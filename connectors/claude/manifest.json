@@ -1,0 +1,7 @@
+{
+  "name": "biset-claude",
+  "version": "0.1.0",
+  "description": "Claude conversation history connector",
+  "capabilities": ["fetch", "send", "watch"],
+  "protocols": ["claude"]
+}
