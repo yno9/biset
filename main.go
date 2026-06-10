@@ -24,6 +24,8 @@ import (
 	"github.com/yd7a/biset/core"
 )
 
+var version = "dev"
+
 // Config holds biset settings loaded from config.json.
 type Config struct {
 	Vault         string   `json:"vault"`
@@ -32,6 +34,7 @@ type Config struct {
 }
 
 func main() {
+	versionFlag := flag.Bool("version", false, "print version and exit")
 	watchFlag   := flag.Bool("watch", false, "run continuously")
 	syncFlag    := flag.Bool("bist", false, "sync once and exit")
 	renderFlag  := flag.Bool("render", false, "re-render all MD from JSON")
@@ -68,6 +71,8 @@ func main() {
 				i++
 				*tokenFlag = args[i]
 			}
+		case "--version", "-version", "version":
+			*versionFlag = true
 		case "--interval", "-interval":
 			if i+1 < len(args) {
 				i++
@@ -82,6 +87,11 @@ func main() {
 		}
 	}
 	_ = flag.CommandLine
+
+	if *versionFlag {
+		fmt.Println(version)
+		return
+	}
 
 	configPath := ""
 	if len(nonFlags) >= 1 {
