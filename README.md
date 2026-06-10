@@ -26,14 +26,13 @@ IMAP / Claude / ActivityPub / ...
 - **IMAP IDLE** — instant new mail detection via connector
 - **Reply / Send** — write in the compose area, set `status: send`
 - **Actions** — `seen`, `archived`, `deleted`, `spam` via frontmatter
-- **Setup wizard** — browser-based first-run setup
-- **JMAP HTTP server** — expose vault to any JMAP-compatible client (`--serve`)
+- **Tray app** — menu bar icon on macOS
 
 ---
 
 ## Requirements
 
-- macOS and linux
+- macOS or Linux
 - An IMAP/SMTP account (for biset-imap)
 - Go 1.21+ (for building from source)
 
@@ -41,44 +40,33 @@ IMAP / Claude / ActivityPub / ...
 
 ## Installation
 
-### End users
-
 ```sh
 curl -fsSL https://github.com/yno9/biset/releases/latest/download/install.sh | sh
 ```
 
-### Developers
+### Build from source
 
 ```sh
 git clone https://github.com/yno9/biset
 cd biset
-go build .
+go build -o biset .
 cd connectors/imap && go build .
 cd ../claude && go build .
 ```
 
 ---
 
-## First run
-
-```sh
-./biset
-```
-
-Opens a browser-based setup wizard. Select connectors, enter account credentials — IMAP server is auto-detected via MX DNS.
-
----
-
 ## Usage
 
-```sh
-./biset                          # tray app (default) — menu bar
-./biset --sync                   # sync once and exit
-./biset --watch                  # continuous sync (interval-based)
-./biset --serve --port 1080      # JMAP HTTP server
-./biset --serve --token <secret> # JMAP server with Bearer token auth
-./biset --interval 5m            # set sync interval (default: 1m)
-./biset /path/to/biset.json      # use specific config file
+```
+biset             show help
+biset up          start daemon (tray app on macOS)
+biset down        stop daemon
+biset status      show running status
+biset sync        sync once and exit
+biset serve       start JMAP HTTP server
+biset config      open config in $EDITOR
+biset version     show version
 ```
 
 ---
@@ -139,7 +127,7 @@ Hey, are you free tomorrow?
 
 ## Replying
 
-Write in the compose area (between frontmatter and the first `- - -`), then set `status: send` or include `!b` in your message :
+Write in the compose area (between frontmatter and the first `- - -`), then set `status: send`:
 
 ```markdown
 ---
@@ -190,18 +178,6 @@ Set `status:` in frontmatter to trigger an action on next sync:
 
 ---
 
-## Serve mode
-
-`biset --serve` exposes the Vault as a JMAP server any compatible client can connect to.
-
-```sh
-biset --serve --port 1080 --token <secret> /path/to/biset.json
-```
-
-Plain HTTP — put Caddy or nginx in front for TLS. Vault changes are pushed to clients in real-time over Server-Sent Events.
-
----
-
 ## Connectors
 
 | Connector | Protocols | Description |
@@ -210,8 +186,6 @@ Plain HTTP — put Caddy or nginx in front for TLS. Vault changes are pushed to 
 | `biset-claude` | claude | Claude Code conversation history |
 
 Each connector is an independent binary communicating with biset over JSON-RPC 2.0 via stdio. It owns its own config and state, and handles its own reconnection and debouncing.
-
-See `config.example.json` in each connector directory for configuration reference.
 
 ---
 

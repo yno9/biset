@@ -8,7 +8,8 @@ set -e
 REPO="yno9/biset"
 BASE_URL="https://github.com/$REPO/releases/latest/download"
 INSTALL_DIR="${BISET_DIR:-$HOME/.biset}"
-CONNECTORS=(imap claude)
+REQUIRED_CONNECTORS=(imap)
+OPTIONAL_CONNECTORS=(claude)
 
 # ── Action selection ───────────────────────────────────────────────────────────
 
@@ -46,14 +47,28 @@ echo "Downloading biset..."
 curl -fsSL "$BASE_URL/biset-$OS-$ARCH" -o "$INSTALL_DIR/biset"
 chmod +x "$INSTALL_DIR/biset"
 
-for name in "${CONNECTORS[@]}"; do
-  dir="$INSTALL_DIR/connectors/biset-$name"
+install_connector() {
+  local name=$1
+  local dir="$INSTALL_DIR/connectors/biset-$name"
   mkdir -p "$dir"
   echo "Downloading biset-$name..."
-  curl -fsSL "$BASE_URL/biset-$name-$OS-$ARCH"            -o "$dir/biset-$name"
-  curl -fsSL "$BASE_URL/biset-$name-manifest.json"         -o "$dir/manifest.json"
-  curl -fsSL "$BASE_URL/biset-$name-config.example.json"   -o "$dir/config.example.json" 2>/dev/null || true
+  curl -fsSL "$BASE_URL/biset-$name-$OS-$ARCH"           -o "$dir/biset-$name"
+  curl -fsSL "$BASE_URL/biset-$name-manifest.json"        -o "$dir/manifest.json"
+  curl -fsSL "$BASE_URL/biset-$name-config.example.json"  -o "$dir/config.example.json" 2>/dev/null || true
   chmod +x "$dir/biset-$name"
+}
+
+for name in "${REQUIRED_CONNECTORS[@]}"; do
+  install_connector "$name"
+done
+
+INSTALLED_OPTIONAL=()
+echo ""
+for name in "${OPTIONAL_CONNECTORS[@]}"; do
+  read -rp "Install connector: biset-$name? [y/N]: " yn </dev/tty
+  case "$yn" in
+    [yY]*) install_connector "$name"; INSTALLED_OPTIONAL+=("biset-$name") ;;
+  esac
 done
 
 # ── Add to PATH ────────────────────────────────────────────────────────────────
@@ -94,26 +109,77 @@ read -rsp "Password: " password </dev/tty
 echo ""
 
 domain="${email#*@}"
+
+# Auto-detect IMAP/SMTP host via MX
 imap_host=""
 smtp_host=""
 if command -v dig &>/dev/null; then
   mx=$(dig +short MX "$domain" 2>/dev/null | sort -n | head -1 | awk '{print $2}' | sed 's/\.$//')
   [ -n "$mx" ] && imap_host="$mx" && smtp_host="$mx"
 fi
+imap_host="${imap_host:-imap.$domain}"
+smtp_host="${smtp_host:-smtp.$domain}"
+imap_port=993
+imap_tls="tls"
+smtp_port=587
+smtp_tls="starttls"
 
-read -rp "IMAP host [${imap_host:-imap.$domain}]: " input </dev/tty
-imap_host="${input:-${imap_host:-imap.$domain}}"
+# Test IMAP connection (TLS or STARTTLS)
+test_imap() {
+  local host=$1 port=$2 tls=$3 user=$4 pass=$5
+  if ! command -v openssl &>/dev/null; then return 1; fi
+  if [ "$tls" = "tls" ]; then
+    printf 'a001 LOGIN "%s" "%s"\r\na002 LOGOUT\r\n' "$user" "$pass" | \
+      openssl s_client -connect "$host:$port" -quiet 2>/dev/null | grep -q "a001 OK"
+  else
+    printf 'a001 LOGIN "%s" "%s"\r\na002 LOGOUT\r\n' "$user" "$pass" | \
+      openssl s_client -connect "$host:$port" -starttls imap -quiet 2>/dev/null | grep -q "a001 OK"
+  fi
+}
 
-read -rp "SMTP host [${smtp_host:-smtp.$domain}]: " input </dev/tty
-smtp_host="${input:-${smtp_host:-smtp.$domain}}"
+echo ""
+echo "Connecting to $imap_host..."
+if test_imap "$imap_host" "$imap_port" "$imap_tls" "$email" "$password"; then
+  echo "✓ Connected"
+  IMAP_OK=1
+else
+  echo "✗ Failed. Configure manually:"
+  echo ""
+  read -rp "IMAP host [$imap_host]: " input </dev/tty
+  imap_host="${input:-$imap_host}"
+  read -rp "IMAP port [$imap_port]: " input </dev/tty
+  imap_port="${input:-$imap_port}"
+  read -rp "IMAP TLS mode (tls/starttls) [$imap_tls]: " input </dev/tty
+  imap_tls="${input:-$imap_tls}"
+  read -rp "SMTP host [$smtp_host]: " input </dev/tty
+  smtp_host="${input:-$smtp_host}"
+  read -rp "SMTP port [$smtp_port]: " input </dev/tty
+  smtp_port="${input:-$smtp_port}"
+  read -rp "SMTP TLS mode (tls/starttls) [$smtp_tls]: " input </dev/tty
+  smtp_tls="${input:-$smtp_tls}"
+  echo ""
+  echo "Retrying..."
+  if test_imap "$imap_host" "$imap_port" "$imap_tls" "$email" "$password"; then
+    echo "✓ Connected"
+    IMAP_OK=1
+  else
+    IMAP_OK=0
+    echo "✗ Still failed."
+  fi
+fi
 
 # ── Write biset.json ───────────────────────────────────────────────────────────
+
+connectors_json='"biset-imap"'
+for name in "${INSTALLED_OPTIONAL[@]}"; do
+  connectors_json="$connectors_json, \"$name\""
+done
 
 cat > "$BISET_JSON" << EOF
 {
   "vault": "$vault",
   "connectors_dir": "connectors",
-  "connectors": ["biset-imap", "biset-claude"]
+  "connectors": [$connectors_json]
 }
 EOF
 
@@ -126,15 +192,15 @@ cat > "$IMAP_CFG" << EOF
       "inbox_key": "$email",
       "imap": {
         "host": "$imap_host",
-        "port": 993,
-        "tls_mode": "tls",
+        "port": $imap_port,
+        "tls_mode": "$imap_tls",
         "username": "$email",
         "password": "$password"
       },
       "smtp": {
         "host": "$smtp_host",
-        "port": 587,
-        "tls_mode": "starttls",
+        "port": $smtp_port,
+        "tls_mode": "$smtp_tls",
         "username": "$email",
         "password": "$password"
       }
@@ -145,8 +211,14 @@ EOF
 chmod 600 "$IMAP_CFG"
 
 echo ""
-if [ "${ADDED_TO_PATH:-0}" = "1" ]; then
-  echo "✓ Done. Restart your terminal, then run: biset"
+if [ "${IMAP_OK:-0}" = "1" ]; then
+  if [ "${ADDED_TO_PATH:-0}" = "1" ]; then
+    echo "✓ Done. Restart your terminal, then run: biset"
+  else
+    echo "✓ Done. Run: biset"
+  fi
 else
-  echo "✓ Done. Run: biset"
+  echo "✗ Could not connect. Edit config and retry:"
+  echo "  $IMAP_CFG"
+  echo "  Then run: biset"
 fi
