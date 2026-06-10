@@ -45,16 +45,16 @@ IMAP / Claude / ActivityPub / ...
 
 ```sh
 # Minimal — downloads biset only; setup wizard installs connectors
-curl -fsSL https://github.com/yd7a/biset/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/yno9/biset/releases/latest/download/install.sh | sh
 
 # Full — downloads biset + all connectors at once
-curl -fsSL https://github.com/yd7a/biset/releases/latest/download/install-full.sh | sh
+curl -fsSL https://github.com/yno9/biset/releases/latest/download/install-full.sh | sh
 ```
 
 ### Developers
 
 ```sh
-git clone https://github.com/yd7a/biset
+git clone https://github.com/yno9/biset
 cd biset
 go build .
 cd connectors/imap && go build .
