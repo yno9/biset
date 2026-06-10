@@ -157,6 +157,8 @@ else
   smtp_port="${input:-$smtp_port}"
   read -rp "SMTP TLS mode (tls/starttls) [$smtp_tls]: " input </dev/tty
   smtp_tls="${input:-$smtp_tls}"
+  read -rsp "Password: " password </dev/tty
+  echo ""
   echo ""
   echo "Retrying..."
   if test_imap "$imap_host" "$imap_port" "$imap_tls" "$email" "$password"; then
@@ -166,6 +168,12 @@ else
     IMAP_OK=0
     echo "✗ Still failed."
   fi
+fi
+
+if [ "${IMAP_OK:-0}" != "1" ]; then
+  echo ""
+  read -rp "Authentication failed. Continue anyway? [y/N]: " yn </dev/tty
+  case "$yn" in [yY]*) ;; *) echo "Aborted."; exit 1 ;; esac
 fi
 
 # ── Write biset.json ───────────────────────────────────────────────────────────

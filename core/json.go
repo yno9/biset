@@ -363,7 +363,6 @@ func ReThreadVault(vaultDir string) {
 	}
 	defer os.WriteFile(marker, []byte("1"), 0644) //nolint:errcheck
 	emails, err := ScanEmails(vaultDir)
-	log.Printf("[rethread] vault=%s emails=%d err=%v", vaultDir, len(emails), err)
 	if err != nil || len(emails) == 0 {
 		return
 	}

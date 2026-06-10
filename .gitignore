@@ -7,3 +7,7 @@ connectors/*/config.json
 connectors/*/state.json
 
 .DS_Store
+
+biset-darwin-arm64
+biset-darwin-amd64
+biset-linux-amd64

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -34,68 +33,104 @@ type Config struct {
 }
 
 func main() {
-	versionFlag := flag.Bool("version", false, "print version and exit")
-	watchFlag   := flag.Bool("watch", false, "run continuously")
-	syncFlag    := flag.Bool("bist", false, "sync once and exit")
-	renderFlag  := flag.Bool("render", false, "re-render all MD from JSON")
-	daemonFlag  := flag.Bool("daemon", false, "")
-	serveFlag   := flag.Bool("serve", false, "run JMAP HTTP server")
-	portFlag    := flag.Int("port", 1080, "port for --serve")
-	tokenFlag   := flag.String("token", "", "bearer token for --serve")
-	intervalFlag := flag.Duration("interval", time.Minute, "sync interval")
-	noKillFlag  := flag.Bool("no-kill", false, "skip killing existing instance on startup")
+	// Parse subcommand and flags.
+	// Usage:
+	//   biset [up]          start daemon (watch+sync, macOS: tray)
+	//   biset down          stop running daemon
+	//   biset sync          one-shot sync and exit
+	//   biset serve         run JMAP HTTP server + watch
+	//   biset version       print version
+	//
+	// Flags: --port, --token, --interval, --daemon (internal)
+
+	portFlag    := 1080
+	tokenFlag   := ""
+	intervalFlag := time.Minute
+	daemonFlag  := false
+	renderFlag  := false // hidden flag for re-rendering MD
+
+	subcommand := "" // empty = no subcommand given → show help
+	var configArgument string
 
 	args := os.Args[1:]
-	var nonFlags []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--watch", "-watch", "watch":
-			*watchFlag = true
-		case "--bist", "-bist", "--sync", "-sync", "sync":
-			*syncFlag = true
+		case "up", "down", "sync", "serve", "version", "status", "config":
+			subcommand = args[i]
+		case "--help", "-help", "-h":
+			subcommand = "help"
 		case "--render", "-render", "render":
-			*renderFlag = true
-		case "--daemon", "-daemon", "daemon":
-			*daemonFlag = true
-		case "--serve", "-serve", "serve":
-			*serveFlag = true
-		case "--no-kill", "-no-kill":
-			*noKillFlag = true
-		case "--port", "-port":
+			renderFlag = true
+			if subcommand == "" {
+				subcommand = "up"
+			}
+		case "--daemon", "-daemon":
+			daemonFlag = true
+			if subcommand == "" {
+				subcommand = "up"
+			}
+case "--port", "-port":
 			if i+1 < len(args) {
 				i++
-				fmt.Sscanf(args[i], "%d", portFlag)
+				fmt.Sscanf(args[i], "%d", &portFlag)
 			}
 		case "--token", "-token":
 			if i+1 < len(args) {
 				i++
-				*tokenFlag = args[i]
+				tokenFlag = args[i]
 			}
-		case "--version", "-version", "version":
-			*versionFlag = true
+		case "--version", "-version":
+			subcommand = "version"
 		case "--interval", "-interval":
 			if i+1 < len(args) {
 				i++
 				if d, err := time.ParseDuration(args[i]); err == nil {
-					*intervalFlag = d
+					intervalFlag = d
 				}
 			}
 		default:
-			if len(args[i]) > 0 && args[i][0] != '-' {
-				nonFlags = append(nonFlags, args[i])
+			if len(args[i]) > 0 && args[i][0] != '-' && configArgument == "" {
+				if strings.Contains(args[i], "/") || strings.HasSuffix(args[i], ".json") {
+					configArgument = args[i]
+					if subcommand == "" {
+						subcommand = "up"
+					}
+				}
 			}
 		}
 	}
-	_ = flag.CommandLine
 
-	if *versionFlag {
+	switch subcommand {
+	case "version":
 		fmt.Println(version)
+		return
+	case "help", "":
+		fmt.Print(`
+Your email. Local. Private.
+
+USAGE
+  biset <subcommand> [flags]
+
+SUBCOMMANDS
+  up      Start biset (sync + watch, macOS: menu bar icon)
+  down    Stop running biset
+  sync    Trigger a sync
+  serve   Run JMAP HTTP server
+  status  Show status
+  config  Show or edit config
+  version Print version
+
+FLAGS
+  --interval duration   Sync interval (default 1m)
+  --port int            Port for "serve" (default 1080)
+  --token string        Bearer token for "serve"
+
+`[1:])
 		return
 	}
 
-	configPath := ""
-	if len(nonFlags) >= 1 {
-		configPath = nonFlags[0]
+	configPath := configArgument
+	if configPath != "" {
 		if !filepath.IsAbs(configPath) {
 			if abs, err := filepath.Abs(configPath); err == nil {
 				configPath = abs
@@ -106,6 +141,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("cannot determine executable path: %v", err)
 		}
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
 		dir := filepath.Dir(exe)
 		if strings.Contains(dir, ".app/Contents/MacOS") {
 			dir = filepath.Dir(filepath.Dir(filepath.Dir(dir)))
@@ -113,10 +151,48 @@ func main() {
 		configPath = filepath.Join(dir, "biset.json")
 	}
 
-	// kill any existing instance (skip if restarted from tray)
-	exe, _ := os.Executable()
-	if !*noKillFlag {
-		killExisting(exe)
+	if subcommand == "config" {
+		editor := os.Getenv("EDITOR")
+		if editor == "" {
+			editor = os.Getenv("VISUAL")
+		}
+		if editor == "" {
+			for _, e := range []string{"nano", "vim", "vi"} {
+				if _, err := exec.LookPath(e); err == nil {
+					editor = e
+					break
+				}
+			}
+		}
+		if editor == "" {
+			fmt.Println(configPath)
+			b, _ := os.ReadFile(configPath)
+			fmt.Println()
+			fmt.Print(string(b))
+			return
+		}
+		cmd := exec.Command(editor, configPath)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Run() //nolint:errcheck
+		return
+	}
+
+	if subcommand == "status" || subcommand == "down" {
+		cfg, err := loadConfig(configPath)
+		if err != nil {
+			log.Fatalf("config: %v", err)
+		}
+		if subcommand == "status" {
+			runStatus(cfg)
+			return
+		}
+		// down
+		quitPath := filepath.Join(cfg.Vault, "biset-quit.json")
+		os.WriteFile(quitPath, []byte("{}"), 0644) //nolint:errcheck
+		fmt.Println("biset: stopping daemon")
+		return
 	}
 
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
@@ -142,14 +218,28 @@ func main() {
 		connectorsDir = filepath.Join(filepath.Dir(configPath), connectorsDir)
 	}
 
-	killExistingBiset(cfg.Vault)
+	// For "up": refuse to start if daemon already running.
+	// For "sync"/"serve": clear stale lock only.
+	lockPath := filepath.Join(cfg.Vault, ".data", ".biset.lock")
+	if b, err := os.ReadFile(lockPath); err == nil {
+		var pid int
+		fmt.Sscanf(string(b), "%d", &pid)
+		if pid > 0 && isBisetProcess(pid) {
+			if subcommand == "up" || subcommand == "" {
+				fmt.Fprintf(os.Stderr, "biset: already running (pid %d)\n", pid)
+				os.Exit(1)
+			}
+		} else {
+			os.Remove(lockPath) //nolint:errcheck
+		}
+	}
+
 	ensureConnectors(cfg, connectorsDir)
 	core.ReThreadVault(cfg.Vault)
 
 	var mgr *core.Manager
 	triggerSync := func() {
-		log.Printf("[main] triggerSync called, syncFlag=%v", *syncFlag)
-		if mgr != nil && !*syncFlag {
+		if mgr != nil {
 			go runSync(cfg, mgr)
 		}
 	}
@@ -168,64 +258,67 @@ func main() {
 		os.Exit(0)
 	}()
 
-	switch {
-	case *serveFlag:
-		mgr.Start()
-		RunTray(cfg, mgr, configPath, *intervalFlag, *portFlag)
-	case *watchFlag:
-		fmt.Printf("watch mode — interval: %s\n", *intervalFlag)
-		mgr.Start()
-		watchLoop(cfg, mgr, configPath, *intervalFlag)
-	case *syncFlag:
+	if renderFlag {
+		runRender(cfg)
+		return
+	}
+
+	switch subcommand {
+	case "sync":
 		mgr.Start()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		mgr.WaitReady(ctx)
 		cancel()
 		runSync(cfg, mgr)
 		mgr.Stop()
-	case *renderFlag:
-		runRender(cfg)
-	default:
-		// tray mode
-		if !*daemonFlag && isTTY() {
-			// launched from Terminal — re-exec as daemon then close Terminal window
-			exe, err := os.Executable()
-			if err == nil {
-				newArgs := append([]string{"--daemon"}, os.Args[1:]...)
-				cmd := exec.Command(exe, newArgs...)
-				cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-				devNull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
-				cmd.Stdin = devNull
-				cmd.Stdout = devNull
-				cmd.Stderr = devNull
-				cmd.Start() //nolint:errcheck
-				// close Terminal window that launched biset
-				exec.Command("osascript", "-e",
-					`tell application "Terminal" to close front window`).Start() //nolint:errcheck
-				return
-			}
-		} else if !*daemonFlag && !isTTY() {
-			exe, err := os.Executable()
-			if err == nil {
-				newArgs := append([]string{"--daemon"}, os.Args[1:]...)
-				cmd := exec.Command(exe, newArgs...)
-				cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-				devNull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
-				cmd.Stdin = devNull
-				cmd.Stdout = devNull
-				cmd.Stderr = devNull
-				cmd.Start() //nolint:errcheck
-				return
-			}
-		}
-		if *daemonFlag {
-			devNull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
-			os.Stdout = devNull
-			os.Stderr = devNull
-			log.SetOutput(devNull)
-		}
+
+	case "serve":
 		mgr.Start()
-		RunTray(cfg, mgr, configPath, *intervalFlag, 0)
+		go runServeContext(context.Background(), cfg, portFlag, tokenFlag) //nolint:errcheck
+		watchLoop(cfg, mgr, configPath, intervalFlag)
+
+	default: // "up"
+		mgr.Start()
+		if runtime.GOOS == "darwin" {
+			if !daemonFlag && isTTY() {
+				exe, err := os.Executable()
+				if err == nil {
+					newArgs := append([]string{"--daemon"}, os.Args[1:]...)
+					cmd := exec.Command(exe, newArgs...)
+					cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+					devNull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+					cmd.Stdin = devNull
+					cmd.Stdout = devNull
+					cmd.Stderr = devNull
+					if err := cmd.Start(); err == nil {
+						fmt.Printf("biset: started (pid %d)\n", cmd.Process.Pid)
+					}
+					return
+				}
+			}
+			if daemonFlag {
+				devNull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+				os.Stdout = devNull
+				os.Stderr = devNull
+				log.SetOutput(devNull)
+			}
+			lockPath, ok := acquireLock(cfg.Vault)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "biset: already running")
+				os.Exit(1)
+			}
+			defer os.Remove(lockPath)
+			RunTray(cfg, mgr, configPath, intervalFlag, 0)
+		} else {
+			lockPath, ok := acquireLock(cfg.Vault)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "biset: already running")
+				os.Exit(1)
+			}
+			defer os.Remove(lockPath)
+			fmt.Printf("biset: started (pid %d)\n", os.Getpid())
+			watchLoop(cfg, mgr, configPath, intervalFlag)
+		}
 	}
 }
 
@@ -789,6 +882,28 @@ func isTTY() bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
+// ── status ────────────────────────────────────────────────────────────────────
+
+func runStatus(cfg *Config) {
+	lockPath := filepath.Join(cfg.Vault, ".data", ".biset.lock")
+	daemonStatus := "not running"
+	if b, err := os.ReadFile(lockPath); err == nil {
+		var pid int
+		fmt.Sscanf(string(b), "%d", &pid)
+		if pid > 0 && isBisetProcess(pid) {
+			daemonStatus = fmt.Sprintf("running (pid %d)", pid)
+		}
+	}
+
+	emails, _ := core.ScanEmails(cfg.Vault)
+	threads, _ := core.ScanThreads(cfg.Vault)
+
+	fmt.Printf("biset:   %s\n", daemonStatus)
+	fmt.Printf("vault:   %s\n", cfg.Vault)
+	fmt.Printf("emails:  %d\n", len(emails))
+	fmt.Printf("threads: %d\n", len(threads))
+}
+
 // ── process management ────────────────────────────────────────────────────────
 
 func acquireLock(vaultDir string) (string, bool) {
@@ -824,7 +939,7 @@ func isBisetProcess(pid int) bool {
 	if err != nil {
 		return false
 	}
-	return strings.TrimSpace(string(out)) == filepath.Base(exe)
+	return filepath.Base(strings.TrimSpace(string(out))) == filepath.Base(exe)
 }
 
 // killExistingBiset sends SIGKILL to any biset process holding the vault lock.
