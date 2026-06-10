@@ -13,8 +13,8 @@ CONNECTORS=(imap claude)
 # ── Action selection ───────────────────────────────────────────────────────────
 
 echo "What would you like to do?"
-echo "  1) Install"
-echo "  2) Uninstall"
+echo "  1) Install biset"
+echo "  2) Uninstall biset (if installed)"
 read -rp "Choice [1]: " choice </dev/tty
 choice="${choice:-1}"
 
@@ -63,7 +63,7 @@ IMAP_CFG="$INSTALL_DIR/connectors/biset-imap/config.json"
 
 if [ -f "$BISET_JSON" ]; then
   echo ""
-  echo "Config already exists. Run: $INSTALL_DIR/biset"
+  echo "Already configured. Updated binaries to latest version."
   exit 0
 fi
 
