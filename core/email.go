@@ -171,27 +171,39 @@ func DefaultMailbox(inboxKey string) Mailbox {
 // AssignThreadIDs walks the InReplyTo chain within the batch and sets ThreadID
 // on emails that don't already have one.
 func AssignThreadIDs(emails []Email) []Email {
-	byMsgID := map[string]int{} // messageID → index in emails
-	for i, e := range emails {
-		if msgID := EmailMessageID(e); msgID != "" {
-			byMsgID[msgID] = i
+	// parentOf maps messageID → inReplyTo, preferring entries that have one.
+	// The same message can appear multiple times (inbox + sent copies with different
+	// Email IDs but identical Message-IDs). The sent copy often lacks InReplyTo,
+	// so we must not let it overwrite the inbox copy's chain.
+	parentOf := map[string]string{}
+	for _, e := range emails {
+		msgID := EmailMessageID(e)
+		if msgID == "" {
+			continue
+		}
+		irt := EmailInReplyTo(e)
+		if irt != "" {
+			parentOf[msgID] = irt // any copy with InReplyTo wins
+		} else if _, exists := parentOf[msgID]; !exists {
+			parentOf[msgID] = ""
 		}
 	}
 
-	var rootOf func(msgID string, depth int) string
-	rootOf = func(msgID string, depth int) string {
-		if depth <= 0 || msgID == "" {
-			return msgID
+	rootOf := func(msgID string) string {
+		visited := map[string]bool{}
+		cur := msgID
+		for cur != "" {
+			if visited[cur] {
+				break // cycle
+			}
+			visited[cur] = true
+			parent, known := parentOf[cur]
+			if !known || parent == "" {
+				break
+			}
+			cur = parent
 		}
-		idx, ok := byMsgID[msgID]
-		if !ok {
-			return msgID
-		}
-		parent := EmailInReplyTo(emails[idx])
-		if parent == "" {
-			return msgID
-		}
-		return rootOf(parent, depth-1)
+		return cur
 	}
 
 	for i := range emails {
@@ -203,7 +215,7 @@ func AssignThreadIDs(emails []Email) []Email {
 
 		var root string
 		if msgID != "" {
-			root = rootOf(msgID, 20)
+			root = rootOf(msgID)
 		} else if parentID != "" {
 			root = parentID
 		}

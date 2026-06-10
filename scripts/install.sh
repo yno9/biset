@@ -1,13 +1,31 @@
 #!/bin/bash
 # Download biset + all connectors from GitHub Releases, then run setup wizard.
 # Usage: curl -fsSL https://github.com/yno9/biset/releases/latest/download/install.sh | sh
+# Uninstall: sh install.sh uninstall
 
 set -e
 
 REPO="yno9/biset"
 BASE_URL="https://github.com/$REPO/releases/latest/download"
-INSTALL_DIR="${BISET_DIR:-$HOME/biset-test2}"
+INSTALL_DIR="${BISET_DIR:-$HOME/.biset}"
 CONNECTORS=(imap claude)
+
+# ── Action selection ───────────────────────────────────────────────────────────
+
+echo "What would you like to do?"
+echo "  1) Install"
+echo "  2) Uninstall"
+read -rp "Choice [1]: " choice
+choice="${choice:-1}"
+
+if [ "$choice" = "2" ]; then
+  echo "=== Uninstalling biset ==="
+  rm -f /usr/local/bin/biset 2>/dev/null || sudo rm -f /usr/local/bin/biset
+  rm -rf "$INSTALL_DIR"
+  echo "✓ Removed $INSTALL_DIR and /usr/local/bin/biset"
+  echo "  (vault was not removed)"
+  exit 0
+fi
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
@@ -53,8 +71,8 @@ echo ""
 echo "=== Setup ==="
 echo ""
 
-read -rp "Vault directory [$HOME/mail]: " vault
-vault="${vault:-$HOME/mail}"
+read -rp "Vault directory [$HOME/inbox]: " vault
+vault="${vault:-$HOME/inbox}"
 mkdir -p "$vault"
 
 echo ""
@@ -113,5 +131,11 @@ cat > "$IMAP_CFG" << EOF
 EOF
 chmod 600 "$IMAP_CFG"
 
+# ── Add to PATH ────────────────────────────────────────────────────────────────
+
+if ! ln -sf "$INSTALL_DIR/biset" /usr/local/bin/biset 2>/dev/null; then
+  sudo ln -sf "$INSTALL_DIR/biset" /usr/local/bin/biset
+fi
+
 echo ""
-echo "✓ Done. Run: $INSTALL_DIR/biset"
+echo "✓ Done. Run: biset"

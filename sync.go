@@ -87,8 +87,8 @@ func runSync(cfg *Config, mgr *core.Manager) (int, []SyncNotification) {
 			}
 		}
 	}
-	allEmails = core.AssignThreadIDs(allEmails)
 	allEmails = core.DeduplicateEmails(allEmails)
+	allEmails = core.AssignThreadIDs(allEmails)
 	fmt.Printf("fetched %d emails\n", len(allEmails))
 
 	// collect notifications (received emails newer than 5 minutes ago)

@@ -368,27 +368,35 @@ func ReThreadVault(vaultDir string) {
 		return
 	}
 
-	byMsgID := make(map[string]int, len(emails))
-	for i, e := range emails {
-		if msgID := EmailMessageID(e); msgID != "" {
-			byMsgID[msgID] = i
+	parentOf := make(map[string]string, len(emails))
+	for _, e := range emails {
+		msgID := EmailMessageID(e)
+		if msgID == "" {
+			continue
+		}
+		irt := EmailInReplyTo(e)
+		if irt != "" {
+			parentOf[msgID] = irt
+		} else if _, exists := parentOf[msgID]; !exists {
+			parentOf[msgID] = ""
 		}
 	}
 
-	var rootOf func(msgID string, depth int) string
-	rootOf = func(msgID string, depth int) string {
-		if depth <= 0 || msgID == "" {
-			return msgID
+	rootOf := func(msgID string) string {
+		visited := map[string]bool{}
+		cur := msgID
+		for cur != "" {
+			if visited[cur] {
+				break
+			}
+			visited[cur] = true
+			parent, known := parentOf[cur]
+			if !known || parent == "" {
+				break
+			}
+			cur = parent
 		}
-		idx, ok := byMsgID[msgID]
-		if !ok {
-			return msgID
-		}
-		parent := EmailInReplyTo(emails[idx])
-		if parent == "" {
-			return msgID
-		}
-		return rootOf(parent, depth-1)
+		return cur
 	}
 
 	changed := false
@@ -398,18 +406,14 @@ func ReThreadVault(vaultDir string) {
 
 		var root string
 		if msgID != "" {
-			root = rootOf(msgID, 20)
+			root = rootOf(msgID)
 		} else if parentID != "" {
-			root = rootOf(parentID, 20)
+			root = rootOf(parentID)
 		}
 
 		var newThreadID string
 		if root != "" {
-			if idx, ok := byMsgID[root]; ok && emails[idx].ThreadID != "" {
-				newThreadID = emails[idx].ThreadID
-			} else {
-				newThreadID = MakeThreadID(root)
-			}
+			newThreadID = MakeThreadID(root)
 		} else {
 			newThreadID = emails[i].ThreadID
 		}
