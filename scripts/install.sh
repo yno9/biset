@@ -133,9 +133,17 @@ chmod 600 "$IMAP_CFG"
 
 # ── Add to PATH ────────────────────────────────────────────────────────────────
 
-if ! ln -sf "$INSTALL_DIR/biset" /usr/local/bin/biset 2>/dev/null; then
-  sudo ln -sf "$INSTALL_DIR/biset" /usr/local/bin/biset
-fi
+mkdir -p "$HOME/.local/bin"
+ln -sf "$INSTALL_DIR/biset" "$HOME/.local/bin/biset"
 
-echo ""
-echo "✓ Done. Run: biset"
+SHELL_RC="$HOME/.zshrc"
+[ -n "$BASH_VERSION" ] && SHELL_RC="$HOME/.bashrc"
+
+if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
+  echo ""
+  echo "✓ Done. Restart your terminal, then run: biset"
+else
+  echo ""
+  echo "✓ Done. Run: biset"
+fi
