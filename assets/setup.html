@@ -236,9 +236,11 @@ function renderConnectorRow(item, nameAttr) {
 document.getElementById('connector-list').append(
   ...BISET_URLS.connectors.map(c => renderConnectorRow(c, 'connector'))
 )
-document.getElementById('interface-list').append(
-  ...BISET_URLS.interfaces.map(c => renderConnectorRow(c, 'interface'))
-)
+if (BISET_URLS.interfaces?.length) {
+  document.getElementById('interface-list').append(
+    ...BISET_URLS.interfaces.map(c => renderConnectorRow(c, 'interface'))
+  )
+}
 
 let dirHandle = null
 
@@ -309,7 +311,7 @@ async function deleteFile(name) {
   try { await dirHandle.removeEntry(name) } catch {}
 }
 
-const _interfaceIds = new Set(BISET_URLS.interfaces.map(i => i.id))
+const _interfaceIds = new Set((BISET_URLS.interfaces ?? []).map(i => i.id))
 function selectedConnectors() {
   return [...document.querySelectorAll('input[name=connector]:checked')]
     .map(el => el.value)
@@ -429,7 +431,7 @@ function initArchSelector() {
 }
 
 function connectorDownloadURL(name) {
-  const all = [...BISET_URLS.connectors, ...BISET_URLS.interfaces]
+  const all = [...BISET_URLS.connectors, ...(BISET_URLS.interfaces ?? [])]
   const entry = all.find(c => c.id === name)
   if (entry?.url) return entry.url
   const { os, arch } = _selectedArch || detectOSArch()
@@ -654,7 +656,7 @@ document.getElementById('btn-vault-done')?.addEventListener('click', async () =>
 })
 
 document.getElementById('btn-ui-done')?.addEventListener('click', async () => {
-  const INDEX_HTML_URL = BISET_URLS.interfaces.find(i => i.id === 'biset-ui')?.url
+  const INDEX_HTML_URL = (BISET_URLS.interfaces ?? []).find(i => i.id === 'biset-ui')?.url
   show('screen-connecting')
   document.querySelector('#screen-connecting p').innerHTML =
     'Downloading<span id="connecting-dots" style="display:inline-block;width:18px;text-align:left"></span>'
