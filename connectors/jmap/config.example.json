@@ -1,7 +1,0 @@
-{
-  "vault": "/path/to/vault",
-  "port": 8080,
-  "token": "your-secret-token",
-  "account": "you@example.com",
-  "ui_html": ""
-}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,7 +21,13 @@ type Manifest struct {
 	Version      string   `json:"version"`
 	Description  string   `json:"description"`
 	Capabilities []string `json:"capabilities"`
-	Protocols    []string `json:"protocols"` // e.g. ["imap", "smtp"]
+	Protocols    []string `json:"protocols"`
+}
+
+// FetchResult is returned by Connector.Fetch.
+type FetchResult struct {
+	Emails    []Email   `json:"emails"`
+	Mailboxes []Mailbox `json:"mailboxes"`
 }
 
 // Manager discovers and manages Connector subprocesses.
@@ -38,6 +45,16 @@ func (m *Manager) SetOnChange(fn func()) {
 	m.onChange = fn
 	for _, c := range m.connectors {
 		c.onChange = fn
+	}
+}
+
+// SetOnChangeFor sets onChange only for connectors whose name contains nameSubstr.
+func (m *Manager) SetOnChangeFor(nameSubstr string, fn func()) {
+	for _, c := range m.connectors {
+		if strings.Contains(c.manifest.Name, nameSubstr) {
+			log.Printf("[manager] SetOnChangeFor %q matched %q", nameSubstr, c.manifest.Name)
+			c.onChange = fn
+		}
 	}
 }
 
@@ -179,31 +196,30 @@ func (c *Connector) run() error {
 	c.enc = json.NewEncoder(stdin)
 	c.mu.Unlock()
 
-	// start reader BEFORE ping so responses can be received
 	sc := bufio.NewScanner(stdout)
-	sc.Buffer(make([]byte, 4*1024*1024), 4*1024*1024) // 4MB buffer
+	sc.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
 	readerDone := make(chan struct{})
 	go func() {
 		defer close(readerDone)
 		for sc.Scan() {
-		var msg rpcResponse
-		if err := json.Unmarshal(sc.Bytes(), &msg); err != nil {
-			continue
-		}
-		if msg.ID == nil {
-			// notification from connector
-			if msg.Method == "notify" && c.onChange != nil {
-				c.onChange()
+			var msg rpcResponse
+			if err := json.Unmarshal(sc.Bytes(), &msg); err != nil {
+				continue
 			}
-			continue
-		}
-		c.mu.Lock()
-		ch, ok := c.pending[*msg.ID]
-		delete(c.pending, *msg.ID)
-		c.mu.Unlock()
-		if ok {
-			ch <- msg
-		}
+			if msg.ID == nil {
+				if msg.Method == "notify" && c.onChange != nil {
+					log.Printf("[connector] notify from %s", c.manifest.Name)
+					c.onChange()
+				}
+				continue
+			}
+			c.mu.Lock()
+			ch, ok := c.pending[*msg.ID]
+			delete(c.pending, *msg.ID)
+			c.mu.Unlock()
+			if ok {
+				ch <- msg
+			}
 		}
 	}()
 
@@ -214,7 +230,6 @@ func (c *Connector) run() error {
 		return fmt.Errorf("ping: %w", err)
 	}
 
-	// signal ready (once only)
 	select {
 	case <-c.readyCh:
 	default:
@@ -311,38 +326,33 @@ func (c *Connector) call(method string, params any) (json.RawMessage, error) {
 
 // ── public methods ────────────────────────────────────────────────────────────
 
-func (c *Connector) Fetch() ([]Message, error) {
+// Fetch retrieves new emails from the connector.
+func (c *Connector) Fetch() (FetchResult, error) {
 	result, err := c.call("fetch", nil)
 	if err != nil {
-		return nil, err
+		return FetchResult{}, err
 	}
-	var out struct {
-		Messages []Message `json:"messages"`
-	}
+	var out FetchResult
 	if err := json.Unmarshal(result, &out); err != nil {
-		return nil, err
+		return FetchResult{}, err
 	}
-	return out.Messages, nil
+	return out, nil
 }
 
-func (c *Connector) Send(inbox, to, cc, bcc, subject, body, parentID string) error {
-	_, err := c.call("send", map[string]string{
-		"inbox":     inbox,
-		"to":        to,
-		"cc":        cc,
-		"bcc":       bcc,
-		"subject":   subject,
-		"body":      body,
-		"parent_id": parentID,
+// Send submits an email via the connector.
+func (c *Connector) Send(email Email, envelope Envelope) error {
+	_, err := c.call("send", map[string]any{
+		"email":    email,
+		"envelope": envelope,
 	})
 	return err
 }
 
-func (c *Connector) Handle(inbox, messageID string, action Action) error {
+// Handle performs an action (archived/deleted/spam) on an email.
+func (c *Connector) Handle(emailID, action string) error {
 	_, err := c.call("handle", map[string]string{
-		"inbox":      inbox,
-		"message_id": messageID,
-		"action":     string(action),
+		"emailId": emailID,
+		"action":  action,
 	})
 	return err
 }

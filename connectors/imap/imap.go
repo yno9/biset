@@ -26,8 +26,8 @@ type IMAPConfig struct {
 	Password string `json:"password"`
 }
 
-// imapFetch retrieves new messages from INBOX and Sent.
-func imapFetch(cfg IMAPConfig, inboxKey string, since AccountState) ([]core.Message, AccountState, error) {
+// imapFetch retrieves new emails from INBOX and Sent.
+func imapFetch(cfg IMAPConfig, inboxKey string, since AccountState) ([]core.Email, AccountState, error) {
 	c, err := imapDial(cfg)
 	if err != nil {
 		return nil, since, fmt.Errorf("dial: %w", err)
@@ -56,11 +56,15 @@ func imapFetch(cfg IMAPConfig, inboxKey string, since AccountState) ([]core.Mess
 		return nil, since, fmt.Errorf("search: %w", err)
 	}
 
-	var messages []core.Message
+	var emails []core.Email
 	var maxUID imap.UID
 	newUIDs := searchData.AllUIDs()
+	emailUIDs := since.EmailUIDs
+	if emailUIDs == nil {
+		emailUIDs = map[string]uint32{}
+	}
 	if len(newUIDs) > 0 {
-		messages, maxUID = fetchUIDs(c, newUIDs, cfg.Username, inboxKey)
+		emails, maxUID = fetchUIDs(c, newUIDs, cfg.Username, inboxKey, emailUIDs)
 	}
 	if maxUID == 0 {
 		maxUID = imap.UID(lastUID)
@@ -70,19 +74,20 @@ func imapFetch(cfg IMAPConfig, inboxKey string, since AccountState) ([]core.Mess
 		LastUID:     fmt.Sprintf("%d", maxUID),
 		SentLastUID: since.SentLastUID,
 		SentMailbox: since.SentMailbox,
+		EmailUIDs:   emailUIDs,
 	}
 
 	// fetch Sent
-	sentMsgs, sentState := fetchSent(cfg, inboxKey, since)
-	messages = append(messages, sentMsgs...)
+	sentEmails, sentState := fetchSent(cfg, inboxKey, since, emailUIDs)
+	emails = append(emails, sentEmails...)
 	newState.SentLastUID = sentState.SentLastUID
 	newState.SentMailbox = sentState.SentMailbox
 
-	return messages, newState, nil
+	return emails, newState, nil
 }
 
-func fetchUIDs(c *imapclient.Client, uids []imap.UID, selfAddr, inboxKey string) ([]core.Message, imap.UID) {
-	bodySection := &imap.FetchItemBodySection{}
+func fetchUIDs(c *imapclient.Client, uids []imap.UID, selfAddr, inboxKey string, emailUIDs map[string]uint32) ([]core.Email, imap.UID) {
+	bodySection := &imap.FetchItemBodySection{Peek: true}
 	fetchCmd := c.Fetch(imap.UIDSetNum(uids...), &imap.FetchOptions{
 		UID:         true,
 		Flags:       true,
@@ -90,7 +95,7 @@ func fetchUIDs(c *imapclient.Client, uids []imap.UID, selfAddr, inboxKey string)
 	})
 	defer fetchCmd.Close()
 
-	var messages []core.Message
+	var emails []core.Email
 	var maxUID imap.UID
 
 	for {
@@ -123,18 +128,21 @@ func fetchUIDs(c *imapclient.Client, uids []imap.UID, selfAddr, inboxKey string)
 			maxUID = uid
 		}
 		if len(bodyData) > 0 {
-			m, err := parseRawMessage(bodyData, selfAddr, inboxKey)
-			if err != nil || m == nil {
+			e, err := parseRawMessage(bodyData, selfAddr, inboxKey, hasSeen)
+			if err != nil || e == nil {
 				continue
 			}
-			m.Seen = hasSeen
-			messages = append(messages, *m)
+			// track emailId → IMAP UID for handle operations
+			if uid > 0 {
+				emailUIDs[e.ID] = uint32(uid)
+			}
+			emails = append(emails, *e)
 		}
 	}
-	return messages, maxUID
+	return emails, maxUID
 }
 
-func fetchSent(cfg IMAPConfig, inboxKey string, since AccountState) ([]core.Message, AccountState) {
+func fetchSent(cfg IMAPConfig, inboxKey string, since AccountState, emailUIDs map[string]uint32) ([]core.Email, AccountState) {
 	c, err := imapDial(cfg)
 	if err != nil {
 		return nil, since
@@ -182,7 +190,7 @@ func fetchSent(cfg IMAPConfig, inboxKey string, since AccountState) ([]core.Mess
 	})
 	defer fetchCmd.Close()
 
-	var messages []core.Message
+	var emails []core.Email
 	var maxUID imap.UID
 
 	for {
@@ -208,17 +216,20 @@ func fetchSent(cfg IMAPConfig, inboxKey string, since AccountState) ([]core.Mess
 			maxUID = uid
 		}
 		if len(bodyData) > 0 {
-			m, err := parseRawMessage(bodyData, cfg.Username, inboxKey)
-			if err != nil || m == nil {
+			e, err := parseRawMessage(bodyData, cfg.Username, inboxKey, true) // sent = always seen
+			if err != nil || e == nil {
 				continue
 			}
-			delete(m.Meta, core.MetaMyRole)
-			m.Seen = true // sent by self — always seen
-			messages = append(messages, *m)
+			// sent: mark as seen, clear inbox role
+			e.Keywords["$seen"] = true
+			if uid > 0 {
+				emailUIDs[e.ID] = uint32(uid)
+			}
+			emails = append(emails, *e)
 		}
 	}
 
-	return messages, AccountState{
+	return emails, AccountState{
 		SentMailbox: sentMailbox,
 		SentLastUID: fmt.Sprintf("%d", maxUID),
 	}
@@ -245,13 +256,98 @@ func detectSentMailbox(c *imapclient.Client) string {
 	return ""
 }
 
-func imapHandle(cfg IMAPConfig, messageID string, action core.Action) error {
+func imapHandle(cfg IMAPConfig, state AccountState, emailID, action string) error {
+	uid, hasUID := state.EmailUIDs[emailID]
+	msgID := core.MessageIDFromEmailID(emailID)
+
 	switch action {
-	case core.ActionDelete, core.ActionArchive, core.ActionSpam:
-		return imapExpunge(cfg, messageID)
+	case "seen":
+		if hasUID && uid > 0 {
+			return imapMarkSeenUID(cfg, imap.UID(uid))
+		}
+		if msgID != "" {
+			return imapMarkSeen(cfg, msgID)
+		}
+		return fmt.Errorf("cannot determine message ID for %q", emailID)
+	case "deleted", "archived", "spam":
+		if hasUID && uid > 0 {
+			return imapExpungeUID(cfg, imap.UID(uid))
+		}
+		if msgID != "" {
+			return imapExpunge(cfg, msgID)
+		}
+		return fmt.Errorf("cannot determine message ID for %q", emailID)
 	default:
 		return nil
 	}
+}
+
+func imapMarkSeenUID(cfg IMAPConfig, uid imap.UID) error {
+	c, err := imapDial(cfg)
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	defer c.Close()
+	if err := c.Login(cfg.Username, cfg.Password).Wait(); err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		return fmt.Errorf("select: %w", err)
+	}
+	return c.Store(imap.UIDSetNum(uid), &imap.StoreFlags{
+		Op:     imap.StoreFlagsAdd,
+		Flags:  []imap.Flag{imap.FlagSeen},
+		Silent: true,
+	}, nil).Close()
+}
+
+func imapMarkSeen(cfg IMAPConfig, msgID string) error {
+	c, err := imapDial(cfg)
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	defer c.Close()
+	if err := c.Login(cfg.Username, cfg.Password).Wait(); err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		return fmt.Errorf("select: %w", err)
+	}
+	searchData, err := c.Search(&imap.SearchCriteria{
+		Header: []imap.SearchCriteriaHeaderField{{Key: "Message-Id", Value: msgID}},
+	}, nil).Wait()
+	if err != nil || len(searchData.AllUIDs()) == 0 {
+		return fmt.Errorf("message not found: %s", msgID)
+	}
+	uids := searchData.AllUIDs()
+	return c.Store(imap.UIDSetNum(uids...), &imap.StoreFlags{
+		Op:     imap.StoreFlagsAdd,
+		Flags:  []imap.Flag{imap.FlagSeen},
+		Silent: true,
+	}, nil).Close()
+}
+
+func imapExpungeUID(cfg IMAPConfig, uid imap.UID) error {
+	c, err := imapDial(cfg)
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	defer c.Close()
+	if err := c.Login(cfg.Username, cfg.Password).Wait(); err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		return fmt.Errorf("select: %w", err)
+	}
+	storeCmd := c.Store(imap.UIDSetNum(uid), &imap.StoreFlags{
+		Op:     imap.StoreFlagsAdd,
+		Flags:  []imap.Flag{imap.FlagDeleted},
+		Silent: true,
+	}, nil)
+	if err := storeCmd.Close(); err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
+	return c.Expunge().Close()
 }
 
 func imapExpunge(cfg IMAPConfig, messageID string) error {
@@ -395,7 +491,8 @@ func idleOnce(ctx context.Context, cfg IMAPConfig, onChange func()) error {
 	}
 }
 
-func parseRawMessage(raw []byte, selfAddr, inboxKey string) (*core.Message, error) {
+// parseRawMessage converts a raw MIME email into a JMAP Email object.
+func parseRawMessage(raw []byte, selfAddr, inboxKey string, seen bool) (*core.Email, error) {
 	msg, err := mail.ReadMessage(strings.NewReader(string(raw)))
 	if err != nil {
 		return nil, err
@@ -406,6 +503,7 @@ func parseRawMessage(raw []byte, selfAddr, inboxKey string) (*core.Message, erro
 	parentID := normalizeID(msg.Header.Get("In-Reply-To"))
 	fromAddr, fromName := parseAddress(msg.Header.Get("From"))
 	ts := parseDate(msg.Header.Get("Date"))
+	receivedAt := time.UnixMilli(ts)
 
 	text, _ := extractText(raw)
 	text = strings.ReplaceAll(text, "\r\n", "\n")
@@ -416,33 +514,58 @@ func parseRawMessage(raw []byte, selfAddr, inboxKey string) (*core.Message, erro
 
 	toAddrs := parseAddresses(msg.Header.Get("To"))
 	ccAddrs := parseAddresses(msg.Header.Get("Cc"))
-	myRole := resolveMyRole(selfAddr, toAddrs, ccAddrs, msg.Header.Get("To"))
 
-	meta := map[string]string{"inbox_key": inboxKey}
-	if fromName != "" {
-		meta[core.MetaFromName] = fromName
-	}
-	if subject != "" {
-		meta[core.MetaSubject] = subject
-	}
-	if myRole != "" {
-		meta[core.MetaMyRole] = myRole
-	}
-	if len(toAddrs) > 0 {
-		meta[core.MetaToAddrs] = joinJSON(toAddrs)
-	}
-	if len(ccAddrs) > 0 {
-		meta[core.MetaCcAddrs] = joinJSON(ccAddrs)
+	// Determine inbox key: emails TO selfAddr are received; from selfAddr are sent
+	mailboxID := core.MakeMailboxID(inboxKey)
+	emailID := core.MakeEmailID(messageID, inboxKey, receivedAt)
+
+	keywords := map[string]bool{}
+	if seen {
+		keywords["$seen"] = true
 	}
 
-	return &core.Message{
-		From:      fromAddr,
-		Body:      text,
-		Ts:        ts,
-		MessageID: messageID,
-		ParentID:  parentID,
-		Meta:      meta,
-	}, nil
+	var to, cc []core.Address
+	for _, a := range toAddrs {
+		to = append(to, core.Address{Email: a})
+	}
+	for _, a := range ccAddrs {
+		cc = append(cc, core.Address{Email: a})
+	}
+
+	partID := "1"
+	e := &core.Email{
+		ID:         emailID,
+		BlobID:     "blob-" + emailID,
+		MailboxIDs: map[string]bool{mailboxID: true},
+		Keywords:   keywords,
+		From:       []core.Address{{Email: fromAddr, Name: fromName}},
+		To:         to,
+		Cc:         cc,
+		Subject:    subject,
+		ReceivedAt: receivedAt,
+		BodyValues: map[string]core.BodyValue{partID: {Value: text}},
+		TextBody:   []core.BodyPart{{PartID: partID, BlobID: "blob-" + emailID + "-body", Type: "text/plain", Charset: "utf-8", Size: len(text)}},
+		HtmlBody:   []core.BodyPart{},
+		Preview:    previewText(text),
+		Size:       len(text),
+	}
+	if messageID != "" {
+		e.MessageID = []string{messageID}
+	}
+	if parentID != "" {
+		e.InReplyTo = []string{parentID}
+		e.References = []string{parentID}
+	}
+	_ = selfAddr // used by caller for self-detection logic
+	return e, nil
+}
+
+func previewText(s string) string {
+	r := []rune(s)
+	if len(r) > 256 {
+		return string(r[:256])
+	}
+	return s
 }
 
 func imapDial(cfg IMAPConfig) (*imapclient.Client, error) {
@@ -495,13 +618,13 @@ func parseAddresses(s string) []string {
 }
 
 func parseDate(s string) int64 {
-	now := time.Now()
 	if d, err := mail.ParseDate(s); err == nil {
-		if d.Before(now.Add(5 * time.Minute)) {
-			return d.UnixMilli()
+		if d.After(time.Now()) {
+			return time.Now().UnixMilli()
 		}
+		return d.UnixMilli()
 	}
-	return now.UnixMilli()
+	return time.Now().UnixMilli()
 }
 
 func extractText(raw []byte) (text, htmlText string) {
@@ -530,24 +653,6 @@ func extractText(raw []byte) (text, htmlText string) {
 	return
 }
 
-func resolveMyRole(selfAddr string, toAddrs, ccAddrs []string, toHeader string) string {
-	if strings.Contains(toHeader, "hidden-recipients") {
-		return ""
-	}
-	self := strings.ToLower(selfAddr)
-	for _, a := range toAddrs {
-		if strings.EqualFold(a, self) {
-			return "to"
-		}
-	}
-	for _, a := range ccAddrs {
-		if strings.EqualFold(a, self) {
-			return "cc"
-		}
-	}
-	return "bcc"
-}
-
 var htmlTagRe = regexp.MustCompile(`<[^>]+>`)
 
 func stripHTMLTags(s string) string {
@@ -558,19 +663,4 @@ var quoteRe = regexp.MustCompile(`(?s)\n\n(On [A-Z].+?wrote:|Le [a-z].+?a écrit
 
 func stripEmailQuote(s string) string {
 	return strings.TrimSpace(quoteRe.ReplaceAllString(s, ""))
-}
-
-func joinJSON(ss []string) string {
-	var b strings.Builder
-	b.WriteString("[")
-	for i, s := range ss {
-		if i > 0 {
-			b.WriteString(",")
-		}
-		b.WriteString(`"`)
-		b.WriteString(strings.ReplaceAll(s, `"`, `\"`))
-		b.WriteString(`"`)
-	}
-	b.WriteString("]")
-	return b.String()
 }

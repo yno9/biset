@@ -2,8 +2,8 @@
 // setup.html reads this; no other file needs editing to add/update connectors.
 
 const BISET_URLS = {
-  // GitHub org — used for fallback connector download URLs.
-  github_org: 'yd7a',
+  // GitHub repo — used for connector download URLs.
+  github_repo: 'yno9/biset',
 
   // Connectors shown on the connector selection screen.
   connectors: [
@@ -12,17 +12,16 @@ const BISET_URLS = {
       label:   'External Mail',
       sub:     'IMAP & SMTP',
       checked: true,
-      url:     'https://github.com/yd7a/biset/releases/latest/download/biset-imap-darwin-arm64',
     },
     {
       id:    'biset-jmap',
       label: 'Mail Server',
-      sub:   'JMAP & SMTP',
+      sub:   'JMAP (Port 25 should be open)',
     },
     {
-      id:    'biset-ap',
-      label: 'ActivityPub',
-      sub:   'Fediverse, Mastodon',
+      id:    'biset-claude',
+      label: 'Claude',
+      sub:   'Claude Code conversations',
     },
   ],
 
@@ -32,7 +31,7 @@ const BISET_URLS = {
       id:    'biset-ui',
       label: 'biset-ui',
       sub:   'HTML interface (serverless)',
-      url:   'https://raw.githubusercontent.com/yd7a/biset-core/main/index.html',
+      url:   'https://github.com/yno9/biset/releases/latest/download/index.html',
     },
     {
       id:    'biset-serve',

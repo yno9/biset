@@ -1,7 +1,0 @@
-{
-  "name": "biset-jmap",
-  "version": "0.1.0",
-  "description": "JMAP connector",
-  "capabilities": ["fetch", "send", "handle", "watch"],
-  "protocols": ["jmap", "smtp"]
-}

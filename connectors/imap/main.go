@@ -28,9 +28,10 @@ type Config struct {
 // ── state ─────────────────────────────────────────────────────────────────────
 
 type AccountState struct {
-	LastUID     string `json:"last_uid"`
-	SentLastUID string `json:"sent_last_uid"`
-	SentMailbox string `json:"sent_mailbox"`
+	LastUID     string            `json:"last_uid"`
+	SentLastUID string            `json:"sent_last_uid"`
+	SentMailbox string            `json:"sent_mailbox"`
+	EmailUIDs   map[string]uint32 `json:"email_uids,omitempty"` // emailId → IMAP UID
 }
 
 type State struct {
@@ -117,7 +118,6 @@ func main() {
 		log.Fatalf("dir: %v", err)
 	}
 
-	// load config
 	b, err := os.ReadFile(filepath.Join(dir, "config.json"))
 	if err != nil {
 		log.Fatalf("config: %v", err)
@@ -146,18 +146,15 @@ func main() {
 		}
 	}
 
-	// load state
 	statePath = filepath.Join(dir, "state.json")
 	loadState()
 
-	// start IDLE watchers
 	ctx := context.Background()
 	for _, acct := range cfg.Accounts {
 		acct := acct
 		go watchAccount(ctx, acct)
 	}
 
-	// JSON-RPC loop
 	sc := bufio.NewScanner(os.Stdin)
 	for sc.Scan() {
 		var req rpcRequest
@@ -174,57 +171,44 @@ func handleRequest(req rpcRequest) {
 		respond(req.ID, "pong", nil)
 
 	case "fetch":
-		msgs, err := fetchAll()
+		result, err := fetchAll()
 		if err != nil {
 			respond(req.ID, nil, err)
 			return
 		}
-		respond(req.ID, map[string]any{"messages": msgs}, nil)
+		respond(req.ID, result, nil)
 
 	case "send":
 		var params struct {
-			Inbox    string `json:"inbox"`
-			To       string `json:"to"`
-			CC       string `json:"cc"`
-			BCC      string `json:"bcc"`
-			Subject  string `json:"subject"`
-			Body     string `json:"body"`
-			ParentID string `json:"parent_id"`
+			Email    core.Email    `json:"email"`
+			Envelope core.Envelope `json:"envelope"`
 		}
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			respond(req.ID, nil, err)
 			return
 		}
-		acct := accountFor(params.Inbox)
-		if acct == nil {
-			respond(req.ID, nil, fmt.Errorf("no account for inbox %q", params.Inbox))
-			return
-		}
-		raw, err := sendSMTP(acct.SMTP, acct.IMAP.Username, params.To, params.CC, params.BCC, params.Subject, params.Body, params.ParentID)
+		raw, err := sendFromEmail(params.Email, params.Envelope)
 		if err != nil {
 			respond(req.ID, nil, err)
 			return
 		}
 		// append to Sent
-		go appendToSent(acct.IMAP, raw)
+		acct := accountForEmail(params.Email)
+		if acct != nil {
+			go appendToSent(acct.IMAP, raw)
+		}
 		respond(req.ID, map[string]any{}, nil)
 
 	case "handle":
 		var params struct {
-			Inbox     string `json:"inbox"`
-			MessageID string `json:"message_id"`
-			Action    string `json:"action"`
+			EmailID string `json:"emailId"`
+			Action  string `json:"action"`
 		}
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			respond(req.ID, nil, err)
 			return
 		}
-		acct := accountFor(params.Inbox)
-		if acct == nil {
-			respond(req.ID, nil, fmt.Errorf("no account for inbox %q", params.Inbox))
-			return
-		}
-		err := imapHandle(acct.IMAP, params.MessageID, core.Action(params.Action))
+		err := handleAction(params.EmailID, params.Action)
 		respond(req.ID, map[string]any{}, err)
 
 	default:
@@ -238,31 +222,86 @@ func accountFor(inboxKey string) *AccountConfig {
 			return &cfg.Accounts[i]
 		}
 	}
-	// fallback: first account
 	if len(cfg.Accounts) > 0 {
 		return &cfg.Accounts[0]
 	}
 	return nil
 }
 
-// fetchAll fetches new messages from all accounts.
-func fetchAll() ([]core.Message, error) {
-	var all []core.Message
+func accountForEmail(email core.Email) *AccountConfig {
+	mbxID := core.EmailMailboxID(email)
+	inboxKey := core.InboxKeyFromMailboxID(mbxID)
+	return accountFor(inboxKey)
+}
+
+func fetchAll() (core.FetchResult, error) {
+	var result core.FetchResult
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
 	for _, acct := range cfg.Accounts {
 		acctState := state.Accounts[acct.InboxKey]
-		msgs, newState, err := imapFetch(acct.IMAP, acct.InboxKey, acctState)
+		emails, newState, err := imapFetch(acct.IMAP, acct.InboxKey, acctState)
 		if err != nil {
 			log.Printf("[%s] fetch: %v", acct.InboxKey, err)
 			continue
 		}
 		state.Accounts[acct.InboxKey] = newState
-		all = append(all, msgs...)
+		result.Emails = append(result.Emails, emails...)
+		result.Mailboxes = append(result.Mailboxes, core.DefaultMailbox(acct.InboxKey))
 	}
 	saveState()
-	return all, nil
+	return result, nil
+}
+
+// sendFromEmail builds SMTP parameters from a JMAP Email and Envelope and sends.
+func sendFromEmail(email core.Email, envelope core.Envelope) ([]byte, error) {
+	inboxKey := core.InboxKeyFromMailboxID(core.EmailMailboxID(email))
+	acct := accountFor(inboxKey)
+	if acct == nil {
+		return nil, fmt.Errorf("no account for inbox %q", inboxKey)
+	}
+
+	var to, cc, bcc []string
+	for _, a := range email.To {
+		to = append(to, a.Email)
+	}
+	for _, a := range email.Cc {
+		cc = append(cc, a.Email)
+	}
+	for _, a := range email.Bcc {
+		bcc = append(bcc, a.Email)
+	}
+
+	inReplyTo := ""
+	if len(email.InReplyTo) > 0 {
+		inReplyTo = email.InReplyTo[0]
+	}
+
+	body := core.EmailBody(email)
+
+	return sendSMTP(
+		acct.SMTP,
+		acct.IMAP.Username,
+		to, cc, bcc,
+		email.Subject,
+		body,
+		inReplyTo,
+	)
+}
+
+func handleAction(emailID, action string) error {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+
+	// find account that has this email
+	for _, acct := range cfg.Accounts {
+		acctState := state.Accounts[acct.InboxKey]
+		if err := imapHandle(acct.IMAP, acctState, emailID, action); err != nil {
+			log.Printf("[%s] handle %s: %v", acct.InboxKey, emailID, err)
+		}
+	}
+	return nil
 }
 
 func watchAccount(ctx context.Context, acct AccountConfig) {

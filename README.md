@@ -1,75 +1,88 @@
 # biset
 
-biset ia a protocol translator that handles several forms of messages in md/json files.
-Folder of plain text files become your inboxes. Recieve, read, write and send, all locally.
+Walks locally. Flies globally.
+
+A multi-protocol messenger. Your inbox is a folder of plain text files — read, write, and reply in any editor. It pairs well with [doucot](https://github.com/yno9/doucot), a portable text editor.
+
 ```
-IMAP ──→ biset-core ──→ vault/
-                          └── you@example.com/
-                              ├── {ts}_{contact}.md   ← read & reply here
-                              └── .data/
-                                  └── {ts}_{contact}.json
+IMAP / Claude / ActivityPub / ...
+         ↕ JSON-RPC 2.0 (stdio)
+      Connector
+         ↕
+      biset core   (JMAP-native)
+         ↕
+      vault/
+        └── you@example.com/
+            ├── _new.md                        ← compose here
+            └── bob@example.com_06101423.md    ← threads as markdown
 ```
 
 ---
 
 ## Features
 
-- **Pull email** via IMAP (incremental, only new messages)
-- **IMAP IDLE** — instant new mail detection, no polling
-- **Reply / New message** — write in the compose area, biset sends automatically
-- **Sent messages** fetched back and merged into threads
-- **macOS menu bar** — tray app with per-account connection status
+- **Multiple protocols** — IMAP/SMTP, Claude Code conversations, ActivityPub (Fediverse)
+- **JMAP-native** — internal data model speaks RFC 8621 (Email, Mailbox, Thread)
+- **IMAP IDLE** — instant new mail detection via connector
+- **Reply / Send** — write in the compose area, set `status: send`
+- **Actions** — `seen`, `archived`, `deleted`, `spam` via frontmatter
 - **Setup wizard** — browser-based first-run setup
-- **Multiple accounts** supported
-- **Operation log** — `log.md` in vault root with configurable logging
-- Works with **biset-ui** (web interface) or any text editor
+- **JMAP HTTP server** — expose vault to any JMAP-compatible client (`--serve`)
 
 ---
 
 ## Requirements
 
-- Go 1.21+
-- An IMAP/SMTP mail account
-- macOS (for tray mode; `--sync`/`--watch` work on Linux too)
+- macOS and linux
+- An IMAP/SMTP account (for biset-imap)
+- Go 1.21+ (for building from source)
 
 ---
 
 ## Installation
 
-```bash
-git clone https://github.com/yd7a/biset-core
-cd biset-core
-go build -o biset .
+### End users
+
+```sh
+# Minimal — downloads biset only; setup wizard installs connectors
+curl -fsSL https://github.com/yd7a/biset/releases/latest/download/install.sh | sh
+
+# Full — downloads biset + all connectors at once
+curl -fsSL https://github.com/yd7a/biset/releases/latest/download/install-full.sh | sh
 ```
 
-Or via Homebrew (once published):
+### Developers
 
-```bash
-brew tap yd7a/biset
-brew install biset
+```sh
+git clone https://github.com/yd7a/biset
+cd biset
+go build .
+cd connectors/imap && go build .
+cd ../claude && go build .
 ```
 
 ---
 
 ## First run
 
-```bash
+```sh
 ./biset
 ```
 
-Opens a browser-based setup wizard. Enter your email and password — IMAP server is auto-detected via MX DNS.
+Opens a browser-based setup wizard. Select connectors, enter account credentials — IMAP server is auto-detected via MX DNS.
 
 ---
 
 ## Usage
 
-```bash
-./biset                   # tray app (default) — menu bar + auto-sync via IMAP IDLE
-./biset --sync            # sync once and exit
-./biset --watch           # continuous sync (interval-based)
-./biset --render          # re-render all MD files from JSON (no IMAP)
-./biset --setup           # force re-run setup wizard
-./biset /path/config.json # use specific config
+```sh
+./biset                          # tray app (default) — menu bar
+./biset --sync                   # sync once and exit
+./biset --watch                  # continuous sync (interval-based)
+./biset --serve --port 1080      # JMAP HTTP server
+./biset --serve --token <secret> # JMAP server with Bearer token auth
+./biset --interval 5m            # set sync interval (default: 1m)
+./biset /path/to/biset.json      # use specific config file
 ```
 
 ---
@@ -78,32 +91,72 @@ Opens a browser-based setup wizard. Enter your email and password — IMAP serve
 
 ```
 vault/
+├── .data/
+│   ├── emails/{emailId}.json        ← one JMAP Email object per file
+│   ├── threads/{threadId}.json      ← thread index (emailIds list)
+│   └── mailboxes.json               ← all Mailbox objects
 └── you@example.com/
-    ├── _new.md                     ← compose new messages here
-    ├── {ts}_{contact}.md          ← thread files (read & reply)
-    └── .data/
-        └── {ts}_{contact}.json    ← thread data (don't edit)
+    ├── _new.md                              ← compose new messages here
+    ├── bob@example.com_06101423.md          ← seen thread
+    └── _bob@example.com_06101423.md         ← unseen thread (_ prefix)
 ```
+
+Filenames: `{contact}_{mmddHHMM}.md` — the timestamp is from the first message in the thread (immutable). The `_` prefix means the thread has unread messages.
+
+JSON (`.data/`) is the source of truth. Markdown files are rendered from JSON. Only the `status:` frontmatter field is read back to trigger actions.
+
+---
+
+## Thread format
+
+```markdown
+---
+subject: "Re: hello"
+contact: bob@example.com
+id: abc123.def456@mail.example.com
+status: 
+---
+
+
+
+- - -
+2024-01-15 11:30 you@example.com
+
+Sounds good, see you then!
+
+- - -
+2024-01-15 11:00 bob@example.com
+
+Hey, are you free tomorrow?
+```
+
+**Frontmatter fields:**
+
+| Field | Description |
+|---|---|
+| `subject` | Thread subject |
+| `contact` | The other party's email address |
+| `id` | Thread ID (used internally for lookups) |
+| `status` | Set to trigger an action (see below) |
 
 ---
 
 ## Replying
 
-Open a thread file. Write in the compose area (between frontmatter and first `#`), then set `status: send`:
+Write in the compose area (between frontmatter and the first `- - -`), then set `status: send` or include `!b` in your message :
 
 ```markdown
 ---
-thread_id: ...
-inbox: you@example.com
-contact: bob@example.com
 subject: "Re: hello"
-in_reply_to: <message-id>
+contact: bob@example.com
+id: abc123.def456@mail.example.com
 status: send
 ---
 
 Thanks, sounds good!
 
-# 2024-01-15 11:00 Bob(bob@example.com)
+- - -
+2024-01-15 11:00 bob@example.com
 
 Hey, are you free tomorrow?
 ```
@@ -114,7 +167,7 @@ biset detects the change and sends automatically.
 
 ## New message
 
-Edit `_new.md` in your inbox dir:
+Edit `_new.md` in your inbox directory:
 
 ```markdown
 ---
@@ -129,90 +182,43 @@ Hi Bob, just wanted to reach out.
 
 ## Actions
 
-Set `status:` in frontmatter:
+Set `status:` in frontmatter to trigger an action on next sync:
 
 | status | action |
 |---|---|
-| `send` | send via SMTP |
-| `deleted` | remove from IMAP, delete file |
-| `archived` | move to Archive |
-| `spam` | move to Spam |
+| `send` | send the compose area via the connector |
+| `seen` | mark thread as read |
+| `archived` | archive (IMAP: move to Archive) |
+| `deleted` | delete (IMAP: expunge) |
+| `spam` | mark as spam |
 
 ---
 
-## Config (`config.json`)
+## Serve mode
 
-```json
-{
-  "accounts": [{
-    "adapter": "imap",
-    "imap": {
-      "host": "imap.example.com",
-      "port": 993,
-      "tls_mode": "tls",
-      "username": "you@example.com",
-      "password": "your-password",
-      "inbox_key": "you@example.com"
-    },
-    "smtp": {
-      "host": "smtp.example.com",
-      "port": 587,
-      "tls_mode": "starttls"
-    }
-  }],
-  "renderers": ["md", "json"],
-  "output": "/Users/you/vault"
-}
+`biset --serve` exposes the Vault as a JMAP server any compatible client can connect to.
+
+```sh
+biset --serve --port 1080 --token <secret> /path/to/biset.json
 ```
 
-SMTP `username`, `password`, and `host` default to IMAP values if omitted.
+Plain HTTP — put Caddy or nginx in front for TLS. Vault changes are pushed to clients in real-time over Server-Sent Events.
 
 ---
 
-## Operation log (`log.md`)
+## Connectors
 
-biset writes a log of all sent/received messages and errors to `log.md` in the vault root. Configure logging by editing the frontmatter:
-
-```markdown
----
-contact: biset
-subject: log
-enabled: true
-level: all
-accounts: 
-max: 1000
-status: 
----
-```
-
-| field | values | description |
+| Connector | Protocols | Description |
 |---|---|---|
-| `enabled` | `true` / `false` | turn logging on or off |
-| `level` | `all` / `sent` / `received` / `errors` | what to log |
-| `accounts` | comma-separated list | restrict to specific accounts (empty = all) |
-| `max` | integer | maximum number of log lines to keep |
+| `biset-imap` | imap, smtp | IMAP/SMTP email |
+| `biset-claude` | claude | Claude Code conversation history |
 
-**Log format:**
-```
-2026-06-02 14:28 mizuki@4r.ma → y@kukubooks.jp
-2026-06-02 14:16 nez → mizuki@4r.ma
-2026-06-02 09:00 Error: fetch failed — connection refused
-```
+Each connector is an independent binary communicating with biset over JSON-RPC 2.0 via stdio. It owns its own config and state, and handles its own reconnection and debouncing.
 
----
-
-## Web interface (biset-ui)
-
-Open `index.html` from your vault directory in Chrome for a full inbox UI:
-
-```bash
-open ~/vault/index.html
-```
-
-Or download the latest `index.html` from [biset-ui releases](https://github.com/yd7a/biset-core/releases).
+See `config.example.json` in each connector directory for configuration reference.
 
 ---
 
 ## License
 
-MIT
+GNU Affero General Public License v3.0 (AGPL-3.0)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -13,22 +14,52 @@ import (
 	"time"
 
 	"fyne.io/systray"
-	"github.com/fsnotify/fsnotify"
 	"github.com/yd7a/biset/core"
 )
 
 //go:embed assets/icon.png
 var iconData []byte
 
-func RunTray(cfg *Config, mgr *core.Manager, configPath string, interval time.Duration) {
-	systray.Run(func() { onTrayReady(cfg, mgr, configPath, interval) }, func() {})
+func RunTray(cfg *Config, mgr *core.Manager, configPath string, interval time.Duration, servePort int) {
+	systray.Run(func() { onTrayReady(cfg, mgr, configPath, interval, servePort) }, func() {})
 }
 
-func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval time.Duration) {
+func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval time.Duration, servePort int) {
 	systray.SetTemplateIcon(iconData, iconData)
 	systray.SetTooltip("biset")
 
-	mSync := systray.AddMenuItem("Sync now", "")
+	// serve toggle
+	defaultPort := servePort
+	if defaultPort == 0 {
+		defaultPort = 1080
+	}
+	var serveCancel context.CancelFunc
+	mServe := systray.AddMenuItem("Serve", "")
+	if servePort > 0 {
+		ctx, cancel := context.WithCancel(context.Background())
+		serveCancel = cancel
+		go runServeContext(ctx, cfg, servePort, "") //nolint:errcheck
+		mServe.SetTitle(fmt.Sprintf("Serving :%d", servePort))
+		systray.SetTooltip(fmt.Sprintf("biset serve :%d", servePort))
+	}
+	go func() {
+		for range mServe.ClickedCh {
+			if serveCancel != nil {
+				serveCancel()
+				serveCancel = nil
+				mServe.SetTitle("Serve")
+				systray.SetTooltip("biset")
+			} else {
+				ctx, cancel := context.WithCancel(context.Background())
+				serveCancel = cancel
+				go runServeContext(ctx, cfg, defaultPort, "") //nolint:errcheck
+				mServe.SetTitle(fmt.Sprintf("Serving :%d", defaultPort))
+				systray.SetTooltip(fmt.Sprintf("biset serve :%d", defaultPort))
+			}
+		}
+	}()
+
+	mSync := systray.AddMenuItem("Bist down", "")
 	mStatus := systray.AddMenuItem("Last sync: —", "")
 	mStatus.Disable()
 	systray.AddSeparator()
@@ -76,7 +107,10 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 			notifiedMu.Lock()
 			var fresh []SyncNotification
 			for _, n := range notifications {
-				key := fmt.Sprintf("%d|%s", n.Ts, n.Contact)
+				key := n.MessageID
+				if key == "" {
+					key = fmt.Sprintf("%d|%s", n.Ts, n.Contact)
+				}
 				if !notifiedSet[key] {
 					notifiedSet[key] = true
 					fresh = append(fresh, n)
@@ -105,40 +139,13 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 		}()
 	}
 
-	// Wire IDLE notify → syncNow(true) with 2s debounce to avoid rapid re-syncs
-	// when connectors emit multiple change events in quick succession.
-	var (
-		debounceTimer *time.Timer
-		debounceMu    sync.Mutex
-	)
-	mgr.SetOnChange(func() {
-		debounceMu.Lock()
-		defer debounceMu.Unlock()
-		if debounceTimer != nil {
-			debounceTimer.Stop()
-		}
-		debounceTimer = time.AfterFunc(2*time.Second, func() { syncNow(true) })
-	})
-
-	// Initial sync
-	go syncNow(false)
-
-	// Vault watcher for status: send + signal files
-	bisetDir := filepath.Dir(configPath)
-	go watchVaultSend(cfg.Vault, bisetDir, func() { go syncNow(false) })
-
-
-	// Interval ticker
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	StartWatcher(cfg, mgr, configPath, interval, syncNow, func() { systray.Quit() })
 
 	// Config watcher
 	configChanged := watchConfigFile(configPath)
 
 	for {
 		select {
-		case <-ticker.C:
-			go syncNow(false)
 		case <-configChanged:
 			fmt.Println("config changed — reloading")
 			if newCfg, err := loadConfig(configPath); err == nil {
@@ -183,7 +190,14 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 		case <-mRestart.ClickedCh:
 			mgr.Stop()
 			exe, _ := os.Executable()
-			exec.Command(exe, os.Args[1:]...).Start() //nolint:errcheck
+			// --no-kill: skip killExisting in the new process (old process exits via systray.Quit below)
+			// --daemon: skip terminal re-exec loop
+			newArgs := append([]string{"--no-kill", "--daemon"}, os.Args[1:]...)
+			cmd := exec.Command(exe, newArgs...)
+			devNull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+			cmd.Stdin, cmd.Stdout, cmd.Stderr = devNull, devNull, devNull
+			cmd.Start() //nolint:errcheck
+			time.Sleep(500 * time.Millisecond) // let new process initialize before old systray quits
 			systray.Quit()
 			return
 		case <-mQuit.ClickedCh:
@@ -195,71 +209,6 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 }
 
 
-func watchVaultSend(vaultDir, bisetDir string, onSend func()) {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return
-	}
-	defer watcher.Close()
-
-	watcher.Add(vaultDir)  //nolint:errcheck
-	watcher.Add(bisetDir)  //nolint:errcheck
-	entries, _ := os.ReadDir(vaultDir)
-	for _, d := range entries {
-		if d.IsDir() {
-			watcher.Add(filepath.Join(vaultDir, d.Name())) //nolint:errcheck
-		}
-	}
-
-	debounce := time.NewTimer(0)
-	<-debounce.C
-	pending := false
-
-	for {
-		select {
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return
-			}
-			if filepath.Base(event.Name) == "biset-open-vault.json" &&
-				event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-				os.Remove(event.Name) //nolint:errcheck
-				openVault(vaultDir)
-				continue
-			}
-			if filepath.Base(event.Name) == "biset-quit.json" &&
-				event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-				os.Remove(event.Name) //nolint:errcheck
-				systray.Quit()
-				return
-			}
-			if !strings.HasSuffix(event.Name, ".md") {
-				continue
-			}
-			if event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
-				continue
-			}
-			b, err := os.ReadFile(event.Name)
-			if err != nil {
-				continue
-			}
-			fm := core.ParseFrontmatter(string(b))
-			if strings.TrimSpace(fm["status"]) != "send" {
-				continue
-			}
-			if !pending {
-				pending = true
-				debounce.Reset(500 * time.Millisecond)
-			}
-		case <-debounce.C:
-			if pending {
-				pending = false
-				onSend()
-			}
-		case <-watcher.Errors:
-		}
-	}
-}
 
 func sendNotify(title, contact, body string) {
 	msg := contact + ":\n" + body

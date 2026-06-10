@@ -32,24 +32,42 @@ type Config struct {
 }
 
 func main() {
-	watchFlag  := flag.Bool("watch", false, "run continuously")
-	syncFlag   := flag.Bool("sync", false, "sync once and exit")
-	renderFlag := flag.Bool("render", false, "re-render all MD from JSON")
-	daemonFlag := flag.Bool("daemon", false, "")
+	watchFlag   := flag.Bool("watch", false, "run continuously")
+	syncFlag    := flag.Bool("bist", false, "sync once and exit")
+	renderFlag  := flag.Bool("render", false, "re-render all MD from JSON")
+	daemonFlag  := flag.Bool("daemon", false, "")
+	serveFlag   := flag.Bool("serve", false, "run JMAP HTTP server")
+	portFlag    := flag.Int("port", 1080, "port for --serve")
+	tokenFlag   := flag.String("token", "", "bearer token for --serve")
 	intervalFlag := flag.Duration("interval", time.Minute, "sync interval")
+	noKillFlag  := flag.Bool("no-kill", false, "skip killing existing instance on startup")
 
 	args := os.Args[1:]
 	var nonFlags []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--watch", "-watch":
+		case "--watch", "-watch", "watch":
 			*watchFlag = true
-		case "--sync", "-sync":
+		case "--bist", "-bist", "--sync", "-sync", "sync":
 			*syncFlag = true
-		case "--render", "-render":
+		case "--render", "-render", "render":
 			*renderFlag = true
-		case "--daemon", "-daemon":
+		case "--daemon", "-daemon", "daemon":
 			*daemonFlag = true
+		case "--serve", "-serve", "serve":
+			*serveFlag = true
+		case "--no-kill", "-no-kill":
+			*noKillFlag = true
+		case "--port", "-port":
+			if i+1 < len(args) {
+				i++
+				fmt.Sscanf(args[i], "%d", portFlag)
+			}
+		case "--token", "-token":
+			if i+1 < len(args) {
+				i++
+				*tokenFlag = args[i]
+			}
 		case "--interval", "-interval":
 			if i+1 < len(args) {
 				i++
@@ -68,6 +86,11 @@ func main() {
 	configPath := ""
 	if len(nonFlags) >= 1 {
 		configPath = nonFlags[0]
+		if !filepath.IsAbs(configPath) {
+			if abs, err := filepath.Abs(configPath); err == nil {
+				configPath = abs
+			}
+		}
 	} else {
 		exe, err := os.Executable()
 		if err != nil {
@@ -77,12 +100,14 @@ func main() {
 		if strings.Contains(dir, ".app/Contents/MacOS") {
 			dir = filepath.Dir(filepath.Dir(filepath.Dir(dir)))
 		}
-		configPath = filepath.Join(dir, "config.json")
+		configPath = filepath.Join(dir, "biset.json")
 	}
 
-	// kill any existing instance
+	// kill any existing instance (skip if restarted from tray)
 	exe, _ := os.Executable()
-	killExisting(exe)
+	if !*noKillFlag {
+		killExisting(exe)
+	}
 
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		runSetup(configPath)
@@ -107,11 +132,14 @@ func main() {
 		connectorsDir = filepath.Join(filepath.Dir(configPath), connectorsDir)
 	}
 
+	killExistingBiset(cfg.Vault)
 	ensureConnectors(cfg, connectorsDir)
+	core.ReThreadVault(cfg.Vault)
 
 	var mgr *core.Manager
 	triggerSync := func() {
-		if mgr != nil {
+		log.Printf("[main] triggerSync called, syncFlag=%v", *syncFlag)
+		if mgr != nil && !*syncFlag {
 			go runSync(cfg, mgr)
 		}
 	}
@@ -131,6 +159,9 @@ func main() {
 	}()
 
 	switch {
+	case *serveFlag:
+		mgr.Start()
+		RunTray(cfg, mgr, configPath, *intervalFlag, *portFlag)
 	case *watchFlag:
 		fmt.Printf("watch mode — interval: %s\n", *intervalFlag)
 		mgr.Start()
@@ -184,7 +215,7 @@ func main() {
 			log.SetOutput(devNull)
 		}
 		mgr.Start()
-		RunTray(cfg, mgr, configPath, *intervalFlag)
+		RunTray(cfg, mgr, configPath, *intervalFlag, 0)
 	}
 }
 
@@ -284,11 +315,11 @@ func installConnector(name, dir string) error {
 func connectorBinURL(name string) string {
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
-	return fmt.Sprintf("https://github.com/yd7a/%s/releases/latest/download/%s-%s-%s", name, name, goos, goarch)
+	return fmt.Sprintf("https://github.com/yno9/biset/releases/latest/download/%s-%s-%s", name, goos, goarch)
 }
 
 func connectorFileURL(name, file string) string {
-	return fmt.Sprintf("https://github.com/yd7a/%s/releases/latest/download/%s", name, file)
+	return fmt.Sprintf("https://github.com/yno9/biset/releases/latest/download/%s-%s", name, file)
 }
 
 func downloadFile(url, path string, mode os.FileMode) error {
@@ -312,11 +343,11 @@ func downloadFile(url, path string, mode os.FileMode) error {
 // ── setup ─────────────────────────────────────────────────────────────────────
 
 // setupURL is the setup page. In production, replace with the GitHub Pages URL.
-const setupURL = "assets/setup.html" // relative to executable dir; will become https://yd7a.github.io/biset/setup
+const setupURL = "https://yno9.github.io/biset/setup.html"
 
 
 func killExisting(exe string) {
-	out, err := exec.Command("pgrep", "-f", exe).Output()
+	out, err := exec.Command("pgrep", "-x", filepath.Base(exe)).Output()
 	if err != nil {
 		return
 	}
@@ -360,8 +391,10 @@ func runSetup(configPath string) {
 	exeDir := filepath.Dir(exe)
 
 	url := setupURL
-	if !strings.HasPrefix(url, "http") {
-		url = "file://" + filepath.Join(exeDir, url)
+	// dev override: if assets/setup.html exists next to the binary, use it
+	localSetup := filepath.Join(exeDir, "assets", "setup.html")
+	if _, err := os.Stat(localSetup); err == nil {
+		url = "file://" + localSetup
 	}
 
 	fmt.Printf("Opening setup: %s\n", url)
@@ -710,7 +743,18 @@ func writeBisetLog(vaultDir, inboxKey string, lines []string) {
 		}
 	}
 
-	allLines := append(lines, existingLines...)
+	// Deduplicate: skip incoming lines already in existing log.
+	existingSet := make(map[string]bool, len(existingLines))
+	for _, l := range existingLines {
+		existingSet[l] = true
+	}
+	var newLines []string
+	for _, l := range lines {
+		if !existingSet[l] {
+			newLines = append(newLines, l)
+		}
+	}
+	allLines := append(newLines, existingLines...)
 	// sort descending by timestamp prefix
 	for i := 1; i < len(allLines); i++ {
 		for j := i; j > 0 && allLines[j] > allLines[j-1]; j-- {
@@ -722,7 +766,7 @@ func writeBisetLog(vaultDir, inboxKey string, lines []string) {
 	}
 
 	result := header + "\n" + strings.Join(allLines, "\n") + "\n"
-	os.WriteFile(logFile, []byte(result), 0644) //nolint:errcheck
+	core.WriteIfChanged(logFile, result)
 }
 
 // ── file helpers ──────────────────────────────────────────────────────────────
@@ -733,6 +777,70 @@ func isTTY() bool {
 		return false
 	}
 	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// ── process management ────────────────────────────────────────────────────────
+
+func acquireLock(vaultDir string) (string, bool) {
+	lockPath := filepath.Join(vaultDir, ".data", ".biset.lock")
+	os.MkdirAll(filepath.Join(vaultDir, ".data"), 0755) //nolint:errcheck
+	if b, err := os.ReadFile(lockPath); err == nil {
+		var pid int
+		fmt.Sscanf(string(b), "%d", &pid)
+		if pid > 0 && isBisetProcess(pid) {
+			return lockPath, false
+		}
+		os.Remove(lockPath) //nolint:errcheck
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		return lockPath, false
+	}
+	fmt.Fprintf(f, "%d", os.Getpid())
+	f.Close()
+	return lockPath, true
+}
+
+func isBisetProcess(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil || proc.Signal(syscall.Signal(0)) != nil {
+		return false
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "comm=").Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == filepath.Base(exe)
+}
+
+// killExistingBiset sends SIGKILL to any biset process holding the vault lock.
+func killExistingBiset(vaultDir string) {
+	lockPath := filepath.Join(vaultDir, ".data", ".biset.lock")
+	b, err := os.ReadFile(lockPath)
+	if err != nil {
+		return
+	}
+	var pid int
+	fmt.Sscanf(string(b), "%d", &pid)
+	if pid <= 0 || pid == os.Getpid() {
+		return
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return
+	}
+	if proc.Signal(syscall.Signal(0)) != nil {
+		os.Remove(lockPath) //nolint:errcheck
+		return
+	}
+	log.Printf("[main] killing existing biset pid=%d", pid)
+	proc.Signal(syscall.SIGKILL) //nolint:errcheck
+	time.Sleep(200 * time.Millisecond)
+	os.Remove(lockPath) //nolint:errcheck
 }
 
 func watchConfigFile(configPath string) <-chan struct{} {

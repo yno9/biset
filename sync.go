@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/yd7a/biset/core"
@@ -16,9 +14,10 @@ import (
 
 // SyncNotification holds info for a desktop notification.
 type SyncNotification struct {
-	Contact string
-	Body    string
-	Ts      int64
+	Contact   string
+	Body      string
+	Ts        int64
+	MessageID string
 }
 
 func runSync(cfg *Config, mgr *core.Manager) (int, []SyncNotification) {
@@ -34,62 +33,108 @@ func runSync(cfg *Config, mgr *core.Manager) (int, []SyncNotification) {
 		return 0, nil
 	}
 
+	// migrate old vault format on first run
+	core.MigrateVault(cfg.Vault)
+
 	// 1. flush outgoing
-	flushOutgoing(cfg.Vault, mgr)
+	core.FlushOutgoing(cfg.Vault, mgr)
 
 	// 2. flush actions
-	flushActions(cfg.Vault, mgr)
+	core.FlushActions(cfg.Vault, mgr)
 
 	// 3. fetch from all connectors
-	var allMessages []core.Message
+	var allEmails []core.Email
+	var allMailboxes []core.Mailbox
+	mailboxSeen := map[string]bool{}
 	for _, c := range mgr.Connectors() {
 		if !c.Has("fetch") {
 			continue
 		}
-		msgs, err := c.Fetch()
+		result, err := c.Fetch()
 		if err != nil {
 			log.Printf("[%s] fetch: %v", c.Name(), err)
 			continue
 		}
-		allMessages = append(allMessages, msgs...)
-	}
-
-	// 4. deduplicate
-	allMessages = deduplicateMessages(allMessages)
-	fmt.Printf("fetched %d messages\n", len(allMessages))
-
-	// collect notifications (received messages newer than 5 minutes ago)
-	cutoff := time.Now().Add(-5 * time.Minute).UnixMilli()
-	var notifications []SyncNotification
-	for _, m := range allMessages {
-		if isInboxMessage(m) && m.Ts >= cutoff {
-			body := []rune(m.Body)
-			if len(body) > 80 {
-				body = body[:80]
+		allEmails = append(allEmails, result.Emails...)
+		for _, m := range result.Mailboxes {
+			if !mailboxSeen[m.ID] {
+				mailboxSeen[m.ID] = true
+				allMailboxes = append(allMailboxes, m)
 			}
-			notifications = append(notifications, SyncNotification{
-				Contact: m.From,
-				Body:    string(body),
-				Ts:      m.Ts,
-			})
 		}
 	}
 
-	// 5. group, merge, render
+	// 4. assign thread IDs + deduplicate
+	// Pre-resolve threadIDs for replies to already-stored emails.
+	// AssignThreadIDs only sees the current batch; without this, a reply
+	// fetched in a later sync cycle gets a brand-new threadId instead of
+	// joining the original thread.
+	if existing, err := core.ScanEmails(cfg.Vault); err == nil {
+		existingByMsgID := make(map[string]string, len(existing))
+		for _, e := range existing {
+			if msgID := core.EmailMessageID(e); msgID != "" {
+				existingByMsgID[msgID] = e.ThreadID
+			}
+		}
+		for i := range allEmails {
+			if allEmails[i].ThreadID != "" {
+				continue
+			}
+			if inReplyTo := core.EmailInReplyTo(allEmails[i]); inReplyTo != "" {
+				if tid := existingByMsgID[inReplyTo]; tid != "" {
+					allEmails[i].ThreadID = tid
+				}
+			}
+		}
+	}
+	allEmails = core.AssignThreadIDs(allEmails)
+	allEmails = core.DeduplicateEmails(allEmails)
+	fmt.Printf("fetched %d emails\n", len(allEmails))
+
+	// collect notifications (received emails newer than 5 minutes ago)
+	cutoff := time.Now().Add(-5 * time.Minute).UnixMilli()
+	var notifications []SyncNotification
+	for _, e := range allEmails {
+		inboxKey := core.InboxKeyFromMailboxID(core.EmailMailboxID(e))
+		fromAddr := core.EmailFromAddr(e)
+		if strings.EqualFold(fromAddr, inboxKey) {
+			continue // sent by self
+		}
+		if e.ReceivedAt.UnixMilli() < cutoff {
+			continue
+		}
+		body := EmailBodyPreview(e, 80)
+		notifications = append(notifications, SyncNotification{
+			Contact:   fromAddr,
+			Body:      body,
+			Ts:        e.ReceivedAt.UnixMilli(),
+			MessageID: core.EmailMessageID(e),
+		})
+	}
+
+	// 5. write mailboxes.json
+	if len(allMailboxes) > 0 {
+		core.WriteMailboxes(cfg.Vault, allMailboxes) //nolint:errcheck
+	}
+
+	// 6. group, merge with existing, write
 	totalUpdated := 0
-	if len(allMessages) > 0 {
-		byInbox := groupByInbox(allMessages)
-		for inboxKey, msgs := range byInbox {
+	if len(allEmails) > 0 {
+		byInbox := groupEmailsByInbox(allEmails)
+		for inboxKey, emails := range byInbox {
 			inboxDir := filepath.Join(cfg.Vault, inboxKey)
-			threads := core.GroupThreads(msgs)
+			threads := core.GroupByThread(emails)
 			for _, t := range threads {
-				merged := core.MergeWithExisting(t, inboxDir)
-				updated := writeThread(cfg.Vault, inboxKey, merged)
-				totalUpdated += updated
+				threadEmails := emailsForThread(emails, t.ID)
+				merged := mergeWithExistingThread(cfg.Vault, t.ID, threadEmails)
+				if core.WriteThreadMD(cfg.Vault, inboxKey, merged) {
+					totalUpdated++
+				}
 			}
 			core.RenderMissingMDs(cfg.Vault, inboxKey)
 			core.EnsureNewFile(cfg.Vault, inboxKey)
-			writeSyncLog(cfg.Vault, inboxKey, msgs)
+			writeSyncLog(cfg.Vault, inboxKey, emailsForInbox(emails, inboxKey))
+			_ = inboxDir
 		}
 	}
 
@@ -97,294 +142,91 @@ func runSync(cfg *Config, mgr *core.Manager) (int, []SyncNotification) {
 	return totalUpdated, notifications
 }
 
-// writeThread renders a thread to MD and JSON, preserving compose drafts.
-func writeThread(vaultDir, inboxKey string, t core.Thread) int {
-	updated := 0
-
-	// JSON
-	jsonPath, jsonContent, err := core.RenderJSON(vaultDir, inboxKey, t)
-	if err != nil {
-		log.Printf("render json: %v", err)
-	} else {
-		os.MkdirAll(filepath.Dir(jsonPath), 0755) //nolint:errcheck
-		if core.WriteIfChanged(jsonPath, string(jsonContent)) {
-			updated++
-		}
+// mergeWithExistingThread reads existing emails for the thread from vault and
+// merges with newly fetched ones.
+func mergeWithExistingThread(vaultDir, threadID string, incoming []core.Email) []core.Email {
+	existing := core.ReadEmailsForThread(vaultDir, threadID)
+	if len(existing) == 0 {
+		return incoming
 	}
-
-	// MD
-	mdPath, mdContent := core.RenderMD(vaultDir, inboxKey, t)
-	contentStr := string(mdContent)
-	if existing, err := os.ReadFile(mdPath); err == nil {
-		if draft := core.ExtractBody(string(existing)); draft != "" {
-			contentStr = core.InjectBody(contentStr, draft)
-		}
-	}
-	os.MkdirAll(filepath.Dir(mdPath), 0755) //nolint:errcheck
-	if core.WriteIfChanged(mdPath, contentStr) {
-		updated++
-	}
-
-	return updated
+	return core.MergeEmails(incoming, existing)
 }
 
-// groupByInbox separates messages by inbox key (from Meta or From field).
-func groupByInbox(msgs []core.Message) map[string][]core.Message {
-	result := map[string][]core.Message{}
-	for _, m := range msgs {
-		inbox := m.Meta["inbox_key"]
-		if inbox == "" {
-			inbox = m.From
+// groupEmailsByInbox separates emails by inbox key derived from MailboxIDs.
+func groupEmailsByInbox(emails []core.Email) map[string][]core.Email {
+	result := map[string][]core.Email{}
+	for _, e := range emails {
+		mbxID := core.EmailMailboxID(e)
+		inboxKey := core.InboxKeyFromMailboxID(mbxID)
+		if inboxKey == "" {
+			inboxKey = core.EmailFromAddr(e)
 		}
-		result[inbox] = append(result[inbox], m)
+		result[inboxKey] = append(result[inboxKey], e)
 	}
 	return result
 }
 
-func isInboxMessage(m core.Message) bool {
-	return m.Meta[core.MetaMyRole] != ""
-}
-
-// ── outgoing ──────────────────────────────────────────────────────────────────
-
-func flushOutgoing(vaultDir string, mgr *core.Manager) int {
-	count := 0
-	entries, _ := os.ReadDir(vaultDir)
-	for _, d := range entries {
-		if !d.IsDir() {
-			continue
-		}
-		inboxKey := d.Name()
-		inboxDir := filepath.Join(vaultDir, inboxKey)
-		files, _ := os.ReadDir(inboxDir)
-		for _, f := range files {
-			if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
-				continue
-			}
-			if flushMDSend(filepath.Join(inboxDir, f.Name()), inboxKey, mgr) {
-				count++
-			}
-		}
-	}
-	// also scan vault root
-	rootFiles, _ := os.ReadDir(vaultDir)
-	for _, f := range rootFiles {
-		if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
-			continue
-		}
-		if flushMDSend(filepath.Join(vaultDir, f.Name()), "", mgr) {
-			count++
-		}
-	}
-	return count
-}
-
-func flushMDSend(filePath, inboxKey string, mgr *core.Manager) bool {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return false
-	}
-	fm := core.ParseFrontmatter(string(content))
-	if strings.TrimSpace(fm["status"]) != string(core.ActionSend) {
-		return false
-	}
-
-	// resolve inbox
-	inbox := strings.TrimSpace(fm["inbox"])
-	if inbox == "" {
-		inbox = inboxKey
-	}
-
-	body := core.ExtractBody(string(content))
-	if body == "" {
-		log.Printf("skip %s: no body", filepath.Base(filePath))
-		return false
-	}
-
-	contact := strings.TrimSpace(fm["contact"])
-	if contact == "" {
-		log.Printf("skip %s: no contact", filepath.Base(filePath))
-		return false
-	}
-
-	protocol := strings.TrimSpace(fm["protocol"])
-	if protocol == "" {
-		protocol = "smtp"
-	}
-
-	c := mgr.ConnectorFor(protocol)
-	if c == nil {
-		log.Printf("skip %s: no connector for protocol %q", filepath.Base(filePath), protocol)
-		return false
-	}
-
-	subject := strings.Trim(fm["subject"], "\"")
-	parentID := wrapAngle(fm["in"])
-	if parentID == "" {
-		parentID = wrapAngle(fm["id"]) // fallback to thread id (e.g. claude)
-	}
-	cc := strings.TrimSpace(fm["cc"])
-	bcc := strings.TrimSpace(fm["bcc"])
-
-	if err := c.Send(inbox, contact, cc, bcc, subject, body, parentID); err != nil {
-		log.Printf("send error %s: %v", filepath.Base(filePath), err)
-		return false
-	}
-
-	if filepath.Base(filePath) == "_new.md" {
-		os.WriteFile(filePath, []byte(core.NewFileTemplate), 0644) //nolint:errcheck
-	} else {
-		cleared := core.ClearBody(string(content))
-		cleared = strings.Replace(cleared, "status: send", "status: ", 1)
-		os.WriteFile(filePath, []byte(cleared), 0644) //nolint:errcheck
-	}
-
-	fmt.Printf("sent: %s → %s\n", filepath.Base(filePath), contact)
-	return true
-}
-
-// ── actions ───────────────────────────────────────────────────────────────────
-
-func flushActions(vaultDir string, mgr *core.Manager) int {
-	count := 0
-	inboxDirs, _ := os.ReadDir(vaultDir)
-	for _, d := range inboxDirs {
-		if !d.IsDir() {
-			continue
-		}
-		inboxKey := d.Name()
-		dirPath := filepath.Join(vaultDir, inboxKey)
-		entries, _ := os.ReadDir(dirPath)
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-				continue
-			}
-			filePath := filepath.Join(dirPath, e.Name())
-			b, err := os.ReadFile(filePath)
-			if err != nil {
-				continue
-			}
-			fm := core.ParseFrontmatter(string(b))
-			status := core.Action(strings.TrimSpace(fm["status"]))
-			if status == "" || status == core.ActionSend {
-				continue
-			}
-
-			protocol := strings.TrimSpace(fm["protocol"])
-			if protocol == "" {
-				protocol = "smtp"
-			}
-			c := mgr.ConnectorFor(protocol)
-			messageID := wrapAngle(fm["in"])
-			if c != nil && messageID != "" {
-				if err := c.Handle(inboxKey, messageID, status); err != nil {
-					log.Printf("action error %s: %v", e.Name(), err)
-					continue
-				}
-			}
-			os.Remove(filePath) //nolint:errcheck
-			base := strings.TrimSuffix(e.Name(), ".md") + ".json"
-			os.Remove(filepath.Join(dirPath, ".data", base)) //nolint:errcheck
-			fmt.Printf("%s: %s\n", status, e.Name())
-			count++
-		}
-	}
-	return count
-}
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-func deduplicateMessages(msgs []core.Message) []core.Message {
-	seen := map[string]bool{}
-	out := msgs[:0:len(msgs)]
-	for _, m := range msgs {
-		key := m.MessageID
-		if key == "" {
-			key = fmt.Sprintf("%d|%s", m.Ts, m.From)
-		}
-		if !seen[key] {
-			seen[key] = true
-			out = append(out, m)
+func emailsForThread(emails []core.Email, threadID string) []core.Email {
+	var out []core.Email
+	for _, e := range emails {
+		if e.ThreadID == threadID {
+			out = append(out, e)
 		}
 	}
 	return out
 }
 
-func wrapAngle(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	if !strings.HasPrefix(s, "<") {
-		s = "<" + s + ">"
-	}
-	return s
-}
-
-func acquireLock(vaultDir string) (string, bool) {
-	lockPath := filepath.Join(vaultDir, ".biset.lock")
-	if b, err := os.ReadFile(lockPath); err == nil {
-		var pid int
-		fmt.Sscanf(string(b), "%d", &pid)
-		if pid > 0 && isBisetProcess(pid) {
-			return lockPath, false
+func emailsForInbox(emails []core.Email, inboxKey string) []core.Email {
+	mbxID := core.MakeMailboxID(inboxKey)
+	var out []core.Email
+	for _, e := range emails {
+		if e.MailboxIDs[mbxID] {
+			out = append(out, e)
 		}
-		os.Remove(lockPath) //nolint:errcheck
 	}
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-	if err != nil {
-		return lockPath, false
-	}
-	fmt.Fprintf(f, "%d", os.Getpid())
-	f.Close()
-	return lockPath, true
+	return out
 }
 
-func isBisetProcess(pid int) bool {
-	proc, err := os.FindProcess(pid)
-	if err != nil || proc.Signal(syscall.Signal(0)) != nil {
-		return false
+// EmailBodyPreview returns a truncated body string for notifications.
+func EmailBodyPreview(e core.Email, maxRunes int) string {
+	body := core.EmailBody(e)
+	r := []rune(body)
+	if len(r) > maxRunes {
+		return string(r[:maxRunes])
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return false
-	}
-	out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "comm=").Output()
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(string(out)) == filepath.Base(exe)
+	return body
 }
 
-// ── log ───────────────────────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────
 
-func writeSyncLog(vaultDir, inboxKey string, msgs []core.Message) {
-	if len(msgs) == 0 {
+// ── sync log ──────────────────────────────────────────────────────────────────
+
+func writeSyncLog(vaultDir, inboxKey string, emails []core.Email) {
+	if len(emails) == 0 {
 		return
 	}
 	var lines []string
-	for _, m := range msgs {
-		ts := time.UnixMilli(m.Ts).Local().Format("2006-01-02 15:04")
-		from := m.From
-		if name := m.Meta[core.MetaFromName]; name != "" {
+	for _, e := range emails {
+		ts := e.ReceivedAt.Local().Format("2006-01-02 15:04")
+		from := core.EmailFromAddr(e)
+		if name := core.EmailFromName(e); name != "" {
 			from = name
 		}
 		var to string
-		if m.Meta[core.MetaMyRole] != "" {
-			// received: to = inbox
+		mbxID := core.MakeMailboxID(inboxKey)
+		if e.MailboxIDs[mbxID] && !strings.EqualFold(core.EmailFromAddr(e), inboxKey) {
 			to = inboxKey
+		} else if len(e.To) > 0 {
+			to = e.To[0].Email
 		} else {
-			// sent: to = first recipient
-			to = firstAddr(m.Meta[core.MetaToAddrs])
-			if to == "" {
-				to = "?"
-			}
+			to = "?"
 		}
 		lines = append(lines, fmt.Sprintf("%s %s → %s", ts, from, to))
 	}
 	writeBisetLog(vaultDir, inboxKey, lines)
 }
 
+// firstAddr returns the first address from a JSON array string.
 func firstAddr(jsonArr string) string {
 	if jsonArr == "" {
 		return ""

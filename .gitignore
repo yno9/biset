@@ -1,12 +1,9 @@
-# Compiled binaries
 biset
 connectors/claude/claude
 connectors/imap/imap
 connectors/jmap/jmap
 
-# Connector runtime files (credentials, state)
 connectors/*/config.json
 connectors/*/state.json
 
-# macOS
 .DS_Store

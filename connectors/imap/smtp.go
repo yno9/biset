@@ -20,12 +20,10 @@ type SMTPConfig struct {
 	Password string `json:"password"`
 }
 
-func sendSMTP(cfg SMTPConfig, from, to, cc, bcc, subject, body, parentID string) ([]byte, error) {
+func sendSMTP(cfg SMTPConfig, from string, to, cc, bcc []string, subject, body, inReplyTo string) ([]byte, error) {
 	msgID := newMessageID(from)
-	raw := buildMessage(from, to, cc, subject, body, msgID, parentID)
-	rcpts := splitAddrs(to)
-	rcpts = append(rcpts, splitAddrs(cc)...)
-	rcpts = append(rcpts, splitAddrs(bcc)...)
+	raw := buildMessage(from, to, cc, subject, body, msgID, inReplyTo)
+	rcpts := append(append(to, cc...), bcc...)
 	if err := smtpSend(cfg, from, rcpts, raw); err != nil {
 		return nil, err
 	}
@@ -98,19 +96,19 @@ func sendData(c *smtp.Client, from string, to []string, raw []byte) error {
 	return c.Quit()
 }
 
-func buildMessage(from, to, cc, subject, body, msgID, parentID string) []byte {
+func buildMessage(from string, to, cc []string, subject, body, msgID, inReplyTo string) []byte {
 	var b strings.Builder
 	b.WriteString("From: " + from + "\r\n")
-	b.WriteString("To: " + to + "\r\n")
-	if cc != "" {
-		b.WriteString("Cc: " + cc + "\r\n")
+	b.WriteString("To: " + strings.Join(to, ", ") + "\r\n")
+	if len(cc) > 0 {
+		b.WriteString("Cc: " + strings.Join(cc, ", ") + "\r\n")
 	}
 	b.WriteString("Subject: " + subject + "\r\n")
 	b.WriteString("Message-ID: " + msgID + "\r\n")
 	b.WriteString("Date: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n")
-	if parentID != "" {
-		b.WriteString("In-Reply-To: " + parentID + "\r\n")
-		b.WriteString("References: " + parentID + "\r\n")
+	if inReplyTo != "" {
+		b.WriteString("In-Reply-To: " + inReplyTo + "\r\n")
+		b.WriteString("References: " + inReplyTo + "\r\n")
 	}
 	b.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
 	b.WriteString("\r\n")

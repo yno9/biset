@@ -94,6 +94,13 @@
   .connector-sub { font-size: 11px; color: #999; }
   #btn-select, #btn-launch, #btn-vault-done { transition: opacity 0.15s; opacity: 0.9; }
   #btn-select:hover, #btn-launch:hover, #btn-vault-done:hover { opacity: 0.7; }
+  .arch-chip {
+    font-size: 10px; font-family: monospace; font-weight: 700;
+    padding: 2px 6px; border-radius: 4px; cursor: pointer;
+    border: none; outline: none; background: none;
+    color: #ccc; transition: color 0.15s;
+  }
+  .arch-chip.active { color: #333; }
 </style>
 <script src="setup.js"></script>
 </head>
@@ -126,8 +133,11 @@
 
 <!-- Screen 2: Connector selection -->
 <div id="screen-connectors" class="screen">
-  <p class="question">Connectors</p>
-  <div id="connector-list"></div>
+  <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px">
+    <p class="question" style="margin:0">Connectors</p>
+    <div id="arch-selector" style="display:flex;gap:2px"></div>
+  </div>
+  <div id="connector-list" style="width:100%"></div>
   <div class="btns" style="margin-top:24px;justify-content:flex-end;gap:8px">
     <button class="btn btn-sm btn-back" id="btn-connectors-back" style="width:auto;padding:10px 20px">back</button>
     <button class="btn btn-sm btn-next" id="btn-connectors-next" style="width:auto;padding:10px 20px">next</button>
@@ -237,7 +247,7 @@ const _rawDir = decodeURIComponent(location.pathname.substring(0, location.pathn
 const _home = location.pathname.match(/^(\/Users\/[^/]+)/)?.[1] ?? ''
 const vaultDir = _home ? _rawDir.replace(_home, '~') : _rawDir
 const label = document.getElementById('vault-dir-label')
-if (label) label.textContent = vaultDir
+if (label) label.style.display = 'none'
 
 // Dot animation
 let dotInterval = null
@@ -322,6 +332,7 @@ document.getElementById('btn-select').addEventListener('click', async () => {
     show('screen-already')
     return
   }
+  initArchSelector()
   show('screen-connectors')
   // start downloading pre-checked connectors immediately
   document.querySelectorAll('input[name=connector]:checked').forEach(el => onConnectorChange(el))
@@ -375,12 +386,54 @@ function setConnectorStatus(name, state, progress) {
   }
 }
 
+// arch chips: label → { os, arch }
+const ARCH_CHIPS = [
+  { label: 'arm',   os: 'darwin', arch: 'arm64' },
+  { label: 'amd',   os: 'darwin', arch: 'amd64' },
+  { label: 'linux', os: 'linux',  arch: 'amd64' },
+]
+
+function detectOSArch() {
+  const ua = navigator.userAgent
+  let os = 'darwin'
+  if (/Win/i.test(ua)) os = 'windows'
+  else if (/Linux/i.test(ua)) os = 'linux'
+  let arch = 'amd64'
+  if (/arm64|aarch64/i.test(ua)) arch = 'arm64'
+  if (navigator.userAgentData?.platform) {
+    const p = navigator.userAgentData.platform.toLowerCase()
+    if (p.includes('arm')) arch = 'arm64'
+  }
+  return { os, arch }
+}
+
+let _selectedArch = null  // { os, arch }
+
+function initArchSelector() {
+  const auto = detectOSArch()
+  _selectedArch = auto
+  const container = document.getElementById('arch-selector')
+  container.innerHTML = ''
+  for (const chip of ARCH_CHIPS) {
+    const btn = document.createElement('button')
+    btn.className = 'arch-chip' + (chip.os === auto.os && chip.arch === auto.arch ? ' active' : '')
+    btn.textContent = chip.label
+    btn.onclick = () => {
+      _selectedArch = { os: chip.os, arch: chip.arch }
+      container.querySelectorAll('.arch-chip').forEach((b, i) => {
+        b.classList.toggle('active', ARCH_CHIPS[i].os === chip.os && ARCH_CHIPS[i].arch === chip.arch)
+      })
+    }
+    container.appendChild(btn)
+  }
+}
+
 function connectorDownloadURL(name) {
   const all = [...BISET_URLS.connectors, ...BISET_URLS.interfaces]
   const entry = all.find(c => c.id === name)
   if (entry?.url) return entry.url
-  const os = 'darwin', arch = 'arm64'
-  return `https://github.com/${BISET_URLS.github_org}/${name}/releases/latest/download/${name}-${os}-${arch}`
+  const { os, arch } = _selectedArch || detectOSArch()
+  return `https://github.com/${BISET_URLS.github_repo}/releases/latest/download/${name}-${os}-${arch}`
 }
 
 async function connectorExists(name) {
@@ -393,6 +446,7 @@ async function connectorExists(name) {
 }
 
 async function downloadConnector(name) {
+  if (!name) { console.error('downloadConnector: empty name', new Error().stack); return }
   if (connectorState[name] === 'ok') return
   // check if already downloaded
   if (await connectorExists(name)) {
@@ -435,6 +489,7 @@ async function deleteConnector(name) {
 
 async function onConnectorChange(el) {
   const name = el.value
+  if (!name) return
   if (!el.checked) {
     setConnectorStatus(name, 'none')
     await deleteConnector(name)

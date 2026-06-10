@@ -110,23 +110,28 @@ func handle(req rpcRequest) {
 		respond(req.ID, "pong", nil)
 
 	case "fetch":
-		msgs, err := fetchAll()
+		result, err := fetchAll()
 		if err != nil {
 			respond(req.ID, nil, err)
 			return
 		}
-		respond(req.ID, map[string]any{"messages": msgs}, nil)
+		respond(req.ID, result, nil)
 
 	case "send":
 		var p struct {
-			Body     string `json:"body"`
-			ParentID string `json:"parent_id"`
+			Email    core.Email    `json:"email"`
+			Envelope core.Envelope `json:"envelope"`
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			respond(req.ID, nil, err)
 			return
 		}
-		respond(req.ID, map[string]any{}, sendClaude(p.Body, p.ParentID))
+		body := core.EmailBody(p.Email)
+		inReplyTo := ""
+		if len(p.Email.InReplyTo) > 0 {
+			inReplyTo = p.Email.InReplyTo[0]
+		}
+		respond(req.ID, map[string]any{}, sendClaude(body, inReplyTo))
 
 	default:
 		respond(req.ID, nil, fmt.Errorf("unknown method: %s", req.Method))
@@ -135,11 +140,11 @@ func handle(req rpcRequest) {
 
 // ── fetch ─────────────────────────────────────────────────────────────────────
 
-func fetchAll() ([]core.Message, error) {
+func fetchAll() (core.FetchResult, error) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 
-	var msgs []core.Message
+	var emails []core.Email
 	newMtime := state.LastMtimeNs
 
 	for _, scanDir := range cfg.ProjectDirs {
@@ -163,7 +168,7 @@ func fetchAll() ([]core.Message, error) {
 			if mtimeNs > newMtime {
 				newMtime = mtimeNs
 			}
-			msgs = append(msgs, parseJSONL(filepath.Join(scanDir, e.Name()), projectName)...)
+			emails = append(emails, parseJSONL(filepath.Join(scanDir, e.Name()), projectName)...)
 		}
 	}
 
@@ -171,16 +176,21 @@ func fetchAll() ([]core.Message, error) {
 	if b, err := json.MarshalIndent(state, "", "  "); err == nil {
 		os.WriteFile(statePath, b, 0644) //nolint:errcheck
 	}
-	return msgs, nil
+
+	mailbox := core.DefaultMailbox(cfg.InboxKey)
+	return core.FetchResult{
+		Emails:    emails,
+		Mailboxes: []core.Mailbox{mailbox},
+	}, nil
 }
 
 // ── send ──────────────────────────────────────────────────────────────────────
 
-func sendClaude(body, parentID string) error {
-	sessionID := strings.Trim(parentID, "<>")
+func sendClaude(body, inReplyTo string) error {
+	sessionID := strings.Trim(inReplyTo, "<>")
 	sessionID = strings.TrimSuffix(sessionID, "@claude")
 	if sessionID == "" {
-		return fmt.Errorf("cannot determine session ID from parent_id=%q", parentID)
+		return fmt.Errorf("cannot determine session ID from inReplyTo=%q", inReplyTo)
 	}
 
 	var cwd string
@@ -245,7 +255,7 @@ type claudeEntry struct {
 
 const maxMsgsPerSession = 50
 
-func parseJSONL(path, projectName string) []core.Message {
+func parseJSONL(path, projectName string) []core.Email {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -256,7 +266,13 @@ func parseJSONL(path, projectName string) []core.Message {
 	sessionID := strings.TrimSuffix(base, ".jsonl")
 	sessionRef := fmt.Sprintf("<%s@claude>", sessionID)
 
-	var msgs []core.Message
+	mailboxID := core.MakeMailboxID(cfg.InboxKey)
+	userAddr := cfg.UserName
+	if userAddr == "" {
+		userAddr = cfg.InboxKey
+	}
+
+	var emails []core.Email
 	aiTitle := ""
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
@@ -292,38 +308,55 @@ func parseJSONL(path, projectName string) []core.Message {
 			continue
 		}
 
-		from := cfg.UserName
-		fromName := cfg.UserName
-		if from == "" {
-			from = cfg.InboxKey
-		}
+		var from core.Address
 		if e.Type == "assistant" {
-			from = projectName
-			fromName = e.Message.Model
-			if fromName == "" {
-				fromName = "claude"
+			model := e.Message.Model
+			if model == "" {
+				model = "claude"
 			}
+			from = core.Address{Email: projectName, Name: model}
+		} else {
+			from = core.Address{Email: userAddr, Name: userAddr}
 		}
 
-		msgs = append(msgs, core.Message{
-			From:     from,
-			Body:     body,
-			Ts:       t.UnixMilli(),
-			ParentID: sessionRef,
-			Seen:     true, // no server-side seen concept for claude
-			Meta: map[string]string{
-				core.MetaFromName: fromName,
-				core.MetaSubject:  aiTitle,
-				"inbox_key":       cfg.InboxKey,
-				"protocol":        "claude",
-			},
-		})
+		eID := core.MakeEmailID("", cfg.InboxKey, t)
+		threadID := core.MakeThreadID(sessionRef)
+
+		partID := "1"
+		email := core.Email{
+			ID:         eID,
+			BlobID:     "blob-" + eID,
+			ThreadID:   threadID,
+			MailboxIDs: map[string]bool{mailboxID: true},
+			Keywords:   map[string]bool{"$seen": true},
+			From:       []core.Address{from},
+			To:         []core.Address{{Email: userAddr}},
+			Subject:    aiTitle,
+			ReceivedAt: t,
+			InReplyTo:  []string{sessionRef},
+			References: []string{sessionRef},
+			BodyValues: map[string]core.BodyValue{partID: {Value: body}},
+			TextBody:   []core.BodyPart{{PartID: partID, BlobID: "blob-" + eID + "-body", Type: "text/plain", Charset: "utf-8", Size: len(body)}},
+			HtmlBody:   []core.BodyPart{},
+			Preview:    previewText(body),
+			Size:       len(body),
+		}
+		emails = append(emails, email)
 	}
-	// return only the most recent N messages
-	if len(msgs) > maxMsgsPerSession {
-		msgs = msgs[len(msgs)-maxMsgsPerSession:]
+
+	// return only the most recent N emails
+	if len(emails) > maxMsgsPerSession {
+		emails = emails[len(emails)-maxMsgsPerSession:]
 	}
-	return msgs
+	return emails
+}
+
+func previewText(s string) string {
+	r := []rune(s)
+	if len(r) > 256 {
+		return string(r[:256])
+	}
+	return s
 }
 
 func extractBody(content json.RawMessage) string {
@@ -353,7 +386,6 @@ func extractBody(content json.RawMessage) string {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func stripProjectPrefix(name string) string {
-	// "-Users-n-biset-core" → "biset-core"
 	re := name
 	count := 0
 	for i, c := range re {
