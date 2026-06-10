@@ -43,10 +43,36 @@ jobs:
           cd ../claude
           go build -ldflags "-X main.version=${{ github.ref_name }}" -o biset-claude-${{ matrix.goos }}-${{ matrix.goarch }} .
 
-      - name: Upload to release
+      - name: Prepare connector metadata
+        if: matrix.goos == 'linux'
+        run: |
+          cp connectors/imap/manifest.json     biset-imap-manifest.json
+          cp connectors/imap/config.example.json biset-imap-config.example.json
+          cp connectors/claude/manifest.json    biset-claude-manifest.json
+          cp connectors/claude/config.example.json biset-claude-config.example.json
+          cp assets/setup.html setup.html
+          cp assets/setup.js   setup.js
+          cp scripts/install.sh install.sh
+          cp scripts/install-full.sh install-full.sh
+
+      - name: Upload platform binaries
         uses: softprops/action-gh-release@v2
         with:
           files: |
             biset-${{ matrix.goos }}-${{ matrix.goarch }}
             connectors/imap/biset-imap-${{ matrix.goos }}-${{ matrix.goarch }}
             connectors/claude/biset-claude-${{ matrix.goos }}-${{ matrix.goarch }}
+
+      - name: Upload shared assets
+        if: matrix.goos == 'linux'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            biset-imap-manifest.json
+            biset-imap-config.example.json
+            biset-claude-manifest.json
+            biset-claude-config.example.json
+            setup.html
+            setup.js
+            install.sh
+            install-full.sh

@@ -14,29 +14,9 @@ const BISET_URLS = {
       checked: true,
     },
     {
-      id:    'biset-jmap',
-      label: 'Mail Server',
-      sub:   'JMAP (Port 25 should be open)',
-    },
-    {
       id:    'biset-claude',
       label: 'Claude',
       sub:   'Claude Code conversations',
-    },
-  ],
-
-  // Interfaces shown on the interface selection screen.
-  interfaces: [
-    {
-      id:    'biset-ui',
-      label: 'biset-ui',
-      sub:   'HTML interface (serverless)',
-      url:   'https://github.com/yno9/biset/releases/latest/download/index.html',
-    },
-    {
-      id:    'biset-serve',
-      label: 'Web Server',
-      sub:   'Access via HTTP',
     },
   ],
 }
