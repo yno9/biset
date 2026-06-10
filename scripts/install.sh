@@ -56,6 +56,19 @@ for name in "${CONNECTORS[@]}"; do
   chmod +x "$dir/biset-$name"
 done
 
+# ── Add to PATH ────────────────────────────────────────────────────────────────
+
+mkdir -p "$HOME/.local/bin"
+ln -sf "$INSTALL_DIR/biset" "$HOME/.local/bin/biset"
+
+SHELL_RC="$HOME/.zshrc"
+[ -n "$BASH_VERSION" ] && SHELL_RC="$HOME/.bashrc"
+
+if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
+  ADDED_TO_PATH=1
+fi
+
 # ── Setup wizard ───────────────────────────────────────────────────────────────
 
 BISET_JSON="$INSTALL_DIR/biset.json"
@@ -63,7 +76,7 @@ IMAP_CFG="$INSTALL_DIR/connectors/biset-imap/config.json"
 
 if [ -f "$BISET_JSON" ]; then
   echo ""
-  echo "Already configured. Updated binaries to latest version."
+  echo "✓ Updated to latest version. Run: biset"
   exit 0
 fi
 
@@ -131,19 +144,9 @@ cat > "$IMAP_CFG" << EOF
 EOF
 chmod 600 "$IMAP_CFG"
 
-# ── Add to PATH ────────────────────────────────────────────────────────────────
-
-mkdir -p "$HOME/.local/bin"
-ln -sf "$INSTALL_DIR/biset" "$HOME/.local/bin/biset"
-
-SHELL_RC="$HOME/.zshrc"
-[ -n "$BASH_VERSION" ] && SHELL_RC="$HOME/.bashrc"
-
-if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
-  echo ""
+echo ""
+if [ "${ADDED_TO_PATH:-0}" = "1" ]; then
   echo "✓ Done. Restart your terminal, then run: biset"
 else
-  echo ""
   echo "✓ Done. Run: biset"
 fi
