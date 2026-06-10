@@ -53,7 +53,6 @@ jobs:
           cp assets/setup.html setup.html
           cp assets/setup.js   setup.js
           cp scripts/install.sh install.sh
-          cp scripts/install-full.sh install-full.sh
 
       - name: Upload platform binaries
         uses: softprops/action-gh-release@v2
@@ -75,4 +74,3 @@ jobs:
             setup.html
             setup.js
             install.sh
-            install-full.sh

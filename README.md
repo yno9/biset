@@ -44,11 +44,7 @@ IMAP / Claude / ActivityPub / ...
 ### End users
 
 ```sh
-# Minimal — downloads biset only; setup wizard installs connectors
 curl -fsSL https://github.com/yno9/biset/releases/latest/download/install.sh | sh
-
-# Full — downloads biset + all connectors at once
-curl -fsSL https://github.com/yno9/biset/releases/latest/download/install-full.sh | sh
 ```
 
 ### Developers
