@@ -164,14 +164,53 @@ FLAGS
 				}
 			}
 		}
+
+		// Build list of editable configs
+		type configEntry struct {
+			label string
+			path  string
+		}
+		entries := []configEntry{{"biset.json", configPath}}
+		installDir := filepath.Dir(configPath)
+		connectorsDir := filepath.Join(installDir, "connectors")
+		if dirs, err := os.ReadDir(connectorsDir); err == nil {
+			for _, d := range dirs {
+				if !d.IsDir() {
+					continue
+				}
+				p := filepath.Join(connectorsDir, d.Name(), "config.json")
+				if _, err := os.Stat(p); err == nil {
+					entries = append(entries, configEntry{d.Name(), p})
+				}
+			}
+		}
+
+		// Menu
+		fmt.Println("Select config to edit:")
+		for i, e := range entries {
+			fmt.Printf("  %d) %s\n", i+1, e.label)
+		}
+		fmt.Print("Choice [1]: ")
+		var line string
+		fmt.Fscanln(os.Stdin, &line)
+		if line == "" {
+			line = "1"
+		}
+		choice := 0
+		fmt.Sscanf(line, "%d", &choice)
+		if choice < 1 || choice > len(entries) {
+			choice = 1
+		}
+		target := entries[choice-1].path
+
 		if editor == "" {
-			fmt.Println(configPath)
-			b, _ := os.ReadFile(configPath)
+			b, _ := os.ReadFile(target)
+			fmt.Println(target)
 			fmt.Println()
 			fmt.Print(string(b))
 			return
 		}
-		cmd := exec.Command(editor, configPath)
+		cmd := exec.Command(editor, target)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -192,6 +231,14 @@ FLAGS
 		quitPath := filepath.Join(cfg.Vault, "biset-quit.json")
 		os.WriteFile(quitPath, []byte("{}"), 0644) //nolint:errcheck
 		fmt.Println("biset: stopping daemon")
+		lockPath := filepath.Join(cfg.Vault, ".data", ".biset.lock")
+		for i := 0; i < 30; i++ {
+			time.Sleep(100 * time.Millisecond)
+			if _, err := os.Stat(lockPath); os.IsNotExist(err) {
+				fmt.Println("biset: stopped")
+				return
+			}
+		}
 		return
 	}
 

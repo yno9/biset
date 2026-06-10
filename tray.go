@@ -28,6 +28,12 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 	systray.SetTemplateIcon(iconData, iconData)
 	systray.SetTooltip("biset")
 
+	vaultDisplay := cfg.Vault
+	if home, err := os.UserHomeDir(); err == nil {
+		vaultDisplay = strings.Replace(cfg.Vault, home, "~", 1)
+	}
+	mVault := systray.AddMenuItem(vaultDisplay, cfg.Vault)
+
 	// serve toggle
 	defaultPort := servePort
 	if defaultPort == 0 {
@@ -59,38 +65,30 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 		}
 	}()
 
-	mSync := systray.AddMenuItem("Bist down", "")
-	mStatus := systray.AddMenuItem("Last sync: —", "")
-	mStatus.Disable()
-	systray.AddSeparator()
+	mChangeVault := systray.AddMenuItem("Vault…", "")
 
-	vaultDisplay := cfg.Vault
-	if home, err := os.UserHomeDir(); err == nil {
-		vaultDisplay = strings.Replace(cfg.Vault, home, "~", 1)
-	}
-	mVault := systray.AddMenuItem(vaultDisplay, cfg.Vault)
-
-	// per-inbox items
-	type inboxItem struct {
-		key  string
-		dir  string
-		item *systray.MenuItem
-	}
-	var inboxItems []inboxItem
-	if entries, err := os.ReadDir(cfg.Vault); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+	// Config submenu
+	type configEntry struct{ label, path string }
+	var configEntries []configEntry
+	configEntries = append(configEntries, configEntry{"biset.json", configPath})
+	installDir := filepath.Dir(configPath)
+	if dirs, err := os.ReadDir(filepath.Join(installDir, "connectors")); err == nil {
+		for _, d := range dirs {
+			if !d.IsDir() {
 				continue
 			}
-			dir := filepath.Join(cfg.Vault, e.Name())
-			item := systray.AddMenuItem("- "+e.Name(), dir)
-			inboxItems = append(inboxItems, inboxItem{e.Name(), dir, item})
+			p := filepath.Join(installDir, "connectors", d.Name(), "config.json")
+			if _, err := os.Stat(p); err == nil {
+				configEntries = append(configEntries, configEntry{d.Name(), p})
+			}
 		}
 	}
+	mConfig := systray.AddMenuItem("Config", "")
+	var configSubItems []*systray.MenuItem
+	for _, e := range configEntries {
+		configSubItems = append(configSubItems, mConfig.AddSubMenuItem(e.label, e.path))
+	}
 
-	systray.AddSeparator()
-	mChangeVault := systray.AddMenuItem("Change vault", "")
-	mRestart := systray.AddMenuItem("Restart", "")
 	mQuit := systray.AddMenuItem("Quit", "")
 
 	// notifiedSet tracks message keys already sent as desktop notifications.
@@ -98,10 +96,9 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 	var notifiedMu sync.Mutex
 
 	syncNow := func(notify bool) {
-		mStatus.SetTitle("Syncing…")
 		systray.SetTooltip("biset — syncing…")
 		_, notifications := runSync(cfg, mgr)
-		mStatus.SetTitle(fmt.Sprintf("Last sync: %s", time.Now().Format("15:04")))
+		mVault.SetTitle(fmt.Sprintf("%s (%s)", vaultDisplay, time.Now().Format("15:04")))
 		systray.SetTooltip("biset")
 		if notify && len(notifications) > 0 {
 			notifiedMu.Lock()
@@ -129,12 +126,11 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 		}
 	}
 
-	// inbox click handlers
-	for _, ai := range inboxItems {
-		ai := ai
+	for i, sub := range configSubItems {
+		i, sub := i, sub
 		go func() {
-			for range ai.item.ClickedCh {
-				openVault(ai.dir)
+			for range sub.ClickedCh {
+				exec.Command("open", "-t", configEntries[i].path).Start() //nolint:errcheck
 			}
 		}()
 	}
@@ -151,8 +147,6 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 			if newCfg, err := loadConfig(configPath); err == nil {
 				cfg = newCfg
 			}
-			go syncNow(false)
-		case <-mSync.ClickedCh:
 			go syncNow(false)
 		case <-mVault.ClickedCh:
 			openVault(cfg.Vault)
@@ -187,19 +181,6 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 					}
 				}
 			}()
-		case <-mRestart.ClickedCh:
-			mgr.Stop()
-			exe, _ := os.Executable()
-			// --no-kill: skip killExisting in the new process (old process exits via systray.Quit below)
-			// --daemon: skip terminal re-exec loop
-			newArgs := append([]string{"--no-kill", "--daemon"}, os.Args[1:]...)
-			cmd := exec.Command(exe, newArgs...)
-			devNull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
-			cmd.Stdin, cmd.Stdout, cmd.Stderr = devNull, devNull, devNull
-			cmd.Start() //nolint:errcheck
-			time.Sleep(500 * time.Millisecond) // let new process initialize before old systray quits
-			systray.Quit()
-			return
 		case <-mQuit.ClickedCh:
 			mgr.Stop()
 			systray.Quit()

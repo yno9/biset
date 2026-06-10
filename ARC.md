@@ -1,5 +1,5 @@
 ---
-version: v0.3.0
+version: v0.3.6
 description: Architecture document for AI and contributors. Read before modifying code.
 ---
 
@@ -137,7 +137,7 @@ Wires all sync triggers; returns immediately after setup.
 
 ### `tray.go`
 Pure menu bar UI. No sync logic.
-- Tray icon, menu items (sync, open vault, serve toggle, quit)
+- Menu: `~/inbox (HH:MM)` (vault + last sync time), `Serve` (toggle), `Vault…` (change vault), `Config` (submenu → open config files in default text editor), `Quit`
 - Desktop notifications on new mail
 - Calls `StartWatcher` to wire sync triggers
 - `openVault` — opens vault directory in Finder
@@ -150,10 +150,13 @@ JMAP HTTP server (`biset --serve`).
 
 ### `main.go`
 CLI entrypoint and process management.
-- Flag parsing (`--serve`, `--config`, `--interval`, …)
-- First-run setup wizard
-- Process management: `acquireLock`, `isBisetProcess`, `killExistingBiset`
-- Launches tray or serve mode
+- **Subcommand parsing**: `up` / `down` / `sync` / `serve` / `status` / `config` / `version`; no args → help screen
+- `up`: forks daemon (macOS), acquires lock at `vault/.data/.biset.lock`, launches tray
+- `down`: writes `biset-quit.json` to vault, polls lock file until daemon exits
+- `status`: reads lock file, checks `isBisetProcess`, prints vault stats
+- `config`: shows numbered menu of all config files (`biset.json` + connector `config.json`s); opens selected in `$EDITOR`
+- `acquireLock` / `isBisetProcess`: single-instance enforcement via PID lock file
+- `runSetup`: first-run setup wizard (only if `biset.json` absent)
 
 ---
 
@@ -413,6 +416,17 @@ Hey, how are you?
 ---
 
 ## Changelog
+
+### v0.3.6
+
+- **Subcommand model** — `biset up/down/sync/serve/status/config/version`; no args shows help
+- **Single-instance lock** — `acquireLock` writes PID to `vault/.data/.biset.lock`; duplicate `up` exits with "already running (pid X)"
+- **`biset down`** — polls lock file after sending quit signal; prints "stopped" on clean exit
+- **`biset config`** — numbered menu listing `biset.json` and all connector `config.json`s
+- **Tray menu redesign** — `~/inbox (HH:MM)`, `Serve`, `Vault…`, `Config` (submenu), `Quit`
+- **Config submenu** — `open -t` to open in default text editor (not browser)
+- **install.sh** — optional connector selection (biset-imap forced, others prompted); IMAP auth test blocks on failure
+- **`biset: stopped`** — printed after daemon exits cleanly
 
 ### v0.3.0
 
