@@ -15,7 +15,7 @@ CONNECTORS=(imap claude)
 echo "What would you like to do?"
 echo "  1) Install"
 echo "  2) Uninstall"
-read -rp "Choice [1]: " choice
+read -rp "Choice [1]: " choice </dev/tty
 choice="${choice:-1}"
 
 if [ "$choice" = "2" ]; then
@@ -71,13 +71,13 @@ echo ""
 echo "=== Setup ==="
 echo ""
 
-read -rp "Vault directory [$HOME/inbox]: " vault
+read -rp "Vault directory [$HOME/inbox]: " vault </dev/tty
 vault="${vault:-$HOME/inbox}"
 mkdir -p "$vault"
 
 echo ""
-read -rp "Email address: " email
-read -rsp "Password: " password
+read -rp "Email address: " email </dev/tty
+read -rsp "Password: " password </dev/tty
 echo ""
 
 domain="${email#*@}"
@@ -88,10 +88,10 @@ if command -v dig &>/dev/null; then
   [ -n "$mx" ] && imap_host="$mx" && smtp_host="$mx"
 fi
 
-read -rp "IMAP host [${imap_host:-imap.$domain}]: " input
+read -rp "IMAP host [${imap_host:-imap.$domain}]: " input </dev/tty
 imap_host="${input:-${imap_host:-imap.$domain}}"
 
-read -rp "SMTP host [${smtp_host:-smtp.$domain}]: " input
+read -rp "SMTP host [${smtp_host:-smtp.$domain}]: " input </dev/tty
 smtp_host="${input:-${smtp_host:-smtp.$domain}}"
 
 # ── Write biset.json ───────────────────────────────────────────────────────────
