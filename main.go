@@ -55,7 +55,7 @@ func main() {
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "up", "down", "sync", "serve", "version", "status", "config":
+		case "up", "down", "sync", "serve", "version", "status", "config", "connectors", "update":
 			subcommand = args[i]
 		case "--help", "-help", "-h":
 			subcommand = "help"
@@ -112,13 +112,15 @@ USAGE
   biset <subcommand> [flags]
 
 SUBCOMMANDS
-  up      Start biset (sync + watch, macOS: menu bar icon)
-  down    Stop running biset
-  sync    Trigger a sync
-  serve   Run JMAP HTTP server
-  status  Show status
-  config  Show or edit config
-  version Print version
+  up          Start biset (sync + watch, macOS: menu bar icon)
+  down        Stop running biset
+  sync        Trigger a sync
+  serve       Run JMAP HTTP server
+  status      Show status
+  config      Edit config
+  connectors  Enable/disable connectors
+  update      Update to latest version
+  version     Print version
 
 FLAGS
   --interval duration   Sync interval (default 1m)
@@ -215,6 +217,38 @@ FLAGS
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Run() //nolint:errcheck
+		return
+	}
+
+	if subcommand == "connectors" {
+		runConnectors(configPath)
+		return
+	}
+
+	if subcommand == "update" {
+		tmp, err := os.CreateTemp("", "biset-install-*.sh")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "update: %v\n", err)
+			os.Exit(1)
+		}
+		defer os.Remove(tmp.Name())
+		tmp.Close()
+		curl := exec.Command("curl", "-fsSL",
+			"https://github.com/yno9/biset/releases/latest/download/install.sh",
+			"-o", tmp.Name())
+		curl.Stderr = os.Stderr
+		if err := curl.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "update: download failed: %v\n", err)
+			os.Exit(1)
+		}
+		sh := exec.Command("sh", tmp.Name())
+		sh.Stdin = os.Stdin
+		sh.Stdout = os.Stdout
+		sh.Stderr = os.Stderr
+		if err := sh.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "update: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -1039,4 +1073,102 @@ func watchConfigFile(configPath string) <-chan struct{} {
 		}
 	}()
 	return ch
+}
+
+// ── biset connectors ──────────────────────────────────────────────────────────
+
+func runConnectors(configPath string) {
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+
+	installDir := filepath.Dir(configPath)
+	connectorsDir := filepath.Join(installDir, "connectors")
+
+	// Scan available connectors
+	entries, err := os.ReadDir(connectorsDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "no connectors directory found")
+		os.Exit(1)
+	}
+
+	type connector struct {
+		name    string
+		enabled bool
+	}
+	var connectors []connector
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		enabled := false
+		for _, c := range cfg.Connectors {
+			if c == name {
+				enabled = true
+				break
+			}
+		}
+		connectors = append(connectors, connector{name, enabled})
+	}
+
+	if len(connectors) == 0 {
+		fmt.Println("no connectors installed")
+		return
+	}
+
+	fmt.Println("Connectors:")
+	changed := false
+	for i := range connectors {
+		c := &connectors[i]
+		fmt.Printf("\n  %s:\n", c.name)
+		fmt.Println("    1) on")
+		fmt.Println("    2) off")
+		current := "2"
+		if c.enabled {
+			current = "1"
+		}
+		fmt.Printf("  Choice [%s]: ", current)
+		var line string
+		fmt.Fscanln(os.Stdin, &line)
+		if line == "" {
+			line = current
+		}
+		newEnabled := line == "1"
+		if newEnabled != c.enabled {
+			c.enabled = newEnabled
+			changed = true
+		}
+	}
+
+	if !changed {
+		fmt.Println("\nNo changes.")
+		return
+	}
+
+	// Rebuild connectors list preserving order
+	var list []string
+	for _, c := range connectors {
+		if c.enabled {
+			list = append(list, c.name)
+		}
+	}
+	cfg.Connectors = list
+
+	b, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Fatalf("read config: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		log.Fatalf("parse config: %v", err)
+	}
+	connJSON, _ := json.Marshal(list)
+	raw["connectors"] = connJSON
+	out, _ := json.MarshalIndent(raw, "", "  ")
+	if err := os.WriteFile(configPath, out, 0644); err != nil {
+		log.Fatalf("write config: %v", err)
+	}
+	fmt.Println("\nSaved.")
 }
