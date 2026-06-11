@@ -21,10 +21,19 @@ import (
 var iconData []byte
 
 func RunTray(cfg *Config, mgr *core.Manager, configPath string, interval time.Duration, servePort int) {
-	systray.Run(func() { onTrayReady(cfg, mgr, configPath, interval, servePort) }, func() {})
+	var restartExe string
+	systray.Run(func() {
+		restartExe = onTrayReady(cfg, mgr, configPath, interval, servePort)
+	}, func() {})
+	if restartExe != "" {
+		cmd := exec.Command(restartExe, "up", "--daemon")
+		devNull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = devNull, devNull, devNull
+		cmd.Start() //nolint:errcheck
+	}
 }
 
-func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval time.Duration, servePort int) {
+func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval time.Duration, servePort int) string {
 	systray.SetTemplateIcon(iconData, iconData)
 	systray.SetTooltip("biset")
 
@@ -33,6 +42,7 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 		vaultDisplay = strings.Replace(cfg.Vault, home, "~", 1)
 	}
 	mVault := systray.AddMenuItem(vaultDisplay, cfg.Vault)
+	mFullSync := systray.AddMenuItem("Full Sync", "")
 
 	// serve toggle
 	defaultPort := servePort
@@ -67,11 +77,41 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 
 	mChangeVault := systray.AddMenuItem("Vault…", "")
 
+	// Connectors submenu
+	type connectorEntry struct {
+		name    string
+		enabled bool
+		item    *systray.MenuItem
+	}
+	var connectorEntries []connectorEntry
+	mConnectors := systray.AddMenuItem("Connectors", "")
+	installDir := filepath.Dir(configPath)
+	if dirs, err := os.ReadDir(filepath.Join(installDir, "connectors")); err == nil {
+		for _, d := range dirs {
+			if !d.IsDir() {
+				continue
+			}
+			name := d.Name()
+			enabled := false
+			for _, c := range cfg.Connectors {
+				if c == name {
+					enabled = true
+					break
+				}
+			}
+			status := "off"
+			if enabled {
+				status = "on"
+			}
+			item := mConnectors.AddSubMenuItem(fmt.Sprintf("%s: %s", name, status), "")
+			connectorEntries = append(connectorEntries, connectorEntry{name, enabled, item})
+		}
+	}
+
 	// Config submenu
 	type configEntry struct{ label, path string }
 	var configEntries []configEntry
 	configEntries = append(configEntries, configEntry{"biset.json", configPath})
-	installDir := filepath.Dir(configPath)
 	if dirs, err := os.ReadDir(filepath.Join(installDir, "connectors")); err == nil {
 		for _, d := range dirs {
 			if !d.IsDir() {
@@ -89,6 +129,15 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 		configSubItems = append(configSubItems, mConfig.AddSubMenuItem(e.label, e.path))
 	}
 
+	notifyLabel := func() string {
+		if notificationsEnabled(cfg) {
+			return "Notify: on"
+		}
+		return "Notify: off"
+	}
+	mNotify := systray.AddMenuItem(notifyLabel(), "")
+
+	mRestart := systray.AddMenuItem("Restart", "")
 	mQuit := systray.AddMenuItem("Quit", "")
 
 	// notifiedSet tracks message keys already sent as desktop notifications.
@@ -100,7 +149,7 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 		_, notifications := runSync(cfg, mgr)
 		mVault.SetTitle(fmt.Sprintf("%s (%s)", vaultDisplay, time.Now().Format("15:04")))
 		systray.SetTooltip("biset")
-		if notify && len(notifications) > 0 {
+		if notify && notificationsEnabled(cfg) && len(notifications) > 0 {
 			notifiedMu.Lock()
 			var fresh []SyncNotification
 			for _, n := range notifications {
@@ -135,6 +184,61 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 		}()
 	}
 
+	restartCh := make(chan struct{}, 1)
+	triggerRestart := func() {
+		select {
+		case restartCh <- struct{}{}:
+		default:
+		}
+	}
+
+	for i := range connectorEntries {
+		i := i
+		go func() {
+			for range connectorEntries[i].item.ClickedCh {
+				connectorEntries[i].enabled = !connectorEntries[i].enabled
+				status := "off"
+				if connectorEntries[i].enabled {
+					status = "on"
+				}
+				connectorEntries[i].item.SetTitle(fmt.Sprintf("%s: %s", connectorEntries[i].name, status))
+				var list []string
+				for _, ce := range connectorEntries {
+					if ce.enabled {
+						list = append(list, ce.name)
+					}
+				}
+				if b, err := os.ReadFile(configPath); err == nil {
+					var raw map[string]json.RawMessage
+					if json.Unmarshal(b, &raw) == nil {
+						connJSON, _ := json.Marshal(list)
+						raw["connectors"] = connJSON
+						out, _ := json.MarshalIndent(raw, "", "  ")
+						os.WriteFile(configPath, out, 0644) //nolint:errcheck
+					}
+				}
+				triggerRestart()
+			}
+		}()
+	}
+
+	go func() {
+		for range mNotify.ClickedCh {
+			enabled := !notificationsEnabled(cfg)
+			cfg.Notification = &enabled
+			mNotify.SetTitle(notifyLabel())
+			if b, err := os.ReadFile(configPath); err == nil {
+				var raw map[string]json.RawMessage
+				if json.Unmarshal(b, &raw) == nil {
+					val, _ := json.Marshal(enabled)
+					raw["notification"] = val
+					out, _ := json.MarshalIndent(raw, "", "  ")
+					os.WriteFile(configPath, out, 0644) //nolint:errcheck
+				}
+			}
+		}
+	}()
+
 	StartWatcher(cfg, mgr, configPath, interval, syncNow, func() { systray.Quit() })
 
 	// Config watcher
@@ -146,6 +250,7 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 			fmt.Println("config changed — reloading")
 			if newCfg, err := loadConfig(configPath); err == nil {
 				cfg = newCfg
+				mNotify.SetTitle(notifyLabel())
 			}
 			go syncNow(false)
 		case <-mVault.ClickedCh:
@@ -181,12 +286,28 @@ func onTrayReady(cfg *Config, mgr *core.Manager, configPath string, interval tim
 					}
 				}
 			}()
+		case <-mFullSync.ClickedCh:
+			go func() {
+				resetConnectorStates(filepath.Join(filepath.Dir(configPath), "connectors"))
+				os.Remove(filepath.Join(cfg.Vault, ".data", ".biset.lock"))
+				syncNow(false)
+			}()
+		case <-mRestart.ClickedCh:
+			triggerRestart()
+		case <-restartCh:
+			lockPath := filepath.Join(cfg.Vault, ".data", ".biset.lock")
+			os.Remove(lockPath)
+			mgr.Stop()
+			exe, _ := os.Executable()
+			systray.Quit()
+			return exe
 		case <-mQuit.ClickedCh:
 			mgr.Stop()
 			systray.Quit()
-			return
+			return ""
 		}
 	}
+	return ""
 }
 
 

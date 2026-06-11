@@ -30,6 +30,11 @@ type Config struct {
 	Vault         string   `json:"vault"`
 	ConnectorsDir string   `json:"connectors_dir"`
 	Connectors    []string `json:"connectors"` // e.g. ["biset-imap", "biset-ap"]
+	Notification  *bool    `json:"notification,omitempty"`
+}
+
+func notificationsEnabled(cfg *Config) bool {
+	return cfg.Notification == nil || *cfg.Notification
 }
 
 func main() {
@@ -48,6 +53,7 @@ func main() {
 	intervalFlag := time.Minute
 	daemonFlag  := false
 	renderFlag  := false // hidden flag for re-rendering MD
+	fullSyncFlag := false
 
 	subcommand := "" // empty = no subcommand given → show help
 	var configArgument string
@@ -55,7 +61,7 @@ func main() {
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "up", "down", "sync", "serve", "version", "status", "config", "connectors", "update":
+		case "up", "down", "sync", "serve", "version", "status", "config", "connectors", "update", "notification":
 			subcommand = args[i]
 		case "--help", "-help", "-h":
 			subcommand = "help"
@@ -88,6 +94,8 @@ case "--port", "-port":
 					intervalFlag = d
 				}
 			}
+		case "--full", "-full":
+			fullSyncFlag = true
 		default:
 			if len(args[i]) > 0 && args[i][0] != '-' && configArgument == "" {
 				if strings.Contains(args[i], "/") || strings.HasSuffix(args[i], ".json") {
@@ -118,9 +126,10 @@ SUBCOMMANDS
   serve       Run JMAP HTTP server
   status      Show status
   config      Edit config
-  connectors  Enable/disable connectors
-  update      Update to latest version
-  version     Print version
+  connectors    Enable/disable connectors
+  notification  Enable/disable desktop notifications
+  update        Update to latest version
+  version       Print version
 
 FLAGS
   --interval duration   Sync interval (default 1m)
@@ -190,7 +199,7 @@ FLAGS
 		// Menu
 		fmt.Println("Select config to edit:")
 		for i, e := range entries {
-			fmt.Printf("  %d) %s\n", i+1, e.label)
+			fmt.Printf("  %d. %s\n", i+1, e.label)
 		}
 		fmt.Print("Choice [1]: ")
 		var line string
@@ -222,6 +231,11 @@ FLAGS
 
 	if subcommand == "connectors" {
 		runConnectors(configPath)
+		return
+	}
+
+	if subcommand == "notification" {
+		runNotification(configPath)
 		return
 	}
 
@@ -346,6 +360,10 @@ FLAGS
 
 	switch subcommand {
 	case "sync":
+		if fullSyncFlag {
+			resetConnectorStates(connectorsDir)
+			os.Remove(filepath.Join(cfg.Vault, ".data", ".biset.lock"))
+		}
 		mgr.Start()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		mgr.WaitReady(ctx)
@@ -987,13 +1005,31 @@ func runStatus(cfg *Config) {
 
 // ── process management ────────────────────────────────────────────────────────
 
+const lockTimeout = 5 * time.Minute
+
+func resetConnectorStates(connectorsDir string) {
+	entries, err := os.ReadDir(connectorsDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		statePath := filepath.Join(connectorsDir, e.Name(), "state.json")
+		os.WriteFile(statePath, []byte(`{"last_mtime_ns":0}`), 0644) //nolint:errcheck
+	}
+}
+
 func acquireLock(vaultDir string) (string, bool) {
 	lockPath := filepath.Join(vaultDir, ".data", ".biset.lock")
 	os.MkdirAll(filepath.Join(vaultDir, ".data"), 0755) //nolint:errcheck
 	if b, err := os.ReadFile(lockPath); err == nil {
 		var pid int
 		fmt.Sscanf(string(b), "%d", &pid)
-		if pid > 0 && isBisetProcess(pid) {
+		info, statErr := os.Stat(lockPath)
+		stale := statErr != nil || time.Since(info.ModTime()) > lockTimeout
+		if pid > 0 && isBisetProcess(pid) && !stale {
 			return lockPath, false
 		}
 		os.Remove(lockPath) //nolint:errcheck
@@ -1122,9 +1158,13 @@ func runConnectors(configPath string) {
 	changed := false
 	for i := range connectors {
 		c := &connectors[i]
-		fmt.Printf("\n  %s:\n", c.name)
-		fmt.Println("    1) on")
-		fmt.Println("    2) off")
+		status := "off"
+		if c.enabled {
+			status = "on"
+		}
+		fmt.Printf("\n  %s [%s]:\n", c.name, status)
+		fmt.Println("    1. on")
+		fmt.Println("    2. off")
 		current := "2"
 		if c.enabled {
 			current = "1"
@@ -1139,6 +1179,50 @@ func runConnectors(configPath string) {
 		if newEnabled != c.enabled {
 			c.enabled = newEnabled
 			changed = true
+		}
+
+		// Config setup when turning on
+		if newEnabled {
+			cfgPath := filepath.Join(connectorsDir, c.name, "config.json")
+			exPath := filepath.Join(connectorsDir, c.name, "config.example.json")
+			_, cfgErr := os.Stat(cfgPath)
+			if os.IsNotExist(cfgErr) {
+				// Copy example as starting point
+				if ex, err := os.ReadFile(exPath); err == nil {
+					os.WriteFile(cfgPath, ex, 0600) //nolint:errcheck
+				}
+				fmt.Printf("\n  %s/config.json — created from example\n", c.name)
+			} else {
+				fmt.Printf("\n  %s/config.json — installed\n", c.name)
+			}
+			fmt.Println("    1. edit")
+			fmt.Println("    2. skip")
+			fmt.Print("  Choice [1]: ")
+			var cfgLine string
+			fmt.Fscanln(os.Stdin, &cfgLine)
+			if cfgLine == "" || cfgLine == "1" {
+				editor := os.Getenv("EDITOR")
+				if editor == "" {
+					editor = os.Getenv("VISUAL")
+				}
+				if editor == "" {
+					for _, e := range []string{"nano", "vim", "vi"} {
+						if _, err := exec.LookPath(e); err == nil {
+							editor = e
+							break
+						}
+					}
+				}
+				if editor != "" {
+					cmd := exec.Command(editor, cfgPath)
+					cmd.Stdin = os.Stdin
+					cmd.Stdout = os.Stdout
+					cmd.Stderr = os.Stderr
+					cmd.Run() //nolint:errcheck
+				} else {
+					fmt.Println("  Edit:", cfgPath)
+				}
+			}
 		}
 	}
 
@@ -1171,4 +1255,52 @@ func runConnectors(configPath string) {
 		log.Fatalf("write config: %v", err)
 	}
 	fmt.Println("\nSaved.")
+}
+
+// ── notification ──────────────────────────────────────────────────────────────
+
+func runNotification(configPath string) {
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+
+	current := "1"
+	if !notificationsEnabled(cfg) {
+		current = "2"
+	}
+	status := "on"
+	if current == "2" {
+		status = "off"
+	}
+	fmt.Printf("Notification [%s]:\n", status)
+	fmt.Println("  1. on")
+	fmt.Println("  2. off")
+	fmt.Printf("Choice [%s]: ", current)
+	var line string
+	fmt.Fscanln(os.Stdin, &line)
+	if line == "" {
+		line = current
+	}
+	enabled := line == "1"
+	if enabled == notificationsEnabled(cfg) {
+		fmt.Println("No changes.")
+		return
+	}
+
+	b, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Fatalf("read config: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		log.Fatalf("parse config: %v", err)
+	}
+	val, _ := json.Marshal(enabled)
+	raw["notification"] = val
+	out, _ := json.MarshalIndent(raw, "", "  ")
+	if err := os.WriteFile(configPath, out, 0644); err != nil {
+		log.Fatalf("write config: %v", err)
+	}
+	fmt.Println("Saved.")
 }

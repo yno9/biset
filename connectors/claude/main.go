@@ -140,9 +140,106 @@ func handle(req rpcRequest) {
 
 // ── fetch ─────────────────────────────────────────────────────────────────────
 
+// buildSessionParentMap scans all jsonl files in dir and returns a map of
+// childSessionID -> parentSessionID using logicalParentUuid linkage.
+// When the same entry UUID appears in multiple files (copied context), the parent
+// is the file where the UUID appears latest (highest line number = original source).
+func buildSessionParentMap(dir string, entries []os.DirEntry) map[string]string {
+	type uuidLoc struct {
+		sessionID string
+		lineNo    int
+	}
+	// step 1: build entryUUID -> location with highest line number
+	uuidToSession := map[string]uuidLoc{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		sid := strings.TrimSuffix(e.Name(), ".jsonl")
+		f, err := os.Open(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		sc := bufio.NewScanner(f)
+		sc.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
+		lineNo := 0
+		for sc.Scan() {
+			var entry struct {
+				UUID string `json:"uuid"`
+			}
+			if json.Unmarshal(sc.Bytes(), &entry) == nil && entry.UUID != "" {
+				if prev, ok := uuidToSession[entry.UUID]; !ok || lineNo > prev.lineNo {
+					uuidToSession[entry.UUID] = uuidLoc{sid, lineNo}
+				}
+			}
+			lineNo++
+		}
+		f.Close()
+	}
+
+	// step 2: for each session, find its parent session via logicalParentUuid
+	parentMap := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		sid := strings.TrimSuffix(e.Name(), ".jsonl")
+		f, err := os.Open(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		sc := bufio.NewScanner(f)
+		sc.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
+		for sc.Scan() {
+			var entry struct {
+				Type    string `json:"type"`
+				Subtype string `json:"subtype"`
+				Parent  string `json:"logicalParentUuid"`
+			}
+			if json.Unmarshal(sc.Bytes(), &entry) == nil &&
+				entry.Type == "system" && entry.Subtype == "compact_boundary" && entry.Parent != "" {
+				if loc, ok := uuidToSession[entry.Parent]; ok && loc.sessionID != sid {
+					parentMap[sid] = loc.sessionID
+				}
+				break
+			}
+		}
+		f.Close()
+	}
+	return parentMap
+}
+
+// rootSession walks the parent chain and returns the root session ID.
+func rootSession(sessionID string, parentMap map[string]string) string {
+	visited := map[string]bool{}
+	for {
+		if visited[sessionID] {
+			break
+		}
+		visited[sessionID] = true
+		p := parentMap[sessionID]
+		if p == "" {
+			break
+		}
+		sessionID = p
+	}
+	return sessionID
+}
+
 func fetchAll() (core.FetchResult, error) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
+
+	// Re-read state from disk so external resets (e.g. state.json → 0) take effect
+	// without requiring a process restart.
+	if b, err := os.ReadFile(statePath); err == nil {
+		var s State
+		if json.Unmarshal(b, &s) == nil && s.LastMtimeNs < state.LastMtimeNs {
+			state = s
+		}
+	}
+
+	appTitles := loadAppTitles()
 
 	var emails []core.Email
 	newMtime := state.LastMtimeNs
@@ -153,6 +250,9 @@ func fetchAll() (core.FetchResult, error) {
 			continue
 		}
 		projectName := stripProjectPrefix(filepath.Base(scanDir))
+
+		// Collect new entries first; skip full parentMap scan if nothing changed.
+		var newEntries []os.DirEntry
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 				continue
@@ -161,14 +261,29 @@ func fetchAll() (core.FetchResult, error) {
 			if info == nil {
 				continue
 			}
-			mtimeNs := info.ModTime().UnixNano()
-			if mtimeNs <= state.LastMtimeNs {
-				continue
+			if info.ModTime().UnixNano() > state.LastMtimeNs {
+				newEntries = append(newEntries, e)
 			}
+		}
+		if len(newEntries) == 0 {
+			continue
+		}
+
+		parentMap := buildSessionParentMap(scanDir, entries)
+
+		for _, e := range newEntries {
+			info, _ := e.Info()
+			mtimeNs := info.ModTime().UnixNano()
 			if mtimeNs > newMtime {
 				newMtime = mtimeNs
 			}
-			emails = append(emails, parseJSONL(filepath.Join(scanDir, e.Name()), projectName)...)
+			sid := strings.TrimSuffix(e.Name(), ".jsonl")
+			root := rootSession(sid, parentMap)
+			title := appTitles[sid]
+			if title == "" {
+				title = appTitles[root]
+			}
+			emails = append(emails, parseJSONL(filepath.Join(scanDir, e.Name()), projectName, root, title)...)
 		}
 	}
 
@@ -255,16 +370,43 @@ type claudeEntry struct {
 
 const maxMsgsPerSession = 50
 
-func parseJSONL(path, projectName string) []core.Email {
+// loadAppTitles scans the Claude desktop app session storage and returns a
+// map of cliSessionID → title for sessions that have an auto-generated title.
+func loadAppTitles() map[string]string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	dir := filepath.Join(home, "Library", "Application Support", "Claude", "claude-code-sessions")
+	titles := map[string]string{}
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".json") {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		var s struct {
+			CliSessionID string `json:"cliSessionId"`
+			Title        string `json:"title"`
+		}
+		if json.Unmarshal(b, &s) == nil && s.CliSessionID != "" && s.Title != "" {
+			titles[s.CliSessionID] = s.Title
+		}
+		return nil
+	})
+	return titles
+}
+
+func parseJSONL(path, projectName, rootSessionID, fallbackTitle string) []core.Email {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
 	defer f.Close()
 
-	base := filepath.Base(path)
-	sessionID := strings.TrimSuffix(base, ".jsonl")
-	sessionRef := fmt.Sprintf("<%s@claude>", sessionID)
+	sessionRef := fmt.Sprintf("<%s@claude>", rootSessionID)
 
 	mailboxID := core.MakeMailboxID(cfg.InboxKey)
 	userAddr := cfg.UserName
@@ -273,7 +415,7 @@ func parseJSONL(path, projectName string) []core.Email {
 	}
 
 	var emails []core.Email
-	aiTitle := ""
+	aiTitle := fallbackTitle
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
 
@@ -316,7 +458,7 @@ func parseJSONL(path, projectName string) []core.Email {
 			}
 			from = core.Address{Email: projectName, Name: model}
 		} else {
-			from = core.Address{Email: userAddr, Name: userAddr}
+			from = core.Address{Email: cfg.InboxKey, Name: userAddr}
 		}
 
 		eID := core.MakeEmailID("", cfg.InboxKey, t)
@@ -330,7 +472,7 @@ func parseJSONL(path, projectName string) []core.Email {
 			MailboxIDs: map[string]bool{mailboxID: true},
 			Keywords:   map[string]bool{"$seen": true},
 			From:       []core.Address{from},
-			To:         []core.Address{{Email: userAddr}},
+			To:         []core.Address{{Email: projectName}},
 			Subject:    aiTitle,
 			ReceivedAt: t,
 			InReplyTo:  []string{sessionRef},
