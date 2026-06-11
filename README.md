@@ -2,22 +2,22 @@
 
 Walks locally. Flies globally. Dwells in [doucot](https://github.com/yno9/doucot), a portable text editor.
 
-Biset keeps two data streams in sync: local changes in vaults and external events bridged by connectors. All data lives locally in JMAP format. Markdown is the human interface rendered on top. Each connector is an independent external process speaking its own protocol.
+Biset keeps two data streams in sync: local changes in vaults and external events bridged by connectors. All data lives locally in JMAP format, while Markdown is the human interface rendered on top. Each connector is an independent external process speaking its own protocol.
 
 ```
 External events
+       ↕ 
+Connectors (JSON-RPC 2.0 stdio)
   ├── IMAP/SMTP
   ├── Claude Code
   ├── ActivityPub
   └── ...
-       ↕ 
-  Connector (JSON-RPC 2.0 stdio)
        ↕
-  Biset core (MD/JSON translator)
+Biset core (MD/JSON translator)
        ↕
-  Vault + JMAP API (MD/JSON interfaces)
+Vault + JMAP API (MD/JSON interfaces)
        ↕
-  Human agency
+Human/AI agency
 ```
 
 ---
