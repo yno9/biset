@@ -1,6 +1,6 @@
 # biset
 
-Walks locally. Flies globally. Pairs well with [doucot](https://github.com/yno9/doucot), a portable text editor.
+Walks locally. Flies globally. Dwells in [doucot](https://github.com/yno9/doucot), a portable text editor.
 
 Biset keeps two data streams in sync: local changes in vaults and external events bridged by connectors. All data lives locally in JMAP format. Markdown is the human interface rendered on top. Each connector is an independent external process speaking its own protocol.
 
