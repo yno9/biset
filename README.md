@@ -65,7 +65,7 @@ biset             show help
 biset up          start daemon (tray app on macOS)
 biset down        stop daemon
 biset status      show running status
-biset sync        sync once and exit
+biset sync        sync once 
 biset serve       start JMAP HTTP server
 biset config      open config in $EDITOR
 biset version     show version
@@ -83,8 +83,8 @@ vault/
 │   └── mailboxes.json               ← all Mailbox objects
 └── you@example.com/
     ├── _new.md                              ← compose new messages here
-    ├── bob@example.com_06101423.md          ← seen thread
-    └── _bob@example.com_06101423.md         ← unseen thread (_ prefix)
+    ├── _bob@example.com_06101423.md         ← unseen thread (_ prefix)
+    └── bob@example.com_06101423.md          ← seen thread
 ```
 
 Filenames: `{contact}_{mmddHHMM}.md` — the timestamp is from the first message in the thread (immutable). The `_` prefix means the thread has unread messages.
@@ -129,7 +129,7 @@ Hey, are you free tomorrow?
 
 ## Replying
 
-Write in the compose area (between frontmatter and the first `- - -`), then set `status: send`:
+Write in the compose area (between frontmatter and the first `- - -`), then set `status: send` or include `!b` in body :
 
 ```markdown
 ---
