@@ -10,14 +10,14 @@ External events
   ├── Claude Code
   ├── ActivityPub
   └── ...
-       ↕ JSON-RPC 2.0 (stdio)
-  Connector (per protocol)
+       ↕ 
+  Connector (JSON-RPC 2.0 stdio)
        ↕
-  Biset core (JMAP native speaker)
+  Biset core (MD/JSON translator)
        ↕
-  Vault (JSON + MD files)
+  Vault + JMAP API (MD/JSON interfaces)
        ↕
-  Human agency (reads/writes Markdown)
+  Human agency
 ```
 
 ---
