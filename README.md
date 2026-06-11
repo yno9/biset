@@ -54,7 +54,6 @@ git clone https://github.com/yno9/biset
 cd biset
 go build -o biset .
 cd connectors/imap && go build .
-cd ../claude && go build .
 ```
 
 ---
