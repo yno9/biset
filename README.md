@@ -13,9 +13,9 @@ External events
        ↕ JSON-RPC 2.0 (stdio)
   Connector (per protocol)
        ↕
-  Biset core (JMAP-native data model)
+  Biset core (JMAP native speaker)
        ↕
-  Vault (local JSON + Markdown files)
+  Vault (JSON + MD files)
        ↕
   Human agency (reads/writes Markdown)
 ```
