@@ -136,10 +136,10 @@ Write in the compose area (between frontmatter and the first `- - -`), then set 
 subject: "Re: hello"
 contact: bob@example.com
 id: abc123.def456@mail.example.com
-status: send
+status: 
 ---
 
-Thanks, sounds good!
+Thanks, sounds good.!b
 
 - - -
 2024-01-15 11:00 bob@example.com
