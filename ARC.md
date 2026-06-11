@@ -7,10 +7,10 @@ description: Architecture document for contributors. Read before modifying code.
 
 ## Concept
 
-biset watches a local Vault for human-authored intent, and bridges messages between that Vault and the outside world via Connectors.
+Biset keeps two data streams in sync: local changes in vaults and external events bridged by connectors. All data lives locally in JMAP format. Markdown is the human interface rendered on top. Each connector is an independent external process speaking its own protocol.
 
 ```
-Outside world
+External events
   ├── IMAP/SMTP
   ├── Claude Code
   ├── ActivityPub

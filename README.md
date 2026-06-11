@@ -1,20 +1,23 @@
 # biset
 
-Walks locally. Flies globally.
+Walks locally. Flies globally. Pairs well with [doucot](https://github.com/yno9/doucot), a portable text editor.
 
-A multi-protocol messenger. Your inbox is a folder of plain text files — read, write, and reply in any editor. It pairs well with [doucot](https://github.com/yno9/doucot), a portable text editor.
+Biset keeps two data streams in sync: local changes in vaults and external events bridged by connectors. All data lives locally in JMAP format. Markdown is the human interface rendered on top. Each connector is an independent external process speaking its own protocol.
 
 ```
-IMAP / Claude / ActivityPub / ...
-         ↕ JSON-RPC 2.0 (stdio)
-      Connector
-         ↕
-      biset core   (JMAP-native)
-         ↕
-      vault/
-        └── you@example.com/
-            ├── _new.md                        ← compose here
-            └── bob@example.com_06101423.md    ← threads as markdown
+External events
+  ├── IMAP/SMTP
+  ├── Claude Code
+  ├── ActivityPub
+  └── ...
+       ↕ JSON-RPC 2.0 (stdio)
+  Connector (per protocol)
+       ↕
+  Biset core (JMAP-native data model)
+       ↕
+  Vault (local JSON + Markdown files)
+       ↕
+  Human agency (reads/writes Markdown)
 ```
 
 ---
