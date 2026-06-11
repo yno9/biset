@@ -7,7 +7,7 @@ Biset keeps two data streams in sync: local changes in vaults and external event
 ```
 External events
        ↕ 
-Connectors (JSON-RPC 2.0 stdio)
+Connectors (JSON-RPC 2.0 speakers)
   ├── IMAP/SMTP
   ├── Claude Code
   ├── ActivityPub
