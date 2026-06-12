@@ -1,42 +1,39 @@
 # biset
 
-Walks locally. Flies globally. Dwells in [doucot](https://github.com/yno9/doucot), a portable text editor.
+The ubiquitous pigeon, de facto like HTTP. Best nested in [doucot](https://github.com/yno9/doucot), a portable text editor.
 
-Biset keeps two data streams in sync: local changes in vaults and external events bridged by connectors. All data lives locally in JMAP format, while Markdown is the human interface rendered on top. Each connector is an independent external process speaking its own protocol.
+biset and its relays together form a JMAP node network. Each relay is an independent JMAP HTTP server bridging an external protocol. biset itself is a JMAP node — client to its relays, server to any JMAP client. It aggregates messages from all relays into a single local vault and renders them in Markdown for human interaction.
 
 ```
 External events
        ↕ 
-Connectors (JSON-RPC 2.0 speakers)
-  ├── IMAP/SMTP
-  ├── Claude Code
-  ├── ActivityPub
-  └── ...
-       ↕
-Biset core (MD/JSON translator)
-       ↕
-Vault + JMAP API (MD/JSON interfaces)
-       ↕
-Human/AI agency
+  Relays (JMAP server)
+   ├── IMAP-SMTP Client
+   ├── SMTP Host
+   ├── ActivityPub
+   └── ...
+       ↕ JMAP HTTP + SSE
+  biset core (JMAP client + server)
+   └── Vault (JSON + Markdown)
+       ↕ 
+  JMAP clients / WebDAV
 ```
 
 ---
 
 ## Features
 
-- **Multiple protocols** — IMAP/SMTP, Claude Code conversations, ActivityPub (Fediverse)
-- **JMAP-native** — internal data model speaks RFC 8621 (Email, Mailbox, Thread)
-- **IMAP IDLE** — instant new mail detection via connector
-- **Reply / Send** — write in the compose area, set `status: send`
-- **Actions** — `seen`, `archived`, `deleted`, `spam` via frontmatter
-- **Tray app** — menu bar icon on macOS
+- **Relay network** — each relay is an independent JMAP HTTP server bridging an external protocol (IMAP/SMTP, ActivityPub, …)
+- **SSE push** — IMAP IDLE → relay notifies biset via SSE → immediate sync
+- **Local vault** — all messages stored locally as JSON + Markdown
+- **JMAP server** — biset serves its vault to any JMAP client (e.g. doucot)
 
 ---
 
 ## Requirements
 
 - macOS or Linux
-- An IMAP/SMTP account (for biset-imap)
+- An IMAP/SMTP account (for imapsmtp-client relay)
 - Go 1.21+ (for building from source)
 
 ---
@@ -53,7 +50,7 @@ curl -fsSL https://github.com/yno9/biset/releases/latest/download/install.sh | s
 git clone https://github.com/yno9/biset
 cd biset
 go build -o biset .
-cd connectors/imap && go build .
+cd relays/imapsmtp-client && go build .
 ```
 
 ---
@@ -61,14 +58,45 @@ cd connectors/imap && go build .
 ## Usage
 
 ```
-biset             show help
-biset up          start daemon (tray app on macOS)
-biset down        stop daemon
-biset status      show running status
-biset sync        sync once 
-biset serve       start JMAP HTTP server
-biset config      open config in $EDITOR
-biset version     show version
+biset                            show help
+biset up                         start daemon
+biset down                       stop daemon
+biset sync                       sync once
+biset relays                     list relays
+biset relays up [name]           start a local relay
+biset relays down [name]         stop a local relay
+biset relays config [name]       edit a local relay's config
+biset server up                  start JMAP server only
+biset server down                stop JMAP server
+biset config                     open config in $EDITOR
+biset version                    show version
+```
+
+---
+
+## Config
+
+`~/.biset/biset.json`:
+
+```json
+{
+  "vault": "/path/to/vault",
+  "server": {
+    "port": 1080,
+    "bind": "127.0.0.1",
+    "relayname": "biset",
+    "password": "...",
+    "interface": "~/doucot/docs/index.html"
+  },
+  "relays": [
+    {
+      "relayname": "imapsmtp",
+      "password": "changeme",
+      "local": "imapsmtp-client",
+      "url": "http://127.0.0.1:8765/.well-known/jmap"
+    }
+  ]
+}
 ```
 
 ---
@@ -78,16 +106,17 @@ biset version     show version
 ```
 vault/
 ├── .data/
-│   ├── emails/{emailId}.json        ← one JMAP Email object per file
-│   ├── threads/{threadId}.json      ← thread index (emailIds list)
-│   └── mailboxes.json               ← all Mailbox objects
+│   ├── messages/{msgId}.json        ← JMAP Email object
+│   ├── threads/{threadId}.json      ← thread index
+│   ├── mailboxes.json
+│   └── submissions/{id}.json        ← queued outgoing
 └── you@example.com/
-    ├── _new.md                              ← compose new messages here
-    ├── _bob@example.com_06101423.md         ← unseen thread (_ prefix)
-    └── bob@example.com_06101423.md          ← seen thread
+    ├── _new.md                      ← compose new messages here
+    ├── _bob@example.com_06101423.md ← unseen thread (_ prefix)
+    └── bob@example.com_06101423.md  ← seen thread
 ```
 
-Filenames: `{contact}_{mmddHHMM}.md` — the timestamp is from the first message in the thread (immutable). The `_` prefix means the thread has unread messages.
+Filenames: `{contact}_{mmddHHMM}.md` — timestamp from the first message (immutable). `_` prefix = unread.
 
 JSON (`.data/`) is the source of truth. Markdown files are rendered from JSON. Only the `status:` frontmatter field is read back to trigger actions.
 
@@ -99,19 +128,19 @@ JSON (`.data/`) is the source of truth. Markdown files are rendered from JSON. O
 ---
 subject: "Re: hello"
 contact: bob@example.com
-id: abc123.def456@mail.example.com
-status: 
+mailboxId: mbx-you@example.com
+id: abc123
+seen: true
+status:
 ---
 
 
 
-- - -
-2024-01-15 11:30 you@example.com
+# 2024-01-15 11:30 you@example.com
 
 Sounds good, see you then!
 
-- - -
-2024-01-15 11:00 bob@example.com
+# 2024-01-15 11:00 bob@example.com
 
 Hey, are you free tomorrow?
 ```
@@ -121,28 +150,29 @@ Hey, are you free tomorrow?
 | Field | Description |
 |---|---|
 | `subject` | Thread subject |
-| `contact` | The other party's email address |
-| `id` | Thread ID (used internally for lookups) |
+| `contact` | The other party's address |
+| `mailboxId` | JMAP Mailbox ID — determines which relay handles this thread |
+| `id` | Short thread ID |
+| `seen` | `false` = thread has unread messages |
 | `status` | Set to trigger an action (see below) |
 
 ---
 
 ## Replying
 
-Write in the compose area (between frontmatter and the first `- - -`), then set `status: send` or include `!b` in body :
+Write in the compose area (before the first `#` header), then set `status: send` or include `!b` in the body:
 
 ```markdown
 ---
 subject: "Re: hello"
 contact: bob@example.com
-id: abc123.def456@mail.example.com
-status: 
+id: abc123
+status:
 ---
 
 Thanks, sounds good.!b
 
-- - -
-2024-01-15 11:00 bob@example.com
+# 2024-01-15 11:00 bob@example.com
 
 Hey, are you free tomorrow?
 ```
@@ -172,7 +202,7 @@ Set `status:` in frontmatter to trigger an action on next sync:
 
 | status | action |
 |---|---|
-| `send` | send the compose area via the connector |
+| `send` | send the compose area via the relay |
 | `seen` | mark thread as read |
 | `archived` | archive (IMAP: move to Archive) |
 | `deleted` | delete (IMAP: expunge) |
@@ -180,14 +210,13 @@ Set `status:` in frontmatter to trigger an action on next sync:
 
 ---
 
-## Connectors
+## Relays
 
-| Connector | Protocols | Description |
+| Relay | Protocols | Description |
 |---|---|---|
-| `biset-imap` | imap, smtp | IMAP/SMTP email |
-| `biset-claude` | claude | Claude Code conversation history |
+| `imapsmtp-client` | imap, smtp | IMAP/SMTP email |
 
-Each connector is an independent binary communicating with biset over JSON-RPC 2.0 via stdio. It owns its own config and state, and handles its own reconnection and debouncing.
+Each relay is an independent JMAP HTTP server. It owns its config and state, handles reconnection, and exposes an SSE endpoint so biset gets push notifications on new data.
 
 ---
 

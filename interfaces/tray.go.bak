@@ -1,0 +1,235 @@
+package interfaces
+
+import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"fyne.io/systray"
+	"biset/vault"
+)
+
+//go:embed assets/icon.png
+var iconData []byte
+
+// TrayCallbacks holds the package main functions tray.go needs.
+type TrayCallbacks struct {
+	SyncFn         func(notify bool) (int, []vault.SyncNotification)
+	StartWatcher   func(onSync func(bool), onQuit func())
+	WatchConfig    func(path string) <-chan struct{}
+	ResetStates    func()
+	StopFn         func()
+}
+
+func RunTray(cfg *vault.Config, configPath string, interval time.Duration, cb TrayCallbacks) {
+	var restartExe string
+	systray.Run(func() {
+		restartExe = onTrayReady(cfg, configPath, interval, cb)
+	}, func() {})
+	if restartExe != "" {
+		cmd := exec.Command(restartExe, "up", "--daemon")
+		devNull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = devNull, devNull, devNull
+		cmd.Start() //nolint:errcheck
+	}
+}
+
+func onTrayReady(cfg *vault.Config, configPath string, interval time.Duration, cb TrayCallbacks) string {
+	systray.SetTemplateIcon(iconData, iconData)
+	systray.SetTooltip("biset")
+
+	vaultDisplay := cfg.Vault
+	if home, err := os.UserHomeDir(); err == nil {
+		vaultDisplay = strings.Replace(cfg.Vault, home, "~", 1)
+	}
+	mVault := systray.AddMenuItem(vaultDisplay, cfg.Vault)
+	mFullSync := systray.AddMenuItem("Full Sync", "")
+
+	mChangeVault := systray.AddMenuItem("Vault…", "")
+
+	// Config submenu — just biset.json for now; nodes configure themselves
+	type configEntry struct{ label, path string }
+	configEntries := []configEntry{{"biset.json", configPath}}
+	mConfig := systray.AddMenuItem("Config", "")
+	var configSubItems []*systray.MenuItem
+	for _, e := range configEntries {
+		configSubItems = append(configSubItems, mConfig.AddSubMenuItem(e.label, e.path))
+	}
+
+	notifyLabel := func() string {
+		if vault.NotificationsEnabled(cfg) {
+			return "Notify: on"
+		}
+		return "Notify: off"
+	}
+	mNotify := systray.AddMenuItem(notifyLabel(), "")
+
+	mRestart := systray.AddMenuItem("Restart", "")
+	mQuit := systray.AddMenuItem("Quit", "")
+
+	// notifiedSet tracks message keys already sent as desktop notifications.
+	notifiedSet := map[string]bool{}
+	var notifiedMu sync.Mutex
+
+	syncNow := func(notify bool) {
+		systray.SetTooltip("biset — syncing…")
+		_, notifications := cb.SyncFn(notify)
+		mVault.SetTitle(fmt.Sprintf("%s (%s)", vaultDisplay, time.Now().Format("15:04")))
+		systray.SetTooltip("biset")
+		if notify && vault.NotificationsEnabled(cfg) && len(notifications) > 0 {
+			notifiedMu.Lock()
+			var fresh []vault.SyncNotification
+			for _, n := range notifications {
+				key := n.MessageID
+				if key == "" {
+					key = fmt.Sprintf("%d|%s", n.Ts, n.Contact)
+				}
+				if !notifiedSet[key] {
+					notifiedSet[key] = true
+					fresh = append(fresh, n)
+				}
+			}
+			notifiedMu.Unlock()
+			if len(fresh) > 0 {
+				newest := fresh[0]
+				for _, n := range fresh[1:] {
+					if n.Ts > newest.Ts {
+						newest = n
+					}
+				}
+				sendNotify("biset", newest.Contact, newest.Body)
+			}
+		}
+	}
+
+	for i, sub := range configSubItems {
+		i, sub := i, sub
+		go func() {
+			for range sub.ClickedCh {
+				exec.Command("open", "-t", configEntries[i].path).Start() //nolint:errcheck
+			}
+		}()
+	}
+
+	restartCh := make(chan struct{}, 1)
+	triggerRestart := func() {
+		select {
+		case restartCh <- struct{}{}:
+		default:
+		}
+	}
+
+	go func() {
+		for range mNotify.ClickedCh {
+			enabled := !vault.NotificationsEnabled(cfg)
+			cfg.Notification = &enabled
+			mNotify.SetTitle(notifyLabel())
+			if b, err := os.ReadFile(configPath); err == nil {
+				var raw map[string]json.RawMessage
+				if json.Unmarshal(b, &raw) == nil {
+					val, _ := json.Marshal(enabled)
+					raw["notification"] = val
+					out, _ := json.MarshalIndent(raw, "", "  ")
+					os.WriteFile(configPath, out, 0644) //nolint:errcheck
+				}
+			}
+		}
+	}()
+
+	cb.StartWatcher(syncNow, func() { systray.Quit() })
+
+	// Config watcher
+	configChanged := cb.WatchConfig(configPath)
+
+	for {
+		select {
+		case <-configChanged:
+			fmt.Println("config changed — reloading")
+			if newCfg, err := vault.LoadConfig(configPath); err == nil {
+				cfg = newCfg
+				mNotify.SetTitle(notifyLabel())
+			}
+			go syncNow(false)
+		case <-mVault.ClickedCh:
+			openVault(cfg.Vault)
+		case <-mChangeVault.ClickedCh:
+			go func() {
+				out, err := exec.Command("osascript", "-e",
+					`choose folder with prompt "Select vault folder"`).Output()
+				if err != nil {
+					return
+				}
+				// osascript returns "alias Macintosh HD:Users:..." format
+				path := strings.TrimSpace(string(out))
+				path = strings.TrimPrefix(path, "alias ")
+				// convert HFS path to POSIX
+				posix, err := exec.Command("osascript", "-e",
+					fmt.Sprintf(`POSIX path of "%s"`, path)).Output()
+				if err != nil {
+					return
+				}
+				newVault := strings.TrimRight(strings.TrimSpace(string(posix)), "/")
+				// update config.json
+				if c, err := vault.LoadConfig(configPath); err == nil {
+					c.Vault = newVault
+					if b, err := json.MarshalIndent(c, "", "  "); err == nil {
+						os.WriteFile(configPath, b, 0644) //nolint:errcheck
+						cfg.Vault = newVault
+						vaultDisplay := newVault
+						if home, err := os.UserHomeDir(); err == nil {
+							vaultDisplay = strings.Replace(newVault, home, "~", 1)
+						}
+						mVault.SetTitle(vaultDisplay)
+					}
+				}
+			}()
+		case <-mFullSync.ClickedCh:
+			go func() {
+				cb.ResetStates()
+				os.Remove(filepath.Join(cfg.Vault, ".data", ".biset.lock"))
+				syncNow(false)
+			}()
+		case <-mRestart.ClickedCh:
+			triggerRestart()
+		case <-restartCh:
+			lockPath := filepath.Join(cfg.Vault, ".data", ".biset.lock")
+			os.Remove(lockPath)
+			cb.StopFn()
+			exe, _ := os.Executable()
+			systray.Quit()
+			return exe
+		case <-mQuit.ClickedCh:
+			cb.StopFn()
+			systray.Quit()
+			return ""
+		}
+	}
+}
+
+
+
+func sendNotify(title, contact, body string) {
+	msg := contact + ":\n" + body
+	script := fmt.Sprintf(`display notification %q with title %q`, msg, title)
+	exec.Command("osascript", "-e", script).Start() //nolint:errcheck
+}
+
+func openVault(vaultPath string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", vaultPath)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", vaultPath)
+	default:
+		cmd = exec.Command("xdg-open", vaultPath)
+	}
+	cmd.Start() //nolint:errcheck
+}

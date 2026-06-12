@@ -1,12 +1,8 @@
-
 biset
-biset-darwin-arm64
-biset-darwin-amd64
-biset-linux-amd64
-connectors/claude/claude
-connectors/imap/imap
+biset-*
 
-connectors/*/config.json
-connectors/*/state.json
+relays/*/config.json
+relays/*/state.json
+relays/*/data/
 
 .DS_Store

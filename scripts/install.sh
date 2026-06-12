@@ -8,14 +8,18 @@ set -e
 REPO="yno9/biset"
 BASE_URL="https://github.com/$REPO/releases/latest/download"
 INSTALL_DIR="${BISET_DIR:-$HOME/.biset}"
-REQUIRED_CONNECTORS=(imap)
+ALL_CONNECTORS=(imap claude)
 OPTIONAL_CONNECTORS=(claude)
 
 # ── Action selection ───────────────────────────────────────────────────────────
 
-echo "What would you like to do?"
-echo "  1) Install biset"
-echo "  2) Uninstall biset (if installed)"
+TAG=$(curl -fsI "https://github.com/$REPO/releases/latest" 2>/dev/null \
+  | grep -i '^location:' | sed 's|.*/tag/||' | tr -d '\r\n')
+[ -n "$TAG" ] && echo "biset $TAG is available."
+echo ""
+echo " 1. Install or update biset"
+echo " 2. Uninstall biset"
+echo ""
 read -rp "Choice [1]: " choice </dev/tty
 choice="${choice:-1}"
 
@@ -43,7 +47,8 @@ esac
 echo "=== Installing biset ($OS/$ARCH) to $INSTALL_DIR ==="
 mkdir -p "$INSTALL_DIR/connectors"
 
-echo "Downloading biset..."
+echo "Downloading biset${TAG:+ $TAG}..."
+rm -f "$INSTALL_DIR/biset"
 curl -fsSL "$BASE_URL/biset-$OS-$ARCH" -o "$INSTALL_DIR/biset"
 chmod +x "$INSTALL_DIR/biset"
 
@@ -52,23 +57,15 @@ install_connector() {
   local dir="$INSTALL_DIR/connectors/biset-$name"
   mkdir -p "$dir"
   echo "Downloading biset-$name..."
+  rm -f "$dir/biset-$name"
   curl -fsSL "$BASE_URL/biset-$name-$OS-$ARCH"           -o "$dir/biset-$name"
   curl -fsSL "$BASE_URL/biset-$name-manifest.json"        -o "$dir/manifest.json"
   curl -fsSL "$BASE_URL/biset-$name-config.example.json"  -o "$dir/config.example.json" 2>/dev/null || true
   chmod +x "$dir/biset-$name"
 }
 
-for name in "${REQUIRED_CONNECTORS[@]}"; do
+for name in "${ALL_CONNECTORS[@]}"; do
   install_connector "$name"
-done
-
-INSTALLED_OPTIONAL=()
-echo ""
-for name in "${OPTIONAL_CONNECTORS[@]}"; do
-  read -rp "Install connector: biset-$name? [y/N]: " yn </dev/tty
-  case "$yn" in
-    [yY]*) install_connector "$name"; INSTALLED_OPTIONAL+=("biset-$name") ;;
-  esac
 done
 
 # ── Add to PATH ────────────────────────────────────────────────────────────────
@@ -91,7 +88,7 @@ IMAP_CFG="$INSTALL_DIR/connectors/biset-imap/config.json"
 
 if [ -f "$BISET_JSON" ]; then
   echo ""
-  echo "✓ Updated to latest version. Run: biset"
+  echo "✓ Updated. Run: biset connectors  to enable/disable connectors."
   exit 0
 fi
 
@@ -176,11 +173,29 @@ if [ "${IMAP_OK:-0}" != "1" ]; then
   case "$yn" in [yY]*) ;; *) echo "Aborted."; exit 1 ;; esac
 fi
 
+# ── Connector opt-in/out ───────────────────────────────────────────────────────
+
+echo ""
+echo "Connectors:"
+ENABLED_CONNECTORS=(imap)
+for name in "${OPTIONAL_CONNECTORS[@]}"; do
+  echo ""
+  echo "  biset-$name:"
+  echo "    1) on"
+  echo "    2) off"
+  read -rp "  Choice [1]: " yn </dev/tty
+  yn="${yn:-1}"
+  if [ "$yn" = "1" ]; then
+    ENABLED_CONNECTORS+=("$name")
+  fi
+done
+
 # ── Write biset.json ───────────────────────────────────────────────────────────
 
-connectors_json='"biset-imap"'
-for name in "${INSTALLED_OPTIONAL[@]}"; do
-  connectors_json="$connectors_json, \"$name\""
+connectors_json=""
+for name in "${ENABLED_CONNECTORS[@]}"; do
+  [ -n "$connectors_json" ] && connectors_json="$connectors_json, "
+  connectors_json="$connectors_json\"biset-$name\""
 done
 
 cat > "$BISET_JSON" << EOF

@@ -9,19 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yd7a/biset/core"
+	"github.com/fsnotify/fsnotify"
+	jmap "git.sr.ht/~rockorager/go-jmap"
+	"biset/vault"
 )
 
-// SyncNotification holds info for a desktop notification.
-type SyncNotification struct {
-	Contact   string
-	Body      string
-	Ts        int64
-	MessageID string
-}
-
-func runSync(cfg *Config, mgr *core.Manager) (int, []SyncNotification) {
-	lockPath, ok := acquireLock(cfg.Vault)
+func runSync(cfg *vault.Config, mgr *Manager) (int, []vault.SyncNotification) {
+	lockPath, ok := acquireSyncLock(cfg.Vault)
 	if !ok {
 		log.Printf("sync already running — skipping")
 		return 0, nil
@@ -33,20 +27,22 @@ func runSync(cfg *Config, mgr *core.Manager) (int, []SyncNotification) {
 		return 0, nil
 	}
 
-	// migrate old vault format on first run
-	core.MigrateVault(cfg.Vault)
+	vault.MigrateVault(cfg.Vault)
 
-	// 1. flush outgoing
-	core.FlushOutgoing(cfg.Vault, mgr)
+	// 1. flush outgoing → queue submissions
+	FlushOutgoing(cfg.Vault, mgr)
+
+	// 1b. dispatch queued submissions
+	dispatchSubmissions(cfg.Vault, mgr)
 
 	// 2. flush actions
-	core.FlushActions(cfg.Vault, mgr)
+	FlushActions(cfg.Vault, mgr)
 
 	// 3. fetch from all connectors
-	var allEmails []core.Email
-	var allMailboxes []core.Mailbox
-	mailboxSeen := map[string]bool{}
-	for _, c := range mgr.Connectors() {
+	var allMessages []vault.Message
+	var allInboxes []vault.Inbox
+	inboxSeen := map[string]bool{}
+	for _, c := range mgr.Relays() {
 		if !c.Has("fetch") {
 			continue
 		}
@@ -55,85 +51,81 @@ func runSync(cfg *Config, mgr *core.Manager) (int, []SyncNotification) {
 			log.Printf("[%s] fetch: %v", c.Name(), err)
 			continue
 		}
-		allEmails = append(allEmails, result.Emails...)
-		for _, m := range result.Mailboxes {
-			if !mailboxSeen[m.ID] {
-				mailboxSeen[m.ID] = true
-				allMailboxes = append(allMailboxes, m)
+		allMessages = append(allMessages, result.Messages...)
+		for _, ib := range result.Inboxes {
+			if !inboxSeen[string(ib.ID)] {
+				inboxSeen[string(ib.ID)] = true
+				allInboxes = append(allInboxes, ib)
 			}
 		}
 	}
 
 	// 4. assign thread IDs + deduplicate
-	// Pre-resolve threadIDs for replies to already-stored emails.
-	// AssignThreadIDs only sees the current batch; without this, a reply
-	// fetched in a later sync cycle gets a brand-new threadId instead of
-	// joining the original thread.
-	if existing, err := core.ScanEmails(cfg.Vault); err == nil {
-		existingByMsgID := make(map[string]string, len(existing))
-		for _, e := range existing {
-			if msgID := core.EmailMessageID(e); msgID != "" {
-				existingByMsgID[msgID] = e.ThreadID
+	if existing, err := vault.ScanMessages(cfg.Vault); err == nil {
+		existingByMsgID := make(map[string]jmap.ID, len(existing))
+		for _, m := range existing {
+			if msgID := vault.MessageHeaderID(m); msgID != "" {
+				existingByMsgID[msgID] = m.ThreadID
 			}
 		}
-		for i := range allEmails {
-			if allEmails[i].ThreadID != "" {
+		for i := range allMessages {
+			if allMessages[i].ThreadID != "" {
 				continue
 			}
-			if inReplyTo := core.EmailInReplyTo(allEmails[i]); inReplyTo != "" {
+			if inReplyTo := vault.MessageInReplyTo(allMessages[i]); inReplyTo != "" {
 				if tid := existingByMsgID[inReplyTo]; tid != "" {
-					allEmails[i].ThreadID = tid
+					allMessages[i].ThreadID = tid
 				}
 			}
 		}
 	}
-	allEmails = core.DeduplicateEmails(allEmails)
-	allEmails = core.AssignThreadIDs(allEmails)
-	fmt.Printf("fetched %d emails\n", len(allEmails))
+	allMessages = vault.DeduplicateMessages(allMessages)
+	allMessages = vault.AssignThreadIDs(allMessages)
+	fmt.Printf("fetched %d messages\n", len(allMessages))
 
-	// collect notifications (received emails newer than 5 minutes ago)
+	// collect notifications (received messages newer than 5 minutes ago)
 	cutoff := time.Now().Add(-5 * time.Minute).UnixMilli()
-	var notifications []SyncNotification
-	for _, e := range allEmails {
-		inboxKey := core.InboxKeyFromMailboxID(core.EmailMailboxID(e))
-		fromAddr := core.EmailFromAddr(e)
+	var notifications []vault.SyncNotification
+	for _, m := range allMessages {
+		inboxKey := vault.InboxKeyFromMailboxID(vault.MessageMailboxID(m))
+		fromAddr := vault.MessageFromAddr(m)
 		if strings.EqualFold(fromAddr, inboxKey) {
 			continue // sent by self
 		}
-		if e.ReceivedAt.UnixMilli() < cutoff {
+		if vault.TimeVal(m.ReceivedAt).UnixMilli() < cutoff {
 			continue
 		}
-		body := EmailBodyPreview(e, 80)
-		notifications = append(notifications, SyncNotification{
+		body := messageBodyPreview(m, 80)
+		notifications = append(notifications, vault.SyncNotification{
 			Contact:   fromAddr,
 			Body:      body,
-			Ts:        e.ReceivedAt.UnixMilli(),
-			MessageID: core.EmailMessageID(e),
+			Ts:        vault.TimeVal(m.ReceivedAt).UnixMilli(),
+			MessageID: vault.MessageHeaderID(m),
 		})
 	}
 
-	// 5. write mailboxes.json
-	if len(allMailboxes) > 0 {
-		core.WriteMailboxes(cfg.Vault, allMailboxes) //nolint:errcheck
+	// 5. write inboxes
+	if len(allInboxes) > 0 {
+		vault.WriteInboxes(cfg.Vault, allInboxes) //nolint:errcheck
 	}
 
 	// 6. group, merge with existing, write
 	totalUpdated := 0
-	if len(allEmails) > 0 {
-		byInbox := groupEmailsByInbox(allEmails)
-		for inboxKey, emails := range byInbox {
+	if len(allMessages) > 0 {
+		byInbox := groupMessagesByInbox(allMessages)
+		for inboxKey, msgs := range byInbox {
 			inboxDir := filepath.Join(cfg.Vault, inboxKey)
-			threads := core.GroupByThread(emails)
+			threads := vault.GroupByThread(msgs)
 			for _, t := range threads {
-				threadEmails := emailsForThread(emails, t.ID)
-				merged := mergeWithExistingThread(cfg.Vault, t.ID, threadEmails)
-				if core.WriteThreadMD(cfg.Vault, inboxKey, merged) {
+				threadMsgs := messagesForThread(msgs, t.ID)
+				merged := mergeWithExistingThread(cfg.Vault, t.ID, threadMsgs)
+				if vault.WriteThreadMD(cfg.Vault, inboxKey, merged) {
 					totalUpdated++
 				}
 			}
-			core.RenderMissingMDs(cfg.Vault, inboxKey)
-			core.EnsureNewFile(cfg.Vault, inboxKey)
-			writeSyncLog(cfg.Vault, inboxKey, emailsForInbox(emails, inboxKey))
+			vault.RenderMissingMDs(cfg.Vault, inboxKey)
+			vault.EnsureNewFile(cfg.Vault, inboxKey)
+			writeSyncLog(cfg.Vault, inboxKey, messagesForInbox(msgs, inboxKey))
 			_ = inboxDir
 		}
 	}
@@ -142,54 +134,74 @@ func runSync(cfg *Config, mgr *core.Manager) (int, []SyncNotification) {
 	return totalUpdated, notifications
 }
 
-// mergeWithExistingThread reads existing emails for the thread from vault and
-// merges with newly fetched ones.
-func mergeWithExistingThread(vaultDir, threadID string, incoming []core.Email) []core.Email {
-	existing := core.ReadEmailsForThread(vaultDir, threadID)
+// dispatchSubmissions sends all queued PendingSubmissions and records results in vault.
+func dispatchSubmissions(vaultDir string, mgr *Manager) {
+	subs, err := vault.ScanSubmissions(vaultDir)
+	if err != nil || len(subs) == 0 {
+		return
+	}
+	for _, s := range subs {
+		c := mgr.RelayForAccount(s.InboxKey)
+		if c == nil {
+			log.Printf("[dispatch] no relay for inbox %q (submission %s)", s.InboxKey, s.ID)
+			continue
+		}
+		if err := c.Send(s.Message, s.Envelope); err != nil {
+			log.Printf("[dispatch] send error %s: %v", s.ID, err)
+			continue
+		}
+		vault.WriteMessage(vaultDir, s.Message) //nolint:errcheck
+		existing := vault.ReadMessagesForThread(vaultDir, s.Message.ThreadID)
+		vault.WriteThreadMD(vaultDir, s.InboxKey, existing)
+		vault.DeleteSubmission(vaultDir, s.ID) //nolint:errcheck
+		fmt.Printf("sent: %s → %v\n", s.ID, s.Envelope.RcptTo)
+	}
+}
+
+func mergeWithExistingThread(vaultDir string, threadID jmap.ID, incoming []vault.Message) []vault.Message {
+	existing := vault.ReadMessagesForThread(vaultDir, threadID)
 	if len(existing) == 0 {
 		return incoming
 	}
-	return core.MergeEmails(incoming, existing)
+	return vault.MergeMessages(incoming, existing)
 }
 
-// groupEmailsByInbox separates emails by inbox key derived from MailboxIDs.
-func groupEmailsByInbox(emails []core.Email) map[string][]core.Email {
-	result := map[string][]core.Email{}
-	for _, e := range emails {
-		mbxID := core.EmailMailboxID(e)
-		inboxKey := core.InboxKeyFromMailboxID(mbxID)
+func groupMessagesByInbox(messages []vault.Message) map[string][]vault.Message {
+	result := map[string][]vault.Message{}
+	for _, m := range messages {
+		mbxID := vault.MessageMailboxID(m)
+		inboxKey := vault.InboxKeyFromMailboxID(mbxID)
 		if inboxKey == "" {
-			inboxKey = core.EmailFromAddr(e)
+			inboxKey = vault.MessageFromAddr(m)
 		}
-		result[inboxKey] = append(result[inboxKey], e)
+		result[inboxKey] = append(result[inboxKey], m)
 	}
 	return result
 }
 
-func emailsForThread(emails []core.Email, threadID string) []core.Email {
-	var out []core.Email
-	for _, e := range emails {
-		if e.ThreadID == threadID {
-			out = append(out, e)
+func messagesForThread(messages []vault.Message, threadID jmap.ID) []vault.Message {
+	var out []vault.Message
+	for _, m := range messages {
+		if m.ThreadID == threadID {
+			out = append(out, m)
 		}
 	}
 	return out
 }
 
-func emailsForInbox(emails []core.Email, inboxKey string) []core.Email {
-	mbxID := core.MakeMailboxID(inboxKey)
-	var out []core.Email
-	for _, e := range emails {
-		if e.MailboxIDs[mbxID] {
-			out = append(out, e)
+func messagesForInbox(messages []vault.Message, inboxKey string) []vault.Message {
+	mbxID := jmap.ID(vault.MakeMailboxID(inboxKey))
+	var out []vault.Message
+	for _, m := range messages {
+		if m.MailboxIDs[mbxID] {
+			out = append(out, m)
 		}
 	}
 	return out
 }
 
-// EmailBodyPreview returns a truncated body string for notifications.
-func EmailBodyPreview(e core.Email, maxRunes int) string {
-	body := core.EmailBody(e)
+func messageBodyPreview(m vault.Message, maxRunes int) string {
+	body := vault.MessageBody(m)
 	r := []rune(body)
 	if len(r) > maxRunes {
 		return string(r[:maxRunes])
@@ -197,27 +209,25 @@ func EmailBodyPreview(e core.Email, maxRunes int) string {
 	return body
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
 // ── sync log ──────────────────────────────────────────────────────────────────
 
-func writeSyncLog(vaultDir, inboxKey string, emails []core.Email) {
-	if len(emails) == 0 {
+func writeSyncLog(vaultDir, inboxKey string, messages []vault.Message) {
+	if len(messages) == 0 {
 		return
 	}
 	var lines []string
-	for _, e := range emails {
-		ts := e.ReceivedAt.Local().Format("2006-01-02 15:04")
-		from := core.EmailFromAddr(e)
-		if name := core.EmailFromName(e); name != "" {
+	mbxID := jmap.ID(vault.MakeMailboxID(inboxKey))
+	for _, m := range messages {
+		ts := vault.TimeVal(m.ReceivedAt).Local().Format("2006-01-02 15:04")
+		from := vault.MessageFromAddr(m)
+		if name := vault.MessageFromName(m); name != "" {
 			from = name
 		}
 		var to string
-		mbxID := core.MakeMailboxID(inboxKey)
-		if e.MailboxIDs[mbxID] && !strings.EqualFold(core.EmailFromAddr(e), inboxKey) {
+		if m.MailboxIDs[mbxID] && !strings.EqualFold(vault.MessageFromAddr(m), inboxKey) {
 			to = inboxKey
-		} else if len(e.To) > 0 {
-			to = e.To[0].Email
+		} else if len(m.To) > 0 && m.To[0] != nil {
+			to = m.To[0].Email
 		} else {
 			to = "?"
 		}
@@ -236,4 +246,98 @@ func firstAddr(jsonArr string) string {
 		return addrs[0]
 	}
 	return jsonArr
+}
+
+// ── watcher ───────────────────────────────────────────────────────────────────
+
+func StartWatcher(
+	cfg *vault.Config,
+	mgr *Manager,
+	configPath string,
+	interval time.Duration,
+	onSync func(notify bool),
+	onQuit func(),
+) {
+	go func() {
+		for range mgr.Changed() {
+			go onSync(true)
+		}
+	}()
+
+	bisetDir := filepath.Dir(configPath)
+	go watchVault(cfg.Vault, bisetDir, func() { go onSync(false) }, onQuit)
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			go onSync(false)
+		}
+	}()
+
+	go onSync(false)
+}
+
+func watchVault(vaultDir, bisetDir string, onAction func(), onQuit func()) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return
+	}
+	defer watcher.Close()
+
+	watcher.Add(vaultDir) //nolint:errcheck
+	watcher.Add(bisetDir) //nolint:errcheck
+	entries, _ := os.ReadDir(vaultDir)
+	for _, d := range entries {
+		if d.IsDir() {
+			watcher.Add(filepath.Join(vaultDir, d.Name())) //nolint:errcheck
+		}
+	}
+
+	debounce := time.NewTimer(0)
+	<-debounce.C
+	pending := false
+
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			base := filepath.Base(event.Name)
+			if base == "biset-quit.json" && event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
+				os.Remove(event.Name) //nolint:errcheck
+				if onQuit != nil {
+					onQuit()
+				}
+				return
+			}
+			if !strings.HasSuffix(event.Name, ".md") {
+				continue
+			}
+			if event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
+				continue
+			}
+			b, err := os.ReadFile(event.Name)
+			if err != nil {
+				continue
+			}
+			fm := vault.ParseFrontmatter(string(b))
+			status := strings.TrimSpace(fm["status"])
+			hasBangB := strings.Contains(vault.ExtractBody(string(b)), "!b")
+			if status != "send" && status != "seen" && !hasBangB {
+				continue
+			}
+			if !pending {
+				pending = true
+				debounce.Reset(500 * time.Millisecond)
+			}
+		case <-debounce.C:
+			if pending {
+				pending = false
+				onAction()
+			}
+		case <-watcher.Errors:
+		}
+	}
 }

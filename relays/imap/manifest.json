@@ -1,0 +1,7 @@
+{
+  "name": "biset-imap",
+  "version": "0.1.0",
+  "description": "IMAP/SMTP connector",
+  "capabilities": ["fetch", "send", "handle", "watch"],
+  "protocols": ["imap", "smtp"]
+}
