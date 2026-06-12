@@ -13,9 +13,15 @@ jobs:
           - os: macos-latest
             goos: darwin
             goarch: arm64
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
           - os: ubuntu-latest
             goos: linux
             goarch: amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
 
     runs-on: ${{ matrix.os }}
 
@@ -30,47 +36,31 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build -ldflags "-X main.version=${{ github.ref_name }}" -o biset-${{ matrix.goos }}-${{ matrix.goarch }} .
+          CGO_ENABLED: '0'
+          VERSION: ${{ github.ref_name }}
+        run: go build -ldflags "-X main.version=$VERSION" -o biset-${{ matrix.goos }}-${{ matrix.goarch }} .
 
-      - name: Build connectors
+      - name: Build imapsmtp-client relay
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
+          VERSION: ${{ github.ref_name }}
         run: |
-          cd connectors/imap
-          go build -ldflags "-X main.version=${{ github.ref_name }}" -o biset-imap-${{ matrix.goos }}-${{ matrix.goarch }} .
-          cd ../claude
-          go build -ldflags "-X main.version=${{ github.ref_name }}" -o biset-claude-${{ matrix.goos }}-${{ matrix.goarch }} .
+          cd relays/imapsmtp-client
+          go build -ldflags "-X main.version=$VERSION" -o imapsmtp-client-${{ matrix.goos }}-${{ matrix.goarch }} .
 
-      - name: Prepare connector metadata
-        if: matrix.goos == 'linux'
-        run: |
-          cp connectors/imap/manifest.json     biset-imap-manifest.json
-          cp connectors/imap/config.example.json biset-imap-config.example.json
-          cp connectors/claude/manifest.json    biset-claude-manifest.json
-          cp connectors/claude/config.example.json biset-claude-config.example.json
-          cp assets/setup.html setup.html
-          cp assets/setup.js   setup.js
-          cp scripts/install.sh install.sh
-
-      - name: Upload platform binaries
+      - name: Upload binaries
         uses: softprops/action-gh-release@v2
         with:
           files: |
             biset-${{ matrix.goos }}-${{ matrix.goarch }}
-            connectors/imap/biset-imap-${{ matrix.goos }}-${{ matrix.goarch }}
-            connectors/claude/biset-claude-${{ matrix.goos }}-${{ matrix.goarch }}
+            relays/imapsmtp-client/imapsmtp-client-${{ matrix.goos }}-${{ matrix.goarch }}
 
       - name: Upload shared assets
-        if: matrix.goos == 'linux'
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            biset-imap-manifest.json
-            biset-imap-config.example.json
-            biset-claude-manifest.json
-            biset-claude-config.example.json
-            setup.html
-            setup.js
-            install.sh
+            relays/imapsmtp-client/config.example.json
+            scripts/install.sh
