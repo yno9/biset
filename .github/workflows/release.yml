@@ -26,9 +26,9 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.21'
 
@@ -51,7 +51,7 @@ jobs:
           go build -ldflags "-X main.version=$VERSION" -o imapsmtp-client-${{ matrix.goos }}-${{ matrix.goarch }} .
 
       - name: Upload binaries
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             biset-${{ matrix.goos }}-${{ matrix.goarch }}
@@ -59,7 +59,7 @@ jobs:
 
       - name: Upload shared assets
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             relays/imapsmtp-client/config.example.json
