@@ -12,7 +12,7 @@ External events
    ├── SMTP Host
    ├── ActivityPub
    └── ...
-       ↕ JMAP HTTP + SSE
+       ↕ Server-Sent Events
   biset core (JMAP client + server)
    └── Vault (JSON + Markdown)
        ↕ 
@@ -33,7 +33,7 @@ External events
 ## Requirements
 
 - macOS or Linux
-- An IMAP/SMTP account (for imapsmtp-client relay)
+- An IMAP-SMTP account (for imapsmtp-client relay)
 - Go 1.21+ (for building from source)
 
 ---
@@ -48,8 +48,7 @@ curl -fsSL https://github.com/yno9/biset/releases/latest/download/install.sh | s
 
 ```sh
 git clone https://github.com/yno9/biset
-cd biset
-go build -o biset .
+cd biset && go build -o biset .
 cd relays/imapsmtp-client && go build .
 ```
 
@@ -128,9 +127,7 @@ JSON (`.data/`) is the source of truth. Markdown files are rendered from JSON. O
 ---
 subject: "Re: hello"
 contact: bob@example.com
-mailboxId: mbx-you@example.com
 id: abc123
-seen: true
 status:
 ---
 
@@ -151,9 +148,7 @@ Hey, are you free tomorrow?
 |---|---|
 | `subject` | Thread subject |
 | `contact` | The other party's address |
-| `mailboxId` | JMAP Mailbox ID — determines which relay handles this thread |
 | `id` | Short thread ID |
-| `seen` | `false` = thread has unread messages |
 | `status` | Set to trigger an action (see below) |
 
 ---
@@ -204,9 +199,8 @@ Set `status:` in frontmatter to trigger an action on next sync:
 |---|---|
 | `send` | send the compose area via the relay |
 | `seen` | mark thread as read |
-| `archived` | archive (IMAP: move to Archive) |
-| `deleted` | delete (IMAP: expunge) |
-| `spam` | mark as spam |
+| `archive` | archive (IMAP: move to Archive) |
+| `delete` | delete (IMAP: expunge) |
 
 ---
 
