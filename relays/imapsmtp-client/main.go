@@ -180,9 +180,13 @@ func (h *handler) emailSet(args json.RawMessage) (any, error) {
 			notCreated[key] = errObj("invalidProperties", err.Error())
 			continue
 		}
-		msg.ID = newID()
+		if msg.ID == "" {
+			msg.ID = newID()
+		}
+		receivedAt := time.Now().UTC()
+		msg.ReceivedAt = &receivedAt
 		h.store.PutPending(msg)
-		created[key] = map[string]any{"id": msg.ID}
+		created[key] = map[string]any{"id": msg.ID, "receivedAt": receivedAt.Format(time.RFC3339Nano)}
 	}
 
 	for msgID, rawPatch := range req.Update {
@@ -272,7 +276,11 @@ func (h *handler) emailSubmissionSet(args json.RawMessage) (any, error) {
 			inReplyTo = msg.InReplyTo[0]
 		}
 
-		raw, err := Send(acct.SMTP, acct.IMAP.Username, to, cc, bcc, msg.Subject, vault.MessageBody(msg), inReplyTo)
+		smtpMsgID := ""
+		if len(msg.MessageID) > 0 {
+			smtpMsgID = msg.MessageID[0]
+		}
+		raw, err := Send(acct.SMTP, acct.IMAP.Username, to, cc, bcc, msg.Subject, vault.MessageBody(msg), inReplyTo, smtpMsgID)
 		if err != nil {
 			notCreated[key] = errObj("serverFail", err.Error())
 			continue

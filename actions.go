@@ -178,7 +178,7 @@ func flushMDSend(filePath, inboxKey, vaultDir string, mgr *Manager) bool {
 		msg.References = []string{inReplyTo}
 	}
 	if len(msg.MessageID) == 0 {
-		msg.MessageID = []string{string(msgID) + "@biset"}
+		msg.MessageID = []string{vault.MessageIDFromMsgID(string(msgID))}
 	}
 
 	rcptTo := make([]*vault.EnvelopeAddress, 0, len(toAddrs)+len(ccAddrs)+len(bccAddrs))

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -25,7 +26,6 @@ func main() {
 	//   biset sync          one-shot sync and exit
 	//   biset version       print version
 
-	intervalFlag := time.Minute
 	fullSyncFlag := false
 
 	subcommand := ""
@@ -46,13 +46,6 @@ func main() {
 			}
 		case "--version", "-version":
 			subcommand = "version"
-		case "--interval", "-interval":
-			if i+1 < len(args) {
-				i++
-				if d, err := time.ParseDuration(args[i]); err == nil {
-					intervalFlag = d
-				}
-			}
 		case "--full", "-full":
 			fullSyncFlag = true
 		default:
@@ -78,23 +71,20 @@ Your email. Local. Private.
 USAGE
   biset <subcommand> [flags]
 
-SUBCOMMANDS
-  up            Start biset (sync + watch, macOS: menu bar icon)
-  down          Stop running biset
-  sync          Trigger a sync
-  relays                   List relays
-  relays up [name]          Start a local relay
-  relays down [name]        Stop a local relay
-  relays config [name]      Edit a local relay's config
-  server up                Start JMAP server
-  server down              Stop JMAP server
-  config        Edit biset config
-  notification  Enable/disable desktop notifications
-  update        Update to latest version
-  version       Print version
-
-FLAGS
-  --interval duration   Sync interval (default 1m)
+Commands
+  up                      Start biset (sync + watch, macOS: menu bar icon)
+  down                    Stop running biset
+  sync                    Trigger a sync
+  relays                  List relays
+  relays up [name]        Start a local relay
+  relays down [name]      Stop a local relay
+  relays config [name]    Edit a local relay's config
+  server on               Start JMAP server
+  server off              Stop JMAP server
+  config                  Edit biset config
+  notification            Enable/disable desktop notifications
+  update                  Update to latest version
+  version                 Print version
 
 `[1:])
 		return
@@ -190,17 +180,17 @@ FLAGS
 		if subcommand == "" {
 			interfaces.RunStatus(cfg, isBisetProcess)
 			fmt.Print(`
-SUBCOMMANDS
-  up                       Start biset
-  down                     Stop biset
-  sync                     Trigger a sync
-  relays                   List relays
-  relays up [name]          Start a local relay
-  relays down [name]        Stop a local relay
-  relays config [name]      Edit a local relay's config
-  server up                Start JMAP server
-  server down              Stop JMAP server
-  config                   Edit biset config
+Commands
+  up                      Start biset
+  down                    Stop biset
+  sync                    Trigger a sync
+  relays                  List relays
+  relays up [name]        Start a local relay
+  relays down [name]      Stop a local relay
+  relays config [name]    Edit a local relay's config
+  server on               Start JMAP server
+  server off              Stop JMAP server
+  config                  Edit biset config
 `)
 			return
 		}
@@ -295,89 +285,104 @@ SUBCOMMANDS
 
 	switch subcommand {
 	case "sync":
-		_ = fullSyncFlag // TODO: reset node JMAP state when implemented
 		runSync(cfg, mgr)
+		if fullSyncFlag {
+			vault.PurgeMessageCache(cfg.Vault)
+			runSync(cfg, mgr)
+			vault.CleanupOrphanedMDs(cfg.Vault)
+		}
 
 	default: // "up"
+		if os.Getenv("BISET_DAEMON") == "" {
+			logPath := filepath.Join(bisetDir, "biset.log")
+			logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			if err != nil {
+				log.Fatalf("cannot open log file: %v", err)
+			}
+			cmd := exec.Command(os.Args[0], os.Args[1:]...)
+			cmd.Env = append(os.Environ(), "BISET_DAEMON=1")
+			cmd.Stdout = logFile
+			cmd.Stderr = logFile
+			if err := cmd.Start(); err != nil {
+				log.Fatalf("cannot start daemon: %v", err)
+			}
+			fmt.Printf("biset: started (pid %d)\n", cmd.Process.Pid)
+			return
+		}
 		startManagedRelays(cfg, bisetDir)
 		mgr.WatchRelays()
-		if cfg.Server.Enabled() {
-			go startJMAPServer(cfg, pgpKey)
-		}
 		lockPath, ok := acquireLock(cfg.Vault)
 		if !ok {
 			fmt.Fprintln(os.Stderr, "biset: already running")
 			os.Exit(1)
 		}
 		defer os.Remove(lockPath)
-		fmt.Printf("biset: started (pid %d)\n", os.Getpid())
-		watchLoop(cfg, mgr, configPath, intervalFlag)
+		watchLoop(cfg, mgr, configPath, pgpKey)
 	}
 }
 
 func runServerCommand(cfg *vault.Config, bisetDir, configPath string, args []string) {
-	sub := ""
 	if len(args) > 0 {
-		sub = args[0]
+		switch args[0] {
+		case "on":
+			interfaces.RunServerSet(configPath, true)
+			return
+		case "off":
+			interfaces.RunServerSet(configPath, false)
+			return
+		}
 	}
-	switch sub {
-	case "up":
-		if !cfg.Server.Enabled() {
-			fmt.Fprintln(os.Stderr, "server: port and bind must be set in config")
-			os.Exit(1)
-		}
-		lockPath, ok := acquireLock(cfg.Vault)
-		if !ok {
-			fmt.Fprintln(os.Stderr, "biset: already running")
-			os.Exit(1)
-		}
-		defer os.Remove(lockPath)
-		keyPEM := loadOrGenerateKey(filepath.Join(bisetDir, "private_key.pem"))
-		pgpKey := loadPGPKey(keyPEM)
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-		go func() {
-			<-sig
-			os.Exit(0)
-		}()
-		fmt.Printf("biset server: started (pid %d) on %s:%d\n", os.Getpid(), cfg.Server.Bind, cfg.Server.Port)
-		startJMAPServer(cfg, pgpKey)
-	case "down":
-		quitPath := filepath.Join(cfg.Vault, "biset-quit.json")
-		os.WriteFile(quitPath, []byte("{}"), 0644) //nolint:errcheck
-		fmt.Println("biset: stopping")
-		lockPath := filepath.Join(cfg.Vault, ".data", ".biset.lock")
-		for i := 0; i < 30; i++ {
-			time.Sleep(100 * time.Millisecond)
-			if _, err := os.Stat(lockPath); os.IsNotExist(err) {
-				fmt.Println("biset: stopped")
-				return
-			}
-		}
-	default:
-		fmt.Fprintf(os.Stderr, "usage: biset server up|down\n")
-		os.Exit(1)
-	}
+	fmt.Fprintf(os.Stderr, "Usage: biset server on|off\n")
+	os.Exit(1)
 }
 
-func watchLoop(cfg *vault.Config, mgr *Manager, configPath string, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+func watchLoop(cfg *vault.Config, mgr *Manager, configPath string, pgpKey string) {
 	configChanged := interfaces.WatchConfigFile(configPath)
+	vaultAction, quit := WatchVaultEvents(cfg, configPath)
+
+	var serverCancel context.CancelFunc
+	startServer := func(c *vault.Config) {
+		if serverCancel != nil {
+			serverCancel()
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		serverCancel = cancel
+		go startJMAPServer(ctx, c, pgpKey)
+	}
+	stopServer := func() {
+		if serverCancel != nil {
+			serverCancel()
+			serverCancel = nil
+		}
+	}
+
+	if cfg.Server.Enabled() {
+		startServer(cfg)
+	}
 
 	runSync(cfg, mgr)
 	for {
 		select {
-		case <-ticker.C:
-			runSync(cfg, mgr)
 		case <-mgr.Changed():
+			runSync(cfg, mgr)
+		case <-vaultAction:
 			runSync(cfg, mgr)
 		case <-configChanged:
 			fmt.Println("config changed — reloading")
 			if newCfg, err := vault.LoadConfig(configPath); err == nil {
+				wasEnabled := cfg.Server.Enabled()
 				cfg = newCfg
+				switch {
+				case !wasEnabled && cfg.Server.Enabled():
+					startServer(cfg)
+				case wasEnabled && !cfg.Server.Enabled():
+					stopServer()
+				}
 			}
 			runSync(cfg, mgr)
+		case <-quit:
+			stopServer()
+			return
 		}
 	}
 }

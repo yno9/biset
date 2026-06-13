@@ -82,6 +82,14 @@ func (s *Store) Get(id jmap.ID) (vault.Message, bool) {
 	return m, ok
 }
 
+// Delete removes a persisted message by ID.
+func (s *Store) Delete(id jmap.ID) {
+	s.mu.Lock()
+	delete(s.msgs, id)
+	s.mu.Unlock()
+	os.Remove(s.msgPath(id)) //nolint:errcheck
+}
+
 // All returns all persisted messages sorted newest-first.
 func (s *Store) All() []vault.Message {
 	s.mu.RLock()

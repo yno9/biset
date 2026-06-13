@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -53,11 +54,21 @@ func RunStatus(cfg *vault.Config, isBisetProcess func(pid int) bool) {
 		}
 	}
 
+	serveStatus := "not serving"
+	if cfg.Server.Enabled() {
+		addr := fmt.Sprintf("%s:%d", cfg.Server.Bind, cfg.Server.Port)
+		if c, err := net.DialTimeout("tcp", addr, 300*time.Millisecond); err == nil {
+			c.Close()
+			serveStatus = fmt.Sprintf("serving: %d", cfg.Server.Port)
+		}
+	}
+
 	messages, _ := vault.ScanMessages(cfg.Vault)
 	threads, _ := vault.ScanThreads(cfg.Vault)
 
 	fmt.Printf("\nStatus\n")
 	fmt.Printf("  %s\n", daemonStatus)
+	fmt.Printf("  %s\n", serveStatus)
 	fmt.Printf("  vault:    %s\n", cfg.Vault)
 	fmt.Printf("  messages: %d\n", len(messages))
 	fmt.Printf("  threads:  %d\n", len(threads))
@@ -150,6 +161,102 @@ func PingRelay(n vault.RelayConfig) ([]RelayAccountInfo, error) {
 		out = append(out, RelayAccountInfo{AccountID: accountID, Total: total})
 	}
 	return out, nil
+}
+
+// RunServerSet directly sets the JMAP server enabled state without interaction.
+func RunServerSet(configPath string, enabled bool) {
+	cfg, err := vault.LoadConfig(configPath)
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	if cfg.Server.Port == 0 || cfg.Server.Bind == "" {
+		fmt.Fprintln(os.Stderr, "server: port and bind must be set in config")
+		os.Exit(1)
+	}
+	if enabled == cfg.Server.Serve {
+		fmt.Println("No changes.")
+		return
+	}
+	b, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Fatalf("read config: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		log.Fatalf("parse config: %v", err)
+	}
+	var rawServer map[string]json.RawMessage
+	if err := json.Unmarshal(raw["server"], &rawServer); err != nil {
+		rawServer = map[string]json.RawMessage{}
+	}
+	val, _ := json.Marshal(enabled)
+	rawServer["serve"] = val
+	raw["server"], _ = json.Marshal(rawServer)
+	out, _ := json.MarshalIndent(raw, "", "  ")
+	if err := os.WriteFile(configPath, out, 0644); err != nil {
+		log.Fatalf("write config: %v", err)
+	}
+	if enabled {
+		fmt.Println("Server Started.")
+	} else {
+		fmt.Println("Server stopped.")
+	}
+}
+
+// RunServerToggle provides an interactive CLI to toggle the JMAP server on/off.
+func RunServerToggle(configPath string) {
+	cfg, err := vault.LoadConfig(configPath)
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	if cfg.Server.Port == 0 || cfg.Server.Bind == "" {
+		fmt.Fprintln(os.Stderr, "server: port and bind must be set in config")
+		os.Exit(1)
+	}
+
+	current := "2"
+	if cfg.Server.Serve {
+		current = "1"
+	}
+	status := "off"
+	if current == "1" {
+		status = "on"
+	}
+	fmt.Printf("Server [%s] (%s:%d):\n", status, cfg.Server.Bind, cfg.Server.Port)
+	fmt.Println("  1. on")
+	fmt.Println("  2. off")
+	fmt.Printf("Choice [%s]: ", current)
+	var line string
+	fmt.Fscanln(os.Stdin, &line)
+	if line == "" {
+		line = current
+	}
+	enabled := line == "1"
+	if enabled == cfg.Server.Serve {
+		fmt.Println("No changes.")
+		return
+	}
+
+	b, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Fatalf("read config: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		log.Fatalf("parse config: %v", err)
+	}
+	var rawServer map[string]json.RawMessage
+	if err := json.Unmarshal(raw["server"], &rawServer); err != nil {
+		rawServer = map[string]json.RawMessage{}
+	}
+	val, _ := json.Marshal(enabled)
+	rawServer["serve"] = val
+	raw["server"], _ = json.Marshal(rawServer)
+	out, _ := json.MarshalIndent(raw, "", "  ")
+	if err := os.WriteFile(configPath, out, 0644); err != nil {
+		log.Fatalf("write config: %v", err)
+	}
+	fmt.Println("Saved.")
 }
 
 // RunNotification provides an interactive CLI to toggle notifications on/off.

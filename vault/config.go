@@ -51,10 +51,11 @@ type ServerConfig struct {
 	RelayName string `json:"relayname,omitempty"`
 	Password  string `json:"password,omitempty"`
 	Interface string `json:"interface,omitempty"`
+	Serve     bool   `json:"serve,omitempty"`
 }
 
 func (s ServerConfig) Enabled() bool {
-	return s.Port > 0 && s.Bind != ""
+	return s.Port > 0 && s.Bind != "" && s.Serve
 }
 
 type Config struct {

@@ -97,9 +97,10 @@ func FetchNew(cfg IMAPConfig, inboxKey string, state FetchState) ([]vault.Messag
 func fetchUIDs(c *imapclient.Client, uids []imap.UID, selfAddr, inboxKey string, msgUIDs map[string]uint32) ([]vault.Message, imap.UID) {
 	bodySection := &imap.FetchItemBodySection{Peek: true}
 	fetchCmd := c.Fetch(imap.UIDSetNum(uids...), &imap.FetchOptions{
-		UID:         true,
-		Flags:       true,
-		BodySection: []*imap.FetchItemBodySection{bodySection},
+		UID:          true,
+		Flags:        true,
+		InternalDate: true,
+		BodySection:  []*imap.FetchItemBodySection{bodySection},
 	})
 	defer fetchCmd.Close()
 
@@ -112,6 +113,7 @@ func fetchUIDs(c *imapclient.Client, uids []imap.UID, selfAddr, inboxKey string,
 		}
 		var uid imap.UID
 		var bodyData []byte
+		var internalDate time.Time
 		hasSeen := false
 		for {
 			item := msg.Next()
@@ -129,6 +131,8 @@ func fetchUIDs(c *imapclient.Client, uids []imap.UID, selfAddr, inboxKey string,
 						hasSeen = true
 					}
 				}
+			case imapclient.FetchItemDataInternalDate:
+				internalDate = v.Time
 			}
 		}
 		if uid > maxUID {
@@ -138,6 +142,9 @@ func fetchUIDs(c *imapclient.Client, uids []imap.UID, selfAddr, inboxKey string,
 			m, err := parseRawMessage(bodyData, selfAddr, inboxKey, hasSeen)
 			if err != nil || m == nil {
 				continue
+			}
+			if !internalDate.IsZero() {
+				m.ReceivedAt = vault.TimePtr(internalDate)
 			}
 			if uid > 0 {
 				msgUIDs[string(m.ID)] = uint32(uid)
@@ -190,8 +197,9 @@ func fetchSent(cfg IMAPConfig, inboxKey string, state FetchState, msgUIDs map[st
 
 	bodySection := &imap.FetchItemBodySection{}
 	fetchCmd := c.Fetch(imap.UIDSetNum(uids...), &imap.FetchOptions{
-		UID:         true,
-		BodySection: []*imap.FetchItemBodySection{bodySection},
+		UID:          true,
+		InternalDate: true,
+		BodySection:  []*imap.FetchItemBodySection{bodySection},
 	})
 	defer fetchCmd.Close()
 
@@ -204,6 +212,7 @@ func fetchSent(cfg IMAPConfig, inboxKey string, state FetchState, msgUIDs map[st
 		}
 		var uid imap.UID
 		var bodyData []byte
+		var internalDate time.Time
 		for {
 			item := msg.Next()
 			if item == nil {
@@ -214,6 +223,8 @@ func fetchSent(cfg IMAPConfig, inboxKey string, state FetchState, msgUIDs map[st
 				uid = v.UID
 			case imapclient.FetchItemDataBodySection:
 				bodyData, _ = io.ReadAll(v.Literal)
+			case imapclient.FetchItemDataInternalDate:
+				internalDate = v.Time
 			}
 		}
 		if uid > maxUID {
@@ -225,6 +236,9 @@ func fetchSent(cfg IMAPConfig, inboxKey string, state FetchState, msgUIDs map[st
 				continue
 			}
 			m.Keywords["$seen"] = true
+			if !internalDate.IsZero() {
+				m.ReceivedAt = vault.TimePtr(internalDate)
+			}
 			if uid > 0 {
 				msgUIDs[string(m.ID)] = uint32(uid)
 			}

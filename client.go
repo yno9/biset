@@ -229,9 +229,9 @@ func (r *Relay) Fetch() (FetchResult, error) {
 }
 
 // Send creates a draft email on the relay and submits it for delivery.
-func (r *Relay) Send(msg vault.Message, envelope vault.Envelope) error {
+func (r *Relay) Send(msg vault.Message, envelope vault.Envelope) (time.Time, error) {
 	if err := r.ensureAuth(); err != nil {
-		return err
+		return time.Time{}, err
 	}
 
 	createKey := jmap.ID("draft")
@@ -242,22 +242,26 @@ func (r *Relay) Send(msg vault.Message, envelope vault.Envelope) error {
 	})
 	setResp, err := r.client.Do(setReq)
 	if err != nil {
-		return fmt.Errorf("email/set: %w", err)
+		return time.Time{}, fmt.Errorf("email/set: %w", err)
 	}
 
 	var serverEmailID jmap.ID
+	var serverReceivedAt time.Time
 	for _, inv := range setResp.Responses {
 		if res, ok := inv.Args.(*email.SetResponse); ok {
 			if obj, ok2 := res.Created[createKey]; ok2 && obj != nil {
 				serverEmailID = obj.ID
+				if obj.ReceivedAt != nil {
+					serverReceivedAt = *obj.ReceivedAt
+				}
 			}
 			if e, ok2 := res.NotCreated[createKey]; ok2 {
-				return fmt.Errorf("email/set create: %s", setErrMsg(e))
+				return time.Time{}, fmt.Errorf("email/set create: %s", setErrMsg(e))
 			}
 		}
 	}
 	if serverEmailID == "" {
-		return fmt.Errorf("email/set: no created ID in response")
+		return time.Time{}, fmt.Errorf("email/set: no created ID in response")
 	}
 
 	subReq := &jmap.Request{}
@@ -272,16 +276,16 @@ func (r *Relay) Send(msg vault.Message, envelope vault.Envelope) error {
 	})
 	subResp, err := r.client.Do(subReq)
 	if err != nil {
-		return fmt.Errorf("submission/set: %w", err)
+		return time.Time{}, fmt.Errorf("submission/set: %w", err)
 	}
 	for _, inv := range subResp.Responses {
 		if res, ok := inv.Args.(*emailsubmission.SetResponse); ok {
 			if e, ok2 := res.NotCreated["sub"]; ok2 {
-				return fmt.Errorf("submission/set create: %s", setErrMsg(e))
+				return time.Time{}, fmt.Errorf("submission/set create: %s", setErrMsg(e))
 			}
 		}
 	}
-	return nil
+	return serverReceivedAt, nil
 }
 
 // Handle patches email keywords (seen, archived, deleted, spam) on the relay.

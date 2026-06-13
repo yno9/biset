@@ -57,6 +57,16 @@ func DeleteMessage(vaultDir string, id ID) error {
 	return os.Remove(MessageFilePath(vaultDir, id))
 }
 
+func PurgeMessageCache(vaultDir string) {
+	dir := filepath.Join(vaultDir, ".data", "messages")
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".json") {
+			os.Remove(filepath.Join(dir, e.Name())) //nolint:errcheck
+		}
+	}
+}
+
 func ScanMessages(vaultDir string) ([]Message, error) {
 	dir := filepath.Join(vaultDir, ".data", "messages")
 	entries, err := os.ReadDir(dir)

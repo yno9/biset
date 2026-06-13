@@ -9,7 +9,7 @@ description: Architecture document for contributors. Read before modifying code.
 
 The ubiquitous pigeon, de facto like HTTP. Best nested in [doucot](https://github.com/yno9/doucot), a portable text editor.
 
-biset and its relays together form a JMAP node network. Each relay is an independent JMAP HTTP server bridging an external protocol. biset itself is a JMAP node — client to its relays, server to any JMAP client. It aggregates messages into a single local vault and renders them as Mardkdon for human interaction.
+biset and its relays together form a JMAP node network. Each relay is a standalone server bridging an external protocol. biset itself is a node — client to its relays, server to any JMAP client. It aggregates messages into a single local vault and renders them in Mardkdown interface.
 
 ```
 External events
@@ -19,7 +19,7 @@ External events
    ├── SMTP Host
    ├── ActivityPub
    └── ...
-       ↕ JMAP HTTP + SSE
+       ↕ Server-Sent Events
   biset core (JMAP client + server)
    └── Vault (JSON + Markdown)
        ↕ 
@@ -324,10 +324,8 @@ Hey, how are you?
 |---|---|
 | `subject` | Thread subject |
 | `contact` | The non-self correspondent |
-| `mailboxId` | JMAP Mailbox ID (`mbx-{inboxKey}`) — determines which relay handles this thread |
-| `id` | Short thread ID |
-| `seen` | `false` = thread has unread messages |
-| `status` | `send` / `seen` / `archived` / `deleted` / `spam` |
+| `id` | thread ID without "thr-" |
+| `status` | `send` / `seen` |
 
 ---
 

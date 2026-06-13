@@ -20,8 +20,10 @@ type SMTPConfig struct {
 }
 
 // Send builds and delivers an email via SMTP. Returns the raw RFC 5322 bytes.
-func Send(cfg SMTPConfig, from string, to, cc, bcc []string, subject, body, inReplyTo string) ([]byte, error) {
-	msgID := newMsgID(from)
+func Send(cfg SMTPConfig, from string, to, cc, bcc []string, subject, body, inReplyTo, msgID string) ([]byte, error) {
+	if msgID == "" {
+		msgID = newMsgID(from)
+	}
 	raw := buildRFC5322(from, to, cc, subject, body, msgID, inReplyTo)
 	rcpts := append(append(to, cc...), bcc...)
 	if err := smtpDeliver(cfg, from, rcpts, raw); err != nil {

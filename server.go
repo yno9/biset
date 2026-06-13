@@ -21,7 +21,7 @@ import (
 	"golang.org/x/net/webdav"
 )
 
-func startJMAPServer(cfg *vault.Config, pgpKey string) {
+func startJMAPServer(ctx context.Context, cfg *vault.Config, pgpKey string) {
 	srv := cfg.Server
 	port := srv.Port
 	bind := srv.Bind
@@ -130,9 +130,13 @@ func startJMAPServer(cfg *vault.Config, pgpKey string) {
 		Addr:    addr,
 		Handler: authMiddleware(mux),
 	}
+	go func() {
+		<-ctx.Done()
+		httpServer.Shutdown(context.Background()) //nolint:errcheck
+	}()
 	log.Printf("[jmap] listening on %s  vault=%s", addr, cfg.Vault)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("jmap: %v", err)
+		log.Printf("[jmap] stopped: %v", err)
 	}
 }
 

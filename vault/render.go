@@ -243,8 +243,133 @@ func NewFileContent() string {
 	return "---\ncontact: \nstatus: \n---\n"
 }
 
+// CleanupOrphanedInboxes removes biset-managed vault directories (those with
+// _new.md) that are no longer tracked by any relay in state. Only runs when
+// state has at least one relay entry to avoid false-positive deletions on first
+// run.
+func CleanupOrphanedInboxes(vaultDir string, state *State, respondedRelays map[string][]string) {
+	if len(state.Relays) == 0 {
+		return
+	}
+
+	// Build complete set of known inboxKeys across all relays in state,
+	// merged with what responded relays are returning now.
+	known := map[string]bool{}
+	for _, rs := range state.Relays {
+		for _, k := range rs.InboxKeys {
+			known[k] = true
+		}
+	}
+	for _, keys := range respondedRelays {
+		for _, k := range keys {
+			known[k] = true
+		}
+	}
+
+	entries, err := os.ReadDir(vaultDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		key := e.Name()
+		subDir := filepath.Join(vaultDir, key)
+		if _, err := os.Stat(filepath.Join(subDir, "_new.md")); err != nil {
+			continue // not biset-managed
+		}
+		if known[key] {
+			continue
+		}
+		log.Printf("[vault] removing orphaned inbox: %s", key)
+		if err := os.RemoveAll(subDir); err != nil {
+			log.Printf("[vault] remove %s: %v", key, err)
+		}
+	}
+}
+
+// CleanupOrphanedMDs removes _*.md files in vault inboxes that no longer
+// correspond to any message in .data/messages/.
+func CleanupOrphanedMDs(vaultDir string) {
+	messages, err := ScanMessages(vaultDir)
+	if err != nil {
+		return
+	}
+
+	// Build set of expected MD paths from current messages.
+	byInbox := map[string][]Message{}
+	for _, m := range messages {
+		key := InboxKeyFromMailboxID(MessageMailboxID(m))
+		if key == "" {
+			continue
+		}
+		byInbox[key] = append(byInbox[key], m)
+	}
+
+	expected := map[string]bool{}
+	for inboxKey, msgs := range byInbox {
+		threads := GroupByThread(msgs)
+		for _, t := range threads {
+			threadMsgs := make([]Message, 0, len(t.EmailIDs))
+			for _, m := range msgs {
+				for _, id := range t.EmailIDs {
+					if m.ID == id {
+						threadMsgs = append(threadMsgs, m)
+					}
+				}
+			}
+			mdPath, _ := RenderMD(vaultDir, inboxKey, threadMsgs)
+			if mdPath != "" {
+				expected[mdPath] = true
+			}
+		}
+	}
+
+	// Scan vault for _*.md files not in expected set.
+	entries, err := os.ReadDir(vaultDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		scanInboxForOrphans(vaultDir, e.Name(), expected)
+	}
+}
+
+func scanInboxForOrphans(vaultDir, inboxKey string, expected map[string]bool) {
+	dir := filepath.Join(vaultDir, inboxKey)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			scanInboxForOrphans(vaultDir, inboxKey+"/"+e.Name(), expected)
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".md") || name == "_new.md" {
+			continue
+		}
+		fullPath := filepath.Join(dir, name)
+		if !expected[fullPath] {
+			log.Printf("[vault] removing orphaned MD: %s/%s", inboxKey, name)
+			os.Remove(fullPath) //nolint:errcheck
+		}
+	}
+}
+
 func EnsureNewFile(vaultDir, inboxKey string) {
-	p := filepath.Join(vaultDir, inboxKey, "_new.md")
+	dir := filepath.Join(vaultDir, inboxKey)
+	os.MkdirAll(dir, 0755) //nolint:errcheck
+	p := filepath.Join(dir, "_new.md")
+	if strings.Contains(inboxKey, "/") {
+		os.Remove(p) //nolint:errcheck
+		return
+	}
 	if _, err := os.Stat(p); os.IsNotExist(err) {
 		os.WriteFile(p, []byte(NewFileContent()), 0644) //nolint:errcheck
 	}

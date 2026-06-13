@@ -42,6 +42,7 @@ func runSync(cfg *vault.Config, mgr *Manager) (int, []vault.SyncNotification) {
 	var allMessages []vault.Message
 	var allInboxes []vault.Inbox
 	inboxSeen := map[string]bool{}
+	respondedRelays := map[string][]string{} // relayName → inboxKeys
 	for _, c := range mgr.Relays() {
 		if !c.Has("fetch") {
 			continue
@@ -52,12 +53,15 @@ func runSync(cfg *vault.Config, mgr *Manager) (int, []vault.SyncNotification) {
 			continue
 		}
 		allMessages = append(allMessages, result.Messages...)
+		var keys []string
 		for _, ib := range result.Inboxes {
 			if !inboxSeen[string(ib.ID)] {
 				inboxSeen[string(ib.ID)] = true
 				allInboxes = append(allInboxes, ib)
 			}
+			keys = append(keys, vault.InboxKeyFromMailboxID(string(ib.ID)))
 		}
+		respondedRelays[c.Name()] = keys
 	}
 
 	// 4. assign thread IDs + deduplicate
@@ -105,9 +109,23 @@ func runSync(cfg *vault.Config, mgr *Manager) (int, []vault.SyncNotification) {
 	}
 
 	// 5. write inboxes
+	validInboxKeys := map[string]bool{}
 	if len(allInboxes) > 0 {
 		vault.WriteInboxes(cfg.Vault, allInboxes) //nolint:errcheck
+		for _, ib := range allInboxes {
+			key := vault.InboxKeyFromMailboxID(string(ib.ID))
+			validInboxKeys[key] = true
+			vault.EnsureNewFile(cfg.Vault, key)
+		}
 	}
+
+	// 5b. update state and clean up orphaned inboxes per relay scope
+	state := vault.LoadState(cfg.Vault)
+	vault.CleanupOrphanedInboxes(cfg.Vault, state, respondedRelays)
+	for name, keys := range respondedRelays {
+		state.UpdateRelay(name, keys)
+	}
+	vault.SaveState(cfg.Vault, state)
 
 	// 6. group, merge with existing, write
 	totalUpdated := 0
@@ -146,9 +164,13 @@ func dispatchSubmissions(vaultDir string, mgr *Manager) {
 			log.Printf("[dispatch] no relay for inbox %q (submission %s)", s.InboxKey, s.ID)
 			continue
 		}
-		if err := c.Send(s.Message, s.Envelope); err != nil {
+		serverReceivedAt, err := c.Send(s.Message, s.Envelope)
+		if err != nil {
 			log.Printf("[dispatch] send error %s: %v", s.ID, err)
 			continue
+		}
+		if !serverReceivedAt.IsZero() {
+			s.Message.ReceivedAt = vault.TimePtr(serverReceivedAt)
 		}
 		vault.WriteMessage(vaultDir, s.Message) //nolint:errcheck
 		existing := vault.ReadMessagesForThread(vaultDir, s.Message.ThreadID)
@@ -249,6 +271,23 @@ func firstAddr(jsonArr string) string {
 }
 
 // ── watcher ───────────────────────────────────────────────────────────────────
+
+// WatchVaultEvents returns two channels: action fires when a vault MD file has
+// an actionable status change; quit fires when biset-quit.json is created.
+func WatchVaultEvents(cfg *vault.Config, configPath string) (action <-chan struct{}, quit <-chan struct{}) {
+	ach := make(chan struct{}, 1)
+	qch := make(chan struct{})
+	bisetDir := filepath.Dir(configPath)
+	go watchVault(cfg.Vault, bisetDir, func() {
+		select {
+		case ach <- struct{}{}:
+		default:
+		}
+	}, func() {
+		close(qch)
+	})
+	return ach, qch
+}
 
 func StartWatcher(
 	cfg *vault.Config,

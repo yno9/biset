@@ -21,6 +21,14 @@ func isTTY() bool {
 }
 
 func acquireLock(vaultDir string) (string, bool) {
+	return acquireLockWithMode(vaultDir, "daemon")
+}
+
+func acquireServerLock(vaultDir string) (string, bool) {
+	return acquireLockWithMode(vaultDir, "server")
+}
+
+func acquireLockWithMode(vaultDir, mode string) (string, bool) {
 	lockPath := filepath.Join(vaultDir, ".data", ".biset.lock")
 	os.MkdirAll(filepath.Join(vaultDir, ".data"), 0755) //nolint:errcheck
 	if b, err := os.ReadFile(lockPath); err == nil {
@@ -37,7 +45,7 @@ func acquireLock(vaultDir string) (string, bool) {
 	if err != nil {
 		return lockPath, false
 	}
-	fmt.Fprintf(f, "%d", os.Getpid())
+	fmt.Fprintf(f, "%d %s", os.Getpid(), mode)
 	f.Close()
 	return lockPath, true
 }

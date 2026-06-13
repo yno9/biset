@@ -83,13 +83,10 @@ type Handler interface {
 	Handle(method string, args json.RawMessage) (any, error)
 }
 
-// Serve starts the JMAP HTTP server and blocks until it returns an error.
-// hub may be nil; if non-nil, a /jmap/eventsource/ SSE endpoint is added.
-func Serve(cfg Config, h Handler, hub *Hub) error {
-	if cfg.Port == 0 {
-		cfg.Port = 8765
-	}
-	addr := net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port))
+// NewMux returns an http.ServeMux with JMAP endpoints registered but does not
+// start a server. Use this when you need to add extra routes (e.g. ActivityPub)
+// to the same mux before calling http.ListenAndServe yourself.
+func NewMux(cfg Config, h Handler, hub *Hub) *http.ServeMux {
 	s := &srv{cfg: cfg, h: h}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/jmap", s.auth(s.serveSession))
@@ -99,7 +96,17 @@ func Serve(cfg Config, h Handler, hub *Hub) error {
 			serveEventSource(w, r, hub)
 		}))
 	}
-	return http.ListenAndServe(addr, mux)
+	return mux
+}
+
+// Serve starts the JMAP HTTP server and blocks until it returns an error.
+// hub may be nil; if non-nil, a /jmap/eventsource/ SSE endpoint is added.
+func Serve(cfg Config, h Handler, hub *Hub) error {
+	if cfg.Port == 0 {
+		cfg.Port = 8765
+	}
+	addr := net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port))
+	return http.ListenAndServe(addr, NewMux(cfg, h, hub))
 }
 
 func serveEventSource(w http.ResponseWriter, r *http.Request, hub *Hub) {

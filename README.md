@@ -2,7 +2,7 @@
 
 The ubiquitous pigeon, de facto like HTTP. Best nested in [doucot](https://github.com/yno9/doucot), a portable text editor.
 
-biset and its relays together form a JMAP node network. Each relay is an independent JMAP HTTP server bridging an external protocol. biset itself is a JMAP node — client to its relays, server to any JMAP client. It aggregates messages from all relays into a single local vault and renders them in Markdown for human interaction.
+biset and its relays together form a JMAP node network. Each relay is a standalone server bridging an external protocol. biset itself is a node — client to its relays, server to any JMAP client. It aggregates messages into a single local vault and renders them in Mardkdown interface.
 
 ```
 External events
