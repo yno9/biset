@@ -273,42 +273,6 @@ func latestMsgTs(messages []Message) int64 {
 	return max
 }
 
-func DeduplicateMessages(messages []Message) []Message {
-	seen := map[jmap.ID]bool{}
-	out := messages[:0:len(messages)]
-	for _, m := range messages {
-		if !seen[m.ID] {
-			seen[m.ID] = true
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
-func MergeMessages(incoming, existing []Message) []Message {
-	byID := map[jmap.ID]Message{}
-	for _, m := range existing {
-		byID[m.ID] = m
-	}
-	for _, m := range incoming {
-		if ex, ok := byID[m.ID]; ok && ex.Keywords["$seen"] && !m.Keywords["$seen"] {
-			if m.Keywords == nil {
-				m.Keywords = map[string]bool{}
-			}
-			m.Keywords["$seen"] = true
-		}
-		byID[m.ID] = m
-	}
-	merged := make([]Message, 0, len(byID))
-	for _, m := range byID {
-		merged = append(merged, m)
-	}
-	sort.Slice(merged, func(i, j int) bool {
-		return TimeVal(merged[i].ReceivedAt).After(TimeVal(merged[j].ReceivedAt))
-	})
-	return merged
-}
-
 // ── misc ──────────────────────────────────────────────────────────────────────
 
 func SafeFilename(s string) string {

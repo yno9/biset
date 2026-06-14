@@ -1,0 +1,8 @@
+{
+  "port": 8770,
+  "bind": "127.0.0.1",
+  "relayname": "rss",
+  "password": "changeme",
+  "poll_interval_minutes": 15,
+  "max_items_per_feed": 50
+}

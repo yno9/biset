@@ -310,57 +310,6 @@ func TestGetInboxesFromStorage(t *testing.T) {
 	}
 }
 
-func TestQueryMessageIDs(t *testing.T) {
-	dir := makeVaultDir(t)
-	ts := time.Now()
-	mbxID := jmap.ID(MakeMailboxID("inbox"))
-	for i := range 5 {
-		m := Message{
-			ID:         jmap.ID("msg-" + string(rune('a'+i))),
-			MailboxIDs: map[jmap.ID]bool{mbxID: true},
-			ReceivedAt: TimePtr(ts.Add(time.Duration(i) * time.Minute)),
-		}
-		WriteMessage(dir, m)
-	}
-
-	ids, total := QueryMessageIDs(dir, string(mbxID), 0, 3)
-	if total != 5 {
-		t.Errorf("total = %d, want 5", total)
-	}
-	if len(ids) != 3 {
-		t.Errorf("ids len = %d, want 3", len(ids))
-	}
-
-	// position past end
-	ids2, total2 := QueryMessageIDs(dir, string(mbxID), 10, 3)
-	if total2 != 5 {
-		t.Errorf("total = %d", total2)
-	}
-	if len(ids2) != 0 {
-		t.Errorf("expected empty ids, got %v", ids2)
-	}
-}
-
-func TestQueryMessageIDsNoLimit(t *testing.T) {
-	dir := makeVaultDir(t)
-	ts := time.Now()
-	mbxID := jmap.ID(MakeMailboxID("inbox"))
-	for i := range 3 {
-		m := Message{
-			ID:         jmap.ID("msg-" + string(rune('a'+i))),
-			MailboxIDs: map[jmap.ID]bool{mbxID: true},
-			ReceivedAt: TimePtr(ts.Add(time.Duration(i) * time.Minute)),
-		}
-		WriteMessage(dir, m)
-	}
-	ids, total := QueryMessageIDs(dir, string(mbxID), 0, 0)
-	if total != 3 {
-		t.Errorf("total = %d", total)
-	}
-	if len(ids) != 3 {
-		t.Errorf("ids len = %d, want 3", len(ids))
-	}
-}
 
 func TestGetIdentities(t *testing.T) {
 	dir := makeVaultDir(t)

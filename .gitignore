@@ -5,6 +5,9 @@ relays/*/config.json
 relays/*/state.json
 relays/*/data/
 
+*_test.go
+*/*_test.go
+
 internal/
 
 .DS_Store

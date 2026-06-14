@@ -1,0 +1,7 @@
+{
+  "name": "biset-rss-client",
+  "version": "0.1.0",
+  "description": "RSS/Atom feed reader relay",
+  "capabilities": ["fetch", "watch"],
+  "protocols": ["rss", "atom"]
+}

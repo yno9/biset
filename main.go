@@ -14,6 +14,7 @@ import (
 
 	"biset/interfaces"
 	"biset/vault"
+	jmapserver "github.com/yno9/go-jmapserver"
 )
 
 var version = "dev"
@@ -109,7 +110,7 @@ Commands
 		if strings.Contains(dir, ".app/Contents/MacOS") {
 			dir = filepath.Dir(filepath.Dir(filepath.Dir(dir)))
 		}
-		configPath = filepath.Join(dir, "biset.json")
+		configPath = filepath.Join(dir, "config.json")
 	}
 
 	if subcommand == "config" {
@@ -140,12 +141,7 @@ Commands
 		return
 	}
 
-	if subcommand == "notification" {
-		interfaces.RunNotification(configPath)
-		return
-	}
-
-	if subcommand == "update" {
+if subcommand == "update" {
 		tmp, err := os.CreateTemp("", "biset-install-*.sh")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "update: %v\n", err)
@@ -271,6 +267,11 @@ Commands
 
 	mgr := NewManager(cfg)
 
+	bisetStore, err := jmapserver.NewStore(filepath.Join(cfg.Vault, ".data"))
+	if err != nil {
+		log.Fatalf("store: %v", err)
+	}
+
 	bisetDir := filepath.Dir(configPath)
 	keyPEM := loadOrGenerateKey(filepath.Join(bisetDir, "private_key.pem"))
 	pgpKey := loadPGPKey(keyPEM)
@@ -285,10 +286,10 @@ Commands
 
 	switch subcommand {
 	case "sync":
-		runSync(cfg, mgr)
+		runSync(cfg, mgr, bisetStore)
 		if fullSyncFlag {
 			vault.PurgeMessageCache(cfg.Vault)
-			runSync(cfg, mgr)
+			runSync(cfg, mgr, bisetStore)
 			vault.CleanupOrphanedMDs(cfg.Vault)
 		}
 
@@ -317,7 +318,7 @@ Commands
 			os.Exit(1)
 		}
 		defer os.Remove(lockPath)
-		watchLoop(cfg, mgr, configPath, pgpKey)
+		watchLoop(cfg, mgr, configPath, pgpKey, bisetStore)
 	}
 }
 
@@ -336,7 +337,7 @@ func runServerCommand(cfg *vault.Config, bisetDir, configPath string, args []str
 	os.Exit(1)
 }
 
-func watchLoop(cfg *vault.Config, mgr *Manager, configPath string, pgpKey string) {
+func watchLoop(cfg *vault.Config, mgr *Manager, configPath string, pgpKey string, store *jmapserver.Store) {
 	configChanged := interfaces.WatchConfigFile(configPath)
 	vaultAction, quit := WatchVaultEvents(cfg, configPath)
 
@@ -347,7 +348,7 @@ func watchLoop(cfg *vault.Config, mgr *Manager, configPath string, pgpKey string
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		serverCancel = cancel
-		go startJMAPServer(ctx, c, pgpKey)
+		go startJMAPServer(ctx, c, pgpKey, store)
 	}
 	stopServer := func() {
 		if serverCancel != nil {
@@ -360,13 +361,13 @@ func watchLoop(cfg *vault.Config, mgr *Manager, configPath string, pgpKey string
 		startServer(cfg)
 	}
 
-	runSync(cfg, mgr)
+	runSync(cfg, mgr, store)
 	for {
 		select {
 		case <-mgr.Changed():
-			runSync(cfg, mgr)
+			runSync(cfg, mgr, store)
 		case <-vaultAction:
-			runSync(cfg, mgr)
+			runSync(cfg, mgr, store)
 		case <-configChanged:
 			fmt.Println("config changed — reloading")
 			if newCfg, err := vault.LoadConfig(configPath); err == nil {
@@ -379,7 +380,7 @@ func watchLoop(cfg *vault.Config, mgr *Manager, configPath string, pgpKey string
 					stopServer()
 				}
 			}
-			runSync(cfg, mgr)
+			runSync(cfg, mgr, store)
 		case <-quit:
 			stopServer()
 			return

@@ -25,14 +25,15 @@ import (
 	"time"
 
 	jmap "git.sr.ht/~rockorager/go-jmap"
-	"biset/relays/core"
+	jmapserver "github.com/yno9/go-jmapserver"
 	"biset/vault"
 )
 
 // ── config ────────────────────────────────────────────────────────────────────
 
 type Config struct {
-	core.Config
+	jmapserver.Config
+	RelayName     string `json:"relayname"`
 	Domain        string `json:"domain"`
 	PrivateKeyPEM string `json:"private_key_pem"`
 	Vault         string `json:"vault"`
@@ -90,7 +91,7 @@ func publicKeyPEM() string {
 // ── handler ───────────────────────────────────────────────────────────────────
 
 type handler struct {
-	store *core.Store
+	store *jmapserver.Store
 }
 
 func (h *handler) Capabilities() []jmap.URI {
@@ -100,70 +101,43 @@ func (h *handler) Capabilities() []jmap.URI {
 	}
 }
 
-func (h *handler) Accounts() []core.Account {
-	return []core.Account{{ID: jmap.ID(identity()), Name: identity()}}
+func (h *handler) Accounts() []jmapserver.Account {
+	return []jmapserver.Account{{ID: jmap.ID(identity()), Name: identity()}}
 }
 
 func (h *handler) Handle(method string, args json.RawMessage) (any, error) {
 	switch method {
 	case "Email/query":
-		return h.emailQuery()
+		return h.emailQuery(args)
+	case "Email/queryChanges":
+		return h.store.HandleQueryChanges(jmap.ID(identity()), args)
+	case "Email/changes":
+		return h.store.HandleEmailChanges(jmap.ID(identity()), args)
 	case "Email/get":
-		return h.emailGet(args)
+		return h.store.HandleEmailGet(jmap.ID(identity()), args)
+	case "Thread/get":
+		return h.store.HandleThreadGet(jmap.ID(identity()), args)
 	case "Mailbox/get":
 		return h.mailboxGet()
+	case "Mailbox/changes":
+		return h.store.HandleMailboxChanges(jmap.ID(identity()), args)
+	case "Identity/get":
+		return h.store.HandleIdentityGet(jmap.ID(identity()))
+	case "Identity/changes":
+		return h.store.HandleIdentityChanges(jmap.ID(identity()), args)
+	case "Thread/changes":
+		return h.store.HandleThreadChanges(jmap.ID(identity()), args)
 	case "Email/set":
 		return h.emailSet(args)
 	case "EmailSubmission/set":
 		return h.emailSubmissionSet(args)
 	default:
-		return nil, fmt.Errorf("unknown method: %s", method)
+		return h.store.Dispatch(jmap.ID(identity()), method, args)
 	}
 }
 
-func (h *handler) emailQuery() (any, error) {
-	all := h.store.All()
-	ids := make([]jmap.ID, len(all))
-	for i, m := range all {
-		ids[i] = m.ID
-	}
-	return map[string]any{
-		"accountId":           jmap.ID(identity()),
-		"queryState":          "0",
-		"canCalculateChanges": false,
-		"position":            0,
-		"ids":                 ids,
-		"total":               len(ids),
-	}, nil
-}
-
-func (h *handler) emailGet(args json.RawMessage) (any, error) {
-	var req struct {
-		IDs []jmap.ID `json:"ids"`
-	}
-	json.Unmarshal(args, &req) //nolint:errcheck
-
-	var list []vault.Message
-	var notFound []jmap.ID
-	for _, id := range req.IDs {
-		if m, ok := h.store.Get(id); ok {
-			list = append(list, m)
-		} else {
-			notFound = append(notFound, id)
-		}
-	}
-	if list == nil {
-		list = []vault.Message{}
-	}
-	if notFound == nil {
-		notFound = []jmap.ID{}
-	}
-	return map[string]any{
-		"accountId": jmap.ID(identity()),
-		"state":     "0",
-		"list":      list,
-		"notFound":  notFound,
-	}, nil
+func (h *handler) emailQuery(args json.RawMessage) (any, error) {
+	return h.store.HandleEmailQuery(jmap.ID(identity()), args)
 }
 
 func feedsMailboxID() string { return vault.MakeMailboxID(identity() + "/feeds") }
@@ -322,10 +296,17 @@ func (h *handler) emailSubmissionSet(args json.RawMessage) (any, error) {
 			continue
 		}
 
-		if err := sendToActor(msg, target); err != nil {
+		noteID, err := sendToActor(msg, target)
+		if err != nil {
 			notCreated[key] = errObj("serverFail", err.Error())
 			continue
 		}
+		if msg.Keywords == nil {
+			msg.Keywords = map[string]bool{}
+		}
+		msg.Keywords["$seen"] = true
+		msg.MessageID = []string{noteID}
+		h.store.Put(msg) //nolint:errcheck
 		created[key] = map[string]any{
 			"id":         newID(),
 			"sendAt":     time.Now().UTC().Format(time.RFC3339),
@@ -351,7 +332,7 @@ func (h *handler) emailSubmissionSet(args json.RawMessage) (any, error) {
 var tagRe = regexp.MustCompile(`<[^>]+>`)
 var mentionRe = regexp.MustCompile(`^(@\S+\s*)+`)
 
-func handleInbox(body []byte, store *core.Store, hub *core.Hub) {
+func handleInbox(body []byte, store *jmapserver.Store, hub *jmapserver.Hub) {
 	var activity struct {
 		Type   string          `json:"type"`
 		Actor  string          `json:"actor"`
@@ -372,7 +353,7 @@ func handleInbox(body []byte, store *core.Store, hub *core.Hub) {
 	}
 }
 
-func handleAccept(actor string, object json.RawMessage, store *core.Store, hub *core.Hub) {
+func handleAccept(actor string, object json.RawMessage, store *jmapserver.Store, hub *jmapserver.Hub) {
 	// Mark the follow record as accepted and register actor for feed routing.
 	var obj struct {
 		Type   string `json:"type"`
@@ -405,13 +386,15 @@ func handleAccept(actor string, object json.RawMessage, store *core.Store, hub *
 	}
 }
 
-func handleCreate(actor string, object json.RawMessage, store *core.Store, hub *core.Hub) {
+func handleCreate(actor string, object json.RawMessage, store *jmapserver.Store, hub *jmapserver.Hub) {
 	var obj struct {
-		Type      string `json:"type"`
-		ID        string `json:"id"`
-		Content   string `json:"content"`
-		InReplyTo string `json:"inReplyTo"`
-		Published string `json:"published"`
+		Type      string   `json:"type"`
+		ID        string   `json:"id"`
+		Content   string   `json:"content"`
+		InReplyTo string   `json:"inReplyTo"`
+		Published string   `json:"published"`
+		To        []string `json:"to"`
+		CC        []string `json:"cc"`
 	}
 	if err := json.Unmarshal(object, &obj); err != nil {
 		return
@@ -422,15 +405,25 @@ func handleCreate(actor string, object json.RawMessage, store *core.Store, hub *
 
 	text := tagRe.ReplaceAllString(obj.Content, "")
 	text = strings.TrimSpace(text)
-
-	// For DMs (mentions), strip leading @mentions.
 	fe, isFollowed := followedActors.Load(actor)
-	if !isFollowed {
-		text = mentionRe.ReplaceAllString(text, "")
-		text = strings.TrimSpace(text)
-	}
 	if text == "" {
 		return
+	}
+
+	isPublic := false
+	for _, t := range append(obj.To, obj.CC...) {
+		if t == "https://www.w3.org/ns/activitystreams#Public" || t == "Public" {
+			isPublic = true
+			break
+		}
+	}
+	log.Printf("[ap] create from=%s isFollowed=%v isPublic=%v to=%v cc=%v", actor, isFollowed, isPublic, obj.To, obj.CC)
+	if !isPublic {
+		text = mentionRe.ReplaceAllString(text, "")
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return
+		}
 	}
 
 	from := actorURLToHandle(actor)
@@ -448,10 +441,11 @@ func handleCreate(actor string, object json.RawMessage, store *core.Store, hub *
 	msgID := fmt.Sprintf("<%s@ap>", strings.ReplaceAll(obj.ID, "/", "-"))
 	id := identity()
 
-	// Route to feeds mailbox if from a followed actor, otherwise inbox.
+	// Route to feeds mailbox only for public posts from followed actors.
+	// DMs / directed replies (no as:Public in to/cc) go to the regular inbox.
 	mbxID := vault.MakeMailboxID(id)
 	inReplyTo := obj.InReplyTo
-	if isFollowed {
+	if isFollowed && isPublic {
 		mbxID = feedsMailboxID()
 		// Thread all feed posts under the follow record so biset accumulates them in one file.
 		entry := fe.(followEntry)
@@ -647,17 +641,16 @@ func sendUnfollow(followMsgID jmap.ID, handle string) error {
 	return httpSignedPost(resolved.inboxURL, payload)
 }
 
-func sendToActor(msg vault.Message, target string) error {
+func sendToActor(msg vault.Message, target string) (string, error) {
 	resolved, err := resolveActor(target)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	body := vault.MessageBody(msg)
 	ts := time.Now().UTC()
 	noteID := fmt.Sprintf("%s/notes/%d", actorURL(), ts.UnixMilli())
 
-	const public = "https://www.w3.org/ns/activitystreams#Public"
 	mention := "@" + target
 	note := map[string]any{
 		"@context":     "https://www.w3.org/ns/activitystreams",
@@ -665,8 +658,8 @@ func sendToActor(msg vault.Message, target string) error {
 		"id":           noteID,
 		"url":          noteID,
 		"attributedTo": actorURL(),
-		"to":           []string{public},
-		"cc":           []string{resolved.actorURL},
+		"to":           []string{resolved.actorURL},
+		"cc":           []string{},
 		"content":      "<p>" + mention + " " + htmlEscape(body) + "</p>",
 		"published":    ts.Format(time.RFC3339),
 		"tag": []map[string]string{{
@@ -685,18 +678,18 @@ func sendToActor(msg vault.Message, target string) error {
 		"type":      "Create",
 		"id":        createID,
 		"actor":     actorURL(),
-		"to":        []string{public},
-		"cc":        []string{resolved.actorURL},
+		"to":        []string{resolved.actorURL},
+		"cc":        []string{},
 		"object":    note,
 		"published": ts.Format(time.RFC3339),
 	}
 
 	payload, err := json.Marshal(create)
 	if err != nil {
-		return err
+		return "", err
 	}
 	log.Printf("[ap] send → %s", resolved.inboxURL)
-	return httpSignedPost(resolved.inboxURL, payload)
+	return noteID, httpSignedPost(resolved.inboxURL, payload)
 }
 
 func httpSignedPost(targetURL string, body []byte) error {
@@ -735,8 +728,9 @@ func httpSignedPost(targetURL string, body []byte) error {
 		return err
 	}
 	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	log.Printf("[ap] POST %s → %d %s", targetURL, resp.StatusCode, strings.TrimSpace(string(b)))
 	if resp.StatusCode != 200 && resp.StatusCode != 202 {
-		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("POST %s: %d %s", targetURL, resp.StatusCode, string(b))
 	}
 	return nil
@@ -758,7 +752,7 @@ func logRequest(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func registerAPRoutes(mux *http.ServeMux, store *core.Store, hub *core.Hub) {
+func registerAPRoutes(mux *http.ServeMux, store *jmapserver.Store, hub *jmapserver.Hub) {
 	mux.HandleFunc("/.well-known/webfinger", logRequest(func(w http.ResponseWriter, r *http.Request) {
 		resource := r.URL.Query().Get("resource")
 		acct := strings.TrimPrefix(resource, "acct:")
@@ -875,7 +869,7 @@ func main() {
 
 	loadOrGenerateKey()
 
-	store, err := core.NewStore(filepath.Join(dir, "data"))
+	store, err := jmapserver.NewStore(filepath.Join(dir, "data"))
 	if err != nil {
 		log.Fatalf("store: %v", err)
 	}
@@ -899,10 +893,10 @@ func main() {
 		}
 	}
 
-	hub := core.NewHub()
+	hub := jmapserver.NewHub()
 	h := &handler{store: store}
 
-	mux := core.NewMux(cfg.Config, h, hub)
+	mux := jmapserver.NewMux(cfg.Config, h, hub)
 	registerAPRoutes(mux, store, hub)
 
 	if cfg.Port == 0 {

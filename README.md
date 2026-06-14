@@ -48,8 +48,7 @@ curl -fsSL https://github.com/yno9/biset/releases/latest/download/install.sh | s
 
 ```sh
 git clone https://github.com/yno9/biset
-cd biset && go build -o biset .
-cd relays/imapsmtp-client && go build .
+cd biset && make
 ```
 
 ---
@@ -75,7 +74,7 @@ biset version                    show version
 
 ## Config
 
-`~/.biset/biset.json`:
+`~/.biset/config.json`:
 
 ```json
 {
@@ -208,7 +207,11 @@ Set `status:` in frontmatter to trigger an action on next sync:
 
 | Relay | Protocols | Description |
 |---|---|---|
-| `imapsmtp-client` | imap, smtp | IMAP/SMTP email |
+| `imapsmtp-client` | IMAP, SMTP | Email via IMAP/SMTP |
+| `smtp-host` | SMTP | Self-hosted SMTP receive + send |
+| `ap-host` | ActivityPub | Fediverse (Mastodon-compatible) |
+| `claude-client` | Claude API | AI assistant as inbox |
+| `rss-client` | RSS/Atom | Feed subscriptions as inbox |
 
 Each relay is an independent JMAP HTTP server. It owns its config and state, handles reconnection, and exposes an SSE endpoint so biset gets push notifications on new data.
 

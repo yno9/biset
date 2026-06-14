@@ -1,0 +1,23 @@
+{
+  "relays": {
+    "http://127.0.0.1:8765/.well-known/jmap": {
+      "lastSeen": "2026-01-01T00:00:00Z",
+      "inboxKeys": [
+        "you@example.com"
+      ]
+    },
+    "http://127.0.0.1:8770/.well-known/jmap": {
+      "lastSeen": "2026-01-01T00:00:00Z",
+      "inboxKeys": [
+        "rss/"
+      ]
+    },
+    "https://biset.example.com/.well-known/jmap": {
+      "lastSeen": "2026-01-01T00:00:00Z",
+      "inboxKeys": [
+        "you@biset.example.com",
+        "you@biset.example.com/feeds"
+      ]
+    }
+  }
+}

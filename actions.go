@@ -10,10 +10,11 @@ import (
 
 	jmap "git.sr.ht/~rockorager/go-jmap"
 	"biset/vault"
+	jmapserver "github.com/yno9/go-jmapserver"
 )
 
 // FlushOutgoing processes all MD files with status:send or !b body and sends them.
-func FlushOutgoing(vaultDir string, mgr *Manager) int {
+func FlushOutgoing(vaultDir string, mgr *Manager, store *jmapserver.Store) int {
 	count := 0
 	entries, _ := os.ReadDir(vaultDir)
 	for _, d := range entries {
@@ -27,7 +28,7 @@ func FlushOutgoing(vaultDir string, mgr *Manager) int {
 			if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
 				continue
 			}
-			if flushMDSend(filepath.Join(inboxDir, f.Name()), inboxKey, vaultDir, mgr) {
+			if flushMDSend(filepath.Join(inboxDir, f.Name()), inboxKey, vaultDir, mgr, store) {
 				count++
 			}
 		}
@@ -38,14 +39,14 @@ func FlushOutgoing(vaultDir string, mgr *Manager) int {
 		if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
 			continue
 		}
-		if flushMDSend(filepath.Join(vaultDir, f.Name()), "", vaultDir, mgr) {
+		if flushMDSend(filepath.Join(vaultDir, f.Name()), "", vaultDir, mgr, store) {
 			count++
 		}
 	}
 	return count
 }
 
-func flushMDSend(filePath, inboxKey, vaultDir string, mgr *Manager) bool {
+func flushMDSend(filePath, inboxKey, vaultDir string, mgr *Manager, store *jmapserver.Store) bool {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return false
@@ -92,9 +93,10 @@ func flushMDSend(filePath, inboxKey, vaultDir string, mgr *Manager) bool {
 	inReplyTo := ""
 
 	if threadID := expandThreadID(fm["id"]); threadID != "" {
-		if thread, err := vault.ReadThread(vaultDir, jmap.ID(threadID)); err == nil && len(thread.EmailIDs) > 0 {
-			latestMsgID := thread.EmailIDs[0]
-			if orig, err := vault.ReadMessage(vaultDir, latestMsgID); err == nil {
+		threadMsgs := store.AllForThread(jmap.ID(threadID))
+		if len(threadMsgs) > 0 {
+			orig := threadMsgs[len(threadMsgs)-1] // newest message (sorted ascending)
+			{
 				if contact == "" {
 					fromAddr := vault.MessageFromAddr(orig)
 					if strings.EqualFold(fromAddr, inbox) && len(orig.To) > 0 && orig.To[0] != nil {
@@ -118,9 +120,9 @@ func flushMDSend(filePath, inboxKey, vaultDir string, mgr *Manager) bool {
 					}
 					cc = strings.Join(ccAddrs, ", ")
 				}
-				inReplyTo = resolveInReplyTo(vaultDir, latestMsgID)
+				inReplyTo = resolveInReplyTo(store, orig.ID)
 				if inReplyTo == "" {
-					inReplyTo = vault.MessageIDFromMsgID(string(latestMsgID))
+					inReplyTo = vault.MessageIDFromMsgID(string(orig.ID))
 				}
 			}
 		}
@@ -207,13 +209,13 @@ func flushMDSend(filePath, inboxKey, vaultDir string, mgr *Manager) bool {
 	if filepath.Base(filePath) == "_new.md" {
 		os.WriteFile(filePath, []byte(vault.NewFileContent()), 0644) //nolint:errcheck
 	} else {
-		for _, m := range vault.ReadMessagesForThread(vaultDir, msg.ThreadID) {
+		for _, m := range store.AllForThread(msg.ThreadID) {
 			if !vault.MessageIsSeen(m) {
 				if m.Keywords == nil {
 					m.Keywords = map[string]bool{}
 				}
 				m.Keywords["$seen"] = true
-				vault.WriteMessage(vaultDir, m) //nolint:errcheck
+				store.Put(m) //nolint:errcheck
 			}
 		}
 		cleared := strings.Replace(vault.ClearBody(string(content)), "status: send", "status: ", 1)
@@ -225,19 +227,12 @@ func flushMDSend(filePath, inboxKey, vaultDir string, mgr *Manager) bool {
 }
 
 func expandThreadID(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	if !strings.HasPrefix(s, "thr-") {
-		return "thr-" + s
-	}
-	return s
+	return strings.TrimSpace(s)
 }
 
-func resolveInReplyTo(vaultDir string, msgID jmap.ID) string {
-	m, err := vault.ReadMessage(vaultDir, msgID)
-	if err != nil {
+func resolveInReplyTo(store *jmapserver.Store, msgID jmap.ID) string {
+	m, ok := store.Get(msgID)
+	if !ok {
 		return ""
 	}
 	return vault.MessageHeaderID(m)
@@ -258,7 +253,8 @@ func parseAddressList(s string) []*vault.Address {
 }
 
 // FlushActions processes non-send status fields in MD files (seen, archived, deleted, etc).
-func FlushActions(vaultDir string, mgr *Manager) int {
+func FlushActions(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) int {
+	vaultDir := cfg.Vault
 	count := 0
 	inboxDirs, _ := os.ReadDir(vaultDir)
 	for _, d := range inboxDirs {
@@ -283,13 +279,31 @@ func FlushActions(vaultDir string, mgr *Manager) int {
 				continue
 			}
 
+			if status == "follow" {
+				contact := strings.TrimSpace(fm["contact"])
+				if contact == "" {
+					log.Printf("[FlushActions] follow: no contact in %s", e.Name())
+					continue
+				}
+				c := mgr.RelayForAccount(inboxKey)
+				if c != nil {
+					if err := c.Follow(contact); err != nil {
+						log.Printf("[FlushActions] follow %s: %v", contact, err)
+					}
+				}
+				cleared := strings.Replace(string(b), "status: follow", "status: ", 1)
+				os.WriteFile(filePath, []byte(cleared), 0644) //nolint:errcheck
+				count++
+				continue
+			}
+
 			c := mgr.RelayForAccount(inboxKey)
 
 			threadID := expandThreadID(fm["id"])
 			var msgIDs []jmap.ID
 			if threadID != "" {
-				if thread, err := vault.ReadThread(vaultDir, jmap.ID(threadID)); err == nil {
-					msgIDs = thread.EmailIDs
+				for _, m := range store.AllForThread(jmap.ID(threadID)) {
+					msgIDs = append(msgIDs, m.ID)
 				}
 			}
 			log.Printf("[FlushActions] file=%s status=%s connector=%v msgs=%d threadID=%q", e.Name(), status, c != nil, len(msgIDs), threadID)
@@ -303,33 +317,28 @@ func FlushActions(vaultDir string, mgr *Manager) int {
 			}
 			if status == "seen" {
 				for _, mid := range msgIDs {
-					if m, err := vault.ReadMessage(vaultDir, mid); err == nil {
+					if m, ok := store.Get(mid); ok {
 						if m.Keywords == nil {
 							m.Keywords = map[string]bool{}
 						}
 						m.Keywords["$seen"] = true
-						if _, werr := vault.WriteMessage(vaultDir, m); werr != nil {
-							log.Printf("[FlushActions] WriteMessage %s: %v", mid, werr)
-						}
+						store.Put(m) //nolint:errcheck
 					} else {
-						log.Printf("[FlushActions] ReadMessage %s: %v", mid, err)
+						log.Printf("[FlushActions] Get %s: not found", mid)
 					}
 				}
-				msgs := vault.ReadMessagesForThread(vaultDir, jmap.ID(threadID))
-				log.Printf("[FlushActions] seen: ReadMessagesForThread=%d", len(msgs))
-				written := vault.WriteThreadMD(vaultDir, inboxKey, msgs)
+				msgs := store.AllForThread(jmap.ID(threadID))
+				log.Printf("[FlushActions] seen: msgs=%d", len(msgs))
+				written := vault.WriteThreadMD(vaultDir, inboxKey, msgs, mgr.InboxConfigFor(inboxKey, cfg))
 				log.Printf("[FlushActions] seen: WriteThreadMD written=%v", written)
 				count++
 				continue
 			}
 			os.Remove(filePath) //nolint:errcheck
 			if threadID != "" {
-				thread, err := vault.ReadThread(vaultDir, jmap.ID(threadID))
-				if err == nil {
-					for _, id := range thread.EmailIDs {
-						vault.DeleteMessage(vaultDir, id) //nolint:errcheck
-					}
-					vault.DeleteThread(vaultDir, jmap.ID(threadID)) //nolint:errcheck
+				for _, mid := range msgIDs {
+					store.Delete(jmap.ID(mid))
+					vault.DeleteMessage(vaultDir, jmap.ID(mid)) //nolint:errcheck
 				}
 			}
 			fmt.Printf("%s: %s\n", status, e.Name())

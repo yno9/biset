@@ -233,7 +233,7 @@ func TestRenderMD(t *testing.T) {
 	m := makeMessage("msg-1", "thr-1", inboxKey, ts, "hello")
 	m.ThreadID = jmap.ID("thr-1")
 
-	path, content := RenderMD(dir, inboxKey, []Message{m})
+	path, content := RenderMD(dir, inboxKey, []Message{m}, InboxConfig{})
 	if path == "" {
 		t.Fatal("RenderMD returned empty path")
 	}
@@ -246,7 +246,7 @@ func TestRenderMD(t *testing.T) {
 }
 
 func TestRenderMDEmpty(t *testing.T) {
-	path, content := RenderMD("/tmp", "inbox", nil)
+	path, content := RenderMD("/tmp", "inbox", nil, InboxConfig{})
 	if path != "" || content != nil {
 		t.Error("RenderMD(empty) should return empty")
 	}
@@ -255,13 +255,13 @@ func TestRenderMDEmpty(t *testing.T) {
 func TestEnsureNewFile(t *testing.T) {
 	dir := t.TempDir()
 	inboxKey := "user@example.com"
-	EnsureNewFile(dir, inboxKey)
+	EnsureNewFile(dir, inboxKey, InboxConfig{})
 	p := filepath.Join(dir, inboxKey, "_new.md")
 	if _, err := os.Stat(p); err != nil {
 		t.Errorf("_new.md not created: %v", err)
 	}
 	// second call is idempotent
-	EnsureNewFile(dir, inboxKey)
+	EnsureNewFile(dir, inboxKey, InboxConfig{})
 	if _, err := os.Stat(p); err != nil {
 		t.Errorf("_new.md removed on second call")
 	}
@@ -269,8 +269,8 @@ func TestEnsureNewFile(t *testing.T) {
 
 func TestEnsureNewFileSubInbox(t *testing.T) {
 	dir := t.TempDir()
-	// sub-inbox (contains /) should not create _new.md
-	EnsureNewFile(dir, "a/b")
+	// sub-inbox (simplified format) should not create _new.md
+	EnsureNewFile(dir, "a/b", InboxConfig{FileFormat: "{contact}.md"})
 	p := filepath.Join(dir, "a", "b", "_new.md")
 	if _, err := os.Stat(p); err == nil {
 		t.Error("sub-inbox should not have _new.md")
@@ -285,13 +285,13 @@ func TestWriteThreadMD(t *testing.T) {
 	m := makeMessage("msg-write", "thr-write", inboxKey, ts, "write body")
 	m.ThreadID = jmap.ID("thr-write")
 
-	written := WriteThreadMD(dir, inboxKey, []Message{m})
+	written := WriteThreadMD(dir, inboxKey, []Message{m}, InboxConfig{})
 	if !written {
 		t.Error("expected written=true")
 	}
 
 	// same messages → no change
-	written2 := WriteThreadMD(dir, inboxKey, []Message{m})
+	written2 := WriteThreadMD(dir, inboxKey, []Message{m}, InboxConfig{})
 	if written2 {
 		t.Error("expected written=false on identical content")
 	}
@@ -299,7 +299,7 @@ func TestWriteThreadMD(t *testing.T) {
 
 func TestWriteThreadMDEmpty(t *testing.T) {
 	dir := t.TempDir()
-	if WriteThreadMD(dir, "inbox", nil) {
+	if WriteThreadMD(dir, "inbox", nil, InboxConfig{}) {
 		t.Error("expected false for empty messages")
 	}
 }

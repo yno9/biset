@@ -34,7 +34,7 @@ func SetMDMtime(mdPath string, messages []Message) {
 
 // ── rendering ─────────────────────────────────────────────────────────────────
 
-func RenderMD(vaultDir, inboxKey string, messages []Message) (string, []byte) {
+func RenderMD(vaultDir, inboxKey string, messages []Message, cfg InboxConfig) (string, []byte) {
 	if len(messages) == 0 {
 		return "", nil
 	}
@@ -44,7 +44,11 @@ func RenderMD(vaultDir, inboxKey string, messages []Message) (string, []byte) {
 		return TimeVal(sorted[i].ReceivedAt).After(TimeVal(sorted[j].ReceivedAt))
 	})
 
-	content := mdContent(inboxKey, sorted)
+	if cfg.MaxDisplay > 0 && len(sorted) > cfg.MaxDisplay {
+		sorted = sorted[:cfg.MaxDisplay]
+	}
+
+	content := mdContent(inboxKey, sorted, cfg.EffectiveMeta())
 
 	contact := threadContact(inboxKey, sorted)
 	seen := isSeen(inboxKey, sorted)
@@ -52,9 +56,15 @@ func RenderMD(vaultDir, inboxKey string, messages []Message) (string, []byte) {
 	if !seen {
 		prefix = "_"
 	}
-	filename := fmt.Sprintf("%s%s_%s.md", prefix, SafeFilename(contact), ThreadShortID(sorted))
+	filename := prefix + expandFileFormat(cfg.EffectiveFileFormat(), contact, ThreadShortID(sorted))
 	path := filepath.Join(vaultDir, inboxKey, filename)
 	return path, []byte(content)
+}
+
+func expandFileFormat(tmpl, contact, shortID string) string {
+	s := strings.ReplaceAll(tmpl, "{contact}", SafeFilename(contact))
+	s = strings.ReplaceAll(s, "{shortId}", shortID)
+	return s
 }
 
 func ThreadShortID(messages []Message) string {
@@ -65,6 +75,19 @@ func ThreadShortID(messages []Message) string {
 		}
 	}
 	return TimeVal(oldest.ReceivedAt).Local().Format("01021504")
+}
+
+// findContactMD finds an existing MD file for a contact in a sub-mailbox
+// (where filenames have no shortID suffix): _contact.md or contact.md.
+func findContactMD(inboxDir, contact string) string {
+	safe := SafeFilename(contact)
+	for _, name := range []string{"_" + safe + ".md", safe + ".md"} {
+		p := filepath.Join(inboxDir, name)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
 }
 
 func FindThreadMD(inboxDir, shortThr string) string {
@@ -114,26 +137,58 @@ func isSeen(inboxKey string, messages []Message) bool {
 	return true
 }
 
-func mdContent(inboxKey string, messages []Message) string {
+func mdContent(inboxKey string, messages []Message, meta []string) string {
 	latest := messages[0]
 	threadID := string(latest.ThreadID)
-
 	contact := threadContact(inboxKey, messages)
-	subject := latest.Subject
-	fm := []string{
-		"---",
-		fmt.Sprintf("subject: \"%s\"", strings.ReplaceAll(subject, `"`, `\"`)),
-		fmt.Sprintf("contact: %s", contact),
-		fmt.Sprintf("id: %s", strings.TrimPrefix(threadID, "thr-")),
-		"status: ",
-		"---",
-		"",
+
+	fm := []string{"---"}
+	for _, field := range meta {
+		switch field {
+		case "subject":
+			if latest.Subject != "" {
+				fm = append(fm, fmt.Sprintf("subject: \"%s\"", strings.ReplaceAll(latest.Subject, `"`, `\"`)))
+			}
+		case "contact":
+			fm = append(fm, fmt.Sprintf("contact: %s", contact))
+		case "id":
+			if threadID != "" {
+				fm = append(fm, fmt.Sprintf("id: %s", threadID))
+			}
+		case "status":
+			fm = append(fm, "status: ")
+		case "cc":
+			if len(latest.CC) > 0 {
+				addrs := make([]string, 0, len(latest.CC))
+				for _, a := range latest.CC {
+					if a != nil {
+						addrs = append(addrs, a.Email)
+					}
+				}
+				if len(addrs) > 0 {
+					fm = append(fm, fmt.Sprintf("cc: %s", strings.Join(addrs, ", ")))
+				}
+			}
+		case "bcc":
+			if len(latest.BCC) > 0 {
+				addrs := make([]string, 0, len(latest.BCC))
+				for _, a := range latest.BCC {
+					if a != nil {
+						addrs = append(addrs, a.Email)
+					}
+				}
+				if len(addrs) > 0 {
+					fm = append(fm, fmt.Sprintf("bcc: %s", strings.Join(addrs, ", ")))
+				}
+			}
+		}
 	}
+	fm = append(fm, "---", "")
 
 	msgs := make([]string, 0, len(messages))
 	for _, m := range messages {
 		from := MessageFromAddr(m)
-		ts := TimeVal(m.ReceivedAt).Local().Format("2006-01-02 15:04")
+		ts := TimeVal(m.ReceivedAt).Local().Format("2006-01-02-15:04")
 		msgs = append(msgs, fmt.Sprintf("- - -\n%s %s\n\n%s", ts, from, MessageBody(m)))
 	}
 
@@ -141,7 +196,7 @@ func mdContent(inboxKey string, messages []Message) string {
 }
 
 // RenderMissingMDs renders MD files for threads missing one in the given inbox.
-func RenderMissingMDs(vaultDir, inboxKey string) {
+func RenderMissingMDs(vaultDir, inboxKey string, cfg InboxConfig) {
 	threads, err := ScanThreads(vaultDir)
 	if err != nil {
 		return
@@ -151,7 +206,7 @@ func RenderMissingMDs(vaultDir, inboxKey string) {
 		msgs := ReadMessagesForThread(vaultDir, t.ID)
 		var inboxMsgs []Message
 		for _, m := range msgs {
-			if m.MailboxIDs[mbxID] {
+			if m.MailboxIDs[mbxID] && m.ThreadID == t.ID {
 				inboxMsgs = append(inboxMsgs, m)
 			}
 		}
@@ -159,10 +214,17 @@ func RenderMissingMDs(vaultDir, inboxKey string) {
 			continue
 		}
 		inboxDir := filepath.Join(vaultDir, inboxKey)
-		if FindThreadMD(inboxDir, ThreadShortID(inboxMsgs)) != "" {
+		alreadyExists := false
+		if cfg.IsSimplified() {
+			contact := threadContact(inboxKey, inboxMsgs)
+			alreadyExists = findContactMD(inboxDir, contact) != ""
+		} else {
+			alreadyExists = FindThreadMD(inboxDir, ThreadShortID(inboxMsgs)) != ""
+		}
+		if alreadyExists {
 			continue
 		}
-		mdPath, content := RenderMD(vaultDir, inboxKey, inboxMsgs)
+		mdPath, content := RenderMD(vaultDir, inboxKey, inboxMsgs, cfg)
 		if mdPath == "" {
 			continue
 		}
@@ -254,15 +316,20 @@ func CleanupOrphanedInboxes(vaultDir string, state *State, respondedRelays map[s
 
 	// Build complete set of known inboxKeys across all relays in state,
 	// merged with what responded relays are returning now.
+	// Normalize trailing slashes: inboxKey "rss/" maps to directory "rss".
 	known := map[string]bool{}
+	addKnown := func(k string) {
+		known[k] = true
+		known[strings.TrimSuffix(k, "/")] = true
+	}
 	for _, rs := range state.Relays {
 		for _, k := range rs.InboxKeys {
-			known[k] = true
+			addKnown(k)
 		}
 	}
 	for _, keys := range respondedRelays {
 		for _, k := range keys {
-			known[k] = true
+			addKnown(k)
 		}
 	}
 
@@ -319,7 +386,7 @@ func CleanupOrphanedMDs(vaultDir string) {
 					}
 				}
 			}
-			mdPath, _ := RenderMD(vaultDir, inboxKey, threadMsgs)
+			mdPath, _ := RenderMD(vaultDir, inboxKey, threadMsgs, InboxConfig{})
 			if mdPath != "" {
 				expected[mdPath] = true
 			}
@@ -362,11 +429,11 @@ func scanInboxForOrphans(vaultDir, inboxKey string, expected map[string]bool) {
 	}
 }
 
-func EnsureNewFile(vaultDir, inboxKey string) {
+func EnsureNewFile(vaultDir, inboxKey string, cfg InboxConfig) {
 	dir := filepath.Join(vaultDir, inboxKey)
 	os.MkdirAll(dir, 0755) //nolint:errcheck
 	p := filepath.Join(dir, "_new.md")
-	if strings.Contains(inboxKey, "/") {
+	if cfg.IsSimplified() {
 		os.Remove(p) //nolint:errcheck
 		return
 	}
@@ -377,7 +444,7 @@ func EnsureNewFile(vaultDir, inboxKey string) {
 
 // ── WriteThreadMD ─────────────────────────────────────────────────────────────
 
-func WriteThreadMD(vaultDir, inboxKey string, messages []Message) bool {
+func WriteThreadMD(vaultDir, inboxKey string, messages []Message, cfg InboxConfig) bool {
 	if len(messages) == 0 {
 		return false
 	}
@@ -399,14 +466,20 @@ func WriteThreadMD(vaultDir, inboxKey string, messages []Message) bool {
 	}
 	WriteThread(vaultDir, Thread{ID: threadID, EmailIDs: eIDs}) //nolint:errcheck
 
-	mdPath, mdBytes := RenderMD(vaultDir, inboxKey, sorted)
+	mdPath, mdBytes := RenderMD(vaultDir, inboxKey, sorted, cfg)
 	if mdPath == "" {
 		return false
 	}
 	content := string(mdBytes)
 
 	inboxDir := filepath.Join(vaultDir, inboxKey)
-	oldMDPath := FindThreadMD(inboxDir, ThreadShortID(sorted))
+	contact := threadContact(inboxKey, sorted)
+	var oldMDPath string
+	if cfg.IsSimplified() {
+		oldMDPath = findContactMD(inboxDir, contact)
+	} else {
+		oldMDPath = FindThreadMD(inboxDir, ThreadShortID(sorted))
+	}
 	readFrom := oldMDPath
 	if readFrom == "" {
 		readFrom = mdPath

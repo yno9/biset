@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -25,6 +24,7 @@ func ThreadFilePath(vaultDir string, threadID ID) string {
 func MailboxesFilePath(vaultDir string) string {
 	return filepath.Join(vaultDir, ".data", "mailboxes.json")
 }
+
 
 func SubmissionFilePath(vaultDir, id string) string {
 	return filepath.Join(vaultDir, ".data", "submissions", id+".json")
@@ -264,38 +264,27 @@ func GetInboxes(vaultDir string) []Inbox {
 	return inboxes
 }
 
-func QueryMessageIDs(vaultDir, mailboxID string, position, limit int) (ids []string, total int) {
-	messages, _ := ScanMessages(vaultDir)
-	type entry struct {
-		id         string
-		receivedAt time.Time
+func identitiesPath(vaultDir string) string {
+	return filepath.Join(vaultDir, ".data", "identities.json")
+}
+
+func WriteIdentities(vaultDir string, ids []Identity) error {
+	b, err := json.Marshal(ids)
+	if err != nil {
+		return err
 	}
-	var list []entry
-	for _, m := range messages {
-		if mailboxID != "" && !m.MailboxIDs[jmap.ID(mailboxID)] {
-			continue
-		}
-		list = append(list, entry{string(m.ID), TimeVal(m.ReceivedAt)})
-	}
-	sort.Slice(list, func(i, j int) bool {
-		return list[i].receivedAt.After(list[j].receivedAt)
-	})
-	total = len(list)
-	if position >= total {
-		return []string{}, total
-	}
-	end := position + limit
-	if limit <= 0 || end > total {
-		end = total
-	}
-	ids = make([]string, 0, end-position)
-	for _, e := range list[position:end] {
-		ids = append(ids, e.id)
-	}
-	return ids, total
+	os.MkdirAll(filepath.Join(vaultDir, ".data"), 0755) //nolint:errcheck
+	return os.WriteFile(identitiesPath(vaultDir), b, 0644)
 }
 
 func GetIdentities(vaultDir string) []Identity {
+	if b, err := os.ReadFile(identitiesPath(vaultDir)); err == nil {
+		var ids []Identity
+		if json.Unmarshal(b, &ids) == nil && len(ids) > 0 {
+			return ids
+		}
+	}
+	// fallback: derive from inbox directories
 	entries, _ := os.ReadDir(vaultDir)
 	var list []Identity
 	for _, e := range entries {
@@ -620,7 +609,7 @@ func ReThreadVault(vaultDir string) {
 			if len(inboxMsgs) == 0 {
 				continue
 			}
-			mdPath, content := RenderMD(vaultDir, inboxKey, inboxMsgs)
+			mdPath, content := RenderMD(vaultDir, inboxKey, inboxMsgs, InboxConfig{})
 			if mdPath == "" {
 				continue
 			}

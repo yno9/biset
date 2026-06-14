@@ -1,0 +1,52 @@
+{
+  "vault": "/path/to/vault",
+
+  "relays": [
+    {
+      "relayname": "imapsmtp",
+      "password": "changeme",
+      "local": "imapsmtp-client",
+      "url": "http://127.0.0.1:8765/.well-known/jmap",
+      "inboxes": {
+        ".": {
+          "meta": ["subject", "contact", "id", "status"],
+          "fileformat": "{contact}_{shortId}.md"
+        }
+      }
+    },
+    {
+      "relayname": "rss",
+      "password": "changeme",
+      "local": "rss-client",
+      "url": "http://127.0.0.1:8770/.well-known/jmap",
+      "notification": false,
+      "inboxes": {
+        ".": {
+          "meta": ["contact", "status"],
+          "fileformat": "{contact}.md",
+          "maxDisplay": 30
+        }
+      }
+    },
+    {
+      "relayname": "you",
+      "password": "secret",
+      "url": "https://biset.example.com/.well-known/jmap",
+      "inboxes": {
+        ".": {
+          "meta": ["subject", "contact", "id", "status"],
+          "fileformat": "{contact}_{shortId}.md"
+        }
+      }
+    }
+  ],
+
+  "server": {
+    "port": 1080,
+    "bind": "127.0.0.1",
+    "relayname": "biset",
+    "password": "changeme",
+    "interface": "~/doucot/docs/index.html",
+    "serve": false
+  }
+}

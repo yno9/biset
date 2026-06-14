@@ -83,10 +83,10 @@ fi
 
 # ── Setup wizard ───────────────────────────────────────────────────────────────
 
-BISET_JSON="$INSTALL_DIR/biset.json"
+CONFIG_JSON="$INSTALL_DIR/config.json"
 IMAP_CFG="$INSTALL_DIR/connectors/biset-imap/config.json"
 
-if [ -f "$BISET_JSON" ]; then
+if [ -f "$CONFIG_JSON" ]; then
   echo ""
   echo "✓ Updated. Run: biset connectors  to enable/disable connectors."
   exit 0
@@ -190,7 +190,7 @@ for name in "${OPTIONAL_CONNECTORS[@]}"; do
   fi
 done
 
-# ── Write biset.json ───────────────────────────────────────────────────────────
+# ── Write config.json ───────────────────────────────────────────────────────────
 
 connectors_json=""
 for name in "${ENABLED_CONNECTORS[@]}"; do
@@ -198,7 +198,7 @@ for name in "${ENABLED_CONNECTORS[@]}"; do
   connectors_json="$connectors_json\"biset-$name\""
 done
 
-cat > "$BISET_JSON" << EOF
+cat > "$CONFIG_JSON" << EOF
 {
   "vault": "$vault",
   "connectors_dir": "connectors",

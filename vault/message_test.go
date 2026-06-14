@@ -107,7 +107,7 @@ func TestMakeThreadID(t *testing.T) {
 func TestMessageIDFromMsgID(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"msg-abc@x.com", "<abc@x.com>"},
-		{"msg-", "<>"},
+		{"msg-", ""},
 		{"", ""},
 	}
 	for _, tt := range tests {
@@ -271,43 +271,6 @@ func TestSafeFilenameLong(t *testing.T) {
 	}
 }
 
-func TestDeduplicateMessages(t *testing.T) {
-	m1 := Message{ID: "1"}
-	m2 := Message{ID: "2"}
-	msgs := []Message{m1, m2, m1}
-	got := DeduplicateMessages(msgs)
-	if len(got) != 2 {
-		t.Errorf("DeduplicateMessages len = %d, want 2", len(got))
-	}
-}
-
-func TestDeduplicateMessagesEmpty(t *testing.T) {
-	got := DeduplicateMessages(nil)
-	if len(got) != 0 {
-		t.Errorf("DeduplicateMessages(nil) = %v", got)
-	}
-}
-
-func TestMergeMessages(t *testing.T) {
-	ts := time.Now()
-	// incoming unseen, existing seen → merged keeps seen
-	incoming := []Message{{ID: "1", Keywords: map[string]bool{}}}
-	existing := []Message{{ID: "1", Keywords: map[string]bool{"$seen": true}}}
-	merged := MergeMessages(incoming, existing)
-	if len(merged) != 1 {
-		t.Fatalf("len = %d", len(merged))
-	}
-	if !merged[0].Keywords["$seen"] {
-		t.Error("expected $seen to be preserved")
-	}
-
-	// new message not in existing
-	incoming2 := []Message{{ID: "2", ReceivedAt: TimePtr(ts)}}
-	merged2 := MergeMessages(incoming2, existing)
-	if len(merged2) != 2 {
-		t.Errorf("len = %d", len(merged2))
-	}
-}
 
 func TestAssignThreadIDs(t *testing.T) {
 	ts := time.Now()

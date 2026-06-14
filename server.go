@@ -14,22 +14,27 @@ import (
 	"sync"
 	"time"
 
+	jmap "git.sr.ht/~rockorager/go-jmap"
 	"biset/vault"
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
 	"github.com/fsnotify/fsnotify"
+	jmapserver "github.com/yno9/go-jmapserver"
 	"golang.org/x/net/webdav"
 )
 
-func startJMAPServer(ctx context.Context, cfg *vault.Config, pgpKey string) {
+func startJMAPServer(ctx context.Context, cfg *vault.Config, pgpKey string, store *jmapserver.Store) {
 	srv := cfg.Server
 	port := srv.Port
 	bind := srv.Bind
-
 	accountID := filepath.Base(cfg.Vault)
 
-	hub := &sseHub{subs: map[chan string]bool{}}
-	go watchVaultDir(cfg.Vault, hub)
+	jmapHub := jmapserver.NewHub()
+	dovecotHub := &notifyHub{subs: map[chan struct{}]bool{}}
+	go watchVaultDir(cfg.Vault, func() {
+		jmapHub.Notify()
+		dovecotHub.notify()
+	})
 
 	password := srv.Password
 	nodeName := srv.RelayName
@@ -73,16 +78,18 @@ func startJMAPServer(ctx context.Context, cfg *vault.Config, pgpKey string) {
 	}
 
 	uiPath := resolveUI(cfg.Server.Interface, cfg.Vault)
-
 	davHandler := &webdav.Handler{
 		Prefix:     "/dav",
 		FileSystem: namedRootFS{webdav.Dir(cfg.Vault), accountID},
 		LockSystem: webdav.NewMemLS(),
 	}
 
-	mux := http.NewServeMux()
+	// go-jmapserver handles: /.well-known/jmap, /jmap/api/, /jmap/eventsource/
+	handler := &jmapHandler{vaultDir: cfg.Vault, accountID: jmap.ID(accountID), store: store}
+	jmapCfg := jmapserver.Config{Port: port, Bind: bind}
+	mux := jmapserver.NewMux(jmapCfg, handler, jmapHub)
 
-	// ── WKD ──────────────────────────────────────────────────────────────────
+	// ── extra routes ──────────────────────────────────────────────────────────
 	mux.HandleFunc("/.well-known/openpgpkey/policy", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -99,8 +106,6 @@ func startJMAPServer(ctx context.Context, cfg *vault.Config, pgpKey string) {
 			w.Write(wkdPubKey) //nolint:errcheck
 		})
 	}
-
-	// ── JMAP / DAV / UI ───────────────────────────────────────────────────────
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" || uiPath == "" {
 			http.NotFound(w, r)
@@ -110,19 +115,12 @@ func startJMAPServer(ctx context.Context, cfg *vault.Config, pgpKey string) {
 	})
 	mux.HandleFunc("/dav/", davHandler.ServeHTTP)
 	mux.HandleFunc("/api/info", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"name": accountID}, 200)
-	})
-	handler := &jmapHandler{vaultDir: cfg.Vault, accountID: accountID}
-
-	mux.HandleFunc("/.well-known/jmap", func(w http.ResponseWriter, r *http.Request) {
-		handler.serveSession(w, r, port)
-	})
-	mux.HandleFunc("/jmap/api/", handler.serveAPI)
-	mux.HandleFunc("/jmap/eventsource/", func(w http.ResponseWriter, r *http.Request) {
-		serveEventSource(w, r, hub)
+		b, _ := json.Marshal(map[string]any{"name": accountID})
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(b) //nolint:errcheck
 	})
 	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
-		serveDovecotEvents(w, r, hub)
+		serveDovecotEvents(w, r, dovecotHub)
 	})
 
 	addr := fmt.Sprintf("%s:%d", bind, port)
@@ -142,279 +140,115 @@ func startJMAPServer(ctx context.Context, cfg *vault.Config, pgpKey string) {
 
 // ── JMAP handler ──────────────────────────────────────────────────────────────
 
+// jmapHandler implements jmapserver.Handler. It serves the biset JMAP server
+// (toward dovecot / UI clients) using go-jmapserver Store for all mail methods.
 type jmapHandler struct {
 	vaultDir  string
-	accountID string
+	accountID jmap.ID
+	store     *jmapserver.Store
 }
 
-func (s *jmapHandler) serveSession(w http.ResponseWriter, r *http.Request, port int) {
-	host := r.Host
-	if host == "" {
-		host = fmt.Sprintf("localhost:%d", port)
+func (s *jmapHandler) Capabilities() []jmap.URI {
+	return []jmap.URI{
+		"urn:ietf:params:jmap:mail",
+		"urn:ietf:params:jmap:submission",
 	}
-	writeJSON(w, map[string]any{
-		"capabilities": map[string]any{
-			"urn:ietf:params:jmap:core": map[string]any{
-				"maxSizeUpload":         50_000_000,
-				"maxConcurrentUpload":   4,
-				"maxSizeRequest":        10_000_000,
-				"maxConcurrentRequests": 4,
-				"maxCallsInRequest":     16,
-				"maxObjectsInGet":       500,
-				"maxObjectsInSet":       500,
-				"collationAlgorithms":   []string{},
-			},
-			"urn:ietf:params:jmap:mail": map[string]any{
-				"maxMailboxesPerEmail":       nil,
-				"maxMailboxDepth":            nil,
-				"maxSizeMailboxName":         200,
-				"maxDescendantMailboxes":     nil,
-				"mayCreateTopLevelMailbox":   false,
-				"maxSizeAttachmentsPerEmail": 50_000_000,
-				"emailQuerySortOptions":      []string{"receivedAt"},
-			},
-			"urn:ietf:params:jmap:submission": map[string]any{
-				"maxDelayedSend":       0,
-				"submissionExtensions": map[string]any{},
-			},
-		},
-		"accounts": map[string]any{
-			s.accountID: map[string]any{
-				"name":       s.accountID,
-				"isPersonal": true,
-				"isReadOnly": false,
-				"accountCapabilities": map[string]any{
-					"urn:ietf:params:jmap:mail":       map[string]any{},
-					"urn:ietf:params:jmap:submission": map[string]any{},
-				},
-			},
-		},
-		"primaryAccounts": map[string]any{
-			"urn:ietf:params:jmap:mail":       s.accountID,
-			"urn:ietf:params:jmap:submission": s.accountID,
-		},
-		"username":       s.accountID,
-		"apiUrl":         "/jmap/api/",
-		"eventSourceUrl": "/jmap/eventsource/?types=*&closeAfter=no&ping=30",
-		"uploadUrl":      "/jmap/upload/{accountId}/",
-		"downloadUrl":    "/jmap/download/{accountId}/{blobId}/{name}?accept={type}",
-		"state":          "1",
-	}, 200)
 }
 
-func (s *jmapHandler) serveAPI(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
-		return
+func (s *jmapHandler) Accounts() []jmapserver.Account {
+	return []jmapserver.Account{{ID: s.accountID, Name: string(s.accountID)}}
+}
+
+func (s *jmapHandler) Handle(method string, args json.RawMessage) (any, error) {
+	switch method {
+	case "Mailbox/get":
+		return s.store.HandleMailboxGet(s.accountID, args)
+	case "Mailbox/changes":
+		return s.store.HandleMailboxChanges(s.accountID, args)
+	case "Email/query":
+		return s.store.HandleEmailQuery(s.accountID, args)
+	case "Email/queryChanges":
+		return s.store.HandleQueryChanges(s.accountID, args)
+	case "Email/changes":
+		return s.store.HandleEmailChanges(s.accountID, args)
+	case "Email/get":
+		return s.store.HandleEmailGet(s.accountID, args)
+	case "Email/set":
+		return s.serveEmailSet(args)
+	case "Thread/get":
+		return s.store.HandleThreadGet(s.accountID, args)
+	case "Thread/changes":
+		return s.store.HandleThreadChanges(s.accountID, args)
+	case "Identity/get":
+		return s.serveIdentityGet(), nil
+	case "Identity/changes":
+		return s.store.HandleIdentityChanges(s.accountID, args)
+	default:
+		return s.store.Dispatch(s.accountID, method, args)
 	}
+}
+
+// ── JMAP methods ─────────────────────────────────────────────────────────────
+
+// serveEmailSet handles Email/set: create (biset-specific draft MD), update (flag patches), destroy.
+func (s *jmapHandler) serveEmailSet(args json.RawMessage) (any, error) {
 	var req struct {
-		MethodCalls [][]any `json:"methodCalls"`
+		Create  map[string]json.RawMessage `json:"create"`
+		Update  map[string]json.RawMessage `json:"update"`
+		Destroy []jmap.ID                  `json:"destroy"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", 400)
-		return
-	}
+	json.Unmarshal(args, &req) //nolint:errcheck
 
-	var results [][]any
-	byID := map[string]any{}
-
-	for _, call := range req.MethodCalls {
-		if len(call) < 3 {
-			continue
-		}
-		method, _ := call[0].(string)
-		args := resolveRefs(call[1], byID)
-		callID, _ := call[2].(string)
-
-		var result map[string]any
-		switch method {
-		case "Mailbox/get":
-			result = s.serveMailboxGet(args)
-		case "Email/query":
-			result = s.serveEmailQuery(args)
-		case "Email/get":
-			result = s.serveEmailGet(args)
-		case "Email/set":
-			result = s.serveEmailSet(args)
-		case "Thread/get":
-			result = s.serveThreadGet(args)
-		case "Identity/get":
-			result = s.serveIdentityGet()
-		default:
-			result = map[string]any{"type": "unknownMethod", "description": "not implemented: " + method}
-			method = "error"
-		}
-
-		byID[callID] = result
-		results = append(results, []any{method, result, callID})
-	}
-
-	if results == nil {
-		results = [][]any{}
-	}
-	writeJSON(w, map[string]any{"methodResponses": results, "sessionState": "1"}, 200)
-}
-
-// ── JMAP methods ──────────────────────────────────────────────────────────────
-
-func (s *jmapHandler) serveMailboxGet(args map[string]any) map[string]any {
-	mailboxes := vault.GetInboxes(s.vaultDir)
-	if idsRaw, ok := args["ids"]; ok && idsRaw != nil {
-		if ids := toStringSlice(idsRaw); ids != nil {
-			set := toSet(ids)
-			var filtered []vault.Inbox
-			for _, m := range mailboxes {
-				if set[string(m.ID)] {
-					filtered = append(filtered, m)
-				}
-			}
-			mailboxes = filtered
-		}
-	}
-	return map[string]any{
-		"accountId": s.accountID,
-		"state":     "1",
-		"list":      orEmpty(mailboxes),
-		"notFound":  []string{},
-	}
-}
-
-func (s *jmapHandler) serveEmailQuery(args map[string]any) map[string]any {
-	mailboxID := ""
-	if filter, ok := args["filter"].(map[string]any); ok {
-		mailboxID, _ = filter["inMailbox"].(string)
-	}
-	position := 0
-	if p, ok := args["position"].(float64); ok {
-		position = int(p)
-	}
-	limit := 0
-	if l, ok := args["limit"].(float64); ok {
-		limit = int(l)
-	}
-	ids, total := vault.QueryMessageIDs(s.vaultDir, mailboxID, position, limit)
-	return map[string]any{
-		"accountId":           s.accountID,
-		"queryState":          "1",
-		"canCalculateChanges": false,
-		"position":            position,
-		"total":               total,
-		"ids":                 ids,
-	}
-}
-
-func (s *jmapHandler) serveEmailGet(args map[string]any) map[string]any {
-	idsRaw, _ := args["ids"].([]any)
-	propsRaw, _ := args["properties"].([]any)
-	want := map[string]bool{}
-	if len(propsRaw) == 0 {
-		want["*"] = true
-	} else {
-		for _, p := range propsRaw {
-			if str, ok := p.(string); ok {
-				want[str] = true
-			}
-		}
-	}
-	has := func(p string) bool { return want["*"] || want[p] }
-
-	var list []map[string]any
-	var notFound []string
-	for _, idRaw := range idsRaw {
-		id, _ := idRaw.(string)
-		e, err := vault.ReadMessage(s.vaultDir, vault.ID(id))
-		if err != nil {
-			notFound = append(notFound, id)
-			continue
-		}
-		obj := map[string]any{"id": e.ID}
-		if has("threadId") {
-			obj["threadId"] = e.ThreadID
-		}
-		if has("mailboxIds") {
-			obj["mailboxIds"] = e.MailboxIDs
-		}
-		if has("keywords") {
-			obj["keywords"] = e.Keywords
-		}
-		if has("subject") {
-			obj["subject"] = e.Subject
-		}
-		if has("from") {
-			obj["from"] = e.From
-		}
-		if has("to") {
-			obj["to"] = orEmpty(e.To)
-		}
-		if has("cc") {
-			obj["cc"] = orEmpty(e.CC)
-		}
-		if has("receivedAt") {
-			obj["receivedAt"] = vault.TimeVal(e.ReceivedAt).UTC().Format(time.RFC3339)
-		}
-		if has("messageId") {
-			obj["messageId"] = orEmptyStrings(e.MessageID)
-		}
-		if has("inReplyTo") {
-			obj["inReplyTo"] = orEmptyStrings(e.InReplyTo)
-		}
-		if has("preview") {
-			obj["preview"] = e.Preview
-		}
-		if has("size") {
-			obj["size"] = e.Size
-		}
-		if has("bodyValues") || has("textBody") {
-			obj["bodyValues"] = e.BodyValues
-			obj["textBody"] = orEmpty(e.TextBody)
-			obj["htmlBody"] = []vault.BodyPart{}
-		}
-		list = append(list, obj)
-	}
-	return map[string]any{
-		"accountId": s.accountID,
-		"state":     "1",
-		"list":      orEmpty(list),
-		"notFound":  orEmptyStrings(notFound),
-	}
-}
-
-func (s *jmapHandler) serveEmailSet(args map[string]any) map[string]any {
+	oldState := s.store.State()
 	created := map[string]any{}
 	notCreated := map[string]any{}
-	if createMap, ok := args["create"].(map[string]any); ok {
-		for createID, raw := range createMap {
-			obj, _ := raw.(map[string]any)
-			if obj == nil {
-				notCreated[createID] = map[string]any{"type": "invalidArguments"}
-				continue
-			}
-			emailID, err := handleEmailCreate(s.vaultDir, obj)
-			if err != nil {
-				log.Printf("[jmap] Email/set create %q: %v", createID, err)
-				notCreated[createID] = map[string]any{"type": "serverFail", "description": err.Error()}
-			} else {
-				created[createID] = map[string]any{"id": emailID}
-			}
+	for createID, raw := range req.Create {
+		var obj map[string]any
+		if json.Unmarshal(raw, &obj) != nil {
+			notCreated[createID] = map[string]any{"type": "invalidArguments"}
+			continue
+		}
+		emailID, err := handleEmailCreate(s.vaultDir, obj)
+		if err != nil {
+			log.Printf("[jmap] Email/set create %q: %v", createID, err)
+			notCreated[createID] = map[string]any{"type": "serverFail", "description": err.Error()}
+		} else {
+			created[createID] = map[string]any{"id": emailID}
 		}
 	}
+
 	updated := map[string]any{}
-	if m, ok := args["update"].(map[string]any); ok {
-		for id := range m {
+	notUpdated := map[string]any{}
+	for id, raw := range req.Update {
+		var patch map[string]any
+		if json.Unmarshal(raw, &patch) != nil {
+			notUpdated[id] = map[string]any{"type": "invalidArguments"}
+			continue
+		}
+		if err := s.store.PatchKeywords(jmap.ID(id), patch); err != nil {
+			notUpdated[id] = map[string]any{"type": "serverFail", "description": err.Error()}
+		} else {
 			updated[id] = map[string]any{}
 		}
 	}
+
+	notDestroyed := map[string]any{}
+	for _, id := range req.Destroy {
+		s.store.Delete(id)
+		vault.DeleteMessage(s.vaultDir, id) //nolint:errcheck
+	}
+
 	return map[string]any{
 		"accountId":    s.accountID,
-		"oldState":     "1",
-		"newState":     "2",
+		"oldState":     oldState,
+		"newState":     s.store.State(),
 		"created":      created,
 		"updated":      updated,
-		"destroyed":    []string{},
+		"destroyed":    orEmpty(req.Destroy),
 		"notCreated":   notCreated,
-		"notUpdated":   map[string]any{},
-		"notDestroyed": map[string]any{},
-	}
+		"notUpdated":   notUpdated,
+		"notDestroyed": notDestroyed,
+	}, nil
 }
 
 func handleEmailCreate(vaultDir string, obj map[string]any) (string, error) {
@@ -427,7 +261,6 @@ func handleEmailCreate(vaultDir string, obj map[string]any) (string, error) {
 	if inboxKey == "" {
 		return "", fmt.Errorf("mailboxIds required")
 	}
-
 	contact := ""
 	if toRaw, ok := obj["to"].([]any); ok && len(toRaw) > 0 {
 		if toObj, ok := toRaw[0].(map[string]any); ok {
@@ -437,7 +270,6 @@ func handleEmailCreate(vaultDir string, obj map[string]any) (string, error) {
 	if contact == "" {
 		return "", fmt.Errorf("to required")
 	}
-
 	body := ""
 	bodyValues, _ := obj["bodyValues"].(map[string]any)
 	if textBodyRaw, ok := obj["textBody"].([]any); ok && len(textBodyRaw) > 0 {
@@ -448,37 +280,13 @@ func handleEmailCreate(vaultDir string, obj map[string]any) (string, error) {
 			}
 		}
 	}
-
 	inReplyTo := ""
 	if irt, ok := obj["inReplyTo"].([]any); ok && len(irt) > 0 {
 		inReplyTo, _ = irt[0].(string)
 	}
-
 	threadID, _ := obj["threadId"].(string)
 	subject, _ := obj["subject"].(string)
-
 	return vault.CreateDraftMD(vaultDir, inboxKey, contact, subject, body, threadID, inReplyTo)
-}
-
-func (s *jmapHandler) serveThreadGet(args map[string]any) map[string]any {
-	idsRaw, _ := args["ids"].([]any)
-	var list []map[string]any
-	var notFound []string
-	for _, idRaw := range idsRaw {
-		id, _ := idRaw.(string)
-		t, err := vault.ReadThread(s.vaultDir, vault.ID(id))
-		if err != nil {
-			notFound = append(notFound, id)
-			continue
-		}
-		list = append(list, map[string]any{"id": t.ID, "emailIds": t.EmailIDs})
-	}
-	return map[string]any{
-		"accountId": s.accountID,
-		"state":     "1",
-		"list":      orEmpty(list),
-		"notFound":  orEmptyStrings(notFound),
-	}
 }
 
 func (s *jmapHandler) serveIdentityGet() map[string]any {
@@ -492,71 +300,38 @@ func (s *jmapHandler) serveIdentityGet() map[string]any {
 
 // ── SSE hub ───────────────────────────────────────────────────────────────────
 
-type sseHub struct {
+// notifyHub is a lightweight SSE broadcaster for non-JMAP endpoints (dovecot).
+type notifyHub struct {
 	mu   sync.Mutex
-	subs map[chan string]bool
+	subs map[chan struct{}]bool
 }
 
-func (h *sseHub) subscribe() chan string {
-	ch := make(chan string, 8)
+func (h *notifyHub) subscribe() chan struct{} {
+	ch := make(chan struct{}, 1)
 	h.mu.Lock()
 	h.subs[ch] = true
 	h.mu.Unlock()
 	return ch
 }
 
-func (h *sseHub) unsubscribe(ch chan string) {
+func (h *notifyHub) unsubscribe(ch chan struct{}) {
 	h.mu.Lock()
 	delete(h.subs, ch)
 	h.mu.Unlock()
 }
 
-func (h *sseHub) notify() {
+func (h *notifyHub) notify() {
 	h.mu.Lock()
 	for ch := range h.subs {
 		select {
-		case ch <- "changed":
+		case ch <- struct{}{}:
 		default:
 		}
 	}
 	h.mu.Unlock()
 }
 
-func serveEventSource(w http.ResponseWriter, r *http.Request, hub *sseHub) {
-	log.Printf("[sse] client connected from %s", r.RemoteAddr)
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(200)
-	fmt.Fprint(w, "event: state\ndata: {\"changed\":{\"urn:ietf:params:jmap:mail\":null}}\n\n")
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
-
-	ch := hub.subscribe()
-	defer hub.unsubscribe(ch)
-	ping := time.NewTicker(30 * time.Second)
-	defer ping.Stop()
-
-	for {
-		select {
-		case <-ch:
-			fmt.Fprint(w, "event: state\ndata: {\"changed\":{\"urn:ietf:params:jmap:mail\":null}}\n\n")
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-		case <-ping.C:
-			fmt.Fprint(w, ": ping\n\n")
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-		case <-r.Context().Done():
-			return
-		}
-	}
-}
-
-func serveDovecotEvents(w http.ResponseWriter, r *http.Request, hub *sseHub) {
+func serveDovecotEvents(w http.ResponseWriter, r *http.Request, hub *notifyHub) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -591,9 +366,9 @@ func serveDovecotEvents(w http.ResponseWriter, r *http.Request, hub *sseHub) {
 
 // ── vault watcher ─────────────────────────────────────────────────────────────
 
-func watchVaultDir(vaultDir string, hub *sseHub) {
+func watchVaultDir(vaultDir string, notify func()) {
 	for {
-		if err := watchVaultOnce(vaultSubdirs(vaultDir), hub); err != nil {
+		if err := watchVaultOnce(vaultSubdirs(vaultDir), notify); err != nil {
 			log.Printf("[jmap] watch: %v — retrying in 5s", err)
 			time.Sleep(5 * time.Second)
 		}
@@ -618,7 +393,7 @@ func vaultSubdirs(vaultDir string) []string {
 	return dirs
 }
 
-func watchVaultOnce(dirs []string, hub *sseHub) error {
+func watchVaultOnce(dirs []string, notify func()) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -637,7 +412,7 @@ func watchVaultOnce(dirs []string, hub *sseHub) error {
 		if debounce != nil {
 			debounce.Stop()
 		}
-		debounce = time.AfterFunc(200*time.Millisecond, hub.notify)
+		debounce = time.AfterFunc(200*time.Millisecond, notify)
 	}
 
 	for {
@@ -736,62 +511,6 @@ func expandHome(path string) (string, error) {
 	return filepath.Join(home, path[2:]), nil
 }
 
-func writeJSON(w http.ResponseWriter, data any, status int) {
-	b, _ := json.Marshal(data)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	w.Write(b) //nolint:errcheck
-}
-
-func resolveRefs(raw any, results map[string]any) map[string]any {
-	args, _ := raw.(map[string]any)
-	out := make(map[string]any, len(args))
-	for k, v := range args {
-		if strings.HasPrefix(k, "#") {
-			ref, _ := v.(map[string]any)
-			resultOf, _ := ref["resultOf"].(string)
-			path, _ := ref["path"].(string)
-			if prev, ok := results[resultOf]; ok {
-				if resolved := resolvePath(prev, path); resolved != nil {
-					out[strings.TrimPrefix(k, "#")] = resolved
-				}
-			}
-		} else {
-			out[k] = v
-		}
-	}
-	return out
-}
-
-func resolvePath(obj any, path string) any {
-	cur := obj
-	for _, p := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
-		if p == "" {
-			continue
-		}
-		switch v := cur.(type) {
-		case map[string]any:
-			cur = v[p]
-		case []any:
-			var flat []any
-			for _, elem := range v {
-				if m, ok := elem.(map[string]any); ok {
-					if val := m[p]; val != nil {
-						if arr, ok := val.([]any); ok {
-							flat = append(flat, arr...)
-						} else {
-							flat = append(flat, val)
-						}
-					}
-				}
-			}
-			cur = flat
-		default:
-			return nil
-		}
-	}
-	return cur
-}
 
 func toStringSlice(v any) []string {
 	arr, _ := v.([]any)

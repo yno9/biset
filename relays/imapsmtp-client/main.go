@@ -13,7 +13,7 @@ import (
 	"time"
 
 	jmap "git.sr.ht/~rockorager/go-jmap"
-	"biset/relays/core"
+	jmapserver "github.com/yno9/go-jmapserver"
 	"biset/vault"
 )
 
@@ -25,18 +25,18 @@ type AccountConfig struct {
 	SMTP     SMTPConfig `json:"smtp"`
 }
 
-// Config embeds core.Config (port, bind, username, password) plus IMAP/SMTP accounts.
+// Config embeds jmapserver.Config (port, bind, username, password) plus IMAP/SMTP accounts.
 type Config struct {
-	core.Config
+	jmapserver.Config
 	Accounts []AccountConfig `json:"accounts"`
 }
 
 // ── handler ───────────────────────────────────────────────────────────────────
 
-// handler implements core.Handler by delegating to store (JMAP persistence) and
+// handler implements jmapserver.Handler by delegating to store (JMAP persistence) and
 // client functions (IMAP/SMTP protocol).
 type handler struct {
-	store     *core.Store
+	store     *jmapserver.Store
 	fetchMu   sync.Mutex
 	states    map[string]FetchState // inboxKey → incremental IMAP state
 	statePath string
@@ -49,10 +49,10 @@ func (h *handler) Capabilities() []jmap.URI {
 	}
 }
 
-func (h *handler) Accounts() []core.Account {
-	out := make([]core.Account, 0, len(cfg.Accounts))
+func (h *handler) Accounts() []jmapserver.Account {
+	out := make([]jmapserver.Account, 0, len(cfg.Accounts))
 	for _, a := range cfg.Accounts {
-		out = append(out, core.Account{ID: jmap.ID(a.InboxKey), Name: a.InboxKey})
+		out = append(out, jmapserver.Account{ID: jmap.ID(a.InboxKey), Name: a.InboxKey})
 	}
 	return out
 }
@@ -60,23 +60,37 @@ func (h *handler) Accounts() []core.Account {
 func (h *handler) Handle(method string, args json.RawMessage) (any, error) {
 	switch method {
 	case "Email/query":
-		return h.emailQuery()
+		return h.emailQuery(args)
+	case "Email/queryChanges":
+		return h.store.HandleQueryChanges(h.primaryID(), args)
+	case "Email/changes":
+		return h.store.HandleEmailChanges(h.primaryID(), args)
 	case "Email/get":
-		return h.emailGet(args)
+		return h.store.HandleEmailGet(h.primaryID(), args)
+	case "Thread/get":
+		return h.store.HandleThreadGet(h.primaryID(), args)
 	case "Mailbox/get":
 		return h.mailboxGet()
+	case "Mailbox/changes":
+		return h.store.HandleMailboxChanges(h.primaryID(), args)
+	case "Identity/get":
+		return h.store.HandleIdentityGet(h.primaryID())
+	case "Identity/changes":
+		return h.store.HandleIdentityChanges(h.primaryID(), args)
+	case "Thread/changes":
+		return h.store.HandleThreadChanges(h.primaryID(), args)
 	case "Email/set":
 		return h.emailSet(args)
 	case "EmailSubmission/set":
 		return h.emailSubmissionSet(args)
 	default:
-		return nil, fmt.Errorf("unknown method: %s", method)
+		return h.store.Dispatch(h.primaryID(), method, args)
 	}
 }
 
 // ── Email/query ───────────────────────────────────────────────────────────────
 
-func (h *handler) emailQuery() (any, error) {
+func (h *handler) emailQuery(args json.RawMessage) (any, error) {
 	h.fetchMu.Lock()
 	defer h.fetchMu.Unlock()
 
@@ -96,50 +110,7 @@ func (h *handler) emailQuery() (any, error) {
 	}
 	h.saveStates()
 
-	all := h.store.All()
-	ids := make([]jmap.ID, len(all))
-	for i, m := range all {
-		ids[i] = m.ID
-	}
-	return map[string]any{
-		"accountId":           h.primaryID(),
-		"queryState":          "0",
-		"canCalculateChanges": false,
-		"position":            0,
-		"ids":                 ids,
-		"total":               len(ids),
-	}, nil
-}
-
-// ── Email/get ─────────────────────────────────────────────────────────────────
-
-func (h *handler) emailGet(args json.RawMessage) (any, error) {
-	var req struct {
-		IDs []jmap.ID `json:"ids"`
-	}
-	json.Unmarshal(args, &req) //nolint:errcheck
-
-	var list []vault.Message
-	var notFound []jmap.ID
-	for _, id := range req.IDs {
-		if m, ok := h.store.Get(id); ok {
-			list = append(list, m)
-		} else {
-			notFound = append(notFound, id)
-		}
-	}
-	if list == nil {
-		list = []vault.Message{}
-	}
-	if notFound == nil {
-		notFound = []jmap.ID{}
-	}
-	return map[string]any{
-		"accountId": h.primaryID(),
-		"state":     "0",
-		"list":      list,
-		"notFound":  notFound,
-	}, nil
+	return h.store.HandleEmailQuery(h.primaryID(), args)
 }
 
 // ── Mailbox/get ───────────────────────────────────────────────────────────────
@@ -431,7 +402,7 @@ func main() {
 		}
 	}
 
-	store, err := core.NewStore(filepath.Join(dir, "data"))
+	store, err := jmapserver.NewStore(filepath.Join(dir, "data"))
 	if err != nil {
 		log.Fatalf("store: %v", err)
 	}
@@ -442,7 +413,7 @@ func main() {
 	}
 	h.loadStates()
 
-	hub := core.NewHub()
+	hub := jmapserver.NewHub()
 	ctx := context.Background()
 	for _, acct := range cfg.Accounts {
 		a := acct
@@ -453,5 +424,5 @@ func main() {
 	}
 
 	log.Printf("imapsmtp: listening on %s:%d", cfg.Bind, cfg.Port)
-	log.Fatal(core.Serve(cfg.Config, h, hub))
+	log.Fatal(jmapserver.Serve(cfg.Config, h, hub))
 }

@@ -9,8 +9,11 @@ import (
 )
 
 type RelayState struct {
-	LastSeen  time.Time `json:"lastSeen"`
-	InboxKeys []string  `json:"inboxKeys"`
+	LastSeen     time.Time         `json:"lastSeen"`
+	InboxKeys    []string          `json:"inboxKeys"`
+	QueryState   map[string]string `json:"queryState,omitempty"`   // accountID → Email/queryChanges state
+	EmailState   map[string]string `json:"emailState,omitempty"`   // accountID → Email/changes state
+	MailboxState map[string]string `json:"mailboxState,omitempty"` // accountID → Mailbox/changes state
 }
 
 type State struct {
@@ -22,10 +25,64 @@ func NewState() *State {
 }
 
 func (s *State) UpdateRelay(name string, inboxKeys []string) {
-	s.Relays[name] = &RelayState{
-		LastSeen:  time.Now().UTC(),
-		InboxKeys: inboxKeys,
+	rs := s.ensureRelay(name)
+	rs.LastSeen = time.Now().UTC()
+	rs.InboxKeys = inboxKeys
+}
+
+func (s *State) UpdateQueryState(relayName, accountID, queryState string) {
+	rs := s.ensureRelay(relayName)
+	if rs.QueryState == nil {
+		rs.QueryState = map[string]string{}
 	}
+	rs.QueryState[accountID] = queryState
+}
+
+func (s *State) GetQueryState(relayName, accountID string) string {
+	rs := s.Relays[relayName]
+	if rs == nil || rs.QueryState == nil {
+		return ""
+	}
+	return rs.QueryState[accountID]
+}
+
+func (s *State) UpdateEmailState(relayName, accountID, emailState string) {
+	rs := s.ensureRelay(relayName)
+	if rs.EmailState == nil {
+		rs.EmailState = map[string]string{}
+	}
+	rs.EmailState[accountID] = emailState
+}
+
+func (s *State) GetEmailState(relayName, accountID string) string {
+	rs := s.Relays[relayName]
+	if rs == nil || rs.EmailState == nil {
+		return ""
+	}
+	return rs.EmailState[accountID]
+}
+
+func (s *State) UpdateMailboxState(relayName, accountID, mailboxState string) {
+	rs := s.ensureRelay(relayName)
+	if rs.MailboxState == nil {
+		rs.MailboxState = map[string]string{}
+	}
+	rs.MailboxState[accountID] = mailboxState
+}
+
+func (s *State) GetMailboxState(relayName, accountID string) string {
+	rs := s.Relays[relayName]
+	if rs == nil || rs.MailboxState == nil {
+		return ""
+	}
+	return rs.MailboxState[accountID]
+}
+
+func (s *State) ensureRelay(name string) *RelayState {
+	if s.Relays[name] == nil {
+		s.Relays[name] = &RelayState{}
+	}
+	return s.Relays[name]
 }
 
 func statePath(vaultDir string) string {

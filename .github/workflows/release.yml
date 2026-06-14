@@ -40,22 +40,33 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: go build -ldflags "-X main.version=$VERSION" -o biset-${{ matrix.goos }}-${{ matrix.goarch }} .
 
-      - name: Build imapsmtp-client relay
+      - name: Build relays
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
           VERSION: ${{ github.ref_name }}
         run: |
-          cd relays/imapsmtp-client
-          go build -ldflags "-X main.version=$VERSION" -o imapsmtp-client-${{ matrix.goos }}-${{ matrix.goarch }} .
+          for relay in ap-host claude-client imapsmtp-client rss-client smtp-host; do
+            go build -ldflags "-X main.version=$VERSION" \
+              -o relays/$relay/biset-$relay-${{ matrix.goos }}-${{ matrix.goarch }} \
+              ./relays/$relay
+          done
 
-      - name: Upload binaries
+      - name: Upload biset binary
+        uses: softprops/action-gh-release@v3
+        with:
+          files: biset-${{ matrix.goos }}-${{ matrix.goarch }}
+
+      - name: Upload relay binaries
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            biset-${{ matrix.goos }}-${{ matrix.goarch }}
-            relays/imapsmtp-client/imapsmtp-client-${{ matrix.goos }}-${{ matrix.goarch }}
+            relays/ap-host/biset-ap-host-${{ matrix.goos }}-${{ matrix.goarch }}
+            relays/claude-client/biset-claude-client-${{ matrix.goos }}-${{ matrix.goarch }}
+            relays/imapsmtp-client/biset-imapsmtp-client-${{ matrix.goos }}-${{ matrix.goarch }}
+            relays/rss-client/biset-rss-client-${{ matrix.goos }}-${{ matrix.goarch }}
+            relays/smtp-host/biset-smtp-host-${{ matrix.goos }}-${{ matrix.goarch }}
 
       - name: Upload shared assets
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
@@ -63,4 +74,7 @@ jobs:
         with:
           files: |
             relays/imapsmtp-client/config.example.json
+            relays/claude-client/config.example.json
+            relays/rss-client/config.example.json
+            relays/smtp-host/config.example.json
             scripts/install.sh

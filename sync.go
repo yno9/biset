@@ -12,9 +12,10 @@ import (
 	"github.com/fsnotify/fsnotify"
 	jmap "git.sr.ht/~rockorager/go-jmap"
 	"biset/vault"
+	jmapserver "github.com/yno9/go-jmapserver"
 )
 
-func runSync(cfg *vault.Config, mgr *Manager) (int, []vault.SyncNotification) {
+func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []vault.SyncNotification) {
 	lockPath, ok := acquireSyncLock(cfg.Vault)
 	if !ok {
 		log.Printf("sync already running — skipping")
@@ -30,62 +31,74 @@ func runSync(cfg *vault.Config, mgr *Manager) (int, []vault.SyncNotification) {
 	vault.MigrateVault(cfg.Vault)
 
 	// 1. flush outgoing → queue submissions
-	FlushOutgoing(cfg.Vault, mgr)
+	FlushOutgoing(cfg.Vault, mgr, store)
 
 	// 1b. dispatch queued submissions
-	dispatchSubmissions(cfg.Vault, mgr)
+	dispatchSubmissions(cfg, mgr, store)
 
 	// 2. flush actions
-	FlushActions(cfg.Vault, mgr)
+	FlushActions(cfg, mgr, store)
 
 	// 3. fetch from all connectors
+	state := vault.LoadState(cfg.Vault)
 	var allMessages []vault.Message
+	var allThreads []vault.Thread
 	var allInboxes []vault.Inbox
+	var allIdentities []vault.Identity
+	var allRemovedIDs []jmap.ID
 	inboxSeen := map[string]bool{}
-	respondedRelays := map[string][]string{} // relayName → inboxKeys
+	respondedRelays := map[string][]string{}       // relayURL → inboxKeys
+	inboxConfigs := map[string]vault.InboxConfig{} // inboxKey → InboxConfig
+	notifEnabled := map[string]bool{}              // inboxKey → notification enabled
 	for _, c := range mgr.Relays() {
 		if !c.Has("fetch") {
 			continue
 		}
-		result, err := c.Fetch()
+		sinceQueryState := state.GetQueryState(c.Name(), string(c.AccountID()))
+		sinceEmailState := state.GetEmailState(c.Name(), string(c.AccountID()))
+		sinceMailboxState := state.GetMailboxState(c.Name(), string(c.AccountID()))
+		result, err := c.Fetch(sinceQueryState, sinceEmailState, sinceMailboxState)
 		if err != nil {
 			log.Printf("[%s] fetch: %v", c.Name(), err)
 			continue
 		}
 		allMessages = append(allMessages, result.Messages...)
+		allThreads = append(allThreads, result.Threads...)
+		allIdentities = append(allIdentities, result.Identities...)
+		allRemovedIDs = append(allRemovedIDs, result.RemovedIDs...)
+		if result.QueryState != "" {
+			state.UpdateQueryState(c.Name(), string(c.AccountID()), result.QueryState)
+		}
+		if result.EmailState != "" {
+			state.UpdateEmailState(c.Name(), string(c.AccountID()), result.EmailState)
+		}
+		if result.MailboxState != "" {
+			state.UpdateMailboxState(c.Name(), string(c.AccountID()), result.MailboxState)
+		}
+		// apply keyword/flag updates from Email/changes
+		for _, m := range result.UpdatedMessages {
+			store.Put(m) //nolint:errcheck
+		}
 		var keys []string
 		for _, ib := range result.Inboxes {
 			if !inboxSeen[string(ib.ID)] {
 				inboxSeen[string(ib.ID)] = true
 				allInboxes = append(allInboxes, ib)
 			}
-			keys = append(keys, vault.InboxKeyFromMailboxID(string(ib.ID)))
+			key := vault.InboxKeyFromMailboxID(string(ib.ID))
+			keys = append(keys, key)
+			inboxConfigs[key] = c.InboxConfigFor(key, cfg)
+			notifEnabled[key] = c.NotificationEnabled(key, cfg)
 		}
 		respondedRelays[c.Name()] = keys
 	}
 
-	// 4. assign thread IDs + deduplicate
-	if existing, err := vault.ScanMessages(cfg.Vault); err == nil {
-		existingByMsgID := make(map[string]jmap.ID, len(existing))
-		for _, m := range existing {
-			if msgID := vault.MessageHeaderID(m); msgID != "" {
-				existingByMsgID[msgID] = m.ThreadID
-			}
-		}
-		for i := range allMessages {
-			if allMessages[i].ThreadID != "" {
-				continue
-			}
-			if inReplyTo := vault.MessageInReplyTo(allMessages[i]); inReplyTo != "" {
-				if tid := existingByMsgID[inReplyTo]; tid != "" {
-					allMessages[i].ThreadID = tid
-				}
-			}
-		}
+	fmt.Printf("fetched %d messages, %d threads\n", len(allMessages), len(allThreads))
+
+	// persist identities to vault cache (store handles message/thread data)
+	if len(allIdentities) > 0 {
+		vault.WriteIdentities(cfg.Vault, allIdentities) //nolint:errcheck
 	}
-	allMessages = vault.DeduplicateMessages(allMessages)
-	allMessages = vault.AssignThreadIDs(allMessages)
-	fmt.Printf("fetched %d messages\n", len(allMessages))
 
 	// collect notifications (received messages newer than 5 minutes ago)
 	cutoff := time.Now().Add(-5 * time.Minute).UnixMilli()
@@ -97,6 +110,9 @@ func runSync(cfg *vault.Config, mgr *Manager) (int, []vault.SyncNotification) {
 			continue // sent by self
 		}
 		if vault.TimeVal(m.ReceivedAt).UnixMilli() < cutoff {
+			continue
+		}
+		if !notifEnabled[inboxKey] {
 			continue
 		}
 		body := messageBodyPreview(m, 80)
@@ -111,49 +127,87 @@ func runSync(cfg *vault.Config, mgr *Manager) (int, []vault.SyncNotification) {
 	// 5. write inboxes
 	validInboxKeys := map[string]bool{}
 	if len(allInboxes) > 0 {
-		vault.WriteInboxes(cfg.Vault, allInboxes) //nolint:errcheck
+		store.PutMailboxes(allInboxes) //nolint:errcheck
 		for _, ib := range allInboxes {
 			key := vault.InboxKeyFromMailboxID(string(ib.ID))
 			validInboxKeys[key] = true
-			vault.EnsureNewFile(cfg.Vault, key)
+			vault.EnsureNewFile(cfg.Vault, key, inboxConfigs[key])
 		}
 	}
 
-	// 5b. update state and clean up orphaned inboxes per relay scope
-	state := vault.LoadState(cfg.Vault)
+	// 5b. remove messages deleted on relay (delta sync)
+	for _, id := range allRemovedIDs {
+		store.Delete(id)
+		vault.DeleteMessage(cfg.Vault, id) //nolint:errcheck
+	}
+
+	// 5c. update state and clean up orphaned inboxes per relay scope
 	vault.CleanupOrphanedInboxes(cfg.Vault, state, respondedRelays)
 	for name, keys := range respondedRelays {
 		state.UpdateRelay(name, keys)
 	}
 	vault.SaveState(cfg.Vault, state)
 
-	// 6. group, merge with existing, write
+	// 6. write messages to store and render threads
 	totalUpdated := 0
 	if len(allMessages) > 0 {
+		// index relay-provided threads by ID
+		relayThreadByID := make(map[jmap.ID]vault.Thread, len(allThreads))
+		for _, t := range allThreads {
+			relayThreadByID[t.ID] = t
+		}
+
+		// write new messages to store and index by ID
+		newByID := make(map[jmap.ID]vault.Message, len(allMessages))
+		for _, m := range allMessages {
+			store.Put(m) //nolint:errcheck
+			newByID[m.ID] = m
+		}
+
 		byInbox := groupMessagesByInbox(allMessages)
 		for inboxKey, msgs := range byInbox {
-			inboxDir := filepath.Join(cfg.Vault, inboxKey)
 			threads := vault.GroupByThread(msgs)
 			for _, t := range threads {
-				threadMsgs := messagesForThread(msgs, t.ID)
-				merged := mergeWithExistingThread(cfg.Vault, t.ID, threadMsgs)
-				if vault.WriteThreadMD(cfg.Vault, inboxKey, merged) {
+				var threadMsgs []vault.Message
+				if rt, ok := relayThreadByID[t.ID]; ok && len(rt.EmailIDs) > 0 {
+					// relay provided ordered email IDs — use them, filling from store when needed
+					for _, eid := range rt.EmailIDs {
+						if m, ok := newByID[eid]; ok {
+							threadMsgs = append(threadMsgs, m)
+						} else if cached, ok := store.Get(eid); ok {
+							threadMsgs = append(threadMsgs, cached)
+						}
+					}
+				} else {
+					threadMsgs = messagesForThread(msgs, t.ID)
+					// supplement with cached messages not in this fetch
+					for _, cached := range store.AllForThread(t.ID) {
+						if _, already := newByID[cached.ID]; !already {
+							threadMsgs = append(threadMsgs, cached)
+						}
+					}
+				}
+				if vault.WriteThreadMD(cfg.Vault, inboxKey, threadMsgs, inboxConfigs[inboxKey]) {
 					totalUpdated++
 				}
 			}
-			vault.RenderMissingMDs(cfg.Vault, inboxKey)
-			vault.EnsureNewFile(cfg.Vault, inboxKey)
+			vault.EnsureNewFile(cfg.Vault, inboxKey, inboxConfigs[inboxKey])
 			writeSyncLog(cfg.Vault, inboxKey, messagesForInbox(msgs, inboxKey))
-			_ = inboxDir
 		}
+	}
+
+	// RenderMissingMDs for all known inboxes (catches sent-only threads not returned by relay).
+	for key := range validInboxKeys {
+		vault.RenderMissingMDs(cfg.Vault, key, inboxConfigs[key])
 	}
 
 	fmt.Printf("done — updated: %d\n", totalUpdated)
 	return totalUpdated, notifications
 }
 
-// dispatchSubmissions sends all queued PendingSubmissions and records results in vault.
-func dispatchSubmissions(vaultDir string, mgr *Manager) {
+// dispatchSubmissions sends all queued PendingSubmissions and records results in store.
+func dispatchSubmissions(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) {
+	vaultDir := cfg.Vault
 	subs, err := vault.ScanSubmissions(vaultDir)
 	if err != nil || len(subs) == 0 {
 		return
@@ -172,21 +226,17 @@ func dispatchSubmissions(vaultDir string, mgr *Manager) {
 		if !serverReceivedAt.IsZero() {
 			s.Message.ReceivedAt = vault.TimePtr(serverReceivedAt)
 		}
-		vault.WriteMessage(vaultDir, s.Message) //nolint:errcheck
-		existing := vault.ReadMessagesForThread(vaultDir, s.Message.ThreadID)
-		vault.WriteThreadMD(vaultDir, s.InboxKey, existing)
+		store.Put(s.Message) //nolint:errcheck
+		existing := store.AllForThread(s.Message.ThreadID)
+		if len(existing) == 0 {
+			existing = []vault.Message{s.Message}
+		}
+		vault.WriteThreadMD(vaultDir, s.InboxKey, existing, mgr.InboxConfigFor(s.InboxKey, cfg))
 		vault.DeleteSubmission(vaultDir, s.ID) //nolint:errcheck
 		fmt.Printf("sent: %s → %v\n", s.ID, s.Envelope.RcptTo)
 	}
 }
 
-func mergeWithExistingThread(vaultDir string, threadID jmap.ID, incoming []vault.Message) []vault.Message {
-	existing := vault.ReadMessagesForThread(vaultDir, threadID)
-	if len(existing) == 0 {
-		return incoming
-	}
-	return vault.MergeMessages(incoming, existing)
-}
 
 func groupMessagesByInbox(messages []vault.Message) map[string][]vault.Message {
 	result := map[string][]vault.Message{}
@@ -364,7 +414,7 @@ func watchVault(vaultDir, bisetDir string, onAction func(), onQuit func()) {
 			fm := vault.ParseFrontmatter(string(b))
 			status := strings.TrimSpace(fm["status"])
 			hasBangB := strings.Contains(vault.ExtractBody(string(b)), "!b")
-			if status != "send" && status != "seen" && !hasBangB {
+			if status != "send" && status != "seen" && status != "follow" && !hasBangB {
 				continue
 			}
 			if !pending {
