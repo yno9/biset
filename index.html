@@ -1,0 +1,3325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>relay</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f5f5f7;
+    --card: #fff;
+    --header-bg: rgba(245,245,247,0.6);
+    --header-border: rgba(0,0,0,0.08);
+    --text: #1c1c1e;
+    --text-dim: #8e8e93;
+    --input-bg: #fff;
+    --font: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+    --accent: #0b93f6;
+    --compose-h: 280px;
+    --reply-box-bg: rgba(255,255,255,0.7);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d0d0d;
+      --card: #1a1a1a;
+      --header-bg: rgba(13,13,13,0.8);
+      --header-border: rgba(255,255,255,0.06);
+      --text: #ececec;
+      --text-dim: #5a5a5a;
+      --input-bg: #1a1a1a;
+      --reply-box-bg: rgba(26,26,26,0.75);
+    }
+  }
+
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 17px; -webkit-font-smoothing: antialiased; }
+  input, textarea, select { font-size: 16px !important; }
+
+  :root { --header-h: calc(48px + env(safe-area-inset-top)); }
+
+  /* ── header (legacy, hidden) ── */
+  #header { display: none !important; }
+
+  #header-left {
+    display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1;
+  }
+  #header-thread-title {
+    font-size: 15px; font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0;
+  }
+  #header-right {
+    display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+  }
+
+  #hamburger {
+    width: 32px; height: 32px; border: none; background: none;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    border-radius: 8px; flex-shrink: 0; padding: 0;
+    color: var(--text-dim);
+  }
+  #hamburger:hover { background: rgba(128,128,128,0.12); }
+
+  #header-avatar-btn {
+    display: none;
+    width: 32px; height: 32px; border: none; border-radius: 50%;
+    background: rgba(128,128,128,0.18);
+    cursor: pointer; align-items: center; justify-content: center;
+    padding: 0; overflow: hidden; flex-shrink: 0;
+    font-size: 13px; font-weight: 700; color: rgba(120,120,128,0.9);
+  }
+  #header-avatar-btn:hover { opacity: 0.8; }
+  #header-avatar-btn img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: none; }
+  #header-avatar-btn.has-avatar { background: transparent; }
+  #header-avatar-btn.has-avatar img { display: block; }
+  #header-avatar-btn.has-avatar span { display: none; }
+  @media (max-width: 720px) {
+    #header-avatar-btn { display: flex; }
+  }
+
+  #menu {
+    position: fixed; top: 48px; right: 12px;
+    background: var(--input-bg); border-radius: 12px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+    padding: 6px 0; min-width: 160px; z-index: 20;
+    display: none;
+  }
+  #menu.open { display: block; }
+  .menu-item {
+    padding: 10px 16px; font-size: 14px; color: var(--text);
+    cursor: pointer; display: block;
+  }
+  .menu-item:hover { background: rgba(128,128,128,0.1); }
+
+  /* ── sys-msg ── */
+  #sys-msg {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.55); color: #fff;
+    font-size: 14px; padding: 10px 20px; border-radius: 20px;
+    pointer-events: none; z-index: 100;
+    opacity: 0; transition: opacity 0.2s;
+  }
+  #sys-msg.show { opacity: 1; }
+
+  /* ── 2-pane layout ── */
+  #app { display: flex; height: 100dvh; overflow: hidden; }
+
+  #left-pane {
+    width: var(--lp-width, 300px); flex-shrink: 0;
+    display: none; flex-direction: column;
+    overflow-y: auto; overflow-x: hidden;
+    background: var(--bg);
+    transition: margin-left 0.28s cubic-bezier(0.25,0.46,0.45,0.94);
+  }
+  #app.lp-enabled #left-pane { display: flex; }
+  #app.lp-enabled #header { display: flex; }
+  /* デスクトップ2ペイン時: lp-toggle を隠す */
+  @media (min-width: 721px) {
+    #lp-toggle { display: none !important; }
+    #app.single-col.lp-enabled #lp-toggle { display: flex !important; }
+  }
+
+  #left-pane-header {
+    display: flex; align-items: center; gap: 0;
+    padding: calc(16px + env(safe-area-inset-top)) 16px 12px 20px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: linear-gradient(to bottom, var(--bg) 70%, transparent);
+  }
+
+  .menu-item.with-toggle {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px;
+  }
+  .toggle-switch {
+    width: 36px; height: 20px; border-radius: 10px;
+    background: rgba(128,128,128,0.35);
+    position: relative; flex-shrink: 0;
+    transition: background 0.2s;
+  }
+  .toggle-switch::after {
+    content: ''; position: absolute;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; top: 2px; left: 2px;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  .toggle-switch.on { background: var(--accent); }
+  .toggle-switch.on::after { transform: translateX(16px); }
+
+  #lp-hamburger {
+    width: 40px; height: 40px; border: none;
+    background: rgba(128,128,128,0.18);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; flex-shrink: 0; padding: 0; overflow: hidden;
+    color: rgba(120,120,128,0.9);
+  }
+  #lp-hamburger:hover { background: rgba(128,128,128,0.28); }
+  #lp-hamburger.has-avatar { background: transparent; }
+  #lp-hamburger.has-avatar:hover { background: transparent; opacity: 0.8; }
+  #lp-hamburger img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: none; }
+  #lp-hamburger.has-avatar img { display: block; }
+  #lp-hamburger.has-avatar svg { display: none; }
+
+  #lp-search-wrap { flex: 1; position: relative; display: flex; align-items: center; min-width: 0; }
+  #lp-search {
+    flex: 1; border: none; background: transparent;
+    font-family: inherit; font-size: 16px; color: var(--text); outline: none;
+    padding: 0 32px 0 12px; min-width: 0;
+  }
+  #lp-search::placeholder { color: var(--text-dim); }
+  #lp-search::-webkit-search-cancel-button { display: none; }
+  #lp-col-toggle {
+    position: absolute; right: 0;
+    width: 28px; height: 28px; border: none; background: none;
+    cursor: pointer; display: flex; flex-direction: column; justify-content: center;
+    gap: 4px; padding: 4px; opacity: 0.4; transition: opacity 0.15s;
+    transform: translateY(-8px);
+  }
+  #lp-col-toggle:hover { opacity: 0.8; }
+  #lp-col-toggle span {
+    display: block; height: 1.5px; background: var(--text); border-radius: 1px;
+  }
+  #lp-col-toggle span:nth-child(1) { width: 100%; }
+  #lp-col-toggle span:nth-child(2) { width: 70%; }
+  #lp-col-toggle span:nth-child(3) { width: 45%; }
+  #lp-search:not(:placeholder-shown) ~ #lp-col-toggle { display: none; }
+  /* single-col mode: left pane slides off to the left */
+  #app.single-col.lp-enabled #left-pane { margin-left: -300px; }
+  #app.single-col.lp-enabled #header { display: flex; }
+  #app.single-col.lp-enabled #lp-toggle { display: flex; }
+  .lp-cmd-item {
+    display: flex; align-items: center;
+    padding: 10px 16px; border-radius: 10px;
+    cursor: pointer; font-size: 15px; font-family: 'SF Mono', monospace;
+    color: var(--text); margin: 0 8px;
+    transition: background 0.1s;
+  }
+  .lp-cmd-item:hover, .lp-cmd-item.selected { background: rgba(128,128,128,0.18); }
+
+  #cmd-page {
+    display: none; position: absolute; inset: 0;
+    padding: 64px 24px 24px; overflow-y: auto; background: var(--bg);
+  }
+  .cmd-page-content { max-width: 520px; margin: 0 auto; padding-top: 12px; }
+  .cmd-page-content h2 { font-size: 22px; font-weight: 600; margin-bottom: 24px; }
+  .cmd-page-section { margin-bottom: 28px; }
+  .cmd-page-section h3 { font-size: 12px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
+  .cmd-page-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--header-border); font-size: 15px; }
+  .cmd-page-row:last-child { border-bottom: none; }
+  .cmd-page-desc { color: var(--text-dim); font-size: 14px; line-height: 1.6; margin-bottom: 20px; }
+  .cmd-page-btn { display: inline-flex; align-items: center; padding: 10px 22px; border-radius: 10px; border: none; font-size: 15px; font-weight: 500; cursor: pointer; }
+  .cmd-page-btn.primary { background: var(--accent); color: #fff; }
+  .cmd-page-btn.danger { background: #ff3b30; color: #fff; }
+  .cmd-form { display: flex; flex-direction: column; gap: 8px; }
+  .cmd-form-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .cmd-input { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--header-border); background: var(--input-bg); color: var(--text); font-size: 14px; }
+  .cmd-input:focus { outline: none; border-color: var(--accent); }
+
+  #lp-menu {
+    position: absolute; top: 44px; left: 0;
+    background: var(--input-bg); border-radius: 12px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+    padding: 6px 0; min-width: 160px; z-index: 30;
+    display: none;
+  }
+  #lp-menu.open { display: block; }
+
+  #lp-new-wrap {
+    padding: 0 8px 8px;
+    flex-shrink: 0;
+  }
+  #lp-new-inner {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--input-bg);
+    border-radius: 10px;
+    padding: 6px 10px;
+  }
+  #lp-new-input {
+    flex: 1; border: none; background: transparent;
+    font-family: inherit; font-size: 16px; color: var(--text);
+    outline: none;
+  }
+  #lp-new-input::placeholder { color: var(--text-dim); }
+  #lp-new-cancel {
+    background: none; border: none; cursor: pointer;
+    color: var(--text-dim); font-size: 14px; padding: 0; line-height: 1;
+  }
+  #lp-new-cancel:hover { color: var(--text); }
+
+  #left-list-wrap { flex: 1; padding: 0 8px 16px; }
+  #left-list { display: flex; flex-direction: column; gap: 2px; }
+
+  .lp-item {
+    display: block; cursor: pointer;
+    text-decoration: none; color: inherit;
+    border-radius: 0;
+    transition: background 0.12s;
+    position: relative; overflow: hidden;
+  }
+  .lp-inner {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 12px; height: 64px; overflow: hidden;
+    transition: transform 0.22s cubic-bezier(0.25,0.46,0.45,0.94);
+  }
+  .lp-item:hover { background: rgba(128,128,128,0.10); }
+  #left-list:has(.lp-item.focused) .lp-item:not(.focused):hover { background: none; }
+  .lp-item.selected { background: rgba(128,128,128,0.18); }
+  .lp-item.selected .lp-name { font-weight: 600; }
+  .lp-item.focused { background: rgba(128,128,128,0.18); }
+  .lp-delete-btn {
+    position: absolute; right: 0; top: 0; bottom: 0;
+    width: 72px; display: flex; align-items: center; justify-content: center;
+    background: #ff3b30; color: #fff; font-size: 13px; font-weight: 600;
+    cursor: pointer; border: none; border-radius: 0 10px 10px 0;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.22s;
+  }
+  .lp-item.swiped .lp-inner { transform: translateX(-72px); }
+  .lp-item.swiped .lp-delete-btn { opacity: 1; pointer-events: auto; }
+
+  .lp-avatar {
+    width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 600; color: #fff; position: relative;
+  }
+  .lp-avatar .unread-dot {
+    position: absolute; top: 0; right: 0;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--bg);
+  }
+  a.lp-avatar { text-decoration: none; transition: opacity 0.15s; }
+  a.lp-avatar:hover { opacity: 0.7; }
+  .lp-info { flex: 1; min-width: 0; }
+  .lp-name { font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+  .lp-preview { font-size: 13px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .lp-time { font-size: 12px; color: var(--text-dim); flex-shrink: 0; }
+  .lp-inbox-menu-btn { background: none; border: none; cursor: pointer; padding: 4px; color: var(--text-dim); flex-shrink: 0; border-radius: 6px; display: flex; align-items: center; }
+  .lp-inbox-menu-btn:hover { background: rgba(128,128,128,0.15); }
+  #lp-inbox-menu { position: fixed; background: var(--card); border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); padding: 6px 0; min-width: 140px; z-index: 30; display: none; }
+  #lp-inbox-menu .menu-item { padding: 10px 16px; font-size: 14px; cursor: pointer; }
+  #lp-inbox-menu .menu-item.danger { color: #ff3b30; }
+  #lp-inbox-menu .menu-item:not(.danger) { color: var(--text); }
+
+  #lp-empty { text-align: center; color: var(--text-dim); padding: 40px 0; font-size: 14px; }
+  .lp-search-result { padding: 8px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 2px; }
+  .lp-search-result:hover { background: rgba(128,128,128,0.1); }
+  .lp-search-header { padding: 6px 10px 4px; font-size: 11px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: .06em; }
+  .lp-search-status { padding: 8px 12px; font-size: 13px; color: var(--text-dim); }
+  .lp-search-contact { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lp-search-subject, .lp-search-preview { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lp-search-preview { opacity: 0.75; }
+  .lp-search-subject mark, .lp-search-preview mark { background: rgba(11,147,246,0.25); border-radius: 2px; color: inherit; }
+  .cmd-textarea { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--header-border); background: var(--input-bg); color: var(--text); font-size: 14px; font-family: var(--font); resize: vertical; min-height: 80px; margin-top: 8px; }
+  .cmd-textarea:focus { outline: none; border-color: var(--accent); }
+  .lp-suggestion-item {
+    margin: 4px 8px; padding: 12px 16px; border-radius: 10px;
+    font-size: 14px; color: var(--accent); cursor: pointer;
+    transition: background 0.1s;
+  }
+  .lp-suggestion-item:hover, .lp-suggestion-item.focused { background: rgba(128,128,128,0.18); }
+
+  #right-pane {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    min-width: 0;
+    background: var(--bg);
+  }
+
+  #lp-toggle {
+    display: none;
+    width: 28px; height: 28px; border: none; background: none;
+    cursor: pointer; flex-direction: column; justify-content: center;
+    gap: 4px; padding: 4px; opacity: 0.4; transition: opacity 0.15s;
+    flex-shrink: 0;
+  }
+  #lp-toggle:hover { opacity: 0.8; }
+  #lp-toggle span {
+    display: block; height: 1.5px; background: var(--text); border-radius: 1px;
+  }
+  #lp-toggle span:nth-child(1) { width: 100%; }
+  #lp-toggle span:nth-child(2) { width: 70%; }
+  #lp-toggle span:nth-child(3) { width: 45%; }
+
+  /* mobile: full-screen switch, no animation */
+  @media (max-width: 720px) {
+    #app.lp-enabled #left-pane { display: none !important; margin-left: 0; width: 300px; }
+    #app.lp-enabled.show-left #left-pane { display: flex !important; width: 100%; }
+    #app.lp-enabled.show-left #right-pane { display: none; }
+    #app.lp-enabled #header { display: flex; }
+    #app.lp-enabled #lp-toggle { display: flex; }
+  }
+
+  /* ── thread layout ── */
+  #outer {
+    height: 100%;
+    overflow-y: scroll;
+    scrollbar-width: none;
+  }
+  #outer::-webkit-scrollbar { display: none; }
+
+  #reply-dock {
+    position: fixed;
+    bottom: 0;
+    left: var(--lp-width, 300px);
+    right: 0;
+    z-index: 10;
+    transition: left 0.28s cubic-bezier(0.25,0.46,0.45,0.94);
+  }
+  body.lp-resizing #reply-dock { transition: none; }
+  #app.single-col #reply-dock,
+  #app:not(.lp-enabled) #reply-dock { left: 0; }
+  @media (max-width: 720px) { #reply-dock { left: 0; } }
+  #reply-dock:empty { display: none; }
+  #reply-dock.group-expanded { bottom: 0; }
+  #reply-dock.group-expanded .reply-box {
+    height: 100%;
+    border-radius: 12px 12px 0 0;
+    display: flex;
+    flex-direction: column;
+  }
+  #reply-dock.group-expanded .reply-content {
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  :root { --dock-h: 80px; }
+  #scroll-to-bottom {
+    position: fixed;
+    bottom: calc(var(--dock-h) + 5px);
+    right: 16px;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: none;
+    border: none;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 11;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s;
+    color: var(--text-dim);
+  }
+  #scroll-to-bottom.visible { opacity: 1; pointer-events: auto; }
+  #scroll-to-top {
+    position: fixed;
+    bottom: calc(var(--dock-h) + 5px);
+    right: 16px;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: none;
+    border: none;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 11;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s, bottom 0.2s;
+    color: var(--text-dim);
+  }
+  #scroll-to-top.visible { opacity: 1; pointer-events: auto; }
+  #scroll-to-top.above-bottom { bottom: calc(var(--dock-h) + 5px + 26px + 8px); }
+
+
+  /* 過去スレッド: 引き出し (ビューポート上に隠れている) */
+  #past-threads {}
+
+
+  @keyframes pastRowIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .past-row { animation: pastRowIn 0.25s ease; }
+
+  .thread-handle-wrap { height: 0; }
+
+  .past-row {
+    cursor: pointer;
+    border-bottom: 1px solid rgba(128,128,128,0.08);
+  }
+  .past-row:hover { background: rgba(128,128,128,0.06); }
+
+  .past-row-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 22px 16px;
+    gap: 12px;
+  }
+  .past-row-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+  }
+  .past-row-title.untitled {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-weight: 400;
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .past-row-date {
+    font-size: 12px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+  .past-row-time-wrap { position: relative; flex-shrink: 0; display: flex; align-items: center; }
+  .past-row-menu-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-dim);
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 8px;
+    opacity: 0;
+    pointer-events: none;
+    position: absolute;
+    right: -1px;
+  }
+  .past-row-menu-btn:hover { background: rgba(128,128,128,0.12); }
+  .past-row-header:hover .past-row-date { opacity: 0; }
+  .past-row-header:hover .past-row-menu-btn { opacity: 1; pointer-events: auto; }
+
+  #thread-title-row {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: calc(22px + env(safe-area-inset-top)) 16px 22px;
+    background: linear-gradient(to bottom, var(--bg) 60%, transparent);
+    flex-shrink: 0;
+    gap: 12px;
+  }
+  #header-thread-title.untitled {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-weight: 400; color: var(--text-dim); font-size: 12px;
+  }
+  /* デスクトップ: lp-toggle と avatar を非表示 */
+  @media (min-width: 721px) {
+    #header-avatar-btn { display: none !important; }
+  }
+
+  #conv-meta {
+    font-size: 13px;
+    font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--text-dim);
+    padding: 0 20px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  #conv-via {
+    font-size: 11px; font-weight: 600; letter-spacing: .04em;
+    background: rgba(128,128,128,0.12); color: var(--text-dim);
+    border-radius: 5px; padding: 2px 6px;
+    display: none; margin-right: 6px; flex-shrink: 0;
+  }
+  #conv-via:not(:empty) { display: inline-flex; align-items: center; }
+  #conv-to { display: flex; align-items: center; gap: 0; }
+  #conv-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    cursor: pointer;
+    user-select: none;
+  }
+  #conv-meta:empty { display: none; }
+  #conv-to, #conv-cc, #conv-bcc { font-size: 13px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 0; }
+  #conv-to:empty, #conv-cc:empty, #conv-bcc:empty { display: none; }
+  .conv-badge { font-size: 11px; font-weight: 600; letter-spacing: .04em; background: rgba(128,128,128,0.12); color: var(--text-dim); border-radius: 5px; padding: 2px 6px; flex-shrink: 0; margin-right: 6px; }
+  #conv-meta-expanded {
+    display: none;
+    margin-top: 8px;
+    font-size: 12px;
+    font-family: ui-monospace, 'SF Mono', monospace;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: rgba(128,128,128,0.06);
+    border-radius: 8px;
+    padding: 10px 12px;
+    line-height: 1.6;
+  }
+  #conv-meta.expanded #conv-to,
+  #conv-meta.expanded #conv-cc,
+  #conv-meta.expanded #conv-bcc { white-space: normal; overflow: visible; }
+  #conv-meta.expanded #conv-meta-expanded { display: block; }
+  #active-thread {
+    min-height: 0;
+  }
+  #scroll-spacer { flex-shrink: 0; }
+  /* ── thread cards ── */
+  .thread-card {
+    background: transparent;
+    border-radius: 10px;
+    overflow: hidden;
+    flex-shrink: 0;
+    transition: background 0.12s;
+  }
+  .thread-card.clickable { cursor: pointer; }
+  .thread-card.clickable:hover { background: rgba(128,128,128,0.10); }
+  .t-menu-btn {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: transparent; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; color: var(--text-dim);
+  }
+  .t-menu-btn:hover { background: rgba(128,128,128,0.12); }
+
+  .thread-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 26px 16px;
+    border-bottom: 1px solid rgba(128,128,128,0.08);
+  }
+  .thread-header { font-size: 15px; font-weight: 600; color: var(--text); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .thread-header.untitled {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-weight: 400;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  .t-messages {
+    padding: 20px 16px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .t-msg { display: flex; gap: 12px; align-items: flex-start; }
+
+  .t-avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    flex-shrink: 0; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px; color: #fff;
+  }
+
+  .t-meta { display: flex; flex-direction: column; gap: 2px; }
+  .t-hdr { display: flex; align-items: baseline; gap: 8px; }
+  .t-sender { font-size: 13px; font-weight: 600; color: var(--text); }
+  .t-msg.me .t-sender { color: var(--accent); }
+  .t-time { font-size: 12px; color: var(--text-dim); }
+  .role-badge { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.05em; }
+  .role-badge.cc  { background: rgba(100,150,255,0.18); color: #6496ff; }
+  .role-badge.bcc { background: rgba(200,100,100,0.18); color: #c86464; }
+  .t-body { font-size: inherit; color: var(--text); line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+  .e2ee-lock { font-size: 10px; opacity: 0.6; margin-right: 2px; }
+
+  .reply-box {
+    margin: 12px;
+    background: var(--reply-box-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-radius: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0 0 16px 0;
+  }
+  .reply-content {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 0 12px;
+  }
+  .reply-content .reply-compose-btn { margin-top: 2px; }
+  .reply-content .reply-proto-label { margin-top: 7px; }
+  .reply-content textarea { margin-top: 6px; transition: height 0.25s cubic-bezier(0.25,0.46,0.45,0.94); }
+  .reply-compose-btn {
+    width: 28px; height: 28px; border: none; background: none;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; padding: 0; opacity: 0.4; transition: opacity 0.15s, color 0.15s;
+    color: var(--text);
+  }
+  .reply-compose-btn:hover { opacity: 0.8; }
+  .reply-box.compose-mode .reply-compose-btn { opacity: 1; color: var(--accent); }
+  /* Resize handle: hidden in reply mode, forces flex line break + drag in compose mode */
+  .reply-subject {
+    display: none; border: none; background: transparent; outline: none;
+    font-size: 15px; font-family: var(--font); color: var(--text);
+    flex: 1; min-width: 0;
+  }
+  .reply-subject::placeholder { color: var(--text-dim); }
+  .reply-resize-handle {
+    display: flex; height: 16px;
+    align-items: center; justify-content: center;
+    cursor: pointer; flex-shrink: 0;
+    border-radius: 12px 12px 0 0;
+  }
+  .reply-resize-handle span {
+    display: block; width: 32px; height: 3px;
+    border-radius: 2px; background: rgba(128,128,128,0.25);
+    transition: background 0.15s, width 0.15s;
+  }
+  .reply-resize-handle.expanded span { background: rgba(128,128,128,0.5); width: 16px; }
+  .reply-box-fixed {
+    position: fixed; top: 0; bottom: 0;
+    left: 0; right: 0;
+    margin: 0; border-radius: 0; z-index: 50;
+  }
+  /* Compose mode */
+  .reply-box.compose-mode .reply-content { flex-direction: column; align-items: stretch; padding: 0; }
+  .reply-row-top { display: flex; align-items: center; gap: 8px; padding: 0 12px; }
+  .reply-row-top .reply-subject { display: block; flex: 1; min-width: 0; }
+  .reply-row-bottom { display: flex; align-items: flex-start; gap: 8px; padding: 0 12px; }
+  .reply-row-bottom textarea { flex: 1; min-width: 0; max-height: none; }
+  .group-form { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; }
+  .group-name-input { flex: 1; min-width: 0; background: transparent; border: none; border-bottom: 1px solid var(--border); outline: none; font-size: 14px; padding: 2px 4px; color: var(--text); }
+  .group-name-input::placeholder { color: var(--text-dim); }
+  .group-recipient-row { display: flex; align-items: center; gap: 6px; }
+  .group-to-input { flex: 1; background: transparent; border: none; border-bottom: 1px solid var(--border); outline: none; font-size: 14px; padding: 2px 4px; color: var(--text); }
+  .group-to-input::placeholder { color: var(--text-dim); }
+  .group-remove-btn { flex-shrink: 0; background: none; border: none; cursor: pointer; color: var(--text-dim); font-size: 16px; line-height: 1; padding: 0 2px; }
+  .group-remove-btn:hover { color: var(--text); }
+  .group-add-btn { background: none; border: none; cursor: pointer; color: var(--accent); font-size: 13px; padding: 2px 4px; text-align: left; }
+  .group-add-btn:hover { opacity: 0.8; }
+  .group-cancel-btn { background: none; border: none; cursor: pointer; color: var(--text-dim); font-size: 13px; padding: 2px 6px; }
+  .group-cancel-btn:hover { color: var(--text); }
+  .group-body-textarea { flex: 1; width: 100%; background: transparent; border: none; outline: none; font-size: 14px; padding: 4px; color: var(--text); resize: none; font-family: inherit; min-height: 80px; }
+  .group-body-textarea::placeholder { color: var(--text-dim); }
+  /* /new page compose card */
+  .new-compose-card { background: var(--reply-box-bg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-radius: 20px; overflow: hidden; margin: 8px 0 0; }
+  .new-compose-field { display: flex; align-items: flex-start; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  .new-compose-field:last-of-type { border-bottom: none; }
+  .new-field-label { font-size: 13px; font-weight: 600; color: var(--text-dim); width: 56px; flex-shrink: 0; padding-top: 2px; }
+  .new-field-input { flex: 1; border: none; background: transparent; outline: none; font-size: 15px; color: var(--text); font-family: inherit; min-width: 0; padding: 0; }
+  .new-field-input::placeholder { color: var(--text-dim); }
+  .new-recipients-list { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .new-recipient-row { display: flex; align-items: center; gap: 4px; }
+  .new-recipient-row .new-field-input { flex: 1; }
+  .new-compose-body-field { display: flex; gap: 12px; padding: 10px 16px 4px; }
+  .new-compose-body-field textarea { flex: 1; border: none; background: transparent; outline: none; font-size: 15px; color: var(--text); font-family: inherit; resize: none; min-height: 180px; line-height: 1.5; scrollbar-width: none; }
+  .new-compose-body-field textarea::-webkit-scrollbar { display: none; }
+  .new-compose-body-field textarea::placeholder { color: var(--text-dim); }
+  .new-compose-actions { display: flex; align-items: center; justify-content: space-between; padding: 4px 12px 12px; }
+  .new-compose-add-btn { background: none; border: none; cursor: pointer; color: var(--accent); font-size: 13px; padding: 2px 4px; }
+  .new-compose-add-btn:hover { opacity: 0.8; }
+  .reply-proto-label {
+    font-size: 11px; font-weight: 600; letter-spacing: .02em;
+    background: rgba(128,128,128,0.15); color: var(--text-dim);
+    border-radius: 6px; padding: 3px 7px;
+    white-space: nowrap; flex-shrink: 0; user-select: none;
+  }
+  .reply-box textarea::-webkit-scrollbar { display: none; }
+  .reply-box textarea {
+    flex: 1; border: none; background: transparent;
+    font-size: 15px; resize: none; outline: none; scrollbar-width: none;
+    font-family: var(--font); line-height: 1.4;
+    color: var(--text);
+  }
+  .reply-box textarea::placeholder { color: var(--text-dim); }
+  .t-send-wrap {
+    position: relative; width: 32px; height: 32px; flex-shrink: 0;
+  }
+  .t-send-avatar {
+    position: absolute; inset: 0; border-radius: 50%; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; color: #fff;
+    transition: opacity 0.15s; pointer-events: none;
+  }
+  .t-send-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .t-send-btn {
+    position: absolute; inset: 0;
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--accent); border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity 0.15s;
+  }
+  .t-send-btn svg { width: 16px; height: 16px; fill: #fff; }
+  /* Show send button on hover or when reply field is focused */
+  .reply-box:has(textarea:focus) .t-send-btn,
+  .t-send-wrap:hover .t-send-btn { opacity: 1; }
+  .reply-box:has(textarea:focus) .t-send-avatar,
+  .t-send-wrap:hover .t-send-avatar { opacity: 0; }
+  .reply-box:has(textarea:focus) .reply-proto-label { display: none; }
+  .attach-btn {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: none; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    color: var(--text-dim); font-size: 22px; line-height: 1; padding: 0;
+    opacity: 0.5; transition: opacity 0.15s;
+  }
+  .attach-btn:hover { opacity: 0.9; }
+
+  /* ── auth overlays ── */
+  #overlay {
+    position: fixed; inset: 0; background: var(--bg);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; z-index: 100;
+  }
+  #owner-avatar {
+    width: 56px; height: 56px; border-radius: 50%;
+    background: var(--input-bg); display: flex; align-items: center; justify-content: center;
+    font-size: 24px; font-weight: 700; color: var(--text);
+  }
+  #owner-info { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  #owner-msg { font-size: 12px; color: var(--text-dim); text-align: center; line-height: 1.5; margin-bottom: 8px; }
+
+  .field-group { display: flex; flex-direction: column; gap: 6px; }
+  .field-label { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); }
+
+  #inbox-slots { margin: 0; width: 276px; }
+  #inbox-slots.connected { border-bottom: 2.5px solid var(--text); gap: 0 !important; }
+  #inbox-slots.connected .slot-input { border-bottom: none; flex: 1; font-size: calc(260px / var(--slot-n, 5)); }
+  #inbox-slots.connected.focused { border-bottom-color: var(--accent); }
+
+  #inbox-cursor {
+    position: fixed; height: 2.5px; background: var(--bg);
+    display: none; pointer-events: none; z-index: 101;
+    animation: blink-cursor 1.2s step-end infinite;
+  }
+  @keyframes blink-cursor { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
+
+  #pin-digits { display: flex; gap: 28px; margin: 8px 0; }
+  .slot-input {
+    width: 48px; height: 68px; box-sizing: border-box; min-width: 0;
+    font-size: 52px; font-weight: 700; text-align: center;
+    background: transparent; border: none; border-bottom: 2.5px solid var(--text);
+    color: var(--text); font-family: var(--font); outline: none;
+    padding: 0; caret-color: transparent;
+    -webkit-appearance: none; appearance: none;
+  }
+  .slot-input:focus { border-bottom-color: var(--accent); color: var(--accent); }
+  .slot-input::selection { background: transparent; }
+
+  #enter-btn {
+    padding: 10px 28px; border-radius: 10px; border: none;
+    background: var(--accent); color: white; font-size: 15px; font-family: var(--font);
+    cursor: pointer; transition: opacity 0.15s;
+  }
+  #enter-btn:hover { opacity: 0.85; }
+  #pw-error { font-size: 13px; color: #ff3b30; min-height: 18px; }
+
+  #pw-inline { display: none; width: 276px; }
+  #pw-inline-input {
+    background: var(--input-bg); border: none; border-radius: 10px;
+    padding: 10px 14px; font-size: 15px; font-family: var(--font);
+    color: var(--text); outline: none; width: 100%;
+  }
+  #pw-inline-input::placeholder { color: var(--text-dim); }
+
+  #pw-overlay {
+    position: fixed; inset: 0; background: var(--bg);
+    display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; z-index: 100;
+  }
+  #pw-overlay-inbox { font-size: 18px; font-weight: 600; }
+  #pw-overlay-msg { font-size: 13px; color: var(--text-dim); }
+  #pw-input-wrap { display: flex; gap: 8px; align-items: center; }
+  #pw-input {
+    background: var(--input-bg); border: none; border-radius: 10px;
+    padding: 10px 14px; font-size: 15px; font-family: var(--font);
+    color: var(--text); outline: none; width: 220px;
+  }
+  #pw-input::placeholder { color: var(--text-dim); }
+  #pw-submit {
+    padding: 10px 18px; border-radius: 10px; border: none;
+    background: var(--accent); color: white; font-size: 15px; font-family: var(--font);
+    cursor: pointer; transition: opacity 0.15s;
+  }
+  #pw-submit:hover { opacity: 0.85; }
+  #pw-error2 { font-size: 13px; color: #ff3b30; min-height: 18px; }
+  #relay-status { display: none; font-size: 13px; }
+  #overlay-inbox-label { font-size: 22px; font-weight: 700; letter-spacing: 0.05em; }
+  #overlay-msg { font-size: 13px; color: var(--text-dim); margin-top: -8px; }
+</style>
+</head>
+<body>
+
+<div id="login-screen" style="display:none; position:fixed; inset:0; background:var(--bg); flex-direction:column; align-items:center; justify-content:center; gap:16px; z-index:1000">
+  <div style="font-size:22px; font-weight:700; color:var(--text)">biset</div>
+  <div style="display:flex; flex-direction:column; gap:10px; width:280px">
+    <input id="login-server" type="url" placeholder="Server URL (http://...)" autocomplete="url"
+      style="padding:10px 14px; border-radius:10px; border:1px solid var(--header-border); background:var(--input-bg); color:var(--text); font-size:15px; font-family:inherit; outline:none; width:100%">
+    <input id="login-account" type="text" placeholder="Account" autocomplete="username"
+      style="padding:10px 14px; border-radius:10px; border:1px solid var(--header-border); background:var(--input-bg); color:var(--text); font-size:15px; font-family:inherit; outline:none; width:100%">
+    <input id="login-password" type="password" placeholder="Password" autocomplete="current-password"
+      style="padding:10px 14px; border-radius:10px; border:1px solid var(--header-border); background:var(--input-bg); color:var(--text); font-size:15px; font-family:inherit; outline:none; width:100%">
+    <button id="login-btn"
+      style="padding:10px 14px; border-radius:10px; border:none; background:var(--accent); color:#fff; font-size:15px; font-family:inherit; font-weight:600; cursor:pointer; width:100%">Connect</button>
+    <div id="login-error" style="color:#ff3b30; font-size:12px; display:none; text-align:center"></div>
+  </div>
+</div>
+
+<div id="overlay" style="display:none">
+  <div id="local-mode-ui" style="display:none;flex-direction:column;align-items:center;gap:16px;padding:32px">
+    <div style="font-size:18px;font-weight:600">biset</div>
+    <div style="color:var(--text-dim);font-size:14px">Select your vault directory to get started</div>
+    <button id="local-open-btn" style="padding:10px 24px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:15px;cursor:pointer">Open vault</button>
+  </div>
+  <div id="owner-info">
+    <div id="owner-avatar"></div>
+    <div id="owner-msg"></div>
+  </div>
+  <div class="field-group">
+    <div class="field-label">name</div>
+    <div id="inbox-slots" style="display:flex;gap:28px"></div>
+    <div id="inbox-cursor"></div>
+    <div id="overlay-inbox-label" style="display:none"></div>
+  </div>
+  <div id="overlay-msg" style="display:none"></div>
+  <div id="relay-status"></div>
+  <form id="pin-form" autocomplete="on" style="display:contents">
+    <input id="pin-username" type="text" name="username" autocomplete="username" style="display:none">
+    <input id="pin-hidden" type="password" name="password" autocomplete="current-password" style="display:none">
+    <div id="pw-inline" style="display:none; gap:8px; align-items:center;">
+      <input id="pw-inline-input" type="password" placeholder="PASSWORD" autocomplete="current-password">
+    </div>
+    <div class="field-group" id="code-group">
+      <div class="field-label" id="code-label">code</div>
+      <div id="pin-digits">
+        <input class="slot-input" type="text" inputmode="numeric" maxlength="1">
+        <input class="slot-input" type="text" inputmode="numeric" maxlength="1">
+        <input class="slot-input" type="text" inputmode="numeric" maxlength="1">
+        <input class="slot-input" type="text" inputmode="numeric" maxlength="1">
+      </div>
+    </div>
+    <div id="pw-error"></div>
+  </form>
+  <button id="enter-btn" type="button">入室</button>
+</div>
+
+<div id="pw-overlay">
+  <div id="pw-overlay-inbox"></div>
+  <div id="pw-overlay-msg">パスワードを入力してください</div>
+  <div id="pw-input-wrap">
+    <input id="pw-input" type="password" placeholder="パスワード" autocomplete="current-password">
+    <button id="pw-submit">入室</button>
+  </div>
+  <div id="pw-error2"></div>
+</div>
+
+<div id="sys-msg"></div>
+
+<div id="app" style="display:none">
+  <aside id="left-pane">
+    <div id="left-pane-header">
+      <div style="position:relative; flex-shrink:0">
+        <button id="lp-hamburger" aria-label="menu">
+          <img id="lp-hamburger-avatar" alt="">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+            <circle cx="4" cy="10" r="1.8"/>
+            <circle cx="10" cy="10" r="1.8"/>
+            <circle cx="16" cy="10" r="1.8"/>
+          </svg>
+        </button>
+      </div>
+      <div id="lp-search-wrap">
+        <input id="lp-search" type="search" placeholder="/ でコマンドを入力" autocomplete="off">
+        <button id="lp-col-toggle" aria-label="1カラムモード切替" title="1カラムモード">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+    <div id="lp-new-wrap" style="display:none">
+      <div id="lp-new-inner">
+        <input id="lp-new-input" type="text" placeholder="宛先 (例: alice, user@example.com)">
+        <button id="lp-new-cancel">✕</button>
+      </div>
+    </div>
+    <div id="left-list-wrap">
+      <div id="lp-commands" style="display:none"></div>
+      <div id="left-list"></div>
+      <div id="lp-empty" style="display:none">まだ会話がありません</div>
+      <div id="lp-new-suggestions"></div>
+      <div id="lp-search-results"></div>
+    </div>
+  </aside>
+  <div id="lp-inbox-menu">
+    <div class="menu-item" id="lp-export-inbox-btn">JSONとして出力</div>
+    <div class="menu-item danger" id="lp-delete-inbox-btn">インボックスを削除</div>
+  </div>
+  <div id="right-pane">
+    <div id="menu">
+      <div class="menu-item" id="delete-thread-btn">スレッドを削除</div>
+      <div class="menu-item" id="logout-btn">ログアウト</div>
+    </div>
+
+    <div id="cmd-page"></div>
+    <div id="outer">
+      <div id="past-threads"></div>
+      <div id="thread-title-row">
+        <div id="header-left">
+          <button id="lp-toggle" aria-label="インボックスに戻る">
+            <span></span><span></span><span></span>
+          </button>
+          <span id="header-group-icon" style="display:none;color:var(--text);flex-shrink:0;line-height:0;margin-right:2px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+          <span id="header-thread-title"></span>
+        </div>
+        <div id="header-right">
+          <button id="hamburger" aria-label="menu">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+              <circle cx="10" cy="5" r="1.8"/>
+              <circle cx="10" cy="10" r="1.8"/>
+              <circle cx="10" cy="15" r="1.8"/>
+            </svg>
+          </button>
+          <button id="header-avatar-btn" aria-label="profile">
+            <img id="hamburger-avatar" alt="">
+            <span id="header-avatar-initials"></span>
+          </button>
+        </div>
+      </div>
+      <div id="conv-meta">
+        <div id="conv-fields">
+          <div id="conv-to"><span id="conv-via"></span></div>
+          <div id="conv-cc"></div>
+          <div id="conv-bcc"></div>
+        </div>
+        <div id="conv-meta-expanded"></div>
+      </div>
+      <div id="active-thread"></div>
+      <div id="scroll-spacer"></div>
+    </div>
+</div>
+<div id="reply-dock"></div>
+<button id="scroll-to-top" aria-label="先頭へ">
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+    <path d="M8 5.5L13.5 11h-11L8 5.5z"/>
+  </svg>
+</button>
+<button id="scroll-to-bottom" aria-label="最新へ">
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+    <path d="M8 10.5L2.5 5h11L8 10.5z"/>
+  </svg>
+</button>
+
+<script>
+(() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __typeError = (msg) => {
+    throw TypeError(msg);
+  };
+  var __esm = (fn, res) => function __init() {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  };
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __accessCheck = (obj, member, msg) => member.has(obj) || __typeError("Cannot " + msg);
+  var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read from private field"), getter ? getter.call(obj) : member.get(obj));
+  var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
+  var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
+
+  // node_modules/jmap-jam/dist/index.js
+  function n({ methodNames: n2, availableCapabilities: r2 }) {
+    let i2 = /* @__PURE__ */ new Set([e.Core]);
+    for (let e2 of n2) {
+      let n3 = t.exec(e2)?.[1];
+      if (n3) {
+        let e3 = r2.get(n3);
+        e3 && i2.add(e3);
+      }
+    }
+    return i2;
+  }
+  function r(e2, t3) {
+    let n2 = e2;
+    for (let [r2, i2] of Object.entries(t3)) {
+      let t4 = `{${r2}}`;
+      if (!n2.includes(t4)) throw Error(`Template "${e2}" is missing parameter: ${r2}`);
+      n2 = n2.replaceAll(t4, i2);
+    }
+    return new URL(n2);
+  }
+  function i(e2) {
+    return e2[0] === `error`;
+  }
+  function a(e2) {
+    return i(e2) ? e2[1] : null;
+  }
+  function o(e2, { returnErrors: t3 }) {
+    return Object.fromEntries(e2.map(([e3, n2, r2]) => t3 ? e3 === `error` ? [r2, { data: null, error: n2 }] : [r2, { data: n2, error: null }] : [r2, n2]));
+  }
+  function l(e2) {
+    let t3 = e2(new Proxy({}, { get: (e3, t4) => new Proxy({}, { get: (e4, n2) => (e5) => new c([`${t4}/${n2}`, e5]) }) }));
+    return c.createInvocationsFromDrafts(t3);
+  }
+  var e, t, s, _e, _a, c, u;
+  var init_dist = __esm({
+    "node_modules/jmap-jam/dist/index.js"() {
+      e = { Core: `urn:ietf:params:jmap:core`, Mailbox: `urn:ietf:params:jmap:mail`, Thread: `urn:ietf:params:jmap:mail`, Email: `urn:ietf:params:jmap:mail`, SearchSnippet: `urn:ietf:params:jmap:mail`, Identity: `urn:ietf:params:jmap:submission`, EmailSubmission: `urn:ietf:params:jmap:submission`, VacationResponse: `urn:ietf:params:jmap:vacationresponse` };
+      t = /^(\w+)\//;
+      s = Symbol(`Result Reference`);
+      c = (_a = class {
+        constructor(e2) {
+          __privateAdd(this, _e);
+          __privateSet(this, _e, e2);
+        }
+        $ref(e2) {
+          return { [s]: { path: e2, invocation: __privateGet(this, _e) } };
+        }
+        static isRef(e2) {
+          return typeof e2 == `object` && !!e2 && s in e2;
+        }
+        static createInvocationsFromDrafts(t3) {
+          let n2 = /* @__PURE__ */ new Set(), r2 = /* @__PURE__ */ new Map();
+          return { methodCalls: Object.entries(t3).map(([t4, i2]) => {
+            let [a2, o2] = __privateGet(i2, _e);
+            return r2.set(__privateGet(i2, _e), t4), n2.add(a2), [a2, Object.fromEntries(Object.entries(o2).map(([t5, n3]) => {
+              if (_a.isRef(n3)) {
+                let { invocation: e2, path: i3 } = n3[s];
+                return [`#${t5}`, { name: e2[0], resultOf: r2.get(e2), path: i3 }];
+              }
+              return [t5, n3];
+            })), t4];
+          }), methodNames: n2 };
+        }
+      }, _e = new WeakMap(), _a);
+      u = class t2 {
+        constructor(n2) {
+          this.authHeader = `Bearer ${n2.bearerToken}`, this.capabilities = new Map([...Object.entries(n2.customCapabilities ?? {}), ...Object.entries(e)]), this.session = t2.loadSession(n2.sessionUrl, this.authHeader);
+        }
+        static loadSession(e2, t3) {
+          return fetch(e2, { headers: { Authorization: t3, Accept: `application/json` }, cache: `no-cache` }).then((e3) => e3.json());
+        }
+        async request([e2, t3], r2) {
+          let { using: i2 = [], fetchInit: o2, createdIds: s2 } = r2 ?? {}, c2 = [e2, t3, `r1`], l2 = { using: [...n({ methodNames: [e2], availableCapabilities: this.capabilities }), ...i2], methodCalls: [c2], createdIds: s2 }, { apiUrl: u2 } = await this.session, d = await fetch(u2, { method: `POST`, headers: { Authorization: this.authHeader, Accept: `application/json`, "Content-Type": `application/json` }, body: JSON.stringify(l2), ...o2 });
+          if (!d.ok) {
+            let e3;
+            throw e3 = d.headers.get(`Content-Type`)?.includes(`json`) ? await d.json() : await d.text(), e3;
+          }
+          let { methodResponses: [f], sessionState: p, createdIds: m } = await d.json(), h = a(f);
+          if (h) throw h;
+          return [f[1], { sessionState: p, createdIds: m, response: d }];
+        }
+        async requestMany(e2, t3 = {}) {
+          let { using: r2 = [], fetchInit: i2, createdIds: s2 } = t3, { methodCalls: c2, methodNames: u2 } = l(e2), d = { using: [...n({ methodNames: u2, availableCapabilities: this.capabilities }), ...r2], methodCalls: c2, createdIds: s2 }, { apiUrl: f } = await this.session, p = await fetch(f, { method: `POST`, headers: { Authorization: this.authHeader, Accept: `application/json`, "Content-Type": `application/json` }, body: JSON.stringify(d), ...i2 });
+          if (!p.ok) {
+            let e3;
+            throw e3 = p.headers.get(`Content-Type`)?.includes(`json`) ? await p.json() : await p.text(), e3;
+          }
+          let { methodResponses: m, sessionState: h, createdIds: g } = await p.json(), _ = { sessionState: h, createdIds: g, response: p }, v = m.map((e3) => a(e3)).filter((e3) => e3 !== null);
+          if (v.length > 0) throw v;
+          return [o(m, { returnErrors: false }), _];
+        }
+        async getPrimaryAccount() {
+          return (await this.session).primaryAccounts?.[`urn:ietf:params:jmap:mail`];
+        }
+        async uploadBlob(e2, t3, n2 = {}) {
+          let { uploadUrl: i2 } = await this.session, a2 = r(i2, { accountId: e2 });
+          try {
+            let e3 = await fetch(a2, { method: `POST`, headers: { Authorization: this.authHeader, Accept: `application/json` }, body: t3, ...n2 });
+            if (!e3.ok) throw e3.headers.get(`Content-Type`)?.includes(`json`) ? await e3.json() : await e3.text();
+            return await e3.json();
+          } catch (e3) {
+            throw Error(`Failed to upload blob`, { cause: e3 });
+          }
+        }
+        async downloadBlob(e2, t3 = {}) {
+          let { downloadUrl: n2 } = await this.session, i2 = r(n2, { accountId: e2.accountId, blobId: e2.blobId, type: e2.mimeType, name: e2.fileName });
+          try {
+            let e3 = await fetch(i2, { method: `GET`, headers: { Authorization: this.authHeader }, ...t3 });
+            if (!e3.ok) throw e3.headers.get(`Content-Type`)?.includes(`json`) ? await e3.json() : await e3.text();
+            return e3;
+          } catch (e3) {
+            throw Error(`Failed to download blob`, { cause: e3 });
+          }
+        }
+        async connectEventSource(e2) {
+          let t3 = { types: e2.types === `*` ? `*` : e2.types.join(`,`), closeafter: e2.closeafter ?? `no`, ping: `${e2.ping}` }, { eventSourceUrl: n2 } = await this.session, i2 = r(n2, t3);
+          return new EventSource(i2);
+        }
+        get api() {
+          return new Proxy({}, { get: (e2, t3) => new Proxy({}, { get: (e3, n2) => (e4, r2) => {
+            let i2 = `${t3}/${n2}`;
+            return this.request([i2, e4], r2);
+          } }) });
+        }
+        static isProblemDetails(e2) {
+          return typeof e2 == `object` && !!e2 && `type` in e2;
+        }
+      };
+    }
+  });
+
+  // src/backend/email-cache.ts
+  var FETCH_PROPS, SORT, EmailCache;
+  var init_email_cache = __esm({
+    "src/backend/email-cache.ts"() {
+      FETCH_PROPS = [
+        "id",
+        "threadId",
+        "from",
+        "to",
+        "subject",
+        "receivedAt",
+        "bodyValues",
+        "textBody",
+        "messageId",
+        "inReplyTo",
+        "keywords"
+      ];
+      SORT = [{ property: "receivedAt", isAscending: true }];
+      EmailCache = class {
+        constructor(client, accountId, inboxUser) {
+          this._cache = /* @__PURE__ */ new Map();
+          this._emailState = null;
+          this._mailboxByRole = /* @__PURE__ */ new Map();
+          this._threads = /* @__PURE__ */ new Map();
+          this._client = client;
+          this._accountId = accountId;
+          this._inboxUser = inboxUser;
+          this._queryState = localStorage.getItem(`jmap_qs_${inboxUser}`) || null;
+        }
+        get size() {
+          return this._cache.size;
+        }
+        values() {
+          return this._cache.values();
+        }
+        threadEmailIds(threadId) {
+          return this._threads.get(threadId) ?? [];
+        }
+        // ── Mailbox helpers ───────────────────────────────────────────────────────────
+        async getMailboxByRole(role) {
+          if (this._mailboxByRole.has(role)) return this._mailboxByRole.get(role);
+          try {
+            const [r2] = await this._client.api.Mailbox.get({ accountId: this._accountId, ids: null });
+            for (const mb of r2.list) {
+              if (mb.role) this._mailboxByRole.set(mb.role, mb.id);
+            }
+          } catch {
+          }
+          return this._mailboxByRole.get(role) ?? null;
+        }
+        async getMailboxes() {
+          try {
+            const [r2] = await this._client.api.Mailbox.get({ accountId: this._accountId, ids: null });
+            for (const mb of r2.list) {
+              if (mb.role) this._mailboxByRole.set(mb.role, mb.id);
+            }
+            return r2.list.map((mb) => ({ id: mb.id, name: mb.name, role: mb.role ?? void 0 }));
+          } catch {
+            return [];
+          }
+        }
+        // ── Cache operations ──────────────────────────────────────────────────────────
+        async init() {
+          try {
+            const [{ q, g }] = await this._client.requestMany((t3) => {
+              const q2 = t3.Email.query({ accountId: this._accountId, sort: [...SORT], limit: 5e3 });
+              const g2 = t3.Email.get({ accountId: this._accountId, ids: q2.$ref("/ids"), fetchAllBodyValues: true, properties: [...FETCH_PROPS] });
+              return { q: q2, g: g2 };
+            });
+            this._saveQueryState(q.queryState);
+            this._emailState = g.state;
+            this._cache.clear();
+            for (const e2 of g.list) this._cache.set(e2.id, e2);
+            await this._loadThreads();
+            return true;
+          } catch {
+            return false;
+          }
+        }
+        async sync() {
+          if (!this._queryState) {
+            const ok = await this.init();
+            return ok ? { added: Array.from(this._cache.values()), removed: [], updated: [] } : { added: [], removed: [], updated: [] };
+          }
+          let added = [];
+          let removed = [];
+          let updated = [];
+          try {
+            const [qc] = await this._client.api.Email.queryChanges({
+              accountId: this._accountId,
+              sinceQueryState: this._queryState,
+              sort: [...SORT]
+            });
+            this._saveQueryState(qc.newQueryState);
+            const addedIds = qc.added.map((a2) => a2.id);
+            removed = [...qc.removed];
+            for (const id of removed) this._cache.delete(id);
+            if (addedIds.length) {
+              const [r2] = await this._client.api.Email.get({
+                accountId: this._accountId,
+                ids: addedIds,
+                fetchAllBodyValues: true,
+                properties: [...FETCH_PROPS]
+              });
+              added = r2.list;
+              for (const e2 of added) this._cache.set(e2.id, e2);
+              this._emailState = r2.state;
+            }
+          } catch {
+            const ok = await this.init();
+            return ok ? { added: Array.from(this._cache.values()), removed: [], updated: [] } : { added: [], removed: [], updated: [] };
+          }
+          if (this._emailState) {
+            try {
+              const [ec] = await this._client.api.Email.changes({
+                accountId: this._accountId,
+                sinceState: this._emailState
+              });
+              this._emailState = ec.newState;
+              const updatedIds = ec.updated.filter((id) => this._cache.has(id));
+              if (updatedIds.length) {
+                const [r3] = await this._client.api.Email.get({
+                  accountId: this._accountId,
+                  ids: updatedIds,
+                  properties: ["id", "keywords"]
+                });
+                for (const e2 of r3.list) {
+                  const existing = this._cache.get(e2.id);
+                  if (existing) this._cache.set(e2.id, { ...existing, keywords: e2.keywords });
+                }
+                updated = updatedIds.map((id) => this._cache.get(id)).filter(Boolean);
+              }
+            } catch {
+            }
+          }
+          if (added.length || removed.length) await this._loadThreads();
+          return { added, removed, updated };
+        }
+        // ── Query helpers ─────────────────────────────────────────────────────────────
+        contactFor(e2, selfAddr) {
+          const fromEmail = e2.from?.[0]?.email ?? "";
+          return fromEmail === selfAddr ? e2.to?.[0]?.email ?? fromEmail : fromEmail;
+        }
+        filterByContact(contact, selfAddr, sinceTs = 0) {
+          let emails = Array.from(this._cache.values());
+          if (contact) emails = emails.filter((e2) => this.contactFor(e2, selfAddr) === contact);
+          if (sinceTs > 0) emails = emails.filter((e2) => new Date(e2.receivedAt).getTime() > sinceTs);
+          return emails.sort((a2, b) => new Date(a2.receivedAt).getTime() - new Date(b.receivedAt).getTime());
+        }
+        inboxPreviews(selfAddr, inboxUser) {
+          const byContact = /* @__PURE__ */ new Map();
+          for (const e2 of this._cache.values()) {
+            const contact = this.contactFor(e2, selfAddr);
+            if (!contact) continue;
+            const ts = e2.receivedAt ? new Date(e2.receivedAt).getTime() : 0;
+            const existing = byContact.get(contact);
+            const isUnread2 = !e2.keywords?.["$seen"];
+            if (!existing || ts > existing.latest_ts) {
+              const body = e2.bodyValues && e2.textBody?.length ? e2.bodyValues[e2.textBody[0].partId]?.value ?? "" : "";
+              byContact.set(contact, {
+                inbox: `${inboxUser}/${contact}`,
+                latest_ts: ts,
+                latest_body: body,
+                latest_subject: e2.subject ?? "",
+                inbox_type: "direct",
+                has_unread: isUnread2
+              });
+            } else if (isUnread2) {
+              existing.has_unread = true;
+            }
+          }
+          return Array.from(byContact.values()).sort((a2, b) => b.latest_ts - a2.latest_ts);
+        }
+        // ── Mutation helpers ──────────────────────────────────────────────────────────
+        async markContactRead(contact, selfAddr) {
+          const unseen = this.filterByContact(contact, selfAddr).filter((e2) => !e2.keywords?.["$seen"]);
+          if (!unseen.length) return;
+          const update = {};
+          for (const e2 of unseen) update[e2.id] = { "keywords/$seen": true };
+          try {
+            await this._client.api.Email.set({ accountId: this._accountId, update });
+            for (const e2 of unseen) {
+              this._cache.set(e2.id, { ...e2, keywords: { ...e2.keywords ?? {}, "$seen": true } });
+            }
+          } catch {
+          }
+        }
+        async destroyContactEmails(contact, selfAddr) {
+          const emails = this.filterByContact(contact, selfAddr);
+          const ids = emails.map((e2) => e2.id);
+          if (!ids.length) return [];
+          try {
+            await this._client.api.Email.set({ accountId: this._accountId, destroy: ids });
+            for (const id of ids) this._cache.delete(id);
+          } catch {
+          }
+          return ids;
+        }
+        // ── Message conversion ────────────────────────────────────────────────────────
+        toMessage(e2) {
+          const from = e2.from?.[0];
+          const body = e2.bodyValues && e2.textBody?.length ? e2.bodyValues[e2.textBody[0].partId]?.value ?? "" : "";
+          return {
+            jmap_id: e2.id,
+            from: from?.email ?? "",
+            from_name: from?.name || "",
+            body,
+            subject: e2.subject ?? "",
+            ts: e2.receivedAt ? new Date(e2.receivedAt).getTime() : 0,
+            message_id: e2.messageId?.[0] ?? "",
+            in_reply_to: e2.inReplyTo?.[0] || "",
+            thread_id: e2.threadId || "",
+            cc_addrs: [],
+            to_addrs: e2.to?.map((a2) => a2.email) ?? [],
+            seen: !!e2.keywords?.["$seen"]
+          };
+        }
+        // ── Private ───────────────────────────────────────────────────────────────────
+        async _loadThreads() {
+          const threadIds = [...new Set(
+            Array.from(this._cache.values()).map((e2) => e2.threadId).filter(Boolean)
+          )];
+          if (!threadIds.length) return;
+          try {
+            const [r2] = await this._client.api.Thread.get({ accountId: this._accountId, ids: threadIds });
+            this._threads.clear();
+            for (const t3 of r2.list) this._threads.set(t3.id, [...t3.emailIds]);
+          } catch {
+          }
+        }
+        _saveQueryState(s2) {
+          this._queryState = s2;
+          const key = `jmap_qs_${this._inboxUser}`;
+          try {
+            s2 ? localStorage.setItem(key, s2) : localStorage.removeItem(key);
+          } catch {
+          }
+        }
+      };
+    }
+  });
+
+  // src/context.ts
+  function jmap() {
+    return ctx.jmapClient;
+  }
+  function cache() {
+    return ctx.emailCache;
+  }
+  function savePassword(key, pw) {
+    try {
+      localStorage.setItem(key, pw);
+    } catch {
+    }
+  }
+  var ctx;
+  var init_context = __esm({
+    "src/context.ts"() {
+      ctx = {
+        serverUrl: (localStorage.getItem("jmap_server_url") ?? "").replace(/\/$/, ""),
+        inbox: "",
+        inboxUser: "",
+        password: "",
+        STORAGE_KEY: "",
+        myName: "",
+        jmapAccountId: "",
+        eventSourceUrl: null,
+        jmapClient: null,
+        emailCache: null
+      };
+    }
+  });
+
+  // src/utils.ts
+  function $id(id) {
+    return document.getElementById(id);
+  }
+  function esc(s2) {
+    return s2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+  }
+  function linkify(html) {
+    return html.replace(
+      /(https?:\/\/[^\s<"]+|\/[a-zA-Z0-9][^\s<"]*)/g,
+      (url) => `<a href="${url}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">${url}</a>`
+    );
+  }
+  function formatTime(ts) {
+    return new Date(ts).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+  }
+  function colorFor(name) {
+    let h = 0;
+    for (const c2 of name) h = h * 31 + c2.charCodeAt(0) & 16777215;
+    return palette[Math.abs(h) % palette.length];
+  }
+  function avatarStyle(name) {
+    return `background:${colorFor(name)}`;
+  }
+  var palette;
+  var init_utils = __esm({
+    "src/utils.ts"() {
+      palette = ["#e8604a", "#4a90d9", "#5caf6e", "#9b59b6", "#e67e22", "#1abc9c", "#e91e8c", "#607d8b"];
+    }
+  });
+
+  // src/auth.ts
+  function showLoginScreen() {
+    const $ls = document.getElementById("login-screen");
+    if (!$ls) return;
+    const savedServer = localStorage.getItem("jmap_server_url") || "";
+    const savedAccount = localStorage.getItem("jmap_account") || "";
+    $id("login-server").value = savedServer;
+    $id("login-account").value = savedAccount;
+    $ls.style.display = "flex";
+  }
+  function hideLoginScreen() {
+    const $ls = document.getElementById("login-screen");
+    if ($ls) $ls.style.display = "none";
+  }
+  function logout() {
+    localStorage.removeItem(ctx.STORAGE_KEY);
+    localStorage.removeItem("jmap_server_url");
+    localStorage.removeItem("jmap_account");
+    location.href = "/";
+  }
+  function setupLoginScreen() {
+    const $loginBtn = document.getElementById("login-btn");
+    if (!$loginBtn) return;
+    const $loginError = document.getElementById("login-error");
+    $loginBtn.addEventListener("click", async () => {
+      const rawServer = $id("login-server").value.trim().replace(/\/$/, "");
+      const account = $id("login-account").value.trim();
+      const pw = $id("login-password").value;
+      if (!rawServer) {
+        $loginError.textContent = "Server URL \u3092\u5165\u529B\u3057\u3066\u304F\u3060\u3055\u3044";
+        $loginError.style.display = "block";
+        return;
+      }
+      if (!account) {
+        $loginError.textContent = "Account \u3092\u5165\u529B\u3057\u3066\u304F\u3060\u3055\u3044";
+        $loginError.style.display = "block";
+        return;
+      }
+      ;
+      $loginBtn.disabled = true;
+      $loginBtn.textContent = "\u63A5\u7D9A\u4E2D\u2026";
+      $loginError.style.display = "none";
+      try {
+        const testUrl = rawServer + "/.well-known/jmap";
+        let res = await fetch(testUrl, { headers: { Authorization: "Bearer " + pw } });
+        if (!res.ok) res = await fetch(testUrl, { headers: { Authorization: "Basic " + btoa(account + ":" + pw) } });
+        if (!res.ok) {
+          $loginError.textContent = res.status === 401 ? "\u8A8D\u8A3C\u306B\u5931\u6557\u3057\u307E\u3057\u305F" : `\u63A5\u7D9A\u30A8\u30E9\u30FC (${res.status})`;
+          $loginError.style.display = "block";
+          $loginBtn.textContent = "Connect";
+          $loginBtn.disabled = false;
+          return;
+        }
+        localStorage.setItem("jmap_server_url", rawServer);
+        localStorage.setItem("jmap_account", account);
+        savePassword(`jmap_pw_${account}`, pw);
+        location.reload();
+      } catch {
+        $loginError.textContent = "\u63A5\u7D9A\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002URL \u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044";
+        $loginError.style.display = "block";
+        $loginBtn.textContent = "Connect";
+        $loginBtn.disabled = false;
+      }
+    });
+    const $pwField = document.getElementById("login-password");
+    if ($pwField) {
+      $pwField.addEventListener("keydown", (e2) => {
+        if (e2.key === "Enter") $loginBtn.click();
+      });
+    }
+  }
+  var init_auth = __esm({
+    "src/auth.ts"() {
+      init_context();
+      init_utils();
+    }
+  });
+
+  // src/state.ts
+  function setFocusedThreadKey(key) {
+    focusedThreadKey = key;
+  }
+  function setLastTs(ts) {
+    lastTs = ts;
+  }
+  function setNotifEnabled(v) {
+    notifEnabled = v;
+  }
+  function setIsFirstFetch(v) {
+    isFirstFetch = v;
+  }
+  function setLastLeftInboxes(v) {
+    lastLeftInboxes = v;
+  }
+  function groupMessages() {
+    const groups = /* @__PURE__ */ new Map();
+    for (const p of processedMessages) {
+      const k = p.msg.thread_id || p.msg.message_id || String(p.msg.ts);
+      const subj = p.msg.subject && p.msg.subject !== "[...]" ? p.msg.subject : "";
+      if (!groups.has(k)) groups.set(k, { key: k, subject: subj, messages: [] });
+      groups.get(k).messages.push(p);
+    }
+    return Array.from(groups.values());
+  }
+  function latestGroup(groups) {
+    return groups.reduce(
+      (best, g) => g.messages[g.messages.length - 1].msg.ts > best.messages[best.messages.length - 1].msg.ts ? g : best
+    );
+  }
+  var processedMessages, renderedKeys, focusedThreadKey, lastTs, notifEnabled, isFirstFetch, lastLeftInboxes;
+  var init_state = __esm({
+    "src/state.ts"() {
+      processedMessages = [];
+      renderedKeys = /* @__PURE__ */ new Set();
+      focusedThreadKey = null;
+      lastTs = 0;
+      notifEnabled = false;
+      isFirstFetch = true;
+      lastLeftInboxes = [];
+    }
+  });
+
+  // src/ui/left-pane.ts
+  async function doDeleteInbox(targetInbox) {
+    const contact = targetInbox.split("/").slice(1).join("/");
+    const selfAddr = ctx.jmapAccountId || ctx.inboxUser;
+    await cache().destroyContactEmails(contact, selfAddr);
+    if (targetInbox === ctx.inbox) {
+      processedMessages.splice(0);
+      renderedKeys.clear();
+      setLastTs(0);
+      setFocusedThreadKey(null);
+    }
+    const idxBefore = lastLeftInboxes.findIndex((x) => x.inbox === targetInbox);
+    await loadLeftInboxes();
+    const remaining = lastLeftInboxes.filter((x) => x.inbox !== targetInbox);
+    if (targetInbox === ctx.inbox) {
+      if (remaining.length > 0) switchInbox(remaining[Math.max(0, idxBefore - 1)].inbox);
+      else render();
+    }
+    showSysMsg("\u524A\u9664\u3057\u307E\u3057\u305F");
+  }
+  function formatLpTime(ts) {
+    if (!ts) return "";
+    const d = new Date(ts), now = /* @__PURE__ */ new Date(), diff = now.getTime() - d.getTime();
+    if (diff < 864e5 && d.getDate() === now.getDate())
+      return d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+    if (diff < 6048e5) return d.toLocaleDateString("ja-JP", { weekday: "short" });
+    return d.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
+  }
+  async function loadLeftInboxes() {
+    if (!ctx.inboxUser) return;
+    try {
+      const inboxes = await jmapLoadInboxesWithPreviews();
+      if (inboxes?.length) renderLeftInboxes(inboxes);
+    } catch {
+    }
+  }
+  function saveCurrentInbox() {
+    inboxCache.set(ctx.inbox, {
+      processed: processedMessages.slice(),
+      renderedKeys: new Set(renderedKeys),
+      lastTs,
+      focusedThreadKey
+    });
+  }
+  function loadInboxState(targetInbox) {
+    const c2 = inboxCache.get(targetInbox);
+    processedMessages.length = 0;
+    renderedKeys.clear();
+    if (c2) {
+      processedMessages.push(...c2.processed);
+      c2.renderedKeys.forEach((k) => renderedKeys.add(k));
+      setLastTs(c2.lastTs);
+      setFocusedThreadKey(c2.focusedThreadKey);
+    } else {
+      setLastTs(0);
+      setFocusedThreadKey(null);
+    }
+  }
+  async function switchInbox(newInbox, fromPopstate = false) {
+    const $app = document.getElementById("app");
+    if (newInbox === ctx.inbox) {
+      $app.classList.remove("show-left");
+      return;
+    }
+    saveCurrentInbox();
+    markRead(newInbox);
+    $app.classList.remove("show-left");
+    ctx.inbox = newInbox;
+    setIsFirstFetch(true);
+    loadInboxState(ctx.inbox);
+    if (!fromPopstate) {
+      const contact = newInbox.split("/").slice(1).join("/");
+      try {
+        history.pushState(null, "", "/" + encodeURIComponent(contact));
+      } catch {
+      }
+    }
+    if (lastLeftInboxes.length) renderLeftInboxes(lastLeftInboxes);
+    render();
+    fetchMessages();
+  }
+  function markRead(ib) {
+    if (!ctx.inboxUser) return;
+    (async () => {
+      const contact = ib.split("/").slice(1).join("/");
+      const selfAddr = ctx.jmapAccountId || ctx.inboxUser;
+      await cache().markContactRead(contact, selfAddr);
+      const listIdx = lastLeftInboxes.findIndex((i2) => i2.inbox === ib);
+      if (listIdx >= 0) {
+        lastLeftInboxes[listIdx].has_unread = false;
+        renderLeftInboxes(lastLeftInboxes);
+      }
+    })();
+  }
+  function isUnread(ib) {
+    const item = lastLeftInboxes.find((i2) => i2.inbox === ib);
+    return !!item?.has_unread;
+  }
+  function makeLpItem(item) {
+    const rawName = item.inbox.split("/").pop() ?? "";
+    const isCurrent = item.inbox === ctx.inbox;
+    const unread = !isCurrent && isUnread(item.inbox);
+    const a2 = document.createElement("a");
+    a2.className = "lp-item" + (isCurrent ? " selected" : "");
+    const contact = item.inbox.split("/").slice(1).join("/");
+    a2.href = "/" + encodeURIComponent(contact);
+    a2.dataset.inbox = item.inbox;
+    const preview = item.latest_body ? esc(item.latest_body.replace(/[\r\n\t]+/g, " ").trim().slice(0, 60)) : "";
+    const avatarHTML = `<div class="lp-avatar" style="${avatarStyle(rawName)}">${rawName.charAt(0).toUpperCase()}${unread ? '<div class="unread-dot"></div>' : ""}</div>`;
+    a2.innerHTML = `
+    <div class="lp-inner">
+      ${avatarHTML}
+      <div class="lp-info">
+        <div class="lp-name">${esc(rawName)}</div>
+        <div class="lp-preview">${preview}</div>
+      </div>
+      ${isCurrent ? `<button class="lp-inbox-menu-btn" onclick="event.preventDefault();event.stopPropagation();(function(b){var m=document.getElementById('lp-inbox-menu');var r=b.getBoundingClientRect();m.style.display='block';m.style.top=r.bottom+'px';m.style.left=r.left+'px';m.dataset.inbox='${esc(item.inbox)}'})(this)" title="\u30AA\u30D7\u30B7\u30E7\u30F3"><svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="5" r="1.8"/><circle cx="10" cy="10" r="1.8"/><circle cx="10" cy="15" r="1.8"/></svg></button>` : `<div class="lp-time">${formatLpTime(item.latest_ts)}</div>`}
+    </div>
+  `;
+    a2.addEventListener("click", (e2) => {
+      if (e2.metaKey || e2.ctrlKey || e2.shiftKey || e2.button !== 0) return;
+      e2.preventDefault();
+      if (a2.classList.contains("swiped")) {
+        a2.classList.remove("swiped");
+        return;
+      }
+      const items = [...document.querySelectorAll("#left-list .lp-item")].filter((el) => el.style.display !== "none");
+      lpNavIdx = items.indexOf(a2);
+      items.forEach((el, i2) => el.classList.toggle("focused", i2 === lpNavIdx));
+      switchInbox(item.inbox);
+      document.getElementById("lp-search")?.focus();
+    });
+    const delBtn = document.createElement("button");
+    delBtn.className = "lp-delete-btn";
+    delBtn.textContent = "\u524A\u9664";
+    delBtn.addEventListener("click", async (e2) => {
+      e2.stopPropagation();
+      await deleteInbox(item.inbox);
+    });
+    a2.appendChild(delBtn);
+    let touchStartX = 0;
+    a2.addEventListener("touchstart", (e2) => {
+      touchStartX = e2.touches[0].clientX;
+    }, { passive: true });
+    a2.addEventListener("touchend", (e2) => {
+      const dx = e2.changedTouches[0].clientX - touchStartX;
+      if (dx < -40) lpRevealDelete(a2);
+      else if (dx > 20) a2.classList.remove("swiped");
+    }, { passive: true });
+    return a2;
+  }
+  function renderLeftInboxes(inboxes) {
+    setLastLeftInboxes(inboxes);
+    const $list = document.getElementById("left-list");
+    if (!inboxes.length) {
+      $list.innerHTML = "";
+      document.getElementById("lp-empty").style.display = "block";
+      return;
+    }
+    document.getElementById("lp-empty").style.display = "none";
+    const existingMap = new Map([...$list.querySelectorAll(".lp-item")].map((el) => [el.dataset.inbox, el]));
+    const inboxKeys = new Set(inboxes.map((i2) => i2.inbox));
+    existingMap.forEach((el, key) => {
+      if (!inboxKeys.has(key)) el.remove();
+    });
+    for (let i2 = 0; i2 < inboxes.length; i2++) {
+      const item = inboxes[i2];
+      const isCurrent = item.inbox === ctx.inbox;
+      const unread = !isCurrent && isUnread(item.inbox);
+      const preview = item.latest_body ? esc(item.latest_body.replace(/[\r\n\t]+/g, " ").trim().slice(0, 60)) : "";
+      let a2 = existingMap.get(item.inbox);
+      const wasSelected = a2?.classList.contains("selected");
+      if (!a2 || wasSelected !== isCurrent) {
+        const newA = makeLpItem(item);
+        if (a2) {
+          a2.replaceWith(newA);
+        } else {
+          const refEl = $list.children[i2] ?? null;
+          $list.insertBefore(newA, refEl);
+        }
+        a2 = newA;
+      } else {
+        a2.classList.toggle("selected", isCurrent);
+        const dot = a2.querySelector(".unread-dot");
+        if (unread && !dot) {
+          const av = a2.querySelector(".lp-avatar");
+          if (av) av.insertAdjacentHTML("beforeend", '<div class="unread-dot"></div>');
+        } else if (!unread && dot) {
+          dot.remove();
+        }
+        const $preview = a2.querySelector(".lp-preview");
+        if ($preview && $preview.innerHTML !== preview) $preview.innerHTML = preview;
+        const $time = a2.querySelector(".lp-time");
+        if ($time) $time.textContent = formatLpTime(item.latest_ts);
+        const refEl = $list.children[i2] ?? null;
+        if (refEl !== a2) $list.insertBefore(a2, refEl);
+      }
+    }
+    applyLpSearch();
+  }
+  function applyLpSearch() {
+    const q = (document.getElementById("lp-search")?.value ?? "").toLowerCase().trim();
+    const allItems = [...document.querySelectorAll("#left-list .lp-item")];
+    let visible = 0;
+    allItems.forEach((el) => {
+      const name = el.querySelector(".lp-name")?.textContent?.toLowerCase() ?? "";
+      const show = !q || name.includes(q);
+      el.style.display = show ? "" : "none";
+      el.classList.remove("focused");
+      if (show) visible++;
+    });
+    const visibleItems = allItems.filter((el) => el.style.display !== "none");
+    if (lpNavIdx >= 0 && lpNavIdx < visibleItems.length) {
+      visibleItems[lpNavIdx].classList.add("focused");
+    }
+    const noMatch = allItems.length && !visible;
+    document.getElementById("lp-empty").style.display = !q && noMatch ? "block" : "none";
+  }
+  function lpRevealDelete(el) {
+    document.querySelectorAll("#left-list .lp-item.swiped").forEach((x) => {
+      if (x !== el) x.classList.remove("swiped");
+    });
+    el.classList.add("swiped");
+  }
+  async function deleteInbox(inboxPath) {
+    if (!confirm(`\u300C${inboxPath.split("/").pop()}\u300D\u306E\u30E1\u30C3\u30BB\u30FC\u30B8\u3092\u3059\u3079\u3066\u524A\u9664\u3057\u307E\u3059\u304B\uFF1F`)) return;
+    await doDeleteInbox(inboxPath);
+  }
+  async function setupLeftPane() {
+    const $app = document.getElementById("app");
+    if (!ctx.inboxUser) return;
+    $app.classList.add("lp-enabled");
+    const savedLpWidth = localStorage.getItem("lp-width");
+    if (savedLpWidth) document.documentElement.style.setProperty("--lp-width", savedLpWidth + "px");
+    const notifKey = `jmap_notif_${ctx.inboxUser}`;
+    setNotifEnabled(localStorage.getItem(notifKey) === "1");
+    {
+      const toggle = document.getElementById("lp-col-toggle");
+      const leftPane = document.getElementById("left-pane");
+      let dragging = false;
+      let startX = 0;
+      let startW = 0;
+      const DRAG_THRESHOLD = 4;
+      toggle.addEventListener("pointerdown", (e2) => {
+        dragging = false;
+        startX = e2.clientX;
+        startW = leftPane.offsetWidth;
+        toggle.setPointerCapture(e2.pointerId);
+        e2.preventDefault();
+      });
+      toggle.addEventListener("pointermove", (e2) => {
+        if (!toggle.hasPointerCapture(e2.pointerId)) return;
+        const dx = e2.clientX - startX;
+        if (!dragging && Math.abs(dx) < DRAG_THRESHOLD) return;
+        if (!dragging) document.body.classList.add("lp-resizing");
+        dragging = true;
+        const newW = Math.max(180, Math.min(520, startW + dx));
+        document.documentElement.style.setProperty("--lp-width", newW + "px");
+      });
+      toggle.addEventListener("pointerup", (e2) => {
+        document.body.classList.remove("lp-resizing");
+        if (dragging) {
+          const w = leftPane.offsetWidth;
+          localStorage.setItem("lp-width", String(w));
+          syncDockPosition();
+        } else {
+          const on = $app.classList.toggle("single-col");
+          if (on) $app.classList.remove("show-left");
+          requestAnimationFrame(() => {
+            syncDockPosition();
+            scrollToFocused();
+          });
+          setTimeout(() => syncDockPosition(), 300);
+        }
+        dragging = false;
+      });
+    }
+    document.getElementById("lp-hamburger").addEventListener("click", (e2) => {
+      e2.stopPropagation();
+      if ($lpSearch.value.startsWith("/")) {
+        $lpSearch.value = "";
+        hideCmdPalette();
+        applyLpSearch();
+      } else {
+        $lpSearch.value = "/";
+        showCommands("/");
+        $lpSearch.focus();
+      }
+    });
+    const $lpSearch = document.getElementById("lp-search");
+    const $lpCmds = document.getElementById("lp-commands");
+    const $cmdPage = document.getElementById("cmd-page");
+    const $outer = document.getElementById("outer");
+    function renderProfilePage() {
+      return `<div class="cmd-page-content">
+      <h2>\u30D7\u30ED\u30D5\u30A3\u30FC\u30EB</h2>
+      <div class="cmd-page-section">
+        <div class="cmd-page-row"><span>Account</span><span>${esc(ctx.inboxUser)}</span></div>
+        <div class="cmd-page-row"><span>Server</span><span>${esc(ctx.serverUrl)}</span></div>
+        <div class="cmd-page-row" style="flex-direction:column;align-items:flex-start;gap:8px;padding-bottom:12px">
+          <span>Display Name</span>
+          <div style="display:flex;gap:8px;width:100%">
+            <input id="profile-name-input" class="cmd-input" value="${esc(ctx.myName || ctx.inboxUser)}" style="flex:1">
+            <button class="cmd-page-btn primary" id="profile-name-save" style="padding:8px 16px;font-size:14px">\u4FDD\u5B58</button>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:8px">
+        <button class="cmd-page-btn danger" id="cmd-logout-btn">\u30ED\u30B0\u30A2\u30A6\u30C8</button>
+      </div>
+    </div>`;
+    }
+    function renderConfigPage() {
+      return `<div class="cmd-page-content">
+      <h2>\u8A2D\u5B9A</h2>
+      <div class="cmd-page-section">
+        <h3>\u901A\u77E5</h3>
+        <div class="cmd-page-row">
+          <span>\u30D7\u30C3\u30B7\u30E5\u901A\u77E5</span>
+          <div class="toggle-switch${notifEnabled ? " on" : ""}" id="config-notif-toggle" style="cursor:pointer"></div>
+        </div>
+      </div>
+      <div class="cmd-page-section" id="vacation-section">
+        <h3>\u4E0D\u5728\u5FDC\u7B54</h3>
+        <div class="lp-search-status">\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026</div>
+      </div>
+    </div>`;
+    }
+    async function onShowConfig() {
+      const $tog = document.getElementById("config-notif-toggle");
+      if ($tog) {
+        $tog.addEventListener("click", async () => {
+          if (!notifEnabled) {
+            if (Notification.permission === "denied") {
+              alert("\u901A\u77E5\u304C\u30D6\u30E9\u30A6\u30B6\u3067\u30D6\u30ED\u30C3\u30AF\u3055\u308C\u3066\u3044\u307E\u3059\u3002");
+              return;
+            }
+            if (Notification.permission !== "granted") {
+              const r2 = await Notification.requestPermission();
+              if (r2 !== "granted") return;
+            }
+          }
+          setNotifEnabled(!notifEnabled);
+          localStorage.setItem(`jmap_notif_${ctx.inboxUser}`, notifEnabled ? "1" : "0");
+          $tog.classList.toggle("on", notifEnabled);
+          document.getElementById("lp-notify-toggle")?.classList.toggle("on", notifEnabled);
+        });
+      }
+      const $vac = document.getElementById("vacation-section");
+      if (!$vac) return;
+      try {
+        const [r2] = await jmap().api.VacationResponse.get({ accountId: ctx.jmapAccountId, ids: null });
+        const vr = r2.list?.[0] ?? {};
+        let isEnabled = vr.isEnabled ?? false;
+        $vac.innerHTML = `<h3 style="font-size:12px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">\u4E0D\u5728\u5FDC\u7B54</h3>
+        <div class="cmd-page-row">
+          <span>\u6709\u52B9</span>
+          <div class="toggle-switch${isEnabled ? " on" : ""}" id="vac-enabled-toggle" style="cursor:pointer"></div>
+        </div>
+        <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
+          <input id="vac-subject" class="cmd-input" value="${esc(vr.subject ?? "")}" placeholder="\u4EF6\u540D">
+          <textarea id="vac-body" class="cmd-textarea" placeholder="\u672C\u6587">${esc(vr.textBody ?? "")}</textarea>
+          <button class="cmd-page-btn primary" id="vac-save" style="align-self:flex-start">\u4FDD\u5B58</button>
+        </div>`;
+        document.getElementById("vac-enabled-toggle")?.addEventListener("click", () => {
+          isEnabled = !isEnabled;
+          document.getElementById("vac-enabled-toggle")?.classList.toggle("on", isEnabled);
+        });
+        document.getElementById("vac-save")?.addEventListener("click", async () => {
+          const subject = document.getElementById("vac-subject")?.value ?? "";
+          const textBody = document.getElementById("vac-body")?.value ?? "";
+          try {
+            await jmap().api.VacationResponse.set({
+              accountId: ctx.jmapAccountId,
+              update: { singleton: { isEnabled, subject, textBody } }
+            });
+            showSysMsg("\u4FDD\u5B58\u3057\u307E\u3057\u305F");
+          } catch {
+            showSysMsg("\u4FDD\u5B58\u5931\u6557");
+          }
+        });
+      } catch {
+        $vac.innerHTML += '<div class="lp-search-status">\u4E0D\u5728\u5FDC\u7B54\u306F\u5229\u7528\u3067\u304D\u307E\u305B\u3093</div>';
+      }
+    }
+    function renderHelpPage() {
+      const shortcuts = [
+        ["\u6587\u5B57\u5165\u529B", "inbox\u3092\u691C\u7D22"],
+        ["/", "\u30B3\u30DE\u30F3\u30C9\u30D1\u30EC\u30C3\u30C8"],
+        ["\u2193 / \u2191", "inbox\u79FB\u52D5"],
+        ["\u2192", "\u8FD4\u4FE1\u6B04\u306B\u30D5\u30A9\u30FC\u30AB\u30B9"],
+        ["\u2190 \uFF08\u8FD4\u4FE1\u6B04\u5148\u982D\uFF09", "\u691C\u7D22\u30D0\u30FC\u306B\u623B\u308B"],
+        ["Enter", "\u9078\u629E\u3057\u305Finbox\u3092\u958B\u304F / \u30B3\u30DE\u30F3\u30C9\u5B9F\u884C"],
+        ["Escape", "\u691C\u7D22\u30AF\u30EA\u30A2\u30FB\u9078\u629E\u89E3\u9664"],
+        ["/new in reply box", "\u65B0\u898F\u30E1\u30C3\u30BB\u30FC\u30B8\u4F5C\u6210"]
+      ];
+      return `<div class="cmd-page-content">
+      <h2>\u30AD\u30FC\u30DC\u30FC\u30C9\u30B7\u30E7\u30FC\u30C8\u30AB\u30C3\u30C8</h2>
+      <div class="cmd-page-section">
+        ${shortcuts.map(([k, v]) => `<div class="cmd-page-row">
+          <span style="font-family:'SF Mono',monospace;font-size:13px;background:rgba(128,128,128,0.12);padding:2px 8px;border-radius:6px">${k}</span>
+          <span style="color:var(--text-dim);font-size:14px">${v}</span>
+        </div>`).join("")}
+      </div>
+    </div>`;
+    }
+    function renderNewPage() {
+      return `<div class="cmd-page-content">
+      <div class="new-compose-card">
+        <div class="new-compose-field">
+          <span class="new-field-label">To</span>
+          <div id="new-recipients" class="new-recipients-list">
+            <div class="new-recipient-row">
+              <input class="new-field-input" type="email" placeholder="recipient@example.com" autocomplete="off">
+              <button id="new-add-btn" class="new-compose-add-btn" tabindex="-1" style="font-size:18px;padding:0 4px;line-height:1">+</button>
+            </div>
+          </div>
+        </div>
+        <div class="new-compose-field">
+          <span class="new-field-label">Subject</span>
+          <input id="new-subject" class="new-field-input" placeholder="(no subject)" autocomplete="off">
+        </div>
+        <div class="new-compose-body-field">
+          <span class="new-field-label">Body</span>
+          <textarea id="new-body" placeholder="Write a message\u2026"></textarea>
+        </div>
+        <div class="new-compose-actions">
+          <span></span>
+          <button id="new-send-btn" class="cmd-page-btn primary">Send</button>
+        </div>
+      </div>
+    </div>`;
+    }
+    function onShowNew() {
+      const recipientsDiv = document.getElementById("new-recipients");
+      const addBtn = document.getElementById("new-add-btn");
+      const addRow = (focus = false) => {
+        const row = document.createElement("div");
+        row.className = "new-recipient-row";
+        const inp = document.createElement("input");
+        inp.className = "new-field-input";
+        inp.type = "email";
+        inp.placeholder = "recipient@example.com";
+        inp.autocomplete = "off";
+        const rm = document.createElement("button");
+        rm.className = "group-remove-btn";
+        rm.tabIndex = -1;
+        rm.textContent = "\xD7";
+        rm.addEventListener("click", () => row.remove());
+        row.append(inp, rm);
+        recipientsDiv.appendChild(row);
+        if (focus) inp.focus();
+      };
+      addBtn?.addEventListener("click", () => addRow(true));
+      document.getElementById("new-send-btn")?.addEventListener("click", async () => {
+        const { jmapCreateEmail: jmapCreateEmail2 } = await Promise.resolve().then(() => (init_app(), app_exports));
+        const toAddrs = [...recipientsDiv.querySelectorAll(".new-field-input")].map((i2) => i2.value.trim()).filter(Boolean);
+        if (!toAddrs.length) {
+          recipientsDiv.querySelector(".new-field-input")?.focus();
+          return;
+        }
+        const subject = document.getElementById("new-subject")?.value.trim() || "";
+        const body = document.getElementById("new-body")?.value.trim() || "";
+        const ok = await jmapCreateEmail2(toAddrs, body, subject);
+        if (!ok) {
+          showSysMsg("\u9001\u4FE1\u5931\u6557");
+          return;
+        }
+        ;
+        $lpSearch.value = "";
+        hideCmdPalette();
+        await loadLeftInboxes();
+        if (toAddrs[0]) switchInbox(ctx.inboxUser + "/" + toAddrs[0]);
+      });
+    }
+    const LP_COMMANDS = [
+      { name: "/profile", page: renderProfilePage, action: () => {
+      }, onShow: () => {
+        document.getElementById("cmd-logout-btn")?.addEventListener("click", logout);
+        document.getElementById("profile-name-save")?.addEventListener("click", async () => {
+          const newName = document.getElementById("profile-name-input")?.value.trim();
+          if (!newName) return;
+          try {
+            const identityId = await getIdentityId();
+            if (identityId) {
+              await jmap().api.Identity.set({
+                accountId: ctx.jmapAccountId,
+                update: { [identityId]: { name: newName } }
+              });
+            }
+            ctx.myName = newName;
+            showSysMsg("\u4FDD\u5B58\u3057\u307E\u3057\u305F");
+          } catch {
+            showSysMsg("\u4FDD\u5B58\u5931\u6557");
+          }
+        });
+      } },
+      { name: "/config", page: renderConfigPage, action: () => {
+      }, onShow: onShowConfig },
+      { name: "/help", page: renderHelpPage, action: () => {
+      } },
+      { name: "/new", page: renderNewPage, action: () => {
+      }, onShow: onShowNew }
+    ];
+    let cmdSelectedIdx = -1;
+    let _filteredCmds = [];
+    function showCmdPage(cmd) {
+      const dock = document.getElementById("reply-dock");
+      if (!cmd.page) {
+        $cmdPage.style.display = "none";
+        $outer.style.display = "";
+        if (dock) dock.style.display = "";
+        return;
+      }
+      $cmdPage.innerHTML = cmd.page();
+      $cmdPage.style.display = "block";
+      $outer.style.display = "none";
+      if (dock) dock.style.display = "none";
+      cmd.onShow?.();
+    }
+    function hideCmdPage() {
+      $cmdPage.style.display = "none";
+      $outer.style.display = "";
+      const dock = document.getElementById("reply-dock");
+      if (dock) dock.style.display = "";
+    }
+    function showCommands(q) {
+      const filtered = LP_COMMANDS.filter((c2) => c2.name.startsWith(q));
+      _filteredCmds = filtered;
+      cmdSelectedIdx = filtered.length ? 0 : -1;
+      $lpCmds.innerHTML = "";
+      filtered.forEach((cmd, i2) => {
+        const el = document.createElement("div");
+        el.className = "lp-cmd-item" + (i2 === 0 ? " selected" : "");
+        el.textContent = cmd.name;
+        el.addEventListener("mousedown", (e2) => {
+          e2.preventDefault();
+          cmdSelectedIdx = i2;
+          updateCmdSelection([...$lpCmds.querySelectorAll(".lp-cmd-item")], i2);
+          showCmdPage(cmd);
+          cmd.action();
+        });
+        $lpCmds.appendChild(el);
+      });
+      const visible = filtered.length > 0;
+      $lpCmds.style.display = visible ? "" : "none";
+      document.getElementById("left-list").style.display = visible ? "none" : "";
+      document.getElementById("lp-empty").style.display = "none";
+      if (filtered.length > 0) showCmdPage(filtered[0]);
+      return filtered;
+    }
+    function hideCmdPalette() {
+      $lpCmds.style.display = "none";
+      document.getElementById("left-list").style.display = "";
+      cmdSelectedIdx = -1;
+      _filteredCmds = [];
+      hideCmdPage();
+    }
+    function updateCmdSelection(items, idx) {
+      items.forEach((el, i2) => el.classList.toggle("selected", i2 === idx));
+      if (idx >= 0 && idx < _filteredCmds.length) showCmdPage(_filteredCmds[idx]);
+    }
+    const $searchResults = document.getElementById("lp-search-results");
+    let _searchTimer = null;
+    function clearSearchResults() {
+      $searchResults.innerHTML = "";
+      $searchResults.style.display = "none";
+      document.getElementById("left-list").style.display = "";
+    }
+    async function doEmailSearch(q) {
+      $searchResults.innerHTML = `<div class="lp-search-status">\u691C\u7D22\u4E2D\u2026</div>`;
+      $searchResults.style.display = "";
+      document.getElementById("left-list").style.display = "none";
+      try {
+        const api = jmap().api;
+        const selfAddr = ctx.jmapAccountId || ctx.inboxUser;
+        const [queryRes] = await api.Email.query({
+          accountId: ctx.jmapAccountId,
+          filter: { text: q },
+          limit: 20,
+          sort: [{ property: "receivedAt", isAscending: false }]
+        });
+        const ids = queryRes.ids ?? [];
+        if (!ids.length) {
+          $searchResults.innerHTML = `<div class="lp-search-status">\u7D50\u679C\u306A\u3057</div>`;
+          return;
+        }
+        const [[emailRes], [snippetRes]] = await Promise.all([
+          api.Email.get({
+            accountId: ctx.jmapAccountId,
+            ids,
+            properties: ["id", "from", "to", "subject", "receivedAt", "threadId"]
+          }),
+          api.SearchSnippet.get({
+            accountId: ctx.jmapAccountId,
+            filter: { text: q },
+            emailIds: ids
+          })
+        ]);
+        const emails = emailRes.list ?? [];
+        const snippetMap = /* @__PURE__ */ new Map();
+        for (const s2 of snippetRes.list ?? []) snippetMap.set(s2.emailId, s2);
+        if (!emails.length) {
+          $searchResults.innerHTML = `<div class="lp-search-status">\u7D50\u679C\u306A\u3057</div>`;
+          return;
+        }
+        const html = emails.map((e2) => {
+          const from = e2.from?.[0];
+          const fromAddr = from?.email ?? "";
+          const fromName = from?.name || fromAddr;
+          const contact = fromAddr === selfAddr ? e2.to?.[0]?.email ?? "" : fromAddr;
+          const inboxKey = ctx.inboxUser + "/" + contact;
+          const snippet = snippetMap.get(e2.id);
+          const subjectSnip = snippet?.subject ? `<span class="lp-search-subject">${snippet.subject}</span>` : `<span class="lp-search-subject">${esc(e2.subject ?? "")}</span>`;
+          const bodySnip = snippet?.preview ? `<span class="lp-search-preview">${snippet.preview}</span>` : "";
+          const ts = e2.receivedAt ? formatTime(new Date(e2.receivedAt).getTime() / 1e3) : "";
+          return `<div class="lp-search-result" data-inbox="${esc(inboxKey)}" data-contact="${esc(contact)}">
+          <span class="lp-search-contact">${esc(fromName)}</span>
+          <span class="lp-search-ts">${esc(ts)}</span>
+          ${subjectSnip}${bodySnip}
+        </div>`;
+        }).join("");
+        $searchResults.innerHTML = `<div class="lp-search-header">\u691C\u7D22\u7D50\u679C ${emails.length}\u4EF6</div>` + html;
+        $searchResults.querySelectorAll(".lp-search-result").forEach((el) => {
+          el.addEventListener("click", () => {
+            switchInbox(el.dataset.inbox);
+            $lpSearch.value = "";
+            clearSearchResults();
+          });
+        });
+      } catch (err) {
+        $searchResults.innerHTML = `<div class="lp-search-status">\u30A8\u30E9\u30FC: ${esc(String(err))}</div>`;
+      }
+    }
+    $lpSearch.addEventListener("focus", () => lpNavClear());
+    $lpSearch.addEventListener("input", () => {
+      const v = $lpSearch.value;
+      lpNavIdx = -1;
+      if (v.startsWith("/")) {
+        clearSearchResults();
+        showCommands(v);
+      } else {
+        hideCmdPalette();
+        if (v.length >= 2) {
+          if (_searchTimer) clearTimeout(_searchTimer);
+          _searchTimer = setTimeout(() => doEmailSearch(v), 400);
+        } else {
+          if (_searchTimer) {
+            clearTimeout(_searchTimer);
+            _searchTimer = null;
+          }
+          clearSearchResults();
+          applyLpSearch();
+        }
+      }
+    });
+    function lpNavItems() {
+      return [...document.querySelectorAll("#left-list .lp-item")].filter((el) => el.style.display !== "none");
+    }
+    function lpNavSelect(idx) {
+      const items = lpNavItems();
+      items.forEach((el, i2) => el.classList.toggle("focused", i2 === idx));
+      if (idx >= 0 && idx < items.length) {
+        const el = items[idx];
+        el.scrollIntoView({ block: "nearest" });
+        switchInbox(el.dataset.inbox);
+      }
+    }
+    function lpNavClear() {
+      lpNavItems().forEach((el) => el.classList.remove("focused"));
+      lpNavIdx = -1;
+    }
+    $lpSearch.addEventListener("keydown", (e2) => {
+      const v = $lpSearch.value;
+      if (v.startsWith("/")) {
+        const cmdItems = [...$lpCmds.querySelectorAll(".lp-cmd-item")];
+        if (e2.key === "ArrowDown") {
+          e2.preventDefault();
+          cmdSelectedIdx = Math.min(cmdSelectedIdx + 1, cmdItems.length - 1);
+          updateCmdSelection(cmdItems, cmdSelectedIdx);
+        } else if (e2.key === "ArrowUp") {
+          e2.preventDefault();
+          cmdSelectedIdx = Math.max(cmdSelectedIdx - 1, 0);
+          updateCmdSelection(cmdItems, cmdSelectedIdx);
+        } else if (e2.key === "Enter") {
+          e2.preventDefault();
+          const exact = LP_COMMANDS.find((c2) => c2.name === v.trim());
+          if (exact) {
+            exact.action();
+            return;
+          }
+          if (cmdSelectedIdx >= 0 && cmdSelectedIdx < cmdItems.length) {
+            const cmd = LP_COMMANDS.find((c2) => c2.name === cmdItems[cmdSelectedIdx].textContent);
+            if (cmd) cmd.action();
+          }
+        } else if (e2.key === "Escape") {
+          $lpSearch.value = "";
+          hideCmdPalette();
+        }
+        return;
+      }
+      const items = lpNavItems();
+      if (e2.key === "ArrowDown") {
+        e2.preventDefault();
+        lpNavIdx = Math.min(lpNavIdx + 1, items.length - 1);
+        lpNavSelect(lpNavIdx);
+      } else if (e2.key === "ArrowUp") {
+        e2.preventDefault();
+        if (lpNavIdx <= 0) {
+          lpNavClear();
+          return;
+        }
+        lpNavIdx = lpNavIdx - 1;
+        lpNavSelect(lpNavIdx);
+      } else if (e2.key === "ArrowRight") {
+        e2.preventDefault();
+        const ta = document.querySelector("#focused-thread-card textarea") ?? document.querySelector(".reply-box textarea");
+        if (ta) {
+          ta.focus();
+          ta.setSelectionRange(ta.value.length, ta.value.length);
+        }
+      } else if (e2.key === "Escape") {
+        lpNavClear();
+        $lpSearch.value = "";
+        clearSearchResults();
+        applyLpSearch();
+      }
+    });
+    setTimeout(() => $lpSearch.focus(), 100);
+    document.getElementById("lp-toggle").addEventListener("click", () => {
+      $app.classList.remove("single-col");
+      $app.classList.add("show-left");
+    });
+    await loadLeftInboxes();
+    setInterval(loadLeftInboxes, 3e4);
+  }
+  var lpNavIdx, inboxCache;
+  var init_left_pane = __esm({
+    "src/ui/left-pane.ts"() {
+      init_context();
+      init_state();
+      init_utils();
+      init_auth();
+      init_thread();
+      init_shell();
+      init_app();
+      lpNavIdx = -1;
+      inboxCache = /* @__PURE__ */ new Map();
+    }
+  });
+
+  // src/ui/shell.ts
+  function showApp() {
+    hideLoginScreen();
+    const $overlay = document.getElementById("overlay");
+    const $pwOverlay = document.getElementById("pw-overlay");
+    const $app = document.getElementById("app");
+    $overlay.style.display = "none";
+    $pwOverlay.style.display = "none";
+    $app.style.display = "flex";
+    setIsFirstFetch(true);
+    syncDockPosition();
+    render();
+    if (ctx.inbox) document.querySelector(".reply-box textarea")?.focus();
+    setupLeftPane();
+    if (window.innerWidth <= 720 && !processedMessages.length) {
+      $app.classList.remove("single-col");
+      $app.classList.add("show-left");
+    }
+  }
+  function showSysMsg(text) {
+    const el = document.getElementById("sys-msg");
+    el.textContent = text;
+    el.classList.add("show");
+    clearTimeout(sysMsgTimer);
+    sysMsgTimer = setTimeout(() => el.classList.remove("show"), 1800);
+  }
+  function addPendingMessage(body, subject = "", inReplyTo = "", sender = "") {
+    const tempId = `__pending_${++_pendingCounter}_${Date.now()}`;
+    const fromName = sender || ctx.myName || ctx.inboxUser || "me";
+    const processed = {
+      msg: {
+        from: fromName,
+        from_name: fromName,
+        body,
+        subject,
+        ts: Date.now(),
+        message_id: tempId,
+        in_reply_to: inReplyTo || focusedThreadKey || "",
+        thread_id: focusedThreadKey || ""
+      },
+      bodyText: body,
+      encrypted: false,
+      unreadable: false,
+      pending: true,
+      tempId
+    };
+    processedMessages.push(processed);
+    renderedKeys.add(`${processed.msg.from}:${processed.msg.ts}`);
+    return tempId;
+  }
+  function removePendingMessage(tempId) {
+    const idx = processedMessages.findIndex((p) => p.tempId === tempId);
+    if (idx < 0) return;
+    const removed = processedMessages.splice(idx, 1)[0];
+    renderedKeys.delete(`${removed.msg.from}:${removed.msg.ts}`);
+  }
+  async function postMessageVia(targetInbox, body, subject, toAddrs, inReplyTo = "") {
+    const contact = targetInbox.split("/").slice(1).join("/");
+    const recipients = toAddrs.length ? toAddrs : contact ? [contact] : [];
+    const ok = await jmapCreateEmail(recipients, body, subject, inReplyTo);
+    return ok;
+  }
+  async function sendReply(ta, replySubject = "", inReplyTo = "") {
+    const body = ta.value.trim();
+    if (!body) return;
+    ta.value = "";
+    ta.style.height = "auto";
+    const contact = ctx.inbox.split("/").slice(1).join("/");
+    const tempId = addPendingMessage(body, replySubject, inReplyTo);
+    render(false, true);
+    requestAnimationFrame(() => {
+      const outer = document.getElementById("outer");
+      if (outer) outer.scrollTo({ top: outer.scrollHeight, behavior: "instant" });
+    });
+    ta.focus();
+    const ok = await postMessageVia(ctx.inbox, body, replySubject, [contact], inReplyTo);
+    removePendingMessage(tempId);
+    if (ok) {
+      await fetchMessages();
+      loadLeftInboxes();
+    } else {
+      render();
+      showSysMsg("\u9001\u4FE1\u5931\u6557");
+    }
+  }
+  async function fetchMessages() {
+    const myInbox = ctx.inbox;
+    const selfAddr = ctx.jmapAccountId || ctx.inboxUser;
+    const contact = myInbox.split("/").slice(1).join("/");
+    const { added, removed, updated } = await cache().sync();
+    if (ctx.inbox !== myInbox) return;
+    const wasFirstLoad = isFirstFetch;
+    setIsFirstFetch(false);
+    if (wasFirstLoad) {
+      await loadContactFromCache();
+    } else {
+      for (const e2 of added) {
+        if (contact && cache().contactFor(e2, selfAddr) !== contact) continue;
+        await addMessage(cache().toMessage(e2));
+      }
+      if (updated.length) {
+        for (const e2 of updated) {
+          const mid = e2.messageId?.[0] ?? "";
+          const pm = processedMessages.find((p) => p.msg.message_id === mid);
+          if (pm) pm.msg.seen = !!e2.keywords?.["$seen"];
+        }
+        loadLeftInboxes();
+      }
+    }
+    const groups = groupMessages();
+    if (!groups.length) return;
+    const hasIncoming = added.some((e2) => {
+      if (contact && cache().contactFor(e2, selfAddr) !== contact) return false;
+      return e2.from?.[0]?.email !== selfAddr;
+    });
+    const latest = latestGroup(groups);
+    if (wasFirstLoad || hasIncoming || latest.key !== focusedThreadKey) {
+      setFocusedThreadKey(latest.key);
+    }
+    if (hasIncoming && notifEnabled && Notification.permission === "granted") {
+      const last = processedMessages.filter((p) => !isMeMsg(p.msg.from)).pop();
+      if (last) new Notification(contact, { body: last.bodyText.slice(0, 100) });
+    }
+    render(false, !wasFirstLoad);
+  }
+  async function loadContactFromCache() {
+    const contact = ctx.inbox.split("/").slice(1).join("/");
+    const selfAddr = ctx.jmapAccountId || ctx.inboxUser;
+    const emails = cache().filterByContact(contact, selfAddr);
+    for (const e2 of emails) await addMessage(cache().toMessage(e2));
+  }
+  function startPolling() {
+    if (sseSource) {
+      try {
+        sseSource.close();
+      } catch {
+      }
+      ;
+      sseSource = null;
+    }
+    if (!ctx.inboxUser) return;
+    const eventUrl = ctx.eventSourceUrl ? ctx.eventSourceUrl.replace(/\{[^}]+\}/g, "") : null;
+    if (eventUrl) {
+      try {
+        sseSource = new EventSource(eventUrl + (eventUrl.includes("?") ? "&" : "?") + `access_token=${encodeURIComponent(ctx.password)}`);
+        sseSource.addEventListener("state", () => {
+          fetchMessages();
+          loadLeftInboxes();
+        });
+        sseSource.onerror = () => {
+          try {
+            sseSource.close();
+          } catch {
+          }
+          ;
+          sseSource = null;
+        };
+        return;
+      } catch {
+      }
+    }
+    const poll = () => {
+      if (!ctx.inboxUser) return;
+      fetchMessages().catch(() => {
+      }).finally(() => setTimeout(poll, 3e3));
+    };
+    setTimeout(poll, 3e3);
+  }
+  var sysMsgTimer, _pendingCounter, sseSource;
+  var init_shell = __esm({
+    "src/ui/shell.ts"() {
+      init_context();
+      init_state();
+      init_auth();
+      init_thread();
+      init_left_pane();
+      init_app();
+      sysMsgTimer = null;
+      _pendingCounter = 0;
+      sseSource = null;
+    }
+  });
+
+  // src/ui/thread.ts
+  function isMeMsg(from) {
+    return from === ctx.inboxUser || !!ctx.jmapAccountId && from === ctx.jmapAccountId;
+  }
+  async function addMessage(msg) {
+    const key = `${msg.from}:${msg.ts}`;
+    if (renderedKeys.has(key)) return false;
+    renderedKeys.add(key);
+    processedMessages.push({ msg, bodyText: msg.body, encrypted: false, unreadable: false });
+    return true;
+  }
+  function createMsgEl({ msg, bodyText, encrypted, unreadable, pending }) {
+    const div = document.createElement("div");
+    if (msg.from === "[system]") {
+      div.className = "t-msg t-system";
+      div.innerHTML = `<div class="t-body" style="font-size:12px;color:var(--text-dim);font-style:italic;padding:4px 0">${esc(bodyText)}</div>`;
+      return div;
+    }
+    div.className = "t-msg" + (isMeMsg(msg.from) ? " me" : "");
+    if (pending) div.style.opacity = "0.6";
+    const display = unreadable ? `<span style="opacity:0.4;font-style:italic">\u6697\u53F7\u5316\u30E1\u30C3\u30BB\u30FC\u30B8</span>` : linkify(esc(bodyText));
+    const senderName = msg.from_name || msg.from;
+    const senderAvatarURL = (() => {
+      const match = lastLeftInboxes.find((x) => x.inbox.endsWith("/" + msg.from) && x.avatar_url);
+      return match?.avatar_url ?? null;
+    })();
+    div.innerHTML = `
+    <div class="t-avatar" style="${avatarStyle(msg.from)}">${senderAvatarURL ? `<img src="${senderAvatarURL}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">` : senderName.charAt(0).toUpperCase()}</div>
+    <div class="t-meta">
+      <div class="t-hdr">
+        <span class="t-sender">${esc(senderName)}</span>
+        <span class="t-time">${formatTime(msg.ts)}</span>
+      </div>
+      <div class="t-body">${display}</div>
+    </div>
+  `;
+    return div;
+  }
+  function makeThreadCard(group, focused) {
+    const card = document.createElement("div");
+    card.className = "thread-card" + (focused ? " focused-card" : " clickable");
+    if (focused) {
+      card.id = "focused-thread-card";
+    }
+    const menuBtn = `<button class="t-menu-btn" aria-label="\u30E1\u30CB\u30E5\u30FC"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>`;
+    const hdr = group.subject ? `<div class="thread-header-row"><span class="thread-header">${esc(group.subject)}</span>${menuBtn}</div>` : `<div class="thread-header-row"><span class="thread-header untitled">no title</span>${menuBtn}</div>`;
+    card.innerHTML = `
+    ${focused ? "" : hdr}
+    <div class="t-messages"></div>
+    ${focused ? `
+    <div class="reply-box">
+      <div class="reply-resize-handle"><span></span></div>
+      <div class="reply-content">
+        <button class="reply-compose-btn" title="\u65B0\u898F\u4F5C\u6210">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+        <input class="reply-subject" type="text" placeholder="Subject (optional)">
+        <textarea rows="1" placeholder="Reply\u2026"></textarea>
+        <div class="t-send-wrap">
+          <div class="t-send-avatar"></div>
+          <button class="t-send-btn">
+            <svg viewBox="0 0 24 24"><path d="M2 12L22 2L12 22L10 14L2 12Z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>` : ""}
+  `;
+    const container = card.querySelector(".t-messages");
+    for (const p of group.messages) container.appendChild(createMsgEl(p));
+    if (focused) {
+      const avatarEl = card.querySelector(".t-send-avatar");
+      if (avatarEl) {
+        const initial = (ctx.inboxUser || "?")[0].toUpperCase();
+        avatarEl.style.background = (avatarStyle(ctx.inboxUser || "?").match(/background:([^;]+)/) ?? [])[1] || "var(--accent)";
+        avatarEl.textContent = initial;
+      }
+      const ta = card.querySelector("textarea");
+      const replyBox = card.querySelector(".reply-box");
+      const subjectInput = card.querySelector(".reply-subject");
+      const composeBtn = card.querySelector(".reply-compose-btn");
+      let composeMode = false;
+      const contact = ctx.inbox.split("/").slice(1).join("/");
+      const replyPlaceholder = `Reply to ${contact}`;
+      const composePlaceholder = `New message from ${ctx.inboxUser}`;
+      ta.placeholder = replyPlaceholder;
+      const getReplyTo = () => {
+        const msgs = group.messages;
+        return msgs.length ? msgs[msgs.length - 1].msg.message_id || "" : "";
+      };
+      const resizeHandle = replyBox.querySelector(".reply-resize-handle");
+      const replyContent = replyBox.querySelector(".reply-content");
+      const sendWrap = card.querySelector(".t-send-wrap");
+      const enterCompose = () => {
+        const rowTop = document.createElement("div");
+        rowTop.className = "reply-row-top";
+        rowTop.append(composeBtn, subjectInput, sendWrap);
+        const rowBottom = document.createElement("div");
+        rowBottom.className = "reply-row-bottom";
+        rowBottom.append(ta);
+        replyContent.innerHTML = "";
+        replyContent.append(rowTop, rowBottom);
+        subjectInput.focus();
+      };
+      const exitCompose = () => {
+        replyContent.innerHTML = "";
+        replyContent.append(composeBtn, ta, sendWrap);
+        ta.focus();
+      };
+      let groupMode = false;
+      const enterGroupMode = () => {
+        groupMode = true;
+        ta.value = "";
+        replyContent.innerHTML = "";
+        const form = document.createElement("div");
+        form.className = "group-form";
+        const topRow = document.createElement("div");
+        topRow.style.cssText = "display:flex;align-items:center;gap:8px;";
+        const nameInput = document.createElement("input");
+        nameInput.className = "group-name-input";
+        nameInput.placeholder = "Subject (optional)";
+        const cancelBtn = document.createElement("button");
+        cancelBtn.className = "group-cancel-btn";
+        cancelBtn.textContent = "Cancel";
+        cancelBtn.addEventListener("click", exitGroupMode);
+        topRow.append(composeBtn, nameInput, cancelBtn, sendWrap);
+        const recipientsDiv = document.createElement("div");
+        recipientsDiv.style.cssText = "display:flex;flex-direction:column;gap:4px;";
+        const addRecipientRow = (focus = false) => {
+          const row = document.createElement("div");
+          row.className = "group-recipient-row";
+          const inp = document.createElement("input");
+          inp.className = "group-to-input";
+          inp.type = "email";
+          inp.placeholder = "recipient@example.com";
+          const rmBtn = document.createElement("button");
+          rmBtn.className = "group-remove-btn";
+          rmBtn.textContent = "\xD7";
+          rmBtn.addEventListener("click", () => row.remove());
+          row.append(inp, rmBtn);
+          recipientsDiv.append(row);
+          if (focus) inp.focus();
+          return inp;
+        };
+        addRecipientRow();
+        addRecipientRow();
+        const addBtn = document.createElement("button");
+        addBtn.className = "group-add-btn";
+        addBtn.textContent = "+ Add recipient";
+        addBtn.addEventListener("click", () => addRecipientRow(true));
+        const bodyTA = document.createElement("textarea");
+        bodyTA.className = "group-body-textarea";
+        bodyTA.placeholder = "Message\u2026";
+        bodyTA.rows = 4;
+        form.append(topRow, recipientsDiv, addBtn, bodyTA);
+        replyContent.append(form);
+        const dock = document.getElementById("reply-dock");
+        const pane = document.getElementById("right-pane");
+        if (dock && pane) {
+          const r2 = pane.getBoundingClientRect();
+          dock.style.top = r2.top + "px";
+          dock.classList.add("group-expanded");
+          document.getElementById("outer").style.paddingBottom = "";
+        }
+        nameInput.focus();
+        const sendBtn = sendWrap.querySelector(".t-send-btn");
+        const groupHandler = async () => {
+          const participants = [...recipientsDiv.querySelectorAll(".group-to-input")].map((i2) => i2.value.trim()).filter(Boolean);
+          if (participants.length < 1) {
+            recipientsDiv.querySelector(".group-to-input")?.focus();
+            return;
+          }
+          const subject = nameInput.value.trim();
+          const msgBody = bodyTA.value.trim();
+          const ok = await jmapCreateEmail(participants, msgBody, subject);
+          if (!ok) {
+            showSysMsg("\u9001\u4FE1\u5931\u6557");
+            return;
+          }
+          exitGroupMode();
+          await loadLeftInboxes();
+          if (participants[0]) switchInbox(ctx.inboxUser + "/" + participants[0]);
+        };
+        sendBtn._groupHandler = groupHandler;
+        sendBtn.addEventListener("click", groupHandler);
+      };
+      const exitGroupMode = () => {
+        groupMode = false;
+        composeMode = false;
+        replyBox.classList.remove("compose-mode");
+        ta.placeholder = replyPlaceholder;
+        const sendBtn = sendWrap.querySelector(".t-send-btn");
+        if (sendBtn._groupHandler) {
+          sendBtn.removeEventListener("click", sendBtn._groupHandler);
+          sendBtn._groupHandler = null;
+        }
+        const dock = document.getElementById("reply-dock");
+        if (dock) {
+          dock.style.top = "";
+          dock.classList.remove("group-expanded");
+        }
+        exitCompose();
+        syncDockPosition();
+      };
+      const sendFn = () => {
+        if (composeMode) {
+          const subj = subjectInput.value.trim();
+          sendReply(ta, subj, "");
+          subjectInput.value = "";
+          composeMode = false;
+          replyBox.classList.remove("compose-mode");
+          ta.placeholder = replyPlaceholder;
+          exitCompose();
+        } else {
+          sendReply(ta, group.subject, getReplyTo());
+        }
+      };
+      composeBtn.addEventListener("mouseenter", () => {
+        if (!composeMode) ta.placeholder = composePlaceholder;
+      });
+      composeBtn.addEventListener("mouseleave", () => {
+        if (!composeMode) ta.placeholder = replyPlaceholder;
+      });
+      composeBtn.addEventListener("click", () => {
+        composeMode = !composeMode;
+        replyBox.classList.toggle("compose-mode", composeMode);
+        ta.placeholder = composeMode ? composePlaceholder : replyPlaceholder;
+        if (composeMode) {
+          enterCompose();
+        } else {
+          exitCompose();
+        }
+      });
+      let replyExpanded = false;
+      const collapseTA = () => {
+        replyExpanded = false;
+        const lineH = parseFloat(getComputedStyle(ta).lineHeight) || 21;
+        ta.style.height = lineH + 8 + "px";
+        resizeHandle.classList.remove("expanded");
+        replyBox.classList.remove("reply-box-fixed");
+        setTimeout(() => {
+          ta.style.height = "auto";
+          ta.rows = 1;
+        }, 260);
+      };
+      const expandTA = () => {
+        replyExpanded = true;
+        const isMobile = window.innerWidth <= 720;
+        const chrome = resizeHandle.offsetHeight + 60;
+        const h = isMobile ? window.innerHeight - chrome : window.innerHeight * 0.5;
+        ta.style.height = ta.getBoundingClientRect().height + "px";
+        resizeHandle.classList.add("expanded");
+        if (isMobile) replyBox.classList.add("reply-box-fixed");
+        requestAnimationFrame(() => {
+          ta.style.height = h + "px";
+          if (!isMobile) {
+            const outer = document.getElementById("outer");
+            if (outer) outer.scrollTo({ top: outer.scrollHeight, behavior: "smooth" });
+          }
+        });
+      };
+      resizeHandle.addEventListener("click", () => {
+        if (replyExpanded) {
+          collapseTA();
+        } else {
+          expandTA();
+        }
+      });
+      sendWrap.querySelector(".t-send-btn").addEventListener("click", sendFn);
+      ta.addEventListener("keydown", (e2) => {
+        if (e2.key === "Enter" && !e2.isComposing) {
+          if (composeMode) {
+            if (e2.metaKey || e2.ctrlKey) {
+              e2.preventDefault();
+              sendFn();
+            }
+          } else {
+            if (!e2.shiftKey) {
+              e2.preventDefault();
+              sendFn();
+            }
+          }
+        }
+        if (e2.key === "ArrowLeft" && ta.selectionStart === 0 && ta.selectionEnd === 0) {
+          e2.preventDefault();
+          document.getElementById("lp-search")?.focus();
+        }
+      });
+      ta.addEventListener("input", () => {
+        if (ta.value.trim() === "/new") {
+          if (!composeMode) {
+            composeMode = true;
+            replyBox.classList.add("compose-mode");
+          }
+          enterGroupMode();
+          return;
+        }
+        autoResizeTA(ta);
+      });
+    } else {
+      card.addEventListener("click", (e2) => {
+        if (e2.target.closest(".t-menu-btn")) return;
+        setFocusedThreadKey(group.key);
+        render();
+        document.querySelector("#focused-thread-card textarea")?.focus();
+      });
+    }
+    return card;
+  }
+  function updateScrollSpacer() {
+    const outer = document.getElementById("outer");
+    const active = document.getElementById("active-thread");
+    const titleRow = document.getElementById("thread-title-row");
+    const spacer = document.getElementById("scroll-spacer");
+    if (!outer || !active || !spacer) return;
+    const convMeta = document.getElementById("conv-meta");
+    const titleH = (titleRow ? titleRow.offsetHeight : 80) + (convMeta ? convMeta.offsetHeight : 0);
+    const dock = document.getElementById("reply-dock");
+    const dockH = dock ? dock.offsetHeight : 0;
+    const clientH = outer.clientHeight || window.innerHeight;
+    const needed = clientH - titleH - active.offsetHeight - dockH;
+    spacer.style.height = needed > 0 ? needed + "px" : "0";
+  }
+  function scrollToBottomIfNear() {
+    const outer = document.getElementById("outer");
+    if (!outer) return;
+    const dist = outer.scrollHeight - outer.scrollTop - outer.clientHeight;
+    if (dist < 200) outer.scrollTo({ top: outer.scrollHeight, behavior: "smooth" });
+  }
+  function scrollToFocused(smooth = false) {
+    const doScroll = () => {
+      updateScrollSpacer();
+      const outer = document.getElementById("outer");
+      if (!outer) return;
+      const msgs = outer.querySelectorAll(".t-msg");
+      let target;
+      const past = document.getElementById("past-threads");
+      const pastH = past ? past.offsetHeight : 0;
+      if (msgs.length > 0) {
+        const last = msgs[msgs.length - 1];
+        const lastRect = last.getBoundingClientRect();
+        const outerRect = outer.getBoundingClientRect();
+        const lastTopInOuter = lastRect.top - outerRect.top + outer.scrollTop;
+        const titleRow = document.getElementById("thread-title-row");
+        const convMeta = document.getElementById("conv-meta");
+        const titleH = (titleRow ? titleRow.offsetHeight : 0) + (convMeta ? convMeta.offsetHeight : 0);
+        if (lastTopInOuter >= pastH + outer.clientHeight) {
+          target = lastTopInOuter - titleH;
+        } else {
+          target = pastH;
+        }
+      } else {
+        target = pastH;
+      }
+      if (smooth) {
+        outer.scrollTo({ top: target, behavior: "smooth" });
+      } else {
+        outer.scrollTop = target;
+      }
+    };
+    requestAnimationFrame(() => requestAnimationFrame(doScroll));
+  }
+  function syncDockPosition() {
+    const pane = document.getElementById("right-pane");
+    if (!pane) return;
+    const dock = document.getElementById("reply-dock");
+    if (dock) {
+      requestAnimationFrame(() => {
+        const outer = document.getElementById("outer");
+        if (outer && dock.offsetHeight) outer.style.paddingBottom = dock.offsetHeight + "px";
+        if (dock.offsetHeight) document.documentElement.style.setProperty("--dock-h", dock.offsetHeight + "px");
+        const titleRow = document.getElementById("thread-title-row");
+        if (titleRow) document.documentElement.style.setProperty("--thread-title-h", titleRow.offsetHeight + "px");
+      });
+    }
+  }
+  function fmtRelDate(ts) {
+    const d = new Date(ts);
+    const pad = (n2) => String(n2).padStart(2, "0");
+    return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function makePastRow(g) {
+    const $menu2 = document.getElementById("menu");
+    const lastMsg = g.messages[g.messages.length - 1];
+    const row = document.createElement("div");
+    row.className = "past-row";
+    const titleClass = g.subject ? "past-row-title" : "past-row-title untitled";
+    const titleText = g.subject ? esc(g.subject) : "no title";
+    const hdr = document.createElement("div");
+    hdr.className = "past-row-header";
+    hdr.innerHTML = `<span class="${titleClass}">${titleText}</span><span class="past-row-time-wrap"><span class="past-row-date">${fmtRelDate(lastMsg.msg.ts)}</span><button class="past-row-menu-btn" title="\u524A\u9664"><svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="5" r="1.8"/><circle cx="10" cy="10" r="1.8"/><circle cx="10" cy="15" r="1.8"/></svg></button></span>`;
+    hdr.querySelector(".past-row-menu-btn").addEventListener("click", (e2) => {
+      e2.stopPropagation();
+      $menu2.dataset.targetThread = g.key;
+      const r2 = e2.currentTarget.getBoundingClientRect();
+      $menu2.style.top = r2.bottom + "px";
+      $menu2.style.right = window.innerWidth - r2.right + "px";
+      $menu2.style.left = "";
+      $menu2.classList.add("open");
+    });
+    hdr.addEventListener("click", () => {
+      setFocusedThreadKey(g.key);
+      render(true);
+      document.querySelector("#focused-thread-card textarea")?.focus();
+    });
+    row.appendChild(hdr);
+    return row;
+  }
+  function render(smooth = false, keepScroll = false) {
+    const $past = document.getElementById("past-threads");
+    const $active = document.getElementById("active-thread");
+    $past.innerHTML = "";
+    $active.innerHTML = "";
+    const $hamburger = document.getElementById("hamburger");
+    if (!ctx.inbox) {
+      if ($hamburger) $hamburger.style.display = "none";
+      const dock2 = document.getElementById("reply-dock");
+      dock2.innerHTML = "";
+      document.getElementById("outer").style.paddingBottom = "0";
+      const el = document.createElement("div");
+      el.style.cssText = "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;color:var(--text-dim);font-size:14px;gap:8px;";
+      el.innerHTML = '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><path d="M4 4h16v13H4z"/><path d="M4 4l8 8 8-8"/></svg><span>Choose Inbox</span>';
+      $active.appendChild(el);
+      return;
+    }
+    if ($hamburger) $hamburger.style.display = "";
+    const groups = groupMessages();
+    if (!groups.length) {
+      const fakeGroup = { key: "__empty__", subject: "", messages: [] };
+      const fullCard = makeThreadCard(fakeGroup, true);
+      $active.appendChild(fullCard);
+      const replyBox2 = document.querySelector("#focused-thread-card .reply-box");
+      const dock2 = document.getElementById("reply-dock");
+      if (replyBox2 && dock2 && !dock2.querySelector(".group-form")) {
+        dock2.innerHTML = "";
+        dock2.appendChild(replyBox2);
+        syncDockPosition();
+        requestAnimationFrame(() => {
+          document.getElementById("outer").style.paddingBottom = dock2.offsetHeight + "px";
+        });
+      }
+      return;
+    }
+    if (focusedThreadKey === null || !groups.find((g) => g.key === focusedThreadKey)) {
+      setFocusedThreadKey(latestGroup(groups).key);
+    }
+    const focused = groups.find((g) => g.key === focusedThreadKey);
+    const others = groups.filter((g) => g.key !== focusedThreadKey).sort((a2, b) => a2.messages[a2.messages.length - 1].msg.ts - b.messages[b.messages.length - 1].msg.ts);
+    for (const g of others) $past.appendChild(makePastRow(g));
+    const $headerTitle = document.getElementById("header-thread-title");
+    const $groupIcon = document.getElementById("header-group-icon");
+    if ($headerTitle) {
+      $headerTitle.textContent = focused.subject || "no title";
+      $headerTitle.className = focused.subject ? "" : "untitled";
+    }
+    if ($groupIcon) $groupIcon.style.display = "none";
+    const $convTo = document.getElementById("conv-to");
+    const $convCc = document.getElementById("conv-cc");
+    const $convBcc = document.getElementById("conv-bcc");
+    if ($convTo) {
+      const contact = ctx.inbox.split("/").slice(1).join("/");
+      const via = $convTo.querySelector("#conv-via");
+      $convTo.textContent = contact;
+      if (via) $convTo.prepend(via);
+      if ($convCc) $convCc.textContent = "";
+      if ($convBcc) $convBcc.textContent = "";
+    }
+    const $convMeta = document.getElementById("conv-meta");
+    const $expanded = document.getElementById("conv-meta-expanded");
+    if ($convMeta) {
+      $convMeta.classList.remove("expanded");
+      if ($expanded) {
+        const buildRaw = () => {
+          const lines = [];
+          const firstMsg = focused?.messages?.[0]?.msg;
+          if (firstMsg?.message_id) lines.push("message-id: " + firstMsg.message_id);
+          if (firstMsg?.in_reply_to) lines.push("in-reply-to: " + firstMsg.in_reply_to);
+          if (firstMsg?.subject) lines.push("subject: " + firstMsg.subject);
+          if (firstMsg?.ts) lines.push("date: " + new Date(firstMsg.ts).toISOString());
+          const froms = [...new Set(focused?.messages?.map((p) => p.msg.from) || [])];
+          if (froms.length) lines.push("participants: " + froms.join(", "));
+          const allTo = [...new Set(focused?.messages?.flatMap((p) => p.msg.to_addrs || []) || [])];
+          if (allTo.length) lines.push("to: " + allTo.join(", "));
+          lines.push("inbox: " + ctx.inbox);
+          lines.push("thread_id: " + (focusedThreadKey || ""));
+          lines.push("messages: " + (focused?.messages?.length || 0));
+          return lines.join("\n");
+        };
+        $expanded.textContent = buildRaw();
+      }
+      const $convFields = document.getElementById("conv-fields");
+      if ($convFields) $convFields.onclick = () => $convMeta.classList.toggle("expanded");
+    }
+    $active.appendChild(makeThreadCard(focused, true));
+    const replyBox = document.querySelector("#focused-thread-card .reply-box");
+    const dock = document.getElementById("reply-dock");
+    const dockHasGroupForm = dock?.querySelector(".group-form");
+    if (dockHasGroupForm) {
+      requestAnimationFrame(() => keepScroll ? scrollToBottomIfNear() : scrollToFocused(smooth));
+    } else if (replyBox && dock) {
+      dock.innerHTML = "";
+      dock.appendChild(replyBox);
+      syncDockPosition();
+      requestAnimationFrame(() => {
+        document.getElementById("outer").style.paddingBottom = dock.offsetHeight + "px";
+        if (!keepScroll) scrollToFocused(smooth);
+        else scrollToBottomIfNear();
+      });
+    } else if (dock) {
+      dock.innerHTML = "";
+      document.getElementById("outer").style.paddingBottom = "";
+      requestAnimationFrame(() => keepScroll ? scrollToBottomIfNear() : scrollToFocused(smooth));
+    } else {
+      requestAnimationFrame(() => keepScroll ? scrollToBottomIfNear() : scrollToFocused(smooth));
+    }
+  }
+  function autoResizeTA(ta) {
+    ta.style.height = "auto";
+    ta.style.height = ta.scrollHeight + "px";
+  }
+  var init_thread = __esm({
+    "src/ui/thread.ts"() {
+      init_context();
+      init_state();
+      init_utils();
+      init_shell();
+      init_left_pane();
+      init_app();
+    }
+  });
+
+  // src/app.ts
+  var app_exports = {};
+  __export(app_exports, {
+    fetchInboxMessages: () => fetchInboxMessages,
+    getIdentityId: () => getIdentityId,
+    jmapCreateEmail: () => jmapCreateEmail,
+    jmapFetchInboxMessages: () => jmapFetchInboxMessages,
+    jmapLoadInboxesWithPreviews: () => jmapLoadInboxesWithPreviews
+  });
+  async function getIdentityId() {
+    if (_identityId) return _identityId;
+    try {
+      const [r2] = await jmap().api.Identity.get({ accountId: ctx.jmapAccountId, ids: null });
+      const identity = r2.list.find((i2) => i2.email === ctx.inboxUser) ?? r2.list[0];
+      _identityId = identity?.id ?? null;
+    } catch {
+    }
+    return _identityId;
+  }
+  async function jmapCreateEmail(toAddrs, body, subject = "", inReplyTo = "") {
+    if (!ctx.inboxUser) return false;
+    const identityId = await getIdentityId();
+    const inboxId = await cache().getMailboxByRole("inbox");
+    if (!inboxId) return false;
+    const draft = {
+      mailboxIds: { [inboxId]: true },
+      keywords: { $draft: true },
+      from: [{ name: ctx.myName || ctx.inboxUser, email: ctx.inboxUser }],
+      to: toAddrs.map((e2) => ({ email: e2 })),
+      subject: subject || "",
+      textBody: [{ partId: "1", type: "text/plain" }],
+      bodyValues: { "1": { value: body, isEncodingProblem: false, isTruncated: false } },
+      ...inReplyTo ? { inReplyTo: [inReplyTo] } : {}
+    };
+    if (identityId) {
+      try {
+        const [ce] = await jmap().api.Email.set({ accountId: ctx.jmapAccountId, create: { draft } });
+        const emailId = ce.created?.["draft"]?.id;
+        if (emailId) {
+          const [cs] = await jmap().api.EmailSubmission.set({
+            accountId: ctx.jmapAccountId,
+            create: { sub: { emailId, identityId } }
+          });
+          if (cs.created?.["sub"]?.id) return true;
+        }
+      } catch {
+      }
+    }
+    try {
+      const [r2] = await jmap().api.Email.set({ accountId: ctx.jmapAccountId, create: { new1: draft } });
+      return r2.created?.["new1"] != null;
+    } catch {
+      return false;
+    }
+  }
+  async function jmapFetchInboxMessages(targetInbox, sinceTs = 0) {
+    if (!ctx.inboxUser) return null;
+    if (cache().size === 0) await cache().init();
+    const contact = targetInbox.split("/").slice(1).join("/");
+    const selfAddr = ctx.jmapAccountId || ctx.inboxUser;
+    return cache().filterByContact(contact, selfAddr, sinceTs).map((e2) => cache().toMessage(e2));
+  }
+  async function jmapLoadInboxesWithPreviews() {
+    if (!ctx.inboxUser) return null;
+    if (cache().size === 0) await cache().init();
+    return cache().inboxPreviews(ctx.jmapAccountId || ctx.inboxUser, ctx.inboxUser);
+  }
+  async function fetchInboxMessages(targetInbox, sinceTs = 0) {
+    return jmapFetchInboxMessages(targetInbox, sinceTs);
+  }
+  async function init() {
+    const serverUrl = localStorage.getItem("jmap_server_url") || "";
+    const account = localStorage.getItem("jmap_account") || "";
+    if (!serverUrl || !account) {
+      showLoginScreen();
+      return;
+    }
+    ctx.serverUrl = serverUrl;
+    ctx.inboxUser = account;
+    ctx.STORAGE_KEY = `jmap_pw_${account}`;
+    ctx.password = localStorage.getItem(ctx.STORAGE_KEY) || "";
+    if (!ctx.password) {
+      showLoginScreen();
+      return;
+    }
+    const jam = new u({
+      sessionUrl: ctx.serverUrl + "/.well-known/jmap",
+      bearerToken: ctx.password
+    });
+    let sess;
+    try {
+      sess = await jam.session;
+    } catch {
+      showLoginScreen();
+      return;
+    }
+    if (!sess?.apiUrl) {
+      showLoginScreen();
+      return;
+    }
+    ctx.jmapClient = jam;
+    ctx.jmapAccountId = sess.primaryAccounts?.["urn:ietf:params:jmap:mail"] ?? Object.keys(sess.accounts ?? {})[0] ?? account;
+    ctx.myName = sess.username || account;
+    ctx.eventSourceUrl = sess.eventSourceUrl ?? null;
+    ctx.emailCache = new EmailCache(ctx.jmapClient, ctx.jmapAccountId, ctx.inboxUser);
+    const pathContact = location.pathname.replace(/^\//, "").replace(/\/$/, "");
+    if (pathContact) {
+      ctx.inbox = ctx.inboxUser + "/" + decodeURIComponent(pathContact);
+    } else {
+      const inboxes = await jmapLoadInboxesWithPreviews();
+      const first = inboxes?.[0];
+      if (!first) {
+        showApp();
+        startPolling();
+        return;
+      }
+      ctx.inbox = first.inbox;
+      try {
+        history.replaceState(null, "", "/" + encodeURIComponent(ctx.inbox.split("/").slice(1).join("/")));
+      } catch {
+      }
+    }
+    const msgs = await fetchInboxMessages(ctx.inbox, 0);
+    if (msgs) {
+      for (const m of msgs) await addMessage(m);
+      if (msgs.length) {
+        setLastTs(msgs[msgs.length - 1].ts);
+        const groups = groupMessages();
+        if (groups.length) setFocusedThreadKey(latestGroup(groups).key);
+      }
+    }
+    showApp();
+    startPolling();
+  }
+  var _identityId, $menu;
+  var init_app = __esm({
+    "src/app.ts"() {
+      init_dist();
+      init_email_cache();
+      init_context();
+      init_auth();
+      init_state();
+      init_thread();
+      init_shell();
+      init_left_pane();
+      _identityId = null;
+      $menu = document.getElementById("menu");
+      document.getElementById("hamburger").addEventListener("click", (e2) => {
+        e2.stopPropagation();
+        $menu.classList.toggle("open");
+      });
+      document.getElementById("header-avatar-btn").addEventListener("click", (e2) => {
+        e2.stopPropagation();
+        $menu.classList.toggle("open");
+      });
+      document.addEventListener("click", () => $menu.classList.remove("open"));
+      document.getElementById("logout-btn").addEventListener("click", logout);
+      document.getElementById("delete-thread-btn").addEventListener("click", async () => {
+        $menu.classList.remove("open");
+        const targetKey = $menu.dataset.targetThread || focusedThreadKey;
+        delete $menu.dataset.targetThread;
+        const groups = groupMessages();
+        const focused = groups.find((g) => g.key === targetKey);
+        if (!focused) return;
+        const emailIds = focused.messages.filter((m) => m.msg.jmap_id && !m.msg.message_id.startsWith("__pending")).map((m) => m.msg.jmap_id);
+        if (emailIds.length) {
+          try {
+            await jmap().api.Email.set({ accountId: ctx.jmapAccountId, destroy: emailIds });
+          } catch {
+          }
+        }
+        processedMessages.splice(0);
+        renderedKeys.clear();
+        setLastTs(0);
+        setFocusedThreadKey(null);
+        render();
+        await fetchMessages();
+        loadLeftInboxes();
+        showSysMsg("\u524A\u9664\u3057\u307E\u3057\u305F");
+      });
+      document.getElementById("lp-export-inbox-btn")?.addEventListener("click", async (e2) => {
+        e2.stopPropagation();
+        const menu = document.getElementById("lp-inbox-menu");
+        const targetInbox = menu.dataset.inbox || ctx.inbox;
+        menu.style.display = "none";
+        showSysMsg("\u30A8\u30AF\u30B9\u30DD\u30FC\u30C8\u4E2D...");
+        try {
+          const contact = targetInbox.split("/").slice(1).join("/");
+          const selfAddr = ctx.jmapAccountId || ctx.inboxUser;
+          const emails = cache().filterByContact(contact, selfAddr);
+          const output = {
+            generated_at: Math.floor(Date.now() / 1e3),
+            inbox: targetInbox,
+            messages: emails.map((e3) => cache().toMessage(e3))
+          };
+          const blob = new Blob([JSON.stringify(output, null, 2)], { type: "application/json" });
+          const a2 = document.createElement("a");
+          a2.href = URL.createObjectURL(blob);
+          a2.download = targetInbox.replace(/\//g, "_") + ".json";
+          a2.click();
+          showSysMsg("\u30A8\u30AF\u30B9\u30DD\u30FC\u30C8\u5B8C\u4E86");
+        } catch {
+          showSysMsg("\u30A8\u30AF\u30B9\u30DD\u30FC\u30C8\u5931\u6557");
+        }
+      });
+      document.getElementById("lp-delete-inbox-btn")?.addEventListener("click", async (e2) => {
+        e2.stopPropagation();
+        const menu = document.getElementById("lp-inbox-menu");
+        const targetInbox = menu.dataset.inbox || ctx.inbox;
+        menu.style.display = "none";
+        await doDeleteInbox(targetInbox);
+      });
+      document.addEventListener("click", () => {
+        const m = document.getElementById("lp-inbox-menu");
+        if (m) m.style.display = "none";
+      });
+      window.addEventListener("popstate", () => {
+        const contact = decodeURIComponent(location.pathname.replace(/^\//, "").replace(/\/$/, ""));
+        const newInbox = contact ? ctx.inboxUser + "/" + contact : "";
+        if (newInbox && newInbox !== ctx.inbox) switchInbox(newInbox, true);
+      });
+      setupLoginScreen();
+      init();
+      {
+        const outer = document.getElementById("outer");
+        const btn = document.getElementById("scroll-to-bottom");
+        const btnTop = document.getElementById("scroll-to-top");
+        outer.addEventListener("scroll", () => {
+          const distFromBottom = outer.scrollHeight - outer.scrollTop - outer.clientHeight;
+          const bottomVisible = distFromBottom > 120;
+          btn.classList.toggle("visible", bottomVisible);
+          const past = document.getElementById("past-threads");
+          const pastH = past ? past.offsetHeight : 0;
+          btnTop?.classList.toggle("visible", outer.scrollTop > pastH + 40);
+          btnTop?.classList.toggle("above-bottom", bottomVisible);
+        }, { passive: true });
+        btn.addEventListener("click", () => {
+          outer.scrollTo({ top: outer.scrollHeight, behavior: "smooth" });
+        });
+        btnTop?.addEventListener("click", () => {
+          const past = document.getElementById("past-threads");
+          const pastH = past ? past.offsetHeight : 0;
+          outer.scrollTo({ top: pastH, behavior: "smooth" });
+        });
+      }
+      window.addEventListener("resize", () => {
+        syncDockPosition();
+        const dock = document.getElementById("reply-dock");
+        if (dock && dock.children.length) {
+          document.getElementById("outer").style.paddingBottom = dock.offsetHeight + "px";
+        }
+        scrollToFocused();
+      });
+      {
+        const dock = document.getElementById("reply-dock");
+        if (dock && typeof ResizeObserver !== "undefined") {
+          let _prevDockH = dock.offsetHeight;
+          new ResizeObserver(() => {
+            const outer = document.getElementById("outer");
+            const newH = dock.offsetHeight;
+            if (outer && newH) {
+              const delta = newH - _prevDockH;
+              outer.style.paddingBottom = newH + "px";
+              if (delta !== 0) outer.scrollTop += delta;
+            }
+            _prevDockH = newH;
+            syncDockPosition();
+          }).observe(dock);
+        }
+      }
+    }
+  });
+
+  // src/main.ts
+  init_app();
+})();
+
+</script>
+</body>
+</html>

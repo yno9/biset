@@ -263,7 +263,15 @@ Commands
 		}
 	}
 
-	vault.ReThreadVault(cfg.Vault)
+	vault.ReThreadVault(cfg.Vault, func(inboxKey string) vault.InboxConfig {
+		for _, r := range cfg.Relays {
+			ic := r.InboxConfigFor(inboxKey, r.AuthUser)
+			if ic.FileFormat != "" || len(ic.Meta) > 0 || ic.MaxDisplay != 0 || ic.Notification != nil {
+				return ic
+			}
+		}
+		return vault.InboxConfig{}
+	})
 
 	mgr := NewManager(cfg)
 
@@ -273,8 +281,6 @@ Commands
 	}
 
 	bisetDir := filepath.Dir(configPath)
-	keyPEM := loadOrGenerateKey(filepath.Join(bisetDir, "private_key.pem"))
-	pgpKey := loadPGPKey(keyPEM)
 
 	go func() {
 		sig := make(chan os.Signal, 1)
@@ -284,13 +290,18 @@ Commands
 		os.Exit(0)
 	}()
 
+	mgr.EnsureKeys()
+
 	switch subcommand {
 	case "sync":
 		runSync(cfg, mgr, bisetStore)
 		if fullSyncFlag {
-			vault.PurgeMessageCache(cfg.Vault)
+			vault.PurgeMessageCache(cfg.Vault) // clear local message JSONs
+			vault.PurgeState(cfg.Vault)        // forget per-relay queryState → next fetch is full
 			runSync(cfg, mgr, bisetStore)
-			vault.CleanupOrphanedMDs(cfg.Vault)
+			vault.CleanupOrphanedMDs(cfg.Vault, func(inboxKey string) vault.InboxConfig {
+				return mgr.InboxConfigFor(inboxKey, cfg)
+			})
 		}
 
 	default: // "up"
@@ -318,7 +329,7 @@ Commands
 			os.Exit(1)
 		}
 		defer os.Remove(lockPath)
-		watchLoop(cfg, mgr, configPath, pgpKey, bisetStore)
+		watchLoop(cfg, mgr, configPath, bisetStore)
 	}
 }
 
@@ -337,23 +348,31 @@ func runServerCommand(cfg *vault.Config, bisetDir, configPath string, args []str
 	os.Exit(1)
 }
 
-func watchLoop(cfg *vault.Config, mgr *Manager, configPath string, pgpKey string, store *jmapserver.Store) {
+func watchLoop(cfg *vault.Config, mgr *Manager, configPath string, store *jmapserver.Store) {
 	configChanged := interfaces.WatchConfigFile(configPath)
 	vaultAction, quit := WatchVaultEvents(cfg, configPath)
 
 	var serverCancel context.CancelFunc
+	var notifyServer func()
 	startServer := func(c *vault.Config) {
 		if serverCancel != nil {
 			serverCancel()
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		serverCancel = cancel
-		go startJMAPServer(ctx, c, pgpKey, store)
+		notifyServer = startJMAPServer(ctx, c, store, mgr)
 	}
 	stopServer := func() {
 		if serverCancel != nil {
 			serverCancel()
 			serverCancel = nil
+			notifyServer = nil
+		}
+	}
+	sync := func() {
+		runSync(cfg, mgr, store)
+		if notifyServer != nil {
+			notifyServer()
 		}
 	}
 
@@ -361,13 +380,13 @@ func watchLoop(cfg *vault.Config, mgr *Manager, configPath string, pgpKey string
 		startServer(cfg)
 	}
 
-	runSync(cfg, mgr, store)
+	sync()
 	for {
 		select {
 		case <-mgr.Changed():
-			runSync(cfg, mgr, store)
+			sync()
 		case <-vaultAction:
-			runSync(cfg, mgr, store)
+			sync()
 		case <-configChanged:
 			fmt.Println("config changed — reloading")
 			if newCfg, err := vault.LoadConfig(configPath); err == nil {
@@ -380,7 +399,7 @@ func watchLoop(cfg *vault.Config, mgr *Manager, configPath string, pgpKey string
 					stopServer()
 				}
 			}
-			runSync(cfg, mgr, store)
+			sync()
 		case <-quit:
 			stopServer()
 			return

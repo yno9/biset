@@ -38,6 +38,16 @@
           "fileformat": "{contact}_{shortId}.md"
         }
       }
+    },
+    {
+      "relayname": "smtp-host",
+      "password": "relay-auth-token",
+      "url": "https://mail.example.com/.well-known/jmap",
+      "accounts": {
+        "you@example.com": {
+          "password": "your-plaintext-login-password"
+        }
+      }
     }
   ],
 

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -25,9 +26,11 @@ type AccountConfig struct {
 	SMTP     SMTPConfig `json:"smtp"`
 }
 
-// Config embeds jmapserver.Config (port, bind, username, password) plus IMAP/SMTP accounts.
+// Config embeds jmapserver.Config (ListenAddr, password) plus IMAP/SMTP accounts.
 type Config struct {
 	jmapserver.Config
+	Bind     string          `json:"bind,omitempty"`
+	Port     int             `json:"port,omitempty"`
 	Accounts []AccountConfig `json:"accounts"`
 }
 
@@ -88,6 +91,16 @@ func (h *handler) Handle(method string, args json.RawMessage) (any, error) {
 	}
 }
 
+// ── BlobHandler ───────────────────────────────────────────────────────────────
+
+func (h *handler) UploadBlob(contentType string, data []byte) string {
+	return h.store.UploadBlob(contentType, data)
+}
+
+func (h *handler) DownloadBlob(blobID string) ([]byte, bool) {
+	return h.store.DownloadBlob(blobID)
+}
+
 // ── Email/query ───────────────────────────────────────────────────────────────
 
 func (h *handler) emailQuery(args json.RawMessage) (any, error) {
@@ -125,7 +138,7 @@ func (h *handler) mailboxGet() (any, error) {
 	}
 	return map[string]any{
 		"accountId": h.primaryID(),
-		"state":     "0",
+		"state":     h.store.MailboxState(),
 		"list":      mbs,
 		"notFound":  []string{},
 	}, nil
@@ -371,10 +384,24 @@ func newID() jmap.ID {
 var cfg Config
 
 func main() {
-	dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
-	if err != nil {
-		log.Fatalf("dir: %v", err)
+	dirFlag := flag.String("dir", "", "directory containing config.json and data/")
+	flag.Parse()
+
+	var dir string
+	if *dirFlag != "" {
+		var err error
+		dir, err = filepath.Abs(*dirFlag)
+		if err != nil {
+			log.Fatalf("dir: %v", err)
+		}
+	} else {
+		var err error
+		dir, err = filepath.Abs(filepath.Dir(os.Args[0]))
+		if err != nil {
+			log.Fatalf("dir: %v", err)
+		}
 	}
+
 	b, err := os.ReadFile(filepath.Join(dir, "config.json"))
 	if err != nil {
 		log.Fatalf("config: %v", err)
@@ -423,6 +450,9 @@ func main() {
 		})
 	}
 
-	log.Printf("imapsmtp: listening on %s:%d", cfg.Bind, cfg.Port)
+	if cfg.ListenAddr == "" {
+		cfg.ListenAddr = fmt.Sprintf("%s:%d", cfg.Bind, cfg.Port)
+	}
+	log.Printf("imapsmtp: listening on %s", cfg.ListenAddr)
 	log.Fatal(jmapserver.Serve(cfg.Config, h, hub))
 }

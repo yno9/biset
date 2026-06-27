@@ -89,6 +89,12 @@ func statePath(vaultDir string) string {
 	return filepath.Join(vaultDir, ".data", "state.json")
 }
 
+// PurgeState removes state.json so the next sync does a full fetch across all
+// relays. Used by `biset sync --full` together with PurgeMessageCache.
+func PurgeState(vaultDir string) {
+	os.Remove(statePath(vaultDir)) //nolint:errcheck
+}
+
 func LoadState(vaultDir string) *State {
 	b, err := os.ReadFile(statePath(vaultDir))
 	if err != nil {

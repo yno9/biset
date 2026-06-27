@@ -11,7 +11,7 @@ require (
 	github.com/emersion/go-smtp v0.24.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/mmcdole/gofeed v1.3.0
-	github.com/yno9/go-jmapserver v0.1.0
+	github.com/yno9/go-jmapserver v0.1.1-replace
 	golang.org/x/crypto v0.53.0
 	golang.org/x/net v0.55.0
 )
@@ -32,3 +32,5 @@ require (
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/protobuf v1.28.0 // indirect
 )
+
+replace github.com/yno9/go-jmapserver => /Users/n/go-jmapserver

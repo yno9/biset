@@ -180,7 +180,9 @@ func flushMDSend(filePath, inboxKey, vaultDir string, mgr *Manager, store *jmaps
 		msg.References = []string{inReplyTo}
 	}
 	if len(msg.MessageID) == 0 {
-		msg.MessageID = []string{vault.MessageIDFromMsgID(string(msgID))}
+		// RFC 5322-compliant Message-Id, independent of the internal JMAP id
+		// (which contains "@" in localpart and isn't a valid id-left).
+		msg.MessageID = []string{vault.NewRFCMessageID(inbox)}
 	}
 
 	rcptTo := make([]*vault.EnvelopeAddress, 0, len(toAddrs)+len(ccAddrs)+len(bccAddrs))

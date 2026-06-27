@@ -2,6 +2,7 @@ package vault
 
 import (
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -52,12 +53,12 @@ func RenderMD(vaultDir, inboxKey string, messages []Message, cfg InboxConfig) (s
 
 	contact := threadContact(inboxKey, sorted)
 	seen := isSeen(inboxKey, sorted)
-	prefix := ""
+	expanded := expandFileFormat(cfg.EffectiveFileFormat(), contact, ThreadShortID(sorted))
 	if !seen {
-		prefix = "_"
+		dir, base := filepath.Split(expanded)
+		expanded = dir + "_" + base
 	}
-	filename := prefix + expandFileFormat(cfg.EffectiveFileFormat(), contact, ThreadShortID(sorted))
-	path := filepath.Join(vaultDir, inboxKey, filename)
+	path := filepath.Join(vaultDir, inboxKey, expanded)
 	return path, []byte(content)
 }
 
@@ -91,21 +92,24 @@ func findContactMD(inboxDir, contact string) string {
 }
 
 func FindThreadMD(inboxDir, shortThr string) string {
-	entries, err := os.ReadDir(inboxDir)
-	if err != nil {
-		return ""
-	}
-	for _, e := range entries {
-		name := e.Name()
+	var found string
+	filepath.WalkDir(inboxDir, func(path string, d fs.DirEntry, err error) error { //nolint:errcheck
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		name := d.Name()
 		if !strings.HasSuffix(name, ".md") {
-			continue
+			return nil
 		}
 		base := strings.TrimPrefix(name, "_")
-		if strings.HasSuffix(base, "_"+shortThr+".md") {
-			return filepath.Join(inboxDir, name)
+		// default format: contact_shortThr.md; subdir format: shortThr.md
+		if strings.HasSuffix(base, "_"+shortThr+".md") || base == shortThr+".md" {
+			found = path
+			return fs.SkipAll
 		}
-	}
-	return ""
+		return nil
+	})
+	return found
 }
 
 func threadContact(inboxKey string, messages []Message) string {
@@ -358,7 +362,7 @@ func CleanupOrphanedInboxes(vaultDir string, state *State, respondedRelays map[s
 
 // CleanupOrphanedMDs removes _*.md files in vault inboxes that no longer
 // correspond to any message in .data/messages/.
-func CleanupOrphanedMDs(vaultDir string) {
+func CleanupOrphanedMDs(vaultDir string, inboxCfg func(string) InboxConfig) {
 	messages, err := ScanMessages(vaultDir)
 	if err != nil {
 		return
@@ -386,7 +390,7 @@ func CleanupOrphanedMDs(vaultDir string) {
 					}
 				}
 			}
-			mdPath, _ := RenderMD(vaultDir, inboxKey, threadMsgs, InboxConfig{})
+			mdPath, _ := RenderMD(vaultDir, inboxKey, threadMsgs, inboxCfg(inboxKey))
 			if mdPath != "" {
 				expected[mdPath] = true
 			}

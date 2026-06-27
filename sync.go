@@ -11,9 +11,29 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	jmap "git.sr.ht/~rockorager/go-jmap"
+	"git.sr.ht/~rockorager/go-jmap/mail/mailbox"
 	"biset/vault"
 	jmapserver "github.com/yno9/go-jmapserver"
 )
+
+// mergeMailboxes returns the union of existing and incoming, with incoming
+// entries overriding existing entries that share the same ID. Used by runSync
+// so per-cycle Mailbox/get results from one relay don't erase mailboxes from
+// other relays.
+func mergeMailboxes(existing, incoming []mailbox.Mailbox) []mailbox.Mailbox {
+	byID := make(map[jmap.ID]mailbox.Mailbox, len(existing)+len(incoming))
+	for _, m := range existing {
+		byID[m.ID] = m
+	}
+	for _, m := range incoming {
+		byID[m.ID] = m
+	}
+	out := make([]mailbox.Mailbox, 0, len(byID))
+	for _, m := range byID {
+		out = append(out, m)
+	}
+	return out
+}
 
 func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []vault.SyncNotification) {
 	lockPath, ok := acquireSyncLock(cfg.Vault)
@@ -62,6 +82,15 @@ func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []v
 			log.Printf("[%s] fetch: %v", c.Name(), err)
 			continue
 		}
+		// jmapsmtp messages carry PGP-encrypted bodies; decrypt and re-resolve
+		// ThreadID via inner Protected Headers' InReplyTo before persisting.
+		if c.RelayName() == "jmapsmtp" {
+			ConvertRelayView(result.Messages, c.AccountEmail())
+			ConvertRelayView(result.UpdatedMessages, c.AccountEmail())
+		}
+		// Persist relay-supplied messages into biset's store (all relays).
+		result.Messages = PersistMessages(result.Messages, store)
+		result.UpdatedMessages = PersistMessages(result.UpdatedMessages, store)
 		allMessages = append(allMessages, result.Messages...)
 		allThreads = append(allThreads, result.Threads...)
 		allIdentities = append(allIdentities, result.Identities...)
@@ -90,7 +119,22 @@ func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []v
 			inboxConfigs[key] = c.InboxConfigFor(key, cfg)
 			notifEnabled[key] = c.NotificationEnabled(key, cfg)
 		}
+		// Delta sync may return empty Inboxes when nothing changed.
+		// Fall back to state's known keys so CleanupOrphanedInboxes
+		// doesn't treat them as orphaned.
+		if len(keys) == 0 {
+			if rs := state.Relays[c.Name()]; rs != nil {
+				keys = rs.InboxKeys
+				for _, key := range keys {
+					inboxConfigs[key] = c.InboxConfigFor(key, cfg)
+					notifEnabled[key] = c.NotificationEnabled(key, cfg)
+				}
+			}
+		}
 		respondedRelays[c.Name()] = keys
+		for _, key := range keys {
+			mgr.SetInboxRelay(key, c)
+		}
 	}
 
 	fmt.Printf("fetched %d messages, %d threads\n", len(allMessages), len(allThreads))
@@ -124,13 +168,61 @@ func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []v
 		})
 	}
 
-	// 5. write inboxes
+	// 5. write inboxes — MERGE with existing rather than overwrite. Each sync
+	// cycle only sees mailboxes from the relays that responded (delta fetches
+	// often skip Mailbox/get entirely), so a plain replace would erase every
+	// other relay's mailbox from biset's store. Mailboxes are scoped per
+	// inboxKey, which is unique across relays.
 	validInboxKeys := map[string]bool{}
-	if len(allInboxes) > 0 {
-		store.PutMailboxes(allInboxes) //nolint:errcheck
-		for _, ib := range allInboxes {
-			key := vault.InboxKeyFromMailboxID(string(ib.ID))
-			validInboxKeys[key] = true
+	for _, ib := range allInboxes {
+		validInboxKeys[vault.InboxKeyFromMailboxID(string(ib.ID))] = true
+	}
+	// Synthesize mailbox stubs for every inboxKey a relay reported this cycle,
+	// even when its delta fetch returned no Mailbox/get list. Without this,
+	// relays in delta mode silently drop out of the merged mailbox set.
+	existing := store.Mailboxes()
+	existingByID := map[jmap.ID]bool{}
+	for _, m := range existing {
+		existingByID[m.ID] = true
+	}
+	synthesized := make([]mailbox.Mailbox, 0)
+	for _, keys := range respondedRelays {
+		for _, key := range keys {
+			mbID := jmap.ID(vault.MakeMailboxID(key))
+			if existingByID[mbID] {
+				continue
+			}
+			seen := false
+			for _, ib := range allInboxes {
+				if ib.ID == mbID {
+					seen = true
+					break
+				}
+			}
+			if seen {
+				continue
+			}
+			role := mailbox.Role("")
+			if !strings.Contains(key, "/") {
+				role = mailbox.RoleInbox
+			}
+			synthesized = append(synthesized, mailbox.Mailbox{
+				ID:   mbID,
+				Name: key,
+				Role: role,
+			})
+		}
+	}
+	if len(allInboxes) > 0 || len(synthesized) > 0 {
+		merged := mergeMailboxes(existing, append(allInboxes, synthesized...))
+		store.PutMailboxes(merged) //nolint:errcheck
+	}
+	// Ensure _new.md exists for every inbox the relays acknowledged this cycle,
+	// even when a delta fetch returned no Mailbox/get list. Prior code only
+	// touched inboxes returned in this run, which let _new.md silently vanish
+	// from inboxes between full fetches.
+	for _, keys := range respondedRelays {
+		for _, key := range keys {
 			vault.EnsureNewFile(cfg.Vault, key, inboxConfigs[key])
 		}
 	}
@@ -157,35 +249,38 @@ func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []v
 			relayThreadByID[t.ID] = t
 		}
 
-		// write new messages to store and index by ID
+		// ConvertRelayView already persisted to the store with resolved ThreadIDs;
+		// allMessages already has biset's view. Build an ID lookup for the
+		// thread-rendering loop below.
 		newByID := make(map[jmap.ID]vault.Message, len(allMessages))
 		for _, m := range allMessages {
-			store.Put(m) //nolint:errcheck
 			newByID[m.ID] = m
 		}
 
 		byInbox := groupMessagesByInbox(allMessages)
 		for inboxKey, msgs := range byInbox {
 			threads := vault.GroupByThread(msgs)
+			mbxID := jmap.ID(vault.MakeMailboxID(inboxKey))
 			for _, t := range threads {
-				var threadMsgs []vault.Message
-				if rt, ok := relayThreadByID[t.ID]; ok && len(rt.EmailIDs) > 0 {
-					// relay provided ordered email IDs — use them, filling from store when needed
-					for _, eid := range rt.EmailIDs {
-						if m, ok := newByID[eid]; ok {
-							threadMsgs = append(threadMsgs, m)
-						} else if cached, ok := store.Get(eid); ok {
-							threadMsgs = append(threadMsgs, cached)
-						}
-					}
-				} else {
-					threadMsgs = messagesForThread(msgs, t.ID)
-					// supplement with cached messages not in this fetch
-					for _, cached := range store.AllForThread(t.ID) {
-						if _, already := newByID[cached.ID]; !already {
-							threadMsgs = append(threadMsgs, cached)
-						}
-					}
+				if t.ID == "" {
+					continue // empty threadID collides across inboxes — skip
+				}
+				// Always use biset's own view of the thread (store.AllForThread).
+			// The relay's Thread/get may return a different message set because
+			// relays and biset can have divergent threading (biset re-resolves
+			// via inner-header InReplyTo extracted from PGP-decrypted bodies).
+			var threadMsgs []vault.Message
+			threadMsgs = append(threadMsgs, messagesForThread(msgs, t.ID)...)
+			for _, cached := range store.AllForThread(t.ID) {
+				if _, already := newByID[cached.ID]; !already {
+					threadMsgs = append(threadMsgs, cached)
+				}
+			}
+			_ = relayThreadByID // intentionally unused; relay's view is informational only
+				// Filter to this inbox's mailbox only (defensive: in case any message has multi-mailbox).
+				threadMsgs = filterByMailbox(threadMsgs, mbxID)
+				if len(threadMsgs) == 0 {
+					continue
 				}
 				if vault.WriteThreadMD(cfg.Vault, inboxKey, threadMsgs, inboxConfigs[inboxKey]) {
 					totalUpdated++
@@ -226,7 +321,17 @@ func dispatchSubmissions(cfg *vault.Config, mgr *Manager, store *jmapserver.Stor
 		if !serverReceivedAt.IsZero() {
 			s.Message.ReceivedAt = vault.TimePtr(serverReceivedAt)
 		}
-		store.Put(s.Message) //nolint:errcheck
+		// Run the sent message through the same view conversion as received
+		// messages so it joins biset's authoritative thread (jmapsmtp only).
+		if c.RelayName() == "jmapsmtp" {
+			msgs := []vault.Message{s.Message}
+			ConvertRelayView(msgs, c.AccountEmail())
+			s.Message = msgs[0]
+		}
+		persisted := PersistMessages([]vault.Message{s.Message}, store)
+		if len(persisted) > 0 {
+			s.Message = persisted[0]
+		}
 		existing := store.AllForThread(s.Message.ThreadID)
 		if len(existing) == 0 {
 			existing = []vault.Message{s.Message}
@@ -249,6 +354,16 @@ func groupMessagesByInbox(messages []vault.Message) map[string][]vault.Message {
 		result[inboxKey] = append(result[inboxKey], m)
 	}
 	return result
+}
+
+func filterByMailbox(messages []vault.Message, mbxID jmap.ID) []vault.Message {
+	out := make([]vault.Message, 0, len(messages))
+	for _, m := range messages {
+		if m.MailboxIDs[mbxID] {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func messagesForThread(messages []vault.Message, threadID jmap.ID) []vault.Message {
@@ -400,6 +515,12 @@ func watchVault(vaultDir, bisetDir string, onAction func(), onQuit func()) {
 					onQuit()
 				}
 				return
+			}
+			// New directory under vault → start watching it (inbox dirs may be created at runtime).
+			if event.Op&fsnotify.Create != 0 {
+				if info, err := os.Stat(event.Name); err == nil && info.IsDir() && filepath.Dir(event.Name) == vaultDir {
+					watcher.Add(event.Name) //nolint:errcheck
+				}
 			}
 			if !strings.HasSuffix(event.Name, ".md") {
 				continue

@@ -2,21 +2,21 @@
 
 The ubiquitous pigeon, de facto like HTTP. Best nested in [doucot](https://github.com/yno9/doucot), a portable text editor.
 
-biset and its relays together form a JMAP node network. Each relay is a standalone server bridging an external protocol. biset itself is a node — client to its relays, server to any JMAP client. It aggregates messages into a single local vault and renders them in Mardkdown interface.
+biset and its relays together form a JMAP node network. Each relay is a standalone server bridging an external protocol. biset itself is a node — client to its relays, server to any JMAP client. It aggregates messages into a single local vault and renders them in MD interface.
 
 ```
 External events
        ↕ 
-  Relays (JMAP server)
-   ├── IMAP-SMTP Client
-   ├── SMTP Host
-   ├── ActivityPub
+  Relays (Per-protocol client & JMAP server)
+   ├── IMAP-SMTP-Client
+   ├── SMTP-Host
+   ├── AP-Host
    └── ...
        ↕ Server-Sent Events
-  biset core (JMAP client + server)
-   └── Vault (JSON + Markdown)
+  biset core (JMAP client & JMAP server)
+   └── Vault (JSON & MD)
        ↕ 
-  JMAP clients / WebDAV
+  JMAP client / WebDAV / FSAA
 ```
 
 ---
@@ -207,11 +207,11 @@ Set `status:` in frontmatter to trigger an action on next sync:
 
 | Relay | Protocols | Description |
 |---|---|---|
-| `imapsmtp-client` | IMAP, SMTP | Email via IMAP/SMTP |
-| `smtp-host` | SMTP | Self-hosted SMTP receive + send |
-| `ap-host` | ActivityPub | Fediverse (Mastodon-compatible) |
-| `claude-client` | Claude API | AI assistant as inbox |
-| `rss-client` | RSS/Atom | Feed subscriptions as inbox |
+| [go-jmapsmtp](https://github.com/yno9/go-jmapsmtp) | SMTP | Self-hosted SMTP receive + send |
+| imapsmtp-client | IMAP, SMTP | Email via IMAP/SMTP |
+| ap-host | ActivityPub | Fediverse (Mastodon-compatible) |
+| claude-client | Claude API | AI assistant as inbox |
+| rss-client | RSS/Atom | Feed subscriptions as inbox |
 
 Each relay is an independent JMAP HTTP server. It owns its config and state, handles reconnection, and exposes an SSE endpoint so biset gets push notifications on new data.
 

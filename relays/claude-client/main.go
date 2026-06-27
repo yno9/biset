@@ -25,6 +25,8 @@ import (
 
 type Config struct {
 	jmapserver.Config
+	Bind        string   `json:"bind,omitempty"`
+	Port        int      `json:"port,omitempty"`
 	ProjectDirs []string `json:"project_dirs"`
 	InboxKey    string   `json:"inbox_key"`
 	UserName    string   `json:"user_name"`
@@ -61,6 +63,7 @@ func (h *handler) Handle(method string, args json.RawMessage) (any, error) {
 	case "Email/query":
 		return h.emailQuery(args)
 	case "Email/queryChanges":
+		h.scanProjects()
 		return h.store.HandleQueryChanges(jmap.ID(cfg.InboxKey), args)
 	case "Email/changes":
 		return h.store.HandleEmailChanges(jmap.ID(cfg.InboxKey), args)
@@ -89,16 +92,9 @@ func (h *handler) Handle(method string, args json.RawMessage) (any, error) {
 
 // ── Email/query ───────────────────────────────────────────────────────────────
 
-func (h *handler) emailQuery(args json.RawMessage) (any, error) {
+func (h *handler) scanProjects() {
 	h.stateMu.Lock()
 	defer h.stateMu.Unlock()
-
-	if b, err := os.ReadFile(h.statePath); err == nil {
-		var s State
-		if json.Unmarshal(b, &s) == nil && s.LastMtimeNs < h.state.LastMtimeNs {
-			h.state = s
-		}
-	}
 
 	appTitles := loadAppTitles()
 	newMtime := h.state.LastMtimeNs
@@ -151,6 +147,10 @@ func (h *handler) emailQuery(args json.RawMessage) (any, error) {
 	if b, err := json.MarshalIndent(h.state, "", "  "); err == nil {
 		os.WriteFile(h.statePath, b, 0644) //nolint:errcheck
 	}
+}
+
+func (h *handler) emailQuery(args json.RawMessage) (any, error) {
+	h.scanProjects()
 
 	all := h.store.All()
 	ids := make([]jmap.ID, len(all))
@@ -318,14 +318,19 @@ func sendClaude(body, inReplyTo string) error {
 
 // ── watch ─────────────────────────────────────────────────────────────────────
 
-func watchProjects(ctx context.Context, hub *jmapserver.Hub) {
+func watchProjects(ctx context.Context, h *handler, hub *jmapserver.Hub) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
+		log.Printf("[watch] NewWatcher error: %v", err)
 		return
 	}
 	defer watcher.Close()
 	for _, dir := range cfg.ProjectDirs {
-		watcher.Add(dir) //nolint:errcheck
+		if err := watcher.Add(dir); err != nil {
+			log.Printf("[watch] failed to watch %s: %v", dir, err)
+		} else {
+			log.Printf("[watch] watching %s", dir)
+		}
 	}
 	for {
 		select {
@@ -336,6 +341,8 @@ func watchProjects(ctx context.Context, hub *jmapserver.Hub) {
 				return
 			}
 			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 && strings.HasSuffix(event.Name, ".jsonl") {
+				log.Printf("[watch] detected: %s", event.Name)
+				h.scanProjects()
 				hub.Notify()
 			}
 		case <-watcher.Errors:
@@ -656,8 +663,11 @@ func main() {
 	}
 
 	hub := jmapserver.NewHub()
-	go watchProjects(context.Background(), hub)
-
-	log.Printf("claude: listening on %s:%d", cfg.Bind, cfg.Port)
+	log.Printf("[watch] starting watcher for %d dirs", len(cfg.ProjectDirs))
+	go watchProjects(context.Background(), h, hub)
+	if cfg.ListenAddr == "" {
+		cfg.ListenAddr = fmt.Sprintf("%s:%d", cfg.Bind, cfg.Port)
+	}
+	log.Printf("claude: listening on %s", cfg.ListenAddr)
 	log.Fatal(jmapserver.Serve(cfg.Config, h, hub))
 }

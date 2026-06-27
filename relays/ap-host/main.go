@@ -25,6 +25,7 @@ import (
 	"time"
 
 	jmap "git.sr.ht/~rockorager/go-jmap"
+	"git.sr.ht/~rockorager/go-jmap/mail/email"
 	jmapserver "github.com/yno9/go-jmapserver"
 	"biset/vault"
 )
@@ -33,6 +34,8 @@ import (
 
 type Config struct {
 	jmapserver.Config
+	Bind          string `json:"bind,omitempty"`
+	Port          int    `json:"port,omitempty"`
 	RelayName     string `json:"relayname"`
 	Domain        string `json:"domain"`
 	PrivateKeyPEM string `json:"private_key_pem"`
@@ -127,8 +130,6 @@ func (h *handler) Handle(method string, args json.RawMessage) (any, error) {
 		return h.store.HandleIdentityChanges(jmap.ID(identity()), args)
 	case "Thread/changes":
 		return h.store.HandleThreadChanges(jmap.ID(identity()), args)
-	case "Email/set":
-		return h.emailSet(args)
 	case "EmailSubmission/set":
 		return h.emailSubmissionSet(args)
 	default:
@@ -151,115 +152,6 @@ func (h *handler) mailboxGet() (any, error) {
 			map[string]any{"id": feedsMailboxID(), "name": "feeds", "role": nil},
 		},
 		"notFound": []string{},
-	}, nil
-}
-
-func (h *handler) emailSet(args json.RawMessage) (any, error) {
-	var req struct {
-		Create  map[jmap.ID]json.RawMessage `json:"create"`
-		Update  map[jmap.ID]json.RawMessage `json:"update"`
-		Destroy []jmap.ID                   `json:"destroy"`
-	}
-	json.Unmarshal(args, &req) //nolint:errcheck
-
-	created := map[jmap.ID]any{}
-	notCreated := map[jmap.ID]any{}
-	updated := map[jmap.ID]any{}
-	notUpdated := map[jmap.ID]any{}
-	destroyed := []jmap.ID{}
-	notDestroyed := map[jmap.ID]any{}
-
-	for key, rawMsg := range req.Create {
-		var msg vault.Message
-		if err := json.Unmarshal(rawMsg, &msg); err != nil {
-			notCreated[key] = errObj("invalidProperties", err.Error())
-			continue
-		}
-		if msg.ID == "" {
-			msg.ID = newID()
-		}
-		receivedAt := time.Now().UTC()
-		msg.ReceivedAt = &receivedAt
-
-		if msg.MailboxIDs[jmap.ID(feedsMailboxID())] {
-			target := ""
-			if len(msg.To) > 0 && msg.To[0] != nil {
-				target = msg.To[0].Email
-			}
-			if target == "" {
-				notCreated[key] = errObj("invalidProperties", "missing to address for follow")
-				continue
-			}
-			actID, err := sendFollow(target)
-			if err != nil {
-				notCreated[key] = errObj("serverFail", err.Error())
-				continue
-			}
-			if msg.Keywords == nil {
-				msg.Keywords = map[string]bool{}
-			}
-			msg.Keywords["$follow_pending"] = true
-			if len(msg.MessageID) == 0 {
-				msg.MessageID = []string{string(msg.ID)}
-			}
-			_ = actID
-			if err := h.store.Put(msg); err != nil {
-				notCreated[key] = errObj("serverFail", err.Error())
-				continue
-			}
-			// Optimistically register so posts can be threaded immediately.
-			if ra, err2 := resolveActor(target); err2 == nil {
-				followedActors.Store(ra.actorURL, followEntry{handle: target, followMsgID: msg.ID})
-			}
-		} else {
-			h.store.PutPending(msg)
-		}
-		created[key] = map[string]any{"id": msg.ID, "receivedAt": receivedAt.Format(time.RFC3339Nano)}
-	}
-
-	for msgID, rawPatch := range req.Update {
-		var patch map[string]any
-		if err := json.Unmarshal(rawPatch, &patch); err != nil {
-			notUpdated[msgID] = errObj("invalidProperties", err.Error())
-			continue
-		}
-		if err := h.store.PatchKeywords(msgID, patch); err != nil {
-			log.Printf("store patch %s: %v", msgID, err)
-		}
-		updated[msgID] = map[string]any{}
-	}
-
-	for _, msgID := range req.Destroy {
-		msg, ok := h.store.Get(msgID)
-		if !ok {
-			notDestroyed[msgID] = errObj("notFound", "not found")
-			continue
-		}
-		if msg.MailboxIDs[jmap.ID(feedsMailboxID())] {
-			target := ""
-			if len(msg.To) > 0 && msg.To[0] != nil {
-				target = msg.To[0].Email
-			}
-			if target != "" {
-				if err := sendUnfollow(msg.ID, target); err != nil {
-					log.Printf("[ap] unfollow %s: %v", target, err)
-				}
-			}
-		}
-		h.store.Delete(msgID)
-		destroyed = append(destroyed, msgID)
-	}
-
-	return map[string]any{
-		"accountId":    jmap.ID(identity()),
-		"oldState":     "0",
-		"newState":     "1",
-		"created":      created,
-		"updated":      updated,
-		"destroyed":    destroyed,
-		"notCreated":   notCreated,
-		"notUpdated":   notUpdated,
-		"notDestroyed": notDestroyed,
 	}, nil
 }
 
@@ -893,16 +785,76 @@ func main() {
 		}
 	}
 
+	store.OnCreateEmail(func(raw json.RawMessage) (email.Email, error) {
+		var msg vault.Message
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			return email.Email{}, err
+		}
+		if msg.ID == "" {
+			msg.ID = newID()
+		}
+		receivedAt := time.Now().UTC()
+		msg.ReceivedAt = &receivedAt
+
+		if msg.MailboxIDs[jmap.ID(feedsMailboxID())] {
+			target := ""
+			if len(msg.To) > 0 && msg.To[0] != nil {
+				target = msg.To[0].Email
+			}
+			if target == "" {
+				return email.Email{}, fmt.Errorf("missing to address for follow")
+			}
+			if _, err := sendFollow(target); err != nil {
+				return email.Email{}, err
+			}
+			if msg.Keywords == nil {
+				msg.Keywords = map[string]bool{}
+			}
+			msg.Keywords["$follow_pending"] = true
+			if len(msg.MessageID) == 0 {
+				msg.MessageID = []string{string(msg.ID)}
+			}
+			if ra, err2 := resolveActor(target); err2 == nil {
+				followedActors.Store(ra.actorURL, followEntry{handle: target, followMsgID: msg.ID})
+			}
+		} else {
+			store.PutPending(msg)
+		}
+		return msg, nil
+	})
+
+	store.OnDestroyEmail(func(id jmap.ID) error {
+		msg, ok := store.Get(id)
+		if !ok {
+			return nil
+		}
+		if msg.MailboxIDs[jmap.ID(feedsMailboxID())] {
+			target := ""
+			if len(msg.To) > 0 && msg.To[0] != nil {
+				target = msg.To[0].Email
+			}
+			if target != "" {
+				if err := sendUnfollow(msg.ID, target); err != nil {
+					log.Printf("[ap] unfollow %s: %v", target, err)
+				}
+			}
+		}
+		return nil
+	})
+
 	hub := jmapserver.NewHub()
 	h := &handler{store: store}
 
 	mux := jmapserver.NewMux(cfg.Config, h, hub)
 	registerAPRoutes(mux, store, hub)
 
-	if cfg.Port == 0 {
-		cfg.Port = 8765
+	if cfg.ListenAddr == "" {
+		port := cfg.Port
+		if port == 0 {
+			port = 8765
+		}
+		cfg.ListenAddr = cfg.Bind + ":" + strconv.Itoa(port)
 	}
-	addr := ":" + strconv.Itoa(cfg.Port)
-	log.Printf("[ap] listening on %s (ActivityPub + JMAP)", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Printf("[ap] listening on %s (ActivityPub + JMAP)", cfg.ListenAddr)
+	log.Fatal(http.ListenAndServe(cfg.ListenAddr, mux))
 }

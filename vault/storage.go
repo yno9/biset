@@ -479,7 +479,7 @@ func migrateOldFormat(b []byte, inboxKey string) (msgs []Message, threadID, key 
 }
 
 // ReThreadVault re-assigns threadIds across all stored messages.
-func ReThreadVault(vaultDir string) {
+func ReThreadVault(vaultDir string, inboxCfg func(string) InboxConfig) {
 	marker := filepath.Join(vaultDir, ".data", ".rethreaded")
 	if _, err := os.Stat(marker); err == nil {
 		return
@@ -609,7 +609,7 @@ func ReThreadVault(vaultDir string) {
 			if len(inboxMsgs) == 0 {
 				continue
 			}
-			mdPath, content := RenderMD(vaultDir, inboxKey, inboxMsgs, InboxConfig{})
+			mdPath, content := RenderMD(vaultDir, inboxKey, inboxMsgs, inboxCfg(inboxKey))
 			if mdPath == "" {
 				continue
 			}

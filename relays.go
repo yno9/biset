@@ -174,6 +174,25 @@ func relayConfig(bisetDir, local string) {
 	cmd.Run() //nolint:errcheck
 }
 
+func newRelayCmd(binPath, dir, logPath string) *exec.Cmd {
+	cmd := exec.Command(binPath)
+	cmd.Dir = dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	devNull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	cmd.Stdin = devNull
+	if logPath != "" {
+		lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err == nil {
+			cmd.Stdout = lf
+			cmd.Stderr = lf
+			return cmd
+		}
+	}
+	cmd.Stdout = devNull
+	cmd.Stderr = devNull
+	return cmd
+}
+
 func relayDir(bisetDir, local string) string {
 	return filepath.Join(bisetDir, "relays", local)
 }
@@ -204,7 +223,8 @@ func relayUp(cfg *vault.Config, bisetDir, local string) {
 	}
 
 	dir := relayDir(bisetDir, local)
-	cmd := newRelayCmd(binPath, dir)
+	logPath := filepath.Join(bisetDir, "biset.log")
+	cmd := newRelayCmd(binPath, dir, logPath)
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start %s: %v\n", local, err)
 		os.Exit(1)

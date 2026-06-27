@@ -25,14 +25,30 @@ type FetchResult = vault.FetchResult
 
 // Manager holds configured Relay connections.
 type Manager struct {
-	relays  []*Relay
-	changed chan struct{}
+	relays         []*Relay
+	changed        chan struct{}
+	mu             sync.RWMutex
+	inboxKeyRelay  map[string]*Relay // inboxKey → relay, updated after each sync
 }
 
 func NewManager(cfg *vault.Config) *Manager {
-	m := &Manager{changed: make(chan struct{}, 1)}
+	m := &Manager{changed: make(chan struct{}, 1), inboxKeyRelay: map[string]*Relay{}}
 	for _, rc := range cfg.Relays {
-		m.relays = append(m.relays, newRelay(rc))
+		if len(rc.Accounts) == 0 {
+			m.relays = append(m.relays, newRelay(rc))
+			continue
+		}
+		// Multi-account relay: one Relay instance per account.
+		for email, acc := range rc.Accounts {
+			perAccount := rc
+			perAccount.AuthUser = email
+			perAccount.Password = "" // filled lazily by envelope login in ensureAuth
+			perAccount.Accounts = nil // children don't inherit
+			r := newRelay(perAccount)
+			r.accountEmail = email
+			r.accountPlainPW = acc.Password
+			m.relays = append(m.relays, r)
+		}
 	}
 	return m
 }
@@ -53,6 +69,24 @@ func (m *Manager) notifyChange() {
 func (m *Manager) WatchRelays() {
 	for _, r := range m.relays {
 		go r.watchSSE(m.notifyChange)
+	}
+}
+
+// EnsureKeys ensures that every per-account relay has a usable PGP keypair
+// (recovered from the server or freshly generated and uploaded). Called once
+// at startup. Non-account relays are skipped.
+func (m *Manager) EnsureKeys() {
+	for _, r := range m.relays {
+		if r.accountEmail == "" {
+			continue
+		}
+		if err := r.ensureAuth(); err != nil {
+			log.Printf("[pgp] auth failed for %s: %v", r.accountEmail, err)
+			continue
+		}
+		if err := EnsureAccountKey(r); err != nil {
+			log.Printf("[pgp] %v", err)
+		}
 	}
 }
 
@@ -79,24 +113,55 @@ func (m *Manager) RelayForAccount(inboxKey string) *Relay {
 	return nil
 }
 
+// SetInboxRelay records that inboxKey is served by r. Called after each sync.
+func (m *Manager) SetInboxRelay(inboxKey string, r *Relay) {
+	m.mu.Lock()
+	m.inboxKeyRelay[inboxKey] = r
+	m.mu.Unlock()
+}
+
+// RelayForInboxKey returns the relay that last reported serving inboxKey.
+// Falls back to RelayForAccount for relays discovered before the first sync.
+func (m *Manager) RelayForInboxKey(inboxKey string) *Relay {
+	m.mu.RLock()
+	r := m.inboxKeyRelay[inboxKey]
+	m.mu.RUnlock()
+	if r != nil {
+		return r
+	}
+	return m.RelayForAccount(inboxKey)
+}
+
+
 // ── Relay ─────────────────────────────────────────────────────────────────────
 
 // Relay is a JMAP peer that biset connects to as a client.
+// For multi-account relays, one Relay represents one (URL, email) pair.
 type Relay struct {
-	cfg       vault.RelayConfig
-	client    *jmap.Client
-	accountID jmap.ID
-	mu        sync.Mutex
-	authed    bool
+	cfg            vault.RelayConfig
+	client         *jmap.Client
+	accountID      jmap.ID
+	mu             sync.Mutex
+	authed         bool
+	accountEmail   string // populated only for per-account relay instances
+	accountPlainPW string // plaintext user password; used once for envelope unseal
+	kek            []byte // 32B AES-GCM key for PGP privkey enc/dec; populated by envelope login
 }
 
+// RelayName returns the relay type identifier from config (e.g. "jmapsmtp", "claude").
+// Stable across multi-account expansion (does not get overridden to the account email).
+func (r *Relay) RelayName() string { return r.cfg.RelayName }
+
 func newRelay(cfg vault.RelayConfig) *Relay {
+	if cfg.AuthUser == "" {
+		cfg.AuthUser = cfg.RelayName
+	}
 	c := &jmap.Client{SessionEndpoint: cfg.URL}
 	switch {
 	case cfg.Token != "":
 		c.WithAccessToken(cfg.Token)
-	case cfg.RelayName != "":
-		c.WithBasicAuth(cfg.RelayName, cfg.Password)
+	case cfg.AuthUser != "":
+		c.WithBasicAuth(cfg.AuthUser, cfg.Password)
 	default:
 		c.HttpClient = http.DefaultClient
 	}
@@ -133,6 +198,9 @@ func setErrMsg(e *jmap.SetError) string {
 
 func (r *Relay) Name() string { return r.cfg.URL }
 
+// AccountEmail returns the account email for per-account relays (empty otherwise).
+func (r *Relay) AccountEmail() string { return r.accountEmail }
+
 // watchSSE subscribes to the relay's JMAP EventSource and calls onChange on state events.
 // Loops forever, reconnecting on error.
 func (r *Relay) watchSSE(onChange func()) {
@@ -157,8 +225,8 @@ func (r *Relay) watchSSEOnce(onChange func()) error {
 		return err
 	}
 	req.Header.Set("Accept", "text/event-stream")
-	if r.cfg.RelayName != "" {
-		req.SetBasicAuth(r.cfg.RelayName, r.cfg.Password)
+	if r.cfg.AuthUser != "" {
+		req.SetBasicAuth(r.cfg.AuthUser, r.cfg.Password)
 	} else if r.cfg.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+r.cfg.Token)
 	}
@@ -185,6 +253,17 @@ func (r *Relay) ensureAuth() error {
 	defer r.mu.Unlock()
 	if r.authed {
 		return nil
+	}
+	// For per-account relays (jmapsmtp-style), derive auth_token + KEK from
+	// the envelope on first auth. Token relays and admin-level relays skip this.
+	if r.accountEmail != "" && r.accountPlainPW != "" && r.cfg.Password == "" {
+		authB64, kek, err := loginViaEnvelope(r.cfg.URL, r.accountEmail, r.accountPlainPW)
+		if err != nil {
+			return fmt.Errorf("%s: envelope login: %w", r.cfg.URL, err)
+		}
+		r.cfg.Password = authB64
+		r.kek = kek
+		r.client.WithBasicAuth(r.cfg.AuthUser, r.cfg.Password)
 	}
 	if err := r.client.Authenticate(); err != nil {
 		return fmt.Errorf("%s: %w", r.cfg.URL, err)
@@ -482,6 +561,19 @@ func (r *Relay) Send(msg vault.Message, envelope vault.Envelope) (time.Time, err
 		return time.Time{}, err
 	}
 
+	// Layer 2: encrypt+sign for single-recipient sends if peer key is available.
+	if len(envelope.RcptTo) == 1 && r.accountEmail != "" {
+		toEmail := envelope.RcptTo[0].Email
+		body := messageBody(msg)
+		if body != "" {
+			enc := EncryptBodyForPeer(r, toEmail, body)
+			if enc != body {
+				replaceMessageBody(&msg, enc)
+				log.Printf("[pgp] encrypted outgoing message to %s", toEmail)
+			}
+		}
+	}
+
 	createKey := jmap.ID("draft")
 	setReq := &jmap.Request{}
 	setReq.Invoke(&email.Set{
@@ -536,27 +628,25 @@ func (r *Relay) Send(msg vault.Message, envelope vault.Envelope) (time.Time, err
 	return serverReceivedAt, nil
 }
 
-// Follow sends an Email/set create to the relay signalling a follow/subscribe intent.
-// The relay interprets the To address as the follow target (feed URL, AP handle, etc).
+// Follow creates a Mailbox on the relay with the contact as its name,
+// which the relay interprets as a subscription request (feed URL, AP handle, etc).
 func (r *Relay) Follow(contact string) error {
 	if err := r.ensureAuth(); err != nil {
 		return err
 	}
-	msg := vault.Message{
-		To:       []*vault.Address{{Email: contact}},
-		Keywords: map[string]bool{"$follow": true},
-	}
 	req := &jmap.Request{}
-	req.Invoke(&email.Set{
+	req.Invoke(&mailbox.Set{
 		Account: r.accountID,
-		Create:  map[jmap.ID]*email.Email{"follow": &msg},
+		Create: map[jmap.ID]*mailbox.Mailbox{
+			"follow": {Name: contact},
+		},
 	})
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("follow: email/set: %w", err)
+		return fmt.Errorf("follow: mailbox/set: %w", err)
 	}
 	for _, inv := range resp.Responses {
-		if res, ok := inv.Args.(*email.SetResponse); ok {
+		if res, ok := inv.Args.(*mailbox.SetResponse); ok {
 			if e, ok2 := res.NotCreated["follow"]; ok2 {
 				return fmt.Errorf("follow: %s", setErrMsg(e))
 			}
@@ -565,32 +655,35 @@ func (r *Relay) Follow(contact string) error {
 	return nil
 }
 
-// Handle patches email keywords (seen, archived, deleted, spam) on the relay.
+// Handle performs the JMAP operation for seen/archived/deleted/spam actions.
+//   - seen: Email/set update keywords/$seen
+//   - deleted: Email/set destroy
+//   - archived: Email/set update mailboxIds (move to role:archive mailbox)
+//   - spam: Email/set update mailboxIds (move to role:junk mailbox)
 func (r *Relay) Handle(msgID, action string) error {
 	if err := r.ensureAuth(); err != nil {
 		return err
 	}
 
-	patch := jmap.Patch{}
 	switch action {
 	case "seen":
-		patch["keywords/$seen"] = true
-	case "archived":
-		patch["keywords/$biset_archived"] = true
+		return r.emailSetUpdate(msgID, jmap.Patch{"keywords/$seen": true})
 	case "deleted":
-		patch["keywords/$deleted"] = true
+		return r.emailSetDestroy(msgID)
+	case "archived":
+		return r.emailMoveToRole(msgID, "archive")
 	case "spam":
-		patch["keywords/$spam"] = true
+		return r.emailMoveToRole(msgID, "junk")
 	default:
 		return fmt.Errorf("unknown action: %s", action)
 	}
+}
 
+func (r *Relay) emailSetUpdate(msgID string, patch jmap.Patch) error {
 	req := &jmap.Request{}
 	req.Invoke(&email.Set{
 		Account: r.accountID,
-		Update: map[jmap.ID]jmap.Patch{
-			jmap.ID(msgID): patch,
-		},
+		Update:  map[jmap.ID]jmap.Patch{jmap.ID(msgID): patch},
 	})
 	resp, err := r.client.Do(req)
 	if err != nil {
@@ -604,4 +697,76 @@ func (r *Relay) Handle(msgID, action string) error {
 		}
 	}
 	return nil
+}
+
+func (r *Relay) emailSetDestroy(msgID string) error {
+	req := &jmap.Request{}
+	req.Invoke(&email.Set{
+		Account: r.accountID,
+		Destroy: []jmap.ID{jmap.ID(msgID)},
+	})
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("email/set destroy: %w", err)
+	}
+	for _, inv := range resp.Responses {
+		if res, ok := inv.Args.(*email.SetResponse); ok {
+			for _, id := range res.NotDestroyed {
+				return fmt.Errorf("email/set destroy: %s", setErrMsg(id))
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Relay) emailMoveToRole(msgID, role string) error {
+	targetID, srcID, err := r.resolveMailboxRole(msgID, role)
+	if err != nil {
+		return err
+	}
+	patch := jmap.Patch{"mailboxIds/" + string(targetID): true}
+	if srcID != "" {
+		patch["mailboxIds/"+string(srcID)] = nil
+	}
+	return r.emailSetUpdate(msgID, patch)
+}
+
+func (r *Relay) resolveMailboxRole(msgID, role string) (target, src jmap.ID, err error) {
+	req := &jmap.Request{}
+	req.Invoke(&mailbox.Get{Account: r.accountID})
+	req.Invoke(&email.Get{
+		Account: r.accountID,
+		IDs:     []jmap.ID{jmap.ID(msgID)},
+	})
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("resolveMailboxRole: %w", err)
+	}
+	var mbs []*mailbox.Mailbox
+	var msgMailboxIDs map[jmap.ID]bool
+	for _, inv := range resp.Responses {
+		switch res := inv.Args.(type) {
+		case *mailbox.GetResponse:
+			mbs = res.List
+		case *email.GetResponse:
+			if len(res.List) > 0 && res.List[0] != nil {
+				msgMailboxIDs = res.List[0].MailboxIDs
+			}
+		}
+	}
+	for _, mb := range mbs {
+		if mb != nil && string(mb.Role) == role {
+			target = mb.ID
+		}
+	}
+	if target == "" {
+		return "", "", fmt.Errorf("no mailbox with role %q on relay", role)
+	}
+	for id := range msgMailboxIDs {
+		if id != target {
+			src = id
+			break
+		}
+	}
+	return target, src, nil
 }

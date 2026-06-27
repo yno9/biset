@@ -74,17 +74,6 @@ func acquireSyncLock(vaultDir string) (string, bool) {
 	return lockPath, true
 }
 
-func newRelayCmd(binPath, dir string) *exec.Cmd {
-	cmd := exec.Command(binPath)
-	cmd.Dir = dir
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	devNull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
-	cmd.Stdin = devNull
-	cmd.Stdout = devNull
-	cmd.Stderr = devNull
-	return cmd
-}
-
 func isBisetProcess(pid int) bool {
 	proc, err := os.FindProcess(pid)
 	if err != nil || proc.Signal(syscall.Signal(0)) != nil {

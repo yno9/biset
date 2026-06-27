@@ -35,6 +35,34 @@ External protocols (IMAP, SMTP, ActivityPub, RSS, Claude API, …)
 
 biset routes sends and actions by **inboxKey** (JMAP account ID). At startup biset reads `accounts` from each relay's session endpoint. `RelayForAccount(inboxKey)` finds the relay that owns a given account. MD files live under `vault/<inboxKey>/`.
 
+### Multi-account relays
+
+Some relays (e.g. `smtp-host`) host multiple JMAP accounts behind one URL. Config for these uses an `accounts` map:
+
+```json
+{
+  "relayname": "smtp-host",
+  "url": "https://mail.example.com/.well-known/jmap",
+  "accounts": {
+    "you@example.com": { "password": "user-plaintext-password" }
+  }
+}
+```
+
+`NewManager` expands each `accounts` entry into its own internal `Relay` instance authenticated as that account (Basic auth: `email + PBKDF2(password, ":biset-auth-v1")`). Single-tenant relays keep the legacy form with relay-level `password`.
+
+### View conversion (relay → biset)
+
+Relays and biset can have **divergent threading**. jmapsmtp sees outer RFC 822 headers only; biset can additionally decrypt PGP bodies and read inner Protected Headers (RFC 1847 / Memory Hole). Trusting the relay's view would mean some replies end up in new threads.
+
+The fix: `ConvertRelayView` in `relay_view.go` normalizes every batch returned by `Relay.Fetch` before it touches the rest of the pipeline:
+
+1. PGP decrypt + extract inner `In-Reply-To`
+2. Clear ThreadID when InReplyTo is set
+3. Oldest-first `store.Put` so the parent is present when the reply resolves its thread
+
+After this point all downstream code (sync, render, dispatch) sees biset's authoritative view only. Relay-provided `Thread/get` responses are ignored.
+
 ### SSE push
 
 ```
@@ -61,12 +89,14 @@ biset/
 ├── interfaces/
 │   └── cli.go         — RunStatus, PingRelay, RelayAccountInfo
 ├── actions.go         — Human intent: FlushOutgoing, FlushActions
-├── auth.go            — RSA key gen/load, PGP derivation
-├── client.go          — JMAP relay client: Manager, Relay, WatchRelays
+├── auth.go            — PBKDF2 derivations: deriveAuthToken, deriveEncPassword
+├── pgp.go             — PGP key recovery/gen, body decrypt+encrypt, MIME parse
+├── relay_view.go      — ConvertRelayView: PGP decrypt + ThreadID re-resolve
+├── client.go          — JMAP relay client: Manager, Relay, WatchRelays, EnsureKeys
 ├── log.go             — Log config read/write
 ├── process.go         — Lock, TTY detection
 ├── relays.go          — Relay process lifecycle
-├── server.go          — biset JMAP server (serves doucot)
+├── serve.go           — biset JMAP server (serves doucot)
 ├── sync.go            — Sync cycle: runSync, dispatchSubmissions, StartWatcher
 └── main.go            — CLI entrypoint + watchLoop
 ```
@@ -78,7 +108,8 @@ biset/
 ### `config.go`
 Config types and JMAP type aliases. No logic beyond `LoadConfig`.
 - `Config`: `Vault`, `Relays`, `Notification`, `Server`, `Inboxes`
-- `RelayConfig`: `RelayName`, `URL`, `Local`, `Password`
+- `RelayConfig`: `RelayName`, `URL`, `Local`, `Password`, `Accounts` (multi-account relays use `Accounts: map[email]AccountConfig` instead of relay-level `Password`)
+- `AccountConfig`: `Password` (user's plaintext login password; biset derives auth_token and enc_password from it)
 - `ServerConfig`: `Port`, `Bind`, `RelayName`, `Password`, `Interface`
 - `InboxConfig`: `MaxDisplay`, `Format` — per-inbox render config; `cfg.InboxConfigFor(key, cfg)` returns zero value if absent
 - `FetchResult`: `Messages`, `Threads`, `Inboxes`, `QueryState`, `EmailState`, `MailboxState`
@@ -274,12 +305,35 @@ State: `state.json` — last seen mtime per project dir.
 ### `client.go`
 JMAP relay client.
 - `Manager`: holds configured `Relay` connections; `Changed()` channel for SSE-triggered sync
+- `NewManager(cfg)` — expands multi-account `RelayConfig.Accounts` into per-account `Relay` instances (Basic auth: `email + deriveAuthToken(plaintext)`)
 - `RelayForAccount(inboxKey)` — finds relay owning the account
-- `Relay.Fetch(sinceQueryState, sinceEmailState, sinceMailboxState)` — `Email/query` + `Email/get` + `Thread/get` + `Mailbox/get` (or delta variants) → `FetchResult`
+- `Relay.Fetch(...)` — returns raw `FetchResult`; conversion to biset's view happens in `sync.go` via `ConvertRelayView`
 - `Relay.Send(msg, envelope)` — `Email/set` + `EmailSubmission/set`
 - `Relay.Handle(msgID, action)` — `Email/set` keyword update
 - `Relay.Follow(contact)` — `Email/set` create with `$follow` keyword
 - `Manager.WatchRelays()` — SSE subscriber goroutines; fires `mgr.Changed()` on state events
+- `Manager.EnsureKeys()` — for each per-account relay, recovers (or generates+uploads) the user's PGP keypair at startup
+
+### `auth.go`
+PBKDF2-derived authentication tokens (match biset-ui formulas).
+- `deriveAuthToken(password, email)` — `PBKDF2(password, email+":biset-auth-v1", 200000, SHA-256)` → base64; sent over the wire as Basic-auth password.
+- `deriveEncPassword(password, email)` — `PBKDF2(password, email+":biset-enc-v1", ...)` → base64; never transmitted; used as the AES-GCM key for the encrypted PGP private key blob.
+
+### `pgp.go`
+PGP key management + body decrypt/encrypt.
+- `EnsureAccountKey(relay)` — `GET /pgp/privkey` → AES-GCM decrypt with `enc_password` → save to `~/.biset/keys/<email>.asc`; if absent, generate ed25519/cv25519 keypair, encrypt, `PUT /pgp/privkey`, `PUT /pgp/pubkey`.
+- `DecryptMessageBodies(messages, email)` — replaces PGP-armored bodies with plaintext, strips RFC 1847 Protected Headers, decodes Content-Transfer-Encoding.
+- `EncryptBodyForPeer(relay, toEmail, body)` — fetches `peers/<addr>.pgp` from relay, encrypts+signs with `peer + sender` keys (used by `Relay.Send`).
+
+### `relay_view.go`
+The relay → biset view conversion layer.
+- `ConvertRelayView(messages, store, accountEmail)`:
+  1. `DecryptMessageBodies` (PGP decrypt + inner-header extraction)
+  2. Clear `ThreadID` whenever `InReplyTo` is present so the store re-resolves it locally
+  3. Oldest-first `store.Put` (parents before replies)
+  4. Refresh in-place so callers see resolved ThreadIDs
+
+Applied once on every `Relay.Fetch` result and every `Relay.Send` submission. Downstream code never touches the raw relay view.
 
 ### `relays.go`
 Relay process lifecycle: `startManagedRelays`, `relayUp/Down`, `listRelays`.
@@ -291,11 +345,13 @@ Reads `status:` frontmatter and executes human intent.
 
 ### `sync.go`
 Full sync cycle.
-- `runSync` — FlushOutgoing → dispatchSubmissions → FlushActions → fetch all relays → `store.Put` → `WriteThreadMD` per thread → `RenderMissingMDs`
-- `dispatchSubmissions` — reads queued submissions, calls `Relay.Send`, writes sent message via `store.Put` + `WriteThreadMD`
-- `StartWatcher` — ticker + SSE + fsnotify
+- `runSync` — FlushOutgoing → dispatchSubmissions → FlushActions → fetch all relays → `ConvertRelayView` → `WriteThreadMD` per thread → `RenderMissingMDs`
+- `dispatchSubmissions` — reads queued submissions, calls `Relay.Send`, runs the sent message through `ConvertRelayView`, then `WriteThreadMD`
+- `StartWatcher` — ticker + SSE + fsnotify; `watchVault` adds newly-created inbox dirs to the fsnotify set
+- Per-thread rendering uses `store.AllForThread` exclusively (relay `Thread/get` results are ignored — biset's view wins)
+- Threads with empty ID and messages whose `MailboxIDs` don't match the inbox are filtered out before rendering
 
-### `server.go`
+### `serve.go`
 biset JMAP HTTP server serving doucot. Backed by `go-jmapserver` Store at `<vault>/.data`.
 
 | Method | Action |
@@ -492,6 +548,17 @@ Human edits _new.md (status: send)
 ---
 
 ## Changelog
+
+### v0.4.1
+
+- **Multi-account relays** — `RelayConfig.Accounts: map[email]AccountConfig` (`AccountConfig.Password` = user plaintext). `NewManager` expands each entry into a per-account `Relay` authed as `email + deriveAuthToken(password)`.
+- **`auth.go`** — PBKDF2 derivations (`deriveAuthToken`, `deriveEncPassword`) matching biset-ui formulas.
+- **`pgp.go`** — PGP keypair recovery / generation per account. On `biset up`, `Manager.EnsureKeys` fetches `/pgp/privkey` (or generates+uploads), saves armored private key to `~/.biset/keys/<email>.asc`.
+- **Layer 2 send encryption** — `Relay.Send` now fetches the recipient's `peers/<addr>.pgp` and signs+encrypts client-side before submitting via JMAP (so DeltaChat-style peers see a properly signed Autocrypt message).
+- **`relay_view.go`** — `ConvertRelayView` consolidates PGP decryption, inner-header extraction, and ThreadID re-resolution. Applied once per `Relay.Fetch` and per `Relay.Send`. All downstream code uses biset's authoritative view; the relay's `Thread/get` response is informational only.
+- **fsnotify dir watching** — new inbox directories created at runtime are now added to the watcher (previously only initial scan).
+- **MD render** — empty-threadID threads skipped; messages are filtered by `MailboxIDs[inbox]` before render (prevents cross-inbox bleed).
+- **`config.example.json`** — adds `smtp-host` multi-account example.
 
 ### v0.4.0
 

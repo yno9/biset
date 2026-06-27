@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	jmap "git.sr.ht/~rockorager/go-jmap"
+	"git.sr.ht/~rockorager/go-jmap/mail/mailbox"
 	jmapserver "github.com/yno9/go-jmapserver"
 	"biset/vault"
 )
@@ -18,6 +20,8 @@ import (
 
 type Config struct {
 	jmapserver.Config
+	Bind                string `json:"bind,omitempty"`
+	Port                int    `json:"port,omitempty"`
 	RelayName           string `json:"relayname"`
 	PollIntervalMinutes int    `json:"poll_interval_minutes"`
 }
@@ -64,24 +68,6 @@ func (h *handler) Handle(method string, args json.RawMessage) (any, error) {
 	case "Email/queryChanges":
 		h.pollAll()
 		return h.store.HandleQueryChanges(jmap.ID(cfg.RelayName), args)
-	case "Email/changes":
-		return h.store.HandleEmailChanges(jmap.ID(cfg.RelayName), args)
-	case "Email/get":
-		return h.store.HandleEmailGet(jmap.ID(cfg.RelayName), args)
-	case "Thread/get":
-		return h.store.HandleThreadGet(jmap.ID(cfg.RelayName), args)
-	case "Mailbox/get":
-		return h.store.HandleMailboxGet(jmap.ID(cfg.RelayName), args)
-	case "Mailbox/changes":
-		return h.store.HandleMailboxChanges(jmap.ID(cfg.RelayName), args)
-	case "Identity/get":
-		return h.store.HandleIdentityGet(jmap.ID(cfg.RelayName))
-	case "Identity/changes":
-		return h.store.HandleIdentityChanges(jmap.ID(cfg.RelayName), args)
-	case "Thread/changes":
-		return h.store.HandleThreadChanges(jmap.ID(cfg.RelayName), args)
-	case "Email/set":
-		return h.emailSet(args)
 	case "EmailSubmission/set":
 		return h.emailSubmissionSet()
 	default:
@@ -94,67 +80,6 @@ func (h *handler) Handle(method string, args json.RawMessage) (any, error) {
 func (h *handler) emailQuery(args json.RawMessage) (any, error) {
 	h.pollAll()
 	return h.store.HandleEmailQuery(jmap.ID(cfg.RelayName), args)
-}
-
-// ── Email/set ─────────────────────────────────────────────────────────────────
-
-func (h *handler) emailSet(args json.RawMessage) (any, error) {
-	var req struct {
-		Create  map[jmap.ID]json.RawMessage `json:"create"`
-		Update  map[jmap.ID]json.RawMessage `json:"update"`
-		Destroy []jmap.ID                   `json:"destroy"`
-	}
-	json.Unmarshal(args, &req) //nolint:errcheck
-
-	created := map[jmap.ID]any{}
-	notCreated := map[jmap.ID]any{}
-	updated := map[jmap.ID]any{}
-	destroyed := []jmap.ID{}
-	notDestroyed := map[jmap.ID]any{}
-
-	for key, rawMsg := range req.Create {
-		var msg vault.Message
-		if err := json.Unmarshal(rawMsg, &msg); err != nil {
-			notCreated[key] = errObj("invalidProperties", err.Error())
-			continue
-		}
-		feedURL := ""
-		if len(msg.To) > 0 && msg.To[0] != nil {
-			feedURL = msg.To[0].Email
-		}
-		if feedURL == "" {
-			notCreated[key] = errObj("invalidProperties", "missing feed URL in To address")
-			continue
-		}
-		h.addFeed(feedURL)
-		created[key] = map[string]any{"id": jmap.ID("follow-" + feedURL), "receivedAt": time.Now().UTC().Format(time.RFC3339Nano)}
-	}
-
-	for msgID, rawPatch := range req.Update {
-		var patch map[string]any
-		if err := json.Unmarshal(rawPatch, &patch); err != nil {
-			continue
-		}
-		h.store.PatchKeywords(msgID, patch) //nolint:errcheck
-		updated[msgID] = map[string]any{}
-	}
-
-	for _, msgID := range req.Destroy {
-		h.store.Delete(msgID)
-		destroyed = append(destroyed, msgID)
-	}
-
-	return map[string]any{
-		"accountId":    jmap.ID(cfg.RelayName),
-		"oldState":     "0",
-		"newState":     "1",
-		"created":      created,
-		"updated":      updated,
-		"destroyed":    destroyed,
-		"notCreated":   notCreated,
-		"notUpdated":   map[string]any{},
-		"notDestroyed": notDestroyed,
-	}, nil
 }
 
 // ── EmailSubmission/set ───────────────────────────────────────────────────────
@@ -199,6 +124,16 @@ func (h *handler) addFeed(feedURL string) {
 		h.state.Feeds[feedURL] = FeedState{}
 		h.saveState()
 		log.Printf("[rss] added feed: %s", feedURL)
+	}
+}
+
+func (h *handler) removeFeed(feedURL string) {
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
+	if _, exists := h.state.Feeds[feedURL]; exists {
+		delete(h.state.Feeds, feedURL)
+		h.saveState()
+		log.Printf("[rss] removed feed: %s", feedURL)
 	}
 }
 
@@ -285,10 +220,29 @@ func main() {
 		statePath: filepath.Join(dir, "state.json"),
 	}
 	h.loadState()
+	store.OnSetMailbox(func(op string, id jmap.ID, mb *mailbox.Mailbox) error {
+		switch op {
+		case "create":
+			if mb != nil && mb.Name != "" {
+				h.addFeed(mb.Name)
+			}
+		case "destroy":
+			for _, existing := range store.Mailboxes() {
+				if existing.ID == id {
+					h.removeFeed(existing.Name)
+					break
+				}
+			}
+		}
+		return nil
+	})
 	store.PutMailboxes([]vault.Inbox{vault.DefaultInbox(cfg.RelayName + "/")}) //nolint:errcheck
 
 	go h.watch(context.Background())
 
-	log.Printf("rss-client: listening on %s:%d", cfg.Bind, cfg.Port)
+	if cfg.ListenAddr == "" {
+		cfg.ListenAddr = fmt.Sprintf("%s:%d", cfg.Bind, cfg.Port)
+	}
+	log.Printf("rss-client: listening on %s", cfg.ListenAddr)
 	log.Fatal(jmapserver.Serve(cfg.Config, h, hub))
 }

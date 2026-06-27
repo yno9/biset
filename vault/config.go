@@ -38,14 +38,24 @@ type (
 
 // RelayConfig describes one JMAP peer node biset connects to.
 // Local nodes have a Local field (binary name); remote nodes do not.
+// Multi-account relays (e.g. smtp-host) populate Accounts instead of relay-level Password.
 type RelayConfig struct {
-	RelayName    string                 `json:"relayname"`
-	Password     string                 `json:"password,omitempty"`
-	URL          string                 `json:"url"`
-	Local        string                 `json:"local,omitempty"`
-	Token        string                 `json:"token,omitempty"`
-	Notification *bool                  `json:"notification,omitempty"`
-	Inboxes      map[string]InboxConfig `json:"inboxes,omitempty"`
+	RelayName    string                   `json:"relayname"`
+	AuthUser     string                   `json:"-"` // runtime auth username (defaults to RelayName; per-account multi-account expansion overrides)
+	Password     string                   `json:"password,omitempty"`
+	URL          string                   `json:"url"`
+	Local        string                   `json:"local,omitempty"`
+	Token        string                   `json:"token,omitempty"`
+	Notification *bool                    `json:"notification,omitempty"`
+	Inboxes      map[string]InboxConfig   `json:"inboxes,omitempty"`
+	Accounts     map[string]AccountConfig `json:"accounts,omitempty"`
+}
+
+// AccountConfig holds per-account credentials for multi-account relays.
+// Password is the user's plaintext login password; biset derives auth_token
+// (for JMAP Basic auth) and enc_password (for PGP private key decryption) from it.
+type AccountConfig struct {
+	Password string `json:"password"`
 }
 
 // InboxConfigFor returns the InboxConfig for inboxKey relative to accountID.

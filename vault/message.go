@@ -1,6 +1,8 @@
 package vault
 
 import (
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -54,6 +56,28 @@ func MessageIDFromMsgID(msgID string) string {
 		return ""
 	}
 	return "<" + id + ">"
+}
+
+// NewRFCMessageID generates a fresh RFC 5322-compliant Message-Id of the form
+// "{nanos}.{rand6hex}@{hostname}", angle brackets NOT included. Matches the
+// format jmapserver.BuildRFC5322 produces when no Message-Id is supplied.
+//
+// inboxKey is "user@domain" or "user@domain/sub..."; the right-hand side of
+// the address (the actual mail domain) is used as the id-right host.
+func NewRFCMessageID(inboxKey string) string {
+	domain := "localhost"
+	if at := strings.Index(inboxKey, "@"); at > 0 {
+		host := inboxKey[at+1:]
+		if slash := strings.Index(host, "/"); slash > 0 {
+			host = host[:slash]
+		}
+		if host != "" {
+			domain = host
+		}
+	}
+	rnd := make([]byte, 6)
+	_, _ = cryptorand.Read(rnd)
+	return fmt.Sprintf("%d.%s@%s", time.Now().UnixNano(), hex.EncodeToString(rnd), domain)
 }
 
 // ── Message construction ──────────────────────────────────────────────────────
