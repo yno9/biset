@@ -13,82 +13,8 @@ import (
 
 // ── path helpers ──────────────────────────────────────────────────────────────
 
-func MessageFilePath(vaultDir string, id ID) string {
-	return filepath.Join(vaultDir, ".data", "messages", string(id)+".json")
-}
-
-func ThreadFilePath(vaultDir string, threadID ID) string {
-	return filepath.Join(vaultDir, ".data", "threads", string(threadID)+".json")
-}
-
-func MailboxesFilePath(vaultDir string) string {
-	return filepath.Join(vaultDir, ".data", "mailboxes.json")
-}
-
-
 func SubmissionFilePath(vaultDir, id string) string {
 	return filepath.Join(vaultDir, ".data", "submissions", id+".json")
-}
-
-// ── messages ──────────────────────────────────────────────────────────────────
-
-func WriteMessage(vaultDir string, m Message) (bool, error) {
-	path := MessageFilePath(vaultDir, m.ID)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return false, err
-	}
-	b, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return false, err
-	}
-	return WriteIfChanged(path, string(b)), nil
-}
-
-func ReadMessage(vaultDir string, id ID) (Message, error) {
-	b, err := os.ReadFile(MessageFilePath(vaultDir, id))
-	if err != nil {
-		return Message{}, err
-	}
-	var m Message
-	return m, json.Unmarshal(b, &m)
-}
-
-func DeleteMessage(vaultDir string, id ID) error {
-	return os.Remove(MessageFilePath(vaultDir, id))
-}
-
-func PurgeMessageCache(vaultDir string) {
-	dir := filepath.Join(vaultDir, ".data", "messages")
-	entries, _ := os.ReadDir(dir)
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".json") {
-			os.Remove(filepath.Join(dir, e.Name())) //nolint:errcheck
-		}
-	}
-}
-
-func ScanMessages(vaultDir string) ([]Message, error) {
-	dir := filepath.Join(vaultDir, ".data", "messages")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	var out []Message
-	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		var m Message
-		if err := json.Unmarshal(b, &m); err != nil {
-			continue
-		}
-		out = append(out, m)
-	}
-	return out, nil
 }
 
 // ── submissions ───────────────────────────────────────────────────────────────
@@ -136,96 +62,6 @@ func DeleteSubmission(vaultDir, id string) error {
 	return os.Remove(SubmissionFilePath(vaultDir, id))
 }
 
-// ── threads ───────────────────────────────────────────────────────────────────
-
-func WriteThread(vaultDir string, t Thread) (bool, error) {
-	path := ThreadFilePath(vaultDir, t.ID)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return false, err
-	}
-	b, err := json.MarshalIndent(t, "", "  ")
-	if err != nil {
-		return false, err
-	}
-	return WriteIfChanged(path, string(b)), nil
-}
-
-func ReadThread(vaultDir string, threadID ID) (Thread, error) {
-	b, err := os.ReadFile(ThreadFilePath(vaultDir, threadID))
-	if err != nil {
-		return Thread{}, err
-	}
-	var t Thread
-	return t, json.Unmarshal(b, &t)
-}
-
-func DeleteThread(vaultDir string, threadID ID) error {
-	return os.Remove(ThreadFilePath(vaultDir, threadID))
-}
-
-func ScanThreads(vaultDir string) ([]Thread, error) {
-	dir := filepath.Join(vaultDir, ".data", "threads")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	var out []Thread
-	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		var t Thread
-		if err := json.Unmarshal(b, &t); err != nil {
-			continue
-		}
-		out = append(out, t)
-	}
-	return out, nil
-}
-
-func ReadMessagesForThread(vaultDir string, threadID ID) []Message {
-	t, err := ReadThread(vaultDir, threadID)
-	if err != nil {
-		return nil
-	}
-	var out []Message
-	for _, id := range t.EmailIDs {
-		m, err := ReadMessage(vaultDir, id)
-		if err != nil {
-			continue
-		}
-		out = append(out, m)
-	}
-	return out
-}
-
-// ── mailboxes ─────────────────────────────────────────────────────────────────
-
-func WriteMailboxes(vaultDir string, mailboxes []Mailbox) error {
-	path := MailboxesFilePath(vaultDir)
-	os.MkdirAll(filepath.Dir(path), 0755) //nolint:errcheck
-	b, err := json.MarshalIndent(mailboxes, "", "  ")
-	if err != nil {
-		return err
-	}
-	WriteIfChanged(path, string(b))
-	return nil
-}
-
-func ReadMailboxes(vaultDir string) []Mailbox {
-	b, err := os.ReadFile(MailboxesFilePath(vaultDir))
-	if err != nil {
-		return nil
-	}
-	var mailboxes []Mailbox
-	json.Unmarshal(b, &mailboxes) //nolint:errcheck
-	return mailboxes
-}
-
 // ── utility ───────────────────────────────────────────────────────────────────
 
 func WriteIfChanged(path, content string) bool {
@@ -249,20 +85,7 @@ func messagesInThread(messages []Message, threadID string) []Message {
 	return out
 }
 
-// ── query helpers ─────────────────────────────────────────────────────────────
-
-func GetMailboxes(vaultDir string) []Mailbox {
-	mailboxes := ReadMailboxes(vaultDir)
-	if len(mailboxes) == 0 {
-		entries, _ := os.ReadDir(vaultDir)
-		for _, e := range entries {
-			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-				mailboxes = append(mailboxes, DefaultMailbox(e.Name()))
-			}
-		}
-	}
-	return mailboxes
-}
+// ── identities ────────────────────────────────────────────────────────────────
 
 func identitiesPath(vaultDir string) string {
 	return filepath.Join(vaultDir, ".data", "identities.json")
@@ -300,19 +123,45 @@ func GetIdentities(vaultDir string) []Identity {
 	return list
 }
 
-func FindThreadByMessageID(vaultDir, messageID string) string {
-	messages, _ := ScanMessages(vaultDir)
-	for _, m := range messages {
-		for _, msgID := range m.MessageID {
-			if msgID == messageID {
-				return string(m.ThreadID)
-			}
-		}
+// ── migration ─────────────────────────────────────────────────────────────────
+//
+// Legacy-format helpers used only by MigrateVault / ReThreadVault. These
+// keep their own minimal file I/O so the public vault API stays free of
+// message/thread CRUD (which the JMAP Store now owns). Migration runs once
+// at boot, before the Store is opened, so direct disk writes are safe —
+// the Store loads the post-migration state on startup.
+
+func migrateWriteMessage(vaultDir string, m Message) {
+	path := filepath.Join(vaultDir, ".data", "messages", string(m.ID)+".json")
+	os.MkdirAll(filepath.Dir(path), 0755) //nolint:errcheck
+	if b, err := json.MarshalIndent(m, "", "  "); err == nil {
+		os.WriteFile(path, b, 0644) //nolint:errcheck
 	}
-	return ""
 }
 
-// ── migration ─────────────────────────────────────────────────────────────────
+func migrateScanMessages(vaultDir string) []Message {
+	dir := filepath.Join(vaultDir, ".data", "messages")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []Message
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var m Message
+		if json.Unmarshal(b, &m) == nil {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 
 func MigrateVault(vaultDir string) {
 	entries, err := os.ReadDir(vaultDir)
@@ -349,19 +198,19 @@ func MigrateVault(vaultDir string) {
 				if key == "" {
 					key = mailboxName
 				}
+				// Threads are derived by the Store from message ThreadIDs;
+				// migration only persists messages.
 				mbxID := jmap.ID(MakeMailboxID(key))
 				for i := range vt.Messages {
 					if vt.Messages[i].MailboxIDs == nil {
 						vt.Messages[i].MailboxIDs = map[jmap.ID]bool{mbxID: true}
 					}
-					WriteMessage(vaultDir, vt.Messages[i]) //nolint:errcheck
+					if vt.Messages[i].ThreadID == "" {
+						vt.Messages[i].ThreadID = jmap.ID(vt.ID)
+					}
+					migrateWriteMessage(vaultDir, vt.Messages[i])
 				}
-				t := Thread{ID: jmap.ID(vt.ID)}
-				for _, m := range vt.Messages {
-					t.EmailIDs = append(t.EmailIDs, m.ID)
-				}
-				WriteThread(vaultDir, t) //nolint:errcheck
-				os.Remove(path)          //nolint:errcheck
+				os.Remove(path) //nolint:errcheck
 				log.Printf("[migrate] %s → %d messages", f.Name(), len(vt.Messages))
 				continue
 			}
@@ -372,14 +221,12 @@ func MigrateVault(vaultDir string) {
 					if msgs[i].MailboxIDs == nil {
 						msgs[i].MailboxIDs = map[jmap.ID]bool{mbxID: true}
 					}
-					WriteMessage(vaultDir, msgs[i]) //nolint:errcheck
+					if msgs[i].ThreadID == "" {
+						msgs[i].ThreadID = jmap.ID(threadID)
+					}
+					migrateWriteMessage(vaultDir, msgs[i])
 				}
-				t := Thread{ID: jmap.ID(threadID)}
-				for _, m := range msgs {
-					t.EmailIDs = append(t.EmailIDs, m.ID)
-				}
-				WriteThread(vaultDir, t) //nolint:errcheck
-				os.Remove(path)          //nolint:errcheck
+				os.Remove(path) //nolint:errcheck
 				log.Printf("[migrate] old %s → %d messages", f.Name(), len(msgs))
 			}
 		}
@@ -486,8 +333,8 @@ func ReThreadVault(vaultDir string, inboxCfg func(string) MailboxConfig) {
 	}
 	defer os.WriteFile(marker, []byte("1"), 0644) //nolint:errcheck
 
-	messages, err := ScanMessages(vaultDir)
-	if err != nil || len(messages) == 0 {
+	messages := migrateScanMessages(vaultDir)
+	if len(messages) == 0 {
 		return
 	}
 
@@ -549,36 +396,19 @@ func ReThreadVault(vaultDir string, inboxCfg func(string) MailboxConfig) {
 
 	if changed {
 		for _, m := range messages {
-			WriteMessage(vaultDir, m) //nolint:errcheck
+			migrateWriteMessage(vaultDir, m) //nolint:errcheck
 		}
 	}
 
 	threads := GroupByThread(messages)
-	log.Printf("[ReThreadVault] rebuilding %d thread indexes", len(threads))
-	for _, t := range threads {
-		ids := make([]jmap.ID, len(t.EmailIDs))
-		copy(ids, t.EmailIDs)
-		WriteThread(vaultDir, Thread{ID: t.ID, EmailIDs: ids}) //nolint:errcheck
-	}
+	log.Printf("[ReThreadVault] grouped into %d threads", len(threads))
 
-	{
-		validThreadIDs := make(map[jmap.ID]bool, len(threads))
-		for _, t := range threads {
-			validThreadIDs[t.ID] = true
-		}
-		threadsDir := filepath.Join(vaultDir, ".data", "threads")
-		if entries, err := os.ReadDir(threadsDir); err == nil {
-			for _, f := range entries {
-				if !strings.HasSuffix(f.Name(), ".json") {
-					continue
-				}
-				tid := jmap.ID(strings.TrimSuffix(f.Name(), ".json"))
-				if !validThreadIDs[tid] {
-					log.Printf("[ReThreadVault] deleting stale thread index %s", f.Name())
-					os.Remove(filepath.Join(threadsDir, f.Name())) //nolint:errcheck
-				}
-			}
-		}
+	// Legacy thread index files are obsolete (Store derives threads from
+	// message ThreadIDs). Remove the entire dir if present so it doesn't
+	// confuse future readers.
+	threadsDir := filepath.Join(vaultDir, ".data", "threads")
+	if _, err := os.Stat(threadsDir); err == nil {
+		os.RemoveAll(threadsDir) //nolint:errcheck
 	}
 
 	mailboxes := map[string]bool{}

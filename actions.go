@@ -340,7 +340,6 @@ func FlushActions(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) int 
 			if threadID != "" {
 				for _, mid := range msgIDs {
 					store.Delete(jmap.ID(mid))
-					vault.DeleteMessage(vaultDir, jmap.ID(mid)) //nolint:errcheck
 				}
 			}
 			fmt.Printf("%s: %s\n", status, e.Name())

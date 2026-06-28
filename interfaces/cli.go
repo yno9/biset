@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	jmapserver "github.com/yno9/go-jmapserver"
 	"biset/vault"
 )
 
@@ -63,15 +64,18 @@ func RunStatus(cfg *vault.Config, isBisetProcess func(pid int) bool) {
 		}
 	}
 
-	messages, _ := vault.ScanMessages(cfg.Vault)
-	threads, _ := vault.ScanThreads(cfg.Vault)
+	msgCount, threadCount := 0, 0
+	if store, err := jmapserver.NewStore(filepath.Join(cfg.Vault, ".data")); err == nil {
+		msgCount = len(store.All())
+		threadCount = len(store.AllThreads())
+	}
 
 	fmt.Printf("\nStatus\n")
 	fmt.Printf("  %s\n", daemonStatus)
 	fmt.Printf("  %s\n", serveStatus)
 	fmt.Printf("  vault:    %s\n", cfg.Vault)
-	fmt.Printf("  messages: %d\n", len(messages))
-	fmt.Printf("  threads:  %d\n", len(threads))
+	fmt.Printf("  messages: %d\n", msgCount)
+	fmt.Printf("  threads:  %d\n", threadCount)
 }
 
 type RelayAccountInfo struct {

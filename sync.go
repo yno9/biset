@@ -48,8 +48,6 @@ func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []v
 		return 0, nil
 	}
 
-	vault.MigrateVault(cfg.Vault)
-
 	// 1. flush outgoing → queue submissions
 	FlushOutgoing(cfg.Vault, mgr, store)
 
@@ -227,10 +225,10 @@ func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []v
 		}
 	}
 
-	// 5b. remove messages deleted on relay (delta sync)
+	// 5b. remove messages deleted on relay (delta sync). store.Delete handles
+	// both the in-memory index and the on-disk JSON file.
 	for _, id := range allRemovedIDs {
 		store.Delete(id)
-		vault.DeleteMessage(cfg.Vault, id) //nolint:errcheck
 	}
 
 	// 5c. update state and clean up orphaned inboxes per relay scope
@@ -291,9 +289,18 @@ func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []v
 		}
 	}
 
-	// RenderMissingMDs for all known inboxes (catches sent-only threads not returned by relay).
+	// RenderMissingMDs for all known mailboxes (catches sent-only threads not
+	// returned by relay). Threads come from the JMAP store, not vault file
+	// scans — render no longer needs to know how messages are persisted.
+	var allThreadViews []vault.ThreadView
+	for _, t := range store.AllThreads() {
+		allThreadViews = append(allThreadViews, vault.ThreadView{
+			ID:       t.ID,
+			Messages: store.AllForThread(t.ID),
+		})
+	}
 	for key := range validInboxKeys {
-		vault.RenderMissingMDs(cfg.Vault, key, inboxConfigs[key])
+		vault.RenderMissingMDs(cfg.Vault, key, inboxConfigs[key], allThreadViews)
 	}
 
 	fmt.Printf("done — updated: %d\n", totalUpdated)

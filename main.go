@@ -263,6 +263,10 @@ Commands
 		}
 	}
 
+	// Run vault migrations before opening the Store so the Store sees the
+	// post-migration on-disk state. Both helpers are one-shot (file marker
+	// for ReThread; no-op when no legacy data for Migrate).
+	vault.MigrateVault(cfg.Vault)
 	vault.ReThreadVault(cfg.Vault, func(mailboxName string) vault.MailboxConfig {
 		for _, r := range cfg.Relays {
 			ic := r.MailboxConfigFor(mailboxName, r.AuthUser)
@@ -296,10 +300,10 @@ Commands
 	case "sync":
 		runSync(cfg, mgr, bisetStore)
 		if fullSyncFlag {
-			vault.PurgeMessageCache(cfg.Vault) // clear local message JSONs
-			vault.PurgeState(cfg.Vault)        // forget per-relay queryState → next fetch is full
+			bisetStore.Purge()          // clear all stored messages (in-memory + on-disk)
+			vault.PurgeState(cfg.Vault) // forget per-relay queryState → next fetch is full
 			runSync(cfg, mgr, bisetStore)
-			vault.CleanupOrphanedMDs(cfg.Vault, func(mailboxName string) vault.MailboxConfig {
+			vault.CleanupOrphanedMDs(cfg.Vault, bisetStore.All(), func(mailboxName string) vault.MailboxConfig {
 				return mgr.MailboxConfigFor(mailboxName, cfg)
 			})
 		}

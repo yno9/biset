@@ -199,17 +199,21 @@ func mdContent(mailboxName string, messages []Message, meta []string) string {
 	return strings.Join(fm, "\n") + "\n\n\n" + strings.Join(msgs, "\n\n")
 }
 
-// RenderMissingMDs renders MD files for threads missing one in the given inbox.
-func RenderMissingMDs(vaultDir, mailboxName string, cfg MailboxConfig) {
-	threads, err := ScanThreads(vaultDir)
-	if err != nil {
-		return
-	}
+// ThreadView is the minimal data RenderMissingMDs needs: a thread ID with the
+// messages it contains. Callers (typically sync.go) fetch these from the JMAP
+// store and pass them in, keeping render free of file I/O for messages/threads.
+type ThreadView struct {
+	ID       ID
+	Messages []Message
+}
+
+// RenderMissingMDs renders MD files for threads missing one in the given mailbox.
+// Caller supplies the threads (with their messages) from the JMAP store.
+func RenderMissingMDs(vaultDir, mailboxName string, cfg MailboxConfig, threads []ThreadView) {
 	mbxID := jmap.ID(MakeMailboxID(mailboxName))
 	for _, t := range threads {
-		msgs := ReadMessagesForThread(vaultDir, t.ID)
 		var inboxMsgs []Message
-		for _, m := range msgs {
+		for _, m := range t.Messages {
 			if m.MailboxIDs[mbxID] && m.ThreadID == t.ID {
 				inboxMsgs = append(inboxMsgs, m)
 			}
@@ -360,14 +364,10 @@ func CleanupOrphanedInboxes(vaultDir string, state *State, respondedRelays map[s
 	}
 }
 
-// CleanupOrphanedMDs removes _*.md files in vault inboxes that no longer
-// correspond to any message in .data/messages/.
-func CleanupOrphanedMDs(vaultDir string, inboxCfg func(string) MailboxConfig) {
-	messages, err := ScanMessages(vaultDir)
-	if err != nil {
-		return
-	}
-
+// CleanupOrphanedMDs removes _*.md files in vault mailboxes that no longer
+// correspond to any message in the given list (caller fetches from the JMAP
+// store, so vault stays out of the message-CRUD business).
+func CleanupOrphanedMDs(vaultDir string, messages []Message, inboxCfg func(string) MailboxConfig) {
 	// Build set of expected MD paths from current messages.
 	byInbox := map[string][]Message{}
 	for _, m := range messages {
@@ -459,16 +459,9 @@ func WriteThreadMD(vaultDir, mailboxName string, messages []Message, cfg Mailbox
 		return TimeVal(sorted[i].ReceivedAt).After(TimeVal(sorted[j].ReceivedAt))
 	})
 
-	for _, m := range sorted {
-		WriteMessage(vaultDir, m) //nolint:errcheck
-	}
-
-	threadID := sorted[0].ThreadID
-	eIDs := make([]jmap.ID, len(sorted))
-	for i, m := range sorted {
-		eIDs[i] = m.ID
-	}
-	WriteThread(vaultDir, Thread{ID: threadID, EmailIDs: eIDs}) //nolint:errcheck
+	// Messages and threads are stored by the JMAP store (sync.go's store.Put);
+	// we no longer write parallel message.json/thread.json copies from the
+	// render layer — they would just shadow Store's authoritative files.
 
 	mdPath, mdBytes := RenderMD(vaultDir, mailboxName, sorted, cfg)
 	if mdPath == "" {
@@ -517,46 +510,3 @@ func SetFMField(content, key, value string) string {
 	return content
 }
 
-func CreateDraftMD(vaultDir, mailboxName, contact, subject, body, threadID, inReplyTo string) (string, error) {
-	if threadID == "" && inReplyTo != "" {
-		threadID = FindThreadByMessageID(vaultDir, inReplyTo)
-	}
-
-	inboxDir := filepath.Join(vaultDir, mailboxName)
-	if err := os.MkdirAll(inboxDir, 0755); err != nil {
-		return "", err
-	}
-
-	mdPath := ""
-	if threadID != "" {
-		if msgs := ReadMessagesForThread(vaultDir, jmap.ID(threadID)); len(msgs) > 0 {
-			mdPath = FindThreadMD(inboxDir, ThreadShortID(msgs))
-		}
-	}
-
-	if mdPath != "" {
-		b, err := os.ReadFile(mdPath)
-		if err != nil {
-			return "", err
-		}
-		content := SetFMField(string(b), "status", "send")
-		content = InjectBody(content, body)
-		if err := os.WriteFile(mdPath, []byte(content), 0644); err != nil {
-			return "", err
-		}
-	} else {
-		if threadID == "" {
-			threadID = fmt.Sprintf("thr-ts-%d", time.Now().UnixMilli())
-		}
-		mbxID := MakeMailboxID(mailboxName)
-		filename := fmt.Sprintf("%s_%s.md", SafeFilename(contact), time.Now().Local().Format("01021504"))
-		mdPath = filepath.Join(inboxDir, filename)
-		fm := fmt.Sprintf("---\nsubject: \"%s\"\ncontact: %s\nmailboxId: %s\nthreadId: %s\nseen: true\nstatus: send\n---\n%s\n\n",
-			strings.ReplaceAll(subject, `"`, `\"`), contact, mbxID, threadID, body)
-		if err := os.WriteFile(mdPath, []byte(fm), 0644); err != nil {
-			return "", err
-		}
-	}
-
-	return fmt.Sprintf("msg-draft-%d", time.Now().UnixMilli()), nil
-}

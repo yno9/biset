@@ -28,8 +28,8 @@ func TestStateUpdateRelay(t *testing.T) {
 	if !ok {
 		t.Fatal("relay1 not found")
 	}
-	if len(rs.InboxKeys) != 2 {
-		t.Errorf("InboxKeys len = %d, want 2", len(rs.InboxKeys))
+	if len(rs.MailboxNames) != 2 {
+		t.Errorf("MailboxNames len = %d, want 2", len(rs.MailboxNames))
 	}
 	if rs.LastSeen.IsZero() {
 		t.Error("LastSeen should not be zero")
@@ -40,7 +40,7 @@ func TestStateUpdateRelay(t *testing.T) {
 
 	// update again
 	s.UpdateRelay("relay1", []string{"e@f.com"})
-	if len(s.Relays["relay1"].InboxKeys) != 1 {
+	if len(s.Relays["relay1"].MailboxNames) != 1 {
 		t.Error("expected overwrite")
 	}
 }
@@ -67,8 +67,8 @@ func TestLoadSaveState(t *testing.T) {
 	if !ok {
 		t.Fatal("relay1 not found after load")
 	}
-	if len(rs.InboxKeys) != 1 || rs.InboxKeys[0] != "a@b.com" {
-		t.Errorf("InboxKeys = %v", rs.InboxKeys)
+	if len(rs.MailboxNames) != 1 || rs.MailboxNames[0] != "a@b.com" {
+		t.Errorf("MailboxNames = %v", rs.MailboxNames)
 	}
 }
 
@@ -108,7 +108,7 @@ func TestSaveStateMultipleRelays(t *testing.T) {
 	if len(loaded.Relays) != 2 {
 		t.Errorf("relay count = %d, want 2", len(loaded.Relays))
 	}
-	if len(loaded.Relays["r2"].InboxKeys) != 2 {
-		t.Errorf("r2 keys = %v", loaded.Relays["r2"].InboxKeys)
+	if len(loaded.Relays["r2"].MailboxNames) != 2 {
+		t.Errorf("r2 keys = %v", loaded.Relays["r2"].MailboxNames)
 	}
 }
