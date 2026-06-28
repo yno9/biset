@@ -7,13 +7,10 @@ require (
 	github.com/ProtonMail/go-crypto v1.4.1
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
-	github.com/emersion/go-msgauth v0.7.0
-	github.com/emersion/go-smtp v0.24.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/mmcdole/gofeed v1.3.0
-	github.com/yno9/go-jmapserver v0.1.1-replace
+	github.com/yno9/go-jmapserver v0.1.3
 	golang.org/x/crypto v0.53.0
-	golang.org/x/net v0.55.0
 )
 
 require (
@@ -26,11 +23,10 @@ require (
 	github.com/mmcdole/goxpp v1.1.1-0.20240225020742-a0c311522b23 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.4.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/protobuf v1.28.0 // indirect
 )
-
-replace github.com/yno9/go-jmapserver => /Users/n/go-jmapserver
