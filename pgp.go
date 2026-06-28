@@ -465,6 +465,7 @@ func EncryptBodyForPeer(r *Relay, toEmail, body string) string {
 		return body // already encrypted
 	}
 	peerKey, err := fetchPeerKey(r, toEmail)
+	log.Printf("[pgp] fetchPeerKey(%s): key=%v err=%v", toEmail, peerKey != nil, err)
 	if err != nil || peerKey == nil {
 		return body
 	}

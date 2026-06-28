@@ -1,5 +1,5 @@
 {
-  "name": "biset-claude",
+  "name": "biset-jmapclaude",
   "version": "0.1.0",
   "description": "Claude conversation history connector",
   "capabilities": ["fetch", "send", "watch"],

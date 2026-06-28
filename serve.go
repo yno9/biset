@@ -33,7 +33,7 @@ func startJMAPServer(ctx context.Context, cfg *vault.Config, store *jmapserver.S
 
 	uiPath := resolveUI(cfg.Server.Interface, cfg.Vault)
 
-	handler := &jmapHandler{accountID: jmap.ID(accountID), store: store, mgr: mgr}
+	handler := &jmapHandler{accountID: jmap.ID(accountID), store: store, mgr: mgr, vaultDir: cfg.Vault}
 	jmapCfg := jmapserver.Config{
 		ListenAddr: fmt.Sprintf("%s:%d", bind, port),
 		Password:   srv.Password,

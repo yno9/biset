@@ -72,11 +72,11 @@ func (h *handler) Handle(method string, args json.RawMessage) (any, error) {
 	case "Thread/get":
 		return h.store.HandleThreadGet(jmap.ID(cfg.InboxKey), args)
 	case "Mailbox/get":
-		return h.mailboxGet()
+		return h.store.HandleMailboxGet(jmap.ID(cfg.InboxKey), args)
 	case "Mailbox/changes":
 		return h.store.HandleMailboxChanges(jmap.ID(cfg.InboxKey), args)
 	case "Identity/get":
-		return h.store.HandleIdentityGet(jmap.ID(cfg.InboxKey))
+		return h.identityGet()
 	case "Identity/changes":
 		return h.store.HandleIdentityChanges(jmap.ID(cfg.InboxKey), args)
 	case "Thread/changes":
@@ -171,13 +171,52 @@ func (h *handler) emailQuery(args json.RawMessage) (any, error) {
 
 // ── Mailbox/get ───────────────────────────────────────────────────────────────
 
-func (h *handler) mailboxGet() (any, error) {
+// identityGet returns one Identity per project mailbox so biset-ui can pick
+// the right display name (cfg.UserName) for the current conversation context.
+// Without this, the default identity has name == accountID ("claude") and the
+// UI's pending-message sender differs from the relay-rendered name.
+func (h *handler) identityGet() (any, error) {
+	list := make([]map[string]any, 0, len(cfg.ProjectDirs))
+	seen := map[string]bool{}
+	for _, dir := range cfg.ProjectDirs {
+		name := stripProjectPrefix(filepath.Base(dir))
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		list = append(list, map[string]any{
+			"id":            "identity-" + name,
+			"name":          cfg.UserName,
+			"email":         name,
+			"replyTo":       nil,
+			"bcc":           nil,
+			"textSignature": "",
+			"htmlSignature": "",
+			"mayDelete":     false,
+		})
+	}
 	return map[string]any{
 		"accountId": jmap.ID(cfg.InboxKey),
 		"state":     "0",
-		"list":      []vault.Inbox{vault.DefaultInbox(cfg.InboxKey)},
+		"list":      list,
 		"notFound":  []string{},
 	}, nil
+}
+
+// projectMailboxes builds the authoritative mailbox list from cfg.ProjectDirs.
+// One mailbox per project; mailbox name == project name == inboxKey.
+func projectMailboxes() []vault.Inbox {
+	list := make([]vault.Inbox, 0, len(cfg.ProjectDirs))
+	seen := map[string]bool{}
+	for _, dir := range cfg.ProjectDirs {
+		name := stripProjectPrefix(filepath.Base(dir))
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		list = append(list, vault.DefaultInbox(name))
+	}
+	return list
 }
 
 // ── Email/set ─────────────────────────────────────────────────────────────────
@@ -263,7 +302,9 @@ func (h *handler) emailSubmissionSet(args json.RawMessage) (any, error) {
 			inReplyTo = msg.InReplyTo[0]
 		}
 
-		if err := sendClaude(body, inReplyTo); err != nil {
+		projectName := projectFromMailboxIDs(msg.MailboxIDs)
+
+		if err := sendClaude(body, inReplyTo, projectName); err != nil {
 			notCreated[key] = errObj("serverFail", err.Error())
 			continue
 		}
@@ -290,30 +331,113 @@ func (h *handler) emailSubmissionSet(args json.RawMessage) (any, error) {
 
 // ── send ──────────────────────────────────────────────────────────────────────
 
-func sendClaude(body, inReplyTo string) error {
-	sessionID := strings.Trim(inReplyTo, "<>")
-	sessionID = strings.TrimSuffix(sessionID, "@claude")
-	if sessionID == "" {
-		return fmt.Errorf("cannot determine session ID from inReplyTo=%q", inReplyTo)
-	}
+func sendClaude(body, inReplyTo, projectName string) error {
+	ref := strings.Trim(inReplyTo, "<>")
+	ref = strings.TrimSuffix(ref, "@claude")
 
-	var cwd string
-	for _, dir := range cfg.ProjectDirs {
-		if _, err := os.Stat(filepath.Join(dir, sessionID+".jsonl")); err == nil {
-			cwd = decodeCwd(dir)
-			break
+	// `ref` may be either a session-file ID (the JSONL filename without
+	// extension — happens when the parent message had no MessageID and we
+	// fell back to setting inReplyTo from sessionRef) or an entry UUID (the
+	// uuid field on an individual JSONL line, used as RFC Message-Id since
+	// the per-project-mailbox refactor). Try direct session-file match first;
+	// fall back to walking JSONLs for an entry whose uuid == ref.
+	sessionID := ""
+	sessionDir := ""
+	if ref != "" {
+		for _, dir := range cfg.ProjectDirs {
+			if _, err := os.Stat(filepath.Join(dir, ref+".jsonl")); err == nil {
+				sessionID = ref
+				sessionDir = dir
+				break
+			}
+		}
+		if sessionID == "" {
+			sessionID, sessionDir = findSessionByEntryUUID(ref)
 		}
 	}
 
-	cmd := exec.Command("claude", "--resume", sessionID, "--print", body)
+	cwd := projectCwd(projectName)
+	if cwd == "" && sessionDir != "" {
+		cwd = decodeCwd(sessionDir)
+	}
+
+	var cmd *exec.Cmd
+	if sessionID == "" {
+		cmd = exec.Command("claude", "--print", body)
+	} else {
+		cmd = exec.Command("claude", "--resume", sessionID, "--print", body)
+	}
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
+
+	log.Printf("[send] project=%q session=%q cwd=%q", projectName, sessionID, cwd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("claude send failed: %w\noutput: %s", err, string(out))
 	}
 	return nil
+}
+
+// findSessionByEntryUUID scans all project_dirs' JSONL files for a line whose
+// `uuid` field matches the given value. Returns (sessionID, dirPath) of the
+// containing session file, or ("", "") if not found.
+func findSessionByEntryUUID(uuid string) (string, string) {
+	for _, dir := range cfg.ProjectDirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, ent := range entries {
+			if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".jsonl") {
+				continue
+			}
+			path := filepath.Join(dir, ent.Name())
+			f, err := os.Open(path)
+			if err != nil {
+				continue
+			}
+			sc := bufio.NewScanner(f)
+			sc.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
+			found := false
+			for sc.Scan() {
+				var e struct {
+					UUID string `json:"uuid"`
+				}
+				if json.Unmarshal(sc.Bytes(), &e) == nil && e.UUID == uuid {
+					found = true
+					break
+				}
+			}
+			f.Close()
+			if found {
+				return strings.TrimSuffix(ent.Name(), ".jsonl"), dir
+			}
+		}
+	}
+	return "", ""
+}
+
+func projectFromMailboxIDs(mailboxIDs map[jmap.ID]bool) string {
+	for mbxID := range mailboxIDs {
+		key := vault.InboxKeyFromMailboxID(string(mbxID))
+		if key != "" && key != cfg.InboxKey {
+			return key
+		}
+	}
+	return ""
+}
+
+func projectCwd(projectName string) string {
+	if projectName == "" {
+		return ""
+	}
+	for _, dir := range cfg.ProjectDirs {
+		if stripProjectPrefix(filepath.Base(dir)) == projectName {
+			return decodeCwd(dir)
+		}
+	}
+	return ""
 }
 
 // ── watch ─────────────────────────────────────────────────────────────────────
@@ -357,6 +481,7 @@ type claudeEntry struct {
 	IsSidechain bool   `json:"isSidechain"`
 	AITitle     string `json:"aiTitle"`
 	Timestamp   string `json:"timestamp"`
+	UUID        string `json:"uuid"`
 	Message     struct {
 		Role    string          `json:"role"`
 		Model   string          `json:"model"`
@@ -402,7 +527,7 @@ func parseJSONL(path, projectName, rootSessionID, fallbackTitle string) []vault.
 
 	sessionRef := fmt.Sprintf("<%s@claude>", rootSessionID)
 
-	mailboxID := vault.MakeMailboxID(cfg.InboxKey)
+	mailboxID := vault.MakeMailboxID(projectName)
 	userAddr := cfg.UserName
 	if userAddr == "" {
 		userAddr = cfg.InboxKey
@@ -445,17 +570,20 @@ func parseJSONL(path, projectName, rootSessionID, fallbackTitle string) []vault.
 		}
 
 		var from vault.Address
+		var to vault.Address
 		if e.Type == "assistant" {
 			model := e.Message.Model
 			if model == "" {
 				model = "claude"
 			}
-			from = vault.Address{Email: projectName, Name: model}
+			from = vault.Address{Email: "claude", Name: model}
+			to = vault.Address{Email: projectName, Name: userAddr}
 		} else {
-			from = vault.Address{Email: cfg.InboxKey, Name: userAddr}
+			from = vault.Address{Email: projectName, Name: userAddr}
+			to = vault.Address{Email: "claude", Name: "claude"}
 		}
 
-		eID := vault.MakeMessageID("", cfg.InboxKey, t)
+		eID := vault.MakeMessageID("", projectName, t)
 		threadID := vault.MakeThreadID(sessionRef)
 
 		email := vault.NewTextMessage(
@@ -463,13 +591,20 @@ func parseJSONL(path, projectName, rootSessionID, fallbackTitle string) []vault.
 			threadID,
 			mailboxID,
 			[]*vault.Address{&from},
-			[]*vault.Address{{Email: projectName}},
+			[]*vault.Address{&to},
 			nil,
 			aiTitle,
 			body,
 			t,
 			sessionRef,
 		)
+		// Set RFC 5322 Message-Id from the JSONL entry UUID so user replies
+		// (whose inReplyTo references this id) can be threaded by Store.Put's
+		// resolveThreadID. Without this, claude messages have nil messageId and
+		// every reply starts a new thread.
+		if e.UUID != "" {
+			email.MessageID = []string{fmt.Sprintf("<%s@claude>", e.UUID)}
+		}
 		emails = append(emails, email)
 	}
 
@@ -660,6 +795,10 @@ func main() {
 	}
 	if b, err := os.ReadFile(h.statePath); err == nil {
 		json.Unmarshal(b, &h.state) //nolint:errcheck
+	}
+
+	if err := store.SyncMailboxes(projectMailboxes()); err != nil {
+		log.Printf("[mailbox] sync: %v", err)
 	}
 
 	hub := jmapserver.NewHub()

@@ -33,7 +33,18 @@ External protocols (IMAP, SMTP, ActivityPub, RSS, Claude API, …)
 
 ### Relay routing
 
-biset routes sends and actions by **inboxKey** (JMAP account ID). At startup biset reads `accounts` from each relay's session endpoint. `RelayForAccount(inboxKey)` finds the relay that owns a given account. MD files live under `vault/<inboxKey>/`.
+biset routes sends and actions by **inboxKey** — a stable string identifier extracted from `mailboxId` via `vault.InboxKeyFromMailboxID` (`mbx-foo` → `foo`). One relay can serve many inboxKeys (one per mailbox it publishes).
+
+`mgr.inboxKeyRelay[inboxKey]` is populated from each relay's `Mailbox/get` response during sync. `RelayForInboxKey(inboxKey)` does a primary lookup there; the fallback `RelayForAccount(inboxKey)` matches inboxKey against JMAP session account IDs for relays whose mailboxes haven't been fetched yet.
+
+**inboxKey vs JMAP account**: distinct concepts. A JMAP account is an authentication identity; a mailbox is a routing container. One JMAP account can hold many mailboxes (Gmail-style: 1 account, N folders), each of which is a separate inboxKey in biset.
+
+- `imapsmtp-client`: N accounts (real email identities), 1 mailbox per account → inboxKey = account email
+- `rss-client`: 1 account, 1 mailbox, threads per feed → inboxKey = relay name
+- `jmapclaude`: 1 account, N mailboxes (one per project context) → inboxKey = project name
+- `ap-host`: typically 1 account per actor
+
+MD files live under `vault/<inboxKey>/`, one directory per mailbox.
 
 ### Multi-account relays
 
@@ -85,7 +96,7 @@ biset/
 │   ├── smtp-host/         — SMTP receive + SMTP send (direct MX / relay)
 │   ├── ap-host/           — ActivityPub server
 │   ├── rss-client/        — RSS/Atom feed reader
-│   └── claude-client/     — Claude API conversation reader
+│   └── jmapclaude/     — Claude API conversation reader
 ├── interfaces/
 │   └── cli.go         — RunStatus, PingRelay, RelayAccountInfo
 ├── actions.go         — Human intent: FlushOutgoing, FlushActions
@@ -281,9 +292,11 @@ Polls RSS/Atom feeds via `gofeed`. All items from one feed share a single thread
 
 State: `state.json` — `{feedURL → {seen_guids}}`.
 
-### claude-client
+### jmapclaude
 
 Reads Claude Code conversation `.jsonl` files from configured project dirs. Presents sessions as email threads.
+
+**Per-project mailbox**: one mailbox per `project_dir` entry (inboxKey = stripped project name, e.g. `dev`, `biset`). Single JMAP account (`cfg.InboxKey`, defaults to `claude`) holds all mailboxes. Sends are routed by mailboxId; `EmailSubmission/set` extracts the project from `mailboxIds` and invokes `claude` in the matching project's cwd.
 
 | Method | Action |
 |---|---|
@@ -418,7 +431,7 @@ go-jmapserver が持たない `Email/set` と `EmailSubmission/set` は各 relay
 | smtp-host | create → pending | SMTP 送信（direct MX or relay host）+ DKIM + Autocrypt |
 | ap-host | AP 投稿・follow・unfollow | AP 送信 |
 | rss-client | create → `To[0].Email` を feed URL として `state.json` に登録 | no-op |
-| claude-client | update → PatchKeywords | no-op |
+| jmapclaude | update → PatchKeywords | no-op |
 | biset server | create → vault MD 生成 + store.Put / update → PatchKeywords / destroy → store.Delete | — |
 
 ---
@@ -543,7 +556,7 @@ Human edits _new.md (status: send)
 | smtp-host | `~/.biset/relays/smtp-host/config.json` | — |
 | ap-host | `~/.biset/relays/ap-host/config.json` | `data/` store files |
 | rss-client | `~/.biset/relays/rss-client/config.json` | `state.json` — seen GUIDs per feed |
-| claude-client | `~/.biset/relays/claude-client/config.json` | `state.json` — last mtime per project dir |
+| jmapclaude | `~/.biset/relays/jmapclaude/config.json` | `state.json` — last mtime per project dir |
 
 ---
 
@@ -568,7 +581,7 @@ Human edits _new.md (status: send)
 - **`HandleEmailQuery`** — supports `filter.inMailbox`, `position`, `limit`.
 - **`HandleThreadGet`** — email IDs sorted by `ReceivedAt` ascending.
 - **`smtp-host`** relay — new: SMTP receive + direct MX send, DKIM, Autocrypt.
-- **`claude-client`** relay — new: Claude Code `.jsonl` session reader.
+- **`jmapclaude`** relay — new: Claude Code `.jsonl` session reader.
 - **`rss-client`** relay — new: RSS/Atom feed reader with per-feed thread grouping.
 - **Deleted**: `relays/core/`, `relays/imap/`, `relays/smtp/`, `relays/claude/`.
 - **`AssignThreadIDs`** removed from `sync.go`; Store.Put handles thread ID resolution via `InReplyTo` chain.

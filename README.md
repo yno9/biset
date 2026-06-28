@@ -208,7 +208,7 @@ Set `status:` in frontmatter to trigger an action on next sync:
 | [go-jmapsmtp](https://github.com/yno9/go-jmapsmtp) | SMTP | Self-hosted SMTP receive + send |
 | imapsmtp-client | IMAP, SMTP | Email via IMAP/SMTP |
 | ap-host | ActivityPub | Fediverse (Mastodon-compatible) |
-| claude-client | Claude API | AI assistant as inbox |
+| jmapclaude | Claude CLI | AI assistant as inbox (per-project mailbox) |
 | rss-client | RSS/Atom | Feed subscriptions as inbox |
 
 Each relay is an independent JMAP HTTP server. It owns its config and state, handles reconnection, and exposes an SSE endpoint so biset gets push notifications on new data.

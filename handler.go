@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"biset/vault"
@@ -19,6 +20,7 @@ type jmapHandler struct {
 	accountID jmap.ID
 	store     *jmapserver.Store
 	mgr       *Manager
+	vaultDir  string
 }
 
 func (s *jmapHandler) Capabilities() []jmap.URI {
@@ -38,9 +40,30 @@ func (s *jmapHandler) Handle(method string, args json.RawMessage) (any, error) {
 		return s.serveEmailSet(args)
 	case "EmailSubmission/set":
 		return s.serveEmailSubmissionSet(args)
+	case "Identity/get":
+		return s.serveIdentityGet()
 	default:
 		return s.store.Dispatch(s.accountID, method, args)
 	}
+}
+
+// serveIdentityGet returns the aggregated Identity list synced from all
+// relays (stored at <vault>/.data/identities.json by sync.go). Without this,
+// the gateway would fall back to go-jmapserver's defaultIdentity, which only
+// exposes one synthetic identity named after the accountID — losing per-
+// mailbox sender names (e.g. claude relay's per-project user_name).
+func (s *jmapHandler) serveIdentityGet() (any, error) {
+	ids := vault.GetIdentities(s.vaultDir)
+	list := make([]any, 0, len(ids))
+	for _, id := range ids {
+		list = append(list, id)
+	}
+	return map[string]any{
+		"accountId": s.accountID,
+		"state":     "0",
+		"list":      list,
+		"notFound":  []jmap.ID{},
+	}, nil
 }
 
 // UploadBlob and DownloadBlob implement jmapserver.BlobHandler.
@@ -74,10 +97,28 @@ func (s *jmapHandler) serveEmailSet(args json.RawMessage) (any, error) {
 		}
 		now := time.Now().UTC()
 		msg.ReceivedAt = &now
-		if msg.ID == "" {
-			msg.ID = jmap.ID(fmt.Sprintf("msg-draft-%d", now.UnixMilli()))
+
+		// biset core acts as the MUA: it generates the RFC 5322 Message-Id
+		// here so the relay's SMTP layer doesn't have to invent one. The
+		// recipient sees this Message-Id; their reply's In-Reply-To then
+		// resolves to the persisted copy below, giving deterministic
+		// threading even before the IMAP Sent-folder fetch round-trips.
+		inboxKey := inboxKeyFromMailboxIDs(msg.MailboxIDs)
+		if len(msg.MessageID) == 0 || msg.MessageID[0] == "" {
+			msg.MessageID = []string{vault.NewRFCMessageID(inboxKey)}
 		}
-		s.store.PutPending(msg)
+		// Use the Message-Id as the JMAP store key so an IMAP-Sent-folder
+		// re-fetch of the same RFC 5322 message overwrites this row instead
+		// of creating a duplicate. (vault.MakeMessageID does the conversion.)
+		msg.ID = jmap.ID(vault.MakeMessageID(msg.MessageID[0], inboxKey, now))
+
+		// Persist immediately (not PutPending) so the outgoing message is
+		// part of the store before its first reply can arrive. Store.Put
+		// resolves ThreadID from InReplyTo when not set.
+		if err := s.store.Put(msg); err != nil {
+			notCreated[createID] = errObj("serverFail", err.Error())
+			continue
+		}
 		created[createID] = map[string]any{"id": msg.ID, "receivedAt": now.Format(time.RFC3339Nano)}
 	}
 
@@ -137,9 +178,12 @@ func (s *jmapHandler) serveEmailSubmissionSet(args json.RawMessage) (any, error)
 	notCreated := map[jmap.ID]any{}
 
 	for key, sub := range req.Create {
-		msg, ok := s.store.TakePending(sub.EmailID)
+		msg, ok := s.store.Get(sub.EmailID)
 		if !ok {
-			msg, ok = s.store.Get(sub.EmailID)
+			// Legacy path: drafts created before the Message-Id rewrite are
+			// still in PutPending; drain them so existing in-flight sends
+			// don't fail across the upgrade.
+			msg, ok = s.store.TakePending(sub.EmailID)
 		}
 		if !ok {
 			notCreated[key] = errObj("notFound", fmt.Sprintf("email %q not found", sub.EmailID))
@@ -153,10 +197,24 @@ func (s *jmapHandler) serveEmailSubmissionSet(args json.RawMessage) (any, error)
 		}
 
 		env := envelopeFrom(msg, sub.Envelope)
-		sentAt, err := relay.Send(msg, env)
+		// Deep-copy before relay.Send so its in-flight PGP encryption can't
+		// mutate the store's in-memory BodyValues map (Go map reference
+		// semantics meant the encrypted ciphertext leaked back into the
+		// persisted draft, surfacing as "encrypted message" in biset-ui).
+		sendMsg := cloneMessage(msg)
+		sentAt, err := relay.Send(sendMsg, env)
 		if err != nil {
 			notCreated[key] = errObj("serverFail", err.Error())
 			continue
+		}
+		// If Relay.Send encrypted the body (peer pubkey was available),
+		// record that on the persisted draft so biset-ui shows the lock icon.
+		if strings.Contains(vault.MessageBody(sendMsg), "-----BEGIN PGP MESSAGE-----") {
+			if msg.Keywords == nil {
+				msg.Keywords = map[string]bool{}
+			}
+			msg.Keywords["$e2e"] = true
+			s.store.Put(msg) //nolint:errcheck
 		}
 		if sentAt.IsZero() {
 			sentAt = time.Now().UTC()
@@ -234,6 +292,32 @@ func (s *jmapHandler) propagateDestroy(msgID string) {
 
 func errObj(typ, desc string) map[string]string {
 	return map[string]string{"type": typ, "description": desc}
+}
+
+// cloneMessage returns a deep copy of m sufficient to isolate downstream
+// mutations to map/slice fields that we share with the in-memory store.
+func cloneMessage(m vault.Message) vault.Message {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return m
+	}
+	var out vault.Message
+	if err := json.Unmarshal(b, &out); err != nil {
+		return m
+	}
+	return out
+}
+
+// inboxKeyFromMailboxIDs picks one inboxKey from a draft's mailboxIds. Used
+// at draft-create time to seed RFC Message-Id with the right id-right host
+// ("non.md" for test@non.md, "localhost" for non-email inboxKeys).
+func inboxKeyFromMailboxIDs(mailboxIDs map[jmap.ID]bool) string {
+	for mbxID := range mailboxIDs {
+		if k := vault.InboxKeyFromMailboxID(string(mbxID)); k != "" {
+			return k
+		}
+	}
+	return ""
 }
 
 func envelopeFrom(msg vault.Message, env *vault.Envelope) vault.Envelope {
