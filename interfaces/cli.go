@@ -167,27 +167,18 @@ func PingRelay(n vault.RelayConfig) ([]RelayAccountInfo, error) {
 	return out, nil
 }
 
-// RunServerSet directly sets the JMAP server enabled state without interaction.
-func RunServerSet(configPath string, enabled bool) {
-	cfg, err := vault.LoadConfig(configPath)
-	if err != nil {
-		log.Fatalf("config: %v", err)
-	}
-	if cfg.Server.Port == 0 || cfg.Server.Bind == "" {
-		fmt.Fprintln(os.Stderr, "server: port and bind must be set in config")
-		os.Exit(1)
-	}
-	if enabled == cfg.Server.Serve {
-		fmt.Println("No changes.")
-		return
-	}
+// writeServerServeFlag updates `server.serve` in configPath to enabled. The
+// rest of the file is preserved verbatim (other server keys, indentation
+// noise, etc.) by going through the raw JSON map rather than re-marshaling
+// the typed Config.
+func writeServerServeFlag(configPath string, enabled bool) error {
 	b, err := os.ReadFile(configPath)
 	if err != nil {
-		log.Fatalf("read config: %v", err)
+		return err
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(b, &raw); err != nil {
-		log.Fatalf("parse config: %v", err)
+		return err
 	}
 	var rawServer map[string]json.RawMessage
 	if err := json.Unmarshal(raw["server"], &rawServer); err != nil {
@@ -197,7 +188,32 @@ func RunServerSet(configPath string, enabled bool) {
 	rawServer["serve"] = val
 	raw["server"], _ = json.Marshal(rawServer)
 	out, _ := json.MarshalIndent(raw, "", "  ")
-	if err := os.WriteFile(configPath, out, 0644); err != nil {
+	return os.WriteFile(configPath, out, 0644)
+}
+
+// loadServerCfg reads configPath, ensures the JMAP server block is
+// well-formed enough to act on, and returns the parsed Config. Exits on any
+// config / preconditions failure.
+func loadServerCfg(configPath string) *vault.Config {
+	cfg, err := vault.LoadConfig(configPath)
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	if cfg.Server.Port == 0 || cfg.Server.Bind == "" {
+		fmt.Fprintln(os.Stderr, "server: port and bind must be set in config")
+		os.Exit(1)
+	}
+	return cfg
+}
+
+// RunServerSet directly sets the JMAP server enabled state without interaction.
+func RunServerSet(configPath string, enabled bool) {
+	cfg := loadServerCfg(configPath)
+	if enabled == cfg.Server.Serve {
+		fmt.Println("No changes.")
+		return
+	}
+	if err := writeServerServeFlag(configPath, enabled); err != nil {
 		log.Fatalf("write config: %v", err)
 	}
 	if enabled {
@@ -209,15 +225,7 @@ func RunServerSet(configPath string, enabled bool) {
 
 // RunServerToggle provides an interactive CLI to toggle the JMAP server on/off.
 func RunServerToggle(configPath string) {
-	cfg, err := vault.LoadConfig(configPath)
-	if err != nil {
-		log.Fatalf("config: %v", err)
-	}
-	if cfg.Server.Port == 0 || cfg.Server.Bind == "" {
-		fmt.Fprintln(os.Stderr, "server: port and bind must be set in config")
-		os.Exit(1)
-	}
-
+	cfg := loadServerCfg(configPath)
 	current := "2"
 	if cfg.Server.Serve {
 		current = "1"
@@ -240,24 +248,7 @@ func RunServerToggle(configPath string) {
 		fmt.Println("No changes.")
 		return
 	}
-
-	b, err := os.ReadFile(configPath)
-	if err != nil {
-		log.Fatalf("read config: %v", err)
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(b, &raw); err != nil {
-		log.Fatalf("parse config: %v", err)
-	}
-	var rawServer map[string]json.RawMessage
-	if err := json.Unmarshal(raw["server"], &rawServer); err != nil {
-		rawServer = map[string]json.RawMessage{}
-	}
-	val, _ := json.Marshal(enabled)
-	rawServer["serve"] = val
-	raw["server"], _ = json.Marshal(rawServer)
-	out, _ := json.MarshalIndent(raw, "", "  ")
-	if err := os.WriteFile(configPath, out, 0644); err != nil {
+	if err := writeServerServeFlag(configPath, enabled); err != nil {
 		log.Fatalf("write config: %v", err)
 	}
 	fmt.Println("Saved.")

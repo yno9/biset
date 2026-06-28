@@ -297,14 +297,6 @@ func replaceMessageBody(m *Message, body string) {
 	m.BodyValues[pid] = &BodyValue{Value: body}
 }
 
-// stripMIMEHeaders mirrors biset-ui parseMIME: if the decrypted content starts
-// with RFC 822 headers (Protected Headers), strip them and decode the body's
-// Content-Transfer-Encoding.
-func stripMIMEHeaders(text string) string {
-	body, _ := stripMIMEHeadersAndExtract(text)
-	return body
-}
-
 // stripMIMEHeadersAndExtract returns the decoded body plus the In-Reply-To
 // value from inner Protected Headers (empty string if none).
 func stripMIMEHeadersAndExtract(text string) (body, inReplyTo string) {

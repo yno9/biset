@@ -42,6 +42,18 @@ func MailboxNameFromID(mailboxID string) string {
 	return strings.ReplaceAll(strings.TrimPrefix(mailboxID, "mbx-"), "~", "/")
 }
 
+// MailboxNameFromIDs picks one mailbox name from a message's mailboxIds map.
+// Used at draft-create time to seed an RFC Message-Id with the right
+// id-right host ("non.md" for test@non.md, "localhost" for non-email keys).
+func MailboxNameFromIDs(mailboxIDs map[ID]bool) string {
+	for mbxID := range mailboxIDs {
+		if k := MailboxNameFromID(string(mbxID)); k != "" {
+			return k
+		}
+	}
+	return ""
+}
+
 func MakeThreadID(rootMessageID string) string {
 	id := strings.Trim(rootMessageID, "<>")
 	if id == "" {

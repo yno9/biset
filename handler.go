@@ -103,7 +103,7 @@ func (s *jmapHandler) serveEmailSet(args json.RawMessage) (any, error) {
 		// recipient sees this Message-Id; their reply's In-Reply-To then
 		// resolves to the persisted copy below, giving deterministic
 		// threading even before the IMAP Sent-folder fetch round-trips.
-		mailboxName := mailboxNameFromMailboxIDs(msg.MailboxIDs)
+		mailboxName := vault.MailboxNameFromIDs(msg.MailboxIDs)
 		if len(msg.MessageID) == 0 || msg.MessageID[0] == "" {
 			msg.MessageID = []string{vault.NewRFCMessageID(mailboxName)}
 		}
@@ -306,18 +306,6 @@ func cloneMessage(m vault.Message) vault.Message {
 		return m
 	}
 	return out
-}
-
-// mailboxNameFromMailboxIDs picks one mailboxName from a draft's mailboxIds. Used
-// at draft-create time to seed RFC Message-Id with the right id-right host
-// ("non.md" for test@non.md, "localhost" for non-email mailboxNames).
-func mailboxNameFromMailboxIDs(mailboxIDs map[jmap.ID]bool) string {
-	for mbxID := range mailboxIDs {
-		if k := vault.MailboxNameFromID(string(mbxID)); k != "" {
-			return k
-		}
-	}
-	return ""
 }
 
 func envelopeFrom(msg vault.Message, env *vault.Envelope) vault.Envelope {

@@ -6,8 +6,36 @@ import (
 	"path/filepath"
 	"strings"
 
+	jmap "git.sr.ht/~rockorager/go-jmap"
 	"biset/vault"
 )
+
+// writeSyncLog formats one line per message ("ts from → to") and appends the
+// batch to vault/log.md via writeBisetLog. Skips when messages is empty.
+func writeSyncLog(vaultDir, mailboxName string, messages []vault.Message) {
+	if len(messages) == 0 {
+		return
+	}
+	var lines []string
+	mbxID := jmap.ID(vault.MakeMailboxID(mailboxName))
+	for _, m := range messages {
+		ts := vault.TimeVal(m.ReceivedAt).Local().Format("2006-01-02 15:04")
+		from := vault.MessageFromAddr(m)
+		if name := vault.MessageFromName(m); name != "" {
+			from = name
+		}
+		var to string
+		if m.MailboxIDs[mbxID] && !strings.EqualFold(vault.MessageFromAddr(m), mailboxName) {
+			to = mailboxName
+		} else if len(m.To) > 0 && m.To[0] != nil {
+			to = m.To[0].Email
+		} else {
+			to = "?"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s → %s", ts, from, to))
+	}
+	writeBisetLog(vaultDir, mailboxName, lines)
+}
 
 type logConfig struct {
 	Enabled  bool
