@@ -33,18 +33,18 @@ External protocols (IMAP, SMTP, ActivityPub, RSS, Claude API, …)
 
 ### Relay routing
 
-biset routes sends and actions by **inboxKey** — a stable string identifier extracted from `mailboxId` via `vault.InboxKeyFromMailboxID` (`mbx-foo` → `foo`). One relay can serve many inboxKeys (one per mailbox it publishes).
+biset routes sends and actions by **mailboxName** — a stable string identifier extracted from `mailboxId` via `vault.MailboxNameFromID` (`mbx-foo` → `foo`). One relay can serve many mailboxNames (one per mailbox it publishes).
 
-`mgr.inboxKeyRelay[inboxKey]` is populated from each relay's `Mailbox/get` response during sync. `RelayForInboxKey(inboxKey)` does a primary lookup there; the fallback `RelayForAccount(inboxKey)` matches inboxKey against JMAP session account IDs for relays whose mailboxes haven't been fetched yet.
+`mgr.mailboxRelay[mailboxName]` is populated from each relay's `Mailbox/get` response during sync. `RelayForMailbox(mailboxName)` does a primary lookup there; the fallback `RelayForAccount(mailboxName)` matches mailboxName against JMAP session account IDs for relays whose mailboxes haven't been fetched yet.
 
-**inboxKey vs JMAP account**: distinct concepts. A JMAP account is an authentication identity; a mailbox is a routing container. One JMAP account can hold many mailboxes (Gmail-style: 1 account, N folders), each of which is a separate inboxKey in biset.
+**mailboxName vs JMAP account**: distinct concepts. A JMAP account is an authentication identity; a mailbox is a routing container. One JMAP account can hold many mailboxes (Gmail-style: 1 account, N folders), each of which is a separate mailboxName in biset.
 
-- `imapsmtp-client`: N accounts (real email identities), 1 mailbox per account → inboxKey = account email
-- `rss-client`: 1 account, 1 mailbox, threads per feed → inboxKey = relay name
-- `jmapclaude`: 1 account, N mailboxes (one per project context) → inboxKey = project name
+- `imapsmtp-client`: N accounts (real email identities), 1 mailbox per account → mailboxName = account email
+- `rss-client`: 1 account, 1 mailbox, threads per feed → mailboxName = relay name
+- `jmapclaude`: 1 account, N mailboxes (one per project context) → mailboxName = project name
 - `ap-host`: typically 1 account per actor
 
-MD files live under `vault/<inboxKey>/`, one directory per mailbox.
+MD files live under `vault/<mailboxName>/`, one directory per mailbox.
 
 ### Multi-account relays
 
@@ -118,37 +118,37 @@ biset/
 
 ### `config.go`
 Config types and JMAP type aliases. No logic beyond `LoadConfig`.
-- `Config`: `Vault`, `Relays`, `Notification`, `Server`, `Inboxes`
+- `Config`: `Vault`, `Relays`, `Notification`, `Server`, `Mailboxes`
 - `RelayConfig`: `RelayName`, `URL`, `Local`, `Password`, `Accounts` (multi-account relays use `Accounts: map[email]AccountConfig` instead of relay-level `Password`)
 - `AccountConfig`: `Password` (user's plaintext login password; biset derives auth_token and enc_password from it)
 - `ServerConfig`: `Port`, `Bind`, `RelayName`, `Password`, `Interface`
-- `InboxConfig`: `MaxDisplay`, `Format` — per-inbox render config; `cfg.InboxConfigFor(key, cfg)` returns zero value if absent
-- `FetchResult`: `Messages`, `Threads`, `Inboxes`, `QueryState`, `EmailState`, `MailboxState`
+- `MailboxConfig`: `MaxDisplay`, `Format` — per-inbox render config; `cfg.MailboxConfigFor(key, cfg)` returns zero value if absent
+- `FetchResult`: `Messages`, `Threads`, `Mailboxes`, `QueryState`, `EmailState`, `MailboxState`
 - `PendingSubmission`: queued outgoing send
-- Type aliases: `Message` (email.Email), `Inbox` (mailbox.Mailbox), `Thread`, `Address`, `Envelope`, `Identity`
+- Type aliases: `Message` (email.Email), `Mailbox` (mailbox.Mailbox), `Thread`, `Address`, `Envelope`, `Identity`
 
 ### `message.go`
 Pure functions on Message values. No I/O.
-- **ID generation**: `MakeMessageID`, `MakeThreadID`, `MakeMailboxID`, `InboxKeyFromMailboxID`
+- **ID generation**: `MakeMessageID`, `MakeThreadID`, `MakeMailboxID`, `MailboxNameFromID`
 - **Accessors**: `MessageFromAddr`, `MessageBody`, `MessageIsSeen`, `MessageHeaderID`, `MessageMailboxID`
 - **Thread grouping**: `GroupByThread`
-- **Helpers**: `DefaultInbox`, `NewTextMessage`, `SafeFilename`
+- **Helpers**: `DefaultMailbox`, `NewTextMessage`, `SafeFilename`
 
 ### `storage.go`
 All vault JSON I/O. Reads and writes `<vault>/.data/` only.
 - **Message**: `ReadMessage`, `WriteMessage`, `DeleteMessage`, `ScanMessages`
 - **Thread**: `ReadThread`, `WriteThread`, `DeleteThread`, `ScanThreads`, `ReadMessagesForThread`
-- **Mailbox**: `ReadInboxes`, `WriteInboxes`, `GetInboxes`
+- **Mailbox**: `ReadMailboxes`, `WriteMailboxes`, `GetMailboxes`
 - **Submissions**: `WriteSubmission`, `ScanSubmissions`, `DeleteSubmission`
 - **Identities**: `WriteIdentities`, `GetIdentities`
 
 ### `render.go`
 Markdown rendering and the canonical JSON→MD bridge.
-- `WriteThreadMD(vaultDir, inboxKey, messages, cfg)` — writes thread MD + backing JSON files
-- `RenderMissingMDs(vaultDir, inboxKey, cfg)` — renders MD for threads without an MD file (e.g. sent-only)
+- `WriteThreadMD(vaultDir, mailboxName, messages, cfg)` — writes thread MD + backing JSON files
+- `RenderMissingMDs(vaultDir, mailboxName, cfg)` — renders MD for threads without an MD file (e.g. sent-only)
 - `EnsureNewFile`, `NewFileContent` — `_new.md` compose file
 - `ParseFrontmatter`, `ExtractBody`, `ClearBody`, `InjectBody` — MD string parsing
-- Accepts `InboxConfig`; applies `MaxDisplay` and `Format` without knowing relay identity
+- Accepts `MailboxConfig`; applies `MaxDisplay` and `Format` without knowing relay identity
 
 ---
 
@@ -296,7 +296,7 @@ State: `state.json` — `{feedURL → {seen_guids}}`.
 
 Reads Claude Code conversation `.jsonl` files from configured project dirs. Presents sessions as email threads.
 
-**Per-project mailbox**: one mailbox per `project_dir` entry (inboxKey = stripped project name, e.g. `dev`, `biset`). Single JMAP account (`cfg.InboxKey`, defaults to `claude`) holds all mailboxes. Sends are routed by mailboxId; `EmailSubmission/set` extracts the project from `mailboxIds` and invokes `claude` in the matching project's cwd.
+**Per-project mailbox**: one mailbox per `project_dir` entry (mailboxName = stripped project name, e.g. `dev`, `biset`). Single JMAP account (`cfg.MailboxName`, defaults to `claude`) holds all mailboxes. Sends are routed by mailboxId; `EmailSubmission/set` extracts the project from `mailboxIds` and invokes `claude` in the matching project's cwd.
 
 | Method | Action |
 |---|---|
@@ -319,7 +319,7 @@ State: `state.json` — last seen mtime per project dir.
 JMAP relay client.
 - `Manager`: holds configured `Relay` connections; `Changed()` channel for SSE-triggered sync
 - `NewManager(cfg)` — expands multi-account `RelayConfig.Accounts` into per-account `Relay` instances (Basic auth: `email + deriveAuthToken(plaintext)`)
-- `RelayForAccount(inboxKey)` — finds relay owning the account
+- `RelayForAccount(mailboxName)` — finds relay owning the account
 - `Relay.Fetch(...)` — returns raw `FetchResult`; conversion to biset's view happens in `sync.go` via `ConvertRelayView`
 - `Relay.Send(msg, envelope)` — `Email/set` + `EmailSubmission/set`
 - `Relay.Handle(msgID, action)` — `Email/set` keyword update
@@ -478,7 +478,7 @@ status:
 message body
 ```
 
-**Simplified** (inboxKey ends with `/`, e.g. `rss/`):
+**Simplified** (mailboxName ends with `/`, e.g. `rss/`):
 
 ```markdown
 ---
@@ -544,7 +544,7 @@ Human edits _new.md (status: send)
 | `messages/{id}.json` | `store.Put`, `WriteThreadMD` | delete → re-fetched from relay on next sync |
 | `threads/{id}.json` | `WriteThreadMD` | delete → MD re-rendered on next sync |
 | `mailboxes.json` | `store.PutMailboxes` | overwritten each sync |
-| `state.json` | `vault.SaveState` | relay → inboxKey map; used by `CleanupOrphanedInboxes` |
+| `state.json` | `vault.SaveState` | relay → mailboxName map; used by `CleanupOrphanedInboxes` |
 | `delta.json` | store internal | state counter; delete → next sync falls back to full fetch |
 | `submissions/{id}.json` | `FlushOutgoing` → deleted by `dispatchSubmissions` | leftover = re-send on next sync |
 
@@ -590,8 +590,8 @@ Human edits _new.md (status: send)
 
 - **`relays/rss-client/`** — RSS/Atom feed reader relay.
 - **`status: follow`** — first-class human intent; `FlushActions` calls `Relay.Follow`.
-- **`InboxConfig`** — per-inbox `maxDisplay`/`format` in `config.json`; relay carries no render preferences.
-- **Simplified MD format** — inboxKeys ending with `/` use contact-only filename and minimal frontmatter.
+- **`MailboxConfig`** — per-inbox `maxDisplay`/`format` in `config.json`; relay carries no render preferences.
+- **Simplified MD format** — mailboxNames ending with `/` use contact-only filename and minimal frontmatter.
 
 ### v0.3.11
 
@@ -604,5 +604,5 @@ Human edits _new.md (status: send)
 - **Relay architecture** — relays as standalone JMAP HTTP servers.
 - **`relays/core/`** — shared Handler interface, Serve, Store.
 - **`relays/imapsmtp-client/`** — first JMAP-native relay.
-- **`RelayForAccount(inboxKey)`** — routing by JMAP session account ID.
+- **`RelayForAccount(mailboxName)`** — routing by JMAP session account ID.
 - **Two-phase send** — `FlushOutgoing` + `dispatchSubmissions`.

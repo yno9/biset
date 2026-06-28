@@ -63,13 +63,13 @@ func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []v
 	state := vault.LoadState(cfg.Vault)
 	var allMessages []vault.Message
 	var allThreads []vault.Thread
-	var allInboxes []vault.Inbox
+	var allInboxes []vault.Mailbox
 	var allIdentities []vault.Identity
 	var allRemovedIDs []jmap.ID
 	inboxSeen := map[string]bool{}
-	respondedRelays := map[string][]string{}       // relayURL → inboxKeys
-	inboxConfigs := map[string]vault.InboxConfig{} // inboxKey → InboxConfig
-	notifEnabled := map[string]bool{}              // inboxKey → notification enabled
+	respondedRelays := map[string][]string{}       // relayURL → mailboxNames
+	inboxConfigs := map[string]vault.MailboxConfig{} // mailboxName → MailboxConfig
+	notifEnabled := map[string]bool{}              // mailboxName → notification enabled
 	for _, c := range mgr.Relays() {
 		if !c.Has("fetch") {
 			continue
@@ -109,31 +109,31 @@ func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []v
 			store.Put(m) //nolint:errcheck
 		}
 		var keys []string
-		for _, ib := range result.Inboxes {
+		for _, ib := range result.Mailboxes {
 			if !inboxSeen[string(ib.ID)] {
 				inboxSeen[string(ib.ID)] = true
 				allInboxes = append(allInboxes, ib)
 			}
-			key := vault.InboxKeyFromMailboxID(string(ib.ID))
+			key := vault.MailboxNameFromID(string(ib.ID))
 			keys = append(keys, key)
-			inboxConfigs[key] = c.InboxConfigFor(key, cfg)
+			inboxConfigs[key] = c.MailboxConfigFor(key, cfg)
 			notifEnabled[key] = c.NotificationEnabled(key, cfg)
 		}
-		// Delta sync may return empty Inboxes when nothing changed.
+		// Delta sync may return empty Mailboxes when nothing changed.
 		// Fall back to state's known keys so CleanupOrphanedInboxes
 		// doesn't treat them as orphaned.
 		if len(keys) == 0 {
 			if rs := state.Relays[c.Name()]; rs != nil {
-				keys = rs.InboxKeys
+				keys = rs.MailboxNames
 				for _, key := range keys {
-					inboxConfigs[key] = c.InboxConfigFor(key, cfg)
+					inboxConfigs[key] = c.MailboxConfigFor(key, cfg)
 					notifEnabled[key] = c.NotificationEnabled(key, cfg)
 				}
 			}
 		}
 		respondedRelays[c.Name()] = keys
 		for _, key := range keys {
-			mgr.SetInboxRelay(key, c)
+			mgr.SetMailboxRelay(key, c)
 		}
 	}
 
@@ -148,15 +148,15 @@ func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []v
 	cutoff := time.Now().Add(-5 * time.Minute).UnixMilli()
 	var notifications []vault.SyncNotification
 	for _, m := range allMessages {
-		inboxKey := vault.InboxKeyFromMailboxID(vault.MessageMailboxID(m))
+		mailboxName := vault.MailboxNameFromID(vault.MessageMailboxID(m))
 		fromAddr := vault.MessageFromAddr(m)
-		if strings.EqualFold(fromAddr, inboxKey) {
+		if strings.EqualFold(fromAddr, mailboxName) {
 			continue // sent by self
 		}
 		if vault.TimeVal(m.ReceivedAt).UnixMilli() < cutoff {
 			continue
 		}
-		if !notifEnabled[inboxKey] {
+		if !notifEnabled[mailboxName] {
 			continue
 		}
 		body := messageBodyPreview(m, 80)
@@ -172,12 +172,12 @@ func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []v
 	// cycle only sees mailboxes from the relays that responded (delta fetches
 	// often skip Mailbox/get entirely), so a plain replace would erase every
 	// other relay's mailbox from biset's store. Mailboxes are scoped per
-	// inboxKey, which is unique across relays.
+	// mailboxName, which is unique across relays.
 	validInboxKeys := map[string]bool{}
 	for _, ib := range allInboxes {
-		validInboxKeys[vault.InboxKeyFromMailboxID(string(ib.ID))] = true
+		validInboxKeys[vault.MailboxNameFromID(string(ib.ID))] = true
 	}
-	// Synthesize mailbox stubs for every inboxKey a relay reported this cycle,
+	// Synthesize mailbox stubs for every mailboxName a relay reported this cycle,
 	// even when its delta fetch returned no Mailbox/get list. Without this,
 	// relays in delta mode silently drop out of the merged mailbox set.
 	existing := store.Mailboxes()
@@ -258,9 +258,9 @@ func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []v
 		}
 
 		byInbox := groupMessagesByInbox(allMessages)
-		for inboxKey, msgs := range byInbox {
+		for mailboxName, msgs := range byInbox {
 			threads := vault.GroupByThread(msgs)
-			mbxID := jmap.ID(vault.MakeMailboxID(inboxKey))
+			mbxID := jmap.ID(vault.MakeMailboxID(mailboxName))
 			for _, t := range threads {
 				if t.ID == "" {
 					continue // empty threadID collides across inboxes — skip
@@ -282,12 +282,12 @@ func runSync(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) (int, []v
 				if len(threadMsgs) == 0 {
 					continue
 				}
-				if vault.WriteThreadMD(cfg.Vault, inboxKey, threadMsgs, inboxConfigs[inboxKey]) {
+				if vault.WriteThreadMD(cfg.Vault, mailboxName, threadMsgs, inboxConfigs[mailboxName]) {
 					totalUpdated++
 				}
 			}
-			vault.EnsureNewFile(cfg.Vault, inboxKey, inboxConfigs[inboxKey])
-			writeSyncLog(cfg.Vault, inboxKey, messagesForInbox(msgs, inboxKey))
+			vault.EnsureNewFile(cfg.Vault, mailboxName, inboxConfigs[mailboxName])
+			writeSyncLog(cfg.Vault, mailboxName, messagesForInbox(msgs, mailboxName))
 		}
 	}
 
@@ -308,9 +308,9 @@ func dispatchSubmissions(cfg *vault.Config, mgr *Manager, store *jmapserver.Stor
 		return
 	}
 	for _, s := range subs {
-		c := mgr.RelayForAccount(s.InboxKey)
+		c := mgr.RelayForAccount(s.MailboxName)
 		if c == nil {
-			log.Printf("[dispatch] no relay for inbox %q (submission %s)", s.InboxKey, s.ID)
+			log.Printf("[dispatch] no relay for inbox %q (submission %s)", s.MailboxName, s.ID)
 			continue
 		}
 		serverReceivedAt, err := c.Send(s.Message, s.Envelope)
@@ -336,7 +336,7 @@ func dispatchSubmissions(cfg *vault.Config, mgr *Manager, store *jmapserver.Stor
 		if len(existing) == 0 {
 			existing = []vault.Message{s.Message}
 		}
-		vault.WriteThreadMD(vaultDir, s.InboxKey, existing, mgr.InboxConfigFor(s.InboxKey, cfg))
+		vault.WriteThreadMD(vaultDir, s.MailboxName, existing, mgr.MailboxConfigFor(s.MailboxName, cfg))
 		vault.DeleteSubmission(vaultDir, s.ID) //nolint:errcheck
 		fmt.Printf("sent: %s → %v\n", s.ID, s.Envelope.RcptTo)
 	}
@@ -347,11 +347,11 @@ func groupMessagesByInbox(messages []vault.Message) map[string][]vault.Message {
 	result := map[string][]vault.Message{}
 	for _, m := range messages {
 		mbxID := vault.MessageMailboxID(m)
-		inboxKey := vault.InboxKeyFromMailboxID(mbxID)
-		if inboxKey == "" {
-			inboxKey = vault.MessageFromAddr(m)
+		mailboxName := vault.MailboxNameFromID(mbxID)
+		if mailboxName == "" {
+			mailboxName = vault.MessageFromAddr(m)
 		}
-		result[inboxKey] = append(result[inboxKey], m)
+		result[mailboxName] = append(result[mailboxName], m)
 	}
 	return result
 }
@@ -376,8 +376,8 @@ func messagesForThread(messages []vault.Message, threadID jmap.ID) []vault.Messa
 	return out
 }
 
-func messagesForInbox(messages []vault.Message, inboxKey string) []vault.Message {
-	mbxID := jmap.ID(vault.MakeMailboxID(inboxKey))
+func messagesForInbox(messages []vault.Message, mailboxName string) []vault.Message {
+	mbxID := jmap.ID(vault.MakeMailboxID(mailboxName))
 	var out []vault.Message
 	for _, m := range messages {
 		if m.MailboxIDs[mbxID] {
@@ -398,12 +398,12 @@ func messageBodyPreview(m vault.Message, maxRunes int) string {
 
 // ── sync log ──────────────────────────────────────────────────────────────────
 
-func writeSyncLog(vaultDir, inboxKey string, messages []vault.Message) {
+func writeSyncLog(vaultDir, mailboxName string, messages []vault.Message) {
 	if len(messages) == 0 {
 		return
 	}
 	var lines []string
-	mbxID := jmap.ID(vault.MakeMailboxID(inboxKey))
+	mbxID := jmap.ID(vault.MakeMailboxID(mailboxName))
 	for _, m := range messages {
 		ts := vault.TimeVal(m.ReceivedAt).Local().Format("2006-01-02 15:04")
 		from := vault.MessageFromAddr(m)
@@ -411,8 +411,8 @@ func writeSyncLog(vaultDir, inboxKey string, messages []vault.Message) {
 			from = name
 		}
 		var to string
-		if m.MailboxIDs[mbxID] && !strings.EqualFold(vault.MessageFromAddr(m), inboxKey) {
-			to = inboxKey
+		if m.MailboxIDs[mbxID] && !strings.EqualFold(vault.MessageFromAddr(m), mailboxName) {
+			to = mailboxName
 		} else if len(m.To) > 0 && m.To[0] != nil {
 			to = m.To[0].Email
 		} else {
@@ -420,7 +420,7 @@ func writeSyncLog(vaultDir, inboxKey string, messages []vault.Message) {
 		}
 		lines = append(lines, fmt.Sprintf("%s %s → %s", ts, from, to))
 	}
-	writeBisetLog(vaultDir, inboxKey, lines)
+	writeBisetLog(vaultDir, mailboxName, lines)
 }
 
 // firstAddr returns the first address from a JSON array string.

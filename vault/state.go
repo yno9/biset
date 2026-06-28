@@ -10,7 +10,7 @@ import (
 
 type RelayState struct {
 	LastSeen     time.Time         `json:"lastSeen"`
-	InboxKeys    []string          `json:"inboxKeys"`
+	MailboxNames    []string          `json:"inboxKeys"`
 	QueryState   map[string]string `json:"queryState,omitempty"`   // accountID → Email/queryChanges state
 	EmailState   map[string]string `json:"emailState,omitempty"`   // accountID → Email/changes state
 	MailboxState map[string]string `json:"mailboxState,omitempty"` // accountID → Mailbox/changes state
@@ -27,7 +27,7 @@ func NewState() *State {
 func (s *State) UpdateRelay(name string, inboxKeys []string) {
 	rs := s.ensureRelay(name)
 	rs.LastSeen = time.Now().UTC()
-	rs.InboxKeys = inboxKeys
+	rs.MailboxNames = inboxKeys
 }
 
 func (s *State) UpdateQueryState(relayName, accountID, queryState string) {

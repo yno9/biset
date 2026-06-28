@@ -17,8 +17,8 @@ import (
 )
 
 // ── go-jmap 型エイリアス ──────────────────────────────────────────────────────
-// biset ではメッセージを protocol-agnostic に扱う。
-// JMAP ワイヤー名（Email/get 等）はプロトコル詳細であり内部名ではない。
+// biset では JMAP ワイヤー型を直接使う。Email/get などの JMAP メソッド名は
+// プロトコル詳細であり、biset 内部の用語ではない。
 
 type (
 	ID         = jmap.ID
@@ -26,7 +26,7 @@ type (
 	BodyPart   = email.BodyPart
 	BodyValue  = email.BodyValue
 	Address    = mail.Address
-	Inbox      = mailbox.Mailbox  // biset では "Inbox" と呼ぶ
+	Mailbox    = mailbox.Mailbox
 	Thread     = thread.Thread
 	Identity   = identity.Identity
 	Submission = emailsubmission.EmailSubmission // 送信キュー
@@ -40,15 +40,15 @@ type (
 // Local nodes have a Local field (binary name); remote nodes do not.
 // Multi-account relays (e.g. smtp-host) populate Accounts instead of relay-level Password.
 type RelayConfig struct {
-	RelayName    string                   `json:"relayname"`
-	AuthUser     string                   `json:"-"` // runtime auth username (defaults to RelayName; per-account multi-account expansion overrides)
-	Password     string                   `json:"password,omitempty"`
-	URL          string                   `json:"url"`
-	Local        string                   `json:"local,omitempty"`
-	Token        string                   `json:"token,omitempty"`
-	Notification *bool                    `json:"notification,omitempty"`
-	Inboxes      map[string]InboxConfig   `json:"inboxes,omitempty"`
-	Accounts     map[string]AccountConfig `json:"accounts,omitempty"`
+	RelayName    string                     `json:"relayname"`
+	AuthUser     string                     `json:"-"` // runtime auth username (defaults to RelayName; per-account multi-account expansion overrides)
+	Password     string                     `json:"password,omitempty"`
+	URL          string                     `json:"url"`
+	Local        string                     `json:"local,omitempty"`
+	Token        string                     `json:"token,omitempty"`
+	Notification *bool                      `json:"notification,omitempty"`
+	Mailboxes    map[string]MailboxConfig   `json:"mailboxes,omitempty"`
+	Accounts     map[string]AccountConfig   `json:"accounts,omitempty"`
 }
 
 // AccountConfig holds per-account credentials for multi-account relays.
@@ -58,21 +58,21 @@ type AccountConfig struct {
 	Password string `json:"password"`
 }
 
-// InboxConfigFor returns the InboxConfig for inboxKey relative to accountID.
-// Looks up "./subdir" keys, falls back to ".", then empty InboxConfig.
-func (r RelayConfig) InboxConfigFor(inboxKey, accountID string) InboxConfig {
-	rel := relativeInboxKey(inboxKey, accountID)
-	if cfg, ok := r.Inboxes[rel]; ok {
+// MailboxConfigFor returns the MailboxConfig for mailboxName relative to accountID.
+// Looks up "./subdir" keys, falls back to ".", then empty MailboxConfig.
+func (r RelayConfig) MailboxConfigFor(mailboxName, accountID string) MailboxConfig {
+	rel := relativeMailboxName(mailboxName, accountID)
+	if cfg, ok := r.Mailboxes[rel]; ok {
 		return cfg
 	}
-	if cfg, ok := r.Inboxes["."]; ok {
+	if cfg, ok := r.Mailboxes["."]; ok {
 		return cfg
 	}
-	return InboxConfig{}
+	return MailboxConfig{}
 }
 
-func relativeInboxKey(inboxKey, accountID string) string {
-	trimmed := strings.TrimPrefix(inboxKey, accountID)
+func relativeMailboxName(mailboxName, accountID string) string {
+	trimmed := strings.TrimPrefix(mailboxName, accountID)
 	trimmed = strings.Trim(trimmed, "/")
 	if trimmed == "" {
 		return "."
@@ -100,9 +100,9 @@ type Config struct {
 	Notification *bool         `json:"notification,omitempty"` // global default
 }
 
-// NotificationEnabled resolves the notification setting for a specific inbox.
-// Priority: inbox > relay > global > default (true).
-func (cfg *Config) NotificationEnabled(relayURL, inboxKey, accountID string) bool {
+// NotificationEnabled resolves the notification setting for a specific mailbox.
+// Priority: mailbox > relay > global > default (true).
+func (cfg *Config) NotificationEnabled(relayURL, mailboxName, accountID string) bool {
 	result := true
 	if cfg.Notification != nil {
 		result = *cfg.Notification
@@ -114,13 +114,13 @@ func (cfg *Config) NotificationEnabled(relayURL, inboxKey, accountID string) boo
 		if rc.Notification != nil {
 			result = *rc.Notification
 		}
-		rel := relativeInboxKey(inboxKey, accountID)
-		if ic, ok := rc.Inboxes[rel]; ok && ic.Notification != nil {
-			return *ic.Notification
+		rel := relativeMailboxName(mailboxName, accountID)
+		if mc, ok := rc.Mailboxes[rel]; ok && mc.Notification != nil {
+			return *mc.Notification
 		}
 		if rel != "." {
-			if ic, ok := rc.Inboxes["."]; ok && ic.Notification != nil {
-				result = *ic.Notification
+			if mc, ok := rc.Mailboxes["."]; ok && mc.Notification != nil {
+				result = *mc.Notification
 			}
 		}
 		return result
@@ -153,38 +153,38 @@ type SyncNotification struct {
 	MessageID string
 }
 
-// InboxConfig holds per-inbox display and render settings, set by the human in config.json.
-type InboxConfig struct {
+// MailboxConfig holds per-mailbox display and render settings, set by the human in config.json.
+type MailboxConfig struct {
 	Meta         []string `json:"meta,omitempty"`         // frontmatter fields to include
 	FileFormat   string   `json:"fileformat,omitempty"`   // filename template, e.g. "{contact}_{shortId}.md"
 	MaxDisplay   int      `json:"maxDisplay,omitempty"`   // max messages shown in MD (0 = unlimited)
 	Notification *bool    `json:"notification,omitempty"` // overrides relay/global notification setting
 }
 
-func (c InboxConfig) EffectiveMeta() []string {
+func (c MailboxConfig) EffectiveMeta() []string {
 	if len(c.Meta) > 0 {
 		return c.Meta
 	}
 	return []string{"subject", "contact", "id", "status"}
 }
 
-func (c InboxConfig) EffectiveFileFormat() string {
+func (c MailboxConfig) EffectiveFileFormat() string {
 	if c.FileFormat != "" {
 		return c.FileFormat
 	}
 	return "{contact}_{shortId}.md"
 }
 
-func (c InboxConfig) IsSimplified() bool {
+func (c MailboxConfig) IsSimplified() bool {
 	return !strings.Contains(c.EffectiveFileFormat(), "{shortId}")
 }
 
-// FetchResult holds messages and inboxes returned by a node Fetch call.
+// FetchResult holds messages and mailboxes returned by a node Fetch call.
 type FetchResult struct {
 	Messages        []Message  `json:"messages"`
 	UpdatedMessages []Message  `json:"updated_messages"` // flag/keyword changes only
 	Threads         []Thread   `json:"threads"`
-	Inboxes         []Inbox    `json:"inboxes"`
+	Mailboxes       []Mailbox  `json:"mailboxes"`
 	Identities      []Identity `json:"identities"`
 	RemovedIDs      []ID       // IDs no longer on relay (delta fetch only)
 	QueryState      string     // queryState for next delta fetch
@@ -194,9 +194,9 @@ type FetchResult struct {
 
 // PendingSubmission is a queued outgoing send written to .data/submissions/.
 type PendingSubmission struct {
-	ID       string    `json:"id"`
-	Message  Message   `json:"message"`
-	Envelope Envelope  `json:"envelope"`
-	InboxKey string    `json:"inbox_key"`
-	Created  time.Time `json:"created"`
+	ID          string    `json:"id"`
+	Message     Message   `json:"message"`
+	Envelope    Envelope  `json:"envelope"`
+	MailboxName string    `json:"mailbox_name"`
+	Created     time.Time `json:"created"`
 }

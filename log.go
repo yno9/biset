@@ -42,7 +42,7 @@ func readLogConfig(vaultDir string) logConfig {
 	return cfg
 }
 
-func writeBisetLog(vaultDir, inboxKey string, lines []string) {
+func writeBisetLog(vaultDir, mailboxName string, lines []string) {
 	if len(lines) == 0 {
 		return
 	}
@@ -53,7 +53,7 @@ func writeBisetLog(vaultDir, inboxKey string, lines []string) {
 	if len(cfg.Accounts) > 0 {
 		found := false
 		for _, a := range cfg.Accounts {
-			if strings.EqualFold(a, inboxKey) {
+			if strings.EqualFold(a, mailboxName) {
 				found = true
 				break
 			}

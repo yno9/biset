@@ -263,14 +263,14 @@ Commands
 		}
 	}
 
-	vault.ReThreadVault(cfg.Vault, func(inboxKey string) vault.InboxConfig {
+	vault.ReThreadVault(cfg.Vault, func(mailboxName string) vault.MailboxConfig {
 		for _, r := range cfg.Relays {
-			ic := r.InboxConfigFor(inboxKey, r.AuthUser)
+			ic := r.MailboxConfigFor(mailboxName, r.AuthUser)
 			if ic.FileFormat != "" || len(ic.Meta) > 0 || ic.MaxDisplay != 0 || ic.Notification != nil {
 				return ic
 			}
 		}
-		return vault.InboxConfig{}
+		return vault.MailboxConfig{}
 	})
 
 	mgr := NewManager(cfg)
@@ -299,8 +299,8 @@ Commands
 			vault.PurgeMessageCache(cfg.Vault) // clear local message JSONs
 			vault.PurgeState(cfg.Vault)        // forget per-relay queryState → next fetch is full
 			runSync(cfg, mgr, bisetStore)
-			vault.CleanupOrphanedMDs(cfg.Vault, func(inboxKey string) vault.InboxConfig {
-				return mgr.InboxConfigFor(inboxKey, cfg)
+			vault.CleanupOrphanedMDs(cfg.Vault, func(mailboxName string) vault.MailboxConfig {
+				return mgr.MailboxConfigFor(mailboxName, cfg)
 			})
 		}
 

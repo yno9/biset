@@ -21,14 +21,14 @@ func FlushOutgoing(vaultDir string, mgr *Manager, store *jmapserver.Store) int {
 		if !d.IsDir() {
 			continue
 		}
-		inboxKey := d.Name()
-		inboxDir := filepath.Join(vaultDir, inboxKey)
+		mailboxName := d.Name()
+		inboxDir := filepath.Join(vaultDir, mailboxName)
 		files, _ := os.ReadDir(inboxDir)
 		for _, f := range files {
 			if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
 				continue
 			}
-			if flushMDSend(filepath.Join(inboxDir, f.Name()), inboxKey, vaultDir, mgr, store) {
+			if flushMDSend(filepath.Join(inboxDir, f.Name()), mailboxName, vaultDir, mgr, store) {
 				count++
 			}
 		}
@@ -46,7 +46,7 @@ func FlushOutgoing(vaultDir string, mgr *Manager, store *jmapserver.Store) int {
 	return count
 }
 
-func flushMDSend(filePath, inboxKey, vaultDir string, mgr *Manager, store *jmapserver.Store) bool {
+func flushMDSend(filePath, mailboxName, vaultDir string, mgr *Manager, store *jmapserver.Store) bool {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return false
@@ -66,13 +66,13 @@ func flushMDSend(filePath, inboxKey, vaultDir string, mgr *Manager, store *jmaps
 
 	inbox := ""
 	if mbxID := strings.TrimSpace(fm["mailboxId"]); mbxID != "" {
-		inbox = vault.InboxKeyFromMailboxID(mbxID)
+		inbox = vault.MailboxNameFromID(mbxID)
 	}
 	if inbox == "" {
 		inbox = strings.TrimSpace(fm["inbox"])
 	}
 	if inbox == "" {
-		inbox = inboxKey
+		inbox = mailboxName
 	}
 
 	if body == "" {
@@ -200,7 +200,7 @@ func flushMDSend(filePath, inboxKey, vaultDir string, mgr *Manager, store *jmaps
 		ID:       string(msgID),
 		Message:  msg,
 		Envelope: envelope,
-		InboxKey: inbox,
+		MailboxName: inbox,
 		Created:  now,
 	}
 	if err := vault.WriteSubmission(vaultDir, sub); err != nil {
@@ -263,8 +263,8 @@ func FlushActions(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) int 
 		if !d.IsDir() {
 			continue
 		}
-		inboxKey := d.Name()
-		dirPath := filepath.Join(vaultDir, inboxKey)
+		mailboxName := d.Name()
+		dirPath := filepath.Join(vaultDir, mailboxName)
 		entries, _ := os.ReadDir(dirPath)
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
@@ -287,7 +287,7 @@ func FlushActions(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) int 
 					log.Printf("[FlushActions] follow: no contact in %s", e.Name())
 					continue
 				}
-				c := mgr.RelayForAccount(inboxKey)
+				c := mgr.RelayForAccount(mailboxName)
 				if c != nil {
 					if err := c.Follow(contact); err != nil {
 						log.Printf("[FlushActions] follow %s: %v", contact, err)
@@ -299,7 +299,7 @@ func FlushActions(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) int 
 				continue
 			}
 
-			c := mgr.RelayForAccount(inboxKey)
+			c := mgr.RelayForAccount(mailboxName)
 
 			threadID := expandThreadID(fm["id"])
 			var msgIDs []jmap.ID
@@ -331,7 +331,7 @@ func FlushActions(cfg *vault.Config, mgr *Manager, store *jmapserver.Store) int 
 				}
 				msgs := store.AllForThread(jmap.ID(threadID))
 				log.Printf("[FlushActions] seen: msgs=%d", len(msgs))
-				written := vault.WriteThreadMD(vaultDir, inboxKey, msgs, mgr.InboxConfigFor(inboxKey, cfg))
+				written := vault.WriteThreadMD(vaultDir, mailboxName, msgs, mgr.MailboxConfigFor(mailboxName, cfg))
 				log.Printf("[FlushActions] seen: WriteThreadMD written=%v", written)
 				count++
 				continue

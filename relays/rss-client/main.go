@@ -236,7 +236,7 @@ func main() {
 		}
 		return nil
 	})
-	store.PutMailboxes([]vault.Inbox{vault.DefaultInbox(cfg.RelayName + "/")}) //nolint:errcheck
+	store.PutMailboxes([]vault.Mailbox{vault.DefaultMailbox(cfg.RelayName + "/")}) //nolint:errcheck
 
 	go h.watch(context.Background())
 

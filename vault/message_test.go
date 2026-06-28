@@ -70,8 +70,8 @@ func TestInboxKeyFromMailboxID(t *testing.T) {
 		{"mbx-", ""},
 	}
 	for _, tt := range tests {
-		if got := InboxKeyFromMailboxID(tt.in); got != tt.want {
-			t.Errorf("InboxKeyFromMailboxID(%q) = %q, want %q", tt.in, got, tt.want)
+		if got := MailboxNameFromID(tt.in); got != tt.want {
+			t.Errorf("MailboxNameFromID(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }
@@ -80,7 +80,7 @@ func TestMakeMailboxIDRoundtrip(t *testing.T) {
 	keys := []string{"inbox", "a/b", "a/b/c", "user@example.com"}
 	for _, k := range keys {
 		mbxID := MakeMailboxID(k)
-		got := InboxKeyFromMailboxID(mbxID)
+		got := MailboxNameFromID(mbxID)
 		if got != k {
 			t.Errorf("roundtrip(%q) = %q", k, got)
 		}
@@ -233,7 +233,7 @@ func TestMessageMailboxID(t *testing.T) {
 }
 
 func TestDefaultInbox(t *testing.T) {
-	ib := DefaultInbox("user@example.com")
+	ib := DefaultMailbox("user@example.com")
 	if string(ib.ID) != MakeMailboxID("user@example.com") {
 		t.Errorf("ID = %q", ib.ID)
 	}

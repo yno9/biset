@@ -28,7 +28,7 @@ type Config struct {
 	Bind        string   `json:"bind,omitempty"`
 	Port        int      `json:"port,omitempty"`
 	ProjectDirs []string `json:"project_dirs"`
-	InboxKey    string   `json:"inbox_key"`
+	MailboxName    string   `json:"mailbox_name"`
 	UserName    string   `json:"user_name"`
 }
 
@@ -55,7 +55,7 @@ func (h *handler) Capabilities() []jmap.URI {
 }
 
 func (h *handler) Accounts() []jmapserver.Account {
-	return []jmapserver.Account{{ID: jmap.ID(cfg.InboxKey), Name: cfg.InboxKey}}
+	return []jmapserver.Account{{ID: jmap.ID(cfg.MailboxName), Name: cfg.MailboxName}}
 }
 
 func (h *handler) Handle(method string, args json.RawMessage) (any, error) {
@@ -64,29 +64,29 @@ func (h *handler) Handle(method string, args json.RawMessage) (any, error) {
 		return h.emailQuery(args)
 	case "Email/queryChanges":
 		h.scanProjects()
-		return h.store.HandleQueryChanges(jmap.ID(cfg.InboxKey), args)
+		return h.store.HandleQueryChanges(jmap.ID(cfg.MailboxName), args)
 	case "Email/changes":
-		return h.store.HandleEmailChanges(jmap.ID(cfg.InboxKey), args)
+		return h.store.HandleEmailChanges(jmap.ID(cfg.MailboxName), args)
 	case "Email/get":
-		return h.store.HandleEmailGet(jmap.ID(cfg.InboxKey), args)
+		return h.store.HandleEmailGet(jmap.ID(cfg.MailboxName), args)
 	case "Thread/get":
-		return h.store.HandleThreadGet(jmap.ID(cfg.InboxKey), args)
+		return h.store.HandleThreadGet(jmap.ID(cfg.MailboxName), args)
 	case "Mailbox/get":
-		return h.store.HandleMailboxGet(jmap.ID(cfg.InboxKey), args)
+		return h.store.HandleMailboxGet(jmap.ID(cfg.MailboxName), args)
 	case "Mailbox/changes":
-		return h.store.HandleMailboxChanges(jmap.ID(cfg.InboxKey), args)
+		return h.store.HandleMailboxChanges(jmap.ID(cfg.MailboxName), args)
 	case "Identity/get":
 		return h.identityGet()
 	case "Identity/changes":
-		return h.store.HandleIdentityChanges(jmap.ID(cfg.InboxKey), args)
+		return h.store.HandleIdentityChanges(jmap.ID(cfg.MailboxName), args)
 	case "Thread/changes":
-		return h.store.HandleThreadChanges(jmap.ID(cfg.InboxKey), args)
+		return h.store.HandleThreadChanges(jmap.ID(cfg.MailboxName), args)
 	case "Email/set":
 		return h.emailSet(args)
 	case "EmailSubmission/set":
 		return h.emailSubmissionSet(args)
 	default:
-		return h.store.Dispatch(jmap.ID(cfg.InboxKey), method, args)
+		return h.store.Dispatch(jmap.ID(cfg.MailboxName), method, args)
 	}
 }
 
@@ -158,7 +158,7 @@ func (h *handler) emailQuery(args json.RawMessage) (any, error) {
 		ids[i] = m.ID
 	}
 	return map[string]any{
-		"accountId":           jmap.ID(cfg.InboxKey),
+		"accountId":           jmap.ID(cfg.MailboxName),
 		"queryState":          "0",
 		"canCalculateChanges": false,
 		"position":            0,
@@ -196,7 +196,7 @@ func (h *handler) identityGet() (any, error) {
 		})
 	}
 	return map[string]any{
-		"accountId": jmap.ID(cfg.InboxKey),
+		"accountId": jmap.ID(cfg.MailboxName),
 		"state":     "0",
 		"list":      list,
 		"notFound":  []string{},
@@ -204,9 +204,9 @@ func (h *handler) identityGet() (any, error) {
 }
 
 // projectMailboxes builds the authoritative mailbox list from cfg.ProjectDirs.
-// One mailbox per project; mailbox name == project name == inboxKey.
-func projectMailboxes() []vault.Inbox {
-	list := make([]vault.Inbox, 0, len(cfg.ProjectDirs))
+// One mailbox per project; mailbox name == project name == mailboxName.
+func projectMailboxes() []vault.Mailbox {
+	list := make([]vault.Mailbox, 0, len(cfg.ProjectDirs))
 	seen := map[string]bool{}
 	for _, dir := range cfg.ProjectDirs {
 		name := stripProjectPrefix(filepath.Base(dir))
@@ -214,7 +214,7 @@ func projectMailboxes() []vault.Inbox {
 			continue
 		}
 		seen[name] = true
-		list = append(list, vault.DefaultInbox(name))
+		list = append(list, vault.DefaultMailbox(name))
 	}
 	return list
 }
@@ -261,7 +261,7 @@ func (h *handler) emailSet(args json.RawMessage) (any, error) {
 	}
 
 	return map[string]any{
-		"accountId":    jmap.ID(cfg.InboxKey),
+		"accountId":    jmap.ID(cfg.MailboxName),
 		"oldState":     "0",
 		"newState":     "1",
 		"created":      created,
@@ -317,7 +317,7 @@ func (h *handler) emailSubmissionSet(args json.RawMessage) (any, error) {
 	}
 
 	return map[string]any{
-		"accountId":    jmap.ID(cfg.InboxKey),
+		"accountId":    jmap.ID(cfg.MailboxName),
 		"oldState":     "0",
 		"newState":     "1",
 		"created":      created,
@@ -420,8 +420,8 @@ func findSessionByEntryUUID(uuid string) (string, string) {
 
 func projectFromMailboxIDs(mailboxIDs map[jmap.ID]bool) string {
 	for mbxID := range mailboxIDs {
-		key := vault.InboxKeyFromMailboxID(string(mbxID))
-		if key != "" && key != cfg.InboxKey {
+		key := vault.MailboxNameFromID(string(mbxID))
+		if key != "" && key != cfg.MailboxName {
 			return key
 		}
 	}
@@ -530,7 +530,7 @@ func parseJSONL(path, projectName, rootSessionID, fallbackTitle string) []vault.
 	mailboxID := vault.MakeMailboxID(projectName)
 	userAddr := cfg.UserName
 	if userAddr == "" {
-		userAddr = cfg.InboxKey
+		userAddr = cfg.MailboxName
 	}
 
 	var emails []vault.Message

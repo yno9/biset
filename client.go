@@ -28,11 +28,11 @@ type Manager struct {
 	relays         []*Relay
 	changed        chan struct{}
 	mu             sync.RWMutex
-	inboxKeyRelay  map[string]*Relay // inboxKey → relay, updated after each sync
+	mailboxRelay  map[string]*Relay // mailboxName → relay, updated after each sync
 }
 
 func NewManager(cfg *vault.Config) *Manager {
-	m := &Manager{changed: make(chan struct{}, 1), inboxKeyRelay: map[string]*Relay{}}
+	m := &Manager{changed: make(chan struct{}, 1), mailboxRelay: map[string]*Relay{}}
 	for _, rc := range cfg.Relays {
 		if len(rc.Accounts) == 0 {
 			m.relays = append(m.relays, newRelay(rc))
@@ -90,18 +90,18 @@ func (m *Manager) EnsureKeys() {
 	}
 }
 
-// InboxConfigFor returns the InboxConfig for the relay that owns inboxKey.
-func (m *Manager) InboxConfigFor(inboxKey string, cfg *vault.Config) vault.InboxConfig {
-	r := m.RelayForAccount(inboxKey)
+// MailboxConfigFor returns the MailboxConfig for the relay that owns mailboxName.
+func (m *Manager) MailboxConfigFor(mailboxName string, cfg *vault.Config) vault.MailboxConfig {
+	r := m.RelayForAccount(mailboxName)
 	if r == nil {
-		return vault.InboxConfig{}
+		return vault.MailboxConfig{}
 	}
-	return r.InboxConfigFor(inboxKey, cfg)
+	return r.MailboxConfigFor(mailboxName, cfg)
 }
 
-// RelayForAccount returns the Relay that manages the given inboxKey (account ID).
-func (m *Manager) RelayForAccount(inboxKey string) *Relay {
-	id := jmap.ID(inboxKey)
+// RelayForAccount returns the Relay that manages the given mailboxName (account ID).
+func (m *Manager) RelayForAccount(mailboxName string) *Relay {
+	id := jmap.ID(mailboxName)
 	for _, r := range m.relays {
 		if err := r.ensureAuth(); err != nil {
 			continue
@@ -113,23 +113,23 @@ func (m *Manager) RelayForAccount(inboxKey string) *Relay {
 	return nil
 }
 
-// SetInboxRelay records that inboxKey is served by r. Called after each sync.
-func (m *Manager) SetInboxRelay(inboxKey string, r *Relay) {
+// SetMailboxRelay records that mailboxName is served by r. Called after each sync.
+func (m *Manager) SetMailboxRelay(mailboxName string, r *Relay) {
 	m.mu.Lock()
-	m.inboxKeyRelay[inboxKey] = r
+	m.mailboxRelay[mailboxName] = r
 	m.mu.Unlock()
 }
 
-// RelayForInboxKey returns the relay that last reported serving inboxKey.
+// RelayForMailbox returns the relay that last reported serving mailboxName.
 // Falls back to RelayForAccount for relays discovered before the first sync.
-func (m *Manager) RelayForInboxKey(inboxKey string) *Relay {
+func (m *Manager) RelayForMailbox(mailboxName string) *Relay {
 	m.mu.RLock()
-	r := m.inboxKeyRelay[inboxKey]
+	r := m.mailboxRelay[mailboxName]
 	m.mu.RUnlock()
 	if r != nil {
 		return r
 	}
-	return m.RelayForAccount(inboxKey)
+	return m.RelayForAccount(mailboxName)
 }
 
 
@@ -168,25 +168,25 @@ func newRelay(cfg vault.RelayConfig) *Relay {
 	return &Relay{cfg: cfg, client: c}
 }
 
-// NotificationEnabled resolves the notification setting for inboxKey on this relay.
-func (r *Relay) NotificationEnabled(inboxKey string, cfg *vault.Config) bool {
+// NotificationEnabled resolves the notification setting for mailboxName on this relay.
+func (r *Relay) NotificationEnabled(mailboxName string, cfg *vault.Config) bool {
 	if err := r.ensureAuth(); err != nil {
 		return true
 	}
-	return cfg.NotificationEnabled(r.cfg.URL, inboxKey, string(r.accountID))
+	return cfg.NotificationEnabled(r.cfg.URL, mailboxName, string(r.accountID))
 }
 
-// InboxConfigFor returns the InboxConfig for a specific inboxKey on this relay.
-func (r *Relay) InboxConfigFor(inboxKey string, cfg *vault.Config) vault.InboxConfig {
+// MailboxConfigFor returns the MailboxConfig for a specific mailboxName on this relay.
+func (r *Relay) MailboxConfigFor(mailboxName string, cfg *vault.Config) vault.MailboxConfig {
 	if err := r.ensureAuth(); err != nil {
-		return vault.InboxConfig{}
+		return vault.MailboxConfig{}
 	}
 	for _, rc := range cfg.Relays {
 		if rc.URL == r.cfg.URL {
-			return rc.InboxConfigFor(inboxKey, string(r.accountID))
+			return rc.MailboxConfigFor(mailboxName, string(r.accountID))
 		}
 	}
-	return vault.InboxConfig{}
+	return vault.MailboxConfig{}
 }
 
 func setErrMsg(e *jmap.SetError) string {
@@ -355,7 +355,7 @@ func (r *Relay) fetchFull() (FetchResult, error) {
 			result.MailboxState = res.State
 			for _, mb := range res.List {
 				if mb != nil {
-					result.Inboxes = append(result.Inboxes, *mb)
+					result.Mailboxes = append(result.Mailboxes, *mb)
 				}
 			}
 		case *email.ChangesResponse:
@@ -417,7 +417,7 @@ func (r *Relay) fetchDelta(sinceQueryState, sinceEmailState, sinceMailboxState s
 			result.MailboxState = res.State
 			for _, mb := range res.List {
 				if mb != nil {
-					result.Inboxes = append(result.Inboxes, *mb)
+					result.Mailboxes = append(result.Mailboxes, *mb)
 				}
 			}
 		case *mailbox.ChangesResponse:
@@ -425,7 +425,7 @@ func (r *Relay) fetchDelta(sinceQueryState, sinceEmailState, sinceMailboxState s
 			// Mailbox/changes only returns IDs; if anything changed, fall back to full Mailbox/get
 			if len(res.Created)+len(res.Updated)+len(res.Destroyed) > 0 {
 				if mbResp, err := r.fetchMailboxes(); err == nil {
-					result.Inboxes = mbResp
+					result.Mailboxes = mbResp
 				}
 			}
 		}
@@ -512,14 +512,14 @@ func threadIDsFrom(msgs []vault.Message) []jmap.ID {
 	return ids
 }
 
-func (r *Relay) fetchMailboxes() ([]vault.Inbox, error) {
+func (r *Relay) fetchMailboxes() ([]vault.Mailbox, error) {
 	req := &jmap.Request{}
 	req.Invoke(&mailbox.Get{Account: r.accountID})
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	var out []vault.Inbox
+	var out []vault.Mailbox
 	for _, inv := range resp.Responses {
 		if res, ok := inv.Args.(*mailbox.GetResponse); ok {
 			for _, mb := range res.List {

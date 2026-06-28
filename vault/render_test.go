@@ -10,11 +10,11 @@ import (
 	jmap "git.sr.ht/~rockorager/go-jmap"
 )
 
-func makeMessage(id, threadID, inboxKey string, ts time.Time, body string) Message {
-	mbxID := jmap.ID(MakeMailboxID(inboxKey))
+func makeMessage(id, threadID, mailboxName string, ts time.Time, body string) Message {
+	mbxID := jmap.ID(MakeMailboxID(mailboxName))
 	return NewTextMessage(id, threadID, string(mbxID),
 		[]*Address{{Email: "from@example.com"}},
-		[]*Address{{Email: inboxKey}},
+		[]*Address{{Email: mailboxName}},
 		nil, "Subject", body, ts, "")
 }
 
@@ -227,13 +227,13 @@ func TestSetFMField(t *testing.T) {
 
 func TestRenderMD(t *testing.T) {
 	dir := t.TempDir()
-	inboxKey := "user@example.com"
-	os.MkdirAll(filepath.Join(dir, inboxKey), 0755)
+	mailboxName := "user@example.com"
+	os.MkdirAll(filepath.Join(dir, mailboxName), 0755)
 	ts := time.Now()
-	m := makeMessage("msg-1", "thr-1", inboxKey, ts, "hello")
+	m := makeMessage("msg-1", "thr-1", mailboxName, ts, "hello")
 	m.ThreadID = jmap.ID("thr-1")
 
-	path, content := RenderMD(dir, inboxKey, []Message{m}, InboxConfig{})
+	path, content := RenderMD(dir, mailboxName, []Message{m}, MailboxConfig{})
 	if path == "" {
 		t.Fatal("RenderMD returned empty path")
 	}
@@ -246,7 +246,7 @@ func TestRenderMD(t *testing.T) {
 }
 
 func TestRenderMDEmpty(t *testing.T) {
-	path, content := RenderMD("/tmp", "inbox", nil, InboxConfig{})
+	path, content := RenderMD("/tmp", "inbox", nil, MailboxConfig{})
 	if path != "" || content != nil {
 		t.Error("RenderMD(empty) should return empty")
 	}
@@ -254,14 +254,14 @@ func TestRenderMDEmpty(t *testing.T) {
 
 func TestEnsureNewFile(t *testing.T) {
 	dir := t.TempDir()
-	inboxKey := "user@example.com"
-	EnsureNewFile(dir, inboxKey, InboxConfig{})
-	p := filepath.Join(dir, inboxKey, "_new.md")
+	mailboxName := "user@example.com"
+	EnsureNewFile(dir, mailboxName, MailboxConfig{})
+	p := filepath.Join(dir, mailboxName, "_new.md")
 	if _, err := os.Stat(p); err != nil {
 		t.Errorf("_new.md not created: %v", err)
 	}
 	// second call is idempotent
-	EnsureNewFile(dir, inboxKey, InboxConfig{})
+	EnsureNewFile(dir, mailboxName, MailboxConfig{})
 	if _, err := os.Stat(p); err != nil {
 		t.Errorf("_new.md removed on second call")
 	}
@@ -270,7 +270,7 @@ func TestEnsureNewFile(t *testing.T) {
 func TestEnsureNewFileSubInbox(t *testing.T) {
 	dir := t.TempDir()
 	// sub-inbox (simplified format) should not create _new.md
-	EnsureNewFile(dir, "a/b", InboxConfig{FileFormat: "{contact}.md"})
+	EnsureNewFile(dir, "a/b", MailboxConfig{FileFormat: "{contact}.md"})
 	p := filepath.Join(dir, "a", "b", "_new.md")
 	if _, err := os.Stat(p); err == nil {
 		t.Error("sub-inbox should not have _new.md")
@@ -279,19 +279,19 @@ func TestEnsureNewFileSubInbox(t *testing.T) {
 
 func TestWriteThreadMD(t *testing.T) {
 	dir := t.TempDir()
-	inboxKey := "user@example.com"
-	os.MkdirAll(filepath.Join(dir, inboxKey), 0755)
+	mailboxName := "user@example.com"
+	os.MkdirAll(filepath.Join(dir, mailboxName), 0755)
 	ts := time.Now()
-	m := makeMessage("msg-write", "thr-write", inboxKey, ts, "write body")
+	m := makeMessage("msg-write", "thr-write", mailboxName, ts, "write body")
 	m.ThreadID = jmap.ID("thr-write")
 
-	written := WriteThreadMD(dir, inboxKey, []Message{m}, InboxConfig{})
+	written := WriteThreadMD(dir, mailboxName, []Message{m}, MailboxConfig{})
 	if !written {
 		t.Error("expected written=true")
 	}
 
 	// same messages → no change
-	written2 := WriteThreadMD(dir, inboxKey, []Message{m}, InboxConfig{})
+	written2 := WriteThreadMD(dir, mailboxName, []Message{m}, MailboxConfig{})
 	if written2 {
 		t.Error("expected written=false on identical content")
 	}
@@ -299,7 +299,7 @@ func TestWriteThreadMD(t *testing.T) {
 
 func TestWriteThreadMDEmpty(t *testing.T) {
 	dir := t.TempDir()
-	if WriteThreadMD(dir, "inbox", nil, InboxConfig{}) {
+	if WriteThreadMD(dir, "inbox", nil, MailboxConfig{}) {
 		t.Error("expected false for empty messages")
 	}
 }

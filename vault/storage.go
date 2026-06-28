@@ -205,10 +205,10 @@ func ReadMessagesForThread(vaultDir string, threadID ID) []Message {
 
 // ── mailboxes ─────────────────────────────────────────────────────────────────
 
-func WriteInboxes(vaultDir string, inboxes []Inbox) error {
+func WriteMailboxes(vaultDir string, mailboxes []Mailbox) error {
 	path := MailboxesFilePath(vaultDir)
 	os.MkdirAll(filepath.Dir(path), 0755) //nolint:errcheck
-	b, err := json.MarshalIndent(inboxes, "", "  ")
+	b, err := json.MarshalIndent(mailboxes, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -216,14 +216,14 @@ func WriteInboxes(vaultDir string, inboxes []Inbox) error {
 	return nil
 }
 
-func ReadInboxes(vaultDir string) []Inbox {
+func ReadMailboxes(vaultDir string) []Mailbox {
 	b, err := os.ReadFile(MailboxesFilePath(vaultDir))
 	if err != nil {
 		return nil
 	}
-	var inboxes []Inbox
-	json.Unmarshal(b, &inboxes) //nolint:errcheck
-	return inboxes
+	var mailboxes []Mailbox
+	json.Unmarshal(b, &mailboxes) //nolint:errcheck
+	return mailboxes
 }
 
 // ── utility ───────────────────────────────────────────────────────────────────
@@ -251,17 +251,17 @@ func messagesInThread(messages []Message, threadID string) []Message {
 
 // ── query helpers ─────────────────────────────────────────────────────────────
 
-func GetInboxes(vaultDir string) []Inbox {
-	inboxes := ReadInboxes(vaultDir)
-	if len(inboxes) == 0 {
+func GetMailboxes(vaultDir string) []Mailbox {
+	mailboxes := ReadMailboxes(vaultDir)
+	if len(mailboxes) == 0 {
 		entries, _ := os.ReadDir(vaultDir)
 		for _, e := range entries {
 			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-				inboxes = append(inboxes, DefaultInbox(e.Name()))
+				mailboxes = append(mailboxes, DefaultMailbox(e.Name()))
 			}
 		}
 	}
-	return inboxes
+	return mailboxes
 }
 
 func identitiesPath(vaultDir string) string {
@@ -323,8 +323,8 @@ func MigrateVault(vaultDir string) {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		inboxKey := e.Name()
-		dataDir := filepath.Join(vaultDir, inboxKey, ".data")
+		mailboxName := e.Name()
+		dataDir := filepath.Join(vaultDir, mailboxName, ".data")
 		files, err := os.ReadDir(dataDir)
 		if err != nil {
 			continue
@@ -340,14 +340,14 @@ func MigrateVault(vaultDir string) {
 			}
 
 			var vt struct {
-				ID       string    `json:"id"`
-				InboxKey string    `json:"inboxKey"`
-				Messages []Message `json:"messages"`
+				ID          string    `json:"id"`
+				MailboxName string    `json:"mailbox_name"`
+				Messages    []Message `json:"messages"`
 			}
 			if json.Unmarshal(b, &vt) == nil && vt.ID != "" && len(vt.Messages) > 0 {
-				key := vt.InboxKey
+				key := vt.MailboxName
 				if key == "" {
-					key = inboxKey
+					key = mailboxName
 				}
 				mbxID := jmap.ID(MakeMailboxID(key))
 				for i := range vt.Messages {
@@ -366,7 +366,7 @@ func MigrateVault(vaultDir string) {
 				continue
 			}
 
-			if msgs, threadID, key := migrateOldFormat(b, inboxKey); len(msgs) > 0 {
+			if msgs, threadID, key := migrateOldFormat(b, mailboxName); len(msgs) > 0 {
 				mbxID := jmap.ID(MakeMailboxID(key))
 				for i := range msgs {
 					if msgs[i].MailboxIDs == nil {
@@ -386,9 +386,9 @@ func MigrateVault(vaultDir string) {
 	}
 }
 
-func migrateOldFormat(b []byte, inboxKey string) (msgs []Message, threadID, key string) {
+func migrateOldFormat(b []byte, mailboxName string) (msgs []Message, threadID, key string) {
 	var old struct {
-		Inbox  string `json:"inbox"`
+		Mailbox  string `json:"inbox"`
 		Thread struct {
 			ID       string `json:"thread_id"`
 			Messages []struct {
@@ -407,9 +407,9 @@ func migrateOldFormat(b []byte, inboxKey string) (msgs []Message, threadID, key 
 		return nil, "", ""
 	}
 
-	key = old.Inbox
+	key = old.Mailbox
 	if key == "" {
-		key = inboxKey
+		key = mailboxName
 	}
 	mbxID := jmap.ID(MakeMailboxID(key))
 	threadID = MakeThreadID(old.Thread.ID)
@@ -479,7 +479,7 @@ func migrateOldFormat(b []byte, inboxKey string) (msgs []Message, threadID, key 
 }
 
 // ReThreadVault re-assigns threadIds across all stored messages.
-func ReThreadVault(vaultDir string, inboxCfg func(string) InboxConfig) {
+func ReThreadVault(vaultDir string, inboxCfg func(string) MailboxConfig) {
 	marker := filepath.Join(vaultDir, ".data", ".rethreaded")
 	if _, err := os.Stat(marker); err == nil {
 		return
@@ -581,15 +581,15 @@ func ReThreadVault(vaultDir string, inboxCfg func(string) InboxConfig) {
 		}
 	}
 
-	inboxes := map[string]bool{}
+	mailboxes := map[string]bool{}
 	for _, m := range messages {
-		inboxes[InboxKeyFromMailboxID(MessageMailboxID(m))] = true
+		mailboxes[MailboxNameFromID(MessageMailboxID(m))] = true
 	}
-	for inboxKey := range inboxes {
-		if inboxKey == "" {
+	for mailboxName := range mailboxes {
+		if mailboxName == "" {
 			continue
 		}
-		inboxDir := filepath.Join(vaultDir, inboxKey)
+		inboxDir := filepath.Join(vaultDir, mailboxName)
 		if entries, err := os.ReadDir(inboxDir); err == nil {
 			for _, entry := range entries {
 				if strings.HasSuffix(entry.Name(), ".md") {
@@ -597,7 +597,7 @@ func ReThreadVault(vaultDir string, inboxCfg func(string) InboxConfig) {
 				}
 			}
 		}
-		mbxID := jmap.ID(MakeMailboxID(inboxKey))
+		mbxID := jmap.ID(MakeMailboxID(mailboxName))
 		for _, t := range threads {
 			threadMsgs := messagesInThread(messages, string(t.ID))
 			var inboxMsgs []Message
@@ -609,7 +609,7 @@ func ReThreadVault(vaultDir string, inboxCfg func(string) InboxConfig) {
 			if len(inboxMsgs) == 0 {
 				continue
 			}
-			mdPath, content := RenderMD(vaultDir, inboxKey, inboxMsgs, inboxCfg(inboxKey))
+			mdPath, content := RenderMD(vaultDir, mailboxName, inboxMsgs, inboxCfg(mailboxName))
 			if mdPath == "" {
 				continue
 			}

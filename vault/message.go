@@ -25,20 +25,20 @@ func TimeVal(t *time.Time) time.Time {
 
 // ── ID helpers ────────────────────────────────────────────────────────────────
 
-func MakeMessageID(messageID, inboxKey string, ts time.Time) string {
+func MakeMessageID(messageID, mailboxName string, ts time.Time) string {
 	if messageID != "" {
 		id := strings.Trim(messageID, "<>")
 		id = strings.ReplaceAll(id, "/", "_")
 		return "msg-" + id
 	}
-	return fmt.Sprintf("msg-%s-%d", strings.ReplaceAll(inboxKey, "/", "-"), ts.UnixMilli())
+	return fmt.Sprintf("msg-%s-%d", strings.ReplaceAll(mailboxName, "/", "-"), ts.UnixMilli())
 }
 
-func MakeMailboxID(inboxKey string) string {
-	return "mbx-" + strings.ReplaceAll(inboxKey, "/", "~")
+func MakeMailboxID(name string) string {
+	return "mbx-" + strings.ReplaceAll(name, "/", "~")
 }
 
-func InboxKeyFromMailboxID(mailboxID string) string {
+func MailboxNameFromID(mailboxID string) string {
 	return strings.ReplaceAll(strings.TrimPrefix(mailboxID, "mbx-"), "~", "/")
 }
 
@@ -62,12 +62,12 @@ func MessageIDFromMsgID(msgID string) string {
 // "{nanos}.{rand6hex}@{hostname}", angle brackets NOT included. Matches the
 // format jmapserver.BuildRFC5322 produces when no Message-Id is supplied.
 //
-// inboxKey is "user@domain" or "user@domain/sub..."; the right-hand side of
-// the address (the actual mail domain) is used as the id-right host.
-func NewRFCMessageID(inboxKey string) string {
+// mailboxName is "user@domain" or "user@domain/sub..."; the right-hand side
+// of the address (the actual mail domain) is used as the id-right host.
+func NewRFCMessageID(mailboxName string) string {
 	domain := "localhost"
-	if at := strings.Index(inboxKey, "@"); at > 0 {
-		host := inboxKey[at+1:]
+	if at := strings.Index(mailboxName, "@"); at > 0 {
+		host := mailboxName[at+1:]
 		if slash := strings.Index(host, "/"); slash > 0 {
 			host = host[:slash]
 		}
@@ -177,10 +177,10 @@ func MessageMailboxID(m Message) string {
 
 // ── Mailbox helpers ───────────────────────────────────────────────────────────
 
-func DefaultInbox(inboxKey string) Inbox {
-	return Inbox{
-		ID:   jmap.ID(MakeMailboxID(inboxKey)),
-		Name: inboxKey,
+func DefaultMailbox(name string) Mailbox {
+	return Mailbox{
+		ID:   jmap.ID(MakeMailboxID(name)),
+		Name: name,
 		Role: mailbox.RoleInbox,
 		Rights: &mailbox.Rights{
 			MayReadItems:   true,

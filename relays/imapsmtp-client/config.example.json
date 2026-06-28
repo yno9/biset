@@ -5,7 +5,7 @@
   "password": "changeme",
   "accounts": [
     {
-      "inbox_key": "you@example.com",
+      "mailbox_name": "you@example.com",
       "imap": {
         "host": "mail.example.com",
         "port": 993,

@@ -148,7 +148,7 @@ func (h *handler) mailboxGet() (any, error) {
 		"accountId": jmap.ID(identity()),
 		"state":     "0",
 		"list": []any{
-			vault.DefaultInbox(identity()),
+			vault.DefaultMailbox(identity()),
 			map[string]any{"id": feedsMailboxID(), "name": "feeds", "role": nil},
 		},
 		"notFound": []string{},

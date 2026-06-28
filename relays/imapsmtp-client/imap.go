@@ -38,7 +38,7 @@ type FetchState struct {
 // ── fetch ─────────────────────────────────────────────────────────────────────
 
 // FetchNew returns messages received since state and an updated FetchState.
-func FetchNew(cfg IMAPConfig, inboxKey string, state FetchState) ([]vault.Message, FetchState, error) {
+func FetchNew(cfg IMAPConfig, mailboxName string, state FetchState) ([]vault.Message, FetchState, error) {
 	c, err := imapDial(cfg)
 	if err != nil {
 		return nil, state, fmt.Errorf("dial: %w", err)
@@ -74,7 +74,7 @@ func FetchNew(cfg IMAPConfig, inboxKey string, state FetchState) ([]vault.Messag
 	var messages []vault.Message
 	var maxUID imap.UID
 	if uids := searchData.AllUIDs(); len(uids) > 0 {
-		messages, maxUID = fetchUIDs(c, uids, cfg.Username, inboxKey, msgUIDs)
+		messages, maxUID = fetchUIDs(c, uids, cfg.Username, mailboxName, msgUIDs)
 	}
 	if maxUID == 0 {
 		maxUID = imap.UID(lastUID)
@@ -86,7 +86,7 @@ func FetchNew(cfg IMAPConfig, inboxKey string, state FetchState) ([]vault.Messag
 		SentMailbox: state.SentMailbox,
 		EmailUIDs:   msgUIDs,
 	}
-	sentMsgs, sentState := fetchSent(cfg, inboxKey, state, msgUIDs)
+	sentMsgs, sentState := fetchSent(cfg, mailboxName, state, msgUIDs)
 	messages = append(messages, sentMsgs...)
 	newState.SentLastUID = sentState.SentLastUID
 	newState.SentMailbox = sentState.SentMailbox
@@ -94,7 +94,7 @@ func FetchNew(cfg IMAPConfig, inboxKey string, state FetchState) ([]vault.Messag
 	return messages, newState, nil
 }
 
-func fetchUIDs(c *imapclient.Client, uids []imap.UID, selfAddr, inboxKey string, msgUIDs map[string]uint32) ([]vault.Message, imap.UID) {
+func fetchUIDs(c *imapclient.Client, uids []imap.UID, selfAddr, mailboxName string, msgUIDs map[string]uint32) ([]vault.Message, imap.UID) {
 	bodySection := &imap.FetchItemBodySection{Peek: true}
 	fetchCmd := c.Fetch(imap.UIDSetNum(uids...), &imap.FetchOptions{
 		UID:          true,
@@ -139,7 +139,7 @@ func fetchUIDs(c *imapclient.Client, uids []imap.UID, selfAddr, inboxKey string,
 			maxUID = uid
 		}
 		if len(bodyData) > 0 {
-			m, err := parseRawMessage(bodyData, selfAddr, inboxKey, hasSeen)
+			m, err := parseRawMessage(bodyData, selfAddr, mailboxName, hasSeen)
 			if err != nil || m == nil {
 				continue
 			}
@@ -155,7 +155,7 @@ func fetchUIDs(c *imapclient.Client, uids []imap.UID, selfAddr, inboxKey string,
 	return messages, maxUID
 }
 
-func fetchSent(cfg IMAPConfig, inboxKey string, state FetchState, msgUIDs map[string]uint32) ([]vault.Message, FetchState) {
+func fetchSent(cfg IMAPConfig, mailboxName string, state FetchState, msgUIDs map[string]uint32) ([]vault.Message, FetchState) {
 	c, err := imapDial(cfg)
 	if err != nil {
 		return nil, state
@@ -231,7 +231,7 @@ func fetchSent(cfg IMAPConfig, inboxKey string, state FetchState, msgUIDs map[st
 			maxUID = uid
 		}
 		if len(bodyData) > 0 {
-			m, err := parseRawMessage(bodyData, cfg.Username, inboxKey, true)
+			m, err := parseRawMessage(bodyData, cfg.Username, mailboxName, true)
 			if err != nil || m == nil {
 				continue
 			}
@@ -509,7 +509,7 @@ func imapDial(cfg IMAPConfig) (*imapclient.Client, error) {
 
 // ── MIME / RFC 5322 parsing ───────────────────────────────────────────────────
 
-func parseRawMessage(raw []byte, selfAddr, inboxKey string, seen bool) (*vault.Message, error) {
+func parseRawMessage(raw []byte, selfAddr, mailboxName string, seen bool) (*vault.Message, error) {
 	msg, err := mail.ReadMessage(strings.NewReader(string(raw)))
 	if err != nil {
 		return nil, err
@@ -531,8 +531,8 @@ func parseRawMessage(raw []byte, selfAddr, inboxKey string, seen bool) (*vault.M
 	toAddrs := parseAddresses(msg.Header.Get("To"))
 	ccAddrs := parseAddresses(msg.Header.Get("Cc"))
 
-	mailboxID := vault.MakeMailboxID(inboxKey)
-	msgID := jmap.ID(vault.MakeMessageID(messageID, inboxKey, receivedAt))
+	mailboxID := vault.MakeMailboxID(mailboxName)
+	msgID := jmap.ID(vault.MakeMessageID(messageID, mailboxName, receivedAt))
 
 	keywords := map[string]bool{}
 	if seen {

@@ -21,7 +21,7 @@ import (
 // ── config ────────────────────────────────────────────────────────────────────
 
 type AccountConfig struct {
-	InboxKey string     `json:"inbox_key"`
+	MailboxName string     `json:"mailbox_name"`
 	IMAP     IMAPConfig `json:"imap"`
 	SMTP     SMTPConfig `json:"smtp"`
 }
@@ -41,7 +41,7 @@ type Config struct {
 type handler struct {
 	store     *jmapserver.Store
 	fetchMu   sync.Mutex
-	states    map[string]FetchState // inboxKey → incremental IMAP state
+	states    map[string]FetchState // mailboxName → incremental IMAP state
 	statePath string
 }
 
@@ -55,7 +55,7 @@ func (h *handler) Capabilities() []jmap.URI {
 func (h *handler) Accounts() []jmapserver.Account {
 	out := make([]jmapserver.Account, 0, len(cfg.Accounts))
 	for _, a := range cfg.Accounts {
-		out = append(out, jmapserver.Account{ID: jmap.ID(a.InboxKey), Name: a.InboxKey})
+		out = append(out, jmapserver.Account{ID: jmap.ID(a.MailboxName), Name: a.MailboxName})
 	}
 	return out
 }
@@ -108,16 +108,16 @@ func (h *handler) emailQuery(args json.RawMessage) (any, error) {
 	defer h.fetchMu.Unlock()
 
 	for _, acct := range cfg.Accounts {
-		state := h.states[acct.InboxKey]
-		msgs, newState, err := FetchNew(acct.IMAP, acct.InboxKey, state)
+		state := h.states[acct.MailboxName]
+		msgs, newState, err := FetchNew(acct.IMAP, acct.MailboxName, state)
 		if err != nil {
-			log.Printf("[%s] fetch: %v", acct.InboxKey, err)
+			log.Printf("[%s] fetch: %v", acct.MailboxName, err)
 			continue
 		}
-		h.states[acct.InboxKey] = newState
+		h.states[acct.MailboxName] = newState
 		for _, m := range msgs {
 			if err := h.store.Put(m); err != nil {
-				log.Printf("[%s] store put: %v", acct.InboxKey, err)
+				log.Printf("[%s] store put: %v", acct.MailboxName, err)
 			}
 		}
 	}
@@ -131,9 +131,9 @@ func (h *handler) emailQuery(args json.RawMessage) (any, error) {
 func (h *handler) mailboxGet() (any, error) {
 	mbs := h.store.Mailboxes()
 	if mbs == nil {
-		mbs = []vault.Inbox{}
+		mbs = []vault.Mailbox{}
 		for _, a := range cfg.Accounts {
-			mbs = append(mbs, vault.DefaultInbox(a.InboxKey))
+			mbs = append(mbs, vault.DefaultMailbox(a.MailboxName))
 		}
 	}
 	return map[string]any{
@@ -208,17 +208,17 @@ func (h *handler) applyIMAPAction(msgID string, patch map[string]any) {
 	h.fetchMu.Unlock()
 
 	for _, acct := range cfg.Accounts {
-		state := states[acct.InboxKey]
+		state := states[acct.MailboxName]
 		switch {
 		case patch["keywords/$seen"] == true:
 			if err := SetFlag(acct.IMAP, state, msgID); err != nil {
-				log.Printf("[%s] setflag %s: %v", acct.InboxKey, msgID, err)
+				log.Printf("[%s] setflag %s: %v", acct.MailboxName, msgID, err)
 			}
 		case patch["keywords/$deleted"] == true,
 			patch["keywords/$biset_archived"] == true,
 			patch["keywords/$spam"] == true:
 			if err := Expunge(acct.IMAP, state, msgID); err != nil {
-				log.Printf("[%s] expunge %s: %v", acct.InboxKey, msgID, err)
+				log.Printf("[%s] expunge %s: %v", acct.MailboxName, msgID, err)
 			}
 		}
 	}
@@ -303,9 +303,9 @@ func (h *handler) accountForMsg(msg vault.Message, envelope *vault.Envelope) *Ac
 			return &cfg.Accounts[i]
 		}
 	}
-	inboxKey := vault.InboxKeyFromMailboxID(vault.MessageMailboxID(msg))
+	mailboxName := vault.MailboxNameFromID(vault.MessageMailboxID(msg))
 	for i := range cfg.Accounts {
-		if cfg.Accounts[i].InboxKey == inboxKey {
+		if cfg.Accounts[i].MailboxName == mailboxName {
 			return &cfg.Accounts[i]
 		}
 	}
@@ -364,7 +364,7 @@ func (h *handler) saveStates() {
 
 func (h *handler) primaryID() jmap.ID {
 	if len(cfg.Accounts) > 0 {
-		return jmap.ID(cfg.Accounts[0].InboxKey)
+		return jmap.ID(cfg.Accounts[0].MailboxName)
 	}
 	return ""
 }
@@ -445,7 +445,7 @@ func main() {
 	for _, acct := range cfg.Accounts {
 		a := acct
 		go Watch(ctx, a.IMAP, func() {
-			log.Printf("[%s] imap idle: new messages", a.InboxKey)
+			log.Printf("[%s] imap idle: new messages", a.MailboxName)
 			hub.Notify()
 		})
 	}

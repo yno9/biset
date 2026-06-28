@@ -215,7 +215,7 @@ func TestWriteSubmissionAndScan(t *testing.T) {
 	dir := makeVaultDir(t)
 	sub := PendingSubmission{
 		ID:      "sub-1",
-		InboxKey: "inbox",
+		MailboxName: "inbox",
 		Created:  time.Now(),
 	}
 	if err := WriteSubmission(dir, sub); err != nil {
@@ -256,7 +256,7 @@ func TestDeleteSubmission(t *testing.T) {
 
 func TestWriteReadInboxes(t *testing.T) {
 	dir := makeVaultDir(t)
-	inboxes := []Inbox{DefaultInbox("a@b.com"), DefaultInbox("c@d.com")}
+	inboxes := []Mailbox{DefaultMailbox("a@b.com"), DefaultMailbox("c@d.com")}
 	if err := WriteInboxes(dir, inboxes); err != nil {
 		t.Fatalf("WriteInboxes: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestGetInboxesFromDir(t *testing.T) {
 
 func TestGetInboxesFromStorage(t *testing.T) {
 	dir := makeVaultDir(t)
-	inboxes := []Inbox{DefaultInbox("a@b.com")}
+	inboxes := []Mailbox{DefaultMailbox("a@b.com")}
 	WriteInboxes(dir, inboxes)
 	got := GetInboxes(dir)
 	if len(got) != 1 {

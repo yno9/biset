@@ -35,7 +35,7 @@ func SetMDMtime(mdPath string, messages []Message) {
 
 // ── rendering ─────────────────────────────────────────────────────────────────
 
-func RenderMD(vaultDir, inboxKey string, messages []Message, cfg InboxConfig) (string, []byte) {
+func RenderMD(vaultDir, mailboxName string, messages []Message, cfg MailboxConfig) (string, []byte) {
 	if len(messages) == 0 {
 		return "", nil
 	}
@@ -49,16 +49,16 @@ func RenderMD(vaultDir, inboxKey string, messages []Message, cfg InboxConfig) (s
 		sorted = sorted[:cfg.MaxDisplay]
 	}
 
-	content := mdContent(inboxKey, sorted, cfg.EffectiveMeta())
+	content := mdContent(mailboxName, sorted, cfg.EffectiveMeta())
 
-	contact := threadContact(inboxKey, sorted)
-	seen := isSeen(inboxKey, sorted)
+	contact := threadContact(mailboxName, sorted)
+	seen := isSeen(mailboxName, sorted)
 	expanded := expandFileFormat(cfg.EffectiveFileFormat(), contact, ThreadShortID(sorted))
 	if !seen {
 		dir, base := filepath.Split(expanded)
 		expanded = dir + "_" + base
 	}
-	path := filepath.Join(vaultDir, inboxKey, expanded)
+	path := filepath.Join(vaultDir, mailboxName, expanded)
 	return path, []byte(content)
 }
 
@@ -112,39 +112,39 @@ func FindThreadMD(inboxDir, shortThr string) string {
 	return found
 }
 
-func threadContact(inboxKey string, messages []Message) string {
+func threadContact(mailboxName string, messages []Message) string {
 	for _, m := range messages {
 		from := MessageFromAddr(m)
-		if !strings.EqualFold(from, inboxKey) {
+		if !strings.EqualFold(from, mailboxName) {
 			return from
 		}
 		for _, a := range m.To {
-			if a != nil && !strings.EqualFold(a.Email, inboxKey) {
+			if a != nil && !strings.EqualFold(a.Email, mailboxName) {
 				return a.Email
 			}
 		}
 		for _, a := range m.CC {
-			if a != nil && !strings.EqualFold(a.Email, inboxKey) {
+			if a != nil && !strings.EqualFold(a.Email, mailboxName) {
 				return a.Email
 			}
 		}
 	}
-	return inboxKey
+	return mailboxName
 }
 
-func isSeen(inboxKey string, messages []Message) bool {
+func isSeen(mailboxName string, messages []Message) bool {
 	for _, m := range messages {
-		if !strings.EqualFold(MessageFromAddr(m), inboxKey) && !MessageIsSeen(m) {
+		if !strings.EqualFold(MessageFromAddr(m), mailboxName) && !MessageIsSeen(m) {
 			return false
 		}
 	}
 	return true
 }
 
-func mdContent(inboxKey string, messages []Message, meta []string) string {
+func mdContent(mailboxName string, messages []Message, meta []string) string {
 	latest := messages[0]
 	threadID := string(latest.ThreadID)
-	contact := threadContact(inboxKey, messages)
+	contact := threadContact(mailboxName, messages)
 
 	fm := []string{"---"}
 	for _, field := range meta {
@@ -200,12 +200,12 @@ func mdContent(inboxKey string, messages []Message, meta []string) string {
 }
 
 // RenderMissingMDs renders MD files for threads missing one in the given inbox.
-func RenderMissingMDs(vaultDir, inboxKey string, cfg InboxConfig) {
+func RenderMissingMDs(vaultDir, mailboxName string, cfg MailboxConfig) {
 	threads, err := ScanThreads(vaultDir)
 	if err != nil {
 		return
 	}
-	mbxID := jmap.ID(MakeMailboxID(inboxKey))
+	mbxID := jmap.ID(MakeMailboxID(mailboxName))
 	for _, t := range threads {
 		msgs := ReadMessagesForThread(vaultDir, t.ID)
 		var inboxMsgs []Message
@@ -217,10 +217,10 @@ func RenderMissingMDs(vaultDir, inboxKey string, cfg InboxConfig) {
 		if len(inboxMsgs) == 0 {
 			continue
 		}
-		inboxDir := filepath.Join(vaultDir, inboxKey)
+		inboxDir := filepath.Join(vaultDir, mailboxName)
 		alreadyExists := false
 		if cfg.IsSimplified() {
-			contact := threadContact(inboxKey, inboxMsgs)
+			contact := threadContact(mailboxName, inboxMsgs)
 			alreadyExists = findContactMD(inboxDir, contact) != ""
 		} else {
 			alreadyExists = FindThreadMD(inboxDir, ThreadShortID(inboxMsgs)) != ""
@@ -228,15 +228,15 @@ func RenderMissingMDs(vaultDir, inboxKey string, cfg InboxConfig) {
 		if alreadyExists {
 			continue
 		}
-		mdPath, content := RenderMD(vaultDir, inboxKey, inboxMsgs, cfg)
+		mdPath, content := RenderMD(vaultDir, mailboxName, inboxMsgs, cfg)
 		if mdPath == "" {
 			continue
 		}
 		if _, statErr := os.Stat(mdPath); statErr == nil {
-			log.Printf("[RenderMissingMDs] SKIP (exists) inbox=%s thread=%s", inboxKey, string(t.ID)[:min(30, len(string(t.ID)))])
+			log.Printf("[RenderMissingMDs] SKIP (exists) inbox=%s thread=%s", mailboxName, string(t.ID)[:min(30, len(string(t.ID)))])
 			continue
 		}
-		log.Printf("[RenderMissingMDs] WRITE inbox=%s thread=%s msgs=%d", inboxKey, string(t.ID)[:min(30, len(string(t.ID)))], len(inboxMsgs))
+		log.Printf("[RenderMissingMDs] WRITE inbox=%s thread=%s msgs=%d", mailboxName, string(t.ID)[:min(30, len(string(t.ID)))], len(inboxMsgs))
 		os.MkdirAll(filepath.Dir(mdPath), 0755) //nolint:errcheck
 		WriteIfChanged(mdPath, string(content))
 		SetMDMtime(mdPath, inboxMsgs)
@@ -318,16 +318,16 @@ func CleanupOrphanedInboxes(vaultDir string, state *State, respondedRelays map[s
 		return
 	}
 
-	// Build complete set of known inboxKeys across all relays in state,
+	// Build complete set of known mailboxNames across all relays in state,
 	// merged with what responded relays are returning now.
-	// Normalize trailing slashes: inboxKey "rss/" maps to directory "rss".
+	// Normalize trailing slashes: mailboxName "rss/" maps to directory "rss".
 	known := map[string]bool{}
 	addKnown := func(k string) {
 		known[k] = true
 		known[strings.TrimSuffix(k, "/")] = true
 	}
 	for _, rs := range state.Relays {
-		for _, k := range rs.InboxKeys {
+		for _, k := range rs.MailboxNames {
 			addKnown(k)
 		}
 	}
@@ -362,7 +362,7 @@ func CleanupOrphanedInboxes(vaultDir string, state *State, respondedRelays map[s
 
 // CleanupOrphanedMDs removes _*.md files in vault inboxes that no longer
 // correspond to any message in .data/messages/.
-func CleanupOrphanedMDs(vaultDir string, inboxCfg func(string) InboxConfig) {
+func CleanupOrphanedMDs(vaultDir string, inboxCfg func(string) MailboxConfig) {
 	messages, err := ScanMessages(vaultDir)
 	if err != nil {
 		return
@@ -371,7 +371,7 @@ func CleanupOrphanedMDs(vaultDir string, inboxCfg func(string) InboxConfig) {
 	// Build set of expected MD paths from current messages.
 	byInbox := map[string][]Message{}
 	for _, m := range messages {
-		key := InboxKeyFromMailboxID(MessageMailboxID(m))
+		key := MailboxNameFromID(MessageMailboxID(m))
 		if key == "" {
 			continue
 		}
@@ -379,7 +379,7 @@ func CleanupOrphanedMDs(vaultDir string, inboxCfg func(string) InboxConfig) {
 	}
 
 	expected := map[string]bool{}
-	for inboxKey, msgs := range byInbox {
+	for mailboxName, msgs := range byInbox {
 		threads := GroupByThread(msgs)
 		for _, t := range threads {
 			threadMsgs := make([]Message, 0, len(t.EmailIDs))
@@ -390,7 +390,7 @@ func CleanupOrphanedMDs(vaultDir string, inboxCfg func(string) InboxConfig) {
 					}
 				}
 			}
-			mdPath, _ := RenderMD(vaultDir, inboxKey, threadMsgs, inboxCfg(inboxKey))
+			mdPath, _ := RenderMD(vaultDir, mailboxName, threadMsgs, inboxCfg(mailboxName))
 			if mdPath != "" {
 				expected[mdPath] = true
 			}
@@ -410,15 +410,15 @@ func CleanupOrphanedMDs(vaultDir string, inboxCfg func(string) InboxConfig) {
 	}
 }
 
-func scanInboxForOrphans(vaultDir, inboxKey string, expected map[string]bool) {
-	dir := filepath.Join(vaultDir, inboxKey)
+func scanInboxForOrphans(vaultDir, mailboxName string, expected map[string]bool) {
+	dir := filepath.Join(vaultDir, mailboxName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	for _, e := range entries {
 		if e.IsDir() {
-			scanInboxForOrphans(vaultDir, inboxKey+"/"+e.Name(), expected)
+			scanInboxForOrphans(vaultDir, mailboxName+"/"+e.Name(), expected)
 			continue
 		}
 		name := e.Name()
@@ -427,14 +427,14 @@ func scanInboxForOrphans(vaultDir, inboxKey string, expected map[string]bool) {
 		}
 		fullPath := filepath.Join(dir, name)
 		if !expected[fullPath] {
-			log.Printf("[vault] removing orphaned MD: %s/%s", inboxKey, name)
+			log.Printf("[vault] removing orphaned MD: %s/%s", mailboxName, name)
 			os.Remove(fullPath) //nolint:errcheck
 		}
 	}
 }
 
-func EnsureNewFile(vaultDir, inboxKey string, cfg InboxConfig) {
-	dir := filepath.Join(vaultDir, inboxKey)
+func EnsureNewFile(vaultDir, mailboxName string, cfg MailboxConfig) {
+	dir := filepath.Join(vaultDir, mailboxName)
 	os.MkdirAll(dir, 0755) //nolint:errcheck
 	p := filepath.Join(dir, "_new.md")
 	if cfg.IsSimplified() {
@@ -448,7 +448,7 @@ func EnsureNewFile(vaultDir, inboxKey string, cfg InboxConfig) {
 
 // ── WriteThreadMD ─────────────────────────────────────────────────────────────
 
-func WriteThreadMD(vaultDir, inboxKey string, messages []Message, cfg InboxConfig) bool {
+func WriteThreadMD(vaultDir, mailboxName string, messages []Message, cfg MailboxConfig) bool {
 	if len(messages) == 0 {
 		return false
 	}
@@ -470,14 +470,14 @@ func WriteThreadMD(vaultDir, inboxKey string, messages []Message, cfg InboxConfi
 	}
 	WriteThread(vaultDir, Thread{ID: threadID, EmailIDs: eIDs}) //nolint:errcheck
 
-	mdPath, mdBytes := RenderMD(vaultDir, inboxKey, sorted, cfg)
+	mdPath, mdBytes := RenderMD(vaultDir, mailboxName, sorted, cfg)
 	if mdPath == "" {
 		return false
 	}
 	content := string(mdBytes)
 
-	inboxDir := filepath.Join(vaultDir, inboxKey)
-	contact := threadContact(inboxKey, sorted)
+	inboxDir := filepath.Join(vaultDir, mailboxName)
+	contact := threadContact(mailboxName, sorted)
 	var oldMDPath string
 	if cfg.IsSimplified() {
 		oldMDPath = findContactMD(inboxDir, contact)
@@ -517,12 +517,12 @@ func SetFMField(content, key, value string) string {
 	return content
 }
 
-func CreateDraftMD(vaultDir, inboxKey, contact, subject, body, threadID, inReplyTo string) (string, error) {
+func CreateDraftMD(vaultDir, mailboxName, contact, subject, body, threadID, inReplyTo string) (string, error) {
 	if threadID == "" && inReplyTo != "" {
 		threadID = FindThreadByMessageID(vaultDir, inReplyTo)
 	}
 
-	inboxDir := filepath.Join(vaultDir, inboxKey)
+	inboxDir := filepath.Join(vaultDir, mailboxName)
 	if err := os.MkdirAll(inboxDir, 0755); err != nil {
 		return "", err
 	}
@@ -548,7 +548,7 @@ func CreateDraftMD(vaultDir, inboxKey, contact, subject, body, threadID, inReply
 		if threadID == "" {
 			threadID = fmt.Sprintf("thr-ts-%d", time.Now().UnixMilli())
 		}
-		mbxID := MakeMailboxID(inboxKey)
+		mbxID := MakeMailboxID(mailboxName)
 		filename := fmt.Sprintf("%s_%s.md", SafeFilename(contact), time.Now().Local().Format("01021504"))
 		mdPath = filepath.Join(inboxDir, filename)
 		fm := fmt.Sprintf("---\nsubject: \"%s\"\ncontact: %s\nmailboxId: %s\nthreadId: %s\nseen: true\nstatus: send\n---\n%s\n\n",

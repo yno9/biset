@@ -103,14 +103,14 @@ func (s *jmapHandler) serveEmailSet(args json.RawMessage) (any, error) {
 		// recipient sees this Message-Id; their reply's In-Reply-To then
 		// resolves to the persisted copy below, giving deterministic
 		// threading even before the IMAP Sent-folder fetch round-trips.
-		inboxKey := inboxKeyFromMailboxIDs(msg.MailboxIDs)
+		mailboxName := mailboxNameFromMailboxIDs(msg.MailboxIDs)
 		if len(msg.MessageID) == 0 || msg.MessageID[0] == "" {
-			msg.MessageID = []string{vault.NewRFCMessageID(inboxKey)}
+			msg.MessageID = []string{vault.NewRFCMessageID(mailboxName)}
 		}
 		// Use the Message-Id as the JMAP store key so an IMAP-Sent-folder
 		// re-fetch of the same RFC 5322 message overwrites this row instead
 		// of creating a duplicate. (vault.MakeMessageID does the conversion.)
-		msg.ID = jmap.ID(vault.MakeMessageID(msg.MessageID[0], inboxKey, now))
+		msg.ID = jmap.ID(vault.MakeMessageID(msg.MessageID[0], mailboxName, now))
 
 		// Persist immediately (not PutPending) so the outgoing message is
 		// part of the store before its first reply can arrive. Store.Put
@@ -243,8 +243,8 @@ func (s *jmapHandler) serveEmailSubmissionSet(args json.RawMessage) (any, error)
 
 func (s *jmapHandler) relayForMailboxIDs(mailboxIDs map[jmap.ID]bool) *Relay {
 	for mbxID := range mailboxIDs {
-		inboxKey := vault.InboxKeyFromMailboxID(string(mbxID))
-		if r := s.mgr.RelayForInboxKey(inboxKey); r != nil {
+		mailboxName := vault.MailboxNameFromID(string(mbxID))
+		if r := s.mgr.RelayForMailbox(mailboxName); r != nil {
 			return r
 		}
 	}
@@ -308,12 +308,12 @@ func cloneMessage(m vault.Message) vault.Message {
 	return out
 }
 
-// inboxKeyFromMailboxIDs picks one inboxKey from a draft's mailboxIds. Used
+// mailboxNameFromMailboxIDs picks one mailboxName from a draft's mailboxIds. Used
 // at draft-create time to seed RFC Message-Id with the right id-right host
-// ("non.md" for test@non.md, "localhost" for non-email inboxKeys).
-func inboxKeyFromMailboxIDs(mailboxIDs map[jmap.ID]bool) string {
+// ("non.md" for test@non.md, "localhost" for non-email mailboxNames).
+func mailboxNameFromMailboxIDs(mailboxIDs map[jmap.ID]bool) string {
 	for mbxID := range mailboxIDs {
-		if k := vault.InboxKeyFromMailboxID(string(mbxID)); k != "" {
+		if k := vault.MailboxNameFromID(string(mbxID)); k != "" {
 			return k
 		}
 	}
