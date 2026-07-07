@@ -29,13 +29,13 @@ External events
 - **Relays** — each account sits behind an independent JMAP HTTP server bridging one external protocol (SMTP, IMAP, …). biset aggregates them all into one view.
 - **End-to-end encryption** — OpenPGP messaging with full **DeltaChat / chatmail interoperability**, including QR-less securejoin (setup-contact) via an invite link. See [`ARC.md`](ARC.md).
 - **Encrypted accounts** — password-derived envelope (Argon2id) provisioned to the server; the private key never leaves the client in the clear.
-- **Markdown vault** — biset's identity. Opt into a folder and biset mirrors every thread as Markdown via the File System Access API. Edit a file to reply, archive, or delete — changes are watched and pushed back through the relay.
+- **Markdown vault** — Opt into a folder and biset mirrors every thread as Markdown via the File System Access API. Edit a file to reply, archive, or delete — changes are watched and pushed back through the relay.
 
 ---
 
 ## Requirements
 
-- A Chromium-based browser (Chrome/Edge/Brave). The Markdown vault — biset's identity — needs the File System Access API + `FileSystemObserver`, which are Chromium-only.
+- Any Chromium-based browser (Brave/Vivaldi/Edge). The Markdown vault needs the File System Access API + `FileSystemObserver`, which are Chromium-only.
 - At least one JMAP relay to connect to (e.g. a [jmapsmtp](https://github.com/yno9/go-jmapsmtp) / chatmail account).
 - [Bun](https://bun.sh) — only if building from source.
 
