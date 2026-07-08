@@ -4,4 +4,4 @@ config.json
 dist/app-*.js
 deploy.sh
 home/
-
+issue.md

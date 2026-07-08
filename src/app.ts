@@ -17,6 +17,7 @@ import * as jmapMailbox from './jmap/mailbox.ts'
 import { initPGP } from './pgp/index.ts'
 import { encryptText } from './pgp/crypto.ts'
 import { deleteAllKeys } from './pgp/keys.ts'
+import { clearAll as clearLocalCache } from './store/cache.ts'
 import { loginViaEnvelope, authTokenToBasicAuth } from './cryptenv.ts'
 import { mailboxNameFromId } from './utils.ts'
 import type { ProcessedMessage } from './state.ts'
@@ -249,7 +250,7 @@ export async function jmapCreateEmail(
   references: string[] = [],
   senderEmail?: string,
   relayUrl?: string,
-): Promise<{ ok: boolean; fromEmail?: string }> {
+): Promise<{ ok: boolean; fromEmail?: string; error?: string }> {
   // Array form (legacy callers): first entry is To, the rest are Cc, no Bcc.
   // Object form (the #new composer): explicit To/Cc/Bcc from the recipient rows.
   const to = Array.isArray(recips) ? recips.slice(0, 1) : recips.to
@@ -408,5 +409,6 @@ export async function logout(): Promise<void> {
   )
   toRemove.forEach(k => localStorage.removeItem(k))
   await deleteAllKeys()
+  await clearLocalCache()
   location.href = '/'
 }

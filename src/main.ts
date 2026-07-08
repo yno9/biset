@@ -10,6 +10,8 @@ import { setupNewUserPage, showNewUserPage } from './ui/account-create.ts'
 import { showUserLanding } from './ui/user-landing.ts'
 import { primeAvatarCache } from './deltachat/avatar.ts'
 import { advertiseAllOwnAvatars } from './ap/avatar.ts'
+import { loadFromCache } from './store/cache.ts'
+import { loadFromIDB as loadQuerystateFromIDB } from './jmap/querystate.ts'
 
 // ── Hash routing helpers ───────────────────────────────────────────────────────
 // Inbox hash build/parse lives in utils (inboxToHash / parseInboxHash) so the
@@ -68,12 +70,45 @@ async function handleUserLanding(localpart: string, accounts: ReturnType<typeof 
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 
+// A stale/broken stored account (e.g. pointing at a relay that no longer
+// resolves, or one left over from a domain migration) can throw partway through
+// initInner and leave the app stuck on the pre-app overlay — unresponsive menu,
+// no left pane, no way back in without devtools. This safety net guarantees the
+// UI becomes interactive no matter what: it drops onto the account page, where
+// the broken account can be removed via the existing per-account "Remove"
+// action (left-pane.ts openAccountMenu) — a self-service recovery path that
+// doesn't require clearing localStorage by hand.
 async function init() {
+  try {
+    await initInner()
+  } catch (e) {
+    console.error('[init] failed, falling back to account page', e)
+    showApp()
+    if (!document.getElementById('app')?.classList.contains('lp-enabled')) {
+      await setupLeftPane().catch(() => {})
+    }
+    showMenuPage('/account')
+  }
+}
+
+async function initInner() {
   const accounts = loadStoredAccounts()
   const rawHash = location.hash
 
-  // Prime the DeltaChat avatar cache so synchronous UI lookups have data.
-  await primeAvatarCache()
+  // Prime the DeltaChat avatar cache so synchronous UI lookups have data, and
+  // load the browser-local cache (IndexedDB) into the in-memory stores before
+  // the first sync — this is what lets a plain page refresh do a delta sync
+  // (via querystate) instead of re-fetching + re-decrypting full history.
+  // IndexedDB can wedge (e.g. a delete racing an open right after logout) —
+  // race it against a timeout so a stuck cache load can never block the app
+  // from ever syncing at all; a missed cache just costs one full re-fetch.
+  const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T | void> =>
+    Promise.race([p, new Promise<void>(resolve => setTimeout(resolve, ms))])
+  await Promise.all([
+    primeAvatarCache(),
+    withTimeout(loadFromCache(), 3000),
+    withTimeout(loadQuerystateFromIDB(), 3000),
+  ])
 
   // Per-user landing page (https://<host>/<localpart>[/]) takes precedence over
   // hash routing — it's how a shared user URL opens a conversation.
@@ -363,7 +398,7 @@ window.addEventListener('popstate', async () => {
   })
   btnTop?.addEventListener('click', () => {
     const past = document.getElementById('past-threads')
-    const pastH = past && outer.contains(past) ? past.offsetHeight : 0
+    const pastH = past && outer?.contains(past) ? past.offsetHeight : 0
     outer?.scrollTo({ top: pastH, behavior: 'smooth' })
   })
 }

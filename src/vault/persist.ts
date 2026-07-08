@@ -9,6 +9,7 @@ import * as threads from '../store/threads.ts'
 import * as mailboxes from '../store/mailboxes.ts'
 import * as identities from '../store/identities.ts'
 import * as submissions from '../store/submissions.ts'
+import * as cache from '../store/cache.ts'
 import { buildEffectiveGroups } from '../processing.ts'
 
 export async function loadFromVault(): Promise<void> {
@@ -96,11 +97,13 @@ function fileId(id: string): string {
 }
 
 export async function flushMessage(email: Email): Promise<void> {
+  await cache.putMessage(email)
   if (!vaultHandle) return
   await writeJson(['.data', 'messages', acctDir(messages.accountOf(email)), `${fileId(email.id as string)}.json`], email)
 }
 
 export async function removeMessage(account: string, id: string): Promise<void> {
+  await cache.deleteMessage(account, id)
   if (!vaultHandle) return
   try {
     await deleteFile(['.data', 'messages', acctDir(account), `${fileId(id)}.json`])
@@ -108,16 +111,19 @@ export async function removeMessage(account: string, id: string): Promise<void> 
 }
 
 export async function flushThread(thread: Thread): Promise<void> {
+  await cache.putThread(thread)
   if (!vaultHandle) return
   await writeJson(['.data', 'threads', `${fileId(thread.id as string)}.json`], thread)
 }
 
 export async function flushMailboxes(): Promise<void> {
+  await cache.putMailboxes(mailboxes.all())
   if (!vaultHandle) return
   await writeJson(['.data', 'mailboxes.json'], mailboxes.all())
 }
 
 export async function flushIdentities(): Promise<void> {
+  await cache.putIdentities(identities.all())
   if (!vaultHandle) return
   await writeJson(['.data', 'identities.json'], identities.all())
 }

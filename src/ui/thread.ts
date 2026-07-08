@@ -389,8 +389,12 @@ export function scrollToFocused(smooth = false) {
       const outerRect = outer.getBoundingClientRect()
       const lastTopInOuter = lastRect.top - outerRect.top + outer.scrollTop
       const titleRow = document.getElementById('thread-title-row')
-      const convMeta = document.getElementById('conv-meta')
-      const titleH = (titleRow && outer.contains(titleRow) ? titleRow.offsetHeight : 0) + (convMeta ? convMeta.offsetHeight : 0)
+      // Only #thread-title-row is position:sticky (style.css) — it's the only
+      // thing that visually overlays scrolled-under content, so it's the only
+      // height that needs compensating here. #conv-meta scrolls away normally;
+      // including its height under-scrolled by that amount, leaving a sliver
+      // of the previous message visible above the "focused" one.
+      const titleH = titleRow && outer.contains(titleRow) ? titleRow.offsetHeight : 0
       if (lastTopInOuter >= pastH + outer.clientHeight) {
         target = lastTopInOuter - titleH
       } else {

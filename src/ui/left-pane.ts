@@ -9,6 +9,7 @@ import {
 } from '../state.ts'
 import { esc, formatTime, avatarStyle, inboxToHash } from '../utils.ts'
 import type { InboxSummary } from '../types.ts'
+import type { Email } from 'jmap-rfc-types'
 // Circular (safe — used only in function bodies):
 import { render, syncDockPosition, scrollToFocused, updateScrollSpacer } from './thread.ts'
 import { fetchMessages, showSysMsg, startPolling } from './shell.ts'
@@ -17,6 +18,7 @@ import { loadInboxSummaries, initSession, initPGPForSession, logout, jmapCreateE
 import { loginViaEnvelope, authTokenToBasicAuth, fetchEnvelope, unsealEnvelope } from '../cryptenv.ts'
 import { decryptAndParse, prefetchRecipientKey } from '../pgp/index.ts'
 import { deleteKey } from '../pgp/keys.ts'
+import { clearIdentity as clearIdentityCache } from '../store/cache.ts'
 import { avatarDataUrl, saveAvatar } from '../deltachat/avatar.ts'
 import { advertiseOwnAvatarForEmail } from '../ap/avatar.ts'
 import * as jmapEmail from '../jmap/email.ts'
@@ -328,9 +330,24 @@ export function markRead(item: InboxSummary) {
       const selfAddr = sess.jmapAccountId || sess.account.email
       const emails = getInboxEmails(item.mailbox, item.contact, selfAddr, sess.account.email)
       const unread = emails.filter(e => !(e.keywords as any)?.['$seen'])
-      const unreadIds = unread.map(e => e.id as string).filter(Boolean)
-      if (unreadIds.length) {
-        await jmapEmail.markSeen(sess.jmapClient, sess.jmapAccountId, unreadIds)
+      if (unread.length) {
+        // A merged inbox can hold messages from more than one relay (mail + AP for
+        // the same identity) — markSeen must go to each message's own relay/session,
+        // not just the active one, or the untouched relay's server-side state
+        // reverts the mark on the next sync.
+        const byRelay = new Map<string, Email[]>()
+        for (const e of unread) {
+          const relay = (e as any)._relay as string ?? sess.account.serverUrl
+          if (!byRelay.has(relay)) byRelay.set(relay, [])
+          byRelay.get(relay)!.push(e)
+        }
+        for (const [relay, group] of byRelay) {
+          const relaySess = sessionForRelay(item.user, relay) ?? sess
+          const ids = group.map(e => e.id as string).filter(Boolean)
+          if (!ids.length) continue
+          try { await jmapEmail.markSeen(relaySess.jmapClient, relaySess.jmapAccountId, ids) }
+          catch (e) { console.log('[markRead] markSeen failed for', relay, e) }
+        }
         // Persist $seen to the local store too — loadInboxSummaries recomputes
         // has_unread from store keywords, so without this the mark reappears
         // on the next sync (server-change propagation lags).
@@ -1425,6 +1442,7 @@ export async function setupLeftPane() {
       )
       toRemove.forEach(k => localStorage.removeItem(k))
       await deleteKey(email)
+      await clearIdentityCache(email)
       _accInfoCache.delete(email)
       renderAccountsList()
     })
