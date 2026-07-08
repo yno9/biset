@@ -34,9 +34,38 @@ export function isMeMsg(from: string): boolean {
   return from === activeSession()?.account.email || (!!activeSession()?.jmapAccountId && from === activeSession()?.jmapAccountId)
 }
 
+// RFC 9078 reactions (src/mail/reactions.ts) arrive as their own message,
+// synced AFTER their target is already on screen — so `reactions` is the one
+// field on an already-rendered message that can still change. Shared by
+// createMsgEl (initial render) and the in-place patch in addMessage below.
+function renderReactionsHtml(reactions: ProcessedMessage['msg']['reactions']): string {
+  if (!reactions?.length) return ''
+  return `<div class="t-reactions">${reactions.map(r =>
+    `<span class="t-reaction-chip" title="${esc(r.from)}">${esc(r.emoji)}</span>`
+  ).join('')}</div>`
+}
+
+function sameReactions(a: ProcessedMessage['msg']['reactions'], b: ProcessedMessage['msg']['reactions']): boolean {
+  const an = a?.length ?? 0, bn = b?.length ?? 0
+  if (an !== bn) return false
+  for (let i = 0; i < an; i++) {
+    if (a![i].emoji !== b![i].emoji || a![i].from !== b![i].from) return false
+  }
+  return true
+}
+
 export async function addMessage(msg: ProcessedMessage['msg']): Promise<boolean> {
   const key = `${msg.from}:${msg.ts}`
-  if (renderedKeys.has(key)) return false
+  if (renderedKeys.has(key)) {
+    const existing = processedMessages.find(p => `${p.msg.from}:${p.msg.ts}` === key)
+    if (existing && !sameReactions(existing.msg.reactions, msg.reactions)) {
+      existing.msg.reactions = msg.reactions
+      const el = document.querySelector(`.t-msg[data-message-id="${CSS.escape(existing.msg.message_id)}"] .t-meta`)
+      el?.querySelector('.t-reactions')?.remove()
+      if (msg.reactions?.length) el?.insertAdjacentHTML('beforeend', renderReactionsHtml(msg.reactions))
+    }
+    return false
+  }
   renderedKeys.add(key)
 
   const { bodyText, encrypted, unreadable } = await processIncoming(
@@ -83,6 +112,7 @@ export function createMsgEl({ msg, bodyText, encrypted, unreadable, pending }: P
   const senderAvatarURL = avatarDataUrl(msg.from)
     ?? lastLeftInboxes.find(x => x.contact === msg.from && x.avatar_url)?.avatar_url
     ?? null
+  div.dataset.messageId = msg.message_id
   div.innerHTML = `
     <div class="t-avatar" style="${senderAvatarURL ? 'background:transparent' : avatarStyle(msg.from)}">${senderAvatarURL ? `<img src="${senderAvatarURL}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">` : senderName.charAt(0).toUpperCase()}</div>
     <div class="t-meta">
@@ -91,6 +121,7 @@ export function createMsgEl({ msg, bodyText, encrypted, unreadable, pending }: P
         <span class="t-time">${formatTime(msg.ts)}${encrypted ? ' <svg style="vertical-align:middle;opacity:0.6" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zm-6 9a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm3.1-9H8.9V6a3.1 3.1 0 0 1 6.2 0v2z"/></svg>' : ''}</span>
       </div>
       <div class="t-body">${display}</div>
+      ${renderReactionsHtml(msg.reactions)}
     </div>
   `
   return div

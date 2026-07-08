@@ -1,6 +1,7 @@
 import type { Email } from 'jmap-rfc-types'
 import type { AccountSession, StoredAccount, InboxSummary } from './types.ts'
 import { readGroupHeaders, groupDraftHeaders, isSecurejoinEmail, type GroupOpts } from './deltachat/protocol.ts'
+import { isReaction, collectReactions } from './mail/reactions.ts'
 import { avatarDataUrl } from './deltachat/avatar.ts'
 import {
   sessions, addSession, setCurrentInbox, currentInbox, activeSession, sessionFor, sessionForRelay,
@@ -27,9 +28,21 @@ export { initSession }
 
 // ── Email → ProcessedMessage.msg ──────────────────────────────────────────────
 
+// RFC 3676 signature delimiter: a line that is exactly "-- " on its own. Mail
+// clients (and DeltaChat's per-message "status" footer) use this to mark
+// everything below as a signature — without stripping it, a sender's status
+// text repeats verbatim in every chat bubble (issue #3).
+function stripSignature(body: string): string {
+  const lines = body.split('\n')
+  const idx = lines.findIndex(l => l.replace(/\r$/, '') === '-- ')
+  if (idx < 0) return body
+  return lines.slice(0, idx).join('\n').replace(/\s+$/, '')
+}
+
 export function emailToMsg(email: Email, _selfAddr: string): ProcessedMessage['msg'] {
   const from = (email.from as any[])?.[0]
-  const body = (Object.values((email.bodyValues as any) ?? {}) as any[])[0]?.value as string ?? ''
+  const rawBody = (Object.values((email.bodyValues as any) ?? {}) as any[])[0]?.value as string ?? ''
+  const body = stripSignature(rawBody)
   const { id: groupId, name: groupName } = readGroupHeaders(email)
   return {
     from: (from?.email as string) ?? '',
@@ -83,6 +96,9 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
       // SecureJoin handshake noise (incl. biset's own sent vc-* copies) never
       // gets its own inbox. Fix B: kills the phantom "Secure-Join" 1:1 inbox.
       if (isSecurejoinEmail(email)) continue
+      // RFC 9078 reactions aren't chat messages — they attach to their target
+      // (see fetchInboxMessages) and never bump unread/latest previews here.
+      if (isReaction(email)) continue
 
       const mbxIds = Object.keys((email.mailboxIds as any) ?? {})
       const mbxName = mbxIds.map(id => mailboxNameFromId(id)).find(n => n) ?? ''
@@ -187,6 +203,7 @@ export function getInboxEmails(mailbox: string, contact: string, selfAddr: strin
       }
     }
     return allMsgs.filter(email => {
+      if (isReaction(email)) return false
       if (readGroupHeaders(email).id === groupId) return true
       const tid = email.threadId as string
       return tid ? groupThreadIds.has(tid) : false
@@ -206,6 +223,7 @@ export function getInboxEmails(mailbox: string, contact: string, selfAddr: strin
   }
   return allMsgs.filter(email => {
     if (isSecurejoinEmail(email)) return false
+    if (isReaction(email)) return false
     if (readGroupHeaders(email).id) return false
     const tid = email.threadId as string
     if (tid && groupThreadIds.has(tid)) return false
@@ -228,6 +246,15 @@ export async function fetchInboxMessages(inboxSummary: InboxSummary): Promise<Pr
   const selfAddr = session.jmapAccountId || session.account.email
   const emails = getInboxEmails(inboxSummary.mailbox, inboxSummary.contact, selfAddr, session.account.email)
   const msgs = emails.map(e => emailToMsg(e, selfAddr)).sort((a, b) => a.ts - b.ts)
+  // RFC 9078 reactions were filtered out of `emails` above (they're not chat
+  // messages) — reattach them to their target message for display. Scan the
+  // whole identity (not just this inbox's emails) since a reaction can arrive
+  // over a different relay than its target (mail + AP for one identity).
+  const reactionMap = collectReactions(messages.forIdentity(session.account.email))
+  for (const msg of msgs) {
+    const rs = reactionMap.get(msg.message_id)
+    if (rs?.length) msg.reactions = rs.map(r => ({ emoji: r.emoji, from: r.from }))
+  }
   // Fill in group metadata for threadId-matched replies that lack Chat-Group-ID header.
   if (inboxSummary.group_id) {
     for (const msg of msgs) {
@@ -316,10 +343,14 @@ export async function jmapCreateEmail(
     if (enc) emailBody = enc
   }
 
+  // Identity.name (set via the "Change display name" modal) only reaches
+  // recipients if it's on the From header — without it here, changing the
+  // display name had no visible effect anywhere (issue #2).
+  const fromName = (identity.name as string | undefined)?.trim()
   const draft: Record<string, any> = {
     mailboxIds: { [mbx.id as string]: true },
     keywords: { $draft: true },
-    from: [{ email: fromEmail }],
+    from: fromName ? [{ email: fromEmail, name: fromName }] : [{ email: fromEmail }],
     to: to.map(e => ({ email: e })),
     subject: subject || '',
     textBody: [{ partId: '1', type: 'text/plain' }],

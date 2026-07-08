@@ -6,8 +6,13 @@ export function asInput(el: Element | HTMLElement | null): HTMLInputElement { re
 export function asHTML(el: Element | EventTarget | null): HTMLElement { return el as HTMLElement }
 
 // ── HTML / text helpers ───────────────────────────────────────────────────────
+// Used both for HTML text content and inside quoted attribute values
+// (e.g. title="${esc(x)}") throughout the UI layer — escape quotes too, or
+// attacker-controlled data (a remote sender's From address, etc.) placed in
+// an attribute can break out of it and inject arbitrary attributes/script.
 export function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/\n/g, '<br>')
 }
 
 export function linkify(html: string): string {

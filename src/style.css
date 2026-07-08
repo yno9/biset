@@ -196,7 +196,7 @@
   .lp-hmenu-item {
     border: none; background: none; cursor: pointer;
     padding: 8px 12px; border-radius: 7px;
-    font-size: 13px; color: var(--text);
+    font-size: 16px; color: var(--text);
     text-align: left; width: 100%;
     font-family: system-ui, sans-serif;
   }
@@ -297,6 +297,11 @@
   .cmd-thread-card .cmd-page-content { max-width: 520px; margin: 0 auto; padding-top: 12px; }
   .cmd-page-content { max-width: 520px; margin: 0 auto; padding-top: 12px; }
   .cmd-page-content h2 { font-size: 22px; font-weight: 600; margin-bottom: 24px; }
+  /* Account/config pages: same edge-to-edge treatment as compose (no centered
+     max-width column, no card side padding). */
+  .cmd-thread-card:has(.wide-page) { padding: 0 0 40px; }
+  .cmd-thread-card .cmd-page-content.wide-page,
+  .cmd-page-content.wide-page { max-width: none; margin: 0; padding-left: 20px; padding-right: 20px; }
   .cmd-page-section { margin-bottom: 28px; }
   .cmd-page-section h3 { font-size: 12px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
   .cmd-page-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--header-border); font-size: 15px; }
@@ -472,8 +477,11 @@
     right: 0;
     z-index: 10;
     transition: none;
+    transform: translateY(0);
   }
   body.lp-resizing #reply-dock { transition: none; }
+  #reply-dock:not(.group-expanded) { transition: transform 0.25s cubic-bezier(0.4,0,0.2,1); }
+  #reply-dock.dock-hidden { transform: translateY(calc(100% + 24px)); }
   #app.single-col.lp-enabled #reply-dock {
     left: 0;
     right: 0;
@@ -512,7 +520,7 @@
     display: flex; align-items: center; justify-content: center;
     z-index: 11;
     opacity: 0; pointer-events: none;
-    transition: opacity 0.2s;
+    transition: opacity 0.2s, bottom 0.25s cubic-bezier(0.4,0,0.2,1);
     color: var(--text-dim);
   }
   #scroll-to-bottom.visible { opacity: 1; pointer-events: auto; }
@@ -528,11 +536,23 @@
     display: flex; align-items: center; justify-content: center;
     z-index: 11;
     opacity: 0; pointer-events: none;
-    transition: opacity 0.2s, bottom 0.2s;
+    transition: opacity 0.2s, bottom 0.25s cubic-bezier(0.4,0,0.2,1);
     color: var(--text-dim);
   }
   #scroll-to-top.visible { opacity: 1; pointer-events: auto; }
   #scroll-to-top.above-bottom { bottom: calc(var(--dock-h) + 5px + 26px + 8px); }
+  /* reply-dock is position:fixed + translateY when stowed (main.ts scroll
+     handler) — that doesn't change its layout height (--dock-h), so these
+     buttons need their own override to follow it down. .above-bottom still
+     needs its own higher offset so it doesn't sit on top of scroll-to-bottom
+     when both are visible at once. */
+  body:has(#reply-dock.dock-hidden) #scroll-to-bottom,
+  body:has(#reply-dock.dock-hidden) #scroll-to-top {
+    bottom: 16px;
+  }
+  body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
+    bottom: calc(16px + 26px + 8px);
+  }
 
 
   /* 過去スレッド: 引き出し (ビューポート上に隠れている) */
@@ -718,6 +738,12 @@
   .role-badge.cc  { background: rgba(100,150,255,0.18); color: #6496ff; }
   .role-badge.bcc { background: rgba(200,100,100,0.18); color: #c86464; }
   .t-body { font-size: inherit; color: var(--text); line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+  .t-reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .t-reaction-chip {
+    display: inline-flex; align-items: center; font-size: 13px;
+    padding: 2px 7px; border-radius: 10px; line-height: 1.4;
+    background: rgba(128,128,128,0.14); cursor: default;
+  }
   .e2ee-lock { font-size: 10px; opacity: 0.6; margin-right: 2px; }
 
   .reply-box {

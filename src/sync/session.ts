@@ -20,6 +20,7 @@ import { maybeHandleSecurejoin } from '../deltachat/securejoin.ts'
 import { learnAvatar } from '../deltachat/avatar.ts'
 import { learnApAvatar } from '../ap/avatar.ts'
 import { isApRelay, identities as ownIdentities } from '../context.ts'
+import { isReactionEmail, isReactionDisposition, cacheReaction } from '../mail/reactions.ts'
 
 export async function sync(session: AccountSession): Promise<void> {
   const { jmapClient: client, jmapAccountId: accountId, account } = session
@@ -87,6 +88,13 @@ export async function sync(session: AccountSession): Promise<void> {
         const raw = partId ? (e.bodyValues as any)?.[partId]?.value as string ?? '' : ''
         const isPgp = raw.includes('-----BEGIN PGP MESSAGE-----')
         console.log('[promote]', (e.id as string)?.slice(0, 30), 'outerIrt:', outerIrt || 'EMPTY', 'isPgp:', isPgp, 'hasOuterGroup:', hasOuterGroup)
+        const from = (e.from as any[] | undefined)?.[0]?.email as string | undefined
+        // RFC 9078 reactions (src/mail/reactions.ts) — generic, not DeltaChat-
+        // specific. Cleartext case only here; the encrypted case is handled
+        // below once decrypted.headers is available.
+        if (!isPgp && from && outerIrt && isReactionEmail(e)) {
+          cacheReaction(e, { emoji: raw.trim(), from, targetMessageId: outerIrt })
+        }
         if (!isPgp) return
         // Decrypt to promote inner protected headers (In-Reply-To, Chat-Group-ID)
         // to the outer email so threading + group routing can see them.
@@ -101,6 +109,9 @@ export async function sync(session: AccountSession): Promise<void> {
           }
           if (decrypted.headers) {
             if (!hasOuterGroup) cacheGroupHeaders(e, readGroupHeadersFromMime(decrypted.headers))
+            if (from && decrypted.inReplyTo && isReactionDisposition(decrypted.headers)) {
+              cacheReaction(e, { emoji: decrypted.body.trim(), from, targetMessageId: decrypted.inReplyTo })
+            }
             // Learn the sender's key from the protected Autocrypt header so we can
             // encrypt replies (chatmail hides Autocrypt inside the encryption).
             const ac = parseAutocryptKey(decrypted.headers)
@@ -116,7 +127,6 @@ export async function sync(session: AccountSession): Promise<void> {
         }
         // DeltaChat SecureJoin handshake (setup-contact v3). Runs after the
         // Autocrypt learning above so the sender's key is available for replies.
-        const from = (e.from as any[] | undefined)?.[0]?.email as string | undefined
         // Learn the sender's DeltaChat profile picture (Chat-User-Avatar), if the
         // decrypted message carries one. No-op otherwise. Never learn an avatar
         // for one of OUR OWN identities: the locally-set avatar is authoritative,

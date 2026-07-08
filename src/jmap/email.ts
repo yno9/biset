@@ -3,7 +3,7 @@ import type { Email } from 'jmap-rfc-types'
 
 const META_PROPS = [
   'id', 'threadId', 'mailboxIds', 'from', 'to', 'cc', 'subject',
-  'receivedAt', 'preview', 'messageId', 'inReplyTo', 'keywords',
+  'receivedAt', 'preview', 'messageId', 'inReplyTo', 'keywords', 'headers',
 ] as const
 
 const BODY_PROPS = ['id', 'bodyValues', 'textBody'] as const

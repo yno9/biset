@@ -379,11 +379,23 @@ window.addEventListener('popstate', async () => {
   if (found) switchInbox(found)
 })
 
-// scroll buttons
+// scroll buttons + reply-dock auto hide/show
 {
   const outer = document.getElementById('outer')
   const btn = document.getElementById('scroll-to-bottom')
   const btnTop = document.getElementById('scroll-to-top')
+  let lastScrollTop = outer?.scrollTop ?? 0
+  // Only a genuine touch/wheel gesture should stow/reveal the reply box.
+  // outer.scrollTop also changes from purely programmatic causes — switching
+  // to a shorter inbox clamps scrollTop down, scrollToFocused()/button clicks
+  // animate it — and those aren't a "scroll up" the user actually did; treating
+  // them as one was hiding the reply box on load for some inboxes and not
+  // others depending on how their content length compared to the previous one.
+  let lastUserInputAt = 0
+  const markUserInput = () => { lastUserInputAt = Date.now() }
+  outer?.addEventListener('touchstart', markUserInput, { passive: true })
+  outer?.addEventListener('touchmove', markUserInput, { passive: true })
+  outer?.addEventListener('wheel', markUserInput, { passive: true })
   outer?.addEventListener('scroll', () => {
     const distFromBottom = outer.scrollHeight - outer.scrollTop - outer.clientHeight
     const bottomVisible = distFromBottom > 120
@@ -392,6 +404,17 @@ window.addEventListener('popstate', async () => {
     const pastH = past && outer.contains(past) ? past.offsetHeight : 0
     btnTop?.classList.toggle('visible', outer.scrollTop > pastH + 40)
     btnTop?.classList.toggle('above-bottom', bottomVisible)
+
+    // Scrolling up (toward older messages) stows the reply box for more
+    // reading room; scrolling down (toward the newest message) brings it
+    // back. A small delta threshold avoids flicker from tiny trackpad jitter.
+    const delta = outer.scrollTop - lastScrollTop
+    const dock = document.getElementById('reply-dock')
+    const isUserGesture = Date.now() - lastUserInputAt < 200
+    if (dock && isUserGesture && !dock.classList.contains('group-expanded') && Math.abs(delta) > 4) {
+      dock.classList.toggle('dock-hidden', delta < 0)
+    }
+    lastScrollTop = outer.scrollTop
   }, { passive: true })
   btn?.addEventListener('click', () => {
     outer?.scrollTo({ top: outer.scrollHeight, behavior: 'smooth' })
@@ -401,6 +424,50 @@ window.addEventListener('popstate', async () => {
     const pastH = past && outer?.contains(past) ? past.offsetHeight : 0
     outer?.scrollTo({ top: pastH, behavior: 'smooth' })
   })
+}
+
+// Mobile: swipe right anywhere in the conversation to reveal the inbox list.
+// Mirrors the swipe-to-delete gesture on inbox rows (left-pane.ts) but opens
+// the left pane instead. Only fires below the mobile breakpoint and while a
+// conversation (not already the list) is showing.
+//
+// Direction is decided early (once the touch has moved a few px) rather than
+// only at touchend: a diagonal touch would otherwise scroll the message list
+// vertically for the whole gesture (native scroll isn't blocked until we
+// preventDefault) while also being judged as a swipe at the end, which felt
+// like the screen wobbling up and down. Once locked horizontal, further
+// vertical movement is suppressed for the rest of the gesture; once locked
+// vertical, we back off entirely and let normal scrolling happen.
+{
+  const rightCol = document.getElementById('right-col')
+  let startX = 0, startY = 0, tracking = false
+  let lockedAxis: 'x' | 'y' | null = null
+  rightCol?.addEventListener('touchstart', e => {
+    if (window.innerWidth > 520) { tracking = false; return }
+    const $app = document.getElementById('app')
+    tracking = !!$app && !$app.classList.contains('show-left')
+    lockedAxis = null
+    startX = e.touches[0].clientX
+    startY = e.touches[0].clientY
+  }, { passive: true })
+  rightCol?.addEventListener('touchmove', e => {
+    if (!tracking) return
+    const dx = e.touches[0].clientX - startX
+    const dy = e.touches[0].clientY - startY
+    if (!lockedAxis) {
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return
+      lockedAxis = Math.abs(dx) > Math.abs(dy) * 1.5 ? 'x' : 'y'
+    }
+    if (lockedAxis === 'x') e.preventDefault()
+  }, { passive: false })
+  rightCol?.addEventListener('touchend', e => {
+    if (!tracking) return
+    tracking = false
+    const dx = e.changedTouches[0].clientX - startX
+    if (lockedAxis === 'x' && dx > 70) {
+      document.getElementById('app')?.classList.add('show-left')
+    }
+  }, { passive: true })
 }
 
 window.addEventListener('resize', async () => {

@@ -23,6 +23,7 @@ import { avatarDataUrl, saveAvatar } from '../deltachat/avatar.ts'
 import { advertiseOwnAvatarForEmail } from '../ap/avatar.ts'
 import * as jmapEmail from '../jmap/email.ts'
 import * as messages from '../store/messages.ts'
+import * as identities from '../store/identities.ts'
 import { loadFromVault, flushAll, flushMessage } from '../vault/persist.ts'
 import * as querystate from '../jmap/querystate.ts'
 import { startWatch } from '../vault/watch.ts'
@@ -272,7 +273,7 @@ export async function switchInbox(item: InboxSummary): Promise<void> {
   const $convMeta = document.getElementById('conv-meta')
   if ($convMeta) $convMeta.style.display = ''
   const $dock = document.getElementById('reply-dock')
-  if ($dock) $dock.style.display = ''
+  if ($dock) { $dock.style.display = ''; $dock.classList.remove('dock-hidden') }
 
   const prev = currentInbox
   if (prev && prev.user === item.user && prev.mailbox === item.mailbox && prev.contact === item.contact) {
@@ -876,7 +877,7 @@ export async function setupLeftPane() {
   // ── cmd pages ──
 
   function renderAccountPage() {
-    return `<div class="cmd-page-content">
+    return `<div class="cmd-page-content wide-page">
       <div class="cmd-page-section">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <h3 style="margin:0">Add JMAP account</h3>
@@ -922,7 +923,7 @@ export async function setupLeftPane() {
   }
 
   function renderConfigPage() {
-    return `<div class="cmd-page-content">
+    return `<div class="cmd-page-content wide-page">
       <div class="cmd-page-section">
         <h3>Notifications</h3>
         <div class="cmd-page-row">
@@ -1574,6 +1575,12 @@ export async function setupLeftPane() {
           accountId: session.jmapAccountId,
           update: { [id.id]: { name: newName } as any },
         })
+        // Mirror into the local identities store — jmapCreateEmail reads
+        // Identity.name from there when it builds the From header, and only
+        // refetches from the server when the store is empty. Without this,
+        // the new name wouldn't take effect on a send until the next full
+        // resync happened to run.
+        identities.set(identities.all().map(i => (i.id === id.id ? { ...i, name: newName } : i)))
         const cache = _accInfoCache.get(email) ?? {}
         cache.name = newName
         _accInfoCache.set(email, cache)
