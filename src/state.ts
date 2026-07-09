@@ -1,5 +1,15 @@
 import type { InboxSummary } from './types.ts'
 
+// A decrypted (or cleartext) message attachment, ready to render — dataUrl
+// works both as an <img src> (images) and an <a download href> (anything
+// else). Display-only for now: extracted from PGP/MIME on receive, see
+// processing.ts and pgp/crypto.ts's DecryptedMime.attachments.
+export interface MsgAttachment {
+  filename?: string
+  contentType: string
+  dataUrl: string
+}
+
 export interface ProcessedMessage {
   msg: {
     from: string
@@ -24,6 +34,7 @@ export interface ProcessedMessage {
   bodyText: string
   encrypted: boolean
   unreadable: boolean
+  attachments?: MsgAttachment[]
   pending?: boolean
   tempId?: string
 }

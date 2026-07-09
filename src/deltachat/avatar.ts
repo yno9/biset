@@ -12,8 +12,18 @@
 // the synchronous `avatarDataUrl()` cache (primed at startup).
 
 import type { DecryptedMime } from '../pgp/crypto.ts'
+import { bytesToDataUrl as encodeDataUrl } from '../utils.ts'
 
 const CHAT_USER_AVATAR = 'chat-user-avatar'
+const CHAT_GROUP_AVATAR = 'chat-group-avatar'
+
+// Cache key namespace for group avatars, distinct from contact addresses
+// (a group id never contains '@', so this can't collide with a real address).
+// Exported so callers building an InboxSummary can look up the same avatar
+// via avatarDataUrl(groupCacheKey(groupId)) without duplicating the format.
+export function groupCacheKey(groupId: string): string {
+  return `group:${groupId}`
+}
 
 const DB_NAME = 'biset-deltachat'
 const DB_VERSION = 1
@@ -71,11 +81,12 @@ export function ownAvatarBase64(account: string): string | undefined {
   return comma >= 0 ? dataUrl.slice(comma + 1) : undefined
 }
 
+// Inline avatars often carry no reliable content-type — sniff from magic
+// bytes when the given one isn't already image/*, then delegate to the
+// shared encoder (utils.ts; also used for general message attachments).
 function bytesToDataUrl(bytes: Uint8Array, contentType: string): string {
-  let bin = ''
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
   const ct = /^image\//i.test(contentType) ? contentType : sniffImageType(bytes)
-  return `data:${ct};base64,${btoa(bin)}`
+  return encodeDataUrl(bytes, ct)
 }
 
 function base64ToBytes(b64: string): Uint8Array {
@@ -137,4 +148,25 @@ export async function learnAvatar(from: string, dec: DecryptedMime): Promise<voi
   const dataUrl = bytesToDataUrl(bytes, ct)
   cache.set(addr, dataUrl)
   await persist(addr, dataUrl)
+}
+
+// Learns (or clears) a DeltaChat group's avatar from a decrypted message.
+// Unlike Chat-User-Avatar, DeltaChat always sends the group image as an
+// attached MIME part named by the header value (never base64-inline) — see
+// chatmail spec.md. Keyed separately from contact addresses (groupCacheKey)
+// so group and 1:1 avatars share the same cache without colliding.
+export async function learnGroupAvatar(groupId: string, dec: DecryptedMime): Promise<void> {
+  const hdr = dec.headers?.[CHAT_GROUP_AVATAR]
+  if (hdr === undefined) return
+  const key = groupCacheKey(groupId)
+  const raw = hdr.trim()
+  if (raw === '0' || raw === '') { await forget(key.toLowerCase()); return }
+
+  const attachments = dec.attachments ?? []
+  const img = attachments.find(a => a.filename === raw && /^image\//i.test(a.contentType))
+    ?? attachments.find(a => /^image\//i.test(a.contentType))
+  if (!img || !img.bytes.length) return
+
+  const dataUrl = bytesToDataUrl(img.bytes, img.contentType)
+  await saveAvatar(key, dataUrl)
 }

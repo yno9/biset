@@ -1,4 +1,28 @@
 // ── DOM helpers ───────────────────────────────────────────────────────────────
+
+// Distinguishes our own JS-driven scrolling (scrollToFocused, scroll-to-top/
+// bottom buttons, ...) from genuine user scrolling (including mobile momentum,
+// which keeps firing 'scroll' events for an unpredictable stretch after the
+// finger lifts — there's no fixed "recent touch" window that reliably covers
+// it). Call markProgrammaticScroll() right before any outer.scrollTo/scrollTop
+// write; a scroll listener elsewhere can then check isProgrammaticScroll() to
+// tell whether the current event is one of ours.
+let _programmaticScrollUntil = 0
+export function markProgrammaticScroll(durationMs = 700): void {
+  _programmaticScrollUntil = Date.now() + durationMs
+}
+export function isProgrammaticScroll(): boolean {
+  return Date.now() < _programmaticScrollUntil
+}
+
+// Home-screen icon badge (Badging API — installed PWA only, iOS 16.4+/Android
+// Chrome). No-op elsewhere; wrapped since older browsers lack the methods.
+export function syncAppBadge(count: number): void {
+  const nav = navigator as any
+  if (count > 0) nav.setAppBadge?.(count).catch(() => {})
+  else nav.clearAppBadge?.().catch(() => {})
+}
+
 export function $id(id: string): HTMLElement { return document.getElementById(id) as HTMLElement }
 export function $input(id: string): HTMLInputElement { return document.getElementById(id) as HTMLInputElement }
 export function $textarea(id: string): HTMLTextAreaElement { return document.getElementById(id) as HTMLTextAreaElement }
@@ -13,6 +37,15 @@ export function asHTML(el: Element | EventTarget | null): HTMLElement { return e
 export function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/\n/g, '<br>')
+}
+
+// Shared by deltachat/avatar.ts and processing.ts (message attachments) — one
+// bytes→data-URL encoder so both stay in sync. Doubles as an attachment's
+// download href (data: URLs work fine with <a download>).
+export function bytesToDataUrl(bytes: Uint8Array, contentType: string): string {
+  let bin = ''
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+  return `data:${contentType || 'application/octet-stream'};base64,${btoa(bin)}`
 }
 
 export function linkify(html: string): string {

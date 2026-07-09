@@ -17,7 +17,7 @@ import { buildEffectiveGroups } from '../processing.ts'
 import { decryptAndParse, uploadPeerKey } from '../pgp/crypto.ts'
 import { readGroupHeaders, readGroupHeadersFromMime, cacheGroupHeaders, parseAutocryptKey, parseGossipKeys } from '../deltachat/protocol.ts'
 import { maybeHandleSecurejoin } from '../deltachat/securejoin.ts'
-import { learnAvatar } from '../deltachat/avatar.ts'
+import { learnAvatar, learnGroupAvatar } from '../deltachat/avatar.ts'
 import { learnApAvatar } from '../ap/avatar.ts'
 import { isApRelay, identities as ownIdentities } from '../context.ts'
 import { isReactionEmail, isReactionDisposition, cacheReaction } from '../mail/reactions.ts'
@@ -109,6 +109,8 @@ export async function sync(session: AccountSession): Promise<void> {
           }
           if (decrypted.headers) {
             if (!hasOuterGroup) cacheGroupHeaders(e, readGroupHeadersFromMime(decrypted.headers))
+            const groupId = readGroupHeaders(e).id
+            if (groupId) await learnGroupAvatar(groupId, decrypted)
             if (from && decrypted.inReplyTo && isReactionDisposition(decrypted.headers)) {
               cacheReaction(e, { emoji: decrypted.body.trim(), from, targetMessageId: decrypted.inReplyTo })
             }

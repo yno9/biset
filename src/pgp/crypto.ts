@@ -143,11 +143,45 @@ async function fetchRecipientPublicKey(recipientEmail: string, serverUrl: string
 
 // ── Encrypt / Decrypt ─────────────────────────────────────────────────────────
 
+export interface OutgoingAttachment { filename: string; contentType: string; bytes: Uint8Array }
+
+// Chunked (loop, not spread) so large attachments don't blow the engine's
+// max-call-arguments limit the way String.fromCharCode(...bytes) would.
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = ''
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+  return btoa(bin)
+}
+
+// RFC 2045 requires base64 body lines <= 76 chars; wrap for interop even
+// though this codebase's own decoder tolerates any width.
+function wrapBase64(b64: string): string {
+  const lines: string[] = []
+  for (let i = 0; i < b64.length; i += 76) lines.push(b64.slice(i, i + 76))
+  return lines.join('\r\n')
+}
+
+// Wraps `text` + `attachments` into a standard multipart/mixed body — plain
+// MIME, nothing DeltaChat-specific (mirrors what parseEntity in this file
+// already parses on receive, and what any RFC 2046 client would produce).
+// Only called when there's at least one attachment; text-only sends keep the
+// original flat text/plain body untouched.
+function buildMultipartBody(text: string, attachments: OutgoingAttachment[]): { contentType: string; body: string } {
+  const boundary = 'biset-' + Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, '0')).join('')
+  let body = `--${boundary}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n${text}\r\n`
+  for (const a of attachments) {
+    body += `--${boundary}\r\nContent-Type: ${a.contentType || 'application/octet-stream'}\r\nContent-Disposition: attachment; filename="${a.filename.replace(/"/g, '')}"\r\nContent-Transfer-Encoding: base64\r\n\r\n${wrapBase64(bytesToBase64(a.bytes))}\r\n`
+  }
+  body += `--${boundary}--`
+  return { contentType: `multipart/mixed; boundary="${boundary}"`, body }
+}
+
 export async function encryptText(
   text: string, recipientEmails: string | string[], senderEmail: string,
   serverUrl: string, authToken: string, inReplyTo = '',
   groupOpts?: GroupOpts,
   bccEmails: string[] = [],
+  attachments: OutgoingAttachment[] = [],
 ): Promise<string | null> {
   try {
     const recipients = Array.isArray(recipientEmails) ? recipientEmails : [recipientEmails]
@@ -171,13 +205,15 @@ export async function encryptText(
     // DeltaChat protocol headers (Chat-Version, group id/name, Autocrypt-Gossip)
     // are built by the deltachat/ layer and embedded INSIDE the encrypted MIME.
     const protectedHeaders = buildProtectedHeaders(recipients, recipientKeys, groupOpts, senderEmail)
+    const { contentType, body } = attachments.length
+      ? buildMultipartBody(text, attachments)
+      : { contentType: 'text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit', body: text }
     const headers =
-      'Content-Type: text/plain; charset=utf-8\r\n' +
-      'Content-Transfer-Encoding: 8bit\r\n' +
+      `Content-Type: ${contentType}\r\n` +
       protectedHeaders +
       (inReplyTo ? `In-Reply-To: <${inReplyTo}>\r\n` : '') +
       '\r\n'
-    const mimeWrapped = headers + text
+    const mimeWrapped = headers + body
     const encrypted = await openpgp.encrypt({
       message: await openpgp.createMessage({ text: mimeWrapped }),
       encryptionKeys: [...recipientKeys as any[], ...bccKeys as any[], senderPubKey],

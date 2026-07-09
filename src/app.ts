@@ -2,7 +2,7 @@ import type { Email } from 'jmap-rfc-types'
 import type { AccountSession, StoredAccount, InboxSummary } from './types.ts'
 import { readGroupHeaders, groupDraftHeaders, isSecurejoinEmail, type GroupOpts } from './deltachat/protocol.ts'
 import { isReaction, collectReactions } from './mail/reactions.ts'
-import { avatarDataUrl } from './deltachat/avatar.ts'
+import { avatarDataUrl, groupCacheKey } from './deltachat/avatar.ts'
 import {
   sessions, addSession, setCurrentInbox, currentInbox, activeSession, sessionFor, sessionForRelay,
   loadStoredAccounts, saveStoredAccounts, identities as listIdentities, isApRelay,
@@ -16,7 +16,7 @@ import * as jmapSubmission from './jmap/submission.ts'
 import * as jmapIdentity from './jmap/identity.ts'
 import * as jmapMailbox from './jmap/mailbox.ts'
 import { initPGP } from './pgp/index.ts'
-import { encryptText } from './pgp/crypto.ts'
+import { encryptText, type OutgoingAttachment } from './pgp/crypto.ts'
 import { deleteAllKeys } from './pgp/keys.ts'
 import { clearAll as clearLocalCache } from './store/cache.ts'
 import { loginViaEnvelope, authTokenToBasicAuth } from './cryptenv.ts'
@@ -136,6 +136,7 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
             inbox_type: 'group',
             group_id: groupId,
             group_name: groupName,
+            avatar_url: avatarDataUrl(groupCacheKey(groupId)),
             latest_ts: ts,
             latest_body: body,
             latest_subject: groupName ?? (email.subject as string) ?? '',
@@ -277,6 +278,7 @@ export async function jmapCreateEmail(
   references: string[] = [],
   senderEmail?: string,
   relayUrl?: string,
+  attachments: OutgoingAttachment[] = [],
 ): Promise<{ ok: boolean; fromEmail?: string; error?: string }> {
   // Array form (legacy callers): first entry is To, the rest are Cc, no Bcc.
   // Object form (the #new composer): explicit To/Cc/Bcc from the recipient rows.
@@ -339,7 +341,7 @@ export async function jmapCreateEmail(
   // for ActivityPub sends — fediverse Notes are plaintext and the AP relay has
   // no peer-key/WKD surface, so encrypting there just fails a lookup with noise.
   if (!isApRelay(serverUrl)) {
-    const enc = await encryptText(body, [...to, ...cc], fromEmail, serverUrl, password, inReplyTo, groupOpts, bcc)
+    const enc = await encryptText(body, [...to, ...cc], fromEmail, serverUrl, password, inReplyTo, groupOpts, bcc, attachments)
     if (enc) emailBody = enc
   }
 

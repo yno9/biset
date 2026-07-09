@@ -1,4 +1,5 @@
 import { sessions, currentInbox, activeSession } from '../context.ts'
+import { markProgrammaticScroll } from '../utils.ts'
 import {
   processedMessages, renderedKeys,
   focusedThreadKey, setFocusedThreadKey,
@@ -6,11 +7,27 @@ import {
   groupMessages, latestGroup,
 } from '../state.ts'
 import { fetchInboxMessages, loadInboxSummaries, jmapCreateEmail, currentSenderSync } from '../app.ts'
+import type { OutgoingAttachment } from '../pgp/crypto.ts'
 import { start as startSync, stop as stopSync } from '../sync/index.ts'
 import type { ProcessedMessage } from '../state.ts'
 // Circular:
 import { render, addMessage, isMeMsg, syncDockPosition } from './thread.ts'
 import { loadLeftInboxes } from './left-pane.ts'
+
+// Mobile single-column mode toggles 'show-left' on #app from many places
+// (hamburger, swipe gesture, switchInbox, ...) — rather than touching every
+// call site to persist it, just observe the class and remember the last
+// state, so a reload can restore it below instead of always landing on the
+// conversation column.
+const MOBILE_SHOW_LEFT_KEY = 'biset-mobile-show-left'
+{
+  const $app = document.getElementById('app')
+  if ($app) {
+    new MutationObserver(() => {
+      try { localStorage.setItem(MOBILE_SHOW_LEFT_KEY, $app.classList.contains('show-left') ? '1' : '0') } catch {}
+    }).observe($app, { attributes: true, attributeFilter: ['class'] })
+  }
+}
 
 export function showApp() {
   const $overlay = document.getElementById('overlay')
@@ -26,11 +43,14 @@ export function showApp() {
     const ta = document.querySelector<HTMLElement>('.reply-box textarea')
     ta?.focus()
   }
-  // Mobile defaults to the right column (content); the left pane is an overlay
-  // reached via the hamburger. (It used to force the left pane open for a
-  // message-less account, which surprised users landing on compose.)
+  // Mobile: restore whichever column (inbox list vs conversation) was showing
+  // before the last reload, instead of always landing back on the
+  // conversation. Defaults to the right column (content) when there's no
+  // saved state yet — the left pane is an overlay reached via the hamburger.
   if (window.innerWidth <= 520) {
-    $app?.classList.remove('show-left')
+    let showLeft = false
+    try { showLeft = localStorage.getItem(MOBILE_SHOW_LEFT_KEY) === '1' } catch {}
+    $app?.classList.toggle('show-left', showLeft)
   }
 }
 
@@ -79,9 +99,12 @@ export function removePendingMessage(tempId: string) {
   renderedKeys.delete(`${removed.msg.from}:${removed.msg.ts}`)
 }
 
-export async function sendReply(ta: HTMLTextAreaElement, replySubject = '', inReplyTo = '') {
+export async function sendReply(
+  ta: HTMLTextAreaElement, replySubject = '', inReplyTo = '',
+  attachments: OutgoingAttachment[] = [],
+) {
   const body = ta.value.trim()
-  if (!body) return
+  if (!body && !attachments.length) return
   ta.value = ''
   ta.style.height = 'auto'
 
@@ -128,8 +151,10 @@ export async function sendReply(ta: HTMLTextAreaElement, replySubject = '', inRe
   requestAnimationFrame(() => {
     if (!outer) return
     const pb = parseFloat(outer.style.paddingBottom) || 0
-    if (outer.scrollHeight - pb > outer.clientHeight + 1 && distFromBottom < 60)
+    if (outer.scrollHeight - pb > outer.clientHeight + 1 && distFromBottom < 60) {
+      markProgrammaticScroll()
       outer.scrollTo({ top: outer.scrollHeight, behavior: 'instant' })
+    }
   })
   ta.focus()
 
@@ -137,7 +162,7 @@ export async function sendReply(ta: HTMLTextAreaElement, replySubject = '', inRe
   // Reply through the relay this conversation arrived on (mail vs ActivityPub).
   const { ok, error } = await jmapCreateEmail(
     toAddrs, body, replySubject, inReplyTo, groupOpts, references,
-    currentInbox?.user, currentInbox?.relay,
+    currentInbox?.user, currentInbox?.relay, attachments,
   )
   if (ok) {
     await fetchMessages()
@@ -166,7 +191,12 @@ export async function fetchMessages() {
   for (const msg of msgs) await addMessage(msg)
 
   const groups = groupMessages()
-  if (!groups.length) { render(false, !wasFirstLoad); return }
+  // Always scroll to the latest message on new mail (scrollToFocused already
+  // handles a message taller than the viewport by pinning its top instead of
+  // its bottom) — keepScroll's "only if already near the bottom" gate was
+  // silently leaving new messages scrolled out of view, behind the fixed
+  // reply box, whenever the user had scrolled up even slightly.
+  if (!groups.length) { render(false, false); return }
 
   const selfAddr = activeSession()?.account.email ?? ''
   const hasIncoming = msgs.some(m => m.from !== selfAddr)
@@ -180,7 +210,7 @@ export async function fetchMessages() {
     if (last && inbox.contact) new Notification(inbox.contact, { body: last.bodyText.slice(0, 100) })
   }
 
-  render(false, !wasFirstLoad)
+  render(false, false)
 }
 
 const _sseSources: EventSource[] = []

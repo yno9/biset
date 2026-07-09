@@ -7,7 +7,7 @@ import {
   notifEnabled, setNotifEnabled,
   lastTs, groupMessages,
 } from '../state.ts'
-import { esc, formatTime, avatarStyle, inboxToHash } from '../utils.ts'
+import { esc, formatTime, avatarStyle, inboxToHash, markProgrammaticScroll, syncAppBadge } from '../utils.ts'
 import type { InboxSummary } from '../types.ts'
 import type { Email } from 'jmap-rfc-types'
 // Circular (safe — used only in function bodies):
@@ -18,13 +18,14 @@ import { loadInboxSummaries, initSession, initPGPForSession, logout, jmapCreateE
 import { loginViaEnvelope, authTokenToBasicAuth, fetchEnvelope, unsealEnvelope } from '../cryptenv.ts'
 import { decryptAndParse, prefetchRecipientKey } from '../pgp/index.ts'
 import { deleteKey } from '../pgp/keys.ts'
+import type { OutgoingAttachment } from '../pgp/crypto.ts'
 import { clearIdentity as clearIdentityCache } from '../store/cache.ts'
 import { avatarDataUrl, saveAvatar } from '../deltachat/avatar.ts'
 import { advertiseOwnAvatarForEmail } from '../ap/avatar.ts'
 import * as jmapEmail from '../jmap/email.ts'
 import * as messages from '../store/messages.ts'
 import * as identities from '../store/identities.ts'
-import { loadFromVault, flushAll, flushMessage } from '../vault/persist.ts'
+import { loadFromVault, flushAll, flushMessage, removeMessage } from '../vault/persist.ts'
 import * as querystate from '../jmap/querystate.ts'
 import { startWatch } from '../vault/watch.ts'
 import { setupAccountCreateOverlay } from './account-create.ts'
@@ -196,8 +197,16 @@ export function renderThreadAccordion() {
       if (!row) return
       e.preventDefault(); e.stopPropagation()
       lpFocusEl(row)
-      if (window.innerWidth <= 520) document.getElementById('app')?.classList.remove('show-left')
-      document.getElementById('lp-search')?.focus()
+      if (window.innerWidth <= 520) {
+        // Mobile navigates away from the list entirely — refocusing its
+        // search input (desktop convenience, list stays visible there) used
+        // to silently no-op back when the pane went display:none on nav; now
+        // that it's just transformed off-screen (for the slide animation),
+        // the same call actually succeeds and pops the keyboard.
+        document.getElementById('app')?.classList.remove('show-left')
+      } else {
+        document.getElementById('lp-search')?.focus()
+      }
     })
   }
 
@@ -404,14 +413,43 @@ export async function archiveInbox(item: InboxSummary, archived: boolean) {
 export async function doDeleteInbox(target: InboxSummary) {
   // Operate on the session that owns this inbox, not necessarily the active one.
   const sess = sessions.find(s => s.account.email === target.user) ?? activeSession()
+  let anyAttempted = false
+  let anyFailed = false
   if (sess) {
     try {
       const { getInboxEmails } = await import('../app.ts')
       const selfAddr = sess.jmapAccountId || sess.account.email
       const emails = getInboxEmails(target.mailbox, target.contact, selfAddr, sess.account.email)
-      const ids = emails.map(e => e.id as string).filter(Boolean)
-      if (ids.length) await jmapEmail.destroy(sess.jmapClient, sess.jmapAccountId, ids)
-    } catch {}
+      // A merged inbox can hold messages from more than one relay (mail + AP
+      // for the same identity) — destroy must go to each message's own
+      // relay/session, or ids belonging to the untouched relay fail server-
+      // side (silently, since Email/destroy just reports them as
+      // notDestroyed rather than throwing) and never actually get deleted.
+      const byRelay = new Map<string, Email[]>()
+      for (const e of emails) {
+        const relay = (e as any)._relay as string ?? sess.account.serverUrl
+        if (!byRelay.has(relay)) byRelay.set(relay, [])
+        byRelay.get(relay)!.push(e)
+      }
+      for (const [relay, group] of byRelay) {
+        const relaySess = sessionForRelay(target.user, relay) ?? sess
+        const ids = group.map(e => e.id as string).filter(Boolean)
+        if (!ids.length) continue
+        anyAttempted = true
+        try {
+          await jmapEmail.destroy(relaySess.jmapClient, relaySess.jmapAccountId, ids)
+          // Server-side destroy succeeded, but the local store (and its
+          // IndexedDB cache) still has these messages — loadLeftInboxes
+          // below rebuilds its summary from that local store, so without
+          // this the "deleted" inbox reappears until the next full resync.
+          for (const e of group) {
+            const acct = messages.accountOf(e)
+            messages.remove(acct, e.id as string)
+            await removeMessage(acct, e.id as string)
+          }
+        } catch (e) { anyFailed = true; console.warn('[doDeleteInbox] destroy failed for', relay, e) }
+      }
+    } catch (e) { anyFailed = true; console.warn('[doDeleteInbox] failed', e) }
   }
 
   const ci = currentInbox
@@ -428,7 +466,7 @@ export async function doDeleteInbox(target: InboxSummary) {
     if (remaining.length > 0) switchInbox(remaining[Math.max(0, idxBefore - 1)])
     else render()
   }
-  showSysMsg('Deleted')
+  showSysMsg(anyFailed ? 'Delete failed for some messages' : (anyAttempted ? 'Deleted' : 'Nothing to delete'))
 }
 
 export async function deleteInbox(item: InboxSummary) {
@@ -483,13 +521,23 @@ function focusedNavEl(items: HTMLElement[]): HTMLElement | undefined {
 }
 
 // Pure CSS: apply focused class to exactly one item. No side effects on data.
+// .focused doubles as the keyboard-nav cursor, applied from many render paths
+// (renderThreadAccordion, renderLeftInboxes, applyLpSearch, ...) — there's no
+// keyboard to navigate with on a touchscreen, and re-applying it on every one
+// of those re-renders was flashing an unrelated row/inbox background after
+// taps (toggle, thread click, ...). Guarding every call site was whack-a-mole;
+// guard the class application here instead so it's fixed everywhere at once.
+function navFocusEnabled(): boolean {
+  return window.innerWidth > 520
+}
+
 export function syncNavFocus() {
   document.querySelectorAll<HTMLElement>('#left-list .lp-item, #left-list .lp-thread-row')
     .forEach(el => el.classList.remove('focused'))
   const items = lpNavItems()
   const target = focusedNavEl(items)
   if (target) {
-    target.classList.add('focused')
+    if (navFocusEnabled()) target.classList.add('focused')
     lpNavIdx = items.indexOf(target)
   } else {
     lpNavIdx = -1
@@ -500,7 +548,8 @@ export function syncNavFocus() {
 function lpFocusEl(el: HTMLElement) {
   document.querySelectorAll<HTMLElement>('#left-list .lp-item, #left-list .lp-thread-row')
     .forEach(item => item.classList.remove('focused'))
-  el.classList.add('focused')
+  if (navFocusEnabled()) el.classList.add('focused')
+  markProgrammaticScroll()
   el.scrollIntoView({ block: 'nearest' })
   if (el.classList.contains('lp-thread-row')) {
     const threadKey = el.dataset.threadKey!
@@ -542,7 +591,7 @@ function toggleAccordionForItem(inboxEl: HTMLElement, focusThread = true) {
   if (!threadList) return
   if (_expandedInboxKeys.has(key)) {
     _expandedInboxKeys.delete(key)
-    if (toggleBtn) toggleBtn.textContent = '▸'
+    if (toggleBtn) toggleBtn.textContent = '◂'
     threadList.style.display = 'none'
     _lpFocusedKey = key
     syncNavFocus()
@@ -605,7 +654,7 @@ export function makeLpItem(item: InboxSummary) {
         <div class="lp-name">${esc(rawName)}</div>
         <div class="lp-preview">${p.text}</div>
       </div>
-      <button class="lp-thread-toggle" tabindex="-1">▸</button>
+      <button class="lp-thread-toggle" tabindex="-1">◂</button>
     </div>
     <div class="lp-thread-list" style="display:none"></div>
   `
@@ -679,8 +728,8 @@ export function makeLpItem(item: InboxSummary) {
       }
     } else {
       toggleAccordionForItem(a)
+      document.getElementById('lp-search')?.focus()
     }
-    document.getElementById('lp-search')?.focus()
   })
   const delBtn = document.createElement('button')
   delBtn.className = 'lp-delete-btn'
@@ -690,12 +739,51 @@ export function makeLpItem(item: InboxSummary) {
     await deleteInbox(item)
   })
   a.appendChild(delBtn)
+  // Live-follow swipe: the delete button reveals in step with the finger
+  // instead of only snapping in once a threshold is crossed at touchend.
+  // Direction is decided after a small movement (like the right-swipe-to-
+  // open-list gesture in main.ts) so a mostly-vertical touch still scrolls
+  // the list normally.
+  const SWIPE_MAX = 72
   let touchStartX = 0
-  a.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX }, { passive: true })
-  a.addEventListener('touchend', e => {
-    const dx = e.changedTouches[0].clientX - touchStartX
-    if (dx < -40) lpRevealDelete(a)
-    else if (dx > 20) a.classList.remove('swiped')
+  let touchStartY = 0
+  let swipeDragging = false
+  let swipeLocked: 'x' | 'y' | null = null
+  let dragDx = 0
+  a.addEventListener('touchstart', e => {
+    touchStartX = e.touches[0].clientX
+    touchStartY = e.touches[0].clientY
+    swipeLocked = null
+    swipeDragging = false
+    if (innerEl) innerEl.style.transition = 'none'
+  }, { passive: true })
+  a.addEventListener('touchmove', e => {
+    const dx = e.touches[0].clientX - touchStartX
+    const dy = e.touches[0].clientY - touchStartY
+    if (!swipeLocked) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return
+      swipeLocked = Math.abs(dx) > Math.abs(dy) * 1.5 ? 'x' : 'y'
+      swipeDragging = swipeLocked === 'x'
+    }
+    if (!swipeDragging) return
+    e.preventDefault()
+    const base = a.classList.contains('swiped') ? -SWIPE_MAX : 0
+    dragDx = Math.max(-SWIPE_MAX, Math.min(0, base + dx))
+    if (innerEl) innerEl.style.transform = `translateX(${dragDx}px)`
+    const revealFrac = Math.abs(dragDx) / SWIPE_MAX
+    delBtn.style.opacity = String(revealFrac)
+    delBtn.style.pointerEvents = revealFrac > 0.5 ? 'auto' : 'none'
+  }, { passive: false })
+  a.addEventListener('touchend', () => {
+    if (innerEl) innerEl.style.transition = ''
+    delBtn.style.opacity = ''
+    delBtn.style.pointerEvents = ''
+    if (innerEl) innerEl.style.transform = ''
+    if (swipeDragging) {
+      if (dragDx < -SWIPE_MAX / 2) lpRevealDelete(a)
+      else a.classList.remove('swiped')
+    }
+    swipeDragging = false
   }, { passive: true })
   return a
 }
@@ -704,6 +792,7 @@ let archivedExpanded = false
 
 export function renderLeftInboxes(inboxes: InboxSummary[]) {
   setLastLeftInboxes(inboxes)
+  syncAppBadge(inboxes.filter(i => !i.archived && i.has_unread).length)
   const $list = document.getElementById('left-list')
   if (!$list) return
   // Drop any prior archived section so the active-list diff below sees a clean
@@ -1059,7 +1148,12 @@ export async function setupLeftPane() {
           <span class="new-field-label">Body</span>
           <textarea id="new-body" placeholder="Write a message…"></textarea>
         </div>
+        <div class="reply-attachments" id="new-attachments" style="display:none"></div>
         <div class="new-compose-actions" style="justify-content:flex-end">
+          <button id="new-attach-btn" class="reply-attach-btn" type="button" title="Attach file">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <input id="new-attach-input" type="file" multiple style="display:none">
           <div class="t-send-wrap">
             <div class="t-send-avatar" id="new-send-avatar"></div>
             <button id="new-send-btn" class="t-send-btn" title="Send">
@@ -1270,6 +1364,39 @@ export async function setupLeftPane() {
       try { await navigator.clipboard.writeText(url); showSysMsg('Invite link copied') } catch { /* manual copy */ }
     })
 
+    // Attachments (mail relay only, mirrors thread.ts's reply-box — see
+    // pgp/crypto.ts buildMultipartBody for the wire format).
+    let pendingAttachments: OutgoingAttachment[] = []
+    const newAttachBtn = document.getElementById('new-attach-btn') as HTMLButtonElement | null
+    const newAttachInput = document.getElementById('new-attach-input') as HTMLInputElement | null
+    const newAttachmentsRow = document.getElementById('new-attachments') as HTMLElement | null
+    const renderNewAttachments = () => {
+      if (!newAttachmentsRow) return
+      newAttachmentsRow.style.display = pendingAttachments.length ? 'flex' : 'none'
+      newAttachmentsRow.innerHTML = pendingAttachments.map((a, i) => `
+        <span class="reply-attachment-chip" data-idx="${i}">
+          <span class="reply-attachment-name">${esc(a.filename)}</span>
+          <button type="button" class="reply-attachment-remove" data-idx="${i}" aria-label="Remove">×</button>
+        </span>
+      `).join('')
+    }
+    newAttachmentsRow?.addEventListener('click', e => {
+      const btn = (e.target as HTMLElement).closest('.reply-attachment-remove') as HTMLElement | null
+      if (!btn) return
+      pendingAttachments.splice(Number(btn.dataset.idx), 1)
+      renderNewAttachments()
+    })
+    newAttachBtn?.addEventListener('click', () => newAttachInput?.click())
+    newAttachInput?.addEventListener('change', async () => {
+      const files = Array.from(newAttachInput.files ?? [])
+      newAttachInput.value = ''
+      for (const f of files) {
+        const bytes = new Uint8Array(await f.arrayBuffer())
+        pendingAttachments.push({ filename: f.name, contentType: f.type, bytes })
+      }
+      renderNewAttachments()
+    })
+
     // Cmd/Ctrl+Enter sends, mirroring the reply field (thread.ts). Reuse the send
     // button's click handler so there's a single send path.
     document.getElementById('new-body')?.addEventListener('keydown', e => {
@@ -1295,14 +1422,20 @@ export async function setupLeftPane() {
       if (apCount > 0 && apCount < filledRows.length) {
         showSysMsg('Mixed mail + ActivityPub recipients not allowed'); return
       }
+      if (apCount > 0 && pendingAttachments.length) {
+        showSysMsg('Attachments are not supported over ActivityPub'); return
+      }
       const relayUrl = apCount > 0 ? apUrl : mailUrl
+      const attachmentsToSend = pendingAttachments
+      pendingAttachments = []
+      renderNewAttachments()
 
       // 2+ visible recipients (To+Cc) => group; a single one => 1:1. Bcc rides
       // along in both cases without affecting the group decision.
       if (visible.length >= 2) {
         const groupName = title || 'Group'
         const groupId = newGroupId()
-        const result = await jmapCreateEmail({ to, cc, bcc }, body, groupName, '', { id: groupId, name: groupName }, [], fromEmail, relayUrl)
+        const result = await jmapCreateEmail({ to, cc, bcc }, body, groupName, '', { id: groupId, name: groupName }, [], fromEmail, relayUrl, attachmentsToSend)
         if (!result.ok) { showSysMsg(result.error || 'Send failed'); return }
         ;($lpSearch as HTMLInputElement).value = ''
         hideCmdPalette()
@@ -1326,7 +1459,7 @@ export async function setupLeftPane() {
         }
       } else {
         const subject = title
-        const result = await jmapCreateEmail({ to, cc, bcc }, body, subject, '', undefined, [], fromEmail, relayUrl)
+        const result = await jmapCreateEmail({ to, cc, bcc }, body, subject, '', undefined, [], fromEmail, relayUrl, attachmentsToSend)
         if (!result.ok) { showSysMsg(result.error || 'Send failed'); return }
         ;($lpSearch as HTMLInputElement).value = ''
         hideCmdPalette()

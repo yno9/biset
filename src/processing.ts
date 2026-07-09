@@ -1,12 +1,14 @@
 import type { Email } from 'jmap-rfc-types'
-import type { ProcessedMessage } from './state.ts'
+import type { ProcessedMessage, MsgAttachment } from './state.ts'
 import { decryptAndParse } from './pgp/crypto.ts'
 import { emailToMsg } from './app.ts'
+import { bytesToDataUrl } from './utils.ts'
 
 export interface ProcessResult {
   bodyText: string
   encrypted: boolean
   unreadable: boolean
+  attachments?: MsgAttachment[]
 }
 
 // PGP復号 + inner In-Reply-To 採用 + チェーン辿りで thread_id 継承。
@@ -21,6 +23,7 @@ export async function processIncoming(
   let bodyText = msg.body ?? ''
   let encrypted = false
   let unreadable = false
+  let attachments: MsgAttachment[] | undefined
 
   if (bodyText.includes('-----BEGIN PGP MESSAGE-----')) {
     encrypted = !!(msg.keywords?.['$e2e'])
@@ -29,6 +32,13 @@ export async function processIncoming(
       bodyText = decrypted.body
       if (decrypted.inReplyTo && !msg.in_reply_to) {
         msg.in_reply_to = decrypted.inReplyTo
+      }
+      if (decrypted.attachments?.length) {
+        attachments = decrypted.attachments.map(a => ({
+          filename: a.filename,
+          contentType: a.contentType,
+          dataUrl: bytesToDataUrl(a.bytes, a.contentType),
+        }))
       }
     } else {
       unreadable = true
@@ -46,7 +56,7 @@ export async function processIncoming(
     }
   }
 
-  return { bodyText, encrypted, unreadable }
+  return { bodyText, encrypted, unreadable, attachments }
 }
 
 // 全 Email を時系列順に processIncoming で処理し、effective thread_id でグループ化。

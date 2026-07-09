@@ -1,4 +1,4 @@
-import { currentInbox, activeSession, relayInfoFor } from '../context.ts'
+import { currentInbox, activeSession, relayInfoFor, isApRelay } from '../context.ts'
 import {
   processedMessages, renderedKeys,
   focusedThreadKey, setFocusedThreadKey,
@@ -6,9 +6,10 @@ import {
   lastLeftInboxes,
 } from '../state.ts'
 import type { ProcessedMessage, ThreadGroup } from '../state.ts'
-import { esc, linkify, formatTime, avatarStyle, stripQuoted } from '../utils.ts'
+import { esc, linkify, formatTime, avatarStyle, stripQuoted, markProgrammaticScroll } from '../utils.ts'
 import { avatarDataUrl } from '../deltachat/avatar.ts'
 import { processIncoming } from '../processing.ts'
+import type { OutgoingAttachment } from '../pgp/crypto.ts'
 // Circular imports — used only inside function bodies, safe:
 import { sendReply, showSysMsg } from './shell.ts'
 import { inMenuMode, renderThreadAccordion } from './left-pane.ts'
@@ -45,6 +46,24 @@ function renderReactionsHtml(reactions: ProcessedMessage['msg']['reactions']): s
   ).join('')}</div>`
 }
 
+// Message attachments (display-only — see processing.ts / state.ts
+// MsgAttachment). Images render as a clickable thumbnail (opens full-size in
+// a new tab); anything else is a filename + download chip.
+function renderAttachmentsHtml(attachments: ProcessedMessage['attachments']): string {
+  if (!attachments?.length) return ''
+  const items = attachments.map(a => {
+    if (/^image\//i.test(a.contentType)) {
+      return `<a class="t-attachment-img" href="${a.dataUrl}" target="_blank" rel="noopener"><img src="${a.dataUrl}" alt="${esc(a.filename ?? '')}"></a>`
+    }
+    const label = a.filename || 'attachment'
+    return `<a class="t-attachment-file" href="${a.dataUrl}" download="${esc(label)}" title="${esc(label)}">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      <span>${esc(label)}</span>
+    </a>`
+  }).join('')
+  return `<div class="t-attachments">${items}</div>`
+}
+
 function sameReactions(a: ProcessedMessage['msg']['reactions'], b: ProcessedMessage['msg']['reactions']): boolean {
   const an = a?.length ?? 0, bn = b?.length ?? 0
   if (an !== bn) return false
@@ -68,11 +87,11 @@ export async function addMessage(msg: ProcessedMessage['msg']): Promise<boolean>
   }
   renderedKeys.add(key)
 
-  const { bodyText, encrypted, unreadable } = await processIncoming(
+  const { bodyText, encrypted, unreadable, attachments } = await processIncoming(
     msg, activeSession()?.account.email ?? '', processedMessages
   )
 
-  processedMessages.push({ msg, bodyText, encrypted, unreadable })
+  processedMessages.push({ msg, bodyText, encrypted, unreadable, attachments })
 
   // If this incoming message matches a pending stub (same from), drop the stub.
   {
@@ -94,7 +113,7 @@ export async function addMessage(msg: ProcessedMessage['msg']): Promise<boolean>
   return true
 }
 
-export function createMsgEl({ msg, bodyText, encrypted, unreadable, pending }: ProcessedMessage) {
+export function createMsgEl({ msg, bodyText, encrypted, unreadable, pending, attachments }: ProcessedMessage) {
   const div = document.createElement('div')
   if (msg.from === '[system]') {
     div.className = 't-msg t-system'
@@ -121,6 +140,7 @@ export function createMsgEl({ msg, bodyText, encrypted, unreadable, pending }: P
         <span class="t-time">${formatTime(msg.ts)}${encrypted ? ' <svg style="vertical-align:middle;opacity:0.6" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zm-6 9a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm3.1-9H8.9V6a3.1 3.1 0 0 1 6.2 0v2z"/></svg>' : ''}</span>
       </div>
       <div class="t-body">${display}</div>
+      ${renderAttachmentsHtml(attachments)}
       ${renderReactionsHtml(msg.reactions)}
     </div>
   `
@@ -161,6 +181,7 @@ export function makeThreadCard(group: ThreadGroup, focused: boolean) {
     ${focused ? `
     <div class="reply-box">
       <div class="reply-resize-handle"><span></span></div>
+      <div class="reply-attachments" style="display:none"></div>
       <div class="reply-content">
         <button class="reply-compose-btn" title="New message">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -170,6 +191,10 @@ export function makeThreadCard(group: ThreadGroup, focused: boolean) {
         </button>
         <input class="reply-subject" type="text" placeholder="Subject (optional)">
         <textarea rows="1" placeholder="Reply…"></textarea>
+        <button class="reply-attach-btn" type="button" title="Attach file">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <input class="reply-attach-input" type="file" multiple style="display:none">
         <div class="t-send-wrap">
           <div class="t-send-avatar"></div>
           <button class="t-send-btn">
@@ -281,11 +306,47 @@ export function makeThreadCard(group: ThreadGroup, focused: boolean) {
     const resizeHandle = replyBox.querySelector('.reply-resize-handle') as HTMLElement
     const replyContent = replyBox.querySelector('.reply-content') as HTMLElement
     const sendWrap = card.querySelector('.t-send-wrap') as HTMLElement
+    const attachBtn = replyBox.querySelector('.reply-attach-btn') as HTMLElement
+    const attachInput = replyBox.querySelector('.reply-attach-input') as HTMLInputElement
+    const attachmentsRow = replyBox.querySelector('.reply-attachments') as HTMLElement
+
+    // Attachments (DeltaChat-compatible multipart, mail relay only — no
+    // JMAP-native blob path for AP, see src/pgp/crypto.ts buildMultipartBody).
+    let pendingAttachments: OutgoingAttachment[] = []
+    const isApThread = isApRelay(currentInbox?.relay)
+    if (isApThread) attachBtn.style.display = 'none'
+    const renderPendingAttachments = () => {
+      attachmentsRow.style.display = pendingAttachments.length ? 'flex' : 'none'
+      attachmentsRow.innerHTML = pendingAttachments.map((a, i) => `
+        <span class="reply-attachment-chip" data-idx="${i}">
+          <span class="reply-attachment-name">${esc(a.filename)}</span>
+          <button type="button" class="reply-attachment-remove" data-idx="${i}" aria-label="Remove">×</button>
+        </span>
+      `).join('')
+      syncDockPosition()
+    }
+    attachmentsRow.addEventListener('click', e => {
+      const btn = (e.target as HTMLElement).closest('.reply-attachment-remove') as HTMLElement | null
+      if (!btn) return
+      const idx = Number(btn.dataset.idx)
+      pendingAttachments.splice(idx, 1)
+      renderPendingAttachments()
+    })
+    attachBtn.addEventListener('click', () => attachInput.click())
+    attachInput.addEventListener('change', async () => {
+      const files = Array.from(attachInput.files ?? [])
+      attachInput.value = ''
+      for (const f of files) {
+        const bytes = new Uint8Array(await f.arrayBuffer())
+        pendingAttachments.push({ filename: f.name, contentType: f.type, bytes })
+      }
+      renderPendingAttachments()
+    })
 
     const enterCompose = () => {
       const rowTop = document.createElement('div')
       rowTop.className = 'reply-row-top'
-      rowTop.append(composeBtn, subjectInput, sendWrap)
+      rowTop.append(composeBtn, subjectInput, attachBtn, attachInput, sendWrap)
       const rowBottom = document.createElement('div')
       rowBottom.className = 'reply-row-bottom'
       rowBottom.append(ta)
@@ -295,7 +356,7 @@ export function makeThreadCard(group: ThreadGroup, focused: boolean) {
     }
     const exitCompose = () => {
       replyContent.innerHTML = ''
-      replyContent.append(composeBtn, ta, sendWrap)
+      replyContent.append(composeBtn, ta, attachBtn, attachInput, sendWrap)
       ta.focus()
     }
 
@@ -306,16 +367,19 @@ export function makeThreadCard(group: ThreadGroup, focused: boolean) {
       syncDockPosition()
     }
     const sendFn = () => {
+      const attachmentsToSend = pendingAttachments
+      pendingAttachments = []
+      renderPendingAttachments()
       if (composeMode) {
         const subj = subjectInput.value.trim()
-        sendReply(ta, subj, '')
+        sendReply(ta, subj, '', attachmentsToSend)
         subjectInput.value = ''
         composeMode = false
         replyBox.classList.remove('compose-mode')
         ta.placeholder = replyPlaceholder
         exitCompose()
       } else {
-        sendReply(ta, group.subject, getReplyTo())
+        sendReply(ta, group.subject, getReplyTo(), attachmentsToSend)
       }
       resetTA()
     }
@@ -402,7 +466,10 @@ export function scrollToBottomIfNear() {
   const pb = parseFloat(outer.style.paddingBottom) || 0
   if (outer.scrollHeight - pb <= outer.clientHeight + 1) return
   const dist = outer.scrollHeight - outer.scrollTop - outer.clientHeight
-  if (dist < 60) outer.scrollTo({ top: outer.scrollHeight, behavior: 'smooth' })
+  if (dist < 60) {
+    markProgrammaticScroll()
+    outer.scrollTo({ top: outer.scrollHeight, behavior: 'smooth' })
+  }
 }
 
 export function scrollToFocused(smooth = false) {
@@ -414,6 +481,15 @@ export function scrollToFocused(smooth = false) {
     let target: number
     const past = document.getElementById('past-threads')
     const pastH = past && outer.contains(past) ? past.offsetHeight : 0
+    // #reply-dock is position:fixed, so it doesn't shrink #outer's own
+    // clientHeight — the bottom dockH px of "visible" area is actually
+    // covered by it. Not accounting for that let the last message's tail
+    // land exactly in the zone the dock covers (visible only as a blurred
+    // sliver through its frosted background). Stowed (dock-hidden, see
+    // main.ts's scroll handler) doesn't cover anything, so it doesn't count.
+    const dock = document.getElementById('reply-dock')
+    const dockH = dock && !dock.classList.contains('dock-hidden') ? dock.offsetHeight : 0
+    const safeHeight = outer.clientHeight - dockH
     if (msgs.length > 0) {
       const last = msgs[msgs.length - 1] as HTMLElement
       const lastRect = last.getBoundingClientRect()
@@ -426,14 +502,22 @@ export function scrollToFocused(smooth = false) {
       // including its height under-scrolled by that amount, leaving a sliver
       // of the previous message visible above the "focused" one.
       const titleH = titleRow && outer.contains(titleRow) ? titleRow.offsetHeight : 0
-      if (lastTopInOuter >= pastH + outer.clientHeight) {
+      if (lastTopInOuter >= pastH + safeHeight) {
+        // Doesn't fit even in the dock-safe area — pin its top just below the
+        // header (matches the "message itself taller than the viewport"
+        // exception; its tail necessarily stays out of view either way).
         target = lastTopInOuter - titleH
       } else {
-        target = pastH
+        // Fits without pinning the top, but plain pastH can still leave the
+        // tail behind the dock if content only *just* fits within clientHeight
+        // (not clientHeight - dockH) — scroll further when that's the case.
+        const lastBottomInOuter = lastTopInOuter + last.offsetHeight
+        target = Math.max(pastH, lastBottomInOuter - safeHeight)
       }
     } else {
       target = pastH
     }
+    markProgrammaticScroll()
     if (smooth) {
       outer.scrollTo({ top: target, behavior: 'smooth' })
     } else {
