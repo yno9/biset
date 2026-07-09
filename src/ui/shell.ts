@@ -1,4 +1,4 @@
-import { sessions, currentInbox, activeSession } from '../context.ts'
+import { sessions, currentInbox, activeSession, accountKey, sessionForRelay } from '../context.ts'
 import { markProgrammaticScroll } from '../utils.ts'
 import {
   processedMessages, renderedKeys,
@@ -8,6 +8,10 @@ import {
 } from '../state.ts'
 import { fetchInboxMessages, loadInboxSummaries, jmapCreateEmail, currentSenderSync } from '../app.ts'
 import type { OutgoingAttachment } from '../pgp/crypto.ts'
+import { buildEditBody, type ChatAction, type GroupOpts } from '../deltachat/protocol.ts'
+import * as jmapEmail from '../jmap/email.ts'
+import * as messages from '../store/messages.ts'
+import { removeMessage } from '../vault/persist.ts'
 import { start as startSync, stop as stopSync } from '../sync/index.ts'
 import type { ProcessedMessage } from '../state.ts'
 // Circular:
@@ -99,6 +103,38 @@ export function removePendingMessage(tempId: string) {
   renderedKeys.delete(`${removed.msg.from}:${removed.msg.ts}`)
 }
 
+// Shared by sendReply and the edit/delete request senders below: who this
+// conversation's messages go to, and (for groups) the Chat-Group-ID/Name that
+// keeps the thread a writable DeltaChat group rather than a read-only ad-hoc
+// one. Also the References chain (oldest → newest known message-id).
+function computeConversationRecipients(): { toAddrs: string[]; groupOpts: GroupOpts | undefined; references: string[] } {
+  const contact = currentInbox?.contact ?? ''
+  const isGroup = currentInbox?.inbox_type === 'group'
+  let groupRecipients: string[] = []
+  let groupOpts: GroupOpts | undefined
+  if (isGroup) {
+    const selfEmail = activeSession()?.account.email ?? ''
+    const allAddrs = new Set<string>()
+    for (const p of processedMessages) {
+      if (!p.pending) {
+        if (p.msg.from) allAddrs.add(p.msg.from)
+        for (const a of p.msg.to_addrs ?? []) allAddrs.add(a)
+        for (const a of p.msg.cc_addrs ?? []) allAddrs.add(a)
+      }
+    }
+    allAddrs.delete(selfEmail)
+    groupRecipients = [...allAddrs]
+    const gMsg = processedMessages.find(p => p.msg.group_id)
+    if (gMsg) groupOpts = { id: gMsg.msg.group_id!, name: gMsg.msg.group_name ?? '' }
+  }
+  const references = processedMessages
+    .filter(p => !p.pending)
+    .sort((a, b) => a.msg.ts - b.msg.ts)
+    .map(p => p.msg.message_id)
+    .filter((id): id is string => !!id && !id.startsWith('__pending_') && !id.startsWith('srv-'))
+  return { toAddrs: isGroup ? groupRecipients : [contact], groupOpts, references }
+}
+
 export async function sendReply(
   ta: HTMLTextAreaElement, replySubject = '', inReplyTo = '',
   attachments: OutgoingAttachment[] = [],
@@ -118,31 +154,7 @@ export async function sendReply(
     inReplyTo = realMsgs[realMsgs.length - 1].msg.message_id
   }
 
-  const contact = currentInbox?.contact ?? ''
-  const isGroup = currentInbox?.inbox_type === 'group'
-  let groupRecipients: string[] = []
-  let groupOpts: { id: string; name: string } | undefined
-  if (isGroup) {
-    const selfEmail = activeSession()?.account.email ?? ''
-    const allAddrs = new Set<string>()
-    for (const p of processedMessages) {
-      if (!p.pending) {
-        if (p.msg.from) allAddrs.add(p.msg.from)
-        for (const a of p.msg.to_addrs ?? []) allAddrs.add(a)
-        for (const a of p.msg.cc_addrs ?? []) allAddrs.add(a)
-      }
-    }
-    allAddrs.delete(selfEmail)
-    groupRecipients = [...allAddrs]
-    const gMsg = processedMessages.find(p => p.msg.group_id)
-    if (gMsg) groupOpts = { id: gMsg.msg.group_id!, name: gMsg.msg.group_name ?? '' }
-  }
-
-  // Build References from all known message IDs in the thread, ordered by ts (oldest first).
-  const references = realMsgs
-    .map(p => p.msg.message_id)
-    .filter((id): id is string => !!id && !id.startsWith('__pending_') && !id.startsWith('srv-'))
-
+  const { toAddrs, groupOpts, references } = computeConversationRecipients()
   const sender = currentSenderSync()
   const outer = document.getElementById('outer')
   const distFromBottom = outer ? outer.scrollHeight - outer.scrollTop - outer.clientHeight : Infinity
@@ -158,7 +170,6 @@ export async function sendReply(
   })
   ta.focus()
 
-  const toAddrs = isGroup ? groupRecipients : [contact]
   // Reply through the relay this conversation arrived on (mail vs ActivityPub).
   const { ok, error } = await jmapCreateEmail(
     toAddrs, body, replySubject, inReplyTo, groupOpts, references,
@@ -172,6 +183,59 @@ export async function sendReply(
     render()
     showSysMsg(error || 'Send failed')
   }
+}
+
+// Sends a Chat-Edit request (deltachat spec.md "Request editing") for a
+// message the current user sent. Non-destructive on the wire — the target
+// email is untouched; every recipient (including this device, once its own
+// Sent-folder copy round-trips back) overlays the new text at display time
+// (see collectEdits in deltachat/protocol.ts). Not offered for AP threads
+// (DeltaChat-only feature) or messages carrying attachments (spec forbids it).
+export async function sendEditRequest(target: ProcessedMessage, newText: string): Promise<void> {
+  const text = newText.trim()
+  if (!text) return
+  const { toAddrs, groupOpts, references } = computeConversationRecipients()
+  const editBody = buildEditBody(text, target.bodyText, target.msg.from_name || target.msg.from, new Date(target.msg.ts))
+  const chatAction: ChatAction = { editTarget: target.msg.message_id }
+  const { ok, error } = await jmapCreateEmail(
+    toAddrs, editBody, '', target.msg.message_id, groupOpts, references,
+    currentInbox?.user, currentInbox?.relay, [], chatAction,
+  )
+  if (ok) {
+    await fetchMessages()
+    loadLeftInboxes()
+  } else {
+    showSysMsg(error || 'Edit failed')
+  }
+}
+
+// Sends a Chat-Delete request (deltachat spec.md "Request deletion") for a
+// message the current user sent, then removes this device's own copy right
+// away — sync/session.ts's applyIncomingDelete handles it for every other
+// device/recipient once the carrier reaches them, but that round-trip can
+// take a few seconds, and "delete for everyone" includes the sender's own view.
+export async function sendDeleteRequest(target: ProcessedMessage): Promise<void> {
+  const { toAddrs, groupOpts, references } = computeConversationRecipients()
+  const chatAction: ChatAction = { deleteTarget: target.msg.message_id }
+  const { ok, error } = await jmapCreateEmail(
+    toAddrs, 'deleted', '', target.msg.message_id, groupOpts, references,
+    currentInbox?.user, currentInbox?.relay, [], chatAction,
+  )
+  if (!ok) { showSysMsg(error || 'Delete failed'); return }
+  const inbox = currentInbox
+  const jmapId = target.msg.jmap_id
+  if (inbox?.user && jmapId) {
+    const sess = sessionForRelay(inbox.user, inbox.relay ?? '') ?? activeSession()
+    if (sess) {
+      try { await jmapEmail.destroy(sess.jmapClient, sess.jmapAccountId, [jmapId]) }
+      catch (err) { console.warn('[chat-delete] own-copy destroy failed', err) }
+      const acct = accountKey({ email: inbox.user, serverUrl: sess.account.serverUrl })
+      messages.remove(acct, jmapId)
+      await removeMessage(acct, jmapId)
+    }
+  }
+  await fetchMessages()
+  loadLeftInboxes()
 }
 
 export async function fetchMessages() {

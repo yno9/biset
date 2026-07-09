@@ -31,6 +31,7 @@ import { startWatch } from '../vault/watch.ts'
 import { setupAccountCreateOverlay } from './account-create.ts'
 import { newGroupId } from '../deltachat/protocol.ts'
 import { newInviteUrl } from '../deltachat/securejoin.ts'
+import { enablePush, disablePush } from '../push/client.ts'
 
 // ── InboxSummary key ──────────────────────────────────────────────────────────
 function isk(i: InboxSummary): string { return i.user + '\0' + i.mailbox + '\0' + i.contact }
@@ -381,6 +382,21 @@ export function markRead(item: InboxSummary) {
 export function isUnread(item: InboxSummary) {
   const found = lastLeftInboxes.find(i => isk(i) === isk(item))
   return !!found?.has_unread
+}
+
+// The notif toggle is stored per-account (jmap_notif_<email>), keyed off
+// activeSession(). On the menu-hash boot path (main.ts: #config/#account)
+// setupLeftPane runs before sessions are loaded, so the first read here sees
+// no session and lands on the wrong (empty-email) key — call this again once
+// sessions exist to pick up the real saved value and fix the toggle's DOM.
+export function syncNotifToggle(): void {
+  const notifKey = `jmap_notif_${activeSession()?.account.email ?? ''}`
+  setNotifEnabled(localStorage.getItem(notifKey) === '1')
+  document.getElementById('config-notif-toggle')?.classList.toggle('on', notifEnabled)
+  document.getElementById('lp-notify-toggle')?.classList.toggle('on', notifEnabled)
+  // Self-healing: re-arms the push subscription on every boot where the
+  // toggle is already on, not just right after the user flips it (idempotent).
+  if (notifEnabled) enablePush().catch(() => {})
 }
 
 // Archive / un-archive a whole conversation by toggling the $archived keyword on
@@ -942,8 +958,7 @@ export async function setupLeftPane() {
     })
   }
 
-  const notifKey = `jmap_notif_${activeSession()?.account.email ?? ''}`
-  setNotifEnabled(localStorage.getItem(notifKey) === '1')
+  syncNotifToggle()
 
   function toggleCmdPalette(e: Event) {
     e.stopPropagation()
@@ -1012,6 +1027,15 @@ export async function setupLeftPane() {
   }
 
   function renderConfigPage() {
+    // File System Access API — unsupported on any iOS browser (all engines are
+    // WebKit there, per Apple policy) and on Firefox. Hide rather than show a
+    // button that will just throw.
+    const vaultSection = 'showDirectoryPicker' in window
+      ? `<div class="cmd-page-section">
+        <h3>Vault (Markdown)</h3>
+        <button id="vault-enable-btn">Select folder to enable</button>
+      </div>`
+      : ''
     return `<div class="cmd-page-content wide-page">
       <div class="cmd-page-section">
         <h3>Notifications</h3>
@@ -1020,14 +1044,7 @@ export async function setupLeftPane() {
           <div class="toggle-switch${notifEnabled ? ' on' : ''}" id="config-notif-toggle" style="cursor:pointer"></div>
         </div>
       </div>
-      <div class="cmd-page-section" id="vacation-section">
-        <h3>Vacation response</h3>
-        <div class="lp-search-status">Loading…</div>
-      </div>
-      <div class="cmd-page-section">
-        <h3>Vault (Markdown)</h3>
-        <button id="vault-enable-btn">Select folder to enable</button>
-      </div>
+      ${vaultSection}
     </div>`
   }
 
@@ -1046,6 +1063,8 @@ export async function setupLeftPane() {
         localStorage.setItem(`jmap_notif_${activeSession()?.account.email ?? ''}`, notifEnabled ? '1' : '0')
         $tog.classList.toggle('on', notifEnabled)
         document.getElementById('lp-notify-toggle')?.classList.toggle('on', notifEnabled)
+        if (notifEnabled) enablePush().catch(() => {})
+        else disablePush().catch(() => {})
       })
     }
 
@@ -1082,44 +1101,6 @@ export async function setupLeftPane() {
           if ((e as any)?.name !== 'AbortError') showSysMsg('Vault selection failed')
         }
       })
-    }
-
-    // VacationResponse/get
-    const $vac = document.getElementById('vacation-section')
-    if (!$vac) return
-    const sess = activeSession()
-    if (!sess) return
-    try {
-      const [r] = await (sess.jmapClient.api as any).VacationResponse.get({ accountId: sess.jmapAccountId, ids: null })
-      const vr = r.list?.[0] ?? {}
-      let isEnabled: boolean = vr.isEnabled ?? false
-      $vac.innerHTML = `<h3 style="font-size:12px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Vacation response</h3>
-        <div class="cmd-page-row">
-          <span>Enabled</span>
-          <div class="toggle-switch${isEnabled ? ' on' : ''}" id="vac-enabled-toggle" style="cursor:pointer"></div>
-        </div>
-        <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
-          <input id="vac-subject" class="cmd-input" value="${esc(vr.subject ?? '')}" placeholder="Subject">
-          <textarea id="vac-body" class="cmd-textarea" placeholder="Body">${esc(vr.textBody ?? '')}</textarea>
-          <button class="cmd-page-btn primary" id="vac-save" style="align-self:flex-start">Save</button>
-        </div>`
-      document.getElementById('vac-enabled-toggle')?.addEventListener('click', () => {
-        isEnabled = !isEnabled
-        document.getElementById('vac-enabled-toggle')?.classList.toggle('on', isEnabled)
-      })
-      document.getElementById('vac-save')?.addEventListener('click', async () => {
-        const subject = (document.getElementById('vac-subject') as HTMLInputElement)?.value ?? ''
-        const textBody = (document.getElementById('vac-body') as HTMLTextAreaElement)?.value ?? ''
-        try {
-          await (sess.jmapClient.api as any).VacationResponse.set({
-            accountId: sess.jmapAccountId,
-            update: { singleton: { isEnabled, subject, textBody } },
-          })
-          showSysMsg('Saved')
-        } catch { showSysMsg('Save failed') }
-      })
-    } catch {
-      $vac.innerHTML += '<div class="lp-search-status">Vacation response not available</div>'
     }
   }
 

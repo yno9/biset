@@ -42,6 +42,9 @@ bun build src/main.ts --outfile=dist/app.js --target=browser --minify-syntax --m
 | `src/jmap/` | JMAP client, email builder, querystate |
 | `src/deltachat/` | DeltaChat protocol knowledge (see below) |
 | `src/pgp/` | E2EE / symmetric crypto primitives |
+| `src/mail/reactions.ts` | RFC 9078 reactions (generic IETF standard — not DeltaChat-specific, kept out of `deltachat/`) |
+| `src/store/` | In-memory stores (`messages.ts`, `threads.ts`, `mailboxes.ts`, `identities.ts`) + `idb.ts`/`cache.ts` browser-local IndexedDB persistence |
+| `src/vault/persist.ts` | Optional filesystem vault sync (user-mounted directory) — separate from the always-on IndexedDB cache in `store/` |
 
 ## Layout
 
@@ -74,6 +77,33 @@ One shared `#lp-hamburger-menu` element (`position: fixed`), triggered by two bu
 - `#lp-hamburger-left` — top-right of the left pane header (mobile `show-left` mode)
 
 `main.ts` attaches mouseenter/mouseleave/click handlers to both buttons via a loop. The menu is positioned via `getBoundingClientRect()` of the triggering button.
+
+## Recurring gotcha: multi-relay identity, one session
+
+One `email` identity can be backed by two `sessions[]` entries (mail relay + AP relay, see below). Any operation that mutates server state for "this identity" — mark-read, delete, display-name save — must **group affected emails by `_relay` and dispatch each group through `sessionForRelay(user, relay)`**, not just grab `sessions.find(s => s.account.email === target.user)` (which silently picks one relay's session and no-ops or fails for the other's ids). This exact bug class has recurred independently in unseen-badge marking, delete (`doDeleteInbox` in `left-pane.ts`), and display-name save — when adding a new bulk-mutation feature, apply the relay-grouping pattern from the start.
+
+A related trap: after a server-side mutation succeeds, the in-memory `store/` (and its IndexedDB cache) is not automatically updated — `messages.remove(acct, id)` / `removeMessage(acct, id)` (from `vault/persist.ts`) must be called explicitly, or list views rebuilt from `store/` (e.g. `loadLeftInboxes`) keep showing stale data until a manual reload.
+
+## Browser-local cache (`src/store/idb.ts`, `src/store/cache.ts`)
+
+Always-on IndexedDB persistence for the in-memory `store/` (messages, threads, mailboxes, identities, per-relay querystate cursors), distinct from the opt-in filesystem vault (`vault/persist.ts`, requires the user to mount a directory). Loaded at boot via `loadFromCache()` (`main.ts`'s `initInner`, timeout-guarded at 3s so a hung IDB open never blocks app start) so a plain refresh has last-sync data immediately and `sync/session.ts`'s querystate-driven delta sync runs instead of a full historical re-fetch (+ re-decrypt of every PGP message). `db()` deliberately does not cache a rejected `openDB()` promise, and `deleteDB()` closes the cached connection before calling `indexedDB.deleteDatabase()` — otherwise a lingering open connection blocks the delete (`onblocked`, silently treated as success) and queues every subsequent `openDB()` call indefinitely, which looks like "logout → relogin → nothing syncs."
+
+## Reactions (RFC 9078)
+
+`src/mail/reactions.ts` implements the generic IETF "Simple Mail Reactions" spec, deliberately kept out of `deltachat/protocol.ts` since the wire format isn't DeltaChat-specific. Reactions are detected both in cleartext (`isReactionEmail`, header check before PGP decrypt) and inside decrypted MIME (`isReactionDisposition`), cached on the target `Email` object (`cacheReaction`/`readCachedReaction`), and collected per-thread (`collectReactions`) into a target-messageId → sender → emoji map (latest-per-sender wins; empty body = retraction). Reaction emails are filtered out of normal message lists (`isReaction()` guards in `app.ts`'s inbox-loading functions) and rendered as chips under the target message in `thread.ts`.
+
+## Attachments (DeltaChat-compatible)
+
+Sent as `multipart/mixed` MIME (`pgp/crypto.ts`'s `buildMultipartBody`), matching DeltaChat's own attachment convention rather than inventing a biset-specific format — this was a deliberate compatibility choice, not an accident. Text-only sends keep the original flat (non-multipart) body untouched. On receive, `processing.ts` converts decrypted MIME attachment bytes into `MsgAttachment[]` (`{ filename, contentType, dataUrl }`) via the shared `bytesToDataUrl` in `utils.ts` (also used by `deltachat/avatar.ts` for group/contact avatars — one bytes→data-URL encoder, kept in sync). Rendered in `thread.ts`: images as clickable thumbnails (opens full-size in a new tab), other files as a filename + download chip (`<a download>` against the `data:` URL).
+
+## Mobile UX patterns
+
+- **`markProgrammaticScroll()` / `isProgrammaticScroll()`** (`utils.ts`) — distinguishes the app's own JS-driven scrolls (`scrollToFocused`, scroll-to-top/bottom buttons, post-send scroll) from genuine user scrolling. Necessary because iOS momentum scroll keeps firing `scroll` events for an unpredictable stretch after the finger lifts, so no fixed "recent touch" timing window reliably distinguishes user vs. programmatic scroll — call `markProgrammaticScroll()` before every `outer.scrollTo`/`scrollTop` write; scroll-driven UI (reply-dock hide/show) checks `isProgrammaticScroll()` instead of a timing heuristic.
+- **`navFocusEnabled()`** (`left-pane.ts`, gated on `window.innerWidth > 520`) — the keyboard-nav-cursor `.focused` class is desktop-only. It's gated at the two functions that ever add it (`syncNavFocus`, `lpFocusEl`), not at individual call sites — earlier per-call-site guards were unreliable because several render paths (`renderThreadAccordion`, `renderLeftInboxes`, `applyLpSearch`) call `syncNavFocus()` independently.
+- **Swipe gestures** (left-pane swipe-to-reveal in `main.ts`, swipe-to-delete on `.lp-item` in `left-pane.ts`) — both use touchmove-driven direction locking: ignore movement under an 8px threshold, then lock to `'x'` or `'y'` based on `abs(dx) > abs(dy) * 1.5`, and only `preventDefault()` once locked horizontal. This is what stops a near-horizontal swipe from also fighting vertical scroll. Delete additionally live-follows the drag distance (`translateX`, capped at `SWIPE_MAX`) rather than a threshold-only reveal.
+- **Mobile pane switch** (`#app.lp-enabled.show-left`) uses `transform: translateX(...)` sliding with both panes always in the DOM, not `display:none/flex` toggling — cheaper to animate, but means elements are never inert, so anything that assumed "hidden pane = no-op" (e.g. `#lp-search` `.focus()` calls) must be explicitly gated to desktop instead.
+- **Glass/blur header effect** (`#left-pane-header`, `#thread-title-row`) needs three things together or it silently degrades: (1) the header must `position: sticky` inside the actual scroll container (content has to scroll *behind* it), (2) `backdrop-filter: blur(...)` present, (3) the gradient's "opaque" stop must be a *translucent-but-strong* color (`--glass-strong-bg`, 0.88 alpha) — a fully opaque stop hides the blur entirely since there's nothing left to show through.
+- **iOS status bar / Dynamic Island**: not CSS-controllable. Governed by `<meta name="apple-mobile-web-app-status-bar-style">` in `index.html` — `black-translucent` lets page content extend behind it; `default` makes iOS draw its own opaque native bar regardless of page CSS. Only takes effect in standalone (home-screen-installed) mode, not a regular Safari tab.
 
 ---
 

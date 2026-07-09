@@ -14,6 +14,15 @@ serve({
         return new Response('run bun build first', { status: 503 })
       }
     }
+    if (url.pathname === '/sw.js') {
+      try {
+        return new Response(readFileSync('dist/sw.js'), {
+          headers: { 'Content-Type': 'application/javascript' },
+        })
+      } catch {
+        return new Response('run bun build first', { status: 503 })
+      }
+    }
     if (url.pathname === '/config.json') {
       try {
         return new Response(readFileSync('config.json'), {

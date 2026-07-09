@@ -11,7 +11,7 @@ import { avatarDataUrl } from '../deltachat/avatar.ts'
 import { processIncoming } from '../processing.ts'
 import type { OutgoingAttachment } from '../pgp/crypto.ts'
 // Circular imports — used only inside function bodies, safe:
-import { sendReply, showSysMsg } from './shell.ts'
+import { sendReply, sendEditRequest, sendDeleteRequest, showSysMsg } from './shell.ts'
 import { inMenuMode, renderThreadAccordion } from './left-pane.ts'
 import { currentSenderSync } from '../app.ts'
 
@@ -63,6 +63,58 @@ function renderAttachmentsHtml(attachments: ProcessedMessage['attachments']): st
   }).join('')
   return `<div class="t-attachments">${items}</div>`
 }
+
+// Edit/Delete (deltachat spec.md "Request editing" / "Request deletion") —
+// DeltaChat-only, mail-relay-only. Own messages only (own = only-safe
+// authorization: session.ts's applyIncomingDelete/collectEdits also verify
+// the requester matches the target's original sender, but there's no reason
+// to even offer it for someone else's message). Edit is additionally hidden
+// for messages with attachments — the spec forbids editing those.
+function canModifyOwn(msg: ProcessedMessage['msg']): boolean {
+  return isMeMsg(msg.from) && !isApRelay(currentInbox?.relay) && !msg.message_id.startsWith('__pending_')
+}
+
+function renderMsgActionsHtml(msg: ProcessedMessage['msg'], attachments: ProcessedMessage['attachments']): string {
+  if (!canModifyOwn(msg)) return ''
+  const editBtn = attachments?.length ? '' : `<button type="button" class="t-msg-edit-btn">Edit</button>`
+  return `
+    <div class="t-msg-actions">
+      <button type="button" class="t-msg-actions-btn" aria-label="Message actions">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+      </button>
+      <div class="t-msg-actions-menu" style="display:none">
+        ${editBtn}
+        <button type="button" class="t-msg-delete-btn">Delete for everyone</button>
+      </div>
+    </div>`
+}
+
+// Swaps a message's `.t-body` into an editable textarea (Save/Cancel). Built
+// via DOM APIs rather than an HTML template for the textarea's initial value —
+// esc() converts newlines to <br>, which is correct for display but would
+// corrupt a textarea's plain-text value.
+function enterEditMode(msgEl: HTMLElement, processed: ProcessedMessage) {
+  const bodyEl = msgEl.querySelector('.t-body') as HTMLElement | null
+  if (!bodyEl) return
+  bodyEl.innerHTML = `<div class="t-edit-actions">
+    <button type="button" class="t-edit-save">Save</button>
+    <button type="button" class="t-edit-cancel">Cancel</button>
+  </div>`
+  const ta = document.createElement('textarea')
+  ta.className = 't-edit-ta'
+  ta.value = processed.bodyText
+  bodyEl.prepend(ta)
+  ta.style.height = ta.scrollHeight + 'px'
+  ta.focus()
+  ta.setSelectionRange(ta.value.length, ta.value.length)
+}
+
+// Closes any open per-message actions menu on an outside click. Registered
+// once at module scope (not per-render) so it never accumulates listeners.
+document.addEventListener('click', e => {
+  if ((e.target as HTMLElement).closest?.('.t-msg-actions-btn')) return
+  document.querySelectorAll('.t-msg-actions-menu').forEach(m => { (m as HTMLElement).style.display = 'none' })
+})
 
 function sameReactions(a: ProcessedMessage['msg']['reactions'], b: ProcessedMessage['msg']['reactions']): boolean {
   const an = a?.length ?? 0, bn = b?.length ?? 0
@@ -138,6 +190,7 @@ export function createMsgEl({ msg, bodyText, encrypted, unreadable, pending, att
       <div class="t-hdr">
         <span class="t-sender">${esc(senderName)}</span>
         <span class="t-time">${formatTime(msg.ts)}${encrypted ? ' <svg style="vertical-align:middle;opacity:0.6" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zm-6 9a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm3.1-9H8.9V6a3.1 3.1 0 0 1 6.2 0v2z"/></svg>' : ''}</span>
+        ${renderMsgActionsHtml(msg, attachments)}
       </div>
       <div class="t-body">${display}</div>
       ${renderAttachmentsHtml(attachments)}
@@ -207,6 +260,42 @@ export function makeThreadCard(group: ThreadGroup, focused: boolean) {
 
   const container = card.querySelector('.t-messages') as HTMLElement
   const allMsgs = group.messages
+
+  // Per-message Edit/Delete (delegated: allMsgs is re-populated on every
+  // render, so one listener on the container covers every message, current
+  // and future, without per-element attach/detach bookkeeping).
+  container.addEventListener('click', async e => {
+    const t = e.target as HTMLElement
+    const msgEl = t.closest('.t-msg') as HTMLElement | null
+    if (!msgEl) return
+    const mid = msgEl.dataset.messageId
+    const processed = mid ? allMsgs.find(p => p.msg.message_id === mid) : undefined
+
+    if (t.closest('.t-msg-actions-btn')) {
+      const menu = msgEl.querySelector('.t-msg-actions-menu') as HTMLElement | null
+      if (menu) menu.style.display = menu.style.display === 'none' ? 'block' : 'none'
+      return
+    }
+    if (t.closest('.t-msg-edit-btn')) {
+      msgEl.querySelector('.t-msg-actions-menu')?.setAttribute('style', 'display:none')
+      if (processed) enterEditMode(msgEl, processed)
+      return
+    }
+    if (t.closest('.t-msg-delete-btn')) {
+      msgEl.querySelector('.t-msg-actions-menu')?.setAttribute('style', 'display:none')
+      if (processed && confirm('Delete this message for everyone?')) await sendDeleteRequest(processed)
+      return
+    }
+    if (t.closest('.t-edit-save')) {
+      const ta = msgEl.querySelector('.t-edit-ta') as HTMLTextAreaElement | null
+      if (processed && ta) {
+        if (!ta.value.trim()) { showSysMsg('Message cannot be empty'); return }
+        await sendEditRequest(processed, ta.value)
+      }
+      return
+    }
+    if (t.closest('.t-edit-cancel')) { render(); return }
+  })
   const INITIAL_COUNT = 100
   const LOAD_STEP = 100
   // Visible-count cache remembers "show older" expansions, but newly arrived

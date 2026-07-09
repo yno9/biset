@@ -5,7 +5,7 @@
 // sync/session.ts's querystate-driven delta sync runs instead of a full
 // historical re-fetch (+ re-decrypt of every PGP message).
 const DB_NAME = 'biset-cache'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 export const STORES = {
   messages: 'messages',     // keyPath: ['_account', 'id']
@@ -13,6 +13,13 @@ export const STORES = {
   mailboxes: 'mailboxes',   // out-of-line key 'all' (single blob, matches vault's one mailboxes.json)
   identities: 'identities', // out-of-line key 'all'
   querystate: 'querystate', // keyPath: 'acctKey'
+  // Mirror of context.ts's loadStoredAccounts() (out-of-line key 'all'). The
+  // Service Worker (sw.ts) has no localStorage access, but needs relay
+  // credentials to recompute the unread badge on a background push — this is
+  // the only channel it can read them from. Same trust boundary as
+  // localStorage already has (same origin), so mirroring plaintext isn't a
+  // new exposure.
+  accounts: 'accounts',
 } as const
 
 function openDB(): Promise<IDBDatabase> {
@@ -20,11 +27,12 @@ function openDB(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION)
     req.onupgradeneeded = () => {
       const db = req.result
-      db.createObjectStore(STORES.messages, { keyPath: ['_account', 'id'] })
-      db.createObjectStore(STORES.threads, { keyPath: 'id' })
-      db.createObjectStore(STORES.mailboxes)
-      db.createObjectStore(STORES.identities)
-      db.createObjectStore(STORES.querystate, { keyPath: 'acctKey' })
+      if (!db.objectStoreNames.contains(STORES.messages)) db.createObjectStore(STORES.messages, { keyPath: ['_account', 'id'] })
+      if (!db.objectStoreNames.contains(STORES.threads)) db.createObjectStore(STORES.threads, { keyPath: 'id' })
+      if (!db.objectStoreNames.contains(STORES.mailboxes)) db.createObjectStore(STORES.mailboxes)
+      if (!db.objectStoreNames.contains(STORES.identities)) db.createObjectStore(STORES.identities)
+      if (!db.objectStoreNames.contains(STORES.querystate)) db.createObjectStore(STORES.querystate, { keyPath: 'acctKey' })
+      if (!db.objectStoreNames.contains(STORES.accounts)) db.createObjectStore(STORES.accounts)
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)

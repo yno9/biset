@@ -1,6 +1,6 @@
 import type { Email } from 'jmap-rfc-types'
 import type { AccountSession, StoredAccount, InboxSummary } from './types.ts'
-import { readGroupHeaders, groupDraftHeaders, isSecurejoinEmail, type GroupOpts } from './deltachat/protocol.ts'
+import { readGroupHeaders, groupDraftHeaders, isSecurejoinEmail, isEdit, collectEdits, type GroupOpts, type ChatAction } from './deltachat/protocol.ts'
 import { isReaction, collectReactions } from './mail/reactions.ts'
 import { avatarDataUrl, groupCacheKey } from './deltachat/avatar.ts'
 import {
@@ -99,6 +99,9 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
       // RFC 9078 reactions aren't chat messages — they attach to their target
       // (see fetchInboxMessages) and never bump unread/latest previews here.
       if (isReaction(email)) continue
+      // Chat-Edit requests aren't chat messages either — they overwrite their
+      // target's text (see fetchInboxMessages) and shouldn't surface on their own.
+      if (isEdit(email)) continue
 
       const mbxIds = Object.keys((email.mailboxIds as any) ?? {})
       const mbxName = mbxIds.map(id => mailboxNameFromId(id)).find(n => n) ?? ''
@@ -205,6 +208,7 @@ export function getInboxEmails(mailbox: string, contact: string, selfAddr: strin
     }
     return allMsgs.filter(email => {
       if (isReaction(email)) return false
+      if (isEdit(email)) return false
       if (readGroupHeaders(email).id === groupId) return true
       const tid = email.threadId as string
       return tid ? groupThreadIds.has(tid) : false
@@ -225,6 +229,7 @@ export function getInboxEmails(mailbox: string, contact: string, selfAddr: strin
   return allMsgs.filter(email => {
     if (isSecurejoinEmail(email)) return false
     if (isReaction(email)) return false
+    if (isEdit(email)) return false
     if (readGroupHeaders(email).id) return false
     const tid = email.threadId as string
     if (tid && groupThreadIds.has(tid)) return false
@@ -256,6 +261,14 @@ export async function fetchInboxMessages(inboxSummary: InboxSummary): Promise<Pr
     const rs = reactionMap.get(msg.message_id)
     if (rs?.length) msg.reactions = rs.map(r => ({ emoji: r.emoji, from: r.from }))
   }
+  // Chat-Edit requests were filtered out of `emails` above too — apply the
+  // latest one directly onto msg.body (pre-decrypt stage: it's already
+  // plaintext, so processIncoming's PGP-marker check just passes it through).
+  const editMap = collectEdits(messages.forIdentity(session.account.email))
+  for (const msg of msgs) {
+    const edited = editMap.get(msg.message_id)
+    if (edited !== undefined) msg.body = edited
+  }
   // Fill in group metadata for threadId-matched replies that lack Chat-Group-ID header.
   if (inboxSummary.group_id) {
     for (const msg of msgs) {
@@ -279,6 +292,7 @@ export async function jmapCreateEmail(
   senderEmail?: string,
   relayUrl?: string,
   attachments: OutgoingAttachment[] = [],
+  chatAction?: ChatAction,
 ): Promise<{ ok: boolean; fromEmail?: string; error?: string }> {
   // Array form (legacy callers): first entry is To, the rest are Cc, no Bcc.
   // Object form (the #new composer): explicit To/Cc/Bcc from the recipient rows.
@@ -341,7 +355,7 @@ export async function jmapCreateEmail(
   // for ActivityPub sends — fediverse Notes are plaintext and the AP relay has
   // no peer-key/WKD surface, so encrypting there just fails a lookup with noise.
   if (!isApRelay(serverUrl)) {
-    const enc = await encryptText(body, [...to, ...cc], fromEmail, serverUrl, password, inReplyTo, groupOpts, bcc, attachments)
+    const enc = await encryptText(body, [...to, ...cc], fromEmail, serverUrl, password, inReplyTo, groupOpts, bcc, attachments, chatAction)
     if (enc) emailBody = enc
   }
 

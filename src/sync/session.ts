@@ -15,12 +15,36 @@ import { mailboxNameFromId } from '../utils.ts'
 import { filterNew } from './dedup.ts'
 import { buildEffectiveGroups } from '../processing.ts'
 import { decryptAndParse, uploadPeerKey } from '../pgp/crypto.ts'
-import { readGroupHeaders, readGroupHeadersFromMime, cacheGroupHeaders, parseAutocryptKey, parseGossipKeys } from '../deltachat/protocol.ts'
+import { readGroupHeaders, readGroupHeadersFromMime, cacheGroupHeaders, parseAutocryptKey, parseGossipKeys, readChatEditTarget, readChatDeleteTarget, parseEditBody, cacheEdit } from '../deltachat/protocol.ts'
 import { maybeHandleSecurejoin } from '../deltachat/securejoin.ts'
 import { learnAvatar, learnGroupAvatar } from '../deltachat/avatar.ts'
 import { learnApAvatar } from '../ap/avatar.ts'
-import { isApRelay, identities as ownIdentities } from '../context.ts'
+import { isApRelay, identities as ownIdentities, sessionForRelay } from '../context.ts'
 import { isReactionEmail, isReactionDisposition, cacheReaction } from '../mail/reactions.ts'
+
+// Chat-Delete (deltachat spec.md "Request deletion"): the sender asks every
+// recipient to remove their own copy of a message the sender originally sent.
+// Only honor the request if the requester really is that message's original
+// sender — otherwise any group member could delete someone else's message by
+// forging (their own, legitimately PGP-signed) Chat-Delete carrier.
+async function applyIncomingDelete(identityEmail: string, requestedBy: string, targetMessageId: string): Promise<void> {
+  const target = messages.forIdentity(identityEmail)
+    .find(m => (m.messageId as string[] | undefined)?.[0] === targetMessageId)
+  if (!target) return
+  const targetFrom = (target.from as any[] | undefined)?.[0]?.email as string | undefined
+  if (!targetFrom || targetFrom.toLowerCase() !== requestedBy.toLowerCase()) {
+    console.warn('[chat-delete] ignoring: requester is not the original sender', requestedBy, targetFrom)
+    return
+  }
+  const targetRelay = (target as any)._relay as string | undefined
+  const targetSess = targetRelay ? sessionForRelay(identityEmail, targetRelay) : undefined
+  const targetAcct = messages.accountOf(target)
+  try {
+    if (targetSess) await jmapEmail.destroy(targetSess.jmapClient, targetSess.jmapAccountId, [target.id as string])
+  } catch (err) { console.warn('[chat-delete] server destroy failed', err) }
+  messages.remove(targetAcct, target.id as string)
+  await persist.removeMessage(targetAcct, target.id as string)
+}
 
 export async function sync(session: AccountSession): Promise<void> {
   const { jmapClient: client, jmapAccountId: accountId, account } = session
@@ -72,6 +96,10 @@ export async function sync(session: AccountSession): Promise<void> {
       // outer inReplyTo が空かつ body が PGP のとき復号して inner In-Reply-To を outer に昇格。
       // DeltaChat の Protected Headers や JMAP server が outer を拾い損ねるケースを store に入る前に補正。
       const handledSJ = new Set<string>()
+      // Chat-Delete carrier emails: never stored (protocol noise, like
+      // securejoin), and their target gets destroyed once decrypted below.
+      const handledDelete = new Set<string>()
+      const deleteRequests: { from: string; targetMessageId: string }[] = []
       // ActivityPub messages are plaintext (no PGP), so they skip the decrypt
       // path below. Learn the remote actor's avatar here via the AP relay's
       // /resolve before that early return.
@@ -96,12 +124,16 @@ export async function sync(session: AccountSession): Promise<void> {
           cacheReaction(e, { emoji: raw.trim(), from, targetMessageId: outerIrt })
         }
         if (!isPgp) return
-        // Decrypt to promote inner protected headers (In-Reply-To, Chat-Group-ID)
-        // to the outer email so threading + group routing can see them.
-        // DeltaChat hides ALL headers (incl. recipients) inside the encryption,
-        // so we can't use recipient count as a hint — decrypt whenever an outer
-        // copy is missing. (null for symm-encrypted securejoin vc-request-pubkey.)
-        const decrypted = (outerIrt && hasOuterGroup) ? null : await decryptAndParse(raw, user)
+        // Decrypt every new PGP message unconditionally. This used to be skipped
+        // whenever the outer copy already had In-Reply-To + Chat-Group-ID (biset
+        // stamps both as cleartext draft headers on its own group sends for MUA
+        // compatibility — see groupDraftHeaders), back when header-promotion was
+        // decrypt's only job. It has since grown gossip-key learning, avatar
+        // learning, and reaction/edit/delete detection — none of which are
+        // knowable without decrypting, and the skip condition was silently
+        // disabling all of them from message #2 onward in any biset-authored
+        // group thread. (null for symm-encrypted securejoin vc-request-pubkey.)
+        const decrypted = await decryptAndParse(raw, user)
         console.log('[promote] decrypted innerIrt:', decrypted?.inReplyTo || 'NONE')
         if (decrypted) {
           if (!outerIrt && decrypted.inReplyTo) {
@@ -113,6 +145,17 @@ export async function sync(session: AccountSession): Promise<void> {
             if (groupId) await learnGroupAvatar(groupId, decrypted)
             if (from && decrypted.inReplyTo && isReactionDisposition(decrypted.headers)) {
               cacheReaction(e, { emoji: decrypted.body.trim(), from, targetMessageId: decrypted.inReplyTo })
+            }
+            // Chat-Edit / Chat-Delete (deltachat spec.md "Request editing" /
+            // "Request deletion") — protected headers, only visible here.
+            if (from) {
+              const editTarget = readChatEditTarget(decrypted.headers)
+              if (editTarget) cacheEdit(e, { targetMessageId: editTarget, newText: parseEditBody(decrypted.body), from })
+              const deleteTarget = readChatDeleteTarget(decrypted.headers)
+              if (deleteTarget) {
+                handledDelete.add(e.id as string)
+                deleteRequests.push({ from, targetMessageId: deleteTarget })
+              }
             }
             // Learn the sender's key from the protected Autocrypt header so we can
             // encrypt replies (chatmail hides Autocrypt inside the encryption).
@@ -141,7 +184,7 @@ export async function sync(session: AccountSession): Promise<void> {
           handledSJ.add(e.id as string)
         }
       }))
-      await Promise.all(fresh.filter(e => !handledSJ.has(e.id as string)).map(async e => {
+      await Promise.all(fresh.filter(e => !handledSJ.has(e.id as string) && !handledDelete.has(e.id as string)).map(async e => {
         messages.put(e)
         await persist.flushMessage(e)
         newEmailIds.add(e.id as string)
@@ -151,6 +194,15 @@ export async function sync(session: AccountSession): Promise<void> {
       if (handledSJ.size) {
         try { await jmapEmail.destroy(client, accountId, [...handledSJ]) }
         catch (err) { console.log('[securejoin] destroy failed', err) }
+      }
+      // Chat-Delete carriers are protocol noise too — delete from the server,
+      // then apply the deletion each one requested (see applyIncomingDelete).
+      if (handledDelete.size) {
+        try { await jmapEmail.destroy(client, accountId, [...handledDelete]) }
+        catch (err) { console.log('[chat-delete] carrier destroy failed', err) }
+      }
+      for (const req of deleteRequests) {
+        await applyIncomingDelete(user, req.from, req.targetMessageId)
       }
     }
 

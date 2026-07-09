@@ -21,6 +21,8 @@ export const CHAT_GROUP_NAME = 'Chat-Group-Name'
 export const CHAT_VERSION = 'Chat-Version'
 export const CHAT_VERSION_VALUE = '1.0'
 export const CHAT_USER_AVATAR = 'Chat-User-Avatar'
+export const CHAT_EDIT = 'Chat-Edit'
+export const CHAT_DELETE = 'Chat-Delete'
 
 export interface GroupOpts { id: string; name: string }
 
@@ -118,6 +120,85 @@ export function cacheGroupHeaders(email: Email, g: GroupHeaders): void {
   if (g.name) hdrs.push({ name: CHAT_GROUP_NAME, value: g.name })
 }
 
+// ── Message editing / deletion (spec.md "Request editing" / "Request deletion") ─
+//
+// Both Chat-Edit and Chat-Delete are protected headers (unlisted in the RFC 9788
+// hcp_chat policy, so they never appear in a cleartext copy) — only readable
+// once decrypted, exactly like Chat-Group-ID. Chat-Edit's target text also rides
+// inside the encrypted body, optionally prefixed with a quote + "✏️" marker that
+// the spec requires receivers to strip.
+
+export function readChatEditTarget(headers: Record<string, string>): string | undefined {
+  return headers[CHAT_EDIT.toLowerCase()]?.trim() || undefined
+}
+
+export function readChatDeleteTarget(headers: Record<string, string>): string | undefined {
+  return headers[CHAT_DELETE.toLowerCase()]?.trim() || undefined
+}
+
+const EDIT_MARKER = '✏️'
+
+// Strips the optional "On <date>, <sender> wrote:\n> quote\n\n✏️" preamble a
+// DeltaChat-compatible edit body MAY carry. No marker present (e.g. biset's own
+// sends without the ornament) → the whole body is already the new text.
+export function parseEditBody(body: string): string {
+  const idx = body.lastIndexOf(EDIT_MARKER)
+  return (idx >= 0 ? body.slice(idx + EDIT_MARKER.length) : body).trim()
+}
+
+// Builds an edit body in DeltaChat's own convention so DeltaChat clients render
+// the familiar "quoted original + ✏️ new text" edit indicator.
+export function buildEditBody(newText: string, originalText: string, originalSender: string, originalDate: Date): string {
+  const dateStr = originalDate.toISOString().slice(0, 10)
+  const quoted = originalText.trim().split('\n').map(l => '> ' + l).join('\n')
+  return `On ${dateStr}, ${originalSender} wrote:\n${quoted}\n\n${EDIT_MARKER}${newText}`
+}
+
+export interface EditInfo { targetMessageId: string; newText: string; from: string }
+
+// Cached onto the edit-request Email object at sync time (mirrors
+// mail/reactions.ts's cacheReaction) so later reads don't need to re-decrypt.
+export function cacheEdit(email: Email, info: EditInfo): void {
+  (email as any)._chatEdit = info
+}
+
+export function readCachedEdit(email: Email): EditInfo | null {
+  return (email as any)._chatEdit ?? null
+}
+
+// An edit-request email is protocol noise, not a chat message — exclude it
+// from inbox summaries / message lists the same way isReaction() is excluded.
+export function isEdit(email: Email): boolean {
+  return !!readCachedEdit(email)
+}
+
+// Builds target-messageId → latest edit text for one identity's emails. Only
+// accepts an edit if its sender matches the TARGET message's own sender — a
+// group member editing someone else's message would otherwise be possible,
+// since Chat-Edit itself carries no such restriction beyond PGP-authenticating
+// who sent the *edit request*.
+export function collectEdits(emails: Email[]): Map<string, string> {
+  const byMessageId = new Map<string, Email>()
+  for (const e of emails) {
+    const mid = (e.messageId as string[] | undefined)?.[0]
+    if (mid) byMessageId.set(mid, e)
+  }
+  const latest = new Map<string, { text: string; ts: number }>()
+  for (const e of emails) {
+    const info = readCachedEdit(e)
+    if (!info) continue
+    const target = byMessageId.get(info.targetMessageId)
+    const targetFrom = (target?.from as any[] | undefined)?.[0]?.email as string | undefined
+    if (!targetFrom || targetFrom.toLowerCase() !== info.from.toLowerCase()) continue
+    const ts = e.receivedAt ? new Date(e.receivedAt as string).getTime() : 0
+    const existing = latest.get(info.targetMessageId)
+    if (!existing || ts >= existing.ts) latest.set(info.targetMessageId, { text: info.newText, ts })
+  }
+  const out = new Map<string, string>()
+  for (const [k, v] of latest) out.set(k, v.text)
+  return out
+}
+
 // ── Composing outgoing mail ───────────────────────────────────────────────────
 
 // JMAP Email/set `header:<Name>:asText` create properties for a group message.
@@ -141,17 +222,23 @@ function autocryptGossipHeader(email: string, key: openpgp.PublicKey): string {
   return prefix + chunks.join('\r\n ') + '\r\n'
 }
 
+export interface ChatAction { editTarget?: string; deleteTarget?: string }
+
 // Builds the DeltaChat "protected" headers that must live INSIDE the encrypted
 // MIME part: Chat-Version, the group id/name (so the group is writable, not a
-// read-only ad-hoc group), and one Autocrypt-Gossip per member (so every member
-// learns all others' keys and can reply encrypted).
+// read-only ad-hoc group), one Autocrypt-Gossip per member (so every member
+// learns all others' keys and can reply encrypted), and — for edit/delete
+// requests — Chat-Edit / Chat-Delete referencing the target message-id.
 export function buildProtectedHeaders(
   recipients: string[],
   recipientKeys: (openpgp.PublicKey | null)[],
   groupOpts?: GroupOpts,
   senderEmail?: string,
+  action?: ChatAction,
 ): string {
   let out = `${CHAT_VERSION}: ${CHAT_VERSION_VALUE}\r\n`
+  if (action?.editTarget) out += `${CHAT_EDIT}: ${action.editTarget}\r\n`
+  if (action?.deleteTarget) out += `${CHAT_DELETE}: ${action.deleteTarget}\r\n`
   if (groupOpts) {
     out += `${CHAT_GROUP_ID}: ${groupOpts.id}\r\n${CHAT_GROUP_NAME}: ${groupOpts.name}\r\n`
   }

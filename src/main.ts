@@ -5,7 +5,7 @@ import { initSession, initPGPForSession, loadInboxSummaries } from './app.ts'
 import type { InboxSummary } from './types.ts'
 import { inboxToHash, parseInboxHash, isProgrammaticScroll, markProgrammaticScroll } from './utils.ts'
 import { showApp, startPolling, fetchMessages } from './ui/shell.ts'
-import { loadLeftInboxes, switchInbox, showMenuPage, setupLeftPane, refreshAccountsList, menuTargetInbox, openComposeTo } from './ui/left-pane.ts'
+import { loadLeftInboxes, switchInbox, showMenuPage, setupLeftPane, refreshAccountsList, menuTargetInbox, openComposeTo, syncNotifToggle } from './ui/left-pane.ts'
 import { setupNewUserPage, showNewUserPage } from './ui/account-create.ts'
 import { showUserLanding } from './ui/user-landing.ts'
 import { primeAvatarCache } from './deltachat/avatar.ts'
@@ -160,6 +160,7 @@ async function initInner() {
       validSessions.forEach(s => addSession(s!))
       validSessions.forEach(s => initPGPForSession(s!))
       advertiseAllOwnAvatars()
+      syncNotifToggle()
       refreshAccountsList()
       startPolling()
       loadLeftInboxes()
