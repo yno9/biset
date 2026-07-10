@@ -128,12 +128,22 @@ export function cacheGroupHeaders(email: Email, g: GroupHeaders): void {
 // inside the encrypted body, optionally prefixed with a quote + "✏️" marker that
 // the spec requires receivers to strip.
 
+// Chat-Edit/Chat-Delete values are RFC 5322 msg-ids (they reference a
+// Message-ID), so — like In-Reply-To/References/Message-ID itself — real
+// DeltaChat clients send and expect them angle-bracket-wrapped. Strip on read
+// to get back the bare id used everywhere else in biset (msg.message_id).
+function stripMsgIdBrackets(v: string): string {
+  return v.replace(/^<|>$/g, '')
+}
+
 export function readChatEditTarget(headers: Record<string, string>): string | undefined {
-  return headers[CHAT_EDIT.toLowerCase()]?.trim() || undefined
+  const v = headers[CHAT_EDIT.toLowerCase()]?.trim()
+  return v ? stripMsgIdBrackets(v) : undefined
 }
 
 export function readChatDeleteTarget(headers: Record<string, string>): string | undefined {
-  return headers[CHAT_DELETE.toLowerCase()]?.trim() || undefined
+  const v = headers[CHAT_DELETE.toLowerCase()]?.trim()
+  return v ? stripMsgIdBrackets(v) : undefined
 }
 
 const EDIT_MARKER = '✏️'
@@ -146,12 +156,16 @@ export function parseEditBody(body: string): string {
   return (idx >= 0 ? body.slice(idx + EDIT_MARKER.length) : body).trim()
 }
 
-// Builds an edit body in DeltaChat's own convention so DeltaChat clients render
-// the familiar "quoted original + ✏️ new text" edit indicator.
-export function buildEditBody(newText: string, originalText: string, originalSender: string, originalDate: Date): string {
-  const dateStr = originalDate.toISOString().slice(0, 10)
-  const quoted = originalText.trim().split('\n').map(l => '> ' + l).join('\n')
-  return `On ${dateStr}, ${originalSender} wrote:\n${quoted}\n\n${EDIT_MARKER}${newText}`
+// Builds an edit body. DeltaChat-core's own sender (chat.rs send_edit_request)
+// sets msg.text to bare `EDITED_PREFIX + new_text` — no quote — and adds the
+// "On ... wrote: > ..." quote separately via set_quote() (a distinct MIME-level
+// construct, not text concatenated into the body). The receiver's check is a
+// literal `strip_prefix(EDITED_PREFIX)` against the text body, which only
+// succeeds when the marker is the very first character — a textual quote
+// prepended ahead of it (as spec.md's own prose example shows) makes real
+// DeltaChat silently fail to recognize the edit and show the raw text instead.
+export function buildEditBody(newText: string): string {
+  return `${EDIT_MARKER}${newText}`
 }
 
 export interface EditInfo { targetMessageId: string; newText: string; from: string }
@@ -237,8 +251,10 @@ export function buildProtectedHeaders(
   action?: ChatAction,
 ): string {
   let out = `${CHAT_VERSION}: ${CHAT_VERSION_VALUE}\r\n`
-  if (action?.editTarget) out += `${CHAT_EDIT}: ${action.editTarget}\r\n`
-  if (action?.deleteTarget) out += `${CHAT_DELETE}: ${action.deleteTarget}\r\n`
+  // <...>-wrapped: these are msg-id references, same convention as In-Reply-To
+  // below (encryptText wraps that one itself) — see stripMsgIdBrackets's comment.
+  if (action?.editTarget) out += `${CHAT_EDIT}: <${action.editTarget}>\r\n`
+  if (action?.deleteTarget) out += `${CHAT_DELETE}: <${action.deleteTarget}>\r\n`
   if (groupOpts) {
     out += `${CHAT_GROUP_ID}: ${groupOpts.id}\r\n${CHAT_GROUP_NAME}: ${groupOpts.name}\r\n`
   }

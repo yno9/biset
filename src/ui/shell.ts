@@ -195,7 +195,7 @@ export async function sendEditRequest(target: ProcessedMessage, newText: string)
   const text = newText.trim()
   if (!text) return
   const { toAddrs, groupOpts, references } = computeConversationRecipients()
-  const editBody = buildEditBody(text, target.bodyText, target.msg.from_name || target.msg.from, new Date(target.msg.ts))
+  const editBody = buildEditBody(text)
   const chatAction: ChatAction = { editTarget: target.msg.message_id }
   const { ok, error } = await jmapCreateEmail(
     toAddrs, editBody, '', target.msg.message_id, groupOpts, references,

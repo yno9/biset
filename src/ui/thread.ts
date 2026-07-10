@@ -135,6 +135,24 @@ export async function addMessage(msg: ProcessedMessage['msg']): Promise<boolean>
       el?.querySelector('.t-reactions')?.remove()
       if (msg.reactions?.length) el?.insertAdjacentHTML('beforeend', renderReactionsHtml(msg.reactions))
     }
+    // A Chat-Edit request overlays msg.body in app.ts's fetchInboxMessages —
+    // collectEdits reruns on every fetch, so a message already on screen can
+    // pick up new (or updated) edited text on a later poll. Without this, the
+    // stale pre-edit text stayed on screen until a full reload rebuilt
+    // processedMessages from scratch (which is why it "worked after refresh").
+    if (existing && existing.msg.body !== msg.body) {
+      existing.msg.body = msg.body
+      const r = await processIncoming(existing.msg, activeSession()?.account.email ?? '', processedMessages)
+      existing.bodyText = r.bodyText
+      existing.encrypted = r.encrypted
+      existing.unreadable = r.unreadable
+      const bodyEl = document.querySelector(`.t-msg[data-message-id="${CSS.escape(existing.msg.message_id)}"] .t-body`)
+      if (bodyEl) {
+        bodyEl.innerHTML = r.unreadable
+          ? `<span style="opacity:0.4;font-style:italic">Encrypted message</span>`
+          : linkify(esc(stripQuoted(r.bodyText)))
+      }
+    }
     return false
   }
   renderedKeys.add(key)
