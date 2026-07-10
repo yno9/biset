@@ -30,6 +30,9 @@ export interface ProcessedMessage {
     // RFC 9078 reactions targeting this message (src/mail/reactions.ts) —
     // display-only, one entry per sender (their latest, non-retracted emoji).
     reactions?: { emoji: string; from: string }[]
+    // Set when a Chat-Edit request overlaid msg.body (see collectEdits in
+    // deltachat/protocol.ts) — display-only "edited" label next to the time.
+    edited?: boolean
   }
   bodyText: string
   encrypted: boolean

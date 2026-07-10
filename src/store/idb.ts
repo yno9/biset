@@ -67,6 +67,15 @@ export async function getAll(store: string): Promise<unknown[]> {
   })
 }
 
+export async function get(store: string, key: IDBValidKey): Promise<unknown> {
+  const d = await db()
+  return new Promise((resolve, reject) => {
+    const req = d.transaction(store, 'readonly').objectStore(store).get(key)
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
 export async function del(store: string, key: IDBValidKey): Promise<void> {
   const d = await db()
   return new Promise((resolve, reject) => {

@@ -11,6 +11,7 @@ export interface InboxSummary {
   latest_subject?: string
   inbox_type?: 'direct' | 'group'
   has_unread?: boolean
+  unread_count?: number
   archived?: boolean
   participants?: string[]
   avatar_url?: string

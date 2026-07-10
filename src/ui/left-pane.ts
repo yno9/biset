@@ -7,7 +7,7 @@ import {
   notifEnabled, setNotifEnabled,
   lastTs, groupMessages,
 } from '../state.ts'
-import { esc, formatTime, avatarStyle, inboxToHash, markProgrammaticScroll, syncAppBadge } from '../utils.ts'
+import { esc, formatTime, avatarStyle, inboxToHash, markProgrammaticScroll, syncAppBadge, mailboxNameFromId } from '../utils.ts'
 import type { InboxSummary } from '../types.ts'
 import type { Email } from 'jmap-rfc-types'
 // Circular (safe — used only in function bodies):
@@ -25,11 +25,13 @@ import { advertiseOwnAvatarForEmail } from '../ap/avatar.ts'
 import * as jmapEmail from '../jmap/email.ts'
 import * as messages from '../store/messages.ts'
 import * as identities from '../store/identities.ts'
+import * as idb from '../store/idb.ts'
 import { loadFromVault, flushAll, flushMessage, removeMessage } from '../vault/persist.ts'
 import * as querystate from '../jmap/querystate.ts'
 import { startWatch } from '../vault/watch.ts'
 import { setupAccountCreateOverlay } from './account-create.ts'
-import { newGroupId } from '../deltachat/protocol.ts'
+import { newGroupId, isSecurejoinEmail, readGroupHeaders, isEdit } from '../deltachat/protocol.ts'
+import { isReaction } from '../mail/reactions.ts'
 import { newInviteUrl } from '../deltachat/securejoin.ts'
 import { enablePush, disablePush } from '../push/client.ts'
 
@@ -374,6 +376,7 @@ export function markRead(item: InboxSummary) {
     const listIdx = lastLeftInboxes.findIndex(i => isk(i) === isk(item))
     if (listIdx >= 0) {
       lastLeftInboxes[listIdx].has_unread = false
+      lastLeftInboxes[listIdx].unread_count = 0
       renderLeftInboxes(lastLeftInboxes)
     }
   })()
@@ -648,7 +651,13 @@ function toggleAccordionForItem(inboxEl: HTMLElement, focusThread = true) {
 export function makeLpItem(item: InboxSummary) {
   const rawName = item.mailbox && item.contact ? `${item.mailbox} / ${item.contact}` : (item.contact || item.mailbox)
   const isCurrent = !!(currentInbox && isk(currentInbox) === isk(item))
-  const unread = !isCurrent && isUnread(item)
+  // Suppress the unread badge only for the conversation actually SHOWN in the
+  // reading pane — i.e. current AND not sitting behind a menu page (/debug,
+  // /config, …). Otherwise a conversation you opened, then left for a menu,
+  // keeps its stale "current" flag and silently hides its unread count even
+  // though you're not looking at it (exactly the "count won't show" report).
+  const viewing = isCurrent && !inMenuMode()
+  const unread = !viewing && isUnread(item)
   const a = document.createElement('a')
   a.className = 'lp-item'
   a.href = '#'
@@ -662,7 +671,10 @@ export function makeLpItem(item: InboxSummary) {
     ? `<img src="${item.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
     : avatarSubject.charAt(0).toUpperCase()
   const avatarBg = item.avatar_url ? 'background:transparent' : avatarStyle(avatarSubject)
-  const avatarHTML = `<div class="lp-avatar" style="${avatarBg}">${avatarInner}${unread ? '<div class="unread-dot"></div>' : ''}</div>`
+  const unreadBadge = unread
+    ? (item.unread_count ? `<div class="unread-badge">${item.unread_count > 99 ? '99+' : item.unread_count}</div>` : '<div class="unread-dot"></div>')
+    : ''
+  const avatarHTML = `<div class="lp-avatar" style="${avatarBg}">${avatarInner}${unreadBadge}</div>`
   a.innerHTML = `
     <div class="lp-inner">
       ${avatarHTML}
@@ -808,7 +820,14 @@ let archivedExpanded = false
 
 export function renderLeftInboxes(inboxes: InboxSummary[]) {
   setLastLeftInboxes(inboxes)
-  syncAppBadge(inboxes.filter(i => !i.archived && i.has_unread).length)
+  // Badge = total unread MESSAGES (not conversations) — matches what a user
+  // counting "2 messages arrived" expects, and mirrors iOS Mail/Messages. Safe
+  // now that reactions/edits are excluded everywhere (they never carry an
+  // unread_count into a surfaced inbox). Falls back to has_unread as 1 for any
+  // inbox that somehow lacks a computed count.
+  syncAppBadge(inboxes
+    .filter(i => !i.archived && i.has_unread)
+    .reduce((sum, i) => sum + (i.unread_count ?? 1), 0))
   const $list = document.getElementById('left-list')
   if (!$list) return
   // Drop any prior archived section so the active-list diff below sees a clean
@@ -836,7 +855,7 @@ export function renderLeftInboxes(inboxes: InboxSummary[]) {
     const item = active[i]
     const key = isk(item)
     const isCurrent = !!(currentInbox && isk(currentInbox) === key)
-    const unread = !isCurrent && isUnread(item)
+    const unread = !(isCurrent && !inMenuMode()) && isUnread(item)
     const p = previewFor(item.latest_body || '')
 
     let a = existingMap.get(key) as HTMLElement | undefined
@@ -846,12 +865,25 @@ export function renderLeftInboxes(inboxes: InboxSummary[]) {
       a = newA
     } else {
       // (selected class removed — focus tracked via _lpFocusedKey / syncNavFocus)
-      const dot = a.querySelector('.unread-dot')
-      if (unread && !dot) {
+      const badge = a.querySelector('.unread-dot, .unread-badge')
+      const badgeText = unread && item.unread_count ? (item.unread_count > 99 ? '99+' : String(item.unread_count)) : null
+      if (!unread) {
+        badge?.remove()
+      } else if (badgeText) {
+        if (badge?.classList.contains('unread-badge')) {
+          if (badge.textContent !== badgeText) badge.textContent = badgeText
+        } else {
+          badge?.remove()
+          const av = a.querySelector('.lp-avatar')
+          if (av) av.insertAdjacentHTML('beforeend', `<div class="unread-badge">${badgeText}</div>`)
+        }
+      } else if (!badge) {
         const av = a.querySelector('.lp-avatar')
         if (av) av.insertAdjacentHTML('beforeend', '<div class="unread-dot"></div>')
-      } else if (!unread && dot) {
-        dot.remove()
+      } else if (badge.classList.contains('unread-badge')) {
+        badge.remove()
+        const av = a.querySelector('.lp-avatar')
+        if (av) av.insertAdjacentHTML('beforeend', '<div class="unread-dot"></div>')
       }
       const $preview = a.querySelector('.lp-preview')
       if ($preview && $preview.innerHTML !== p.text) $preview.innerHTML = p.text
@@ -1024,6 +1056,116 @@ export async function setupLeftPane() {
       if (errEl) errEl.style.display = 'none'
       setOpen(false)
     })
+  }
+
+  // ── /debug: unread reconciliation diagnostic ─────────────────────────────────
+  // Temporary. Shows the unread messages the SERVER reports vs how the LOCAL
+  // store attributes each one, so a stuck "Unread: N" that won't clear can be
+  // traced to the exact messages + inboxes responsible (are they even in the
+  // local store? what inbox key? group or 1:1? which relay?).
+  function renderDebugPage() {
+    return `<div class="cmd-page-content wide-page">
+      <div class="cmd-page-section">
+        <h3>Unread diagnostic <span id="debug-copy-hint" style="font-size:11px;font-weight:400;color:var(--text-dim)">— tap to copy</span></h3>
+        <pre id="debug-out" style="white-space:pre-wrap;word-break:break-all;font-size:11px;font-family:ui-monospace,monospace;line-height:1.5;margin:0;cursor:pointer">Loading…</pre>
+      </div>
+    </div>`
+  }
+
+  async function onShowDebug() {
+    const out = document.getElementById('debug-out')
+    if (!out) return
+    // Tap anywhere on the output to copy it — saves fiddly text selection on
+    // mobile when relaying this back for debugging.
+    out.addEventListener('click', async () => {
+      const hint = document.getElementById('debug-copy-hint')
+      try {
+        await navigator.clipboard.writeText(out.textContent ?? '')
+        if (hint) { hint.textContent = '— copied!'; setTimeout(() => { hint.textContent = '— tap to copy' }, 1500) }
+      } catch {
+        // clipboard API can be unavailable (insecure context / denied) — fall
+        // back to selecting the text so a manual copy is one gesture.
+        const range = document.createRange()
+        range.selectNodeContents(out)
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(range)
+        if (hint) { hint.textContent = '— selected, ⌘C / long-press copy'; setTimeout(() => { hint.textContent = '— tap to copy' }, 2500) }
+      }
+    })
+    const lines: string[] = []
+    try {
+      for (const s of sessions) {
+        const email = s.account.email
+        // Server truth: one Email/query+get per session, count non-seen non-own.
+        const [qr] = await s.jmapClient.api.Email.query({ accountId: s.jmapAccountId, limit: 5000 } as any)
+        const ids: string[] = (qr as any).ids ?? []
+        let serverUnread: any[] = []
+        if (ids.length) {
+          const [gr] = await s.jmapClient.api.Email.get({
+            accountId: s.jmapAccountId, ids: ids as any,
+            properties: ['id', 'keywords', 'from', 'subject', 'headers', 'mailboxIds'],
+          })
+          serverUnread = ((gr as any).list ?? []).filter((e: any) => {
+            const from = e.from?.[0]?.email ?? ''
+            return from !== email && !e.keywords?.['$seen'] && !isSecurejoinEmail(e) && !isReaction(e)
+          })
+        }
+        lines.push(`=== ${email} @ ${s.account.serverUrl} ===`)
+        lines.push(`SERVER unread (non-seen, non-own, non-noise): ${serverUnread.length}`)
+        // Local store view — is each server-unread message present locally, and how attributed?
+        const local = messages.forIdentity(email)
+        const localById = new Map(local.map(m => [m.id as string, m]))
+        for (const e of serverUnread) {
+          const from = e.from?.[0]?.email ?? '?'
+          const inStore = localById.get(e.id)
+          const mbx = Object.keys(e.mailboxIds ?? {}).map(mailboxNameFromId).find(Boolean) ?? '?'
+          let attribution = 'NOT IN LOCAL STORE'
+          if (inStore) {
+            const gid = readGroupHeaders(inStore).id
+            const seenLocal = !!(inStore.keywords as any)?.['$seen']
+            const flags = [isEdit(inStore) ? 'EDIT' : '', isReaction(inStore) ? 'REACT' : '', isSecurejoinEmail(inStore) ? 'SJOIN' : ''].filter(Boolean).join(',')
+            attribution = gid ? `group:${gid.slice(0, 12)}` : `1:1 ${from}`
+            attribution += ` | localSeen=${seenLocal}${flags ? ' | ' + flags : ''}`
+          }
+          lines.push(`  • ${from} | ${attribution}`)
+        }
+      }
+      // What the left pane actually surfaces as unread — the real source of the
+      // list. If a store-unread message's inbox isn't here (or shows a smaller
+      // count), that inbox is being dropped/undercounted before it can render.
+      lines.push('')
+      lines.push('=== loadInboxSummaries unread inboxes ===')
+      const summaries = await loadInboxSummaries()
+      const unreadInboxes = summaries.filter(s => s.has_unread)
+      lines.push(`inboxes with has_unread: ${unreadInboxes.length}`)
+      for (const s of unreadInboxes) {
+        lines.push(`  • ${s.contact} | count=${s.unread_count ?? '?'} | archived=${!!s.archived}`)
+      }
+      // What the SERVICE WORKER actually did on its last push (written by
+      // sw.ts). Confirms which sw.js version is active on this device and
+      // whether decrypt/reaction-classification worked in the SW context.
+      lines.push('')
+      lines.push('=== service worker (last push) ===')
+      const reg = ('serviceWorker' in navigator) ? await navigator.serviceWorker.getRegistration() : null
+      lines.push(`active SW: ${reg?.active ? 'yes' : 'NO'} | waiting: ${reg?.waiting ? 'yes (update pending!)' : 'no'}`)
+      const activeVer = await idb.get(idb.STORES.accounts, 'sw_active_version').catch(() => null)
+      lines.push(`active SW version: ${activeVer ?? '?'}`)
+      const swdbg = await idb.get(idb.STORES.accounts, 'sw_last_push_debug').catch(() => null) as any
+      if (swdbg) {
+        lines.push(`version: ${swdbg.version} | ${swdbg.at ? Math.round((Date.now() - swdbg.at) / 1000) + 's ago' : '?'}`)
+        lines.push(`candidates=${swdbg.candidates} pgp=${swdbg.pgp} decryptOk=${swdbg.decryptOk} decryptFail=${swdbg.decryptFail}`)
+        lines.push(`classify: reaction=${swdbg.reaction} edit=${swdbg.edit} real=${swdbg.real}`)
+        lines.push(`badge=${swdbg.badge} willNotify=${swdbg.willNotify} (realCount=${swdbg.realCount} freshCount=${swdbg.freshCount})`)
+        lines.push(`lastDisposition: ${swdbg.lastDisp ?? '?'}`)
+        lines.push(`lastHeaderKeys: ${swdbg.lastHdrKeys ?? '?'}`)
+      } else {
+        lines.push('no push processed yet by this SW')
+      }
+    } catch (err) {
+      lines.push('ERROR: ' + (err as any)?.message)
+    }
+    out.textContent = lines.join('\n')
   }
 
   function renderConfigPage() {
@@ -1495,11 +1637,23 @@ export async function setupLeftPane() {
         const [gr] = await session.jmapClient.api.Email.get({
           accountId: session.jmapAccountId,
           ids: ids as any,
-          properties: ['id', 'keywords'],
+          properties: ['id', 'keywords', 'from', 'subject', 'headers'],
         })
         const emails: any[] = (gr as any).list ?? []
         info.total = emails.length
-        info.unread = emails.filter(e => !e.keywords?.['$seen']).length
+        // Own sent mail never carries $seen (mirrors app.ts's loadInboxSummaries
+        // and sw.ts) — without this exclusion every account looked permanently
+        // more "unread" than it really was, inflated by its own sent history.
+        // Secure-Join handshake noise and reactions are excluded from every
+        // inbox the user can actually open (see loadInboxSummaries/getInboxEmails),
+        // so they never get a chance to be marked $seen — left uncounted here
+        // too, or "Unread" gets permanently stuck above 0 no matter how much
+        // the user actually reads.
+        info.unread = emails.filter(e => {
+          if (isSecurejoinEmail(e) || isReaction(e)) return false
+          const fromEmail = e.from?.[0]?.email ?? ''
+          return fromEmail !== email && !e.keywords?.['$seen']
+        }).length
         info.lastSyncAt = Date.now()
       } else {
         info.total = 0
@@ -2012,6 +2166,7 @@ export async function setupLeftPane() {
     { name: '/account', page: renderAccountPage, action: () => {}, onShow: onShowAccount },
     { name: '/config',  page: renderConfigPage,  action: () => {}, onShow: onShowConfig },
     { name: '/compose',     page: renderComposePage,     action: () => {}, onShow: onShowNew },
+    { name: '/debug',       page: renderDebugPage,       action: () => {}, onShow: onShowDebug },
   ]
   let cmdSelectedIdx = -1
   let _filteredCmds: typeof LP_COMMANDS = []

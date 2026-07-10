@@ -883,6 +883,27 @@ body:has(#app.lp-enabled.single-col) #main-toggle-cmd {
   background: var(--accent);
   border: 2px solid var(--bg);
 }
+/* Numeric equivalent of unread-dot — same corner, shows a count instead of
+   just presence, so a specific inbox's unread pile is identifiable at a
+   glance (see left-pane.ts makeLpItem / the ios badge debugging thread). */
+.lp-avatar .unread-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  aspect-ratio: 1;
+  padding: 0 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: content-box;
+}
 a.lp-avatar {
   text-decoration: none;
   transition: opacity 0.15s;
@@ -1221,6 +1242,13 @@ a.lp-avatar:hover {
     transform: translateX(-100%);
     transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
     z-index: 2;
+    /* Full-screen here, so there's nothing behind it to blur — but a
+       backdrop-filter on a transformed overflow-scroll container is a classic
+       iOS paint bug (content below the fold isn't painted until a scroll forces
+       a repaint, leaving an initial gap at the bottom). Drop it on mobile: no
+       visual loss, and it removes the compositing that triggers the glitch. */
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
   #app.lp-enabled.show-left #left-pane {
     transform: translateX(0);
@@ -1250,6 +1278,10 @@ a.lp-avatar:hover {
   min-height: 0;
   overflow-y: scroll;
   scrollbar-width: none;
+  /* Flush to the top, no inset padding here — the notch inset (PWA only) is
+     reserved on #past-threads (this scroll container's first child) instead, so
+     the sticky title's top:0 anchor stays browser-consistent. See the
+     @media (display-mode: standalone) block at the end of the file. */
   padding: 0px 4px 4px 4px;
 }
 #outer::-webkit-scrollbar {
@@ -1264,6 +1296,7 @@ a.lp-avatar:hover {
   z-index: 10;
   transition: none;
   transform: translateY(0);
+  margin-left: 10px;
 }
 body.lp-resizing #reply-dock {
   transition: none;
@@ -1476,17 +1509,21 @@ body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
 
 #thread-title-row {
   position: sticky;
+  /* top:0 for the browser (and any non-installed context). The Dynamic Island
+     offset (top: env(safe-area-inset-top)) is applied ONLY in the installed PWA,
+     in the @media (display-mode: standalone) block further down — see there for
+     the whole notch story. */
   top: 0;
   z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: calc(20px + env(safe-area-inset-top)) 12px 10px 16px;
+  padding: 20px 12px 10px 16px;
   background: linear-gradient(to bottom, var(--bg) 80%, transparent);
   flex-shrink: 0;
   gap: 12px;
   font-family: Recursive;
-  opacity:0.9;
+  opacity: 0.9;
 }
 #header-thread-title.untitled {
   font-family:
@@ -1697,6 +1734,12 @@ body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
   font-size: 12px;
   color: var(--text-dim);
 }
+.t-edited {
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.65;
+  font-style: italic;
+}
 .role-badge {
   font-size: 10px;
   font-weight: 700;
@@ -1713,10 +1756,6 @@ body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
   color: #c86464;
 }
 /* ── message edit/delete actions ─────────────────────────────────────────── */
-.t-msg-actions {
-  position: relative;
-  margin-left: auto;
-}
 .t-msg-actions-btn {
   width: 20px;
   height: 20px;
@@ -1729,17 +1768,21 @@ body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
   justify-content: center;
   color: var(--text-dim);
   opacity: 0.6;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 .t-msg-actions-btn:hover {
   opacity: 1;
   background: rgba(128, 128, 128, 0.12);
 }
+/* Single shared instance, appended to <body> and positioned via JS
+   (getBoundingClientRect of the clicked button) — see openActionsMenu in
+   ui/thread.ts. position:fixed so it isn't clipped by #outer's own scroll
+   overflow when the triggering message is near the bottom of the viewport. */
 .t-msg-actions-menu {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  z-index: 5;
-  min-width: 160px;
+  position: fixed;
+  z-index: 50;
+  min-width: 170px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1749,10 +1792,13 @@ body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
   flex-direction: column;
 }
 .t-msg-actions-menu button {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
   background: transparent;
   border: none;
   text-align: left;
-  padding: 7px 10px;
+  padding: 9px 12px;
   border-radius: 6px;
   font-size: 13px;
   color: var(--text);
@@ -1818,6 +1864,10 @@ body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
   max-width: 220px;
   max-height: 220px;
   line-height: 0;
+  border: none;
+  padding: 0;
+  background: none;
+  cursor: zoom-in;
 }
 .t-attachment-img img {
   width: 100%;
@@ -1826,6 +1876,48 @@ body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
   max-height: 220px;
   object-fit: cover;
   display: block;
+}
+#t-img-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.85);
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  box-sizing: border-box;
+}
+.t-lightbox-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+  cursor: default;
+}
+.t-lightbox-close,
+.t-lightbox-download {
+  position: fixed;
+  top: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.t-lightbox-close {
+  right: 16px;
+}
+.t-lightbox-download {
+  right: 62px;
+}
+.t-lightbox-close:hover,
+.t-lightbox-download:hover {
+  background: rgba(255, 255, 255, 0.22);
 }
 .t-attachment-file {
   display: inline-flex;
@@ -2734,4 +2826,44 @@ body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
   font-size: 16px;
   font-weight: 500;
   opacity: 0.5;
+}
+
+/* ── standalone PWA only: Dynamic Island / notch handling ──────────────────── */
+/* Scoped to the installed home-screen app via the .pwa-standalone class set on
+   <html> by the inline detector in index.html — NOT @media (display-mode:
+   standalone), which iOS does not match for a legacy apple-mobile-web-app-capable
+   launch (no web manifest here; iOS exposes navigator.standalone instead). Also
+   avoids a browser landscape notch (where env(safe-area-inset-top) can be
+   non-zero) falsely triggering this, keeping the browser version untouched.
+
+   The shape (learned the hard way, see ARC.md):
+   - #outer stays full-height/flush (never padded — a scroll-container inset
+     scrolls away with content and makes sticky top:0 anchor browser-dependent).
+   - #past-threads (always #outer's first child) reserves the notch height at
+     the very top of the scrollable content, so at scrollTop=0 the first row
+     sits BELOW the island and is tappable — without this the first past-row
+     stayed jammed under the island, unreachable.
+   - #thread-title-row sticks at top:inset, directly beneath the strip.
+   - #right-col::before is the island strip itself: same material as the title
+     (var(--bg) @ 0.9, no blur) so the two read as one continuous surface. */
+html.pwa-standalone #right-col {
+  position: relative;
+}
+html.pwa-standalone #right-col::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: env(safe-area-inset-top);
+  z-index: 15;
+  pointer-events: none;
+  background: var(--bg);
+  opacity: 0.9;
+}
+html.pwa-standalone #past-threads {
+  padding-top: env(safe-area-inset-top);
+}
+html.pwa-standalone #thread-title-row {
+  top: env(safe-area-inset-top);
 }

@@ -69,6 +69,10 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
   const result = new Map<string, InboxSummary>()
 
   const groupParticipants = new Map<string, Set<string>>()
+  // has_unread only tracks "at least one" — the left-pane's per-inbox count
+  // badge needs the real number, so tally separately and attach at the end
+  // (mirrors groupParticipants' same two-pass shape below).
+  const unreadCounts = new Map<string, number>()
 
   for (const userEmail of listIdentities()) {
     // An identity (email) may span multiple relays (mail + AP); jmapAccountId is
@@ -129,6 +133,7 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
         ].filter(a => a && a !== userEmail)
         if (!groupParticipants.has(key)) groupParticipants.set(key, new Set())
         for (const a of allAddrs) groupParticipants.get(key)!.add(a)
+        if (has_unread) unreadCounts.set(key, (unreadCounts.get(key) ?? 0) + 1)
 
         const existing = result.get(key)
         if (!existing || ts > (existing.latest_ts ?? 0)) {
@@ -162,6 +167,7 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
 
       const key = `${userEmail}\0${mbxName}\0${contact}`
       const existing = result.get(key)
+      if (has_unread) unreadCounts.set(key, (unreadCounts.get(key) ?? 0) + 1)
 
       if (!existing || ts > (existing.latest_ts ?? 0)) {
         result.set(key, {
@@ -188,6 +194,12 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
   for (const [key, addrs] of groupParticipants) {
     const entry = result.get(key)
     if (entry) entry.participants = [...addrs]
+  }
+
+  // Attach accumulated unread counts
+  for (const [key, count] of unreadCounts) {
+    const entry = result.get(key)
+    if (entry) entry.unread_count = count
   }
 
   return Array.from(result.values()).sort((a, b) => (b.latest_ts ?? 0) - (a.latest_ts ?? 0))
@@ -266,8 +278,8 @@ export async function fetchInboxMessages(inboxSummary: InboxSummary): Promise<Pr
   // plaintext, so processIncoming's PGP-marker check just passes it through).
   const editMap = collectEdits(messages.forIdentity(session.account.email))
   for (const msg of msgs) {
-    const edited = editMap.get(msg.message_id)
-    if (edited !== undefined) msg.body = edited
+    const editedText = editMap.get(msg.message_id)
+    if (editedText !== undefined) { msg.body = editedText; msg.edited = true }
   }
   // Fill in group metadata for threadId-matched replies that lack Chat-Group-ID header.
   if (inboxSummary.group_id) {

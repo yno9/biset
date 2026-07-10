@@ -14,9 +14,10 @@ import * as messages from '../store/messages.ts'
 import { removeMessage } from '../vault/persist.ts'
 import { start as startSync, stop as stopSync } from '../sync/index.ts'
 import type { ProcessedMessage } from '../state.ts'
+import type { AccountSession } from '../types.ts'
 // Circular:
 import { render, addMessage, isMeMsg, syncDockPosition } from './thread.ts'
-import { loadLeftInboxes } from './left-pane.ts'
+import { loadLeftInboxes, markRead, inMenuMode } from './left-pane.ts'
 
 // Mobile single-column mode toggles 'show-left' on #app from many places
 // (hamburger, swipe gesture, switchInbox, ...) — rather than touching every
@@ -246,10 +247,23 @@ export async function fetchMessages() {
   setIsFirstFetch(false)
 
   const msgs = await fetchInboxMessages(inbox)
+  const previouslyKnownIds = new Set(processedMessages.map(p => p.msg.message_id))
 
   if (wasFirstLoad) {
     processedMessages.length = 0
     renderedKeys.clear()
+  } else {
+    // Prune messages no longer present server-side (Chat-Delete, manual
+    // delete elsewhere) — addMessage only ever adds/patches, so without this
+    // a deleted message's bubble stayed on screen until a full reload
+    // rebuilt processedMessages from scratch.
+    const liveIds = new Set(msgs.map(m => m.message_id))
+    for (let i = processedMessages.length - 1; i >= 0; i--) {
+      const p = processedMessages[i]
+      if (p.pending || liveIds.has(p.msg.message_id)) continue
+      processedMessages.splice(i, 1)
+      renderedKeys.delete(`${p.msg.from}:${p.msg.ts}`)
+    }
   }
 
   for (const msg of msgs) await addMessage(msg)
@@ -269,15 +283,62 @@ export async function fetchMessages() {
     setFocusedThreadKey(latest.key)
   }
 
-  if (hasIncoming && notifEnabled && Notification.permission === 'granted') {
+  // Notify only for messages that weren't already known before this fetch —
+  // hasIncoming above is true for a conversation's entire existing history,
+  // so without this guard, simply opening (or re-polling) any conversation
+  // that has ever had a reply fires a notification for messages already on
+  // screen. wasFirstLoad is excluded outright: that's the initial load of
+  // whichever conversation was just opened, never "new" mail.
+  const hasNewIncoming = !wasFirstLoad && msgs.some(m => m.from !== selfAddr && !previouslyKnownIds.has(m.message_id))
+  if (hasNewIncoming && notifEnabled && Notification.permission === 'granted') {
     const last = processedMessages.filter(p => !isMeMsg(p.msg.from)).pop()
     if (last && inbox.contact) new Notification(inbox.contact, { body: last.bodyText.slice(0, 100) })
   }
+  // A message arriving in the conversation you're actively reading (thread
+  // visible, not behind a menu page) has been seen — mark it read so it doesn't
+  // linger as unread (inflating the badge / re-appearing the moment you leave).
+  // markRead only ran on switchInbox before, so live arrivals stayed unread.
+  if (hasNewIncoming && !inMenuMode()) markRead(inbox)
 
   render(false, false)
 }
 
 const _sseSources: EventSource[] = []
+let _visibilityHandlerInstalled = false
+
+// Reconnects with capped exponential backoff instead of permanently giving up
+// on the first drop — a plain EventSource that errors once (mobile network
+// changes, backgrounding, a relay restart) never came back on its own, so a
+// client could go arbitrarily long without seeing new mail: fine for Web Push
+// (which hits the relay directly), but the app's own left-pane/badge logic
+// reads from the local synced cache, and a message that's never synced can
+// never be marked seen either — it just sits there looking unread forever,
+// with no way for the user to "read" it away.
+function connectSSE(session: AccountSession, backoffMs = 2000): void {
+  const eventUrl = session.eventSourceUrl?.replace(/\{[^}]+\}/g, '') ?? null
+  if (!eventUrl) return
+  try {
+    const token = encodeURIComponent(session.account.email + ':' + session.account.password)
+    const sep = eventUrl.includes('?') ? '&' : '?'
+    const src = new EventSource(eventUrl + sep + `access_token=${token}`)
+    src.addEventListener('state', async () => {
+      const { sync } = await import('../sync/session.ts')
+      await sync(session)
+      fetchMessages()
+      loadLeftInboxes()
+    })
+    src.onerror = () => {
+      try { src.close() } catch {}
+      const idx = _sseSources.indexOf(src)
+      if (idx >= 0) _sseSources.splice(idx, 1)
+      // Only reconnect if this session is still the one startPolling() last
+      // set up for (a fresh startPolling()/logout call already tore this down).
+      if (!sessions.includes(session)) return
+      setTimeout(() => connectSSE(session, Math.min(backoffMs * 2, 60000)), backoffMs)
+    }
+    _sseSources.push(src)
+  } catch {}
+}
 
 export function startPolling() {
   _sseSources.forEach(s => { try { s.close() } catch {} })
@@ -288,21 +349,17 @@ export function startPolling() {
   // Initial sync + UI refresh on completion
   startSync(sessions).then(() => { fetchMessages(); loadLeftInboxes() })
 
-  for (const session of sessions) {
-    const eventUrl = session.eventSourceUrl?.replace(/\{[^}]+\}/g, '') ?? null
-    if (!eventUrl) continue
-    try {
-      const token = encodeURIComponent(session.account.email + ':' + session.account.password)
-      const sep = eventUrl.includes('?') ? '&' : '?'
-      const src = new EventSource(eventUrl + sep + `access_token=${token}`)
-      src.addEventListener('state', async () => {
-        const { sync } = await import('../sync/session.ts')
-        await sync(session)
-        fetchMessages()
-        loadLeftInboxes()
-      })
-      src.onerror = () => { try { src.close() } catch {} }
-      _sseSources.push(src)
-    } catch {}
+  for (const session of sessions) connectSSE(session)
+
+  // Belt-and-suspenders for the reconnect above: a backgrounded/frozen tab's
+  // JS (including the onerror handler and its setTimeout) doesn't get to run
+  // at all until the tab is foregrounded again, so catch up on anything
+  // missed the moment that happens rather than waiting for the next poll.
+  if (!_visibilityHandlerInstalled) {
+    _visibilityHandlerInstalled = true
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible' || !sessions.length) return
+      startSync(sessions).then(() => { fetchMessages(); loadLeftInboxes() })
+    })
   }
 }

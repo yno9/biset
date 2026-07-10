@@ -15,12 +15,12 @@ import { mailboxNameFromId } from '../utils.ts'
 import { filterNew } from './dedup.ts'
 import { buildEffectiveGroups } from '../processing.ts'
 import { decryptAndParse, uploadPeerKey } from '../pgp/crypto.ts'
-import { readGroupHeaders, readGroupHeadersFromMime, cacheGroupHeaders, parseAutocryptKey, parseGossipKeys, readChatEditTarget, readChatDeleteTarget, parseEditBody, cacheEdit } from '../deltachat/protocol.ts'
+import { readGroupHeaders, readGroupHeadersFromMime, cacheGroupHeaders, parseAutocryptKey, parseGossipKeys, readChatEditTarget, readChatDeleteTarget, parseEditBody, cacheEdit, isEdit } from '../deltachat/protocol.ts'
 import { maybeHandleSecurejoin } from '../deltachat/securejoin.ts'
 import { learnAvatar, learnGroupAvatar } from '../deltachat/avatar.ts'
 import { learnApAvatar } from '../ap/avatar.ts'
 import { isApRelay, identities as ownIdentities, sessionForRelay } from '../context.ts'
-import { isReactionEmail, isReactionDisposition, cacheReaction } from '../mail/reactions.ts'
+import { isReactionEmail, isReactionDisposition, cacheReaction, isReaction } from '../mail/reactions.ts'
 
 // Chat-Delete (deltachat spec.md "Request deletion"): the sender asks every
 // recipient to remove their own copy of a message the sender originally sent.
@@ -59,10 +59,25 @@ export async function sync(session: AccountSession): Promise<void> {
     let emailState = qs.emailState ?? undefined
 
     if (qs.emailQueryState) {
-      const delta = await jmapEmail.queryChanges(client, accountId, qs.emailQueryState)
-      newIds = delta.added
-      removedIds = delta.removed
-      await querystate.save(acctKey, { emailQueryState: delta.newQueryState })
+      try {
+        const delta = await jmapEmail.queryChanges(client, accountId, qs.emailQueryState)
+        newIds = delta.added
+        removedIds = delta.removed
+        await querystate.save(acctKey, { emailQueryState: delta.newQueryState })
+      } catch (err) {
+        // The server returns cannotCalculateChanges when its delta history
+        // doesn't reach back to our cursor (e.g. a relay restart raced with
+        // a delta.json flush — see go-jmapserver ARC.md). Previously this
+        // threw straight out to the outer catch and aborted the ENTIRE
+        // sync — every subsequent poll retried the same stale cursor and
+        // failed the same way, forever, so new mail silently stopped
+        // syncing with no visible error. Fall back to a full query instead,
+        // exactly as the server-side doc already promises clients would.
+        console.warn('[sync] queryChanges failed, falling back to full query:', err)
+        const full = await jmapEmail.query(client, accountId)
+        newIds = full.ids
+        await querystate.save(acctKey, { emailQueryState: full.queryState })
+      }
     } else {
       const full = await jmapEmail.query(client, accountId)
       newIds = full.ids
@@ -71,10 +86,43 @@ export async function sync(session: AccountSession): Promise<void> {
 
     let emailChangedIds: string[] = []
     if (qs.emailState) {
-      const changed = await jmapEmail.changes(client, accountId, qs.emailState)
-      emailState = changed.newState
-      emailChangedIds = [...(changed.created ?? []), ...(changed.updated ?? [])]
-      await querystate.save(acctKey, { emailState: changed.newState })
+      try {
+        const changed = await jmapEmail.changes(client, accountId, qs.emailState)
+        emailState = changed.newState
+        emailChangedIds = [...(changed.created ?? []), ...(changed.updated ?? [])]
+        await querystate.save(acctKey, { emailState: changed.newState })
+      } catch (err) {
+        // Same cannotCalculateChanges risk as above. This cursor only drives
+        // picking up keyword/mailbox updates on already-known messages (see
+        // the newIds fetch below, which sets emailState fresh if it was
+        // never set) — safe to just drop it and let the next successful
+        // Email/get reseed emailState, rather than aborting sync entirely.
+        console.warn('[sync] email changes failed, dropping stale state:', err)
+        await querystate.save(acctKey, { emailState: undefined })
+      }
+    }
+
+    // Reconcile against the full server ID list. The delta cursors above are
+    // saved BEFORE the messages they name are durably fetched+decrypted+stored
+    // (below) — so any failure in that pipeline (one poison decrypt, a network
+    // blip, the whole batch's Promise.all rejecting) used to advance the cursor
+    // past messages that never made it into the local store, losing them for
+    // good: the next delta returns nothing for them, yet they sit unread on the
+    // server forever (never synced ⇒ never displayed ⇒ never markSeen-able).
+    // An independent full Email/query (ids only — cheap) catches exactly this:
+    // anything the server has that our store doesn't gets re-pulled through the
+    // same pipeline, so past drops self-heal and no message is lost permanently.
+    try {
+      const full = await jmapEmail.query(client, accountId)
+      const known = new Set(messages.forAccount(acctKey).map(e => e.id as string))
+      const pending = new Set(newIds)
+      const missing = full.ids.filter(id => !known.has(id) && !pending.has(id))
+      if (missing.length) {
+        console.warn(`[sync] reconcile: ${missing.length} message(s) on server but missing locally — re-pulling`)
+        newIds = [...newIds, ...missing]
+      }
+    } catch (err) {
+      console.warn('[sync] reconcile query failed:', err)
     }
 
     // Remove deleted emails from store + vault (scoped to this account).
@@ -110,6 +158,13 @@ export async function sync(session: AccountSession): Promise<void> {
         }))
       }
       await Promise.all(fresh.map(async e => {
+       // Isolate each message's decrypt/enrichment so one failure (a poison
+       // body, a network error in key/avatar learning) can't reject the whole
+       // Promise.all and skip the storage pass below for the ENTIRE batch —
+       // which is how a single bad message used to strand every message that
+       // arrived alongside it. On error the message still falls through to the
+       // storage pass un-enriched: better stored plain than lost.
+       try {
         const outerIrt = (e.inReplyTo as string[] | undefined)?.[0]
         const hasOuterGroup = !!readGroupHeaders(e).id
         const partId = (e.textBody as any[] | undefined)?.[0]?.partId as string | undefined
@@ -183,6 +238,9 @@ export async function sync(session: AccountSession): Promise<void> {
         if (from && await maybeHandleSecurejoin(session, from, raw, decrypted)) {
           handledSJ.add(e.id as string)
         }
+       } catch (err) {
+        console.warn('[sync] per-message enrichment failed, storing plain:', (e.id as string)?.slice(0, 30), err)
+       }
       }))
       await Promise.all(fresh.filter(e => !handledSJ.has(e.id as string) && !handledDelete.has(e.id as string)).map(async e => {
         messages.put(e)
@@ -281,6 +339,36 @@ export async function sync(session: AccountSession): Promise<void> {
           }
         }
       } catch (err) { console.log('[sync] fetch updated failed', err) }
+    }
+
+    // ── Mark hidden protocol-noise as $seen ──────────────────────────────────
+    // Reactions attach to their target message and edits overwrite their
+    // target's text — both are deliberately hidden from every openable inbox
+    // (see loadInboxSummaries / getInboxEmails). Because they never surface in
+    // a conversation, markRead can never mark them $seen, so they sit unread on
+    // the server forever and silently inflate every server-side unread count
+    // (the account page's "Unread", the Web Push badge) — a count that no
+    // amount of reading in the UI could ever bring down. Mark them $seen here,
+    // at sync time, the moment we've recognised and filed them. This also
+    // heals already-stored ones (scans the whole account, not just this batch's
+    // fresh set), so the historical stuck count clears on the next sync.
+    // (SecureJoin / Chat-Delete carriers don't need this — they're destroyed
+    // outright above.)
+    const noiseUnseen = messages.forAccount(acctKey).filter(e => {
+      if ((e.keywords as any)?.['$seen']) return false
+      const from = (e.from as any[] | undefined)?.[0]?.email as string | undefined
+      if (from && (from === user || from === accountId)) return false
+      return isReaction(e) || isEdit(e)
+    })
+    if (noiseUnseen.length) {
+      const ids = noiseUnseen.map(e => e.id as string).filter(Boolean)
+      try { await jmapEmail.markSeen(client, accountId, ids) }
+      catch (err) { console.warn('[sync] mark reaction/edit $seen failed', err) }
+      for (const e of noiseUnseen) {
+        ;(e as any).keywords = { ...((e as any).keywords ?? {}), $seen: true }
+        messages.put(e)
+        await persist.flushMessage(e)
+      }
     }
 
     // ── MD render (vault only) ───────────────────────────────────────────────

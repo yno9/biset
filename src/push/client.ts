@@ -11,8 +11,17 @@ let swReg: ServiceWorkerRegistration | null = null
 
 async function getRegistration(): Promise<ServiceWorkerRegistration | null> {
   if (!('serviceWorker' in navigator)) return null
-  if (swReg) return swReg
-  try { swReg = await navigator.serviceWorker.register('/sw.js') } catch { return null }
+  if (swReg) { swReg.update().catch(() => {}); return swReg }
+  try {
+    swReg = await navigator.serviceWorker.register('/sw.js')
+    // Force an immediate update check on every boot. register() alone reuses
+    // an existing registration and may not re-fetch sw.js within the browser's
+    // update-throttle window — an explicit update(), against the no-cache
+    // headers the relay now sends, guarantees a new sw.js is picked up and
+    // (via skipWaiting/clients.claim in sw.ts) activated right away, instead of
+    // a fix sitting undeployed on a sticky iOS PWA worker for hours.
+    swReg.update().catch(() => {})
+  } catch { return null }
   return swReg
 }
 

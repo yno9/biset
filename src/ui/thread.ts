@@ -47,13 +47,17 @@ function renderReactionsHtml(reactions: ProcessedMessage['msg']['reactions']): s
 }
 
 // Message attachments (display-only — see processing.ts / state.ts
-// MsgAttachment). Images render as a clickable thumbnail (opens full-size in
-// a new tab); anything else is a filename + download chip.
+// MsgAttachment). Images render as a clickable thumbnail opening an in-app
+// zoom lightbox (see openLightbox below) — a data: URL has no permalink to
+// navigate to (the plaintext image only ever exists client-side, decrypted
+// from the PGP body; uploading it anywhere to get a real URL would defeat
+// E2EE), so "open in new tab" was always a dead click. Anything else is a
+// filename + download chip.
 function renderAttachmentsHtml(attachments: ProcessedMessage['attachments']): string {
   if (!attachments?.length) return ''
   const items = attachments.map(a => {
     if (/^image\//i.test(a.contentType)) {
-      return `<a class="t-attachment-img" href="${a.dataUrl}" target="_blank" rel="noopener"><img src="${a.dataUrl}" alt="${esc(a.filename ?? '')}"></a>`
+      return `<button type="button" class="t-attachment-img" title="${esc(a.filename ?? '')}"><img src="${a.dataUrl}" alt="${esc(a.filename ?? '')}"></button>`
     }
     const label = a.filename || 'attachment'
     return `<a class="t-attachment-file" href="${a.dataUrl}" download="${esc(label)}" title="${esc(label)}">
@@ -74,19 +78,11 @@ function canModifyOwn(msg: ProcessedMessage['msg']): boolean {
   return isMeMsg(msg.from) && !isApRelay(currentInbox?.relay) && !msg.message_id.startsWith('__pending_')
 }
 
-function renderMsgActionsHtml(msg: ProcessedMessage['msg'], attachments: ProcessedMessage['attachments']): string {
+function renderMsgActionsHtml(msg: ProcessedMessage['msg']): string {
   if (!canModifyOwn(msg)) return ''
-  const editBtn = attachments?.length ? '' : `<button type="button" class="t-msg-edit-btn">Edit</button>`
-  return `
-    <div class="t-msg-actions">
-      <button type="button" class="t-msg-actions-btn" aria-label="Message actions">
-        <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
-      </button>
-      <div class="t-msg-actions-menu" style="display:none">
-        ${editBtn}
-        <button type="button" class="t-msg-delete-btn">Delete for everyone</button>
-      </div>
-    </div>`
+  return `<button type="button" class="t-msg-actions-btn" aria-label="Message actions">
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+  </button>`
 }
 
 // Swaps a message's `.t-body` into an editable textarea (Save/Cancel). Built
@@ -109,12 +105,111 @@ function enterEditMode(msgEl: HTMLElement, processed: ProcessedMessage) {
   ta.setSelectionRange(ta.value.length, ta.value.length)
 }
 
-// Closes any open per-message actions menu on an outside click. Registered
-// once at module scope (not per-render) so it never accumulates listeners.
+// Single shared Edit/Delete menu for all messages (mirrors #lp-hamburger-menu:
+// one element, position:fixed, repositioned via getBoundingClientRect of the
+// clicked "..." button). Sharing one instance means only one can ever be open
+// (fixes multiple menus staying open at once), and position:fixed escapes
+// #outer's scroll clipping (a menu anchored inside the last message would
+// otherwise get cut off at the bottom edge of the scroll viewport).
+let _actionsMenuEl: HTMLElement | null = null
+let _actionsMenuTarget: ProcessedMessage | null = null
+
+function actionsMenuEl(): HTMLElement {
+  if (_actionsMenuEl) return _actionsMenuEl
+  const el = document.createElement('div')
+  el.className = 't-msg-actions-menu'
+  el.style.display = 'none'
+  document.body.appendChild(el)
+  el.addEventListener('click', async e => {
+    const t = e.target as HTMLElement
+    const processed = _actionsMenuTarget
+    if (!processed) return
+    if (t.closest('.t-msg-edit-btn')) {
+      closeActionsMenu()
+      const msgEl = document.querySelector(`.t-msg[data-message-id="${CSS.escape(processed.msg.message_id)}"]`) as HTMLElement | null
+      if (msgEl) enterEditMode(msgEl, processed)
+      return
+    }
+    if (t.closest('.t-msg-delete-btn')) {
+      closeActionsMenu()
+      if (confirm('Delete this message for everyone?')) await sendDeleteRequest(processed)
+      return
+    }
+  })
+  _actionsMenuEl = el
+  return el
+}
+
+function closeActionsMenu() {
+  if (_actionsMenuEl) _actionsMenuEl.style.display = 'none'
+  _actionsMenuTarget = null
+}
+
+function openActionsMenu(btn: HTMLElement, processed: ProcessedMessage) {
+  const menu = actionsMenuEl()
+  const editBtn = processed.attachments?.length ? '' : `<button type="button" class="t-msg-edit-btn">Edit</button>`
+  menu.innerHTML = `${editBtn}<button type="button" class="t-msg-delete-btn">Delete for everyone</button>`
+  _actionsMenuTarget = processed
+  menu.style.display = 'flex'
+  const r = btn.getBoundingClientRect()
+  const menuH = menu.offsetHeight
+  const menuW = menu.offsetWidth
+  const spaceBelow = window.innerHeight - r.bottom
+  menu.style.top = (spaceBelow < menuH + 8 && r.top > menuH + 8 ? r.top - menuH - 4 : r.bottom + 4) + 'px'
+  menu.style.left = Math.max(8, Math.min(r.right - menuW, window.innerWidth - menuW - 8)) + 'px'
+}
+
+// Closes the shared menu on any click outside it (and outside the button that
+// opens it — that click is handled separately, by the .t-messages delegate).
 document.addEventListener('click', e => {
-  if ((e.target as HTMLElement).closest?.('.t-msg-actions-btn')) return
-  document.querySelectorAll('.t-msg-actions-menu').forEach(m => { (m as HTMLElement).style.display = 'none' })
+  const t = e.target as HTMLElement
+  if (t.closest?.('.t-msg-actions-btn') || t.closest?.('.t-msg-actions-menu')) return
+  closeActionsMenu()
 })
+
+// Image attachment zoom lightbox — single shared full-screen overlay (same
+// portal pattern as the actions menu above / #lp-hamburger-menu elsewhere).
+let _lightboxEl: HTMLElement | null = null
+
+function lightboxEl(): HTMLElement {
+  if (_lightboxEl) return _lightboxEl
+  const el = document.createElement('div')
+  el.id = 't-img-lightbox'
+  el.style.display = 'none'
+  el.innerHTML = `
+    <button type="button" class="t-lightbox-close" aria-label="Close">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+    <a class="t-lightbox-download" aria-label="Download">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+    </a>
+    <img class="t-lightbox-img">`
+  document.body.appendChild(el)
+  el.addEventListener('click', e => {
+    const t = e.target as HTMLElement
+    if (t.closest('.t-lightbox-download') || t.closest('.t-lightbox-img')) return
+    closeLightbox()
+  })
+  el.querySelector('.t-lightbox-close')?.addEventListener('click', closeLightbox)
+  _lightboxEl = el
+  return el
+}
+
+function closeLightbox() {
+  if (_lightboxEl) _lightboxEl.style.display = 'none'
+}
+
+function openLightbox(src: string, filename: string) {
+  const el = lightboxEl()
+  const img = el.querySelector('.t-lightbox-img') as HTMLImageElement
+  img.src = src
+  const dl = el.querySelector('.t-lightbox-download') as HTMLAnchorElement
+  dl.href = src
+  dl.setAttribute('download', filename || 'image')
+  el.style.display = 'flex'
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox() })
 
 function sameReactions(a: ProcessedMessage['msg']['reactions'], b: ProcessedMessage['msg']['reactions']): boolean {
   const an = a?.length ?? 0, bn = b?.length ?? 0
@@ -142,15 +237,20 @@ export async function addMessage(msg: ProcessedMessage['msg']): Promise<boolean>
     // processedMessages from scratch (which is why it "worked after refresh").
     if (existing && existing.msg.body !== msg.body) {
       existing.msg.body = msg.body
+      existing.msg.edited = msg.edited
       const r = await processIncoming(existing.msg, activeSession()?.account.email ?? '', processedMessages)
       existing.bodyText = r.bodyText
       existing.encrypted = r.encrypted
       existing.unreadable = r.unreadable
-      const bodyEl = document.querySelector(`.t-msg[data-message-id="${CSS.escape(existing.msg.message_id)}"] .t-body`)
+      const msgEl = document.querySelector(`.t-msg[data-message-id="${CSS.escape(existing.msg.message_id)}"]`)
+      const bodyEl = msgEl?.querySelector('.t-body')
       if (bodyEl) {
         bodyEl.innerHTML = r.unreadable
           ? `<span style="opacity:0.4;font-style:italic">Encrypted message</span>`
           : linkify(esc(stripQuoted(r.bodyText)))
+      }
+      if (msg.edited && !msgEl?.querySelector('.t-edited')) {
+        msgEl?.querySelector('.t-time')?.insertAdjacentHTML('afterend', '<span class="t-edited">edited</span>')
       }
     }
     return false
@@ -208,7 +308,8 @@ export function createMsgEl({ msg, bodyText, encrypted, unreadable, pending, att
       <div class="t-hdr">
         <span class="t-sender">${esc(senderName)}</span>
         <span class="t-time">${formatTime(msg.ts)}${encrypted ? ' <svg style="vertical-align:middle;opacity:0.6" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zm-6 9a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm3.1-9H8.9V6a3.1 3.1 0 0 1 6.2 0v2z"/></svg>' : ''}</span>
-        ${renderMsgActionsHtml(msg, attachments)}
+        ${msg.edited ? '<span class="t-edited">edited</span>' : ''}
+        ${renderMsgActionsHtml(msg)}
       </div>
       <div class="t-body">${display}</div>
       ${renderAttachmentsHtml(attachments)}
@@ -289,19 +390,15 @@ export function makeThreadCard(group: ThreadGroup, focused: boolean) {
     const mid = msgEl.dataset.messageId
     const processed = mid ? allMsgs.find(p => p.msg.message_id === mid) : undefined
 
-    if (t.closest('.t-msg-actions-btn')) {
-      const menu = msgEl.querySelector('.t-msg-actions-menu') as HTMLElement | null
-      if (menu) menu.style.display = menu.style.display === 'none' ? 'block' : 'none'
+    const actionsBtn = t.closest('.t-msg-actions-btn') as HTMLElement | null
+    if (actionsBtn) {
+      if (processed) openActionsMenu(actionsBtn, processed)
       return
     }
-    if (t.closest('.t-msg-edit-btn')) {
-      msgEl.querySelector('.t-msg-actions-menu')?.setAttribute('style', 'display:none')
-      if (processed) enterEditMode(msgEl, processed)
-      return
-    }
-    if (t.closest('.t-msg-delete-btn')) {
-      msgEl.querySelector('.t-msg-actions-menu')?.setAttribute('style', 'display:none')
-      if (processed && confirm('Delete this message for everyone?')) await sendDeleteRequest(processed)
+    const imgBtn = t.closest('.t-attachment-img') as HTMLElement | null
+    if (imgBtn) {
+      const img = imgBtn.querySelector('img') as HTMLImageElement | null
+      if (img) openLightbox(img.src, img.alt)
       return
     }
     if (t.closest('.t-edit-save')) {
@@ -587,7 +684,13 @@ export function scrollToFocused(smooth = false) {
     const msgs = outer.querySelectorAll('.t-msg')
     let target: number
     const past = document.getElementById('past-threads')
-    const pastH = past && outer.contains(past) ? past.offsetHeight : 0
+    // Exclude #past-threads' top padding from pastH. In the standalone PWA that
+    // padding reserves the Dynamic Island height (see the .pwa-standalone block
+    // in style.css) — it corresponds to the always-present notch strip and must
+    // NOT be scrolled past, or the target over-scrolls by the inset and tucks
+    // the focused content up under the sticky title. 0 in the browser.
+    const pastPadTop = past ? parseFloat(getComputedStyle(past).paddingTop) || 0 : 0
+    const pastH = past && outer.contains(past) ? past.offsetHeight - pastPadTop : 0
     // #reply-dock is position:fixed, so it doesn't shrink #outer's own
     // clientHeight — the bottom dockH px of "visible" area is actually
     // covered by it. Not accounting for that let the last message's tail
@@ -596,30 +699,35 @@ export function scrollToFocused(smooth = false) {
     // main.ts's scroll handler) doesn't cover anything, so it doesn't count.
     const dock = document.getElementById('reply-dock')
     const dockH = dock && !dock.classList.contains('dock-hidden') ? dock.offsetHeight : 0
-    const safeHeight = outer.clientHeight - dockH
+    // viewBottom = the dock's top edge (bottom of the usable area).
+    const viewBottom = outer.clientHeight - dockH
     if (msgs.length > 0) {
       const last = msgs[msgs.length - 1] as HTMLElement
       const lastRect = last.getBoundingClientRect()
       const outerRect = outer.getBoundingClientRect()
       const lastTopInOuter = lastRect.top - outerRect.top + outer.scrollTop
       const titleRow = document.getElementById('thread-title-row')
-      // Only #thread-title-row is position:sticky (style.css) — it's the only
-      // thing that visually overlays scrolled-under content, so it's the only
-      // height that needs compensating here. #conv-meta scrolls away normally;
-      // including its height under-scrolled by that amount, leaving a sliver
-      // of the previous message visible above the "focused" one.
+      // #thread-title-row is the only position:sticky element that overlays
+      // scrolled-under content. Its height (titleH) AND its sticky top offset
+      // both cover the top of #outer: in the standalone PWA it sticks at
+      // top:env(safe-area-inset-top) (the Dynamic Island strip sits above it),
+      // so the header truly covers stickyTop + titleH. Compensating only titleH
+      // let the focused message tuck under the header by the inset. stickyTop is
+      // 0 in the browser, so this is a no-op there. (#conv-meta scrolls away
+      // normally and must NOT be added, or the focused message under-scrolls.)
       const titleH = titleRow && outer.contains(titleRow) ? titleRow.offsetHeight : 0
-      if (lastTopInOuter >= pastH + safeHeight) {
-        // Doesn't fit even in the dock-safe area — pin its top just below the
-        // header (matches the "message itself taller than the viewport"
-        // exception; its tail necessarily stays out of view either way).
-        target = lastTopInOuter - titleH
+      const stickyTop = titleRow ? parseFloat(getComputedStyle(titleRow).top) || 0 : 0
+      const viewTop = titleH + stickyTop
+      const lastBottomInOuter = lastTopInOuter + last.offsetHeight
+      if (last.offsetHeight > viewBottom - viewTop) {
+        // Taller than the usable area between header and dock — can't be shown
+        // whole either way; pin its top just below the header rather than chase
+        // its tail (which would hide the header).
+        target = Math.max(pastH, lastTopInOuter - viewTop)
       } else {
-        // Fits without pinning the top, but plain pastH can still leave the
-        // tail behind the dock if content only *just* fits within clientHeight
-        // (not clientHeight - dockH) — scroll further when that's the case.
-        const lastBottomInOuter = lastTopInOuter + last.offsetHeight
-        target = Math.max(pastH, lastBottomInOuter - safeHeight)
+        // Fits — rest its bottom just above the dock; since it fits, its top
+        // then clears the header automatically.
+        target = Math.max(pastH, lastBottomInOuter - viewBottom)
       }
     } else {
       target = pastH

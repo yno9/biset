@@ -91,7 +91,14 @@ export function loadStoredAccounts(): StoredAccount[] {
   try {
     const raw = localStorage.getItem(ACCOUNTS_KEY)
     const accounts = raw ? JSON.parse(raw) as StoredAccount[] : []
-    return migrateApexToMail(accounts)
+    const migrated = migrateApexToMail(accounts)
+    // Mirror on every read too, not just on save — a session that logged in
+    // before sw.ts's IndexedDB mirror existed would otherwise never populate
+    // it (saveStoredAccounts only fires on login/add/remove), leaving the
+    // Service Worker with an empty account list forever and silently zeroing
+    // the badge on every push.
+    idb.put(idb.STORES.accounts, migrated, 'all').catch(() => {})
+    return migrated
   } catch { return [] }
 }
 
