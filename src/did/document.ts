@@ -1,0 +1,163 @@
+// did:dht DID document <-> DNS resource records mapping (the "thin did:dht
+// layer" from DID.md). Spec: https://did-dht.com (decentralized-identity/did-dht).
+// Verified against the spec's official test vectors — see did/document.spec.ts.
+//
+// Scope note: biset only ever *builds* a minimal document — the Ed25519 identity
+// key at _k0, plus its service (relay) list and alsoKnownAs (address). The
+// *parser* is tolerant of the fuller shape other did:dht documents may carry
+// (extra keys, controllers, types, previous), extracting just what biset needs
+// (identity key, services, aka); unknown records are ignored, not an error.
+
+// Key type index (registry/index.html#key-type-index). biset uses only 0.
+const KEY_TYPE_ED25519 = 0
+
+export interface DidService {
+  id: string // fragment only, e.g. "mail" (not the full did#mail)
+  type: string
+  serviceEndpoint: string[]
+}
+
+export interface DidDocument {
+  id: string // did:dht:...
+  identityKey: Uint8Array // raw Ed25519 public key (the _k0 key)
+  alsoKnownAs: string[]
+  service: DidService[]
+}
+
+export interface DnsRecord {
+  name: string
+  type: 'TXT' | 'NS'
+  ttl: number
+  rdata: string[] // RFC1035 character-strings; logical value = concatenation
+}
+
+const TTL = 7200
+const CHUNK = 255 // RFC1035 max character-string length
+
+// ── base64url (unpadded) ─────────────────────────────────────────────────────
+function b64urlEncode(bytes: Uint8Array): string {
+  let s = ''
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i])
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+function b64urlDecode(s: string): Uint8Array {
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + '=='.slice((s.length + 3) % 4)
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
+// A TXT logical value may exceed 255 bytes; split into ≤255-byte chunks.
+function toChunks(value: string): string[] {
+  if (value.length <= CHUNK) return [value]
+  const out: string[] = []
+  for (let i = 0; i < value.length; i += CHUNK) out.push(value.slice(i, i + CHUNK))
+  return out
+}
+
+// ── build: DID document → DNS records ────────────────────────────────────────
+export function documentToRecords(doc: DidDocument): DnsRecord[] {
+  const records: DnsRecord[] = []
+
+  // Identity key at _k0 (t=0 Ed25519; id and alg omitted — identity key uses the
+  // default of both, per spec).
+  records.push({
+    name: '_k0._did.',
+    type: 'TXT',
+    ttl: TTL,
+    rdata: [`t=${KEY_TYPE_ED25519};k=${b64urlEncode(doc.identityKey)}`],
+  })
+
+  // Services at _sN, collecting their ids for the root record's svc= list.
+  const svcIds: string[] = []
+  doc.service.forEach((svc, i) => {
+    svcIds.push(`s${i}`)
+    const value = `id=${svc.id};t=${svc.type};se=${svc.serviceEndpoint.join(',')}`
+    records.push({ name: `_s${i}._did.`, type: 'TXT', ttl: TTL, rdata: toChunks(value) })
+  })
+
+  if (doc.alsoKnownAs.length) {
+    records.push({ name: '_aka._did.', type: 'TXT', ttl: TTL, rdata: [doc.alsoKnownAs.join(',')] })
+  }
+
+  // Root record. The identity key (k0) carries the standard relationships an
+  // identity key must have (auth, asm, inv, del — spec Create step 2b).
+  const parts = ['v=0', 'vm=k0', 'auth=k0', 'asm=k0', 'inv=k0', 'del=k0']
+  if (svcIds.length) parts.push(`svc=${svcIds.join(',')}`)
+  const id = suffixOf(doc.id)
+  records.push({ name: `_did.${id}.`, type: 'TXT', ttl: TTL, rdata: [parts.join(';')] })
+
+  return records
+}
+
+// ── parse: DNS records → DID document ────────────────────────────────────────
+export function recordsToDocument(did: string, records: DnsRecord[]): DidDocument {
+  const byName = new Map<string, string>()
+  for (const r of records) {
+    if (r.type !== 'TXT') continue // NS = gateway designation, not doc content
+    // Strip the trailing "<id>." on the root record name so both forms key as "_did".
+    const key = r.name.replace(/\.$/, '').replace(new RegExp(`^_did\\.${suffixOf(did)}$`), '_did')
+    byName.set(key, r.rdata.join(''))
+  }
+
+  // Identity key from _k0.
+  const k0 = byName.get('_k0._did')
+  if (!k0) throw new Error('did:dht document missing _k0 identity key')
+  const k0Fields = parseFields(k0)
+  if (!k0Fields.k) throw new Error('_k0 record missing k=')
+  const identityKey = b64urlDecode(k0Fields.k)
+
+  // Services from the root record's svc= list.
+  const root = byName.get('_did')
+  const service: DidService[] = []
+  if (root) {
+    const rootFields = parseFields(root)
+    const svcList = rootFields.svc ? rootFields.svc.split(',') : []
+    for (const sid of svcList) {
+      const raw = byName.get(`_${sid}._did`)
+      if (!raw) continue
+      const f = parseFields(raw)
+      if (f.id && f.t && f.se) service.push({ id: f.id, type: f.t, serviceEndpoint: f.se.split(',') })
+    }
+  }
+
+  const akaRaw = byName.get('_aka._did')
+  const alsoKnownAs = akaRaw ? akaRaw.split(',') : []
+
+  return { id: did, identityKey, alsoKnownAs, service }
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+// "id=x;t=0;k=y" → { id:"x", t:"0", k:"y" }. Note "se=" values themselves never
+// contain ';' (URIs are comma-joined within one field), so a plain ';' split is
+// safe for the fields biset reads.
+function parseFields(rdata: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const pair of rdata.split(';')) {
+    const eq = pair.indexOf('=')
+    if (eq > 0) out[pair.slice(0, eq)] = pair.slice(eq + 1)
+  }
+  return out
+}
+
+export function suffixOf(did: string): string {
+  return did.replace(/^did:dht:/, '')
+}
+
+// Builds the biset DID document: identity key + one service per relay serving
+// this identity + the address as alsoKnownAs. This is what discovery reads —
+// resolve(did).service is the relay list that solves cross-relay identity (b).
+export function buildBisetDocument(
+  did: string,
+  identityKey: Uint8Array,
+  relays: Array<{ id: string; serverUrl: string }>,
+  address: string,
+): DidDocument {
+  return {
+    id: did,
+    identityKey,
+    alsoKnownAs: address ? [`mailto:${address}`] : [],
+    service: relays.map(r => ({ id: r.id, type: 'JMAPRelay', serviceEndpoint: [r.serverUrl.replace(/\/$/, '')] })),
+  }
+}
