@@ -88,6 +88,7 @@ body {
   font-family: var(--font);
   font-size: 17px;
   -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
 }
 input,
 textarea,
@@ -195,6 +196,7 @@ select {
   display: none;
   flex-direction: column;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   overflow-x: hidden;
   background: var(--card);
   backdrop-filter: blur(16px);
@@ -890,19 +892,20 @@ body:has(#app.lp-enabled.single-col) #main-toggle-cmd {
   position: absolute;
   top: -4px;
   right: -4px;
-  min-width: 16px;
-  aspect-ratio: 1;
-  padding: 0 4px;
+  width: 17px;
+  height: 17px;
+  padding: 0;
   border-radius: 50%;
-  background: var(--accent);
+  background: #007aff;
   color: #fff;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   line-height: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-sizing: content-box;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 a.lp-avatar {
   text-decoration: none;
@@ -1277,6 +1280,7 @@ a.lp-avatar:hover {
   flex: 1;
   min-height: 0;
   overflow-y: scroll;
+  overscroll-behavior-y: contain;
   scrollbar-width: none;
   /* Flush to the top, no inset padding here — the notch inset (PWA only) is
      reserved on #past-threads (this scroll container's first child) instead, so
@@ -2866,4 +2870,45 @@ html.pwa-standalone #past-threads {
 }
 html.pwa-standalone #thread-title-row {
   top: env(safe-area-inset-top);
+}
+
+/* ── standalone PWA only: bottom safe-area (home-indicator band) ──────────────
+   Measured on device (iOS standalone): window.innerHeight === 100dvh === 793,
+   but env(safe-area-inset-bottom) === 34 and the physical screen is 827. iOS
+   reports the *safe* viewport (793) as the full viewport, so #app/#right-col/
+   #left-pane (all sized to 100dvh, directly or via inset:0) stop at 793 — the
+   34px strip below is outside the document and paints as bare webview black
+   (not even var(--bg)). This is the mirror of the top-notch handling above.
+
+   Grow #app past the safe viewport by the inset so BOTH panes and the
+   reply-dock (position:fixed but transform-trapped inside #right-col, so it
+   tracks that box, not the viewport) reach the true screen bottom and cover
+   the band. Then pad the interactive bottom edges by the inset so controls
+   stay above the home indicator while the frosted backgrounds fill behind it.
+
+   Phone-scoped: env() is 0 on a home-button iPad / desktop PWA anyway, but the
+   height calc could otherwise shift the non-absolute (flex) pane layout used
+   above 520px, so keep it off that path. */
+@media (max-width: 520px) {
+  html.pwa-standalone #app {
+    height: calc(100dvh + env(safe-area-inset-bottom));
+  }
+  /* Keyboard up: collapse #app to the visible viewport (JS sets --vvh from
+     visualViewport.height) so the conversation lays out within the visible
+     area and its tail isn't scrolled behind the keyboard/reply box. */
+  html.pwa-standalone.kb-open #app {
+    height: var(--vvh, 100dvh);
+  }
+  html.pwa-standalone .reply-box {
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+  /* Keyboard up → no home indicator, but iOS still reports the inset; drop the
+     added padding (JS sets html.kb-open) so the composer sits flush on the
+     keyboard instead of floating an inset's-worth above it. */
+  html.pwa-standalone.kb-open .reply-box {
+    padding-bottom: 16px;
+  }
+  html.pwa-standalone #left-pane {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }

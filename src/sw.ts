@@ -30,7 +30,7 @@
 
 import * as idb from './store/idb.ts'
 import type { StoredAccount } from './types.ts'
-import { postPushSubscribe } from './push/api.ts'
+import { postPushSubscribe, postPushUnsubscribe } from './push/api.ts'
 import { isSecurejoinEmail, readChatEditTarget } from './deltachat/protocol.ts'
 import { isReaction, isReactionDisposition } from './mail/reactions.ts'
 import { decryptAndParse } from './pgp/crypto.ts'
@@ -256,6 +256,11 @@ sw.addEventListener('pushsubscriptionchange', (event: any) => {
   event.waitUntil((async () => {
     const key = event.oldSubscription?.options?.applicationServerKey
     if (!key) return
+    // Endpoint the browser is rotating away from. Drop it from every relay so
+    // the old (now-dead) subscription doesn't linger in push_subs.json getting
+    // pushed to forever — the browser has already discarded it, so only the
+    // server copy remains to clean up.
+    const oldEndpoint = event.oldSubscription?.endpoint
     const newSub = await sw.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key })
     const accounts = await loadAccounts()
     const seenRelays = new Set<string>()
@@ -263,6 +268,9 @@ sw.addEventListener('pushsubscriptionchange', (event: any) => {
       if (seenRelays.has(account.serverUrl)) continue
       seenRelays.add(account.serverUrl)
       try { await postPushSubscribe(account.serverUrl, account.email, account.password, newSub.toJSON()) } catch { /* best-effort */ }
+      if (oldEndpoint) {
+        try { await postPushUnsubscribe(account.serverUrl, account.email, account.password, oldEndpoint) } catch { /* best-effort */ }
+      }
     }
   })())
 })

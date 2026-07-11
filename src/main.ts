@@ -410,7 +410,10 @@ window.addEventListener('popstate', async () => {
     // threshold avoids flicker from tiny trackpad jitter.
     const delta = outer.scrollTop - lastScrollTop
     const dock = document.getElementById('reply-dock')
-    if (dock && !isProgrammaticScroll() && !dock.classList.contains('group-expanded') && Math.abs(delta) > 4) {
+    // Never stow the dock while the keyboard is up: iOS auto-scrolls #outer to
+    // reveal the focused composer, which reads as a scroll-up and would slide
+    // the reply box (the thing being typed into) off-screen. See kb-open below.
+    if (dock && !document.documentElement.classList.contains('kb-open') && !isProgrammaticScroll() && !dock.classList.contains('group-expanded') && Math.abs(delta) > 4) {
       dock.classList.toggle('dock-hidden', delta < 0)
     }
     lastScrollTop = outer.scrollTop
@@ -499,6 +502,54 @@ window.addEventListener('resize', async () => {
   }
   scrollToFocused()
 })
+
+// iOS keeps env(safe-area-inset-bottom) at its home-indicator value (~34px)
+// even while the soft keyboard is up — where there is no indicator — so the
+// standalone bottom-inset padding on .reply-box (see style.css) turns into dead
+// space between the composer and the keyboard. Detect the keyboard by the
+// visualViewport height collapsing below the keyboard-closed height and toggle
+// html.kb-open, which drops that padding. restH tracks the tallest (=closed)
+// height and resets on rotation so a shorter landscape viewport isn't misread
+// as an open keyboard.
+if (window.visualViewport) {
+  const vv = window.visualViewport
+  let restH = vv.height
+  let wasKbOpen = false
+  window.addEventListener('orientationchange', () => { restH = 0 })
+  const syncKb = () => {
+    if (vv.height > restH) restH = vv.height
+    const kbOpen = vv.height < restH - 120
+    document.documentElement.classList.toggle('kb-open', kbOpen)
+    if (kbOpen !== wasKbOpen) {
+      // Re-run the dock/scroll sync on the open⇄close transition, after the
+      // #app height has flipped, so the conversation tail lands above the dock
+      // in the new viewport instead of using the pre-resize geometry.
+      wasKbOpen = kbOpen
+      import('./ui/thread.ts').then(({ syncDockPosition, scrollToFocused }) => {
+        syncDockPosition()
+        scrollToFocused()
+      })
+    }
+    if (kbOpen) {
+      // Keyboard just opened: undo any stow so the composer is guaranteed
+      // visible (the scroll handler is gated on kb-open, but a pre-existing
+      // dock-hidden from scrolling before focus would otherwise persist).
+      document.getElementById('reply-dock')?.classList.remove('dock-hidden')
+      // Shrink #app to the visible viewport so the document no longer overflows
+      // behind the keyboard. Otherwise the tall (100dvh + inset) #app forces iOS
+      // to scroll the whole page to reveal the focused composer, burying the
+      // last messages under the reply box (see .kb-open #app height in css).
+      document.documentElement.style.setProperty('--vvh', vv.height + 'px')
+      // Any page scroll iOS already applied to reach the composer is now
+      // unnecessary and would misalign #app's top with the visible top.
+      if (window.scrollY !== 0) window.scrollTo(0, 0)
+    } else {
+      document.documentElement.style.removeProperty('--vvh')
+    }
+  }
+  vv.addEventListener('resize', syncKb)
+  syncKb()
+}
 
 {
   const dock = document.getElementById('reply-dock')
