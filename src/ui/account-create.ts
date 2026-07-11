@@ -313,6 +313,9 @@ export function setupNewUserPage() {
       // it isn't persisted, so this first showing is the natural moment.
       const { showMnemonic } = await import('./mnemonic.ts')
       showMnemonic(masterSecret, { firstTime: true })
+
+      // Publish the DID record to the new account's relay gateways (best-effort).
+      import('../did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
     } catch (e) {
       errEl.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e))
       errEl.style.display = 'block'

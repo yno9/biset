@@ -160,6 +160,7 @@ async function initInner() {
       validSessions.forEach(s => addSession(s!))
       validSessions.forEach(s => initPGPForSession(s!))
       advertiseAllOwnAvatars()
+      import('./did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
       syncNotifToggle()
       refreshAccountsList()
       startPolling()
@@ -184,6 +185,9 @@ async function initInner() {
     showMenuPage('/account')
     return
   }
+
+  // Keep our DID records alive on the DHT (best-effort — see did/publish.ts).
+  import('./did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
 
   // Fire-and-forget PGP init (kek only available on fresh envelope login, not here)
   // sessions.forEach(s => initPGPForSession(s))
