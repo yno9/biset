@@ -1031,11 +1031,34 @@ export async function setupLeftPane() {
         </form>
       </div>
       <div class="cmd-page-section" id="cmd-acc-list"></div>
+      <div class="cmd-page-section" id="cmd-acc-recovery" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+          <div style="min-width:0">
+            <h3 style="margin:0">Recovery phrase</h3>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:2px">24 words that restore your identity on any device.</div>
+          </div>
+          <button id="cmd-acc-recovery-btn" type="button" class="cmd-page-btn" style="width:auto;padding:6px 14px;flex-shrink:0">Show</button>
+        </div>
+      </div>
     </div>`
   }
 
   function onShowAccount() {
     onShowAccounts()
+
+    // Recovery phrase is only meaningful for a home (cryptenv-envelope) identity.
+    // Reveal the section for the first such identity and wire its button to the
+    // password-gated display (masterSecret isn't persisted — see mnemonic.ts).
+    const recoverySection = document.getElementById('cmd-acc-recovery')
+    const recoveryBtn = document.getElementById('cmd-acc-recovery-btn') as HTMLButtonElement | null
+    const homeIdentity = sessions.find(s => !isApRelay(s.account.serverUrl))
+    if (recoverySection && recoveryBtn && homeIdentity) {
+      recoverySection.style.display = ''
+      recoveryBtn.addEventListener('click', async () => {
+        const { showMnemonicWithPassword } = await import('./mnemonic.ts')
+        showMnemonicWithPassword(homeIdentity.account.email, homeIdentity.account.serverUrl)
+      })
+    }
 
     const addToggle = document.getElementById('cmd-acc-toggle') as HTMLButtonElement | null
     const addForm = document.getElementById('cmd-acc-form') as HTMLFormElement | null
@@ -2101,6 +2124,7 @@ export async function setupLeftPane() {
       // relay has no envelope of its own. kek is kept from the first successful
       // unseal (mail relay) since that's where the PGP key lives.
       let kek: Uint8Array | undefined
+      let masterSecret: Uint8Array | undefined
       let badPw = false
       const resolveAuth = async (server: string): Promise<string | null> => {
         const env = await fetchEnvelope(server, email)
@@ -2108,6 +2132,7 @@ export async function setupLeftPane() {
         try {
           const u = await unsealEnvelope(env, pw)
           if (!kek) kek = u.kek
+          if (!masterSecret) masterSecret = u.masterSecret
           return authTokenToBasicAuth(u.authToken)
         } catch { badPw = true; return null }
       }
@@ -2139,6 +2164,12 @@ export async function setupLeftPane() {
       }
 
       const isFirst = sessions.length === 0
+      // Lazy DID migration (DID.md "Existing account" flow): a password entry
+      // is exactly the moment masterSecret is available. Deterministic
+      // derivation means this is idempotent for accounts that already have a
+      // local DID record — initDid() just returns the existing one.
+      const { initDid } = await import('../did/index.ts')
+      const didRecord = masterSecret ? await initDid(email, masterSecret) : null
       // Persist + register each connected relay, deduped by (email, serverUrl) so
       // mail and AP for the same identity coexist as separate sessions.
       const stored = loadStoredAccounts()
@@ -2150,6 +2181,7 @@ export async function setupLeftPane() {
           sessions.push(c.session)
         }
         if (kek) initPGPForSession(c.session, kek)
+        if (didRecord) { const { putDid } = await import('../cryptenv.ts'); putDid(c.server, email, c.token, didRecord.did) }
       }
       saveStoredAccounts(stored)
       addBtn.disabled = false; addBtn.textContent = 'Add'
@@ -2228,8 +2260,7 @@ export async function setupLeftPane() {
     if (dock) dock.style.display = 'none'
     if ($convMeta) $convMeta.style.display = 'none'
     $outer.style.display = ''
-    $outer.style.paddingBottom = '0'
-    document.documentElement.style.setProperty('--dock-h', '0px')
+    syncDockPosition()
 
     if ($past) {
       $past.innerHTML = ''

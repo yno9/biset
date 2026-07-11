@@ -590,9 +590,7 @@ export function makeThreadCard(group: ThreadGroup, focused: boolean) {
     const applyDragH = (h: number) => {
       const lineH = parseFloat(getComputedStyle(ta).lineHeight) || 21
       ta.style.height = Math.max(lineH + 8, Math.min(window.innerHeight * 0.8, h)) + 'px'
-      const outer = document.getElementById('outer')
-      const dock = document.getElementById('reply-dock')
-      if (outer && dock) outer.style.paddingBottom = dock.offsetHeight + 'px'
+      syncDockPosition()
     }
     resizeHandle.addEventListener('mousedown', e => {
       e.preventDefault()
@@ -742,19 +740,22 @@ export function scrollToFocused(smooth = false) {
   requestAnimationFrame(() => requestAnimationFrame(doScroll))
 }
 
+// Single source of truth for the reply-dock → #outer geometry. Because the dock
+// is position:fixed it doesn't shrink #outer, so #outer's bottom padding is kept
+// equal to the dock's height (and mirrored into --dock-h for CSS that needs it).
+// Anything that changes the dock's presence or size calls this — no other code
+// should write outer.style.paddingBottom directly; that scattered duplication,
+// half of it deferred in rAF, is what used to drift and flicker. Synchronous on
+// purpose: reading offsetHeight forces layout, so the value is current, and
+// callers that adjust scroll afterward see the updated padding immediately.
 export function syncDockPosition() {
-  const pane = document.getElementById('right-pane')
-  if (!pane) return
+  const outer = document.getElementById('outer')
   const dock = document.getElementById('reply-dock')
-  if (dock) {
-    requestAnimationFrame(() => {
-      const outer = document.getElementById('outer')
-      if (outer) outer.style.paddingBottom = dock.offsetHeight ? dock.offsetHeight + 'px' : '0'
-      document.documentElement.style.setProperty('--dock-h', dock.offsetHeight ? dock.offsetHeight + 'px' : '0px')
-      const titleRow = document.getElementById('thread-title-row')
-      if (titleRow) document.documentElement.style.setProperty('--thread-title-h', titleRow.offsetHeight + 'px')
-    })
-  }
+  const h = dock?.offsetHeight ?? 0
+  if (outer) outer.style.paddingBottom = h ? h + 'px' : '0'
+  document.documentElement.style.setProperty('--dock-h', h ? h + 'px' : '0px')
+  const titleRow = document.getElementById('thread-title-row')
+  if (titleRow) document.documentElement.style.setProperty('--thread-title-h', titleRow.offsetHeight + 'px')
 }
 
 export function fmtRelDate(ts: number) {
@@ -794,8 +795,7 @@ export function render(smooth = false, keepScroll = false) {
   if (!currentInbox) {
     const dock = document.getElementById('reply-dock')
     if (dock) dock.innerHTML = ''
-    const outer = document.getElementById('outer')
-    if (outer) outer.style.paddingBottom = '0'
+    syncDockPosition()
     const el = document.createElement('div')
     el.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;color:var(--text-dim);'
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -818,11 +818,8 @@ export function render(smooth = false, keepScroll = false) {
     if (replyBox && dock) {
       dock.innerHTML = ''
       dock.appendChild(replyBox)
+      if (!keepScroll) dock.classList.remove('dock-hidden')
       syncDockPosition()
-      requestAnimationFrame(() => {
-        const outer = document.getElementById('outer')
-        if (outer) outer.style.paddingBottom = dock.offsetHeight + 'px'
-      })
     }
     return
   }
@@ -905,17 +902,18 @@ export function render(smooth = false, keepScroll = false) {
   if (replyBox && dock) {
     dock.innerHTML = ''
     dock.appendChild(replyBox)
+    // Opening/switching a thread always shows the composer. Without this a
+    // dock-hidden left over from a prior scroll (or set by the tall-message
+    // initial scroll settling past the programmatic-scroll window) keeps the
+    // reply box stowed off-screen on a freshly opened thread. keepScroll=true is
+    // an in-place update (new mail while reading history) — respect the user's
+    // current stow there instead of popping the dock back up.
+    if (!keepScroll) dock.classList.remove('dock-hidden')
     syncDockPosition()
-    requestAnimationFrame(() => {
-      const outer = document.getElementById('outer')
-      if (outer) outer.style.paddingBottom = dock.offsetHeight + 'px'
-      if (!keepScroll) scrollToFocused(smooth)
-      else scrollToBottomIfNear()
-    })
+    requestAnimationFrame(() => keepScroll ? scrollToBottomIfNear() : scrollToFocused(smooth))
   } else if (dock) {
     dock.innerHTML = ''
-    const outer = document.getElementById('outer')
-    if (outer) outer.style.paddingBottom = ''
+    syncDockPosition()
     requestAnimationFrame(() => keepScroll ? scrollToBottomIfNear() : scrollToFocused(smooth))
   } else {
     requestAnimationFrame(() => keepScroll ? scrollToBottomIfNear() : scrollToFocused(smooth))

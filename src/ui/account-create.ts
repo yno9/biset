@@ -237,17 +237,24 @@ export function setupNewUserPage() {
     errEl.style.display = 'none'
 
     try {
-      const { envelope, authToken, kek } = await buildEnvelope(pw)
+      const { envelope, authToken, kek, masterSecret } = await buildEnvelope(pw)
       const password = authTokenToBasicAuth(authToken)
       submitBtn.textContent = 'Creating…'
 
-      // Provision both relays with the SAME envelope. The first claims the identity
-      // anchor; the second presents the matching fingerprint and is accepted, so the
-      // two relay accounts share one identity (username@hostname).
+      // Root DID identity (DID.md Phase 1: mandatory from the first account).
+      // Derived from the same masterSecret the envelope already carries — no
+      // extra secret, no extra user step. Stored locally now; masterSecret
+      // itself is discarded once this call returns.
+      const { initDid } = await import('../did/index.ts')
+      const didRecord = await initDid(email, masterSecret)
+
+      // Provision both relays with the SAME envelope (+ did). The first claims the
+      // identity anchor; the second presents the matching fingerprint/did and is
+      // accepted, so the two relay accounts share one identity (username@hostname).
       const provision = (url: string) => fetch(`${url}/account/provision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, envelope }),
+        body: JSON.stringify({ username, envelope, did: didRecord?.did }),
       })
       const relayFail = (label: string, status: number) => {
         errEl.textContent = status === 409 ? 'Username taken' : `${label} server error (${status})`
@@ -300,6 +307,12 @@ export function setupNewUserPage() {
       if (pending) openComposeTo(pending)
       else showMenuPage('/account')
       showSysMsg('Account created')
+
+      // Show the recovery phrase once, now — this is the only safety valve for
+      // the rotation-less root identity (DID.md). masterSecret is in hand here;
+      // it isn't persisted, so this first showing is the natural moment.
+      const { showMnemonic } = await import('./mnemonic.ts')
+      showMnemonic(masterSecret, { firstTime: true })
     } catch (e) {
       errEl.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e))
       errEl.style.display = 'block'

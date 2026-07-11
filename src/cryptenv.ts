@@ -19,7 +19,11 @@ export interface Envelope {
   wrapped_secret: string
   auth_token_hash: string
 }
-export interface Unsealed { authToken: Uint8Array; kek: Uint8Array }
+// masterSecret is exposed alongside authToken/kek so callers can derive the
+// DID identity (src/did/) — it's the same one-way root the HKDF diagram above
+// already derives auth_token and kek from, not a new secret. Like kek, it is
+// meant to be used immediately and then discarded, never persisted as-is.
+export interface Unsealed { authToken: Uint8Array; kek: Uint8Array; masterSecret: Uint8Array }
 
 const DEFAULT_KDF: KDFParams = { t: 3, m: 64 * 1024, p: 4 }
 
@@ -86,7 +90,7 @@ export async function buildEnvelope(password: string): Promise<{ envelope: Envel
   const authHash = await sha256(authToken)
   return {
     envelope: { v: ENVELOPE_VERSION, salt: b64(salt), kdf: DEFAULT_KDF, wrapped_secret: b64(wrapped), auth_token_hash: b64(authHash) },
-    authToken, kek,
+    authToken, kek, masterSecret,
   }
 }
 
@@ -96,7 +100,7 @@ export async function unsealEnvelope(env: Envelope, password: string): Promise<U
   const masterSecret = await aesGcmOpen(wrapKey, b64d(env.wrapped_secret))
   const authToken = await hkdfBytes(masterSecret, HKDF_INFO_AUTH, 32)
   const kek = await hkdfBytes(masterSecret, HKDF_INFO_KEK, 32)
-  return { authToken, kek }
+  return { authToken, kek, masterSecret }
 }
 
 export async function rewrapEnvelope(env: Envelope, oldPw: string, newPw: string): Promise<Envelope> {
@@ -127,6 +131,21 @@ export async function putEnvelope(serverUrl: string, email: string, authTokenB64
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + btoa(email + ':' + authTokenB64) },
       body: JSON.stringify(env),
+    })
+    return resp.ok
+  } catch { return false }
+}
+
+// Registers/confirms this identity's DID with the relay's anchor (DID.md's
+// lazy migration — see src/did/). Best-effort: a relay in single-relay mode
+// (no anchor configured) 204s trivially; a stale/pre-DID relay 404s and the
+// caller just ignores it.
+export async function putDid(serverUrl: string, email: string, authTokenB64: string, did: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${trim(serverUrl)}/account/did`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + btoa(email + ':' + authTokenB64) },
+      body: JSON.stringify({ did }),
     })
     return resp.ok
   } catch { return false }
