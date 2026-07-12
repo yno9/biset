@@ -9,6 +9,7 @@ import {
 import { fetchInboxMessages, loadInboxSummaries, jmapCreateEmail, currentSenderSync } from '../app.ts'
 import type { OutgoingAttachment } from '../pgp/crypto.ts'
 import { buildEditBody, type ChatAction, type GroupOpts } from '../deltachat/protocol.ts'
+import { freshestAddressFor } from '../did/discovery.ts'
 import * as jmapEmail from '../jmap/email.ts'
 import * as messages from '../store/messages.ts'
 import { removeMessage } from '../vault/persist.ts'
@@ -133,7 +134,12 @@ function computeConversationRecipients(): { toAddrs: string[]; groupOpts: GroupO
     .sort((a, b) => a.msg.ts - b.msg.ts)
     .map(p => p.msg.message_id)
     .filter((id): id is string => !!id && !id.startsWith('__pending_') && !id.startsWith('srv-'))
-  return { toAddrs: isGroup ? groupRecipients : [contact], groupOpts, references }
+  // DID.md option A: deliver a 1:1 to the contact's freshest verified address
+  // (from their signed DID document), so a relay/domain move is followed
+  // invisibly. No-op unless a verified fresher address is cached; groups are
+  // left as-is (multi-recipient discovery is out of scope for the first cut).
+  const dmTo = isGroup ? groupRecipients : [freshestAddressFor(contact)]
+  return { toAddrs: dmTo, groupOpts, references }
 }
 
 export async function sendReply(
@@ -153,6 +159,11 @@ export async function sendReply(
     .sort((a, b) => a.msg.ts - b.msg.ts)
   if (!inReplyTo && realMsgs.length) {
     inReplyTo = realMsgs[realMsgs.length - 1].msg.message_id
+  }
+
+  // Warm the contact's DID cache for next time (best-effort, non-blocking).
+  if (currentInbox?.contact && currentInbox.inbox_type !== 'group') {
+    import('../did/discovery.ts').then(m => m.refreshContact(currentInbox!.contact!)).catch(() => {})
   }
 
   const { toAddrs, groupOpts, references } = computeConversationRecipients()

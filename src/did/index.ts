@@ -4,6 +4,7 @@ export * from './store.ts'
 export * from './resolver.ts'
 export { buildBisetDocument, documentToRecords, recordsToDocument } from './document.ts'
 export { buildSignedPayload, parseSignedPayload, nowSeq } from './packet.ts'
+export { seenSeq, noteSeq } from './freshness.ts'
 
 import { deriveRootKey, deriveNostrKey, didFromRootPublicKey } from './keys.ts'
 import { getDidRecord, storeDidRecord, type DidRecord } from './store.ts'
