@@ -276,6 +276,32 @@ document.querySelectorAll('.lp-hmenu-item').forEach(btn => {
     document.getElementById('app')?.classList.remove('show-left')
   })
 })
+
+// Full local wipe — every account's cached credentials, messages, keys, DID
+// records. Server-side data is untouched (this only clears what the browser
+// holds); a stale password/token surviving a server-side reset (see the
+// 401-after-relay-reset incident) is exactly what this is for.
+document.getElementById('lp-hmenu-logout')?.addEventListener('click', async () => {
+  if (!confirm('Log out and erase ALL local data (accounts, messages, keys)? This cannot be undone.')) return
+  localStorage.clear()
+  try { sessionStorage.clear() } catch { /* ignore */ }
+  const dbNames = ['biset-cache', 'biset-pgp', 'biset-did', 'biset-deltachat']
+  await Promise.all(dbNames.map(name => new Promise<void>(resolve => {
+    const req = indexedDB.deleteDatabase(name)
+    req.onsuccess = () => resolve()
+    req.onerror = () => resolve()
+    // onblocked (another open connection) resolves too — the reload below
+    // closes every connection, so a blocked delete finishes on next load.
+    req.onblocked = () => resolve()
+  })))
+  if ('caches' in window) {
+    try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))) } catch { /* ignore */ }
+  }
+  if ('serviceWorker' in navigator) {
+    try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())) } catch { /* ignore */ }
+  }
+  location.href = location.pathname // drop the hash too, land on a clean boot
+})
 {
   const menu = document.getElementById('lp-hamburger-menu')!
   let hideTimer: ReturnType<typeof setTimeout> | null = null
@@ -324,12 +350,12 @@ document.getElementById('lp-export-inbox-btn')?.addEventListener('click', async 
   const { showSysMsg } = await import('./ui/shell.ts')
   showSysMsg('Exporting…')
   try {
-    const { activeSession } = await import('./context.ts')
+    const { activeSession, identityKey } = await import('./context.ts')
     const { getInboxEmails, emailToMsg } = await import('./app.ts')
     const sess = activeSession()
     if (!sess) return
     const selfAddr = sess.jmapAccountId || sess.account.email
-    const emails = getInboxEmails(ci.mailbox, ci.contact, selfAddr, sess.account.email)
+    const emails = getInboxEmails(ci.mailbox, ci.contact, selfAddr, identityKey(sess))
     const output = {
       generated_at: Math.floor(Date.now() / 1000),
       inbox: ci,

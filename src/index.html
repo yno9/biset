@@ -162,6 +162,14 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
       <button id="nu-submit" type="button" style="padding:10px 12px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-size:15px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0">Start</button>
     </div>
     <div id="nu-error" style="color:#ff3b30;font-size:13px;display:none;min-height:18px;text-align:center"></div>
+    <div id="nu-restore-toggle" style="text-align:center;font-size:13px;color:var(--text-dim);cursor:pointer;margin-top:2px;text-decoration:underline;text-underline-offset:2px">Restore with recovery phrase</div>
+    <div id="nu-restore-box" style="display:none;flex-direction:column;gap:10px;margin-top:6px">
+      <textarea id="nu-restore-phrase" rows="3" placeholder="Enter your 24-word recovery phrase" autocomplete="off" autocapitalize="off" spellcheck="false" style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid var(--header-border);background:var(--input-bg);color:var(--text);font-size:14px;font-family:inherit;resize:vertical;outline:none"></textarea>
+      <div style="display:flex;justify-content:flex-end">
+        <button id="nu-restore-submit" type="button" style="padding:10px 16px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-size:15px;font-weight:500;cursor:pointer">Restore</button>
+      </div>
+      <div id="nu-restore-error" style="color:#ff3b30;font-size:13px;display:none;min-height:18px;text-align:center"></div>
+    </div>
     <div class="biset-title"><a href="https://biset.md" target="_blank" rel="noopener">biset</a> <a class="biset-version" href="https://github.com/yno9/biset" target="_blank" rel="noopener">beta</a></div>
   </div>
 </div>
@@ -170,6 +178,7 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
   <button class="lp-hmenu-item" data-page="/compose">compose</button>
   <button class="lp-hmenu-item" data-page="/account">account</button>
   <button class="lp-hmenu-item" data-page="/config">config</button>
+  <button class="lp-hmenu-item" id="lp-hmenu-logout">logout</button>
 </div>
 
 <div id="app" style="display:none">

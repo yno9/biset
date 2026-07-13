@@ -1,5 +1,11 @@
 // Account creation overlay — username@hostname + password
-import { buildEnvelope, authTokenToBasicAuth } from '../cryptenv.ts'
+import { buildEnvelope } from '../cryptenv.ts'
+
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return out
+}
 
 const WORDS = [
   'Acid','Amber','Anvil','Arch','Arrow','Ash','Axle','Badge','Bark','Beam',
@@ -93,19 +99,21 @@ export function setupAccountCreateOverlay() {
 
     try {
       // Build envelope client-side (Argon2id — takes a few seconds)
-      const { envelope, authToken, kek } = await buildEnvelope(pw)
+      const { envelope, masterSecret, kek } = await buildEnvelope(pw)
+      const { initDid } = await import('../did/index.ts')
+      const didRecord = await initDid(email, masterSecret)
 
       submitBtn.textContent = 'Creating…'
 
-      // Provision account on server
-      const resp = await fetch(`${serverUrl}/account/provision`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, envelope }),
+      // Provision with signature-based binding + relay-scoped token (own relay →
+      // include the envelope for password recovery).
+      const { provisionAccount } = await import('../did/provision.ts')
+      const res = await provisionAccount({
+        serverUrl, username, did: didRecord!.did,
+        rootPrivateKey: hexToBytes(didRecord!.rootPrivateKey), masterSecret, envelope,
       })
-      if (!resp.ok) {
-        const msg = resp.status === 409 ? 'Username taken' : `Server error (${resp.status})`
-        errEl.textContent = msg
+      if (!res.ok) {
+        errEl.textContent = res.conflict ? 'Username taken' : `Server error (${res.status})`
         errEl.style.display = 'block'
         submitBtn.textContent = 'Create'
         submitBtn.disabled = false
@@ -114,8 +122,8 @@ export function setupAccountCreateOverlay() {
 
       submitBtn.textContent = 'Connecting…'
 
-      // Use pre-computed authToken — no second Argon2id needed
-      const stored = { serverUrl, email, password: authTokenToBasicAuth(authToken) }
+      // Log in with the relay-scoped token from provisioning.
+      const stored = { serverUrl, email, password: res.password!, did: didRecord!.did }
       const session = await initSession(stored)
       if (!session) {
         errEl.textContent = 'Login failed after creation'
@@ -237,38 +245,33 @@ export function setupNewUserPage() {
     errEl.style.display = 'none'
 
     try {
-      const { envelope, authToken, kek, masterSecret } = await buildEnvelope(pw)
-      const password = authTokenToBasicAuth(authToken)
+      const { envelope, kek, masterSecret } = await buildEnvelope(pw)
       submitBtn.textContent = 'Creating…'
 
       // Root DID identity (DID.md Phase 1: mandatory from the first account).
-      // Derived from the same masterSecret the envelope already carries — no
-      // extra secret, no extra user step. Stored locally now; masterSecret
-      // itself is discarded once this call returns.
+      // Derived from the same masterSecret the envelope already carries.
       const { initDid } = await import('../did/index.ts')
       const didRecord = await initDid(email, masterSecret)
+      const rootPriv = hexToBytes(didRecord!.rootPrivateKey)
 
-      // Provision both relays with the SAME envelope (+ did). The first claims the
-      // identity anchor; the second presents the matching fingerprint/did and is
-      // accepted, so the two relay accounts share one identity (username@hostname).
-      const provision = (url: string) => fetch(`${url}/account/provision`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, envelope, did: didRecord?.did }),
-      })
-      const relayFail = (label: string, status: number) => {
-        errEl.textContent = status === 409 ? 'Username taken' : `${label} server error (${status})`
+      // Provision both home relays: signature-based DID binding + relay-scoped
+      // token; own relays get the envelope (password recovery). Each relay logs
+      // in with its OWN scoped token (res.password).
+      const { provisionAccount } = await import('../did/provision.ts')
+      const relayFail = (label: string, r: { conflict?: boolean; status: number }) => {
+        errEl.textContent = r.conflict ? 'Username taken' : `${label} server error (${r.status})`
         errEl.style.display = 'block'
         submitBtn.textContent = 'Create'; submitBtn.disabled = false
       }
-      const mailResp = await provision(mailUrl)
-      if (!mailResp.ok) { relayFail('mail', mailResp.status); return }
-      const apResp = await provision(apUrl)
-      if (!apResp.ok) { relayFail('ap', apResp.status); return }
+      const mailRes = await provisionAccount({ serverUrl: mailUrl, username, did: didRecord!.did, rootPrivateKey: rootPriv, masterSecret, envelope })
+      if (!mailRes.ok) { relayFail('mail', mailRes); return }
+      const apRes = await provisionAccount({ serverUrl: apUrl, username, did: didRecord!.did, rootPrivateKey: rootPriv, masterSecret, envelope })
+      if (!apRes.ok) { relayFail('ap', apRes); return }
 
       submitBtn.textContent = 'Connecting…'
-      const mailStored = { serverUrl: mailUrl, email, password }
-      const apStored = { serverUrl: apUrl, email, password }
+      // Each endpoint stores its OWN relay-scoped token.
+      const mailStored = { serverUrl: mailUrl, email, password: mailRes.password!, did: didRecord?.did }
+      const apStored = { serverUrl: apUrl, email, password: apRes.password!, did: didRecord?.did }
       const { initSession } = await import('../jmap/client.ts')
       const [mailSession, apSession] = await Promise.all([
         initSession(mailStored).catch(() => null),
@@ -320,6 +323,51 @@ export function setupNewUserPage() {
       errEl.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e))
       errEl.style.display = 'block'
       submitBtn.textContent = 'Create'; submitBtn.disabled = false
+    }
+  })
+
+  // ── Recovery-phrase login ──────────────────────────────────────────────────
+  // 24 words → seed → DID → resolve relays → connect. No password, no need to
+  // know your relays/address (the DID document supplies them). See did/restore.ts.
+  const restoreToggle = document.getElementById('nu-restore-toggle')
+  const restoreBox = document.getElementById('nu-restore-box')
+  const restorePhrase = document.getElementById('nu-restore-phrase') as HTMLTextAreaElement | null
+  const restoreSubmit = document.getElementById('nu-restore-submit') as HTMLButtonElement | null
+  const restoreErr = document.getElementById('nu-restore-error')
+  restoreToggle?.addEventListener('click', () => {
+    if (!restoreBox) return
+    const open = restoreBox.style.display === 'flex'
+    restoreBox.style.display = open ? 'none' : 'flex'
+    if (!open) restorePhrase?.focus()
+  })
+  restoreSubmit?.addEventListener('click', async () => {
+    if (!restorePhrase || !restoreErr) return
+    const phrase = restorePhrase.value.trim()
+    if (!phrase) { restoreErr.textContent = 'Enter your recovery phrase'; restoreErr.style.display = 'block'; return }
+    restoreErr.style.display = 'none'
+    restoreSubmit.disabled = true; restoreSubmit.textContent = 'Restoring…'
+    try {
+      const { restoreFromMnemonic } = await import('../did/restore.ts')
+      const res = await restoreFromMnemonic(phrase)
+      if ('error' in res) { restoreErr.textContent = res.error; restoreErr.style.display = 'block'; return }
+      const { addSession, loadStoredAccounts, saveStoredAccounts } = await import('../context.ts')
+      const { initPGPForSession } = await import('../app.ts')
+      const existing = loadStoredAccounts()
+      const toAdd = res.sessions.map(s => s.account).filter(a => !existing.some(x => x.email === a.email && x.serverUrl === a.serverUrl))
+      if (toAdd.length) saveStoredAccounts([...existing, ...toAdd])
+      for (const s of res.sessions) { addSession(s); initPGPForSession(s, res.kek) }
+      hideNewUserPage()
+      const { showApp, startPolling, showSysMsg } = await import('./shell.ts')
+      showApp()
+      const { setupLeftPane, refreshAccountsList, showMenuPage } = await import('./left-pane.ts')
+      await setupLeftPane(); startPolling(); refreshAccountsList(); showMenuPage('/account')
+      showSysMsg('Identity restored')
+      import('../did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
+    } catch (e) {
+      restoreErr.textContent = 'Restore failed: ' + (e instanceof Error ? e.message : String(e))
+      restoreErr.style.display = 'block'
+    } finally {
+      restoreSubmit.disabled = false; restoreSubmit.textContent = 'Restore'
     }
   })
 }

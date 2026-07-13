@@ -1,6 +1,6 @@
 import type { Email, Thread, Mailbox, Identity } from 'jmap-rfc-types'
 import type { PendingSubmission } from '../types.ts'
-import { vaultHandle, sessions } from '../context.ts'
+import { vaultHandle, sessions, identityKey } from '../context.ts'
 import { readJson, writeJson, scanDir, scanEntries, deleteFile } from './fs.ts'
 import { writeThreadMD, ensureNewFile } from './render.ts'
 import { mailboxNameFromId } from '../utils.ts'
@@ -150,7 +150,7 @@ export async function flushAll(): Promise<void> {
     const mailboxDirs = new Set<string>()
     for (const session of sessions) {
       const selfEmail = session.account.email
-      const { groups } = await buildEffectiveGroups(messages.forIdentity(selfEmail), selfEmail)
+      const { groups } = await buildEffectiveGroups(messages.forIdentity(identityKey(session)), selfEmail)
       for (const [effectiveTid, threadEmails] of groups) {
         if (!threadEmails.length) continue
         const allMbxIds = new Set<string>()

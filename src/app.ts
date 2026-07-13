@@ -5,7 +5,7 @@ import { isReaction, collectReactions } from './mail/reactions.ts'
 import { avatarDataUrl, groupCacheKey } from './deltachat/avatar.ts'
 import {
   sessions, addSession, setCurrentInbox, currentInbox, activeSession, sessionFor, sessionForRelay,
-  loadStoredAccounts, saveStoredAccounts, identities as listIdentities, isApRelay,
+  loadStoredAccounts, saveStoredAccounts, identityIds, relaysForId, identityKey, isApRelay,
 } from './context.ts'
 import { initSession } from './jmap/client.ts'
 import * as messages from './store/messages.ts'
@@ -74,13 +74,18 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
   // (mirrors groupParticipants' same two-pass shape below).
   const unreadCounts = new Map<string, number>()
 
-  for (const userEmail of listIdentities()) {
-    // An identity (email) may span multiple relays (mail + AP); jmapAccountId is
-    // usually the email itself. Use the identity for the own/sent check.
+  for (const identityId of identityIds()) {
+    // Identity-by-DID: identityId is the DID (or an email for a not-yet-derived
+    // account). `user` is the identity's representative address — used for the
+    // own/sent check, From, and reply routing (which resolves it through the DID
+    // via relaysFor, so it works even across a moved identity's addresses).
+    const endpoints = relaysForId(identityId)
+    const userEmail = endpoints[0]?.account.email ?? identityId
     const accountId = userEmail
 
-    // This identity's messages, merged across all its relays.
-    const ownMessages = messages.forIdentity(userEmail)
+    // This identity's messages, merged across ALL its relays and addresses (the
+    // store stamps _identity = the DID at ingest, so a moved identity unifies).
+    const ownMessages = messages.forIdentity(identityId)
 
     // First pass: build threadId → groupId mapping for routing replies.
     const threadToGroup = new Map<string, string>()
@@ -207,10 +212,13 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
 
 // ── Messages for inbox ────────────────────────────────────────────────────────
 
-export function getInboxEmails(mailbox: string, contact: string, selfAddr: string, account: string): Email[] {
+// `identity` is the identity key (DID, or email for a DID-less relay) — the value
+// the store stamps as _identity. Callers map their email through identityKey /
+// identityKeyForEmail before calling.
+export function getInboxEmails(mailbox: string, contact: string, selfAddr: string, identity: string): Email[] {
   if (contact.startsWith('group:')) {
     const groupId = contact.slice(6)
-    const allMsgs = messages.forIdentity(account)
+    const allMsgs = messages.forIdentity(identity)
     const groupThreadIds = new Set<string>()
     for (const email of allMsgs) {
       if (readGroupHeaders(email).id === groupId) {
@@ -230,7 +238,7 @@ export function getInboxEmails(mailbox: string, contact: string, selfAddr: strin
   // thread ids that touch ANY group so threadId-matched replies (which may lack the
   // Chat-Group-ID header) are excluded from 1:1 lists too — otherwise a group's
   // messages leak into a per-contact inbox via from/to matching.
-  const allMsgs = messages.forIdentity(account)
+  const allMsgs = messages.forIdentity(identity)
   const groupThreadIds = new Set<string>()
   for (const email of allMsgs) {
     if (readGroupHeaders(email).id) {
@@ -262,13 +270,17 @@ export async function fetchInboxMessages(inboxSummary: InboxSummary): Promise<Pr
   const session = activeSession()
   if (!session) return []
   const selfAddr = session.jmapAccountId || session.account.email
-  const emails = getInboxEmails(inboxSummary.mailbox, inboxSummary.contact, selfAddr, session.account.email)
+  // Query by the identity key (DID, or email for a DID-less relay) — the same
+  // value the store stamps as _identity — so the thread isn't empty for a
+  // DID-bearing account (whose messages are stamped with the DID, not the email).
+  const identity = identityKey(session)
+  const emails = getInboxEmails(inboxSummary.mailbox, inboxSummary.contact, selfAddr, identity)
   const msgs = emails.map(e => emailToMsg(e, selfAddr)).sort((a, b) => a.ts - b.ts)
   // RFC 9078 reactions were filtered out of `emails` above (they're not chat
   // messages) — reattach them to their target message for display. Scan the
   // whole identity (not just this inbox's emails) since a reaction can arrive
   // over a different relay than its target (mail + AP for one identity).
-  const reactionMap = collectReactions(messages.forIdentity(session.account.email))
+  const reactionMap = collectReactions(messages.forIdentity(identity))
   for (const msg of msgs) {
     const rs = reactionMap.get(msg.message_id)
     if (rs?.length) msg.reactions = rs.map(r => ({ emoji: r.emoji, from: r.from }))
@@ -276,7 +288,7 @@ export async function fetchInboxMessages(inboxSummary: InboxSummary): Promise<Pr
   // Chat-Edit requests were filtered out of `emails` above too — apply the
   // latest one directly onto msg.body (pre-decrypt stage: it's already
   // plaintext, so processIncoming's PGP-marker check just passes it through).
-  const editMap = collectEdits(messages.forIdentity(session.account.email))
+  const editMap = collectEdits(messages.forIdentity(identity))
   for (const msg of msgs) {
     const editedText = editMap.get(msg.message_id)
     if (editedText !== undefined) { msg.body = editedText; msg.edited = true }

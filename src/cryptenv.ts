@@ -7,23 +7,29 @@
 
 import { argon2id } from 'hash-wasm'
 
-const HKDF_INFO_AUTH = 'biset-jmapsmtp/auth/v1'
+// Auth tokens are RELAY-SCOPED: HKDF info = "auth/v1/<relay-host>", so the token
+// you present to one relay is useless at another (a hostile relay can't replay
+// it). Still fully seed-derived, so recovery-phrase login re-derives each relay's
+// token from the master secret (the relay list comes from the DID document).
+const HKDF_INFO_AUTH_PREFIX = 'biset-jmapsmtp/auth/v1/'
 const HKDF_INFO_KEK = 'biset-jmapsmtp/enc/v1'
-const ENVELOPE_VERSION = 1
+const ENVELOPE_VERSION = 2 // v2: recovery-only (no auth_token_hash; tokens are per-relay, stored relay-side)
 
 export interface KDFParams { t: number; m: number; p: number }
+// The envelope is now RECOVERY MATERIAL ONLY — the password-wrapped master
+// secret. The per-relay auth_token_hash lives relay-side (sent at provision),
+// not here, so the envelope stays identical across an identity's relays and is
+// only ever stored on relays the user trusts with their (offline-crackable)
+// wrapped secret.
 export interface Envelope {
   v: number
   salt: string
   kdf: KDFParams
   wrapped_secret: string
-  auth_token_hash: string
 }
-// masterSecret is exposed alongside authToken/kek so callers can derive the
-// DID identity (src/did/) — it's the same one-way root the HKDF diagram above
-// already derives auth_token and kek from, not a new secret. Like kek, it is
-// meant to be used immediately and then discarded, never persisted as-is.
-export interface Unsealed { authToken: Uint8Array; kek: Uint8Array; masterSecret: Uint8Array }
+// masterSecret is exposed so callers can derive the DID identity (src/did/) AND
+// per-relay auth tokens. Like kek, use immediately then discard; never persist.
+export interface Unsealed { kek: Uint8Array; masterSecret: Uint8Array }
 
 const DEFAULT_KDF: KDFParams = { t: 3, m: 64 * 1024, p: 4 }
 
@@ -85,12 +91,10 @@ export async function buildEnvelope(password: string): Promise<{ envelope: Envel
   const masterSecret = rnd(32)
   const wrapKey = await deriveWrapKey(password, salt, DEFAULT_KDF)
   const wrapped = await aesGcmSeal(wrapKey, masterSecret)
-  const authToken = await hkdfBytes(masterSecret, HKDF_INFO_AUTH, 32)
   const kek = await hkdfBytes(masterSecret, HKDF_INFO_KEK, 32)
-  const authHash = await sha256(authToken)
   return {
-    envelope: { v: ENVELOPE_VERSION, salt: b64(salt), kdf: DEFAULT_KDF, wrapped_secret: b64(wrapped), auth_token_hash: b64(authHash) },
-    authToken, kek, masterSecret,
+    envelope: { v: ENVELOPE_VERSION, salt: b64(salt), kdf: DEFAULT_KDF, wrapped_secret: b64(wrapped) },
+    kek, masterSecret,
   }
 }
 
@@ -98,22 +102,48 @@ export async function unsealEnvelope(env: Envelope, password: string): Promise<U
   if (env.v !== ENVELOPE_VERSION) throw new Error(`unsupported envelope version ${env.v}`)
   const wrapKey = await deriveWrapKey(password, b64d(env.salt), env.kdf)
   const masterSecret = await aesGcmOpen(wrapKey, b64d(env.wrapped_secret))
-  const authToken = await hkdfBytes(masterSecret, HKDF_INFO_AUTH, 32)
   const kek = await hkdfBytes(masterSecret, HKDF_INFO_KEK, 32)
-  return { authToken, kek, masterSecret }
+  return { kek, masterSecret }
 }
 
 export async function rewrapEnvelope(env: Envelope, oldPw: string, newPw: string): Promise<Envelope> {
   const masterSecret = await aesGcmOpen(await deriveWrapKey(oldPw, b64d(env.salt), env.kdf), b64d(env.wrapped_secret))
   const newSalt = rnd(16)
   const wrapped = await aesGcmSeal(await deriveWrapKey(newPw, newSalt, DEFAULT_KDF), masterSecret)
-  const authToken = await hkdfBytes(masterSecret, HKDF_INFO_AUTH, 32)
-  const authHash = await sha256(authToken)
-  return { v: ENVELOPE_VERSION, salt: b64(newSalt), kdf: DEFAULT_KDF, wrapped_secret: b64(wrapped), auth_token_hash: b64(authHash) }
+  return { v: ENVELOPE_VERSION, salt: b64(newSalt), kdf: DEFAULT_KDF, wrapped_secret: b64(wrapped) }
+}
+
+// The relay host an auth token is scoped to (hostname of the relay's base URL).
+export function hostOf(serverUrl: string): string {
+  try { return new URL(serverUrl).host } catch { return serverUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '') }
+}
+
+// Per-relay auth token: HKDF(masterSecret, "auth/v1/<host>"). Present base64(this)
+// as the JMAP password to the relay `host`.
+export async function deriveAuthToken(masterSecret: Uint8Array, host: string): Promise<Uint8Array> {
+  return hkdfBytes(masterSecret, HKDF_INFO_AUTH_PREFIX + host, 32)
+}
+
+export async function deriveKek(masterSecret: Uint8Array): Promise<Uint8Array> {
+  return hkdfBytes(masterSecret, HKDF_INFO_KEK, 32)
 }
 
 export function authTokenToBasicAuth(authToken: Uint8Array): string {
   return b64(authToken)
+}
+
+// base64(SHA-256(token)) — sent to the relay at provision so it can verify future
+// logins (the relay stores this per account; the token itself never leaves as a
+// stored secret, only its hash).
+export async function authTokenHashB64(authToken: Uint8Array): Promise<string> {
+  return b64(await sha256(authToken))
+}
+
+// Convenience for a relay login/provision: unseal (or take masterSecret) → the
+// scoped token for `serverUrl` + its hash + the kek.
+export async function relayAuth(masterSecret: Uint8Array, serverUrl: string): Promise<{ token: Uint8Array; password: string; hash: string; kek: Uint8Array }> {
+  const token = await deriveAuthToken(masterSecret, hostOf(serverUrl))
+  return { token, password: b64(token), hash: await authTokenHashB64(token), kek: await deriveKek(masterSecret) }
 }
 
 function trim(url: string): string { return url.replace(/\/$/, '') }

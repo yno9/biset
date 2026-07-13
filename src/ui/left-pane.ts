@@ -1,4 +1,4 @@
-import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay } from '../context.ts'
+import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, accountKey, identityKey, identityKeyForEmail, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay } from '../context.ts'
 import {
   lastLeftInboxes, setLastLeftInboxes,
   processedMessages, renderedKeys,
@@ -15,7 +15,7 @@ import { render, syncDockPosition, scrollToFocused, updateScrollSpacer } from '.
 import { fetchMessages, showSysMsg, startPolling } from './shell.ts'
 // From app.ts (safe — called only inside async functions):
 import { loadInboxSummaries, initSession, initPGPForSession, logout, jmapCreateEmail } from '../app.ts'
-import { loginViaEnvelope, authTokenToBasicAuth, fetchEnvelope, unsealEnvelope } from '../cryptenv.ts'
+import { fetchEnvelope, unsealEnvelope, relayAuth } from '../cryptenv.ts'
 import { decryptAndParse, prefetchRecipientKey } from '../pgp/index.ts'
 import { deleteKey } from '../pgp/keys.ts'
 import type { OutgoingAttachment } from '../pgp/crypto.ts'
@@ -37,6 +37,12 @@ import { enablePush, disablePush } from '../push/client.ts'
 
 // ── InboxSummary key ──────────────────────────────────────────────────────────
 function isk(i: InboxSummary): string { return i.user + '\0' + i.mailbox + '\0' + i.contact }
+
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return out
+}
 
 // ── Preview cache / decrypt ───────────────────────────────────────────────────
 
@@ -341,7 +347,7 @@ export function markRead(item: InboxSummary) {
     try {
       const { getInboxEmails } = await import('../app.ts')
       const selfAddr = sess.jmapAccountId || sess.account.email
-      const emails = getInboxEmails(item.mailbox, item.contact, selfAddr, sess.account.email)
+      const emails = getInboxEmails(item.mailbox, item.contact, selfAddr, identityKey(sess))
       const unread = emails.filter(e => !(e.keywords as any)?.['$seen'])
       if (unread.length) {
         // A merged inbox can hold messages from more than one relay (mail + AP for
@@ -411,7 +417,7 @@ export async function archiveInbox(item: InboxSummary, archived: boolean) {
   if (!sess) return
   const { getInboxEmails } = await import('../app.ts')
   const selfAddr = sess.jmapAccountId || sess.account.email
-  const emails = getInboxEmails(item.mailbox, item.contact, selfAddr, sess.account.email)
+  const emails = getInboxEmails(item.mailbox, item.contact, selfAddr, identityKey(sess))
   const ids = emails.map(e => e.id as string).filter(Boolean)
   try {
     if (ids.length) await jmapEmail.markArchived(sess.jmapClient, sess.jmapAccountId, ids, archived)
@@ -438,7 +444,7 @@ export async function doDeleteInbox(target: InboxSummary) {
     try {
       const { getInboxEmails } = await import('../app.ts')
       const selfAddr = sess.jmapAccountId || sess.account.email
-      const emails = getInboxEmails(target.mailbox, target.contact, selfAddr, sess.account.email)
+      const emails = getInboxEmails(target.mailbox, target.contact, selfAddr, identityKey(sess))
       // A merged inbox can hold messages from more than one relay (mail + AP
       // for the same identity) — destroy must go to each message's own
       // relay/session, or ids belonging to the untouched relay fail server-
@@ -564,7 +570,21 @@ export function syncNavFocus() {
 }
 
 // Set focus on el: update key, apply CSS, trigger data action.
+//
+// This is the single entry point for "user hover/click intent to view a
+// thread" — it must ALWAYS leave menu mode before any render() call reaches
+// thread.ts, or that render() silently no-ops (thread.ts's render() bails
+// while inMenuMode() is true, by design, so a passive background refresh
+// doesn't yank the user off a settings page they're reading). Previously only
+// switchInbox() cleared the flag, so the "already on this inbox" fast path
+// below (calling render(true) directly, without going through switchInbox)
+// left a stale _inMenuMode=true in place — hovering back onto the inbox you
+// were on before opening a menu page silently did nothing, while hovering to
+// a DIFFERENT (never-visited) inbox worked, because that path always goes
+// through switchInbox(). Clearing it here, once, for every path through this
+// function, closes that whole bug class rather than patching one call site.
 function lpFocusEl(el: HTMLElement) {
+  _inMenuMode = false
   document.querySelectorAll<HTMLElement>('#left-list .lp-item, #left-list .lp-thread-row')
     .forEach(item => item.classList.remove('focused'))
   if (navFocusEnabled()) el.classList.add('focused')
@@ -1019,6 +1039,9 @@ export async function setupLeftPane() {
           <h3 style="margin:0">Add JMAP account</h3>
           <button id="cmd-acc-toggle" type="button" class="cmd-page-btn" style="width:auto;padding:4px 12px;font-size:13px">+</button>
         </div>
+        <div style="margin-top:8px">
+          <button id="cmd-acc-customdomain" type="button" style="background:none;border:none;color:var(--text-dim);font-size:12px;text-decoration:underline;text-underline-offset:2px;cursor:pointer;padding:0">Add my own domain…</button>
+        </div>
         <form id="cmd-acc-form" style="display:none;flex-direction:column;gap:8px;margin-top:12px" autocomplete="on">
           <input id="cmd-acc-server" class="cmd-input" type="url" placeholder="Server URL (https://...)" autocomplete="url" style="display:none">
           <input id="cmd-acc-email" class="cmd-input" type="text" placeholder="Email (or gateway username)" autocomplete="username" required>
@@ -1070,6 +1093,10 @@ export async function setupLeftPane() {
       if (open) (document.getElementById('cmd-acc-email') as HTMLInputElement)?.focus()
     }
     addToggle?.addEventListener('click', () => setOpen(addForm?.style.display === 'none'))
+    document.getElementById('cmd-acc-customdomain')?.addEventListener('click', async () => {
+      const { openCustomDomainFlow } = await import('./custom-domain.ts')
+      openCustomDomainFlow()
+    })
     addCancel?.addEventListener('click', () => {
       ;(document.getElementById('cmd-acc-email') as HTMLInputElement).value = ''
       ;(document.getElementById('cmd-acc-password') as HTMLInputElement).value = ''
@@ -1137,7 +1164,7 @@ export async function setupLeftPane() {
         lines.push(`=== ${email} @ ${s.account.serverUrl} ===`)
         lines.push(`SERVER unread (non-seen, non-own, non-noise): ${serverUnread.length}`)
         // Local store view — is each server-unread message present locally, and how attributed?
-        const local = messages.forIdentity(email)
+        const local = messages.forIdentity(identityKeyForEmail(email))
         const localById = new Map(local.map(m => [m.id as string, m]))
         for (const e of serverUnread) {
           const from = e.from?.[0]?.email ?? '?'
@@ -1642,10 +1669,13 @@ export async function setupLeftPane() {
 
   const _accInfoCache = new Map<string, { name?: string; unread?: number; total?: number; pgp?: boolean; lastSyncAt?: number }>()
 
-  async function fetchAccountInfo(email: string) {
-    const session = sessions.find(s => s.account.email === email)
+  // Per-RELAY stats (identity-by-DID: each relay endpoint is its own card). Keyed
+  // by accountKey (email+serverUrl) and queries that specific relay's session.
+  async function fetchAccountInfo(session: import('../types.ts').AccountSession) {
     if (!session) return null
-    const info: { name?: string; unread?: number; total?: number; pgp?: boolean; lastSyncAt?: number } = _accInfoCache.get(email) ?? {}
+    const email = session.account.email
+    const cacheKey = accountKey(session.account)
+    const info: { name?: string; unread?: number; total?: number; pgp?: boolean; lastSyncAt?: number } = _accInfoCache.get(cacheKey) ?? {}
 
     try {
       const [r] = await (session.jmapClient.api as any).Identity.get({ accountId: session.jmapAccountId, ids: null })
@@ -1663,7 +1693,6 @@ export async function setupLeftPane() {
           properties: ['id', 'keywords', 'from', 'subject', 'headers'],
         })
         const emails: any[] = (gr as any).list ?? []
-        info.total = emails.length
         // Own sent mail never carries $seen (mirrors app.ts's loadInboxSummaries
         // and sw.ts) — without this exclusion every account looked permanently
         // more "unread" than it really was, inflated by its own sent history.
@@ -1671,12 +1700,16 @@ export async function setupLeftPane() {
         // inbox the user can actually open (see loadInboxSummaries/getInboxEmails),
         // so they never get a chance to be marked $seen — left uncounted here
         // too, or "Unread" gets permanently stuck above 0 no matter how much
-        // the user actually reads.
-        info.unread = emails.filter(e => {
+        // the user actually reads. Same exclusions apply to "Total" — it's meant
+        // to read as "how many conversation messages", not a raw mailbox count
+        // padded by your own sent copies.
+        const realEmails = emails.filter(e => {
           if (isSecurejoinEmail(e) || isReaction(e)) return false
           const fromEmail = e.from?.[0]?.email ?? ''
-          return fromEmail !== email && !e.keywords?.['$seen']
-        }).length
+          return fromEmail !== email
+        })
+        info.total = realEmails.length
+        info.unread = realEmails.filter(e => !e.keywords?.['$seen']).length
         info.lastSyncAt = Date.now()
       } else {
         info.total = 0
@@ -1685,14 +1718,21 @@ export async function setupLeftPane() {
       }
     } catch (e) { console.error('[fetchAccountInfo Email.query]', e) }
 
-    try {
-      const resp = await fetch(session.account.serverUrl.replace(/\/$/, '') + '/pgp/privkey', {
-        headers: { Authorization: 'Basic ' + btoa(session.account.email + ':' + session.account.password) },
-      })
-      info.pgp = resp.ok
-    } catch (e) { console.error('[fetchAccountInfo pgp]', e); info.pgp = false }
+    // AP relays have no PGP key store (initPGPForSession no-ops there) — skip
+    // the fetch entirely rather than hitting a route that doesn't exist there
+    // (was surfacing as a noisy cross-origin CORS failure, not a clean 404).
+    if (isApRelay(session.account.serverUrl)) {
+      info.pgp = undefined
+    } else {
+      try {
+        const resp = await fetch(session.account.serverUrl.replace(/\/$/, '') + '/pgp/privkey', {
+          headers: { Authorization: 'Basic ' + btoa(session.account.email + ':' + session.account.password) },
+        })
+        info.pgp = resp.ok
+      } catch (e) { console.error('[fetchAccountInfo pgp]', e); info.pgp = false }
+    }
 
-    _accInfoCache.set(email, info)
+    _accInfoCache.set(cacheKey, info)
     return info
   }
 
@@ -1705,7 +1745,7 @@ export async function setupLeftPane() {
     _openMenuCleanup = null
   }
 
-  function openAccountMenu(anchor: HTMLElement, email: string) {
+  function openAccountMenu(anchor: HTMLElement, email: string, serverUrl?: string) {
     closeAccountMenu()
     const rect = anchor.getBoundingClientRect()
     const menu = document.createElement('div')
@@ -1722,20 +1762,61 @@ export async function setupLeftPane() {
     }
     mkItem('Change password', false, () => openPasswordModal(email))
     mkItem('Change display name', false, () => openDisplayNameModal(email))
+    // Re-publish this identity's DID document (relay list + address) to the DHT.
+    // Normally automatic (on boot and on relay change); this is a manual nudge,
+    // e.g. after adding a relay elsewhere or if a record expired.
+    mkItem('Republish to DHT', false, async () => {
+      // DHT puts take several seconds each (mainline DHT traversal latency,
+      // now run in parallel across gateways but still not instant) — a long
+      // duration here keeps the toast up as a "working" indicator instead of
+      // vanishing after 1.8s while the request is still in flight.
+      showSysMsg('Publishing to the network…', 30000)
+      try {
+        const ok = await (await import('../did/publish.ts')).publishOneVisible(email)
+        showSysMsg(ok ? 'Published to DHT' : 'No gateway reachable (record not published)')
+      } catch { showSysMsg('Publish failed') }
+    })
+    // Move / spread this identity to a relay on another domain (same DID). Keeps
+    // one identity across both addresses; contacts follow via the DID (S2).
+    mkItem('Move to another relay…', false, () => {
+      const target = prompt('Provision this identity on another relay (base URL, e.g. https://mail.example.com):')?.trim()
+      if (!target) return
+      // Needs the password to unseal the master secret (scoped token + binding
+      // signature) — the seed is never persisted.
+      const password = prompt('Enter your password to authorize the move:')
+      if (password) moveIdentityToRelay(email, target, password)
+    })
+    // Per-relay: drop just THIS endpoint from the identity (the card's own relay),
+    // as long as it isn't the identity's last one. Republishes so the DID document
+    // no longer lists it.
+    if (serverUrl && relaysFor(email).length > 1) {
+      mkItem('Remove this relay', true, async () => {
+        saveStoredAccounts(loadStoredAccounts().filter(x => !(x.email === email && x.serverUrl === serverUrl)))
+        for (let i = sessions.length - 1; i >= 0; i--) {
+          if (sessions[i].account.email === email && sessions[i].account.serverUrl === serverUrl) sessions.splice(i, 1)
+        }
+        import('../did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
+        renderAccountsList(); loadLeftInboxes()
+      })
+    }
     mkItem('Log out', true, async () => {
-      // Remove the identity across ALL its relays (mail + AP), stored + live.
-      saveStoredAccounts(loadStoredAccounts().filter(x => x.email !== email))
+      // Remove the whole IDENTITY across ALL its relays/addresses (per-relay
+      // removal is "Remove this relay"). Compute the identity key BEFORE tearing
+      // sessions down, then drop every endpoint that shares it.
+      const idKey = identityKeyForEmail(email)
+      const endpoints = loadStoredAccounts().filter(a => (a.did || a.email) === idKey)
+      const emails = new Set(endpoints.map(e => e.email))
+      saveStoredAccounts(loadStoredAccounts().filter(a => (a.did || a.email) !== idKey))
       for (let i = sessions.length - 1; i >= 0; i--) {
-        if (sessions[i].account.email === email) sessions.splice(i, 1)
+        if (identityKey(sessions[i]) === idKey) sessions.splice(i, 1)
       }
-      // Clear localStorage keys scoped to this account.
-      const toRemove = Object.keys(localStorage).filter(k =>
-        k === `jmap_notif_${email}` || k === `sjoin_invites_${email}`
-      )
-      toRemove.forEach(k => localStorage.removeItem(k))
-      await deleteKey(email)
-      await clearIdentityCache(email)
-      _accInfoCache.delete(email)
+      // Clear localStorage keys + PGP keys scoped to each of the identity's addresses.
+      for (const k of Object.keys(localStorage)) {
+        for (const em of emails) if (k === `jmap_notif_${em}` || k === `sjoin_invites_${em}`) localStorage.removeItem(k)
+      }
+      for (const em of emails) await deleteKey(em)
+      for (const ep of endpoints) _accInfoCache.delete(accountKey(ep))
+      await clearIdentityCache(idKey)
       renderAccountsList()
     })
     document.body.appendChild(menu)
@@ -1886,43 +1967,77 @@ export async function setupLeftPane() {
     })
   }
 
-  // Add the relay an identity is missing (mail→+ap, or ap→+mail). Reuses the
-  // identity's EXISTING envelope — a freshly built one has a different fingerprint
-  // and the anchor would reject it as a different owner (409). Same envelope →
-  // same auth_token → the new relay logs in and merges into the same inbox.
-  async function provisionMissingRelay(email: string, existingUrl: string, missingUrl: string): Promise<void> {
-    const username = email.split('@')[0]
-    const existing = sessions.find(s => s.account.email === email && s.account.serverUrl === existingUrl)
-      ?? sessions.find(s => s.account.email === email)
+  // Move / spread an identity to a relay on a DIFFERENT domain (S2). Provisions
+  // the SAME envelope (→ same seed → same DID) at the target; the target's apex
+  // assigns a new address (localpart@newdomain), which the response returns. The
+  // new endpoint is tagged with the identity's DID so it merges under one
+  // identity (A1) and its messages unify (A2). Re-publishing lists the new
+  // address in alsoKnownAs so contacts following the DID can reach the move —
+  // the core of domain-death portability (a).
+  async function moveIdentityToRelay(email: string, targetUrl: string, password: string): Promise<void> {
+    const tgt = targetUrl.replace(/\/$/, '')
+    const existing = relaysFor(email)[0]
     if (!existing) { showSysMsg('No connected session for this identity'); return }
+    const username = email.split('@')[0]
     try {
-      const env = await fetchEnvelope(existingUrl, email)
+      const { getDidRecord, storeDidRecord } = await import('../did/store.ts')
+      const rec = await getDidRecord(email)
+      if (!rec) { showSysMsg('No DID for this identity'); return }
+      // The scoped token + binding signature need the master secret, which only
+      // the password unseals (the seed is never persisted). Get it from any of the
+      // identity's existing cryptenv relays.
+      const env = await fetchEnvelope(existing.account.serverUrl, existing.account.email)
       if (!env) { showSysMsg('Could not read the account envelope'); return }
-      const resp = await fetch(`${missingUrl.replace(/\/$/, '')}/account/provision`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, envelope: env }),
+      let masterSecret: Uint8Array
+      try { masterSecret = (await unsealEnvelope(env, password)).masterSecret }
+      catch { showSysMsg('Incorrect password'); return }
+      // Bind to the target with a signature (no secret leaves); a move to a
+      // third-party relay does NOT get the envelope (recovery stays seed-only).
+      const { provisionAccount } = await import('../did/provision.ts')
+      const res = await provisionAccount({
+        serverUrl: tgt, username, did: rec.did,
+        rootPrivateKey: hexToBytes(rec.rootPrivateKey), masterSecret,
       })
-      if (resp.status === 409) { showSysMsg('That relay is already owned by a different key'); return }
-      if (!resp.ok) { showSysMsg(`Provision failed (${resp.status})`); return }
-      const password = existing.account.password
-      const session = await initSession({ serverUrl: missingUrl, email, password }).catch(() => null)
+      if (res.conflict) { showSysMsg('That address is owned by a different key'); return }
+      if (!res.ok) { showSysMsg(`Move failed (${res.status})`); return }
+      const newEmail = res.email || `${username}@${new URL(tgt).hostname}`
+      const session = await initSession({ serverUrl: tgt, email: newEmail, password: res.password!, did: rec.did }).catch(() => null)
       if (!session) { showSysMsg('Provisioned but failed to connect'); return }
-      const kek = (existing as any).kek as Uint8Array | undefined
-      if (kek) (session as any).kek = kek
-      if (!sessions.some(s => s.account.email === email && s.account.serverUrl === missingUrl)) sessions.push(session)
+      session.account.did = rec.did
+      // initSession already fires fetchRelayInfo(tgt) fire-and-forget, but the
+      // card renders synchronously right after — awaiting it explicitly here
+      // (idempotent no-op once cached) ensures the FIRST paint already knows
+      // whether tgt is mail or activitypub, instead of falling back to the
+      // home-ap_url guess (wrong for any foreign AP relay) with nothing to
+      // ever correct the label afterward — protoEl.textContent is set once at
+      // card-creation time and never revisited.
+      const { fetchRelayInfo } = await import('../context.ts')
+      await fetchRelayInfo(tgt)
+      const { deriveKek } = await import('../cryptenv.ts')
+      const kek = await deriveKek(masterSecret)
+      ;(session as any).kek = kek
+      if (!sessions.some(s => s.account.email === newEmail && s.account.serverUrl === tgt)) sessions.push(session)
       const stored = loadStoredAccounts()
-      if (!stored.some(a => a.email === email && a.serverUrl === missingUrl)) {
-        saveStoredAccounts([...stored, { serverUrl: missingUrl, email, password }])
+      if (!stored.some(a => a.email === newEmail && a.serverUrl === tgt)) {
+        saveStoredAccounts([...stored, { serverUrl: tgt, email: newEmail, password: res.password!, did: rec.did }])
       }
-      if (kek) initPGPForSession(session, kek)
-      if (isApRelay(missingUrl)) advertiseOwnAvatarForEmail(email)
-      // Re-arm polling so the newly added relay gets its own live SSE connection;
-      // otherwise its new messages wouldn't surface until a page reload.
+      initPGPForSession(session, kek)
+      // Mirror the DID record under the new address so it stays resolvable if the
+      // new endpoint later becomes the representative (e.g. the old one is dropped).
+      await storeDidRecord({ ...rec, email: newEmail })
+      if (isApRelay(tgt)) advertiseOwnAvatarForEmail(newEmail)
       startPolling()
-      showSysMsg('Relay added')
       renderAccountsList()
       loadLeftInboxes()
-    } catch (e) { console.warn('[addrelay] failed', e); showSysMsg('Could not add relay') }
+      // The move itself (provision + connect, above) is fast; publishing the
+      // updated relay list to the DHT is the slow part (several seconds per
+      // gateway). Report them as two distinct steps so a contact-discovery
+      // wait isn't mistaken for the move having failed or hung.
+      showSysMsg(`Moved — also reachable at ${newEmail}. Publishing to the network…`, 30000)
+      import('../did/publish.ts').then(m => m.publishOneVisible(email)).then(ok => {
+        showSysMsg(ok ? `Published — ${newEmail} is now discoverable` : 'Moved, but no gateway accepted the publish (will retry automatically)')
+      }).catch(() => { showSysMsg('Moved, but publishing to the network failed (will retry automatically)') })
+    } catch (e) { console.warn('[move] failed', e); showSysMsg('Could not move identity') }
   }
 
   function renderAccountsList() {
@@ -1937,21 +2052,21 @@ export async function setupLeftPane() {
       $list.appendChild(msg)
       return
     }
-    // One row per identity (email). An identity may span several relay accounts
-    // (mail + ActivityPub); show it once, with a badge for its connected relays.
-    const seenEmails = new Set<string>()
-    const identityAccounts = accounts.filter(a => {
-      if (seenEmails.has(a.email)) return false
-      seenEmails.add(a.email); return true
-    })
     const relayLabel = (url: string): string => {
       try { return new URL(url).hostname.split('.')[0] } catch { return '?' }
     }
-    for (const a of identityAccounts) {
-      const relays = accounts.filter(x => x.email === a.email)
-      const session = sessions.find(s => s.account.email === a.email)
+    const protoLabel = (url: string): string => isApRelay(url) ? 'AP' : 'SMTP'
+    // One card per RELAY endpoint. Identity-by-DID: the DID is the identity; each
+    // relay is a concrete endpoint you see and manage (SMTP, ActivityPub, …).
+    // Cards of the same identity share a DID (shown small on each); sorting by
+    // did keeps an identity's relays adjacent.
+    const idKeyOf = (x: { did?: string; email: string }) => x.did || x.email
+    const relayCards = [...accounts].sort((x, y) =>
+      idKeyOf(x).localeCompare(idKeyOf(y)) || x.serverUrl.localeCompare(y.serverUrl))
+    for (const a of relayCards) {
+      const session = sessions.find(s => s.account.email === a.email && s.account.serverUrl === a.serverUrl)
       const connected = !!session
-      const cached = _accInfoCache.get(a.email) ?? {}
+      const cached = _accInfoCache.get(a.email + '\0' + a.serverUrl) ?? {}
 
       const row = document.createElement('div')
       row.className = 'cmd-page-row'
@@ -1982,68 +2097,45 @@ export async function setupLeftPane() {
       headRow.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0'
       const dot = document.createElement('span')
       dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${connected ? '#34c759' : '#ff3b30'}`
-      const name = document.createElement('span')
-      name.style.cssText = 'font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
-      name.textContent = cached.name || a.email.split('@')[0]
-      const emailEl = document.createElement('span')
-      emailEl.style.cssText = 'font-size:12px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
-      emailEl.textContent = `<${a.email}>`
-      headRow.append(dot, name, emailEl)
+      const protoEl = document.createElement('span')
+      protoEl.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--accent2, #888);flex-shrink:0'
+      protoEl.textContent = protoLabel(a.serverUrl)
+      const sep = document.createElement('span')
+      sep.style.cssText = 'color:var(--text-dim);flex-shrink:0'
+      sep.textContent = ':'
+      const addrEl = document.createElement('span')
+      addrEl.style.cssText = 'font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
+      addrEl.textContent = a.email
+      headRow.append(dot, protoEl, sep, addrEl)
 
       const statsRow = document.createElement('div')
-      statsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:var(--text-dim)'
+      statsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:var(--text-dim)'
+      const fmtUnread = (c: { unread?: number; total?: number }) => `Unread: ${c.unread ?? '…'}/${c.total ?? '…'}`
       const statUnread = document.createElement('span')
       statUnread.dataset.kind = 'unread'
-      statUnread.textContent = cached.unread != null ? `Unread: ${cached.unread}` : 'Unread: …'
-      const statTotal = document.createElement('span')
-      statTotal.dataset.kind = 'total'
-      statTotal.textContent = cached.total != null ? `Total: ${cached.total}` : 'Total: …'
+      statUnread.textContent = fmtUnread(cached)
       const statPgp = document.createElement('span')
       statPgp.dataset.kind = 'pgp'
-      statPgp.textContent = cached.pgp == null ? 'PGP …' : cached.pgp ? 'PGP ✓' : 'PGP ✗'
+      statPgp.textContent = cached.pgp == null ? '' : cached.pgp ? 'PGP ✓' : 'PGP ✗'
       const statSync = document.createElement('span')
       statSync.dataset.kind = 'sync'
       statSync.textContent = `Sync: ${fmtRelTime(cached.lastSyncAt)}`
-      const statRelays = document.createElement('span')
-      statRelays.dataset.kind = 'relays'
-      statRelays.textContent = relays.map(r => relayLabel(r.serverUrl)).join(' · ')
-      // A home-domain identity missing one relay (mail-only / ap-only) gets a
-      // clickable badge — looks the same, but hovering reveals it, and clicking
-      // provisions the missing relay (reusing the existing envelope). Once both
-      // relays are present the badge is plain / unclickable.
-      {
-        const cfg = (window as any).__BISET_CONFIG__
-        const homeHost = cfg?.hostname
-        const mailUrl = cfg?.mail_url || (homeHost ? `https://mail.${homeHost}` : '')
-        const apUrl = cfg?.ap_url || (homeHost ? `https://ap.${homeHost}` : '')
-        const norm = (u: string) => u.replace(/\/$/, '')
-        const urls = relays.map(r => norm(r.serverUrl))
-        const apexOf2 = (u: string) => { try { return new URL(u).hostname.split('.').slice(1).join('.') } catch { return '' } }
-        const emailDomain = a.email.split('@')[1] ?? ''
-        const isHome = emailDomain === homeHost || (!!mailUrl && emailDomain === apexOf2(mailUrl)) || (!!apUrl && emailDomain === apexOf2(apUrl))
-        let missingUrl = '', existingUrl = ''
-        if (isHome && connected) {
-          const hasMail = !!mailUrl && urls.includes(norm(mailUrl))
-          const hasAp = !!apUrl && urls.includes(norm(apUrl))
-          if (hasMail && !hasAp && apUrl) { missingUrl = apUrl; existingUrl = mailUrl }
-          else if (hasAp && !hasMail && mailUrl) { missingUrl = mailUrl; existingUrl = apUrl }
-        }
-        if (missingUrl) {
-          statRelays.style.cursor = 'pointer'
-          statRelays.title = `Click to add ${relayLabel(missingUrl)}`
-          statRelays.addEventListener('mouseover', () => { statRelays.style.textDecoration = 'underline' })
-          statRelays.addEventListener('mouseout', () => { statRelays.style.textDecoration = 'none' })
-          statRelays.addEventListener('click', (ev) => {
-            ev.stopPropagation()
-            statRelays.textContent = 'Adding…'
-            statRelays.style.cursor = 'default'; statRelays.style.textDecoration = 'none'
-            provisionMissingRelay(a.email, existingUrl, missingUrl)
-          })
-        }
-      }
-      statsRow.append(statRelays, statUnread, statTotal, statPgp, statSync)
+      statsRow.append(statUnread, statPgp, statSync)
 
-      left.append(headRow, statsRow)
+      // The identity IS the DID (identity-by-DID) — surface it. The address in
+      // the header is just its current primary handle; this line is the stable
+      // root that binds all the endpoints above. Click to copy.
+      const didLine = document.createElement('div')
+      if (a.did) {
+        const suffix = a.did.replace(/^did:dht:/, '')
+        didLine.style.cssText = 'font-size:11px;color:var(--text-dim);font-family:ui-monospace,monospace;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
+        didLine.textContent = `did:dht:${suffix.slice(0, 8)}…${suffix.slice(-6)}`
+        didLine.title = `${a.did}\n(click to copy)`
+        didLine.addEventListener('click', (ev) => { ev.stopPropagation(); navigator.clipboard?.writeText(a.did!).then(() => showSysMsg('DID copied')).catch(() => {}) })
+        left.append(headRow, didLine, statsRow)
+      } else {
+        left.append(headRow, statsRow)
+      }
 
       const menuBtn = document.createElement('button')
       menuBtn.type = 'button'
@@ -2054,20 +2146,18 @@ export async function setupLeftPane() {
       menuBtn.addEventListener('mouseout', () => { menuBtn.style.background = 'none' })
       menuBtn.addEventListener('click', (ev) => {
         ev.stopPropagation()
-        openAccountMenu(menuBtn, a.email)
+        openAccountMenu(menuBtn, a.email, a.serverUrl)
       })
 
       row.append(avatar, left, menuBtn)
       $list.appendChild(row)
 
-      if (connected) {
-        fetchAccountInfo(a.email).then(info => {
+      if (session) {
+        fetchAccountInfo(session).then(info => {
           if (!info) return
-          statUnread.textContent = `Unread: ${info.unread ?? 0}`
-          statTotal.textContent = `Total: ${info.total ?? 0}`
-          statPgp.textContent = info.pgp ? 'PGP ✓' : 'PGP ✗'
+          statUnread.textContent = fmtUnread(info)
+          statPgp.textContent = info.pgp == null ? '' : info.pgp ? 'PGP ✓' : 'PGP ✗'
           statSync.textContent = `Sync: ${fmtRelTime(info.lastSyncAt)}`
-          if (info.name) name.textContent = info.name
         }).catch(() => {})
       }
     }
@@ -2128,12 +2218,14 @@ export async function setupLeftPane() {
       let badPw = false
       const resolveAuth = async (server: string): Promise<string | null> => {
         const env = await fetchEnvelope(server, email)
-        if (!env) return pw // non-cryptenv relay: use the raw password
+        if (!env) return pw // non-cryptenv / DID-less relay: use the raw password
         try {
           const u = await unsealEnvelope(env, pw)
           if (!kek) kek = u.kek
           if (!masterSecret) masterSecret = u.masterSecret
-          return authTokenToBasicAuth(u.authToken)
+          // Relay-scoped token for THIS server (not a shared master token).
+          const { password } = await relayAuth(u.masterSecret, server)
+          return password
         } catch { badPw = true; return null }
       }
 
@@ -2170,18 +2262,39 @@ export async function setupLeftPane() {
       // local DID record — initDid() just returns the existing one.
       const { initDid } = await import('../did/index.ts')
       const didRecord = masterSecret ? await initDid(email, masterSecret) : null
+
+      // Self-resolution (DID.md): don't just connect the relay(s) explicitly
+      // requested — also pick up any relay this identity's OWN DID document
+      // currently lists (e.g. added from another device, or after a move) that
+      // isn't among `connected` yet. Mirrors contact discovery, applied to the
+      // account holder's own identity. Best-effort; never blocks login.
+      if (didRecord && masterSecret) {
+        const { syncRelaysFromDid } = await import('../did/sync.ts')
+        const extra = await syncRelaysFromDid(didRecord.did, email, masterSecret, connected.map(c => c.server))
+        for (const e of extra) {
+          if (kek) (e.session as any).kek = kek
+          connected.push(e)
+        }
+      }
+
       // Persist + register each connected relay, deduped by (email, serverUrl) so
       // mail and AP for the same identity coexist as separate sessions.
       const stored = loadStoredAccounts()
       for (const c of connected) {
-        if (!stored.some(a => a.email === email && a.serverUrl === c.server)) {
-          stored.push({ serverUrl: c.server, email, password: c.token })
-        }
-        if (!sessions.some(s => s.account.email === email && s.account.serverUrl === c.server)) {
+        // Tag the endpoint with its DID so it groups by identity (see context.ts).
+        if (didRecord) c.session.account.did = didRecord.did
+        // Each relay's own address — usually == the login email, but a
+        // self-synced relay (see syncRelaysFromDid above) may carry a
+        // different address (svc.address) after a move.
+        const relayEmail: string = c.session.account.email || email
+        const existingStored = stored.find(a => a.email === relayEmail && a.serverUrl === c.server)
+        if (existingStored) { if (didRecord) existingStored.did = didRecord.did }
+        else stored.push({ serverUrl: c.server, email: relayEmail, password: c.token, did: didRecord?.did })
+        if (!sessions.some(s => s.account.email === relayEmail && s.account.serverUrl === c.server)) {
           sessions.push(c.session)
         }
         if (kek) initPGPForSession(c.session, kek)
-        if (didRecord) { const { putDid } = await import('../cryptenv.ts'); putDid(c.server, email, c.token, didRecord.did) }
+        if (didRecord) { const { putDid } = await import('../cryptenv.ts'); putDid(c.server, relayEmail, c.token, didRecord.did) }
       }
       saveStoredAccounts(stored)
       addBtn.disabled = false; addBtn.textContent = 'Add'

@@ -15,6 +15,13 @@ export interface DidService {
   id: string // fragment only, e.g. "mail" (not the full did#mail)
   type: string
   serviceEndpoint: string[]
+  // biset extension (did:dht additional properties): the transport this relay
+  // bridges and the identity's address ON this relay. This is what links a
+  // relay endpoint to its own address + protocol — so AP and SMTP endpoints of
+  // one DID can carry DIFFERENT addresses (they no longer must match; the DID
+  // binds them). Unknown to generic did:dht resolvers, which ignore extra props.
+  protocol?: string // e.g. 'mail' | 'activitypub'
+  address?: string  // this endpoint's address, e.g. y@biset.md
 }
 
 export interface DidDocument {
@@ -73,7 +80,9 @@ export function documentToRecords(doc: DidDocument): DnsRecord[] {
   const svcIds: string[] = []
   doc.service.forEach((svc, i) => {
     svcIds.push(`s${i}`)
-    const value = `id=${svc.id};t=${svc.type};se=${svc.serviceEndpoint.join(',')}`
+    let value = `id=${svc.id};t=${svc.type};se=${svc.serviceEndpoint.join(',')}`
+    if (svc.protocol) value += `;proto=${svc.protocol}`
+    if (svc.address) value += `;addr=${svc.address}`
     records.push({ name: `_s${i}._did.`, type: 'TXT', ttl: TTL, rdata: toChunks(value) })
   })
 
@@ -118,7 +127,7 @@ export function recordsToDocument(did: string, records: DnsRecord[]): DidDocumen
       const raw = byName.get(`_${sid}._did`)
       if (!raw) continue
       const f = parseFields(raw)
-      if (f.id && f.t && f.se) service.push({ id: f.id, type: f.t, serviceEndpoint: f.se.split(',') })
+      if (f.id && f.t && f.se) service.push({ id: f.id, type: f.t, serviceEndpoint: f.se.split(','), protocol: f.proto, address: f.addr })
     }
   }
 
@@ -146,18 +155,24 @@ export function suffixOf(did: string): string {
 }
 
 // Builds the biset DID document: identity key + one service per relay serving
-// this identity + the address as alsoKnownAs. This is what discovery reads —
-// resolve(did).service is the relay list that solves cross-relay identity (b).
+// this identity + its address(es) as alsoKnownAs. This is what discovery reads —
+// resolve(did).service is the relay list that solves cross-relay identity (b),
+// and alsoKnownAs[0] is the current/primary address a contact should deliver to
+// (solves (a): after a move, the new address is listed here, primary-first).
 export function buildBisetDocument(
   did: string,
   identityKey: Uint8Array,
-  relays: Array<{ id: string; serverUrl: string }>,
-  address: string,
+  relays: Array<{ id: string; serverUrl: string; protocol?: string; address?: string }>,
+  addresses: string | string[],
 ): DidDocument {
+  const addrs = (Array.isArray(addresses) ? addresses : [addresses]).filter(Boolean)
   return {
     id: did,
     identityKey,
-    alsoKnownAs: address ? [`mailto:${address}`] : [],
-    service: relays.map(r => ({ id: r.id, type: 'JMAPRelay', serviceEndpoint: [r.serverUrl.replace(/\/$/, '')] })),
+    alsoKnownAs: addrs.map(a => `mailto:${a}`),
+    service: relays.map(r => ({
+      id: r.id, type: 'JMAPRelay', serviceEndpoint: [r.serverUrl.replace(/\/$/, '')],
+      protocol: r.protocol, address: r.address,
+    })),
   }
 }

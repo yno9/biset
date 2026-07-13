@@ -1,5 +1,5 @@
 import type { PendingSubmission } from '../types.ts'
-import { mailboxRoutes } from '../context.ts'
+import { mailboxRoutes, identityKey } from '../context.ts'
 import * as submissions from '../store/submissions.ts'
 import * as messages from '../store/messages.ts'
 import * as storeMailboxes from '../store/mailboxes.ts'
@@ -33,7 +33,8 @@ async function markThreadSeen(
 ): Promise<void> {
   const session = mailboxRoutes.get(mailboxName)
   const selfEmail = session?.account.email ?? mailboxName
-  const { groups } = await buildEffectiveGroups(messages.forIdentity(selfEmail), selfEmail)
+  const identity = session ? identityKey(session) : selfEmail
+  const { groups } = await buildEffectiveGroups(messages.forIdentity(identity), selfEmail)
   const threadMsgs = groups.get(threadId) ?? []
   if (!threadMsgs.length) return
 

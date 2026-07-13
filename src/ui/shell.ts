@@ -61,13 +61,19 @@ export function showApp() {
 }
 
 let _sysMsgTimer: ReturnType<typeof setTimeout> | null = null
-export function showSysMsg(text: string) {
+// durationMs: how long the toast stays up before auto-hiding. Default (1800ms)
+// suits instant confirmations; pass a longer value for a "this is still
+// working" message ahead of a slow operation (e.g. DHT republish, which takes
+// several seconds per gateway) — the follow-up completion call replaces it
+// and resets the timer to the default, so it reads as a live status right up
+// until the real outcome is known, not a toast that vanishes while work continues.
+export function showSysMsg(text: string, durationMs = 1800) {
   const el = document.getElementById('sys-msg')
   if (!el) return
   el.textContent = text
   el.classList.add('show')
   if (_sysMsgTimer) clearTimeout(_sysMsgTimer)
-  _sysMsgTimer = setTimeout(() => el.classList.remove('show'), 1800)
+  _sysMsgTimer = setTimeout(() => el.classList.remove('show'), durationMs)
 }
 
 let _pendingCounter = 0

@@ -19,7 +19,7 @@ import { readGroupHeaders, readGroupHeadersFromMime, cacheGroupHeaders, parseAut
 import { maybeHandleSecurejoin } from '../deltachat/securejoin.ts'
 import { learnAvatar, learnGroupAvatar } from '../deltachat/avatar.ts'
 import { learnApAvatar } from '../ap/avatar.ts'
-import { isApRelay, identities as ownIdentities, sessionForRelay } from '../context.ts'
+import { isApRelay, identities as ownIdentities, sessionForRelay, identityKeyForEmail } from '../context.ts'
 import { isReactionEmail, isReactionDisposition, cacheReaction, isReaction } from '../mail/reactions.ts'
 
 // Chat-Delete (deltachat spec.md "Request deletion"): the sender asks every
@@ -28,7 +28,7 @@ import { isReactionEmail, isReactionDisposition, cacheReaction, isReaction } fro
 // sender — otherwise any group member could delete someone else's message by
 // forging (their own, legitimately PGP-signed) Chat-Delete carrier.
 async function applyIncomingDelete(identityEmail: string, requestedBy: string, targetMessageId: string): Promise<void> {
-  const target = messages.forIdentity(identityEmail)
+  const target = messages.forIdentity(identityKeyForEmail(identityEmail))
     .find(m => (m.messageId as string[] | undefined)?.[0] === targetMessageId)
   if (!target) return
   const targetFrom = (target.from as any[] | undefined)?.[0]?.email as string | undefined
@@ -48,7 +48,8 @@ async function applyIncomingDelete(identityEmail: string, requestedBy: string, t
 
 export async function sync(session: AccountSession): Promise<void> {
   const { jmapClient: client, jmapAccountId: accountId, account } = session
-  const user = account.email          // identity (email) — address logic, decryption
+  const user = account.email          // this endpoint's address — From, decryption
+  const identity = account.did || user // identity id (DID) — merges across a DID's relays AND addresses
   const acctKey = accountKey(account) // per-relay storage/querystate/persist key
   const qs = querystate.get(acctKey)
 
@@ -139,7 +140,7 @@ export async function sync(session: AccountSession): Promise<void> {
       const fresh = filterNew(emails)
       // Stamp the owning account so the global store can partition by it (JMAP ids
       // collide across accounts on the same server).
-      for (const e of fresh) { (e as any)._account = acctKey; (e as any)._identity = user; (e as any)._relay = account.serverUrl }
+      for (const e of fresh) { (e as any)._account = acctKey; (e as any)._identity = identity; (e as any)._relay = account.serverUrl }
       // biset-old relay_view.go:ConvertRelayView 相当。
       // outer inReplyTo が空かつ body が PGP のとき復号して inner In-Reply-To を outer に昇格。
       // DeltaChat の Protected Headers や JMAP server が outer を拾い損ねるケースを store に入る前に補正。

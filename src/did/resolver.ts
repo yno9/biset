@@ -74,10 +74,12 @@ export async function publishTo(gatewayUrl: string, did: string, payload: Uint8A
   } catch { return false }
 }
 
-// Convenience: build + sign a document and publish it to every gateway.
+// Convenience: build + sign a document and publish it to every gateway. Fired
+// in parallel — a DHT PUT takes several seconds per gateway (mainline DHT
+// traversal latency, not something we control), so publishing to N gateways
+// sequentially took N times as long for no benefit (each PUT is independent).
 export async function publishDocument(rootPrivateKey: Uint8Array, doc: DidDocument, gatewayUrls: string[]): Promise<number> {
   const payload = buildSignedPayload(rootPrivateKey, doc)
-  let ok = 0
-  for (const gw of gatewayUrls) if (await publishTo(gw, doc.id, payload)) ok++
-  return ok
+  const results = await Promise.all(gatewayUrls.map(gw => publishTo(gw, doc.id, payload)))
+  return results.filter(Boolean).length
 }

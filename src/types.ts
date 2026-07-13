@@ -25,6 +25,12 @@ export interface StoredAccount {
   serverUrl: string
   email: string
   password: string   // base64(authToken)
+  // The identity this endpoint belongs to (did:dht:…). Identity-by-DID: one DID
+  // may span several (serverUrl, email) endpoints — including different email
+  // addresses after a move. Populated at password login (derived from the seed)
+  // and persisted so a silent reboot can group without re-deriving. Absent =
+  // not yet known; such an endpoint falls back to grouping by email.
+  did?: string
 }
 
 export interface Config {
