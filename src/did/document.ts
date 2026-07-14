@@ -29,6 +29,11 @@ export interface DidDocument {
   identityKey: Uint8Array // raw Ed25519 public key (the _k0 key)
   alsoKnownAs: string[]
   service: DidService[]
+  // biset extension (did:dht additional property, same pattern as service's
+  // protocol/address): a self-asserted display name — purely a UX label
+  // (e.g. shown instead of the raw did:dht string), not verified by anyone.
+  // Same trust level as any social profile's display name.
+  name?: string
 }
 
 export interface DnsRecord {
@@ -48,7 +53,8 @@ function b64urlEncode(bytes: Uint8Array): string {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 function b64urlDecode(s: string): Uint8Array {
-  const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + '=='.slice((s.length + 3) % 4)
+  const pad = (4 - (s.length % 4)) % 4
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat(pad)
   const bin = atob(b64)
   const out = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
@@ -94,8 +100,12 @@ export function documentToRecords(doc: DidDocument): DnsRecord[] {
   // identity key must have (auth, asm, inv, del — spec Create step 2b).
   const parts = ['v=0', 'vm=k0', 'auth=k0', 'asm=k0', 'inv=k0', 'del=k0']
   if (svcIds.length) parts.push(`svc=${svcIds.join(',')}`)
+  // base64url-encoded (not raw text) so an arbitrary display name — which
+  // could contain ';' or ',' — can never collide with the field separators
+  // parseFields()/service-endpoint-list splitting relies on.
+  if (doc.name) parts.push(`name=${b64urlEncode(new TextEncoder().encode(doc.name))}`)
   const id = suffixOf(doc.id)
-  records.push({ name: `_did.${id}.`, type: 'TXT', ttl: TTL, rdata: [parts.join(';')] })
+  records.push({ name: `_did.${id}.`, type: 'TXT', ttl: TTL, rdata: toChunks(parts.join(';')) })
 
   return records
 }
@@ -117,24 +127,23 @@ export function recordsToDocument(did: string, records: DnsRecord[]): DidDocumen
   if (!k0Fields.k) throw new Error('_k0 record missing k=')
   const identityKey = b64urlDecode(k0Fields.k)
 
-  // Services from the root record's svc= list.
+  // Services + name from the root record's svc=/name= fields.
   const root = byName.get('_did')
+  const rootFields = root ? parseFields(root) : {}
   const service: DidService[] = []
-  if (root) {
-    const rootFields = parseFields(root)
-    const svcList = rootFields.svc ? rootFields.svc.split(',') : []
-    for (const sid of svcList) {
-      const raw = byName.get(`_${sid}._did`)
-      if (!raw) continue
-      const f = parseFields(raw)
-      if (f.id && f.t && f.se) service.push({ id: f.id, type: f.t, serviceEndpoint: f.se.split(','), protocol: f.proto, address: f.addr })
-    }
+  const svcList = rootFields.svc ? rootFields.svc.split(',') : []
+  for (const sid of svcList) {
+    const raw = byName.get(`_${sid}._did`)
+    if (!raw) continue
+    const f = parseFields(raw)
+    if (f.id && f.t && f.se) service.push({ id: f.id, type: f.t, serviceEndpoint: f.se.split(','), protocol: f.proto, address: f.addr })
   }
+  const name = rootFields.name ? new TextDecoder().decode(b64urlDecode(rootFields.name)) : undefined
 
   const akaRaw = byName.get('_aka._did')
   const alsoKnownAs = akaRaw ? akaRaw.split(',') : []
 
-  return { id: did, identityKey, alsoKnownAs, service }
+  return { id: did, identityKey, alsoKnownAs, service, name }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -164,6 +173,7 @@ export function buildBisetDocument(
   identityKey: Uint8Array,
   relays: Array<{ id: string; serverUrl: string; protocol?: string; address?: string }>,
   addresses: string | string[],
+  name?: string,
 ): DidDocument {
   const addrs = (Array.isArray(addresses) ? addresses : [addresses]).filter(Boolean)
   return {
@@ -174,5 +184,6 @@ export function buildBisetDocument(
       id: r.id, type: 'JMAPRelay', serviceEndpoint: [r.serverUrl.replace(/\/$/, '')],
       protocol: r.protocol, address: r.address,
     })),
+    name,
   }
 }

@@ -1,4 +1,5 @@
 import type { Email } from 'jmap-rfc-types'
+import { relaysForId, accountKey } from '../context.ts'
 
 // JMAP email ids are unique only WITHIN one account. With multiple accounts on the
 // same server, two accounts can share an id string, so the store is keyed by
@@ -31,15 +32,20 @@ export function forAccount(account: string): Email[] {
   return [...store.values()].filter(e => accountOf(e) === account)
 }
 
-// The identity (email) a message belongs to, independent of which relay it came
-// from. Set at ingest alongside `_account` (the per-relay storage key). Used to
-// build the merged inbox view that unifies an identity's relays.
-export function identityOf(email: Email): string {
-  return (email as any)._identity as string ?? accountOf(email)
-}
-
+// Every message belonging to one identity (DID, or email fallback for a
+// DID-less relay) — spans every relay/address that identity currently has a
+// live session on. Computed dynamically from `sessions` (relaysForId) rather
+// than a stamped `_identity` field: a message only ever needs to know its own
+// `_account`, and "which accounts share this identity" is exactly what
+// relaysForId already answers on demand — the same organize-don't-duplicate
+// principle did/contacts.ts's contact-DID grouping uses for correspondents,
+// applied to the user's own multi-relay identity instead. This also means a
+// lazily-DID-migrated identity's older messages (ingested before the account
+// had a DID) are picked up correctly with no re-stamping needed — `_account`
+// never changes, only which identity currently claims it.
 export function forIdentity(identity: string): Email[] {
-  return [...store.values()].filter(e => identityOf(e) === identity)
+  const accounts = new Set(relaysForId(identity).map(s => accountKey(s.account)))
+  return [...store.values()].filter(e => accounts.has(accountOf(e)))
 }
 
 export function byThread(account: string, threadId: string): Email[] {

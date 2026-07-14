@@ -31,8 +31,9 @@ export function identityKey(s: AccountSession): string {
 }
 // Identity key for an email address: its DID if a connected session carries one,
 // else the email itself (DID-less relays — plain IMAP etc. — still work, keyed by
-// address, exactly as before). This is the value the message store stamps as
-// `_identity`, so consumers that only hold an email map through this to query it.
+// address, exactly as before). This is the key store/messages.ts's forIdentity()
+// resolves dynamically (via relaysForId), so consumers that only hold an email
+// map through this to query it.
 export function identityKeyForEmail(email: string): string {
   return sessions.find(s => s.account.email === email)?.account.did || email
 }
@@ -72,9 +73,12 @@ export function sessionForRelay(email: string, serverUrl: string): AccountSessio
 }
 
 // ── Relay-advertised display info (label/color) ─────────────────────────────────
-// Each relay serves GET /relay-info → {label, color, type}. biset caches it per
-// relay so conversation UI stays relay-agnostic (no hardcoded protocol knowledge).
-export interface RelayInfo { label: string; color: string; type?: 'mail' | 'activitypub' }
+// Each relay serves GET /relay-info → {label, color, type, domain?}. biset caches
+// it per relay so conversation UI stays relay-agnostic (no hardcoded protocol
+// knowledge). `domain`: the domain a NEW account actually lands under
+// (server-side provisionDomain()) — not necessarily this relay's own hostname
+// (e.g. t.biset.md accounts are provisioned on the mail.biset.md relay).
+export interface RelayInfo { label: string; color: string; type?: 'mail' | 'activitypub'; domain?: string }
 const relayInfoCache = new Map<string, RelayInfo>()
 
 export function relayInfoFor(serverUrl?: string): RelayInfo | undefined {
@@ -112,9 +116,9 @@ export async function fetchRelayInfo(serverUrl: string): Promise<void> {
   try {
     const r = await fetch(`${url}/relay-info`)
     if (!r.ok) return
-    const j = await r.json() as { label?: string; color?: string; type?: string }
+    const j = await r.json() as { label?: string; color?: string; type?: string; domain?: string }
     const type = j?.type === 'mail' || j?.type === 'activitypub' ? j.type : undefined
-    if (j?.label) relayInfoCache.set(url, { label: String(j.label), color: String(j.color || '#64748b'), type })
+    if (j?.label) relayInfoCache.set(url, { label: String(j.label), color: String(j.color || '#64748b'), type, domain: j.domain })
   } catch { /* best-effort */ }
 }
 
@@ -179,4 +183,39 @@ export function saveStoredAccounts(accounts: StoredAccount[]): void {
   // Best-effort mirror for sw.ts (see store/idb.ts STORES.accounts) — the
   // Service Worker can't read localStorage, only IndexedDB.
   idb.put(idb.STORES.accounts, accounts, 'all').catch(() => {})
+}
+
+// ── Active identity (2026-07-14: one client session = one identity) ────────────
+// biset can *store* credentials for several distinct identities (DIDs) at
+// once, but only ever loads one of them into `sessions[]` — switching to a
+// different one is logout, then log back in as that identity (Gmail-style
+// account switching and the finer "add a relay to me" vs "add a different
+// identity" UX are both deferred; see ARC.md). This is just which identity
+// key (did || email) that is, persisted so a reload keeps showing the same
+// one instead of picking arbitrarily.
+const ACTIVE_IDENTITY_KEY = 'biset_active_identity'
+
+export function getActiveIdentity(): string | null {
+  try { return localStorage.getItem(ACTIVE_IDENTITY_KEY) } catch { return null }
+}
+
+export function setActiveIdentity(identity: string): void {
+  try { localStorage.setItem(ACTIVE_IDENTITY_KEY, identity) } catch { /* quota / private mode */ }
+}
+
+// Narrows a full stored-accounts list down to the ones belonging to the
+// active identity — main.ts's boot sequence uses this instead of the raw
+// list so `sessions[]` only ever spans one identity. If no active identity
+// is set yet (first launch), or the one that was set no longer has any
+// stored accounts (logged out of it entirely), adopts whichever identity IS
+// present instead of returning nothing.
+export function accountsForActiveIdentity(accounts: StoredAccount[]): StoredAccount[] {
+  if (!accounts.length) return []
+  let active = getActiveIdentity()
+  const matches = (a: StoredAccount) => (a.did || a.email) === active
+  if (!active || !accounts.some(matches)) {
+    active = accounts[0]!.did || accounts[0]!.email
+    setActiveIdentity(active)
+  }
+  return accounts.filter(matches)
 }

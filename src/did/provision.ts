@@ -11,8 +11,10 @@
 //
 // Nothing secret leaves: the relay gets a public DID, a signature, a token HASH,
 // and (own relays only) the already-public wrapped envelope.
-import { relayAuth, hostOf, type Envelope } from '../cryptenv.ts'
+import { relayAuth, hostOf, fetchEnvelope, unsealEnvelope, type Envelope } from '../cryptenv.ts'
 import { signBinding } from './binding.ts'
+import { getDidRecord } from './store.ts'
+import { hexToBytes } from '../utils.ts'
 
 export interface ProvisionParams {
   serverUrl: string
@@ -31,6 +33,47 @@ export interface ProvisionResult {
   email?: string
   password?: string // base64 scoped auth token, for the follow-up login
   conflict?: boolean
+}
+
+export interface UnsealedIdentity {
+  did: string
+  rootPrivateKey: Uint8Array
+  masterSecret: Uint8Array
+  kek: Uint8Array
+  envelope: Envelope
+}
+
+// Recovers the CURRENTLY LOGGED IN identity's DID + master secret via
+// password — the common first step behind "add a relay/address to me"
+// (whether the target is an arbitrary relay URL or a BYO domain on biset's
+// own relay; see ARC.md 2026-07-14): unseal that identity's EXISTING
+// envelope (fetched from one of its already-connected sessions), rather than
+// building a brand new one. Not identity creation — this only ever operates
+// on an identity that already has a connected session and a local DID
+// record; callers needing a fresh identity use buildEnvelope()+initDid()
+// instead (see account-create.ts's #new flow).
+export async function unsealCurrentIdentity(
+  identityEmail: string, password: string,
+): Promise<{ ok: true; identity: UnsealedIdentity } | { ok: false; error: string }> {
+  const { relaysFor } = await import('../context.ts')
+  const existing = relaysFor(identityEmail)[0]
+  if (!existing) return { ok: false, error: 'No connected session for this identity' }
+  const rec = await getDidRecord(identityEmail)
+  if (!rec) return { ok: false, error: 'No DID for this identity' }
+  const envelope = await fetchEnvelope(existing.account.serverUrl, existing.account.email)
+  if (!envelope) return { ok: false, error: 'Could not read the account envelope' }
+  try {
+    const unsealed = await unsealEnvelope(envelope, password)
+    return {
+      ok: true,
+      identity: {
+        did: rec.did, rootPrivateKey: hexToBytes(rec.rootPrivateKey),
+        masterSecret: unsealed.masterSecret, kek: unsealed.kek, envelope,
+      },
+    }
+  } catch {
+    return { ok: false, error: 'Incorrect password' }
+  }
 }
 
 export async function provisionAccount(p: ProvisionParams): Promise<ProvisionResult> {

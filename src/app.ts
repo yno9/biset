@@ -21,6 +21,7 @@ import { deleteAllKeys } from './pgp/keys.ts'
 import { clearAll as clearLocalCache } from './store/cache.ts'
 import { loginViaEnvelope, authTokenToBasicAuth } from './cryptenv.ts'
 import { mailboxNameFromId } from './utils.ts'
+import { contactIdentityKey, allKnownAddressesFor } from './did/contacts.ts'
 import type { ProcessedMessage } from './state.ts'
 
 export { loginViaEnvelope, authTokenToBasicAuth }
@@ -83,8 +84,9 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
     const userEmail = endpoints[0]?.account.email ?? identityId
     const accountId = userEmail
 
-    // This identity's messages, merged across ALL its relays and addresses (the
-    // store stamps _identity = the DID at ingest, so a moved identity unifies).
+    // This identity's messages, merged across ALL its relays and addresses
+    // (forIdentity resolves the DID's current sessions dynamically, so a
+    // moved identity unifies without needing any stamped field to catch up).
     const ownMessages = messages.forIdentity(identityId)
 
     // First pass: build threadId → groupId mapping for routing replies.
@@ -170,7 +172,10 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
       const contact = isSent ? (toEmails[0] ?? '') : fromEmail
       if (!contact || !mbxName) continue
 
-      const key = `${userEmail}\0${mbxName}\0${contact}`
+      // Group by the contact's DID when contacts.json has learned one, not the
+      // literal address — so a contact who migrated relays mid-conversation
+      // stays one inbox row instead of forking into two (see did/contacts.ts).
+      const key = `${userEmail}\0${mbxName}\0${contactIdentityKey(contact)}`
       const existing = result.get(key)
       if (has_unread) unreadCounts.set(key, (unreadCounts.get(key) ?? 0) + 1)
 
@@ -212,9 +217,9 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
 
 // ── Messages for inbox ────────────────────────────────────────────────────────
 
-// `identity` is the identity key (DID, or email for a DID-less relay) — the value
-// the store stamps as _identity. Callers map their email through identityKey /
-// identityKeyForEmail before calling.
+// `identity` is the identity key (DID, or email for a DID-less relay) —
+// forIdentity() resolves it to the matching `_account` set dynamically.
+// Callers map their email through identityKey / identityKeyForEmail before calling.
 export function getInboxEmails(mailbox: string, contact: string, selfAddr: string, identity: string): Email[] {
   if (contact.startsWith('group:')) {
     const groupId = contact.slice(6)
@@ -246,6 +251,7 @@ export function getInboxEmails(mailbox: string, contact: string, selfAddr: strin
       if (tid) groupThreadIds.add(tid)
     }
   }
+  const contactAddrs = allKnownAddressesFor(contact)
   return allMsgs.filter(email => {
     if (isSecurejoinEmail(email)) return false
     if (isReaction(email)) return false
@@ -262,7 +268,10 @@ export function getInboxEmails(mailbox: string, contact: string, selfAddr: strin
     const toEmails = ((email.to as any[]) ?? []).map((a: any) => a.email as string)
     const isSent = fromEmail === selfAddr
     const emailContact = isSent ? (toEmails[0] ?? '') : fromEmail
-    return emailContact === contact
+    // Match any address grouped under the same contact-DID as `contact` (not
+    // just the literal address), so a merged inbox row (see loadInboxSummaries)
+    // actually surfaces messages sent to/from every address the contact has used.
+    return contactAddrs.includes(emailContact)
   })
 }
 
@@ -270,9 +279,9 @@ export async function fetchInboxMessages(inboxSummary: InboxSummary): Promise<Pr
   const session = activeSession()
   if (!session) return []
   const selfAddr = session.jmapAccountId || session.account.email
-  // Query by the identity key (DID, or email for a DID-less relay) — the same
-  // value the store stamps as _identity — so the thread isn't empty for a
-  // DID-bearing account (whose messages are stamped with the DID, not the email).
+  // Query by the identity key (DID, or email for a DID-less relay) — forIdentity()
+  // resolves this to the account's current sessions dynamically, so the thread
+  // isn't empty for a DID-bearing account (grouped by DID, not by literal email).
   const identity = identityKey(session)
   const emails = getInboxEmails(inboxSummary.mailbox, inboxSummary.contact, selfAddr, identity)
   const msgs = emails.map(e => emailToMsg(e, selfAddr)).sort((a, b) => a.ts - b.ts)

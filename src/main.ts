@@ -1,9 +1,10 @@
 import {
-  sessions, addSession, setCurrentInbox, currentInbox, loadStoredAccounts,
+  sessions, addSession, setCurrentInbox, currentInbox, loadStoredAccounts, accountsForActiveIdentity,
 } from './context.ts'
 import { initSession, initPGPForSession, loadInboxSummaries } from './app.ts'
 import type { InboxSummary } from './types.ts'
 import { inboxToHash, parseInboxHash, isProgrammaticScroll, markProgrammaticScroll } from './utils.ts'
+import { contactIdentityKey, representativeAddressForDid } from './did/contacts.ts'
 import { showApp, startPolling, fetchMessages } from './ui/shell.ts'
 import { loadLeftInboxes, switchInbox, showMenuPage, setupLeftPane, refreshAccountsList, menuTargetInbox, openComposeTo, syncNotifToggle } from './ui/left-pane.ts'
 import { setupNewUserPage, showNewUserPage } from './ui/account-create.ts'
@@ -17,10 +18,16 @@ import { loadFromIDB as loadQuerystateFromIDB } from './jmap/querystate.ts'
 // Inbox hash build/parse lives in utils (inboxToHash / parseInboxHash) so the
 // left pane's switchInbox and this router encode permalinks identically.
 
+// The complete, fixed set of menu-page names (LP_COMMANDS in left-pane.ts).
+// A conversation permalink is now also a single, shapeless segment (just the
+// contact — see utils.ts's inboxToHash), so "no slash = menu page" no longer
+// disambiguates anything; an explicit allowlist does instead.
+const MENU_PAGE_NAMES = new Set(['account', 'config', 'compose', 'debug'])
+
 function menuHashFromHash(hash: string): string | null {
   const raw = hash.startsWith('#') ? hash.slice(1) : hash
-  if (!raw || raw.includes('/')) return null
-  return raw.startsWith('/') ? raw : '/' + raw
+  const name = raw.startsWith('/') ? raw.slice(1) : raw
+  return MENU_PAGE_NAMES.has(name) ? '/' + name : null
 }
 
 // `#compose/<addr>` opens the compose page with To pre-filled — a shareable link
@@ -30,6 +37,36 @@ function composeArgFromHash(hash: string): string | null {
   if (!raw.startsWith('compose/')) return null
   const addr = raw.slice('compose/'.length)
   try { return addr ? decodeURIComponent(addr) : null } catch { return addr || null }
+}
+
+// Resolves a permalink hash (just a contact — see utils.ts's inboxToHash)
+// against currently-loaded inboxes, regardless of which of the user's own
+// identities/mailboxes it lives under (a real but rare edge case — the same
+// contact appearing under two different logged-in identities — just picks
+// the first match). Matching goes through contactIdentityKey rather than
+// plain string equality: InboxSummary.contact is whichever literal address
+// most recently had traffic (see app.ts's loadInboxSummaries), which can
+// drift to a DIFFERENT address than what's in an old hash even for the exact
+// same DID-grouped conversation — comparing raw strings would wrongly call
+// that "not found".
+//
+// If the contact segment is a DID with no locally-known Card yet (a fresh
+// device, or a shared link opened cold), one extra live DHT resolve is
+// attempted before giving up — the same self-healing property compose's
+// DID input already has, applied to permalinks.
+async function matchInboxForHash(hash: string, inboxes: InboxSummary[]): Promise<InboxSummary | null> {
+  const parts = parseInboxHash(hash)
+  if (!parts) return null
+  const matches = (i: InboxSummary) =>
+    parts.contact.startsWith('group:')
+      ? i.contact === parts.contact
+      : contactIdentityKey(i.contact) === contactIdentityKey(parts.contact)
+  let found = inboxes.find(matches) ?? null
+  if (!found && parts.contact.startsWith('did:') && !representativeAddressForDid(parts.contact)) {
+    try { await (await import('./did/discovery.ts')).resolveDidDirect(parts.contact) } catch { /* best-effort */ }
+    found = inboxes.find(matches) ?? null
+  }
+  return found
 }
 
 // ── Per-user landing (/<localpart>[/]) ──────────────────────────────────────────
@@ -92,7 +129,10 @@ async function init() {
 }
 
 async function initInner() {
-  const accounts = loadStoredAccounts()
+  // One client session = one identity (2026-07-14) — narrow to whichever
+  // identity is currently active before anything gets initSession'd, so
+  // sessions[] (and everything merged from it) only ever spans one DID.
+  const accounts = accountsForActiveIdentity(loadStoredAccounts())
   const rawHash = location.hash
 
   // Prime the DeltaChat avatar cache so synchronous UI lookups have data, and
@@ -161,6 +201,7 @@ async function initInner() {
       validSessions.forEach(s => initPGPForSession(s!))
       advertiseAllOwnAvatars()
       import('./did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
+      import('./did/discovery.ts').then(m => m.pullOwnContacts()).catch(() => {})
       syncNotifToggle()
       refreshAccountsList()
       startPolling()
@@ -188,6 +229,7 @@ async function initInner() {
 
   // Keep our DID records alive on the DHT (best-effort — see did/publish.ts).
   import('./did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
+  import('./did/discovery.ts').then(m => m.pullOwnContacts()).catch(() => {})
 
   // Fire-and-forget PGP init (kek only available on fresh envelope login, not here)
   // sessions.forEach(s => initPGPForSession(s))
@@ -195,16 +237,7 @@ async function initInner() {
   // Determine initial inbox from hash or first available
   const inboxes = await loadInboxSummaries()
 
-  let target: InboxSummary | null = null
-
-  const hashParts = parseInboxHash(rawHash)
-  if (hashParts) {
-    target = inboxes.find(i =>
-      i.user === hashParts.user &&
-      i.mailbox === hashParts.mailbox &&
-      i.contact === hashParts.contact,
-    ) ?? null
-  }
+  let target: InboxSummary | null = await matchInboxForHash(rawHash, inboxes)
 
   if (!target) {
     target = inboxes[0] ?? null
@@ -218,7 +251,7 @@ async function initInner() {
   }
 
   setCurrentInbox(target)
-  if (!rawHash || hashParts) {
+  if (!rawHash || parseInboxHash(rawHash)) {
     try { history.replaceState(null, '', inboxToHash(target)) } catch {}
   }
 
@@ -401,12 +434,9 @@ window.addEventListener('popstate', async () => {
   const hash = location.hash
   const menuPage = menuHashFromHash(hash)
   if (menuPage) { showMenuPage(menuPage); return }
-  const parts = parseInboxHash(hash)
-  if (!parts) return
+  if (!parseInboxHash(hash)) return
   const inboxes = await loadInboxSummaries()
-  const found = inboxes.find(i =>
-    i.user === parts.user && i.mailbox === parts.mailbox && i.contact === parts.contact,
-  )
+  const found = await matchInboxForHash(hash, inboxes)
   if (found) switchInbox(found)
 })
 

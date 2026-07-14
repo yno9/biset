@@ -1,11 +1,6 @@
-// Account creation overlay — username@hostname + password
+// New-user onboarding (#new page) — username@hostname + password
 import { buildEnvelope } from '../cryptenv.ts'
-
-function hexToBytes(hex: string): Uint8Array {
-  const out = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return out
-}
+import { hexToBytes } from '../utils.ts'
 
 const WORDS = [
   'Acid','Amber','Anvil','Arch','Arrow','Ash','Axle','Badge','Bark','Beam',
@@ -58,125 +53,10 @@ function getHostname(): string {
   try { return (window as any).__BISET_CONFIG__?.hostname || '' } catch { return '' }
 }
 
-export function setupAccountCreateOverlay() {
-  const overlay = document.getElementById('acc-create-overlay')
-  if (!overlay) return
-
-  const hostnameEl = document.getElementById('acc-create-hostname')!
-  const usernameInput = document.getElementById('acc-create-username') as HTMLInputElement
-  const pwInput = document.getElementById('acc-create-password') as HTMLInputElement
-  const submitBtn = document.getElementById('acc-create-submit') as HTMLButtonElement
-  const errEl = document.getElementById('acc-create-error')!
-
-  hostnameEl.textContent = getHostname()
-
-  const copyBtn = document.getElementById('acc-create-pw-copy')!
-  const copyIcon = document.getElementById('acc-pw-copy-icon')!
-  const checkIcon = document.getElementById('acc-pw-check-icon')!
-  copyBtn.addEventListener('click', async () => {
-    if (!pwInput.value) return
-    await navigator.clipboard.writeText(pwInput.value)
-    copyIcon.style.display = 'none'
-    checkIcon.style.display = ''
-    setTimeout(() => { copyIcon.style.display = ''; checkIcon.style.display = 'none' }, 1200)
-  })
-
-  submitBtn.addEventListener('click', async () => {
-    const username = usernameInput.value.trim()
-    const pw = pwInput.value
-    const hostname = getHostname()
-
-    if (!username) { errEl.textContent = 'Username required'; errEl.style.display = 'block'; return }
-    if (!pw) { errEl.textContent = 'Password required'; errEl.style.display = 'block'; return }
-    if (!hostname) { errEl.textContent = 'hostname not set in config.json'; errEl.style.display = 'block'; return }
-
-    const email = `${username}@${hostname}`
-    const serverUrl = `https://${hostname}`
-
-    submitBtn.disabled = true
-    submitBtn.textContent = 'Generating…'
-    errEl.style.display = 'none'
-
-    try {
-      // Build envelope client-side (Argon2id — takes a few seconds)
-      const { envelope, masterSecret, kek } = await buildEnvelope(pw)
-      const { initDid } = await import('../did/index.ts')
-      const didRecord = await initDid(email, masterSecret)
-
-      submitBtn.textContent = 'Creating…'
-
-      // Provision with signature-based binding + relay-scoped token (own relay →
-      // include the envelope for password recovery).
-      const { provisionAccount } = await import('../did/provision.ts')
-      const res = await provisionAccount({
-        serverUrl, username, did: didRecord!.did,
-        rootPrivateKey: hexToBytes(didRecord!.rootPrivateKey), masterSecret, envelope,
-      })
-      if (!res.ok) {
-        errEl.textContent = res.conflict ? 'Username taken' : `Server error (${res.status})`
-        errEl.style.display = 'block'
-        submitBtn.textContent = 'Create'
-        submitBtn.disabled = false
-        return
-      }
-
-      submitBtn.textContent = 'Connecting…'
-
-      // Log in with the relay-scoped token from provisioning.
-      const stored = { serverUrl, email, password: res.password!, did: didRecord!.did }
-      const session = await initSession(stored)
-      if (!session) {
-        errEl.textContent = 'Login failed after creation'
-        errEl.style.display = 'block'
-        submitBtn.textContent = 'Create'
-        submitBtn.disabled = false
-        return
-      }
-
-      const existing = loadStoredAccounts()
-      if (!existing.some(a => a.email === email)) {
-        saveStoredAccounts([...existing, stored])
-      }
-      addSession(session)
-      initPGPForSession(session, kek)
-      hideAccountCreateOverlay()
-      refreshAccountsList()
-      showSysMsg('Account created')
-    } catch (e) {
-      errEl.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e))
-      errEl.style.display = 'block'
-      submitBtn.textContent = 'Create'
-      submitBtn.disabled = false
-    }
-  })
-}
-
 export function randomHex4(): string {
   const arr = new Uint32Array(1)
   crypto.getRandomValues(arr)
   return (arr[0] & 0xffff).toString(16).padStart(4, '0')
-}
-
-export function showAccountCreateOverlay() {
-  const overlay = document.getElementById('acc-create-overlay')
-  if (overlay) overlay.style.display = 'flex'
-  const hostnameEl = document.getElementById('acc-create-hostname')
-  if (hostnameEl) hostnameEl.textContent = getHostname()
-  const usernameInput = document.getElementById('acc-create-username') as HTMLInputElement
-  if (usernameInput) usernameInput.value = randomHex4()
-  const pwInput = document.getElementById('acc-create-password') as HTMLInputElement
-  if (pwInput) { pwInput.value = generatePassphrase(); pwInput.focus() }
-}
-
-export function hideAccountCreateOverlay() {
-  const overlay = document.getElementById('acc-create-overlay')
-  if (overlay) overlay.style.display = 'none'
-  ;(document.getElementById('acc-create-username') as HTMLInputElement).value = ''
-  ;(document.getElementById('acc-create-password') as HTMLInputElement).value = ''
-  const errEl = document.getElementById('acc-create-error')
-  if (errEl) errEl.style.display = 'none'
-  const submitBtn = document.getElementById('acc-create-submit') as HTMLButtonElement
-  if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Create' }
 }
 
 export function showNewUserPage() {

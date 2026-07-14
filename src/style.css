@@ -694,7 +694,7 @@ body:has(#app.lp-enabled.single-col) #main-toggle-cmd {
   min-width: 0;
   padding: 8px 10px;
   border-radius: 8px;
-  border: 1px solid var(--header-border);
+  border: 0px solid var(--header-border);
   background: var(--input-bg);
   color: var(--text);
   font-size: 14px;
@@ -704,6 +704,121 @@ body:has(#app.lp-enabled.single-col) #main-toggle-cmd {
   border-color: var(--accent);
 }
 
+/* "+ New JMAP account" panel — opens on a Sign up / Log in choice, flush
+   against the trigger card above it (no gap, no tint). */
+#cmd-acc-list {
+  margin-bottom: 0;
+}
+/* flex column + gap is the ONE spacing mechanism between this panel's rows
+   (relay row, choice buttons, signup body, login form) — ad-hoc margin-top
+   on individual rows used to duplicate/fight this (e.g. .cmd-form's own
+   gap:8px only covers ITS children, not the gap before it, so Log in's
+   form had no spacing above it at all; 2026-07-14, user-reported). gap
+   only counts VISIBLE siblings, so hidden rows (display:none) contribute
+   nothing — no need to zero out margins per visibility state. */
+#cmd-acc-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-radius: 10px;
+  padding: 16px;
+  margin-top: 0;
+}
+#cmd-acc-choice {
+  display: flex;
+  gap: 10px;
+}
+.cmd-acc-choice-btn {
+  flex: 1;
+  border: 1px solid var(--header-border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 14px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.cmd-acc-choice-btn:hover {
+  border-color: var(--accent);
+}
+/* One shared row shape for all three "+ New JMAP account" input rows (relay,
+   email, password+Add) — they used to diverge (relay-row was missing
+   display:flex/align-items entirely, block vs flex), which showed up as
+   slightly different line-height/left-alignment between rows (2026-07-14,
+   user-reported). */
+.cmd-acc-login-row,
+.cmd-acc-email-row,
+.cmd-acc-relay-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cmd-acc-login-row .cmd-page-btn {
+  flex-shrink: 0;
+}
+/* Protocol pill sits INSIDE the relay input, pinned to its right edge —
+   not a separate element after it. */
+.cmd-acc-relay-row {
+  position: relative;
+  font-family: "Recursive", ui-monospace, monospace;
+  font-variation-settings: "MONO" 1;
+}
+.cmd-acc-relay-row .cmd-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding-right: 44px;
+  font-family: inherit;
+}
+/* Log in's Email/Password/Add — same Recursive-mono treatment as the relay
+   row and Sign up body; <input>/<button> don't inherit font-family from an
+   ancestor by default, hence the explicit `inherit` on both children. */
+#cmd-acc-form {
+  font-family: "Recursive", ui-monospace, monospace;
+  font-variation-settings: "MONO" 1;
+}
+#cmd-acc-form .cmd-input,
+#cmd-acc-form .cmd-page-btn {
+  font-family: inherit;
+}
+/* display:contents so the <form> itself generates no box — its rows
+   (email-row, login-row, error) join #cmd-acc-panel's flex column directly
+   and share its ONE gap with the relay row above, instead of the form's own
+   .cmd-form gap (8px) fighting the panel's gap (14px) as two different
+   rhythms stacked on top of each other (2026-07-14, user-reported: still
+   not one consistent 3-row rhythm after the panel-level gap fix). The
+   <form> element still exists in the DOM — submit-on-Enter is unaffected. */
+#cmd-acc-form {
+  display: contents;
+}
+/* Once Sign up/Log in commits to this relay, the field is locked for the
+   rest of that flow — no border, no background, reads as plain text instead
+   of an editable field still sitting above steps that already depend on it. */
+.cmd-acc-relay-row.locked .cmd-input {
+  border-color: transparent;
+  background: none;
+  color: var(--text-dim);
+}
+#cmd-acc-signup-body {
+  font-family: "Recursive", ui-monospace, monospace;
+  font-variation-settings: "MONO" 1;
+}
+#cmd-acc-relay-badge {
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.cmd-acc-error {
+  color: #ff3b30;
+  font-size: 12px;
+  margin-top: 8px;
+}
+#cmd-acc-panel .cmd-page-btn {
+  padding: 8px 18px;
+  font-size: 14px;
+}
 /* ── left pane: new-conversation quick bar ── */
 #lp-menu {
   position: absolute;
@@ -1427,6 +1542,22 @@ body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
 #past-threads {
 }
 
+.did-resolving-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-left: 4px;
+  flex-shrink: 0;
+  vertical-align: middle;
+  border: 2px solid rgba(128, 128, 128, 0.25);
+  border-top-color: var(--accent, #0891b2);
+  border-radius: 50%;
+  animation: did-resolving-spin 0.7s linear infinite;
+}
+@keyframes did-resolving-spin {
+  to { transform: rotate(360deg); }
+}
+
 @keyframes pastRowIn {
   from {
     opacity: 0;
@@ -1563,6 +1694,23 @@ body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
   display: inline-flex;
   align-items: center;
 }
+#conv-did {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background: #0891b2;
+  color: #fff;
+  border-radius: 5px;
+  padding: 2px 6px;
+  display: none;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+#conv-did:not(:empty) {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
 #conv-to {
   display: flex;
   align-items: center;
@@ -1627,6 +1775,211 @@ body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
 }
 #conv-meta.expanded #conv-meta-expanded {
   display: block;
+}
+
+/* Account-page identity heading — avatar + [name / shortened DID], click the
+   DID line to expand the raw document (same expand pattern as #conv-meta). */
+#cmd-acc-identity-fields {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+#cmd-acc-identity-avatar {
+  flex-shrink: 0;
+}
+#cmd-acc-identity-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+#cmd-acc-identity-name {
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#cmd-acc-identity-did-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+#cmd-acc-identity-did {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#cmd-acc-identity-copy {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px;
+  line-height: 0;
+  flex-shrink: 0;
+  border-radius: 4px;
+  opacity: 0.6;
+}
+#cmd-acc-identity-copy:hover {
+  opacity: 1;
+  background: rgba(128, 128, 128, 0.12);
+}
+#cmd-acc-identity-menu-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 6px;
+  line-height: 0;
+  flex-shrink: 0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#cmd-acc-identity-menu-btn:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+#cmd-acc-identity-expanded {
+  display: none;
+  position: relative;
+  margin-top: 8px;
+  background: rgba(128, 128, 128, 0.06);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+#cmd-acc-identity-doc {
+  margin: 0;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.6;
+  padding-right: 24px;
+}
+#cmd-acc-identity-republish {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px;
+  line-height: 0;
+  border-radius: 4px;
+  opacity: 0.6;
+}
+#cmd-acc-identity-republish:hover {
+  opacity: 1;
+  background: rgba(128, 128, 128, 0.12);
+}
+#cmd-acc-identity-section.expanded #cmd-acc-identity-expanded {
+  display: block;
+}
+
+/* Per-account "how your data is stored" panel (issue #7) — the whole card is
+   the click target; the solid border between cards opens into a filled
+   surface instead of just a line, same idea as #cmd-acc-identity-expanded /
+   #conv-meta's click-to-expand. */
+.acc-card-wrap .cmd-page-row {
+  cursor: pointer;
+}
+.acc-card-wrap.expanded .cmd-page-row,
+.acc-card-wrap:last-child .cmd-page-row {
+  border-bottom: none;
+}
+.acc-new-account-row {
+  min-height: 56px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+}
+.acc-new-account-plus {
+  margin-right: 6px;
+}
+.acc-storage-panel {
+  display: none;
+  padding: 12px;
+  background: rgba(128, 128, 128, 0.05);
+  border-bottom: 1px solid var(--header-border);
+  font-size: 12px;
+}
+.acc-card-wrap.expanded .acc-storage-panel {
+  display: block;
+}
+.acc-storage-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 8px;
+}
+.acc-storage-title {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.acc-storage-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.acc-storage-icon-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px;
+  line-height: 0;
+  border-radius: 4px;
+  opacity: 0.6;
+}
+.acc-storage-icon-btn:hover {
+  opacity: 1;
+  background: rgba(128, 128, 128, 0.12);
+}
+.acc-storage-icon-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+.acc-storage-tree {
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--text-dim);
+}
+.acc-storage-tree .tree-entry {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+.acc-storage-tree .tree-name {
+  color: var(--text);
+}
+.acc-storage-tree .tree-meta {
+  color: var(--text-dim);
+}
+.acc-storage-tree .tree-expandable {
+  cursor: pointer;
+}
+.acc-storage-tree .tree-expandable:hover .tree-name {
+  text-decoration: underline;
+}
+.acc-storage-tree .tree-sublist {
+  display: none;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-left: 20px;
 }
 #active-thread {
   min-height: 0;

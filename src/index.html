@@ -76,33 +76,6 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
   <div id="pw-error2"></div>
 </div>
 
-<div id="acc-create-overlay" style="position:fixed;inset:0;background:var(--bg);display:none;flex-direction:column;align-items:center;justify-content:center;gap:20px;z-index:100;padding:32px">
-  <div style="font-size:20px;font-weight:600">Create Account</div>
-  <div style="width:100%;max-width:320px;display:flex;flex-direction:column;gap:16px">
-    <div style="display:flex;flex-direction:column;gap:6px">
-      <label style="font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em">Account</label>
-      <div style="display:flex;align-items:center;border-radius:8px;border:1px solid var(--header-border);background:var(--input-bg);overflow:hidden">
-        <input id="acc-create-username" type="text" placeholder="username" autocomplete="username" style="flex:1;min-width:0;padding:10px 0 10px 14px;border:none;background:transparent;color:var(--text);font-size:15px;font-family:inherit;outline:none">
-        <span id="acc-create-at" style="padding:10px 14px 10px 2px;color:var(--text-dim);font-size:15px;white-space:nowrap;user-select:none">@<span id="acc-create-hostname"></span></span>
-      </div>
-    </div>
-    <div style="display:flex;flex-direction:column;gap:6px">
-      <label style="font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em">Password</label>
-      <div style="display:flex;align-items:center;gap:8px">
-        <div style="flex:1;display:flex;align-items:center;border-radius:8px;border:1px solid var(--header-border);background:var(--input-bg);overflow:hidden">
-          <input id="acc-create-password" type="text" placeholder="" autocomplete="current-password" style="flex:1;min-width:0;padding:10px 14px;border:none;background:transparent;color:var(--text);font-size:15px;font-family:inherit;outline:none">
-          <button id="acc-create-pw-copy" type="button" style="padding:0 12px;height:100%;border:none;background:transparent;color:var(--text-dim);cursor:pointer;flex-shrink:0;display:flex;align-items:center" aria-label="Copy">
-            <svg id="acc-pw-copy-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            <svg id="acc-pw-check-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:none"><polyline points="20 6 9 17 4 12"/></svg>
-          </button>
-        </div>
-        <button id="acc-create-submit" type="button" style="padding:10px 18px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-size:15px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0">Create</button>
-      </div>
-    </div>
-    <div id="acc-create-error" style="color:#ff3b30;font-size:13px;display:none;min-height:18px"></div>
-  </div>
-</div>
-
 <div id="sys-msg"></div>
 
 <div id="menu"></div>
@@ -281,7 +254,7 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
         <div id="cmd-page"></div>
         <div id="conv-meta">
           <div id="conv-fields">
-            <div id="conv-to"><span id="conv-via"></span></div>
+            <div id="conv-to"><span id="conv-did"></span><span id="conv-via"></span></div>
             <div id="conv-cc"></div>
             <div id="conv-bcc"></div>
           </div>

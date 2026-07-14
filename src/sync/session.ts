@@ -49,7 +49,6 @@ async function applyIncomingDelete(identityEmail: string, requestedBy: string, t
 export async function sync(session: AccountSession): Promise<void> {
   const { jmapClient: client, jmapAccountId: accountId, account } = session
   const user = account.email          // this endpoint's address — From, decryption
-  const identity = account.did || user // identity id (DID) — merges across a DID's relays AND addresses
   const acctKey = accountKey(account) // per-relay storage/querystate/persist key
   const qs = querystate.get(acctKey)
 
@@ -139,8 +138,10 @@ export async function sync(session: AccountSession): Promise<void> {
       if (!emailState) await querystate.save(acctKey, { emailState: state })
       const fresh = filterNew(emails)
       // Stamp the owning account so the global store can partition by it (JMAP ids
-      // collide across accounts on the same server).
-      for (const e of fresh) { (e as any)._account = acctKey; (e as any)._identity = identity; (e as any)._relay = account.serverUrl }
+      // collide across accounts on the same server). Which *identity* (DID) this
+      // account belongs to is no longer stamped here — messages.forIdentity()
+      // derives it dynamically from sessions instead (see store/messages.ts).
+      for (const e of fresh) { (e as any)._account = acctKey; (e as any)._relay = account.serverUrl }
       // biset-old relay_view.go:ConvertRelayView 相当。
       // outer inReplyTo が空かつ body が PGP のとき復号して inner In-Reply-To を outer に昇格。
       // DeltaChat の Protected Headers や JMAP server が outer を拾い損ねるケースを store に入る前に補正。

@@ -22,12 +22,26 @@
 import { sessions } from '../context.ts'
 import { resolve, PUBLIC_PKARR_FALLBACKS } from './resolver.ts'
 import type { DidDocument } from './document.ts'
+import { buildCardForDid, type Card } from './contacts.ts'
+import * as contactsStore from '../store/contacts.ts'
+import * as persist from '../vault/persist.ts'
 
 interface ContactCache {
   did: string
   address: string // current address from the document's alsoKnownAs (mailto:)
   relays: string[] // service endpoints from the document
+  protocol?: string // 'mail' | 'activitypub' — the transport this address's matching service entry carries (DidService.protocol)
+  name?: string // self-asserted display name from the document (biset extension, see document.ts) — a UX label only, not verified
+  lastChecked?: number // ms epoch — throttles refreshContact's DHT round-trip
 }
+
+// How often refreshContact actually re-resolves against the DHT, once a
+// contact is known. First contact always resolves (no cache yet); after
+// that, re-checking on literally every send is wasted network/gateway load
+// for a fact that changes rarely (a contact migrating relays mid-conversation
+// is the whole point of periodic re-checks — but "periodic" isn't "every
+// message").
+const REFRESH_TTL_MS = 60 * 60 * 1000
 
 const DID_KEY = 'biset_did_addr:' // address → did (TOFU binding)
 const CONTACT_KEY = 'biset_did_contact:' // address → ContactCache (last resolved)
@@ -112,6 +126,7 @@ export async function refreshContact(address: string): Promise<void> {
     const did = await addressToDid(address)
     if (!did) return
     const prev = getJSON<ContactCache>(CONTACT_KEY + address)
+    if (prev?.lastChecked && Date.now() - prev.lastChecked < REFRESH_TTL_MS) return
     // Gateways: own relays first, then the contact's last-known relays, then
     // public fallbacks — so a contact whose own relays moved is still findable.
     const gateways = [
@@ -135,12 +150,106 @@ export async function refreshContact(address: string): Promise<void> {
       did,
       address: verifiedAddress,
       relays: doc.service.flatMap(s => s.serviceEndpoint),
+      protocol: doc.service.find(s => s.address === verifiedAddress)?.protocol,
+      name: doc.name,
+      lastChecked: Date.now(),
     })
+    await syncContactCard(did)
   } catch { /* best-effort */ }
+}
+
+// Resolves a DID typed directly (shared via QR code, profile link, etc. —
+// without knowing any current address) to its verified current address. The
+// entry point for composing to someone by DID alone, complementing
+// refreshContact (which starts from a known address instead). Same
+// reverse-binding rule applies: a document's self-claimed address is only
+// trusted once that address's own anchor points back to this DID — with no
+// previously-known address to fall back to here, failure to verify means no
+// usable address at all (returns null), not a guess.
+export async function resolveDidDirect(did: string): Promise<{ address: string; relays: string[] } | null> {
+  try {
+    const gateways = [...ownGateways(), ...PUBLIC_PKARR_FALLBACKS]
+    const doc = await resolve(did, [...new Set(gateways)])
+    if (!doc) return null
+    const claimed = akaMailAddress(doc)
+    if (!claimed || !(await verifyBinding(claimed, did))) return null
+    const relays = doc.service.flatMap(s => s.serviceEndpoint)
+    const protocol = doc.service.find(s => s.address === claimed)?.protocol
+    setJSON(CONTACT_KEY + claimed, { did, address: claimed, relays, protocol, name: doc.name, lastChecked: Date.now() })
+    localStorage.setItem(DID_KEY + claimed, did) // seed the TOFU cache so a later refreshContact(claimed) skips the DNS round-trip
+    await syncContactCard(did)
+    return { address: claimed, relays }
+  } catch { return null }
 }
 
 // The freshest verified address to deliver to. Returns the input unchanged
 // unless a signature-verified DID document gave a different current address.
 export function freshestAddressFor(address: string): string {
   return getJSON<ContactCache>(CONTACT_KEY + address)?.address ?? address
+}
+
+// The transport ('mail' | 'activitypub') `address`'s freshest verified
+// binding uses, per the contact's DID document. Undefined if unresolved or
+// the document didn't tag a protocol for it — callers should treat that as
+// "unknown, don't second-guess the conversation's established relay".
+export function protocolForContact(address: string): string | undefined {
+  return getJSON<ContactCache>(CONTACT_KEY + address)?.protocol
+}
+
+// ── DID-rooted contact cache sync (server write-through + fresh-device pull) ──
+// Consolidates every locally-known address for `did` into one JSContact Card
+// (buildCardForDid) and write-throughs it: to the in-memory/idb/vault store
+// (survives this browser's localStorage being cleared) and, best-effort, to
+// every one of the user's own relays (survives a device change — the vault
+// needs Chromium's File System Access API, so this is the fallback that works
+// on every browser). Neither is the ground truth — the contact's own DID
+// document is — this only makes what's already been resolved durable.
+function allContactCacheEntries(): { did: string; address: string; relays: string[]; name?: string }[] {
+  const out: { did: string; address: string; relays: string[]; name?: string }[] = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (!key || !key.startsWith(CONTACT_KEY)) continue
+    const entry = getJSON<ContactCache>(key)
+    if (entry) out.push(entry)
+  }
+  return out
+}
+
+async function syncContactCard(did: string): Promise<void> {
+  try {
+    const card = buildCardForDid(did, allContactCacheEntries())
+    contactsStore.put(card)
+    await persist.flushContacts()
+    const uid = encodeURIComponent(card.uid)
+    await Promise.all(sessions.map(s =>
+      fetch(`${s.account.serverUrl.replace(/\/$/, '')}/contacts/${uid}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: 'Basic ' + btoa(s.account.email + ':' + s.account.password),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(card),
+      }).catch(() => {})
+    ))
+  } catch { /* best-effort */ }
+}
+
+// Pulls every Card from every one of the user's own relays and merges them
+// into the local store — the counterpart to syncContactCard's push, run once
+// at session start so a fresh device/browser (empty localStorage/idb) inherits
+// previously-resolved contacts instead of starting blind.
+export async function pullOwnContacts(): Promise<void> {
+  try {
+    for (const s of sessions) {
+      try {
+        const resp = await fetch(`${s.account.serverUrl.replace(/\/$/, '')}/contacts`, {
+          headers: { Authorization: 'Basic ' + btoa(s.account.email + ':' + s.account.password) },
+        })
+        if (!resp.ok) continue
+        const body = await resp.json() as { cards?: Card[] }
+        for (const card of body.cards ?? []) contactsStore.put(card)
+      } catch { /* try next relay */ }
+    }
+    await persist.flushContacts()
+  } catch { /* best-effort */ }
 }

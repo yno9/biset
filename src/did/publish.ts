@@ -6,15 +6,25 @@
 // owner next opens biset (DID.md republish rules). No-op when a gateway is
 // disabled (PKARR_GATEWAY off) — the PUT just fails and is swallowed.
 import { identities, relaysFor, isApRelay } from '../context.ts'
+import * as identityStore from '../store/identities.ts'
 import { getDidRecord } from './store.ts'
 import { buildBisetDocument } from './document.ts'
 import { publishDocument } from './resolver.ts'
+import { hexToBytes } from '../utils.ts'
 
-function hexToBytes(hex: string): Uint8Array {
-  const out = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return out
+// The display name to publish in the DID document (biset extension, see
+// document.ts) — reuses the same JMAP Identity.name the "Change display
+// name" modal already sets (left-pane.ts), rather than inventing a separate
+// DID-specific name to manage. An identity can span several relays/addresses;
+// take the first one that has a name set at all.
+function displayNameFor(relaySessions: Array<{ account: { email: string } }>): string | undefined {
+  for (const s of relaySessions) {
+    const name = identityStore.all().find(i => i.email === s.account.email)?.name
+    if (name) return name
+  }
+  return undefined
 }
+
 
 function relayId(serverUrl: string): string {
   try { return new URL(serverUrl).hostname.split('.')[0] } catch { return 'relay' }
@@ -46,7 +56,7 @@ async function publishOne(email: string): Promise<number> {
     // All addresses of this identity (a moved identity spans several), the
     // representative `email` first as the primary a contact should deliver to.
     const addresses = [email, ...new Set(relaySessions.map(s => s.account.email))].filter((a, i, arr) => arr.indexOf(a) === i)
-    const doc = buildBisetDocument(rec.did, hexToBytes(rec.rootPublicKey), services, addresses)
+    const doc = buildBisetDocument(rec.did, hexToBytes(rec.rootPublicKey), services, addresses, displayNameFor(relaySessions))
     return await publishDocument(hexToBytes(rec.rootPrivateKey), doc, gateways)
   } catch { return 0 }
 }

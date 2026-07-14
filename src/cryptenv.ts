@@ -181,6 +181,71 @@ export async function putDid(serverUrl: string, email: string, authTokenB64: str
   } catch { return false }
 }
 
+// Permanently deletes the account's data ON THIS RELAY (messages, mailbox,
+// envelope — see go-jmapsmtp/go-jmapap's /account/delete). Distinct from
+// forgetting local credentials (left-pane.ts's "Log out") — this actually
+// destroys server-side data and cannot be undone. `did`, if known, lets the
+// relay drop this address from that DID's local index too; harmless to omit
+// (the server derives which account to delete purely from the Basic Auth
+// credential, never from anything in the body).
+export async function deleteAccountOnRelay(serverUrl: string, email: string, authTokenB64: string, did?: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${trim(serverUrl)}/account/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + btoa(email + ':' + authTokenB64) },
+      body: JSON.stringify(did ? { did } : {}),
+    })
+    return resp.ok
+  } catch { return false }
+}
+
+// "How your data is stored" (biset issue #7) — GET/export/purge over the
+// account's own on-disk data, see go-jmapserver's storage.go.
+export interface StorageEntry { name: string; type: 'file' | 'dir'; count?: number; sizeBytes: number }
+
+export async function fetchAccountStorage(serverUrl: string, email: string, authTokenB64: string): Promise<{ entries: StorageEntry[]; totalSizeBytes: number } | null> {
+  try {
+    const resp = await fetch(`${trim(serverUrl)}/account/storage`, {
+      headers: { 'Authorization': 'Basic ' + btoa(email + ':' + authTokenB64) },
+    })
+    return resp.ok ? (await resp.json()) as { entries: StorageEntry[]; totalSizeBytes: number } : null
+  } catch { return null }
+}
+
+// Drill-down into the summarized "messages" entry from fetchAccountStorage —
+// the individual files inside messages/.
+export async function fetchMessageFiles(serverUrl: string, email: string, authTokenB64: string): Promise<StorageEntry[] | null> {
+  try {
+    const resp = await fetch(`${trim(serverUrl)}/account/storage/messages`, {
+      headers: { 'Authorization': 'Basic ' + btoa(email + ':' + authTokenB64) },
+    })
+    return resp.ok ? ((await resp.json()) as { files: StorageEntry[] }).files : null
+  } catch { return null }
+}
+
+export async function exportAccountStorage(serverUrl: string, email: string, authTokenB64: string): Promise<{ email: string; files: Record<string, string> } | null> {
+  try {
+    const resp = await fetch(`${trim(serverUrl)}/account/storage/export`, {
+      headers: { 'Authorization': 'Basic ' + btoa(email + ':' + authTokenB64) },
+    })
+    return resp.ok ? (await resp.json()) as { email: string; files: Record<string, string> } : null
+  } catch { return null }
+}
+
+// Purges ONLY messages/ on this relay (see storage.go) — distinct from
+// deleteAccountOnRelay, which destroys the whole account. Returns the number
+// of messages removed, or null on failure.
+export async function purgeAccountMessages(serverUrl: string, email: string, authTokenB64: string): Promise<number | null> {
+  try {
+    const resp = await fetch(`${trim(serverUrl)}/account/storage/purge-messages`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Basic ' + btoa(email + ':' + authTokenB64) },
+    })
+    if (!resp.ok) return null
+    return ((await resp.json()) as { purged: number }).purged
+  } catch { return null }
+}
+
 export async function loginViaEnvelope(serverUrl: string, email: string, password: string): Promise<Unsealed | null> {
   const env = await fetchEnvelope(serverUrl, email)
   if (!env) return null

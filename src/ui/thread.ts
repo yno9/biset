@@ -1,4 +1,5 @@
 import { currentInbox, activeSession, relayInfoFor, isApRelay } from '../context.ts'
+import { contactIdentityKey, displayLabelFor } from '../did/contacts.ts'
 import {
   processedMessages, renderedKeys,
   focusedThreadKey, setFocusedThreadKey,
@@ -850,7 +851,11 @@ export function render(smooth = false, keepScroll = false) {
   if ($convTo) {
     const contact = currentInbox?.contact ?? ''
     const via = $convTo.querySelector('#conv-via') as HTMLElement | null
-    $convTo.textContent = contact
+    const didBadge = $convTo.querySelector('#conv-did') as HTMLElement | null
+    // Same fallback chain as the left-pane list (did/contacts.ts's
+    // displayLabelFor): name → shortened DID (did~xxxx) → literal address.
+    // Never the raw DID in full.
+    $convTo.textContent = (contact && displayLabelFor(contact)) || contact
     if (via) {
       // Protocol pill (left of the recipient) derived from the conversation's
       // origin relay. Label is the transport, not the relay binary name.
@@ -863,6 +868,28 @@ export function render(smooth = false, keepScroll = false) {
         via.style.cssText = ''
       }
       $convTo.prepend(via)
+    }
+    if (didBadge) {
+      // DID pill (left of the protocol pill — prepended last, so it lands
+      // leftmost): shown when this contact is reached via DID discovery
+      // (contacts.json has resolved a DID for them), not just the literal
+      // address — click to copy the DID.
+      const key = contact ? contactIdentityKey(contact) : ''
+      if (key.startsWith('did:')) {
+        // The main conv-to text already shows the name (if any) — this badge
+        // just marks "DID-mediated"; the tooltip/click still deal in the DID.
+        didBadge.textContent = 'DID'
+        didBadge.title = `${key}\n(click to copy)`
+        didBadge.onclick = (ev) => {
+          ev.stopPropagation() // don't also toggle conv-meta (conv-fields' own click handler)
+          navigator.clipboard?.writeText(key).then(() => showSysMsg('DID copied')).catch(() => {})
+        }
+      } else {
+        didBadge.textContent = ''
+        didBadge.title = ''
+        didBadge.onclick = null
+      }
+      $convTo.prepend(didBadge)
     }
     if ($convCc) $convCc.textContent = ''
     if ($convBcc) $convBcc.textContent = ''

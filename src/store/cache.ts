@@ -1,9 +1,11 @@
 import type { Email, Thread, Mailbox, Identity } from 'jmap-rfc-types'
+import type { Card } from '../did/contacts.ts'
 import * as idb from './idb.ts'
 import * as messages from './messages.ts'
 import * as threads from './threads.ts'
 import * as mailboxes from './mailboxes.ts'
 import * as identities from './identities.ts'
+import * as contacts from './contacts.ts'
 
 // Load the browser-local cache into the in-memory stores. Always runs at
 // startup (unlike vault/persist.ts's loadFromVault, which only runs once a
@@ -12,16 +14,18 @@ import * as identities from './identities.ts'
 // in instead of a full historical re-fetch.
 export async function loadFromCache(): Promise<void> {
   try {
-    const [msgs, thrs, mbx, ids] = await Promise.all([
+    const [msgs, thrs, mbx, ids, crds] = await Promise.all([
       idb.getAll(idb.STORES.messages),
       idb.getAll(idb.STORES.threads),
       idb.getAll(idb.STORES.mailboxes),
       idb.getAll(idb.STORES.identities),
+      idb.getAll(idb.STORES.contacts),
     ])
     for (const m of msgs) messages.put(m as Email)
     for (const t of thrs) threads.put(t as Thread)
     if (mbx.length) mailboxes.set(mbx[0] as Mailbox[])
     if (ids.length) identities.set(ids[0] as Identity[])
+    if (crds.length) contacts.set(crds[0] as Card[])
   } catch (e) { console.warn('[cache] loadFromCache failed', e) }
 }
 
@@ -43,6 +47,10 @@ export async function putMailboxes(list: Mailbox[]): Promise<void> {
 
 export async function putIdentities(list: Identity[]): Promise<void> {
   try { await idb.put(idb.STORES.identities, list, 'all') } catch { /* best-effort */ }
+}
+
+export async function putContacts(list: Card[]): Promise<void> {
+  try { await idb.put(idb.STORES.contacts, list, 'all') } catch { /* best-effort */ }
 }
 
 // Purge one identity's cached messages + sync cursors across all its relays

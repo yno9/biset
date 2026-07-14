@@ -5,13 +5,14 @@
 // sync/session.ts's querystate-driven delta sync runs instead of a full
 // historical re-fetch (+ re-decrypt of every PGP message).
 const DB_NAME = 'biset-cache'
-const DB_VERSION = 2
+const DB_VERSION = 3
 
 export const STORES = {
   messages: 'messages',     // keyPath: ['_account', 'id']
   threads: 'threads',       // keyPath: 'id'
   mailboxes: 'mailboxes',   // out-of-line key 'all' (single blob, matches vault's one mailboxes.json)
   identities: 'identities', // out-of-line key 'all'
+  contacts: 'contacts',     // out-of-line key 'all' (JSContact Cards, matches vault's one contacts.json)
   querystate: 'querystate', // keyPath: 'acctKey'
   // Mirror of context.ts's loadStoredAccounts() (out-of-line key 'all'). The
   // Service Worker (sw.ts) has no localStorage access, but needs relay
@@ -31,6 +32,7 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORES.threads)) db.createObjectStore(STORES.threads, { keyPath: 'id' })
       if (!db.objectStoreNames.contains(STORES.mailboxes)) db.createObjectStore(STORES.mailboxes)
       if (!db.objectStoreNames.contains(STORES.identities)) db.createObjectStore(STORES.identities)
+      if (!db.objectStoreNames.contains(STORES.contacts)) db.createObjectStore(STORES.contacts)
       if (!db.objectStoreNames.contains(STORES.querystate)) db.createObjectStore(STORES.querystate, { keyPath: 'acctKey' })
       if (!db.objectStoreNames.contains(STORES.accounts)) db.createObjectStore(STORES.accounts)
     }

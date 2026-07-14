@@ -1,4 +1,4 @@
-import { sessions, currentInbox, activeSession, accountKey, sessionForRelay } from '../context.ts'
+import { sessions, currentInbox, activeSession, accountKey, sessionForRelay, relaysFor, isApRelay } from '../context.ts'
 import { markProgrammaticScroll } from '../utils.ts'
 import {
   processedMessages, renderedKeys,
@@ -9,7 +9,7 @@ import {
 import { fetchInboxMessages, loadInboxSummaries, jmapCreateEmail, currentSenderSync } from '../app.ts'
 import type { OutgoingAttachment } from '../pgp/crypto.ts'
 import { buildEditBody, type ChatAction, type GroupOpts } from '../deltachat/protocol.ts'
-import { freshestAddressFor } from '../did/discovery.ts'
+import { freshestAddressFor, protocolForContact } from '../did/discovery.ts'
 import * as jmapEmail from '../jmap/email.ts'
 import * as messages from '../store/messages.ts'
 import { removeMessage } from '../vault/persist.ts'
@@ -111,6 +111,29 @@ export function removePendingMessage(tempId: string) {
   renderedKeys.delete(`${removed.msg.from}:${removed.msg.ts}`)
 }
 
+// Which of the current user's own relays to actually send a 1:1 reply
+// through. Normally the conversation's established relay (currentInbox.relay)
+// — but freshestAddressFor only swaps the *address*, not the protocol, so a
+// contact who dropped ActivityPub entirely for mail-only (or vice versa)
+// would otherwise still get routed through the old protocol's relay, which
+// can't reach a differently-shaped address at all. If the contact's freshest
+// verified binding names a different protocol than the established relay
+// speaks, switch to whichever of the user's own relays (same DID, per
+// relaysFor) matches instead. Falls back to the established relay whenever
+// the target protocol is unknown, or the user has no matching relay of their
+// own — best-effort, same as the rest of DID discovery.
+function relayForSend(contact: string): string | undefined {
+  const established = currentInbox?.relay
+  if (!contact || currentInbox?.inbox_type === 'group') return established
+  const targetProtocol = protocolForContact(freshestAddressFor(contact))
+  if (!targetProtocol) return established
+  const establishedProtocol = isApRelay(established) ? 'activitypub' : 'mail'
+  if (targetProtocol === establishedProtocol) return established
+  const match = relaysFor(currentInbox?.user ?? '')
+    .find(s => (isApRelay(s.account.serverUrl) ? 'activitypub' : 'mail') === targetProtocol)
+  return match?.account.serverUrl ?? established
+}
+
 // Shared by sendReply and the edit/delete request senders below: who this
 // conversation's messages go to, and (for groups) the Chat-Group-ID/Name that
 // keeps the thread a writable DeltaChat group rather than a read-only ad-hoc
@@ -188,10 +211,12 @@ export async function sendReply(
   })
   ta.focus()
 
-  // Reply through the relay this conversation arrived on (mail vs ActivityPub).
+  // Reply through the relay this conversation arrived on (mail vs ActivityPub)
+  // — unless the contact's freshest DID binding now needs the other protocol
+  // (relayForSend), in which case switch to the matching one of our own relays.
   const { ok, error } = await jmapCreateEmail(
     toAddrs, body, replySubject, inReplyTo, groupOpts, references,
-    currentInbox?.user, currentInbox?.relay, attachments,
+    currentInbox?.user, relayForSend(currentInbox?.contact ?? ''), attachments,
   )
   if (ok) {
     await fetchMessages()
@@ -217,7 +242,7 @@ export async function sendEditRequest(target: ProcessedMessage, newText: string)
   const chatAction: ChatAction = { editTarget: target.msg.message_id }
   const { ok, error } = await jmapCreateEmail(
     toAddrs, editBody, '', target.msg.message_id, groupOpts, references,
-    currentInbox?.user, currentInbox?.relay, [], chatAction,
+    currentInbox?.user, relayForSend(currentInbox?.contact ?? ''), [], chatAction,
   )
   if (ok) {
     await fetchMessages()
@@ -237,7 +262,7 @@ export async function sendDeleteRequest(target: ProcessedMessage): Promise<void>
   const chatAction: ChatAction = { deleteTarget: target.msg.message_id }
   const { ok, error } = await jmapCreateEmail(
     toAddrs, 'deleted', '', target.msg.message_id, groupOpts, references,
-    currentInbox?.user, currentInbox?.relay, [], chatAction,
+    currentInbox?.user, relayForSend(currentInbox?.contact ?? ''), [], chatAction,
   )
   if (!ok) { showSysMsg(error || 'Delete failed'); return }
   const inbox = currentInbox

@@ -1,4 +1,4 @@
-import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, accountKey, identityKey, identityKeyForEmail, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay } from '../context.ts'
+import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay } from '../context.ts'
 import {
   lastLeftInboxes, setLastLeftInboxes,
   processedMessages, renderedKeys,
@@ -7,7 +7,8 @@ import {
   notifEnabled, setNotifEnabled,
   lastTs, groupMessages,
 } from '../state.ts'
-import { esc, formatTime, avatarStyle, inboxToHash, markProgrammaticScroll, syncAppBadge, mailboxNameFromId } from '../utils.ts'
+import { esc, formatTime, avatarStyle, inboxToHash, markProgrammaticScroll, syncAppBadge, mailboxNameFromId, hexToBytes, expandDualRelay } from '../utils.ts'
+import { displayLabelFor } from '../did/contacts.ts'
 import type { InboxSummary } from '../types.ts'
 import type { Email } from 'jmap-rfc-types'
 // Circular (safe — used only in function bodies):
@@ -29,7 +30,6 @@ import * as idb from '../store/idb.ts'
 import { loadFromVault, flushAll, flushMessage, removeMessage } from '../vault/persist.ts'
 import * as querystate from '../jmap/querystate.ts'
 import { startWatch } from '../vault/watch.ts'
-import { setupAccountCreateOverlay } from './account-create.ts'
 import { newGroupId, isSecurejoinEmail, readGroupHeaders, isEdit } from '../deltachat/protocol.ts'
 import { isReaction } from '../mail/reactions.ts'
 import { newInviteUrl } from '../deltachat/securejoin.ts'
@@ -38,11 +38,6 @@ import { enablePush, disablePush } from '../push/client.ts'
 // ── InboxSummary key ──────────────────────────────────────────────────────────
 function isk(i: InboxSummary): string { return i.user + '\0' + i.mailbox + '\0' + i.contact }
 
-function hexToBytes(hex: string): Uint8Array {
-  const out = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return out
-}
 
 // ── Preview cache / decrypt ───────────────────────────────────────────────────
 
@@ -148,9 +143,13 @@ function imageFileToAvatarDataUrl(file: File): Promise<string> {
   })
 }
 
-// Opens a file picker and sets the given account's own avatar (stored + gossiped
-// on outgoing DeltaChat messages via buildProtectedHeaders).
-function pickAndSetAvatar(email: string): void {
+// Opens a file picker and sets the identity's avatar — one session = one
+// identity (ARC.md 2026-07-14), so the avatar is a property of the DID, not
+// any one address. Every consumer that reads avatarDataUrl(email) (thread.ts,
+// DeltaChat's Chat-User-Avatar header, AP actor icon) is still keyed by
+// address, so the same picture is saved under every known address of this
+// DID rather than re-keying that whole cache by DID.
+function pickAndSetIdentityAvatar(did: string): void {
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = 'image/*'
@@ -159,13 +158,14 @@ function pickAndSetAvatar(email: string): void {
     if (!file) return
     try {
       const dataUrl = await imageFileToAvatarDataUrl(file)
-      await saveAvatar(email, dataUrl)
+      const addrs = loadStoredAccounts().filter(a => a.did === did).map(a => a.email)
+      await Promise.all(addrs.map(addr => saveAvatar(addr, dataUrl)))
       // Push the new picture to this identity's AP relay(s) so the fediverse
       // actor document advertises it.
-      advertiseOwnAvatarForEmail(email)
+      for (const addr of addrs) advertiseOwnAvatarForEmail(addr)
       refreshAccountsList()
       loadLeftInboxes()
-    } catch (e) { console.log('[avatar] set own failed', e) }
+    } catch (e) { console.log('[avatar] set identity failed', e) }
   })
   input.click()
 }
@@ -301,6 +301,15 @@ export async function switchInbox(item: InboxSummary): Promise<void> {
   }
   saveCurrentInbox()
   setCurrentInbox(item)
+  // Warm the DID cache for this contact too (TTL-guarded, see discovery.ts).
+  // Previously DID discovery only ran on send (shell.ts), so it was
+  // one-sided: the sender's side learned the recipient's DID (and showed the
+  // [DID] badge), but a recipient who never replies never triggered the same
+  // lookup for the sender — leaving their conversation unbadged even though
+  // the same DID relationship exists on both ends.
+  if (item.contact && item.inbox_type !== 'group') {
+    import('../did/discovery.ts').then(m => m.refreshContact(item.contact)).catch(() => {})
+  }
   // Reflect the selected inbox in the URL. Shared encoder (inboxToHash) keeps this
   // identical to the router's permalinks. replaceState avoids firing hashchange,
   // so this doesn't re-enter routing.
@@ -669,7 +678,15 @@ function toggleAccordionForItem(inboxEl: HTMLElement, focusThread = true) {
 }
 
 export function makeLpItem(item: InboxSummary) {
-  const rawName = item.mailbox && item.contact ? `${item.mailbox} / ${item.contact}` : (item.contact || item.mailbox)
+  // The other party only — which of our own mailboxes/relays a conversation
+  // lives under is a self-referential detail with no business in the label
+  // (mirrors the permalink hash, see utils.ts's inboxToHash). Fallback chain
+  // (did/contacts.ts's displayLabelFor): (1) their self-asserted name, (2) a
+  // shortened DID if one is known but no name is, (3) the literal address.
+  // mailbox is a last-resort fallback for the (should-never-happen)
+  // empty-contact case only.
+  const contactLabel = item.inbox_type === 'group' ? (item.group_name || item.contact) : (item.contact && displayLabelFor(item.contact))
+  const rawName = contactLabel || item.mailbox
   const isCurrent = !!(currentInbox && isk(currentInbox) === isk(item))
   // Suppress the unread badge only for the conversation actually SHOWN in the
   // reading pane — i.e. current AND not sitting behind a menu page (/debug,
@@ -1034,78 +1051,154 @@ export async function setupLeftPane() {
 
   function renderAccountPage() {
     return `<div class="cmd-page-content wide-page">
-      <div class="cmd-page-section">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <h3 style="margin:0">Add JMAP account</h3>
-          <button id="cmd-acc-toggle" type="button" class="cmd-page-btn" style="width:auto;padding:4px 12px;font-size:13px">+</button>
-        </div>
-        <div style="margin-top:8px">
-          <button id="cmd-acc-customdomain" type="button" style="background:none;border:none;color:var(--text-dim);font-size:12px;text-decoration:underline;text-underline-offset:2px;cursor:pointer;padding:0">Add my own domain…</button>
-        </div>
-        <form id="cmd-acc-form" style="display:none;flex-direction:column;gap:8px;margin-top:12px" autocomplete="on">
-          <input id="cmd-acc-server" class="cmd-input" type="url" placeholder="Server URL (https://...)" autocomplete="url" style="display:none">
-          <input id="cmd-acc-email" class="cmd-input" type="text" placeholder="Email (or gateway username)" autocomplete="username" required>
-          <input id="cmd-acc-password" class="cmd-input" type="password" placeholder="Password" autocomplete="current-password" required>
-          <div id="cmd-acc-error" style="color:#ff3b30;font-size:12px;display:none"></div>
-          <div style="display:flex;justify-content:flex-end;gap:8px">
-            <button id="cmd-acc-cancel" type="button" class="cmd-page-btn" style="width:auto;padding:6px 18px">Cancel</button>
-            <button id="cmd-acc-add" type="submit" class="cmd-page-btn primary" style="width:auto;padding:6px 18px">Add</button>
+      <div class="cmd-page-section" id="cmd-acc-identity-section" style="display:none">
+        <div id="cmd-acc-identity-fields">
+          <div id="cmd-acc-identity-avatar" class="lp-avatar"></div>
+          <div id="cmd-acc-identity-text">
+            <div id="cmd-acc-identity-name" title="Click to change display name"></div>
+            <div id="cmd-acc-identity-did-row">
+              <span id="cmd-acc-identity-did" title="Click to view DID document"></span>
+              <button id="cmd-acc-identity-copy" type="button" aria-label="Copy DID" title="Copy DID"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
+            </div>
           </div>
-        </form>
+          <button id="cmd-acc-identity-menu-btn" type="button" aria-label="Menu"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+        </div>
+        <div id="cmd-acc-identity-expanded">
+          <button id="cmd-acc-identity-republish" type="button" aria-label="Republish to DHT" title="Republish to DHT"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>
+          <pre id="cmd-acc-identity-doc"></pre>
+        </div>
       </div>
       <div class="cmd-page-section" id="cmd-acc-list"></div>
-      <div class="cmd-page-section" id="cmd-acc-recovery" style="display:none">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-          <div style="min-width:0">
-            <h3 style="margin:0">Recovery phrase</h3>
-            <div style="font-size:12px;color:var(--text-dim);margin-top:2px">24 words that restore your identity on any device.</div>
-          </div>
-          <button id="cmd-acc-recovery-btn" type="button" class="cmd-page-btn" style="width:auto;padding:6px 14px;flex-shrink:0">Show</button>
+      <div class="cmd-page-section" id="cmd-acc-panel" style="display:none">
+        <div class="cmd-acc-relay-row">
+          <input id="cmd-acc-relay" class="cmd-input" type="text" placeholder="Relay URL (ex. biset.md)" required>
+          <span id="cmd-acc-relay-badge"></span>
         </div>
+        <div id="cmd-acc-relay-error" class="cmd-acc-error" style="display:none"></div>
+        <div id="cmd-acc-choice">
+          <button type="button" class="cmd-acc-choice-btn" data-mode="add">Sign up</button>
+          <button type="button" class="cmd-acc-choice-btn" data-mode="login">Log in</button>
+        </div>
+        <div id="cmd-acc-signup-body" style="display:none"></div>
+        <form id="cmd-acc-form" class="cmd-form" style="display:none" autocomplete="on">
+          <div class="cmd-acc-email-row">
+            <input id="cmd-acc-email" class="cmd-input" type="text" placeholder="Email" autocomplete="username" required>
+          </div>
+          <div class="cmd-acc-login-row">
+            <input id="cmd-acc-password" class="cmd-input" type="password" placeholder="Password" autocomplete="current-password" required>
+            <button id="cmd-acc-add" type="submit" class="cmd-page-btn primary">Add</button>
+          </div>
+          <div id="cmd-acc-error" class="cmd-acc-error" style="display:none"></div>
+        </form>
       </div>
     </div>`
+  }
+
+  // Resets the "+ New JMAP account" panel back to its opening screen (the
+  // Sign up / Log in choice) and clears whatever was typed into either form.
+  // Called both when the trigger card opens the panel and after Add
+  // succeeds/fails, so there's no separate Cancel button to do this instead.
+  function resetAddAccountPanel(): void {
+    const choice = document.getElementById('cmd-acc-choice') as HTMLElement | null
+    const addForm = document.getElementById('cmd-acc-form') as HTMLFormElement | null
+    const signupBody = document.getElementById('cmd-acc-signup-body') as HTMLElement | null
+    if (choice) choice.style.display = 'flex'
+    if (addForm) addForm.style.display = 'none'
+    if (signupBody) { signupBody.style.display = 'none'; signupBody.textContent = '' }
+    for (const id of ['cmd-acc-relay', 'cmd-acc-email', 'cmd-acc-password']) {
+      const el = document.getElementById(id) as HTMLInputElement | null
+      if (el) el.value = ''
+    }
+    const relayInput = document.getElementById('cmd-acc-relay') as HTMLInputElement | null
+    if (relayInput) relayInput.disabled = false
+    const relayRow = relayInput?.closest('.cmd-acc-relay-row') as HTMLElement | null
+    relayRow?.classList.remove('locked')
+    if (relayRow) relayRow.style.display = ''
+    const relayBadge = document.getElementById('cmd-acc-relay-badge')
+    if (relayBadge) relayBadge.textContent = ''
+    const relayErr = document.getElementById('cmd-acc-relay-error')
+    if (relayErr) relayErr.style.display = 'none'
+    const formErr = document.getElementById('cmd-acc-error')
+    if (formErr) formErr.style.display = 'none'
   }
 
   function onShowAccount() {
     onShowAccounts()
 
-    // Recovery phrase is only meaningful for a home (cryptenv-envelope) identity.
-    // Reveal the section for the first such identity and wire its button to the
-    // password-gated display (masterSecret isn't persisted — see mnemonic.ts).
-    const recoverySection = document.getElementById('cmd-acc-recovery')
-    const recoveryBtn = document.getElementById('cmd-acc-recovery-btn') as HTMLButtonElement | null
-    const homeIdentity = sessions.find(s => !isApRelay(s.account.serverUrl))
-    if (recoverySection && recoveryBtn && homeIdentity) {
-      recoverySection.style.display = ''
-      recoveryBtn.addEventListener('click', async () => {
-        const { showMnemonicWithPassword } = await import('./mnemonic.ts')
-        showMnemonicWithPassword(homeIdentity.account.email, homeIdentity.account.serverUrl)
+    const relayInput = document.getElementById('cmd-acc-relay') as HTMLInputElement | null
+    const relayErr = document.getElementById('cmd-acc-relay-error')
+    const addForm = document.getElementById('cmd-acc-form') as HTMLFormElement | null
+
+    // Protocol pill(s) for whatever relay is typed — queries that relay's own
+    // /relay-info directly (accurate for ANY relay, not a heuristic tied to
+    // biset's own AP relay the way the old email-domain check was). A bare
+    // apex (expandDualRelay) resolves to two relays, so both get their own
+    // pill instead of only the one that happened to answer last.
+    relayInput?.addEventListener('blur', async () => {
+      const badge = document.getElementById('cmd-acc-relay-badge')
+      if (!badge) return
+      badge.innerHTML = ''
+      const raw = relayInput.value.trim().replace(/\/$/, '')
+      if (!raw) return
+      const dual = expandDualRelay(raw)
+      const urls = dual ?? [/^https?:\/\//i.test(raw) ? raw : 'https://' + raw]
+      const { fetchRelayInfo, relayInfoFor } = await import('../context.ts')
+      await Promise.all(urls.map(u => fetchRelayInfo(u)))
+      if (relayInput.value.trim().replace(/\/$/, '') !== raw) return // stale by the time it resolved
+      const pills = urls
+        .map(u => relayInfoFor(u)?.type)
+        .filter((t): t is 'mail' | 'activitypub' => !!t)
+        .map(t => `<span style="font-size:10px;font-weight:700;color:#fff;border-radius:4px;padding:1px 5px;flex-shrink:0;background:${t === 'activitypub' ? '#8b5cf6' : '#64748b'}">${t === 'activitypub' ? 'AP' : 'Mail'}</span>`)
+      if (!pills.length) return
+      badge.style.cssText = 'display:flex;gap:4px;flex-shrink:0'
+      badge.innerHTML = pills.join('')
+    })
+
+    // Relay URL is required up front for either path — Sign up (provision a
+    // new address under the current identity there) or Log in (an account
+    // that already exists there). See ARC.md 2026-07-14 "Add account"
+    // unification; opened via the "+ New JMAP account" trigger card at the
+    // end of the account list (renderAccountsList) — kept as a static panel
+    // outside the dynamically-rebuilt list so in-progress input survives a
+    // re-render.
+    for (const btn of document.querySelectorAll<HTMLButtonElement>('.cmd-acc-choice-btn')) {
+      btn.addEventListener('click', async () => {
+        if (relayErr) relayErr.style.display = 'none'
+        const raw = relayInput?.value.trim()
+        if (!raw) {
+          if (relayErr) { relayErr.textContent = 'Relay URL required'; relayErr.style.display = 'block' }
+          relayInput?.focus()
+          return
+        }
+        // The relay is committed for the rest of this flow (Sign up's steps,
+        // or the Log in form below) — lock it instead of leaving an editable
+        // field sitting above steps that already depend on its value.
+        if (relayInput) relayInput.disabled = true
+        relayInput?.closest('.cmd-acc-relay-row')?.classList.add('locked')
+        const choice = document.getElementById('cmd-acc-choice') as HTMLElement | null
+        if (btn.dataset.mode === 'add') {
+          // Passed exactly as typed (not URL-prefixed): openAddRelayOrDomainFlow
+          // itself distinguishes a relay URL from a bare domain by whether a
+          // scheme is present — force-prefixing here would misroute a bare BYO
+          // domain into the arbitrary-relay branch instead of the domain-
+          // ownership one. Renders inline in this same panel (signupBody)
+          // instead of a separate overlay — matches Log in's own inline reveal
+          // rather than popping a different UI out from under it.
+          const signupBody = document.getElementById('cmd-acc-signup-body') as HTMLElement | null
+          if (!signupBody) return
+          if (choice) choice.style.display = 'none'
+          signupBody.style.display = 'block'
+          const { openAddRelayOrDomainFlow } = await import('./custom-domain.ts')
+          openAddRelayOrDomainFlow(raw, signupBody, resetAddAccountPanel)
+          return
+        }
+        if (choice) choice.style.display = 'none'
+        // 'contents', not 'flex' — the form itself generates no box (style.css
+        // #cmd-acc-form), so its rows join the panel's own flex gap directly.
+        if (addForm) addForm.style.display = 'contents'
+        ;(document.getElementById('cmd-acc-email') as HTMLInputElement)?.focus()
       })
     }
-
-    const addToggle = document.getElementById('cmd-acc-toggle') as HTMLButtonElement | null
-    const addForm = document.getElementById('cmd-acc-form') as HTMLFormElement | null
-    const addCancel = document.getElementById('cmd-acc-cancel')
-    const setOpen = (open: boolean) => {
-      if (!addForm || !addToggle) return
-      addForm.style.display = open ? 'flex' : 'none'
-      addToggle.textContent = open ? '−' : '+'
-      if (open) (document.getElementById('cmd-acc-email') as HTMLInputElement)?.focus()
-    }
-    addToggle?.addEventListener('click', () => setOpen(addForm?.style.display === 'none'))
-    document.getElementById('cmd-acc-customdomain')?.addEventListener('click', async () => {
-      const { openCustomDomainFlow } = await import('./custom-domain.ts')
-      openCustomDomainFlow()
-    })
-    addCancel?.addEventListener('click', () => {
-      ;(document.getElementById('cmd-acc-email') as HTMLInputElement).value = ''
-      ;(document.getElementById('cmd-acc-password') as HTMLInputElement).value = ''
-      ;(document.getElementById('cmd-acc-server') as HTMLInputElement).value = ''
-      ;(document.getElementById('cmd-acc-server') as HTMLInputElement).style.display = 'none'
-      const errEl = document.getElementById('cmd-acc-error')
-      if (errEl) errEl.style.display = 'none'
-      setOpen(false)
-    })
   }
 
   // ── /debug: unread reconciliation diagnostic ─────────────────────────────────
@@ -1427,13 +1520,24 @@ export async function setupLeftPane() {
         if (j?.ap && inp.value.trim() === addr) {
           const b = document.createElement('span')
           b.className = 'ap-badge'
-          b.textContent = 'AP'
-          b.style.cssText = 'font-size:10px;font-weight:700;color:#fff;background:#8b5cf6;border-radius:4px;padding:1px 5px;margin-left:4px;flex-shrink:0;align-self:center;cursor:pointer;user-select:none;transition:opacity .12s,filter .12s'
-          // The badge is a toggle: on = deliver via ActivityPub, off (dim +
-          // grayscale) = fall back to mail for this recipient.
+          b.style.cssText = 'font-size:10px;font-weight:700;color:#fff;border-radius:4px;padding:1px 5px;margin-left:4px;flex-shrink:0;align-self:center;cursor:pointer;user-select:none'
+          // The badge is a toggle: on = deliver via ActivityPub, off = fall
+          // back to mail for this recipient. Label the actual protocol
+          // outright (text + color, matching conv-via's convention) rather
+          // than dimming the same "AP" text — gray-and-dimmed still read as
+          // "AP" at a glance, not "this is now going via mail".
           const setOn = (on: boolean) => {
-            if (on) { row.dataset.ap = 'true'; b.style.opacity = ''; b.style.filter = ''; b.title = 'ActivityPub — click to send via mail instead' }
-            else { delete row.dataset.ap; b.style.opacity = '0.4'; b.style.filter = 'grayscale(1)'; b.title = 'Mail — click to send via ActivityPub' }
+            if (on) {
+              row.dataset.ap = 'true'
+              b.textContent = 'AP'
+              b.style.background = '#8b5cf6'
+              b.title = 'ActivityPub — click to send via mail instead'
+            } else {
+              delete row.dataset.ap
+              b.textContent = 'Mail'
+              b.style.background = '#64748b'
+              b.title = 'Mail — click to send via ActivityPub'
+            }
           }
           b.addEventListener('click', () => setOn(row.dataset.ap !== 'true'))
           setOn(true)
@@ -1442,18 +1546,54 @@ export async function setupLeftPane() {
       } catch { /* discovery is best-effort */ }
     }
 
+    // Given a real (non-DID) address, warm the AP badge + PGP peer-key cache
+    // + DID cache. Split out from attachPrefetch's blur handler so the DID
+    // branch below can call it directly on the resolved address without
+    // re-registering event listeners on the input.
+    const prefetchForAddress = (inp: HTMLInputElement, addr: string) => {
+      const sess = sessionFor(selectedFrom()) ?? activeSession()
+      if (!addr || !addr.includes('@') || !sess) return
+      // Only warm the PGP peer-key cache on a mail relay; the AP relay has no
+      // peer-key store (and PGP is meaningless for fediverse recipients).
+      if (!isApRelay(sess.account.serverUrl)) {
+        prefetchRecipientKey(addr, sess.account.email, sess.account.serverUrl, sess.account.password)
+      }
+      resolveAp(inp)
+      // Warm the DID cache too (TTL-guarded — see discovery.ts) so a brand
+      // new recipient gets the same portability discovery a reply gets.
+      import('../did/discovery.ts').then(m => m.refreshContact(addr)).catch(() => {})
+    }
+
     const attachPrefetch = (inp: HTMLInputElement) => {
       inp.addEventListener('input', updateTitleLabel)
       inp.addEventListener('blur', async () => {
         const addr = inp.value.trim()
-        const sess = sessionFor(selectedFrom()) ?? activeSession()
-        if (!addr || !addr.includes('@') || !sess) return
-        // Only warm the PGP peer-key cache on a mail relay; the AP relay has no
-        // peer-key store (and PGP is meaningless for fediverse recipients).
-        if (!isApRelay(sess.account.serverUrl)) {
-          prefetchRecipientKey(addr, sess.account.email, sess.account.serverUrl, sess.account.password)
+        // Composing straight to a DID (shared via QR code / profile link,
+        // without knowing any current address) — resolve it to a real
+        // address up front, then let the rest of send/UI work unchanged.
+        if (addr.startsWith('did:')) {
+          // Same slot the AP badge would occupy (inp.after(...)) — a resolve
+          // with no visible feedback otherwise just looks like nothing
+          // happened for however many seconds the DHT lookup takes. No
+          // timeout: a spinner that never stops is itself the "it failed"
+          // signal (resolveDidDirect has no upper bound either).
+          inp.closest('.new-recipient-row')?.querySelector('.did-resolving-spinner')?.remove()
+          const spinner = document.createElement('span')
+          spinner.className = 'did-resolving-spinner'
+          inp.after(spinner)
+          const { resolveDidDirect } = await import('../did/discovery.ts')
+          const result = await resolveDidDirect(addr)
+          spinner.remove()
+          if (result) {
+            inp.value = result.address
+            showSysMsg(`Resolved via DID → ${result.address}`)
+            prefetchForAddress(inp, result.address)
+          } else {
+            showSysMsg('Could not resolve DID — no verified address found')
+          }
+          return
         }
-        resolveAp(inp)
+        prefetchForAddress(inp, addr)
       })
     }
 
@@ -1579,7 +1719,35 @@ export async function setupLeftPane() {
       }
     })
 
+    // Resolves any DID-shaped recipient row in place (updates the input's
+    // value AND its AP badge via resolveAp) before send. blur (attachPrefetch)
+    // already does this, but its DHT resolution can take seconds and nothing
+    // stops a user from clicking Send before it lands — reading the DOM at
+    // send time (collect()) would then see the raw `did:...` string, sending
+    // to that literal, invalid "address" and skipping AP-vs-mail detection
+    // entirely (resolveAp is a no-op on a non-email-shaped value). Returns
+    // false (and shows an error) if any recipient's DID fails to resolve.
+    const resolveDidRows = async (): Promise<boolean> => {
+      const rows = [...recipientsDiv.querySelectorAll<HTMLElement>('.new-recipient-row')]
+      for (const row of rows) {
+        const inp = row.querySelector<HTMLInputElement>('.new-field-input')
+        const val = inp?.value.trim()
+        if (!inp || !val || !val.startsWith('did:')) continue
+        const { resolveDidDirect } = await import('../did/discovery.ts')
+        const result = await resolveDidDirect(val)
+        if (!result) { showSysMsg(`Could not resolve ${val} — no verified address found`); return false }
+        inp.value = result.address
+        await resolveAp(inp) // sets row.dataset.ap so mail-vs-AP routing below is correct
+      }
+      return true
+    }
+
     document.getElementById('new-send-btn')?.addEventListener('click', async () => {
+      const hasDid = [...recipientsDiv.querySelectorAll<HTMLInputElement>('.new-field-input')].some(i => i.value.trim().startsWith('did:'))
+      if (hasDid) {
+        showSysMsg('Resolving DID…', 30000)
+        if (!await resolveDidRows()) return
+      }
       const { to, cc, bcc } = collect()
       const visible = [...to, ...cc]
       if (!visible.length) { (recipientsDiv.querySelector('.new-field-input') as HTMLElement)?.focus(); return }
@@ -1667,6 +1835,12 @@ export async function setupLeftPane() {
     return `${Math.floor(s / 86400)}d ago`
   }
 
+  function fmtBytes(n: number): string {
+    if (n < 1024) return `${n} B`
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`
+  }
+
   const _accInfoCache = new Map<string, { name?: string; unread?: number; total?: number; pgp?: boolean; lastSyncAt?: number }>()
 
   // Per-RELAY stats (identity-by-DID: each relay endpoint is its own card). Keyed
@@ -1736,7 +1910,7 @@ export async function setupLeftPane() {
     return info
   }
 
-  // ── per-account context menu ────────────────────────────────────────────────
+  // ── dropdown menus (per-account + identity) ─────────────────────────────────
 
   let _openMenuCleanup: (() => void) | null = null
 
@@ -1745,80 +1919,26 @@ export async function setupLeftPane() {
     _openMenuCleanup = null
   }
 
-  function openAccountMenu(anchor: HTMLElement, email: string, serverUrl?: string) {
+  interface MenuItem { label: string; danger?: boolean; onClick: () => void }
+
+  // Shared small dropdown builder — anchored below-right of `anchor`, closes on
+  // outside click/Escape. Used by both the per-account card menu and the
+  // identity-level menu (renderAccountsList's hamburger button).
+  function openDropdownMenu(anchor: HTMLElement, items: MenuItem[]): void {
     closeAccountMenu()
     const rect = anchor.getBoundingClientRect()
     const menu = document.createElement('div')
     menu.style.cssText = `position:fixed;top:${rect.bottom + 4}px;left:${Math.max(8, rect.right - 180)}px;width:180px;background:var(--bg);border:1px solid var(--border, rgba(128,128,128,0.25));border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.18);z-index:10000;padding:4px;font-size:14px`
-    const mkItem = (label: string, danger: boolean, onClick: () => void) => {
+    for (const item of items) {
       const b = document.createElement('button')
       b.type = 'button'
-      b.style.cssText = `display:block;width:100%;text-align:left;padding:8px 12px;background:none;border:none;border-radius:6px;cursor:pointer;color:${danger ? '#ff3b30' : 'var(--text)'};font-size:14px`
-      b.textContent = label
+      b.style.cssText = `display:block;width:100%;text-align:left;padding:8px 12px;background:none;border:none;border-radius:6px;cursor:pointer;color:${item.danger ? '#ff3b30' : 'var(--text)'};font-size:14px`
+      b.textContent = item.label
       b.addEventListener('mouseover', () => { b.style.background = 'rgba(128,128,128,0.12)' })
       b.addEventListener('mouseout', () => { b.style.background = 'none' })
-      b.addEventListener('click', () => { closeAccountMenu(); onClick() })
+      b.addEventListener('click', () => { closeAccountMenu(); item.onClick() })
       menu.appendChild(b)
     }
-    mkItem('Change password', false, () => openPasswordModal(email))
-    mkItem('Change display name', false, () => openDisplayNameModal(email))
-    // Re-publish this identity's DID document (relay list + address) to the DHT.
-    // Normally automatic (on boot and on relay change); this is a manual nudge,
-    // e.g. after adding a relay elsewhere or if a record expired.
-    mkItem('Republish to DHT', false, async () => {
-      // DHT puts take several seconds each (mainline DHT traversal latency,
-      // now run in parallel across gateways but still not instant) — a long
-      // duration here keeps the toast up as a "working" indicator instead of
-      // vanishing after 1.8s while the request is still in flight.
-      showSysMsg('Publishing to the network…', 30000)
-      try {
-        const ok = await (await import('../did/publish.ts')).publishOneVisible(email)
-        showSysMsg(ok ? 'Published to DHT' : 'No gateway reachable (record not published)')
-      } catch { showSysMsg('Publish failed') }
-    })
-    // Move / spread this identity to a relay on another domain (same DID). Keeps
-    // one identity across both addresses; contacts follow via the DID (S2).
-    mkItem('Move to another relay…', false, () => {
-      const target = prompt('Provision this identity on another relay (base URL, e.g. https://mail.example.com):')?.trim()
-      if (!target) return
-      // Needs the password to unseal the master secret (scoped token + binding
-      // signature) — the seed is never persisted.
-      const password = prompt('Enter your password to authorize the move:')
-      if (password) moveIdentityToRelay(email, target, password)
-    })
-    // Per-relay: drop just THIS endpoint from the identity (the card's own relay),
-    // as long as it isn't the identity's last one. Republishes so the DID document
-    // no longer lists it.
-    if (serverUrl && relaysFor(email).length > 1) {
-      mkItem('Remove this relay', true, async () => {
-        saveStoredAccounts(loadStoredAccounts().filter(x => !(x.email === email && x.serverUrl === serverUrl)))
-        for (let i = sessions.length - 1; i >= 0; i--) {
-          if (sessions[i].account.email === email && sessions[i].account.serverUrl === serverUrl) sessions.splice(i, 1)
-        }
-        import('../did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
-        renderAccountsList(); loadLeftInboxes()
-      })
-    }
-    mkItem('Log out', true, async () => {
-      // Remove the whole IDENTITY across ALL its relays/addresses (per-relay
-      // removal is "Remove this relay"). Compute the identity key BEFORE tearing
-      // sessions down, then drop every endpoint that shares it.
-      const idKey = identityKeyForEmail(email)
-      const endpoints = loadStoredAccounts().filter(a => (a.did || a.email) === idKey)
-      const emails = new Set(endpoints.map(e => e.email))
-      saveStoredAccounts(loadStoredAccounts().filter(a => (a.did || a.email) !== idKey))
-      for (let i = sessions.length - 1; i >= 0; i--) {
-        if (identityKey(sessions[i]) === idKey) sessions.splice(i, 1)
-      }
-      // Clear localStorage keys + PGP keys scoped to each of the identity's addresses.
-      for (const k of Object.keys(localStorage)) {
-        for (const em of emails) if (k === `jmap_notif_${em}` || k === `sjoin_invites_${em}`) localStorage.removeItem(k)
-      }
-      for (const em of emails) await deleteKey(em)
-      for (const ep of endpoints) _accInfoCache.delete(accountKey(ep))
-      await clearIdentityCache(idKey)
-      renderAccountsList()
-    })
     document.body.appendChild(menu)
     const onDocClick = (ev: MouseEvent) => {
       if (!menu.contains(ev.target as Node)) closeAccountMenu()
@@ -1831,6 +1951,150 @@ export async function setupLeftPane() {
       document.removeEventListener('keydown', onKey)
       menu.remove()
     }
+  }
+
+  // Identity-level menu (hamburger button in the account-page heading). Change
+  // password + recovery phrase both operate on the envelope, which lives on
+  // whichever of the identity's relays isn't an AP relay (the "home" relay —
+  // same criterion the old standalone recovery-phrase section used) — an AP
+  // relay never holds an envelope. Folds that former standalone section in
+  // here instead of keeping two places to reach the same thing.
+  function openIdentityMenu(anchor: HTMLElement): void {
+    const homeIdentity = sessions.find(s => !isApRelay(s.account.serverUrl))
+    if (!homeIdentity) { showSysMsg('No password-protected relay in this identity'); return }
+    const idKey = identityKey(homeIdentity)
+    openDropdownMenu(anchor, [
+      { label: 'Change password', onClick: () => openPasswordModal(homeIdentity.account.email) },
+      {
+        label: 'Show recovery phrase', onClick: async () => {
+          const { showMnemonicWithPassword } = await import('./mnemonic.ts')
+          showMnemonicWithPassword(homeIdentity.account.email, homeIdentity.account.serverUrl)
+        },
+      },
+      {
+        label: 'Download all data', onClick: async () => {
+          // The per-card "Download" only ever exports ONE relay's data (by
+          // design — see storage.go). This is the whole-identity counterpart:
+          // every relay/address sharing the DID, bundled into one archive —
+          // real directory structure (raw/) plus the same markdown rendering
+          // vault sync uses (markdown/), each under its own relay folder so a
+          // cross-relay thread's independent per-store halves stay separate
+          // (no cross-relay merging here, same as the server's own storage).
+          const endpoints = loadStoredAccounts().filter(a => (a.did || a.email) === idKey)
+          showSysMsg('Preparing download…', 30000)
+          const { exportAccountStorage } = await import('../cryptenv.ts')
+          const { buildAccountArchiveEntries } = await import('../vault/export.ts')
+          const { buildZip } = await import('../vault/zip.ts')
+          const allEntries: { path: string; data: Uint8Array }[] = []
+          let failures = 0
+          for (const ep of endpoints) {
+            const data = await exportAccountStorage(ep.serverUrl, ep.email, ep.password)
+            if (!data) { failures++; continue }
+            const entries = await buildAccountArchiveEntries(ep.email, data.files)
+            for (const e of entries) allEntries.push({ path: `${ep.email}/${e.path}`, data: e.data })
+          }
+          const zipBytes = buildZip(allEntries)
+          const blob = new Blob([zipBytes.buffer as ArrayBuffer], { type: 'application/zip' })
+          const url = URL.createObjectURL(blob)
+          const link = document.createElement('a')
+          link.href = url
+          link.download = `${homeIdentity.account.email}-all-data.zip`
+          link.click()
+          URL.revokeObjectURL(url)
+          showSysMsg(failures ? `Downloaded with ${failures} relay(s) failed` : 'Download ready')
+        },
+      },
+      {
+        label: 'Delete account', onClick: async () => {
+          // Whole-identity delete: every relay/address sharing this DID, not
+          // just the "home" one — per-card "Delete account" already covers a
+          // single relay; this is the counterpart for the whole identity.
+          const endpoints = loadStoredAccounts().filter(a => (a.did || a.email) === idKey)
+          const list = endpoints.map(e => e.email).join(', ')
+          if (!confirm(`Permanently delete this identity across all ${endpoints.length} relay(s) (${list})? This deletes all messages and account data everywhere — it cannot be undone.`)) return
+          const { deleteAccountOnRelay } = await import('../cryptenv.ts')
+          let failures = 0
+          for (const ep of endpoints) {
+            const ok = await deleteAccountOnRelay(ep.serverUrl, ep.email, ep.password, ep.did)
+            if (!ok) failures++
+          }
+          saveStoredAccounts(loadStoredAccounts().filter(a => (a.did || a.email) !== idKey))
+          for (let i = sessions.length - 1; i >= 0; i--) {
+            if (identityKey(sessions[i]) === idKey) sessions.splice(i, 1)
+          }
+          for (const ep of endpoints) {
+            _accInfoCache.delete(accountKey(ep))
+            await deleteKey(ep.email)
+            if (localStorage.getItem(`jmap_notif_${ep.email}`) != null) localStorage.removeItem(`jmap_notif_${ep.email}`)
+            if (localStorage.getItem(`sjoin_invites_${ep.email}`) != null) localStorage.removeItem(`sjoin_invites_${ep.email}`)
+          }
+          await clearIdentityCache(idKey)
+          renderAccountsList(); loadLeftInboxes()
+          showSysMsg(failures ? `Deleted with ${failures} failure(s) — some relay data may remain` : 'Identity deleted')
+        },
+      },
+    ])
+  }
+
+  // Drops just THIS one relay/address from local storage — session, stored
+  // credentials, cached info. Used by both "Log out" (local-only) and
+  // "Delete account" (after the server-side delete already succeeded). If
+  // this was the identity's only remaining relay, this IS a full identity
+  // sign-out, so it also clears identity-scoped local state (PGP keys,
+  // notif prefs, cache) instead of leaving them orphaned.
+  async function removeRelayLocally(email: string, serverUrl: string): Promise<void> {
+    const idKey = identityKeyForEmail(email)
+    const remaining = loadStoredAccounts().filter(a =>
+      (a.did || a.email) === idKey && !(a.email === email && a.serverUrl === serverUrl))
+    const wasLastRelay = remaining.length === 0
+    saveStoredAccounts(loadStoredAccounts().filter(x => !(x.email === email && x.serverUrl === serverUrl)))
+    for (let i = sessions.length - 1; i >= 0; i--) {
+      if (sessions[i].account.email === email && sessions[i].account.serverUrl === serverUrl) sessions.splice(i, 1)
+    }
+    _accInfoCache.delete(accountKey({ email, serverUrl }))
+    if (wasLastRelay) {
+      if (localStorage.getItem(`jmap_notif_${email}`) != null) localStorage.removeItem(`jmap_notif_${email}`)
+      if (localStorage.getItem(`sjoin_invites_${email}`) != null) localStorage.removeItem(`sjoin_invites_${email}`)
+      await deleteKey(email)
+      await clearIdentityCache(idKey)
+    } else {
+      import('../did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
+    }
+    renderAccountsList(); loadLeftInboxes()
+  }
+
+  function openAccountMenu(anchor: HTMLElement, email: string, serverUrl?: string) {
+    const items: MenuItem[] = [
+      { label: 'Change password', onClick: () => openPasswordModal(email) },
+    ]
+    if (serverUrl) {
+      // Actually deletes the account's data on THIS relay (messages, mailbox,
+      // envelope — see go-jmapsmtp/go-jmapap's /account/delete) — distinct
+      // from "Log out" below, which only forgets local credentials and
+      // leaves the server-side account untouched.
+      items.push({
+        label: 'Delete account', onClick: async () => {
+          if (!confirm(`Permanently delete ${email}? This deletes all messages and account data on the server — it cannot be undone.`)) return
+          const session = sessions.find(s => s.account.email === email && s.account.serverUrl === serverUrl)
+          if (!session) { showSysMsg('Not connected — log in before deleting'); return }
+          const { deleteAccountOnRelay } = await import('../cryptenv.ts')
+          const ok = await deleteAccountOnRelay(serverUrl, email, session.account.password, session.account.did)
+          if (!ok) { showSysMsg('Delete failed'); return }
+          await removeRelayLocally(email, serverUrl)
+          showSysMsg('Account deleted')
+        },
+      })
+      // No separate "wipe the whole identity" action — it used to be a
+      // hidden effect of this same item (clicking it from ONE relay's card
+      // silently logged out AP and mail together, since both shared a DID).
+      // This is always scoped to just this one card; logging out of an
+      // identity's last remaining relay naturally covers full sign-out,
+      // arrived at explicitly one relay at a time.
+      items.push({
+        label: 'Log out', onClick: () => removeRelayLocally(email, serverUrl),
+      })
+    }
+    openDropdownMenu(anchor, items)
   }
 
   // ── modal helpers ───────────────────────────────────────────────────────────
@@ -1957,6 +2221,11 @@ export async function setupLeftPane() {
         cache.name = newName
         _accInfoCache.set(email, cache)
         renderAccountsList()
+        // Also publish it into the DID document (biset extension, see
+        // document.ts) — same name, one more place it shows up: anyone who
+        // resolves this DID (e.g. via the [DID] badge) sees it instead of the
+        // raw did:dht string. Best-effort, same as any other republish.
+        import('../did/publish.ts').then(m => m.publishOneVisible(email)).catch(() => {})
         okEl.textContent = 'Saved'; okEl.style.display = 'block'
         setTimeout(dismiss, 600)
       } catch {
@@ -1967,77 +2236,35 @@ export async function setupLeftPane() {
     })
   }
 
-  // Move / spread an identity to a relay on a DIFFERENT domain (S2). Provisions
-  // the SAME envelope (→ same seed → same DID) at the target; the target's apex
-  // assigns a new address (localpart@newdomain), which the response returns. The
-  // new endpoint is tagged with the identity's DID so it merges under one
-  // identity (A1) and its messages unify (A2). Re-publishing lists the new
-  // address in alsoKnownAs so contacts following the DID can reach the move —
-  // the core of domain-death portability (a).
-  async function moveIdentityToRelay(email: string, targetUrl: string, password: string): Promise<void> {
-    const tgt = targetUrl.replace(/\/$/, '')
-    const existing = relaysFor(email)[0]
-    if (!existing) { showSysMsg('No connected session for this identity'); return }
-    const username = email.split('@')[0]
+  // Expand/collapse the identity heading's raw DID document — same pattern as
+  // #conv-meta's click-to-expand (thread.ts). Resolves live from the DHT via
+  // this identity's own relay gateways (not a local reconstruction) so what's
+  // shown matches what a contact resolving this DID actually sees.
+  async function toggleIdentityDidDoc(section: HTMLElement, docEl: HTMLElement, did: string): Promise<void> {
+    const wasExpanded = section.classList.contains('expanded')
+    section.classList.toggle('expanded')
+    if (wasExpanded) return
+    docEl.textContent = 'Resolving…'
     try {
-      const { getDidRecord, storeDidRecord } = await import('../did/store.ts')
-      const rec = await getDidRecord(email)
-      if (!rec) { showSysMsg('No DID for this identity'); return }
-      // The scoped token + binding signature need the master secret, which only
-      // the password unseals (the seed is never persisted). Get it from any of the
-      // identity's existing cryptenv relays.
-      const env = await fetchEnvelope(existing.account.serverUrl, existing.account.email)
-      if (!env) { showSysMsg('Could not read the account envelope'); return }
-      let masterSecret: Uint8Array
-      try { masterSecret = (await unsealEnvelope(env, password)).masterSecret }
-      catch { showSysMsg('Incorrect password'); return }
-      // Bind to the target with a signature (no secret leaves); a move to a
-      // third-party relay does NOT get the envelope (recovery stays seed-only).
-      const { provisionAccount } = await import('../did/provision.ts')
-      const res = await provisionAccount({
-        serverUrl: tgt, username, did: rec.did,
-        rootPrivateKey: hexToBytes(rec.rootPrivateKey), masterSecret,
-      })
-      if (res.conflict) { showSysMsg('That address is owned by a different key'); return }
-      if (!res.ok) { showSysMsg(`Move failed (${res.status})`); return }
-      const newEmail = res.email || `${username}@${new URL(tgt).hostname}`
-      const session = await initSession({ serverUrl: tgt, email: newEmail, password: res.password!, did: rec.did }).catch(() => null)
-      if (!session) { showSysMsg('Provisioned but failed to connect'); return }
-      session.account.did = rec.did
-      // initSession already fires fetchRelayInfo(tgt) fire-and-forget, but the
-      // card renders synchronously right after — awaiting it explicitly here
-      // (idempotent no-op once cached) ensures the FIRST paint already knows
-      // whether tgt is mail or activitypub, instead of falling back to the
-      // home-ap_url guess (wrong for any foreign AP relay) with nothing to
-      // ever correct the label afterward — protoEl.textContent is set once at
-      // card-creation time and never revisited.
-      const { fetchRelayInfo } = await import('../context.ts')
-      await fetchRelayInfo(tgt)
-      const { deriveKek } = await import('../cryptenv.ts')
-      const kek = await deriveKek(masterSecret)
-      ;(session as any).kek = kek
-      if (!sessions.some(s => s.account.email === newEmail && s.account.serverUrl === tgt)) sessions.push(session)
-      const stored = loadStoredAccounts()
-      if (!stored.some(a => a.email === newEmail && a.serverUrl === tgt)) {
-        saveStoredAccounts([...stored, { serverUrl: tgt, email: newEmail, password: res.password!, did: rec.did }])
+      const { resolve } = await import('../did/resolver.ts')
+      // relaysForId, not relaysFor(email): the representative address picked
+      // for display isn't necessarily the one with a live session (accounts
+      // is unordered stored-account data, not the connected sessions list),
+      // so looking it up by "self" email could silently return zero gateways.
+      const gateways = relaysForId(did).map(s => s.account.serverUrl.replace(/\/$/, '') + '/pkarr')
+      const doc = await resolve(did, gateways)
+      // identityKey is a raw Uint8Array — JSON.stringify serializes typed
+      // arrays as {"0":244,"1":42,...} (no special-casing, unlike a plain
+      // array), so it's already redundant with the DID suffix itself. Format
+      // as hex for display instead of dumping 32 numbered object keys.
+      const forDisplay = doc && {
+        ...doc,
+        identityKey: [...doc.identityKey].map(b => b.toString(16).padStart(2, '0')).join(''),
       }
-      initPGPForSession(session, kek)
-      // Mirror the DID record under the new address so it stays resolvable if the
-      // new endpoint later becomes the representative (e.g. the old one is dropped).
-      await storeDidRecord({ ...rec, email: newEmail })
-      if (isApRelay(tgt)) advertiseOwnAvatarForEmail(newEmail)
-      startPolling()
-      renderAccountsList()
-      loadLeftInboxes()
-      // The move itself (provision + connect, above) is fast; publishing the
-      // updated relay list to the DHT is the slow part (several seconds per
-      // gateway). Report them as two distinct steps so a contact-discovery
-      // wait isn't mistaken for the move having failed or hung.
-      showSysMsg(`Moved — also reachable at ${newEmail}. Publishing to the network…`, 30000)
-      import('../did/publish.ts').then(m => m.publishOneVisible(email)).then(ok => {
-        showSysMsg(ok ? `Published — ${newEmail} is now discoverable` : 'Moved, but no gateway accepted the publish (will retry automatically)')
-      }).catch(() => { showSysMsg('Moved, but publishing to the network failed (will retry automatically)') })
-    } catch (e) { console.warn('[move] failed', e); showSysMsg('Could not move identity') }
+      docEl.textContent = forDisplay ? JSON.stringify(forDisplay, null, 2) : 'No document found (not yet published, or no gateway reachable)'
+    } catch {
+      docEl.textContent = 'Failed to resolve DID document'
+    }
   }
 
   function renderAccountsList() {
@@ -2045,12 +2272,80 @@ export async function setupLeftPane() {
     if (!$list) return
     $list.textContent = ''
     const accounts = loadStoredAccounts()
+    // One session = one identity (ARC.md 2026-07-14): every loaded account
+    // shares the same DID (if any), so the identity is a property of the
+    // PAGE, not of any one card — shown once in the heading, avatar + [display
+    // name / shortened DID], instead of repeated per card.
+    const identitySection = document.getElementById('cmd-acc-identity-section')
+    const identityAvatar = document.getElementById('cmd-acc-identity-avatar')
+    const identityName = document.getElementById('cmd-acc-identity-name')
+    const identityDid = document.getElementById('cmd-acc-identity-did')
+    const identityCopy = document.getElementById('cmd-acc-identity-copy')
+    const identityRepublish = document.getElementById('cmd-acc-identity-republish') as HTMLButtonElement | null
+    const identityMenuBtn = document.getElementById('cmd-acc-identity-menu-btn') as HTMLButtonElement | null
+    const identityDoc = document.getElementById('cmd-acc-identity-doc')
+    const repAccount = accounts.find(a => a.did)
+    if (identitySection && identityAvatar && identityName && identityDid && identityDoc) {
+      if (repAccount?.did) {
+        const repEmail = repAccount.email
+        const did = repAccount.did
+        identityAvatar.textContent = ''
+        identityAvatar.style.cssText = 'cursor:pointer;position:relative;overflow:hidden'
+        identityAvatar.title = 'Click to set avatar'
+        const ownAvatar = avatarDataUrl(repEmail)
+        if (ownAvatar) {
+          identityAvatar.style.cssText += ';background:transparent'
+          const img = document.createElement('img')
+          img.src = ownAvatar
+          img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%'
+          identityAvatar.appendChild(img)
+        } else {
+          identityAvatar.style.cssText += ';' + avatarStyle(repEmail)
+          identityAvatar.textContent = repEmail.charAt(0).toUpperCase()
+        }
+        identityAvatar.onclick = () => pickAndSetIdentityAvatar(did)
+        // Default is the localpart until changed — the server synthesizes
+        // exactly this as Identity.name until a real Identity/set happens
+        // (go-jmapserver's defaultIdentity()), so this needs no separate
+        // "auto-derive at creation" step of its own.
+        const name = identities.all().find(i => i.email === repEmail)?.name || repEmail.split('@')[0]
+        identityName.textContent = name
+        identityName.onclick = () => openDisplayNameModal(repEmail)
+        const suffix = did.replace(/^did:dht:/, '')
+        identityDid.textContent = `did:dht:${suffix.slice(0, 8)}…${suffix.slice(-6)}`
+        identityDid.onclick = () => toggleIdentityDidDoc(identitySection, identityDoc, did)
+        if (identityMenuBtn) identityMenuBtn.onclick = (ev) => { ev.stopPropagation(); openIdentityMenu(identityMenuBtn) }
+        if (identityCopy) {
+          identityCopy.onclick = (ev) => {
+            ev.stopPropagation() // don't also trigger identityDid's expand-doc click
+            navigator.clipboard?.writeText(did).then(() => showSysMsg('DID copied')).catch(() => {})
+          }
+        }
+        // Republishing publishes the WHOLE identity's document (every relay,
+        // every address — see publish.ts's publishOne) regardless of which
+        // account triggered it, so it belongs here once, not duplicated in
+        // every per-card menu (it used to be, and always did the same thing
+        // no matter which card's menu you opened it from).
+        if (identityRepublish) {
+          identityRepublish.onclick = async () => {
+            showSysMsg('Publishing to the network…', 30000)
+            try {
+              const ok = await (await import('../did/publish.ts')).publishOneVisible(repEmail)
+              showSysMsg(ok ? 'Published to DHT' : 'No gateway reachable (record not published)')
+            } catch { showSysMsg('Publish failed') }
+          }
+        }
+        identitySection.style.display = ''
+      } else {
+        identitySection.style.display = 'none'
+        identitySection.classList.remove('expanded')
+      }
+    }
     if (!accounts.length) {
       const msg = document.createElement('div')
       msg.className = 'lp-search-status'
       msg.textContent = 'No accounts'
       $list.appendChild(msg)
-      return
     }
     const relayLabel = (url: string): string => {
       try { return new URL(url).hostname.split('.')[0] } catch { return '?' }
@@ -2058,8 +2353,8 @@ export async function setupLeftPane() {
     const protoLabel = (url: string): string => isApRelay(url) ? 'AP' : 'SMTP'
     // One card per RELAY endpoint. Identity-by-DID: the DID is the identity; each
     // relay is a concrete endpoint you see and manage (SMTP, ActivityPub, …).
-    // Cards of the same identity share a DID (shown small on each); sorting by
-    // did keeps an identity's relays adjacent.
+    // Sorting by did keeps an identity's relays adjacent (the DID itself is
+    // shown once, in the page heading above — see identitySection).
     const idKeyOf = (x: { did?: string; email: string }) => x.did || x.email
     const relayCards = [...accounts].sort((x, y) =>
       idKeyOf(x).localeCompare(idKeyOf(y)) || x.serverUrl.localeCompare(y.serverUrl))
@@ -2072,24 +2367,8 @@ export async function setupLeftPane() {
       row.className = 'cmd-page-row'
       row.style.cssText = 'gap:12px;align-items:center;padding:10px 12px'
 
-      const avatarName = a.email
-      const avatar = document.createElement('div')
-      avatar.className = 'lp-avatar'
-      avatar.style.cssText = 'flex-shrink:0;cursor:pointer;position:relative;overflow:hidden'
-      avatar.title = 'Click to set avatar'
-      const ownAvatar = avatarDataUrl(a.email)
-      if (ownAvatar) {
-        avatar.style.cssText += ';background:transparent'
-        const img = document.createElement('img')
-        img.src = ownAvatar
-        img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%'
-        avatar.appendChild(img)
-      } else {
-        avatar.style.cssText += ';' + avatarStyle(avatarName)
-        avatar.textContent = avatarName.charAt(0).toUpperCase()
-      }
-      avatar.addEventListener('click', (ev) => { ev.stopPropagation(); pickAndSetAvatar(a.email) })
-
+      // Avatar lives at the identity heading now, not per card — it applies to
+      // every address of this identity (see pickAndSetIdentityAvatar).
       const left = document.createElement('div')
       left.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:4px'
 
@@ -2120,22 +2399,11 @@ export async function setupLeftPane() {
       const statSync = document.createElement('span')
       statSync.dataset.kind = 'sync'
       statSync.textContent = `Sync: ${fmtRelTime(cached.lastSyncAt)}`
-      statsRow.append(statUnread, statPgp, statSync)
+      statsRow.append(statUnread, statSync, statPgp)
 
-      // The identity IS the DID (identity-by-DID) — surface it. The address in
-      // the header is just its current primary handle; this line is the stable
-      // root that binds all the endpoints above. Click to copy.
-      const didLine = document.createElement('div')
-      if (a.did) {
-        const suffix = a.did.replace(/^did:dht:/, '')
-        didLine.style.cssText = 'font-size:11px;color:var(--text-dim);font-family:ui-monospace,monospace;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
-        didLine.textContent = `did:dht:${suffix.slice(0, 8)}…${suffix.slice(-6)}`
-        didLine.title = `${a.did}\n(click to copy)`
-        didLine.addEventListener('click', (ev) => { ev.stopPropagation(); navigator.clipboard?.writeText(a.did!).then(() => showSysMsg('DID copied')).catch(() => {}) })
-        left.append(headRow, didLine, statsRow)
-      } else {
-        left.append(headRow, statsRow)
-      }
+      // DID is shown once in the page heading (identitySection above), not
+      // per card — every card here shares it (one session = one identity).
+      left.append(headRow, statsRow)
 
       const menuBtn = document.createElement('button')
       menuBtn.type = 'button'
@@ -2149,8 +2417,156 @@ export async function setupLeftPane() {
         openAccountMenu(menuBtn, a.email, a.serverUrl)
       })
 
-      row.append(avatar, left, menuBtn)
-      $list.appendChild(row)
+      row.append(left, menuBtn)
+
+      // "How your data is stored" (issue #7): the whole card is the click
+      // target — the border between cards opens into a filled panel instead
+      // of staying a line (same idea as #cmd-acc-identity-expanded). One
+      // fetch per expand, not cached, so it stays current with a purge/delete
+      // done moments earlier.
+      const cardWrap = document.createElement('div')
+      cardWrap.className = 'acc-card-wrap'
+      const panel = document.createElement('div')
+      panel.className = 'acc-storage-panel'
+      const panelHeader = document.createElement('div')
+      panelHeader.className = 'acc-storage-header'
+      const panelTitle = document.createElement('span')
+      panelTitle.className = 'acc-storage-title'
+      panelTitle.textContent = 'Storage'
+      const panelActions = document.createElement('div')
+      panelActions.className = 'acc-storage-actions'
+      const downloadBtn = document.createElement('button')
+      downloadBtn.type = 'button'
+      downloadBtn.className = 'acc-storage-icon-btn'
+      downloadBtn.setAttribute('aria-label', 'Download')
+      downloadBtn.title = 'Download this relay’s data'
+      downloadBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M6 11l6 6 6-6"/><path d="M4 21h16"/></svg>'
+      const purgeBtn = document.createElement('button')
+      purgeBtn.type = 'button'
+      purgeBtn.className = 'acc-storage-icon-btn'
+      purgeBtn.setAttribute('aria-label', 'Purge messages')
+      purgeBtn.title = 'Purge messages'
+      purgeBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>'
+      panelActions.append(downloadBtn, purgeBtn)
+      panelHeader.append(panelTitle, panelActions)
+      const tree = document.createElement('div')
+      tree.className = 'acc-storage-tree'
+      tree.textContent = 'Loading…'
+      panel.append(panelHeader, tree)
+      cardWrap.append(row, panel)
+      $list.appendChild(cardWrap)
+
+      const loadStorageTree = async () => {
+        tree.textContent = 'Loading…'
+        const { fetchAccountStorage } = await import('../cryptenv.ts')
+        const info = await fetchAccountStorage(a.serverUrl, a.email, a.password)
+        if (!info) { tree.textContent = 'Failed to load — check the relay is reachable.'; return }
+        panelTitle.textContent = `STORAGE : ${fmtBytes(info.totalSizeBytes)}`
+        tree.textContent = ''
+        info.entries.forEach((entry, i) => {
+          const isLastEntry = i === info.entries.length - 1
+          const line = document.createElement('div')
+          line.className = 'tree-entry'
+          const prefix = document.createElement('span')
+          prefix.textContent = isLastEntry ? '└─' : '├─'
+          const name = document.createElement('span')
+          name.className = 'tree-name'
+          name.textContent = entry.type === 'dir' ? `${entry.name}/` : entry.name
+          const meta = document.createElement('span')
+          meta.className = 'tree-meta'
+          meta.textContent = entry.type === 'dir'
+            ? `(${entry.count ?? 0} file${entry.count === 1 ? '' : 's'}, ${fmtBytes(entry.sizeBytes)})`
+            : `(${fmtBytes(entry.sizeBytes)})`
+          line.append(prefix, name, meta)
+          tree.appendChild(line)
+
+          // Drill-down: "messages" is the one entry summarized rather than
+          // listed (could be thousands of files) — click it to fetch and
+          // show the individual files nested underneath.
+          if (entry.type === 'dir' && entry.name === 'messages' && entry.count) {
+            line.classList.add('tree-expandable')
+            const subList = document.createElement('div')
+            subList.className = 'tree-sublist'
+            tree.appendChild(subList)
+            line.addEventListener('click', async () => {
+              const expandingSub = subList.style.display !== 'block'
+              subList.style.display = expandingSub ? 'block' : 'none'
+              line.classList.toggle('tree-expanded', expandingSub)
+              if (!expandingSub || subList.dataset.loaded) return
+              subList.dataset.loaded = '1'
+              subList.textContent = 'Loading…'
+              const { fetchMessageFiles } = await import('../cryptenv.ts')
+              const files = await fetchMessageFiles(a.serverUrl, a.email, a.password)
+              subList.textContent = ''
+              if (!files) { subList.textContent = 'Failed to load'; return }
+              files.forEach((f, fi) => {
+                const subLine = document.createElement('div')
+                subLine.className = 'tree-entry'
+                const subPrefix = document.createElement('span')
+                subPrefix.textContent = fi === files.length - 1 ? '└─' : '├─'
+                const subName = document.createElement('span')
+                subName.className = 'tree-name'
+                subName.textContent = f.name
+                const subMeta = document.createElement('span')
+                subMeta.className = 'tree-meta'
+                subMeta.textContent = `(${fmtBytes(f.sizeBytes)})`
+                subLine.append(subPrefix, subName, subMeta)
+                subList.appendChild(subLine)
+              })
+            })
+          }
+        })
+        if (!info.entries.length) tree.textContent = 'Empty.'
+      }
+
+      row.addEventListener('click', () => {
+        const expanding = !cardWrap.classList.contains('expanded')
+        cardWrap.classList.toggle('expanded')
+        if (expanding) loadStorageTree()
+      })
+
+      downloadBtn.addEventListener('click', async (ev) => {
+        ev.stopPropagation()
+        if (downloadBtn.disabled) return
+        downloadBtn.disabled = true
+        try {
+          const { exportAccountStorage } = await import('../cryptenv.ts')
+          const bundle = await exportAccountStorage(a.serverUrl, a.email, a.password)
+          if (!bundle) { showSysMsg('Download failed'); return }
+          // Real directory structure (raw/) + the same markdown rendering
+          // vault sync uses (markdown/), zipped — not a flattened JSON blob.
+          const { buildAccountArchiveEntries } = await import('../vault/export.ts')
+          const { buildZip } = await import('../vault/zip.ts')
+          const entries = await buildAccountArchiveEntries(a.email, bundle.files)
+          const zipBytes = buildZip(entries)
+          const blob = new Blob([zipBytes.buffer as ArrayBuffer], { type: 'application/zip' })
+          const url = URL.createObjectURL(blob)
+          const link = document.createElement('a')
+          link.href = url
+          link.download = `${a.email}-data.zip`
+          link.click()
+          URL.revokeObjectURL(url)
+        } finally {
+          downloadBtn.disabled = false
+        }
+      })
+
+      purgeBtn.addEventListener('click', async (ev) => {
+        ev.stopPropagation()
+        if (purgeBtn.disabled) return
+        if (!confirm(`Delete every stored message for ${a.email} on this relay? Mailboxes, contacts, and the account itself are kept — only the messages are removed. This cannot be undone.`)) return
+        purgeBtn.disabled = true
+        try {
+          const { purgeAccountMessages } = await import('../cryptenv.ts')
+          const n = await purgeAccountMessages(a.serverUrl, a.email, a.password)
+          if (n == null) { showSysMsg('Purge failed'); return }
+          showSysMsg(`Purged ${n} message${n === 1 ? '' : 's'}`)
+          loadStorageTree()
+          loadLeftInboxes()
+        } finally {
+          purgeBtn.disabled = false
+        }
+      })
 
       if (session) {
         fetchAccountInfo(session).then(info => {
@@ -2161,6 +2577,39 @@ export async function setupLeftPane() {
         }).catch(() => {})
       }
     }
+
+    // Trailing "card" (n+1th) that opens the same add-relay/login panel the
+    // old top-of-page "+" toggle used to — kept as its own last row so
+    // `.acc-card-wrap:last-child` styling (no border under the very last
+    // item) lands here instead of on the last real account.
+    const newCardWrap = document.createElement('div')
+    newCardWrap.className = 'acc-card-wrap'
+    const newCardRow = document.createElement('div')
+    newCardRow.className = 'cmd-page-row acc-new-account-row'
+    const newCardText = document.createElement('h3')
+    newCardText.style.margin = '0'
+    const newCardPlus = document.createElement('span')
+    newCardPlus.className = 'acc-new-account-plus'
+    newCardPlus.textContent = '+'
+    newCardText.append(newCardPlus, 'New JMAP account')
+    newCardRow.appendChild(newCardText)
+    newCardRow.addEventListener('click', () => {
+      const panel = document.getElementById('cmd-acc-panel')
+      if (!panel) return
+      const opening = panel.style.display === 'none'
+      // 'flex', not 'block' — #cmd-acc-panel's own CSS is display:flex (its
+      // gap is the one spacing mechanism for all rows inside it); an inline
+      // 'block' here overrides that stylesheet rule outright, silently
+      // disabling gap entirely (2026-07-14, user-reported: gap changes had
+      // zero visible effect no matter the value, because of exactly this).
+      panel.style.display = opening ? 'flex' : 'none'
+      if (opening) {
+        resetAddAccountPanel()
+        ;(document.getElementById('cmd-acc-relay') as HTMLInputElement | null)?.focus()
+      }
+    })
+    newCardWrap.appendChild(newCardRow)
+    $list.appendChild(newCardWrap)
   }
 
   function onShowAccounts() {
@@ -2168,7 +2617,7 @@ export async function setupLeftPane() {
     const form = document.getElementById('cmd-acc-form') as HTMLFormElement | null
     form?.addEventListener('submit', async (ev) => {
       ev.preventDefault()
-      const serverInput = document.getElementById('cmd-acc-server') as HTMLInputElement
+      const relayInput = document.getElementById('cmd-acc-relay') as HTMLInputElement
       const emailInput = document.getElementById('cmd-acc-email') as HTMLInputElement
       const pwInput = document.getElementById('cmd-acc-password') as HTMLInputElement
       const errEl = document.getElementById('cmd-acc-error')!
@@ -2176,68 +2625,48 @@ export async function setupLeftPane() {
 
       const email = emailInput.value.trim()
       const pw = pwInput.value
+      const raw = relayInput.value.trim().replace(/\/$/, '')
+      // The relay picker at the top of the panel is required for either path
+      // (Sign up or Log in) — no more domain-guessing fallback ladder here.
+      // A bare apex ("biset.md") still expands to BOTH mail+ap siblings
+      // (expandDualRelay) — the same home-identity pairing #new provisions,
+      // now available on Log in too (best-effort: whichever comes up is
+      // kept, same as the old auto-discovery this replaced).
+      const dual = expandDualRelay(raw)
+      const servers = dual ?? (raw ? [/^https?:\/\//i.test(raw) ? raw : 'https://' + raw] : [])
+      if (!servers.length) { errEl.textContent = 'Relay URL required'; errEl.style.display = 'block'; return }
       if (!email || !pw) { errEl.textContent = 'Email and Password required'; errEl.style.display = 'block'; return }
-
-      const raw = serverInput.value.trim().replace(/\/$/, '')
-      const explicit = raw && !/^https?:\/\//i.test(raw) ? 'https://' + raw : raw
-      const domain = email.split('@')[1] ?? ''
-      // An identity can span multiple relays. For the home domain, connect BOTH
-      // the mail (mail.<host>) and ActivityPub (ap.<host>) relays best-effort —
-      // whichever comes up is kept, so an AP-only account (no mailbox) is fine.
-      // An explicit server overrides to that single relay; other domains fall
-      // back to bare-domain JMAP autodiscovery.
-      const cfg = (window as any).__BISET_CONFIG__
-      const homeHost = cfg?.hostname
-      const mailUrl = cfg?.mail_url || (homeHost ? `https://mail.${homeHost}` : '')
-      const apUrl = cfg?.ap_url || (homeHost ? `https://ap.${homeHost}` : '')
-      const apexOf = (u: string) => { try { return new URL(u).hostname.split('.').slice(1).join('.') } catch { return '' } }
-      const isHomeDomain = (d: string) => d === homeHost || (!!mailUrl && d === apexOf(mailUrl)) || (!!apUrl && d === apexOf(apUrl))
-      let candidates: string[]
-      if (explicit) candidates = [explicit]
-      else if (domain && isHomeDomain(domain)) candidates = [mailUrl, apUrl].filter(Boolean)
-      else if (domain) candidates = ['https://' + domain]
-      else candidates = []
-      if (!candidates.length) {
-        serverInput.style.display = ''
-        ;(serverInput as HTMLInputElement).focus()
-        errEl.textContent = 'Server URL required'
-        errEl.style.display = 'block'
-        addBtn.disabled = false; addBtn.textContent = 'Add'
-        return
-      }
 
       addBtn.disabled = true; addBtn.textContent = 'Connecting…'; errEl.style.display = 'none'
 
-      // Relays of one identity ideally share a cryptenv envelope (same authToken).
-      // Legacy accounts may have independent envelopes per relay, so we fetch each
-      // relay's envelope separately and only fall back to a cached token when the
-      // relay has no envelope of its own. kek is kept from the first successful
-      // unseal (mail relay) since that's where the PGP key lives.
+      // Own relays ideally carry a cryptenv envelope (the identity's wrapped
+      // master secret); a third-party/DID-less relay has none, so the raw
+      // password is used as-is.
       let kek: Uint8Array | undefined
       let masterSecret: Uint8Array | undefined
       let badPw = false
       const resolveAuth = async (server: string): Promise<string | null> => {
         const env = await fetchEnvelope(server, email)
-        if (!env) return pw // non-cryptenv / DID-less relay: use the raw password
+        if (!env) return pw
         try {
           const u = await unsealEnvelope(env, pw)
-          if (!kek) kek = u.kek
-          if (!masterSecret) masterSecret = u.masterSecret
-          // Relay-scoped token for THIS server (not a shared master token).
+          kek = u.kek
+          masterSecret = u.masterSecret
           const { password } = await relayAuth(u.masterSecret, server)
           return password
         } catch { badPw = true; return null }
       }
 
       const connected: Array<{ session: any; server: string; token: string }> = []
-      for (const server of candidates) {
+      for (const server of servers) {
         const token = await resolveAuth(server)
         if (badPw) break
         if (!token) continue
         const session = await initSession({ serverUrl: server, email, password: token }).catch(() => null)
-        if (!session) { console.warn('[add] connect failed', server); continue }
-        if (kek) (session as any).kek = kek
-        connected.push({ session, server, token })
+        if (session) {
+          if (kek) (session as any).kek = kek
+          connected.push({ session, server, token })
+        }
       }
 
       if (badPw) {
@@ -2247,8 +2676,6 @@ export async function setupLeftPane() {
         return
       }
       if (!connected.length) {
-        serverInput.style.display = ''
-        if (!serverInput.value) serverInput.value = candidates[0]
         errEl.textContent = 'Failed to establish JMAP session'
         errEl.style.display = 'block'
         addBtn.disabled = false; addBtn.textContent = 'Add'
@@ -2262,6 +2689,23 @@ export async function setupLeftPane() {
       // local DID record — initDid() just returns the existing one.
       const { initDid } = await import('../did/index.ts')
       const didRecord = masterSecret ? await initDid(email, masterSecret) : null
+
+      // One session = one identity (ARC.md 2026-07-14): this account's own
+      // DID/masterSecret is DERIVED independently of whatever is currently
+      // active (initDid(email, masterSecret) computes the DID purely from
+      // THIS account's own seed) — so logging into an account belonging to a
+      // genuinely different identity must never silently merge into the
+      // active one's sessions. Switching identity is logout-then-login only.
+      if (!isFirst) {
+        const activeIdKey = identityIds()[0]
+        const newIdKey = didRecord?.did || email
+        if (activeIdKey && newIdKey !== activeIdKey) {
+          errEl.textContent = 'This account belongs to a different identity — log out first to switch.'
+          errEl.style.display = 'block'
+          addBtn.disabled = false; addBtn.textContent = 'Add'
+          return
+        }
+      }
 
       // Self-resolution (DID.md): don't just connect the relay(s) explicitly
       // requested — also pick up any relay this identity's OWN DID document
@@ -2298,9 +2742,9 @@ export async function setupLeftPane() {
       }
       saveStoredAccounts(stored)
       addBtn.disabled = false; addBtn.textContent = 'Add'
-      serverInput.value = ''; serverInput.style.display = 'none'
-      emailInput.value = ''
-      pwInput.value = ''
+      resetAddAccountPanel()
+      const panel = document.getElementById('cmd-acc-panel') as HTMLElement | null
+      if (panel) panel.style.display = 'none'
       renderAccountsList()
       loadLeftInboxes()
       if (isFirst) startPolling()
@@ -2713,6 +3157,4 @@ export async function setupLeftPane() {
       } catch { showSysMsg('Import failed') }
     })
   }
-
-  setupAccountCreateOverlay()
 }

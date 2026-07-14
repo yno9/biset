@@ -1,4 +1,5 @@
 import type { Email, Thread, Mailbox, Identity } from 'jmap-rfc-types'
+import type { Card } from '../did/contacts.ts'
 import type { PendingSubmission } from '../types.ts'
 import { vaultHandle, sessions, identityKey } from '../context.ts'
 import { readJson, writeJson, scanDir, scanEntries, deleteFile } from './fs.ts'
@@ -8,6 +9,7 @@ import * as messages from '../store/messages.ts'
 import * as threads from '../store/threads.ts'
 import * as mailboxes from '../store/mailboxes.ts'
 import * as identities from '../store/identities.ts'
+import * as contacts from '../store/contacts.ts'
 import * as submissions from '../store/submissions.ts'
 import * as cache from '../store/cache.ts'
 import { buildEffectiveGroups } from '../processing.ts'
@@ -20,6 +22,7 @@ export async function loadFromVault(): Promise<void> {
     loadThreads(),
     loadMailboxes(),
     loadIdentities(),
+    loadContacts(),
     loadSubmissions(),
   ])
 }
@@ -68,6 +71,13 @@ async function loadIdentities(): Promise<void> {
   try {
     const data = await readJson(['.data', 'identities.json'])
     identities.set(data as Identity[])
+  } catch { /* file may not exist */ }
+}
+
+async function loadContacts(): Promise<void> {
+  try {
+    const data = await readJson(['.data', 'contacts.json'])
+    contacts.set(data as Card[])
   } catch { /* file may not exist */ }
 }
 
@@ -126,6 +136,12 @@ export async function flushIdentities(): Promise<void> {
   await cache.putIdentities(identities.all())
   if (!vaultHandle) return
   await writeJson(['.data', 'identities.json'], identities.all())
+}
+
+export async function flushContacts(): Promise<void> {
+  await cache.putContacts(contacts.all())
+  if (!vaultHandle) return
+  await writeJson(['.data', 'contacts.json'], contacts.all())
 }
 
 export async function flushSubmission(sub: PendingSubmission): Promise<void> {
