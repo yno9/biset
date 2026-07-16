@@ -26,21 +26,6 @@ export function expandDualRelay(raw: string): [string, string] | null {
 
 // ── DOM helpers ───────────────────────────────────────────────────────────────
 
-// Distinguishes our own JS-driven scrolling (scrollToFocused, scroll-to-top/
-// bottom buttons, ...) from genuine user scrolling (including mobile momentum,
-// which keeps firing 'scroll' events for an unpredictable stretch after the
-// finger lifts — there's no fixed "recent touch" window that reliably covers
-// it). Call markProgrammaticScroll() right before any outer.scrollTo/scrollTop
-// write; a scroll listener elsewhere can then check isProgrammaticScroll() to
-// tell whether the current event is one of ours.
-let _programmaticScrollUntil = 0
-export function markProgrammaticScroll(durationMs = 700): void {
-  _programmaticScrollUntil = Date.now() + durationMs
-}
-export function isProgrammaticScroll(): boolean {
-  return Date.now() < _programmaticScrollUntil
-}
-
 // Home-screen icon badge (Badging API — installed PWA only, iOS 16.4+/Android
 // Chrome). No-op elsewhere; wrapped since older browsers lack the methods.
 export function syncAppBadge(count: number): void {

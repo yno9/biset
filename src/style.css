@@ -1420,12 +1420,6 @@ a.lp-avatar:hover {
 body.lp-resizing #reply-dock {
   transition: none;
 }
-#reply-dock:not(.group-expanded) {
-  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
-#reply-dock.dock-hidden {
-  transform: translateY(calc(100% + 24px));
-}
 #app.single-col.lp-enabled #reply-dock {
   left: 0;
   right: 0;
@@ -1524,19 +1518,6 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 #scroll-to-top.above-bottom {
   bottom: calc(var(--dock-h) + 5px + 26px + 8px);
 }
-/* reply-dock is position:fixed + translateY when stowed (main.ts scroll
-     handler) — that doesn't change its layout height (--dock-h), so these
-     buttons need their own override to follow it down. .above-bottom still
-     needs its own higher offset so it doesn't sit on top of scroll-to-bottom
-     when both are visible at once. */
-body:has(#reply-dock.dock-hidden) #scroll-to-bottom,
-body:has(#reply-dock.dock-hidden) #scroll-to-top {
-  bottom: 16px;
-}
-body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
-  bottom: calc(16px + 26px + 8px);
-}
-
 /* ── past threads drawer ── */
 /* 過去スレッド: 引き出し (ビューポート上に隠れている) */
 #past-threads {
@@ -2748,7 +2729,21 @@ body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
   max-width: none;
   margin: 0;
   padding: 0;
-  min-height: calc(100vh - 56px);
+  /* height, not min-height — the children below (.new-compose-card,
+     .new-compose-body-field, the textarea) are already built as a
+     flex:1/min-height:0 chain meant to fill and cap at this box's height,
+     with the textarea growing/scrolling internally and the send button
+     row staying put at the bottom. min-height is only a floor, so real
+     content simply grew past it instead, pushing the send button below
+     the viewport on mobile (2026-07-14, user-reported). 100dvh (not
+     100vh) so it tracks the actual visible area, not the address-bar-
+     hidden maximum. The fixed 56px this used to subtract was just wrong
+     (measured live: actual space above this box is --thread-title-h
+     PLUS the notch safe-area padding #past-threads reserves above it —
+     both already tracked elsewhere in this file, e.g. #right-pane's own
+     `calc(100% - var(--thread-title-h))`, so reuse them instead of a
+     second, different, hand-guessed constant). */
+  height: calc(100dvh - var(--thread-title-h, 62px) - env(safe-area-inset-top, 0px));
   display: flex;
   flex-direction: column;
 }
@@ -2778,6 +2773,15 @@ body:has(#reply-dock.dock-hidden) #scroll-to-top.above-bottom {
 /* Shift the whole value column 10px right (wider label column). */
 .compose-page .new-field-label {
   width: 66px;
+}
+/* Mobile only: drop the "Body" label column so the textarea gets the full
+   row width instead of sharing it with a label like From/To/Subject do —
+   the one field that's actually written in benefits from the extra space
+   (2026-07-14, user-requested). */
+@media (max-width: 520px) {
+  .compose-page .new-compose-body-field .new-field-label {
+    display: none;
+  }
 }
 /* Full-screen compose shows a subtle scrollbar. NOTE: setting the standard
      `scrollbar-width` makes Chrome IGNORE the ::-webkit-scrollbar-* pseudos, so

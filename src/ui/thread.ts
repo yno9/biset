@@ -7,7 +7,7 @@ import {
   lastLeftInboxes,
 } from '../state.ts'
 import type { ProcessedMessage, ThreadGroup } from '../state.ts'
-import { esc, linkify, formatTime, avatarStyle, stripQuoted, markProgrammaticScroll } from '../utils.ts'
+import { esc, linkify, formatTime, avatarStyle, stripQuoted } from '../utils.ts'
 import { avatarDataUrl } from '../deltachat/avatar.ts'
 import { processIncoming } from '../processing.ts'
 import type { OutgoingAttachment } from '../pgp/crypto.ts'
@@ -670,7 +670,6 @@ export function scrollToBottomIfNear() {
   if (outer.scrollHeight - pb <= outer.clientHeight + 1) return
   const dist = outer.scrollHeight - outer.scrollTop - outer.clientHeight
   if (dist < 60) {
-    markProgrammaticScroll()
     outer.scrollTo({ top: outer.scrollHeight, behavior: 'smooth' })
   }
 }
@@ -694,10 +693,9 @@ export function scrollToFocused(smooth = false) {
     // clientHeight — the bottom dockH px of "visible" area is actually
     // covered by it. Not accounting for that let the last message's tail
     // land exactly in the zone the dock covers (visible only as a blurred
-    // sliver through its frosted background). Stowed (dock-hidden, see
-    // main.ts's scroll handler) doesn't cover anything, so it doesn't count.
+    // sliver through its frosted background).
     const dock = document.getElementById('reply-dock')
-    const dockH = dock && !dock.classList.contains('dock-hidden') ? dock.offsetHeight : 0
+    const dockH = dock ? dock.offsetHeight : 0
     // viewBottom = the dock's top edge (bottom of the usable area).
     const viewBottom = outer.clientHeight - dockH
     if (msgs.length > 0) {
@@ -731,7 +729,6 @@ export function scrollToFocused(smooth = false) {
     } else {
       target = pastH
     }
-    markProgrammaticScroll()
     if (smooth) {
       outer.scrollTo({ top: target, behavior: 'smooth' })
     } else {
@@ -819,7 +816,6 @@ export function render(smooth = false, keepScroll = false) {
     if (replyBox && dock) {
       dock.innerHTML = ''
       dock.appendChild(replyBox)
-      if (!keepScroll) dock.classList.remove('dock-hidden')
       syncDockPosition()
     }
     return
@@ -929,13 +925,6 @@ export function render(smooth = false, keepScroll = false) {
   if (replyBox && dock) {
     dock.innerHTML = ''
     dock.appendChild(replyBox)
-    // Opening/switching a thread always shows the composer. Without this a
-    // dock-hidden left over from a prior scroll (or set by the tall-message
-    // initial scroll settling past the programmatic-scroll window) keeps the
-    // reply box stowed off-screen on a freshly opened thread. keepScroll=true is
-    // an in-place update (new mail while reading history) — respect the user's
-    // current stow there instead of popping the dock back up.
-    if (!keepScroll) dock.classList.remove('dock-hidden')
     syncDockPosition()
     requestAnimationFrame(() => keepScroll ? scrollToBottomIfNear() : scrollToFocused(smooth))
   } else if (dock) {

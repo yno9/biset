@@ -1,5 +1,4 @@
 import { sessions, currentInbox, activeSession, accountKey, sessionForRelay, relaysFor, isApRelay } from '../context.ts'
-import { markProgrammaticScroll } from '../utils.ts'
 import {
   processedMessages, renderedKeys,
   focusedThreadKey, setFocusedThreadKey,
@@ -205,7 +204,6 @@ export async function sendReply(
     if (!outer) return
     const pb = parseFloat(outer.style.paddingBottom) || 0
     if (outer.scrollHeight - pb > outer.clientHeight + 1 && distFromBottom < 60) {
-      markProgrammaticScroll()
       outer.scrollTo({ top: outer.scrollHeight, behavior: 'instant' })
     }
   })

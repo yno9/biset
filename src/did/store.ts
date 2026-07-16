@@ -15,6 +15,19 @@ export interface DidRecord {
   rootPrivateKey: string // hex
   nostrPublicKey: string // hex
   nostrPrivateKey: string // hex
+  // _k1 (PLAN.md "Key material"/"DIDComm transport identity" — did:dht
+  // direct path). Optional: records created before this field existed are
+  // lazily backfilled on next login (initDid()), same pattern as every
+  // other DID.md lazy-migration case.
+  didCommPublicKey?: string // hex
+  didCommPrivateKey?: string // hex
+  // Which mediator this identity registered its _k1 with, if any. Unlike the
+  // keys these aren't derivable — they're registration state, and they must
+  // be persisted precisely because publish.ts rebuilds the whole document
+  // from local state on every app start: a document built without them would
+  // republish over (i.e. silently cancel) the DIDComm registration.
+  didCommMediatorUrl?: string
+  didCommRoutingKey?: string // the mediator's own keyAgreement kid
 }
 
 function openDB(): Promise<IDBDatabase> {

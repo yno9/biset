@@ -7,7 +7,7 @@ import {
   notifEnabled, setNotifEnabled,
   lastTs, groupMessages,
 } from '../state.ts'
-import { esc, formatTime, avatarStyle, inboxToHash, markProgrammaticScroll, syncAppBadge, mailboxNameFromId, hexToBytes, expandDualRelay } from '../utils.ts'
+import { esc, formatTime, avatarStyle, inboxToHash, syncAppBadge, mailboxNameFromId, hexToBytes, expandDualRelay } from '../utils.ts'
 import { displayLabelFor } from '../did/contacts.ts'
 import type { InboxSummary } from '../types.ts'
 import type { Email } from 'jmap-rfc-types'
@@ -34,6 +34,7 @@ import { newGroupId, isSecurejoinEmail, readGroupHeaders, isEdit } from '../delt
 import { isReaction } from '../mail/reactions.ts'
 import { newInviteUrl } from '../deltachat/securejoin.ts'
 import { enablePush, disablePush } from '../push/client.ts'
+import { renderDidcommDebugPage, onShowDidcommDebug } from './didcomm-debug.ts'
 
 // ── InboxSummary key ──────────────────────────────────────────────────────────
 function isk(i: InboxSummary): string { return i.user + '\0' + i.mailbox + '\0' + i.contact }
@@ -290,8 +291,13 @@ export async function switchInbox(item: InboxSummary): Promise<void> {
   _menuResizeObserver?.disconnect()
   const $convMeta = document.getElementById('conv-meta')
   if ($convMeta) $convMeta.style.display = ''
-  const $dock = document.getElementById('reply-dock')
-  if ($dock) { $dock.style.display = ''; $dock.classList.remove('dock-hidden') }
+  // No dock.style.display touch here — #reply-dock:empty{display:none}
+  // (style.css) already makes visibility a pure function of whether it HAS
+  // a reply-box in it, and render() below (thread.ts) is the one place
+  // that populates/clears that content. Manually toggling display in
+  // multiple places (here, renderMenuInboxImpl, hideCmdPage) alongside that
+  // was the actual source of this whole day's bugs — ordering between them
+  // could drift, this can't (2026-07-14, user: "この単純なロジックはないわけ？").
 
   const prev = currentInbox
   if (prev && prev.user === item.user && prev.mailbox === item.mailbox && prev.contact === item.contact) {
@@ -597,7 +603,6 @@ function lpFocusEl(el: HTMLElement) {
   document.querySelectorAll<HTMLElement>('#left-list .lp-item, #left-list .lp-thread-row')
     .forEach(item => item.classList.remove('focused'))
   if (navFocusEnabled()) el.classList.add('focused')
-  markProgrammaticScroll()
   el.scrollIntoView({ block: 'nearest' })
   if (el.classList.contains('lp-thread-row')) {
     const threadKey = el.dataset.threadKey!
@@ -660,7 +665,15 @@ function toggleAccordionForItem(inboxEl: HTMLElement, focusThread = true) {
       const found = lastLeftInboxes.find(i => isk(i) === key)
       if (found) {
         const appEl = document.getElementById('app')
-        const wasShowLeft = appEl?.classList.contains('show-left')
+        // Only preserve show-left on narrow/mobile widths, where it's the
+        // single-column pane toggle it was meant for — re-adding it
+        // unconditionally left it stuck from an earlier (e.g. resized-from-
+        // mobile) session and, on desktop, `body:has(#app.show-left)
+        // #reply-dock{display:none}` (style.css) then hid the reply box
+        // outright with no flicker, a SEPARATE bug from the scroll-race one
+        // fixed the same day (2026-07-14, user-reported: dock sometimes
+        // never appeared at all, not just flickered and vanished).
+        const wasShowLeft = window.innerWidth <= 520 && appEl?.classList.contains('show-left')
         switchInbox(found).then(() => {
           if (wasShowLeft) appEl?.classList.add('show-left')
           threadList.style.display = 'block'
@@ -2253,13 +2266,18 @@ export async function setupLeftPane() {
       // so looking it up by "self" email could silently return zero gateways.
       const gateways = relaysForId(did).map(s => s.account.serverUrl.replace(/\/$/, '') + '/pkarr')
       const doc = await resolve(did, gateways)
-      // identityKey is a raw Uint8Array — JSON.stringify serializes typed
-      // arrays as {"0":244,"1":42,...} (no special-casing, unlike a plain
-      // array), so it's already redundant with the DID suffix itself. Format
-      // as hex for display instead of dumping 32 numbered object keys.
+      // The document's keys are raw Uint8Arrays — JSON.stringify serializes
+      // typed arrays as {"0":244,"1":42,...} (no special-casing, unlike a
+      // plain array). Format every one as hex instead of dumping 32 numbered
+      // object keys each. Keep this in step with DidDocument's key fields:
+      // keyAgreementKey (_k1) was added later and initially missed here,
+      // which showed up as one key rendering as hex next to another
+      // rendering as an object.
+      const hex = (b: Uint8Array) => [...b].map(x => x.toString(16).padStart(2, '0')).join('')
       const forDisplay = doc && {
         ...doc,
-        identityKey: [...doc.identityKey].map(b => b.toString(16).padStart(2, '0')).join(''),
+        identityKey: hex(doc.identityKey),
+        ...(doc.keyAgreementKey ? { keyAgreementKey: hex(doc.keyAgreementKey) } : {}),
       }
       docEl.textContent = forDisplay ? JSON.stringify(forDisplay, null, 2) : 'No document found (not yet published, or no gateway reachable)'
     } catch {
@@ -2756,6 +2774,7 @@ export async function setupLeftPane() {
     { name: '/config',  page: renderConfigPage,  action: () => {}, onShow: onShowConfig },
     { name: '/compose',     page: renderComposePage,     action: () => {}, onShow: onShowNew },
     { name: '/debug',       page: renderDebugPage,       action: () => {}, onShow: onShowDebug },
+    { name: '/didcomm',     page: renderDidcommDebugPage, action: () => {}, onShow: onShowDidcommDebug },
   ]
   let cmdSelectedIdx = -1
   let _filteredCmds: typeof LP_COMMANDS = []
@@ -2814,7 +2833,15 @@ export async function setupLeftPane() {
     const $convMeta = document.getElementById('conv-meta')
 
     $cmdPage.style.display = 'none'
-    if (dock) dock.style.display = 'none'
+    // Empty it, don't just hide it — #reply-dock:empty{display:none}
+    // (style.css) is what actually keeps the dock invisible on every menu
+    // page from here on; a menu page never calls render() (thread.ts) to
+    // re-clear it the way opening a real thread does, so if this only set
+    // display:none, whatever content was in the dock from before opening
+    // this menu page would just sit there ready to reappear the moment
+    // anything else touched .style.display (2026-07-14, user-reported: the
+    // reply box showed up ON a menu page, exactly this).
+    if (dock) dock.innerHTML = ''
     if ($convMeta) $convMeta.style.display = 'none'
     $outer.style.display = ''
     syncDockPosition()
@@ -2868,8 +2895,9 @@ export async function setupLeftPane() {
     $cmdPage.style.display = 'none'
     const $convMeta = document.getElementById('conv-meta')
     if ($convMeta) $convMeta.style.display = ''
-    const dock = document.getElementById('reply-dock')
-    if (dock) dock.style.display = ''
+    // No dock.style.display touch — render() just below (thread.ts)
+    // populates or clears #reply-dock's content, and #reply-dock:empty
+    // (style.css) is what actually governs its visibility now.
     $outer.style.display = ''
     render()
   }

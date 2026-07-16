@@ -8,8 +8,10 @@
 // (extra keys, controllers, types, previous), extracting just what biset needs
 // (identity key, services, aka); unknown records are ignored, not an error.
 
-// Key type index (registry/index.html#key-type-index). biset uses only 0.
+// Key type index (registry/index.html#key-type-index). biset uses 0 (Ed25519
+// identity key) and 3 (X25519 keyAgreement key, PLAN.md "Key material").
 const KEY_TYPE_ED25519 = 0
+const KEY_TYPE_X25519 = 3
 
 export interface DidService {
   id: string // fragment only, e.g. "mail" (not the full did#mail)
@@ -22,11 +24,21 @@ export interface DidService {
   // binds them). Unknown to generic did:dht resolvers, which ignore extra props.
   protocol?: string // e.g. 'mail' | 'activitypub'
   address?: string  // this endpoint's address, e.g. y@biset.md
+  // DIDCommMessaging service extension (PLAN.md "DID Document encoding"):
+  // `accept`/`routingKeys` are W3C-standard DIDCommMessaging serviceEndpoint
+  // fields with no did:dht wire encoding of their own — biset proposes `ac=`/
+  // `rk=` to the did:dht Additional Properties Registry (same pattern as the
+  // already-registered `sig`/`enc`), and adopts it ahead of any PR merge
+  // (works identically either way; a merge only helps OTHER did:dht
+  // implementations interpret it too).
+  accept?: string[]
+  routingKeys?: string[] // DID URLs, e.g. "did:dht:xxx#k1" (a mediator's kid)
 }
 
 export interface DidDocument {
   id: string // did:dht:...
   identityKey: Uint8Array // raw Ed25519 public key (the _k0 key)
+  keyAgreementKey?: Uint8Array // raw X25519 public key (the _k1 key, DIDComm)
   alsoKnownAs: string[]
   service: DidService[]
   // biset extension (did:dht additional property, same pattern as service's
@@ -82,6 +94,17 @@ export function documentToRecords(doc: DidDocument): DnsRecord[] {
     rdata: [`t=${KEY_TYPE_ED25519};k=${b64urlEncode(doc.identityKey)}`],
   })
 
+  // keyAgreement key at _k1 (t=3 X25519), if present — DIDComm's direct
+  // did:dht path (PLAN.md "DIDComm transport identity").
+  if (doc.keyAgreementKey) {
+    records.push({
+      name: '_k1._did.',
+      type: 'TXT',
+      ttl: TTL,
+      rdata: [`t=${KEY_TYPE_X25519};k=${b64urlEncode(doc.keyAgreementKey)}`],
+    })
+  }
+
   // Services at _sN, collecting their ids for the root record's svc= list.
   const svcIds: string[] = []
   doc.service.forEach((svc, i) => {
@@ -89,6 +112,8 @@ export function documentToRecords(doc: DidDocument): DnsRecord[] {
     let value = `id=${svc.id};t=${svc.type};se=${svc.serviceEndpoint.join(',')}`
     if (svc.protocol) value += `;proto=${svc.protocol}`
     if (svc.address) value += `;addr=${svc.address}`
+    if (svc.accept?.length) value += `;ac=${svc.accept.join(',')}`
+    if (svc.routingKeys?.length) value += `;rk=${svc.routingKeys.join(',')}`
     records.push({ name: `_s${i}._did.`, type: 'TXT', ttl: TTL, rdata: toChunks(value) })
   })
 
@@ -97,8 +122,13 @@ export function documentToRecords(doc: DidDocument): DnsRecord[] {
   }
 
   // Root record. The identity key (k0) carries the standard relationships an
-  // identity key must have (auth, asm, inv, del — spec Create step 2b).
-  const parts = ['v=0', 'vm=k0', 'auth=k0', 'asm=k0', 'inv=k0', 'del=k0']
+  // identity key must have (auth, asm, inv, del — spec Create step 2b). k1
+  // (if present) is keyAgreement-only (agm=) — never authentication, per
+  // did-dht spec's own worked example (spec.md: "vm=k0,k1;...;agm=k1;...").
+  const vm = doc.keyAgreementKey ? 'k0,k1' : 'k0'
+  const parts = ['v=0', `vm=${vm}`, 'auth=k0', 'asm=k0']
+  if (doc.keyAgreementKey) parts.push('agm=k1') // same field order as did-dht spec.md's own worked example
+  parts.push('inv=k0', 'del=k0')
   if (svcIds.length) parts.push(`svc=${svcIds.join(',')}`)
   // base64url-encoded (not raw text) so an arbitrary display name — which
   // could contain ';' or ',' — can never collide with the field separators
@@ -127,6 +157,10 @@ export function recordsToDocument(did: string, records: DnsRecord[]): DidDocumen
   if (!k0Fields.k) throw new Error('_k0 record missing k=')
   const identityKey = b64urlDecode(k0Fields.k)
 
+  // keyAgreement key from _k1, if present.
+  const k1 = byName.get('_k1._did')
+  const keyAgreementKey = k1 ? b64urlDecode(parseFields(k1).k ?? '') : undefined
+
   // Services + name from the root record's svc=/name= fields.
   const root = byName.get('_did')
   const rootFields = root ? parseFields(root) : {}
@@ -136,14 +170,20 @@ export function recordsToDocument(did: string, records: DnsRecord[]): DidDocumen
     const raw = byName.get(`_${sid}._did`)
     if (!raw) continue
     const f = parseFields(raw)
-    if (f.id && f.t && f.se) service.push({ id: f.id, type: f.t, serviceEndpoint: f.se.split(','), protocol: f.proto, address: f.addr })
+    if (f.id && f.t && f.se) {
+      service.push({
+        id: f.id, type: f.t, serviceEndpoint: f.se.split(','), protocol: f.proto, address: f.addr,
+        accept: f.ac ? f.ac.split(',') : undefined,
+        routingKeys: f.rk ? f.rk.split(',') : undefined,
+      })
+    }
   }
   const name = rootFields.name ? new TextDecoder().decode(b64urlDecode(rootFields.name)) : undefined
 
   const akaRaw = byName.get('_aka._did')
   const alsoKnownAs = akaRaw ? akaRaw.split(',') : []
 
-  return { id: did, identityKey, alsoKnownAs, service, name }
+  return { id: did, identityKey, keyAgreementKey, alsoKnownAs, service, name }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import {
 } from './context.ts'
 import { initSession, initPGPForSession, loadInboxSummaries } from './app.ts'
 import type { InboxSummary } from './types.ts'
-import { inboxToHash, parseInboxHash, isProgrammaticScroll, markProgrammaticScroll } from './utils.ts'
+import { inboxToHash, parseInboxHash } from './utils.ts'
 import { contactIdentityKey, representativeAddressForDid } from './did/contacts.ts'
 import { showApp, startPolling, fetchMessages } from './ui/shell.ts'
 import { loadLeftInboxes, switchInbox, showMenuPage, setupLeftPane, refreshAccountsList, menuTargetInbox, openComposeTo, syncNotifToggle } from './ui/left-pane.ts'
@@ -22,7 +22,7 @@ import { loadFromIDB as loadQuerystateFromIDB } from './jmap/querystate.ts'
 // A conversation permalink is now also a single, shapeless segment (just the
 // contact — see utils.ts's inboxToHash), so "no slash = menu page" no longer
 // disambiguates anything; an explicit allowlist does instead.
-const MENU_PAGE_NAMES = new Set(['account', 'config', 'compose', 'debug'])
+const MENU_PAGE_NAMES = new Set(['account', 'config', 'compose', 'debug', 'didcomm'])
 
 function menuHashFromHash(hash: string): string | null {
   const raw = hash.startsWith('#') ? hash.slice(1) : hash
@@ -440,12 +440,21 @@ window.addEventListener('popstate', async () => {
   if (found) switchInbox(found)
 })
 
-// scroll buttons + reply-dock auto hide/show
+// scroll-to-top/bottom buttons. The reply dock used to also auto-hide while
+// scrolling up (for reading room) and re-show scrolling down — removed
+// (2026-07-14) after it caused a whole day of intermittent "reply box
+// missing" reports: it needed a stale-prone lastScrollTop baseline plus a
+// markProgrammaticScroll/isProgrammaticScroll window (utils.ts, since
+// removed) sprinkled across every app-driven scroll to avoid mistaking our
+// own scrolls for the user's, and kept finding new timing gaps (native
+// scroll-anchoring on thread-open, slow devices missing the window, a
+// completely separate show-left/CSS interaction) no matter how many self-
+// heals got added. The dock is just always visible while a thread is open
+// now — simpler and it can't get stuck hidden again by construction.
 {
   const outer = document.getElementById('outer')
   const btn = document.getElementById('scroll-to-bottom')
   const btnTop = document.getElementById('scroll-to-top')
-  let lastScrollTop = outer?.scrollTop ?? 0
   outer?.addEventListener('scroll', () => {
     const distFromBottom = outer.scrollHeight - outer.scrollTop - outer.clientHeight
     const bottomVisible = distFromBottom > 120
@@ -454,56 +463,16 @@ window.addEventListener('popstate', async () => {
     const pastH = past && outer.contains(past) ? past.offsetHeight : 0
     btnTop?.classList.toggle('visible', outer.scrollTop > pastH + 40)
     btnTop?.classList.toggle('above-bottom', bottomVisible)
-
-    // Safety net: however dock-hidden got set, being at the bottom of the
-    // conversation should always show the reply box — self-heals a stuck
-    // state instead of requiring a thread switch to reset it.
-    if (!bottomVisible) document.getElementById('reply-dock')?.classList.remove('dock-hidden')
-
-    // Scrolling up (toward older messages) stows the reply box for more
-    // reading room; scrolling down (toward the newest message) brings it
-    // back. Only for scrolls we didn't trigger ourselves (scrollToFocused,
-    // these buttons, sendReply's auto-scroll all call markProgrammaticScroll
-    // first) — mobile momentum keeps firing 'scroll' events for an
-    // unpredictable stretch after the finger lifts, so there's no reliable
-    // fixed "recent touch" window to key off instead. A small delta
-    // threshold avoids flicker from tiny trackpad jitter.
-    const delta = outer.scrollTop - lastScrollTop
-    const dock = document.getElementById('reply-dock')
-    if (dock && !isProgrammaticScroll() && !dock.classList.contains('group-expanded') && Math.abs(delta) > 4) {
-      dock.classList.toggle('dock-hidden', delta < 0)
-    }
-    lastScrollTop = outer.scrollTop
   }, { passive: true })
   btn?.addEventListener('click', () => {
-    markProgrammaticScroll()
     outer?.scrollTo({ top: outer.scrollHeight, behavior: 'smooth' })
   })
   btnTop?.addEventListener('click', () => {
     const past = document.getElementById('past-threads')
     const pastH = past && outer?.contains(past) ? past.offsetHeight : 0
-    markProgrammaticScroll()
     outer?.scrollTo({ top: pastH, behavior: 'smooth' })
   })
 }
-
-// Left-pane header auto hide/show — disabled for now (turned out not to be
-// wanted), kept here commented so it's easy to bring back. Same mechanism as
-// the reply-dock above (translateY + markProgrammaticScroll-gated direction),
-// mirrored for the top edge.
-// {
-//   const leftPane = document.getElementById('left-pane')
-//   const header = document.getElementById('left-pane-header')
-//   let lastLpScrollTop = leftPane?.scrollTop ?? 0
-//   leftPane?.addEventListener('scroll', () => {
-//     if (leftPane.scrollTop < 24) header?.classList.remove('lph-hidden')
-//     const delta = leftPane.scrollTop - lastLpScrollTop
-//     if (header && !isProgrammaticScroll() && Math.abs(delta) > 4) {
-//       header.classList.toggle('lph-hidden', delta > 0)
-//     }
-//     lastLpScrollTop = leftPane.scrollTop
-//   }, { passive: true })
-// }
 
 // Mobile: swipe right anywhere in the conversation to reveal the inbox list.
 // Mirrors the swipe-to-delete gesture on inbox rows (left-pane.ts) but opens
