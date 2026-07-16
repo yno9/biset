@@ -2237,8 +2237,12 @@ export async function setupLeftPane() {
         // Also publish it into the DID document (biset extension, see
         // document.ts) — same name, one more place it shows up: anyone who
         // resolves this DID (e.g. via the [DID] badge) sees it instead of the
-        // raw did:dht string. Best-effort, same as any other republish.
-        import('../did/publish.ts').then(m => m.publishOneVisible(email)).catch(() => {})
+        // raw did:dht string. Genuinely best-effort — the name is already
+        // saved server-side either way, so this must not fail the save — but
+        // logged rather than dropped, so a document that can NEVER publish
+        // leaves a trace instead of nothing at all.
+        import('../did/publish.ts').then(m => m.publishOneVisible(email))
+          .catch(e => console.error(`[did/publish] ${email}: republish after name change failed —`, e))
         okEl.textContent = 'Saved'; okEl.style.display = 'block'
         setTimeout(dismiss, 600)
       } catch {
@@ -2350,7 +2354,14 @@ export async function setupLeftPane() {
             try {
               const ok = await (await import('../did/publish.ts')).publishOneVisible(repEmail)
               showSysMsg(ok ? 'Published to DHT' : 'No gateway reachable (record not published)')
-            } catch { showSysMsg('Publish failed') }
+            } catch (e) {
+              // Show the actual reason: publishOneVisible only throws when the
+              // document itself can't be published (too big to sign, chain
+              // link unplaceable, ...). Reporting those as "no gateway
+              // reachable" — as this used to — sends you debugging the network
+              // for a problem that has nothing to do with it.
+              showSysMsg(`Publish failed: ${e instanceof Error ? e.message : String(e)}`, 15000)
+            }
           }
         }
         identitySection.style.display = ''

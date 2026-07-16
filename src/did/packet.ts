@@ -38,10 +38,34 @@ export function nowSeq(): number {
   return Math.floor(Date.now() / 1000)
 }
 
+// BEP44's cap is on the BENCODED form of `v`, not on `v` itself: "Storing
+// nodes MAY reject put requests where the bencoded form of v is longer than
+// 1000 bytes". Bencoding a byte string prefixes it with `<decimal length>:`,
+// so a 999-byte packet is 1003 bencoded — over the cap, and DHT nodes drop
+// it. They do not answer with an error: they simply never respond, so a
+// Pkarr relay reports "Publish query timed out with no responses neither
+// success or failure" as a 500. Verified by bisecting real puts against
+// pkarr.pubky.org (PLAN.md): 996B (=1000 bencoded) is accepted, 998B (=1002)
+// is not. A plain `>= 1000` check on the raw packet — what this used to do —
+// therefore passes documents of 997-999B that the DHT silently discards.
+const MAX_BENCODED_V = 1000
+function bencodedLength(v: Uint8Array): number {
+  return String(v.length).length + 1 + v.length // "<len>" + ":" + bytes
+}
+
+/** Largest raw DNS packet whose bencoded form still fits BEP44's cap. */
+export function maxPacketBytes(): number {
+  let n = MAX_BENCODED_V
+  while (bencodedLength(new Uint8Array(n)) > MAX_BENCODED_V) n--
+  return n
+}
+
 // DID document → signed payload bytes ready for a gateway PUT.
 export function buildSignedPayload(rootPrivateKey: Uint8Array, doc: DidDocument, seq: number = nowSeq()): Uint8Array {
   const dnsPacket = encodePacket(documentToRecords(doc))
-  if (dnsPacket.length >= 1000) throw new Error(`DNS packet ${dnsPacket.length}B exceeds BEP44 1000B limit`)
+  if (bencodedLength(dnsPacket) > MAX_BENCODED_V) {
+    throw new Error(`DNS packet ${dnsPacket.length}B (${bencodedLength(dnsPacket)}B bencoded) exceeds BEP44's 1000B cap — max ${maxPacketBytes()}B`)
+  }
   const sig = ed25519.sign(canonicalBufferToSign(seq, dnsPacket), rootPrivateKey)
   const out = new Uint8Array(64 + 8 + dnsPacket.length)
   out.set(sig, 0)

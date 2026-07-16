@@ -85,22 +85,43 @@ export async function buildOwnDocument(email: string): Promise<OwnDocument | nul
   return { doc, gateways, rootPrivateKey: hexToBytes(rec.rootPrivateKey) }
 }
 
-// Build + publish, returning how many gateways accepted it. Shared by the
-// automatic and manual paths. Returns 0 (never throws) when there's no DID
-// record / no relay / all gateways unreachable.
+// Build + publish, returning how many gateways accepted the record. Shared by
+// the automatic and manual paths.
+//
+// Deliberately does NOT swallow errors. `0` means only the two benign,
+// expected outcomes — nothing to publish (no DID record / no connected
+// relay), or every gateway refused a well-formed record. Anything else (a
+// document that can't be built or signed, a chain whose continuation
+// couldn't be placed) throws, because those mean the identity CANNOT
+// publish, ever, until something is fixed — and this is the only automatic
+// publish path, so swallowing them let a real account's document sit
+// unpublished and decay out of the DHT (~2h TTL) with no signal anywhere.
+// See PLAN.md's incident notes.
 async function publishOne(email: string): Promise<number> {
-  try {
-    const own = await buildOwnDocument(email)
-    if (!own) return 0
-    return await publishDocument(own.rootPrivateKey, own.doc, own.gateways)
-  } catch { return 0 }
+  const own = await buildOwnDocument(email)
+  if (!own) return 0
+  return await publishDocument(own.rootPrivateKey, own.doc, own.gateways)
 }
 
 export async function publishOwnDids(): Promise<void> {
-  for (const email of identities()) await publishOne(email)
+  for (const email of identities()) {
+    // Per-identity best-effort: one identity's failure must not stop the
+    // rest, but it must not disappear either. This runs on every app start
+    // with no UI to report into, so the console is where a permanently
+    // unpublishable document becomes findable at all.
+    try {
+      await publishOne(email)
+    } catch (e) {
+      console.error(`[did/publish] ${email}: DID document could not be published —`, e)
+    }
+  }
 }
 
-// Manual "Republish to DHT" action: true if at least one gateway accepted it.
+// Manual "Republish to DHT" action: true if at least one gateway accepted it,
+// false if every gateway refused. Throws (with the real reason) when the
+// document itself is the problem — the caller shows that reason rather than
+// reporting every failure as "no gateway reachable", which is what it used
+// to do even when the truth was e.g. "too big to sign".
 export async function publishOneVisible(email: string): Promise<boolean> {
   return (await publishOne(email)) > 0
 }

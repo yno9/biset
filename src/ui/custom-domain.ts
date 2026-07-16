@@ -348,7 +348,13 @@ function showRelayCreateStep(body: HTMLElement, close: () => void, relays: strin
       showSysMsg(`Added — also reachable at ${emails.join(', ')}. Publishing to the network…`, 30000)
       import('../did/publish.ts').then(m => m.publishOneVisible(reuseIdentity.account.email)).then(ok => {
         showSysMsg(ok ? `Published — ${emails.join(', ')} now discoverable` : 'Added, but no gateway accepted the publish (will retry automatically)')
-      }).catch(() => { showSysMsg('Added, but publishing to the network failed (will retry automatically)') })
+      }).catch(e => {
+        // Only reached when the document itself can't be published, which the
+        // automatic republish will hit identically every time — so "will
+        // retry automatically" (what this said before) is precisely wrong
+        // here. Show the reason instead.
+        showSysMsg(`Added, but the DID document could not be published: ${e instanceof Error ? e.message : String(e)}`, 15000)
+      })
 
       // Just the confirmation — no button, no lingering locked relay field
       // above it. The account is already live (refreshAccountsList() above

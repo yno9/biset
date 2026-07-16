@@ -7,6 +7,8 @@
 // interop. PGP stays randomly generated for now (openpgp.js has no supported
 // deterministic-seed keygen API); see DID.md's Key genealogy table.
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
+import { hkdf } from '@noble/hashes/hkdf.js'
+import { sha256 } from '@noble/hashes/sha2.js'
 import { HDKey } from '@scure/bip32'
 import { derivePath as slip10DerivePath } from './slip10.ts'
 import { zbase32Encode } from './zbase32.ts'
@@ -40,6 +42,25 @@ export function deriveNostrKey(masterSeed: Uint8Array): KeyPair {
 export function deriveDidCommKey(masterSeed: Uint8Array): KeyPair {
   const node = slip10DerivePath(masterSeed, DIDCOMM_PATH)
   return { privateKey: node.key, publicKey: x25519.getPublicKey(node.key) }
+}
+
+// Continuation records (resolver.ts's chaining): a BEP44 value is capped at
+// 1000 bytes, so an identity with more relays than fit spills into further
+// did:dht records, each its own DID naming its own key. Those keys are
+// derived from the ROOT PRIVATE key rather than the master seed, so that
+// publishDocument (which only ever holds rootPrivateKey — see store.ts: the
+// seed is never persisted) can mint them without the seed travelling further
+// into the codebase. Still fully seed-restorable: rootPrivateKey itself comes
+// from the seed, so the 24 words rebuild the whole chain.
+//
+// Not a SLIP-0010 path because there is no seed here to walk one from; HKDF
+// over the root private key with a domain-separating info string is the
+// standard construction for exactly this ("give me an unlimited, indexed
+// family of independent keys from one secret").
+export function deriveContinuationKey(rootPrivateKey: Uint8Array, index: number): KeyPair {
+  const info = new TextEncoder().encode(`biset did:dht continuation ${index}`)
+  const key = hkdf(sha256, rootPrivateKey, undefined, info, 32)
+  return { privateKey: key, publicKey: ed25519.getPublicKey(key) }
 }
 
 export function didFromRootPublicKey(rootPublicKey: Uint8Array): string {

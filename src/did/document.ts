@@ -41,6 +41,14 @@ export interface DidDocument {
   keyAgreementKey?: Uint8Array // raw X25519 public key (the _k1 key, DIDComm)
   alsoKnownAs: string[]
   service: DidService[]
+  // Continuation pointer (`ext=` in the root record): the did:dht that holds
+  // the rest of this identity's services when they don't fit in one BEP44
+  // record. See resolver.ts's chaining — resolve() follows it and merges, so
+  // callers see one logical document and never deal with this field.
+  // Unknown to generic did:dht resolvers, which ignore extra root fields:
+  // they still get a valid, working document, just with fewer services
+  // (graceful degradation — same stance as `proto=`/`addr=`/`ac=`/`rk=`).
+  ext?: string // z-base-32 suffix only; the `did:dht:` prefix is implied
   // biset extension (did:dht additional property, same pattern as service's
   // protocol/address): a self-asserted display name — purely a UX label
   // (e.g. shown instead of the raw did:dht string), not verified by anyone.
@@ -134,6 +142,7 @@ export function documentToRecords(doc: DidDocument): DnsRecord[] {
   // could contain ';' or ',' — can never collide with the field separators
   // parseFields()/service-endpoint-list splitting relies on.
   if (doc.name) parts.push(`name=${b64urlEncode(new TextEncoder().encode(doc.name))}`)
+  if (doc.ext) parts.push(`ext=${doc.ext}`)
   const id = suffixOf(doc.id)
   records.push({ name: `_did.${id}.`, type: 'TXT', ttl: TTL, rdata: toChunks(parts.join(';')) })
 
@@ -183,7 +192,7 @@ export function recordsToDocument(did: string, records: DnsRecord[]): DidDocumen
   const akaRaw = byName.get('_aka._did')
   const alsoKnownAs = akaRaw ? akaRaw.split(',') : []
 
-  return { id: did, identityKey, keyAgreementKey, alsoKnownAs, service, name }
+  return { id: did, identityKey, keyAgreementKey, alsoKnownAs, service, name, ext: rootFields.ext }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
