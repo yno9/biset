@@ -8,7 +8,7 @@
 //   GET    /identity/<localpart>?domain=<domain>                    → {"fingerprint":…,"did":…} | 404
 //   GET    /identity/by-did/<did>                                   → {"domain":…,"localpart":…} | 404
 //   DELETE /identity/<localpart>?domain=<domain>                    → 204
-import { readAnchorRecord, claimIdentity, releaseIdentity, resolveDID } from './store.ts'
+import type { ClaimStore } from './store.ts'
 import { CloudflareAnchor } from './cloudflare.ts'
 
 const MAX_BODY = 1 << 12 // matches Go's io.LimitReader(r.Body, 1<<12)
@@ -31,13 +31,13 @@ const text = (body: string, status: number) =>
 const notFound = () => text('404 page not found', 404)
 
 export interface AnchorOptions {
-  dataDir: string
+  claims: ClaimStore
   cloudflare: CloudflareAnchor
   port: number
   hostname?: string
 }
 
-export function startAnchor({ dataDir, cloudflare, port, hostname }: AnchorOptions) {
+export function startAnchor({ claims, cloudflare, port, hostname }: AnchorOptions) {
   async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url)
     if (!url.pathname.startsWith('/identity/')) return notFound()
@@ -47,7 +47,7 @@ export function startAnchor({ dataDir, cloudflare, port, hostname }: AnchorOptio
     if (rest.startsWith('by-did/')) {
       const did = rest.slice('by-did/'.length)
       if (did === '' || req.method !== 'GET') return notFound()
-      const found = resolveDID(dataDir, did)
+      const found = claims.resolveDid(did)
       return found ? json(found) : notFound()
     }
 
@@ -58,7 +58,7 @@ export function startAnchor({ dataDir, cloudflare, port, hostname }: AnchorOptio
       case 'GET': {
         const domain = url.searchParams.get('domain')
         if (!domain) return text('domain required', 400)
-        const rec = readAnchorRecord(dataDir, domain, localpart)
+        const rec = claims.read(domain, localpart)
         return rec ? json(rec) : notFound()
       }
 
@@ -76,8 +76,8 @@ export function startAnchor({ dataDir, cloudflare, port, hostname }: AnchorOptio
         const did = body?.did ?? ''
         if (!domain || (!fingerprint && !did)) return text('domain, and fingerprint or did, required', 400)
 
-        const existed = readAnchorRecord(dataDir, domain, localpart) !== null
-        if (!claimIdentity(dataDir, domain, localpart, fingerprint, did)) {
+        const existed = claims.read(domain, localpart) !== null
+        if (!claims.claim(domain, localpart, fingerprint, did)) {
           return text('identity owned by a different key', 409)
         }
         if (did) {
@@ -86,7 +86,7 @@ export function startAnchor({ dataDir, cloudflare, port, hostname }: AnchorOptio
           await cloudflare.writeAnchorTXT(localpart, domain, did)
             .catch(e => console.error(`[dns-anchor] failed for ${localpart}@${domain}:`, e?.message ?? e))
         }
-        return json(readAnchorRecord(dataDir, domain, localpart), existed ? 200 : 201)
+        return json(claims.read(domain, localpart), existed ? 200 : 201)
       }
 
       case 'DELETE': {
@@ -98,7 +98,7 @@ export function startAnchor({ dataDir, cloudflare, port, hostname }: AnchorOptio
         const domain = url.searchParams.get('domain')
         if (!domain) return text('domain required', 400)
         try {
-          releaseIdentity(dataDir, domain, localpart)
+          claims.release(domain, localpart)
         } catch {
           return text('release failed', 500)
         }

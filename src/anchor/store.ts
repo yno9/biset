@@ -1,17 +1,30 @@
 // Identity anchor storage — the claim registry. Ported from go-didanchor's
 // anchor.go (ANCHOR.md decision 5: staged migration, step 1 is "same behavior,
-// same files, different language"), so this reads and writes **the exact same
-// on-disk layout** the deployed Go service uses. That is the whole point: no
+// same files, different language"), so this reads and writes **the same
+// `identity.fp` layout** the deployed Go service uses. That is the point: no
 // data migration, and both can run against the same directory during cutover.
 //
 //   <dataDir>/<domain>/<localpart>/identity.fp   {"fingerprint":"…","did":"…"}
-//   <dataDir>/_did/<did>                          "<domain>/<localpart>"
 //
 // Storage is keyed by the REAL address domain the caller passes — an earlier
 // version inside jmapap silently bucketed every caller under jmapap's own
 // primaryDomain() regardless of the account's actual domain (harmless with one
 // domain, wrong once t.biset.md existed).
-import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+//
+// **DID→address is derived, never stored** (ANCHOR.md, 2026-07-16). The Go
+// service keeps a second copy on disk at `<dataDir>/_did/<did>`, and that copy
+// had silently drifted out of sync in production: `biset.md/y` — a real, live
+// account — had a DID but no index entry, so `by-did` 404'd for it while the
+// forward lookup worked fine. Cause, from reading the Go source: the index is
+// only written by writeAnchorRecord, and claimIdentity's idempotent path (both
+// fields already present and matching) returns early **without writing**, so a
+// once-missing entry can never come back. It went missing in the v1→v2 move
+// and no amount of re-claiming would have rebuilt it. The index is a pure
+// function of the identity.fp files, so keeping a separate copy bought nothing
+// and cost correctness — this builds it at startup instead. The stale `_did/`
+// files on disk are simply never read; they can be deleted once the Go service
+// is retired.
+import { mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 export interface AnchorRecord {
@@ -23,97 +36,114 @@ export interface AnchorRecord {
 const identityFPPath = (dataDir: string, domain: string, localpart: string) =>
   join(dataDir, domain, localpart, 'identity.fp')
 
-/** A DID maps back to its (domain, localpart) here. Keyed on the DID string
- * itself (already URL-safe z-base-32) since a DID is domain-independent. */
-const didIndexPath = (dataDir: string, did: string) => join(dataDir, '_did', did)
+export interface DidLocation { domain: string; localpart: string }
 
-export function readAnchorRecord(dataDir: string, domain: string, localpart: string): AnchorRecord | null {
-  let s: string
-  try {
-    s = readFileSync(identityFPPath(dataDir, domain, localpart), 'utf-8').trim()
-  } catch {
-    return null
+export class ClaimStore {
+  /** DID → where it lives. Derived from disk at startup and maintained here;
+   * the identity.fp files remain the only source of truth. */
+  private byDid = new Map<string, DidLocation>()
+
+  constructor(private dataDir: string) {
+    this.rebuildIndex()
   }
-  if (s === '') return null
-  if (s[0] === '{') {
+
+  /** Scans every `<domain>/<localpart>/identity.fp` and rebuilds the DID index.
+   * Cheap: one small file per account (production holds single digits, and even
+   * a large deployment is thousands of stat+reads at boot, once). */
+  rebuildIndex(): number {
+    this.byDid.clear()
+    for (const domain of this.subdirs(this.dataDir)) {
+      if (domain === '_did') continue // the Go service's derived copy — never read
+      for (const localpart of this.subdirs(join(this.dataDir, domain))) {
+        const rec = this.read(domain, localpart)
+        if (rec?.did) this.byDid.set(rec.did, { domain, localpart })
+      }
+    }
+    return this.byDid.size
+  }
+
+  private subdirs(dir: string): string[] {
     try {
-      return JSON.parse(s) as AnchorRecord
+      return readdirSync(dir, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name)
+    } catch {
+      return []
+    }
+  }
+
+  read(domain: string, localpart: string): AnchorRecord | null {
+    let s: string
+    try {
+      s = readFileSync(identityFPPath(this.dataDir, domain, localpart), 'utf-8').trim()
     } catch {
       return null
     }
-  }
-  // Legacy format inherited from pre-DID jmapap: the file held the bare
-  // fingerprint hex string. Still on disk for old accounts — do not drop this.
-  return { fingerprint: s }
-}
-
-function writeAnchorRecord(dataDir: string, domain: string, localpart: string, rec: AnchorRecord): boolean {
-  const path = identityFPPath(dataDir, domain, localpart)
-  try {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-    // Match Go's json.Marshal of `did,omitempty`: an empty DID is absent, not null.
-    const body = rec.did ? { fingerprint: rec.fingerprint, did: rec.did } : { fingerprint: rec.fingerprint }
-    writeFileSync(path, JSON.stringify(body), { mode: 0o600 })
-  } catch {
-    return false
-  }
-  if (rec.did) {
-    try {
-      const didPath = didIndexPath(dataDir, rec.did)
-      mkdirSync(dirname(didPath), { recursive: true, mode: 0o700 })
-      writeFileSync(didPath, `${domain}/${localpart}`, { mode: 0o600 })
-    } catch {
-      // Go ignores this error too: the forward claim is what matters, the
-      // reverse index is a lookup convenience that can be rebuilt.
+    if (s === '') return null
+    if (s[0] === '{') {
+      try {
+        return JSON.parse(s) as AnchorRecord
+      } catch {
+        return null
+      }
     }
+    // Legacy format inherited from pre-DID jmapap: the file held the bare
+    // fingerprint hex string. Still on disk for old accounts — do not drop this.
+    return { fingerprint: s }
   }
-  return true
-}
 
-/** Records the fingerprint (and, once known, the DID) for a name, or verifies
- * it against an existing claim. Returns false only on a genuine conflict —
- * name already held by a different fingerprint, or a DID mismatch against an
- * already-registered DID for this name (root keys are rotation-less by design,
- * so a mismatch signals a bug or a split attempt, never a legitimate update).
- * fp/did may be '' (not yet known) — an empty value never conflicts, it just
- * skips that field. First claim and idempotent re-claims return true. */
-export function claimIdentity(dataDir: string, domain: string, localpart: string, fp: string, did: string): boolean {
-  if (fp === '' && did === '') return false // nothing to claim by
-  const existing = readAnchorRecord(dataDir, domain, localpart)
-  if (!existing) return writeAnchorRecord(dataDir, domain, localpart, { fingerprint: fp, did })
-  if (fp !== '' && existing.fingerprint !== '' && existing.fingerprint !== fp) return false
-  if (did !== '' && existing.did && existing.did !== did) return false
-  if ((did !== '' && !existing.did) || (fp !== '' && existing.fingerprint === '')) {
-    return writeAnchorRecord(dataDir, domain, localpart, {
-      fingerprint: existing.fingerprint || fp,
-      did: existing.did || did,
-    })
+  private write(domain: string, localpart: string, rec: AnchorRecord): boolean {
+    const path = identityFPPath(this.dataDir, domain, localpart)
+    try {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+      // Match Go's json.Marshal of `did,omitempty`: an empty DID is absent, not null.
+      const body = rec.did ? { fingerprint: rec.fingerprint, did: rec.did } : { fingerprint: rec.fingerprint }
+      writeFileSync(path, JSON.stringify(body), { mode: 0o600 })
+    } catch {
+      return false
+    }
+    if (rec.did) this.byDid.set(rec.did, { domain, localpart })
+    return true
   }
-  return true
-}
 
-/** Forgets a claim entirely — call when the underlying account is permanently
- * deleted, so the address becomes claimable again (by anyone, including its
- * original owner under a fresh identity). Without this, claimIdentity would
- * keep rejecting a legitimate future registration of the same address as a
- * false "different key" conflict forever. Removing what's already gone is not
- * an error — release is idempotent. */
-export function releaseIdentity(dataDir: string, domain: string, localpart: string): void {
-  const existing = readAnchorRecord(dataDir, domain, localpart)
-  rmSync(identityFPPath(dataDir, domain, localpart), { force: true })
-  if (existing?.did) rmSync(didIndexPath(dataDir, existing.did), { force: true })
-}
-
-/** Which (domain, localpart) a DID belongs to, via the reverse index written
- * alongside every claim that carries a DID. */
-export function resolveDID(dataDir: string, did: string): { domain: string; localpart: string } | null {
-  let s: string
-  try {
-    s = readFileSync(didIndexPath(dataDir, did), 'utf-8').trim()
-  } catch {
-    return null
+  /** Records the fingerprint (and, once known, the DID) for a name, or verifies
+   * it against an existing claim. Returns false only on a genuine conflict —
+   * name already held by a different fingerprint, or a DID mismatch against an
+   * already-registered DID for this name (root keys are rotation-less by
+   * design, so a mismatch signals a bug or a split attempt, never a legitimate
+   * update). fp/did may be '' (not yet known) — an empty value never conflicts,
+   * it just skips that field. First claim and idempotent re-claims return true. */
+  claim(domain: string, localpart: string, fp: string, did: string): boolean {
+    if (fp === '' && did === '') return false // nothing to claim by
+    const existing = this.read(domain, localpart)
+    if (!existing) return this.write(domain, localpart, { fingerprint: fp, did })
+    if (fp !== '' && existing.fingerprint !== '' && existing.fingerprint !== fp) return false
+    if (did !== '' && existing.did && existing.did !== did) return false
+    if ((did !== '' && !existing.did) || (fp !== '' && existing.fingerprint === '')) {
+      return this.write(domain, localpart, {
+        fingerprint: existing.fingerprint || fp,
+        did: existing.did || did,
+      })
+    }
+    // Idempotent: nothing on disk changes. The index still needs to know about
+    // this DID — under the Go service this early return is exactly where the
+    // index silently failed to heal.
+    if (existing.did) this.byDid.set(existing.did, { domain, localpart })
+    return true
   }
-  const i = s.indexOf('/')
-  if (i < 0) return null
-  return { domain: s.slice(0, i), localpart: s.slice(i + 1) }
+
+  /** Forgets a claim entirely — call when the underlying account is permanently
+   * deleted, so the address becomes claimable again (by anyone, including its
+   * original owner under a fresh identity). Without this, claim() would keep
+   * rejecting a legitimate future registration of the same address as a false
+   * "different key" conflict forever. Removing what's already gone is not an
+   * error — release is idempotent. */
+  release(domain: string, localpart: string): void {
+    const existing = this.read(domain, localpart)
+    rmSync(identityFPPath(this.dataDir, domain, localpart), { force: true })
+    if (existing?.did) this.byDid.delete(existing.did)
+  }
+
+  /** Which (domain, localpart) a DID belongs to. */
+  resolveDid(did: string): DidLocation | null {
+    return this.byDid.get(did) ?? null
+  }
 }

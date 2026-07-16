@@ -17,6 +17,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { CloudflareAnchor } from './cloudflare.ts'
+import { ClaimStore } from './store.ts'
 import { startAnchor } from './server.ts'
 
 interface Config {
@@ -73,5 +74,11 @@ if (!cloudflare.enabled()) {
 const dataDir = join(baseDir, 'data')
 mkdirSync(dataDir, { recursive: true, mode: 0o700 })
 
-startAnchor({ dataDir, cloudflare, port, hostname })
+// The DID index is derived from the identity.fp files at startup rather than
+// kept on disk — see store.ts for why (the Go service's on-disk copy had
+// silently drifted in production and could not self-heal).
+const claims = new ClaimStore(dataDir)
+console.log(`[anchor] indexed ${claims.rebuildIndex()} DID(s) from ${dataDir}`)
+
+startAnchor({ claims, cloudflare, port, hostname })
 console.log(`[anchor] listening on ${cfg.listen_addr} (data: ${dataDir})`)
