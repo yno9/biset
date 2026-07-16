@@ -90,11 +90,12 @@ export function startAnchor({ claims, cloudflare, port, hostname }: AnchorOption
       }
 
       case 'DELETE': {
-        // Account-delete's counterpart to claim (POST). Note: this does NOT
-        // remove the `_did.<localpart>.<domain>` TXT record — no delete method
-        // exists on the Cloudflare side yet. A smaller leftover than the claim
-        // itself, since the DID document it points at fades from the DHT on its
-        // own once nothing republishes it.
+        // Account-delete's counterpart to claim (POST): drop the claim, then
+        // withdraw its publication. Both halves matter — a released address
+        // that keeps its TXT record goes on telling the world it belongs to the
+        // DID of whoever held it last, and the next holder's claim can't undo
+        // that (a fresh claim with a *different* DID rewrites it, but a claim
+        // with no DID leaves the old record standing).
         const domain = url.searchParams.get('domain')
         if (!domain) return text('domain required', 400)
         try {
@@ -102,6 +103,11 @@ export function startAnchor({ claims, cloudflare, port, hostname }: AnchorOption
         } catch {
           return text('release failed', 500)
         }
+        // Best-effort, mirroring the claim path: the registry is the authority
+        // and it has already let go, so a DNS failure must not fail the release
+        // — that would leave the caller retrying a delete that already happened.
+        await cloudflare.deleteAnchorTXT(localpart, domain)
+          .catch(e => console.error(`[dns-anchor] delete failed for ${localpart}@${domain}:`, e?.message ?? e))
         return new Response(null, { status: 204, headers: CORS })
       }
 

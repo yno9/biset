@@ -69,6 +69,14 @@ if (!Number.isInteger(port) || port <= 0) {
 const cloudflare = new CloudflareAnchor({ apiToken: cfg.cloudflare_api_token, zoneId: cfg.cloudflare_zone_id })
 if (!cloudflare.enabled()) {
   console.log('[anchor] Cloudflare not configured — claims will be recorded but no DNS record written')
+} else {
+  // Which zone we can write to decides which addresses get a DNS anchor at all
+  // (cloudflare.ts: everything outside it is the owner's to publish), so say it
+  // out loud at startup rather than leaving it implicit in a zone id. Warn and
+  // carry on if Cloudflare is unreachable — claims must not wait on DNS.
+  cloudflare.zoneName()
+    .then(z => console.log(`[anchor] Cloudflare zone ${z} — addresses outside it get no DNS anchor`))
+    .catch(e => console.error('[anchor] Cloudflare zone lookup failed:', e?.message ?? e))
 }
 
 const dataDir = join(baseDir, 'data')
