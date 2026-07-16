@@ -1,0 +1,28 @@
+{
+  // biset-anchor is a Bun server; the client (tsconfig.json) is a browser
+  // bundle. Two configs rather than one is what keeps the monorepo honest
+  // (ANCHOR.md decision 6): the client's config carries no Bun/node types, so
+  // client code physically cannot typecheck against `fs` or `process`; this one
+  // carries no DOM lib, so anchor code cannot reach for `localStorage` or
+  // `indexedDB`. The separation is enforced by the type checker rather than by
+  // remembering.
+  //
+  // `include` is only the entry tree: TypeScript follows imports on its own, so
+  // whatever the anchor pulls out of `src/did/**` gets checked **without a DOM
+  // lib** — i.e. the purity that made sharing possible (ANCHOR.md "純化") is
+  // verified automatically, not asserted in a hand-maintained exclude list.
+  // Importing something browser-bound fails here, loudly, at the type level.
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ESNext"],
+    "types": ["bun"]
+  },
+  "include": ["src/anchor/**/*"],
+  "typeRoots": ["node_modules/@types"]
+}
