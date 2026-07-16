@@ -4,7 +4,7 @@ The ubiquitous pigeon, de facto like HTTP.
 
 **biset is a single HTML file: a JMAP client with a Markdown vault, built on a portable identity.** It connects to your accounts, aggregates every message into one local vault, and renders it as Markdown you can read and reply to from any editor. Each account lives behind a *relay* — a small server that bridges an external protocol (SMTP, ActivityPub, IMAP, …) into JMAP — and biset is the client that reads them all.
 
-Underneath, every identity is a **did:dht** — a client-generated, rotation-less key, not an address. Addresses (`you@relay.example`) are discoverable *pointers* to that key, published as a signed record on the Mainline DHT and (for human-readable lookup) a DNS TXT record. Lose a relay, move to another operator, or bring your own domain, and contacts still find you — the address can change, the identity doesn't. See [`DID.md`](DID.md) for the full design and [`ARC.md`](ARC.md#identity-layer-did) for the current architecture.
+Underneath, every identity is a **did:dht** — a client-generated, rotation-less key, not an address. Addresses (`you@relay.example`) are discoverable *pointers* to that key, published as a signed record on the Mainline DHT and (for human-readable lookup) a DNS TXT record. Lose a relay, move to another operator, or bring your own domain, and contacts still find you — the address can change, the identity doesn't. See [`ARC.md`](ARC.md#identity-layer-did) for the architecture.
 
 ```
 External events
@@ -29,12 +29,12 @@ External events
 ## Features
 
 - **Single HTML file** — biset builds to one inlined [`dist/index.html`](https://github.com/yno9/biset/blob/main/dist/index.html). No dev server, no runtime dependencies; it runs from `file://` (local-first) or any static host.
-- **Portable identity (DID)** — a rotation-less `did:dht` root, generated client-side, backed up as a 24-word recovery phrase. Move relays, add a relay run by a different operator, or bring your own domain, and your identity — keys, contacts, discoverability — comes with you. DID is layered on top of, not instead of, real protocols: biset still speaks plain SMTP/JMAP/ActivityPub, so nothing about interop is sacrificed for portability. Fully optional — a relay/account can run with no DID at all ("anchorless"). See [`DID.md`](DID.md).
+- **Portable identity (DID)** — a rotation-less `did:dht` root, generated client-side, backed up as a 24-word recovery phrase. Move relays, add a relay run by a different operator, or bring your own domain, and your identity — keys, contacts, discoverability — comes with you. DID is layered on top of, not instead of, real protocols: biset still speaks plain SMTP/JMAP/ActivityPub, so nothing about interop is sacrificed for portability. Fully optional — a relay/account can run with no DID at all ("anchorless"). See [`ARC.md`](ARC.md#identity-layer-did).
 - **JMAP client** — connects directly to any JMAP relay/server. Multi-account, multi-protocol (mail + ActivityPub) merged into one identity.
 - **Relays** — each account sits behind an independent JMAP HTTP server bridging one external protocol (SMTP, ActivityPub, IMAP, …). biset aggregates them all into one view. Relays are independent processes that share libraries, not state — no core server.
 - **End-to-end encryption** — OpenPGP messaging with full **DeltaChat / chatmail interoperability**, including QR-less securejoin (setup-contact) via an invite link. See [`ARC.md`](ARC.md).
 - **Encrypted accounts** — password-derived envelope (Argon2id) provisioned to the server; the private key never leaves the client in the clear. Recovery-phrase login works without ever touching a password.
-- **Bring your own domain** — host mail on your own domain, served by an existing relay, with no server to run yourself: prove domain ownership via a DNS TXT record, biset relay handles the rest. See [`DID.md`](DID.md#custom-byo-domains--implemented-2026-07-13).
+- **Bring your own domain** — host mail on your own domain, served by an existing relay, with no server to run yourself: prove domain ownership via a DNS TXT record, biset relay handles the rest. See [`ARC.md`](ARC.md#account--relay-flows).
 - **Markdown vault** — Opt into a folder and biset mirrors every thread as Markdown via the File System Access API. Edit a file to reply, archive, or delete — changes are watched and pushed back through the relay.
 
 ---
@@ -84,7 +84,7 @@ First launch with no accounts drops you on `#new`, where you can create an accou
 }
 ```
 
-New accounts get **both** a mail identity (`username@hostname` on `mail_url`) and an ActivityPub identity (on `ap_url`), sharing one DID — see [`DID.md`](DID.md). `hostname` alone (no explicit `mail_url`/`ap_url`) falls back to `mail.<hostname>` / `ap.<hostname>`.
+New accounts get **both** a mail identity (`username@hostname` on `mail_url`) and an ActivityPub identity (on `ap_url`), sharing one DID — see [`ARC.md`](ARC.md#identity-layer-did). `hostname` alone (no explicit `mail_url`/`ap_url`) falls back to `mail.<hostname>` / `ap.<hostname>`.
 
 ---
 
@@ -205,18 +205,18 @@ Set `status:` in the frontmatter to trigger an action on the next sync:
 
 | Relay | Protocols | Description |
 |---|---|---|
-| [jmapsmtp](https://github.com/yno9/go-jmap-smtp) | SMTP | Self-hosted SMTP send/receive; wraps outgoing mail as PGP/MIME and injects Autocrypt for DeltaChat/chatmail E2EE |
-| [jmapap](https://github.com/yno9/go-jmapap) | ActivityPub | Fediverse federation — WebFinger, actor documents, inbox/outbox; a JMAP↔AP bridge, sibling of jmapsmtp |
+| [jmapsmtp](https://github.com/yno9/go-jmapsmtp) | SMTP | Self-hosted SMTP send/receive; wraps outgoing mail as PGP/MIME and injects Autocrypt for DeltaChat/chatmail E2EE |
+| jmapap | ActivityPub | Fediverse federation — WebFinger, actor documents, inbox/outbox; a JMAP↔AP bridge, sibling of jmapsmtp |
 | jmapimap | IMAP | Email via a standard IMAP mailbox |
 | jmapclaude | Claude CLI | AI assistant as an inbox (per-project mailbox) |
 
-Each relay is an independent JMAP HTTP server. It owns its config and state, handles reconnection, and exposes an SSE endpoint so biset gets push notifications on new data. Relays that opt into DID also share [`go-jmapserver`](https://github.com/yno9/go-jmapserver) (common JMAP/DID library code, not shared state) and, optionally, [`go-didanchor`](https://github.com/yno9/go-didanchor) — a small, standalone identity registry (address↔DID claims, DNS anchor records) that any relay can point at, or none at all ("anchorless" mode). See [`DID.md`](DID.md) for how these fit together.
+Each relay is an independent JMAP HTTP server. It owns its config and state, handles reconnection, and exposes an SSE endpoint so biset gets push notifications on new data. Relays that opt into DID also share [`go-jmapserver`](https://github.com/yno9/go-jmapserver) (common JMAP/DID library code, not shared state) and, optionally, `go-didanchor` — a small, standalone identity registry (address↔DID claims, DNS anchor records) that any relay can point at, or none at all ("anchorless" mode). See [`ARC.md`](ARC.md#identity-layer-did) for how these fit together.
 
 ---
 
 ## Architecture
 
-See [`ARC.md`](ARC.md) for the build flow, source layout, hash routing, and the DeltaChat / chatmail interoperability notes (securejoin v3, protected headers, and the byte-level chatmail traps).
+See [`ARC.md`](ARC.md) — build flow and source layout, the [storage model](ARC.md#storage-model) (what lives in memory / IndexedDB / the vault / each relay), the [identity layer](ARC.md#identity-layer-did) (did:dht, the anchor, DIDComm), and the [DeltaChat / chatmail interop notes](ARC.md#deltachat--chatmail-interoperability) — securejoin v3, protected headers, and the byte-level traps.
 
 ---
 
