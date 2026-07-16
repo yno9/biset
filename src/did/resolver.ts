@@ -8,7 +8,7 @@ import { zbase32Decode } from './zbase32.ts'
 import { parseSignedPayload, buildSignedPayload, type ParsedPayload } from './packet.ts'
 import { suffixOf, type DidDocument } from './document.ts'
 import { splitIntoChain, mergeChain, MAX_CHAIN } from './chain.ts'
-import { noteSeq } from './freshness.ts'
+import { noteSeq, requireSeqStore } from './freshness.ts'
 
 export type { DidDocument, DidService } from './document.ts'
 
@@ -62,6 +62,7 @@ export async function resolveVia(did: string, gatewayUrls: string[]): Promise<Pa
 // link degrades to the services resolved so far rather than failing the
 // whole resolve: a partial relay list still beats an unresolvable identity.
 export async function resolve(did: string, gatewayUrls: string[]): Promise<DidDocument | null> {
+  requireSeqStore() // up front: a lookup that finds nothing must still surface a missing store
   const r = await resolveVia(did, gatewayUrls)
   if (!r) return null
   if (!noteSeq(did, r.seq)) return null // rollback attempt — refuse the stale record

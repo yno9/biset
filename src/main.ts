@@ -5,6 +5,7 @@ import { initSession, initPGPForSession, loadInboxSummaries } from './app.ts'
 import type { InboxSummary } from './types.ts'
 import { inboxToHash, parseInboxHash } from './utils.ts'
 import { contactIdentityKey, representativeAddressForDid } from './did/contacts.ts'
+import { useSeqStore } from './did/freshness.ts'
 import { showApp, startPolling, fetchMessages } from './ui/shell.ts'
 import { loadLeftInboxes, switchInbox, showMenuPage, setupLeftPane, refreshAccountsList, menuTargetInbox, openComposeTo, syncNotifToggle } from './ui/left-pane.ts'
 import { setupNewUserPage, showNewUserPage } from './ui/account-create.ts'
@@ -547,5 +548,12 @@ window.addEventListener('resize', async () => {
     }).observe(dock)
   }
 }
+
+// Wire the browser's storage into the DID freshness floor before anything can
+// resolve. did/freshness.ts takes this by injection rather than reaching for
+// localStorage itself, so the did:dht wire layer stays runnable outside a
+// browser (see ANCHOR.md) — and it throws rather than defaulting, since a
+// silent fallback would quietly disable rollback defense.
+useSeqStore(localStorage)
 
 init()
