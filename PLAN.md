@@ -350,7 +350,7 @@ did:dhtがどうDNSに落とすかは、did:dht自身が決める話。
 **発見: did:dht仕様には「Additional Properties Registry」という正式な拡張
 窓口がある(`spec/registry/spec.md`)。** 既に`sig`/`enc`という2つのService用
 プロパティが登録済み(形式: `id=M;t=N;se=O;sig=S;enc=E`、"String or array of
-strings")。仕様自体が「追加したければ`TBD54566975/did-dht`へPRを送ってくれ」
+strings")。仕様自体が「追加したければ`did-dht`リポジトリへPRを送ってくれ」
 と明記している。
 
 **決定: `accept`/`routingKeys`のDNS表現を、`sig`/`enc`と同じパターンで
@@ -372,7 +372,8 @@ id=M;t=DIDCommMessaging;se=O;ac=A;rk=R
 (X25519、`m/1'`、seed導出——root ed25519からの変換ではなく独立path、
 決定論性・独立性をscratchで確認済み)、`src/did/document.ts`に`_k1`
 verification method + `DidService.accept`/`routingKeys`(`ac=`/`rk=`)を
-追加。**`TBD54566975/did-dht`のspec.md本文を直接取得し、`agm=`(keyAgreement
+追加。**did:dht公式仕様(`decentralized-identity/did-dht`、TBD54566975から
+移管済み)のspec.md本文を直接取得し、`agm=`(keyAgreement
 relationship略称)と、その配置順を含むroot recordの実例
 (`v=0;vm=k0,k1;auth=k0;asm=k0;agm=k1;inv=k0;del=k0;svc=s0`)をそのまま
 参照して実装**——記憶からの再構成ではない。往復テスト
@@ -569,8 +570,14 @@ document _k1(X25519 verification method)+ _s2(DIDCommMessaging service,
 1. **鍵 + document拡張** — `keys.ts` にX25519派生追加、`document.ts` に
    `_k1`/`_s2`(`ac=`/`rk=`拡張含む)。relay不要、既存resolve/publishの
    テストで検証可能。
-2. **did:dht Additional Properties Registryへの提案** — `TBD54566975/did-dht`
-   へ`ac=`/`rk=`のPRを提案(相互運用性を狙う本筋)。
+2. **did:dht Additional Properties Registryへの提案** — **PR提出済み
+   (2026-07-16): [decentralized-identity/did-dht#337](https://github.com/decentralized-identity/did-dht/pull/337)**。
+   `ac=`/`rk=`のDNSマッピング登録 + 既存`sig`/`enc`行の入れ違い修正(別
+   コミット、分離可能)。**リポジトリはTBD54566975からDIFへ移管済み**——
+   本家は`decentralized-identity/did-dht`。ただし**最後の実質的なコミットが
+   2024年10-11月でほぼ休眠状態**なので、マージは期待薄。bisetの実装は
+   採否に関わらず動く(先行採用済み)ので、これは「他実装も`rk=`を解釈
+   できるようになる」ための布石。
 3. **クライアント実装(送受信 + forward wrapping)** — `src/did/didcomm.ts`。
    自前relay不要。既存の公開Mediator実装やDIDCommライブラリ/test vectorsを
    相手に暗号フォーマット・forward wrappingの正しさを検証する。
