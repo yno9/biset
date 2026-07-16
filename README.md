@@ -206,7 +206,7 @@ Set `status:` in the frontmatter to trigger an action on the next sync:
 | Relay | Protocols | Description |
 |---|---|---|
 | [jmapsmtp](https://github.com/yno9/go-jmapsmtp) | SMTP | Self-hosted SMTP send/receive; wraps outgoing mail as PGP/MIME and injects Autocrypt for DeltaChat/chatmail E2EE |
-| jmapap | ActivityPub | Fediverse federation — WebFinger, actor documents, inbox/outbox; a JMAP↔AP bridge, sibling of jmapsmtp |
+| [jmapap](https://github.com/yno9/go-jmapap) | ActivityPub | Fediverse federation — WebFinger, actor documents, inbox/outbox; a JMAP↔AP bridge, sibling of jmapsmtp |
 | jmapimap | IMAP | Email via a standard IMAP mailbox |
 | jmapclaude | Claude CLI | AI assistant as an inbox (per-project mailbox) |
 
