@@ -4,6 +4,8 @@ The ubiquitous pigeon, de facto like HTTP.
 
 **biset is a single HTML file: a JMAP client with a Markdown vault, built on a portable identity.** It connects to your accounts, aggregates every message into one local vault, and renders it as Markdown you can read and reply to from any editor. Each account lives behind a *relay* — a small server that bridges an external protocol (SMTP, ActivityPub, IMAP, …) into JMAP — and biset is the client that reads them all.
 
+The client is the whole of biset for anyone using it. This repo also builds one optional server binary, `biset-anchor` — the identity registry an *operator* runs to make addresses discoverable (`bun run build:anchor`). It shares the client's did:dht code and nothing else, it is nobody's dependency, and running without it is a first-class mode. See [`ARC.md`](ARC.md#build-flow).
+
 Underneath, every identity is a **did:dht** — a client-generated, rotation-less key, not an address. Addresses (`you@relay.example`) are discoverable *pointers* to that key, published as a signed record on the Mainline DHT and (for human-readable lookup) a DNS TXT record. Lose a relay, move to another operator, or bring your own domain, and contacts still find you — the address can change, the identity doesn't. See [`ARC.md`](ARC.md#identity-layer-did) for the architecture.
 
 ```
@@ -34,7 +36,7 @@ External events
 - **Relays** — each account sits behind an independent JMAP HTTP server bridging one external protocol (SMTP, ActivityPub, IMAP, …). biset aggregates them all into one view. Relays are independent processes that share libraries, not state — no core server.
 - **End-to-end encryption** — OpenPGP messaging with full **DeltaChat / chatmail interoperability**, including QR-less securejoin (setup-contact) via an invite link. See [`ARC.md`](ARC.md).
 - **Encrypted accounts** — password-derived envelope (Argon2id) provisioned to the server; the private key never leaves the client in the clear. Recovery-phrase login works without ever touching a password.
-- **Bring your own domain** — host mail on your own domain, served by an existing relay, with no server to run yourself: prove domain ownership via a DNS TXT record, biset relay handles the rest. See [`ARC.md`](ARC.md#account--relay-flows).
+- **Bring your own domain** — host mail on your own domain, served by an existing relay, with no server to run yourself: prove domain ownership via a DNS TXT record, biset relay handles the rest. To be *discoverable* by DID on that domain, publish one more TXT record yourself — `_did.<localpart>.<domain>` = `did=<your-did>` — since the relay operator has no access to your zone, and shouldn't. See [`ARC.md`](ARC.md#account--relay-flows).
 - **Markdown vault** — Opt into a folder and biset mirrors every thread as Markdown via the File System Access API. Edit a file to reply, archive, or delete — changes are watched and pushed back through the relay.
 
 ---
@@ -210,7 +212,7 @@ Set `status:` in the frontmatter to trigger an action on the next sync:
 | jmapimap | IMAP | Email via a standard IMAP mailbox |
 | jmapclaude | Claude CLI | AI assistant as an inbox (per-project mailbox) |
 
-Each relay is an independent JMAP HTTP server. It owns its config and state, handles reconnection, and exposes an SSE endpoint so biset gets push notifications on new data. Relays that opt into DID also share [`go-jmapserver`](https://github.com/yno9/go-jmapserver) (common JMAP/DID library code, not shared state) and, optionally, `go-didanchor` — a small, standalone identity registry (address↔DID claims, DNS anchor records) that any relay can point at, or none at all ("anchorless" mode). See [`ARC.md`](ARC.md#identity-layer-did) for how these fit together.
+Each relay is an independent JMAP HTTP server. It owns its config and state, handles reconnection, and exposes an SSE endpoint so biset gets push notifications on new data. Relays that opt into DID also share [`go-jmapserver`](https://github.com/yno9/go-jmapserver) (common JMAP/DID library code, not shared state) and, optionally, point at an **anchor** — the identity registry (address↔DID claims, DNS anchor records) built from this repo as `biset-anchor`. Any number of relays can share one, or none at all ("anchorless" mode). See [`ARC.md`](ARC.md#identity-layer-did) for how these fit together.
 
 ---
 
