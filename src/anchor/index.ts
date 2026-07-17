@@ -19,11 +19,18 @@ import { dirname, join, resolve as resolvePath } from 'node:path'
 import { CloudflareAnchor } from './cloudflare.ts'
 import { ClaimStore } from './store.ts'
 import { startAnchor } from './server.ts'
+import { createMediator } from './mediator/server.ts'
+import { loadMediatorIdentity } from './mediator/identity.ts'
 
 interface Config {
   listen_addr: string
   cloudflare_api_token?: string
   cloudflare_zone_id?: string
+  /** The mediator's own public URL. Setting it turns the DIDComm mediator on;
+   * omitting it leaves the anchor a pure registry. It must be the URL clients
+   * can actually reach, because it goes into the mediator's DID — correspondents
+   * read it from there to know where to deliver. */
+  mediator_url?: string
 }
 
 // Beside the executable when compiled (`bun build --compile`), beside this file
@@ -88,5 +95,11 @@ mkdirSync(dataDir, { recursive: true, mode: 0o700 })
 const claims = new ClaimStore(dataDir)
 console.log(`[anchor] indexed ${claims.rebuildIndex()} DID(s) from ${dataDir}`)
 
-startAnchor({ claims, cloudflare, port, hostname })
+const mediator = cfg.mediator_url
+  ? createMediator({ mediator: loadMediatorIdentity(join(dataDir, 'mediator-identity.json'), cfg.mediator_url) })
+  : undefined
+if (mediator) console.log(`[anchor] DIDComm mediator at ${cfg.mediator_url} — ${mediator.mediatorDid}`)
+else console.log('[anchor] no mediator_url — registry only, no DIDComm mediation')
+
+startAnchor({ claims, cloudflare, port, hostname, mediator })
 console.log(`[anchor] listening on ${cfg.listen_addr} (data: ${dataDir})`)

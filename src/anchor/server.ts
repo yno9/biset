@@ -10,6 +10,7 @@
 //   DELETE /identity/<localpart>?domain=<domain>                    → 204
 import type { ClaimStore } from './store.ts'
 import { CloudflareAnchor } from './cloudflare.ts'
+import type { MediatorHandler } from './mediator/server.ts'
 
 const MAX_BODY = 1 << 12 // matches Go's io.LimitReader(r.Body, 1<<12)
 
@@ -35,11 +36,25 @@ export interface AnchorOptions {
   cloudflare: CloudflareAnchor
   port: number
   hostname?: string
+  /** Absent when no `mediator_url` is configured — the anchor then answers
+   * nothing on `/` and `/.well-known/did.json`, exactly as before it could
+   * mediate at all. */
+  mediator?: MediatorHandler
 }
 
-export function startAnchor({ claims, cloudflare, port, hostname }: AnchorOptions) {
+export function startAnchor({ claims, cloudflare, port, hostname, mediator }: AnchorOptions) {
   async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url)
+
+    // The mediator owns `/` and `/.well-known/did.json`; the registry owns
+    // `/identity/*`. Ask first and fall through, so a request for neither still
+    // gets the registry's 404 rather than a mediator error about a message it
+    // was never sent.
+    if (mediator) {
+      const resp = await mediator.handle(req, url)
+      if (resp) return resp
+    }
+
     if (!url.pathname.startsWith('/identity/')) return notFound()
     const rest = url.pathname.slice('/identity/'.length)
 

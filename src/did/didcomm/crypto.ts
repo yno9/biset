@@ -24,16 +24,33 @@
 // scratch-didcomm-crypto-interop.mjs for a round-trip check against the real
 // didcomm-node library (round-trips both directions, both algorithms).
 //
-// `enc` is always A256CBC-HS512, never XC20P/A256GCM — those are other
-// libraries' options for content this one never needs to produce (we always
-// choose our own forward-wrap's `enc`) or is ever asked to consume (didmediator
-// relays already-encrypted bytes opaquely; it doesn't re-encrypt under a
-// different `enc`). unpack* below will reject anything else rather than
-// silently mishandle it.
+// **We only ever produce A256CBC-HS512, but we must consume more than that.**
+// An earlier version of this comment argued the reverse — that no `enc` but
+// ours would ever arrive, because the only thing unpacking foreign messages was
+// didmediator, and it relayed already-encrypted bytes opaquely. That reasoning
+// was sound until the mediator moved into this repo and became *this* code: a
+// mediator unpacks the anoncrypt'd Forward envelope of whoever sends it, and
+// didcomm-rust — the reference implementation, hence most third-party agents —
+// **defaults anoncrypt's `enc` to XC20P**, not A256CBC-HS512. Caught by an
+// interop test against didcomm-node; before that, a real third-party forward
+// would have failed with "authentication tag mismatch", an error pointing
+// nowhere near the cause.
+//
+// The same comment also promised "unpack* will reject anything else rather than
+// silently mishandle it" — which was never true. `alg` was checked, `enc` was
+// not, so an unsupported `enc` was mishandled in exactly the promised-against
+// way. Both unpack paths now dispatch on `enc` and name what they won't take.
+//
+// Anoncrypt accepts A256CBC-HS512 and XC20P; authcrypt is A256CBC-HS512 only
+// (didcomm-rust's authcrypt has no other option, so there is nothing to
+// interop with). A256GCM stays unimplemented — permitted by the spec, but no
+// implementation reachable from here defaults to it, and an unsupported `enc`
+// now fails loudly instead of quietly.
 import { x25519 } from '@noble/curves/ed25519.js'
 import { sha256, sha512 } from '@noble/hashes/sha2.js'
 import { hmac } from '@noble/hashes/hmac.js'
 import { cbc, aeskw } from '@noble/ciphers/aes.js'
+import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
 
 // ── byte helpers ─────────────────────────────────────────────────────────────
 function concatBytes(...parts: Uint8Array[]): Uint8Array {
@@ -142,6 +159,42 @@ function aesCbcHs512Decrypt(cek: Uint8Array, iv: Uint8Array, aad: Uint8Array, ci
   return cbc(encKey, iv).decrypt(ciphertext)
 }
 
+// ── XC20P (XChaCha20-Poly1305) ─────────────────────────────────────────────
+// Decrypt only: didcomm-rust's default `enc` for anoncrypt, so it arrives from
+// third parties, but we never choose it ourselves. 32-byte CEK, 24-byte nonce,
+// and the 16-byte Poly1305 tag lives in the JWE's own `tag` field rather than
+// appended to the ciphertext — so it is concatenated back on here, which is the
+// layout @noble/ciphers (and every AEAD API) expects.
+const XC20P_KEY_BYTES = 32
+
+function xc20pDecrypt(cek: Uint8Array, iv: Uint8Array, aad: Uint8Array, ciphertext: Uint8Array, tag: Uint8Array): Uint8Array {
+  if (cek.length !== XC20P_KEY_BYTES) throw new Error(`XC20P: expected a ${XC20P_KEY_BYTES}-byte key, got ${cek.length}`)
+  if (iv.length !== 24) throw new Error(`XC20P: expected a 24-byte nonce, got ${iv.length}`)
+  return xchacha20poly1305(cek, iv, aad).decrypt(concatBytes(ciphertext, tag))
+}
+
+/** The content-encryption half of unpacking, shared by both algorithms: given a
+ * CEK, turn the JWE body back into bytes under whichever `enc` the sender
+ * chose. Unknown values are named and refused — the alternative is a decrypt
+ * that fails as a tag mismatch and sends the reader hunting the key schedule. */
+function decryptContent(enc: string, cek: Uint8Array, jwe: DidCommJWE): Uint8Array {
+  const iv = b64urlToBytes(jwe.iv)
+  const aad = utf8(jwe.protected)
+  const ciphertext = b64urlToBytes(jwe.ciphertext)
+  const tag = b64urlToBytes(jwe.tag)
+  if (enc === 'A256CBC-HS512') return aesCbcHs512Decrypt(cek, iv, aad, ciphertext, tag)
+  if (enc === 'XC20P') return xc20pDecrypt(cek, iv, aad, ciphertext, tag)
+  throw new Error(`unsupported enc ${JSON.stringify(enc)} — this implementation reads A256CBC-HS512 and XC20P`)
+}
+
+/** How many bytes of CEK an `enc` needs — the KDF has to produce the right
+ * length before the content algorithm is ever reached. */
+function cekBytesFor(enc: string): number {
+  if (enc === 'A256CBC-HS512') return 64
+  if (enc === 'XC20P') return XC20P_KEY_BYTES
+  throw new Error(`unsupported enc ${JSON.stringify(enc)} — this implementation reads A256CBC-HS512 and XC20P`)
+}
+
 // ── JWE (general JSON serialization, DIDComm's single-recipient subset) ────
 export interface DidCommJWE {
   protected: string
@@ -245,14 +298,24 @@ export async function unpackAuthcrypt(jwe: DidCommJWE, recipient: X25519Sender, 
   const apv = b64urlToBytes(header.apv)
   const tag = b64urlToBytes(jwe.tag)
 
+  // didcomm-rust's authcrypt offers no `enc` but this one, so an authcrypt
+  // arriving as anything else isn't an interop case to support — it's a message
+  // we should refuse by name rather than fail cryptically on. Calling
+  // aesCbcHs512Decrypt directly rather than routing through decryptContent is
+  // deliberate: there is exactly one possibility left by the line above, and
+  // going through the dispatcher would drag XC20P into every bundle that
+  // authenticates a message — the browser client unpacks only authcrypt, and
+  // paid ~15KB for a branch it can't reach until this was untangled.
+  if (header.enc !== 'A256CBC-HS512') {
+    throw new Error(`unpackAuthcrypt: unsupported enc ${JSON.stringify(header.enc)} — authcrypt is A256CBC-HS512 only`)
+  }
+
   const ze = ecdh(recipient.privateKey, epkPub)
   const zs = ecdh(recipient.privateKey, senderPub)
   const kek = deriveEcdh1PU(ze, zs, header.alg, apu, apv, tag, 256)
   const cek = unwrapKey(kek, b64urlToBytes(rec.encrypted_key))
 
-  const iv = b64urlToBytes(jwe.iv)
-  const ciphertext = b64urlToBytes(jwe.ciphertext)
-  const plaintext = aesCbcHs512Decrypt(cek, iv, utf8(jwe.protected), ciphertext, tag)
+  const plaintext = aesCbcHs512Decrypt(cek, b64urlToBytes(jwe.iv), utf8(jwe.protected), b64urlToBytes(jwe.ciphertext), tag)
   return { plaintext, senderKid }
 }
 
@@ -271,10 +334,16 @@ export async function unpackAnoncrypt(jwe: DidCommJWE, recipient: X25519Sender):
   const kek = deriveEcdhEs(z, header.alg, apu, apv, 256)
   const cek = unwrapKey(kek, b64urlToBytes(rec.encrypted_key))
 
-  const iv = b64urlToBytes(jwe.iv)
-  const ciphertext = b64urlToBytes(jwe.ciphertext)
-  const tag = b64urlToBytes(jwe.tag)
-  return aesCbcHs512Decrypt(cek, iv, utf8(jwe.protected), ciphertext, tag)
+  // The sender picked `enc`, and for anoncrypt that is genuinely open: we send
+  // A256CBC-HS512, didcomm-rust sends XC20P. Check the unwrapped CEK is the
+  // length that `enc` implies — a mismatch here means the sender's key schedule
+  // and ours disagree, which is worth saying plainly instead of letting the
+  // AEAD report it as a tag failure.
+  const want = cekBytesFor(header.enc)
+  if (cek.length !== want) {
+    throw new Error(`unpackAnoncrypt: ${header.enc} wants a ${want}-byte CEK, unwrapped ${cek.length}`)
+  }
+  return decryptContent(header.enc, cek, jwe)
 }
 
 // ── exported for the standalone RFC test-vector check (scratchpad only) ────

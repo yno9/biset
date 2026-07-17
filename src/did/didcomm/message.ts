@@ -57,7 +57,7 @@ export async function sendAndUnpack(mediator: MediatorLike, own: DidCommSender, 
   })
   if (!resp.ok) throw new Error(`mediator request failed: HTTP ${resp.status} ${await resp.text()}`)
 
-  const replyJwe: DidCommJWE = await resp.json()
+  const replyJwe = await resp.json() as DidCommJWE
   const resolveSenderKey = (senderKid: string) => publicKeyOf(mediator.doc, senderKid)
   const { plaintext: replyBytes } = await unpackAuthcrypt(replyJwe, { kid: own.xKid, privateKey: own.xPriv }, resolveSenderKey)
   return JSON.parse(new TextDecoder().decode(replyBytes))
