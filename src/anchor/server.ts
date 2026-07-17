@@ -10,6 +10,7 @@
 //   DELETE /identity/<localpart>?domain=<domain>                    → 204
 import type { ClaimStore } from './store.ts'
 import { CloudflareAnchor } from './cloudflare.ts'
+import { verifyDIDBinding } from './didbind.ts'
 import type { MediatorHandler } from './mediator/server.ts'
 
 const MAX_BODY = 1 << 12 // matches Go's io.LimitReader(r.Body, 1<<12)
@@ -80,7 +81,7 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator }: An
       case 'POST': {
         const raw = await req.text()
         if (raw.length > MAX_BODY) return text('domain, and fingerprint or did, required', 400)
-        let body: { domain?: string; fingerprint?: string; did?: string } | null = null
+        let body: { domain?: string; fingerprint?: string; did?: string; did_sig?: string; bind_ts?: number; host?: string } | null = null
         try {
           body = JSON.parse(raw)
         } catch {
@@ -90,6 +91,27 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator }: An
         const fingerprint = body?.fingerprint ?? ''
         const did = body?.did ?? ''
         if (!domain || (!fingerprint && !did)) return text('domain, and fingerprint or did, required', 400)
+
+        // Proof that the claimant controls the DID (ANCHOR.md decision 1:
+        // verification is the anchor's job, relays pass it through).
+        //
+        // **A claim without `did_sig` is still accepted**, because relays that
+        // verify locally and don't forward the proof are still deployed — they
+        // are the reason this is a migration and not a switch. Rejecting them
+        // now would take DID account creation down across the fleet. Once every
+        // relay sends the proof, absence becomes a 401 and this comment goes
+        // with it. Until then the check is strictly additive: a signature that
+        // *is* sent must be valid.
+        if (did && body?.did_sig) {
+          const r = verifyDIDBinding({
+            did,
+            username: localpart,
+            relayHost: body.host ?? '',
+            bindTs: Number(body.bind_ts),
+            sigB64: body.did_sig,
+          })
+          if (!r.ok) return text('did binding: ' + r.reason, 401)
+        }
 
         const existed = claims.read(domain, localpart) !== null
         if (!claims.claim(domain, localpart, fingerprint, did)) {

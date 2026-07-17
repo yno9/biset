@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.anchor.json",
     "build:anchor": "bun build --compile src/anchor/index.ts --outfile biset-anchor",
     "anchor": "bun run src/anchor/index.ts",
-    "test": "bun run test/anchor-dns.test.ts && bun run test/mediator.test.ts && bun run test/didcomm-interop.test.ts"
+    "test": "bun run test/anchor-dns.test.ts && bun run test/anchor-didbind.test.ts && bun run test/mediator.test.ts && bun run test/didcomm-interop.test.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
