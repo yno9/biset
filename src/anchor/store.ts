@@ -61,7 +61,15 @@ export class ClaimStore {
   rebuildIndex(): number {
     this.byDid.clear()
     for (const domain of this.subdirs(this.dataDir)) {
-      if (domain === '_did') continue // the Go service's derived copy — never read
+      // Everything under dataDir that is not an address domain is prefixed with
+      // an underscore, and a real domain cannot be (`_did`, the Go service's
+      // derived copy, which is never read; `_pkarr`, the gateway's republish
+      // set). Skipping them by name rather than by shape: `_pkarr` happens to
+      // hold files, so subdirs() would return nothing for it today and the loop
+      // would be harmless — but that is an accident, not a guarantee, and a
+      // future internal directory holding subdirectories would quietly be
+      // scanned as somebody's domain.
+      if (domain.startsWith('_')) continue
       for (const localpart of this.subdirs(join(this.dataDir, domain))) {
         const rec = this.read(domain, localpart)
         if (rec?.did) this.link(rec.did, domain, localpart)

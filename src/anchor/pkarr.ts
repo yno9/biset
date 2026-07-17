@@ -21,6 +21,8 @@
 // observer of every lookup.
 import DHT, { type MutableResult } from 'bittorrent-dht'
 import { createHash } from 'node:crypto'
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { lookup } from 'node:dns/promises'
 import { ed25519 } from '@noble/curves/ed25519.js'
 
@@ -91,16 +93,68 @@ function signedBuffer(seq: number, v: Buffer): Buffer {
   return Buffer.concat([Buffer.from(`3:seqi${seq}e1:v${v.length}:`), v])
 }
 
+/** The republish set, kept on disk as `<dataDir>/_pkarr/<hex pubkey>`.
+ *
+ * **Stored, not derived — and that is not a contradiction of decision 1b.** The
+ * DID→address index had to stop being stored because it is a pure function of
+ * the identity.fp files: a second copy could only ever drift out of step. A
+ * pkarr payload is the opposite. It is a blob the client signed, recomputable
+ * from nothing the anchor holds, so keeping it is the only way to keep it.
+ *
+ * The Go gateway held this in memory alone and got away with it, because every
+ * relay ran a gateway — one restarting still left another republishing. One
+ * anchor now serves the whole family, so an in-memory set would mean each
+ * restart silently stopped republishing every identity until its owner next
+ * happened to publish. Worse, a record the DHT had already dropped could never
+ * come back: nobody else has the bytes.
+ *
+ * Its own class so the disk behaviour can be tested without a live DHT — which
+ * cannot be faked, and which the thing being tested here does not involve. */
+export class PayloadStore {
+  constructor(private dir: string) {}
+
+  load(): Map<string, Buffer> {
+    const out = new Map<string, Buffer>()
+    let entries: string[]
+    try {
+      entries = readdirSync(this.dir)
+    } catch {
+      return out // first run — nothing carried over
+    }
+    for (const hex of entries) {
+      try {
+        out.set(hex, readFileSync(join(this.dir, hex)))
+      } catch { /* skip an unreadable entry rather than refuse to start */ }
+    }
+    return out
+  }
+
+  /** Best-effort: a write that fails costs this record its republishing after
+   * the next restart, which must not also cost the caller its request. */
+  put(hex: string, payload: Buffer): void {
+    try {
+      mkdirSync(this.dir, { recursive: true, mode: 0o700 })
+      writeFileSync(join(this.dir, hex), payload, { mode: 0o600 })
+    } catch (e) {
+      console.error(`[pkarr] could not persist ${hex.slice(0, 12)}…:`, e instanceof Error ? e.message : e)
+    }
+  }
+
+  drop(hex: string): void {
+    rmSync(join(this.dir, hex), { force: true })
+  }
+}
+
 export class PkarrGateway {
   private dht: DHT
-  private cache = new Map<string, Buffer>() // hex pubkey → last-seen payload
+  private cache = new Map<string, Buffer>() // hex pubkey → last-seen payload, mirrored by store
   private timer: ReturnType<typeof setInterval> | null = null
 
-  private constructor(dht: DHT) {
+  private constructor(dht: DHT, private store: PayloadStore) {
     this.dht = dht
   }
 
-  static async start(): Promise<PkarrGateway> {
+  static async start(dataDir: string): Promise<PkarrGateway> {
     const bootstrap = await bootstrapAddrs()
     if (bootstrap.length === 0) throw new Error('pkarr: no bootstrap node resolved')
     const dht = new DHT({
@@ -113,7 +167,9 @@ export class PkarrGateway {
     })
     dht.listen(0)
     await new Promise<void>(resolve => dht.once('ready', () => resolve()))
-    const g = new PkarrGateway(dht)
+    const g = new PkarrGateway(dht, new PayloadStore(join(dataDir, '_pkarr')))
+    g.cache = g.store.load()
+    if (g.cache.size > 0) console.log(`[pkarr] republishing ${g.cache.size} record(s) carried over from disk`)
     g.timer = setInterval(() => void g.republishAll(), REPUBLISH_MS)
     return g
   }
@@ -163,16 +219,24 @@ export class PkarrGateway {
     })
   }
 
+  /** Remembering survives a restart (see load). Best-effort on disk: a write
+   * that fails costs this record its republishing after the next restart, which
+   * must not also cost the caller its request. */
   private remember(pubkey: Buffer, payload: Buffer): void {
-    this.cache.set(pubkey.toString('hex'), Buffer.from(payload))
+    const hex = pubkey.toString('hex')
+    this.cache.set(hex, Buffer.from(payload))
+    this.store.put(hex, payload)
   }
 
   /** Drops a key from the republish set — called when the identity it belongs to
    * is permanently deleted. Without it the loop would re-announce an orphaned
    * record forever: a BEP44 record only fades (~2h) once nothing re-announces
-   * it, and this gateway is that re-announcer. */
+   * it, and this gateway is that re-announcer. Deleting it from disk too, or a
+   * restart would resurrect the identity we were asked to forget. */
   forget(pubkey: Buffer): void {
-    this.cache.delete(pubkey.toString('hex'))
+    const hex = pubkey.toString('hex')
+    this.cache.delete(hex)
+    this.store.drop(hex)
   }
 
   /** DHT records expire in hours, so anything served here must be refreshed to

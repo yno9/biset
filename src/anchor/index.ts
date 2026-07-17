@@ -110,7 +110,7 @@ else console.log('[anchor] no mediator_url — registry only, no DIDComm mediati
 // Started before listening: joining the DHT takes a moment, and answering
 // /pkarr with a 404 in the meantime would look to a client exactly like "this
 // identity does not exist" rather than "ask again shortly".
-const pkarr = cfg.pkarr_gateway ? await PkarrGateway.start() : undefined
+const pkarr = cfg.pkarr_gateway ? await PkarrGateway.start(dataDir) : undefined
 if (pkarr) console.log('[pkarr] gateway enabled — joined the Mainline DHT')
 else console.log('[pkarr] no pkarr_gateway — registry only, no DHT')
 
