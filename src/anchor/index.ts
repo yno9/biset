@@ -1,19 +1,38 @@
-// biset-anchor: the identity registry. Its only job today is claim/verify
-// `localpart+domain → {fingerprint, did}`, and — when a DID is present — keep
-// that binding's DNS anchor record current via Cloudflare. Nothing here handles
-// JMAP, mail, or ActivityPub: a relay that doesn't configure an anchor_url runs
-// "anchorless" and never contacts this service (ARC.md / ANCHOR.md).
+// biset-anchor: everything a biset identity needs that a single relay cannot
+// answer for. ANCHOR.md's migration is finished — this holds all of it now:
 //
-// This is **step 1** of ANCHOR.md's staged migration: behaviour-identical to
-// the deployed `go-didanchor`, reading the same files, answering the same
-// routes, so it can be swapped in (and back out) by changing `anchor_url`
-// alone. The DIDComm mediator, the pkarr gateway, binding verification and the
-// DID→address index all move here **later**, only once this has proven itself.
+//   - the claim registry: `localpart+domain → {fingerprint, did}`, which stops
+//     one address being split across relays, and answers `by-did` with every
+//     address an identity holds
+//   - proof that a DID belongs to whoever claims it (didbind.ts). Relays used
+//     to check this themselves; they forward it here instead and no relay
+//     handles DID material any more
+//   - the DNS anchor record, via Cloudflare — the only place that credential is
+//     used, which is why this process's blast radius is worth caring about
+//   - the Pkarr/DHT gateway that relays' `/pkarr` forwards to, so browsers can
+//     read and write did:dht records without speaking UDP
+//   - the DIDComm mediator, so a client that cannot hold a socket open can
+//     still be delivered to
 //
-// Config: `config.json` next to the executable, same shape as go-didanchor's.
-//   { "listen_addr": ":8081",
-//     "cloudflare_api_token": "…",   // optional; omit to record claims without DNS
-//     "cloudflare_zone_id":   "…" }
+// Nothing here handles JMAP, mail or ActivityPub. A relay that sets no
+// `anchor_url` runs "anchorless" and never contacts this service — which means
+// no DIDs at all, not DIDs without coordination (ANCHOR.md decision 2).
+//
+// **An anchor is per-operator by construction, and that is load-bearing.** Its
+// job is "mail.biset.md and ap.biset.md agree about the same @biset.md" — a
+// question that only exists within one operator's domain. Running ONE anchor
+// for everybody would hand it every lookup on the network to watch.
+//
+// Config: `config.json` next to the executable.
+//   { "listen_addr": ":8081",          // required
+//     "cloudflare_api_token": "…",     // optional; omit to record claims without DNS
+//     "cloudflare_zone_id":   "…",     // required with the token
+//     "pkarr_gateway": true,           // optional; joins the Mainline DHT (UDP)
+//     "mediator_url": "https://…" }    // optional; turns the DIDComm mediator on.
+//
+// `mediator_url` is a promise, not a setting: it is baked into the mediator's
+// did:peer, which is how correspondents learn where to deliver. Changing it
+// later changes the DID and strands every client already registered with it.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { CloudflareAnchor } from './cloudflare.ts'
