@@ -25,6 +25,7 @@
 //
 // Config: `config.json` next to the executable.
 //   { "listen_addr": ":8081",          // required
+//     "relay_token": "…",              // required; the secret its relays present
 //     "cloudflare_api_token": "…",     // optional; omit to record claims without DNS
 //     "cloudflare_zone_id":   "…",     // required with the token
 //     "pkarr_gateway": true,           // optional; joins the Mainline DHT (UDP)
@@ -41,9 +42,25 @@ import { startAnchor } from './server.ts'
 import { createMediator } from './mediator/server.ts'
 import { loadMediatorIdentity } from './mediator/identity.ts'
 import { PkarrGateway } from './pkarr.ts'
+import { zbase32Encode } from '../did/zbase32.ts'
 
 interface Config {
   listen_addr: string
+  /** The secret this anchor's own relays present on every write, as
+   * `Authorization: Bearer <token>` (go-jmapserver's AnchorRef).
+   *
+   * **Required. There is no unauthenticated mode.** This service is on the
+   * public internet — the DIDComm mediator has to be reachable by clients — and
+   * its registry decides who owns which address. A fingerprint-only claim
+   * carries no proof by design (backfill and envelope rotation have no DID to
+   * prove), so before this existed "can reach the anchor" was the whole
+   * authorization story: anyone could claim a name nobody held, or DELETE the
+   * claim of somebody who did and take it, DNS record and all.
+   *
+   * Making it optional would leave that as the default. src/did/freshness.ts
+   * refuses a default for the same reason and throws instead — an implicit
+   * fallback is a *quiet* security downgrade, and quiet is what makes it bad. */
+  relay_token: string
   cloudflare_api_token?: string
   cloudflare_zone_id?: string
   /** The mediator's own public URL. Setting it turns the DIDComm mediator on;
@@ -77,6 +94,10 @@ function loadConfig(): Config {
   }
   if (!cfg.listen_addr) {
     console.error('config: listen_addr required')
+    process.exit(1)
+  }
+  if (!cfg.relay_token) {
+    console.error('config: relay_token required — without it this anchor\'s registry is writable by anyone who can reach it, and it is reachable by everyone')
     process.exit(1)
   }
   return cfg
@@ -129,9 +150,13 @@ else console.log('[anchor] no mediator_url — registry only, no DIDComm mediati
 // Started before listening: joining the DHT takes a moment, and answering
 // /pkarr with a 404 in the meantime would look to a client exactly like "this
 // identity does not exist" rather than "ask again shortly".
-const pkarr = cfg.pkarr_gateway ? await PkarrGateway.start(dataDir) : undefined
+// The gateway republishes only identities this anchor anchors — the registry is
+// the whole definition of "ours". A did:dht IS its public key, so the question
+// costs one encode and a map lookup.
+const isAnchored = (pubkey: Buffer) => claims.lookupByDid('did:dht:' + zbase32Encode(new Uint8Array(pubkey))).length > 0
+const pkarr = cfg.pkarr_gateway ? await PkarrGateway.start(dataDir, isAnchored) : undefined
 if (pkarr) console.log('[pkarr] gateway enabled — joined the Mainline DHT')
 else console.log('[pkarr] no pkarr_gateway — registry only, no DHT')
 
-startAnchor({ claims, cloudflare, port, hostname, mediator, pkarr })
+startAnchor({ claims, cloudflare, port, hostname, mediator, pkarr, relayToken: cfg.relay_token })
 console.log(`[anchor] listening on ${cfg.listen_addr} (data: ${dataDir})`)

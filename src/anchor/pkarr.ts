@@ -145,16 +145,21 @@ export class PayloadStore {
   }
 }
 
+/** Answers "is this key an identity we anchor?" — the claim registry, asked
+ * about a raw pubkey rather than a DID. Injected rather than imported so the
+ * gateway keeps knowing nothing about claims beyond this one question. */
+export type IsAnchored = (pubkey: Buffer) => boolean
+
 export class PkarrGateway {
   private dht: DHT
   private cache = new Map<string, Buffer>() // hex pubkey → last-seen payload, mirrored by store
   private timer: ReturnType<typeof setInterval> | null = null
 
-  private constructor(dht: DHT, private store: PayloadStore) {
+  private constructor(dht: DHT, private store: PayloadStore, private isAnchored: IsAnchored) {
     this.dht = dht
   }
 
-  static async start(dataDir: string): Promise<PkarrGateway> {
+  static async start(dataDir: string, isAnchored: IsAnchored): Promise<PkarrGateway> {
     const bootstrap = await bootstrapAddrs()
     if (bootstrap.length === 0) throw new Error('pkarr: no bootstrap node resolved')
     const dht = new DHT({
@@ -167,8 +172,14 @@ export class PkarrGateway {
     })
     dht.listen(0)
     await new Promise<void>(resolve => dht.once('ready', () => resolve()))
-    const g = new PkarrGateway(dht, new PayloadStore(join(dataDir, '_pkarr')))
-    g.cache = g.store.load()
+    const g = new PkarrGateway(dht, new PayloadStore(join(dataDir, '_pkarr')), isAnchored)
+    // Entries whose identity is no longer ours are dropped on the way in, not
+    // just skipped: a released claim must not leave its record being announced
+    // for the life of the process.
+    for (const [hex, payload] of g.store.load()) {
+      if (isAnchored(Buffer.from(hex, 'hex'))) g.cache.set(hex, payload)
+      else g.store.drop(hex)
+    }
     if (g.cache.size > 0) console.log(`[pkarr] republishing ${g.cache.size} record(s) carried over from disk`)
     g.timer = setInterval(() => void g.republishAll(), REPUBLISH_MS)
     return g
@@ -219,10 +230,25 @@ export class PkarrGateway {
     })
   }
 
-  /** Remembering survives a restart (see load). Best-effort on disk: a write
-   * that fails costs this record its republishing after the next restart, which
-   * must not also cost the caller its request. */
+  /** Takes on republishing a record — but only for an identity this anchor
+   * actually anchors.
+   *
+   * Both get() and put() used to remember unconditionally, inherited from the Go
+   * gateway. Reading a stranger's DID once was therefore enough to make this
+   * republish it for as long as the process lived, and forget() only ever fires
+   * when one of our own claims is released — so nothing ever removed it. In Go
+   * that leaked memory until the next restart. Persisting the set turned the
+   * same code into an unbounded disk leak and a free permanent pinning service
+   * for anyone who could name a key.
+   *
+   * The registry already knows which identities are ours, and the answer bounds
+   * the set by the number of accounts. Resolving still works for everyone —
+   * strangers' records are fetched and returned, just not adopted.
+   *
+   * Best-effort on disk: a failed write costs this record its republishing after
+   * the next restart, which must not also cost the caller its request. */
   private remember(pubkey: Buffer, payload: Buffer): void {
+    if (!this.isAnchored(pubkey)) return
     const hex = pubkey.toString('hex')
     this.cache.set(hex, Buffer.from(payload))
     this.store.put(hex, payload)

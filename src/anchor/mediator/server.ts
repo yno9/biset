@@ -15,8 +15,8 @@
 import { decodePeerDid2, type PeerIdentity, type PeerDidDoc } from '../../did/peer.ts'
 import { buildPlaintext, publicKeyOf, type DidCommPlaintext } from '../../did/didcomm/message.ts'
 import { packAuthcrypt, unpackAuthcrypt, unpackAnoncrypt, b64urlToBytes, type DidCommJWE } from '../../did/didcomm/crypto.ts'
-import { MessageQueue } from './queue.ts'
-import { ConnectionStore } from './connections.ts'
+import { MessageQueue, QueueFullError } from './queue.ts'
+import { ConnectionStore, ConnectionFullError } from './connections.ts'
 
 const MEDIATE_REQUEST = 'https://didcomm.org/coordinate-mediation/2.0/mediate-request'
 const MEDIATE_GRANT = 'https://didcomm.org/coordinate-mediation/2.0/mediate-grant'
@@ -130,16 +130,31 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
 
     switch (msg.type) {
       case MEDIATE_REQUEST: {
-        connections.register(fromDid!)
+        try {
+          connections.register(fromDid!)
+        } catch (e) {
+          if (e instanceof ConnectionFullError) return Response.json({ error: String(e.message) }, { status: 503 })
+          throw e
+        }
         return reply(packReplyTo(fromDid!, MEDIATE_GRANT, { routing_did: mediator.did }))
       }
 
       case KEYLIST_UPDATE: {
         const updates: Array<{ recipient_did: string; action: 'add' | 'remove' }> = (msg.body as any)?.updates ?? []
+        // Per-update result, as Coordinate Mediation 2.0 defines it: one refused
+        // key reports itself and the rest still land, rather than the whole
+        // batch failing over the last one.
         const updated = updates.map(u => {
           const kid = stripFragment(u.recipient_did)
-          if (u.action === 'add') connections.addKey(fromDid!, kid)
-          else connections.removeKey(fromDid!, kid)
+          try {
+            if (u.action === 'add') connections.addKey(fromDid!, kid)
+            else connections.removeKey(fromDid!, kid)
+          } catch (e) {
+            if (e instanceof ConnectionFullError) {
+              return { recipient_did: u.recipient_did, action: u.action, result: 'server_error' }
+            }
+            throw e
+          }
           return { recipient_did: u.recipient_did, action: u.action, result: 'success' }
         })
         return reply(packReplyTo(fromDid!, KEYLIST_UPDATE_RESPONSE, { updated }))
@@ -158,7 +173,15 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
         if (!connections.isAuthorized(kid)) {
           return Response.json({ error: 'uncoordinated recipient — no keylist-update registered this kid' }, { status: 401 })
         }
-        queue.push(kid, JSON.stringify(forwarded))
+        try {
+          queue.push(kid, JSON.stringify(forwarded))
+        } catch (e) {
+          // 503, not a silent drop: the sender is the only party who can still
+          // do something about it (retry, or route another way), and this is the
+          // last point that knows the message existed.
+          if (e instanceof QueueFullError) return Response.json({ error: String(e.message) }, { status: 503 })
+          throw e
+        }
         return new Response(null, { status: 202 })
       }
 

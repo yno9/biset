@@ -17,6 +17,7 @@ import { CloudflareAnchor } from './cloudflare.ts'
 import { verifyDIDBinding, didPublicKey } from './didbind.ts'
 import type { MediatorHandler } from './mediator/server.ts'
 import type { PkarrGateway } from './pkarr.ts'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { zbase32Decode } from '../did/zbase32.ts'
 
 const MAX_BODY = 1 << 12 // matches Go's io.LimitReader(r.Body, 1<<12)
@@ -50,15 +51,49 @@ export interface AnchorOptions {
   /** Absent when the DHT gateway is off — `/pkarr/*` then 404s, as it did
    * before the anchor could serve it. */
   pkarr?: PkarrGateway
+  /** The secret this anchor's own relays present. Not optional: see index.ts. */
+  relayToken: string
 }
 
-export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkarr }: AnchorOptions) {
+export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkarr, relayToken }: AnchorOptions) {
+  const expected = createHash('sha256').update(relayToken).digest()
+
+  /** True when the caller is one of this anchor's own relays.
+   *
+   * Digests are compared, not the tokens: timingSafeEqual throws on a length
+   * mismatch, so comparing raw would either leak the length or need a branch
+   * that leaks it anyway. Hashing first makes every comparison the same 32
+   * bytes.
+   *
+   * **What this gates is writing, not reading.** A claim tells the anchor who
+   * owns an address; only its relays have any business saying so, and before
+   * this the answer was "anyone who can reach it" — which is everyone, because
+   * the mediator has to be. Reads stay open on purpose: an address is *meant*
+   * to be discoverable from its DID, and `by-did`/the forward lookup disclose
+   * nothing the DID and DNS layers do not already publish. */
+  function fromOwnRelay(req: Request): boolean {
+    const m = /^Bearer (.+)$/.exec(req.headers.get('authorization') ?? '')
+    if (!m) return false
+    return timingSafeEqual(createHash('sha256').update(m[1]!).digest(), expected)
+  }
+
+  // 403, not 401: 401 already means "the DID binding proof you sent was
+  // rejected", which a relay reports to its user as their problem. This is the
+  // relay itself being turned away and no user can do anything about it —
+  // collapsing the two would have relays telling people their signature failed
+  // when it was never looked at.
+  const forbidden = () => text('this anchor does not serve that relay', 403)
   // GET/PUT /pkarr/<z-base-32 pubkey> — the Pkarr relay surface browsers need
   // (they cannot speak UDP). Clients reach it through their own relay, which
   // proxies here: go-jmapserver used to run this itself, one DHT node per relay
   // (ANCHOR.md decision 1).
   async function handlePkarr(req: Request, url: URL): Promise<Response> {
     if (!pkarr) return notFound()
+    // Relays only. Clients reach this through their own relay's /pkarr, which
+    // proxies here with the token — nobody else has a reason to, and an open
+    // gateway is both bandwidth anyone can spend and, per resolver.ts's privacy
+    // note, a view of strangers' lookups.
+    if (!fromOwnRelay(req)) return forbidden()
     const key = url.pathname.slice('/pkarr/'.length)
     if (key === '' || key.includes('/')) return notFound()
     let pubkey: Buffer
@@ -139,6 +174,7 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
       }
 
       case 'POST': {
+        if (!fromOwnRelay(req)) return forbidden()
         const raw = await req.text()
         if (raw.length > MAX_BODY) return text('domain, and fingerprint or did, required', 400)
         let body: { domain?: string; fingerprint?: string; did?: string; did_sig?: string; bind_ts?: number; host?: string } | null = null
@@ -192,6 +228,7 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
       }
 
       case 'DELETE': {
+        if (!fromOwnRelay(req)) return forbidden()
         // Account-delete's counterpart to claim (POST): drop the claim, then
         // withdraw its publication. Both halves matter — a released address
         // that keeps its TXT record goes on telling the world it belongs to the

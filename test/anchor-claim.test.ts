@@ -29,18 +29,20 @@ const DOMAIN = 't.example'
 const HOST = 'mail.example'
 
 // No Cloudflare credential: claims are recorded, no DNS is touched.
+const TOKEN = 'test-relay-token'
 const server = startAnchor({
   claims: new ClaimStore(dataDir),
   cloudflare: new CloudflareAnchor({}),
   port: PORT,
   hostname: '127.0.0.1',
+  relayToken: TOKEN,
 })
 await Bun.sleep(200)
 
 const claim = (localpart: string, body: object) =>
   fetch(`${A}/identity/${localpart}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
     body: JSON.stringify({ domain: DOMAIN, ...body }),
   })
 const byDid = (did: string) => fetch(`${A}/identity/by-did/${did}`)
@@ -93,11 +95,39 @@ ok('同じ主張の再送で重複しない', await (async () => {
   await claim('multi-a', { did: multi.did, ...proofFor(multi, 'multi-a') })
   return (await addressesOf(multi.did)).length === 2
 })())
-await fetch(`${A}/identity/multi-a?domain=${DOMAIN}`, { method: 'DELETE' })
+await fetch(`${A}/identity/multi-a?domain=${DOMAIN}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${TOKEN}` } })
 ok('片方を release しても、もう片方は残る', (await addressesOf(multi.did)).join() === `multi-b@${DOMAIN}`,
   'DID ごと消すと、生きているアドレスの公表まで巻き添えになる')
-await fetch(`${A}/identity/multi-b?domain=${DOMAIN}`, { method: 'DELETE' })
+await fetch(`${A}/identity/multi-b?domain=${DOMAIN}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${TOKEN}` } })
 ok('最後の1つが消えたら 404（空配列ではなく）', (await byDid(multi.did)).status === 404)
+
+console.log('\n=== relay 以外は書けない（この穴のために書かれたテスト）===')
+// The anchor is on the public internet — its DIDComm mediator has to be — and
+// nothing about a claim identifies the caller: a fingerprint-only claim carries
+// no proof by design. "Can reach it" was the entire authorization story.
+{
+  const noAuth = (init: RequestInit) => fetch(`${A}/identity/victim?domain=${DOMAIN}`, init)
+  const squat = await fetch(`${A}/identity/zzsquat`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain: DOMAIN, fingerprint: 'i-have-no-account-anywhere' }),
+  })
+  ok('トークン無しで名前を claim できない', squat.status === 403, `status=${squat.status}`)
+  ok('実際に claim されていない', (await fetch(`${A}/identity/zzsquat?domain=${DOMAIN}`)).status === 404)
+
+  const wrong = await fetch(`${A}/identity/zzsquat`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer wrong-token' },
+    body: JSON.stringify({ domain: DOMAIN, fingerprint: 'x' }),
+  })
+  ok('違うトークンでも claim できない', wrong.status === 403)
+
+  ok('トークン無しで他人の claim を DELETE できない', (await noAuth({ method: 'DELETE' })).status === 403,
+    '無認証の DELETE は、claim を持ち主から奪い DNS ごと消す手口そのもの')
+  ok('victim の claim は無事', (await addressesOf(victim.did)).join() === `victim@${DOMAIN}`)
+
+  ok('読み取りは誰でもできる（設計通り）', (await byDid(victim.did)).status === 200,
+    'アドレスは DID から発見できるべきもの — 隠す対象ではない')
+  ok('正引きも公開のまま', (await fetch(`${A}/identity/victim?domain=${DOMAIN}`)).status === 200)
+}
 
 console.log('\n=== 証明が壊れている場合 ===')
 ok('改竄した署名は 401',
