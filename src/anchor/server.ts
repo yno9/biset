@@ -95,14 +95,19 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator }: An
         // Proof that the claimant controls the DID (ANCHOR.md decision 1:
         // verification is the anchor's job, relays pass it through).
         //
-        // **A claim without `did_sig` is still accepted**, because relays that
-        // verify locally and don't forward the proof are still deployed — they
-        // are the reason this is a migration and not a switch. Rejecting them
-        // now would take DID account creation down across the fleet. Once every
-        // relay sends the proof, absence becomes a 401 and this comment goes
-        // with it. Until then the check is strictly additive: a signature that
-        // *is* sent must be valid.
-        if (did && body?.did_sig) {
+        // **Naming a DID now requires proving it.** Until every relay forwarded
+        // the proof this had to accept claims without one, which meant the
+        // registry took a DID on the relay's word: PUT /account/did carried no
+        // signature, so anyone holding a self-service account could have a
+        // stranger's DID bound to their own address — and a `_did` TXT record
+        // published saying so — because owning an *account* was never evidence
+        // of owning an *identity*. Both relays send a proof on both paths now,
+        // so absence is a 401.
+        //
+        // A claim with no DID at all is untouched: fingerprint-only claims
+        // (backfill, envelope rotation) have no identity to prove.
+        if (did) {
+          if (!body?.did_sig) return text('did binding: did_sig required', 401)
           const r = verifyDIDBinding({
             did,
             username: localpart,

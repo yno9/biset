@@ -104,3 +104,36 @@ export async function provisionAccount(p: ProvisionParams): Promise<ProvisionRes
     return { ok: false, status: 0 }
   }
 }
+
+// Registers/confirms this identity's DID with an already-provisioned account's
+// relay — DID.md's lazy migration, for identities that predate DID support.
+//
+//   PUT /account/did  { did, bind_ts, did_sig }   (Basic Auth)
+//
+// The proof is the point. Basic Auth only proves the caller owns *this account*,
+// which says nothing about whether they own the DID they are naming: without a
+// signature the relay would take any DID on the caller's word, and anyone with a
+// self-service account could have the anchor bind a stranger's DID to their own
+// address — and publish a DNS record saying so. So this signs the same statement
+// provisionAccount does, over the same host, with the same root key. It lives
+// here rather than in cryptenv.ts because that would import this layer back.
+//
+// Best-effort by design: the caller ignores failure (a relay in single-relay
+// mode 204s trivially, a pre-DID relay 404s), so a rejected proof costs the DID
+// registration, never the login.
+export async function registerDid(serverUrl: string, email: string, authTokenB64: string, did: string, rootPrivateKey: Uint8Array): Promise<boolean> {
+  const url = serverUrl.replace(/\/$/, '')
+  // The localpart, matching what the relay derives from the credential and
+  // passes to the anchor as the claim's name. Signing the full address instead
+  // would produce a statement the anchor never reconstructs.
+  const username = email.slice(0, email.lastIndexOf('@'))
+  const proof = signBinding(rootPrivateKey, did, username, hostOf(url))
+  try {
+    const resp = await fetch(`${url}/account/did`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + btoa(email + ':' + authTokenB64) },
+      body: JSON.stringify({ did, bind_ts: proof.ts, did_sig: proof.sig }),
+    })
+    return resp.ok
+  } catch { return false }
+}

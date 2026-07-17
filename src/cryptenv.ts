@@ -166,20 +166,10 @@ export async function putEnvelope(serverUrl: string, email: string, authTokenB64
   } catch { return false }
 }
 
-// Registers/confirms this identity's DID with the relay's anchor (DID.md's
-// lazy migration — see src/did/). Best-effort: a relay in single-relay mode
-// (no anchor configured) 204s trivially; a stale/pre-DID relay 404s and the
-// caller just ignores it.
-export async function putDid(serverUrl: string, email: string, authTokenB64: string, did: string): Promise<boolean> {
-  try {
-    const resp = await fetch(`${trim(serverUrl)}/account/did`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + btoa(email + ':' + authTokenB64) },
-      body: JSON.stringify({ did }),
-    })
-    return resp.ok
-  } catch { return false }
-}
+// Registering a DID with a relay's anchor lives in src/did/provision.ts
+// (registerDid), not here: it has to sign a binding proof with the root key,
+// and this module is a dependency of that layer rather than the other way
+// round. It used to live here and sent the DID unproven.
 
 // Permanently deletes the account's data ON THIS RELAY (messages, mailbox,
 // envelope — see go-jmapsmtp/go-jmapap's /account/delete). Distinct from

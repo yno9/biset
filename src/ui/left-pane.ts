@@ -2767,7 +2767,11 @@ export async function setupLeftPane() {
           sessions.push(c.session)
         }
         if (kek) initPGPForSession(c.session, kek)
-        if (didRecord) { const { putDid } = await import('../cryptenv.ts'); putDid(c.server, relayEmail, c.token, didRecord.did) }
+        if (didRecord) {
+          const { registerDid } = await import('../did/provision.ts')
+          const { hexToBytes } = await import('../utils.ts')
+          registerDid(c.server, relayEmail, c.token, didRecord.did, hexToBytes(didRecord.rootPrivateKey))
+        }
       }
       saveStoredAccounts(stored)
       addBtn.disabled = false; addBtn.textContent = 'Add'
