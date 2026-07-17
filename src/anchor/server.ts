@@ -2,16 +2,23 @@
 // shapes, status codes and error strings this matched exactly — so the deployed
 // relays could keep working against it unmodified while it was swapped in
 // (ANCHOR.md decision 5). **That constraint is spent.** The migration finished,
-// go-didanchor is retired, and the routes below have since moved on: `by-did`
-// answers with every address an identity holds rather than one, naming a DID
-// requires proving it, and `/pkarr` is here at all.
+// go-didanchor is retired, and the routes below have since moved on: naming a
+// DID requires proving it, `/pkarr` is here at all, and the two read routes are
+// gone (see below).
 //
 //   POST   /identity/<localpart>                {"domain":…,"fingerprint":…,"did":…} → 201/200/409
-//   GET    /identity/<localpart>?domain=<domain>                    → {"fingerprint":…,"did":…} | 404
-//   GET    /identity/by-did/<did>                          → {"addresses":["y@biset.md",…]} | 404
 //   DELETE /identity/<localpart>?domain=<domain>                    → 204
 //   GET    /pkarr/<z-base-32 pubkey>                       → wire payload | 404
 //   PUT    /pkarr/<z-base-32 pubkey>   body = wire payload → 204 | 400
+//
+// **Every route is for this anchor's own relays. Nothing here answers a
+// stranger.** The registry had two read routes and neither had a caller: the
+// client never learns the anchor's URL, and asks DNS for address→DID precisely
+// so a stranger's operator does not learn who is looking them up
+// (src/did/discovery.ts). Their "public by design" rationale was inherited from
+// go-jmapserver's /identity/local, which existed for operational lookups by
+// hand — a question `grep` over identity.fp still answers, without a public
+// surface to defend. The mediator is the one thing here the world may talk to.
 import type { ClaimStore } from './store.ts'
 import { CloudflareAnchor } from './cloudflare.ts'
 import { verifyDIDBinding, didPublicKey } from './didbind.ts'
@@ -65,12 +72,12 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
    * that leaks it anyway. Hashing first makes every comparison the same 32
    * bytes.
    *
-   * **What this gates is writing, not reading.** A claim tells the anchor who
-   * owns an address; only its relays have any business saying so, and before
-   * this the answer was "anyone who can reach it" — which is everyone, because
-   * the mediator has to be. Reads stay open on purpose: an address is *meant*
-   * to be discoverable from its DID, and `by-did`/the forward lookup disclose
-   * nothing the DID and DNS layers do not already publish. */
+   * A claim tells the anchor who owns an address; only its relays have any
+   * business saying so, and before this the answer was "anyone who can reach
+   * it" — which is everyone, because the mediator has to be reachable. This
+   * gated writing and left reads open, on the grounds that an address is meant
+   * to be discoverable from its DID. True, but it was answering a question
+   * nobody asked here: the read routes had no callers at all, and are gone. */
   function fromOwnRelay(req: Request): boolean {
     const m = /^Bearer (.+)$/.exec(req.headers.get('authorization') ?? '')
     if (!m) return false
@@ -141,38 +148,16 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
     if (!url.pathname.startsWith('/identity/')) return notFound()
     const rest = url.pathname.slice('/identity/'.length)
 
-    // GET /identity/by-did/<did> → {"addresses": ["y@biset.md", …]}
-    //
-    // Answers "where does this identity live", across every domain the anchor
-    // serves — the cross-relay version of the per-relay `/identity/local/<did>`
-    // that go-jmapserver used to expose, which this replaces (ANCHOR.md decision
-    // 1: the index is cross-relay information, so it belongs here; a relay could
-    // only ever answer for itself). Addresses are strings, as that endpoint
-    // returned them: a localpart cannot contain '@', so nothing is lost by
-    // joining, and the answer is usable as-is.
-    //
-    // Public and unauthenticated, unchanged: it discloses nothing the DID/DNS
-    // layer does not already publish by design — an address is *meant* to be
-    // discoverable from its DID.
-    if (rest.startsWith('by-did/')) {
-      const did = rest.slice('by-did/'.length)
-      if (did === '' || req.method !== 'GET') return notFound()
-      const at = claims.lookupByDid(did)
-      if (at.length === 0) return notFound()
-      return json({ addresses: at.map(l => `${l.localpart}@${l.domain}`) })
-    }
-
     const localpart = rest.toLowerCase() // Go: strings.ToLower(rest)
     if (localpart === '' || localpart.includes('/')) return notFound()
 
-    switch (req.method) {
-      case 'GET': {
-        const domain = url.searchParams.get('domain')
-        if (!domain) return text('domain required', 400)
-        const rec = claims.read(domain, localpart)
-        return rec ? json(rec) : notFound()
-      }
+    // GET is a 404, not a 405. 405 would say "this resource is readable, just
+    // not that way" — there is no readable resource here at all. The registry
+    // answers its own relays' writes and nothing else; address→DID is DNS's
+    // question, deliberately (src/did/discovery.ts).
+    if (req.method === 'GET') return notFound()
 
+    switch (req.method) {
       case 'POST': {
         if (!fromOwnRelay(req)) return forbidden()
         const raw = await req.text()
