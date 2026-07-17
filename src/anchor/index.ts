@@ -21,6 +21,7 @@ import { ClaimStore } from './store.ts'
 import { startAnchor } from './server.ts'
 import { createMediator } from './mediator/server.ts'
 import { loadMediatorIdentity } from './mediator/identity.ts'
+import { PkarrGateway } from './pkarr.ts'
 
 interface Config {
   listen_addr: string
@@ -31,6 +32,11 @@ interface Config {
    * can actually reach, because it goes into the mediator's DID — correspondents
    * read it from there to know where to deliver. */
   mediator_url?: string
+  /** Turns the Pkarr DHT gateway on. Opt-in, mirroring the PKARR_GATEWAY=1 flag
+   * go-jmapserver gated its own gateway behind: it opens a UDP socket and joins
+   * the Mainline DHT, which an operator should choose deliberately. Relays proxy
+   * their /pkarr here when it's on. */
+  pkarr_gateway?: boolean
 }
 
 // Beside the executable when compiled (`bun build --compile`), beside this file
@@ -101,5 +107,12 @@ const mediator = cfg.mediator_url
 if (mediator) console.log(`[anchor] DIDComm mediator at ${cfg.mediator_url} — ${mediator.mediatorDid}`)
 else console.log('[anchor] no mediator_url — registry only, no DIDComm mediation')
 
-startAnchor({ claims, cloudflare, port, hostname, mediator })
+// Started before listening: joining the DHT takes a moment, and answering
+// /pkarr with a 404 in the meantime would look to a client exactly like "this
+// identity does not exist" rather than "ask again shortly".
+const pkarr = cfg.pkarr_gateway ? await PkarrGateway.start() : undefined
+if (pkarr) console.log('[pkarr] gateway enabled — joined the Mainline DHT')
+else console.log('[pkarr] no pkarr_gateway — registry only, no DHT')
+
+startAnchor({ claims, cloudflare, port, hostname, mediator, pkarr })
 console.log(`[anchor] listening on ${cfg.listen_addr} (data: ${dataDir})`)

@@ -8,10 +8,14 @@
 //   GET    /identity/<localpart>?domain=<domain>                    → {"fingerprint":…,"did":…} | 404
 //   GET    /identity/by-did/<did>                          → {"addresses":["y@biset.md",…]} | 404
 //   DELETE /identity/<localpart>?domain=<domain>                    → 204
+//   GET    /pkarr/<z-base-32 pubkey>                       → wire payload | 404
+//   PUT    /pkarr/<z-base-32 pubkey>   body = wire payload → 204 | 400
 import type { ClaimStore } from './store.ts'
 import { CloudflareAnchor } from './cloudflare.ts'
-import { verifyDIDBinding } from './didbind.ts'
+import { verifyDIDBinding, didPublicKey } from './didbind.ts'
 import type { MediatorHandler } from './mediator/server.ts'
+import type { PkarrGateway } from './pkarr.ts'
+import { zbase32Decode } from '../did/zbase32.ts'
 
 const MAX_BODY = 1 << 12 // matches Go's io.LimitReader(r.Body, 1<<12)
 
@@ -41,9 +45,48 @@ export interface AnchorOptions {
    * nothing on `/` and `/.well-known/did.json`, exactly as before it could
    * mediate at all. */
   mediator?: MediatorHandler
+  /** Absent when the DHT gateway is off — `/pkarr/*` then 404s, as it did
+   * before the anchor could serve it. */
+  pkarr?: PkarrGateway
 }
 
-export function startAnchor({ claims, cloudflare, port, hostname, mediator }: AnchorOptions) {
+export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkarr }: AnchorOptions) {
+  // GET/PUT /pkarr/<z-base-32 pubkey> — the Pkarr relay surface browsers need
+  // (they cannot speak UDP). Clients reach it through their own relay, which
+  // proxies here: go-jmapserver used to run this itself, one DHT node per relay
+  // (ANCHOR.md decision 1).
+  async function handlePkarr(req: Request, url: URL): Promise<Response> {
+    if (!pkarr) return notFound()
+    const key = url.pathname.slice('/pkarr/'.length)
+    if (key === '' || key.includes('/')) return notFound()
+    let pubkey: Buffer
+    try {
+      pubkey = Buffer.from(zbase32Decode(key, 32))
+    } catch {
+      return text('invalid key', 400)
+    }
+    switch (req.method) {
+      case 'GET': {
+        const payload = await pkarr.get(pubkey)
+        if (!payload) return notFound()
+        return new Response(payload, { status: 200, headers: { ...CORS, 'Content-Type': 'application/octet-stream' } })
+      }
+      case 'PUT': {
+        const body = Buffer.from(await req.arrayBuffer())
+        try {
+          await pkarr.put(pubkey, body)
+        } catch (e) {
+          // A bad signature and an unreachable DHT are both the caller's problem
+          // to retry, and the Go gateway answered 400 to both. Keep that.
+          return text(e instanceof Error ? e.message : 'pkarr: put failed', 400)
+        }
+        return new Response(null, { status: 204, headers: CORS })
+      }
+      default:
+        return text('method not allowed', 405)
+    }
+  }
+
   async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url)
 
@@ -55,6 +98,8 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator }: An
       const resp = await mediator.handle(req, url)
       if (resp) return resp
     }
+
+    if (url.pathname.startsWith('/pkarr/')) return handlePkarr(req, url)
 
     if (!url.pathname.startsWith('/identity/')) return notFound()
     const rest = url.pathname.slice('/identity/'.length)
@@ -153,10 +198,21 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator }: An
         // with no DID leaves the old record standing).
         const domain = url.searchParams.get('domain')
         if (!domain) return text('domain required', 400)
+        // Read the DID before releasing — afterwards the claim is gone and with
+        // it the only record of which key this address belonged to.
+        const releasedDid = claims.read(domain, localpart)?.did
         try {
           claims.release(domain, localpart)
         } catch {
           return text('release failed', 500)
+        }
+        // Stop re-announcing the deleted identity's DHT record. The relays used
+        // to do this themselves (pkarr.Gateway.Forget, from the DID the client
+        // put in the delete body); now that the gateway lives here, the anchor
+        // knows the DID from its own claim and the client never has to say it.
+        if (releasedDid && pkarr) {
+          const pk = didPublicKey(releasedDid)
+          if (pk) pkarr.forget(Buffer.from(pk))
         }
         // Best-effort, mirroring the claim path: the registry is the authority
         // and it has already let go, so a DNS failure must not fail the release
