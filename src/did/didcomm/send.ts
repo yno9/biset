@@ -35,8 +35,8 @@ export async function sendDidComm(sender: DidCommSender, toDid: string, toDoc: P
   if (routingKeys.length > 0) {
     const routingKid = routingKeys[0]!
     // The routing key is a mediator's own kid — resolveDidCommDoc dispatches
-    // on method (today's ~/didmediator is did:peer, self-certifying and free;
-    // a future did:dht-native mediator resolves the same way, no change here).
+    // on method (our own mediator, in the anchor, is did:peer: self-certifying
+    // and free; a future did:dht-native one resolves the same way, no change).
     const routingDid = routingKid.split('#')[0]!
     const mediatorDoc = await resolveDidCommDoc(routingDid)
     if (!mediatorDoc) throw new Error(`sendDidComm: could not resolve mediator ${routingDid}`)

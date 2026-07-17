@@ -301,7 +301,9 @@ Switching identity is currently **logout, then log back in as the other one** (t
 
 **A DIDComm-capable document needs no extra exchange step.** address → (DNS anchor) → `did:dht` → (DHT) → `_k1` + service is already the discovery path, so contact over mail/AP is enough to make DIDComm reachable. Carrying DIDs in mail headers (Autocrypt-style) was considered and rejected: a DNS anchor is trustworthy because a *third party* (the domain) attests it, whereas a header would make both directions the sender's own claim and collapse `verifyBinding`'s bidirectional check into a circle.
 
-**Mediator:** `~/didmediator` (separate repo, TypeScript/Bun) — Coordination + Routing + Pickup, resolving both did:dht and did:peer. Its own ARC.md carries the server-side gotchas.
+**Mediator:** part of the anchor (`src/anchor/mediator/`), live at `https://anchor.biset.md` — Coordination Mediation 2.0 + Routing 2.0 + Pickup 3.0. It ran as its own repo (`~/didmediator`) until 2026-07-17, when it was absorbed (ANCHOR.md decision 0/3); that repo is archived and no longer describes anything running.
+
+It speaks **our own** `src/did/didcomm/`, not `didcomm-node` — the same reason the client does. Absorbing it meant it had to survive `bun build --compile`, and didcomm-node reads its `.wasm` off disk at runtime, so it can't. That turned out to be the right shape anyway: both ends of every message here are ours, and the 964-line service became ~290 lines by dropping the library. **It is not an open relay** — a forward for a recipient that hasn't done a `keylist-update` is refused with 401 and never queued.
 
 # Account & relay flows
 
