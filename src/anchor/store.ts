@@ -39,9 +39,17 @@ const identityFPPath = (dataDir: string, domain: string, localpart: string) =>
 export interface DidLocation { domain: string; localpart: string }
 
 export class ClaimStore {
-  /** DID → where it lives. Derived from disk at startup and maintained here;
-   * the identity.fp files remain the only source of truth. */
-  private byDid = new Map<string, DidLocation>()
+  /** DID → every address it holds. Derived from disk at startup and maintained
+   * here; the identity.fp files remain the only source of truth.
+   *
+   * A list, not a single location: one identity legitimately holds several
+   * addresses — mail and AP, or the old and new one across a move — and the
+   * whole point of a cross-relay index is to answer with all of them. Keying it
+   * 1:1 (as this did while it only mirrored go-didanchor) makes the last address
+   * scanned silently evict the others. Production has no such DID today, so
+   * nothing is being repaired here; it would simply have lost the answer the
+   * first time one appeared. */
+  private byDid = new Map<string, DidLocation[]>()
 
   constructor(private dataDir: string) {
     this.rebuildIndex()
@@ -56,10 +64,34 @@ export class ClaimStore {
       if (domain === '_did') continue // the Go service's derived copy — never read
       for (const localpart of this.subdirs(join(this.dataDir, domain))) {
         const rec = this.read(domain, localpart)
-        if (rec?.did) this.byDid.set(rec.did, { domain, localpart })
+        if (rec?.did) this.link(rec.did, domain, localpart)
       }
     }
     return this.byDid.size
+  }
+
+  /** Adds an address to a DID's list, idempotently — re-claiming an identity
+   * must not list its address twice. */
+  private link(did: string, domain: string, localpart: string): void {
+    const at = this.byDid.get(did)
+    if (!at) { this.byDid.set(did, [{ domain, localpart }]); return }
+    if (!at.some(l => l.domain === domain && l.localpart === localpart)) at.push({ domain, localpart })
+  }
+
+  /** Drops one address from a DID's list, forgetting the DID entirely once its
+   * last address is gone (so by-did 404s rather than answering with []). */
+  private unlink(did: string, domain: string, localpart: string): void {
+    const at = this.byDid.get(did)
+    if (!at) return
+    const rest = at.filter(l => !(l.domain === domain && l.localpart === localpart))
+    if (rest.length === 0) this.byDid.delete(did)
+    else this.byDid.set(did, rest)
+  }
+
+  /** Every address this DID holds, across every domain the anchor serves —
+   * empty if it holds none. */
+  lookupByDid(did: string): DidLocation[] {
+    return this.byDid.get(did) ?? []
   }
 
   private subdirs(dir: string): string[] {
@@ -100,7 +132,7 @@ export class ClaimStore {
     } catch {
       return false
     }
-    if (rec.did) this.byDid.set(rec.did, { domain, localpart })
+    if (rec.did) this.link(rec.did, domain, localpart)
     return true
   }
 
@@ -126,7 +158,7 @@ export class ClaimStore {
     // Idempotent: nothing on disk changes. The index still needs to know about
     // this DID — under the Go service this early return is exactly where the
     // index silently failed to heal.
-    if (existing.did) this.byDid.set(existing.did, { domain, localpart })
+    if (existing.did) this.link(existing.did, domain, localpart)
     return true
   }
 
@@ -139,11 +171,10 @@ export class ClaimStore {
   release(domain: string, localpart: string): void {
     const existing = this.read(domain, localpart)
     rmSync(identityFPPath(this.dataDir, domain, localpart), { force: true })
-    if (existing?.did) this.byDid.delete(existing.did)
+    // Only this address leaves the DID's list. Deleting the whole entry would
+    // unpublish an identity's remaining addresses because one of them was
+    // released.
+    if (existing?.did) this.unlink(existing.did, domain, localpart)
   }
 
-  /** Which (domain, localpart) a DID belongs to. */
-  resolveDid(did: string): DidLocation | null {
-    return this.byDid.get(did) ?? null
-  }
 }

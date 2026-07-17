@@ -6,7 +6,7 @@
 //
 //   POST   /identity/<localpart>                {"domain":…,"fingerprint":…,"did":…} → 201/200/409
 //   GET    /identity/<localpart>?domain=<domain>                    → {"fingerprint":…,"did":…} | 404
-//   GET    /identity/by-did/<did>                                   → {"domain":…,"localpart":…} | 404
+//   GET    /identity/by-did/<did>                          → {"addresses":["y@biset.md",…]} | 404
 //   DELETE /identity/<localpart>?domain=<domain>                    → 204
 import type { ClaimStore } from './store.ts'
 import { CloudflareAnchor } from './cloudflare.ts'
@@ -59,12 +59,25 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator }: An
     if (!url.pathname.startsWith('/identity/')) return notFound()
     const rest = url.pathname.slice('/identity/'.length)
 
-    // GET /identity/by-did/<did>
+    // GET /identity/by-did/<did> → {"addresses": ["y@biset.md", …]}
+    //
+    // Answers "where does this identity live", across every domain the anchor
+    // serves — the cross-relay version of the per-relay `/identity/local/<did>`
+    // that go-jmapserver used to expose, which this replaces (ANCHOR.md decision
+    // 1: the index is cross-relay information, so it belongs here; a relay could
+    // only ever answer for itself). Addresses are strings, as that endpoint
+    // returned them: a localpart cannot contain '@', so nothing is lost by
+    // joining, and the answer is usable as-is.
+    //
+    // Public and unauthenticated, unchanged: it discloses nothing the DID/DNS
+    // layer does not already publish by design — an address is *meant* to be
+    // discoverable from its DID.
     if (rest.startsWith('by-did/')) {
       const did = rest.slice('by-did/'.length)
       if (did === '' || req.method !== 'GET') return notFound()
-      const found = claims.resolveDid(did)
-      return found ? json(found) : notFound()
+      const at = claims.lookupByDid(did)
+      if (at.length === 0) return notFound()
+      return json({ addresses: at.map(l => `${l.localpart}@${l.domain}`) })
     }
 
     const localpart = rest.toLowerCase() // Go: strings.ToLower(rest)
