@@ -27,10 +27,22 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+/** What a claim holds. **Only the DID** — the DID is the identity anchor, so a
+ * second one was one too many.
+ *
+ * It used to carry the envelope fingerprint, which predates DIDs and which
+ * nothing ever read: `claim()` compared it only against itself. Its whole job
+ * was spotting two DID-less accounts of the same name diverging, and a DID-less
+ * account publishes nothing — no DNS record, no document — so the split it
+ * detected was two strangers who happen to share a name, which is not a
+ * problem. Meanwhile it cost: a squatted fingerprint locked the real owner out
+ * of their own name forever, since every later claim of theirs carried their
+ * real one and 409'd.
+ *
+ * It also never guarded what it looked like it guarded. Provisioning claims with
+ * `fp=""`, so the fingerprint check simply never fired there. */
 export interface AnchorRecord {
-  fingerprint: string
-  /** omitted from JSON when empty, matching Go's `json:"did,omitempty"` */
-  did?: string
+  did: string
 }
 
 const identityFPPath = (dataDir: string, domain: string, localpart: string) =>
@@ -110,6 +122,11 @@ export class ClaimStore {
     }
   }
 
+  /** A claim, or null when there is nothing worth reading — which now includes
+   * every file that only ever held a fingerprint. Those exist on disk (two in
+   * production) and are inert: with no DID they claim nothing, and the index
+   * already ignored them. They are left alone rather than deleted; the next
+   * genuine claim for that name overwrites them. */
   read(domain: string, localpart: string): AnchorRecord | null {
     let s: string
     try {
@@ -117,56 +134,49 @@ export class ClaimStore {
     } catch {
       return null
     }
-    if (s === '') return null
-    if (s[0] === '{') {
-      try {
-        return JSON.parse(s) as AnchorRecord
-      } catch {
-        return null
-      }
+    // A bare hex string is the pre-DID jmapap format: a fingerprint, nothing
+    // else. Nothing to read out of it any more.
+    if (s === '' || s[0] !== '{') return null
+    try {
+      const rec = JSON.parse(s) as { did?: string }
+      return rec.did ? { did: rec.did } : null
+    } catch {
+      return null
     }
-    // Legacy format inherited from pre-DID jmapap: the file held the bare
-    // fingerprint hex string. Still on disk for old accounts — do not drop this.
-    return { fingerprint: s }
   }
 
+  /** The file keeps its `identity.fp` name. It is vestigial — there is no
+   * fingerprint in it — but renaming it means migrating live data for a word,
+   * and the path is not what anyone reads. */
   private write(domain: string, localpart: string, rec: AnchorRecord): boolean {
     const path = identityFPPath(this.dataDir, domain, localpart)
     try {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-      // Match Go's json.Marshal of `did,omitempty`: an empty DID is absent, not null.
-      const body = rec.did ? { fingerprint: rec.fingerprint, did: rec.did } : { fingerprint: rec.fingerprint }
-      writeFileSync(path, JSON.stringify(body), { mode: 0o600 })
+      writeFileSync(path, JSON.stringify({ did: rec.did }), { mode: 0o600 })
     } catch {
       return false
     }
-    if (rec.did) this.link(rec.did, domain, localpart)
+    this.link(rec.did, domain, localpart)
     return true
   }
 
-  /** Records the fingerprint (and, once known, the DID) for a name, or verifies
-   * it against an existing claim. Returns false only on a genuine conflict —
-   * name already held by a different fingerprint, or a DID mismatch against an
-   * already-registered DID for this name (root keys are rotation-less by
-   * design, so a mismatch signals a bug or a split attempt, never a legitimate
-   * update). fp/did may be '' (not yet known) — an empty value never conflicts,
-   * it just skips that field. First claim and idempotent re-claims return true. */
-  claim(domain: string, localpart: string, fp: string, did: string): boolean {
-    if (fp === '' && did === '') return false // nothing to claim by
+  /** Records which DID owns a name, or verifies an existing claim against it.
+   * Returns false only on a genuine conflict: the name is already held by a
+   * DIFFERENT DID. Root keys are rotation-less by design, so a mismatch is a bug
+   * or a split attempt, never a legitimate update.
+   *
+   * There is nothing else to claim by. A claim with no DID would record nothing
+   * and mean nothing — an account without a DID publishes no DNS record and no
+   * document, so no name it holds needs defending here. */
+  claim(domain: string, localpart: string, did: string): boolean {
+    if (did === '') return false
     const existing = this.read(domain, localpart)
-    if (!existing) return this.write(domain, localpart, { fingerprint: fp, did })
-    if (fp !== '' && existing.fingerprint !== '' && existing.fingerprint !== fp) return false
-    if (did !== '' && existing.did && existing.did !== did) return false
-    if ((did !== '' && !existing.did) || (fp !== '' && existing.fingerprint === '')) {
-      return this.write(domain, localpart, {
-        fingerprint: existing.fingerprint || fp,
-        did: existing.did || did,
-      })
-    }
+    if (!existing) return this.write(domain, localpart, { did })
+    if (existing.did !== did) return false
     // Idempotent: nothing on disk changes. The index still needs to know about
     // this DID — under the Go service this early return is exactly where the
     // index silently failed to heal.
-    if (existing.did) this.link(existing.did, domain, localpart)
+    this.link(did, domain, localpart)
     return true
   }
 

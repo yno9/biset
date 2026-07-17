@@ -6,7 +6,7 @@
 // DID requires proving it, `/pkarr` is here at all, and the two read routes are
 // gone (see below).
 //
-//   POST   /identity/<localpart>                {"domain":…,"fingerprint":…,"did":…} → 201/200/409
+//   POST   /identity/<localpart>   {"domain":…,"did":…,"did_sig":…,…} → 201/200/409
 //   DELETE /identity/<localpart>?domain=<domain>                    → 204
 //   GET    /pkarr/<z-base-32 pubkey>                       → wire payload | 404
 //   PUT    /pkarr/<z-base-32 pubkey>   body = wire payload → 204 | 400
@@ -161,46 +161,41 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
       case 'POST': {
         if (!fromOwnRelay(req)) return forbidden()
         const raw = await req.text()
-        if (raw.length > MAX_BODY) return text('domain, and fingerprint or did, required', 400)
-        let body: { domain?: string; fingerprint?: string; did?: string; did_sig?: string; bind_ts?: number; host?: string } | null = null
+        if (raw.length > MAX_BODY) return text('domain and did required', 400)
+        let body: { domain?: string; did?: string; did_sig?: string; bind_ts?: number; host?: string } | null = null
         try {
           body = JSON.parse(raw)
         } catch {
-          return text('domain, and fingerprint or did, required', 400)
+          return text('domain and did required', 400)
         }
         const domain = body?.domain ?? ''
-        const fingerprint = body?.fingerprint ?? ''
         const did = body?.did ?? ''
-        if (!domain || (!fingerprint && !did)) return text('domain, and fingerprint or did, required', 400)
+        // A DID is the only thing there is to claim by. The body used to accept
+        // an envelope fingerprint instead — see store.ts for why that is gone.
+        if (!domain || !did) return text('domain and did required', 400)
 
         // Proof that the claimant controls the DID (ANCHOR.md decision 1:
         // verification is the anchor's job, relays pass it through).
         //
-        // **Naming a DID now requires proving it.** Until every relay forwarded
-        // the proof this had to accept claims without one, which meant the
-        // registry took a DID on the relay's word: PUT /account/did carried no
-        // signature, so anyone holding a self-service account could have a
-        // stranger's DID bound to their own address — and a `_did` TXT record
-        // published saying so — because owning an *account* was never evidence
-        // of owning an *identity*. Both relays send a proof on both paths now,
-        // so absence is a 401.
-        //
-        // A claim with no DID at all is untouched: fingerprint-only claims
-        // (backfill, envelope rotation) have no identity to prove.
-        if (did) {
-          if (!body?.did_sig) return text('did binding: did_sig required', 401)
-          const r = verifyDIDBinding({
-            did,
-            username: localpart,
-            relayHost: body.host ?? '',
-            bindTs: Number(body.bind_ts),
-            sigB64: body.did_sig,
-          })
-          if (!r.ok) return text('did binding: ' + r.reason, 401)
-        }
+        // **Naming a DID requires proving it.** Until every relay forwarded the
+        // proof this accepted claims without one, which meant the registry took
+        // a DID on the relay's word: PUT /account/did carried no signature, so
+        // anyone holding a self-service account could have a stranger's DID
+        // bound to their own address — and a `_did` TXT record published saying
+        // so — because owning an *account* was never evidence of owning an
+        // *identity*.
+        if (!body?.did_sig) return text('did binding: did_sig required', 401)
+        const r = verifyDIDBinding({
+          did,
+          username: localpart,
+          relayHost: body.host ?? '',
+          bindTs: Number(body.bind_ts),
+          sigB64: body.did_sig,
+        })
+        if (!r.ok) return text('did binding: ' + r.reason, 401)
 
         const existed = claims.read(domain, localpart) !== null
-        if (!claims.claim(domain, localpart, fingerprint, did)) {
+        if (!claims.claim(domain, localpart, did)) {
           return text('identity owned by a different key', 409)
         }
         if (did) {

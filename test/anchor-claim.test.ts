@@ -68,21 +68,20 @@ console.log('\n=== 正当な主張は通る ===')
 ok('署名付きで DID を主張できる', (await claim('victim', { did: victim.did, ...proofFor(victim, 'victim') })).status === 201)
 ok('同じ主張の再送は冪等', (await claim('victim', { did: victim.did, ...proofFor(victim, 'victim') })).status === 200)
 ok('索引が victim を指す', addressesOf(victim.did).join() === `victim@${DOMAIN}`)
-ok('DID を伴わない fingerprint のみの主張は証明不要',
-  (await claim('plain', { fingerprint: 'envelope-fp' })).status === 201,
-  'backfill と envelope rotation には証明すべき identity が無い')
+ok('DID を伴わない主張は 400（もう claim するものが無い）',
+  (await claim('plain', { fingerprint: 'envelope-fp' })).status === 400,
+  'fingerprint は消えた — claim は DID を名指すもので、DID の無い主張は無内容')
 
 console.log('\n=== 乗っ取り（この穴のために書かれたテスト）===')
-// The attacker holds a real account: own fingerprint, no DID of their own.
-await claim('attacker', { fingerprint: 'attacker-fp' })
-// Exactly what PUT /account/did used to forward: someone else's DID, no proof.
-const hijack = await claim('attacker', { fingerprint: 'attacker-fp', did: victim.did })
+// The client posts victim's DID against a name it does not own, with no proof —
+// exactly what PUT /account/did used to forward before it carried a signature.
+const hijack = await claim('attacker', { did: victim.did })
 ok('署名なしで他人の DID は主張できない', hijack.status === 401, `status=${hijack.status}`)
 ok('索引は victim を指したまま', addressesOf(victim.did).join() === `victim@${DOMAIN}`,
   '乗っ取りが通ると、ここに attacker が入る')
 ok('attacker 自身の DID なら、署名付きで主張できる',
-  (await claim('attacker', { fingerprint: 'attacker-fp', did: attacker.did, ...proofFor(attacker, 'attacker') })).status === 200,
-  '塞いだのは他人の DID を騙ることだけで、正当な遅延移行は通る')
+  (await claim('attacker', { did: attacker.did, ...proofFor(attacker, 'attacker') })).status === 201,
+  '塞いだのは他人の DID を騙ることだけ')
 
 console.log('\n=== 1つの DID が複数アドレスを持つ（索引が全部持つ）===')
 // mail と AP、あるいは移行前後の旧新 — 1つの identity が複数アドレスを持つのは前提。
@@ -103,21 +102,25 @@ await fetch(`${A}/identity/multi-b?domain=${DOMAIN}`, { method: 'DELETE', header
 ok('最後の1つが消えたら索引から消える', addressesOf(multi.did).length === 0)
 
 console.log('\n=== relay 以外は書けない（この穴のために書かれたテスト）===')
-// The anchor is on the public internet — its DIDComm mediator has to be — and
-// nothing about a claim identifies the caller: a fingerprint-only claim carries
-// no proof by design. "Can reach it" was the entire authorization story.
+// The anchor is on the public internet — its DIDComm mediator has to be. A
+// signature proves control of a DID, but not that the caller is a relay allowed
+// to write here; before the relay token, "can reach it" was the whole story, so
+// a valid signature from anyone was enough to squat, and an unauthenticated
+// DELETE was enough to steal.
 {
   const noAuth = (init: RequestInit) => fetch(`${A}/identity/victim?domain=${DOMAIN}`, init)
+  const sq = identity()
+  const sqProof = proofFor(sq, 'zzsquat')
   const squat = await fetch(`${A}/identity/zzsquat`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ domain: DOMAIN, fingerprint: 'i-have-no-account-anywhere' }),
+    body: JSON.stringify({ domain: DOMAIN, did: sq.did, ...sqProof }),
   })
-  ok('トークン無しで名前を claim できない', squat.status === 403, `status=${squat.status}`)
-  ok('実際に claim されていない', (await fetch(`${A}/identity/zzsquat?domain=${DOMAIN}`)).status === 404)
+  ok('トークン無しなら、正しい署名を持っていても claim できない', squat.status === 403, `status=${squat.status}`)
+  ok('実際に claim されていない', addressesOf(sq.did).length === 0)
 
   const wrong = await fetch(`${A}/identity/zzsquat`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer wrong-token' },
-    body: JSON.stringify({ domain: DOMAIN, fingerprint: 'x' }),
+    body: JSON.stringify({ domain: DOMAIN, did: sq.did, ...sqProof }),
   })
   ok('違うトークンでも claim できない', wrong.status === 403)
 
