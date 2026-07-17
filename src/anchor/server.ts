@@ -1,8 +1,10 @@
-// The anchor's HTTP surface. Ported from go-didanchor's main.go — the route
-// shapes, status codes and error strings are deliberately identical, because
-// the existing relays (`go-jmapserver`'s AnchorClaim/AnchorRelease) must keep
-// working against this **unmodified** during the staged migration (ANCHOR.md
-// decision 5).
+// The anchor's HTTP surface. Ported from go-didanchor's main.go, whose route
+// shapes, status codes and error strings this matched exactly — so the deployed
+// relays could keep working against it unmodified while it was swapped in
+// (ANCHOR.md decision 5). **That constraint is spent.** The migration finished,
+// go-didanchor is retired, and the routes below have since moved on: `by-did`
+// answers with every address an identity holds rather than one, naming a DID
+// requires proving it, and `/pkarr` is here at all.
 //
 //   POST   /identity/<localpart>                {"domain":…,"fingerprint":…,"did":…} → 201/200/409
 //   GET    /identity/<localpart>?domain=<domain>                    → {"fingerprint":…,"did":…} | 404
