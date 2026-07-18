@@ -55,12 +55,17 @@ export interface UnsealedIdentity {
 export async function unsealCurrentIdentity(
   identityEmail: string, password: string,
 ): Promise<{ ok: true; identity: UnsealedIdentity } | { ok: false; error: string }> {
-  const { relaysFor } = await import('../context.ts')
-  const existing = relaysFor(identityEmail)[0]
-  if (!existing) return { ok: false, error: 'No connected session for this identity' }
   const rec = await getDidRecord(identityEmail)
   if (!rec) return { ok: false, error: 'No DID for this identity' }
-  const envelope = await fetchEnvelope(existing.account.serverUrl, existing.account.email)
+  // A relay-less identity (DID⊥relay) keeps its envelope locally — there is no
+  // relay to fetch it from. A normal identity fetches it from its relay.
+  let envelope = rec.envelope ?? null
+  if (!envelope) {
+    const { relaysFor } = await import('../context.ts')
+    const existing = relaysFor(identityEmail)[0]
+    if (!existing) return { ok: false, error: 'No connected session for this identity' }
+    envelope = await fetchEnvelope(existing.account.serverUrl, existing.account.email)
+  }
   if (!envelope) return { ok: false, error: 'Could not read the account envelope' }
   try {
     const unsealed = await unsealEnvelope(envelope, password)

@@ -1,4 +1,5 @@
 import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay } from '../context.ts'
+import { standaloneDid } from '../did/create-standalone.ts'
 import {
   lastLeftInboxes, setLastLeftInboxes,
   processedMessages, renderedKeys,
@@ -2365,17 +2366,50 @@ export async function setupLeftPane() {
           }
         }
         identitySection.style.display = ''
+      } else if (standaloneDid()) {
+        // Relay-less identity (DID⊥relay): no StoredAccount to hang the heading
+        // on, so drive it from the DID alone — DID + doc view + republish. No
+        // avatar/name/menu tied to an address it doesn't have yet; adding a
+        // relay below fills those in the normal way.
+        const sDid = standaloneDid()!
+        identityAvatar.textContent = '◇'
+        identityAvatar.style.cssText = 'display:flex;align-items:center;justify-content:center;background:var(--header-border);color:var(--text-dim)'
+        identityAvatar.onclick = null
+        identityName.textContent = 'Your identity'
+        identityName.onclick = null
+        const suffix = sDid.replace(/^did:dht:/, '')
+        identityDid.textContent = `did:dht:${suffix.slice(0, 8)}…${suffix.slice(-6)}`
+        identityDid.onclick = () => toggleIdentityDidDoc(identitySection, identityDoc, sDid)
+        if (identityMenuBtn) identityMenuBtn.style.display = 'none'
+        if (identityCopy) {
+          identityCopy.onclick = (ev) => {
+            ev.stopPropagation()
+            navigator.clipboard?.writeText(sDid).then(() => showSysMsg('DID copied')).catch(() => {})
+          }
+        }
+        if (identityRepublish) {
+          identityRepublish.onclick = async () => {
+            showSysMsg('Publishing to the network…', 30000)
+            const did = await (await import('../did/create-standalone.ts')).refreshStandalone()
+            showSysMsg(did ? 'Published to DHT' : 'Publish failed', 8000)
+          }
+        }
+        // Adding a relay uses the normal "+ New JMAP account" panel below,
+        // which provisions under THIS identity's DID (see the standalone branch
+        // in the add-account flow) — no separate button.
+        identitySection.style.display = ''
       } else {
         identitySection.style.display = 'none'
         identitySection.classList.remove('expanded')
       }
     }
-    if (!accounts.length) {
+    if (!accounts.length && !standaloneDid()) {
       const msg = document.createElement('div')
       msg.className = 'lp-search-status'
       msg.textContent = 'No accounts'
       $list.appendChild(msg)
     }
+    // (a standalone identity shows its DID heading above instead of "No accounts")
     const relayLabel = (url: string): string => {
       try { return new URL(url).hostname.split('.')[0] } catch { return '?' }
     }

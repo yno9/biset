@@ -16,6 +16,8 @@ import { PUBLIC_PKARR_FALLBACKS } from '../did/resolver.ts'
 import type { DidCommSender } from '../did/didcomm/message.ts'
 import { sessions } from '../context.ts'
 import { hexToBytes } from '../utils.ts'
+import { standaloneDid } from '../did/create-standalone.ts'
+import { buildBisetDocument } from '../did/document.ts'
 
 const PEER_KEYS_STORAGE_KEY = 'biset_didcomm_debug_keys'
 const MEDIATOR_STORAGE_KEY = 'biset_didcomm_debug_mediator'
@@ -88,15 +90,20 @@ export async function onShowDidcommDebug(): Promise<void> {
   document.getElementById('dc-register-btn')?.addEventListener('click', async () => {
     myDidOut.textContent = 'registering…'
     try {
-      const mediatorUrl = mediatorInput.value.trim() || DEFAULT_MEDIATOR_URL
+      const rawMediator = mediatorInput.value.trim() || DEFAULT_MEDIATOR_URL
+      // A scheme-less "anchor.biset.md" would be fetched RELATIVE to the page
+      // (file://…/anchor.biset.md) — force https so it hits the real host.
+      const mediatorUrl = /^https?:\/\//i.test(rawMediator) ? rawMediator : 'https://' + rawMediator
       localStorage.setItem(MEDIATOR_STORAGE_KEY, mediatorUrl)
 
       if (methodSelect.value === 'dht') {
         // Uses the REAL logged-in account's own did:dht — not a throwaway —
         // per explicit request (2026-07-16): the point is direct messaging
         // on the identity biset already has, not a disposable test one.
-        const email = sessions[0]?.account.email
-        if (!email) throw new Error('no logged-in account — log in first')
+        // A logged-in account's DID, or — the whole point of relay-less
+        // messaging — the standalone identity's, keyed by its DID.
+        const email = sessions[0]?.account.email ?? standaloneDid()
+        if (!email) throw new Error('no identity — create one first')
         const record = await getDidRecord(email)
         if (!record) throw new Error(`no local DID record for ${email}`)
         if (!record.didCommPrivateKey || !record.didCommPublicKey) {
@@ -104,16 +111,16 @@ export async function onShowDidcommDebug(): Promise<void> {
         }
         const didCommPrivateKey = hexToBytes(record.didCommPrivateKey)
 
-        // Base document comes from the LIVE session state via publish.ts's
-        // own builder — the same one the automatic republish uses, never a
-        // resolve-and-append of whatever is currently on the DHT (see
-        // buildOwnDocument's comment: a transient resolve failure would
-        // otherwise erase this identity's real relay list).
+        // Base document: from LIVE session state when there are relays (publish
+        // .ts's own builder, the same one the automatic republish uses), or —
+        // for a relay-less identity, where that builder returns null — the
+        // record alone: no relays, no address, _k1 only.
         const own = await buildOwnDocument(email)
-        if (!own) throw new Error(`could not build a document for ${email} — no DID record or no connected relay`)
-        const gatewayUrls = [...own.gateways, ...PUBLIC_PKARR_FALLBACKS]
+        const doc = own?.doc ?? buildBisetDocument(record.did, hexToBytes(record.rootPublicKey), [], [])
+        const rootPrivateKey = own?.rootPrivateKey ?? hexToBytes(record.rootPrivateKey)
+        const gatewayUrls = [...(own?.gateways ?? []), ...PUBLIC_PKARR_FALLBACKS]
 
-        const result = await registerDidCommViaDht(didCommPrivateKey, own.rootPrivateKey, own.doc, mediatorUrl, gatewayUrls)
+        const result = await registerDidCommViaDht(didCommPrivateKey, rootPrivateKey, doc, mediatorUrl, gatewayUrls)
 
         // Persist the registration so publish.ts's builder keeps carrying it
         // — every app start republishes from the local record, so a mediator

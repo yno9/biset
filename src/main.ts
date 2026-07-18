@@ -183,7 +183,7 @@ async function initInner() {
     return
   }
 
-  if (rawHash === '#new') {
+  if (rawHash === '#new' || rawHash === '#newdid') {
     setupNewUserPage()
     showNewUserPage()
     return
@@ -218,8 +218,12 @@ async function initInner() {
     const { refreshStandalone } = await import('./did/create-standalone.ts')
     const sDid = await refreshStandalone()
     if (sDid) {
-      const { showIdentityHome } = await import('./ui/identity-home.ts')
-      await showIdentityHome(sDid)
+      // A relay-less identity has no session, but the app already renders with
+      // zero sessions (the same path a failed login lands on): show the normal
+      // shell + the account page, where the identity and "add a relay" live.
+      showApp()
+      await setupLeftPane()
+      showMenuPage('/account')
       return
     }
     setupNewUserPage()

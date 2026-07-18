@@ -63,7 +63,12 @@ export function showNewUserPage() {
   const page = document.getElementById('new-user-page')
   if (!page) return
   page.style.display = 'flex'
-  try { history.replaceState(null, '', '#new') } catch {}
+  // #newdid = relay-less (DID-only) mode: same page, no username/relay field —
+  // just a password. #new = the normal relay signup.
+  const didOnly = location.hash === '#newdid'
+  try { history.replaceState(null, '', didOnly ? '#newdid' : '#new') } catch {}
+  const usernameRow = document.getElementById('nu-username-row')
+  if (usernameRow) usernameRow.style.display = didOnly ? 'none' : 'flex'
   const hostnameEl = document.getElementById('nu-hostname')
   if (hostnameEl) hostnameEl.textContent = getHostname()
   const usernameInput = document.getElementById('nu-username') as HTMLInputElement
@@ -101,14 +106,36 @@ export function setupNewUserPage() {
   })
 
   submitBtn.addEventListener('click', async () => {
+    const didOnly = location.hash === '#newdid'
     const hostname = getHostname()
     const username = usernameInput.value.trim()
     const pw = pwInput.value
 
-    if (!username) { errEl.textContent = 'Username required'; errEl.style.display = 'block'; return }
+    if (!didOnly && !username) { errEl.textContent = 'Username required'; errEl.style.display = 'block'; return }
     if (!pw) { errEl.textContent = 'Password required'; errEl.style.display = 'block'; return }
-    if (!hostname) { errEl.textContent = 'hostname not set in config.json'; errEl.style.display = 'block'; return }
+    if (!didOnly && !hostname) { errEl.textContent = 'hostname not set in config.json'; errEl.style.display = 'block'; return }
     if (!tosInput.checked) { errEl.textContent = 'Please agree to the Terms of Beta-testing'; errEl.style.display = 'block'; return }
+
+    // Relay-less (DID-only) signup: create the identity from just a password —
+    // no relay, no address. Lands on the normal account page like any account.
+    if (didOnly) {
+      submitBtn.disabled = true; submitBtn.textContent = 'Creating…'; errEl.style.display = 'none'
+      try {
+        const { createStandaloneIdentity } = await import('../did/create-standalone.ts')
+        const { masterSecret } = await createStandaloneIdentity(pw)
+        hideNewUserPage()
+        const { showApp } = await import('./shell.ts')
+        showApp()
+        const { setupLeftPane, showMenuPage } = await import('./left-pane.ts')
+        await setupLeftPane(); showMenuPage('/account')
+        const { showMnemonic } = await import('./mnemonic.ts')
+        showMnemonic(masterSecret, { firstTime: true })
+      } catch (e) {
+        errEl.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e)); errEl.style.display = 'block'
+        submitBtn.textContent = 'Start'; submitBtn.disabled = false
+      }
+      return
+    }
 
     const email = `${username}@${hostname}`
     // A home identity spans two relays: mail (jmapsmtp) and ActivityPub (jmapap).
@@ -230,6 +257,17 @@ export function setupNewUserPage() {
       const { restoreFromMnemonic } = await import('../did/restore.ts')
       const res = await restoreFromMnemonic(phrase)
       if ('error' in res) { restoreErr.textContent = res.error; restoreErr.style.display = 'block'; return }
+      if (res.standalone) {
+        // Relay-less identity restored (no sessions): show the normal UI's
+        // account page, same as a fresh standalone create.
+        hideNewUserPage()
+        const { showApp, showSysMsg } = await import('./shell.ts')
+        showApp()
+        const { setupLeftPane, showMenuPage } = await import('./left-pane.ts')
+        await setupLeftPane(); showMenuPage('/account')
+        showSysMsg('Identity restored (no relay)')
+        return
+      }
       const { addSession, loadStoredAccounts, saveStoredAccounts } = await import('../context.ts')
       const { initPGPForSession } = await import('../app.ts')
       const existing = loadStoredAccounts()
@@ -251,28 +289,4 @@ export function setupNewUserPage() {
     }
   })
 
-  // ── Relay-less identity (DID⊥relay) ────────────────────────────────────────
-  // Create a DID with no relay account at all — reachable via the mediator,
-  // relays addable later from the identity home. The mnemonic is the only
-  // backup (no password/envelope, since there is no relay to recover against).
-  document.getElementById('nu-standalone-toggle')?.addEventListener('click', async () => {
-    const toggle = document.getElementById('nu-standalone-toggle')!
-    toggle.textContent = 'Creating identity…'
-    ;(toggle as HTMLElement).style.pointerEvents = 'none'
-    try {
-      const masterSeed = crypto.getRandomValues(new Uint8Array(32))
-      const { createStandaloneIdentity } = await import('../did/create-standalone.ts')
-      const { did } = await createStandaloneIdentity(masterSeed)
-      hideNewUserPage()
-      const { showMnemonic } = await import('./mnemonic.ts')
-      showMnemonic(masterSeed, { firstTime: true })
-      const { showIdentityHome } = await import('./identity-home.ts')
-      await showIdentityHome(did, masterSeed)
-    } catch (e) {
-      toggle.textContent = 'Create without a relay (DID only)'
-      ;(toggle as HTMLElement).style.pointerEvents = ''
-      const errEl = document.getElementById('nu-error')
-      if (errEl) { errEl.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e)); errEl.style.display = 'block' }
-    }
-  })
 }

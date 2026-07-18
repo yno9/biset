@@ -109,7 +109,7 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
       </svg>
     </div>
     <div id="nu-chat-header" style="display:none;flex-direction:column;align-items:center;gap:6px;margin-bottom:8px;text-align:center"></div>
-    <div style="display:flex;align-items:center;border-radius:8px;border:1px solid var(--header-border);background:var(--input-bg);overflow:hidden">
+    <div id="nu-username-row" style="display:flex;align-items:center;border-radius:8px;border:1px solid var(--header-border);background:var(--input-bg);overflow:hidden">
       <input id="nu-username" type="text" placeholder="username" autocomplete="username" style="flex:1;min-width:0;padding:10px 0 10px 14px;border:none;background:transparent;color:var(--text);font-size:15px;font-family:inherit;outline:none">
       <span id="nu-at" style="padding:10px 14px 10px 2px;color:var(--text-dim);font-size:15px;white-space:nowrap;user-select:none">@<span id="nu-hostname"></span></span>
     </div>
@@ -143,7 +143,6 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
       </div>
       <div id="nu-restore-error" style="color:#ff3b30;font-size:13px;display:none;min-height:18px;text-align:center"></div>
     </div>
-    <div id="nu-standalone-toggle" style="text-align:center;font-size:13px;color:var(--text-dim);cursor:pointer;margin-top:2px;text-decoration:underline;text-underline-offset:2px">Create without a relay (DID only)</div>
     <div class="biset-title"><a href="https://biset.md" target="_blank" rel="noopener">biset</a> <a class="biset-version" href="https://github.com/yno9/biset" target="_blank" rel="noopener">beta</a></div>
   </div>
 </div>

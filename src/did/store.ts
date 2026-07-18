@@ -28,6 +28,12 @@ export interface DidRecord {
   // republish over (i.e. silently cancel) the DIDComm registration.
   didCommMediatorUrl?: string
   didCommRoutingKey?: string // the mediator's own keyAgreement kid
+  // A relay-less identity (DID⊥relay) has no relay to hold its cryptenv
+  // envelope, so it keeps one here instead: the password-wrapped master secret,
+  // so operations that need the seed (adding a relay) unlock with a password
+  // like every other account, not the 24-word phrase. Uploaded to the relay the
+  // normal way once one is added.
+  envelope?: import('../cryptenv.ts').Envelope
 }
 
 function openDB(): Promise<IDBDatabase> {

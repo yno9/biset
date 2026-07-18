@@ -23,7 +23,12 @@
 //     always shown for the user to add themselves.
 import { buildEnvelope } from '../cryptenv.ts'
 import { activeSession, isApRelay } from '../context.ts'
-import type { AccountSession } from '../types.ts'
+import { standaloneDid, clearStandalone } from '../did/create-standalone.ts'
+
+// The add-relay flow only ever reads the identity's record key (account.email —
+// which is the DID for a relay-less identity), so it works for a real session or
+// a synthetic standalone reference alike.
+type IdentityRef = { account: { email: string } }
 import { hexToBytes, expandDualRelay } from '../utils.ts'
 import * as identityStore from '../store/identities.ts'
 
@@ -104,7 +109,11 @@ export function openAddRelayOrDomainFlow(target: string, body: HTMLElement, clos
   const relay = (/^https?:\/\//i.test(target) ? target : 'https://' + target).replace(/\/$/, '')
   let host = relay
   try { host = new URL(relay).hostname } catch { /* keep the raw relay string for display */ }
-  const reuseIdentity = activeSession()
+  // A relay-less identity (DID⊥relay) has no session, but the add-relay flow can
+  // still bind a relay to it: its record key is the DID and its envelope is
+  // local. Represent it as a synthetic ref keyed by the DID.
+  const sDid = standaloneDid()
+  const reuseIdentity: IdentityRef | undefined = activeSession() ?? (sDid ? { account: { email: sDid } } : undefined)
   // A bare apex ("biset.md" — no scheme, not already "mail."/"ap.") names a
   // home identity, not one relay: mail and ActivityPub are separate services
   // there (mail.<apex> / ap.<apex>), same pairing #new's onboarding
@@ -246,7 +255,7 @@ function showDomainInputStep(body: HTMLElement, close: () => void, relay: string
 // unsealed identity provisions each one independently; partial success is
 // kept (matches the old best-effort "whichever comes up is kept" login
 // behavior) rather than requiring every relay in the set to succeed.
-function showRelayCreateStep(body: HTMLElement, close: () => void, relays: string[], reuseIdentity: AccountSession): void {
+function showRelayCreateStep(body: HTMLElement, close: () => void, relays: string[], reuseIdentity: IdentityRef): void {
   body.innerHTML = ''
   const primary = relays[0]
   // Reuses .cmd-input's own box (border-radius/background/padding) on the
@@ -341,6 +350,11 @@ function showRelayCreateStep(body: HTMLElement, close: () => void, relays: strin
         emails.push(email)
       }
       if (!emails.length) throw new Error(lastError ?? 'Failed to create account')
+
+      // This identity now has a relay, so it is no longer relay-less: drop the
+      // standalone marker (a no-op for a normal identity) so future boots take
+      // the ordinary session path.
+      clearStandalone()
 
       const { refreshAccountsList } = await import('./left-pane.ts')
       const { showSysMsg } = await import('./shell.ts')

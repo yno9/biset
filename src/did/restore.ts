@@ -16,6 +16,11 @@ export interface RestoreResult {
   primaryAddress: string
   sessions: AccountSession[]
   kek: Uint8Array
+  // A relay-less identity (DID⊥relay): the phrase resolved to a real identity
+  // whose document lists no relays (only a mediator). Restored as standalone —
+  // sessions is empty and the caller shows the normal UI's account page rather
+  // than erroring "could not connect to any of its relays".
+  standalone?: boolean
 }
 
 const bytesToHex = (b: Uint8Array) => [...b].map(x => x.toString(16).padStart(2, '0')).join('')
@@ -47,9 +52,19 @@ export async function restoreFromMnemonic(mnemonic: string): Promise<RestoreResu
 
   const doc = await resolve(did, bootstrapGateways())
   if (!doc) return { error: 'No published record found for this identity — its relays may be offline, or it was never published.' }
-  if (!doc.service.length) return { error: 'This identity has no relays published.' }
 
-  const kek = (await relayAuth(masterSecret, doc.service[0].serviceEndpoint[0] || '')).kek
+  // A relay service carries an address (the account's mailbox/actor at that
+  // relay); the DIDCommMessaging service (the mediator) does not. No relay
+  // services at all = a relay-less identity: restore it as standalone rather
+  // than trying — and failing — to connect to relays it doesn't have.
+  const relayServices = doc.service.filter(s => !!s.address)
+  if (relayServices.length === 0) {
+    const { registerStandaloneIdentity } = await import('./create-standalone.ts')
+    await registerStandaloneIdentity(masterSecret) // stores the record, republishes, re-registers, sets the marker
+    return { did, primaryAddress: '', sessions: [], kek: new Uint8Array(0), standalone: true }
+  }
+
+  const kek = (await relayAuth(masterSecret, relayServices[0].serviceEndpoint[0] || '')).kek
   const primaryAddress = akaMail(doc.alsoKnownAs) ?? doc.service[0].address ?? ''
 
   // Persist the DID record (keyed by the primary address) so grouping/publish
@@ -72,7 +87,7 @@ export async function restoreFromMnemonic(mnemonic: string): Promise<RestoreResu
   // and its OWN relay-scoped token (derived from the seed for that host).
   const { initSession } = await import('../jmap/client.ts')
   const sessions: AccountSession[] = []
-  for (const svc of doc.service) {
+  for (const svc of relayServices) {
     const serverUrl = svc.serviceEndpoint[0]?.replace(/\/$/, '')
     if (!serverUrl) continue
     const email = svc.address || primaryAddress

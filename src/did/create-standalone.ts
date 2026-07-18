@@ -64,7 +64,7 @@ async function publishAndRegister(rec: DidRecord): Promise<void> {
   // (it decodes did:peer only), so this registration fails against it today —
   // that is the Phase C work (teach the mediator a did:dht resolver). The
   // identity is fully created either way; it just isn't mediator-reachable until
-  // then (relays added later via identity-home make it reachable the normal way).
+  // then (relays added later from the account page make it reachable normally).
   const mUrl = rec.didCommMediatorUrl || mediatorUrl()
   if (mUrl) {
     try {
@@ -80,19 +80,35 @@ async function publishAndRegister(rec: DidRecord): Promise<void> {
   }
 }
 
-/** Create a brand-new relay-less identity from a fresh master seed. The caller
- * owns seed generation + showing the mnemonic (seedToMnemonic) for backup —
- * the mnemonic is the ONLY recovery path (no relay, no envelope). */
-export async function createStandaloneIdentity(masterSeed: Uint8Array): Promise<{ did: string }> {
-  const root = deriveRootKey(masterSeed)
+/** Create a brand-new relay-less identity. Like a normal #new account it takes a
+ * password and builds a cryptenv envelope — a relay-less identity is just a
+ * normal identity with zero relays — but stores the envelope locally (in its
+ * DidRecord) since there is no relay to hold it yet. Returns the master secret so
+ * the caller can show the mnemonic (the ultimate backup; the password is the
+ * everyday unlock). */
+export async function createStandaloneIdentity(password: string): Promise<{ did: string; masterSecret: Uint8Array }> {
+  const { buildEnvelope } = await import('../cryptenv.ts')
+  const { envelope, masterSecret } = await buildEnvelope(password)
+  const did = await registerStandaloneIdentity(masterSecret, envelope)
+  return { did, masterSecret }
+}
+
+/** Store + publish + mediator-register a relay-less identity from its seed,
+ * marking it standalone. Shared by createStandaloneIdentity (fresh, with an
+ * envelope) and restore (from the mnemonic, no local envelope — add-relay falls
+ * back to the phrase there). Idempotent: initDid returns any existing record. */
+export async function registerStandaloneIdentity(masterSecret: Uint8Array, envelope?: import('../cryptenv.ts').Envelope): Promise<string> {
+  const root = deriveRootKey(masterSecret)
   const did = didFromRootPublicKey(root.publicKey)
   // Key the DidRecord by the DID itself (no email address exists yet). initDid
   // derives + persists all sub-keys (root/nostr/_k1) from the seed.
-  const rec = await initDid(did, masterSeed)
-  if (!rec) throw new Error('createStandaloneIdentity: initDid returned null')
+  const rec = await initDid(did, masterSecret)
+  if (!rec) throw new Error('registerStandaloneIdentity: initDid returned null')
+  if (envelope) rec.envelope = envelope
+  await storeDidRecord(rec)
   await publishAndRegister(rec)
   localStorage.setItem(MARKER, did)
-  return { did }
+  return did
 }
 
 /** Boot-time refresh: if this browser holds a standalone identity, republish its
