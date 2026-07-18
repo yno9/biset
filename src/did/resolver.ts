@@ -86,12 +86,27 @@ export async function resolve(did: string, gatewayUrls: string[]): Promise<DidDo
 // Returns true on 2xx. Callers publish to every gateway (their relays) so the
 // record is redundantly kept alive — see DID.md republish rules.
 export async function publishTo(gatewayUrl: string, did: string, payload: Uint8Array): Promise<boolean> {
+  const url = `${trim(gatewayUrl)}/${suffixOf(did)}`
+  // Uint8Array is a valid fetch body in both the DOM and the anchor's DOM-free
+  // lib; the two disagree only on the type name (BodyInit), so erase it.
+  const put = (ifUnmodifiedSince?: string) => fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/octet-stream', ...(ifUnmodifiedSince ? { 'If-Unmodified-Since': ifUnmodifiedSince } : {}) },
+    body: payload as any,
+  })
   try {
-    const resp = await fetch(`${trim(gatewayUrl)}/${suffixOf(did)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: payload as BodyInit,
-    })
+    let resp = await put()
+    if (resp.status === 428) {
+      // pubky-style relays (relay.pkarr.org) refuse to REPLACE an existing
+      // record without a conditional write — a lost-update guard. The first
+      // publish of a key succeeds; every update 428s until it carries the
+      // record's current Last-Modified back as If-Unmodified-Since. Read it and
+      // retry once. (biset's own relay /pkarr proxies straight to a DHT node and
+      // never does this, so only the relay-less public-gateway path hits it.)
+      const current = await fetch(url, { headers: { Accept: 'application/octet-stream' } })
+      const lastModified = current.headers.get('Last-Modified')
+      if (lastModified) resp = await put(lastModified)
+    }
     return resp.ok
   } catch { return false }
 }

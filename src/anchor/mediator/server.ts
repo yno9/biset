@@ -58,6 +58,12 @@ export interface MediatorOptions {
   mediator: PeerIdentity
   queue?: MessageQueue
   connections?: ConnectionStore
+  /** Resolve a `did:dht` peer's DIDComm key (_k1, x25519) — needed to
+   * authenticate senders and encrypt replies that identify by did:dht rather
+   * than the self-certifying did:peer. Without it the mediator handles did:peer
+   * only (the original assumption). The anchor supplies one backed by its DHT
+   * access; a mediator run standalone may omit it. */
+  resolveDidDht?: (did: string) => Promise<Uint8Array | null>
 }
 
 export interface MediatorHandler {
@@ -66,27 +72,42 @@ export interface MediatorHandler {
   mediatorDid: string
 }
 
-export function createMediator({ mediator, queue = new MessageQueue(), connections = new ConnectionStore() }: MediatorOptions): MediatorHandler {
+export function createMediator({ mediator, queue = new MessageQueue(), connections = new ConnectionStore(), resolveDidDht }: MediatorOptions): MediatorHandler {
   const ownRecipient = { kid: mediator.xKid, privateKey: mediator.xPriv }
 
-  /** The sender's key comes out of its own did:peer string, so a forged `skid`
-   * cannot name a key the sender doesn't hold — authcrypt then fails to
-   * decrypt, which is the authentication. */
-  function resolveSenderKey(senderKid: string): Uint8Array {
+  /** The x25519 (_k1) key + its kid for a peer identified by either method.
+   * did:peer is self-certifying (decode, no network); did:dht is resolved from
+   * the DHT via the injected resolver — a relay-less identity (DID⊥relay)
+   * reaches the mediator as its did:dht, not a did:peer. */
+  async function didCommKey(did: string): Promise<{ xKid: string; publicKey: Uint8Array }> {
+    if (did.startsWith('did:dht:')) {
+      const key = resolveDidDht ? await resolveDidDht(did) : null
+      if (!key) throw new Error(`unresolvable did:dht peer ${did} (no _k1 on the DHT / no resolver)`)
+      return { xKid: `${did}#k1`, publicKey: key }
+    }
+    const doc = docFor(did)
+    return { xKid: xKidOf(doc), publicKey: publicKeyOf(doc, xKidOf(doc)) }
+  }
+
+  /** The sender's key. For did:peer it comes out of the DID string itself, so a
+   * forged `skid` cannot name a key the sender doesn't hold — authcrypt then
+   * fails to decrypt, which is the authentication. For did:dht the same holds
+   * once the _k1 key is resolved from the (signed) DHT document. */
+  async function resolveSenderKey(senderKid: string): Promise<Uint8Array> {
     const did = stripFragment(senderKid)
+    if (did.startsWith('did:dht:')) return (await didCommKey(did)).publicKey
     const doc = docFor(did)
     return publicKeyOf(doc, senderKid === did ? xKidOf(doc) : senderKid)
   }
 
-  function packReplyTo(toDid: string, type: string, body: unknown, attachments?: DidCommPlaintext['attachments']): string {
+  async function packReplyTo(toDid: string, type: string, body: unknown, attachments?: DidCommPlaintext['attachments']): Promise<string> {
     const plaintext = buildPlaintext(type, body, mediator.did, toDid)
     if (attachments) plaintext.attachments = attachments
-    const toDoc = docFor(toDid)
-    const toKid = xKidOf(toDoc)
+    const { xKid: toKid, publicKey } = await didCommKey(toDid)
     const jwe = packAuthcrypt(
       utf8(JSON.stringify(plaintext)),
       { kid: mediator.xKid, privateKey: mediator.xPriv },
-      { kid: toKid, publicKey: publicKeyOf(toDoc, toKid) },
+      { kid: toKid, publicKey },
     )
     return JSON.stringify(jwe)
   }
@@ -136,7 +157,7 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
           if (e instanceof ConnectionFullError) return Response.json({ error: String(e.message) }, { status: 503 })
           throw e
         }
-        return reply(packReplyTo(fromDid!, MEDIATE_GRANT, { routing_did: mediator.did }))
+        return reply(await packReplyTo(fromDid!, MEDIATE_GRANT, { routing_did: mediator.did }))
       }
 
       case KEYLIST_UPDATE: {
@@ -157,7 +178,7 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
           }
           return { recipient_did: u.recipient_did, action: u.action, result: 'success' }
         })
-        return reply(packReplyTo(fromDid!, KEYLIST_UPDATE_RESPONSE, { updated }))
+        return reply(await packReplyTo(fromDid!, KEYLIST_UPDATE_RESPONSE, { updated }))
       }
 
       case FORWARD: {
@@ -187,7 +208,7 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
 
       case STATUS_REQUEST: {
         const kid = stripFragment((msg.body as any)?.recipient_did ?? fromDid!)
-        return reply(packReplyTo(fromDid!, STATUS, { recipient_did: kid, message_count: queue.count(kid) }))
+        return reply(await packReplyTo(fromDid!, STATUS, { recipient_did: kid, message_count: queue.count(kid) }))
       }
 
       case DELIVERY_REQUEST: {
@@ -195,13 +216,13 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
         const limit: number = (msg.body as any)?.limit ?? 10
         const batch = queue.take(kid, limit)
         if (batch.length === 0) {
-          return reply(packReplyTo(fromDid!, STATUS, { recipient_did: kid, message_count: 0 }))
+          return reply(await packReplyTo(fromDid!, STATUS, { recipient_did: kid, message_count: 0 }))
         }
         const attachments = batch.map((packed, i) => ({
           id: `msg-${i}-${crypto.randomUUID()}`,
           data: { json: JSON.parse(packed) },
         }))
-        return reply(packReplyTo(fromDid!, DELIVERY, { recipient_did: kid }, attachments))
+        return reply(await packReplyTo(fromDid!, DELIVERY, { recipient_did: kid }, attachments))
       }
 
       default:

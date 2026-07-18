@@ -43,6 +43,7 @@ import { createMediator } from './mediator/server.ts'
 import { loadMediatorIdentity } from './mediator/identity.ts'
 import { PkarrGateway } from './pkarr.ts'
 import { zbase32Encode } from '../did/zbase32.ts'
+import { resolveVia, PUBLIC_PKARR_FALLBACKS } from '../did/resolver.ts'
 
 interface Config {
   listen_addr: string
@@ -141,8 +142,17 @@ mkdirSync(dataDir, { recursive: true, mode: 0o700 })
 const claims = new ClaimStore(dataDir)
 console.log(`[anchor] indexed ${claims.rebuildIndex()} DID(s) from ${dataDir}`)
 
+// Resolve a did:dht peer's _k1 key from the DHT so the mediator can authenticate
+// relay-less (did:dht) senders and encrypt replies to them — not just the
+// self-certifying did:peer it started with. Reads through the public pkarr
+// gateways (where relay-less clients publish), verifying the record's signature
+// against the DID's own key (resolveVia), so a gateway can withhold but not forge.
+const resolveDidDht = async (did: string): Promise<Uint8Array | null> => {
+  try { return (await resolveVia(did, PUBLIC_PKARR_FALLBACKS))?.document.keyAgreementKey ?? null }
+  catch { return null }
+}
 const mediator = cfg.mediator_url
-  ? createMediator({ mediator: loadMediatorIdentity(join(dataDir, 'mediator-identity.json'), cfg.mediator_url) })
+  ? createMediator({ mediator: loadMediatorIdentity(join(dataDir, 'mediator-identity.json'), cfg.mediator_url), resolveDidDht })
   : undefined
 if (mediator) console.log(`[anchor] DIDComm mediator at ${cfg.mediator_url} — ${mediator.mediatorDid}`)
 else console.log('[anchor] no mediator_url — registry only, no DIDComm mediation')

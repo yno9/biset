@@ -140,7 +140,16 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
     // was never sent.
     if (mediator) {
       const resp = await mediator.handle(req, url)
-      if (resp) return resp
+      if (resp) {
+        // The mediator is browser-facing: biset is a browser app, and a
+        // relay-less identity (DID⊥relay) reaches the mediator directly — from
+        // a t.biset.md page or even origin `null` (file://). Its handlers build
+        // plain Responses, so add CORS at this single choke point rather than on
+        // every one. (Preflight OPTIONS is already answered globally below.)
+        const headers = new Headers(resp.headers)
+        for (const [k, v] of Object.entries(CORS)) headers.set(k, v)
+        return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers })
+      }
     }
 
     if (url.pathname.startsWith('/pkarr/')) return handlePkarr(req, url)
