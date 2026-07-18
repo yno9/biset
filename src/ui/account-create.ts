@@ -250,4 +250,29 @@ export function setupNewUserPage() {
       restoreSubmit.disabled = false; restoreSubmit.textContent = 'Restore'
     }
   })
+
+  // ── Relay-less identity (DID⊥relay) ────────────────────────────────────────
+  // Create a DID with no relay account at all — reachable via the mediator,
+  // relays addable later from the identity home. The mnemonic is the only
+  // backup (no password/envelope, since there is no relay to recover against).
+  document.getElementById('nu-standalone-toggle')?.addEventListener('click', async () => {
+    const toggle = document.getElementById('nu-standalone-toggle')!
+    toggle.textContent = 'Creating identity…'
+    ;(toggle as HTMLElement).style.pointerEvents = 'none'
+    try {
+      const masterSeed = crypto.getRandomValues(new Uint8Array(32))
+      const { createStandaloneIdentity } = await import('../did/create-standalone.ts')
+      const { did } = await createStandaloneIdentity(masterSeed)
+      hideNewUserPage()
+      const { showMnemonic } = await import('./mnemonic.ts')
+      showMnemonic(masterSeed, { firstTime: true })
+      const { showIdentityHome } = await import('./identity-home.ts')
+      await showIdentityHome(did, masterSeed)
+    } catch (e) {
+      toggle.textContent = 'Create without a relay (DID only)'
+      ;(toggle as HTMLElement).style.pointerEvents = ''
+      const errEl = document.getElementById('nu-error')
+      if (errEl) { errEl.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e)); errEl.style.display = 'block' }
+    }
+  })
 }

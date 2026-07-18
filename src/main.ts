@@ -212,6 +212,16 @@ async function initInner() {
   }
 
   if (!accounts.length) {
+    // A relay-less identity (DID⊥relay) has zero StoredAccounts but its own
+    // home screen — republish its DID doc + renew mediation, then show it
+    // instead of falling through to new-user onboarding.
+    const { refreshStandalone } = await import('./did/create-standalone.ts')
+    const sDid = await refreshStandalone()
+    if (sDid) {
+      const { showIdentityHome } = await import('./ui/identity-home.ts')
+      await showIdentityHome(sDid)
+      return
+    }
     setupNewUserPage()
     showNewUserPage()
     return
