@@ -142,14 +142,23 @@ mkdirSync(dataDir, { recursive: true, mode: 0o700 })
 const claims = new ClaimStore(dataDir)
 console.log(`[anchor] indexed ${claims.rebuildIndex()} DID(s) from ${dataDir}`)
 
-// Resolve a did:dht peer's _k1 key from the DHT so the mediator can authenticate
-// relay-less (did:dht) senders and encrypt replies to them — not just the
-// self-certifying did:peer it started with. Reads through the public pkarr
-// gateways (where relay-less clients publish), verifying the record's signature
-// against the DID's own key (resolveVia), so a gateway can withhold but not forge.
-const resolveDidDht = async (did: string): Promise<Uint8Array | null> => {
-  try { return (await resolveVia(did, PUBLIC_PKARR_FALLBACKS))?.document.keyAgreementKey ?? null }
-  catch { return null }
+// Resolve a did:dht peer's DIDComm key AT A SPECIFIC device's kid (e.g.
+// "did:dht:X#k2") from the DHT, so the mediator can authenticate relay-less
+// (did:dht) senders and encrypt replies to them — not just the self-
+// certifying did:peer it started with. Kid-aware because a relay-less
+// identity can have more than one registered device, each its own entry in
+// the document's keyAgreementKeys (document.ts's DidKeyAgreement note) — "the"
+// key for a bare DID would be ambiguous once there's more than one. Reads
+// through the public pkarr gateways (where relay-less clients publish),
+// verifying the record's signature against the DID's own key (resolveVia), so
+// a gateway can withhold but not forge.
+const resolveDidDht = async (did: string, kid: string): Promise<Uint8Array | null> => {
+  const n = Number(kid.split('#k')[1])
+  if (!Number.isFinite(n)) return null
+  try {
+    const doc = (await resolveVia(did, PUBLIC_PKARR_FALLBACKS))?.document
+    return doc?.keyAgreementKeys?.find(k => k.n === n)?.publicKey ?? null
+  } catch { return null }
 }
 const mediator = cfg.mediator_url
   ? createMediator({ mediator: loadMediatorIdentity(join(dataDir, 'mediator-identity.json'), cfg.mediator_url), resolveDidDht })

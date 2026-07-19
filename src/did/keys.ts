@@ -39,9 +39,25 @@ export function deriveNostrKey(masterSeed: Uint8Array): KeyPair {
 // way did:peer identities already do (peer.ts/didmediator's identity.ts) —
 // noble's x25519.getPublicKey applies RFC 7748 clamping internally, no
 // pre-processing needed.
+//
+// UNUSED as of the multi-device DIDComm key change (document.ts's
+// DidKeyAgreement note): deriving _k1 from the seed meant every device
+// restoring the same 24 words produced the IDENTICAL key, and the mediator's
+// one-queue-per-kid delivery model let whichever device polled first silently
+// starve the rest. Kept only as a record of the path that's now retired —
+// create-standalone.ts's generateDeviceDidCommKey replaces it.
 export function deriveDidCommKey(masterSeed: Uint8Array): KeyPair {
   const node = slip10DerivePath(masterSeed, DIDCOMM_PATH)
   return { privateKey: node.key, publicKey: x25519.getPublicKey(node.key) }
+}
+
+// Each device mints its OWN DIDComm key, independent of the seed — see
+// deriveDidCommKey's note above for why. Random, not deterministic: nothing
+// should ever need to reproduce a specific device's key from the seed, since
+// the whole point is that different devices hold different keys.
+export function generateDeviceDidCommKey(): KeyPair {
+  const privateKey = crypto.getRandomValues(new Uint8Array(32))
+  return { privateKey, publicKey: x25519.getPublicKey(privateKey) }
 }
 
 // Continuation records (resolver.ts's chaining): a BEP44 value is capped at

@@ -35,10 +35,23 @@ export interface DidService {
   routingKeys?: string[] // DID URLs, e.g. "did:dht:xxx#k1" (a mediator's kid)
 }
 
+// One X25519 keyAgreement key at did-dht's positional slot `n` (kid =
+// `#k<n>`). Zero or more of these — one per DEVICE a relay-less identity
+// (DID⊥relay) has registered for DIDComm, not one per identity: two devices
+// restoring the same seed would derive the IDENTICAL key if this were still
+// seed-derived, and the mediator's single-queue-per-kid delivery model means
+// whichever device polled first would silently starve the other. Each device
+// instead mints its own random key (create-standalone.ts) and holds its own
+// slot here, so a sender fans a message out to every registered device.
+// `n` need not be contiguous (a device that stops registering just leaves a
+// gap; did-dht's vm= list doesn't require one) — sort by `n` when encoding
+// for determinism, but never assume 1..N.
+export interface DidKeyAgreement { n: number; publicKey: Uint8Array }
+
 export interface DidDocument {
   id: string // did:dht:...
   identityKey: Uint8Array // raw Ed25519 public key (the _k0 key)
-  keyAgreementKey?: Uint8Array // raw X25519 public key (the _k1 key, DIDComm)
+  keyAgreementKeys?: DidKeyAgreement[] // was a single Uint8Array — see DidKeyAgreement
   alsoKnownAs: string[]
   service: DidService[]
   // Continuation pointer (`ext=` in the root record): the did:dht that holds
@@ -81,6 +94,16 @@ function b64urlDecode(s: string): Uint8Array {
   return out
 }
 
+// Local, not imported from utils.ts: this file is shared into the anchor's
+// DOM-free build (the same purity constraint that keeps it dependency-free
+// elsewhere — see the b64url helpers above, defined here rather than
+// imported), and utils.ts is a DOM-touching grab-bag that would break that.
+function hexToBytesLocal(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return out
+}
+
 // A TXT logical value may exceed 255 bytes; split into ≤255-byte chunks.
 function toChunks(value: string): string[] {
   if (value.length <= CHUNK) return [value]
@@ -102,14 +125,15 @@ export function documentToRecords(doc: DidDocument): DnsRecord[] {
     rdata: [`t=${KEY_TYPE_ED25519};k=${b64urlEncode(doc.identityKey)}`],
   })
 
-  // keyAgreement key at _k1 (t=3 X25519), if present — DIDComm's direct
-  // did:dht path (PLAN.md "DIDComm transport identity").
-  if (doc.keyAgreementKey) {
+  // keyAgreement keys at _k<n> (t=3 X25519) — DIDComm's direct did:dht path
+  // (PLAN.md "DIDComm transport identity"), one per registered device.
+  const kaKeys = [...(doc.keyAgreementKeys ?? [])].sort((a, b) => a.n - b.n)
+  for (const ka of kaKeys) {
     records.push({
-      name: '_k1._did.',
+      name: `_k${ka.n}._did.`,
       type: 'TXT',
       ttl: TTL,
-      rdata: [`t=${KEY_TYPE_X25519};k=${b64urlEncode(doc.keyAgreementKey)}`],
+      rdata: [`t=${KEY_TYPE_X25519};k=${b64urlEncode(ka.publicKey)}`],
     })
   }
 
@@ -130,12 +154,14 @@ export function documentToRecords(doc: DidDocument): DnsRecord[] {
   }
 
   // Root record. The identity key (k0) carries the standard relationships an
-  // identity key must have (auth, asm, inv, del — spec Create step 2b). k1
-  // (if present) is keyAgreement-only (agm=) — never authentication, per
-  // did-dht spec's own worked example (spec.md: "vm=k0,k1;...;agm=k1;...").
-  const vm = doc.keyAgreementKey ? 'k0,k1' : 'k0'
+  // identity key must have (auth, asm, inv, del — spec Create step 2b). Every
+  // k<n> (if any) is keyAgreement-only (agm=) — never authentication, per
+  // did-dht spec's own worked example (spec.md: "vm=k0,k1;...;agm=k1;...") —
+  // extended here to list every device's slot, not just k1.
+  const kaIds = kaKeys.map(ka => `k${ka.n}`)
+  const vm = ['k0', ...kaIds].join(',')
   const parts = ['v=0', `vm=${vm}`, 'auth=k0', 'asm=k0']
-  if (doc.keyAgreementKey) parts.push('agm=k1') // same field order as did-dht spec.md's own worked example
+  if (kaIds.length) parts.push(`agm=${kaIds.join(',')}`)
   parts.push('inv=k0', 'del=k0')
   if (svcIds.length) parts.push(`svc=${svcIds.join(',')}`)
   // base64url-encoded (not raw text) so an arbitrary display name — which
@@ -166,13 +192,25 @@ export function recordsToDocument(did: string, records: DnsRecord[]): DidDocumen
   if (!k0Fields.k) throw new Error('_k0 record missing k=')
   const identityKey = b64urlDecode(k0Fields.k)
 
-  // keyAgreement key from _k1, if present.
-  const k1 = byName.get('_k1._did')
-  const keyAgreementKey = k1 ? b64urlDecode(parseFields(k1).k ?? '') : undefined
-
   // Services + name from the root record's svc=/name= fields.
   const root = byName.get('_did')
   const rootFields = root ? parseFields(root) : {}
+
+  // keyAgreement keys — every non-"k0" entry vm= names, each resolved from its
+  // own _k<n> record. Reads the count from vm= rather than probing a fixed
+  // range, so it's exact for however many devices are actually registered and
+  // tolerant of gaps (a device that stopped registering just isn't listed).
+  const vmIds = rootFields.vm ? rootFields.vm.split(',') : []
+  const keyAgreementKeys: DidKeyAgreement[] = []
+  for (const vid of vmIds) {
+    const m = /^k(\d+)$/.exec(vid)
+    if (!m || m[1] === '0') continue
+    const n = Number(m[1])
+    const raw = byName.get(`_k${n}._did`)
+    if (!raw) continue
+    const k = parseFields(raw).k
+    if (k) keyAgreementKeys.push({ n, publicKey: b64urlDecode(k) })
+  }
   const service: DidService[] = []
   const svcList = rootFields.svc ? rootFields.svc.split(',') : []
   for (const sid of svcList) {
@@ -192,7 +230,11 @@ export function recordsToDocument(did: string, records: DnsRecord[]): DidDocumen
   const akaRaw = byName.get('_aka._did')
   const alsoKnownAs = akaRaw ? akaRaw.split(',') : []
 
-  return { id: did, identityKey, keyAgreementKey, alsoKnownAs, service, name, ext: rootFields.ext }
+  return {
+    id: did, identityKey,
+    ...(keyAgreementKeys.length ? { keyAgreementKeys } : {}),
+    alsoKnownAs, service, name, ext: rootFields.ext,
+  }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -210,6 +252,32 @@ function parseFields(rdata: string): Record<string, string> {
 
 export function suffixOf(did: string): string {
   return did.replace(/^did:dht:/, '')
+}
+
+// "#k2" or "did:dht:X#k2" -> 2. Shared by every caller that stores/reads a
+// keyAgreement kid as a bare fragment (DidRecord's didCommOwnKid/
+// didCommSiblingKeys) and needs its positional slot back.
+export function kidN(kid: string): number {
+  const m = /#k(\d+)$/.exec(kid)
+  if (!m) throw new Error(`bad DIDComm kid: ${kid}`)
+  return Number(m[1])
+}
+
+// This device's own keyAgreement entry (if it has one) plus every known
+// sibling device's — the array a document publish carries (this file's
+// DidKeyAgreement note: one entry per device, never one per identity). Takes
+// hex strings directly (a DidRecord's own shape: didCommPublicKey/
+// didCommOwnKid, didCommSiblingKeys) so publish.ts and create-standalone.ts
+// both build the exact same array from cached record state without each
+// re-deriving the hex-decode boilerplate.
+export function keyAgreementKeysFromHex(
+  own: { kid: string; publicKeyHex: string } | null,
+  siblings: Array<{ kid: string; publicKeyHex: string }>,
+): DidKeyAgreement[] {
+  const out: DidKeyAgreement[] = []
+  if (own) out.push({ n: kidN(own.kid), publicKey: hexToBytesLocal(own.publicKeyHex) })
+  for (const s of siblings) out.push({ n: kidN(s.kid), publicKey: hexToBytesLocal(s.publicKeyHex) })
+  return out
 }
 
 // Builds the biset DID document: identity key + one service per relay serving

@@ -5,19 +5,13 @@
 // shipping the feature. See PLAN.md's "DIDComm transport identity" (did:peer
 // and did:dht direct now coexist) / implementation-progress log.
 import { generatePeerIdentity, identityFromKeys, b64url, b64urlDecodeToBytes, type PeerIdentity } from '../did/peer.ts'
-import { getDidRecord, storeDidRecord } from '../did/store.ts'
-import { buildOwnDocument } from '../did/publish.ts'
 import { fetchMediatorInfo, requestMediation, updateKeylist, type MediatorInfo } from '../did/didcomm/coordinate.ts'
-import { registerDidCommViaDht } from '../did/didcomm/register.ts'
 import { sendDidComm } from '../did/didcomm/send.ts'
 import { pickupDeliver } from '../did/didcomm/pickup.ts'
 import { resolveDidCommDoc, resolveSenderPublicKey } from '../did/didcomm/resolve.ts'
-import { PUBLIC_PKARR_FALLBACKS } from '../did/resolver.ts'
 import type { DidCommSender } from '../did/didcomm/message.ts'
 import { sessions } from '../context.ts'
-import { hexToBytes } from '../utils.ts'
 import { standaloneDid } from '../did/create-standalone.ts'
-import { buildBisetDocument } from '../did/document.ts'
 
 const PEER_KEYS_STORAGE_KEY = 'biset_didcomm_debug_keys'
 const MEDIATOR_STORAGE_KEY = 'biset_didcomm_debug_mediator'
@@ -99,38 +93,21 @@ export async function onShowDidcommDebug(): Promise<void> {
       if (methodSelect.value === 'dht') {
         // Uses the REAL logged-in account's own did:dht — not a throwaway —
         // per explicit request (2026-07-16): the point is direct messaging
-        // on the identity biset already has, not a disposable test one.
-        // A logged-in account's DID, or — the whole point of relay-less
+        // on the identity biset already has, not a disposable test one. A
+        // logged-in account's DID, or — the whole point of relay-less
         // messaging — the standalone identity's, keyed by its DID.
+        //
+        // registerWithMediator (create-standalone.ts) does the whole thing —
+        // mints THIS DEVICE's own key if it doesn't have one, establishes its
+        // multi-device slot, merges siblings, publishes, and registers — the
+        // same path the account page's "+ New Relay" mediator button uses, so
+        // this debug page and production share one implementation.
         const email = sessions[0]?.account.email ?? standaloneDid()
         if (!email) throw new Error('no identity — create one first')
-        const record = await getDidRecord(email)
-        if (!record) throw new Error(`no local DID record for ${email}`)
-        if (!record.didCommPrivateKey || !record.didCommPublicKey) {
-          throw new Error('this account has no _k1 key yet — log out and back in once to backfill it (lazy migration), then retry')
-        }
-        const didCommPrivateKey = hexToBytes(record.didCommPrivateKey)
-
-        // Base document: from LIVE session state when there are relays (publish
-        // .ts's own builder, the same one the automatic republish uses), or —
-        // for a relay-less identity, where that builder returns null — the
-        // record alone: no relays, no address, _k1 only.
-        const own = await buildOwnDocument(email)
-        const doc = own?.doc ?? buildBisetDocument(record.did, hexToBytes(record.rootPublicKey), [], [])
-        const rootPrivateKey = own?.rootPrivateKey ?? hexToBytes(record.rootPrivateKey)
-        const gatewayUrls = [...(own?.gateways ?? []), ...PUBLIC_PKARR_FALLBACKS]
-
-        const result = await registerDidCommViaDht(didCommPrivateKey, rootPrivateKey, doc, mediatorUrl, gatewayUrls)
-
-        // Persist the registration so publish.ts's builder keeps carrying it
-        // — every app start republishes from the local record, so a mediator
-        // that isn't recorded here would be dropped on the next launch.
-        record.didCommMediatorUrl = result.mediator.url
-        record.didCommRoutingKey = result.mediator.doc.keyAgreement[0]
-        await storeDidRecord(record)
-
+        const { registerWithMediator } = await import('../did/create-standalone.ts')
+        const result = await registerWithMediator(mediatorUrl)
         active = { kind: 'dht', own: result.own, mediator: result.mediator }
-        myDidOut.textContent = record.did
+        myDidOut.textContent = result.own.did
       } else {
         const mediator = await fetchMediatorInfo(mediatorUrl)
         const mediatorXKid = mediator.doc.keyAgreement[0]

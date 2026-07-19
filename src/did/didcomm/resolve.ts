@@ -13,10 +13,13 @@ function didDhtToPeerDidDocShape(doc: DidDocument): PeerDidDoc {
   const verificationMethod: PeerDidDoc['verificationMethod'] = [
     { id: `${doc.id}#k0`, type: 'JsonWebKey2020', controller: doc.id, publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: b64url(doc.identityKey) } },
   ]
+  // One entry per registered DEVICE (document.ts's DidKeyAgreement note) —
+  // send.ts fans a message out to every kid here, so every device gets it.
   const keyAgreement: string[] = []
-  if (doc.keyAgreementKey) {
-    verificationMethod.push({ id: `${doc.id}#k1`, type: 'JsonWebKey2020', controller: doc.id, publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: b64url(doc.keyAgreementKey) } })
-    keyAgreement.push(`${doc.id}#k1`)
+  for (const ka of doc.keyAgreementKeys ?? []) {
+    const kid = `${doc.id}#k${ka.n}`
+    verificationMethod.push({ id: kid, type: 'JsonWebKey2020', controller: doc.id, publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: b64url(ka.publicKey) } })
+    keyAgreement.push(kid)
   }
   return {
     id: doc.id,

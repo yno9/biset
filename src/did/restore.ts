@@ -7,7 +7,7 @@ import { mnemonicToSeed, isValidMnemonic } from './seed.ts'
 import { deriveRootKey, didFromRootPublicKey } from './keys.ts'
 import { resolve, PUBLIC_PKARR_FALLBACKS } from './resolver.ts'
 import { storeDidRecord, type DidRecord } from './store.ts'
-import { deriveNostrKey, deriveDidCommKey } from './keys.ts'
+import { deriveNostrKey } from './keys.ts'
 import { relayAuth } from '../cryptenv.ts'
 import type { StoredAccount, AccountSession } from '../types.ts'
 
@@ -68,9 +68,10 @@ export async function restoreFromMnemonic(mnemonic: string): Promise<RestoreResu
   const primaryAddress = akaMail(doc.alsoKnownAs) ?? doc.service[0].address ?? ''
 
   // Persist the DID record (keyed by the primary address) so grouping/publish
-  // work after restore without re-deriving.
+  // work after restore without re-deriving. No DIDComm key here — that's a
+  // per-DEVICE concern now (document.ts's DidKeyAgreement note), minted lazily
+  // by this device the first time it registers with a mediator.
   const nostr = deriveNostrKey(masterSecret)
-  const didComm = deriveDidCommKey(masterSecret)
   const record: DidRecord = {
     email: primaryAddress || did,
     did,
@@ -78,8 +79,6 @@ export async function restoreFromMnemonic(mnemonic: string): Promise<RestoreResu
     rootPrivateKey: bytesToHex(root.privateKey),
     nostrPublicKey: bytesToHex(nostr.publicKey),
     nostrPrivateKey: bytesToHex(nostr.privateKey),
-    didCommPublicKey: bytesToHex(didComm.publicKey),
-    didCommPrivateKey: bytesToHex(didComm.privateKey),
   }
   await storeDidRecord(record)
 

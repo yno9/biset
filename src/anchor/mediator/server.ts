@@ -30,13 +30,28 @@ const DELIVERY = 'https://didcomm.org/messagepickup/3.0/delivery'
 
 const DIDCOMM_CT = 'application/didcomm-encrypted+json'
 
-/** Forward's `next`, keylist registrations and Pickup's `recipient_did` must
- * all agree on one spelling of a recipient, and callers legitimately send
- * either a bare DID or a full kid URL. Normalize every one of them to the bare
- * DID so the three line up. */
 function stripFragment(didOrKidUrl: string): string {
   const i = didOrKidUrl.indexOf('#')
   return i === -1 ? didOrKidUrl : didOrKidUrl.slice(0, i)
+}
+
+/** Forward's `next`, keylist registrations and Pickup's `recipient_did` must
+ * all agree on one KID (not just DID) for multi-device delivery to route to
+ * the right device's queue (document.ts's DidKeyAgreement note — one kid per
+ * device). A bare DID (no fragment) defaults to that identity's PRIMARY
+ * device (#k1), for callers that predate multi-device or hold only one; a
+ * full kid URL passes through unchanged.
+ *
+ * This used to collapse everything to the bare DID — fine when there was only
+ * ever one possible kid, but it silently pooled every device's Forward/queue
+ * traffic into one shared bucket once there could be more than one: whichever
+ * device polled DELIVERY_REQUEST first drained messages addressed to every
+ * OTHER device too, the rest getting nothing. Keeping the kid distinct is the
+ * actual fix multi-device delivery needed — the keyAgreementKeys/fan-out work
+ * elsewhere only supplies multiple ADDRESSES; this is what keeps them from
+ * being routed into the same box regardless. */
+function normalizeKid(didOrKidUrl: string): string {
+  return didOrKidUrl.includes('#') ? didOrKidUrl : `${didOrKidUrl}#k1`
 }
 
 /** did:peer:2 is self-certifying — the keys are *in* the DID string, so every
@@ -58,12 +73,15 @@ export interface MediatorOptions {
   mediator: PeerIdentity
   queue?: MessageQueue
   connections?: ConnectionStore
-  /** Resolve a `did:dht` peer's DIDComm key (_k1, x25519) — needed to
-   * authenticate senders and encrypt replies that identify by did:dht rather
-   * than the self-certifying did:peer. Without it the mediator handles did:peer
-   * only (the original assumption). The anchor supplies one backed by its DHT
-   * access; a mediator run standalone may omit it. */
-  resolveDidDht?: (did: string) => Promise<Uint8Array | null>
+  /** Resolve a `did:dht` peer's DIDComm key (x25519) at a SPECIFIC kid — needed
+   * to authenticate senders and encrypt replies that identify by did:dht
+   * rather than the self-certifying did:peer. Kid-aware because a relay-less
+   * identity (DID⊥relay) can have more than one registered device, each at
+   * its own kid (document.ts's DidKeyAgreement note) — resolving "the" key for
+   * a bare DID would pick an arbitrary one. Without this option the mediator
+   * handles did:peer only (the original assumption). The anchor supplies one
+   * backed by its DHT access; a mediator run standalone may omit it. */
+  resolveDidDht?: (did: string, kid: string) => Promise<Uint8Array | null>
 }
 
 export interface MediatorHandler {
@@ -75,39 +93,50 @@ export interface MediatorHandler {
 export function createMediator({ mediator, queue = new MessageQueue(), connections = new ConnectionStore(), resolveDidDht }: MediatorOptions): MediatorHandler {
   const ownRecipient = { kid: mediator.xKid, privateKey: mediator.xPriv }
 
-  /** The x25519 (_k1) key + its kid for a peer identified by either method.
-   * did:peer is self-certifying (decode, no network); did:dht is resolved from
-   * the DHT via the injected resolver — a relay-less identity (DID⊥relay)
-   * reaches the mediator as its did:dht, not a did:peer. */
-  async function didCommKey(did: string): Promise<{ xKid: string; publicKey: Uint8Array }> {
+  /** The x25519 key + its kid for a peer identified by either method, AT A
+   * SPECIFIC device's kid. did:peer is self-certifying and has exactly one
+   * key regardless of what `kid` names (decode, no network — the passed kid
+   * is ignored, always resolved canonically, and by construction always
+   * matches anyway: every did:peer identity in this codebase mints exactly
+   * one x25519 key). did:dht is resolved from the DHT via the injected
+   * resolver, AT `kid` specifically — a relay-less identity (DID⊥relay) can
+   * have multiple registered devices, and this is what picks the right one
+   * instead of an arbitrary "the" key. */
+  async function didCommKey(did: string, kid: string): Promise<{ xKid: string; publicKey: Uint8Array }> {
     if (did.startsWith('did:dht:')) {
-      const key = resolveDidDht ? await resolveDidDht(did) : null
-      if (!key) throw new Error(`unresolvable did:dht peer ${did} (no _k1 on the DHT / no resolver)`)
-      return { xKid: `${did}#k1`, publicKey: key }
+      if (!resolveDidDht) throw new Error(`no did:dht resolver configured for ${kid}`)
+      const key = await resolveDidDht(did, kid)
+      if (!key) throw new Error(`unresolvable did:dht peer ${kid} (no such key on the DHT / no resolver)`)
+      return { xKid: kid, publicKey: key }
     }
     const doc = docFor(did)
-    return { xKid: xKidOf(doc), publicKey: publicKeyOf(doc, xKidOf(doc)) }
+    const canonicalKid = xKidOf(doc)
+    return { xKid: canonicalKid, publicKey: publicKeyOf(doc, canonicalKid) }
   }
 
-  /** The sender's key. For did:peer it comes out of the DID string itself, so a
-   * forged `skid` cannot name a key the sender doesn't hold — authcrypt then
-   * fails to decrypt, which is the authentication. For did:dht the same holds
-   * once the _k1 key is resolved from the (signed) DHT document. */
+  /** The sender's key, at the exact kid it claimed (authcrypt's own `skid`
+   * header, not `msg.from` — a bare DID that never carries which device sent
+   * it). For did:peer it comes out of the DID string itself, so a forged
+   * `skid` cannot name a key the sender doesn't hold — authcrypt then fails to
+   * decrypt, which is the authentication. For did:dht the same holds once the
+   * claimed device's key is resolved from the (signed) DHT document. */
   async function resolveSenderKey(senderKid: string): Promise<Uint8Array> {
     const did = stripFragment(senderKid)
-    if (did.startsWith('did:dht:')) return (await didCommKey(did)).publicKey
-    const doc = docFor(did)
-    return publicKeyOf(doc, senderKid === did ? xKidOf(doc) : senderKid)
+    return (await didCommKey(did, senderKid)).publicKey
   }
 
-  async function packReplyTo(toDid: string, type: string, body: unknown, attachments?: DidCommPlaintext['attachments']): Promise<string> {
+  /** Replies to `toKid` SPECIFICALLY — the exact device that authenticated the
+   * request being answered (handle()'s replyKid), not just any of the
+   * sender's registered devices; otherwise a reply to a multi-device identity
+   * could land encrypted to a key a different device holds. */
+  async function packReplyTo(toDid: string, toKid: string, type: string, body: unknown, attachments?: DidCommPlaintext['attachments']): Promise<string> {
     const plaintext = buildPlaintext(type, body, mediator.did, toDid)
     if (attachments) plaintext.attachments = attachments
-    const { xKid: toKid, publicKey } = await didCommKey(toDid)
+    const { xKid, publicKey } = await didCommKey(toDid, toKid)
     const jwe = packAuthcrypt(
       utf8(JSON.stringify(plaintext)),
       { kid: mediator.xKid, privateKey: mediator.xPriv },
-      { kid: toKid, publicKey },
+      { kid: xKid, publicKey },
     )
     return JSON.stringify(jwe)
   }
@@ -136,8 +165,9 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
     if (url.pathname !== '/' || req.method !== 'POST') return null
 
     let msg: DidCommPlaintext
+    let senderKid: string | null
     try {
-      ;({ msg } = await unpack(await req.text()))
+      ;({ msg, senderKid } = await unpack(await req.text()))
     } catch (e) {
       return Response.json({ error: String(e) }, { status: 400 })
     }
@@ -148,6 +178,12 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
     if (msg.type !== FORWARD && !fromDid) {
       return Response.json({ error: 'message has no `from` — this message type requires an authenticated sender' }, { status: 400 })
     }
+    // Replies go to the EXACT device that authenticated this request
+    // (senderKid, authcrypt's own `skid` — `msg.from` is always a bare DID,
+    // never naming which device sent it, see normalizeKid's note). FORWARD is
+    // anoncrypt (no senderKid) but never replies, so this fallback is
+    // defensive only.
+    const replyKid = senderKid ?? (fromDid ? `${fromDid}#k1` : undefined)
 
     switch (msg.type) {
       case MEDIATE_REQUEST: {
@@ -157,7 +193,7 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
           if (e instanceof ConnectionFullError) return Response.json({ error: String(e.message) }, { status: 503 })
           throw e
         }
-        return reply(await packReplyTo(fromDid!, MEDIATE_GRANT, { routing_did: mediator.did }))
+        return reply(await packReplyTo(fromDid!, replyKid!, MEDIATE_GRANT, { routing_did: mediator.did }))
       }
 
       case KEYLIST_UPDATE: {
@@ -166,7 +202,7 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
         // key reports itself and the rest still land, rather than the whole
         // batch failing over the last one.
         const updated = updates.map(u => {
-          const kid = stripFragment(u.recipient_did)
+          const kid = normalizeKid(u.recipient_did)
           try {
             if (u.action === 'add') connections.addKey(fromDid!, kid)
             else connections.removeKey(fromDid!, kid)
@@ -178,7 +214,7 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
           }
           return { recipient_did: u.recipient_did, action: u.action, result: 'success' }
         })
-        return reply(await packReplyTo(fromDid!, KEYLIST_UPDATE_RESPONSE, { updated }))
+        return reply(await packReplyTo(fromDid!, replyKid!, KEYLIST_UPDATE_RESPONSE, { updated }))
       }
 
       case FORWARD: {
@@ -190,7 +226,7 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
         if (!next || forwarded === undefined) {
           return Response.json({ error: 'forward is missing `next` or its attachment' }, { status: 400 })
         }
-        const kid = stripFragment(next)
+        const kid = normalizeKid(next)
         if (!connections.isAuthorized(kid)) {
           return Response.json({ error: 'uncoordinated recipient — no keylist-update registered this kid' }, { status: 401 })
         }
@@ -207,22 +243,22 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
       }
 
       case STATUS_REQUEST: {
-        const kid = stripFragment((msg.body as any)?.recipient_did ?? fromDid!)
-        return reply(await packReplyTo(fromDid!, STATUS, { recipient_did: kid, message_count: queue.count(kid) }))
+        const kid = normalizeKid((msg.body as any)?.recipient_did ?? fromDid!)
+        return reply(await packReplyTo(fromDid!, replyKid!, STATUS, { recipient_did: kid, message_count: queue.count(kid) }))
       }
 
       case DELIVERY_REQUEST: {
-        const kid = stripFragment((msg.body as any)?.recipient_did ?? fromDid!)
+        const kid = normalizeKid((msg.body as any)?.recipient_did ?? fromDid!)
         const limit: number = (msg.body as any)?.limit ?? 10
         const batch = queue.take(kid, limit)
         if (batch.length === 0) {
-          return reply(await packReplyTo(fromDid!, STATUS, { recipient_did: kid, message_count: 0 }))
+          return reply(await packReplyTo(fromDid!, replyKid!, STATUS, { recipient_did: kid, message_count: 0 }))
         }
         const attachments = batch.map((packed, i) => ({
           id: `msg-${i}-${crypto.randomUUID()}`,
           data: { json: JSON.parse(packed) },
         }))
-        return reply(await packReplyTo(fromDid!, DELIVERY, { recipient_did: kid }, attachments))
+        return reply(await packReplyTo(fromDid!, replyKid!, DELIVERY, { recipient_did: kid }, attachments))
       }
 
       default:

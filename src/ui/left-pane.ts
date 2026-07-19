@@ -1,5 +1,6 @@
 import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay } from '../context.ts'
 import { standaloneDid } from '../did/create-standalone.ts'
+import { getDidRecord } from '../did/store.ts'
 import {
   lastLeftInboxes, setLastLeftInboxes,
   processedMessages, renderedKeys,
@@ -1117,6 +1118,10 @@ export async function setupLeftPane() {
     const addForm = document.getElementById('cmd-acc-form') as HTMLFormElement | null
     const signupBody = document.getElementById('cmd-acc-signup-body') as HTMLElement | null
     if (choice) choice.style.display = 'flex'
+    // Restore Sign up / Log in and drop any mediator "Register" swap from a
+    // previous open (the blur handler re-applies it if the URL is a mediator).
+    choice?.querySelectorAll<HTMLButtonElement>('.cmd-acc-choice-btn').forEach(b => { b.style.display = '' })
+    document.getElementById('cmd-acc-mediator-register')?.remove()
     if (addForm) addForm.style.display = 'none'
     if (signupBody) { signupBody.style.display = 'none'; signupBody.textContent = '' }
     for (const id of ['cmd-acc-relay', 'cmd-acc-email', 'cmd-acc-password']) {
@@ -1154,6 +1159,50 @@ export async function setupLeftPane() {
       badge.innerHTML = ''
       const raw = relayInput.value.trim().replace(/\/$/, '')
       if (!raw) return
+
+      // A DIDComm mediator has no account — it needs registering, not signing up
+      // or logging in. Detect it and swap the Sign up / Log in choice for a
+      // single credential-less "Register".
+      const { isMediatorUrl } = await import('../did/create-standalone.ts')
+      const isMed = await isMediatorUrl(raw)
+      if (relayInput.value.trim().replace(/\/$/, '') !== raw) return // stale by the time it resolved
+      const choiceEl = document.getElementById('cmd-acc-choice') as HTMLElement | null
+      const modeBtns = choiceEl?.querySelectorAll<HTMLButtonElement>('.cmd-acc-choice-btn')
+      let regBtn = document.getElementById('cmd-acc-mediator-register') as HTMLButtonElement | null
+      if (isMed) {
+        modeBtns?.forEach(b => { b.style.display = 'none' })
+        if (!regBtn && choiceEl) {
+          regBtn = document.createElement('button')
+          regBtn.id = 'cmd-acc-mediator-register'
+          regBtn.type = 'button'
+          // Same look as Sign up / Log in (.cmd-acc-choice-btn). The setup loop
+          // that attaches the relay handler to that class skips this id, and it
+          // ran before this button existed anyway.
+          regBtn.className = 'cmd-acc-choice-btn'
+          regBtn.style.cssText = 'flex:1;font-family:inherit'
+          regBtn.textContent = 'Register with mediator'
+          choiceEl.appendChild(regBtn)
+          regBtn.addEventListener('click', async () => {
+            regBtn!.disabled = true; regBtn!.textContent = 'Registering…'
+            try {
+              const { registerWithMediator } = await import('../did/create-standalone.ts')
+              await registerWithMediator(relayInput.value.trim())
+              showSysMsg('Registered with mediator')
+              const panel = document.getElementById('cmd-acc-panel'); if (panel) panel.style.display = 'none'
+              resetAddAccountPanel()
+              renderAccountsList()
+            } catch (e) {
+              regBtn!.disabled = false; regBtn!.textContent = 'Register with mediator'
+              showSysMsg('Register failed: ' + (e instanceof Error ? e.message : String(e)), 8000)
+            }
+          })
+        }
+        if (regBtn) regBtn.style.display = ''
+        return // a mediator has no relay-type pills
+      }
+      modeBtns?.forEach(b => { b.style.display = '' })
+      if (regBtn) regBtn.style.display = 'none'
+
       const dual = expandDualRelay(raw)
       const urls = dual ?? [/^https?:\/\//i.test(raw) ? raw : 'https://' + raw]
       const { fetchRelayInfo, relayInfoFor } = await import('../context.ts')
@@ -2275,14 +2324,15 @@ export async function setupLeftPane() {
       // typed arrays as {"0":244,"1":42,...} (no special-casing, unlike a
       // plain array). Format every one as hex instead of dumping 32 numbered
       // object keys each. Keep this in step with DidDocument's key fields:
-      // keyAgreementKey (_k1) was added later and initially missed here,
-      // which showed up as one key rendering as hex next to another
-      // rendering as an object.
+      // keyAgreementKeys (one per registered device, document.ts's
+      // DidKeyAgreement) was added later and initially missed here, which
+      // showed up as one key rendering as hex next to another rendering as
+      // an object.
       const hex = (b: Uint8Array) => [...b].map(x => x.toString(16).padStart(2, '0')).join('')
       const forDisplay = doc && {
         ...doc,
         identityKey: hex(doc.identityKey),
-        ...(doc.keyAgreementKey ? { keyAgreementKey: hex(doc.keyAgreementKey) } : {}),
+        ...(doc.keyAgreementKeys?.length ? { keyAgreementKeys: doc.keyAgreementKeys.map(k => ({ kid: `#k${k.n}`, publicKey: hex(k.publicKey) })) } : {}),
       }
       docEl.textContent = forDisplay ? JSON.stringify(forDisplay, null, 2) : 'No document found (not yet published, or no gateway reachable)'
     } catch {
@@ -2654,7 +2704,7 @@ export async function setupLeftPane() {
     const newCardPlus = document.createElement('span')
     newCardPlus.className = 'acc-new-account-plus'
     newCardPlus.textContent = '+'
-    newCardText.append(newCardPlus, 'New JMAP account')
+    newCardText.append(newCardPlus, 'New Relay')
     newCardRow.appendChild(newCardText)
     newCardRow.addEventListener('click', () => {
       const panel = document.getElementById('cmd-acc-panel')
@@ -2673,6 +2723,83 @@ export async function setupLeftPane() {
     })
     newCardWrap.appendChild(newCardRow)
     $list.appendChild(newCardWrap)
+
+    // Mediator card — the DIDComm mediator this identity is registered with, in
+    // the same card format as a relay (a mediator IS a relay for DIDComm). Its
+    // URL lives in the DID record, so this fills in asynchronously; a stale
+    // render's callback bails (its newCardWrap is already detached).
+    const mediatorRecKey = repAccount?.email ?? standaloneDid()
+    if (mediatorRecKey) {
+      getDidRecord(mediatorRecKey).then(rec => {
+        if (!rec?.didCommMediatorUrl) return
+        if (newCardWrap.parentNode !== $list) return
+        if (document.getElementById('cmd-acc-mediator-card')) return
+        $list.insertBefore(buildMediatorCard(rec.didCommMediatorUrl), newCardWrap)
+      }).catch(() => {})
+    }
+  }
+
+  function buildMediatorCard(mediatorUrl: string): HTMLElement {
+    let host = mediatorUrl
+    try { host = new URL(mediatorUrl).hostname } catch { /* keep raw */ }
+    const wrap = document.createElement('div')
+    wrap.className = 'acc-card-wrap'
+    wrap.id = 'cmd-acc-mediator-card'
+    const row = document.createElement('div')
+    row.className = 'cmd-page-row'
+    row.style.cssText = 'gap:12px;align-items:center;padding:10px 12px'
+    const left = document.createElement('div')
+    left.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:4px'
+    const headRow = document.createElement('div')
+    headRow.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0'
+    const dot = document.createElement('span')
+    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;flex-shrink:0;background:#34c759'
+    const protoEl = document.createElement('span')
+    protoEl.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--accent2, #888);flex-shrink:0'
+    protoEl.textContent = 'DIDComm'
+    const sep = document.createElement('span')
+    sep.style.cssText = 'color:var(--text-dim);flex-shrink:0'
+    sep.textContent = ':'
+    const addrEl = document.createElement('span')
+    addrEl.style.cssText = 'font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
+    addrEl.textContent = host
+    headRow.append(dot, protoEl, sep, addrEl)
+    const statsRow = document.createElement('div')
+    statsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:var(--text-dim)'
+    const stat = document.createElement('span')
+    stat.textContent = 'Mediator · DIDComm inbox'
+    statsRow.append(stat)
+    left.append(headRow, statsRow)
+
+    // Unlike a relay card, only "Log out" applies here — a mediator has no
+    // password and no server-side account to delete, only the keylist
+    // registration to withdraw (see unregisterFromMediator).
+    const menuBtn = document.createElement('button')
+    menuBtn.type = 'button'
+    menuBtn.style.cssText = 'background:none;border:none;color:var(--text-dim);cursor:pointer;padding:6px;line-height:0;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center'
+    menuBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>`
+    menuBtn.setAttribute('aria-label', 'Menu')
+    menuBtn.addEventListener('mouseover', () => { menuBtn.style.background = 'rgba(128,128,128,0.12)' })
+    menuBtn.addEventListener('mouseout', () => { menuBtn.style.background = 'none' })
+    menuBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation()
+      openDropdownMenu(menuBtn, [{
+        label: 'Log out', danger: true, onClick: async () => {
+          try {
+            const { unregisterFromMediator } = await import('../did/create-standalone.ts')
+            await unregisterFromMediator()
+            showSysMsg('Logged out of mediator')
+          } catch (e) {
+            showSysMsg('Log out failed: ' + (e instanceof Error ? e.message : String(e)), 8000)
+          }
+          wrap.remove()
+        },
+      }])
+    })
+
+    row.append(left, menuBtn)
+    wrap.append(row)
+    return wrap
   }
 
   function onShowAccounts() {

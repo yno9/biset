@@ -16,42 +16,62 @@ export interface SendOptions {
 }
 
 /** `toDid`/`toDoc` must already be resolved (biset's own resolver, or
- * resolveDidCommDoc). */
+ * resolveDidCommDoc). Fans out to EVERY device the recipient has registered
+ * (`toDoc.keyAgreement`, one kid per device — document.ts's DidKeyAgreement
+ * note): each gets its own authcrypt'd copy and its own Forward, since Routing
+ * 2.0's `next` names exactly one recipient kid. Succeeds if at least one
+ * device received it — a device that's stopped registering (a stale kid still
+ * cached in a sender's resolved doc) must not sink delivery to the rest. */
 export async function sendDidComm(sender: DidCommSender, toDid: string, toDoc: PeerDidDoc, opts: SendOptions): Promise<void> {
-  const toXKid = toDoc.keyAgreement[0]
-  if (!toXKid) throw new Error('sendDidComm: recipient DID doc has no keyAgreement')
+  if (toDoc.keyAgreement.length === 0) throw new Error('sendDidComm: recipient DID doc has no keyAgreement')
   const service = toDoc.service.find(s => s.type === 'DIDCommMessaging')
   if (!service) throw new Error('sendDidComm: recipient DID doc has no DIDCommMessaging service')
 
   const plaintext = buildPlaintext(opts.type, opts.body, sender.did, toDid)
-  const innerJwe = packAuthcrypt(
-    new TextEncoder().encode(JSON.stringify(plaintext)),
-    { kid: sender.xKid, privateKey: sender.xPriv },
-    { kid: toXKid, publicKey: publicKeyOf(toDoc, toXKid) },
-  )
-
+  const plaintextBytes = new TextEncoder().encode(JSON.stringify(plaintext))
   const routingKeys = service.serviceEndpoint.routing_keys
-  let outbound: DidCommJWE = innerJwe
+
+  // The mediator's doc is the same for every device fanned out to below (one
+  // shared mediator per identity today) — resolve it once, outside the loop.
+  let mediatorDoc: PeerDidDoc | null = null
   if (routingKeys.length > 0) {
-    const routingKid = routingKeys[0]!
-    // The routing key is a mediator's own kid — resolveDidCommDoc dispatches
-    // on method (our own mediator, in the anchor, is did:peer: self-certifying
-    // and free; a future did:dht-native one resolves the same way, no change).
-    const routingDid = routingKid.split('#')[0]!
-    const mediatorDoc = await resolveDidCommDoc(routingDid)
+    const routingDid = routingKeys[0]!.split('#')[0]!
+    // resolveDidCommDoc dispatches on method (our own mediator, in the
+    // anchor, is did:peer: self-certifying and free; a future did:dht-native
+    // one resolves the same way, no change).
+    mediatorDoc = await resolveDidCommDoc(routingDid)
     if (!mediatorDoc) throw new Error(`sendDidComm: could not resolve mediator ${routingDid}`)
-    const forward = buildPlaintext(FORWARD_TYPE, { next: toXKid })
-    forward.attachments = [{ id: crypto.randomUUID(), data: { json: innerJwe } }]
-    outbound = packAnoncrypt(
-      new TextEncoder().encode(JSON.stringify(forward)),
-      { kid: routingKid, publicKey: publicKeyOf(mediatorDoc, routingKid) },
-    )
   }
 
-  const resp = await fetch(service.serviceEndpoint.uri, {
-    method: 'POST',
-    headers: { 'content-type': 'application/didcomm-encrypted+json' },
-    body: JSON.stringify(outbound),
-  })
-  if (!resp.ok) throw new Error(`sendDidComm: HTTP ${resp.status} ${await resp.text()}`)
+  const errors: string[] = []
+  let delivered = 0
+  for (const toXKid of toDoc.keyAgreement) {
+    try {
+      const innerJwe = packAuthcrypt(
+        plaintextBytes,
+        { kid: sender.xKid, privateKey: sender.xPriv },
+        { kid: toXKid, publicKey: publicKeyOf(toDoc, toXKid) },
+      )
+      let outbound: DidCommJWE = innerJwe
+      if (mediatorDoc) {
+        const routingKid = routingKeys[0]!
+        const forward = buildPlaintext(FORWARD_TYPE, { next: toXKid })
+        forward.attachments = [{ id: crypto.randomUUID(), data: { json: innerJwe } }]
+        outbound = packAnoncrypt(
+          new TextEncoder().encode(JSON.stringify(forward)),
+          { kid: routingKid, publicKey: publicKeyOf(mediatorDoc, routingKid) },
+        )
+      }
+      const resp = await fetch(service.serviceEndpoint.uri, {
+        method: 'POST',
+        headers: { 'content-type': 'application/didcomm-encrypted+json' },
+        body: JSON.stringify(outbound),
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} ${await resp.text()}`)
+      delivered++
+    } catch (e) {
+      errors.push(`${toXKid}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+  if (delivered === 0) throw new Error(`sendDidComm: failed to deliver to any device — ${errors.join('; ')}`)
 }

@@ -8,7 +8,7 @@
 import { identities, relaysFor, isApRelay } from '../context.ts'
 import * as identityStore from '../store/identities.ts'
 import { getDidRecord } from './store.ts'
-import { buildBisetDocument } from './document.ts'
+import { buildBisetDocument, keyAgreementKeysFromHex } from './document.ts'
 import { publishDocument } from './resolver.ts'
 import { hexToBytes } from '../utils.ts'
 
@@ -68,12 +68,20 @@ export async function buildOwnDocument(email: string): Promise<OwnDocument | nul
   const addresses = [email, ...new Set(relaySessions.map(s => s.account.email))].filter((a, i, arr) => arr.indexOf(a) === i)
   const doc = buildBisetDocument(rec.did, hexToBytes(rec.rootPublicKey), services, addresses, displayNameFor(relaySessions))
 
-  // Carry the DIDComm layer (_k1 + the mediator it's registered with, both
-  // from the local record) into every publish. This function is the ONLY
-  // builder — publishOwnDids runs it on every app start — so anything it
-  // omits gets republished away: without this, registering with a mediator
-  // would silently un-register itself the next time biset opened.
-  if (rec.didCommPublicKey) doc.keyAgreementKey = hexToBytes(rec.didCommPublicKey)
+  // Carry the DIDComm layer (this device's key + every known sibling device's
+  // key + the mediator it's registered with, all from the local record) into
+  // every publish. This function is the ONLY builder — publishOwnDids runs it
+  // on every app start — so anything it omits gets republished away: without
+  // this, registering with a mediator would silently un-register itself the
+  // next time biset opened, and without the sibling cache, republishing from
+  // ANY ONE device would silently drop every OTHER device's key (this
+  // deliberately never resolves to relearn siblings — see the note above;
+  // that only happens once, at registration time, in create-standalone.ts).
+  const keyAgreementKeys = keyAgreementKeysFromHex(
+    rec.didCommPublicKey && rec.didCommOwnKid ? { kid: rec.didCommOwnKid, publicKeyHex: rec.didCommPublicKey } : null,
+    (rec.didCommSiblingKeys ?? []).map(s => ({ kid: s.kid, publicKeyHex: s.publicKey })),
+  )
+  if (keyAgreementKeys.length) doc.keyAgreementKeys = keyAgreementKeys
   if (rec.didCommMediatorUrl && rec.didCommRoutingKey) {
     doc.service.push({
       id: 'didcomm', type: 'DIDCommMessaging',

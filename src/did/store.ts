@@ -15,17 +15,34 @@ export interface DidRecord {
   rootPrivateKey: string // hex
   nostrPublicKey: string // hex
   nostrPrivateKey: string // hex
-  // _k1 (PLAN.md "Key material"/"DIDComm transport identity" — did:dht
-  // direct path). Optional: records created before this field existed are
-  // lazily backfilled on next login (initDid()), same pattern as every
-  // other DID.md lazy-migration case.
+  // THIS DEVICE's own DIDComm key (PLAN.md "Key material"/"DIDComm transport
+  // identity" — did:dht direct path). Generated randomly per device the first
+  // time it registers with a mediator (create-standalone.ts), never derived
+  // from the seed — a multi-device identity needs each device to hold a
+  // DIFFERENT key (see document.ts's DidKeyAgreement), since the mediator
+  // queues per-kid and a shared key would let one device silently starve
+  // another's deliveries.
   didCommPublicKey?: string // hex
   didCommPrivateKey?: string // hex
-  // Which mediator this identity registered its _k1 with, if any. Unlike the
-  // keys these aren't derivable — they're registration state, and they must
-  // be persisted precisely because publish.ts rebuilds the whole document
-  // from local state on every app start: a document built without them would
-  // republish over (i.e. silently cancel) the DIDComm registration.
+  // This device's stable positional slot in the published document's
+  // keyAgreement list (did-dht numbers them k1, k2, ... — kid = "#k<n>", e.g.
+  // "#k2"). Remembered rather than recomputed each publish, so this device's
+  // kid never shifts as sibling devices come and go (mediator registrations
+  // and any sender's cached routing are keyed by kid string).
+  didCommOwnKid?: string
+  // Other devices' registered DIDComm keys, learned by resolving the
+  // identity's published document once at registration time (create-
+  // standalone.ts's syncDevicePosition). A routine republish (publishOwnDids,
+  // every boot) never resolves — publish.ts's buildOwnDocument note explains
+  // why (a transient resolve failure must not erase a real list) — so without
+  // this cache, republishing from any one device would silently drop every
+  // OTHER device's key from the document.
+  didCommSiblingKeys?: Array<{ kid: string; publicKey: string }> // publicKey hex
+  // Which mediator this identity registered its DIDComm keys with, if any.
+  // Unlike the keys these aren't derivable — they're registration state, and
+  // they must be persisted precisely because publish.ts rebuilds the whole
+  // document from local state on every app start: a document built without
+  // them would republish over (i.e. silently cancel) the DIDComm registration.
   didCommMediatorUrl?: string
   didCommRoutingKey?: string // the mediator's own keyAgreement kid
   // A relay-less identity (DID⊥relay) has no relay to hold its cryptenv
