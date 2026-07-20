@@ -5,11 +5,11 @@
 // the backstop that keeps a DID resolvable even if every relay is down when the
 // owner next opens biset (DID.md republish rules). No-op when a gateway is
 // disabled (PKARR_GATEWAY off) — the PUT just fails and is swallowed.
-import { identities, relaysFor, isApRelay } from '../context.ts'
+import { identities, relaysFor, isApRelay, isDidCommRelay } from '../context.ts'
 import * as identityStore from '../store/identities.ts'
 import { getDidRecord } from './store.ts'
 import { buildBisetDocument, keyAgreementKeysFromHex } from './document.ts'
-import { publishDocument } from './resolver.ts'
+import { publishDocument, PUBLIC_PKARR_FALLBACKS } from './resolver.ts'
 import { hexToBytes } from '../utils.ts'
 
 // The display name to publish in the DID document (biset extension, see
@@ -17,7 +17,7 @@ import { hexToBytes } from '../utils.ts'
 // name" modal already sets (left-pane.ts), rather than inventing a separate
 // DID-specific name to manage. An identity can span several relays/addresses;
 // take the first one that has a name set at all.
-function displayNameFor(relaySessions: Array<{ account: { email: string } }>): string | undefined {
+export function displayNameFor(relaySessions: Array<{ account: { email: string } }>): string | undefined {
   for (const s of relaySessions) {
     const name = identityStore.all().find(i => i.email === s.account.email)?.name
     if (name) return name
@@ -52,7 +52,18 @@ export interface OwnDocument {
 export async function buildOwnDocument(email: string): Promise<OwnDocument | null> {
   const rec = await getDidRecord(email)
   if (!rec) return null
-  const relaySessions = relaysFor(email)
+  // relaysFor(email) includes the synthetic DIDComm session (did/didcomm/
+  // channel.ts) on purpose — that's what lets the SAME "which endpoints does
+  // this identity have" lookup drive both message routing and this document
+  // build. But it has no real relay behind it (serverUrl is the 'didcomm:'
+  // sentinel, no actual HTTP endpoint) — treating it as a relay here
+  // published a bogus service entry with serverUrl:'didcomm:' into the
+  // identity's OWN DID document, and fed a literal 'didcomm:/pkarr' into
+  // gateway lists used to resolve OTHER people's DIDs (every browser rejects
+  // fetching an unsupported URL scheme outright). The identity's real
+  // DIDComm service is added separately by did/didcomm/register.ts, not via
+  // this generic per-relay services loop.
+  const relaySessions = relaysFor(email).filter(s => !isDidCommRelay(s.account.serverUrl))
   if (!relaySessions.length) return null
   // Each endpoint carries its own protocol + address, so an AP relay and an
   // SMTP relay of one DID can advertise different addresses (see DidService).
@@ -73,10 +84,29 @@ export async function buildOwnDocument(email: string): Promise<OwnDocument | nul
   // every publish. This function is the ONLY builder — publishOwnDids runs it
   // on every app start — so anything it omits gets republished away: without
   // this, registering with a mediator would silently un-register itself the
-  // next time biset opened, and without the sibling cache, republishing from
-  // ANY ONE device would silently drop every OTHER device's key (this
-  // deliberately never resolves to relearn siblings — see the note above;
-  // that only happens once, at registration time, in create-standalone.ts).
+  // next time biset opened.
+  //
+  // Refreshed here, not just read from the cache: a device that registered
+  // BEFORE a sibling existed never learned about it, and every one of ITS OWN
+  // later boots republished a document that had simply never heard of the
+  // other device — silently erasing it, since whichever device boots (i.e.
+  // reopens its browser tab) more recently always wins the highest-seq race.
+  // Found live: two of one identity's own browsers, unable to reach each
+  // other, because the routine republish path never resolved to relearn
+  // siblings (that used to only happen once, at registration time). This
+  // reuses create-standalone.ts's syncDevicePosition — dynamic import to
+  // avoid a static cycle (that file already dynamic-imports buildOwnDocument
+  // from here) — which is safe to call repeatedly by design: best-effort, and
+  // it only ever grows the sibling cache, never removes an entry, so a
+  // resolve that fails or a gateway that's simply behind can't erase a real
+  // device the way rebuilding the list from scratch would.
+  if (rec.didCommOwnKid) {
+    const { syncDevicePosition } = await import('./create-standalone.ts')
+    const syncGateways = rec.didCommMediatorUrl
+      ? [...PUBLIC_PKARR_FALLBACKS, `${rec.didCommMediatorUrl.replace(/\/$/, '')}/pkarr`]
+      : PUBLIC_PKARR_FALLBACKS
+    await syncDevicePosition(rec, syncGateways).catch(() => {}) // best-effort — mutates + persists rec in place
+  }
   const keyAgreementKeys = keyAgreementKeysFromHex(
     rec.didCommPublicKey && rec.didCommOwnKid ? { kid: rec.didCommOwnKid, publicKeyHex: rec.didCommPublicKey } : null,
     (rec.didCommSiblingKeys ?? []).map(s => ({ kid: s.kid, publicKeyHex: s.publicKey })),

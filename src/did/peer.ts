@@ -90,6 +90,10 @@ export interface PeerDidDoc {
     type: string
     serviceEndpoint: { uri: string; accept: string[]; routing_keys: string[] }
   }>
+  // Self-asserted display name (did:dht's document.ts `name=` extension) —
+  // optional since a did:peer document (self-certifying, no room for extra
+  // fields) never carries one.
+  name?: string
 }
 
 export interface PeerSecret {

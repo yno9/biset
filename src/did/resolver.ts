@@ -36,21 +36,44 @@ function trim(u: string): string { return u.replace(/\/$/, '') }
 // payload — a lagging gateway must not win over a fresher one. Signature is
 // verified against the key the DID itself names, so a gateway cannot forge; the
 // worst it can do is withhold or serve stale, which max-seq + freshness defeat.
+//
+// Queried in PARALLEL, not one gateway at a time: a caller's list now
+// routinely carries 3-4 entries (own relay + own mediator's token-gated
+// pkarr + 2 public fallbacks — see channel.ts/discovery.ts's ownGateways),
+// and one of those (a real DHT gateway, not a cache) can legitimately take
+// several seconds. Querying sequentially meant every SLOW gateway's full
+// latency stacked onto every resolve, however many faster ones would have
+// answered first — the resolve got proportionally slower every time another
+// gateway was added to the list, not just occasionally slow when one happened
+// to lag.
 export async function resolveVia(did: string, gatewayUrls: string[]): Promise<ParsedPayload | null> {
   const pubkey = identityKeyFromDid(did)
   const suffix = suffixOf(did)
+  const results = await Promise.allSettled(gatewayUrls.map(async gw => {
+    const resp = await fetch(`${trim(gw)}/${suffix}`, { headers: { Accept: 'application/octet-stream' } })
+    if (!resp.ok) throw new Error(`gateway returned ${resp.status}`)
+    const payload = new Uint8Array(await resp.arrayBuffer())
+    return parseSignedPayload(pubkey, payload) // throws on bad signature → this gateway's result is dropped
+  }))
   let best: ParsedPayload | null = null
-  for (const gw of gatewayUrls) {
-    try {
-      const resp = await fetch(`${trim(gw)}/${suffix}`, { headers: { Accept: 'application/octet-stream' } })
-      if (!resp.ok) continue
-      const payload = new Uint8Array(await resp.arrayBuffer())
-      const parsed = parseSignedPayload(pubkey, payload) // throws on bad signature → skipped
-      if (!best || parsed.seq > best.seq) best = parsed
-    } catch { /* try the next gateway */ }
+  for (const r of results) {
+    if (r.status !== 'fulfilled') continue
+    if (!best || r.value.seq > best.seq) best = r.value
   }
   return best
 }
+
+// Every gateway in a caller's list is either this browser's own relay (fast,
+// local network) or a real DHT gateway/fallback — the latter routinely takes
+// several seconds per COLD lookup (resolveVia's own note). A send resolves
+// its recipient fresh every time, and a poll cycle re-resolves every
+// delivered message's sender fresh every time — the same identity, over and
+// over, within a single chat session. Short-TTL so a real change (a relay
+// added, a display name edited) still shows up within a session rather than
+// needing a reload; only successful resolves are cached, so a withheld/failed
+// lookup always retries immediately rather than being stuck for the TTL.
+const resolveCache = new Map<string, { doc: DidDocument; at: number }>()
+const RESOLVE_CACHE_TTL_MS = 60_000
 
 // Resolve with rollback protection: rejects a record whose seq is lower than the
 // highest previously trusted for this DID (DID.md monotonicity check).
@@ -62,24 +85,33 @@ export async function resolveVia(did: string, gatewayUrls: string[]): Promise<Pa
 // link degrades to the services resolved so far rather than failing the
 // whole resolve: a partial relay list still beats an unresolvable identity.
 export async function resolve(did: string, gatewayUrls: string[]): Promise<DidDocument | null> {
+  const cached = resolveCache.get(did)
+  if (cached && Date.now() - cached.at < RESOLVE_CACHE_TTL_MS) return cached.doc
+
   requireSeqStore() // up front: a lookup that finds nothing must still surface a missing store
   const r = await resolveVia(did, gatewayUrls)
   if (!r) return null
   if (!noteSeq(did, r.seq)) return null // rollback attempt — refuse the stale record
-  if (!r.document.ext) return r.document
 
-  const continuations: DidDocument[] = []
-  const seen = new Set<string>([suffixOf(did)])
-  let next: string | undefined = r.document.ext
-  while (next && continuations.length < MAX_CHAIN) {
-    if (seen.has(next)) break // a chain that points back at itself — stop rather than loop
-    seen.add(next)
-    const link: ParsedPayload | null = await resolveVia(`did:dht:${next}`, gatewayUrls)
-    if (!link) break // withheld or expired link — keep what we have
-    continuations.push(link.document)
-    next = link.document.ext
+  let doc: DidDocument
+  if (!r.document.ext) {
+    doc = r.document
+  } else {
+    const continuations: DidDocument[] = []
+    const seen = new Set<string>([suffixOf(did)])
+    let next: string | undefined = r.document.ext
+    while (next && continuations.length < MAX_CHAIN) {
+      if (seen.has(next)) break // a chain that points back at itself — stop rather than loop
+      seen.add(next)
+      const link: ParsedPayload | null = await resolveVia(`did:dht:${next}`, gatewayUrls)
+      if (!link) break // withheld or expired link — keep what we have
+      continuations.push(link.document)
+      next = link.document.ext
+    }
+    doc = mergeChain(r.document, continuations)
   }
-  return mergeChain(r.document, continuations)
+  resolveCache.set(did, { doc, at: Date.now() })
+  return doc
 }
 
 // Publish a signed document to a gateway (PUT /{suffix} with the raw payload).

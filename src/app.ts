@@ -5,7 +5,7 @@ import { isReaction, collectReactions } from './mail/reactions.ts'
 import { avatarDataUrl, groupCacheKey } from './deltachat/avatar.ts'
 import {
   sessions, addSession, setCurrentInbox, currentInbox, activeSession, sessionFor, sessionForRelay,
-  loadStoredAccounts, saveStoredAccounts, identityIds, relaysForId, identityKey, isApRelay,
+  loadStoredAccounts, saveStoredAccounts, identityIds, relaysForId, identityKey, isApRelay, isDidCommRelay,
 } from './context.ts'
 import { initSession } from './jmap/client.ts'
 import * as messages from './store/messages.ts'
@@ -21,7 +21,8 @@ import { deleteAllKeys } from './pgp/keys.ts'
 import { clearAll as clearLocalCache } from './store/cache.ts'
 import { loginViaEnvelope, authTokenToBasicAuth } from './cryptenv.ts'
 import { mailboxNameFromId } from './utils.ts'
-import { contactIdentityKey, allKnownAddressesFor } from './did/contacts.ts'
+import { contactIdentityKey, allKnownAddressesFor, shortDid } from './did/contacts.ts'
+import { displayNameFor } from './did/publish.ts'
 import type { ProcessedMessage } from './state.ts'
 
 export { loginViaEnvelope, authTokenToBasicAuth }
@@ -47,7 +48,7 @@ export function emailToMsg(email: Email, _selfAddr: string): ProcessedMessage['m
   const { id: groupId, name: groupName } = readGroupHeaders(email)
   return {
     from: (from?.email as string) ?? '',
-    from_name: (from?.name as string) || (from?.email as string) || '',
+    from_name: (from?.name as string) || '',
     body: body as string,
     subject: (email.subject as string) ?? '',
     ts: email.receivedAt ? new Date(email.receivedAt as string).getTime() : 0,
@@ -126,8 +127,16 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
       const body = (Object.values((email.bodyValues as any) ?? {}) as any[])[0]?.value as string ?? ''
       // Unread = an INCOMING message we haven't seen. Own sent mail never carries
       // $seen, so counting it would keep every conversation permanently unread.
+      // `userEmail`/`accountId` are both whichever RELAY address happened to be
+      // this identity's first session (see above) — a DIDComm message's own
+      // `from` is always this identity's DID instead, which never equals
+      // either for a relay-backed identity that also has DIDComm, so an own
+      // sent DIDComm message was misread as an incoming one from a stranger
+      // (wrongly unread, and — see isSent below — filed as if received FROM
+      // itself). Comparing against `identityId` (this loop's own DID) too
+      // covers the DIDComm case without disturbing the plain-relay one.
       const senderEmail = (email.from as any[])?.[0]?.email as string ?? ''
-      const isOwn = senderEmail === userEmail || senderEmail === accountId
+      const isOwn = senderEmail === userEmail || senderEmail === accountId || senderEmail === identityId
       const has_unread = !isOwn && !((email.keywords as any)?.['$seen'])
 
       if (groupId) {
@@ -168,7 +177,12 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
       const fromEmail = (email.from as any[])?.[0]?.email as string ?? ''
       const toEmails = ((email.to as any[]) ?? []).map((a: any) => a.email as string)
 
-      const isSent = fromEmail === userEmail || fromEmail === accountId
+      // Same DID-vs-relay-email gap as isOwn above — without identityId here,
+      // an own sent DIDComm message's `contact` became its OWN did (fromEmail,
+      // since isSent was wrongly false), producing an inbox row that pointed
+      // at itself instead of the actual recipient. mailbox and contact ending
+      // up identical (both this identity's own DID) is the exact symptom.
+      const isSent = fromEmail === userEmail || fromEmail === accountId || fromEmail === identityId
       const contact = isSent ? (toEmails[0] ?? '') : fromEmail
       if (!contact || !mbxName) continue
 
@@ -266,7 +280,14 @@ export function getInboxEmails(mailbox: string, contact: string, selfAddr: strin
 
     const fromEmail = (email.from as any[])?.[0]?.email as string ?? ''
     const toEmails = ((email.to as any[]) ?? []).map((a: any) => a.email as string)
-    const isSent = fromEmail === selfAddr
+    // `selfAddr` is whichever relay address fetchInboxMessages's activeSession()
+    // resolved to — a DIDComm message's own `from` is this identity's DID
+    // instead, which `selfAddr` alone never matches for a relay-backed
+    // identity that also has DIDComm (loadInboxSummaries' isSent has the
+    // exact same gap — see its note). `identity` is this call's DID (or
+    // email, for a DID-less relay), so it's the one comparison that works
+    // for both.
+    const isSent = fromEmail === selfAddr || fromEmail === identity
     const emailContact = isSent ? (toEmails[0] ?? '') : fromEmail
     // Match any address grouped under the same contact-DID as `contact` (not
     // just the literal address), so a merged inbox row (see loadInboxSummaries)
@@ -341,6 +362,23 @@ export async function jmapCreateEmail(
     ?? (senderEmail ? sessionFor(senderEmail) : null)
     ?? activeSession()
   if (!session) { console.warn('[send] fail: no active session'); return { ok: false } }
+
+  // A recipient addressed directly by DID (composed that way, or replying
+  // within a DIDComm-sourced conversation whose session IS the synthetic
+  // DIDComm one) sends over DIDComm instead of JMAP — regardless of which of
+  // the sender's OWN relays happens to be selected as "From": the sending
+  // identity is the same did:dht either way (DID⊥relay — one identity, many
+  // endpoints), so `session.account.did` is what to send AS, not which
+  // relay-session resolved. None of the mailbox/identity/PGP machinery below
+  // applies (no server mailbox to look up, no WKD/relay peer-key surface —
+  // DIDComm's own authcrypt already gives E2E confidentiality, the same
+  // reasoning isApRelay's PGP skip uses). `to[0]` is the recipient's did:dht
+  // string; cc/bcc/attachments aren't supported over this transport.
+  const toIsDid = to[0]?.startsWith('did:')
+  if ((isDidCommRelay(session.account.serverUrl) || toIsDid) && session.account.did) {
+    const { sendViaDidComm } = await import('./did/didcomm/channel.ts')
+    return await sendViaDidComm(session.account.did, to[0]!, body, subject)
+  }
 
   const { jmapClient: client, jmapAccountId: accountId } = session
 
@@ -430,6 +468,32 @@ export async function currentSenderEmail(): Promise<string> {
 export interface Sender { email: string; name: string }
 export function currentSenderSync(): Sender {
   const sess = activeSession()
+  // A DIDComm conversation's messages always carry a DID as `from` — never
+  // an email — but activeSession() picks WHICHEVER of this identity's
+  // sessions (mail/AP/DIDComm) happens to be first in sessions[], usually a
+  // relay session for a relay-backed identity that also has DIDComm. Every
+  // endpoint of one identity shares the same `.did`, so the SEND itself
+  // still worked either way — but the reply dock's optimistic pending stub
+  // (shell.ts's addPendingMessage) used this relay email as its `from`,
+  // which then never matched the DID `from` on the real message once it
+  // arrived (addMessage's stub-drop check is a strict equality on `from`).
+  // The stub was stuck at its dimmed pending opacity forever, correct
+  // delivery notwithstanding — using the DID here for a DIDComm
+  // conversation keeps the stub and the real message's `from` the same.
+  if (isDidCommRelay(currentInbox?.relay) && sess?.account.did) {
+    // `email` (the pending stub's `from`, matched exactly against the DID
+    // once the real message arrives) must stay the raw DID — see the note
+    // above. `name` is display-only and had no reason to be the same string:
+    // it was showing the full did:dht:… everywhere a name renders (the
+    // compose avatar initial, the pending bubble's sender label) right up
+    // until the real message arrived with its own from_name — same source
+    // sendViaDidComm (channel.ts) already resolves for that real message, so
+    // resolving it here too means the pending stub matches from the start
+    // instead of visibly changing once confirmed.
+    const did = sess.account.did
+    const name = displayNameFor(relaysForId(did).filter(s => !isDidCommRelay(s.account.serverUrl))) ?? shortDid(did)
+    return { email: did, name }
+  }
   const email = sess?.account.email ?? ''
   return { email, name: email.split('@')[0] }
 }

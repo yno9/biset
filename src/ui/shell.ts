@@ -1,4 +1,4 @@
-import { sessions, currentInbox, activeSession, accountKey, sessionForRelay, relaysFor, isApRelay } from '../context.ts'
+import { sessions, currentInbox, activeSession, accountKey, sessionForRelay, relaysFor, isApRelay, isDidCommRelay } from '../context.ts'
 import {
   processedMessages, renderedKeys,
   focusedThreadKey, setFocusedThreadKey,
@@ -384,12 +384,23 @@ export function startPolling() {
   _sseSources.forEach(s => { try { s.close() } catch {} })
   _sseSources.length = 0
   stopSync()
+  import('../did/didcomm/channel.ts').then(m => m.stopAllDidCommPolling())
   if (!sessions.length) return
 
   // Initial sync + UI refresh on completion
   startSync(sessions).then(() => { fetchMessages(); loadLeftInboxes() })
 
-  for (const session of sessions) connectSSE(session)
+  for (const session of sessions) {
+    // DIDComm sessions have no EventSource/JMAP session to poll this way
+    // (see sync/index.ts's start()) — Pickup 3.0 is pull-only, so they get
+    // their own interval loop instead (channel.ts's startDidCommPolling).
+    if (isDidCommRelay(session.account.serverUrl)) {
+      const did = session.account.did!
+      import('../did/didcomm/channel.ts').then(m => m.startDidCommPolling(did, () => { fetchMessages(); loadLeftInboxes() }))
+      continue
+    }
+    connectSSE(session)
+  }
 
   // Belt-and-suspenders for the reconnect above: a backgrounded/frozen tab's
   // JS (including the onerror handler and its setTimeout) doesn't get to run

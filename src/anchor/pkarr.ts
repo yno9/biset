@@ -150,9 +150,21 @@ export class PayloadStore {
  * gateway keeps knowing nothing about claims beyond this one question. */
 export type IsAnchored = (pubkey: Buffer) => boolean
 
+// A cold BEP44 get() is an iterative Kademlia lookup — several seconds is
+// normal, sometimes tens of — and every single client resolve (every DIDComm
+// send, every poll cycle's sender-key lookup) used to pay that in full, even
+// for the SAME key looked up moments earlier by a different client. Distinct
+// from `cache`/`store` below (which exist to re-announce OUR OWN identities,
+// deliberately gated on isAnchored to stay bounded): this is a short-lived
+// read-through cache for ANY key, ours or a stranger's, so it needs its own
+// size cap rather than inheriting that gate.
+const READ_CACHE_TTL_MS = 30_000
+const READ_CACHE_MAX = 2_000
+
 export class PkarrGateway {
   private dht: DHT
   private cache = new Map<string, Buffer>() // hex pubkey → last-seen payload, mirrored by store
+  private readCache = new Map<string, { payload: Buffer; at: number }>()
   private timer: ReturnType<typeof setInterval> | null = null
 
   private constructor(dht: DHT, private store: PayloadStore, private isAnchored: IsAnchored) {
@@ -192,8 +204,14 @@ export class PkarrGateway {
 
   /** Resolves a mutable record and returns the reassembled wire payload, or
    * null when the DHT has no such record (a stalled traversal is indistinguishable
-   * from absence here, and both mean "cannot answer"). */
+   * from absence here, and both mean "cannot answer"). Serves a fresh
+   * READ_CACHE_TTL_MS hit without touching the DHT at all — see the class's
+   * own note on why that hit rate matters in practice. */
   async get(pubkey: Buffer): Promise<Buffer | null> {
+    const hex = pubkey.toString('hex')
+    const hit = this.readCache.get(hex)
+    if (hit && Date.now() - hit.at < READ_CACHE_TTL_MS) return hit.payload
+
     const res = await new Promise<MutableResult | null>(resolve => {
       const t = setTimeout(() => resolve(null), GET_TIMEOUT_MS)
       this.dht.get(mutableTarget(pubkey), (err, r) => {
@@ -204,7 +222,20 @@ export class PkarrGateway {
     if (!res?.v) return null
     const payload = joinPayload(Buffer.from(res.sig), Number(res.seq), Buffer.from(res.v))
     this.remember(pubkey, payload)
+    this.rememberRead(hex, payload)
     return payload
+  }
+
+  /** Bounds `readCache` by eviction rather than a TTL sweep — a Map iterates
+   * in insertion order, so re-inserting on every write keeps the oldest entry
+   * first without a separate LRU structure. */
+  private rememberRead(hex: string, payload: Buffer): void {
+    this.readCache.delete(hex)
+    this.readCache.set(hex, { payload, at: Date.now() })
+    if (this.readCache.size > READ_CACHE_MAX) {
+      const oldest = this.readCache.keys().next().value
+      if (oldest !== undefined) this.readCache.delete(oldest)
+    }
   }
 
   /** Verifies a payload against pubkey and publishes it. Never signs — the
@@ -218,6 +249,7 @@ export class PkarrGateway {
     }
     await this.publish(pubkey, p)
     this.remember(pubkey, payload)
+    this.rememberRead(pubkey.toString('hex'), payload)
   }
 
   private async publish(pubkey: Buffer, p: WirePayload): Promise<void> {

@@ -1,4 +1,4 @@
-import { currentInbox, activeSession, relayInfoFor, isApRelay } from '../context.ts'
+import { currentInbox, activeSession, isApRelay, isDidCommRelay, relayProtocolLabel } from '../context.ts'
 import { contactIdentityKey, displayLabelFor } from '../did/contacts.ts'
 import {
   processedMessages, renderedKeys,
@@ -18,22 +18,16 @@ import { currentSenderSync } from '../app.ts'
 
 const threadVisibleCounts = new Map<string, number>()
 
-// Transport label for a conversation's origin relay (serverUrl). Uses the relay's
-// own advertised label/color (GET /relay-info, cached on connect) so biset stays
-// relay-agnostic; falls back to the subdomain until that fetch lands.
-function relayProtocolLabel(relay?: string): { text: string; color: string } | null {
-  if (!relay) return null
-  const info = relayInfoFor(relay)
-  if (info) return { text: info.label, color: info.color }
-  let sub = ''
-  try { sub = new URL(relay).hostname.split('.')[0].toLowerCase() } catch { return null }
-  if (sub === 'ap') return { text: 'AP', color: '#8b5cf6' }
-  if (sub === 'mail') return { text: 'Mail', color: '#64748b' }
-  return { text: sub.toUpperCase(), color: '#64748b' }
-}
-
 export function isMeMsg(from: string): boolean {
-  return from === activeSession()?.account.email || (!!activeSession()?.jmapAccountId && from === activeSession()?.jmapAccountId)
+  // A DIDComm message's `from` is always this identity's DID — never its
+  // account.email/jmapAccountId, which for a relay-backed identity that also
+  // has DIDComm is some relay address instead (activeSession() can resolve
+  // to any of that identity's sessions, not necessarily the DIDComm one).
+  // Same gap as app.ts's isSent/isOwn — own DIDComm messages read as not-me
+  // without this.
+  return from === activeSession()?.account.email
+    || (!!activeSession()?.jmapAccountId && from === activeSession()?.jmapAccountId)
+    || (!!activeSession()?.account.did && from === activeSession()?.account.did)
 }
 
 // RFC 9078 reactions (src/mail/reactions.ts) arrive as their own message,
@@ -231,6 +225,16 @@ export async function addMessage(msg: ProcessedMessage['msg']): Promise<boolean>
       el?.querySelector('.t-reactions')?.remove()
       if (msg.reactions?.length) el?.insertAdjacentHTML('beforeend', renderReactionsHtml(msg.reactions))
     }
+    // Same story as the edited-text case below, for the sender's display
+    // name: a DIDComm contact's doc.name resolves asynchronously, well after
+    // this bubble first rendered (channel.ts's pollDidCommOnce patches it in
+    // later) — without this, the raw DID this bubble opened with stuck around
+    // until a full reload rebuilt processedMessages from scratch.
+    if (existing && existing.msg.from_name !== msg.from_name) {
+      existing.msg.from_name = msg.from_name
+      const senderEl = document.querySelector(`.t-msg[data-message-id="${CSS.escape(existing.msg.message_id)}"] .t-sender`)
+      if (senderEl) senderEl.textContent = msg.from_name || displayLabelFor(existing.msg.from)
+    }
     // A Chat-Edit request overlays msg.body in app.ts's fetchInboxMessages —
     // collectEdits reruns on every fetch, so a message already on screen can
     // pick up new (or updated) edited text on a later poll. Without this, the
@@ -296,7 +300,12 @@ export function createMsgEl({ msg, bodyText, encrypted, unreadable, pending, att
   const display = unreadable
     ? `<span style="opacity:0.4;font-style:italic">Encrypted message</span>`
     : linkify(esc(stripQuoted(bodyText)))
-  const senderName = msg.from_name || msg.from
+  // displayLabelFor's fallback chain (name → shortened DID → literal address)
+  // — msg.from is a raw did:dht:... for a DIDComm sender whose name hasn't
+  // resolved yet (or one's own outgoing message, which never carries a name
+  // for itself); showing that unshortened is what broke the message bubble
+  // header. For anything else it's a no-op (returns the address unchanged).
+  const senderName = msg.from_name || displayLabelFor(msg.from)
   // DeltaChat avatar for the sender (works for group members too, unlike the
   // per-inbox avatar_url which only exists for 1:1 contacts).
   const senderAvatarURL = avatarDataUrl(msg.from)
@@ -868,10 +877,13 @@ export function render(smooth = false, keepScroll = false) {
     if (didBadge) {
       // DID pill (left of the protocol pill — prepended last, so it lands
       // leftmost): shown when this contact is reached via DID discovery
-      // (contacts.json has resolved a DID for them), not just the literal
-      // address — click to copy the DID.
+      // (contacts.json has resolved a DID for them) despite the conversation
+      // itself going out over mail/AP — a DID-mediated address is portable
+      // even though this particular transport isn't DIDComm. Suppressed when
+      // the conversation's own transport already IS DIDComm — #conv-via just
+      // showed the same "DID" pill for that, showing it twice is noise.
       const key = contact ? contactIdentityKey(contact) : ''
-      if (key.startsWith('did:')) {
+      if (key.startsWith('did:') && !isDidCommRelay(currentInbox?.relay)) {
         // The main conv-to text already shows the name (if any) — this badge
         // just marks "DID-mediated"; the tooltip/click still deal in the DID.
         didBadge.textContent = 'DID'

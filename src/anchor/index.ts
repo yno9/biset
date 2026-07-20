@@ -38,12 +38,14 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { CloudflareAnchor } from './cloudflare.ts'
 import { ClaimStore } from './store.ts'
-import { startAnchor } from './server.ts'
+import { startAnchor, type PkarrRef } from './server.ts'
 import { createMediator } from './mediator/server.ts'
 import { loadMediatorIdentity } from './mediator/identity.ts'
+import { ConnectionStore } from './mediator/connections.ts'
 import { PkarrGateway } from './pkarr.ts'
 import { zbase32Encode } from '../did/zbase32.ts'
-import { resolveVia, PUBLIC_PKARR_FALLBACKS } from '../did/resolver.ts'
+import { resolveVia, identityKeyFromDid, PUBLIC_PKARR_FALLBACKS, type DidDocument } from '../did/resolver.ts'
+import { parseSignedPayload } from '../did/packet.ts'
 
 interface Config {
   listen_addr: string
@@ -142,40 +144,80 @@ mkdirSync(dataDir, { recursive: true, mode: 0o700 })
 const claims = new ClaimStore(dataDir)
 console.log(`[anchor] indexed ${claims.rebuildIndex()} DID(s) from ${dataDir}`)
 
+// The gateway republishes only identities this anchor anchors — the registry is
+// the whole definition of "ours". A did:dht IS its public key, so the question
+// costs one encode and a map lookup.
+const isAnchored = (pubkey: Buffer) => claims.lookupByDid('did:dht:' + zbase32Encode(new Uint8Array(pubkey))).length > 0
+
+// A mutable slot, not an awaited value: PkarrGateway.start() joining the
+// Mainline DHT takes several seconds, and this used to be awaited BEFORE the
+// HTTP listener opened at all — meaning the entire anchor (mediator inbox,
+// claim registry, everything, not just /pkarr) was connection-refused for
+// that whole window on every single restart. server.ts's handlePkarr reads
+// this fresh on every request (see PkarrRef's own note), so the listener can
+// open immediately below while the DHT join happens in the background —
+// /pkarr answers a distinguishable 503 ("still starting") rather than either
+// a connection refusal or the misleading-forever 404 that meant "no such
+// identity" everywhere else it's used.
+const pkarrRef: PkarrRef = { starting: !!cfg.pkarr_gateway }
+
 // Resolve a did:dht peer's DIDComm key AT A SPECIFIC device's kid (e.g.
 // "did:dht:X#k2") from the DHT, so the mediator can authenticate relay-less
 // (did:dht) senders and encrypt replies to them — not just the self-
 // certifying did:peer it started with. Kid-aware because a relay-less
 // identity can have more than one registered device, each its own entry in
 // the document's keyAgreementKeys (document.ts's DidKeyAgreement note) — "the"
-// key for a bare DID would be ambiguous once there's more than one. Reads
-// through the public pkarr gateways (where relay-less clients publish),
-// verifying the record's signature against the DID's own key (resolveVia), so
-// a gateway can withhold but not forge.
+// key for a bare DID would be ambiguous once there's more than one.
+//
+// Tries this anchor's OWN DHT node first (in-process, no HTTP round trip, no
+// propagation lag) — it's the freshest possible source for a record a client
+// JUST published moments earlier via this same anchor's /pkarr, which a brand
+// new device key always is. Falls back to the public pkarr relays only if
+// this anchor has no DHT node of its own, or genuinely doesn't have it yet.
+// Was public-fallback-only, unconditionally, even though the anchor runs its
+// own DHT node right here — a client registering with a fresh device key
+// routinely failed mediate-request with "no such key on the DHT" simply
+// because relay.pkarr.org/pkarr.pubky.org hadn't caught up yet, despite the
+// record being available locally the whole time. Both paths verify the
+// record's signature against the DID's own key, so neither can forge, only
+// withhold.
 const resolveDidDht = async (did: string, kid: string): Promise<Uint8Array | null> => {
   const n = Number(kid.split('#k')[1])
   if (!Number.isFinite(n)) return null
   try {
-    const doc = (await resolveVia(did, PUBLIC_PKARR_FALLBACKS))?.document
+    let doc: DidDocument | undefined
+    if (pkarrRef.current) {
+      const pubkey = identityKeyFromDid(did)
+      const payload = await pkarrRef.current.get(Buffer.from(pubkey))
+      if (payload) {
+        try { doc = parseSignedPayload(pubkey, new Uint8Array(payload)).document } catch { /* bad sig — fall through to public gateways */ }
+      }
+    }
+    if (!doc) doc = (await resolveVia(did, PUBLIC_PKARR_FALLBACKS))?.document
     return doc?.keyAgreementKeys?.find(k => k.n === n)?.publicKey ?? null
   } catch { return null }
 }
 const mediator = cfg.mediator_url
-  ? createMediator({ mediator: loadMediatorIdentity(join(dataDir, 'mediator-identity.json'), cfg.mediator_url), resolveDidDht })
+  ? createMediator({
+      mediator: loadMediatorIdentity(join(dataDir, 'mediator-identity.json'), cfg.mediator_url),
+      connections: new ConnectionStore(join(dataDir, 'mediator-connections.json')),
+      resolveDidDht,
+    })
   : undefined
 if (mediator) console.log(`[anchor] DIDComm mediator at ${cfg.mediator_url} — ${mediator.mediatorDid}`)
 else console.log('[anchor] no mediator_url — registry only, no DIDComm mediation')
 
-// Started before listening: joining the DHT takes a moment, and answering
-// /pkarr with a 404 in the meantime would look to a client exactly like "this
-// identity does not exist" rather than "ask again shortly".
-// The gateway republishes only identities this anchor anchors — the registry is
-// the whole definition of "ours". A did:dht IS its public key, so the question
-// costs one encode and a map lookup.
-const isAnchored = (pubkey: Buffer) => claims.lookupByDid('did:dht:' + zbase32Encode(new Uint8Array(pubkey))).length > 0
-const pkarr = cfg.pkarr_gateway ? await PkarrGateway.start(dataDir, isAnchored) : undefined
-if (pkarr) console.log('[pkarr] gateway enabled — joined the Mainline DHT')
-else console.log('[pkarr] no pkarr_gateway — registry only, no DHT')
-
-startAnchor({ claims, cloudflare, port, hostname, mediator, pkarr, relayToken: cfg.relay_token })
+startAnchor({ claims, cloudflare, port, hostname, mediator, pkarr: pkarrRef, relayToken: cfg.relay_token })
 console.log(`[anchor] listening on ${cfg.listen_addr} (data: ${dataDir})`)
+
+if (cfg.pkarr_gateway) {
+  PkarrGateway.start(dataDir, isAnchored)
+    .then(g => {
+      pkarrRef.current = g
+      console.log('[pkarr] gateway enabled — joined the Mainline DHT')
+    })
+    .catch(e => console.error('[pkarr] failed to join the Mainline DHT:', e instanceof Error ? e.message : e))
+    .finally(() => { pkarrRef.starting = false })
+} else {
+  console.log('[pkarr] no pkarr_gateway — registry only, no DHT')
+}

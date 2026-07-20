@@ -11,19 +11,29 @@
 //   GET    /pkarr/<z-base-32 pubkey>                       → wire payload | 404
 //   PUT    /pkarr/<z-base-32 pubkey>   body = wire payload → 204 | 400
 //
-// **Every route is for this anchor's own relays. Nothing here answers a
-// stranger.** The registry had two read routes and neither had a caller: the
-// client never learns the anchor's URL, and asks DNS for address→DID precisely
-// so a stranger's operator does not learn who is looking them up
-// (src/did/discovery.ts). Their "public by design" rationale was inherited from
-// go-jmapserver's /identity/local, which existed for operational lookups by
-// hand — a question `grep` over identity.fp still answers, without a public
-// surface to defend. The mediator is the one thing here the world may talk to.
+// **The claim registry (/identity/*) is for this anchor's own relays only** —
+// naming a DID requires proving it (a relay_token Bearer), and the registry
+// had two read routes with no caller (a stranger's operator must not learn
+// who is looking them up — src/did/discovery.ts asks DNS instead). The
+// **Pkarr gateway (/pkarr/*) answers anyone** — see handlePkarr's own note on
+// why that's safe. The mediator is the other thing here the world may talk to.
 import type { ClaimStore } from './store.ts'
 import { CloudflareAnchor } from './cloudflare.ts'
 import { verifyDIDBinding, didPublicKey } from './didbind.ts'
 import type { MediatorHandler } from './mediator/server.ts'
 import type { PkarrGateway } from './pkarr.ts'
+
+/** A mutable slot rather than a plain value: joining the Mainline DHT takes a
+ * few seconds (PkarrGateway.start), and the HTTP listener used to wait for
+ * that before opening at all — meaning EVERY route here (not just /pkarr)
+ * was connection-refused for that whole window on every restart, including
+ * the mediator's `/` and `/.well-known/did.json`. index.ts now starts the
+ * listener immediately and fills this in once the DHT node is ready, so
+ * `handlePkarr` needs to read it fresh on every request rather than close
+ * over a value fixed at startAnchor's call time. `starting` distinguishes
+ * "still joining, retry shortly" (503) from "no pkarr_gateway configured at
+ * all" (404, permanent) — both look like `current` is unset. */
+export interface PkarrRef { current?: PkarrGateway; starting: boolean }
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { zbase32Decode } from '../did/zbase32.ts'
 
@@ -55,9 +65,9 @@ export interface AnchorOptions {
    * nothing on `/` and `/.well-known/did.json`, exactly as before it could
    * mediate at all. */
   mediator?: MediatorHandler
-  /** Absent when the DHT gateway is off — `/pkarr/*` then 404s, as it did
-   * before the anchor could serve it. */
-  pkarr?: PkarrGateway
+  /** Absent (or `current` unset) when the DHT gateway is off — `/pkarr/*`
+   * then 404s, as it did before the anchor could serve it. */
+  pkarr?: PkarrRef
   /** The secret this anchor's own relays present. Not optional: see index.ts. */
   relayToken: string
 }
@@ -91,16 +101,23 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
   // when it was never looked at.
   const forbidden = () => text('this anchor does not serve that relay', 403)
   // GET/PUT /pkarr/<z-base-32 pubkey> — the Pkarr relay surface browsers need
-  // (they cannot speak UDP). Clients reach it through their own relay, which
-  // proxies here: go-jmapserver used to run this itself, one DHT node per relay
-  // (ANCHOR.md decision 1).
+  // (they cannot speak UDP). Open to anyone, no Bearer/token gate: PUT is
+  // self-authenticating (pkarr.ts's own header note — the payload's signature
+  // is checked against the key named in the URL, so nobody can forge or
+  // overwrite a record they don't hold the key for, no matter who's asking),
+  // and this is exactly how the public fallback gateways this same client
+  // already trusts (relay.pkarr.org, pkarr.pubky.org) have always operated.
+  // Was gated behind this anchor's own relay_token (or, for relay-less
+  // clients with no relay to hold that secret, a separate pkarr_token minted
+  // at mediator registration) — that bought nothing safety-wise, since the
+  // signature check was already doing the actual work, and it coupled two
+  // unrelated services: a mediator registration became a prerequisite for
+  // DHT gateway access. republishAll (pkarr.ts) still only keeps OUR OWN
+  // claimed identities alive long-term (isAnchored gate), so a stranger's put
+  // costs one DHT announce, never ongoing pinning.
   async function handlePkarr(req: Request, url: URL): Promise<Response> {
-    if (!pkarr) return notFound()
-    // Relays only. Clients reach this through their own relay's /pkarr, which
-    // proxies here with the token — nobody else has a reason to, and an open
-    // gateway is both bandwidth anyone can spend and, per resolver.ts's privacy
-    // note, a view of strangers' lookups.
-    if (!fromOwnRelay(req)) return forbidden()
+    if (!pkarr?.current) return pkarr?.starting ? text('pkarr gateway still starting — retry shortly', 503) : notFound()
+    const gw = pkarr.current
     const key = url.pathname.slice('/pkarr/'.length)
     if (key === '' || key.includes('/')) return notFound()
     let pubkey: Buffer
@@ -111,14 +128,14 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
     }
     switch (req.method) {
       case 'GET': {
-        const payload = await pkarr.get(pubkey)
+        const payload = await gw.get(pubkey)
         if (!payload) return notFound()
         return new Response(payload, { status: 200, headers: { ...CORS, 'Content-Type': 'application/octet-stream' } })
       }
       case 'PUT': {
         const body = Buffer.from(await req.arrayBuffer())
         try {
-          await pkarr.put(pubkey, body)
+          await gw.put(pubkey, body)
         } catch (e) {
           // A bad signature and an unreachable DHT are both the caller's problem
           // to retry, and the Go gateway answered 400 to both. Keep that.
@@ -238,9 +255,9 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
         // to do this themselves (pkarr.Gateway.Forget, from the DID the client
         // put in the delete body); now that the gateway lives here, the anchor
         // knows the DID from its own claim and the client never has to say it.
-        if (releasedDid && pkarr) {
+        if (releasedDid && pkarr?.current) {
           const pk = didPublicKey(releasedDid)
-          if (pk) pkarr.forget(Buffer.from(pk))
+          if (pk) pkarr.current.forget(Buffer.from(pk))
         }
         // Best-effort, mirroring the claim path: the registry is the authority
         // and it has already let go, so a DNS failure must not fail the release

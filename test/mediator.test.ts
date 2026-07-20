@@ -56,8 +56,8 @@ const bob = generatePeerIdentity()
 const bobSender = { did: bob.did, xKid: bob.xKid, xPriv: bob.xPriv }
 
 console.log('\n=== Coordinate Mediation 2.0 ===')
-const routingDid = await requestMediation(info, aliceSender)
-ok('mediate-request → mediate-grant が routing_did を返す', routingDid === mediatorIdentity.did, `got ${routingDid}`)
+const grant = await requestMediation(info, aliceSender)
+ok('mediate-request → mediate-grant が routing_did を返す', grant.routingDid === mediatorIdentity.did, `got ${grant.routingDid}`)
 
 console.log('\n=== 未登録の宛先は拒否される（オープンリレー化の防止）===')
 {

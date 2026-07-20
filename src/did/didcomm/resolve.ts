@@ -26,6 +26,7 @@ function didDhtToPeerDidDocShape(doc: DidDocument): PeerDidDoc {
     keyAgreement,
     authentication: [`${doc.id}#k0`],
     verificationMethod,
+    name: doc.name,
     // Only DIDCommMessaging services belong in a DIDComm-resolved document —
     // a did:dht identity's other services (JMAPRelay etc.) aren't DIDComm
     // endpoints. Matters more than it looks: didcomm-node's Rust ServiceKind

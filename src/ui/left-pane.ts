@@ -1,5 +1,7 @@
-import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay } from '../context.ts'
+import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay, isDidCommRelay, relayProtocolLabel, DIDCOMM_SERVER_URL } from '../context.ts'
 import { standaloneDid } from '../did/create-standalone.ts'
+import { currentIdentityDid, ownGateways } from '../did/didcomm/channel.ts'
+import { resolve as resolveDidFull, PUBLIC_PKARR_FALLBACKS } from '../did/resolver.ts'
 import { getDidRecord } from '../did/store.ts'
 import {
   lastLeftInboxes, setLastLeftInboxes,
@@ -10,7 +12,7 @@ import {
   lastTs, groupMessages,
 } from '../state.ts'
 import { esc, formatTime, avatarStyle, inboxToHash, syncAppBadge, mailboxNameFromId, hexToBytes, expandDualRelay } from '../utils.ts'
-import { displayLabelFor } from '../did/contacts.ts'
+import { displayLabelFor, nameForContact, shortDid } from '../did/contacts.ts'
 import type { InboxSummary } from '../types.ts'
 import type { Email } from 'jmap-rfc-types'
 // Circular (safe — used only in function bodies):
@@ -36,10 +38,24 @@ import { newGroupId, isSecurejoinEmail, readGroupHeaders, isEdit } from '../delt
 import { isReaction } from '../mail/reactions.ts'
 import { newInviteUrl } from '../deltachat/securejoin.ts'
 import { enablePush, disablePush } from '../push/client.ts'
-import { renderDidcommDebugPage, onShowDidcommDebug } from './didcomm-debug.ts'
 
 // ── InboxSummary key ──────────────────────────────────────────────────────────
 function isk(i: InboxSummary): string { return i.user + '\0' + i.mailbox + '\0' + i.contact }
+
+// Resolves a DID's full document via the SAME gateway set the send path uses
+// (channel.ts's ownGateways — this browser's own relay /pkarr endpoints,
+// plus this identity's own mediator if it has a pkarr token, ahead of the
+// public Pkarr fallbacks). Shared by the compose To-field's DID pill lookup
+// and the #account page's own-document viewer — the latter used to
+// reimplement this a second way (relay-sessions-only, silently empty for a
+// relay-less identity, since it has no relay session to draw a /pkarr
+// gateway from at all), which is why a standalone identity's own #account
+// page permanently reported "No document found" despite the record
+// resolving fine everywhere else (own anchor, public gateways).
+async function resolveDidDocFull(did: string) {
+  const gateways = await ownGateways(currentIdentityDid())
+  return await resolveDidFull(did, [...gateways, ...PUBLIC_PKARR_FALLBACKS])
+}
 
 
 // ── Preview cache / decrypt ───────────────────────────────────────────────────
@@ -917,6 +933,15 @@ export function renderLeftInboxes(inboxes: InboxSummary[]) {
       a = newA
     } else {
       // (selected class removed — focus tracked via _lpFocusedKey / syncNavFocus)
+      // Contact name can resolve AFTER this row was first drawn (DIDComm's
+      // doc.name arrives async, patched into contactsStore well after the
+      // message itself renders — see channel.ts's pollDidCommOnce) — recompute
+      // it every pass rather than only at creation, so the raw DID a row was
+      // first drawn with doesn't survive until a full reload rebuilds it.
+      const contactLabel = item.inbox_type === 'group' ? (item.group_name || item.contact) : (item.contact && displayLabelFor(item.contact))
+      const $name = a.querySelector('.lp-name')
+      const rawName = contactLabel || item.mailbox
+      if ($name && $name.textContent !== rawName) $name.textContent = rawName
       const badge = a.querySelector('.unread-dot, .unread-badge')
       const badgeText = unread && item.unread_count ? (item.unread_count > 99 ? '99+' : String(item.unread_count)) : null
       if (!unread) {
@@ -1186,11 +1211,17 @@ export async function setupLeftPane() {
             regBtn!.disabled = true; regBtn!.textContent = 'Registering…'
             try {
               const { registerWithMediator } = await import('../did/create-standalone.ts')
-              await registerWithMediator(relayInput.value.trim())
+              const reg = await registerWithMediator(relayInput.value.trim())
               showSysMsg('Registered with mediator')
               const panel = document.getElementById('cmd-acc-panel'); if (panel) panel.style.display = 'none'
               resetAddAccountPanel()
               renderAccountsList()
+              // Wire the new channel into the same left/right column UI every
+              // other conversation uses (did/didcomm/channel.ts) — without
+              // this the mediator card would appear but no inbox would ever
+              // show DIDComm messages until the next full reload.
+              const { setupDidCommChannel } = await import('../did/didcomm/channel.ts')
+              await setupDidCommChannel(reg.own.did, () => { import('./shell.ts').then(s => s.fetchMessages()); loadLeftInboxes() })
             } catch (e) {
               regBtn!.disabled = false; regBtn!.textContent = 'Register with mediator'
               showSysMsg('Register failed: ' + (e instanceof Error ? e.message : String(e)), 8000)
@@ -1455,19 +1486,19 @@ export async function setupLeftPane() {
   function renderComposePage() {
     return `<div class="cmd-page-content compose-page">
       <div class="new-compose-card">
-        <div id="new-from-field" class="new-compose-field" style="align-items:center">
-          <span class="new-field-label">From</span>
-          <select id="new-from" class="new-field-input"></select>
-          <button id="new-invite-btn" class="cmd-page-btn" style="flex-shrink:0;padding:4px;background:none;border:none;box-shadow:none" title="Copy Invitation"><img src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9Im5vIj8+CjwhLS0gQ3JlYXRlZCB3aXRoIElua3NjYXBlIChodHRwOi8vd3d3Lmlua3NjYXBlLm9yZy8pIC0tPgoKPHN2ZwogICB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iCiAgIHhtbG5zOmNjPSJodHRwOi8vY3JlYXRpdmVjb21tb25zLm9yZy9ucyMiCiAgIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyIKICAgeG1sbnM6c3ZnPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICAgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIgogICB4bWxuczp4bGluaz0iaHR0cDovL3d3dy53My5vcmcvMTk5OS94bGluayIKICAgeG1sbnM6c29kaXBvZGk9Imh0dHA6Ly9zb2RpcG9kaS5zb3VyY2Vmb3JnZS5uZXQvRFREL3NvZGlwb2RpLTAuZHRkIgogICB4bWxuczppbmtzY2FwZT0iaHR0cDovL3d3dy5pbmtzY2FwZS5vcmcvbmFtZXNwYWNlcy9pbmtzY2FwZSIKICAgd2lkdGg9IjQ4cHgiCiAgIGhlaWdodD0iNDhweCIKICAgaWQ9InN2ZzI5ODUiCiAgIHZlcnNpb249IjEuMSIKICAgaW5rc2NhcGU6dmVyc2lvbj0iMC45MSByMTM3MjUiCiAgIHNvZGlwb2RpOmRvY25hbWU9ImRlbHRhLXY3LXBhdGhlZC5zdmciCiAgIGlua3NjYXBlOmV4cG9ydC1maWxlbmFtZT0iL2hvbWUvYnBldGVyc2VuL3Byb2plY3RzL21lc3Nlbmdlci1hbmRyb2lkL01lc3NlbmdlclByb2ovc3JjL21haW4vcmVzL2RyYXdhYmxlLXhoZHBpL2ljX2xhdW5jaGVyLnBuZyIKICAgaW5rc2NhcGU6ZXhwb3J0LXhkcGk9IjE4My44MyIKICAgaW5rc2NhcGU6ZXhwb3J0LXlkcGk9IjE4My44MyI+CiAgPGRlZnMKICAgICBpZD0iZGVmczI5ODciPgogICAgPGxpbmVhckdyYWRpZW50CiAgICAgICBpZD0ibGluZWFyR3JhZGllbnQ0NDA5Ij4KICAgICAgPHN0b3AKICAgICAgICAgc3R5bGU9InN0b3AtY29sb3I6I2Y5ZjlmOTtzdG9wLW9wYWNpdHk6MSIKICAgICAgICAgb2Zmc2V0PSIwIgogICAgICAgICBpZD0ic3RvcDQ0MTEiIC8+CiAgICAgIDxzdG9wCiAgICAgICAgIHN0eWxlPSJzdG9wLWNvbG9yOiNjY2NjY2M7c3RvcC1vcGFjaXR5OjA7IgogICAgICAgICBvZmZzZXQ9IjEiCiAgICAgICAgIGlkPSJzdG9wNDQxMyIgLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQKICAgICAgIGlkPSJsaW5lYXJHcmFkaWVudDQzOTkiPgogICAgICA8c3RvcAogICAgICAgICBzdHlsZT0ic3RvcC1jb2xvcjojZjlmOWY5O3N0b3Atb3BhY2l0eToxOyIKICAgICAgICAgb2Zmc2V0PSIwIgogICAgICAgICBpZD0ic3RvcDQ0MDEiIC8+CiAgICAgIDxzdG9wCiAgICAgICAgIHN0eWxlPSJzdG9wLWNvbG9yOiNmOWY5Zjk7c3RvcC1vcGFjaXR5OjA7IgogICAgICAgICBvZmZzZXQ9IjEiCiAgICAgICAgIGlkPSJzdG9wNDQwMyIgLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQKICAgICAgIGlkPSJsaW5lYXJHcmFkaWVudDQzNzUiPgogICAgICA8c3RvcAogICAgICAgICBzdHlsZT0ic3RvcC1jb2xvcjojMzY0ZTU5O3N0b3Atb3BhY2l0eToxOyIKICAgICAgICAgb2Zmc2V0PSIwIgogICAgICAgICBpZD0ic3RvcDQzNzciIC8+CiAgICAgIDxzdG9wCiAgICAgICAgIHN0eWxlPSJzdG9wLWNvbG9yOiMzNjRlNTk7c3RvcC1vcGFjaXR5OjA7IgogICAgICAgICBvZmZzZXQ9IjEiCiAgICAgICAgIGlkPSJzdG9wNDM3OSIgLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQKICAgICAgIGlkPSJsaW5lYXJHcmFkaWVudDQzNjciPgogICAgICA8c3RvcAogICAgICAgICBzdHlsZT0ic3RvcC1jb2xvcjojZGMwMDBmO3N0b3Atb3BhY2l0eToxOyIKICAgICAgICAgb2Zmc2V0PSIwIgogICAgICAgICBpZD0ic3RvcDQzNjkiIC8+CiAgICAgIDxzdG9wCiAgICAgICAgIHN0eWxlPSJzdG9wLWNvbG9yOiMwMGZmMDA7c3RvcC1vcGFjaXR5OjA7IgogICAgICAgICBvZmZzZXQ9IjEiCiAgICAgICAgIGlkPSJzdG9wNDM3MSIgLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQKICAgICAgIGlkPSJsaW5lYXJHcmFkaWVudDQzNTkiPgogICAgICA8c3RvcAogICAgICAgICBzdHlsZT0ic3RvcC1jb2xvcjojZGMwMDBmO3N0b3Atb3BhY2l0eToxOyIKICAgICAgICAgb2Zmc2V0PSIwIgogICAgICAgICBpZD0ic3RvcDQzNjEiIC8+CiAgICAgIDxzdG9wCiAgICAgICAgIHN0eWxlPSJzdG9wLWNvbG9yOiMwMDAwMDA7c3RvcC1vcGFjaXR5OjA7IgogICAgICAgICBvZmZzZXQ9IjEiCiAgICAgICAgIGlkPSJzdG9wNDM2MyIgLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQKICAgICAgIGlua3NjYXBlOmNvbGxlY3Q9ImFsd2F5cyIKICAgICAgIHhsaW5rOmhyZWY9IiNsaW5lYXJHcmFkaWVudDQzNzUiCiAgICAgICBpZD0ibGluZWFyR3JhZGllbnQ0MzgxIgogICAgICAgeDE9IjMxLjk1NzI2OCIKICAgICAgIHkxPSIyOS43NTE0OTMiCiAgICAgICB4Mj0iLTQ1LjA0MTQwNSIKICAgICAgIHkyPSItMTguNTkxNjE2IgogICAgICAgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiCiAgICAgICBncmFkaWVudFRyYW5zZm9ybT0ibWF0cml4KDAuOTM3NjYzOTMsMCwwLDAuOTM3NjYzOTMsMS41NDI1NjYsMS43MTk5NjkzKSIgLz4KICAgIDxsaW5lYXJHcmFkaWVudAogICAgICAgaW5rc2NhcGU6Y29sbGVjdD0iYWx3YXlzIgogICAgICAgeGxpbms6aHJlZj0iI2xpbmVhckdyYWRpZW50NDQwOSIKICAgICAgIGlkPSJsaW5lYXJHcmFkaWVudDQ0MTUiCiAgICAgICB4MT0iMTYuMzQ1MTI1IgogICAgICAgeTE9IjMuODM4ODk0OCIKICAgICAgIHgyPSIzNi4wMDE1NjEiCiAgICAgICB5Mj0iMjQuMzU5MTY0IgogICAgICAgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiIC8+CiAgPC9kZWZzPgogIDxzb2RpcG9kaTpuYW1lZHZpZXcKICAgICBpZD0iYmFzZSIKICAgICBwYWdlY29sb3I9IiNmZmZmZmYiCiAgICAgYm9yZGVyY29sb3I9IiM2NjY2NjYiCiAgICAgYm9yZGVyb3BhY2l0eT0iMS4wIgogICAgIGlua3NjYXBlOnBhZ2VvcGFjaXR5PSIwLjAiCiAgICAgaW5rc2NhcGU6cGFnZXNoYWRvdz0iMiIKICAgICBpbmtzY2FwZTp6b29tPSI5Ljg5OTQ5NDkiCiAgICAgaW5rc2NhcGU6Y3g9IjEuOTU0Nzk3OCIKICAgICBpbmtzY2FwZTpjeT0iMjguMDAwMjMyIgogICAgIGlua3NjYXBlOmN1cnJlbnQtbGF5ZXI9ImxheWVyMSIKICAgICBzaG93Z3JpZD0idHJ1ZSIKICAgICBpbmtzY2FwZTpncmlkLWJib3g9InRydWUiCiAgICAgaW5rc2NhcGU6ZG9jdW1lbnQtdW5pdHM9InB4IgogICAgIGlua3NjYXBlOnNuYXAtZ2xvYmFsPSJmYWxzZSIKICAgICBpbmtzY2FwZTpzbmFwLWJib3g9InRydWUiCiAgICAgaW5rc2NhcGU6YmJveC1ub2Rlcz0idHJ1ZSIKICAgICBpbmtzY2FwZTpiYm94LXBhdGhzPSJ0cnVlIgogICAgIGlua3NjYXBlOnNuYXAtYmJveC1lZGdlLW1pZHBvaW50cz0idHJ1ZSIKICAgICBpbmtzY2FwZTp3aW5kb3ctd2lkdGg9IjE1NDMiCiAgICAgaW5rc2NhcGU6d2luZG93LWhlaWdodD0iODc2IgogICAgIGlua3NjYXBlOndpbmRvdy14PSI1NyIKICAgICBpbmtzY2FwZTp3aW5kb3cteT0iMjQiCiAgICAgaW5rc2NhcGU6d2luZG93LW1heGltaXplZD0iMSIgLz4KICA8bWV0YWRhdGEKICAgICBpZD0ibWV0YWRhdGEyOTkwIj4KICAgIDxyZGY6UkRGPgogICAgICA8Y2M6V29yawogICAgICAgICByZGY6YWJvdXQ9IiI+CiAgICAgICAgPGRjOmZvcm1hdD5pbWFnZS9zdmcreG1sPC9kYzpmb3JtYXQ+CiAgICAgICAgPGRjOnR5cGUKICAgICAgICAgICByZGY6cmVzb3VyY2U9Imh0dHA6Ly9wdXJsLm9yZy9kYy9kY21pdHlwZS9TdGlsbEltYWdlIiAvPgogICAgICAgIDxkYzp0aXRsZT48L2RjOnRpdGxlPgogICAgICA8L2NjOldvcms+CiAgICA8L3JkZjpSREY+CiAgPC9tZXRhZGF0YT4KICA8ZwogICAgIGlkPSJsYXllcjEiCiAgICAgaW5rc2NhcGU6bGFiZWw9IkxheWVyIDEiCiAgICAgaW5rc2NhcGU6Z3JvdXBtb2RlPSJsYXllciI+CiAgICA8cGF0aAogICAgICAgc3R5bGU9ImZpbGw6I2ZmZmZmZjtmaWxsLW9wYWNpdHk6MTtzdHJva2U6IzAwMDAwMDtzdHJva2Utd2lkdGg6MC41NzQwNTA3ODtzdHJva2UtbGluZWpvaW46cm91bmQ7c3Ryb2tlLW1pdGVybGltaXQ6NDtzdHJva2UtZGFzaGFycmF5Om5vbmU7c3Ryb2tlLW9wYWNpdHk6MC40MzkyMTU2OSIKICAgICAgIGQ9Im0gMjQuMDE1NDE5LDEuMjg3MDI0OSBjIC0xMi41NDk0MjEsMCAtMjIuNzI4MzkzNiwxMC4xNzg5NzExIC0yMi43MjgzOTM2LDIyLjcyODM5MzEgMCwxMi41NDk0MjIgMTAuMTc4OTcyNiwyMi43MjgzOTUgMjIuNzI4MzkzNiwyMi43MjgzOTUgMTQuMzM3NzQyLC0wLjM0Mjg3NyA5LjYxNDM1MiwtNC43MDI3MDUgMjMuNjk3NTU2LDAuOTY5MTYxIC03LjU0NTQ1MywtMTMuMDAxNTU1IC0xLjA4Mjk3MywtMTMuMzI5NjQgLTAuOTY5MTYxLC0yMy42OTc1NTYgMCwtMTIuNTQ5NDIyIC0xMC4xNzg5NzMsLTIyLjcyODM5MzEgLTIyLjcyODM5NSwtMjIuNzI4MzkzMSB6IgogICAgICAgaWQ9InBhdGgzNzY5IgogICAgICAgaW5rc2NhcGU6Y29ubmVjdG9yLWN1cnZhdHVyZT0iMCIKICAgICAgIHNvZGlwb2RpOm5vZGV0eXBlcz0ic3NjY2NzIiAvPgogICAgPHBhdGgKICAgICAgIGlua3NjYXBlOmNvbm5lY3Rvci1jdXJ2YXR1cmU9IjAiCiAgICAgICBpZD0icGF0aDM3OTkiCiAgICAgICBkPSJNIDIzLjk4MjI0OSw1LjMxMDYxNjMgQyAxMy42NDU4MjIsNS40MzY0MDA1IDUuMjYxODM1NSwxMy45Mjk5OSA1LjI2MTgzNTUsMjQuMjc1NzUzIGMgMCwxMC4zNDU3NjQgOC4zODM5ODY1LDE4LjYzNTMwMSAxOC43MjA0MTM1LDE4LjUwOTUxNiA5LjgyNzcyNCwtMC4wMzk1MSA3LjUxNjc2OSwtNS40ODk2OTUgMTguMzgwMDgyLC0wLjQ0MzE4NyAtNS45NTA4NDksLTkuMjk2MTE1IDAuMjAxNzUzLC0xMC41MzM2NjcgMC4zNDAzMzYsLTE4LjUyMTk0NyAwLC0xMC4zNDU3NjYgLTguMzgzOTg5LC0xOC42MzUzMDMxIC0xOC43MjA0MTgsLTE4LjUwOTUxODcgeiIKICAgICAgIHN0eWxlPSJmaWxsOnVybCgjbGluZWFyR3JhZGllbnQ0MzgxKTtmaWxsLW9wYWNpdHk6MTtzdHJva2U6bm9uZSIKICAgICAgIHNvZGlwb2RpOm5vZGV0eXBlcz0ic3NjY2NzIiAvPgogICAgPGcKICAgICAgIHN0eWxlPSJmb250LXN0eWxlOm5vcm1hbDtmb250LXdlaWdodDpub3JtYWw7Zm9udC1zaXplOjQwcHg7bGluZS1oZWlnaHQ6MTI1JTtmb250LWZhbWlseTpTYW5zO2xldHRlci1zcGFjaW5nOjBweDt3b3JkLXNwYWNpbmc6MHB4O2ZpbGw6IzAwMDAwMDtmaWxsLW9wYWNpdHk6MTtzdHJva2U6bm9uZSIKICAgICAgIGlkPSJ0ZXh0NDM4MyIgLz4KICAgIDxnCiAgICAgICBzdHlsZT0iZm9udC1zdHlsZTpub3JtYWw7Zm9udC13ZWlnaHQ6bm9ybWFsO2ZvbnQtc2l6ZTo0MHB4O2xpbmUtaGVpZ2h0OjEyNSU7Zm9udC1mYW1pbHk6U2FucztsZXR0ZXItc3BhY2luZzowcHg7d29yZC1zcGFjaW5nOjBweDtmaWxsOiMwMDAwMDA7ZmlsbC1vcGFjaXR5OjE7c3Ryb2tlOm5vbmUiCiAgICAgICBpZD0idGV4dDQ0MjEiIC8+CiAgICA8ZwogICAgICAgdHJhbnNmb3JtPSJzY2FsZSgxLjExMjIzNzMsMC44OTkwODg3NCkiCiAgICAgICBzdHlsZT0iZm9udC1zdHlsZTpub3JtYWw7Zm9udC13ZWlnaHQ6bm9ybWFsO2ZvbnQtc2l6ZTo0Mi4xMDU4NzMxMXB4O2xpbmUtaGVpZ2h0OjEyNSU7Zm9udC1mYW1pbHk6U2FucztsZXR0ZXItc3BhY2luZzowcHg7d29yZC1zcGFjaW5nOjBweDtmaWxsOiNmZmZmZmY7ZmlsbC1vcGFjaXR5OjE7c3Ryb2tlOm5vbmUiCiAgICAgICBpZD0idGV4dDM3OTciPgogICAgICA8cGF0aAogICAgICAgICBkPSJtIDIxLjY4ODg1NCwyMy42MzYyNTEgcSAtMS4wMjc5NzUsLTEuMTUxMzMzIC0yLjg1Nzc3MSwtMi43NTQ5NzQgLTIuMDE0ODMyLC0xLjc2ODExOCAtMi43MTM4NTUsLTIuNzc1NTM0IC0wLjY5OTAyNCwtMS4wMjc5NzUgLTAuNjk5MDI0LC0yLjI0MDk4NiAwLC0xLjgwOTIzNyAxLjY4NTg4LC0yLjgzNzIxMiAxLjY4NTg4LC0xLjA0ODUzNSA0LjM5OTczNSwtMS4wNDg1MzUgMi43MTM4NTUsMCA0LjcyODY4NywwLjkyNTE3OCAyLjAzNTM5MSwwLjkyNTE3NyAyLjAzNTM5MSwyLjU0OTM3OSAwLDAuNzgxMjYxIC0wLjQ5MzQyOCwxLjI5NTI0OSAtMC40OTM0MjgsMC41MTM5ODcgLTEuMTUxMzMzLDAuNTEzOTg3IC0wLjk0NTczNywwIC0yLjIyMDQyNiwtMS40MTg2MDYgLTEuMjk1MjQ5LC0xLjQzOTE2NSAtMi4xOTk4NjgsLTIuMDE0ODMyIC0wLjg4NDA1OSwtMC41OTYyMjUgLTIuMDc2NTEsLTAuNTk2MjI1IC0xLjUyMTQwNCwwIC0yLjUwODI2LDAuNjc4NDYzIC0wLjk2NjI5NywwLjY3ODQ2NCAtMC45NjYyOTcsMS43MjY5OTkgMCwwLjk4Njg1NyAwLjgwMTgyMSwxLjg1MDM1NiAwLjgwMTgyMSwwLjg2MzQ5OSA0LjEzMjQ2MSwzLjE0NTYwNSAzLjU1Njc5NSwyLjQ0NjU4MSA1LjAxNjUyLDMuODI0MDY4IDEuNDgwMjg1LDEuMzc3NDg3IDIuNDA1NDYyLDMuMzUxMiAwLjkyNTE3OCwxLjk3MzcxMyAwLjkyNTE3OCw0LjE3MzU4IDAsMy44NjUxODggLTIuNzM0NDE0LDYuODI1NzU3IC0yLjcxMzg1NSwyLjk0MDAxIC02LjM1Mjg4OCwyLjk0MDAxIC0zLjMxMDA4MSwwIC01LjU5MjE4NywtMi4zNjQzNDQgLTIuMjgyMTA1LC0yLjM2NDM0MyAtMi4yODIxMDUsLTYuMzExNzY5IDAsLTMuODAzNTA5IDIuNTA4MjYsLTYuMzUyODg4IDIuNTI4ODE5LC0yLjU0OTM3OSA2LjIwODk3MSwtMy4wODM5MjYgeiBtIDAuOTA0NjE5LDAuOTQ1NzM3IHEgLTUuOTAwNTc5LDAuOTY2Mjk3IC01LjkwMDU3OSw4LjEwMDQ0NyAwLDMuNjgwMTUyIDEuNDU5NzI1LDUuNzE1NTQzIDEuNDgwMjg1LDIuMDM1MzkxIDMuNDMzNDM4LDIuMDM1MzkxIDIuMDM1MzkxLDAgMy4zNTEyLC0xLjk1MzE1MyAxLjMxNTgwOCwtMS45NzM3MTMgMS4zMTU4MDgsLTUuMzI0OTEzIDAsLTQuODUyMDQ0IC0zLjY1OTU5MiwtOC41NzMzMTUgeiIKICAgICAgICAgc3R5bGU9ImZvbnQtZmFtaWx5OidUaW1lcyBOZXcgUm9tYW4nOy1pbmtzY2FwZS1mb250LXNwZWNpZmljYXRpb246J1RpbWVzIE5ldyBSb21hbic7ZmlsbDojZmZmZmZmO2ZpbGwtb3BhY2l0eToxIgogICAgICAgICBpZD0icGF0aDQxNjEiIC8+CiAgICA8L2c+CiAgPC9nPgo8L3N2Zz4K" width="20" height="20" alt="DeltaChat" style="display:block"></button>
-        </div>
         <div class="new-compose-field">
           <div id="new-recipients" class="new-recipients-list">
             <div class="new-recipient-row" data-kind="to">
               <span class="new-field-label">To</span>
+              <span class="new-recip-protos"></span>
               <input class="new-field-input" type="email" placeholder="recipient@example.com" autocomplete="off">
               <button id="new-add-btn" class="new-compose-add-btn" tabindex="-1" style="font-size:18px;padding:0 4px;line-height:1">+</button>
             </div>
           </div>
+        </div>
+        <div id="new-from-field" class="new-compose-field" style="align-items:center">
+          <span class="new-field-label">From</span>
+          <button type="button" id="new-from" class="new-field-input new-from-btn"></button>
         </div>
         <div id="new-title-field" class="new-compose-field">
           <span id="new-title-label" class="new-field-label">Subject</span>
@@ -1490,16 +1521,113 @@ export async function setupLeftPane() {
             </button>
           </div>
         </div>
-        <div id="new-invite-out" class="new-compose-field" style="display:none">
-          <input id="new-invite-url" class="new-field-input" readonly onclick="this.select()">
-        </div>
       </div>
     </div>`
   }
 
-  function onShowNew() {
+  async function onShowNew() {
     const recipientsDiv = document.getElementById('new-recipients')!
     const addBtn = document.getElementById('new-add-btn')
+
+    // A DIDComm-registered identity's synthetic session (did/didcomm/channel.ts)
+    // may not exist in sessions[] yet — main.ts registers it fire-and-forget
+    // (best-effort, non-blocking) for a relay-backed identity that ALSO has
+    // DIDComm, so a compose opened moments after boot can race it. Actively
+    // check+register here instead of passively trusting sessions[]'s current
+    // contents, so the From selector never silently omits (or, worse, ends up
+    // entirely empty for) the one identity a relay-less user actually has.
+    let ownChannelDid: string | null = null
+    {
+      const did = currentIdentityDid()
+      if (did) {
+        const { hasDidCommChannel, ensureDidCommSession } = await import('../did/didcomm/channel.ts')
+        if (await hasDidCommChannel(did)) { ensureDidCommSession(did); ownChannelDid = did } // idempotent — no-op if already registered
+      }
+    }
+
+    // ── Per-recipient protocol options ──────────────────────────────────────
+    // A recipient row can have MULTIPLE viable delivery protocols — an email
+    // address might also be a discoverable ActivityPub actor and/or have a DID
+    // anchor; a did: address might advertise mail/AP endpoints in its own
+    // document. Each option carries the EFFECTIVE address to send to for that
+    // protocol (an AP/mail address discovered off a DID's document, or the DID
+    // itself when an email turns out to have one) — never resolved
+    // automatically into the compose, only offered as a click-to-pick pill
+    // (see request history: auto-redirecting a typed DID to a resolved email
+    // was explicitly the wrong behavior).
+    type Proto = 'mail' | 'ap' | 'did'
+    interface ProtoOption { protocol: Proto; address: string }
+    const PROTO_COLOR: Record<Proto, string> = { mail: '#64748b', ap: '#8b5cf6', did: '#0ea5e9' }
+    const PROTO_TEXT: Record<Proto, string> = { mail: 'Mail', ap: 'AP', did: 'DID' }
+    const rowProtoOptions = new WeakMap<HTMLElement, ProtoOption[]>()
+    const rowProtoSelected = new WeakMap<HTMLElement, Proto>()
+    const rowProtoManual = new WeakSet<HTMLElement>() // user explicitly clicked a pill — stop auto-switching it
+    const rowEffective = (row: HTMLElement): ProtoOption | undefined => {
+      const opts = rowProtoOptions.get(row) ?? []
+      const sel = rowProtoSelected.get(row)
+      return opts.find(o => o.protocol === sel) ?? opts[0]
+    }
+    const rowProtosEl = (row: HTMLElement): HTMLElement => {
+      let el = row.querySelector<HTMLElement>('.new-recip-protos')
+      if (!el) {
+        el = document.createElement('span')
+        el.className = 'new-recip-protos'
+        row.querySelector('.new-field-label')?.after(el)
+      }
+      return el
+    }
+    const renderRowProtos = (row: HTMLElement) => {
+      const el = rowProtosEl(row)
+      el.innerHTML = ''
+      const opts = rowProtoOptions.get(row) ?? []
+      const sel = rowProtoSelected.get(row)
+      for (const o of opts) {
+        const b = document.createElement('span')
+        b.textContent = PROTO_TEXT[o.protocol]
+        const isSel = o.protocol === sel
+        b.style.cssText = `font-size:10px;font-weight:700;color:#fff;border-radius:4px;padding:1px 5px;margin-right:6px;flex-shrink:0;cursor:pointer;user-select:none;background:${isSel ? PROTO_COLOR[o.protocol] : 'rgba(128,128,128,0.4)'}`
+        b.title = isSel ? `Sending via ${PROTO_TEXT[o.protocol]}` : `Click to send via ${PROTO_TEXT[o.protocol]} instead`
+        b.addEventListener('click', e => {
+          e.stopPropagation()
+          rowProtoManual.add(row)
+          rowProtoSelected.set(row, o.protocol)
+          renderRowProtos(row)
+          // Show what's actually being sent to, not just what was typed — a
+          // DID row that toggled to [Mail]/[AP] displays the mail/AP address
+          // its own document claimed for that protocol, not the raw DID.
+          const inp = row.querySelector<HTMLInputElement>('.new-field-input')
+          if (inp) inp.value = o.address
+          syncFromRequirement()
+        })
+        el.append(b)
+      }
+    }
+    // `forcedDefault`, when its protocol is present in `opts`, wins UNLESS the
+    // user already manually picked something for this row (rowProtoManual) —
+    // this is what lets "AP just got confirmed" flip the default from mail to
+    // AP (matching the old auto-on AP badge) while never overriding an
+    // explicit click, and never hijacking a DID row's default away from `did`
+    // just because its document also advertises a mail/AP fallback.
+    const setRowProtoOptions = (row: HTMLElement, opts: ProtoOption[], forcedDefault?: Proto) => {
+      rowProtoOptions.set(row, opts)
+      const current = rowProtoSelected.get(row)
+      const manual = rowProtoManual.has(row) && current && opts.some(o => o.protocol === current)
+      let next: Proto | undefined
+      if (manual) next = current
+      else if (forcedDefault && opts.some(o => o.protocol === forcedDefault)) next = forcedDefault
+      else if (current && opts.some(o => o.protocol === current)) next = current
+      else next = opts[0]?.protocol
+      if (next) rowProtoSelected.set(row, next); else rowProtoSelected.delete(row)
+      renderRowProtos(row)
+      syncFromRequirement()
+    }
+    const clearRowProtos = (row: HTMLElement) => {
+      rowProtoOptions.delete(row)
+      rowProtoSelected.delete(row)
+      rowProtoManual.delete(row)
+      renderRowProtos(row)
+      syncFromRequirement()
+    }
 
     // Unified compose: no Message/Group toggle. Each recipient row is tagged
     // To/Cc/Bcc; the "+" button chooses which to add. 2+ visible recipients
@@ -1513,7 +1641,7 @@ export async function setupLeftPane() {
       for (const row of recipientsDiv.querySelectorAll<HTMLElement>('.new-recipient-row')) {
         const v = row.querySelector<HTMLInputElement>('.new-field-input')?.value.trim()
         if (!v) continue
-        out[(row.dataset.kind as Kind) ?? 'to'].push(v)
+        out[(row.dataset.kind as Kind) ?? 'to'].push(rowEffective(row)?.address ?? v)
       }
       return out
     }
@@ -1526,21 +1654,216 @@ export async function setupLeftPane() {
       if (inp) inp.placeholder = g ? 'Group name' : '(no subject)'
     }
 
-    // Populate the "From" account selector; hide the row when there's nothing
-    // to choose (0–1 accounts) so it doesn't add noise to the common case.
-    const fromSel = document.getElementById('new-from') as HTMLSelectElement | null
-    if (fromSel) {
+    // "From" is a CUSTOM dropdown, not a native <select>: each option needs
+    // the exact protocol pill (colored [Mail]/[AP]/[DID] badge) the To field
+    // and conversation header use — and a native <option> can't host a styled
+    // child element, only plain text. The trigger button shows the selected
+    // "<pill> address", and clicking it opens a menu of the same rows.
+    //
+    // One row per SESSION, not per unique email — a relay-backed identity's
+    // mail and ActivityPub accounts share the same address but are genuinely
+    // different endpoints (different server, different credentials), so both
+    // are pickable; the DIDComm endpoint's "address" is the DID itself.
+    const fromBtn = document.getElementById('new-from') as HTMLButtonElement | null
+    type FromOption = { email: string; serverUrl: string }
+    let fromOptions: FromOption[] = []
+    let fromSelectedIdx = 0
+    // Middle-ellipsis by ACTUAL rendered layout, not canvas font guessing:
+    // shrink `span`'s text until `container` (the pill + this span in a flex
+    // row, `overflow:hidden`) stops overflowing — measured via the browser's
+    // own scrollWidth/clientWidth, so it's exact regardless of font load
+    // timing or how wide the field ends up. Produces exactly one `…`.
+    // Cheap (a handful of iterations, only when the text overflows) and safe
+    // to re-run on resize. The container must already be laid out; callers
+    // append it (or it's on-screen) before calling.
+    const fitMiddleEllipsis = (container: HTMLElement, span: HTMLElement, full: string) => {
+      span.textContent = full
+      if (container.scrollWidth <= container.clientWidth) return
+      let lo = 1, hi = full.length - 1
+      const at = (n: number) => {
+        const head = Math.ceil(n / 2)
+        span.textContent = full.slice(0, head) + '…' + full.slice(full.length - (n - head))
+      }
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2)
+        at(mid)
+        if (container.scrollWidth <= container.clientWidth) lo = mid; else hi = mid - 1
+      }
+      at(lo)
+    }
+    // The shared protocol pill (same style as thread.ts's #conv-via and the
+    // recipient AP badge): colored background, white text, to the LEFT of the
+    // address. relayProtocolLabel (context.ts) is the single source of the
+    // transport's text + color.
+    const protoPill = (serverUrl: string): HTMLElement | null => {
+      const lbl = relayProtocolLabel(serverUrl)
+      if (!lbl) return null
+      const s = document.createElement('span')
+      s.textContent = lbl.text
+      s.style.cssText = `font-size:10px;font-weight:700;color:#fff;background:${lbl.color};border-radius:4px;padding:1px 5px;margin-right:6px;flex-shrink:0`
+      return s
+    }
+
+    // ── DID display: name + fixed short form ────────────────────────────────
+    // A DID is far too long to show whole, and (unlike an email) middle-
+    // ellipsizing it to the field width gives a shape that jumps around with
+    // layout. shortDid (did/contacts.ts — shared with the inbox list and
+    // thread header, not reimplemented here) keeps the did:method: prefix
+    // plus just the first/last 3 chars: did:dht:6oi…b7x. When the DID
+    // document advertises a name, prepend it: "y / did:dht:6oi…b7x".
+    const didNames = new Map<string, string>() // did -> resolved self-asserted name
+    const didNameTried = new Set<string>()
+    const didDisplayText = (did: string): string => {
+      const n = didNames.get(did)
+      return n ? `${n} / ${shortDid(did)}` : shortDid(did)
+    }
+    // Fill in a DID's display name (local Card first — no network — then a
+    // document resolve), re-rendering the From button once it lands.
+    const ensureDidName = (did: string) => {
+      if (didNameTried.has(did)) return
+      didNameTried.add(did)
+      const local = nameForContact(did)
+      if (local) { didNames.set(did, local); renderFromButton(); return }
+      resolveDidDocFull(did).then(doc => {
+        const nm = (doc as any)?.name as string | undefined
+        if (nm) { didNames.set(did, nm); renderFromButton() }
+      }).catch(() => {})
+    }
+
+    const renderFromButton = () => {
+      if (!fromBtn) return
+      fromBtn.innerHTML = ''
+      const o = fromOptions[fromSelectedIdx]
+      if (!o) return
+      const pill = protoPill(o.serverUrl)
+      if (pill) fromBtn.append(pill)
+      const addr = document.createElement('span')
+      addr.className = 'from-addr'
+      addr.style.cssText = 'white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis'
+      fromBtn.append(addr)
+      if (o.serverUrl === DIDCOMM_SERVER_URL || o.email.startsWith('did:')) {
+        addr.textContent = didDisplayText(o.email) // fixed short form, no width-fit
+        ensureDidName(o.email)
+      } else {
+        fitMiddleEllipsis(fromBtn, addr, o.email)
+      }
+      // Dim if the SELECTED option doesn't match what the To field requires —
+      // syncFromRequirement already tries to hop off a disallowed selection
+      // first; this only shows when no alternative exists to hop to.
+      const allowed = fromOptionAllowed(o, requiredFromProto())
+      addr.style.opacity = allowed ? '1' : DISABLED_OPACITY
+      if (pill) pill.style.opacity = allowed ? '1' : DISABLED_OPACITY
+    }
+
+    // ── From⇄To protocol match ──────────────────────────────────────────────
+    // A message goes out over exactly ONE transport, decided by the From
+    // endpoint: [Mail]→SMTP, [AP]→ActivityPub, [DID]→DIDComm. The FIRST filled
+    // recipient's currently-selected protocol pill (see the To-field protocol
+    // pills below) narrows which From endpoints are even choosable — a
+    // non-matching From option is dimmed AND actually disabled, not just
+    // visually muted, so there's no way to end up with a From/To mismatch at
+    // send time.
+    const DISABLED_OPACITY = '0.25'
+    const fromProtoOf = (serverUrl: string): Proto =>
+      serverUrl === DIDCOMM_SERVER_URL ? 'did' : isApRelay(serverUrl) ? 'ap' : 'mail'
+    const requiredFromProto = (): Proto | null => {
+      for (const row of recipientsDiv.querySelectorAll<HTMLElement>('.new-recipient-row')) {
+        if (!row.querySelector<HTMLInputElement>('.new-field-input')?.value.trim()) continue
+        return rowEffective(row)?.protocol ?? null // filled but not yet resolved — nothing choosable yet either
+      }
+      return null
+    }
+    // No required protocol (nothing typed in To yet, or it hasn't resolved)
+    // means NOTHING is choosable — every From option is disabled until To
+    // actually settles on a transport, rather than defaulting to "anything
+    // goes" and risking a From picked before To narrows what's even valid.
+    const fromOptionAllowed = (o: FromOption, required: Proto | null): boolean =>
+      required !== null && fromProtoOf(o.serverUrl) === required
+    // Recomputes which From options are choosable whenever a recipient's
+    // protocol selection changes. If the currently-selected From no longer
+    // qualifies, hop to the first one that does — "can't be selected" has to
+    // mean the actual selection moves, not just that it LOOKS disabled.
+    const syncFromRequirement = () => {
+      const required = requiredFromProto()
+      const current = fromOptions[fromSelectedIdx]
+      if (required && current && !fromOptionAllowed(current, required)) {
+        const alt = fromOptions.findIndex(o => fromOptionAllowed(o, required))
+        if (alt >= 0) { fromSelectedIdx = alt; updateSendAvatar() }
+      }
+      renderFromButton()
+    }
+    let fromMenu: HTMLElement | null = null
+    const closeFromMenu = () => { fromMenu?.remove(); fromMenu = null }
+    const openFromMenu = () => {
+      if (!fromBtn) return
+      if (fromMenu) { closeFromMenu(); return }
+      const menu = document.createElement('div')
+      menu.className = 'new-from-menu'
+      const r = fromBtn.getBoundingClientRect()
+      menu.style.top = r.bottom + 4 + 'px'
+      menu.style.left = r.left + 'px'
+      menu.style.minWidth = r.width + 'px'
+      menu.style.maxWidth = Math.max(r.width, Math.min(window.innerWidth - r.left - 12, 480)) + 'px'
+      const required = requiredFromProto()
+      const pending: Array<{ row: HTMLElement; addr: HTMLElement; email: string }> = []
+      fromOptions.forEach((o, i) => {
+        const allowed = fromOptionAllowed(o, required)
+        const row = document.createElement('button')
+        row.type = 'button'
+        row.disabled = !allowed
+        row.className = 'new-from-menu-item' + (i === fromSelectedIdx ? ' selected' : '')
+        row.style.cssText = allowed ? '' : `opacity:${DISABLED_OPACITY};cursor:not-allowed`
+        const pill = protoPill(o.serverUrl)
+        if (pill) row.append(pill)
+        const addr = document.createElement('span')
+        addr.style.cssText = 'white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis'
+        row.append(addr)
+        if (allowed) {
+          row.addEventListener('click', () => {
+            fromSelectedIdx = i
+            renderFromButton()
+            updateSendAvatar()
+            closeFromMenu()
+          })
+        }
+        menu.append(row)
+        // A DID row uses the fixed short form + name (same as the button); only
+        // email rows get width-fitted (they rarely need it, but a very long one
+        // still gets a clean middle-ellipsis).
+        if (o.serverUrl === DIDCOMM_SERVER_URL || o.email.startsWith('did:')) {
+          addr.textContent = didDisplayText(o.email)
+          ensureDidName(o.email)
+        } else {
+          pending.push({ row, addr, email: o.email })
+        }
+      })
+      document.body.append(menu)
+      // Now that the menu is laid out at its real width, fit each email row.
+      for (const p of pending) fitMiddleEllipsis(p.row, p.addr, p.email)
+      fromMenu = menu
+      setTimeout(() => document.addEventListener('click', closeFromMenu, { once: true }), 0)
+    }
+    fromBtn?.addEventListener('click', e => { e.stopPropagation(); openFromMenu() })
+    if (fromBtn) {
       // `sessions` can still be empty on a fresh #new load (init race), so fall
       // back to the stored account list — never leave the selector blank.
-      const emails = (sessions.length ? sessions.map(s => s.account.email) : loadStoredAccounts().map(a => a.email))
-      const uniq = [...new Set(emails)]
-      const def = activeSession()?.account.email ?? uniq[0]
-      fromSel.innerHTML = uniq.map(e =>
-        `<option value="${esc(e)}"${e === def ? ' selected' : ''}>${esc(e)}</option>`,
-      ).join('')
+      fromOptions = sessions.length
+        ? sessions.map(s => ({ email: s.account.email, serverUrl: s.account.serverUrl }))
+        : loadStoredAccounts().map(a => ({ email: a.email, serverUrl: a.serverUrl }))
+      // Guarantee the identity's DIDComm endpoint is offered whenever it has a
+      // channel — covers both the synthetic-session-not-yet-in-sessions[] race
+      // and the fallback-to-stored-accounts branch (stored accounts never
+      // include the DIDComm pseudo-account).
+      if (ownChannelDid && !fromOptions.some(o => o.serverUrl === DIDCOMM_SERVER_URL)) {
+        fromOptions.push({ email: ownChannelDid, serverUrl: DIDCOMM_SERVER_URL })
+      }
+      const activeEmail = activeSession()?.account.email
+      fromSelectedIdx = Math.max(0, fromOptions.findIndex(o => o.email === activeEmail))
+      renderFromButton()
+      if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => renderFromButton()).observe(fromBtn)
     }
-    const selectedFrom = () => (document.getElementById('new-from') as HTMLSelectElement | null)?.value
-      || activeSession()?.account.email || ''
+    const selectedFromOption = (): FromOption | undefined => fromOptions[fromSelectedIdx]
+    const selectedFrom = () => selectedFromOption()?.email || activeSession()?.account.email || ''
 
     // Send button mirrors the reply dock: shows the From avatar, revealing the
     // send icon on hover (t-send-wrap CSS). Keep it in sync with the From select.
@@ -1558,106 +1881,144 @@ export async function setupLeftPane() {
       }
     }
     updateSendAvatar()
-    fromSel?.addEventListener('change', updateSendAvatar)
 
     // Relay base URLs for this home domain (see account-create.getMailUrl/getApUrl).
     const cfg = (window as any).__BISET_CONFIG__
     const mailUrl = cfg?.mail_url || (cfg?.hostname ? `https://mail.${cfg.hostname}` : '')
     const apUrl = cfg?.ap_url || (cfg?.hostname ? `https://ap.${cfg.hostname}` : '')
 
-    // Background recipient discovery: ask our own AP relay (server-side webfinger,
-    // no browser CORS) whether the address is an ActivityPub actor. If so, badge
-    // the row — the message will route via AP, made explicit in the UI.
-    const resolveAp = async (inp: HTMLInputElement) => {
-      const row = inp.closest<HTMLElement>('.new-recipient-row')
-      if (!row) return
-      row.querySelector('.ap-badge')?.remove()
-      delete row.dataset.ap
-      const addr = inp.value.trim()
-      if (!addr || !addr.includes('@') || !apUrl) return
-      try {
-        const r = await fetch(`${apUrl}/resolve?acct=${encodeURIComponent(addr)}`)
-        const j = await r.json()
-        // Cache the recipient's actor avatar so the conversation shows it once opened.
-        if (j?.icon && !avatarDataUrl(addr)) saveAvatar(addr, j.icon)
-        if (j?.ap && inp.value.trim() === addr) {
-          const b = document.createElement('span')
-          b.className = 'ap-badge'
-          b.style.cssText = 'font-size:10px;font-weight:700;color:#fff;border-radius:4px;padding:1px 5px;margin-left:4px;flex-shrink:0;align-self:center;cursor:pointer;user-select:none'
-          // The badge is a toggle: on = deliver via ActivityPub, off = fall
-          // back to mail for this recipient. Label the actual protocol
-          // outright (text + color, matching conv-via's convention) rather
-          // than dimming the same "AP" text — gray-and-dimmed still read as
-          // "AP" at a glance, not "this is now going via mail".
-          const setOn = (on: boolean) => {
-            if (on) {
-              row.dataset.ap = 'true'
-              b.textContent = 'AP'
-              b.style.background = '#8b5cf6'
-              b.title = 'ActivityPub — click to send via mail instead'
-            } else {
-              delete row.dataset.ap
-              b.textContent = 'Mail'
-              b.style.background = '#64748b'
-              b.title = 'Mail — click to send via ActivityPub'
-            }
-          }
-          b.addEventListener('click', () => setOn(row.dataset.ap !== 'true'))
-          setOn(true)
-          inp.after(b)
-        }
-      } catch { /* discovery is best-effort */ }
+    // Resolves ALL viable protocol options for whatever's currently in `inp`
+    // and feeds them into the row's protocol pills (rowProto* above) — this is
+    // the one place that decides what To offers:
+    //   - did: address → always [DID]; if its document also advertises a mail
+    //     or ActivityPub service (DidService.protocol/address), those become
+    //     additional pills, but DID stays the DEFAULT selection (never
+    //     silently redirected to a resolved address — same reasoning as
+    //     before: a typed DID sends over DIDComm unless the user explicitly
+    //     clicks a different pill).
+    //   - email address → [Mail] baseline while probes are in flight. AP
+    //     webfinger and a DID DNS anchor are probed IN PARALLEL, but the
+    //     final option list is synthesized once BOTH settle (not applied
+    //     piecemeal as each resolves) specifically so the AP/mail decision
+    //     below can see the DID result no matter which probe happens to
+    //     finish first:
+    //       - AP hit, no DID record  → [AP] only, mail dropped. Nothing here
+    //         can positively confirm OR rule out plain SMTP deliverability
+    //         (no MX/mailbox probe exists — an MX record would only prove
+    //         the DOMAIN accepts mail for SOME address, not this local
+    //         part), so this is a judgment call: an address that
+    //         webfinger-resolves to a real actor with no DID anchor behind
+    //         it is almost always a fediverse-only handle (mastodon.social
+    //         and friends), not a real mailbox.
+    //       - AP hit AND a DID record → [Mail] + [AP] together. A DID anchor
+    //         is exactly the signal that this is a portable, dual-protocol
+    //         biset-native identity (one identity, many endpoints — mail and
+    //         ActivityPub genuinely both live at the same address), not a
+    //         fediverse-only handle, so mail stays offered.
+    //       - no AP hit → [Mail] (+ [DID] if a DID record was found).
+    //     AP becomes the DEFAULT selection whenever it's offered (matching
+    //     the old auto-on AP badge); a DID hit never forces a default.
+    // Loading spinner at the recipient field's right edge, shown only while
+    // resolveRecipientProtocols has a resolve in flight (DID doc lookup, or
+    // the AP/DID probes for an email address) — the gap between typing a
+    // did:dht: address and its [Mail]/[AP] pills actually appearing is a
+    // real wait (a DHT/pkarr resolve, not instant), and with nothing here it
+    // just looked stalled.
+    const recipLoadingEl = (row: HTMLElement): HTMLElement => {
+      let el = row.querySelector<HTMLElement>('.recip-loading')
+      if (!el) {
+        el = document.createElement('span')
+        el.className = 'recip-loading'
+        row.querySelector('.new-field-input')?.after(el)
+      }
+      return el
+    }
+    const setRecipLoading = (row: HTMLElement, loading: boolean) => {
+      recipLoadingEl(row).dataset.active = loading ? 'true' : 'false'
     }
 
-    // Given a real (non-DID) address, warm the AP badge + PGP peer-key cache
-    // + DID cache. Split out from attachPrefetch's blur handler so the DID
-    // branch below can call it directly on the resolved address without
-    // re-registering event listeners on the input.
-    const prefetchForAddress = (inp: HTMLInputElement, addr: string) => {
+    const resolveRecipientProtocols = async (inp: HTMLInputElement) => {
+      const row = inp.closest<HTMLElement>('.new-recipient-row')
+      if (!row) return
+      const addr = inp.value.trim()
+      if (!addr) { clearRowProtos(row); setRecipLoading(row, false); return }
+
+      // A pill toggle (renderRowProtos) rewrites the input's displayed text to
+      // the effective address for whatever protocol got picked — e.g. a DID
+      // row toggled to [Mail] now shows that DID document's claimed mail
+      // address. Clicking the pill blurs the input, which would otherwise
+      // land right back here and re-probe THAT address from scratch (and,
+      // for a mail address that happens to itself resolve as AP, silently
+      // flip the selection again). If the row already knows this exact
+      // address as one of its own already-resolved options and the user
+      // picked it explicitly, there's nothing new to resolve — leave it.
+      if (rowProtoManual.has(row) && (rowProtoOptions.get(row) ?? []).some(o => o.address === addr)) return
+
+      if (addr.startsWith('did:')) {
+        setRowProtoOptions(row, [{ protocol: 'did', address: addr }], 'did')
+        setRecipLoading(row, true)
+        try {
+          // resolveDidDocFull uses this browser's own relay /pkarr gateways
+          // (CORS-open) — did:dht won't resolve through the public gateways
+          // from a file:// page.
+          const doc = await resolveDidDocFull(addr)
+          if (inp.value.trim() !== addr) return // stale
+          const opts: ProtoOption[] = [{ protocol: 'did', address: addr }]
+          for (const s of doc?.service ?? []) {
+            if (s.protocol === 'mail' && s.address) opts.push({ protocol: 'mail', address: s.address })
+            if (s.protocol === 'activitypub' && s.address) opts.push({ protocol: 'ap', address: s.address })
+          }
+          setRowProtoOptions(row, opts, 'did')
+        } catch { /* best-effort */ } finally { setRecipLoading(row, false) }
+        return
+      }
+
+      if (!addr.includes('@')) { clearRowProtos(row); setRecipLoading(row, false); return }
+
+      setRowProtoOptions(row, [{ protocol: 'mail', address: addr }], 'mail')
+      setRecipLoading(row, true)
+
       const sess = sessionFor(selectedFrom()) ?? activeSession()
-      if (!addr || !addr.includes('@') || !sess) return
-      // Only warm the PGP peer-key cache on a mail relay; the AP relay has no
-      // peer-key store (and PGP is meaningless for fediverse recipients).
-      if (!isApRelay(sess.account.serverUrl)) {
+      if (sess && !isApRelay(sess.account.serverUrl)) {
         prefetchRecipientKey(addr, sess.account.email, sess.account.serverUrl, sess.account.password)
       }
-      resolveAp(inp)
-      // Warm the DID cache too (TTL-guarded — see discovery.ts) so a brand
-      // new recipient gets the same portability discovery a reply gets.
+
+      const apProbe = (async (): Promise<boolean> => {
+        if (!apUrl) return false
+        try {
+          const r = await fetch(`${apUrl}/resolve?acct=${encodeURIComponent(addr)}`)
+          const j = await r.json()
+          // Cache the recipient's actor avatar so the conversation shows it once opened.
+          if (j?.icon && !avatarDataUrl(addr)) saveAvatar(addr, j.icon)
+          return !!j?.ap
+        } catch { return false }
+      })()
+
+      const didProbe = (async (): Promise<string | null> => {
+        try {
+          const { discoverDidForAddress } = await import('../did/discovery.ts')
+          return await discoverDidForAddress(addr)
+        } catch { return null }
+      })()
+
+      // Background contact-cache warm (relays/name durability) — unrelated to
+      // the probes above, same TTL-guarded call as always.
       import('../did/discovery.ts').then(m => m.refreshContact(addr)).catch(() => {})
+
+      const [apHit, didHit] = await Promise.all([apProbe, didProbe])
+      setRecipLoading(row, false)
+      if (inp.value.trim() !== addr) return // stale
+
+      const opts: ProtoOption[] = []
+      if (!apHit || didHit) opts.push({ protocol: 'mail', address: addr })
+      if (apHit) opts.push({ protocol: 'ap', address: addr })
+      if (didHit) opts.push({ protocol: 'did', address: didHit })
+      setRowProtoOptions(row, opts, apHit ? 'ap' : 'mail')
     }
 
     const attachPrefetch = (inp: HTMLInputElement) => {
       inp.addEventListener('input', updateTitleLabel)
-      inp.addEventListener('blur', async () => {
-        const addr = inp.value.trim()
-        // Composing straight to a DID (shared via QR code / profile link,
-        // without knowing any current address) — resolve it to a real
-        // address up front, then let the rest of send/UI work unchanged.
-        if (addr.startsWith('did:')) {
-          // Same slot the AP badge would occupy (inp.after(...)) — a resolve
-          // with no visible feedback otherwise just looks like nothing
-          // happened for however many seconds the DHT lookup takes. No
-          // timeout: a spinner that never stops is itself the "it failed"
-          // signal (resolveDidDirect has no upper bound either).
-          inp.closest('.new-recipient-row')?.querySelector('.did-resolving-spinner')?.remove()
-          const spinner = document.createElement('span')
-          spinner.className = 'did-resolving-spinner'
-          inp.after(spinner)
-          const { resolveDidDirect } = await import('../did/discovery.ts')
-          const result = await resolveDidDirect(addr)
-          spinner.remove()
-          if (result) {
-            inp.value = result.address
-            showSysMsg(`Resolved via DID → ${result.address}`)
-            prefetchForAddress(inp, result.address)
-          } else {
-            showSysMsg('Could not resolve DID — no verified address found')
-          }
-          return
-        }
-        prefetchForAddress(inp, addr)
-      })
+      inp.addEventListener('blur', () => { resolveRecipientProtocols(inp) })
     }
 
     const addRow = (kind: Kind, focus = false) => {
@@ -1665,8 +2026,17 @@ export async function setupLeftPane() {
       row.className = 'new-recipient-row'
       row.dataset.kind = kind
       const tag = document.createElement('span')
-      tag.className = 'new-field-label'
+      tag.className = 'new-field-label new-field-label-toggle'
       tag.textContent = kind === 'cc' ? 'Cc' : 'Bcc'
+      tag.title = 'Click to toggle Cc / Bcc'
+      // Cc and Bcc rows are otherwise identical — no separate chooser to add
+      // one or the other, just add a Cc row and let its own label toggle it.
+      tag.addEventListener('click', () => {
+        const next: Kind = row.dataset.kind === 'cc' ? 'bcc' : 'cc'
+        row.dataset.kind = next
+        tag.textContent = next === 'cc' ? 'Cc' : 'Bcc'
+        updateTitleLabel() // Bcc doesn't count toward the group/1:1 decision — a toggle can change it
+      })
       const inp = document.createElement('input')
       inp.className = 'new-field-input'
       inp.type = 'email'
@@ -1677,34 +2047,18 @@ export async function setupLeftPane() {
       rm.className = 'group-remove-btn'
       rm.tabIndex = -1
       rm.textContent = '×'
-      rm.addEventListener('click', () => { row.remove(); updateTitleLabel() })
+      rm.addEventListener('click', () => { row.remove(); updateTitleLabel(); syncFromRequirement() })
       row.append(tag, inp, rm)
       recipientsDiv.appendChild(row)
       updateTitleLabel()
       if (focus) inp.focus()
     }
 
-    // "+" opens a tiny chooser: add a Cc or a Bcc row.
-    let addMenu: HTMLElement | null = null
-    const closeAddMenu = () => { addMenu?.remove(); addMenu = null }
+    // "+" adds a Cc row directly — no Cc/Bcc chooser menu; toggle between
+    // them by clicking the row's own label (see addRow above).
     addBtn?.addEventListener('click', (e) => {
       e.stopPropagation()
-      if (addMenu) { closeAddMenu(); return }
-      const menu = document.createElement('div')
-      menu.className = 'new-recip-menu'
-      for (const kind of ['cc', 'bcc'] as Kind[]) {
-        const b = document.createElement('button')
-        b.className = 'new-recip-menu-item'
-        b.textContent = kind === 'cc' ? 'Cc' : 'Bcc'
-        b.addEventListener('click', () => { addRow(kind, true); closeAddMenu() })
-        menu.append(b)
-      }
-      const r = (addBtn as HTMLElement).getBoundingClientRect()
-      menu.style.top = r.bottom + 4 + 'px'
-      menu.style.left = r.left + 'px'
-      document.body.append(menu)
-      addMenu = menu
-      setTimeout(() => document.addEventListener('click', closeAddMenu, { once: true }), 0)
+      addRow('cc', true)
     })
 
     // Mark the initial static row as the To recipient and wire prefetch.
@@ -1715,30 +2069,15 @@ export async function setupLeftPane() {
     updateTitleLabel()
 
     // Pre-fill the To field when compose was opened via openComposeTo (e.g. the
-    // /<user>/ page). Resolve straight away so the AP badge shows.
+    // /<user>/ page). Resolve straight away so the protocol pills show.
     if (composePrefillTo && firstInp) {
       firstInp.value = composePrefillTo
       composePrefillTo = null
-      resolveAp(firstInp)
+      resolveRecipientProtocols(firstInp)
       updateTitleLabel()
       // Body focus is driven by openComposeTo's retry loop (more reliable across
       // the #new→app transition than a focus() here).
     }
-
-    // DeltaChat SecureJoin invite link (setup-contact). A DeltaChat/chatmail
-    // contact opens this to exchange keys with biset automatically.
-    document.getElementById('new-invite-btn')?.addEventListener('click', async () => {
-      const fromEmail = selectedFrom()
-      if (!fromEmail) { showSysMsg('No session'); return }
-      const url = await newInviteUrl(fromEmail, fromEmail)
-      if (!url) { showSysMsg('Invite link failed (no key set)'); return }
-      const out = document.getElementById('new-invite-out')!
-      const inp = document.getElementById('new-invite-url') as HTMLInputElement
-      out.style.display = ''
-      inp.value = url
-      inp.focus(); inp.select()
-      try { await navigator.clipboard.writeText(url); showSysMsg('Invite link copied') } catch { /* manual copy */ }
-    })
 
     // Attachments (mail relay only, mirrors thread.ts's reply-box — see
     // pgp/crypto.ts buildMultipartBody for the wire format).
@@ -1782,34 +2121,18 @@ export async function setupLeftPane() {
       }
     })
 
-    // Resolves any DID-shaped recipient row in place (updates the input's
-    // value AND its AP badge via resolveAp) before send. blur (attachPrefetch)
-    // already does this, but its DHT resolution can take seconds and nothing
-    // stops a user from clicking Send before it lands — reading the DOM at
-    // send time (collect()) would then see the raw `did:...` string, sending
-    // to that literal, invalid "address" and skipping AP-vs-mail detection
-    // entirely (resolveAp is a no-op on a non-email-shaped value). Returns
-    // false (and shows an error) if any recipient's DID fails to resolve.
-    const resolveDidRows = async (): Promise<boolean> => {
-      const rows = [...recipientsDiv.querySelectorAll<HTMLElement>('.new-recipient-row')]
-      for (const row of rows) {
-        const inp = row.querySelector<HTMLInputElement>('.new-field-input')
-        const val = inp?.value.trim()
-        if (!inp || !val || !val.startsWith('did:')) continue
-        const { resolveDidDirect } = await import('../did/discovery.ts')
-        const result = await resolveDidDirect(val)
-        if (!result) { showSysMsg(`Could not resolve ${val} — no verified address found`); return false }
-        inp.value = result.address
-        await resolveAp(inp) // sets row.dataset.ap so mail-vs-AP routing below is correct
-      }
-      return true
-    }
-
     document.getElementById('new-send-btn')?.addEventListener('click', async () => {
-      const hasDid = [...recipientsDiv.querySelectorAll<HTMLInputElement>('.new-field-input')].some(i => i.value.trim().startsWith('did:'))
-      if (hasDid) {
-        showSysMsg('Resolving DID…', 30000)
-        if (!await resolveDidRows()) return
+      // A row blurred by clicking Send directly (never lost focus, so
+      // resolveRecipientProtocols never ran) gets a synchronous baseline here
+      // — real resolution also kicked off, but best-effort/non-blocking so a
+      // slow network never delays sending.
+      for (const inp of recipientsDiv.querySelectorAll<HTMLInputElement>('.new-field-input')) {
+        const row = inp.closest<HTMLElement>('.new-recipient-row')
+        const v = inp.value.trim()
+        if (!row || !v || rowProtoOptions.get(row)) continue
+        if (v.startsWith('did:')) setRowProtoOptions(row, [{ protocol: 'did', address: v }], 'did')
+        else if (v.includes('@')) setRowProtoOptions(row, [{ protocol: 'mail', address: v }], 'mail')
+        resolveRecipientProtocols(inp)
       }
       const { to, cc, bcc } = collect()
       const visible = [...to, ...cc]
@@ -1818,18 +2141,29 @@ export async function setupLeftPane() {
       const fromEmail = selectedFrom()
       const title = (document.getElementById('new-title') as HTMLInputElement)?.value.trim() || ''
 
-      // Protocol from the AP badges. A single compose is one protocol — mixing
-      // mail + ActivityPub recipients in one message is not allowed.
+      // Protocol from each row's selected pill. A single compose is one
+      // protocol — mixing mail, ActivityPub and DIDComm recipients in one
+      // message isn't allowed (each is a different transport, DIDComm doesn't
+      // even have a "cc").
       const filledRows = [...recipientsDiv.querySelectorAll<HTMLElement>('.new-recipient-row')]
         .filter(r => r.querySelector<HTMLInputElement>('.new-field-input')?.value.trim())
-      const apCount = filledRows.filter(r => r.dataset.ap === 'true').length
-      if (apCount > 0 && apCount < filledRows.length) {
+      const apCount = filledRows.filter(r => rowEffective(r)?.protocol === 'ap').length
+      const didCount = filledRows.filter(r => rowEffective(r)?.protocol === 'did').length
+      if (apCount > 0 && apCount < filledRows.length - didCount) {
         showSysMsg('Mixed mail + ActivityPub recipients not allowed'); return
+      }
+      if (didCount > 0 && (didCount < filledRows.length || visible.length > 1)) {
+        showSysMsg('DIDComm only supports one direct recipient — no mixing with mail/AP or group sends'); return
       }
       if (apCount > 0 && pendingAttachments.length) {
         showSysMsg('Attachments are not supported over ActivityPub'); return
       }
-      const relayUrl = apCount > 0 ? apUrl : mailUrl
+      if (didCount > 0 && pendingAttachments.length) {
+        showSysMsg('Attachments are not supported over DIDComm'); return
+      }
+      // A DID recipient has no relay to route through — jmapCreateEmail
+      // resolves the sender purely by fromEmail in that case (app.ts).
+      const relayUrl = didCount > 0 ? undefined : (apCount > 0 ? apUrl : mailUrl)
       const attachmentsToSend = pendingAttachments
       pendingAttachments = []
       renderNewAttachments()
@@ -2129,6 +2463,18 @@ export async function setupLeftPane() {
   function openAccountMenu(anchor: HTMLElement, email: string, serverUrl?: string) {
     const items: MenuItem[] = [
       { label: 'Change password', onClick: () => openPasswordModal(email) },
+      // DeltaChat SecureJoin invite link (setup-contact) — moved here from the
+      // compose "From" row, which is the wrong place for a per-ACCOUNT action
+      // (the link is scoped to whichever address it's generated for, not to
+      // whatever's currently being composed).
+      {
+        label: 'DeltaChat link', onClick: async () => {
+          const url = await newInviteUrl(email, email)
+          if (!url) { showSysMsg('Invite link failed (no key set)'); return }
+          try { await navigator.clipboard.writeText(url); showSysMsg('DeltaChat invite link copied') }
+          catch { prompt('Copy this invite link:', url) } // clipboard denied — still surface it
+        },
+      },
     ]
     if (serverUrl) {
       // Actually deletes the account's data on THIS relay (messages, mailbox,
@@ -2313,13 +2659,17 @@ export async function setupLeftPane() {
     if (wasExpanded) return
     docEl.textContent = 'Resolving…'
     try {
-      const { resolve } = await import('../did/resolver.ts')
-      // relaysForId, not relaysFor(email): the representative address picked
-      // for display isn't necessarily the one with a live session (accounts
-      // is unordered stored-account data, not the connected sessions list),
-      // so looking it up by "self" email could silently return zero gateways.
-      const gateways = relaysForId(did).map(s => s.account.serverUrl.replace(/\/$/, '') + '/pkarr')
-      const doc = await resolve(did, gateways)
+      // Was its own relay-sessions-only gateway list (relaysForId(did),
+      // filtered) — empty for a relay-less (DID⊥relay) identity, which has no
+      // relay session to draw a /pkarr gateway from at all. resolveDidDocFull
+      // (above) already solves this the right way via channel.ts's
+      // ownGateways (relay gateways + this identity's own mediator's
+      // token-gated pkarr, plus the public fallbacks) — reuse it instead of
+      // a second gateway-list implementation that only worked for a
+      // relay-backed identity. This is what made a standalone identity's own
+      // #account page permanently report "No document found" even though the
+      // record was resolvable everywhere else (own anchor, public gateways).
+      const doc = await resolveDidDocFull(did)
       // The document's keys are raw Uint8Arrays — JSON.stringify serializes
       // typed arrays as {"0":244,"1":42,...} (no special-casing, unlike a
       // plain array). Format every one as hex instead of dumping 32 numbered
@@ -2950,7 +3300,6 @@ export async function setupLeftPane() {
     { name: '/config',  page: renderConfigPage,  action: () => {}, onShow: onShowConfig },
     { name: '/compose',     page: renderComposePage,     action: () => {}, onShow: onShowNew },
     { name: '/debug',       page: renderDebugPage,       action: () => {}, onShow: onShowDebug },
-    { name: '/didcomm',     page: renderDidcommDebugPage, action: () => {}, onShow: onShowDidcommDebug },
   ]
   let cmdSelectedIdx = -1
   let _filteredCmds: typeof LP_COMMANDS = []
@@ -3327,7 +3676,11 @@ export async function setupLeftPane() {
   setInterval(async () => {
     try {
       const { sync } = await import('../sync/session.ts')
-      await Promise.allSettled(sessions.map(sync))
+      // sync() speaks JMAP — the synthetic DIDComm session (context.ts's
+      // isDidCommRelay) has no jmapClient (null) behind it, and calling
+      // sync() on it threw every 30s (sync/index.ts's own start() already
+      // filters this same way; this periodic backstop just hadn't).
+      await Promise.allSettled(sessions.filter(s => !isDidCommRelay(s.account.serverUrl)).map(sync))
     } catch { /* best-effort */ }
     loadLeftInboxes()
   }, 30000)

@@ -23,7 +23,7 @@ import { loadFromIDB as loadQuerystateFromIDB } from './jmap/querystate.ts'
 // A conversation permalink is now also a single, shapeless segment (just the
 // contact — see utils.ts's inboxToHash), so "no slash = menu page" no longer
 // disambiguates anything; an explicit allowlist does instead.
-const MENU_PAGE_NAMES = new Set(['account', 'config', 'compose', 'debug', 'didcomm'])
+const MENU_PAGE_NAMES = new Set(['account', 'config', 'compose', 'debug'])
 
 function menuHashFromHash(hash: string): string | null {
   const raw = hash.startsWith('#') ? hash.slice(1) : hash
@@ -195,6 +195,21 @@ async function initInner() {
     showApp()
     await setupLeftPane()
     showMenuPage(menuPage)
+    // showMenuPage above renders (and, for /compose, onShow-initializes) the
+    // page immediately, BEFORE sessions[] is populated below — deliberate,
+    // so a menu page never blocks on the network. But /compose's From
+    // selector reads sessions[] at that exact moment and finds it empty
+    // (see did/didcomm/channel.ts's channel-detection notes for the same
+    // race). Once sessions[] is actually populated, redraw it — but only if
+    // the user hasn't started typing a draft in the meantime, so a slow
+    // network never clobbers real input.
+    const refreshComposeIfPristine = () => {
+      if (menuPage !== '/compose') return
+      const body = document.getElementById('new-body') as HTMLTextAreaElement | null
+      const firstTo = document.querySelector<HTMLInputElement>('#new-recipients .new-field-input')
+      if (body?.value.trim() || firstTo?.value.trim()) return
+      showMenuPage(menuPage)
+    }
     if (accounts.length) {
       const results = await Promise.all(accounts.map(initSession))
       const validSessions = results.filter(Boolean) as NonNullable<Awaited<ReturnType<typeof initSession>>>[]
@@ -207,28 +222,51 @@ async function initInner() {
       refreshAccountsList()
       startPolling()
       loadLeftInboxes()
+      refreshComposeIfPristine()
+    } else {
+      // A relay-less identity landing directly on a menu page (e.g. a
+      // bookmarked #compose/#account) skipped the !accounts.length bootstrap
+      // below entirely — sessions[] stayed empty, so compose's From selector
+      // and every other session-driven bit of this page had nothing to show.
+      // Same wiring the normal boot path does for a standalone identity.
+      const { refreshStandalone } = await import('./did/create-standalone.ts')
+      const sDid = await refreshStandalone()
+      if (sDid) {
+        const { setupDidCommChannel } = await import('./did/didcomm/channel.ts')
+        await setupDidCommChannel(sDid, () => { fetchMessages(); loadLeftInboxes() })
+        loadLeftInboxes()
+        refreshComposeIfPristine()
+      }
     }
     return
   }
 
   if (!accounts.length) {
-    // A relay-less identity (DID⊥relay) has zero StoredAccounts but its own
-    // home screen — republish its DID doc + renew mediation, then show it
-    // instead of falling through to new-user onboarding.
+    // A relay-less identity (DID⊥relay) has zero StoredAccounts. Republish its
+    // DID doc + renew mediation, then register its DIDComm channel (if any) as
+    // a synthetic session (did/didcomm/channel.ts) — sessions[] being
+    // non-empty from here on is what lets the SAME "pick an inbox, show it"
+    // flow below handle it, exactly like a JMAP identity's sessions. No
+    // DIDComm channel yet (mediator unreachable, or never configured) falls
+    // through to the account page, where "+ New Relay" can register one.
     const { refreshStandalone } = await import('./did/create-standalone.ts')
     const sDid = await refreshStandalone()
     if (sDid) {
-      // A relay-less identity has no session, but the app already renders with
-      // zero sessions (the same path a failed login lands on): show the normal
-      // shell + the account page, where the identity and "add a relay" live.
-      showApp()
-      await setupLeftPane()
-      showMenuPage('/account')
+      const { setupDidCommChannel } = await import('./did/didcomm/channel.ts')
+      const hasChannel = await setupDidCommChannel(sDid, () => { fetchMessages(); loadLeftInboxes() })
+      if (!hasChannel) {
+        showApp()
+        await setupLeftPane()
+        showMenuPage('/account')
+        return
+      }
+      // else: fall through into the shared flow below, which now finds this
+      // identity's synthetic session in sessions[] and treats it like any other.
+    } else {
+      setupNewUserPage()
+      showNewUserPage()
       return
     }
-    setupNewUserPage()
-    showNewUserPage()
-    return
   }
 
   const results = await Promise.all(accounts.map(initSession))
@@ -245,6 +283,16 @@ async function initInner() {
   // Keep our DID records alive on the DHT (best-effort — see did/publish.ts).
   import('./did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
   import('./did/discovery.ts').then(m => m.pullOwnContacts()).catch(() => {})
+  // A relay-backed identity MAY also have a DIDComm channel registered (the
+  // account page's mediator card) — surface it as another inbox source
+  // alongside the JMAP ones, same session registration standalone uses above.
+  // Best-effort/non-blocking: if this hasn't finished by the first
+  // loadInboxSummaries() below, the next loadLeftInboxes() (startPolling's
+  // sync completion, or this channel's own first poll tick) picks it up.
+  const ownDid = validSessions.find(s => s.account.did)?.account.did
+  if (ownDid) {
+    import('./did/didcomm/channel.ts').then(m => m.setupDidCommChannel(ownDid, () => { fetchMessages(); loadLeftInboxes() })).catch(() => {})
+  }
 
   // Fire-and-forget PGP init (kek only available on fresh envelope login, not here)
   // sessions.forEach(s => initPGPForSession(s))

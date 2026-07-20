@@ -19,21 +19,40 @@ export interface MediatorInfo {
 
 function trimSlash(u: string): string { return u.replace(/\/$/, '') }
 
+// A mediator's did:peer is baked into its `mediator_url` at deploy time
+// (anchor/index.ts's own comment: changing it later strands every registered
+// client) — this document is static for all practical purposes. Yet
+// ownSender() (channel.ts) re-fetched it fresh on EVERY poll tick and EVERY
+// send, adding one full network round trip ahead of the actual pickup/send
+// work each time — a steady, avoidable chunk of the "10-20 seconds" latency,
+// worst on the receive side where it repeated every poll cycle. Cached
+// in-memory per mediatorUrl for the tab's lifetime; a real change to the
+// mediator's own identity is an operator-side event rare enough that a reload
+// picking it up is fine.
+const mediatorInfoCache = new Map<string, MediatorInfo>()
+
 export async function fetchMediatorInfo(mediatorUrl: string): Promise<MediatorInfo> {
+  const cached = mediatorInfoCache.get(mediatorUrl)
+  if (cached) return cached
   const resp = await fetch(`${trimSlash(mediatorUrl)}/.well-known/did.json`)
   if (!resp.ok) throw new Error(`fetchMediatorInfo: HTTP ${resp.status}`)
   const doc: PeerDidDoc = await resp.json()
-  return { url: mediatorUrl, did: doc.id, doc }
+  const info = { url: mediatorUrl, did: doc.id, doc }
+  mediatorInfoCache.set(mediatorUrl, info)
+  return info
 }
 
-/** mediate-request -> mediate-grant. Returns the mediator's routing_did
- * (the DID that will appear as Forward's target once we register a kid). */
-export async function requestMediation(mediator: MediatorInfo, own: DidCommSender): Promise<string> {
+export interface MediationGrant {
+  routingDid: string // the DID that will appear as Forward's target once we register a kid
+}
+
+/** mediate-request -> mediate-grant. */
+export async function requestMediation(mediator: MediatorInfo, own: DidCommSender): Promise<MediationGrant> {
   const reply = await sendAndUnpack(mediator, own, MEDIATE_REQUEST, {})
   if (reply.type !== MEDIATE_GRANT) throw new Error(`requestMediation: unexpected reply type ${reply.type}`)
-  const routingDid = (reply.body as { routing_did?: string }).routing_did
-  if (!routingDid) throw new Error('requestMediation: mediate-grant missing routing_did')
-  return routingDid
+  const body = reply.body as { routing_did?: string }
+  if (!body.routing_did) throw new Error('requestMediation: mediate-grant missing routing_did')
+  return { routingDid: body.routing_did }
 }
 
 /** keylist-update: register (or remove) one recipient kid — normally our own

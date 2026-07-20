@@ -39,11 +39,26 @@ export function identityKeyForEmail(email: string): string {
 }
 // Unique identities as their canonical email (representative endpoint address).
 // A DID's representative is the primary address (its `alsoKnownAs`); until that
-// plumbing lands, the first-seen endpoint's email stands in.
+// plumbing lands, the first-seen endpoint's email stands in — EXCEPT the
+// synthetic DIDComm session (did/didcomm/channel.ts; its "email" is just the
+// DID itself), which never wins the representative slot over a real relay
+// session if one exists for the same identity. did/publish.ts's
+// buildOwnDocument(email) looks the DidRecord up by this exact email, and
+// for a relay-backed identity that record is keyed by the RELAY email, not
+// the DID — picking the synthetic session's email here (purely an accident
+// of which session landed in sessions[] first) made getDidRecord() find
+// nothing, so buildOwnDocument silently no-op'd and the identity's document
+// (including its DIDComm keyAgreementKeys) never got republished at all,
+// left to decay off the DHT (~2h TTL) on its own.
 export function identities(): string[] {
-  const byId = new Map<string, string>() // identityKey → representative email
-  for (const s of sessions) if (!byId.has(identityKey(s))) byId.set(identityKey(s), s.account.email)
-  return [...byId.values()]
+  const byId = new Map<string, { email: string; synthetic: boolean }>() // identityKey → representative
+  for (const s of sessions) {
+    const id = identityKey(s)
+    const synthetic = isDidCommRelay(s.account.serverUrl)
+    const cur = byId.get(id)
+    if (!cur || (cur.synthetic && !synthetic)) byId.set(id, { email: s.account.email, synthetic })
+  }
+  return [...byId.values()].map(v => v.email)
 }
 // Unique identities as DID (or email fallback) — for per-identity operations
 // that must not double-fire across a DID's multiple addresses (e.g. publish).
@@ -99,6 +114,15 @@ export function relayInfoFor(serverUrl?: string): RelayInfo | undefined {
 // previous implementation) silently mislabeled every OTHER AP relay — e.g. a
 // third-party one added via "Move to another relay…" — as "mail", both in the
 // UI and in the DID document this client publishes (see did/publish.ts).
+// DIDComm's synthetic "relay": a session with this serverUrl has no real JMAP
+// account behind it (did/didcomm/channel.ts) — every JMAP-only code path
+// (sync/index.ts's start(), app.ts's send) must skip a session flagged this
+// way rather than try to speak JMAP through a null client.
+export const DIDCOMM_SERVER_URL = 'didcomm:'
+export function isDidCommRelay(serverUrl?: string): boolean {
+  return serverUrl === DIDCOMM_SERVER_URL
+}
+
 export function isApRelay(serverUrl?: string): boolean {
   if (!serverUrl) return false
   const url = serverUrl.replace(/\/$/, '')
@@ -108,6 +132,24 @@ export function isApRelay(serverUrl?: string): boolean {
   const apUrl: string | undefined = cfg?.ap_url || (cfg?.hostname ? `https://ap.${cfg.hostname}` : undefined)
   if (!apUrl) return false
   return url === apUrl.replace(/\/$/, '')
+}
+
+// Transport label for a relay (serverUrl) — the relay's own advertised
+// label/color (GET /relay-info, cached above) so the UI stays relay-agnostic;
+// falls back to the subdomain until that fetch lands. Shared by thread.ts's
+// conversation header and left-pane.ts's compose From selector — one source
+// of truth for "how do we describe this transport", not a reimplementation
+// per call site.
+export function relayProtocolLabel(relay?: string): { text: string; color: string } | null {
+  if (!relay) return null
+  if (isDidCommRelay(relay)) return { text: 'DID', color: '#0ea5e9' }
+  const info = relayInfoFor(relay)
+  if (info) return { text: info.label, color: info.color }
+  let sub = ''
+  try { sub = new URL(relay).hostname.split('.')[0].toLowerCase() } catch { return null }
+  if (sub === 'ap') return { text: 'AP', color: '#8b5cf6' }
+  if (sub === 'mail') return { text: 'Mail', color: '#64748b' }
+  return { text: sub.toUpperCase(), color: '#64748b' }
 }
 
 export async function fetchRelayInfo(serverUrl: string): Promise<void> {

@@ -20,10 +20,14 @@
 // key derived from the seed, which would let two devices collide and starve
 // each other at the mediator's per-kid delivery queue. `ensureDeviceKey` mints
 // this device's key once; `syncDevicePosition` resolves the currently-
-// published document (best-effort, ONCE per device registration) to learn its
-// own stable slot and cache every sibling device's key, so a routine republish
-// from this device alone (which never resolves — see publish.ts's
-// buildOwnDocument note) doesn't silently drop the others.
+// published document (best-effort) to learn its own stable slot and cache
+// every sibling device's key. Runs at registration AND on every routine
+// republish (publish.ts's buildOwnDocument) — it used to run only once, at
+// registration, which meant a device that registered BEFORE a sibling existed
+// never learned about it and kept erasing that sibling's key on every one of
+// its own later boots (found live: two of one identity's own browsers,
+// neither could reach the other, because whichever reopened most recently
+// republished a document that had never heard of the other one).
 import { deriveRootKey, didFromRootPublicKey, generateDeviceDidCommKey } from './keys.ts'
 import { initDid } from './index.ts'
 import { getDidRecord, storeDidRecord, type DidRecord } from './store.ts'
@@ -69,10 +73,14 @@ async function ensureDeviceKey(rec: DidRecord): Promise<DidRecord> {
 /** Establishes this device's stable positional slot and refreshes the sibling
  * cache, by resolving whatever document is currently published (best-effort —
  * a resolve failure just means this call learns nothing new, safe to retry
- * later). Only needs to run ONCE per device to establish `didCommOwnKid`
- * (kept stable afterward); safe to call again to pick up devices registered
- * elsewhere since — it only ever grows the cache, never removes an entry. */
-async function syncDevicePosition(rec: DidRecord, gatewayUrls: string[]): Promise<DidRecord> {
+ * later). Establishes `didCommOwnKid` once (kept stable afterward); safe —
+ * DESIGNED — to call again and again to pick up devices registered elsewhere
+ * since: it only ever grows the cache, never removes an entry, so a failed or
+ * incomplete resolve can't erase a real sibling. Exported: publish.ts's
+ * buildOwnDocument calls this on every routine republish now, not just once
+ * at registration — see that file's own note on why skipping it was a real
+ * bug, not just an approximation. */
+export async function syncDevicePosition(rec: DidRecord, gatewayUrls: string[]): Promise<DidRecord> {
   let resolved: DidDocument | null = null
   try { resolved = await resolve(rec.did, gatewayUrls) } catch { /* best-effort */ }
   const existing = resolved?.keyAgreementKeys ?? []
@@ -131,7 +139,14 @@ async function publishAndRegister(rec: DidRecord): Promise<void> {
       // from either device, not silent data loss.
       if (!rec.didCommOwnKid) await syncDevicePosition(rec, PUBLIC_PKARR_FALLBACKS)
       const base: DidDocument = { ...buildBisetDocument(rec.did, rootPub, [], []), keyAgreementKeys: fullKeyAgreementKeys(rec) }
-      const reg = await registerDidCommViaDht(hexToBytes(rec.didCommPrivateKey!), kidN(rec.didCommOwnKid!), rootPriv, base, mUrl, PUBLIC_PKARR_FALLBACKS)
+      // The anchor's own pkarr gateway is open (no token needed — see
+      // anchor/server.ts's handlePkarr), so it's always in this list, not
+      // just after an earlier registration had already issued a credential
+      // for it — extra redundancy, on top of the public fallbacks, for the
+      // one write that matters most (this identity's own record), from the
+      // very first registration attempt too.
+      const gatewayUrls = [...PUBLIC_PKARR_FALLBACKS, `${mUrl.replace(/\/$/, '')}/pkarr`]
+      const reg = await registerDidCommViaDht(hexToBytes(rec.didCommPrivateKey!), kidN(rec.didCommOwnKid!), rootPriv, base, mUrl, gatewayUrls)
       // Persist mediator wiring so a later publishOwnDids rebuilds the document
       // WITH the DIDComm service instead of republishing it away — see store.ts.
       rec.didCommMediatorUrl = reg.mediator.url

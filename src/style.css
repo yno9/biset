@@ -1523,22 +1523,6 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 #past-threads {
 }
 
-.did-resolving-spinner {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  margin-left: 4px;
-  flex-shrink: 0;
-  vertical-align: middle;
-  border: 2px solid rgba(128, 128, 128, 0.25);
-  border-top-color: var(--accent, #0891b2);
-  border-radius: 50%;
-  animation: did-resolving-spin 0.7s linear infinite;
-}
-@keyframes did-resolving-spin {
-  to { transform: rotate(360deg); }
-}
-
 @keyframes pastRowIn {
   from {
     opacity: 0;
@@ -2530,7 +2514,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   color: var(--text-dim);
   font-size: 16px;
   line-height: 1;
-  padding: 0 2px;
+  padding: 4px;
 }
 .group-remove-btn:hover {
   color: var(--text);
@@ -2653,16 +2637,25 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 }
 /* Strip the native <select> inset so the From value lines up with the text
      inputs' value column (label 56px + gap 12px). */
-#new-from.new-field-input {
+/* The From trigger is a button styled to read like the other field inputs:
+   flush-left, transparent, the protocol pill + address laid out in a row. */
+#new-from.new-from-btn {
   -webkit-appearance: none;
   appearance: none;
   padding: 0;
-  text-indent: 0;
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  color: var(--text);
 }
-.new-recipient-row .new-field-input {
-  flex: 1;
-}
-.new-recip-menu {
+/* From dropdown popup surface. */
+.new-from-menu {
   position: fixed;
   z-index: 1000;
   background: var(--reply-box-bg);
@@ -2673,21 +2666,83 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   padding: 4px;
   display: flex;
   flex-direction: column;
-  min-width: 72px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
-.new-recip-menu-item {
+.new-from-menu-item {
+  display: flex;
+  align-items: center;
   background: none;
   border: none;
-  cursor: pointer;
   color: var(--text);
-  font-size: 13px;
+  font-family: inherit;
+  font-size: 14px;
   text-align: left;
-  padding: 6px 10px;
-  border-radius: 6px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
 }
-.new-recip-menu-item:hover {
-  background: var(--border);
+.new-from-menu-item:hover {
+  background: rgba(128, 128, 128, 0.14);
+}
+.new-from-menu-item.selected {
+  background: rgba(128, 128, 128, 0.10);
+}
+.new-recipient-row .new-field-input {
+  flex: 1;
+}
+/* Recipient protocol pills — left of the To/Cc/Bcc address, same slot the
+   From field's pill occupies, and pixel-aligned with it: the pill's own
+   6px margin-right is the ONLY spacing to the address text in both places.
+   .new-recipient-row's flex `gap` would otherwise ALSO add its 12px between
+   this element and the input (an extra gap the From button, a single flex
+   container with no such ancestor, never has) — the negative margin below
+   cancels exactly that contribution so the two fields' address text lines
+   up instead of the To field sitting 12px further right. Collapses to
+   nothing (no dead flex-gap at all) until there's a pill to show. */
+.new-recip-protos {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.new-recip-protos:not(:empty) {
+  margin-right: -12px;
+}
+.new-recip-protos:empty {
+  display: none;
+}
+/* Recipient protocol-resolve spinner — right edge of the To/Cc/Bcc field.
+   The [Mail]/[AP]/[DID] pills a did: address ends up with depend on a real
+   DHT/pkarr document resolve, not an instant lookup; this is the only
+   feedback that anything's happening while it's in flight. */
+.recip-loading {
+  display: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-dim);
+  border-top-color: transparent;
+  flex-shrink: 0;
+  align-self: center;
+  opacity: 0.7;
+  animation: recip-loading-spin 0.7s linear infinite;
+}
+.recip-loading[data-active="true"] {
+  display: inline-block;
+}
+@keyframes recip-loading-spin {
+  to { transform: rotate(360deg); }
+}
+/* Cc/Bcc row label doubles as a toggle between the two (left-pane.ts's
+   addRow) — no separate chooser menu. */
+.new-field-label-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+.new-field-label-toggle:hover {
+  color: var(--text);
 }
 .new-compose-body-field {
   display: flex;

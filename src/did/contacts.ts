@@ -153,10 +153,16 @@ export function representativeAddressForDid(did: string): string | undefined {
   return undefined
 }
 
-// A DID is unreadable as a label — `did~xxxx` (last 4 chars) is the compact
-// form shown when a contact is DID-mediated but hasn't set a display name.
+// A DID is unreadable as a label — the compact form shown when a contact is
+// DID-mediated but hasn't set a display name keeps the did:method: prefix
+// plus just the first/last 3 chars of the identifier (did:dht:6oi…b7x): a
+// stable, still-recognisable fingerprint, much more legible than truncating
+// blind.
 export function shortDid(did: string): string {
-  return 'did~' + did.slice(-4)
+  const m = did.match(/^(did:[^:]+:)(.+)$/)
+  if (!m) return did
+  const id = m[2]!
+  return id.length <= 6 ? did : `${m[1]}${id.slice(0, 3)}…${id.slice(-3)}`
 }
 
 // The full display-label fallback chain for a contact: (1) their

@@ -19,7 +19,7 @@
 // behind it": DNS is a commodity, swappable, and self-hostable by whoever owns
 // the domain, unlike a bespoke relay endpoint only that relay's software can
 // serve.
-import { sessions } from '../context.ts'
+import { sessions, isDidCommRelay } from '../context.ts'
 import { resolve, PUBLIC_PKARR_FALLBACKS } from './resolver.ts'
 import type { DidDocument } from './document.ts'
 import { buildCardForDid, type Card } from './contacts.ts'
@@ -93,9 +93,13 @@ function akaMailAddress(doc: DidDocument): string | null {
 }
 
 // The user's own relays double as resolution gateways (DID.md: query through a
-// relay that already sees your traffic, not a stranger's).
-function ownGateways(): string[] {
-  return [...new Set(sessions.map(s => s.account.serverUrl.replace(/\/$/, '') + '/pkarr'))]
+// relay that already sees your traffic, not a stranger's), plus — via
+// did/didcomm/channel.ts's ownGateways, not re-derived here — this identity's
+// own mediator's pkarr gateway when it has one, the ONLY gateway a fully
+// relay-less identity (DID⊥relay, zero relay sessions) has of its own at all.
+async function ownGateways(): Promise<string[]> {
+  const { ownGateways: channelOwnGateways, currentIdentityDid } = await import('./didcomm/channel.ts')
+  return channelOwnGateways(currentIdentityDid())
 }
 
 // address → DID via the DNS anchor (cached; TOFU on first success).
@@ -107,6 +111,13 @@ async function addressToDid(address: string): Promise<string | null> {
   localStorage.setItem(DID_KEY + address, did)
   return did
 }
+
+// Public wrapper for UI callers that just want to know "does this address
+// have a DID anchor at all" (e.g. compose's To-field protocol pills offering
+// a [DID] option next to [Mail]/[AP] for an address that publishes one) —
+// no reverse-binding check needed here, since (unlike a document's *claimed*
+// address) this direction is already anchored by the address's own domain.
+export const discoverDidForAddress = addressToDid
 
 // Fresh (uncached) reverse-binding check: does `address`'s own DNS anchor
 // attest that it belongs to `did`? A DID document is self-signed, so it can
@@ -130,7 +141,7 @@ export async function refreshContact(address: string): Promise<void> {
     // Gateways: own relays first, then the contact's last-known relays, then
     // public fallbacks — so a contact whose own relays moved is still findable.
     const gateways = [
-      ...ownGateways(),
+      ...(await ownGateways()),
       ...(prev?.relays ?? []).map(u => u.replace(/\/$/, '') + '/pkarr'),
       ...PUBLIC_PKARR_FALLBACKS,
     ]
@@ -168,7 +179,7 @@ export async function refreshContact(address: string): Promise<void> {
 // usable address at all (returns null), not a guess.
 export async function resolveDidDirect(did: string): Promise<{ address: string; relays: string[] } | null> {
   try {
-    const gateways = [...ownGateways(), ...PUBLIC_PKARR_FALLBACKS]
+    const gateways = [...(await ownGateways()), ...PUBLIC_PKARR_FALLBACKS]
     const doc = await resolve(did, [...new Set(gateways)])
     if (!doc) return null
     const claimed = akaMailAddress(doc)
@@ -221,7 +232,7 @@ async function syncContactCard(did: string): Promise<void> {
     contactsStore.put(card)
     await persist.flushContacts()
     const uid = encodeURIComponent(card.uid)
-    await Promise.all(sessions.map(s =>
+    await Promise.all(sessions.filter(s => !isDidCommRelay(s.account.serverUrl)).map(s =>
       fetch(`${s.account.serverUrl.replace(/\/$/, '')}/contacts/${uid}`, {
         method: 'PUT',
         headers: {
@@ -241,6 +252,7 @@ async function syncContactCard(did: string): Promise<void> {
 export async function pullOwnContacts(): Promise<void> {
   try {
     for (const s of sessions) {
+      if (isDidCommRelay(s.account.serverUrl)) continue // no JMAP endpoint behind the synthetic DIDComm session
       try {
         const resp = await fetch(`${s.account.serverUrl.replace(/\/$/, '')}/contacts`, {
           headers: { Authorization: 'Basic ' + btoa(s.account.email + ':' + s.account.password) },
