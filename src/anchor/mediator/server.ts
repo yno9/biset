@@ -129,10 +129,18 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
    * request being answered (handle()'s replyKid), not just any of the
    * sender's registered devices; otherwise a reply to a multi-device identity
    * could land encrypted to a key a different device holds. */
-  async function packReplyTo(toDid: string, toKid: string, type: string, body: unknown, attachments?: DidCommPlaintext['attachments']): Promise<string> {
+  async function packReplyTo(
+    toDid: string, toKid: string, type: string, body: unknown,
+    attachments?: DidCommPlaintext['attachments'],
+    // Pre-resolved key, when the caller already needed to resolve it BEFORE
+    // a destructive step (DELIVERY_REQUEST's queue.take() below) and can't
+    // afford this function's own resolve to be the one that fails after the
+    // fact. Defaults to resolving here, unchanged for every other caller.
+    resolvedKey?: { xKid: string; publicKey: Uint8Array },
+  ): Promise<string> {
     const plaintext = buildPlaintext(type, body, mediator.did, toDid)
     if (attachments) plaintext.attachments = attachments
-    const { xKid, publicKey } = await didCommKey(toDid, toKid)
+    const { xKid, publicKey } = resolvedKey ?? await didCommKey(toDid, toKid)
     const jwe = packAuthcrypt(
       utf8(JSON.stringify(plaintext)),
       { kid: mediator.xKid, privateKey: mediator.xPriv },
@@ -185,6 +193,22 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
     // defensive only.
     const replyKid = senderKid ?? (fromDid ? `${fromDid}#k1` : undefined)
 
+    // Defense in depth around the whole dispatch, on top of DELIVERY_REQUEST's
+    // own queue-ordering fix above: found live, an unhandled exception here
+    // (any case's packReplyTo hitting a did:dht resolve hiccup) showed up in
+    // the anchor's own logs as an uncaught rejection, and the process was
+    // observed restarting periodically around the same errors — every
+    // in-memory queued message lost on restart (queue.ts's own note: volatile
+    // by design). One request that can't be answered must 500, not take the
+    // whole mediator down with it.
+    try {
+      return await dispatch(msg, fromDid, replyKid)
+    } catch (e) {
+      return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
+    }
+  }
+
+  async function dispatch(msg: DidCommPlaintext, fromDid: string | undefined, replyKid: string | undefined): Promise<Response> {
     switch (msg.type) {
       case MEDIATE_REQUEST: {
         try {
@@ -250,15 +274,30 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
       case DELIVERY_REQUEST: {
         const kid = normalizeKid((msg.body as any)?.recipient_did ?? fromDid!)
         const limit: number = (msg.body as any)?.limit ?? 10
-        const batch = queue.take(kid, limit)
-        if (batch.length === 0) {
+        if (queue.count(kid) === 0) {
           return reply(await packReplyTo(fromDid!, replyKid!, STATUS, { recipient_did: kid, message_count: 0 }))
         }
+        // Resolve the reply key BEFORE touching the queue — found live: this
+        // used to resolve as part of packReplyTo AFTER queue.take() already
+        // ran. take() is destructive (queue.ts splices the batch out), so a
+        // resolve failure here — encrypting the reply back to the very device
+        // that's asking, a transient did:dht hiccup is enough — silently lost
+        // whatever had just been dequeued: the messages were gone from the
+        // queue, and the response that would have carried them never sent.
+        // Resolving first means a failure here changes nothing; the messages
+        // are still queued for the retry.
+        let replyKey: { xKid: string; publicKey: Uint8Array }
+        try {
+          replyKey = await didCommKey(fromDid!, replyKid!)
+        } catch (e) {
+          return Response.json({ error: `could not resolve reply key: ${e instanceof Error ? e.message : String(e)}` }, { status: 502 })
+        }
+        const batch = queue.take(kid, limit)
         const attachments = batch.map((packed, i) => ({
           id: `msg-${i}-${crypto.randomUUID()}`,
           data: { json: JSON.parse(packed) },
         }))
-        return reply(await packReplyTo(fromDid!, replyKid!, DELIVERY, { recipient_did: kid }, attachments))
+        return reply(await packReplyTo(fromDid!, replyKid!, DELIVERY, { recipient_did: kid }, attachments, replyKey))
       }
 
       default:

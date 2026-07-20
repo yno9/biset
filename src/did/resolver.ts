@@ -5,10 +5,10 @@
 // gateway can withhold or serve a stale record, never forge one: the payload
 // signature is verified against the identity key the DID itself names.
 import { zbase32Decode } from './zbase32.ts'
-import { parseSignedPayload, buildSignedPayload, type ParsedPayload } from './packet.ts'
+import { parseSignedPayload, buildSignedPayload, nowSeq, type ParsedPayload } from './packet.ts'
 import { suffixOf, type DidDocument } from './document.ts'
 import { splitIntoChain, mergeChain, MAX_CHAIN } from './chain.ts'
-import { noteSeq, requireSeqStore } from './freshness.ts'
+import { noteSeq, seenSeq, requireSeqStore } from './freshness.ts'
 
 export type { DidDocument, DidService } from './document.ts'
 
@@ -155,19 +155,39 @@ export async function publishTo(gatewayUrl: string, did: string, payload: Uint8A
 // failed everywhere is reported by throwing rather than by a lower count
 // (silently publishing a root whose chain is broken would advertise relays
 // nobody can reach).
+// nowSeq() alone is only 1-second resolution — several publishes of the same
+// DID within one second (e.g. deleting several device keys back to back,
+// left-pane.ts's device list) would otherwise reuse the same seq. BEP44
+// requires each write to strictly exceed what a node already has, so the
+// second write is silently rejected everywhere the first one already landed
+// — and since a caller here never learns that (only a fully-failed root
+// publish is surfaced, see below), it looks like it worked while the
+// document never actually changed. seenSeq(did) is this browser's own
+// floor — bumped by every resolve AND now by every accepted publish — so
+// consecutive writes strictly increase even inside the same wall-clock
+// second, without needing every gateway to agree on the current value.
+function nextSafeSeq(did: string): number {
+  return Math.max(seenSeq(did) + 1, nowSeq())
+}
+
 export async function publishDocument(rootPrivateKey: Uint8Array, doc: DidDocument, gatewayUrls: string[]): Promise<number> {
   const links = splitIntoChain(rootPrivateKey, doc)
 
   // Continuations first: the root's `ext=` pointer must never be live before
   // the record it points at is.
   for (const link of links.slice(1).reverse()) {
-    const payload = buildSignedPayload(link.privateKey, link.doc)
+    const seq = nextSafeSeq(link.did)
+    const payload = buildSignedPayload(link.privateKey, link.doc, seq)
     const accepted = await Promise.all(gatewayUrls.map(gw => publishTo(gw, link.did, payload)))
     if (!accepted.some(Boolean)) throw new Error(`publishDocument: no gateway accepted continuation record ${link.did}`)
+    noteSeq(link.did, seq)
   }
 
   const root = links[0]!
-  const payload = buildSignedPayload(root.privateKey, root.doc)
+  const seq = nextSafeSeq(root.did)
+  const payload = buildSignedPayload(root.privateKey, root.doc, seq)
   const results = await Promise.all(gatewayUrls.map(gw => publishTo(gw, root.did, payload)))
-  return results.filter(Boolean).length
+  const accepted = results.filter(Boolean).length
+  if (accepted > 0) noteSeq(root.did, seq)
+  return accepted
 }

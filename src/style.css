@@ -1946,6 +1946,26 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   overflow-y: auto;
   padding-left: 20px;
 }
+.acc-device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.acc-device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+}
+.acc-device-label {
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 #active-thread {
   min-height: 0;
 }

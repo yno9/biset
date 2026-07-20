@@ -67,6 +67,20 @@ export interface DidDocument {
   // (e.g. shown instead of the raw did:dht string), not verified by anyone.
   // Same trust level as any social profile's display name.
   name?: string
+  // biset extension: keyAgreement slot numbers a device was DELIBERATELY
+  // removed from (left-pane.ts's devices-list trash icon), riding along on
+  // the document itself so every OTHER device learns about the removal too —
+  // found live: a removal is otherwise only ever recorded in the ACTING
+  // device's own local cache (DidRecord.didCommRemovedKeys); every other
+  // still-active device of the same identity has its OWN independent local
+  // sibling cache that never heard about it, and grow-only means its very
+  // next routine republish (create-standalone.ts's syncDevicePosition) just
+  // re-publishes the removed slot right back — the deletion looked like it
+  // worked on the deleting device and then reappeared from a completely
+  // different one. A slot number here is small and non-secret (no key
+  // material, just an integer), so the cost of carrying it stays trivial
+  // even against BEP44's byte cap.
+  removedKeyNs?: number[]
 }
 
 export interface DnsRecord {
@@ -168,6 +182,7 @@ export function documentToRecords(doc: DidDocument): DnsRecord[] {
   // could contain ';' or ',' — can never collide with the field separators
   // parseFields()/service-endpoint-list splitting relies on.
   if (doc.name) parts.push(`name=${b64urlEncode(new TextEncoder().encode(doc.name))}`)
+  if (doc.removedKeyNs?.length) parts.push(`rm=${doc.removedKeyNs.join(',')}`)
   if (doc.ext) parts.push(`ext=${doc.ext}`)
   const id = suffixOf(doc.id)
   records.push({ name: `_did.${id}.`, type: 'TXT', ttl: TTL, rdata: toChunks(parts.join(';')) })
@@ -226,6 +241,7 @@ export function recordsToDocument(did: string, records: DnsRecord[]): DidDocumen
     }
   }
   const name = rootFields.name ? new TextDecoder().decode(b64urlDecode(rootFields.name)) : undefined
+  const removedKeyNs = rootFields.rm ? rootFields.rm.split(',').map(Number) : undefined
 
   const akaRaw = byName.get('_aka._did')
   const alsoKnownAs = akaRaw ? akaRaw.split(',') : []
@@ -233,7 +249,7 @@ export function recordsToDocument(did: string, records: DnsRecord[]): DidDocumen
   return {
     id: did, identityKey,
     ...(keyAgreementKeys.length ? { keyAgreementKeys } : {}),
-    alsoKnownAs, service, name, ext: rootFields.ext,
+    alsoKnownAs, service, name, ext: rootFields.ext, removedKeyNs,
   }
 }
 

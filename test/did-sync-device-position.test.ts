@@ -99,6 +99,100 @@ ok('デバイス2の公開鍵が一致', siblings.find(s => s.kid === '#k2')?.pu
 ok('自分自身(k1)はsiblingに含まれない', !siblings.some(s => s.kid === '#k1'))
 ok('自分のkidは変わらず#k1のまま', device1Rec.didCommOwnKid === '#k1')
 
+console.log('\n=== 自分が名乗ってるkidの鍵が、実際に公開されてる鍵と食い違っている（found live: y@biset.md）===')
+// A SEPARATE identity/root key for this scenario, to avoid resolve()'s cache
+// (60s TTL, keyed by DID) serving the FIRST scenario's already-resolved
+// result instead of hitting the gateway again for this one.
+const rootPriv2 = ed25519.utils.randomSecretKey()
+const rootPub2 = ed25519.getPublicKey(rootPriv2)
+const did2 = didFromRootPublicKey(rootPub2)
+const realK1Key = ed25519.utils.randomSecretKey() // what's ACTUALLY published at #k1
+const k2Key = ed25519.utils.randomSecretKey()
+const staleLocalKey = ed25519.utils.randomSecretKey() // what THIS device actually holds — different from realK1Key
+
+const doc2: DidDocument = {
+  ...buildBisetDocument(did2, rootPub2, [], []),
+  keyAgreementKeys: [
+    { n: 1, publicKey: realK1Key.slice(0, 32) },
+    { n: 2, publicKey: k2Key.slice(0, 32) },
+  ],
+}
+await fetch(`${URL_}/${did2.replace('did:dht:', '')}`, { method: 'PUT', body: buildSignedPayload(rootPriv2, doc2) })
+
+const mismatchedRec: DidRecord = {
+  did: did2, email: did2,
+  rootPrivateKey: bytesToHex(rootPriv2), rootPublicKey: bytesToHex(rootPub2),
+  nostrPrivateKey: '', nostrPublicKey: '',
+  didCommOwnKid: '#k1', didCommPublicKey: bytesToHex(staleLocalKey.slice(0, 32)), // claims #k1, but doesn't hold #k1's real key
+  didCommSiblingKeys: [],
+}
+await syncDevicePosition(mismatchedRec, [URL_]).catch(() => {})
+
+ok('#k1を名乗り続けない（自分の鍵はそこに無いと気づく）', mismatchedRec.didCommOwnKid !== '#k1', mismatchedRec.didCommOwnKid)
+ok('#k2でもない（既存の他デバイスの枠を奪わない）', mismatchedRec.didCommOwnKid !== '#k2', mismatchedRec.didCommOwnKid)
+ok('新しい空きスロット(#k3)を取り直す', mismatchedRec.didCommOwnKid === '#k3', mismatchedRec.didCommOwnKid)
+const siblings2 = mismatchedRec.didCommSiblingKeys ?? []
+ok('本物のk1・k2は両方siblingとして認識される', siblings2.some(s => s.kid === '#k1') && siblings2.some(s => s.kid === '#k2'), JSON.stringify(siblings2))
+
+console.log('\n=== grow-only は死守する — 成功したresolveがたまたま少なめでも、既知のsiblingは消えない ===')
+// A "replace with whatever a successful resolve returns" version of this
+// lived here briefly and caused real, near-unrecoverable damage live: a
+// resolve can return HTTP 200 with a validly-signed payload and still not
+// reflect every other device (mid-propagation, an incomplete gateway list
+// for that one call, a stale-but-validly-signed old snapshot with no
+// rollback check to catch it) — "the request succeeded" is not "this is the
+// complete truth". One device's ordinary republish wiped two other real,
+// live devices' keys off the document in a single call. Silently
+// resurrecting a revoked device (grow-only's known, accepted tradeoff) is a
+// recoverable annoyance; silently destroying a live device's key is not —
+// so this must stay grow-only, permanently. This test is the regression
+// guard for that revert: it must never pass by accident again.
+const rootPriv3 = ed25519.utils.randomSecretKey()
+const rootPub3 = ed25519.getPublicKey(rootPriv3)
+const did3 = didFromRootPublicKey(rootPub3)
+const deviceAKey = ed25519.utils.randomSecretKey()
+const deviceBKey = ed25519.utils.randomSecretKey()
+
+// A resolve that succeeds but only shows device A — device B is real and
+// still exists, this gateway (or this moment) just doesn't reflect it.
+const incompleteDoc: DidDocument = {
+  ...buildBisetDocument(did3, rootPub3, [], []),
+  keyAgreementKeys: [{ n: 1, publicKey: deviceAKey.slice(0, 32) }],
+}
+await fetch(`${URL_}/${did3.replace('did:dht:', '')}`, { method: 'PUT', body: buildSignedPayload(rootPriv3, incompleteDoc) })
+
+const deviceARec: DidRecord = {
+  did: did3, email: did3,
+  rootPrivateKey: bytesToHex(rootPriv3), rootPublicKey: bytesToHex(rootPub3),
+  nostrPrivateKey: '', nostrPublicKey: '',
+  didCommOwnKid: '#k1', didCommPublicKey: bytesToHex(deviceAKey.slice(0, 32)),
+  didCommSiblingKeys: [{ kid: '#k2', publicKey: bytesToHex(deviceBKey.slice(0, 32)) }],
+}
+await syncDevicePosition(deviceARec, [URL_]).catch(() => {})
+
+const siblingsAfterIncompleteResolve = deviceARec.didCommSiblingKeys ?? []
+ok('resolveが成功しても、既に知ってたdevice Bは消えない', siblingsAfterIncompleteResolve.some(s => s.kid === '#k2'), JSON.stringify(siblingsAfterIncompleteResolve))
+ok('自分自身(k1)は変わらない', deviceARec.didCommOwnKid === '#k1')
+
+console.log('\n=== resolveが本当に失敗した時は、既存キャッシュを消さない（一時障害と本物のrevokeを区別する）===')
+const rootPriv4 = ed25519.utils.randomSecretKey()
+const rootPub4 = ed25519.getPublicKey(rootPriv4)
+const did4 = didFromRootPublicKey(rootPub4)
+// Nothing published anywhere for did4 — every gateway will 404/refuse, so
+// resolve() genuinely fails (resolved stays null), not "succeeds with an
+// empty list".
+const deviceCRec: DidRecord = {
+  did: did4, email: did4,
+  rootPrivateKey: bytesToHex(rootPriv4), rootPublicKey: bytesToHex(rootPub4),
+  nostrPrivateKey: '', nostrPublicKey: '',
+  didCommOwnKid: '#k1', didCommPublicKey: bytesToHex(ed25519.utils.randomSecretKey().slice(0, 32)),
+  didCommSiblingKeys: [{ kid: '#k2', publicKey: bytesToHex(ed25519.utils.randomSecretKey().slice(0, 32)) }],
+}
+await syncDevicePosition(deviceCRec, ['http://127.0.0.1:1']).catch(() => {}) // port 1 — connection refused, a genuine failure
+
+const siblingsAfterFailedResolve = deviceCRec.didCommSiblingKeys ?? []
+ok('resolve失敗時は既存のsiblingキャッシュがそのまま残る（消えない）', siblingsAfterFailedResolve.some(s => s.kid === '#k2'), JSON.stringify(siblingsAfterFailedResolve))
+
 console.log(fails === 0 ? '\n  全て通過 — ルーチン republish 前の sync がsiblingを正しく学習する\n' : `\n  ${fails} 件失敗\n`)
 server.stop()
 process.exit(fails === 0 ? 0 : 1)

@@ -7,8 +7,8 @@
 // disabled (PKARR_GATEWAY off) — the PUT just fails and is swallowed.
 import { identities, relaysFor, isApRelay, isDidCommRelay } from '../context.ts'
 import * as identityStore from '../store/identities.ts'
-import { getDidRecord } from './store.ts'
-import { buildBisetDocument, keyAgreementKeysFromHex } from './document.ts'
+import { getDidRecord, withDidLock } from './store.ts'
+import { buildBisetDocument, keyAgreementKeysFromHex, kidN } from './document.ts'
 import { publishDocument, PUBLIC_PKARR_FALLBACKS } from './resolver.ts'
 import { hexToBytes } from '../utils.ts'
 
@@ -34,6 +34,23 @@ export function gatewayUrl(serverUrl: string): string {
   return serverUrl.replace(/\/$/, '') + '/pkarr'
 }
 
+// The one place that decides which gateways a DIDComm-related publish or
+// resolve goes through: this identity's own relays (if any), its own
+// mediator's pkarr gateway (if registered — anchor/server.ts's /pkarr, open
+// to anyone, see its own note on why that's safe), and the public fallbacks.
+// Was three near-identical constructions across this file and
+// create-standalone.ts, each independently deciding which of those three
+// sources to include — which is exactly how the public fallbacks ended up
+// missing from the most frequently-run one (buildOwnDocument's routine
+// republish) while every other caller had them. One function, one list,
+// used everywhere a DIDComm gateway list is needed.
+export function didCommGateways(relaySessions: Array<{ account: { serverUrl: string } }>, mediatorUrl?: string): string[] {
+  const out = new Set(relaySessions.map(s => gatewayUrl(s.account.serverUrl)))
+  if (mediatorUrl) out.add(`${mediatorUrl.replace(/\/$/, '')}/pkarr`)
+  for (const gw of PUBLIC_PKARR_FALLBACKS) out.add(gw)
+  return [...out]
+}
+
 export interface OwnDocument {
   doc: ReturnType<typeof buildBisetDocument>
   gateways: string[]
@@ -49,7 +66,17 @@ export interface OwnDocument {
 // "no relays" would republish a document that erases the identity's real
 // relay/address list — which is exactly what happened to a real account
 // before this was unified (PLAN.md).
-export async function buildOwnDocument(email: string): Promise<OwnDocument | null> {
+// `skipSync` bypasses the syncDevicePosition resolve-and-remerge below for
+// this one build — needed by create-standalone.ts's removeDeviceKey: it
+// edits rec.didCommSiblingKeys directly to drop an entry, and syncDevicePosition
+// is grow-only by design, so calling it here would re-absorb that very entry
+// off the still-stale published document before the removal ever reaches the
+// network, undoing the deletion in the same call meant to perform it.
+export async function buildOwnDocument(email: string, opts?: { skipSync?: boolean }): Promise<OwnDocument | null> {
+  return withDidLock(email, () => buildOwnDocumentLocked(email, opts))
+}
+
+async function buildOwnDocumentLocked(email: string, opts?: { skipSync?: boolean }): Promise<OwnDocument | null> {
   const rec = await getDidRecord(email)
   if (!rec) return null
   // relaysFor(email) includes the synthetic DIDComm session (did/didcomm/
@@ -73,7 +100,19 @@ export async function buildOwnDocument(email: string): Promise<OwnDocument | nul
     protocol: isApRelay(s.account.serverUrl) ? 'activitypub' : 'mail',
     address: s.account.email,
   }))
-  const gateways = relaySessions.map(s => gatewayUrl(s.account.serverUrl))
+  // didCommGateways always includes the public fallbacks — this function's
+  // routine republish (publishOwnDids, every single boot) used to build its
+  // own narrower list (relay gateways only) and so never pushed to them at
+  // all, unlike the rarer explicit "Register with mediator" flow. Left them
+  // dependent purely on organic DHT propagation from this identity's own
+  // relay/anchor announce, which is real but was consistently, indefinitely
+  // behind in practice (found live: two independently-operated public
+  // gateways serving the same stale seq no matter how much later they were
+  // asked, while this identity's own anchor was already current) — plausibly
+  // their own read-side caching, entirely outside biset's control either way.
+  // A direct PUT is the one thing guaranteed to actually reach them, so send
+  // it every time this identity's document changes, not just occasionally.
+  const gateways = didCommGateways(relaySessions, rec.didCommMediatorUrl)
   // All addresses of this identity (a moved identity spans several), the
   // representative `email` first as the primary a contact should deliver to.
   const addresses = [email, ...new Set(relaySessions.map(s => s.account.email))].filter((a, i, arr) => arr.indexOf(a) === i)
@@ -100,18 +139,20 @@ export async function buildOwnDocument(email: string): Promise<OwnDocument | nul
   // it only ever grows the sibling cache, never removes an entry, so a
   // resolve that fails or a gateway that's simply behind can't erase a real
   // device the way rebuilding the list from scratch would.
-  if (rec.didCommOwnKid) {
+  if (rec.didCommOwnKid && !opts?.skipSync) {
     const { syncDevicePosition } = await import('./create-standalone.ts')
-    const syncGateways = rec.didCommMediatorUrl
-      ? [...PUBLIC_PKARR_FALLBACKS, `${rec.didCommMediatorUrl.replace(/\/$/, '')}/pkarr`]
-      : PUBLIC_PKARR_FALLBACKS
-    await syncDevicePosition(rec, syncGateways).catch(() => {}) // best-effort — mutates + persists rec in place
+    await syncDevicePosition(rec, gateways).catch(() => {}) // best-effort — mutates + persists rec in place
   }
   const keyAgreementKeys = keyAgreementKeysFromHex(
     rec.didCommPublicKey && rec.didCommOwnKid ? { kid: rec.didCommOwnKid, publicKeyHex: rec.didCommPublicKey } : null,
     (rec.didCommSiblingKeys ?? []).map(s => ({ kid: s.kid, publicKeyHex: s.publicKey })),
   )
   if (keyAgreementKeys.length) doc.keyAgreementKeys = keyAgreementKeys
+  // Carry forward whatever this device knows has been removed (document.ts's
+  // removedKeyNs note) — every republish keeps propagating it to any sibling
+  // that hasn't heard yet, the same way keyAgreementKeys itself propagates
+  // sibling additions.
+  if (rec.didCommRemovedKeys?.length) doc.removedKeyNs = rec.didCommRemovedKeys.map(kidN)
   if (rec.didCommMediatorUrl && rec.didCommRoutingKey) {
     doc.service.push({
       id: 'didcomm', type: 'DIDCommMessaging',

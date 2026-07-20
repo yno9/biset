@@ -5,7 +5,7 @@ import { isReaction, collectReactions } from './mail/reactions.ts'
 import { avatarDataUrl, groupCacheKey } from './deltachat/avatar.ts'
 import {
   sessions, addSession, setCurrentInbox, currentInbox, activeSession, sessionFor, sessionForRelay,
-  loadStoredAccounts, saveStoredAccounts, identityIds, relaysForId, identityKey, isApRelay, isDidCommRelay,
+  loadStoredAccounts, saveStoredAccounts, identityIds, identities as identityEmails, relaysForId, identityKey, isApRelay, isDidCommRelay,
 } from './context.ts'
 import { initSession } from './jmap/client.ts'
 import * as messages from './store/messages.ts'
@@ -544,12 +544,34 @@ export function removeAccount(email: string): void {
 }
 
 export async function logout(): Promise<void> {
+  // Revoke this device's DIDComm key from every logged-in identity's DID
+  // document before wiping anything — create-standalone.ts's
+  // unregisterFromMediator note: this is the only device that will ever be
+  // able to prove it owns that keyAgreement slot, and once sessions[] is
+  // cleared below there's no way to even know which identities to revoke
+  // for. Best-effort + silent: no DIDComm registration at all is the
+  // ordinary case for most accounts, not an error worth surfacing on the
+  // way out. Must run first — everything after this point (saveStoredAccounts,
+  // clearLocalCache, the eventual reload) makes the identity unreachable.
+  const { unregisterFromMediator } = await import('./did/create-standalone.ts')
+  await Promise.all(identityEmails().map(email => unregisterFromMediator(email).catch(() => {})))
+
   saveStoredAccounts([])
   sessions.length = 0
   setCurrentInbox(null)
-  // Clear all localStorage keys belonging to biset
+  // Clear all localStorage keys belonging to biset — EXCEPT the did:dht
+  // rollback-defense floor (did/freshness.ts's 'biset_did_seq:' prefix,
+  // matched by the 'biset' prefix below unless excluded). That store exists
+  // to reject a signed record with a lower seq than one already trusted for
+  // a DID — its whole point is surviving exactly this kind of moment. Wiping
+  // it on logout, then logging back into the SAME identity later, opened a
+  // real window where a resolve that happened to reach only a stale gateway
+  // (this DID's ancient, pre-DIDComm-registration document, zero
+  // keyAgreementKeys) got accepted as legitimate with no rollback check
+  // to catch it — which is exactly how a routine re-registration wiped two
+  // other live devices' keys off the document in one shot (found live).
   const toRemove = Object.keys(localStorage).filter(k =>
-    k.startsWith('biset') || k.startsWith('jmap_notif_') || k.startsWith('sjoin_invites_')
+    (k.startsWith('biset') || k.startsWith('jmap_notif_') || k.startsWith('sjoin_invites_')) && !k.startsWith('biset_did_seq:')
   )
   toRemove.forEach(k => localStorage.removeItem(k))
   await deleteAllKeys()

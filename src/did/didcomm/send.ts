@@ -74,4 +74,12 @@ export async function sendDidComm(sender: DidCommSender, toDid: string, toDoc: P
     }
   }
   if (delivered === 0) throw new Error(`sendDidComm: failed to deliver to any device — ${errors.join('; ')}`)
+  // A per-device failure here used to be permanently invisible whenever at
+  // least one OTHER device succeeded (the common case: "delivered === 0"
+  // never trips, so this never throws) — found live, chasing a report of one
+  // specific device silently never receiving anything while its siblings
+  // worked fine, with zero errors anywhere in either party's console. Warn
+  // rather than throw: the send to everyone else already genuinely
+  // succeeded, and this fan-out is best-effort per device by design.
+  if (errors.length > 0) console.warn(`[didcomm] sendDidComm: delivered to ${delivered}/${toDoc.keyAgreement.length} device(s) — ${errors.join('; ')}`)
 }

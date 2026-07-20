@@ -16,13 +16,13 @@ import type { AccountSession, StoredAccount } from '../../types.ts'
 import type { Email } from 'jmap-rfc-types'
 import { sessions, addSession, accountKey, relaysForId, DIDCOMM_SERVER_URL } from '../../context.ts'
 import { getDidRecord } from '../store.ts'
-import { standaloneDid } from '../create-standalone.ts'
+import { standaloneDid, registerWithMediator } from '../create-standalone.ts'
 import { displayNameFor } from '../publish.ts'
 import { PUBLIC_PKARR_FALLBACKS } from '../resolver.ts'
 import { resolveDidCommDoc, resolveSenderPublicKey } from './resolve.ts'
 import { sendDidComm } from './send.ts'
 import { pickupDeliver } from './pickup.ts'
-import { fetchMediatorInfo, requestMediation, updateKeylist, type MediatorInfo } from './coordinate.ts'
+import { fetchMediatorInfo, type MediatorInfo } from './coordinate.ts'
 import type { DidCommSender } from './message.ts'
 import { hexToBytes } from '../../utils.ts'
 import * as messages from '../../store/messages.ts'
@@ -98,8 +98,21 @@ function didRecordKey(did: string): string {
 /** True if this identity has registered a DIDComm mediator at all — the
  * precondition for ensureDidCommSession being worth calling. */
 export async function hasDidCommChannel(did: string): Promise<boolean> {
-  const rec = await getDidRecord(didRecordKey(did))
-  return !!(rec?.didCommMediatorUrl && rec.didCommPrivateKey && rec.didCommOwnKid)
+  const key = didRecordKey(did)
+  const rec = await getDidRecord(key)
+  const result = !!(rec?.didCommMediatorUrl && rec.didCommPrivateKey && rec.didCommOwnKid)
+  // A false here means DIDComm polling never starts, with no other trace
+  // anywhere (main.ts's own note) — pin down WHICH of the three conditions
+  // failed, and whether didRecordKey even resolved to the record's actual
+  // storage key, rather than leaving that to be re-diagnosed from scratch
+  // next time.
+  if (!result) {
+    console.warn('[didcomm] hasDidCommChannel: false', {
+      did, key, found: !!rec,
+      mediatorUrl: !!rec?.didCommMediatorUrl, privateKey: !!rec?.didCommPrivateKey, ownKid: !!rec?.didCommOwnKid,
+    })
+  }
+  return result
 }
 
 /** This device's own DIDComm identity + mediator, built fresh from the local
@@ -365,30 +378,41 @@ export async function setupDidCommChannel(did: string, onNew: () => void): Promi
   return true
 }
 
-/** Best-effort mediate-request + keylist-update on every boot, not just at
- * the one-time "Register with mediator" click — self-healing against the
- * mediator's ConnectionStore losing this device's registration (it did, in
- * production, for a device that had registered before ConnectionStore
- * persistence existed — a restart before that point wiped it with no way for
- * that specific browser to ever notice: the 401 this causes is on the
- * SENDER'S Forward attempt, not on this device's own pickup, so the device
- * whose registration was lost sees no error at all, forever — pickupDeliver
- * just always returns empty, because the mediator drops the delivery attempt
- * before it ever reaches this kid's queue).
+/** A full re-registration on every boot, not just at the one-time "Register
+ * with mediator" click — self-healing against every way this identity's
+ * DIDComm state can drift from what's actually live: the mediator's
+ * ConnectionStore losing this device's registration (happened in production,
+ * for a device that had registered before ConnectionStore persistence
+ * existed), or this device's claimed kid/key silently no longer matching
+ * what's published for it (also happened live — see create-standalone.ts's
+ * syncDevicePosition note). Either failure is otherwise invisible to the
+ * affected device forever: the errors land on the SENDER'S Forward attempt
+ * or the mediator's reply-encryption step, never on this device's own
+ * pickup, so pickupDeliver just quietly keeps returning empty.
  *
- * Both calls are idempotent server-side (ConnectionStore.register/addKey are
- * no-ops on an existing entry), so repeating them unconditionally on every
- * load costs two cheap round trips and fixes itself the moment the affected
- * browser is next opened — no user action, no diagnosis needed. Never blocks
- * startDidCommPolling: a mediator hiccup here must not stop the poll loop
- * from starting. */
+ * This used to do its own lighter version — syncDevicePosition +
+ * mediate-request + keylist-update, skipping the actual document republish —
+ * on the theory that publish.ts's separate routine republish would cover
+ * that half. It didn't always: the two run as independent, unordered
+ * fire-and-forget chains at boot, and a device found live with a genuinely
+ * mismatched kid needed a full manual "log out of mediator, register again"
+ * (create-standalone.ts's registerWithMediator, the exact function called
+ * here now) before it started receiving — the lighter self-heal alone wasn't
+ * enough. registerWithMediator does the whole cycle atomically: resolve +
+ * correct this device's slot, rebuild the FULL document (relay services if
+ * any, plus the DIDComm layer), republish it, then mediate-request +
+ * keylist-update — so there's no window where the mediator and the DHT
+ * record can disagree. Every step is independently idempotent, so repeating
+ * the whole thing unconditionally on every load is safe, if heavier than the
+ * old version — worth it since the lighter one demonstrably wasn't always
+ * enough. Never blocks startDidCommPolling: a mediator or gateway hiccup
+ * here must not stop the poll loop from starting. */
 function reassertKeylistRegistration(did: string): void {
   (async () => {
-    const sender = await ownSender(did)
-    if (!sender) return
-    await requestMediation(sender.mediator, sender.own)
-    await updateKeylist(sender.mediator, sender.own, sender.own.xKid, 'add')
-  })().catch(e => console.warn('[didcomm] keylist re-assertion failed (will retry next load):', e instanceof Error ? e.message : e))
+    const rec = await getDidRecord(didRecordKey(did))
+    if (!rec?.didCommMediatorUrl || !rec.didCommPrivateKey || !rec.didCommOwnKid) return
+    await registerWithMediator(rec.didCommMediatorUrl)
+  })().catch(e => console.warn('[didcomm] re-registration failed (will retry next load):', e instanceof Error ? e.message : e))
 }
 
 /** The identity currently boot-relevant: a logged-in session's DID, or the

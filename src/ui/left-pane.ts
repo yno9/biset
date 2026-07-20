@@ -2457,6 +2457,20 @@ export async function setupLeftPane() {
     } else {
       import('../did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
     }
+    // This device's own DIDComm mediator registration is per-DEVICE state
+    // (create-standalone.ts's DidKeyAgreement note — a random key this one
+    // browser minted), not scoped to "is this identity's LAST relay going
+    // away" — found live: gating it on wasLastRelay left a stale, still-
+    // published key behind every time a device logged out of just ONE of
+    // several relay accounts, because the identity was still considered
+    // active via whichever relay remained. Any explicit Log out — this
+    // relay card's, or the mediator card's own — means THIS DEVICE is done;
+    // unregisterFromMediator is a harmless no-op (throws, caught) for the
+    // common case of a device that never registered a DIDComm channel at
+    // all, and by the time this runs the identity's session may already be
+    // gone from sessions[], so the identity key must be passed explicitly.
+    import('../did/create-standalone.ts').then(m => m.unregisterFromMediator(email))
+      .catch(e => console.warn('[logout] unregisterFromMediator failed — this device\'s DIDComm key may still be published:', e instanceof Error ? e.message : e))
     renderAccountsList(); loadLeftInboxes()
   }
 
@@ -3084,12 +3098,12 @@ export async function setupLeftPane() {
         if (!rec?.didCommMediatorUrl) return
         if (newCardWrap.parentNode !== $list) return
         if (document.getElementById('cmd-acc-mediator-card')) return
-        $list.insertBefore(buildMediatorCard(rec.didCommMediatorUrl), newCardWrap)
+        $list.insertBefore(buildMediatorCard(rec.didCommMediatorUrl, mediatorRecKey), newCardWrap)
       }).catch(() => {})
     }
   }
 
-  function buildMediatorCard(mediatorUrl: string): HTMLElement {
+  function buildMediatorCard(mediatorUrl: string, identityKey: string): HTMLElement {
     let host = mediatorUrl
     try { host = new URL(mediatorUrl).hostname } catch { /* keep raw */ }
     const wrap = document.createElement('div')
@@ -3148,7 +3162,78 @@ export async function setupLeftPane() {
     })
 
     row.append(left, menuBtn)
-    wrap.append(row)
+
+    // Device list panel — same accordion shape as a relay card's storage
+    // panel (.acc-storage-panel, driven by .acc-card-wrap.expanded in CSS),
+    // one row per keyAgreementKeys entry currently cached locally (this
+    // device's own + every known sibling — the same set buildOwnDocument
+    // publishes, so it matches what's actually live). Trash icon per row
+    // removes just that entry (create-standalone.ts's removeDeviceKey) —
+    // the human-confirmed manual prune, not an automatic one.
+    const panel = document.createElement('div')
+    panel.className = 'acc-storage-panel'
+    const panelHeader = document.createElement('div')
+    panelHeader.className = 'acc-storage-header'
+    const panelTitle = document.createElement('span')
+    panelTitle.className = 'acc-storage-title'
+    panelTitle.textContent = 'Devices'
+    panelHeader.append(panelTitle)
+    const deviceList = document.createElement('div')
+    deviceList.className = 'acc-device-list'
+    panel.append(panelHeader, deviceList)
+
+    const loadDevices = async () => {
+      deviceList.textContent = 'Loading…'
+      const rec = await getDidRecord(identityKey).catch(() => null)
+      if (!rec) { deviceList.textContent = 'Failed to load.'; return }
+      const entries: Array<{ kid: string; publicKey: string; isSelf: boolean }> = []
+      if (rec.didCommOwnKid && rec.didCommPublicKey) entries.push({ kid: rec.didCommOwnKid, publicKey: rec.didCommPublicKey, isSelf: true })
+      for (const s of rec.didCommSiblingKeys ?? []) entries.push({ kid: s.kid, publicKey: s.publicKey, isSelf: false })
+      deviceList.textContent = ''
+      if (!entries.length) { deviceList.textContent = 'No devices.'; return }
+      for (const entry of entries) {
+        const devRow = document.createElement('div')
+        devRow.className = 'acc-device-row'
+        const label = document.createElement('span')
+        label.className = 'acc-device-label'
+        const shortKey = entry.publicKey.slice(0, 8) + '…' + entry.publicKey.slice(-4)
+        label.textContent = `${entry.kid} · ${shortKey}${entry.isSelf ? ' · This device' : ''}`
+        const trashBtn = document.createElement('button')
+        trashBtn.type = 'button'
+        trashBtn.className = 'acc-storage-icon-btn'
+        trashBtn.setAttribute('aria-label', 'Remove device')
+        trashBtn.title = entry.isSelf ? 'Log out this device' : 'Remove this device'
+        trashBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>'
+        trashBtn.addEventListener('click', async (ev) => {
+          ev.stopPropagation()
+          if (trashBtn.disabled) return
+          if (!confirm(entry.isSelf
+            ? 'Log this device out of the mediator? It will stop receiving DIDComm messages until it registers again.'
+            : `Remove device ${entry.kid} from the published key list? This cannot be undone from here.`)) return
+          trashBtn.disabled = true
+          try {
+            const { removeDeviceKey } = await import('../did/create-standalone.ts')
+            await removeDeviceKey(identityKey, entry.kid)
+            showSysMsg(entry.isSelf ? 'Logged out of mediator' : 'Device removed')
+            if (entry.isSelf) { wrap.remove(); return }
+            loadDevices()
+          } catch (e) {
+            showSysMsg('Remove failed: ' + (e instanceof Error ? e.message : String(e)), 8000)
+            trashBtn.disabled = false
+          }
+        })
+        devRow.append(label, trashBtn)
+        deviceList.appendChild(devRow)
+      }
+    }
+
+    row.addEventListener('click', () => {
+      const expanding = !wrap.classList.contains('expanded')
+      wrap.classList.toggle('expanded')
+      if (expanding) loadDevices()
+    })
+
+    wrap.append(row, panel)
     return wrap
   }
 

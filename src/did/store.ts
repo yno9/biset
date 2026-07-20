@@ -38,6 +38,14 @@ export interface DidRecord {
   // this cache, republishing from any one device would silently drop every
   // OTHER device's key from the document.
   didCommSiblingKeys?: Array<{ kid: string; publicKey: string }> // publicKey hex
+  // Kids deliberately removed via the devices-list trash icon
+  // (create-standalone.ts's removeDeviceKey) — checked by syncDevicePosition
+  // so a later resolve that still shows a removed sibling (a lagging gateway,
+  // or this same device's own next boot) can't silently re-absorb it: grow-
+  // only merging has no other way to distinguish "never seen before" from
+  // "seen, and deliberately dropped". Kid numbers are never reused (always
+  // max+1), so a tombstone here is unambiguous and never needs to expire.
+  didCommRemovedKeys?: string[]
   // Which mediator this identity registered its DIDComm keys with, if any.
   // Unlike the keys these aren't derivable — they're registration state, and
   // they must be persisted precisely because publish.ts rebuilds the whole
@@ -76,6 +84,37 @@ function dbPut(db: IDBDatabase, record: DidRecord): Promise<void> {
     req.onsuccess = () => resolve()
     req.onerror = () => reject(req.error)
   })
+}
+
+// Serializes read-modify-write access to one identity's record. Found live:
+// buildOwnDocument's routine republish (every app boot) reads the record,
+// then does a multi-second network resolve (syncDevicePosition) before
+// writing it back — and an explicit action that reads-edits-writes in
+// between (create-standalone.ts's removeDeviceKey, deleting a device key)
+// finishes first, only to have the routine call's stale, pre-edit snapshot
+// overwrite it moments later when ITS write finally lands. Last-write-wins
+// on a full-record IndexedDB put means whichever read-modify-write started
+// EARLIER but finishes LATER (the slow, network-bound one) silently erases
+// the other's change. Every place that reads a DidRecord meaning to write it
+// back must run that whole sequence under the same identity's lock, or this
+// happens again — see buildOwnDocument, removeDeviceKey, unregisterFromMediator.
+// Bounds how long a holder may occupy the lock — a stuck fn() (a fetch that
+// never settles; browsers don't universally time these out) would otherwise
+// wedge every future caller for this identity for the rest of the page's
+// life, no reload short of a hard refresh recovers it. The timeout only
+// releases the LOCK; it doesn't cancel fn() itself, which keeps running and
+// still writes if it eventually finishes — this exists purely so one hung
+// caller can't starve every other one forever.
+const LOCK_TIMEOUT_MS = 15_000
+const locks = new Map<string, Promise<unknown>>()
+export function withDidLock<T>(identityKey: string, fn: () => Promise<T>): Promise<T> {
+  const prev = locks.get(identityKey) ?? Promise.resolve()
+  const run = prev.then(fn, fn)
+  const timeout = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error(`withDidLock: timed out waiting for ${identityKey}`)), LOCK_TIMEOUT_MS)
+  })
+  locks.set(identityKey, Promise.race([run, timeout]).then(() => {}, () => {}))
+  return run
 }
 
 export async function getDidRecord(email: string): Promise<DidRecord | null> {

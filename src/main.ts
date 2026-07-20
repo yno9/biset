@@ -1,7 +1,7 @@
 import {
   sessions, addSession, setCurrentInbox, currentInbox, loadStoredAccounts, accountsForActiveIdentity,
 } from './context.ts'
-import { initSession, initPGPForSession, loadInboxSummaries } from './app.ts'
+import { initSession, loadInboxSummaries } from './app.ts'
 import type { InboxSummary } from './types.ts'
 import { inboxToHash, parseInboxHash } from './utils.ts'
 import { contactIdentityKey, representativeAddressForDid } from './did/contacts.ts'
@@ -106,6 +106,59 @@ async function handleUserLanding(localpart: string, accounts: ReturnType<typeof 
   await showUserLanding(target, apUrl)
 }
 
+// ── Session bootstrap ────────────────────────────────────────────────────────
+// DID⊥relay (PLAN.md): an identity's DIDComm channel is orthogonal to whether
+// it has any relay (JMAP) accounts at all — every identity may have one, on
+// top of however many relay accounts it also has. This is the ONE place
+// sessions[] gets populated, for either shape, so nothing downstream can ever
+// implement it for one and forget the other again. Found live: this pairing
+// used to be reimplemented separately at every boot entry point (one per
+// hash-route × relay/standalone combination) — the "menu-hash × relay-backed"
+// copy never got the DIDComm half at all, so a relay-backed identity's iOS
+// PWA that always relaunches into #account (its start_url, captured at
+// "Add to Home Screen" time) silently never polled for DIDComm mail, ever,
+// with zero trace anywhere — no network request, no console line, nothing.
+//
+// Returns `configured`: whether SOME identity exists on this device at all (a
+// relay account, or a standalone DID ever created) — distinct from whether
+// sessions[] ends up non-empty, which also depends on whether that identity's
+// relays/channel are reachable right now. Callers use this to tell "nothing
+// set up yet" (new-user page) apart from "set up, but nothing came up this
+// time" (account page).
+async function bootSessions(accounts: ReturnType<typeof loadStoredAccounts>, onNew: () => void): Promise<{ configured: boolean }> {
+  const createStandalone = await import('./did/create-standalone.ts')
+  let configured = accounts.length > 0
+  if (accounts.length) {
+    const results = await Promise.all(accounts.map(initSession))
+    const validSessions = results.filter(Boolean) as NonNullable<Awaited<ReturnType<typeof initSession>>>[]
+    validSessions.forEach(s => addSession(s))
+  } else {
+    // Relay-less: republish this identity's bare DID doc + renew mediation.
+    // refreshStandalone reads its own localStorage marker and returns null
+    // immediately if this device was never set up as standalone, so this is
+    // exactly the relay-less branch — never reached when accounts.length > 0.
+    const sDid = await createStandalone.refreshStandalone()
+    configured = createStandalone.standaloneDid() !== null
+    if (!sDid) return { configured } // no accounts, no standalone identity — genuinely new
+  }
+  advertiseAllOwnAvatars()
+
+  const ownDid = sessions.find(s => s.account.did)?.account.did ?? createStandalone.standaloneDid()
+  if (ownDid) {
+    const { setupDidCommChannel } = await import('./did/didcomm/channel.ts')
+    await setupDidCommChannel(ownDid, onNew)
+      .then(started => { if (!started) console.warn('[didcomm] channel setup skipped — hasDidCommChannel() returned false for', ownDid) })
+      .catch(e => console.warn('[didcomm] channel setup failed:', e instanceof Error ? e.message : e))
+  }
+
+  if (sessions.length) {
+    // Keep our DID records alive on the DHT (best-effort — see did/publish.ts).
+    import('./did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
+    import('./did/discovery.ts').then(m => m.pullOwnContacts()).catch(() => {})
+  }
+  return { configured }
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────────
 
 // A stale/broken stored account (e.g. pointing at a relay that no longer
@@ -161,21 +214,18 @@ async function initInner() {
   // new visitor → account creation (with the target as a chat header) then compose.
   const composeTo = composeArgFromHash(rawHash)
   if (composeTo) {
-    if (accounts.length) {
-      const results = await Promise.all(accounts.map(initSession))
-      const valid = results.filter(Boolean) as NonNullable<Awaited<ReturnType<typeof initSession>>>[]
-      valid.forEach(s => addSession(s!))
-      valid.forEach(s => initPGPForSession(s!))
-      advertiseAllOwnAvatars()
-      if (sessions.length) {
-        showApp()
-        await setupLeftPane()
-        refreshAccountsList()
-        startPolling()
-        loadLeftInboxes()
-        openComposeTo(composeTo)
-        return
-      }
+    // DID⊥relay: a relay-less identity can compose too (bootSessions.
+    // configured also becomes true here for anyone with an existing
+    // standalone identity, not just relay accounts).
+    await bootSessions(accounts, () => { fetchMessages(); loadLeftInboxes() })
+    if (sessions.length) {
+      showApp()
+      await setupLeftPane()
+      refreshAccountsList()
+      startPolling()
+      loadLeftInboxes()
+      openComposeTo(composeTo)
+      return
     }
     const cfg = (window as any).__BISET_CONFIG__
     const apUrl: string = cfg?.ap_url || (cfg?.hostname ? `https://ap.${cfg.hostname}` : '')
@@ -210,88 +260,38 @@ async function initInner() {
       if (body?.value.trim() || firstTo?.value.trim()) return
       showMenuPage(menuPage)
     }
-    if (accounts.length) {
-      const results = await Promise.all(accounts.map(initSession))
-      const validSessions = results.filter(Boolean) as NonNullable<Awaited<ReturnType<typeof initSession>>>[]
-      validSessions.forEach(s => addSession(s!))
-      validSessions.forEach(s => initPGPForSession(s!))
-      advertiseAllOwnAvatars()
-      import('./did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
-      import('./did/discovery.ts').then(m => m.pullOwnContacts()).catch(() => {})
-      syncNotifToggle()
-      refreshAccountsList()
-      startPolling()
-      loadLeftInboxes()
-      refreshComposeIfPristine()
-    } else {
-      // A relay-less identity landing directly on a menu page (e.g. a
-      // bookmarked #compose/#account) skipped the !accounts.length bootstrap
-      // below entirely — sessions[] stayed empty, so compose's From selector
-      // and every other session-driven bit of this page had nothing to show.
-      // Same wiring the normal boot path does for a standalone identity.
-      const { refreshStandalone } = await import('./did/create-standalone.ts')
-      const sDid = await refreshStandalone()
-      if (sDid) {
-        const { setupDidCommChannel } = await import('./did/didcomm/channel.ts')
-        await setupDidCommChannel(sDid, () => { fetchMessages(); loadLeftInboxes() })
-        loadLeftInboxes()
-        refreshComposeIfPristine()
-      }
-    }
+    // One shared bootstrap regardless of relay/standalone shape (bootSessions'
+    // own note) — this used to be reimplemented separately per shape here,
+    // and the relay-backed copy never started the DIDComm channel at all.
+    await bootSessions(accounts, () => { fetchMessages(); loadLeftInboxes() })
+    syncNotifToggle()
+    refreshAccountsList()
+    startPolling()
+    loadLeftInboxes()
+    refreshComposeIfPristine()
     return
   }
 
-  if (!accounts.length) {
-    // A relay-less identity (DID⊥relay) has zero StoredAccounts. Republish its
-    // DID doc + renew mediation, then register its DIDComm channel (if any) as
-    // a synthetic session (did/didcomm/channel.ts) — sessions[] being
-    // non-empty from here on is what lets the SAME "pick an inbox, show it"
-    // flow below handle it, exactly like a JMAP identity's sessions. No
-    // DIDComm channel yet (mediator unreachable, or never configured) falls
-    // through to the account page, where "+ New Relay" can register one.
-    const { refreshStandalone } = await import('./did/create-standalone.ts')
-    const sDid = await refreshStandalone()
-    if (sDid) {
-      const { setupDidCommChannel } = await import('./did/didcomm/channel.ts')
-      const hasChannel = await setupDidCommChannel(sDid, () => { fetchMessages(); loadLeftInboxes() })
-      if (!hasChannel) {
-        showApp()
-        await setupLeftPane()
-        showMenuPage('/account')
-        return
-      }
-      // else: fall through into the shared flow below, which now finds this
-      // identity's synthetic session in sessions[] and treats it like any other.
-    } else {
+  // One shared bootstrap for whichever shape this identity is (bootSessions'
+  // own note): a relay-less identity's zero StoredAccounts republishes its
+  // DID doc + renews mediation and registers its DIDComm channel (if any) as
+  // a synthetic session — sessions[] being non-empty from here on is what
+  // lets the SAME "pick an inbox, show it" flow below handle it, exactly like
+  // a JMAP identity's sessions. No DIDComm channel yet (mediator unreachable,
+  // or never configured) falls through to the account page, where "+ New
+  // Relay" can register one. A genuinely new visitor (no accounts, no
+  // standalone identity ever created) routes to the new-user page instead.
+  const { configured } = await bootSessions(accounts, () => { fetchMessages(); loadLeftInboxes() })
+  if (!sessions.length) {
+    if (!configured) {
       setupNewUserPage()
       showNewUserPage()
       return
     }
-  }
-
-  const results = await Promise.all(accounts.map(initSession))
-  const validSessions = results.filter(Boolean) as NonNullable<Awaited<ReturnType<typeof initSession>>>[]
-  validSessions.forEach(s => addSession(s))
-  advertiseAllOwnAvatars()
-
-  if (!sessions.length) {
     showApp()
+    await setupLeftPane()
     showMenuPage('/account')
     return
-  }
-
-  // Keep our DID records alive on the DHT (best-effort — see did/publish.ts).
-  import('./did/publish.ts').then(m => m.publishOwnDids()).catch(() => {})
-  import('./did/discovery.ts').then(m => m.pullOwnContacts()).catch(() => {})
-  // A relay-backed identity MAY also have a DIDComm channel registered (the
-  // account page's mediator card) — surface it as another inbox source
-  // alongside the JMAP ones, same session registration standalone uses above.
-  // Best-effort/non-blocking: if this hasn't finished by the first
-  // loadInboxSummaries() below, the next loadLeftInboxes() (startPolling's
-  // sync completion, or this channel's own first poll tick) picks it up.
-  const ownDid = validSessions.find(s => s.account.did)?.account.did
-  if (ownDid) {
-    import('./did/didcomm/channel.ts').then(m => m.setupDidCommChannel(ownDid, () => { fetchMessages(); loadLeftInboxes() })).catch(() => {})
   }
 
   // Fire-and-forget PGP init (kek only available on fresh envelope login, not here)
