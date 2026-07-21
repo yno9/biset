@@ -103,4 +103,18 @@ export class ConnectionStore {
     }
     return false
   }
+
+  /** The kids THIS client (a shared identity DID across all its devices)
+   * currently has registered — the authoritative live-device set for that
+   * identity. A logged-out device's keylist-update remove drops its kid here
+   * immediately and point-to-point (no DHT last-writer-wins race), which is
+   * why keylist-query against this is the backstop that lets every device's
+   * next republish converge on removing a key, overriding stale sibling
+   * caches. Empty array for an unknown client (never registered) — a caller
+   * must treat that as "no authoritative answer", not "zero live devices",
+   * exactly as it must treat a failed query. */
+  listKeys(clientDid: string): string[] {
+    const conn = this.byClientDid.get(clientDid)
+    return conn ? [...conn.keylist] : []
+  }
 }

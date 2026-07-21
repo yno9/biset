@@ -290,10 +290,21 @@ export function keyAgreementKeysFromHex(
   own: { kid: string; publicKeyHex: string } | null,
   siblings: Array<{ kid: string; publicKeyHex: string }>,
 ): DidKeyAgreement[] {
-  const out: DidKeyAgreement[] = []
-  if (own) out.push({ n: kidN(own.kid), publicKey: hexToBytesLocal(own.publicKeyHex) })
-  for (const s of siblings) out.push({ n: kidN(s.kid), publicKey: hexToBytesLocal(s.publicKeyHex) })
-  return out
+  // Deduped by slot number, own always wins — found live: a device that
+  // self-heals to a new kid (create-standalone.ts's syncDevicePosition,
+  // mismatch branch) keeps its OWN local sibling cache around, and if that
+  // cache still had a stale entry at the SAME number it just claimed (e.g.
+  // an old ghost that once lived there), this used to emit TWO entries for
+  // one `n` — a document.ts `_k<n>._did` record written twice with two
+  // different keys, ambiguous the moment anything parses it back, and
+  // visibly duplicated in left-pane.ts's device list.
+  const byN = new Map<number, Uint8Array>()
+  if (own) byN.set(kidN(own.kid), hexToBytesLocal(own.publicKeyHex))
+  for (const s of siblings) {
+    const n = kidN(s.kid)
+    if (!byN.has(n)) byN.set(n, hexToBytesLocal(s.publicKeyHex))
+  }
+  return [...byN.entries()].map(([n, publicKey]) => ({ n, publicKey }))
 }
 
 // Builds the biset DID document: identity key + one service per relay serving

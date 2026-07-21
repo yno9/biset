@@ -46,21 +46,57 @@ function trim(u: string): string { return u.replace(/\/$/, '') }
 // answered first — the resolve got proportionally slower every time another
 // gateway was added to the list, not just occasionally slow when one happened
 // to lag.
-export async function resolveVia(did: string, gatewayUrls: string[]): Promise<ParsedPayload | null> {
+// Per-gateway outcome, kept internal to this module — 'found'/'absent' are
+// both a REAL answer (the gateway was reached and definitively knows this DID
+// has/hasn't got a record); 'unknown' covers everything else a caller must
+// not read as a real answer: a network/CORS failure, a timeout, or ANY
+// non-404 error status (429 rate-limited, 5xx, etc). A 429 in particular
+// looks superficially like "the gateway answered" but it explicitly refused
+// to check — collapsing it into the same bucket as a real 404 is exactly the
+// bug resolveConfirmedAbsent below exists to avoid.
+type GatewayOutcome =
+  | { status: 'found'; payload: ParsedPayload }
+  | { status: 'absent' }
+  | { status: 'unknown' }
+
+async function resolveViaDetailed(did: string, gatewayUrls: string[]): Promise<{ payload: ParsedPayload | null; outcomes: GatewayOutcome[] }> {
   const pubkey = identityKeyFromDid(did)
   const suffix = suffixOf(did)
-  const results = await Promise.allSettled(gatewayUrls.map(async gw => {
+  const results = await Promise.allSettled(gatewayUrls.map(async (gw): Promise<GatewayOutcome> => {
     const resp = await fetch(`${trim(gw)}/${suffix}`, { headers: { Accept: 'application/octet-stream' } })
-    if (!resp.ok) throw new Error(`gateway returned ${resp.status}`)
+    if (resp.status === 404) return { status: 'absent' }
+    if (!resp.ok) return { status: 'unknown' }
     const payload = new Uint8Array(await resp.arrayBuffer())
-    return parseSignedPayload(pubkey, payload) // throws on bad signature → this gateway's result is dropped
+    try { return { status: 'found', payload: parseSignedPayload(pubkey, payload) } }
+    catch { return { status: 'unknown' } } // bad signature / corrupt payload — not trustworthy either way
   }))
+  const outcomes = results.map((r): GatewayOutcome => r.status === 'fulfilled' ? r.value : { status: 'unknown' })
   let best: ParsedPayload | null = null
-  for (const r of results) {
-    if (r.status !== 'fulfilled') continue
-    if (!best || r.value.seq > best.seq) best = r.value
+  for (const o of outcomes) {
+    if (o.status !== 'found') continue
+    if (!best || o.payload.seq > best.seq) best = o.payload
   }
-  return best
+  return { payload: best, outcomes }
+}
+
+export async function resolveVia(did: string, gatewayUrls: string[]): Promise<ParsedPayload | null> {
+  return (await resolveViaDetailed(did, gatewayUrls)).payload
+}
+
+// True only when every gateway that gave a real answer said 404, AND at
+// least one gateway actually did (an empty/all-unreachable gateway list must
+// never read as "confirmed absent" — that's just "we don't know"). Exists
+// for exactly one caller: syncDevicePosition's brand-new-device slot
+// assignment, which must never treat "couldn't check" (rate-limited, CORS-
+// blocked, network down — all 'unknown') as equivalent to "genuinely nothing
+// published yet" (all 'absent') — found live: a registration during a
+// relay.pkarr.org 429/CORS spell defaulted a new device straight to slot #k1
+// as if the identity had never published anything, silently colliding with
+// (and displacing) another device's already-live #k1.
+export async function resolveConfirmedAbsent(did: string, gatewayUrls: string[]): Promise<boolean> {
+  const { outcomes } = await resolveViaDetailed(did, gatewayUrls)
+  const definitive = outcomes.filter(o => o.status !== 'unknown')
+  return definitive.length > 0 && definitive.every(o => o.status === 'absent')
 }
 
 // Every gateway in a caller's list is either this browser's own relay (fast,
@@ -84,9 +120,9 @@ const RESOLVE_CACHE_TTL_MS = 60_000
 // root — a gateway can withhold a link, never forge one. A missing/corrupt
 // link degrades to the services resolved so far rather than failing the
 // whole resolve: a partial relay list still beats an unresolvable identity.
-export async function resolve(did: string, gatewayUrls: string[]): Promise<DidDocument | null> {
+export async function resolve(did: string, gatewayUrls: string[], opts?: { skipCache?: boolean }): Promise<DidDocument | null> {
   const cached = resolveCache.get(did)
-  if (cached && Date.now() - cached.at < RESOLVE_CACHE_TTL_MS) return cached.doc
+  if (!opts?.skipCache && cached && Date.now() - cached.at < RESOLVE_CACHE_TTL_MS) return cached.doc
 
   requireSeqStore() // up front: a lookup that finds nothing must still surface a missing store
   const r = await resolveVia(did, gatewayUrls)
@@ -112,6 +148,27 @@ export async function resolve(did: string, gatewayUrls: string[]): Promise<DidDo
   }
   resolveCache.set(did, { doc, at: Date.now() })
   return doc
+}
+
+// Own-gateway-first resolve: query only `ownGatewayUrls` (this deployment's
+// own relays/anchor) first, and only escalate to PUBLIC_PKARR_FALLBACKS when
+// that comes back empty. Every caller used to flat-merge own+public and
+// query both in parallel on EVERY resolve — fine for a rare call, but
+// resolve() is the highest-volume gateway consumer in the app (every message
+// send, every poll tick, every contact refresh), and constantly hitting
+// relay.pkarr.org/pkarr.pubky.org at that rate is what tripped their rate
+// limit this session, not just the rarer registration/publish paths. Own
+// gateways answer the ordinary case; public fallbacks become a genuine last
+// resort instead of continuous background load on someone else's free
+// infrastructure — worth doing before this deployment has 100s-1000s of
+// users generating that traffic instead of one browser's test session.
+export async function resolveOwnFirst(
+  did: string, ownGatewayUrls: string[],
+  opts?: { skipCache?: boolean; fallbackGatewayUrls?: string[] },
+): Promise<DidDocument | null> {
+  const doc = await resolve(did, ownGatewayUrls, opts)
+  if (doc) return doc
+  return resolve(did, [...ownGatewayUrls, ...(opts?.fallbackGatewayUrls ?? PUBLIC_PKARR_FALLBACKS)], opts)
 }
 
 // Publish a signed document to a gateway (PUT /{suffix} with the raw payload).

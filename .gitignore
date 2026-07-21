@@ -6,9 +6,14 @@ deploy.sh
 home/
 issue.md
 GRAF.md
-DID.md
+DID*.md
 PLAN.md
 ANCHOR.md
 JOURNAL.md
+didcomm2.1/
+test/
 
-biset-anchor
+biset-*
+
+
+

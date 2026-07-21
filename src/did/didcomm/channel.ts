@@ -16,14 +16,14 @@ import type { AccountSession, StoredAccount } from '../../types.ts'
 import type { Email } from 'jmap-rfc-types'
 import { sessions, addSession, accountKey, relaysForId, DIDCOMM_SERVER_URL } from '../../context.ts'
 import { getDidRecord } from '../store.ts'
-import { standaloneDid, registerWithMediator } from '../create-standalone.ts'
+import { standaloneDid, registerWithMediator, mediatorUrl } from '../create-standalone.ts'
 import { displayNameFor } from '../publish.ts'
 import { PUBLIC_PKARR_FALLBACKS } from '../resolver.ts'
 import { resolveDidCommDoc, resolveSenderPublicKey } from './resolve.ts'
 import { sendDidComm } from './send.ts'
 import { pickupDeliver } from './pickup.ts'
 import { fetchMediatorInfo, type MediatorInfo } from './coordinate.ts'
-import type { DidCommSender } from './message.ts'
+import { isExpired, type DidCommSender } from './message.ts'
 import { hexToBytes } from '../../utils.ts'
 import * as messages from '../../store/messages.ts'
 import * as contactsStore from '../../store/contacts.ts'
@@ -53,7 +53,46 @@ export async function ownGateways(selfDid?: string | null): Promise<string[]> {
     const rec = await getDidRecord(didRecordKey(selfDid))
     if (rec?.didCommMediatorUrl) out.add(`${rec.didCommMediatorUrl.replace(/\/$/, '')}/pkarr`)
   }
+  // This deployment's own anchor answers /pkarr for ANY identity, registered
+  // with it or not (server.ts: "/pkarr/* answers anyone") — include it
+  // unconditionally so PUBLIC_PKARR_FALLBACKS stays a true last resort
+  // instead of the only gateway an identity with no relay and no mediator
+  // registration yet has. At scale (100s-1000s of users), leaning on a
+  // third-party public relay as the default path is a rate-limit bottleneck
+  // waiting to happen (relay.pkarr.org 429s already seen from a single
+  // browser's worth of test traffic).
+  const mUrl = mediatorUrl()
+  if (mUrl) out.add(`${mUrl.replace(/\/$/, '')}/pkarr`)
   return [...out]
+}
+
+// Own-gateway-first resolve, public fallbacks only on a miss — this module's
+// resolveDidCommDoc/resolveSenderPublicKey calls used to always be handed
+// ownGateways() + PUBLIC_PKARR_FALLBACKS flattened together and query BOTH
+// in parallel on every call. That's fine for a rare call, but this is by far
+// the highest-volume consumer of any gateway in the app: every message send
+// (sendViaDidComm) AND every poll tick (pollDidCommOnce, every 4s per open
+// identity) resolves through here. Constantly hitting relay.pkarr.org/
+// pkarr.pubky.org at that rate — not just the rarer registration/publish
+// paths — is what actually tripped their rate limit this session. Own
+// gateways (this device's relays + this deployment's own anchor) answer the
+// ordinary case; public fallbacks are queried only when they come back
+// empty, keeping them a genuine last resort instead of constant background
+// load.
+async function resolveDocOwnFirst(did: string, selfDid?: string | null): Promise<Awaited<ReturnType<typeof resolveDidCommDoc>>> {
+  const own = await ownGateways(selfDid)
+  const doc = await resolveDidCommDoc(did, own)
+  if (doc) return doc
+  return resolveDidCommDoc(did, [...own, ...PUBLIC_PKARR_FALLBACKS])
+}
+
+async function resolveSenderKeyOwnFirst(kid: string, selfDid?: string | null): Promise<Uint8Array> {
+  const own = await ownGateways(selfDid)
+  try {
+    return await resolveSenderPublicKey(kid, own)
+  } catch {
+    return resolveSenderPublicKey(kid, [...own, ...PUBLIC_PKARR_FALLBACKS])
+  }
 }
 
 /** The pseudo-StoredAccount a relay-less identity's DIDComm reachability is
@@ -180,8 +219,7 @@ export async function pollDidCommOnce(did: string, onNameResolved?: () => void):
     // failed this resolve for every single incoming message, which
     // unpackAuthcrypt treats as a hard failure (can't authenticate = can't
     // decrypt), so nothing was ever delivered.
-    const gateways = [...(await ownGateways(did)), ...PUBLIC_PKARR_FALLBACKS]
-    delivered = await pickupDeliver(sender.mediator, sender.own, kid => resolveSenderPublicKey(kid, gateways))
+    delivered = await pickupDeliver(sender.mediator, sender.own, kid => resolveSenderKeyOwnFirst(kid, did))
   } catch (e) {
     console.warn('[didcomm] pickup failed:', e instanceof Error ? e.message : e)
     return false
@@ -192,7 +230,11 @@ export async function pollDidCommOnce(did: string, onNameResolved?: () => void):
   const now = new Date().toISOString()
   let gotOne = false
   for (const d of delivered) {
-    const body = d.plaintext as { type?: string; body?: { content?: unknown; subject?: unknown; syncTo?: unknown; sentAt?: unknown; fromName?: unknown }; id?: string }
+    const body = d.plaintext as { type?: string; body?: { content?: unknown; subject?: unknown; syncTo?: unknown; sentAt?: unknown; fromName?: unknown }; id?: string; expires_time?: number }
+    // A message whose sender-declared deadline has already passed is stale —
+    // drop it rather than render it (problems.md "Timeouts"). Pickup is
+    // destructive at the mediator, so this is the last point that sees it.
+    if (isExpired(body)) continue
     if (body?.type && !body.type.includes('basicmessage')) continue // admin/unknown traffic — never queued here in practice, but don't render it as a chat message if it ever is
     const content = typeof body?.body?.content === 'string' ? body.body.content : ''
     if (!content) continue
@@ -229,7 +271,7 @@ export async function pollDidCommOnce(did: string, onNameResolved?: () => void):
     // conv-to both use it — only ever reads a name from THAT store. A DID
     // reached with no email involved at all (pure DIDComm, no discovery.ts
     // flow ever runs) had its document's name go nowhere but this one email.
-    ownGateways(did).then(gws => resolveDidCommDoc(fromDid, [...gws, ...PUBLIC_PKARR_FALLBACKS])).then(doc => {
+    resolveDocOwnFirst(fromDid, did).then(doc => {
       const name = doc?.name
       if (!name) return
       const cur = messages.get(acctKey, id)
@@ -295,8 +337,7 @@ export interface DidCommSendResult { ok: boolean; fromEmail?: string; error?: st
 export async function sendViaDidComm(selfDid: string, toDid: string, body: string, subject = ''): Promise<DidCommSendResult> {
   const sender = await ownSender(selfDid)
   if (!sender) return { ok: false, error: 'this identity has no DIDComm mediator registered' }
-  const gateways = [...(await ownGateways(selfDid)), ...PUBLIC_PKARR_FALLBACKS]
-  const toDoc = await resolveDidCommDoc(toDid, gateways)
+  const toDoc = await resolveDocOwnFirst(toDid, selfDid)
   if (!toDoc) return { ok: false, error: `could not resolve recipient ${toDid}` }
   const id = crypto.randomUUID()
   // `subject` is a biset extension to basicmessage/2.0 (not part of the
@@ -316,7 +357,7 @@ export async function sendViaDidComm(selfDid: string, toDid: string, body: strin
   // bubble/left-pane row showed the raw DID with no way to ever resolve it
   // (unlike a remote contact's name, which self-resolves off THEIR doc).
   const fromName = displayNameFor(relaysForId(selfDid).filter(s => s.account.serverUrl !== DIDCOMM_SERVER_URL))
-  syncToSiblingDevices(sender.own, selfDid, toDid, msgBody, sentAt, fromName, gateways)
+  syncToSiblingDevices(sender.own, selfDid, toDid, msgBody, sentAt, fromName)
   const acctKey = accountKey(didCommAccount(selfDid))
   const email = didCommToEmail(id, selfDid, selfDid, toDid, body, sentAt, fromName, subject)
   ;(email.keywords as any)['$seen'] = true // own outgoing mail is never "unread"
@@ -349,9 +390,9 @@ export async function sendViaDidComm(selfDid: string, toDid: string, body: strin
 function syncToSiblingDevices(
   own: DidCommSender, selfDid: string, toDid: string,
   msgBody: { content: string; id: string; subject?: string },
-  sentAt: string, fromName: string | undefined, gateways: string[],
+  sentAt: string, fromName: string | undefined,
 ): void {
-  resolveDidCommDoc(selfDid, gateways).then(async selfDoc => {
+  resolveDocOwnFirst(selfDid, selfDid).then(async selfDoc => {
     if (!selfDoc) return
     const siblings = selfDoc.keyAgreement.filter(k => k !== own.xKid)
     if (siblings.length === 0) return

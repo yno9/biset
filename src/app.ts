@@ -17,8 +17,6 @@ import * as jmapIdentity from './jmap/identity.ts'
 import * as jmapMailbox from './jmap/mailbox.ts'
 import { initPGP } from './pgp/index.ts'
 import { encryptText, type OutgoingAttachment } from './pgp/crypto.ts'
-import { deleteAllKeys } from './pgp/keys.ts'
-import { clearAll as clearLocalCache } from './store/cache.ts'
 import { loginViaEnvelope, authTokenToBasicAuth } from './cryptenv.ts'
 import { mailboxNameFromId } from './utils.ts'
 import { contactIdentityKey, allKnownAddressesFor, shortDid } from './did/contacts.ts'
@@ -543,38 +541,68 @@ export function removeAccount(email: string): void {
   if (idx >= 0) sessions.splice(idx, 1)
 }
 
+/** The ONE full-logout path (DID.md "single teardown chokepoint"). Every
+ * logout control routes here — the top-right menu (main.ts's lp-hmenu-logout)
+ * is the only one the UI wires up, and it used to inline its OWN wipe that
+ * skipped the deregister step entirely, so every logout orphaned this device's
+ * DIDComm key in the mediator keylist AND the published DID document forever
+ * (the whole "logout doesn't remove the key" saga). There used to be a second,
+ * DEAD copy of this function too, imported but never called — which is exactly
+ * how the divergence went unnoticed. Keep this the sole implementation. */
 export async function logout(): Promise<void> {
-  // Revoke this device's DIDComm key from every logged-in identity's DID
-  // document before wiping anything — create-standalone.ts's
-  // unregisterFromMediator note: this is the only device that will ever be
-  // able to prove it owns that keyAgreement slot, and once sessions[] is
-  // cleared below there's no way to even know which identities to revoke
-  // for. Best-effort + silent: no DIDComm registration at all is the
-  // ordinary case for most accounts, not an error worth surfacing on the
-  // way out. Must run first — everything after this point (saveStoredAccounts,
-  // clearLocalCache, the eventual reload) makes the identity unreachable.
+  // Deregister this device from every identity's mediator BEFORE any wipe —
+  // this is the ONE moment the keys that prove ownership of this device's
+  // keyAgreement slot still exist locally. unregisterFromMediator does
+  // keylist-update remove (point-to-point, authoritative — the mediator can't
+  // be raced the way DHT gossip can) + republishes the DID document without
+  // this device's key. Best-effort per identity, but NOT silent: a registered
+  // device whose revoke genuinely fails would otherwise stay published with no
+  // trace, indistinguishable from the ordinary "never registered" case.
   const { unregisterFromMediator } = await import('./did/create-standalone.ts')
-  await Promise.all(identityEmails().map(email => unregisterFromMediator(email).catch(() => {})))
+  await Promise.all(identityEmails().map(email => unregisterFromMediator(email)
+    .catch(e => console.warn(`[logout] unregisterFromMediator(${email}) failed — this device's DIDComm key may stay published:`, e instanceof Error ? e.message : e))))
 
   saveStoredAccounts([])
   sessions.length = 0
   setCurrentInbox(null)
-  // Clear all localStorage keys belonging to biset — EXCEPT the did:dht
-  // rollback-defense floor (did/freshness.ts's 'biset_did_seq:' prefix,
-  // matched by the 'biset' prefix below unless excluded). That store exists
-  // to reject a signed record with a lower seq than one already trusted for
-  // a DID — its whole point is surviving exactly this kind of moment. Wiping
-  // it on logout, then logging back into the SAME identity later, opened a
-  // real window where a resolve that happened to reach only a stale gateway
-  // (this DID's ancient, pre-DIDComm-registration document, zero
-  // keyAgreementKeys) got accepted as legitimate with no rollback check
-  // to catch it — which is exactly how a routine re-registration wiped two
-  // other live devices' keys off the document in one shot (found live).
-  const toRemove = Object.keys(localStorage).filter(k =>
-    (k.startsWith('biset') || k.startsWith('jmap_notif_') || k.startsWith('sjoin_invites_')) && !k.startsWith('biset_did_seq:')
-  )
-  toRemove.forEach(k => localStorage.removeItem(k))
-  await deleteAllKeys()
-  await clearLocalCache()
-  location.href = '/'
+
+  // Wipe ALL local data (the confirm text promises exactly this) EXCEPT the
+  // did:dht rollback-defense floor (freshness.ts's 'biset_did_seq:' keys):
+  // that store rejects a signed record with a LOWER seq than one already
+  // trusted for a DID. Wiping it, then logging back into the same identity,
+  // opened a real window where a stale gateway's ancient (pre-DIDComm)
+  // document got accepted with no rollback check — wiping two live devices'
+  // keys off the document in one shot (found live). It must survive exactly
+  // this moment, so it's read out and restored across the clear().
+  const keepSeq = Object.keys(localStorage)
+    .filter(k => k.startsWith('biset_did_seq:'))
+    .map(k => [k, localStorage.getItem(k)] as const)
+  localStorage.clear()
+  for (const [k, v] of keepSeq) if (v != null) localStorage.setItem(k, v)
+  try { sessionStorage.clear() } catch { /* ignore */ }
+
+  // Delete every app IndexedDB database — DID records included, so a re-login
+  // mints a FRESH device key and re-syncs its slot from scratch instead of
+  // reusing a stale local didCommOwnKid (that stale reuse is how a new device
+  // landed back on an already-tombstoned slot number, found live).
+  const dbNames = ['biset-cache', 'biset-pgp', 'biset-did', 'biset-deltachat']
+  await Promise.all(dbNames.map(name => new Promise<void>(resolve => {
+    const req = indexedDB.deleteDatabase(name)
+    req.onsuccess = () => resolve()
+    req.onerror = () => resolve()
+    // onblocked (another open connection) resolves too — the reload below
+    // closes every connection, so a blocked delete finishes on next load.
+    req.onblocked = () => resolve()
+  })))
+
+  // Caches + service worker so re-login lands on fresh app code, not a stale
+  // cached bundle.
+  if ('caches' in window) {
+    try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))) } catch { /* ignore */ }
+  }
+  if ('serviceWorker' in navigator) {
+    try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())) } catch { /* ignore */ }
+  }
+
+  location.href = location.pathname // drop the hash too, land on a clean boot
 }

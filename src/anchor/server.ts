@@ -275,6 +275,16 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
   const server = Bun.serve({
     port,
     hostname,
+    // Bun's own default idle timeout is 10s — shorter than pkarr.ts's
+    // GET_TIMEOUT_MS/PUT_TIMEOUT_MS (30s each). Found live: a slow DHT
+    // operation that pkarr.ts's own timeout was specifically designed to
+    // wait out instead got its CONNECTION killed by Bun first, at 10s,
+    // before that internal timeout ever got a chance to fire and return a
+    // clean response — the caller saw a raw socket death (502/ERR_FAILED)
+    // instead of the graceful "timed out, retry" pkarr.ts intended. Longer
+    // than both internal timeouts, so they're always the ones that actually
+    // decide when a slow request gives up.
+    idleTimeout: 35,
     async fetch(req) {
       if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS })
       try {

@@ -20,7 +20,7 @@
 // the domain, unlike a bespoke relay endpoint only that relay's software can
 // serve.
 import { sessions, isDidCommRelay } from '../context.ts'
-import { resolve, PUBLIC_PKARR_FALLBACKS } from './resolver.ts'
+import { resolveOwnFirst } from './resolver.ts'
 import type { DidDocument } from './document.ts'
 import { buildCardForDid, type Card } from './contacts.ts'
 import * as contactsStore from '../store/contacts.ts'
@@ -138,14 +138,15 @@ export async function refreshContact(address: string): Promise<void> {
     if (!did) return
     const prev = getJSON<ContactCache>(CONTACT_KEY + address)
     if (prev?.lastChecked && Date.now() - prev.lastChecked < REFRESH_TTL_MS) return
-    // Gateways: own relays first, then the contact's last-known relays, then
-    // public fallbacks — so a contact whose own relays moved is still findable.
-    const gateways = [
+    // Gateways: own relays + the contact's last-known relays first — public
+    // fallbacks only if neither has it (resolveOwnFirst), so a contact whose
+    // own relays moved is still findable without hitting third-party public
+    // relays on every contact refresh.
+    const own = [
       ...(await ownGateways()),
       ...(prev?.relays ?? []).map(u => u.replace(/\/$/, '') + '/pkarr'),
-      ...PUBLIC_PKARR_FALLBACKS,
     ]
-    const doc = await resolve(did, [...new Set(gateways)]) // applies signature + freshness (rollback) checks
+    const doc = await resolveOwnFirst(did, [...new Set(own)]) // applies signature + freshness (rollback) checks
     if (!doc) return
     // The document may claim a moved-to primary address (DID → address). Only
     // adopt it as the delivery target if the claimed address's relay attests the
@@ -179,8 +180,7 @@ export async function refreshContact(address: string): Promise<void> {
 // usable address at all (returns null), not a guess.
 export async function resolveDidDirect(did: string): Promise<{ address: string; relays: string[] } | null> {
   try {
-    const gateways = [...(await ownGateways()), ...PUBLIC_PKARR_FALLBACKS]
-    const doc = await resolve(did, [...new Set(gateways)])
+    const doc = await resolveOwnFirst(did, await ownGateways())
     if (!doc) return null
     const claimed = akaMailAddress(doc)
     if (!claimed || !(await verifyBinding(claimed, did))) return null

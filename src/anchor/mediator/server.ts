@@ -13,8 +13,9 @@
 // browser, both sides of every message here are ours, and one implementation is
 // the whole reason the mediator moved into this repo.
 import { decodePeerDid2, type PeerIdentity, type PeerDidDoc } from '../../did/peer.ts'
-import { buildPlaintext, publicKeyOf, type DidCommPlaintext } from '../../did/didcomm/message.ts'
+import { buildPlaintext, publicKeyOf, isExpired, type DidCommPlaintext } from '../../did/didcomm/message.ts'
 import { packAuthcrypt, unpackAuthcrypt, unpackAnoncrypt, b64urlToBytes, type DidCommJWE } from '../../did/didcomm/crypto.ts'
+import { SeenIds } from '../../did/didcomm/replay.ts'
 import { MessageQueue, QueueFullError } from './queue.ts'
 import { ConnectionStore, ConnectionFullError } from './connections.ts'
 
@@ -22,6 +23,8 @@ const MEDIATE_REQUEST = 'https://didcomm.org/coordinate-mediation/2.0/mediate-re
 const MEDIATE_GRANT = 'https://didcomm.org/coordinate-mediation/2.0/mediate-grant'
 const KEYLIST_UPDATE = 'https://didcomm.org/coordinate-mediation/2.0/keylist-update'
 const KEYLIST_UPDATE_RESPONSE = 'https://didcomm.org/coordinate-mediation/2.0/keylist-update-response'
+const KEYLIST_QUERY = 'https://didcomm.org/coordinate-mediation/2.0/keylist-query'
+const KEYLIST = 'https://didcomm.org/coordinate-mediation/2.0/keylist'
 const FORWARD = 'https://didcomm.org/routing/2.0/forward'
 const STATUS_REQUEST = 'https://didcomm.org/messagepickup/3.0/status-request'
 const STATUS = 'https://didcomm.org/messagepickup/3.0/status'
@@ -92,6 +95,11 @@ export interface MediatorHandler {
 
 export function createMediator({ mediator, queue = new MessageQueue(), connections = new ConnectionStore(), resolveDidDht }: MediatorOptions): MediatorHandler {
   const ownRecipient = { kid: mediator.xKid, privateKey: mediator.xPriv }
+  // Replay guard over every inbound message's `id` — a re-POSTed anoncrypt
+  // Forward would otherwise re-queue the same payload, and a resent authcrypt
+  // request would be re-processed (a replayed DELIVERY_REQUEST re-drains a
+  // queue). Bounded + TTL'd so it can't itself be turned into a memory DoS.
+  const seen = new SeenIds()
 
   /** The x25519 key + its kid for a peer identified by either method, AT A
    * SPECIFIC device's kid. did:peer is self-certifying and has exactly one
@@ -180,6 +188,23 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
       return Response.json({ error: String(e) }, { status: 400 })
     }
 
+    // Every plaintext MUST carry an `id` (threading.md: a message without one
+    // SHOULD be rejected and MUST NOT be treated as part of an interaction).
+    if (typeof msg.id !== 'string' || !msg.id) {
+      return Response.json({ error: 'message has no `id`' }, { status: 400 })
+    }
+    // A message past its own `expires_time` is stale by the sender's own
+    // declaration — don't queue or act on it (problems.md "Timeouts").
+    if (isExpired(msg)) {
+      return Response.json({ error: 'message expired (expires_time in the past)' }, { status: 400 })
+    }
+    // Replay: a second live arrival of the same id is a resend of a message we
+    // already handled. Checked AFTER expiry so a stale replay is reported as
+    // expired (the more actionable cause) rather than as a duplicate.
+    if (!seen.check(msg.id)) {
+      return Response.json({ error: 'replayed message id' }, { status: 400 })
+    }
+
     // `from` is the sender's own claim, but authcrypt already proved they hold
     // that DID's key (resolveSenderKey above), so it is safe to trust here.
     const fromDid: string | undefined = msg.from
@@ -239,6 +264,23 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
           return { recipient_did: u.recipient_did, action: u.action, result: 'success' }
         })
         return reply(await packReplyTo(fromDid!, replyKid!, KEYLIST_UPDATE_RESPONSE, { updated }))
+      }
+
+      case KEYLIST_QUERY: {
+        // Coordinate Mediation 2.0 keylist-query → keylist. Returns the kids
+        // THIS authenticated client (fromDid = the identity's shared DID
+        // across all its devices) currently has registered — the
+        // authoritative live-device set. A client republishing its DID
+        // document uses this to drop any keyAgreementKey the mediator no
+        // longer lists (a logged-out sibling), overriding its own stale
+        // sibling cache so a removal actually converges instead of being
+        // resurrected by whichever device last republished from a pre-logout
+        // snapshot. Authenticated by construction: fromDid comes from the
+        // authcrypt envelope, so a client can only ever read its own keylist.
+        const keys = connections.listKeys(fromDid!)
+        return reply(await packReplyTo(fromDid!, replyKid!, KEYLIST, {
+          keys: keys.map(k => ({ recipient_did: k })),
+        }))
       }
 
       case FORWARD: {

@@ -1,7 +1,7 @@
 import {
   sessions, addSession, setCurrentInbox, currentInbox, loadStoredAccounts, accountsForActiveIdentity,
 } from './context.ts'
-import { initSession, loadInboxSummaries } from './app.ts'
+import { initSession, loadInboxSummaries, logout } from './app.ts'
 import type { InboxSummary } from './types.ts'
 import { inboxToHash, parseInboxHash } from './utils.ts'
 import { contactIdentityKey, representativeAddressForDid } from './did/contacts.ts'
@@ -379,24 +379,11 @@ document.querySelectorAll('.lp-hmenu-item').forEach(btn => {
 // 401-after-relay-reset incident) is exactly what this is for.
 document.getElementById('lp-hmenu-logout')?.addEventListener('click', async () => {
   if (!confirm('Log out and erase ALL local data (accounts, messages, keys)? This cannot be undone.')) return
-  localStorage.clear()
-  try { sessionStorage.clear() } catch { /* ignore */ }
-  const dbNames = ['biset-cache', 'biset-pgp', 'biset-did', 'biset-deltachat']
-  await Promise.all(dbNames.map(name => new Promise<void>(resolve => {
-    const req = indexedDB.deleteDatabase(name)
-    req.onsuccess = () => resolve()
-    req.onerror = () => resolve()
-    // onblocked (another open connection) resolves too — the reload below
-    // closes every connection, so a blocked delete finishes on next load.
-    req.onblocked = () => resolve()
-  })))
-  if ('caches' in window) {
-    try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))) } catch { /* ignore */ }
-  }
-  if ('serviceWorker' in navigator) {
-    try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())) } catch { /* ignore */ }
-  }
-  location.href = location.pathname // drop the hash too, land on a clean boot
+  // The single teardown chokepoint (app.ts) — deregisters this device from
+  // every mediator, then wipes. This handler used to inline its OWN wipe that
+  // skipped the deregister entirely; that divergence is the whole "logout
+  // doesn't remove the key" saga. Do NOT reintroduce a second wipe here.
+  await logout()
 })
 {
   const menu = document.getElementById('lp-hamburger-menu')!

@@ -10,6 +10,8 @@ const MEDIATE_REQUEST = 'https://didcomm.org/coordinate-mediation/2.0/mediate-re
 const MEDIATE_GRANT = 'https://didcomm.org/coordinate-mediation/2.0/mediate-grant'
 const KEYLIST_UPDATE = 'https://didcomm.org/coordinate-mediation/2.0/keylist-update'
 const KEYLIST_UPDATE_RESPONSE = 'https://didcomm.org/coordinate-mediation/2.0/keylist-update-response'
+const KEYLIST_QUERY = 'https://didcomm.org/coordinate-mediation/2.0/keylist-query'
+const KEYLIST = 'https://didcomm.org/coordinate-mediation/2.0/keylist'
 
 export interface MediatorInfo {
   url: string
@@ -63,4 +65,19 @@ export async function updateKeylist(mediator: MediatorInfo, own: DidCommSender, 
   const updated = (reply.body as { updated?: Array<{ recipient_did: string; result: string }> }).updated ?? []
   const entry = updated.find(u => u.recipient_did === recipientKid)
   if (!entry || entry.result !== 'success') throw new Error(`updateKeylist: mediator did not confirm ${recipientKid}`)
+}
+
+/** keylist-query -> keylist: the kids the mediator currently has registered
+ * for THIS identity (every device of it shares one clientDid, so this is the
+ * authoritative live-device set). Returns full kid URLs (`did#kN`). syncDevice
+ * Position uses it to drop a keyAgreementKey the mediator no longer lists — a
+ * logged-out sibling — so a removal converges across every device instead of
+ * being resurrected from a stale sibling cache. Throws on any transport or
+ * protocol failure: a caller MUST distinguish "the mediator says this kid is
+ * gone" from "couldn't ask" and never prune on the latter. */
+export async function queryKeylist(mediator: MediatorInfo, own: DidCommSender): Promise<string[]> {
+  const reply = await sendAndUnpack(mediator, own, KEYLIST_QUERY, {})
+  if (reply.type !== KEYLIST) throw new Error(`queryKeylist: unexpected reply type ${reply.type}`)
+  const keys = (reply.body as { keys?: Array<{ recipient_did: string }> }).keys ?? []
+  return keys.map(k => k.recipient_did)
 }

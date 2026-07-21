@@ -1,7 +1,7 @@
 import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay, isDidCommRelay, relayProtocolLabel, DIDCOMM_SERVER_URL } from '../context.ts'
 import { standaloneDid } from '../did/create-standalone.ts'
 import { currentIdentityDid, ownGateways } from '../did/didcomm/channel.ts'
-import { resolve as resolveDidFull, PUBLIC_PKARR_FALLBACKS } from '../did/resolver.ts'
+import { resolveOwnFirst as resolveDidFullOwnFirst } from '../did/resolver.ts'
 import { getDidRecord } from '../did/store.ts'
 import {
   lastLeftInboxes, setLastLeftInboxes,
@@ -19,7 +19,7 @@ import type { Email } from 'jmap-rfc-types'
 import { render, syncDockPosition, scrollToFocused, updateScrollSpacer } from './thread.ts'
 import { fetchMessages, showSysMsg, startPolling } from './shell.ts'
 // From app.ts (safe — called only inside async functions):
-import { loadInboxSummaries, initSession, initPGPForSession, logout, jmapCreateEmail } from '../app.ts'
+import { loadInboxSummaries, initSession, initPGPForSession, jmapCreateEmail } from '../app.ts'
 import { fetchEnvelope, unsealEnvelope, relayAuth } from '../cryptenv.ts'
 import { decryptAndParse, prefetchRecipientKey } from '../pgp/index.ts'
 import { deleteKey } from '../pgp/keys.ts'
@@ -54,7 +54,7 @@ function isk(i: InboxSummary): string { return i.user + '\0' + i.mailbox + '\0' 
 // resolving fine everywhere else (own anchor, public gateways).
 async function resolveDidDocFull(did: string) {
   const gateways = await ownGateways(currentIdentityDid())
-  return await resolveDidFull(did, [...gateways, ...PUBLIC_PKARR_FALLBACKS])
+  return await resolveDidFullOwnFirst(did, gateways)
 }
 
 
@@ -1189,12 +1189,16 @@ export async function setupLeftPane() {
       // or logging in. Detect it and swap the Sign up / Log in choice for a
       // single credential-less "Register".
       const { isMediatorUrl } = await import('../did/create-standalone.ts')
-      const isMed = await isMediatorUrl(raw)
+      const probe = await isMediatorUrl(raw)
       if (relayInput.value.trim().replace(/\/$/, '') !== raw) return // stale by the time it resolved
+      // A failed probe (network error, CORS, 5xx) is not a confirmed
+      // "not a mediator" — don't fall through to relay-apex expansion on
+      // a hostname we couldn't actually reach.
+      if (probe === 'unknown') return
       const choiceEl = document.getElementById('cmd-acc-choice') as HTMLElement | null
       const modeBtns = choiceEl?.querySelectorAll<HTMLButtonElement>('.cmd-acc-choice-btn')
       let regBtn = document.getElementById('cmd-acc-mediator-register') as HTMLButtonElement | null
-      if (isMed) {
+      if (probe === 'mediator') {
         modeBtns?.forEach(b => { b.style.display = 'none' })
         if (!regBtn && choiceEl) {
           regBtn = document.createElement('button')
@@ -2469,7 +2473,18 @@ export async function setupLeftPane() {
     // common case of a device that never registered a DIDComm channel at
     // all, and by the time this runs the identity's session may already be
     // gone from sessions[], so the identity key must be passed explicitly.
-    import('../did/create-standalone.ts').then(m => m.unregisterFromMediator(email))
+    //
+    // AWAITED, not fire-and-forget — found live: logging out of two relays
+    // back to back (this identity's mail + ap pair) let the SECOND card's
+    // click fire before the first's revoke had actually finished its network
+    // round-trip, and a subsequent reload/navigation (landing on the
+    // now-empty-identity #new page) can abort an in-flight, un-awaited
+    // fetch outright — the revoke never completes, and the only credentials
+    // that could ever prove ownership of that slot are gone the moment this
+    // function returns and the caller moves on. Awaiting here can't fix a
+    // navigation that happens from OUTSIDE this call, but it stops this
+    // function itself from racing its own async work.
+    await import('../did/create-standalone.ts').then(m => m.unregisterFromMediator(email))
       .catch(e => console.warn('[logout] unregisterFromMediator failed — this device\'s DIDComm key may still be published:', e instanceof Error ? e.message : e))
     renderAccountsList(); loadLeftInboxes()
   }
@@ -3186,6 +3201,13 @@ export async function setupLeftPane() {
       deviceList.textContent = 'Loading…'
       const rec = await getDidRecord(identityKey).catch(() => null)
       if (!rec) { deviceList.textContent = 'Failed to load.'; return }
+      // Shows rec's raw state, duplicates and all — deliberately NOT deduped
+      // here. This panel is a diagnostic view of the actual local cache; a
+      // duplicate entry (own kid also stuck in didCommSiblingKeys) is a real
+      // data problem, and hiding it behind display-layer cleanup is how it
+      // stays undetected instead of getting fixed at the root
+      // (syncDevicePosition's own cache-purge, document.ts's
+      // keyAgreementKeysFromHex for what actually gets published).
       const entries: Array<{ kid: string; publicKey: string; isSelf: boolean }> = []
       if (rec.didCommOwnKid && rec.didCommPublicKey) entries.push({ kid: rec.didCommOwnKid, publicKey: rec.didCommPublicKey, isSelf: true })
       for (const s of rec.didCommSiblingKeys ?? []) entries.push({ kid: s.kid, publicKey: s.publicKey, isSelf: false })
@@ -3213,7 +3235,7 @@ export async function setupLeftPane() {
           trashBtn.disabled = true
           try {
             const { removeDeviceKey } = await import('../did/create-standalone.ts')
-            await removeDeviceKey(identityKey, entry.kid)
+            await removeDeviceKey(identityKey, entry.kid, entry.isSelf)
             showSysMsg(entry.isSelf ? 'Logged out of mediator' : 'Device removed')
             if (entry.isSelf) { wrap.remove(); return }
             loadDevices()

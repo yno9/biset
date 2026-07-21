@@ -32,6 +32,7 @@ const HEADER_LEN = SIG_LEN + SEQ_LEN
 const MAX_PACKET_LEN = 1000
 const REPUBLISH_MS = 30 * 60 * 1000
 const GET_TIMEOUT_MS = 30_000
+const PUT_TIMEOUT_MS = 30_000
 
 // Same list anacrolix/dht carries (what the Go gateway bootstrapped from, and
 // it worked). bittorrent-dht's own default is only the three classic nodes, and
@@ -254,9 +255,20 @@ export class PkarrGateway {
 
   private async publish(pubkey: Buffer, p: WirePayload): Promise<void> {
     await new Promise<void>((resolve, reject) => {
+      // Timed out exactly like get() — found live: without this, a dht.put()
+      // whose callback never fires (the DHT network never gathers enough
+      // acks, or a node it's waiting on just stops responding) left this
+      // promise pending forever. Nothing above handlePkarr's PUT case has its
+      // own timeout either, so the request just hung until Bun.serve's own
+      // connection idleTimeout (10s) killed the SOCKET — not this dangling
+      // promise/callback, which kept running underneath, invisible, for as
+      // long as the process lived. Every retry from a stuck client added
+      // another one.
+      const t = setTimeout(() => reject(new Error('pkarr: put timed out')), PUT_TIMEOUT_MS)
       // The client's seq and signature go out as-is: the record is signed for
       // exactly this seq, so letting the library pick one would invalidate it.
       this.dht.put({ v: p.v, k: pubkey, sig: p.sig, seq: p.seq }, err => {
+        clearTimeout(t)
         err ? reject(err) : resolve()
       })
     })

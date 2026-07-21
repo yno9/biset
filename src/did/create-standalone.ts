@@ -33,7 +33,7 @@ import { initDid } from './index.ts'
 import { getDidRecord, storeDidRecord, withDidLock, type DidRecord } from './store.ts'
 import { buildBisetDocument, keyAgreementKeysFromHex, kidN, type DidDocument } from './document.ts'
 import { registerDidCommViaDht } from './didcomm/register.ts'
-import { resolve, publishDocument, PUBLIC_PKARR_FALLBACKS } from './resolver.ts'
+import { resolve, publishDocument, resolveConfirmedAbsent } from './resolver.ts'
 import { didCommGateways } from './publish.ts'
 import { hexToBytes } from '../utils.ts'
 
@@ -89,10 +89,39 @@ async function ensureDeviceKey(rec: DidRecord): Promise<DidRecord> {
  * bug, not just an approximation. */
 export async function syncDevicePosition(rec: DidRecord, gatewayUrls: string[]): Promise<DidRecord> {
   let resolved: DidDocument | null = null
-  try { resolved = await resolve(rec.did, gatewayUrls) } catch { /* best-effort */ }
+  // skipCache: this function's whole job is establishing ground truth for
+  // slot assignment (the `!rec.didCommOwnKid` branch below) — found live, a
+  // new device registering within resolve()'s 60s cache window of ANY
+  // earlier resolve (a routine poll, another device's sync, anything) picked
+  // a slot number from THAT stale snapshot's highest-seen `n`, silently
+  // REUSING a number a since-retired device had already vacated. Numbers
+  // being permanent and never reused is the one invariant the whole removal/
+  // tombstone system (removedKeyNs) depends on — a cache-induced reuse
+  // collides two unrelated devices' history onto the same kid and corrupts
+  // it irrecoverably, unlike ordinary sibling-list staleness which just
+  // self-corrects on the next sync.
+  try { resolved = await resolve(rec.did, gatewayUrls, { skipCache: true }) } catch { /* best-effort */ }
   const existing = resolved?.keyAgreementKeys ?? []
 
   if (!rec.didCommOwnKid) {
+    // A failed resolve() here (null) is NOT the same as "this identity has
+    // never published anything" — it's just as likely a rate-limited or
+    // CORS-blocked gateway telling us nothing. Assuming the latter used to
+    // default nextN to 1 unconditionally — found live: a brand-new device
+    // registered during a relay.pkarr.org 429/CORS spell, silently claimed
+    // slot #k1 as if the identity were fresh, and stomped another device's
+    // already-live #k1 (that device only found out on its own next sync,
+    // self-healing onto yet another number — see the `else if` branch below
+    // — a visible, confusing slot-number game of musical chairs). Only
+    // proceed past a failed resolve when every gateway that answered
+    // definitively said 404 (resolveConfirmedAbsent) — genuinely nothing
+    // published, safe to start at #k1. Otherwise refuse to guess: throw, so
+    // the registration attempt fails visibly and can be retried once the
+    // network is actually healthy, instead of silently corrupting slot
+    // assignment.
+    if (!resolved && !(await resolveConfirmedAbsent(rec.did, gatewayUrls).catch(() => false))) {
+      throw new Error('cannot assign a device slot: this identity\'s DID document is unreachable right now (network error or every gateway rate-limited) — try again shortly')
+    }
     // Already published under this exact key (this device registered before,
     // record survived, but didCommOwnKid was never set — e.g. a pre-multi-
     // device record)? Reuse that slot instead of taking a new one.
@@ -165,9 +194,19 @@ export async function syncDevicePosition(rec: DidRecord, gatewayUrls: string[]):
   removed.delete(`#k${myN}`)
   // Filtered on the way IN too, not just when adding — a removal learned only
   // just now (via `rm=` above) must also evict whatever this device already
-  // had cached locally from before it heard about it.
+  // had cached locally from before it heard about it. Also strips any STALE
+  // entry at this device's OWN (possibly just-self-healed) kid — found live:
+  // self-heal above only ever changes didCommOwnKid, never touches
+  // didCommSiblingKeys, so a device that renamed itself onto a number its own
+  // cache still remembered as some OTHER (ghost) device's slot ended up
+  // publishing BOTH — two keyAgreementKeys entries at the same `n`, visibly
+  // duplicated in left-pane.ts's device list and ambiguous on the wire
+  // (document.ts's keyAgreementKeysFromHex now also dedupes defensively, but
+  // the stale entry has no business surviving in this device's own cache at
+  // all once it's the one sitting at that slot).
+  const myKid = `#k${myN}`
   const siblingMap = new Map(
-    (rec.didCommSiblingKeys ?? []).filter(s => !removed.has(s.kid)).map(s => [s.kid, s]),
+    (rec.didCommSiblingKeys ?? []).filter(s => !removed.has(s.kid) && s.kid !== myKid).map(s => [s.kid, s]),
   )
   for (const k of existing) {
     if (k.n === myN) continue // that's us, not a sibling
@@ -188,6 +227,44 @@ export async function syncDevicePosition(rec: DidRecord, gatewayUrls: string[]):
     }
     siblingMap.set(kid, { kid, publicKey: bytesToHex(k.publicKey) })
   }
+
+  // AUTHORITATIVE removal via the mediator's keylist — the backstop that
+  // makes a logout actually converge. Everything above is DHT gossip: each
+  // device merges its own cache with a resolved snapshot and republishes the
+  // union, highest-seq-wins. That can never reliably REMOVE anything — a
+  // device still holding a pre-logout snapshot (mid poll/republish cycle)
+  // re-publishes the removed key right back, and the `forgive` step above
+  // then sees it "alive" and un-tombstones it everywhere (found live: a
+  // logged-out #k1 kept reappearing with its rm= tombstone silently dropped,
+  // because a sibling republished the stale set after the logout landed).
+  // The mediator's keylist is not gossip: a logout's keylist-update remove
+  // reaches it directly and point-to-point, no last-writer-wins race. So a
+  // sibling the mediator no longer lists is authoritatively gone — drop it
+  // from the published keys AND tombstone it, regardless of what the resolved
+  // document or this device's cache still claims, overriding the forgive
+  // above. Best-effort and fail-CLOSED-toward-safety: a query that can't be
+  // made (no mediator, missing local key, network/transport error) prunes
+  // NOTHING — "couldn't ask" must never read as "zero live devices", same
+  // principle as resolveConfirmedAbsent. Never prunes this device's own kid.
+  if (rec.didCommMediatorUrl && rec.didCommPrivateKey && rec.didCommOwnKid) {
+    try {
+      const { fetchMediatorInfo, queryKeylist } = await import('./didcomm/coordinate.ts')
+      const mediator = await fetchMediatorInfo(rec.didCommMediatorUrl)
+      const own = { did: rec.did, xKid: `${rec.did}${rec.didCommOwnKid}`, xPriv: hexToBytes(rec.didCommPrivateKey) }
+      const live = new Set(queryKeylistToLocalKids(await queryKeylist(mediator, own)))
+      for (const kid of [...siblingMap.keys()]) {
+        if (kid === myKid) continue // never prune ourselves
+        if (!live.has(kid)) {
+          siblingMap.delete(kid)
+          removed.add(kid) // propagate the removal via rm= too, for anyone who can't query
+        }
+      }
+    } catch (e) {
+      // Fail closed: keep whatever the gossip merge produced, prune nothing.
+      console.warn('[standalone] keylist-query prune skipped (continuing with gossip-only view):', e instanceof Error ? e.message : e)
+    }
+  }
+
   rec.didCommSiblingKeys = [...siblingMap.values()]
   // Carry the union forward: this device now also knows about anything it
   // just learned from `rm=`, so ITS next publish keeps propagating the full
@@ -196,6 +273,13 @@ export async function syncDevicePosition(rec: DidRecord, gatewayUrls: string[]):
   rec.didCommRemovedKeys = [...removed]
   await storeDidRecord(rec)
   return rec
+}
+
+/** Mediator keylist entries are full kid URLs (`did:dht:…#kN`); this file's
+ * sibling map keys them by fragment (`#kN`). Strip to the fragment so the two
+ * can be compared. */
+function queryKeylistToLocalKids(kids: string[]): string[] {
+  return kids.map(k => { const i = k.indexOf('#'); return i === -1 ? k : k.slice(i) })
 }
 
 /** This device's own entry + every known sibling's, as the array a document
@@ -248,9 +332,13 @@ async function publishAndRegister(rec: DidRecord): Promise<void> {
   // No mediator configured, or registration failed: still publish the bare
   // document (identity + this device's key) so the DID exists on the DHT —
   // this publish is the load-bearing step, so it must succeed against at
-  // least one public gateway.
+  // least one gateway. Still try this deployment's own anchor /pkarr (even
+  // though mediator *registration* above just failed or was skipped, the
+  // bare pkarr proxy is a separate, unauthenticated endpoint that may still
+  // be reachable) ahead of the public fallbacks — see ownGateways' note on
+  // why leaning on relay.pkarr.org by default doesn't scale.
   const base: DidDocument = { ...buildBisetDocument(rec.did, rootPub, [], []), keyAgreementKeys: fullKeyAgreementKeys(rec) }
-  const published = await publishDocument(rootPriv, base, PUBLIC_PKARR_FALLBACKS)
+  const published = await publishDocument(rootPriv, base, didCommGateways([], mUrl || mediatorUrl()))
   if (published === 0) throw new Error('no pkarr gateway accepted the DID document')
 }
 
@@ -399,14 +487,21 @@ export async function unregisterFromMediator(identityKey?: string): Promise<void
   if (!key) throw new Error('no identity')
   const rec = await getDidRecord(key)
   if (!rec?.didCommMediatorUrl || !rec.didCommPrivateKey || !rec.didCommOwnKid) throw new Error('not registered with a mediator')
+  const ownKid = `${rec.did}${rec.didCommOwnKid}`
+  console.log('[logout] unregisterFromMediator start', { key, did: rec.did, ownKid, mediatorUrl: rec.didCommMediatorUrl })
   try {
     const { fetchMediatorInfo, updateKeylist } = await import('./didcomm/coordinate.ts')
     const mediator = await fetchMediatorInfo(rec.didCommMediatorUrl)
-    const ownKid = `${rec.did}${rec.didCommOwnKid}`
     const own = { did: rec.did, xKid: ownKid, xPriv: hexToBytes(rec.didCommPrivateKey) }
     await updateKeylist(mediator, own, ownKid, 'remove')
+    console.log('[logout] keylist-update remove CONFIRMED by mediator for', ownKid)
   } catch (e) {
-    console.warn('[standalone] mediator keylist-update failed (continuing — the document-side revoke matters more):', e instanceof Error ? e.message : e)
+    // NOT swallowed to a vague warn — this is the exact step whose silent
+    // failure left a logged-out device permanently in the mediator's keylist
+    // (found live: keylist retained k1..k6 while every doc-side rm= tombstone
+    // landed, so keylist-query prune had nothing to prune). Surface the real
+    // error and the kid it was for, loudly.
+    console.error(`[logout] keylist-update remove FAILED for ${ownKid} — this device stays in the mediator keylist:`, e instanceof Error ? (e.stack ?? e.message) : e)
   }
 
   // Locked: a concurrent routine republish (buildOwnDocument, also lock-
@@ -417,6 +512,17 @@ export async function unregisterFromMediator(identityKey?: string): Promise<void
   await withDidLock(key, async () => {
     const fresh = await getDidRecord(key)
     if (!fresh) return
+    // Tombstone this kid before clearing it — found live: without this, a
+    // logged-out device's OWN kid carried no `rm=` signal at all (only
+    // removeDeviceKey's sibling-removal path did), so every OTHER still-
+    // active device of this identity kept it cached in ITS OWN
+    // didCommSiblingKeys and simply republished it right back on its own
+    // next routine boot — the logout looked like it worked here and then
+    // silently reappeared from a different device, same class of bug as the
+    // sibling-removal one this same tombstone mechanism already fixed.
+    if (fresh.didCommOwnKid) {
+      fresh.didCommRemovedKeys = [...new Set([...(fresh.didCommRemovedKeys ?? []), fresh.didCommOwnKid])]
+    }
     delete fresh.didCommOwnKid
     delete fresh.didCommPublicKey
     delete fresh.didCommPrivateKey
@@ -443,17 +549,59 @@ export async function unregisterFromMediator(identityKey?: string): Promise<void
     if (!fresh) return
     const rootPriv = hexToBytes(fresh.rootPrivateKey)
     const rootPub = hexToBytes(fresh.rootPublicKey)
-    const base: DidDocument = { ...buildBisetDocument(fresh.did, rootPub, [], []), keyAgreementKeys: fullKeyAgreementKeys(fresh) }
-    if (fresh.didCommRemovedKeys?.length) base.removedKeyNs = fresh.didCommRemovedKeys.map(kidN)
     const gatewayUrls = didCommGateways([], fresh.didCommMediatorUrl)
-    await publishDocument(rootPriv, base, gatewayUrls).catch(e => console.warn('[standalone] revoke republish failed:', e instanceof Error ? e.message : e))
+    // publishOneVisible only fails this way when THIS device's local
+    // sessions[] has no relay for the identity right now — which is not the
+    // same as the identity having no relay at all. removeRelayLocally always
+    // splices the just-logged-out relay out of sessions[] before calling
+    // unregisterFromMediator, so for a single-relay identity (this device's
+    // only relay account) this branch fires on every ordinary logout, not
+    // just for a genuinely relay-less identity. Building the document from
+    // buildBisetDocument(..., [], []) here used to hard-code EMPTY services —
+    // found live: every normal "Log out" of a single-relay identity silently
+    // wiped that identity's mail/ap services from the DID document (a higher
+    // seq than whatever last had them), until some OTHER device happened to
+    // republish and restore them. Resolve whatever is currently on the DHT
+    // first and carry its services/addresses/name forward untouched — this
+    // call only ever means to change the DIDComm layer.
+    const resolved = await resolve(fresh.did, gatewayUrls, { skipCache: true }).catch(() => null)
+    const base: DidDocument = resolved
+      // ext dropped — it's a derived chain-continuation pointer (chain.ts
+      // recomputes it from doc.service's current size), not authoritative
+      // input; carrying a stale one forward could point at a continuation
+      // record this rebuild no longer needs.
+      ? { ...resolved, ext: undefined, keyAgreementKeys: fullKeyAgreementKeys(fresh), removedKeyNs: undefined }
+      : { ...buildBisetDocument(fresh.did, rootPub, [], []), keyAgreementKeys: fullKeyAgreementKeys(fresh) }
+    if (fresh.didCommRemovedKeys?.length) base.removedKeyNs = fresh.didCommRemovedKeys.map(kidN)
+    // Must actually land somewhere, or the revoke only ever existed locally —
+    // found live: this used to swallow a total publish failure into a
+    // console.warn with no way for the caller to know, so a device could
+    // "successfully" log out (local state cleared, no error shown) while its
+    // key sat published on the DHT indefinitely, same silent-failure shape
+    // removeDeviceKey's own accepted-count check already guards against.
+    const accepted = await publishDocument(rootPriv, base, gatewayUrls)
+    if (accepted === 0) throw new Error('no gateway accepted the revoke — this device\'s key may still be published')
   }
 }
 
 /** Removes ONE device's key from the published DID document — the DIDComm
- * card's per-device trash icon. `kid` matching this identity's own current
- * slot delegates to unregisterFromMediator (self-removal already has a
- * correct path: mediator keylist-update + local key cleanup + republish).
+ * card's per-device trash icon. `isSelf` — supplied by the CALLER, which
+ * already knows which on-screen row was clicked (left-pane.ts's device list
+ * tags every entry when it builds them) — decides whether this delegates to
+ * unregisterFromMediator (self-removal: mediator keylist-update + local key
+ * cleanup + republish) or removes a sibling from the local cache.
+ *
+ * Found live: this used to re-derive "is this self" by comparing `kid`
+ * against rec.didCommOwnKid — which breaks the moment there's a DUPLICATE
+ * entry at the same kid (document.ts's keyAgreementKeysFromHex note on how
+ * that happens: a stale sibling-cache entry surviving at the same number a
+ * self-heal just claimed). With a duplicate, `kid` alone can't say which of
+ * the two on-screen rows was clicked — both share the same string — so
+ * clicking the clearly-labeled "not this device" ghost row silently
+ * self-logged this device out instead, because its kid happened to match.
+ * Trusting the caller's already-disambiguated isSelf instead of re-deriving
+ * it from an ambiguous string comparison is the actual fix.
+ *
  * A sibling's kid is removed straight out of the local cache and republished
  * immediately, deliberately bypassing buildOwnDocument's normal
  * syncDevicePosition resync (see that function's own note on skipSync) —
@@ -466,10 +614,11 @@ export async function unregisterFromMediator(identityKey?: string): Promise<void
  * targeted removal of that same authority, not a new one) — see PLAN.md's
  * note on why this stays a human-confirmed action rather than an automatic
  * one keyed off mediator inactivity. */
-export async function removeDeviceKey(identityKey: string | undefined, kid: string): Promise<void> {
+export async function removeDeviceKey(identityKey: string | undefined, kid: string, isSelf: boolean): Promise<void> {
   const { sessions } = await import('../context.ts')
   const key = identityKey ?? sessions[0]?.account.email ?? standaloneDid()
   if (!key) throw new Error('no identity')
+  if (isSelf) return unregisterFromMediator(key)
 
   // Locked (store.ts's withDidLock): read-check-edit-write as one atomic
   // step relative to buildOwnDocument's own lock-protected routine republish
@@ -482,7 +631,6 @@ export async function removeDeviceKey(identityKey: string | undefined, kid: stri
   const outcome = await withDidLock(key, async () => {
     const rec = await getDidRecord(key)
     if (!rec) throw new Error('no DID record')
-    if (kid === rec.didCommOwnKid) return 'self' as const
     const before = rec.didCommSiblingKeys ?? []
     const after = before.filter(s => s.kid !== kid)
     if (after.length === before.length) return 'noop' as const
@@ -495,7 +643,6 @@ export async function removeDeviceKey(identityKey: string | undefined, kid: stri
     await storeDidRecord(rec)
     return 'removed' as const
   })
-  if (outcome === 'self') return unregisterFromMediator(key)
   if (outcome === 'noop') return
 
   // Publish must actually land somewhere, or the removal only ever existed
@@ -528,17 +675,30 @@ export async function removeDeviceKey(identityKey: string | undefined, kid: stri
   if (accepted === 0) throw new Error('no gateway accepted the update')
 }
 
-/** True if `url` serves a DIDComm mediator (its /.well-known/did.json is a
+/** Whether `url` serves a DIDComm mediator (its /.well-known/did.json is a
  * did:peer) rather than a JMAP relay — so the account page can offer a
- * credential-less "Register" instead of Sign up / Log in. */
-export async function isMediatorUrl(url: string): Promise<boolean> {
+ * credential-less "Register" instead of Sign up / Log in.
+ *
+ * 'unknown' means the probe itself failed (network error, CORS, 5xx) — this
+ * is NOT the same as a confirmed "not a mediator", and callers must not
+ * treat it as one. A transient fetch failure used to silently fall through
+ * to relay-apex expansion (expandDualRelay), which for a mediator hostname
+ * fabricates nonexistent mail./ap. subdomains and probes those instead. */
+export async function isMediatorUrl(url: string): Promise<'mediator' | 'not-mediator' | 'unknown'> {
+  const base = (/^https?:\/\//i.test(url) ? url : 'https://' + url).replace(/\/$/, '')
+  let resp: Response
   try {
-    const base = (/^https?:\/\//i.test(url) ? url : 'https://' + url).replace(/\/$/, '')
-    const resp = await fetch(base + '/.well-known/did.json')
-    if (!resp.ok) return false
+    resp = await fetch(base + '/.well-known/did.json')
+  } catch {
+    return 'unknown'
+  }
+  if (!resp.ok) return resp.status >= 500 ? 'unknown' : 'not-mediator'
+  try {
     const doc = await resp.json()
-    return typeof doc?.id === 'string' && doc.id.startsWith('did:peer:')
-  } catch { return false }
+    return typeof doc?.id === 'string' && doc.id.startsWith('did:peer:') ? 'mediator' : 'not-mediator'
+  } catch {
+    return 'unknown'
+  }
 }
 
 /** Boot-time refresh: if this browser holds a standalone identity, republish its

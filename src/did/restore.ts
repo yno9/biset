@@ -7,6 +7,7 @@ import { mnemonicToSeed, isValidMnemonic } from './seed.ts'
 import { deriveRootKey, didFromRootPublicKey } from './keys.ts'
 import { resolve, PUBLIC_PKARR_FALLBACKS } from './resolver.ts'
 import { storeDidRecord, type DidRecord } from './store.ts'
+import { mediatorUrl } from './create-standalone.ts'
 import { deriveNostrKey } from './keys.ts'
 import { relayAuth } from '../cryptenv.ts'
 import type { StoredAccount, AccountSession } from '../types.ts'
@@ -26,13 +27,16 @@ export interface RestoreResult {
 const bytesToHex = (b: Uint8Array) => [...b].map(x => x.toString(16).padStart(2, '0')).join('')
 
 // Bootstrap gateways for the very first resolve, before we know the identity's
-// own relays: the configured home relays (whose gateways we run) + public ones.
+// own relays: the configured home relays (whose gateways we run) + this
+// deployment's anchor (a relay-less identity may only ever have published
+// through anchor's /pkarr, never a mail/ap relay) + public ones as last resort.
 function bootstrapGateways(): string[] {
   const cfg = (window as any).__BISET_CONFIG__ || {}
   const host: string | undefined = cfg.hostname
   const mail = cfg.mail_url || (host ? `https://mail.${host}` : '')
   const ap = cfg.ap_url || (host ? `https://ap.${host}` : '')
-  const own = [mail, ap].filter(Boolean).map((u: string) => u.replace(/\/$/, '') + '/pkarr')
+  const anchor = mediatorUrl()
+  const own = [mail, ap, anchor].filter(Boolean).map((u: string) => u.replace(/\/$/, '') + '/pkarr')
   return [...new Set([...own, ...PUBLIC_PKARR_FALLBACKS])]
 }
 
