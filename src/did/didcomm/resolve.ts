@@ -1,0 +1,157 @@
+// Unified DIDComm recipient resolution: given any DID (did:peer, did:dht, or
+// did:webvh — PLANWEBVH.md §5.3), returns a PeerDidDoc-shaped document —
+// send.ts/message.ts's publicKeyOf only ever need
+// {keyAgreement, service, verificationMethod}, so every method can share one
+// recipient shape once resolved. did:peer self-decodes (no network); did:dht
+// resolves over Pkarr gateways; did:webvh resolves over its own domain's
+// did.jsonl (webvh/resolver.ts) — both get converted to the same shape, the
+// same conversion ~/didmediator's resolver.ts does server-side for
+// didcomm-node, mirrored here for biset's own client-side send path.
+import { decodePeerDid2, b64url, type PeerDidDoc } from '../peer/peer.ts'
+import { resolve as resolveDidDht, PUBLIC_PKARR_FALLBACKS, type DidDocument } from '../resolver.ts'
+import { resolve as resolveDidWebvh } from '../webvh/resolver.ts'
+import { decodeMultikey, decodeX25519Multikey, decodeMlkem768Multikey } from '../webvh/multikey.ts'
+import type { WebvhDidDocument } from '../webvh/document.ts'
+import { b64urlToBytes } from './crypto.ts'
+
+function didDhtToPeerDidDocShape(doc: DidDocument): PeerDidDoc {
+  const verificationMethod: PeerDidDoc['verificationMethod'] = [
+    { id: `${doc.id}#k0`, type: 'JsonWebKey2020', controller: doc.id, publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: b64url(doc.identityKey) } },
+  ]
+  // One entry per registered DEVICE (document.ts's DidKeyAgreement note) —
+  // send.ts fans a message out to every kid here, so every device gets it.
+  const keyAgreement: string[] = []
+  for (const ka of doc.keyAgreementKeys ?? []) {
+    const kid = `${doc.id}#k${ka.n}`
+    verificationMethod.push({ id: kid, type: 'JsonWebKey2020', controller: doc.id, publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: b64url(ka.publicKey) } })
+    keyAgreement.push(kid)
+  }
+  return {
+    id: doc.id,
+    keyAgreement,
+    authentication: [`${doc.id}#k0`],
+    verificationMethod,
+    name: doc.name,
+    // Only DIDCommMessaging services belong in a DIDComm-resolved document —
+    // a did:dht identity's other services (JMAPRelay etc.) aren't DIDComm
+    // endpoints. Matters more than it looks: didcomm-node's Rust ServiceKind
+    // is internally tagged on the literal `type` string "DIDCommMessaging"
+    // or "Other" (verified against its did_doc.rs) — passing through e.g.
+    // "JMAPRelay" as-is throws "unknown variant" wherever this shape ends up
+    // feeding a real didcomm-node resolver (found live, via ~/didmediator).
+    service: doc.service
+      .filter(s => s.type === 'DIDCommMessaging')
+      .map(s => ({
+        id: `${doc.id}#${s.id}`,
+        type: s.type,
+        serviceEndpoint: { uri: s.serviceEndpoint[0] ?? '', accept: s.accept ?? [], routing_keys: s.routingKeys ?? [] },
+      })),
+  }
+}
+
+// did:webvh's state is already W3C DID Core shaped (unlike did:dht's DNS
+// encoding), so this conversion is mostly a field-rename — the one real
+// transform is multikey (base58btc) -> the JsonWebKey2020 (base64url-x)
+// shape send.ts/message.ts's publicKeyOf expects.
+function webvhToPeerDidDocShape(doc: WebvhDidDocument): PeerDidDoc {
+  const kaIds = new Set(doc.keyAgreement ?? [])
+  const identityKeyId = `${doc.id}#key-1`
+  const verificationMethod: PeerDidDoc['verificationMethod'] = []
+  for (const vm of doc.verificationMethod) {
+    if (vm.id === identityKeyId) {
+      verificationMethod.push({ id: vm.id, type: 'JsonWebKey2020', controller: doc.id, publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: b64url(decodeMultikey(vm.publicKeyMultibase)) } })
+    } else if (kaIds.has(vm.id) && /#kk\d+$/.test(vm.id)) {
+      // ML-KEM-768 hybrid keyAgreement entry (PLAN.md "did:webvh
+      // PQハイブリッド化" Phase 2) — kty/crv aren't real JWK registry values
+      // (no standard OKP-style JWK shape exists for ML-KEM yet), self-
+      // descriptive tags for send.ts's mlkemPublicKeyOf to read back, never
+      // interpreted as an actual JWK `crv` elsewhere.
+      verificationMethod.push({ id: vm.id, type: 'JsonWebKey2020', controller: doc.id, publicKeyJwk: { kty: 'AKP', crv: 'ML-KEM-768', x: b64url(decodeMlkem768Multikey(vm.publicKeyMultibase)) } })
+    } else if (kaIds.has(vm.id)) {
+      verificationMethod.push({ id: vm.id, type: 'JsonWebKey2020', controller: doc.id, publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: b64url(decodeX25519Multikey(vm.publicKeyMultibase)) } })
+    }
+  }
+  return {
+    id: doc.id,
+    // Fan-out list (send.ts's sendDidComm loop) — X25519 kids only. `#kk<n>`
+    // entries stay in verificationMethod (mlkemPublicKeyOf reads them from
+    // there, keyed off the X25519 kid) but must NOT appear here too, or the
+    // loop would try to fan out to them as if they were a second device.
+    keyAgreement: (doc.keyAgreement ?? []).filter(id => !/#kk\d+$/.test(id)),
+    authentication: doc.authentication,
+    verificationMethod,
+    name: doc.name,
+    // Only DIDCommMessaging services belong in a DIDComm-resolved document —
+    // same reasoning as didDhtToPeerDidDocShape above.
+    service: doc.service
+      .filter(s => s.type === 'DIDCommMessaging')
+      .map(s => ({
+        id: s.id, type: s.type,
+        serviceEndpoint: {
+          uri: (Array.isArray(s.serviceEndpoint) ? s.serviceEndpoint[0] : s.serviceEndpoint) ?? '',
+          accept: s.accept ?? [], routing_keys: s.routingKeys ?? [],
+        },
+      })),
+  }
+}
+
+/** Resolves any DIDComm recipient DID to a PeerDidDoc-shaped document,
+ * dispatching on method. did:dht resolution defaults to the public Pkarr
+ * fallback gateways (no "own relay" concept for a bare resolve call here).
+ * did:webvh derives its own URL from the DID string and ignores
+ * `gatewayUrls` entirely (same as resolver.ts's resolveAny). */
+export async function resolveDidCommDoc(
+  did: string, gatewayUrls: string[] = PUBLIC_PKARR_FALLBACKS, opts?: { skipCache?: boolean },
+): Promise<PeerDidDoc | null> {
+  if (did.startsWith('did:peer:2.')) {
+    try {
+      return decodePeerDid2(did)
+    } catch {
+      return null
+    }
+  }
+  if (did.startsWith('did:dht:')) {
+    // `skipCache` reaches dht/resolver.ts's 60s document cache. It exists for
+    // one caller: a RETRY, which by definition already failed once, and where
+    // one of the possible causes is a cached document that predates whatever
+    // the retry is trying to reach (a device registered a moment ago).
+    const doc = await resolveDidDht(did, gatewayUrls, opts)
+    return doc ? didDhtToPeerDidDocShape(doc) : null
+  }
+  if (did.startsWith('did:webvh:')) {
+    const doc = await resolveDidWebvh(did).catch(() => null)
+    return doc ? webvhToPeerDidDocShape(doc) : null
+  }
+  return null
+}
+
+/** pickup.ts's resolveSenderKey shape, method-agnostic: resolves the sender's
+ * own DID (either method) and looks up the specific kid's public key. */
+export async function resolveSenderPublicKey(senderKid: string, gatewayUrls: string[] = PUBLIC_PKARR_FALLBACKS): Promise<Uint8Array> {
+  const senderDid = senderKid.split('#')[0]!
+  const doc = await resolveDidCommDoc(senderDid, gatewayUrls)
+  if (!doc) throw new Error(`resolveSenderPublicKey: could not resolve ${senderDid}`)
+  let vm = doc.verificationMethod.find(v => v.id === senderKid)
+  // Moved-identity fallback (did:webvh portability, webvh/publish.ts's
+  // moveDidToNewDomain): after a domain move, resolving the OLD DID returns
+  // the NEW document — same log, same SCID, verified chain — whose
+  // verificationMethod ids are all scoped to the NEW DID string. So an
+  // old-DID-scoped kid like `{oldDid}#key-1` is legitimately absent, and
+  // matching on the full id alone would reject a key that demonstrably
+  // belongs to this very identity. This is exactly the case from_prior
+  // verification hits (rotation.ts resolves the PRIOR DID by design), which
+  // is precisely when the sender is telling us they moved.
+  //
+  // Narrow on purpose: only when the resolved document's own `id` differs
+  // from the DID we asked for — which for did:webvh can only happen through
+  // a location change the resolver already validated (SCID match, unbroken
+  // entryHash/proof chain, `portable` set at genesis — resolver.ts). Same-id
+  // documents keep strict full-id matching, so two unrelated DIDs sharing a
+  // fragment name can never satisfy each other's kids.
+  if (!vm && doc.id && doc.id !== senderDid) {
+    const fragment = senderKid.slice(senderDid.length) // "#key-1"
+    vm = doc.verificationMethod.find(v => v.id === `${doc.id}${fragment}`)
+  }
+  if (!vm) throw new Error(`resolveSenderPublicKey: kid ${senderKid} not found in its own DID`)
+  return b64urlToBytes(vm.publicKeyJwk.x)
+}

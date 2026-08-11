@@ -1,0 +1,303 @@
+// Invisible DID-backed contact discovery (DID.md option A): keep a contact's
+// reachable address/relays fresh from their signed DID document, so that if they
+// move relays or domains, outgoing mail still reaches them — with no UI, exactly
+// as did:plc is invisible to Bluesky users.
+//
+// Chain: address ──anchor(DNS TXT)──> DID ──gateway/DHT──> signed document
+// (relay list + current address in alsoKnownAs). The document is
+// signature-verified against the key the DID names (resolve()), and the
+// address→DID binding is TOFU at the anchor. Everything here is best-effort
+// and fully guarded: with gateways disabled or a contact that never published
+// a DID, every call is a silent no-op and delivery falls back to the address
+// as typed.
+//
+// Anchor = DNS, not a relay-hosted endpoint (DID.md "biset verse"): the
+// address→DID binding lives in a `_did.<localpart>.<domain>` TXT record
+// (`did=<did>`), resolved via DNS-over-HTTPS since browsers can't issue raw
+// DNS queries — mirrors ATProto's `_atproto.<handle>` handle resolution. This
+// decouples "who answers for this address" from "who runs the JMAP relay
+// behind it": DNS is a commodity, swappable, and self-hostable by whoever owns
+// the domain, unlike a bespoke relay endpoint only that relay's software can
+// serve.
+import { sessions, isDidCommRelay } from '../context.ts'
+import { resolveOwnFirst } from './resolver.ts'
+import type { DidDocument } from './dht/document.ts'
+import { buildCardForDid, type Card } from './contacts.ts'
+import * as contactsStore from '../store/contacts.ts'
+import * as persist from '../vault/persist.ts'
+
+interface ContactCache {
+  did: string
+  address: string // current address from the document's alsoKnownAs (mailto:)
+  relays: string[] // service endpoints from the document
+  protocol?: string // 'mail' | 'activitypub' — the transport this address's matching service entry carries (DidService.protocol)
+  name?: string // self-asserted display name from the document (biset extension, see document.ts) — a UX label only, not verified
+  lastChecked?: number // ms epoch — throttles refreshContact's DHT round-trip
+}
+
+// How often refreshContact actually re-resolves against the DHT, once a
+// contact is known. First contact always resolves (no cache yet); after
+// that, re-checking on literally every send is wasted network/gateway load
+// for a fact that changes rarely (a contact migrating relays mid-conversation
+// is the whole point of periodic re-checks — but "periodic" isn't "every
+// message").
+const REFRESH_TTL_MS = 60 * 60 * 1000
+
+const DID_KEY = 'biset_did_addr:' // address → did (TOFU binding)
+const CONTACT_KEY = 'biset_did_contact:' // address → ContactCache (last resolved)
+
+function getJSON<T>(key: string): T | null {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) as T : null } catch { return null }
+}
+function setJSON(key: string, val: unknown): void {
+  try { localStorage.setItem(key, JSON.stringify(val)) } catch { /* quota / private mode */ }
+}
+
+function domainOf(address: string): string { return address.slice(address.lastIndexOf('@') + 1) }
+function localpartOf(address: string): string { return address.slice(0, address.lastIndexOf('@')) }
+
+// DNS label for the anchor TXT record. Lowercased — DNS labels are
+// case-insensitive and biset usernames are conventionally lowercase already.
+function didTxtName(address: string): string {
+  return `_did.${localpartOf(address).toLowerCase()}.${domainOf(address)}`
+}
+
+// DNS-over-HTTPS TXT lookup (JSON API), Cloudflare first, Google as a
+// fallback so no single DoH provider is a hard dependency. Returns the decoded
+// TXT string values (quotes stripped) or [] on any failure/empty result.
+async function resolveTxt(name: string): Promise<string[]> {
+  const providers = [
+    `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=TXT`,
+    `https://dns.google/resolve?name=${encodeURIComponent(name)}&type=TXT`,
+  ]
+  for (const url of providers) {
+    try {
+      const resp = await fetch(url, { headers: { Accept: 'application/dns-json' } })
+      if (!resp.ok) continue
+      const body = await resp.json() as { Answer?: Array<{ type: number; data: string }> }
+      const txts = (body.Answer ?? []).filter(a => a.type === 16).map(a => a.data.replace(/^"|"$/g, ''))
+      if (txts.length) return txts
+    } catch { /* try next provider */ }
+  }
+  return []
+}
+
+function parseDidTxt(txts: string[]): string | null {
+  for (const t of txts) if (t.startsWith('did=')) return t.slice('did='.length)
+  return null
+}
+
+// Every address this document claims — every `mailto:` entry in
+// alsoKnownAs, not just the first, PLUS every service[].address (a second+
+// address never surfaced there before, e.g. the mail/AP split identities
+// project_biset_identity_split describes). Generalizes what used to be a
+// single-slot check (only alsoKnownAs[0]) to the "claim ≠ ownership"
+// principle applying uniformly to anything the document asserts.
+function claimedAddresses(doc: DidDocument): string[] {
+  const out = new Set<string>()
+  for (const aka of doc.alsoKnownAs) if (aka.startsWith('mailto:')) out.add(aka.slice('mailto:'.length))
+  for (const svc of doc.service) if (svc.address) out.add(svc.address)
+  return [...out]
+}
+
+// The user's own relays double as resolution gateways (DID.md: query through a
+// relay that already sees your traffic, not a stranger's), plus — via
+// did/didcomm/channel.ts's ownGateways, not re-derived here — this identity's
+// own mediator's pkarr gateway when it has one, the ONLY gateway a fully
+// relay-less identity (DID⊥relay, zero relay sessions) has of its own at all.
+async function ownGateways(): Promise<string[]> {
+  const { ownGateways: channelOwnGateways, currentIdentityDid } = await import('./didcomm/channel.ts')
+  return channelOwnGateways(currentIdentityDid())
+}
+
+// address → DID via the DNS anchor (cached; TOFU on first success).
+async function addressToDid(address: string): Promise<string | null> {
+  const cached = localStorage.getItem(DID_KEY + address)
+  if (cached) return cached
+  const did = parseDidTxt(await resolveTxt(didTxtName(address)))
+  if (!did) return null
+  localStorage.setItem(DID_KEY + address, did)
+  return did
+}
+
+// Public wrapper for UI callers that just want to know "does this address
+// have a DID anchor at all" (e.g. compose's To-field protocol pills offering
+// a [DID] option next to [Mail]/[AP] for an address that publishes one) —
+// no reverse-binding check needed here, since (unlike a document's *claimed*
+// address) this direction is already anchored by the address's own domain.
+export const discoverDidForAddress = addressToDid
+
+// Fresh (uncached) reverse-binding check: does `address`'s own DNS anchor
+// attest that it belongs to `did`? A DID document is self-signed, so it can
+// *claim* any address (even someone else's); a claim is only trustworthy when
+// the claimed address points BACK to the same DID (bidirectional verification —
+// see the two-DIDs-claim-one-account problem). Fails closed: no record / no
+// match → not verified → we don't redirect delivery there.
+async function verifyBinding(address: string, did: string): Promise<boolean> {
+  const claimed = parseDidTxt(await resolveTxt(didTxtName(address)))
+  return claimed === did
+}
+
+// Picks which of the document's claimed addresses (if any) to actually
+// deliver to instead of `known` — `known` itself needs no check (its own
+// anchor is how this DID was found in the first place, addressToDid). Every
+// OTHER address the document claims is verified independently (claimedAddresses,
+// generalized from checking only alsoKnownAs[0]); among the ones that verify,
+// one sharing `known`'s own protocol wins (a same-protocol move), otherwise
+// whichever verified first. No verified claim at all → keep `known` unchanged,
+// same fail-closed default as before.
+async function resolveVerifiedAddress(
+  doc: DidDocument, did: string, known: string,
+): Promise<{ address: string; protocol?: string }> {
+  const knownProtocol = doc.service.find(s => s.address === known)?.protocol
+  let fallback: { address: string; protocol?: string } | undefined
+  for (const candidate of claimedAddresses(doc)) {
+    if (candidate === known) continue
+    if (!(await verifyBinding(candidate, did))) continue
+    const protocol = doc.service.find(s => s.address === candidate)?.protocol
+    if (knownProtocol && protocol === knownProtocol) return { address: candidate, protocol }
+    if (!fallback) fallback = { address: candidate, protocol }
+  }
+  return fallback ?? { address: known, protocol: knownProtocol }
+}
+
+// Best-effort: resolve a contact's current document and cache their (verified)
+// address + relays. Safe to fire-and-forget; never throws.
+export async function refreshContact(address: string): Promise<void> {
+  try {
+    const did = await addressToDid(address)
+    if (!did) return
+    const prev = getJSON<ContactCache>(CONTACT_KEY + address)
+    if (prev?.lastChecked && Date.now() - prev.lastChecked < REFRESH_TTL_MS) return
+    // Gateways: own relays + the contact's last-known relays first — public
+    // fallbacks only if neither has it (resolveOwnFirst), so a contact whose
+    // own relays moved is still findable without hitting third-party public
+    // relays on every contact refresh.
+    const own = [
+      ...(await ownGateways()),
+      ...(prev?.relays ?? []).map(u => u.replace(/\/$/, '') + '/pkarr'),
+    ]
+    const doc = await resolveOwnFirst(did, [...new Set(own)]) // applies signature + freshness (rollback) checks
+    if (!doc) return
+    // The document may claim other addresses (a moved-to primary, a second
+    // mail/AP-split address, …). Only adopt one as the delivery target if
+    // that address's own relay attests the reverse (address → same DID) —
+    // resolveVerifiedAddress checks every claim, not just one privileged
+    // slot. Otherwise keep the address we already know (which came from its
+    // own anchor via addressToDid) — never redirect on an unverified
+    // unilateral claim.
+    const { address: verifiedAddress, protocol } = await resolveVerifiedAddress(doc, did, address)
+    setJSON(CONTACT_KEY + address, {
+      did,
+      address: verifiedAddress,
+      relays: doc.service.flatMap(s => s.serviceEndpoint),
+      protocol,
+      name: doc.name,
+      lastChecked: Date.now(),
+    })
+    await syncContactCard(did)
+  } catch { /* best-effort */ }
+}
+
+// Resolves a DID typed directly (shared via QR code, profile link, etc. —
+// without knowing any current address) to its verified current address. The
+// entry point for composing to someone by DID alone, complementing
+// refreshContact (which starts from a known address instead). Same
+// reverse-binding rule applies: a document's self-claimed address is only
+// trusted once that address's own anchor points back to this DID — with no
+// previously-known address to fall back to here, failure to verify means no
+// usable address at all (returns null), not a guess.
+export async function resolveDidDirect(did: string): Promise<{ address: string; relays: string[] } | null> {
+  try {
+    const doc = await resolveOwnFirst(did, await ownGateways())
+    if (!doc) return null
+    // No prior known address to compare against here (cold start) — check
+    // every claim the document makes (claimedAddresses, not just
+    // alsoKnownAs[0]) and take the first that verifies. Still no guessing:
+    // nothing verifies → no usable address at all.
+    let claimed: string | undefined
+    for (const candidate of claimedAddresses(doc)) {
+      if (await verifyBinding(candidate, did)) { claimed = candidate; break }
+    }
+    if (!claimed) return null
+    const relays = doc.service.flatMap(s => s.serviceEndpoint)
+    const protocol = doc.service.find(s => s.address === claimed)?.protocol
+    setJSON(CONTACT_KEY + claimed, { did, address: claimed, relays, protocol, name: doc.name, lastChecked: Date.now() })
+    localStorage.setItem(DID_KEY + claimed, did) // seed the TOFU cache so a later refreshContact(claimed) skips the DNS round-trip
+    await syncContactCard(did)
+    return { address: claimed, relays }
+  } catch { return null }
+}
+
+// The freshest verified address to deliver to. Returns the input unchanged
+// unless a signature-verified DID document gave a different current address.
+export function freshestAddressFor(address: string): string {
+  return getJSON<ContactCache>(CONTACT_KEY + address)?.address ?? address
+}
+
+// The transport ('mail' | 'activitypub') `address`'s freshest verified
+// binding uses, per the contact's DID document. Undefined if unresolved or
+// the document didn't tag a protocol for it — callers should treat that as
+// "unknown, don't second-guess the conversation's established relay".
+export function protocolForContact(address: string): string | undefined {
+  return getJSON<ContactCache>(CONTACT_KEY + address)?.protocol
+}
+
+// ── DID-rooted contact cache sync (server write-through + fresh-device pull) ──
+// Consolidates every locally-known address for `did` into one JSContact Card
+// (buildCardForDid) and write-throughs it: to the in-memory/idb/vault store
+// (survives this browser's localStorage being cleared) and, best-effort, to
+// every one of the user's own relays (survives a device change — the vault
+// needs Chromium's File System Access API, so this is the fallback that works
+// on every browser). Neither is the ground truth — the contact's own DID
+// document is — this only makes what's already been resolved durable.
+function allContactCacheEntries(): { did: string; address: string; relays: string[]; name?: string }[] {
+  const out: { did: string; address: string; relays: string[]; name?: string }[] = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (!key || !key.startsWith(CONTACT_KEY)) continue
+    const entry = getJSON<ContactCache>(key)
+    if (entry) out.push(entry)
+  }
+  return out
+}
+
+async function syncContactCard(did: string): Promise<void> {
+  try {
+    const card = buildCardForDid(did, allContactCacheEntries())
+    contactsStore.put(card)
+    await persist.flushContacts()
+    const uid = encodeURIComponent(card.uid)
+    await Promise.all(sessions.filter(s => !isDidCommRelay(s.account.serverUrl)).map(s =>
+      fetch(`${s.account.serverUrl.replace(/\/$/, '')}/contacts/${uid}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: 'Basic ' + btoa(s.account.email + ':' + s.account.password),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(card),
+      }).catch(() => {})
+    ))
+  } catch { /* best-effort */ }
+}
+
+// Pulls every Card from every one of the user's own relays and merges them
+// into the local store — the counterpart to syncContactCard's push, run once
+// at session start so a fresh device/browser (empty localStorage/idb) inherits
+// previously-resolved contacts instead of starting blind.
+export async function pullOwnContacts(): Promise<void> {
+  try {
+    for (const s of sessions) {
+      if (isDidCommRelay(s.account.serverUrl)) continue // no JMAP endpoint behind the synthetic DIDComm session
+      try {
+        const resp = await fetch(`${s.account.serverUrl.replace(/\/$/, '')}/contacts`, {
+          headers: { Authorization: 'Basic ' + btoa(s.account.email + ':' + s.account.password) },
+        })
+        if (!resp.ok) continue
+        const body = await resp.json() as { cards?: Card[] }
+        for (const card of body.cards ?? []) contactsStore.put(card)
+      } catch { /* try next relay */ }
+    }
+    await persist.flushContacts()
+  } catch { /* best-effort */ }
+}

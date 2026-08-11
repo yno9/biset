@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/main.ts",
+    "src/sw.ts",
+    "src/anchor/index.ts",
+    "test/**/*.test.ts",
+    "scripts/*.mjs"
+  ],
+  "project": ["src/**/*.ts"],
+  "ignoreBinaries": ["deploy.sh"],
+  "ignoreDependencies": ["didcomm-node"]
+}
