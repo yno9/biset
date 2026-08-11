@@ -221,6 +221,53 @@ export interface DidCommJWE {
   tag: string
 }
 
+/** A JWE this implementation is willing to attempt, or `null`.
+ *
+ * `JSON.parse(raw) as DidCommJWE` was the shape of every entry point here, and
+ * `as` is an assertion, not a check: the first field touched decided what
+ * happened. POSTing `{}` to the mediator reached `b64urlToBytes(undefined)` and
+ * came back as `TypeError: undefined is not an object (evaluating 's.length')`
+ * — a runtime error handed to a stranger, from a decoder that should never
+ * have been reached.
+ *
+ * Takes `unknown` because the three callers hold three different untrusted
+ * things: a parsed request body, a reply from a remote endpoint, and an
+ * attachment out of a mediator queue.
+ *
+ * Structure only. Whether the ciphertext decrypts, the tag matches, or the
+ * sender is who they claim is decided further in — this is the gate that makes
+ * reaching those checks safe.
+ */
+export function parseJwe(value: unknown): DidCommJWE | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const j = value as Record<string, unknown>
+  const str = (v: unknown): v is string => typeof v === 'string' && v.length > 0
+  if (!str(j.protected) || !str(j.iv) || !str(j.ciphertext) || !str(j.tag)) return null
+  if (!Array.isArray(j.recipients) || j.recipients.length === 0) return null
+  for (const r of j.recipients) {
+    if (typeof r !== 'object' || r === null) return null
+    const rec = r as Record<string, unknown>
+    if (!str(rec.encrypted_key)) return null
+    const h = rec.header
+    if (typeof h !== 'object' || h === null) return null
+    if (!str((h as Record<string, unknown>).kid)) return null
+  }
+  return value as DidCommJWE
+}
+
+/** The decoded `protected` header, or `null` if it is not base64url of a JSON
+ * object. The second thing every caller does, and the second way a malformed
+ * message used to throw. */
+export function protectedHeaderOf(jwe: DidCommJWE): Record<string, unknown> | null {
+  try {
+    const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(jwe.protected)))
+    if (typeof header !== 'object' || header === null || Array.isArray(header)) return null
+    return header as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
 export interface X25519Recipient { kid: string; publicKey: Uint8Array }
 export interface X25519Sender { kid: string; privateKey: Uint8Array }
 

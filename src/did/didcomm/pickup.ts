@@ -2,7 +2,7 @@
 // delivery. Polls a mediator for messages queued against our own kid and
 // unpacks each one.
 import type { MediatorInfo } from './coordinate.ts'
-import { unpackAuthcryptAuto, type DidCommJWE, type ResolveSenderKey } from './crypto.ts'
+import { unpackAuthcryptAuto, parseJwe, type ResolveSenderKey } from './crypto.ts'
 import { sendAndUnpack, type DidCommSender } from './message.ts'
 import { unwrapMaybeSigned, type ResolveSignerKey } from './signature.ts'
 
@@ -76,7 +76,10 @@ export async function pickupDeliver(
     const open = async (fresh: boolean): Promise<DeliveredMessage> => {
       const self = { kid: own.xKid, x25519PrivateKey: own.xPriv, mlkemPrivateKey: own.mlkemPriv }
       const senderKeys: typeof resolveSenderKey = fresh ? kid => resolveSenderKey(kid, { fresh: true }) : resolveSenderKey
-      const { plaintext, senderKid } = await unpackAuthcryptAuto(att.data.json as DidCommJWE, self, senderKeys)
+      // Queued by the mediator, but authored by whoever sent it — see parseJwe.
+      const queued = parseJwe(att.data.json)
+      if (!queued) throw new Error('queued attachment is not a DIDComm JWE')
+      const { plaintext, senderKid } = await unpackAuthcryptAuto(queued, self, senderKeys)
       let bytes = plaintext
       let signerKid: string | null = null
       if (resolveSignerKey) {

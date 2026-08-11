@@ -15,7 +15,7 @@
 import { decodePeerDid2, type PeerIdentity, type PeerDidDoc } from '../../did/peer/peer.ts'
 import { buildPlaintext, publicKeyOf, isExpired, type DidCommPlaintext } from '../../did/didcomm/message.ts'
 import { buildProblemReport } from '../../did/didcomm/problems.ts'
-import { packAuthcrypt, unpackAuthcrypt, unpackAnoncrypt, b64urlToBytes, type DidCommJWE } from '../../did/didcomm/crypto.ts'
+import { packAuthcrypt, unpackAuthcrypt, unpackAnoncrypt, b64urlToBytes, parseJwe, protectedHeaderOf, type DidCommJWE } from '../../did/didcomm/crypto.ts'
 import { SeenIds } from '../../did/didcomm/replay.ts'
 import { packSigned } from '../../did/didcomm/signature.ts'
 import { ResolvedKeyCache } from '../../did/keycache.ts'
@@ -403,13 +403,26 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
     })()
   }
 
+  /** A body this mediator refuses to read, with a reason it is willing to
+   * say out loud. Distinguished from an unexpected throw so the two get
+   * different answers. */
+  class Malformed extends Error {}
+
   /** Unpacks either flavour. The `alg` header decides: Forward is anoncrypt by
    * design — the whole point of routing is that the mediator learns where to
    * queue, not who sent it — while everything else is authcrypt'd and carries
    * a verified sender. */
   async function unpack(raw: string): Promise<{ msg: DidCommPlaintext; senderKid: string | null }> {
-    const jwe = JSON.parse(raw) as DidCommJWE
-    const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(jwe.protected)))
+    let body: unknown
+    try {
+      body = JSON.parse(raw)
+    } catch {
+      throw new Malformed('body is not JSON')
+    }
+    const jwe = parseJwe(body)
+    if (!jwe) throw new Malformed('body is not a DIDComm JWE')
+    const header = protectedHeaderOf(jwe)
+    if (!header) throw new Malformed('the protected header is not readable')
     if (header.alg === 'ECDH-ES+A256KW') {
       const plaintext = await unpackAnoncrypt(jwe, ownRecipient)
       return { msg: JSON.parse(new TextDecoder().decode(plaintext)), senderKid: null }
@@ -438,7 +451,16 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
     try {
       ;({ msg, senderKid } = await unpack(await req.text()))
     } catch (e) {
-      return Response.json({ error: String(e) }, { status: 400 })
+      // A refusal written here is safe to hand back; anything else is an
+      // internal detail. Returning `String(e)` for both is how a POST of `{}`
+      // came back as "TypeError: undefined is not an object (evaluating
+      // 's.length')", naming the runtime and the failing expression to
+      // anyone who asked.
+      if (e instanceof Malformed) {
+        return Response.json({ error: e.message }, { status: 400 })
+      }
+      console.error('[mediator] could not unpack an inbound message:', e)
+      return Response.json({ error: 'could not read this message' }, { status: 400 })
     }
 
     // Every plaintext MUST carry an `id` (threading.md: a message without one

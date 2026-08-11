@@ -2,7 +2,7 @@
 // send.ts and pickup.ts alike — kept in one place so the envelope shape
 // (id/typ/type/body/from/to) can't drift between them.
 import type { PeerDidDoc } from '../peer/peer.ts'
-import { b64urlToBytes, packAuthcrypt, unpackAuthcrypt, type DidCommJWE } from './crypto.ts'
+import { b64urlToBytes, packAuthcrypt, unpackAuthcrypt, parseJwe, type DidCommJWE } from './crypto.ts'
 import { isProblemReport, problemReportError } from './problems.ts'
 
 // The minimal shape sendAndUnpack actually needs — deliberately narrower than
@@ -139,7 +139,9 @@ export async function sendAndUnpack(mediator: MediatorLike, own: DidCommSender, 
   })
   if (!resp.ok) throw new Error(`mediator request failed: HTTP ${resp.status} ${await resp.text()}`)
 
-  const replyJwe = await resp.json() as DidCommJWE
+  // The far end's reply is as untrusted as any other body — see parseJwe.
+  const replyJwe = parseJwe(await resp.json())
+  if (!replyJwe) throw new Error('the reply is not a DIDComm JWE')
   const resolveSenderKey = (senderKid: string) => publicKeyOf(mediator.doc, senderKid)
   const { plaintext: replyBytes } = await unpackAuthcrypt(replyJwe, { kid: own.xKid, privateKey: own.xPriv }, resolveSenderKey)
   const reply = JSON.parse(new TextDecoder().decode(replyBytes)) as DidCommPlaintext
