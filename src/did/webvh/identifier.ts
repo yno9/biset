@@ -35,11 +35,18 @@ export function buildWebvhDid(parts: { scid: string; domain: string; port?: numb
 
 /** biset-specific: the path-segment form that avoids the apex-sharing problem
  * (PLANWEBVH.md §2.3) — every biset user gets their own path segment under
- * the shared domain, e.g. did:webvh:{scid}:biset.md:dids:alice, so that
- * biset.md's and t.biset.md's users don't collide on the same
- * .well-known/did.jsonl file. */
+ * the shared domain, e.g. did:webvh:{scid}:biset.md:alice, so that biset.md's
+ * and t.biset.md's users don't collide on the same .well-known/did.jsonl
+ * file.
+ *
+ * No `dids/` prefix segment (2026-08-11, user-requested — shorter DIDs; was
+ * `pathSegments: ['dids', username]`). The anchor enforces the corresponding
+ * safety property this prefix used to give away for free: a username can
+ * never equal RESERVED_USERNAME (server.ts), so `/<username>/did.jsonl` can
+ * never collide with one of the anchor's own routes (which all live under
+ * `/_anchor/*` for exactly this reason). */
 export function buildBisetWebvhDid(scid: string, domain: string, username: string): string {
-  return buildWebvhDid({ scid, domain, pathSegments: ['dids', username] })
+  return buildWebvhDid({ scid, domain, pathSegments: [username] })
 }
 
 /** The reverse of buildBisetWebvhDid's username: the identifier itself
@@ -48,16 +55,16 @@ export function buildBisetWebvhDid(scid: string, domain: string, username: strin
  * anywhere (contacts.ts's labelForDid — did:dht has no equivalent, its
  * identifier is pure key material).
  *
- * Undefined for anything that isn't biset's `:dids:{username}` path shape —
- * a webvh DID at an apex (`.well-known`) or under someone else's path
- * convention has no username to read, and inventing one from an arbitrary
- * segment would label a stranger with a name they never chose. */
+ * Undefined for anything that isn't biset's single-segment `:{username}`
+ * path shape — a webvh DID at an apex (`.well-known`) or under someone
+ * else's path convention has no username to read, and inventing one from an
+ * arbitrary segment would label a stranger with a name they never chose. */
 export function bisetWebvhUsername(did: string): string | undefined {
   if (!did.startsWith('did:webvh:')) return undefined
   try {
     const { pathSegments } = parseWebvhDid(did)
-    if (pathSegments.length !== 2 || pathSegments[0] !== 'dids') return undefined
-    const username = decodeURIComponent(pathSegments[1]!)
+    if (pathSegments.length !== 1) return undefined
+    const username = decodeURIComponent(pathSegments[0]!)
     return username || undefined
   } catch {
     return undefined

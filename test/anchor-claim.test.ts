@@ -41,7 +41,7 @@ const server = startAnchor({
 await Bun.sleep(200)
 
 const claim = (localpart: string, body: object) =>
-  fetch(`${A}/identity/${localpart}`, {
+  fetch(`${A}/_anchor/identity/${localpart}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
     body: JSON.stringify({ domain: DOMAIN, ...body }),
@@ -95,10 +95,10 @@ ok('同じ主張の再送で重複しない', await (async () => {
   await claim('multi-a', { did: multi.did, ...proofFor(multi, 'multi-a') })
   return addressesOf(multi.did).length === 2
 })())
-await fetch(`${A}/identity/multi-a?domain=${DOMAIN}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${TOKEN}` } })
+await fetch(`${A}/_anchor/identity/multi-a?domain=${DOMAIN}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${TOKEN}` } })
 ok('片方を release しても、もう片方は残る', addressesOf(multi.did).join() === `multi-b@${DOMAIN}`,
   'DID ごと消すと、生きているアドレスの公表まで巻き添えになる')
-await fetch(`${A}/identity/multi-b?domain=${DOMAIN}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${TOKEN}` } })
+await fetch(`${A}/_anchor/identity/multi-b?domain=${DOMAIN}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${TOKEN}` } })
 ok('最後の1つが消えたら索引から消える', addressesOf(multi.did).length === 0)
 
 console.log('\n=== relay 以外は書けない（この穴のために書かれたテスト）===')
@@ -108,17 +108,17 @@ console.log('\n=== relay 以外は書けない（この穴のために書かれ�
 // a valid signature from anyone was enough to squat, and an unauthenticated
 // DELETE was enough to steal.
 {
-  const noAuth = (init: RequestInit) => fetch(`${A}/identity/victim?domain=${DOMAIN}`, init)
+  const noAuth = (init: RequestInit) => fetch(`${A}/_anchor/identity/victim?domain=${DOMAIN}`, init)
   const sq = identity()
   const sqProof = proofFor(sq, 'zzsquat')
-  const squat = await fetch(`${A}/identity/zzsquat`, {
+  const squat = await fetch(`${A}/_anchor/identity/zzsquat`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ domain: DOMAIN, did: sq.did, ...sqProof }),
   })
   ok('トークン無しなら、正しい署名を持っていても claim できない', squat.status === 403, `status=${squat.status}`)
   ok('実際に claim されていない', addressesOf(sq.did).length === 0)
 
-  const wrong = await fetch(`${A}/identity/zzsquat`, {
+  const wrong = await fetch(`${A}/_anchor/identity/zzsquat`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer wrong-token' },
     body: JSON.stringify({ domain: DOMAIN, did: sq.did, ...sqProof }),
   })
@@ -132,11 +132,11 @@ console.log('\n=== relay 以外は書けない（この穴のために書かれ�
   // learns the anchor's URL and asks DNS for address→DID, precisely so a
   // stranger's operator does not learn who is looking them up. A public surface
   // with no caller is only something to defend.
-  ok('正引きの読み取りルートは無い', (await fetch(`${A}/identity/victim?domain=${DOMAIN}`)).status === 404,
+  ok('正引きの読み取りルートは無い', (await fetch(`${A}/_anchor/identity/victim?domain=${DOMAIN}`)).status === 404,
     'address→DID は DNS が答える — anchor に聞くと相手の operator に足がつく')
-  ok('by-did の読み取りルートも無い', (await fetch(`${A}/identity/by-did/${victim.did}`)).status === 404)
+  ok('by-did の読み取りルートも無い', (await fetch(`${A}/_anchor/identity/by-did/${victim.did}`)).status === 404)
   ok('トークンを持っていても読めない（ルート自体が無い）', await (async () => {
-    const r = await fetch(`${A}/identity/victim?domain=${DOMAIN}`, { headers: { 'Authorization': `Bearer ${TOKEN}` } })
+    const r = await fetch(`${A}/_anchor/identity/victim?domain=${DOMAIN}`, { headers: { 'Authorization': `Bearer ${TOKEN}` } })
     return r.status === 404
   })(), '認可の問題ではなく、存在しない')
 }

@@ -12,7 +12,7 @@ import {
   lastTs, groupMessages,
 } from '../state.ts'
 import { esc, formatTime, avatarStyle, inboxToHash, syncAppBadge, mailboxNameFromId, hexToBytes, expandDualRelay, previewText } from '../utils.ts'
-import { displayLabelFor, nameForContact, shortDid, labelForDid, contactIdentityKey } from '../did/contacts.ts'
+import { displayLabelFor, nameForContact, shortDid, shortOwnDid, labelForDid, contactIdentityKey } from '../did/contacts.ts'
 import type { InboxSummary, StoredAccount } from '../types.ts'
 import type { Email } from 'jmap-rfc-types'
 // Circular (safe — used only in function bodies):
@@ -1001,6 +1001,19 @@ export function renderLeftInboxes(inboxes: InboxSummary[]) {
       const $name = a.querySelector('.lp-name')
       const rawName = contactLabel || item.mailbox
       if ($name && $name.textContent !== rawName) $name.textContent = rawName
+      // Same async-arrival problem as the name above, but for avatars: a
+      // DeltaChat group/contact avatar (Chat-Group-Avatar / Chat-User-Avatar)
+      // is only learned once its message is decrypted during sync, which can
+      // land well after this row was first drawn without one. Patch the <img>
+      // in place instead of waiting for a full reload to pick it up.
+      const $avatar = a.querySelector('.lp-avatar')
+      if ($avatar && item.avatar_url && !$avatar.querySelector('img')) {
+        const img = document.createElement('img')
+        img.src = item.avatar_url
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;'
+        $avatar.insertBefore(img, $avatar.firstChild)
+        ;($avatar as HTMLElement).style.background = 'transparent'
+      }
       const badge = a.querySelector('.unread-dot, .unread-badge')
       const badgeText = unread && item.unread_count ? (item.unread_count > 99 ? '99+' : String(item.unread_count)) : null
       if (!unread) {
@@ -1176,7 +1189,7 @@ export async function setupLeftPane() {
         <div id="cmd-acc-identity-fields" title="Click to view devices and DID document">
           <div id="cmd-acc-identity-avatar" class="lp-avatar"></div>
           <div id="cmd-acc-identity-text">
-            <div id="cmd-acc-identity-name" title="Click to change display name"></div>
+            <div id="cmd-acc-identity-name"></div>
             <div id="cmd-acc-identity-did-row">
               <span id="cmd-acc-identity-did"></span>
               <button id="cmd-acc-identity-copy" type="button" aria-label="Copy DID" title="Copy DID"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
@@ -2937,6 +2950,16 @@ export async function setupLeftPane() {
         const cache = _accInfoCache.get(email) ?? {}
         cache.name = newName
         _accInfoCache.set(email, cache)
+        // Direct DOM update, not relying on renderAccountsList() below alone
+        // (user-reported, 2026-08-12: the DID document picked up the new
+        // name on republish but the identity heading's own text never did) —
+        // renderAccountsList re-derives the heading's name from
+        // identities.all() via repAccount's email, which should already
+        // reflect the .set() above, but setting the visible text directly
+        // here removes any dependency on that indirection being exactly
+        // right for the account that was actually just renamed.
+        const identityNameEl = document.getElementById('cmd-acc-identity-name')
+        if (identityNameEl) identityNameEl.textContent = newName
         renderAccountsList()
         // Also publish it into the DID document (biset extension, see
         // document.ts) — same name, one more place it shows up: anyone who
@@ -3057,7 +3080,7 @@ export async function setupLeftPane() {
         const name = identities.all().find(i => i.email === repEmail)?.name || repEmail.split('@')[0]
         identityName.textContent = name
         identityName.onclick = null
-        identityDid.textContent = shortDid(did)
+        identityDid.textContent = shortOwnDid(did)
         wireIdentityHeading(did)
         // "Change display name" moved off the name text's own click (which
         // now just bubbles to the card's expand, like the rest of the
@@ -3097,7 +3120,7 @@ export async function setupLeftPane() {
         identityAvatar.onclick = null
         identityName.textContent = 'Your identity'
         identityName.onclick = null
-        identityDid.textContent = shortDid(sDid)
+        identityDid.textContent = shortOwnDid(sDid)
         wireIdentityHeading(sDid)
         // No display name to change (no address yet) — Export/Import/Sync
         // still apply to a relay-less identity's local DIDComm state though.

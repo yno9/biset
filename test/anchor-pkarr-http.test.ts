@@ -62,13 +62,13 @@ const payload = new Uint8Array(80).fill(9)
 
 console.log('\n=== /pkarr GET/PUT: no Authorization header required ===')
 {
-  const missResp = await fetch(`${A}/pkarr/${key}`)
+  const missResp = await fetch(`${A}/_anchor/pkarr/${key}`)
   ok('存在しないキーは 404（認証ヘッダ無しでも到達する）', missResp.status === 404, `got ${missResp.status}`)
 
-  const putResp = await fetch(`${A}/pkarr/${key}`, { method: 'PUT', body: payload })
+  const putResp = await fetch(`${A}/_anchor/pkarr/${key}`, { method: 'PUT', body: payload })
   ok('Authorization ヘッダ無しの PUT が 204 で通る', putResp.status === 204, `got ${putResp.status}`)
 
-  const getResp = await fetch(`${A}/pkarr/${key}`)
+  const getResp = await fetch(`${A}/_anchor/pkarr/${key}`)
   ok('直後の GET も認証無しで通り、内容が一致', getResp.status === 200, `got ${getResp.status}`)
   const got = new Uint8Array(await getResp.arrayBuffer())
   ok('中身が put したバイト列と一致', got.length === payload.length && got.every((b, i) => b === payload[i]))
@@ -76,7 +76,7 @@ console.log('\n=== /pkarr GET/PUT: no Authorization header required ===')
 
 console.log('\n=== /identity/* は引き続き relay_token 必須（誤って一緒に開けていないことの確認）===')
 {
-  const resp = await fetch(`${A}/identity/someone`, {
+  const resp = await fetch(`${A}/_anchor/identity/someone`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ domain: 't.example' }),

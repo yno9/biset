@@ -91,7 +91,7 @@ console.log('\n=== did:webvh（root key はDID自体でなく解決したdocumen
   const REAL_FETCH = globalThis.fetch
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-    const m = /^https:\/\/([^/]+)(\/dids\/.*)$/.exec(url)
+    const m = /^https:\/\/([^/]+)(\/[^/]+\/did\.jsonl.*)$/.exec(url)
     if (!m) return REAL_FETCH(input as any, init)
     const [, domain, path] = m
     const headers = new Headers(init?.headers)

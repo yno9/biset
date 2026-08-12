@@ -219,7 +219,7 @@ export function setupNewUserPage() {
     // Username required, always (2026-08-11): did:dht — the one method that
     // could ever produce an identity with no username — is deprecated, and
     // did:webvh always bakes a domain into the identifier
-    // (did:webvh:{scid}:{domain}:dids:{username}), so every identity this
+    // (did:webvh:{scid}:{domain}:{username}), so every identity this
     // form creates is username@hostname now. No more separate "kind" of
     // account creation to branch on.
     // password/envelope concept disabled (commented out for easy revival —
@@ -305,7 +305,7 @@ export function setupNewUserPage() {
       // static token anywhere any more.
       //
       // `username` is baked directly into the DID string itself
-      // (did:webvh:{scid}:{domain}:dids:{username} — PLANWEBVH.md §2.3), so
+      // (did:webvh:{scid}:{domain}:{username} — PLANWEBVH.md §2.3), so
       // a non-conflict mail failure here is fatal too, same as a conflict —
       // falling back would publish a resolvable document that CLAIMS this
       // address without ever having actually bound it (the "two different

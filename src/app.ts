@@ -2,7 +2,7 @@ import type { Email } from 'jmap-rfc-types'
 import type { AccountSession, StoredAccount, InboxSummary } from './types.ts'
 import { readGroupHeaders, groupDraftHeaders, isSecurejoinEmail, isEdit, collectEdits, type GroupOpts, type ChatAction } from './deltachat/protocol.ts'
 import { isReaction, collectReactions } from './mail/reactions.ts'
-import { avatarDataUrl, groupCacheKey } from './deltachat/avatar.ts'
+import { avatarDataUrl, groupCacheKey, learnContactName } from './deltachat/avatar.ts'
 import {
   sessions, addSession, setCurrentInbox, currentInbox, activeSession, sessionFor, sessionForRelay,
   loadStoredAccounts, saveStoredAccounts, identityIds, relaysForId, identityKey, isApRelay, isDidCommRelay,
@@ -26,6 +26,31 @@ import type { ProcessedMessage } from './state.ts'
 
 export { loginViaEnvelope, authTokenToBasicAuth }
 export { initSession }
+
+// A no-op `unload` listener, registered once at module load, purely to make
+// this page ineligible for the back/forward cache (bfcache) — found live,
+// 2026-08-12: logout()'s wipe-then-navigate below kept landing back on the
+// account page it had just wiped, on at least one file:// browser, no matter
+// which of four different navigation techniques triggered it (a straight
+// `location.href` reassignment, `history.replaceState` + `location.reload()`,
+// the same with `location.hash = ''` first, and a simulated real link click —
+// see the dated history still in the comment below). Every one of those
+// "worked" in the sense that the browser visibly navigated, yet
+// `bootSessionsPromise` (main.ts, a MODULE-LEVEL memoized promise, reset only
+// by the JS actually re-executing from a cold module load) kept answering
+// with its pre-logout `{configured: true}` — which is exactly the signal
+// route() uses to land on the account page (main.ts: `!sessions.length &&
+// configured` → `showMenuPage('/account')`, which writes `#account` into the
+// URL itself, deliberately — this was never a "stale hash survived" bug,
+// the app was choosing that page correctly for what looked, from inside a
+// bfcache-restored JS heap, like a still-configured identity). A page kept
+// in bfcache is restored by replaying its exact in-memory state instead of
+// re-running module top-level code, so a real navigation can "succeed" and
+// still never touch `bootSessionsPromise` at all. An `unload` listener —
+// even one that does nothing — is the standard, widely-supported way to opt
+// a page out of bfcache eligibility, forcing every subsequent navigation
+// away from it to be a genuine cold reload.
+if (typeof window !== 'undefined') window.addEventListener('unload', () => {})
 
 // ── Email → ProcessedMessage.msg ──────────────────────────────────────────────
 
@@ -61,6 +86,24 @@ export function emailToMsg(email: Email, _selfAddr: string): ProcessedMessage['m
     group_name: groupName,
     seen: !!((email.keywords as any)?.['$seen']),
     keywords: (email.keywords as Record<string, boolean>) ?? {},
+  }
+}
+
+// Learns DeltaChat contact display names (deltachat/avatar.ts's
+// learnContactName) from every message already sitting in the local store —
+// sync/session.ts only does this for messages freshly fetched over JMAP, so a
+// conversation synced before that code existed (or before its first sync
+// after an app update) never got its sender's name recorded. Called once at
+// startup after loadFromCache() populates the store, so existing history
+// backfills without waiting for new mail.
+export function backfillContactNames(): void {
+  for (const email of messages.all()) {
+    const from = (email.from as any[] | undefined)?.[0]
+    const addr = from?.email as string | undefined
+    const name = from?.name as string | undefined
+    if (!addr || !name) continue
+    if (sessions.some(s => s.account.email.toLowerCase() === addr.toLowerCase())) continue
+    learnContactName(addr, name)
   }
 }
 
@@ -636,5 +679,19 @@ export async function logout(): Promise<void> {
     try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())) } catch { /* ignore */ }
   }
 
-  location.href = location.pathname // drop the hash too, land on a clean boot
+  // Land on a clean boot. Deliberately NOT touching the hash here — every
+  // attempt that reconstructed or mutated the URL first (location.href
+  // reassignment, history.replaceState before reload()) got refused by this
+  // browser on file:// as "Unsafe attempt to load URL ... from frame with
+  // URL ..." (2026-08-12, user-reported, several rounds). A bare reload()
+  // with NO preceding URL manipulation is the one variant that hasn't
+  // thrown. It re-executes this module from a cold load now that the page
+  // has opted out of bfcache (this file's own top-level `unload` listener,
+  // and its note on why that mattered — a bfcache-restored page was
+  // replaying stale module state, including main.ts's bootSessionsPromise,
+  // no matter how "successful" a navigation back to it looked). Landing
+  // hash-less is a nice-to-have that can be revisited once a plain reload is
+  // confirmed actually working — chasing both at once is what produced the
+  // unsafe-navigation error in the first place.
+  location.reload()
 }

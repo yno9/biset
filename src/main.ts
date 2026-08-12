@@ -1,7 +1,7 @@
 import {
   sessions, addSession, setCurrentInbox, currentInbox, loadStoredAccounts, accountsForActiveIdentity,
 } from './context.ts'
-import { initSession, loadInboxSummaries, logout } from './app.ts'
+import { initSession, loadInboxSummaries, logout, backfillContactNames } from './app.ts'
 import type { InboxSummary } from './types.ts'
 import { inboxToHash, parseInboxHash } from './utils.ts'
 import { contactIdentityKey, representativeAddressForDid } from './did/contacts.ts'
@@ -364,6 +364,7 @@ async function initInner() {
     withTimeout(loadFromCache(), 3000),
     withTimeout(loadQuerystateFromIDB(), 3000),
   ])
+  backfillContactNames()
 
   // Per-user landing page (https://<host>/<localpart>[/]) takes precedence over
   // hash routing — it's how a shared user URL opens a conversation. This reads
@@ -711,4 +712,29 @@ init()
   })
   console.log('[register] channel set up — reload the page next')
   return reg.own.did
+}
+
+// TEMPORARY (2026-08-12, remove once y@biset.md's did:webvh path-shape
+// migration — dropping the `dids/` segment — is confirmed live): console-
+// only, one-shot, gated to the exact known (already-migrated-once) DID.
+// Run once, logged into t.biset.md as y@biset.md: `await window.__migrateWebvhShape()`.
+;(window as any).__migrateWebvhShape = async () => {
+  const OLD_DID = 'did:webvh:Qmcz9xXcVcToPw5w4cgUv9SonybrmNpjnUDjtw1Zsqtua3:biset.md:dids:y'
+  const { migrateWebvhPathShape } = await import('./did/index.ts')
+  const { setOwnDid, publishBareOrCurrent } = await import('./did/didcomm-devices.ts')
+  const { loadStoredAccounts, saveStoredAccounts } = await import('./context.ts')
+
+  const rec = await migrateWebvhPathShape(OLD_DID, { domain: 'biset.md', username: 'y' })
+  console.log('[migrate] new did:', rec.did)
+
+  const accounts = loadStoredAccounts()
+  const updated = accounts.map(a => a.did === OLD_DID ? { ...a, did: rec.did } : a)
+  saveStoredAccounts(updated)
+  console.log('[migrate] StoredAccount.did rewritten for', updated.filter(a => a.did === rec.did).map(a => a.email))
+
+  setOwnDid(rec.did)
+  const published = await publishBareOrCurrent(rec)
+  console.log('[migrate] published to', published, 'gateway(s) — reload the page next, then run window.__registerMediator()')
+
+  return rec.did
 }

@@ -26,27 +26,38 @@ export function groupCacheKey(groupId: string): string {
 }
 
 const DB_NAME = 'biset-deltachat'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE = 'avatars'
+const NAME_STORE = 'names'
 
 interface AvatarRecord { addr: string; dataUrl: string }
+interface NameRecord { addr: string; name: string }
 
 // In-memory cache for synchronous UI access (keyed by lowercased address).
 const cache = new Map<string, string>()
+
+// The From-header display name last seen for a plain (non-DID) address —
+// DeltaChat/chatmail contacts have no JSContact Card (contacts.ts's Card is
+// DID-rooted only), so this is the only place their display name is learned
+// from. Kept alongside the avatar cache since it's the same per-address,
+// learned-from-incoming-mail shape and persistence needs.
+const nameCache = new Map<string, string>()
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION)
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE, { keyPath: 'addr' })
+      if (!req.result.objectStoreNames.contains(NAME_STORE)) req.result.createObjectStore(NAME_STORE, { keyPath: 'addr' })
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)
   })
 }
 
-// Loads all persisted avatars into the in-memory cache. Call once at startup so
-// the synchronous UI lookups have data without awaiting IndexedDB per render.
+// Loads all persisted avatars + names into the in-memory caches. Call once at
+// startup so the synchronous UI lookups have data without awaiting IndexedDB
+// per render.
 export async function primeAvatarCache(): Promise<void> {
   try {
     const db = await openDB()
@@ -57,6 +68,42 @@ export async function primeAvatarCache(): Promise<void> {
     })
     for (const r of recs) cache.set(r.addr, r.dataUrl)
   } catch { /* no avatars yet */ }
+  try {
+    const db = await openDB()
+    const recs: NameRecord[] = await new Promise((resolve, reject) => {
+      const req = db.transaction(NAME_STORE, 'readonly').objectStore(NAME_STORE).getAll()
+      req.onsuccess = () => resolve(req.result as NameRecord[])
+      req.onerror = () => reject(req.error)
+    })
+    for (const r of recs) nameCache.set(r.addr, r.name)
+  } catch { /* no names yet */ }
+}
+
+// Synchronous display-name lookup for a plain address (contacts.ts's
+// displayLabelFor fallback chain). Returns undefined if none was ever
+// observed on an incoming From header.
+export function contactNameFor(addr: string): string | undefined {
+  return nameCache.get(addr.toLowerCase())
+}
+
+// Learns (or updates) the display name for `addr`, taken verbatim from an
+// incoming email's From-header phrase (cleartext even for chatmail — unlike
+// Chat-Group-ID it's never protected, since the outer envelope needs it for
+// delivery). Last-seen-wins: no attempt to reconcile conflicting names.
+export async function learnContactName(addr: string, name: string): Promise<void> {
+  const trimmed = name.trim()
+  if (!trimmed) return
+  const key = addr.toLowerCase()
+  if (nameCache.get(key) === trimmed) return
+  nameCache.set(key, trimmed)
+  try {
+    const db = await openDB()
+    await new Promise<void>((resolve, reject) => {
+      const req = db.transaction(NAME_STORE, 'readwrite').objectStore(NAME_STORE).put({ addr: key, name: trimmed } as NameRecord)
+      req.onsuccess = () => resolve()
+      req.onerror = () => reject(req.error)
+    })
+  } catch { /* non-fatal */ }
 }
 
 // Synchronous avatar lookup for rendering. Returns a data: URL or undefined.

@@ -12,6 +12,7 @@ import { sha1 } from '@noble/hashes/legacy.js'
 import * as contactsStore from '../store/contacts.ts'
 import { stableIdKey, isDidIdentityKey } from './idkey.ts'
 import { bisetWebvhUsername } from './webvh/identifier.ts'
+import { contactNameFor } from '../deltachat/avatar.ts'
 
 export interface JSContactEmail { address: string }
 export interface JSContactCryptoKey { uri: string }
@@ -212,6 +213,22 @@ export function shortDid(did: string): string {
   return id.length <= 6 ? did : `${m[1]}${id.slice(0, 3)}…${id.slice(-3)}`
 }
 
+// Like shortDid, but for the account page's OWN identity heading (2026-08-12,
+// user-requested): a did:webvh identity's SCID carries no meaning to the
+// account holder (unlike a contact's, there's no "recognisable fingerprint"
+// value in seeing it), while the domain+username are exactly what they'd
+// recognise. `did..{domain}:{username}` — collapses the SCID to `..` instead
+// of a truncated fragment of it. Falls back to shortDid for anything that
+// isn't biset's own `:{username}` webvh shape (did:dht, a foreign webvh path
+// convention, …).
+export function shortOwnDid(did: string): string {
+  if (!did.startsWith('did:webvh:')) return shortDid(did)
+  const username = bisetWebvhUsername(did)
+  if (!username) return shortDid(did)
+  const domain = did.slice('did:webvh:'.length).split(':')[1]
+  return domain ? `did..${domain}:${username}` : shortDid(did)
+}
+
 // The one "how do I show this DID to a human" rule, for every caller that
 // has a DID and no self-asserted name for it: a did:webvh identifier bakes
 // the username in (identifier.ts's bisetWebvhUsername), so `alice` beats
@@ -226,11 +243,13 @@ export function labelForDid(did: string): string {
 }
 
 // The full display-label fallback chain for a contact: (1) their
-// self-asserted name if known, (2) labelForDid — a did:webvh username, else a
-// shortened DID — if one is known but no name is, (3) the literal address —
-// never the raw DID in full.
+// self-asserted name if known (a DID Card's name, or — for a plain address
+// with no Card, e.g. a DeltaChat contact over classic email — the From-header
+// display name last seen from them, avatar.ts's contactNameFor), (2)
+// labelForDid — a did:webvh username, else a shortened DID — if one is known
+// but no name is, (3) the literal address — never the raw DID in full.
 export function displayLabelFor(address: string): string {
-  const name = nameForContact(address)
+  const name = nameForContact(address) ?? contactNameFor(address)
   if (name) return name
   const key = contactIdentityKey(address)
   if (!isDidIdentityKey(key)) return address

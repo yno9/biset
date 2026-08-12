@@ -13,9 +13,10 @@ import type { WebvhDidDocument } from '../did/webvh/document.ts'
 export function resolveOwnWebvhDocument(webvh: WebvhLogStore, did: string): WebvhDidDocument | null {
   try {
     const parts = parseWebvhDid(did)
-    // biset's path-segment scheme (PLANWEBVH.md §2.3): did:webvh:{scid}:{domain}:dids:{username}
-    if (parts.pathSegments[0] !== 'dids' || !parts.pathSegments[1]) return null
-    const jsonl = webvh.read(parts.domain, parts.pathSegments[1])
+    // biset's path-segment scheme (PLANWEBVH.md §2.3, no `dids/` prefix any
+    // more — 2026-08-11): did:webvh:{scid}:{domain}:{username}
+    if (parts.pathSegments.length !== 1 || !parts.pathSegments[0]) return null
+    const jsonl = webvh.read(parts.domain, parts.pathSegments[0])
     if (!jsonl) return null
     return resolveEntries(did, parseLog(jsonl))
   } catch { return null }

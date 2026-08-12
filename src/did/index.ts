@@ -71,7 +71,7 @@ export async function localDidRecord(masterSeed: Uint8Array, did: string, email?
 // anchor, not here).
 //
 // `domain`/`username` select biset's path-segment identifier
-// (PLANWEBVH.md §2.3): did:webvh:{scid}:{domain}:dids:{username} — the fix
+// (PLANWEBVH.md §2.3): did:webvh:{scid}:{domain}:{username} — the fix
 // for biset.md/t.biset.md's apex-sharing problem. `relays`/`addresses` seed
 // the initial document the same way dht/publish.ts's buildOwnDocument would
 // for a did:dht identity.
@@ -102,6 +102,50 @@ export async function initDidWebvh(
     rootPrivateKey: toHex(root.privateKey),
     nostrPublicKey: toHex(nostr.publicKey),
     nostrPrivateKey: toHex(nostr.privateKey),
+  }
+  await storeDidRecord(record)
+  return record
+}
+
+// One-off did:webvh → did:webvh path-shape migration (2026-08-12): drops the
+// `dids/` path segment (did:webvh:{scid}:{domain}:dids:{username} →
+// :{domain}:{username}) for the one real account still on the old shape,
+// y@biset.md. A NEW genesis (new SCID), not a rename — did:webvh's SCID is
+// derived from the whole genesis document, not the path, so there is no way
+// to keep the old SCID under a new path. Reuses the same root/nostr keys
+// (method-independent key material) and the device's own JMAP login
+// credential, same reasoning as migrateDhtToWebvh (removed after y's
+// did:dht→did:webvh migration completed) — see that function's own note,
+// since this is its direct descendant.
+export async function migrateWebvhPathShape(
+  oldDid: string,
+  opts: { domain: string; username: string },
+): Promise<DidRecord> {
+  const old = await getDidRecord(oldDid)
+  if (!old) throw new Error(`migrateWebvhPathShape: no local record for ${oldDid}`)
+  const { hexToBytes } = await import('../utils.ts')
+  const { did } = await createGenesis({
+    domain: opts.domain,
+    username: opts.username,
+    rootPrivateKey: hexToBytes(old.rootPrivateKey),
+    rootPublicKey: hexToBytes(old.rootPublicKey),
+    relays: [],
+    addresses: [],
+  })
+
+  const existing = await getDidRecord(did)
+  if (existing) return existing
+
+  const record: DidRecord = {
+    did,
+    ...(old.email ? { email: old.email } : {}),
+    rootPublicKey: old.rootPublicKey,
+    rootPrivateKey: old.rootPrivateKey,
+    nostrPublicKey: old.nostrPublicKey,
+    nostrPrivateKey: old.nostrPrivateKey,
+    ...(old.envelope ? { envelope: old.envelope } : {}),
+    ...(old.jmapDevicePublicKey ? { jmapDevicePublicKey: old.jmapDevicePublicKey } : {}),
+    ...(old.jmapDevicePrivateKey ? { jmapDevicePrivateKey: old.jmapDevicePrivateKey } : {}),
   }
   await storeDidRecord(record)
   return record

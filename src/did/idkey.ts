@@ -4,7 +4,7 @@
 // Why this exists: a DID string is not uniformly stable. did:dht's identifier
 // IS its public key (dht/identifier.ts's `did:dht:${zbase32Encode(rootPublicKey)}`)
 // — no hosting location in it at all, so it never changes. did:webvh's is
-// `did:webvh:{SCID}:{domain}:dids:{username}`, where only the SCID is
+// `did:webvh:{SCID}:{domain}:{username}`, where only the SCID is
 // self-certifying: a domain move (webvh/publish.ts's moveDidToNewDomain)
 // keeps the SCID and the log, but the DID STRING changes. Keying biset's
 // internal data model on the full string therefore breaks every contact,

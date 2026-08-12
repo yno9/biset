@@ -17,7 +17,7 @@ import { buildEffectiveGroups } from '../processing.ts'
 import { decryptAndParse, uploadPeerKey } from '../pgp/crypto.ts'
 import { readGroupHeaders, readGroupHeadersFromMime, cacheGroupHeaders, parseAutocryptKey, parseGossipKeys, readChatEditTarget, readChatDeleteTarget, parseEditBody, cacheEdit, isEdit } from '../deltachat/protocol.ts'
 import { maybeHandleSecurejoin } from '../deltachat/securejoin.ts'
-import { learnAvatar, learnGroupAvatar } from '../deltachat/avatar.ts'
+import { learnAvatar, learnGroupAvatar, learnContactName } from '../deltachat/avatar.ts'
 import { learnApAvatar } from '../ap/avatar.ts'
 import { isApRelay, sessions, sessionForRelay, identityKeyForEmail } from '../context.ts'
 import { isReactionEmail, isReactionDisposition, cacheReaction, isReaction } from '../mail/reactions.ts'
@@ -174,6 +174,16 @@ export async function sync(session: AccountSession): Promise<void> {
         const isPgp = raw.includes('-----BEGIN PGP MESSAGE-----')
         console.log('[promote]', (e.id as string)?.slice(0, 30), 'outerIrt:', outerIrt || 'EMPTY', 'isPgp:', isPgp, 'hasOuterGroup:', hasOuterGroup)
         const from = (e.from as any[] | undefined)?.[0]?.email as string | undefined
+        const fromName = (e.from as any[] | undefined)?.[0]?.name as string | undefined
+        // The From-header display name is on the outer (cleartext) envelope —
+        // unlike Chat-Group-ID it's never a protected header, since delivery
+        // itself needs it — so it's learnable straight off `e`, no decrypt
+        // required. Never learn it for one of our OWN identities: same reason
+        // learnAvatar below skips fromIsSelf (a gossiped copy of our own name
+        // showing up in our own sent mail, or another account's inbox, is not
+        // this contact's name).
+        const fromIsSelf = !!from && sessions.some(s => s.account.email.toLowerCase() === from.toLowerCase())
+        if (from && fromName && !fromIsSelf) await learnContactName(from, fromName)
         // RFC 9078 reactions (src/mail/reactions.ts) — generic, not DeltaChat-
         // specific. Cleartext case only here; the encrypted case is handled
         // below once decrypted.headers is available.
@@ -235,7 +245,6 @@ export async function sync(session: AccountSession): Promise<void> {
         // and a peer's gossiped copy of it (present in our own sent messages, or
         // in messages from us that landed in another account's inbox) is stale —
         // learning it would clobber a freshly-uploaded avatar on the next sync.
-        const fromIsSelf = !!from && sessions.some(s => s.account.email.toLowerCase() === from.toLowerCase())
         if (from && decrypted && !fromIsSelf) await learnAvatar(from, decrypted)
         if (from && await maybeHandleSecurejoin(session, from, raw, decrypted)) {
           handledSJ.add(e.id as string)

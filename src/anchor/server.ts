@@ -3,23 +3,26 @@
 // relays could keep working against it unmodified while it was swapped in
 // (ANCHOR.md decision 5). **That constraint is spent.** The migration finished,
 // go-didanchor is retired, and the routes below have since moved on: naming a
-// DID requires proving it, `/pkarr` is here at all, and the two read routes are
-// gone (see below).
+// DID requires proving it, the two read routes are gone, and (2026-08-11) every
+// relay-facing/internal route moved under `/_anchor/*` so a did:webvh username
+// can never collide with one (RESERVED_USERNAME's own note; shorter DIDs —
+// no more `dids/` path segment — was the actual motivation).
 //
-//   POST   /identity/<localpart>   {"domain":…,"did":…,"did_sig":…,…} → 201/200/409
-//   DELETE /identity/<localpart>?domain=<domain>                    → 204
-//   GET    /pkarr/<z-base-32 pubkey>                       → wire payload | 404
-//   PUT    /pkarr/<z-base-32 pubkey>   body = wire payload → 204 | 400
-//   GET    /dids/<username>/did.jsonl                      → did:webvh log | 404
-//   PUT    /dids/<username>/did.jsonl  body = JSONL         → 204 | 400/409
-//   POST   /devices/vouch   {"did":…,"device_pub_key":…,"label":…,…} → 200 | 400/401
+//   POST   /_anchor/identity/<localpart>   {"domain":…,"did":…,"did_sig":…,…} → 201/200/409
+//   DELETE /_anchor/identity/<localpart>?domain=<domain>                    → 204
+//   GET    /_anchor/pkarr/<z-base-32 pubkey>                       → wire payload | 404
+//   PUT    /_anchor/pkarr/<z-base-32 pubkey>   body = wire payload → 204 | 400
+//   GET    /<username>/did.jsonl                      → did:webvh log | 404
+//   PUT    /<username>/did.jsonl  body = JSONL         → 204 | 400/409
+//   POST   /_anchor/devices/vouch   {"did":…,"device_pub_key":…,"label":…,…} → 200 | 400/401
 //
-// **The claim registry (/identity/*) is for this anchor's own relays only** —
-// naming a DID requires proving it (a relay_token Bearer), and the registry
-// had two read routes with no caller (a stranger's operator must not learn
-// who is looking them up — src/did/discovery.ts asks DNS instead). The
-// **Pkarr gateway (/pkarr/*) answers anyone** — see handlePkarr's own note on
-// why that's safe. The mediator is the other thing here the world may talk to.
+// **The claim registry (/_anchor/identity/*) is for this anchor's own relays
+// only** — naming a DID requires proving it (a relay_token Bearer), and the
+// registry had two read routes with no caller (a stranger's operator must not
+// learn who is looking them up — src/did/discovery.ts asks DNS instead). The
+// **Pkarr gateway (/_anchor/pkarr/*) answers anyone** — see handlePkarr's own
+// note on why that's safe. The mediator is the other thing here the world may
+// talk to.
 import type { ClaimStore } from './store.ts'
 import { CloudflareAnchor } from './cloudflare.ts'
 import { verifyDIDBinding, verifyDeviceVouch, didPublicKey, rootKeyResolver } from './didbind.ts'
@@ -83,10 +86,10 @@ export interface AnchorOptions {
    * nothing on `/` and `/.well-known/did.json`, exactly as before it could
    * mediate at all. */
   mediator?: MediatorHandler
-  /** Absent (or `current` unset) when the DHT gateway is off — `/pkarr/*`
+  /** Absent (or `current` unset) when the DHT gateway is off — `/_anchor/pkarr/*`
    * then 404s, as it did before the anchor could serve it. */
   pkarr?: PkarrRef
-  /** did:webvh log storage (PLANWEBVH.md §2.1/§2.3). Absent means `/dids/*`
+  /** did:webvh log storage (PLANWEBVH.md §2.1/§2.3). Absent means the webvh route
    * 404s — same "off by omission" shape as `pkarr`/`mediator`. */
   webvh?: WebvhLogStore
   /** The secret this anchor's own relays present. Not optional: see index.ts. */
@@ -122,7 +125,7 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
   // collapsing the two would have relays telling people their signature failed
   // when it was never looked at.
   const forbidden = () => text('this anchor does not serve that relay', 403)
-  // GET/PUT /pkarr/<z-base-32 pubkey> — the Pkarr relay surface browsers need
+  // GET/PUT /_anchor/pkarr/<z-base-32 pubkey> — the Pkarr relay surface browsers need
   // (they cannot speak UDP). Open to anyone, no Bearer/token gate: PUT is
   // self-authenticating (pkarr.ts's own header note — the payload's signature
   // is checked against the key named in the URL, so nobody can forge or
@@ -207,7 +210,7 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
   // browser client can PUT it directly and this store cannot forge one, only
   // withhold. (Originally gated behind fromOwnRelay, on the theory that a
   // `username` — unlike a did:dht key — is a scarce human-readable name and
-  // needed the same ownership proof `/identity/*` requires for addresses.
+  // needed the same ownership proof `/_anchor/identity/*` requires for addresses.
   // That gate made the endpoint unusable from a browser: relay_token is a
   // server-side secret the client never holds. Fixed by enforcing ownership
   // a different way — see the append-only check below — rather than by
@@ -304,12 +307,12 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
     }
   }
 
-  // POST /devices/vouch — the per-device JMAP credential's one DID-touching
+  // POST /_anchor/devices/vouch — the per-device JMAP credential's one DID-touching
   // step (devicebind.ts's file header): a relay forwards its client's
   // root-key-signed "this DID authorizes this device pubkey" statement here,
-  // same server-to-server shape as `/identity/*` (Bearer relay_token — this
+  // same server-to-server shape as `/_anchor/identity/*` (Bearer relay_token — this
   // anchor's own relays only, never a browser directly). Stateless: unlike
-  // `/identity/*` there is no NEW registry entry to write, just a yes/no —
+  // `/_anchor/identity/*` there is no NEW registry entry to write, just a yes/no —
   // the relay itself keeps the resulting authorized-device list.
   //
   // Two checks, not one. verifyDeviceVouch alone proves "this DID's current
@@ -319,7 +322,7 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
   // to know whether `did` is even the right one for the `username`@`domain`
   // mailbox the caller means to add a device to. This function also checks
   // the claim registry itself (the same `claims` a provisioning POST
-  // /identity/<localpart> writes to) agrees `did` is who that address
+  // /_anchor/identity/<localpart> writes to) agrees `did` is who that address
   // belongs to — without it, a validly-signed vouch for a real DID could
   // still be presented for somebody ELSE's mailbox.
   async function handleDeviceVouch(req: Request): Promise<Response> {
@@ -355,7 +358,7 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
     const url = new URL(req.url)
 
     // The mediator owns `/` and `/.well-known/did.json`; the registry owns
-    // `/identity/*`. Ask first and fall through, so a request for neither still
+    // `/_anchor/identity/*`. Ask first and fall through, so a request for neither still
     // gets the registry's 404 rather than a mediator error about a message it
     // was never sent.
     if (mediator) {
