@@ -1,14 +1,9 @@
 node_modules
 config.json
-.DS_Store
+
 dist/app-*.js
 deploy.sh
 home/
-issue.md
-GRAF.md
-DID*.md
-PLAN.md
-ANCHOR.md
 JOURNAL.md
 didcomm2.1/
 test/
@@ -17,9 +12,6 @@ biset-*
 PLAN*
 docs/
 
-.playwright-mcp/
-
-# jmapsmtp は独立したリポジトリ（github.com/yno9/jmapsmtp）で、ここには
-# 作業場所として置いてあるだけ。無視しないと git add -A が中の .git を見て
-# gitlink として登録してしまう。
 /jmapsmtp/
+
+.DS_Store
