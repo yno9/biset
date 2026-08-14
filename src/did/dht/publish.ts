@@ -8,7 +8,7 @@
 import { identityIds, relaysForId, isApRelay, isDidCommRelay } from '../../context.ts'
 import * as identityStore from '../../store/identities.ts'
 import { getDidRecord, withDidLock } from '../store.ts'
-import { buildBisetDocument, keyAgreementKeysFromHex, kidN } from './document.ts'
+import { buildBisetDocument } from './document.ts'
 import { publishDocument, PUBLIC_PKARR_FALLBACKS } from './resolver.ts'
 import { hexToBytes } from '../../utils.ts'
 
@@ -162,18 +162,16 @@ async function buildOwnDocumentLocked(did: string, opts?: { skipSync?: boolean }
   // device the way rebuilding the list from scratch would.
   if (rec.didCommOwnKid && !opts?.skipSync) {
     const { syncDevicePosition } = await import('../didcomm-devices.ts')
-    await syncDevicePosition(rec, gateways).catch(() => {}) // best-effort — mutates + persists rec in place
+    await syncDevicePosition(rec).catch(() => {}) // best-effort — mutates + persists rec in place
   }
-  const keyAgreementKeys = keyAgreementKeysFromHex(
-    rec.didCommPublicKey && rec.didCommOwnKid ? { kid: rec.didCommOwnKid, publicKeyHex: rec.didCommPublicKey } : null,
-    (rec.didCommSiblingKeys ?? []).map(s => ({ kid: s.kid, publicKeyHex: s.publicKey })),
-  )
+  // One implementation of "which devices does this identity publish", shared
+  // with registerWithMediator's own publish — it reads the MLS self group, not
+  // a local sibling cache (didcomm-devices.ts's fullKeyAgreementKeys). Two
+  // copies of that decision is exactly how the old gossip merge and the
+  // keylist prune managed to disagree.
+  const { fullKeyAgreementKeys } = await import('../didcomm-devices.ts')
+  const keyAgreementKeys = await fullKeyAgreementKeys(rec)
   if (keyAgreementKeys.length) doc.keyAgreementKeys = keyAgreementKeys
-  // Carry forward whatever this device knows has been removed (document.ts's
-  // removedKeyNs note) — every republish keeps propagating it to any sibling
-  // that hasn't heard yet, the same way keyAgreementKeys itself propagates
-  // sibling additions.
-  if (rec.didCommRemovedKeys?.length) doc.removedKeyNs = rec.didCommRemovedKeys.map(kidN)
   // Gated on there being a key to reach, not just on a mediator being on
   // record — the service and the keyAgreement list stand or fall together
   // (didcomm-devices.ts's publishCurrentState carries the full reasoning and

@@ -4,8 +4,6 @@ config.json
 dist/app-*.js
 deploy.sh
 home/
-JOURNAL.md
-didcomm2.1/
 test/
 
 biset-*

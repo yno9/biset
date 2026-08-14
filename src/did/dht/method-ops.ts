@@ -16,7 +16,7 @@ import type { MethodOps } from '../didcomm-devices.ts'
 export const dhtMethodOps: MethodOps = {
   async resolveKeyAgreement(did, gatewayUrls) {
     const doc = await resolve(did, gatewayUrls, { skipCache: true }).catch(() => null)
-    return doc ? { keyAgreementKeys: doc.keyAgreementKeys ?? [], removedKeyNs: doc.removedKeyNs } : null
+    return doc ? { keyAgreementKeys: doc.keyAgreementKeys ?? [] } : null
   },
 
   resolveConfirmedAbsent,
@@ -41,12 +41,11 @@ export const dhtMethodOps: MethodOps = {
       gateways = didCommGateways([], rec.didCommMediatorUrl)
       const resolved = await resolve(rec.did, gateways, { skipCache: true }).catch(() => null)
       doc = resolved
-        ? { ...resolved, ext: undefined, keyAgreementKeys: undefined, removedKeyNs: undefined }
+        ? { ...resolved, ext: undefined, keyAgreementKeys: undefined }
         : buildBisetDocument(rec.did, rootPub, [], [])
     }
 
     if (opts.keyAgreementKeys.length) doc.keyAgreementKeys = opts.keyAgreementKeys
-    if (opts.removedKeyNs?.length) doc.removedKeyNs = opts.removedKeyNs
     if (opts.didCommService) {
       doc.service = [
         ...doc.service.filter(s => s.type !== 'DIDCommMessaging'),

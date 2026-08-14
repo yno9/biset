@@ -18,6 +18,7 @@ import type { Email } from 'jmap-rfc-types'
 // Circular (safe — used only in function bodies):
 import { render, syncDockPosition, scrollToFocused, updateScrollSpacer } from './thread.ts'
 import { fetchMessages, showSysMsg, startPolling } from './shell.ts'
+import { setupNewUserPage, mountNewUserPageInline, unmountNewUserPageInline } from './account-create.ts'
 // From app.ts (safe — called only inside async functions):
 import { loadInboxSummaries, initSession, jmapCreateEmail, persistSession } from '../app.ts'
 import { decryptAndParse, prefetchRecipientKey } from '../pgp/index.ts'
@@ -103,6 +104,10 @@ let _lpFocusedKey: string | null = null  // 'inbox:KEY' | 'thread:KEY'
 let _inMenuMode = false
 export function inMenuMode(): boolean { return _inMenuMode }
 let _menuResizeObserver: ResizeObserver | null = null
+// Keeps the account page's floating "+ New Relay" button and its panel
+// centred on the right column (positionAccFloating). Module-scoped so
+// re-entering the account page replaces it rather than stacking observers.
+let accFloatingObserver: ResizeObserver | null = null
 let _showMenuPageFn: ((name: string) => void) | null = null
 export function showMenuPage(name: string) { _showMenuPageFn?.(name) }
 
@@ -1210,6 +1215,8 @@ export async function setupLeftPane() {
         <input id="cmd-acc-identity-devices-import-input" type="file" accept=".zip" style="display:none">
       </div>
       <div class="cmd-page-section" id="cmd-acc-list"></div>
+      <button id="cmd-acc-fab" type="button"><span class="acc-new-account-plus">+</span>New Relay</button>
+      <div id="cmd-acc-panel-backdrop"></div>
       <div class="cmd-page-section" id="cmd-acc-panel" style="display:none">
         <div class="cmd-acc-relay-row">
           <input id="cmd-acc-relay" class="cmd-input" type="text" placeholder="Relay URL (ex. biset.md)" required>
@@ -1266,6 +1273,78 @@ export async function setupLeftPane() {
     if (formErr) formErr.style.display = 'none'
   }
 
+  // ── Add-relay panel open/close ──────────────────────────────────────────
+  // The panel used to be toggled inline from a trailing "+ New Relay" card,
+  // with `panel.style.display` written directly at three separate call
+  // sites. It's a floating bottom button opening an overlay now (2026-08-12,
+  // user-requested), which needs a class toggled for the expand transition
+  // and a backdrop shown alongside — too much to keep duplicating, hence
+  // this pair being the only place either is touched.
+  //
+  // 'flex', not 'block' — #cmd-acc-panel's own CSS is display:flex (its gap
+  // is the one spacing mechanism for all rows inside it); an inline 'block'
+  // overrides that stylesheet rule outright, silently disabling gap entirely
+  // (2026-07-14, user-reported: gap changes had zero visible effect no
+  // matter the value, because of exactly this).
+  // Both floaters are `position: fixed` (they must not scroll with the card
+  // list, and the panel has to land on the button's own coordinates), but
+  // they belong to the RIGHT COLUMN, not the viewport (2026-08-12,
+  // user-requested) — and `fixed` resolves left/bottom against the viewport.
+  // So the horizontal placement is measured rather than declared. A
+  // ResizeObserver on #right-col keeps it honest through both window resizes
+  // and left-pane toggles (the pane collapsing changes the column's width
+  // without any window event at all).
+  function positionAccFloating(): void {
+    const col = document.getElementById('right-col')
+    if (!col) return
+    const r = col.getBoundingClientRect()
+    if (!r.width) return // hidden (app not shown yet) — nothing meaningful to measure
+    const centre = r.left + r.width / 2
+    const fab = document.getElementById('cmd-acc-fab') as HTMLElement | null
+    const panel = document.getElementById('cmd-acc-panel') as HTMLElement | null
+    if (fab) fab.style.left = `${centre}px`
+    if (panel) {
+      panel.style.left = `${centre}px`
+      // Never wider than the column it belongs to, whatever the stylesheet's
+      // own min() says about the viewport.
+      panel.style.maxWidth = `${Math.max(240, r.width - 32)}px`
+    }
+  }
+
+  function openAddRelayPanel(): void {
+    const panel = document.getElementById('cmd-acc-panel') as HTMLElement | null
+    const backdrop = document.getElementById('cmd-acc-panel-backdrop') as HTMLElement | null
+    if (!panel) return
+    resetAddAccountPanel()
+    panel.style.display = 'flex'
+    positionAccFloating()
+    if (backdrop) backdrop.classList.add('open')
+    document.getElementById('cmd-acc-fab')?.classList.add('hidden')
+    // One frame between `display` becoming non-none and the class that
+    // animates it — a transition can't run on an element that was
+    // display:none in the same frame, so without this the panel just
+    // appears at its final size with no expand at all.
+    requestAnimationFrame(() => {
+      panel.classList.add('open')
+      ;(document.getElementById('cmd-acc-relay') as HTMLInputElement | null)?.focus()
+    })
+  }
+
+  function closeAddRelayPanel(): void {
+    const panel = document.getElementById('cmd-acc-panel') as HTMLElement | null
+    const backdrop = document.getElementById('cmd-acc-panel-backdrop') as HTMLElement | null
+    if (!panel) return
+    panel.classList.remove('open')
+    if (backdrop) backdrop.classList.remove('open')
+    document.getElementById('cmd-acc-fab')?.classList.remove('hidden')
+    // Hidden only after the collapse transition, so it actually plays.
+    // Guarded on still being closed: a reopen inside the timeout window
+    // would otherwise hide the panel it just opened.
+    setTimeout(() => {
+      if (!panel.classList.contains('open')) panel.style.display = 'none'
+    }, 180)
+  }
+
   function onShowAccount() {
     onShowAccounts()
 
@@ -1317,7 +1396,7 @@ export async function setupLeftPane() {
               const { registerWithMediator } = await import('../did/didcomm-devices.ts')
               const reg = await registerWithMediator(relayInput.value.trim())
               showSysMsg('Registered with mediator')
-              const panel = document.getElementById('cmd-acc-panel'); if (panel) panel.style.display = 'none'
+              closeAddRelayPanel()
               resetAddAccountPanel()
               renderAccountsList()
               // Wire the new channel into the same left/right column UI every
@@ -3026,9 +3105,26 @@ export async function setupLeftPane() {
     }
   }
 
+  // Full sign-out, from the identity card's own menu (2026-08-12 — it used
+  // to sit on the top-right page-navigation menu, which is the wrong place
+  // for the one action there that isn't navigation). The confirm text is the
+  // promise app.ts's logout() actually keeps: local only, nothing
+  // server-side. logout() itself re-renders this page in its zero-account
+  // state when it's done — no reload, no navigation.
+  async function confirmAndLogout(): Promise<void> {
+    if (!confirm('Log out and erase ALL local data (accounts, messages, keys)? This cannot be undone.')) return
+    const { logout } = await import('../app.ts')
+    await logout()
+  }
+
   function renderAccountsList() {
     const $list = document.getElementById('cmd-acc-list')
     if (!$list) return
+    // BEFORE the clear, always: the zero-account branch below parks the live
+    // #new-user-page node in this very container, and `textContent = ''`
+    // would destroy it outright — taking #new's only DOM (and every listener
+    // bound to it) with it for the rest of the session.
+    unmountNewUserPageInline()
     $list.textContent = ''
     const accounts = loadStoredAccounts()
     // One session = one identity (ARC.md 2026-07-14): every loaded account
@@ -3084,12 +3180,14 @@ export async function setupLeftPane() {
         wireIdentityHeading(did)
         // "Change display name" moved off the name text's own click (which
         // now just bubbles to the card's expand, like the rest of the
-        // heading), and Sync/Export/Import moved off the Devices panel's own
-        // icon row — all four now live in the one hamburger menu
-        // (2026-08-11, user-requested). Sync (republishIdentity) publishes
-        // the WHOLE identity's document (every relay, every address)
-        // regardless of which account triggered it, so it belongs here once,
-        // not duplicated per relay card.
+        // heading), Sync/Export/Import moved off the Devices panel's own
+        // icon row (2026-08-11), and Log out moved off the top-right page
+        // menu (2026-08-12) — that menu is page navigation, and logging out
+        // was the one item on it that wasn't. All five now live in this one
+        // hamburger, which is the identity's own. Sync (republishIdentity)
+        // publishes the WHOLE identity's document (every relay, every
+        // address) regardless of which account triggered it, so it belongs
+        // here once, not duplicated per relay card.
         if (identityMenuBtn) {
           identityMenuBtn.style.display = ''
           identityMenuBtn.onclick = (ev) => {
@@ -3099,6 +3197,7 @@ export async function setupLeftPane() {
               { label: 'Export Messages', onClick: () => exportIdentityMessages(did) },
               { label: 'Import Messages', onClick: () => importIdentityMessages() },
               { label: 'Sync', onClick: () => republishIdentity(did) },
+              { label: 'Log out', danger: true, onClick: () => confirmAndLogout() },
             ])
           }
         }
@@ -3123,7 +3222,7 @@ export async function setupLeftPane() {
         identityDid.textContent = shortOwnDid(sDid)
         wireIdentityHeading(sDid)
         // No display name to change (no address yet) — Export/Import/Sync
-        // still apply to a relay-less identity's local DIDComm state though.
+        // and Log out still apply to a relay-less identity's local state.
         if (identityMenuBtn) {
           identityMenuBtn.style.display = ''
           identityMenuBtn.onclick = (ev) => {
@@ -3132,6 +3231,7 @@ export async function setupLeftPane() {
               { label: 'Export Messages', onClick: () => exportIdentityMessages(sDid) },
               { label: 'Import Messages', onClick: () => importIdentityMessages() },
               { label: 'Sync', onClick: () => republishIdentity(sDid) },
+              { label: 'Log out', danger: true, onClick: () => confirmAndLogout() },
             ])
           }
         }
@@ -3150,13 +3250,27 @@ export async function setupLeftPane() {
         identitySection.classList.remove('expanded')
       }
     }
-    if (!accounts.length && !ownDid()) {
-      const msg = document.createElement('div')
-      msg.className = 'lp-search-status'
-      msg.textContent = 'No accounts'
-      $list.appendChild(msg)
+    // Nothing set up on this device: show the #new signup form right here
+    // rather than a bare "No accounts" line (2026-08-12, user-requested) —
+    // it's the only thing there is to do from this page in that state, and
+    // the floating "+ New Relay" button stays available alongside it for
+    // joining an existing relay instead. setup* are idempotent, so calling
+    // them on every render is free.
+    const nothingSetUp = !accounts.length && !ownDid()
+    if (nothingSetUp) {
+      setupNewUserPage()
+      mountNewUserPageInline($list)
     }
-    // (a standalone identity shows its DID heading above instead of "No accounts")
+    // With the signup form standing in for the whole page, "account" names
+    // something that doesn't exist yet — the app's own name is what this
+    // screen is actually introducing. Safe to write unconditionally here:
+    // reaching this line means the account page's own markup is on screen
+    // (the $list lookup above returns otherwise), so there's no conversation
+    // title to clobber. renderMenuInboxImpl sets the plain page name first
+    // and only then calls onShow → here, so this always wins.
+    const $headerTitle = document.getElementById('header-thread-title')
+    if ($headerTitle) $headerTitle.textContent = nothingSetUp ? 'biset' : 'account'
+    // (a standalone identity shows its DID heading above instead)
     const relayLabel = (url: string): string => {
       try { return new URL(url).hostname.split('.')[0] } catch { return '?' }
     }
@@ -3398,55 +3512,68 @@ export async function setupLeftPane() {
       }
     }
 
-    // Trailing "card" (n+1th) that opens the same add-relay/login panel the
-    // old top-of-page "+" toggle used to — kept as its own last row so
-    // `.acc-card-wrap:last-child` styling (no border under the very last
-    // item) lands here instead of on the last real account.
-    const newCardWrap = document.createElement('div')
-    newCardWrap.className = 'acc-card-wrap'
-    const newCardRow = document.createElement('div')
-    newCardRow.className = 'cmd-page-row acc-new-account-row'
-    const newCardText = document.createElement('h3')
-    newCardText.style.margin = '0'
-    const newCardPlus = document.createElement('span')
-    newCardPlus.className = 'acc-new-account-plus'
-    newCardPlus.textContent = '+'
-    newCardText.append(newCardPlus, 'New Relay')
-    newCardRow.appendChild(newCardText)
-    newCardRow.addEventListener('click', () => {
-      const panel = document.getElementById('cmd-acc-panel')
-      if (!panel) return
-      const opening = panel.style.display === 'none'
-      // 'flex', not 'block' — #cmd-acc-panel's own CSS is display:flex (its
-      // gap is the one spacing mechanism for all rows inside it); an inline
-      // 'block' here overrides that stylesheet rule outright, silently
-      // disabling gap entirely (2026-07-14, user-reported: gap changes had
-      // zero visible effect no matter the value, because of exactly this).
-      panel.style.display = opening ? 'flex' : 'none'
-      if (opening) {
-        resetAddAccountPanel()
-        ;(document.getElementById('cmd-acc-relay') as HTMLInputElement | null)?.focus()
-      }
-    })
-    newCardWrap.appendChild(newCardRow)
-    $list.appendChild(newCardWrap)
+    // No trailing "+ New Relay" card any more (2026-08-12, user-requested):
+    // it's a floating button pinned to the bottom of the page instead
+    // (#cmd-acc-fab in renderAccountPage), which opens the same panel over
+    // the card area. See openAddRelayPanel below.
   }
 
-  // Device list — one row per keyAgreementKeys entry currently cached
-  // locally (this device's own + every known sibling, the same set
-  // buildOwnDocument publishes). Deliberately NOT deduped: a duplicate entry
-  // (own kid also stuck in didCommSiblingKeys) is a real data problem, and
-  // hiding it behind display-layer cleanup is how it stays undetected
-  // instead of getting fixed at the root (syncDevicePosition's own
-  // cache-purge, document.ts's keyAgreementKeysFromHex for what actually
-  // gets published).
+  // Device list — one row per device the MLS self group holds, which is the
+  // same set this identity publishes (didcomm-devices.ts's
+  // fullKeyAgreementKeys). Showing the group rather than a local cache means
+  // the panel cannot disagree with what senders actually see, and that a
+  // device removed here is removed cryptographically, not just hidden.
+  //
+  // Before the group exists (a fresh identity, or one that has not reached
+  // its mediator yet) the only device there is to show is this one.
   async function loadIdentityDevices(deviceList: HTMLElement, did: string): Promise<void> {
     deviceList.textContent = 'Loading…'
     const rec = await getDidRecord(did).catch(() => null)
     if (!rec) { deviceList.textContent = 'Failed to load.'; return }
-    const entries: Array<{ kid: string; publicKey: string; isSelf: boolean }> = []
-    if (rec.didCommOwnKid && rec.didCommPublicKey) entries.push({ kid: rec.didCommOwnKid, publicKey: rec.didCommPublicKey, isSelf: true })
-    for (const s of rec.didCommSiblingKeys ?? []) entries.push({ kid: s.kid, publicKey: s.publicKey, isSelf: false })
+    // TWO sources, deliberately shown together.
+    //
+    // The MLS self group is what decides membership, and it is what gets
+    // published — so a panel showing only the group is "correct" and useless
+    // the moment something goes wrong: a device that has not joined shows one
+    // row (itself) and no hint that anything is missing, which is exactly what
+    // two devices of one identity looked like while neither had a group
+    // (2026-08-13). The published document is the other half of the picture:
+    // it says who senders can currently reach.
+    //
+    // Showing the union, labelled, makes the two distinguishable — and makes
+    // "this device is not in the group yet" visible instead of silent.
+    // ONE network-touching source, not three.
+    //
+    // `fullKeyAgreementKeys` already unions the MLS group with the devices the
+    // mediator still has a registration for, resolving the document once to
+    // learn their keys (didcomm-devices.ts). The panel used to redo that
+    // resolve for itself and query the keylist a second time through
+    // mediatorDeviceActivity — on a device that cannot authenticate with the
+    // mediator right now, the extra round trips are exactly the ones that hang,
+    // and the panel sat on "Loading…" indefinitely.
+    //
+    // Everything here is also time-boxed. A device list that renders late is
+    // an annoyance; one that never renders hides the very state a person opened
+    // this panel to inspect.
+    const withTimeout = async <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<T>(resolve => { timer = setTimeout(() => resolve(fallback), ms) })
+      try { return await Promise.race([p, timeout]) } finally { if (timer) clearTimeout(timer) }
+    }
+    const { fullKeyAgreementKeys } = await import('../did/didcomm-devices.ts')
+    const { selfGroupTransportKeys } = await import('../mls/self-group.ts')
+    const hexOf = (b: Uint8Array) => [...b].map(x => x.toString(16).padStart(2, '0')).join('')
+    const [groupDevices, published] = await Promise.all([
+      withTimeout(selfGroupTransportKeys(did).catch(() => undefined), 8000, undefined),
+      withTimeout(fullKeyAgreementKeys(rec).catch(() => []), 12000, []),
+    ])
+    const inGroup = new Set((groupDevices ?? []).map(d => d.kid.slice(d.kid.indexOf('#'))))
+    const entries = published.map(k => ({
+      kid: k.kid,
+      publicKey: hexOf(k.publicKey),
+      isSelf: k.kid === rec.didCommOwnKid,
+      state: !groupDevices ? 'local' as const : inGroup.has(k.kid) ? 'group' as const : 'published-only' as const,
+    })) as Array<{ kid: string; publicKey: string; isSelf: boolean; state: 'group' | 'published-only' | 'local' | 'registered-only' }>
     deviceList.textContent = ''
     if (!entries.length) { deviceList.textContent = 'No devices.'; return }
     // Liveness from the mediator, the only party that sees whether a slot's
@@ -3455,14 +3582,44 @@ export async function setupLeftPane() {
     // published and its queue filling forever, and this row is the only place
     // it can be recognised and removed. Null (couldn't ask) shows nothing at
     // all rather than mislabelling every device as never-seen.
-    const activity = await mediatorDeviceActivity(did)
+    const activity = await withTimeout(mediatorDeviceActivity(did).catch(() => null), 8000, null)
+    // Registrations outlive the devices that made them. A browser whose
+    // storage was cleared, or a device that logged out while it could not
+    // reach the mediator, leaves a keylist entry nothing else cleans up — and
+    // an entry there is what keeps a device addressable and its key packages
+    // handed out to anyone inviting this identity. Eleven had accumulated on
+    // one identity by 2026-08-13, and none of them were listed here, so there
+    // was no way to see them, let alone remove them.
+    //
+    // Shown last and labelled for what they are: not devices this identity
+    // publishes, just registrations left behind.
+    const listed = new Set(entries.map(e => e.kid))
+    for (const kid of activity?.byKid.keys() ?? []) {
+      if (listed.has(kid)) continue
+      entries.push({ kid, publicKey: '', isSelf: kid === rec.didCommOwnKid, state: 'registered-only' })
+    }
     for (const entry of entries) {
       const devRow = document.createElement('div')
       devRow.className = 'acc-device-row'
       const label = document.createElement('span')
       label.className = 'acc-device-label'
-      const shortKey = entry.publicKey.slice(0, 8) + '…' + entry.publicKey.slice(-4)
-      label.textContent = `${entry.kid} · ${shortKey}${entry.isSelf ? ' · This device' : ''}${deviceActivityLabel(activity, entry.kid, entry.isSelf)}`
+      // The kid alone identifies the device now: it is derived from that
+      // device's own key (did/devicekid.ts), so showing the key next to it
+      // said the same thing twice — once in a form nobody can read. The pair
+      // made sense when a kid was a slot number (`#k2`) and the key was the
+      // only thing telling two devices apart. The full key stays reachable on
+      // hover for anyone verifying one out of band.
+      label.title = entry.publicKey
+      // `published-only` is a device senders can reach that the group does not
+      // list — either it has not joined yet, or it was removed and the
+      // document has not caught up. Both are worth seeing; neither is an
+      // error, and MLS makes the second harmless (it can be addressed, not
+      // read).
+      const stateLabel = entry.state === 'registered-only' ? ' · stale registration (not published)'
+        : entry.state === 'published-only' ? ' · not in the device group'
+        : entry.state === 'local' ? ' · device group not set up yet'
+        : ''
+      label.textContent = `${entry.kid}${entry.isSelf ? ' · This device' : ''}${stateLabel}${deviceActivityLabel(activity, entry.kid, entry.isSelf)}`
       const trashBtn = document.createElement('button')
       trashBtn.type = 'button'
       trashBtn.className = 'acc-storage-icon-btn'
@@ -3474,7 +3631,9 @@ export async function setupLeftPane() {
         if (trashBtn.disabled) return
         if (!confirm(entry.isSelf
           ? 'Log this device out of the mediator? It will stop receiving DIDComm messages until it registers again.'
-          : `Remove device ${entry.kid} from the published key list? This cannot be undone from here.`)) return
+          : entry.state === 'registered-only'
+            ? `Clear the leftover registration for ${entry.kid}? This identity does not publish that device; the registration is what keeps it addressable and its key packages on offer.`
+            : `Remove device ${entry.kid} from the published key list? This cannot be undone from here.`)) return
         trashBtn.disabled = true
         try {
           const { removeDeviceKey } = await import('../did/didcomm-devices.ts')
@@ -3506,9 +3665,12 @@ export async function setupLeftPane() {
       if (!rec) { showSysMsg('Export failed'); return }
       // Public kid/key list only — never this device's private keys, even
       // though this is a local-only export.
-      const devices: Array<{ kid: string; publicKey: string; isSelf: boolean }> = []
-      if (rec.didCommOwnKid && rec.didCommPublicKey) devices.push({ kid: rec.didCommOwnKid, publicKey: rec.didCommPublicKey, isSelf: true })
-      for (const s of rec.didCommSiblingKeys ?? []) devices.push({ kid: s.kid, publicKey: s.publicKey, isSelf: false })
+      const { fullKeyAgreementKeys } = await import('../did/didcomm-devices.ts')
+      const devices = (await fullKeyAgreementKeys(rec).catch(() => [])).map(k => ({
+        kid: k.kid,
+        publicKey: [...k.publicKey].map(x => x.toString(16).padStart(2, '0')).join(''),
+        isSelf: k.kid === rec.didCommOwnKid,
+      }))
       // Mediator delivery is pickup-and-persist-locally by design (no
       // server-side store to fetch from, unlike a relay) — every DIDComm
       // message this identity has ever received/sent already lives in the
@@ -3615,7 +3777,7 @@ export async function setupLeftPane() {
       const forDisplay = doc && 'identityKey' in doc && {
         ...doc,
         identityKey: hex(doc.identityKey),
-        ...(doc.keyAgreementKeys?.length ? { keyAgreementKeys: doc.keyAgreementKeys.map(k => ({ kid: `#k${k.n}`, publicKey: hex(k.publicKey) })) } : {}),
+        ...(doc.keyAgreementKeys?.length ? { keyAgreementKeys: doc.keyAgreementKeys.map(k => ({ kid: k.kid, publicKey: hex(k.publicKey) })) } : {}),
       }
       docEl.textContent = forDisplay ? JSON.stringify(forDisplay, null, 2) : 'No document found (not yet published, or no gateway reachable)'
     } catch {
@@ -3627,6 +3789,26 @@ export async function setupLeftPane() {
   function onShowAccounts() {
     renderAccountsList()
     setupIdentityImportInput()
+    // The floating "+ New Relay" button and the ways out of the panel it
+    // opens. Wired here (with the rest of this page's one-time setup) rather
+    // than in renderAccountsList, which re-runs on every account change and
+    // would stack duplicate listeners on these fixed template elements.
+    document.getElementById('cmd-acc-fab')?.addEventListener('click', () => openAddRelayPanel())
+    document.getElementById('cmd-acc-panel-backdrop')?.addEventListener('click', () => closeAddRelayPanel())
+    positionAccFloating()
+    const rightCol = document.getElementById('right-col')
+    if (rightCol && typeof ResizeObserver !== 'undefined') {
+      // One observer for the life of the page — the elements it positions are
+      // recreated with the template, but #right-col itself never is.
+      accFloatingObserver?.disconnect()
+      accFloatingObserver = new ResizeObserver(() => positionAccFloating())
+      accFloatingObserver.observe(rightCol)
+    }
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape') return
+      const panel = document.getElementById('cmd-acc-panel')
+      if (panel?.classList.contains('open')) closeAddRelayPanel()
+    })
     const form = document.getElementById('cmd-acc-form') as HTMLFormElement | null
     form?.addEventListener('submit', async (ev) => {
       ev.preventDefault()
@@ -3704,8 +3886,7 @@ export async function setupLeftPane() {
       }
       addBtn.disabled = false; addBtn.textContent = 'Add'
       resetAddAccountPanel()
-      const panel = document.getElementById('cmd-acc-panel') as HTMLElement | null
-      if (panel) panel.style.display = 'none'
+      closeAddRelayPanel()
       renderAccountsList()
       loadLeftInboxes()
       if (isFirst) startPolling()
@@ -3800,6 +3981,11 @@ export async function setupLeftPane() {
     }
 
     if ($active) {
+      // Same reason renderAccountsList unmounts first: the account page may
+      // be holding the live #new-user-page node inside the markup about to
+      // be thrown away here (navigating away from /account, or re-rendering
+      // it), and it must survive that.
+      unmountNewUserPageInline()
       $active.innerHTML = ''
       const card = document.createElement('div')
       card.className = 'cmd-thread-card'

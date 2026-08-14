@@ -43,13 +43,21 @@
 // (dht/method-ops.ts, webvh/method-ops.ts) rather than being copied here.
 import { generateDeviceDidCommKey, generateDeviceMlkemKey } from './keys.ts'
 import { getDidRecord, storeDidRecord, withDidLock, type DidRecord } from './store.ts'
-import { kidN, keyAgreementKeysFromHex, type DidKeyAgreement } from './dht/document.ts'
+import { keyAgreementKeysFromHex, type DidKeyAgreement } from './dht/document.ts'
 import type { DidMlkemKeyAgreement } from './webvh/document.ts'
 import { relaysForId, isApRelay, isDidCommRelay } from '../context.ts'
 import * as identityStore from '../store/identities.ts'
 import { fetchMediatorInfo, requestMediation, updateKeylist, queryKeylist, type MediatorInfo } from './didcomm/coordinate.ts'
 import type { DidCommSender } from './didcomm/message.ts'
 import { hexToBytes } from '../utils.ts'
+import { deviceKidFragment, isLegacyKid, fragmentOf } from './devicekid.ts'
+import { generateOwnKeyPackage, memberTransportKeys, type OwnKeyPackage } from '../mls/group.ts'
+import { ensureSelfGroup, selfGroupTransportKeys, selfGroupIdHex, selfGroupDevices, removeDeviceFromSelfGroup, leaveSelfGroup } from '../mls/self-group.ts'
+import { forgetDevices } from '../mls/authservice.ts'
+import { loadGroup, saveGroup, deleteGroup, ensureKeyPackages } from '../mls/store.ts'
+import { publishKeyPackages } from '../mls/transport.ts'
+import type { ClientState } from '../mls/vendor/index.ts'
+import { reportDeviceProjection } from '../mls/device-projection.ts'
 
 const OWN_DID_KEY = 'biset_own_did'
 const bytesToHex = (b: Uint8Array): string => [...b].map(x => x.toString(16).padStart(2, '0')).join('')
@@ -177,7 +185,6 @@ export interface PublishFullOpts {
   // has nowhere to put a 1184-byte key); webvh/method-ops.ts's threads it
   // into buildBisetWebvhState's mlkemKeyAgreementKeys.
   mlkemKeyAgreementKeys?: DidMlkemKeyAgreement[]
-  removedKeyNs?: number[]
   didCommService?: { mediatorUrl: string; routingKey: string }
   /** Actively REMOVE any DIDCommMessaging service the published document
    * still carries, rather than merely not writing one. The distinction is
@@ -203,7 +210,6 @@ export interface MethodOps {
     // method that never returns this is read as "no PQ keys, and never will
     // be" (dht/method-ops.ts doesn't set it at all).
     mlkemKeyAgreementKeys?: DidMlkemKeyAgreement[]
-    removedKeyNs?: number[]
   } | null>
   resolveConfirmedAbsent(did: string, gatewayUrls: string[]): Promise<boolean>
   gatewayUrls(relaySessions: Array<{ account: { serverUrl: string } }>, mediatorUrl?: string): string[]
@@ -237,282 +243,68 @@ function methodOpsFor(did: string): MethodOps {
 
 // ── device slot / sibling sync (method-agnostic) ────────────────────────────
 
-/** Establishes this device's stable positional slot and refreshes the sibling
- * cache, by resolving whatever document is currently published (best-effort —
- * a resolve failure just means this call learns nothing new, safe to retry
- * later). Establishes `didCommOwnKid` once (kept stable afterward); safe to
- * call again and again to pick up devices registered elsewhere since — and,
- * on a resolve that actually succeeds, to drop a device that's been
- * legitimately REVOKED (unregisterFromMediator) too: the cache is REPLACED
- * with whatever a successful resolve returns, not merged with what was
- * there before, so a revoke actually sticks instead of getting silently
- * restored by the next device that still remembers it. A resolve that
- * fails outright changes nothing (no fresher information to replace the
- * cache with), which is what makes repeating this safe — a transient outage
- * can't be mistaken for "everyone else disappeared". Exported: dht/publish.ts's
- * buildOwnDocument calls this on every routine republish now, not just once
- * at registration — see that file's own note on why skipping it was a real
- * bug, not just an approximation. */
-export async function syncDevicePosition(rec: DidRecord, gatewayUrls: string[]): Promise<DidRecord> {
-  await ensureMethodOpsLoaded()
-  const ops = methodOpsFor(rec.did)
-  let resolved: { keyAgreementKeys: DidKeyAgreement[]; mlkemKeyAgreementKeys?: DidMlkemKeyAgreement[]; removedKeyNs?: number[] } | null = null
-  // skipCache semantics are the implementation's own concern — this function's
-  // whole job is establishing ground truth for slot assignment (the
-  // `!rec.didCommOwnKid` branch below) — found live, a new device registering
-  // within a resolve cache's window of ANY earlier resolve (a routine poll,
-  // another device's sync, anything) picked a slot number from THAT stale
-  // snapshot's highest-seen `n`, silently REUSING a number a since-retired
-  // device had already vacated. Numbers being permanent and never reused is
-  // the one invariant the whole removal/tombstone system (removedKeyNs)
-  // depends on — a cache-induced reuse collides two unrelated devices'
-  // history onto the same kid and corrupts it irrecoverably, unlike ordinary
-  // sibling-list staleness which just self-corrects on the next sync.
-  try { resolved = await ops.resolveKeyAgreement(rec.did, gatewayUrls) } catch { /* best-effort */ }
-  const existing = resolved?.keyAgreementKeys ?? []
 
-  if (!rec.didCommOwnKid) {
-    // A failed resolve here (null) is NOT the same as "this identity has
-    // never published anything" — it's just as likely a rate-limited or
-    // CORS-blocked gateway telling us nothing. Assuming the latter used to
-    // default nextN to 1 unconditionally — found live: a brand-new device
-    // registered during a relay.pkarr.org 429/CORS spell, silently claimed
-    // slot #k1 as if the identity were fresh, and stomped another device's
-    // already-live #k1 (that device only found out on its own next sync,
-    // self-healing onto yet another number — see the `else if` branch below
-    // — a visible, confusing slot-number game of musical chairs). Only
-    // proceed past a failed resolve when confirmed absent (genuinely nothing
-    // published, safe to start at #k1). Otherwise refuse to guess: throw, so
-    // the registration attempt fails visibly and can be retried once the
-    // network is actually healthy, instead of silently corrupting slot
-    // assignment.
-    if (!resolved && !(await ops.resolveConfirmedAbsent(rec.did, gatewayUrls).catch(() => false))) {
-      throw new Error('cannot assign a device slot: this identity\'s DID document is unreachable right now (network error or every gateway rate-limited) — try again shortly')
-    }
-    // Already published under this exact key (this device registered before,
-    // record survived, but didCommOwnKid was never set — e.g. a pre-multi-
-    // device record)? Reuse that slot instead of taking a new one.
-    const mine = existing.find(k => bytesToHex(k.publicKey) === rec.didCommPublicKey)
-    // Numbers must never be reused even once every LIVE entry is gone (the
-    // sole-device "register, log out, restore" cycle empties `existing`
-    // entirely) — this used to compute nextN from `existing` alone, so an
-    // identity with zero currently-published keys always restarted at #k1,
-    // silently reassigning a genuinely-retired number to a brand-new key.
-    // The mediator's own resolved-key cache keys purely by kid string and
-    // treats a kid as a permanently stable key once seen (server.ts's
-    // resolveViaCache, "biset's keys are rotation-less ... safe to cache") —
-    // reusing a number while that cache entry is still warm hands a
-    // DIFFERENT key the SAME kid, so the mediator derives ECDH against the
-    // stale cached key and every subsequent authcrypt to/from this device
-    // fails AEAD decryption ("integrity check failed") until the cache
-    // entry ages out. `removedKeyNs` (published in the document specifically
-    // to make this permanent, this function's own comment above) is exactly
-    // the tombstone that closes this — reproduced live (2026-07-27) via
-    // register → log out → restore on a single-device identity.
-    const usedNs = [...existing.map(k => k.n), ...(resolved?.removedKeyNs ?? [])]
-    const nextN = usedNs.length ? Math.max(...usedNs) + 1 : 1
-    rec.didCommOwnKid = mine ? `#k${mine.n}` : `#k${nextN}`
-  } else if (resolved) {
-    // The slot this device already claims might not actually be OURS on the
-    // network any more — found live: a device whose local didCommOwnKid/
-    // didCommPublicKey had drifted from what's published at that slot (root
-    // cause unclear — plausibly a failed resolve at some earlier registration
-    // defaulted to #k1 while another device already legitimately held it, per
-    // the note below on that exact race). The mediator and every sender only
-    // ever trust the PUBLISHED key for a kid, never what a device claims
-    // locally — so a mismatch here means this device can never decrypt
-    // anything addressed to "its own" kid, silently and permanently, no
-    // matter how many times it re-registers under the same wrong slot.
-    // Self-heal by disowning the slot and taking a fresh one, exactly like a
-    // brand-new device would — only when `resolved` is non-null (a resolve
-    // that failed must not be read as "the slot doesn't exist", which would
-    // make this fire on every transient network hiccup and reassign kids
-    // that were never actually wrong).
-    const myN = kidN(rec.didCommOwnKid)
-    const published = existing.find(k => k.n === myN)
-    if (published && bytesToHex(published.publicKey) !== rec.didCommPublicKey) {
-      const nextN = Math.max(...existing.map(k => k.n)) + 1
-      rec.didCommOwnKid = `#k${nextN}`
-    }
-  }
-  const myN = kidN(rec.didCommOwnKid)
+// ---------------------------------------------------------------- MLS bridge
+//
+// The DID document's device list is an OUTPUT of the MLS self group now, not
+// an input to anything. These three functions are the whole of the join
+// between the two layers: mint this device's key package with its transport
+// keys inside, and read the group's devices back out in the shape a publish
+// expects.
 
-  // REVERTED to grow-only (never remove an entry, only ever add) — a
-  // "replace with whatever a successful resolve returns" version of this
-  // was live briefly and caused real, near-unrecoverable damage: a resolve
-  // can return a validly-signed payload and STILL not reflect every other
-  // device — mid-propagation, an incomplete gateway list at that specific
-  // call, a race right after a fresh registration hasn't reached every
-  // gateway yet — "the request succeeded" is not the same guarantee as
-  // "this is the complete, current truth," and trusting it as such let one
-  // device's ordinary republish wipe two other real, live devices' keys off
-  // the document in one shot. Silently resurrecting a revoked device (the
-  // problem this was trying to solve) is a real but recoverable annoyance;
-  // silently destroying a live device's key is not. Revocation needs a
-  // design that can't fail this way — not resolved here — so it stays a
-  // known gap: `unregisterFromMediator` removes a device from the document
-  // at the moment it runs, but another device's stale sibling cache can
-  // still bring it back on its own next republish, same as before this file
-  // ever mentioned replace-on-success.
-  // Union of what THIS device has ever removed and what the resolved
-  // document's own removed-key field carries — the latter is how a removal
-  // performed on a DIFFERENT device of this same identity reaches this one:
-  // without it, this device's own local didCommSiblingKeys cache (seeded
-  // below) would just keep re-affirming a slot every OTHER device already
-  // agreed is gone, since grow-only alone has no way to un-learn something
-  // purely from a resolve going quiet on it.
-  const removed = new Set([...(rec.didCommRemovedKeys ?? []), ...(resolved?.removedKeyNs ?? []).map(n => `#k${n}`)])
-  // Never let THIS device's own kid end up in its own removed set — found
-  // live: another device's bulk removal (e.g. from the devices-list trash
-  // icon) can legitimately include a kid that's actually still live, and
-  // the removed-key field propagates that to every device INCLUDING the one
-  // it names. Every OTHER device forgives it the moment it sees that kid
-  // still present in `existing` (below) — but that forgive check is inside
-  // the `k.n === myN` branch's `continue`, which skips itself before ever
-  // reaching it, so THIS device could never forgive an entry naming its own
-  // kid. Once poisoned it stayed poisoned forever: every future sync
-  // re-absorbed it right back from rec.didCommRemovedKeys, and every
-  // republish broadcast the removal for its own kid to everyone else.
-  // Self-removal has its own correct path (unregisterFromMediator clears
-  // didCommOwnKid entirely) — this set must never be how it happens.
-  removed.delete(`#k${myN}`)
-  // Filtered on the way IN too, not just when adding — a removal learned only
-  // just now must also evict whatever this device already had cached locally
-  // from before it heard about it. Also strips any STALE entry at this
-  // device's OWN (possibly just-self-healed) kid — found live: self-heal
-  // above only ever changes didCommOwnKid, never touches didCommSiblingKeys,
-  // so a device that renamed itself onto a number its own cache still
-  // remembered as some OTHER (ghost) device's slot ended up publishing BOTH
-  // — two keyAgreementKeys entries at the same `n`, visibly duplicated in
-  // left-pane.ts's device list and ambiguous on the wire
-  // (dht/document.ts's keyAgreementKeysFromHex now also dedupes defensively,
-  // but the stale entry has no business surviving in this device's own
-  // cache at all once it's the one sitting at that slot).
-  const myKid = `#k${myN}`
-  const siblingMap = new Map(
-    (rec.didCommSiblingKeys ?? []).filter(s => !removed.has(s.kid) && s.kid !== myKid).map(s => [s.kid, s]),
-  )
-  for (const k of existing) {
-    if (k.n === myN) continue // that's us, not a sibling
-    const kid = `#k${k.n}`
-    if (removed.has(kid)) {
-      // Tombstoned, but it just showed up again in a freshly resolved,
-      // validly-signed document — proof it's actually still alive, not the
-      // ghost the removal assumed (found live: a device deliberately removed
-      // for looking dead kept legitimately republishing itself; the
-      // tombstone, once it also started propagating, made every device
-      // permanently blind to it regardless). Forgive: a removal only needs
-      // to survive long enough that a stale snapshot from right around the
-      // delete can't immediately undo it (withDidLock + this removal wave
-      // already cover that window) — it was never meant to out-rank the
-      // removed device proving itself alive afterward, or "recoverable
-      // annoyance" stops being recoverable.
-      removed.delete(kid)
-    }
-    siblingMap.set(kid, { kid, publicKey: bytesToHex(k.publicKey) })
-  }
+/** This device's MLS key package, carrying its DIDComm transport keys in its
+ * own leaf (mls/transport-keys.ts) — which is what lets any member of the
+ * group publish the identity's document without reading it first. */
+async function ownKeyPackageFor(rec: DidRecord): Promise<OwnKeyPackage> {
+  if (!rec.didCommOwnKid || !rec.didCommPublicKey) throw new Error('ownKeyPackageFor: this device has no kid yet')
+  return generateOwnKeyPackage(`${rec.did}${rec.didCommOwnKid}`, {
+    x25519: hexToBytes(rec.didCommPublicKey),
+    mlkem: rec.mlkemPublicKey ? hexToBytes(rec.mlkemPublicKey) : undefined,
+  })
+}
 
-  rec.didCommSiblingKeys = [...siblingMap.values()]
-  // Carry the union forward: this device now also knows about anything it
-  // just learned, so ITS next publish keeps propagating the full removed
-  // set too — the same gossip-by-republish mechanism siblings already use
-  // to learn about each other, applied to removals.
-  rec.didCommRemovedKeys = [...removed]
-  // Authoritative prune (below) on whatever mediator this device already
-  // knows about. A device registering for the FIRST time on this install
-  // has none yet — registerWithMediator runs its own prune pass once Phase 2
-  // has made this device queryable, see that function.
-  await pruneSiblingsByKeylist(rec, rec.didCommMediatorUrl ?? '')
+/** The keyAgreement entries to publish, taken from group state. */
+function deviceKeysFromGroup(state: ClientState, did: string): DidKeyAgreement[] {
+  return memberTransportKeys(state, did).map(d => ({ kid: fragmentOf(d.kid), publicKey: d.x25519 }))
+}
 
-  // ML-KEM-768 siblings (PLAN.md "did:webvh PQハイブリッド化" Phase 1) — rides
-  // entirely on the X25519 decision just above (post-prune, so a sibling the
-  // keylist-prune just dropped doesn't get its ML-KEM key resurrected here).
-  syncMlkemSiblings(rec, resolved?.mlkemKeyAgreementKeys)
+/** The ML-KEM-768 entries to publish. Only devices that announced one appear —
+ * absence means "not PQ-capable", exactly as before. */
+function mlkemKeysFromGroup(state: ClientState, did: string): DidMlkemKeyAgreement[] {
+  return memberTransportKeys(state, did)
+    .filter((d): d is typeof d & { mlkem: Uint8Array } => !!d.mlkem)
+    .map(d => ({ kid: fragmentOf(d.kid), publicKey: d.mlkem }))
+}
+
+/** Settle this device's own identity fields, and nothing else.
+ *
+ * This used to be the identity's device-list authority: it merged a resolved
+ * document with a local sibling cache (grow-only gossip), subtracted
+ * tombstones, forgave entries that reappeared, and finally asked the
+ * mediator's keylist to break ties. All of that is gone. Membership is decided
+ * by the MLS self group (mls/self-group.ts) — a device joins by a commit the
+ * Delivery Service ordered and leaves by a Remove commit, so there is nothing
+ * for a merge to reconcile and nothing a stale republish could resurrect.
+ *
+ * What is left is the part MLS has no opinion about: this device's own kid,
+ * derived from its own key (did/devicekid.ts), and the retirement of a kid it
+ * used before that derivation existed.
+ *
+ * It no longer reads the network at all, which is why `gatewayUrls` is gone
+ * from its signature. */
+export async function syncDevicePosition(rec: DidRecord): Promise<DidRecord> {
+  if (!rec.didCommPublicKey) throw new Error('syncDevicePosition: this device has no DIDComm key yet')
+
+  // The kid is a function of the key: no allocation, no view of the network,
+  // no possibility of two devices claiming one name.
+  const derivedKid = deviceKidFragment(hexToBytes(rec.didCommPublicKey))
+  rec.didCommOwnKid = derivedKid
 
   await storeDidRecord(rec)
   return rec
 }
 
-/** Keeps didCommMlkemSiblingKeys in sync with whatever the X25519 side (this
- * device's own kid + didCommSiblingKeys) just decided is live, merging in any
- * newly-resolved ML-KEM-768 keys. Called after EVERY point that can change
- * the X25519 live set (syncDevicePosition's merge above, and
- * registerWithMediator's own authoritative prune below) so the two can't
- * drift apart. See store.ts's didCommMlkemSiblingKeys note on why this rides
- * on the X25519 decision rather than keeping independent tombstone state:
- * an `n` that's a live X25519 sibling (or this device's own) MAY also carry
- * a ML-KEM-768 entry — one that isn't never does, even if a stale
- * `freshlyResolved` still lists it. */
-function syncMlkemSiblings(rec: DidRecord, freshlyResolved?: DidMlkemKeyAgreement[]): void {
-  const myN = rec.didCommOwnKid ? kidN(rec.didCommOwnKid) : undefined
-  const liveNs = new Set([myN, ...(rec.didCommSiblingKeys ?? []).map(s => kidN(s.kid))])
-  const map = new Map(
-    (rec.didCommMlkemSiblingKeys ?? []).filter(k => k.n !== myN && liveNs.has(k.n)).map(k => [k.n, k]),
-  )
-  for (const k of freshlyResolved ?? []) {
-    if (k.n === myN || !liveNs.has(k.n)) continue
-    map.set(k.n, { n: k.n, publicKey: bytesToHex(k.publicKey) })
-  }
-  rec.didCommMlkemSiblingKeys = [...map.values()]
-}
 
-/** AUTHORITATIVE removal via the mediator's keylist — the backstop that makes
- * a logout actually converge. syncDevicePosition's merge above is gossip: each
- * device merges its own cache with a resolved snapshot and republishes the
- * union, highest-seq/version-wins. That can never reliably REMOVE anything — a
- * device still holding a pre-logout snapshot (mid poll/republish cycle)
- * re-publishes the removed key right back, and the `forgive` step above then
- * sees it "alive" and un-tombstones it everywhere (found live: a logged-out
- * #k1 kept reappearing with its tombstone silently dropped, because a sibling
- * republished the stale set after the logout landed). The mediator's keylist
- * is not gossip: a logout's keylist-update remove reaches it directly and
- * point-to-point, no last-writer-wins race. So a sibling the mediator no
- * longer lists is authoritatively gone — drop it from the published keys AND
- * tombstone it, regardless of what the resolved document or this device's
- * cache still claims, overriding the forgive above.
- *
- * Best-effort and fail-CLOSED-toward-safety: a query that can't be made (no
- * mediator, missing local key, network/transport error) prunes NOTHING —
- * "couldn't ask" must never read as "zero live devices", same principle as
- * resolveConfirmedAbsent. Never prunes this device's own kid. Returns whether
- * anything actually changed, so a caller that already computed a key list from
- * `rec` knows to recompute it.
- *
- * Extracted from syncDevicePosition (2026-07-27) precisely so registerWithMediator
- * can run the SAME pass at a point syncDevicePosition structurally cannot: this
- * whole check needs a mediator that can already authenticate us, and on a fresh
- * restore neither is true when syncDevicePosition runs — didCommMediatorUrl
- * isn't stored until registration completes, and this device's key isn't
- * published until Phase 1. Two copies of this logic would be exactly the kind
- * of divergence one shared function exists to prevent. */
-async function pruneSiblingsByKeylist(rec: DidRecord, mediatorUrl: string): Promise<boolean> {
-  if (!mediatorUrl || !rec.didCommPrivateKey || !rec.didCommOwnKid) return false
-  const myKid = rec.didCommOwnKid
-  try {
-    const mediator = await fetchMediatorInfo(mediatorUrl)
-    const own = { did: rec.did, xKid: `${rec.did}${myKid}`, xPriv: hexToBytes(rec.didCommPrivateKey) }
-    const live = new Set(queryKeylistToLocalKids((await queryKeylist(mediator, own)).map(e => e.kid)))
-    const removed = new Set(rec.didCommRemovedKeys ?? [])
-    const kept: NonNullable<DidRecord['didCommSiblingKeys']> = []
-    let changed = false
-    for (const s of rec.didCommSiblingKeys ?? []) {
-      if (s.kid !== myKid && !live.has(s.kid)) {
-        removed.add(s.kid) // propagate the removal too, for anyone who can't query
-        changed = true
-        continue
-      }
-      kept.push(s)
-    }
-    if (!changed) return false
-    rec.didCommSiblingKeys = kept
-    rec.didCommRemovedKeys = [...removed]
-    return true
-  } catch (e) {
-    // Fail closed: keep whatever the gossip merge produced, prune nothing.
-    console.warn('[didcomm-devices] keylist-query prune skipped (continuing with gossip-only view):', e instanceof Error ? e.message : e)
-    return false
-  }
-}
 
 /** What the mediator knows about each of this identity's device slots, keyed
  * by local kid fragment (`#kN`): whether it is still registered at all, and
@@ -568,31 +360,111 @@ function queryKeylistToLocalKids(kids: string[]): string[] {
   return kids.map(k => { const i = k.indexOf('#'); return i === -1 ? k : k.slice(i) })
 }
 
-/** This device's own entry + every known sibling's, as the array a document
- * publish carries — reads purely from the cached record (no resolve here —
- * see MethodOps.publishFull's own note on why a routine publish doesn't
- * resolve). Method-agnostic: `#k<n>` kid numbering is shared by both
- * did:dht (dht/document.ts's DidKeyAgreement) and did:webvh
- * (webvh/document.ts's webvhKeyAgreementId), so keyAgreementKeysFromHex
- * (dht/document.ts) applies unchanged to either. */
-function fullKeyAgreementKeys(rec: DidRecord): DidKeyAgreement[] {
-  return keyAgreementKeysFromHex(
-    rec.didCommPublicKey && rec.didCommOwnKid ? { kid: rec.didCommOwnKid, publicKeyHex: rec.didCommPublicKey } : null,
-    (rec.didCommSiblingKeys ?? []).map(s => ({ kid: s.kid, publicKeyHex: s.publicKey })),
-  )
+/** The keyAgreement entries this identity publishes.
+ *
+ * TWO sources, and the split is the whole design:
+ *
+ *   - **The MLS self group** decides who can READ. Its leaves carry each
+ *     device's transport key (mls/transport-keys.ts), so a member can build
+ *     this list without reading the document back.
+ *   - **The mediator's keylist** decides who can be ADDRESSED. A device that
+ *     is registered is one senders must still be able to encrypt an envelope
+ *     to, whether or not it has joined the group yet.
+ *
+ * Publishing only the group was wrong, and wrong in a way that deadlocked two
+ * devices of one identity (found live 2026-08-13). A device outside the group
+ * was dropped from the document; the mediator authenticates a sender by
+ * resolving its kid IN that document; so the dropped device could no longer
+ * talk to the mediator at all — and its only route back, an external commit,
+ * goes through the mediator. Each device kept unpublishing the other, and
+ * neither could recover. "It will re-add itself" assumed a recovery path that
+ * the drop itself had closed.
+ *
+ * Keeping a registered non-member addressable is safe precisely because MLS is
+ * the read authority now: it receives envelopes it cannot open. What removes a
+ * device is removing it from BOTH — a Remove commit and a keylist removal,
+ * which is what `removeDeviceKey` and `unregisterFromMediator` each do.
+ *
+ * Every lookup here is best-effort. A device that cannot reach the mediator,
+ * or resolve its own document, publishes what it knows rather than nothing:
+ * the failure mode of this function must never be "shorten the list".
+ */
+export async function fullKeyAgreementKeys(rec: DidRecord): Promise<DidKeyAgreement[]> {
+  await ensureMethodOpsLoaded()
+  const entries = new Map<string, { kid: string; publicKeyHex: string }>()
+
+  // This device, always. It is the one entry that cannot be wrong.
+  if (rec.didCommPublicKey && rec.didCommOwnKid) {
+    entries.set(rec.didCommOwnKid, { kid: rec.didCommOwnKid, publicKeyHex: rec.didCommPublicKey })
+  }
+
+  // Group members, with the keys their own leaves carry.
+  const fromGroup = await selfGroupTransportKeys(rec.did).catch(() => undefined)
+  for (const d of fromGroup ?? []) {
+    const kid = fragmentOf(d.kid)
+    if (!entries.has(kid)) entries.set(kid, { kid, publicKeyHex: bytesToHex(d.x25519) })
+  }
+
+  // Anything else the mediator still holds a registration for. Its key comes
+  // from the currently published document — the keylist carries kids only,
+  // and a kid alone cannot be published.
+  for (const [kid, publicKeyHex] of await registeredButUnknown(rec, entries)) {
+    entries.set(kid, { kid, publicKeyHex })
+  }
+
+  return keyAgreementKeysFromHex(null, [...entries.values()])
 }
 
-/** ML-KEM-768 counterpart of fullKeyAgreementKeys — this device's own entry
- * (if it has minted one, did:webvh only) plus every sibling's cached one.
- * did:dht callers naturally get an empty array (mlkemPublicKey/
- * didCommMlkemSiblingKeys are never set for that method — ensureDeviceKey's
- * `did.startsWith('did:webvh:')` gate), which dht/method-ops.ts's publishFull
- * ignores anyway. */
-function fullMlkemKeyAgreementKeys(rec: DidRecord): DidMlkemKeyAgreement[] {
-  const out: DidMlkemKeyAgreement[] = []
-  if (rec.mlkemPublicKey && rec.didCommOwnKid) out.push({ n: kidN(rec.didCommOwnKid), publicKey: hexToBytes(rec.mlkemPublicKey) })
-  for (const k of rec.didCommMlkemSiblingKeys ?? []) out.push({ n: k.n, publicKey: hexToBytes(k.publicKey) })
-  return out
+/** Published devices that are still registered with the mediator and are not
+ * already accounted for. Empty when this device has no mediator to ask, or
+ * when the ask fails — never a reason to publish a shorter list. */
+async function registeredButUnknown(
+  rec: DidRecord,
+  known: Map<string, { kid: string; publicKeyHex: string }>,
+): Promise<Array<[string, string]>> {
+  if (!rec.didCommMediatorUrl || !rec.didCommPrivateKey || !rec.didCommOwnKid) return []
+  try {
+    const mediator = await fetchMediatorInfo(rec.didCommMediatorUrl)
+    const own: DidCommSender = { did: rec.did, xKid: `${rec.did}${rec.didCommOwnKid}`, xPriv: hexToBytes(rec.didCommPrivateKey) }
+    const registered = new Set((await queryKeylist(mediator, own)).map(e => fragmentOf(e.kid)))
+    if (registered.size === 0) return []
+    const ops = methodOpsFor(rec.did)
+    // The identity's own gateways first (its relays, plus the mediator's own
+    // pkarr endpoint) — the public fallbacks are slower and are not where a
+    // relay-backed identity's document most reliably lives. Reading the live
+    // relay list can itself fail outside a browser, and a failure here must
+    // not take the whole lookup down: the mediator is already known, and its
+    // gateway alone is enough to resolve.
+    let gateways: string[] = []
+    try {
+      const relayInput = liveRelayInputs(rec.did)
+      gateways = ops.gatewayUrls(relayInput?.services.map(s => ({ account: { serverUrl: s.serverUrl } })) ?? [], rec.didCommMediatorUrl)
+    } catch {
+      gateways = ops.gatewayUrls([], rec.didCommMediatorUrl)
+    }
+    const resolved = await ops.resolveKeyAgreement(rec.did, gateways).catch(() => null)
+    return (resolved?.keyAgreementKeys ?? [])
+      .filter(k => registered.has(k.kid) && !known.has(k.kid))
+      .map(k => [k.kid, bytesToHex(k.publicKey)] as [string, string])
+  } catch (e) {
+    console.warn('[did] could not check which devices are still registered:', e instanceof Error ? e.message : e)
+    return []
+  }
+}
+
+/** ML-KEM-768 counterpart, from the same source. A device that has not minted
+ * a PQ key simply announced none in its leaf, and is absent here — which is
+ * how "not PQ-capable yet" has always been expressed. */
+export async function fullMlkemKeyAgreementKeys(rec: DidRecord): Promise<DidMlkemKeyAgreement[]> {
+  const fromGroup = await selfGroupTransportKeys(rec.did).catch(() => undefined)
+  if (fromGroup?.length) {
+    return fromGroup
+      .filter((d): d is typeof d & { mlkem: Uint8Array } => !!d.mlkem)
+      .map(d => ({ kid: fragmentOf(d.kid), publicKey: d.mlkem }))
+  }
+  return rec.mlkemPublicKey && rec.didCommOwnKid
+    ? [{ kid: rec.didCommOwnKid, publicKey: hexToBytes(rec.mlkemPublicKey) }]
+    : []
 }
 
 // ── publish / register / revoke (method-agnostic) ───────────────────────────
@@ -623,10 +495,9 @@ export async function publishCurrentState(rec: DidRecord): Promise<number> {
     const gateways = relayInput
       ? ops.gatewayUrls(relayInput.services.map(s => ({ account: { serverUrl: s.serverUrl } })), rec.didCommMediatorUrl)
       : ops.gatewayUrls([], rec.didCommMediatorUrl)
-    rec = await syncDevicePosition(rec, gateways).catch(() => rec)
+    rec = await syncDevicePosition(rec).catch(() => rec)
   }
-  const removedKeyNs = rec.didCommRemovedKeys?.length ? rec.didCommRemovedKeys.map(kidN) : undefined
-  const keyAgreementKeys = fullKeyAgreementKeys(rec)
+  const keyAgreementKeys = await fullKeyAgreementKeys(rec)
   // THE INVARIANT: a DIDCommMessaging service and at least one keyAgreement
   // key stand or fall together. A document advertising the service with zero
   // keys says "reach me over DIDComm" while offering nothing to encrypt to —
@@ -647,12 +518,40 @@ export async function publishCurrentState(rec: DidRecord): Promise<number> {
   // correspondents fall back to mail/AP (and the [DID] pill stops being
   // offered) instead of hitting a dead end, and re-registering from any device
   // restores both at once.
-  const didCommService = keyAgreementKeys.length && rec.didCommMediatorUrl && rec.didCommRoutingKey
-    ? { mediatorUrl: rec.didCommMediatorUrl, routingKey: rec.didCommRoutingKey } : undefined
-  return ops.publishFull(rec, relayInput, {
-    keyAgreementKeys, mlkemKeyAgreementKeys: fullMlkemKeyAgreementKeys(rec),
-    removedKeyNs, didCommService, removeDidCommService: keyAgreementKeys.length === 0,
+  //
+  // The rule was enforced in ONE direction only — service dropped when there
+  // were no keys — and the other direction produced the mirror-image failure,
+  // seen live on y@biset.md (2026-08-13): twelve keyAgreement entries and no
+  // DIDCommMessaging service at all. A sender resolving that gets the same
+  // hard `DidCommUnreachableError`; the document advertises a dozen devices
+  // and no way to reach any of them.
+  //
+  // It happens whenever a device that never completed registration (or lost
+  // its mediator fields — restore used to drop them, see ARC.md) publishes:
+  // it has keys to publish and no service to publish with them.
+  //
+  // Publishing NEITHER is not an option here the way it is above: the key list
+  // belongs to the identity, not to this device, so emitting an empty one
+  // would unpublish every other device over a local gap in THIS device's
+  // record. So this publish is refused outright. Nothing gets worse — whatever
+  // is currently published stays — and the remedy is the one the person can
+  // actually take: register with a mediator again.
+  const canRoute = !!(rec.didCommMediatorUrl && rec.didCommRoutingKey)
+  if (keyAgreementKeys.length && !canRoute) {
+    console.warn(`[did] refusing to publish ${rec.did}: it has device keys but no mediator to route them to — register with a mediator to restore the DIDComm service`)
+    return 0
+  }
+  const didCommService = keyAgreementKeys.length && canRoute
+    ? { mediatorUrl: rec.didCommMediatorUrl!, routingKey: rec.didCommRoutingKey! } : undefined
+  const published = await ops.publishFull(rec, relayInput, {
+    keyAgreementKeys, mlkemKeyAgreementKeys: await fullMlkemKeyAgreementKeys(rec),
+    didCommService, removeDidCommService: keyAgreementKeys.length === 0,
   })
+  // Same reason as registerWithMediator's own call: what a device may claim
+  // has just changed, and a stale "no such device" is how a legitimate leaf
+  // gets refused by the Authentication Service.
+  if (published > 0) forgetDevices(rec.did)
+  return published
 }
 
 /** Alias kept for the "no live relay session, carry forward" call sites that
@@ -660,6 +559,7 @@ export async function publishCurrentState(rec: DidRecord): Promise<number> {
  * fallback) — behaves identically to publishCurrentState, since
  * liveRelayInputs already returns null in exactly that situation. */
 export const publishBareOrCurrent = publishCurrentState
+
 
 /** Register the CURRENT identity (relay-backed or with zero relays — same
  * call either way) with a DIDComm mediator at `mediatorUrl` and persist the
@@ -701,14 +601,23 @@ export async function registerWithMediator(rawMediatorUrl: string): Promise<{ ow
   return withDidLock(key, async () => {
     let fresh = await getDidRecord(key)
     if (!fresh) throw new Error(`no local DID record for ${key}`)
-    fresh = await syncDevicePosition(fresh, gateways)
-    let keyAgreementKeys = fullKeyAgreementKeys(fresh)
-    let mlkemKeyAgreementKeys = fullMlkemKeyAgreementKeys(fresh)
+    fresh = await syncDevicePosition(fresh)
+    let keyAgreementKeys = await fullKeyAgreementKeys(fresh)
+    let mlkemKeyAgreementKeys = await fullMlkemKeyAgreementKeys(fresh)
 
     // Phase 1: publish current keys (no service yet) so the mediator can
     // resolve this device's key before it's ever asked to encrypt to it.
     const publishedTo = await ops.publishFull(fresh, relayInput, { keyAgreementKeys, mlkemKeyAgreementKeys })
     if (publishedTo === 0) throw new Error('registerWithMediator: no gateway/endpoint accepted the key publish')
+    // The MLS Authentication Service answers "is this kid a listed device of
+    // that DID" from a cached resolve (mls/authservice.ts). This publish is
+    // what makes THIS device listed, so the cached answer is now wrong — and
+    // wrong in the one direction that matters: the very next step creates or
+    // joins the self group, and the AS would reject this device's own leaf
+    // against a document snapshot taken before it existed. That is exactly
+    // what happened live (2026-08-13: "self group unavailable at
+    // registration: Could not validate credential").
+    forgetDevices(fresh.did)
 
     // Phase 2: mediate-request + keylist-update (method-agnostic protocol —
     // coordinate.ts only needs {did, xKid, xPriv}, either method satisfies it).
@@ -723,24 +632,46 @@ export async function registerWithMediator(rawMediatorUrl: string): Promise<{ ow
     const routingKey = mediator.doc.keyAgreement?.[0]
     if (!routingKey) throw new Error('registerWithMediator: mediator DID doc has no keyAgreement')
 
-    // Authoritative prune, HERE and not inside syncDevicePosition above —
-    // this is the first moment it's possible at all on a fresh install:
-    // pruneSiblingsByKeylist needs a mediator that can authenticate us, and
-    // until Phase 1 published this device's key and Phase 2 registered it,
-    // the mediator can neither resolve our sender key nor answer a
-    // keylist-query from us. syncDevicePosition additionally has no
-    // didCommMediatorUrl to work from yet (it's only stored below, once
-    // registration succeeds), so its own prune call no-ops on a restore.
-    // Without this pass a restored device absorbed every key still published
-    // — including ones a previous logout had already removed from the
-    // mediator's keylist — as a "sibling" via the grow-only gossip merge,
-    // then republished them in Phase 3, permanently resurrecting a dead
-    // device slot (user-caught 2026-07-27: a sole-device identity whose
-    // document listed both #k4 and #k8 after a logout/restore cycle).
-    if (await pruneSiblingsByKeylist(fresh, mediator.url)) {
-      keyAgreementKeys = fullKeyAgreementKeys(fresh)
-      syncMlkemSiblings(fresh) // keep didCommMlkemSiblingKeys from drifting off the pruned X25519 set
-      mlkemKeyAgreementKeys = fullMlkemKeyAgreementKeys(fresh)
+    // Join (or create) this identity's MLS self group, now that the mediator
+    // knows this device and can act as its Delivery Service. HERE and not in
+    // syncDevicePosition, for the reason the keylist prune used to be here
+    // too: until Phase 1 published this device's key and Phase 2 registered
+    // it, the mediator can neither resolve this device nor answer it.
+    //
+    // The group is what decides which devices this identity has. It replaced
+    // an authoritative keylist prune that itself replaced a gossip merge —
+    // and the failure that motivated both is now structurally impossible: a
+    // restored device cannot absorb long-dead devices as "siblings", because
+    // it does not learn membership from the published document at all.
+    //
+    // Failure is tolerated. A device that cannot reach its group is still
+    // registered and still reachable; only the device LIST waits, and the
+    // republish below simply carries what this device already knows.
+    const selfGroup = await ensureSelfGroup(mediator, own, await ownKeyPackageFor(fresh)).catch((e: unknown) => {
+      console.warn('[mls] self group unavailable at registration:', e instanceof Error ? e.message : e)
+      return undefined
+    })
+    if (selfGroup) {
+      keyAgreementKeys = deviceKeysFromGroup(selfGroup, fresh.did)
+      mlkemKeyAgreementKeys = mlkemKeysFromGroup(selfGroup, fresh.did)
+    }
+
+    // Top up and publish this device's key packages.
+    //
+    // A key package is how someone ELSE adds this device to a group while it
+    // is offline — the asynchronous half of MLS, and the only way an
+    // invitation can reach a browser that is closed. Without it a device is
+    // invitable only in the seconds it happens to be running, which for a
+    // browser is almost never.
+    //
+    // This is not what the self group uses (a device of ours joins by external
+    // commit, needing no key package at all), so it is best-effort: a failure
+    // costs invitations, not this registration.
+    try {
+      const pool = await ensureKeyPackages(ownKid)
+      await publishKeyPackages(mediator, own, ownKid, pool)
+    } catch (e) {
+      console.warn('[mls] could not publish key packages:', e instanceof Error ? e.message : e)
     }
 
     // Phase 3: republish with the DIDCommMessaging service added — REPLACING
@@ -812,6 +743,34 @@ export async function unregisterFromMediator(identityDid?: string): Promise<void
   try {
     const mediator = await fetchMediatorInfo(rec.didCommMediatorUrl)
     const own = { did: rec.did, xKid: ownKid, xPriv: hexToBytes(rec.didCommPrivateKey) }
+    // Leave the MLS self group FIRST, while this device can still authenticate
+    // and still holds its group state.
+    //
+    // MLS has no way for a member to remove itself — a commit may not remove
+    // its own committer (RFC 9420 §12.4, enforced in vendor/clientState.ts) —
+    // so this can only be a PROPOSAL, and someone else has to commit it. That
+    // is the honest shape of the operation and the code says so rather than
+    // pretending the device is gone the moment it asks:
+    //
+    //   - Another device online now receives the proposal and commits it
+    //     immediately (channel.ts's poll loop).
+    //   - If this is the LAST device, nobody can. The Delivery Service keeps
+    //     the declaration, and the next device to join carries it out
+    //     (self-group.ts's applyPendingRemovals). Without that path a sole
+    //     device's logout could never take effect at all — it would stay in
+    //     the tree, and every restore would add one more dead leaf.
+    const stored = await loadGroup(selfGroupIdHex(rec.did))
+    if (stored) {
+      try {
+        await leaveSelfGroup(mediator, own, stored.state)
+      } catch (e) {
+        console.warn('[logout] could not declare this device gone to its group:', e instanceof Error ? e.message : e)
+      }
+      // The local group state goes regardless: this device is leaving, and
+      // keeping a key schedule it has renounced would only let it keep reading
+      // whatever arrives before the removal is committed.
+      await deleteGroup(selfGroupIdHex(rec.did)).catch(() => {})
+    }
     await updateKeylist(mediator, own, ownKid, 'remove')
     console.log('[logout] keylist-update remove CONFIRMED by mediator for', ownKid)
   } catch (e) {
@@ -839,9 +798,6 @@ export async function unregisterFromMediator(identityDid?: string): Promise<void
     // next routine boot — the logout looked like it worked here and then
     // silently reappeared from a different device, same class of bug as the
     // sibling-removal one this same tombstone mechanism already fixed.
-    if (fresh.didCommOwnKid) {
-      fresh.didCommRemovedKeys = [...new Set([...(fresh.didCommRemovedKeys ?? []), fresh.didCommOwnKid])]
-    }
     delete fresh.didCommOwnKid
     delete fresh.didCommPublicKey
     delete fresh.didCommPrivateKey
@@ -917,27 +873,57 @@ export async function removeDeviceKey(identityDid: string | undefined, kid: stri
   // call's stale (pre-delete) snapshot then finishes and overwrites the
   // deletion when IT saves. Waiting for the lock means it's forced to start
   // (and see) after this delete, not race it.
+  // Removing another device is an MLS **Remove commit**, not a cache edit.
+  //
+  // The difference is the whole reason the self group exists. Editing the
+  // local list and republishing only stopped future senders from ADDRESSING
+  // that device: its key stayed valid, so anyone still holding a cached
+  // document kept encrypting messages it could read. A Remove advances the
+  // group's epoch without it, and it cannot read anything sent afterwards no
+  // matter what any document says.
+  //
+  // Two more things still have to happen, because MLS cannot do them: the
+  // mediator must stop queueing for that kid (it is not in the group and has
+  // no idea what a Remove is), and the document must be republished so
+  // senders stop addressing it at all. Neither is what makes the removal
+  // effective — they just stop wasted delivery.
   const outcome = await withDidLock(key, async () => {
     const rec = await getDidRecord(key)
     if (!rec) throw new Error('no DID record')
-    const before = rec.didCommSiblingKeys ?? []
-    const after = before.filter(s => s.kid !== kid)
-    if (after.length === before.length) return 'noop' as const
-    rec.didCommSiblingKeys = after
-    // Tombstoned BEFORE the publish below, not after: syncDevicePosition
-    // checks this set on the very next resolve (including one triggered
-    // elsewhere), so it has to be in place before any resolve can happen,
-    // not just before this function returns.
-    rec.didCommRemovedKeys = [...new Set([...(rec.didCommRemovedKeys ?? []), kid])]
-    // Drop the ML-KEM-768 sibling at the same slot too, if there was one —
-    // syncMlkemSiblings would filter it out on the very next sync anyway
-    // (its `n` no longer being in didCommSiblingKeys), but doing it here
-    // keeps the two fields consistent without waiting for that.
-    rec.didCommMlkemSiblingKeys = (rec.didCommMlkemSiblingKeys ?? []).filter(k => k.n !== kidN(kid))
+    if (!rec.didCommMediatorUrl || !rec.didCommPrivateKey || !rec.didCommOwnKid) throw new Error('this identity is not registered with a mediator')
+    const group = await loadGroup(selfGroupIdHex(rec.did))
+    const fullKid = kid.startsWith('did:') ? kid : `${rec.did}${kid}`
+    const isMember = !!group && selfGroupDevices(group.state, rec.did).includes(fullKid)
+
+    const mediator = await fetchMediatorInfo(rec.didCommMediatorUrl)
+    const own: DidCommSender = { did: rec.did, xKid: `${rec.did}${rec.didCommOwnKid}`, xPriv: hexToBytes(rec.didCommPrivateKey) }
+
+    // A device that is in the group is removed FROM it — that is the part that
+    // makes the removal cryptographic.
+    //
+    // One that is not is still worth removing, and refusing would leave no way
+    // to. Registrations outlive the devices that made them: a device whose
+    // local storage was cleared, or one that logged out while it could not
+    // reach the mediator, leaves a keylist entry nothing else will ever clean
+    // up — and an entry there is what keeps a device addressable and its key
+    // packages handed out. Eleven such entries had accumulated on one identity
+    // by 2026-08-13. So a non-member removal does the half that applies.
+    if (isMember) {
+      const nextState = await removeDeviceFromSelfGroup(mediator, own, group!.state, fullKid)
+      await saveGroup({ ...group!, state: nextState })
+    }
+
+    // Best-effort, and deliberately after the commit: a mediator that cannot
+    // be told still leaves the removed device unable to READ, which is the
+    // part that matters. The keylist entry only costs it deliveries it can do
+    // nothing with.
+    await updateKeylist(mediator, own, fullKid, 'remove').catch(e => {
+      console.warn(`[devices] removed ${fullKid} from the group, but the mediator still lists it:`, e instanceof Error ? e.message : e)
+    })
     await storeDidRecord(rec)
     return 'removed' as const
   })
-  if (outcome === 'noop') return
+  void outcome
 
   const rec = await getDidRecord(key)
   if (!rec) throw new Error('no DID record')

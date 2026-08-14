@@ -26,12 +26,14 @@ export function groupCacheKey(groupId: string): string {
 }
 
 const DB_NAME = 'biset-deltachat'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const STORE = 'avatars'
 const NAME_STORE = 'names'
+const SCAN_STORE = 'scanned'
 
 interface AvatarRecord { addr: string; dataUrl: string }
 interface NameRecord { addr: string; name: string }
+interface ScanRecord { key: string }
 
 // In-memory cache for synchronous UI access (keyed by lowercased address).
 const cache = new Map<string, string>()
@@ -49,6 +51,7 @@ function openDB(): Promise<IDBDatabase> {
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE, { keyPath: 'addr' })
       if (!req.result.objectStoreNames.contains(NAME_STORE)) req.result.createObjectStore(NAME_STORE, { keyPath: 'addr' })
+      if (!req.result.objectStoreNames.contains(SCAN_STORE)) req.result.createObjectStore(SCAN_STORE, { keyPath: 'key' })
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)
@@ -77,6 +80,68 @@ export async function primeAvatarCache(): Promise<void> {
     })
     for (const r of recs) nameCache.set(r.addr, r.name)
   } catch { /* no names yet */ }
+  try {
+    const db = await openDB()
+    const recs: ScanRecord[] = await new Promise((resolve, reject) => {
+      const req = db.transaction(SCAN_STORE, 'readonly').objectStore(SCAN_STORE).getAll()
+      req.onsuccess = () => resolve(req.result as ScanRecord[])
+      req.onerror = () => reject(req.error)
+    })
+    for (const r of recs) scanned.add(r.key)
+  } catch { /* nothing swept yet */ }
+}
+
+// Groups whose history has already been swept for a Chat-Group-Avatar
+// (app.ts's backfillGroupAvatars). Persisted so a group that genuinely has
+// no avatar isn't re-decrypted on every single app start — the sweep is the
+// expensive one, since unlike a contact name the avatar header sits on one
+// specific old message rather than the newest.
+const scanned = new Set<string>()
+
+// Bump whenever the sweep's logic changes. The marker is what stops a group
+// with genuinely no avatar from being re-decrypted every start — which also
+// means a stale marker permanently hides any later fix to the sweep from the
+// devices that already recorded one. Versioning the key retires old markers
+// instead of stranding those devices (found the hard way: the first release
+// of the sweep marked every group scanned on its first run).
+const SWEEP_VERSION = 4
+
+function scanKey(groupId: string): string {
+  return `v${SWEEP_VERSION}:${groupCacheKey(groupId)}`
+}
+
+export function wasGroupScanned(groupId: string): boolean {
+  return scanned.has(scanKey(groupId))
+}
+
+// Drops every sweep marker (all versions) so the next sweep re-examines all
+// groups. Exposed for the console hook in app.ts — re-running a sweep is
+// otherwise only possible by shipping a SWEEP_VERSION bump, which makes
+// diagnosing a fruitless sweep a deploy round-trip per attempt.
+export async function clearGroupScanMarkers(): Promise<void> {
+  scanned.clear()
+  try {
+    const db = await openDB()
+    await new Promise<void>((resolve, reject) => {
+      const req = db.transaction(SCAN_STORE, 'readwrite').objectStore(SCAN_STORE).clear()
+      req.onsuccess = () => resolve()
+      req.onerror = () => reject(req.error)
+    })
+  } catch { /* non-fatal */ }
+}
+
+export async function markGroupScanned(groupId: string): Promise<void> {
+  const key = scanKey(groupId)
+  if (scanned.has(key)) return
+  scanned.add(key)
+  try {
+    const db = await openDB()
+    await new Promise<void>((resolve, reject) => {
+      const req = db.transaction(SCAN_STORE, 'readwrite').objectStore(SCAN_STORE).put({ key } as ScanRecord)
+      req.onsuccess = () => resolve()
+      req.onerror = () => reject(req.error)
+    })
+  } catch { /* non-fatal: costs one repeated sweep */ }
 }
 
 // Synchronous display-name lookup for a plain address (contacts.ts's
@@ -198,10 +263,21 @@ export async function learnAvatar(from: string, dec: DecryptedMime): Promise<voi
 }
 
 // Learns (or clears) a DeltaChat group's avatar from a decrypted message.
-// Unlike Chat-User-Avatar, DeltaChat always sends the group image as an
-// attached MIME part named by the header value (never base64-inline) — see
-// chatmail spec.md. Keyed separately from contact addresses (groupCacheKey)
-// so group and 1:1 avatars share the same cache without colliding.
+// Keyed separately from contact addresses (groupCacheKey) so group and 1:1
+// avatars share the same cache without colliding.
+//
+// Two wire formats, because the spec and the implementation disagree:
+// chatmail spec.md still documents the group image as an attached MIME part
+// named by the header value, but core's mimefactory.rs emits
+// `Chat-Group-Avatar: base64:<image>` inline — the same shape as
+// Chat-User-Avatar. Verified against core (2026-08): the base64 form is what
+// current DeltaChat actually sends, so it's tried first, with the documented
+// attachment form kept as the fallback for older/other clients.
+//
+// Sent only on encrypted messages, and only when the avatar changes or a
+// member is added — never on ordinary traffic. So a group whose avatar was
+// set before this account's history begins carries no copy of it anywhere,
+// and no amount of re-scanning will produce one.
 export async function learnGroupAvatar(groupId: string, dec: DecryptedMime): Promise<void> {
   const hdr = dec.headers?.[CHAT_GROUP_AVATAR]
   if (hdr === undefined) return
@@ -209,11 +285,18 @@ export async function learnGroupAvatar(groupId: string, dec: DecryptedMime): Pro
   const raw = hdr.trim()
   if (raw === '0' || raw === '') { await forget(key.toLowerCase()); return }
 
-  const attachments = dec.attachments ?? []
-  const img = attachments.find(a => a.filename === raw && /^image\//i.test(a.contentType))
-    ?? attachments.find(a => /^image\//i.test(a.contentType))
-  if (!img || !img.bytes.length) return
+  let bytes: Uint8Array | null = null
+  let ct = ''
+  const b64 = raw.match(/^base64:(.*)$/s)
+  if (b64) {
+    try { bytes = base64ToBytes(b64[1]) } catch { bytes = null }
+  } else {
+    const attachments = dec.attachments ?? []
+    const img = attachments.find(a => a.filename === raw && /^image\//i.test(a.contentType))
+      ?? attachments.find(a => /^image\//i.test(a.contentType))
+    if (img) { bytes = img.bytes; ct = img.contentType }
+  }
+  if (!bytes || !bytes.length) return
 
-  const dataUrl = bytesToDataUrl(img.bytes, img.contentType)
-  await saveAvatar(key, dataUrl)
+  await saveAvatar(key, bytesToDataUrl(bytes, ct))
 }

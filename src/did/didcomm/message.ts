@@ -3,6 +3,7 @@
 // (id/typ/type/body/from/to) can't drift between them.
 import type { PeerDidDoc } from '../peer/peer.ts'
 import { b64urlToBytes, packAuthcrypt, unpackAuthcrypt, parseJwe, type DidCommJWE } from './crypto.ts'
+import { isDeviceKid, mlkemKidFor } from '../devicekid.ts'
 import { isProblemReport, problemReportError } from './problems.ts'
 
 // The minimal shape sendAndUnpack actually needs — deliberately narrower than
@@ -110,10 +111,14 @@ export function publicKeyOf(doc: PeerDidDoc, kid: string): Uint8Array {
  * not have published one yet) — send.ts reads that as "use plain
  * packAuthcrypt for this device", never as an error. */
 export function mlkemPublicKeyOf(doc: PeerDidDoc, x25519Kid: string): Uint8Array | null {
-  const n = /#k(\d+)$/.exec(x25519Kid)?.[1]
-  if (!n) return null
-  const did = x25519Kid.slice(0, x25519Kid.indexOf('#'))
-  const vm = doc.verificationMethod.find(v => v.id === `${did}#kk${n}`)
+  // The pair share a suffix (did/devicekid.ts's mlkemKidFor): `#k_<hash>` and
+  // `#kk_<hash>`, or `#k1`/`#kk1` for a kid minted before kids were derived
+  // from keys. This used to parse a slot NUMBER out of the kid, which stopped
+  // matching the moment kids stopped being numbered — silently, by returning
+  // null, which reads as "this device isn't PQ-capable" and would have turned
+  // the hybrid path off for every device without a single error anywhere.
+  if (!isDeviceKid(x25519Kid)) return null
+  const vm = doc.verificationMethod.find(v => v.id === mlkemKidFor(x25519Kid))
   return vm ? b64urlToBytes(vm.publicKeyJwk.x) : null
 }
 

@@ -10,6 +10,7 @@ import { buildProof } from './proof.ts'
 import { encodeMultikey } from './multikey.ts'
 import { buildBisetWebvhState, keyAgreementKeysFromWebvhState, mlkemKeyAgreementKeysFromWebvhState, type WebvhDidDocument, type BuildWebvhStateOpts } from './document.ts'
 import { canonicalize } from './jcs.ts'
+import { firstServiceEndpoint } from '../../utils.ts'
 
 // Strictly increasing even across back-to-back calls within the same
 // process (found live in testing: two updates issued within the same
@@ -52,7 +53,7 @@ export interface CreateGenesisOptions {
    * a later domain move can use the log's own portability mechanism instead
    * of a bare rotation. */
   portable?: boolean
-  /** keyAgreement/DIDCommMessaging/removedKeyNs/name — same options
+  /** keyAgreement/DIDCommMessaging/name — same options
    * buildBisetWebvhState takes directly (didcomm-devices.ts's method-agnostic
    * multi-device logic passes these through when a device is registering
    * DIDComm alongside identity creation). */
@@ -143,9 +144,32 @@ async function fetchCurrentLog(did: string): Promise<{ url: string; entries: Log
   return { url, entries, last }
 }
 
-async function putLog(url: string, entries: LogEntry[]): Promise<void> {
-  const resp = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'text/jsonl' }, body: serializeLog(entries) })
-  if (!resp.ok) throw new Error(`putLog: PUT failed with HTTP ${resp.status} ${await resp.text().catch(() => '')}`)
+/** Write the log, sending only what is NEW.
+ *
+ * A did:webvh log is append-only and every entry embeds the whole document, so
+ * it grows without bound — and re-uploading all of it on every update makes
+ * the request grow with the history. That is not merely wasteful, it deadlocks:
+ * y@biset.md (2026-08-13) crossed the server's 1MiB body limit and could no
+ * longer publish ANYTHING, including the update that would have shrunk the
+ * document. Every route out required an append, and the append was the thing
+ * that no longer fit.
+ *
+ * `newEntries` alone goes up as a POST, which the store splices onto what it
+ * holds — it already required an update to extend the existing log verbatim,
+ * so it was always the one that knew the prefix. The body is then one entry's
+ * worth regardless of how long the history is.
+ *
+ * Falls back to the whole-log PUT when the store does not answer POST (405/404
+ * from an anchor that predates this), so a client can talk to either. */
+async function putLog(url: string, entries: LogEntry[], newEntries?: LogEntry[]): Promise<void> {
+  const appended = newEntries ?? entries
+  const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/jsonl' }, body: serializeLog(appended) })
+  if (resp.ok) return
+  if (resp.status !== 404 && resp.status !== 405) {
+    throw new Error(`putLog: POST failed with HTTP ${resp.status} ${await resp.text().catch(() => '')}`)
+  }
+  const full = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'text/jsonl' }, body: serializeLog(entries) })
+  if (!full.ok) throw new Error(`putLog: PUT failed with HTTP ${full.status} ${await full.text().catch(() => '')}`)
 }
 
 /** Keeps the display name the log already carries when THIS call has none of
@@ -221,7 +245,7 @@ export async function updateDocument(opts: UpdateOptions): Promise<void> {
   const proof = buildProof(unsigned, { verificationMethod: `did:key:${updateKey}#${updateKey}`, privateKey: opts.rootPrivateKey, created: versionTime })
   const entry: LogEntry = { ...unsigned, proof: [proof] }
 
-  await putLog(url, [...entries, entry])
+  await putLog(url, [...entries, entry], [entry])
 }
 
 /** Known-issue mitigation (ARC.md "Account & relay flows", 2026-07-26):
@@ -254,7 +278,7 @@ export async function deactivateDocument(did: string, rootPrivateKey: Uint8Array
   const proof = buildProof(unsigned, { verificationMethod: `did:key:${updateKey}#${updateKey}`, privateKey: rootPrivateKey, created: versionTime })
   const entry: LogEntry = { ...unsigned, proof: [proof] }
 
-  await putLog(url, [...entries, entry])
+  await putLog(url, [...entries, entry], [entry])
 }
 
 export interface RotateUpdateKeysOptions {
@@ -298,7 +322,7 @@ export async function rotateUpdateKeys(opts: RotateUpdateKeysOptions): Promise<v
   const proof = buildProof(unsigned, { verificationMethod: `did:key:${oldUpdateKey}#${oldUpdateKey}`, privateKey: opts.oldPrivateKey, created: versionTime })
   const entry: LogEntry = { ...unsigned, proof: [proof] }
 
-  await putLog(url, [...entries, entry])
+  await putLog(url, [...entries, entry], [entry])
 }
 
 export interface MoveToNewDomainOptions {
@@ -385,8 +409,12 @@ export async function moveDidToNewDomain(opts: MoveToNewDomainOptions): Promise<
   const currentDidCommSvc = currentState.service?.find(s => s.type === 'DIDCommMessaging')
   const didCommService = currentDidCommSvc
     ? {
-      mediatorUrl: Array.isArray(currentDidCommSvc.serviceEndpoint) ? currentDidCommSvc.serviceEndpoint[0]! : currentDidCommSvc.serviceEndpoint,
-      routingKey: currentDidCommSvc.routingKeys?.[0] ?? '',
+      // Either shape: DIDComm v2's nested object (current) or the flat form a
+      // document published before that carries (document.ts's WebvhService).
+      mediatorUrl: firstServiceEndpoint(currentDidCommSvc.serviceEndpoint),
+      routingKey: (typeof currentDidCommSvc.serviceEndpoint === 'object' && !Array.isArray(currentDidCommSvc.serviceEndpoint)
+        ? currentDidCommSvc.serviceEndpoint.routingKeys?.[0]
+        : undefined) ?? currentDidCommSvc.routingKeys?.[0] ?? '',
     }
     : undefined
 
@@ -420,8 +448,10 @@ export async function moveDidToNewDomain(opts: MoveToNewDomainOptions): Promise<
   // identity is still wholly intact where it was — whereas repointing the old
   // location first and then failing would leave the DID resolvable only to a
   // location serving nothing.
+  // The new location has nothing yet, so the whole log IS what is new there.
+  // The old one only gains the move entry.
   await putLog(didToHttpsUrl(newDid), moved)
-  await putLog(oldUrl, moved)
+  await putLog(oldUrl, moved, [moved[moved.length - 1]!])
 
   return { newDid, scid }
 }

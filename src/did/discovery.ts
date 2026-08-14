@@ -127,6 +127,17 @@ async function addressToDid(address: string): Promise<string | null> {
 // address) this direction is already anchored by the address's own domain.
 export const discoverDidForAddress = addressToDid
 
+/** Same question, asked FRESH: does `address` publish a DID right now?
+ *
+ * Uncached on purpose, unlike discoverDidForAddress — the signup form asks
+ * this to decide whether a typed username is an existing identity (offer
+ * "Log in") or a free name (offer "Start"), and the TOFU cache would keep
+ * answering "taken" for an address whose account has since been deleted.
+ * Shares this file's one DoH implementation rather than adding a second. */
+export async function lookupDidForAddressFresh(address: string): Promise<string | null> {
+  return parseDidTxt(await resolveTxt(didTxtName(address)))
+}
+
 // Fresh (uncached) reverse-binding check: does `address`'s own DNS anchor
 // attest that it belongs to `did`? A DID document is self-signed, so it can
 // *claim* any address (even someone else's); a claim is only trustworthy when

@@ -13,6 +13,7 @@ import { resolve as resolveDidWebvh } from '../webvh/resolver.ts'
 import { decodeMultikey, decodeX25519Multikey, decodeMlkem768Multikey } from '../webvh/multikey.ts'
 import type { WebvhDidDocument } from '../webvh/document.ts'
 import { b64urlToBytes } from './crypto.ts'
+import { isMlkemKid } from '../devicekid.ts'
 
 function didDhtToPeerDidDocShape(doc: DidDocument): PeerDidDoc {
   const verificationMethod: PeerDidDoc['verificationMethod'] = [
@@ -22,7 +23,7 @@ function didDhtToPeerDidDocShape(doc: DidDocument): PeerDidDoc {
   // send.ts fans a message out to every kid here, so every device gets it.
   const keyAgreement: string[] = []
   for (const ka of doc.keyAgreementKeys ?? []) {
-    const kid = `${doc.id}#k${ka.n}`
+    const kid = `${doc.id}${ka.kid}`
     verificationMethod.push({ id: kid, type: 'JsonWebKey2020', controller: doc.id, publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: b64url(ka.publicKey) } })
     keyAgreement.push(kid)
   }
@@ -60,8 +61,11 @@ function webvhToPeerDidDocShape(doc: WebvhDidDocument): PeerDidDoc {
   for (const vm of doc.verificationMethod) {
     if (vm.id === identityKeyId) {
       verificationMethod.push({ id: vm.id, type: 'JsonWebKey2020', controller: doc.id, publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: b64url(decodeMultikey(vm.publicKeyMultibase)) } })
-    } else if (kaIds.has(vm.id) && /#kk\d+$/.test(vm.id)) {
-      // ML-KEM-768 hybrid keyAgreement entry (PLAN.md "did:webvh
+    } else if (isMlkemKid(vm.id)) {
+      // ML-KEM-768 hybrid entry. Recognized by its id alone, NOT by being
+      // listed in `keyAgreement` — it deliberately is not (webvh/document.ts):
+      // that relationship means X25519-shaped ECDH to every other
+      // implementation. (PLAN.md "did:webvh
       // PQハイブリッド化" Phase 2) — kty/crv aren't real JWK registry values
       // (no standard OKP-style JWK shape exists for ML-KEM yet), self-
       // descriptive tags for send.ts's mlkemPublicKeyOf to read back, never
@@ -77,7 +81,13 @@ function webvhToPeerDidDocShape(doc: WebvhDidDocument): PeerDidDoc {
     // entries stay in verificationMethod (mlkemPublicKeyOf reads them from
     // there, keyed off the X25519 kid) but must NOT appear here too, or the
     // loop would try to fan out to them as if they were a second device.
-    keyAgreement: (doc.keyAgreement ?? []).filter(id => !/#kk\d+$/.test(id)),
+    // Matched by PREFIX, not by a `#kk<digits>` pattern. A device kid is
+    // derived from its key now (did/devicekid.ts) — `#k_<hash>` with `#kk_…`
+    // for its ML-KEM counterpart — so a digit-based test silently stopped
+    // recognizing them: the ML-KEM entries would have been left in the
+    // fan-out list AND run through the X25519 decoder below, which throws on
+    // a 1184-byte key and would have made the whole identity unresolvable.
+    keyAgreement: (doc.keyAgreement ?? []).filter(id => !isMlkemKid(id)),
     authentication: doc.authentication,
     verificationMethod,
     name: doc.name,
@@ -85,13 +95,24 @@ function webvhToPeerDidDocShape(doc: WebvhDidDocument): PeerDidDoc {
     // same reasoning as didDhtToPeerDidDocShape above.
     service: doc.service
       .filter(s => s.type === 'DIDCommMessaging')
-      .map(s => ({
-        id: s.id, type: s.type,
-        serviceEndpoint: {
-          uri: (Array.isArray(s.serviceEndpoint) ? s.serviceEndpoint[0] : s.serviceEndpoint) ?? '',
-          accept: s.accept ?? [], routing_keys: s.routingKeys ?? [],
-        },
-      })),
+      .map(s => {
+        // Two shapes, because documents published before the fix carry the
+        // pre-DIDComm-v2 one: uri/accept/routingKeys nested inside
+        // `serviceEndpoint` (current), or a bare string/array with `accept`
+        // and `routingKeys` as siblings (legacy). Reading both is what lets an
+        // identity that has not republished yet still be reached.
+        const nested = typeof s.serviceEndpoint === 'object' && !Array.isArray(s.serviceEndpoint) ? s.serviceEndpoint : null
+        const flat = Array.isArray(s.serviceEndpoint) ? s.serviceEndpoint[0] : typeof s.serviceEndpoint === 'string' ? s.serviceEndpoint : undefined
+        const uri = nested ? nested.uri : flat ?? ''
+        return {
+          id: s.id, type: s.type,
+          serviceEndpoint: {
+            uri,
+            accept: nested?.accept ?? s.accept ?? [],
+            routing_keys: nested?.routingKeys ?? s.routingKeys ?? [],
+          },
+        }
+      }),
   }
 }
 

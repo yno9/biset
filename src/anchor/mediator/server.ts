@@ -22,6 +22,19 @@ import { ResolvedKeyCache } from '../../did/keycache.ts'
 import { MessageQueue, QueueFullError } from './queue.ts'
 import { ConnectionStore, ConnectionFullError } from './connections.ts'
 import { PushSubscriptionStore } from './pushsubs.ts'
+import { MlsDeliveryService, DsFullError, type DsLogEntry } from './mls-ds.ts'
+import { sendDidComm } from '../../did/didcomm/send.ts'
+import { resolveDidCommDoc } from '../../did/didcomm/resolve.ts'
+import {
+  KEY_PACKAGE_PUBLISH, KEY_PACKAGE_REQUEST, KEY_PACKAGE_RESPONSE,
+  GROUP_CREATE, GROUP_CREATED, COMMIT, APPLICATION, DELIVER, EPOCH_CONFLICT,
+  DELIVERIES_REQUEST, DELIVERIES,
+  EXTERNAL_COMMIT, GROUP_INFO_REQUEST, GROUP_INFO, NO_GROUP_INFO, SELF_REMOVE, CLEAR_REMOVALS,
+  type ExternalCommitBody, type GroupInfoRequestBody, type GroupInfoBody, type SelfRemoveBody, type ClearRemovalsBody,
+  type ApplicationBody, type CommitBody, type DeliverBody, type DeliveriesRequestBody, type DeliveriesBody,
+  type GroupCreateBody, type GroupCreatedBody,
+  type KeyPackagePublishBody, type KeyPackageRequestBody, type KeyPackageResponseBody,
+} from '../../did/didcomm/mls-transport.ts'
 import { sendWebPush, type VapidKeys, type WebPushSubscription } from './webpush.ts'
 
 const MEDIATE_REQUEST = 'https://didcomm.org/coordinate-mediation/2.0/mediate-request'
@@ -112,6 +125,8 @@ function xKidOf(doc: PeerDidDoc): string {
 }
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
+const toHex = (b: Uint8Array): string => [...b].map(x => x.toString(16).padStart(2, '0')).join('')
+const fromHex = (h: string): Uint8Array => new Uint8Array((h.match(/../g) ?? []).map(x => parseInt(x, 16)))
 
 export interface MediatorOptions {
   mediator: PeerIdentity
@@ -153,6 +168,10 @@ export interface MediatorOptions {
    * separate subscription for the mediator (webpush.ts's header). */
   vapid?: VapidKeys
   pushSubs?: PushSubscriptionStore
+  /** MLS Delivery Service + key package store (PLANMLS.md). Supplied with a
+   * persist path by the anchor; a default in-memory one keeps tests and a
+   * standalone mediator working exactly as before. */
+  mlsDs?: MlsDeliveryService
 }
 
 export interface MediatorHandler {
@@ -161,7 +180,7 @@ export interface MediatorHandler {
   mediatorDid: string
 }
 
-export function createMediator({ mediator, queue = new MessageQueue(), connections = new ConnectionStore(), resolveDidDht, resolveDidWebvh, forwardResolver, vapid, pushSubs = new PushSubscriptionStore() }: MediatorOptions): MediatorHandler {
+export function createMediator({ mediator, queue = new MessageQueue(), connections = new ConnectionStore(), resolveDidDht, resolveDidWebvh, forwardResolver, vapid, pushSubs = new PushSubscriptionStore(), mlsDs = new MlsDeliveryService() }: MediatorOptions): MediatorHandler {
   const ownRecipient = { kid: mediator.xKid, privateKey: mediator.xPriv }
   // Replay guard over every inbound message's `id` — a re-POSTed anoncrypt
   // Forward would otherwise re-queue the same payload, and a resent authcrypt
@@ -228,6 +247,30 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
    * decrypt, which is the authentication. For did:dht the same holds once the
    * claimed device's key is resolved from the (signed) DHT document. */
   async function resolveSenderKey(senderKid: string): Promise<Uint8Array> {
+    // A kid this mediator has already registered authenticates against the key
+    // it registered WITH, not against whatever the identity's document happens
+    // to say right now.
+    //
+    // Resolving every time makes a device's ability to talk to its own
+    // mediator depend on a third document being in a particular state. That is
+    // fragile in both directions and broke both of them in production
+    // (2026-08-13): a device momentarily absent from the document could not
+    // re-register, and could not deregister either — the two operations that
+    // would have fixed it. Two devices of one identity took turns publishing
+    // themselves and locking the other out.
+    //
+    // Safe only because a device kid is DERIVED FROM ITS KEY now
+    // (did/devicekid.ts): kid → key is one-to-one and permanent, so a
+    // remembered key can never become the wrong answer. Under the old
+    // positional scheme this would have been precisely wrong — that is the
+    // "integrity check failed" incident in ARC.md, where a reused `#k1` named
+    // a different key while a cache still held the old one.
+    //
+    // The security property is unchanged, because it lives at the other end:
+    // JOINING the keylist still resolves the document (KEYLIST_UPDATE below),
+    // so only a device the identity has published can ever get here.
+    const registered = connections.keyFor(senderKid)
+    if (registered) return fromHex(registered)
     const did = stripFragment(senderKid)
     return (await didCommKey(did, senderKid)).publicKey
   }
@@ -515,6 +558,97 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
     }
   }
 
+  // ------------------------------------------------------------ MLS fan-out
+  //
+  // PLANMLS.md §3.2: DIDComm requires every recipient to be encrypted for
+  // independently — there is no multi-recipient authcrypt, and this is where
+  // the resulting O(n) is paid. §3.3's point is that it is paid HERE, by the
+  // DS, and not by the sending client, which submits exactly one copy.
+
+  /** Deliver one ordered MLS object to one device of one member.
+   *
+   * Locally-registered devices get the authcrypt'd DELIVER queued directly —
+   * this mediator is their mediator, so wrapping it in a Forward addressed to
+   * itself would be a round trip through its own HTTP endpoint for nothing.
+   * Everyone else goes out over ordinary DIDComm: resolve, authcrypt per
+   * device, anoncrypt Forward to THEIR mediator, which is exactly what
+   * send.ts already does — so it does it, rather than a second copy of the
+   * routing logic living here. */
+  async function deliverToMember(memberDid: string, entry: DsLogEntry, groupId: string, skipKid: string | null, silent = false): Promise<void> {
+    const body: DeliverBody = { group_id: groupId, seq: entry.seq, kind: entry.kind, payload: entry.payload, epoch: entry.epoch }
+    const registered = connections.listKeys(memberDid)
+    const localKids = registered.filter(kid => kid !== skipKid)
+    // A member registered HERE is delivered to here — even when the only
+    // device to deliver to is the one being skipped (the submitter), in which
+    // case there is simply nothing to do. Falling through to the remote path
+    // would try to resolve a DID this mediator already knows how to reach, and
+    // fail for no reason.
+    if (registered.length > 0) {
+      for (const kid of localKids) {
+        const plaintext = buildPlaintext(DELIVER, body, mediator.did, memberDid)
+        try {
+          queue.push(kid, await packPlaintextTo(plaintext, memberDid, kid), { silent })
+          // No push for a device-sync delivery — see fanOutMls. The web has no
+          // silent push (a Service Worker that takes one must show something),
+          // so "don't notify" can only mean "don't push"; the copy still
+          // arrives on the recipient's next poll.
+          if (!silent) notifyPush(kid)
+        } catch (e) {
+          // One device's full queue must not sink the delivery to the rest of
+          // the group — the same best-effort-per-device rule send.ts follows.
+          console.warn(`[mediator] MLS deliver to ${kid} failed: ${e instanceof Error ? e.message : String(e)}`)
+        }
+      }
+      return
+    }
+    const doc = await resolveDidCommDoc(memberDid)
+    if (!doc) throw new Error(`could not resolve member ${memberDid}`)
+    await sendDidComm({ did: mediator.did, xKid: mediator.xKid, xPriv: mediator.xPriv }, memberDid, doc, {
+      type: DELIVER, body, skipKids: skipKid ? [skipKid] : undefined,
+      // Their mediator decides whether to notify; ours can only ask by
+      // authenticating the Forward, which is what `silent` does (send.ts).
+      silent,
+    })
+  }
+
+  /** Fan an accepted submission out to the group.
+   *
+   * Who gets what is not uniform: a Welcome goes ONLY to the devices being
+   * added (nobody else can read it, and it would be noise), while the commit
+   * that produced it goes to everyone who was already in the group — a joiner
+   * must not process the commit that added them, they start from the Welcome.
+   *
+   * Failures are logged, not propagated: the submitting client has already had
+   * its commit accepted and ORDERED, which is the part that cannot be redone.
+   * Reporting a delivery failure back as a rejection would tell it to retry a
+   * commit that is already the group's history. */
+  function fanOutMls(groupId: string, entries: DsLogEntry[], roster: string[], welcomeTo: string[], senderKid: string | null): void {
+    const joiners = new Set(welcomeTo)
+    // Device sync, recognized rather than declared — the same rule the FORWARD
+    // case applies to a sibling delivery, for the same reason.
+    //
+    // A group whose roster is a single DID is that identity's own devices
+    // (mls/self-group.ts), so every delivery in it is one of this user's
+    // devices telling the others what it just did. Waking their phone for
+    // their own message is exactly what nobody wants. The mediator works this
+    // out from state it already holds — it must not be a flag on the message,
+    // since an anoncrypt sender could then silence anyone's notifications.
+    const senderDid = senderKid ? senderKid.split('#')[0] : null
+    const isDeviceSync = roster.length === 1 && !!senderDid && roster[0] === senderDid
+    void (async () => {
+      for (const entry of entries) {
+        const recipients = entry.kind === 'welcome' ? welcomeTo : roster.filter(did => !joiners.has(did))
+        await Promise.all(recipients.map(async did => {
+          try {
+            await deliverToMember(did, entry, groupId, senderKid, isDeviceSync)
+          } catch (e) {
+            console.warn(`[mediator] MLS fan-out to ${did} (group ${groupId}, seq ${entry.seq}) failed: ${e instanceof Error ? e.message : String(e)}`)
+          }
+        }))
+      }
+    })()
+  }
+
   /** `senderKid` is the authcrypt envelope's own `skid` — null when the message
    * arrived anoncrypt, which is the normal case for a forward. Passed separately
    * from `replyKid` because that one falls back to a GUESSED kid when there is
@@ -539,7 +673,7 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
         // Per-update result, as Coordinate Mediation 2.0 defines it: one refused
         // key reports itself and the rest still land, rather than the whole
         // batch failing over the last one.
-        const updated = updates.map(u => {
+        const updated = await Promise.all(updates.map(async u => {
           const kid = normalizeKid(u.recipient_did)
           // `no_change` when the request asked for a state the keylist was
           // already in — adding a kid that is registered, removing one that
@@ -552,9 +686,24 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
           // accepts both.
           let changed = true
           try {
-            if (u.action === 'add') changed = connections.addKey(fromDid!, kid, u.recipient_did)
+            if (u.action === 'add') {
+              // The key this request authenticated with is the published one —
+              // that is what unpacking it just proved. Recorded now so later
+              // requests from this device need no document at all.
+              // Resolved through the same path every request uses, so a
+              // first registration reads the document (as it must) and a
+              // re-registration reuses what is already recorded.
+              const registering = senderKid === kid
+                ? await resolveSenderKey(senderKid).then(toHex).catch(() => undefined)
+                : undefined
+              changed = connections.addKey(fromDid!, kid, u.recipient_did, registering)
+            }
             else {
               changed = connections.removeKey(fromDid!, kid)
+              // A deregistered device is gone: its key packages must go with
+              // it, or the next person to invite this identity is handed one
+              // and sends a Welcome nobody can open.
+              mlsDs.dropKeyPackages(kid)
               // Everything else this kid owns goes with it. Deregistering used
               // to leave both behind: queued ciphertext nothing would ever
               // collect (harmless while the queue died with the process, a
@@ -571,7 +720,7 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
             throw e
           }
           return { recipient_did: u.recipient_did, action: u.action, result: changed ? 'success' : 'no_change' }
-        })
+        }))
         return reply(await packReplyTo(msg, fromDid!, replyKid!, KEYLIST_UPDATE_RESPONSE, { updated }))
       }
 
@@ -793,6 +942,200 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
         // report a per-kid count for a request that was never about one kid.
         if (typeof named === 'string' && named) body.recipient_did = named
         return reply(await packReplyTo(msg, fromDid!, replyKid!, STATUS, body))
+      }
+
+      // ------------------------------------------------------- MLS (PLANMLS.md)
+      //
+      // Every case here is authenticated by authcrypt like any other mediator
+      // request, so `fromDid` is proven and is what membership is checked
+      // against. The mediator never decodes an MLS object in any of them.
+
+      case KEY_PACKAGE_PUBLISH: {
+        const body = msg.body as KeyPackagePublishBody | undefined
+        const kid = body?.kid
+        if (typeof kid !== 'string' || !Array.isArray(body?.key_packages)) {
+          return problemReply(msg, fromDid, replyKid, 400, 'e.p.msg.mls.malformed', 'key-package-publish needs `kid` and `key_packages`')
+        }
+        // A device may publish only for ITSELF — checked against the authcrypt
+        // envelope's own `skid`, which names the exact device that sent this,
+        // not against the identity's keylist.
+        //
+        // The identity-level check (`connections.ownsKey`) is not enough, and
+        // the difference is a real attack rather than a technicality: a
+        // keylist is per IDENTITY (its devices share one connection), so an
+        // identity-level check lets one device publish key packages under a
+        // SIBLING's kid. Those key packages are ones it generated and holds
+        // the private halves of, so anyone inviting that sibling would add
+        // this device instead, reading the group as the sibling while the real
+        // device never sees it. `senderKid` is the only thing here that names
+        // a device rather than an identity.
+        if (!senderKid || normalizeKid(kid) !== senderKid) {
+          return problemReply(msg, fromDid, replyKid, 403, 'e.p.msg.mls.not-your-key', 'key packages for {1} must be published by that device itself', [kid])
+        }
+        mlsDs.publishKeyPackages(kid, body.key_packages)
+        return reply(await packReplyTo(msg, fromDid!, replyKid!, KEY_PACKAGE_RESPONSE, { did: stripFragment(kid), packages: [] } satisfies KeyPackageResponseBody))
+      }
+
+      case KEY_PACKAGE_REQUEST: {
+        const did = (msg.body as KeyPackageRequestBody | undefined)?.did
+        if (typeof did !== 'string' || !did) {
+          return problemReply(msg, fromDid, replyKid, 400, 'e.p.msg.mls.malformed', 'key-package-request needs `did`')
+        }
+        // Deliberately open to any authenticated agent: being invitable is the
+        // point of publishing key packages. What it costs an attacker is real
+        // but bounded — each request consumes one key package per device, and
+        // the device refills its pool the next time it is online (the classic
+        // "last resort key package" exhaustion tradeoff, same as every other
+        // asynchronous E2EE system).
+        const packages = mlsDs.takeKeyPackages(did, kid => connections.isAuthorized(kid)).map(p => ({ kid: p.kid, key_package: p.keyPackage }))
+        return reply(await packReplyTo(msg, fromDid!, replyKid!, KEY_PACKAGE_RESPONSE, { did, packages } satisfies KeyPackageResponseBody))
+      }
+
+      case GROUP_CREATE: {
+        const body = msg.body as GroupCreateBody | undefined
+        if (typeof body?.group_id !== 'string' || !Array.isArray(body.roster)) {
+          return problemReply(msg, fromDid, replyKid, 400, 'e.p.msg.mls.malformed', 'group-create needs `group_id` and `roster`')
+        }
+        try {
+          mlsDs.createGroup(body.group_id, fromDid!, body.roster)
+        } catch (e) {
+          if (e instanceof DsFullError) return problemReply(msg, fromDid, replyKid, 503, 'e.p.me.res.storage', '{1}', [e.message])
+          throw e
+        }
+        return reply(await packReplyTo(msg, fromDid!, replyKid!, GROUP_CREATED, { group_id: body.group_id, ds_did: mediator.did } satisfies GroupCreatedBody))
+      }
+
+      case COMMIT: {
+        const body = msg.body as CommitBody | undefined
+        if (typeof body?.group_id !== 'string' || typeof body.epoch !== 'string' || typeof body.commit !== 'string' || !Array.isArray(body.roster)) {
+          return problemReply(msg, fromDid, replyKid, 400, 'e.p.msg.mls.malformed', 'commit needs `group_id`, `epoch`, `commit` and `roster`')
+        }
+        const result = mlsDs.submitCommit(body.group_id, fromDid!, body.epoch, body.commit, body.roster, body.welcome, body.welcome_to, body.group_info)
+        if (!result.ok) {
+          // The epoch conflict is the ONE outcome that is a normal part of the
+          // protocol rather than an error: the client applies the winning
+          // commit (which is already on its way to it) and re-commits from the
+          // new epoch. The current epoch travels in the comment's argument so
+          // it doesn't have to guess how far it fell behind.
+          if (result.reason === 'epoch-conflict') {
+            return problemReply(msg, fromDid, replyKid, 409, EPOCH_CONFLICT, 'group is at epoch {1}; retry from there', [result.epoch])
+          }
+          const code = result.reason === 'no-such-group' ? 'e.p.msg.mls.no-such-group' : 'e.p.msg.mls.not-a-member'
+          return problemReply(msg, fromDid, replyKid, 403, code, 'cannot commit to group {1}: {2}', [body.group_id, result.reason])
+        }
+        fanOutMls(body.group_id, result.entries, result.roster, body.welcome_to ?? [], senderKid)
+        return reply(await packReplyTo(msg, fromDid!, replyKid!, DELIVER, {
+          group_id: body.group_id, seq: result.entries[result.entries.length - 1]!.seq, kind: 'commit', payload: body.commit, epoch: body.epoch,
+        } satisfies DeliverBody))
+      }
+
+      case GROUP_INFO_REQUEST: {
+        const groupId = (msg.body as GroupInfoRequestBody | undefined)?.group_id
+        if (typeof groupId !== 'string' || !groupId) {
+          return problemReply(msg, fromDid, replyKid, 400, 'e.p.msg.mls.malformed', 'group-info-request needs `group_id`')
+        }
+        // A non-member gets the same answer as a member of a group with no
+        // GroupInfo published: nothing. Distinguishing the two would tell a
+        // stranger whether a given group id exists and who is in it.
+        const answer = mlsDs.groupInfoFor(groupId, fromDid!)
+        return reply(await packReplyTo(msg, fromDid!, replyKid!, GROUP_INFO, {
+          group_id: groupId,
+          ...(answer?.groupInfo ? { group_info: answer.groupInfo } : {}),
+          ...(answer?.pendingRemovals.length ? { pending_removals: answer.pendingRemovals } : {}),
+        } satisfies GroupInfoBody))
+      }
+
+      case DELIVERIES_REQUEST: {
+        const body = msg.body as DeliveriesRequestBody | undefined
+        if (typeof body?.group_id !== 'string' || typeof body.after_seq !== 'number') {
+          return problemReply(msg, fromDid, replyKid, 400, 'e.p.msg.mls.malformed', 'deliveries-request needs `group_id` and `after_seq`')
+        }
+        // A stranger and a member with nothing outstanding get the same empty
+        // answer, for the same reason group-info-request does not distinguish
+        // them: whether a group id exists is not a stranger's business.
+        const entries = mlsDs.deliveriesSince(body.group_id, fromDid!, body.after_seq) ?? []
+        return reply(await packReplyTo(msg, fromDid!, replyKid!, DELIVERIES, {
+          group_id: body.group_id,
+          deliveries: entries.map(e => ({
+            group_id: body.group_id, seq: e.seq, kind: e.kind, payload: e.payload,
+            ...(e.epoch === undefined ? {} : { epoch: e.epoch }),
+          })),
+        } satisfies DeliveriesBody))
+      }
+
+      case EXTERNAL_COMMIT: {
+        const body = msg.body as ExternalCommitBody | undefined
+        if (typeof body?.group_id !== 'string' || typeof body.epoch !== 'string' || typeof body.commit !== 'string') {
+          return problemReply(msg, fromDid, replyKid, 400, 'e.p.msg.mls.malformed', 'external-commit needs `group_id`, `epoch` and `commit`')
+        }
+        const result = mlsDs.submitExternalCommit(body.group_id, fromDid!, body.epoch, body.commit, body.group_info)
+        if (!result.ok) {
+          if (result.reason === 'epoch-conflict') {
+            return problemReply(msg, fromDid, replyKid, 409, EPOCH_CONFLICT, 'group is at epoch {1}; fetch a fresh group-info and retry', [result.epoch])
+          }
+          if (result.reason === 'no-group-info') {
+            return problemReply(msg, fromDid, replyKid, 409, NO_GROUP_INFO, 'no group-info published for group {1} at epoch {2}', [body.group_id, result.epoch])
+          }
+          // "Not a member" here means the joining device's IDENTITY is not in
+          // the roster — the whole authorization for an external commit.
+          const code = result.reason === 'no-such-group' ? 'e.p.msg.mls.no-such-group' : 'e.p.msg.mls.not-a-member'
+          return problemReply(msg, fromDid, replyKid, 403, code, 'cannot join group {1} externally: {2}', [body.group_id, result.reason])
+        }
+        // The joining device gets no copy of its own commit (it already holds
+        // the state that commit produced) — same skipKid rule as any commit.
+        fanOutMls(body.group_id, result.entries, result.roster, [], senderKid)
+        return reply(await packReplyTo(msg, fromDid!, replyKid!, DELIVER, {
+          group_id: body.group_id, seq: result.entries[0]!.seq, kind: 'commit', payload: body.commit, epoch: body.epoch,
+        } satisfies DeliverBody))
+      }
+
+      case CLEAR_REMOVALS: {
+        const body = msg.body as ClearRemovalsBody | undefined
+        if (typeof body?.group_id !== 'string' || !Array.isArray(body.kids)) {
+          return problemReply(msg, fromDid, replyKid, 400, 'e.p.msg.mls.malformed', 'clear-removals needs `group_id` and `kids`')
+        }
+        mlsDs.clearPendingRemovals(body.group_id, fromDid!, body.kids)
+        return reply(await packReplyTo(msg, fromDid!, replyKid!, GROUP_INFO, { group_id: body.group_id } satisfies GroupInfoBody))
+      }
+
+      case SELF_REMOVE: {
+        const body = msg.body as SelfRemoveBody | undefined
+        if (typeof body?.group_id !== 'string' || typeof body.epoch !== 'string' || typeof body.proposal !== 'string' || typeof body.kid !== 'string') {
+          return problemReply(msg, fromDid, replyKid, 400, 'e.p.msg.mls.malformed', 'self-remove needs `group_id`, `epoch`, `proposal` and `kid`')
+        }
+        // A device may only declare ITSELF gone. The kid is checked against
+        // the authcrypt envelope's own `skid`, the one thing here that names a
+        // device rather than an identity — without it any device of the
+        // identity could declare a sibling's departure, and the next joiner
+        // would carry it out.
+        if (!senderKid || body.kid !== senderKid) {
+          return problemReply(msg, fromDid, replyKid, 403, 'e.p.msg.mls.not-your-key', 'a self-removal must name the device that sent it')
+        }
+        const result = mlsDs.submitSelfRemove(body.group_id, fromDid!, body.epoch, body.proposal, body.kid)
+        if (!result.ok) {
+          const code = result.reason === 'no-such-group' ? 'e.p.msg.mls.no-such-group' : 'e.p.msg.mls.not-a-member'
+          return problemReply(msg, fromDid, replyKid, 403, code, 'cannot leave group {1}: {2}', [body.group_id, result.reason])
+        }
+        fanOutMls(body.group_id, result.entries, result.roster, [], senderKid)
+        return reply(await packReplyTo(msg, fromDid!, replyKid!, DELIVER, {
+          group_id: body.group_id, seq: result.entries[0]!.seq, kind: 'proposal', payload: body.proposal, epoch: body.epoch,
+        } satisfies DeliverBody))
+      }
+
+      case APPLICATION: {
+        const body = msg.body as ApplicationBody | undefined
+        if (typeof body?.group_id !== 'string' || typeof body.message !== 'string') {
+          return problemReply(msg, fromDid, replyKid, 400, 'e.p.msg.mls.malformed', 'application needs `group_id` and `message`')
+        }
+        const result = mlsDs.submitApplication(body.group_id, fromDid!, body.message)
+        if (!result.ok) {
+          const code = result.reason === 'no-such-group' ? 'e.p.msg.mls.no-such-group' : 'e.p.msg.mls.not-a-member'
+          return problemReply(msg, fromDid, replyKid, 403, code, 'cannot send to group {1}: {2}', [body.group_id, result.reason])
+        }
+        fanOutMls(body.group_id, result.entries, result.roster, [], senderKid)
+        return reply(await packReplyTo(msg, fromDid!, replyKid!, DELIVER, {
+          group_id: body.group_id, seq: result.entries[0]!.seq, kind: 'application', payload: body.message,
+        } satisfies DeliverBody))
       }
 
       default:

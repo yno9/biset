@@ -2,13 +2,15 @@ import type { Email } from 'jmap-rfc-types'
 import type { AccountSession, StoredAccount, InboxSummary } from './types.ts'
 import { readGroupHeaders, groupDraftHeaders, isSecurejoinEmail, isEdit, collectEdits, type GroupOpts, type ChatAction } from './deltachat/protocol.ts'
 import { isReaction, collectReactions } from './mail/reactions.ts'
-import { avatarDataUrl, groupCacheKey, learnContactName } from './deltachat/avatar.ts'
+import { avatarDataUrl, groupCacheKey, learnContactName, contactNameFor } from './deltachat/avatar.ts'
 import {
   sessions, addSession, setCurrentInbox, currentInbox, activeSession, sessionFor, sessionForRelay,
   loadStoredAccounts, saveStoredAccounts, identityIds, relaysForId, identityKey, isApRelay, isDidCommRelay,
+  accountKey,
 } from './context.ts'
 import { initSession } from './jmap/client.ts'
 import * as messages from './store/messages.ts'
+import * as threads from './store/threads.ts'
 import * as mailboxes from './store/mailboxes.ts'
 import * as identities from './store/identities.ts'
 import * as jmapEmail from './jmap/email.ts'
@@ -96,6 +98,125 @@ export function emailToMsg(email: Email, _selfAddr: string): ProcessedMessage['m
 // after an app update) never got its sender's name recorded. Called once at
 // startup after loadFromCache() populates the store, so existing history
 // backfills without waiting for new mail.
+// For a DeltaChat/chatmail contact the name lives ONLY in the protected From
+// inside the encrypted part (readSenderNameFromMime), so the cleartext pass
+// above finds nothing and the name would stay missing until that contact
+// happens to send a NEW message. Decrypting all of history to fix that would
+// cost hundreds of PGP operations at startup, so decrypt exactly one message
+// per still-unnamed sender — their newest, which carries their current name.
+// Bounded by contact count (a handful), and runs detached from the boot path.
+async function backfillProtectedNames(): Promise<void> {
+  const { decryptAndParse } = await import('./pgp/crypto.ts')
+  const { readSenderNameFromMime } = await import('./deltachat/protocol.ts')
+
+  // account key → the address whose private key decrypts that account's mail.
+  const accountEmails = new Map(sessions.map(s => [accountKey(s.account), s.account.email]))
+
+  const newestBySender = new Map<string, Email>()
+  for (const email of messages.all()) {
+    const addr = (email.from as any[] | undefined)?.[0]?.email as string | undefined
+    if (!addr) continue
+    if (sessions.some(s => s.account.email.toLowerCase() === addr.toLowerCase())) continue
+    if (contactNameFor(addr)) continue
+    const prev = newestBySender.get(addr.toLowerCase())
+    const ts = email.receivedAt ? new Date(email.receivedAt as string).getTime() : 0
+    const prevTs = prev?.receivedAt ? new Date(prev.receivedAt as string).getTime() : -1
+    if (ts > prevTs) newestBySender.set(addr.toLowerCase(), email)
+  }
+
+  for (const [addr, email] of newestBySender) {
+    const user = accountEmails.get(messages.accountOf(email))
+    if (!user) continue
+    const raw = (Object.values((email.bodyValues as any) ?? {}) as any[])[0]?.value as string ?? ''
+    if (!raw.includes('-----BEGIN PGP MESSAGE-----')) continue
+    try {
+      const dec = await decryptAndParse(raw, user)
+      const name = dec?.headers ? readSenderNameFromMime(dec.headers) : undefined
+      if (name) await learnContactName(addr, name)
+    } catch { /* one unreadable message shouldn't stop the rest */ }
+  }
+}
+
+// Sweeps group history for a Chat-Group-Avatar. Needed because that header
+// rides on the ONE message where the avatar was set — typically the group's
+// oldest — rather than on the newest like a contact name, and because group
+// messages historically weren't decrypted at all past the first one in a
+// thread (see sync/session.ts's note on the removed decrypt-skip), so
+// learnGroupAvatar never got a chance to see them. Oldest-first for that
+// reason, stopping at the first hit.
+//
+// A group that has no avatar at all would otherwise be re-swept on every
+// start, so the result is recorded either way (markGroupScanned) and the
+// per-group work is capped. New messages still go through the normal sync
+// path, so an avatar set later is picked up there without another sweep.
+const GROUP_SWEEP_CAP = 250
+
+async function backfillGroupAvatars(): Promise<boolean> {
+  const { decryptAndParse } = await import('./pgp/crypto.ts')
+  const { learnGroupAvatar, avatarDataUrl: lookup, groupCacheKey: gkey, wasGroupScanned, markGroupScanned } =
+    await import('./deltachat/avatar.ts')
+
+  const accountEmails = new Map(sessions.map(s => [accountKey(s.account), s.account.email]))
+
+  const byGroup = new Map<string, Email[]>()
+  for (const email of messages.all()) {
+    const gid = readGroupHeaders(email).id
+    if (!gid) continue
+    if (lookup(gkey(gid)) || wasGroupScanned(gid)) continue
+    const list = byGroup.get(gid)
+    if (list) list.push(email)
+    else byGroup.set(gid, [email])
+  }
+
+  if (!byGroup.size) return false
+  console.log('[group-avatar] sweeping', byGroup.size, 'group(s) with no avatar yet')
+
+  let learned = false
+  for (const [gid, list] of byGroup) {
+    list.sort((a, b) => {
+      const ta = a.receivedAt ? new Date(a.receivedAt as string).getTime() : 0
+      const tb = b.receivedAt ? new Date(b.receivedAt as string).getTime() : 0
+      return ta - tb
+    })
+    // Counters exist to make a fruitless sweep diagnosable: "no avatar" and
+    // "never got far enough to look" are indistinguishable from the outcome
+    // alone, and they have completely different fixes.
+    // Kept as counters rather than a bare outcome: "this group never carried
+    // an avatar" and "the sweep never got far enough to look" produce the
+    // same silence otherwise, and they have opposite fixes.
+    let noAccount = 0, notPgp = 0, decryptFailed = 0, decrypted = 0, sawHeader = 0
+    for (const email of list.slice(0, GROUP_SWEEP_CAP)) {
+      const user = accountEmails.get(messages.accountOf(email))
+      if (!user) { noAccount++; continue }
+      const raw = (Object.values((email.bodyValues as any) ?? {}) as any[])[0]?.value as string ?? ''
+      if (!raw.includes('-----BEGIN PGP MESSAGE-----')) { notPgp++; continue }
+      try {
+        const dec = await decryptAndParse(raw, user)
+        if (!dec) { decryptFailed++; continue }
+        decrypted++
+        if (dec.headers?.['chat-group-avatar'] !== undefined) sawHeader++
+        await learnGroupAvatar(gid, dec)
+        if (lookup(gkey(gid))) { learned = true; break }
+      } catch { decryptFailed++ }
+    }
+    // Flattened into the message string rather than passed as an object: the
+    // console collapses objects to "Object" and the counters are the whole
+    // point of the line.
+    console.log(`[group-avatar] ${gid}: ${list.length} msgs decrypted=${decrypted} sawHeader=${sawHeader} decryptFailed=${decryptFailed} notPgp=${notPgp} noAccount=${noAccount} got=${!!lookup(gkey(gid))}`)
+    // Only record the group as swept when the pass was actually conclusive.
+    // A run that couldn't decrypt (no key yet at boot, a transient failure)
+    // has NOT established that there's no avatar, and marking it would make
+    // that temporary condition permanent.
+    const conclusive = decryptFailed === 0 && noAccount === 0 && list.length <= GROUP_SWEEP_CAP
+    if (conclusive || lookup(gkey(gid))) await markGroupScanned(gid)
+  }
+  return learned
+}
+
+// Learns whatever display identity (names, group avatars) is recoverable from
+// history already in the store, for the cases the live sync path can't cover.
+// Named for the cleartext pass it starts with; the two decrypt-based sweeps
+// run detached behind it.
 export function backfillContactNames(): void {
   for (const email of messages.all()) {
     const from = (email.from as any[] | undefined)?.[0]
@@ -104,6 +225,30 @@ export function backfillContactNames(): void {
     if (!addr || !name) continue
     if (sessions.some(s => s.account.email.toLowerCase() === addr.toLowerCase())) continue
     learnContactName(addr, name)
+  }
+  // Detached: this is a display nicety, never worth delaying first paint.
+  // Names land in a synchronous cache the left pane re-reads on its next
+  // render pass, so those need no redraw of their own; a group avatar does,
+  // since avatar_url is baked into the InboxSummary at build time.
+  void (async () => {
+    await backfillProtectedNames()
+    const learned = await backfillGroupAvatars()
+    if (learned) {
+      const { loadLeftInboxes } = await import('./ui/left-pane.ts')
+      loadLeftInboxes()
+    }
+  })()
+
+  // Console hook: forces a fresh sweep regardless of stored markers. Without
+  // it the only way to retry a sweep is to ship a SWEEP_VERSION bump, i.e. a
+  // deploy per diagnostic attempt.
+  ;(window as any).__bisetRescanGroupAvatars = async () => {
+    const { clearGroupScanMarkers } = await import('./deltachat/avatar.ts')
+    await clearGroupScanMarkers()
+    const got = await backfillGroupAvatars()
+    const { loadLeftInboxes } = await import('./ui/left-pane.ts')
+    loadLeftInboxes()
+    return got
   }
 }
 
@@ -617,81 +762,160 @@ export function removeAccount(email: string): void {
 }
 
 /** The ONE full-logout path (DID.md "single teardown chokepoint"). Every
- * logout control routes here — the top-right menu (main.ts's lp-hmenu-logout)
- * is the only one the UI wires up, and it used to inline its OWN wipe that
- * skipped the deregister step entirely, so every logout orphaned this device's
- * DIDComm key in the mediator keylist AND the published DID document forever
- * (the whole "logout doesn't remove the key" saga). There used to be a second,
- * DEAD copy of this function too, imported but never called — which is exactly
- * how the divergence went unnoticed. Keep this the sole implementation. */
+ * logout control routes here — the identity card's own hamburger menu
+ * (left-pane.ts's renderAccountsList) is the only one the UI wires up, and a
+ * caller once inlined its OWN wipe that skipped the deregister step entirely,
+ * so every logout orphaned this device's DIDComm key in the mediator keylist
+ * AND the published DID document forever (the whole "logout doesn't remove
+ * the key" saga). There used to be a second, DEAD copy of this function too,
+ * imported but never called — which is exactly how the divergence went
+ * unnoticed. Keep this the sole implementation. */
 export async function logout(): Promise<void> {
-  // Deregister this device from every identity's mediator BEFORE any wipe —
-  // this is the ONE moment the keys that prove ownership of this device's
-  // keyAgreement slot still exist locally. unregisterFromMediator does
-  // keylist-update remove (point-to-point, authoritative — the mediator can't
-  // be raced the way DHT gossip can) + republishes the DID document without
-  // this device's key. Best-effort per identity, but NOT silent: a registered
-  // device whose revoke genuinely fails would otherwise stay published with no
-  // trace, indistinguishable from the ordinary "never registered" case.
-  const { unregisterFromMediator } = await import('./did/didcomm-devices.ts')
-  await Promise.all(identityIds().map(did => unregisterFromMediator(did)
-    .catch(e => console.warn(`[logout] unregisterFromMediator(${did}) failed — this device's DIDComm key may stay published:`, e instanceof Error ? e.message : e))))
-
-  saveStoredAccounts([])
-  sessions.length = 0
-  setCurrentInbox(null)
-
-  // Wipe ALL local data (the confirm text promises exactly this) EXCEPT the
-  // did:dht rollback-defense floor (freshness.ts's 'biset_did_seq:' keys):
-  // that store rejects a signed record with a LOWER seq than one already
-  // trusted for a DID. Wiping it, then logging back into the same identity,
-  // opened a real window where a stale gateway's ancient (pre-DIDComm)
-  // document got accepted with no rollback check — wiping two live devices'
-  // keys off the document in one shot (found live). It must survive exactly
-  // this moment, so it's read out and restored across the clear().
-  const keepSeq = Object.keys(localStorage)
-    .filter(k => k.startsWith('biset_did_seq:'))
-    .map(k => [k, localStorage.getItem(k)] as const)
-  localStorage.clear()
-  for (const [k, v] of keepSeq) if (v != null) localStorage.setItem(k, v)
-  try { sessionStorage.clear() } catch { /* ignore */ }
-
-  // Delete every app IndexedDB database — DID records included, so a re-login
-  // mints a FRESH device key and re-syncs its slot from scratch instead of
-  // reusing a stale local didCommOwnKid (that stale reuse is how a new device
-  // landed back on an already-tombstoned slot number, found live).
-  const dbNames = ['biset-cache', 'biset-pgp', 'biset-did', 'biset-deltachat']
-  await Promise.all(dbNames.map(name => new Promise<void>(resolve => {
-    const req = indexedDB.deleteDatabase(name)
-    req.onsuccess = () => resolve()
-    req.onerror = () => resolve()
-    // onblocked (another open connection) resolves too — the reload below
-    // closes every connection, so a blocked delete finishes on next load.
-    req.onblocked = () => resolve()
-  })))
-
-  // Caches + service worker so re-login lands on fresh app code, not a stale
-  // cached bundle.
-  if ('caches' in window) {
-    try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))) } catch { /* ignore */ }
-  }
-  if ('serviceWorker' in navigator) {
-    try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())) } catch { /* ignore */ }
+  // **No page navigation** (2026-08-12, user-requested, and it settles a long
+  // fight): this used to end in a reload, and on file:// that reload kept not
+  // happening — four different navigation techniques were tried on the
+  // assumption that browsers were refusing the NAVIGATION, when the real
+  // problem was that control often never reached it (an awaited cleanup step
+  // hanging, each written as a bare `await` on the happy path). Logging out
+  // doesn't actually need a fresh document: it needs the app to show the
+  // account page in its zero-account state, which is a render, not a boot.
+  // So the wipe now ends by re-rendering in place. Nothing here can leave
+  // the user staring at a dead button any more.
+  //
+  // Because there's no reload, in-memory state has to be emptied explicitly
+  // (stores below) rather than dying with the document — that's the one
+  // thing a navigation was doing for free.
+  //
+  // Every cleanup step is still individually timeboxed and logged: they're
+  // all best-effort local housekeeping (a re-login re-derives whatever a
+  // failed step left behind), so none of them may block the re-render, and a
+  // per-step trace is how the next silent failure gets diagnosed in one
+  // round instead of four.
+  const step = (name: string) => console.log('[logout] step:', name)
+  // A step that never settles must not outlive its budget. 4s is generous
+  // for local storage/IDB/cache work while still being far below a user's
+  // patience for a button that looks dead.
+  const bounded = async (label: string, work: () => Promise<unknown>): Promise<void> => {
+    step(label)
+    try {
+      await Promise.race([
+        work(),
+        new Promise<void>(resolve => setTimeout(() => {
+          console.warn(`[logout] ${label}: timed out, continuing anyway`)
+          resolve()
+        }, 4000)),
+      ])
+    } catch (e) {
+      console.warn(`[logout] ${label}: failed, continuing anyway:`, e instanceof Error ? e.message : e)
+    }
   }
 
-  // Land on a clean boot. Deliberately NOT touching the hash here — every
-  // attempt that reconstructed or mutated the URL first (location.href
-  // reassignment, history.replaceState before reload()) got refused by this
-  // browser on file:// as "Unsafe attempt to load URL ... from frame with
-  // URL ..." (2026-08-12, user-reported, several rounds). A bare reload()
-  // with NO preceding URL manipulation is the one variant that hasn't
-  // thrown. It re-executes this module from a cold load now that the page
-  // has opted out of bfcache (this file's own top-level `unload` listener,
-  // and its note on why that mattered — a bfcache-restored page was
-  // replaying stale module state, including main.ts's bootSessionsPromise,
-  // no matter how "successful" a navigation back to it looked). Landing
-  // hash-less is a nice-to-have that can be revisited once a plain reload is
-  // confirmed actually working — chasing both at once is what produced the
-  // unsafe-navigation error in the first place.
-  location.reload()
+  try {
+    // Deregister this device from every identity's mediator BEFORE any wipe —
+    // this is the ONE moment the keys that prove ownership of this device's
+    // keyAgreement slot still exist locally. unregisterFromMediator does
+    // keylist-update remove (point-to-point, authoritative — the mediator can't
+    // be raced the way DHT gossip can) + republishes the DID document without
+    // this device's key. Best-effort per identity, but NOT silent: a registered
+    // device whose revoke genuinely fails would otherwise stay published with no
+    // trace, indistinguishable from the ordinary "never registered" case.
+    await bounded('unregister-from-mediators', async () => {
+      const { unregisterFromMediator } = await import('./did/didcomm-devices.ts')
+      await Promise.all(identityIds().map(did => unregisterFromMediator(did)
+        .catch(e => console.warn(`[logout] unregisterFromMediator(${did}) failed — this device's DIDComm key may stay published:`, e instanceof Error ? e.message : e))))
+    })
+
+    step('clear-sessions')
+    saveStoredAccounts([])
+    sessions.length = 0
+    setCurrentInbox(null)
+    // In-memory stores too, since there's no reload to drop them (see this
+    // function's header). Without this the wiped UI would re-render straight
+    // out of RAM: the account list reads sessions[] (now empty, fine), but
+    // the left pane's inbox rows and any open thread come from these.
+    step('clear-in-memory-stores')
+    messages.clear()
+    threads.clear()
+    mailboxes.set([])
+    identities.set([])
+
+    // Wipe ALL local data (the confirm text promises exactly this) EXCEPT the
+    // did:dht rollback-defense floor (freshness.ts's 'biset_did_seq:' keys):
+    // that store rejects a signed record with a LOWER seq than one already
+    // trusted for a DID. Wiping it, then logging back into the same identity,
+    // opened a real window where a stale gateway's ancient (pre-DIDComm)
+    // document got accepted with no rollback check — wiping two live devices'
+    // keys off the document in one shot (found live). It must survive exactly
+    // this moment, so it's read out and restored across the clear().
+    step('clear-web-storage')
+    try {
+      const keepSeq = Object.keys(localStorage)
+        .filter(k => k.startsWith('biset_did_seq:'))
+        .map(k => [k, localStorage.getItem(k)] as const)
+      localStorage.clear()
+      for (const [k, v] of keepSeq) if (v != null) localStorage.setItem(k, v)
+    } catch (e) {
+      console.warn('[logout] clear-web-storage failed, continuing anyway:', e instanceof Error ? e.message : e)
+    }
+    try { sessionStorage.clear() } catch { /* ignore */ }
+
+    // Delete every app IndexedDB database — DID records included, so a re-login
+    // mints a FRESH device key and re-syncs its slot from scratch instead of
+    // reusing a stale local didCommOwnKid (that stale reuse is how a new device
+    // landed back on an already-tombstoned slot number, found live).
+    //
+    // The prime hang suspect: a deleteDatabase with a live connection open
+    // fires `blocked` and waits for that connection to close — which, for a
+    // connection this very page holds, only happens on the reload this was
+    // blocking. Timeboxed, so a blocked delete finishes on the next load
+    // exactly as the original comment assumed it would.
+    await bounded('delete-indexeddb', () => {
+      const dbNames = ['biset-cache', 'biset-pgp', 'biset-did', 'biset-deltachat']
+      return Promise.all(dbNames.map(name => new Promise<void>(resolve => {
+        const req = indexedDB.deleteDatabase(name)
+        req.onsuccess = () => resolve()
+        req.onerror = () => resolve()
+        req.onblocked = () => resolve()
+      })))
+    })
+
+    // Caches + service worker so re-login lands on fresh app code, not a stale
+    // cached bundle.
+    if ('caches' in window) {
+      await bounded('clear-caches', async () => {
+        const keys = await caches.keys()
+        await Promise.all(keys.map(k => caches.delete(k)))
+      })
+    }
+    if ('serviceWorker' in navigator) {
+      await bounded('unregister-service-workers', async () => {
+        const regs = await navigator.serviceWorker.getRegistrations()
+        await Promise.all(regs.map(r => r.unregister()))
+      })
+    }
+  } finally {
+    // Land on the account page in its zero-account state, unconditionally —
+    // a render, not a navigation (see this function's header for why the
+    // reload this replaces was the wrong tool). renderAccountsList already
+    // draws exactly the right thing once sessions[] and the stored accounts
+    // are empty: "No accounts" plus "+ New Relay", with the identity heading
+    // hidden. loadLeftInboxes clears the left pane the same way, from the
+    // stores emptied above.
+    //
+    // Dynamic imports: app.ts is imported BY the UI modules, so a static
+    // import either way round would close a cycle.
+    step('render-logged-out')
+    try {
+      const [{ showMenuPage, loadLeftInboxes, refreshAccountsList }, { showApp }] = await Promise.all([
+        import('./ui/left-pane.ts'),
+        import('./ui/shell.ts'),
+      ])
+      showApp()
+      showMenuPage('/account')
+      refreshAccountsList()
+      await loadLeftInboxes()
+    } catch (e) {
+      console.error('[logout] render-logged-out failed:', e instanceof Error ? e.message : e)
+    }
+  }
 }

@@ -52,15 +52,13 @@ export interface DidRecord {
   // why (a transient resolve failure must not erase a real list) — so without
   // this cache, republishing from any one device would silently drop every
   // OTHER device's key from the document.
+  /** @deprecated Other devices' keys, learned by merging a resolved document
+   * (grow-only gossip). The MLS self group decides membership now
+   * (mls/self-group.ts) and `didcomm-devices.ts`'s publish reads that, not
+   * this. Kept only so a record written by an older build still loads; nothing
+   * writes it any more, and nothing may start again — reintroducing a second
+   * answer to "which devices exist" is the whole class of bug this removed. */
   didCommSiblingKeys?: Array<{ kid: string; publicKey: string }> // publicKey hex
-  // Kids deliberately removed via the devices-list trash icon
-  // (didcomm-devices.ts's removeDeviceKey) — checked by syncDevicePosition
-  // so a later resolve that still shows a removed sibling (a lagging gateway,
-  // or this same device's own next boot) can't silently re-absorb it: grow-
-  // only merging has no other way to distinguish "never seen before" from
-  // "seen, and deliberately dropped". Kid numbers are never reused (always
-  // max+1), so a tombstone here is unambiguous and never needs to expire.
-  didCommRemovedKeys?: string[]
   // Which mediator this identity registered its DIDComm keys with, if any.
   // Unlike the keys these aren't derivable — they're registration state, and
   // they must be persisted precisely because publish.ts rebuilds the whole
@@ -95,9 +93,9 @@ export interface DidRecord {
   jmapDevicePublicKey?: string // hex
   jmapDevicePrivateKey?: string // hex
   // THIS DEVICE's own ML-KEM-768 keyAgreement key (PLAN.md "did:webvh
-  // PQハイブリッド化" Phase 1/2) — paired by slot number with didCommPublicKey/
-  // didCommPrivateKey at the same `didCommOwnKid` (webvh/document.ts's
-  // `#kk<n>` alongside `#k<n>`). did:webvh only (did:dht can't carry a
+  // PQハイブリッド化" Phase 1/2) — paired with didCommPublicKey/
+  // didCommPrivateKey by sharing this device's kid suffix (webvh/document.ts's
+  // `#kk…` alongside `#k…`). did:webvh only (did:dht can't carry a
   // 1184-byte key in a 1000-byte BEP44 record). Random per device, same
   // reasoning as didCommPrivateKey. Its lifecycle rides entirely on the
   // X25519 key's: it is minted/dropped alongside didCommPublicKey/
@@ -107,15 +105,10 @@ export interface DidRecord {
   // logic that already exists once for `didCommOwnKid`.
   mlkemPublicKey?: string // hex
   mlkemPrivateKey?: string // hex
-  // Other devices' ML-KEM-768 keys, keyed by SLOT NUMBER (not kid string,
-  // unlike didCommSiblingKeys) — a sibling may not have published one yet
-  // (pre-PQ device), so absence at a given `n` just means "that device isn't
-  // PQ-capable yet", not an error. Learned the same way didCommSiblingKeys
-  // is (syncDevicePosition resolving the published document), but merged
-  // and pruned purely by following whichever `n`s didCommSiblingKeys/
-  // didCommRemovedKeys already decided are live — no separate merge/
-  // tombstone state of its own.
-  didCommMlkemSiblingKeys?: Array<{ n: number; publicKey: string }> // publicKey hex
+  /** @deprecated Counterpart of didCommSiblingKeys, and dead for the same
+   * reason: a device's ML-KEM-768 key travels in its own MLS leaf now
+   * (mls/transport-keys.ts), so nothing learns or publishes this. */
+  didCommMlkemSiblingKeys?: Array<{ kid: string; publicKey: string }> // publicKey hex
 }
 
 function openDB(): Promise<IDBDatabase> {

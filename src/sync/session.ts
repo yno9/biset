@@ -15,7 +15,7 @@ import { mailboxNameFromId } from '../utils.ts'
 import { filterNew } from './dedup.ts'
 import { buildEffectiveGroups } from '../processing.ts'
 import { decryptAndParse, uploadPeerKey } from '../pgp/crypto.ts'
-import { readGroupHeaders, readGroupHeadersFromMime, cacheGroupHeaders, parseAutocryptKey, parseGossipKeys, readChatEditTarget, readChatDeleteTarget, parseEditBody, cacheEdit, isEdit } from '../deltachat/protocol.ts'
+import { readGroupHeaders, readGroupHeadersFromMime, cacheGroupHeaders, parseAutocryptKey, parseGossipKeys, readChatEditTarget, readChatDeleteTarget, parseEditBody, cacheEdit, isEdit, readSenderNameFromMime } from '../deltachat/protocol.ts'
 import { maybeHandleSecurejoin } from '../deltachat/securejoin.ts'
 import { learnAvatar, learnGroupAvatar, learnContactName } from '../deltachat/avatar.ts'
 import { learnApAvatar } from '../ap/avatar.ts'
@@ -210,6 +210,14 @@ export async function sync(session: AccountSession): Promise<void> {
             if (!hasOuterGroup) cacheGroupHeaders(e, readGroupHeadersFromMime(decrypted.headers))
             const groupId = readGroupHeaders(e).id
             if (groupId) await learnGroupAvatar(groupId, decrypted)
+            // The sender's DeltaChat profile name, from the PROTECTED From —
+            // the outer From carries only the bare address, so the learn above
+            // (off `e.from[0].name`) never fires for a chatmail contact. Same
+            // fromIsSelf guard as learnAvatar, for the same reason.
+            if (from && !fromIsSelf) {
+              const protectedName = readSenderNameFromMime(decrypted.headers)
+              if (protectedName) await learnContactName(from, protectedName)
+            }
             if (from && decrypted.inReplyTo && isReactionDisposition(decrypted.headers)) {
               cacheReaction(e, { emoji: decrypted.body.trim(), from, targetMessageId: decrypted.inReplyTo })
             }

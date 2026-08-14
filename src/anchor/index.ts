@@ -44,6 +44,8 @@ import { loadMediatorIdentity } from './mediator/identity.ts'
 import { ConnectionStore } from './mediator/connections.ts'
 import { PushSubscriptionStore } from './mediator/pushsubs.ts'
 import { MessageQueue } from './mediator/queue.ts'
+import { MlsDeliveryService } from './mediator/mls-ds.ts'
+import { fragmentOf, isDeviceKid } from '../did/devicekid.ts'
 import { PkarrGateway } from './pkarr.ts'
 import { WebvhLogStore } from './webvh-store.ts'
 import { zbase32Encode } from '../did/dht/zbase32.ts'
@@ -209,8 +211,11 @@ const pkarrRef: PkarrRef = { starting: !!cfg.pkarr_gateway }
 // record's signature against the DID's own key, so neither can forge, only
 // withhold.
 const resolveDidDht = async (did: string, kid: string): Promise<Uint8Array | null> => {
-  const n = Number(kid.split('#k')[1])
-  if (!Number.isFinite(n)) return null
+  // Matched by kid FRAGMENT, not by slot number: a device's identifier is
+  // derived from its key now (did/devicekid.ts), so there is no number to
+  // parse, and a legacy `#k1` compares just as well as a string.
+  const fragment = fragmentOf(kid)
+  if (!isDeviceKid(fragment)) return null
   try {
     let doc: DidDocument | undefined
     if (pkarrRef.current) {
@@ -221,7 +226,7 @@ const resolveDidDht = async (did: string, kid: string): Promise<Uint8Array | nul
       }
     }
     if (!doc) doc = (await resolveVia(did, PUBLIC_PKARR_FALLBACKS))?.document
-    return doc?.keyAgreementKeys?.find(k => k.n === n)?.publicKey ?? null
+    return doc?.keyAgreementKeys?.find(k => k.kid === fragment)?.publicKey ?? null
   } catch { return null }
 }
 // Resolve a did:webvh peer's DIDComm key AT A SPECIFIC device's kid, so the
@@ -238,16 +243,15 @@ const resolveDidDht = async (did: string, kid: string): Promise<Uint8Array | nul
 // registering with this SAME mediator, because only the own-store path
 // existed).
 const resolveDidWebvh = async (did: string, kid: string): Promise<Uint8Array | null> => {
-  const m = /#k(\d+)$/.exec(kid)
-  const n = m ? Number(m[1]) : NaN
-  if (!Number.isFinite(n)) return null
+  const fragment = fragmentOf(kid)
+  if (!isDeviceKid(fragment)) return null
 
   const own = webvh ? resolveOwnWebvhDocument(webvh, did) : null
-  if (own) return keyAgreementKeysFromWebvhState(own).find(k => k.n === n)?.publicKey ?? null
+  if (own) return keyAgreementKeysFromWebvhState(own).find(k => k.kid === fragment)?.publicKey ?? null
 
   try {
     const remote = await resolveWebvhRemote(did)
-    return remote ? keyAgreementKeysFromWebvhState(remote).find(k => k.n === n)?.publicKey ?? null : null
+    return remote ? keyAgreementKeysFromWebvhState(remote).find(k => k.kid === fragment)?.publicKey ?? null : null
   } catch { return null }
 }
 // All three or nothing: a keypair without a subscriber produces a JWT Apple
@@ -268,6 +272,15 @@ const mediator = cfg.mediator_url
       // was in flight.
       queue: new MessageQueue(join(dataDir, 'mediator-queue.json')),
       pushSubs: new PushSubscriptionStore(join(dataDir, 'mediator-push-subs.json')),
+      // MLS groups and key packages, persisted for a reason the other stores
+      // do not share: losing this is not a delivery that gets retried, it is
+      // an identity's DEVICE LIST. A restart with in-memory state drops every
+      // group, so every device falls back to publishing only itself, two
+      // devices of one identity overwrite each other's document forever, and
+      // nothing in the system notices (found live 2026-08-13 — this option was
+      // simply never passed, so the default in-memory store was in use in
+      // production).
+      mlsDs: new MlsDeliveryService(join(dataDir, 'mediator-mls.json')),
       vapid,
       resolveDidDht,
       resolveDidWebvh,

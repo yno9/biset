@@ -855,13 +855,42 @@ select {
    form had no spacing above it at all; 2026-07-14, user-reported). gap
    only counts VISIBLE siblings, so hidden rows (display:none) contribute
    nothing — no need to zero out margins per visibility state. */
+/* Positioned over the card area, growing upward out of the floating
+   "+ New Relay" button that opens it (#cmd-acc-fab, 2026-08-12) — same
+   bottom edge, same centre line, so the expand reads as the button itself
+   unfolding rather than a separate sheet appearing. Fixed rather than
+   in-flow for exactly that reason: it has to land on the button's own
+   coordinates (both get their `left` from positionAccFloating, measured off
+   the right column), not wherever the list happens to end.
+   Same surface as the button and the fields inside it — one flat white. */
 #cmd-acc-panel {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  border-radius: 10px;
+  border-radius: 16px;
   padding: 16px;
   margin-top: 0;
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 61;
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(70vh, calc(100vh - 96px));
+  overflow-y: auto;
+  box-sizing: border-box;
+  background: var(--input-bg);
+  box-shadow:
+    inset 0 1px 0 var(--glass-btn-hi),
+    0 1px 6px rgba(0, 0, 0, 0.1),
+    0 1px 2px rgba(0, 0, 0, 0.06);
+  transform-origin: bottom center;
+  transform: translateX(-50%) translateY(10px) scale(0.94);
+  opacity: 0;
+  transition: transform 0.18s ease, opacity 0.16s ease;
+}
+#cmd-acc-panel.open {
+  transform: translateX(-50%) translateY(0) scale(1);
+  opacity: 1;
 }
 #cmd-acc-choice {
   display: flex;
@@ -1724,13 +1753,82 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 .acc-card-wrap:last-child .cmd-page-row {
   border-bottom: none;
 }
-.acc-new-account-row {
-  min-height: 56px;
-  padding: 10px 12px;
-  box-sizing: border-box;
-}
 .acc-new-account-plus {
   margin-right: 6px;
+}
+
+/* "+ New Relay": a floating button pinned to the bottom of the RIGHT COLUMN
+   (not the viewport — left-pane.ts's positionAccFloating measures #right-col
+   and writes `left`, kept in step by a ResizeObserver so pane toggles and
+   window resizes follow), and the panel it expands into over the card area.
+
+   Raised, not glass: this one sits ON TOP of content rather than in the
+   header furniture, so it takes the same inset top-rim/bottom-rim emboss the
+   header buttons use (--glass-btn-*, "light from above") plus a drop shadow
+   — deliberately a light one, enough to lift it off the cards without
+   reading as a modal. */
+#cmd-acc-fab {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--input-bg);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 var(--glass-btn-hi),
+    inset 0 -1px 1.5px var(--glass-btn-lo),
+    0 2px 6px rgba(0, 0, 0, 0.07),
+    0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, opacity 0.14s ease, color 0.14s ease;
+}
+/* Recedes until wanted: dimmed label at rest, full-strength text on hover —
+   it's a standing affordance on a page that's mostly about the accounts
+   already there, not a call to action. */
+#cmd-acc-fab:hover {
+  transform: translateX(-50%) translateY(-1px);
+  color: var(--text);
+  box-shadow:
+    inset 0 1px 0 var(--glass-btn-hi),
+    inset 0 -1px 1.5px var(--glass-btn-lo),
+    0 4px 10px rgba(0, 0, 0, 0.09),
+    0 1px 2px rgba(0, 0, 0, 0.04);
+}
+#cmd-acc-fab:active {
+  transform: translateX(-50%) translateY(1px);
+  box-shadow:
+    inset 0 2px 3px var(--glass-btn-lo),
+    0 1px 4px rgba(0, 0, 0, 0.07);
+}
+/* Hidden while its own panel is open — the panel replaces it in place, so
+   leaving it visible would stack the two. Kept in the layout (opacity +
+   pointer-events, not display) so reopening animates from the same spot. */
+#cmd-acc-fab.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Click-outside-to-close only — deliberately NOT dimmed (2026-08-12,
+   user-requested): this panel is an inline affordance on the account page,
+   not a modal interrupting it, and a scrim said otherwise. */
+#cmd-acc-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 59;
+  background: transparent;
+  pointer-events: none;
+}
+#cmd-acc-panel-backdrop.open {
+  pointer-events: auto;
 }
 .acc-storage-panel {
   display: none;
@@ -1811,6 +1909,10 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* Also covers the bare "Loading…" text this container holds before the rows
+     exist — without it that placeholder inherited the card's larger size and
+     jumped when the list arrived. */
+  font-size: 13px;
 }
 .acc-device-row {
   display: flex;

@@ -110,6 +110,56 @@ export function readGroupHeadersFromMime(headers: Record<string, string>): Group
   }
 }
 
+// Decodes RFC 2047 encoded-words (`=?UTF-8?B?..?=` / `=?..?Q?..?=`) inside a
+// header value. Display names are the one place biset sees them in practice —
+// any non-ASCII name (which is most of them outside en/fr) arrives encoded,
+// and showing the raw `=?UTF-8?B?…?=` would be worse than showing nothing.
+// Leaves anything it can't decode untouched.
+function decodeEncodedWords(v: string): string {
+  // Adjacent encoded-words are separated by whitespace that RFC 2047 says to
+  // drop (it's an artifact of folding, not part of the text).
+  return v.replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=(\s+)(?==\?)/g, (_m, cs, enc, txt) => `=?${cs}?${enc}?${txt}?=`)
+    .replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, (m, charset: string, enc: string, text: string) => {
+      try {
+        let bytes: Uint8Array
+        if (enc.toUpperCase() === 'B') {
+          bytes = Uint8Array.from(atob(text), c => c.charCodeAt(0))
+        } else {
+          // Q-encoding: like quoted-printable, but '_' additionally means space.
+          const s = text.replace(/_/g, ' ')
+          const out: number[] = []
+          for (let i = 0; i < s.length; i++) {
+            if (s[i] === '=' && /^[0-9A-Fa-f]{2}$/.test(s.slice(i + 1, i + 3))) {
+              out.push(parseInt(s.slice(i + 1, i + 3), 16)); i += 2
+            } else out.push(s.charCodeAt(i))
+          }
+          bytes = new Uint8Array(out)
+        }
+        return new TextDecoder(charset.toLowerCase()).decode(bytes)
+      } catch { return m }
+    })
+}
+
+// Extracts the display-name phrase from an RFC 5322 `From:` value —
+// `"Alice" <a@b>` / `Alice <a@b>` → `Alice`; a bare `a@b` → undefined.
+function addressPhrase(v: string): string | undefined {
+  const lt = v.lastIndexOf('<')
+  if (lt < 0) return undefined
+  const phrase = decodeEncodedWords(v.slice(0, lt).trim()).replace(/^"|"$/g, '').trim()
+  return phrase || undefined
+}
+
+// The sender's DeltaChat profile name. DeltaChat carries the real `From:` —
+// display-name phrase included — as a *protected* header inside the encrypted
+// part, exactly like Chat-Group-ID; the outer envelope's From is reduced to a
+// bare address for delivery. So for any chatmail/DeltaChat contact this is the
+// ONLY place their name exists, and reading `email.from[0].name` off the JMAP
+// object (which reflects the outer header) always yields nothing.
+export function readSenderNameFromMime(headers: Record<string, string>): string | undefined {
+  const from = headers['from']
+  return from ? addressPhrase(from) : undefined
+}
+
 // Caches decrypted group id/name onto an Email's outer `headers` array so the
 // synchronous routing helpers (readGroupHeaders) can see them. Idempotent.
 export function cacheGroupHeaders(email: Email, g: GroupHeaders): void {

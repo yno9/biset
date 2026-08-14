@@ -1,14 +1,16 @@
 import {
   sessions, addSession, setCurrentInbox, currentInbox, loadStoredAccounts, accountsForActiveIdentity,
 } from './context.ts'
-import { initSession, loadInboxSummaries, logout, backfillContactNames } from './app.ts'
+import { initSession, loadInboxSummaries, backfillContactNames } from './app.ts'
 import type { InboxSummary } from './types.ts'
 import { inboxToHash, parseInboxHash } from './utils.ts'
 import { contactIdentityKey, representativeAddressForDid } from './did/contacts.ts'
 import { useSeqStore } from './did/dht/freshness.ts'
+import { setMlsAuthService } from './mls/group.ts'
+import { didAuthenticationService } from './mls/authservice.ts'
 import { showApp, startPolling, fetchMessages } from './ui/shell.ts'
 import { loadLeftInboxes, showMenuPage, setupLeftPane, refreshAccountsList, menuTargetInbox, openComposeTo, syncNotifToggle } from './ui/left-pane.ts'
-import { setupNewUserPage, showNewUserPage, setupRestorePage, showRestorePage } from './ui/account-create.ts'
+import { setupNewUserPage, showNewUserPage } from './ui/account-create.ts'
 import { showUserLanding } from './ui/user-landing.ts'
 import { primeAvatarCache } from './deltachat/avatar.ts'
 import { advertiseAllOwnAvatars } from './ap/avatar.ts'
@@ -169,6 +171,12 @@ async function bootSessions(accounts: ReturnType<typeof loadStoredAccounts>, onN
 
     if (sessions.length) {
       import('./did/discovery.ts').then(m => m.pullOwnContacts()).catch(() => {})
+      // Learn contact display names from history already in the store. Lives
+      // here rather than beside loadFromCache() in initInner: it needs
+      // sessions[] populated — both to tell our own addresses apart from
+      // contacts', and to know which private key decrypts a given message
+      // (a DeltaChat name is only in the encrypted part, see app.ts).
+      backfillContactNames()
     }
     return { configured }
   })()
@@ -186,6 +194,14 @@ async function bootSessions(accounts: ReturnType<typeof loadStoredAccounts>, onN
 // action (left-pane.ts openAccountMenu) — a self-service recovery path that
 // doesn't require clearing localStorage by hand.
 async function init() {
+  // The MLS Authentication Service, installed before anything can process a
+  // group message. Until it is, ts-mls's own validator accepts every
+  // credential, so a leaf's claim to be `did#kN` is structurally well-formed
+  // and completely unverified (mls/authservice.ts). Installed here rather than
+  // lazily at first use because "unverified until someone remembers to switch
+  // it on" is exactly the shape of a security control that silently never
+  // runs.
+  setMlsAuthService(didAuthenticationService)
   try {
     await initInner()
   } catch (e) {
@@ -231,21 +247,14 @@ async function route(rawHash: string, accounts: ReturnType<typeof loadStoredAcco
     return
   }
 
-  // #new and #restore are two pages that link to each other (the "Restore
-  // with recovery phrase" link, #restore's own "Back" link) — both pages'
-  // listeners are wired up regardless of which one is landed on first, so
-  // navigating between them never hits an unset-up form.
-  if (rawHash === '#new') {
+  // #restore is gone (2026-08-12): logging into an existing identity is the
+  // same form as creating one — type the address, and if it already exists
+  // #new turns itself into a login with a recovery-phrase box
+  // (account-create.ts's logInExistingAddress). The hash is still accepted
+  // so an old bookmark lands somewhere sensible rather than nowhere.
+  if (rawHash === '#new' || rawHash === '#restore') {
     setupNewUserPage()
-    setupRestorePage()
     showNewUserPage()
-    return
-  }
-
-  if (rawHash === '#restore') {
-    setupNewUserPage()
-    setupRestorePage()
-    showRestorePage()
     return
   }
 
@@ -295,7 +304,6 @@ async function route(rawHash: string, accounts: ReturnType<typeof loadStoredAcco
   if (!sessions.length) {
     if (!configured) {
       setupNewUserPage()
-      setupRestorePage()
       showNewUserPage()
       return
     }
@@ -364,7 +372,6 @@ async function initInner() {
     withTimeout(loadFromCache(), 3000),
     withTimeout(loadQuerystateFromIDB(), 3000),
   ])
-  backfillContactNames()
 
   // Per-user landing page (https://<host>/<localpart>[/]) takes precedence over
   // hash routing — it's how a shared user URL opens a conversation. This reads
@@ -424,18 +431,10 @@ document.querySelectorAll('.lp-hmenu-item').forEach(btn => {
   })
 })
 
-// Full local wipe — every account's cached credentials, messages, keys, DID
-// records. Server-side data is untouched (this only clears what the browser
-// holds); a stale password/token surviving a server-side reset (see the
-// 401-after-relay-reset incident) is exactly what this is for.
-document.getElementById('lp-hmenu-logout')?.addEventListener('click', async () => {
-  if (!confirm('Log out and erase ALL local data (accounts, messages, keys)? This cannot be undone.')) return
-  // The single teardown chokepoint (app.ts) — deregisters this device from
-  // every mediator, then wipes. This handler used to inline its OWN wipe that
-  // skipped the deregister entirely; that divergence is the whole "logout
-  // doesn't remove the key" saga. Do NOT reintroduce a second wipe here.
-  await logout()
-})
+// Logout moved off this menu entirely (2026-08-12, user-requested): it now
+// lives on the identity card's own hamburger (left-pane.ts's
+// renderAccountsList), next to the other whole-identity actions — this menu
+// is page navigation, and logging out was the one item on it that wasn't.
 {
   const menu = document.getElementById('lp-hamburger-menu')!
   let hideTimer: ReturnType<typeof setTimeout> | null = null

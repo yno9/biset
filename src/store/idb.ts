@@ -5,7 +5,7 @@
 // sync/session.ts's querystate-driven delta sync runs instead of a full
 // historical re-fetch (+ re-decrypt of every PGP message).
 const DB_NAME = 'biset-cache'
-const DB_VERSION = 3
+const DB_VERSION = 4
 
 export const STORES = {
   messages: 'messages',     // keyPath: ['_account', 'id']
@@ -21,6 +21,15 @@ export const STORES = {
   // localStorage already has (same origin), so mirroring plaintext isn't a
   // new exposure.
   accounts: 'accounts',
+  // MLS (PLANMLS.md): one row per group, holding ts-mls's own encoded group
+  // state — key material, not just a cache. Losing it means losing the ability
+  // to read the group at all (there is no server-side copy to re-fetch: that
+  // is the point of MLS), so unlike the rows above it must never be dropped as
+  // "stale cache". See mls/store.ts.
+  mlsgroups: 'mlsgroups',   // keyPath: 'id'
+  // Private halves of the key packages this device has published, keyed by
+  // key package ref — consumed when a Welcome that used one arrives.
+  mlskeys: 'mlskeys',       // keyPath: 'ref'
 } as const
 
 function openDB(): Promise<IDBDatabase> {
@@ -35,6 +44,8 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORES.contacts)) db.createObjectStore(STORES.contacts)
       if (!db.objectStoreNames.contains(STORES.querystate)) db.createObjectStore(STORES.querystate, { keyPath: 'acctKey' })
       if (!db.objectStoreNames.contains(STORES.accounts)) db.createObjectStore(STORES.accounts)
+      if (!db.objectStoreNames.contains(STORES.mlsgroups)) db.createObjectStore(STORES.mlsgroups, { keyPath: 'id' })
+      if (!db.objectStoreNames.contains(STORES.mlskeys)) db.createObjectStore(STORES.mlskeys, { keyPath: 'ref' })
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)

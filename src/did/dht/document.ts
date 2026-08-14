@@ -8,6 +8,8 @@
 // (extra keys, controllers, types, previous), extracting just what biset needs
 // (identity key, services, aka); unknown records are ignored, not an error.
 
+import { fragmentOf } from '../devicekid.ts'
+
 // Key type index (registry/index.html#key-type-index). biset uses 0 (Ed25519
 // identity key) and 3 (X25519 keyAgreement key, PLAN.md "Key material").
 const KEY_TYPE_ED25519 = 0
@@ -46,7 +48,13 @@ export interface DidService {
 // `n` need not be contiguous (a device that stops registering just leaves a
 // gap; did-dht's vm= list doesn't require one) — sort by `n` when encoding
 // for determinism, but never assume 1..N.
-export interface DidKeyAgreement { n: number; publicKey: Uint8Array }
+export interface DidKeyAgreement {
+  /** The verification-method FRAGMENT naming this device key — `#k_<hash>`
+   * for a derived kid (devicekid.ts) or `#k<n>` for one minted before that.
+   * Was a slot NUMBER; see devicekid.ts's header for why the number went. */
+  kid: string
+  publicKey: Uint8Array
+}
 
 export interface DidDocument {
   id: string // did:dht:...
@@ -67,20 +75,6 @@ export interface DidDocument {
   // (e.g. shown instead of the raw did:dht string), not verified by anyone.
   // Same trust level as any social profile's display name.
   name?: string
-  // biset extension: keyAgreement slot numbers a device was DELIBERATELY
-  // removed from (left-pane.ts's devices-list trash icon), riding along on
-  // the document itself so every OTHER device learns about the removal too —
-  // found live: a removal is otherwise only ever recorded in the ACTING
-  // device's own local cache (DidRecord.didCommRemovedKeys); every other
-  // still-active device of the same identity has its OWN independent local
-  // sibling cache that never heard about it, and grow-only means its very
-  // next routine republish (didcomm-devices.ts's syncDevicePosition) just
-  // re-publishes the removed slot right back — the deletion looked like it
-  // worked on the deleting device and then reappeared from a completely
-  // different one. A slot number here is small and non-secret (no key
-  // material, just an integer), so the cost of carrying it stays trivial
-  // even against BEP44's byte cap.
-  removedKeyNs?: number[]
 }
 
 export interface DnsRecord {
@@ -141,10 +135,17 @@ export function documentToRecords(doc: DidDocument): DnsRecord[] {
 
   // keyAgreement keys at _k<n> (t=3 X25519) — DIDComm's direct did:dht path
   // (PLAN.md "DIDComm transport identity"), one per registered device.
-  const kaKeys = [...(doc.keyAgreementKeys ?? [])].sort((a, b) => a.n - b.n)
+  // Sorted by kid so the encoding is deterministic; the ordering carries no
+  // meaning now that kids are not sequential.
+  const kaKeys = [...(doc.keyAgreementKeys ?? [])].sort((a, b) => (a.kid < b.kid ? -1 : a.kid > b.kid ? 1 : 0))
   for (const ka of kaKeys) {
     records.push({
-      name: `_k${ka.n}._did.`,
+      // The record label is the fragment without its `#`: `k1` for a legacy
+      // kid, `k_<hash>` for a derived one. did:dht's own example uses numeric
+      // labels; a derived kid is longer but still a valid DNS label, and this
+      // codebase is the only thing that publishes did:dht documents with
+      // device keys in them.
+      name: `_${ka.kid.slice(1)}._did.`,
       type: 'TXT',
       ttl: TTL,
       rdata: [`t=${KEY_TYPE_X25519};k=${b64urlEncode(ka.publicKey)}`],
@@ -172,7 +173,7 @@ export function documentToRecords(doc: DidDocument): DnsRecord[] {
   // k<n> (if any) is keyAgreement-only (agm=) — never authentication, per
   // did-dht spec's own worked example (spec.md: "vm=k0,k1;...;agm=k1;...") —
   // extended here to list every device's slot, not just k1.
-  const kaIds = kaKeys.map(ka => `k${ka.n}`)
+  const kaIds = kaKeys.map(ka => ka.kid.slice(1))
   const vm = ['k0', ...kaIds].join(',')
   const parts = ['v=0', `vm=${vm}`, 'auth=k0', 'asm=k0']
   if (kaIds.length) parts.push(`agm=${kaIds.join(',')}`)
@@ -182,7 +183,6 @@ export function documentToRecords(doc: DidDocument): DnsRecord[] {
   // could contain ';' or ',' — can never collide with the field separators
   // parseFields()/service-endpoint-list splitting relies on.
   if (doc.name) parts.push(`name=${b64urlEncode(new TextEncoder().encode(doc.name))}`)
-  if (doc.removedKeyNs?.length) parts.push(`rm=${doc.removedKeyNs.join(',')}`)
   if (doc.ext) parts.push(`ext=${doc.ext}`)
   const id = suffixOf(doc.id)
   records.push({ name: `_did.${id}.`, type: 'TXT', ttl: TTL, rdata: toChunks(parts.join(';')) })
@@ -218,13 +218,14 @@ export function recordsToDocument(did: string, records: DnsRecord[]): DidDocumen
   const vmIds = rootFields.vm ? rootFields.vm.split(',') : []
   const keyAgreementKeys: DidKeyAgreement[] = []
   for (const vid of vmIds) {
-    const m = /^k(\d+)$/.exec(vid)
-    if (!m || m[1] === '0') continue
-    const n = Number(m[1])
-    const raw = byName.get(`_k${n}._did`)
+    // `k0` is the identity key, never a device. Everything else beginning
+    // with `k` is one — numeric (legacy) or derived (devicekid.ts), read the
+    // same way since the label IS the fragment.
+    if (vid === 'k0' || !vid.startsWith('k')) continue
+    const raw = byName.get(`_${vid}._did`)
     if (!raw) continue
     const k = parseFields(raw).k
-    if (k) keyAgreementKeys.push({ n, publicKey: b64urlDecode(k) })
+    if (k) keyAgreementKeys.push({ kid: `#${vid}`, publicKey: b64urlDecode(k) })
   }
   const service: DidService[] = []
   const svcList = rootFields.svc ? rootFields.svc.split(',') : []
@@ -241,7 +242,6 @@ export function recordsToDocument(did: string, records: DnsRecord[]): DidDocumen
     }
   }
   const name = rootFields.name ? new TextDecoder().decode(b64urlDecode(rootFields.name)) : undefined
-  const removedKeyNs = rootFields.rm ? rootFields.rm.split(',').map(Number) : undefined
 
   const akaRaw = byName.get('_aka._did')
   const alsoKnownAs = akaRaw ? akaRaw.split(',') : []
@@ -249,7 +249,7 @@ export function recordsToDocument(did: string, records: DnsRecord[]): DidDocumen
   return {
     id: did, identityKey,
     ...(keyAgreementKeys.length ? { keyAgreementKeys } : {}),
-    alsoKnownAs, service, name, ext: rootFields.ext, removedKeyNs,
+    alsoKnownAs, service, name, ext: rootFields.ext,
   }
 }
 
@@ -273,6 +273,10 @@ export function suffixOf(did: string): string {
 // "#k2" or "did:dht:X#k2" -> 2. Shared by every caller that stores/reads a
 // keyAgreement kid as a bare fragment (DidRecord's didCommOwnKid/
 // didCommSiblingKeys) and needs its positional slot back.
+/** The legacy slot number behind a `#k<n>` kid. Only did:dht's own wire
+ * format still cares (its records are `_k<n>._did` and its `vm=` list is
+ * numeric by that spec's example); everything else addresses devices by the
+ * kid string. Throws for a derived kid, which has no number by design. */
 export function kidN(kid: string): number {
   const m = /#k(\d+)$/.exec(kid)
   if (!m) throw new Error(`bad DIDComm kid: ${kid}`)
@@ -290,7 +294,7 @@ export function keyAgreementKeysFromHex(
   own: { kid: string; publicKeyHex: string } | null,
   siblings: Array<{ kid: string; publicKeyHex: string }>,
 ): DidKeyAgreement[] {
-  // Deduped by slot number, own always wins — found live: a device that
+  // Deduped by kid, own always wins — found live: a device that
   // self-heals to a new kid (didcomm-devices.ts's syncDevicePosition,
   // mismatch branch) keeps its OWN local sibling cache around, and if that
   // cache still had a stale entry at the SAME number it just claimed (e.g.
@@ -298,13 +302,13 @@ export function keyAgreementKeysFromHex(
   // one `n` — a document.ts `_k<n>._did` record written twice with two
   // different keys, ambiguous the moment anything parses it back, and
   // visibly duplicated in left-pane.ts's device list.
-  const byN = new Map<number, Uint8Array>()
-  if (own) byN.set(kidN(own.kid), hexToBytesLocal(own.publicKeyHex))
+  const byKid = new Map<string, Uint8Array>()
+  if (own) byKid.set(fragmentOf(own.kid), hexToBytesLocal(own.publicKeyHex))
   for (const s of siblings) {
-    const n = kidN(s.kid)
-    if (!byN.has(n)) byN.set(n, hexToBytesLocal(s.publicKeyHex))
+    const kid = fragmentOf(s.kid)
+    if (!byKid.has(kid)) byKid.set(kid, hexToBytesLocal(s.publicKeyHex))
   }
-  return [...byN.entries()].map(([n, publicKey]) => ({ n, publicKey }))
+  return [...byKid.entries()].map(([kid, publicKey]) => ({ kid, publicKey }))
 }
 
 // Builds the biset DID document: identity key + one service per relay serving

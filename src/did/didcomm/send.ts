@@ -36,6 +36,12 @@ export interface SendOptions {
    * stranger stays anoncrypt — the privacy of NOT telling someone else's
    * mediator who is writing to their user is worth more than any of this. */
   silent?: boolean
+  /** Device kids to leave OUT of the fan-out. One use: the MLS Delivery
+   * Service distributing a commit to a group must not send it back to the
+   * device that submitted it — that device has already applied it, and MLS
+   * state cannot apply the same commit twice. Unknown kids are simply not
+   * present and cost nothing. */
+  skipKids?: string[]
 }
 
 /** `toDid`/`toDoc` must already be resolved (biset's own resolver, or
@@ -105,7 +111,11 @@ export async function sendDidComm(sender: DidCommSender, toDid: string, toDoc: P
 
   const errors: string[] = []
   const deliveredKids: string[] = []
-  for (const toXKid of toDoc.keyAgreement) {
+  const targetKids = opts.skipKids?.length ? toDoc.keyAgreement.filter(k => !opts.skipKids!.includes(k)) : toDoc.keyAgreement
+  // Everything was skipped: nothing to do, and NOT a delivery failure — the
+  // caller asked for exactly this (the only device is the one to skip).
+  if (targetKids.length === 0) return { delivered: 0, total: 0, errors: [], deliveredKids: [] }
+  for (const toXKid of targetKids) {
     try {
       // Hybrid negotiation (PLAN.md "did:webvh PQハイブリッド化" Phase 2): use
       // the PQ path only when BOTH sides are capable — this device has its
@@ -174,6 +184,6 @@ export async function sendDidComm(sender: DidCommSender, toDid: string, toDoc: P
   // than only logged, so the caller can tell the person who pressed send that
   // one of the recipient's devices didn't get it — a console warning nobody
   // has open is the same as silence.
-  if (errors.length > 0) console.warn(`[didcomm] sendDidComm: delivered to ${delivered}/${toDoc.keyAgreement.length} device(s) — ${errors.join('; ')}`)
-  return { delivered, total: toDoc.keyAgreement.length, errors, deliveredKids }
+  if (errors.length > 0) console.warn(`[didcomm] sendDidComm: delivered to ${delivered}/${targetKids.length} device(s) — ${errors.join('; ')}`)
+  return { delivered, total: targetKids.length, errors, deliveredKids }
 }

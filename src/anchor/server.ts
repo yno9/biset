@@ -48,7 +48,33 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import { zbase32Decode } from '../did/dht/zbase32.ts'
 
 const MAX_BODY = 1 << 12 // matches Go's io.LimitReader(r.Body, 1<<12)
-const MAX_WEBVH_LOG_BODY = 1 << 20 // 1MiB — a did:webvh log grows one full state+proof per entry
+// What one REQUEST may carry. A did:webvh log is append-only and every entry
+// embeds the whole document, so the log itself outgrows any request-sized
+// bound eventually — which is why a write sends only what is new (POST below)
+// and this bounds a handful of entries, not a history. It stays generous
+// because the whole-log PUT is still accepted from clients that predate the
+// append route.
+//
+// This is the ONLY bound available before the caller is known: writes here are
+// authorized by the update key inside the body (see handleWebvh's note), which
+// cannot be checked until the body has been buffered and parsed.
+const MAX_WEBVH_LOG_BODY = 1 << 20 // 1MiB
+
+// What one IDENTITY may accumulate on this disk, enforced explicitly rather
+// than left to the request cap to imply. The request cap used to be the de
+// facto storage bound — and did the job so badly that a legitimate client
+// crossed it and could no longer publish AT ALL, including the update that
+// would have shrunk its document (y@biset.md, 2026-08-13): every way out
+// needed an append, and the append was what no longer fit.
+//
+// Two numbers rather than one because the two failure modes differ: a log of
+// enormous entries and a log of endless tiny ones both need stopping, and
+// saying so plainly is better than a single byte count that silently means
+// different things for different documents.
+const serializeLines = (lines: string[]): string => lines.join('\n') + '\n'
+
+const MAX_WEBVH_LOG_ENTRIES = 10_000
+const MAX_WEBVH_LOG_BYTES = 16 << 20 // 16MiB
 
 // The one name a username/localpart may never be: every internal route below
 // (`/_anchor/identity/*`, `/_anchor/devices/vouch`, `/_anchor/pkarr/*`) lives
@@ -233,6 +259,7 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
         if (!jsonl) return notFound()
         return new Response(jsonl, { status: 200, headers: { ...CORS, 'Content-Type': 'text/jsonl' } })
       }
+      case 'POST':
       case 'PUT': {
         const body = await req.text()
         // A did:webvh log accumulates a full state + proof per entry (unlike
@@ -257,10 +284,37 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
         // entire history. A first-ever PUT for a username (genesis) is
         // unrestricted — first-come, same as claiming any name anywhere.
         const existing = webvh.read(domain, username)
-        if (existing) {
-          const existingLines = existing.split('\n').map(l => l.trim()).filter(Boolean)
+        const existingLines = existing ? existing.split('\n').map(l => l.trim()).filter(Boolean) : []
+        // POST carries ONLY the new entries; the stored log is the prefix.
+        // PUT carries the whole thing, as it always did.
+        //
+        // The distinction matters far past convenience: with PUT, the request
+        // grows with the history, so a long-lived identity eventually cannot
+        // write at all — and the operation it needs in order to shrink is
+        // itself a write. POST's body is one entry's worth forever.
+        const isAppend = req.method === 'POST' && existingLines.length > 0
+        const allLines = isAppend ? [...existingLines, ...lines] : lines
+        if (!isAppend && existing) {
+          // The append-only rule, unchanged for a whole-log PUT: every line
+          // the store already holds must come back byte-identical. `username`
+          // is a scarce human-readable name, and without this anyone could
+          // replace a stranger's log with a fabricated one and erase their
+          // history.
           const extendsExisting = lines.length >= existingLines.length && existingLines.every((l, i) => l === lines[i])
           if (!extendsExisting) return text('update must extend the existing log, not replace it', 409)
+        }
+        if (allLines.length > MAX_WEBVH_LOG_ENTRIES) {
+          return text(`log would exceed ${MAX_WEBVH_LOG_ENTRIES} entries for this name`, 507)
+        }
+        const totalBytes = allLines.reduce((n, l) => n + l.length + 1, 0)
+        if (totalBytes > MAX_WEBVH_LOG_BYTES) {
+          return text(`log would exceed ${MAX_WEBVH_LOG_BYTES} bytes for this name`, 507)
+        }
+        let allEntries: LogEntry[]
+        try {
+          allEntries = isAppend ? [...existingLines.map(l => JSON.parse(l) as LogEntry), ...entries] : entries
+        } catch {
+          return text('stored log is not valid JSONL', 500)
         }
         // Full did:webvh verification (SCID, entryHash chain, versionTime
         // monotonicity, every entry's Data Integrity proof against the
@@ -291,15 +345,15 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
         //    Squatting like that could never be RESOLVED (the resolver applies
         //    the same rule), but it would still consume a scarce human-readable
         //    name and shadow the real owner's first-ever PUT.
-        const scid = entries[0]?.parameters?.scid
+        const scid = allEntries[0]?.parameters?.scid
         if (!scid) return text('first entry parameters.scid missing', 400)
         const locationDid = buildBisetWebvhDid(scid, domain, username)
         try {
-          resolveEntries(locationDid, entries)
+          resolveEntries(locationDid, allEntries)
         } catch (e) {
           return text(`invalid did:webvh log: ${e instanceof Error ? e.message : String(e)}`, 400)
         }
-        webvh.write(domain, username, body)
+        webvh.write(domain, username, serializeLines(allLines))
         return new Response(null, { status: 204, headers: CORS })
       }
       default:

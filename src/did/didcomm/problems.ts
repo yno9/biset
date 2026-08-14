@@ -76,7 +76,20 @@ export function formatProblem(body: ProblemBody): string {
 
 /** A problem-report plaintext → an Error whose message is the formatted
  * code+comment, for the client to throw. */
-export function problemReportError(msg: DidCommPlaintext): Error {
+/** A problem-report turned into a throwable, keeping the machine-readable
+ * `code` alongside the human text. Callers that must branch on the reason —
+ * the MLS client treats an epoch conflict as "apply the winner and retry",
+ * not as a failure (mls/transport.ts) — need the code, and parsing it back out
+ * of the message string is exactly the kind of thing that breaks silently when
+ * the wording changes. */
+export class DidCommProblemError extends Error {
+  constructor(readonly code: string, message: string, readonly args: string[] = []) {
+    super(message)
+    this.name = 'DidCommProblemError'
+  }
+}
+
+export function problemReportError(msg: DidCommPlaintext): DidCommProblemError {
   const body = (msg.body ?? {}) as ProblemBody
-  return new Error(`DIDComm problem-report ${formatProblem(body)}`)
+  return new DidCommProblemError(body.code ?? '', `DIDComm problem-report ${formatProblem(body)}`, body.args ?? [])
 }

@@ -13,3 +13,10 @@ export function all(): Thread[] {
 export function put(thread: Thread): void {
   store.set(thread.id as string, thread)
 }
+
+/** Drops everything. For logout (app.ts), which no longer reloads the page —
+ * so in-memory state has to be emptied explicitly rather than dying with the
+ * document. */
+export function clear(): void {
+  store.clear()
+}

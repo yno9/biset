@@ -72,7 +72,6 @@ export async function moveWebvhIdentity(opts: MoveWebvhIdentityOptions): Promise
   delete newRec.didCommPublicKey
   delete newRec.didCommPrivateKey
   delete newRec.didCommSiblingKeys
-  delete newRec.didCommRemovedKeys
   delete newRec.didCommMediatorUrl
   delete newRec.didCommRoutingKey
 

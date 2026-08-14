@@ -59,3 +59,10 @@ export function put(email: Email): void {
 export function remove(account: string, id: string): void {
   store.delete(keyOf(account, id))
 }
+
+/** Drops everything. For logout (app.ts), which no longer reloads the page —
+ * so in-memory state has to be emptied explicitly rather than dying with the
+ * document. */
+export function clear(): void {
+  store.clear()
+}

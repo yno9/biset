@@ -41,6 +41,31 @@ interface Connection {
    * by an older build) — the kid itself is then the best available answer,
    * which is exactly what was returned before. */
   asGiven: Map<string, string>
+  /** kid → the X25519 public key that kid authenticated with when it was
+   * registered, hex.
+   *
+   * This is what lets a device keep talking to its mediator after the
+   * published document has moved on. Every request is authenticated by
+   * resolving the sender's kid, and resolving means reading the identity's
+   * DID document — so a device that is momentarily absent from it (mid-publish,
+   * or dropped by another device) could do NOTHING, including the one thing it
+   * needed to do: deregister, or re-register. It deadlocked two devices of one
+   * identity in production (2026-08-13).
+   *
+   * Recording the key at registration is only correct because a device kid is
+   * DERIVED FROM ITS KEY now (did/devicekid.ts): kid → key is one-to-one and
+   * permanent, so a key remembered here can never become the wrong answer for
+   * that kid. Under the old positional scheme (`#k1`) it would have been
+   * exactly wrong — a reused slot number meant a kid whose key legitimately
+   * changed, which is the "integrity check failed" incident ARC.md records.
+   *
+   * The security property is unchanged: joining a keylist still requires
+   * resolving the document, so only a device the identity has PUBLISHED can
+   * ever be registered. What changes is that it stays authenticated afterwards.
+   *
+   * Absent for kids registered before this existed — those fall back to
+   * resolving, exactly as they always did. */
+  keyByKid: Map<string, string>
 }
 
 interface StoredConnection {
@@ -48,6 +73,7 @@ interface StoredConnection {
   keylist: string[]
   lastSeen?: Record<string, number>
   asGiven?: Record<string, string>
+  keyByKid?: Record<string, string>
 }
 
 /** Registering is free and open by design, so the list has to have a bottom.
@@ -81,6 +107,7 @@ export class ConnectionStore {
           // known. It fills in on each device's next pickup.
           lastSeen: new Map(Object.entries(s.lastSeen ?? {})),
           asGiven: new Map(Object.entries(s.asGiven ?? {})),
+          keyByKid: new Map(Object.entries(s.keyByKid ?? {})),
         })
       }
     } catch (e) {
@@ -95,6 +122,7 @@ export class ConnectionStore {
         .map(c => ({
           clientDid: c.clientDid, keylist: [...c.keylist],
           lastSeen: Object.fromEntries(c.lastSeen), asGiven: Object.fromEntries(c.asGiven),
+          keyByKid: Object.fromEntries(c.keyByKid),
         }))
       mkdirSync(dirname(this.persistPath), { recursive: true, mode: 0o700 })
       writeFileSync(this.persistPath, JSON.stringify(out), { mode: 0o600 })
@@ -114,7 +142,7 @@ export class ConnectionStore {
     if (this.byClientDid.size >= MAX_CONNECTIONS) {
       throw new ConnectionFullError('mediator: too many registered clients')
     }
-    this.byClientDid.set(clientDid, { clientDid, keylist: new Set(), lastSeen: new Map(), asGiven: new Map() })
+    this.byClientDid.set(clientDid, { clientDid, keylist: new Set(), lastSeen: new Map(), asGiven: new Map(), keyByKid: new Map() })
     this.save()
   }
 
@@ -140,7 +168,7 @@ export class ConnectionStore {
    * keylist-update-response (`success` vs `no_change`), and answering
    * `success` for a no-op tells the client its request did something it
    * didn't. */
-  addKey(clientDid: string, recipientKid: string, asGiven = recipientKid): boolean {
+  addKey(clientDid: string, recipientKid: string, asGiven = recipientKid, publicKeyHex?: string): boolean {
     this.register(clientDid)
     const conn = this.byClientDid.get(clientDid)!
     if (conn.keylist.has(recipientKid)) return false
@@ -150,6 +178,10 @@ export class ConnectionStore {
     // After the capacity check, never before — a refused add must leave nothing
     // behind.
     if (asGiven !== recipientKid) conn.asGiven.set(recipientKid, asGiven)
+    // Recorded at the one moment it is known to be right: this request was
+    // authenticated by resolving the document, so the key it arrived with IS
+    // the published one.
+    if (publicKeyHex) conn.keyByKid.set(recipientKid, publicKeyHex)
     conn.keylist.add(recipientKid)
     this.save()
     return true
@@ -168,6 +200,15 @@ export class ConnectionStore {
    * kid (and thus its connection) is untouched. */
   /** Returns whether the keylist actually CHANGED — false means there was
    * nothing to remove (see addKey's note on why the distinction is reported). */
+  /** The key this kid registered with, if it was recorded. */
+  keyFor(recipientKid: string): string | undefined {
+    for (const conn of this.byClientDid.values()) {
+      const k = conn.keyByKid.get(recipientKid)
+      if (k) return k
+    }
+    return undefined
+  }
+
   removeKey(clientDid: string, recipientKid: string): boolean {
     const conn = this.byClientDid.get(clientDid)
     if (!conn || !conn.keylist.has(recipientKid)) return false

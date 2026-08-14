@@ -18,7 +18,8 @@
     "@types/wicg-file-system-access": "^2023.10.7",
     "didcomm-node": "^0.4.1",
     "knip": "^6.27.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "@hpke/core": "1.8.0"
   },
   "dependencies": {
     "@noble/ciphers": "^2.2.0",

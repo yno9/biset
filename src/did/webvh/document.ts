@@ -8,6 +8,7 @@ import {
   encodeMultikey, decodeMultikey, encodeX25519Multikey, decodeX25519Multikey,
   encodeMlkem768Multikey, decodeMlkem768Multikey,
 } from './multikey.ts'
+import { fragmentOf, isDeviceKid, isMlkemKid, mlkemKidFor, deviceKidForMlkem } from '../devicekid.ts'
 import type { DidKeyAgreement } from '../dht/document.ts'
 
 // ML-KEM-768 keyAgreement key (PLAN.md "did:webvh PQハイブリッド化", Phase 1) —
@@ -16,17 +17,32 @@ import type { DidKeyAgreement } from '../dht/document.ts'
 // concept as DidKeyAgreement (dht/document.ts), paired to the X25519 entry at
 // the same `n` — one entry per registered device, kept as its own type rather
 // than folded into DidKeyAgreement since that type is shared with did:dht.
-export interface DidMlkemKeyAgreement { n: number; publicKey: Uint8Array }
+export interface DidMlkemKeyAgreement {
+  /** The FRAGMENT of the X25519 device kid this ML-KEM key belongs to
+   * (`#k1`, `#k_<hash>`) — NOT its own `#kk…` id, which is derived from it.
+   * Pairing by a shared suffix replaces pairing by slot number; see
+   * devicekid.ts's mlkemKidFor. */
+  kid: string
+  publicKey: Uint8Array
+}
+
+/** A DIDCommMessaging endpoint as DIDComm v2 defines it: `accept` and
+ * `routingKeys` live INSIDE `serviceEndpoint`, not beside it. */
+export interface DidCommServiceEndpoint {
+  uri: string
+  accept: string[]
+  routingKeys: string[]
+}
 
 export interface WebvhService {
   id: string
   type: string
-  serviceEndpoint: string | string[]
+  serviceEndpoint: string | string[] | DidCommServiceEndpoint
   protocol?: string
   address?: string
-  // DIDCommMessaging extension (W3C-standard fields, mirrors dht/document.ts's
-  // DidService — an identity's mediator is reached through its own routing
-  // key, and the client declares which DIDComm versions it accepts).
+  /** @deprecated The pre-DIDComm-v2 placement: these belong inside
+   * `serviceEndpoint`. Still READ so documents published before the change
+   * keep working (didcomm/resolve.ts accepts either), never written. */
   accept?: string[]
   routingKeys?: string[]
 }
@@ -50,29 +66,23 @@ export interface WebvhDidDocument {
   keyAgreement?: string[]
   service: WebvhService[]
   alsoKnownAs: string[]
-  // biset extension (same purpose as dht/document.ts's removedKeyNs): device
-  // slot numbers deliberately revoked, carried on the document itself so
-  // every OTHER device (and any resolver) learns about a removal too.
-  removedKeyNs?: number[]
   name?: string
 }
 
-// keyAgreement verification-method id scheme: `{did}#k{n}` — deliberately the
-// SAME fragment shape dht/document.ts uses (`_k<n>` there, `#k<n>` here as a
-// DID URL fragment), so kidN()/keyAgreementKeysFromHex() (dht/document.ts) —
-// both already method-agnostic in content — can be reused verbatim by the
-// shared multi-device logic (didcomm-devices.ts) instead of reimplemented.
-export function webvhKeyAgreementId(did: string, n: number): string {
-  return `${did}#k${n}`
+// A device key's verification-method id is the DID plus its kid fragment —
+// the kid IS the name, derived from the key itself (devicekid.ts), and this
+// function only joins the two. Same fragment shape dht/document.ts uses, so
+// the shared multi-device logic (didcomm-devices.ts) stays method-agnostic.
+export function webvhKeyAgreementId(did: string, kidFragment: string): string {
+  return `${did}${fragmentOf(kidFragment)}`
 }
 
-// ML-KEM-768 counterpart's verification-method id — `#kk{n}`, deliberately
-// distinct from `#k{n}` (never matched by the `/#k(\d+)$/` pattern
-// keyAgreementKeysFromWebvhState/kidN use, since `k` isn't a digit) so the two
-// key types coexist in one keyAgreement list without either parser
-// misreading the other's entries.
-export function webvhMlkemKeyAgreementId(did: string, n: number): string {
-  return `${did}#kk${n}`
+// ML-KEM-768 counterpart's verification-method id: the same suffix under the
+// `#kk` prefix (devicekid.ts's mlkemKidFor), so the pair is readable from the
+// strings alone. `#kk…` and `#k…` stay distinguishable by prefix because a
+// derived X25519 suffix always starts with `_` and a legacy one with a digit.
+export function webvhMlkemKeyAgreementId(did: string, kidFragment: string): string {
+  return `${did}${mlkemKidFor(fragmentOf(kidFragment))}`
 }
 
 export interface DidCommServiceOpts {
@@ -88,7 +98,6 @@ export interface BuildWebvhStateOpts {
   // propagated yet or the whole identity predates PQ support, not an error.
   mlkemKeyAgreementKeys?: DidMlkemKeyAgreement[]
   didCommService?: DidCommServiceOpts
-  removedKeyNs?: number[]
   name?: string
   /** The DID string this identity was published under BEFORE a domain move
    * (webvh/publish.ts's moveDidToNewDomain, PLANWEBVH.md §9) — appended to
@@ -117,17 +126,19 @@ export function buildBisetWebvhState(
     { id: keyId, type: 'Multikey', controller: did, publicKeyMultibase: encodeMultikey(rootPublicKey) },
   ]
 
-  const kaKeys = [...(opts.keyAgreementKeys ?? [])].sort((a, b) => a.n - b.n)
+  // Sorted by kid for a deterministic document; the order carries no meaning.
+  const byKid = (a: { kid: string }, b: { kid: string }) => (a.kid < b.kid ? -1 : a.kid > b.kid ? 1 : 0)
+  const kaKeys = [...(opts.keyAgreementKeys ?? [])].sort(byKid)
   for (const ka of kaKeys) {
     verificationMethod.push({
-      id: webvhKeyAgreementId(did, ka.n), type: 'Multikey', controller: did,
+      id: webvhKeyAgreementId(did, ka.kid), type: 'Multikey', controller: did,
       publicKeyMultibase: encodeX25519Multikey(ka.publicKey),
     })
   }
-  const mlkemKaKeys = [...(opts.mlkemKeyAgreementKeys ?? [])].sort((a, b) => a.n - b.n)
+  const mlkemKaKeys = [...(opts.mlkemKeyAgreementKeys ?? [])].sort(byKid)
   for (const ka of mlkemKaKeys) {
     verificationMethod.push({
-      id: webvhMlkemKeyAgreementId(did, ka.n), type: 'Multikey', controller: did,
+      id: webvhMlkemKeyAgreementId(did, ka.kid), type: 'Multikey', controller: did,
       publicKeyMultibase: encodeMlkem768Multikey(ka.publicKey),
     })
   }
@@ -138,26 +149,45 @@ export function buildBisetWebvhState(
   }))
   if (opts.didCommService) {
     service.push({
-      id: `${did}#didcomm`, type: 'DIDCommMessaging', serviceEndpoint: [opts.didCommService.mediatorUrl],
-      accept: ['didcomm/v2'], routingKeys: [opts.didCommService.routingKey],
+      // DIDComm v2's own shape: one object carrying uri/accept/routingKeys.
+      // This used to publish the endpoint as an array with `accept` and
+      // `routingKeys` as SIBLINGS of it, which is the pre-v2 placement — a
+      // conforming agent reading that finds the mediator's URI and no routing
+      // keys, so it cannot Forward to us at all. biset's own resolver read the
+      // flat form, which is why nothing here noticed.
+      id: `${did}#didcomm`, type: 'DIDCommMessaging',
+      serviceEndpoint: { uri: opts.didCommService.mediatorUrl, accept: ['didcomm/v2'], routingKeys: [opts.didCommService.routingKey] },
     })
   }
 
   return {
-    '@context': ['https://www.w3.org/ns/did/v1'],
+    // Multikey is what every verificationMethod here uses, and it is defined
+    // by the security vocabulary rather than by DID Core — a document that
+    // names the type without the context that defines it is only readable by
+    // implementations that already assume it. did:webvh hashes with JCS rather
+    // than JSON-LD canonicalization, so this costs nothing at verification
+    // time and makes the document self-describing for everyone else.
+    '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/multikey/v1'],
     id: did,
     verificationMethod,
     authentication: [keyId],
     assertionMethod: [keyId],
-    ...(kaKeys.length || mlkemKaKeys.length ? {
-      keyAgreement: [
-        ...kaKeys.map(ka => webvhKeyAgreementId(did, ka.n)),
-        ...mlkemKaKeys.map(ka => webvhMlkemKeyAgreementId(did, ka.n)),
-      ],
-    } : {}),
+    // ML-KEM entries are deliberately NOT in `keyAgreement`.
+    //
+    // `keyAgreement` means "you may run key agreement with these". Every
+    // implementation but this one reads that as X25519-shaped ECDH, so listing
+    // 1184-byte ML-KEM keys there hands a conforming agent a list where half
+    // the entries fail — and biset's own resolver only avoided it by filtering
+    // on a naming convention nobody else knows (didcomm/resolve.ts).
+    //
+    // They stay in `verificationMethod`, which is where a key that exists but
+    // has no standard relationship belongs. biset pairs each with its device
+    // by the shared kid suffix (devicekid.ts's mlkemKidFor) and reads it from
+    // there; anyone else simply sees keys they have no use for, which is the
+    // honest state of affairs while MLS/DIDComm PQ hybrids are pre-standard.
+    ...(kaKeys.length ? { keyAgreement: kaKeys.map(ka => webvhKeyAgreementId(did, ka.kid)) } : {}),
     service,
     alsoKnownAs: [...addrs.map(a => `mailto:${a}`), ...(opts.movedFrom ? [opts.movedFrom] : [])],
-    ...(opts.removedKeyNs?.length ? { removedKeyNs: opts.removedKeyNs } : {}),
     ...(opts.name ? { name: opts.name } : {}),
   }
 }
@@ -177,30 +207,32 @@ export function rootPublicKeyFromWebvhState(doc: WebvhDidDocument): Uint8Array |
 /** Extracts the keyAgreement X25519 keys back out of a resolved document —
  * the read-side counterpart to buildBisetWebvhState's keyAgreementKeys
  * option. Reads verificationMethod entries named by the `keyAgreement` id
- * list, parses each `#k<n>` fragment for its slot number (dht/document.ts's
- * kidN, applied to the DID URL fragment). */
+ * list; the fragment IS the kid, so nothing is parsed out of it. */
 export function keyAgreementKeysFromWebvhState(doc: WebvhDidDocument): DidKeyAgreement[] {
   const ids = new Set(doc.keyAgreement ?? [])
   const out: DidKeyAgreement[] = []
   for (const vm of doc.verificationMethod) {
     if (!ids.has(vm.id)) continue
-    const m = /#k(\d+)$/.exec(vm.id)
-    if (!m) continue
-    try { out.push({ n: Number(m[1]), publicKey: decodeX25519Multikey(vm.publicKeyMultibase) }) } catch { /* skip malformed entry */ }
+    const kid = fragmentOf(vm.id)
+    if (!isDeviceKid(kid)) continue
+    try { out.push({ kid, publicKey: decodeX25519Multikey(vm.publicKeyMultibase) }) } catch { /* skip malformed entry */ }
   }
   return out
 }
 
 /** ML-KEM-768 counterpart of keyAgreementKeysFromWebvhState — reads back the
- * `#kk<n>` entries a PQ-capable device published alongside its X25519 one. */
+ * `#kk…` entries a PQ-capable device published alongside its X25519 one. */
 export function mlkemKeyAgreementKeysFromWebvhState(doc: WebvhDidDocument): DidMlkemKeyAgreement[] {
-  const ids = new Set(doc.keyAgreement ?? [])
   const out: DidMlkemKeyAgreement[] = []
   for (const vm of doc.verificationMethod) {
-    if (!ids.has(vm.id)) continue
-    const m = /#kk(\d+)$/.exec(vm.id)
-    if (!m) continue
-    try { out.push({ n: Number(m[1]), publicKey: decodeMlkem768Multikey(vm.publicKeyMultibase) }) } catch { /* skip malformed entry */ }
+    // Read from verificationMethod alone: these are deliberately not in
+    // `keyAgreement` (see buildBisetWebvhState), so requiring them to be
+    // listed there would find nothing.
+    const kid = fragmentOf(vm.id)
+    if (!isMlkemKid(kid)) continue
+    // Stored under the X25519 kid it belongs to, not its own — that is the
+    // key the rest of the code pairs it with.
+    try { out.push({ kid: deviceKidForMlkem(kid), publicKey: decodeMlkem768Multikey(vm.publicKeyMultibase) }) } catch { /* skip malformed entry */ }
   }
   return out
 }

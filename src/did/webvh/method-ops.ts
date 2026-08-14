@@ -2,7 +2,7 @@
 // method-specific piece (build + publish a document) that file's shared
 // multi-device logic calls through. Thin: wraps webvh/publish.ts's
 // updateDocument + webvh/resolver.ts's resolve, no new business logic.
-import { hexToBytes } from '../../utils.ts'
+import { hexToBytes, firstServiceEndpoint } from '../../utils.ts'
 import { resolve } from './resolver.ts'
 import { updateDocument, type BisetRelay } from './publish.ts'
 import { keyAgreementKeysFromWebvhState, mlkemKeyAgreementKeysFromWebvhState, type WebvhDidDocument } from './document.ts'
@@ -26,7 +26,7 @@ function relaysAndAddressesFromState(doc: WebvhDidDocument): { relays: BisetRela
     .filter(s => s.type === 'JMAPRelay')
     .map(s => ({
       id: s.id.split('#')[1] ?? s.id,
-      serverUrl: Array.isArray(s.serviceEndpoint) ? s.serviceEndpoint[0]! : s.serviceEndpoint,
+      serverUrl: firstServiceEndpoint(s.serviceEndpoint),
       protocol: s.protocol, address: s.address,
     }))
   const addresses = doc.alsoKnownAs.filter(a => a.startsWith('mailto:')).map(a => a.slice('mailto:'.length))
@@ -40,7 +40,6 @@ export const webvhMethodOps: MethodOps = {
       ? {
         keyAgreementKeys: keyAgreementKeysFromWebvhState(doc),
         mlkemKeyAgreementKeys: mlkemKeyAgreementKeysFromWebvhState(doc),
-        removedKeyNs: doc.removedKeyNs,
       }
       : null
   },
@@ -86,7 +85,6 @@ export const webvhMethodOps: MethodOps = {
         stateOpts: {
           keyAgreementKeys: opts.keyAgreementKeys,
           mlkemKeyAgreementKeys: opts.mlkemKeyAgreementKeys,
-          removedKeyNs: opts.removedKeyNs,
           // No `removeDidCommService` handling needed here (unlike
           // dht/method-ops.ts): buildBisetWebvhState rebuilds `service` from
           // scratch on every entry, so an absent didCommService already IS

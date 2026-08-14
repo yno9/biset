@@ -20,8 +20,14 @@ export function bytesToHex(bytes: Uint8Array): string {
 // starting to reappear ad hoc (webvh/method-ops.ts, webvh/publish.ts,
 // didcomm/resolve.ts) each time new code touched a document from both
 // methods; one copy here instead of a fifth.
-export function firstServiceEndpoint(se: string | string[]): string {
-  return Array.isArray(se) ? (se[0] ?? '') : se
+export function firstServiceEndpoint(se: string | string[] | { uri?: string }): string {
+  // Three shapes, all valid DID Core: a bare string (biset's own JMAPRelay
+  // entries), an array (what a DIDCommMessaging service used to be published
+  // as), and the object DIDComm v2 defines — `{uri, accept, routingKeys}` —
+  // which is what one is published as now (webvh/document.ts).
+  if (Array.isArray(se)) return se[0] ?? ''
+  if (typeof se === 'object' && se !== null) return se.uri ?? ''
+  return se
 }
 
 // ── Relay pairs ───────────────────────────────────────────────────────────────

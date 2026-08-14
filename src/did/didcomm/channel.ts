@@ -17,6 +17,10 @@ import type { Email } from 'jmap-rfc-types'
 import { sessions, addSession, accountKey, relaysForId, DIDCOMM_SERVER_URL } from '../../context.ts'
 import { getDidRecord } from '../store.ts'
 import { ownDid, registerWithMediator, mediatorUrl } from '../didcomm-devices.ts'
+import { DELIVER as MLS_DELIVER } from './mls-transport.ts'
+import { readDelivery } from '../../mls/transport.ts'
+import { receiveSelfGroupDelivery, catchUpSelfGroup, syncToOwnDevices, encodeDeviceSync, selfGroupIdHex, commitPendingProposals, type DeviceSyncPayload } from '../../mls/self-group.ts'
+import { loadGroup, saveGroup } from '../../mls/store.ts'
 import { displayNameFor } from '../dht/publish.ts'
 import { PUBLIC_PKARR_FALLBACKS } from '../resolver.ts'
 import { resolveDidCommDoc, resolveSenderPublicKey } from './resolve.ts'
@@ -30,7 +34,6 @@ import { hexToBytes } from '../../utils.ts'
 import { avatarDataUrl, saveAvatar } from '../../deltachat/avatar.ts'
 import { recentlyMissed, noteMiss, didcommDocumentMissKey } from '../negcache.ts'
 import { cachedSenderKey } from './sender-keys.ts'
-import { rememberSiblingSync, dueSiblingSyncs, hasPendingSiblingSyncs, noteSiblingAttempt, type SiblingSync } from './sibling-outbox.ts'
 import { fetchVapidPublicKey } from '../../push/api.ts'
 import * as messages from '../../store/messages.ts'
 import * as contactsStore from '../../store/contacts.ts'
@@ -315,6 +318,12 @@ function maybeAutoReply(own: DidCommSender, selfDid: string, msg: DidCommPlainte
 export async function pollDidCommOnce(did: string, onNameResolved?: () => void): Promise<boolean> {
   const sender = await ownSender(did)
   if (!sender) return false
+  const acctKey = accountKey(didCommAccount(did))
+  // Before the queue, because what this asks for is precisely what the queue
+  // may not contain: the Delivery Service fans out to the roster a committer
+  // declared and cannot verify (mls/self-group.ts's catchUpSelfGroup), so an
+  // empty queue is not evidence that nothing was sent.
+  let gotOne = await catchUpSelfGroupIfDue(did, sender, acctKey)
   let delivered: Awaited<ReturnType<typeof pickupDeliver>>
   try {
     // Authenticating an incoming message resolves the SENDER's DID document
@@ -331,12 +340,12 @@ export async function pollDidCommOnce(did: string, onNameResolved?: () => void):
     delivered = await pickupDeliver(sender.mediator, sender.own, resolveKey, 10, resolveKey)
   } catch (e) {
     console.warn('[didcomm] pickup failed:', e instanceof Error ? e.message : e)
-    return false
+    return gotOne
   }
-  if (!delivered.length) return false
+  if (!delivered.length) return gotOne
 
-  const acctKey = accountKey(didCommAccount(did))
-  let gotOne = false
+  // Messages that must NOT be acknowledged this cycle — see the MLS branch.
+  const withheld = new Set<string>()
   for (const d of delivered) {
     // Per message, not per pickup. One timestamp for the whole batch gave every
     // message in it an identical receivedAt, which left their display order
@@ -368,6 +377,31 @@ export async function pollDidCommOnce(did: string, onNameResolved?: () => void):
           if (rot.newDid && rebindContactDid(rot.priorDid, rot.newDid)) await persist.flushContacts()
         })
         .catch(e => console.warn('[didcomm] from_prior verification failed (ignoring rotation claim):', e instanceof Error ? e.message : e))
+    }
+    // A delivery from this identity's own self group: another of our devices
+    // telling us what it just sent (mls/self-group.ts's syncToOwnDevices), or
+    // a commit/proposal changing which devices this identity has. All of them
+    // advance the group's own state; only a device-sync payload produces
+    // something to file, and it is filed exactly like the copy the sending
+    // device kept for itself.
+    if (body.type === MLS_DELIVER) {
+      const applied: Awaited<ReturnType<typeof receiveSelfGroupDelivery>> = await receiveSelfGroupDelivery(did, readDelivery(body.body))
+        .catch(e => { console.warn('[didcomm] self-group delivery failed:', e instanceof Error ? e.message : e); return { retry: true } })
+      // Held back from the acknowledgement below, so the mediator keeps it and
+      // the next poll tries again. Acknowledging a commit this device could
+      // not apply would leave it permanently a step behind the group, with
+      // nothing left to fetch.
+      if (applied?.retry) withheld.add(d.ackId)
+      // A sibling declared its own departure. MLS cannot let it remove itself,
+      // so this device commits the proposal on its behalf — promptly, because
+      // until someone does, the leaving device is still a member and still
+      // published (mls/self-group.ts's leaveSelfGroup).
+      if (applied?.sawProposal) await commitPendingSelfGroup(did)
+      if (applied?.sync) {
+        await fileDeviceSync(did, acctKey, applied.sync)
+        gotOne = true
+      }
+      continue
     }
     // Only basicmessage is chat and belongs in the inbox. Everything else is a
     // protocol message: hand it to the inbound dispatcher, which auto-replies
@@ -480,10 +514,16 @@ export async function pollDidCommOnce(did: string, onNameResolved?: () => void):
   // failed ack just means the batch is re-fetched next cycle (messages.put is
   // keyed by id, so a redelivery is deduped on storage, not doubled).
   try {
-    await acknowledgeMessages(sender.mediator, sender.own, delivered.map(d => d.ackId))
+    const toAck = delivered.map(d => d.ackId).filter(id => !withheld.has(id))
+    if (toAck.length) await acknowledgeMessages(sender.mediator, sender.own, toAck)
   } catch (e) {
     console.warn('[didcomm] messages-received ack failed (will redeliver next poll):', e instanceof Error ? e.message : e)
   }
+  // A withheld ack means a delivery arrived that this device could not apply,
+  // which in a strictly ordered group almost always means an EARLIER one never
+  // arrived. Ask for it now rather than at the next heartbeat: until the gap
+  // is filled nothing else in the group can be applied either.
+  if (withheld.size && await catchUpSelfGroupIfDue(did, sender, acctKey, true)) gotOne = true
   return gotOne
 }
 
@@ -573,9 +613,10 @@ export function startDidCommPolling(did: string, onNew: () => void): () => void 
   stopDidCommPolling(did)
   const tick = serialize(async () => {
     if (await pollDidCommOnce(did, onNew)) onNew()
-    // After the pickup, never before: collecting what has arrived is what the
-    // person is waiting on, and the outbox is a background debt.
-    await flushSiblingOutbox(did).catch(e => console.warn('[didcomm] sibling outbox flush failed (will retry):', e instanceof Error ? e.message : e))
+    // No outbox flush here any more: a device-sync copy is submitted to the
+    // Delivery Service, which owns the fan-out, and each device's mediator
+    // queue holds it until collected — nothing is owed by this device once a
+    // send returns.
   })
   tick() // don't wait a full interval for the first check
   _polls.set(did, { tick, timer: setInterval(tick, pollIntervalMs()) })
@@ -739,7 +780,7 @@ export async function sendViaDidComm(selfDid: string, toDid: string, body: strin
   // bubble/left-pane row showed the raw DID with no way to ever resolve it
   // (unlike a remote contact's name, which self-resolves off THEIR doc).
   const fromName = displayNameFor(relaysForId(selfDid).filter(s => s.account.serverUrl !== DIDCOMM_SERVER_URL))
-  syncToSiblingDevices(sender.own, selfDid, toDid, msgBody, fromName)
+  syncToOwnDevicesBestEffort(selfDid, toDid, msgBody, fromName)
   const acctKey = accountKey(didCommAccount(selfDid))
   const email = didCommToEmail(id, selfDid, selfDid, toDid, body, sentAt, fromName, subject)
   ;(email.keywords as any)['$seen'] = true // own outgoing mail is never "unread"
@@ -752,106 +793,127 @@ export async function sendViaDidComm(selfDid: string, toDid: string, body: strin
     : { ok: true, fromEmail: selfDid }
 }
 
-/** Best-effort fan-out of an already-sent message to this identity's OWN
- * other devices, so a second open browser's thread gains it too.
+/** File a device-sync copy — a message one of this identity's OTHER devices
+ * sent — into the local store, exactly as the sending device filed it.
  *
- * Works by resolving OUR OWN DID document rather than asking the mediator
- * anything new: every device that registers DIDComm publishes its own
- * keyAgreement entry into the SAME shared did:dht document (document.ts's
- * DidKeyAgreement note — the exact mechanism that already lets a stranger's
- * single send reach all of a recipient's devices), so it doubles as the
- * multi-device roster for free. Filters OUR sending kid out before handing
- * the (possibly single-entry, possibly empty) rest to sendDidComm — it fans
- * out to every kid in whatever doc it's given with no self-awareness of its
- * own, so an unfiltered list would mail this device a copy of its own
- * message back through the mediator. `syncTo`/`sentAt` on the payload are
- * what let a sibling's pollDidCommOnce recognize this as "my own sent copy,
- * actually addressed to `syncTo`" rather than an ordinary incoming message
- * from myself. Never affects DidCommSendResult — the message to the real
- * recipient already succeeded by the time this runs; a sibling that's
- * offline or fails to resolve just doesn't get synced yet, exactly like a
- * poll cycle that hasn't run. */
-function syncToSiblingDevices(
-  own: DidCommSender, selfDid: string, toDid: string,
-  msgBody: { content: string; id: string; sentAt: string; subject?: string },
+ * One function because a copy arrives two ways: pushed by the Delivery Service
+ * (the ordinary case), and pulled by this device when it notices it is missing
+ * deliveries. The two must produce the identical row; two copies of this
+ * filing logic would be two ways for them to drift. */
+async function fileDeviceSync(did: string, acctKey: string, synced: DeviceSyncPayload): Promise<void> {
+  const at = synced.sentAt || new Date().toISOString()
+  const copy = didCommToEmail(synced.id, did, did, synced.syncTo, synced.content, at, synced.fromName, synced.subject ?? '')
+  ;(copy.keywords as any)['$seen'] = true // our own outgoing message is never unread
+  ;(copy as any)._account = acctKey
+  ;(copy as any)._relay = DIDCOMM_SERVER_URL
+  messages.put(copy)
+  await persist.flushMessage(copy)
+  if (synced.avatar) await saveAvatar(did, synced.avatar).catch(() => {})
+}
+
+/** How often a device asks the Delivery Service whether it is missing
+ * self-group deliveries, absent any other reason to ask.
+ *
+ * There has to be a heartbeat and not only an on-demand check, because the
+ * failure it exists for is SILENT: a device left out of the fan-out sees no
+ * deliveries, so it has no gap to notice — the absence looks exactly like a
+ * quiet group. Asking on a timer is the only way to tell the two apart. */
+const SELF_GROUP_CATCH_UP_INTERVAL_MS = 5 * 60 * 1000
+const lastCatchUp = new Map<string, number>()
+
+/** Run the catch-up if it is due (or `force`d by evidence of a gap: a delivery
+ * that would not apply). Returns whether it filed anything.
+ *
+ * Best-effort throughout — a DS that cannot be reached, or a group this device
+ * has not joined, simply means nothing to catch up on right now. */
+async function catchUpSelfGroupIfDue(
+  did: string, sender: { own: DidCommSender; mediator: MediatorInfo }, acctKey: string, force = false,
+): Promise<boolean> {
+  if (!force && Date.now() - (lastCatchUp.get(did) ?? 0) < SELF_GROUP_CATCH_UP_INTERVAL_MS) return false
+  lastCatchUp.set(did, Date.now())
+  try {
+    const { syncs, sawProposal } = await catchUpSelfGroup(sender.mediator, sender.own)
+    for (const sync of syncs) await fileDeviceSync(did, acctKey, sync)
+    if (sawProposal) await commitPendingSelfGroup(did)
+    return syncs.length > 0
+  } catch (e) {
+    console.warn('[didcomm] self-group catch-up failed:', e instanceof Error ? e.message : e)
+    return false
+  }
+}
+
+/** Commit whatever the self group has pending — a sibling's declared
+ * departure, in practice. Best-effort and silent about ordinary losses: if
+ * another device commits first, its commit reaches this one as an ordinary
+ * delivery and both end up in the same place. */
+async function commitPendingSelfGroup(did: string): Promise<void> {
+  try {
+    const rec = await getDidRecord(did)
+    if (!rec?.didCommMediatorUrl || !rec.didCommPrivateKey || !rec.didCommOwnKid) return
+    const stored = await loadGroup(selfGroupIdHex(did))
+    if (!stored) return
+    const own: DidCommSender = { did, xKid: `${did}${rec.didCommOwnKid}`, xPriv: hexToBytes(rec.didCommPrivateKey) }
+    const mediator = await fetchMediatorInfo(rec.didCommMediatorUrl)
+    const next = await commitPendingProposals(mediator, own, stored.state)
+    await saveGroup({ ...stored, state: next })
+  } catch (e) {
+    console.warn('[didcomm] could not commit a self-group proposal:', e instanceof Error ? e.message : e)
+  }
+}
+
+/** Hand an already-sent message to this identity's OWN other devices, so a
+ * second open browser's thread gains it too. DIDComm has no carbon-copy
+ * protocol, so the sender does this itself.
+ *
+ * One MLS application message to the self group, submitted once. The Delivery
+ * Service fans it out per device, and each device's mediator queue holds it
+ * until collected — which is why there is no retry, no owed-work record and no
+ * outbox here any more. The previous version resolved this identity's own
+ * document for a device list, sent a separate copy per kid, and needed a
+ * durable outbox because a copy that failed to send existed nowhere else: the
+ * sending device was the only party holding it, so a failure meant two devices
+ * disagreed about the conversation permanently, with nothing anywhere
+ * recording the debt.
+ *
+ * Never affects DidCommSendResult — the message to the real recipient has
+ * already succeeded by the time this runs. A device that has not joined its
+ * self group yet simply syncs nothing; its own sends still reach their
+ * recipient, and it starts syncing as soon as it joins. */
+function syncToOwnDevicesBestEffort(
+  selfDid: string, toDid: string,
+  msgBody: { content: string; id: string; sentAt: string; subject?: string; avatar?: string },
   fromName: string | undefined,
 ): void {
-  // Written down FIRST, attempted second. Everything below is best-effort and
-  // always was; the difference is that a failure now leaves a record of what
-  // this device still owes, which flushSiblingOutbox retries.
-  const entry: Parameters<typeof rememberSiblingSync>[0] = { id: msgBody.id, selfDid, toDid, body: msgBody }
-  if (fromName) entry.fromName = fromName
-  rememberSiblingSync(entry)
-    .then(() => deliverSiblingSync(own, { ...entry, deliveredKids: [], attempts: 0, lastAttemptAt: 0, createdAt: Date.now() }))
-    .catch(e => console.warn('[didcomm] sync to sibling devices failed (message still sent, will retry):', e instanceof Error ? e.message : e))
-}
-
-/** One attempt at an owed sync copy, recording what it achieved. Never throws:
- * the message to the real recipient already succeeded, and a sibling that
- * can't be reached this minute is retried on a later poll tick. */
-async function deliverSiblingSync(own: DidCommSender, entry: SiblingSync): Promise<void> {
-  try {
-    await attemptSiblingSync(own, entry)
-  } catch (e) {
-    await noteSiblingAttempt(entry.id, [], false).catch(() => {})
-    console.warn('[didcomm] device-sync copy failed (queued for retry):', e instanceof Error ? e.message : e)
-  }
-}
-
-async function attemptSiblingSync(own: DidCommSender, entry: SiblingSync): Promise<void> {
-  const { selfDid, toDid, body: msgBody, fromName } = entry
-  // skipCache on a RETRY only. The first attempt may legitimately use the
-  // cached document, but a retry exists because something was wrong — and one
-  // of the things that can be wrong is precisely that the cached document
-  // predates a sibling registering, which is a failure a cached read repeats
-  // forever.
-  const selfDoc = await resolveDocOwnFirst(selfDid, selfDid, { skipCache: entry.attempts > 0 })
-  if (!selfDoc) throw new Error(`could not resolve own DID document for ${selfDid}`)
-  {
-    const siblings = selfDoc.keyAgreement.filter(k => k !== own.xKid && !entry.deliveredKids.includes(k))
-    // Nothing left to reach — either this identity has no other device, or
-    // every one of them already has a copy. Either way the debt is settled.
-    if (siblings.length === 0) { await noteSiblingAttempt(entry.id, [], true); return }
-    // fromName travels with it (rather than each sibling re-resolving its own
-    // owner's name) so the synced row matches the sending device's own bubble
-    // exactly — same displayNameFor source, just carried instead of re-derived.
-    // `sentAt` rides along inside msgBody now, the same value every OTHER
-    // recipient of this message gets — it used to be passed in separately and
-    // attached only here, which is how the sender's send time ended up being
-    // something only this identity's own devices could see.
-    const syncBody: typeof msgBody & { syncTo: string; fromName?: string } = { ...msgBody, syncTo: toDid }
-    if (fromName) syncBody.fromName = fromName
-    // silent: this is a copy of what the user just sent, going to their own
-    // other devices. A notification there announces their own action back to
-    // them — the one message in the system that is never news. See
-    // SendOptions.silent: the mediator recognizes the sibling delivery from its
-    // own keylist and skips the Web Push, so no banner and no badge.
-    const fanout = await sendDidComm(own, selfDid, { ...selfDoc, keyAgreement: siblings }, { type: 'https://didcomm.org/basicmessage/2.0/message', body: syncBody, silent: true })
-    // Done only when EVERY sibling got one. A partial fan-out keeps the entry,
-    // with the reached kids recorded so the retry doesn't send them a second
-    // copy — sendDidComm succeeds as long as one device took it, which is
-    // exactly the case that used to look like success and leave a device out.
-    await noteSiblingAttempt(entry.id, fanout.deliveredKids, fanout.delivered === fanout.total)
-    if (fanout.delivered < fanout.total) {
-      console.warn(`[didcomm] device-sync copy reached ${fanout.delivered}/${fanout.total} of this identity's other devices — retrying the rest`)
+  void (async () => {
+    const rec = await getDidRecord(selfDid)
+    if (!rec?.didCommMediatorUrl || !rec.didCommPrivateKey || !rec.didCommOwnKid) return
+    const stored = await loadGroup(selfGroupIdHex(selfDid))
+    if (!stored) return // not in the group yet — nothing to sync to, and nothing owed
+    // State this device is no longer a member of encrypts to an epoch the
+    // group has left: the Delivery Service accepts the submission (its roster
+    // is per identity, and this IS our identity), fans it out, and every other
+    // device fails to open it. The copy would be lost with nothing reporting
+    // it. Skipping is honest — the next registration rejoins and syncing
+    // resumes.
+    const { isActiveMember } = await import('../../mls/group.ts')
+    if (!isActiveMember(stored.state, `${selfDid}${rec.didCommOwnKid}`)) {
+      console.warn('[didcomm] skipping device sync: this device is not a current member of its own group')
+      return
     }
-  }
-}
-
-/** Retries every sync copy this identity still owes. Called from the poll tick,
- * which is the only thing that runs on a timer while the app is open; a boot
- * with pending entries therefore picks them up on its very first tick.
- *
- * Cheap when there is nothing owed (one IndexedDB read, no network), which is
- * the normal case — worth checking on every tick precisely because the whole
- * point is that a failure must not need the user to do anything. */
-export async function flushSiblingOutbox(did: string): Promise<void> {
-  if (!(await hasPendingSiblingSyncs(did))) return
-  const sender = await ownSender(did)
-  if (!sender) return
-  for (const entry of await dueSiblingSyncs(did)) {
-    await deliverSiblingSync(sender.own, entry)
-  }
+    const payload: DeviceSyncPayload = {
+      t: 'sync', id: msgBody.id, content: msgBody.content, sentAt: msgBody.sentAt, syncTo: toDid,
+      ...(msgBody.subject ? { subject: msgBody.subject } : {}),
+      ...(fromName ? { fromName } : {}),
+      ...(msgBody.avatar ? { avatar: msgBody.avatar } : {}),
+    }
+    const own: DidCommSender = {
+      did: selfDid, xKid: `${selfDid}${rec.didCommOwnKid}`, xPriv: hexToBytes(rec.didCommPrivateKey),
+      mlkemPriv: rec.mlkemPrivateKey ? hexToBytes(rec.mlkemPrivateKey) : undefined,
+    }
+    const mediator = await fetchMediatorInfo(rec.didCommMediatorUrl)
+    const next = await syncToOwnDevices(mediator, own, stored.state, encodeDeviceSync(payload))
+    await saveGroup({ ...stored, state: next })
+  })().catch(e => console.warn('[didcomm] device sync failed (message still sent):', e instanceof Error ? e.message : e))
 }
 
 /** Sets up everything a DIDComm-registered identity's inbox needs: the
@@ -861,11 +923,66 @@ export async function flushSiblingOutbox(did: string): Promise<void> {
  * succeeds so the new channel appears without a reload. `onNew` re-renders
  * the left pane / active thread the same way a JMAP SSE event does. */
 export async function setupDidCommChannel(did: string, onNew: () => void): Promise<boolean> {
-  if (!(await hasDidCommChannel(did))) return false
+  if (!(await hasDidCommChannel(did))) {
+    // A device that holds a DIDComm key but no mediator URL never finished
+    // registering — and could never finish, because the boot-time
+    // re-registration below is gated on `didCommMediatorUrl`, the field
+    // registration itself sets. Nothing retried, nothing was published, and no
+    // error appeared anywhere: the only trace was hasDidCommChannel's own
+    // warning saying `mediatorUrl: false` forever.
+    //
+    // Found live (2026-08-13) on an identity whose registration had failed
+    // earlier for an unrelated reason (its did:webvh log had outgrown the
+    // store's request limit). Once that was fixed the device still sat in this
+    // dead end, because the thing that would have re-tried was switched off by
+    // the failure it was supposed to recover from.
+    if (!(await completeFirstRegistration(did))) return false
+  }
   ensureDidCommSession(did)
   reassertKeylistRegistration(did)
   startDidCommPolling(did, onNew)
   return true
+}
+
+/** One attempt to finish a registration that was started and never completed.
+ *
+ * Which mediator: the identity's OWN published DIDCommMessaging service if it
+ * still has one — that is the mediator its other devices are already using,
+ * and picking a different one would split the identity across two. Otherwise
+ * this deployment's default, but only when it answers: registering against a
+ * mediator that is down would fail anyway, and the probe is what tells this
+ * apart from "this identity deliberately has no mediator".
+ *
+ * Returns false without complaint for an identity that simply has no DIDComm
+ * key — that is not a broken registration, it is an identity that never
+ * started one. */
+async function completeFirstRegistration(did: string): Promise<boolean> {
+  const rec = await getDidRecord(did)
+  if (!rec?.didCommPrivateKey || !rec.didCommOwnKid || rec.didCommMediatorUrl) return false
+  try {
+    // The identity's own document first, and the deployment default only if it
+    // has none — asking this deployment before asking the identity would put a
+    // device on a mediator its siblings are not using, and each device would
+    // then be reachable only through its own.
+    const doc = await resolveDidCommDoc(did).catch(() => null)
+    let url = doc?.service.find(s => s.type === 'DIDCommMessaging')?.serviceEndpoint.uri ?? ''
+    if (!url) {
+      const { anchorReachable, mediatorUrl: defaultMediatorUrl } = await import('../didcomm-devices.ts')
+      // Probed rather than assumed: registering against a mediator that is
+      // down fails anyway, and the probe is what separates that from "this
+      // identity deliberately has no mediator".
+      if (await anchorReachable()) url = defaultMediatorUrl()
+    }
+    if (!url) return false
+    console.info(`[didcomm] finishing an incomplete registration for ${did} at ${url}`)
+    await registerWithMediator(url)
+    return await hasDidCommChannel(did)
+  } catch (e) {
+    // Loud, because this is the recovery path for a device that is otherwise
+    // silently unreachable — a warning nobody reads is how it stayed stuck.
+    console.warn('[didcomm] could not finish registration:', e instanceof Error ? e.message : e)
+    return false
+  }
 }
 
 /** A full re-registration on every boot, not just at the one-time "Register

@@ -57,6 +57,19 @@ declare const __BISET_CONFIG__: { hostname?: string } | undefined
 let resetDidMethodToggle: (() => void) | undefined
 let setSignupAvailability: ((mode: 'full' | 'blocked' | 'checking') => void) | undefined
 let refreshSignupAvailability: (() => void) | undefined
+// The DID published by whatever address is currently typed into #new, or
+// null when that name is free (2026-08-12). Set by the debounced DNS-anchor
+// lookup in setupNewUserPage; read by the submit handler to decide whether
+// this is a signup or a login, and by applySignupAvailability to label the
+// button. Module-level for the same reason the two above are: the lookup and
+// the handlers that consume it are wired at different times.
+let loginDidForTypedName: string | null = null
+
+/** The #new submit button's resting label: this form is a signup until the
+ * typed address turns out to already exist, at which point it's a login. */
+function signupButtonLabel(): string {
+  return loginDidForTypedName ? 'Log in' : 'Start'
+}
 
 function getHostname(): string {
   try { return (window as any).__BISET_CONFIG__?.hostname || '' } catch { return '' }
@@ -112,11 +125,10 @@ export function randomHex4(): string {
   return (arr[0] & 0xffff).toString(16).padStart(4, '0')
 }
 
-export function showNewUserPage() {
-  const page = document.getElementById('new-user-page')
-  if (!page) return
-  page.style.display = 'flex'
-  try { history.replaceState(null, '', '#new') } catch {}
+// Everything opening #new does EXCEPT deciding where it's shown — shared by
+// the full-page overlay (showNewUserPage) and the inline mount on the
+// account page (mountNewUserPageInline).
+function refreshNewUserPage(opts: { focus: boolean }) {
   resetDidMethodToggle?.()
   // Whether #new can offer email creation at all — and, tied to the exact
   // same check, which DID method a submit right now would actually use — is
@@ -130,12 +142,75 @@ export function showNewUserPage() {
   const hostnameEl = document.getElementById('nu-hostname')
   if (hostnameEl) hostnameEl.textContent = getHostname()
   const usernameInput = document.getElementById('nu-username') as HTMLInputElement
+  // A fresh random name — free by definition, and set programmatically so no
+  // `input` event fires to clear the previous visit's lookup for us.
+  loginDidForTypedName = null
   if (usernameInput) usernameInput.value = randomHex4()
   // password/envelope concept disabled (commented out for easy revival —
   // see index.html's matching <!-- --> block and setupNewUserPage below).
   // const pwInput = document.getElementById('nu-password') as HTMLInputElement
   // if (pwInput) { pwInput.value = generatePassphrase(); pwInput.focus() }
-  usernameInput?.focus()
+  if (opts.focus) usernameInput?.focus()
+}
+
+export function showNewUserPage() {
+  const page = document.getElementById('new-user-page')
+  if (!page) return
+  unmountNewUserPageInline() // may be parked on the account page; take it back first
+  page.style.display = 'flex'
+  try { history.replaceState(null, '', '#new') } catch {}
+  refreshNewUserPage({ focus: true })
+}
+
+// ── Inline mount on the account page (2026-08-12, user-requested) ──────────
+// With zero accounts, #account shows this signup form in place of a bare
+// "No accounts" line — the one thing there is to do from that page anyway.
+//
+// The ELEMENT is moved rather than cloned or re-templated: setupNewUserPage
+// binds its listeners by id (getElementById), so a clone would either
+// duplicate every id in the document or arrive with no handlers at all.
+// Moving the live node keeps every listener attached exactly once.
+//
+// The overlay geometry lives in index.html's inline `style` attribute, so
+// it's stashed on first mount and written back verbatim on unmount — no
+// second copy of those values to drift out of step.
+let _nuOverlayStyle: string | null = null
+
+export function mountNewUserPageInline(container: HTMLElement): void {
+  const page = document.getElementById('new-user-page')
+  if (!page) return
+  if (_nuOverlayStyle === null) _nuOverlayStyle = page.getAttribute('style') ?? ''
+  if (page.parentElement !== container) container.appendChild(page)
+  // In-flow, not a fixed full-bleed overlay: no inset/z-index/background of
+  // its own. Still centred vertically though — with nothing else on the page
+  // in this state, top-aligning it leaves the form clinging to the header
+  // above a screen of blank space. min-height gives `justify-content` an
+  // axis to centre within (a flex column only centres inside height it
+  // actually has), and it's a floor rather than a fixed height so a small
+  // window just grows and scrolls instead of clipping the form.
+  page.setAttribute('style', 'display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 220px);padding:4px 0 20px')
+  // The "biset / beta" masthead belongs to a full-page takeover; inside the
+  // account page it's a second app title under the one already on screen.
+  const title = page.querySelector<HTMLElement>('.biset-title')
+  if (title) title.style.display = 'none'
+  // No focus grab — this form shares the page with the account list and the
+  // "+ New Relay" button, so stealing the caret on every render would fight
+  // whatever the user was actually doing.
+  refreshNewUserPage({ focus: false })
+}
+
+/** Puts the node back in `document.body` as the hidden full-page overlay it
+ * started as. Called before anything replaces the account page's markup —
+ * otherwise the node would be destroyed along with the container it's parked
+ * in, and #new would be permanently empty for the rest of the session. */
+export function unmountNewUserPageInline(): void {
+  const page = document.getElementById('new-user-page')
+  if (!page) return
+  if (_nuOverlayStyle !== null) page.setAttribute('style', _nuOverlayStyle)
+  page.style.display = 'none'
+  const title = page.querySelector<HTMLElement>('.biset-title')
+  if (title) title.style.display = ''
+  if (page.parentElement !== document.body) document.body.appendChild(page)
 }
 
 function hideNewUserPage() {
@@ -143,7 +218,17 @@ function hideNewUserPage() {
   if (page) page.style.display = 'none'
 }
 
+// Both setup functions bind listeners with addEventListener and are called
+// from several routes (main.ts's #new and #restore branches both call BOTH,
+// and route() re-runs on every hashchange) — so without a guard the same
+// handler stacks up and a single submit fires it N times. Latent before the
+// account page started mounting this form inline too; not latent any more.
+let _newUserPageWired = false
+let _restorePageWired = false
+
 export function setupNewUserPage() {
+  if (_newUserPageWired) return
+  _newUserPageWired = true
   const usernameInput = document.getElementById('nu-username') as HTMLInputElement
   // password/envelope concept disabled (commented out for easy revival —
   // index.html's matching <!-- --> block has the fuller note). These
@@ -160,6 +245,83 @@ export function setupNewUserPage() {
 
   tosInput.addEventListener('change', () => {
     tosIcon.style.opacity = tosInput.checked ? '1' : '0.3'
+  })
+
+  // ── "is this name already someone's?" (2026-08-12) ──────────────────────
+  // Typing an address that already exists turns this form into a login
+  // rather than a signup — restore stopped being a separate concept the
+  // moment the DID could be discovered from the address itself. The check is
+  // the address's DNS anchor (`_did.<user>.<domain>` TXT, discovery.ts's own
+  // DoH client), NOT the webvh log: the log is the thing a login actually
+  // needs, but it is ~1MB for an established identity, which is absurd to
+  // fetch on every keystroke. The TXT record is a few hundred bytes and
+  // carries the full DID, which is exactly what the login then needs to
+  // resolve that log — so the cheap check hands the expensive step its input.
+  let lookupSeq = 0
+  let lookupTimer: ReturnType<typeof setTimeout> | null = null
+  const phraseEl = document.getElementById('nu-phrase') as HTMLTextAreaElement | null
+  // Grows with the phrase instead of offering a drag handle: a recovery
+  // phrase is pasted, not composed, so the only useful height is "however
+  // tall the thing you just pasted is". Four rows is the resting size — one
+  // line short of it looks like a single-line field and invites typing a
+  // password into it.
+  const PHRASE_MIN_ROWS = 4
+  const autosizePhrase = () => {
+    if (!phraseEl) return
+    const cs = getComputedStyle(phraseEl)
+    // `lineHeight: normal` computes to the string, not a px value — fall back
+    // to the usual ~1.4×font-size rather than producing NaN.
+    const line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4
+    const padding = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
+    // box-sizing is border-box here, so the height we set includes borders —
+    // but scrollHeight doesn't, hence adding them back on.
+    const borders = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth)
+    phraseEl.style.height = 'auto' // let scrollHeight shrink back down, not just grow
+    const content = Math.max(phraseEl.scrollHeight, line * PHRASE_MIN_ROWS + padding)
+    phraseEl.style.height = `${content + borders}px`
+  }
+  phraseEl?.addEventListener('input', autosizePhrase)
+  const applyTypedNameLookup = (did: string | null) => {
+    loginDidForTypedName = did
+    // Never override 'Checking…'/disabled — availability owns that state and
+    // re-renders the label itself when it resolves.
+    if (!submitBtn.disabled) submitBtn.textContent = signupButtonLabel()
+    // The phrase box only exists for the login case: an existing address
+    // can't be signed up for, and a free one has no phrase to check against.
+    // Cleared on the way out so a half-typed phrase can't survive into a
+    // different address's login.
+    if (phraseEl) {
+      phraseEl.style.display = did ? '' : 'none'
+      if (!did) phraseEl.value = ''
+      // Only measurable once it's actually displayed (a hidden element has
+      // no scrollHeight), so size it here rather than at wiring time.
+      if (did) autosizePhrase()
+    }
+  }
+  usernameInput.addEventListener('input', () => {
+    // Optimistically back to signup the instant the name changes: a stale
+    // "Log in" on a name that no longer resolves is the one wrong answer
+    // that would actually mislead (it sends the user off looking for a
+    // recovery phrase for an account that doesn't exist).
+    applyTypedNameLookup(null)
+    if (lookupTimer) clearTimeout(lookupTimer)
+    const typed = usernameInput.value.trim()
+    const hostname = getHostname()
+    if (!typed || !hostname) return
+    const seq = ++lookupSeq
+    lookupTimer = setTimeout(async () => {
+      let did: string | null = null
+      try {
+        const { lookupDidForAddressFresh } = await import('../did/discovery.ts')
+        did = await lookupDidForAddressFresh(`${typed}@${hostname}`)
+      } catch { /* offline / DoH refused — treat as "free", the signup path */ }
+      // Two staleness guards, not one: `seq` catches a later lookup already
+      // in flight, and the value comparison catches the field having moved
+      // on to something this answer was never about (including
+      // refreshNewUserPage's programmatic reset, which fires no input event).
+      if (seq !== lookupSeq || usernameInput.value.trim() !== typed) return
+      applyTypedNameLookup(did)
+    }, 400)
   })
 
   // did:dht deprecated (2026-08-11): every identity #new creates is now
@@ -184,7 +346,7 @@ export function setupNewUserPage() {
     submitBtn.style.alignSelf = 'stretch'
     usernameRow?.appendChild(submitBtn)
     submitBtn.disabled = mode === 'blocked' || mode === 'checking'
-    submitBtn.textContent = mode === 'checking' ? 'Checking…' : 'Start'
+    submitBtn.textContent = mode === 'checking' ? 'Checking…' : signupButtonLabel()
     if (mode === 'blocked') {
       errEl.textContent = BLOCKED_MSG
       errEl.style.display = 'block'
@@ -232,6 +394,14 @@ export function setupNewUserPage() {
     // if (!pw) { errEl.textContent = 'Password required'; errEl.style.display = 'block'; return }
     if (!username) { errEl.textContent = 'Username required'; errEl.style.display = 'block'; return }
     if (!hostname) { errEl.textContent = 'hostname not set in config.json'; errEl.style.display = 'block'; return }
+    // This address already exists: log in instead of trying to create it
+    // (which would 409 at the relay anyway). Checked BEFORE the terms
+    // checkbox — an existing account agreed to them when it was created,
+    // and re-gating an ordinary login behind them is nonsense.
+    if (loginDidForTypedName) {
+      await logInExistingAddress(`${username}@${hostname}`, loginDidForTypedName, phraseEl, errEl, submitBtn)
+      return
+    }
     if (!tosInput.checked) { errEl.textContent = 'Please agree to the Terms of Beta-testing'; errEl.style.display = 'block'; return }
 
     submitBtn.disabled = true
@@ -445,7 +615,7 @@ export function setupNewUserPage() {
       // the rotation-less root identity (DID.md). masterSecret is in hand here;
       // it isn't persisted, so this first showing is the natural moment.
       const { showMnemonic } = await import('./mnemonic.ts')
-      showMnemonic(masterSecret, didRecord.did, { firstTime: true })
+      showMnemonic(masterSecret, { firstTime: true })
 
       // Publishing is no longer opt-in-only: the mediator registration above
       // already published as part of its own 3-phase publish cycle.
@@ -456,85 +626,60 @@ export function setupNewUserPage() {
     }
   })
 
-  // "Restore with recovery phrase" is a link to the standalone #restore page
-  // (setupRestorePage/showRestorePage below), not an inline toggle — a
-  // did:webvh restore needs a second field (the DID) that doesn't belong
-  // cluttering the ordinary signup form. main.ts calls setupRestorePage()
-  // alongside this on every route that can reach either page, so its
-  // listeners exist by the time this link (or #restore's own "Back" link)
-  // is clicked.
-  const restoreToggle = document.getElementById('nu-restore-toggle')
-  restoreToggle?.addEventListener('click', () => showRestorePage())
 }
 
-// ── Recovery-phrase login (#restore page) ───────────────────────────────────
-// 24 words → seed → DID → resolve relays → connect. No password, no need to
-// know your relays/address (the DID document supplies them) for did:dht. The
-// optional DID field is did:webvh-only (see did/restore.ts's file header for
-// why that method needs it and did:dht doesn't) — left blank, it's simply
-// unused.
-export function showRestorePage() {
-  const page = document.getElementById('restore-page')
-  if (!page) return
-  hideNewUserPage()
-  page.style.display = 'flex'
-  try { history.replaceState(null, '', '#restore') } catch {}
-  document.getElementById('rp-phrase')?.focus()
-}
-
-function hideRestorePage() {
-  const page = document.getElementById('restore-page')
-  if (page) page.style.display = 'none'
-}
-
-export function setupRestorePage() {
-  const backLink = document.getElementById('rp-back')
-  const phraseEl = document.getElementById('rp-phrase') as HTMLTextAreaElement | null
-  const didEl = document.getElementById('rp-did') as HTMLInputElement | null
-  const submitBtn = document.getElementById('rp-submit') as HTMLButtonElement | null
-  const errEl = document.getElementById('rp-error')
-
-  backLink?.addEventListener('click', () => {
-    hideRestorePage()
-    showNewUserPage()
-  })
-
-  submitBtn?.addEventListener('click', async () => {
-    if (!phraseEl || !errEl) return
-    const phrase = phraseEl.value.trim()
-    if (!phrase) { errEl.textContent = 'Enter your recovery phrase'; errEl.style.display = 'block'; return }
-    const did = didEl?.value.trim() || undefined
-    errEl.style.display = 'none'
-    submitBtn.disabled = true; submitBtn.textContent = 'Restoring…'
-    try {
-      const { restoreFromMnemonic } = await import('../did/restore.ts')
-      const res = await restoreFromMnemonic(phrase, did)
-      if ('error' in res) { errEl.textContent = res.error; errEl.style.display = 'block'; return }
-      // restoreFromMnemonic already persisted + registered + PGP'd each
-      // session via connectAndPersist — nothing left to do here but reflect
-      // the outcome in the UI.
-      const hasRelays = res.sessions.length > 0
-      hideRestorePage()
-      const { showApp, showSysMsg, startPolling } = await import('./shell.ts')
-      showApp()
-      const { setupLeftPane, showMenuPage, refreshAccountsList } = await import('./left-pane.ts')
-      await setupLeftPane()
-      if (hasRelays) startPolling()
-      // Unconditional, not just when hasRelays — restore.ts's own mediator
-      // registration (fire-and-forget, may still be in flight) refreshes
-      // this again once it lands, but a relay-less identity still needs
-      // this FIRST call so /account isn't left showing stale/empty state
-      // right after restoring (this used to run only inside `if
-      // (hasRelays)`, which is exactly backwards for a relay-less identity —
-      // that's the one case with nothing else to trigger a render at all).
-      refreshAccountsList()
-      showMenuPage('/account')
-      showSysMsg(hasRelays ? 'Identity restored' : 'Identity restored (no relay)')
-    } catch (e) {
-      errEl.textContent = 'Restore failed: ' + (e instanceof Error ? e.message : String(e))
-      errEl.style.display = 'block'
-    } finally {
-      submitBtn.disabled = false; submitBtn.textContent = 'Restore'
-    }
-  })
+// ── Recovery-phrase login ───────────────────────────────────────────────────
+// 24 words → seed → resolve the DID's document → connect its relays. There is
+// no separate "restore" page any more (2026-08-12, user-requested): restoring
+// an identity and logging into one were always the same operation, and the
+// only reason they were split was that a did:webvh restore needed a DID
+// string the user had to know. It doesn't — the address's own DNS anchor
+// publishes it (setupNewUserPage's lookup), so the address the user was
+// already typing is enough, and the phrase box appears under it in place.
+async function logInExistingAddress(
+  address: string,
+  did: string,
+  phraseEl: HTMLTextAreaElement | null,
+  errEl: HTMLElement,
+  submitBtn: HTMLButtonElement,
+): Promise<void> {
+  const phrase = phraseEl?.value.trim() ?? ''
+  if (!phrase) {
+    errEl.textContent = `${address} already exists — paste its 24-word recovery phrase to log in`
+    errEl.style.display = 'block'
+    phraseEl?.focus()
+    return
+  }
+  errEl.style.display = 'none'
+  submitBtn.disabled = true
+  submitBtn.textContent = 'Logging in…'
+  try {
+    const { restoreFromMnemonic } = await import('../did/restore.ts')
+    const res = await restoreFromMnemonic(phrase, did)
+    if ('error' in res) { errEl.textContent = res.error; errEl.style.display = 'block'; return }
+    // restoreFromMnemonic already persisted + registered + PGP'd each session
+    // via connectAndPersist — nothing left to do here but reflect the outcome.
+    const hasRelays = res.sessions.length > 0
+    hideNewUserPage()
+    unmountNewUserPageInline()
+    const { showApp, showSysMsg, startPolling } = await import('./shell.ts')
+    showApp()
+    const { setupLeftPane, showMenuPage, refreshAccountsList } = await import('./left-pane.ts')
+    await setupLeftPane()
+    if (hasRelays) startPolling()
+    // Unconditional, not just when hasRelays — restore.ts's own mediator
+    // registration (fire-and-forget, may still be in flight) refreshes this
+    // again once it lands, but a relay-less identity still needs this FIRST
+    // call so /account isn't left showing stale/empty state right after
+    // logging in: that's the one case with nothing else to trigger a render.
+    refreshAccountsList()
+    showMenuPage('/account')
+    showSysMsg(hasRelays ? 'Logged in' : 'Logged in (no relay)')
+  } catch (e) {
+    errEl.textContent = 'Log in failed: ' + (e instanceof Error ? e.message : String(e))
+    errEl.style.display = 'block'
+  } finally {
+    submitBtn.disabled = false
+    submitBtn.textContent = signupButtonLabel()
+  }
 }
