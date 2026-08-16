@@ -1,5 +1,6 @@
 import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay, isDidCommRelay, relayProtocolLabel, fetchRelayInfo, DIDCOMM_SERVER_URL } from '../context.ts'
 import { ownDid, mediatorDeviceActivity, type MediatorDeviceActivity } from '../did/didcomm-devices.ts'
+import { bisetWebvhUsername } from '../did/webvh/identifier.ts'
 import { currentIdentityDid } from '../did/didcomm/channel.ts'
 import { resolveAny as resolveDidAny } from '../did/resolver.ts'
 import { getDidRecord, identityProtectionEnabled } from '../did/store.ts'
@@ -13,12 +14,12 @@ import {
 } from '../state.ts'
 import { esc, formatTime, avatarStyle, inboxToHash, syncAppBadge, hexToBytes, expandDualRelay, previewText } from '../utils.ts'
 import { displayLabelFor, nameForContact, shortDid, ownDidParts, labelForDid, contactIdentityKey } from '../did/contacts.ts'
-import type { InboxSummary, StoredAccount } from '../types.ts'
+import type { InboxSummary, StoredAccount, AccountSession } from '../types.ts'
 import type { Email } from 'jmap-rfc-types'
 // Circular (safe — used only in function bodies):
 import { render, syncDockPosition, scrollToFocused, updateScrollSpacer } from './thread.ts'
 import { fetchMessages, showSysMsg, startPolling } from './shell.ts'
-import { setupNewUserPage, mountNewUserPageInline, unmountNewUserPageInline } from './account-create.ts'
+import { setupNewUserPage, mountNewUserPageInline, unmountNewUserPageInline, getHostname, getMailUrl } from './account-create.ts'
 // From app.ts (safe — called only inside async functions):
 import { loadInboxSummaries, initSession, jmapCreateEmail, persistSession } from '../app.ts'
 import { decryptAndParse, prefetchRecipientKey } from '../pgp/index.ts'
@@ -2869,14 +2870,72 @@ export async function setupLeftPane() {
     })
   }
 
-  function openDisplayNameModal(email: string) {
-    const session = sessions.find(s => s.account.email === email)
-    const cached = _accInfoCache.get(email)
-    const currentName = cached?.name || email.split('@')[0]
+  // A display name for identities that have no relay yet (and therefore no
+  // JMAP Identity object to hold one). Same key shape as didcomm-devices.ts's
+  // OWN_DID_KEY — a small localStorage entry, not synced across devices or
+  // published anywhere on its own. Once a relay is claimed, the JMAP
+  // Identity.name becomes the real source of truth (openDisplayNameModal
+  // below writes both, so the two never disagree while a relay exists) —
+  // this cache is only ever a fallback for "no session to ask".
+  const LOCAL_DISPLAY_NAME_PREFIX = 'biset_display_name_'
+  function localDisplayName(did: string): string | null {
+    try { return localStorage.getItem(LOCAL_DISPLAY_NAME_PREFIX + did) } catch { return null }
+  }
+  function setLocalDisplayName(did: string, name: string): void {
+    try { localStorage.setItem(LOCAL_DISPLAY_NAME_PREFIX + did, name) } catch { /* ignore */ }
+  }
+  // The name actually shown for an identity, in priority order: the JMAP
+  // Identity's own name (server-side, only meaningful once repEmail exists),
+  // the local cache above (set before any relay existed, or if the JMAP
+  // fetch/set failed), the DID's own path-segment username (always present,
+  // never wrong — see buildBisetWebvhDid), and finally the email localpart
+  // as a last resort for a repEmail whose DID somehow has no readable
+  // username (a non-biset-shaped webvh identifier).
+  function currentDisplayName(did: string, repEmail?: string): string {
+    if (repEmail) {
+      const jmapName = identities.all().find(i => i.email === repEmail)?.name
+      if (jmapName) return jmapName
+    }
+    return localDisplayName(did) || bisetWebvhUsername(did) || repEmail?.split('@')[0] || 'Your identity'
+  }
+
+  // Writes `name` to this session's JMAP Identity and mirrors it into every
+  // local cache that reads Identity.name (identities store, _accInfoCache,
+  // the heading's own DOM text) — the part of openDisplayNameModal's submit
+  // handler that talks to the relay, split out so claimMailAccount can run
+  // the identical sequence right after provisioning (2026-08-16: a display
+  // name set BEFORE claiming, while there was no relay to hold it, used to
+  // sit in localStorage forever — the JMAP Identity a freshly claimed
+  // account gets defaults to the localpart, same as go-jmapserver's
+  // defaultIdentity(), and nothing ever pushed the local name into it).
+  // Returns false on any failure; the caller decides how loud to be about
+  // that (claimMailAccount treats it as best-effort, this modal surfaces it).
+  async function applyDisplayNameToRelay(session: AccountSession, email: string, name: string): Promise<boolean> {
+    try {
+      const [r] = await (session.jmapClient.api as any).Identity.get({ accountId: session.jmapAccountId, ids: null })
+      const id = (r.list as any[]).find(i => i.email === email) ?? r.list[0]
+      if (!id?.id) return false
+      await session.jmapClient.api.Identity.set({
+        accountId: session.jmapAccountId,
+        update: { [id.id]: { name } as any },
+      })
+      identities.set(identities.all().map(i => (i.id === id.id ? { ...i, name } : i)))
+      const cache = _accInfoCache.get(email) ?? {}
+      cache.name = name
+      _accInfoCache.set(email, cache)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  function openDisplayNameModal(did: string, email?: string) {
+    const session = email ? sessions.find(s => s.account.email === email) : undefined
+    const currentName = currentDisplayName(did, email)
     const body = document.createElement('form')
     body.style.cssText = 'display:flex;flex-direction:column;gap:10px'
     body.innerHTML = `
-      <div style="font-size:12px;color:var(--text-dim)">${esc(email)}</div>
+      <div style="font-size:12px;color:var(--text-dim)">${esc(email ?? did)}</div>
       <input class="cmd-input" type="text" name="name" value="${esc(currentName)}" placeholder="Display name" required autofocus>
       <div data-role="error" style="color:#ff3b30;font-size:12px;display:none"></div>
       <div data-role="ok" style="color:#34c759;font-size:12px;display:none"></div>
@@ -2888,7 +2947,6 @@ export async function setupLeftPane() {
     body.querySelector<HTMLButtonElement>('[data-role=cancel]')!.addEventListener('click', dismiss)
     body.addEventListener('submit', async (ev) => {
       ev.preventDefault()
-      if (!session) return
       const newName = (body.elements.namedItem('name') as HTMLInputElement).value.trim()
       const errEl = body.querySelector<HTMLElement>('[data-role=error]')!
       const okEl = body.querySelector<HTMLElement>('[data-role=ok]')!
@@ -2896,23 +2954,19 @@ export async function setupLeftPane() {
       errEl.style.display = 'none'; okEl.style.display = 'none'
       if (!newName) { errEl.textContent = 'Display name required'; errEl.style.display = 'block'; return }
       submit.disabled = true; submit.textContent = 'Saving…'
+      // Always written locally, relay or not — the one thing every identity
+      // can hold regardless of whether a JMAP Identity exists yet.
+      setLocalDisplayName(did, newName)
+      if (!session || !email) {
+        const identityNameEl = document.getElementById('cmd-acc-identity-name')
+        if (identityNameEl) identityNameEl.textContent = newName
+        dismiss()
+        renderAccountsList()
+        return
+      }
       try {
-        const [r] = await (session.jmapClient.api as any).Identity.get({ accountId: session.jmapAccountId, ids: null })
-        const id = (r.list as any[]).find(i => i.email === email) ?? r.list[0]
-        if (!id?.id) { errEl.textContent = 'Failed to fetch identity'; errEl.style.display = 'block'; return }
-        await session.jmapClient.api.Identity.set({
-          accountId: session.jmapAccountId,
-          update: { [id.id]: { name: newName } as any },
-        })
-        // Mirror into the local identities store — jmapCreateEmail reads
-        // Identity.name from there when it builds the From header, and only
-        // refetches from the server when the store is empty. Without this,
-        // the new name wouldn't take effect on a send until the next full
-        // resync happened to run.
-        identities.set(identities.all().map(i => (i.id === id.id ? { ...i, name: newName } : i)))
-        const cache = _accInfoCache.get(email) ?? {}
-        cache.name = newName
-        _accInfoCache.set(email, cache)
+        const ok = await applyDisplayNameToRelay(session, email, newName)
+        if (!ok) { errEl.textContent = 'Failed to fetch identity'; errEl.style.display = 'block'; return }
         // Direct DOM update, not relying on renderAccountsList() below alone
         // (user-reported, 2026-08-12: the DID document picked up the new
         // name on republish but the identity heading's own text never did) —
@@ -2935,11 +2989,10 @@ export async function setupLeftPane() {
         // server-side either way, so this must not fail the save — but
         // logged rather than dropped, so a document that can NEVER publish
         // leaves a trace instead of nothing at all.
-        const idKey = identityKeyForEmail(email)
         import('../did/didcomm/channel.ts').then(async m => {
-          if (!(await m.hasDidCommChannel(idKey))) return
+          if (!(await m.hasDidCommChannel(did))) return
           // Method-agnostic — see removeRelayLocally's identical note above.
-          const rec = await getDidRecord(idKey)
+          const rec = await getDidRecord(did)
           if (!rec) return
           const { publishBareOrCurrent } = await import('../did/didcomm-devices.ts')
           await publishBareOrCurrent(rec)
@@ -3048,6 +3101,113 @@ export async function setupLeftPane() {
     }
   }
 
+  // Provisions the home mail relay for the CURRENT identity, on demand —
+  // the counterpart to account-create.ts no longer doing this eagerly at
+  // signup. Mirrors custom-domain.ts's showRelayCreateStep (same
+  // unlockIdentitySecrets → getDidRecord → provisionAccount →
+  // connectAndPersist shape), simplified: no relay-URL/username input,
+  // since both are fixed (home mail relay, the DID's own path-segment
+  // username) rather than user-chosen.
+  async function claimMailAccount(did: string): Promise<void> {
+    const username = bisetWebvhUsername(did)
+    const mailUrl = getMailUrl()
+    if (!username || !mailUrl) { showSysMsg('Mail relay not configured for this deployment'); return }
+
+    const { getDidRecord, unlockIdentitySecrets } = await import('../did/store.ts')
+    if (!(await unlockIdentitySecrets())) return
+    const rec = await getDidRecord(did)
+    if (!rec) { showSysMsg('No local record for this identity'); return }
+    const rootPrivateKey = hexToBytes(rec.rootPrivateKey)
+
+    const { provisionAccount } = await import('../did/provision.ts')
+    const res = await provisionAccount({ serverUrl: mailUrl, username, did, rootPrivateKey, envelope: rec.envelope })
+    if (!res.ok) {
+      showSysMsg(res.conflict ? 'That address is owned by a different key' : `Server error (${res.status})`)
+      return
+    }
+    const email = res.email || `${username}@${getHostname()}`
+
+    const { connectAndPersist } = await import('../app.ts')
+    const session = await connectAndPersist({ serverUrl: mailUrl, email, password: '', did }, undefined)
+    if (!session) { showSysMsg('Claimed, but failed to connect'); return }
+
+    // Carry over a display name set BEFORE this relay existed (the
+    // localStorage cache openDisplayNameModal writes even with no relay to
+    // hold it) — the freshly claimed Identity otherwise defaults to the
+    // localpart (go-jmapserver's defaultIdentity()), silently discarding
+    // whatever name was already showing on this exact card a moment ago.
+    // Best-effort: claiming has already succeeded either way.
+    const localName = localDisplayName(did)
+    if (localName && localName !== username) {
+      await applyDisplayNameToRelay(session, email, localName).catch(() => false)
+    }
+
+    const { fetchRelayInfo } = await import('../context.ts')
+    await fetchRelayInfo(mailUrl)
+    renderAccountsList()
+    showSysMsg(`Claimed ${email}`)
+  }
+
+  // The home mail relay's card when this identity has NOT claimed it yet —
+  // same row shape as a real relay card (relayCards below), styled dim/gray
+  // and reduced to a single "Claim account" action, so the surface a
+  // brand-new identity sees is discoverable rather than an empty list. Never
+  // shown for an identity with no DID at all (nothingSetUp's signup form
+  // covers that case instead).
+  function renderUnclaimedMailCard($list: HTMLElement, accounts: StoredAccount[]): void {
+    const did = ownDid()
+    if (!did) return
+    const username = bisetWebvhUsername(did)
+    const mailUrl = getMailUrl()
+    if (!username || !mailUrl) return // this deployment has no mail relay configured
+    const email = `${username}@${getHostname()}`
+    // Already claimed (a real StoredAccount exists for this address) — the
+    // real card in relayCards below covers it, don't show a second one.
+    if (accounts.some(a => a.email === email && a.did === did)) return
+
+    const row = document.createElement('div')
+    row.className = 'cmd-page-row'
+    row.style.cssText = 'gap:12px;align-items:center;padding:10px 12px;opacity:0.55'
+
+    const left = document.createElement('div')
+    left.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:4px'
+    const headRow = document.createElement('div')
+    headRow.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0'
+    const dot = document.createElement('span')
+    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;flex-shrink:0;background:var(--text-dim)'
+    const protoEl = document.createElement('span')
+    protoEl.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--text-dim);flex-shrink:0'
+    protoEl.textContent = 'MAIL'
+    const sep = document.createElement('span')
+    sep.style.cssText = 'color:var(--text-dim);flex-shrink:0'
+    sep.textContent = ':'
+    const addrEl = document.createElement('span')
+    addrEl.style.cssText = 'font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
+    addrEl.textContent = email
+    headRow.append(dot, protoEl, sep, addrEl)
+    const statusRow = document.createElement('div')
+    statusRow.style.cssText = 'font-size:11px;color:var(--text-dim)'
+    statusRow.textContent = 'Not claimed'
+    left.append(headRow, statusRow)
+
+    const menuBtn = document.createElement('button')
+    menuBtn.type = 'button'
+    menuBtn.style.cssText = 'background:none;border:none;color:var(--text-dim);cursor:pointer;padding:6px;line-height:0;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center'
+    menuBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>`
+    menuBtn.setAttribute('aria-label', 'Menu')
+    menuBtn.addEventListener('mouseover', () => { menuBtn.style.background = 'rgba(128,128,128,0.12)' })
+    menuBtn.addEventListener('mouseout', () => { menuBtn.style.background = 'none' })
+    menuBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation()
+      openDropdownMenu(menuBtn, [
+        { label: 'Claim account', onClick: () => claimMailAccount(did) },
+      ])
+    })
+
+    row.append(left, menuBtn)
+    $list.appendChild(row)
+  }
+
   function renderAccountsList() {
     const $list = document.getElementById('cmd-acc-list')
     if (!$list) return
@@ -3084,13 +3244,30 @@ export async function setupLeftPane() {
       const wireIdentityHeading = (did: string) => {
         identityFields.onclick = () => toggleIdentityExpanded(identitySection, identityDevices, identityDoc, did)
       }
-      if (repAccount?.did) {
-        const repEmail = repAccount.email
-        const did = repAccount.did
+      // One identity, one heading, regardless of whether it has a relay yet
+      // (2026-08-16 — used to be two near-duplicate branches, "has a
+      // StoredAccount" vs "DID only", that quietly disagreed on the name
+      // ('Your identity' vs the real one), the avatar (fixed glyph vs the
+      // saved picture — pickAndSetIdentityAvatar already keys by the bare
+      // DID too, so relay-less rendering never actually needed the fixed
+      // glyph), and the menu (Change display name only appeared once a
+      // relay existed, even though currentDisplayName/setLocalDisplayName
+      // above work with no relay at all). `repEmail` is the only thing that
+      // still varies — some of what it feeds (Identity.get/.set,
+      // "Delete account" elsewhere) is genuinely relay-specific — so it
+      // stays optional rather than being faked.
+      const did = repAccount?.did ?? ownDid()
+      const repEmail = repAccount?.email
+      if (did) {
         identityAvatar.textContent = ''
         identityAvatar.style.cssText = 'cursor:pointer;position:relative;overflow:hidden'
         identityAvatar.title = 'Click to set avatar'
-        const ownAvatar = avatarDataUrl(repEmail)
+        // pickAndSetIdentityAvatar saves under every known address AND the
+        // bare DID (its own note) — read the DID first as the identity-wide
+        // picture, falling back to the address only for a picture saved
+        // before that dual-write existed.
+        const ownAvatar = avatarDataUrl(did) ?? (repEmail ? avatarDataUrl(repEmail) : undefined)
+        const initialsSource = repEmail ?? currentDisplayName(did)
         if (ownAvatar) {
           identityAvatar.style.cssText += ';background:transparent'
           const img = document.createElement('img')
@@ -3098,16 +3275,11 @@ export async function setupLeftPane() {
           img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%'
           identityAvatar.appendChild(img)
         } else {
-          identityAvatar.style.cssText += ';' + avatarStyle(repEmail)
-          identityAvatar.textContent = repEmail.charAt(0).toUpperCase()
+          identityAvatar.style.cssText += ';' + avatarStyle(initialsSource)
+          identityAvatar.textContent = initialsSource.charAt(0).toUpperCase()
         }
         identityAvatar.onclick = (ev) => { ev.stopPropagation(); pickAndSetIdentityAvatar(did) }
-        // Default is the localpart until changed — the server synthesizes
-        // exactly this as Identity.name until a real Identity/set happens
-        // (go-jmapserver's defaultIdentity()), so this needs no separate
-        // "auto-derive at creation" step of its own.
-        const name = identities.all().find(i => i.email === repEmail)?.name || repEmail.split('@')[0]
-        identityName.textContent = name
+        identityName.textContent = currentDisplayName(did, repEmail)
         identityName.onclick = null
         wireIdentityDid(identityDid, did)
         wireIdentityHeading(did)
@@ -3126,8 +3298,8 @@ export async function setupLeftPane() {
           identityMenuBtn.onclick = (ev) => {
             ev.stopPropagation()
             openDropdownMenu(identityMenuBtn, [
-              { label: 'Change display name', onClick: () => openDisplayNameModal(repEmail) },
-              ...(identityProtected ? [] : [{ label: 'Protect with passkey', onClick: () => protectWithPasskey(repEmail) }]),
+              { label: 'Change display name', onClick: () => openDisplayNameModal(did, repEmail) },
+              ...(identityProtected ? [] : [{ label: 'Protect with passkey', onClick: () => protectWithPasskey(repEmail ?? did) }]),
               { label: 'Show recovery phrase', onClick: () => showRecoveryPhrase(did) },
               { label: 'Export Messages', onClick: () => exportIdentityMessages(did) },
               { label: 'Import Messages', onClick: () => importIdentityMessages() },
@@ -3136,39 +3308,10 @@ export async function setupLeftPane() {
             ])
           }
         }
-        identitySection.style.display = ''
-      } else if (ownDid()) {
-        // An identity with zero relays yet: no StoredAccount to hang the
-        // heading on, so drive it from the DID alone — DID + doc view +
-        // republish. No avatar/name/menu tied to an address it doesn't have
-        // yet; adding a relay below fills those in the normal way.
-        const sDid = ownDid()!
-        identityAvatar.textContent = '◇'
-        identityAvatar.style.cssText = 'display:flex;align-items:center;justify-content:center;background:var(--header-border);color:var(--text-dim)'
-        identityAvatar.onclick = null
-        identityName.textContent = 'Your identity'
-        identityName.onclick = null
-        wireIdentityDid(identityDid, sDid)
-        wireIdentityHeading(sDid)
-        // No display name to change (no address yet) — Export/Import/Sync
-        // and Log out still apply to a relay-less identity's local state.
-        if (identityMenuBtn) {
-          identityMenuBtn.style.display = ''
-          identityMenuBtn.onclick = (ev) => {
-            ev.stopPropagation()
-            openDropdownMenu(identityMenuBtn, [
-              ...(identityProtected ? [] : [{ label: 'Protect with passkey', onClick: () => protectWithPasskey(sDid) }]),
-              { label: 'Show recovery phrase', onClick: () => showRecoveryPhrase(sDid) },
-              { label: 'Export Messages', onClick: () => exportIdentityMessages(sDid) },
-              { label: 'Import Messages', onClick: () => importIdentityMessages() },
-              { label: 'Sync', onClick: () => republishIdentity(sDid) },
-              { label: 'Log out', danger: true, onClick: () => confirmAndLogout() },
-            ])
-          }
-        }
-        // Adding a relay uses the normal "+ New JMAP account" panel below,
-        // which provisions under THIS identity's DID (see the zero-relay
-        // branch in the add-account flow) — no separate button.
+        // Adding a relay uses the normal "+ New JMAP account" panel below
+        // (or, for the home mail relay specifically, the unclaimed card's
+        // own "Claim account" — renderUnclaimedMailCard), which provisions
+        // under THIS identity's DID — no separate button here.
         identitySection.style.display = ''
       } else {
         identitySection.style.display = 'none'
@@ -3199,6 +3342,14 @@ export async function setupLeftPane() {
     const relayLabel = (url: string): string => {
       try { return new URL(url).hostname.split('.')[0] } catch { return '?' }
     }
+    // The home mail relay's own card, ALWAYS shown once this identity has a
+    // DID — claimed (a real StoredAccount exists) or not (2026-08-16,
+    // "claim account" redesign: #new no longer provisions mail itself, see
+    // account-create.ts's submit handler). Unclaimed is the default state
+    // for a brand new identity; claiming happens explicitly from this
+    // card's own hamburger menu (claimMailAccount below), never implicitly.
+    renderUnclaimedMailCard($list, accounts)
+
     // One card per RELAY endpoint. Identity-by-DID: the DID is the identity; each
     // relay is a concrete endpoint you see and manage (SMTP, ActivityPub, …).
     // Sorting by did keeps an identity's relays adjacent (the DID itself is

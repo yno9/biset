@@ -71,7 +71,10 @@ function signupButtonLabel(): string {
   return loginDidForTypedName ? 'Log in' : 'Start'
 }
 
-function getHostname(): string {
+// Exported: left-pane.ts's unclaimed mail-relay card (renderAccountsList)
+// needs the identical hostname/URL this file's own submit handler uses, so
+// the two never compute a different "home mail relay" for the same identity.
+export function getHostname(): string {
   try { return (window as any).__BISET_CONFIG__?.hostname || '' } catch { return '' }
 }
 
@@ -79,7 +82,7 @@ function getHostname(): string {
 // against — same explicit-config-or-hostname-convention pattern as
 // didcomm-devices.ts's mediatorUrl, so account-create.ts's own submit
 // handler (below) and this availability check always agree on the URL.
-function getMailUrl(): string {
+export function getMailUrl(): string {
   const cfg = (window as any).__BISET_CONFIG__
   const hostname = getHostname()
   const url = cfg?.mail_url || (hostname ? `https://mail.${hostname}` : '')
@@ -473,40 +476,20 @@ export function setupNewUserPage() {
       const mailUrl = getMailUrl()
       const apUrl = getApUrl()
 
-      // Provision the home mail relay: signature-based DID binding + THIS
-      // device's own per-device credential, established atomically with
-      // the account itself (this session's account-model redesign,
-      // src/did/devicebind.ts's file header) — no masterSecret-derived
-      // static token anywhere any more.
-      //
-      // `username` is baked directly into the DID string itself
-      // (did:webvh:{scid}:{domain}:{username} — PLANWEBVH.md §2.3), so
-      // a non-conflict mail failure here is fatal too, same as a conflict —
-      // falling back would publish a resolvable document that CLAIMS this
-      // address without ever having actually bound it (the "two different
-      // people, same-looking name" confusion a mismatched webvh
-      // username/email would cause). No silent fallback.
+      // Mail is no longer provisioned here at all (2026-08-16, "claim
+      // account" redesign — [account.ts]'s per-relay card, unclaimed by
+      // default): signup now only ever creates the DID. The home mail
+      // relay card on #account starts unclaimed and provisions on demand
+      // when the user explicitly clicks "Claim account" — same
+      // `provisionAccount` call this used to make eagerly here, just moved
+      // to `claimMailAccount` in left-pane.ts so a slow or unreachable mail
+      // relay at signup time no longer blocks identity creation at all
+      // (previously fatal: a mail failure used to deactivate the DID that
+      // was just created, on the theory that a resolvable-but-unbound
+      // document was worse than no identity — that trade-off doesn't apply
+      // once mail is opt-in rather than assumed).
       const { provisionAccount } = await import('../did/provision.ts')
-      const relayFail = (label: string, r: { conflict?: boolean; status: number }) => {
-        errEl.textContent = r.conflict ? 'Username taken' : `${label} server error (${r.status})`
-        errEl.style.display = 'block'
-        submitBtn.textContent = 'Create'; submitBtn.disabled = false
-      }
-      const mailRes = await provisionAccount({ serverUrl: mailUrl, username, did: didRecord.did, rootPrivateKey: rootPriv, envelope })
-      if (!mailRes.ok) {
-        // The did:webvh genesis is already live on the anchor by this point
-        // (see the note above) — stamp it deactivated so it doesn't sit
-        // there looking like a valid, resolvable claim on an address it
-        // never actually got. Best-effort: this failure is already fatal
-        // to the signup either way, so a deactivate failure just leaves
-        // the known-issue window open a little longer, not a new one.
-        const { deactivateDocument } = await import('../did/webvh/publish.ts')
-        await deactivateDocument(didRecord.did, rootPriv, hexToBytes(didRecord.rootPublicKey))
-          .catch(e => console.warn('[account-create] deactivateDocument failed (non-fatal):', e instanceof Error ? e.message : e))
-        relayFail('mail', mailRes)
-        return
-      }
-      const mailOk = mailRes.ok
+      const mailOk = false
 
       // AP (ActivityPub) is optional — jmapap may not be deployed at all
       // for this host, or simply unreachable right now (and is slated for
