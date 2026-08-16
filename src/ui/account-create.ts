@@ -456,6 +456,11 @@ export function setupNewUserPage() {
       didRecord.envelope = envelope
       await storeDidRecord(didRecord)
       setOwnDid(didRecord.did)
+      // Read the root key BEFORE enabling at-rest protection: enabling it
+      // re-writes every record with the seed and root key sealed, and the rest
+      // of this handler signs with them. The session stays unlocked either
+      // way, so this is about holding the value rather than re-reading a
+      // record that no longer carries it in the clear.
       const rootPriv = hexToBytes(didRecord.rootPrivateKey)
 
       const email = `${username}@${hostname}`
@@ -611,11 +616,30 @@ export function setupNewUserPage() {
       else showMenuPage('/account')
       showSysMsg('Account created')
 
-      // Show the recovery phrase once, now — this is the only safety valve for
-      // the rotation-less root identity (DID.md). masterSecret is in hand here;
-      // it isn't persisted, so this first showing is the natural moment.
+      // Show the recovery phrase, and offer passkey protection as the user
+      // dismisses it.
+      //
+      // **The enrolment has to hang off a real click.** WebAuthn's
+      // `credentials.create()` requires transient activation — a few seconds
+      // from an actual user gesture — and this handler spends far longer than
+      // that on the network before reaching here (anchorReachable, the
+      // genesis PUT, provisioning). Called inline it was rejected every time
+      // and swallowed, so accounts came out unprotected with no trace
+      // (2026-08-14, user-reported). `onClose` fires from the dialog's own
+      // "I've saved it" click, which is both a fresh gesture and the moment
+      // the user has just been told this phrase is the only copy.
       const { showMnemonic } = await import('./mnemonic.ts')
-      showMnemonic(masterSecret, { firstTime: true })
+      showMnemonic(masterSecret, {
+        firstTime: true,
+        onClose: () => {
+          import('../did/store.ts')
+            .then(async m => {
+              const ok = await m.enableIdentityProtection(`${username}@${hostname}`)
+              if (!ok) console.warn('[identity] passkey protection not enabled — secrets stay plaintext at rest')
+            })
+            .catch(e => console.warn('[identity] passkey protection failed:', e instanceof Error ? e.message : e))
+        },
+      })
 
       // Publishing is no longer opt-in-only: the mediator registration above
       // already published as part of its own 3-phase publish cycle.

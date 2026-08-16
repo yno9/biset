@@ -28,10 +28,11 @@ import { resolveDidCommDoc } from '../../did/didcomm/resolve.ts'
 import {
   KEY_PACKAGE_PUBLISH, KEY_PACKAGE_REQUEST, KEY_PACKAGE_RESPONSE,
   GROUP_CREATE, GROUP_CREATED, COMMIT, APPLICATION, DELIVER, EPOCH_CONFLICT,
-  DELIVERIES_REQUEST, DELIVERIES,
+  DELIVERIES_REQUEST, DELIVERIES, GROUPS_REQUEST, GROUPS,
   EXTERNAL_COMMIT, GROUP_INFO_REQUEST, GROUP_INFO, NO_GROUP_INFO, SELF_REMOVE, CLEAR_REMOVALS,
   type ExternalCommitBody, type GroupInfoRequestBody, type GroupInfoBody, type SelfRemoveBody, type ClearRemovalsBody,
   type ApplicationBody, type CommitBody, type DeliverBody, type DeliveriesRequestBody, type DeliveriesBody,
+  type GroupsBody,
   type GroupCreateBody, type GroupCreatedBody,
   type KeyPackagePublishBody, type KeyPackageRequestBody, type KeyPackageResponseBody,
 } from '../../did/didcomm/mls-transport.ts'
@@ -132,19 +133,15 @@ export interface MediatorOptions {
   mediator: PeerIdentity
   queue?: MessageQueue
   connections?: ConnectionStore
-  /** Resolve a `did:dht` peer's DIDComm key (x25519) at a SPECIFIC kid — needed
-   * to authenticate senders and encrypt replies that identify by did:dht
-   * rather than the self-certifying did:peer. Kid-aware because a relay-less
-   * identity (DID⊥relay) can have more than one registered device, each at
-   * its own kid (document.ts's DidKeyAgreement note) — resolving "the" key for
-   * a bare DID would pick an arbitrary one. Without this option the mediator
-   * handles did:peer only (the original assumption). The anchor supplies one
-   * backed by its DHT access; a mediator run standalone may omit it. */
-  resolveDidDht?: (did: string, kid: string) => Promise<Uint8Array | null>
-  /** Same as `resolveDidDht`, for did:webvh peers (PLANWEBVH.md §5.3). Kept as
-   * a separate option rather than a single "resolve any method" function so
-   * each method's resolver can fail/degrade independently — a did:webvh
-   * outage must not also break did:dht senders and vice versa. */
+  /** Resolve a `did:webvh` peer's DIDComm key (x25519) at a SPECIFIC kid —
+   * needed to authenticate senders and encrypt replies that identify by
+   * did:webvh rather than the self-certifying did:peer. Kid-aware because a
+   * relay-less identity (DID⊥relay) can have more than one registered
+   * device, each at its own kid (document.ts's DidKeyAgreement note) —
+   * resolving "the" key for a bare DID would pick an arbitrary one. Without
+   * this option the mediator handles did:peer only (the original
+   * assumption). The anchor supplies one backed by its webvh store; a
+   * mediator run standalone may omit it. */
   resolveDidWebvh?: (did: string, kid: string) => Promise<Uint8Array | null>
   /** OPT-IN server-side multi-hop forwarding (Routing 2.0 Mediator Process): a
    * Forward whose `next` is NOT a locally-registered kid is normally rejected
@@ -180,7 +177,7 @@ export interface MediatorHandler {
   mediatorDid: string
 }
 
-export function createMediator({ mediator, queue = new MessageQueue(), connections = new ConnectionStore(), resolveDidDht, resolveDidWebvh, forwardResolver, vapid, pushSubs = new PushSubscriptionStore(), mlsDs = new MlsDeliveryService() }: MediatorOptions): MediatorHandler {
+export function createMediator({ mediator, queue = new MessageQueue(), connections = new ConnectionStore(), resolveDidWebvh, forwardResolver, vapid, pushSubs = new PushSubscriptionStore(), mlsDs = new MlsDeliveryService() }: MediatorOptions): MediatorHandler {
   const ownRecipient = { kid: mediator.xKid, privateKey: mediator.xPriv }
   // Replay guard over every inbound message's `id` — a re-POSTed anoncrypt
   // Forward would otherwise re-queue the same payload, and a resent authcrypt
@@ -188,25 +185,23 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
   // queue). Bounded + TTL'd so it can't itself be turned into a memory DoS.
   const seen = new SeenIds()
 
-  // A did:dht peer's keyAgreement key, cached by kid. This is THE fix for
+  // A did:webvh peer's keyAgreement key, cached by kid. This is THE fix for
   // "unstable / slow but eventually arrives": every authenticated request
   // (status, delivery, messages-received, keylist-query) re-resolved the
-  // client's OWN key straight from the DHT, so a single un-propagated or
-  // rate-limited gateway lookup turned a routine poll into an HTTP 400, and the
-  // client only got through once the DHT happened to answer — hence the latency
-  // and flakiness. biset's keys are rotation-less and seed-derived, so a given
-  // kid maps to ONE stable key: safe to cache. The TTL bounds how long the DHT
-  // is skipped entirely (the fast path); past it the key is re-resolved, but a
+  // client's OWN key straight from its webvh log, so a single slow fetch
+  // turned a routine poll into an HTTP 400, and the client only got through
+  // once the fetch happened to complete — hence the latency and flakiness.
+  // biset's keys are rotation-less and seed-derived, so a given kid maps to
+  // ONE stable key: safe to cache. The TTL bounds how long the network is
+  // skipped entirely (the fast path); past it the key is re-resolved, but a
   // resolve FAILURE still falls back to the last good value rather than
-  // erroring — a DHT hiccup must not break a client that already
+  // erroring — a network hiccup must not break a client that already
   // authenticated successfully once.
   //
   // The policy itself lives in did/keycache.ts, shared with the browser's own
   // sender-key cache (didcomm/sender-keys.ts): both sides of the wire cache
   // "the key behind a kid" for the same reason and under the same assumption,
-  // and having each write its own version is how the two would drift. One
-  // instance for both network-resolved methods (did:dht, did:webvh) — a kid
-  // always carries its own DID prefix, so their entries can never collide.
+  // and having each write its own version is how the two would drift.
   //
   // Deliberately NOT stale-while-revalidate, unlike the browser's: this is
   // authenticating a request it is about to answer, with no screen waiting on
@@ -219,17 +214,11 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
    * one key regardless of what `kid` names (decode, no network — the passed
    * kid is ignored, always resolved canonically, and by construction always
    * matches anyway: every did:peer identity in this codebase mints exactly
-   * one x25519 key). did:dht/did:webvh are resolved over the network via the
-   * injected resolvers, AT `kid` specifically — a relay-less identity
-   * (DID⊥relay) can have multiple registered devices, and this is what
-   * picks the right one instead of an arbitrary "the" key — then cached
-   * (see resolvedKeyCache). */
+   * one x25519 key). did:webvh is resolved over the network via the injected
+   * resolver, AT `kid` specifically — a relay-less identity (DID⊥relay) can
+   * have multiple registered devices, and this is what picks the right one
+   * instead of an arbitrary "the" key — then cached (see resolvedKeyCache). */
   async function didCommKey(did: string, kid: string): Promise<{ xKid: string; publicKey: Uint8Array }> {
-    if (did.startsWith('did:dht:')) {
-      if (!resolveDidDht) throw new Error(`no did:dht resolver configured for ${kid}`)
-      const publicKey = await resolvedKeyCache.get(kid, k => resolveDidDht!(did, k))
-      return { xKid: kid, publicKey }
-    }
     if (did.startsWith('did:webvh:')) {
       if (!resolveDidWebvh) throw new Error(`no did:webvh resolver configured for ${kid}`)
       const publicKey = await resolvedKeyCache.get(kid, k => resolveDidWebvh!(did, k))
@@ -972,8 +961,12 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
         if (!senderKid || normalizeKid(kid) !== senderKid) {
           return problemReply(msg, fromDid, replyKid, 403, 'e.p.msg.mls.not-your-key', 'key packages for {1} must be published by that device itself', [kid])
         }
-        mlsDs.publishKeyPackages(kid, body.key_packages)
-        return reply(await packReplyTo(msg, fromDid!, replyKid!, KEY_PACKAGE_RESPONSE, { did: stripFragment(kid), packages: [] } satisfies KeyPackageResponseBody))
+        // The count is the answer, not an acknowledgement: the client cannot
+        // work out its own pool size (it keeps every private half until a
+        // Welcome uses one), so this is the only place the truth exists.
+        // A publish of nothing is therefore a legitimate query.
+        const remaining = mlsDs.publishKeyPackages(kid, body.key_packages)
+        return reply(await packReplyTo(msg, fromDid!, replyKid!, KEY_PACKAGE_RESPONSE, { did: stripFragment(kid), packages: [], remaining } satisfies KeyPackageResponseBody))
       }
 
       case KEY_PACKAGE_REQUEST: {
@@ -1043,6 +1036,14 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
           ...(answer?.groupInfo ? { group_info: answer.groupInfo } : {}),
           ...(answer?.pendingRemovals.length ? { pending_removals: answer.pendingRemovals } : {}),
         } satisfies GroupInfoBody))
+      }
+
+      case GROUPS_REQUEST: {
+        // "Which of your groups am I in?" — the recovery path for a Welcome
+        // that was pushed once and lost. Nothing is disclosed that the asker
+        // is not already a member of.
+        const groups = mlsDs.groupsFor(fromDid!).map(g => ({ group_id: g.groupId, epoch: g.epoch.toString() }))
+        return reply(await packReplyTo(msg, fromDid!, replyKid!, GROUPS, { groups } satisfies GroupsBody))
       }
 
       case DELIVERIES_REQUEST: {

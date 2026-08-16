@@ -50,8 +50,7 @@ export const SW_KEYS = {
   // contributing zero, which silently subtracted every unread mail from the
   // badge on any relay hiccup.
   localJmapUnread: 'sw_local_jmap_unread',
-  // Diagnostics read back by /debug.
-  debug: 'sw_last_push_debug',
+  // The SW version that last activated (written by sw.ts on activate).
   version: 'sw_active_version',
 } as const
 

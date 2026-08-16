@@ -1,8 +1,8 @@
-import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay, isDidCommRelay, relayProtocolLabel, DIDCOMM_SERVER_URL } from '../context.ts'
+import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay, isDidCommRelay, relayProtocolLabel, fetchRelayInfo, DIDCOMM_SERVER_URL } from '../context.ts'
 import { ownDid, mediatorDeviceActivity, type MediatorDeviceActivity } from '../did/didcomm-devices.ts'
-import { currentIdentityDid, ownGateways } from '../did/didcomm/channel.ts'
-import { resolveOwnFirst as resolveDidFullOwnFirst } from '../did/resolver.ts'
-import { getDidRecord } from '../did/store.ts'
+import { currentIdentityDid } from '../did/didcomm/channel.ts'
+import { resolveAny as resolveDidAny } from '../did/resolver.ts'
+import { getDidRecord, identityProtectionEnabled } from '../did/store.ts'
 import {
   lastLeftInboxes, setLastLeftInboxes,
   processedMessages, renderedKeys,
@@ -11,8 +11,8 @@ import {
   notifEnabled, setNotifEnabled,
   lastTs, groupMessages,
 } from '../state.ts'
-import { esc, formatTime, avatarStyle, inboxToHash, syncAppBadge, mailboxNameFromId, hexToBytes, expandDualRelay, previewText } from '../utils.ts'
-import { displayLabelFor, nameForContact, shortDid, shortOwnDid, labelForDid, contactIdentityKey } from '../did/contacts.ts'
+import { esc, formatTime, avatarStyle, inboxToHash, syncAppBadge, hexToBytes, expandDualRelay, previewText } from '../utils.ts'
+import { displayLabelFor, nameForContact, shortDid, ownDidParts, labelForDid, contactIdentityKey } from '../did/contacts.ts'
 import type { InboxSummary, StoredAccount } from '../types.ts'
 import type { Email } from 'jmap-rfc-types'
 // Circular (safe — used only in function bodies):
@@ -30,37 +30,25 @@ import { advertiseOwnAvatarForEmail } from '../ap/avatar.ts'
 import * as jmapEmail from '../jmap/email.ts'
 import * as messages from '../store/messages.ts'
 import * as identities from '../store/identities.ts'
-import * as idb from '../store/idb.ts'
 import { loadFromVault, flushAll, flushMessage, removeMessage } from '../vault/persist.ts'
 import * as querystate from '../jmap/querystate.ts'
 import { startWatch } from '../vault/watch.ts'
-import { newGroupId, isSecurejoinEmail, readGroupHeaders, isEdit } from '../deltachat/protocol.ts'
+import { newGroupId, isSecurejoinEmail } from '../deltachat/protocol.ts'
 import { isReaction } from '../mail/reactions.ts'
 import { newInviteUrl } from '../deltachat/securejoin.ts'
 import { enablePush, disablePush, setActiveConversation, publishUnreadCounts } from '../push/client.ts'
-import { SW_KEYS } from '../push/shared.ts'
 
 // ── InboxSummary key ──────────────────────────────────────────────────────────
 function isk(i: InboxSummary): string { return i.user + '\0' + i.mailbox + '\0' + i.contact }
 
-// Resolves a DID's full document via the SAME gateway set the send path uses
-// (channel.ts's ownGateways — this browser's own relay /pkarr endpoints,
-// plus this identity's own mediator if it has a pkarr token, ahead of the
-// public Pkarr fallbacks). Shared by the compose To-field's DID pill lookup
-// and the #account page's own-document viewer — the latter used to
+// Resolves a DID's full document. Shared by the compose To-field's DID pill
+// lookup and the #account page's own-document viewer — the latter used to
 // reimplement this a second way (relay-sessions-only, silently empty for a
-// relay-less identity, since it has no relay session to draw a /pkarr
-// gateway from at all), which is why a standalone identity's own #account
+// relay-less identity), which is why a standalone identity's own #account
 // page permanently reported "No document found" despite the record
-// resolving fine everywhere else (own anchor, public gateways).
+// resolving fine everywhere else.
 async function resolveDidDocFull(did: string) {
-  // did:webvh derives its own https:// URL from the DID string itself
-  // (webvh/resolver.ts) — no gateway list, no own-relay-first optimization
-  // to do (that's a did:dht-specific concern, see resolveOwnFirst's own
-  // note on why own gateways go first).
-  if (did.startsWith('did:webvh:')) return (await import('../did/webvh/resolver.ts')).resolve(did)
-  const gateways = await ownGateways(currentIdentityDid())
-  return await resolveDidFullOwnFirst(did, gateways)
+  return await resolveDidAny(did)
 }
 
 
@@ -775,7 +763,7 @@ export function makeLpItem(item: InboxSummary) {
   const rawName = contactLabel || item.mailbox
   const isCurrent = !!(currentInbox && isk(currentInbox) === isk(item))
   // Suppress the unread badge only for the conversation actually SHOWN in the
-  // reading pane — i.e. current AND not sitting behind a menu page (/debug,
+  // reading pane — i.e. current AND not sitting behind a menu page (/config,
   // /config, …). Otherwise a conversation you opened, then left for a menu,
   // keeps its stale "current" flag and silently hides its unread count even
   // though you're not looking at it (exactly the "count won't show" report).
@@ -1476,145 +1464,6 @@ export async function setupLeftPane() {
         ;(document.getElementById('cmd-acc-email') as HTMLInputElement)?.focus()
       })
     }
-  }
-
-  // ── /debug: unread reconciliation diagnostic ─────────────────────────────────
-  // Temporary. Shows the unread messages the SERVER reports vs how the LOCAL
-  // store attributes each one, so a stuck "Unread: N" that won't clear can be
-  // traced to the exact messages + inboxes responsible (are they even in the
-  // local store? what inbox key? group or 1:1? which relay?).
-  function renderDebugPage() {
-    return `<div class="cmd-page-content wide-page">
-      <div class="cmd-page-section">
-        <h3>Unread diagnostic <span id="debug-copy-hint" style="font-size:11px;font-weight:400;color:var(--text-dim)">— tap to copy</span></h3>
-        <pre id="debug-out" style="white-space:pre-wrap;word-break:break-all;font-size:11px;font-family:ui-monospace,monospace;line-height:1.5;margin:0;cursor:pointer">Loading…</pre>
-      </div>
-    </div>`
-  }
-
-  async function onShowDebug() {
-    const out = document.getElementById('debug-out')
-    if (!out) return
-    // Tap anywhere on the output to copy it — saves fiddly text selection on
-    // mobile when relaying this back for debugging.
-    out.addEventListener('click', async () => {
-      const hint = document.getElementById('debug-copy-hint')
-      try {
-        await navigator.clipboard.writeText(out.textContent ?? '')
-        if (hint) { hint.textContent = '— copied!'; setTimeout(() => { hint.textContent = '— tap to copy' }, 1500) }
-      } catch {
-        // clipboard API can be unavailable (insecure context / denied) — fall
-        // back to selecting the text so a manual copy is one gesture.
-        const range = document.createRange()
-        range.selectNodeContents(out)
-        const sel = window.getSelection()
-        sel?.removeAllRanges()
-        sel?.addRange(range)
-        if (hint) { hint.textContent = '— selected, ⌘C / long-press copy'; setTimeout(() => { hint.textContent = '— tap to copy' }, 2500) }
-      }
-    })
-    const lines: string[] = []
-    try {
-      for (const s of sessions) {
-        const email = s.account.email
-        // The DIDComm channel's synthetic session has no jmapClient at all
-        // (channel.ts's ensureDidCommSession sets it null — every JMAP call
-        // site is supposed to guard on isDidCommRelay). This loop didn't, so
-        // an identity with a mediator registered threw here and took the whole
-        // debug page down with it — including the service-worker section below,
-        // which is the one thing this page exists to show right now.
-        if (isDidCommRelay(s.account.serverUrl)) {
-          lines.push(`=== ${email} @ DIDComm (mediator) ===`)
-          lines.push('no JMAP — skipped')
-          continue
-        }
-        // Server truth: one Email/query+get per session, count non-seen non-own.
-        const [qr] = await s.jmapClient.api.Email.query({ accountId: s.jmapAccountId, limit: 5000 } as any)
-        const ids: string[] = (qr as any).ids ?? []
-        let serverUnread: any[] = []
-        if (ids.length) {
-          const [gr] = await s.jmapClient.api.Email.get({
-            accountId: s.jmapAccountId, ids: ids as any,
-            properties: ['id', 'keywords', 'from', 'subject', 'headers', 'mailboxIds'],
-          })
-          serverUnread = ((gr as any).list ?? []).filter((e: any) => {
-            const from = e.from?.[0]?.email ?? ''
-            return from !== email && !e.keywords?.['$seen'] && !isSecurejoinEmail(e) && !isReaction(e)
-          })
-        }
-        lines.push(`=== ${email} @ ${s.account.serverUrl} ===`)
-        lines.push(`SERVER unread (non-seen, non-own, non-noise): ${serverUnread.length}`)
-        // Local store view — is each server-unread message present locally, and how attributed?
-        const local = messages.forIdentity(identityKeyForEmail(email))
-        const localById = new Map(local.map(m => [m.id as string, m]))
-        for (const e of serverUnread) {
-          const from = e.from?.[0]?.email ?? '?'
-          const inStore = localById.get(e.id)
-          const mbx = Object.keys(e.mailboxIds ?? {}).map(mailboxNameFromId).find(Boolean) ?? '?'
-          let attribution = 'NOT IN LOCAL STORE'
-          if (inStore) {
-            const gid = readGroupHeaders(inStore).id
-            const seenLocal = !!(inStore.keywords as any)?.['$seen']
-            const flags = [isEdit(inStore) ? 'EDIT' : '', isReaction(inStore) ? 'REACT' : '', isSecurejoinEmail(inStore) ? 'SJOIN' : ''].filter(Boolean).join(',')
-            attribution = gid ? `group:${gid.slice(0, 12)}` : `1:1 ${from}`
-            attribution += ` | localSeen=${seenLocal}${flags ? ' | ' + flags : ''}`
-          }
-          lines.push(`  • ${from} | ${attribution}`)
-        }
-      }
-      // What the left pane actually surfaces as unread — the real source of the
-      // list. If a store-unread message's inbox isn't here (or shows a smaller
-      // count), that inbox is being dropped/undercounted before it can render.
-      lines.push('')
-      lines.push('=== loadInboxSummaries unread inboxes ===')
-      const summaries = await loadInboxSummaries()
-      const unreadInboxes = summaries.filter(s => s.has_unread)
-      lines.push(`inboxes with has_unread: ${unreadInboxes.length}`)
-      for (const s of unreadInboxes) {
-        lines.push(`  • ${s.contact} | count=${s.unread_count ?? '?'} | archived=${!!s.archived}`)
-      }
-    } catch (err) {
-      lines.push('ERROR: ' + (err as any)?.message)
-    }
-
-    // Its own try: the whole page used to be one block, so any failure in the
-    // per-relay section above (a session with no JMAP client, a relay that is
-    // down) silently swallowed this section too — exactly when you most need
-    // to see it.
-    try {
-      // What the SERVICE WORKER actually did on its last push (written by
-      // sw.ts). Confirms which sw.js version is active on this device and
-      // whether decrypt/reaction-classification worked in the SW context.
-      lines.push('')
-      lines.push('=== service worker (last push) ===')
-      const reg = ('serviceWorker' in navigator) ? await navigator.serviceWorker.getRegistration() : null
-      lines.push(`active SW: ${reg?.active ? 'yes' : 'NO'} | waiting: ${reg?.waiting ? 'yes (update pending!)' : 'no'}`)
-      const activeVer = await idb.get(idb.STORES.accounts, SW_KEYS.version).catch(() => null)
-      lines.push(`active SW version: ${activeVer ?? '?'}`)
-      const swdbg = await idb.get(idb.STORES.accounts, SW_KEYS.debug).catch(() => null) as any
-      if (swdbg) {
-        lines.push(`version: ${swdbg.version} | ${swdbg.at ? Math.round((Date.now() - swdbg.at) / 1000) + 's ago' : '?'}`)
-        lines.push(`candidates=${swdbg.candidates} pgp=${swdbg.pgp} decryptOk=${swdbg.decryptOk} decryptFail=${swdbg.decryptFail}`)
-        // complete=false means at least one account's JMAP fetch failed, so the
-        // badge was left alone and the notified-id set was merged, not replaced.
-        lines.push(`classify: noise=${swdbg.noise} real=${swdbg.real} | complete=${swdbg.complete}`)
-        // The badge's three disjoint parts (sw.ts) — if the number on the icon
-        // looks wrong, this says which of them is, and whether the JMAP half
-        // came from the SW's own scan or from the window's last published value.
-        lines.push(`badge=${swdbg.badge} = jmap ${swdbg.jmapUnread ?? '?'} + localDidcomm ${swdbg.localDidcomm ?? '?'} + queued ${swdbg.didcommQueued ?? 0}`)
-        lines.push(`  jmap source: ${swdbg.complete ? 'own scan' : 'published fallback'} (scanned=${swdbg.jmapScanned ?? '?'} published=${swdbg.publishedJmap ?? '?'} accounts=${swdbg.accounts ?? '?'})`)
-        if (swdbg.calls?.length) lines.push(`  FAILED JMAP calls: ${swdbg.calls.join(', ')}`)
-        lines.push(`notified=${swdbg.notified} (realCount=${swdbg.realCount} freshCount=${swdbg.freshCount})`)
-        lines.push(`suppressed (open thread): ${swdbg.suppressed || '(none)'}`)
-        lines.push(`lastDisposition: ${swdbg.lastDisp ?? '?'}`)
-        lines.push(`lastHeaderKeys: ${swdbg.lastHdrKeys ?? '?'}`)
-      } else {
-        lines.push('no push processed yet by this SW')
-      }
-    } catch (err) {
-      lines.push('ERROR (service worker section): ' + (err as any)?.message)
-    }
-    out.textContent = lines.join('\n')
   }
 
   function renderConfigPage() {
@@ -2354,8 +2203,8 @@ export async function setupLeftPane() {
       if (apCount > 0 && apCount < filledRows.length - didCount) {
         showSysMsg('Mixed mail + ActivityPub recipients not allowed'); return
       }
-      if (didCount > 0 && (didCount < filledRows.length || visible.length > 1)) {
-        showSysMsg('DIDComm only supports one direct recipient — no mixing with mail/AP or group sends'); return
+      if (didCount > 0 && didCount < filledRows.length) {
+        showSysMsg('DIDComm recipients cannot be mixed with mail or ActivityPub ones'); return
       }
       if (apCount > 0 && pendingAttachments.length) {
         showSysMsg('Attachments are not supported over ActivityPub'); return
@@ -2372,7 +2221,42 @@ export async function setupLeftPane() {
 
       // 2+ visible recipients (To+Cc) => group; a single one => 1:1. Bcc rides
       // along in both cases without affecting the group decision.
-      if (visible.length >= 2) {
+      if (visible.length >= 2 && didCount > 0) {
+        // Several DIDComm recipients: an MLS group conversation. Not the same
+        // object as the email group below at all — this one has a ratchet
+        // tree, so membership is cryptographic (a removed member cannot read
+        // what follows) rather than a recipient list anyone can edit.
+        const groupName = title || 'Group'
+        const { createGroupConversation } = await import('../did/didcomm/channel.ts')
+        const sess = sessionFor(fromEmail) ?? activeSession()
+        const selfDid = sess?.account.did
+        if (!selfDid) { showSysMsg('This identity has no DID to start a group with'); return }
+        const created = await createGroupConversation(selfDid, groupName, visible)
+        if (!created.ok) { showSysMsg(created.error); return }
+        // Whoever could not be reached is named rather than silently dropped:
+        // "the group exists but Bob is not in it" is a fact the user has to
+        // have, and the remedy (invite them again later) is theirs to choose.
+        if (created.skipped.length) {
+          showSysMsg(`Could not invite ${created.skipped.map(d => displayLabelFor(d)).join(', ')} — no key packages published`)
+        }
+        if (body) {
+          const { sendToGroup } = await import('../did/didcomm/channel.ts')
+          const sent = await sendToGroup(selfDid, created.groupId, body, '')
+          if (!sent.ok) { showSysMsg(sent.error || 'Send failed'); return }
+        }
+        ;($lpSearch as HTMLInputElement).value = ''
+        hideCmdPalette()
+        await loadLeftInboxes()
+        switchInbox({
+          user: sess.account.email,
+          mailbox: '',
+          contact: `group:${created.groupId}`,
+          inbox_type: 'group',
+          group_id: created.groupId,
+          group_name: groupName,
+          participants: visible,
+        })
+      } else if (visible.length >= 2) {
         const groupName = title || 'Group'
         const groupId = newGroupId()
         const result = await jmapCreateEmail({ to, cc, bcc }, body, groupName, '', { id: groupId, name: groupName }, [], fromEmail, relayUrl, attachmentsToSend)
@@ -3088,6 +2972,29 @@ export async function setupLeftPane() {
   // branch already called publishBareOrCurrent correctly; this just extends
   // that same call to the relay-backed case too, rather than a second,
   // divergent implementation.
+  // Re-shows the 24 words (mnemonic.ts's showStoredMnemonic), behind a fresh
+  // passkey gesture on a protected device. Only "nothing to show" gets a
+  // message: a refused prompt is the user's own answer, and the seed being
+  // absent means this identity predates seed storage and has never been
+  // logged into with its phrase since.
+  async function showRecoveryPhrase(did: string): Promise<void> {
+    const { showStoredMnemonic } = await import('./mnemonic.ts')
+    const shown = await showStoredMnemonic(did)
+    if (!shown) showSysMsg('No recovery phrase stored for this identity on this device', 8000)
+  }
+
+  // Offered only while this device has no passkey guarding the identity —
+  // enrolment needs a real click (WebAuthn transient activation), which is
+  // exactly why signup hangs it off the phrase dialog's own button and login
+  // doesn't attempt it at all (did/restore.ts's note).
+  async function protectWithPasskey(userName: string): Promise<void> {
+    const { enableIdentityProtection } = await import('../did/store.ts')
+    showSysMsg('Waiting for passkey…', 30000)
+    const ok = await enableIdentityProtection(userName).catch(() => false)
+    showSysMsg(ok ? 'Identity protected on this device' : 'Not protected — passkey unavailable or declined', 8000)
+    refreshAccountsList()
+  }
+
   async function republishIdentity(did: string): Promise<void> {
     // Method-neutral wording throughout ("Sync", not "Publish to DHT") —
     // did:webvh has no DHT/gateway concept at all (a single HTTP PUT to the
@@ -3095,6 +3002,11 @@ export async function setupLeftPane() {
     // language here was actively wrong for it, not just imprecise.
     showSysMsg('Syncing…', 30000)
     try {
+      // Publishing signs with the root key, which is sealed at rest on a
+      // passkey-protected device (did/store.ts). No-op when this device never
+      // enabled protection.
+      const { unlockIdentitySecrets } = await import('../did/store.ts')
+      if (!(await unlockIdentitySecrets())) { showSysMsg('Unlock cancelled — not synced'); return }
       const rec = await getDidRecord(did)
       if (!rec) throw new Error('no local DID record')
       const { publishBareOrCurrent } = await import('../did/didcomm-devices.ts')
@@ -3117,6 +3029,25 @@ export async function setupLeftPane() {
     await logout()
   }
 
+  // The account page's own DID line: shown with the SCID elided
+  // (`did:webvh:t.biset.md:bfc5`) — 46 characters of base58 mean nothing to
+  // the account holder. The DID text + copy button area is one target: hover
+  // it for the full identifier in a bubble, click it to copy that full DID
+  // (never the elided form). The area shrinks to its own content (style.css's
+  // align-self on the row), so the rest of the card still expands on click.
+  function wireIdentityDid(didEl: HTMLElement, did: string) {
+    const row = didEl.parentElement ?? didEl
+    const { prefix, suffix } = ownDidParts(did)
+    didEl.textContent = prefix + suffix
+    // A CSS bubble rather than `title`: the native tooltip takes a second to
+    // appear and breaks the DID across the screen's edge on its own terms.
+    row.dataset.fullDid = did
+    row.onclick = (ev) => {
+      ev.stopPropagation() // copy only; don't also expand the card
+      navigator.clipboard?.writeText(did).then(() => showSysMsg('DID copied')).catch(() => {})
+    }
+  }
+
   function renderAccountsList() {
     const $list = document.getElementById('cmd-acc-list')
     if (!$list) return
@@ -3136,11 +3067,13 @@ export async function setupLeftPane() {
     const identityAvatar = document.getElementById('cmd-acc-identity-avatar')
     const identityName = document.getElementById('cmd-acc-identity-name')
     const identityDid = document.getElementById('cmd-acc-identity-did')
-    const identityCopy = document.getElementById('cmd-acc-identity-copy')
     const identityMenuBtn = document.getElementById('cmd-acc-identity-menu-btn') as HTMLButtonElement | null
     const identityDoc = document.getElementById('cmd-acc-identity-doc')
     const identityDevices = document.getElementById('cmd-acc-identity-devices')
     const repAccount = accounts.find(a => a.did)
+    // Whether this device already has a passkey guarding the seed + root key
+    // (did/store.ts) — decides whether the menu offers to set one up.
+    const identityProtected = identityProtectionEnabled()
     if (identitySection && identityFields && identityAvatar && identityName && identityDid && identityDoc && identityDevices) {
       // The whole card is the click target now (not just the DID text) —
       // same "click anywhere to expand" pattern the relay/storage cards
@@ -3176,7 +3109,7 @@ export async function setupLeftPane() {
         const name = identities.all().find(i => i.email === repEmail)?.name || repEmail.split('@')[0]
         identityName.textContent = name
         identityName.onclick = null
-        identityDid.textContent = shortOwnDid(did)
+        wireIdentityDid(identityDid, did)
         wireIdentityHeading(did)
         // "Change display name" moved off the name text's own click (which
         // now just bubbles to the card's expand, like the rest of the
@@ -3194,17 +3127,13 @@ export async function setupLeftPane() {
             ev.stopPropagation()
             openDropdownMenu(identityMenuBtn, [
               { label: 'Change display name', onClick: () => openDisplayNameModal(repEmail) },
+              ...(identityProtected ? [] : [{ label: 'Protect with passkey', onClick: () => protectWithPasskey(repEmail) }]),
+              { label: 'Show recovery phrase', onClick: () => showRecoveryPhrase(did) },
               { label: 'Export Messages', onClick: () => exportIdentityMessages(did) },
               { label: 'Import Messages', onClick: () => importIdentityMessages() },
               { label: 'Sync', onClick: () => republishIdentity(did) },
               { label: 'Log out', danger: true, onClick: () => confirmAndLogout() },
             ])
-          }
-        }
-        if (identityCopy) {
-          identityCopy.onclick = (ev) => {
-            ev.stopPropagation() // don't also trigger identityDid's expand click
-            navigator.clipboard?.writeText(did).then(() => showSysMsg('DID copied')).catch(() => {})
           }
         }
         identitySection.style.display = ''
@@ -3219,7 +3148,7 @@ export async function setupLeftPane() {
         identityAvatar.onclick = null
         identityName.textContent = 'Your identity'
         identityName.onclick = null
-        identityDid.textContent = shortOwnDid(sDid)
+        wireIdentityDid(identityDid, sDid)
         wireIdentityHeading(sDid)
         // No display name to change (no address yet) — Export/Import/Sync
         // and Log out still apply to a relay-less identity's local state.
@@ -3228,17 +3157,13 @@ export async function setupLeftPane() {
           identityMenuBtn.onclick = (ev) => {
             ev.stopPropagation()
             openDropdownMenu(identityMenuBtn, [
+              ...(identityProtected ? [] : [{ label: 'Protect with passkey', onClick: () => protectWithPasskey(sDid) }]),
+              { label: 'Show recovery phrase', onClick: () => showRecoveryPhrase(sDid) },
               { label: 'Export Messages', onClick: () => exportIdentityMessages(sDid) },
               { label: 'Import Messages', onClick: () => importIdentityMessages() },
               { label: 'Sync', onClick: () => republishIdentity(sDid) },
               { label: 'Log out', danger: true, onClick: () => confirmAndLogout() },
             ])
-          }
-        }
-        if (identityCopy) {
-          identityCopy.onclick = (ev) => {
-            ev.stopPropagation()
-            navigator.clipboard?.writeText(sDid).then(() => showSysMsg('DID copied')).catch(() => {})
           }
         }
         // Adding a relay uses the normal "+ New JMAP account" panel below,
@@ -3274,7 +3199,6 @@ export async function setupLeftPane() {
     const relayLabel = (url: string): string => {
       try { return new URL(url).hostname.split('.')[0] } catch { return '?' }
     }
-    const protoLabel = (url: string): string => isApRelay(url) ? 'AP' : 'SMTP'
     // One card per RELAY endpoint. Identity-by-DID: the DID is the identity; each
     // relay is a concrete endpoint you see and manage (SMTP, ActivityPub, …).
     // Sorting by did keeps an identity's relays adjacent (the DID itself is
@@ -3302,7 +3226,10 @@ export async function setupLeftPane() {
       dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${connected ? '#34c759' : '#ff3b30'}`
       const protoEl = document.createElement('span')
       protoEl.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--accent2, #888);flex-shrink:0'
-      protoEl.textContent = protoLabel(a.serverUrl)
+      // Relay-advertised label (GET /relay-info, context.ts's relayProtocolLabel) —
+      // no hardcoded AP/mail guess here. Cache-first render, refreshed once
+      // fetchRelayInfo resolves (mirrors fetchAccountInfo's pattern below).
+      protoEl.textContent = relayProtocolLabel(a.serverUrl)?.text ?? '…'
       const sep = document.createElement('span')
       sep.style.cssText = 'color:var(--text-dim);flex-shrink:0'
       sep.textContent = ':'
@@ -3510,6 +3437,9 @@ export async function setupLeftPane() {
           statSync.textContent = `Sync: ${fmtRelTime(info.lastSyncAt)}`
         }).catch(() => {})
       }
+      fetchRelayInfo(a.serverUrl).then(() => {
+        protoEl.textContent = relayProtocolLabel(a.serverUrl)?.text ?? '?'
+      }).catch(() => {})
     }
 
     // No trailing "+ New Relay" card any more (2026-08-12, user-requested):
@@ -3749,37 +3679,13 @@ export async function setupLeftPane() {
     try {
       // Was its own relay-sessions-only gateway list (relaysForId(did),
       // filtered) — empty for a relay-less (DID⊥relay) identity, which has no
-      // relay session to draw a /pkarr gateway from at all. resolveDidDocFull
-      // (above) already solves this the right way via channel.ts's
-      // ownGateways (relay gateways + this identity's own mediator's
-      // token-gated pkarr, plus the public fallbacks) — reuse it instead of
-      // a second gateway-list implementation that only worked for a
-      // relay-backed identity. This is what made a standalone identity's own
+      // relay session to draw a gateway from at all. resolveDidDocFull
+      // (above) solves this by resolving from the DID string itself instead
+      // of a gateway list. This is what made a standalone identity's own
       // #account page permanently report "No document found" even though the
-      // record was resolvable everywhere else (own anchor, public gateways).
+      // record was resolvable everywhere else.
       const doc = await resolveDidDocFull(did)
-      // did:webvh's document is plain JSON already (keys are multibase
-      // strings, not typed arrays) — nothing to reformat, unlike did:dht
-      // below.
-      if (did.startsWith('did:webvh:')) {
-        docEl.textContent = doc ? JSON.stringify(doc, null, 2) : 'No document found (not yet published, or no gateway reachable)'
-        return
-      }
-      // did:dht's document keys are raw Uint8Arrays — JSON.stringify
-      // serializes typed arrays as {"0":244,"1":42,...} (no special-casing,
-      // unlike a plain array). Format every one as hex instead of dumping 32
-      // numbered object keys each. Keep this in step with DidDocument's key
-      // fields: keyAgreementKeys (one per registered device, document.ts's
-      // DidKeyAgreement) was added later and initially missed here, which
-      // showed up as one key rendering as hex next to another rendering as
-      // an object.
-      const hex = (b: Uint8Array) => [...b].map(x => x.toString(16).padStart(2, '0')).join('')
-      const forDisplay = doc && 'identityKey' in doc && {
-        ...doc,
-        identityKey: hex(doc.identityKey),
-        ...(doc.keyAgreementKeys?.length ? { keyAgreementKeys: doc.keyAgreementKeys.map(k => ({ kid: k.kid, publicKey: hex(k.publicKey) })) } : {}),
-      }
-      docEl.textContent = forDisplay ? JSON.stringify(forDisplay, null, 2) : 'No document found (not yet published, or no gateway reachable)'
+      docEl.textContent = doc ? JSON.stringify(doc, null, 2) : 'No document found (not yet published, or no gateway reachable)'
     } catch {
       docEl.textContent = 'Failed to resolve DID document'
     }
@@ -3897,7 +3803,6 @@ export async function setupLeftPane() {
     { name: '/account', page: renderAccountPage, action: () => {}, onShow: onShowAccount },
     { name: '/config',  page: renderConfigPage,  action: () => {}, onShow: onShowConfig },
     { name: '/compose',     page: renderComposePage,     action: () => {}, onShow: onShowNew },
-    { name: '/debug',       page: renderDebugPage,       action: () => {}, onShow: onShowDebug },
   ]
   let cmdSelectedIdx = -1
   let _filteredCmds: typeof LP_COMMANDS = []

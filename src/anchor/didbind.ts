@@ -16,7 +16,6 @@
 // anything it liked on the anchor without this check at all — the anchor has
 // never authenticated its relays.
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { zbase32Decode } from '../did/dht/zbase32.ts'
 import { rootPublicKeyFromWebvhState } from '../did/webvh/document.ts'
 import { resolveOwnWebvhDocument } from './webvh-resolve.ts'
 import type { WebvhLogStore } from './webvh-store.ts'
@@ -28,32 +27,16 @@ const BIND_WINDOW_SECONDS = 300
 
 export type BindResult = { ok: true } | { ok: false; reason: string }
 
-/** The ed25519 public key a did:dht identifier names — the DID is the key. */
-export function didPublicKey(did: string): Uint8Array | null {
-  if (!did.startsWith('did:dht:')) return null
-  const suffix = did.slice('did:dht:'.length)
-  if (suffix === '') return null
-  try {
-    return zbase32Decode(suffix, 32)
-  } catch {
-    return null
-  }
-}
-
-// Method-dispatching root-key resolver for verifyDIDBinding: did:dht names
-// its key in the identifier itself; did:webvh only names a
-// verificationMethod, so the DID must be resolved — against this anchor's
-// own log store, since the DID being claimed here was just PUT there by the
-// same account-creation flow (server.ts's PUT /dids/*).
+// Root-key resolver for verifyDIDBinding: a did:webvh identifier only names a
+// verificationMethod, so the DID must be resolved — against this anchor's own
+// log store, since the DID being claimed here was just PUT there by the same
+// account-creation flow (server.ts's PUT /dids/*).
 export function rootKeyResolver(webvh: WebvhLogStore | undefined): (did: string) => Promise<Uint8Array | null> {
   return async (did: string): Promise<Uint8Array | null> => {
-    if (did.startsWith('did:dht:')) return didPublicKey(did)
-    if (did.startsWith('did:webvh:')) {
-      if (!webvh) return null
-      const doc = resolveOwnWebvhDocument(webvh, did)
-      return doc ? rootPublicKeyFromWebvhState(doc) : null
-    }
-    return null
+    if (!did.startsWith('did:webvh:')) return null
+    if (!webvh) return null
+    const doc = resolveOwnWebvhDocument(webvh, did)
+    return doc ? rootPublicKeyFromWebvhState(doc) : null
   }
 }
 
@@ -72,11 +55,10 @@ export interface Binding {
  * and the timestamp is inside the freshness window. Returns a reason rather
  * than throwing: a bad binding is a 401 for the caller, not an anchor fault.
  *
- * `resolveRootKey` gets the DID's root public key — did:dht names it in the
- * identifier itself (didPublicKey, no lookup needed); did:webvh only names a
- * verificationMethod, so the caller must resolve the document (server.ts,
- * against its own webvh store — the DID being claimed there was written by
- * the same PUT /dids/* flow moments earlier). */
+ * `resolveRootKey` gets the DID's root public key: a did:webvh identifier
+ * only names a verificationMethod, so the caller must resolve the document
+ * (server.ts, against its own webvh store — the DID being claimed there was
+ * written by the same PUT /dids/* flow moments earlier). */
 export async function verifyDIDBinding(
   b: Binding,
   resolveRootKey: (did: string) => Promise<Uint8Array | null>,

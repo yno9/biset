@@ -31,6 +31,13 @@ Every divergence from upstream is marked in the source with a comment starting
 `// biset:` so a future re-sync can find them without a diff against a tag.
 
 - `clientState.ts` — the `needsUpdatePath` fix above.
+- `processMessages.ts` — an early return once a member has removed ITSELF (a
+  self-removed leaf otherwise walks an ancestor chain out of a tree that no
+  longer contains it, and spins), and `senderLeafIndex` on an application
+  message. The second is an addition, not a fix: WHO sent a message is the one
+  thing MLS proves and no transport header can, and a group of several people
+  has to attribute messages to a leaf rather than to a name in the plaintext
+  that any member could write.
 - Ciphersuites other than the one biset uses, and the WebCrypto ("default")
   crypto provider, are removed along with their `@hpke/*` dependencies.
 - HPKE (RFC 9180, base mode) is implemented over `@noble/*` in

@@ -10,8 +10,6 @@
 //
 //   POST   /_anchor/identity/<localpart>   {"domain":…,"did":…,"did_sig":…,…} → 201/200/409
 //   DELETE /_anchor/identity/<localpart>?domain=<domain>                    → 204
-//   GET    /_anchor/pkarr/<z-base-32 pubkey>                       → wire payload | 404
-//   PUT    /_anchor/pkarr/<z-base-32 pubkey>   body = wire payload → 204 | 400
 //   GET    /<username>/did.jsonl                      → did:webvh log | 404
 //   PUT    /<username>/did.jsonl  body = JSONL         → 204 | 400/409
 //   POST   /_anchor/devices/vouch   {"did":…,"device_pub_key":…,"label":…,…} → 200 | 400/401
@@ -20,32 +18,17 @@
 // only** — naming a DID requires proving it (a relay_token Bearer), and the
 // registry had two read routes with no caller (a stranger's operator must not
 // learn who is looking them up — src/did/discovery.ts asks DNS instead). The
-// **Pkarr gateway (/_anchor/pkarr/*) answers anyone** — see handlePkarr's own
-// note on why that's safe. The mediator is the other thing here the world may
-// talk to.
+// mediator is the other thing here the world may talk to.
 import type { ClaimStore } from './store.ts'
 import { CloudflareAnchor } from './cloudflare.ts'
-import { verifyDIDBinding, verifyDeviceVouch, didPublicKey, rootKeyResolver } from './didbind.ts'
+import { verifyDIDBinding, verifyDeviceVouch, rootKeyResolver } from './didbind.ts'
 import type { MediatorHandler } from './mediator/server.ts'
-import type { PkarrGateway } from './pkarr.ts'
 import type { WebvhLogStore } from './webvh-store.ts'
 import { resolveEntries } from '../did/webvh/resolver.ts'
-import { buildBisetWebvhDid } from '../did/webvh/identifier.ts'
+import { buildBisetWebvhDid, parseWebvhDid, bisetWebvhUsername } from '../did/webvh/identifier.ts'
 import type { LogEntry } from '../did/webvh/log.ts'
 
-/** A mutable slot rather than a plain value: joining the Mainline DHT takes a
- * few seconds (PkarrGateway.start), and the HTTP listener used to wait for
- * that before opening at all — meaning EVERY route here (not just /pkarr)
- * was connection-refused for that whole window on every restart, including
- * the mediator's `/` and `/.well-known/did.json`. index.ts now starts the
- * listener immediately and fills this in once the DHT node is ready, so
- * `handlePkarr` needs to read it fresh on every request rather than close
- * over a value fixed at startAnchor's call time. `starting` distinguishes
- * "still joining, retry shortly" (503) from "no pkarr_gateway configured at
- * all" (404, permanent) — both look like `current` is unset. */
-export interface PkarrRef { current?: PkarrGateway; starting: boolean }
 import { createHash, timingSafeEqual } from 'node:crypto'
-import { zbase32Decode } from '../did/dht/zbase32.ts'
 
 const MAX_BODY = 1 << 12 // matches Go's io.LimitReader(r.Body, 1<<12)
 // What one REQUEST may carry. A did:webvh log is append-only and every entry
@@ -77,7 +60,7 @@ const MAX_WEBVH_LOG_ENTRIES = 10_000
 const MAX_WEBVH_LOG_BYTES = 16 << 20 // 16MiB
 
 // The one name a username/localpart may never be: every internal route below
-// (`/_anchor/identity/*`, `/_anchor/devices/vouch`, `/_anchor/pkarr/*`) lives
+// (`/_anchor/identity/*`, `/_anchor/devices/vouch`) lives
 // under this prefix specifically so a did:webvh path (`/<username>/did.jsonl`,
 // no `dids/` prefix any more — 2026-08-11, shorter DIDs) can never collide
 // with one of them EXCEPT if a username were literally this string. Checked
@@ -112,17 +95,14 @@ export interface AnchorOptions {
    * nothing on `/` and `/.well-known/did.json`, exactly as before it could
    * mediate at all. */
   mediator?: MediatorHandler
-  /** Absent (or `current` unset) when the DHT gateway is off — `/_anchor/pkarr/*`
-   * then 404s, as it did before the anchor could serve it. */
-  pkarr?: PkarrRef
   /** did:webvh log storage (PLANWEBVH.md §2.1/§2.3). Absent means the webvh route
-   * 404s — same "off by omission" shape as `pkarr`/`mediator`. */
+   * 404s — same "off by omission" shape as `mediator`. */
   webvh?: WebvhLogStore
   /** The secret this anchor's own relays present. Not optional: see index.ts. */
   relayToken: string
 }
 
-export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkarr, webvh, relayToken }: AnchorOptions) {
+export function startAnchor({ claims, cloudflare, port, hostname, mediator, webvh, relayToken }: AnchorOptions) {
   const expected = createHash('sha256').update(relayToken).digest()
   const resolveRootKey = rootKeyResolver(webvh)
 
@@ -151,54 +131,6 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
   // collapsing the two would have relays telling people their signature failed
   // when it was never looked at.
   const forbidden = () => text('this anchor does not serve that relay', 403)
-  // GET/PUT /_anchor/pkarr/<z-base-32 pubkey> — the Pkarr relay surface browsers need
-  // (they cannot speak UDP). Open to anyone, no Bearer/token gate: PUT is
-  // self-authenticating (pkarr.ts's own header note — the payload's signature
-  // is checked against the key named in the URL, so nobody can forge or
-  // overwrite a record they don't hold the key for, no matter who's asking),
-  // and this is exactly how the public fallback gateways this same client
-  // already trusts (relay.pkarr.org, pkarr.pubky.org) have always operated.
-  // Was gated behind this anchor's own relay_token (or, for relay-less
-  // clients with no relay to hold that secret, a separate pkarr_token minted
-  // at mediator registration) — that bought nothing safety-wise, since the
-  // signature check was already doing the actual work, and it coupled two
-  // unrelated services: a mediator registration became a prerequisite for
-  // DHT gateway access. republishAll (pkarr.ts) still only keeps OUR OWN
-  // claimed identities alive long-term (isAnchored gate), so a stranger's put
-  // costs one DHT announce, never ongoing pinning.
-  async function handlePkarr(req: Request, url: URL): Promise<Response> {
-    if (!pkarr?.current) return pkarr?.starting ? text('pkarr gateway still starting — retry shortly', 503) : notFound()
-    const gw = pkarr.current
-    const key = url.pathname.slice('/_anchor/pkarr/'.length)
-    if (key === '' || key.includes('/')) return notFound()
-    let pubkey: Buffer
-    try {
-      pubkey = Buffer.from(zbase32Decode(key, 32))
-    } catch {
-      return text('invalid key', 400)
-    }
-    switch (req.method) {
-      case 'GET': {
-        const payload = await gw.get(pubkey)
-        if (!payload) return notFound()
-        return new Response(payload, { status: 200, headers: { ...CORS, 'Content-Type': 'application/octet-stream' } })
-      }
-      case 'PUT': {
-        const body = Buffer.from(await req.arrayBuffer())
-        try {
-          await gw.put(pubkey, body)
-        } catch (e) {
-          // A bad signature and an unreachable DHT are both the caller's problem
-          // to retry, and the Go gateway answered 400 to both. Keep that.
-          return text(e instanceof Error ? e.message : 'pkarr: put failed', 400)
-        }
-        return new Response(null, { status: 204, headers: CORS })
-      }
-      default:
-        return text('method not allowed', 405)
-    }
-  }
-
   // GET/PUT /<username>/did.jsonl — did:webvh log storage (PLANWEBVH.md
   // §2.1/§2.3). Domain comes from the request Host header, not the path: a
   // username is only unique within its own domain, and biset serves two
@@ -231,7 +163,7 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
   // against anchor.biset.md itself) working unchanged.
   //
   // Both GET and PUT are open to anyone — no relay_token gate — same
-  // "gateway holds zero authority" stance /pkarr already takes: a did:webvh
+  // "gateway holds zero authority" stance the anchor already takes: a did:webvh
   // log is self-certifying (SCID + per-entry Data Integrity proofs), so a
   // browser client can PUT it directly and this store cannot forge one, only
   // withhold. (Originally gated behind fromOwnRelay, on the theory that a
@@ -401,9 +333,26 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
     if (!body?.sig) return text('device vouch: sig required', 401)
     const r = await verifyDeviceVouch({ did, devicePubKey, label, ts: Number(body.bind_ts), sigB64: body.sig }, resolveRootKey)
     if (!r.ok) return text('device vouch: ' + r.reason, 401)
+
+    // Two ways an address can be legitimately bound to this DID, checked in
+    // that order: a recorded claim (the `allow_provision`/`provision_secret`
+    // path, POST /_anchor/identity/*), or — when there is no claim on
+    // record — the DID's OWN webvh identifier naming this exact
+    // domain+username (the `authorized_did_domain` path, verify-binding
+    // above, which deliberately never writes a claim). Symmetric with that
+    // endpoint's own reasoning: a 1:1 mail-domain:did-domain pairing needs no
+    // registry to say who owns a name, because the DID string already says it.
     const claimed = claims.read(domain, username.toLowerCase())
-    if (!claimed || claimed.did !== did) {
-      return text('device vouch: did does not match the claim on record for that address', 401)
+    if (claimed) {
+      if (claimed.did !== did) {
+        return text('device vouch: did does not match the claim on record for that address', 401)
+      }
+    } else {
+      const selfNamed = did.startsWith('did:webvh:') && bisetWebvhUsername(did) === username.toLowerCase()
+        && parseWebvhDid(did).domain.toLowerCase() === domain.toLowerCase()
+      if (!selfNamed) {
+        return text('device vouch: did does not match the claim on record for that address', 401)
+      }
     }
     return json({ ok: true }, 200)
   }
@@ -433,8 +382,8 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
     // (RESERVED_USERNAME's own note) — checked BEFORE the webvh catch-all
     // below, so `/_anchor/...` itself is never mistaken for a one-segment
     // username's did.jsonl path.
-    if (url.pathname.startsWith('/_anchor/pkarr/')) return handlePkarr(req, url)
     if (url.pathname === '/_anchor/devices/vouch') return handleDeviceVouch(req)
+    if (url.pathname === '/_anchor/verify-binding') return handleVerifyBinding(req)
     if (url.pathname.startsWith('/_anchor/identity/')) {
       const rest = url.pathname.slice('/_anchor/identity/'.length)
       return handleIdentity(req, url, rest)
@@ -444,6 +393,87 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
     // handleWebvh itself 404s anything that doesn't actually match.
     if (/^\/[^/]+\/did\.jsonl$/.test(url.pathname)) return handleWebvh(req, url)
     return notFound()
+  }
+
+  // POST /_anchor/verify-binding { domain, username, did, did_sig, bind_ts, host }
+  // → 200 | 400/401/403
+  //
+  // The `authorized_did_domain` counterpart to POST /_anchor/identity/<localpart>
+  // (jmapsmtp's ARC.md §2a): proves a DID's root key signed the binding, exactly
+  // as handleIdentity does, but **writes nothing to the claim registry**. A mail
+  // domain pinned 1:1 to one did-domain (`authorized_did_domain`) needs no
+  // registry to enforce non-duplication — the did:webvh log store's own
+  // append-only-per-(domain,username) shape already is that guarantee (this
+  // file's own note on the claim registry's role explains the gap a 1:N config
+  // would reopen; this endpoint exists for the 1:1 case where that gap cannot
+  // occur). What POST /_anchor/identity/* does beyond verification — record a
+  // claim, publish a DNS TXT — only the TXT half still applies here: the DNS
+  // anchor is how other clients discover this address's DID (src/did/
+  // discovery.ts), and skipping the registry write does not change that.
+  //
+  // No `existed`/`claims.claim()` call, and therefore no 409 either: the
+  // did:webvh log itself is what "already claimed" means here, and its
+  // append-only PUT already refused a conflicting write long before this
+  // endpoint is ever reached — by the time a caller has a `did` to present
+  // here, the log write already succeeded or failed on its own terms.
+  async function handleVerifyBinding(req: Request): Promise<Response> {
+    if (req.method !== 'POST') return text('method not allowed', 405)
+    if (!fromOwnRelay(req)) return forbidden()
+    const raw = await req.text()
+    if (raw.length > MAX_BODY) return text('domain, username and did required', 400)
+    let body: { domain?: string; username?: string; did?: string; did_sig?: string; bind_ts?: number; host?: string } | null = null
+    try {
+      body = JSON.parse(raw)
+    } catch {
+      return text('domain, username and did required', 400)
+    }
+    const domain = body?.domain ?? ''
+    const username = (body?.username ?? '').toLowerCase()
+    const did = body?.did ?? ''
+    if (!domain || !username || !did) return text('domain, username and did required', 400)
+    if (!body?.did_sig) return text('did binding: did_sig required', 401)
+
+    // The check the claim registry's non-duplication guarantee is replaced
+    // BY, not merely alongside: without this, a valid did_sig proves only
+    // that the presenting DID's root key signed a statement naming this
+    // username — which any DID can do about any username, since the
+    // signature says nothing about who that username actually belongs to.
+    // With a claim registry, `claims.claim()` was the thing that separately
+    // enforced "and this address is actually yours." Here there is no
+    // registry, so the DID's OWN webvh path segment has to say so instead —
+    // exactly the invariant a 1:1 mail-domain:did-domain pairing exists to
+    // make true (jmapsmtp's provision.rs::did_domain_gate does the identical
+    // check before this endpoint is ever called, on the Rust side — this is
+    // the same check enforced again here, so this endpoint is safe to call
+    // on its own rather than only safe behind a caller that happens to have
+    // already checked).
+    if (!did.startsWith('did:webvh:') || bisetWebvhUsername(did) !== username) {
+      return text('did binding: DID does not name this username', 401)
+    }
+    let didDomain: string
+    try {
+      didDomain = parseWebvhDid(did).domain
+    } catch {
+      return text('did binding: malformed did:webvh identifier', 401)
+    }
+    if (didDomain.toLowerCase() !== domain.toLowerCase()) {
+      return text('did binding: DID is not rooted at this domain', 401)
+    }
+
+    const r = await verifyDIDBinding({
+      did,
+      username,
+      relayHost: body.host ?? '',
+      bindTs: Number(body.bind_ts),
+      sigB64: body.did_sig,
+    }, resolveRootKey)
+    if (!r.ok) return text('did binding: ' + r.reason, 401)
+
+    // Best-effort, same as the claim path: publication failing must not fail
+    // a binding that already verified.
+    await cloudflare.writeAnchorTXT(username, domain, did)
+      .catch(e => console.error(`[dns-anchor] failed for ${username}@${domain}:`, e?.message ?? e))
+    return json({ ok: true }, 200)
   }
 
   async function handleIdentity(req: Request, url: URL, rest: string): Promise<Response> {
@@ -520,21 +550,10 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
         // with no DID leaves the old record standing).
         const domain = url.searchParams.get('domain')
         if (!domain) return text('domain required', 400)
-        // Read the DID before releasing — afterwards the claim is gone and with
-        // it the only record of which key this address belonged to.
-        const releasedDid = claims.read(domain, localpart)?.did
         try {
           claims.release(domain, localpart)
         } catch {
           return text('release failed', 500)
-        }
-        // Stop re-announcing the deleted identity's DHT record. The relays used
-        // to do this themselves (pkarr.Gateway.Forget, from the DID the client
-        // put in the delete body); now that the gateway lives here, the anchor
-        // knows the DID from its own claim and the client never has to say it.
-        if (releasedDid && pkarr?.current) {
-          const pk = didPublicKey(releasedDid)
-          if (pk) pkarr.current.forget(Buffer.from(pk))
         }
         // Best-effort, mirroring the claim path: the registry is the authority
         // and it has already let go, so a DNS failure must not fail the release
@@ -552,15 +571,6 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, pkar
   const server = Bun.serve({
     port,
     hostname,
-    // Bun's own default idle timeout is 10s — shorter than pkarr.ts's
-    // GET_TIMEOUT_MS/PUT_TIMEOUT_MS (30s each). Found live: a slow DHT
-    // operation that pkarr.ts's own timeout was specifically designed to
-    // wait out instead got its CONNECTION killed by Bun first, at 10s,
-    // before that internal timeout ever got a chance to fire and return a
-    // clean response — the caller saw a raw socket death (502/ERR_FAILED)
-    // instead of the graceful "timed out, retry" pkarr.ts intended. Longer
-    // than both internal timeouts, so they're always the ones that actually
-    // decide when a slow request gives up.
     idleTimeout: 35,
     async fetch(req) {
       if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS })

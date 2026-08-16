@@ -9,7 +9,8 @@
 // key) since connecting to a newly-discovered relay needs THIS device vouched
 // there — a per-device credential (this session's account-model redesign,
 // src/did/devicebind.ts), not a cached token.
-import { resolve, PUBLIC_PKARR_FALLBACKS } from './resolver.ts'
+import { resolveAny } from './resolver.ts'
+import { firstServiceEndpoint } from '../utils.ts'
 import { deriveRootKey } from './keys.ts'
 import type { AccountSession } from '../types.ts'
 
@@ -22,11 +23,7 @@ export interface SyncResult { session: AccountSession; server: string }
 export async function syncRelaysFromDid(
   did: string, email: string, masterSecret: Uint8Array, alreadyConnected: string[],
 ): Promise<SyncResult[]> {
-  const gateways = [...new Set([
-    ...alreadyConnected.map(u => u.replace(/\/$/, '') + '/pkarr'),
-    ...PUBLIC_PKARR_FALLBACKS,
-  ])]
-  const doc = await resolve(did, gateways).catch(() => null)
+  const doc = await resolveAny(did).catch(() => null)
   if (!doc) return []
 
   const known = new Set(alreadyConnected.map(u => u.replace(/\/$/, '')))
@@ -36,7 +33,7 @@ export async function syncRelaysFromDid(
   const label = deviceLabel()
   const out: SyncResult[] = []
   for (const svc of doc.service) {
-    const server = svc.serviceEndpoint[0]?.replace(/\/$/, '')
+    const server = firstServiceEndpoint(svc.serviceEndpoint).replace(/\/$/, '')
     if (!server || known.has(server)) continue
     known.add(server)
     const svcEmail = svc.address || email

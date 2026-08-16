@@ -13,24 +13,26 @@ import type { MediatorInfo } from '../did/didcomm/coordinate.ts'
 import {
   KEY_PACKAGE_PUBLISH, KEY_PACKAGE_REQUEST, KEY_PACKAGE_RESPONSE,
   GROUP_CREATE, GROUP_CREATED, COMMIT, APPLICATION, DELIVER, EPOCH_CONFLICT,
-  DELIVERIES_REQUEST, DELIVERIES,
+  DELIVERIES_REQUEST, DELIVERIES, GROUPS_REQUEST, GROUPS,
   EXTERNAL_COMMIT, GROUP_INFO_REQUEST, GROUP_INFO, NO_GROUP_INFO, SELF_REMOVE, CLEAR_REMOVALS,
   encodeMlsField, decodeMlsField,
   type ExternalCommitBody, type GroupInfoRequestBody, type GroupInfoBody, type SelfRemoveBody, type ClearRemovalsBody,
   type ApplicationBody, type CommitBody, type DeliverBody,
-  type DeliveriesRequestBody, type DeliveriesBody, type GroupCreateBody,
+  type DeliveriesRequestBody, type DeliveriesBody, type GroupsBody, type GroupCreateBody,
   type GroupCreatedBody, type KeyPackagePublishBody, type KeyPackageRequestBody,
   type KeyPackageResponseBody, type MlsObjectKind,
 } from '../did/didcomm/mls-transport.ts'
 
-/** Publish this device's unused key packages, replacing whatever the store
- * holds for it. Call it after topping up the pool (mls/store.ts's
- * ensureKeyPackages) — the two together are what keeps an offline device
- * invitable. */
-export async function publishKeyPackages(store: MediatorInfo, own: DidCommSender, kid: string, packages: Uint8Array[]): Promise<void> {
+/** Add key packages to this device's published pool, and learn how many it
+ * has left unused. Publishing none is how a device ASKS, which is the normal
+ * first step of a top-up: only the store knows the real count, because a key
+ * package is consumed there and the private half stays here until a Welcome
+ * arrives (mls/store.ts's topUpKeyPackages). */
+export async function publishKeyPackages(store: MediatorInfo, own: DidCommSender, kid: string, packages: Uint8Array[]): Promise<number> {
   const body: KeyPackagePublishBody = { kid, key_packages: packages.map(encodeMlsField) }
   const reply = await sendAndUnpack(store, own, KEY_PACKAGE_PUBLISH, body)
   if (reply.type !== KEY_PACKAGE_RESPONSE) throw new Error(`publishKeyPackages: unexpected reply type ${reply.type}`)
+  return (reply.body as KeyPackageResponseBody | undefined)?.remaining ?? 0
 }
 
 /** One key package per device of `did`, consumed from the store. Empty when
@@ -161,6 +163,18 @@ export async function submitApplication(ds: MediatorInfo, own: DidCommSender, gr
 /** A delivery as the receiving client wants it: the MLS bytes, plus the
  * ordering it arrived with. */
 export interface Delivery { groupId: string; seq: number; kind: MlsObjectKind; payload: Uint8Array; epoch?: bigint }
+
+/** Ask a DS which of its groups this device's identity is in.
+ *
+ * The recovery path for a lost Welcome: joining is pushed exactly once, so a
+ * device that could not use the Welcome it was sent has no way to notice that
+ * it is a member of a group it has never seen. Everyone else already thinks
+ * it is one. */
+export async function fetchGroups(ds: MediatorInfo, own: DidCommSender): Promise<Array<{ groupId: string; epoch: bigint }>> {
+  const reply = await sendAndUnpack(ds, own, GROUPS_REQUEST, {})
+  if (reply.type !== GROUPS) throw new Error(`fetchGroups: unexpected reply type ${reply.type}`)
+  return ((reply.body as GroupsBody | undefined)?.groups ?? []).map(g => ({ groupId: g.group_id, epoch: BigInt(g.epoch) }))
+}
 
 /** Ask the DS for everything this device is missing in a group, after the last
  * seq it managed to APPLY.

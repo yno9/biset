@@ -43,7 +43,7 @@
 // (dht/method-ops.ts, webvh/method-ops.ts) rather than being copied here.
 import { generateDeviceDidCommKey, generateDeviceMlkemKey } from './keys.ts'
 import { getDidRecord, storeDidRecord, withDidLock, type DidRecord } from './store.ts'
-import { keyAgreementKeysFromHex, type DidKeyAgreement } from './dht/document.ts'
+import { keyAgreementKeysFromHex, type DidKeyAgreement } from './document.ts'
 import type { DidMlkemKeyAgreement } from './webvh/document.ts'
 import { relaysForId, isApRelay, isDidCommRelay } from '../context.ts'
 import * as identityStore from '../store/identities.ts'
@@ -54,7 +54,7 @@ import { deviceKidFragment, isLegacyKid, fragmentOf } from './devicekid.ts'
 import { generateOwnKeyPackage, memberTransportKeys, type OwnKeyPackage } from '../mls/group.ts'
 import { ensureSelfGroup, selfGroupTransportKeys, selfGroupIdHex, selfGroupDevices, removeDeviceFromSelfGroup, leaveSelfGroup } from '../mls/self-group.ts'
 import { forgetDevices } from '../mls/authservice.ts'
-import { loadGroup, saveGroup, deleteGroup, ensureKeyPackages } from '../mls/store.ts'
+import { loadGroup, saveGroup, deleteGroup, mintKeyPackages, KEY_PACKAGE_POOL_TARGET } from '../mls/store.ts'
 import { publishKeyPackages } from '../mls/transport.ts'
 import type { ClientState } from '../mls/vendor/index.ts'
 import { reportDeviceProjection } from '../mls/device-projection.ts'
@@ -217,28 +217,29 @@ export interface MethodOps {
 }
 
 // Cached after first resolution — dynamic-import-backed purely to break the
-// module-init cycle (dht/method-ops.ts and webvh/method-ops.ts both import
-// TYPES from this file; this file needs their concrete implementations),
-// not to defer work on every call. Every exported function below calls
-// ensureMethodOpsLoaded() first; it's cheap after the first call since the
-// module cache short-circuits every subsequent import().
-let dhtOps: MethodOps | undefined
+// module-init cycle (webvh/method-ops.ts imports TYPES from this file; this
+// file needs its concrete implementation), not to defer work on every call.
+// Every exported function below calls ensureMethodOpsLoaded() first; it's
+// cheap after the first call since the module cache short-circuits every
+// subsequent import().
 let webvhOps: MethodOps | undefined
 let methodOpsLoaded: Promise<void> | undefined
 async function ensureMethodOpsLoaded(): Promise<void> {
   if (!methodOpsLoaded) {
-    methodOpsLoaded = Promise.all([
-      import('./dht/method-ops.ts').then(m => { dhtOps = m.dhtMethodOps }),
-      import('./webvh/method-ops.ts').then(m => { webvhOps = m.webvhMethodOps }),
-    ]).then(() => {})
+    methodOpsLoaded = import('./webvh/method-ops.ts').then(m => { webvhOps = m.webvhMethodOps })
   }
   await methodOpsLoaded
 }
 
+/** The method implementation for a DID.
+ *
+ * There is one method, so an unrecognised DID gets no silent fallback: it used
+ * to fall through to the did:dht ops, which is how a `did:webvh` string that
+ * failed the prefix test would still have been published to the DHT. */
 function methodOpsFor(did: string): MethodOps {
-  const ops = did.startsWith('did:webvh:') ? webvhOps : dhtOps
-  if (!ops) throw new Error('didcomm-devices: MethodOps not yet loaded — this indicates a bug (every exported function awaits ensureMethodOpsLoaded() first)')
-  return ops
+  if (!did.startsWith('did:webvh:')) throw new Error(`didcomm-devices: no method implementation for ${did}`)
+  if (!webvhOps) throw new Error('didcomm-devices: MethodOps not yet loaded — this indicates a bug (every exported function awaits ensureMethodOpsLoaded() first)')
+  return webvhOps
 }
 
 // ── device slot / sibling sync (method-agnostic) ────────────────────────────
@@ -668,8 +669,17 @@ export async function registerWithMediator(rawMediatorUrl: string): Promise<{ ow
     // commit, needing no key package at all), so it is best-effort: a failure
     // costs invitations, not this registration.
     try {
-      const pool = await ensureKeyPackages(ownKid)
-      await publishKeyPackages(mediator, own, ownKid, pool)
+      // publishKeyPackages transport.ts's own way: an empty publish is a
+      // QUERY (mls-ds.ts's own note), so this asks the store how many are
+      // left before minting the difference — only the store knows the real
+      // count, since a key package is consumed there and this device keeps
+      // the private half until a Welcome uses one (mintKeyPackages's note).
+      const remaining = await publishKeyPackages(mediator, own, ownKid, [])
+      const short = KEY_PACKAGE_POOL_TARGET - remaining
+      if (short > 0) {
+        const pool = await mintKeyPackages(ownKid, short)
+        await publishKeyPackages(mediator, own, ownKid, pool)
+      }
     } catch (e) {
       console.warn('[mls] could not publish key packages:', e instanceof Error ? e.message : e)
     }

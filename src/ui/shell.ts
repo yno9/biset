@@ -177,7 +177,14 @@ function computeConversationRecipients(): { toAddrs: string[]; groupOpts: GroupO
   // (from their signed DID document), so a relay/domain move is followed
   // invisibly. No-op unless a verified fresher address is cached; groups are
   // left as-is (multi-recipient discovery is out of scope for the first cut).
-  const dmTo = isGroup ? groupRecipients : [freshestAddressFor(contact)]
+  // An MLS group is addressed as ONE recipient — the group — because that is
+  // what it is: the Delivery Service fans a single submission out to the
+  // ratchet tree's members. Listing the members instead would send each of
+  // them a separate copy outside the group, which nobody could read as part of
+  // the conversation. Email groups keep addressing their members, since there
+  // the recipient list IS the group.
+  const mlsGroup = groupOpts?.id?.startsWith('mls:') ? groupOpts.id : undefined
+  const dmTo = mlsGroup ? [mlsGroup] : isGroup ? groupRecipients : [freshestAddressFor(contact)]
   return { toAddrs: dmTo, groupOpts, references }
 }
 

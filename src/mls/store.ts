@@ -48,6 +48,15 @@ export interface StoredGroup {
   id: string           // hex of the MLS group id
   selfKid: string      // which of this identity's devices is the member
   dsDid: string        // the Mediator acting as this group's Delivery Service
+  /** Where that Delivery Service is, so submissions can reach it.
+   *
+   * A group's DS is whoever's mediator created it, which for a conversation
+   * someone else started is not this identity's own. Stored rather than
+   * derived because it is not derivable later: the DID that fans deliveries
+   * out is a did:peer whose endpoint is decodable now, and losing it would
+   * leave a joinable group nobody here can submit to. Empty for the self
+   * group, whose DS is always this device's own mediator. */
+  dsUrl?: string
   name: string
   state: Uint8Array
   /** The highest DS sequence number this device has APPLIED to `state`.
@@ -89,13 +98,22 @@ export function newGroupId(): Uint8Array {
 
 // ---------------------------------------------------------------- key packages
 
-/** Top the pool back up to POOL_TARGET and return every unused key package
- * this device has, in wire form — what gets (re)published to the mediator.
- * Idempotent: calling it when the pool is full generates nothing. */
-export async function ensureKeyPackages(kid: string, target = POOL_TARGET): Promise<Uint8Array[]> {
-  const existing = (await getAll(STORES.mlskeys) as StoredKeyPackage[]).filter(k => k.kid === kid)
-  const created: StoredKeyPackage[] = []
-  for (let i = existing.length; i < target; i++) {
+/** How many unused key packages this device should keep published, and how
+ * many it mints when the store says the pool has run down. */
+export const KEY_PACKAGE_POOL_TARGET = POOL_TARGET
+
+/** Mint `count` fresh key packages, keep their private halves, and return the
+ * public wire form to publish.
+ *
+ * It mints rather than "ensures", because how many are needed is not
+ * knowable here: a key package is consumed at the STORE, and this device keeps
+ * every private half until a Welcome uses one, so the local count only ever
+ * grows. The earlier version counted locally and therefore stopped generating
+ * after the first five ever — a pool that looked full and was empty. The
+ * caller asks the store how many remain and mints the difference. */
+export async function mintKeyPackages(kid: string, count: number): Promise<Uint8Array[]> {
+  const minted: Uint8Array[] = []
+  for (let i = 0; i < count; i++) {
     const own = await generateOwnKeyPackage(kid)
     const rec: StoredKeyPackage = {
       ref: await keyPackageRefOf(own.publicPackage),
@@ -105,9 +123,9 @@ export async function ensureKeyPackages(kid: string, target = POOL_TARGET): Prom
       createdAt: Date.now(),
     }
     await put(STORES.mlskeys, rec)
-    created.push(rec)
+    minted.push(rec.publicWire)
   }
-  return [...existing, ...created].map(k => k.publicWire)
+  return minted
 }
 
 /** Find the key package a Welcome was addressed to, and consume it.
@@ -134,6 +152,9 @@ export async function saveGroup(group: Omit<LoadedGroup, 'updatedAt' | 'lastSeq'
     id: group.id,
     selfKid: group.selfKid,
     dsDid: group.dsDid,
+    // Not optional in practice for a conversation: without it the group can be
+    // read and never spoken to, and nothing later can recover it.
+    ...(group.dsUrl ? { dsUrl: group.dsUrl } : {}),
     name: group.name,
     state: encodeState(group.state),
     lastSeq: group.lastSeq ?? 0,

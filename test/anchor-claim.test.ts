@@ -6,15 +6,20 @@
 // address and have the anchor publish a `_did` TXT record saying so. Basic Auth
 // proved the caller owned an *account*; nothing proved they owned an
 // *identity*. The hijack is replayed below and must stay a 401.
+//
+// did:dht is retired (see PLANWEBVH.md); every identity below is did:webvh,
+// so proving one requires a real resolvable log — the anchor is started with
+// a webvh store and `identity()` publishes a genesis document through it.
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { zbase32Encode } from '../src/did/dht/zbase32.ts'
 import { signBinding } from '../src/did/binding.ts'
 import { ClaimStore } from '../src/anchor/store.ts'
 import { CloudflareAnchor } from '../src/anchor/cloudflare.ts'
 import { startAnchor } from '../src/anchor/server.ts'
+import { WebvhLogStore } from '../src/anchor/webvh-store.ts'
+import { createGenesis } from '../src/did/webvh/publish.ts'
 
 let fails = 0
 const ok = (name: string, cond: boolean, detail = '') => {
@@ -28,17 +33,37 @@ const PORT = 18201
 const A = `http://127.0.0.1:${PORT}`
 const DOMAIN = 't.example'
 const HOST = 'mail.example'
+// The DID's own domain — separate from DOMAIN (the mail relay's namespace the
+// claim is filed under) to keep the two concerns visibly distinct, same as
+// the real system: a claim's address lives on a relay's domain, the DID's log
+// lives on whatever domain minted it.
+const DID_DOMAIN = 'id.example'
 
 // No Cloudflare credential: claims are recorded, no DNS is touched.
 const TOKEN = 'test-relay-token'
+const webvh = new WebvhLogStore(dataDir)
 const server = startAnchor({
   claims: store,
   cloudflare: new CloudflareAnchor({}),
   port: PORT,
   hostname: '127.0.0.1',
   relayToken: TOKEN,
+  webvh,
 })
 await Bun.sleep(200)
+
+// Every did:webvh identity below resolves over HTTPS at its own domain;
+// redirect that fetch to this anchor's own webvh store.
+const REAL_FETCH = globalThis.fetch
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+  const m = /^https:\/\/([^/]+)(\/[^/]+\/did\.jsonl.*)$/.exec(url)
+  if (!m) return REAL_FETCH(input as any, init)
+  const [, domain, path] = m
+  const headers = new Headers(init?.headers)
+  headers.set('Host', domain!)
+  return REAL_FETCH(`${A}${path}`, { ...init, headers })
+}) as typeof fetch
 
 const claim = (localpart: string, body: object) =>
   fetch(`${A}/_anchor/identity/${localpart}`, {
@@ -52,17 +77,24 @@ const claim = (localpart: string, body: object) =>
 const addressesOf = (did: string): string[] =>
   store.lookupByDid(did).map(l => `${l.localpart}@${l.domain}`)
 
-const identity = () => {
+let seq = 0
+const identity = async () => {
   const priv = ed25519.utils.randomSecretKey()
-  return { priv, did: 'did:dht:' + zbase32Encode(ed25519.getPublicKey(priv)) }
+  const pub = ed25519.getPublicKey(priv)
+  const { did } = await createGenesis({
+    domain: DID_DOMAIN, username: `id${seq++}`,
+    rootPrivateKey: priv, rootPublicKey: pub,
+    relays: [], addresses: `id${seq}@${DID_DOMAIN}`,
+  })
+  return { priv, did }
 }
-const proofFor = (id: ReturnType<typeof identity>, username: string) => {
+const proofFor = (id: Awaited<ReturnType<typeof identity>>, username: string) => {
   const p = signBinding(id.priv, id.did, username, HOST)
   return { did_sig: p.sig, bind_ts: p.ts, host: HOST }
 }
 
-const victim = identity()
-const attacker = identity()
+const victim = await identity()
+const attacker = await identity()
 
 console.log('\n=== 正当な主張は通る ===')
 ok('署名付きで DID を主張できる', (await claim('victim', { did: victim.did, ...proofFor(victim, 'victim') })).status === 201)
@@ -85,7 +117,7 @@ ok('attacker 自身の DID なら、署名付きで主張できる',
 
 console.log('\n=== 1つの DID が複数アドレスを持つ（索引が全部持つ）===')
 // mail と AP、あるいは移行前後の旧新 — 1つの identity が複数アドレスを持つのは前提。
-const multi = identity()
+const multi = await identity()
 await claim('multi-a', { did: multi.did, ...proofFor(multi, 'multi-a') })
 await claim('multi-b', { did: multi.did, ...proofFor(multi, 'multi-b') })
 const both = addressesOf(multi.did)
@@ -109,7 +141,7 @@ console.log('\n=== relay 以外は書けない（この穴のために書かれ�
 // DELETE was enough to steal.
 {
   const noAuth = (init: RequestInit) => fetch(`${A}/_anchor/identity/victim?domain=${DOMAIN}`, init)
-  const sq = identity()
+  const sq = await identity()
   const sqProof = proofFor(sq, 'zzsquat')
   const squat = await fetch(`${A}/_anchor/identity/zzsquat`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -155,6 +187,7 @@ ok('期限切れの署名は 401', await (async () => {
   return (await claim('zz4', { did: victim.did, did_sig: p.sig, bind_ts: p.ts, host: HOST })).status === 401
 })())
 
+globalThis.fetch = REAL_FETCH
 console.log(fails ? `\n${fails} 件 FAILED` : '\n全て通過 — 署名なしで他人の DID は主張できない')
 server.stop(true)
 rmSync(dataDir, { recursive: true, force: true })

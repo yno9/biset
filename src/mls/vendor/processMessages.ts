@@ -53,7 +53,12 @@ export type ProcessMessageResult =
       actionTaken: IncomingMessageAction
       consumed: Uint8Array[]
     }
-  | { kind: "applicationMessage"; message: Uint8Array; newState: ClientState; consumed: Uint8Array[] }
+  // biset: `senderLeafIndex` added. Who sent an application message is the one
+  // thing MLS proves and no header can: a group of several people needs to
+  // attribute a message to a leaf (and through its credential, to a DID), and
+  // trusting a name inside the plaintext would let any member speak as any
+  // other. The value comes from the FramedContent that was just authenticated.
+  | { kind: "applicationMessage"; message: Uint8Array; newState: ClientState; consumed: Uint8Array[]; senderLeafIndex?: number }
 
 /**
  * Process private message and apply proposal or commit and return the updated ClientState or return an application message
@@ -94,6 +99,8 @@ export async function processPrivateMessage(
           message: result.content.content.applicationData,
           newState,
           consumed: result.consumed,
+          // biset: see the note on ProcessMessageResult.
+          ...(result.content.content.sender.senderType === "member" ? { senderLeafIndex: result.content.content.sender.leafIndex } : {}),
         }
       } else {
         throw new ValidationError("Cannot process commit or proposal from former epoch")
@@ -121,6 +128,8 @@ export async function processPrivateMessage(
       message: result.content.content.applicationData,
       newState: updatedState,
       consumed: result.consumed,
+      // biset: see the note on ProcessMessageResult.
+      ...(result.content.content.sender.senderType === "member" ? { senderLeafIndex: result.content.content.sender.leafIndex } : {}),
     }
   } else if (result.content.content.contentType === "commit") {
     const { newState, actionTaken, consumed } = await processCommit(

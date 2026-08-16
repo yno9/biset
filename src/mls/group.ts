@@ -95,7 +95,7 @@ export function confirmCommit(result: CommitResult): void {
  * an application message and `message` is the plaintext. */
 export type IncomingResult =
   | { state: ClientState; kind: 'state' }
-  | { state: ClientState; kind: 'message'; message: Uint8Array }
+  | { state: ClientState; kind: 'message'; message: Uint8Array; sender?: MlsMemberId }
 
 /** What this identity's own devices advertise. `defaultCapabilities()` plus
  * the private-use extension a leaf carries its transport keys in — a leaf
@@ -301,9 +301,18 @@ export async function processIncoming(state: ClientState, bytes: Uint8Array): Pr
   }
   const result = await processMessage(msg, state, emptyPskIndex, acceptAll, suite)
   result.consumed.forEach(zeroOutUint8Array)
-  return result.kind === 'applicationMessage'
-    ? { state: result.newState, kind: 'message', message: result.message }
-    : { state: result.newState, kind: 'state' }
+  if (result.kind !== 'applicationMessage') return { state: result.newState, kind: 'state' }
+  // WHO sent it, taken from the leaf MLS just authenticated — not from
+  // anything inside the plaintext. In a group of several people that
+  // distinction is the difference between attribution and a name field any
+  // member could fill in with someone else's.
+  //
+  // The leaf is read from the state the message was decrypted AGAINST, which
+  // for a message from an epoch this device has already left is the historical
+  // tree rather than the current one — the same reason the sender index is
+  // taken here and not resolved later by the caller.
+  const sender = result.senderLeafIndex === undefined ? undefined : memberAt(state, result.senderLeafIndex)
+  return { state: result.newState, kind: 'message', message: result.message, ...(sender ? { sender } : {}) }
 }
 
 /** A symmetric key derived from the group's current epoch, for a purpose
@@ -315,6 +324,19 @@ export async function processIncoming(state: ClientState, bytes: Uint8Array): Pr
 export async function exportSecret(state: ClientState, label: string, context: Uint8Array, length: number): Promise<Uint8Array> {
   const suite = await mlsSuite()
   return mlsExporter(state.keySchedule.exporterSecret, label, context, length, suite)
+}
+
+/** The member at one leaf index, or undefined when the leaf is empty — which
+ * a message's sender leaf never is, since MLS authenticated it against that
+ * leaf's key to get here. */
+export function memberAt(state: ClientState, leafIndex: number): MlsMemberId | undefined {
+  const node = state.ratchetTree[leafIndex * 2]
+  if (node?.nodeType !== 'leaf') return undefined
+  try {
+    return memberIdOf(node.leaf.credential)
+  } catch {
+    return undefined
+  }
 }
 
 /** Everyone currently in the group, in leaf order. */

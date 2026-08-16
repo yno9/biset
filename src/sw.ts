@@ -53,9 +53,10 @@ import type { NotificationTarget } from './push/shared.ts'
 // with the rest of the app's "dom" lib, so the global scope is cast to `any`.
 const sw = self as any
 
-// Bump on each meaningful sw.ts change so /debug (main thread) can confirm
-// WHICH sw.js the device actually has active — iOS PWA service workers update
-// stickily, and a stale one silently produces old behaviour.
+// Bump on each meaningful sw.ts change. Recorded on activate (SW_KEYS.version)
+// so WHICH sw.js the device actually has active is inspectable — iOS PWA
+// service workers update stickily, and a stale one silently produces old
+// behaviour.
 const SW_VERSION = 'didcomm-poke-first-1'
 
 // How many unread candidates (newest first) get bodies fetched and decrypted
@@ -75,9 +76,8 @@ sw.addEventListener('install', () => { sw.skipWaiting() })
 sw.addEventListener('activate', (event: any) => {
   event.waitUntil((async () => {
     await sw.clients.claim()
-    // Record which version is now ACTIVE (distinct from SW_KEYS.debug's
-    // version, which only updates when a push is processed) so /debug can tell
-    // whether a new sw.js has actually taken over even before any push arrives.
+    // Record which version is now ACTIVE, so it's possible to tell whether a
+    // new sw.js has actually taken over even before any push arrives.
     await idb.put(idb.STORES.accounts, SW_VERSION, SW_KEYS.version).catch(() => {})
   })())
 })
@@ -109,8 +109,7 @@ async function loadAccounts(): Promise<StoredAccount[]> {
 // write both went through their own hand-rolled copy of this before).
 // Returns null on any failure — callers must treat that as "unknown", never
 // as "nothing unread".
-async function jmapCall(account: StoredAccount, methodCalls: unknown[], dbg: Debug): Promise<any | null> {
-  const host = (() => { try { return new URL(account.serverUrl).host } catch { return account.serverUrl } })()
+async function jmapCall(account: StoredAccount, methodCalls: unknown[]): Promise<any | null> {
   try {
     const res = await fetch(account.serverUrl.replace(/\/$/, '') + '/jmap/api/', {
       method: 'POST',
@@ -123,13 +122,9 @@ async function jmapCall(account: StoredAccount, methodCalls: unknown[], dbg: Deb
         methodCalls,
       }),
     })
-    if (!res.ok) { dbg.calls.push(`${host}:HTTP${res.status}`); return null }
+    if (!res.ok) return null
     return await res.json()
-  } catch (e) {
-    // The reason matters and is otherwise invisible from the main thread: a
-    // failing scan silently contributes 0 unread, which used to subtract every
-    // unread mail from the badge with nothing to show for it.
-    dbg.calls.push(`${host}:${e instanceof Error ? e.name : 'error'}`)
+  } catch {
     return null
   }
 }
@@ -138,12 +133,12 @@ function methodResult(data: any, name: string): any {
   return (data?.methodResponses ?? []).find((r: any) => r[0] === name)?.[1]
 }
 
-async function markSeen(account: StoredAccount, ids: string[], dbg: Debug): Promise<void> {
+async function markSeen(account: StoredAccount, ids: string[]): Promise<void> {
   if (!ids.length) return
   const update: Record<string, any> = {}
   for (const id of ids) update[id] = { 'keywords/$seen': true }
   // Best-effort — the foreground sync will mark it too.
-  await jmapCall(account, [['Email/set', { accountId: account.email, update }, '0']], dbg)
+  await jmapCall(account, [['Email/set', { accountId: account.email, update }, '0']])
 }
 
 // ── Classification ───────────────────────────────────────────────────────────
@@ -164,26 +159,17 @@ interface Classified { kind: Kind; groupId?: string }
 // is a header INSIDE the PGP body, end-to-end encrypted — so it pushes for a
 // reaction just like a real message; only a decrypt here can distinguish them.
 // SecureJoin handshake noise is filtered earlier, on the cheap metadata pass.
-async function classify(e: any, selfEmail: string, dbg: Debug): Promise<Classified> {
-  dbg.candidates++
+async function classify(e: any, selfEmail: string): Promise<Classified> {
   // Cleartext reaction: Content-Disposition is a plain outer header.
-  if (isReaction(e)) { dbg.noise++; return { kind: 'noise' } }
+  if (isReaction(e)) return { kind: 'noise' }
   const outerGroupId = readGroupHeaders(e).id
   const body = emailBody(e)
-  if (!body.includes('-----BEGIN PGP MESSAGE-----')) { dbg.real++; return { kind: 'real', groupId: outerGroupId } }
-  dbg.pgp++
+  if (!body.includes('-----BEGIN PGP MESSAGE-----')) return { kind: 'real', groupId: outerGroupId }
   const dec = await decryptAndParse(body, selfEmail)
-  if (!dec?.headers) { dbg.decryptFail++; dbg.real++; return { kind: 'real', groupId: outerGroupId } }
-  dbg.decryptOk++
-  // Capture the actual decrypted headers of the LAST classified message so
-  // /debug can show why a reaction was (mis)classified.
-  dbg.lastHdrKeys = Object.keys(dec.headers).join(',')
-  dbg.lastDisp = (dec.headers['content-disposition'] ?? '(none)').slice(0, 40)
+  if (!dec?.headers) return { kind: 'real', groupId: outerGroupId }
   if (isReactionDisposition(dec.headers) || readChatEditTarget(dec.headers) || readChatDeleteTarget(dec.headers)) {
-    dbg.noise++
     return { kind: 'noise' }
   }
-  dbg.real++
   return { kind: 'real', groupId: dec.headers[CHAT_GROUP_ID.toLowerCase()]?.trim() || outerGroupId }
 }
 
@@ -199,7 +185,7 @@ type AccountUnread =
   | { ok: true; total: number; real: RealMsg[] }
   | { ok: false }
 
-async function fetchAccountUnread(account: StoredAccount, dbg: Debug): Promise<AccountUnread> {
+async function fetchAccountUnread(account: StoredAccount): Promise<AccountUnread> {
   // Stage 1 — metadata only. Bodies are deliberately NOT requested here: with
   // fetchAllBodyValues over the whole mailbox this single call used to pull
   // every message the account has ever received, on every push.
@@ -210,7 +196,7 @@ async function fetchAccountUnread(account: StoredAccount, dbg: Debug): Promise<A
       '#ids': { resultOf: '0', name: 'Email/query', path: '/ids' },
       properties: ['id', 'keywords', 'from', 'receivedAt', 'subject'],
     }, '1'],
-  ], dbg)
+  ])
   if (!head) return { ok: false }
   const list: any[] = methodResult(head, 'Email/get')?.list ?? []
   // Own sent mail never carries $seen (mirrors app.ts's loadInboxSummaries);
@@ -234,7 +220,7 @@ async function fetchAccountUnread(account: StoredAccount, dbg: Debug): Promise<A
       properties: ['id', 'headers', 'bodyValues', 'textBody'],
       fetchAllBodyValues: true,
     }, '0'],
-  ], dbg)
+  ])
   if (!full) return { ok: false }
   const detail = new Map<string, any>()
   for (const e of methodResult(full, 'Email/get')?.list ?? []) detail.set(e.id, e)
@@ -243,7 +229,7 @@ async function fetchAccountUnread(account: StoredAccount, dbg: Debug): Promise<A
   const real: RealMsg[] = []
   for (const e of scan) {
     const merged = { ...e, ...(detail.get(e.id) ?? {}) }
-    const { kind, groupId } = await classify(merged, account.email, dbg)
+    const { kind, groupId } = await classify(merged, account.email)
     if (kind === 'noise') { noiseIds.push(e.id); continue }
     const from = e.from?.[0]?.email ?? ''
     real.push({
@@ -257,7 +243,7 @@ async function fetchAccountUnread(account: StoredAccount, dbg: Debug): Promise<A
   // Same durable fix the foreground sync applies (sync/session.ts): mark the
   // inbox-hidden noise $seen so it leaves the unread set for good, keeping the
   // badge and every future push accurate without waiting for the app to open.
-  await markSeen(account, noiseIds, dbg)
+  await markSeen(account, noiseIds)
   // Candidates past SCAN_LIMIT are counted but unclassified: they're older
   // unread messages, and any noise among them gets marked $seen as it moves
   // into the scan window on a later push.
@@ -292,18 +278,6 @@ async function activeView(): Promise<{ focused: boolean; hash: string | null }> 
 }
 
 // ── Push ─────────────────────────────────────────────────────────────────────
-
-interface Debug {
-  candidates: number; pgp: number; decryptOk: number; decryptFail: number
-  noise: number; real: number; lastHdrKeys: string; lastDisp: string
-  /** One entry per FAILED JMAP call, as `host:reason`. Empty when every call
-   * succeeded — so an empty list next to a zero unread count means there was
-   * genuinely nothing unread, not that the scan never got off the ground. */
-  calls: string[]
-}
-function newDebug(): Debug {
-  return { candidates: 0, pgp: 0, decryptOk: 0, decryptFail: 0, noise: 0, real: 0, lastHdrKeys: '', lastDisp: '', calls: [] }
-}
 
 /** What the sender put in the push, when it put anything there at all.
  *
@@ -353,9 +327,8 @@ async function handlePush(payload: PushPayload | null): Promise<void> {
   // the thread. Nothing below depends on this having happened.
   if (didcommQueued > 0) await pokeDidCommClients()
 
-  const dbg = newDebug()
   const accounts = await loadAccounts()
-  const results = await Promise.all(accounts.map(a => fetchAccountUnread(a, dbg)))
+  const results = await Promise.all(accounts.map(a => fetchAccountUnread(a)))
   const complete = results.length > 0 && results.every(r => r.ok)
 
   let total = 0
@@ -430,16 +403,6 @@ async function handlePush(payload: PushPayload | null): Promise<void> {
   const seenIds = real.map(m => m.id)
   const next = complete ? seenIds : [...new Set([...prev, ...seenIds])]
   await idb.put(idb.STORES.accounts, next, SW_KEYS.notifiedIds).catch(() => {})
-
-  // Ground-truth record for /debug: which SW ran, what it saw, what it did.
-  await idb.put(idb.STORES.accounts, {
-    version: SW_VERSION, at: Date.now(), badge, complete,
-    notified: targets.length + (didcommQueued > 0 && !view.focused ? 1 : 0),
-    realCount: real.length, freshCount: fresh.length,
-    accounts: accounts.length, jmapUnread, jmapScanned: total, publishedJmap,
-    localDidcomm, didcommQueued,
-    suppressed: suppressed ?? '', ...dbg,
-  }, SW_KEYS.debug).catch(() => {})
 }
 
 // Push events are serialized. Two pushes landing together would otherwise both

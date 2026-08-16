@@ -40,7 +40,7 @@ const dir = mkdtempSync(join(tmpdir(), 'medtest-channel-'))
 const PORT = 8903
 const URL_ = `http://127.0.0.1:${PORT}`
 
-const ALICE_DID = 'did:dht:testchannelalice'
+const ALICE_DID = 'did:webvh:testchannelalice'
 const aliceKey = { priv: x25519.utils.randomSecretKey(), pub: undefined as unknown as Uint8Array }
 aliceKey.pub = x25519.getPublicKey(aliceKey.priv)
 
@@ -55,10 +55,10 @@ const aliceKey2 = { priv: x25519.utils.randomSecretKey(), pub: undefined as unkn
 aliceKey2.pub = x25519.getPublicKey(aliceKey2.priv)
 
 const keysByKid = new Map<string, Uint8Array>([[`${ALICE_DID}#k1`, aliceKey.pub], [`${ALICE_DID}#k2`, aliceKey2.pub]])
-const resolveDidDht = async (_did: string, kid: string): Promise<Uint8Array | null> => keysByKid.get(kid) ?? null
+const resolveDidWebvh = async (_did: string, kid: string): Promise<Uint8Array | null> => keysByKid.get(kid) ?? null
 
 const mediatorIdentity = loadMediatorIdentity(join(dir, 'mediator-identity.json'), URL_)
-const mediator = createMediator({ mediator: mediatorIdentity, resolveDidDht })
+const mediator = createMediator({ mediator: mediatorIdentity, resolveDidWebvh })
 const server = Bun.serve({
   port: PORT,
   async fetch(req) {
@@ -168,7 +168,7 @@ console.log('\n=== relay持ちアイデンティティのDIDComm送信 — accou
 // DID, indistinguishable from its own mailbox), and it counted its own sent
 // messages as unread. This is the exact "mailbox and contact are the same
 // DID" / "sent message never leaves the pending/dim state" bug reported live.
-const CAROL_DID = 'did:dht:testchannelcarol'
+const CAROL_DID = 'did:webvh:testchannelcarol'
 const CAROL_RELAY_EMAIL = 'carol@relay.example' // deliberately NOT equal to CAROL_DID
 addSession({
   account: { serverUrl: 'https://relay.example', email: CAROL_RELAY_EMAIL, password: '', did: CAROL_DID },

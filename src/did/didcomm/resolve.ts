@@ -1,59 +1,22 @@
-// Unified DIDComm recipient resolution: given any DID (did:peer, did:dht, or
-// did:webvh — PLANWEBVH.md §5.3), returns a PeerDidDoc-shaped document —
-// send.ts/message.ts's publicKeyOf only ever need
-// {keyAgreement, service, verificationMethod}, so every method can share one
-// recipient shape once resolved. did:peer self-decodes (no network); did:dht
-// resolves over Pkarr gateways; did:webvh resolves over its own domain's
-// did.jsonl (webvh/resolver.ts) — both get converted to the same shape, the
-// same conversion ~/didmediator's resolver.ts does server-side for
-// didcomm-node, mirrored here for biset's own client-side send path.
+// Unified DIDComm recipient resolution: given any DID (did:peer or
+// did:webvh), returns a PeerDidDoc-shaped document — send.ts/message.ts's
+// publicKeyOf only ever need {keyAgreement, service, verificationMethod}, so
+// every method can share one recipient shape once resolved. did:peer
+// self-decodes (no network); did:webvh resolves over its own domain's
+// did.jsonl (webvh/resolver.ts) — the same conversion ~/didmediator's
+// resolver.ts does server-side for didcomm-node, mirrored here for biset's
+// own client-side send path.
 import { decodePeerDid2, b64url, type PeerDidDoc } from '../peer/peer.ts'
-import { resolve as resolveDidDht, PUBLIC_PKARR_FALLBACKS, type DidDocument } from '../resolver.ts'
 import { resolve as resolveDidWebvh } from '../webvh/resolver.ts'
 import { decodeMultikey, decodeX25519Multikey, decodeMlkem768Multikey } from '../webvh/multikey.ts'
 import type { WebvhDidDocument } from '../webvh/document.ts'
 import { b64urlToBytes } from './crypto.ts'
 import { isMlkemKid } from '../devicekid.ts'
 
-function didDhtToPeerDidDocShape(doc: DidDocument): PeerDidDoc {
-  const verificationMethod: PeerDidDoc['verificationMethod'] = [
-    { id: `${doc.id}#k0`, type: 'JsonWebKey2020', controller: doc.id, publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: b64url(doc.identityKey) } },
-  ]
-  // One entry per registered DEVICE (document.ts's DidKeyAgreement note) —
-  // send.ts fans a message out to every kid here, so every device gets it.
-  const keyAgreement: string[] = []
-  for (const ka of doc.keyAgreementKeys ?? []) {
-    const kid = `${doc.id}${ka.kid}`
-    verificationMethod.push({ id: kid, type: 'JsonWebKey2020', controller: doc.id, publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: b64url(ka.publicKey) } })
-    keyAgreement.push(kid)
-  }
-  return {
-    id: doc.id,
-    keyAgreement,
-    authentication: [`${doc.id}#k0`],
-    verificationMethod,
-    name: doc.name,
-    // Only DIDCommMessaging services belong in a DIDComm-resolved document —
-    // a did:dht identity's other services (JMAPRelay etc.) aren't DIDComm
-    // endpoints. Matters more than it looks: didcomm-node's Rust ServiceKind
-    // is internally tagged on the literal `type` string "DIDCommMessaging"
-    // or "Other" (verified against its did_doc.rs) — passing through e.g.
-    // "JMAPRelay" as-is throws "unknown variant" wherever this shape ends up
-    // feeding a real didcomm-node resolver (found live, via ~/didmediator).
-    service: doc.service
-      .filter(s => s.type === 'DIDCommMessaging')
-      .map(s => ({
-        id: `${doc.id}#${s.id}`,
-        type: s.type,
-        serviceEndpoint: { uri: s.serviceEndpoint[0] ?? '', accept: s.accept ?? [], routing_keys: s.routingKeys ?? [] },
-      })),
-  }
-}
-
-// did:webvh's state is already W3C DID Core shaped (unlike did:dht's DNS
-// encoding), so this conversion is mostly a field-rename — the one real
-// transform is multikey (base58btc) -> the JsonWebKey2020 (base64url-x)
-// shape send.ts/message.ts's publicKeyOf expects.
+// did:webvh's state is already W3C DID Core shaped, so this conversion is
+// mostly a field-rename — the one real transform is multikey (base58btc) ->
+// the JsonWebKey2020 (base64url-x) shape send.ts/message.ts's publicKeyOf
+// expects.
 function webvhToPeerDidDocShape(doc: WebvhDidDocument): PeerDidDoc {
   const kaIds = new Set(doc.keyAgreement ?? [])
   const identityKeyId = `${doc.id}#key-1`
@@ -91,8 +54,12 @@ function webvhToPeerDidDocShape(doc: WebvhDidDocument): PeerDidDoc {
     authentication: doc.authentication,
     verificationMethod,
     name: doc.name,
-    // Only DIDCommMessaging services belong in a DIDComm-resolved document —
-    // same reasoning as didDhtToPeerDidDocShape above.
+    // Only DIDCommMessaging services belong in a DIDComm-resolved document.
+    // Matters more than it looks: didcomm-node's Rust ServiceKind is
+    // internally tagged on the literal `type` string "DIDCommMessaging" or
+    // "Other" (verified against its did_doc.rs) — passing through e.g.
+    // "JMAPRelay" as-is throws "unknown variant" wherever this shape ends up
+    // feeding a real didcomm-node resolver (found live, via ~/didmediator).
     service: doc.service
       .filter(s => s.type === 'DIDCommMessaging')
       .map(s => {
@@ -117,12 +84,11 @@ function webvhToPeerDidDocShape(doc: WebvhDidDocument): PeerDidDoc {
 }
 
 /** Resolves any DIDComm recipient DID to a PeerDidDoc-shaped document,
- * dispatching on method. did:dht resolution defaults to the public Pkarr
- * fallback gateways (no "own relay" concept for a bare resolve call here).
- * did:webvh derives its own URL from the DID string and ignores
- * `gatewayUrls` entirely (same as resolver.ts's resolveAny). */
+ * dispatching on method. `gatewayUrls`/`opts` are accepted for call-site
+ * compatibility and unused — did:webvh derives its own URL from the DID
+ * string itself (same as resolver.ts's resolveAny). */
 export async function resolveDidCommDoc(
-  did: string, gatewayUrls: string[] = PUBLIC_PKARR_FALLBACKS, opts?: { skipCache?: boolean },
+  did: string, _gatewayUrls: string[] = [], _opts?: { skipCache?: boolean },
 ): Promise<PeerDidDoc | null> {
   if (did.startsWith('did:peer:2.')) {
     try {
@@ -130,14 +96,6 @@ export async function resolveDidCommDoc(
     } catch {
       return null
     }
-  }
-  if (did.startsWith('did:dht:')) {
-    // `skipCache` reaches dht/resolver.ts's 60s document cache. It exists for
-    // one caller: a RETRY, which by definition already failed once, and where
-    // one of the possible causes is a cached document that predates whatever
-    // the retry is trying to reach (a device registered a moment ago).
-    const doc = await resolveDidDht(did, gatewayUrls, opts)
-    return doc ? didDhtToPeerDidDocShape(doc) : null
   }
   if (did.startsWith('did:webvh:')) {
     const doc = await resolveDidWebvh(did).catch(() => null)
@@ -148,7 +106,7 @@ export async function resolveDidCommDoc(
 
 /** pickup.ts's resolveSenderKey shape, method-agnostic: resolves the sender's
  * own DID (either method) and looks up the specific kid's public key. */
-export async function resolveSenderPublicKey(senderKid: string, gatewayUrls: string[] = PUBLIC_PKARR_FALLBACKS): Promise<Uint8Array> {
+export async function resolveSenderPublicKey(senderKid: string, gatewayUrls: string[] = []): Promise<Uint8Array> {
   const senderDid = senderKid.split('#')[0]!
   const doc = await resolveDidCommDoc(senderDid, gatewayUrls)
   if (!doc) throw new Error(`resolveSenderPublicKey: could not resolve ${senderDid}`)

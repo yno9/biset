@@ -18,11 +18,19 @@ import { sessions, addSession, accountKey, relaysForId, DIDCOMM_SERVER_URL } fro
 import { getDidRecord } from '../store.ts'
 import { ownDid, registerWithMediator, mediatorUrl } from '../didcomm-devices.ts'
 import { DELIVER as MLS_DELIVER } from './mls-transport.ts'
-import { readDelivery } from '../../mls/transport.ts'
+import { readDelivery, type Delivery } from '../../mls/transport.ts'
 import { receiveSelfGroupDelivery, catchUpSelfGroup, syncToOwnDevices, encodeDeviceSync, selfGroupIdHex, commitPendingProposals, type DeviceSyncPayload } from '../../mls/self-group.ts'
+import {
+  receiveConversationDelivery, commitPendingProposalsIn, conversationDs, conversations, catchUpConversation,
+  conversationInfo, groupAddress, groupIdOfAddress, createConversation, sendToConversation, recoverMissingGroups,
+  inviteToConversation, renameConversation,
+  // removeFromConversation, leaveConversation: unused while removeFromGroup/
+  // leaveGroup below are commented out — see the note there.
+  type ReceivedGroupMessage,
+} from '../../mls/conversation.ts'
+import { catchUpGroup } from '../../mls/delivery.ts'
 import { loadGroup, saveGroup } from '../../mls/store.ts'
-import { displayNameFor } from '../dht/publish.ts'
-import { PUBLIC_PKARR_FALLBACKS } from '../resolver.ts'
+import { displayNameFor } from '../displayname.ts'
 import { resolveDidCommDoc, resolveSenderPublicKey } from './resolve.ts'
 import { sendDidComm, DidCommUnreachableError } from './send.ts'
 import { pickupDeliver, acknowledgeMessages } from './pickup.ts'
@@ -48,89 +56,38 @@ const MAILBOX_PREFIX = 'mbx-' // go-jmapserver's own encoding — mailboxNameFro
 // dropped there is gone from the mediator too).
 const UNREADABLE_PLACEHOLDER = '(message could not be read)'
 
-/** This browser's own relay /pkarr gateways (CORS-open) first, then — if
- * `selfDid` is given and has a mediator on record — that mediator's own
- * anchor's pkarr gateway too (anchor/server.ts's /pkarr, open to anyone — see
- * its own note on why that's safe), so a relay-less identity (DID⊥relay,
- * zero relay sessions to draw a gateway from) isn't left with ONLY the
- * public fallbacks, which is what silently starved it: did:dht resolution
- * from a plain file:// page never works through the public gateways alone in
- * practice (no CORS there — or, per a live case, simply hasn't propagated
- * there), and the ONE gateway that definitely has this identity's fresh
- * record is whichever it just published to. Excludes the synthetic DIDComm
- * session itself (DIDCOMM_SERVER_URL has no real HTTP endpoint behind it —
- * including it fed a literal, browser-rejected "didcomm:/pkarr/..." fetch
- * into the gateway list). Exported: left-pane.ts's own DID-doc resolves (the
- * To field's protocol pills, the /account identity panel) reuse this rather
- * than re-deriving the same gateway list a second way. */
-export async function ownGateways(selfDid?: string | null): Promise<string[]> {
-  const out = new Set(sessions.filter(s => s.account.serverUrl !== DIDCOMM_SERVER_URL).map(s => s.account.serverUrl.replace(/\/$/, '') + '/pkarr'))
-  if (selfDid) {
-    const rec = await getDidRecord(selfDid)
-    if (rec?.didCommMediatorUrl) out.add(`${rec.didCommMediatorUrl.replace(/\/$/, '')}/pkarr`)
-  }
-  // This deployment's own anchor answers /pkarr for ANY identity, registered
-  // with it or not (server.ts: "/pkarr/* answers anyone") — include it
-  // unconditionally so PUBLIC_PKARR_FALLBACKS stays a true last resort
-  // instead of the only gateway an identity with no relay and no mediator
-  // registration yet has. At scale (100s-1000s of users), leaning on a
-  // third-party public relay as the default path is a rate-limit bottleneck
-  // waiting to happen (relay.pkarr.org 429s already seen from a single
-  // browser's worth of test traffic).
-  const mUrl = mediatorUrl()
-  if (mUrl) out.add(`${mUrl.replace(/\/$/, '')}/pkarr`)
-  return [...out]
-}
-
-// Own-gateway-first resolve, public fallbacks only on a miss — this module's
-// resolveDidCommDoc/resolveSenderPublicKey calls used to always be handed
-// ownGateways() + PUBLIC_PKARR_FALLBACKS flattened together and query BOTH
-// in parallel on every call. That's fine for a rare call, but this is by far
-// the highest-volume consumer of any gateway in the app: every message send
-// (sendViaDidComm) AND every poll tick (pollDidCommOnce, every 4s per open
-// identity) resolves through here. Constantly hitting relay.pkarr.org/
-// pkarr.pubky.org at that rate — not just the rarer registration/publish
-// paths — is what actually tripped their rate limit this session. Own
-// gateways (this device's relays + this deployment's own anchor) answer the
-// ordinary case; public fallbacks are queried only when they come back
-// empty, keeping them a genuine last resort instead of constant background
-// load.
+// Own-gateway-first resolve was a did:dht concern (a BEP44 lookup needs
+// SOME gateway to ask, and asking this device's own relays before the public
+// Pkarr fallbacks avoided a third-party rate limit — relay.pkarr.org 429s
+// were seen live from a single browser's worth of test traffic). did:webvh
+// derives its own https:// URL from the DID string itself
+// (resolveDidCommDoc → webvh/resolver.ts), so there is no gateway list left
+// to choose between — both functions below keep their `selfDid` parameter
+// for call-site compatibility (and because negcache below still wants a
+// stable key) but no longer use it to pick a gateway.
 async function resolveDocOwnFirst(
-  did: string, selfDid?: string | null, opts?: { skipCache?: boolean },
+  did: string, _selfDid?: string | null, opts?: { skipCache?: boolean },
 ): Promise<Awaited<ReturnType<typeof resolveDidCommDoc>>> {
-  // Both rounds coming back empty is the most expensive thing that can happen
-  // here — every gateway in both lists runs to completion — and it repeated in
-  // full for every send, every poll tick and every contact refresh of the same
-  // unresolvable DID. negcache.ts bounds that; its TTL is seconds, so a device
-  // that registers a moment later is still found (see its own note).
-  // `skipCache` bypasses the negative memory as well as the document cache: a
-  // caller asking for a genuinely fresh answer must not be handed a remembered
-  // "nothing there" either.
+  // negcache.ts bounds the cost of a DID that never resolves — its TTL is
+  // seconds, so a device that registers a moment later is still found (see
+  // its own note). `skipCache` bypasses the negative memory as well as the
+  // document cache: a caller asking for a genuinely fresh answer must not be
+  // handed a remembered "nothing there" either.
   const negKey = didcommDocumentMissKey(did)
   if (!opts?.skipCache && recentlyMissed(negKey)) return null
-  const own = await ownGateways(selfDid)
-  const doc = await resolveDidCommDoc(did, own, opts)
-  if (doc) return doc
-  const full = await resolveDidCommDoc(did, [...own, ...PUBLIC_PKARR_FALLBACKS], opts)
-  if (!full) noteMiss(negKey)
-  return full
+  const doc = await resolveDidCommDoc(did, [], opts)
+  if (!doc) noteMiss(negKey)
+  return doc
 }
 
 /** The sender's public key, cached across reloads (sender-keys.ts). Every
  * incoming message blocks on this — authcrypt cannot be opened without it —
- * so the cache is what keeps a gateway round trip out of the path between a
- * push notification and the message showing up in the thread. `fresh` skips
- * the cache and replaces its entry, which is pickup.ts's repair for the one
- * case a permanently-cached key would otherwise be a permanent failure. */
-function resolveSenderKeyOwnFirst(kid: string, selfDid?: string | null, opts?: { fresh?: boolean }): Promise<Uint8Array> {
-  return cachedSenderKey(kid, async () => {
-    const own = await ownGateways(selfDid)
-    try {
-      return await resolveSenderPublicKey(kid, own)
-    } catch {
-      return resolveSenderPublicKey(kid, [...own, ...PUBLIC_PKARR_FALLBACKS])
-    }
-  }, opts)
+ * so the cache is what keeps a resolve out of the path between a push
+ * notification and the message showing up in the thread. `fresh` skips the
+ * cache and replaces its entry, which is pickup.ts's repair for the one case
+ * a permanently-cached key would otherwise be a permanent failure. */
+function resolveSenderKeyOwnFirst(kid: string, _selfDid?: string | null, opts?: { fresh?: boolean }): Promise<Uint8Array> {
+  return cachedSenderKey(kid, () => resolveSenderPublicKey(kid), opts)
 }
 
 /** The pseudo-StoredAccount a relay-less identity's DIDComm reachability is
@@ -323,7 +280,7 @@ export async function pollDidCommOnce(did: string, onNameResolved?: () => void):
   // may not contain: the Delivery Service fans out to the roster a committer
   // declared and cannot verify (mls/self-group.ts's catchUpSelfGroup), so an
   // empty queue is not evidence that nothing was sent.
-  let gotOne = await catchUpSelfGroupIfDue(did, sender, acctKey)
+  let gotOne = await catchUpGroupsIfDue(did, sender, acctKey)
   let delivered: Awaited<ReturnType<typeof pickupDeliver>>
   try {
     // Authenticating an incoming message resolves the SENDER's DID document
@@ -385,7 +342,17 @@ export async function pollDidCommOnce(did: string, onNameResolved?: () => void):
     // something to file, and it is filed exactly like the copy the sending
     // device kept for itself.
     if (body.type === MLS_DELIVER) {
-      const applied: Awaited<ReturnType<typeof receiveSelfGroupDelivery>> = await receiveSelfGroupDelivery(did, readDelivery(body.body))
+      const delivery = readDelivery(body.body)
+      // Two kinds of group arrive through the same door, and which one this is
+      // decides everything about what the payload MEANS: the self group's
+      // application messages are copies of this user's own sends, a
+      // conversation's are other people talking. The group id says which, and
+      // nothing else has to.
+      if (delivery.groupId !== selfGroupIdHex(did)) {
+        if (await handleConversationDelivery(did, acctKey, sender, delivery, fromDid, d.ackId, withheld)) gotOne = true
+        continue
+      }
+      const applied: Awaited<ReturnType<typeof receiveSelfGroupDelivery>> = await receiveSelfGroupDelivery(did, delivery)
         .catch(e => { console.warn('[didcomm] self-group delivery failed:', e instanceof Error ? e.message : e); return { retry: true } })
       // Held back from the acknowledgement below, so the mediator keeps it and
       // the next poll tries again. Acknowledging a commit this device could
@@ -523,7 +490,7 @@ export async function pollDidCommOnce(did: string, onNameResolved?: () => void):
   // which in a strictly ordered group almost always means an EARLIER one never
   // arrived. Ask for it now rather than at the next heartbeat: until the gap
   // is filled nothing else in the group can be applied either.
-  if (withheld.size && await catchUpSelfGroupIfDue(did, sender, acctKey, true)) gotOne = true
+  if (withheld.size && await catchUpGroupsIfDue(did, sender, acctKey, true)) gotOne = true
   return gotOne
 }
 
@@ -811,6 +778,210 @@ async function fileDeviceSync(did: string, acctKey: string, synced: DeviceSyncPa
   if (synced.avatar) await saveAvatar(did, synced.avatar).catch(() => {})
 }
 
+/** Create a group conversation and invite people into it.
+ *
+ * Returns who could not be reached: an identity with no key packages left
+ * published (or none at all — someone who has never run a build with MLS in
+ * it) cannot be invited right now, and the group is more useful with the
+ * people who could be than not created at all. They can be added later by the
+ * same path. */
+export async function createGroupConversation(
+  selfDid: string, name: string, memberDids: string[],
+): Promise<{ ok: true; groupId: string; skipped: string[] } | { ok: false; error: string }> {
+  try {
+    const sender = await ownSender(selfDid)
+    if (!sender) return { ok: false, error: 'this identity has no DIDComm mediator registered' }
+    const created = await createConversation(sender.mediator, sender.own, name, memberDids)
+    return { ok: true, groupId: groupAddress(created.id), skipped: created.skipped }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/** Send to a group conversation.
+ *
+ * One submission, whatever the group's size: the Delivery Service fans it out
+ * (PLANMLS.md §3.3 — the O(n) is the DS's, not the sender's), and each
+ * member's own mediator queue holds their copy until they collect it. That
+ * includes this identity's OTHER devices, which are ordinary members of the
+ * group, so a group message needs none of the device-sync machinery a 1:1 send
+ * does. */
+export async function sendToGroup(selfDid: string, address: string, body: string, subject = ''): Promise<DidCommSendResult> {
+  const id = groupIdOfAddress(address)
+  if (!id) return { ok: false, error: `${address} is not a group conversation` }
+  let sender: Awaited<ReturnType<typeof ownSender>>
+  let ds: MediatorInfo | undefined
+  try {
+    sender = await ownSender(selfDid)
+    if (!sender) return { ok: false, error: 'this identity has no DIDComm mediator registered' }
+    ds = await conversationDs(id)
+  } catch (e) {
+    return { ok: false, error: `could not reach the DIDComm network: ${e instanceof Error ? e.message : String(e)}` }
+  }
+  // A group whose delivery service is unknown can be read and not spoken to.
+  // That is a real state (joined from a Welcome whose sender could not be
+  // resolved), and saying so beats a send that silently goes nowhere.
+  if (!ds) return { ok: false, error: 'this conversation has no reachable delivery service' }
+  const messageId = crypto.randomUUID()
+  const sentAt = new Date().toISOString()
+  const fromName = displayNameFor(relaysForId(selfDid).filter(s => s.account.serverUrl !== DIDCOMM_SERVER_URL))
+  const avatar = avatarDataUrl(selfDid)
+  try {
+    await sendToConversation(ds, sender.own, id, {
+      t: 'msg', id: messageId, content: body, sentAt,
+      ...(subject ? { subject } : {}), ...(fromName ? { fromName } : {}), ...(avatar ? { avatar } : {}),
+    })
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+  // The sender's own copy. The DS deliberately does not send a message back to
+  // the device that submitted it, so this is the only copy this device will
+  // ever have — same as a 1:1 send.
+  await fileGroupMessage(selfDid, accountKey(didCommAccount(selfDid)), {
+    groupId: id,
+    from: { did: selfDid, kid: sender.own.xKid },
+    payload: { t: 'msg', id: messageId, content: body, sentAt, ...(subject ? { subject } : {}), ...(fromName ? { fromName } : {}) },
+  })
+  return { ok: true, fromEmail: selfDid }
+}
+
+/** Who is in a group conversation right now, from its ratchet tree — the only
+ * authority on membership. Empty when this device is not in it. */
+export async function groupMembersOf(address: string): Promise<string[]> {
+  const id = groupIdOfAddress(address)
+  return id ? (await conversationInfo(id))?.members ?? [] : []
+}
+
+/** Everything one can do to a group's membership, from the UI's point of view.
+ * Each is one commit, ordered by the group's Delivery Service like any other.
+ *
+ * All four report their failure rather than throwing: the caller is a click
+ * handler, and "the group moved on while you were deciding" is a normal
+ * outcome that deserves a sentence, not a stack trace. */
+export async function inviteToGroup(selfDid: string, address: string, did: string): Promise<{ ok: boolean; error?: string }> {
+  return groupAction(selfDid, address, async (ds, own, id) => {
+    const added = await inviteToConversation(ds, own, id, did)
+    if (!added) throw new Error(`${labelForDid(did)} has no key packages published, so they cannot be added yet`)
+  })
+}
+
+// removeFromGroup / leaveGroup: pulled from the UI (2026-08-16). MLS itself
+// has no notion of roles — createProposal/removeMembers only check that the
+// target is a current member, not that the caller has any special standing.
+// So with the chip wired up, ANY member could remove ANY other member,
+// including one who joined seconds ago removing the group's creator. That
+// was never a deliberate access-control decision, just the shape you get by
+// wiring the UI straight to the MLS primitive. Until there is an actual
+// permission model (e.g. creator-only, or a voted removal), membership
+// changes are add-only from the UI; the underlying conversation.ts functions
+// (removeFromConversation, leaveConversation) and groupAction plumbing below
+// are left in place for when that design lands.
+//
+// export async function removeFromGroup(selfDid: string, address: string, did: string): Promise<{ ok: boolean; error?: string }> {
+//   return groupAction(selfDid, address, (ds, own, id) => removeFromConversation(ds, own, id, did))
+// }
+
+export async function renameGroup(selfDid: string, address: string, name: string): Promise<{ ok: boolean; error?: string }> {
+  return groupAction(selfDid, address, (ds, own, id) => renameConversation(ds, own, id, name))
+}
+
+/** Leave. The declaration is what this device can do on its own — MLS forbids
+ * committing one's own removal — and another member carries it out. The local
+ * state goes either way: staying able to read a conversation one has left
+ * would make the word mean nothing.
+ *
+ * Commented out alongside removeFromGroup (see note above) — leaving is the
+ * same "any member can end anyone's membership" primitive from the other
+ * side, and until removal has a permission model, hiding leave too keeps the
+ * UI's story consistent (add-only) rather than allowing one asymmetric hole. */
+// export async function leaveGroup(selfDid: string, address: string): Promise<{ ok: boolean; error?: string }> {
+//   return groupAction(selfDid, address, (ds, own, id) => leaveConversation(ds, own, id))
+// }
+
+async function groupAction(
+  selfDid: string, address: string, act: (ds: MediatorInfo, own: DidCommSender, id: string) => Promise<void>,
+): Promise<{ ok: boolean; error?: string }> {
+  const id = groupIdOfAddress(address)
+  if (!id) return { ok: false, error: `${address} is not a group conversation` }
+  try {
+    const sender = await ownSender(selfDid)
+    if (!sender) return { ok: false, error: 'this identity has no DIDComm mediator registered' }
+    const ds = await conversationDs(id)
+    if (!ds) return { ok: false, error: 'this conversation has no reachable delivery service' }
+    await act(ds, sender.own, id)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/** File a message somebody sent to a group conversation.
+ *
+ * Attribution comes from `msg.from`, which is the MLS leaf that sent it — the
+ * only trustworthy answer in a group of several people, since a `from` header
+ * is written by whoever packed the envelope and the DS repacks every copy.
+ * The stored row therefore names the sender's DID, not the Delivery Service
+ * that handed it over. */
+async function fileGroupMessage(did: string, acctKey: string, msg: ReceivedGroupMessage): Promise<void> {
+  const address = groupAddress(msg.groupId)
+  const info = await conversationInfo(msg.groupId)
+  const at = msg.payload.sentAt || new Date().toISOString()
+  const row = didCommToEmail(msg.payload.id, did, msg.from.did, address, msg.payload.content, at, msg.payload.fromName, msg.payload.subject ?? '')
+  // The conversation is the thread: every message in it belongs together
+  // whoever sent it, unlike a 1:1 thread whose id is a function of the pair.
+  ;(row as any).threadId = address
+  // The same two headers an email group carries (deltachat/protocol.ts), so a
+  // conversation reaches the existing group UI — list row, participants,
+  // thread view — without a second notion of "group" alongside it. The id is
+  // namespaced `mls:` because the SEND path has to tell the two apart: an
+  // email group goes out over JMAP, this one to its Delivery Service.
+  ;(row as any).headers = [
+    { name: 'Chat-Group-ID', value: address },
+    ...(info?.name ? [{ name: 'Chat-Group-Name', value: info.name }] : []),
+  ]
+  // Everyone else in the group, so the list row can show who is in it. Taken
+  // from the ratchet tree rather than from anything the message says — the
+  // tree is the membership, and a sender's idea of it may be an epoch old.
+  ;(row as any).cc = (info?.members ?? []).filter(m => m !== msg.from.did && m !== did).map(m => ({ email: m }))
+  ;(row as any)._account = acctKey
+  ;(row as any)._relay = DIDCOMM_SERVER_URL
+  if (msg.from.did === did) (row.keywords as any)['$seen'] = true // our own message, arriving from another of our devices
+  messages.put(row)
+  await persist.flushMessage(row)
+  if (msg.payload.avatar) await saveAvatar(msg.from.did, msg.payload.avatar).catch(() => {})
+}
+
+/** Apply one delivery for a group conversation and file whatever came out.
+ * Returns whether anything new arrived. */
+async function handleConversationDelivery(
+  did: string, acctKey: string, sender: { own: DidCommSender; mediator: MediatorInfo },
+  delivery: Delivery, fromDid: string, ackId: string, withheld: Set<string>,
+): Promise<boolean> {
+  const applied = await receiveConversationDelivery(sender.own, delivery, fromDid)
+    .catch(e => { console.warn('[didcomm] conversation delivery failed:', e instanceof Error ? e.message : e); return { retry: true } as Awaited<ReturnType<typeof receiveConversationDelivery>> })
+  if (applied.retry) withheld.add(ackId)
+  // Somebody declared they are leaving. MLS forbids removing oneself, so the
+  // departure only takes effect when another member commits it — and until
+  // one does, they remain a member of a group they have said they are done
+  // with. Any member can do it; doing it promptly is the point.
+  if (applied.sawProposal) await commitPendingConversation(sender, delivery.groupId)
+  if (applied.message) await fileGroupMessage(did, acctKey, applied.message)
+  return !!applied.message || !!applied.joined || !!applied.renamed
+}
+
+/** Commit a conversation's outstanding proposals — a member's declared
+ * departure, in practice. Best-effort: if another member commits first, their
+ * commit arrives here as an ordinary delivery and both end up in the same
+ * place. */
+async function commitPendingConversation(sender: { own: DidCommSender; mediator: MediatorInfo }, id: string): Promise<void> {
+  try {
+    const ds = await conversationDs(id)
+    if (ds) await commitPendingProposalsIn(ds, sender.own, id)
+  } catch (e) {
+    console.warn('[didcomm] could not commit a conversation proposal:', e instanceof Error ? e.message : e)
+  }
+}
+
 /** How often a device asks the Delivery Service whether it is missing
  * self-group deliveries, absent any other reason to ask.
  *
@@ -826,20 +997,43 @@ const lastCatchUp = new Map<string, number>()
  *
  * Best-effort throughout — a DS that cannot be reached, or a group this device
  * has not joined, simply means nothing to catch up on right now. */
-async function catchUpSelfGroupIfDue(
+async function catchUpGroupsIfDue(
   did: string, sender: { own: DidCommSender; mediator: MediatorInfo }, acctKey: string, force = false,
 ): Promise<boolean> {
   if (!force && Date.now() - (lastCatchUp.get(did) ?? 0) < SELF_GROUP_CATCH_UP_INTERVAL_MS) return false
   lastCatchUp.set(did, Date.now())
+  let filed = false
   try {
     const { syncs, sawProposal } = await catchUpSelfGroup(sender.mediator, sender.own)
     for (const sync of syncs) await fileDeviceSync(did, acctKey, sync)
     if (sawProposal) await commitPendingSelfGroup(did)
-    return syncs.length > 0
+    filed = syncs.length > 0
   } catch (e) {
     console.warn('[didcomm] self-group catch-up failed:', e instanceof Error ? e.message : e)
-    return false
   }
+  // Invitations that never took effect. Joining is the one step with no push
+  // to fall back on — a Welcome is sent once — so a device asks its mediator
+  // which groups it is in and pulls anything it has never seen.
+  try {
+    const recovered = await recoverMissingGroups(sender.mediator, sender.own, did)
+    if (recovered.length) filed = true
+  } catch (e) {
+    console.warn('[didcomm] could not check for missed invitations:', e instanceof Error ? e.message : e)
+  }
+  // Every conversation as well, each against its OWN delivery service — which
+  // for a group somebody else created is their mediator, not this one.
+  for (const conversation of await conversations(did).catch(() => [])) {
+    try {
+      const ds = await conversationDs(conversation.id)
+      if (!ds) continue
+      const { messages, sawProposal } = await catchUpConversation(ds, sender.own, conversation.id)
+      for (const message of messages) { await fileGroupMessage(did, acctKey, message); filed = true }
+      if (sawProposal) await commitPendingProposalsIn(ds, sender.own, conversation.id).catch(() => {})
+    } catch (e) {
+      console.warn(`[didcomm] catch-up on ${conversation.id.slice(0, 12)} failed:`, e instanceof Error ? e.message : e)
+    }
+  }
+  return filed
 }
 
 /** Commit whatever the self group has pending — a sibling's declared

@@ -1,9 +1,38 @@
-// IndexedDB persistence for derived identity keys — mirrors src/pgp/keys.ts's
-// pattern deliberately (same DB shape, same plaintext-at-rest trust model: the
-// PGP private key already lives unencrypted in IndexedDB, so this isn't a new
-// exposure). Only the DERIVED keys are stored, never the master seed itself —
-// the seed is used transiently at creation/login time (see cryptenv.ts's
-// masterSecret) and discarded, exactly like `kek` already is.
+// IndexedDB persistence for identity keys — mirrors src/pgp/keys.ts's pattern
+// deliberately (same DB shape, same plaintext-at-rest trust model: the PGP
+// private key already lives unencrypted in IndexedDB, so this isn't a new
+// exposure).
+//
+// **The master seed is stored too, since 2026-08-14** — it deliberately was
+// not, and the reversal is worth stating plainly because it reads like a
+// downgrade and isn't:
+//
+//   - `rootPrivateKey` sits in this same store, in plaintext, and it IS the
+//     identity: it signs document updates (so it can rotate keys, move
+//     domains, deactivate), signs `bind:` proofs (so it can claim addresses
+//     at relays under this DID), and signs device vouches (so it can
+//     authorize new devices for JMAP login). Anyone who can read this store
+//     already owns the identity completely. Withholding the seed from them
+//     protects nothing about it.
+//   - The seed's only other derivations are Nostr (unused) and a reserved
+//     PGP path (unimplemented), so it grants no capability the root key
+//     doesn't already grant.
+//   - What NOT storing it did cost was real and one-directional: the 24-word
+//     phrase could be shown exactly once, at creation, and never again — no
+//     password exists to unseal it with and nothing was on disk to unseal.
+//     Miss that one screen and the identity is gone permanently.
+//
+// Storing it does NOT by itself put the phrase back on screen; that is a
+// separate decision (a "show recovery phrase" affordance carries its own,
+// human-factor risks — social engineering above all) and is deliberately not
+// taken here. This is the data-collection half, done first because it has a
+// lead time: an identity created before this change has no seed anywhere to
+// recover, so every day without it is a day of accounts that can never be
+// offered the option.
+//
+// If at-rest protection is ever wanted, the target is `rootPrivateKey`, not
+// the seed — encrypting one while the other lies in plaintext beside it is
+// theatre, since an attacker simply takes the root key instead.
 //
 // Keyed by `did`, not an address: did is the essential identity concept here
 // (biset's own decision record — [[project_biset_did_relay_orthogonality]]),
@@ -16,6 +45,8 @@
 // bumping to v2 drops that store outright rather than migrating it: no
 // backward compatibility is owed here, existing accounts start over.
 import { stableIdKey } from './idkey.ts'
+import { aesGcmSeal, aesGcmOpen } from '../cryptenv.ts'
+import { enrollPrfKey, unlockPrfKey, hasPrfCredential } from './prf.ts'
 
 const DB_NAME = 'biset-did'
 const DB_VERSION = 2
@@ -26,8 +57,19 @@ export interface DidRecord {
   // only (display, lazy-migration bookkeeping), never the lookup key.
   email?: string
   did: string
+  // The BIP39 master seed every key below is derived from (see this file's
+  // header for why it is kept at all). Optional because identities created
+  // before 2026-08-14 have none and no way to acquire one except a login
+  // through the recovery phrase, which fills it in (`localDidRecord`).
+  masterSeed?: string // hex
   rootPublicKey: string // hex
   rootPrivateKey: string // hex
+  /** Present INSTEAD of `masterSeed`/`rootPrivateKey` once this device has a
+   * passkey guarding them (did/prf.ts): AES-GCM over the two, keyed by the
+   * passkey's PRF output, base64. `getDidRecord` merges them back in for the
+   * rest of the session after `unlockIdentitySecrets` has run, so consumers
+   * that just read `rec.rootPrivateKey` keep working — unlocked. */
+  sealed?: string
   nostrPublicKey: string // hex
   nostrPrivateKey: string // hex
   // THIS DEVICE's own DIDComm key (PLAN.md "Key material"/"DIDComm transport
@@ -215,16 +257,146 @@ export async function getDidRecord(did: string): Promise<DidRecord | null> {
   try {
     const db = await openDB()
     const exact = await dbGet(db, did)
-    if (exact) return exact
+    if (exact) return unsealForSession(exact)
     const key = stableIdKey(did)
     if (key === did) return null // no normalization happened — nothing a scan could find
-    return (await dbGetAll(db)).find(r => stableIdKey(r.did) === key) ?? null
+    const scanned = (await dbGetAll(db)).find(r => stableIdKey(r.did) === key) ?? null
+    return scanned ? await unsealForSession(scanned) : null
   } catch { return null }
 }
 
 export async function storeDidRecord(record: DidRecord): Promise<void> {
   const db = await openDB()
-  await dbPut(db, record)
+  await dbPut(db, await sealIfProtected(record))
+}
+
+// ── At-rest sealing of the seed + root key (did/prf.ts) ─────────────────────
+// The PRF-derived key for THIS page load. Never persisted: that is the whole
+// point — on disk there is only ciphertext, and getting the key back costs a
+// user-verification gesture. Cached for the session so that gesture happens
+// once rather than on every signature.
+let sessionKey: Uint8Array | null = null
+
+/** True when this device has opted into passkey protection at all. */
+export function identityProtectionEnabled(): boolean {
+  return hasPrfCredential()
+}
+
+export function identityUnlocked(): boolean {
+  return sessionKey !== null
+}
+
+/** Turns protection ON for this device: enrols a passkey and re-writes every
+ * stored record sealed. Returns false when the platform declines (no
+ * authenticator, PRF unsupported, user cancelled) — an ordinary outcome, and
+ * the records simply stay plaintext (this file's header on why that fallback
+ * is deliberate). */
+export async function enableIdentityProtection(userName: string): Promise<boolean> {
+  const key = await enrollPrfKey(userName)
+  if (!key) return false
+  sessionKey = key
+  try {
+    const db = await openDB()
+    for (const rec of await dbGetAll(db)) await dbPut(db, await sealIfProtected(rec))
+    return true
+  } catch {
+    // Enrolled but couldn't re-write: leave the credential in place (the next
+    // write seals normally) rather than reporting a failure that already
+    // half-happened.
+    return true
+  }
+}
+
+/** Prompts for the passkey and caches its PRF output for this page load, so
+ * records read afterwards come back with `masterSeed`/`rootPrivateKey`
+ * populated. No-op (true) when already unlocked or when this device never
+ * enabled protection — callers can invoke it unconditionally before any
+ * root-key operation. */
+export async function unlockIdentitySecrets(): Promise<boolean> {
+  if (sessionKey) return true
+  if (!hasPrfCredential()) return true // nothing sealed on this device
+  const key = await unlockPrfKey()
+  if (!key) return false
+  sessionKey = key
+  return true
+}
+
+/** The master seed in the clear, for the one operation that shows it to a
+ * human (the recovery phrase). **Re-authenticates every time, ignoring the
+ * session cache** — unlike unlockIdentitySecrets, which exists so that
+ * signing doesn't prompt on every signature. Putting the identity's whole
+ * secret on screen is not in that category: it should cost a fresh gesture
+ * even inside an already-unlocked session, or the protection reduces to
+ * "whoever reaches the device after the first Sync of the day".
+ *
+ * Null when the record has no seed at all (an identity created before seeds
+ * were stored, and never logged into with the phrase since) or when the
+ * gesture is refused. On a device without passkey protection the seed is
+ * plaintext anyway, so it is simply returned — refusing there would hide
+ * something devtools can read regardless (2026-08-14 decision: A). */
+export async function revealMasterSeed(did: string): Promise<string | null> {
+  const db = await openDB().catch(() => null)
+  if (!db) return null
+  const stored = await dbGet(db, did).catch(() => null)
+  if (!stored) return null
+  if (!stored.sealed) return stored.masterSeed ?? null
+  const key = await unlockPrfKey()
+  if (!key) return null
+  try {
+    const blob = Uint8Array.from(atob(stored.sealed), c => c.charCodeAt(0))
+    const secrets = JSON.parse(new TextDecoder().decode(await aesGcmOpen(key, blob))) as SealedSecrets
+    return secrets.masterSeed ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Drops the session key — logout's counterpart to unlock. The ciphertext
+ * stays; only the ability to read it this page load goes away. */
+export function lockIdentitySecrets(): void {
+  sessionKey = null
+}
+
+interface SealedSecrets { masterSeed?: string; rootPrivateKey: string }
+
+async function sealIfProtected(record: DidRecord): Promise<DidRecord> {
+  if (!sessionKey || !record.rootPrivateKey) return record
+  const secrets: SealedSecrets = { rootPrivateKey: record.rootPrivateKey, ...(record.masterSeed ? { masterSeed: record.masterSeed } : {}) }
+  const blob = await aesGcmSeal(sessionKey, new TextEncoder().encode(JSON.stringify(secrets)))
+  const out: DidRecord = { ...record, sealed: btoa(String.fromCharCode(...blob)) }
+  delete out.masterSeed
+  delete (out as { rootPrivateKey?: string }).rootPrivateKey
+  return out
+}
+
+/** Merges the sealed secrets back in when the session is unlocked. A sealed
+ * record read while LOCKED comes back without them — deliberately: the
+ * alternative is prompting for a gesture from whatever background path
+ * happened to read the record first (boot, a DIDComm poll), which is exactly
+ * what the device keys are kept in plaintext to avoid. Consumers that need
+ * the root key call unlockIdentitySecrets() first; one that forgets gets a
+ * legible failure from requireRootPrivateKey rather than a signature over
+ * `undefined`. */
+async function unsealForSession(record: DidRecord): Promise<DidRecord> {
+  if (!record.sealed || !sessionKey) return record
+  try {
+    const blob = Uint8Array.from(atob(record.sealed), c => c.charCodeAt(0))
+    const secrets = JSON.parse(new TextDecoder().decode(await aesGcmOpen(sessionKey, blob))) as SealedSecrets
+    return { ...record, rootPrivateKey: secrets.rootPrivateKey, ...(secrets.masterSeed ? { masterSeed: secrets.masterSeed } : {}) }
+  } catch {
+    return record // wrong key / corrupt blob — same as locked, never a crash
+  }
+}
+
+/** The one place a missing root key turns into a message a human can act on.
+ * A sealed-but-locked record reaches signing code with `rootPrivateKey`
+ * undefined, and @noble would otherwise throw something opaque about byte
+ * lengths. */
+export function requireRootPrivateKey(record: DidRecord): string {
+  if (!record.rootPrivateKey) {
+    throw new Error('This identity is locked — unlock it with your passkey to sign as it')
+  }
+  return record.rootPrivateKey
 }
 
 export async function deleteDidRecord(did: string): Promise<void> {

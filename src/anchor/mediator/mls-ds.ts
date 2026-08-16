@@ -43,6 +43,13 @@ const MAX_EVER_MEMBERS = 2048
  * asks again from the seq it reached — bounded work per envelope, and the
  * envelope has to fit in one authcrypt'd reply. */
 const MAX_DELIVERIES_PER_PULL = 32
+/** How many outstanding departure declarations a group holds. One per device
+ * that has asked to leave and is still in the tree; a bound rather than a
+ * quota, since the list is handed to every joiner. */
+const MAX_PENDING_REMOVALS = 64
+/** How many groups one membership answer lists. A bound on the reply size, not
+ * on how many groups anyone may be in. */
+const MAX_GROUPS_PER_ANSWER = 256
 
 export class DsFullError extends Error {}
 
@@ -109,6 +116,9 @@ interface DsGroup {
    * The DS does not act on these itself and could not: it holds no group key
    * and cannot commit anything. It remembers, and hands the list to members. */
   pendingRemovals: string[]
+  /** Who submitted the most recent accepted commit. The only party allowed to
+   * clear a declared departure — see clearPendingRemovals. */
+  lastCommitter?: string
   createdAt: number
 }
 
@@ -121,6 +131,7 @@ interface StoredGroup {
   log: DsLogEntry[]
   groupInfo?: string
   pendingRemovals?: string[]
+  lastCommitter?: string
   createdAt: number
 }
 
@@ -208,6 +219,24 @@ export class MlsDeliveryService {
 
   group(groupId: string): DsGroup | undefined { return this.groups.get(groupId) }
 
+  /** Every group this DS holds that `did` is in — the answer to "did I miss an
+   * invitation".
+   *
+   * Ever-membership rather than the current roster, for the same reason
+   * `deliveriesSince` uses it: the point is to be reachable by someone whose
+   * membership somebody else's claim has already put in doubt. A group the
+   * asker has genuinely left is listed too, and costs them one pull that finds
+   * nothing they can open. */
+  groupsFor(did: string, limit = MAX_GROUPS_PER_ANSWER): Array<{ groupId: string; epoch: bigint }> {
+    const found: Array<{ groupId: string; epoch: bigint }> = []
+    for (const g of this.groups.values()) {
+      if (!g.everMembers.has(did)) continue
+      found.push({ groupId: g.groupId, epoch: g.epoch })
+      if (found.length >= limit) break
+    }
+    return found
+  }
+
   /** Everyone a delivery for this group goes to. */
   roster(groupId: string): string[] { return [...(this.groups.get(groupId)?.roster ?? [])] }
 
@@ -236,6 +265,7 @@ export class MlsDeliveryService {
     if (welcome) entries.push(this.append(group, 'welcome', welcome, epoch))
     entries.push(this.append(group, 'commit', commit, epoch))
     group.epoch = group.epoch + 1n
+    group.lastCommitter = sender
     // The roster the commit results in — including anyone the Welcome is for,
     // who by definition isn't in the old roster.
     group.roster = new Set([...roster, ...(welcomeTo ?? [])])
@@ -273,8 +303,12 @@ export class MlsDeliveryService {
   submitSelfRemove(groupId: string, sender: string, epoch: string, proposal: string, kid: string): CommitAccepted | CommitRejected {
     const group = this.groups.get(groupId)
     if (!group) return { ok: false, reason: 'no-such-group', epoch: '0' }
-    if (!group.roster.has(sender)) return { ok: false, reason: 'not-a-member', epoch: group.epoch.toString() }
-    if (!group.pendingRemovals.includes(kid)) group.pendingRemovals.push(kid)
+    // Ever-members, not the current roster — the same reasoning as
+    // deliveriesSince. A member cut out of a shrunken roster must still be
+    // able to say so and to leave; being unable to leave a group one has been
+    // quietly excluded from is a worse position than being excluded.
+    if (!group.everMembers.has(sender)) return { ok: false, reason: 'not-a-member', epoch: group.epoch.toString() }
+    if (!group.pendingRemovals.includes(kid) && group.pendingRemovals.length < MAX_PENDING_REMOVALS) group.pendingRemovals.push(kid)
     const entry = this.append(group, 'proposal', proposal, epoch)
     this.persist()
     return { ok: true, entries: [entry], roster: [...group.roster] }
@@ -285,7 +319,17 @@ export class MlsDeliveryService {
    * the tree. */
   clearPendingRemovals(groupId: string, requester: string, kids: string[]): void {
     const group = this.groups.get(groupId)
-    if (!group || !group.roster.has(requester)) return
+    // Only whoever committed last. A declaration is cleared because it was
+    // CARRIED OUT, and carrying one out is a commit — so the party with any
+    // business clearing it is the one whose commit the DS just accepted.
+    //
+    // Any member could do this before, and a departure that is un-declared
+    // without being carried out simply stops happening: the leaf stays in the
+    // tree, the next joiner is never told to remove it, and the device that
+    // asked to leave stays a member. Harmless in a self group, where every
+    // member is one person's own device; not harmless in a group of several
+    // people, which is what this is being tightened ahead of.
+    if (!group || group.lastCommitter !== requester) return
     group.pendingRemovals = group.pendingRemovals.filter(k => !kids.includes(k))
     this.persist()
   }
@@ -310,6 +354,7 @@ export class MlsDeliveryService {
     if (BigInt(epoch) !== group.epoch) return { ok: false, reason: 'epoch-conflict', epoch: group.epoch.toString() }
     const entry = this.append(group, 'commit', commit, epoch)
     group.epoch = group.epoch + 1n
+    group.lastCommitter = sender
     // The stored GroupInfo described the epoch this commit just left, so it is
     // replaced by the joiner's own (describing the epoch just reached) or
     // dropped. Dropping leaves the group unjoinable until someone commits
@@ -327,7 +372,20 @@ export class MlsDeliveryService {
   submitApplication(groupId: string, sender: string, message: string): CommitAccepted | CommitRejected {
     const group = this.groups.get(groupId)
     if (!group) return { ok: false, reason: 'no-such-group', epoch: '0' }
-    if (!group.roster.has(sender)) return { ok: false, reason: 'not-a-member', epoch: group.epoch.toString() }
+    // Ever-members again, and this is the half of the roster problem that pull
+    // could not fix: a member cut out of the roster could still READ (it pulls
+    // its own deliveries) but could not SPEAK, including to say that it had
+    // been cut out.
+    //
+    // Opening it is safe in the way that matters, because an application
+    // message advances nothing. A COMMIT stays roster-gated precisely because
+    // it does: a removed device submitting a bogus commit would take the
+    // group's next epoch, and since nobody can apply it, no real commit could
+    // ever be accepted again — the group would be dead, permanently, by one
+    // message. Nothing comparable happens here; a message from someone who no
+    // longer holds the epoch's keys simply fails to decrypt, and costs one
+    // wasted fan-out.
+    if (!group.everMembers.has(sender)) return { ok: false, reason: 'not-a-member', epoch: group.epoch.toString() }
     const entry = this.append(group, 'application', message, group.epoch.toString())
     this.persist()
     return { ok: true, entries: [entry], roster: [...group.roster] }
@@ -381,14 +439,35 @@ export class MlsDeliveryService {
 
   // ------------------------------------------------------------ key packages
 
-  /** Replace a device's published key packages. Replace rather than append:
-   * the client knows which of its key packages are still unused (it holds the
-   * private halves), so its latest publish is the truth. */
-  publishKeyPackages(kid: string, packages: string[]): void {
+  /** Add to a device's published key packages, and report how many it now
+   * has unused.
+   *
+   * ADD rather than replace, and the difference is the whole reason a pool
+   * ever stays full. A key package is single-use and the DS deletes each one
+   * as it hands it out — but the client cannot see that: it keeps every
+   * private half until a Welcome consumes it, so its own count never falls.
+   * Under "replace", a client that published what it held locally either
+   * republished packages already handed out (single-use, violated: two
+   * inviters could each get a Welcome for the same one) or, counting locally,
+   * concluded its pool was full and topped up nothing, forever. The pool was
+   * silently a one-time allocation.
+   *
+   * So the client mints new ones and sends only those, and the count that
+   * comes back is what it plans the next top-up from. Duplicates are ignored,
+   * which makes a retried publish harmless. An empty list is a query — the
+   * way to forget a device's packages is dropKeyPackages, which is what
+   * deregistration calls. */
+  publishKeyPackages(kid: string, packages: string[]): number {
     const did = kid.includes('#') ? kid.slice(0, kid.indexOf('#')) : kid
-    if (packages.length === 0) this.keyPackages.delete(kid)
-    else this.keyPackages.set(kid, { did, packages: packages.slice(0, MAX_KEY_PACKAGES_PER_KID) })
-    this.persist()
+    const entry = this.keyPackages.get(kid) ?? { did, packages: [] }
+    for (const kp of packages) {
+      if (entry.packages.length >= MAX_KEY_PACKAGES_PER_KID) break
+      if (!entry.packages.includes(kp)) entry.packages.push(kp)
+    }
+    if (entry.packages.length === 0) return 0
+    this.keyPackages.set(kid, entry)
+    if (packages.length) this.persist()
+    return entry.packages.length
   }
 
   /** Forget a device's published key packages.

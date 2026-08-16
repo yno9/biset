@@ -26,8 +26,23 @@
 //
 // Session-login statement (device-key-signed; the relay checks it against
 // the device pubkey it already has on file — no DID resolution, so this step
-// never touches DID material at all):
-//   session:<did>:<devicePubKeyB64url>:<unixSeconds>
+// never touches DID material at all). Host-bound like binding.ts's bind:
+// statement (2026-08-16 — the session statement was the one signed statement
+// in this file that had DROPPED the host, unlike vouch: above): without it, a
+// device signature captured by one relay (over TLS or not — a relay itself
+// can misbehave, or a network intermediary the client trusts less than the
+// relay) verifies just as well replayed against a DIFFERENT relay this
+// device is also registered with, within the freshness window. `ts` alone
+// stops an EXPIRED signature from being replayed; it does no work at all
+// against a replay to a different host inside the same window — that is what
+// `relayHost` closes. Still not a server-issued nonce (each relay reports the
+// host IT observed, the same "first-hand, off the transport" shape
+// anchor/didbind.ts's bind: check uses, not a value this relay generates and
+// remembers) — a genuine nonce would also stop a same-relay, same-window
+// replay, which this does not, and needs a challenge round trip this
+// lightweight a credential does not otherwise require. Tracked as a real gap,
+// not assumed closed:
+//   session:<did>:<devicePubKeyB64url>:<relayHost>:<unixSeconds>
 import { ed25519 } from '@noble/curves/ed25519.js'
 
 const enc = new TextEncoder()
@@ -86,33 +101,42 @@ export function signVouch(
   return { did, devicePubKey, label, ts, sig: b64(sig) }
 }
 
-export function sessionLoginStatement(did: string, devicePubKeyB64url: string, ts: number): string {
-  return `session:${did}:${devicePubKeyB64url}:${ts}`
+export function sessionLoginStatement(did: string, devicePubKeyB64url: string, relayHost: string, nonce: string, ts: number): string {
+  return `session:${did}:${devicePubKeyB64url}:${relayHost}:${nonce}:${ts}`
 }
 
-export interface SessionLoginProof { did: string; devicePubKey: string /* b64url */; ts: number; sig: string /* base64 */ }
+export interface SessionLoginProof { did: string; devicePubKey: string /* b64url */; relayHost: string; nonce: string; ts: number; sig: string /* base64 */ }
 
 // Signed by the DEVICE's own key: "I am the device this vouch authorized,
 // let me in." Used for every ordinary login — root key and mnemonic are
 // never involved here, so this step is completely unaffected by any later
 // root-key rotation (unlike the vouch step, this one doesn't even need to
 // resolve the DID document at all).
+//
+// `nonce` comes from the relay's own `GET /account/session/challenge`
+// (SPEC.md §11.28 on the relay side) — single-use, so a captured-and-
+// replayed POST of this exact statement fails even inside the freshness
+// window `ts` alone would still be within. `relayHost` alone only stopped a
+// replay against a DIFFERENT relay; the nonce is what closes the same-relay
+// case.
 export function signSessionLogin(
-  devicePrivateKey: Uint8Array, did: string,
+  devicePrivateKey: Uint8Array, did: string, relayHost: string, nonce: string,
   ts: number = Math.floor(Date.now() / 1000),
 ): SessionLoginProof {
   const devicePubKey = b64urlEncode(ed25519.getPublicKey(devicePrivateKey))
-  const sig = ed25519.sign(enc.encode(sessionLoginStatement(did, devicePubKey, ts)), devicePrivateKey)
-  return { did, devicePubKey, ts, sig: b64(sig) }
+  const sig = ed25519.sign(enc.encode(sessionLoginStatement(did, devicePubKey, relayHost, nonce, ts)), devicePrivateKey)
+  return { did, devicePubKey, relayHost, nonce, ts, sig: b64(sig) }
 }
 
 // Client-side sanity check (the relay does the authoritative one, against
 // its own on-file device pubkey — see this file's header). Verifies the
-// proof's signature against the device pubkey it itself names.
+// proof's signature against the device pubkey it itself names. Does NOT (and
+// cannot) check that `nonce` was genuinely issued or is still unspent — only
+// the relay's own nonce store knows that.
 export function verifySessionLoginProof(proof: SessionLoginProof): boolean {
   try {
     const sig = b64decode(proof.sig)
-    const msg = enc.encode(sessionLoginStatement(proof.did, proof.devicePubKey, proof.ts))
+    const msg = enc.encode(sessionLoginStatement(proof.did, proof.devicePubKey, proof.relayHost, proof.nonce, proof.ts))
     return ed25519.verify(sig, msg, b64urlDecode(proof.devicePubKey))
   } catch { return false }
 }

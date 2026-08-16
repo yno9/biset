@@ -236,16 +236,28 @@ export async function vouchThisDevice(p: VouchDeviceParams): Promise<{ ok: boole
  * it already has on file. `null` whenever this device has no key yet (never
  * vouched) or the relay doesn't recognize it (never vouched THERE, or
  * revoked) — callers fall back to the account's stored password, which the
- * relay still accepts unconditionally (auth_env.go's authenticate). */
+ * relay still accepts unconditionally (auth_env.go's authenticate).
+ *
+ * Two round trips, not one (SPEC.md §11.28): first a `GET /account/session/
+ * challenge` for a single-use nonce, then the signed `POST /account/session`
+ * that spends it. The nonce closes what `relayHost` alone left open — a
+ * captured-and-replayed POST of the identical signed statement against the
+ * SAME relay, inside the freshness window `ts` alone would still accept. */
 export async function deviceSessionLogin(serverUrl: string, username: string, domain: string, did: string): Promise<string | null> {
   const rec = await getDidRecord(did)
   if (!rec?.jmapDevicePrivateKey) return null
-  const proof = signSessionLogin(hexToBytes(rec.jmapDevicePrivateKey), did)
+  const base = serverUrl.replace(/\/$/, '')
   try {
-    const resp = await fetch(`${serverUrl.replace(/\/$/, '')}/account/session`, {
+    const challengeResp = await fetch(`${base}/account/session/challenge`)
+    if (!challengeResp.ok) return null
+    const { nonce } = (await challengeResp.json()) as { nonce?: string }
+    if (!nonce) return null
+
+    const proof = signSessionLogin(hexToBytes(rec.jmapDevicePrivateKey), did, hostOf(serverUrl), nonce)
+    const resp = await fetch(`${base}/account/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, domain, did, device_pub_key: proof.devicePubKey, ts: proof.ts, sig: proof.sig }),
+      body: JSON.stringify({ username, domain, did, device_pub_key: proof.devicePubKey, host: proof.relayHost, nonce: proof.nonce, ts: proof.ts, sig: proof.sig }),
     })
     if (!resp.ok) return null
     const j = (await resp.json()) as { token?: string }

@@ -104,6 +104,30 @@ export function showMnemonic(masterSecret: Uint8Array, opts: { firstTime: boolea
   renderPhrase(box, dismiss, seedToMnemonic(masterSecret), opts)
 }
 
+/** Re-display, on demand, long after creation (2026-08-14). Possible at all
+ * because the seed is now stored (did/store.ts's header) — it deliberately
+ * was not, which is what made the phrase a show-once-or-lose-it secret and
+ * made "clicked past the creation screen" a permanent account loss.
+ *
+ * The gesture comes from `revealMasterSeed`, which re-authenticates against
+ * the passkey EVERY time rather than reusing the unlocked session: this is
+ * the one action that puts the whole identity on screen in the clear, so it
+ * should not ride on an unlock the user performed for something else.
+ *
+ * Silent on refusal — a cancelled biometric prompt is a decision, not an
+ * error worth a dialog. Returns false when there is nothing to show: an
+ * identity created before seeds were stored has none until its owner logs in
+ * with the phrase once. */
+export async function showStoredMnemonic(did: string): Promise<boolean> {
+  const { revealMasterSeed } = await import('../did/store.ts')
+  const seedHex = await revealMasterSeed(did)
+  if (!seedHex) return false
+  const seed = new Uint8Array((seedHex.match(/../g) ?? []).map(h => parseInt(h, 16)))
+  const { box, dismiss } = overlay()
+  renderPhrase(box, dismiss, seedToMnemonic(seed), { firstTime: false })
+  return true
+}
+
 // password/envelope concept disabled (commented out for easy revival —
 // account-create.ts's submit handler has the fuller note). This function is
 // now also STRUCTURALLY impossible to bring back as-is: masterSecret is

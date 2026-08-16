@@ -65,7 +65,10 @@ async function hkdfBytes(secret: Uint8Array, info: string, len: number): Promise
 
 const ab = (u: Uint8Array): ArrayBuffer => u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength) as ArrayBuffer
 
-async function aesGcmSeal(key: Uint8Array, pt: Uint8Array): Promise<Uint8Array> {
+// Exported for did/store.ts's at-rest sealing (did/prf.ts) — same primitive,
+// different key source, so it shares this implementation rather than growing
+// a second one.
+export async function aesGcmSeal(key: Uint8Array, pt: Uint8Array): Promise<Uint8Array> {
   const ck = await crypto.subtle.importKey('raw', ab(key), 'AES-GCM', false, ['encrypt'])
   const nonce = rnd(12)
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: ab(nonce) }, ck, ab(pt)))
@@ -74,7 +77,7 @@ async function aesGcmSeal(key: Uint8Array, pt: Uint8Array): Promise<Uint8Array> 
   return out
 }
 
-async function aesGcmOpen(key: Uint8Array, sealed: Uint8Array): Promise<Uint8Array> {
+export async function aesGcmOpen(key: Uint8Array, sealed: Uint8Array): Promise<Uint8Array> {
   if (sealed.length < 12) throw new Error('sealed too short')
   const ck = await crypto.subtle.importKey('raw', ab(key), 'AES-GCM', false, ['decrypt'])
   return new Uint8Array(await crypto.subtle.decrypt(

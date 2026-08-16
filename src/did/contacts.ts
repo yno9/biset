@@ -217,16 +217,32 @@ export function shortDid(did: string): string {
 // user-requested): a did:webvh identity's SCID carries no meaning to the
 // account holder (unlike a contact's, there's no "recognisable fingerprint"
 // value in seeing it), while the domain+username are exactly what they'd
-// recognise. `did..{domain}:{username}` — collapses the SCID to `..` instead
-// of a truncated fragment of it. Falls back to shortDid for anything that
-// isn't biset's own `:{username}` webvh shape (did:dht, a foreign webvh path
-// convention, …).
+// recognise. So the SCID is the ONLY part elided — `did:webvh:{domain}:{user}`
+// keeps the method prefix intact so the string still reads as the DID it is
+// (2026-08-14: `did..` collapsed the prefix too, which read as a typo).
+// Split into three pieces so the account page can reveal the hidden middle in
+// place on hover; prefix + hidden + suffix always reconstructs `did` exactly.
+export function ownDidParts(did: string): { prefix: string; hidden: string; suffix: string } {
+  if (did.startsWith('did:webvh:')) {
+    const rest = did.slice('did:webvh:'.length)
+    const colon = rest.indexOf(':')
+    // Only biset's own `:{username}` webvh shape hides the SCID wholesale —
+    // a foreign path convention gets the generic fingerprint treatment below,
+    // where what's kept is stable-but-meaningless rather than meaningful.
+    if (colon > 0 && bisetWebvhUsername(did)) {
+      return { prefix: 'did:webvh:', hidden: rest.slice(0, colon + 1), suffix: rest.slice(colon + 1) }
+    }
+  }
+  const m = did.match(/^(did:[^:]+:)(.+)$/)
+  if (!m) return { prefix: did, hidden: '', suffix: '' }
+  const id = m[2]!
+  if (id.length <= 6) return { prefix: did, hidden: '', suffix: '' }
+  return { prefix: m[1]! + id.slice(0, 3), hidden: id.slice(3, -3), suffix: id.slice(-3) }
+}
+
 export function shortOwnDid(did: string): string {
-  if (!did.startsWith('did:webvh:')) return shortDid(did)
-  const username = bisetWebvhUsername(did)
-  if (!username) return shortDid(did)
-  const domain = did.slice('did:webvh:'.length).split(':')[1]
-  return domain ? `did..${domain}:${username}` : shortDid(did)
+  const { prefix, suffix } = ownDidParts(did)
+  return prefix + suffix
 }
 
 // The one "how do I show this DID to a human" rule, for every caller that

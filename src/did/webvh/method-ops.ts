@@ -7,6 +7,7 @@ import { resolve } from './resolver.ts'
 import { updateDocument, type BisetRelay } from './publish.ts'
 import { keyAgreementKeysFromWebvhState, mlkemKeyAgreementKeysFromWebvhState, type WebvhDidDocument } from './document.ts'
 import type { MethodOps } from '../didcomm-devices.ts'
+import { requireRootPrivateKey } from '../store.ts'
 
 /** did:webvh has no gateway list — a DID's own domain segment names exactly
  * one URL (identifier.ts's didToHttpsUrl). Kept as an empty array rather
@@ -60,7 +61,10 @@ export const webvhMethodOps: MethodOps = {
   gatewayUrls: noGateways,
 
   async publishFull(rec, relayInput, opts) {
-    const rootPriv = hexToBytes(rec.rootPrivateKey)
+    // Signing needs the root key, which is sealed at rest on a device with
+    // passkey protection (store.ts) — requireRootPrivateKey turns "locked"
+    // into a message instead of a signature over undefined.
+    const rootPriv = hexToBytes(requireRootPrivateKey(rec))
     const rootPub = hexToBytes(rec.rootPublicKey)
 
     let relays: BisetRelay[]

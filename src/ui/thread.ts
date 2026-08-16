@@ -1,5 +1,5 @@
 import { currentInbox, activeSession, isApRelay, isDidCommRelay, relayProtocolLabel } from '../context.ts'
-import { contactIdentityKey, displayLabelFor, currentDidForKey } from '../did/contacts.ts'
+import { contactIdentityKey, displayLabelFor, currentDidForKey, shortOwnDid } from '../did/contacts.ts'
 import { isDidIdentityKey } from '../did/idkey.ts'
 import {
   processedMessages, renderedKeys, messageKey,
@@ -11,6 +11,7 @@ import type { ProcessedMessage, ThreadGroup } from '../state.ts'
 import { esc, linkify, formatTime, avatarStyle, stripQuoted } from '../utils.ts'
 import { avatarDataUrl } from '../deltachat/avatar.ts'
 import { processIncoming } from '../processing.ts'
+import { threadKeyOf } from '../threading.ts'
 import type { OutgoingAttachment } from '../pgp/crypto.ts'
 // Circular imports — used only inside function bodies, safe:
 import { sendReply, sendEditRequest, sendDeleteRequest, showSysMsg } from './shell.ts'
@@ -18,6 +19,85 @@ import { inMenuMode, renderThreadAccordion } from './left-pane.ts'
 import { currentSenderSync } from '../app.ts'
 
 const threadVisibleCounts = new Map<string, number>()
+
+// Get-or-create, not a plain lookup: #conv-via/#conv-did are written once in
+// index.html, and renderGroupMembers' `host.textContent = …` destroys them
+// outright. Without this, opening ONE MLS group conversation left every later
+// 1:1 conversation with no protocol/DID pill for the rest of the session
+// (2026-08-14, user-reported as "conv-via sometimes disappears").
+function convBadge(id: string): HTMLElement {
+  const found = document.getElementById(id) as HTMLElement | null
+  if (found) return found
+  const el = document.createElement('span')
+  el.id = id
+  return el
+}
+
+// Protocol pill (leftmost in #conv-to) derived from the conversation's origin
+// relay — the label is the transport, not the relay binary name. Applied by
+// every path that rewrites #conv-to's contents, groups included (2026-08-14,
+// user-requested): "which transport is this conversation on" is the same
+// question whether the other end is one person or five.
+function applyConvViaPill(host: HTMLElement): void {
+  const via = convBadge('conv-via')
+  const lbl = relayProtocolLabel(currentInbox?.relay)
+  if (lbl) {
+    via.textContent = lbl.text
+    via.style.cssText = `font-size:10px;font-weight:700;color:#fff;background:${lbl.color};border-radius:4px;padding:1px 5px;margin-right:6px;flex-shrink:0`
+  } else {
+    via.textContent = ''
+    via.style.cssText = ''
+  }
+  host.prepend(via)
+}
+
+/** The members strip for a group conversation: who is in it, and the three
+ * things one can do about that.
+ *
+ * Membership is read from the group's own ratchet tree every render rather
+ * than from the message list, because those two disagree in both directions —
+ * a member who has never spoken does not appear in the messages, and one who
+ * was removed still does. The tree is what decides who can read what is said
+ * next, so it is what the header shows.
+ *
+ * Rendered asynchronously: reading the tree means opening the group's stored
+ * state. The chip strip appears a beat after the thread, which is the honest
+ * trade for showing membership that is actually true. */
+function renderGroupMembers(host: HTMLElement, address: string): void {
+  const selfDid = activeSession()?.account.did ?? ''
+  host.textContent = currentInbox?.group_name || 'Group'
+  const strip = document.createElement('span')
+  strip.className = 'conv-members'
+  host.appendChild(strip)
+  applyConvViaPill(host)
+  const refresh = () => { renderGroupMembers(host, address) }
+
+  const chip = (label: string, title: string, onClick: () => void, cls = '') => {
+    const el = document.createElement('button')
+    el.type = 'button'
+    el.className = `conv-member-chip${cls ? ' ' + cls : ''}`
+    el.textContent = label
+    el.title = title
+    el.addEventListener('click', ev => { ev.stopPropagation(); onClick() })
+    strip.appendChild(el)
+    return el
+  }
+
+  import('../did/didcomm/channel.ts').then(async mls => {
+    const members = await mls.groupMembersOf(address)
+    if (!members.length) return
+    for (const did of members.filter(m => m !== selfDid)) {
+      chip(displayLabelFor(did) || did, did, () => {}, 'conv-member-static')
+    }
+    chip('+', 'Add someone to this group', async () => {
+      const did = window.prompt('DID of the person to add')?.trim()
+      if (!did) return
+      const result = await mls.inviteToGroup(selfDid, address, did)
+      if (!result.ok) showSysMsg(result.error || 'Could not add them')
+      refresh()
+    }, 'conv-member-add')
+  }).catch(() => {})
+}
 
 export function isMeMsg(from: string): boolean {
   // A DIDComm message's `from` is always this identity's DID — never its
@@ -244,7 +324,7 @@ export async function addMessage(msg: ProcessedMessage['msg']): Promise<boolean>
     if (existing && existing.msg.body !== msg.body) {
       existing.msg.body = msg.body
       existing.msg.edited = msg.edited
-      const r = await processIncoming(existing.msg, activeSession()?.account.email ?? '', processedMessages)
+      const r = await processIncoming(existing.msg, activeSession()?.account.email ?? '')
       existing.bodyText = r.bodyText
       existing.encrypted = r.encrypted
       existing.unreadable = r.unreadable
@@ -264,7 +344,7 @@ export async function addMessage(msg: ProcessedMessage['msg']): Promise<boolean>
   renderedKeys.add(key)
 
   const { bodyText, encrypted, unreadable, attachments } = await processIncoming(
-    msg, activeSession()?.account.email ?? '', processedMessages
+    msg, activeSession()?.account.email ?? ''
   )
 
   processedMessages.push({ msg, bodyText, encrypted, unreadable, attachments })
@@ -331,7 +411,7 @@ export function createMsgEl({ msg, bodyText, encrypted, unreadable, pending, att
 }
 
 export function appendMsgToDOM(processed: ProcessedMessage) {
-  const k = processed.msg.thread_id || processed.msg.message_id || String(processed.msg.ts)
+  const k = threadKeyOf(processed.msg, processedMessages.map(p => p.msg))
   if (k === focusedThreadKey) {
     const container = document.querySelector('#focused-thread-card .t-messages')
     if (container) {
@@ -917,33 +997,19 @@ export function render(smooth = false, keepScroll = false) {
   const $convBcc = document.getElementById('conv-bcc')
   if ($convTo) {
     const contact = currentInbox?.contact ?? ''
-    const via = $convTo.querySelector('#conv-via') as HTMLElement | null
-    const didBadge = $convTo.querySelector('#conv-did') as HTMLElement | null
-    // Same fallback chain as the left-pane list (did/contacts.ts's
-    // displayLabelFor): name → shortened DID (did~xxxx) → literal address.
-    // Never the raw DID in full.
-    $convTo.textContent = (contact && displayLabelFor(contact)) || contact
-    if (via) {
-      // Protocol pill (left of the recipient) derived from the conversation's
-      // origin relay. Label is the transport, not the relay binary name.
-      const lbl = relayProtocolLabel(currentInbox?.relay)
-      if (lbl) {
-        via.textContent = lbl.text
-        via.style.cssText = `font-size:10px;font-weight:700;color:#fff;background:${lbl.color};border-radius:4px;padding:1px 5px;margin-right:6px;flex-shrink:0`
-      } else {
-        via.textContent = ''
-        via.style.cssText = ''
-      }
-      $convTo.prepend(via)
-    }
-    if (didBadge) {
-      // DID pill (left of the protocol pill — prepended last, so it lands
-      // leftmost): shown when this contact is reached via DID discovery
-      // (contacts.json has resolved a DID for them) despite the conversation
-      // itself going out over mail/AP — a DID-mediated address is portable
-      // even though this particular transport isn't DIDComm. Suppressed when
-      // the conversation's own transport already IS DIDComm — #conv-via just
-      // showed the same "DID" pill for that, showing it twice is noise.
+    // A group conversation names a GROUP, not a correspondent, and the useful
+    // thing to show is who is in it — read from the ratchet tree, which is the
+    // only authority on that (a member who has never spoken is still a member,
+    // and one who was removed is not, whatever old messages suggest).
+    const mlsGroup = currentInbox?.inbox_type === 'group' && currentInbox.group_id?.startsWith('mls:') ? currentInbox.group_id : undefined
+    if (mlsGroup) renderGroupMembers($convTo, mlsGroup)
+    else {
+      const didBadge = convBadge('conv-did')
+      // #conv-to shows the address itself, not the contact's name — a
+      // protocol-appropriate identifier (2026-08-16, user-requested): the
+      // literal address for mail, and for DIDComm a did:webvh with just the
+      // SCID elided (shortOwnDid — `did:webvh:{domain}:{user}`, never the
+      // raw name or the full DID with its meaningless SCID).
       const key = contact ? contactIdentityKey(contact) : ''
       // Shown/copied as the CURRENT full DID, never the internal key: for a
       // did:webvh contact that key is `webvh:{SCID}`, which is not an
@@ -952,9 +1018,18 @@ export function render(smooth = false, keepScroll = false) {
       // `contact` itself covers the case where it already IS the DID and no
       // Card has been resolved yet.
       const did = key ? (currentDidForKey(key) ?? (contact.startsWith('did:') ? contact : '')) : ''
+      $convTo.textContent = (isDidIdentityKey(key) && did) ? shortOwnDid(did) : contact
+      applyConvViaPill($convTo)
+      // DID pill (left of the protocol pill — prepended last, so it lands
+      // leftmost): shown when this contact is reached via DID discovery
+      // (contacts.json has resolved a DID for them) despite the conversation
+      // itself going out over mail/AP — a DID-mediated address is portable
+      // even though this particular transport isn't DIDComm. Suppressed when
+      // the conversation's own transport already IS DIDComm — #conv-via just
+      // showed the same "DID" pill for that, showing it twice is noise.
       if (isDidIdentityKey(key) && did && !isDidCommRelay(currentInbox?.relay)) {
-        // The main conv-to text already shows the name (if any) — this badge
-        // just marks "DID-mediated"; the tooltip/click still deal in the DID.
+        // The main conv-to text already shows the address — this badge just
+        // marks "DID-mediated"; the tooltip/click still deal in the DID.
         didBadge.textContent = 'DID'
         didBadge.title = `${did}\n(click to copy)`
         didBadge.onclick = (ev) => {

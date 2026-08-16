@@ -20,8 +20,9 @@
 // the domain, unlike a bespoke relay endpoint only that relay's software can
 // serve.
 import { sessions, isDidCommRelay } from '../context.ts'
-import { resolveOwnFirst } from './resolver.ts'
-import type { DidDocument } from './dht/document.ts'
+import { resolveAny } from './resolver.ts'
+import type { WebvhDidDocument } from './webvh/document.ts'
+import { firstServiceEndpoint } from '../utils.ts'
 import { buildCardForDid, type Card } from './contacts.ts'
 import * as contactsStore from '../store/contacts.ts'
 import * as persist from '../vault/persist.ts'
@@ -93,21 +94,11 @@ function parseDidTxt(txts: string[]): string | null {
 // project_biset_identity_split describes). Generalizes what used to be a
 // single-slot check (only alsoKnownAs[0]) to the "claim ≠ ownership"
 // principle applying uniformly to anything the document asserts.
-function claimedAddresses(doc: DidDocument): string[] {
+function claimedAddresses(doc: WebvhDidDocument): string[] {
   const out = new Set<string>()
   for (const aka of doc.alsoKnownAs) if (aka.startsWith('mailto:')) out.add(aka.slice('mailto:'.length))
   for (const svc of doc.service) if (svc.address) out.add(svc.address)
   return [...out]
-}
-
-// The user's own relays double as resolution gateways (DID.md: query through a
-// relay that already sees your traffic, not a stranger's), plus — via
-// did/didcomm/channel.ts's ownGateways, not re-derived here — this identity's
-// own mediator's pkarr gateway when it has one, the ONLY gateway a fully
-// relay-less identity (DID⊥relay, zero relay sessions) has of its own at all.
-async function ownGateways(): Promise<string[]> {
-  const { ownGateways: channelOwnGateways, currentIdentityDid } = await import('./didcomm/channel.ts')
-  return channelOwnGateways(currentIdentityDid())
 }
 
 // address → DID via the DNS anchor (cached; TOFU on first success).
@@ -158,7 +149,7 @@ async function verifyBinding(address: string, did: string): Promise<boolean> {
 // whichever verified first. No verified claim at all → keep `known` unchanged,
 // same fail-closed default as before.
 async function resolveVerifiedAddress(
-  doc: DidDocument, did: string, known: string,
+  doc: WebvhDidDocument, did: string, known: string,
 ): Promise<{ address: string; protocol?: string }> {
   const knownProtocol = doc.service.find(s => s.address === known)?.protocol
   let fallback: { address: string; protocol?: string } | undefined
@@ -180,15 +171,7 @@ export async function refreshContact(address: string): Promise<void> {
     if (!did) return
     const prev = getJSON<ContactCache>(CONTACT_KEY + address)
     if (prev?.lastChecked && Date.now() - prev.lastChecked < REFRESH_TTL_MS) return
-    // Gateways: own relays + the contact's last-known relays first — public
-    // fallbacks only if neither has it (resolveOwnFirst), so a contact whose
-    // own relays moved is still findable without hitting third-party public
-    // relays on every contact refresh.
-    const own = [
-      ...(await ownGateways()),
-      ...(prev?.relays ?? []).map(u => u.replace(/\/$/, '') + '/pkarr'),
-    ]
-    const doc = await resolveOwnFirst(did, [...new Set(own)]) // applies signature + freshness (rollback) checks
+    const doc = await resolveAny(did) // applies signature + chain verification
     if (!doc) return
     // The document may claim other addresses (a moved-to primary, a second
     // mail/AP-split address, …). Only adopt one as the delivery target if
@@ -201,7 +184,7 @@ export async function refreshContact(address: string): Promise<void> {
     setJSON(CONTACT_KEY + address, {
       did,
       address: verifiedAddress,
-      relays: doc.service.flatMap(s => s.serviceEndpoint),
+      relays: doc.service.map(s => firstServiceEndpoint(s.serviceEndpoint)),
       protocol,
       name: doc.name,
       lastChecked: Date.now(),
@@ -220,7 +203,7 @@ export async function refreshContact(address: string): Promise<void> {
 // usable address at all (returns null), not a guess.
 export async function resolveDidDirect(did: string): Promise<{ address: string; relays: string[] } | null> {
   try {
-    const doc = await resolveOwnFirst(did, await ownGateways())
+    const doc = await resolveAny(did)
     if (!doc) return null
     // No prior known address to compare against here (cold start) — check
     // every claim the document makes (claimedAddresses, not just
@@ -231,7 +214,7 @@ export async function resolveDidDirect(did: string): Promise<{ address: string; 
       if (await verifyBinding(candidate, did)) { claimed = candidate; break }
     }
     if (!claimed) return null
-    const relays = doc.service.flatMap(s => s.serviceEndpoint)
+    const relays = doc.service.map(s => firstServiceEndpoint(s.serviceEndpoint))
     const protocol = doc.service.find(s => s.address === claimed)?.protocol
     setJSON(CONTACT_KEY + claimed, { did, address: claimed, relays, protocol, name: doc.name, lastChecked: Date.now() })
     localStorage.setItem(DID_KEY + claimed, did) // seed the TOFU cache so a later refreshContact(claimed) skips the DNS round-trip

@@ -9,7 +9,7 @@ import {
   encodeMlkem768Multikey, decodeMlkem768Multikey,
 } from './multikey.ts'
 import { fragmentOf, isDeviceKid, isMlkemKid, mlkemKidFor, deviceKidForMlkem } from '../devicekid.ts'
-import type { DidKeyAgreement } from '../dht/document.ts'
+import type { DidKeyAgreement } from '../document.ts'
 
 // ML-KEM-768 keyAgreement key (PLAN.md "did:webvh PQハイブリッド化", Phase 1) —
 // webvh-only (did:dht is explicitly out of scope, PLAN.md §1: BEP44's 1000-byte

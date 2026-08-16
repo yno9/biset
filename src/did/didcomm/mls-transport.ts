@@ -98,6 +98,21 @@ export const DELIVER = `${MLS_PROTOCOL}/deliver`
 export const DELIVERIES_REQUEST = `${MLS_PROTOCOL}/deliveries-request`
 /** delivery-service → member. Zero or more ordered MLS objects, in seq order. */
 export const DELIVERIES = `${MLS_PROTOCOL}/deliveries`
+/** member → delivery-service. "Which of your groups am I in?"
+ *
+ * The way INTO a group is a Welcome, and a Welcome is pushed exactly once. A
+ * device that fails to use the one it was sent — an old build that did not
+ * understand it, a key package whose private half was lost, a crash between
+ * receiving and joining — is then invited to a group it will never see, while
+ * everyone else sees it as a member. Both sides are silently wrong, and no
+ * amount of waiting fixes it.
+ *
+ * So membership is askable. The answer lets a device notice a group it belongs
+ * to and has no state for, pull that group's log, and join from the Welcome
+ * still sitting in it. */
+export const GROUPS_REQUEST = `${MLS_PROTOCOL}/groups-request`
+/** delivery-service → member. The groups this DS holds that the asker is in. */
+export const GROUPS = `${MLS_PROTOCOL}/groups`
 
 /** The problem-report code for "no GroupInfo has been published for this
  * group's current epoch yet", the one thing an external join needs and cannot
@@ -133,6 +148,12 @@ export interface KeyPackageRequestBody {
 
 export interface KeyPackageResponseBody {
   did: string
+  /** Answering a PUBLISH: how many unused key packages the store now holds for
+   * that device. The publisher cannot count them itself — it keeps every
+   * private half until a Welcome consumes one, so its local count never falls
+   * — which is why the pool has to be topped up from this number and not from
+   * anything the client knows. Absent when answering a request. */
+  remaining?: number
   /** One entry per device that has an unused key package left. A device with
    * an exhausted pool is simply absent — it can be added later, and inviting
    * the rest now beats failing the whole invitation. */
@@ -243,6 +264,14 @@ export interface DeliverBody {
    * MLS itself is authoritative — but lets a client discard a delivery for an
    * epoch it has already passed without a decrypt attempt. */
   epoch?: string
+}
+
+export interface GroupsRequestBody { /** No fields: the asker is the envelope's sender. */ }
+
+export interface GroupsBody {
+  /** Group ids the asker is a member of, as this DS sees it. A device
+   * compares them against what it holds and pulls anything missing. */
+  groups: Array<{ group_id: string; epoch: string }>
 }
 
 export interface DeliveriesRequestBody {

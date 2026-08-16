@@ -37,18 +37,18 @@ const URL_ = `http://127.0.0.1:${PORT}`
 // reply-key resolve inside one specific request without also failing the
 // request's own sender-authentication resolve (which must succeed, or the
 // request never reaches DELIVERY_REQUEST's handler at all).
-const IDENTITY_DID = 'did:dht:testresolvefailure'
+const IDENTITY_DID = 'did:webvh:testresolvefailure'
 const deviceKey = { priv: x25519.utils.randomSecretKey(), pub: undefined as unknown as Uint8Array }
 deviceKey.pub = x25519.getPublicKey(deviceKey.priv)
 const keysByKid = new Map<string, Uint8Array>([[`${IDENTITY_DID}#k1`, deviceKey.pub]])
 let dhtDown = false // simulate a total DHT/gateway outage on demand
-const resolveDidDht = async (_did: string, kid: string): Promise<Uint8Array | null> => {
+const resolveDidWebvh = async (_did: string, kid: string): Promise<Uint8Array | null> => {
   if (dhtDown) return null
   return keysByKid.get(kid) ?? null
 }
 
 const mediatorIdentity = loadMediatorIdentity(join(dir, 'mediator-identity.json'), URL_)
-const mediator = createMediator({ mediator: mediatorIdentity, resolveDidDht })
+const mediator = createMediator({ mediator: mediatorIdentity, resolveDidWebvh })
 const server = Bun.serve({
   port: PORT,
   async fetch(req) {

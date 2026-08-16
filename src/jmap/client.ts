@@ -42,7 +42,16 @@ export async function initSession(account: StoredAccount): Promise<AccountSessio
     console.error('[initSession] failed:', email, serverUrl, e)
     return null
   }
-  if (!session?.apiUrl) return null
+  // The one silent null this function used to have: every other failure path
+  // logs, so an account that simply never connected — no session, no error,
+  // "Sync: Never" forever — was undiagnosable from the console (2026-08-14,
+  // user-reported). A session document without an apiUrl means the relay
+  // answered something that isn't a JMAP session (a proxy error page, a
+  // redirect landing on HTML, a partial response).
+  if (!session?.apiUrl) {
+    console.error('[initSession] relay returned no apiUrl — not a JMAP session:', email, serverUrl, session)
+    return null
+  }
 
   const jmapAccountId: string = (email && (session.accounts as any)?.[email] ? email : null)
     ?? session.primaryAccounts?.['urn:ietf:params:jmap:mail']

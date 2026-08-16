@@ -322,8 +322,9 @@ function showRelayCreateStep(body: HTMLElement, close: () => void, relays: strin
       // replaced). kek is NOT available without the mnemonic any more, so
       // this newly-added relay's PGP setup is skipped here — same graceful
       // degradation initPGPForSession(session, undefined) already had.
-      const { getDidRecord } = await import('../did/store.ts')
+      const { getDidRecord, unlockIdentitySecrets } = await import('../did/store.ts')
       const { hexToBytes } = await import('../utils.ts')
+      if (!(await unlockIdentitySecrets())) throw new Error('Unlock cancelled')
       const rec = await getDidRecord(reuseIdentity.account.did)
       if (!rec) throw new Error('No local record for this identity')
       const did = rec.did
@@ -528,7 +529,8 @@ function showCreateAccountStep(body: HTMLElement, close: () => void, relay: stri
       // DidRecord, no unseal needed. kek isn't available without the
       // mnemonic — this new relay's PGP setup is skipped, same graceful
       // degradation initPGPForSession(session, undefined) already had.
-      const { getDidRecord } = await import('../did/store.ts')
+      const { getDidRecord, unlockIdentitySecrets } = await import('../did/store.ts')
+      if (!(await unlockIdentitySecrets())) throw new Error('Unlock cancelled')
       const rec = await getDidRecord(reuseIdentity.account.did ?? reuseIdentity.account.email)
       if (!rec) throw new Error('No local record for this identity')
       const did = rec.did

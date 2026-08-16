@@ -1,4 +1,5 @@
 import type { InboxSummary } from './types.ts'
+import { computeThreadKeys, nodeId } from './threading.ts'
 
 // A decrypted (or cleartext) message attachment, ready to render — dataUrl
 // works both as an <img src> (images) and an <a download href> (anything
@@ -20,6 +21,9 @@ export interface ProcessedMessage {
     message_id: string
     jmap_id?: string
     in_reply_to: string
+    references?: string[]
+    // JMAP サーバが付けた threadId。表示上のスレッド分けには使わない
+    // （threading.ts 参照）。JMAP 側の照合が要る箇所のためだけに保持。
     thread_id: string
     to_addrs?: string[]
     cc_addrs?: string[]
@@ -85,9 +89,10 @@ export let lastLeftInboxes: InboxSummary[] = []
 export function setLastLeftInboxes(v: InboxSummary[]): void { lastLeftInboxes = v }
 
 export function groupMessages(): ThreadGroup[] {
+  const keys = computeThreadKeys(processedMessages.map(p => p.msg))
   const groups = new Map<string, ThreadGroup>()
   for (const p of processedMessages) {
-    const k = p.msg.thread_id || p.msg.message_id || String(p.msg.ts)
+    const k = keys.get(nodeId(p.msg)) ?? nodeId(p.msg)
     // DeltaChat hides the real subject (outer = "[...]"); the group title lives in
     // the Chat-Group-Name protected header (msg.group_name). Fall back to it so the
     // thread header shows "gt" instead of "no title" for DeltaChat groups.

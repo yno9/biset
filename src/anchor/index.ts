@@ -9,8 +9,6 @@
 //     handles DID material any more
 //   - the DNS anchor record, via Cloudflare — the only place that credential is
 //     used, which is why this process's blast radius is worth caring about
-//   - the Pkarr/DHT gateway that relays' `/pkarr` forwards to, so browsers can
-//     read and write did:dht records without speaking UDP
 //   - the DIDComm mediator, so a client that cannot hold a socket open can
 //     still be delivered to
 //
@@ -28,7 +26,6 @@
 //     "relay_token": "…",              // required; the secret its relays present
 //     "cloudflare_api_token": "…",     // optional; omit to record claims without DNS
 //     "cloudflare_zone_id":   "…",     // required with the token
-//     "pkarr_gateway": true,           // optional; joins the Mainline DHT (UDP)
 //     "mediator_url": "https://…" }    // optional; turns the DIDComm mediator on.
 //
 // `mediator_url` is a promise, not a setting: it is baked into the mediator's
@@ -38,7 +35,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { CloudflareAnchor } from './cloudflare.ts'
 import { ClaimStore } from './store.ts'
-import { startAnchor, type PkarrRef } from './server.ts'
+import { startAnchor } from './server.ts'
 import { createMediator } from './mediator/server.ts'
 import { loadMediatorIdentity } from './mediator/identity.ts'
 import { ConnectionStore } from './mediator/connections.ts'
@@ -46,14 +43,9 @@ import { PushSubscriptionStore } from './mediator/pushsubs.ts'
 import { MessageQueue } from './mediator/queue.ts'
 import { MlsDeliveryService } from './mediator/mls-ds.ts'
 import { fragmentOf, isDeviceKid } from '../did/devicekid.ts'
-import { PkarrGateway } from './pkarr.ts'
 import { WebvhLogStore } from './webvh-store.ts'
-import { zbase32Encode } from '../did/dht/zbase32.ts'
-import { resolveVia, identityKeyFromDid, PUBLIC_PKARR_FALLBACKS, type DidDocument } from '../did/resolver.ts'
-import { parseSignedPayload } from '../did/dht/packet.ts'
-import { resolveOwnWebvhDocument } from './webvh-resolve.ts'
+import { resolveWebvhDocument } from './webvh-resolve.ts'
 import { keyAgreementKeysFromWebvhState } from '../did/webvh/document.ts'
-import { resolve as resolveWebvhRemote } from '../did/webvh/resolver.ts'
 
 interface Config {
   listen_addr: string
@@ -79,11 +71,6 @@ interface Config {
    * can actually reach, because it goes into the mediator's DID — correspondents
    * read it from there to know where to deliver. */
   mediator_url?: string
-  /** Turns the Pkarr DHT gateway on. Opt-in, mirroring the PKARR_GATEWAY=1 flag
-   * go-jmapserver gated its own gateway behind: it opens a UDP socket and joins
-   * the Mainline DHT, which an operator should choose deliberately. Relays proxy
-   * their /pkarr here when it's on. */
-  pkarr_gateway?: boolean
   /** Web Push for the mediator's queued messages. Without these the mediator
    * queues silently and a closed browser learns nothing until it is reopened —
    * which is why a relay-less (DID⊥relay) identity had no notifications at all.
@@ -167,91 +154,29 @@ mkdirSync(dataDir, { recursive: true, mode: 0o700 })
 const claims = new ClaimStore(dataDir)
 console.log(`[anchor] indexed ${claims.rebuildIndex()} DID(s) from ${dataDir}`)
 
-// did:webvh log storage (PLANWEBVH.md §2.1/§2.3) — always on, unlike pkarr/
-// mediator: it's a plain file store with no external network dependency
-// (no DHT join, no did_sig-bearing mediator identity to mint), so there's
-// nothing here worth gating behind a config flag.
+// did:webvh log storage (PLANWEBVH.md §2.1/§2.3) — always on, unlike the
+// mediator: it's a plain file store with no external network dependency, so
+// there's nothing here worth gating behind a config flag.
 const webvh = new WebvhLogStore(dataDir)
 
-// The gateway republishes only identities this anchor anchors — the registry is
-// the whole definition of "ours". A did:dht IS its public key, so the question
-// costs one encode and a map lookup.
-const isAnchored = (pubkey: Buffer) => claims.lookupByDid('did:dht:' + zbase32Encode(new Uint8Array(pubkey))).length > 0
-
-// A mutable slot, not an awaited value: PkarrGateway.start() joining the
-// Mainline DHT takes several seconds, and this used to be awaited BEFORE the
-// HTTP listener opened at all — meaning the entire anchor (mediator inbox,
-// claim registry, everything, not just /pkarr) was connection-refused for
-// that whole window on every single restart. server.ts's handlePkarr reads
-// this fresh on every request (see PkarrRef's own note), so the listener can
-// open immediately below while the DHT join happens in the background —
-// /pkarr answers a distinguishable 503 ("still starting") rather than either
-// a connection refusal or the misleading-forever 404 that meant "no such
-// identity" everywhere else it's used.
-const pkarrRef: PkarrRef = { starting: !!cfg.pkarr_gateway }
-
-// Resolve a did:dht peer's DIDComm key AT A SPECIFIC device's kid (e.g.
-// "did:dht:X#k2") from the DHT, so the mediator can authenticate relay-less
-// (did:dht) senders and encrypt replies to them — not just the self-
-// certifying did:peer it started with. Kid-aware because a relay-less
-// identity can have more than one registered device, each its own entry in
-// the document's keyAgreementKeys (document.ts's DidKeyAgreement note) — "the"
-// key for a bare DID would be ambiguous once there's more than one.
-//
-// Tries this anchor's OWN DHT node first (in-process, no HTTP round trip, no
-// propagation lag) — it's the freshest possible source for a record a client
-// JUST published moments earlier via this same anchor's /pkarr, which a brand
-// new device key always is. Falls back to the public pkarr relays only if
-// this anchor has no DHT node of its own, or genuinely doesn't have it yet.
-// Was public-fallback-only, unconditionally, even though the anchor runs its
-// own DHT node right here — a client registering with a fresh device key
-// routinely failed mediate-request with "no such key on the DHT" simply
-// because relay.pkarr.org/pkarr.pubky.org hadn't caught up yet, despite the
-// record being available locally the whole time. Both paths verify the
-// record's signature against the DID's own key, so neither can forge, only
-// withhold.
-const resolveDidDht = async (did: string, kid: string): Promise<Uint8Array | null> => {
-  // Matched by kid FRAGMENT, not by slot number: a device's identifier is
-  // derived from its key now (did/devicekid.ts), so there is no number to
-  // parse, and a legacy `#k1` compares just as well as a string.
-  const fragment = fragmentOf(kid)
-  if (!isDeviceKid(fragment)) return null
-  try {
-    let doc: DidDocument | undefined
-    if (pkarrRef.current) {
-      const pubkey = identityKeyFromDid(did)
-      const payload = await pkarrRef.current.get(Buffer.from(pubkey))
-      if (payload) {
-        try { doc = parseSignedPayload(pubkey, new Uint8Array(payload)).document } catch { /* bad sig — fall through to public gateways */ }
-      }
-    }
-    if (!doc) doc = (await resolveVia(did, PUBLIC_PKARR_FALLBACKS))?.document
-    return doc?.keyAgreementKeys?.find(k => k.kid === fragment)?.publicKey ?? null
-  } catch { return null }
-}
 // Resolve a did:webvh peer's DIDComm key AT A SPECIFIC device's kid, so the
-// mediator can authenticate/encrypt to did:webvh senders too
-// (PLANWEBVH.md §5.3) — same job as resolveDidDht above, for the other
-// method. Tries this anchor's own webvh store FIRST (no HTTP round trip back
-// to itself, verified with resolveEntries — same core resolve() uses for a
-// real HTTP fetch), since that's the common case (biset's own users). Falls
-// back to a real HTTPS resolve for anything not found there — a DID hosted
-// on a domain this anchor doesn't own at all (a BYO domain, DID⊥relay's own
-// point) is neither a bug nor rare; the mediator must be able to reach ANY
-// did:webvh peer, not just ones this anchor happens to also host (found
-// live: a moved-to-BYO-domain identity got "unresolvable did:webvh peer"
-// registering with this SAME mediator, because only the own-store path
-// existed).
+// mediator can authenticate/encrypt to did:webvh senders (PLANWEBVH.md §5.3).
+// webvh-resolve.ts's resolveWebvhDocument tries this anchor's own store
+// FIRST (no HTTP round trip back to itself), since that's the common case
+// (biset's own users) — falling back to a guarded remote HTTPS resolve for
+// anything not found there. A DID hosted on a domain this anchor doesn't own
+// at all (a BYO domain, DID⊥relay's own point, or now also
+// `authorized_did_domain`'s third-party case) is neither a bug nor rare; the
+// mediator must be able to reach ANY did:webvh peer, not just ones this
+// anchor happens to also host (found live: a moved-to-BYO-domain identity got
+// "unresolvable did:webvh peer" registering with this SAME mediator, because
+// only the own-store path existed).
 const resolveDidWebvh = async (did: string, kid: string): Promise<Uint8Array | null> => {
   const fragment = fragmentOf(kid)
   if (!isDeviceKid(fragment)) return null
-
-  const own = webvh ? resolveOwnWebvhDocument(webvh, did) : null
-  if (own) return keyAgreementKeysFromWebvhState(own).find(k => k.kid === fragment)?.publicKey ?? null
-
   try {
-    const remote = await resolveWebvhRemote(did)
-    return remote ? keyAgreementKeysFromWebvhState(remote).find(k => k.kid === fragment)?.publicKey ?? null : null
+    const doc = await resolveWebvhDocument(did, webvh)
+    return doc ? keyAgreementKeysFromWebvhState(doc).find(k => k.kid === fragment)?.publicKey ?? null : null
   } catch { return null }
 }
 // All three or nothing: a keypair without a subscriber produces a JWT Apple
@@ -282,24 +207,11 @@ const mediator = cfg.mediator_url
       // production).
       mlsDs: new MlsDeliveryService(join(dataDir, 'mediator-mls.json')),
       vapid,
-      resolveDidDht,
       resolveDidWebvh,
     })
   : undefined
 if (mediator) console.log(`[anchor] DIDComm mediator at ${cfg.mediator_url} — ${mediator.mediatorDid}${vapid ? ' (Web Push on)' : ''}`)
 else console.log('[anchor] no mediator_url — registry only, no DIDComm mediation')
 
-startAnchor({ claims, cloudflare, port, hostname, mediator, pkarr: pkarrRef, webvh, relayToken: cfg.relay_token })
+startAnchor({ claims, cloudflare, port, hostname, mediator, webvh, relayToken: cfg.relay_token })
 console.log(`[anchor] listening on ${cfg.listen_addr} (data: ${dataDir})`)
-
-if (cfg.pkarr_gateway) {
-  PkarrGateway.start(dataDir, isAnchored)
-    .then(g => {
-      pkarrRef.current = g
-      console.log('[pkarr] gateway enabled — joined the Mainline DHT')
-    })
-    .catch(e => console.error('[pkarr] failed to join the Mainline DHT:', e instanceof Error ? e.message : e))
-    .finally(() => { pkarrRef.starting = false })
-} else {
-  console.log('[pkarr] no pkarr_gateway — registry only, no DHT')
-}

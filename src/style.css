@@ -1681,6 +1681,56 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  position: relative;
+  cursor: pointer;
+  /* Shrink to the DID text + copy button instead of stretching across the
+     card: the row is the tooltip's hover target, and a full-width row would
+     pop the bubble from the empty space to the right of the button too. */
+  align-self: flex-start;
+  max-width: 100%;
+}
+/* The heading shows the DID with its SCID elided; hovering the row bubbles up
+   the full identifier, wrapped, so it can be read (or checked against another
+   device) without the 46 base58 characters occupying the card at rest.
+
+   Every knob lives in these variables — retune the bubble here alone, without
+   touching the rule below or anything in left-pane.ts. Override any of them
+   under the dark-mode block further down if a value needs to differ there. */
+#cmd-acc-identity-did-row {
+  --did-tip-gap: 6px;            /* distance below the DID line */
+  --did-tip-max-width: min(420px, 90vw);
+  --did-tip-pad: 6px 8px;
+  --did-tip-radius: 6px;
+  --did-tip-bg: var(--glass-strong-bg);
+  --did-tip-blur: 16px;          /* 0 disables the frosted backdrop */
+  --did-tip-color: var(--text);
+  --did-tip-border: 1px solid var(--header-border);
+  --did-tip-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --did-tip-font-size: 11px;
+  --did-tip-line-height: 1.45;
+  --did-tip-z: 40;
+}
+#cmd-acc-identity-did-row[data-full-did]:hover::after {
+  content: attr(data-full-did);
+  position: absolute;
+  top: calc(100% + var(--did-tip-gap));
+  left: 0;
+  z-index: var(--did-tip-z);
+  max-width: var(--did-tip-max-width);
+  padding: var(--did-tip-pad);
+  border-radius: var(--did-tip-radius);
+  background: var(--did-tip-bg);
+  backdrop-filter: blur(var(--did-tip-blur));
+  -webkit-backdrop-filter: blur(var(--did-tip-blur));
+  color: var(--did-tip-color);
+  border: var(--did-tip-border);
+  box-shadow: var(--did-tip-shadow);
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--did-tip-font-size);
+  line-height: var(--did-tip-line-height);
+  white-space: normal;
+  word-break: break-all;
+  pointer-events: none;
 }
 #cmd-acc-identity-did {
   font-size: 11px;
@@ -3529,3 +3579,16 @@ html.pwa-standalone #thread-title-row {
 html.pwa-standalone #app {
   height: 100vh;
 }
+
+/* Group conversation members, in the thread header (ui/thread.ts's
+   renderGroupMembers). Chips rather than a comma list because each one is a
+   control: clicking a member removes them from the group. */
+.conv-members { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 8px; vertical-align: middle }
+.conv-member-chip {
+  font: inherit; font-size: 11px; line-height: 1.4;
+  padding: 1px 7px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border, #d0d0d0); background: transparent; color: inherit; opacity: .8;
+}
+.conv-member-chip:hover { opacity: 1; border-color: #b00020; color: #b00020 }
+.conv-member-add:hover, .conv-member-leave:hover { border-color: var(--border, #d0d0d0); color: inherit }
+.conv-member-leave { opacity: .55 }

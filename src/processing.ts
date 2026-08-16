@@ -3,6 +3,7 @@ import type { ProcessedMessage, MsgAttachment } from './state.ts'
 import { decryptAndParse } from './pgp/crypto.ts'
 import { emailToMsg } from './app.ts'
 import { bytesToDataUrl } from './utils.ts'
+import { computeThreadKeys, nodeId } from './threading.ts'
 
 export interface ProcessResult {
   bodyText: string
@@ -11,14 +12,14 @@ export interface ProcessResult {
   attachments?: MsgAttachment[]
 }
 
-// PGP復号 + inner In-Reply-To 採用 + チェーン辿りで thread_id 継承。
-// msg の in_reply_to / thread_id を in-place で書き換える。
-// prior は先に処理済みの ProcessedMessage 配列（時系列順、古い→新しい）。
-// UI と MD render の両方が同じロジックでスレッディングするための共通関数。
+// PGP復号 + 暗号化MIMEの内側にしかない参照ヘッダ（In-Reply-To / References）の
+// 採用。msg を in-place で書き換える。DeltaChat は参照ヘッダを暗号化部の中にしか
+// 置かないので、ここで拾わないと threading.ts が Thread 併合の辺を張れない。
+// スレッド判定そのものは threading.ts（computeThreadKeys）が全メッセージを
+// まとめて見て行う。UI と MD render が同じ結果になるよう共通化してある。
 export async function processIncoming(
   msg: ProcessedMessage['msg'],
   selfEmail: string,
-  prior: ProcessedMessage[],
 ): Promise<ProcessResult> {
   let bodyText = msg.body ?? ''
   let encrypted = false
@@ -32,6 +33,10 @@ export async function processIncoming(
       bodyText = decrypted.body
       if (decrypted.inReplyTo && !msg.in_reply_to) {
         msg.in_reply_to = decrypted.inReplyTo
+      }
+      if (decrypted.references?.length) {
+        const merged = new Set([...(msg.references ?? []), ...decrypted.references])
+        msg.references = [...merged]
       }
       if (decrypted.attachments?.length) {
         attachments = decrypted.attachments.map(a => ({
@@ -47,20 +52,11 @@ export async function processIncoming(
     encrypted = true
   }
 
-  console.log('[chain]', msg.message_id?.slice(0, 30), 'from:', msg.from, 'irt:', msg.in_reply_to?.slice(0, 40) || 'EMPTY', 'tid:', msg.thread_id?.slice(0, 30))
-  if (msg.in_reply_to) {
-    const parent = prior.find(p => p.msg.message_id === msg.in_reply_to)
-    console.log('[chain] parent:', parent?.msg.message_id?.slice(0, 30) ?? 'MISS', 'parent.tid:', parent?.msg.thread_id?.slice(0, 30))
-    if (parent && parent.msg.thread_id && parent.msg.thread_id !== msg.thread_id) {
-      msg.thread_id = parent.msg.thread_id
-    }
-  }
-
   return { bodyText, encrypted, unreadable, attachments }
 }
 
-// 全 Email を時系列順に processIncoming で処理し、effective thread_id でグループ化。
-// 返り値: { groups: Map<effectiveThreadId, Email[]>, emailById }。
+// 全 Email を時系列順に processIncoming で処理し、threading.ts のスレッドキーで
+// グループ化。返り値: { groups: Map<threadKey, Email[]>, emailById }。
 // MD render が UI と同じスレッディング結果を再現するために使用。
 export async function buildEffectiveGroups(
   emails: Email[], selfEmail: string,
@@ -69,24 +65,22 @@ export async function buildEffectiveGroups(
     (a, b) => new Date(a.receivedAt as string).getTime() - new Date(b.receivedAt as string).getTime()
   )
   const emailById = new Map<string, Email>(sorted.map(e => [e.id as string, e]))
-  const processed: ProcessedMessage[] = []
-  const tidByEmailId = new Map<string, string>()
+  const msgs: ProcessedMessage['msg'][] = []
 
   for (const email of sorted) {
     const msg = emailToMsg(email, selfEmail)
-    const r = await processIncoming(msg, selfEmail, processed)
-    processed.push({ msg, bodyText: r.bodyText, encrypted: r.encrypted, unreadable: r.unreadable })
-    const tid = msg.thread_id || msg.message_id
-    if (tid) tidByEmailId.set(email.id as string, tid)
+    await processIncoming(msg, selfEmail)
+    msgs.push(msg)
   }
 
+  const keys = computeThreadKeys(msgs)
   const groups = new Map<string, Email[]>()
-  for (const email of sorted) {
-    const tid = tidByEmailId.get(email.id as string)
-    if (!tid) continue
+  sorted.forEach((email, i) => {
+    const tid = keys.get(nodeId(msgs[i]!))
+    if (!tid) return
     if (!groups.has(tid)) groups.set(tid, [])
     groups.get(tid)!.push(email)
-  }
+  })
 
   return { groups, emailById }
 }

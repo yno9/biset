@@ -206,6 +206,21 @@ export async function sync(session: AccountSession): Promise<void> {
           if (!outerIrt && decrypted.inReplyTo) {
             ;(e as any).inReplyTo = [decrypted.inReplyTo]
           }
+          // References も内側にしかない。threading.ts はこれを Thread 併合の辺に
+          // 使うので、outer にマージしておく。
+          if (decrypted.references?.length) {
+            const merged = new Set([
+              ...((e.references as string[] | undefined) ?? []),
+              ...decrypted.references,
+            ])
+            ;(e as any).references = [...merged]
+          }
+          // References も同様に内側にしかない（DeltaChat は参照ヘッダを暗号化部に
+          // 置く）。threading.ts はこれを辺として使うので、外側にマージしておく。
+          if (decrypted.references?.length) {
+            const merged = new Set([...((e.references as string[] | undefined) ?? []), ...decrypted.references])
+            ;(e as any).references = [...merged]
+          }
           if (decrypted.headers) {
             if (!hasOuterGroup) cacheGroupHeaders(e, readGroupHeadersFromMime(decrypted.headers))
             const groupId = readGroupHeaders(e).id

@@ -23,7 +23,8 @@ import { loginViaEnvelope, authTokenToBasicAuth } from './cryptenv.ts'
 import { mailboxNameFromId } from './utils.ts'
 import { contactIdentityKey, allKnownAddressesFor, shortDid } from './did/contacts.ts'
 import { stableIdKey } from './did/idkey.ts'
-import { displayNameFor } from './did/dht/publish.ts'
+import { displayNameFor } from './did/displayname.ts'
+import { conversations, groupAddress } from './mls/conversation.ts'
 import type { ProcessedMessage } from './state.ts'
 
 export { loginViaEnvelope, authTokenToBasicAuth }
@@ -81,6 +82,7 @@ export function emailToMsg(email: Email, _selfAddr: string): ProcessedMessage['m
     message_id: ((email.messageId as string[])?.[0]) ?? (email.id as string),
     jmap_id: email.id as string,
     in_reply_to: ((email.inReplyTo as string[])?.[0]) ?? '',
+    references: ((email.references as string[]) ?? []).filter(Boolean),
     thread_id: (email.threadId as string) ?? '',
     to_addrs: ((email.to as any[]) ?? []).map((a: any) => a.email as string),
     cc_addrs: ((email.cc as any[]) ?? []).map((a: any) => a.email as string),
@@ -406,6 +408,37 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
     }
   }
 
+  // Group conversations this device is IN but has no messages for yet.
+  //
+  // A conversation exists the moment the Welcome is accepted — before anyone
+  // has said anything in it. Deriving the list purely from stored messages
+  // would hide exactly that moment: someone adds you to a group and nothing
+  // appears until they also happen to speak. The group's own state is the
+  // authority on whether it exists; messages only decide where it sorts.
+  for (const identityId of identityIds()) {
+    if (!identityId.startsWith('did:')) continue
+    const endpoints = relaysForId(identityId)
+    const userEmail = endpoints[0]?.account.email ?? identityId
+    for (const c of await conversations(identityId).catch(() => [])) {
+      const address = groupAddress(c.id)
+      const key = `${userEmail}\0\0group:${address}`
+      const existing = result.get(key)
+      if (existing) {
+        // Membership comes from the ratchet tree, not from who happens to have
+        // spoken — a member who has never sent anything is still a member.
+        existing.participants = [...new Set([...(existing.participants ?? []), ...c.members.filter(m => m !== identityId)])]
+        if (c.name && !existing.group_name) existing.group_name = c.name
+        continue
+      }
+      result.set(key, {
+        user: userEmail, mailbox: '', contact: `group:${address}`,
+        inbox_type: 'group', group_id: address, group_name: c.name || 'Group',
+        participants: c.members.filter(m => m !== identityId),
+        latest_ts: c.updatedAt, latest_body: '', latest_subject: c.name || '',
+      })
+    }
+  }
+
   // Attach accumulated participants to group entries
   for (const [key, addrs] of groupParticipants) {
     const entry = result.get(key)
@@ -577,6 +610,15 @@ export async function jmapCreateEmail(
   // DIDComm's own authcrypt already gives E2E confidentiality, the same
   // reasoning isApRelay's PGP skip uses). `to[0]` is the recipient's did:dht
   // string; cc/bcc/attachments aren't supported over this transport.
+  // A group conversation is addressed by the group itself, not by its members
+  // (mls/conversation.ts's `mls:` prefix): one submission goes to the group's
+  // Delivery Service, which fans it out. Addressing the members individually
+  // would be N separate 1:1 messages that happen to have the same text — not
+  // the same conversation, and not readable as one by anybody.
+  if (to[0]?.startsWith('mls:') && session.account.did) {
+    const { sendToGroup } = await import('./did/didcomm/channel.ts')
+    return await sendToGroup(session.account.did, to[0]!, body, subject)
+  }
   const toIsDid = to[0]?.startsWith('did:')
   if ((isDidCommRelay(session.account.serverUrl) || toIsDid) && session.account.did) {
     const { sendViaDidComm } = await import('./did/didcomm/channel.ts')
@@ -748,7 +790,12 @@ export function persistSession(stored: StoredAccount, session: AccountSession): 
 // restore.ts) funnels its per-relay connect through here so the same steps
 // can't drift out of sync across call sites again.
 export async function connectAndPersist(stored: StoredAccount, kek?: Uint8Array): Promise<AccountSession | null> {
-  const session = await initSession(stored).catch(() => null)
+  const session = await initSession(stored).catch(e => {
+    // initSession logs its own failures; this catch is for the ones it
+    // throws rather than returns, which were being discarded entirely.
+    console.error('[connectAndPersist] initSession threw:', stored.email, stored.serverUrl, e)
+    return null
+  })
   if (!session) return null
   persistSession(stored, session)
   if (kek) await initPGPForSession(session, kek)
@@ -826,6 +873,17 @@ export async function logout(): Promise<void> {
     })
 
     step('clear-sessions')
+    // Drop the unlocked at-rest key and the passkey handle guarding it
+    // (did/store.ts, did/prf.ts) — the sealed records are about to be deleted
+    // with the rest of IndexedDB, so keeping either would only leave a
+    // credential pointing at nothing. The passkey itself stays in the
+    // authenticator; a web page cannot remove one.
+    try {
+      const { lockIdentitySecrets } = await import('./did/store.ts')
+      const { forgetPrfCredential } = await import('./did/prf.ts')
+      lockIdentitySecrets()
+      forgetPrfCredential()
+    } catch { /* best-effort, same as every other step here */ }
     saveStoredAccounts([])
     sessions.length = 0
     setCurrentInbox(null)

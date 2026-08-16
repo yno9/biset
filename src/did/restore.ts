@@ -18,7 +18,8 @@
 // anything a relay issued.
 import { mnemonicToSeed, isValidMnemonic } from './seed.ts'
 import { deriveRootKey } from './keys.ts'
-import { resolveAny, PUBLIC_PKARR_FALLBACKS, type DidDocument } from './resolver.ts'
+import { resolveAny } from './resolver.ts'
+import type { DidDocument } from './document.ts'
 import { rootPublicKeyFromWebvhState, type WebvhDidDocument } from './webvh/document.ts'
 import { mediatorUrl, setOwnDid } from './didcomm-devices.ts'
 import { deriveKek } from '../cryptenv.ts'
@@ -35,22 +36,6 @@ export interface RestoreResult {
   // on separately.
   sessions: AccountSession[]
   kek: Uint8Array
-}
-
-// Bootstrap gateways for the very first resolve, before we know the identity's
-// own relays: the configured home relays (whose gateways we run) + this
-// deployment's anchor (a relay-less identity may only ever have published
-// through anchor's /pkarr, never a mail/ap relay) + public ones as last resort.
-// did:webvh ignores these entirely (resolveAny derives its own https:// URL
-// from the DID string) — harmless to pass along unconditionally.
-function bootstrapGateways(): string[] {
-  const cfg = (window as any).__BISET_CONFIG__ || {}
-  const host: string | undefined = cfg.hostname
-  const mail = cfg.mail_url || (host ? `https://mail.${host}` : '')
-  const ap = cfg.ap_url || (host ? `https://ap.${host}` : '')
-  const anchor = mediatorUrl()
-  const own = [mail, ap, anchor].filter(Boolean).map((u: string) => u.replace(/\/$/, '') + '/pkarr')
-  return [...new Set([...own, ...PUBLIC_PKARR_FALLBACKS])]
 }
 
 function akaMail(addrs: string[]): string | null {
@@ -79,7 +64,7 @@ export async function restoreFromMnemonic(mnemonic: string, did?: string): Promi
     return { error: 'DID required (did:webvh:…) — check it was typed correctly.' }
   }
 
-  const resolved = await resolveAny(suppliedDid, bootstrapGateways())
+  const resolved = await resolveAny(suppliedDid)
   if (!resolved) return { error: 'Could not resolve that DID — check it was typed correctly, or its relays may be offline.' }
   const rootKey = rootPublicKeyFromWebvhState(resolved as WebvhDidDocument)
   if (!rootKey || !bytesEqual(rootKey, root.publicKey)) {
@@ -98,6 +83,12 @@ export async function restoreFromMnemonic(mnemonic: string, did?: string): Promi
   const { localDidRecord } = await import('./index.ts')
   await localDidRecord(masterSecret, resolvedDid)
   setOwnDid(resolvedDid)
+  // Passkey protection is NOT attempted here, even though this is the moment
+  // the device receives the seed: `credentials.create()` needs transient
+  // activation, and by this point the login click is many network round
+  // trips old (resolve, vouch, connect) — the call would just be rejected.
+  // The identity menu's "Protect with passkey" (left-pane.ts) offers it from
+  // a real click instead.
 
   // Re-register THIS device with the identity's mediator, if the resolved
   // document shows one — user-caught gap (2026-07-27): restore never had

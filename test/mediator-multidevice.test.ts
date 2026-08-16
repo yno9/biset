@@ -6,7 +6,7 @@
 // DELIVERY_REQUEST first silently drained messages meant for every device,
 // starving the rest. normalizeKid keeps the kid distinct instead.
 //
-// Uses a FAKE resolveDidDht (an in-memory kid->pubkey map) rather than a real
+// Uses a FAKE resolveDidWebvh (an in-memory kid->pubkey map) rather than a real
 // DHT/pkarr gateway — this is a unit test of the mediator's own kid-routing
 // logic, not of DHT publish/resolve (covered elsewhere).
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -35,7 +35,7 @@ const URL_ = `http://127.0.0.1:${PORT}`
 // The identity under test: one did:dht, two devices. Not a real did:dht
 // (no seed/DHT needed for this) — just a fixed identifier string and an
 // in-memory keyAgreementKeys map the fake resolver reads.
-const IDENTITY_DID = 'did:dht:testmultidevice'
+const IDENTITY_DID = 'did:webvh:testmultidevice'
 const deviceAKey = { priv: x25519.utils.randomSecretKey(), pub: undefined as unknown as Uint8Array }
 deviceAKey.pub = x25519.getPublicKey(deviceAKey.priv)
 const deviceBKey = { priv: x25519.utils.randomSecretKey(), pub: undefined as unknown as Uint8Array }
@@ -45,10 +45,10 @@ const keysByKid = new Map<string, Uint8Array>([
   [`${IDENTITY_DID}#k1`, deviceAKey.pub],
   [`${IDENTITY_DID}#k2`, deviceBKey.pub],
 ])
-const resolveDidDht = async (_did: string, kid: string): Promise<Uint8Array | null> => keysByKid.get(kid) ?? null
+const resolveDidWebvh = async (_did: string, kid: string): Promise<Uint8Array | null> => keysByKid.get(kid) ?? null
 
 const mediatorIdentity = loadMediatorIdentity(join(dir, 'mediator-identity.json'), URL_)
-const mediator = createMediator({ mediator: mediatorIdentity, resolveDidDht })
+const mediator = createMediator({ mediator: mediatorIdentity, resolveDidWebvh })
 const server = Bun.serve({
   port: PORT,
   async fetch(req) {
