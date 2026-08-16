@@ -1,6 +1,6 @@
 import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay, isDidCommRelay, relayProtocolLabel, fetchRelayInfo, DIDCOMM_SERVER_URL } from '../context.ts'
 import { ownDid, mediatorDeviceActivity, type MediatorDeviceActivity } from '../did/didcomm-devices.ts'
-import { bisetWebvhUsername } from '../did/webvh/identifier.ts'
+import { bisetWebvhUsername, parseWebvhDid } from '../did/webvh/identifier.ts'
 import { currentIdentityDid } from '../did/didcomm/channel.ts'
 import { resolveAny as resolveDidAny } from '../did/resolver.ts'
 import { getDidRecord, identityProtectionEnabled } from '../did/store.ts'
@@ -19,7 +19,7 @@ import type { Email } from 'jmap-rfc-types'
 // Circular (safe — used only in function bodies):
 import { render, syncDockPosition, scrollToFocused, updateScrollSpacer } from './thread.ts'
 import { fetchMessages, showSysMsg, startPolling } from './shell.ts'
-import { setupNewUserPage, mountNewUserPageInline, unmountNewUserPageInline, getHostname, getMailUrl } from './account-create.ts'
+import { setupNewUserPage, mountNewUserPageInline, unmountNewUserPageInline, getMailUrl } from './account-create.ts'
 // From app.ts (safe — called only inside async functions):
 import { loadInboxSummaries, initSession, jmapCreateEmail, persistSession } from '../app.ts'
 import { decryptAndParse, prefetchRecipientKey } from '../pgp/index.ts'
@@ -3110,8 +3110,19 @@ export async function setupLeftPane() {
   // username) rather than user-chosen.
   async function claimMailAccount(did: string): Promise<void> {
     const username = bisetWebvhUsername(did)
+    // The DID's OWN domain segment, not the deployment's fixed getHostname()
+    // — a relay's `authorized_did_domain` gate (jmapsmtp's ARC.md §2a) admits
+    // an identity by matching its did:webvh domain exactly, so an identity
+    // rooted at biset.md can only ever claim `*@biset.md`, never
+    // `*@t.biset.md`, however this deployment's own config.json hostname
+    // happens to be set. Using the fixed hostname here used to build an
+    // address for the WRONG domain whenever they differ (found live,
+    // 2026-08-16: a biset.md identity was shown a doomed "claim t.biset.md"
+    // card that the relay would have rejected outright).
+    let didDomain: string | null = null
+    try { didDomain = parseWebvhDid(did).domain } catch { /* not a biset-shaped webvh DID */ }
     const mailUrl = getMailUrl()
-    if (!username || !mailUrl) { showSysMsg('Mail relay not configured for this deployment'); return }
+    if (!username || !didDomain || !mailUrl) { showSysMsg('Mail relay not configured for this deployment'); return }
 
     const { getDidRecord, unlockIdentitySecrets } = await import('../did/store.ts')
     if (!(await unlockIdentitySecrets())) return
@@ -3125,7 +3136,7 @@ export async function setupLeftPane() {
       showSysMsg(res.conflict ? 'That address is owned by a different key' : `Server error (${res.status})`)
       return
     }
-    const email = res.email || `${username}@${getHostname()}`
+    const email = res.email || `${username}@${didDomain}`
 
     const { connectAndPersist } = await import('../app.ts')
     const session = await connectAndPersist({ serverUrl: mailUrl, email, password: '', did }, undefined)
@@ -3158,9 +3169,17 @@ export async function setupLeftPane() {
     const did = ownDid()
     if (!did) return
     const username = bisetWebvhUsername(did)
+    // The DID's own domain segment — see claimMailAccount's identical note.
+    // A card built from the deployment's fixed hostname instead would offer
+    // to claim an address this identity's DID can never actually be
+    // authorized for (authorized_did_domain matches the DID's domain
+    // exactly), for any identity rooted at a different domain than this
+    // deployment's own config.json happens to name.
+    let didDomain: string | null = null
+    try { didDomain = parseWebvhDid(did).domain } catch { /* not a biset-shaped webvh DID */ }
     const mailUrl = getMailUrl()
-    if (!username || !mailUrl) return // this deployment has no mail relay configured
-    const email = `${username}@${getHostname()}`
+    if (!username || !didDomain || !mailUrl) return // this deployment has no mail relay configured
+    const email = `${username}@${didDomain}`
     // Already claimed (a real StoredAccount exists for this address) — the
     // real card in relayCards below covers it, don't show a second one.
     if (accounts.some(a => a.email === email && a.did === did)) return
