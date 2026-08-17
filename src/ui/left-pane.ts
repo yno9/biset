@@ -3424,6 +3424,30 @@ export async function setupLeftPane() {
         }
       }
 
+      // publishCurrentState refuses outright — before it ever reaches
+      // publishFull, so before the override above can help — when this
+      // identity has device keys but no mediator recorded to route them to.
+      // That state is reachable precisely BECAUSE of a stale signing key:
+      // registerWithMediator publishes as its first step, so it fails and
+      // never records didCommMediatorUrl/didCommRoutingKey, and every later
+      // Sync then hits the refusal instead of the publish. Breaking that
+      // loop is exactly what a human-driven Sync can do that no automatic
+      // path can: it has a freshly entered Sign Key in hand. Found live on
+      // y@biset.md (2026-08-17): "Nothing reachable" on every Sync, with the
+      // correct phrase entered each time.
+      if (signingKeyOverride && !(rec.didCommMediatorUrl && rec.didCommRoutingKey) && rec.didCommPublicKey) {
+        const { mediatorUrl, registerWithMediator } = await import('../did/didcomm-devices.ts')
+        const mUrl = rec.didCommMediatorUrl || mediatorUrl()
+        if (mUrl) {
+          try {
+            await registerWithMediator(mUrl, signingKeyOverride)
+            rec = (await getDidRecord(did)) ?? rec
+          } catch (e) {
+            console.warn('[sync] mediator re-registration failed:', e instanceof Error ? e.message : e)
+          }
+        }
+      }
+
       const accepted = await publishBareOrCurrent(rec, signingKeyOverride)
       // Whatever the banner last concluded is now out of date either way —
       // a success means it should disappear, a failure that its 60s TTL

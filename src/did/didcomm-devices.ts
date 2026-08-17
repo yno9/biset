@@ -610,7 +610,24 @@ export const publishBareOrCurrent = publishCurrentState
  * that same mediate-request) is a chicken-and-egg ordering bug. So: publish
  * the keys alone first, then register, then republish with the
  * DIDCommMessaging service added. */
-export async function registerWithMediator(rawMediatorUrl: string): Promise<{ own: DidCommSender; mediator: MediatorInfo }> {
+export async function registerWithMediator(
+  rawMediatorUrl: string,
+  /** Same escape hatch as publishCurrentState's: registration PUBLISHES (twice
+   * — keys first, then the service), so it hits exactly the same wall as any
+   * other publish once pre-rotation has moved updateKeys off the Root Key and
+   * this device holds no Sign Key. Left undefined by every automatic caller
+   * (boot, restore) — those cannot prompt — and supplied by left-pane.ts's
+   * Sync, which just asked a human for the phrase.
+   *
+   * Without this the two guards deadlock: registration can't publish, so
+   * didCommMediatorUrl/didCommRoutingKey never get recorded; and
+   * publishCurrentState then refuses outright ("device keys but no mediator
+   * to route them to") BEFORE it ever reaches publishFull, so the override it
+   * does accept never gets a chance to be used. Found live on y@biset.md
+   * (2026-08-17): Sync reported "Nothing reachable" forever, with the correct
+   * Sign Key entered. */
+  signingKeyOverride?: { privateKey: Uint8Array; publicKey: Uint8Array },
+): Promise<{ own: DidCommSender; mediator: MediatorInfo }> {
   await ensureMethodOpsLoaded()
   // A scheme-less "anchor.biset.md" would otherwise be fetched RELATIVE to the
   // page (file://…/anchor.biset.md, or the app's own origin) — force https.
@@ -638,7 +655,7 @@ export async function registerWithMediator(rawMediatorUrl: string): Promise<{ ow
 
     // Phase 1: publish current keys (no service yet) so the mediator can
     // resolve this device's key before it's ever asked to encrypt to it.
-    const publishedTo = await ops.publishFull(fresh, relayInput, { keyAgreementKeys, mlkemKeyAgreementKeys })
+    const publishedTo = await ops.publishFull(fresh, relayInput, { keyAgreementKeys, mlkemKeyAgreementKeys, signingKeyOverride })
     if (publishedTo === 0) throw new Error('registerWithMediator: no gateway/endpoint accepted the key publish')
     // The MLS Authentication Service answers "is this kid a listed device of
     // that DID" from a cached resolve (mls/authservice.ts). This publish is
@@ -718,7 +735,7 @@ export async function registerWithMediator(rawMediatorUrl: string): Promise<{ ow
     // any existing one rather than appending (each MethodOps.publishFull
     // implementation is responsible for that; registering twice must not
     // stack duplicate service entries).
-    await ops.publishFull(fresh, relayInput, { keyAgreementKeys, mlkemKeyAgreementKeys, didCommService: { mediatorUrl: mediator.url, routingKey } })
+    await ops.publishFull(fresh, relayInput, { keyAgreementKeys, mlkemKeyAgreementKeys, didCommService: { mediatorUrl: mediator.url, routingKey }, signingKeyOverride })
 
     fresh.didCommMediatorUrl = mediator.url
     fresh.didCommRoutingKey = routingKey
