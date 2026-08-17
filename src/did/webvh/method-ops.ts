@@ -63,9 +63,13 @@ export const webvhMethodOps: MethodOps = {
   async publishFull(rec, relayInput, opts) {
     // Signing needs the root key, which is sealed at rest on a device with
     // passkey protection (store.ts) — requireRootPrivateKey turns "locked"
-    // into a message instead of a signature over undefined.
-    const rootPriv = hexToBytes(requireRootPrivateKey(rec))
-    const rootPub = hexToBytes(rec.rootPublicKey)
+    // into a message instead of a signature over undefined. Overridden when
+    // the caller already resolved the CURRENT updateKeys-holding key some
+    // other way (opts.signingKeyOverride's own note) — #key-1 always stays
+    // rec.rootPublicKey regardless, passed separately below.
+    const signingPriv = opts.signingKeyOverride?.privateKey ?? hexToBytes(requireRootPrivateKey(rec))
+    const signingPub = opts.signingKeyOverride?.publicKey ?? hexToBytes(rec.rootPublicKey)
+    const identityPub = hexToBytes(rec.rootPublicKey)
 
     let relays: BisetRelay[]
     let addresses: string[]
@@ -85,27 +89,28 @@ export const webvhMethodOps: MethodOps = {
 
     try {
       await updateDocument({
-        did: rec.did, rootPrivateKey: rootPriv, rootPublicKey: rootPub, relays, addresses,
-        stateOpts: {
-          keyAgreementKeys: opts.keyAgreementKeys,
-          mlkemKeyAgreementKeys: opts.mlkemKeyAgreementKeys,
-          // No `removeDidCommService` handling needed here (unlike
-          // dht/method-ops.ts): buildBisetWebvhState rebuilds `service` from
-          // scratch on every entry, so an absent didCommService already IS
-          // the removal — which is also what registerWithMediator's Phase 1
-          // relies on.
-          didCommService: opts.didCommService,
-          // The self-asserted display name, exactly as dht/method-ops.ts
-          // passes relayInput.name to buildBisetDocument. This was missing
-          // entirely, so NO did:webvh document ever carried a name: every
-          // peer's displayLabelFor fell through to the shortened DID, and
-          // channel.ts's post-arrival name resolve (which reads doc.name and
-          // patches both the stored Email and the contact Card) had nothing
-          // to find (found live, 2026-08-02). Undefined when this device has
-          // no live relay session — updateDocument carries the previously
-          // published name forward in that case rather than erasing it.
-          name: relayInput?.name,
-        },
+        did: rec.did, signingPrivateKey: signingPriv, signingPublicKey: signingPub, identityPublicKey: identityPub, relays, addresses,
+        // routing.ts, not the signed document (document.ts's own header):
+        // an absent didCommService/keyAgreementKeys here already IS the
+        // removal (updateDocument rewrites routing.json from scratch every
+        // call) — which is also what registerWithMediator's Phase 1 relies
+        // on. No `removeDidCommService` handling needed (unlike
+        // dht/method-ops.ts, whose document.service is carried forward
+        // wholesale rather than rebuilt).
+        didCommService: opts.didCommService,
+        keyAgreementKeys: opts.keyAgreementKeys,
+        mlkemKeyAgreementKeys: opts.mlkemKeyAgreementKeys,
+        // The self-asserted display name, exactly as dht/method-ops.ts
+        // passes relayInput.name to buildBisetDocument. This was missing
+        // entirely at first, so NO did:webvh document ever carried a name:
+        // every peer's displayLabelFor fell through to the shortened DID,
+        // and channel.ts's post-arrival name resolve (which reads doc.name
+        // and patches both the stored Email and the contact Card) had
+        // nothing to find (found live, 2026-08-02). Undefined when this
+        // device has no live relay session — updateDocument carries the
+        // previously published name forward in that case rather than
+        // erasing it.
+        name: relayInput?.name,
       })
       // did:webvh has exactly one publish target (the anchor serving this
       // DID's domain segment) — accepted count is boolean-shaped, matching

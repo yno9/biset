@@ -306,6 +306,138 @@ Switching identity is currently **logout, then log back in as the other one** (t
 
 Consequence: if that mail bind then fails (username conflict is caught before minting the identity's data disappears anywhere, but a genuine relay error post-genesis is possible), the did:webvh document is already live and resolvable, publicly claiming a username it never actually got bound to — confusing if a different, later owner ends up with the real mailbox under that name. Mitigated, not fixed: `provision.ts`'s submit handler treats ANY mail failure as fatal for `useWebvh` (no silent relay-less fallback, unlike did:dht, whose identifier carries no username claim at all and so has nothing to leave dangling), and on that failure calls `webvh/publish.ts`'s new `deactivateDocument(did, rootPrivateKey, rootPublicKey)` — appends a log entry with `parameters.deactivated: true`, reusing the log's last-known state verbatim. did:webvh logs are append-only (the genesis entry itself stays in history forever, this can't be retracted), so this is a public "this was never live" marker for future resolvers, not an erasure. Best-effort: a failed deactivate call just leaves the window open a little longer, logged but non-fatal (the signup has already failed either way by that point).
 
+## Key rotation (did:webvh pre-rotation)
+
+### What it is actually for
+
+Pre-rotation does **not** prevent a takeover, and reading it as if it does is
+how this feature gets misjudged. Whoever holds the root phrase — leaked paper,
+compromised device — *is* this identity as far as everything that matters
+goes: `restoreFromMnemonic` accepts them, `vouchThisDevice` gets them a mail
+login, they sign DIDComm and MLS as you. Pre-rotation changes none of that.
+
+What it buys is the **exclusive right to recover**:
+
+| | pre-rotation never activated | activated |
+|---|---|---|
+| attacker rotates `updateKeys` to their own key, locking the real owner out permanently | **possible** — no recovery from this, ever | **impossible**: appending any log entry needs a spare whose hash was committed one entry earlier, and that spare exists only on the owner's paper |
+| owner runs **Revoke root key**, moving `#key-1` and invalidating every phrase the attacker holds | only if the attacker hasn't already seized `updateKeys` | **always available** |
+
+So: `activate` arms the lever, `revoke` fires it. Activating alone is not a
+half-measure — it is the whole protection, because it is what stops an attacker
+from pre-empting the owner's recovery. Rotating afterwards is key hygiene, not
+the point.
+
+Limits worth stating plainly:
+
+- It does nothing about the window between compromise and noticing. The
+  attacker reads mail and impersonates freely until `revoke` runs.
+- `routing.json` (mail delivery address, device keyAgreement keys, display
+  name) is writable by whoever holds the current `updateKeys` key in **both**
+  modes — see the caching note below. Pre-rotation guards the *log*, not this.
+- It is worth exactly as much as the spare phrase's storage. Losing that phrase
+  disarms the lever and, while pre-rotation is on, also blocks every ordinary
+  document write.
+
+### The two keys
+
+They start identical and then diverge; conflating them has caused every bug here:
+
+| | What it is | What it authorises | Where it lives |
+|---|---|---|---|
+| **root key** (`#key-1`) | the document's own `verificationMethod[0]` | *being* this identity: `restoreFromMnemonic`'s check, `vouchThisDevice`, DIDComm/MLS signing | `DidRecord.rootPrivateKey`, derived from the 24-word phrase via `deriveRootKey` (SLIP-0010) |
+| **sign key** (`parameters.updateKeys`) | who may write the DID document | appending a log entry, and writing `routing.json` | `DidRecord.signingPrivateKey`, **absent until the two diverge** |
+
+At genesis they are the same key (`createGenesis` puts the root public key in
+both). Pre-rotation is what pulls them apart, and nothing ever puts them back.
+
+### What each operation does
+
+| Operation | `updateKeys` after | `#key-1` after | `nextKeyHashes` after | Signed by |
+|---|---|---|---|---|
+| genesis | root | root | `[]` | root |
+| **activate** | *unchanged* | unchanged | `[hash(spare₁)]` | whoever holds `updateKeys` now |
+| **rotate** | spare₁ (revealed) | unchanged | `[hash(spare₂)]` | spare₁ |
+| **deactivate** | spare₁ (revealed) | unchanged | `[]` | spare₁ |
+| **revoke root key** | spare₁ (revealed, raw) | `deriveRootKey(spare₁)` | `[hash(spare₂)]` | spare₁ |
+
+Three consequences that are not obvious from the table:
+
+- **`activate` does not move `updateKeys`.** It only commits a hash. An identity
+  that activated but never rotated still signs with its root key, and everything
+  keeps working with no phrase prompt anywhere — while already holding the full
+  protection described above.
+- **`rotate` and `deactivate` are the same operation** (`rotateOrDeactivate`),
+  differing only in whether a further commitment is made. Both consume the
+  revealed spare and make it the new `updateKeys`. Neither returns to the root
+  key. `deactivate` therefore does not restore the pre-activation state — it
+  leaves `updateKeys` on a spare with the lever disarmed, which is strictly
+  worse than never having activated.
+- **`revoke` is the only one that touches `#key-1`,** and it derives it
+  (`deriveRootKey(revealed)`) rather than using the revealed key raw — because
+  `restoreFromMnemonic` always re-derives before comparing, so a raw `#key-1`
+  can never match anything typed into restore again. Setting it raw is what made
+  every phrase fail restore, correct one included (2026-08-17).
+
+### Why ON and OFF look identical at the Sync button
+
+| | pre-rotation ON | pre-rotation OFF |
+|---|---|---|
+| append a **log entry** (rotate, deactivate, move domain, change `#key-1`) | needs a committed spare; holding the current `updateKeys` key is **not enough** | current `updateKeys` key is enough |
+| write **`routing.json`** | current `updateKeys` key is enough | current `updateKeys` key is enough |
+
+Routine publishing — `Sync`, avatar publish, mediator registration — only ever
+writes `routing.json`: `updateDocument`'s `state` is byte-identical on every
+call that isn't a real `#key-1` change, so the log-append branch never fires.
+That is the whole reason the two modes behave the same from the UI while
+differing at the protocol level.
+
+**Two prompts, two different phrases — do not share wording between them.**
+`revealAndVerify` (Rotate / Revoke / deactivate) checks `nextKeyHashes`, so it
+wants the phrase most recently **shown**. `revealCurrentSigner` (Sync, and
+re-activate) checks `updateKeys`, so it wants the phrase most recently **typed
+in** — one generation *older*, because every activate/rotate displays a newer
+one immediately afterwards. Both said "Enter your latest recovery phrase" at
+first, which sent people to the newer phrase for the Sync prompt, where it
+fails validation with no hint why (2026-08-17). Only the Sync-side wording was
+changed; "latest" is correct for the rotate side and stays.
+
+### The caching tradeoff (2026-08-17, deliberate)
+
+`DidRecord.signingPrivateKey` persists the current `updateKeys` holder after
+`revealCurrentSigner` verifies it once, so routine publishing stops re-prompting
+on every Sync. What survives and what does not:
+
+- **Survives:** the recovery lever. The *next* spare is shown once and stored
+  nowhere, so a compromised device still cannot append a log entry — cannot
+  rotate, deactivate, change `#key-1`, or move the domain. The owner's `revoke`
+  remains exclusively theirs. This is the protection that matters, and caching
+  does not touch it.
+- **Does not survive:** `routing.json` under device compromise. The cached sign
+  key sits at the same exposure as `rootPrivateKey` (sealed behind the passkey
+  where one exists, plaintext otherwise), so device access means mail delivery
+  can be redirected and device keys planted — in both modes, identically.
+
+Narrowing that second row means a memory-only cache (cleared on reload) or no
+cache at all, at the cost of a phrase prompt per Sync. The current choice is the
+permissive end.
+
+### Two races that made this look broken (both fixed)
+
+Both were full-record IndexedDB read-modify-writes with no compare-and-swap,
+the exact class `store.ts`'s `withDidLock` exists for:
+
+- `republishIdentity` read `rec` **before** prompting, so `cacheSigningKey`'s
+  write landed and was then overwritten by the stale snapshot handed to
+  `publishBareOrCurrent` — inside the same click. Sync re-prompted forever.
+  Fixed by re-reading after the prompt.
+- `publishCurrentState`'s `syncDevicePosition` call was unlocked, so a
+  boot-time avatar publish could overwrite the device key `ensureJmapDeviceKey`
+  had just minted during a claim — surfacing later as `device session login
+  failed (never vouched here, or revoked)` on an account that *was* vouched.
+  Fixed by re-reading inside the lock. The identity card's **Reconnect device**
+  action re-vouches with the root key for accounts already left in that state.
+
 ## DIDComm messaging
 
 *Status: in the inbox. The `/didcomm` debug page it grew up on is gone.*

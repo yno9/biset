@@ -31,6 +31,15 @@ export async function localDidRecord(masterSeed: Uint8Array, did: string, email?
   const record: DidRecord = {
     did,
     ...(email ? { email } : {}),
+    // Stored so a LATER action needing the seed (claimMailAccount's PGP
+    // setup via deriveKek, showStoredMnemonic's re-display) has it without
+    // requiring a fresh phrase entry — rootPrivateKey is deriveRootKey's
+    // one-way SLIP-10 output and cannot be reversed back into this. Without
+    // it, the seed was only ever in scope at the exact moment a phrase was
+    // typed in, nowhere else (found live, 2026-08-17: a relay claimed long
+    // after restore had no PGP key, silently, because initPGPForSession
+    // needs a kek derived from this exact seed and none was ever kept).
+    masterSeed: toHex(masterSeed),
     rootPublicKey: toHex(root.publicKey),
     rootPrivateKey: toHex(root.privateKey),
     nostrPublicKey: toHex(nostr.publicKey),
@@ -69,6 +78,8 @@ export async function initDidWebvh(
   const record: DidRecord = {
     did,
     ...(opts.email ? { email: opts.email } : {}),
+    // See localDidRecord's own note just above — same reasoning, same fix.
+    masterSeed: toHex(masterSeed),
     rootPublicKey: toHex(root.publicKey),
     rootPrivateKey: toHex(root.privateKey),
     nostrPublicKey: toHex(nostr.publicKey),
@@ -114,6 +125,7 @@ export async function migrateWebvhPathShape(
     rootPrivateKey: old.rootPrivateKey,
     nostrPublicKey: old.nostrPublicKey,
     nostrPrivateKey: old.nostrPrivateKey,
+    ...(old.masterSeed ? { masterSeed: old.masterSeed } : {}),
     ...(old.envelope ? { envelope: old.envelope } : {}),
     ...(old.jmapDevicePublicKey ? { jmapDevicePublicKey: old.jmapDevicePublicKey } : {}),
     ...(old.jmapDevicePrivateKey ? { jmapDevicePrivateKey: old.jmapDevicePrivateKey } : {}),

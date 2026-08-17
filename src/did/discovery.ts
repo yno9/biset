@@ -3,27 +3,30 @@
 // move relays or domains, outgoing mail still reaches them — with no UI, exactly
 // as did:plc is invisible to Bluesky users.
 //
-// Chain: address ──anchor(DNS TXT)──> DID ──gateway/DHT──> signed document
-// (relay list + current address in alsoKnownAs). The document is
+// Chain: address ──did:webvh's own convention──> DID ──gateway/DHT──> signed
+// document (relay list + current address in alsoKnownAs). The document is
 // signature-verified against the key the DID names (resolve()), and the
-// address→DID binding is TOFU at the anchor. Everything here is best-effort
-// and fully guarded: with gateways disabled or a contact that never published
-// a DID, every call is a silent no-op and delivery falls back to the address
-// as typed.
+// address→DID binding is TOFU (the did.jsonl fetch below is unauthenticated —
+// resolveAny's own signature/chain verification is what actually vouches for
+// the document once the DID is known). Everything here is best-effort and
+// fully guarded: with gateways disabled or a contact that never published a
+// DID, every call is a silent no-op and delivery falls back to the address as
+// typed.
 //
-// Anchor = DNS, not a relay-hosted endpoint (DID.md "biset verse"): the
-// address→DID binding lives in a `_did.<localpart>.<domain>` TXT record
-// (`did=<did>`), resolved via DNS-over-HTTPS since browsers can't issue raw
-// DNS queries — mirrors ATProto's `_atproto.<handle>` handle resolution. This
-// decouples "who answers for this address" from "who runs the JMAP relay
-// behind it": DNS is a commodity, swappable, and self-hostable by whoever owns
-// the domain, unlike a bespoke relay endpoint only that relay's software can
-// serve.
+// Anchor = the DID's own trailing path segment (2026-08-17, replacing both a
+// DNS TXT anchor and a brief WebFinger detour): biset's own DID.md
+// convention commits to `did:webvh:{SCID}:{domain}:{localpart}` always
+// naming the SAME localpart the mail address at that domain uses — so
+// `user@domain`'s DID is always at `https://domain/user/did.jsonl`, no
+// separate address→DID binding record needed at all. Both DNS TXT and
+// WebFinger existed to answer a question that, under this convention, the
+// URL itself already answers.
 import { sessions, isDidCommRelay } from '../context.ts'
 import { resolveAny } from './resolver.ts'
 import type { WebvhDidDocument } from './webvh/document.ts'
 import { firstServiceEndpoint } from '../utils.ts'
 import { buildCardForDid, type Card } from './contacts.ts'
+import { buildBisetWebvhDid } from './webvh/identifier.ts'
 import * as contactsStore from '../store/contacts.ts'
 import * as persist from '../vault/persist.ts'
 
@@ -57,35 +60,28 @@ function setJSON(key: string, val: unknown): void {
 function domainOf(address: string): string { return address.slice(address.lastIndexOf('@') + 1) }
 function localpartOf(address: string): string { return address.slice(0, address.lastIndexOf('@')) }
 
-// DNS label for the anchor TXT record. Lowercased — DNS labels are
-// case-insensitive and biset usernames are conventionally lowercase already.
-function didTxtName(address: string): string {
-  return `_did.${localpartOf(address).toLowerCase()}.${domainOf(address)}`
-}
-
-// DNS-over-HTTPS TXT lookup (JSON API), Cloudflare first, Google as a
-// fallback so no single DoH provider is a hard dependency. Returns the decoded
-// TXT string values (quotes stripped) or [] on any failure/empty result.
-async function resolveTxt(name: string): Promise<string[]> {
-  const providers = [
-    `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=TXT`,
-    `https://dns.google/resolve?name=${encodeURIComponent(name)}&type=TXT`,
-  ]
-  for (const url of providers) {
-    try {
-      const resp = await fetch(url, { headers: { Accept: 'application/dns-json' } })
-      if (!resp.ok) continue
-      const body = await resp.json() as { Answer?: Array<{ type: number; data: string }> }
-      const txts = (body.Answer ?? []).filter(a => a.type === 16).map(a => a.data.replace(/^"|"$/g, ''))
-      if (txts.length) return txts
-    } catch { /* try next provider */ }
+// GET https://<domain>/<localpart>/did.jsonl directly — biset's own
+// convention (this file's header) means the address's localpart IS the
+// did:webvh path segment, so there is nothing to look up beyond the log
+// itself. Reads the SCID out of the genesis entry's parameters (same
+// computation buildBisetWebvhDid does for a fresh create) rather than
+// parsing/verifying the whole log — this is a lookup, not a resolution;
+// resolveAny's own chain verification is what a caller actually trusts.
+// Anything else (network error, no did.jsonl at that path, malformed log) is
+// null, same "silent no-op" contract the old DNS TXT / WebFinger lookups had.
+async function resolveWebvhDid(address: string): Promise<string | null> {
+  const domain = domainOf(address)
+  const localpart = localpartOf(address).toLowerCase()
+  try {
+    const resp = await fetch(`https://${domain}/${encodeURIComponent(localpart)}/did.jsonl`)
+    if (!resp.ok) return null
+    const firstLine = (await resp.text()).split('\n').find(l => l.trim())
+    if (!firstLine) return null
+    const scid = (JSON.parse(firstLine) as { parameters?: { scid?: string } }).parameters?.scid
+    return scid ? buildBisetWebvhDid(scid, domain, localpart) : null
+  } catch {
+    return null
   }
-  return []
-}
-
-function parseDidTxt(txts: string[]): string | null {
-  for (const t of txts) if (t.startsWith('did=')) return t.slice('did='.length)
-  return null
 }
 
 // Every address this document claims — every `mailto:` entry in
@@ -101,11 +97,11 @@ function claimedAddresses(doc: WebvhDidDocument): string[] {
   return [...out]
 }
 
-// address → DID via the DNS anchor (cached; TOFU on first success).
+// address → DID via the convention's own did.jsonl path (cached; TOFU on first success).
 async function addressToDid(address: string): Promise<string | null> {
   const cached = localStorage.getItem(DID_KEY + address)
   if (cached) return cached
-  const did = parseDidTxt(await resolveTxt(didTxtName(address)))
+  const did = await resolveWebvhDid(address)
   if (!did) return null
   localStorage.setItem(DID_KEY + address, did)
   return did
@@ -124,20 +120,20 @@ export const discoverDidForAddress = addressToDid
  * this to decide whether a typed username is an existing identity (offer
  * "Log in") or a free name (offer "Start"), and the TOFU cache would keep
  * answering "taken" for an address whose account has since been deleted.
- * Shares this file's one DoH implementation rather than adding a second. */
+ * Shares this file's one lookup implementation rather than adding a
+ * second. */
 export async function lookupDidForAddressFresh(address: string): Promise<string | null> {
-  return parseDidTxt(await resolveTxt(didTxtName(address)))
+  return resolveWebvhDid(address)
 }
 
-// Fresh (uncached) reverse-binding check: does `address`'s own DNS anchor
-// attest that it belongs to `did`? A DID document is self-signed, so it can
-// *claim* any address (even someone else's); a claim is only trustworthy when
-// the claimed address points BACK to the same DID (bidirectional verification —
+// Fresh (uncached) reverse-binding check: does `address`'s own anchor attest
+// that it belongs to `did`? A DID document is self-signed, so it can *claim*
+// any address (even someone else's); a claim is only trustworthy when the
+// claimed address points BACK to the same DID (bidirectional verification —
 // see the two-DIDs-claim-one-account problem). Fails closed: no record / no
 // match → not verified → we don't redirect delivery there.
 async function verifyBinding(address: string, did: string): Promise<boolean> {
-  const claimed = parseDidTxt(await resolveTxt(didTxtName(address)))
-  return claimed === did
+  return (await resolveWebvhDid(address)) === did
 }
 
 // Picks which of the document's claimed addresses (if any) to actually

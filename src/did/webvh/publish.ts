@@ -3,46 +3,35 @@
 // role — build + sign a document and send it — but for webvh that means
 // appending a new DID Log entry rather than replacing a BEP44 record.
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { didToHttpsUrl, buildBisetWebvhDid, parseWebvhDid } from './identifier.ts'
+import { didToHttpsUrl, buildBisetWebvhDid } from './identifier.ts'
 import { generateScid, SCID_PLACEHOLDER } from './scid.ts'
-import { generateEntryHash, serializeLog, parseLog, entryVersionNumber, resolveParameters, parametersToWrite, type LogEntry, type LogParameters } from './log.ts'
+import { generateEntryHash, entryVersionNumber, resolveParameters, parametersToWrite, serializeLog, type LogEntry, type LogParameters } from './log.ts'
 import { buildProof } from './proof.ts'
 import { encodeMultikey } from './multikey.ts'
-import { buildBisetWebvhState, keyAgreementKeysFromWebvhState, mlkemKeyAgreementKeysFromWebvhState, type WebvhDidDocument, type BuildWebvhStateOpts } from './document.ts'
+import { buildBisetWebvhState, keyAgreementKeysFromWebvhState, mlkemKeyAgreementKeysFromWebvhState, type WebvhDidDocument, type DidMlkemKeyAgreement } from './document.ts'
+import type { DidKeyAgreement } from '../document.ts'
 import { canonicalize } from './jcs.ts'
 import { firstServiceEndpoint } from '../../utils.ts'
+import { fetchCurrentLog, putLog, nowVersionTime } from './log-io.ts'
+import { migrateWebvhLocation } from './migrate.ts'
+import { buildRoutingDoc, fetchRouting, putRouting } from './routing.ts'
+import { resolve as resolveWebvh } from './resolver.ts'
 
-// Strictly increasing even across back-to-back calls within the same
-// process (found live in testing: two updates issued within the same
-// second produced an identical versionTime, which resolver.ts's
-// monotonicity check then rejects outright — same failure shape
-// dht/resolver.ts's nextSafeSeq exists to prevent for BEP44 seq). The +1s
-// bump (not wall-clock waiting) covers back-to-back calls without slowing
-// anything down — this is a monotonic counter, not a claim about real
-// elapsed time, same reasoning dht's seq numbers already lean on.
-//
-// Whole-seconds precision, NOT milliseconds (2026-07-28, corrected after an
-// interop check against didwebvh-rs, the DIF reference implementation, via
-// its resolve_file() test entrypoint): didwebvh-rs re-serializes versionTime
-// through `DateTime<FixedOffset>` + `to_rfc3339_opts(SecondsFormat::Secs, true)`
-// before re-hashing it as part of proof verification (log_entry/mod.rs's
-// format_version_time) — millisecond precision survives parsing but is
-// always DROPPED on that re-serialize, so a proof signed over a
-// millisecond-precision versionTime can never re-hash to the same bytes a
-// spec-compliant verifier computes. did:webvh v1.0 itself only requires
-// ISO8601 and doesn't forbid fractional seconds, but this asymmetry (kept
-// by the signer, discarded by at least this verifier) makes millisecond
-// precision a real interop trap in practice, not just a style choice.
-let lastIssuedSec = 0
-function nowVersionTime(): string {
-  const sec = Math.max(Math.floor(Date.now() / 1000), lastIssuedSec + 1)
-  lastIssuedSec = sec
-  return new Date(sec * 1000).toISOString().replace('.000Z', 'Z')
-}
+export { fetchCurrentLog, putLog, nowVersionTime }
 
 export interface BisetRelay { id: string; serverUrl: string; protocol?: string; address?: string }
 
-export interface CreateGenesisOptions {
+/** Everything routing.ts's buildRoutingDoc needs beyond `relays`/`addresses`
+ * — shared across createGenesis/updateDocument since both feed the same
+ * sibling resource, never the signed log (document.ts's own header). */
+export interface RoutingExtras {
+  didCommService?: { mediatorUrl: string; routingKey: string }
+  keyAgreementKeys?: DidKeyAgreement[]
+  mlkemKeyAgreementKeys?: DidMlkemKeyAgreement[]
+  name?: string
+}
+
+export interface CreateGenesisOptions extends RoutingExtras {
   domain: string
   username: string
   rootPrivateKey: Uint8Array
@@ -53,11 +42,6 @@ export interface CreateGenesisOptions {
    * a later domain move can use the log's own portability mechanism instead
    * of a bare rotation. */
   portable?: boolean
-  /** keyAgreement/DIDCommMessaging/name — same options
-   * buildBisetWebvhState takes directly (didcomm-devices.ts's method-agnostic
-   * multi-device logic passes these through when a device is registering
-   * DIDComm alongside identity creation). */
-  stateOpts?: BuildWebvhStateOpts
 }
 
 /** Creates a brand-new did:webvh identity: builds the genesis log entry
@@ -79,15 +63,15 @@ export async function createGenesis(opts: CreateGenesisOptions): Promise<{ did: 
     deactivated: false,
     ttl: 3600,
   }
-  const state = buildBisetWebvhState(placeholderDid, opts.rootPublicKey, opts.relays, opts.addresses, opts.stateOpts)
+  const state = buildBisetWebvhState(placeholderDid, opts.rootPublicKey)
   const preliminary = { versionId: SCID_PLACEHOLDER, versionTime, parameters, state }
 
   const scid = generateScid(preliminary)
   const did = buildBisetWebvhDid(scid, opts.domain, opts.username)
   // Substitute the placeholder everywhere it landed (parameters.scid,
-  // state.id, state's verificationMethod/authentication/assertionMethod/
-  // service ids, all of which embed the DID) via one whole-document string
-  // replace, same approach as scid.ts's verifyScid.
+  // state.id, state's verificationMethod/authentication ids, all of which
+  // embed the DID) via one whole-document string replace, same approach as
+  // scid.ts's verifyScid.
   const real = JSON.parse(JSON.stringify({ parameters, state }).split(SCID_PLACEHOLDER).join(scid)) as {
     parameters: LogParameters
     state: WebvhDidDocument
@@ -106,92 +90,40 @@ export async function createGenesis(opts: CreateGenesisOptions): Promise<{ did: 
   })
   if (!resp.ok) throw new Error(`createGenesis: PUT failed with HTTP ${resp.status} ${await resp.text().catch(() => '')}`)
 
+  // routing.ts: everything except id/#key-1/authentication never enters the
+  // signed log — seed the sibling resource right after genesis so the
+  // identity is reachable immediately, not just resolvable.
+  await putRouting(
+    did,
+    buildRoutingDoc(did, {
+      relays: opts.relays, addresses: opts.addresses, didCommService: opts.didCommService,
+      keyAgreementKeys: opts.keyAgreementKeys, mlkemKeyAgreementKeys: opts.mlkemKeyAgreementKeys, name: opts.name,
+    }),
+    { updateKey, privateKey: opts.rootPrivateKey },
+  )
+
   return { did, scid }
 }
 
-export interface UpdateOptions {
+export interface UpdateOptions extends RoutingExtras {
   did: string
-  rootPrivateKey: Uint8Array
-  rootPublicKey: Uint8Array
+  /** Whichever key currently holds updateKeys authority — signs this entry
+   * (if one ends up needed) and authorizes the routing.json write. Equal to
+   * identityPublicKey below for every identity that has never diverged the
+   * two (the overwhelming common case: no pre-rotation, or pre-rotation
+   * activated but never yet rotated) — but once pre-rotation has moved
+   * updateKeys away from #key-1, THIS is the key that must be supplied, not
+   * the identity's root key (webvh/method-ops.ts's publishFull always
+   * defaults to rec.rootPublicKey here, which is correct until it isn't —
+   * see left-pane.ts's Sync retry for the case where it no longer is). */
+  signingPrivateKey: Uint8Array
+  signingPublicKey: Uint8Array
+  /** #key-1, the document's own identity key — independent of updateKeys,
+   * same convention as prerotation.ts's activate/rotate/revoke. Always
+   * rec.rootPublicKey; never the signing key when the two have diverged. */
+  identityPublicKey: Uint8Array
   relays: BisetRelay[]
   addresses: string | string[]
-  stateOpts?: BuildWebvhStateOpts
-}
-
-/** Fetches the current log — the shared first half of every update
- * (content-only, key rotation, deactivate...). Exported so callers that need
- * something other than a plain content update (rotateUpdateKeys below) don't
- * duplicate the GET + validation.
- *
- * `last.parameters` is the FULLY RESOLVED value (chained through every entry
- * via resolveParameters), not the raw last entry's own `parameters` — a
- * non-genesis entry legitimately omits any field unchanged from before
- * (log.ts's parametersToWrite, the did:webvh v1.0 inheritance rule), so the
- * raw entry alone can't answer "what are the CURRENT updateKeys" the moment
- * any update has ever gone through. `entries` stays the raw array (what
- * putLog below re-serializes) — only the `last` handed back for callers to
- * READ from is resolved. */
-async function fetchCurrentLog(did: string): Promise<{ url: string; entries: LogEntry[]; last: LogEntry }> {
-  const url = didToHttpsUrl(did)
-  const resp = await fetch(url)
-  if (!resp.ok) throw new Error(`fetchCurrentLog: GET failed with HTTP ${resp.status}`)
-  const entries = parseLog(await resp.text())
-  const rawLast = entries[entries.length - 1]
-  if (!rawLast) throw new Error('fetchCurrentLog: log is empty')
-  let resolved: LogParameters = {}
-  for (const entry of entries) resolved = resolveParameters(resolved, entry.parameters)
-  const last: LogEntry = { ...rawLast, parameters: resolved }
-  return { url, entries, last }
-}
-
-/** Write the log, sending only what is NEW.
- *
- * A did:webvh log is append-only and every entry embeds the whole document, so
- * it grows without bound — and re-uploading all of it on every update makes
- * the request grow with the history. That is not merely wasteful, it deadlocks:
- * y@biset.md (2026-08-13) crossed the server's 1MiB body limit and could no
- * longer publish ANYTHING, including the update that would have shrunk the
- * document. Every route out required an append, and the append was the thing
- * that no longer fit.
- *
- * `newEntries` alone goes up as a POST, which the store splices onto what it
- * holds — it already required an update to extend the existing log verbatim,
- * so it was always the one that knew the prefix. The body is then one entry's
- * worth regardless of how long the history is.
- *
- * Falls back to the whole-log PUT when the store does not answer POST (405/404
- * from an anchor that predates this), so a client can talk to either. */
-async function putLog(url: string, entries: LogEntry[], newEntries?: LogEntry[]): Promise<void> {
-  const appended = newEntries ?? entries
-  const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/jsonl' }, body: serializeLog(appended) })
-  if (resp.ok) return
-  if (resp.status !== 404 && resp.status !== 405) {
-    throw new Error(`putLog: POST failed with HTTP ${resp.status} ${await resp.text().catch(() => '')}`)
-  }
-  const full = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'text/jsonl' }, body: serializeLog(entries) })
-  if (!full.ok) throw new Error(`putLog: PUT failed with HTTP ${full.status} ${await full.text().catch(() => '')}`)
-}
-
-/** Keeps the display name the log already carries when THIS call has none of
- * its own. A publish can legitimately run from a device with no live relay
- * session for the identity (didcomm-devices.ts's liveRelayInputs returns
- * null, e.g. a DIDComm-only browser, or any device mid-logout), and the
- * document's `name` is the one field such a call has no source for. Without
- * this, every publish from that device would append an entry that DROPS the
- * name, the next publish from a device that does know it would append one
- * that puts it back, and a log that is append-only forever would accumulate
- * that flip-flop permanently.
- *
- * The trade-off is deliberate: an explicit "clear my display name" cannot
- * propagate through here (undefined reads as "I don't know", never as "unset
- * it") — a name reverting to a stale value on every republish is the worse
- * failure of the two, and clearing it still works from any device that has
- * the identity's relay session. */
-function withCarriedName(stateOpts: BuildWebvhStateOpts | undefined, last: LogEntry): BuildWebvhStateOpts | undefined {
-  if (stateOpts?.name !== undefined) return stateOpts
-  const previous = (last.state as WebvhDidDocument | undefined)?.name
-  if (!previous) return stateOpts
-  return { ...(stateOpts ?? {}), name: previous }
 }
 
 /** Read-modify-write: fetches the current log, appends one new entry with an
@@ -201,18 +133,28 @@ function withCarriedName(stateOpts: BuildWebvhStateOpts | undefined, last: LogEn
  * race and one can clobber the other. Acceptable for now (biset.md/t.biset.md
  * both single-writer per identity in practice); revisit if that changes.
  *
- * Content-only: the signing key and the key embedded in `state` are the SAME
- * key here (`rootPrivateKey`/`rootPublicKey`) — no key change. For rotating
- * the update key itself, see rotateUpdateKeys below (the two must NOT be
- * conflated: an entry always signs with the PREVIOUS entry's authorized key,
- * never its own new one — resolver.ts's verification rule). */
+ * The signing key and the key embedded in `state` (#key-1) are independent —
+ * signingPrivateKey/signingPublicKey vs identityPublicKey, see UpdateOptions.
+ * For rotating the update key itself, see rotateUpdateKeys below (the two
+ * must NOT be conflated there either: an entry always signs with the
+ * PREVIOUS entry's authorized key, never its own new one — resolver.ts's
+ * verification rule).
+ *
+ * In ordinary operation (identityPublicKey never itself changes) this now
+ * appends NOTHING: `state` is built from just `did`/identityPublicKey
+ * (document.ts's buildBisetWebvhState), so it is byte-identical to
+ * `last.state` on every call that isn't an actual root-key change — meaning
+ * the no-op check below fires every time, and the ONLY thing this function
+ * ends up doing is the routing.json write. That is the intended effect, not
+ * a bug: relay changes, device (de)registration, and display-name edits
+ * used to append a log entry each; now none of them do. */
 export async function updateDocument(opts: UpdateOptions): Promise<void> {
   const { url, entries, last } = await fetchCurrentLog(opts.did)
 
-  const state = buildBisetWebvhState(opts.did, opts.rootPublicKey, opts.relays, opts.addresses, withCarriedName(opts.stateOpts, last))
-  const updateKey = encodeMultikey(opts.rootPublicKey)
+  const state = buildBisetWebvhState(opts.did, opts.identityPublicKey)
+  const updateKey = encodeMultikey(opts.signingPublicKey)
 
-  // A stale local root key must never pass as a no-op success. Content-only
+  // A stale local signing key must never pass as a no-op success. Content-only
   // rotation (rotateUpdateKeys with the identity key left unchanged) leaves
   // `state` byte-identical to before, so the check below alone can't catch
   // it — checking authorization FIRST closes that gap: a key no longer in
@@ -221,9 +163,34 @@ export async function updateDocument(opts: UpdateOptions): Promise<void> {
   // still sign anything (found investigating a live "mediator unusable after
   // rotation" bug, ARC.md 2026-07-27 — this branch used to fall through to
   // the no-op return below and never even attempt (or need) a real publish).
+  // The same gate covers the routing.json write just below: a rotated-out
+  // key must not be able to redirect this identity's mail/DIDComm delivery,
+  // plant a fake device key, or rewrite its name, even though that write
+  // never touches the signed log.
   if (!(last.parameters.updateKeys ?? []).includes(updateKey)) {
     throw new Error('updateDocument: local signing key is not authorized by the document\'s current updateKeys (rotated elsewhere) — restore with the current recovery phrase/DID to get back in sync')
   }
+
+  // Keeps the display name routing.json already carries when THIS call has
+  // none of its own. A publish can legitimately run from a device with no
+  // live relay session for the identity (didcomm-devices.ts's
+  // liveRelayInputs returns null, e.g. a DIDComm-only browser, or any device
+  // mid-logout), and `name` is the one field such a call has no source for.
+  // Every OTHER field here (relays, didCommService, keyAgreementKeys) is
+  // rebuilt from scratch on every call by design — an absent one IS a
+  // removal (registerWithMediator's Phase 1 relies on exactly this for
+  // didCommService) — name is the one deliberate exception, the same
+  // reasoning as before this lived in document.ts's own state.
+  const previousName = opts.name === undefined ? (await fetchRouting(opts.did).catch(() => null))?.name : undefined
+  await putRouting(
+    opts.did,
+    buildRoutingDoc(opts.did, {
+      relays: opts.relays, addresses: opts.addresses, didCommService: opts.didCommService,
+      keyAgreementKeys: opts.keyAgreementKeys, mlkemKeyAgreementKeys: opts.mlkemKeyAgreementKeys,
+      name: opts.name ?? previousName,
+    }),
+    { updateKey, privateKey: opts.signingPrivateKey },
+  )
 
   // No-op when nothing actually changed. did:webvh's log is append-only and
   // has no decay concept at all (unlike did:dht's ~2h BEP44 TTL, the reason
@@ -242,7 +209,7 @@ export async function updateDocument(opts: UpdateOptions): Promise<void> {
   const entryHash = generateEntryHash(last.versionId, versionTime, parameters, state)
   const versionId = `${entryVersionNumber(last.versionId) + 1}-${entryHash}`
   const unsigned = { versionId, versionTime, parameters, state }
-  const proof = buildProof(unsigned, { verificationMethod: `did:key:${updateKey}#${updateKey}`, privateKey: opts.rootPrivateKey, created: versionTime })
+  const proof = buildProof(unsigned, { verificationMethod: `did:key:${updateKey}#${updateKey}`, privateKey: opts.signingPrivateKey, created: versionTime })
   const entry: LogEntry = { ...unsigned, proof: [proof] }
 
   await putLog(url, [...entries, entry], [entry])
@@ -262,8 +229,8 @@ export async function updateDocument(opts: UpdateOptions): Promise<void> {
  * genesis entry itself stays in history forever — this only flips
  * `parameters.deactivated` going forward, so any future resolver sees "this
  * was never live" instead of a seemingly-valid, unbound claim. State is
- * carried over unchanged from the log's last entry (no relay/address
- * content to revise — this is a status flip, not a content update). */
+ * carried over unchanged from the log's last entry — a status flip, not a
+ * content update. */
 export async function deactivateDocument(did: string, rootPrivateKey: Uint8Array, rootPublicKey: Uint8Array): Promise<void> {
   const { url, entries, last } = await fetchCurrentLog(did)
 
@@ -291,27 +258,30 @@ export interface RotateUpdateKeysOptions {
    * this entry (DIDWEBVHFEAT.md §7: a stolen key must not be able to rotate
    * to a new key and vouch for its own rotation in the same breath). */
   newPublicKey: Uint8Array
-  relays: BisetRelay[]
-  addresses: string | string[]
   /** The document's OWN identity key (`state.verificationMethod[0]`, the
    * `#key-1` entry) — independent of the update-signing key rotated here.
    * Callers that also want to rotate the document's identity key pass the
    * new one; otherwise pass the same key the document already has. */
   identityPublicKey: Uint8Array
-  stateOpts?: BuildWebvhStateOpts
 }
 
 /** DIDWEBVHFEAT.md §7's previously-unimplemented "key rotation body": appends
  * a log entry whose parameters.updateKeys names the NEW key, signed by the
  * OLD one. After this lands, every later update must sign with newPrivateKey
- * instead of oldPrivateKey. */
+ * instead of oldPrivateKey.
+ *
+ * Never touches routing.json: rotation changes who is authorized to sign,
+ * not the document's content, and routing.json's own signature is verified
+ * against did.jsonl's CURRENT updateKeys only at write time (server.ts's
+ * handleRouting), never re-checked on read — so an unrotated routing.json
+ * already published under the old key stays servable exactly as before. */
 export async function rotateUpdateKeys(opts: RotateUpdateKeysOptions): Promise<void> {
   const { url, entries, last } = await fetchCurrentLog(opts.did)
 
   const newUpdateKey = encodeMultikey(opts.newPublicKey)
   const versionTime = nowVersionTime()
   const parameters = parametersToWrite(last.parameters, resolveParameters(last.parameters, { updateKeys: [newUpdateKey] }))
-  const state = buildBisetWebvhState(opts.did, opts.identityPublicKey, opts.relays, opts.addresses, withCarriedName(opts.stateOpts, last))
+  const state = buildBisetWebvhState(opts.did, opts.identityPublicKey)
 
   const entryHash = generateEntryHash(last.versionId, versionTime, parameters, state)
   const versionId = `${entryVersionNumber(last.versionId) + 1}-${entryHash}`
@@ -345,113 +315,82 @@ export interface MoveToNewDomainOptions {
  * different signing key) this changes the DID string itself, but only its
  * domain/path segments; the self-certifying part does not move.
  *
- * Mechanically this is NOT a new genesis: it appends ONE entry to the
- * EXISTING log whose `state.id` names the new location, and writes that one
- * log to BOTH locations. Consequences, all of which fall out of
- * resolver.ts's existing rules rather than needing special cases:
- *
- *  - Resolving the NEW DID fetches the new location, matches the final
- *    entry's `state.id`, and verifies the whole chain back to a genesis that
- *    still hashes to the same SCID.
- *  - Resolving the OLD DID fetches the old location, matches the GENESIS
- *    entry's `state.id`, and returns the LATEST state — i.e. a peer holding
- *    only the old DID automatically follows the move on its next resolve,
- *    with no `alsoKnownAs` pointer-chasing.
- *  - Both locations serve byte-identical logs, so the anchor's append-only
- *    check (anchor/server.ts) sees a legitimate extension at the old
- *    location and a first-ever write at the new one.
+ * Thin biset-specific wrapper around migrate.ts's migrateWebvhLocation — the
+ * protocol-level "append one entry whose state.id names a new location, write
+ * that one log to both locations" mechanism, which knows nothing about
+ * relays, mediators, or usernames, is shared with any did:webvh identity
+ * (biset's or not). The signed state itself carries nothing beyond
+ * id/#key-1/authentication now, so this wrapper's own job shrinks to: seed
+ * the NEW location's routing.json (relays/addresses from the caller,
+ * everything else carried forward from the OLD identity's current resolved
+ * state), and record `movedFrom` there instead of in the document.
  *
  * `from_prior` (didcomm/rotation.ts) is still built by the caller
  * (webvh/move.ts) and still matters: portability is the "re-resolve and
  * you'll find me" path, from_prior the "know immediately, without
  * resolving" path (PLANWEBVH.md §4.1 — they are complementary, not
- * alternatives).
- *
- * This REPLACES an earlier new-genesis implementation that could not
- * preserve the SCID (2026-07-28). That version made the old and new DIDs
- * cryptographically unrelated identities linked only by from_prior, which
- * defeated both `portable: true`'s purpose and §3.1's stable-key design. */
+ * alternatives). */
 export async function moveDidToNewDomain(opts: MoveToNewDomainOptions): Promise<{ newDid: string; scid: string }> {
-  const { url: oldUrl, entries, last } = await fetchCurrentLog(opts.oldDid)
-
-  // did:webvh v1.0 permits a location change only for a portable DID, and
-  // `portable` can only ever have been set in the genesis entry (log.ts's
-  // parametersToWrite). Checked here rather than left to the resolver: a log
-  // that moves a non-portable DID is append-only garbage the moment it lands
-  // — every future resolve of it fails forever (same reasoning as the
-  // anchor's pre-write verification).
-  if (!last.parameters.portable) {
-    throw new Error('moveDidToNewDomain: this DID was not created portable — its location cannot be changed')
-  }
-
-  const updateKey = encodeMultikey(opts.rootPublicKey)
-  if (!(last.parameters.updateKeys ?? []).includes(updateKey)) {
-    throw new Error('moveDidToNewDomain: local signing key is not authorized by the document\'s current updateKeys (rotated elsewhere) — restore with the current recovery phrase/DID to get back in sync')
-  }
-
-  // Same SCID, new domain/path — the whole point of this operation.
-  const { scid } = parseWebvhDid(opts.oldDid)
-  const newDid = buildBisetWebvhDid(scid, opts.newDomain, opts.newUsername)
-
-  // Carry the current keyAgreement/DIDComm service forward — a move must not
-  // silently drop DIDComm reachability. Any from_prior-unaware peer, or
-  // anyone within the from_prior window who simply hasn't re-sent yet, still
-  // addresses the OLD DID until they learn otherwise, and after this move the
-  // old DID resolves to THIS state; rebuilding it with an empty keyAgreement
-  // would strand exactly those messages (found in the e2e test: a message
-  // sent just before the move, still unacked in the mediator's queue, failed
-  // to authenticate on redelivery once the keyAgreement had vanished).
-  //
-  // Read from the log we already hold rather than a fresh resolve() — same
-  // bytes, one less round trip, and immune to the old location having already
-  // been repointed by an earlier partial run.
-  const currentState = last.state as WebvhDidDocument
-  const currentDidCommSvc = currentState.service?.find(s => s.type === 'DIDCommMessaging')
-  const didCommService = currentDidCommSvc
+  // Resolved (log + routing.json merged, resolver.ts's resolve) rather than
+  // read off the raw log entry: keyAgreement/DIDCommMessaging/name all live
+  // in routing.json now, and resolve() already knows how to find them — a
+  // move must not silently drop any of it (an e2e test once caught exactly
+  // this for DIDComm reachability: a message sent just before a move, still
+  // unacked in the mediator's queue, failed to authenticate on redelivery
+  // once the keyAgreement had vanished).
+  const resolved = await resolveWebvh(opts.oldDid).catch(() => null)
+  const oldDidCommSvc = resolved?.service.find(s => s.type === 'DIDCommMessaging')
+  const didCommService = oldDidCommSvc
     ? {
       // Either shape: DIDComm v2's nested object (current) or the flat form a
       // document published before that carries (document.ts's WebvhService).
-      mediatorUrl: firstServiceEndpoint(currentDidCommSvc.serviceEndpoint),
-      routingKey: (typeof currentDidCommSvc.serviceEndpoint === 'object' && !Array.isArray(currentDidCommSvc.serviceEndpoint)
-        ? currentDidCommSvc.serviceEndpoint.routingKeys?.[0]
-        : undefined) ?? currentDidCommSvc.routingKeys?.[0] ?? '',
+      mediatorUrl: firstServiceEndpoint(oldDidCommSvc.serviceEndpoint),
+      routingKey: (typeof oldDidCommSvc.serviceEndpoint === 'object' && !Array.isArray(oldDidCommSvc.serviceEndpoint)
+        ? oldDidCommSvc.serviceEndpoint.routingKeys?.[0]
+        : undefined) ?? oldDidCommSvc.routingKeys?.[0] ?? '',
     }
     : undefined
 
-  const state = buildBisetWebvhState(newDid, opts.rootPublicKey, opts.relays, opts.addresses, {
-    keyAgreementKeys: keyAgreementKeysFromWebvhState(currentState),
-    // Same reasoning as keyAgreementKeys just above — a move must not
-    // silently drop the identity's ML-KEM-768 hybrid capability either.
-    mlkemKeyAgreementKeys: mlkemKeyAgreementKeysFromWebvhState(currentState),
-    didCommService,
-    // Same carry-forward reasoning as keyAgreement above, for the display
-    // name: a move must not silently reset the identity's name to nothing
-    // (which is what every peer's label would fall back to).
-    name: currentState.name,
-    // The identifier this DID used to be published under. Purely
-    // informational for humans and for a peer holding the old string —
-    // resolution itself never needs it (the log IS the history), unlike the
-    // superseded new-genesis implementation where a pointer was the only
-    // link that existed at all.
-    movedFrom: opts.oldDid,
+  const updateKey = encodeMultikey(opts.rootPublicKey)
+
+  const result = await migrateWebvhLocation({
+    oldDid: opts.oldDid,
+    newDomain: opts.newDomain,
+    newPathSegments: [opts.newUsername],
+    rootPrivateKey: opts.rootPrivateKey,
+    rootPublicKey: opts.rootPublicKey,
+    // Nothing to carry through the SIGNED state any more (it is just
+    // id/#key-1/authentication) — the new location gets a fresh minimal
+    // state naming the same identity key, full stop.
+    buildState: (_carried, newDid) => buildBisetWebvhState(newDid, opts.rootPublicKey),
+    // Seed the new location's routing.json — mediator/keyAgreement/name
+    // carried forward above plus the caller's current relay list, the same
+    // way createGenesis seeds a brand-new identity's — BEFORE the old
+    // location is told about the move (migrate.ts's own note on this hook
+    // explains why: this can only run here, never earlier, and a failure
+    // here must not leave the move half-announced). If this throws, the OLD
+    // DID simply keeps resolving to the pre-move document, unaware anything
+    // was attempted; the caller can retry the whole moveDidToNewDomain call
+    // once whatever failed (network, anchor) recovers.
+    afterNewLocationWritten: async newDid => {
+      await putRouting(
+        newDid,
+        buildRoutingDoc(newDid, {
+          relays: opts.relays, addresses: opts.addresses, didCommService,
+          keyAgreementKeys: resolved ? keyAgreementKeysFromWebvhState(resolved) : undefined,
+          mlkemKeyAgreementKeys: resolved ? mlkemKeyAgreementKeysFromWebvhState(resolved) : undefined,
+          name: resolved?.name,
+          // The identifier this DID used to be published under. Purely
+          // informational for humans and for a peer holding the old string —
+          // resolution itself never needs it (the log IS the history),
+          // unlike the superseded new-genesis implementation where a
+          // pointer was the only link that existed at all.
+          movedFrom: opts.oldDid,
+        }),
+        { updateKey, privateKey: opts.rootPrivateKey },
+      )
+    },
   })
 
-  const versionTime = nowVersionTime()
-  const parameters = parametersToWrite(last.parameters, resolveParameters(last.parameters, {}))
-  const entryHash = generateEntryHash(last.versionId, versionTime, parameters, state)
-  const versionId = `${entryVersionNumber(last.versionId) + 1}-${entryHash}`
-  const unsigned = { versionId, versionTime, parameters, state }
-  const proof = buildProof(unsigned, { verificationMethod: `did:key:${updateKey}#${updateKey}`, privateKey: opts.rootPrivateKey, created: versionTime })
-  const moved = [...entries, { ...unsigned, proof: [proof] } as LogEntry]
-
-  // NEW location first. If it fails, the old location is untouched and the
-  // identity is still wholly intact where it was — whereas repointing the old
-  // location first and then failing would leave the DID resolvable only to a
-  // location serving nothing.
-  // The new location has nothing yet, so the whole log IS what is new there.
-  // The old one only gains the move entry.
-  await putLog(didToHttpsUrl(newDid), moved)
-  await putLog(oldUrl, moved, [moved[moved.length - 1]!])
-
-  return { newDid, scid }
+  return result
 }

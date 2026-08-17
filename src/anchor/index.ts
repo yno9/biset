@@ -7,8 +7,10 @@
 //   - proof that a DID belongs to whoever claims it (didbind.ts). Relays used
 //     to check this themselves; they forward it here instead and no relay
 //     handles DID material any more
-//   - the DNS anchor record, via Cloudflare — the only place that credential is
-//     used, which is why this process's blast radius is worth caring about
+//   - address→DID discovery, via GET /.well-known/webfinger (server.ts's
+//     handleWebfinger) — used to be a Cloudflare-published DNS TXT record;
+//     answered from data already on disk now, no external credential needed
+//     at all (2026-08-17, see that handler's own note for the full history)
 //   - the DIDComm mediator, so a client that cannot hold a socket open can
 //     still be delivered to
 //
@@ -24,8 +26,6 @@
 // Config: `config.json` next to the executable.
 //   { "listen_addr": ":8081",          // required
 //     "relay_token": "…",              // required; the secret its relays present
-//     "cloudflare_api_token": "…",     // optional; omit to record claims without DNS
-//     "cloudflare_zone_id":   "…",     // required with the token
 //     "mediator_url": "https://…" }    // optional; turns the DIDComm mediator on.
 //
 // `mediator_url` is a promise, not a setting: it is baked into the mediator's
@@ -33,7 +33,6 @@
 // later changes the DID and strands every client already registered with it.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve as resolvePath } from 'node:path'
-import { CloudflareAnchor } from './cloudflare.ts'
 import { ClaimStore } from './store.ts'
 import { startAnchor } from './server.ts'
 import { createMediator } from './mediator/server.ts'
@@ -44,7 +43,7 @@ import { MessageQueue } from './mediator/queue.ts'
 import { MlsDeliveryService } from './mediator/mls-ds.ts'
 import { fragmentOf, isDeviceKid } from '../did/devicekid.ts'
 import { WebvhLogStore } from './webvh-store.ts'
-import { resolveWebvhDocument } from './webvh-resolve.ts'
+import { resolveWebvhDocumentWithRouting } from './webvh-resolve.ts'
 import { keyAgreementKeysFromWebvhState } from '../did/webvh/document.ts'
 
 interface Config {
@@ -64,8 +63,6 @@ interface Config {
    * refuses a default for the same reason and throws instead — an implicit
    * fallback is a *quiet* security downgrade, and quiet is what makes it bad. */
   relay_token: string
-  cloudflare_api_token?: string
-  cloudflare_zone_id?: string
   /** The mediator's own public URL. Setting it turns the DIDComm mediator on;
    * omitting it leaves the anchor a pure registry. It must be the URL clients
    * can actually reach, because it goes into the mediator's DID — correspondents
@@ -132,19 +129,6 @@ if (!Number.isInteger(port) || port <= 0) {
   process.exit(1)
 }
 
-const cloudflare = new CloudflareAnchor({ apiToken: cfg.cloudflare_api_token, zoneId: cfg.cloudflare_zone_id })
-if (!cloudflare.enabled()) {
-  console.log('[anchor] Cloudflare not configured — claims will be recorded but no DNS record written')
-} else {
-  // Which zone we can write to decides which addresses get a DNS anchor at all
-  // (cloudflare.ts: everything outside it is the owner's to publish), so say it
-  // out loud at startup rather than leaving it implicit in a zone id. Warn and
-  // carry on if Cloudflare is unreachable — claims must not wait on DNS.
-  cloudflare.zoneName()
-    .then(z => console.log(`[anchor] Cloudflare zone ${z} — addresses outside it get no DNS anchor`))
-    .catch(e => console.error('[anchor] Cloudflare zone lookup failed:', e?.message ?? e))
-}
-
 const dataDir = join(baseDir, 'data')
 mkdirSync(dataDir, { recursive: true, mode: 0o700 })
 
@@ -175,7 +159,7 @@ const resolveDidWebvh = async (did: string, kid: string): Promise<Uint8Array | n
   const fragment = fragmentOf(kid)
   if (!isDeviceKid(fragment)) return null
   try {
-    const doc = await resolveWebvhDocument(did, webvh)
+    const doc = await resolveWebvhDocumentWithRouting(did, webvh)
     return doc ? keyAgreementKeysFromWebvhState(doc).find(k => k.kid === fragment)?.publicKey ?? null : null
   } catch { return null }
 }
@@ -213,5 +197,5 @@ const mediator = cfg.mediator_url
 if (mediator) console.log(`[anchor] DIDComm mediator at ${cfg.mediator_url} — ${mediator.mediatorDid}${vapid ? ' (Web Push on)' : ''}`)
 else console.log('[anchor] no mediator_url — registry only, no DIDComm mediation')
 
-startAnchor({ claims, cloudflare, port, hostname, mediator, webvh, relayToken: cfg.relay_token })
+startAnchor({ claims, port, hostname, mediator, webvh, relayToken: cfg.relay_token })
 console.log(`[anchor] listening on ${cfg.listen_addr} (data: ${dataDir})`)

@@ -18,7 +18,6 @@ import { bindingStatement } from '../src/did/binding.ts'
 import { verifyDIDBinding, rootKeyResolver } from '../src/anchor/didbind.ts'
 import { startAnchor } from '../src/anchor/server.ts'
 import { ClaimStore } from '../src/anchor/store.ts'
-import { CloudflareAnchor } from '../src/anchor/cloudflare.ts'
 import { WebvhLogStore } from '../src/anchor/webvh-store.ts'
 import { createGenesis } from '../src/did/webvh/publish.ts'
 
@@ -36,7 +35,6 @@ const dataDir = mkdtempSync(join(tmpdir(), 'anchor-didbind-webvh-'))
 const PORT = 18511
 startAnchor({
   claims: new ClaimStore(dataDir),
-  cloudflare: new CloudflareAnchor({}),
   port: PORT,
   hostname: '127.0.0.1',
   relayToken: 'test-relay-token',
@@ -50,7 +48,7 @@ await Bun.sleep(200)
 const REAL_FETCH = globalThis.fetch
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-  const m = /^https:\/\/([^/]+)(\/[^/]+\/did\.jsonl.*)$/.exec(url)
+  const m = /^https:\/\/([^/]+)(\/[^/]+\/(?:did\.jsonl|routing\.json).*)$/.exec(url)
   if (!m) return REAL_FETCH(input as any, init)
   const [, domain, path] = m
   const headers = new Headers(init?.headers)

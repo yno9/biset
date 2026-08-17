@@ -221,6 +221,16 @@ export async function removeMembers(state: ClientState, kids: string[]): Promise
   return commitWith(state, proposals)
 }
 
+/** Like removeMembers, but by leaf index rather than kid. Needed exactly when
+ * kid-based lookup breaks down: two leaves sharing the same kid (self-group.ts's
+ * joinSelfGroup self-heal, for a device that lost its local group state and
+ * rejoined under the SAME kid its old, never-removed leaf still carries) —
+ * `members.find(m => m.kid === kid)` can only ever resolve to one of the two. */
+export async function removeLeavesByIndex(state: ClientState, leafIndices: number[]): Promise<CommitResult> {
+  const proposals: Proposal[] = leafIndices.map(removed => ({ proposalType: 'remove', remove: { removed } }))
+  return commitWith(state, proposals)
+}
+
 /** Propose this device's OWN removal from the group.
  *
  * A member cannot commit its own removal — RFC 9420 forbids a commit that

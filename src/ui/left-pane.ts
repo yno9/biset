@@ -1,4 +1,4 @@
-import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, isApRelay, isDidCommRelay, relayProtocolLabel, fetchRelayInfo, DIDCOMM_SERVER_URL } from '../context.ts'
+import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, vaultHandle, clearVaultHandle, isApRelay, isDidCommRelay, relayProtocolLabel, fetchRelayInfo, DIDCOMM_SERVER_URL, mailRelayUrl } from '../context.ts'
 import { ownDid, mediatorDeviceActivity, type MediatorDeviceActivity } from '../did/didcomm-devices.ts'
 import { bisetWebvhUsername, parseWebvhDid } from '../did/webvh/identifier.ts'
 import { currentIdentityDid } from '../did/didcomm/channel.ts'
@@ -13,13 +13,14 @@ import {
   lastTs, groupMessages,
 } from '../state.ts'
 import { esc, formatTime, avatarStyle, inboxToHash, syncAppBadge, hexToBytes, expandDualRelay, previewText } from '../utils.ts'
-import { displayLabelFor, nameForContact, shortDid, ownDidParts, labelForDid, contactIdentityKey } from '../did/contacts.ts'
+import { hashSeg } from '../route.ts'
+import { displayLabelFor, nameForContact, shortDid, ownDidParts, shortOwnDid, labelForDid, contactIdentityKey } from '../did/contacts.ts'
 import type { InboxSummary, StoredAccount, AccountSession } from '../types.ts'
 import type { Email } from 'jmap-rfc-types'
 // Circular (safe — used only in function bodies):
 import { render, syncDockPosition, scrollToFocused, updateScrollSpacer } from './thread.ts'
 import { fetchMessages, showSysMsg, startPolling } from './shell.ts'
-import { setupNewUserPage, mountNewUserPageInline, unmountNewUserPageInline, getMailUrl } from './account-create.ts'
+import { setupNewUserPage, mountNewUserPageInline, unmountNewUserPageInline, getMailUrl, getHostname, randomHex4 } from './account-create.ts'
 // From app.ts (safe — called only inside async functions):
 import { loadInboxSummaries, initSession, jmapCreateEmail, persistSession } from '../app.ts'
 import { decryptAndParse, prefetchRecipientKey } from '../pgp/index.ts'
@@ -28,12 +29,13 @@ import type { OutgoingAttachment } from '../pgp/crypto.ts'
 import { clearIdentity as clearIdentityCache } from '../store/cache.ts'
 import { avatarDataUrl, saveAvatar } from '../deltachat/avatar.ts'
 import { advertiseOwnAvatarForEmail } from '../ap/avatar.ts'
+import { apOutboundUrl } from '../ap/config.ts'
 import * as jmapEmail from '../jmap/email.ts'
 import * as messages from '../store/messages.ts'
 import * as identities from '../store/identities.ts'
 import { loadFromVault, flushAll, flushMessage, removeMessage } from '../vault/persist.ts'
 import * as querystate from '../jmap/querystate.ts'
-import { startWatch } from '../vault/watch.ts'
+import { startWatch, stopWatch } from '../vault/watch.ts'
 import { newGroupId, isSecurejoinEmail } from '../deltachat/protocol.ts'
 import { isReaction } from '../mail/reactions.ts'
 import { newInviteUrl } from '../deltachat/securejoin.ts'
@@ -102,7 +104,11 @@ export function showMenuPage(name: string) { _showMenuPageFn?.(name) }
 
 // Open the compose page with the To field pre-filled. Consumed once by the
 // compose page's onShow (composePrefillTo). Backs the /<user>/ entry point: start
-// a message to that user. URL becomes #compose/<addr> so it's shareable.
+// a message to that user. URL becomes the SAME shape as a conversation
+// permalink (#<contact>, route.ts's hashSeg/utils.ts's inboxToHash) — a
+// shareable link to someone with no conversation yet, resolved by main.ts's
+// route() the same way an existing one is (2026-08-16, folded the old
+// separate `#compose/<addr>` shape into this one).
 let composePrefillTo: string | null = null
 export function openComposeTo(addr: string) {
   composePrefillTo = addr
@@ -111,7 +117,7 @@ export function openComposeTo(addr: string) {
   // opening compose is an explicit intent to see the form, so reveal the right
   // column instead.
   document.getElementById('app')?.classList.remove('show-left')
-  try { history.replaceState(null, '', '/#compose/' + encodeURIComponent(addr).replace(/%40/g, '@')) } catch { /* file:// */ }
+  try { history.replaceState(null, '', '/#' + hashSeg(addr)) } catch { /* file:// */ }
   // Focus the body. A single deferred focus() is unreliable here — the compose
   // page renders across the #new→app transition and something (search box / polling
   // re-render) can steal focus right after — so re-assert it a few times over the
@@ -384,7 +390,7 @@ export async function switchInbox(item: InboxSummary): Promise<void> {
 // caches the target's actor avatar first so the header renders nicely.
 export async function openApConversation(target: string): Promise<void> {
   const cfg = (window as any).__BISET_CONFIG__
-  const apUrl: string = cfg?.ap_url || (cfg?.hostname ? `https://ap.${cfg.hostname}` : '')
+  const apUrl: string = apOutboundUrl(cfg)
   if (apUrl) {
     try {
       const r = await fetch(`${apUrl}/resolve?acct=${encodeURIComponent(target)}`)
@@ -1183,7 +1189,10 @@ export async function setupLeftPane() {
         <div id="cmd-acc-identity-fields" title="Click to view devices and DID document">
           <div id="cmd-acc-identity-avatar" class="lp-avatar"></div>
           <div id="cmd-acc-identity-text">
-            <div id="cmd-acc-identity-name"></div>
+            <div id="cmd-acc-identity-name-row">
+              <span id="cmd-acc-identity-name"></span>
+              <span id="cmd-acc-identity-name-edit" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+            </div>
             <div id="cmd-acc-identity-did-row">
               <span id="cmd-acc-identity-did"></span>
               <button id="cmd-acc-identity-copy" type="button" aria-label="Copy DID" title="Copy DID"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
@@ -1191,6 +1200,7 @@ export async function setupLeftPane() {
           </div>
           <button id="cmd-acc-identity-menu-btn" type="button" aria-label="Menu"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
         </div>
+        <div id="cmd-acc-sync-stalled" style="display:none"></div>
         <div id="cmd-acc-identity-expanded">
           <div class="acc-storage-header">
             <span class="acc-storage-title">Devices</span>
@@ -1198,6 +1208,9 @@ export async function setupLeftPane() {
           <div id="cmd-acc-identity-devices" class="acc-device-list"></div>
           <div class="acc-storage-header" style="margin-top:12px">
             <span class="acc-storage-title">DID:Webvh</span>
+            <div class="acc-storage-actions">
+              <button id="cmd-acc-identity-sync-btn" class="acc-storage-icon-btn" type="button" aria-label="Sync" title="Sync"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
+            </div>
           </div>
           <pre id="cmd-acc-identity-doc"></pre>
         </div>
@@ -1474,7 +1487,32 @@ export async function setupLeftPane() {
     const vaultSection = 'showDirectoryPicker' in window
       ? `<div class="cmd-page-section">
         <h3>Vault (Markdown)</h3>
-        <button id="vault-enable-btn">Select folder to enable</button>
+        <div class="cmd-page-row">
+          <span>Vault</span>
+          <div class="toggle-switch${vaultHandle ? ' on' : ''}" id="config-vault-toggle" style="cursor:pointer"></div>
+        </div>
+      </div>`
+      : ''
+    // Pre-rotation status (did/webvh/prerotation.ts) is only known async
+    // (it lives in the log's parameters, not anything resolved sync-side) —
+    // rendered off here, corrected by onShowConfig right after paint. The
+    // section itself only needs an identity to exist at all, checked sync.
+    const preRotationSection = currentIdentityDid()
+      ? `<div class="cmd-page-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <h3 style="margin:0">Key rotation</h3>
+          <div class="toggle-switch" id="config-prerotation-toggle" style="cursor:pointer"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0">
+          <button id="prerotation-rotate-btn" class="cmd-page-btn primary" style="display:none;padding:4px 12px;font-size:11px;font-weight:900;text-transform:uppercase;border-radius:20px;flex-shrink:0">Rotate</button>
+          <span style="font-size:13px;color:var(--text-dim);flex-shrink:0">Sign Key:</span>
+          <span id="config-prerotation-key" style="font-family:ui-monospace,monospace;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0"></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0">
+          <button id="prerotation-revoke-btn" class="cmd-page-btn primary" style="display:none;padding:4px 12px;font-size:11px;font-weight:900;text-transform:uppercase;border-radius:20px;flex-shrink:0">Revoke</button>
+          <span style="font-size:13px;color:var(--text-dim);flex-shrink:0">Root Key:</span>
+          <span id="config-rootkey" style="font-family:ui-monospace,monospace;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0"></span>
+        </div>
       </div>`
       : ''
     return `<div class="cmd-page-content wide-page">
@@ -1485,6 +1523,7 @@ export async function setupLeftPane() {
           <div class="toggle-switch${notifEnabled ? ' on' : ''}" id="config-notif-toggle" style="cursor:pointer"></div>
         </div>
       </div>
+      ${preRotationSection}
       ${vaultSection}
     </div>`
   }
@@ -1517,34 +1556,122 @@ export async function setupLeftPane() {
       })
     }
 
-    // Vault opt-in
-    const $vaultBtn = document.getElementById('vault-enable-btn') as HTMLButtonElement | null
-    console.log('[vault] onShowConfig, btn:', !!$vaultBtn)
-    if ($vaultBtn) {
-      $vaultBtn.addEventListener('click', async () => {
-        console.log('[vault] click', typeof (window as any).showDirectoryPicker)
+    // Key rotation (did:webvh pre-rotation — src/did/webvh/prerotation.ts).
+    // Status is async-only (it lives in the log's parameters), so the
+    // toggle paints off and gets corrected here rather than in the
+    // sync renderConfigPage.
+    const $preRotTog = document.getElementById('config-prerotation-toggle')
+    const $rotateBtn = document.getElementById('prerotation-rotate-btn') as HTMLButtonElement | null
+    const $preRotKey = document.getElementById('config-prerotation-key')
+    const $rootKey = document.getElementById('config-rootkey')
+    const $revokeBtn = document.getElementById('prerotation-revoke-btn') as HTMLButtonElement | null
+    if ($preRotTog && $rotateBtn) {
+      const did = currentIdentityDid()
+      if (did) {
+        // Sign key / Root key stay visible regardless of toggle state — only
+        // the [Rotate]/[Revoke] buttons (the OPERATIONS) are gated on it,
+        // since pre-rotation being off doesn't make either key stop existing
+        // (2026-08-17, user-requested).
+        const reflect = (active: boolean) => {
+          $preRotTog.classList.toggle('on', active)
+          $rotateBtn.style.display = active ? '' : 'none'
+          if ($revokeBtn) $revokeBtn.style.display = active ? '' : 'none'
+        }
+        // Shows both keys currently in play, not just on/off — "Rotate"
+        // changes the sign key every time and "Revoke" moves the root key
+        // too, and before/after both just read "on" without this, so there
+        // was no way to tell either operation actually landed from a no-op
+        // (2026-08-17, user: 本当にrotateしたかわからない). Full strings in
+        // the DOM; single-line clamp + native text-overflow:ellipsis (each
+        // span's own style, above) is what elides the tail rather than
+        // wrapping to a second line — user: 二行になる場合は…末尾から省略.
+        // Both public keys are already in the resolved document anyone can
+        // fetch — showing them here reveals nothing that isn't already
+        // public (user asked before adding the root key row).
+        const refreshKeyLabel = async () => {
+          try {
+            const { fetchCurrentLog } = await import('../did/webvh/log-io.ts')
+            const { last } = await fetchCurrentLog(did)
+            if ($preRotKey) $preRotKey.textContent = last.parameters.updateKeys?.[0] ?? ''
+            const state = last.state as { verificationMethod?: Array<{ publicKeyMultibase?: string }> }
+            if ($rootKey) $rootKey.textContent = state.verificationMethod?.[0]?.publicKeyMultibase ?? ''
+          } catch {
+            if ($preRotKey) $preRotKey.textContent = ''
+            if ($rootKey) $rootKey.textContent = ''
+          }
+        }
+        const { isPreRotationActive } = await import('../did/webvh/prerotation.ts')
+        isPreRotationActive(did).then(reflect).catch(() => {})
+        refreshKeyLabel()
+
+        $preRotTog.addEventListener('click', async () => {
+          const active = $preRotTog.classList.contains('on')
+          const { runActivatePreRotation, runDeactivatePreRotation } = await import('./prerotation.ts')
+          const ok = active ? await runDeactivatePreRotation(did) : await runActivatePreRotation(did)
+          if (ok) { reflect(!active); refreshKeyLabel() }
+        })
+        $rotateBtn.addEventListener('click', async () => {
+          const { runRotateNow } = await import('./prerotation.ts')
+          const wasDisabled = $rotateBtn.disabled
+          $rotateBtn.disabled = true
+          try {
+            const ok = await runRotateNow(did)
+            // Still active either way (rotating always re-commits — see
+            // prerotation.ts's own header) — nothing to reflect but the
+            // button's own disabled state and the key label, which is the
+            // one thing that actually moves on a successful rotate.
+            if (ok) refreshKeyLabel()
+          } finally {
+            $rotateBtn.disabled = wasDisabled
+          }
+        })
+        if ($revokeBtn) {
+          $revokeBtn.addEventListener('click', async () => {
+            if (!confirm('Revoke the Root Key? Your current recovery phrase stops working permanently — it will no longer restore this identity, log into mail, or sign as you on any device.\n\nYou will be asked for your Spare Key phrase, then shown TWO new phrases to save: a new Root Key and a new Spare Key.\n\nUse this only if you believe your current phrase is compromised.')) return
+            const { runRevokeRootKey } = await import('./prerotation.ts')
+            const wasDisabled = $revokeBtn.disabled
+            $revokeBtn.disabled = true
+            try {
+              const ok = await runRevokeRootKey(did)
+              if (ok) refreshKeyLabel()
+            } finally {
+              $revokeBtn.disabled = wasDisabled
+            }
+          })
+        }
+      }
+    }
+
+    // Vault opt-in — a toggle like the others (2026-08-17, was a bare
+    // "Select folder to enable" button that looked nothing like the rest of
+    // this page). Turning it off just tears down the local watch; turning it
+    // on re-runs the same directory-picker flow as before, and reverts to off
+    // if the picker is cancelled or permission is refused.
+    const $vaultTog = document.getElementById('config-vault-toggle')
+    if ($vaultTog) {
+      $vaultTog.addEventListener('click', async () => {
+        const active = $vaultTog.classList.contains('on')
+        if (active) {
+          stopWatch()
+          clearVaultHandle()
+          $vaultTog.classList.remove('on')
+          showSysMsg('Vault disabled')
+          return
+        }
         try {
           const handle = await (window as any).showDirectoryPicker({ mode: 'readwrite' })
-          console.log('[vault] handle:', handle)
-          // Verify write permission
           if ((handle as any).queryPermission) {
             const perm = await (handle as any).queryPermission({ mode: 'readwrite' })
-            console.log('[vault] queryPermission:', perm)
             if (perm !== 'granted' && (handle as any).requestPermission) {
-              const req = await (handle as any).requestPermission({ mode: 'readwrite' })
-              console.log('[vault] requestPermission:', req)
+              await (handle as any).requestPermission({ mode: 'readwrite' })
             }
           }
           setVaultHandle(handle)
-          console.log('[vault] handle set')
           await querystate.loadFromVault()
-          console.log('[vault] querystate loaded')
           await loadFromVault()
-          console.log('[vault] loadFromVault done')
           await flushAll()
-          console.log('[vault] flushAll returned')
           await startWatch()
-          console.log('[vault] startWatch done')
+          $vaultTog.classList.add('on')
           showSysMsg('Vault enabled')
         } catch (e) {
           if ((e as any)?.name !== 'AbortError') showSysMsg('Vault selection failed')
@@ -1629,6 +1756,26 @@ export async function setupLeftPane() {
     const rowProtoOptions = new WeakMap<HTMLElement, ProtoOption[]>()
     const rowProtoSelected = new WeakMap<HTMLElement, Proto>()
     const rowProtoManual = new WeakSet<HTMLElement>() // user explicitly clicked a pill — stop auto-switching it
+
+    // A did:webvh's SCID is 46 chars of base58 nobody reads — same rule the
+    // account page's own DID line uses (contacts.ts's ownDidParts), reused
+    // here for a To-field recipient's DID rather than the signed-in user's
+    // own. `inp.value` shows the elided form; the ACTUAL address (needed for
+    // resolveDidDocFull/send, which require the real SCID) is kept in
+    // `dataset.fullDid` — inpAddr is the one place that reads it back.
+    // Cleared the moment the user types into the field by hand (attachPrefetch's
+    // 'input' listener) so a manual edit is never silently overridden by a
+    // stale full DID from before.
+    const setRecipientInputValue = (inp: HTMLInputElement, address: string) => {
+      if (address.startsWith('did:webvh:') && bisetWebvhUsername(address)) {
+        inp.value = shortOwnDid(address)
+        inp.dataset.fullDid = address
+      } else {
+        inp.value = address
+        delete inp.dataset.fullDid
+      }
+    }
+    const inpAddr = (inp: HTMLInputElement): string => (inp.dataset.fullDid || inp.value).trim()
     const rowEffective = (row: HTMLElement): ProtoOption | undefined => {
       const opts = rowProtoOptions.get(row) ?? []
       const sel = rowProtoSelected.get(row)
@@ -1663,7 +1810,7 @@ export async function setupLeftPane() {
           // DID row that toggled to [Mail]/[AP] displays the mail/AP address
           // its own document claimed for that protocol, not the raw DID.
           const inp = row.querySelector<HTMLInputElement>('.new-field-input')
-          if (inp) inp.value = o.address
+          if (inp) setRecipientInputValue(inp, o.address)
           syncFromRequirement()
         })
         el.append(b)
@@ -1685,6 +1832,16 @@ export async function setupLeftPane() {
       else if (current && opts.some(o => o.protocol === current)) next = current
       else next = opts[0]?.protocol
       if (next) rowProtoSelected.set(row, next); else rowProtoSelected.delete(row)
+      // Keep the field's displayed text in sync with whichever protocol just
+      // became selected, auto or not — a [DID] pill next to an unrelated
+      // mail-shaped string is misleading (found live: y@biset.md shown with
+      // [DID] highlighted, when the actual DIDComm target is a different
+      // identifier entirely). The explicit pill-click handler below already
+      // does this for a manual pick; this covers the auto-selected case
+      // (e.g. resolveRecipientProtocols defaulting a plain address to DID).
+      const inp = row.querySelector<HTMLInputElement>('.new-field-input')
+      const opt = next ? opts.find(o => o.protocol === next) : undefined
+      if (inp && opt) setRecipientInputValue(inp, opt.address)
       renderRowProtos(row)
       syncFromRequirement()
     }
@@ -1706,9 +1863,9 @@ export async function setupLeftPane() {
     const collect = () => {
       const out = { to: [] as string[], cc: [] as string[], bcc: [] as string[] }
       for (const row of recipientsDiv.querySelectorAll<HTMLElement>('.new-recipient-row')) {
-        const v = row.querySelector<HTMLInputElement>('.new-field-input')?.value.trim()
-        if (!v) continue
-        out[(row.dataset.kind as Kind) ?? 'to'].push(rowEffective(row)?.address ?? v)
+        const inp = row.querySelector<HTMLInputElement>('.new-field-input')
+        if (!inp || !inp.value.trim()) continue
+        out[(row.dataset.kind as Kind) ?? 'to'].push(rowEffective(row)?.address ?? inpAddr(inp))
       }
       return out
     }
@@ -1782,10 +1939,14 @@ export async function setupLeftPane() {
     const didNameTried = new Set<string>()
     const didDisplayText = (did: string): string => {
       const n = didNames.get(did)
-      // Same no-name fallback rule as every other DID label (contacts.ts's
-      // labelForDid): a did:webvh identity shows its username rather than a
-      // shortened DID nobody can read.
-      return n ? `${n} / ${shortDid(did)}` : labelForDid(did)
+      if (n) return `${n} / ${shortDid(did)}`
+      // Unlike contacts.ts's labelForDid (bare username — fine for an inbox
+      // list where every row already reads as "a person"), the From button
+      // stands alone with no other context, so a bisetWebvhUsername gets the
+      // full elided-SCID form (did:webvh:{domain}:{username}) rather than
+      // just the username — otherwise a fresh identity's random name (e.g.
+      // "89b3") reads as some opaque label, not recognizably a DID at all.
+      return bisetWebvhUsername(did) ? shortOwnDid(did) : shortDid(did)
     }
     // Fill in a DID's display name (local Card first — no network — then a
     // document resolve), re-rendering the From button once it lands.
@@ -1800,11 +1961,65 @@ export async function setupLeftPane() {
       }).catch(() => {})
     }
 
+    // No identity at all yet (a first-time visitor who landed straight in
+    // compose — main.ts's handleUserLanding/route, 2026-08-16): the From
+    // field itself doubles as the account-creation affordance instead of
+    // sending the visitor through a separate #new page first. Clicking it
+    // creates a DIDComm-only identity (src/did/create.ts) and drops the
+    // result straight into fromOptions/fromSelectedIdx — no page navigation.
+    let creatingAccount = false
+    const renderCreateAccountAffordance = () => {
+      if (!fromBtn) return
+      fromBtn.innerHTML = '' // idempotent even when called directly (handleCreateAccount), not just via renderFromButton
+      fromBtn.disabled = creatingAccount
+      const label = document.createElement('span')
+      label.className = 'new-from-create-btn'
+      label.style.cssText = 'white-space:nowrap;flex-shrink:0'
+      label.textContent = creatingAccount ? 'Creating account…' : 'create account'
+      fromBtn.append(label)
+    }
+    const handleCreateAccount = async () => {
+      if (creatingAccount) return
+      creatingAccount = true
+      renderCreateAccountAffordance()
+      try {
+        const hostname = getHostname()
+        if (!hostname) throw new Error('hostname not set in config.json')
+        const username = randomHex4()
+        const masterSecret = crypto.getRandomValues(new Uint8Array(32))
+        const { createIdentity, registerIdentityChannel } = await import('../did/create.ts')
+        const { didRecord } = await createIdentity(masterSecret, username, hostname)
+        await registerIdentityChannel(didRecord.did, () => { fetchMessages(); loadLeftInboxes() })
+        ownChannelDid = didRecord.did
+        fromOptions = [{ email: didRecord.did, serverUrl: DIDCOMM_SERVER_URL }]
+        fromSelectedIdx = 0
+        syncFromRequirement()
+        refreshAccountsList()
+        const { showMnemonic } = await import('./mnemonic.ts')
+        showMnemonic(masterSecret, {
+          firstTime: true,
+          onClose: () => {
+            import('../did/store.ts')
+              .then(async m => {
+                const ok = await m.enableIdentityProtection(`${username}@${hostname}`)
+                if (!ok) console.warn('[identity] passkey protection not enabled — secrets stay plaintext at rest')
+              })
+              .catch(e => console.warn('[identity] passkey protection failed:', e instanceof Error ? e.message : e))
+          },
+        })
+      } catch (e) {
+        showSysMsg(e instanceof Error ? e.message : String(e))
+      } finally {
+        creatingAccount = false
+        renderFromButton()
+      }
+    }
     const renderFromButton = () => {
       if (!fromBtn) return
       fromBtn.innerHTML = ''
       const o = fromOptions[fromSelectedIdx]
-      if (!o) return
+      if (!o) { renderCreateAccountAffordance(); return }
+      fromBtn.disabled = false
       const pill = protoPill(o.serverUrl)
       if (pill) fromBtn.append(pill)
       const addr = document.createElement('span')
@@ -1912,7 +2127,11 @@ export async function setupLeftPane() {
       fromMenu = menu
       setTimeout(() => document.addEventListener('click', closeFromMenu, { once: true }), 0)
     }
-    fromBtn?.addEventListener('click', e => { e.stopPropagation(); openFromMenu() })
+    fromBtn?.addEventListener('click', e => {
+      e.stopPropagation()
+      if (!fromOptions.length) { handleCreateAccount(); return }
+      openFromMenu()
+    })
     if (fromBtn) {
       // `sessions` can still be empty on a fresh #new load (init race), so fall
       // back to the stored account list — never leave the selector blank.
@@ -1936,8 +2155,8 @@ export async function setupLeftPane() {
 
     // Relay base URLs for this home domain (see account-create.getMailUrl/getApUrl).
     const cfg = (window as any).__BISET_CONFIG__
-    const mailUrl = cfg?.mail_url || (cfg?.hostname ? `https://mail.${cfg.hostname}` : '')
-    const apUrl = cfg?.ap_url || (cfg?.hostname ? `https://ap.${cfg.hostname}` : '')
+    const mailUrl = cfg?.mail_url || (cfg?.hostname ? mailRelayUrl(cfg.hostname) : '')
+    const apUrl = apOutboundUrl(cfg)
 
     // Resolves ALL viable protocol options for whatever's currently in `inp`
     // and feeds them into the row's protocol pills (rowProto* above) — this is
@@ -1992,7 +2211,7 @@ export async function setupLeftPane() {
     const resolveRecipientProtocols = async (inp: HTMLInputElement) => {
       const row = inp.closest<HTMLElement>('.new-recipient-row')
       if (!row) return
-      const addr = inp.value.trim()
+      const addr = inpAddr(inp)
       if (!addr) { clearRowProtos(row); setRecipLoading(row, false); return }
 
       // A pill toggle (renderRowProtos) rewrites the input's displayed text to
@@ -2014,7 +2233,7 @@ export async function setupLeftPane() {
           // (CORS-open) — did:dht won't resolve through the public gateways
           // from a file:// page.
           const doc = await resolveDidDocFull(addr)
-          if (inp.value.trim() !== addr) return // stale
+          if (inpAddr(inp) !== addr) return // stale
           const opts: ProtoOption[] = [{ protocol: 'did', address: addr }]
           for (const s of doc?.service ?? []) {
             if (s.protocol === 'mail' && s.address) opts.push({ protocol: 'mail', address: s.address })
@@ -2059,17 +2278,24 @@ export async function setupLeftPane() {
 
       const [apHit, didHit] = await Promise.all([apProbe, didProbe])
       setRecipLoading(row, false)
-      if (inp.value.trim() !== addr) return // stale
+      if (inpAddr(inp) !== addr) return // stale
 
       const opts: ProtoOption[] = []
       if (!apHit || didHit) opts.push({ protocol: 'mail', address: addr })
       if (apHit) opts.push({ protocol: 'ap', address: addr })
       if (didHit) opts.push({ protocol: 'did', address: didHit })
-      setRowProtoOptions(row, opts, apHit ? 'ap' : 'mail')
+      // AP still wins when both are on offer (matches the old auto-on AP
+      // badge); otherwise DID beats Mail — a published DID anchor is the
+      // stronger, more capable transport (e2ee by default, portable
+      // identity) whenever this address turns out to have one.
+      setRowProtoOptions(row, opts, apHit ? 'ap' : didHit ? 'did' : 'mail')
     }
 
     const attachPrefetch = (inp: HTMLInputElement) => {
-      inp.addEventListener('input', updateTitleLabel)
+      // A manual edit invalidates whatever full DID was stashed for the
+      // elided display (setRecipientInputValue) — from here on inp.value
+      // IS the address, same as any other row.
+      inp.addEventListener('input', () => { delete inp.dataset.fullDid; updateTitleLabel() })
       inp.addEventListener('blur', () => { resolveRecipientProtocols(inp) })
     }
 
@@ -2123,7 +2349,7 @@ export async function setupLeftPane() {
     // Pre-fill the To field when compose was opened via openComposeTo (e.g. the
     // /<user>/ page). Resolve straight away so the protocol pills show.
     if (composePrefillTo && firstInp) {
-      firstInp.value = composePrefillTo
+      setRecipientInputValue(firstInp, composePrefillTo)
       composePrefillTo = null
       resolveRecipientProtocols(firstInp)
       updateTitleLabel()
@@ -2180,7 +2406,7 @@ export async function setupLeftPane() {
       // slow network never delays sending.
       for (const inp of recipientsDiv.querySelectorAll<HTMLInputElement>('.new-field-input')) {
         const row = inp.closest<HTMLElement>('.new-recipient-row')
-        const v = inp.value.trim()
+        const v = inpAddr(inp)
         if (!row || !v || rowProtoOptions.get(row)) continue
         if (v.startsWith('did:')) setRowProtoOptions(row, [{ protocol: 'did', address: v }], 'did')
         else if (v.includes('@')) setRowProtoOptions(row, [{ protocol: 'mail', address: v }], 'mail')
@@ -2191,6 +2417,7 @@ export async function setupLeftPane() {
       if (!visible.length) { (recipientsDiv.querySelector('.new-field-input') as HTMLElement)?.focus(); return }
       const body = (document.getElementById('new-body') as HTMLTextAreaElement)?.value.trim() || ''
       const fromEmail = selectedFrom()
+      if (!fromEmail) { showSysMsg('Create an account first (From field)'); fromBtn?.focus(); return }
       const title = (document.getElementById('new-title') as HTMLInputElement)?.value.trim() || ''
 
       // Protocol from each row's selected pill. A single compose is one
@@ -2646,7 +2873,7 @@ export async function setupLeftPane() {
     renderAccountsList(); loadLeftInboxes()
   }
 
-  function openAccountMenu(anchor: HTMLElement, email: string, serverUrl?: string) {
+  function openAccountMenu(anchor: HTMLElement, email: string, serverUrl?: string, did?: string) {
     const items: MenuItem[] = [
       // DeltaChat SecureJoin invite link (setup-contact) — moved here from the
       // compose "From" row, which is the wrong place for a per-ACCOUNT action
@@ -2661,6 +2888,44 @@ export async function setupLeftPane() {
         },
       },
     ]
+    if (serverUrl && did) {
+      // Root-key-signed re-vouch for a modern (password-less) DID-bound
+      // account whose LOCAL device key is gone but the account itself still
+      // exists server-side — distinct from "Enable this device" above
+      // (password-based, needs an active session to unseal against) and
+      // from claiming (would 409 UsernameTaken, the account already
+      // exists). Mirrors exactly what restoreFromMnemonic does per relay,
+      // just triggered manually for one already-known card instead of
+      // during a full identity restore (2026-08-17: found live after a
+      // device-key-clobbering race — since fixed in didcomm-devices.ts's
+      // publishCurrentState — left a claimed relay's local device key gone
+      // with no UI path back in short of recreating the identity).
+      items.push({
+        label: 'Reconnect device', onClick: async () => {
+          const { unlockIdentitySecrets, getDidRecord } = await import('../did/store.ts')
+          if (!(await unlockIdentitySecrets())) return
+          const rec = await getDidRecord(did)
+          if (!rec) { showSysMsg('No local record for this identity'); return }
+          const at = email.lastIndexOf('@')
+          if (at <= 0) { showSysMsg('Malformed address'); return }
+          const username = email.slice(0, at)
+          const domain = email.slice(at + 1)
+          showSysMsg('Reconnecting…', 15000)
+          const { vouchThisDevice, deviceLabel } = await import('../did/provision.ts')
+          const vouch = await vouchThisDevice({
+            serverUrl, username, domain, did, rootPrivateKey: hexToBytes(rec.rootPrivateKey), label: deviceLabel(),
+          }).catch(() => ({ ok: false, status: 0 }))
+          if (!vouch.ok) { showSysMsg(`Reconnect failed (HTTP ${vouch.status})`, 8000); return }
+          const { deriveKek } = await import('../cryptenv.ts')
+          const kek = rec.masterSeed ? await deriveKek(hexToBytes(rec.masterSeed)) : undefined
+          const { connectAndPersist } = await import('../app.ts')
+          const session = await connectAndPersist({ serverUrl, email, password: '', did }, kek)
+          if (!session) { showSysMsg('Vouched, but failed to connect'); return }
+          refreshAccountsList()
+          showSysMsg('Reconnected')
+        },
+      })
+    }
     if (serverUrl) {
       // Actually deletes the account's data on THIS relay (messages, mailbox,
       // envelope — see go-jmapsmtp/go-jmapap's /account/delete) — distinct
@@ -3048,6 +3313,66 @@ export async function setupLeftPane() {
     refreshAccountsList()
   }
 
+  // Whether this device can still publish this identity's document at all.
+  // Silent failure is the default everywhere else: publishFull catches its
+  // own error and returns 0, so a boot-time avatar publish or a mediator
+  // re-registration that can no longer sign just... doesn't, with nothing on
+  // screen and only a console line (PLANROTATION.md §2 C3). Those paths
+  // cannot prompt for a phrase — no human is present — so the only fix is to
+  // make the state visible somewhere a human looks, which is this page.
+  //
+  // Stalled means: pre-rotation has moved updateKeys off the Root Key at some
+  // point, and this device holds no Sign Key that the log still authorises
+  // (never entered here, or entered before a further rotate superseded it).
+  // Everything else — including "activated but never rotated", where the Root
+  // Key is still the Sign Key — is fine and shows nothing.
+  const _syncStalled = new Map<string, { stalled: boolean; at: number }>()
+  const SYNC_STALLED_TTL_MS = 60_000
+  async function isPublishStalled(did: string): Promise<boolean> {
+    if (!did.startsWith('did:webvh:')) return false
+    const cached = _syncStalled.get(did)
+    if (cached && Date.now() - cached.at < SYNC_STALLED_TTL_MS) return cached.stalled
+    try {
+      const [{ fetchCurrentLog }, { encodeMultikey }, { getDidRecord }] = await Promise.all([
+        import('../did/webvh/log-io.ts'), import('../did/webvh/multikey.ts'), import('../did/store.ts'),
+      ])
+      const [log, rec] = await Promise.all([fetchCurrentLog(did), getDidRecord(did)])
+      if (!rec) return false
+      const authorised = log.last.parameters.updateKeys ?? []
+      const holds = (hex?: string) => !!hex && authorised.includes(encodeMultikey(hexToBytes(hex)))
+      const stalled = !holds(rec.rootPublicKey) && !holds(rec.signingPublicKey)
+      _syncStalled.set(did, { stalled, at: Date.now() })
+      return stalled
+    } catch {
+      // Couldn't ask (offline, anchor down) is not "stalled" — same
+      // fail-closed-on-uncertainty stance as resolveConfirmedAbsent.
+      return false
+    }
+  }
+
+  async function refreshSyncStalledBanner(did: string): Promise<void> {
+    const el = document.getElementById('cmd-acc-sync-stalled')
+    if (!el) return
+    if (!(await isPublishStalled(did))) { el.style.display = 'none'; return }
+    el.textContent = ''
+    el.style.cssText = 'display:flex;align-items:center;gap:10px;margin-top:10px;padding:9px 12px;border-radius:8px;background:rgba(255,149,0,0.12);font-size:12.5px;line-height:1.45;color:var(--text)'
+    const txt = document.createElement('span')
+    txt.style.flex = '1'
+    txt.textContent = 'This device can no longer publish your DID document — key rotation moved control to a Sign Key it does not hold. Mail routing and device changes will not reach the network until you enter that phrase.'
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'cmd-page-btn primary'
+    btn.style.cssText = 'padding:4px 12px;font-size:11px;font-weight:900;text-transform:uppercase;border-radius:20px;flex-shrink:0'
+    btn.textContent = 'Fix'
+    btn.onclick = async (ev) => {
+      ev.stopPropagation()
+      _syncStalled.delete(did)
+      await republishIdentity(did)
+      refreshSyncStalledBanner(did)
+    }
+    el.append(txt, btn)
+  }
+
   async function republishIdentity(did: string): Promise<void> {
     // Method-neutral wording throughout ("Sync", not "Publish to DHT") —
     // did:webvh has no DHT/gateway concept at all (a single HTTP PUT to the
@@ -3060,10 +3385,50 @@ export async function setupLeftPane() {
       // enabled protection.
       const { unlockIdentitySecrets } = await import('../did/store.ts')
       if (!(await unlockIdentitySecrets())) { showSysMsg('Unlock cancelled — not synced'); return }
-      const rec = await getDidRecord(did)
+      let rec = await getDidRecord(did)
       if (!rec) throw new Error('no local DID record')
       const { publishBareOrCurrent } = await import('../did/didcomm-devices.ts')
-      const accepted = await publishBareOrCurrent(rec)
+
+      // The root key may no longer hold updateKeys authority — pre-rotation
+      // activated then rotated/deactivated/revoked at any point in this
+      // identity's history moves updateKeys away from root and never moves
+      // it back (this session's whole pre-rotation design). publishFull
+      // would otherwise silently fail with the stale key (caught, logged,
+      // returns 0) and just report "Nothing reachable" — checked here
+      // instead so Sync can prompt for the CURRENT phrase, the same
+      // recovery path rotate/deactivate/revoke already use (2026-08-17,
+      // user: a plain activate→deactivate cycle broke Sync with no way back
+      // in from the UI).
+      let signingKeyOverride: { privateKey: Uint8Array; publicKey: Uint8Array } | undefined
+      if (did.startsWith('did:webvh:')) {
+        const [{ fetchCurrentLog }, { encodeMultikey }] = await Promise.all([
+          import('../did/webvh/log-io.ts'), import('../did/webvh/multikey.ts'),
+        ])
+        const currentLog = await fetchCurrentLog(did).catch(() => null)
+        const rootKey = encodeMultikey(hexToBytes(rec.rootPublicKey))
+        if (currentLog && !(currentLog.last.parameters.updateKeys ?? []).includes(rootKey)) {
+          const { revealCurrentSigner } = await import('./prerotation.ts')
+          const revealed = await revealCurrentSigner(did)
+          if (!revealed) { showSysMsg('Sync needs your Sign Key phrase — cancelled'); return }
+          signingKeyOverride = revealed
+          // revealCurrentSigner may just have written signingPrivateKey/
+          // signingPublicKey to this SAME record (cacheSigningKey) — re-read
+          // it so the `rec` handed to publishBareOrCurrent below reflects
+          // that. Without this, publishFull's own internal read-modify-write
+          // (syncDevicePosition, called from inside publishCurrentState)
+          // would put back the STALE snapshot captured above, silently
+          // erasing the cache this exact Sync call just wrote — the reason
+          // Sync kept re-prompting on every single click even right after
+          // "fixing" that (found live, 2026-08-17).
+          rec = (await getDidRecord(did)) ?? rec
+        }
+      }
+
+      const accepted = await publishBareOrCurrent(rec, signingKeyOverride)
+      // Whatever the banner last concluded is now out of date either way —
+      // a success means it should disappear, a failure that its 60s TTL
+      // shouldn't hide a state the user just tried to fix.
+      _syncStalled.delete(did)
       showSysMsg(accepted > 0 ? 'Synced' : 'Nothing reachable — not synced')
     } catch (e) {
       showSysMsg(`Sync failed: ${e instanceof Error ? e.message : String(e)}`, 15000)
@@ -3121,7 +3486,20 @@ export async function setupLeftPane() {
     // card that the relay would have rejected outright).
     let didDomain: string | null = null
     try { didDomain = parseWebvhDid(did).domain } catch { /* not a biset-shaped webvh DID */ }
-    const mailUrl = getMailUrl()
+    // Same bug the comment above already describes, just one line further
+    // than it was fixed: didDomain was corrected, but the actual request
+    // target here still used getMailUrl() — this deployment's OWN
+    // mail.<hostname>, not the identity's. That sent every claim to
+    // whichever domain happened to be serving the page, which happily
+    // provisioned `<username>@<ITS OWN domain>` and handed back an address
+    // that was never the one the card showed (found live, 2026-08-17:
+    // claiming the `y@biset.md` card from a t.biset.md-served page silently
+    // created `y@t.biset.md` instead).
+    //
+    // mailUrl itself is NOT `mail.<didDomain>` though — see context.ts's
+    // mailRelayUrl for why (one relay serves every domain in this deployment
+    // behind ONE apex URL; mail.t.biset.md has no DNS record at all).
+    const mailUrl = didDomain ? mailRelayUrl(didDomain) : null
     if (!username || !didDomain || !mailUrl) { showSysMsg('Mail relay not configured for this deployment'); return }
 
     const { getDidRecord, unlockIdentitySecrets } = await import('../did/store.ts')
@@ -3131,15 +3509,56 @@ export async function setupLeftPane() {
     const rootPrivateKey = hexToBytes(rec.rootPrivateKey)
 
     const { provisionAccount } = await import('../did/provision.ts')
-    const res = await provisionAccount({ serverUrl: mailUrl, username, did, rootPrivateKey, envelope: rec.envelope })
+    // domain MUST be explicit — provision.ts's own note on this field spells
+    // out why: a relay can host several domains behind one serverUrl,
+    // distinguished only by this field, and omitting it falls back to
+    // "the relay's open domain" — never necessarily didDomain. That default
+    // is exactly what silently provisioned `y@t.biset.md` for a
+    // `did:webvh:...:biset.md:y` claim: mail.biset.md hosts BOTH biset.md
+    // and t.biset.md, and only t.biset.md is configured open — biset.md
+    // requires a provision_secret this UI has no field for yet (found live,
+    // 2026-08-17, alongside the mailUrl bug this same claim card carried).
+    let res = await provisionAccount({ serverUrl: mailUrl, username, did, rootPrivateKey, envelope: rec.envelope, domain: didDomain })
+    // 403 here (jmapsmtp's Refusal::DomainNotOpen etc. — provision.rs's own
+    // may_provision) means the domain isn't self-service: no
+    // authorized_did_domain match, allow_provision off, and no secret sent
+    // yet. It gates EVERY provision attempt unconditionally, including
+    // reclaiming an address this exact DID already legitimately owns per
+    // the claim registry (server.rs checks it before ever looking at
+    // whether the name is already taken) — so there is no path around this
+    // for a privileged domain except supplying the secret its own operator
+    // configured. One retry, not a loop: a wrong secret should fail
+    // visibly, not prompt forever.
+    if (!res.ok && res.status === 403) {
+      const secret = prompt(`${didDomain} requires a provisioning secret to claim ${username}@${didDomain}. Enter it:`)
+      if (secret) {
+        res = await provisionAccount({ serverUrl: mailUrl, username, did, rootPrivateKey, envelope: rec.envelope, domain: didDomain, provisionSecret: secret })
+      }
+    }
     if (!res.ok) {
-      showSysMsg(res.conflict ? 'That address is owned by a different key' : `Server error (${res.status})`)
+      // The relay's own text (provision.ts's ProvisionResult.error) now
+      // surfaces directly rather than a hardcoded "owned by a different
+      // key" for every 409 — jmapsmtp maps BOTH UsernameTaken ("this
+      // account already exists — you want to log in, not claim") and
+      // IdentityOwnedByAnother (a genuine conflict) to the same status
+      // code, and only the server's own message text tells them apart.
+      showSysMsg(res.error || `Server error (${res.status})`)
       return
     }
     const email = res.email || `${username}@${didDomain}`
 
+    // A kek, when this record has the seed to derive one from (did/index.ts's
+    // localDidRecord/initDidWebvh — absent only for an identity created
+    // before 2026-08-17, or restored on a device that hasn't kept it), so
+    // connectAndPersist's PGP setup actually runs. Without it a freshly
+    // claimed relay silently got no PGP key at all (found live, 2026-08-17)
+    // — restoreFromMnemonic already derives one the same way, this just
+    // brings claim in line with it.
+    const { deriveKek } = await import('../cryptenv.ts')
+    const kek = rec.masterSeed ? await deriveKek(hexToBytes(rec.masterSeed)) : undefined
+
     const { connectAndPersist } = await import('../app.ts')
-    const session = await connectAndPersist({ serverUrl: mailUrl, email, password: '', did }, undefined)
+    const session = await connectAndPersist({ serverUrl: mailUrl, email, password: '', did }, kek)
     if (!session) { showSysMsg('Claimed, but failed to connect'); return }
 
     // Carry over a display name set BEFORE this relay existed (the
@@ -3151,6 +3570,26 @@ export async function setupLeftPane() {
     const localName = localDisplayName(did)
     if (localName && localName !== username) {
       await applyDisplayNameToRelay(session, email, localName).catch(() => false)
+    }
+
+    // Publish the new relay to the DID document (routing.json's `service`
+    // array) — without this, claiming only ever produced a LOCAL session:
+    // restoreFromMnemonic (did/restore.ts) discovers relays exclusively from
+    // `doc.service.filter(s => !!s.address)` on the resolved document, never
+    // from this device's own StoredAccounts, so an identity that claimed
+    // mail here could connect on THIS device but a sign-out + restore (or
+    // any other device) found nothing to reconnect to, forever — the same
+    // shape as every other device having zero relays (found live,
+    // 2026-08-17). liveRelayInputs (didcomm-devices.ts) reads live sessions,
+    // and `session` was just added to sessions[] by connectAndPersist above,
+    // so this republish picks it up. Best-effort: the claim itself already
+    // succeeded either way, and the existing "Sync" action (identity menu)
+    // covers a publish that fails here.
+    try {
+      const { publishBareOrCurrent } = await import('../did/didcomm-devices.ts')
+      await publishBareOrCurrent(rec)
+    } catch (e) {
+      console.warn('[claimMailAccount] publish after claim failed (non-fatal, Sync will retry):', e instanceof Error ? e.message : e)
     }
 
     const { fetchRelayInfo } = await import('../context.ts')
@@ -3177,8 +3616,15 @@ export async function setupLeftPane() {
     // deployment's own config.json happens to name.
     let didDomain: string | null = null
     try { didDomain = parseWebvhDid(did).domain } catch { /* not a biset-shaped webvh DID */ }
-    const mailUrl = getMailUrl()
-    if (!username || !didDomain || !mailUrl) return // this deployment has no mail relay configured
+    if (!username || !didDomain) return
+    // Not gated on getMailUrl() (this deployment's own mail.<hostname>) any
+    // more: whether to OFFER claiming `<username>@<didDomain>` is a property
+    // of the identity, not of which domain happens to be serving this page
+    // right now. A deployment with no mail relay of its OWN can still show
+    // (and successfully act on, via claimMailAccount's own didDomain-derived
+    // URL) a claim card for an identity rooted at some OTHER domain that
+    // does have one — the previous `!mailUrl` gate hid it in exactly that
+    // case (found alongside claimMailAccount's own bug, 2026-08-17).
     const email = `${username}@${didDomain}`
     // Already claimed (a real StoredAccount exists for this address) — the
     // real card in relayCards below covers it, don't show a second one.
@@ -3249,6 +3695,7 @@ export async function setupLeftPane() {
     const identityMenuBtn = document.getElementById('cmd-acc-identity-menu-btn') as HTMLButtonElement | null
     const identityDoc = document.getElementById('cmd-acc-identity-doc')
     const identityDevices = document.getElementById('cmd-acc-identity-devices')
+    const identitySyncBtn = document.getElementById('cmd-acc-identity-sync-btn')
     const repAccount = accounts.find(a => a.did)
     // Whether this device already has a passkey guarding the seed + root key
     // (did/store.ts) — decides whether the menu offers to set one up.
@@ -3299,34 +3746,51 @@ export async function setupLeftPane() {
         }
         identityAvatar.onclick = (ev) => { ev.stopPropagation(); pickAndSetIdentityAvatar(did) }
         identityName.textContent = currentDisplayName(did, repEmail)
-        identityName.onclick = null
+        identityName.onclick = (ev) => { ev.stopPropagation(); openDisplayNameModal(did, repEmail) }
         wireIdentityDid(identityDid, did)
         wireIdentityHeading(did)
-        // "Change display name" moved off the name text's own click (which
-        // now just bubbles to the card's expand, like the rest of the
-        // heading), Sync/Export/Import moved off the Devices panel's own
-        // icon row (2026-08-11), and Log out moved off the top-right page
-        // menu (2026-08-12) — that menu is page navigation, and logging out
-        // was the one item on it that wasn't. All five now live in this one
-        // hamburger, which is the identity's own. Sync (republishIdentity)
-        // publishes the WHOLE identity's document (every relay, every
-        // address) regardless of which account triggered it, so it belongs
-        // here once, not duplicated per relay card.
+        // Change display name moved onto the name text's own click (hover
+        // reveals the pencil icon as the affordance, 2026-08-16), Sync/
+        // Export/Import moved off the Devices panel's own icon row
+        // (2026-08-11), and Log out moved off the top-right page menu
+        // (2026-08-12) — that menu is page navigation, and logging out was
+        // the one item on it that wasn't. Sync (republishIdentity) publishes
+        // the WHOLE identity's document (every relay, every address)
+        // regardless of which account triggered it. It moved back out to
+        // its own icon button on the DID:Webvh row (2026-08-16,
+        // user-requested revert) — it's the one action people reach for
+        // often enough that burying it in the dropdown was the wrong call.
         if (identityMenuBtn) {
           identityMenuBtn.style.display = ''
           identityMenuBtn.onclick = (ev) => {
             ev.stopPropagation()
             openDropdownMenu(identityMenuBtn, [
-              { label: 'Change display name', onClick: () => openDisplayNameModal(did, repEmail) },
               ...(identityProtected ? [] : [{ label: 'Protect with passkey', onClick: () => protectWithPasskey(repEmail ?? did) }]),
               { label: 'Show recovery phrase', onClick: () => showRecoveryPhrase(did) },
               { label: 'Export Messages', onClick: () => exportIdentityMessages(did) },
               { label: 'Import Messages', onClick: () => importIdentityMessages() },
-              { label: 'Sync', onClick: () => republishIdentity(did) },
+              // did:webvh only — did:dht has no location to move (its DID is
+              // a pure function of the key, PLAN.md §2.1) and no other method
+              // this identity might have has a portability mechanism at all.
+              ...(did.startsWith('did:webvh:')
+                ? [{
+                  label: 'Edit identity', onClick: async () => {
+                    const { openEditIdentityModal } = await import('./edit-identity.ts')
+                    openEditIdentityModal(did, openModal, () => renderAccountsList(), () => { fetchMessages(); loadLeftInboxes() })
+                  },
+                }]
+                : []),
               { label: 'Log out', danger: true, onClick: () => confirmAndLogout() },
             ])
           }
         }
+        if (identitySyncBtn) {
+          identitySyncBtn.onclick = (ev) => {
+            ev.stopPropagation()
+            republishIdentity(did)
+          }
+        }
+        refreshSyncStalledBanner(did)
         // Adding a relay uses the normal "+ New JMAP account" panel below
         // (or, for the home mail relay specifically, the unclaimed card's
         // own "Claim account" — renderUnclaimedMailCard), which provisions
@@ -3428,15 +3892,26 @@ export async function setupLeftPane() {
 
       const menuBtn = document.createElement('button')
       menuBtn.type = 'button'
-      menuBtn.style.cssText = 'background:none;border:none;color:var(--text-dim);cursor:pointer;padding:6px;line-height:0;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center'
+      menuBtn.style.cssText = 'position:relative;background:none;border:none;color:var(--text-dim);cursor:pointer;padding:6px;line-height:0;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center'
       menuBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>`
       menuBtn.setAttribute('aria-label', 'Menu')
       menuBtn.addEventListener('mouseover', () => { menuBtn.style.background = 'rgba(128,128,128,0.12)' })
       menuBtn.addEventListener('mouseout', () => { menuBtn.style.background = 'none' })
       menuBtn.addEventListener('click', (ev) => {
         ev.stopPropagation()
-        openAccountMenu(menuBtn, a.email, a.serverUrl)
+        openAccountMenu(menuBtn, a.email, a.serverUrl, a.did)
       })
+      // Overlaid on this card's own hamburger (not the top-level one) while
+      // fetchAccountInfo — the actual JMAP Identity.get/Email.query round trip
+      // that fills in Unread/PGP/Sync below — is in flight, so a still-blank
+      // "Unread: …/…" doesn't read as "nothing to show" (2026-08-17, user:
+      // 自分がいっているハンバーガーボタンはjmap relayカードのハンバーカード).
+      const menuSpinner = document.createElement('span')
+      menuSpinner.style.cssText = 'display:none;position:absolute;inset:0;border-radius:6px;background:var(--bg);pointer-events:none'
+      const menuSpinnerRing = document.createElement('span')
+      menuSpinnerRing.style.cssText = 'position:absolute;inset:6px;border-radius:50%;border:1.5px solid var(--accent);border-top-color:transparent;border-right-color:transparent;animation:recip-loading-spin 0.7s linear infinite'
+      menuSpinner.appendChild(menuSpinnerRing)
+      menuBtn.appendChild(menuSpinner)
 
       row.append(left, menuBtn)
 
@@ -3600,12 +4075,13 @@ export async function setupLeftPane() {
       })
 
       if (session) {
+        menuSpinner.style.display = 'block'
         fetchAccountInfo(session).then(info => {
           if (!info) return
           statUnread.textContent = fmtUnread(info)
           statPgp.textContent = info.pgp == null ? '' : info.pgp ? 'PGP ✓' : 'PGP ✗'
           statSync.textContent = `Sync: ${fmtRelTime(info.lastSyncAt)}`
-        }).catch(() => {})
+        }).catch(() => {}).finally(() => { menuSpinner.style.display = 'none' })
       }
       fetchRelayInfo(a.serverUrl).then(() => {
         protoEl.textContent = relayProtocolLabel(a.serverUrl)?.text ?? '?'

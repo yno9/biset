@@ -1,5 +1,7 @@
 // did:webvh identifier parsing/building and the DID-to-HTTPS transform
 // (DIDWEBVHFEAT.md §1-§2, did:webvh v1.0 spec).
+import { SCID_PLACEHOLDER } from './scid.ts'
+
 const SCID_RE = /^[1-9A-HJ-NP-Za-km-z]{46}$/ // base58-btc alphabet, 46 chars (DIDWEBVHFEAT.md §1)
 
 export interface WebvhDidParts {
@@ -13,7 +15,15 @@ export function parseWebvhDid(did: string): WebvhDidParts {
   if (!did.startsWith('did:webvh:')) throw new Error('parseWebvhDid: not a did:webvh identifier')
   const segments = did.slice('did:webvh:'.length).split(':')
   const scid = segments[0]
-  if (!scid || !SCID_RE.test(scid)) throw new Error('parseWebvhDid: invalid SCID segment')
+  // The placeholder is accepted here too, not just SCID_RE's real alphabet:
+  // createGenesis (publish.ts) builds a preliminary document — including,
+  // now, buildBisetWebvhState's routing.json pointer serviceEndpoint, which
+  // calls didToResourceUrl below — against a DID that still carries `{SCID}`
+  // literally, before the real SCID is known and substituted in wholesale.
+  // Rejecting the placeholder here would make that preliminary pass
+  // impossible rather than just producing a URL that gets string-substituted
+  // like every other placeholder-bearing field already does.
+  if (!scid || !(SCID_RE.test(scid) || scid === SCID_PLACEHOLDER)) throw new Error('parseWebvhDid: invalid SCID segment')
   const domainAndPort = segments[1]
   if (!domainAndPort) throw new Error('parseWebvhDid: missing domain segment')
 
@@ -86,15 +96,22 @@ function validatePathSegment(seg: string): string {
   return percentEncodeUpper(decoded)
 }
 
-/** The DID-to-HTTPS transform (DIDWEBVHFEAT.md §2): where a did:webvh
- * identifier's log actually lives. Domain normalization (IDNA/Punycode,
- * RFC9233) is delegated to the platform's URL parser rather than
- * reimplemented. */
-export function didToHttpsUrl(did: string): string {
+/** The DID-to-HTTPS transform (DIDWEBVHFEAT.md §2), generalized to any
+ * filename logically beside `did.jsonl` at the DID's own location — the same
+ * pattern the spec itself uses for `did-witness.json` and `/whois.vp`.
+ * webvh/routing.ts's routing.json (volatile connectivity data kept out of
+ * the signed log) is the other consumer. Domain normalization
+ * (IDNA/Punycode, RFC9233) is delegated to the platform's URL parser rather
+ * than reimplemented. */
+export function didToResourceUrl(did: string, filename: string): string {
   const { domain, port, pathSegments } = parseWebvhDid(did)
   const hostname = new URL(`https://${domain}`).hostname
   const hostPart = port ? `${hostname}:${port}` : hostname
 
-  if (pathSegments.length === 0) return `https://${hostPart}/.well-known/did.jsonl`
-  return `https://${hostPart}/${pathSegments.map(validatePathSegment).join('/')}/did.jsonl`
+  if (pathSegments.length === 0) return `https://${hostPart}/.well-known/${filename}`
+  return `https://${hostPart}/${pathSegments.map(validatePathSegment).join('/')}/${filename}`
+}
+
+export function didToHttpsUrl(did: string): string {
+  return didToResourceUrl(did, 'did.jsonl')
 }

@@ -80,7 +80,7 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
 
 <div id="menu"></div>
 
-<div id="new-user-page" style="display:none;position:fixed;inset:0;background:var(--bg);flex-direction:column;align-items:center;justify-content:center;padding:32px;z-index:10">
+<div id="new-user-page" style="display:none">
   <div style="width:100%;max-width:360px;display:flex;flex-direction:column;gap:14px">
     <div id="nu-pigeon">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges">
@@ -108,7 +108,6 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
         <rect x="7" y="14" width="1" height="1" fill="#ff4d6d"/>
       </svg>
     </div>
-    <div id="nu-chat-header" style="display:none;flex-direction:column;align-items:center;gap:6px;margin-bottom:8px;text-align:center"></div>
     <!-- did:dht/did:webvh indicator hidden (account-create.ts's dhtBtn/webvhBtn
          lookups are null-safe, so this can stay commented without touching
          the TS side — see setupNewUserPage's own note on why the toggle

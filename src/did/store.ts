@@ -64,6 +64,27 @@ export interface DidRecord {
   masterSeed?: string // hex
   rootPublicKey: string // hex
   rootPrivateKey: string // hex
+  /** Whichever key currently holds updateKeys authority, when it differs
+   * from rootPublicKey/rootPrivateKey above — absent for the common case
+   * (pre-rotation never used, or activated but never yet rotated), present
+   * once a rotate/deactivate/revoke has moved updateKeys to a pre-rotation
+   * spare (did/webvh/prerotation.ts). Set the first time ui/prerotation.ts's
+   * revealCurrentSigner verifies a phrase against it, so routine publishing
+   * (Sync, avatar, mediator registration) doesn't need that phrase re-typed
+   * on every call — the key was already in this device's memory the instant
+   * it was typed in to authorize that one verified operation, so persisting
+   * it durably (sealed alongside rootPrivateKey when this device has
+   * passkey protection) creates no NEW exposure beyond what
+   * rootPrivateKey/jmapDevicePrivateKey already accept. What this does NOT
+   * touch is the pre-rotation model's actual protection: a FUTURE,
+   * not-yet-revealed spare (generateSpareKeypair's freshly minted one) is
+   * still shown once and never stored anywhere (2026-08-17 design
+   * discussion — the table this session worked out: every state where
+   * updateKeys != root was requiring a fresh phrase on every single Sync,
+   * with no remaining security reason once the key had already been
+   * revealed once and verified). */
+  signingPrivateKey?: string // hex
+  signingPublicKey?: string // hex
   /** Present INSTEAD of `masterSeed`/`rootPrivateKey` once this device has a
    * passkey guarding them (did/prf.ts): AES-GCM over the two, keyed by the
    * passkey's PRF output, base64. `getDidRecord` merges them back in for the
@@ -357,15 +378,20 @@ export function lockIdentitySecrets(): void {
   sessionKey = null
 }
 
-interface SealedSecrets { masterSeed?: string; rootPrivateKey: string }
+interface SealedSecrets { masterSeed?: string; rootPrivateKey: string; signingPrivateKey?: string }
 
 async function sealIfProtected(record: DidRecord): Promise<DidRecord> {
   if (!sessionKey || !record.rootPrivateKey) return record
-  const secrets: SealedSecrets = { rootPrivateKey: record.rootPrivateKey, ...(record.masterSeed ? { masterSeed: record.masterSeed } : {}) }
+  const secrets: SealedSecrets = {
+    rootPrivateKey: record.rootPrivateKey,
+    ...(record.masterSeed ? { masterSeed: record.masterSeed } : {}),
+    ...(record.signingPrivateKey ? { signingPrivateKey: record.signingPrivateKey } : {}),
+  }
   const blob = await aesGcmSeal(sessionKey, new TextEncoder().encode(JSON.stringify(secrets)))
   const out: DidRecord = { ...record, sealed: btoa(String.fromCharCode(...blob)) }
   delete out.masterSeed
   delete (out as { rootPrivateKey?: string }).rootPrivateKey
+  delete out.signingPrivateKey
   return out
 }
 
@@ -382,7 +408,12 @@ async function unsealForSession(record: DidRecord): Promise<DidRecord> {
   try {
     const blob = Uint8Array.from(atob(record.sealed), c => c.charCodeAt(0))
     const secrets = JSON.parse(new TextDecoder().decode(await aesGcmOpen(sessionKey, blob))) as SealedSecrets
-    return { ...record, rootPrivateKey: secrets.rootPrivateKey, ...(secrets.masterSeed ? { masterSeed: secrets.masterSeed } : {}) }
+    return {
+      ...record,
+      rootPrivateKey: secrets.rootPrivateKey,
+      ...(secrets.masterSeed ? { masterSeed: secrets.masterSeed } : {}),
+      ...(secrets.signingPrivateKey ? { signingPrivateKey: secrets.signingPrivateKey } : {}),
+    }
   } catch {
     return record // wrong key / corrupt blob — same as locked, never a crash
   }

@@ -6,6 +6,7 @@ import { SW_KEYS } from './push/shared.ts'
 // ── Vault ──────────────────────────────────────────────────────────────────────
 export let vaultHandle: FileSystemDirectoryHandle | null = null
 export function setVaultHandle(h: FileSystemDirectoryHandle): void { vaultHandle = h }
+export function clearVaultHandle(): void { vaultHandle = null }
 
 // ── Sessions ───────────────────────────────────────────────────────────────────
 export let sessions: AccountSession[] = []
@@ -152,6 +153,27 @@ export function isDidCommRelay(serverUrl?: string): boolean {
   return serverUrl === DIDCOMM_SERVER_URL
 }
 
+// This deployment's single jmapsmtp relay lives at mail.<apex>, regardless
+// of which same-network subdomain a page is served from or an identity is
+// rooted at (t.biset.md/biset.md, ...) — one relay serves every domain
+// behind ONE URL, distinguished by the `domain` field in the request body,
+// never by a different vhost per domain (see did/provision.ts's
+// provisionAccount). Apex-collapses the same way didcomm-devices.ts's
+// mediatorUrl() already does (t.biset.md -> biset.md) before building the
+// URL. Found live (2026-08-17): three separate call sites each built
+// `mail.<domain>` from the LITERAL (non-apex) domain instead — mail.t.biset.md
+// has no DNS record at all, only mail.biset.md does, so every one of them
+// DNS-failed for any identity/page not rooted at the apex itself. Consolidated
+// here rather than left divergent across call sites.
+export function mailRelayUrl(domain: string): string {
+  const apex = domain.split('.').slice(-2).join('.')
+  return `https://mail.${apex}`
+}
+
+// Deliberately independent of ap/config.ts's AP_ENABLED (outbound AP is
+// retired, but this classifies whatever's already on disk — an existing
+// AP-relay session/account, if any — so it must keep working regardless of
+// whether the app would reach OUT to AP for anything new).
 export function isApRelay(serverUrl?: string): boolean {
   if (!serverUrl) return false
   const url = serverUrl.replace(/\/$/, '')

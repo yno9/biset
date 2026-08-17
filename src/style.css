@@ -800,7 +800,11 @@ select {
   border-bottom: 1px solid var(--header-border);
   font-size: 15px;
 }
-.cmd-page-row:last-child {
+/* :last-of-type, not :last-child — a section can end with a non-row sibling
+   (prerotation-rotate-btn, hidden until active) that would otherwise keep
+   this row from being its parent's last CHILD while still being its last
+   ROW, leaving a stray trailing border under it (2026-08-17). */
+.cmd-page-row:last-of-type {
   border-bottom: none;
 }
 
@@ -1668,6 +1672,17 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   flex-direction: column;
   gap: 2px;
 }
+#cmd-acc-identity-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  /* Hugs the name text instead of stretching across the card (like
+     #cmd-acc-identity-did-row) — otherwise hover/click would fire over the
+     empty space to the right of a short name too. */
+  align-self: flex-start;
+  max-width: 100%;
+}
 #cmd-acc-identity-name {
   font-size: 14px;
   font-weight: 600;
@@ -1675,6 +1690,17 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+}
+#cmd-acc-identity-name-edit {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+#cmd-acc-identity-name:hover + #cmd-acc-identity-name-edit {
+  opacity: 0.7;
 }
 #cmd-acc-identity-did-row {
   display: flex;
@@ -2619,6 +2645,23 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 }
 .new-from-menu-item.selected {
   background: rgba(128, 128, 128, 0.10);
+}
+/* From field's "create account" affordance (shown in place of the address
+   when there's no identity yet) — its own pill, sized for readability as a
+   short call-to-action label rather than a tiny transport badge (a protocol
+   pill's 10px reads fine for 2-3 letters but not for this). Grey by
+   default, darkening on hover. */
+.new-from-create-btn {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  border-radius: 8px;
+  padding: 1px 8px 3px 8px;
+  background: rgba(128, 128, 128, 0.6);
+
+}
+.new-from-create-btn:hover {
+  background: rgba(128, 128, 128, 0.8);
 }
 .new-recipient-row .new-field-input {
   flex: 1;

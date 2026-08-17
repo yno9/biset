@@ -16,7 +16,6 @@ import { join } from 'node:path'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { signBinding } from '../src/did/binding.ts'
 import { ClaimStore } from '../src/anchor/store.ts'
-import { CloudflareAnchor } from '../src/anchor/cloudflare.ts'
 import { startAnchor } from '../src/anchor/server.ts'
 import { WebvhLogStore } from '../src/anchor/webvh-store.ts'
 import { createGenesis } from '../src/did/webvh/publish.ts'
@@ -44,7 +43,6 @@ const TOKEN = 'test-relay-token'
 const webvh = new WebvhLogStore(dataDir)
 const server = startAnchor({
   claims: store,
-  cloudflare: new CloudflareAnchor({}),
   port: PORT,
   hostname: '127.0.0.1',
   relayToken: TOKEN,
@@ -57,7 +55,7 @@ await Bun.sleep(200)
 const REAL_FETCH = globalThis.fetch
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-  const m = /^https:\/\/([^/]+)(\/[^/]+\/did\.jsonl.*)$/.exec(url)
+  const m = /^https:\/\/([^/]+)(\/[^/]+\/(?:did\.jsonl|routing\.json).*)$/.exec(url)
   if (!m) return REAL_FETCH(input as any, init)
   const [, domain, path] = m
   const headers = new Headers(init?.headers)

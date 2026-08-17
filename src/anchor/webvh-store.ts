@@ -8,8 +8,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-const logPath = (dataDir: string, domain: string, username: string) =>
-  join(dataDir, '_webvh', domain, username, 'did.jsonl')
+const resourcePath = (dataDir: string, domain: string, username: string, filename: string) =>
+  join(dataDir, '_webvh', domain, username, filename)
 
 export class WebvhLogStore {
   constructor(private dataDir: string) {}
@@ -17,7 +17,7 @@ export class WebvhLogStore {
   /** Raw JSONL text, or null if this domain+username has no log yet. */
   read(domain: string, username: string): string | null {
     try {
-      return readFileSync(logPath(this.dataDir, domain, username), 'utf-8')
+      return readFileSync(resourcePath(this.dataDir, domain, username, 'did.jsonl'), 'utf-8')
     } catch {
       return null
     }
@@ -28,8 +28,27 @@ export class WebvhLogStore {
    * read-modify-write) — this store has no append/CAS semantics of its own
    * (PLANWEBVH.md §6 remaining infra work). */
   write(domain: string, username: string, jsonl: string): void {
-    const path = logPath(this.dataDir, domain, username)
+    const path = resourcePath(this.dataDir, domain, username, 'did.jsonl')
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     writeFileSync(path, jsonl, { mode: 0o600 })
+  }
+
+  /** did/webvh/routing.ts's sibling resource — volatile connectivity data
+   * (mediatorUrl/routingKey, relay endpoints) that a did:webvh log entry no
+   * longer carries (that file's own note has the why). Same per-(domain,
+   * username) directory as did.jsonl, different filename, no history: a PUT
+   * here always overwrites, there being nothing to preserve. */
+  readRouting(domain: string, username: string): string | null {
+    try {
+      return readFileSync(resourcePath(this.dataDir, domain, username, 'routing.json'), 'utf-8')
+    } catch {
+      return null
+    }
+  }
+
+  writeRouting(domain: string, username: string, json: string): void {
+    const path = resourcePath(this.dataDir, domain, username, 'routing.json')
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    writeFileSync(path, json, { mode: 0o600 })
   }
 }

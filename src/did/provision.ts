@@ -59,6 +59,16 @@ export interface ProvisionResult {
   // wasn't bound/claimed there — the relay says so rather than refusing the
   // whole provision (go-jmapsmtp/go-jmapap provision.go).
   didBound?: boolean
+  // The relay's own refusal text on failure (jmapsmtp's provision.rs's
+  // Refusal::message()) — plain text, not JSON, so the old body-as-JSON
+  // parse silently discarded it on every failure and left callers with
+  // nothing but a status code. `conflict` alone can't distinguish jmapsmtp's
+  // TWO different 409 causes (UsernameTaken vs. IdentityOwnedByAnother —
+  // "this account already exists, log in instead" vs. a genuine identity
+  // conflict), which is exactly the distinction that mattered live,
+  // 2026-08-17: a UI showing "owned by a different key" for both sent
+  // someone hunting for a key mismatch that was never there.
+  error?: string
 }
 
 export interface UnsealedIdentity {
@@ -133,12 +143,18 @@ export async function provisionAccount(p: ProvisionParams): Promise<ProvisionRes
     })
     let email: string | undefined
     let didBound: boolean | undefined
-    try {
-      const j = (await resp.json()) as { email?: string; did_bound?: boolean }
-      email = j.email
-      didBound = j.did_bound
-    } catch { /* no body */ }
-    return { ok: resp.ok, status: resp.status, email, conflict: resp.status === 409, didBound }
+    let error: string | undefined
+    const raw = await resp.text().catch(() => '')
+    if (resp.ok) {
+      try {
+        const j = JSON.parse(raw) as { email?: string; did_bound?: boolean }
+        email = j.email
+        didBound = j.did_bound
+      } catch { /* no body */ }
+    } else {
+      error = raw.trim() || undefined
+    }
+    return { ok: resp.ok, status: resp.status, email, conflict: resp.status === 409, didBound, error }
   } catch {
     return { ok: false, status: 0 }
   }

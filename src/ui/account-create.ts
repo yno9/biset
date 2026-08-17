@@ -4,6 +4,8 @@
 // <!-- --> block).
 // import { buildEnvelope } from '../cryptenv.ts'
 import { hexToBytes } from '../utils.ts'
+import { apOutboundUrl } from '../ap/config.ts'
+import { mailRelayUrl } from '../context.ts'
 
 const WORDS = [
   'Acid','Amber','Anvil','Arch','Arrow','Ash','Axle','Badge','Bark','Beam',
@@ -45,7 +47,7 @@ export function generatePassphrase(): string {
 }
 declare const __BISET_CONFIG__: { hostname?: string } | undefined
 
-// Shared between showNewUserPage (resets/refreshes on every visit) and
+// Shared between refreshNewUserPage (resets/refreshes on every visit) and
 // setupNewUserPage (owns the indicator elements) — module-level since the
 // two run at different times (page show vs. one-time listener setup). Both
 // indicators are purely cosmetic: the submit handler re-checks
@@ -71,10 +73,21 @@ function signupButtonLabel(): string {
   return loginDidForTypedName ? 'Log in' : 'Start'
 }
 
+// Set when the user clicks the `@hostname` suffix on #new and types a
+// different one (2026-08-17, user-requested) — this build's own
+// __BISET_CONFIG__.hostname is baked in at deploy time (one deployment,
+// one domain), which is right for signup but leaves no way to log into an
+// identity on a DIFFERENT biset domain from a page built for this one (e.g.
+// this build serves t.biset.md, the identity to restore is `y@biset.md`).
+// Session-only: reset on reload, exactly like the random default username
+// refreshNewUserPage rolls every visit.
+let hostnameOverride: string | null = null
+
 // Exported: left-pane.ts's unclaimed mail-relay card (renderAccountsList)
 // needs the identical hostname/URL this file's own submit handler uses, so
 // the two never compute a different "home mail relay" for the same identity.
 export function getHostname(): string {
+  if (hostnameOverride) return hostnameOverride
   try { return (window as any).__BISET_CONFIG__?.hostname || '' } catch { return '' }
 }
 
@@ -85,7 +98,7 @@ export function getHostname(): string {
 export function getMailUrl(): string {
   const cfg = (window as any).__BISET_CONFIG__
   const hostname = getHostname()
-  const url = cfg?.mail_url || (hostname ? `https://mail.${hostname}` : '')
+  const url = cfg?.mail_url || (hostname ? mailRelayUrl(hostname) : '')
   return url ? url.replace(/\/$/, '') : ''
 }
 
@@ -100,14 +113,12 @@ async function smtpReachable(): Promise<boolean> {
   }
 }
 
-// The AP (ActivityPub, jmapap) relay — optional, unlike mail: this deployment
-// may not run one at all (and jmapap itself is slated for removal later), so
-// the submit handler treats any failure here as "skip AP", never a signup
-// failure — see its own note.
+// The AP (ActivityPub) relay — retired (2026-08-16, see ap/config.ts's
+// AP_ENABLED), so this now always resolves to '' and apReachable() below
+// always short-circuits false; the submit handler already treats that as
+// "skip AP", never a signup failure, so nothing else here needed to change.
 function getApUrl(): string {
-  const cfg = (window as any).__BISET_CONFIG__
-  const hostname = getHostname()
-  const url = cfg?.ap_url || (hostname ? `https://ap.${hostname}` : '')
+  const url = apOutboundUrl((window as any).__BISET_CONFIG__)
   return url ? url.replace(/\/$/, '') : ''
 }
 
@@ -156,16 +167,9 @@ function refreshNewUserPage(opts: { focus: boolean }) {
   if (opts.focus) usernameInput?.focus()
 }
 
-export function showNewUserPage() {
-  const page = document.getElementById('new-user-page')
-  if (!page) return
-  unmountNewUserPageInline() // may be parked on the account page; take it back first
-  page.style.display = 'flex'
-  try { history.replaceState(null, '', '#new') } catch {}
-  refreshNewUserPage({ focus: true })
-}
-
-// ── Inline mount on the account page (2026-08-12, user-requested) ──────────
+// ── Inline mount on the account page (2026-08-12, user-requested; the only
+// way #new is shown at all since 2026-08-16 — the separate full-page
+// overlay is gone, #account now owns account creation/restore entirely) ──
 // With zero accounts, #account shows this signup form in place of a bare
 // "No accounts" line — the one thing there is to do from that page anyway.
 //
@@ -173,16 +177,10 @@ export function showNewUserPage() {
 // binds its listeners by id (getElementById), so a clone would either
 // duplicate every id in the document or arrive with no handlers at all.
 // Moving the live node keeps every listener attached exactly once.
-//
-// The overlay geometry lives in index.html's inline `style` attribute, so
-// it's stashed on first mount and written back verbatim on unmount — no
-// second copy of those values to drift out of step.
-let _nuOverlayStyle: string | null = null
 
 export function mountNewUserPageInline(container: HTMLElement): void {
   const page = document.getElementById('new-user-page')
   if (!page) return
-  if (_nuOverlayStyle === null) _nuOverlayStyle = page.getAttribute('style') ?? ''
   if (page.parentElement !== container) container.appendChild(page)
   // In-flow, not a fixed full-bleed overlay: no inset/z-index/background of
   // its own. Still centred vertically though — with nothing else on the page
@@ -202,14 +200,13 @@ export function mountNewUserPageInline(container: HTMLElement): void {
   refreshNewUserPage({ focus: false })
 }
 
-/** Puts the node back in `document.body` as the hidden full-page overlay it
- * started as. Called before anything replaces the account page's markup —
- * otherwise the node would be destroyed along with the container it's parked
- * in, and #new would be permanently empty for the rest of the session. */
+/** Parks the node back in `document.body`, hidden. Called before anything
+ * replaces the account page's markup — otherwise the node would be
+ * destroyed along with the container it's parked in, and #account would be
+ * permanently missing its signup form for the rest of the session. */
 export function unmountNewUserPageInline(): void {
   const page = document.getElementById('new-user-page')
   if (!page) return
-  if (_nuOverlayStyle !== null) page.setAttribute('style', _nuOverlayStyle)
   page.style.display = 'none'
   const title = page.querySelector<HTMLElement>('.biset-title')
   if (title) title.style.display = ''
@@ -249,6 +246,54 @@ export function setupNewUserPage() {
   tosInput.addEventListener('change', () => {
     tosIcon.style.opacity = tosInput.checked ? '1' : '0.3'
   })
+
+  // ── Editable @hostname (2026-08-17) ──────────────────────────────────────
+  // Click the suffix to type a different biset domain than this build's own
+  // __BISET_CONFIG__.hostname — see hostnameOverride's own note on why this
+  // exists at all. Swapped for a plain <input> on click rather than made
+  // permanently editable, so the common case (this deployment's own domain,
+  // no override needed) still reads as inert label text.
+  const hostnameEl = document.getElementById('nu-hostname')
+  if (hostnameEl) {
+    hostnameEl.style.cursor = 'pointer'
+    hostnameEl.title = 'Click to log into an identity on a different biset domain'
+    hostnameEl.addEventListener('click', () => {
+      if (hostnameEl.querySelector('input')) return // already editing
+      const current = getHostname()
+      hostnameEl.textContent = ''
+      const input = document.createElement('input')
+      input.type = 'text'
+      input.value = current
+      input.autocomplete = 'off'
+      input.spellcheck = false
+      input.style.cssText = 'width:9em;border:none;background:transparent;color:inherit;font:inherit;outline:none;padding:0;text-align:right'
+      hostnameEl.appendChild(input)
+      input.focus()
+      input.select()
+
+      // `cancelled` guards against blur's own commit firing a second time
+      // after Escape already reverted — blur() still dispatches even on a
+      // detached input, so without this Escape's revert would be
+      // immediately overwritten by commit() reading the untouched value.
+      let cancelled = false
+      const commit = () => {
+        if (cancelled) return
+        const typed = input.value.trim().toLowerCase()
+        hostnameOverride = typed || null
+        hostnameEl.textContent = getHostname()
+        // Same input the username field's own listener re-runs the DNS
+        // lookup on — dispatched rather than duplicating that logic here, so
+        // changing domain re-checks "is this a login?" against the NEW
+        // domain immediately, exactly as if the name had just been retyped.
+        usernameInput.dispatchEvent(new Event('input'))
+      }
+      input.addEventListener('blur', commit)
+      input.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter') { ev.preventDefault(); input.blur() }
+        if (ev.key === 'Escape') { ev.preventDefault(); cancelled = true; hostnameEl.textContent = current; input.blur() }
+      })
+    })
+  }
 
   // ── "is this name already someone's?" (2026-08-12) ──────────────────────
   // Typing an address that already exists turns this form into a login
@@ -445,20 +490,19 @@ export function setupNewUserPage() {
       // rather than silently falling back to a different method. Re-checked
       // fresh here (not trusted from the page-open indicator, which may be
       // stale) since this is the one check that actually decides.
-      const { initDidWebvh } = await import('../did/index.ts')
+      const { createIdentity } = await import('../did/create.ts')
       const { storeDidRecord } = await import('../did/store.ts')
-      const { setOwnDid, anchorReachable } = await import('../did/didcomm-devices.ts')
-      const anchorOk = await anchorReachable()
-      if (!anchorOk) {
-        errEl.textContent = 'Identity anchor unreachable — cannot create an account right now.'
+      let didRecord: import('../did/store.ts').DidRecord
+      try {
+        ;({ didRecord } = await createIdentity(masterSecret, username, hostname))
+      } catch (e) {
+        errEl.textContent = e instanceof Error ? e.message : String(e)
         errEl.style.display = 'block'
         submitBtn.textContent = 'Create'; submitBtn.disabled = false
         return
       }
-      const didRecord = await initDidWebvh(masterSecret, { domain: hostname, username, relays: [], addresses: [] })
       didRecord.envelope = envelope
       await storeDidRecord(didRecord)
-      setOwnDid(didRecord.did)
       // Read the root key BEFORE enabling at-rest protection: enabling it
       // re-writes every record with the seed and root key sealed, and the rest
       // of this handler signs with them. The session stays unlocked either
@@ -517,8 +561,9 @@ export function setupNewUserPage() {
         const relays: Array<{ id: string; serverUrl: string; protocol: string; address: string }> = []
         if (mailOk) relays.push({ id: 'mail', serverUrl: mailUrl, protocol: 'mail', address: email })
         if (apOk) relays.push({ id: 'ap', serverUrl: apUrl, protocol: 'activitypub', address: email })
+        const identityPub = hexToBytes(didRecord.rootPublicKey)
         await updateDocument({
-          did: didRecord.did, rootPrivateKey: rootPriv, rootPublicKey: hexToBytes(didRecord.rootPublicKey),
+          did: didRecord.did, signingPrivateKey: rootPriv, signingPublicKey: identityPub, identityPublicKey: identityPub,
           relays, addresses: email,
         }).catch(e => console.warn('[account-create] webvh relay sync failed (non-fatal):', e instanceof Error ? e.message : e))
       }
@@ -579,24 +624,16 @@ export function setupNewUserPage() {
       // time) appears without the user needing to manually reload; harmless
       // no-op if they've already navigated away from /account by then.
       ;(async () => {
-        const { registerWithMediator, mediatorUrl } = await import('../did/didcomm-devices.ts')
-        const reg = await registerWithMediator(mediatorUrl())
-        const { setupDidCommChannel } = await import('../did/didcomm/channel.ts')
-        await setupDidCommChannel(reg.own.did, () => { import('./shell.ts').then(s => s.fetchMessages()); loadLeftInboxes() })
+        const { registerIdentityChannel } = await import('../did/create.ts')
+        await registerIdentityChannel(didRecord.did, () => { import('./shell.ts').then(s => s.fetchMessages()); loadLeftInboxes() })
         const { refreshAccountsList } = await import('./left-pane.ts')
         refreshAccountsList()
       })().catch(e => console.warn('[account-create] mediator registration failed (non-fatal):', e instanceof Error ? e.message : e))
 
-      const { refreshAccountsList, openComposeTo } = await import('./left-pane.ts')
+      const { refreshAccountsList } = await import('./left-pane.ts')
       startPolling()
       refreshAccountsList()
-      // Pending-DM handoff: a visitor who arrived via /<user> (or #compose/<addr>)
-      // had the chat target stashed by showUserLanding — open compose to it rather
-      // than dropping on the account page.
-      const { takePendingDm } = await import('./user-landing.ts')
-      const pending = takePendingDm()
-      if (pending) openComposeTo(pending)
-      else showMenuPage('/account')
+      showMenuPage('/account')
       showSysMsg('Account created')
 
       // Show the recovery phrase, and offer passkey protection as the user

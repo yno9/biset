@@ -10,3 +10,13 @@ export function jcsMultihashBase58(value: unknown): string {
   const bytes = new TextEncoder().encode(canonicalize(value))
   return base58.encode(multihashSha256(bytes))
 }
+
+/** Pre-rotation's own hash construction (did:webvh v1.0 "Pre-Rotation Key
+ * Hash Generation and Verification"): `base58btc(multihash(multikey))` over
+ * the raw multikey STRING bytes directly — no JSON, no JCS canonicalization,
+ * unlike jcsMultihashBase58 above. Used both to build `nextKeyHashes` entries
+ * (publish.ts) and to verify a revealed key against a previous commitment
+ * (resolver.ts). */
+export function multikeyHashBase58(multikey: string): string {
+  return base58.encode(multihashSha256(new TextEncoder().encode(multikey)))
+}

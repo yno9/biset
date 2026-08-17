@@ -1,15 +1,43 @@
 // biset's did:webvh DID Document ("state") builder — the W3C DID Core JSON
 // shape a did:webvh log entry's `state` field carries directly (unlike
 // did:dht, whose DNS-record encoding needs its own codec — see
-// dht/document.ts). Mirrors dht/document.ts's buildBisetDocument argument
-// shape so call sites (didcomm-devices.ts, webvh/publish.ts) branch on
-// method without relearning a different signature.
-import {
-  encodeMultikey, decodeMultikey, encodeX25519Multikey, decodeX25519Multikey,
-  encodeMlkem768Multikey, decodeMlkem768Multikey,
-} from './multikey.ts'
+// dht/document.ts).
+//
+// Minimal by design (2026-08-17): did:webvh v1.0 requires only the top-level
+// `id` in the DIDDoc ("The DIDDoc can contain any other content as deemed
+// necessary by the DID Controller" — spec's own "Create" step 3), and the
+// log has no compaction, so anything that isn't actually load-bearing for
+// PROVING this identity is the same one across time costs bytes forever.
+// Sorted into what stays signed and what moved to routing.ts's sibling
+// resource:
+//
+//   id / verificationMethod[0] (#key-1) / authentication  — identity itself:
+//     the root key IS what "same identity" means here, and the hash chain
+//     only has meaning relative to it. Stays.
+//   assertionMethod — pure duplication of #key-1 via a second relationship
+//     name nothing here ever used. Dropped outright, not even relocated.
+//   keyAgreement (X25519 + ML-KEM device keys), alsoKnownAs, name —
+//     operational/self-asserted data that churns with device and relay
+//     churn, never with "is this still the same identity". Moved to
+//     routing.ts; resolver.ts merges it back in on read so every existing
+//     consumer of a resolved WebvhDidDocument stays oblivious to where it
+//     came from.
+//   service — almost entirely moved too, EXCEPT one constant pointer entry
+//     (`#routing`, added 2026-08-17) naming where routing.json actually
+//     lives. Without it, nothing in did.jsonl signals routing.json exists at
+//     all — a resolver has to already know biset's private filename
+//     convention to find it, which is unfriendly to exactly the kind of
+//     third party did:webvh's own "override the implicit DID URL resolution
+//     with an explicit service" mechanism (spec's DID URL Handling section,
+//     the same mechanism `/whois` uses) exists to help. This entry never
+//     changes after genesis, so it costs one one-time write, never a
+//     recurring one — resolver.ts's mergeRouting concatenates it with
+//     routing.json's own service list rather than replacing wholesale, so
+//     it survives every merge.
+import { encodeMultikey, decodeMultikey, decodeX25519Multikey, decodeMlkem768Multikey } from './multikey.ts'
 import { fragmentOf, isDeviceKid, isMlkemKid, mlkemKidFor, deviceKidForMlkem } from '../devicekid.ts'
 import type { DidKeyAgreement } from '../document.ts'
+import { didToResourceUrl } from './identifier.ts'
 
 // ML-KEM-768 keyAgreement key (PLAN.md "did:webvh PQハイブリッド化", Phase 1) —
 // webvh-only (did:dht is explicitly out of scope, PLAN.md §1: BEP44's 1000-byte
@@ -59,10 +87,11 @@ export interface WebvhDidDocument {
   id: string
   verificationMethod: WebvhVerificationMethod[]
   authentication: string[]
-  assertionMethod: string[]
   // Present only when this identity has at least one registered DIDComm
   // device key — array of verificationMethod ids, W3C DID Core standard
-  // shape (unlike did:dht's positional _k<n> DNS records).
+  // shape (unlike did:dht's positional _k<n> DNS records). Sourced from
+  // routing.json on a resolved document (resolver.ts) — see this file's own
+  // header note.
   keyAgreement?: string[]
   service: WebvhService[]
   alsoKnownAs: string[]
@@ -85,110 +114,42 @@ export function webvhMlkemKeyAgreementId(did: string, kidFragment: string): stri
   return `${did}${mlkemKidFor(fragmentOf(kidFragment))}`
 }
 
-export interface DidCommServiceOpts {
-  mediatorUrl: string
-  routingKey: string
-}
+/** The signed log entry's own `state` shape — narrower than a resolved
+ * WebvhDidDocument. `alsoKnownAs` is deliberately absent rather than written
+ * as `[]`: resolver.ts's mergeRouting overwrites it unconditionally on every
+ * resolve regardless of what the raw state holds, so writing an empty array
+ * into the signed bytes buys nothing but a dead key forever. `service` DOES
+ * stay — see this file's header on the one pointer entry it always carries. */
+export type SignedWebvhState = Omit<WebvhDidDocument, 'alsoKnownAs'>
 
-export interface BuildWebvhStateOpts {
-  keyAgreementKeys?: DidKeyAgreement[]
-  // Paired by slot number with keyAgreementKeys — a device that has published
-  // an X25519 entry at `n` MAY also have one here at the same `n` (PQ-capable
-  // device); absence just means that device's ML-KEM-768 key hasn't
-  // propagated yet or the whole identity predates PQ support, not an error.
-  mlkemKeyAgreementKeys?: DidMlkemKeyAgreement[]
-  didCommService?: DidCommServiceOpts
-  name?: string
-  /** The DID string this identity was published under BEFORE a domain move
-   * (webvh/publish.ts's moveDidToNewDomain, PLANWEBVH.md §9) — appended to
-   * alsoKnownAs alongside any mailto: addresses.
-   *
-   * Informational only. Under did:webvh's portability mechanism the move
-   * appends to the SAME log (same SCID), so resolution needs no pointer at
-   * all in either direction: the old location serves that same log, and
-   * resolving the old DID matches its genesis entry and returns the latest
-   * state. This replaced a `movedTo` forward-pointer that the superseded
-   * new-genesis implementation depended on, where two unrelated logs meant a
-   * pointer was the ONLY link between them. */
-  movedFrom?: string
-}
+/** did.jsonl and routing.json are logically beside each other (both under
+ * the DID's own domain/path, identifier.ts's didToResourceUrl) — kept as a
+ * literal here rather than importing routing.ts's own didToRoutingUrl to
+ * avoid a cycle (routing.ts already imports this file for WebvhService).
+ * Must name the exact same file routing.ts's own functions read/write. */
+const ROUTING_FILENAME = 'routing.json'
 
-export function buildBisetWebvhState(
-  did: string,
-  rootPublicKey: Uint8Array,
-  relays: Array<{ id: string; serverUrl: string; protocol?: string; address?: string }>,
-  addresses: string | string[],
-  opts: BuildWebvhStateOpts = {},
-): WebvhDidDocument {
-  const addrs = (Array.isArray(addresses) ? addresses : [addresses]).filter(Boolean)
+/** Builds the always-minimal signed state: `id`, the one key that defines
+ * this identity, and a constant pointer to where routing.json lives (this
+ * file's header explains why that one entry stays signed while everything
+ * else in `service` doesn't). Everything else a resolved WebvhDidDocument
+ * carries (keyAgreement, the rest of service, alsoKnownAs, name) comes from
+ * routing.ts/resolver.ts instead. */
+export function buildBisetWebvhState(did: string, rootPublicKey: Uint8Array): SignedWebvhState {
   const keyId = `${did}#key-1`
-  const verificationMethod: WebvhVerificationMethod[] = [
-    { id: keyId, type: 'Multikey', controller: did, publicKeyMultibase: encodeMultikey(rootPublicKey) },
-  ]
-
-  // Sorted by kid for a deterministic document; the order carries no meaning.
-  const byKid = (a: { kid: string }, b: { kid: string }) => (a.kid < b.kid ? -1 : a.kid > b.kid ? 1 : 0)
-  const kaKeys = [...(opts.keyAgreementKeys ?? [])].sort(byKid)
-  for (const ka of kaKeys) {
-    verificationMethod.push({
-      id: webvhKeyAgreementId(did, ka.kid), type: 'Multikey', controller: did,
-      publicKeyMultibase: encodeX25519Multikey(ka.publicKey),
-    })
-  }
-  const mlkemKaKeys = [...(opts.mlkemKeyAgreementKeys ?? [])].sort(byKid)
-  for (const ka of mlkemKaKeys) {
-    verificationMethod.push({
-      id: webvhMlkemKeyAgreementId(did, ka.kid), type: 'Multikey', controller: did,
-      publicKeyMultibase: encodeMlkem768Multikey(ka.publicKey),
-    })
-  }
-
-  const service: WebvhService[] = relays.map(r => ({
-    id: `${did}#${r.id}`, type: 'JMAPRelay', serviceEndpoint: r.serverUrl.replace(/\/$/, ''),
-    protocol: r.protocol, address: r.address,
-  }))
-  if (opts.didCommService) {
-    service.push({
-      // DIDComm v2's own shape: one object carrying uri/accept/routingKeys.
-      // This used to publish the endpoint as an array with `accept` and
-      // `routingKeys` as SIBLINGS of it, which is the pre-v2 placement — a
-      // conforming agent reading that finds the mediator's URI and no routing
-      // keys, so it cannot Forward to us at all. biset's own resolver read the
-      // flat form, which is why nothing here noticed.
-      id: `${did}#didcomm`, type: 'DIDCommMessaging',
-      serviceEndpoint: { uri: opts.didCommService.mediatorUrl, accept: ['didcomm/v2'], routingKeys: [opts.didCommService.routingKey] },
-    })
-  }
-
   return {
-    // Multikey is what every verificationMethod here uses, and it is defined
-    // by the security vocabulary rather than by DID Core — a document that
-    // names the type without the context that defines it is only readable by
-    // implementations that already assume it. did:webvh hashes with JCS rather
-    // than JSON-LD canonicalization, so this costs nothing at verification
-    // time and makes the document self-describing for everyone else.
+    // Multikey is what verificationMethod uses, and it is defined by the
+    // security vocabulary rather than by DID Core — a document that names
+    // the type without the context that defines it is only readable by
+    // implementations that already assume it. did:webvh hashes with JCS
+    // rather than JSON-LD canonicalization, so this costs nothing at
+    // verification time and makes the document self-describing for
+    // everyone else.
     '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/multikey/v1'],
     id: did,
-    verificationMethod,
+    verificationMethod: [{ id: keyId, type: 'Multikey', controller: did, publicKeyMultibase: encodeMultikey(rootPublicKey) }],
     authentication: [keyId],
-    assertionMethod: [keyId],
-    // ML-KEM entries are deliberately NOT in `keyAgreement`.
-    //
-    // `keyAgreement` means "you may run key agreement with these". Every
-    // implementation but this one reads that as X25519-shaped ECDH, so listing
-    // 1184-byte ML-KEM keys there hands a conforming agent a list where half
-    // the entries fail — and biset's own resolver only avoided it by filtering
-    // on a naming convention nobody else knows (didcomm/resolve.ts).
-    //
-    // They stay in `verificationMethod`, which is where a key that exists but
-    // has no standard relationship belongs. biset pairs each with its device
-    // by the shared kid suffix (devicekid.ts's mlkemKidFor) and reads it from
-    // there; anyone else simply sees keys they have no use for, which is the
-    // honest state of affairs while MLS/DIDComm PQ hybrids are pre-standard.
-    ...(kaKeys.length ? { keyAgreement: kaKeys.map(ka => webvhKeyAgreementId(did, ka.kid)) } : {}),
-    service,
-    alsoKnownAs: [...addrs.map(a => `mailto:${a}`), ...(opts.movedFrom ? [opts.movedFrom] : [])],
-    ...(opts.name ? { name: opts.name } : {}),
+    service: [{ id: `${did}#routing`, type: 'BisetRoutingDocument', serviceEndpoint: didToResourceUrl(did, ROUTING_FILENAME) }],
   }
 }
 
@@ -205,9 +166,9 @@ export function rootPublicKeyFromWebvhState(doc: WebvhDidDocument): Uint8Array |
 }
 
 /** Extracts the keyAgreement X25519 keys back out of a resolved document —
- * the read-side counterpart to buildBisetWebvhState's keyAgreementKeys
- * option. Reads verificationMethod entries named by the `keyAgreement` id
- * list; the fragment IS the kid, so nothing is parsed out of it. */
+ * the read-side counterpart to routing.ts's keyAgreementKeys option. Reads
+ * verificationMethod entries named by the `keyAgreement` id list; the
+ * fragment IS the kid, so nothing is parsed out of it. */
 export function keyAgreementKeysFromWebvhState(doc: WebvhDidDocument): DidKeyAgreement[] {
   const ids = new Set(doc.keyAgreement ?? [])
   const out: DidKeyAgreement[] = []
@@ -226,8 +187,8 @@ export function mlkemKeyAgreementKeysFromWebvhState(doc: WebvhDidDocument): DidM
   const out: DidMlkemKeyAgreement[] = []
   for (const vm of doc.verificationMethod) {
     // Read from verificationMethod alone: these are deliberately not in
-    // `keyAgreement` (see buildBisetWebvhState), so requiring them to be
-    // listed there would find nothing.
+    // `keyAgreement` (see routing.ts's buildRoutingDoc), so requiring them
+    // to be listed there would find nothing.
     const kid = fragmentOf(vm.id)
     if (!isMlkemKid(kid)) continue
     // Stored under the X25519 kid it belongs to, not its own — that is the

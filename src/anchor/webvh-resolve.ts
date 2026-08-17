@@ -19,8 +19,9 @@
 import type { WebvhLogStore } from './webvh-store.ts'
 import { parseWebvhDid, didToHttpsUrl } from '../did/webvh/identifier.ts'
 import { parseLog } from '../did/webvh/log.ts'
-import { resolveEntries } from '../did/webvh/resolver.ts'
+import { resolveEntries, mergeRouting } from '../did/webvh/resolver.ts'
 import type { WebvhDidDocument } from '../did/webvh/document.ts'
+import { didToRoutingUrl, type RoutingDoc } from '../did/webvh/routing.ts'
 import { fetchGuarded, NotFoundError } from './ssrf-guard.ts'
 
 /** Local-store-only resolve, kept as its own export for the one caller that
@@ -63,4 +64,36 @@ export async function resolveWebvhDocument(did: string, webvh?: WebvhLogStore): 
     throw e
   }
   return resolveEntries(did, parseLog(text))
+}
+
+/** resolveWebvhDocument, plus routing.json's keyAgreement/service/name
+ * (webvh/routing.ts's own note: none of that lives in the signed log any
+ * more). Only the mediator's own key resolver (anchor/index.ts's
+ * resolveDidWebvh) needs this — didbind.ts's root-key verification reads
+ * only `authentication`/verificationMethod[0], which stay in the signed
+ * document, so it keeps using resolveOwnWebvhDocument alone rather than
+ * paying for a routing.json read it has no use for. Own-store-then-guarded-
+ * remote, same fallback shape as resolveWebvhDocument itself; a missing or
+ * unreachable routing.json degrades to "no extra info" (mergeRouting's own
+ * fail-soft stance), not a resolution failure. */
+export async function resolveWebvhDocumentWithRouting(did: string, webvh?: WebvhLogStore): Promise<WebvhDidDocument | null> {
+  const doc = await resolveWebvhDocument(did, webvh)
+  if (!doc) return null
+
+  let routing: RoutingDoc | null = null
+  if (webvh) {
+    try {
+      const parts = parseWebvhDid(doc.id)
+      const json = parts.pathSegments.length === 1 && parts.pathSegments[0]
+        ? webvh.readRouting(parts.domain, parts.pathSegments[0])
+        : null
+      routing = json ? (JSON.parse(json) as RoutingDoc) : null
+    } catch { routing = null }
+  }
+  if (!routing) {
+    try {
+      routing = JSON.parse(await fetchGuarded(didToRoutingUrl(doc.id))) as RoutingDoc
+    } catch { routing = null }
+  }
+  return mergeRouting(doc, routing)
 }

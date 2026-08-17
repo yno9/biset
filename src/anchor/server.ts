@@ -15,49 +15,28 @@
 //   POST   /_anchor/devices/vouch   {"did":…,"device_pub_key":…,"label":…,…} → 200 | 400/401
 //
 // **The claim registry (/_anchor/identity/*) is for this anchor's own relays
-// only** — naming a DID requires proving it (a relay_token Bearer), and the
-// registry had two read routes with no caller (a stranger's operator must not
-// learn who is looking them up — src/did/discovery.ts asks DNS instead). The
-// mediator is the other thing here the world may talk to.
+// only** — naming a DID requires proving it (a relay_token Bearer). It has no
+// read routes at all: address→DID discovery does not need one, since biset's
+// own DID.md convention commits to a did:webvh identifier's trailing path
+// segment always naming the SAME localpart the mail address at that domain
+// uses — `user@domain`'s DID is always at `https://domain/user/did.jsonl`
+// (did/discovery.ts). A DNS TXT anchor and, briefly, a WebFinger endpoint
+// both used to answer this question separately (2026-08-17: removed, see
+// discovery.ts's own history) before it was clear the convention alone
+// always could. The mediator is the other thing here the world may talk to.
 import type { ClaimStore } from './store.ts'
-import { CloudflareAnchor } from './cloudflare.ts'
 import { verifyDIDBinding, verifyDeviceVouch, rootKeyResolver } from './didbind.ts'
 import type { MediatorHandler } from './mediator/server.ts'
 import type { WebvhLogStore } from './webvh-store.ts'
-import { resolveEntries } from '../did/webvh/resolver.ts'
-import { buildBisetWebvhDid, parseWebvhDid, bisetWebvhUsername } from '../did/webvh/identifier.ts'
-import type { LogEntry } from '../did/webvh/log.ts'
+import { parseWebvhDid, bisetWebvhUsername } from '../did/webvh/identifier.ts'
+import { createWebvhHandler } from '../webvh-server/core.ts'
+import { parseLog, resolveParameters, type LogParameters } from '../did/webvh/log.ts'
+import { verifyProof, type DataIntegrityProof } from '../did/webvh/proof.ts'
+import { decodeMultikey } from '../did/webvh/multikey.ts'
 
 import { createHash, timingSafeEqual } from 'node:crypto'
 
 const MAX_BODY = 1 << 12 // matches Go's io.LimitReader(r.Body, 1<<12)
-// What one REQUEST may carry. A did:webvh log is append-only and every entry
-// embeds the whole document, so the log itself outgrows any request-sized
-// bound eventually — which is why a write sends only what is new (POST below)
-// and this bounds a handful of entries, not a history. It stays generous
-// because the whole-log PUT is still accepted from clients that predate the
-// append route.
-//
-// This is the ONLY bound available before the caller is known: writes here are
-// authorized by the update key inside the body (see handleWebvh's note), which
-// cannot be checked until the body has been buffered and parsed.
-const MAX_WEBVH_LOG_BODY = 1 << 20 // 1MiB
-
-// What one IDENTITY may accumulate on this disk, enforced explicitly rather
-// than left to the request cap to imply. The request cap used to be the de
-// facto storage bound — and did the job so badly that a legitimate client
-// crossed it and could no longer publish AT ALL, including the update that
-// would have shrunk its document (y@biset.md, 2026-08-13): every way out
-// needed an append, and the append was what no longer fit.
-//
-// Two numbers rather than one because the two failure modes differ: a log of
-// enormous entries and a log of endless tiny ones both need stopping, and
-// saying so plainly is better than a single byte count that silently means
-// different things for different documents.
-const serializeLines = (lines: string[]): string => lines.join('\n') + '\n'
-
-const MAX_WEBVH_LOG_ENTRIES = 10_000
-const MAX_WEBVH_LOG_BYTES = 16 << 20 // 16MiB
 
 // The one name a username/localpart may never be: every internal route below
 // (`/_anchor/identity/*`, `/_anchor/devices/vouch`) lives
@@ -88,7 +67,6 @@ const notFound = () => text('404 page not found', 404)
 
 export interface AnchorOptions {
   claims: ClaimStore
-  cloudflare: CloudflareAnchor
   port: number
   hostname?: string
   /** Absent when no `mediator_url` is configured — the anchor then answers
@@ -102,7 +80,7 @@ export interface AnchorOptions {
   relayToken: string
 }
 
-export function startAnchor({ claims, cloudflare, port, hostname, mediator, webvh, relayToken }: AnchorOptions) {
+export function startAnchor({ claims, port, hostname, mediator, webvh, relayToken }: AnchorOptions) {
   const expected = createHash('sha256').update(relayToken).digest()
   const resolveRootKey = rootKeyResolver(webvh)
 
@@ -131,17 +109,18 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, webv
   // collapsing the two would have relays telling people their signature failed
   // when it was never looked at.
   const forbidden = () => text('this anchor does not serve that relay', 403)
-  // GET/PUT /<username>/did.jsonl — did:webvh log storage (PLANWEBVH.md
-  // §2.1/§2.3). Domain comes from the request Host header, not the path: a
-  // username is only unique within its own domain, and biset serves two
-  // (biset.md gated, t.biset.md open) off this one process.
+  // GET/PUT/POST /<username>/did.jsonl — did:webvh log storage (PLANWEBVH.md
+  // §2.1/§2.3), delegated to webvh-server/core.ts's standalone handler (the
+  // did:webvh v1.0 hosting contract with no biset-specific opinions — see
+  // its file header). This anchor only supplies what makes it biset's own
+  // anchor rather than a bare one: the reserved-name guard and the
+  // x-biset-domain resolution below.
   //
   // No `dids/` prefix any more (2026-08-11, user-requested — shorter DIDs):
   // the path is now just `/<username>/did.jsonl`, which means a username
   // MUST NOT be able to collide with any of this anchor's own reserved
   // top-level names (`_anchor`, the prefix every other internal route below
-  // now lives under) — checked once, at the bottom of this function, rather
-  // than trusted to never come up.
+  // now lives under) — passed to core.ts as reservedFirstSegments.
   //
   // x-biset-domain, not Host, is the real signal: biset.md/t.biset.md's
   // Caddy proxies `/*/did.jsonl` to this anchor over `reverse_proxy
@@ -159,139 +138,95 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, webv
   // hop 1 and never touched by hop 2 is the only thing that survives — v1's
   // Caddyfile sets `header_up X-Biset-Domain {host}` in the same block that
   // rewrites Host, and hop 2 has no reason to touch a header it doesn't know
-  // about. Falling back to Host keeps direct-to-anchor callers (tests, curl
-  // against anchor.biset.md itself) working unchanged.
+  // about. Falling back to Host (core.ts's default) keeps direct-to-anchor
+  // callers (tests, curl against anchor.biset.md itself) working unchanged.
   //
-  // Both GET and PUT are open to anyone — no relay_token gate — same
-  // "gateway holds zero authority" stance the anchor already takes: a did:webvh
-  // log is self-certifying (SCID + per-entry Data Integrity proofs), so a
-  // browser client can PUT it directly and this store cannot forge one, only
-  // withhold. (Originally gated behind fromOwnRelay, on the theory that a
-  // `username` — unlike a did:dht key — is a scarce human-readable name and
-  // needed the same ownership proof `/_anchor/identity/*` requires for addresses.
-  // That gate made the endpoint unusable from a browser: relay_token is a
-  // server-side secret the client never holds. Fixed by enforcing ownership
-  // a different way — see the append-only check below — rather than by
-  // requiring a secret the caller can't have.)
-  async function handleWebvh(req: Request, url: URL): Promise<Response> {
-    if (!webvh) return notFound()
-    const m = /^\/([^/]+)\/did\.jsonl$/.exec(url.pathname)
-    if (!m) return notFound()
-    const username = m[1]!
-    // Reserved: the one name every OTHER route on this anchor lives under
-    // (RESERVED_USERNAME, checked below too so account creation itself can
-    // never mint a claim this route would then be unable to serve).
-    if (username === RESERVED_USERNAME) return notFound()
-    const domain = (req.headers.get('x-biset-domain') ?? req.headers.get('host') ?? '').split(':')[0]
-    if (!domain) return text('missing host', 400)
+  // Both GET and write are open to anyone — no relay_token gate — same
+  // "gateway holds zero authority" stance the anchor already takes (core.ts's
+  // own note has the full reasoning: a did:webvh log is self-certifying, so
+  // this store cannot forge one, only withhold it).
+  const handleWebvh = webvh
+    ? createWebvhHandler(webvh, { domainHeader: 'x-biset-domain', reservedFirstSegments: [RESERVED_USERNAME] })
+    : async () => notFound()
 
-    switch (req.method) {
-      case 'GET': {
-        const jsonl = webvh.read(domain, username)
-        if (!jsonl) return notFound()
-        return new Response(jsonl, { status: 200, headers: { ...CORS, 'Content-Type': 'text/jsonl' } })
-      }
-      case 'POST':
-      case 'PUT': {
-        const body = await req.text()
-        // A did:webvh log accumulates a full state + proof per entry (unlike
-        // the single-JSON-object bodies MAX_BODY was sized for), so it
-        // outgrows that 4KB limit within a handful of updates — a dedicated,
-        // much larger cap instead.
-        if (body.length > MAX_WEBVH_LOG_BODY) return text('log too large', 400)
-        const lines = body.split('\n').map(l => l.trim()).filter(Boolean)
-        if (lines.length === 0) return text('empty log', 400)
-        let entries: LogEntry[]
-        try {
-          entries = lines.map(l => JSON.parse(l) as LogEntry)
-        } catch {
-          return text('invalid JSONL', 400)
-        }
-        // What this store DOES enforce, in place of the relay_token gate: an
-        // update to an EXISTING username must extend its current log
-        // verbatim (every existing line byte-identical, only new lines
-        // appended), never replace it outright. `username` is a scarce
-        // human-readable name — without this, anyone could overwrite a
-        // stranger's log with a fabricated one of their own and erase their
-        // entire history. A first-ever PUT for a username (genesis) is
-        // unrestricted — first-come, same as claiming any name anywhere.
-        const existing = webvh.read(domain, username)
-        const existingLines = existing ? existing.split('\n').map(l => l.trim()).filter(Boolean) : []
-        // POST carries ONLY the new entries; the stored log is the prefix.
-        // PUT carries the whole thing, as it always did.
-        //
-        // The distinction matters far past convenience: with PUT, the request
-        // grows with the history, so a long-lived identity eventually cannot
-        // write at all — and the operation it needs in order to shrink is
-        // itself a write. POST's body is one entry's worth forever.
-        const isAppend = req.method === 'POST' && existingLines.length > 0
-        const allLines = isAppend ? [...existingLines, ...lines] : lines
-        if (!isAppend && existing) {
-          // The append-only rule, unchanged for a whole-log PUT: every line
-          // the store already holds must come back byte-identical. `username`
-          // is a scarce human-readable name, and without this anyone could
-          // replace a stranger's log with a fabricated one and erase their
-          // history.
-          const extendsExisting = lines.length >= existingLines.length && existingLines.every((l, i) => l === lines[i])
-          if (!extendsExisting) return text('update must extend the existing log, not replace it', 409)
-        }
-        if (allLines.length > MAX_WEBVH_LOG_ENTRIES) {
-          return text(`log would exceed ${MAX_WEBVH_LOG_ENTRIES} entries for this name`, 507)
-        }
-        const totalBytes = allLines.reduce((n, l) => n + l.length + 1, 0)
-        if (totalBytes > MAX_WEBVH_LOG_BYTES) {
-          return text(`log would exceed ${MAX_WEBVH_LOG_BYTES} bytes for this name`, 507)
-        }
-        let allEntries: LogEntry[]
-        try {
-          allEntries = isAppend ? [...existingLines.map(l => JSON.parse(l) as LogEntry), ...entries] : entries
-        } catch {
-          return text('stored log is not valid JSONL', 500)
-        }
-        // Full did:webvh verification (SCID, entryHash chain, versionTime
-        // monotonicity, every entry's Data Integrity proof against the
-        // updateKeys the PRIOR entry authorized) — same check resolve() does,
-        // run here too before accepting the write. Used to be skipped ("the
-        // resolver's job"), on the theory that this store holds zero
-        // cryptographic authority over a log's content — true for reading,
-        // but append-only writes have no undo: once a wrongly-signed entry
-        // (e.g. a rotation signed with the wrong key) is accepted, every
-        // future resolve fails at that entry forever, and there is no way to
-        // retract it (found live: an editor tool signed a rotation with a
-        // superseded key, and the DID was permanently unresolvable from that
-        // point on). Rejecting a bad log HERE, before it's ever written,
-        // costs nothing a well-formed client would notice.
-        // Verified against the DID of the LOCATION being written to — built
-        // from (this domain, this username, the log's own SCID) — not against
-        // whatever `state.id` the genesis entry happens to carry. Two things
-        // fall out of that, both needed:
-        //
-        //  - A domain move (webvh/publish.ts's moveDidToNewDomain) writes the
-        //    SAME log to a NEW location, where the genesis names the OLD DID.
-        //    resolveEntries' rule is "SOME entry's state.id matches", so the
-        //    move entry satisfies it here while the genesis satisfies it back
-        //    at the old location. Validating against the genesis DID instead
-        //    would have accepted both, but for the wrong reason.
-        //  - It rejects parking a valid log for DID X under an unrelated
-        //    username Y at this domain: no entry names Y, so nothing matches.
-        //    Squatting like that could never be RESOLVED (the resolver applies
-        //    the same rule), but it would still consume a scarce human-readable
-        //    name and shadow the real owner's first-ever PUT.
-        const scid = allEntries[0]?.parameters?.scid
-        if (!scid) return text('first entry parameters.scid missing', 400)
-        const locationDid = buildBisetWebvhDid(scid, domain, username)
-        try {
-          resolveEntries(locationDid, allEntries)
-        } catch (e) {
-          return text(`invalid did:webvh log: ${e instanceof Error ? e.message : String(e)}`, 400)
-        }
-        webvh.write(domain, username, serializeLines(allLines))
-        return new Response(null, { status: 204, headers: CORS })
-      }
-      default:
-        return text('method not allowed', 405)
+  // GET/PUT /<username>/routing.json — did/webvh/routing.ts's sibling
+  // resource, biset-specific (unlike did.jsonl this isn't part of did:webvh
+  // v1.0 itself, so it stays out of webvh-server/core.ts's protocol-generic
+  // handler). Same domain/reserved-name resolution as handleWebvh above.
+  //
+  // Unlike a did:webvh log entry, routing.json's own bytes carry no
+  // self-certifying structure — no SCID, no hash chain — so a PUT here is
+  // verified against the identity's CURRENT updateKeys (read straight off
+  // the did.jsonl this same store already holds for that domain+name) using
+  // the exact same DataIntegrityProof a log entry signs with. This protects
+  // against a third party overwriting someone else's routing.json; it does
+  // NOT add anything past what did.jsonl already trusts this anchor process
+  // with (the same host that could withhold/MITM did.jsonl could also just
+  // not verify this correctly) — a scope call this design already made when
+  // deciding connectivity metadata doesn't need did.jsonl's full guarantees.
+  const MAX_ROUTING_BODY = 1 << 14 // generous for a handful of service entries
+  function currentUpdateKeys(domain: string, name: string): string[] | null {
+    const jsonl = webvh?.read(domain, name)
+    if (!jsonl) return null
+    try {
+      let parameters: LogParameters = {}
+      for (const entry of parseLog(jsonl)) parameters = resolveParameters(parameters, entry.parameters)
+      return parameters.updateKeys ?? null
+    } catch {
+      return null
     }
   }
+  const handleRouting = webvh
+    ? async (req: Request, url: URL): Promise<Response> => {
+      const m = /^\/([^/]+)\/routing\.json$/.exec(url.pathname)
+      if (!m) return notFound()
+      const name = m[1]!
+      if (name === RESERVED_USERNAME) return notFound()
+      const domain = ((req.headers.get('x-biset-domain')) ?? req.headers.get('host') ?? '').split(':')[0]
+      if (!domain) return text('missing host', 400)
+
+      switch (req.method) {
+        case 'GET': {
+          const stored = webvh.readRouting(domain, name)
+          if (!stored) return notFound()
+          return new Response(stored, { status: 200, headers: { ...CORS, 'Content-Type': 'application/json' } })
+        }
+        case 'PUT': {
+          const body = await req.text()
+          if (body.length > MAX_ROUTING_BODY) return text('bad request', 400)
+          let parsed: { service?: unknown; proof?: DataIntegrityProof; [key: string]: unknown }
+          try {
+            parsed = JSON.parse(body)
+          } catch {
+            return text('invalid JSON', 400)
+          }
+          if (!Array.isArray(parsed.service) || !parsed.proof) return text('service and proof required', 400)
+          const updateKeys = currentUpdateKeys(domain, name)
+          if (!updateKeys?.length) return text('no did:webvh log for this name yet', 404)
+          const vmMatch = /^did:key:([^#]+)(?:#.+)?$/.exec(parsed.proof.verificationMethod ?? '')
+          const key = vmMatch?.[1]
+          if (!key || !updateKeys.includes(key)) return text('routing.json: signing key not authorized by current updateKeys', 401)
+          let publicKey: Uint8Array
+          try {
+            publicKey = decodeMultikey(key)
+          } catch {
+            return text('routing.json: invalid signing key', 400)
+          }
+          // The proof covers the WHOLE routing document (routing.ts's
+          // putRouting signs `doc` as-is, not just `service`) — verify and
+          // store everything except the `proof` envelope field itself.
+          const { proof, ...doc } = parsed
+          if (!verifyProof(doc, proof, publicKey)) {
+            return text('routing.json: invalid signature', 401)
+          }
+          webvh.writeRouting(domain, name, JSON.stringify(doc))
+          return new Response(null, { status: 204, headers: CORS })
+        }
+        default:
+          return text('method not allowed', 405)
+      }
+    }
+    : async () => notFound()
 
   // POST /_anchor/devices/vouch — the per-device JMAP credential's one DID-touching
   // step (devicebind.ts's file header): a relay forwards its client's
@@ -392,6 +327,7 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, webv
     // one-segment path ending in did.jsonl is a webvh log request;
     // handleWebvh itself 404s anything that doesn't actually match.
     if (/^\/[^/]+\/did\.jsonl$/.test(url.pathname)) return handleWebvh(req, url)
+    if (/^\/[^/]+\/routing\.json$/.test(url.pathname)) return handleRouting(req, url)
     return notFound()
   }
 
@@ -407,9 +343,10 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, webv
   // file's own note on the claim registry's role explains the gap a 1:N config
   // would reopen; this endpoint exists for the 1:1 case where that gap cannot
   // occur). What POST /_anchor/identity/* does beyond verification — record a
-  // claim, publish a DNS TXT — only the TXT half still applies here: the DNS
-  // anchor is how other clients discover this address's DID (src/did/
-  // discovery.ts), and skipping the registry write does not change that.
+  // claim — has no counterpart here at all: discovery (src/did/discovery.ts)
+  // reads `https://<domain>/<username>/did.jsonl` directly, which for this
+  // exact 1:1 shape is already served by the did:webvh log this DID's own
+  // update just wrote — there is nothing left for this endpoint to publish.
   //
   // No `existed`/`claims.claim()` call, and therefore no 409 either: the
   // did:webvh log itself is what "already claimed" means here, and its
@@ -469,10 +406,6 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, webv
     }, resolveRootKey)
     if (!r.ok) return text('did binding: ' + r.reason, 401)
 
-    // Best-effort, same as the claim path: publication failing must not fail
-    // a binding that already verified.
-    await cloudflare.writeAnchorTXT(username, domain, did)
-      .catch(e => console.error(`[dns-anchor] failed for ${username}@${domain}:`, e?.message ?? e))
     return json({ ok: true }, 200)
   }
 
@@ -485,9 +418,9 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, webv
     if (localpart === RESERVED_USERNAME) return text('reserved username', 400)
 
     // GET is a 404, not a 405. 405 would say "this resource is readable, just
-    // not that way" — there is no readable resource here at all. The registry
-    // answers its own relays' writes and nothing else; address→DID is DNS's
-    // question, deliberately (src/did/discovery.ts).
+    // not that way" — there is no readable resource here at all. This
+    // registry answers its own relays' writes and nothing else; address→DID
+    // is the did.jsonl path's own question (this file's header note).
     if (req.method === 'GET') return notFound()
 
     switch (req.method) {
@@ -514,9 +447,8 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, webv
         // proof this accepted claims without one, which meant the registry took
         // a DID on the relay's word: PUT /account/did carried no signature, so
         // anyone holding a self-service account could have a stranger's DID
-        // bound to their own address — and a `_did` TXT record published saying
-        // so — because owning an *account* was never evidence of owning an
-        // *identity*.
+        // bound to their own address — because owning an *account* was never
+        // evidence of owning an *identity*.
         if (!body?.did_sig) return text('did binding: did_sig required', 401)
         const r = await verifyDIDBinding({
           did,
@@ -531,23 +463,12 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, webv
         if (!claims.claim(domain, localpart, did)) {
           return text('identity owned by a different key', 409)
         }
-        if (did) {
-          // Best-effort, exactly as in Go: a DNS failure must not undo an
-          // accepted claim — the claim is the authority, DNS is its publication.
-          await cloudflare.writeAnchorTXT(localpart, domain, did)
-            .catch(e => console.error(`[dns-anchor] failed for ${localpart}@${domain}:`, e?.message ?? e))
-        }
         return json(claims.read(domain, localpart), existed ? 200 : 201)
       }
 
       case 'DELETE': {
         if (!fromOwnRelay(req)) return forbidden()
-        // Account-delete's counterpart to claim (POST): drop the claim, then
-        // withdraw its publication. Both halves matter — a released address
-        // that keeps its TXT record goes on telling the world it belongs to the
-        // DID of whoever held it last, and the next holder's claim can't undo
-        // that (a fresh claim with a *different* DID rewrites it, but a claim
-        // with no DID leaves the old record standing).
+        // Account-delete's counterpart to claim (POST).
         const domain = url.searchParams.get('domain')
         if (!domain) return text('domain required', 400)
         try {
@@ -555,11 +476,6 @@ export function startAnchor({ claims, cloudflare, port, hostname, mediator, webv
         } catch {
           return text('release failed', 500)
         }
-        // Best-effort, mirroring the claim path: the registry is the authority
-        // and it has already let go, so a DNS failure must not fail the release
-        // — that would leave the caller retrying a delete that already happened.
-        await cloudflare.deleteAnchorTXT(localpart, domain)
-          .catch(e => console.error(`[dns-anchor] delete failed for ${localpart}@${domain}:`, e?.message ?? e))
         return new Response(null, { status: 204, headers: CORS })
       }
 

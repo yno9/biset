@@ -9,8 +9,6 @@ import { setMlsAuthService } from './mls/group.ts'
 import { didAuthenticationService } from './mls/authservice.ts'
 import { showApp, startPolling, fetchMessages } from './ui/shell.ts'
 import { loadLeftInboxes, showMenuPage, setupLeftPane, refreshAccountsList, menuTargetInbox, openComposeTo, syncNotifToggle } from './ui/left-pane.ts'
-import { setupNewUserPage, showNewUserPage } from './ui/account-create.ts'
-import { showUserLanding } from './ui/user-landing.ts'
 import { primeAvatarCache } from './deltachat/avatar.ts'
 import { advertiseAllOwnAvatars } from './ap/avatar.ts'
 import { loadFromCache } from './store/cache.ts'
@@ -31,15 +29,6 @@ function menuHashFromHash(hash: string): string | null {
   const raw = hash.startsWith('#') ? hash.slice(1) : hash
   const name = raw.startsWith('/') ? raw.slice(1) : raw
   return MENU_PAGE_NAMES.has(name) ? '/' + name : null
-}
-
-// `#compose/<addr>` opens the compose page with To pre-filled — a shareable link
-// to start a message to someone.
-function composeArgFromHash(hash: string): string | null {
-  const raw = hash.startsWith('#') ? hash.slice(1) : hash
-  if (!raw.startsWith('compose/')) return null
-  const addr = raw.slice('compose/'.length)
-  try { return addr ? decodeURIComponent(addr) : null } catch { return addr || null }
 }
 
 // Resolves a permalink hash (just a contact — see utils.ts's inboxToHash)
@@ -82,30 +71,48 @@ function userPathLocalpart(): string | null {
   return m ? m[1]! : null
 }
 
+// A typed/linked address or DID → the value the To field should actually
+// carry. did: already means DIDComm, used as-is. An address gets one shot at
+// resolving to its DID anchor first (discoverDidForAddress) so a link to
+// someone with a published DID opens compose already on DIDComm rather than
+// defaulting to Mail (resolveRecipientProtocols's own default for a bare
+// email-shaped To) — falls back to the address itself when no DID anchor
+// exists yet.
+async function resolveComposeTarget(addrOrDid: string): Promise<string> {
+  if (addrOrDid.startsWith('did:')) return addrOrDid
+  try {
+    const { discoverDidForAddress } = await import('./did/discovery.ts')
+    return (await discoverDidForAddress(addrOrDid)) || addrOrDid
+  } catch { return addrOrDid }
+}
+
+// One visitor's journey, whether they already have an account here or not
+// (2026-08-16 — collapsed the old two-step "Chat with X?" landing → #new →
+// compose handoff into one screen): compose opens straight away with the
+// target pre-filled as To (via DIDComm whenever the target has a DID
+// anchor), and account creation itself now happens INSIDE compose (a
+// "create account" affordance in the From field — left-pane.ts's onShowNew)
+// rather than as a separate page first. Existing sessions just additionally
+// get polling/inbox loading; a first-time visitor gets the exact same
+// compose page, just without anything to poll yet.
 async function handleUserLanding(localpart: string, accounts: ReturnType<typeof loadStoredAccounts>) {
   const cfg = (window as any).__BISET_CONFIG__
   const host: string = cfg?.hostname || location.hostname
   const target = `${localpart}@${host}`
-  const apUrl: string = cfg?.ap_url || (host ? `https://ap.${host}` : '')
 
-  // Existing biset users get the compose page with the target pre-filled as To.
   if (accounts.length) {
     const results = await Promise.all(accounts.map(initSession))
     const valid = results.filter(Boolean) as NonNullable<Awaited<ReturnType<typeof initSession>>>[]
     valid.forEach(s => addSession(s))
-    if (sessions.length) {
-      advertiseAllOwnAvatars()
-      showApp()
-      await setupLeftPane()
-      startPolling()
-      loadLeftInboxes()
-      openComposeTo(target)
-      return
-    }
   }
-  // New visitors see the profile + a CTA that routes through account creation and
-  // then opens the conversation (pending-DM handoff).
-  await showUserLanding(target, apUrl)
+  showApp()
+  await setupLeftPane()
+  if (sessions.length) {
+    advertiseAllOwnAvatars()
+    startPolling()
+    loadLeftInboxes()
+  }
+  openComposeTo(await resolveComposeTarget(target))
 }
 
 // ── Session bootstrap ────────────────────────────────────────────────────────
@@ -222,38 +229,16 @@ async function init() {
 // hash state idempotently — nothing here accumulates on a second call the
 // way a naive full initInner() rerun would (double addSession, etc).
 async function route(rawHash: string, accounts: ReturnType<typeof loadStoredAccounts>): Promise<void> {
-  // #compose/<addr>: open compose with To pre-filled (shareable message link; the
-  // app-host handoff target from a /<user>/ profile page). Logged in → compose;
-  // new visitor → account creation (with the target as a chat header) then compose.
-  const composeTo = composeArgFromHash(rawHash)
-  if (composeTo) {
-    // DID⊥relay: a relay-less identity can compose too (bootSessions.
-    // configured also becomes true here for anyone with an existing
-    // standalone identity, not just relay accounts).
-    await bootSessions(accounts, () => { fetchMessages(); loadLeftInboxes() })
-    if (sessions.length) {
-      showApp()
-      await setupLeftPane()
-      refreshAccountsList()
-      startPolling()
-      loadLeftInboxes()
-      openComposeTo(composeTo)
-      return
-    }
-    const cfg = (window as any).__BISET_CONFIG__
-    const apUrl: string = cfg?.ap_url || (cfg?.hostname ? `https://ap.${cfg.hostname}` : '')
-    await showUserLanding(composeTo, apUrl)
-    return
-  }
-
-  // #restore is gone (2026-08-12): logging into an existing identity is the
-  // same form as creating one — type the address, and if it already exists
-  // #new turns itself into a login with a recovery-phrase box
-  // (account-create.ts's logInExistingAddress). The hash is still accepted
-  // so an old bookmark lands somewhere sensible rather than nowhere.
+  // #new/#restore are gone (2026-08-16): account creation is no longer a
+  // separate page, it's a "create account" affordance inside compose's From
+  // field (left-pane.ts's onShowNew). Both hashes are still accepted so an
+  // old bookmark lands somewhere sensible (the account page, which already
+  // covers both creating a new identity and restoring one from its
+  // recovery phrase) rather than nowhere.
   if (rawHash === '#new' || rawHash === '#restore') {
-    setupNewUserPage()
-    showNewUserPage()
+    showApp()
+    await setupLeftPane()
+    showMenuPage('/account')
     return
   }
 
@@ -290,57 +275,52 @@ async function route(rawHash: string, accounts: ReturnType<typeof loadStoredAcco
     return
   }
 
-  // One shared bootstrap for whichever shape this identity is (bootSessions'
-  // own note): a relay-less identity's zero StoredAccounts republishes its
-  // DID doc + renews mediation and registers its DIDComm channel (if any) as
-  // a synthetic session — sessions[] being non-empty from here on is what
-  // lets the SAME "pick an inbox, show it" flow below handle it, exactly like
-  // a JMAP identity's sessions. No DIDComm channel yet (mediator unreachable,
-  // or never configured) falls through to the account page, where "+ New
-  // Relay" can register one. A genuinely new visitor (no accounts, no
-  // standalone identity ever created) routes to the new-user page instead.
-  const { configured } = await bootSessions(accounts, () => { fetchMessages(); loadLeftInboxes() })
-  if (!sessions.length) {
-    if (!configured) {
-      setupNewUserPage()
-      showNewUserPage()
-      return
-    }
-    showApp()
-    await setupLeftPane()
-    showMenuPage('/account')
-    return
-  }
-
-  // Fire-and-forget PGP init (kek only available on fresh envelope login, not here)
-  // sessions.forEach(s => initPGPForSession(s))
-
-  // Determine initial inbox from hash or first available
-  const inboxes = await loadInboxSummaries()
-
-  let target: InboxSummary | null = await matchInboxForHash(rawHash, inboxes)
-
-  if (!target) {
-    target = inboxes[0] ?? null
-  }
-
-  if (!target) {
-    showApp()
-    await setupLeftPane()
-    startPolling()
-    return
-  }
-
-  setCurrentInbox(target)
-  if (!rawHash || parseInboxHash(rawHash)) {
-    try { history.replaceState(null, '', inboxToHash(target)) } catch {}
-  }
-
+  // Everything else is a conversation permalink (#<contact>, the exact shape
+  // utils.ts's inboxToHash emits): an existing conversation opens it; a hash
+  // naming someone with no conversation yet opens compose prefilled with
+  // them instead — logged in or not (2026-08-16: folded the old separate
+  // `#compose/<addr>` shareable-link shape into this one, since a link to
+  // start chatting with someone IS a permalink, just to a conversation that
+  // doesn't exist). One shared bootstrap regardless of relay/standalone
+  // shape (bootSessions' own note): a relay-less identity's zero
+  // StoredAccounts republishes its DID doc + renews mediation and registers
+  // its DIDComm channel (if any) as a synthetic session.
+  await bootSessions(accounts, () => { fetchMessages(); loadLeftInboxes() })
   showApp()
   await setupLeftPane()
-  startPolling()
-  loadLeftInboxes()
-  await fetchMessages()
+
+  const parts = rawHash ? parseInboxHash(rawHash) : null
+  // group: permalinks are never a compose target — no "start a message to
+  // this group" flow exists, so a stale/broken one falls back like an empty
+  // hash always has (inboxes[0]) rather than trying to compose to it.
+  const composable = !!parts && !parts.contact.startsWith('group:')
+
+  if (sessions.length) {
+    refreshAccountsList()
+    startPolling()
+    loadLeftInboxes()
+
+    const inboxes = await loadInboxSummaries()
+    let target: InboxSummary | null = await matchInboxForHash(rawHash, inboxes)
+    if (!target && !composable) target = inboxes[0] ?? null
+    if (target) {
+      setCurrentInbox(target)
+      if (!rawHash || parseInboxHash(rawHash)) {
+        try { history.replaceState(null, '', inboxToHash(target)) } catch {}
+      }
+      await fetchMessages()
+      return
+    }
+  }
+
+  if (composable) {
+    openComposeTo(await resolveComposeTarget(parts!.contact))
+    return
+  }
+  // Not logged in and the hash names nothing composable (empty, or a
+  // group: permalink): #new is gone, so this is where a genuinely new
+  // visitor (and a stale group link) both land.
+  if (!sessions.length) showMenuPage('/account')
 }
 
 async function initInner() {

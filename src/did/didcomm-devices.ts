@@ -195,6 +195,19 @@ export interface PublishFullOpts {
    * sets this when the identity has NO keyAgreement keys left to publish —
    * see the invariant note there. */
   removeDidCommService?: boolean
+  /** Sign with this key instead of the local record's rootPrivateKey/
+   * rootPublicKey — for a caller that already resolved the identity's
+   * CURRENT updateKeys-holding key some other way (left-pane.ts's Sync
+   * retry, after pre-rotation has moved updateKeys away from root and the
+   * stale local key was rejected — did/webvh/publish.ts's updateDocument
+   * throws exactly that reason). #key-1 (the document's identity key) is
+   * unaffected either way — webvh/method-ops.ts's publishFull always builds
+   * it from rec.rootPublicKey, never from this override. Never set by any
+   * AUTOMATIC/background caller (main.ts's boot flow, avatar publish): none
+   * of those can prompt a human for a phrase, so they simply keep failing
+   * gracefully (a caught, logged 0) once diverged — this override exists
+   * for the one place a fresh phrase CAN be asked for. */
+  signingKeyOverride?: { privateKey: Uint8Array; publicKey: Uint8Array }
 }
 
 /** The one thing each DID method implements differently: build this
@@ -477,7 +490,7 @@ export async function fullMlkemKeyAgreementKeys(rec: DidRecord): Promise<DidMlke
  * (publishBareOrCurrent, and buildOwnDocument's live-session branch) — the
  * distinction was never in the CALLER's control anyway, only in whether
  * `liveRelayInputs` finds a session, so one function suffices. */
-export async function publishCurrentState(rec: DidRecord): Promise<number> {
+export async function publishCurrentState(rec: DidRecord, signingKeyOverride?: { privateKey: Uint8Array; publicKey: Uint8Array }): Promise<number> {
   await ensureMethodOpsLoaded()
   const ops = methodOpsFor(rec.did)
   const relayInput = liveRelayInputs(rec.did)
@@ -496,7 +509,23 @@ export async function publishCurrentState(rec: DidRecord): Promise<number> {
     const gateways = relayInput
       ? ops.gatewayUrls(relayInput.services.map(s => ({ account: { serverUrl: s.serverUrl } })), rec.didCommMediatorUrl)
       : ops.gatewayUrls([], rec.didCommMediatorUrl)
-    rec = await syncDevicePosition(rec).catch(() => rec)
+    // Locked (store.ts's withDidLock — the SAME class of bug its own note
+    // and ensureJmapDeviceKey's describe): this used to read-modify-write
+    // the `rec` PARAMETER unlocked, so any OTHER concurrent write for this
+    // identity that started earlier but finished later (ensureJmapDeviceKey
+    // minting a device key during claim, cacheSigningKey caching a
+    // pre-rotation signer, registerWithMediator) got silently overwritten
+    // with a stale pre-that-write snapshot the instant this ran — found
+    // live (2026-08-17) as the reason a freshly claimed relay's device
+    // login started failing ("never vouched here, or revoked") moments
+    // after claiming successfully: an avatar-publish-triggered call here
+    // raced ensureJmapDeviceKey's write and won. Re-reads fresh INSIDE the
+    // lock rather than trusting the possibly-stale `rec` parameter, same
+    // pattern registerWithMediator already uses for exactly this reason.
+    rec = await withDidLock(rec.did, async () => {
+      const fresh = await getDidRecord(rec.did)
+      return fresh ? syncDevicePosition(fresh) : rec
+    }).catch(() => rec)
   }
   const keyAgreementKeys = await fullKeyAgreementKeys(rec)
   // THE INVARIANT: a DIDCommMessaging service and at least one keyAgreement
@@ -547,6 +576,7 @@ export async function publishCurrentState(rec: DidRecord): Promise<number> {
   const published = await ops.publishFull(rec, relayInput, {
     keyAgreementKeys, mlkemKeyAgreementKeys: await fullMlkemKeyAgreementKeys(rec),
     didCommService, removeDidCommService: keyAgreementKeys.length === 0,
+    signingKeyOverride,
   })
   // Same reason as registerWithMediator's own call: what a device may claim
   // has just changed, and a stale "no such device" is how a legitimate leaf
