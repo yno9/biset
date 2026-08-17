@@ -372,6 +372,33 @@ export async function revealMasterSeed(did: string): Promise<string | null> {
   }
 }
 
+/** Sign Key counterpart of revealMasterSeed, same re-authenticate-every-time
+ * stance (this file's header on why: putting a secret this powerful on
+ * screen must cost a fresh gesture even inside an already-unlocked session,
+ * never ride on whatever earlier action happened to unlock it). Returns hex,
+ * not the reversible mnemonic — signingPrivateKey IS the raw 32-byte Ed25519
+ * seed already (prerotation.ts's generateSpareKeypair never derives it),
+ * unlike rootPrivateKey, so the caller's own seedToMnemonic works directly.
+ * Null when this device holds no Sign Key distinct from its Root Key (never
+ * diverged, or diverged on a different device) — that is not an error, the
+ * Root Key phrase already covers this case since they are the same secret. */
+export async function revealSigningKey(did: string): Promise<string | null> {
+  const db = await openDB().catch(() => null)
+  if (!db) return null
+  const stored = await dbGet(db, did).catch(() => null)
+  if (!stored) return null
+  if (!stored.sealed) return stored.signingPrivateKey ?? null
+  const key = await unlockPrfKey()
+  if (!key) return null
+  try {
+    const blob = Uint8Array.from(atob(stored.sealed), c => c.charCodeAt(0))
+    const secrets = JSON.parse(new TextDecoder().decode(await aesGcmOpen(key, blob))) as SealedSecrets
+    return secrets.signingPrivateKey ?? null
+  } catch {
+    return null
+  }
+}
+
 /** Drops the session key — logout's counterpart to unlock. The ciphertext
  * stays; only the ability to read it this page load goes away. */
 export function lockIdentitySecrets(): void {

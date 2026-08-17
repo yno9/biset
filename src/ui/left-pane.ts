@@ -1506,12 +1506,12 @@ export async function setupLeftPane() {
         <div style="display:flex;align-items:center;gap:10px;padding:6px 0">
           <button id="prerotation-rotate-btn" class="cmd-page-btn primary" style="display:none;padding:4px 12px;font-size:11px;font-weight:900;text-transform:uppercase;border-radius:20px;flex-shrink:0">Rotate</button>
           <span style="font-size:13px;color:var(--text-dim);flex-shrink:0">Sign Key:</span>
-          <span id="config-prerotation-key" style="font-family:ui-monospace,monospace;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0"></span>
+          <span id="config-prerotation-key" style="font-family:ui-monospace,monospace;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;cursor:pointer" title="Click to show the Sign Key phrase"></span>
         </div>
         <div style="display:flex;align-items:center;gap:10px;padding:6px 0">
           <button id="prerotation-revoke-btn" class="cmd-page-btn primary" style="display:none;padding:4px 12px;font-size:11px;font-weight:900;text-transform:uppercase;border-radius:20px;flex-shrink:0">Revoke</button>
           <span style="font-size:13px;color:var(--text-dim);flex-shrink:0">Root Key:</span>
-          <span id="config-rootkey" style="font-family:ui-monospace,monospace;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0"></span>
+          <span id="config-rootkey" style="font-family:ui-monospace,monospace;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;cursor:pointer" title="Click to show the Root Key phrase"></span>
         </div>
       </div>`
       : ''
@@ -1603,6 +1603,14 @@ export async function setupLeftPane() {
         const { isPreRotationActive } = await import('../did/webvh/prerotation.ts')
         isPreRotationActive(did).then(reflect).catch(() => {})
         refreshKeyLabel()
+
+        // Click-to-reveal — replaces the identity menu's old single
+        // "Show recovery phrase" item (2026-08-17): this card is where
+        // Sign key and Root key are already shown side by side, so which
+        // phrase a click means is unambiguous in a way a shared menu item
+        // never was.
+        $preRotKey?.addEventListener('click', () => showSignKeyPhrase(did))
+        $rootKey?.addEventListener('click', () => showRootKeyPhrase(did))
 
         $preRotTog.addEventListener('click', async () => {
           const active = $preRotTog.classList.contains('on')
@@ -3290,15 +3298,24 @@ export async function setupLeftPane() {
   // branch already called publishBareOrCurrent correctly; this just extends
   // that same call to the relay-backed case too, rather than a second,
   // divergent implementation.
-  // Re-shows the 24 words (mnemonic.ts's showStoredMnemonic), behind a fresh
-  // passkey gesture on a protected device. Only "nothing to show" gets a
-  // message: a refused prompt is the user's own answer, and the seed being
-  // absent means this identity predates seed storage and has never been
-  // logged into with its phrase since.
-  async function showRecoveryPhrase(did: string): Promise<void> {
+  // Re-shows the 24 words behind a fresh passkey gesture on a protected
+  // device (mnemonic.ts's showStoredMnemonic/showSignKeyMnemonic — both
+  // re-authenticate every call, never trusting an already-unlocked session,
+  // same reasoning as revealMasterSeed's own note). Two entry points, not one
+  // "Show recovery phrase" menu item (2026-08-17, replacing that item): the
+  // Key rotation card's own Sign key / Root key values are what's clicked,
+  // since that is where the two are already shown side by side and where
+  // "which one is this" is unambiguous. Only "nothing to show" gets a
+  // message: a refused prompt is the user's own answer.
+  async function showRootKeyPhrase(did: string): Promise<void> {
     const { showStoredMnemonic } = await import('./mnemonic.ts')
     const shown = await showStoredMnemonic(did)
     if (!shown) showSysMsg('No Root Key phrase stored for this identity on this device', 8000)
+  }
+  async function showSignKeyPhrase(did: string): Promise<void> {
+    const { showSignKeyMnemonic } = await import('./mnemonic.ts')
+    const shown = await showSignKeyMnemonic(did)
+    if (!shown) showSysMsg('No Sign Key phrase stored for this identity on this device', 8000)
   }
 
   // Offered only while this device has no passkey guarding the identity —
@@ -3790,7 +3807,6 @@ export async function setupLeftPane() {
             ev.stopPropagation()
             openDropdownMenu(identityMenuBtn, [
               ...(identityProtected ? [] : [{ label: 'Protect with passkey', onClick: () => protectWithPasskey(repEmail ?? did) }]),
-              { label: 'Show Root Key phrase', onClick: () => showRecoveryPhrase(did) },
               { label: 'Export Messages', onClick: () => exportIdentityMessages(did) },
               { label: 'Import Messages', onClick: () => importIdentityMessages() },
               // did:webvh only — did:dht has no location to move (its DID is

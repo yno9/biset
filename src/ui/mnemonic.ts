@@ -203,6 +203,33 @@ export async function showStoredMnemonic(did: string): Promise<boolean> {
   return true
 }
 
+/** Sign Key counterpart, from the #config Key rotation card's own click
+ * affordance (this replaces the identity menu's old "Show recovery phrase"
+ * item, split into two — one per key — 2026-08-17). Same re-authenticate
+ * gesture as showStoredMnemonic, via revealSigningKey.
+ *
+ * signingPrivateKey is stored ONLY once updateKeys has actually diverged
+ * from #key-1 (cacheSigningKey's own note) — before that, the Sign Key IS
+ * the Root Key, same secret, so there is nothing distinct to reveal. Falls
+ * back to the Root Key display in that case rather than reporting "nothing
+ * stored", which would read as a bug rather than the expected state. */
+export async function showSignKeyMnemonic(did: string): Promise<boolean> {
+  const { revealSigningKey } = await import('../did/store.ts')
+  const keyHex = await revealSigningKey(did)
+  if (!keyHex) return showStoredMnemonic(did)
+  const key = new Uint8Array((keyHex.match(/../g) ?? []).map(h => parseInt(h, 16)))
+  const { box, dismiss } = overlay()
+  // Unlike the Root Key, signingPrivateKey IS the raw 32-byte seed already
+  // (generateSpareKeypair never derives it) — seedToMnemonic applies
+  // directly, with no deriveRootKey step.
+  renderPhrase(box, dismiss, seedToMnemonic(key), {
+    firstTime: false,
+    badges: ['SIGN KEY'],
+    fingerprint: encodeMultikey(ed25519.getPublicKey(key)),
+  })
+  return true
+}
+
 /** Promise-based display for a mnemonic that is NOT the identity's main
  * recovery phrase — ui/prerotation.ts's pre-rotation spare key, shown once
  * right after it's generated. Resolves when the user confirms they saved
