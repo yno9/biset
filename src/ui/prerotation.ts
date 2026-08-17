@@ -330,7 +330,7 @@ export async function runRevokeRootKey(did: string): Promise<boolean> {
     firstTime: true,
     badges: ['ROOT KEY'],
     title: 'New Root Key phrase',
-    subtitle: 'This replaces your original recovery phrase, which stops working the moment this completes. From now on THIS is what restores your identity and logs you in on a new device. Two phrases are shown — this one, then your new Spare Key.',
+    subtitle: 'This replaces your current Root Key phrase, which stops working the moment this completes. From now on THIS is what restores your identity and logs you in on a new device. Two phrases are shown — this one, then your new Spare Key.',
     fingerprint: encodeMultikey(newRoot.publicKey),
   })
   await showMnemonicOnce(spare.mnemonic, {

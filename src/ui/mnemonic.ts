@@ -77,7 +77,7 @@ function renderPhrase(box: HTMLElement, dismiss: () => void, mnemonic: string, o
     titleRow.appendChild(badge)
   }
   const title = document.createElement('h3')
-  title.textContent = opts.title ?? 'Recovery phrase'
+  title.textContent = opts.title ?? 'Root Key phrase'
   title.style.cssText = 'margin:0;font-size:17px'
   titleRow.appendChild(title)
   const sub = document.createElement('div')

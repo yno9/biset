@@ -77,7 +77,7 @@ export async function migrateWebvhLocation(opts: MigrateLocationOptions): Promis
 
   const updateKey = encodeMultikey(opts.rootPublicKey)
   if (!(last.parameters.updateKeys ?? []).includes(updateKey)) {
-    throw new Error('migrateWebvhLocation: local signing key is not authorized by the document\'s current updateKeys (rotated elsewhere) — restore with the current recovery phrase/DID to get back in sync')
+    throw new Error('migrateWebvhLocation: local signing key is not authorized by the document\'s current updateKeys (rotated elsewhere) — restore with the current Root Key phrase/DID to get back in sync')
   }
 
   const { scid } = parseWebvhDid(opts.oldDid)

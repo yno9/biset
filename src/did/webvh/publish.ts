@@ -168,7 +168,7 @@ export async function updateDocument(opts: UpdateOptions): Promise<void> {
   // plant a fake device key, or rewrite its name, even though that write
   // never touches the signed log.
   if (!(last.parameters.updateKeys ?? []).includes(updateKey)) {
-    throw new Error('updateDocument: local signing key is not authorized by the document\'s current updateKeys (rotated elsewhere) — restore with the current recovery phrase/DID to get back in sync')
+    throw new Error('updateDocument: local signing key is not authorized by the document\'s current updateKeys (rotated elsewhere) — restore with the current Root Key phrase/DID to get back in sync')
   }
 
   // Keeps the display name routing.json already carries when THIS call has

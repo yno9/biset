@@ -55,7 +55,7 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
 // fill in; did:webvh always needs one, see file header).
 export async function restoreFromMnemonic(mnemonic: string, did?: string): Promise<RestoreResult | { error: string }> {
   const phrase = mnemonic.trim().toLowerCase().replace(/\s+/g, ' ')
-  if (!isValidMnemonic(phrase)) return { error: 'Invalid recovery phrase (check the 24 words and their order).' }
+  if (!isValidMnemonic(phrase)) return { error: 'Invalid Root Key phrase (check the 24 words and their order).' }
 
   const masterSecret = mnemonicToSeed(phrase)
   const root = deriveRootKey(masterSecret)
@@ -68,7 +68,7 @@ export async function restoreFromMnemonic(mnemonic: string, did?: string): Promi
   if (!resolved) return { error: 'Could not resolve that DID — check it was typed correctly, or its relays may be offline.' }
   const rootKey = rootPublicKeyFromWebvhState(resolved as WebvhDidDocument)
   if (!rootKey || !bytesEqual(rootKey, root.publicKey)) {
-    return { error: 'This recovery phrase does not control that DID.' }
+    return { error: 'This Root Key phrase does not control that DID.' }
   }
   const resolvedDid: string = suppliedDid
   const doc: DidDocument | WebvhDidDocument = resolved

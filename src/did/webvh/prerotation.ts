@@ -75,7 +75,7 @@ export async function activatePreRotation(opts: ActivatePreRotationOptions): Pro
 
   const updateKey = encodeMultikey(opts.signingPublicKey)
   if (!(last.parameters.updateKeys ?? []).includes(updateKey)) {
-    throw new Error('activatePreRotation: local signing key is not authorized by the document\'s current updateKeys (rotated elsewhere) — restore with the current recovery phrase/DID to get back in sync')
+    throw new Error('activatePreRotation: local signing key is not authorized by the document\'s current updateKeys (rotated elsewhere) — restore with the current Root Key phrase/DID to get back in sync')
   }
   if ((last.parameters.nextKeyHashes?.length ?? 0) > 0) {
     throw new Error('activatePreRotation: pre-rotation is already active for this identity')
@@ -122,7 +122,7 @@ async function rotateOrDeactivate(opts: RotateToPreRotatedKeyOptions): Promise<v
   }
   const revealedKey = encodeMultikey(opts.revealedPublicKey)
   if (!(last.parameters.nextKeyHashes ?? []).includes(multikeyHashBase58(revealedKey))) {
-    throw new Error('rotateToPreRotatedKey: this key does not match the identity\'s current pre-rotation commitment — wrong recovery words, or someone else already rotated')
+    throw new Error('rotateToPreRotatedKey: this key does not match the identity\'s current pre-rotation commitment — wrong Spare Key phrase, or someone else already rotated')
   }
 
   const versionTime = nowVersionTime()

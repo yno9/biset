@@ -1627,7 +1627,7 @@ export async function setupLeftPane() {
         })
         if ($revokeBtn) {
           $revokeBtn.addEventListener('click', async () => {
-            if (!confirm('Revoke the Root Key? Your current recovery phrase stops working permanently — it will no longer restore this identity, log into mail, or sign as you on any device.\n\nYou will be asked for your Spare Key phrase, then shown TWO new phrases to save: a new Root Key and a new Spare Key.\n\nUse this only if you believe your current phrase is compromised.')) return
+            if (!confirm('Revoke the Root Key? Your current Root Key phrase stops working permanently — it will no longer restore this identity, log into mail, or sign as you on any device.\n\nYou will be asked for your Spare Key phrase, then shown TWO new phrases to save: a new Root Key and a new Spare Key.\n\nUse this only if you believe your current phrase is compromised.')) return
             const { runRevokeRootKey } = await import('./prerotation.ts')
             const wasDisabled = $revokeBtn.disabled
             $revokeBtn.disabled = true
@@ -3298,7 +3298,7 @@ export async function setupLeftPane() {
   async function showRecoveryPhrase(did: string): Promise<void> {
     const { showStoredMnemonic } = await import('./mnemonic.ts')
     const shown = await showStoredMnemonic(did)
-    if (!shown) showSysMsg('No recovery phrase stored for this identity on this device', 8000)
+    if (!shown) showSysMsg('No Root Key phrase stored for this identity on this device', 8000)
   }
 
   // Offered only while this device has no passkey guarding the identity —
@@ -3790,7 +3790,7 @@ export async function setupLeftPane() {
             ev.stopPropagation()
             openDropdownMenu(identityMenuBtn, [
               ...(identityProtected ? [] : [{ label: 'Protect with passkey', onClick: () => protectWithPasskey(repEmail ?? did) }]),
-              { label: 'Show recovery phrase', onClick: () => showRecoveryPhrase(did) },
+              { label: 'Show Root Key phrase', onClick: () => showRecoveryPhrase(did) },
               { label: 'Export Messages', onClick: () => exportIdentityMessages(did) },
               { label: 'Import Messages', onClick: () => importIdentityMessages() },
               // did:webvh only — did:dht has no location to move (its DID is

@@ -689,7 +689,7 @@ async function logInExistingAddress(
 ): Promise<void> {
   const phrase = phraseEl?.value.trim() ?? ''
   if (!phrase) {
-    errEl.textContent = `${address} already exists — paste its 24-word recovery phrase to log in`
+    errEl.textContent = `${address} already exists — paste its 24-word Root Key phrase to log in`
     errEl.style.display = 'block'
     phraseEl?.focus()
     return
