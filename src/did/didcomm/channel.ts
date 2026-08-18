@@ -15,7 +15,7 @@
 import type { AccountSession, StoredAccount } from '../../types.ts'
 import type { Email } from 'jmap-rfc-types'
 import { sessions, addSession, accountKey, relaysForId, DIDCOMM_SERVER_URL } from '../../context.ts'
-import { getDidRecord } from '../store.ts'
+import { getDidRecord, storeDidRecord } from '../store.ts'
 import { ownDid, registerWithMediator, mediatorUrl } from '../didcomm-devices.ts'
 import { DELIVER as MLS_DELIVER } from './mls-transport.ts'
 import { readDelivery, type Delivery } from '../../mls/transport.ts'
@@ -1159,7 +1159,26 @@ async function completeFirstRegistration(did: string): Promise<boolean> {
     // device on a mediator its siblings are not using, and each device would
     // then be reachable only through its own.
     const doc = await resolveDidCommDoc(did).catch(() => null)
-    let url = doc?.service.find(s => s.type === 'DIDCommMessaging')?.serviceEndpoint.uri ?? ''
+    const service = doc?.service.find(s => s.type === 'DIDCommMessaging')
+    let url = service?.serviceEndpoint.uri ?? ''
+
+    // A prior registration can have reached Phase 3 (the public DID document
+    // names the mediator) but lost its final local IndexedDB write — for
+    // example when the page was closed while that write was in flight.  This
+    // is not a new registration at all, so do not republish the document just
+    // to rediscover information it already authoritatively carries.  Persist
+    // it first; setupDidCommChannel then starts polling immediately and its
+    // ordinary background reassertion restores this device's mediator keylist
+    // entry if that part was the interrupted step.
+    const routingKey = service?.serviceEndpoint.routing_keys?.[0]
+    if (url && routingKey) {
+      rec.didCommMediatorUrl = url
+      rec.didCommRoutingKey = routingKey
+      await storeDidRecord(rec)
+      console.info(`[didcomm] restored mediator registration metadata for ${did} at ${url}`)
+      return true
+    }
+
     if (!url) {
       const { anchorReachable, mediatorUrl: defaultMediatorUrl } = await import('../didcomm-devices.ts')
       // Probed rather than assumed: registering against a mediator that is

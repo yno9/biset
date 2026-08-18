@@ -1,0 +1,52 @@
+- generic [active] [ref=f4e1]:
+  - generic [ref=f4e2]:
+    - complementary:
+      - generic [ref=f4e3]:
+        - button "Toggle pane" [ref=f4e4] [cursor=pointer]
+        - searchbox "/ for commands" [ref=f4e7]
+    - generic [ref=f4e11]:
+      - generic [ref=f4e12]:
+        - generic [ref=f4e13] [cursor=pointer]: config
+        - generic [ref=f4e16] [cursor=pointer]: compose
+      - generic [ref=f4e19]:
+        - button "Toggle pane" [ref=f4e20] [cursor=pointer]
+        - generic [ref=f4e23]: account
+        - button "menu" [ref=f4e26] [cursor=pointer]
+      - generic [ref=f4e34]:
+        - generic "Click to view devices and DID document" [ref=f4e36] [cursor=pointer]:
+          - generic "Click to set avatar" [ref=f4e37]: Q
+          - generic [ref=f4e38]:
+            - generic [ref=f4e39]: scidfresh2
+            - generic [ref=f4e44]:
+              - generic [ref=f4e45]: did:webvh:t.biset.md:scidfresh2
+              - button "Copy DID" [ref=f4e46]
+          - button "Menu" [ref=f4e50]
+        - generic [ref=f4e57] [cursor=pointer]:
+          - generic [ref=f4e58]:
+            - generic [ref=f4e59]:
+              - generic [ref=f4e61]: Mail
+              - generic [ref=f4e62]: ":"
+              - generic [ref=f4e63]: scidfresh2@t.biset.md
+            - generic [ref=f4e64]:
+              - generic [ref=f4e65]: "Unread: 0/0"
+              - generic [ref=f4e66]: "Sync: 0s ago"
+              - generic [ref=f4e67]: PGP ✓
+          - button "Menu" [ref=f4e68]
+        - button "Compose" [ref=f4e73] [cursor=pointer]
+  - button "Scroll to top"
+  - button "Scroll to bottom"
+  - generic [ref=f4e83]:
+    - generic [ref=f4e84]:
+      - heading "Edit identity" [level=3] [ref=f4e85]
+      - button "✕" [ref=f4e86] [cursor=pointer]
+    - generic [ref=f4e87]:
+      - generic [ref=f4e88]: Change this identity's domain, its username, or both. The identity's underlying key stays the same, so a contact who already knows you follows the change automatically the next time they resolve you.
+      - generic [ref=f4e89]:
+        - generic [ref=f4e90]: Domain
+        - textbox [ref=f4e91]: t.biset.md
+      - generic [ref=f4e92]:
+        - generic [ref=f4e93]: Username
+        - textbox [ref=f4e94]: scidfresh2
+      - generic [ref=f4e96]:
+        - button "Cancel" [ref=f4e97] [cursor=pointer]
+        - button "Save" [disabled] [ref=f4e98]

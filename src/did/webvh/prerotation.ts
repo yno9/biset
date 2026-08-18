@@ -112,8 +112,15 @@ export interface RotateToPreRotatedKeyOptions {
   nextKeyHash?: string
 }
 
-/** Core of both `rotateToPreRotatedKey` and `deactivatePreRotation` — the
- * only difference between them is whether a further commitment is made. */
+/** Core of both `rotateToPreRotatedKey` and `deactivatePreRotation`.
+ *
+ * A normal rotation consumes the committed key and commits another one. A
+ * deactivation consumes the committed key, clears that commitment, THEN
+ * returns update authority to the identity's Root Key. The latter has to be
+ * a second entry: while pre-rotation is active, the resolver correctly
+ * rejects an updateKeys value that was not committed one entry earlier. Both
+ * entries are appended in one request, so observers never see the temporary
+ * "off, but still Sign-Key-controlled" state. */
 async function rotateOrDeactivate(opts: RotateToPreRotatedKeyOptions): Promise<void> {
   const { url, entries, last } = await fetchCurrentLog(opts.did)
 
@@ -140,13 +147,36 @@ async function rotateOrDeactivate(opts: RotateToPreRotatedKeyOptions): Promise<v
   const proof = buildProof(unsigned, { verificationMethod: `did:key:${revealedKey}#${revealedKey}`, privateKey: opts.revealedPrivateKey, created: versionTime })
   const entry: LogEntry = { ...unsigned, proof: [proof] }
 
-  await putLog(url, [...entries, entry], [entry])
+  if (opts.nextKeyHash) {
+    await putLog(url, [...entries, entry], [entry])
+    return
+  }
+
+  // Pre-rotation is now OFF in `entry`, so the just-revealed key is the
+  // previous/current update key permitted to authorize this ordinary rotation
+  // back to Root Key. `identityPublicKey` is always #key-1 (the Root Key),
+  // distinct from the Sign/Spare Key that signs this transition.
+  const rootUpdateKey = encodeMultikey(opts.identityPublicKey)
+  const rootVersionTime = nowVersionTime()
+  const rootParameters = parametersToWrite(parameters, resolveParameters(parameters, { updateKeys: [rootUpdateKey] }))
+  const rootState = buildBisetWebvhState(opts.did, opts.identityPublicKey)
+  const rootEntryHash = generateEntryHash(entry.versionId, rootVersionTime, rootParameters, rootState)
+  const rootVersionId = `${entryVersionNumber(entry.versionId) + 1}-${rootEntryHash}`
+  const rootUnsigned = { versionId: rootVersionId, versionTime: rootVersionTime, parameters: rootParameters, state: rootState }
+  const rootProof = buildProof(rootUnsigned, { verificationMethod: `did:key:${revealedKey}#${revealedKey}`, privateKey: opts.revealedPrivateKey, created: rootVersionTime })
+  const rootEntry: LogEntry = { ...rootUnsigned, proof: [rootProof] }
+
+  await putLog(url, [...entries, entry, rootEntry], [entry, rootEntry])
 }
 
 export async function rotateToPreRotatedKey(opts: RotateToPreRotatedKeyOptions & { nextKeyHash: string }): Promise<void> {
   await rotateOrDeactivate(opts)
 }
 
+/** Disables pre-rotation and restores the Root Key as the sole current
+ * update key. The one batched append is required by the pre-rotation rule
+ * (see rotateOrDeactivate): the Root Key is not committed as the next key,
+ * so it cannot appear in the consuming entry itself. */
 export async function deactivatePreRotation(opts: Omit<RotateToPreRotatedKeyOptions, 'nextKeyHash'>): Promise<void> {
   await rotateOrDeactivate(opts)
 }

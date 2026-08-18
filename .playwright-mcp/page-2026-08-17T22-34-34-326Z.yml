@@ -1,0 +1,35 @@
+- generic [active] [ref=f2e1]:
+  - generic: Account created
+  - generic [ref=f2e2]:
+    - complementary:
+      - generic [ref=f2e3]:
+        - button "Toggle pane" [ref=f2e4] [cursor=pointer]
+        - searchbox "/ for commands" [ref=f2e7]
+    - generic [ref=f2e11]:
+      - generic [ref=f2e12]:
+        - generic [ref=f2e76] [cursor=pointer]: config
+        - generic [ref=f2e79] [cursor=pointer]: compose
+      - generic [ref=f2e19]:
+        - button "Toggle pane" [ref=f2e20] [cursor=pointer]
+        - generic [ref=f2e23]: account
+        - button "menu" [ref=f2e26] [cursor=pointer]
+      - generic [ref=f2e83]:
+        - generic "Click to view devices and DID document" [ref=f2e85] [cursor=pointer]:
+          - generic "Click to set avatar" [ref=f2e86]: S
+          - generic [ref=f2e87]:
+            - generic [ref=f2e88]: scidtest1
+            - generic [ref=f2e93]:
+              - generic [ref=f2e94]: did:webvh:t.biset.md:scidtest1
+              - button "Copy DID" [ref=f2e95]
+          - button "Menu" [ref=f2e99]
+        - generic [ref=f2e105]:
+          - generic [ref=f2e106]:
+            - generic [ref=f2e107]:
+              - generic [ref=f2e109]: MAIL
+              - generic [ref=f2e110]: ":"
+              - generic [ref=f2e111]: scidtest1@t.biset.md
+            - generic [ref=f2e112]: Not claimed
+          - button "Menu" [ref=f2e113] [cursor=pointer]
+        - button "Compose" [ref=f2e118] [cursor=pointer]
+  - button "Scroll to top"
+  - button "Scroll to bottom"

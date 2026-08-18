@@ -49,12 +49,31 @@ const TTL_MS = 5 * 60 * 1000
 interface CachedDevices { kids: Set<string>; at: number }
 
 const cache = new Map<string, CachedDevices>()
+// `forgetDevices` is used immediately after a successful device-key publish.
+// Dropping only this module's Set was not enough: the following resolve could
+// still be served from the browser's HTTP cache and return the pre-publish
+// routing.json. Mark that one next lookup so it is a real network read.
+const requireFreshResolve = new Set<string>()
 
 async function deviceKidsOf(did: string): Promise<Set<string> | null> {
   const hit = cache.get(did)
   if (hit && Date.now() - hit.at < TTL_MS) return hit.kids
-  const doc = await resolveDidCommDoc(did)
-  if (!doc) return null
+  const skipCache = requireFreshResolve.delete(did)
+  let doc
+  try {
+    doc = await resolveDidCommDoc(did, [], { skipCache })
+  } catch (e) {
+    // Resolution is deliberately fail-open (see this module's header), but
+    // keep the concrete browser-side failure visible. Previously this escape
+    // bypassed the null branch below and ts-mls reduced it to its unhelpful
+    // "Could not validate credential" error.
+    console.warn(`[mls] DID resolution threw for ${did}; accepting unverified:`, e instanceof Error ? e.message : e)
+    return null
+  }
+  if (!doc) {
+    console.warn(`[mls] DID resolution returned no document for ${did}; accepting unverified`)
+    return null
+  }
   const kids = new Set(doc.keyAgreement)
   cache.set(did, { kids, at: Date.now() })
   return kids
@@ -65,6 +84,7 @@ async function deviceKidsOf(did: string): Promise<Set<string> | null> {
  * it without waiting out the TTL. */
 export function forgetDevices(did: string): void {
   cache.delete(did)
+  requireFreshResolve.add(did)
 }
 
 /** True when `kid` is currently a listed device of its own DID. Exported for

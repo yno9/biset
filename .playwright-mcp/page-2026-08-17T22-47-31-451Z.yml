@@ -1,0 +1,37 @@
+- generic [active] [ref=f5e1]:
+  - generic [ref=f5e2]:
+    - complementary:
+      - generic [ref=f5e3]:
+        - button "Toggle pane" [ref=f5e4] [cursor=pointer]
+        - searchbox "/ for commands" [ref=f5e7]
+    - generic [ref=f5e11]:
+      - generic [ref=f5e12]:
+        - generic [ref=f5e13] [cursor=pointer]: config
+        - generic [ref=f5e16] [cursor=pointer]: compose
+      - generic [ref=f5e19]:
+        - button "Toggle pane" [ref=f5e20] [cursor=pointer]
+        - generic [ref=f5e23]: account
+        - button "menu" [ref=f5e26] [cursor=pointer]
+      - generic [ref=f5e34]:
+        - generic "Click to view devices and DID document" [ref=f5e36] [cursor=pointer]:
+          - generic "Click to set avatar" [ref=f5e37]: Q
+          - generic [ref=f5e38]:
+            - generic [ref=f5e39]: scidfresh3
+            - generic [ref=f5e44]:
+              - generic [ref=f5e45]: did:webvh:t.biset.md:scidfresh3
+              - button "Copy DID" [ref=f5e46]
+          - button "Menu" [ref=f5e50]
+        - generic [ref=f5e99] [cursor=pointer]:
+          - generic [ref=f5e100]:
+            - generic [ref=f5e101]:
+              - generic [ref=f5e103]: Mail
+              - generic [ref=f5e104]: ":"
+              - generic [ref=f5e105]: scidfresh3@t.biset.md
+            - generic [ref=f5e106]:
+              - generic [ref=f5e107]: "Unread: 0/0"
+              - generic [ref=f5e108]: "Sync: 0s ago"
+              - generic [ref=f5e109]: PGP ✓
+          - button "Menu" [ref=f5e110]
+        - button "Compose" [ref=f5e73] [cursor=pointer]
+  - button "Scroll to top"
+  - button "Scroll to bottom"

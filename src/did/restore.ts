@@ -19,13 +19,16 @@
 import { mnemonicToSeed, isValidMnemonic } from './seed.ts'
 import { deriveRootKey } from './keys.ts'
 import { resolveAny } from './resolver.ts'
+import { fetchCurrentLog } from './webvh/log-io.ts'
+import { encodeMultikey } from './webvh/multikey.ts'
 import type { DidDocument } from './document.ts'
 import { rootPublicKeyFromWebvhState, type WebvhDidDocument } from './webvh/document.ts'
 import { bisetWebvhUsername, parseWebvhDid } from './webvh/identifier.ts'
 import { mediatorUrl, setOwnDid } from './didcomm-devices.ts'
 import { deriveKek } from '../cryptenv.ts'
-import { firstServiceEndpoint } from '../utils.ts'
+import { bytesToHex, firstServiceEndpoint } from '../utils.ts'
 import type { StoredAccount, AccountSession } from '../types.ts'
+import { ed25519 } from '@noble/curves/ed25519.js'
 
 export interface RestoreResult {
   did: string
@@ -39,6 +42,18 @@ export interface RestoreResult {
   kek: Uint8Array
 }
 
+/** What the login UI needs to know after the Root Key step. The Sign Key is
+ * required only after pre-rotation has actually moved `updateKeys` away from
+ * the identity's Root Key. Merely enabling the rotation feature still leaves
+ * the Root Key as the current signer, so asking for a second phrase there
+ * would be needless friction. */
+export interface RestoreKeyRequirements {
+  needsSignKey: boolean
+  /** The public multikey the Sign Key phrase must produce, for a live UI
+   * fingerprint/check. Absent when the Root Key is still the signer. */
+  signKeyFingerprint?: string
+}
+
 function akaMail(addrs: string[]): string | null {
   for (const a of addrs) if (a.startsWith('mailto:')) return a.slice('mailto:'.length)
   return null
@@ -50,12 +65,51 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return true
 }
 
+function normalizePhrase(phrase: string): string {
+  return phrase.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+export function restoreNeedsSignKey(updateKeys: string[] | undefined, rootPublicKey: Uint8Array): boolean {
+  return !!updateKeys?.length && !updateKeys.includes(encodeMultikey(rootPublicKey))
+}
+
+/** Checks the Root Key and inspects the current signing authority without
+ * writing a local record. This deliberately backs the first, Root-Key-only
+ * screen of restore: the caller can insert a Sign Key step before any login
+ * or background DIDComm work begins. */
+export async function restoreKeyRequirements(mnemonic: string, did?: string): Promise<RestoreKeyRequirements | { error: string }> {
+  const phrase = normalizePhrase(mnemonic)
+  if (!isValidMnemonic(phrase)) return { error: 'Invalid Root Key phrase (check the 24 words and their order).' }
+
+  const suppliedDid = did?.trim()
+  if (!suppliedDid || !suppliedDid.startsWith('did:webvh:')) {
+    return { error: 'DID required (did:webvh:…) — check it was typed correctly.' }
+  }
+  const resolved = await resolveAny(suppliedDid)
+  if (!resolved) return { error: 'Could not resolve that DID — check it was typed correctly, or its relays may be offline.' }
+
+  const root = deriveRootKey(mnemonicToSeed(phrase))
+  const rootKey = rootPublicKeyFromWebvhState(resolved as WebvhDidDocument)
+  if (!rootKey || !bytesEqual(rootKey, root.publicKey)) {
+    return { error: 'This Root Key phrase does not control that DID.' }
+  }
+
+  try {
+    const { last } = await fetchCurrentLog(suppliedDid)
+    const updateKeys = last.parameters.updateKeys
+    if (!restoreNeedsSignKey(updateKeys, root.publicKey)) return { needsSignKey: false }
+    return { needsSignKey: true, signKeyFingerprint: updateKeys?.[0] }
+  } catch (e) {
+    return { error: `Could not check this DID's current Sign Key: ${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
 // Returns a human-readable error string on failure, or the restored identity.
 // `did` is required now (2026-08-11: did:dht deprecated — that was the only
 // method whose DID could be rederived from the seed alone with no field to
 // fill in; did:webvh always needs one, see file header).
-export async function restoreFromMnemonic(mnemonic: string, did?: string): Promise<RestoreResult | { error: string }> {
-  const phrase = mnemonic.trim().toLowerCase().replace(/\s+/g, ' ')
+export async function restoreFromMnemonic(mnemonic: string, did?: string, signKeyMnemonic?: string): Promise<RestoreResult | { error: string }> {
+  const phrase = normalizePhrase(mnemonic)
   if (!isValidMnemonic(phrase)) return { error: 'Invalid Root Key phrase (check the 24 words and their order).' }
 
   const masterSecret = mnemonicToSeed(phrase)
@@ -74,6 +128,31 @@ export async function restoreFromMnemonic(mnemonic: string, did?: string): Promi
   const resolvedDid: string = suppliedDid
   const doc: DidDocument | WebvhDidDocument = resolved
 
+  // The Root Key proves who the identity is and vouches the device to a
+  // relay, but after a pre-rotation has been spent it no longer has authority
+  // to publish this DID document. Validate and retain the current Sign Key
+  // during restore instead of letting the first mediator registration fail
+  // later and make the account page ask for it as a surprise "FIX".
+  let signingKey: { privateKey: Uint8Array; publicKey: Uint8Array } | null = null
+  try {
+    const { last } = await fetchCurrentLog(resolvedDid)
+    const updateKeys = last.parameters.updateKeys
+    if (restoreNeedsSignKey(updateKeys, root.publicKey)) {
+      const signPhrase = normalizePhrase(signKeyMnemonic ?? '')
+      if (!isValidMnemonic(signPhrase)) {
+        return { error: 'This DID uses key rotation. Enter its current 24-word Sign Key phrase too.' }
+      }
+      const privateKey = mnemonicToSeed(signPhrase)
+      const publicKey = ed25519.getPublicKey(privateKey)
+      if (!updateKeys?.includes(encodeMultikey(publicKey))) {
+        return { error: "This Sign Key phrase does not control the DID's current document." }
+      }
+      signingKey = { privateKey, publicKey }
+    }
+  } catch (e) {
+    return { error: `Could not check this DID's current Sign Key: ${e instanceof Error ? e.message : String(e)}` }
+  }
+
   // Persist the DID record (keyed by did — store.ts's file header) so
   // grouping/publish work after restore without re-deriving. No DIDComm key
   // here — that's a per-DEVICE concern now (document.ts's DidKeyAgreement
@@ -82,7 +161,15 @@ export async function restoreFromMnemonic(mnemonic: string, did?: string): Promi
   // identity's local record and its relay count are unrelated (no more
   // "restore as standalone" special case).
   const { localDidRecord } = await import('./index.ts')
-  await localDidRecord(masterSecret, resolvedDid)
+  const local = await localDidRecord(masterSecret, resolvedDid)
+  if (signingKey) {
+    const { storeDidRecord } = await import('./store.ts')
+    await storeDidRecord({
+      ...local,
+      signingPrivateKey: bytesToHex(signingKey.privateKey),
+      signingPublicKey: bytesToHex(signingKey.publicKey),
+    })
+  }
   setOwnDid(resolvedDid)
   // Passkey protection is NOT attempted here, even though this is the moment
   // the device receives the seed: `credentials.create()` needs transient
@@ -209,24 +296,30 @@ export async function restoreFromMnemonic(mnemonic: string, did?: string): Promi
       .catch(e => { console.warn(`[restore] vouchThisDevice(${serverUrl}) threw:`, e instanceof Error ? e.message : e); return { ok: false, status: 0 } })
     if (!vouch.ok) console.warn(`[restore] vouchThisDevice(${serverUrl}) rejected: HTTP ${vouch.status}`)
     const stored: StoredAccount = { serverUrl, email, displayEmail, password: '', did: resolvedDid }
-    // One retry, short backoff, ONLY after a successful vouch: a vouch this
-    // device just wrote and an immediate session-login read of it are two
-    // separate round trips (one through the anchor, one straight to the
-    // relay's own device-key file) with no ordering guarantee between them
-    // — found live 2026-08-18, "Found the identity but could not connect to
-    // any of its relays" on a restore that then worked on a bare reload
-    // seconds later, with nothing else having changed. A vouch that was
-    // ITSELF rejected is not retried here — that failure is real and a
-    // retry would just waste a round trip confirming it again.
-    let session = await connectAndPersist(stored, kek)
-    if (!session && vouch.ok) {
-      await new Promise(r => setTimeout(r, 800))
+    // A vouch and the first session login reach different relay paths.  The
+    // vouch may already have returned 200 while the login path still sees its
+    // previous device snapshot; a browser reload seconds later then succeeds
+    // with no user action.  One 800ms retry did not cover that window in
+    // production.  Bound the recovery here instead: successful vouches get
+    // five login attempts over ten seconds, while a rejected vouch remains a
+    // real failure and is not retried pointlessly.
+    let session: AccountSession | null = null
+    const attempts = vouch.ok ? 5 : 1
+    for (let attempt = 0; attempt < attempts && !session; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1000))
       session = await connectAndPersist(stored, kek)
     }
     if (session) { session.account.did = resolvedDid; sessions.push(session) }
     else console.warn(`[restore] connectAndPersist(${serverUrl}) returned no session (vouch ${vouch.ok ? 'ok' : `HTTP ${vouch.status}`})`)
   }
   if (!sessions.length) return { error: 'Found the identity but could not connect to any of its relays.' }
+
+  // Restore is also an identity selection. Without this, a successful restore
+  // leaves `biset_active_identity` empty until a later reload happens to
+  // adopt the newly persisted account, which makes the post-restore state
+  // needlessly ambiguous to both the UI and diagnostics.
+  const { setActiveIdentity } = await import('../context.ts')
+  setActiveIdentity(resolvedDid)
 
   return { did: resolvedDid, primaryAddress: primaryAddress || sessions[0].account.displayEmail || sessions[0].account.email, sessions, kek }
 }

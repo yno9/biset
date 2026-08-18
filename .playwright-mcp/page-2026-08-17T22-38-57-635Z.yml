@@ -1,0 +1,36 @@
+- generic [ref=f3e1]:
+  - generic [ref=f3e2]:
+    - complementary:
+      - generic [ref=f3e3]:
+        - button "Toggle pane" [ref=f3e4] [cursor=pointer]
+        - searchbox "/ for commands" [ref=f3e7]
+    - generic [ref=f3e11]:
+      - generic [ref=f3e29]:
+        - generic [ref=f3e30] [cursor=pointer]: config
+        - generic [ref=f3e33] [cursor=pointer]: compose
+      - generic [ref=f3e12]:
+        - button "Toggle pane" [ref=f3e13] [cursor=pointer]
+        - generic [ref=f3e16]: account
+        - button "menu" [active] [ref=f3e18] [cursor=pointer]
+      - generic [ref=f3e39]:
+        - generic "Click to view devices and DID document" [ref=f3e41] [cursor=pointer]:
+          - generic "Click to set avatar" [ref=f3e42]: S
+          - generic [ref=f3e43]:
+            - generic [ref=f3e44]: scidtest1
+            - generic [ref=f3e49]:
+              - generic [ref=f3e50]: did:webvh:t.biset.md:scidtest1
+              - button "Copy DID" [ref=f3e51]
+          - button "Menu" [ref=f3e55]
+        - generic [ref=f3e62] [cursor=pointer]:
+          - generic [ref=f3e63]:
+            - generic [ref=f3e64]:
+              - generic [ref=f3e66]: Mail
+              - generic [ref=f3e67]: ":"
+              - generic [ref=f3e68]: scidtest1@t.biset.md
+            - generic [ref=f3e69]:
+              - generic [ref=f3e70]: "Unread: …/…"
+              - generic [ref=f3e71]: "Sync: Never"
+          - button "Menu" [ref=f3e72]
+        - button "Compose" [ref=f3e77] [cursor=pointer]
+  - button "Scroll to top"
+  - button "Scroll to bottom"

@@ -1,0 +1,88 @@
+[   20744ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/.well-known/jmap:0
+[   63398ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/.well-known/jmap:0
+[   63586ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/.well-known/jmap:0
+[   63689ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/.well-known/jmap:0
+[   84223ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://t.biset.md/scidtest1/did.jsonl:0
+[  101645ms] [INFO] [mls] catch-up on 97184037e9d1 walked past 1 delivery/deliveries this device had already applied @ file:///Users/n/biset/dist/index.html:4163
+[  131588ms] [WARNING] [identity] passkey protection not enabled — secrets stay plaintext at rest @ file:///Users/n/biset/dist/index.html:6302
+[  167958ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://mail.biset.md/pgp/privkey:0
+[  168488ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://mail.biset.md/account/alias:0
+[  393443ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[  393461ms] [WARNING] [sync] queryChanges failed, falling back to full query: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[  393557ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[  393557ms] [ERROR] [sync] scidtest1@t.biset.md failed: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[  399204ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[  399205ms] [WARNING] [sync] queryChanges failed, falling back to full query: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[  399287ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[  399288ms] [ERROR] [sync] scidtest1@t.biset.md failed: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[  404068ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/account/session:0
+[  404068ms] [ERROR] [initSession] device session login failed (never vouched here, or revoked): scidtest1@t.biset.md https://mail.biset.md @ file:///Users/n/biset/dist/index.html:4109
+[  463964ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://t.biset.md/scidtest1r/did.jsonl:0
+[  474724ms] [INFO] [mls] catch-up on 94d76317db9d walked past 1 delivery/deliveries this device had already applied @ file:///Users/n/biset/dist/index.html:4163
+[  542339ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/.well-known/jmap:0
+[  542438ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/.well-known/jmap:0
+[  542478ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/.well-known/jmap:0
+[  549754ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://t.biset.md/scidfresh2/did.jsonl:0
+[  555509ms] [WARNING] [account-create] mediator registration failed (non-fatal): ensureDeviceKey: no local DID record for did:webvh:QmbxdoBAKnBjBuD9jKvzyiDpoKHhnUoAQ2EA5zpFec5C3B:t.biset.md:scidtest1r @ file:///Users/n/biset/dist/index.html:6302
+[  569835ms] [WARNING] [identity] passkey protection not enabled — secrets stay plaintext at rest @ file:///Users/n/biset/dist/index.html:6302
+[  578498ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://mail.biset.md/pgp/privkey:0
+[  795022ms] [WARNING] [didcomm] hasDidCommChannel: false {did: did:webvh:QmSH33aK6WjCzuDgQJgcc3nxeVCF7BX2DVvJVgCt4TeA3b:t.biset.md:scidfresh2, found: true, mediatorUrl: false, privateKey: false, ownKid: false} @ file:///Users/n/biset/dist/index.html:4181
+[  795023ms] [WARNING] [didcomm] channel setup skipped — hasDidCommChannel() returned false for did:webvh:QmSH33aK6WjCzuDgQJgcc3nxeVCF7BX2DVvJVgCt4TeA3b:t.biset.md:scidfresh2 @ file:///Users/n/biset/dist/index.html:6494
+[  848412ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://t.biset.md/scidfresh3/did.jsonl:0
+[  855257ms] [WARNING] [didcomm] hasDidCommChannel: false {did: did:webvh:QmSH33aK6WjCzuDgQJgcc3nxeVCF7BX2DVvJVgCt4TeA3b:t.biset.md:scidfresh2, found: true, mediatorUrl: false, privateKey: false, ownKid: false} @ file:///Users/n/biset/dist/index.html:4181
+[  896162ms] [WARNING] [didcomm] hasDidCommChannel: false {did: did:webvh:QmSH33aK6WjCzuDgQJgcc3nxeVCF7BX2DVvJVgCt4TeA3b:t.biset.md:scidfresh3, found: true, mediatorUrl: false, privateKey: false, ownKid: false} @ file:///Users/n/biset/dist/index.html:4181
+[  896165ms] [WARNING] [didcomm] channel setup skipped — hasDidCommChannel() returned false for did:webvh:QmSH33aK6WjCzuDgQJgcc3nxeVCF7BX2DVvJVgCt4TeA3b:t.biset.md:scidfresh3 @ file:///Users/n/biset/dist/index.html:6494
+[  944155ms] [WARNING] [didcomm] hasDidCommChannel: false {did: did:webvh:QmSH33aK6WjCzuDgQJgcc3nxeVCF7BX2DVvJVgCt4TeA3b:t.biset.md:scidfresh3, found: true, mediatorUrl: false, privateKey: false, ownKid: false} @ file:///Users/n/biset/dist/index.html:4181
+[  948890ms] [WARNING] [didcomm] hasDidCommChannel: false {did: did:webvh:QmSH33aK6WjCzuDgQJgcc3nxeVCF7BX2DVvJVgCt4TeA3b:t.biset.md:scidfresh3, found: true, mediatorUrl: false, privateKey: false, ownKid: false} @ file:///Users/n/biset/dist/index.html:4181
+[  948890ms] [WARNING] [didcomm] channel setup skipped — hasDidCommChannel() returned false for did:webvh:QmSH33aK6WjCzuDgQJgcc3nxeVCF7BX2DVvJVgCt4TeA3b:t.biset.md:scidfresh3 @ file:///Users/n/biset/dist/index.html:6494
+[ 1492738ms] [ERROR] Failed to load resource: net::ERR_HTTP2_PROTOCOL_ERROR @ https://mail.biset.md/jmap/eventsource/?access_token=qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b%40t.biset.md%3An5yB8ZaSRq5ZHohIH2Gurrm5%2FKWOOd2NQTGyglRA15Y%3D:0
+[ 1494900ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/eventsource/?access_token=qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b%40t.biset.md%3An5yB8ZaSRq5ZHohIH2Gurrm5%2FKWOOd2NQTGyglRA15Y%3D:0
+[ 1499078ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/eventsource/?access_token=qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b%40t.biset.md%3An5yB8ZaSRq5ZHohIH2Gurrm5%2FKWOOd2NQTGyglRA15Y%3D:0
+[ 1507120ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/eventsource/?access_token=qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b%40t.biset.md%3An5yB8ZaSRq5ZHohIH2Gurrm5%2FKWOOd2NQTGyglRA15Y%3D:0
+[ 1518737ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[ 1518758ms] [WARNING] [sync] queryChanges failed, falling back to full query: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[ 1519038ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[ 1519042ms] [ERROR] [sync] qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b@t.biset.md failed: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[ 1523187ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/eventsource/?access_token=qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b%40t.biset.md%3An5yB8ZaSRq5ZHohIH2Gurrm5%2FKWOOd2NQTGyglRA15Y%3D:0
+[ 1548822ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[ 1548825ms] [WARNING] [sync] queryChanges failed, falling back to full query: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[ 1549026ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[ 1549030ms] [ERROR] [sync] qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b@t.biset.md failed: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[ 1555638ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/eventsource/?access_token=qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b%40t.biset.md%3An5yB8ZaSRq5ZHohIH2Gurrm5%2FKWOOd2NQTGyglRA15Y%3D:0
+[ 1578797ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[ 1578798ms] [WARNING] [sync] queryChanges failed, falling back to full query: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[ 1578879ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[ 1578879ms] [ERROR] [sync] qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b@t.biset.md failed: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[ 1608724ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[ 1608725ms] [WARNING] [sync] queryChanges failed, falling back to full query: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[ 1608837ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[ 1608842ms] [ERROR] [sync] qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b@t.biset.md failed: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[ 1615697ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/eventsource/?access_token=qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b%40t.biset.md%3An5yB8ZaSRq5ZHohIH2Gurrm5%2FKWOOd2NQTGyglRA15Y%3D:0
+[ 1638998ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[ 1639011ms] [WARNING] [sync] queryChanges failed, falling back to full query: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[ 1639118ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[ 1639120ms] [ERROR] [sync] qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b@t.biset.md failed: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[ 1668950ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[ 1668960ms] [WARNING] [sync] queryChanges failed, falling back to full query: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[ 1669042ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/api/:0
+[ 1669044ms] [ERROR] [sync] qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b@t.biset.md failed: unauthorized
+ @ file:///Users/n/biset/dist/index.html:4191
+[ 1675762ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/jmap/eventsource/?access_token=qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b%40t.biset.md%3An5yB8ZaSRq5ZHohIH2Gurrm5%2FKWOOd2NQTGyglRA15Y%3D:0
+[ 1697228ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/.well-known/jmap:0
+[ 1697269ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/.well-known/jmap:0
+[ 1697309ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://mail.biset.md/.well-known/jmap:0

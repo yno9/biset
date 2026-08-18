@@ -437,45 +437,38 @@ export async function fullKeyAgreementKeys(rec: DidRecord): Promise<DidKeyAgreem
 }
 
 /** Published devices that are still registered with the mediator and are not
- * already accounted for. Empty when this device has no mediator to ask, or
- * when the ask fails — never a reason to publish a shorter list. */
+ * already accounted for. When a NEW device has not completed keylist-update
+ * yet, the mediator cannot authenticate its query (its kid is not published
+ * until this very Phase 1). In that bootstrap window retain every currently
+ * published key rather than treating an unavailable keylist as an empty one:
+ * otherwise the new device's first publish briefly erases its sibling and
+ * makes the two-device MLS join impossible. */
 async function registeredButUnknown(
   rec: DidRecord,
   known: Map<string, { kid: string; publicKeyHex: string }>,
 ): Promise<Array<[string, string]>> {
   if (!rec.didCommMediatorUrl || !rec.didCommPrivateKey || !rec.didCommOwnKid) return []
+  const ops = methodOpsFor(rec.did)
+  const gateways = resolutionGatewayUrls(rec, ops)
+  const resolved = await ops.resolveKeyAgreement(rec.did, gateways).catch(() => null)
+  if (!resolved) return []
+
+  let registered: Set<string> | undefined
   try {
     const mediator = await fetchMediatorInfo(rec.didCommMediatorUrl)
     const own: DidCommSender = { did: rec.did, xKid: `${rec.did}${rec.didCommOwnKid}`, xPriv: hexToBytes(rec.didCommPrivateKey) }
-    const registered = new Set((await queryKeylist(mediator, own)).map(e => fragmentOf(e.kid)))
-    if (registered.size === 0) return []
-    const ops = methodOpsFor(rec.did)
-    // The identity's own gateways first (its relays, plus the mediator's own
-    // pkarr endpoint) — the public fallbacks are slower and are not where a
-    // relay-backed identity's document most reliably lives. Reading the live
-    // relay list can itself fail outside a browser, and a failure here must
-    // not take the whole lookup down: the mediator is already known, and its
-    // gateway alone is enough to resolve.
-    let gateways: string[] = []
-    try {
-      const relayInput = liveRelayInputs(rec.did)
-      gateways = ops.gatewayUrls(relayInput?.services.map(s => ({ account: { serverUrl: s.serverUrl } })) ?? [], rec.didCommMediatorUrl)
-    } catch {
-      gateways = ops.gatewayUrls([], rec.didCommMediatorUrl)
-    }
-    const resolved = await ops.resolveKeyAgreement(rec.did, gateways).catch(() => null)
-    return (resolved?.keyAgreementKeys ?? [])
-      .filter(k => registered.has(k.kid) && !known.has(k.kid))
-      .map(k => [k.kid, bytesToHex(k.publicKey)] as [string, string])
+    registered = new Set((await queryKeylist(mediator, own)).map(e => fragmentOf(e.kid)))
   } catch (e) {
     console.warn('[did] could not check which devices are still registered:', e instanceof Error ? e.message : e)
-    return []
   }
+  return resolved.keyAgreementKeys
+    .filter(k => !known.has(k.kid) && (!registered || registered.has(k.kid)))
+    .map(k => [k.kid, bytesToHex(k.publicKey)] as [string, string])
 }
 
-/** ML-KEM-768 counterpart, from the same source. A device that has not minted
- * a PQ key simply announced none in its leaf, and is absent here — which is
- * how "not PQ-capable yet" has always been expressed. */
+/** ML-KEM-768 counterpart. Prefer the committed group roster; while no group
+ * exists yet, carry forward published sibling keys during device bootstrap.
+ * A device that has not minted a PQ key simply announces none in its leaf. */
 export async function fullMlkemKeyAgreementKeys(rec: DidRecord): Promise<DidMlkemKeyAgreement[]> {
   const fromGroup = await selfGroupTransportKeys(rec.did).catch(() => undefined)
   if (fromGroup?.length) {
@@ -483,9 +476,37 @@ export async function fullMlkemKeyAgreementKeys(rec: DidRecord): Promise<DidMlke
       .filter((d): d is typeof d & { mlkem: Uint8Array } => !!d.mlkem)
       .map(d => ({ kid: fragmentOf(d.kid), publicKey: d.mlkem }))
   }
-  return rec.mlkemPublicKey && rec.didCommOwnKid
-    ? [{ kid: rec.didCommOwnKid, publicKey: hexToBytes(rec.mlkemPublicKey) }]
-    : []
+  const entries = new Map<string, DidMlkemKeyAgreement>()
+  if (rec.mlkemPublicKey && rec.didCommOwnKid) {
+    entries.set(rec.didCommOwnKid, { kid: rec.didCommOwnKid, publicKey: hexToBytes(rec.mlkemPublicKey) })
+  }
+  // Same bootstrap preservation as registeredButUnknown above. This device
+  // cannot query the mediator under its new kid before Phase 1 has published
+  // it, so retain an already-published sibling's hybrid key as well.
+  try {
+    const ops = methodOpsFor(rec.did)
+    const gateways = resolutionGatewayUrls(rec, ops)
+    const resolved = await ops.resolveKeyAgreement(rec.did, gateways)
+    for (const key of resolved?.mlkemKeyAgreementKeys ?? []) {
+      if (!entries.has(key.kid)) entries.set(key.kid, key)
+    }
+  } catch { /* current own key remains sufficient when resolution is down */ }
+  return [...entries.values()]
+}
+
+/** Resolve through this identity's relays first, with its mediator as the
+ * fallback. `liveRelayInputs` is browser session state and may be absent
+ * during restore, so lookup construction itself must remain best-effort. */
+function resolutionGatewayUrls(rec: DidRecord, ops: MethodOps): string[] {
+  try {
+    const relayInput = liveRelayInputs(rec.did)
+    return ops.gatewayUrls(
+      relayInput?.services.map(s => ({ account: { serverUrl: s.serverUrl } })) ?? [],
+      rec.didCommMediatorUrl,
+    )
+  } catch {
+    return ops.gatewayUrls([], rec.didCommMediatorUrl)
+  }
 }
 
 // ── publish / register / revoke (method-agnostic) ───────────────────────────

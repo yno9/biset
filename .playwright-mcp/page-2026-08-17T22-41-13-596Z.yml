@@ -1,0 +1,121 @@
+- generic [ref=f3e1]:
+  - generic: Account created
+  - generic [ref=f3e2]:
+    - complementary:
+      - generic [ref=f3e3]:
+        - button "Toggle pane" [ref=f3e4] [cursor=pointer]
+        - searchbox "/ for commands" [ref=f3e7]
+    - generic [ref=f3e11]:
+      - generic [ref=f3e29]:
+        - generic [ref=f3e182] [cursor=pointer]: config
+        - generic [ref=f3e185] [cursor=pointer]: compose
+      - generic [ref=f3e12]:
+        - button "Toggle pane" [ref=f3e13] [cursor=pointer]
+        - generic [ref=f3e16]: account
+        - button "menu" [ref=f3e18] [cursor=pointer]
+      - generic [ref=f3e189]:
+        - generic "Click to view devices and DID document" [ref=f3e191] [cursor=pointer]:
+          - generic "Click to set avatar" [ref=f3e192]: S
+          - generic [ref=f3e193]:
+            - generic [ref=f3e194]: scidfresh2
+            - generic [ref=f3e199]:
+              - generic [ref=f3e200]: did:webvh:t.biset.md:scidfresh2
+              - button "Copy DID" [ref=f3e201]
+          - button "Menu" [ref=f3e205]
+        - generic [ref=f3e211]:
+          - generic [ref=f3e212]:
+            - generic [ref=f3e213]:
+              - generic [ref=f3e215]: MAIL
+              - generic [ref=f3e216]: ":"
+              - generic [ref=f3e217]: scidfresh2@t.biset.md
+            - generic [ref=f3e218]: Not claimed
+          - button "Menu" [ref=f3e219] [cursor=pointer]
+        - button "Compose" [ref=f3e224] [cursor=pointer]
+  - button "Scroll to top"
+  - button "Scroll to bottom"
+  - generic [ref=f3e228]:
+    - generic [ref=f3e229]:
+      - generic [ref=f3e230]: ROOT KEY
+      - generic [ref=f3e231]: SIGN KEY
+      - heading "Root Key phrase" [level=3] [ref=f3e232]
+    - generic [ref=f3e233]: Write these 24 words down on paper, in order, and keep them somewhere safe.
+    - generic [ref=f3e234]:
+      - generic [ref=f3e235]:
+        - generic [ref=f3e236]: "01"
+        - generic [ref=f3e237]: hollow
+      - generic [ref=f3e238]:
+        - generic [ref=f3e239]: "02"
+        - generic [ref=f3e240]: cloth
+      - generic [ref=f3e241]:
+        - generic [ref=f3e242]: "03"
+        - generic [ref=f3e243]: gun
+      - generic [ref=f3e244]:
+        - generic [ref=f3e245]: "04"
+        - generic [ref=f3e246]: squeeze
+      - generic [ref=f3e247]:
+        - generic [ref=f3e248]: "05"
+        - generic [ref=f3e249]: perfect
+      - generic [ref=f3e250]:
+        - generic [ref=f3e251]: "06"
+        - generic [ref=f3e252]: debate
+      - generic [ref=f3e253]:
+        - generic [ref=f3e254]: "07"
+        - generic [ref=f3e255]: bar
+      - generic [ref=f3e256]:
+        - generic [ref=f3e257]: "08"
+        - generic [ref=f3e258]: expect
+      - generic [ref=f3e259]:
+        - generic [ref=f3e260]: "09"
+        - generic [ref=f3e261]: ask
+      - generic [ref=f3e262]:
+        - generic [ref=f3e263]: "10"
+        - generic [ref=f3e264]: supply
+      - generic [ref=f3e265]:
+        - generic [ref=f3e266]: "11"
+        - generic [ref=f3e267]: forward
+      - generic [ref=f3e268]:
+        - generic [ref=f3e269]: "12"
+        - generic [ref=f3e270]: drama
+      - generic [ref=f3e271]:
+        - generic [ref=f3e272]: "13"
+        - generic [ref=f3e273]: hybrid
+      - generic [ref=f3e274]:
+        - generic [ref=f3e275]: "14"
+        - generic [ref=f3e276]: brave
+      - generic [ref=f3e277]:
+        - generic [ref=f3e278]: "15"
+        - generic [ref=f3e279]: wave
+      - generic [ref=f3e280]:
+        - generic [ref=f3e281]: "16"
+        - generic [ref=f3e282]: group
+      - generic [ref=f3e283]:
+        - generic [ref=f3e284]: "17"
+        - generic [ref=f3e285]: way
+      - generic [ref=f3e286]:
+        - generic [ref=f3e287]: "18"
+        - generic [ref=f3e288]: equal
+      - generic [ref=f3e289]:
+        - generic [ref=f3e290]: "19"
+        - generic [ref=f3e291]: achieve
+      - generic [ref=f3e292]:
+        - generic [ref=f3e293]: "20"
+        - generic [ref=f3e294]: helmet
+      - generic [ref=f3e295]:
+        - generic [ref=f3e296]: "21"
+        - generic [ref=f3e297]: hidden
+      - generic [ref=f3e298]:
+        - generic [ref=f3e299]: "22"
+        - generic [ref=f3e300]: shoulder
+      - generic [ref=f3e301]:
+        - generic [ref=f3e302]: "23"
+        - generic [ref=f3e303]: mule
+      - generic [ref=f3e304]:
+        - generic [ref=f3e305]: "24"
+        - generic [ref=f3e306]: scare
+    - generic [ref=f3e307]: → z6MkenLyUXfsVKPyzmcrL9x3pdHTCbXHsbqLiTmQZyYmYTcb
+    - generic [ref=f3e308]:
+      - generic [ref=f3e309]: ⚠
+      - generic [ref=f3e310]: Anyone with this phrase can take over your identity. We can never show or reset it for you — lose it and your account is gone for good.
+    - generic [ref=f3e311]:
+      - button "Copied" [active] [ref=f3e314] [cursor=pointer]
+      - button "I've saved it" [ref=f3e313] [cursor=pointer]

@@ -1,0 +1,47 @@
+- generic [active] [ref=f5e1]:
+  - generic [ref=f5e2]:
+    - complementary:
+      - generic [ref=f5e3]:
+        - button "Toggle pane" [ref=f5e4] [cursor=pointer]
+        - searchbox "/ for commands" [ref=f5e7]
+    - generic [ref=f5e11]:
+      - generic [ref=f5e12]:
+        - generic [ref=f5e13] [cursor=pointer]: config
+        - generic [ref=f5e16] [cursor=pointer]: compose
+      - generic [ref=f5e19]:
+        - button "Toggle pane" [ref=f5e20] [cursor=pointer]
+        - generic [ref=f5e23]: account
+        - button "menu" [ref=f5e26] [cursor=pointer]
+      - generic [ref=f5e34]:
+        - generic "Click to view devices and DID document" [ref=f5e36] [cursor=pointer]:
+          - generic "Click to set avatar" [ref=f5e37]: Q
+          - generic [ref=f5e38]:
+            - generic [ref=f5e39]: qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b
+            - generic [ref=f5e44]:
+              - generic [ref=f5e45]: did:webvh:t.biset.md:scidfresh3
+              - button "Copy DID" [ref=f5e46]
+          - button "Menu" [ref=f5e50]
+        - generic [ref=f5e57] [cursor=pointer]:
+          - generic [ref=f5e58]:
+            - generic [ref=f5e59]:
+              - generic [ref=f5e61]: Mail
+              - generic [ref=f5e62]: ":"
+              - generic [ref=f5e63]: scidfresh3@t.biset.md
+            - generic [ref=f5e64]:
+              - generic [ref=f5e65]: "Unread: 0/0"
+              - generic [ref=f5e66]: "Sync: 0s ago"
+              - generic [ref=f5e67]: PGP ✓
+          - button "Menu" [ref=f5e68]
+        - button "Compose" [ref=f5e73] [cursor=pointer]
+  - button "Scroll to top"
+  - button "Scroll to bottom"
+  - generic [ref=f5e77]:
+    - generic [ref=f5e78]:
+      - heading "Change display name" [level=3] [ref=f5e79]
+      - button "✕" [ref=f5e80] [cursor=pointer]
+    - generic [ref=f5e81]:
+      - generic [ref=f5e82]: qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b@t.biset.md
+      - textbox "Display name" [ref=f5e83]: qmsh33ak6wjczudgqjgcc3nxevcf7bx2dvvjvgct4tea3b
+      - generic [ref=f5e84]:
+        - button "Cancel" [ref=f5e85] [cursor=pointer]
+        - button "Save" [ref=f5e86] [cursor=pointer]

@@ -26,6 +26,7 @@ import { signBinding } from './binding.ts'
 import { generateDeviceKey, signVouch, signSessionLogin } from './devicebind.ts'
 import { getDidRecord, storeDidRecord, withDidLock } from './store.ts'
 import { hexToBytes } from '../utils.ts'
+import { scidToLocalpart } from './webvh/scid-localpart.ts'
 
 const bytesToHex = (b: Uint8Array): string => [...b].map(x => x.toString(16).padStart(2, '0')).join('')
 
@@ -47,8 +48,8 @@ export function deviceLabel(): string {
  * directly (PLANSCID.md).
  *
  * A SCID-primary account's login identity is the DID's permanent SCID
- * segment, computed straight from the DID string — never from what the
- * document happens to be advertising, which is the delivery ALIAS
+ * segment's z-base-32 projection, computed straight from the DID string —
+ * never from what the document happens to be advertising, which is the delivery ALIAS
  * (PLANSCID.md's whole point: the alias can be renamed freely without ever
  * touching the account it points at). Falls back to `publishedAddress`'s own
  * localpart when the DID doesn't read as biset's own did:webvh shape (a
@@ -67,7 +68,12 @@ export async function scidLoginAddress(did: string, publishedAddress: string): P
   try {
     const { parseWebvhDid } = await import('./webvh/identifier.ts')
     const parsed = parseWebvhDid(did)
-    if (parsed.scid) username = parsed.scid.toLowerCase()
+    // The relay's permanent account localpart is not the base58 SCID made
+    // lowercase. It is a z-base-32 encoding of the SCID bytes. Using the old
+    // lowercase form makes a restore vouch and then log into a non-existent
+    // account, leaving only the DID record behind with no StoredAccount.
+    const scidLocalpart = scidToLocalpart(parsed.scid)
+    if (scidLocalpart) username = scidLocalpart
   } catch { /* not a biset-shaped did:webvh — publishedAddress's own localpart already is the login identity */ }
   return { email: `${username}@${domain}`, username, domain }
 }

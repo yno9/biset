@@ -57,14 +57,14 @@ function findSigningKey(proof: LogEntry['proof'][number], candidateKeys: string[
  * resolve — the identity itself (id, root key) is still valid even if its
  * operational data is temporarily unreachable, the same fail-soft stance
  * every reader of `service` already takes for a missing entry. */
-export async function resolve(did: string): Promise<WebvhDidDocument | null> {
+export async function resolve(did: string, init?: RequestInit): Promise<WebvhDidDocument | null> {
   const url = didToHttpsUrl(did)
-  const resp = await fetch(url)
+  const resp = await fetch(url, init)
   if (resp.status === 404) return null
   if (!resp.ok) throw new WebvhResolutionError(`resolve: HTTP ${resp.status} fetching ${url}`)
   const doc = resolveEntries(did, parseLog(await resp.text()))
   if (!doc) return null
-  const routing = await fetchRouting(doc.id).catch(() => null)
+  const routing = await fetchRouting(doc.id, init).catch(() => null)
   return mergeRouting(doc, routing)
 }
 

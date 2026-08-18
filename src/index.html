@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>biset</title>
 <script>
@@ -69,10 +70,11 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
 <div id="pw-overlay">
   <div id="pw-overlay-inbox"></div>
   <div id="pw-overlay-msg">Enter your password</div>
-  <div id="pw-input-wrap">
+  <form id="pw-input-wrap" onsubmit="return false">
+    <input type="text" name="username" autocomplete="username" style="display:none">
     <input id="pw-input" type="password" placeholder="Password" autocomplete="current-password">
-    <button id="pw-submit">Enter</button>
-  </div>
+    <button id="pw-submit" type="submit">Enter</button>
+  </form>
   <div id="pw-error2"></div>
 </div>
 
@@ -143,6 +145,7 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
     </div>
     -->
     <textarea id="nu-phrase" rows="4" placeholder="Paste your 24-word Root Key phrase" autocomplete="off" autocapitalize="off" spellcheck="false" style="display:none;width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid var(--header-border);background:var(--input-bg);color:var(--text);font-size:14px;font-family:inherit;resize:none;overflow-y:hidden;outline:none"></textarea>
+    <textarea id="nu-sign-phrase" rows="4" placeholder="Paste your 24-word Sign Key phrase" autocomplete="off" autocapitalize="off" spellcheck="false" style="display:none;width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid var(--header-border);background:var(--input-bg);color:var(--text);font-size:14px;font-family:inherit;resize:none;overflow-y:hidden;outline:none"></textarea>
     <div id="nu-tos-row" style="display:flex;align-items:center;justify-content:center;gap:8px">
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-dim);cursor:pointer;user-select:none">
         <input id="nu-tos" type="checkbox" style="position:absolute;opacity:0;width:0;height:0;pointer-events:none">
