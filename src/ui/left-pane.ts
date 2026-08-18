@@ -3147,9 +3147,13 @@ export async function setupLeftPane() {
       if (needsMigration) {
         items.push({
           label: 'Migrate to SCID', onClick: async () => {
-            if (!confirm(`Move ${email}'s account storage onto its permanent SCID identity? This account will then keep working under ${email} as an alias, and future renames (Edit identity) will never need to touch its mail data again. This device stays logged in — nothing else changes.`)) return
             const session = sessions.find(s => s.account.email === email && s.account.serverUrl === serverUrl)
             if (!session) { showSysMsg('Not connected — log in before migrating'); return }
+            // The human-facing alias, not `email` (see the note further
+            // down at `displayEmail` for why the two are not the same
+            // thing on a second migration).
+            const shownAs = session.account.displayEmail ?? email
+            if (!confirm(`Move ${shownAs}'s account storage onto its permanent SCID identity? This account will then keep working under ${shownAs} as an alias, and future renames (Edit identity) will never need to touch its mail data again. This device stays logged in — nothing else changes.`)) return
             const { migrateAccountToScid } = await import('../cryptenv.ts')
             const newEmail = await migrateAccountToScid(serverUrl, email, session.account.password, did)
             if (!newEmail) { showSysMsg('Migration failed'); return }
@@ -3163,7 +3167,20 @@ export async function setupLeftPane() {
             // under the NEW email before rekeyPgpForNewLogin below gets a
             // chance to carry the real key over, finding nothing local and
             // minting a throwaway keypair in the meantime.
-            const newSession = await connectAndPersist({ serverUrl, email: newEmail, displayEmail: email, password: '', did })
+            //
+            // `displayEmail: shownAs`, NOT `email`: `email` is `a.email`,
+            // the internal login address (types.ts's own distinction) — on
+            // a FIRST migration (pre-SCID human address -> SCID-primary)
+            // that happens to equal `a.displayEmail` too, which is exactly
+            // what hid this until a SECOND migration (old-format SCID ->
+            // new-format SCID, 2026-08-18) made the two diverge for the
+            // first time: `email` was already an internal SCID address, not
+            // the "y@biset.md" a human actually recognizes, so writing it
+            // into the new session's `displayEmail` made every check
+            // comparing against the real alias (renderUnclaimedMailCard's
+            // "Not claimed", the account card's "Not the current address")
+            // fail — found live on this exact account.
+            const newSession = await connectAndPersist({ serverUrl, email: newEmail, displayEmail: shownAs, password: '', did })
             if (!newSession) { showSysMsg(`Migrated to ${newEmail}, but reconnecting failed — Sync will retry`); refreshAccountsList(); return }
             // Carries this device's PGP identity across the login-identity
             // change (rekeyPgpForNewLogin's own note) — the local cache and
@@ -3178,7 +3195,7 @@ export async function setupLeftPane() {
             // Already-synced messages are re-keyed onto the new accountKey
             // automatically by connectAndPersist's own healStaleMessageAccountKey
             // step (app.ts, PLANSCID.md) — no separate call needed here.
-            showSysMsg(`Migrated — still reachable at ${email}`)
+            showSysMsg(`Migrated — still reachable at ${shownAs}`)
             refreshAccountsList()
           },
         })

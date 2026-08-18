@@ -879,10 +879,30 @@ function healStaleMessageAccountKey(session: AccountSession): void {
  * UI only ever has room to show one, and picking any live one beats a stale
  * cached guess. */
 function refreshDisplayEmail(session: AccountSession): void {
-  const { serverUrl, email, password, displayEmail } = session.account
-  fetchAccountAliases(serverUrl, email, password).then(aliases => {
-    const current = aliases?.[0]
-    if (!current || current === displayEmail) return
+  const { serverUrl, email, password, displayEmail, did } = session.account
+  fetchAccountAliases(serverUrl, email, password).then(async aliases => {
+    if (!aliases?.length) return
+    // Prefer the alias matching the DID's CURRENT did:webvh identifier
+    // (jmapsmtp ARC.md §2.9's Lv2 — the one alias `did::alias_reconcile`
+    // itself would keep current) over `aliases[0]`: the relay's own
+    // `aliases_for` iterates a `BTreeMap<String, String>`, so index 0 is
+    // whichever alias sorts first ALPHABETICALLY, which has nothing to do
+    // with which one a human actually recognizes as "their" address.
+    // Found live (2026-08-18): after a SCID-primary account's second
+    // migration, its internal old-format address ("qmwpmygewt1...")
+    // sorted before its real human alias ("y@..."), so this picked the
+    // wrong one and the UI never self-corrected.
+    let current = aliases[0]!
+    if (did?.startsWith('did:webvh:')) {
+      try {
+        const { bisetWebvhUsername, parseWebvhDid } = await import('./did/webvh/identifier.ts')
+        const username = bisetWebvhUsername(did)
+        const domain = parseWebvhDid(did).domain
+        const expected = username && `${username}@${domain}`
+        if (expected && aliases.includes(expected)) current = expected
+      } catch { /* not a path-shaped did:webvh — fall through to aliases[0] */ }
+    }
+    if (current === displayEmail) return
     session.account.displayEmail = current
     const accounts = loadStoredAccounts()
     const stored = accounts.find(a => a.serverUrl === serverUrl && a.email === email)
