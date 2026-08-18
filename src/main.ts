@@ -8,7 +8,7 @@ import { contactIdentityKey, representativeAddressForDid } from './did/contacts.
 import { setMlsAuthService } from './mls/group.ts'
 import { didAuthenticationService } from './mls/authservice.ts'
 import { showApp, startPolling, fetchMessages } from './ui/shell.ts'
-import { loadLeftInboxes, showMenuPage, setupLeftPane, refreshAccountsList, menuTargetInbox, openComposeTo, syncNotifToggle } from './ui/left-pane.ts'
+import { loadLeftInboxes, showMenuPage, setupLeftPane, refreshAccountsList, menuTargetInbox, openComposeTo, syncNotifToggle, inMenuMode } from './ui/left-pane.ts'
 import { primeAvatarCache } from './deltachat/avatar.ts'
 import { advertiseAllOwnAvatars } from './ap/avatar.ts'
 import { loadFromCache } from './store/cache.ts'
@@ -542,6 +542,15 @@ window.addEventListener('popstate', onHashNav)
   const btn = document.getElementById('scroll-to-bottom')
   const btnTop = document.getElementById('scroll-to-top')
   outer?.addEventListener('scroll', () => {
+    // Menu pages (#account, #config, #compose, …) share #outer with the
+    // conversation view, but these buttons only make sense for a thread's
+    // own message strip — not a settings form (2026-08-17, user-reported:
+    // they showed up while scrolling #account).
+    if (inMenuMode()) {
+      btn?.classList.remove('visible')
+      btnTop?.classList.remove('visible')
+      return
+    }
     const distFromBottom = outer.scrollHeight - outer.scrollTop - outer.clientHeight
     const bottomVisible = distFromBottom > 120
     btn?.classList.toggle('visible', bottomVisible)

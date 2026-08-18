@@ -333,8 +333,11 @@ export async function fetchMessages() {
   // reply box, whenever the user had scrolled up even slightly.
   if (!groups.length) { render(false, false); return }
 
-  const selfAddr = activeSession()?.account.email ?? ''
-  const hasIncoming = msgs.some(m => m.from !== selfAddr)
+  // Both the login identity and display alias — a sent message's own
+  // `from` is always the display one for a SCID-primary account
+  // (PLANSCID.md), never `account.email` alone.
+  const selfAddrs = new Set([activeSession()?.account.email, activeSession()?.account.displayEmail].filter((x): x is string => !!x))
+  const hasIncoming = msgs.some(m => !selfAddrs.has(m.from))
   const latest = latestGroup(groups)
   if (wasFirstLoad || hasIncoming || latest.key !== focusedThreadKey) {
     setFocusedThreadKey(latest.key)
@@ -353,7 +356,7 @@ export async function fetchMessages() {
   // The Service Worker's push handler is now the single place a notification
   // comes from (sw.ts); it covers every conversation, foreground or not, and
   // skips the one being viewed via push/client.ts's setActiveConversation.
-  const hasNewIncoming = !wasFirstLoad && msgs.some(m => m.from !== selfAddr && !previouslyKnownIds.has(m.message_id))
+  const hasNewIncoming = !wasFirstLoad && msgs.some(m => !selfAddrs.has(m.from) && !previouslyKnownIds.has(m.message_id))
   // A message arriving in the conversation you're actively reading (thread
   // visible, not behind a menu page) has been seen — mark it read so it doesn't
   // linger as unread (inflating the badge / re-appearing the moment you leave).

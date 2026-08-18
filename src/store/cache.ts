@@ -24,7 +24,7 @@ export async function loadFromCache(): Promise<void> {
     for (const m of msgs) messages.put(m as Email)
     for (const t of thrs) threads.put(t as Thread)
     if (mbx.length) mailboxes.set(mbx[0] as Mailbox[])
-    if (ids.length) identities.set(ids[0] as Identity[])
+    if (ids.length) identities.loadStamped(ids[0] as (Identity & { _account?: string })[])
     if (crds.length) contacts.set(crds[0] as Card[])
   } catch (e) { console.warn('[cache] loadFromCache failed', e) }
 }

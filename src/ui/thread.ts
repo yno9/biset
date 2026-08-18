@@ -106,7 +106,15 @@ export function isMeMsg(from: string): boolean {
   // to any of that identity's sessions, not necessarily the DIDComm one).
   // Same gap as app.ts's isSent/isOwn — own DIDComm messages read as not-me
   // without this.
+  //
+  // Also checks `displayEmail` — a sent message's own `from` is always the
+  // display alias for a SCID-primary account (PLANSCID.md), never
+  // `account.email` (the permanent login identity), so that comparison
+  // alone stopped ever matching a SCID-primary account's own sent mail
+  // (found live, 2026-08-18, alongside the missing References header —
+  // both needed fixing before a reply reliably stayed in one thread).
   return from === activeSession()?.account.email
+    || from === activeSession()?.account.displayEmail
     || (!!activeSession()?.jmapAccountId && from === activeSession()?.jmapAccountId)
     || (!!activeSession()?.account.did && from === activeSession()?.account.did)
 }

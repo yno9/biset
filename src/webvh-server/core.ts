@@ -61,7 +61,28 @@ export interface WebvhHandlerOptions {
  * resolve() runs, so a wrongly-signed entry never lands in the first place
  * (once landed it can never be retracted — the log is append-only). A
  * first-ever write for a name is unrestricted: first-come, same as claiming
- * any name anywhere. */
+ * any name anywhere.
+ *
+ * One exception to append-only: a RECLAIM. A name that was moved away from
+ * keeps its did.jsonl forever (this store never deletes on move — see
+ * webvh-store.ts and the sweep in anchor/webvh-sweep.ts for the only thing
+ * that ever does), so the same portable identity moving back to a name it
+ * held before finds a stale, forked log already sitting there — appending
+ * onto it produces a corrupt chain (a genesis entry landing where entry N+1
+ * is expected), and it isn't a byte-prefix of the incoming log either, so
+ * the ordinary extend-verbatim rule can't accept it. Found live 2026-08-18:
+ * did:webvh:t.biset.md:5534testaa moving 5534 -> 5534testaa -> 5534test hit
+ * exactly this, "versionId gap at entry 4". Detected by comparing the
+ * incoming log's OWN scid (only ever present on a full log's first entry)
+ * against the scid the stored log's first entry already carries: a match
+ * requires having produced a validly-chained, validly-signed log from that
+ * exact genesis (verified below by resolveEntries same as any other write),
+ * which nobody but the true holder of that SCID's key material can do — so
+ * treating a scid match as authorization to replace the stale log outright
+ * costs no security the append-only rule was providing in the first place.
+ * A scid MISMATCH against an existing log, conversely, now gets a clear
+ * conflict response instead of silently falling into the append path and
+ * failing with a confusing versionId-gap error. */
 export function createWebvhHandler(store: WebvhLogStore, opts: WebvhHandlerOptions = {}): (req: Request, url: URL) => Promise<Response> {
   const reserved = new Set(opts.reservedFirstSegments ?? [])
   const maxBody = opts.maxLogBodyBytes ?? DEFAULT_MAX_LOG_BODY
@@ -103,9 +124,18 @@ export function createWebvhHandler(store: WebvhLogStore, opts: WebvhHandlerOptio
         // publish.ts's putLog note).
         const existing = store.read(domain, name)
         const existingLines = existing ? existing.split('\n').map(l => l.trim()).filter(Boolean) : []
-        const isAppend = req.method === 'POST' && existingLines.length > 0
+        let existingScid: string | undefined
+        if (existingLines[0]) {
+          try { existingScid = (JSON.parse(existingLines[0]) as LogEntry).parameters?.scid } catch { /* corrupt — treated as no readable scid below */ }
+        }
+        const incomingScid = entries[0]?.parameters?.scid // only ever set when this request carries a full log from its own genesis
+        const isReclaim = existingLines.length > 0 && incomingScid !== undefined && incomingScid === existingScid
+        if (existingLines.length > 0 && incomingScid !== undefined && !isReclaim) {
+          return text('location already in use by a different identity', 409)
+        }
+        const isAppend = !isReclaim && req.method === 'POST' && existingLines.length > 0
         const allLines = isAppend ? [...existingLines, ...lines] : lines
-        if (!isAppend && existing) {
+        if (!isReclaim && !isAppend && existing) {
           const extendsExisting = lines.length >= existingLines.length && existingLines.every((l, i) => l === lines[i])
           if (!extendsExisting) return text('update must extend the existing log, not replace it', 409)
         }

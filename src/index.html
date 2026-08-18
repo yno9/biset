@@ -158,7 +158,6 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
 </div>
 
 <div id="lp-hamburger-menu">
-  <button class="lp-hmenu-item" data-page="/compose">compose</button>
   <button class="lp-hmenu-item" data-page="/account">account</button>
   <button class="lp-hmenu-item" data-page="/config">config</button>
 </div>
@@ -205,6 +204,7 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
     </div>
     <div id="lp-resize-handle"></div>
   </aside>
+  <button id="lp-compose-fab" class="compose-fab" type="button" aria-label="Compose" title="Compose"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
   <div id="lp-inbox-menu">
     <div class="menu-item" id="lp-archive-inbox-btn">Archive</div>
     <div class="menu-item" id="lp-export-inbox-btn">Export as JSON</div>

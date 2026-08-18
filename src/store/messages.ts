@@ -52,6 +52,31 @@ export function byThread(account: string, threadId: string): Email[] {
   return [...store.values()].filter(e => accountOf(e) === account && e.threadId === threadId)
 }
 
+/** Re-keys every locally cached message from one account stamp to another.
+ * `_account` is stamped once at ingest and normally never changes (this
+ * file's own header) — nothing used to ever change what
+ * `accountKey(session.account)` produces for an ALREADY-EXISTING account.
+ * SCID migration (PLANSCID.md) is the first thing that does:
+ * `session.account.email` moves from the human address to the permanent
+ * SCID, so every already-synced message's stamp goes stale in the same
+ * instant, and `forIdentity`'s join against the newly-reconnected session
+ * stops matching any of them — an inbox with hundreds of messages appears
+ * to go empty, though nothing was lost (found live, 2026-08-18, immediately
+ * after the first production migration). Returns the renamed emails so the
+ * caller (vault/persist.ts) can write each one under its new key too. */
+export function renameAccount(oldAccount: string, newAccount: string): Email[] {
+  if (oldAccount === newAccount) return []
+  const renamed: Email[] = []
+  for (const [key, email] of [...store.entries()]) {
+    if (accountOf(email) !== oldAccount) continue
+    store.delete(key)
+    ;(email as any)._account = newAccount
+    store.set(keyOf(newAccount, email.id as string), email)
+    renamed.push(email)
+  }
+  return renamed
+}
+
 export function put(email: Email): void {
   store.set(keyOf(accountOf(email), email.id as string), email)
 }

@@ -77,12 +77,12 @@ function renderPhrase(box: HTMLElement, dismiss: () => void, mnemonic: string, o
     titleRow.appendChild(badge)
   }
   const title = document.createElement('h3')
-  title.textContent = opts.title ?? 'Root Key phrase'
-  title.style.cssText = 'margin:0;font-size:17px'
+  title.textContent = opts.title ?? 'Recovery phrase'
+  title.style.cssText = 'margin:0;font-size:17px' + (opts.badges?.length ? ';margin-left:6px' : '')
   titleRow.appendChild(title)
   const sub = document.createElement('div')
   sub.textContent = opts.subtitle ?? (opts.firstTime
-    ? 'Write these 24 words down on paper, in order, and keep them somewhere safe.'
+    ? 'Copy these 24 words and keep them somewhere safe. Anyone with this phrase can take over your identity.'
     : 'These 24 words restore your identity on any device.')
   sub.style.cssText = 'font-size:13px;color:var(--text-dim);line-height:1.4'
 
@@ -97,15 +97,6 @@ function renderPhrase(box: HTMLElement, dismiss: () => void, mnemonic: string, o
     fp.style.cssText = 'font-family:ui-monospace,monospace;font-size:11px;color:var(--text-dim);margin:-8px 0 14px;word-break:break-all'
     fp.textContent = `\u2192 ${opts.fingerprint}`
   }
-
-  const warn = document.createElement('div')
-  warn.style.cssText = 'font-size:12.5px;color:#ff9500;line-height:1.45;margin-bottom:16px;display:flex;gap:8px'
-  const warnIcon = document.createElement('span')
-  warnIcon.textContent = '⚠'
-  warnIcon.style.flexShrink = '0'
-  const warnText = document.createElement('span')
-  warnText.textContent = 'Anyone with this phrase can take over your identity. We can never show or reset it for you — lose it and your account is gone for good.'
-  warn.append(warnIcon, warnText)
 
   const btnRow = document.createElement('div')
   btnRow.style.cssText = 'display:flex;justify-content:flex-end;gap:8px'
@@ -145,7 +136,7 @@ function renderPhrase(box: HTMLElement, dismiss: () => void, mnemonic: string, o
   doneBtn.addEventListener('click', () => { dismiss(); opts.onClose?.() })
 
   btnRow.append(copyBtn, doneBtn)
-  box.append(titleRow, sub, grid, ...(opts.fingerprint ? [fp] : []), warn, btnRow)
+  box.append(titleRow, sub, grid, ...(opts.fingerprint ? [fp] : []), btnRow)
 }
 
 // Direct display — used right after account creation, when masterSecret is

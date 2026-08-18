@@ -17,6 +17,7 @@ import { buildWebvhDid, parseWebvhDid } from './identifier.ts'
 import { generateEntryHash, entryVersionNumber, resolveParameters, parametersToWrite, type LogEntry } from './log.ts'
 import { buildProof } from './proof.ts'
 import { encodeMultikey } from './multikey.ts'
+import { multikeyHashBase58 } from './hash.ts'
 import type { WebvhDidDocument } from './document.ts'
 import { fetchCurrentLog, putLog, nowVersionTime } from './log-io.ts'
 import { didToHttpsUrl } from './identifier.ts'
@@ -28,8 +29,27 @@ export interface MigrateLocationOptions {
   /** Omitted (or empty) targets the domain apex (`.well-known/did.jsonl`) —
    * same convention didToHttpsUrl already uses. */
   newPathSegments?: string[]
-  rootPrivateKey: Uint8Array
-  rootPublicKey: Uint8Array
+  /** Whichever key currently holds updateKeys authority: the Root Key when
+   * pre-rotation has never diverged updateKeys from it (the common case,
+   * checked below against the log's CURRENT updateKeys), or — while
+   * pre-rotation is ACTIVE — the just-revealed Spare Key committed in the
+   * current entry's nextKeyHashes. There is no third option: resolver.ts's
+   * active-pre-rotation rule forbids inheriting updateKeys at all, so any
+   * OTHER key — including a cached-but-already-spent Sign Key — is rejected
+   * below before ever reaching the network (found live, 2026-08-17: this
+   * function unconditionally relied on inheritance and could not append
+   * ANY entry while pre-rotation was active, regardless of which key
+   * signed it — a deeper break than a simple wrong-key mismatch). */
+  signingPrivateKey: Uint8Array
+  signingPublicKey: Uint8Array
+  /** Required, and ONLY valid, while pre-rotation is active — the hash of a
+   * FRESH Spare Key to commit for the FOLLOWING round, since inheriting the
+   * old commitment is forbidden the same as inheriting updateKeys (this
+   * migration entry has to explicitly restate both, exactly like
+   * prerotation.ts's rotateOrDeactivate does for an ordinary rotate). Omit
+   * when pre-rotation is off — the moved entry simply carries the same
+   * (empty) nextKeyHashes forward, same as before this option existed. */
+  nextKeyHash?: string
   /** Runs AFTER the automatic old-DID→new-DID string substitution that
    * carries every id (verificationMethod/service/keyAgreement) forward
    * byte-for-byte. Most callers should leave this unset — the whole point of
@@ -75,8 +95,17 @@ export async function migrateWebvhLocation(opts: MigrateLocationOptions): Promis
     throw new Error('migrateWebvhLocation: this DID was not created portable — its location cannot be changed')
   }
 
-  const updateKey = encodeMultikey(opts.rootPublicKey)
-  if (!(last.parameters.updateKeys ?? []).includes(updateKey)) {
+  const updateKey = encodeMultikey(opts.signingPublicKey)
+  const preRotationActive = (last.parameters.nextKeyHashes?.length ?? 0) > 0
+  if (preRotationActive) {
+    if (!opts.nextKeyHash) {
+      throw new Error('migrateWebvhLocation: pre-rotation is active for this identity — a fresh Spare Key commitment (nextKeyHash) is required to append any entry, including a move')
+    }
+    const committed = new Set(last.parameters.nextKeyHashes ?? [])
+    if (!committed.has(multikeyHashBase58(updateKey))) {
+      throw new Error('migrateWebvhLocation: this key does not match the identity\'s current pre-rotation commitment — wrong Spare Key phrase, or someone else already rotated')
+    }
+  } else if (!(last.parameters.updateKeys ?? []).includes(updateKey)) {
     throw new Error('migrateWebvhLocation: local signing key is not authorized by the document\'s current updateKeys (rotated elsewhere) — restore with the current Root Key phrase/DID to get back in sync')
   }
 
@@ -96,11 +125,19 @@ export async function migrateWebvhLocation(opts: MigrateLocationOptions): Promis
   const state: object = { ...(opts.buildState ? opts.buildState(carried, newDid) : carried), id: newDid }
 
   const versionTime = nowVersionTime()
-  const parameters = parametersToWrite(last.parameters, resolveParameters(last.parameters, {}))
+  // No inheritance permitted while pre-rotation is active (resolver.ts's own
+  // rule, this file's header) — updateKeys/nextKeyHashes are forced explicit
+  // here rather than left to parametersToWrite's usual diff, same as
+  // prerotation.ts's rotateOrDeactivate does for an ordinary rotate. Off:
+  // unchanged from before, plain inheritance via resolveParameters.
+  const restParameters = parametersToWrite(last.parameters, resolveParameters(last.parameters, {}))
+  const parameters = preRotationActive
+    ? { ...restParameters, updateKeys: [updateKey], nextKeyHashes: [opts.nextKeyHash!] }
+    : restParameters
   const entryHash = generateEntryHash(last.versionId, versionTime, parameters, state)
   const versionId = `${entryVersionNumber(last.versionId) + 1}-${entryHash}`
   const unsigned = { versionId, versionTime, parameters, state }
-  const proof = buildProof(unsigned, { verificationMethod: `did:key:${updateKey}#${updateKey}`, privateKey: opts.rootPrivateKey, created: versionTime })
+  const proof = buildProof(unsigned, { verificationMethod: `did:key:${updateKey}#${updateKey}`, privateKey: opts.signingPrivateKey, created: versionTime })
   const moved = [...entries, { ...unsigned, proof: [proof] } as LogEntry]
 
   // NEW location first. If it fails, the old location is untouched and the

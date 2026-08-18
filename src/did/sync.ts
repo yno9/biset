@@ -28,7 +28,7 @@ export async function syncRelaysFromDid(
 
   const known = new Set(alreadyConnected.map(u => u.replace(/\/$/, '')))
   const { initSession } = await import('../jmap/client.ts')
-  const { vouchThisDevice, deviceLabel } = await import('./provision.ts')
+  const { vouchThisDevice, deviceLabel, scidLoginAddress } = await import('./provision.ts')
   const rootPrivateKey = deriveRootKey(masterSecret).privateKey
   const label = deviceLabel()
   const out: SyncResult[] = []
@@ -37,12 +37,16 @@ export async function syncRelaysFromDid(
     if (!server || known.has(server)) continue
     known.add(server)
     const svcEmail = svc.address || email
-    const at = svcEmail.lastIndexOf('@')
-    if (at <= 0) continue
-    await vouchThisDevice({ serverUrl: server, username: svcEmail.slice(0, at), domain: svcEmail.slice(at + 1), did, rootPrivateKey, label }).catch(() => {})
-    const session = await initSession({ serverUrl: server, email: svcEmail, password: '', did }).catch(() => null)
+    // The document's own address is a delivery alias (PLANSCID.md) — the
+    // login identity is resolved from the DID itself, never assumed to be
+    // this same string.
+    const login = await scidLoginAddress(did, svcEmail)
+    if (!login) continue
+    await vouchThisDevice({ serverUrl: server, username: login.username, domain: login.domain, did, rootPrivateKey, label }).catch(() => {})
+    const session = await initSession({ serverUrl: server, email: login.email, password: '', did }).catch(() => null)
     if (!session) continue
     session.account.did = did
+    session.account.displayEmail = svcEmail
     out.push({ session, server })
   }
   return out

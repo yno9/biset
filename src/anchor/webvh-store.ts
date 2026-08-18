@@ -5,7 +5,7 @@
 // ClaimStore). Domain is part of the storage key because biset runs two
 // domains off one anchor process (biset.md gated, t.biset.md open) and a
 // username is only unique within its own domain.
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 const resourcePath = (dataDir: string, domain: string, username: string, filename: string) =>
@@ -50,5 +50,33 @@ export class WebvhLogStore {
     const path = resourcePath(this.dataDir, domain, username, 'routing.json')
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     writeFileSync(path, json, { mode: 0o600 })
+  }
+
+  /** Every (domain, username) this store currently holds a did.jsonl for —
+   * webvh-sweep.ts's only way to find reclaim candidates, since nothing else
+   * here ever enumerates the store (every other method takes the key it
+   * wants directly). */
+  list(): Array<{ domain: string; username: string }> {
+    const root = join(this.dataDir, '_webvh')
+    if (!existsSync(root)) return []
+    const out: Array<{ domain: string; username: string }> = []
+    for (const domain of readdirSync(root)) {
+      const domainDir = join(root, domain)
+      let usernames: string[]
+      try { usernames = readdirSync(domainDir) } catch { continue }
+      for (const username of usernames) {
+        if (existsSync(join(domainDir, username, 'did.jsonl'))) out.push({ domain, username })
+      }
+    }
+    return out
+  }
+
+  /** Removes a name's did.jsonl and routing.json outright — the one thing
+   * that ever undoes a write here (webvh-sweep.ts, after its own TTL check;
+   * nothing in the GET/PUT/POST contract itself calls this). Once gone, the
+   * name is first-come again, same as it never having been claimed. */
+  delete(domain: string, username: string): void {
+    const dir = dirname(resourcePath(this.dataDir, domain, username, 'did.jsonl'))
+    rmSync(dir, { recursive: true, force: true })
   }
 }

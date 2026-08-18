@@ -158,8 +158,8 @@ export async function revealCurrentSigner(did: string): Promise<{ privateKey: Ui
   // is in the log's updateKeys) so it is echoed for checking against a
   // labelled paper copy.
   const phrase = await promptForMnemonic({
-    title: 'Enter your Sign Key phrase',
-    subtitle: 'The phrase that currently controls this document. Not the Spare Key phrase you were shown after your last rotate — that one is the successor, and is not in use yet.',
+    title: 'Enter Sign Key phrase',
+    subtitle: 'The phrase that currently controls this document. Not the Spare Key phrase (if you have one).',
     badges: ['SIGN KEY'],
     ...(currentUpdateKeys[0] ? { expectedFingerprint: currentUpdateKeys[0] } : {}),
   })
@@ -356,6 +356,30 @@ export async function runRevokeRootKey(did: string): Promise<boolean> {
     return false
   }
 
+  // masterSeed just changed, and with it the PGP kek (cryptenv.ts's
+  // deriveKek) — without re-wrapping, every mail relay account's
+  // server-side encrypted PGP privkey blob is stuck under the OLD kek, which
+  // no device can ever derive again (this file's own note above on the
+  // fresh-independent-seed design). Best-effort per account: this device
+  // already holds the plaintext PGP key locally regardless of which kek
+  // wrapped the server copy, so a rewrap here needs no old-kek derivation at
+  // all — see rewrapPgpForNewKek's own note. A failure on one account (relay
+  // unreachable) must not block the others or undo the revoke, which has
+  // already landed on the DID log.
+  try {
+    const { deriveKek } = await import('../cryptenv.ts')
+    const { rewrapPgpForNewKek } = await import('../pgp/index.ts')
+    const { sessions } = await import('../context.ts')
+    const newKek = await deriveKek(newRootSeed)
+    for (const s of sessions) {
+      if (s.account.did !== did) continue
+      const ok = await rewrapPgpForNewKek(s, newKek).catch(() => false)
+      if (!ok) console.warn('[prerotation] revokeRootKey: PGP rewrap failed for', s.account.email, '— that account will mint a fresh PGP key on its next restore')
+    }
+  } catch (e) {
+    console.warn('[prerotation] revokeRootKey: PGP rewrap step failed:', e instanceof Error ? e.message : e)
+  }
+
   try {
     const { getDidRecord, storeDidRecord } = await import('../did/store.ts')
     const rec = await getDidRecord(did)
@@ -398,6 +422,49 @@ export async function runRevokeRootKey(did: string): Promise<boolean> {
     console.warn('[prerotation] revokeRootKey: publish succeeded but local record update failed:', e instanceof Error ? e.message : e)
   }
   return true
+}
+
+/** For any OTHER operation that appends a log entry (currently: a domain/
+ * username move, ui/edit-identity.ts) and therefore hits the exact same
+ * resolver.ts wall a rotate does whenever pre-rotation is active — no
+ * inheritance permitted, the signer must match the current nextKeyHashes
+ * commitment (migrate.ts's own note, found live 2026-08-17: moves could not
+ * complete at all while active, regardless of which key signed). Returns
+ * null when pre-rotation is OFF (the caller proceeds with its own normal,
+ * Root-Key-signs behavior, untouched) or on cancel/mismatch (the caller
+ * should not proceed at all — same as revealAndVerify's own null cases).
+ * When active, reveals the current Spare Key exactly like a rotate does and
+ * mints+shows a fresh successor, so the move consumes one spare and leaves
+ * pre-rotation still armed afterward, same invariant every other operation
+ * here maintains. */
+export type SpareKeyForMoveResult =
+  | { active: false }
+  | { active: true; override: { privateKey: Uint8Array; publicKey: Uint8Array; nextKeyHash: string } | null }
+
+export async function resolveSpareKeyForMove(did: string): Promise<SpareKeyForMoveResult> {
+  const { last } = await fetchCurrentLog(did)
+  if ((last.parameters.nextKeyHashes?.length ?? 0) === 0) return { active: false }
+
+  const revealed = await revealAndVerify(did, 'Key rotation is active for this identity. Your Spare Key phrase authorises this move and becomes your new Sign Key.')
+  if (!revealed) return { active: true, override: null }
+
+  const spare = generateSpareKeypair()
+  await showMnemonicOnce(spare.mnemonic, {
+    firstTime: true,
+    badges: ['SPARE KEY'],
+    title: 'New Spare Key phrase',
+    subtitle: 'Your successor key, unchanged by the move itself — it takes over the next time you rotate, revoke, or turn key rotation off. Keep your existing Sign Key phrase as well.',
+    fingerprint: encodeMultikey(spare.publicKey),
+  })
+
+  return {
+    active: true,
+    override: {
+      privateKey: revealed.revealedPrivateKey,
+      publicKey: revealed.revealedPublicKey,
+      nextKeyHash: multikeyHashBase58(encodeMultikey(spare.publicKey)),
+    },
+  }
 }
 
 /** Turns pre-rotation back off. Still needs the saved phrase (see this

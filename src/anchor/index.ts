@@ -43,6 +43,7 @@ import { MessageQueue } from './mediator/queue.ts'
 import { MlsDeliveryService } from './mediator/mls-ds.ts'
 import { fragmentOf, isDeviceKid } from '../did/devicekid.ts'
 import { WebvhLogStore } from './webvh-store.ts'
+import { startWebvhSweep } from './webvh-sweep.ts'
 import { resolveWebvhDocumentWithRouting } from './webvh-resolve.ts'
 import { keyAgreementKeysFromWebvhState } from '../did/webvh/document.ts'
 
@@ -83,6 +84,13 @@ interface Config {
    * service 403s a send whose JWT has no usable subject, so this is required
    * alongside the keys, not optional metadata. */
   vapid_subscriber?: string
+  /** How long a did:webvh name stays reserved after the identity that held
+   * it moves away, before webvh-sweep.ts deletes it and frees it for anyone
+   * else. Not about the reclaim window for the SAME identity moving back —
+   * that's webvh-server/core.ts's scid-match rule and has no expiry — this
+   * is purely "when does a stranger get to claim this name." Defaults to 7
+   * days (2026-08-18, user-requested) if unset. */
+  webvh_reclaim_ttl_days?: number
 }
 
 // Beside the executable when compiled (`bun build --compile`), beside this file
@@ -142,6 +150,12 @@ console.log(`[anchor] indexed ${claims.rebuildIndex()} DID(s) from ${dataDir}`)
 // mediator: it's a plain file store with no external network dependency, so
 // there's nothing here worth gating behind a config flag.
 const webvh = new WebvhLogStore(dataDir)
+
+const webvhReclaimTtlDays = cfg.webvh_reclaim_ttl_days ?? 7
+// Checked once an hour: immaterial slop against a multi-day TTL, and the
+// sweep itself is cheap (webvh-sweep.ts's own note — one readdir + one
+// parse per stored name).
+startWebvhSweep(webvh, webvhReclaimTtlDays * 24 * 60 * 60 * 1000, 60 * 60 * 1000)
 
 // Resolve a did:webvh peer's DIDComm key AT A SPECIFIC device's kid, so the
 // mediator can authenticate/encrypt to did:webvh senders (PLANWEBVH.md §5.3).

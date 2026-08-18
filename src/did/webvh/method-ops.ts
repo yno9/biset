@@ -61,14 +61,26 @@ export const webvhMethodOps: MethodOps = {
   gatewayUrls: noGateways,
 
   async publishFull(rec, relayInput, opts) {
-    // Signing needs the root key, which is sealed at rest on a device with
-    // passkey protection (store.ts) — requireRootPrivateKey turns "locked"
-    // into a message instead of a signature over undefined. Overridden when
-    // the caller already resolved the CURRENT updateKeys-holding key some
-    // other way (opts.signingKeyOverride's own note) — #key-1 always stays
-    // rec.rootPublicKey regardless, passed separately below.
-    const signingPriv = opts.signingKeyOverride?.privateKey ?? hexToBytes(requireRootPrivateKey(rec))
-    const signingPub = opts.signingKeyOverride?.publicKey ?? hexToBytes(rec.rootPublicKey)
+    // Three-tier fallback for whichever key currently holds updateKeys
+    // authority: an explicit override (a caller that just resolved it some
+    // other way, e.g. left-pane.ts's Sync after a fresh prompt) beats the
+    // record's own cached Sign Key (did/store.ts's signingPrivateKey/
+    // signingPublicKey — set once ui/prerotation.ts's revealCurrentSigner or
+    // any rotate/deactivate/revoke has verified one), which beats the root
+    // key as the last resort. Root alone is only ever right when updateKeys
+    // has never diverged from #key-1.
+    //
+    // The cache tier is what makes this useful for AUTOMATIC callers
+    // (boot-time avatar publish, mediator re-registration) that cannot
+    // prompt at all: before this, only a caller that explicitly threaded an
+    // override through ever benefited from a cached Sign Key, so every
+    // automatic publish kept failing with "local signing key is not
+    // authorized" forever, even on a device that had already cached the
+    // right key via an earlier Sync (found live, 2026-08-17, y@biset.md).
+    const cachedSigningPriv = rec.signingPrivateKey ? hexToBytes(rec.signingPrivateKey) : null
+    const cachedSigningPub = rec.signingPublicKey ? hexToBytes(rec.signingPublicKey) : null
+    const signingPriv = opts.signingKeyOverride?.privateKey ?? cachedSigningPriv ?? hexToBytes(requireRootPrivateKey(rec))
+    const signingPub = opts.signingKeyOverride?.publicKey ?? cachedSigningPub ?? hexToBytes(rec.rootPublicKey)
     const identityPub = hexToBytes(rec.rootPublicKey)
 
     let relays: BisetRelay[]

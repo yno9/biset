@@ -299,8 +299,24 @@ export function buildProtectedHeaders(
   groupOpts?: GroupOpts,
   senderEmail?: string,
   action?: ChatAction,
+  references: string[] = [],
 ): string {
   let out = `${CHAT_VERSION}: ${CHAT_VERSION_VALUE}\r\n`
+  // Same msg-ids encryptText's own cleartext-side `references` array
+  // already carries (ui/shell.ts's sendReply builds the chain from every
+  // prior real message in the conversation) — but this codebase's own file
+  // header is explicit that DeltaChat "ignores the cleartext copies and
+  // only trusts the ones found INSIDE the encrypted MIME part", and this
+  // was the one protected header never actually built: only In-Reply-To
+  // was (encryptText's own headers block, below the DeltaChat block).
+  // DeltaChat's own chat-assignment (receive_imf) falls back to References
+  // when In-Reply-To's immediate target isn't resolvable on the recipient's
+  // end — filtered out as protocol noise (Secure-Join, Chat-Edit/Delete, a
+  // reaction), or simply not yet synced there. With no References fallback
+  // at all, that lookup can fail outright and DeltaChat starts a NEW chat
+  // instead of continuing the existing one (found live, 2026-08-18: a
+  // reply splitting an otherwise-working conversation in two).
+  if (references.length) out += `References: ${references.map(r => `<${r}>`).join(' ')}\r\n`
   // <...>-wrapped: these are msg-id references, same convention as In-Reply-To
   // below (encryptText wraps that one itself) — see stripMsgIdBrackets's comment.
   if (action?.editTarget) out += `${CHAT_EDIT}: <${action.editTarget}>\r\n`

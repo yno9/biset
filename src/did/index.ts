@@ -24,7 +24,25 @@ const toHex = (b: Uint8Array): string => Array.from(b).map(x => x.toString(16).p
 // mediator, never derived here from the seed.
 export async function localDidRecord(masterSeed: Uint8Array, did: string, email?: string): Promise<DidRecord> {
   const existing = await getDidRecord(did)
-  if (existing) return existing
+  if (existing) {
+    // Backfill masterSeed onto a record that predates this being stored at
+    // all (2026-08-17 — see this field's own note below) — otherwise a
+    // pre-existing identity's Root Key phrase can NEVER be re-shown on this
+    // device, ever, even after typing the correct phrase back in here,
+    // since this early-return used to skip straight past the write below.
+    // Verified against rootPrivateKey FIRST: a wrong phrase (typo, someone
+    // else's identity) must never silently attach a seed that doesn't
+    // actually belong to this record.
+    if (!existing.masterSeed) {
+      const candidateRoot = deriveRootKey(masterSeed)
+      if (toHex(candidateRoot.privateKey) === existing.rootPrivateKey) {
+        const updated: DidRecord = { ...existing, masterSeed: toHex(masterSeed) }
+        await storeDidRecord(updated)
+        return updated
+      }
+    }
+    return existing
+  }
 
   const root = deriveRootKey(masterSeed)
   const nostr = deriveNostrKey(masterSeed)

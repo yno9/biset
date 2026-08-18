@@ -299,8 +299,20 @@ export interface MoveToNewDomainOptions {
   oldDid: string
   newDomain: string
   newUsername: string
-  rootPrivateKey: Uint8Array
-  rootPublicKey: Uint8Array
+  // The identity key (#key-1) — ALWAYS the Root Key, never the Spare Key,
+  // even when pre-rotation is active: buildBisetWebvhState below names this
+  // key as the identity's own authentication method regardless of who
+  // currently signs log entries.
+  identityPublicKey: Uint8Array
+  // Whichever key signs THIS entry and (routing.json) the new location's
+  // seed write — the Root Key when pre-rotation has never diverged from it,
+  // or the just-revealed Spare Key while it's active (migrate.ts's own
+  // note). Equal to identityPublicKey/rootPrivateKey in the common case.
+  signingPrivateKey: Uint8Array
+  signingPublicKey: Uint8Array
+  // Required, and only meaningful, while pre-rotation is active — see
+  // migrate.ts's MigrateLocationOptions.nextKeyHash.
+  nextKeyHash?: string
   relays: BisetRelay[]
   addresses: string | string[]
   // No `portable` here, deliberately: it is genesis-only (did:webvh v1.0
@@ -351,18 +363,21 @@ export async function moveDidToNewDomain(opts: MoveToNewDomainOptions): Promise<
     }
     : undefined
 
-  const updateKey = encodeMultikey(opts.rootPublicKey)
+  const updateKey = encodeMultikey(opts.signingPublicKey)
 
   const result = await migrateWebvhLocation({
     oldDid: opts.oldDid,
     newDomain: opts.newDomain,
     newPathSegments: [opts.newUsername],
-    rootPrivateKey: opts.rootPrivateKey,
-    rootPublicKey: opts.rootPublicKey,
+    signingPrivateKey: opts.signingPrivateKey,
+    signingPublicKey: opts.signingPublicKey,
+    nextKeyHash: opts.nextKeyHash,
     // Nothing to carry through the SIGNED state any more (it is just
     // id/#key-1/authentication) — the new location gets a fresh minimal
-    // state naming the same identity key, full stop.
-    buildState: (_carried, newDid) => buildBisetWebvhState(newDid, opts.rootPublicKey),
+    // state naming the same identity key, full stop. Always the Root Key,
+    // never the signer of this particular entry (opts.identityPublicKey's
+    // own note above).
+    buildState: (_carried, newDid) => buildBisetWebvhState(newDid, opts.identityPublicKey),
     // Seed the new location's routing.json — mediator/keyAgreement/name
     // carried forward above plus the caller's current relay list, the same
     // way createGenesis seeds a brand-new identity's — BEFORE the old
@@ -387,7 +402,7 @@ export async function moveDidToNewDomain(opts: MoveToNewDomainOptions): Promise<
           // pointer was the only link that existed at all.
           movedFrom: opts.oldDid,
         }),
-        { updateKey, privateKey: opts.rootPrivateKey },
+        { updateKey, privateKey: opts.signingPrivateKey },
       )
     },
   })

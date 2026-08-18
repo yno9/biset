@@ -180,6 +180,47 @@ export class ClaimStore {
     return true
   }
 
+  /** Self-heals a claim's recorded DID after a did:webvh portable move —
+   * `localpart@domain` stays the same JMAP account, but the literal
+   * identifier this anchor has on file for it (bound once, at
+   * `/account/did` time, and never updated by an ordinary rename —
+   * edit-identity.ts's flow only ever touches `/account/alias`) can drift
+   * arbitrarily far from the identity's CURRENT did:webvh location.
+   *
+   * Unlike [`claim`], which treats ANY change to the stored DID as a
+   * conflict (root keys are rotation-less, so drift there is exactly what
+   * that guards against), this OVERWRITES on purpose. It exists for exactly
+   * one caller — server.ts's `handleAliasTarget`, immediately after a
+   * successful `resolveWebvhDocument(claim.did, …)` — which already holds
+   * proof `claim()` itself never had: `resolveEntries` cannot return a
+   * document unless its log's first entry's `parameters.scid` matches the
+   * SCID embedded in the DID string being resolved, so `doc.id` is
+   * guaranteed to share `claim.did`'s SCID before this is ever called. No
+   * additional signature check is needed here — the resolve WAS the proof.
+   *
+   * Found live (2026-08-18): without this, a renamed identity whose
+   * ORIGINAL bind-location fell in webvh-sweep.ts's 7-day TTL (abandoned by
+   * the move, and never revisited) becomes permanently unresolvable through
+   * the stale stored DID — own-store AND remote fetch both 404 at that now-
+   * deleted URL — and alias-reconcile.ts's cron reads that failure as
+   * "deactivated," deleting every alias for the account, including the
+   * CORRECT current one. Rebinding to `doc.id` on every successful resolve
+   * keeps the stored pointer tracking the identity's live location, so a
+   * later sweep of some now-irrelevant OLD location never again breaks
+   * resolution of the CURRENT one.
+   *
+   * A no-op false when there is no existing claim — this heals an existing
+   * pointer, it never creates one (that is still `claim`'s job, gated by
+   * `did_sig`). Also a no-op (true) when the DID is already current, so a
+   * caller can call this unconditionally without checking first. */
+  rebind(domain: string, localpart: string, newDid: string): boolean {
+    const existing = this.read(domain, localpart)
+    if (!existing) return false
+    if (existing.did === newDid) return true
+    this.unlink(existing.did, domain, localpart)
+    return this.write(domain, localpart, { did: newDid })
+  }
+
   /** Forgets a claim entirely — call when the underlying account is permanently
    * deleted, so the address becomes claimable again (by anyone, including its
    * original owner under a fresh identity). Without this, claim() would keep

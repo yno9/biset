@@ -9,18 +9,20 @@
 //
 // What the destination does with the identity going forward — relays,
 // mediator, anything else — is the destination's concern, not biset's: this
-// only ever moves the bare DID document (relays: [], addresses: []). Mail on
-// THIS instance is domain-paired 1:1 with the DID (biset.md:biset.md) — once
-// the DID's domain changes, that pairing no longer holds and the mail
-// account stops working.
+// only ever moves the bare DID document (relays: [], addresses: []).
+//
+// Mail on THIS instance no longer breaks on a rename (PLANSCID.md,
+// 2026-08-18): a SCID-primary account's real JMAP identity never moves, so a
+// username/domain change here is just re-pointing that account's alias —
+// see the submit handler's own alias-sync step below. Pre-SCID accounts
+// (the scheme this replaced) have no alias to update and simply keep
+// working under their old address, same as before this existed.
 //
 // DIDComm reachability is a separate axis from where the document lives
 // (DID⊥relay orthogonality) — this re-registers with THIS biset instance's
 // own mediator after the move, not a mediator at the new domain, exactly
 // the same way any other identity on this instance would.
 type OpenModal = (title: string, bodyEl: HTMLElement) => () => void
-
-const BISET_DOMAINS = ['biset.md', 't.biset.md']
 
 /** GET https://domain/username/did.jsonl and read what that says about
  * availability. A did:webvh log is public by the spec's own contract (see
@@ -29,20 +31,35 @@ const BISET_DOMAINS = ['biset.md', 't.biset.md']
  * GET the way biset's own server does, timeout) is honestly "unknown", not
  * "available": a false "available" here is what would let a migrate fail
  * loudly at submit time instead of a quiet check beforehand. */
-async function checkAvailability(domain: string, username: string): Promise<'available' | 'taken' | 'unknown'> {
+/** `ownScid` lets a 200 response be told apart from a stranger's: a log
+ * whose first entry's `parameters.scid` matches this identity's own SCID is
+ * a location this SAME identity occupied at some earlier point in its
+ * history (webvh-store.ts never deletes on move) — not someone else's name.
+ * Cheap: the GET already happened, this only parses the first line already
+ * in hand. It does NOT mean the move will succeed — the anchor's own reclaim
+ * rule (webvh-server/core.ts) is the actual authority on that, and a
+ * non-biset destination may have no reclaim path at all — just that "taken"
+ * is the wrong word for it. */
+async function checkAvailability(domain: string, username: string, ownScid: string): Promise<'available' | 'taken' | 'own-history' | 'unknown'> {
   if (!domain || !username) return 'unknown'
   try {
     const resp = await fetch(`https://${domain}/${encodeURIComponent(username)}/did.jsonl`, { method: 'GET' })
     if (resp.status === 404) return 'available'
-    if (resp.ok) return 'taken'
-    return 'unknown'
+    if (!resp.ok) return 'unknown'
+    try {
+      const firstLine = (await resp.text()).split('\n').map(l => l.trim()).find(Boolean)
+      const scid = firstLine ? (JSON.parse(firstLine) as { parameters?: { scid?: string } }).parameters?.scid : undefined
+      return scid === ownScid ? 'own-history' : 'taken'
+    } catch {
+      return 'taken' // 200 but unparseable — still someone's log, so still not "available"
+    }
   } catch {
     return 'unknown'
   }
 }
 
 export function openEditIdentityModal(did: string, openModal: OpenModal, onDone: () => void, onDidCommMessage: () => void): void {
-  let currentDomain: string, currentUsername: string
+  let currentDomain: string, currentUsername: string, currentScid: string
 
   void (async () => {
     const { parseWebvhDid, bisetWebvhUsername } = await import('../did/webvh/identifier.ts')
@@ -53,6 +70,7 @@ export function openEditIdentityModal(did: string, openModal: OpenModal, onDone:
       return
     }
     currentDomain = parsed.domain
+    currentScid = parsed.scid
     const username = bisetWebvhUsername(did)
     if (!username) {
       const body = document.createElement('div')
@@ -78,13 +96,12 @@ export function openEditIdentityModal(did: string, openModal: OpenModal, onDone:
         Changing the domain moves this identity to a new destination. What
         that destination does with it from here on is entirely up to that
         destination, not biset — this only edits the bare identity document.
-        Your mail account on this instance is tied 1:1 to this DID's domain
-        and will stop working once the domain changes.
+        Your mail address updates to match; existing mail history and your
+        PGP key carry over unchanged.
       </div>
       <div style="display:flex;flex-direction:column;gap:3px">
         <label style="font-size:11px;color:var(--text-dim)">Domain</label>
         <input class="cmd-input" type="text" name="domain" required>
-        <div data-role="domain-suggestions" style="display:flex;gap:6px"></div>
       </div>
       <div style="display:flex;flex-direction:column;gap:3px">
         <label style="font-size:11px;color:var(--text-dim)">Username</label>
@@ -104,16 +121,6 @@ export function openEditIdentityModal(did: string, openModal: OpenModal, onDone:
     const usernameInput = body.elements.namedItem('username') as HTMLInputElement
     domainInput.value = currentDomain
     usernameInput.value = currentUsername
-
-    const suggestions = body.querySelector<HTMLElement>('[data-role=domain-suggestions]')!
-    for (const d of BISET_DOMAINS) {
-      const b = document.createElement('button')
-      b.type = 'button'
-      b.textContent = d
-      b.style.cssText = 'font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--header-border);background:none;color:var(--text-dim);cursor:pointer'
-      b.addEventListener('click', () => { domainInput.value = d; domainInput.dispatchEvent(new Event('input')) })
-      suggestions.appendChild(b)
-    }
 
     const availEl = body.querySelector<HTMLElement>('[data-role=availability]')!
     const domainWarning = body.querySelector<HTMLElement>('[data-role=domain-warning]')!
@@ -137,12 +144,13 @@ export function openEditIdentityModal(did: string, openModal: OpenModal, onDone:
       if (!domain || !username) { availEl.textContent = ''; return }
       const token = ++availToken
       availEl.textContent = 'Checking availability…'
-      checkAvailability(domain, username).then(status => {
+      checkAvailability(domain, username, currentScid).then(status => {
         if (token !== availToken) return // a newer check superseded this one
         availEl.textContent = status === 'available' ? '✓ Available'
+          : status === 'own-history' ? '↺ You used to be here — may or may not accept a move back, depending on the destination'
           : status === 'taken' ? '✗ Already in use at that location'
           : '? Could not check — the destination may not answer GET, or is unreachable'
-        availEl.style.color = status === 'available' ? '#34c759' : status === 'taken' ? '#ff3b30' : 'var(--text-dim)'
+        availEl.style.color = status === 'available' ? '#34c759' : status === 'own-history' ? '#ff9500' : status === 'taken' ? '#ff3b30' : 'var(--text-dim)'
       })
     }
     domainInput.addEventListener('input', refresh)
@@ -165,8 +173,56 @@ export function openEditIdentityModal(did: string, openModal: OpenModal, onDone:
         const { hasDidCommChannel } = await import('../did/didcomm/channel.ts')
         const hadChannel = await hasDidCommChannel(did)
 
+        // Same wall a rotate hits: while key rotation is active, appending
+        // ANY entry — including a move — needs the current Spare Key, not
+        // the Root Key (prerotation.ts's own note).
+        const { resolveSpareKeyForMove } = await import('./prerotation.ts')
+        const spareKey = await resolveSpareKeyForMove(did)
+        if (spareKey.active && !spareKey.override) {
+          // Cancelled or the phrase didn't match — abort rather than
+          // silently falling through to an unauthorized Root Key signature
+          // the anchor would reject anyway.
+          setSubmitEnabled(true); submit.textContent = 'Save'
+          return
+        }
+
         const { moveWebvhIdentity } = await import('../did/webvh/move.ts')
-        const newRec = await moveWebvhIdentity({ oldDid: did, newDomain: domain, newUsername: username, relays: [], addresses: [] })
+        const newRec = await moveWebvhIdentity({
+          oldDid: did, newDomain: domain, newUsername: username, relays: [], addresses: [],
+          ...(spareKey.active ? { spareKeyOverride: spareKey.override! } : {}),
+        })
+
+        const { sessions, loadStoredAccounts, saveStoredAccounts, isDidCommRelay, isApRelay } = await import('../context.ts')
+
+        // Re-point each mail account's ALIAS to the new username/domain —
+        // never a data move, never even a credential change: a SCID-primary
+        // account's own login identity (session.account.email) is
+        // permanent, so this is the entire cost of a rename on the mail
+        // side (PLANSCID.md). Captured against the OLD did, before the
+        // bookkeeping loop below reassigns it. Best-effort throughout: the
+        // DID move itself already landed by this point, so a relay being
+        // unreachable here must not undo it or block the rest of this
+        // handler — it just means that one account keeps answering to its
+        // old alias too, discoverable again next time this runs.
+        const mailSessions = sessions.filter(s => s.account.did === did && !isDidCommRelay(s.account.serverUrl) && !isApRelay(s.account.serverUrl))
+        if (mailSessions.length) {
+          const { aliasAccountOnRelay } = await import('../cryptenv.ts')
+          const newAlias = `${username}@${domain}`
+          const oldAlias = `${currentUsername}@${currentDomain}`
+          for (const s of mailSessions) {
+            const { serverUrl, email: loginEmail, password: credential } = s.account
+            const added = await aliasAccountOnRelay(serverUrl, loginEmail, credential, 'add', newAlias).catch(() => false)
+            if (!added) {
+              console.warn(`[edit-identity] could not register ${newAlias} as an alias on ${serverUrl} — this account will keep answering to ${oldAlias} only`)
+              continue
+            }
+            // Best-effort in the stricter sense: the NEW alias is already
+            // live either way, so failing to drop the old one just leaves
+            // the account reachable at both, never broken.
+            await aliasAccountOnRelay(serverUrl, loginEmail, credential, 'remove', oldAlias).catch(() => false)
+            s.account.displayEmail = newAlias
+          }
+        }
 
         // moveWebvhIdentity already moved the IndexedDB DidRecord to its new
         // stable key (store.ts) — but every OTHER local pointer to "this
@@ -178,13 +234,17 @@ export function openEditIdentityModal(did: string, openModal: OpenModal, onDone:
         // correctly followed alsoKnownAs to the new document's content
         // (found live, 2026-08-16 — the move itself worked, only the UI's
         // own bookkeeping didn't follow).
-        const { sessions, loadStoredAccounts, saveStoredAccounts } = await import('../context.ts')
         const { ownDid, setOwnDid } = await import('../did/didcomm-devices.ts')
         if (ownDid() === did) setOwnDid(newRec.did)
         const accounts = loadStoredAccounts()
         let accountsChanged = false
         for (const a of accounts) {
-          if (a.did === did) { a.did = newRec.did; accountsChanged = true }
+          if (a.did === did) {
+            a.did = newRec.did
+            const updated = mailSessions.find(s => s.account.serverUrl === a.serverUrl && s.account.email === a.email)
+            if (updated?.account.displayEmail) a.displayEmail = updated.account.displayEmail
+            accountsChanged = true
+          }
         }
         if (accountsChanged) saveStoredAccounts(accounts)
         for (const s of sessions) {

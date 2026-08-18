@@ -39,6 +39,39 @@ export function deviceLabel(): string {
   catch { return 'Browser' }
 }
 
+/** The address this device should authenticate AS at a relay, for a
+ * `publishedAddress` learned from somewhere that only ever carries the
+ * human-facing alias (a resolved DID document's `service.address`/
+ * `alsoKnownAs`, this session's `svcEmail`) — never the relay's own
+ * `/account/provision` response, which already returns the right thing
+ * directly (PLANSCID.md).
+ *
+ * A SCID-primary account's login identity is the DID's permanent SCID
+ * segment, computed straight from the DID string — never from what the
+ * document happens to be advertising, which is the delivery ALIAS
+ * (PLANSCID.md's whole point: the alias can be renamed freely without ever
+ * touching the account it points at). Falls back to `publishedAddress`'s own
+ * localpart when the DID doesn't read as biset's own did:webvh shape (a
+ * different method, an apex DID, a foreign convention) — those never went
+ * through SCID-primary provisioning in the first place, so their published
+ * address already IS their login identity, same as before this existed.
+ *
+ * The DOMAIN half always comes from `publishedAddress`, never the DID's own
+ * domain segment — a relay can serve mail for an identity whose DID lives
+ * elsewhere entirely, and the two are not required to match. */
+export async function scidLoginAddress(did: string, publishedAddress: string): Promise<{ email: string; username: string; domain: string } | null> {
+  const at = publishedAddress.lastIndexOf('@')
+  if (at <= 0) return null
+  const domain = publishedAddress.slice(at + 1)
+  let username = publishedAddress.slice(0, at)
+  try {
+    const { parseWebvhDid } = await import('./webvh/identifier.ts')
+    const parsed = parseWebvhDid(did)
+    if (parsed.scid) username = parsed.scid.toLowerCase()
+  } catch { /* not a biset-shaped did:webvh — publishedAddress's own localpart already is the login identity */ }
+  return { email: `${username}@${domain}`, username, domain }
+}
+
 export interface ProvisionParams {
   serverUrl: string
   username: string

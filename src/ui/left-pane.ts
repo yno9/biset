@@ -12,7 +12,7 @@ import {
   notifEnabled, setNotifEnabled,
   lastTs, groupMessages,
 } from '../state.ts'
-import { esc, formatTime, avatarStyle, inboxToHash, syncAppBadge, hexToBytes, expandDualRelay, previewText } from '../utils.ts'
+import { esc, formatTime, avatarStyle, inboxToHash, syncAppBadge, hexToBytes, bytesToHex, expandDualRelay, previewText } from '../utils.ts'
 import { hashSeg } from '../route.ts'
 import { displayLabelFor, nameForContact, shortDid, ownDidParts, shortOwnDid, labelForDid, contactIdentityKey } from '../did/contacts.ts'
 import type { InboxSummary, StoredAccount, AccountSession } from '../types.ts'
@@ -99,6 +99,13 @@ let _menuResizeObserver: ResizeObserver | null = null
 // centred on the right column (positionAccFloating). Module-scoped so
 // re-entering the account page replaces it rather than stacking observers.
 let accFloatingObserver: ResizeObserver | null = null
+// Per-relay Unread/PGP/Sync stats shown on #account (renderAccountsList).
+// Module-scoped, NOT local to setupLeftPane — route() (main.ts) calls
+// setupLeftPane() again on every menu-page navigation, so a `const` declared
+// inside it would be recreated empty each time, defeating the whole point of
+// caching (2026-08-17, user-reported: the card's loading spinner re-spun on
+// every single visit to #account, not just the first).
+const _accInfoCache = new Map<string, { name?: string; unread?: number; total?: number; pgp?: boolean; lastSyncAt?: number }>()
 let _showMenuPageFn: ((name: string) => void) | null = null
 export function showMenuPage(name: string) { _showMenuPageFn?.(name) }
 
@@ -415,7 +422,11 @@ export function markRead(item: InboxSummary) {
     // Mark all emails from this contact/mailbox as seen
     try {
       const { getInboxEmails } = await import('../app.ts')
-      const selfAddr = sess.jmapAccountId || sess.account.email
+      // Every address this identity's endpoints could send FROM — login
+      // identity AND display alias for each (app.ts's getInboxEmails note: a
+      // sent message's `from` is always the display one for a SCID-primary
+      // account, PLANSCID.md).
+      const selfAddr = relaysForId(identityKey(sess)).flatMap(s => [s.jmapAccountId, s.account.email, s.account.displayEmail].filter((x): x is string => !!x))
       const emails = getInboxEmails(item.mailbox, item.contact, selfAddr, identityKey(sess))
       const unread = emails.filter(e => !(e.keywords as any)?.['$seen'])
       if (unread.length) {
@@ -490,7 +501,11 @@ export async function archiveInbox(item: InboxSummary, archived: boolean) {
   const sess = sessionFor(item.user) ?? activeSession()
   if (!sess) return
   const { getInboxEmails } = await import('../app.ts')
-  const selfAddr = sess.jmapAccountId || sess.account.email
+  // Every address this identity's endpoints could send FROM — login identity
+  // AND display alias for each (app.ts's getInboxEmails note: a sent
+  // message's `from` is always the display one for a SCID-primary account,
+  // PLANSCID.md).
+  const selfAddr = relaysForId(identityKey(sess)).flatMap(s => [s.jmapAccountId, s.account.email, s.account.displayEmail].filter((x): x is string => !!x))
   const emails = getInboxEmails(item.mailbox, item.contact, selfAddr, identityKey(sess))
   const ids = emails.map(e => e.id as string).filter(Boolean)
   try {
@@ -517,7 +532,11 @@ export async function doDeleteInbox(target: InboxSummary) {
   if (sess) {
     try {
       const { getInboxEmails } = await import('../app.ts')
-      const selfAddr = sess.jmapAccountId || sess.account.email
+      // Every address this identity's endpoints could send FROM — login
+      // identity AND display alias for each (app.ts's getInboxEmails note: a
+      // sent message's `from` is always the display one for a SCID-primary
+      // account, PLANSCID.md).
+      const selfAddr = relaysForId(identityKey(sess)).flatMap(s => [s.jmapAccountId, s.account.email, s.account.displayEmail].filter((x): x is string => !!x))
       const emails = getInboxEmails(target.mailbox, target.contact, selfAddr, identityKey(sess))
       // A merged inbox can hold messages from more than one relay (mail + AP
       // for the same identity) — destroy must go to each message's own
@@ -1104,6 +1123,12 @@ export function lpRevealDelete(el: HTMLElement) {
 export async function setupLeftPane() {
   const $app = document.getElementById('app')
   $app?.classList.add('lp-enabled')
+  // Mirrors #account's compose fab (#cmd-acc-compose-fab, part of that page's
+  // own template) into the left pane, which is persistent chrome rather than
+  // page content — wired once here rather than per-render. CSS (data-menu-
+  // page selector below) shows only one of the two at a time, matching
+  // whichever column is actually on screen (2026-08-17, user-requested).
+  document.getElementById('lp-compose-fab')?.addEventListener('click', () => showMenuPage('/compose'))
   // Left column defaults to OFF (collapsed) and its on/off state is remembered
   // across sessions (localStorage 'lp-open'). Desktop only — on mobile the pane is
   // an overlay governed by 'show-left'.
@@ -1217,29 +1242,7 @@ export async function setupLeftPane() {
         <input id="cmd-acc-identity-devices-import-input" type="file" accept=".zip" style="display:none">
       </div>
       <div class="cmd-page-section" id="cmd-acc-list"></div>
-      <button id="cmd-acc-fab" type="button"><span class="acc-new-account-plus">+</span>New Relay</button>
-      <div id="cmd-acc-panel-backdrop"></div>
-      <div class="cmd-page-section" id="cmd-acc-panel" style="display:none">
-        <div class="cmd-acc-relay-row">
-          <input id="cmd-acc-relay" class="cmd-input" type="text" placeholder="Relay URL (ex. biset.md)" required>
-          <span id="cmd-acc-relay-badge"></span>
-        </div>
-        <div id="cmd-acc-relay-error" class="cmd-acc-error" style="display:none"></div>
-        <div id="cmd-acc-choice">
-          <button type="button" class="cmd-acc-choice-btn" data-mode="add">Sign up</button>
-          <button type="button" class="cmd-acc-choice-btn" data-mode="login">Log in</button>
-        </div>
-        <div id="cmd-acc-signup-body" style="display:none"></div>
-        <form id="cmd-acc-form" class="cmd-form" style="display:none" autocomplete="on">
-          <div class="cmd-acc-email-row">
-            <input id="cmd-acc-email" class="cmd-input" type="text" placeholder="Email" autocomplete="username" required>
-          </div>
-          <div class="cmd-acc-login-row">
-            <button id="cmd-acc-add" type="submit" class="cmd-page-btn primary">Add</button>
-          </div>
-          <div id="cmd-acc-error" class="cmd-acc-error" style="display:none"></div>
-        </form>
-      </div>
+      <button id="cmd-acc-compose-fab" class="compose-fab" type="button" aria-label="Compose" title="Compose"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
     </div>`
   }
 
@@ -1348,136 +1351,12 @@ export async function setupLeftPane() {
   }
 
   function onShowAccount() {
-    onShowAccounts()
-
-    const relayInput = document.getElementById('cmd-acc-relay') as HTMLInputElement | null
-    const relayErr = document.getElementById('cmd-acc-relay-error')
-    const addForm = document.getElementById('cmd-acc-form') as HTMLFormElement | null
-
-    // Protocol pill(s) for whatever relay is typed — queries that relay's own
-    // /relay-info directly (accurate for ANY relay, not a heuristic tied to
-    // biset's own AP relay the way the old email-domain check was). A bare
-    // apex (expandDualRelay) resolves to two relays, so both get their own
-    // pill instead of only the one that happened to answer last.
-    relayInput?.addEventListener('blur', async () => {
-      const badge = document.getElementById('cmd-acc-relay-badge')
-      if (!badge) return
-      badge.innerHTML = ''
-      const raw = relayInput.value.trim().replace(/\/$/, '')
-      if (!raw) return
-
-      // A DIDComm mediator has no account — it needs registering, not signing up
-      // or logging in. Detect it and swap the Sign up / Log in choice for a
-      // single credential-less "Register".
-      const { isMediatorUrl } = await import('../did/didcomm-devices.ts')
-      const probe = await isMediatorUrl(raw)
-      if (relayInput.value.trim().replace(/\/$/, '') !== raw) return // stale by the time it resolved
-      // A failed probe (network error, CORS, 5xx) is not a confirmed
-      // "not a mediator" — don't fall through to relay-apex expansion on
-      // a hostname we couldn't actually reach.
-      if (probe === 'unknown') return
-      const choiceEl = document.getElementById('cmd-acc-choice') as HTMLElement | null
-      const modeBtns = choiceEl?.querySelectorAll<HTMLButtonElement>('.cmd-acc-choice-btn')
-      let regBtn = document.getElementById('cmd-acc-mediator-register') as HTMLButtonElement | null
-      if (probe === 'mediator') {
-        modeBtns?.forEach(b => { b.style.display = 'none' })
-        if (!regBtn && choiceEl) {
-          regBtn = document.createElement('button')
-          regBtn.id = 'cmd-acc-mediator-register'
-          regBtn.type = 'button'
-          // Same look as Sign up / Log in (.cmd-acc-choice-btn). The setup loop
-          // that attaches the relay handler to that class skips this id, and it
-          // ran before this button existed anyway.
-          regBtn.className = 'cmd-acc-choice-btn'
-          regBtn.style.cssText = 'flex:1;font-family:inherit'
-          regBtn.textContent = 'Register with mediator'
-          choiceEl.appendChild(regBtn)
-          regBtn.addEventListener('click', async () => {
-            regBtn!.disabled = true; regBtn!.textContent = 'Registering…'
-            try {
-              const { registerWithMediator } = await import('../did/didcomm-devices.ts')
-              const reg = await registerWithMediator(relayInput.value.trim())
-              showSysMsg('Registered with mediator')
-              closeAddRelayPanel()
-              resetAddAccountPanel()
-              renderAccountsList()
-              // Wire the new channel into the same left/right column UI every
-              // other conversation uses (did/didcomm/channel.ts) — without
-              // this the mediator card would appear but no inbox would ever
-              // show DIDComm messages until the next full reload.
-              const { setupDidCommChannel } = await import('../did/didcomm/channel.ts')
-              await setupDidCommChannel(reg.own.did, () => { import('./shell.ts').then(s => s.fetchMessages()); loadLeftInboxes() })
-            } catch (e) {
-              regBtn!.disabled = false; regBtn!.textContent = 'Register with mediator'
-              showSysMsg('Register failed: ' + (e instanceof Error ? e.message : String(e)), 8000)
-            }
-          })
-        }
-        if (regBtn) regBtn.style.display = ''
-        return // a mediator has no relay-type pills
-      }
-      modeBtns?.forEach(b => { b.style.display = '' })
-      if (regBtn) regBtn.style.display = 'none'
-
-      const dual = expandDualRelay(raw)
-      const urls = dual ?? [/^https?:\/\//i.test(raw) ? raw : 'https://' + raw]
-      const { fetchRelayInfo, relayInfoFor } = await import('../context.ts')
-      await Promise.all(urls.map(u => fetchRelayInfo(u)))
-      if (relayInput.value.trim().replace(/\/$/, '') !== raw) return // stale by the time it resolved
-      const pills = urls
-        .map(u => relayInfoFor(u)?.type)
-        .filter((t): t is 'mail' | 'activitypub' => !!t)
-        .map(t => `<span style="font-size:10px;font-weight:700;color:#fff;border-radius:4px;padding:1px 5px;flex-shrink:0;background:${t === 'activitypub' ? '#8b5cf6' : '#64748b'}">${t === 'activitypub' ? 'AP' : 'Mail'}</span>`)
-      if (!pills.length) return
-      badge.style.cssText = 'display:flex;gap:4px;flex-shrink:0'
-      badge.innerHTML = pills.join('')
-    })
-
-    // Relay URL is required up front for either path — Sign up (provision a
-    // new address under the current identity there) or Log in (an account
-    // that already exists there). See ARC.md 2026-07-14 "Add account"
-    // unification; opened via the "+ New JMAP account" trigger card at the
-    // end of the account list (renderAccountsList) — kept as a static panel
-    // outside the dynamically-rebuilt list so in-progress input survives a
-    // re-render.
-    for (const btn of document.querySelectorAll<HTMLButtonElement>('.cmd-acc-choice-btn')) {
-      btn.addEventListener('click', async () => {
-        if (relayErr) relayErr.style.display = 'none'
-        const raw = relayInput?.value.trim()
-        if (!raw) {
-          if (relayErr) { relayErr.textContent = 'Relay URL required'; relayErr.style.display = 'block' }
-          relayInput?.focus()
-          return
-        }
-        // The relay is committed for the rest of this flow (Sign up's steps,
-        // or the Log in form below) — lock it instead of leaving an editable
-        // field sitting above steps that already depend on its value.
-        if (relayInput) relayInput.disabled = true
-        relayInput?.closest('.cmd-acc-relay-row')?.classList.add('locked')
-        const choice = document.getElementById('cmd-acc-choice') as HTMLElement | null
-        if (btn.dataset.mode === 'add') {
-          // Passed exactly as typed (not URL-prefixed): openAddRelayOrDomainFlow
-          // itself distinguishes a relay URL from a bare domain by whether a
-          // scheme is present — force-prefixing here would misroute a bare BYO
-          // domain into the arbitrary-relay branch instead of the domain-
-          // ownership one. Renders inline in this same panel (signupBody)
-          // instead of a separate overlay — matches Log in's own inline reveal
-          // rather than popping a different UI out from under it.
-          const signupBody = document.getElementById('cmd-acc-signup-body') as HTMLElement | null
-          if (!signupBody) return
-          if (choice) choice.style.display = 'none'
-          signupBody.style.display = 'block'
-          const { openAddRelayOrDomainFlow } = await import('./custom-domain.ts')
-          openAddRelayOrDomainFlow(raw, signupBody, resetAddAccountPanel)
-          return
-        }
-        if (choice) choice.style.display = 'none'
-        // 'contents', not 'flex' — the form itself generates no box (style.css
-        // #cmd-acc-form), so its rows join the panel's own flex gap directly.
-        if (addForm) addForm.style.display = 'contents'
-        ;(document.getElementById('cmd-acc-email') as HTMLInputElement)?.focus()
-      })
-    }
+    renderAccountsList()
+    setupIdentityImportInput()
+    // Compose fab, bottom-right of the account page (2026-08-17, replaces
+    // the "+ New Relay" fab that used to live here — that one moved to
+    // #config, see onShowConfig).
+    document.getElementById('cmd-acc-compose-fab')?.addEventListener('click', () => showMenuPage('/compose'))
   }
 
   function renderConfigPage() {
@@ -1525,6 +1404,29 @@ export async function setupLeftPane() {
       </div>
       ${preRotationSection}
       ${vaultSection}
+      <button id="cmd-acc-fab" type="button"><span class="acc-new-account-plus">+</span>New Relay</button>
+      <div id="cmd-acc-panel-backdrop"></div>
+      <div class="cmd-page-section" id="cmd-acc-panel" style="display:none">
+        <div class="cmd-acc-relay-row">
+          <input id="cmd-acc-relay" class="cmd-input" type="text" placeholder="Relay URL (ex. biset.md)" required>
+          <span id="cmd-acc-relay-badge"></span>
+        </div>
+        <div id="cmd-acc-relay-error" class="cmd-acc-error" style="display:none"></div>
+        <div id="cmd-acc-choice">
+          <button type="button" class="cmd-acc-choice-btn" data-mode="add">Sign up</button>
+          <button type="button" class="cmd-acc-choice-btn" data-mode="login">Log in</button>
+        </div>
+        <div id="cmd-acc-signup-body" style="display:none"></div>
+        <form id="cmd-acc-form" class="cmd-form" style="display:none" autocomplete="on">
+          <div class="cmd-acc-email-row">
+            <input id="cmd-acc-email" class="cmd-input" type="text" placeholder="Email" autocomplete="username" required>
+          </div>
+          <div class="cmd-acc-login-row">
+            <button id="cmd-acc-add" type="submit" class="cmd-page-btn primary">Add</button>
+          </div>
+          <div id="cmd-acc-error" class="cmd-acc-error" style="display:none"></div>
+        </form>
+      </div>
     </div>`
   }
 
@@ -1686,6 +1588,240 @@ export async function setupLeftPane() {
         }
       })
     }
+
+    // The floating "+ New Relay" button and the panel it opens (moved here
+    // from #account, 2026-08-17 — #account's fab is now Compose instead).
+    // Wired here (with the rest of this page's one-time setup) rather than in
+    // renderAccountsList, which re-runs on every account change and would
+    // stack duplicate listeners on these fixed template elements.
+    document.getElementById('cmd-acc-fab')?.addEventListener('click', () => openAddRelayPanel())
+    document.getElementById('cmd-acc-panel-backdrop')?.addEventListener('click', () => closeAddRelayPanel())
+    positionAccFloating()
+    const rightCol = document.getElementById('right-col')
+    if (rightCol && typeof ResizeObserver !== 'undefined') {
+      // One observer for the life of the page — the elements it positions are
+      // recreated with the template, but #right-col itself never is.
+      accFloatingObserver?.disconnect()
+      accFloatingObserver = new ResizeObserver(() => positionAccFloating())
+      accFloatingObserver.observe(rightCol)
+    }
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape') return
+      const panel = document.getElementById('cmd-acc-panel')
+      if (panel?.classList.contains('open')) closeAddRelayPanel()
+    })
+
+    const relayInput = document.getElementById('cmd-acc-relay') as HTMLInputElement | null
+    const relayErr = document.getElementById('cmd-acc-relay-error')
+    const addForm = document.getElementById('cmd-acc-form') as HTMLFormElement | null
+
+    // Protocol pill(s) for whatever relay is typed — queries that relay's own
+    // /relay-info directly (accurate for ANY relay, not a heuristic tied to
+    // biset's own AP relay the way the old email-domain check was). A bare
+    // apex (expandDualRelay) resolves to two relays, so both get their own
+    // pill instead of only the one that happened to answer last.
+    relayInput?.addEventListener('blur', async () => {
+      const badge = document.getElementById('cmd-acc-relay-badge')
+      if (!badge) return
+      badge.innerHTML = ''
+      const raw = relayInput.value.trim().replace(/\/$/, '')
+      if (!raw) return
+
+      // A DIDComm mediator has no account — it needs registering, not signing up
+      // or logging in. Detect it and swap the Sign up / Log in choice for a
+      // single credential-less "Register".
+      const { isMediatorUrl } = await import('../did/didcomm-devices.ts')
+      const probe = await isMediatorUrl(raw)
+      if (relayInput.value.trim().replace(/\/$/, '') !== raw) return // stale by the time it resolved
+      // A failed probe (network error, CORS, 5xx) is not a confirmed
+      // "not a mediator" — don't fall through to relay-apex expansion on
+      // a hostname we couldn't actually reach.
+      if (probe === 'unknown') return
+      const choiceEl = document.getElementById('cmd-acc-choice') as HTMLElement | null
+      const modeBtns = choiceEl?.querySelectorAll<HTMLButtonElement>('.cmd-acc-choice-btn')
+      let regBtn = document.getElementById('cmd-acc-mediator-register') as HTMLButtonElement | null
+      if (probe === 'mediator') {
+        modeBtns?.forEach(b => { b.style.display = 'none' })
+        if (!regBtn && choiceEl) {
+          regBtn = document.createElement('button')
+          regBtn.id = 'cmd-acc-mediator-register'
+          regBtn.type = 'button'
+          // Same look as Sign up / Log in (.cmd-acc-choice-btn). The setup loop
+          // that attaches the relay handler to that class skips this id, and it
+          // ran before this button existed anyway.
+          regBtn.className = 'cmd-acc-choice-btn'
+          regBtn.style.cssText = 'flex:1;font-family:inherit'
+          regBtn.textContent = 'Register with mediator'
+          choiceEl.appendChild(regBtn)
+          regBtn.addEventListener('click', async () => {
+            regBtn!.disabled = true; regBtn!.textContent = 'Registering…'
+            try {
+              const { registerWithMediator } = await import('../did/didcomm-devices.ts')
+              const reg = await registerWithMediator(relayInput.value.trim())
+              showSysMsg('Registered with mediator')
+              closeAddRelayPanel()
+              resetAddAccountPanel()
+              renderAccountsList()
+              // Wire the new channel into the same left/right column UI every
+              // other conversation uses (did/didcomm/channel.ts) — without
+              // this the mediator card would appear but no inbox would ever
+              // show DIDComm messages until the next full reload.
+              const { setupDidCommChannel } = await import('../did/didcomm/channel.ts')
+              await setupDidCommChannel(reg.own.did, () => { import('./shell.ts').then(s => s.fetchMessages()); loadLeftInboxes() })
+            } catch (e) {
+              regBtn!.disabled = false; regBtn!.textContent = 'Register with mediator'
+              showSysMsg('Register failed: ' + (e instanceof Error ? e.message : String(e)), 8000)
+            }
+          })
+        }
+        if (regBtn) regBtn.style.display = ''
+        return // a mediator has no relay-type pills
+      }
+      modeBtns?.forEach(b => { b.style.display = '' })
+      if (regBtn) regBtn.style.display = 'none'
+
+      const dual = expandDualRelay(raw)
+      const urls = dual ?? [/^https?:\/\//i.test(raw) ? raw : 'https://' + raw]
+      const { fetchRelayInfo, relayInfoFor } = await import('../context.ts')
+      await Promise.all(urls.map(u => fetchRelayInfo(u)))
+      if (relayInput.value.trim().replace(/\/$/, '') !== raw) return // stale by the time it resolved
+      const pills = urls
+        .map(u => relayInfoFor(u)?.type)
+        .filter((t): t is 'mail' | 'activitypub' => !!t)
+        .map(t => `<span style="font-size:10px;font-weight:700;color:#fff;border-radius:4px;padding:1px 5px;flex-shrink:0;background:${t === 'activitypub' ? '#8b5cf6' : '#64748b'}">${t === 'activitypub' ? 'AP' : 'Mail'}</span>`)
+      if (!pills.length) return
+      badge.style.cssText = 'display:flex;gap:4px;flex-shrink:0'
+      badge.innerHTML = pills.join('')
+    })
+
+    // Relay URL is required up front for either path — Sign up (provision a
+    // new address under the current identity there) or Log in (an account
+    // that already exists there). See ARC.md 2026-07-14 "Add account"
+    // unification; opened via the "+ New JMAP account" trigger card at the
+    // end of the account list (renderAccountsList) — kept as a static panel
+    // outside the dynamically-rebuilt list so in-progress input survives a
+    // re-render.
+    for (const btn of document.querySelectorAll<HTMLButtonElement>('.cmd-acc-choice-btn')) {
+      btn.addEventListener('click', async () => {
+        if (relayErr) relayErr.style.display = 'none'
+        const raw = relayInput?.value.trim()
+        if (!raw) {
+          if (relayErr) { relayErr.textContent = 'Relay URL required'; relayErr.style.display = 'block' }
+          relayInput?.focus()
+          return
+        }
+        // The relay is committed for the rest of this flow (Sign up's steps,
+        // or the Log in form below) — lock it instead of leaving an editable
+        // field sitting above steps that already depend on its value.
+        if (relayInput) relayInput.disabled = true
+        relayInput?.closest('.cmd-acc-relay-row')?.classList.add('locked')
+        const choice = document.getElementById('cmd-acc-choice') as HTMLElement | null
+        if (btn.dataset.mode === 'add') {
+          // Passed exactly as typed (not URL-prefixed): openAddRelayOrDomainFlow
+          // itself distinguishes a relay URL from a bare domain by whether a
+          // scheme is present — force-prefixing here would misroute a bare BYO
+          // domain into the arbitrary-relay branch instead of the domain-
+          // ownership one. Renders inline in this same panel (signupBody)
+          // instead of a separate overlay — matches Log in's own inline reveal
+          // rather than popping a different UI out from under it.
+          const signupBody = document.getElementById('cmd-acc-signup-body') as HTMLElement | null
+          if (!signupBody) return
+          if (choice) choice.style.display = 'none'
+          signupBody.style.display = 'block'
+          const { openAddRelayOrDomainFlow } = await import('./custom-domain.ts')
+          openAddRelayOrDomainFlow(raw, signupBody, resetAddAccountPanel)
+          return
+        }
+        if (choice) choice.style.display = 'none'
+        // 'contents', not 'flex' — the form itself generates no box (style.css
+        // #cmd-acc-form), so its rows join the panel's own flex gap directly.
+        if (addForm) addForm.style.display = 'contents'
+        ;(document.getElementById('cmd-acc-email') as HTMLInputElement)?.focus()
+      })
+    }
+
+    const form = document.getElementById('cmd-acc-form') as HTMLFormElement | null
+    form?.addEventListener('submit', async (ev) => {
+      ev.preventDefault()
+      const relayInputEl = document.getElementById('cmd-acc-relay') as HTMLInputElement
+      const emailInput = document.getElementById('cmd-acc-email') as HTMLInputElement
+      const errEl = document.getElementById('cmd-acc-error')!
+      const addBtn = document.getElementById('cmd-acc-add') as HTMLButtonElement
+
+      const email = emailInput.value.trim()
+      const raw = relayInputEl.value.trim().replace(/\/$/, '')
+      // The relay picker at the top of the panel is required for either path
+      // (Sign up or Log in) — no more domain-guessing fallback ladder here.
+      // A bare apex ("biset.md") still expands to BOTH mail+ap siblings
+      // (expandDualRelay) — the same home-identity pairing #new provisions,
+      // now available on Log in too (best-effort: whichever comes up is
+      // kept, same as the old auto-discovery this replaced).
+      const dual = expandDualRelay(raw)
+      const servers = dual ?? (raw ? [/^https?:\/\//i.test(raw) ? raw : 'https://' + raw] : [])
+      if (!servers.length) { errEl.textContent = 'Relay URL required'; errEl.style.display = 'block'; return }
+      if (!email) { errEl.textContent = 'Email required'; errEl.style.display = 'block'; return }
+
+      addBtn.disabled = true; addBtn.textContent = 'Connecting…'; errEl.style.display = 'none'
+
+      // No password field at all any more (user's explicit call — third-party/
+      // plain-password JMAP login isn't a use case worth keeping): "Log in" is
+      // purely a reconnect via this device's own per-device key (devicebind.ts).
+      // ownDid() is set independently of any session and never cleared by an
+      // ordinary per-relay logout (removeRelayLocally only drops the
+      // StoredAccount/session, never the DidRecord) — so this works whenever
+      // this device was vouched at the typed relay before (e.g. logging back
+      // in after logging out). Never vouched there, or revoked: no fallback,
+      // just an error.
+      const myDid = ownDid()
+      const connected: Array<{ session: import('../types.ts').AccountSession; server: string }> = []
+      if (myDid) {
+        for (const server of servers) {
+          const session = await initSession({ serverUrl: server, email, password: '', did: myDid }).catch(() => null)
+          if (session) connected.push({ session, server })
+        }
+      }
+
+      if (!connected.length) {
+        errEl.textContent = myDid ? 'Could not reconnect this device at that relay' : 'No local identity on this device to reconnect with'
+        errEl.style.display = 'block'
+        addBtn.disabled = false; addBtn.textContent = 'Add'
+        return
+      }
+
+      // One session = one identity (ARC.md 2026-07-14): a reconnected
+      // session's own `.did` (only set when the device-key path above
+      // succeeded) is this device's OWN identity, independent of whatever is
+      // currently active — so logging into an account belonging to a
+      // genuinely different identity must never silently merge into the
+      // active one's sessions. Switching identity is logout-then-login only.
+      const isFirst = sessions.length === 0
+      if (!isFirst) {
+        const activeIdKey = identityIds()[0]
+        if (activeIdKey && myDid !== activeIdKey) {
+          errEl.textContent = 'This account belongs to a different identity — log out first to switch.'
+          errEl.style.display = 'block'
+          addBtn.disabled = false; addBtn.textContent = 'Add'
+          return
+        }
+      }
+
+      // Persist + register each connected relay, deduped by (email, serverUrl)
+      // so mail and AP for the same identity coexist as separate sessions. No
+      // password to persist — every future login re-derives a fresh device
+      // session instead (initSession's per-device branch).
+      for (const c of connected) {
+        const session = c.session
+        const relayEmail: string = session.account.email || email
+        const stored: StoredAccount = { serverUrl: c.server, email: relayEmail, password: '', did: myDid ?? undefined }
+        persistSession(stored, session)
+      }
+      addBtn.disabled = false; addBtn.textContent = 'Add'
+      resetAddAccountPanel()
+      closeAddRelayPanel()
+      renderAccountsList()
+      loadLeftInboxes()
+      if (isFirst) startPolling()
+    })
   }
 
   function renderComposePage() {
@@ -2580,8 +2716,6 @@ export async function setupLeftPane() {
     return `${(n / (1024 * 1024)).toFixed(1)} MB`
   }
 
-  const _accInfoCache = new Map<string, { name?: string; unread?: number; total?: number; pgp?: boolean; lastSyncAt?: number }>()
-
   // Per-RELAY stats (identity-by-DID: each relay endpoint is its own card). Keyed
   // by accountKey (email+serverUrl) and queries that specific relay's session.
   async function fetchAccountInfo(session: import('../types.ts').AccountSession) {
@@ -2933,6 +3067,114 @@ export async function setupLeftPane() {
           showSysMsg('Reconnected')
         },
       })
+      // Recovers PGP continuity onto THIS device's own local key, for
+      // whichever OTHER device just went through a Root Key revoke —
+      // rewrapPgpForNewKek (runRevokeRootKey) and rekeyPgpForNewLogin
+      // (SCID migration) both already carry PGP forward automatically, but
+      // only on the device that actually PERFORMED the operation, and only
+      // when it had a live mail session at that exact moment. Any device
+      // that missed that — logged out before reconnecting, was offline,
+      // or the automatic step silently failed — has no other way back:
+      // its OWN local IndexedDB key is the plaintext this identity's PGP
+      // history was ever going to be recoverable from once the old kek/
+      // email combination stops decrypting the server blob (found live,
+      // 2026-08-18: a revoke + SCID migration landing close together left
+      // exactly this gap on the device that restored fresh afterward).
+      //
+      // Requires the NEW Root Key phrase (shown once, at revoke time) —
+      // verified here against the identity's CURRENT #key-1 before doing
+      // anything, so a wrong phrase fails with a plain message instead of
+      // silently uploading nonsense.
+      items.push({
+        label: 'Repair PGP on this device', onClick: async () => {
+          const { promptForMnemonic } = await import('./mnemonic.ts')
+          const phrase = await promptForMnemonic({
+            title: 'Enter the current Root Key phrase',
+            subtitle: 'The one shown after your most recent Revoke, if any — this repairs PGP continuity using this device\'s own copy of the key, for a device that missed the automatic carry-over.',
+            badges: ['ROOT KEY'],
+          })
+          if (!phrase) return
+          const { mnemonicToSeed } = await import('../did/seed.ts')
+          const { deriveRootKey } = await import('../did/keys.ts')
+          const newRootSeed = mnemonicToSeed(phrase)
+          const newRoot = deriveRootKey(newRootSeed)
+          const { resolve } = await import('../did/webvh/resolver.ts')
+          const { rootPublicKeyFromWebvhState } = await import('../did/webvh/document.ts')
+          const doc = await resolve(did).catch(() => null)
+          const currentKey = doc ? rootPublicKeyFromWebvhState(doc) : null
+          if (!currentKey || bytesToHex(currentKey) !== bytesToHex(newRoot.publicKey)) {
+            showSysMsg("Those words don't match this identity's current Root Key")
+            return
+          }
+          const session = sessions.find(s => s.account.email === email && s.account.serverUrl === serverUrl)
+          if (!session) { showSysMsg('Not connected — log in before repairing'); return }
+          const { getKeyRecord } = await import('../pgp/keys.ts')
+          const localKeyEmail = (await getKeyRecord(session.account.email)) ? session.account.email
+            : session.account.displayEmail && (await getKeyRecord(session.account.displayEmail)) ? session.account.displayEmail
+            : null
+          if (!localKeyEmail) { showSysMsg('This device has no local PGP key for this account — nothing to repair from here'); return }
+          const { deriveKek } = await import('../cryptenv.ts')
+          const newKek = await deriveKek(newRootSeed)
+          const { rekeyPgpForNewLogin } = await import('../pgp/index.ts')
+          const ok = await rekeyPgpForNewLogin(localKeyEmail, session, newKek).catch(() => false)
+          showSysMsg(ok ? 'PGP repaired — other devices can now decrypt history after their next restore' : 'Repair failed')
+        },
+      })
+    }
+    // One-time move onto SCID-primary (PLANSCID.md) for an account still on
+    // the pre-SCID (human-keyed) scheme — shown only when the login
+    // identity's OWN localpart doesn't already match the DID's SCID (a
+    // fresh signup already gets one; this is only ever relevant for an
+    // account that predates the scheme). Deliberately a manual, explicit
+    // action rather than something triggered automatically on next login —
+    // migrating touches a real account's own storage, and the account
+    // holder should choose when, not have it happen silently mid-session.
+    if (serverUrl && did?.startsWith('did:webvh:')) {
+      let needsMigration = false
+      try {
+        const scid = parseWebvhDid(did).scid.toLowerCase()
+        const at = email.lastIndexOf('@')
+        needsMigration = at > 0 && email.slice(0, at).toLowerCase() !== scid
+      } catch { /* not a path-shaped did:webvh — nothing to compare */ }
+      if (needsMigration) {
+        items.push({
+          label: 'Migrate to SCID', onClick: async () => {
+            if (!confirm(`Move ${email}'s account storage onto its permanent SCID identity? This account will then keep working under ${email} as an alias, and future renames (Edit identity) will never need to touch its mail data again. This device stays logged in — nothing else changes.`)) return
+            const session = sessions.find(s => s.account.email === email && s.account.serverUrl === serverUrl)
+            if (!session) { showSysMsg('Not connected — log in before migrating'); return }
+            const { migrateAccountToScid } = await import('../cryptenv.ts')
+            const newEmail = await migrateAccountToScid(serverUrl, email, session.account.password, did)
+            if (!newEmail) { showSysMsg('Migration failed'); return }
+            const { removeAccount, connectAndPersist } = await import('../app.ts')
+            const { getDidRecord } = await import('../did/store.ts')
+            const { deriveKek } = await import('../cryptenv.ts')
+            const rec = await getDidRecord(did)
+            const kek = rec?.masterSeed ? await deriveKek(hexToBytes(rec.masterSeed)) : undefined
+            removeAccount(email)
+            // No kek here on purpose: connectAndPersist would call initPGP
+            // under the NEW email before rekeyPgpForNewLogin below gets a
+            // chance to carry the real key over, finding nothing local and
+            // minting a throwaway keypair in the meantime.
+            const newSession = await connectAndPersist({ serverUrl, email: newEmail, displayEmail: email, password: '', did })
+            if (!newSession) { showSysMsg(`Migrated to ${newEmail}, but reconnecting failed — Sync will retry`); refreshAccountsList(); return }
+            // Carries this device's PGP identity across the login-identity
+            // change (rekeyPgpForNewLogin's own note) — the local cache and
+            // server blob are both still filed under the OLD email at this
+            // point; this moves both under the new one before anything else
+            // gets a chance to initialize PGP fresh. Best-effort: the
+            // account migration itself already landed either way.
+            if (kek) {
+              const { rekeyPgpForNewLogin } = await import('../pgp/index.ts')
+              await rekeyPgpForNewLogin(email, newSession, kek).catch(() => false)
+            }
+            // Already-synced messages are re-keyed onto the new accountKey
+            // automatically by connectAndPersist's own healStaleMessageAccountKey
+            // step (app.ts, PLANSCID.md) — no separate call needed here.
+            showSysMsg(`Migrated — still reachable at ${email}`)
+            refreshAccountsList()
+          },
+        })
+      }
     }
     if (serverUrl) {
       // Actually deletes the account's data on THIS relay (messages, mailbox,
@@ -3192,7 +3434,8 @@ export async function setupLeftPane() {
         accountId: session.jmapAccountId,
         update: { [id.id]: { name } as any },
       })
-      identities.set(identities.all().map(i => (i.id === id.id ? { ...i, name } : i)))
+      const acctKey = accountKey(session.account)
+      identities.set(acctKey, identities.all(acctKey).map(i => (i.id === id.id ? { ...i, name } : i)))
       const cache = _accInfoCache.get(email) ?? {}
       cache.name = name
       _accInfoCache.set(email, cache)
@@ -3586,7 +3829,13 @@ export async function setupLeftPane() {
       showSysMsg(res.error || `Server error (${res.status})`)
       return
     }
+    // res.email is the relay's own answer — a SCID-primary account
+    // (PLANSCID.md) returns the permanent SCID address here, never the
+    // human name just claimed. The fallback (`res.email` absent, an older
+    // relay build) is the pre-SCID scheme, where the two are the same
+    // address anyway.
     const email = res.email || `${username}@${didDomain}`
+    const displayEmail = `${username}@${didDomain}`
 
     // A kek, when this record has the seed to derive one from (did/index.ts's
     // localDidRecord/initDidWebvh — absent only for an identity created
@@ -3599,19 +3848,25 @@ export async function setupLeftPane() {
     const kek = rec.masterSeed ? await deriveKek(hexToBytes(rec.masterSeed)) : undefined
 
     const { connectAndPersist } = await import('../app.ts')
-    const session = await connectAndPersist({ serverUrl: mailUrl, email, password: '', did }, kek)
+    const session = await connectAndPersist({ serverUrl: mailUrl, email, displayEmail, password: '', did }, kek)
     if (!session) { showSysMsg('Claimed, but failed to connect'); return }
 
     // Carry over a display name set BEFORE this relay existed (the
     // localStorage cache openDisplayNameModal writes even with no relay to
-    // hold it) — the freshly claimed Identity otherwise defaults to the
-    // localpart (go-jmapserver's defaultIdentity()), silently discarding
-    // whatever name was already showing on this exact card a moment ago.
-    // Best-effort: claiming has already succeeded either way.
+    // hold it), falling back to the human username otherwise — the freshly
+    // claimed Identity's OWN default (go-jmapserver's defaultIdentity())
+    // used to already equal `username` for a pre-SCID account, making this
+    // write a harmless no-op whenever there was no local override to carry
+    // over. That stopped being true the moment `email` became the SCID
+    // address (PLANSCID.md): the server's default Identity.name is derived
+    // from the LOGIN email, which is now the SCID string, not `username` —
+    // so this always writes now, correcting a raw SCID name every fresh
+    // claim would otherwise show forever (found live, 2026-08-18, the
+    // scheme's first production test — the identity heading showed the
+    // 46-character SCID instead of the chosen name). Best-effort: claiming
+    // has already succeeded either way.
     const localName = localDisplayName(did)
-    if (localName && localName !== username) {
-      await applyDisplayNameToRelay(session, email, localName).catch(() => false)
-    }
+    await applyDisplayNameToRelay(session, email, localName || username).catch(() => false)
 
     // Publish the new relay to the DID document (routing.json's `service`
     // array) — without this, claiming only ever produced a LOCAL session:
@@ -3669,7 +3924,13 @@ export async function setupLeftPane() {
     const email = `${username}@${didDomain}`
     // Already claimed (a real StoredAccount exists for this address) — the
     // real card in relayCards below covers it, don't show a second one.
-    if (accounts.some(a => a.email === email && a.did === did)) return
+    // Compared against `displayEmail`, never `a.email` directly — for a
+    // SCID-primary account (PLANSCID.md) `a.email` is the permanent SCID
+    // and never equals this human address, so comparing it here would show
+    // this placeholder forever even after a successful claim (found live,
+    // 2026-08-18, immediately after the SCID scheme's first production
+    // test).
+    if (accounts.some(a => (a.displayEmail ?? a.email) === email && a.did === did)) return
 
     const row = document.createElement('div')
     row.className = 'cmd-page-row'
@@ -3706,7 +3967,7 @@ export async function setupLeftPane() {
     menuBtn.addEventListener('click', (ev) => {
       ev.stopPropagation()
       openDropdownMenu(menuBtn, [
-        { label: 'Claim account', onClick: () => claimMailAccount(did) },
+        { label: 'Claim email', onClick: () => claimMailAccount(did) },
       ])
     })
 
@@ -3909,7 +4170,11 @@ export async function setupLeftPane() {
       sep.textContent = ':'
       const addrEl = document.createElement('span')
       addrEl.style.cssText = 'font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
-      addrEl.textContent = a.email
+      // The human-facing alias, not the login identity — see StoredAccount's
+      // own note on why the two differ for a SCID-primary account
+      // (PLANSCID.md). Falls back to `a.email` for an account still on the
+      // legacy scheme, where the two are the same address.
+      addrEl.textContent = a.displayEmail ?? a.email
       headRow.append(dot, protoEl, sep, addrEl)
 
       const statsRow = document.createElement('div')
@@ -3925,6 +4190,41 @@ export async function setupLeftPane() {
       statSync.dataset.kind = 'sync'
       statSync.textContent = `Sync: ${fmtRelTime(cached.lastSyncAt)}`
       statsRow.append(statUnread, statSync, statPgp)
+
+      // Cross-check this card's own DISPLAY address against the DID's
+      // CURRENT path segment — cheap, local, no server round trip: a
+      // did:webvh identity's username IS its advertised mail localpart
+      // (PLANWEBVH.md §2.3), so a mismatch here means this alias predates
+      // the identity's last rename (ui/edit-identity.ts's username change)
+      // and is no longer what the DID document advertises, even though the
+      // JMAP login/device-vouch keeps it fully functional regardless
+      // (device-key auth is decoupled from DID resolution entirely —
+      // jmapserver's devicekeys.rs). Purely informational: does not touch
+      // the account in any way, just surfaces what was otherwise invisible
+      // (found live, 2026-08-17, e79e -> e79e2).
+      //
+      // Compared against `displayEmail`, never `a.email` directly — for a
+      // SCID-primary account (PLANSCID.md) `a.email` is the account's
+      // PERMANENT internal identity and never equals a human username by
+      // design, so comparing it here would flag every such card as stale,
+      // always, which is exactly the false positive this check exists to
+      // avoid. `a.displayEmail` is what the relay's alias table actually
+      // advertises, kept in sync by every rename going forward — genuinely
+      // stale here now only means the alias itself really did change.
+      if (a.did?.startsWith('did:webvh:')) {
+        try {
+          const currentUsername = bisetWebvhUsername(a.did)
+          const currentDomain = parseWebvhDid(a.did).domain
+          const shown = a.displayEmail ?? a.email
+          if (currentUsername && `${currentUsername}@${currentDomain}` !== shown) {
+            const statStale = document.createElement('span')
+            statStale.dataset.kind = 'stale'
+            statStale.textContent = 'Not the current address'
+            statStale.style.color = '#ff9500'
+            statsRow.appendChild(statStale)
+          }
+        } catch { /* not a path-shaped did:webvh (e.g. domain apex) — nothing to compare */ }
+      }
 
       // DID is shown once in the page heading (identitySection above), not
       // per card — every card here shares it (one session = one identity).
@@ -4115,7 +4415,14 @@ export async function setupLeftPane() {
       })
 
       if (session) {
-        menuSpinner.style.display = 'block'
+        // Spinner only when this card has never been fetched before — every
+        // #account visit re-runs renderAccountsList (onShowAccount), and
+        // without this it re-spun on every single visit even with cached
+        // data already on screen (2026-08-17, user-reported: should only
+        // spin once). Still refetches every time to stay current — just
+        // silently, since `cached` above already has something to show.
+        const hasCache = _accInfoCache.has(a.email + '\0' + a.serverUrl)
+        if (!hasCache) menuSpinner.style.display = 'block'
         fetchAccountInfo(session).then(info => {
           if (!info) return
           statUnread.textContent = fmtUnread(info)
@@ -4378,113 +4685,6 @@ export async function setupLeftPane() {
   }
 
 
-  function onShowAccounts() {
-    renderAccountsList()
-    setupIdentityImportInput()
-    // The floating "+ New Relay" button and the ways out of the panel it
-    // opens. Wired here (with the rest of this page's one-time setup) rather
-    // than in renderAccountsList, which re-runs on every account change and
-    // would stack duplicate listeners on these fixed template elements.
-    document.getElementById('cmd-acc-fab')?.addEventListener('click', () => openAddRelayPanel())
-    document.getElementById('cmd-acc-panel-backdrop')?.addEventListener('click', () => closeAddRelayPanel())
-    positionAccFloating()
-    const rightCol = document.getElementById('right-col')
-    if (rightCol && typeof ResizeObserver !== 'undefined') {
-      // One observer for the life of the page — the elements it positions are
-      // recreated with the template, but #right-col itself never is.
-      accFloatingObserver?.disconnect()
-      accFloatingObserver = new ResizeObserver(() => positionAccFloating())
-      accFloatingObserver.observe(rightCol)
-    }
-    document.addEventListener('keydown', (ev) => {
-      if (ev.key !== 'Escape') return
-      const panel = document.getElementById('cmd-acc-panel')
-      if (panel?.classList.contains('open')) closeAddRelayPanel()
-    })
-    const form = document.getElementById('cmd-acc-form') as HTMLFormElement | null
-    form?.addEventListener('submit', async (ev) => {
-      ev.preventDefault()
-      const relayInput = document.getElementById('cmd-acc-relay') as HTMLInputElement
-      const emailInput = document.getElementById('cmd-acc-email') as HTMLInputElement
-      const errEl = document.getElementById('cmd-acc-error')!
-      const addBtn = document.getElementById('cmd-acc-add') as HTMLButtonElement
-
-      const email = emailInput.value.trim()
-      const raw = relayInput.value.trim().replace(/\/$/, '')
-      // The relay picker at the top of the panel is required for either path
-      // (Sign up or Log in) — no more domain-guessing fallback ladder here.
-      // A bare apex ("biset.md") still expands to BOTH mail+ap siblings
-      // (expandDualRelay) — the same home-identity pairing #new provisions,
-      // now available on Log in too (best-effort: whichever comes up is
-      // kept, same as the old auto-discovery this replaced).
-      const dual = expandDualRelay(raw)
-      const servers = dual ?? (raw ? [/^https?:\/\//i.test(raw) ? raw : 'https://' + raw] : [])
-      if (!servers.length) { errEl.textContent = 'Relay URL required'; errEl.style.display = 'block'; return }
-      if (!email) { errEl.textContent = 'Email required'; errEl.style.display = 'block'; return }
-
-      addBtn.disabled = true; addBtn.textContent = 'Connecting…'; errEl.style.display = 'none'
-
-      // No password field at all any more (user's explicit call — third-party/
-      // plain-password JMAP login isn't a use case worth keeping): "Log in" is
-      // purely a reconnect via this device's own per-device key (devicebind.ts).
-      // ownDid() is set independently of any session and never cleared by an
-      // ordinary per-relay logout (removeRelayLocally only drops the
-      // StoredAccount/session, never the DidRecord) — so this works whenever
-      // this device was vouched at the typed relay before (e.g. logging back
-      // in after logging out). Never vouched there, or revoked: no fallback,
-      // just an error.
-      const myDid = ownDid()
-      const connected: Array<{ session: import('../types.ts').AccountSession; server: string }> = []
-      if (myDid) {
-        for (const server of servers) {
-          const session = await initSession({ serverUrl: server, email, password: '', did: myDid }).catch(() => null)
-          if (session) connected.push({ session, server })
-        }
-      }
-
-      if (!connected.length) {
-        errEl.textContent = myDid ? 'Could not reconnect this device at that relay' : 'No local identity on this device to reconnect with'
-        errEl.style.display = 'block'
-        addBtn.disabled = false; addBtn.textContent = 'Add'
-        return
-      }
-
-      // One session = one identity (ARC.md 2026-07-14): a reconnected
-      // session's own `.did` (only set when the device-key path above
-      // succeeded) is this device's OWN identity, independent of whatever is
-      // currently active — so logging into an account belonging to a
-      // genuinely different identity must never silently merge into the
-      // active one's sessions. Switching identity is logout-then-login only.
-      const isFirst = sessions.length === 0
-      if (!isFirst) {
-        const activeIdKey = identityIds()[0]
-        if (activeIdKey && myDid !== activeIdKey) {
-          errEl.textContent = 'This account belongs to a different identity — log out first to switch.'
-          errEl.style.display = 'block'
-          addBtn.disabled = false; addBtn.textContent = 'Add'
-          return
-        }
-      }
-
-      // Persist + register each connected relay, deduped by (email, serverUrl)
-      // so mail and AP for the same identity coexist as separate sessions. No
-      // password to persist — every future login re-derives a fresh device
-      // session instead (initSession's per-device branch).
-      for (const c of connected) {
-        const session = c.session
-        const relayEmail: string = session.account.email || email
-        const stored: StoredAccount = { serverUrl: c.server, email: relayEmail, password: '', did: myDid ?? undefined }
-        persistSession(stored, session)
-      }
-      addBtn.disabled = false; addBtn.textContent = 'Add'
-      resetAddAccountPanel()
-      closeAddRelayPanel()
-      renderAccountsList()
-      loadLeftInboxes()
-      if (isFirst) startPolling()
-    })
-  }
-
   const LP_COMMANDS: Array<{ name: string; page?: () => string; action: () => void; onShow?: () => void | Promise<void> }> = [
     { name: '/account', page: renderAccountPage, action: () => {}, onShow: onShowAccount },
     { name: '/config',  page: renderConfigPage,  action: () => {}, onShow: onShowConfig },
@@ -4537,6 +4737,17 @@ export async function setupLeftPane() {
     const cmd = LP_COMMANDS.find(c => c.name === focusedName)
     if (!cmd?.page) return
     _inMenuMode = true
+    // Which menu page is active, for CSS that must react to it outside the
+    // page's own template — e.g. the left-pane compose fab (style.css),
+    // which mirrors #account's own fab but lives in persistent chrome.
+    document.getElementById('app')?.setAttribute('data-menu-page', focusedName)
+    // Not a thread — the scroll-to-top/bottom buttons only belong to a
+    // conversation's message strip (main.ts's #outer scroll handler skips
+    // re-showing them while inMenuMode() is true, but that only fires on the
+    // next scroll; clear them here too so they don't linger visible from
+    // whatever was on screen just before).
+    document.getElementById('scroll-to-bottom')?.classList.remove('visible')
+    document.getElementById('scroll-to-top')?.classList.remove('visible')
 
     const hashName = focusedName.startsWith('/') ? focusedName.slice(1) : focusedName
     try { history.replaceState(null, '', '#' + hashName) } catch {}
@@ -4613,6 +4824,7 @@ export async function setupLeftPane() {
 
   function hideCmdPage() {
     _inMenuMode = false
+    document.getElementById('app')?.removeAttribute('data-menu-page')
     _menuResizeObserver?.disconnect()
     $cmdPage.style.display = 'none'
     const $convMeta = document.getElementById('conv-meta')
@@ -4695,7 +4907,11 @@ export async function setupLeftPane() {
     try {
       const api = sess.jmapClient.api as any
       const accountId = sess.jmapAccountId
-      const selfAddr = accountId || sess.account.email
+      // Both the login identity and display alias — a sent message's own
+      // `from` is always the display one for a SCID-primary account
+      // (PLANSCID.md), never the login address `selfAddr` alone used to
+      // cover.
+      const selfAddrs = new Set([accountId, sess.account.email, sess.account.displayEmail].filter((x): x is string => !!x))
 
       const [queryRes] = await api.Email.query({
         accountId,
@@ -4735,7 +4951,7 @@ export async function setupLeftPane() {
         const from = e.from?.[0]
         const fromAddr = from?.email ?? ''
         const fromName = from?.name || fromAddr
-        const contact = fromAddr === selfAddr ? (e.to?.[0]?.email ?? '') : fromAddr
+        const contact = selfAddrs.has(fromAddr) ? (e.to?.[0]?.email ?? '') : fromAddr
         const snippet = snippetMap.get(e.id)
         const subjectSnip = snippet?.subject ? `<span class="lp-search-subject">${snippet.subject}</span>` : `<span class="lp-search-subject">${esc(e.subject ?? '')}</span>`
         const bodySnip = snippet?.preview ? `<span class="lp-search-preview">${snippet.preview}</span>` : ''

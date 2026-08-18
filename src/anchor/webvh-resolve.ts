@@ -41,6 +41,20 @@ export function resolveOwnWebvhDocument(webvh: WebvhLogStore, did: string): Webv
   } catch { return null }
 }
 
+/** Whether this store holds ANY did.jsonl for `did`'s path at all —
+ * independent of what it resolves to. The one thing `resolveOwnWebvhDocument`
+ * alone can't tell a caller: its `null` already means both "nothing here"
+ * and "something here, resolved to nothing" (deactivated), and
+ * `resolveWebvhDocument` needs to tell those apart to know whether a remote
+ * fallback is warranted at all. */
+function storedLocally(webvh: WebvhLogStore, did: string): boolean {
+  try {
+    const parts = parseWebvhDid(did)
+    if (parts.pathSegments.length !== 1 || !parts.pathSegments[0]) return false
+    return webvh.read(parts.domain, parts.pathSegments[0]) !== null
+  } catch { return false }
+}
+
 /** Resolves any did:webvh identifier: this anchor's own store first (cheap,
  * no network, and the freshest possible source for a log this same anchor
  * just accepted a write for), a guarded remote fetch on a miss — the
@@ -51,9 +65,18 @@ export function resolveOwnWebvhDocument(webvh: WebvhLogStore, did: string): Webv
  * 404), throws for a genuine failure (SSRF-blocked, network error, bad log)
  * so a caller can tell "this identity doesn't exist" from "couldn't check". */
 export async function resolveWebvhDocument(did: string, webvh?: WebvhLogStore): Promise<WebvhDidDocument | null> {
-  if (webvh) {
-    const own = resolveOwnWebvhDocument(webvh, did)
-    if (own) return own
+  if (webvh && storedLocally(webvh, did)) {
+    // Present in this anchor's own store — trust that answer outright,
+    // INCLUDING a `null` one (a deactivated identity, resolveEntries's own
+    // documented return). `resolveOwnWebvhDocument`'s `null` is otherwise
+    // ambiguous between "resolved to nothing" and "nothing stored here at
+    // all" — `storedLocally` above is what disambiguates them, so this
+    // branch is only reached for the former. Skipping the remote fallback
+    // here isn't just an optimization: a deactivated identity's OWN former
+    // did.jsonl already answers this correctly, and needlessly re-asking a
+    // domain this anchor doesn't control for permission to trust its own
+    // data is exactly backwards.
+    return resolveOwnWebvhDocument(webvh, did)
   }
   const url = didToHttpsUrl(did)
   let text: string

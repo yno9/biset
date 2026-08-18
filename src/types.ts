@@ -23,7 +23,17 @@ export interface InboxSummary {
 
 export interface StoredAccount {
   serverUrl: string
+  // The JMAP LOGIN identity — for a SCID-primary account (PLANSCID.md) this
+  // is the permanent `<scid>@<domain>` address, never the human-chosen
+  // name. Never shown to a human directly; see `displayEmail` for that.
   email: string
+  // What a human sees and what goes in a compose "From" — the relay's own
+  // alias for this account (what other people actually use to reach it),
+  // cached from wherever it was last learned (a claim, a DID-document
+  // resolve, `GET /account/alias`) rather than re-fetched on every render.
+  // Falls back to `email` for an account still on the legacy scheme, where
+  // the two ARE the same address.
+  displayEmail?: string
   password: string   // base64(authToken)
   // The identity this endpoint belongs to (did:dht:…). Identity-by-DID: one DID
   // may span several (serverUrl, email) endpoints — including different email

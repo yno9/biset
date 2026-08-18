@@ -136,12 +136,26 @@ export async function sync(session: AccountSession): Promise<void> {
     if (newIds.length) {
       const { emails, state } = await jmapEmail.get(client, accountId, newIds, true)
       if (!emailState) await querystate.save(acctKey, { emailState: state })
-      const fresh = filterNew(emails)
+      const { fresh, idDrift } = filterNew(acctKey, emails)
       // Stamp the owning account so the global store can partition by it (JMAP ids
       // collide across accounts on the same server). Which *identity* (DID) this
       // account belongs to is no longer stamped here — messages.forIdentity()
       // derives it dynamically from sessions instead (see store/messages.ts).
       for (const e of fresh) { (e as any)._account = acctKey; (e as any)._relay = account.serverUrl }
+      // Repoint, don't drop (filterNew's own idDrift note) — the server
+      // reissued an id for content this account already has under an older
+      // one. Re-key in place: same Map entry, new id, everything else
+      // (decrypted body, thread grouping, read state) carried forward
+      // untouched, so this never re-triggers a re-decrypt or a duplicate row.
+      for (const { oldId, newEmail } of idDrift) {
+        const existing = messages.get(acctKey, oldId)
+        if (!existing) continue
+        messages.remove(acctKey, oldId)
+        await persist.removeMessage(acctKey, oldId).catch(() => {})
+        const relocated = { ...existing, id: newEmail.id }
+        messages.put(relocated)
+        await persist.flushMessage(relocated).catch(() => {})
+      }
       // biset-old relay_view.go:ConvertRelayView 相当。
       // outer inReplyTo が空かつ body が PGP のとき復号して inner In-Reply-To を outer に昇格。
       // DeltaChat の Protected Headers や JMAP server が outer を拾い損ねるケースを store に入る前に補正。
@@ -353,7 +367,7 @@ export async function sync(session: AccountSession): Promise<void> {
     // ── Identity sync ────────────────────────────────────────────────────────
     try {
       const { identities: fetched } = await jmapIdentity.get(client, accountId)
-      identities.set(fetched)
+      identities.set(accountKey(session.account), fetched)
       await persist.flushIdentities()
     } catch { /* non-fatal */ }
 

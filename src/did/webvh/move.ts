@@ -8,7 +8,7 @@
 // the new DID is the caller's job, via didcomm-devices.ts's
 // registerWithMediator — not duplicated here).
 import { getDidRecord, storeDidRecord, deleteDidRecord, type DidRecord } from '../store.ts'
-import { hexToBytes } from '../../utils.ts'
+import { hexToBytes, bytesToHex } from '../../utils.ts'
 import { moveDidToNewDomain, type BisetRelay } from './publish.ts'
 import { buildFromPrior } from '../didcomm/rotation.ts'
 
@@ -25,6 +25,15 @@ export interface MoveWebvhIdentityOptions {
    * this window learns of the move either way; this is purely for one that
    * doesn't. */
   fromPriorWindowMs?: number
+  /** Required when pre-rotation is active for this identity — a move is a
+   * log entry like any other, and resolver.ts forbids appending one while
+   * pre-rotation is active without a key matching the current commitment
+   * (migrate.ts's own note). Omit when pre-rotation is off: the Root Key
+   * signs as it always has, unchanged. The caller (ui/edit-identity.ts)
+   * gets this the same way Rotate/Deactivate/Revoke do — prompting for the
+   * current Spare Key phrase and generating a fresh one for the next round
+   * (ui/prerotation.ts's revealAndVerify/generateSpareKeypair). */
+  spareKeyOverride?: { privateKey: Uint8Array; publicKey: Uint8Array; nextKeyHash: string }
 }
 
 /** Moves an identity to a new domain via did:webvh's portability mechanism
@@ -46,10 +55,14 @@ export async function moveWebvhIdentity(opts: MoveWebvhIdentityOptions): Promise
   if (!oldRec) throw new Error('moveWebvhIdentity: no local record for the DID being moved')
   const rootPriv = hexToBytes(oldRec.rootPrivateKey)
   const rootPub = hexToBytes(oldRec.rootPublicKey)
+  const signingPriv = opts.spareKeyOverride?.privateKey ?? rootPriv
+  const signingPub = opts.spareKeyOverride?.publicKey ?? rootPub
 
   const { newDid } = await moveDidToNewDomain({
     oldDid: opts.oldDid, newDomain: opts.newDomain, newUsername: opts.newUsername,
-    rootPrivateKey: rootPriv, rootPublicKey: rootPub, relays: opts.relays, addresses: opts.addresses,
+    identityPublicKey: rootPub, signingPrivateKey: signingPriv, signingPublicKey: signingPub,
+    nextKeyHash: opts.spareKeyOverride?.nextKeyHash,
+    relays: opts.relays, addresses: opts.addresses,
   })
 
   // Signed by the OLD identity's own root key at its `#key-1` verification
@@ -63,6 +76,17 @@ export async function moveWebvhIdentity(opts: MoveWebvhIdentityOptions): Promise
     did: newDid,
     movedFromJwt: jwt,
     movedFromExpiresAt: Date.now() + (opts.fromPriorWindowMs ?? THIRTY_DAYS_MS),
+    // The just-consumed Spare Key is now the current Sign Key — same
+    // caching ui/prerotation.ts's cacheSigningKey does after a rotate, so a
+    // later Sync/publish on this device doesn't need to re-prompt for what
+    // this move already revealed. Untouched (carried via the spread above)
+    // when pre-rotation was off — the Root Key still signs.
+    ...(opts.spareKeyOverride
+      ? {
+        signingPrivateKey: bytesToHex(opts.spareKeyOverride.privateKey),
+        signingPublicKey: bytesToHex(opts.spareKeyOverride.publicKey),
+      }
+      : {}),
   }
   // Device DIDComm registration is scoped to the OLD document's kid/slot —
   // does not carry over. The new identity registers fresh, exactly like any

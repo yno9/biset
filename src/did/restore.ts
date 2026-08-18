@@ -163,18 +163,22 @@ export async function restoreFromMnemonic(mnemonic: string, did?: string): Promi
   // follows did:webvh rotation, and did:dht's key IS the identifier), so
   // this works unchanged regardless of any later root-key rotation.
   const { connectAndPersist } = await import('../app.ts')
-  const { vouchThisDevice, deviceLabel } = await import('./provision.ts')
+  const { vouchThisDevice, deviceLabel, scidLoginAddress } = await import('./provision.ts')
   const label = deviceLabel()
   const sessions: AccountSession[] = []
   for (const svc of relayServices) {
     const serverUrl = firstServiceEndpoint(svc.serviceEndpoint).replace(/\/$/, '')
     if (!serverUrl) continue
-    const email = svc.address || primaryAddress
-    if (!email) continue
-    const at = email.lastIndexOf('@')
-    if (at <= 0) continue
-    const username = email.slice(0, at)
-    const domain = email.slice(at + 1)
+    const displayEmail = svc.address || primaryAddress
+    if (!displayEmail) continue
+    // The DID document's own service.address is a delivery ALIAS
+    // (PLANSCID.md) — never necessarily the address this device logs in
+    // as. scidLoginAddress resolves the real login identity straight from
+    // the DID string; displayEmail (below) stays the human-facing one for
+    // everything the user actually sees.
+    const login = await scidLoginAddress(resolvedDid, displayEmail)
+    if (!login) continue
+    const { email, username, domain } = login
     // vouchThisDevice resolves {ok:false} rather than throwing on a rejected
     // vouch (a genuine HTTP error, not a transport failure) — a bare .catch
     // here only ever caught the transport-failure case, so a REJECTED vouch
@@ -185,12 +189,12 @@ export async function restoreFromMnemonic(mnemonic: string, did?: string): Promi
     const vouch = await vouchThisDevice({ serverUrl, username, domain, did: resolvedDid, rootPrivateKey: root.privateKey, label })
       .catch(e => { console.warn(`[restore] vouchThisDevice(${serverUrl}) threw:`, e instanceof Error ? e.message : e); return { ok: false, status: 0 } })
     if (!vouch.ok) console.warn(`[restore] vouchThisDevice(${serverUrl}) rejected: HTTP ${vouch.status}`)
-    const stored: StoredAccount = { serverUrl, email, password: '', did: resolvedDid }
+    const stored: StoredAccount = { serverUrl, email, displayEmail, password: '', did: resolvedDid }
     const session = await connectAndPersist(stored, kek)
     if (session) { session.account.did = resolvedDid; sessions.push(session) }
     else console.warn(`[restore] connectAndPersist(${serverUrl}) returned no session (vouch ${vouch.ok ? 'ok' : `HTTP ${vouch.status}`})`)
   }
   if (!sessions.length) return { error: 'Found the identity but could not connect to any of its relays.' }
 
-  return { did: resolvedDid, primaryAddress: primaryAddress || sessions[0].account.email, sessions, kek }
+  return { did: resolvedDid, primaryAddress: primaryAddress || sessions[0].account.displayEmail || sessions[0].account.email, sessions, kek }
 }

@@ -187,6 +187,62 @@ export async function deleteAccountOnRelay(serverUrl: string, email: string, aut
   } catch { return false }
 }
 
+/** Adds or drops one delivery alias for the account authenticated as `email`
+ * (PLANSCID.md) — `address` never has to be the account's own login
+ * identity: for a SCID-primary account this is exactly the point, a rename
+ * is just this call with a different address, no data ever moves.
+ * `email`/`authTokenB64` are the LOGIN credential (the SCID address and its
+ * device session token or password), never the alias itself. */
+/** The account's own current alias list, straight from the relay's live
+ * table — never the DID document, which can lag or diverge from what's
+ * actually deliverable (PLANSCID.md's display-layer note: this is the
+ * authoritative source, a resolved DID document is a cache of it at best).
+ * `null` on any failure (unreachable, not authenticated) — callers treat
+ * that as "nothing new to show", never as "no aliases", since the two are
+ * not the same thing. */
+export async function fetchAccountAliases(serverUrl: string, email: string, authTokenB64: string): Promise<string[] | null> {
+  try {
+    const resp = await fetch(`${trim(serverUrl)}/account/alias`, {
+      headers: { 'Authorization': 'Basic ' + btoa(email + ':' + authTokenB64) },
+    })
+    return resp.ok ? (await resp.json()) as string[] : null
+  } catch { return null }
+}
+
+/** One-time move of an account still on the pre-SCID (human-keyed) scheme
+ * onto SCID-primary (PLANSCID.md) — never used for an ordinary rename
+ * (`aliasAccountOnRelay` covers that). `email`/`authTokenB64` are the
+ * account's CURRENT login credential (the human address, since that's still
+ * what it authenticates as before this call succeeds). Returns the new
+ * SCID login address on success — the caller is responsible for updating
+ * `StoredAccount.email` to it and re-establishing the session under it,
+ * same as this file's other relay-mutating calls leave to their callers. */
+export async function migrateAccountToScid(serverUrl: string, email: string, authTokenB64: string, did: string): Promise<string | null> {
+  try {
+    const resp = await fetch(`${trim(serverUrl)}/account/migrate-to-scid`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + btoa(email + ':' + authTokenB64) },
+      body: JSON.stringify({ did }),
+    })
+    if (!resp.ok) return null
+    const j = (await resp.json()) as { email?: string }
+    return j.email ?? null
+  } catch { return null }
+}
+
+export async function aliasAccountOnRelay(
+  serverUrl: string, email: string, authTokenB64: string, op: 'add' | 'remove', address: string,
+): Promise<boolean> {
+  try {
+    const resp = await fetch(`${trim(serverUrl)}/account/alias`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + btoa(email + ':' + authTokenB64) },
+      body: JSON.stringify({ op, address }),
+    })
+    return resp.ok
+  } catch { return false }
+}
+
 // "How your data is stored" (biset issue #7) — GET/export/purge over the
 // account's own on-disk data, see go-jmapserver's storage.go.
 export interface StorageEntry { name: string; type: 'file' | 'dir'; count?: number; sizeBytes: number }

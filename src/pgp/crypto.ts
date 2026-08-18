@@ -183,6 +183,7 @@ export async function encryptText(
   bccEmails: string[] = [],
   attachments: OutgoingAttachment[] = [],
   chatAction?: ChatAction,
+  references: string[] = [],
 ): Promise<string | null> {
   try {
     const recipients = Array.isArray(recipientEmails) ? recipientEmails : [recipientEmails]
@@ -205,7 +206,7 @@ export async function encryptText(
     const senderPubKey = await openpgp.readKey({ armoredKey: record.publicKey })
     // DeltaChat protocol headers (Chat-Version, group id/name, Autocrypt-Gossip)
     // are built by the deltachat/ layer and embedded INSIDE the encrypted MIME.
-    const protectedHeaders = buildProtectedHeaders(recipients, recipientKeys, groupOpts, senderEmail, chatAction)
+    const protectedHeaders = buildProtectedHeaders(recipients, recipientKeys, groupOpts, senderEmail, chatAction, references)
     const { contentType, body } = attachments.length
       ? buildMultipartBody(text, attachments)
       : { contentType: 'text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit', body: text }

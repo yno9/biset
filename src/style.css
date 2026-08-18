@@ -542,6 +542,7 @@ select {
 
 /* Size, shape, tint and hover come from the shared header-chip rule above. */
 #lp-hamburger-left {
+  position: relative;
   border: none;
   cursor: pointer;
   display: none;
@@ -576,8 +577,51 @@ select {
 #lp-hamburger-left.has-avatar span {
   display: none;
 }
+/* With an avatar set, the shared header-chip hover (opacity: 0.8, above)
+   read as the avatar going lighter/washed out — the opposite of the "this
+   is now clickable" cue it's meant to give (2026-08-17, user-reported).
+   No opacity/filter tricks (2026-08-17, user: opacityいじるのやめよう) — a
+   flat gray fill at 80% instead, same technique as .lp-item .lp-avatar's
+   own hover below. z-index, not DOM order, controls the stack: img (auto)
+   under the fill (1) under the icon (2), since the icon is the last real
+   child in the markup (index.html) and would otherwise paint UNDER a
+   same-order ::after fill. */
+/* Cancels the shared header-chip's own opacity dimming (line ~379 above) —
+   this button stays at full opacity; the fill below is the entire hover
+   effect. */
+#lp-hamburger-left.has-avatar:hover {
+  opacity: 1;
+}
+#lp-hamburger-left.has-avatar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+  z-index: 1;
+}
+#lp-hamburger-left.has-avatar:hover::after {
+  opacity: 1;
+}
 #lp-hamburger-left.has-avatar #lp-hamburger-left-icon {
-  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+#lp-hamburger-left.has-avatar:hover #lp-hamburger-left-icon {
+  opacity: 1;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1168,6 +1212,38 @@ a.lp-avatar:hover {
 }
 .lp-avatar:hover {
   opacity: 0.8;
+}
+/* Inbox row avatar specifically (makeLpItem, left-pane.ts) — it's a click
+   target that opens the row's context menu (Archive/Export/Delete), so
+   fading it out on hover read as the wrong direction: "getting lighter"
+   rather than "now clickable" (2026-08-17, user-reported, screenshot).
+   Scoped to .lp-item so the identity-header avatar elsewhere
+   (#cmd-acc-identity-avatar, same .lp-avatar class, no menu of its own)
+   keeps the plain fade above instead. Darkens the avatar itself and
+   overlays the same 3-dot "more" glyph used by every other row-menu
+   trigger in the app (.t-menu-btn, the account-card menuBtn), so the cue
+   reads as "menu", not just "hover". */
+.lp-item .lp-avatar:hover {
+  opacity: 1;
+}
+.lp-item .lp-avatar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-color: rgba(0, 0, 0, 0.15);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Ccircle cx='12' cy='5' r='1.5'/%3E%3Ccircle cx='12' cy='12' r='1.5'/%3E%3Ccircle cx='12' cy='19' r='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 14px 14px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+.lp-item .lp-avatar:hover::after {
+  opacity: 1;
 }
 .lp-info {
   flex: 1;
@@ -1891,6 +1967,108 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 #cmd-acc-fab.hidden {
   opacity: 0;
   pointer-events: none;
+}
+
+/* Compose fab — bottom-right corner, round icon-only button, same raised
+   glass treatment as the header buttons. Two instances share this look:
+   #cmd-acc-compose-fab lives in #account's own template (right column) and
+   #lp-compose-fab is persistent chrome in the left pane (2026-08-17, added
+   so mobile's left-pane nav-stack screen has its own compose affordance —
+   see the visibility rules below). Only one is ever shown at a time. */
+.compose-fab {
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: var(--input-bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 var(--glass-btn-hi),
+    inset 0 -1px 1.5px var(--glass-btn-lo),
+    0 2px 6px rgba(0, 0, 0, 0.15),
+    0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, color 0.14s ease;
+}
+.compose-fab:hover {
+  color: var(--text);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 var(--glass-btn-hi),
+    inset 0 -1px 1.5px var(--glass-btn-lo),
+    0 4px 10px rgba(0, 0, 0, 0.18),
+    0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.compose-fab:active {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 2px 3px var(--glass-btn-lo),
+    0 1px 4px rgba(0, 0, 0, 0.12);
+}
+/* Right column's own coordinates — fixed to the viewport like #cmd-acc-fab. */
+#cmd-acc-compose-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+}
+/* A SIBLING of <aside id="left-pane"> in the markup (index.html), not a
+   descendant — #left-pane both scrolls its own content (overflow-y:auto,
+   section 06) AND, on desktop, carries `backdrop-filter: blur()` (the
+   575px+ pane style below) which makes it the containing block for any
+   `position: fixed` descendant too (same rule as `transform`/`filter`).
+   Either way, a fixed/absolute box whose containing block is that same
+   scrolling element still gets carried along by its internal scroll — two
+   different attempts nested inside #left-pane both drifted with the list on
+   scroll (2026-08-17, user-reported twice: once as `position: absolute`,
+   once as `position: fixed` that turned out pane-relative for this exact
+   reason). Living outside #left-pane entirely, with #app itself having no
+   transform/filter of its own, is what actually makes `fixed` mean
+   viewport-fixed here.
+   Hidden by default: shown whenever the left pane is the on-screen column
+   (rules below, desktop split-view and mobile nav-stack respectively) —
+   unconditional on which page is open (user-requested: not #account-only,
+   unlike #cmd-acc-compose-fab). */
+#lp-compose-fab {
+  position: fixed;
+  bottom: 24px;
+  display: none;
+}
+@media (min-width: 575px) {
+  /* Viewport-relative `right`, aimed at the pane's own right edge (which
+     sits at var(--lp-width) from the viewport's left, since #left-pane is
+     #app's first flex child with no left offset) — mirrors #reply-dock's
+     own `left: var(--lp-width)` technique (section 21). */
+  #lp-compose-fab {
+    right: calc(100vw - var(--lp-width, 300px) + 16px);
+  }
+  /* Split view (left pane open, not single-col): compose belongs to
+     whichever column the user is actually looking at — here, the left
+     one — so #account's own copy steps aside when that's the open page. */
+  #app.lp-enabled:not(.single-col)[data-menu-page="/account"] #cmd-acc-compose-fab {
+    display: none;
+  }
+  #app.lp-enabled:not(.single-col) #lp-compose-fab {
+    display: inline-flex;
+  }
+}
+@media (max-width: 574px) {
+  /* The active pane is full viewport width here (section 26), so a plain
+     viewport edge inset lines up with it directly. */
+  #lp-compose-fab {
+    right: 16px;
+  }
+  /* Nav-stack: the left pane is the on-screen one exactly when show-left
+     is set (section 26) — same condition the pane's own slide-in uses. */
+  #app.lp-enabled.show-left[data-menu-page="/account"] #cmd-acc-compose-fab {
+    display: none;
+  }
+  #app.lp-enabled.show-left #lp-compose-fab {
+    display: inline-flex;
+  }
 }
 
 /* Click-outside-to-close only — deliberately NOT dimmed (2026-08-12,
@@ -2852,25 +3030,23 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 .reply-box textarea::placeholder {
   color: var(--text-dim);
 }
+/* width:0 by default, not just an invisible child — a fixed 32px wrap with
+   nothing visibly rendered inside it still reserves that width in the
+   .reply-content flex row, leaving a dead gap next to the attach button
+   (2026-08-17, user-reported, screenshot). Expanding the wrap itself, not
+   just the button's opacity, is what actually reclaims that space. */
 .t-send-wrap {
   position: relative;
-  width: 32px;
+  width: 0;
   height: 32px;
   flex-shrink: 0;
+  overflow: hidden;
+}
+.reply-box:has(textarea:not(:placeholder-shown)) .t-send-wrap {
+  width: 32px;
 }
 .t-send-avatar {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 700;
-  color: #fff;
-  transition: opacity 0.15s;
-  pointer-events: none;
+  display: none;
 }
 .t-send-avatar img {
   width: 100%;
@@ -2889,22 +3065,11 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0;
-  transition: opacity 0.15s;
 }
 .t-send-btn svg {
   width: 16px;
   height: 16px;
   fill: #fff;
-}
-/* Show send button on hover or when reply field is focused */
-.reply-box:has(textarea:focus) .t-send-btn,
-.t-send-wrap:hover .t-send-btn {
-  opacity: 1;
-}
-.reply-box:has(textarea:focus) .t-send-avatar,
-.t-send-wrap:hover .t-send-avatar {
-  opacity: 0;
 }
 /* Compose (#new) send button: no avatar overlay, always visible */
 .t-send-btn.always-send {

@@ -10,6 +10,7 @@
 //
 //   POST   /_anchor/identity/<localpart>   {"domain":…,"did":…,"did_sig":…,…} → 201/200/409
 //   DELETE /_anchor/identity/<localpart>?domain=<domain>                    → 204
+//   GET    /_anchor/alias-target/<localpart>?domain=<domain>                → 200/404 (jmapserver::anchor::current_alias)
 //   GET    /<username>/did.jsonl                      → did:webvh log | 404
 //   PUT    /<username>/did.jsonl  body = JSONL         → 204 | 400/409
 //   POST   /_anchor/devices/vouch   {"did":…,"device_pub_key":…,"label":…,…} → 200 | 400/401
@@ -29,6 +30,7 @@ import { verifyDIDBinding, verifyDeviceVouch, rootKeyResolver } from './didbind.
 import type { MediatorHandler } from './mediator/server.ts'
 import type { WebvhLogStore } from './webvh-store.ts'
 import { parseWebvhDid, bisetWebvhUsername } from '../did/webvh/identifier.ts'
+import { resolveWebvhDocument } from './webvh-resolve.ts'
 import { createWebvhHandler } from '../webvh-server/core.ts'
 import { parseLog, resolveParameters, type LogParameters } from '../did/webvh/log.ts'
 import { verifyProof, type DataIntegrityProof } from '../did/webvh/proof.ts'
@@ -283,8 +285,25 @@ export function startAnchor({ claims, port, hostname, mediator, webvh, relayToke
         return text('device vouch: did does not match the claim on record for that address', 401)
       }
     } else {
-      const selfNamed = did.startsWith('did:webvh:') && bisetWebvhUsername(did) === username.toLowerCase()
+      // Two ways a DID can name ITSELF as the owner of `username`, with no
+      // claim-registry entry needed: the human path segment (the original
+      // check), or — SCID-primary accounts (PLANSCID.md) — the DID's own
+      // permanent SCID segment. A SCID-primary account's real JMAP login
+      // identity IS the SCID, so every vouch after the first (the one
+      // embedded in provisioning, which still sends the human name and so
+      // hits the claim-registry branch above) is signed with `username` set
+      // to the SCID — restore.ts, sync.ts, and left-pane.ts's "Reconnect
+      // device" all resolve it via provision.ts's scidLoginAddress. Without
+      // this, EVERY vouch after the very first one for such an account —
+      // any new device, and any RE-vouch of an already-known one — was
+      // rejected outright, since neither the claim registry (keyed by the
+      // human name only) nor the human-path-segment check recognizes a SCID
+      // string as belonging to this DID (found live, 2026-08-18: y@biset.md
+      // locked out of restore entirely, the very first real-account use of
+      // this scheme after migration).
+      const selfNamed = did.startsWith('did:webvh:')
         && parseWebvhDid(did).domain.toLowerCase() === domain.toLowerCase()
+        && (bisetWebvhUsername(did) === username.toLowerCase() || parseWebvhDid(did).scid.toLowerCase() === username.toLowerCase())
       if (!selfNamed) {
         return text('device vouch: did does not match the claim on record for that address', 401)
       }
@@ -319,6 +338,10 @@ export function startAnchor({ claims, port, hostname, mediator, webvh, relayToke
     // username's did.jsonl path.
     if (url.pathname === '/_anchor/devices/vouch') return handleDeviceVouch(req)
     if (url.pathname === '/_anchor/verify-binding') return handleVerifyBinding(req)
+    if (url.pathname.startsWith('/_anchor/alias-target/')) {
+      const localpart = url.pathname.slice('/_anchor/alias-target/'.length)
+      return handleAliasTarget(req, url, localpart)
+    }
     if (url.pathname.startsWith('/_anchor/identity/')) {
       const rest = url.pathname.slice('/_anchor/identity/'.length)
       return handleIdentity(req, url, rest)
@@ -407,6 +430,68 @@ export function startAnchor({ claims, port, hostname, mediator, webvh, relayToke
     if (!r.ok) return text('did binding: ' + r.reason, 401)
 
     return json({ ok: true }, 200)
+  }
+
+  /** `GET /_anchor/alias-target/<localpart>?domain=<domain>` —
+   * jmapsmtp's alias-reconcile sweep (crates/jmapserver/src/anchor.rs's
+   * `current_alias`) asking "what does `localpart@domain`'s bound DID
+   * currently claim as its address". Answers the SCID-primary design
+   * (PLANSCID.md) directly: `localpart` is the account's immutable SCID, and
+   * the response names whatever human-chosen username/domain the DID's
+   * CURRENT did:webvh identifier resolves to — the one alias jmapsmtp should
+   * keep alive, with everything else on that primary being stale and safe to
+   * drop. Relay-internal only (`fromOwnRelay`), same gate as every other
+   * `/_anchor/*` route — this is not the public discovery route
+   * handleIdentity's own header explains was removed; it answers a
+   * maintenance question a relay asks about ITS OWN accounts, not "whose DID
+   * is this address" for the world.
+   *
+   * 404 means no claim recorded at all (a pre-SCID account, or one that
+   * never bound a DID) — the caller's own note on `AliasLookup::NotBound`
+   * explains why that means "leave every alias alone", not "remove them". A
+   * genuine resolve failure (network, malformed log) THROWS here rather than
+   * quietly answering with nothing — turned into a 503 below, which the
+   * caller reads as `Unknown`, never as grounds to delete anything: a
+   * transient anchor or upstream hiccup must never be indistinguishable from
+   * "this identity is gone". Only a clean, successful resolve that returns
+   * `null` (deactivated) is reported as "no valid alias" — every other
+   * failure mode reports "couldn't tell". */
+  async function handleAliasTarget(req: Request, url: URL, localpart: string): Promise<Response> {
+    if (req.method !== 'GET') return text('method not allowed', 405)
+    if (!fromOwnRelay(req)) return forbidden()
+    const domain = url.searchParams.get('domain')
+    if (!domain) return text('domain required', 400)
+
+    const claim = claims.read(domain, localpart)
+    if (!claim) return notFound()
+
+    let doc: Awaited<ReturnType<typeof resolveWebvhDocument>>
+    try {
+      doc = await resolveWebvhDocument(claim.did, webvh)
+    } catch (e) {
+      console.error(`[anchor] alias-target: resolve failed for ${claim.did}:`, e)
+      return text('resolve failed', 503)
+    }
+    if (!doc) {
+      // Deactivated, or the log is simply gone (webvh-sweep.ts eventually
+      // reaps a location this DID moved away from and never returned to) —
+      // either way, a clean answer of "nothing", not a failure.
+      return json({ did: claim.did, currentUsername: null, currentDomain: null })
+    }
+    // Self-heal the stored pointer to the identity's CURRENT location — see
+    // ClaimStore.rebind's own note: without this, a stale stored DID whose
+    // OWN original location later falls to webvh-sweep.ts's TTL becomes
+    // permanently unresolvable, and this route would start reporting a
+    // perfectly live identity as gone.
+    if (doc.id !== claim.did) claims.rebind(domain, localpart, doc.id)
+    const currentUsername = bisetWebvhUsername(doc.id)
+    let currentDomain: string | null
+    try {
+      currentDomain = parseWebvhDid(doc.id).domain
+    } catch {
+      currentDomain = null
+    }
+    return json({ did: claim.did, currentUsername: currentUsername ?? null, currentDomain })
   }
 
   async function handleIdentity(req: Request, url: URL, rest: string): Promise<Response> {

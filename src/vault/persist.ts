@@ -70,7 +70,7 @@ async function loadMailboxes(): Promise<void> {
 async function loadIdentities(): Promise<void> {
   try {
     const data = await readJson(['.data', 'identities.json'])
-    identities.set(data as Identity[])
+    identities.loadStamped(data as (Identity & { _account?: string })[])
   } catch { /* file may not exist */ }
 }
 
@@ -112,6 +112,22 @@ export async function flushMessage(email: Email): Promise<void> {
   await writeJson(['.data', 'messages', acctDir(messages.accountOf(email)), `${fileId(email.id as string)}.json`], email)
 }
 
+/** Persists a bulk account rename (messages.renameAccount's own note) —
+ * writes each renamed message under its new key (IndexedDB cache, and the
+ * vault directory when one is mounted) and drops the old cache entry, so a
+ * reload doesn't resurrect the stale stamp and go empty again. A mounted
+ * vault's OLD per-account subdirectory is left behind rather than deleted
+ * (fs.ts has no directory-removal helper) — its files are stale duplicates
+ * nothing in the in-memory store references any more, harmless clutter, not
+ * a correctness issue. */
+export async function renameMessageAccount(oldAccount: string, newAccount: string): Promise<void> {
+  const renamed = messages.renameAccount(oldAccount, newAccount)
+  for (const email of renamed) {
+    await cache.deleteMessage(oldAccount, email.id as string)
+    await flushMessage(email)
+  }
+}
+
 export async function removeMessage(account: string, id: string): Promise<void> {
   await cache.deleteMessage(account, id)
   if (!vaultHandle) return
@@ -133,9 +149,9 @@ export async function flushMailboxes(): Promise<void> {
 }
 
 export async function flushIdentities(): Promise<void> {
-  await cache.putIdentities(identities.all())
+  await cache.putIdentities(identities.toStamped())
   if (!vaultHandle) return
-  await writeJson(['.data', 'identities.json'], identities.all())
+  await writeJson(['.data', 'identities.json'], identities.toStamped())
 }
 
 export async function flushContacts(): Promise<void> {

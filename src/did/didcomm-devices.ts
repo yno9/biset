@@ -169,11 +169,18 @@ function relayId(serverUrl: string): string {
 function liveRelayInputs(did: string): RelayInput | null {
   const relaySessions = relaysForId(did).filter(s => !isDidCommRelay(s.account.serverUrl))
   if (!relaySessions.length) return null
+  // The address advertised to the world is the human-facing alias
+  // (`displayEmail`, PLANSCID.md) — never `account.email` directly, which
+  // for a SCID-primary account is the permanent internal login identity,
+  // not something meant for anyone to see or send to. Falls back to
+  // `account.email` for an account still on the legacy scheme, where the
+  // two are the same address.
+  const advertised = (s: { account: { email: string; displayEmail?: string } }) => s.account.displayEmail ?? s.account.email
   const services = relaySessions.map(s => ({
     id: relayId(s.account.serverUrl), serverUrl: s.account.serverUrl,
-    protocol: isApRelay(s.account.serverUrl) ? 'activitypub' : 'mail', address: s.account.email,
+    protocol: isApRelay(s.account.serverUrl) ? 'activitypub' : 'mail', address: advertised(s),
   }))
-  const addresses = [...new Set(relaySessions.map(s => s.account.email))]
+  const addresses = [...new Set(relaySessions.map(advertised))]
   const name = identityStore.all().find(i => relaySessions.some(s => s.account.email === i.email))?.name
   return { services, addresses, name }
 }

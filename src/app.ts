@@ -19,7 +19,7 @@ import * as jmapIdentity from './jmap/identity.ts'
 import * as jmapMailbox from './jmap/mailbox.ts'
 import { initPGP } from './pgp/index.ts'
 import { encryptText, type OutgoingAttachment } from './pgp/crypto.ts'
-import { loginViaEnvelope, authTokenToBasicAuth } from './cryptenv.ts'
+import { loginViaEnvelope, authTokenToBasicAuth, fetchAccountAliases } from './cryptenv.ts'
 import { mailboxNameFromId } from './utils.ts'
 import { contactIdentityKey, allKnownAddressesFor, shortDid } from './did/contacts.ts'
 import { stableIdKey } from './did/idkey.ts'
@@ -273,6 +273,16 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
     const endpoints = relaysForId(identityId)
     const userEmail = endpoints[0]?.account.email ?? identityId
     const accountId = userEmail
+    // Every address this identity could plausibly send FROM — the login
+    // identity (jmapCreateEmail's fromEmail, mailbox/PGP-keyed) for each
+    // endpoint AND its display alias (what the From header actually
+    // carries for a SCID-primary account, PLANSCID.md). A sent message's
+    // own `from` is always the display address, never the login one, so
+    // checking only `userEmail` here misclassified every SCID-primary
+    // account's own sent mail as incoming — from itself — splitting the
+    // conversation (found live, 2026-08-18, alongside the missing
+    // References header).
+    const selfAddrs = new Set(endpoints.flatMap(e => [e.account.email, e.account.displayEmail].filter((x): x is string => !!x)))
 
     // This identity's messages, merged across ALL its relays and addresses
     // (forIdentity resolves the DID's current sessions dynamically, so a
@@ -376,7 +386,7 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
       // since isSent was wrongly false), producing an inbox row that pointed
       // at itself instead of the actual recipient. mailbox and contact ending
       // up identical (both this identity's own DID) is the exact symptom.
-      const isSent = fromEmail === userEmail || fromEmail === accountId || stableIdKey(fromEmail) === identityId
+      const isSent = selfAddrs.has(fromEmail) || fromEmail === accountId || stableIdKey(fromEmail) === identityId
       const contact = isSent ? (toEmails[0] ?? '') : fromEmail
       if (!contact || !mbxName) continue
 
@@ -459,7 +469,8 @@ export async function loadInboxSummaries(): Promise<InboxSummary[]> {
 // `identity` is the identity key (DID, or email for a DID-less relay) —
 // forIdentity() resolves it to the matching `_account` set dynamically.
 // Callers map their email through identityKey / identityKeyForEmail before calling.
-export function getInboxEmails(mailbox: string, contact: string, selfAddr: string, identity: string): Email[] {
+export function getInboxEmails(mailbox: string, contact: string, selfAddr: string | string[], identity: string): Email[] {
+  const selfAddrs = new Set(Array.isArray(selfAddr) ? selfAddr : [selfAddr])
   if (contact.startsWith('group:')) {
     const groupId = contact.slice(6)
     const allMsgs = messages.forIdentity(identity)
@@ -505,14 +516,17 @@ export function getInboxEmails(mailbox: string, contact: string, selfAddr: strin
 
     const fromEmail = (email.from as any[])?.[0]?.email as string ?? ''
     const toEmails = ((email.to as any[]) ?? []).map((a: any) => a.email as string)
-    // `selfAddr` is whichever relay address fetchInboxMessages's activeSession()
-    // resolved to — a DIDComm message's own `from` is this identity's DID
-    // instead, which `selfAddr` alone never matches for a relay-backed
-    // identity that also has DIDComm (loadInboxSummaries' isSent has the
-    // exact same gap — see its note). `identity` is this call's DID (or
-    // email, for a DID-less relay), so it's the one comparison that works
-    // for both.
-    const isSent = fromEmail === selfAddr || stableIdKey(fromEmail) === identity
+    // `selfAddr` is whichever relay address(es) fetchInboxMessages's
+    // activeSession() resolved to — both the login identity AND the
+    // display alias now (a sent message's own `from` is always the
+    // display one for a SCID-primary account, PLANSCID.md, never the
+    // login address `selfAddr` used to be a bare string of). A DIDComm
+    // message's own `from` is this identity's DID instead, which
+    // `selfAddrs` alone never matches for a relay-backed identity that
+    // also has DIDComm (loadInboxSummaries' isSent has the exact same gap
+    // — see its note). `identity` is this call's DID (or email, for a
+    // DID-less relay), so it's the one comparison that works for both.
+    const isSent = selfAddrs.has(fromEmail) || stableIdKey(fromEmail) === identity
     const emailContact = isSent ? (toEmails[0] ?? '') : fromEmail
     // Match any address grouped under the same contact-DID as `contact` (not
     // just the literal address), so a merged inbox row (see loadInboxSummaries)
@@ -531,13 +545,16 @@ export function getInboxEmails(mailbox: string, contact: string, selfAddr: strin
 export async function fetchInboxMessages(inboxSummary: InboxSummary): Promise<ProcessedMessage['msg'][]> {
   const session = activeSession()
   if (!session) return []
-  const selfAddr = session.jmapAccountId || session.account.email
   // Query by the identity key (DID, or email for a DID-less relay) — forIdentity()
   // resolves this to the account's current sessions dynamically, so the thread
   // isn't empty for a DID-bearing account (grouped by DID, not by literal email).
   const identity = identityKey(session)
-  const emails = getInboxEmails(inboxSummary.mailbox, inboxSummary.contact, selfAddr, identity)
-  const msgs = emails.map(e => emailToMsg(e, selfAddr)).sort((a, b) => a.ts - b.ts)
+  // Every address this identity's endpoints could send FROM — login identity
+  // AND display alias for each (getInboxEmails' own note: a sent message's
+  // `from` is always the display one for a SCID-primary account).
+  const selfAddrs = relaysForId(identity).flatMap(s => [s.jmapAccountId, s.account.email, s.account.displayEmail].filter((x): x is string => !!x))
+  const emails = getInboxEmails(inboxSummary.mailbox, inboxSummary.contact, selfAddrs, identity)
+  const msgs = emails.map(e => emailToMsg(e, session.account.email)).sort((a, b) => a.ts - b.ts)
   // RFC 9078 reactions were filtered out of `emails` above (they're not chat
   // messages) — reattach them to their target message for display. Scan the
   // whole identity (not just this inbox's emails) since a reaction can arrive
@@ -635,12 +652,26 @@ export async function jmapCreateEmail(
     try { mailboxes.set((await jmapMailbox.get(client, accountId)).mailboxes) }
     catch (e) { console.warn('[send] Mailbox.get failed', e) }
   }
-  if (!identities.all().length) {
-    try { identities.set((await jmapIdentity.get(client, accountId)).identities) }
+  if (!identities.all(accountKey(session.account)).length) {
+    try { identities.set(accountKey(session.account), (await jmapIdentity.get(client, accountId)).identities) }
     catch (e) { console.warn('[send] Identity.get failed', e) }
   }
 
   const fromEmail = session.account.email
+  // What the recipient actually sees on the wire — the human-facing alias
+  // for a SCID-primary account (PLANSCID.md), never the permanent login
+  // identity. `fromEmail` itself has to stay the login address for
+  // everything server-side (mailbox/identity lookups, PGP key lookup — all
+  // keyed by the account's own login email), so this is a SEPARATE value
+  // used only for the visible From header below. Without it, every SCID-
+  // primary account's outgoing mail carried its 46-character SCID as the
+  // From address — DeltaChat (and any client) treats a changed sender
+  // address as a different contact, splitting an otherwise-continuous
+  // conversation into a new thread on the recipient's end the moment they
+  // replied to a message actually sent this way (found live, 2026-08-18,
+  // alongside the missing References header — both needed fixing before a
+  // reply reliably stayed in one thread).
+  const displayFromEmail = session.account.displayEmail ?? fromEmail
 
   // Pick a mailbox owned by the SENDING account. The global `mailboxes` store is
   // overwritten per-account on sync (mailboxes.set replaces the whole list), so
@@ -659,7 +690,7 @@ export async function jmapCreateEmail(
     ?? (currentInbox ? mailboxes.byName(currentInbox.mailbox) : null)
     ?? mailboxes.all()[0]
   if (!mbx) { console.warn('[send] fail: no mailbox', { fromEmail, count: mailboxes.all().length }); return { ok: false } }
-  const identityList = identities.all()
+  const identityList = identities.all(accountKey(session.account))
   const identity = identityList.find(i => (i.email as string) === fromEmail) ?? identityList[0]
   if (!identity) { console.warn('[send] fail: no identity', { count: identityList.length }); return { ok: false } }
 
@@ -671,7 +702,7 @@ export async function jmapCreateEmail(
   // for ActivityPub sends — fediverse Notes are plaintext and the AP relay has
   // no peer-key/WKD surface, so encrypting there just fails a lookup with noise.
   if (!isApRelay(serverUrl)) {
-    const enc = await encryptText(body, [...to, ...cc], fromEmail, serverUrl, password, inReplyTo, groupOpts, bcc, attachments, chatAction)
+    const enc = await encryptText(body, [...to, ...cc], fromEmail, serverUrl, password, inReplyTo, groupOpts, bcc, attachments, chatAction, references)
     if (enc) emailBody = enc
   }
 
@@ -682,7 +713,7 @@ export async function jmapCreateEmail(
   const draft: Record<string, any> = {
     mailboxIds: { [mbx.id as string]: true },
     keywords: { $draft: true },
-    from: fromName ? [{ email: fromEmail, name: fromName }] : [{ email: fromEmail }],
+    from: fromName ? [{ email: displayFromEmail, name: fromName }] : [{ email: displayFromEmail }],
     to: to.map(e => ({ email: e })),
     subject: subject || '',
     textBody: [{ partId: '1', type: 'text/plain' }],
@@ -739,7 +770,15 @@ export function currentSenderSync(): Sender {
     const name = displayNameFor(relaysForId(did).filter(s => !isDidCommRelay(s.account.serverUrl))) ?? shortDid(did)
     return { email: did, name }
   }
-  const email = sess?.account.email ?? ''
+  // Display alias, not the login identity — the pending stub's `from` is
+  // matched by strict equality against the REAL sent message's `from` once
+  // it arrives (this function's own note above), and that real `from` is
+  // always the display address for a SCID-primary account (PLANSCID.md),
+  // never `account.email`. Using the login address here left the stub
+  // permanently unmatched — stuck at pending opacity, or double-counted
+  // once the real message landed under a different `from` (found live,
+  // 2026-08-18, alongside the missing References header).
+  const email = sess?.account.displayEmail ?? sess?.account.email ?? ''
   return { email, name: email.split('@')[0] }
 }
 
@@ -747,7 +786,7 @@ export async function getIdentityId(): Promise<string | null> {
   const sess = activeSession()
   if (!sess) return null
   const email = sess.account.email
-  const list = identities.all()
+  const list = identities.all(accountKey(sess.account))
   return (list.find(i => (i.email as string) === email) ?? list[0])?.id as string ?? null
 }
 
@@ -799,7 +838,56 @@ export async function connectAndPersist(stored: StoredAccount, kek?: Uint8Array)
   if (!session) return null
   persistSession(stored, session)
   if (kek) await initPGPForSession(session, kek)
+  refreshDisplayEmail(session)
+  healStaleMessageAccountKey(session)
   return session
+}
+
+/** Self-heals the exact damage a SCID migration (PLANSCID.md) leaves behind
+ * on every OTHER device/reload after the one that ran it: every message
+ * already synced before the migration is stamped with the OLD accountKey
+ * (store/messages.ts's `_account`), and `forIdentity`'s join against the
+ * now-current session stops matching any of them — an inbox with hundreds
+ * of messages looks empty, though nothing was lost (found live, 2026-08-18,
+ * the migration feature's first production use).
+ *
+ * Scoped safely by `displayEmail`, not by guessing: after a migration,
+ * `displayEmail` IS the exact old login email for this same (serverUrl,
+ * identity) pair (left-pane.ts's migration handler sets it to exactly
+ * that) — never some OTHER identity's address that happens to share this
+ * relay. Runs on every connect, not just once, and is a no-op once nothing
+ * is left stamped under the old key (renameAccount's own early return) — so
+ * this is safe to call unconditionally rather than tracking "have I healed
+ * this session already" anywhere. */
+function healStaleMessageAccountKey(session: AccountSession): void {
+  const { email, displayEmail, serverUrl } = session.account
+  if (!displayEmail || displayEmail === email) return
+  const oldKey = accountKey({ email: displayEmail, serverUrl })
+  const newKey = accountKey(session.account)
+  import('./vault/persist.ts').then(persist => persist.renameMessageAccount(oldKey, newKey)).catch(() => {})
+}
+
+/** Fire-and-forget: corrects `session.account.displayEmail` (and the
+ * persisted copy) against the relay's OWN live alias table, the moment a
+ * session comes up — never blocks login on it. PLANSCID.md's display-layer
+ * decision: a resolved DID document (what populates `displayEmail` at
+ * claim/restore/sync time) is only ever a cache of this, and this is what
+ * corrects the cache once an authenticated connection actually exists to
+ * ask. No-op for an account still on the pre-SCID scheme (`aliases` comes
+ * back empty there too — nothing to prefer over the login address itself).
+ * `[0]` because a relay could in principle carry more than one alias; the
+ * UI only ever has room to show one, and picking any live one beats a stale
+ * cached guess. */
+function refreshDisplayEmail(session: AccountSession): void {
+  const { serverUrl, email, password, displayEmail } = session.account
+  fetchAccountAliases(serverUrl, email, password).then(aliases => {
+    const current = aliases?.[0]
+    if (!current || current === displayEmail) return
+    session.account.displayEmail = current
+    const accounts = loadStoredAccounts()
+    const stored = accounts.find(a => a.serverUrl === serverUrl && a.email === email)
+    if (stored) { stored.displayEmail = current; saveStoredAccounts(accounts) }
+  }).catch(() => {})
 }
 
 export function removeAccount(email: string): void {
@@ -895,7 +983,7 @@ export async function logout(): Promise<void> {
     messages.clear()
     threads.clear()
     mailboxes.set([])
-    identities.set([])
+    identities.clear()
 
     // Wipe ALL local data (the confirm text promises exactly this) EXCEPT the
     // did:dht rollback-defense floor (freshness.ts's 'biset_did_seq:' keys):

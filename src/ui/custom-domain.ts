@@ -340,17 +340,22 @@ function showRelayCreateStep(body: HTMLElement, close: () => void, relays: strin
       for (const relay of relays) {
         const res = await provisionAccount({ serverUrl: relay, username, did, rootPrivateKey })
         if (!res.ok) { lastError = res.conflict ? 'That address is owned by a different key' : `Server error (${res.status})`; continue }
+        // res.email is the relay's own answer — a SCID-primary account
+        // (PLANSCID.md) returns the permanent SCID address here, never the
+        // human name just claimed; displayEmail is that human name, for
+        // everything actually shown to a person.
         const email = res.email || `${username}@${new URL(relay).hostname}`
+        const displayEmail = `${username}@${new URL(relay).hostname}`
         // No password: provisionAccount already established this device's
         // own credential (account-create.ts has the fuller note). initSession
         // always tries the device-signed login first when did is set.
-        const session = await connectAndPersist({ serverUrl: relay, email, password: '', did }, kek)
+        const session = await connectAndPersist({ serverUrl: relay, email, displayEmail, password: '', did }, kek)
         if (!session) { lastError = 'Provisioned but failed to connect'; continue }
         await fetchRelayInfo(relay)
         // No record to mirror under the new address anymore — DidRecord is
         // keyed by did (store.ts), one record for every address this
         // identity ever grows, so a new address needs no copy of it.
-        emails.push(email)
+        emails.push(displayEmail)
       }
       if (!emails.length) throw new Error(lastError ?? 'Failed to create account')
 
@@ -541,8 +546,13 @@ function showCreateAccountStep(body: HTMLElement, close: () => void, relay: stri
       if (!res.ok) throw new Error(res.conflict ? 'Username taken' : `Server error (${res.status})`)
 
       // No password: provisionAccount already established this device's own
-      // credential (account-create.ts has the fuller note).
-      const stored = { serverUrl: relay, email, password: '', did }
+      // credential (account-create.ts has the fuller note). res.email is the
+      // relay's own answer — a SCID-primary account (PLANSCID.md) returns
+      // the permanent SCID address, never `email` (the human name just
+      // claimed, computed above) — using `email` here as the LOGIN identity
+      // would have logged in as an address the relay never registered as an
+      // account of its own.
+      const stored = { serverUrl: relay, email: res.email || email, displayEmail: email, password: '', did }
       const { connectAndPersist } = await import('../app.ts')
       const session = await connectAndPersist(stored, kek)
       if (!session) throw new Error('Provisioned but failed to connect')
