@@ -3947,15 +3947,23 @@ export async function setupLeftPane() {
     // does have one — the previous `!mailUrl` gate hid it in exactly that
     // case (found alongside claimMailAccount's own bug, 2026-08-17).
     const email = `${username}@${didDomain}`
-    // Already claimed (a real StoredAccount exists for this address) — the
-    // real card in relayCards below covers it, don't show a second one.
-    // Compared against `displayEmail`, never `a.email` directly — for a
-    // SCID-primary account (PLANSCID.md) `a.email` is the permanent SCID
-    // and never equals this human address, so comparing it here would show
-    // this placeholder forever even after a successful claim (found live,
-    // 2026-08-18, immediately after the SCID scheme's first production
-    // test).
-    if (accounts.some(a => (a.displayEmail ?? a.email) === email && a.did === did)) return
+    // Already claimed — the real card in relayCards below covers it, don't
+    // show a second one. Checked by ACCOUNT EXISTENCE (this identity has a
+    // connected StoredAccount on the relay that serves didDomain), not by
+    // comparing `displayEmail` to `email`: under SCID-primary (PLANSCID.md),
+    // `username@didDomain` is never an independently claimable thing in the
+    // first place — it is always just an alias of the account's permanent
+    // SCID address, so its existence, not a string match against a cached
+    // display label, is what should suppress this card. A displayEmail
+    // comparison here makes this card's correctness depend on that cache
+    // being perfectly fresh, which it is not always guaranteed to be (a
+    // migration, a slow `refreshDisplayEmail` round trip, routing.json
+    // drift) — found live, 2026-08-18: an already-claimed, actively syncing
+    // SCID account (17 messages, green dot) sat right next to a permanent
+    // "Not claimed" ghost card for its own alias, on a device whose local
+    // displayEmail simply had not caught up yet.
+    const mailUrl = mailRelayUrl(didDomain)
+    if (accounts.some(a => a.did === did && a.serverUrl === mailUrl)) return
 
     const row = document.createElement('div')
     row.className = 'cmd-page-row'
