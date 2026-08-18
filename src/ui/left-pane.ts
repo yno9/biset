@@ -1,6 +1,7 @@
 import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, vaultHandle, clearVaultHandle, isApRelay, isDidCommRelay, relayProtocolLabel, fetchRelayInfo, DIDCOMM_SERVER_URL, mailRelayUrl } from '../context.ts'
 import { ownDid, mediatorDeviceActivity, type MediatorDeviceActivity } from '../did/didcomm-devices.ts'
 import { bisetWebvhUsername, parseWebvhDid } from '../did/webvh/identifier.ts'
+import { scidToLocalpart } from '../did/webvh/scid-localpart.ts'
 import { currentIdentityDid } from '../did/didcomm/channel.ts'
 import { resolveAny as resolveDidAny } from '../did/resolver.ts'
 import { getDidRecord, identityProtectionEnabled } from '../did/store.ts'
@@ -3132,9 +3133,16 @@ export async function setupLeftPane() {
     if (serverUrl && did?.startsWith('did:webvh:')) {
       let needsMigration = false
       try {
-        const scid = parseWebvhDid(did).scid.toLowerCase()
+        // jmapsmtp/ARC.md §2.9 (2026-08-18): the canonical SCID-primary
+        // localpart is a zbase32 re-encoding of the SCID's own bytes now,
+        // not a plain lowercase fold — a fold could collide with an
+        // unrelated identity's differently-cased SCID at scale. Comparing
+        // against the OLD fold here would make an already-migrated account
+        // on the pre-2026-08-18 localpart shape look "already current" and
+        // never offer the one-time re-key that moves it onto the new one.
+        const scid = scidToLocalpart(parseWebvhDid(did).scid)
         const at = email.lastIndexOf('@')
-        needsMigration = at > 0 && email.slice(0, at).toLowerCase() !== scid
+        needsMigration = scid !== null && at > 0 && email.slice(0, at).toLowerCase() !== scid
       } catch { /* not a path-shaped did:webvh — nothing to compare */ }
       if (needsMigration) {
         items.push({
