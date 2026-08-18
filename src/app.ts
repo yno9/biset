@@ -878,7 +878,17 @@ function healStaleMessageAccountKey(session: AccountSession): void {
  * `[0]` because a relay could in principle carry more than one alias; the
  * UI only ever has room to show one, and picking any live one beats a stale
  * cached guess. */
-function refreshDisplayEmail(session: AccountSession): void {
+// Exported (was a private helper `connectAndPersist` alone called) so
+// regular startup — `main.ts`'s `accounts.map(initSession)`, which does NOT
+// go through `connectAndPersist` — can call it too. Without this, a
+// `displayEmail` that drifted from reality (a migration, a rename, routing
+// data lag) only ever self-corrected on the NEXT explicit connect action
+// (login, restore, migrate) and never on a plain page reload — found live,
+// 2026-08-18: an already-claimed, actively-syncing SCID account kept
+// showing its permanent internal SCID address instead of its human alias
+// across repeated reloads, because nothing on the reload path ever asked
+// the relay again.
+export function refreshDisplayEmail(session: AccountSession): void {
   const { serverUrl, email, password, displayEmail, did } = session.account
   fetchAccountAliases(serverUrl, email, password).then(async aliases => {
     if (!aliases?.length) return

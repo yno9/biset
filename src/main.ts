@@ -1,7 +1,7 @@
 import {
   sessions, addSession, setCurrentInbox, currentInbox, loadStoredAccounts, accountsForActiveIdentity,
 } from './context.ts'
-import { initSession, loadInboxSummaries, backfillContactNames } from './app.ts'
+import { initSession, refreshDisplayEmail, loadInboxSummaries, backfillContactNames } from './app.ts'
 import type { InboxSummary } from './types.ts'
 import { inboxToHash, parseInboxHash } from './utils.ts'
 import { contactIdentityKey, representativeAddressForDid } from './did/contacts.ts'
@@ -103,7 +103,7 @@ async function handleUserLanding(localpart: string, accounts: ReturnType<typeof 
   if (accounts.length) {
     const results = await Promise.all(accounts.map(initSession))
     const valid = results.filter(Boolean) as NonNullable<Awaited<ReturnType<typeof initSession>>>[]
-    valid.forEach(s => addSession(s))
+    valid.forEach(s => { addSession(s); refreshDisplayEmail(s) })
   }
   showApp()
   await setupLeftPane()
@@ -159,7 +159,10 @@ async function bootSessions(accounts: ReturnType<typeof loadStoredAccounts>, onN
     if (accounts.length) {
       const results = await Promise.all(accounts.map(initSession))
       const validSessions = results.filter(Boolean) as NonNullable<Awaited<ReturnType<typeof initSession>>>[]
-      validSessions.forEach(s => addSession(s))
+      // Fire-and-forget, same as connectAndPersist's own use of this — a
+      // plain reload never otherwise re-asks the relay whether displayEmail
+      // still matches reality (app.ts's refreshDisplayEmail export note).
+      validSessions.forEach(s => { addSession(s); refreshDisplayEmail(s) })
     }
 
     const { ownDid: ownIdentityDid } = await import('./did/didcomm-devices.ts')
@@ -170,7 +173,13 @@ async function bootSessions(accounts: ReturnType<typeof loadStoredAccounts>, onN
 
     if (ownDid) {
       const { setupDidCommChannel } = await import('./did/didcomm/channel.ts')
-      await setupDidCommChannel(ownDid, onNew)
+      // Completing a half-finished mediator registration is a multi-request
+      // network exchange.  It must never hold the initial route hostage: a
+      // mediator that accepts the first request but stalls on a later one used
+      // to leave a cold load with no rendered app at all.  setupDidCommChannel
+      // installs the synthetic session and begins polling once it completes;
+      // `onNew` then refreshes the inbox UI just like any newly received mail.
+      void setupDidCommChannel(ownDid, onNew)
         .then(started => { if (!started) console.warn('[didcomm] channel setup skipped — hasDidCommChannel() returned false for', ownDid) })
         .catch(e => console.warn('[didcomm] channel setup failed:', e instanceof Error ? e.message : e))
     }
