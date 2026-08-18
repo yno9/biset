@@ -21,6 +21,7 @@ import { deriveRootKey } from './keys.ts'
 import { resolveAny } from './resolver.ts'
 import type { DidDocument } from './document.ts'
 import { rootPublicKeyFromWebvhState, type WebvhDidDocument } from './webvh/document.ts'
+import { bisetWebvhUsername, parseWebvhDid } from './webvh/identifier.ts'
 import { mediatorUrl, setOwnDid } from './didcomm-devices.ts'
 import { deriveKek } from '../cryptenv.ts'
 import { firstServiceEndpoint } from '../utils.ts'
@@ -166,10 +167,28 @@ export async function restoreFromMnemonic(mnemonic: string, did?: string): Promi
   const { vouchThisDevice, deviceLabel, scidLoginAddress } = await import('./provision.ts')
   const label = deviceLabel()
   const sessions: AccountSession[] = []
+  // biset's own convention (server.rs's own note, jmapsmtp ARC.md §2.9): a
+  // did:webvh identifier's trailing path segment always names the SAME
+  // localpart the mail address at that domain uses — so it is a BETTER
+  // source for the human-facing display address than `svc.address` /
+  // `alsoKnownAs`, which live in routing.json and can drift out of sync
+  // with reality (found live 2026-08-18: this exact DID's routing.json had
+  // been overwritten with its own SCID-login address in both fields, by
+  // the self-reinforcing loop `refreshDisplayEmail`/`liveRelayInputs` could
+  // form before this fix — see those functions' own notes). Preferred
+  // whenever the DID actually has a path-shaped username; falls back to
+  // whatever the document says for a DID that doesn't (an apex DID, or a
+  // foreign did:webvh convention with no username segment biset can read).
+  let webvhHome: string | undefined
+  try {
+    const username = bisetWebvhUsername(resolvedDid)
+    if (username) webvhHome = `${username}@${parseWebvhDid(resolvedDid).domain}`
+  } catch { /* not a path-shaped did:webvh — nothing to prefer */ }
+
   for (const svc of relayServices) {
     const serverUrl = firstServiceEndpoint(svc.serviceEndpoint).replace(/\/$/, '')
     if (!serverUrl) continue
-    const displayEmail = svc.address || primaryAddress
+    const displayEmail = webvhHome || svc.address || primaryAddress
     if (!displayEmail) continue
     // The DID document's own service.address is a delivery ALIAS
     // (PLANSCID.md) — never necessarily the address this device logs in
@@ -190,7 +209,20 @@ export async function restoreFromMnemonic(mnemonic: string, did?: string): Promi
       .catch(e => { console.warn(`[restore] vouchThisDevice(${serverUrl}) threw:`, e instanceof Error ? e.message : e); return { ok: false, status: 0 } })
     if (!vouch.ok) console.warn(`[restore] vouchThisDevice(${serverUrl}) rejected: HTTP ${vouch.status}`)
     const stored: StoredAccount = { serverUrl, email, displayEmail, password: '', did: resolvedDid }
-    const session = await connectAndPersist(stored, kek)
+    // One retry, short backoff, ONLY after a successful vouch: a vouch this
+    // device just wrote and an immediate session-login read of it are two
+    // separate round trips (one through the anchor, one straight to the
+    // relay's own device-key file) with no ordering guarantee between them
+    // — found live 2026-08-18, "Found the identity but could not connect to
+    // any of its relays" on a restore that then worked on a bare reload
+    // seconds later, with nothing else having changed. A vouch that was
+    // ITSELF rejected is not retried here — that failure is real and a
+    // retry would just waste a round trip confirming it again.
+    let session = await connectAndPersist(stored, kek)
+    if (!session && vouch.ok) {
+      await new Promise(r => setTimeout(r, 800))
+      session = await connectAndPersist(stored, kek)
+    }
     if (session) { session.account.did = resolvedDid; sessions.push(session) }
     else console.warn(`[restore] connectAndPersist(${serverUrl}) returned no session (vouch ${vouch.ok ? 'ok' : `HTTP ${vouch.status}`})`)
   }
