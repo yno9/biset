@@ -1,4 +1,4 @@
-import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, vaultHandle, clearVaultHandle, isApRelay, isDidCommRelay, relayProtocolLabel, fetchRelayInfo, DIDCOMM_SERVER_URL, mailRelayUrl } from '../context.ts'
+import { currentInbox, setCurrentInbox, activeSession, sessionFor, sessionForRelay, relaysFor, relaysForId, accountKey, identityKey, identityKeyForEmail, identityIds, sessions, loadStoredAccounts, saveStoredAccounts, setVaultHandle, vaultHandle, clearVaultHandle, isApRelay, isDidCommRelay, relayProtocolLabel, fetchRelayInfo, DIDCOMM_SERVER_URL, mailRelayUrl, markRelayClaimed, unmarkRelayClaimed, isRelayClaimed } from '../context.ts'
 import { ownDid, mediatorDeviceActivity, type MediatorDeviceActivity } from '../did/didcomm-devices.ts'
 import { bisetWebvhUsername, parseWebvhDid } from '../did/webvh/identifier.ts'
 import { scidToLocalpart } from '../did/webvh/scid-localpart.ts'
@@ -3910,23 +3910,44 @@ export async function setupLeftPane() {
         res = await provisionAccount({ serverUrl: mailUrl, username, did, rootPrivateKey, envelope: rec.envelope, domain: didDomain, provisionSecret: secret })
       }
     }
-    if (!res.ok) {
-      // The relay's own text (provision.ts's ProvisionResult.error) now
-      // surfaces directly rather than a hardcoded "owned by a different
-      // key" for every 409 — jmapsmtp maps BOTH UsernameTaken ("this
-      // account already exists — you want to log in, not claim") and
-      // IdentityOwnedByAnother (a genuine conflict) to the same status
-      // code, and only the server's own message text tells them apart.
+    let email: string
+    const displayEmail = `${username}@${didDomain}`
+    if (res.ok) {
+      // res.email is the relay's own answer — a SCID-primary account
+      // (PLANSCID.md) returns the permanent SCID address here, never the
+      // human name just claimed. The fallback (`res.email` absent, an older
+      // relay build) is the pre-SCID scheme, where the two are the same
+      // address anyway.
+      email = res.email || displayEmail
+    } else if (res.status === 409 && res.error === 'username taken') {
+      // "Log out" only forgets THIS DEVICE's local credentials — the
+      // server-side account is untouched (its own doc comment, below) — so
+      // re-"claiming" an address this identity already owns 409s here.
+      // jmapsmtp's own UsernameTaken check (server.rs's `provision`
+      // handler) is exactly "does this DID's own SCID-primary directory
+      // already exist", which is precisely this case, not a genuine name
+      // collision with a different identity — so recover by reconnecting
+      // instead of leaving a permanent "Not claimed" ghost card with no way
+      // back (2026-08-19, user-reported: clicking its only action,
+      // "Claim email", just repeats this same 409 forever).
+      //
+      // Safe even when this guess is wrong (a real collision, the rarer
+      // branch UsernameTaken also covers — server.rs's alias check): a
+      // reconnect only succeeds if THIS device's key already verifies
+      // against the account it resolves to, so a genuine stranger's account
+      // simply 401s below like any other failed reconnect, and the
+      // original server message still surfaces.
+      const { scidLoginAddress } = await import('../did/provision.ts')
+      const resolved = await scidLoginAddress(did, displayEmail)
+      if (!resolved) { showSysMsg(res.error); return }
+      email = resolved.email
+    } else {
+      // The relay's own text (provision.ts's ProvisionResult.error) —
+      // IdentityOwnedByAnother (a genuine conflict) also lands here, now
+      // that the recoverable UsernameTaken case above no longer does.
       showSysMsg(res.error || `Server error (${res.status})`)
       return
     }
-    // res.email is the relay's own answer — a SCID-primary account
-    // (PLANSCID.md) returns the permanent SCID address here, never the
-    // human name just claimed. The fallback (`res.email` absent, an older
-    // relay build) is the pre-SCID scheme, where the two are the same
-    // address anyway.
-    const email = res.email || `${username}@${didDomain}`
-    const displayEmail = `${username}@${didDomain}`
 
     // A kek, when this record has the seed to derive one from (did/index.ts's
     // localDidRecord/initDidWebvh — absent only for an identity created
@@ -3941,6 +3962,11 @@ export async function setupLeftPane() {
     const { connectAndPersist } = await import('../app.ts')
     const session = await connectAndPersist({ serverUrl: mailUrl, email, displayEmail, password: '', did }, kek)
     if (!session) { showSysMsg('Claimed, but failed to connect'); return }
+    // Survives a later "Log out" (removeRelayLocally, which deliberately
+    // leaves this untouched) — only "Delete account" clears it — so a
+    // logged-out-but-still-server-side-real address reads as that, not as
+    // never claimed (context.ts's own note on why this exists).
+    markRelayClaimed(did, mailUrl)
 
     // Carry over a display name set BEFORE this relay existed (the
     // localStorage cache openDisplayNameModal writes even with no relay to
@@ -4061,6 +4087,14 @@ export async function setupLeftPane() {
     // displayEmail simply had not caught up yet.
     const mailUrl = mailRelayUrl(didDomain)
     if (accounts.some(a => a.did === did && a.serverUrl === mailUrl)) return
+    // Distinguishes "genuinely never claimed" from "claimed, then logged
+    // out" — the latter still exists server-side (removeRelayLocally's own
+    // note), and this device is still a vouched-for one, so it just needs
+    // reconnecting, not a fresh (and doomed, UsernameTaken) claim attempt
+    // (2026-08-19, user-reported: both read identically before this marker
+    // existed, right down to the label — "Claim email" on an address that
+    // was never available to claim in the first place).
+    const loggedOut = isRelayClaimed(did, mailUrl)
 
     const row = document.createElement('div')
     row.className = 'cmd-page-row'
@@ -4071,7 +4105,7 @@ export async function setupLeftPane() {
     const headRow = renderCardHeadRow(mailUrl, email, 'var(--text-dim)')
     const statusRow = document.createElement('div')
     statusRow.style.cssText = 'font-size:11px;color:var(--text-dim)'
-    statusRow.textContent = 'Not claimed'
+    statusRow.textContent = loggedOut ? 'Logged out' : 'Not claimed'
     left.append(headRow, statusRow)
 
     const menuBtn = document.createElement('button')

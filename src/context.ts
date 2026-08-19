@@ -296,6 +296,49 @@ export function setActiveIdentity(identity: string): void {
   try { localStorage.setItem(ACTIVE_IDENTITY_KEY, identity) } catch { /* quota / private mode */ }
 }
 
+// ── Claimed relays, independent of any live StoredAccount ──────────────────────
+// "Log out" (left-pane.ts's removeRelayLocally) only forgets this device's
+// local credentials/session for one relay — the server-side account is
+// untouched, on purpose (its own doc comment: distinct from "Delete
+// account", which actually removes it). But whether an identity's home mail
+// relay card shows as claimable at all (renderUnclaimedMailCard) used to key
+// off nothing but "does a live StoredAccount exist for it", so logging out
+// made an address that genuinely still exists server-side look identical to
+// one that was NEVER claimed — same "Not claimed" ghost card, same "Claim
+// email" action, which then just 409s (UsernameTaken) forever (2026-08-19,
+// user-reported). This is the missing piece: a marker that survives "Log
+// out" and is cleared only by "Delete account" (openAccountMenu, below), so
+// the card can tell the two states apart and label/act on them differently.
+const CLAIMED_RELAYS_KEY = 'biset_claimed_relays'
+
+function claimedRelayId(did: string, serverUrl: string): string {
+  return did + '\0' + serverUrl
+}
+
+function loadClaimedRelays(): Set<string> {
+  try { return new Set(JSON.parse(localStorage.getItem(CLAIMED_RELAYS_KEY) || '[]')) }
+  catch { return new Set() }
+}
+
+function saveClaimedRelays(ids: Set<string>): void {
+  try { localStorage.setItem(CLAIMED_RELAYS_KEY, JSON.stringify([...ids])) } catch { /* quota / private mode */ }
+}
+
+export function markRelayClaimed(did: string, serverUrl: string): void {
+  const ids = loadClaimedRelays()
+  ids.add(claimedRelayId(did, serverUrl))
+  saveClaimedRelays(ids)
+}
+
+export function unmarkRelayClaimed(did: string, serverUrl: string): void {
+  const ids = loadClaimedRelays()
+  if (ids.delete(claimedRelayId(did, serverUrl))) saveClaimedRelays(ids)
+}
+
+export function isRelayClaimed(did: string, serverUrl: string): boolean {
+  return loadClaimedRelays().has(claimedRelayId(did, serverUrl))
+}
+
 // Narrows a full stored-accounts list down to the ones belonging to the
 // active identity — main.ts's boot sequence uses this instead of the raw
 // list so `sessions[]` only ever spans one identity. If no active identity
