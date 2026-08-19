@@ -3263,6 +3263,11 @@ export async function setupLeftPane() {
           const { deleteAccountOnRelay } = await import('../cryptenv.ts')
           const ok = await deleteAccountOnRelay(serverUrl, email, session.account.password, session.account.did)
           if (!ok) { showSysMsg('Delete failed'); return }
+          // The counterpart to claimMailAccount's markRelayClaimed: this
+          // address genuinely no longer exists, so the next visit to this
+          // card should read "Not claimed" again, not "Logged out"
+          // (context.ts's own note on why the two need to read differently).
+          if (did) unmarkRelayClaimed(did, serverUrl)
           await removeRelayLocally(email, serverUrl)
           showSysMsg('Account deleted')
         },
@@ -4118,7 +4123,10 @@ export async function setupLeftPane() {
     menuBtn.addEventListener('click', (ev) => {
       ev.stopPropagation()
       openDropdownMenu(menuBtn, [
-        { label: 'Claim email', onClick: () => claimMailAccount(did) },
+        // Same function either way — claimMailAccount already recovers via
+        // reconnect on a 409 UsernameTaken (its own note), so "Log in" here
+        // is purely a label correction, not a different code path.
+        { label: loggedOut ? 'Log in' : 'Claim email', onClick: () => claimMailAccount(did) },
       ])
     })
 
