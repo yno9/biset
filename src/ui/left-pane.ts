@@ -2960,17 +2960,29 @@ export async function setupLeftPane() {
     const remaining = loadStoredAccounts().filter(a =>
       (a.did || a.email) === idKey && !(a.email === email && a.serverUrl === serverUrl))
     const wasLastRelay = remaining.length === 0
-    saveStoredAccounts(loadStoredAccounts().filter(x => !(x.email === email && x.serverUrl === serverUrl)))
-    for (let i = sessions.length - 1; i >= 0; i--) {
-      if (sessions[i].account.email === email && sessions[i].account.serverUrl === serverUrl) sessions.splice(i, 1)
-    }
-    _accInfoCache.delete(accountKey({ email, serverUrl }))
+    // clearIdentityCache resolves which `_account` stamps belong to this
+    // identity via relaysForId(idKey) — a lookup against the CURRENTLY LIVE
+    // `sessions[]` — so it has to run BEFORE this function's own splice
+    // below removes the very session it needs to find. Calling it after (as
+    // this used to) left relaysForId with nothing to match for a just-
+    // vacated identity, so the purge silently matched zero accounts and did
+    // nothing: a deleted-then-reclaimed identity's pre-delete inbox came
+    // back from cache in full, the instant sync re-admitted a live session
+    // whose account key matched the untouched cached rows (found live,
+    // 2026-08-19 — a delete/claim round-trip on the SCID-primary address
+    // resurrected the old conversation, since a rename or a fresh claim of
+    // the same identity reuses the identical primary_localpart).
     if (wasLastRelay) {
       if (localStorage.getItem(`jmap_notif_${email}`) != null) localStorage.removeItem(`jmap_notif_${email}`)
       if (localStorage.getItem(`sjoin_invites_${email}`) != null) localStorage.removeItem(`sjoin_invites_${email}`)
       await deleteKey(email)
       await clearIdentityCache(idKey)
     }
+    saveStoredAccounts(loadStoredAccounts().filter(x => !(x.email === email && x.serverUrl === serverUrl)))
+    for (let i = sessions.length - 1; i >= 0; i--) {
+      if (sessions[i].account.email === email && sessions[i].account.serverUrl === serverUrl) sessions.splice(i, 1)
+    }
+    _accInfoCache.delete(accountKey({ email, serverUrl }))
     // Republish without the relay that just went away — for the LAST one too,
     // not only when others remain. Removing the last relay leaves a
     // relay-less identity that still has its DIDComm channel, which is a
@@ -3269,6 +3281,13 @@ export async function setupLeftPane() {
           // (context.ts's own note on why the two need to read differently).
           if (did) unmarkRelayClaimed(did, serverUrl)
           await removeRelayLocally(email, serverUrl)
+          // removeRelayLocally only mutates state/cache — it never
+          // re-renders on its own (found live, 2026-08-19: the left
+          // column's account list and inbox summaries kept showing this
+          // relay, and the just-deleted identity's messages, until an
+          // unrelated re-render happened to run).
+          refreshAccountsList()
+          loadLeftInboxes()
           showSysMsg('Account deleted')
         },
       })
@@ -3279,7 +3298,13 @@ export async function setupLeftPane() {
       // identity's last remaining relay naturally covers full sign-out,
       // arrived at explicitly one relay at a time.
       items.push({
-        label: 'Log out', onClick: () => removeRelayLocally(email, serverUrl),
+        label: 'Log out', onClick: async () => {
+          await removeRelayLocally(email, serverUrl)
+          // Same gap as "Delete account" above: removeRelayLocally never
+          // re-renders on its own.
+          refreshAccountsList()
+          loadLeftInboxes()
+        },
       })
       // Per-device JMAP credential (account-model redesign,
       // src/did/devicebind.ts): scoped to THIS relay/account specifically,

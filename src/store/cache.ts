@@ -53,12 +53,33 @@ export async function putContacts(list: Card[]): Promise<void> {
   try { await idb.put(idb.STORES.contacts, list, 'all') } catch { /* best-effort */ }
 }
 
-// Purge one identity's cached messages + sync cursors across all its relays
-// (mail + AP) — called from per-account "Log out" so a removed identity's
-// data can't resurrect from cache if it (or another identity in the same
-// browser) reconnects later.
+// Purge one identity's cached messages + threads + sync cursors across all
+// its relays (mail + AP) — called from per-account "Log out" so a removed
+// identity's data can't resurrect from cache if it (or another identity in
+// the same browser) reconnects later. Must run BEFORE the caller drops the
+// identity's session(s) from `sessions[]` — `messages.forIdentity` resolves
+// via `relaysForId`, a lookup against the currently LIVE sessions, so
+// calling this after they're gone silently matches nothing (found live,
+// 2026-08-19 — left-pane.ts's removeRelayLocally's own note has the story).
+//
+// Clears BOTH the persisted IDB rows and the in-memory stores — this is a
+// long-lived SPA page, not a reload, so a delete-then-immediate-reclaim of
+// the SAME identity (SCID-primary reuses the identical account key —
+// PLANSCID.md) would otherwise keep serving the old in-memory messages/
+// threads for the rest of this page's lifetime even with IDB itself clean.
 export async function clearIdentity(identity: string): Promise<void> {
-  const accts = new Set(messages.forIdentity(identity).map(e => messages.accountOf(e)))
+  const msgs = messages.forIdentity(identity)
+  const accts = new Set(msgs.map(e => messages.accountOf(e)))
+  // Collected before the loop below removes the messages that name them —
+  // a thread with no messages left pointing at it is exactly the stale
+  // "hi" / "Encrypted message" ghost this was missing (threads.ts's own
+  // note on why messages/threads must be purged together).
+  const threadIds = new Set(msgs.map(e => e.threadId).filter((id): id is string => !!id))
+  for (const e of msgs) messages.remove(messages.accountOf(e), e.id as string)
+  for (const id of threadIds) {
+    threads.remove(id)
+    try { await idb.del(idb.STORES.threads, id) } catch { /* best-effort */ }
+  }
   for (const acct of accts) {
     if (!acct) continue
     try { await idb.delRange(idb.STORES.messages, IDBKeyRange.bound([acct, ''], [acct, '￿'])) } catch { /* best-effort */ }
