@@ -52,13 +52,13 @@ export function setMlsAuthService(service: AuthenticationService): void { authSe
 /** The client configuration every group of ours is created, joined and
  * restored with. `decodeGroupState` deliberately does NOT carry config — it is
  * policy, not state — so restoring a group means re-attaching this. */
-function clientConfig(): ClientConfig {
+function clientConfig(authenticationService: AuthenticationService = authService): ClientConfig {
   return {
     keyRetentionConfig: defaultKeyRetentionConfig,
     lifetimeConfig: defaultLifetimeConfig,
     keyPackageEqualityConfig: defaultKeyPackageEqualityConfig,
     paddingConfig: defaultPaddingConfig,
-    authService,
+    authService: authenticationService,
   }
 }
 
@@ -407,7 +407,14 @@ export async function groupInfoForExternalJoin(state: ClientState): Promise<Uint
  * join is not complete until the DS accepts that commit, and if it loses its
  * epoch the whole result is discarded and retried against a fresh GroupInfo
  * (same rule as confirmCommit's). */
-export async function joinGroupExternally(groupInfoBytes: Uint8Array, own: OwnKeyPackage): Promise<CommitResult> {
+export async function joinGroupExternally(
+  groupInfoBytes: Uint8Array,
+  own: OwnKeyPackage,
+  /** Narrow recovery override for a self-group whose prior leaves have all
+   * been revoked from its owner's DID document. Normal joins always use the
+   * installed DID Authentication Service. */
+  authenticationService?: AuthenticationService,
+): Promise<CommitResult> {
   const suite = await mlsSuite()
   const groupInfo = decodeGroupInfo(groupInfoBytes, 0)?.[0]
   if (groupInfo === undefined) throw new Error('joinGroupExternally: undecodable group info')
@@ -416,13 +423,31 @@ export async function joinGroupExternally(groupInfoBytes: Uint8Array, own: OwnKe
     // `resync` false: this is a new leaf joining, not a device replacing its
     // own existing leaf after losing state. Resync would remove the old leaf,
     // which for a genuinely new device would remove somebody else's.
-    false, suite, undefined, clientConfig(),
+    false, suite, undefined, clientConfig(authenticationService),
   )
   return {
     state: newState,
     commit: encodeMlsMessage({ publicMessage, wireformat: 'mls_public_message', version: 'mls10' }),
     consumed: [],
   }
+}
+
+/** Credential kids carried by a GroupInfo ratchet tree. This is deliberately
+ * structural only: callers that need to *trust* a leaf must still run it
+ * through the Authentication Service. The self-group recovery path uses this
+ * to identify already-revoked leaves which otherwise prevent the MLS library
+ * from parsing the very GroupInfo needed to remove them. */
+export function groupInfoMemberKids(groupInfoBytes: Uint8Array): string[] | undefined {
+  const groupInfo = decodeGroupInfo(groupInfoBytes, 0)?.[0]
+  if (groupInfo === undefined) return undefined
+  const tree = ratchetTreeFromExtension(groupInfo)
+  if (tree === undefined) return undefined
+  const kids: string[] = []
+  for (const node of tree) {
+    if (node?.nodeType !== 'leaf') continue
+    try { kids.push(memberIdOf(node.leaf.credential).kid) } catch { return undefined }
+  }
+  return kids
 }
 
 /** Does the group described by this GroupInfo still contain `kid`?

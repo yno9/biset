@@ -7,7 +7,7 @@ import { resolve } from './resolver.ts'
 import { updateDocument, type BisetRelay } from './publish.ts'
 import { keyAgreementKeysFromWebvhState, mlkemKeyAgreementKeysFromWebvhState, type WebvhDidDocument } from './document.ts'
 import type { MethodOps } from '../didcomm-devices.ts'
-import { requireRootPrivateKey } from '../store.ts'
+import { requireRootPrivateKey, storeDidRecord } from '../store.ts'
 
 /** did:webvh has no gateway list — a DID's own domain segment names exactly
  * one URL (identifier.ts's didToHttpsUrl). Kept as an empty array rather
@@ -79,8 +79,10 @@ export const webvhMethodOps: MethodOps = {
     // right key via an earlier Sync (found live, 2026-08-17, y@biset.md).
     const cachedSigningPriv = rec.signingPrivateKey ? hexToBytes(rec.signingPrivateKey) : null
     const cachedSigningPub = rec.signingPublicKey ? hexToBytes(rec.signingPublicKey) : null
-    const signingPriv = opts.signingKeyOverride?.privateKey ?? cachedSigningPriv ?? hexToBytes(requireRootPrivateKey(rec))
-    const signingPub = opts.signingKeyOverride?.publicKey ?? cachedSigningPub ?? hexToBytes(rec.rootPublicKey)
+    const rootSigningPriv = hexToBytes(requireRootPrivateKey(rec))
+    const rootSigningPub = hexToBytes(rec.rootPublicKey)
+    const signingPriv = opts.signingKeyOverride?.privateKey ?? cachedSigningPriv ?? rootSigningPriv
+    const signingPub = opts.signingKeyOverride?.publicKey ?? cachedSigningPub ?? rootSigningPub
     const identityPub = hexToBytes(rec.rootPublicKey)
 
     let relays: BisetRelay[]
@@ -99,9 +101,9 @@ export const webvhMethodOps: MethodOps = {
       addresses = carried.addresses
     }
 
-    try {
+    const publish = async (privateKey: Uint8Array, publicKey: Uint8Array): Promise<void> => {
       await updateDocument({
-        did: rec.did, signingPrivateKey: signingPriv, signingPublicKey: signingPub, identityPublicKey: identityPub, relays, addresses,
+        did: rec.did, signingPrivateKey: privateKey, signingPublicKey: publicKey, identityPublicKey: identityPub, relays, addresses,
         // routing.ts, not the signed document (document.ts's own header):
         // an absent didCommService/keyAgreementKeys here already IS the
         // removal (updateDocument rewrites routing.json from scratch every
@@ -124,6 +126,10 @@ export const webvhMethodOps: MethodOps = {
         // erasing it.
         name: relayInput?.name,
       })
+    }
+
+    try {
+      await publish(signingPriv, signingPub)
       // did:webvh has exactly one publish target (the anchor serving this
       // DID's domain segment) — accepted count is boolean-shaped, matching
       // the dht path's "number of gateways that accepted it" convention
@@ -131,6 +137,26 @@ export const webvhMethodOps: MethodOps = {
       // the same way.
       return 1
     } catch (e) {
+      // A device that was offline when pre-rotation was turned OFF can still
+      // carry the formerly-valid Sign Key. It must not be preferred forever:
+      // the current document is authoritative, and after OFF it names Root
+      // Key alone. Retry exactly this stale-cache case with Root Key, then
+      // erase the obsolete cache so the next automatic DIDComm registration
+      // follows the same authority without another failed round trip.
+      const usedCachedSignKey = !opts.signingKeyOverride && !!cachedSigningPriv && !!cachedSigningPub
+      const staleCachedSigner = e instanceof Error && e.message.includes('not authorized by the document\'s current updateKeys')
+      if (usedCachedSignKey && staleCachedSigner) {
+        try {
+          await publish(rootSigningPriv, rootSigningPub)
+          delete rec.signingPrivateKey
+          delete rec.signingPublicKey
+          await storeDidRecord(rec)
+          console.info(`[webvh] dropped stale Sign Key cache for ${rec.did}; Root Key is current again`)
+          return 1
+        } catch (rootError) {
+          console.warn('[webvh] Root Key retry after stale Sign Key failed:', rootError instanceof Error ? rootError.message : rootError)
+        }
+      }
       // Swallowed into a bare 0 for the caller (its own contract — see the
       // interface note above), but the actual reason (e.g. "local key not
       // authorized by the current updateKeys" — publish.ts's updateDocument)

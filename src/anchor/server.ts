@@ -30,6 +30,7 @@ import { verifyDIDBinding, verifyDeviceVouch, rootKeyResolver } from './didbind.
 import type { MediatorHandler } from './mediator/server.ts'
 import type { WebvhLogStore } from './webvh-store.ts'
 import { parseWebvhDid, bisetWebvhUsername } from '../did/webvh/identifier.ts'
+import { scidToLocalpart } from '../did/webvh/scid-localpart.ts'
 import { resolveWebvhDocument } from './webvh-resolve.ts'
 import { createWebvhHandler } from '../webvh-server/core.ts'
 import { parseLog, resolveParameters, type LogParameters } from '../did/webvh/log.ts'
@@ -289,10 +290,11 @@ export function startAnchor({ claims, port, hostname, mediator, webvh, relayToke
       // claim-registry entry needed: the human path segment (the original
       // check), or — SCID-primary accounts (PLANSCID.md) — the DID's own
       // permanent SCID segment. A SCID-primary account's real JMAP login
-      // identity IS the SCID, so every vouch after the first (the one
+      // identity is the case-safe z-base32 projection of the SCID, so every
+      // vouch after the first (the one
       // embedded in provisioning, which still sends the human name and so
       // hits the claim-registry branch above) is signed with `username` set
-      // to the SCID — restore.ts, sync.ts, and left-pane.ts's "Reconnect
+      // to that localpart — restore.ts, sync.ts, and left-pane.ts's "Reconnect
       // device" all resolve it via provision.ts's scidLoginAddress. Without
       // this, EVERY vouch after the very first one for such an account —
       // any new device, and any RE-vouch of an already-known one — was
@@ -303,7 +305,8 @@ export function startAnchor({ claims, port, hostname, mediator, webvh, relayToke
       // this scheme after migration).
       const selfNamed = did.startsWith('did:webvh:')
         && parseWebvhDid(did).domain.toLowerCase() === domain.toLowerCase()
-        && (bisetWebvhUsername(did) === username.toLowerCase() || parseWebvhDid(did).scid.toLowerCase() === username.toLowerCase())
+        && (bisetWebvhUsername(did) === username.toLowerCase()
+          || scidToLocalpart(parseWebvhDid(did).scid) === username.toLowerCase())
       if (!selfNamed) {
         return text('device vouch: did does not match the claim on record for that address', 401)
       }

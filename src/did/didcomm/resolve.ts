@@ -88,7 +88,7 @@ function webvhToPeerDidDocShape(doc: WebvhDidDocument): PeerDidDoc {
  * compatibility and unused — did:webvh derives its own URL from the DID
  * string itself (same as resolver.ts's resolveAny). */
 export async function resolveDidCommDoc(
-  did: string, _gatewayUrls: string[] = [], _opts?: { skipCache?: boolean },
+  did: string, _gatewayUrls: string[] = [], opts?: { skipCache?: boolean },
 ): Promise<PeerDidDoc | null> {
   if (did.startsWith('did:peer:2.')) {
     try {
@@ -98,7 +98,12 @@ export async function resolveDidCommDoc(
     }
   }
   if (did.startsWith('did:webvh:')) {
-    const doc = await resolveDidWebvh(did).catch(() => null)
+    // The MLS authentication path calls this immediately after publishing a
+    // new device key. A normal browser fetch is allowed to reuse its prior
+    // routing.json response there, which makes the authenticator reject the
+    // very credential it just published. Honor skipCache for BOTH the log and
+    // routing resource, not merely an in-memory caller cache.
+    const doc = await resolveDidWebvh(did, opts?.skipCache ? { cache: 'no-store' } : undefined).catch(() => null)
     return doc ? webvhToPeerDidDocShape(doc) : null
   }
   return null

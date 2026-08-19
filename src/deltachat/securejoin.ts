@@ -67,7 +67,18 @@ const sharedSecret = (fpUpper: string, auth: string) => `securejoin/${fpUpper}/$
 
 // ── invite URL generation ─────────────────────────────────────────────────────
 
-export async function newInviteUrl(email: string, name: string): Promise<string | null> {
+// `email` is the storage/lookup key (PGP key record, pending-invite list) —
+// always the real login address, the same one the incoming vc-request
+// handler below looks invites up by (`self`, e.g. left-pane.ts's session
+// account). `address`, when given, is only what gets embedded in the URL's
+// own `a=` — the address a scanning contact will actually send mail to —
+// and defaults to `email` for a DID-less/legacy account where the two are
+// the same string anyway. Kept separate so a SCID-primary account
+// (PLANSCID.md) can advertise its short human alias to a new contact
+// without touching where its key/invites are actually filed (found live
+// 2026-08-19: this used to hand out the opaque SCID address to every new
+// DeltaChat contact).
+export async function newInviteUrl(email: string, name: string, address: string = email): Promise<string | null> {
   const fp = await selfFingerprint(email)
   if (!fp) return null
   const invitenumber = createId()
@@ -75,8 +86,8 @@ export async function newInviteUrl(email: string, name: string): Promise<string 
   const invites = loadInvites(email)
   invites.push({ invitenumber, auth, createdAt: Date.now() })
   saveInvites(email, invites)
-  const a = encodeURIComponent(email)
-  const n = encodeURIComponent(name || email).replace(/%20/g, '+')
+  const a = encodeURIComponent(address)
+  const n = encodeURIComponent(name || address).replace(/%20/g, '+')
   return `https://i.delta.chat/#${fp}&v=3&i=${invitenumber}&s=${auth}&a=${a}&n=${n}`
 }
 

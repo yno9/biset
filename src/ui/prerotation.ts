@@ -467,10 +467,11 @@ export async function resolveSpareKeyForMove(did: string): Promise<SpareKeyForMo
   }
 }
 
-/** Turns pre-rotation back off. Still needs the saved phrase (see this
- * file's header) — there is no lighter path once pre-rotation is active. */
+/** Turns pre-rotation back off and returns publishing authority to Root Key.
+ * Still needs the saved phrase (see this file's header) — there is no lighter
+ * path once pre-rotation is active. */
 export async function runDeactivatePreRotation(did: string): Promise<boolean> {
-  const revealed = await revealAndVerify(did, 'Your Spare Key phrase. It becomes your new Sign Key, and no further successor is committed.')
+  const revealed = await revealAndVerify(did, 'Your Spare Key phrase. It authorises turning key rotation off and returning this identity to its Root Key.')
   if (!revealed) return false
 
   try {
@@ -478,12 +479,33 @@ export async function runDeactivatePreRotation(did: string): Promise<boolean> {
       did, revealedPrivateKey: revealed.revealedPrivateKey, revealedPublicKey: revealed.revealedPublicKey,
       identityPublicKey: revealed.identityPublicKey,
     })
-    // Same reasoning as runRotateNow: the just-revealed key becomes the new
-    // (now permanent, no further commitment) updateKeys — this is exactly
-    // the case the user found Sync kept re-prompting for with no way to
-    // ever stop (2026-08-17): deactivating doesn't return authority to
-    // root, and this key doesn't get consumed by being used again.
-    await cacheSigningKey(did, revealed.revealedPrivateKey, revealed.revealedPublicKey)
+    // deactivatePreRotation's second, batched entry returns updateKeys to
+    // Root Key. Drop the now-stale cached Sign Key, otherwise automatic
+    // publish paths would keep selecting it and fail instead of using root.
+    const { getDidRecord, storeDidRecord, withDidLock } = await import('../did/store.ts')
+    await withDidLock(did, async () => {
+      const rec = await getDidRecord(did)
+      if (!rec) return
+      const { signingPrivateKey: _private, signingPublicKey: _public, ...withoutSigningKey } = rec
+      await storeDidRecord(withoutSigningKey)
+    })
+
+    // A restore that happened while this DID still needed a Sign Key may have
+    // minted a fresh device key, then failed before it could publish/register
+    // it. Now that Root Key is the signer again, immediately run the normal
+    // incomplete-registration recovery instead of making the user reload (or
+    // discover a stale MLS device list) just to get that retry.
+    try {
+      const { setupDidCommChannel } = await import('../did/didcomm/channel.ts')
+      await setupDidCommChannel(did, () => {
+        import('./shell.ts').then(s => s.fetchMessages())
+        import('./left-pane.ts').then(m => m.loadLeftInboxes())
+      })
+    } catch (e) {
+      // The key-rotation change itself already landed. Registration remains
+      // boot-time self-healing work, so do not report this as a failed toggle.
+      console.warn('[prerotation] DIDComm re-registration after deactivation failed:', e instanceof Error ? e.message : e)
+    }
     return true
   } catch (e) {
     const { showSysMsg } = await import('./shell.ts')

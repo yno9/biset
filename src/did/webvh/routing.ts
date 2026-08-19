@@ -100,8 +100,8 @@ export function buildRoutingDoc(did: string, input: RoutingInput): RoutingDoc {
  * `keyAgreement`/`name`/`alsoKnownAs` already handles an absent entry
  * gracefully, so a 404 here just reproduces that same, already-tolerated
  * state. */
-export async function fetchRouting(did: string): Promise<RoutingDoc | null> {
-  const resp = await fetch(didToRoutingUrl(did))
+export async function fetchRouting(did: string, init?: RequestInit): Promise<RoutingDoc | null> {
+  const resp = await fetch(didToRoutingUrl(did), init)
   if (resp.status === 404) return null
   if (!resp.ok) throw new Error(`fetchRouting: GET failed with HTTP ${resp.status}`)
   return (await resp.json()) as RoutingDoc

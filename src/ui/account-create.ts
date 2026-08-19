@@ -178,18 +178,26 @@ function refreshNewUserPage(opts: { focus: boolean }) {
 // duplicate every id in the document or arrive with no handlers at all.
 // Moving the live node keeps every listener attached exactly once.
 
-export function mountNewUserPageInline(container: HTMLElement): void {
+export function mountNewUserPageInline(container: HTMLElement, opts: { centered?: boolean } = {}): void {
   const page = document.getElementById('new-user-page')
   if (!page) return
   if (page.parentElement !== container) container.appendChild(page)
   // In-flow, not a fixed full-bleed overlay: no inset/z-index/background of
-  // its own. Still centred vertically though — with nothing else on the page
-  // in this state, top-aligning it leaves the form clinging to the header
-  // above a screen of blank space. min-height gives `justify-content` an
-  // axis to centre within (a flex column only centres inside height it
-  // actually has), and it's a floor rather than a fixed height so a small
-  // window just grows and scrolls instead of clipping the form.
-  page.setAttribute('style', 'display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 220px);padding:4px 0 20px')
+  // its own. Centred vertically only when this is the only thing on the page
+  // (`centered`, the historical zero-account case) — with nothing else there,
+  // top-aligning it leaves the form clinging to the header above a screen of
+  // blank space, so min-height gives `justify-content` an axis to centre
+  // within (a flex column only centres inside height it actually has), and
+  // it's a floor rather than a fixed height so a small window just grows and
+  // scrolls instead of clipping the form. With account cards already below it
+  // (a DID-less relay account exists but no DID identity yet — 2026-08-19,
+  // user-reported: the create-identity option must stay reachable even then)
+  // that same min-height would shove those real, already-connected accounts
+  // off-screen for no reason, so it sits at its natural size instead.
+  const centered = opts.centered ?? true
+  page.setAttribute('style', centered
+    ? 'display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:calc(100vh - 220px);padding:4px 0 20px'
+    : 'display:flex;flex-direction:column;align-items:center;padding:4px 0 20px')
   // The "biset / beta" masthead belongs to a full-page takeover; inside the
   // account page it's a second app title under the one already on screen.
   const title = page.querySelector<HTMLElement>('.biset-title')
@@ -308,15 +316,21 @@ export function setupNewUserPage() {
   let lookupSeq = 0
   let lookupTimer: ReturnType<typeof setTimeout> | null = null
   const phraseEl = document.getElementById('nu-phrase') as HTMLTextAreaElement | null
+  const signPhraseEl = document.getElementById('nu-sign-phrase') as HTMLTextAreaElement | null
+  // Set only after the Root Key has been checked against this exact DID and
+  // its document says a distinct current Sign Key controls updates. Changing
+  // either the address or Root Key clears it, so a Sign Key pasted for one
+  // identity can never be submitted for another.
+  let signKeyRequiredForDid: string | null = null
   // Grows with the phrase instead of offering a drag handle: a recovery
   // phrase is pasted, not composed, so the only useful height is "however
   // tall the thing you just pasted is". Four rows is the resting size — one
   // line short of it looks like a single-line field and invites typing a
   // password into it.
   const PHRASE_MIN_ROWS = 4
-  const autosizePhrase = () => {
-    if (!phraseEl) return
-    const cs = getComputedStyle(phraseEl)
+  const autosizePhrase = (el: HTMLTextAreaElement | null) => {
+    if (!el) return
+    const cs = getComputedStyle(el)
     // `lineHeight: normal` computes to the string, not a px value — fall back
     // to the usual ~1.4×font-size rather than producing NaN.
     const line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4
@@ -324,13 +338,19 @@ export function setupNewUserPage() {
     // box-sizing is border-box here, so the height we set includes borders —
     // but scrollHeight doesn't, hence adding them back on.
     const borders = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth)
-    phraseEl.style.height = 'auto' // let scrollHeight shrink back down, not just grow
-    const content = Math.max(phraseEl.scrollHeight, line * PHRASE_MIN_ROWS + padding)
-    phraseEl.style.height = `${content + borders}px`
+    el.style.height = 'auto' // let scrollHeight shrink back down, not just grow
+    const content = Math.max(el.scrollHeight, line * PHRASE_MIN_ROWS + padding)
+    el.style.height = `${content + borders}px`
   }
-  phraseEl?.addEventListener('input', autosizePhrase)
+  phraseEl?.addEventListener('input', () => {
+    autosizePhrase(phraseEl)
+    signKeyRequiredForDid = null
+    if (signPhraseEl) { signPhraseEl.value = ''; signPhraseEl.style.display = 'none' }
+  })
+  signPhraseEl?.addEventListener('input', () => autosizePhrase(signPhraseEl))
   const applyTypedNameLookup = (did: string | null) => {
     loginDidForTypedName = did
+    signKeyRequiredForDid = null
     // Never override 'Checking…'/disabled — availability owns that state and
     // re-renders the label itself when it resolves.
     if (!submitBtn.disabled) submitBtn.textContent = signupButtonLabel()
@@ -343,7 +363,11 @@ export function setupNewUserPage() {
       if (!did) phraseEl.value = ''
       // Only measurable once it's actually displayed (a hidden element has
       // no scrollHeight), so size it here rather than at wiring time.
-      if (did) autosizePhrase()
+      if (did) autosizePhrase(phraseEl)
+    }
+    if (signPhraseEl) {
+      signPhraseEl.style.display = 'none'
+      signPhraseEl.value = ''
     }
   }
   usernameInput.addEventListener('input', () => {
@@ -447,7 +471,11 @@ export function setupNewUserPage() {
     // checkbox — an existing account agreed to them when it was created,
     // and re-gating an ordinary login behind them is nonsense.
     if (loginDidForTypedName) {
-      await logInExistingAddress(`${username}@${hostname}`, loginDidForTypedName, phraseEl, errEl, submitBtn)
+      await logInExistingAddress(`${username}@${hostname}`, loginDidForTypedName, phraseEl, signPhraseEl, {
+        get signKeyRequired() { return signKeyRequiredForDid === loginDidForTypedName },
+        requireSignKey() { signKeyRequiredForDid = loginDidForTypedName },
+        clearSignKeyRequirement() { signKeyRequiredForDid = null },
+      }, errEl, submitBtn)
       return
     }
     if (!tosInput.checked) { errEl.textContent = 'Please agree to the Terms of Beta-testing'; errEl.style.display = 'block'; return }
@@ -684,6 +712,8 @@ async function logInExistingAddress(
   address: string,
   did: string,
   phraseEl: HTMLTextAreaElement | null,
+  signPhraseEl: HTMLTextAreaElement | null,
+  signKeyStep: { readonly signKeyRequired: boolean; requireSignKey(): void; clearSignKeyRequirement(): void },
   errEl: HTMLElement,
   submitBtn: HTMLButtonElement,
 ): Promise<void> {
@@ -698,8 +728,35 @@ async function logInExistingAddress(
   submitBtn.disabled = true
   submitBtn.textContent = 'Logging in…'
   try {
+    // Root Key is always step one. Inspect the document before persisting
+    // anything so a DID whose current update key has rotated away from its
+    // Root Key gets a clear, inline Sign Key step rather than a successful
+    // login followed by the account page's late "FIX" prompt.
+    if (!signKeyStep.signKeyRequired) {
+      const { restoreKeyRequirements } = await import('../did/restore.ts')
+      const requirements = await restoreKeyRequirements(phrase, did)
+      if ('error' in requirements) { errEl.textContent = requirements.error; errEl.style.display = 'block'; return }
+      if (requirements.needsSignKey) {
+        signKeyStep.requireSignKey()
+        if (signPhraseEl) {
+          signPhraseEl.style.display = ''
+          signPhraseEl.focus()
+        }
+        errEl.textContent = 'Key rotation is active — now paste this identity\'s current 24-word Sign Key phrase.'
+        errEl.style.display = 'block'
+        return
+      }
+    }
+
+    const signPhrase = signPhraseEl?.value.trim() ?? ''
+    if (signKeyStep.signKeyRequired && !signPhrase) {
+      errEl.textContent = 'Paste the 24-word Sign Key phrase to continue.'
+      errEl.style.display = 'block'
+      signPhraseEl?.focus()
+      return
+    }
     const { restoreFromMnemonic } = await import('../did/restore.ts')
-    const res = await restoreFromMnemonic(phrase, did)
+    const res = await restoreFromMnemonic(phrase, did, signKeyStep.signKeyRequired ? signPhrase : undefined)
     if ('error' in res) { errEl.textContent = res.error; errEl.style.display = 'block'; return }
     // restoreFromMnemonic already persisted + registered + PGP'd each session
     // via connectAndPersist — nothing left to do here but reflect the outcome.
@@ -719,11 +776,12 @@ async function logInExistingAddress(
     refreshAccountsList()
     showMenuPage('/account')
     showSysMsg(hasRelays ? 'Logged in' : 'Logged in (no relay)')
+    signKeyStep.clearSignKeyRequirement()
   } catch (e) {
     errEl.textContent = 'Log in failed: ' + (e instanceof Error ? e.message : String(e))
     errEl.style.display = 'block'
   } finally {
     submitBtn.disabled = false
-    submitBtn.textContent = signupButtonLabel()
+    submitBtn.textContent = signKeyStep.signKeyRequired ? 'Continue' : signupButtonLabel()
   }
 }

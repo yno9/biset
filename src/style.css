@@ -965,6 +965,7 @@ select {
    user-reported). */
 .cmd-acc-login-row,
 .cmd-acc-email-row,
+.cmd-acc-password-row,
 .cmd-acc-relay-row {
   display: flex;
   align-items: center;

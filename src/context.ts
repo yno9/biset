@@ -302,13 +302,28 @@ export function setActiveIdentity(identity: string): void {
 // is set yet (first launch), or the one that was set no longer has any
 // stored accounts (logged out of it entirely), adopts whichever identity IS
 // present instead of returning nothing.
+//
+// DID-less accounts (a plain JMAP password login — jmap/client.ts's non-DID
+// branch, config's "+ New Relay" → Log in with a password) are kept
+// UNCONDITIONALLY, on top of whichever DID identity is active, rather than
+// competing for the one identity slot: they have no DID of their own to be
+// "the active identity", and the whole point of allowing that login
+// alongside an existing DID identity (its own submit handler skips the
+// identity-switch guard for exactly this reason) was for both to work at
+// once. Without this, only one of the two ever reached initSession on a
+// reload — the other's account card sat "Sync: Never" forever, silently
+// dropped here before route() ever saw it, with no error logged anywhere
+// because it was never attempted at all (2026-08-19, user-reported).
 export function accountsForActiveIdentity(accounts: StoredAccount[]): StoredAccount[] {
   if (!accounts.length) return []
+  const didLess = accounts.filter(a => !a.did)
+  const withDid = accounts.filter(a => a.did)
+  if (!withDid.length) return accounts
   let active = getActiveIdentity()
-  const matches = (a: StoredAccount) => (a.did || a.email) === active
-  if (!active || !accounts.some(matches)) {
-    active = accounts[0]!.did || accounts[0]!.email
+  const matches = (a: StoredAccount) => a.did === active
+  if (!active || !withDid.some(matches)) {
+    active = withDid[0]!.did!
     setActiveIdentity(active)
   }
-  return accounts.filter(matches)
+  return [...withDid.filter(matches), ...didLess]
 }

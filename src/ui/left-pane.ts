@@ -1262,7 +1262,7 @@ export async function setupLeftPane() {
     document.getElementById('cmd-acc-mediator-register')?.remove()
     if (addForm) addForm.style.display = 'none'
     if (signupBody) { signupBody.style.display = 'none'; signupBody.textContent = '' }
-    for (const id of ['cmd-acc-relay', 'cmd-acc-email']) {
+    for (const id of ['cmd-acc-relay', 'cmd-acc-email', 'cmd-acc-password']) {
       const el = document.getElementById(id) as HTMLInputElement | null
       if (el) el.value = ''
     }
@@ -1421,6 +1421,9 @@ export async function setupLeftPane() {
         <form id="cmd-acc-form" class="cmd-form" style="display:none" autocomplete="on">
           <div class="cmd-acc-email-row">
             <input id="cmd-acc-email" class="cmd-input" type="text" placeholder="Email" autocomplete="username" required>
+          </div>
+          <div class="cmd-acc-password-row">
+            <input id="cmd-acc-password" class="cmd-input" type="password" placeholder="Password (plain JMAP account — leave blank for device-key login)" autocomplete="current-password">
           </div>
           <div class="cmd-acc-login-row">
             <button id="cmd-acc-add" type="submit" class="cmd-page-btn primary">Add</button>
@@ -1746,10 +1749,12 @@ export async function setupLeftPane() {
       ev.preventDefault()
       const relayInputEl = document.getElementById('cmd-acc-relay') as HTMLInputElement
       const emailInput = document.getElementById('cmd-acc-email') as HTMLInputElement
+      const passwordInput = document.getElementById('cmd-acc-password') as HTMLInputElement | null
       const errEl = document.getElementById('cmd-acc-error')!
       const addBtn = document.getElementById('cmd-acc-add') as HTMLButtonElement
 
       const email = emailInput.value.trim()
+      const password = passwordInput?.value ?? ''
       const raw = relayInputEl.value.trim().replace(/\/$/, '')
       // The relay picker at the top of the panel is required for either path
       // (Sign up or Log in) — no more domain-guessing fallback ladder here.
@@ -1764,18 +1769,24 @@ export async function setupLeftPane() {
 
       addBtn.disabled = true; addBtn.textContent = 'Connecting…'; errEl.style.display = 'none'
 
-      // No password field at all any more (user's explicit call — third-party/
-      // plain-password JMAP login isn't a use case worth keeping): "Log in" is
-      // purely a reconnect via this device's own per-device key (devicebind.ts).
-      // ownDid() is set independently of any session and never cleared by an
-      // ordinary per-relay logout (removeRelayLocally only drops the
-      // StoredAccount/session, never the DidRecord) — so this works whenever
-      // this device was vouched at the typed relay before (e.g. logging back
-      // in after logging out). Never vouched there, or revoked: no fallback,
-      // just an error.
+      // Two ways in. With a password typed, this is a plain JMAP account —
+      // unrelated to did:webvh — authenticated the ordinary way (Basic/Bearer
+      // against the relay's auth_token_hash, jmap/client.ts's non-DID
+      // branch). Left blank, "Log in" is a reconnect via this device's own
+      // per-device key (devicebind.ts): ownDid() is set independently of any
+      // session and never cleared by an ordinary per-relay logout
+      // (removeRelayLocally only drops the StoredAccount/session, never the
+      // DidRecord) — so that works whenever this device was vouched at the
+      // typed relay before (e.g. logging back in after logging out). Never
+      // vouched there, or revoked: no fallback, just an error.
       const myDid = ownDid()
       const connected: Array<{ session: import('../types.ts').AccountSession; server: string }> = []
-      if (myDid) {
+      if (password) {
+        for (const server of servers) {
+          const session = await initSession({ serverUrl: server, email, password }).catch(() => null)
+          if (session) connected.push({ session, server })
+        }
+      } else if (myDid) {
         for (const server of servers) {
           const session = await initSession({ serverUrl: server, email, password: '', did: myDid }).catch(() => null)
           if (session) connected.push({ session, server })
@@ -1783,7 +1794,9 @@ export async function setupLeftPane() {
       }
 
       if (!connected.length) {
-        errEl.textContent = myDid ? 'Could not reconnect this device at that relay' : 'No local identity on this device to reconnect with'
+        errEl.textContent = password
+          ? 'Login failed — check the email and password'
+          : (myDid ? 'Could not reconnect this device at that relay' : 'No local identity on this device to reconnect with')
         errEl.style.display = 'block'
         addBtn.disabled = false; addBtn.textContent = 'Add'
         return
@@ -1795,8 +1808,12 @@ export async function setupLeftPane() {
       // currently active — so logging into an account belonging to a
       // genuinely different identity must never silently merge into the
       // active one's sessions. Switching identity is logout-then-login only.
+      // Doesn't apply to the password path: a plain JMAP account has no DID
+      // of its own, so it coexists alongside whatever identity is active
+      // rather than competing with it (same DID-less-relay model discovery.ts
+      // and app.ts's identityKey already use elsewhere).
       const isFirst = sessions.length === 0
-      if (!isFirst) {
+      if (!isFirst && !password) {
         const activeIdKey = identityIds()[0]
         if (activeIdKey && myDid !== activeIdKey) {
           errEl.textContent = 'This account belongs to a different identity — log out first to switch.'
@@ -1807,13 +1824,17 @@ export async function setupLeftPane() {
       }
 
       // Persist + register each connected relay, deduped by (email, serverUrl)
-      // so mail and AP for the same identity coexist as separate sessions. No
-      // password to persist — every future login re-derives a fresh device
-      // session instead (initSession's per-device branch).
+      // so mail and AP for the same identity coexist as separate sessions.
+      // The password path persists the real password (every future login
+      // re-sends it as-is); the device-key path persists none — every future
+      // login re-derives a fresh device session instead (initSession's
+      // per-device branch).
       for (const c of connected) {
         const session = c.session
         const relayEmail: string = session.account.email || email
-        const stored: StoredAccount = { serverUrl: c.server, email: relayEmail, password: '', did: myDid ?? undefined }
+        const stored: StoredAccount = password
+          ? { serverUrl: c.server, email: relayEmail, password }
+          : { serverUrl: c.server, email: relayEmail, password: '', did: myDid ?? undefined }
         persistSession(stored, session)
       }
       addBtn.disabled = false; addBtn.textContent = 'Add'
@@ -2034,7 +2055,17 @@ export async function setupLeftPane() {
     // different endpoints (different server, different credentials), so both
     // are pickable; the DIDComm endpoint's "address" is the DID itself.
     const fromBtn = document.getElementById('new-from') as HTMLButtonElement | null
-    type FromOption = { email: string; serverUrl: string }
+    // `email` is the real login address (sessionFor's lookup key — SCID-primary
+    // accounts, PLANSCID.md, mean this is often an opaque zbase32 string, never
+    // shown to a human). `displayEmail`, when present, is the human alias
+    // (`StoredAccount.displayEmail`/`AccountSession.account.displayEmail`) —
+    // what the alsoKnownAs claim actually reads, and what every OTHER From-ish
+    // label in this file already prefers (renderCardHeadRow, `shownAs` above).
+    // This selector used to show `email` unconditionally, so a freshly claimed
+    // SCID-primary identity's own From button/menu displayed the raw SCID
+    // address even though its did:webvh document's alsoKnownAs named the short
+    // human one (found live, 2026-08-19).
+    type FromOption = { email: string; displayEmail?: string; serverUrl: string }
     let fromOptions: FromOption[] = []
     let fromSelectedIdx = 0
     // Middle-ellipsis by ACTUAL rendered layout, not canvas font guessing:
@@ -2175,7 +2206,7 @@ export async function setupLeftPane() {
         addr.textContent = didDisplayText(o.email) // fixed short form, no width-fit
         ensureDidName(o.email)
       } else {
-        fitMiddleEllipsis(fromBtn, addr, o.email)
+        fitMiddleEllipsis(fromBtn, addr, o.displayEmail ?? o.email)
       }
       // Dim if the SELECTED option doesn't match what the To field requires —
       // syncFromRequirement already tries to hop off a disallowed selection
@@ -2237,6 +2268,7 @@ export async function setupLeftPane() {
       const required = requiredFromProto()
       const pending: Array<{ row: HTMLElement; addr: HTMLElement; email: string }> = []
       fromOptions.forEach((o, i) => {
+        const shown = o.displayEmail ?? o.email
         const allowed = fromOptionAllowed(o, required)
         const row = document.createElement('button')
         row.type = 'button'
@@ -2263,7 +2295,7 @@ export async function setupLeftPane() {
           addr.textContent = didDisplayText(o.email)
           ensureDidName(o.email)
         } else {
-          pending.push({ row, addr, email: o.email })
+          pending.push({ row, addr, email: shown })
         }
       })
       document.body.append(menu)
@@ -2281,8 +2313,8 @@ export async function setupLeftPane() {
       // `sessions` can still be empty on a fresh #new load (init race), so fall
       // back to the stored account list — never leave the selector blank.
       fromOptions = sessions.length
-        ? sessions.map(s => ({ email: s.account.email, serverUrl: s.account.serverUrl }))
-        : loadStoredAccounts().map(a => ({ email: a.email, serverUrl: a.serverUrl }))
+        ? sessions.map(s => ({ email: s.account.email, displayEmail: s.account.displayEmail, serverUrl: s.account.serverUrl }))
+        : loadStoredAccounts().map(a => ({ email: a.email, displayEmail: a.displayEmail, serverUrl: a.serverUrl }))
       // Guarantee the identity's DIDComm endpoint is offered whenever it has a
       // channel — covers both the synthetic-session-not-yet-in-sessions[] race
       // and the fallback-to-stored-accounts branch (stored accounts never
@@ -3016,21 +3048,38 @@ export async function setupLeftPane() {
     renderAccountsList(); loadLeftInboxes()
   }
 
-  function openAccountMenu(anchor: HTMLElement, email: string, serverUrl?: string, did?: string) {
-    const items: MenuItem[] = [
-      // DeltaChat SecureJoin invite link (setup-contact) — moved here from the
-      // compose "From" row, which is the wrong place for a per-ACCOUNT action
-      // (the link is scoped to whichever address it's generated for, not to
-      // whatever's currently being composed).
-      {
+  // `email` is the real login address — every functional use below (device
+  // vouch, session lookup, delete/log-out, PGP key lookup, which is keyed by
+  // login email — pgp/index.ts's initPGP) needs exactly that, never the
+  // alias. `displayEmail`, when given, is only for text a human reads or a
+  // third party is handed: the delete confirmation, and the DeltaChat invite
+  // link's own advertised address (`a=`) — a contact scanning it should end
+  // up addressing the short human alias, not a SCID-primary account's opaque
+  // permanent one (this menu used to hand out the raw one for both, found
+  // live 2026-08-19 alongside the compose From-menu's identical gap).
+  function openAccountMenu(anchor: HTMLElement, email: string, serverUrl?: string, did?: string, displayEmail?: string) {
+    const shownEmail = displayEmail ?? email
+    const items: MenuItem[] = []
+    // DeltaChat SecureJoin invite link (setup-contact) — moved here from the
+    // compose "From" row, which is the wrong place for a per-ACCOUNT action
+    // (the link is scoped to whichever address it's generated for, not to
+    // whatever's currently being composed). Gated on `did`: the invite link
+    // is built from this account's PGP key (newInviteUrl's own "no key set"
+    // failure path), and PGP itself is gated on a DID's masterSecret-derived
+    // kek (app.ts's initPGPForSession/connectAndPersist) — a DID-less plain
+    // JMAP account (jmap/client.ts's non-DID login branch) never has one, so
+    // this item could only ever fail for it (2026-08-19, user-reported: it
+    // showed up as dead weight on such an account's menu).
+    if (did) {
+      items.push({
         label: 'DeltaChat link', onClick: async () => {
-          const url = await newInviteUrl(email, email)
+          const url = await newInviteUrl(email, shownEmail, shownEmail)
           if (!url) { showSysMsg('Invite link failed (no key set)'); return }
           try { await navigator.clipboard.writeText(url); showSysMsg('DeltaChat invite link copied') }
           catch { prompt('Copy this invite link:', url) } // clipboard denied — still surface it
         },
-      },
-    ]
+      })
+    }
     if (serverUrl && did) {
       // Root-key-signed re-vouch for a modern (password-less) DID-bound
       // account whose LOCAL device key is gone but the account itself still
@@ -3208,7 +3257,7 @@ export async function setupLeftPane() {
       // leaves the server-side account untouched.
       items.push({
         label: 'Delete account', onClick: async () => {
-          if (!confirm(`Permanently delete ${email}? This deletes all messages and account data on the server — it cannot be undone.`)) return
+          if (!confirm(`Permanently delete ${shownEmail}? This deletes all messages and account data on the server — it cannot be undone.`)) return
           const session = sessions.find(s => s.account.email === email && s.account.serverUrl === serverUrl)
           if (!session) { showSysMsg('Not connected — log in before deleting'); return }
           const { deleteAccountOnRelay } = await import('../cryptenv.ts')
@@ -3231,17 +3280,26 @@ export async function setupLeftPane() {
       // src/did/devicebind.ts): scoped to THIS relay/account specifically,
       // like Delete account/Log out above — devices.go's list/revoke are
       // per (serverUrl, email), not per-identity, since each relay keeps its
-      // own independent authorized-device list.
-      items.push({
-        label: 'Devices', onClick: () => openDevicesModal(email, serverUrl),
-      })
+      // own independent authorized-device list. Gated on `did`: a DID-less
+      // plain JMAP account (jmap/client.ts's non-DID login branch) never
+      // registers a device key at all (auth_env.rs's authenticate checks the
+      // device-session-token path first, but such an account only ever has
+      // an auth_token_hash) — its own modal already said as much ("No
+      // devices registered — this account is only reachable with its
+      // password"), so the menu item that opens an always-empty modal is
+      // just as meaningless (2026-08-19, user-reported).
+      if (did) {
+        items.push({
+          label: 'Devices', onClick: () => openDevicesModal(email, serverUrl),
+        })
+      }
     }
     openDropdownMenu(anchor, items)
   }
 
   // ── modal helpers ───────────────────────────────────────────────────────────
 
-  function openModal(title: string, bodyEl: HTMLElement): () => void {
+  function openModal(title: string, bodyEl: HTMLElement, onClose?: () => void): () => void {
     const overlay = document.createElement('div')
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px'
     const box = document.createElement('div')
@@ -3257,6 +3315,7 @@ export async function setupLeftPane() {
     close.style.cssText = 'background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:0 4px'
     const dismiss = () => {
       document.removeEventListener('keydown', onKey)
+      onClose?.()
       overlay.remove()
     }
     const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') dismiss() }
@@ -3470,13 +3529,20 @@ export async function setupLeftPane() {
     }
   }
 
-  function openDisplayNameModal(did: string, email?: string) {
+  // `email`, when present, is the real login address — the ONLY thing
+  // `sessions.find`/`currentDisplayName`'s Identity.email match below can be
+  // looked up by. `shownEmail` is purely for the subheading text a human
+  // reads; falls back to `email` for a DID-less/legacy account where the two
+  // already coincide (found live 2026-08-19 alongside this same identity's
+  // avatar-initial and account-menu gaps: this modal's own subtext was
+  // showing the raw SCID address under "Change display name").
+  function openDisplayNameModal(did: string, email?: string, shownEmail?: string) {
     const session = email ? sessions.find(s => s.account.email === email) : undefined
     const currentName = currentDisplayName(did, email)
     const body = document.createElement('form')
     body.style.cssText = 'display:flex;flex-direction:column;gap:10px'
     body.innerHTML = `
-      <div style="font-size:12px;color:var(--text-dim)">${esc(email ?? did)}</div>
+      <div style="font-size:12px;color:var(--text-dim)">${esc(shownEmail ?? email ?? did)}</div>
       <input class="cmd-input" type="text" name="name" value="${esc(currentName)}" placeholder="Display name" required autofocus>
       <div data-role="error" style="color:#ff3b30;font-size:12px;display:none"></div>
       <div data-role="ok" style="color:#34c759;font-size:12px;display:none"></div>
@@ -3919,6 +3985,37 @@ export async function setupLeftPane() {
     showSysMsg(`Claimed ${email}`)
   }
 
+  // The "dot + PROTO : address" head row every relay/mail card starts with —
+  // shared by the unclaimed ghost card (renderUnclaimedMailCard) and each
+  // connected relay's real card (the relayCards loop in renderAccountsList)
+  // so their protocol labels can never diverge again (2026-08-19,
+  // user-reported: the two were separate near-identical blocks, and only one
+  // of them actually asked the relay via relayProtocolLabel — the other had
+  // 'MAIL' hardcoded, so the SAME relay read "MAIL" on one card and "Mail" on
+  // the other).
+  function renderCardHeadRow(serverUrl: string, address: string, dotColor: string): HTMLElement {
+    const headRow = document.createElement('div')
+    headRow.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0'
+    const dot = document.createElement('span')
+    dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${dotColor}`
+    const protoEl = document.createElement('span')
+    protoEl.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--accent2, #888);flex-shrink:0'
+    // Relay-advertised label (GET /relay-info) — no hardcoded guess. Cache-
+    // first render, refreshed once fetchRelayInfo resolves.
+    protoEl.textContent = relayProtocolLabel(serverUrl)?.text ?? '…'
+    fetchRelayInfo(serverUrl).then(() => {
+      protoEl.textContent = relayProtocolLabel(serverUrl)?.text ?? '?'
+    }).catch(() => {})
+    const sep = document.createElement('span')
+    sep.style.cssText = 'color:var(--text-dim);flex-shrink:0'
+    sep.textContent = ':'
+    const addrEl = document.createElement('span')
+    addrEl.style.cssText = 'font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
+    addrEl.textContent = address
+    headRow.append(dot, protoEl, sep, addrEl)
+    return headRow
+  }
+
   // The home mail relay's card when this identity has NOT claimed it yet —
   // same row shape as a real relay card (relayCards below), styled dim/gray
   // and reduced to a single "Claim account" action, so the surface a
@@ -3971,20 +4068,7 @@ export async function setupLeftPane() {
 
     const left = document.createElement('div')
     left.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:4px'
-    const headRow = document.createElement('div')
-    headRow.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0'
-    const dot = document.createElement('span')
-    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;flex-shrink:0;background:var(--text-dim)'
-    const protoEl = document.createElement('span')
-    protoEl.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--text-dim);flex-shrink:0'
-    protoEl.textContent = 'MAIL'
-    const sep = document.createElement('span')
-    sep.style.cssText = 'color:var(--text-dim);flex-shrink:0'
-    sep.textContent = ':'
-    const addrEl = document.createElement('span')
-    addrEl.style.cssText = 'font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
-    addrEl.textContent = email
-    headRow.append(dot, protoEl, sep, addrEl)
+    const headRow = renderCardHeadRow(mailUrl, email, 'var(--text-dim)')
     const statusRow = document.createElement('div')
     statusRow.style.cssText = 'font-size:11px;color:var(--text-dim)'
     statusRow.textContent = 'Not claimed'
@@ -4008,6 +4092,46 @@ export async function setupLeftPane() {
     $list.appendChild(row)
   }
 
+  // "Claim identity" (the identity heading card's own hamburger item, in its
+  // "not created" state below) opens the same #new-user-page form used for
+  // the zero-account case, but as a dismissable popup (openModal) instead of
+  // mounted inline in the account list (2026-08-19, user-requested: mounting
+  // it inline there, even non-centered, still read as the page's layout
+  // rearranging around a form that wasn't asked for yet).
+  function openClaimIdentityModal(): void {
+    const body = document.createElement('div')
+    body.style.cssText = 'min-width:280px'
+    // openModal FIRST, empty — it inserts `body` into the live document.
+    // mountNewUserPageInline's own refreshNewUserPage does its
+    // document.getElementById('nu-username'/'nu-hostname') lookups
+    // synchronously, and those only find anything once `body` is actually
+    // attached: mounting into a still-detached `body` (this modal's own
+    // first cut) left the username/hostname fields silently unfilled — no
+    // error, just document.getElementById returning null for a subtree the
+    // document doesn't contain yet (2026-08-19, user-reported: the popup's
+    // fields stayed blank while the ordinary inline mount's never did).
+    const dismiss = openModal('Create identity', body, () => {
+      unmountNewUserPageInline()
+      if (claimIdentityDismiss === dismiss) claimIdentityDismiss = null
+    })
+    claimIdentityDismiss = dismiss
+    setupNewUserPage()
+    mountNewUserPageInline(body, { centered: false })
+  }
+
+  // Set only while openClaimIdentityModal's popup is open — checked (and
+  // cleared) at the top of renderAccountsList below. account-create.ts's
+  // submit handler has no reference to this modal; it only knows to call
+  // refreshAccountsList() on success, same as the inline zero-account form
+  // does. Closing the modal here, once ownDid() confirms creation actually
+  // landed, is what stands in for that missing direct hook (2026-08-19,
+  // user-reported: without it, a successful claim left an empty "Create
+  // identity" box on screen — hideNewUserPage's display:none only hid the
+  // form INSIDE it, and refreshAccountsList's own unmountNewUserPageInline
+  // then yanked that hidden node back out to document.body, emptying the
+  // modal box rather than closing it).
+  let claimIdentityDismiss: (() => void) | null = null
+
   function renderAccountsList() {
     const $list = document.getElementById('cmd-acc-list')
     if (!$list) return
@@ -4015,7 +4139,20 @@ export async function setupLeftPane() {
     // #new-user-page node in this very container, and `textContent = ''`
     // would destroy it outright — taking #new's only DOM (and every listener
     // bound to it) with it for the rest of the session.
-    unmountNewUserPageInline()
+    //
+    // Skipped while openClaimIdentityModal's popup holds the node instead —
+    // renderAccountsList can run for reasons that have nothing to do with
+    // that popup (an unrelated message arriving, a sync tick), and yanking
+    // the node out from under it mid-fill would break the open form. Once
+    // identity creation actually lands (ownDid() true), close the popup via
+    // its own dismiss — which itself calls unmountNewUserPageInline — rather
+    // than unmounting out from under it here; anything else just leaves the
+    // node where it is.
+    if (claimIdentityDismiss) {
+      if (ownDid()) { claimIdentityDismiss(); claimIdentityDismiss = null }
+    } else {
+      unmountNewUserPageInline()
+    }
     $list.textContent = ''
     const accounts = loadStoredAccounts()
     // One session = one identity (ARC.md 2026-07-14): every loaded account
@@ -4059,6 +4196,13 @@ export async function setupLeftPane() {
       // stays optional rather than being faked.
       const did = repAccount?.did ?? ownDid()
       const repEmail = repAccount?.email
+      // Human-facing wherever this is only ever READ, not looked up by —
+      // the avatar-letter fallback and the display-name modal's own
+      // subheading (openDisplayNameModal below). `repEmail` itself stays
+      // the login address everywhere it's a LOOKUP key (currentDisplayName's
+      // Identity.email match, avatarDataUrl's save key — pickAndSetIdentityAvatar
+      // saves under `a.email`, never the alias).
+      const repShownEmail = repAccount?.displayEmail ?? repEmail
       if (did) {
         identityAvatar.textContent = ''
         identityAvatar.style.cssText = 'cursor:pointer;position:relative;overflow:hidden'
@@ -4068,7 +4212,7 @@ export async function setupLeftPane() {
         // picture, falling back to the address only for a picture saved
         // before that dual-write existed.
         const ownAvatar = avatarDataUrl(did) ?? (repEmail ? avatarDataUrl(repEmail) : undefined)
-        const initialsSource = repEmail ?? currentDisplayName(did)
+        const initialsSource = repShownEmail ?? currentDisplayName(did)
         if (ownAvatar) {
           identityAvatar.style.cssText += ';background:transparent'
           const img = document.createElement('img')
@@ -4081,7 +4225,7 @@ export async function setupLeftPane() {
         }
         identityAvatar.onclick = (ev) => { ev.stopPropagation(); pickAndSetIdentityAvatar(did) }
         identityName.textContent = currentDisplayName(did, repEmail)
-        identityName.onclick = (ev) => { ev.stopPropagation(); openDisplayNameModal(did, repEmail) }
+        identityName.onclick = (ev) => { ev.stopPropagation(); openDisplayNameModal(did, repEmail, repShownEmail) }
         wireIdentityDid(identityDid, did)
         wireIdentityHeading(did)
         // Change display name moved onto the name text's own click (hover
@@ -4100,7 +4244,7 @@ export async function setupLeftPane() {
           identityMenuBtn.onclick = (ev) => {
             ev.stopPropagation()
             openDropdownMenu(identityMenuBtn, [
-              ...(identityProtected ? [] : [{ label: 'Protect with passkey', onClick: () => protectWithPasskey(repEmail ?? did) }]),
+              ...(identityProtected ? [] : [{ label: 'Protect with passkey', onClick: () => protectWithPasskey(repShownEmail ?? did) }]),
               { label: 'Export Messages', onClick: () => exportIdentityMessages(did) },
               { label: 'Import Messages', onClick: () => importIdentityMessages() },
               // did:webvh only — did:dht has no location to move (its DID is
@@ -4130,21 +4274,74 @@ export async function setupLeftPane() {
         // own "Claim account" — renderUnclaimedMailCard), which provisions
         // under THIS identity's DID — no separate button here.
         identitySection.style.display = ''
+      } else if (accounts.length) {
+        // No DID yet, but a DID-less relay account already exists (a plain
+        // JMAP login) — the heading card shows in a "not created" state
+        // instead of disappearing outright (2026-08-19, user-requested: a
+        // separate ad-hoc placeholder row was tried first and looked like a
+        // different component; this reuses the real one instead). Its only
+        // action is "Claim identity", which opens the create/restore form as
+        // a popup (openClaimIdentityModal, above).
+        //
+        // Gated on accounts.length: with NO accounts at all either, the
+        // nothingSetUp branch below already takes over the whole page with
+        // this same form — showing this card too would just be the same
+        // "create an identity" offer twice at once (2026-08-19,
+        // user-reported).
+        identitySection.classList.remove('expanded')
+        identityFields.onclick = null
+        identityAvatar.onclick = null
+        // A generic placeholder, not blank — the avatar slot otherwise reads
+        // as a layout gap rather than "an identity goes here" (2026-08-19,
+        // user-requested).
+        identityAvatar.style.cssText = 'background:var(--input-bg);color:var(--text-dim);display:flex;align-items:center;justify-content:center'
+        identityAvatar.innerHTML = '<svg viewBox="0 0 24 24" width="55%" height="55%" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.5-7 8-7s8 3 8 7"/></svg>'
+        identityAvatar.title = ''
+        identityName.textContent = 'Identity'
+        identityName.onclick = null
+        identityDid.textContent = 'Not created'
+        const didRow = identityDid.parentElement
+        if (didRow) { didRow.dataset.fullDid = ''; didRow.onclick = null }
+        if (identityMenuBtn) {
+          identityMenuBtn.style.display = ''
+          identityMenuBtn.onclick = (ev) => {
+            ev.stopPropagation()
+            openDropdownMenu(identityMenuBtn, [
+              { label: 'Claim identity', onClick: () => openClaimIdentityModal() },
+            ])
+          }
+        }
+        identitySection.style.display = ''
       } else {
+        // Truly nothing set up (no DID, no accounts at all) — the
+        // nothingSetUp branch below owns this state with the full
+        // create-identity form; the heading card stays hidden rather than
+        // duplicating that offer.
         identitySection.style.display = 'none'
         identitySection.classList.remove('expanded')
       }
     }
-    // Nothing set up on this device: show the #new signup form right here
-    // rather than a bare "No accounts" line (2026-08-12, user-requested) —
-    // it's the only thing there is to do from this page in that state, and
-    // the floating "+ New Relay" button stays available alongside it for
-    // joining an existing relay instead. setup* are idempotent, so calling
-    // them on every render is free.
+    // Nothing set up on this device at all: show the #new signup form right
+    // here rather than a bare "No accounts" line (2026-08-12,
+    // user-requested) — it's the only thing there is to do from this page in
+    // that state, and the floating "+ New Relay" button stays available
+    // alongside it for joining an existing relay instead. setup* are
+    // idempotent, so calling them on every render is free.
+    //
+    // A device can also hold a plain, DID-less JMAP relay account (added via
+    // config's "+ New Relay" → Log in with a password — jmap/client.ts's
+    // non-DID branch) with no DID identity of its own yet — accounts.length
+    // > 0 but still nothing to show above the relay cards. Mounting the
+    // create-identity form inline unconditionally there was tried first, but
+    // it pushed those real, already-connected accounts off-screen
+    // (2026-08-19, user-reported), so instead the identity heading card
+    // above shows its own "not created" state with a "Claim identity" menu
+    // item, which opens the same form as a popup (openClaimIdentityModal)
+    // rather than mounting it inline here at all.
     const nothingSetUp = !accounts.length && !ownDid()
     if (nothingSetUp) {
       setupNewUserPage()
-      mountNewUserPageInline($list)
+      mountNewUserPageInline($list, { centered: true })
     }
     // With the signup form standing in for the whole page, "account" names
     // something that doesn't exist yet — the app's own name is what this
@@ -4188,27 +4385,11 @@ export async function setupLeftPane() {
       const left = document.createElement('div')
       left.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:4px'
 
-      const headRow = document.createElement('div')
-      headRow.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0'
-      const dot = document.createElement('span')
-      dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${connected ? '#34c759' : '#ff3b30'}`
-      const protoEl = document.createElement('span')
-      protoEl.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--accent2, #888);flex-shrink:0'
-      // Relay-advertised label (GET /relay-info, context.ts's relayProtocolLabel) —
-      // no hardcoded AP/mail guess here. Cache-first render, refreshed once
-      // fetchRelayInfo resolves (mirrors fetchAccountInfo's pattern below).
-      protoEl.textContent = relayProtocolLabel(a.serverUrl)?.text ?? '…'
-      const sep = document.createElement('span')
-      sep.style.cssText = 'color:var(--text-dim);flex-shrink:0'
-      sep.textContent = ':'
-      const addrEl = document.createElement('span')
-      addrEl.style.cssText = 'font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
       // The human-facing alias, not the login identity — see StoredAccount's
       // own note on why the two differ for a SCID-primary account
       // (PLANSCID.md). Falls back to `a.email` for an account still on the
       // legacy scheme, where the two are the same address.
-      addrEl.textContent = a.displayEmail ?? a.email
-      headRow.append(dot, protoEl, sep, addrEl)
+      const headRow = renderCardHeadRow(a.serverUrl, a.displayEmail ?? a.email, connected ? '#34c759' : '#ff3b30')
 
       const statsRow = document.createElement('div')
       statsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:var(--text-dim)'
@@ -4272,7 +4453,7 @@ export async function setupLeftPane() {
       menuBtn.addEventListener('mouseout', () => { menuBtn.style.background = 'none' })
       menuBtn.addEventListener('click', (ev) => {
         ev.stopPropagation()
-        openAccountMenu(menuBtn, a.email, a.serverUrl, a.did)
+        openAccountMenu(menuBtn, a.email, a.serverUrl, a.did, a.displayEmail)
       })
       // Overlaid on this card's own hamburger (not the top-level one) while
       // fetchAccountInfo — the actual JMAP Identity.get/Email.query round trip
@@ -4463,9 +4644,6 @@ export async function setupLeftPane() {
           statSync.textContent = `Sync: ${fmtRelTime(info.lastSyncAt)}`
         }).catch(() => {}).finally(() => { menuSpinner.style.display = 'none' })
       }
-      fetchRelayInfo(a.serverUrl).then(() => {
-        protoEl.textContent = relayProtocolLabel(a.serverUrl)?.text ?? '?'
-      }).catch(() => {})
     }
 
     // No trailing "+ New Relay" card any more (2026-08-12, user-requested):

@@ -26,6 +26,7 @@ import { signBinding } from './binding.ts'
 import { generateDeviceKey, signVouch, signSessionLogin } from './devicebind.ts'
 import { getDidRecord, storeDidRecord, withDidLock } from './store.ts'
 import { hexToBytes } from '../utils.ts'
+import { scidToLocalpart } from './webvh/scid-localpart.ts'
 
 const bytesToHex = (b: Uint8Array): string => [...b].map(x => x.toString(16).padStart(2, '0')).join('')
 
@@ -47,8 +48,8 @@ export function deviceLabel(): string {
  * directly (PLANSCID.md).
  *
  * A SCID-primary account's login identity is the DID's permanent SCID
- * segment, computed straight from the DID string — never from what the
- * document happens to be advertising, which is the delivery ALIAS
+ * segment's z-base-32 projection, computed straight from the DID string —
+ * never from what the document happens to be advertising, which is the delivery ALIAS
  * (PLANSCID.md's whole point: the alias can be renamed freely without ever
  * touching the account it points at). Falls back to `publishedAddress`'s own
  * localpart when the DID doesn't read as biset's own did:webvh shape (a
@@ -59,16 +60,35 @@ export function deviceLabel(): string {
  * The DOMAIN half always comes from `publishedAddress`, never the DID's own
  * domain segment — a relay can serve mail for an identity whose DID lives
  * elsewhere entirely, and the two are not required to match. */
+// The relay's permanent account localpart is not the human name a did:webvh
+// path segment happens to carry (e.g. account-create.ts's randomHex4()) and
+// not the base58 SCID made lowercase either. It is a z-base-32 encoding of
+// the SCID bytes (jmapsmtp server.rs's identical `primary_localpart`
+// derivation — `did::scid_localpart::to_localpart`) — falls back to
+// `fallback` when `did` doesn't read as biset's own did:webvh shape (a
+// different method, an apex DID, a foreign convention), same as the server's
+// own `unwrap_or_else`. Shared by scidLoginAddress (restore/reconnect) and
+// provisionAccount's binding signature (claim) so the two can never drift
+// apart the way they did until 2026-08-19: the server started keying Lv1
+// accounts by this projection on 2026-08-18, but provisionAccount kept
+// signing the binding statement with the human username, so every claim's
+// signature verified against a string the anchor never reconstructed —
+// `did binding rejected` on every attempt, not just right after creation.
+async function primaryLocalpart(did: string, fallback: string): Promise<string> {
+  try {
+    const { parseWebvhDid } = await import('./webvh/identifier.ts')
+    const parsed = parseWebvhDid(did)
+    const scidLocalpart = scidToLocalpart(parsed.scid)
+    if (scidLocalpart) return scidLocalpart
+  } catch { /* not a biset-shaped did:webvh — fallback's own localpart already is the login identity */ }
+  return fallback
+}
+
 export async function scidLoginAddress(did: string, publishedAddress: string): Promise<{ email: string; username: string; domain: string } | null> {
   const at = publishedAddress.lastIndexOf('@')
   if (at <= 0) return null
   const domain = publishedAddress.slice(at + 1)
-  let username = publishedAddress.slice(0, at)
-  try {
-    const { parseWebvhDid } = await import('./webvh/identifier.ts')
-    const parsed = parseWebvhDid(did)
-    if (parsed.scid) username = parsed.scid.toLowerCase()
-  } catch { /* not a biset-shaped did:webvh — publishedAddress's own localpart already is the login identity */ }
+  const username = await primaryLocalpart(did, publishedAddress.slice(0, at))
   return { email: `${username}@${domain}`, username, domain }
 }
 
@@ -152,7 +172,10 @@ export async function unsealCurrentIdentity(
 export async function provisionAccount(p: ProvisionParams): Promise<ProvisionResult> {
   const url = p.serverUrl.replace(/\/$/, '')
   const host = hostOf(url)
-  const bindProof = signBinding(p.rootPrivateKey, p.did, p.username, host)
+  // Signed with the SAME localpart the server will actually register the
+  // account under (primaryLocalpart's own note) — never `p.username`, the
+  // human name, which the anchor's rebuilt statement no longer contains.
+  const bindProof = signBinding(p.rootPrivateKey, p.did, await primaryLocalpart(p.did, p.username), host)
   const device = await ensureJmapDeviceKey(p.did)
   const vouchProof = signVouch(p.rootPrivateKey, p.did, device.publicKey, deviceLabel())
   const body = {
