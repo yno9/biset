@@ -547,8 +547,30 @@ export function startAnchor({ claims, port, hostname, mediator, webvh, relayToke
         }, resolveRootKey)
         if (!r.ok) return text('did binding: ' + r.reason, 401)
 
-        const existed = claims.read(domain, localpart) !== null
-        if (!claims.claim(domain, localpart, did)) {
+        // A did:webvh identifier embeds its OWN username path segment, so a
+        // rename (edit-identity.ts's moveWebvhIdentity — the same identity,
+        // preserved SCID, but a genuinely different DID string per did:webvh's
+        // portability mechanism) leaves the claim registry holding the
+        // PRE-rename DID string forever: claim()'s own string equality then
+        // reads a legitimate re-claim by the SAME identity as somebody else's
+        // name, 409ing it as `identity owned by a different key` (found live,
+        // 2026-08-19). The registry already has a purpose-built self-heal for
+        // exactly this drift — `rebind()`, used by handleAliasTarget below
+        // whenever a resolved document's current `id` no longer matches the
+        // stored claim — just never wired into this path. Safe to reuse here
+        // too: `verifyDIDBinding` above already proved cryptographic control
+        // of `did` (the NEW string) before this point, so a same-SCID mismatch
+        // here is exactly the rename case, not a stranger's claim — only a
+        // DIFFERENT SCID is still a genuine conflict.
+        const existingClaim = claims.read(domain, localpart)
+        const existed = existingClaim !== null
+        const sameIdentity = existingClaim !== null && existingClaim.did !== did && (() => {
+          try { return parseWebvhDid(existingClaim.did).scid === parseWebvhDid(did).scid }
+          catch { return false }
+        })()
+        if (sameIdentity) {
+          claims.rebind(domain, localpart, did)
+        } else if (!claims.claim(domain, localpart, did)) {
           return text('identity owned by a different key', 409)
         }
         return json(claims.read(domain, localpart), existed ? 200 : 201)

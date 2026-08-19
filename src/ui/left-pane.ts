@@ -3916,6 +3916,7 @@ export async function setupLeftPane() {
       }
     }
     let email: string
+    let reconnected = false
     const displayEmail = `${username}@${didDomain}`
     if (res.ok) {
       // res.email is the relay's own answer — a SCID-primary account
@@ -3946,6 +3947,7 @@ export async function setupLeftPane() {
       const resolved = await scidLoginAddress(did, displayEmail)
       if (!resolved) { showSysMsg(res.error); return }
       email = resolved.email
+      reconnected = true
     } else {
       // The relay's own text (provision.ts's ProvisionResult.error) —
       // IdentityOwnedByAnother (a genuine conflict) also lands here, now
@@ -4013,7 +4015,14 @@ export async function setupLeftPane() {
     const { fetchRelayInfo } = await import('../context.ts')
     await fetchRelayInfo(mailUrl)
     renderAccountsList()
-    showSysMsg(`Claimed ${email}`)
+    // Distinguishes an actual new claim from the UsernameTaken recovery path
+    // above — "Claimed" on an address that was already this identity's own,
+    // logged back into, reads as if a second account had just been created
+    // (2026-08-19, user-reported).
+    // displayEmail (the alias), never the bare SCID `email` — a human
+    // reading this toast has no reason to ever see the internal permanent
+    // address (PLANSCID.md's whole point).
+    showSysMsg(reconnected ? `Logged in as ${displayEmail}` : `Claimed ${displayEmail}`)
   }
 
   // The "dot + PROTO : address" head row every relay/mail card starts with —

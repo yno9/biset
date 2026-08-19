@@ -18,7 +18,7 @@ import { signBinding } from '../src/did/binding.ts'
 import { ClaimStore } from '../src/anchor/store.ts'
 import { startAnchor } from '../src/anchor/server.ts'
 import { WebvhLogStore } from '../src/anchor/webvh-store.ts'
-import { createGenesis } from '../src/did/webvh/publish.ts'
+import { createGenesis, moveDidToNewDomain } from '../src/did/webvh/publish.ts'
 
 let fails = 0
 const ok = (name: string, cond: boolean, detail = '') => {
@@ -169,6 +169,34 @@ console.log('\n=== relay 以外は書けない（この穴のために書かれ�
     const r = await fetch(`${A}/_anchor/identity/victim?domain=${DOMAIN}`, { headers: { 'Authorization': `Bearer ${TOKEN}` } })
     return r.status === 404
   })(), '認可の問題ではなく、存在しない')
+}
+
+console.log('\n=== renameでDID文字列が変わっても、同一SCIDなら再claimできる（rebind、self-heal）===')
+{
+  // A did:webvh identifier embeds its own path segment, so a rename (the
+  // portability "move" mechanism — same identity, preserved SCID, but a
+  // genuinely different DID string) used to make claim()'s plain string
+  // equality read the SAME identity re-claiming its OWN address as a
+  // stranger's, 409ing it forever (found live, 2026-08-19: delete+reclaim
+  // after an Edit-identity rename). handleAliasTarget already self-heals
+  // this exact drift via rebind() — this proves the claim path does too.
+  const renamer = await identity()
+  const pub = ed25519.getPublicKey(renamer.priv)
+  const first = await claim('renamer', { did: renamer.did, ...proofFor(renamer, 'renamer') })
+  ok('最初のclaimは通る', first.status === 201, `status=${first.status}`)
+
+  const { newDid } = await moveDidToNewDomain({
+    oldDid: renamer.did, newDomain: DID_DOMAIN, newUsername: 'renamer2',
+    identityPublicKey: pub, signingPrivateKey: renamer.priv, signingPublicKey: pub,
+    relays: [], addresses: [],
+  })
+  ok('DID文字列は変わるが同一SCID', newDid !== renamer.did && newDid.split(':')[2] === renamer.did.split(':')[2],
+    `old=${renamer.did} new=${newDid}`)
+
+  const reclaimed = await claim('renamer', { did: newDid, ...proofFor({ priv: renamer.priv, did: newDid }, 'renamer') })
+  ok('rename後の同一identityによる再claimは409にならない', reclaimed.status === 200, `status=${reclaimed.status}`)
+  ok('索引が新DID文字列へ更新されている（rebind）', addressesOf(newDid).join() === `renamer@${DOMAIN}`)
+  ok('旧DID文字列はもう索引に無い', addressesOf(renamer.did).length === 0)
 }
 
 console.log('\n=== 証明が壊れている場合 ===')
