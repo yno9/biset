@@ -162,12 +162,12 @@
 
 ### 5.2 Local JMAP Gateway
 
-- [ ] `Session` と local account capability を実装する。
-- [ ] `Mailbox/get`、`Email/get`、`Email/query` の read path を実装する。
+- [x] `Session` と read-only local account capability を実装する。
+- [-] memory read model 上の `Mailbox/get`、`Email/get`、`Email/query` read path を実装した。IndexedDB vault projection adapter は未実装。
 - [ ] `Email/changes`、`Mailbox/changes`、query state を実装する。
 - [ ] `Email/set`、`Mailbox/set`、`Email/import` を immutable vault event へ変換する。
 - [ ] `EmailSubmission/set` を outbound intent に変換する。
-- [ ] local blob download / range read を実装する。
+- [-] local read model 経由の blob download / range read を実装した。encrypted vault object/chunk adapter は未実装。
 - [ ] same UI test を Local/Remote account の両方で実行する。
 
 **完了条件:** Biset account は offline でも JMAP UI で過去 vault を一覧・検索・閲覧できる。

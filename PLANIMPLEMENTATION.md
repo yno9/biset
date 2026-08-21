@@ -586,6 +586,8 @@ UI と email/mailbox/submission helper は `AccountTransport` だけを見る。
 
 現在 `src/local-jmap/remote.ts` は第三者 JMAP account 向けに standard `/.well-known/jmap` discovery、`apiUrl` への JMAP method call、`downloadUrl` template による blob download を実装している。この transport は Biset identity / MLS / vault に依存しないため、client は local vault gateway の完成前でも pure remote-JMAP mode を維持できる。provider 固有の credential acquisition と既存 UI settings の移植は別工程である。
 
+`src/local-jmap/gateway.ts` は同じ `AccountTransport` の local 実装である。read model が返す local vault projection から、read-only `Session`、`Mailbox/get`、`Email/get`、`Email/query`、local blob range download を返す。現段階の `MemoryLocalJmapReadModel` は protocol test 用であり、次に IndexedDB の vault projection / encrypted object reader を `LocalJmapReadModel` として実装する。したがって UI は transport の違いを意識せず、remote account と local-vault account の双方へ同じ JMAP call を送れる。
+
 ## 8. 実装モジュールと現状コードの対応
 
 ### 8.1 新しい論理モジュール
