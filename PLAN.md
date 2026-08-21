@@ -55,7 +55,7 @@
 - [x] recipient snapshot に入っていても、pull 時点で trusted roster から Remove 済みなら ingress を渡さない。
 - [x] ACK hash、snapshot、authorizer を確認後に payload を削除し、tombstone だけを残す。
 - [x] expiry で payload を削除する。
-- [-] trusted-device roster を mediation authorizer adapter に接続した。Ingress ACK / delivery ACK の実際の DID signature verifier は未実装。
+- [-] trusted-device roster を mediation authorizer adapter に接続し、DID/webvh public-key resolver を入力に取る Ed25519 verifier を実装した。actual DID resolution / key rotation cache は未実装。
 - [-] crash-safe な SQLite `VaultDeliveryStore` を追加した。core deployment への authorizer/persistence wiring と restart/concurrency coverage は未実装。
 - [ ] tombstone retention / dedup retention / quota eviction の数値を policy として決める。
 - [-] signed shared vault delivery の `append` / `pull` / `ack` を narrow HTTP adapter と browser transport に結び付けた。production core composition / persistence は未実装。`status` は core internal のみ。
@@ -255,5 +255,6 @@
 | 2026-08-21 | `8fb0bfa` | authorizer 注入なしでは relay を公開しない安全な core application composition を追加 |
 | 2026-08-21 | `27af8c3` | bounded shared vault delivery を crash-safe SQLite へ永続化し、再起動後 pull を検証 |
 | 2026-08-21 | `7866f95` | accepted MLS device roster の public projection を SQLite 永続化 |
+| 2026-08-21 | `ff483d0` | roster-selected DID public key を使う Ed25519 device-control verifier を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
