@@ -1,831 +1,88 @@
-# biset Architecture Notes
+# Biset Architecture
 
-## Build flow
+*Status: skeleton. The implementation plan is authoritative until this document is expanded.*
 
-This repo builds **two independent artifacts**, each self-contained and free of runtime dependencies:
+## 1. Purpose
 
-| | Command | Output | What it is |
-|---|---|---|---|
-| **client** | `bun run build` | `dist/index.html` | The app. A single HTML file — `dist/app.js` and `src/style.css` are inlined at build time, so it runs from `file://` with no dev server (local-first design). |
-| **anchor** | `bun run build:anchor` | `biset-anchor` | The optional identity registry, a single compiled binary (Bun runtime embedded). See [Identity layer (DID)](#identity-layer-did). |
+## 2. Design Principles
 
-They share `src/did/` — the did:dht wire format, crypto and chaining — and nothing else. Two tsconfigs keep them apart **by type checker rather than discipline**: `tsconfig.json` (client: DOM, no Bun types, `src/anchor/**` excluded) and `tsconfig.anchor.json` (anchor: Bun types, no DOM). `bun run typecheck` runs both. Because the anchor config's `include` names only its entry tree and TypeScript follows imports from there, any browser dependency creeping into `src/did/` fails the check automatically.
+- Endpoint-owned vaults are the long-term source of truth.
+- The core provides bounded delivery, not a mailbox archive.
+- JMAP remains the client data API.
+- Device membership and vault key epochs are managed by MLS self groups.
 
-An operator running **anchorless** (no DID at all — see below) builds only the client and never touches the anchor.
+## 3. System Artifacts
 
-### Build and deploy
+### 3.1 Biset Client
 
-```sh
-bun run build
-```
+### 3.2 Biset Core / Anchor
 
-This runs the `build` script in `package.json`:
-```
-bun build src/main.ts --outfile=dist/app.js --target=browser --minify-syntax --minify-whitespace --define ... && bun run scripts/inline.mjs
-```
+### 3.3 Protocol Schemas
 
-`scripts/inline.mjs` reads `src/style.css` and `dist/app.js` and splices them into `dist/index.html` replacing the placeholder comments. Running `bun build` alone updates `dist/app.js` but leaves `dist/index.html` with the old inlined code — always use `bun run build`.
+## 4. Trust and Identity Model
 
-**Deploy** to production (`v1`) with `./deploy.sh [app|landing|all]`. Two **separate artifacts** are served from the same jmapap host — never conflate them:
+### 4.1 Identity
 
-| Artifact | Source | Server dir | Served at | Config |
-|---|---|---|---|---|
-| **app** (chat client) | `dist/index.html` (built) | `/root/jmapap/app/` | `t.biset.md` | jmapap `web_root:"app"` |
-| **landing** (public site) | `home/*` (index + assets + `tos.html`) | `/root/jmapap/apex/` | `biset.md` apex | Caddy `root * /root/jmapap/apex` |
+### 4.2 Devices
 
-`deploy.sh` builds (app only), uploads, then verifies via **sha match + live URL** so a wrong-directory or stale deploy fails loudly. Do not `scp` by hand — deploying the app over the landing dir (or vice versa) silently breaks one of the two sites, and file mtimes alone won't reveal it.
+### 4.3 MLS Self Group
 
-### Source layout
+### 4.4 Revocation and Restore
 
-| Path | Role |
-|---|---|
-| `src/index.html` | Shell HTML; CSS/JS placeholders replaced at build |
-| `src/style.css` | All styles; inlined into `<style>` by `inline.mjs` |
-| `src/main.ts` | Entry point — routing, global event wiring |
-| `src/ui/left-pane.ts` | Left column, LP_COMMANDS (account/config/compose), inbox list |
-| `src/ui/thread.ts` | Right column — thread render, reply dock, scroll |
-| `src/ui/shell.ts` | `showApp`, `startPolling`, `fetchMessages`, `showSysMsg` |
-| `src/ui/account-create.ts` | New-user onboarding page (`#new`), account-create overlay |
-| `src/context.ts` | Global state — sessions, current inbox, stored accounts, `identityKey()` (DID-or-email grouping) |
-| `src/app.ts` | Session init, PGP init, inbox summary loading |
-| `src/did/` | Identity layer — key derivation, DID document build/parse, DHT resolve/publish, contact discovery, self-resolution, provisioning, recovery. Platform-free: the only tree **shared with the anchor**. See [Identity layer (DID)](#identity-layer-did) below |
-| `src/anchor/` | The anchor binary — claim registry, Cloudflare DNS, HTTP routes. Server-only; never imported by `main.ts` |
-| `src/did/contacts.ts` | JSContact (RFC 9553) Card building + DID-rooted contact grouping/routing helpers (`contactIdentityKey`, `allKnownAddressesFor`, `nameForContact`, `representativeAddressForDid`) |
-| `src/ui/custom-domain.ts` | "Add my own domain" flow (BYO-domain onboarding UI) |
-| `src/jmap/` | JMAP client, email builder, querystate |
-| `src/deltachat/` | DeltaChat protocol knowledge (see below) |
-| `src/pgp/` | E2EE / symmetric crypto primitives |
-| `src/mail/reactions.ts` | RFC 9078 reactions (generic IETF standard — not DeltaChat-specific, kept out of `deltachat/`) |
-| `src/store/` | In-memory stores (`messages.ts`, `threads.ts`, `mailboxes.ts`, `identities.ts`, `contacts.ts`) + `idb.ts`/`cache.ts` browser-local IndexedDB persistence. See [Storage model](#storage-model) |
-| `src/vault/persist.ts` | Optional filesystem vault sync (user-mounted directory) — separate from the always-on IndexedDB cache in `store/` |
+## 5. Vault Model
 
-## Layout
+### 5.1 Events and Objects
 
-Two-pane app (`#app`):
-- **`#left-pane`** — card with margin, collapsible. Contains search, inbox list, LP_COMMANDS.
-- **`#right-col`** — flex column containing `#outer` (scrollable) and `#reply-dock` (sticky bottom).
-  - `#outer` contains `#thread-title-row` (sticky top), `#right-pane` (thread/cmd content).
+### 5.2 Manifests and Projections
 
-### Mobile (`≤720px`)
+### 5.3 Segment Keys and Epoch Keys
 
-Left pane is hidden by default. `#app.lp-enabled.show-left` shows the left pane full-screen and hides `#right-col`. `#right-pane` gets `width: 100%` to override the desktop calc.
+### 5.4 Local Persistence and Garbage Collection
 
-### Single-col mode
+## 6. Delivery Model
 
-`#app.single-col.lp-enabled` collapses the left pane to `width: 0` via CSS transition (shrinks from the right). Triggered by Cmd+B or the toggle button.
+### 6.1 Ingress Buffer
 
-## Routing
+### 6.2 Shared Vault Delivery Buffer
 
-Hash-based:
-- `#new` → new-user onboarding page (no app chrome, full-screen)
-- `#account`, `#config`, `#compose`, `#debug` → LP_COMMANDS pages inside the normal app shell (the complete, fixed set — `main.ts`'s `MENU_PAGE_NAMES`)
-- `#contact` → opens a specific inbox thread — see below
-- `#compose/<addr>` → compose page with To pre-filled
+### 6.3 Acknowledgements, Cursors, and TTL
 
-`init()` in `main.ts` reads `location.hash` on load and dispatches accordingly. After account creation on the `#new` page, `showApp()` + `setupLeftPane()` + `startPolling()` run before navigating to `#account`.
+### 6.4 Restore
 
-**A conversation permalink is just the contact (2026-07-14)** — `utils.ts`'s `inboxToHash`/`parseInboxHash`. Which of the user's own logged-in identities/mailboxes a conversation happens to live under is a self-referential detail with no business being in a URL that's fundamentally "who this is with" — an earlier `#user/mailbox/contact` form was simplified down to this single segment. **DID-preferred** (`did/contacts.ts`'s `contactIdentityKey`): an address is a replaceable relay detail, not the identity, so the permalink shouldn't be the one place that still treats it as the "real" name. Falls back to the literal address when no DID is known (most real contacts never publish one — Gmail, Mastodon, etc.).
+## 7. Client Data API
 
-Because a conversation hash is now a single, shapeless segment — the exact same shape a menu-page hash (`#account`) has — `menuHashFromHash` disambiguates via an **explicit allowlist** (`MENU_PAGE_NAMES`) rather than "no slash = menu page" (which stopped working the moment contact hashes lost their own slash). Decoding (`main.ts`'s `matchInboxForHash`) compares via `contactIdentityKey` rather than plain string equality — `InboxSummary.contact` drifts to whichever address most recently had traffic (see [Storage model](#storage-model)'s inbox-grouping note), so a permalink built from an older address must still match the same DID-grouped row, regardless of which of the user's own accounts it's under (a same-contact-under-two-different-logged-in-identities collision is a real but rare edge case — first match wins). If the contact segment is a DID this browser has never resolved yet (a fresh device, or a shared link opened cold), one live DHT resolve (`resolveDidDirect`) is attempted before giving up — the same self-healing property compose's DID input has (below), applied to permalinks.
+### 7.1 Local JMAP Gateway
 
-The left-pane inbox list label (`left-pane.ts`'s `makeLpItem`) follows the same principle — it used to prefix the row with `mailbox / contact`; now it's just the contact's name (if known) or address/group name, self info dropped entirely.
+### 7.2 Remote JMAP Accounts
 
-## Hamburger menu
+### 7.3 Account Routing
 
-One shared `#lp-hamburger-menu` element (`position: fixed`), triggered by two buttons:
-- `#lp-hamburger` — top-right of the right column header (desktop)
-- `#lp-hamburger-left` — top-right of the left pane header (mobile `show-left` mode)
+## 8. Transport Adapters
 
-`main.ts` attaches mouseenter/mouseleave/click handlers to both buttons via a loop. The menu is positioned via `getBoundingClientRect()` of the triggering button.
+### 8.1 DIDComm
 
-## Recurring gotcha: multi-relay identity, one session
+### 8.2 Mail, Autocrypt, and OpenPGP
 
-One `email` identity can be backed by two `sessions[]` entries (mail relay + AP relay, see below). Any operation that mutates server state for "this identity" — mark-read, delete, display-name save — must **group affected emails by `_relay` and dispatch each group through `sessionForRelay(user, relay)`**, not just grab `sessions.find(s => s.account.email === target.user)` (which silently picks one relay's session and no-ops or fails for the other's ids). This exact bug class has recurred independently in unseen-badge marking, delete (`doDeleteInbox` in `left-pane.ts`), and display-name save — when adding a new bulk-mutation feature, apply the relay-grouping pattern from the start.
+### 8.3 ActivityPub
 
-A related trap: after a server-side mutation succeeds, the in-memory `store/` (and its IndexedDB cache) is not automatically updated — `messages.remove(acct, id)` / `removeMessage(acct, id)` (from `vault/persist.ts`) must be called explicitly, or list views rebuilt from `store/` (e.g. `loadLeftInboxes`) keep showing stale data until a manual reload.
+### 8.4 Adapter Host Boundary
 
-## Browser-local cache (`src/store/idb.ts`, `src/store/cache.ts`)
+## 9. Security and Privacy Properties
 
-See [Storage model](#storage-model) for the full map of where data lives (this is one tier of four on the client). Always-on IndexedDB persistence for the in-memory `store/` (messages, threads, mailboxes, identities, contacts, per-relay querystate cursors), distinct from the opt-in filesystem vault (`vault/persist.ts`, requires the user to mount a directory). Loaded at boot via `loadFromCache()` (`main.ts`'s `initInner`, timeout-guarded at 3s so a hung IDB open never blocks app start) so a plain refresh has last-sync data immediately and `sync/session.ts`'s querystate-driven delta sync runs instead of a full historical re-fetch (+ re-decrypt of every PGP message). `db()` deliberately does not cache a rejected `openDB()` promise, and `deleteDB()` closes the cached connection before calling `indexedDB.deleteDatabase()` — otherwise a lingering open connection blocks the delete (`onblocked`, silently treated as success) and queues every subsequent `openDB()` call indefinitely, which looks like "logout → relogin → nothing syncs."
+## 10. Availability and Failure Semantics
 
-## Reactions (RFC 9078)
+## 11. Protocol Versioning and Compatibility
 
-`src/mail/reactions.ts` implements the generic IETF "Simple Mail Reactions" spec, deliberately kept out of `deltachat/protocol.ts` since the wire format isn't DeltaChat-specific. Reactions are detected both in cleartext (`isReactionEmail`, header check before PGP decrypt) and inside decrypted MIME (`isReactionDisposition`), cached on the target `Email` object (`cacheReaction`/`readCachedReaction`), and collected per-thread (`collectReactions`) into a target-messageId → sender → emoji map (latest-per-sender wins; empty body = retraction). Reaction emails are filtered out of normal message lists (`isReaction()` guards in `app.ts`'s inbox-loading functions) and rendered as chips under the target message in `thread.ts`.
+## 12. Deployment and Operations
 
-## Attachments (DeltaChat-compatible)
+## 13. Development Workflow
 
-Sent as `multipart/mixed` MIME (`pgp/crypto.ts`'s `buildMultipartBody`), matching DeltaChat's own attachment convention rather than inventing a biset-specific format — this was a deliberate compatibility choice, not an accident. Text-only sends keep the original flat (non-multipart) body untouched. On receive, `processing.ts` converts decrypted MIME attachment bytes into `MsgAttachment[]` (`{ filename, contentType, dataUrl }`) via the shared `bytesToDataUrl` in `utils.ts` (also used by `deltachat/avatar.ts` for group/contact avatars — one bytes→data-URL encoder, kept in sync). Rendered in `thread.ts`: images as clickable thumbnails (opens full-size in a new tab), other files as a filename + download chip (`<a download>` against the `data:` URL).
+## 14. Migration from the Legacy Relay
 
-## `scrollToFocused` (`ui/thread.ts`) — the two-branch scroll target
+## 15. Decision Record
 
-Two rules, in order: (1) scroll to the bottom of the latest message; (2) **unless** the latest message alone is taller than the available viewport, in which case pin its *top* just below the sticky title row instead (its tail necessarily stays off-screen either way — chasing it just hides the header). Rule 2 needs "is this message's own height greater than `safeHeight` (`outer.clientHeight` minus the reply-dock's covered height)" — `last.offsetHeight > safeHeight`. A previous version instead compared the message's cumulative scroll *offset* (`lastTopInOuter`) against one viewport-height — which is true for any long *thread* regardless of the last message's own height, and false for a single very tall message near the top of a short thread (the exact case rule 2 exists for), so it silently never fired and rule 1 always won. This bug recurred multiple times before the wrong variable was identified — if "scroll lands at the tail of a long message instead of pinning its header" resurfaces, check this condition first before re-deriving the fix from scratch.
-
-## Reply dock
-
-**Visible exactly when it has a reply box in it — never by anyone setting `display` (2026-07-14).** A day of intermittent "reply box missing / flickers and vanishes" reports came down to `renderMenuInboxImpl`, `switchInbox`, and `hideCmdPage` each writing `#reply-dock`'s inline `style.display` by hand: three call sites that had to agree on ordering, and every bug was that agreement breaking. But `style.css` already had `#reply-dock:empty { display: none }`, and `render()` (thread.ts) already either fills the dock with a `.reply-box` or clears its `innerHTML` — **content was already the single source of truth, and `style.display` was a hand-maintained second copy of the same fact**. All three writes are gone; `renderMenuInboxImpl` clears `innerHTML` instead (nothing else would, since a menu page never calls `render()`), and the other two don't touch the dock at all. Don't reintroduce a `display` write here.
-
-**Accepted regression: "stow the dock while scrolling up to read history" was removed, not fixed (2026-07-14, user: "それは技術的な退行。私たちの敗北").** It was a wanted feature, cut because keeping it needed a `markProgrammaticScroll`/`isProgrammaticScroll` timing window (`utils.ts`, since deleted) at four separate call sites plus a stale-prone `lastScrollTop` baseline — all to avoid mistaking our own scrolls for the user's — and kept finding new gaps anyway (native scroll-anchoring on thread-open, slow devices missing the window). `main.ts`'s scroll handler carries the full post-mortem. If re-implemented, don't key it off wall-clock windows around "was this our own scroll"; use something that can't go stale by construction, e.g. a state machine tied to actual DOM/animation completion events.
-
-## Mobile UX patterns
-
-- **`navFocusEnabled()`** (`left-pane.ts`, gated on `window.innerWidth > 520`) — the keyboard-nav-cursor `.focused` class is desktop-only. It's gated at the two functions that ever add it (`syncNavFocus`, `lpFocusEl`), not at individual call sites — earlier per-call-site guards were unreliable because several render paths (`renderThreadAccordion`, `renderLeftInboxes`, `applyLpSearch`) call `syncNavFocus()` independently.
-- **Swipe gestures** (left-pane swipe-to-reveal in `main.ts`, swipe-to-delete on `.lp-item` in `left-pane.ts`) — both use touchmove-driven direction locking: ignore movement under an 8px threshold, then lock to `'x'` or `'y'` based on `abs(dx) > abs(dy) * 1.5`, and only `preventDefault()` once locked horizontal. This is what stops a near-horizontal swipe from also fighting vertical scroll. Delete additionally live-follows the drag distance (`translateX`, capped at `SWIPE_MAX`) rather than a threshold-only reveal.
-- **Mobile pane switch** (`#app.lp-enabled.show-left`) uses `transform: translateX(...)` sliding with both panes always in the DOM, not `display:none/flex` toggling — cheaper to animate, but means elements are never inert, so anything that assumed "hidden pane = no-op" (e.g. `#lp-search` `.focus()` calls) must be explicitly gated to desktop instead.
-- **Glass/blur header effect** (`#left-pane-header`, `#thread-title-row`) needs three things together or it silently degrades: (1) the header must `position: sticky` inside the actual scroll container (content has to scroll *behind* it), (2) `backdrop-filter: blur(...)` present, (3) the gradient's "opaque" stop must be a *translucent-but-strong* color (`--glass-strong-bg`, 0.88 alpha) — a fully opaque stop hides the blur entirely since there's nothing left to show through.
-- **iOS status bar / Dynamic Island**: not CSS-controllable. Governed by `<meta name="apple-mobile-web-app-status-bar-style">` in `index.html` — `black-translucent` lets page content extend behind it; `default` makes iOS draw its own opaque native bar regardless of page CSS. Only takes effect in standalone (home-screen-installed) mode, not a regular Safari tab.
-- **`env(safe-area-inset-top)` is the #1 "works in a Safari tab, breaks in the standalone PWA" trap.** In a normal Safari tab it resolves to **0** (browser chrome owns the notch); only in a home-screen PWA (with `black-translucent`, above) does it become ~59px. So any layout bug that only reproduces in the installed PWA — content colliding with the status-bar clock, a mysterious ~59px gap, scroll position "off" — is almost always this inset landing somewhere wrong. You cannot debug it in a browser; it's invisible there.
-- **The notch inset must NOT go on `#thread-title-row`.** That row sits *between* `#past-threads` and the active thread in the DOM, so at most scroll positions it's mid-content, not at the top. Putting `padding-top: calc(... + env(safe-area-inset-top))` there made the inset render as a dead ~59px gap between past-threads and the focused card (and left the first past-row jammed under the island). For the same reason **the title row can't be frosted/translucent** — a `backdrop-filter`/semi-transparent title reads as a floating glass band whenever it's mid-content. It must stay a flush opaque-ish surface.
-- **Detect standalone with `navigator.standalone`, NOT `@media (display-mode: standalone)`.** biset has no web manifest and launches via the legacy `apple-mobile-web-app-capable` meta, so iOS does **not** match the `display-mode: standalone` media query — it only exposes the non-standard `navigator.standalone === true`. An inline `<script>` in `index.html`'s `<head>` (runs before first paint, no flash) sets `document.documentElement.classList.add('pwa-standalone')` from `navigator.standalone || matchMedia('(display-mode: standalone)').matches`. All notch CSS is scoped to `html.pwa-standalone …`. Keying off this class (not the `env()` value) also avoids a browser landscape notch falsely triggering it, so the browser version stays byte-for-byte the working layout.
-- **Correct notch handling (the shape that finally worked), all under `html.pwa-standalone`:** (1) `#outer` stays full-height and flush — never pad the *scroll container* (an inset there scrolls away with content and makes `position:sticky` anchor browser-dependently). (2) `#past-threads` (always `#outer`'s first child) gets `padding-top: env(safe-area-inset-top)` to **reserve** the island height at the very top of the scrollable content — this is what puts the first row below the island (tappable) and stops the initial scroll from tucking content under the notch. (3) `#thread-title-row` sticks at `top: env(safe-area-inset-top)`, landing directly below (4) the island strip `#right-col::before` (`position:absolute; top:0; height:env(safe-area-inset-top)`). Give the strip and the title the **same material** (`var(--bg)` @ `opacity:0.9`, no blur) so they read as one continuous surface — mismatched textures look broken, and the title **can't** be frosted/translucent because it's mid-content at most scroll positions (reads as a floating glass band). Scope the strip to `#right-col` so the left pane (own `#left-pane-header`) is untouched.
-- **`scrollToFocused` / notch interaction (two spots, both easy to miss):** (a) it derives `pastH` from `#past-threads.offsetHeight` — subtract that element's `padding-top` (the reserved island height), or the menu/thread over-scrolls by the inset and tucks content under the title. (b) It compensates for the sticky header covering the top of `#outer`: use `titleH + stickyTop` where `stickyTop = parseFloat(getComputedStyle(titleRow).top)` (the sticky `top:` = the inset in the PWA, 0 in the browser), not `titleH` alone — otherwise the focused message tucks under the header by the inset. Both read the live values, so both are automatically no-ops in the browser.
-- **The "bottom blank strip" in the installed PWA is `100dvh` collapsing, NOT a static CSS bug — don't chase it with padding/height math.** Symptom: no gap on a fresh launch, but after the keyboard opens once and closes, a ~59px blank strip appears at the bottom and stays until reload. Measured on device across one keyboard cycle: `window.innerHeight` (and `#app`, at `height:100dvh`) goes **852 → 793 and never returns** — iOS resolves `dvh` to the *large* viewport (full screen, 852) at first paint, then permanently switches it to the *small* one (852 minus the ~59px Dynamic Island strip, 793) the first time the soft keyboard appears. `#app` follows `dvh` down and the 59px it vacates at the bottom is the blank. This wasted a long debugging arc disguised as a reply-dock/safe-area problem (every static fix — growing `#app` by the safe-area inset, transform-trap theories, `body::after` fillers — missed because the real variable is `dvh` changing value over time, invisible in a single snapshot). Fix: `html.pwa-standalone #app { height: 100vh }` — in the installed PWA there's no URL bar, so the large/stable viewport is the correct full height and `vh` (== `lvh` on iOS) does not collapse. The browser tab keeps the base `100dvh` (it genuinely needs the dynamic value for the collapsing URL bar). If a bottom gap ever resurfaces here, re-measure `innerHeight` before *and after* a keyboard cycle before touching anything else.
-
-# Storage model
-
-biset's data lives in four places on the client and one on each relay. None of them is "the database" in the traditional sense — each exists for a different durability/availability tradeoff, and the same JSON shape (JMAP objects, plus a couple of biset-specific ones) flows through all of them.
-
-## Client-side
-
-| Layer | Location | Scope | Survives |
-|---|---|---|---|
-| **In-memory stores** | `src/store/messages.ts`, `threads.ts`, `mailboxes.ts`, `identities.ts`, `contacts.ts` | This page load | Nothing — plain arrays/Maps the UI reads/writes directly |
-| **IndexedDB cache** | `src/store/idb.ts`/`cache.ts`, DB `biset-cache` | This browser | Page refresh/reload. Always on, no user action — loaded at boot (`loadFromCache()`) so a plain refresh has last-sync data immediately and delta sync (querystate) runs instead of a full historical re-fetch |
-| **Vault** | `src/vault/persist.ts`, File System Access API | A user-chosen folder | The browser dying entirely — it's a real folder on disk. **Opt-in, Chromium-only** (FSAA + `FileSystemObserver` aren't implemented elsewhere) |
-| **localStorage** | plain keys, this origin | This browser | Page refresh, not a cache-clear. Holds DID-specific bindings that don't fit the JMAP-object stores above (below) |
-
-The IndexedDB cache and the vault store the **same objects** (JMAP `Email`/`Mailbox`/`Identity` plus biset's `Card`), just at different durability tiers — every `flush*` in `vault/persist.ts` writes to the IndexedDB cache unconditionally and to the vault file only `if (vaultHandle)`. Vault files: `.data/messages/<account>/<id>.json`, `.data/threads/<threadId>.json`, `.data/mailboxes.json`, `.data/identities.json`, `.data/contacts.json`, `.data/submissions/<id>.json`, plus the rendered Markdown mirror (see README's "Vault structure"). Same shape in IndexedDB, one object store per JSON file (`STORES.messages/threads/mailboxes/identities/contacts`, `mailboxes`/`identities`/`contacts` as a single out-of-line-keyed blob matching their one-file-per-account vault counterpart).
-
-**localStorage** (not IndexedDB — it's small, synchronous, DID-specific keys, not a general object store):
-- `biset_did_addr:<address>` — address→DID TOFU binding (cache only; re-derivable from a DNS TXT lookup).
-- `biset_did_contact:<address>` — `ContactCache { did, address, relays, protocol?, name?, lastChecked? }`, one entry per address this browser has resolved via `did/discovery.ts`. This is the per-address working cache `freshestAddressFor`/`protocolForContact`/`refreshContact`'s TTL gate all read from directly; `did/contacts.ts`'s `buildCardForDid` consolidates every entry sharing a DID into one `Card` for the stores above.
-- `biset_did_name:*`-shaped keys don't exist — a display name is just JMAP `Identity.name` (see below), not a separate DID-specific setting.
-
-## Server-side (each relay, independently)
-
-Every relay (`go-jmapsmtp`, `go-jmapap`) owns a `jmapserver.Store` per account, rooted at `dataDir/<domain>/<localpart>/`:
-
-| File | Contents |
-|---|---|
-| `messages/<id>.json` | One JMAP `Email` object per message |
-| `mailboxes.json` | The account's `Mailbox` list |
-| `delta.json` | `Email`/`Mailbox`/`EmailSubmission` change-state counters (JMAP `/changes` support) |
-| `identities.json` | JMAP `Identity` objects — the account's own send-identities (From name, signature, ...) |
-| `contacts.json` | JSContact (RFC 9553) `Card` array — **this account's** resolved contacts, DID-rooted (see below) |
-| `peers/<addr>.pgp` | (jmapsmtp only) cached Autocrypt public keys, learned from inbound mail or WKD prefetch |
-
-`contacts.json` is the server-side half of the client's `ContactCache`/vault `Card` — a write-through, not a second source of truth: `did/discovery.ts`'s `syncContactCard` pushes one `Card` at a time (`PUT /contacts/<uid>`) to every one of the account's own relays whenever it resolves or refreshes a contact, and pulls the full list (`GET /contacts`) once at session start (`pullOwnContacts`) so a fresh device/browser — or any non-Chromium browser, where the vault doesn't exist at all — inherits previously-resolved contacts instead of starting blind. Neither the vault, IndexedDB, localStorage, nor this server copy is the *ground truth* — the contact's own signed DID document is; all four are just durability tiers for what's already been resolved from it (see [Identity layer (DID)](#identity-layer-did)).
-
-`go-jmapserver/contacts.go` implements the shared `Card` type + `ReadContacts`/`PutContact` (plain file read/upsert-by-uid, no locking — same risk level as `mailboxes.json`, which has none either) + `RegisterContactsEndpoints` (the `GET`/`PUT /contacts` HTTP routes, taking each relay's own `authenticate` function as a callback since jmapap/jmapsmtp resolve accounts differently).
-
-A `Card`'s `uid` is `urn:uuid:` + a **UUIDv5** (RFC 4122 §4.3) of the DID string, under a fixed biset namespace constant — deterministic, so "does this DID already have a Card" is a `uid` lookup, not a separate DID→uid index. Fields map onto native JSContact properties wherever one exists: `cryptoKeys` holds the DID itself (a DID is a URI by construction, no vendor extension needed), `links` holds the contact's current relay endpoints, `emails` holds every address known for that DID, `name.full` holds their self-asserted display name if their DID document carries one. Only `biset.md:verifiedAt` (a bookkeeping timestamp) needed the vendor-extension form the spec requires for non-standard properties.
-
-(the anchor's own claim registry is a *different* store, for a different question — "is this address/DID combination globally unique" — not covered here; see [Identity layer (DID)](#identity-layer-did).)
-
-## The Email/Mailbox/Thread hierarchy
-
-`messages/<id>.json` (and its client-side counterparts in [Client-side](#client-side)) hold a standard **JMAP `Email` object (RFC 8621)** — already a *parsed* representation of the raw RFC 5322 message, not the raw bytes themselves:
-
-```
-Account
- └─ Mailbox (folder; parentId forms a tree)
-      "a named set of Email objects" — totalEmails/unreadEmails etc. are server-set aggregates, not stored per-message
-      │
-      └─ Email (mailboxIds: the set of Mailboxes it belongs to — can be more than one)
-           ├─ threadId → Thread (just an emailIds[] array, sorted by receivedAt — a thread holds no data of its own)
-           ├─ blobId → the raw RFC 5322 byte stream itself (the actual "raw data" — fetched separately, on demand)
-           │
-           └─ bodyStructure: EmailBodyPart (the full MIME tree, as-is — multipart/* parts recurse via subParts)
-                ├─ bodyValues: Record<partId, EmailBodyValue> — the decoded text of each text/* part, keyed by partId back into bodyStructure
-                ├─ textBody / htmlBody: EmailBodyPart[] — a pre-picked, depth-first "what to actually render" list (pointers into bodyStructure, not a data copy)
-                └─ attachments: EmailBodyPart[] — everything else non-multipart that isn't in textBody/htmlBody
-```
-
-So `Email` is already the *parsed* form — MIME structure, decoded text, attachment list all pulled apart for the client. The literal, unparsed wire bytes are a separate thing entirely, reachable only via `blobId`; biset's whole pipeline (rendering, PGP decrypt, DeltaChat header handling) works against the parsed `Email` object, never the raw blob. `Thread` sits *above* `Email` as pure grouping — it carries no content of its own, just an ordered list of member ids.
-
-**biset's own non-standard fields, stamped onto the `Email` object once at ingest** (`sync/session.ts`) and persisted client-side alongside it (vault/IndexedDB — the relay itself never sees or stores these, they're added *after* fetching over JMAP):
-- `_account` — owning account (`email\0serverUrl`), since two accounts on the same relay can produce colliding JMAP ids.
-- `_relay` — which relay (serverUrl) this Email arrived through.
-
-That's it — a third field, `_identity` (the owning identity's DID-or-email grouping key), used to exist here too but was removed as redundant (2026-07-14): `store/messages.ts`'s `forIdentity(identity)` now resolves which `_account`s belong to an identity **dynamically**, via `relaysForId(identity)` (`context.ts`'s live `sessions`), rather than trusting a value stamped once at ingest-time. Same organize-don't-duplicate principle as contact-DID grouping (below) — `_account` is the only fact that needs to be *stored*; "which identity currently claims this account" is answered fresh every query, so a lazily-DID-migrated identity's older messages (ingested before the account had a DID) are picked up correctly with no re-stamping needed.
-
-These ride alongside the standard fields in the exact same JSON file — `messages/<id>.json` is never a biset-specific shape, just a standard `Email` with a couple of extra top-level keys a generic JMAP client would simply ignore.
-
-# Identity layer (DID)
-
-Every biset identity is rooted in a client-generated **ed25519 key**, expressed as a **`did:webvh`** identifier whose document lives in an append-only, hash-chained log served over HTTPS by the anchor. The DID document lists the identity's current relays (`service`) and address(es) (`alsoKnownAs`) — resolving DID → current state is what makes moving relays, adding a relay run by a different operator, or losing a domain not mean losing your identity. Design rationale and decision history live in `DID.md` / `PLAN.md` (kept out of the repo); this section is the current-state summary.
-
-## Two methods, one live
-
-**`did:webvh` is the only method a new identity gets** (`ui/account-create.ts`,
-2026-08-11), shaped `did:webvh:{scid}:{domain}:{username}` — no `dids` path
-segment since 2026-08-12; its log is served at `https://{domain}/{username}/did.jsonl` and the only one `resolveAny` will resolve — a `did:dht` string
-returns `null` there, fail-closed, without asking the DHT
-(`did/resolver.ts`). The did:dht code is not deleted: its packet/freshness
-helpers stay load-bearing for the records already sitting on devices that
-predate the change (`didcomm-devices.ts`'s `methodOpsFor`), which is why
-`src/did/dht/` is still here and still imported.
-
-**The decision to stop at one method is recorded outside this repo**
-(`did/resolver.ts` cites it), so this document does not restate a rationale it
-cannot check. What *is* recorded here is why the second method was added at
-all, and it was never did:webvh's own merits: `PLANWEBVH.md` §0 says
-did:webvh evaluated alone partly *regresses* on what did:dht had already solved
-(independence from a domain dying), and that the point was proving the
-`resolve(did)` seam could carry a second method at all — the capability, not
-the method.
-
-Everything below this line is the reasoning behind did:dht, kept because it is
-the record of what the first method bought and what leaving it costs.
-
-### Why did:dht was chosen (history)
-
-The choice is **Mainline DHT** for economic reasons: Mainline has no protocol-level incentive layer (no token, no miners/validators) and biset needs none either — the network's ~10M nodes already exist, already run 24/7, and already cost their operators nothing extra to keep routing.
-
-**Joint production.** BitTorrent clients don't run a DHT node *in order to* support the DHT — they run one as an inseparable byproduct of what they actually want, which is to find peers for a torrent someone is downloading. Maintaining routing-table health is the classic joint-production case (grazing cattle for meat yields hide as a byproduct): the "service" did:dht rides on was never built or staffed as a service, it's the residue of millions of self-interested downloads.
-
-**Positive externality, free-ridden deliberately.** Those node operators have no idea they're carrying `did:dht` traffic and are paid nothing for it — biset is a pure free rider on an externality nobody had to intend into existence. This is *why* the design can skip everything a blockchain needs to internalize consensus-safety costs (staking, fees, block rewards): there is no global order to agree on. Each record is self-authenticating (signed by the DID's own key — verified client-side, no network-wide consensus required, see `didbind.go` above) and self-expiring (BEP44 TTL, ~2h without re-announcement — see the delete/`Gateway.Forget` discussion below), so there's no persistent-storage externality being pushed onto anyone either. The free ride isn't just "use someone else's network," it's "use a resource whose marginal cost per record is already indistinguishable from zero."
-
-**Consequence for biset's own architecture:** biset never had to stand up or fund DHT infrastructure. The optional `pkarr/` gateway in `go-jmapserver` (`PKARR_GATEWAY=1`) is a convenience cache-and-republisher sitting *on top of* the DHT, not a replacement for it or something biset is on the hook to keep alive — if every biset-run gateway disappeared tomorrow, any still-referenced DID would keep resolving through the DHT directly (or any other unrelated Pkarr-aware relay) until its own ~2h TTL lapsed. The tradeoff is the flip side of free-riding on an externality: there's no SLA, and no vendor to escalate to if resolution degrades — a real risk for hosted convenience layers, but a much smaller one for Mainline DHT itself, precisely because its survival was never coupled to any single company's funding or roadmap.
-
-## Where it lives
-
-**Client (`src/did/`):** `seed.ts`/`keys.ts` (BIP39 mnemonic → SLIP-0010 root key + sub-keys — Nostr via NIP-06, DIDComm's `_k1` at `m/1'`, PGP reserved at `m/2'`, and this device's ML-KEM-768 decapsulation key), `webvh/` (SCID, JCS canonicalisation, multihash/multikey, the append-only log and its proofs, genesis/update publication, `move.ts` for a domain change), `dht/` (the sealed-off first method: document ⇄ DNS-RR ⇄ signed BEP44 payload, `chain.ts`'s multi-record spill, the DHT resolver), `resolver.ts` (the one dispatcher — `resolveAny`), `discovery.ts` (contact address→DID resolution, bidirectional-verified), `sync.ts` (**self**-resolution — the account holder's own reconnection follows their DID's current service list, not a static cached URL), `provision.ts`/`binding.ts` (signature-based DID→relay binding, no secrets sent to third-party relays), `restore.ts` (full identity recovery from the 24-word phrase alone), `didcomm/` + `peer.ts` ([DIDComm messaging](#didcomm-messaging) below).
-
-`store.ts` persists only *derived* keys (root/Nostr/`_k1`) and the mediator a `_k1` is registered with — **never the master seed**, which is used transiently at login and discarded. New key material follows that rule: derive it, store the result, let the 24 words be the only backup. The consequence is that the phrase is shown exactly once, at creation, and cannot be re-derived afterwards: there is no password to unseal it with and nothing on disk to unseal.
-
-**Relay side.** The Go relays (`jmapap` and friends) share `go-jmapserver`: `didbind.go` (`VerifyDIDBinding` — pure ed25519 signature check, no network dependency), `anchorclient.go` (`AnchorClaim` — HTTP client to the anchor), `didindex.go` (per-relay local index: which addresses on *this* relay belong to which DID — organizational only, does not merge storage; see below). **`jmapsmtp` is a Rust port of the relay and that library** ([yno9/jmapsmtp](https://github.com/yno9/jmapsmtp)); it shares no source with them, only the wire format, which is kept true by running the two implementations side by side rather than by reading either. It carries no did:dht support at all: the `/pkarr/` gateway that used to forward a client's DHT record went with the method, and every device vouch now goes to the anchor, since a `did:webvh` SCID — unlike a `did:dht` identifier — carries no key to check a signature against.
-
-**anchor (`src/anchor/`, binary `biset-anchor`):** the identity registry — optional, and the one place a DNS-write credential lives. Two jobs: (1) claim/verify `localpart+domain → {fingerprint, did}` (cross-relay split-identity detection — the same address can't be claimed by two different keys), (2) when a DID is present, keep its `_did.<localpart>.<domain>` DNS TXT record in step with the claim. jmapap and jmapsmtp are equal HTTP clients of it, pointed at via `anchor_url` in config; unset = "anchorless" (see below). Routes: `POST/DELETE /_anchor/identity/<localpart>`, `POST /_anchor/devices/vouch`, `GET/PUT /_anchor/pkarr/<key>`, and the did:webvh log at `GET/PUT /<username>/did.jsonl`. **Everything relay-facing sits under `/_anchor/`** so that a username can never collide with a route: the webvh log path lost its `dids/` prefix (2026-08-12, shorter DIDs), which put usernames at the top level. `_anchor` is refused as a username at claim time — the one reserved word this arrangement costs. There are no read routes on the registry: address→DID is DNS's question (`did/discovery.ts`), deliberately, so a stranger's operator never learns who is looking them up.
-
-**Why it is TypeScript, and why it lives here:** DIDComm mediation is meant to move into the anchor, and Go has no viable DIDComm v2 library. It shares the client's repo because both are downstream of one did:dht wire format — a second copy of that format had already produced a real bug (the 996-byte cap below, fixed in one copy and not the other). `ANCHOR.md` carries the decisions and the migration.
-
-**DID→address is derived at startup, not stored.** Scanning the `identity.fp` files rebuilds the index in memory. The Go service kept a second copy on disk and it had silently drifted in production — a live account's `by-did` 404'd while its forward lookup worked, and no amount of re-claiming could heal it, because only one write path touched the copy and the idempotent path returned early. The index is a pure function of the claims, so a separate copy bought nothing and cost correctness.
-
-**The anchor writes DNS for one zone only, and that is a functional limit as much as a security one.** Its token is scoped to a single zone (deliberately: it confines the blast radius of a compromise). Cloudflare does not reject an out-of-zone record name — **it appends the zone**, so a claim for an address on some other domain silently created a live, meaningless `_did.<lp>.<other-domain>.<our-zone>` that then collided with every retry. The anchor now refuses out-of-zone names outright. Addresses on a domain the operator doesn't run DNS for get no record from us: **the domain's owner publishes `_did.<localpart>.<domain>` in their own zone** — the same DNS control they already prove during BYO-domain setup.
-
-**Anchorless / with_anchor is a config-driven spectrum, not two codebases.** `/account/provision`'s `did`/`did_sig` fields are optional — a client that omits them gets a plain JMAP account (no discovery, no portability, same as a classic mailbox). If a DID is present but no `anchor_url` is configured, binding is still cryptographically verified (pure math, no anchor needed) but there's no cross-relay coordination or DNS publication. Only with both DID *and* a configured anchor do you get the full picture (discoverable, portable, split-protected).
-
-**Address→DID lookup is DNS, not a bespoke endpoint.** A `_did.<localpart>.<domain>` TXT record (`did=<did>`), resolved client-side via DNS-over-HTTPS (Cloudflare, Google fallback) — mirrors ATProto's `_atproto.<handle>`. This decouples "who answers for an address's identity" from "who runs its relay": DNS is a commodity, swappable, and self-hostable by whoever owns the domain, which a bespoke relay-hosted endpoint never was. Custom (BYO) domains (`src/ui/custom-domain.ts`, `go-jmapsmtp`'s `/domain/verify-token` + `/domain/add`) extend this to end users — host mail on an existing relay while keeping the domain (and hence the exit) under your own control.
-
-**On a BYO domain, publishing that record is the owner's job.** The anchor only writes DNS inside its own zone (above), so a DID on a domain the operator doesn't run gets a claim but no record — the owner adds `_did.<localpart>.<domain>` TXT = `did=<did>` themselves, alongside the ownership TXT they already add. That is the design working as intended rather than a shortfall: the whole point of DNS-based lookup is that the domain owner, not the relay operator, answers for the address. The claim is the authority and DNS is its publication, so a missing record costs discoverability, not identity.
-
-**Data model: DID-rooted organization, address-rooted storage.** Two addresses under one DID each get their own fully independent JMAP `Store` — server-side storage is never merged across addresses. What *is* DID-rooted is a local index (`didindex.go`'s `data/_did_local/<did>`) recording which addresses on a given relay trace back to which DID, exposed read-only at `GET /identity/local/<did>` (public/unauthenticated — an address is meant to be discoverable given its DID, same sensitivity as anything else in this layer). The unified inbox view a user actually sees comes entirely from the *client's* existing identity-by-DID grouping (`identityKey() = did || email` in `context.ts`) — a deliberate choice after an earlier attempt at physical storage-sharing introduced a real duplicate-message race with no corresponding benefit the client-side grouping didn't already provide. See DID.md's "Data-model inversion" section for the full story.
-
-**Contact-DID grouping applies the same lesson to correspondents, not just the user's own accounts (2026-07-14).** `did/contacts.ts`'s `contactIdentityKey(address)` groups a *contact's* addresses by DID exactly the way `identityKey()` already grouped the user's own — organizationally, via the `Card`s in [Storage model](#storage-model), never by merging message data. `app.ts`'s `loadInboxSummaries` keys inbox rows on it (so a contact who migrated relays mid-conversation stays one row, not two) and `getInboxEmails` widens its address filter via `allKnownAddressesFor` to match. `refreshContact`'s DHT re-check is TTL-gated (currently 1h; was 24h) — first contact always resolves, but re-checking on literally every send would be wasted DHT/gateway load for a fact (a migration) that changes rarely; the TTL only throttles the *check*, not how often it's triggered (opening/sending in a conversation), so a contact not spoken to in weeks still catches up fully the next time they are.
-
-**Protocol-aware send routing (`relayForSend` in `ui/shell.ts`).** `freshestAddressFor` only swaps the *address* a reply goes to, not which of the user's own relays sends it — so a contact who drops ActivityPub entirely for mail-only (or vice versa) would otherwise still get routed through the old protocol's relay, which can't reach a differently-shaped address at all. `ContactCache` and `Card` now also carry `protocol` (from the DID document's matching `service.protocol`); `relayForSend` compares the target's current protocol against the conversation's established relay and, on a mismatch, switches to whichever of the user's own relays (`relaysFor`, same DID) speaks the right one — falling back to the established relay if the user has no matching relay of their own.
-
-**Self-asserted display name (`DidDocument.name`, `document.ts`).** A did:dht additional-property extension, same pattern as `service.protocol`/`.address` — base64url-encoded in the root DNS record (so an arbitrary name can never collide with the `;`/`,` field separators the rest of the document's encoding relies on). Reuses the *existing* "Change display name" JMAP `Identity.name` (no separate DID-specific name to manage) — saving it there also triggers a republish. Purely a UX label, same trust level as any social profile's display name, never verified. Surfaces via `did/contacts.ts`'s `displayLabelFor` — a 3-tier fallback (self-asserted name → `did~xxxx`, the last 4 chars, if a DID is known but has no name → the literal address) used identically by both the left-pane inbox list (`makeLpItem`) and the conversation header (`thread.ts`'s `conv-to`) — self info (which mailbox/relay it's under) is never part of either label, only the contact's own identity. The small `[DID]` pill next to `conv-to` stays a plain "DID-mediated" marker, since the main text already carries the name/short-DID.
-
-**Composing directly to a DID (`resolveDidDirect`, `discovery.ts`).** Complements `refreshContact` (which starts from a known address) for contacts shared via QR code / profile link / permalink, where no current address is known at all — resolves the DID's document, applies the same reverse-binding verification (a claimed address is only trusted once *that* address's own anchor points back to the same DID), and caches the result exactly like an address-first resolve. Wired into both the compose-new recipient field (`left-pane.ts`'s `attachPrefetch`, with a spinner in the same slot the AP/mail protocol pill occupies — no timeout, a spinner that never stops *is* the failure signal) and, redundantly, the Send button itself (`resolveDidRows`) — resolution is async and nothing stops a user clicking Send before the blur handler finishes, so the button re-resolves in place rather than risk sending to a raw, unresolved `did:...` string.
-
-**One client session = one identity (2026-07-14).** biset can *store* credentials for several distinct identities (DIDs) at once — `loadStoredAccounts()` is a flat, unscoped list — but only ever loads **one** of them into `sessions[]`. `context.ts`'s `accountsForActiveIdentity` narrows the stored list down to whichever identity is currently active (a persisted `did || email` marker, `getActiveIdentity`/`setActiveIdentity`) before `main.ts`'s boot sequence calls `initSession` on anything; if no active identity is set yet, or the one that was active no longer has any stored accounts (logged out of it entirely), it adopts whichever identity IS present. Because `app.ts`'s `loadInboxSummaries` and everything downstream already iterate `identityIds()` (the *distinct* DIDs found in `sessions[]`) rather than assuming exactly one, this required no changes to the merging logic itself — constraining the input to one identity was enough.
-
-Switching identity is currently **logout, then log back in as the other one** (the "Log out" account-menu action already removes a whole identity's stored accounts; the next login naturally becomes the new active identity via the fallback above) — deliberately not building a Gmail-style account switcher yet. Two related things are explicitly deferred, not forgotten:
-- **A real "switch identity" UI** (pick from previously-used identities without re-entering a password, the way Gmail's account switcher does) instead of full logout/login.
-- **Distinguishing "add a relay to my current identity" from "sign in to a different identity entirely"** in the account-add flows — the boot-time filter above just silently leaves an inactive identity's stored credentials unloaded until it somehow becomes "active"; no UI yet helps a user manage multiple stored identities explicitly.
-
-**"Log in to existing account" now refuses a genuinely different identity (2026-07-14, user-reported).** Was the one real remaining gap in the above: logging in with an email whose account belongs to a different DID silently merged its session into the active identity's `sessions[]`, violating one-session-one-identity — reported live (logged into `y@biset.md`, DID `6oien8gc…`, then successfully "logged in" with `y@orillo.org`, whose account is bound to an entirely different DID `5chjsir3…`). Root cause: `initDid(email, masterSecret)` derives a DID purely from *that account's own* unsealed seed — correct in isolation, but nothing compared the result against whatever identity was already active before merging. Fixed in the login form's submit handler (`onShowAccounts`, `left-pane.ts`): when `sessions.length > 0`, compares the new account's `did || email` against `identityIds()[0]` (the active identity's key) *before* the self-resolution/merge steps run, and refuses with "This account belongs to a different identity — log out first to switch" on a mismatch. A same-identity relay logged in through this form (rather than "Add a relay…") still works fine, since its derived DID naturally matches.
-
-**"Add a relay…" (2026-07-14), not "Move to another relay."** Nothing is ever removed — the old name implied migration, but the operation only ever adds a new relay/address under the *same* DID, the existing account stays connected. This is the same operation as "Add my own domain" when already logged in: both recover the active identity's existing DID + master secret via password and `provisionAccount` a new address under it, rather than minting a fresh identity. Factored the shared part out of what was duplicated inline across `left-pane.ts` and `custom-domain.ts` into `did/provision.ts`'s `unsealCurrentIdentity(identityEmail, password)` — fetches the *existing* envelope from an already-connected session of that identity, unseals it with the password, returns `{ did, rootPrivateKey, masterSecret, kek, envelope }` ready to pass into `provisionAccount`. A `hexToBytes` helper duplicated across 5 files was consolidated into `utils.ts` as part of this cleanup (`did/contacts.ts`'s unrelated dash-stripping UUID variant kept separate).
-
-**Per-relay card menu: "Change password" / "Delete account" / "Log out" (2026-07-14).** "Log out" used to be a hidden whole-identity wipe (removed every relay/address sharing the card's DID, however many — surprising, since it read as a per-card action), the counterpart to per-card "Remove this relay" which only ever touched the one card. That distinction is gone: "Log out" now IS the per-relay removal (renamed, `removeRelayLocally()` in `left-pane.ts`) — local-only, server-side account untouched, and if it happens to be the identity's last remaining relay that already amounts to a full sign-out, so no separate bulk action is needed. **"Delete account"** is new and different in kind: it actually deletes the account's data server-side (messages, mailbox, envelope — `POST /account/delete` in `go-jmapsmtp`/`go-jmapap`, `cryptenv.ts`'s `deleteAccountOnRelay`), gated behind a native `confirm()` given it's irreversible. The endpoint mirrors `registerDidUpdate`'s pattern deliberately: no email/account identifier in the request body at all — target account comes only from the Basic Auth credential (`authenticate(r, dataDir)`), so it can never act on anyone else's account. Cleanup mirrors the existing `purgeInactiveAccounts` maintenance job (same map deletions under `h.mu`, same `os.RemoveAll`), just on-demand for one account instead of a periodic sweep.
-
-**Deleting a whole identity, not just one relay (2026-07-14).** The per-card "Delete account" above only ever touches one relay/address. The identity heading's hamburger menu (`openIdentityMenu`) got its own "Delete account" that loops `deleteAccountOnRelay` over every stored endpoint sharing the DID, then does the same local cleanup `removeRelayLocally` does for a single relay (stored accounts, sessions, PGP keys, notif prefs, `clearIdentityCache`) — across all of them at once. A single account-delete call's optional `{"did":...}` body field now does three cleanup jobs, not one:
-1. **`jmapserver.RemoveLocalDID`** — drops the address from this relay's own `_did_local/<did>` index (unchanged from the per-relay case above).
-2. **`jmapserver.AnchorRelease`** (new) — tells the identity anchor to forget its claim on this `(domain, localpart)` (the delete counterpart to the claim). Without this, the anchor would keep the claim forever and reject any *future* registration of the same address — by anyone, including the original owner under a fresh identity — as a false split-identity conflict. Verified live: provision identity A → delete → anchor claim gone (404) → a genuinely different identity B can immediately claim the same address. The anchor also withdraws the `_did.<localpart>.<domain>` TXT record as part of the release: a freed address that keeps its record goes on advertising the DID of whoever held it last, and the next holder can't necessarily undo that (a claim with a *different* DID rewrites it, but a claim with no DID leaves it standing). This was a known gap until 2026-07-17 and it had accumulated — 15 records pointing at deleted accounts, plus two live addresses still publishing DIDs their own claims had dropped.
-3. **`pkarr.Gateway.Forget(pubkey)`** (new) — if this relay runs a pkarr gateway (`PKARR_GATEWAY=1`), evicts the DID's record from its in-memory republish cache. This turned out to matter more than expected — see below.
-
-**How long does a deleted identity's did:dht record actually take to disappear from the DHT?** Investigated directly rather than assumed, since the answer matters for anyone relying on "delete = gone": **BEP44's own spec** ("Expiration" section) says an item MAY expire in ~2 hours without re-announcement, SHOULD be re-announced hourly to stay alive — Pkarr's own docs describe the same ("records are ephemeral, the DHT drops them after hours"). *But* biset's own pkarr gateway (`go-jmapserver/pkarr/gateway.go`) caches every record it has ever `Get` or `Put` in memory (`g.cache`, keyed by pubkey) and its `republishLoop` re-puts everything in that cache every 30 minutes, **forever — nothing ever evicted an entry before this change**. So the real, previously-undocumented answer was: a deleted identity's record would keep getting actively re-published by biset's own gateway indefinitely (until that relay process happened to restart), not fade in ~2 hours at all — the "hours" figure only ever applied to *other, independent* DHT nodes that aren't actively being told to keep it alive. `Gateway.Forget` (new) closes this: once called from account-delete, this gateway stops being that indefinite re-announcer, and the ~2-hour BEP44 figure becomes accurate again. Cuts both ways as a design note: the same unbounded-cache behavior is *why* a live, still-used identity stays resolvable indefinitely across any single relay's downtime shorter than a restart — losing every one of an identity's relays simultaneously for longer than that is what actually risks the ~2-hour DHT-wide decay DID.md already describes ("neglect = temporary unresolvability, never death" — true only as long as at least one relay, or its gateway's cache, is still republishing).
-
-**A document too big for one BEP44 record spills into a chain of them (`did/chain.ts`, 2026-07-16).** A BEP44 value caps at 1000 bytes, which fits ~4 relays once `_k1` + a DIDComm service are present. Past that the signer threw, `publishOne` swallowed it, and the identity **silently stopped republishing** — decaying out of the DHT ~2h later and becoming unresolvable with no signal anywhere. Now `splitIntoChain` spills the overflow into further did:dht records, each named by the previous one's `ext=` field; `resolve`/`publishDocument` handle it internally, so callers still see one logical document. Chosen over BEP44 `salt` (Pkarr's relay protocol — the only path a browser has to the DHT — has no salt field, so it would mean extending two specs and giving up public gateways) and over an external store (which trades the DHT commons for a service someone must fund). Continuation keys come from the **root private key** via HKDF, not the seed — `publishDocument` never holds the seed, and the 24 words still restore the whole chain. Documents that already fit publish byte-identically; resolvers that ignore `ext=` still get a valid document with the first N services. Verified live: 20 relays across 3 records, resolved back in order.
-
-**The cap is on the *bencoded* form, so the real limit is 996 bytes, not 1000 (`packet.ts`).** BEP44 says nodes may reject a put whose *bencoded* `v` exceeds 1000 bytes, and bencoding prefixes `<len>:` — so a 999-byte packet is 1003 and gets dropped. Nodes don't answer with an error; they simply never respond (a Pkarr relay surfaces this as `Publish query timed out with no responses`). A plain `>= 1000` check therefore passed 997–999B documents straight into silent discard. Bisected against a live gateway: 996B (=1000 bencoded) accepted, 998B not.
-
-**Known issue: did:webvh's genesis is necessarily published BEFORE its home address is bound, not after (2026-07-26).** `account-create.ts`'s `#new` mints a did:webvh genesis (`initDidWebvh` → `createGenesis`, a real `PUT` to the anchor's `/<username>/did.jsonl`) before attempting to provision the identity's home mail address. Investigated whether this could be reordered — mint genesis only once the mail bind is confirmed — and it cannot, with the current protocol: mail provisioning's binding-proof verification is forwarded by the relay to the anchor (`anchor.Claim`, `go-jmapap`/`go-jmapsmtp`'s `anchor_on.go`), which resolves the DID's root key via `rootKeyResolver`'s did:webvh branch (`anchor/didbind.ts`) — `resolveOwnWebvhDocument` against the anchor's OWN local webvh log store. That store only has an entry once the genesis `PUT` has already landed, so genesis-before-bind is the only order verification can succeed in at all; deferring the `PUT` until after a successful bind is structurally impossible without a deeper redesign (the anchor would need to accept an unpublished-but-self-consistent genesis entry inline alongside the bind proof and verify+persist both atomically in one request — spanning the anchor's claim handler and the Go relay's provision flow, not attempted here).
-
-Consequence: if that mail bind then fails (username conflict is caught before minting the identity's data disappears anywhere, but a genuine relay error post-genesis is possible), the did:webvh document is already live and resolvable, publicly claiming a username it never actually got bound to — confusing if a different, later owner ends up with the real mailbox under that name. Mitigated, not fixed: `provision.ts`'s submit handler treats ANY mail failure as fatal for `useWebvh` (no silent relay-less fallback, unlike did:dht, whose identifier carries no username claim at all and so has nothing to leave dangling), and on that failure calls `webvh/publish.ts`'s new `deactivateDocument(did, rootPrivateKey, rootPublicKey)` — appends a log entry with `parameters.deactivated: true`, reusing the log's last-known state verbatim. did:webvh logs are append-only (the genesis entry itself stays in history forever, this can't be retracted), so this is a public "this was never live" marker for future resolvers, not an erasure. Best-effort: a failed deactivate call just leaves the window open a little longer, logged but non-fatal (the signup has already failed either way by that point).
-
-## Key rotation (did:webvh pre-rotation)
-
-### What it is actually for
-
-Pre-rotation does **not** prevent a takeover, and reading it as if it does is
-how this feature gets misjudged. Whoever holds the root phrase — leaked paper,
-compromised device — *is* this identity as far as everything that matters
-goes: `restoreFromMnemonic` accepts them, `vouchThisDevice` gets them a mail
-login, they sign DIDComm and MLS as you. Pre-rotation changes none of that.
-
-What it buys is the **exclusive right to recover**:
-
-| | pre-rotation never activated | activated |
-|---|---|---|
-| attacker rotates `updateKeys` to their own key, locking the real owner out permanently | **possible** — no recovery from this, ever | **impossible**: appending any log entry needs a spare whose hash was committed one entry earlier, and that spare exists only on the owner's paper |
-| owner runs **Revoke root key**, moving `#key-1` and invalidating every phrase the attacker holds | only if the attacker hasn't already seized `updateKeys` | **always available** |
-
-So: `activate` arms the lever, `revoke` fires it. Activating alone is not a
-half-measure — it is the whole protection, because it is what stops an attacker
-from pre-empting the owner's recovery. Rotating afterwards is key hygiene, not
-the point.
-
-Limits worth stating plainly:
-
-- It does nothing about the window between compromise and noticing. The
-  attacker reads mail and impersonates freely until `revoke` runs.
-- `routing.json` (mail delivery address, device keyAgreement keys, display
-  name) is writable by whoever holds the current `updateKeys` key in **both**
-  modes — see the caching note below. Pre-rotation guards the *log*, not this.
-- It is worth exactly as much as the spare phrase's storage. Losing that phrase
-  disarms the lever and, while pre-rotation is on, also blocks every ordinary
-  document write.
-
-### The two keys
-
-They start identical and then diverge; conflating them has caused every bug here:
-
-| | What it is | What it authorises | Where it lives |
-|---|---|---|---|
-| **root key** (`#key-1`) | the document's own `verificationMethod[0]` | *being* this identity: `restoreFromMnemonic`'s check, `vouchThisDevice`, DIDComm/MLS signing | `DidRecord.rootPrivateKey`, derived from the 24-word phrase via `deriveRootKey` (SLIP-0010) |
-| **sign key** (`parameters.updateKeys`) | who may write the DID document | appending a log entry, and writing `routing.json` | `DidRecord.signingPrivateKey`, **absent until the two diverge** |
-
-At genesis they are the same key (`createGenesis` puts the root public key in
-both). Pre-rotation is what pulls them apart, and nothing ever puts them back.
-
-### What each operation does
-
-| Operation | `updateKeys` after | `#key-1` after | `nextKeyHashes` after | Signed by |
-|---|---|---|---|---|
-| genesis | root | root | `[]` | root |
-| **activate** | *unchanged* | unchanged | `[hash(spare₁)]` | whoever holds `updateKeys` now |
-| **rotate** | spare₁ (revealed) | unchanged | `[hash(spare₂)]` | spare₁ |
-| **deactivate** | spare₁ (revealed) | unchanged | `[]` | spare₁ |
-| **revoke root key** | spare₁ (revealed, raw) | `deriveRootKey(spare₁)` | `[hash(spare₂)]` | spare₁ |
-
-Three consequences that are not obvious from the table:
-
-- **`activate` does not move `updateKeys`.** It only commits a hash. An identity
-  that activated but never rotated still signs with its root key, and everything
-  keeps working with no phrase prompt anywhere — while already holding the full
-  protection described above.
-- **`rotate` and `deactivate` are the same operation** (`rotateOrDeactivate`),
-  differing only in whether a further commitment is made. Both consume the
-  revealed spare and make it the new `updateKeys`. Neither returns to the root
-  key. `deactivate` therefore does not restore the pre-activation state — it
-  leaves `updateKeys` on a spare with the lever disarmed, which is strictly
-  worse than never having activated.
-- **`revoke` is the only one that touches `#key-1`,** and it derives it
-  (`deriveRootKey(revealed)`) rather than using the revealed key raw — because
-  `restoreFromMnemonic` always re-derives before comparing, so a raw `#key-1`
-  can never match anything typed into restore again. Setting it raw is what made
-  every phrase fail restore, correct one included (2026-08-17).
-
-### Why ON and OFF look identical at the Sync button
-
-| | pre-rotation ON | pre-rotation OFF |
-|---|---|---|
-| append a **log entry** (rotate, deactivate, move domain, change `#key-1`) | needs a committed spare; holding the current `updateKeys` key is **not enough** | current `updateKeys` key is enough |
-| write **`routing.json`** | current `updateKeys` key is enough | current `updateKeys` key is enough |
-
-Routine publishing — `Sync`, avatar publish, mediator registration — only ever
-writes `routing.json`: `updateDocument`'s `state` is byte-identical on every
-call that isn't a real `#key-1` change, so the log-append branch never fires.
-That is the whole reason the two modes behave the same from the UI while
-differing at the protocol level.
-
-**Two prompts, two different phrases — do not share wording between them.**
-`revealAndVerify` (Rotate / Revoke / deactivate) checks `nextKeyHashes`, so it
-wants the phrase most recently **shown**. `revealCurrentSigner` (Sync, and
-re-activate) checks `updateKeys`, so it wants the phrase most recently **typed
-in** — one generation *older*, because every activate/rotate displays a newer
-one immediately afterwards. Both said "Enter your latest recovery phrase" at
-first, which sent people to the newer phrase for the Sync prompt, where it
-fails validation with no hint why (2026-08-17). Only the Sync-side wording was
-changed; "latest" is correct for the rotate side and stays.
-
-### The caching tradeoff (2026-08-17, deliberate)
-
-`DidRecord.signingPrivateKey` persists the current `updateKeys` holder after
-`revealCurrentSigner` verifies it once, so routine publishing stops re-prompting
-on every Sync. What survives and what does not:
-
-- **Survives:** the recovery lever. The *next* spare is shown once and stored
-  nowhere, so a compromised device still cannot append a log entry — cannot
-  rotate, deactivate, change `#key-1`, or move the domain. The owner's `revoke`
-  remains exclusively theirs. This is the protection that matters, and caching
-  does not touch it.
-- **Does not survive:** `routing.json` under device compromise. The cached sign
-  key sits at the same exposure as `rootPrivateKey` (sealed behind the passkey
-  where one exists, plaintext otherwise), so device access means mail delivery
-  can be redirected and device keys planted — in both modes, identically.
-
-Narrowing that second row means a memory-only cache (cleared on reload) or no
-cache at all, at the cost of a phrase prompt per Sync. The current choice is the
-permissive end.
-
-### Two races that made this look broken (both fixed)
-
-Both were full-record IndexedDB read-modify-writes with no compare-and-swap,
-the exact class `store.ts`'s `withDidLock` exists for:
-
-- `republishIdentity` read `rec` **before** prompting, so `cacheSigningKey`'s
-  write landed and was then overwritten by the stale snapshot handed to
-  `publishBareOrCurrent` — inside the same click. Sync re-prompted forever.
-  Fixed by re-reading after the prompt.
-- `publishCurrentState`'s `syncDevicePosition` call was unlocked, so a
-  boot-time avatar publish could overwrite the device key `ensureJmapDeviceKey`
-  had just minted during a claim — surfacing later as `device session login
-  failed (never vouched here, or revoked)` on an account that *was* vouched.
-  Fixed by re-reading inside the lock. The identity card's **Reconnect device**
-  action re-vouches with the root key for accounts already left in that state.
-
-## DIDComm messaging
-
-*Status: in the inbox. The `/didcomm` debug page it grew up on is gone.*
-
-**DIDComm v2 over the same `did:webvh` identity** — a direct biset↔biset channel with no mail relay in the middle, appearing in the same conversation list as everything else. A DIDComm endpoint shows up as a relay card like any other, and messages arrive by Web Push while the app is closed.
-
-**Every device of an identity is a separate DIDComm peer.** Each has its own `_k1`, registers itself with the mediator, and is listed in the identity's document — so a message reaches all of them, and a device that sends one hands copies to its siblings (`sibling-outbox.ts`) rather than leaving its own history incomplete. Logging out of a *relay* card must therefore not deregister the device: the identity outlives any one relay, and a DIDComm channel is not a relay account.
-
-| Path | Role |
-|---|---|
-| `src/did/didcomm/crypto.ts` | JWE: authcrypt (`ECDH-1PU+A256KW`) / anoncrypt (`ECDH-ES+A256KW`), both `A256CBC-HS512` |
-| `src/did/didcomm/coordinate.ts` | Mediator Coordination 2.0 — `mediate-request`, `keylist-update` |
-| `src/did/didcomm/send.ts` | authcrypt to the recipient, anoncrypt-wrap in a Forward for their mediator, POST |
-| `src/did/didcomm/pickup.ts` | Pickup 3.0 — `status-request` / `delivery-request` |
-| `src/did/didcomm/register.ts` | Publish `_k1` → register with a mediator → republish with the DIDCommMessaging service |
-| `src/did/didcomm/resolve.ts` | Resolve a recipient DID to one document shape |
-| `src/did/didcomm/sibling-outbox.ts` | Hand a sent message to this identity's other devices |
-| `src/did/didcomm/rotation.ts` | `from_prior` — key rotation across a domain move |
-| `src/push/` + `src/sw.ts` | Web Push subscription and the service worker that wakes on delivery |
-| `src/did/peer.ts` | did:peer:2 encode/decode — interop fallback only, see below |
-
-**Crypto is hand-rolled in TypeScript, and that is not incidental.** The obvious move is sicpa-dlab's `didcomm`/`didcomm-node` (the Rust reference implementation via wasm-bindgen), and it was rejected: both packages fetch a separate ~0.9MB `.wasm` at runtime, which **breaks the single-HTML-file/`file://` architecture** this whole app is built around ([Build flow](#build-flow)). So `crypto.ts` builds the JWEs directly on `@noble/curves` + `@noble/ciphers`. The constructions (ConcatKDF byte layout, ECDH-1PU's `Ze‖Zs` and its cc_tag-in-pub_info step) were read out of `hyperledger/aries-askar`'s source — the crate didcomm-rust itself uses — not reconstructed from memory, and checked against the RFC/draft test vectors plus a live round-trip with the real `didcomm-node` library in both directions. `enc` is always `A256CBC-HS512`; unpack rejects anything else rather than half-supporting it. **Don't add `didcomm`/`didcomm-node` back as dependencies** — they were removed once they had no importer.
-
-**Transport identity: the identity's DID + `_k1`, with did:peer only as an interop fallback.** `_k1` is a seed-derived X25519 key at its own SLIP-0010 path (`keys.ts`'s `deriveDidCommKey`, `m/1'`) — deliberately *not* a birational conversion of the root ed25519 key, since one secret must not both sign Pkarr puts and do key agreement. It's published as the document's `_k1` verification method alongside a `DIDCommMessaging` service, and since 2026-08 it is **PQ-hybrid**: an X25519 key and an ML-KEM-768 key are both listed, so a recipient that understands the second gets key agreement that a recorded session cannot later be decrypted from. did:peer exists (`peer.ts`) only for mediators that can't resolve the identity's own method — every third-party mediator surveyed. It is **not** a second identity: a biset user has one DID and nothing else.
-
-**A DIDComm-capable document needs no extra exchange step.** address → (DNS anchor) → `did:webvh` → (the anchor's log) → `_k1` + service is already the discovery path, so contact over mail/AP is enough to make DIDComm reachable. Carrying DIDs in mail headers (Autocrypt-style) was considered and rejected: a DNS anchor is trustworthy because a *third party* (the domain) attests it, whereas a header would make both directions the sender's own claim and collapse `verifyBinding`'s bidirectional check into a circle.
-
-**Mediator:** part of the anchor (`src/anchor/mediator/`), live at `https://anchor.biset.md` — Coordination Mediation 2.0 + Routing 2.0 + Pickup 3.0. It ran as its own repo (`~/didmediator`) until 2026-07-17, when it was absorbed (ANCHOR.md decision 0/3); that repo is archived and no longer describes anything running.
-
-It speaks **our own** `src/did/didcomm/`, not `didcomm-node` — the same reason the client does. Absorbing it meant it had to survive `bun build --compile`, and didcomm-node reads its `.wasm` off disk at runtime, so it can't. That turned out to be the right shape anyway: both ends of every message here are ours, and the 964-line service became ~290 lines by dropping the library. **It is not an open relay** — a forward for a recipient that hasn't done a `keylist-update` is refused with 401 and never queued, and a queue can only be drained by the device it belongs to.
-
-It also holds the **Web Push** subscriptions (`mediator/pushsubs.ts`, `webpush.ts`): a browser that is closed is woken by the push service rather than by a socket it cannot keep. A push that arrives to find nothing to show costs the subscription its life on iOS, so a delivery wakes only the devices it is actually for.
-
-# Account & relay flows
-
-The `/account` page's own UI: per-relay cards, adding relays/accounts, and the BYO-domain path. Separate from [Identity layer (DID)](#identity-layer-did) above, which is the identity model these flows drive.
-
-## Signing up and logging in are one form (2026-08-12)
-
-There is **no restore page**. `#new` asks for `username@hostname`; as the name
-is typed it is looked up against that address's DNS anchor
-(`_did.<user>.<domain>` TXT, debounced, through `discovery.ts`'s own DoH
-client via `lookupDidForAddressFresh`). A free name keeps the **Start**
-button and creates an identity; a taken one turns the button into **Log in**
-and reveals a recovery-phrase box under the address field.
-
-The reason the two collapsed into one form is that logging in stopped needing
-anything the user has to remember beyond the phrase: the DID used to be a
-second required input (a `did:webvh` identifier is not derivable from the
-seed — see `did/restore.ts`), and the address's own DNS anchor publishes it.
-So the address the user was already typing is enough, and the lookup hands
-the expensive step its input: the TXT record is a few hundred bytes, while
-the webvh log a login actually resolves is ~1MB for an established identity —
-far too much to fetch on every keystroke.
-
-The lookup is deliberately **uncached**, unlike `discoverDidForAddress`'s TOFU
-path: a cache would keep answering "taken" for an address whose account has
-since been deleted.
-
-**Zero accounts renders that same form inline on `/account`** rather than a
-"No accounts" line (`mountNewUserPageInline`). The node is *moved*, not
-cloned — `setupNewUserPage` binds listeners by id, so a clone would either
-duplicate ids or arrive dead — which means every path that replaces the
-account page's markup has to put it back first (`renderAccountsList` before
-its `textContent = ''`, `renderMenuInboxImpl` before its `innerHTML`),
-or `#new` loses its only DOM for the rest of the session.
-
-## The identity card owns the identity (2026-08-12)
-
-The mediator is no longer a card that can appear and disappear next to the
-relay cards; it is a property of the identity, so it folded into the identity
-heading. Clicking anywhere on that card expands **Devices** (the mediator's
-registered keyAgreement keys, with per-device removal) and **DID:Webvh** (the
-resolved document). Its hamburger carries the whole-identity actions —
-Change display name, Export/Import Messages, Sync, and **Log out**, which
-moved off the page-navigation menu at the top right (that menu is for
-navigation; logging out was the one item on it that wasn't).
-
-Adding a relay is a floating button at the bottom of the right column,
-measured against `#right-col` rather than the viewport (`positionAccFloating`,
-kept in step by a `ResizeObserver` so pane toggles follow), expanding into
-the sign-up/log-in panel over the card area.
-
-**"How your data is stored" (2026-07-14, biset issue #7).** Each per-relay card in `#account` is now the click target itself, not just its menu button — clicking anywhere on the card expands a panel in place, the solid border between cards opening into a filled surface rather than staying a line (`.acc-card-wrap`/`.acc-storage-panel` in `style.css`, same idea as `#cmd-acc-identity-expanded`/`#conv-meta`). The panel shows:
-- A one-level directory tree of that account's real on-disk data (`GET /account/storage`, `go-jmapserver/storage.go`'s `listAccountStorage`) — every top-level file with its size, and `messages/` summarized as one entry (count + total size) rather than listed file-by-file, since it can hold thousands of one-file-per-message JSON files and a full per-message tree isn't what "how your data is stored" is asking to see by default. The panel title shows the account's total size (`STORAGE : n KB`, from the same response's `totalSizeBytes`). Clicking the `messages` entry itself drills down into the individual files (`GET /account/storage/messages`, `listMessageFiles` — a separate endpoint so the common one-level view never pays for a directory read that could return thousands of entries).
-- **Download** (subtle icon button, per card) — `GET /account/storage/export` reads every file under the account directory (including inside `messages/`) and returns relative-path → raw bytes, base64-encoded. First cut bundled that straight into a flat `.json`; per explicit follow-up, the client now re-packs it into a **`.zip`** with the real directory structure preserved (`JSON/<path>` — every file exactly as it sits on disk) plus a **`Markdown/`** folder rendering each thread the *same way vault sync already does*: `vault/export.ts`'s `buildAccountArchiveEntries` groups the exported `messages/*.json` by `threadId`, decodes them as `Email`, and feeds each group through `vault/render.ts`'s existing `renderContent`/`threadContact`/`threadShortId`/`isSeen`/`threadFilename` — the identical PGP-decrypting, frontmatter-plus-`- - -`-separated renderer that writes a live vault's `.md` files, not a reimplementation. `vault/zip.ts` is a from-scratch minimal ZIP writer (STORED/uncompressed entries, hand-rolled CRC32 table) rather than a new dependency, since this is a data-export feature, not a bandwidth-sensitive one, and any standard unzip tool reads STORED entries identically to compressed ones — verified against the system `unzip` (contents, structure, and a real two-message thread correctly merged into one rendered `.md`). Scoped to that ONE relay by design (per-card = per-relay everywhere else in this menu family) — the identity heading's hamburger menu has its own **"Download all data"**, the same "loop every stored endpoint sharing the DID" pattern as its "Delete account", building the same JSON+Markdown archive per relay under `<email>/` folders in one zip — the whole-identity counterpart for anyone who wants everything in one download, not per-relay. (Cross-relay threads are NOT merged across an identity's relays here, same boundary the server's own per-relay `Store`s already keep — each relay's markdown is rendered from only that relay's own messages.)
-- **Purge messages** (subtle trash-icon button, per card) — `POST /account/storage/purge-messages` reuses `Store.Purge()` (already existed, previously dead code with no caller anywhere in either relay — written for an admin reset path that was never wired up) which correctly clears both the in-memory `msgs` index and the `messages/*.json` files under the same lock discipline as single-message `Delete`. Scoped to `messages/` **only** — mailboxes.json/identities.json/contacts.json/envelope.json/auth_token_hash are never touched by this, unlike full account deletion, since removing those would corrupt the account or lock it out entirely rather than just clear message history.
-
-All three endpoints share the same authenticated-by-credential-only shape as `/account/delete`/`/account/did`: no email in any request, target derived purely from the Basic Auth credential (`RegisterStorageEndpoints`'s `authenticate` callback), so none of them can ever act on an account other than the one the credential belongs to. Verified live end-to-end (list/export/purge/wrong-auth-401/disk-state-before-and-after) against a throwaway account with real planted message files, not just unit tests.
-
-**"+ New JMAP account" panel: relay URL first, always (2026-07-14).** Replaced the old two-step flow (email's domain guessed which relay to try; only revealed a manual Server URL field after that guess failed — reported live: `y@orillo.org`'s domain doesn't match biset's own, so the guess always failed first) with one explicit, required Relay URL field at the top of the panel, followed by **Sign up** / **Log in** buttons. Both paths need "which relay" answered up front; there's no more autodiscovery ladder (home-domain → try mail+ap both, foreign domain → guess `https://` + bare domain, then reveal a hidden fallback field) to get right or wrong. Consequence accepted at the time: logging in connected exactly the one relay typed, not automatically both mail+AP for the home domain the way the old guess did — matches "Add a relay…"'s existing one-relay-at-a-time shape. (Superseded for the bare-apex case by `expandDualRelay`, see below — an explicit apex like `biset.md` once again fans out to both, just via a named, testable function instead of an implicit guess.) The relay field also carries a protocol pill (queries *that* relay's own `/relay-info` on blur via `context.ts`'s `fetchRelayInfo`/`relayInfoFor`) — accurate for any relay typed, unlike an earlier email-domain-based attempt tied to biset's own AP relay that could never see a foreign or BYO-domain address correctly. Sign up passes the field's raw value (not URL-prefixed) straight to `openAddRelayOrDomainFlow`, since that function's own relay-vs-bare-domain branch depends on whether a scheme is present — prefixing here would misroute a bare BYO domain into the arbitrary-relay path instead of the domain-ownership one; Log in prefixes `https://` itself since JMAP calls need a real base URL regardless.
-
-**Sign up renders inline, not as a separate modal (2026-07-14).** `openAddRelayOrDomainFlow` used to build its own fixed-position overlay+box+header on every call — visually a completely different UI popping up over the panel Log in already renders into inline. Its step functions (`showRelayCreateStep`/`showVerifyStep`/`showDnsAndCreateStep`/`showAnchorStep`) already took a `body`/`close` pair as parameters and never touched the overlay directly, so the fix was purely at the top of `openAddRelayOrDomainFlow`: it now takes `body`/`close` as parameters too instead of creating them, and the caller (`left-pane.ts`'s Sign-up choice handler) passes the panel's own `#cmd-acc-signup-body` div and `resetAddAccountPanel` — the same reset Log in's Cancel-less flow already uses. Sign up and Log in now share one screen throughout, neither ever popping a separate dialog over the other.
-
-**Relay URL is never a domain-ownership signal (2026-07-14, user-reported).** Right after the above, typing the bare hostname `mail.biset.md` (no scheme) into the Relay URL field and clicking Sign up landed in the BYO-domain ownership-verification flow instead of a plain signup on that relay — because `openAddRelayOrDomainFlow` used "does the typed string have a scheme?" as an implicit relay-vs-domain signal, and a bare hostname reads identically to a bare domain by that test. Per the file header's now-explicit stance: the Relay URL field is *purely* "which relay", never a domain-ownership claim. `openAddRelayOrDomainFlow` now always normalizes `target` into a full relay URL first, then presents an explicit follow-up choice — **"Use `<host>`'s own domain"** (unchanged `showRelayCreateStep`, gated on an active session same as before) vs **"Use my own domain"** (the new `showDomainInputStep`, asking for the domain name as its own separate input, then continuing into the existing `showVerifyStep`/`showDnsAndCreateStep`/`showAnchorStep` chain unchanged) — rather than inferring which one from the relay field's shape. The BYO-domain-verify calls now target whatever relay was actually typed (`relay` from the outer closure) instead of the hardcoded `homeMailUrl()` they used before, since that helper's only caller was the branch just removed.
-
-**`/relay-info` also reports the actual account domain (2026-07-14, user-reported).** "Use `<host>`'s own domain" was previewing `username@mail.biset.md` — the relay's own hostname — when the real answer is `username@t.biset.md`: a relay's own server hostname and the domain new accounts land under are genuinely different things (server-side `provisionDomain()` picks whichever configured domain has `allow_provision`, independent of the relay's own URL). The account itself was always created correctly (`provisionAccount`'s response `res.email` is the source of truth, used as-is), only the pre-submission preview text was wrong. Fixed at the source rather than guessed client-side: `/relay-info` (`go-jmapsmtp/main.go`, `go-jmapap/activitypub.go`) now includes an optional `"domain"` field (`provisionDomain()`'s result, omitted if no domain is open for self-service), `context.ts`'s `RelayInfo`/`fetchRelayInfo` carry it through the existing cache, and `showRelayCreateStep`'s "@…" preview swaps in the real domain once that best-effort fetch resolves — falling back to the relay's own hostname (the old guess) if an older relay doesn't report one yet.
-
-**Bare apex in Relay URL fans out to mail+AP together (2026-07-14).** `biset.md` typed into Relay URL used to mean nothing special — it'd be treated as one relay URL (`https://biset.md`), wrong for both Sign up and Log in. `#new`'s onboarding (`account-create.ts`) already provisions the same identity to `mail.<host>` and `ap.<host>` together; `utils.ts`'s new `expandDualRelay(raw)` generalizes that pairing to the Relay URL field itself, for any apex, not just the app's own configured home hostname: a bare string with no scheme, not already prefixed `mail.`/`ap.`, and containing a `.` expands to `[https://mail.<raw>, https://ap.<raw>]`; anything else (has a scheme, already names one specific relay, or isn't a plausible domain) returns `null` and the field is treated as exactly one relay same as before. Both call sites (`custom-domain.ts`'s `openAddRelayOrDomainFlow`/`showRelayCreateStep` for Sign up, `left-pane.ts`'s Log in submit handler) check this first and loop over the resulting relay list instead of a single URL. **Sign up**: `showRelayCreateStep` now takes `relays: string[]`, provisions the same identity to each in turn, and is best-effort/partial-success — one relay failing (e.g. only `mail.` exists, no `ap.`) keeps whichever succeeded rather than failing the whole signup, matching the old auto-discovery login's "whichever comes up is kept" philosophy rather than `#new`'s stricter all-or-nothing (deliberately looser here since this is an *existing* identity adding relays, not first-time onboarding). **Log in**: the submit handler's `resolveAuth` now takes a `server` parameter (was a closed-over single value) and loops over the expanded list the same way, pushing every relay that both unseals correctly (envelope password check) and connects into the existing array-based `connected` — the downstream identity-consistency check (`identityIds()[0]` vs the newly-derived `did`), `syncRelaysFromDid` self-resolution, and per-relay persist loop were already written generically against `connected` (originally to support `syncRelaysFromDid` appending extra sessions after the fact) so they needed no changes to correctly handle 2 sessions arriving from the initial connection attempt itself instead.
-
-**BYO domain: all DNS records shown in one step (2026-07-14).** The verify flow used to be two sequential screens — TXT record → verify → THEN see the MX/DKIM records to add next — because MX/DKIM were only generated and returned by `/domain/add`, which itself only runs after the TXT ownership check passes. Consolidated to one screen: `/domain/verify-token` (`go-jmapsmtp/customdomain.go`) now also eagerly generates/loads the DKIM key and returns `mx_target`/`dkim_name`/`dkim_value` alongside the TXT challenge — safe to hand out before ownership is proven since none of it is privileged (a public key record + this relay's own hostname), unlike `provision_secret`, which stays gated behind the TXT check in `/domain/add` as before. `/domain/add` still calls the same `loadOrGenerateDKIMKey` (idempotent — loads the already-generated key from disk rather than rotating it) so the DKIM value shown before verification is the exact one that ends up live. Client: `showVerifyStep` now renders TXT+MX+DKIM together with one "I've added them — Verify" button; on success it goes straight to `showCreateAccountStep` (username/password/Create only — no more record display, everything was already shown before this point).
-
-**BYO domain's DID-record step was silently invisible (2026-07-14, user-reported).** After creating a BYO-domain account, `showCreateAccountStep` called `showMenuPage('/account')` before `showAnchorStep(body, close, email, did)` — but `showMenuPage` (`left-pane.ts`'s `renderMenuInboxImpl`) re-renders the whole `/account` page's HTML (`card.innerHTML = cmd.page()`), destroying the very `body` element (`#cmd-acc-signup-body`) the anchor step was about to append its "add this DID TXT record yourself" content into. The step still ran, just onto an already-detached DOM node — nothing ever appeared on screen, silently. Fixed by dropping the `showMenuPage('/account')` call: this whole flow only ever runs from inside the `/account` page's own panel to begin with (the "+ New JMAP account" trigger card lives there), so the navigation was both redundant and destructive — `refreshAccountsList()` alone (which only touches `#cmd-acc-list`, confirmed safe) is enough to reflect the new account in the list. (Separately confirmed as *expected*, not a bug: BYO custom domains are mail-only by design — see this file's header comment on `custom-domain.ts` — so a dual `[mail][ap]` relay input's "Use my own domain" branch always targets `relays[0]` only; ActivityPub hosting a custom domain would need real HTTP/TLS SNI routing, out of scope for now.)
-
-**BYO domain is mail-only — the domain-choice screen is skipped whenever ANY targeted relay is ActivityPub (2026-07-14, corrected same day after a user-caught miss).** `/domain/verify-token`/`/domain/add` are mail-relay-only concepts (no ActivityPub equivalent — see file header). First cut only checked `dual` (the bare-apex mail+ap pair case) — missed that typing a single AP relay directly (e.g. `ap.biset.md`, not dual at all) still showed the now-pointless "Use my own domain" button, since the real test was never "is this a dual pair" but "is AP involved at all." Fixed: `openAddRelayOrDomainFlow` now checks `dual || relays.some(isApRelay)` (`context.ts`'s existing relay-type helper, backed by the cached `/relay-info` `type` field — already populated by the time this screen renders, since the relay input's own blur handler fetches it for the protocol pill). For a single mail-only relay input, "Which domain should your new address use?" still shows both "Use default domain"/"Use my own domain" same as before; whenever AP is involved (dual or a lone AP relay), BYO is a dead end anyway (confirmed via the live experiment below) so the whole choice screen is skipped — not just the now-pointless second button, which would've left a one-button screen asking a question with only one possible answer — going straight to `showRelayCreateStep` (or, with no active session, the same "Log in first" message `hereBtn`'s disabled state used to carry, shown directly instead of on a button nobody could click anyway).
-
-**Live-tested: WebFinger cross-domain redirect does NOT give a real vanity AP handle on Mastodon (2026-07-14, experiment).** Explored whether a bsky/atproto-style trick — user hosts a static WebFinger JSON at `https://orillo.org/.well-known/webfinger` whose `rel=self` points at the *real* actor `https://ap.biset.md/users/x` — could offer "BYO domain for AP identity" without biset ever needing multi-tenant TLS (unlike full custom-domain AP hosting, which would need on-demand cert issuance + Host-based routing, a materially bigger build). Verified live against a real Mastodon instance (mastodon.social) using a temporary Caddy-level webfinger override on `t.biset.md` pointing at the real, already-live actor `https://biset.md/y` (Caddyfile edit + reload on v1, reverted after the test — no server code or data touched). Access logs captured the full resolution sequence: Mastodon fetches the redirected webfinger (200), fetches the actor (200), then **fetches its OWN reverse webfinger** at the actor's real domain — `biset.md/.well-known/webfinger?resource=acct:y@biset.md` — before importing the account, and displays/stores it under that *canonical* identity (`y@biset.md`), discarding the vanity name (`wftest2@t.biset.md`) entirely. So the redirect mechanically works (the actor resolves and imports fine) but the vanity domain name never sticks in the UI — Mastodon always shows the real underlying domain. Conclusion: this approach doesn't achieve "BYO domain for AP" on Mastodon; untested on GoToSocial/Pleroma (looser implementations might differ, not verified). Real custom-domain AP hosting, if ever pursued, needs the full on-demand-TLS + routing build discussed but not started.
-
-**Sign up / Log in / Restore unified through `app.ts`'s `connectAndPersist`/`persistSession` (2026-07-26).** The `initSession → dedup-save StoredAccount → addSession → initPGPForSession` sequence was independently duplicated across `account-create.ts` (×2), `custom-domain.ts` (×2), `restore.ts`, and `left-pane.ts`'s Log in — one of them (`restore.ts`) even skipped the dedup key's `serverUrl` half, a latent bug. `app.ts` now owns two exports: `persistSession(stored, session)` (dedup by `email`+`serverUrl`, register in `sessions`) and `connectAndPersist(stored, kek?)` (calls `initSession` then `persistSession`, then `initPGPForSession` if a kek is available) — every one of those call sites routes through one of the two now. `src/ui/accounts.ts` (a legacy standalone accounts page, `addAccount`'s only caller) was found fully orphaned — no live route or DOM ever reached it — and deleted outright rather than migrated.
-
-**Left-pane "Log in" is now purely a device-key reconnect — the password field is gone (2026-07-26).** Investigated whether a logged-out browser could silently reconnect using its own already-vouched per-device key (`devicebind.ts`) rather than needing a password again: confirmed the key survives an ordinary per-relay logout (`removeRelayLocally` only drops the `StoredAccount`/session, never the `DidRecord` IndexedDB store `ownDid()` reads). `onShowAccounts`'s submit handler now tries `initSession({ ..., password: '', did: ownDid() })` (the existing device-signed-session branch, no new code needed there) and, on failure, shows an error — no password fallback at all, since third-party/plain-password JMAP login was judged not worth keeping as a first-class path. `#cmd-acc-password` removed from the DOM entirely (not just hidden); a large dead code path this form had accumulated (a lazy-DID-migration/vouch block gated on a `masterSecret` that could never be assigned any more, since password/envelope was disabled earlier in the same work) went with it.
-
-**`#new` auto-detects did:dht vs did:webvh, and whether email creation is even offered, instead of asking the user (2026-07-26).** Two manual choices removed in favor of reachability checks against this deployment's own config:
-- **DID method**: `didcomm-devices.ts`'s new `anchorReachable()` (probes `mediatorUrl()`, itself `config.json`'s `mediator_url` or a derived `https://anchor.<apex>` default) feeds into deciding did:webvh (requires an anchor unconditionally — its log lives only there) vs did:dht (fully anchorless, self-certifying). The `did:dht`/`did:webvh` toggle buttons in `#new` are now `disabled` — display-only.
-- **Email creation**: new `getMailUrl()`/`smtpReachable()` (same explicit-config-or-hostname-convention pattern, `mail_url`) gate whether `#new` offers a username field at all. `applySignupAvailability('full' | 'did-only' | 'blocked' | 'checking')` drives this: `full` (mail reachable) shows the username row as before; `did-only` (mail unreachable but the anchor is) hides/clears it and creates a relay-less identity instead — the exact case the now-removed `#newdid` route used to require a manual visit for; `blocked` (neither reachable) disables Start entirely, since an identity that could reach nothing would be permanently uncontactable. Starts pessimistically `checking` (Start disabled) on every page open so a fast click can't slip through before either check resolves.
-- **`#newdid` removed outright** (`main.ts`'s route, and every `didOnly`-branch in `account-create.ts`) — subsumed by the `did-only` auto-detection above; there is no longer a manual override that does anything the automatic path doesn't already cover.
-- **Bug found same day (user-reported): the did:webvh/did:dht toggle and the email-availability check were two independent checks that could disagree.** First cut had a separate `refreshDidMethodIndicator` that only called `anchorReachable()`, with no regard for whether mail was reachable — so a deployment with `mail_url`/`ap_url` both unset but `mediator_url` set showed the toggle highlighting "webvh" even though the actual submit-time `useWebvh = hasUsername && anchorReachable()` would evaluate false (did-only mode clears the username field, so `hasUsername` is false regardless of the anchor). The toggle was lying about what would actually get created — a real did:webvh identity with NO username is not even constructible (its identifier bakes the username in), so "webvh mode, no email" as displayed was never a real state, just a misleading indicator. Fixed by deleting the separate check entirely: `refreshSignupAvailability` now calls `setDidMethod(smtp && anchor ? 'webvh' : 'dht')` itself, from the exact same `Promise.all([smtpReachable(), anchorReachable()])` result `applySignupAvailability` uses — the toggle and the real outcome can no longer diverge because they're now literally the same check.
-
-**AP (ActivityPub) is fully optional at signup; mail is required only for did:dht (2026-07-26).** `#new`'s submit handler used to hard-fail the whole signup (`relayFail`, aborting even though the DID and, in the dual-relay case, the mail account were already created) if AP provisioning failed for any reason — a real gap once `ap_url` could be unset or jmapap simply not deployed (it is slated for removal later). Now: AP failing for any reason (including `apReachable()` saying no up front) just means the identity ends up mail-only, never a failed signup — the account holder can always add it later ("+ New Relay"). Mail followed the same relaxation UNLESS `useWebvh`: see the did:webvh known issue below for why a mail failure can't be silently absorbed once a webvh genesis is already live claiming that username — for did:dht (no username baked into the DID itself), the identical relaxation is safe, since there's no dangling claim to leave behind. A genuine 409 (username taken) always stops the signup regardless of DID method — real, actionable feedback about a name the user chose, never worth silently swallowing.
-
-**Mediator registration is no longer opt-in-only at signup — policy reversal, user-requested (2026-07-26).** Investigated a user report that `#new` never registered a fresh identity with the DIDComm mediator, even when its `mediator_url`/anchor was reachable — traced every `registerWithMediator` call site and confirmed it: only the `/account` page's explicit "+ New Relay" mediator branch called it; boot's own `reassertKeylistRegistration` (`channel.ts`) only re-asserts an ALREADY-registered `didCommMediatorUrl`, so it's a no-op for a brand-new identity. This matched the codebase's own explicit prior stance (a comment removed by this change, and [[project_biset_did_relay_orthogonality]]): "publishing is opt-in, not a side effect of creating an identity" — deliberate, so an identity that never needs DIDComm pays no DHT-publish/mediator cost automatically. Reversed by explicit request, reasoning that `#new` now computes `anchorReachable()` anyway (for the did:webvh/dht decision above) so "check reachability, then actually use it" should apply here too, the same as it now does for mail/AP. `account-create.ts`'s submit handler hoists that check to `anchorOk` (previously inlined into `useWebvh`'s `&&`, which short-circuited it away whenever `hasUsername` was false — needed un-short-circuited here since mediator registration applies regardless of whether there's a username at all, DID⊥relay) and, after `setupLeftPane()`, calls `registerWithMediator(mediatorUrl())` + `setupDidCommChannel` whenever `anchorOk` — best-effort, a failure never blocks signup, same treatment AP already gets. The "+ New Relay" mediator branch remains for registering later if this didn't happen (anchor down at signup time) or was skipped (anchor unconfigured). `restore.ts`'s flow is intentionally untouched: a restored identity that previously registered already carries `didCommMediatorUrl`, which `reassertKeylistRegistration` re-asserts automatically at the next boot regardless.
-
-**Bug found same day (user-reported): signup got stuck on `#new` with an empty app shell, no mediator card ever appeared.** First cut of the above `await`ed `registerWithMediator`/`setupDidCommChannel` before navigating to `/account`. Unlike mail/AP (one HTTP round trip each), `registerWithMediator` is a multi-step DIDComm protocol dance — publish keys, `fetchMediatorInfo`, `requestMediation`, `updateKeylist`, republish — each its own network call with no explicit timeout; a slow or unresponsive mediator left the whole submit handler awaiting indefinitely, well past `hideNewUserPage()`/`showApp()` (so the app shell was already showing) but before `showMenuPage('/account')` (never reached) — explaining both symptoms at once: hash stuck on `#new`, and no mediator card because the account page itself never rendered. Fixed by making the registration block genuinely fire-and-forget — an unawaited `(async () => {...})().catch(...)` that runs after navigation instead of before it — with an explicit `refreshAccountsList()` once it lands, so the mediator card (`buildMediatorCard`, which only checks the DidRecord once at render time) still appears without a manual reload.
-
-**"Republish" was did:dht-only for any identity with a relay — silently published a phantom record for did:webvh (user-caught, 2026-07-27).** Asked how the account-heading "Republish" button actually works; tracing it turned up a real bug. The button had two code paths depending on whether the identity had a relay: zero-relay identities correctly called `didcomm-devices.ts`'s `publishBareOrCurrent` (`publishCurrentState`), which dispatches by DID method via `methodOpsFor` — but the relay-backed path (the common case, since any did:webvh identity created through `#new` always has one) called `dht/publish.ts`'s `publishOneVisible` directly — did:dht-only, no method dispatch at all. For a did:webvh identity this built and PUT a did:dht-*shaped* document instead (same root key, so the BEP44 write itself succeeds cryptographically) under a DIFFERENT DID string nobody would ever resolve — the real did:webvh document was never touched — while the button reported "Published to DHT". Fixed by extracting one shared `republishIdentity(did)` (`left-pane.ts`) that both branches call, using the already-correct `publishBareOrCurrent`. The same `publishOneVisible`-direct pattern was found in three more places in the same pass — `removeRelayLocally`'s post-remove republish, the display-name-change republish, and `custom-domain.ts`'s two "add a relay to an existing identity" republish calls — all fixed identically (fetch the `DidRecord`, call `publishBareOrCurrent`). `publishOneVisible` itself is now unreferenced outside its own tests; left in place rather than deleted (did:dht's own routine-republish module still uses its sibling `buildOwnDocument` internally, and removing a tested public export wasn't asked for).
-
-**`didCommGateways` fanned every DIDComm publish out to real public pkarr infrastructure unconditionally — even with a self-owned relay/mediator, and on every boot (user-caught, 2026-07-27).** Raised alongside the Republish bug above: `didCommGateways` (`dht/publish.ts`) always unioned relay gateways + the identity's own mediator gateway (if registered) + BOTH `PUBLIC_PKARR_FALLBACKS` (`relay.pkarr.org`, `pkarr.pubky.org`) — meaning any did:dht identity with a mediator registered hit those two real, third-party-operated services on every single boot (`reassertKeylistRegistration`, `channel.ts`), not just when self-owned gateways were unavailable. Changed to prefer self-owned gateways outright: public fallbacks are now only added when the self-owned set is empty. Reasoning: the DHT's own peer-to-peer replication is what actually provides resilience once a record lands anywhere — writing to one well-behaved gateway is enough (a still-referenced DID keeps resolving through the DHT directly even if every biset-run gateway vanished, per "Why did:dht?" above) — so redundant writes through every known door, including a commons biset doesn't operate, bought nothing but avoidable load. `test/did-publish-gateways.test.ts` updated to lock in the new priority (was asserting the opposite — public fallback always present). Two *other* tests turned out to be silently depending on the old unconditional fan-out to mask a latent test-only bug (their own gateway lists never actually matched what the app's `gatewayUrl()` really writes to, papered over by public fallback traffic quietly reaching the real `relay.pkarr.org`/`pkarr.pubky.org` during `bun test` runs) — `unregister-relay-backed.test.ts`'s verification gateways now use `gatewayUrl()` itself instead of bare relay URLs, and `remove-device-key-self-collision.test.ts`'s placeholder `mediatorUrl: 'https://mediator.invalid'` (a self-owned gateway that's real enough to suppress the public fallback, but too fake to actually accept a write) now points at the test's own local mock server instead.
-
-**Mediator "Log out" left a hollow, permanent connection entry behind — no "delete account" needed once fixed at the root (user-raised, 2026-07-27).** Asked what the mediator-equivalent of a relay's "Delete account" would look like, since the mediator card only has "Log out". Investigation found the mediator has no real "account" to delete in the first place: its message queue is deliberately in-memory/volatile (`queue.ts`'s own header), and the only persisted state is `ConnectionStore` (`anchor/mediator/connections.ts`) — clientDid → registered-kids keylist, written to disk on every mutation. "Log out" (`unregisterFromMediator`) already correctly does `keylist-update remove` for just this device's kid — but `ConnectionStore.removeKey` only ever deleted the kid from the `Set`, never the surrounding `Connection` object once its keylist emptied, so a client that logged every device out kept a permanent, empty, disk-persisted entry forever (nothing else ever revisited it to clean it up — same shape of leak as several other "nobody's job" cleanup gaps found this session). Considered building a proper "Delete account" action to match the relay pattern, but rejected: relay's log-out/delete split exists because there's real, valuable server-side data (mail, envelope) a log-out should NOT destroy — a mediator keylist registration has no such content, and registering is explicitly "free and open by design" (the store's own comment) — nothing is lost by making a full removal automatic. Fixed at the root instead of adding a second action: `removeKey` now deletes the whole `byClientDid` entry once its keylist reaches zero, mirroring `MessageQueue.remove`'s identical already-established bucket-eviction pattern in the same file family. Safe for multi-device — only the connection whose keylist is now genuinely empty is dropped, a sibling device's own kid (and connection) is untouched.
-
-**Identity storage panel used the wrong credential for every DID-bound account — user-caught on a fresh did:webvh test identity (2026-07-27).** "STORAGE — Failed to load — check the relay is reachable" on a relay that was visibly fine everywhere else (green status, syncing, PGP ✓). All four storage-panel actions (`loadStorageTree`, the message-file drill-down, Download, Purge) called their `cryptenv.ts` fetchers with `a.password` — `a` being the raw `StoredAccount` from `loadStoredAccounts()`, whose `password` field is always `''` for a DID-bound account (no static credential is persisted any more — this session's whole per-device-credential redesign). The same loop already computes `session` (`sessions.find(...)`, used for the `connected` dot) — the live session's `account.password` carries the actual effective device-session bearer token `initSession` swapped in. Fixed by using `session?.account.password ?? a.password` at all four call sites — falls through to the stored value for a genuinely password-based (non-DID) account, where it IS the real credential.
-
-**"Republish to DHT" was did:dht-specific language on a method-neutral button — did:webvh doesn't touch the DHT at all (user-raised, 2026-07-27).** Following the earlier Republish bug fix, asked whether did:webvh has a "publish" concept at all. It does, but it's a fundamentally different operation from did:dht's: a single HTTP PUT to the anchor (`webvh/method-ops.ts`'s `noGateways` — no DHT, no gateway fan-out), and — unlike a BEP44 record — a did:webvh document never decays (no TTL to fight), so there was never a "keep-alive" reason to click it repeatedly the way did:dht's routine republish has. Worse: `updateDocument` unconditionally appended a new log entry on every call, so clicking "Republish" on an unchanged did:webvh identity would bloat its (append-only, un-prunable) log with a zero-content-diff entry forever. Fixed both: `updateDocument` now JCS-canonicalizes (`jcs.ts`, the same canonicalization the hash chain/proof already use) the new state against the log's last entry and no-ops if identical; the button's label/tooltip and `republishIdentity`'s sysMsg copy changed from "Republish"/"Published to DHT" to method-neutral "Sync"/"Synced" throughout.
-
-**Mediator "integrity check failed" right after a did:webvh update-key rotation — root-caused to the mediator's own 10-minute key-resolution cache, not a code bug (user-reported, tested with an external DID tooling repo `~/did`, 2026-07-27).** Rotating a did:webvh identity's update key (`#key-1`) via an external editor tool, then immediately trying "Register with mediator" in biset, failed with `mediator request failed: HTTP 400 {"error":"Error: integrity check failed"}` — an AEAD authentication-tag mismatch (`@noble/ciphers`' wording) during the mediator's DIDComm decrypt of the `mediate-request`. Traced the full path — the external tool's rotation logic (preserves `keyAgreementKeys`/`#k1` via object spread, only touches the rotated `verificationMethod` entry), the anchor's PUT-time full log re-verification (`server.ts`'s `handleWebvh`, added after a near-identical PAST incident described in its own comment — "an editor tool signed a rotation with a superseded key, and the DID was permanently unresolvable"), and the mediator's own key-parsing (`keyAgreementKeysFromWebvhState`) — and found every layer structurally correct: the rotation only ever changes `#key-1` (the identity/update key), never `#k1` (the per-device DIDComm keyAgreement key the mediator actually needs), confirmed byte-for-byte against the resolved document's `publicKeyMultibase` matching the Devices panel's locally-registered key. The actual cause: `anchor/mediator/server.ts`'s `resolveViaCache` caches a resolved sender key **for 10 minutes per kid**, with a fail-soft fallback to the stale cached value on any re-resolve error — so a `mediate-request` sent shortly after ANY did:webvh document change (rotation or otherwise) can transiently fail before the cache naturally expires. Confirmed live: retrying after waiting past the TTL succeeded with no code changes. Not fixed — this is a deliberate resilience tradeoff (a transient DHT/webvh outage must not break an already-authenticated client, the cache's own comment), and the failure window is bounded and self-healing; noted here so a future "just rotated, mediator briefly rejects me" report is recognized immediately instead of re-investigated from scratch.
-
-**Restore never registered the restoring device with the identity's mediator at all — user-caught, same investigation session (2026-07-27).** Following the rotation investigation, asked directly whether restore even calls the mediator. It doesn't: `restore.ts`'s `relayServices = doc.service.filter(s => !!s.address)` explicitly excludes the DIDCommMessaging service (which has no `address`) from the relays it connects, and nothing else in the function looks at it. The reasoning that shipped with the earlier "mediator auto-registration" policy change — "a restored identity already has `didCommMediatorUrl` locally, and boot's `reassertKeylistRegistration` re-asserts it automatically" — turned out to be wrong on inspection: `reassertKeylistRegistration` only runs on a full page load (restore never reloads, it continues the same session), AND even then only for a device whose *local* DidRecord already has `didCommMediatorUrl` set — which a freshly-restored device never does, having no registration history of its own on this device. Fixed: `restore.ts` now extracts the identity's own DIDCommMessaging service endpoint from the resolved document (not this deployment's config-default mediator, so restoring onto a different biset deployment than originally used still finds the right one) and calls `registerWithMediator` for this device too — fire-and-forget, same reasoning as the `#new` fix (no-timeout multi-step network dance must never block restore), with a `refreshAccountsList()` once it lands so the mediator card appears without a manual reload. Also fixed in the same pass: `account-create.ts`'s restore handler only called `refreshAccountsList()` inside `if (hasRelays)` — exactly backwards, since a relay-less restored identity is the one case with nothing else to trigger an `/account` re-render at all — and deleted the now-proven-wrong comment explaining why no mediator call was "needed" here.
-
-**Follow-up dig into the "integrity check failed" rotation bug found a real (but separate) latent bug, exact mechanism still unconfirmed (2026-07-27).** Asked to investigate further since the 10-minute-cache theory left the exact failure mechanism unverified. Built two empirical repros against a real anchor+mediator harness (mirroring `test/webvh-didcomm-e2e.test.ts`'s pattern): (1) rotating both the update key and `#key-1` (checkbox on), then republishing with the stale local root key — the anchor correctly rejects it (`no valid proof on entry N`), which never even reaches the mediator, so it can't be the observed error; (2) rotating the update key only (`#key-1` unchanged) exposed a real bug — `updateDocument`'s no-op guard (`publish.ts`, added earlier this session) compared only `state`, not `parameters`, so an update-key-only rotation left `state` byte-identical and made Phase 1 silently report success without ever checking whether the local key could still sign anything. Confirmed `"integrity check failed"` itself only exists in `@noble/ciphers`' AES-GCM tag-verification code (grepped `src/` — zero hits of that string anywhere in biset's own code), meaning it can only originate from an authcrypt/anoncrypt *decrypt*, never from webvh's proof/hash verification — so the failure is necessarily downstream of Phase 1, in Phase 2's `mediate-request`/`keylist-update` or later. Neither repro reproduced the exact error text; Phase 2 succeeded cleanly in both cases once Phase 1 got past (correctly rejected, or silently no-op'd) because `#k1` — confirmed byte-identical across the user's own rotations — is the only key Phase 2 actually depends on. Root mechanism remains unconfirmed, most likely a genuine one-off production race rather than a deterministic path. Fixed the confirmed bug regardless: `updateDocument` now checks the local signing key against `last.parameters.updateKeys` *before* the no-op comparison, throwing loudly (`local signing key is not authorized by the document's current updateKeys`) instead of silently reporting success on a stale key when only the update key (not the document content) has moved on. `webvhMethodOps.publishFull`'s catch (`method-ops.ts`) — which converts any `updateDocument` failure into a bare `0` for its caller's contract — now `console.warn`s the swallowed reason first, and `resolveViaCache` (`anchor/mediator/server.ts`) now logs both a resolver-threw case and a resolve-came-back-empty-served-stale-cache case, previously fully silent (`catch { key = null }`) — so if this happens again in production, the actual cause is visible instead of needing another cold investigation. `test/webvh-e2e.test.ts`'s forged-signature test updated to match: a forged/unauthorized key is now rejected locally before the network round-trip, so the assertion checks for the new local error message instead of the anchor's `HTTP 400`.
-
-**Found the real root cause of "integrity check failed" the same day: device-slot number reuse colliding with the mediator's per-kid resolve cache — reproducible on demand via register → log out → restore, no external rotation tool needed (2026-07-27).** Asked to add logging around `vouchThisDevice` for an unrelated restore failure (below); the added instrumentation caught `registerWithMediator`'s Phase 2 hitting the *exact* `"integrity check failed"` error live, on a plain restore of an identity whose root key had never been touched by anything — ruling out root rotation as a necessary precondition and reopening the earlier "not fixed, self-healing cache" conclusion. Root cause: `didcomm-devices.ts`'s `syncDevicePosition` computed a new device's slot number as `existing.length ? Math.max(...existing.map(k => k.n)) + 1 : 1` — `existing` being only the CURRENTLY-published (live) keyAgreement entries. A single-device identity that logs out (removing its only entry, `existing` now empty) and then restores gets handed `#k1` again — the exact number the logged-out device just vacated — even though the document's own `removedKeyNs` (published specifically as a permanent tombstone, per this function's pre-existing comment insisting "numbers being permanent and never reused is the one invariant the whole removal/tombstone system depends on") already lists it. The new device's key is a **different** actual key than the old `#k1`'s. The mediator's `resolveViaCache` (`anchor/mediator/server.ts`) caches a resolved public key **by kid string alone** for 10 minutes on the assumption that a kid is permanently stable ("biset's keys are rotation-less and seed-derived, so a given kid maps to ONE stable key: safe to cache" — that function's own comment) — reusing the number while that cache entry is still warm hands the SAME kid a genuinely DIFFERENT key, so the mediator derives ECDH against the stale cached (wrong) key and every authcrypt to/from the new device fails AEAD decryption until the cache entry ages out — matching every symptom from the original report (waiting fixes it, `#k1`'s *resolved* bytes looked consistent because the log was checked before vs. after the SAME still-cached window, not across the reuse boundary). Fixed: `nextN` now also considers `resolved?.removedKeyNs` (already threaded through `resolveKeyAgreement` for other purposes), so a retired number is never handed out again even when the live set is momentarily empty.
-
-**"Found the identity but could not connect to any of its relays" on restore: concurrent unlocked read-modify-writes on the same DidRecord, each silently erasing the other's key (user-caught 2026-07-27, several wrong theories first).** With the new vouch-result logging in place (previous entry's session), a restore showed `vouchThisDevice` returning `{ok: true}` immediately followed by `deviceSessionLogin` failing with "never vouched here, or revoked" — and a second, fully separate restore attempt then working. That "works on retry" shape was initially misread as relay-side read-after-write lag and "fixed" with a retry+backoff in `restore.ts` (first ~1.3s, then widened to ~10.5s); neither helped, which was the clue that the theory was wrong — and reading the relay actually settles it: `go-jmapsmtp`'s `/account/devices` POST calls `jmapserver.WriteDeviceKey` (a plain `os.WriteFile`) and `/account/session` checks `hasDeviceKey` (a plain `os.Stat`) on the same path in the same process, so there is no lag to wait out. The real cause is entirely client-side: `provision.ts`'s `ensureJmapDeviceKey` and `didcomm-devices.ts`'s `ensureDeviceKey` were both bare read-modify-writes on the same `DidRecord`, and restore runs them concurrently — `vouchThisDevice` mints the JMAP device key on one tick while the fire-and-forget `registerWithMediator` (a multi-round-trip network flow: webvh publish + mediate-request) holds a record snapshot read from *before* that write and persists it *after*, wiping `jmapDevicePrivateKey`/`jmapDevicePublicKey` outright. The vouch itself genuinely succeeded (it signed with the in-memory keypair, and the relay recorded the pubkey) — but the next read of the local record found no private key, so `deviceSessionLogin` returned null and `initSession` reported "never vouched here, or revoked", a false diagnosis. No amount of retrying or waiting can fix a key that is no longer there, which is exactly why the backoff never worked and why only a whole fresh restore (which re-mints and re-vouches) did. Fixed by putting BOTH functions inside `store.ts`'s `withDidLock` and re-reading the record inside the lock — `registerWithMediator`'s own mutation was already lock-protected, which protected nothing while the other side of the race wasn't. `ensureDeviceKey` also changed to take a `did` instead of a caller-supplied record, so a stale snapshot can't be handed to it in the first place; the retry/backoff added under the wrong theory was removed. Note `dht/publish.ts`'s routine-republish call into `syncDevicePosition` (`buildOwnDocument`, did:dht only) still passes a caller-held record the same way — same latent shape, left alone as it's a separate path and outside this bug.
-
-**A restored device resurrected every already-removed device slot, because the authoritative keylist prune structurally cannot run during a first registration (user-caught 2026-07-27, immediately after the restore fix above).** With restore finally working, the identity's document listed TWO keyAgreement keys (`#k4` and `#k8`) for what is a single-device identity. Cause: `syncDevicePosition`'s sibling merge is deliberately grow-only (its own long comment explains why replace-on-resolve was reverted — it once wiped two live devices' keys), so the only thing that can actually REMOVE a slot is the authoritative pass that asks the mediator's keylist what's still live. That pass was gated on `rec.didCommMediatorUrl && rec.didCommPrivateKey && rec.didCommOwnKid` — and on a fresh restore `didCommMediatorUrl` is not stored until registration *finishes*, so it silently no-op'd exactly when it was needed most. The restored device therefore absorbed every key still published (including ones a prior logout had already removed from the keylist) as a "sibling" and republished them in Phase 3, making a dead slot permanent. Moving the gate earlier doesn't work either: the check needs a mediator that can *authenticate* us, and before Phase 1 publishes this device's key and Phase 2 registers it, the mediator can neither resolve our sender key nor answer our keylist-query — the query would just throw and fail closed. Fixed by extracting the pass into a shared `pruneSiblingsByKeylist(rec, mediatorUrl)` (one implementation, per the "unify common logic" rule — two copies of a removal policy this subtle is exactly the divergence that rule exists to prevent) and calling it from BOTH places: `syncDevicePosition` as before (using whatever mediator the record already knows), and `registerWithMediator` right after Phase 2 succeeds, which is the earliest moment a first-time or just-restored device can legitimately ask. Phase 3's key list is recomputed when that prune actually changes something, so the pruned set is what gets published rather than the pre-prune snapshot.
-
-**…and the prune then correctly refused to remove the dead slot, because nothing had ever taken it out of the mediator's keylist (user-caught 2026-07-27, immediately after).** With the prune now running at the right moment, `#k4` still survived a logout/restore — the prune was working exactly as specified: it asks the keylist what's live, the keylist still listed `#k4`, so it ruled it alive. The missing half is that `removeDeviceKey`'s SIBLING branch (the Devices-panel trash icon) only ever edited the local cache, tombstoned the kid and republished the document — pure gossip, never a `keylist-update remove` to the mediator. That was survivable while the keylist was merely advisory; the moment the previous entry made it authoritative it became self-defeating, since a sibling deleted through the UI would be re-absorbed as live on the next registration. It also left no mechanism at all to clean up a slot orphaned by an earlier failed logout, which is where the user's `#k4` came from. Fixed: sibling removal now also sends `keylist-update remove` for that kid before republishing. Permitted by construction — the mediator's `ConnectionStore` is keyed by the identity's DID (shared across its devices), not per-device, so `connections.removeKey(fromDid, kid)` accepts a removal for any kid of the authenticated identity; this is the same authority over the identity's own document that the function's header already notes the root key carries. Best-effort so an unreachable mediator can't block the document-side removal, which is the half that actually stops senders addressing the dead device.
-
-**Mediator card's Devices panel gained a "Download" button, mirroring a relay card's Storage download — local data instead of a server fetch (2026-07-27).** A relay's download button (`left-pane.ts`) calls `exportAccountStorage` (an HTTP round trip) and zips the result via `buildAccountArchiveEntries` into `JSON/` (raw files) + `Markdown/` (rendered threads, `vault/render.ts`). There's no equivalent server endpoint for a mediator to hit: DIDComm delivery is pickup-and-persist-locally by design (the mediator's own queue is deliberately volatile, `queue.ts`'s header), so everything worth exporting already lives in this device's own local state. Added `buildMediatorArchiveEntries` (`vault/export.ts`) as the local-only counterpart — same `JSON/`+`Markdown/` shape, built from `store/messages.ts`'s `forAccount(accountKey({email: did, serverUrl: DIDCOMM_SERVER_URL}))` (the same synthetic pseudo-account `channel.ts`'s `didCommAccount` stores DIDComm chat under, reusing the identical `Email` shape and `renderContent`/`threadContact`/etc. rendering as mail) plus a `devices.json` of this identity's kid/public-key list. Deliberately public-key-only: unlike the relay path (which never had private keys to worry about, since a relay never stores them), the local DidRecord sitting right next to this data DOES hold this device's `didCommPrivateKey` — excluded explicitly rather than by omission, so a future refactor can't accidentally start including it.
-
-**…and an Import button alongside it, restoring DIDComm message history from that same backup (2026-07-27).** Asked in passing whether import was even feasible; recommended scoping it to messages only (not `devices.json` — public-key-only metadata with no private key to restore a device from, so there's nothing an import could do with it) before building. `zip.ts` gained `readZip` — a small reader for the STORE-only format `buildZip` writes (walks local file headers sequentially rather than via the central directory; no DEFLATE support needed or added, matching `buildZip`'s own documented scope). `export.ts` gained `parseMediatorArchive`, extracting just `JSON/messages/*.json` entries back into `Email[]` (skipping `devices.json`/`Markdown/`, and skipping — not aborting on — any single unparseable entry). The Devices panel's Import button is a file-picker `<input type=file accept=.zip>` (matching every other one-shot file-in action in this codebase rather than introducing drag-and-drop as a new interaction pattern); on selection it calls `messages.put()` + `persist.flushMessage()` per recovered email — both, not just the in-memory `put()`, so the restore survives a reload the same way a normally-received message does. New test `test/vault-zip-roundtrip.test.ts` locks in the buildZip/readZip round-trip and the messages-only extraction.
-
-**Confirmed the mediator card was never a rendering bug — it was entirely downstream of the vouch/login race above (2026-07-27, same investigation).** After the two fixes above, the "mediator card doesn't appear" report kept recurring; added temporary logging to `registerWithMediator` and the card-render path (`left-pane.ts`) to check whether the DID used to persist `didCommMediatorUrl` matched the DID used to read it back for the card. They matched every time, and once a restore actually succeeded in connecting to its relay (see next entry), the mediator card rendered correctly with no other change needed. Logging removed once confirmed — there was no separate bug here, just the same underlying failure surfacing as a second, unrelated-looking symptom.
-
-**The vouch/login race outlasts even a ~1.3s retry budget — widened to ~10.5s, but a single restore attempt can still lose the race (2026-07-27, same investigation, not fully resolved).** The `[400, 900]`ms retry from the entry above wasn't enough on a live retest — still failed with "Found the identity but could not connect to any of its relays" after both retries. Widened to `[500, 1000, 2000, 3000, 4000]`ms (~10.5s total) and added per-retry logging. Even this can still lose: one retest failed the *entire* restore attempt (all retries exhausted) and only succeeded on a fully separate second restore a bit later. This points to the relay-side (`go-jmapsmtp`, a separate repo, no access from here) read-after-write lag sometimes exceeding 10s, or being a different mechanism than pure propagation delay (a debounced/batched write, a replica read, etc.) — client-side retrying can paper over the common case but isn't a real fix for whatever's actually happening relay-side. Flagged as a known limitation rather than chased further into a repo this session can't inspect: a restore that fails this way currently needs a manual second attempt, same as before, just less often.
-
-**Found the actual root cause: not the relay at all — a client-side lost-update race in `ensureJmapDeviceKey`, the one DidRecord read-modify-write in this whole codebase that had never been wrapped in `withDidLock` (2026-07-27, same investigation, now fully resolved).** Went to `~/go-jmapsmtp` to chase the "relay lag" theory from the two entries above — read `devices.go`'s `/account/devices` and `/account/session` handlers, `go-jmapserver/devicekeys.go`'s `WriteDeviceKey`/`VerifyDeviceSession` (plain synchronous local-disk `os.WriteFile`/`os.Stat`, no caching, no async decoupling), confirmed a single production IP (no load-balanced replicas with non-shared disk), and confirmed the vouch handler writes the device key to disk BEFORE responding 204 — the client's own `await` on that response is a genuine happens-before against the write. Nothing server-side could explain a lag. The actual mechanism: `provision.ts`'s `ensureJmapDeviceKey` — mints (on first use) and persists this device's JMAP signing key — did a bare `getDidRecord` → mutate → `storeDidRecord`, with NO lock, unlike every other DidRecord read-modify-write in the codebase (`store.ts`'s `withDidLock` doc comment already lists this exact failure class by name: "buildOwnDocument, removeDeviceKey, unregisterFromMediator" — `ensureJmapDeviceKey` was simply missing from that list). During restore, this runs CONCURRENTLY with restore's own fire-and-forget `registerWithMediator` (a slower, multi-round-trip network flow that IS lock-protected, but that protects nothing against an unlocked racer): `ensureJmapDeviceKey` reads a snapshot, mints+persists `jmapDevicePrivateKey`/`jmapDevicePublicKey`, and the vouch (using the in-memory key) genuinely succeeds — but `registerWithMediator`, having read ITS OWN snapshot earlier (before that write), finishes later and writes ITS fields back onto that stale snapshot, silently erasing the just-added jmapDeviceKey fields. The vouch really did succeed at the relay; the LOCAL proof that it happened just got wiped moments later by an unrelated concurrent write. `deviceSessionLogin`'s subsequent read finds no `jmapDevicePrivateKey`, returns `null`, and `initSession` logs the misleading "device session login failed (never vouched here, or revoked)" — indistinguishable from a genuine server rejection, which is what sent the last two entries chasing the relay. This also explains why longer client-side retries never reliably helped (no wait duration un-erases an erased key) and why a fully separate second restore attempt "worked" (a fresh `ensureJmapDeviceKey` mint, and this time the race happened not to recur). Fixed by wrapping `ensureJmapDeviceKey`'s whole body in `withDidLock(did, ...)`, same as every other caller in this class — the two flows can no longer interleave. The two prior "fixes" (vouch-result logging, the widened retry budget) are partly superseded: the retry loop was removed (it was compensating for a misdiagnosed cause, and masking would have hidden any future regression instead of failing loudly), the vouch-result logging was kept since it's still useful signal on its own.
-
-# MLS group messaging (PLANMLS.md)
-
-*Status: MLS core, the DIDComm transport, the mediator's Delivery Service and the self group (multi-device key management) are done and E2E-tested. Not wired into the UI yet, which is why knip lists `src/mls/store.ts` as an unused file.*
-
-Group conversations — and, first of all, **an identity's own set of devices** — get their key management from **MLS (RFC 9420)** rather than from DIDComm, which has none. The two are orthogonal layers, not alternatives: MLS secures contents over time (forward secrecy, post-compromise security, O(log n) rekeying), DIDComm secures the transport and everything that happens *before* someone is in the group (key package fetch, invitation, Welcome). Every MLS object still travels inside an ordinary authcrypt'd DIDComm envelope.
-
-| Path | Role |
-|---|---|
-| `src/mls/vendor/` | **A fork of ts-mls v1.6.2**, MIT. See `vendor/VENDOR.md` — it exists for one security fix and one size reduction, both described below |
-| `src/mls/suite.ts` | The one ciphersuite (`MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`) and the single `getCiphersuiteImpl` |
-| `src/mls/identity.ts` | An MLS leaf's credential IS a DIDComm device key id (`did#kN`) — one leaf per device, resolvable and revocable through the DID document |
-| `src/mls/group.ts` | Every MLS operation the app may use. Platform-free (no DOM, no storage, no fetch) |
-| `src/mls/self-group.ts` | The identity's own devices as one group — see below |
-| `src/mls/store.ts` | Browser persistence: group states + unused key package privates, in IndexedDB, under a per-group lock |
-| `src/mls/authservice.ts` | The AS: validates a leaf's `did#kN` claim against the resolved DID document |
-| `src/mls/transport.ts` | Client side of the wire protocol below |
-| `src/did/didcomm/mls-transport.ts` | The protocol itself: PIURI `https://biset.md/mls/1.0`, shared by client and mediator |
-| `src/anchor/mediator/mls-ds.ts` | The mediator's Delivery Service + key package store |
-
-## The self group — what MLS was actually adopted for
-
-An identity's device set used to live in three places at once (`did/didcomm-devices.ts`): a grow-only gossip merge, a `removedKeyNs` tombstone list, and the mediator's keylist as the tiebreaker. Five separate live incidents from that arrangement are recorded above. The deeper problem was that **removal was never cryptographic** — dropping a device from the document and the keylist stops future senders from *addressing* it and nothing more, so any sender with a cached document kept encrypting readable messages to it.
-
-The self group is one MLS group per identity, id derived deterministically from the DID (`sha256("biset-self-group/1 " + did)`, so a freshly restored device can name it knowing only its seed). Removal is a Remove commit: the removed device is outside the new epoch and **cannot read**, whatever the document still says. Stale document state stops being a security bug and becomes wasted delivery, which `selfGroupDrift` reports rather than assumes.
-
-A new or restored device joins by **external commit** against a GroupInfo the DS holds, with no other device of the identity online — the property the seed-based design had and a "an existing device must add you" rule would have taken away. What authorizes it is not the group id (a hash of a public DID; anyone can compute it) but the DS's rule: an external commit is admitted only when the joiner's DID is **already in the roster**, and the joiner is authenticated by the authcrypt envelope its submission arrives in. So it lets an identity add its own device, and lets nobody else in.
-
-`keyAgreement` in the DID document does not go away and cannot — it is how a DIDComm envelope is addressed, and every MLS object travels inside one. What changes is what holding one of those keys gets you: the envelope, and no longer the contents.
-
-## What a published document says, and what it must not
-
-Read off a live document (`y@biset.md`, 2026-08-13) and fixed here:
-
-**The DIDComm layer is two halves and neither may ship alone.** The `DIDCommMessaging` service says where to route; the `keyAgreement` entries say what to encrypt to. One without the other is not degraded, it is a dead end — a sender gets `DidCommUnreachableError` instead of falling back to mail. The rule was enforced in one direction only (drop the service when there are no keys, added after 7 of 21 identities shipped that shape in 2026-08), and the mirror image then appeared in the wild: twelve keyAgreement entries and no service, from a device that had keys to publish and no mediator on its record. `publishCurrentState` now **refuses the publish** in that case rather than emitting either half — refusing, not emitting an empty list, because the key list belongs to the identity and an empty one would unpublish every other device over a gap in this device's record. `test/did-didcomm-layer-invariant.test.ts` pins both directions.
-
-**ML-KEM-768 keys are no longer in `keyAgreement`.** That relationship means "run key agreement with these", which every implementation but this one reads as X25519-shaped ECDH — so listing 1184-byte keys there hands a conforming agent a list where half the entries fail. They stay in `verificationMethod`, where a key with no standard relationship belongs, and biset pairs each with its device by the shared kid suffix. This also removed the only reason the resolver had to filter `keyAgreement` by a naming convention nobody else knows.
-
-**Two live bugs came out of the kid change and are fixed.** Both were `#kk<digits>` assumptions left behind when kids stopped being numbered — the pairing rule's own comment had warned that it relied on "`k` is not a digit":
-- `didcomm/resolve.ts` filtered the fan-out list with `/#kk\d+$/`, so a derived `#kk_<hash>` stayed in it AND fell through to the X25519 decoder, which throws on 1184 bytes — making the whole identity unresolvable.
-- `didcomm/message.ts`'s `mlkemPublicKeyOf` parsed a slot number out of the kid and returned null for a derived one, which reads as "not PQ-capable" and would have turned the hybrid path off for every device, silently.
-Both now use `devicekid.ts`'s `isMlkemKid`/`mlkemKidFor`. `test/webvh-multikey-mlkem768.test.ts` covers the derived shape.
-
-**The DIDCommMessaging endpoint uses DIDComm v2's own shape.** `accept` and `routingKeys` belong INSIDE `serviceEndpoint`, not beside it — biset published the pre-v2 placement, so a conforming agent read the endpoint object, found no routing keys, and had nothing to Forward with. It went unnoticed because biset's own resolver read the flat form; the mediator's did:peer document had used the nested form all along, so the same codebase carried both. Documents published before the change are still read either way (`utils.ts`'s `firstServiceEndpoint`, `didcomm/resolve.ts`), since refusing the old shape would make every identity that has not republished unreachable.
-
-**`@context` now includes the multikey vocabulary.** Every verificationMethod is `Multikey`, which DID Core does not define. did:webvh hashes with JCS rather than JSON-LD canonicalization, so this costs nothing at verification time and stops the document being readable only by implementations that already assume the type.
-
-**Six device entries where there were at most two devices.** Accumulated ghosts from the positional scheme — nothing could tell a dead slot from a live one, so every republish carried them all, and with an ML-KEM key each they were ~10KB of a ~12KB document (which did:webvh writes into every log entry). No cleanup step was needed: the key list is a projection of the self group now, so the first publish from a device that is in the group simply does not contain them.
-
-## A device kid is derived from its key, not allocated
-
-`src/did/devicekid.ts`. A device key's identifier is `#k_<base58(sha256(publicKey)[0..16])>` — a function of the key, computed locally, needing no view of the network and no coordination with anything.
-
-It replaced `#k1`, `#k2`, … , which was a counter, and every device-management incident recorded above traces back to that one fact. A counter has to be allocated (from what view of the world? a resolve that failed looks exactly like "nothing published"), must never be issued twice (hence `removedKeyNs` tombstones, whose job was to make retirement permanent), and a mistake is unrecoverable rather than merely wrong — the mediator caches a resolved key per kid for ten minutes, so a reused `#k1` naming a different key broke every authcrypt to that device until the cache expired.
-
-Deleting the state deleted the machinery around it. `syncDevicePosition` no longer scans published and tombstoned numbers for a free one, no longer refuses to proceed when the document cannot be resolved, and no longer self-heals a device that finds someone else's key at "its" slot — that last one cannot happen when the name follows the key. `test/did-device-kid-derivation.test.ts` replaces the test that pinned the refusal, with the properties that make it unnecessary.
-
-**The identifier could not simply be dropped.** Four layers require one: DID Core (`verificationMethod.id`), DIDComm's JWE (`kid`/`skid` — and `didcomm/crypto.ts` feeds both into `apu`/`apv`, so it is an input to key derivation, not a label), Routing 2.0 (`next` is the only addressing a mediator that cannot decrypt has), and the mediator's per-kid queue and keylist. The question was only whether it should carry state.
-
-**Related keys share the suffix.** An ML-KEM-768 key is `#kk<suffix>` beside its device's `#k<suffix>` (`mlkemKidFor`). This replaces pairing by slot number and works unchanged for a legacy kid (`#k1` ↔ `#kk1`). A derived suffix always starts with `_`, so `#k…` and `#kk…` stay distinguishable by prefix alone.
-
-**Tombstones now carry kids, not numbers.** The document field is `rmk=` (did:dht) / `removedKids` (did:webvh), holding fragments. The older numeric `rm=` / `removedKeyNs` is still READ, as `#k<n>`, so a removal published before the change keeps propagating.
-
-### The rename, which is a wire change
-
-Existing devices rename at their next boot, and a kid is not a label — so this is a change senders can see, with a window in it. `syncDevicePosition` renames locally and immediately, and the old kid becomes `didCommLegacyKid`: still published (a second entry carrying the same key), still registered with the mediator, until the poll loop's extra pass under it comes back empty. `retireLegacyKid` then deregisters and tombstones it. Dropping it at rename time would lose exactly the messages queued in the moments before.
-
-Three narrower rules keep that from going wrong, each of which is a real failure someone would otherwise hit:
-
-- A kid is adopted as legacy only if it was plausibly **ours** — the published document must list it with our key, or not list it at all. A record can name a kid that belongs to another device (the mismatch the old self-heal existed for); carrying that one would republish another device's name with our key and hide that device from the sibling merge.
-- …and only if it is not **already tombstoned**. An explicit removal is a decision; the rename's "assume ours unless disproved" is a default, and a default must not undo a decision.
-- The keylist prune and the logout speak as the kid **the network currently knows** (the legacy one while it exists). The mediator authenticates by resolving the claimed kid in the published document, so a request under a kid that has not been published yet fails — silently, since a failed keylist query correctly prunes nothing.
-
-Logging out mid-rename removes and tombstones **both** names. `test/did-kid-rename-retire.test.ts` covers the sequence.
-
-## The old device machinery is gone
-
-Membership is decided by the MLS self group and nothing else. What used to decide it — a grow-only gossip merge of the resolved document, a `removedKids` tombstone list to stop removals being undone, and the mediator's keylist as the tie-breaking authority over both — is deleted, along with the tests that pinned each one (`did-sync-device-position`, `did-removed-key-propagation`, `did-sync-keylist-prune`, `remove-device-key-self-collision`). `test/did-devices-from-mls.test.ts` states the contract that replaced them.
-
-`syncDevicePosition` no longer reads the network at all: it settles this device's own kid and the retirement of a previous one, and that is the whole function.
-
-**The document's device list is an output.** `fullKeyAgreementKeys` projects the group — every device's kid, and the transport key its own MLS leaf carries. It is the single implementation, shared by the routine republish (`dht/publish.ts`) and by registration, because two copies of that decision is exactly how the merge and the prune once managed to disagree.
-
-**Transport keys live in the leaf** (`src/mls/transport-keys.ts`, private-use extension `0xF001`, `version ‖ x25519(32) [‖ ml-kem-768(1184)]`). Without them the tree would say *who* is a member while the published document still had to be consulted for *what each member is* — leaving the read path the switch existed to remove. Two independent things make the binding trustworthy: MLS signs the leaf, so nobody else can put a key in someone's leaf; and the kid is a hash of that same key, so credential and extension can be checked against each other with no third party. `deviceTransportKeys` drops a leaf that fails the check rather than publishing a key under the wrong device's name.
-
-**A device removing ITSELF is a proposal, not a commit.** RFC 9420 forbids a commit that removes its own committer, so logging out can only *declare* the departure and rely on someone else to carry it out (`leaveSelfGroup`). A sibling that is online receives the proposal and commits it within a round trip. When it is the LAST device, nobody can — and if that were the end of it, a sole device's logout would never take effect: its leaf would stay in the tree, stay published, and every later restore would leave one more dead leaf. So the Delivery Service keeps the *declaration* past the epoch its proposal was valid in, and the next device to join carries it out as an ordinary Remove (`applyPendingRemovals`), the leaf being somebody else's by then. The DS checks a self-removal's kid against the authcrypt envelope's own `skid`, so a device can only ever declare itself gone. `test/mls-self-remove.test.ts`.
-
-**Removing ANOTHER device is a Remove commit** (`removeDeviceKey`). Editing a local list and republishing only stopped future senders from *addressing* it; its key stayed valid, so anyone with a cached document kept sending it readable messages. Now it is outside the new epoch and cannot read, whatever any document says. Two things still follow the commit because MLS cannot do them — a keylist removal so the mediator stops queueing, and a republish so senders stop addressing — and neither is what makes the removal effective.
-
-**No tombstones anywhere.** `removedKids` / `removedKeyNs` and `DidRecord.didCommRemovedKeys` are gone from records and from both document formats. Their two jobs both ended: stopping a gossip merge from resurrecting a removal (there is no merge), and stopping a retired slot number from being reissued (a kid is derived from its key, so it cannot be issued to anything else).
-
-**Addressable and readable are different, and the document decides only the first.** Collapsing them deadlocked two devices of one identity (2026-08-13): the rule was "publish the group, or just yourself if you have none", so a device outside the group was dropped from the document — and the mediator authenticates a sender by resolving its kid IN that document, so the dropped device could no longer talk to the mediator at all. Its only route back, an external commit, goes through the mediator. Each device unpublished the other in turn and neither could recover; "it will re-add itself" assumed a path the drop had closed.
-
-The published list is now the union of two sources with different jobs: the **MLS group** (who can READ group content) and the **mediator keylist** (who can be ADDRESSED). A registered non-member stays addressable, which is safe precisely because MLS is the read authority — it receives envelopes it cannot open. Removing a device means removing it from both, which `removeDeviceKey` and `unregisterFromMediator` each already do. Every lookup on that path is best-effort with one rule: the failure mode must never be "publish a shorter list". `test/did-addressable-vs-readable.test.ts`.
-
-**With no group state, a device still publishes every registered device.** Not a remembered sibling list: that was the gossip. The consequence is bounded and self-correcting — a device left out re-adds itself with an external commit the next time it runs, which needs its mediator registration and not the document. This is the switch's accepted cost, and it is strictly better than the old failure mode, where a device wrongly dropped had no way back.
-
-**Device sync moved too.** A message a device sends is handed to the identity's other devices as one MLS application message to the self group (`syncToOwnDevices`), submitted once. `sibling-outbox.ts` — a durable record of copies this device still owed, with a retry loop — is deleted along with its test: the debt it tracked does not exist once the Delivery Service owns the fan-out and each device's mediator queue holds the copy until collected. The receiving half is a branch in the poll loop for `mls/1.0/deliver` messages (`receiveSelfGroupDelivery`), which files a synced copy exactly as the sending device filed its own.
-
-One property had to be rebuilt on the way: a copy of your own message must not push a notification to your other devices. The mediator recognizes it rather than being told — a group whose roster is a single DID is that identity's own devices, so its deliveries are queued `silent`. Recognized, not declared, for the same reason the FORWARD path is: a flag on the message would let anyone silence anyone's notifications. `test/mls-device-sync.test.ts` pins that, plus delivery to an offline sibling.
-
-**What could not move.** The document's `keyAgreement` (a DIDComm envelope has to be addressed, and every MLS object travels inside one — including the key packages and Welcomes that exist *before* anyone is in a group) and the mediator keylist (the receive queue's address; the mediator is not in the group and cannot be). `src/mls/device-projection.ts` remains as the comparison used during the parallel run.
-
-## Server fanout
-
-One mediator per group is that group's ordering authority (normally the creator's own). It admits exactly one commit per epoch, numbers what it accepts, and fans each object out to every member — packing a separate authcrypt per recipient, because DIDComm's `encryption.md` requires it and authcrypt (ECDH-1PU) has no multi-recipient form. That O(n) is paid by the DS, not by the sending client, which submits one copy. The DS never parses an MLS object and holds no group key; it **does** necessarily know the roster, which is the cost of choosing server fanout and is recorded as such in PLANMLS.md §5.
-
-**Key packages live at the mediator, not in the DID document.** A key package is ~350 bytes, single-use, and needs replacing after each use — none of which suits a DID document (did:dht's 996-byte cap especially). A device publishes a small pool; an inviter consumes one per device of the identity it is inviting. Publishing is authorized against the authcrypt envelope's own `skid`, i.e. per DEVICE: the identity-level keylist check that came first was not enough, since one device could then publish key packages under a sibling's kid and be added in its place.
-
-## Why the library is forked (`src/mls/vendor/`)
-
-Two upstream problems, both found by the tests in this repo rather than by reading:
-
-1. **A single-Remove commit had no UpdatePath.** RFC 9420 §12.4 requires a path for any Remove or Update proposal; upstream's condition read `> 1` where the table means `> 0`. With no path the commit secret is a zero buffer, everyone derives the same next epoch — *including the member just removed*, who goes on reading everything. Since cryptographic device removal is the whole reason MLS is here, this could not be worked around at a higher layer. `test/mls-core.test.ts` pins the single-remove case specifically; the multi-device removal already in that file happened to remove two leaves at once and so took the correct path by accident, which is how the bug survived a passing test suite.
-2. **Fixing (1) exposed a hang.** With a real path present, a member processing the commit that removes *itself* walked an ancestor chain out of a tree it is no longer in — and when it was the last leaf, `removeLeafNode` truncates the tree, so the walk never terminates. `vendor/processMessages.ts` now returns early for `selfRemoved`, which is also the semantically correct answer: a removed member must not derive the new epoch at all.
-
-The fork also **replaces `@hpke/core` with an RFC 9180 implementation over `@noble`** (`vendor/crypto/implementation/noble/hpke.ts`). @hpke/core is ~687KB minified — five times the MLS implementation it supports — to cover fifteen ciphersuites biset does not use. With only suite 1 kept and HPKE written against the `@noble/*` packages already bundled, the MLS layer's cost to the app went from **+989KB to +174KB** (gzip +37KB). Hand-written crypto is checked two ways in `test/mls-crypto.test.ts`: RFC 9420's own `crypto-basics` vectors (fixed inputs, fixed outputs, including decrypting a ciphertext biset did not produce), and differentially against `@hpke/core` itself, kept as a devDependency purely for that — seal here/open there, seal there/open here, matching exported secrets and `deriveKeyPair`.
-
-Every divergence from upstream is marked `// biset:` in the vendored source.
-
-## Two non-obvious mechanics, both load-bearing
-
-- **`decodeGroupState` does not restore the client config** (auth service, key retention, padding). `mls/group.ts`'s `encodeState`/`decodeState` re-attach it; a state restored without it looks fine and then fails inside the library on the first arriving message. Never call the vendored encode/decode directly.
-- **A commit's retired key material must not be zeroed until the DS accepts it.** States share buffers with the state they were derived from, so zeroing at commit-creation time destroys the state a losing commit has to fall back to — the retry then fails with "Could not verify confirmation tag". `commitWith` hands the buffers back and `confirmCommit()` zeroes them once the commit is ordered; on an epoch conflict the whole `CommitResult` is dropped and nothing is zeroed. Found by `test/mls-e2e.test.ts`'s conflict case, which is why that case exists.
-
-Tests: `mls-core` (MLS guarantees alone), `mls-crypto` (the vendored crypto against RFC vectors and an independent implementation), `mls-e2e` (two identities, a real mediator process, real authcrypt, Pickup 3.0, epoch conflict, non-member rejection), `mls-multidevice` (the self group: external join with nothing else online, cryptographic removal, drift reporting), `mls-device-projection` (the parallel run's comparison, including the kid-naming mismatch it exists to avoid producing).
-
-# DeltaChat / chatmail interoperability
-
-biset is a JMAP mail client that interoperates with DeltaChat / chatmail via group chat, E2EE, and securejoin. DeltaChat-specific protocol knowledge is isolated in one place.
-
-## Layer structure
-
-- **`src/deltachat/protocol.ts`** — all `Chat-*` header knowledge, Autocrypt/Gossip, protected header generation, grpid generation. No `Chat-*` magic strings anywhere else.
-- **`src/deltachat/securejoin.ts`** — securejoin v3 (setup-contact), inviter (Alice) side.
-- **`src/pgp/crypto.ts`** — E2EE / symmetric crypto primitives. Symmetric message construction for securejoin lives here.
-- **`src/sync/session.ts`** — on receive: decrypts PGP, promotes protected headers, learns Autocrypt keys, drives securejoin handshake (`maybeHandleSecurejoin`).
-
-## Message model
-
-- **DeltaChat hides all headers inside the ciphertext** (recipients as `To: hidden-recipients:;`, Autocrypt inside). The receiver must decrypt before it can read Chat-Group-ID or the sender's Autocrypt key. `session.ts` decrypts and promotes inner headers.
-- **biset sending**: the plaintext body contains armored PGP. `go-jmapsmtp` wraps it as PGP/MIME (RFC 3156), injects Autocrypt + Chat-Version headers on the outside, and DKIM-signs. The outer Autocrypt enables opportunistic E2EE even before securejoin completes.
-- **Protected headers**: `Chat-*` / `Secure-Join*` / `Autocrypt(-Gossip)` go inside the ciphertext. DeltaChat ignores cleartext copies and trusts only the inner values (RFC 9788 family). `buildProtectedHeaders` handles this.
-
-## securejoin v3 (biset = inviter Alice)
-
-Invite URL (no QR needed, `newInviteUrl`):
-```
-https://i.delta.chat/#<FP uppercase 40hex>&v=3&i=<invitenumber>&s=<auth>&a=<addr>&n=<name>
-```
-invitenumber/auth are `create_id()`-equivalent (18 bytes URL-safe base64), persisted in localStorage.
-
-Handshake (driven by `maybeHandleSecurejoin` on receive sync):
-1. Bob→biset **`vc-request-pubkey`** (symmetric / no key). password=`securejoin/<biset FP>/<auth>`. biset tries symmetric decrypt against all active invite auth values.
-2. biset→Bob **`vc-pubkey`** (symmetric + signed, inner Autocrypt = biset key). Bob learns biset's key.
-3. Bob→biset **`vc-request-with-auth`** (normal E2E/PKESK, Bob key in Autocrypt, Secure-Join-Auth/Fingerprint). biset learns Bob's key and verifies auth/FP.
-4. biset→Bob **`vc-contact-confirm`** (E2E, Bob key in gossip to pass Bob's self-gossip guard). Bob fires `SecurejoinJoinerProgress::Succeeded` → UI advances from "Establishing connection" to compose.
-
-Processed securejoin messages are not stored — they are destroyed via JMAP.
-
-## Three non-obvious interop traps (confirmed at byte level)
-
-1. **Read-only group**: if the grpid doesn't satisfy DeltaChat's `validate_id` (URL-safe base64, 11–32 chars), Chat-Group-ID is ignored and the chat becomes a read-only ad-hoc group. `crypto.randomUUID()` (36 chars) fails this. → `newGroupId()` produces 18-byte base64url (24 chars).
-
-2. **Missing CRC24 → `523 Encryption Needed`**: chatmail's filtermail expects an `=CRC24` suffix on armored PGP and strips everything from the last `=` onward. openpgp.js **omits CRC24 for AEAD (SEIPDv2)**, so without a checksum the base64 padding `=` gets stripped, causing decode failure → "not encrypted" rejection. → `ensureArmorChecksum` appends RFC 9580 §6.1 CRC-24 (init `0xB704CE` / poly `0x1864CFB`).
-
-3. **S2K iterated → rPGP decrypt rejection**: DeltaChat's `check_symmetric_encryption` (core `decrypt.rs`) only accepts **`Salted` S2K** in symmetric SKESKs. openpgp.js only produces `Iterated` for password encryption and ignores `config.s2kType: salted`. → `symmEncryptSignMime` builds a **manual Salted-S2K SKESK**: derives `K = SHA256(salt‖password)[:16]` as session key, lets openpgp.js produce SEIPDv1, then strips the Iterated SKESK and prepends a hand-crafted v4 SKESK (AES-128, Salted type 1, SHA-256, no ESK).
-
-## Current status (2026-07-05)
-
-- ✅ biset ⇔ DeltaChat/chatmail **securejoin v3 full handshake** (invite URL only, no QR / manual key extraction). Verified against multiple chatmail servers (d.gaufr.es family).
-- ✅ Group chat (valid Chat-Group-ID), bidirectional E2EE, threading.
-- ✅ Peer key auto-learning from inner Autocrypt on receive (no manual key installation).
-- ⚠️ Known minor issues:
-  - `[pgp] decrypt failed ... No public key encrypted session key` log noise when trying PK decrypt on symmetric messages (expected, harmless).
-  - Handshake steps (vc-request-with-auth etc.) occasionally remain in inbox. Robust swallowing not yet implemented.
-- ⚠️ **nine.testrun.org** does not deliver to non.md addresses (testrun-specific issue). Use another chatmail server (d.gaufr.es etc.).
-
-## Reference material used
-
-- DeltaChat core: `securejoin.rs` / `securejoin/bob.rs` / `qrinvite.rs` / `mimefactory.rs` / `mimeparser.rs` / `decrypt.rs` / `tools.rs`
-- chatmail filtermail (Rust): `src/message.rs` (check_encrypted / is_securejoin) / `src/openpgp.rs` (check_armored_payload) / `src/inbound.rs`
-- go side: `go-jmapsmtp/main.go` (sendEmail/wrap), `autocrypt.go` (pgpMIMEWrapInline/peerkey), `go-jmapserver/email.go` (BuildRFC5322)
+## 16. Open Questions
 
 ---
 
-# ActivityPub federation & E2EE roadmap
-
-biset federates over ActivityPub through the **`go-jmapap`** relay (a JMAP↔AP bridge, sibling of `go-jmapsmtp`). Relays are independent and share libraries, not state — there is no core server. One identity can be served by both the mail relay and the AP relay (and more, after a move — see [Identity layer (DID)](#identity-layer-did)); biset merges them into one inbox client-side (`accountKey` = `email\0serverUrl` to avoid JMAP id collisions across relays, `messages.forIdentity()` resolving `did || email` → its current accounts dynamically — see [The Email/Mailbox/Thread hierarchy](#the-emailmailboxthread-hierarchy)).
-
-## Identity anchor (split-identity prevention)
-
-Because the relays are independent, each owns its `<localpart>` namespace on its own disk — so the same address could be provisioned by two different people on two relays (different keys), a **split identity** exploitable for fediverse impersonation. This is now handled by the standalone **anchor** service (`biset-anchor`) rather than by `jmapap` itself — see [Identity layer (DID)](#identity-layer-did) above for the current design (DNS-based address→DID lookup, the anchor's narrow claim-registry role, and the anchorless/with_anchor spectrum). The anchor fingerprint/key is still the natural root for MLS credentials later, per the identity/MLS discussion below.
-
-## Two-language crypto model
-
-E2EE is **per-protocol**, matching the "one relay bridges one protocol" architecture:
-
-| Transport | E2EE scheme | Rationale |
-|---|---|---|
-| **mail** (jmapsmtp) | **PGP** (openpgp.js) | DeltaChat / chatmail interop — non-negotiable |
-| **ActivityPub** (jmapap) | **MLS** (target; see below) | fediverse-standard E2EE, interoperable |
-
-These key models cannot be unified — PGP is a stateless static key, MLS is a stateful per-device ratchet. What *is* unified is the surface: same `email` identity, same WebFinger/actor + WKD discovery, same cryptenv envelope/login. **PGP is never used over AP** — a PGP-wrapped Note is unreadable to Mastodon/Emissary/other fediverse clients and would defeat federation. AP is either plaintext (fediverse interop) or MLS (standard E2EE). The send path skips PGP entirely for AP relays (`isApRelay()` in `context.ts` gates `encryptText` and `prefetchRecipientKey`).
-
-## MLS-in-ActivityPub — decision & design (decided 2026-07-06, timing TBD, not yet implemented)
-
-**Decision:** biset↔biset AP E2EE uses **MLS**, per the SWICG spec *"Messaging Layer Security in ActivityPub"* + **RFC 9420**, via the **`ts-mls`** TypeScript library (in-browser). Reference implementation: **Emissary** (emissary.dev/e2ee — Social Web Foundation project, Sovereign Tech Fund funded, same `ts-mls`, targeting mid-2026).
-
-**Why MLS over PGP for AP:** forward secrecy + post-compromise security, real group semantics at scale (efficient add/remove rekey), and — decisively — it is the emerging fediverse standard, so encrypted messages still *federate* (interop with Emissary et al.). PGP over AP gives none of this and breaks interop.
-
-**Services already provided by `go-jmapap` (reused, not rebuilt):**
-- MLS **directory service** ← WebFinger + Actor profiles (locate users / their key material).
-- MLS **delivery service** ← AP inbox/outbox (route opaque MLS ciphertext to clients).
-- To add: **KeyPackage publishing** at the actor, and **routing of opaque MLS message types** to the client (server treats contents as opaque).
-
-**Identity / device design (recommended; final ratification pending):**
-
-| Axis | Decision |
-|---|---|
-| **Credential** | AP **actor URI** (resolved from `email` via WebFinger), `basic` credential. Unifies with the merge model (email = identity = actor). |
-| **Trust** | KeyPackage fetched from the actor's own server over HTTPS — the AP-MLS directory-service trust model (honest-but-curious server, no CA). Key transparency is future work. |
-| **Multi-device** | **Per-device leaf** (true MLS): each browser has its own signing key + KeyPackages and is an independent group member. Private keys never leave the device. |
-| **State storage** | MLS group state (ratchet/secrets) in **IndexedDB (device-local)**, *not* the synced vault. |
-| **History** | **Not shared across a user's own devices** (MLS default; Emissary behaves the same). A new device joins fresh. |
-| **Device management** | Publish a KeyPackage set (device list) at the actor; future **revoke** UI removes a leaf from all groups. |
-
-**Rejected: shared identity key across devices.** MLS group state is a *mutating* ratchet; syncing it across devices via the vault means concurrent epoch mutation → corrupted group state, plus copying private keys destroys per-device PCS. It looks like the PGP one-key-per-email model but is a trap. Per-device leaves are how AP-MLS/Emissary work, so it is also the interoperable choice.
-
-**Accepted UX costs of per-device:** adding a contact adds *all* of their devices; a freshly-added device cannot read prior history; revoking a device is a group operation.
-
-**Near-term stance:** AP stays plaintext (fediverse interop); E2EE remains mail/PGP only until MLS work begins.
-
-
+For concrete schemas, state machines, migration phases, and release gates, see [PLANIMPLEMENTATION.md](PLANIMPLEMENTATION.md).

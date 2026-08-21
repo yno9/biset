@@ -10,6 +10,7 @@ biset-*
 PLAN*
 docs/
 
+*.bak
 /*.bak/
 
 
