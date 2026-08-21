@@ -14,7 +14,7 @@
 - [x] memory-only の bounded `IngressStore` を実装し、TTL、quota、recipient snapshot、一台の authorised ACK、payload 削除をテストした。
 - [x] core を `identity`（anchor）、`mediation`、`adapters` に概念分離し、初期 deployment は一つの `biset-core` binary に統合した。
 - [-] IndexedDB の local vault schema、atomic ingress commit、object crypto、flat manifest は存在するが、ingest workflow と durable recovery は未実装。
-- [-] narrow delivery HTTP binding と injection-safe core application composition は存在する。production persistence / actual MLS device authorizer の deployment wiring は未実装。
+- [-] SQLite roster + SQLite delivery + roster authorizer + Ed25519 verifier + narrow HTTP の deployment composition を実装した。actual MLS accepted-commit source / DID resolver cache policy は未実装。
 - [ ] Local JMAP Gateway、MLS VEK 導出、DIDComm/Mail adapter は未実装である。SegmentKey の object encryption と、VEK を入力に取る wrap primitive は実装済みである。
 
 **次に着手する工程:** §2.3 の vault delivery protocol と、§3 の durable local vault の基盤。`MemoryIngressStore` を HTTP に公開する前に、device authorization と永続化の境界を設計・実装する。
@@ -256,5 +256,6 @@
 | 2026-08-21 | `27af8c3` | bounded shared vault delivery を crash-safe SQLite へ永続化し、再起動後 pull を検証 |
 | 2026-08-21 | `7866f95` | accepted MLS device roster の public projection を SQLite 永続化 |
 | 2026-08-21 | `ff483d0` | roster-selected DID public key を使う Ed25519 device-control verifier を追加 |
+| 2026-08-21 | `b068b22` | SQLite roster / delivery / authorizer / DID key verifier / HTTP を一体化した core deployment を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
