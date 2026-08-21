@@ -155,7 +155,7 @@
 ### 5.1 Account transport abstraction
 
 - [x] `AccountTransport`、`LocalVaultSession`、`RemoteJmapSession` の型を作った。
-- [ ] `RemoteJmapTransport` を実装し、既存 remote JMAP client behavior を adapter 内へ移す。
+- [-] standard session discovery / API call / blob download を行う `RemoteJmapTransport` を実装した。既存 UI の account settings / authentication flow 移植は未実装。
 - [ ] UI/feature call site を direct `JamClient` 依存から `AccountTransport` へ移す。
 - [ ] account routing を `biset:<did>` / `remote:<provider>:<id>` に固定する。
 - [ ] cross-backend JMAP batch を reject または明示 split する。

@@ -8,8 +8,16 @@ export interface JmapMethodCall {
   callId: string
 }
 
+export interface JmapSession {
+  apiUrl: string
+  downloadUrl: string
+  capabilities: Record<string, unknown>
+  accounts: Record<string, unknown>
+  [key: string]: unknown
+}
+
 export interface AccountTransport {
-  session(): Promise<Record<string, unknown>>
+  session(): Promise<JmapSession>
   call<T>(methodCalls: JmapMethodCall[]): Promise<T>
   download(blobId: string, range?: { start: number; end?: number }): Promise<Uint8Array>
 }
@@ -28,4 +36,3 @@ export interface RemoteJmapSession {
 }
 
 export type AccountSession = LocalVaultSession | RemoteJmapSession
-

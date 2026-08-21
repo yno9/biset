@@ -584,6 +584,8 @@ interface RemoteJmapSession {
 
 UI と email/mailbox/submission helper は `AccountTransport` だけを見る。backend の判定を UI 各所へ漏らさない。
 
+現在 `src/local-jmap/remote.ts` は第三者 JMAP account 向けに standard `/.well-known/jmap` discovery、`apiUrl` への JMAP method call、`downloadUrl` template による blob download を実装している。この transport は Biset identity / MLS / vault に依存しないため、client は local vault gateway の完成前でも pure remote-JMAP mode を維持できる。provider 固有の credential acquisition と既存 UI settings の移植は別工程である。
+
 ## 8. 実装モジュールと現状コードの対応
 
 ### 8.1 新しい論理モジュール
