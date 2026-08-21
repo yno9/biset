@@ -85,6 +85,7 @@ export class MemoryRestoreControlStore implements RestoreControlStore {
     if (!entry || entry.request.requesterDeviceId !== input.requesterDeviceId) {
       throw new ProtocolValidationError('restore request is absent or no longer active')
     }
+    if (Date.parse(input.expiresAt) > Date.parse(entry.request.expiresAt)) throw new ProtocolValidationError('restore offer cannot outlive its request')
     if (!(await this.authorizer.isTrustedDevice(input.identityId, input.responderDeviceId))) {
       throw new ProtocolValidationError('restore responder is not trusted')
     }

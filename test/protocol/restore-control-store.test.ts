@@ -64,6 +64,7 @@ describe('restore control store', () => {
     expect(await store.pullRequests(pull('device-c', 'requests'), now)).toEqual([])
 
     await store.offer(offer(), now)
+    await expect(store.offer(offer({ responderDeviceId: 'device-b', expiresAt: '2026-08-21T00:16:00.000Z' }), now)).rejects.toThrow('cannot outlive')
     expect(await store.pullOffers(pull('device-c', 'offers'), now)).toEqual([offer()])
     await expect(store.pullRequests(pull('not-a-device', 'requests'), now)).rejects.toThrow('not trusted')
     await expect(store.pullRequests(pull('device-a', 'offers'), now)).rejects.toThrow('kind must be requests')

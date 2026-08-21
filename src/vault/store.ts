@@ -1,11 +1,11 @@
 import type { IngressAckV1 } from '../protocol/ingress.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import type { DeliverySeq, DeviceId, IdentityId, VaultEventId, VaultObjectId } from '../protocol/ids.ts'
-import type { DeliveryPullResult, RestoreRequestV1, SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
-import { assertRestoreRequest } from '../protocol/validate.ts'
+import type { DeliveryPullResult, RestoreOfferV1, RestoreRequestV1, SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import { assertRestoreOffer, assertRestoreRequest } from '../protocol/validate.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
-const DATABASE_VERSION = 3
+const DATABASE_VERSION = 4
 
 const STORES = {
   ingressReceipts: 'vault_ingress_receipts',
@@ -23,6 +23,7 @@ const STORES = {
   deliveryAckOutbox: 'vault_delivery_ack_outbox',
   deliveryState: 'vault_delivery_state',
   restoreState: 'vault_restore_state',
+  restoreOfferOutbox: 'vault_restore_offer_outbox',
   transportStatus: 'transport_status',
 } as const
 
@@ -91,6 +92,19 @@ export interface VaultRestoreRequestStateRecord {
   deviceId: DeviceId
   request: RestoreRequestV1
   gap: Extract<DeliveryPullResult, { kind: 'restoreRequired' }>
+  status: 'pending' | 'submitted'
+  attempts: number
+  createdAt: string
+  lastAttemptAt?: string
+  submittedAt?: string
+}
+
+/** Durable, user-approved peer offer; it contains no manifest or vault bytes. */
+export interface VaultRestoreOfferOutboxRecord {
+  identityId: IdentityId
+  requestId: string
+  responderDeviceId: DeviceId
+  offer: RestoreOfferV1
   status: 'pending' | 'submitted'
   attempts: number
   createdAt: string
@@ -185,7 +199,15 @@ export interface VaultRestoreRequestStateStore {
   clearRestoreRequestState(identityId: IdentityId, deviceId: DeviceId): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore {
+export interface VaultRestoreOfferOutboxStore {
+  readRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<VaultRestoreOfferOutboxRecord | undefined>
+  writeRestoreOfferOutbox(value: VaultRestoreOfferOutboxRecord): Promise<void>
+  noteRestoreOfferAttempt(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId, attemptedAt: string): Promise<void>
+  markRestoreOfferSubmitted(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId, submittedAt: string): Promise<void>
+  clearRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<void>
+}
+
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -469,6 +491,55 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     transaction.objectStore(STORES.restoreState).delete([identityId, deviceId])
     await transactionDone(transaction)
   }
+
+  async readRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<VaultRestoreOfferOutboxRecord | undefined> {
+    if (!identityId || !requestId || !responderDeviceId) throw new TypeError('restore offer identity, request, and responder are required')
+    const transaction = this.database.transaction(STORES.restoreOfferOutbox, 'readonly')
+    const completed = transactionDone(transaction)
+    const record = await requestValue<VaultRestoreOfferOutboxRecord | undefined>(transaction.objectStore(STORES.restoreOfferOutbox).get([identityId, requestId, responderDeviceId]))
+    await completed
+    return record && copyRestoreOfferOutbox(record)
+  }
+
+  async writeRestoreOfferOutbox(value: VaultRestoreOfferOutboxRecord): Promise<void> {
+    assertRestoreOfferOutbox(value)
+    const transaction = this.database.transaction(STORES.restoreOfferOutbox, 'readwrite')
+    transaction.objectStore(STORES.restoreOfferOutbox).put(copyRestoreOfferOutbox(value))
+    await transactionDone(transaction)
+  }
+
+  async noteRestoreOfferAttempt(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId, attemptedAt: string): Promise<void> {
+    if (!identityId || !requestId || !responderDeviceId || Number.isNaN(Date.parse(attemptedAt))) throw new TypeError('restore offer attempt is invalid')
+    const transaction = this.database.transaction(STORES.restoreOfferOutbox, 'readwrite')
+    const store = transaction.objectStore(STORES.restoreOfferOutbox)
+    const request = store.get([identityId, requestId, responderDeviceId])
+    request.onsuccess = () => {
+      const record = request.result as VaultRestoreOfferOutboxRecord | undefined
+      if (!record || record.status !== 'pending') return
+      store.put({ ...copyRestoreOfferOutbox(record), attempts: record.attempts + 1, lastAttemptAt: attemptedAt })
+    }
+    await transactionDone(transaction)
+  }
+
+  async markRestoreOfferSubmitted(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId, submittedAt: string): Promise<void> {
+    if (!identityId || !requestId || !responderDeviceId || Number.isNaN(Date.parse(submittedAt))) throw new TypeError('restore offer submission is invalid')
+    const transaction = this.database.transaction(STORES.restoreOfferOutbox, 'readwrite')
+    const store = transaction.objectStore(STORES.restoreOfferOutbox)
+    const request = store.get([identityId, requestId, responderDeviceId])
+    request.onsuccess = () => {
+      const record = request.result as VaultRestoreOfferOutboxRecord | undefined
+      if (!record) return
+      store.put({ ...copyRestoreOfferOutbox(record), status: 'submitted', submittedAt })
+    }
+    await transactionDone(transaction)
+  }
+
+  async clearRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<void> {
+    if (!identityId || !requestId || !responderDeviceId) throw new TypeError('restore offer identity, request, and responder are required')
+    const transaction = this.database.transaction(STORES.restoreOfferOutbox, 'readwrite')
+    transaction.objectStore(STORES.restoreOfferOutbox).delete([identityId, requestId, responderDeviceId])
+    await transactionDone(transaction)
+  }
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -497,6 +568,7 @@ function createStores(database: IDBDatabase): void {
   createStore(database, STORES.deliveryAckOutbox, ['identityId', 'recipientDeviceId', 'seq'])
   createStore(database, STORES.deliveryState, ['identityId', 'deviceId'])
   createStore(database, STORES.restoreState, ['identityId', 'deviceId'])
+  createStore(database, STORES.restoreOfferOutbox, ['identityId', 'requestId', 'responderDeviceId'])
   createStore(database, STORES.transportStatus, ['identityId', 'outboundEventId'])
 }
 
@@ -617,6 +689,15 @@ function assertRestoreRequestState(value: VaultRestoreRequestStateRecord): void 
   if (value.gap.kind !== 'restoreRequired' || value.gap.reason !== value.request.reason) throw new TypeError('restore request state gap is invalid')
 }
 
+function assertRestoreOfferOutbox(value: VaultRestoreOfferOutboxRecord): void {
+  if (!value.identityId || !value.requestId || !value.responderDeviceId || value.offer.identityId !== value.identityId || value.offer.requestId !== value.requestId || value.offer.responderDeviceId !== value.responderDeviceId) throw new TypeError('restore offer outbox identity does not match')
+  assertRestoreOffer(value.offer)
+  if (value.status !== 'pending' && value.status !== 'submitted') throw new TypeError('restore offer outbox status is invalid')
+  if (!Number.isSafeInteger(value.attempts) || value.attempts < 0 || Number.isNaN(Date.parse(value.createdAt))) throw new TypeError('restore offer outbox metadata is invalid')
+  if (value.lastAttemptAt !== undefined && Number.isNaN(Date.parse(value.lastAttemptAt))) throw new TypeError('restore offer last attempt is invalid')
+  if (value.submittedAt !== undefined && Number.isNaN(Date.parse(value.submittedAt))) throw new TypeError('restore offer submission is invalid')
+}
+
 function copyKeyWrap(value: SegmentKeyWrapV1): SegmentKeyWrapV1 {
   return {
     ...value,
@@ -629,4 +710,8 @@ function copyKeyWrap(value: SegmentKeyWrapV1): SegmentKeyWrapV1 {
 
 function copyRestoreRequestState(value: VaultRestoreRequestStateRecord): VaultRestoreRequestStateRecord {
   return { ...value, request: { ...value.request, signature: value.request.signature.slice() }, gap: { ...value.gap } }
+}
+
+function copyRestoreOfferOutbox(value: VaultRestoreOfferOutboxRecord): VaultRestoreOfferOutboxRecord {
+  return { ...value, offer: { ...value.offer, signature: value.offer.signature.slice() } }
 }

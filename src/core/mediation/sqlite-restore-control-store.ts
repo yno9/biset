@@ -90,6 +90,7 @@ export class SqliteRestoreControlStore implements RestoreControlStore {
     if (Date.parse(input.expiresAt) <= now.getTime()) throw new ProtocolValidationError('restore offer is already expired')
     const request = this.requestRow(input.identityId, input.requestId)
     if (!request || request.requester_device_id !== input.requesterDeviceId) throw new ProtocolValidationError('restore request is absent or no longer active')
+    if (Date.parse(input.expiresAt) > Date.parse(request.expires_at)) throw new ProtocolValidationError('restore offer cannot outlive its request')
     if (!(await this.authorizer.isTrustedDevice(input.identityId, input.responderDeviceId))) throw new ProtocolValidationError('restore responder is not trusted')
     if (!(await this.authorizer.isTrustedDevice(input.identityId, input.requesterDeviceId))) throw new ProtocolValidationError('restore requester is no longer trusted')
     if (!(await this.authorizer.verifyOffer(input))) throw new ProtocolValidationError('restore offer signature is invalid')

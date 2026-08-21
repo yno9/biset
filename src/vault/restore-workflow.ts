@@ -1,8 +1,8 @@
-import { restoreRequestSigningBytes } from '../protocol/signing.ts'
-import type { DeliveryPullResult, RestoreRequestV1 } from '../protocol/vault.ts'
+import { restoreControlPullSigningBytes, restoreOfferSigningBytes, restoreRequestSigningBytes } from '../protocol/signing.ts'
+import type { DeliveryPullResult, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1 } from '../protocol/vault.ts'
 import type { DeviceId, IdentityId } from '../protocol/ids.ts'
 import type { RestoreControlTransport } from './core-restore-control-transport.ts'
-import type { VaultRestoreRequestStateRecord, VaultRestoreRequestStateStore } from './store.ts'
+import type { VaultRestoreOfferOutboxRecord, VaultRestoreOfferOutboxStore, VaultRestoreRequestStateRecord, VaultRestoreRequestStateStore } from './store.ts'
 
 export interface RestoreControlSigner {
   readonly deviceId: DeviceId
@@ -20,6 +20,10 @@ export interface RestoreWorkflowOptions {
 export type RestoreRequestSubmission =
   | { kind: 'submitted'; request: RestoreRequestV1; reused: boolean }
   | { kind: 'pending'; request: RestoreRequestV1; error: unknown; reused: boolean }
+
+export type RestoreOfferSubmission =
+  | { kind: 'submitted'; offer: RestoreOfferV1; reused: boolean }
+  | { kind: 'pending'; offer: RestoreOfferV1; error: unknown; reused: boolean }
 
 /**
  * Makes a delivery gap durable before contacting the mediator. If a network
@@ -77,5 +81,89 @@ async function createState(
   if (signature.length === 0) throw new TypeError('restore request signature is empty')
   const state: VaultRestoreRequestStateRecord = { identityId, deviceId: signer.deviceId, request: { ...unsigned, signature }, gap: { ...gap }, status: 'pending', attempts: 0, createdAt: current.toISOString() }
   await store.writeRestoreRequestState(state)
+  return state
+}
+
+/** Peer-side signed discovery. Receiving a request does not authorise transfer. */
+export async function pollRestoreRequests(
+  transport: Pick<RestoreControlTransport, 'pullRequests'>,
+  signer: RestoreControlSigner,
+  identityId: IdentityId,
+  now: () => Date = () => new Date(),
+): Promise<RestoreRequestV1[]> {
+  const pull = await signedRestorePoll(signer, identityId, 'requests', now())
+  return transport.pullRequests(pull)
+}
+
+/** Requester-side signed offer polling; it never creates a data-transfer channel itself. */
+export async function pollRestoreOffers(
+  transport: Pick<RestoreControlTransport, 'pullOffers'>,
+  signer: RestoreControlSigner,
+  identityId: IdentityId,
+  now: () => Date = () => new Date(),
+): Promise<RestoreOfferV1[]> {
+  const pull = await signedRestorePoll(signer, identityId, 'offers', now())
+  return transport.pullOffers(pull)
+}
+
+/**
+ * Called only after the peer UI has approved a restore. The offer itself is
+ * durable and idempotent; it is not an approval to upload vault content to
+ * the mediator.
+ */
+export async function submitRestoreOffer(
+  store: VaultRestoreOfferOutboxStore,
+  transport: Pick<RestoreControlTransport, 'offer'>,
+  signer: RestoreControlSigner,
+  request: RestoreRequestV1,
+  manifestRoot: string,
+  options: Omit<RestoreWorkflowOptions, 'knownManifestRoot' | 'newRequestId'> = {},
+): Promise<RestoreOfferSubmission> {
+  if (!manifestRoot || signer.deviceId === request.requesterDeviceId) throw new TypeError('restore offer needs a peer device and manifest root')
+  const now = options.now ?? (() => new Date())
+  const current = now()
+  const existing = await store.readRestoreOfferOutbox(request.identityId, request.requestId, signer.deviceId)
+  const active = existing !== undefined && Date.parse(existing.offer.expiresAt) > current.getTime()
+  if (active && existing.status === 'submitted') return { kind: 'submitted', offer: existing.offer, reused: true }
+  const state = active ? existing : await createOfferState(store, signer, request, manifestRoot, current, options)
+  try {
+    await transport.offer(state.offer)
+    await store.markRestoreOfferSubmitted(request.identityId, request.requestId, signer.deviceId, now().toISOString())
+    return { kind: 'submitted', offer: state.offer, reused: active }
+  } catch (error) {
+    await store.noteRestoreOfferAttempt(request.identityId, request.requestId, signer.deviceId, now().toISOString())
+    return { kind: 'pending', offer: state.offer, error, reused: active }
+  }
+}
+
+async function signedRestorePoll(
+  signer: RestoreControlSigner,
+  identityId: IdentityId,
+  kind: RestoreControlPullV1['kind'],
+  current: Date,
+): Promise<RestoreControlPullV1> {
+  const unsigned = { version: 1 as const, identityId, deviceId: signer.deviceId, kind, requestedAt: current.toISOString() }
+  const signature = await signer.sign(restoreControlPullSigningBytes(unsigned))
+  if (signature.length === 0) throw new TypeError('restore control poll signature is empty')
+  return { ...unsigned, signature }
+}
+
+async function createOfferState(
+  store: VaultRestoreOfferOutboxStore,
+  signer: RestoreControlSigner,
+  request: RestoreRequestV1,
+  manifestRoot: string,
+  current: Date,
+  options: Omit<RestoreWorkflowOptions, 'knownManifestRoot' | 'newRequestId'>,
+): Promise<VaultRestoreOfferOutboxRecord> {
+  const ttlMs = options.ttlMs ?? 10 * 60 * 1000
+  if (!Number.isSafeInteger(ttlMs) || ttlMs < 1) throw new TypeError('restore offer TTL must be a positive safe integer')
+  const expiry = new Date(Math.min(current.getTime() + ttlMs, Date.parse(request.expiresAt)))
+  if (Number.isNaN(expiry.getTime()) || expiry.getTime() <= current.getTime()) throw new TypeError('restore request is already expired')
+  const unsigned = { version: 1 as const, requestId: request.requestId, identityId: request.identityId, requesterDeviceId: request.requesterDeviceId, responderDeviceId: signer.deviceId, manifestRoot, offeredAt: current.toISOString(), expiresAt: expiry.toISOString() }
+  const signature = await signer.sign(restoreOfferSigningBytes(unsigned))
+  if (signature.length === 0) throw new TypeError('restore offer signature is empty')
+  const state: VaultRestoreOfferOutboxRecord = { identityId: request.identityId, requestId: request.requestId, responderDeviceId: signer.deviceId, offer: { ...unsigned, signature }, status: 'pending', attempts: 0, createdAt: current.toISOString() }
+  await store.writeRestoreOfferOutbox(state)
   return state
 }

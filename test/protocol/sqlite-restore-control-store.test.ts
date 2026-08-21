@@ -38,6 +38,7 @@ describe('SQLite restore control store', () => {
     const now = new Date('2026-08-21T00:00:00.000Z')
     await first.request(request(), now)
     await first.offer(offer(), now)
+    await expect(first.offer(offer({ responderDeviceId: 'device-b', expiresAt: '2026-08-21T00:16:00.000Z' }), now)).rejects.toThrow('cannot outlive')
     first.close()
 
     const restarted = SqliteRestoreControlStore.open(path, authorizer)

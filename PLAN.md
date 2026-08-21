@@ -82,7 +82,7 @@
 - [x] `RestoreRequestV1`、`RestoreOfferV1`、cancel / expiry schema と canonical signing bytes を定義する。
 - [-] short-lived restore control store を memory / SQLite で実装した。current roster の署名 verifier と bounded persistence に接続済み。actual MLS commit source と peer availability は未実装。
 - [x] restore store の API は request / offer / cancel / signed poll の control 型だけを受け付け、history/blob/chunk を受け付けない。64 KiB HTTP boundary と production storage の restart / expiry / quota test を追加した。
-- [-] `restoreRequired` を受けた client が、署名済み `RestoreRequestV1` を local durable state に先に保存し、同一 request ID で core へ再送する contract を実装した。UI state / offer polling / approval UI は未実装。
+- [-] `restoreRequired` を受けた client が、署名済み `RestoreRequestV1` を local durable state に先に保存し、同一 request ID で core へ再送する contract を実装した。peer の signed poll と、承認後の `RestoreOfferV1` durable outbox も実装済み。実 UI / transfer approval は未実装。
 - [ ] peer への opaque push / control notification を定義する。
 
 **完了条件:** TTL 外端末は不足を明確に検出でき、peer が不在なら曖昧に同期成功したように見えない。
@@ -261,5 +261,6 @@
 | 2026-08-21 | `3a8b3cc` | SQLite の quota eviction が再起動後も明示的な restore gap になることを検証 |
 | 2026-08-21 | `d4a2002` | 署名付き restore poll、SQLite の短命 control store、bounded HTTP / browser transport を追加 |
 | 2026-08-21 | `c0957b6` | client が restore gap を durable request state に保存し、同じ request ID で再送する workflow を追加 |
+| 2026-08-21 | `b86d96f` | peer の signed restore poll と、承認後 offer の durable outbox / 再送を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

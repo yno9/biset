@@ -741,8 +741,8 @@ new device or restoreRequired
   → joins/verifies current self MLS group
   → durable local restore state に client-generated RestoreRequest を保存
   → mediator へ同じ request ID を idempotent に送信（応答喪失時は再送）
-  → peer receives visible push and opens app
-  → peer validates membership and offers manifest
+  → peer は署名付き poll または visible push で request を知り、foreground で開く
+  → peer は UI approval 後、同じ request に期限内の署名付き offer を idempotent に送信
   → manifest diff / chunks / SegmentKeyWrap transfer
   → requester verifies roots and installs projection checkpoint
   → normal delivery cursor is initialized
@@ -750,7 +750,7 @@ new device or restoreRequired
 
 transfer は途中停止を許す。chunk hash と manifest root により、何度再開しても同じ結果になるようにする。
 
-`src/vault/restore-workflow.ts` は `restoreRequired` を受けて、署名済み request と gap reason を `vault_restore_state` に先に保存する。network request が失敗した場合は同じ request ID のまま `pending` として残し、次回 wake で再送する。core が受理した後は `submitted` を記録し、control TTL 内に再度同じ request を発行しない。これは transfer state ではなく、**小さい復旧要求だけ**の durable state である。実際の peer offer polling、visible push、approve/deny UI と chunk transfer は後続工程である。
+`src/vault/restore-workflow.ts` は `restoreRequired` を受けて、署名済み request と gap reason を `vault_restore_state` に先に保存する。network request が失敗した場合は同じ request ID のまま `pending` として残し、次回 wake で再送する。core が受理した後は `submitted` を記録し、control TTL 内に再度同じ request を発行しない。peer は `RestoreControlPullV1` を署名して request を poll し、**UI が明示的に承認した後だけ** `vault_restore_offer_outbox` に署名済み offer を保存・再送する。offer の expiry は request の expiry を超えられない。これらは transfer state ではなく、**小さい復旧制御だけ**の durable state である。visible push、実 UI、chunk transfer は後続工程である。
 
 ### 9.5 cursor の原則
 
@@ -910,6 +910,7 @@ object body と event、projection、outbox の durability boundary を明文化
 - vault delivery pull、ACK、cursor を実装する。
 - `restoreRequired` を受けたら通常 sync を止め、restore UI/state に遷移する。
 - request を送る前に local durable state へ書き、post の応答喪失は client-generated request ID で再送する。受理済み control TTL 内に重複 request を発行しない。
+- peer は signed poll で request を読む。user approval 後の offer も local durable outbox に保存し、元 request より長く残らない expiry で idempotent に再送する。
 - duplicate ingress、duplicate delivery、順序逆転、ACK 再送を idempotent にする。
 
 ### C5. restore UI と PWA 行動
