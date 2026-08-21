@@ -14,7 +14,7 @@
 - [x] memory-only の bounded `IngressStore` を実装し、TTL、quota、recipient snapshot、一台の authorised ACK、payload 削除をテストした。
 - [x] core を `identity`（anchor）、`mediation`、`adapters` に概念分離し、初期 deployment は一つの `biset-core` binary に統合した。
 - [-] IndexedDB の local vault schema、atomic ingress commit、object crypto、flat manifest は存在するが、ingest workflow と durable recovery は未実装。
-- [ ] production 用の mediator persistence / MLS device authorizer / HTTP binding はまだ存在しない。
+- [-] narrow delivery HTTP binding と injection-safe core application composition は存在する。production persistence / actual MLS device authorizer の deployment wiring は未実装。
 - [ ] Local JMAP Gateway、MLS VEK 導出、DIDComm/Mail adapter は未実装である。SegmentKey の object encryption と、VEK を入力に取る wrap primitive は実装済みである。
 
 **次に着手する工程:** §2.3 の vault delivery protocol と、§3 の durable local vault の基盤。`MemoryIngressStore` を HTTP に公開する前に、device authorization と永続化の境界を設計・実装する。
@@ -252,5 +252,6 @@
 | 2026-08-21 | `6d96cd5` | cursor-based delivery sync と durable ACK retry、idempotent core ACK を追加 |
 | 2026-08-21 | `faef01d` | signed vault-delivery pull を追加し、device ID のみでは payload を取得できないようにした |
 | 2026-08-21 | `d944cbd` | bounded vault delivery の append / pull / ACK HTTP adapter と browser transport を追加 |
+| 2026-08-21 | `8fb0bfa` | authorizer 注入なしでは relay を公開しない安全な core application composition を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
