@@ -925,7 +925,7 @@ object body と event、projection、outbox の durability boundary を明文化
 
 ### C4. ingress と vault delivery client
 
-- ingress offer/pull を受け、validate → vault transaction → `IngressAck` outbox の順に実装する。
+- [-] ingress pull 後の `verifyAndProject` → vault transaction → `IngressAck` outbox の共通 orchestration を実装した。DIDComm/Mail ごとの decoder / verifier / projector は未実装。
 - vault delivery pull、ACK、cursor を実装する。
 - `restoreRequired` を受けたら通常 sync を止め、restore UI/state に遷移する。
 - request を送る前に local durable state へ書き、post の応答喪失は client-generated request ID で再送する。受理済み control TTL 内に重複 request を発行しない。

@@ -118,7 +118,7 @@
 
 ### 3.3 Ingress-to-vault transaction
 
-- [-] `src/vault/delivery-ingest.ts` と `delivery-projector.ts` に shared vault delivery の hash/pack verify → current MLS wrap / event / object verify → deterministic projection → durable commit → delivery ACK outbox を実装した。raw external ingress は未実装。
+- [-] `src/vault/delivery-ingest.ts` と `delivery-projector.ts` に shared vault delivery の hash/pack verify → current MLS wrap / event / object verify → deterministic projection → durable commit → delivery ACK outbox を実装した。`ingress-ingest.ts` に external ingress の verify/project → atomic commit → ACK outbox 境界を実装したが、DIDComm/Mail の具体 decoder/projector は未実装。
 - [x] TTL 内の shared vault delivery は cursor-based pull → ordered ingest → durable ACK outbox flush として同期し、TTL 外は `restoreRequired` を UI 層へ返す。
 - [x] append / pull / ACK はすべて current trusted device の署名を必要とする。HTTP binding はこの型をそのまま使う。
 - [x] ACK outbox の retry / idempotence を実装する。
