@@ -77,9 +77,9 @@
 
 ### 2.4 Restore control
 
-- [ ] `RestoreRequestV1`、`RestoreOfferV1`、cancel / expiry schema を定義する。
-- [ ] mediator は小さい restore control と peer availability だけを短期保持する。
-- [ ] mediator が restore payload/history/blob を保存しないことを API と storage test で保証する。
+- [x] `RestoreRequestV1`、`RestoreOfferV1`、cancel / expiry schema を定義する。
+- [-] in-memory の short-lived restore control store を実装した。MLS authorizer、durable bounded persistence、peer availability は未実装。
+- [-] restore store の API は request / offer / cancel の control 型だけを受け付け、history/blob/chunk を受け付けない。production storage boundary の test は未実装。
 - [ ] requester が `restoreRequired` から restore UI/state へ遷移する client contract を定義する。
 - [ ] peer への opaque push / control notification を定義する。
 

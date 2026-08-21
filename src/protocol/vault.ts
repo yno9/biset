@@ -107,6 +107,41 @@ export type RestoreRequiredReason =
   | 'delivery-confirmed'
   | 'new-device'
 
+/** Small signed control only. It never embeds a manifest, object, or chunk. */
+export interface RestoreRequestV1 {
+  version: 1
+  requestId: string
+  identityId: IdentityId
+  requesterDeviceId: DeviceId
+  reason: RestoreRequiredReason
+  knownManifestRoot?: string
+  requestedAt: string
+  expiresAt: string
+  signature: Uint8Array
+}
+
+/** A peer is willing to perform a foreground manifest/chunk transfer. */
+export interface RestoreOfferV1 {
+  version: 1
+  requestId: string
+  identityId: IdentityId
+  requesterDeviceId: DeviceId
+  responderDeviceId: DeviceId
+  manifestRoot: string
+  offeredAt: string
+  expiresAt: string
+  signature: Uint8Array
+}
+
+export interface RestoreCancelV1 {
+  version: 1
+  requestId: string
+  identityId: IdentityId
+  requesterDeviceId: DeviceId
+  cancelledAt: string
+  signature: Uint8Array
+}
+
 export type DeliveryPullResult =
   | {
       kind: 'items'

@@ -382,6 +382,36 @@ type DeliveryPullResult =
 
 ### 5.4 mediator が restore でしてよいこと・してはいけないこと
 
+restore control の wire schema は、content transfer を意図的に表現できない小さい control 型に限定する。
+
+```ts
+interface RestoreRequestV1 {
+  version: 1;
+  requestId: string;
+  identityId: IdentityId;
+  requesterDeviceId: DeviceId;
+  reason: RestoreRequiredReason;
+  knownManifestRoot?: string;
+  requestedAt: string;
+  expiresAt: string;
+  signature: Uint8Array;
+}
+
+interface RestoreOfferV1 {
+  version: 1;
+  requestId: string;
+  identityId: IdentityId;
+  requesterDeviceId: DeviceId;
+  responderDeviceId: DeviceId;
+  manifestRoot: string;
+  offeredAt: string;
+  expiresAt: string;
+  signature: Uint8Array;
+}
+```
+
+`src/core/mediation/restore-control-store.ts` の reference implementation は、同じ identity の current trusted device にだけ request を見せ、requester にだけ offer を返す。request / offer / cancel は expiry 後に消える。型と store API に object、chunk、添付、manifest 本体を置かないため、この層を vault data storage に拡張する余地を API 上から閉じている。実際の MLS membership / signature validation と durable bounded persistence は後続実装で差し込む。
+
 **してよいこと**:
 
 - `RestoreRequestV1` の小さい signed control message を保存・配信する。
