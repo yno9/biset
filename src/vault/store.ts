@@ -165,7 +165,13 @@ function copyReceipt(value: IngressReceiptRecord): IngressReceiptRecord {
 }
 
 function copyObject(value: VaultObjectRecord): VaultObjectRecord {
-  return { ...value, ciphertext: value.ciphertext.slice(), ciphertextHash: value.ciphertextHash.slice(), aad: value.aad.slice() }
+  return {
+    ...value,
+    nonce: value.nonce.slice(),
+    ciphertext: value.ciphertext.slice(),
+    ciphertextHash: value.ciphertextHash.slice(),
+    aad: value.aad.slice(),
+  }
 }
 
 function copyEvent(value: VaultEventRecord): VaultEventRecord {

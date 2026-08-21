@@ -40,6 +40,7 @@ export interface VaultObjectV1 {
   version: 1
   objectId: VaultObjectId
   segmentId: SegmentId
+  nonce: Uint8Array
   ciphertext: Uint8Array
   ciphertextHash: Uint8Array
   plaintextLength: number
