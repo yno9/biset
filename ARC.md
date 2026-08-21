@@ -63,6 +63,17 @@
 
 ### 8.2 Mail, Autocrypt, and OpenPGP
 
+Mail adapters preserve raw RFC 5322 / MIME as opaque ingress and never receive
+or interpret OpenPGP private keys. A Biset identity's OpenPGP private key is
+an endpoint-vault credential: normal new-device recovery comes from an
+authorised peer restore, while full-device-loss recovery is possible only from
+an opt-in, user-managed encrypted recovery archive. The core does not retain a
+durable key blob.
+
+MLS device removal cannot retract an already received OpenPGP private key.
+Device compromise therefore requires both MLS Remove and OpenPGP key rotation /
+revocation; a stale correspondent may still encrypt to an old public key.
+
 ### 8.3 ActivityPub
 
 ### 8.4 Adapter Host Boundary

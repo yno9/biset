@@ -197,7 +197,7 @@
 - [ ] client で OpenPGP、Autocrypt、DeltaChat protected headers、SecureJoin を処理する。
 - [ ] outbound intent から client-side PGP/MIME を作り、SMTP/JMAP Submission する。
 - [ ] `250` 後の TTL expiry policy を **DSN 型**または**4xx 型**のどちらかに決定・実装する。
-- [ ] PGP private-key credential の self-device restore / revoke / export policy を実装する。
+- [-] PGP private-key credential は vault / peer restore の対象、全端末喪失への備えはユーザー管理の暗号化 recovery archive、core の恒久 key blob は置かない、と policy を決定した。credential schema、restore、rotation / revocation、archive export/import は未実装。
 
 ### 6.3 ActivityPub adapter
 

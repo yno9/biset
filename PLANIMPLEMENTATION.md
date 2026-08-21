@@ -29,6 +29,7 @@ Biset の正本を JMAP/SMTP relay のメールボックスから、各ユーザ
 6. TTL を超えた端末は信頼を失わない。`restore-required` として、新端末と同じ復元フローを行う。TTL による MLS Remove や「repair」状態は導入しない。
 7. v1 の adapter は core と同一 release の first-party module とする。実行時 plugin loader は作らない。
 8. core の初期実装は TypeScript とする。Rust 化は protocol が固定され、性能・隔離・公開 daemon の要件が明確になった時点で再評価する。
+9. OpenPGP 秘密鍵は endpoint vault の credential として扱う。通常の新端末・TTL 外端末への再配布は正規 peer からの vault restore で行い、core は秘密鍵 blob を恒久保存しない。全端末喪失への備えは、利用者が保持する暗号化 recovery archive の opt-in とする。
 
 ### 0.2 成功条件
 
@@ -292,6 +293,14 @@ peer は payload を復号して送る必要がない。既存 ciphertext と、
 Forward Secrecy を捨てない。新 leaf は過去 epoch の exporter secret を得ないため、self group 加入だけでは昔の vault を開けない。過去データは trusted peer が `SegmentKeyWrapV1` を明示的に grant した場合だけ読める。
 
 ただし Remove 前に端末へ渡った payload や SegmentKey を回収することはできない。MLS Remove が保証するのは **Remove 後に新しく作られるデータ** を受け取れず復号できないことである。
+
+### 4.7 OpenPGP credential と recovery archive
+
+OpenPGP 秘密鍵はメール adapter や core の credential DB ではなく、endpoint vault の `credential.openpgp.private` object として扱う。object は通常の vault object と同じく SegmentKey で暗号化し、同一 identity の正規端末だけが current-epoch `SegmentKeyWrapV1` grant を受けて restore できる。新端末と TTL 外端末は、peer restore で raw mail、通常の vault history、OpenPGP credential を同じ approval の下で受け取る。
+
+全端末喪失に備える既定の server backup は作らない。必要な利用者だけが、client が作る暗号化 recovery archive を自分で export し、NAS・外部媒体・印刷した recovery key 等で管理する。archive は少なくとも vault snapshot と OpenPGP credential を一体で含む。recovery key は MLS exporter secret、端末鍵、Biset core の credential と混用せず、client が生成・保持する独立した復旧要因とする。archive なしで全端末を失えば、history と OpenPGP 秘密鍵の双方を失う。
+
+OpenPGP は長期 identity key であり、MLS Remove より弱い性質を持つ。端末が一度 credential を得た後は、その端末から鍵を暗号的に回収できない。端末の紛失・侵害で Remove を行う際には、MLS Remove に加えて OpenPGP key rotation / revocation を実施し、新公開鍵を Autocrypt/WKD 等の discovery に反映する。旧鍵は過去 mail の復号用 credential として正規 vault/archive に残せるが、相手が stale な旧公開鍵へ送った将来 mail を、removed device が読めないことまでは保証できない。この限界と鍵変更の UX は product に明示する。
 
 ## 5. mediator の短期 storage と配送状態
 
@@ -824,7 +833,7 @@ transfer は途中停止を許す。chunk hash と manifest root により、何
 4. **Autocrypt / DeltaChat state**: A は送信者 address と Autocrypt public key の対応、key fingerprint の変更、PGP signature/encryption status、group state、SecureJoin、reaction を検証し、vault event として保存する。Autocrypt は鍵発見であって人間としての本人確認ではない。より強い確認は SecureJoin、fingerprint 照合、DID binding 等で別途扱う。
 5. **vault への確定**: A は raw `.eml` object、復号後の message / attachment object、検証結果、contact-key / group / reaction event、Local JMAP projection を durable に保存する。raw mail は export、再解析、再検証、相互運用のために端末 vault に残す。
 6. **ACK と sibling 同期**: A は `IngressAckV1` を送る。mediator は有効性を確認後に raw mail の短期 body を削除する。B/C へは SMTP で再配送せず、vault delivery と MLS による端末認可で同期する。
-7. **OpenPGP 秘密鍵の端末間扱い**: B/C が raw PGP mail を独立に復号・再検証するには、identity の OpenPGP 秘密鍵も正規端末だけが読める credential として vault / restore 設計に含める必要がある。これを実装するまでは、復号済み正規化結果を同期するだけでは完全な独立再検証を保証できない。この credential の Add/Remove と export/recovery policy は MLS self group の端末認可に接続して設計する。
+7. **OpenPGP 秘密鍵の端末間扱い**: B/C が raw PGP mail を独立に復号・再検証できるよう、identity の OpenPGP 秘密鍵は `credential.openpgp.private` vault object として peer restore の対象にする。core はこの鍵の永続 backup を持たない。全端末喪失へ備える場合は、利用者が暗号化 recovery archive を自ら保持する。Remove は過去鍵を回収できないため、端末侵害時には MLS Remove と OpenPGP rotation / revocation の両方が必要である（§4.7）。
 8. **SMTP 失効**: adapter が SMTP `250` を返した ingress が端末 ACK 前に TTL を超えた場合、silent loss は禁止する。§6.3 の短期受理型なら DSN/permanent failure、非受理型なら SMTP `4xx` により送信側再送、という選択を実装前に固定する。
 
 #### 9.6.3 DeltaChat 互換 Mail / Autocrypt / OpenPGP の送信
@@ -1167,6 +1176,8 @@ core が外部に公開する API には、vault history query を追加しな�
 - JMAP `Email/get` / `Email/query` 相当の履歴。
 - 長期的な peer の object 所有一覧。
 
+ただし short buffer を運用する以上、core 運用者は ingress / delivery の到着・削除時刻、ciphertext size、identity と snapshot device 数、ACK latency をリアルタイムに観測し得る。これは本文や長期 history を保存しないことでは消えない残存 metadata である。長期ログへ残す範囲、保持期間、アクセス監査を運用 policy として別途固定する。
+
 TTL、object size、identity quota、global quota は定数に埋め込まず policy として versioned configuration にする。ただし quota eviction は data loss を隠さず、必ず `restoreRequired` の原因として client に返す。
 
 ## 16. release gate と未決定事項
@@ -1184,7 +1195,7 @@ TTL、object size、identity quota、global quota は定数に埋め込まず po
 - [ ] iOS では foreground restore が必要なことを product UX に明記する。
 - [ ] migration/export/全端末喪失時の回復不能条件を利用者に明示する。
 
-### 16.2 実装開始前に数値を決める事項
+### 16.2 実装開始前に固定する policy
 
 1. ingress TTL、vault delivery TTL、identity/global quota、最大 object/chunk size。
 2. transport ごとの retry / DSN / spam / abuse policy。
@@ -1192,6 +1203,7 @@ TTL、object size、identity quota、global quota は定数に埋め込まず po
 4. restore approval の UX、QR/OOB の要否、ユーザー所有 archive の最初の形式。
 5. Local JMAP の最初の method coverage と、未対応 method の error semantics。
 6. migration 期間と old JMAP relay の read-only/export deadline。
+7. OpenPGP credential の object schema、peer restore approval 文言、rotation / revocation UX、recovery archive の暗号形式・export / import / verification 手順。core は credential blob を恒久保存しない。
 
 ## 17. 実装順序
 
