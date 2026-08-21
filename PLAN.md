@@ -266,5 +266,6 @@
 | 2026-08-21 | `57b0d34` | manifest-first / resume cursor / frame hash を使う peer-only restore transfer frame を追加 |
 | 2026-08-21 | `8cdcff8` | verified restore frame の records と resume session を IndexedDB で atomic commit |
 | 2026-08-21 | `1457a73` | first-party adapter 向け SQLite ingress と offer 時の payload hash 検証を追加 |
+| 2026-08-21 | `709ffe5` | adapter から recipient snapshot を受け取らず、core が accepted self-group roster から ingress 宛先を凍結 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
