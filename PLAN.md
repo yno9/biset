@@ -13,7 +13,7 @@
 - [x] canonical JSON、domain-separated hash、ingress schema validation を実装した。
 - [x] memory-only の bounded `IngressStore` を実装し、TTL、quota、recipient snapshot、一台の authorised ACK、payload 削除をテストした。
 - [x] core を `identity`（anchor）、`mediation`、`adapters` に概念分離し、初期 deployment は一つの `biset-core` binary に統合した。
-- [ ] durable local vault はまだ存在しない。
+- [-] IndexedDB の local vault schema と atomic ingress commit は存在するが、crypto / manifest / ingest workflow は未実装。
 - [ ] production 用の mediator persistence / MLS device authorizer / HTTP binding はまだ存在しない。
 - [ ] Local JMAP Gateway、MLS VEK/SegmentKey、DIDComm/Mail adapter は未実装である。
 
@@ -89,11 +89,11 @@
 
 ### 3.1 Local persistence abstraction
 
-- [ ] `src/vault/store.ts` に browser persistence の interface を定義する。
-- [ ] IndexedDB schema migration を実装する。
-- [ ] store: `vault_events`、`vault_objects`、`vault_chunks`、`vault_segments`、`vault_key_wraps` を作る。
-- [ ] store: `vault_manifests`、`vault_projection`、`vault_jmap_state`、`vault_outbox`、`vault_delivery_state`、`vault_restore_state` を作る。
-- [ ] transaction boundary を object/event/projection/outbox 単位で固定する。
+- [-] `src/vault/store.ts` に browser persistence boundary を定義する。現在は `IndexedDbVaultStore` の concrete implementation のみで、testable abstraction は未抽出。
+- [x] IndexedDB version 1 schema と store 作成を実装する。
+- [x] store: `vault_events`、`vault_objects`、`vault_chunks`、`vault_segments`、`vault_key_wraps` を作る。
+- [x] store: `vault_manifests`、`vault_projection`、`vault_jmap_state`、`vault_outbox`、`vault_delivery_state`、`vault_restore_state` を作る。
+- [x] ingress receipt / object / event / projection / JMAP state / ACK outbox を単一 transaction にする。
 - [ ] browser restart、partial write、migration failure の test harness を作る。
 
 **完了条件:** network がなくても、再起動後に vault root と Local JMAP state を同じ状態へ復元できる。

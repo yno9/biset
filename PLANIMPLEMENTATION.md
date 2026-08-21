@@ -561,6 +561,7 @@ src/
     jmap-local.ts          # Local JMAP public types
     test-vectors.ts
   vault/
+    store.ts               # IndexedDB schema and atomic ingress commit
     objects.ts             # encrypted object/chunk I/O
     events.ts              # append、verify、conflict rules
     manifest.ts            # Merkle manifest、checkpoint、diff
