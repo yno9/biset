@@ -19,6 +19,8 @@ export interface VaultDeliveryStoreLimits {
   maxPayloadBytes: number
   maxIdentityPayloadBytes: number
   maxIdentityPendingItems: number
+  /** Bounded relay retention chosen by core policy, never an append caller. */
+  deliveryTtlMs: number
 }
 
 /**
@@ -28,7 +30,8 @@ export interface VaultDeliveryStoreLimits {
  */
 export interface VaultDeliveryAuthorizer {
   deliveryFloor(identityId: IdentityId, deviceId: DeviceId): Promise<DeliverySeq | undefined>
-  verifyRecipients(identityId: IdentityId, deviceIds: DeviceId[]): Promise<boolean>
+  /** The core, rather than an untrusted append caller, freezes this snapshot. */
+  recipientsAtAppend(identityId: IdentityId): Promise<DeviceId[]>
   verifyAck(ack: VaultDeliveryAckV1, item: VaultDeliveryItemV1): Promise<boolean>
 }
 
@@ -51,6 +54,7 @@ export interface VaultDeliveryStore {
 type EntryState = 'pending' | 'completed' | 'expired'
 
 interface Entry {
+  appendId: string
   item: VaultDeliveryItemV1
   recipientsAtAppend: Set<DeviceId>
   acknowledgements: Set<DeviceId>
@@ -61,12 +65,14 @@ interface Entry {
 interface IdentityState {
   latest: bigint
   entries: Map<bigint, Entry>
+  entriesByAppendId: Map<string, Entry>
 }
 
 const DEFAULT_LIMITS: VaultDeliveryStoreLimits = {
   maxPayloadBytes: 25 * 1024 * 1024,
   maxIdentityPayloadBytes: 100 * 1024 * 1024,
   maxIdentityPendingItems: 128,
+  deliveryTtlMs: 24 * 60 * 60 * 1000,
 }
 
 /**
@@ -80,7 +86,9 @@ export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
   constructor(
     private readonly authorizer: VaultDeliveryAuthorizer,
     private readonly limits: VaultDeliveryStoreLimits = DEFAULT_LIMITS,
-  ) {}
+  ) {
+    if (!Number.isSafeInteger(limits.deliveryTtlMs) || limits.deliveryTtlMs <= 0) throw new TypeError('deliveryTtlMs must be a positive safe integer')
+  }
 
   async append(input: VaultDeliveryAppendV1, now = new Date()): Promise<VaultDeliveryItemV1> {
     assertVaultDeliveryAppend(input)
@@ -90,8 +98,18 @@ export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
     if (input.payload.length > this.limits.maxPayloadBytes) {
       throw new ProtocolValidationError('delivery payload exceeds maxPayloadBytes')
     }
-    if (!(await this.authorizer.verifyRecipients(input.identityId, input.recipientsAtAppend))) {
-      throw new ProtocolValidationError('recipient snapshot is not authorised')
+
+    const existing = this.identities.get(input.identityId)?.entriesByAppendId.get(input.appendId)
+    if (existing) {
+      if (!equalBytes(existing.item.payloadHash, input.payloadHash)) {
+        throw new ProtocolValidationError('appendId is already bound to a different payload')
+      }
+      return copyItem(existing.item)
+    }
+
+    const recipientsAtAppend = await this.authorizer.recipientsAtAppend(input.identityId)
+    if (recipientsAtAppend.length === 0 || new Set(recipientsAtAppend).size !== recipientsAtAppend.length || recipientsAtAppend.some(deviceId => !deviceId)) {
+      throw new ProtocolValidationError('core returned an invalid recipient snapshot')
     }
 
     await this.expire(now)
@@ -103,16 +121,19 @@ export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
       seq: deliverySeq(seq),
       payload: input.payload.slice(),
       payloadHash: input.payloadHash.slice(),
-      createdAt: input.createdAt,
-      expiresAt: input.expiresAt,
+      createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + this.limits.deliveryTtlMs).toISOString(),
     }
     state.latest = seq
-    state.entries.set(seq, {
+    const entry: Entry = {
+      appendId: input.appendId,
       item,
-      recipientsAtAppend: new Set(input.recipientsAtAppend),
+      recipientsAtAppend: new Set(recipientsAtAppend),
       acknowledgements: new Set(),
       state: 'pending',
-    })
+    }
+    state.entries.set(seq, entry)
+    state.entriesByAppendId.set(input.appendId, entry)
     this.enforceQuota(input.identityId, state)
     return copyItem(item)
   }
@@ -202,7 +223,7 @@ export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
   private stateFor(identityId: IdentityId): IdentityState {
     let state = this.identities.get(identityId)
     if (!state) {
-      state = { latest: 0n, entries: new Map() }
+      state = { latest: 0n, entries: new Map(), entriesByAppendId: new Map() }
       this.identities.set(identityId, state)
     }
     return state

@@ -106,7 +106,14 @@ export interface SegmentKeyWrapWriter {
   writeSegmentKeyWrap(wrap: SegmentKeyWrapV1): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, SegmentKeyWrapReader, SegmentKeyWrapWriter {
+/** The client retry loop sees only its own encrypted, local append work. */
+export interface VaultDeliveryOutboxReader {
+  readDeliveryOutbox(identityId: IdentityId, limit?: number): Promise<VaultDeliveryOutboxRecord[]>
+  removeDeliveryOutbox(identityId: IdentityId, entryId: VaultEventId): Promise<void>
+  noteDeliveryOutboxAttempt(identityId: IdentityId, entryId: VaultEventId): Promise<void>
+}
+
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -224,6 +231,39 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     )
     await completed
     return wrap && copyKeyWrap(wrap)
+  }
+
+  async readDeliveryOutbox(identityId: IdentityId, limit = 32): Promise<VaultDeliveryOutboxRecord[]> {
+    if (!identityId || !Number.isSafeInteger(limit) || limit < 1) throw new TypeError('delivery outbox identity and positive limit are required')
+    const transaction = this.database.transaction(STORES.deliveryOutbox, 'readonly')
+    const completed = transactionDone(transaction)
+    const values = await requestValue<VaultDeliveryOutboxRecord[]>(transaction.objectStore(STORES.deliveryOutbox).getAll())
+    await completed
+    return values
+      .filter(value => value.identityId === identityId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.entryId.localeCompare(right.entryId))
+      .slice(0, limit)
+      .map(copyDeliveryOutbox)
+  }
+
+  async removeDeliveryOutbox(identityId: IdentityId, entryId: VaultEventId): Promise<void> {
+    if (!identityId || !entryId) throw new TypeError('delivery outbox identity and entry ID are required')
+    const transaction = this.database.transaction(STORES.deliveryOutbox, 'readwrite')
+    transaction.objectStore(STORES.deliveryOutbox).delete([identityId, entryId])
+    await transactionDone(transaction)
+  }
+
+  async noteDeliveryOutboxAttempt(identityId: IdentityId, entryId: VaultEventId): Promise<void> {
+    if (!identityId || !entryId) throw new TypeError('delivery outbox identity and entry ID are required')
+    const transaction = this.database.transaction(STORES.deliveryOutbox, 'readwrite')
+    const store = transaction.objectStore(STORES.deliveryOutbox)
+    const request = store.get([identityId, entryId])
+    request.onsuccess = () => {
+      const record = request.result as VaultDeliveryOutboxRecord | undefined
+      if (!record) return
+      store.put({ ...copyDeliveryOutbox(record), attempts: record.attempts + 1 })
+    }
+    await transactionDone(transaction)
   }
 }
 

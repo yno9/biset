@@ -94,11 +94,10 @@ export interface VaultDeliveryAckV1 {
 export interface VaultDeliveryAppendV1 {
   version: 1
   identityId: IdentityId
+  /** Client-generated idempotency key; normally the final vault event ID. */
+  appendId: VaultEventId
   payload: Uint8Array
   payloadHash: Uint8Array
-  recipientsAtAppend: DeviceId[]
-  createdAt: string
-  expiresAt: string
 }
 
 export type RestoreRequiredReason =

@@ -100,26 +100,13 @@ export function assertIngressAck(value: unknown): asserts value is IngressAckV1 
 export function assertVaultDeliveryAppend(value: unknown): asserts value is VaultDeliveryAppendV1 {
   const input = record(value, 'VaultDeliveryAppendV1')
   exactKeys(input, [
-    'version', 'identityId', 'payload', 'payloadHash', 'recipientsAtAppend', 'createdAt', 'expiresAt',
+    'version', 'identityId', 'appendId', 'payload', 'payloadHash',
   ], 'VaultDeliveryAppendV1')
   if (input.version !== 1) throw new ProtocolValidationError('VaultDeliveryAppendV1.version must be 1')
   text(input.identityId, 'identityId')
+  text(input.appendId, 'appendId')
   bytes(input.payload, 'payload')
   bytes(input.payloadHash, 'payloadHash')
-  if (!Array.isArray(input.recipientsAtAppend) || input.recipientsAtAppend.length === 0) {
-    throw new ProtocolValidationError('recipientsAtAppend must be a non-empty array')
-  }
-  const recipients = new Set<string>()
-  for (const deviceId of input.recipientsAtAppend) {
-    text(deviceId, 'recipientsAtAppend entry')
-    if (recipients.has(deviceId)) throw new ProtocolValidationError('recipientsAtAppend has a duplicate device')
-    recipients.add(deviceId)
-  }
-  time(input.createdAt, 'createdAt')
-  time(input.expiresAt, 'expiresAt')
-  if (Date.parse(input.expiresAt) <= Date.parse(input.createdAt)) {
-    throw new ProtocolValidationError('expiresAt must be after createdAt')
-  }
 }
 
 export function assertVaultDeliveryAck(value: unknown): asserts value is VaultDeliveryAckV1 {

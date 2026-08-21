@@ -66,9 +66,10 @@
 ### 2.3 Shared VaultDeliveryStore
 
 - [x] `VaultDeliveryItemV1`、`VaultDeliveryAppendV1`、`VaultDeliveryAckV1`、`DeliveryPullResult` を `src/protocol/vault.ts` に定義する。
-- [-] append 時の `recipientsAtAppend` を immutable な trusted-device snapshot として取得する。store は `VaultDeliveryAuthorizer.verifyRecipients` を必須にしたが、identity projection は未実装。
-- [x] payload body を一コピー、端末ごとには ACK/cursor だけを持つ in-memory store を実装する。
+- [x] append 時の `recipientsAtAppend` は、client input でなく core の trusted-device roster から immutable に取得する。
+- [x] payload body を一コピー、端末ごとには ACK/cursor だけを持つ in-memory store を実装する。recipient snapshot と TTL は core policy が決定する。
 - [x] all-ACK 時の body 削除を実装する。
+- [x] local delivery outbox の再送を重複配送にしないため、core append を client-generated `appendId` で idempotent にする。
 - [-] TTL / quota expiry 時に `retainedFrom` と gap record を更新する。in-memory reference は実装済み、quota の境界 test と durable persistence は未実装。
 - [x] 古い cursor の pull が必ず `restoreRequired` を返すよう実装する。
 - [x] new device を過去 item の recipient set に遡及追加しない test を書く。
@@ -96,6 +97,7 @@
 - [x] store: `vault_manifests`、`vault_projection`、`vault_jmap_state`、`vault_outbox`、`vault_delivery_state`、`vault_restore_state` を作る。
 - [x] ingress receipt / object / event / projection / JMAP state / ACK outbox を単一 transaction にする。
 - [x] local JMAP mutation の object / event / projection / JMAP state / shared vault-delivery outbox を単一 transaction にした。browser fault injection は未実装。
+- [-] outbox の causal-order flush / append idempotency boundary を実装した。IndexedDB outbox の index、retry backoff、actual core HTTP transport は未実装。
 - [ ] browser restart、partial write、migration failure の test harness を作る。
 
 **完了条件:** network がなくても、再起動後に vault root と Local JMAP state を同じ状態へ復元できる。
@@ -241,5 +243,6 @@
 | 2026-08-21 | `2254ed9` | protocol source の整形 |
 | 2026-08-21 | 作業中 | `biset-core` 内の identity / mediation / adapters 境界へ再編 |
 | 2026-08-21 | `39008f4` | Local JMAP mutation と共有 vault-delivery outbox を原子的に保存。canonical delivery pack と MLS key-wrap 同梱を追加 |
+| 2026-08-21 | `409a6dd` | delivery recipient snapshot / TTL を core policy に移し、idempotent append と causal-order outbox flush を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

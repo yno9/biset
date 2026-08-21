@@ -34,9 +34,8 @@ export function rosterBackedVaultDeliveryAuthorizer(
 ): VaultDeliveryAuthorizer {
   return {
     deliveryFloor: (identityId, deviceId) => roster.deliveryFloor(identityId, deviceId),
-    async verifyRecipients(identityId, deviceIds) {
-      if (new Set(deviceIds).size !== deviceIds.length) return false
-      return (await Promise.all(deviceIds.map(deviceId => roster.isTrustedDevice(identityId, deviceId)))).every(Boolean)
+    async recipientsAtAppend(identityId) {
+      return (await roster.trustedDevices(identityId)).map(device => device.deviceId)
     },
     async verifyAck(ack, item) {
       const device = await currentDevice(roster, ack.identityId, ack.recipientDeviceId)

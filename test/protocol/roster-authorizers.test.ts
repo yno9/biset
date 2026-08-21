@@ -30,8 +30,7 @@ describe('roster-backed mediation authorizers', () => {
     expect(await ingress.isTrustedDevice(identityId, 'device-b')).toBe(false)
     expect(await ingress.verify({ recipientDeviceId: 'device-b' } as never, { recipientIdentityId: identityId } as never)).toBe(false)
     expect(await delivery.deliveryFloor(identityId, 'device-a')).toBe('9')
-    expect(await delivery.verifyRecipients(identityId, ['device-a'])).toBe(true)
-    expect(await delivery.verifyRecipients(identityId, ['device-b'])).toBe(false)
+    expect(await delivery.recipientsAtAppend(identityId)).toEqual(['device-a'])
     expect(await delivery.verifyAck({ identityId, recipientDeviceId: 'device-b' } as never, {} as never)).toBe(false)
   })
 
