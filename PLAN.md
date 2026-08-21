@@ -277,5 +277,6 @@
 | 2026-08-21 | `a135e8f` | endpoint-only OpenPGP 鍵生成と vault credential fingerprint / packet 検証を追加 |
 | 2026-08-22 | `411c521` | verified OpenPGP credential から public certificate のみを DID / WKD / Autocrypt 向けに取り出す境界を追加 |
 | 2026-08-22 | `3044a09` | endpoint-only OpenPGP credential reader を追加し、current epoch の再検証と fail-closed な現行鍵選択を実装 |
+| 2026-08-22 | `d4b2297` | core 非依存の独立 recovery key で vault ciphertext/SegmentKey snapshot を保護する user-owned archive primitive を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
