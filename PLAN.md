@@ -10,14 +10,14 @@
 - [x] 新しい `src/` の client / anchor / protocol の最小骨格を作った。
 - [x] 新設計の統合文書 `PLANIMPLEMENTATION.md` を作った。
 - [x] 新しい ARC/README の骨格を作った。
-- [x] canonical JSON、domain-separated hash、ingress schema validation を実装した。
+- [x] canonical JSON、domain-separated hash、ingress schema validation を実装した。first-party adapter の offer から recipient snapshot を排除し、core が accepted self-group roster から凍結する。
 - [x] memory-only の bounded `IngressStore` を実装し、TTL、quota、recipient snapshot、一台の authorised ACK、payload 削除をテストした。
 - [x] core を `identity`（anchor）、`mediation`、`adapters` に概念分離し、初期 deployment は一つの `biset-core` binary に統合した。
 - [-] IndexedDB の local vault schema、atomic ingress commit、object crypto、flat manifest は存在するが、ingest workflow と durable recovery は未実装。
 - [-] SQLite roster + SQLite delivery / restore-control + roster authorizer + Ed25519 verifier + narrow HTTP の deployment composition を実装した。actual MLS accepted-commit source / DID resolver cache policy は未実装。
 - [ ] Local JMAP Gateway、MLS VEK 導出、DIDComm/Mail adapter は未実装である。SegmentKey の object encryption と、VEK を入力に取る wrap primitive は実装済みである。
 
-**次に着手する工程:** §2.3 の vault delivery protocol と、§3 の durable local vault の基盤。`MemoryIngressStore` を HTTP に公開する前に、device authorization と永続化の境界を設計・実装する。
+**次に着手する工程:** actual MLS accepted-commit source / DID resolver を roster へ接続しつつ、§3.3 の raw external ingress を端末 vault の durable transaction に接続する。ingress は generic public HTTP API にせず、first-party adapter の内部 boundary に限定する。
 
 ## 1. 作業上の不変条件
 
@@ -38,7 +38,7 @@
 ### 2.1 Canonical encoding と基本 schema
 
 - [x] `src/protocol/canonical.ts` に canonical JSON、SHA-256、domain-separated hash、constant-time byte comparison を実装する。
-- [x] `src/protocol/ingress.ts` に `IngressEnvelopeV1` と `IngressAckV1` を定義する。
+- [x] `src/protocol/ingress.ts` に `IngressEnvelopeV1`、`IngressAckV1`、adapter 入力専用の `AdapterIngressOfferV1` を定義する。
 - [x] `src/protocol/validate.ts` に ingress / ACK の shape validation を実装する。
 - [x] canonical order、hash domain、byte equality、invalid ingress の unit test を追加する。
 - [ ] canonical JSON V1 の値域・Unicode・number の cross-language test vector を `src/protocol/test-vectors.ts` に固定する。
@@ -55,6 +55,7 @@
 - [x] recipient snapshot に入っていても、pull 時点で trusted roster から Remove 済みなら ingress を渡さない。
 - [x] ACK hash、snapshot、authorizer を確認後に payload を削除し、tombstone だけを残す。
 - [x] expiry で payload を削除する。
+- [x] adapter 入力は recipient device snapshot を持てず、`CoreIngressAdapter` が offer 時点の accepted self-group roster から snapshot を凍結する。
 - [-] trusted-device roster を mediation authorizer adapter に接続し、DID/webvh public-key resolver を入力に取る Ed25519 verifier を実装した。actual DID resolution / key rotation cache は未実装。
 - [-] crash-safe な SQLite `VaultDeliveryStore` / `IngressStore` と core deployment への authorizer/persistence wiring を実装した。ingress は first-party adapter の内部 boundary だけで、公開 HTTP には出していない。restart coverage はあるが、同時操作の coverage は未実装。
 - [ ] tombstone retention / dedup retention / quota eviction の数値を policy として決める。

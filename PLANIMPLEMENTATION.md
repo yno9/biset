@@ -335,7 +335,9 @@ interface IngressAckV1 {
 - 新規 device は過去 ingress の snapshot に遡って追加しない。
 - TTL、identity あたりの payload bytes / object count、global quota、重複 ingress ID の処理を必ず持つ。
 
-`src/core/mediation/sqlite-ingress-store.ts` はこの状態機械を SQLite に永続化する。offer 時に `protectedPayloadHash == SHA-256(protectedPayload)` を確認し、ACK/expiry 時には payload だけでなく source evidence、transport metadata、recipient snapshot も clear する。tombstone に残るのは ingress ID、identity、expiry、状態だけである。これは adapter host が呼ぶ内部 API であり、`biset-core` の public HTTP surface に generic ingress offer/pull を出さない。adapter authentication と SMTP/DIDComm/ActivityPub 別の evidence validation は各 adapter の工程である。
+`src/core/mediation/sqlite-ingress-store.ts` はこの状態機械を SQLite に永続化する。offer 時に `protectedPayloadHash == SHA-256(protectedPayload)` を確認し、ACK/expiry 時には payload だけでなく source evidence、transport metadata、recipient snapshot も clear する。tombstone に残るのは ingress ID、identity、expiry、状態だけである。
+
+adapter が core に渡すのは `AdapterIngressOfferV1` であり、ここには `recipientDeviceSnapshot` を置かない。`CoreIngressAdapter` が offer を受理する瞬間に accepted MLS self-group roster を読み、空なら拒否し、得られた device ID 列を `IngressEnvelopeV1` の snapshot として一度だけ凍結する。従って SMTP/DIDComm/ActivityPub adapter は本文・evidence・宛先 identity を翻訳できても、配送対象の端末を追加・省略できない。これは adapter host が呼ぶ内部 API であり、`biset-core` の public HTTP surface に generic ingress offer/pull を出さない。adapter authentication と SMTP/DIDComm/ActivityPub 別の evidence validation は各 adapter の工程である。
 
 ### 5.2 vault delivery buffer
 
@@ -471,11 +473,13 @@ adapter は protocol の翻訳器であり、mailbox の所有者ではない。
 ```ts
 interface TransportAdapterHost {
   resolveRecipient(input: RecipientReference): Promise<RecipientResolution>;
-  offerIngress(input: IngressEnvelopeV1): Promise<IngressOfferResult>;
+  offerIngress(input: AdapterIngressOfferV1): Promise<IngressOfferResult>;
   recordTransportResult(input: TransportResult): Promise<void>;
   publishPush(input: PushRequest): Promise<void>;
 }
 ```
+
+`AdapterIngressOfferV1` は宛先 identity を含むが recipient-device snapshot を含まない。host/core が accepted self-group roster から snapshot を凍結して `IngressEnvelopeV1` を組み立てる。この権限分離により、adapter の誤実装や侵害が任意 device への body 配送を指示することを防ぐ。
 
 adapter ができないこと:
 
@@ -791,7 +795,7 @@ transfer は途中停止を許す。chunk hash と manifest root により、何
 
 1. **宛先発見**: 送信者は webvh DID Document を解決し、DIDComm service endpoint、key agreement key、protocol capability を得る。送信者は受信者の self MLS group や Vault Epoch Key を知る必要がない。
 2. **外部暗号化**: 送信者は DIDComm `authcrypt` 等で ingress を作る。互換フェーズでは端末鍵ごとの DIDComm message を許す。目標形では、本文を一つの protected body とし、recipient device snapshot 用の小さい復号 capability / key wrap を別に持つ。後者は標準 packed DIDComm そのものではないため、Biset transport version として明示する。
-3. **短期受理**: DIDComm adapter は `IngressEnvelopeV1` を作り、recipient identity、device snapshot、payload hash、TTL とともに `IngressStore.offer` する。ここで保存するのは、まだどの端末にも vault 化されていない payload だけである。
+3. **短期受理**: DIDComm adapter は `AdapterIngressOfferV1` を作り、recipient identity、payload hash、TTL とともに core へ渡す。core は受理済み self-group roster から device snapshot を凍結して `IngressStore.offer` する。ここで保存するのは、まだどの端末にも vault 化されていない payload だけである。
 4. **端末への到達**: mediator は online endpoint への control message、または opaque な Web Push で端末 A に知らせる。push に本文・添付名・会話 metadata を入れない。
 5. **端末での ingest**: A は ingress を pull し、DIDComm の復号、送信者認証、宛先、replay、payload hash、形式を検証する。成功時は message/blob、`message.add` 等の event、manifest、JMAP projection、ACK outbox を一つの durable transaction として保存する。
 6. **ingress の確定**: A は `IngressAckV1` に ingress ID、payload hash、vault event ID、checkpoint、device signature を入れて送る。mediator は current trusted device であることと hash を検証し、body を削除する。ACK は network receipt ではなく local vault への確定保存を意味する。
@@ -813,7 +817,7 @@ transfer は途中停止を許す。chunk hash と manifest root により、何
 ```
 
 1. **メール配送の受理**: SMTP listener または upstream JMAP fetcher は、SMTP envelope の `RCPT TO` から Biset identity を解決する。`To:` header は DeltaChat 互換メールでは hidden であり得るため、宛先判定の根拠にしない。
-2. **raw mail の保存**: Mail adapter は完成した RFC 5322 / MIME を変更せず、envelope、受信時刻、DKIM/ARC 等の source evidence とともに ingress に置く。OpenPGP encrypted body、署名、添付、Autocrypt header を server 側で復号・書換え・連絡先学習しない。
+2. **raw mail の保存**: Mail adapter は完成した RFC 5322 / MIME を変更せず、envelope、受信時刻、DKIM/ARC 等の source evidence とともに `AdapterIngressOfferV1` を core へ渡す。core が受理済み self-group roster から device snapshot を凍結して ingress に置く。OpenPGP encrypted body、署名、添付、Autocrypt header を server 側で復号・書換え・連絡先学習しない。
 3. **端末での PGP 処理**: device A は raw mail を pull し、local OpenPGP 秘密鍵で PGP/MIME を復号・検証する。DeltaChat 互換メールでは `To: hidden-recipients:;`、`Autocrypt`、`Chat-Version`、`Chat-Group-ID`、member 情報、SecureJoin 情報などが暗号文内にあるため、復号後に初めて読み取る。
 4. **Autocrypt / DeltaChat state**: A は送信者 address と Autocrypt public key の対応、key fingerprint の変更、PGP signature/encryption status、group state、SecureJoin、reaction を検証し、vault event として保存する。Autocrypt は鍵発見であって人間としての本人確認ではない。より強い確認は SecureJoin、fingerprint 照合、DID binding 等で別途扱う。
 5. **vault への確定**: A は raw `.eml` object、復号後の message / attachment object、検証結果、contact-key / group / reaction event、Local JMAP projection を durable に保存する。raw mail は export、再解析、再検証、相互運用のために端末 vault に残す。

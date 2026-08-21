@@ -8,6 +8,7 @@ import type { VaultDeliveryStoreLimits } from './mediation/vault-delivery-store.
 import { SqliteRestoreControlStore, type RestoreControlStoreLimits } from './mediation/sqlite-restore-control-store.ts'
 import { SqliteIngressStore } from './mediation/sqlite-ingress-store.ts'
 import type { IngressStoreLimits } from './mediation/ingress-store.ts'
+import { CoreIngressAdapter } from './adapters/ingress.ts'
 
 export interface BisetCoreDeploymentOptions {
   databasePath: string
@@ -24,6 +25,7 @@ export interface BisetCoreDeployment {
   readonly restoreControl: SqliteRestoreControlStore
   /** First-party adapter boundary only; the public core fetch handler does not expose it. */
   readonly ingress: SqliteIngressStore
+  readonly ingressAdapter: CoreIngressAdapter
   readonly fetch: (request: Request) => Promise<Response>
   close(): void
 }
@@ -41,11 +43,13 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
   const delivery = new SqliteVaultDeliveryStore(database, rosterBackedVaultDeliveryAuthorizer(roster, verifier), options.deliveryLimits)
   const restoreControl = new SqliteRestoreControlStore(database, rosterBackedRestoreControlAuthorizer(roster, verifier), options.restoreControlLimits)
   const ingress = new SqliteIngressStore(database, rosterBackedIngressAckAuthorizer(roster, verifier), options.ingressLimits)
+  const ingressAdapter = new CoreIngressAdapter(roster, ingress)
   return {
     roster,
     delivery,
     restoreControl,
     ingress,
+    ingressAdapter,
     fetch: createBisetCoreFetchHandler({ vaultDeliveryStore: delivery, restoreControlStore: restoreControl }),
     close() { database.close() },
   }

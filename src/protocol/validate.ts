@@ -1,4 +1,4 @@
-import type { IngressAckV1, IngressEnvelopeV1 } from './ingress.ts'
+import type { AdapterIngressOfferV1, IngressAckV1, IngressEnvelopeV1 } from './ingress.ts'
 import { assertDeliverySeq } from './ids.ts'
 import type {
   RestoreCancelV1,
@@ -73,6 +73,29 @@ export function assertIngressEnvelope(value: unknown): asserts value is IngressE
   if (Date.parse(input.expiresAt) <= Date.parse(input.createdAt)) {
     throw new ProtocolValidationError('expiresAt must be after createdAt')
   }
+  const metadata = record(input.transportMetadata, 'transportMetadata')
+  for (const [key, entry] of Object.entries(metadata)) {
+    text(key, 'transportMetadata key')
+    if (typeof entry !== 'string') throw new ProtocolValidationError('transportMetadata values must be strings')
+  }
+  bytes(input.sourceEvidence, 'sourceEvidence')
+  bytes(input.protectedPayload, 'protectedPayload')
+  bytes(input.protectedPayloadHash, 'protectedPayloadHash')
+}
+
+export function assertAdapterIngressOffer(value: unknown): asserts value is AdapterIngressOfferV1 {
+  const input = record(value, 'AdapterIngressOfferV1')
+  exactKeys(input, [
+    'version', 'ingressId', 'protocol', 'recipientIdentityId', 'createdAt', 'expiresAt',
+    'transportMetadata', 'sourceEvidence', 'protectedPayload', 'protectedPayloadHash',
+  ], 'AdapterIngressOfferV1')
+  if (input.version !== 1) throw new ProtocolValidationError('AdapterIngressOfferV1.version must be 1')
+  text(input.ingressId, 'ingressId')
+  if (input.protocol !== 'didcomm' && input.protocol !== 'mail' && input.protocol !== 'activitypub') throw new ProtocolValidationError('protocol is unsupported')
+  text(input.recipientIdentityId, 'recipientIdentityId')
+  time(input.createdAt, 'createdAt')
+  time(input.expiresAt, 'expiresAt')
+  if (Date.parse(input.expiresAt) <= Date.parse(input.createdAt)) throw new ProtocolValidationError('expiresAt must be after createdAt')
   const metadata = record(input.transportMetadata, 'transportMetadata')
   for (const [key, entry] of Object.entries(metadata)) {
     text(key, 'transportMetadata key')

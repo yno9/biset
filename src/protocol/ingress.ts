@@ -23,6 +23,24 @@ export interface IngressEnvelopeV1 {
   protectedPayloadHash: Uint8Array
 }
 
+/**
+ * Input accepted from a first-party transport adapter. It intentionally has
+ * no recipient-device snapshot: the core computes that from the accepted MLS
+ * roster at the moment it accepts the ingress.
+ */
+export interface AdapterIngressOfferV1 {
+  version: 1
+  ingressId: IngressId
+  protocol: IngressProtocol
+  recipientIdentityId: IdentityId
+  createdAt: string
+  expiresAt: string
+  transportMetadata: Record<string, string>
+  sourceEvidence: Uint8Array
+  protectedPayload: Uint8Array
+  protectedPayloadHash: Uint8Array
+}
+
 /** Sent only after the receiving device has durably committed its vault write. */
 export interface IngressAckV1 {
   version: 1
@@ -34,4 +52,3 @@ export interface IngressAckV1 {
   ackedAt: string
   signature: Uint8Array
 }
-
