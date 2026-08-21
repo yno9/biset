@@ -545,6 +545,8 @@ Local gateway は HTTP server である必要がない。TypeScript の direct t
 
 異なる backend をまたぐ JMAP method batch は原子的に実行できない。v1 は reject するか、UI が明示的に分割実行する。
 
+`src/local-jmap/accounts.ts` の `AccountRouter` は上記 ID namespace を parse / validate し、UI action を必ず一つの `AccountTransport` へ解決する。multi-account `call` API を意図的に持たないため、local vault と remote JMAP を跨ぐ batch を「原子的」と誤認させない。UI が複数 account 操作を望む場合は、明示的な順序・失敗表示を伴う split を実装する。
+
 ### 7.3 Local JMAP の最小 method 対応
 
 | JMAP method | local vault での実装 |
