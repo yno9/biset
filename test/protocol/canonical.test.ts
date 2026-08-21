@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { canonicalHash, canonicalJson, domainHash, equalBytes } from '../../src/protocol/canonical.ts'
+import { base64urlToBytes, bytesToBase64url, canonicalHash, canonicalJson, domainHash, equalBytes } from '../../src/protocol/canonical.ts'
 import { assertIngressEnvelope, ProtocolValidationError } from '../../src/protocol/validate.ts'
 
 describe('protocol canonical encoding', () => {
@@ -18,6 +18,14 @@ describe('protocol canonical encoding', () => {
   test('compares bytes without accepting a prefix', () => {
     expect(equalBytes(new Uint8Array([1, 2]), new Uint8Array([1, 2]))).toBe(true)
     expect(equalBytes(new Uint8Array([1, 2]), new Uint8Array([1, 2, 3]))).toBe(false)
+  })
+
+  test('round-trips long base64url byte sequences without padding', () => {
+    const bytes = new Uint8Array(513)
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = index & 0xff
+    expect(base64urlToBytes(bytesToBase64url(bytes))).toEqual(bytes)
+    expect(() => base64urlToBytes('A')).toThrow('invalid base64url')
+    expect(() => base64urlToBytes('AB')).toThrow('trailing bits')
   })
 })
 

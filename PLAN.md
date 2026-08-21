@@ -91,11 +91,11 @@
 ### 3.1 Local persistence abstraction
 
 - [-] `IndexedDbVaultStore` から projection だけを読む `VaultProjectionReader` boundary を抽出し、Local JMAP adapter に接続した。event/object write と migration の testable abstraction は未抽出。
-- [x] IndexedDB version 1 schema と store 作成を実装する。
+- [x] IndexedDB version 2 schema と store 作成を実装する。
 - [x] store: `vault_events`、`vault_objects`、`vault_chunks`、`vault_segments`、`vault_key_wraps` を作る。
 - [x] store: `vault_manifests`、`vault_projection`、`vault_jmap_state`、`vault_outbox`、`vault_delivery_state`、`vault_restore_state` を作る。
 - [x] ingress receipt / object / event / projection / JMAP state / ACK outbox を単一 transaction にする。
-- [-] local JMAP mutation の object / event / projection / JMAP state transaction を実装した。delivery outbox と browser fault injection は未実装。
+- [x] local JMAP mutation の object / event / projection / JMAP state / shared vault-delivery outbox を単一 transaction にした。browser fault injection は未実装。
 - [ ] browser restart、partial write、migration failure の test harness を作る。
 
 **完了条件:** network がなくても、再起動後に vault root と Local JMAP state を同じ状態へ復元できる。
@@ -166,7 +166,7 @@
 - [x] `Session` と read-only local account capability を実装する。
 - [-] memory read model と IndexedDB vault projection adapter 上の `Mailbox/get`、`Email/get`、`Email/query` read path を実装した。state mutation reducer はあるが、full projection rebuild は未実装。
 - [ ] `Email/changes`、`Mailbox/changes`、query state を実装する。
-- [-] `Email/set` の mailbox / keyword / tombstone 更新を immutable vault mutation intent → encrypted object → signed event → local transaction に接続した。delivery outbox、`Mailbox/set`、`Email/import` は未実装。
+- [-] `Email/set` の mailbox / keyword / tombstone 更新を immutable vault mutation intent → encrypted object → signed event → local transaction → shared vault-delivery outbox に接続した。mediator append retry、`Mailbox/set`、`Email/import` は未実装。
 - [ ] `EmailSubmission/set` を outbound intent に変換する。
 - [-] encrypted `VaultObjectV1` を SegmentKey resolver で検証・復号する local blob reader と range read を実装した。stored key wrap からの SegmentKey resolver / attachment chunk reader は未実装。
 - [ ] same UI test を Local/Remote account の両方で実行する。
@@ -240,5 +240,6 @@
 | 2026-08-21 | `efc863c` | canonical/hash/schema validation と bounded in-memory IngressStore を追加 |
 | 2026-08-21 | `2254ed9` | protocol source の整形 |
 | 2026-08-21 | 作業中 | `biset-core` 内の identity / mediation / adapters 境界へ再編 |
+| 2026-08-21 | `39008f4` | Local JMAP mutation と共有 vault-delivery outbox を原子的に保存。canonical delivery pack と MLS key-wrap 同梱を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

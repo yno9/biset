@@ -60,6 +60,29 @@ export function bytesToBase64url(bytes: Uint8Array): string {
   return result
 }
 
+export function base64urlToBytes(value: string): Uint8Array {
+  if (!/^[A-Za-z0-9_-]*$/.test(value) || value.length % 4 === 1) throw new TypeError('invalid base64url value')
+  const output: number[] = []
+  let buffer = 0
+  let bits = 0
+  for (const char of value) {
+    const index = base64url.indexOf(char)
+    if (index < 0) throw new TypeError('invalid base64url value')
+    buffer = (buffer << 6) | index
+    bits += 6
+    while (bits >= 8) {
+      bits -= 8
+      output.push((buffer >>> bits) & 0xff)
+    }
+    // Keep only the bits that have not yet become an output byte. Besides
+    // documenting the decoder invariant, this avoids relying on JavaScript's
+    // 32-bit bitwise truncation for long vault payloads.
+    buffer = bits === 0 ? 0 : buffer & ((1 << bits) - 1)
+  }
+  if (bits > 0 && (buffer & ((1 << bits) - 1)) !== 0) throw new TypeError('invalid base64url trailing bits')
+  return new Uint8Array(output)
+}
+
 export function sha256Bytes(bytes: Uint8Array): Uint8Array {
   return sha256(bytes)
 }

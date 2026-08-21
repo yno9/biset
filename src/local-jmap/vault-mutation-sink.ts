@@ -1,7 +1,9 @@
+import { sha256Bytes } from '../protocol/canonical.ts'
 import type { VaultEventSigner } from '../vault/events.ts'
 import { buildVaultMutation, encodeVaultMutationObject } from '../vault/mutations.ts'
 import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../protocol/ids.ts'
-import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import { encodeVaultDeliveryPack } from '../vault/delivery-pack.ts'
 import type { LocalJmapMutationSink, LocalJmapProjectionV1, LocalJmapSnapshot } from './gateway.ts'
 import { emailSetToVaultMutationIntents } from './mutations.ts'
 import { reduceLocalJmapProjection } from './reducer.ts'
@@ -9,6 +11,8 @@ import { reduceLocalJmapProjection } from './reducer.ts'
 export interface ActiveVaultSegment {
   segmentId: SegmentId
   segmentKey: Uint8Array
+  /** Current MLS epoch wrap(s) needed by another authorised device to open this segment. */
+  keyWraps: SegmentKeyWrapV1[]
 }
 
 export interface LocalVaultMutationCommitter {
@@ -18,6 +22,14 @@ export interface LocalVaultMutationCommitter {
     events: VaultEventV1[]
     projection: LocalJmapProjectionV1
     jmapState: unknown
+    deliveryOutbox: {
+      identityId: IdentityId
+      entryId: VaultEventId
+      payload: Uint8Array
+      payloadHash: Uint8Array
+      createdAt: string
+      attempts: number
+    }
   }): Promise<'committed' | 'already-committed'>
 }
 
@@ -49,6 +61,11 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
   async emailSet(arguments_: Record<string, unknown>, snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>> {
     const intents = emailSetToVaultMutationIntents(arguments_)
     const segment = await this.options.activeSegment()
+    if (segment.keyWraps.length === 0) throw new TypeError('active vault segment has no current MLS key wrap')
+    if (segment.keyWraps.some(wrap => wrap.identityId !== this.options.identityId || wrap.segmentId !== segment.segmentId)) {
+      throw new TypeError('active vault segment key wrap does not match mutation identity or segment')
+    }
+    const createdAt = this.now().toISOString()
     let parents = await this.options.initialParents()
     const records: Array<{ event: VaultEventV1; object: VaultObjectV1; plaintext: Uint8Array }> = []
     for (const intent of intents) {
@@ -59,7 +76,7 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
         parents,
         segmentId: segment.segmentId,
         segmentKey: segment.segmentKey,
-        createdAt: this.now().toISOString(),
+        createdAt,
       }, this.options.signer)
       records.push({ ...record, plaintext: encodeVaultMutationObject(intent) })
       parents = [record.event.id]
@@ -73,12 +90,29 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
       identityId: this.options.identityId,
       ...next,
     }
+    const objects = records.map(record => ({ ...record.object, identityId: this.options.identityId }))
+    const events = records.map(record => record.event)
+    const payload = encodeVaultDeliveryPack({
+      version: 1,
+      identityId: this.options.identityId,
+      objects,
+      events,
+      keyWraps: segment.keyWraps,
+    })
     await this.options.committer.commitLocalMutation({
       identityId: this.options.identityId,
-      objects: records.map(record => ({ ...record.object, identityId: this.options.identityId })),
-      events: records.map(record => record.event),
+      objects,
+      events,
       projection,
       jmapState: { state: projection.state },
+      deliveryOutbox: {
+        identityId: this.options.identityId,
+        entryId: events.at(-1)!.id,
+        payload,
+        payloadHash: sha256Bytes(payload),
+        createdAt,
+        attempts: 0,
+      },
     })
     const destroyed = new Set(records.filter(record => record.event.kind === 'message.tombstone').flatMap(record => record.event.targetIds))
     const updated = new Set(records.filter(record => record.event.kind !== 'message.tombstone').flatMap(record => record.event.targetIds))

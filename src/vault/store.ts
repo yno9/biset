@@ -3,7 +3,7 @@ import type { IdentityId, VaultEventId, VaultObjectId } from '../protocol/ids.ts
 import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
-const DATABASE_VERSION = 1
+const DATABASE_VERSION = 2
 
 const STORES = {
   ingressReceipts: 'vault_ingress_receipts',
@@ -16,6 +16,7 @@ const STORES = {
   projection: 'vault_projection',
   jmapState: 'vault_jmap_state',
   outbox: 'vault_outbox',
+  deliveryOutbox: 'vault_delivery_outbox',
   deliveryState: 'vault_delivery_state',
   restoreState: 'vault_restore_state',
   transportStatus: 'transport_status',
@@ -49,6 +50,20 @@ export interface IngressAckOutboxRecord {
 }
 
 /**
+ * Locally durable work waiting to become one mediator delivery item. Its body
+ * is an encrypted shared-vault pack; recipient snapshots and expiry belong to
+ * the mediator append operation and are deliberately absent here.
+ */
+export interface VaultDeliveryOutboxRecord {
+  identityId: IdentityId
+  entryId: VaultEventId
+  payload: Uint8Array
+  payloadHash: Uint8Array
+  createdAt: string
+  attempts: number
+}
+
+/**
  * All fields are written in one IndexedDB transaction. The caller may send the
  * ACK only after this promise resolves successfully.
  */
@@ -69,6 +84,7 @@ export interface LocalVaultMutationCommit {
   events: VaultEventRecord[]
   projection: unknown
   jmapState: unknown
+  deliveryOutbox: VaultDeliveryOutboxRecord
 }
 
 export type IngressCommitResult = 'committed' | 'already-committed'
@@ -158,6 +174,7 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
       STORES.events,
       STORES.projection,
       STORES.jmapState,
+      STORES.deliveryOutbox,
     ], 'readwrite')
     let duplicate = false
     const eventStore = transaction.objectStore(STORES.events)
@@ -170,6 +187,7 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject(object))
     transaction.objectStore(STORES.projection).put({ identityId: input.identityId, value: input.projection })
     transaction.objectStore(STORES.jmapState).put({ identityId: input.identityId, value: input.jmapState })
+    transaction.objectStore(STORES.deliveryOutbox).put(copyDeliveryOutbox(input.deliveryOutbox))
     try {
       await transactionDone(transaction)
       return 'committed'
@@ -230,6 +248,7 @@ function createStores(database: IDBDatabase): void {
   createStore(database, STORES.projection, 'identityId')
   createStore(database, STORES.jmapState, 'identityId')
   createStore(database, STORES.outbox, ['identityId', 'ingressId'])
+  createStore(database, STORES.deliveryOutbox, ['identityId', 'entryId'])
   createStore(database, STORES.deliveryState, ['identityId', 'deviceId'])
   createStore(database, STORES.restoreState, ['identityId', 'deviceId'])
   createStore(database, STORES.transportStatus, ['identityId', 'outboundEventId'])
@@ -266,7 +285,10 @@ function assertCommit(input: IngressVaultCommit): void {
 }
 
 function assertLocalCommit(input: LocalVaultMutationCommit): void {
-  if (!input.identityId || input.events.length === 0) throw new TypeError('local mutation commit needs identity and events')
+  if (!input.identityId || input.events.length === 0 || input.deliveryOutbox.identityId !== input.identityId) throw new TypeError('local mutation commit needs matching identity and events')
+  if (!input.deliveryOutbox.entryId || input.deliveryOutbox.payload.length === 0 || input.deliveryOutbox.payloadHash.length === 0 || !Number.isSafeInteger(input.deliveryOutbox.attempts) || input.deliveryOutbox.attempts < 0 || Number.isNaN(Date.parse(input.deliveryOutbox.createdAt))) {
+    throw new TypeError('local mutation delivery outbox is invalid')
+  }
   for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('local mutation object identity does not match')
   for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('local mutation event identity does not match')
 }
@@ -298,6 +320,10 @@ function copyOutbox(value: IngressAckOutboxRecord): IngressAckOutboxRecord {
       signature: value.ack.signature.slice(),
     },
   }
+}
+
+function copyDeliveryOutbox(value: VaultDeliveryOutboxRecord): VaultDeliveryOutboxRecord {
+  return { ...value, payload: value.payload.slice(), payloadHash: value.payloadHash.slice() }
 }
 
 function assertKeyWrap(value: SegmentKeyWrapV1): void {

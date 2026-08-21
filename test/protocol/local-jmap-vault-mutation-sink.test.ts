@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { equalBytes } from '../../src/protocol/canonical.ts'
 import { LocalJmapGateway, LocalJmapTransport, MemoryLocalJmapReadModel } from '../../src/local-jmap/gateway.ts'
 import { VaultBackedLocalJmapMutationSink } from '../../src/local-jmap/vault-mutation-sink.ts'
+import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
+import { decodeVaultDeliveryPack } from '../../src/vault/delivery-pack.ts'
 import type { VaultEventSigner } from '../../src/vault/events.ts'
 import { createSegmentKey } from '../../src/vault/objects.ts'
 
@@ -21,7 +23,17 @@ describe('VaultBackedLocalJmapMutationSink', () => {
       actorDeviceId: 'device-a',
       async nextActorSeq() { sequence += 1; return sequence },
       async initialParents() { return ['event-base'] },
-      async activeSegment() { return { segmentId: 'segment-1', segmentKey: createSegmentKey() } },
+      async activeSegment() {
+        const segmentKey = createSegmentKey()
+        return {
+          segmentId: 'segment-1',
+          segmentKey,
+          keyWraps: [await createSegmentKeyWrap(new Uint8Array(32).fill(7), segmentKey, {
+            identityId: 'did:web:alice.example', selfGroupId: 'self-group-1', segmentId: 'segment-1',
+            sourceEpoch: '1', recipientEpoch: '1', grantorDeviceId: 'device-a', grantedAt: '2026-08-21T00:00:00.000Z',
+          }, signer)],
+        }
+      },
       signer,
       committer: { async commitLocalMutation(input) { committed = input as unknown as Record<string, unknown>; return 'committed' } },
       now: () => new Date('2026-08-21T00:00:00.000Z'),
@@ -41,6 +53,11 @@ describe('VaultBackedLocalJmapMutationSink', () => {
     expect(response.methodResponses[0][1]).toMatchObject({ oldState: 'state-1', updated: { 'email-1': null } })
     expect((committed?.events as unknown[])).toHaveLength(1)
     expect((committed?.objects as unknown[])).toHaveLength(1)
+    const deliveryOutbox = committed?.deliveryOutbox as { payload: Uint8Array; attempts: number }
+    expect(deliveryOutbox.attempts).toBe(0)
+    expect(decodeVaultDeliveryPack(deliveryOutbox.payload)).toMatchObject({
+      identityId: 'did:web:alice.example', objects: [{ segmentId: 'segment-1' }], events: [{ kind: 'keyword.set' }], keyWraps: [{ recipientEpoch: '1' }],
+    })
     expect((committed?.projection as { emails: Array<{ keywords: unknown }> }).emails[0].keywords).toEqual({ '$seen': true })
   })
 })
