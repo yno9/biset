@@ -151,7 +151,18 @@ export interface VaultDeliveryOutboxReader {
   noteDeliveryOutboxAttempt(identityId: IdentityId, entryId: VaultEventId): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader {
+export interface VaultDeliveryCursorReader {
+  readDeliveryCursor(identityId: IdentityId, recipientDeviceId: DeviceId): Promise<DeliverySeq>
+}
+
+/** ACKs are durable work items, independent of whether a push/network wake succeeds. */
+export interface VaultDeliveryAckOutboxReader {
+  readDeliveryAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, limit?: number): Promise<VaultDeliveryAckOutboxRecord[]>
+  removeDeliveryAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, seq: DeliverySeq): Promise<void>
+  noteDeliveryAckOutboxAttempt(identityId: IdentityId, recipientDeviceId: DeviceId, seq: DeliverySeq): Promise<void>
+}
+
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -339,6 +350,50 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
       const record = request.result as VaultDeliveryOutboxRecord | undefined
       if (!record) return
       store.put({ ...copyDeliveryOutbox(record), attempts: record.attempts + 1 })
+    }
+    await transactionDone(transaction)
+  }
+
+  async readDeliveryCursor(identityId: IdentityId, recipientDeviceId: DeviceId): Promise<DeliverySeq> {
+    if (!identityId || !recipientDeviceId) throw new TypeError('delivery cursor identity and device are required')
+    const transaction = this.database.transaction(STORES.deliveryState, 'readonly')
+    const completed = transactionDone(transaction)
+    const record = await requestValue<{ cursor?: DeliverySeq } | undefined>(
+      transaction.objectStore(STORES.deliveryState).get([identityId, recipientDeviceId]),
+    )
+    await completed
+    return record?.cursor ?? '0'
+  }
+
+  async readDeliveryAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, limit = 32): Promise<VaultDeliveryAckOutboxRecord[]> {
+    if (!identityId || !recipientDeviceId || !Number.isSafeInteger(limit) || limit < 1) throw new TypeError('delivery ACK outbox identity, device, and positive limit are required')
+    const transaction = this.database.transaction(STORES.deliveryAckOutbox, 'readonly')
+    const completed = transactionDone(transaction)
+    const values = await requestValue<VaultDeliveryAckOutboxRecord[]>(transaction.objectStore(STORES.deliveryAckOutbox).getAll())
+    await completed
+    return values
+      .filter(value => value.identityId === identityId && value.recipientDeviceId === recipientDeviceId)
+      .sort((left, right) => BigInt(left.seq) < BigInt(right.seq) ? -1 : BigInt(left.seq) > BigInt(right.seq) ? 1 : 0)
+      .slice(0, limit)
+      .map(copyDeliveryAckOutbox)
+  }
+
+  async removeDeliveryAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, seq: DeliverySeq): Promise<void> {
+    if (!identityId || !recipientDeviceId || !seq) throw new TypeError('delivery ACK outbox identity, device, and sequence are required')
+    const transaction = this.database.transaction(STORES.deliveryAckOutbox, 'readwrite')
+    transaction.objectStore(STORES.deliveryAckOutbox).delete([identityId, recipientDeviceId, seq])
+    await transactionDone(transaction)
+  }
+
+  async noteDeliveryAckOutboxAttempt(identityId: IdentityId, recipientDeviceId: DeviceId, seq: DeliverySeq): Promise<void> {
+    if (!identityId || !recipientDeviceId || !seq) throw new TypeError('delivery ACK outbox identity, device, and sequence are required')
+    const transaction = this.database.transaction(STORES.deliveryAckOutbox, 'readwrite')
+    const store = transaction.objectStore(STORES.deliveryAckOutbox)
+    const request = store.get([identityId, recipientDeviceId, seq])
+    request.onsuccess = () => {
+      const record = request.result as VaultDeliveryAckOutboxRecord | undefined
+      if (!record) return
+      store.put({ ...copyDeliveryAckOutbox(record), attempts: record.attempts + 1 })
     }
     await transactionDone(transaction)
   }

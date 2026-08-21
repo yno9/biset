@@ -183,7 +183,6 @@ export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
     const sequence = BigInt(ack.seq)
     const entry = state?.entries.get(sequence)
     if (!entry) throw new ProtocolValidationError('unknown delivery sequence')
-    if (entry.state !== 'pending') throw new ProtocolValidationError(`delivery is already ${entry.state}`)
     if (!entry.recipientsAtAppend.has(ack.recipientDeviceId)) {
       throw new ProtocolValidationError('ACK device is not in the recipient snapshot')
     }
@@ -193,6 +192,11 @@ export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
     if (!(await this.authorizer.verifyAck(ack, entry.item))) {
       throw new ProtocolValidationError('ACK is not authorised')
     }
+    // An accepted ACK can be retried after its core response was lost. Once a
+    // completed entry has recorded this exact recipient acknowledgement, the
+    // body has already been safely deleted and the retry is a no-op.
+    if (entry.state === 'completed' && entry.acknowledgements.has(ack.recipientDeviceId)) return
+    if (entry.state !== 'pending') throw new ProtocolValidationError(`delivery is already ${entry.state}`)
 
     entry.acknowledgements.add(ack.recipientDeviceId)
     if (entry.acknowledgements.size === entry.recipientsAtAppend.size) {

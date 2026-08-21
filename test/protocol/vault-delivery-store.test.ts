@@ -58,6 +58,7 @@ describe('MemoryVaultDeliveryStore', () => {
 
     await store.acknowledge(ack('device-b'), new Date('2026-08-21T01:00:00.000Z'))
     expect(await store.status(identityId)).toMatchObject({ pendingItems: 0, payloadBytes: 0, retainedFrom: '2' })
+    await expect(store.acknowledge(ack('device-b'), new Date('2026-08-21T01:01:00.000Z'))).resolves.toBeUndefined()
     expect(await store.pull(identityId, 'device-a', '1', new Date('2026-08-21T01:00:00.000Z')))
       .toMatchObject({ kind: 'items', items: [], nextCursor: '1' })
   })
