@@ -323,17 +323,25 @@ interface VaultDeliveryItemV1 {
   version: 1;
   identityId: IdentityId;
   seq: DeliverySeq;
-  objectId: VaultObjectId;
-  ciphertext: Uint8Array;
-  ciphertextHash: Uint8Array;
-  recipientsAtAppend: DeviceId[];
-  pendingAcks: DeviceId[];
+  payload: Uint8Array;       // encrypted object/event pack; one body only
+  payloadHash: Uint8Array;
+  createdAt: string;
+  expiresAt: string;
+}
+
+interface VaultDeliveryAppendV1 {
+  version: 1;
+  identityId: IdentityId;
+  payload: Uint8Array;
+  payloadHash: Uint8Array;
+  recipientsAtAppend: DeviceId[]; // core-only immutable snapshot
   createdAt: string;
   expiresAt: string;
 }
 ```
 
-- payload は一コピーだけ保存する。device ごとに保存するのは `pendingAcks`、cursor、ACK signature 等の小さい metadata である。
+- `VaultDeliveryItemV1` は recipient に渡す visible item であり、body と hash だけを含む。`recipientsAtAppend`、pending ACK set、gap reason は core 内部の metadata であり、payload ごとに複製しない。
+- payload は一コピーだけ保存する。device ごとに保存するのは ACK/cursor 等の小さい metadata である。
 - `recipientsAtAppend` は append 時点の trusted set で固定する。新端末を過去 delivery の pending recipient にしない。
 - device が object を durable save・hash verify した後、署名付き ACK を送る。
 - 全 `recipientsAtAppend` が ACK したら body を削除する。
@@ -347,18 +355,23 @@ device が `cursor` を提示して pull したとき、`cursor < retainedFrom -
 
 ```ts
 type DeliveryPullResult =
-  | { kind: 'items'; items: VaultDeliveryItemV1[]; nextCursor: DeliverySeq }
+  | {
+      kind: 'items';
+      items: VaultDeliveryItemV1[];
+      nextCursor: DeliverySeq; // durable cursor は ACK 後だけ client が進める
+      retainedFrom: DeliverySeq;
+      latestSeq: DeliverySeq;
+    }
   | {
       kind: 'restoreRequired';
       requestedCursor: DeliverySeq;
       retainedFrom: DeliverySeq;
       latestSeq: DeliverySeq;
-      reason: 'ttl-expired' | 'retention-quota' | 'new-device';
-      restoreRequestId: string;
+      reason: 'ttl-expired' | 'retention-quota' | 'delivery-confirmed' | 'new-device';
     };
 ```
 
-これにより C は、mediator 接続時に「自分の差分が TTL で失効し、通常 pull では追いつけない」ことを機械可読に理解できる。client は restore request を作り、push / control message を通じて peer を起こせる。
+これにより C は、mediator 接続時に「自分の差分が TTL で失効し、通常 pull では追いつけない」ことを機械可読に理解できる。client はこの応答を受けて restore request を作り、push / control message を通じて peer を起こせる。`restoreRequestId` は delivery pull の副作用にせず、次段階の Restore control API が発行する。
 
 ### 5.4 mediator が restore でしてよいこと・してはいけないこと
 

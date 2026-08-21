@@ -1,4 +1,6 @@
 import type { IngressAckV1, IngressEnvelopeV1 } from './ingress.ts'
+import { assertDeliverySeq } from './ids.ts'
+import type { VaultDeliveryAckV1, VaultDeliveryAppendV1 } from './vault.ts'
 
 export class ProtocolValidationError extends Error {
   constructor(message: string) {
@@ -84,6 +86,50 @@ export function assertIngressAck(value: unknown): asserts value is IngressAckV1 
   bytes(input.protectedPayloadHash, 'protectedPayloadHash')
   text(input.recipientDeviceId, 'recipientDeviceId')
   text(input.vaultEventId, 'vaultEventId')
+  text(input.checkpointId, 'checkpointId')
+  time(input.ackedAt, 'ackedAt')
+  bytes(input.signature, 'signature')
+}
+
+export function assertVaultDeliveryAppend(value: unknown): asserts value is VaultDeliveryAppendV1 {
+  const input = record(value, 'VaultDeliveryAppendV1')
+  exactKeys(input, [
+    'version', 'identityId', 'payload', 'payloadHash', 'recipientsAtAppend', 'createdAt', 'expiresAt',
+  ], 'VaultDeliveryAppendV1')
+  if (input.version !== 1) throw new ProtocolValidationError('VaultDeliveryAppendV1.version must be 1')
+  text(input.identityId, 'identityId')
+  bytes(input.payload, 'payload')
+  bytes(input.payloadHash, 'payloadHash')
+  if (!Array.isArray(input.recipientsAtAppend) || input.recipientsAtAppend.length === 0) {
+    throw new ProtocolValidationError('recipientsAtAppend must be a non-empty array')
+  }
+  const recipients = new Set<string>()
+  for (const deviceId of input.recipientsAtAppend) {
+    text(deviceId, 'recipientsAtAppend entry')
+    if (recipients.has(deviceId)) throw new ProtocolValidationError('recipientsAtAppend has a duplicate device')
+    recipients.add(deviceId)
+  }
+  time(input.createdAt, 'createdAt')
+  time(input.expiresAt, 'expiresAt')
+  if (Date.parse(input.expiresAt) <= Date.parse(input.createdAt)) {
+    throw new ProtocolValidationError('expiresAt must be after createdAt')
+  }
+}
+
+export function assertVaultDeliveryAck(value: unknown): asserts value is VaultDeliveryAckV1 {
+  const input = record(value, 'VaultDeliveryAckV1')
+  exactKeys(input, [
+    'version', 'identityId', 'seq', 'payloadHash', 'recipientDeviceId', 'checkpointId', 'ackedAt', 'signature',
+  ], 'VaultDeliveryAckV1')
+  if (input.version !== 1) throw new ProtocolValidationError('VaultDeliveryAckV1.version must be 1')
+  text(input.identityId, 'identityId')
+  try {
+    assertDeliverySeq(input.seq)
+  } catch {
+    throw new ProtocolValidationError('seq must be an unsigned 64-bit decimal string')
+  }
+  bytes(input.payloadHash, 'payloadHash')
+  text(input.recipientDeviceId, 'recipientDeviceId')
   text(input.checkpointId, 'checkpointId')
   time(input.ackedAt, 'ackedAt')
   bytes(input.signature, 'signature')

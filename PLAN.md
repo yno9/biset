@@ -64,13 +64,13 @@
 
 ### 2.3 Shared VaultDeliveryStore
 
-- [ ] `VaultDeliveryItemV1`、`VaultDeliveryAckV1`、`DeliveryStatusV1`、`DeliveryPullResult` を `src/protocol/vault.ts` に定義する。
-- [ ] append 時の `recipientsAtAppend` を immutable な current trusted-device snapshot として取得する。
-- [ ] payload body を一コピー、端末ごとには ACK/cursor だけを持つ store を実装する。
-- [ ] all-ACK 時の body 削除を実装する。
-- [ ] TTL / quota expiry 時に `retainedFrom` と gap record を更新する。
-- [ ] 古い cursor の pull が必ず `restoreRequired` を返すよう実装する。
-- [ ] new device を過去 item の recipient set に遡及追加しない test を書く。
+- [x] `VaultDeliveryItemV1`、`VaultDeliveryAppendV1`、`VaultDeliveryAckV1`、`DeliveryPullResult` を `src/protocol/vault.ts` に定義する。
+- [-] append 時の `recipientsAtAppend` を immutable な trusted-device snapshot として取得する。store は `VaultDeliveryAuthorizer.verifyRecipients` を必須にしたが、identity projection は未実装。
+- [x] payload body を一コピー、端末ごとには ACK/cursor だけを持つ in-memory store を実装する。
+- [x] all-ACK 時の body 削除を実装する。
+- [-] TTL / quota expiry 時に `retainedFrom` と gap record を更新する。in-memory reference は実装済み、quota の境界 test と durable persistence は未実装。
+- [x] 古い cursor の pull が必ず `restoreRequired` を返すよう実装する。
+- [x] new device を過去 item の recipient set に遡及追加しない test を書く。
 - [ ] N devices でも payload copy が一つだけである storage test を書く。
 
 **完了条件:** per-device DIDComm queue を使わず、共有 body + cursor/ACK だけで sibling devices を TTL 内 catch-up できる。

@@ -1,5 +1,7 @@
 import type {
+  CheckpointId,
   DeviceId,
+  DeliverySeq,
   IdentityId,
   SegmentId,
   VaultEventId,
@@ -60,3 +62,57 @@ export interface SegmentKeyWrapV1 {
   signature: Uint8Array
 }
 
+/** A device-visible immutable delivery body. The recipient snapshot is core-only metadata. */
+export interface VaultDeliveryItemV1 {
+  version: 1
+  identityId: IdentityId
+  seq: DeliverySeq
+  payload: Uint8Array
+  payloadHash: Uint8Array
+  createdAt: string
+  expiresAt: string
+}
+
+/** Sent only after the delivered payload is durably committed to the local vault. */
+export interface VaultDeliveryAckV1 {
+  version: 1
+  identityId: IdentityId
+  seq: DeliverySeq
+  payloadHash: Uint8Array
+  recipientDeviceId: DeviceId
+  checkpointId: CheckpointId
+  ackedAt: string
+  signature: Uint8Array
+}
+
+export interface VaultDeliveryAppendV1 {
+  version: 1
+  identityId: IdentityId
+  payload: Uint8Array
+  payloadHash: Uint8Array
+  recipientsAtAppend: DeviceId[]
+  createdAt: string
+  expiresAt: string
+}
+
+export type RestoreRequiredReason =
+  | 'ttl-expired'
+  | 'retention-quota'
+  | 'delivery-confirmed'
+  | 'new-device'
+
+export type DeliveryPullResult =
+  | {
+      kind: 'items'
+      items: VaultDeliveryItemV1[]
+      nextCursor: DeliverySeq
+      retainedFrom: DeliverySeq
+      latestSeq: DeliverySeq
+    }
+  | {
+      kind: 'restoreRequired'
+      requestedCursor: DeliverySeq
+      retainedFrom: DeliverySeq
+      latestSeq: DeliverySeq
+      reason: RestoreRequiredReason
+    }
