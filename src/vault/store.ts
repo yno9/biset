@@ -3,9 +3,10 @@ import { equalBytes } from '../protocol/canonical.ts'
 import type { DeliverySeq, DeviceId, IdentityId, VaultEventId, VaultObjectId } from '../protocol/ids.ts'
 import type { DeliveryPullResult, RestoreOfferV1, RestoreRequestV1, SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 import { assertRestoreOffer, assertRestoreRequest } from '../protocol/validate.ts'
+import type { RestoreTransferChunkCommit, RestoreTransferReceiverStore, RestoreTransferSessionV1 } from './restore-transfer-receiver.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
-const DATABASE_VERSION = 4
+const DATABASE_VERSION = 5
 
 const STORES = {
   ingressReceipts: 'vault_ingress_receipts',
@@ -24,6 +25,7 @@ const STORES = {
   deliveryState: 'vault_delivery_state',
   restoreState: 'vault_restore_state',
   restoreOfferOutbox: 'vault_restore_offer_outbox',
+  restoreTransferState: 'vault_restore_transfer_state',
   transportStatus: 'transport_status',
 } as const
 
@@ -207,7 +209,7 @@ export interface VaultRestoreOfferOutboxStore {
   clearRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore {
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -540,6 +542,26 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     transaction.objectStore(STORES.restoreOfferOutbox).delete([identityId, requestId, responderDeviceId])
     await transactionDone(transaction)
   }
+
+  async readRestoreTransferSession(identityId: IdentityId, requesterDeviceId: string): Promise<RestoreTransferSessionV1 | undefined> {
+    if (!identityId || !requesterDeviceId) throw new TypeError('restore transfer identity and requester are required')
+    const transaction = this.database.transaction(STORES.restoreTransferState, 'readonly')
+    const completed = transactionDone(transaction)
+    const value = await requestValue<RestoreTransferSessionV1 | undefined>(transaction.objectStore(STORES.restoreTransferState).get([identityId, requesterDeviceId]))
+    await completed
+    return value && copyRestoreTransferSession(value)
+  }
+
+  /** Records and the resume cursor are one transaction; a crash cannot advance one without the other. */
+  async commitRestoreTransferChunk(input: RestoreTransferChunkCommit): Promise<void> {
+    assertRestoreTransferChunkCommit(input)
+    const transaction = this.database.transaction([STORES.objects, STORES.events, STORES.keyWraps, STORES.restoreTransferState], 'readwrite')
+    for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject({ ...object, identityId: input.session.identityId }))
+    for (const event of input.events) transaction.objectStore(STORES.events).put(copyEvent({ ...event, identityId: input.session.identityId }))
+    for (const wrap of input.keyWraps) transaction.objectStore(STORES.keyWraps).put(copyKeyWrap(wrap))
+    transaction.objectStore(STORES.restoreTransferState).put(copyRestoreTransferSession(input.session))
+    await transactionDone(transaction)
+  }
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -569,6 +591,7 @@ function createStores(database: IDBDatabase): void {
   createStore(database, STORES.deliveryState, ['identityId', 'deviceId'])
   createStore(database, STORES.restoreState, ['identityId', 'deviceId'])
   createStore(database, STORES.restoreOfferOutbox, ['identityId', 'requestId', 'responderDeviceId'])
+  createStore(database, STORES.restoreTransferState, ['identityId', 'requesterDeviceId'])
   createStore(database, STORES.transportStatus, ['identityId', 'outboundEventId'])
 }
 
@@ -698,6 +721,19 @@ function assertRestoreOfferOutbox(value: VaultRestoreOfferOutboxRecord): void {
   if (value.submittedAt !== undefined && Number.isNaN(Date.parse(value.submittedAt))) throw new TypeError('restore offer submission is invalid')
 }
 
+function assertRestoreTransferChunkCommit(input: RestoreTransferChunkCommit): void {
+  const { session, chunk } = input
+  if (session.version !== 1 || !session.identityId || !session.requesterDeviceId || session.identityId !== chunk.identityId || session.sourceManifest.identityId !== session.identityId || session.requesterManifest.identityId !== session.identityId || session.lastChunkHash !== chunk.chunkHash || session.completed !== (chunk.next === undefined)) throw new TypeError('restore transfer session does not match chunk')
+  if (!sameStringLists(input.objects.map(object => object.objectId), chunk.objects.map(object => object.objectId)) || !sameStringLists(input.events.map(event => event.id), chunk.events.map(event => event.id)) || !sameStringLists(input.keyWraps.map(wrap => `${wrap.segmentId}\u0000${wrap.recipientEpoch}`), chunk.keyWraps.map(wrap => `${wrap.segmentId}\u0000${wrap.recipientEpoch}`))) throw new TypeError('restore transfer records do not match verified chunk')
+  for (const object of input.objects) if (object.objectId.length === 0) throw new TypeError('restore transfer object is invalid')
+  for (const event of input.events) if (event.identityId !== session.identityId) throw new TypeError('restore transfer event identity does not match')
+  for (const wrap of input.keyWraps) if (wrap.identityId !== session.identityId) throw new TypeError('restore transfer key wrap identity does not match')
+}
+
+function sameStringLists(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
 function copyKeyWrap(value: SegmentKeyWrapV1): SegmentKeyWrapV1 {
   return {
     ...value,
@@ -714,4 +750,8 @@ function copyRestoreRequestState(value: VaultRestoreRequestStateRecord): VaultRe
 
 function copyRestoreOfferOutbox(value: VaultRestoreOfferOutboxRecord): VaultRestoreOfferOutboxRecord {
   return { ...value, offer: { ...value.offer, signature: value.offer.signature.slice() } }
+}
+
+function copyRestoreTransferSession(value: RestoreTransferSessionV1): RestoreTransferSessionV1 {
+  return { ...value, sourceManifest: { ...value.sourceManifest, eventIds: [...value.sourceManifest.eventIds], objectIds: [...value.sourceManifest.objectIds] }, requesterManifest: { ...value.requesterManifest, eventIds: [...value.requesterManifest.eventIds], objectIds: [...value.requesterManifest.objectIds] }, ...(value.next === undefined ? {} : { next: { ...value.next } }) }
 }

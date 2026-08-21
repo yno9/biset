@@ -98,7 +98,7 @@
 - [x] ingress receipt / object / event / projection / JMAP state / ACK outbox を単一 transaction にする。
 - [x] local JMAP mutation の object / event / projection / JMAP state / shared vault-delivery outbox を単一 transaction にした。browser fault injection は未実装。
 - [-] outbox の causal-order flush / append idempotency boundary を実装した。IndexedDB outbox の index、retry backoff、actual core HTTP transport は未実装。
-- [ ] browser restart、partial write、migration failure の test harness を作る。
+- [ ] browser restart、partial write、migration failure の test harness を作る（restore transfer state store の v5 migration を含む）。
 
 **完了条件:** network がなくても、再起動後に vault root と Local JMAP state を同じ状態へ復元できる。
 
@@ -148,7 +148,7 @@
 ### 4.3 Peer restore transfer
 
 - [ ] peer membership verification と restore approval UI contract を実装する。
-- [-] manifest first、chunk hash、resume cursor を使う peer transfer frame の作成・検証を実装した。実際の direct/relayed channel と durable import は未実装。
+- [-] manifest first、chunk hash、resume cursor を使う peer transfer frame の作成・検証と、verified records/session cursor の IndexedDB atomic import を実装した。実際の direct/relayed channel、projection rebuild、browser fault test は未実装。
 - [-] frame 内の event signature、ciphertext hash/object ID、current-epoch SegmentKeyWrap を別々に検証する。actual MLS grant verification は未接続。
 - [-] interrupted cursor / tampered frame は test 済み。stale grant / removed requester / replay の channel-level test は未実装。
 - [ ] user-owned archive を peer と同じ restore source interface に追加する。
@@ -263,5 +263,6 @@
 | 2026-08-21 | `c0957b6` | client が restore gap を durable request state に保存し、同じ request ID で再送する workflow を追加 |
 | 2026-08-21 | `b86d96f` | peer の signed restore poll と、承認後 offer の durable outbox / 再送を追加 |
 | 2026-08-21 | `57b0d34` | manifest-first / resume cursor / frame hash を使う peer-only restore transfer frame を追加 |
+| 2026-08-21 | `8cdcff8` | verified restore frame の records と resume session を IndexedDB で atomic commit |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

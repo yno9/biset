@@ -281,7 +281,9 @@ peer は payload を復号して送る必要がない。既存 ciphertext と、
 3. event signature、object ID/ciphertext hash、必要な object segment ごとの current-epoch wrap。
 4. frame hash と、注入された current-epoch wrap verifier。
 
-これは peer-to-peer/direct relay channel の payload framing であり、mediator HTTP API には接続しない。channel capability、actual MLS grant verification、受信 records の durable import transaction は後続工程である。
+これは peer-to-peer/direct relay channel の payload framing であり、mediator HTTP API には接続しない。channel capability と actual MLS grant verification は後続工程である。
+
+受信側の `src/vault/restore-transfer-receiver.ts` は session に保存した expected cursor と次 frame の cursor を一致させ、順序逆転・停止 cursor・完了後に異なる frame を拒否する。`IndexedDbVaultStore` は receiver store を実装し、検証済み frame と一致する object/event/wrap だけを、`vault_restore_transfer_state` の session cursor と一つの IndexedDB transaction で保存する。したがって crash 後は records だけ、または cursor だけが進む状態にならない。projection の full rebuild と実ブラウザ migration/fault harness は未実装である。
 
 既存端末もユーザー所有 archive も存在しなければ、過去 history は復元できない。この限界は UI と recovery flow に明記する。
 
