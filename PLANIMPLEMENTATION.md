@@ -302,6 +302,8 @@ OpenPGP 秘密鍵はメール adapter や core の credential DB ではなく、
 
 `VaultDeliveryProjector` は credential event を通常の shared delivery pack として署名・current epoch wrap・object integrity とともに検証して保存する。ただし credential は JMAP mail projection を変えない。そのため、JMAP reducer は credential をメール mutation として解釈せず、credential record の identity / fingerprint / AAD 整合性だけを検証する。
 
+`OpenPgpCredentialVaultSink` は local creation / rotation 時に credential object、event、既存 JMAP projection、current epoch wrap を一つの local vault transaction に保存し、shared delivery outbox へ暗号文 pack を一度だけ積む。credential write は JMAP state を変えない。実際の OpenPGP key generation と user-facing rotation operation はこの sink の呼び出し側として後続実装する。
+
 全端末喪失に備える既定の server backup は作らない。必要な利用者だけが、client が作る暗号化 recovery archive を自分で export し、NAS・外部媒体・印刷した recovery key 等で管理する。archive は少なくとも vault snapshot と OpenPGP credential を一体で含む。recovery key は MLS exporter secret、端末鍵、Biset core の credential と混用せず、client が生成・保持する独立した復旧要因とする。archive なしで全端末を失えば、history と OpenPGP 秘密鍵の双方を失う。
 
 OpenPGP は長期 identity key であり、MLS Remove より弱い性質を持つ。端末が一度 credential を得た後は、その端末から鍵を暗号的に回収できない。端末の紛失・侵害で Remove を行う際には、MLS Remove に加えて OpenPGP key rotation / revocation を実施し、新公開鍵を Autocrypt/WKD 等の discovery に反映する。旧鍵は過去 mail の復号用 credential として正規 vault/archive に残せるが、相手が stale な旧公開鍵へ送った将来 mail を、removed device が読めないことまでは保証できない。この限界と鍵変更の UX は product に明示する。
