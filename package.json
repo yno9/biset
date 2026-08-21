@@ -6,9 +6,9 @@
   "scripts": {
     "build": "bun build src/main.ts --outfile=dist/app.js --target=browser --minify-syntax --minify-whitespace --define 'process.env.NODE_ENV=\"production\"' && bun build src/sw.ts --outfile=dist/sw.js --target=browser --minify-syntax --minify-whitespace && bun run scripts/inline.mjs",
     "dev": "bun build src/main.ts --outfile=dist/app.js --target=browser --watch & bun build src/sw.ts --outfile=dist/sw.js --target=browser --watch & bun run scripts/serve.mjs",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.anchor.json",
-    "build:anchor": "bun build --compile --target=bun-linux-x64 src/anchor/index.ts --outfile biset-anchor",
-    "anchor": "bun run src/anchor/index.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.core.json",
+    "build:core": "bun build --compile --target=bun-linux-x64 src/core/index.ts --outfile biset-core",
+    "core": "bun run src/core/index.ts",
     "test": "for f in test/*.test.ts; do echo \"== $f\"; bun run \"$f\" || exit 1; done",
     "knip": "knip",
     "check": "bun run typecheck && bun run knip && bun run test"

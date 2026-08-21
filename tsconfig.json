@@ -10,6 +10,6 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["src/**/*"],
-  "exclude": ["src/anchor/**"],
+  "exclude": ["src/core/**"],
   "typeRoots": ["node_modules/@types"]
 }

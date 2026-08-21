@@ -1,6 +1,6 @@
 # Biset Vault Core — 実装作業工程
 
-*最終更新: 2026-08-21 / 現在の基準 commit: `2254ed9`*
+*最終更新: 2026-08-21 / 現在の基準 commit: 作業中*
 
 この文書は、実装を順番に進めるためのチェックリストである。設計の根拠、wire schema、状態機械、security invariant の詳細は [`PLANIMPLEMENTATION.md`](PLANIMPLEMENTATION.md) を正とする。本書は「次に何を作るか」「どこまで終わったか」「何を満たせば次へ進めるか」を示す。
 
@@ -12,6 +12,7 @@
 - [x] 新しい ARC/README の骨格を作った。
 - [x] canonical JSON、domain-separated hash、ingress schema validation を実装した。
 - [x] memory-only の bounded `IngressStore` を実装し、TTL、quota、recipient snapshot、一台の authorised ACK、payload 削除をテストした。
+- [x] core を `identity`（anchor）、`mediation`、`adapters` に概念分離し、初期 deployment は一つの `biset-core` binary に統合した。
 - [ ] durable local vault はまだ存在しない。
 - [ ] production 用の mediator persistence / MLS device authorizer / HTTP binding はまだ存在しない。
 - [ ] Local JMAP Gateway、MLS VEK/SegmentKey、DIDComm/Mail adapter は未実装である。
@@ -48,7 +49,7 @@
 
 ### 2.2 IngressStore
 
-- [x] `src/anchor/mediator/ingress-store.ts` に in-memory reference implementation を作る。
+- [x] `src/core/mediation/ingress-store.ts` に in-memory reference implementation を作る。
 - [x] payload size、identity 合計 bytes、pending item 数の quota を実装する。
 - [x] recipient snapshot 外の device への pull を拒否する。
 - [x] ACK hash、snapshot、authorizer を確認後に payload を削除し、tombstone だけを残す。
@@ -236,5 +237,6 @@
 | 2026-08-21 | `f56188b` | 新 ARC/README の骨格を追加 |
 | 2026-08-21 | `efc863c` | canonical/hash/schema validation と bounded in-memory IngressStore を追加 |
 | 2026-08-21 | `2254ed9` | protocol source の整形 |
+| 2026-08-21 | 作業中 | `biset-core` 内の identity / mediation / adapters 境界へ再編 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

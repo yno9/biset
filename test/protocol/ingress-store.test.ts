@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { MemoryIngressStore, type IngressAckAuthorizer } from '../../src/anchor/mediator/ingress-store.ts'
+import { MemoryIngressStore, type IngressAckAuthorizer } from '../../src/core/mediation/ingress-store.ts'
 import type { IngressAckV1, IngressEnvelopeV1 } from '../../src/protocol/ingress.ts'
 
 const authorizer: IngressAckAuthorizer = { verify: async () => true }

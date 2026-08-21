@@ -3,7 +3,7 @@
   "entry": [
     "src/main.ts",
     "src/sw.ts",
-    "src/anchor/index.ts",
+    "src/core/index.ts",
     "test/**/*.test.ts",
     "scripts/*.mjs"
   ],

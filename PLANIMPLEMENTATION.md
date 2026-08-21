@@ -568,12 +568,11 @@ src/
     didcomm-adapter.ts
     mail-adapter.ts
     activitypub-adapter.ts
-  anchor/mediator/
-    ingress-store.ts
-    vault-delivery-store.ts
-    transport-server.ts
-    push.ts
-    adapters/
+  core/
+    index.ts               # unified process composition root
+    identity/              # anchor: DID/webvh and public device projection
+    mediation/             # bounded ingress/delivery buffers, cursor, push
+    adapters/              # DIDComm / Mail / ActivityPub adapters
 ```
 
 物理ディレクトリ名は既存 layout に合わせて調整してよいが、上の責務境界を崩さない。
@@ -583,10 +582,10 @@ src/
 | 現在の箇所 | 現在の問題 | 移行後 |
 | --- | --- | --- |
 | `src/did/didcomm/send.ts` | `toDoc.keyAgreement` ごとに authcrypt・forward し payload が O(devices) | external ingress / control に限定。vault object は一コピー + ACK に移す |
-| `src/anchor/mediator/queue.ts` | `kid` ごとの packed JWE queue、Pickup ACK で削除 | ingress store と vault delivery store に責務分離 |
+| `src.bak/anchor/mediator/queue.ts` | `kid` ごとの packed JWE queue、Pickup ACK で削除 | `src/core/mediation/` の ingress store と vault delivery store に責務分離 |
 | `src/did/didcomm/channel.ts` | self sync が best effort、synthetic JMAP session に依存 | vault ingest / delivery / restore control へ移行 |
-| `src/anchor/mediator/server.ts` | MLS message の outer per-device fanout | group log は短期順序通知、object delivery は共有 body + cursor |
-| `src/anchor/mediator/mls-ds.ts` | bounded group log はあるが history vault ではない | 短期 DS のまま維持し、vault 正本化しない |
+| `src.bak/anchor/mediator/server.ts` | MLS message の outer per-device fanout | group log は短期順序通知、object delivery は共有 body + cursor |
+| `src.bak/anchor/mediator/mls-ds.ts` | bounded group log はあるが history vault ではない | 短期 DS のまま維持し、vault 正本化しない |
 | `src/jmap/client.ts` | `.well-known/jmap` 前提の `JamClient` | `AccountTransport` factory を導入 |
 | `src/jmap/email.ts` / `mailbox.ts` / `submission.ts` | remote `JamClient` を直接前提 | Local/Remote 共通 JMAP transport へ抽象化 |
 | `src/store/idb.ts` | messages/threads/mailboxes は cache 寄り | vault object/event/manifest/projection を durable に追加 |
