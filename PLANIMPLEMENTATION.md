@@ -995,6 +995,8 @@ core が外部に公開する API には、vault history query を追加しな�
 
 `src/core/identity/authorizers.ts` はこの roster を mediation の `VaultDeliveryAuthorizer` / `RestoreControlAuthorizer` に接続する。authorizer は毎回 current roster を参照し、caller supplied device list では認可しない。署名 bytes の canonical 化と実際の public-key verification は identity / MLS adapter から注入するため、mediation に秘密鍵・MLS state を持ち込まない。
 
+`src/protocol/signing.ts` が Ingress ACK、vault-delivery ACK、restore request / offer / cancel の canonical signing bytes を固定する。すべての routing identity、payload hash、cursor、expiry、request ID を含め、メッセージ種別ごとに domain label を分ける。したがって、ある種類の control message の署名を別種類の ACK / restore message に流用できない。実際の DID public key verification は、これらの bytes を `DeviceControlSignatureVerifier` に渡して行う。
+
 ### M1. segment lifecycle
 
 - identity ごとの active segment を管理する。

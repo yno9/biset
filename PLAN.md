@@ -54,7 +54,7 @@
 - [x] recipient snapshot 外の device への pull を拒否する。
 - [x] ACK hash、snapshot、authorizer を確認後に payload を削除し、tombstone だけを残す。
 - [x] expiry で payload を削除する。
-- [ ] `IngressAckAuthorizer` を MLS self-group の trusted-device projection に接続する。
+- [-] trusted-device roster を mediation authorizer adapter に接続した。Ingress ACK / delivery ACK の実際の DID signature verifier は未実装。
 - [ ] in-memory Map を crash-safe bounded persistence adapter に置換する。
 - [ ] tombstone retention / dedup retention / quota eviction の数値を policy として決める。
 - [ ] `offer` / `pull` / `ack` / `status` を authentication 付き core API に結び付ける。
@@ -77,7 +77,7 @@
 
 ### 2.4 Restore control
 
-- [x] `RestoreRequestV1`、`RestoreOfferV1`、cancel / expiry schema を定義する。
+- [x] `RestoreRequestV1`、`RestoreOfferV1`、cancel / expiry schema と canonical signing bytes を定義する。
 - [-] in-memory の short-lived restore control store を実装した。MLS authorizer、durable bounded persistence、peer availability は未実装。
 - [-] restore store の API は request / offer / cancel の control 型だけを受け付け、history/blob/chunk を受け付けない。production storage boundary の test は未実装。
 - [ ] requester が `restoreRequired` から restore UI/state へ遷移する client contract を定義する。
@@ -124,7 +124,7 @@
 ### 4.1 MLS integration boundary
 
 - [ ] 現行 MLS implementation を `src.bak/` から参照し、新 core に必要な最小 self-group API を抽出する。
-- [-] accepted MLS epoch だけで更新する public trusted-device roster projection と、それを使う delivery / restore authorizer adapter を実装した。actual MLS commit / DID publishing / signature wire bytes との接続は未実装。
+- [-] accepted MLS epoch だけで更新する public trusted-device roster projection と、それを使う delivery / restore authorizer adapter を実装した。actual MLS commit / DID publishing / DID signature verifier との接続は未実装。
 - [-] fixed label/context/32-byte output の `deriveVaultEpochKey(group)` boundary を実装した。実際の MLS group adapter への接続は未実装。
 - [ ] VEK を永続化しないことを code review / test で保証する。
 

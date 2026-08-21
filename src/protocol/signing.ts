@@ -1,0 +1,73 @@
+import { bytesToBase64url, canonicalBytes } from './canonical.ts'
+import type { IngressAckV1 } from './ingress.ts'
+import type { RestoreCancelV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1 } from './vault.ts'
+
+/**
+ * Canonical bytes for device-control signatures. These functions omit only
+ * `signature`; every routing, identity, expiry, and payload-binding field is
+ * authenticated. They are shared by client signing and core verification.
+ */
+export function ingressAckSigningBytes(ack: Omit<IngressAckV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/ingress-ack/v1',
+    version: ack.version,
+    ingressId: ack.ingressId,
+    protectedPayloadHash: bytesToBase64url(ack.protectedPayloadHash),
+    recipientDeviceId: ack.recipientDeviceId,
+    vaultEventId: ack.vaultEventId,
+    checkpointId: ack.checkpointId,
+    ackedAt: ack.ackedAt,
+  })
+}
+
+export function vaultDeliveryAckSigningBytes(ack: Omit<VaultDeliveryAckV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/vault-delivery-ack/v1',
+    version: ack.version,
+    identityId: ack.identityId,
+    seq: ack.seq,
+    payloadHash: bytesToBase64url(ack.payloadHash),
+    recipientDeviceId: ack.recipientDeviceId,
+    checkpointId: ack.checkpointId,
+    ackedAt: ack.ackedAt,
+  })
+}
+
+export function restoreRequestSigningBytes(request: Omit<RestoreRequestV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/restore-request/v1',
+    version: request.version,
+    requestId: request.requestId,
+    identityId: request.identityId,
+    requesterDeviceId: request.requesterDeviceId,
+    reason: request.reason,
+    ...(request.knownManifestRoot === undefined ? {} : { knownManifestRoot: request.knownManifestRoot }),
+    requestedAt: request.requestedAt,
+    expiresAt: request.expiresAt,
+  })
+}
+
+export function restoreOfferSigningBytes(offer: Omit<RestoreOfferV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/restore-offer/v1',
+    version: offer.version,
+    requestId: offer.requestId,
+    identityId: offer.identityId,
+    requesterDeviceId: offer.requesterDeviceId,
+    responderDeviceId: offer.responderDeviceId,
+    manifestRoot: offer.manifestRoot,
+    offeredAt: offer.offeredAt,
+    expiresAt: offer.expiresAt,
+  })
+}
+
+export function restoreCancelSigningBytes(cancel: Omit<RestoreCancelV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/restore-cancel/v1',
+    version: cancel.version,
+    requestId: cancel.requestId,
+    identityId: cancel.identityId,
+    requesterDeviceId: cancel.requesterDeviceId,
+    cancelledAt: cancel.cancelledAt,
+  })
+}
