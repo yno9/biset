@@ -4,7 +4,7 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { createBisetCoreDeployment } from '../../src/core/deployment.ts'
 import { CoreVaultDeliveryTransport } from '../../src/vault/core-delivery-transport.ts'
 import { sha256Bytes } from '../../src/protocol/canonical.ts'
-import { vaultDeliveryAppendSigningBytes, vaultDeliveryPullSigningBytes } from '../../src/protocol/signing.ts'
+import { ingressAckSigningBytes, vaultDeliveryAppendSigningBytes, vaultDeliveryPullSigningBytes } from '../../src/protocol/signing.ts'
 
 const path = `/tmp/biset-core-${process.pid}-${Date.now()}.sqlite`
 const identityId = 'did:web:alice.example'
@@ -26,6 +26,11 @@ describe('core deployment composition', () => {
     await transport.append({ ...appendUnsigned, signature: ed25519.sign(vaultDeliveryAppendSigningBytes(appendUnsigned), privateKey) })
     const pullUnsigned = { version: 1 as const, identityId, recipientDeviceId: 'device-a', after: '0', requestedAt: '2026-08-21T00:00:00.000Z' }
     expect(await transport.pull({ ...pullUnsigned, signature: ed25519.sign(vaultDeliveryPullSigningBytes(pullUnsigned), privateKey) })).toMatchObject({ kind: 'items', items: [{ payload }] })
+    const ingress = { version: 1 as const, ingressId: 'ingress-1', protocol: 'mail' as const, recipientIdentityId: identityId, recipientDeviceSnapshot: ['device-a'], createdAt: '2026-08-21T00:00:00.000Z', expiresAt: '2026-08-22T00:00:00.000Z', transportMetadata: {}, sourceEvidence: new Uint8Array([1]), protectedPayload: new Uint8Array([2]), protectedPayloadHash: sha256Bytes(new Uint8Array([2])) }
+    await core.ingress.offer(ingress)
+    const ackUnsigned = { version: 1 as const, ingressId: ingress.ingressId, protectedPayloadHash: ingress.protectedPayloadHash, recipientDeviceId: 'device-a', vaultEventId: 'event-1', checkpointId: 'checkpoint-1', ackedAt: '2026-08-21T00:01:00.000Z' }
+    await core.ingress.acknowledge({ ...ackUnsigned, signature: ed25519.sign(ingressAckSigningBytes(ackUnsigned), privateKey) })
+    expect((await core.fetch(new Request('https://core.example/v1/ingress/pull', { method: 'POST', body: '{}' }))).status).toBe(404)
     core.close()
   })
 })

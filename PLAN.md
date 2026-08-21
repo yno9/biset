@@ -56,7 +56,7 @@
 - [x] ACK hash、snapshot、authorizer を確認後に payload を削除し、tombstone だけを残す。
 - [x] expiry で payload を削除する。
 - [-] trusted-device roster を mediation authorizer adapter に接続し、DID/webvh public-key resolver を入力に取る Ed25519 verifier を実装した。actual DID resolution / key rotation cache は未実装。
-- [-] crash-safe な SQLite `VaultDeliveryStore` と core deployment への authorizer/persistence wiring を実装した。restart coverage はあるが、同時操作の coverage は未実装。
+- [-] crash-safe な SQLite `VaultDeliveryStore` / `IngressStore` と core deployment への authorizer/persistence wiring を実装した。ingress は first-party adapter の内部 boundary だけで、公開 HTTP には出していない。restart coverage はあるが、同時操作の coverage は未実装。
 - [ ] tombstone retention / dedup retention / quota eviction の数値を policy として決める。
 - [-] signed shared vault delivery の `append` / `pull` / `ack` を narrow HTTP adapter と browser transport に結び付けた。SQLite を使う production core composition / persistence は実装済み。actual DID resolution / MLS commit の runtime injection は未実装。`status` は core internal のみ。
 - [-] SQLite restart、all-ACK 後の body 消去、ACK 再送、TTL/ quota gap の integration test を追加した。同時 ACK、duplicate offer、authorizer rejection の coverage は未実装。
@@ -264,5 +264,6 @@
 | 2026-08-21 | `b86d96f` | peer の signed restore poll と、承認後 offer の durable outbox / 再送を追加 |
 | 2026-08-21 | `57b0d34` | manifest-first / resume cursor / frame hash を使う peer-only restore transfer frame を追加 |
 | 2026-08-21 | `8cdcff8` | verified restore frame の records と resume session を IndexedDB で atomic commit |
+| 2026-08-21 | `1457a73` | first-party adapter 向け SQLite ingress と offer 時の payload hash 検証を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

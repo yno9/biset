@@ -335,6 +335,8 @@ interface IngressAckV1 {
 - 新規 device は過去 ingress の snapshot に遡って追加しない。
 - TTL、identity あたりの payload bytes / object count、global quota、重複 ingress ID の処理を必ず持つ。
 
+`src/core/mediation/sqlite-ingress-store.ts` はこの状態機械を SQLite に永続化する。offer 時に `protectedPayloadHash == SHA-256(protectedPayload)` を確認し、ACK/expiry 時には payload だけでなく source evidence、transport metadata、recipient snapshot も clear する。tombstone に残るのは ingress ID、identity、expiry、状態だけである。これは adapter host が呼ぶ内部 API であり、`biset-core` の public HTTP surface に generic ingress offer/pull を出さない。adapter authentication と SMTP/DIDComm/ActivityPub 別の evidence validation は各 adapter の工程である。
+
 ### 5.2 vault delivery buffer
 
 端末が vault object を durable save した後、同時 online でない sibling devices を短期間 catch-up させるための buffer である。

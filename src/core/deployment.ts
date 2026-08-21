@@ -1,11 +1,13 @@
 import { Database } from 'bun:sqlite'
 import { createBisetCoreFetchHandler } from './app.ts'
-import { rosterBackedRestoreControlAuthorizer, rosterBackedVaultDeliveryAuthorizer } from './identity/authorizers.ts'
+import { rosterBackedIngressAckAuthorizer, rosterBackedRestoreControlAuthorizer, rosterBackedVaultDeliveryAuthorizer } from './identity/authorizers.ts'
 import { Ed25519DeviceControlSignatureVerifier, type DeviceSigningPublicKeyResolver } from './identity/ed25519-device-control-verifier.ts'
 import { SqliteTrustedDeviceRoster } from './identity/sqlite-device-roster.ts'
 import { SqliteVaultDeliveryStore } from './mediation/sqlite-vault-delivery-store.ts'
 import type { VaultDeliveryStoreLimits } from './mediation/vault-delivery-store.ts'
 import { SqliteRestoreControlStore, type RestoreControlStoreLimits } from './mediation/sqlite-restore-control-store.ts'
+import { SqliteIngressStore } from './mediation/sqlite-ingress-store.ts'
+import type { IngressStoreLimits } from './mediation/ingress-store.ts'
 
 export interface BisetCoreDeploymentOptions {
   databasePath: string
@@ -13,12 +15,15 @@ export interface BisetCoreDeploymentOptions {
   signingKeys: DeviceSigningPublicKeyResolver
   deliveryLimits?: VaultDeliveryStoreLimits
   restoreControlLimits?: RestoreControlStoreLimits
+  ingressLimits?: IngressStoreLimits
 }
 
 export interface BisetCoreDeployment {
   readonly roster: SqliteTrustedDeviceRoster
   readonly delivery: SqliteVaultDeliveryStore
   readonly restoreControl: SqliteRestoreControlStore
+  /** First-party adapter boundary only; the public core fetch handler does not expose it. */
+  readonly ingress: SqliteIngressStore
   readonly fetch: (request: Request) => Promise<Response>
   close(): void
 }
@@ -35,10 +40,12 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
   const verifier = new Ed25519DeviceControlSignatureVerifier(options.signingKeys)
   const delivery = new SqliteVaultDeliveryStore(database, rosterBackedVaultDeliveryAuthorizer(roster, verifier), options.deliveryLimits)
   const restoreControl = new SqliteRestoreControlStore(database, rosterBackedRestoreControlAuthorizer(roster, verifier), options.restoreControlLimits)
+  const ingress = new SqliteIngressStore(database, rosterBackedIngressAckAuthorizer(roster, verifier), options.ingressLimits)
   return {
     roster,
     delivery,
     restoreControl,
+    ingress,
     fetch: createBisetCoreFetchHandler({ vaultDeliveryStore: delivery, restoreControlStore: restoreControl }),
     close() { database.close() },
   }

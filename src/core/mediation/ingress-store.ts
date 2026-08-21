@@ -1,4 +1,4 @@
-import { equalBytes } from '../../protocol/canonical.ts'
+import { equalBytes, sha256Bytes } from '../../protocol/canonical.ts'
 import type { IngressAckV1, IngressEnvelopeV1 } from '../../protocol/ingress.ts'
 import type { DeviceId, IdentityId, IngressId } from '../../protocol/ids.ts'
 import { assertIngressAck, assertIngressEnvelope, ProtocolValidationError } from '../../protocol/validate.ts'
@@ -62,6 +62,9 @@ export class MemoryIngressStore implements IngressStore {
 
   async offer(envelope: IngressEnvelopeV1): Promise<void> {
     assertIngressEnvelope(envelope)
+    if (!equalBytes(sha256Bytes(envelope.protectedPayload), envelope.protectedPayloadHash)) {
+      throw new ProtocolValidationError('ingress protectedPayloadHash does not match payload')
+    }
     const size = envelope.protectedPayload.length
     if (size > this.limits.maxPayloadBytes) {
       throw new ProtocolValidationError('ingress payload exceeds maxPayloadBytes')

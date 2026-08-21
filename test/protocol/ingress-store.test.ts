@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { MemoryIngressStore, type IngressAckAuthorizer } from '../../src/core/mediation/ingress-store.ts'
+import { sha256Bytes } from '../../src/protocol/canonical.ts'
 import type { IngressAckV1, IngressEnvelopeV1 } from '../../src/protocol/ingress.ts'
 
 const authorizer: IngressAckAuthorizer = {
@@ -19,7 +20,7 @@ function envelope(overrides: Partial<IngressEnvelopeV1> = {}): IngressEnvelopeV1
     transportMetadata: {},
     sourceEvidence: new Uint8Array([1]),
     protectedPayload: new Uint8Array([2, 3]),
-    protectedPayloadHash: new Uint8Array([4, 5]),
+    protectedPayloadHash: sha256Bytes(new Uint8Array([2, 3])),
     ...overrides,
   }
 }
@@ -28,7 +29,7 @@ function ack(overrides: Partial<IngressAckV1> = {}): IngressAckV1 {
   return {
     version: 1,
     ingressId: 'ingress-1',
-    protectedPayloadHash: new Uint8Array([4, 5]),
+    protectedPayloadHash: sha256Bytes(new Uint8Array([2, 3])),
     recipientDeviceId: 'device-a',
     vaultEventId: 'event-1',
     checkpointId: 'checkpoint-1',
@@ -83,5 +84,10 @@ describe('MemoryIngressStore', () => {
     const store = new MemoryIngressStore(authorizer)
     await store.offer(envelope())
     await expect(store.acknowledge(ack({ protectedPayloadHash: new Uint8Array([8]) }))).rejects.toThrow('does not match')
+  })
+
+  test('rejects an adapter offer whose declared body hash is not the body hash', async () => {
+    const store = new MemoryIngressStore(authorizer)
+    await expect(store.offer(envelope({ protectedPayloadHash: new Uint8Array([8]) }))).rejects.toThrow('protectedPayloadHash does not match')
   })
 })
