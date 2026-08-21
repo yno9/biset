@@ -69,7 +69,11 @@ export interface VaultProjectionReader {
   readProjection(identityId: IdentityId): Promise<unknown | undefined>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader {
+export interface VaultObjectReader {
+  readObject(identityId: IdentityId, objectId: VaultObjectId): Promise<VaultObjectRecord | undefined>
+}
+
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -124,6 +128,17 @@ export class IndexedDbVaultStore implements VaultProjectionReader {
     )
     await completed
     return record?.value
+  }
+
+  async readObject(identityId: IdentityId, objectId: VaultObjectId): Promise<VaultObjectRecord | undefined> {
+    if (!identityId || !objectId) throw new TypeError('object identity and ID are required')
+    const transaction = this.database.transaction(STORES.objects, 'readonly')
+    const completed = transactionDone(transaction)
+    const record = await requestValue<VaultObjectRecord | undefined>(
+      transaction.objectStore(STORES.objects).get([identityId, objectId]),
+    )
+    await completed
+    return record && copyObject(record)
   }
 }
 

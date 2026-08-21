@@ -167,7 +167,7 @@
 - [ ] `Email/changes`、`Mailbox/changes`、query state を実装する。
 - [ ] `Email/set`、`Mailbox/set`、`Email/import` を immutable vault event へ変換する。
 - [ ] `EmailSubmission/set` を outbound intent に変換する。
-- [-] local read model 経由の blob download / range read を実装した。encrypted vault object/chunk reader は injectable boundary のみで、実装は未完了。
+- [-] encrypted `VaultObjectV1` を SegmentKey resolver で検証・復号する local blob reader と range read を実装した。stored key wrap からの SegmentKey resolver / attachment chunk reader は未実装。
 - [ ] same UI test を Local/Remote account の両方で実行する。
 
 **完了条件:** Biset account は offline でも JMAP UI で過去 vault を一覧・検索・閲覧できる。
