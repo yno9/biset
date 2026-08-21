@@ -100,8 +100,8 @@ export function assertOpenPgpCredentialRecord(event: VaultEventV1, object: Vault
 
 function assertCredential(value: OpenPgpPrivateCredentialV1): void {
   if (!value.identityId || value.kind !== 'credential.openpgp.private' || value.privateKey.length === 0 || value.privateKey.length > 5 * 1024 * 1024 || Number.isNaN(Date.parse(value.createdAt))) throw new TypeError('OpenPGP credential is invalid')
-  normalizeFingerprint(value.fingerprint)
-  if (value.supersedesFingerprint !== undefined) normalizeFingerprint(value.supersedesFingerprint)
+  const fingerprint = normalizeFingerprint(value.fingerprint)
+  if (value.supersedesFingerprint !== undefined && normalizeFingerprint(value.supersedesFingerprint) === fingerprint) throw new TypeError('OpenPGP credential cannot supersede itself')
 }
 
 function normalizeFingerprint(value: string): string {

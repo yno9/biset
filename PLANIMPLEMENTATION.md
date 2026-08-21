@@ -29,7 +29,7 @@ Biset の正本を JMAP/SMTP relay のメールボックスから、各ユーザ
 6. TTL を超えた端末は信頼を失わない。`restore-required` として、新端末と同じ復元フローを行う。TTL による MLS Remove や「repair」状態は導入しない。
 7. v1 の adapter は core と同一 release の first-party module とする。実行時 plugin loader は作らない。
 8. core の初期実装は TypeScript とする。Rust 化は protocol が固定され、性能・隔離・公開 daemon の要件が明確になった時点で再評価する。
-9. OpenPGP 秘密鍵は endpoint vault の credential として扱う。通常の新端末・TTL 外端末への再配布は正規 peer からの vault restore で行い、core は秘密鍵 blob を恒久保存しない。全端末喪失への備えは、利用者が保持する暗号化 recovery archive の opt-in とする。
+9. OpenPGP 秘密鍵は endpoint vault の credential として扱う。通常の新端末・TTL 外端末への再配布は正規 peer からの vault restore で行い、core は秘密鍵 blob を恒久保存しない。全端末喪失への備えは、利用者が保持する暗号化 recovery archive の opt-in とする。endpoint は署名・current epoch wrap・AEAD object を再検証して credential を読む。複数の未継承鍵があれば時計順で選ばず fail-closed にする。
 
 ### 0.2 成功条件
 
@@ -298,11 +298,13 @@ Forward Secrecy を捨てない。新 leaf は過去 epoch の exporter secret �
 
 OpenPGP 秘密鍵はメール adapter や core の credential DB ではなく、endpoint vault の `credential.openpgp.private` object として扱う。object は通常の vault object と同じく SegmentKey で暗号化し、同一 identity の正規端末だけが current-epoch `SegmentKeyWrapV1` grant を受けて restore できる。新端末と TTL 外端末は、peer restore で raw mail、通常の vault history、OpenPGP credential を同じ approval の下で受け取る。
 
-`src/vault/openpgp-credential.ts` は credential の canonical payload と encrypted vault object / signed `credential.openpgp.set` event を定義する。OpenPGP v4/v6 fingerprint、identity、segment を object AAD と event target に束縛し、非 canonical な secret-key payload は decode 前に拒否する。これは鍵 packet の妥当性検証や OpenPGP library との接続をまだ含まない。
+`src/vault/openpgp-credential.ts` は credential の canonical payload と encrypted vault object / signed `credential.openpgp.set` event を定義する。OpenPGP v4/v6 fingerprint、identity、segment を object AAD と event target に束縛し、非 canonical な secret-key payload は decode 前に拒否する。鍵 packet の生成・packet/fingerprint 検証はこの暗号化 vault schema と別の endpoint-only OpenPGP.js boundary に置く。
 
 `VaultDeliveryProjector` は credential event を通常の shared delivery pack として署名・current epoch wrap・object integrity とともに検証して保存する。ただし credential は JMAP mail projection を変えない。そのため、JMAP reducer は credential をメール mutation として解釈せず、credential record の identity / fingerprint / AAD 整合性だけを検証する。
 
-`OpenPgpCredentialVaultSink` は local creation / rotation 時に credential object、event、既存 JMAP projection、current epoch wrap を一つの local vault transaction に保存し、shared delivery outbox へ暗号文 pack を一度だけ積む。credential write は JMAP state を変えない。実際の OpenPGP key generation と user-facing rotation operation はこの sink の呼び出し側として後続実装する。
+`OpenPgpCredentialVaultSink` は local creation / rotation 時に credential object、event、既存 JMAP projection、current epoch wrap を一つの local vault transaction に保存し、shared delivery outbox へ暗号文 pack を一度だけ積む。credential write は JMAP state を変えない。OpenPGP key generation は実装済みだが、user-facing rotation operation はこの sink の呼び出し側として後続実装する。
+
+`OpenPgpCredentialReader` は endpoint の local credential envelope だけを列挙し、event signature、object reference、current-epoch SegmentKey wrap、AEAD/AAD をあらためて検証して private packet を読む。過去 mail 用には旧鍵も返すが、新規送信に使う current key は `supersedesFingerprint` により一意に決める。無関係な二鍵があれば時刻順に勝手に選ばずエラーにし、明示的な rotation を要求する。
 
 `src/mail/openpgp-credential.ts` は endpoint-only の OpenPGP.js boundary として、mail 用の dedicated OpenPGP key を生成し、vault から復号した private packet が credential に記録された fingerprint と一致することを確認する。DID root/update key、MLS leaf key、VEK を OpenPGP private key として流用しない。key generation / vault sink を呼ぶ UI と、公開鍵を DID / WKD / Autocrypt へ publish する adapter は後続工程である。
 
