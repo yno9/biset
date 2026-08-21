@@ -250,6 +250,8 @@ interface SegmentKeyWrapV1 {
 
 現在 `src/vault/crypto.ts` には、この下位プリミティブを実装している。caller が 32-byte VEK を渡すと、`identityId` / self group / segment / source epoch / recipient epoch / grantor device を canonical AAD に束縛して AES-GCM wrap し、その全体に grantor の署名を付ける。unwrap は metadata と AAD の一致、署名、AEAD tag のすべてを確認する。**ここで渡す VEK が MLS exporter 由来であり、grantor が current member であることの確認はまだ未接続**で、§12 M0/M2 の責務である。
 
+`src/vault/segment-key-resolver.ts` は current self-group epoch を得て、その `(identityId, segmentId, recipientEpoch)` の stored wrap だけを読み、current epoch VEK で unwrap する。旧 epoch の wrap へ fallback しないため、新端末 / TTL 外端末には trusted peer の current-epoch grant が必要になる。VEK は resolver 内で使用後に zeroize し、IndexedDB には key wrap だけを保存する。
+
 ### 4.4 membership 変更時の必須規則
 
 MLS commit（Add / Remove / Update / rekey）が durable に受理されたら、現在の vault segment を seal する。

@@ -1,6 +1,6 @@
 import type { IngressAckV1 } from '../protocol/ingress.ts'
 import type { IdentityId, VaultEventId, VaultObjectId } from '../protocol/ids.ts'
-import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
 const DATABASE_VERSION = 1
@@ -73,7 +73,15 @@ export interface VaultObjectReader {
   readObject(identityId: IdentityId, objectId: VaultObjectId): Promise<VaultObjectRecord | undefined>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader {
+export interface SegmentKeyWrapReader {
+  readSegmentKeyWrap(identityId: IdentityId, segmentId: string, recipientEpoch: string): Promise<SegmentKeyWrapV1 | undefined>
+}
+
+export interface SegmentKeyWrapWriter {
+  writeSegmentKeyWrap(wrap: SegmentKeyWrapV1): Promise<void>
+}
+
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, SegmentKeyWrapReader, SegmentKeyWrapWriter {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -139,6 +147,24 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     )
     await completed
     return record && copyObject(record)
+  }
+
+  async writeSegmentKeyWrap(wrap: SegmentKeyWrapV1): Promise<void> {
+    assertKeyWrap(wrap)
+    const transaction = this.database.transaction(STORES.keyWraps, 'readwrite')
+    transaction.objectStore(STORES.keyWraps).put(copyKeyWrap(wrap))
+    await transactionDone(transaction)
+  }
+
+  async readSegmentKeyWrap(identityId: IdentityId, segmentId: string, recipientEpoch: string): Promise<SegmentKeyWrapV1 | undefined> {
+    if (!identityId || !segmentId || !recipientEpoch) throw new TypeError('key wrap identity, segment, and epoch are required')
+    const transaction = this.database.transaction(STORES.keyWraps, 'readonly')
+    const completed = transactionDone(transaction)
+    const wrap = await requestValue<SegmentKeyWrapV1 | undefined>(
+      transaction.objectStore(STORES.keyWraps).get([identityId, segmentId, recipientEpoch]),
+    )
+    await completed
+    return wrap && copyKeyWrap(wrap)
   }
 }
 
@@ -224,5 +250,21 @@ function copyOutbox(value: IngressAckOutboxRecord): IngressAckOutboxRecord {
       protectedPayloadHash: value.ack.protectedPayloadHash.slice(),
       signature: value.ack.signature.slice(),
     },
+  }
+}
+
+function assertKeyWrap(value: SegmentKeyWrapV1): void {
+  if (value.version !== 1 || !value.identityId || !value.selfGroupId || !value.segmentId || !value.recipientEpoch) {
+    throw new TypeError('invalid SegmentKeyWrap')
+  }
+}
+
+function copyKeyWrap(value: SegmentKeyWrapV1): SegmentKeyWrapV1 {
+  return {
+    ...value,
+    nonce: value.nonce.slice(),
+    aad: value.aad.slice(),
+    wrappedSegmentKey: value.wrappedSegmentKey.slice(),
+    signature: value.signature.slice(),
   }
 }

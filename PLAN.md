@@ -132,7 +132,7 @@
 ### 4.2 SegmentKey lifecycle
 
 - [x] random SegmentKey で payload を一度だけ AEAD encrypt する。
-- [-] VEK を入力に取る署名付き `SegmentKeyWrapV1` の AEAD wrap/unwrap を実装した。current VEK の導出と membership check は MLS integration 待ちである。
+- [-] VEK を入力に取る署名付き `SegmentKeyWrapV1` の AEAD wrap/unwrap と、current epoch の stored wrap だけを使う SegmentKey resolver を実装した。actual MLS VEK 導出・membership signer は integration 待ちである。
 - [ ] MLS commit durable acceptance 後に active segment を seal する。
 - [ ] Add/Remove/Update/rekey 後に旧 SegmentKey へ新 object を追記しない。
 - [ ] old ciphertext を mutation せず、新 epoch 向け wrap を作る restore grant を実装する。
