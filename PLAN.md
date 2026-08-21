@@ -124,7 +124,7 @@
 ### 4.1 MLS integration boundary
 
 - [ ] 現行 MLS implementation を `src.bak/` から参照し、新 core に必要な最小 self-group API を抽出する。
-- [ ] device add/remove/current trusted roster projection を実装する。
+- [-] accepted MLS epoch だけで更新する public trusted-device roster projection と、それを使う delivery / restore authorizer adapter を実装した。actual MLS commit / DID publishing / signature wire bytes との接続は未実装。
 - [-] fixed label/context/32-byte output の `deriveVaultEpochKey(group)` boundary を実装した。実際の MLS group adapter への接続は未実装。
 - [ ] VEK を永続化しないことを code review / test で保証する。
 

@@ -984,6 +984,17 @@ core が外部に公開する API には、vault history query を追加しな�
 - label/context/length を caller が任意指定できないようにする。
 - MLS state 変更と vault segment seal の transaction/outbox 境界を定義する。
 
+### M0.5 trusted-device projection
+
+`src/core/identity/device-roster.ts` には `AcceptedSelfGroupProjectionV1` を置く。これは accepted MLS epoch、public device ID、public signing key ID、normal vault delivery の開始 cursor (`deliveryFloor`) だけからなる。identity control plane はこの projection を保存・提供できるが、MLS state、exporter secret、vault payload を受け取らない。
+
+- 同じ identity の roster は epoch が単調増加する accepted projection によってのみ変わる。
+- stale epoch と同 epoch の異なる roster を拒否する。
+- Remove は後続 epoch から device を落とすことで表し、TTL / push 不達 / 非活動で roster を自動変更しない。
+- 実際の MLS commit validation と DID 公開への反映は次段階の adapter が担う。memory reference はその結果を受け取るだけである。
+
+`src/core/identity/authorizers.ts` はこの roster を mediation の `VaultDeliveryAuthorizer` / `RestoreControlAuthorizer` に接続する。authorizer は毎回 current roster を参照し、caller supplied device list では認可しない。署名 bytes の canonical 化と実際の public-key verification は identity / MLS adapter から注入するため、mediation に秘密鍵・MLS state を持ち込まない。
+
 ### M1. segment lifecycle
 
 - identity ごとの active segment を管理する。
