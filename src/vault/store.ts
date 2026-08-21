@@ -174,6 +174,12 @@ export interface VaultCredentialEventReader {
   readCredentialEvents(identityId: IdentityId): Promise<VaultEventRecord[]>
 }
 
+/** Full ciphertext/event reader used only by peer restore and user archive export. */
+export interface VaultRecordReader {
+  readVaultEvents(identityId: IdentityId): Promise<VaultEventRecord[]>
+  readVaultObjects(identityId: IdentityId): Promise<VaultObjectRecord[]>
+}
+
 export interface SegmentKeyWrapReader {
   readSegmentKeyWrap(identityId: IdentityId, segmentId: string, recipientEpoch: string): Promise<SegmentKeyWrapV1 | undefined>
 }
@@ -217,7 +223,7 @@ export interface VaultRestoreOfferOutboxStore {
   clearRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, VaultCredentialEventReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -368,6 +374,24 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
       .filter(value => value.identityId === identityId && value.kind.startsWith('credential.'))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
       .map(copyEvent)
+  }
+
+  async readVaultEvents(identityId: IdentityId): Promise<VaultEventRecord[]> {
+    if (!identityId) throw new TypeError('vault event identity is required')
+    const transaction = this.database.transaction(STORES.events, 'readonly')
+    const completed = transactionDone(transaction)
+    const values = await requestValue<VaultEventRecord[]>(transaction.objectStore(STORES.events).getAll())
+    await completed
+    return values.filter(value => value.identityId === identityId).sort((left, right) => left.id.localeCompare(right.id)).map(copyEvent)
+  }
+
+  async readVaultObjects(identityId: IdentityId): Promise<VaultObjectRecord[]> {
+    if (!identityId) throw new TypeError('vault object identity is required')
+    const transaction = this.database.transaction(STORES.objects, 'readonly')
+    const completed = transactionDone(transaction)
+    const values = await requestValue<VaultObjectRecord[]>(transaction.objectStore(STORES.objects).getAll())
+    await completed
+    return values.filter(value => value.identityId === identityId).sort((left, right) => left.objectId.localeCompare(right.objectId)).map(copyObject)
   }
 
   async writeSegmentKeyWrap(wrap: SegmentKeyWrapV1): Promise<void> {

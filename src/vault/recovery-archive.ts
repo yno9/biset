@@ -124,6 +124,7 @@ async function assertSnapshot(snapshot: RecoveryArchiveSnapshotV1): Promise<void
   const eventIds = new Set<string>()
   for (const event of snapshot.events) {
     if (event.identityId !== snapshot.identityId || eventIds.has(event.id)) throw new TypeError('recovery archive event set is invalid')
+    if (event.objectRefs.some(objectId => !snapshot.objects.some(object => object.objectId === objectId))) throw new TypeError('recovery archive event references an absent object')
     eventIds.add(event.id)
   }
   const objectIds = new Set<string>()
