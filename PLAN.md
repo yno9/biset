@@ -56,7 +56,7 @@
 - [x] ACK hash、snapshot、authorizer を確認後に payload を削除し、tombstone だけを残す。
 - [x] expiry で payload を削除する。
 - [-] trusted-device roster を mediation authorizer adapter に接続した。Ingress ACK / delivery ACK の実際の DID signature verifier は未実装。
-- [ ] in-memory Map を crash-safe bounded persistence adapter に置換する。
+- [-] crash-safe な SQLite `VaultDeliveryStore` を追加した。core deployment への authorizer/persistence wiring と restart/concurrency coverage は未実装。
 - [ ] tombstone retention / dedup retention / quota eviction の数値を policy として決める。
 - [-] signed shared vault delivery の `append` / `pull` / `ack` を narrow HTTP adapter と browser transport に結び付けた。production core composition / persistence は未実装。`status` は core internal のみ。
 - [ ] restart、同時 ACK、duplicate offer、quota eviction、authorizer rejection の integration test を追加する。
@@ -253,5 +253,6 @@
 | 2026-08-21 | `faef01d` | signed vault-delivery pull を追加し、device ID のみでは payload を取得できないようにした |
 | 2026-08-21 | `d944cbd` | bounded vault delivery の append / pull / ACK HTTP adapter と browser transport を追加 |
 | 2026-08-21 | `8fb0bfa` | authorizer 注入なしでは relay を公開しない安全な core application composition を追加 |
+| 2026-08-21 | `27af8c3` | bounded shared vault delivery を crash-safe SQLite へ永続化し、再起動後 pull を検証 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
