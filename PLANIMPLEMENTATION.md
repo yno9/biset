@@ -267,7 +267,7 @@ MLS commit（Add / Remove / Update / rekey）が durable に受理されたら�
 新端末または `restore-required` 端末は次の順で復元する。
 
 1. self group へ Add され、current epoch の正規端末になる。
-2. peer に `RestoreRequestV1`（identity、device、manifest root、必要 object/segment 範囲）を送る。
+2. peer に `RestoreRequestV1`（identity、device、既知 manifest root、失われた理由だけを持つ小さい制御要求）を送る。必要 object/segment 範囲は、peer が許可した後の端末間 transfer で manifest から決める。
 3. peer は requester の current membership を検証する。
 4. peer は manifest 差分、暗号化 object、添付 chunk、current VEK 向け `SegmentKeyWrapV1` を渡す。
 5. requester は hash・署名・event DAG を検証し、manifest root に到達したときだけ restore 完了にする。
@@ -381,7 +381,7 @@ type DeliveryPullResult =
     };
 ```
 
-これにより C は、mediator 接続時に「自分の差分が TTL で失効し、通常 pull では追いつけない」ことを機械可読に理解できる。client はこの応答を受けて restore request を作り、push / control message を通じて peer を起こせる。`restoreRequestId` は delivery pull の副作用にせず、次段階の Restore control API が発行する。
+これにより C は、mediator 接続時に「自分の差分が TTL で失効し、通常 pull では追いつけない」ことを機械可読に理解できる。client はこの応答を受けて client-generated な `requestId` を持つ restore request を作り、push / control message を通じて peer を起こせる。delivery pull 自体に restore control の副作用はない。
 
 ### 5.4 mediator が restore でしてよいこと・してはいけないこと
 
@@ -411,9 +411,18 @@ interface RestoreOfferV1 {
   expiresAt: string;
   signature: Uint8Array;
 }
+
+interface RestoreControlPullV1 {
+  version: 1;
+  identityId: IdentityId;
+  deviceId: DeviceId;
+  kind: 'requests' | 'offers';
+  requestedAt: string;
+  signature: Uint8Array;
+}
 ```
 
-`src/core/mediation/restore-control-store.ts` の reference implementation は、同じ identity の current trusted device にだけ request を見せ、requester にだけ offer を返す。request / offer / cancel は expiry 後に消える。型と store API に object、chunk、添付、manifest 本体を置かないため、この層を vault data storage に拡張する余地を API 上から閉じている。実際の MLS membership / signature validation と durable bounded persistence は後続実装で差し込む。
+`src/core/mediation/restore-control-store.ts` の reference implementation と SQLite 実装は、同じ identity の current trusted device にだけ request を見せ、requester にだけ offer を返す。poll も `RestoreControlPullV1` で署名するため、HTTP caller が device ID だけを偽って request / offer を列挙できない。request / offer / cancel は expiry 後に消え、identity ごとの request 数と request ごとの offer 数にも上限を持つ。型と store API に object、chunk、添付、manifest 本体を置かないため、この層を vault data storage に拡張する余地を API 上から閉じている。MLS accepted roster と DID public-key verifier は deployment から注入し、actual MLS commit source / DID resolver の実装は後続とする。
 
 **してよいこと**:
 
@@ -1015,7 +1024,7 @@ core が外部に公開する API には、vault history query を追加しな�
 
 `src/core/identity/authorizers.ts` はこの roster を mediation の `VaultDeliveryAuthorizer` / `RestoreControlAuthorizer` に接続する。authorizer は毎回 current roster を参照し、caller supplied device list では認可しない。署名 bytes の canonical 化と実際の public-key verification は identity / MLS adapter から注入するため、mediation に秘密鍵・MLS state を持ち込まない。
 
-`src/protocol/signing.ts` が Ingress ACK、vault-delivery ACK、restore request / offer / cancel の canonical signing bytes を固定する。すべての routing identity、payload hash、cursor、expiry、request ID を含め、メッセージ種別ごとに domain label を分ける。したがって、ある種類の control message の署名を別種類の ACK / restore message に流用できない。実際の DID public key verification は、これらの bytes を `DeviceControlSignatureVerifier` に渡して行う。
+`src/protocol/signing.ts` が Ingress ACK、vault-delivery ACK/pull、restore request / offer / cancel / poll の canonical signing bytes を固定する。すべての routing identity、payload hash、cursor、expiry、request ID を含め、メッセージ種別ごとに domain label を分ける。したがって、ある種類の control message の署名を別種類の ACK / restore message に流用できない。実際の DID public key verification は、これらの bytes を `DeviceControlSignatureVerifier` に渡して行う。
 
 ### M1. segment lifecycle
 

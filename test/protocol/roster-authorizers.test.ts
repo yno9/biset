@@ -48,8 +48,11 @@ describe('roster-backed mediation authorizers', () => {
       async verifyRestoreRequest(_request, device) { return device.signingKeyId.endsWith('#device-a-sign') },
       async verifyRestoreOffer() { return true },
       async verifyRestoreCancel() { return true },
+      async verifyRestoreControlPull(_pull, device) { return device.deviceId === 'device-a' },
     })
     expect(await control.verifyRequest({ identityId, requesterDeviceId: 'device-a' } as never)).toBe(true)
     expect(await control.verifyRequest({ identityId, requesterDeviceId: 'device-b' } as never)).toBe(false)
+    expect(await control.verifyPull({ identityId, deviceId: 'device-a' } as never)).toBe(true)
+    expect(await control.verifyPull({ identityId, deviceId: 'device-b' } as never)).toBe(false)
   })
 })

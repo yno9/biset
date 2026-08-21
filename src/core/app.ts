@@ -1,5 +1,7 @@
 import { createVaultDeliveryHttpHandler } from './mediation/vault-delivery-http.ts'
 import type { VaultDeliveryStore } from './mediation/vault-delivery-store.ts'
+import { createRestoreControlHttpHandler } from './mediation/restore-control-http.ts'
+import type { RestoreControlStore } from './mediation/restore-control-store.ts'
 
 export interface BisetCoreApplicationOptions {
   /**
@@ -8,15 +10,19 @@ export interface BisetCoreApplicationOptions {
    * relay whose caller can invent devices or authorisation.
    */
   vaultDeliveryStore?: VaultDeliveryStore
+  /** Optional, separately authorised short-lived restore signalling plane. */
+  restoreControlStore?: RestoreControlStore
 }
 
 /** Narrow composition root: identity decides authorisation; mediation stores bounded ciphertext. */
 export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions): (request: Request) => Promise<Response> {
   const vaultDelivery = options.vaultDeliveryStore && createVaultDeliveryHttpHandler(options.vaultDeliveryStore)
+  const restoreControl = options.restoreControlStore && createRestoreControlHttpHandler(options.restoreControlStore)
   return async (request) => {
     const path = new URL(request.url).pathname
     if (path === '/healthz') return Response.json({ ok: true, service: 'biset-core', storage: 'bounded-only' })
     if (path.startsWith('/v1/vault-delivery/') && vaultDelivery) return vaultDelivery(request)
+    if (path.startsWith('/v1/restore/') && restoreControl) return restoreControl(request)
     return new Response('Not found', { status: 404 })
   }
 }

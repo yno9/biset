@@ -1,7 +1,8 @@
 import type { DeviceId, IdentityId } from '../../protocol/ids.ts'
-import type { RestoreCancelV1, RestoreOfferV1, RestoreRequestV1 } from '../../protocol/vault.ts'
+import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1 } from '../../protocol/vault.ts'
 import {
   assertRestoreCancel,
+  assertRestoreControlPull,
   assertRestoreOffer,
   assertRestoreRequest,
   ProtocolValidationError,
@@ -17,13 +18,14 @@ export interface RestoreControlAuthorizer {
   verifyRequest(request: RestoreRequestV1): Promise<boolean>
   verifyOffer(offer: RestoreOfferV1): Promise<boolean>
   verifyCancel(cancel: RestoreCancelV1, request: RestoreRequestV1): Promise<boolean>
+  verifyPull(pull: RestoreControlPullV1): Promise<boolean>
 }
 
 export interface RestoreControlStore {
   request(input: RestoreRequestV1, now?: Date): Promise<void>
-  pullRequests(identityId: IdentityId, peerDeviceId: DeviceId, now?: Date): Promise<RestoreRequestV1[]>
+  pullRequests(input: RestoreControlPullV1, now?: Date): Promise<RestoreRequestV1[]>
   offer(input: RestoreOfferV1, now?: Date): Promise<void>
-  pullOffers(identityId: IdentityId, requesterDeviceId: DeviceId, now?: Date): Promise<RestoreOfferV1[]>
+  pullOffers(input: RestoreControlPullV1, now?: Date): Promise<RestoreOfferV1[]>
   cancel(input: RestoreCancelV1, now?: Date): Promise<void>
   expire(now?: Date): Promise<void>
 }
@@ -59,15 +61,18 @@ export class MemoryRestoreControlStore implements RestoreControlStore {
     this.requests.set(key, { request: copyRequest(input), offers: new Map() })
   }
 
-  async pullRequests(identityId: IdentityId, peerDeviceId: DeviceId, now = new Date()): Promise<RestoreRequestV1[]> {
+  async pullRequests(input: RestoreControlPullV1, now = new Date()): Promise<RestoreRequestV1[]> {
+    assertRestoreControlPull(input)
+    if (input.kind !== 'requests') throw new ProtocolValidationError('restore control pull kind must be requests')
     await this.expire(now)
-    if (!(await this.authorizer.isTrustedDevice(identityId, peerDeviceId))) {
+    if (!(await this.authorizer.isTrustedDevice(input.identityId, input.deviceId))) {
       throw new ProtocolValidationError('restore peer is not trusted')
     }
+    if (!(await this.authorizer.verifyPull(input))) throw new ProtocolValidationError('restore control pull signature is invalid')
     const visible: RestoreRequestV1[] = []
     for (const { request } of this.requests.values()) {
-      if (request.identityId !== identityId || request.requesterDeviceId === peerDeviceId) continue
-      if (await this.authorizer.isTrustedDevice(identityId, request.requesterDeviceId)) visible.push(copyRequest(request))
+      if (request.identityId !== input.identityId || request.requesterDeviceId === input.deviceId) continue
+      if (await this.authorizer.isTrustedDevice(input.identityId, request.requesterDeviceId)) visible.push(copyRequest(request))
     }
     return visible
   }
@@ -87,18 +92,30 @@ export class MemoryRestoreControlStore implements RestoreControlStore {
       throw new ProtocolValidationError('restore requester is no longer trusted')
     }
     if (!(await this.authorizer.verifyOffer(input))) throw new ProtocolValidationError('restore offer signature is invalid')
+    const existing = entry.offers.get(input.responderDeviceId)
+    if (existing) {
+      if (!sameOffer(existing, input)) throw new ProtocolValidationError('restore offer conflicts with existing responder offer')
+      return
+    }
     entry.offers.set(input.responderDeviceId, copyOffer(input))
   }
 
-  async pullOffers(identityId: IdentityId, requesterDeviceId: DeviceId, now = new Date()): Promise<RestoreOfferV1[]> {
+  async pullOffers(input: RestoreControlPullV1, now = new Date()): Promise<RestoreOfferV1[]> {
+    assertRestoreControlPull(input)
+    if (input.kind !== 'offers') throw new ProtocolValidationError('restore control pull kind must be offers')
     await this.expire(now)
-    if (!(await this.authorizer.isTrustedDevice(identityId, requesterDeviceId))) {
+    if (!(await this.authorizer.isTrustedDevice(input.identityId, input.deviceId))) {
       throw new ProtocolValidationError('restore requester is not trusted')
     }
-    return [...this.requests.values()]
-      .filter(entry => entry.request.identityId === identityId && entry.request.requesterDeviceId === requesterDeviceId)
-      .flatMap(entry => [...entry.offers.values()])
-      .map(copyOffer)
+    if (!(await this.authorizer.verifyPull(input))) throw new ProtocolValidationError('restore control pull signature is invalid')
+    const visible: RestoreOfferV1[] = []
+    for (const entry of this.requests.values()) {
+      if (entry.request.identityId !== input.identityId || entry.request.requesterDeviceId !== input.deviceId) continue
+      for (const offer of entry.offers.values()) {
+        if (await this.authorizer.isTrustedDevice(input.identityId, offer.responderDeviceId)) visible.push(copyOffer(offer))
+      }
+    }
+    return visible
   }
 
   async cancel(input: RestoreCancelV1, now = new Date()): Promise<void> {
@@ -140,6 +157,17 @@ function sameRequest(left: RestoreRequestV1, right: RestoreRequestV1): boolean {
     && left.reason === right.reason
     && left.knownManifestRoot === right.knownManifestRoot
     && left.requestedAt === right.requestedAt
+    && left.expiresAt === right.expiresAt
+    && equalBytes(left.signature, right.signature)
+}
+
+function sameOffer(left: RestoreOfferV1, right: RestoreOfferV1): boolean {
+  return left.requestId === right.requestId
+    && left.identityId === right.identityId
+    && left.requesterDeviceId === right.requesterDeviceId
+    && left.responderDeviceId === right.responderDeviceId
+    && left.manifestRoot === right.manifestRoot
+    && left.offeredAt === right.offeredAt
     && left.expiresAt === right.expiresAt
     && equalBytes(left.signature, right.signature)
 }

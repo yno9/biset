@@ -14,7 +14,7 @@
 - [x] memory-only の bounded `IngressStore` を実装し、TTL、quota、recipient snapshot、一台の authorised ACK、payload 削除をテストした。
 - [x] core を `identity`（anchor）、`mediation`、`adapters` に概念分離し、初期 deployment は一つの `biset-core` binary に統合した。
 - [-] IndexedDB の local vault schema、atomic ingress commit、object crypto、flat manifest は存在するが、ingest workflow と durable recovery は未実装。
-- [-] SQLite roster + SQLite delivery + roster authorizer + Ed25519 verifier + narrow HTTP の deployment composition を実装した。actual MLS accepted-commit source / DID resolver cache policy は未実装。
+- [-] SQLite roster + SQLite delivery / restore-control + roster authorizer + Ed25519 verifier + narrow HTTP の deployment composition を実装した。actual MLS accepted-commit source / DID resolver cache policy は未実装。
 - [ ] Local JMAP Gateway、MLS VEK 導出、DIDComm/Mail adapter は未実装である。SegmentKey の object encryption と、VEK を入力に取る wrap primitive は実装済みである。
 
 **次に着手する工程:** §2.3 の vault delivery protocol と、§3 の durable local vault の基盤。`MemoryIngressStore` を HTTP に公開する前に、device authorization と永続化の境界を設計・実装する。
@@ -80,8 +80,8 @@
 ### 2.4 Restore control
 
 - [x] `RestoreRequestV1`、`RestoreOfferV1`、cancel / expiry schema と canonical signing bytes を定義する。
-- [-] in-memory の short-lived restore control store を実装した。MLS authorizer、durable bounded persistence、peer availability は未実装。
-- [-] restore store の API は request / offer / cancel の control 型だけを受け付け、history/blob/chunk を受け付けない。production storage boundary の test は未実装。
+- [-] short-lived restore control store を memory / SQLite で実装した。current roster の署名 verifier と bounded persistence に接続済み。actual MLS commit source と peer availability は未実装。
+- [x] restore store の API は request / offer / cancel / signed poll の control 型だけを受け付け、history/blob/chunk を受け付けない。64 KiB HTTP boundary と production storage の restart / expiry / quota test を追加した。
 - [ ] requester が `restoreRequired` から restore UI/state へ遷移する client contract を定義する。
 - [ ] peer への opaque push / control notification を定義する。
 
@@ -259,5 +259,6 @@
 | 2026-08-21 | `b068b22` | SQLite roster / delivery / authorizer / DID key verifier / HTTP を一体化した core deployment を追加 |
 | 2026-08-21 | `cfe56a4` | SQLite restart 後の all-ACK body 消去、ACK 再送、TTL restore gap を検証 |
 | 2026-08-21 | `3a8b3cc` | SQLite の quota eviction が再起動後も明示的な restore gap になることを検証 |
+| 2026-08-21 | `d4a2002` | 署名付き restore poll、SQLite の短命 control store、bounded HTTP / browser transport を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

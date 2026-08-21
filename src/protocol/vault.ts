@@ -154,6 +154,17 @@ export interface RestoreCancelV1 {
   signature: Uint8Array
 }
 
+/** Signed polling request for one side of the short-lived restore control plane. */
+export interface RestoreControlPullV1 {
+  version: 1
+  identityId: IdentityId
+  deviceId: DeviceId
+  /** `requests` is for a peer offering help; `offers` is for the requester. */
+  kind: 'requests' | 'offers'
+  requestedAt: string
+  signature: Uint8Array
+}
+
 export type DeliveryPullResult =
   | {
       kind: 'items'

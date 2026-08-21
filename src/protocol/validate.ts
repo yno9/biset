@@ -2,6 +2,7 @@ import type { IngressAckV1, IngressEnvelopeV1 } from './ingress.ts'
 import { assertDeliverySeq } from './ids.ts'
 import type {
   RestoreCancelV1,
+  RestoreControlPullV1,
   RestoreOfferV1,
   RestoreRequestV1,
   VaultDeliveryAckV1,
@@ -196,5 +197,16 @@ export function assertRestoreCancel(value: unknown): asserts value is RestoreCan
   text(input.identityId, 'identityId')
   text(input.requesterDeviceId, 'requesterDeviceId')
   time(input.cancelledAt, 'cancelledAt')
+  bytes(input.signature, 'signature')
+}
+
+export function assertRestoreControlPull(value: unknown): asserts value is RestoreControlPullV1 {
+  const input = record(value, 'RestoreControlPullV1')
+  exactKeys(input, ['version', 'identityId', 'deviceId', 'kind', 'requestedAt', 'signature'], 'RestoreControlPullV1')
+  if (input.version !== 1) throw new ProtocolValidationError('RestoreControlPullV1.version must be 1')
+  text(input.identityId, 'identityId')
+  text(input.deviceId, 'deviceId')
+  if (input.kind !== 'requests' && input.kind !== 'offers') throw new ProtocolValidationError('RestoreControlPullV1.kind is unsupported')
+  time(input.requestedAt, 'requestedAt')
   bytes(input.signature, 'signature')
 }

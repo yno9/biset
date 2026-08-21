@@ -2,7 +2,7 @@ import type { RestoreControlAuthorizer } from '../mediation/restore-control-stor
 import type { IngressAckAuthorizer } from '../mediation/ingress-store.ts'
 import type { VaultDeliveryAuthorizer } from '../mediation/vault-delivery-store.ts'
 import type { IngressAckV1, IngressEnvelopeV1 } from '../../protocol/ingress.ts'
-import type { RestoreCancelV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryItemV1, VaultDeliveryPullV1 } from '../../protocol/vault.ts'
+import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryItemV1, VaultDeliveryPullV1 } from '../../protocol/vault.ts'
 import type { DeviceId, IdentityId } from '../../protocol/ids.ts'
 import type { TrustedDeviceRoster, TrustedDeviceV1 } from './device-roster.ts'
 
@@ -15,6 +15,7 @@ export interface DeviceControlSignatureVerifier {
   verifyRestoreRequest(request: RestoreRequestV1, device: TrustedDeviceV1): Promise<boolean>
   verifyRestoreOffer(offer: RestoreOfferV1, device: TrustedDeviceV1): Promise<boolean>
   verifyRestoreCancel(cancel: RestoreCancelV1, request: RestoreRequestV1, device: TrustedDeviceV1): Promise<boolean>
+  verifyRestoreControlPull(pull: RestoreControlPullV1, device: TrustedDeviceV1): Promise<boolean>
 }
 
 export function rosterBackedIngressAckAuthorizer(
@@ -56,7 +57,7 @@ export function rosterBackedVaultDeliveryAuthorizer(
 
 export function rosterBackedRestoreControlAuthorizer(
   roster: TrustedDeviceRoster,
-  verifier: Pick<DeviceControlSignatureVerifier, 'verifyRestoreRequest' | 'verifyRestoreOffer' | 'verifyRestoreCancel'>,
+  verifier: Pick<DeviceControlSignatureVerifier, 'verifyRestoreRequest' | 'verifyRestoreOffer' | 'verifyRestoreCancel' | 'verifyRestoreControlPull'>,
 ): RestoreControlAuthorizer {
   return {
     isTrustedDevice: (identityId, deviceId) => roster.isTrustedDevice(identityId, deviceId),
@@ -71,6 +72,10 @@ export function rosterBackedRestoreControlAuthorizer(
     async verifyCancel(cancel, request) {
       const device = await currentDevice(roster, cancel.identityId, cancel.requesterDeviceId)
       return device !== undefined && verifier.verifyRestoreCancel(cancel, request, device)
+    },
+    async verifyPull(pull) {
+      const device = await currentDevice(roster, pull.identityId, pull.deviceId)
+      return device !== undefined && verifier.verifyRestoreControlPull(pull, device)
     },
   }
 }
