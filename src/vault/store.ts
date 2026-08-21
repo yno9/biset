@@ -1,7 +1,8 @@
 import type { IngressAckV1 } from '../protocol/ingress.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import type { DeliverySeq, DeviceId, IdentityId, VaultEventId, VaultObjectId } from '../protocol/ids.ts'
-import type { SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import type { DeliveryPullResult, RestoreRequestV1, SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import { assertRestoreRequest } from '../protocol/validate.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
 const DATABASE_VERSION = 3
@@ -84,6 +85,19 @@ export interface VaultDeliveryAckOutboxRecord {
   createdAt: string
 }
 
+/** Durable client-side intent to ask a trusted peer for a foreground restore. */
+export interface VaultRestoreRequestStateRecord {
+  identityId: IdentityId
+  deviceId: DeviceId
+  request: RestoreRequestV1
+  gap: Extract<DeliveryPullResult, { kind: 'restoreRequired' }>
+  status: 'pending' | 'submitted'
+  attempts: number
+  createdAt: string
+  lastAttemptAt?: string
+  submittedAt?: string
+}
+
 /**
  * All fields are written in one IndexedDB transaction. The caller may send the
  * ACK only after this promise resolves successfully.
@@ -162,7 +176,16 @@ export interface VaultDeliveryAckOutboxReader {
   noteDeliveryAckOutboxAttempt(identityId: IdentityId, recipientDeviceId: DeviceId, seq: DeliverySeq): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader {
+/** Restore requests are local durable state, not a core-side vault archive. */
+export interface VaultRestoreRequestStateStore {
+  readRestoreRequestState(identityId: IdentityId, deviceId: DeviceId): Promise<VaultRestoreRequestStateRecord | undefined>
+  writeRestoreRequestState(value: VaultRestoreRequestStateRecord): Promise<void>
+  noteRestoreRequestAttempt(identityId: IdentityId, deviceId: DeviceId, attemptedAt: string): Promise<void>
+  markRestoreRequestSubmitted(identityId: IdentityId, deviceId: DeviceId, submittedAt: string): Promise<void>
+  clearRestoreRequestState(identityId: IdentityId, deviceId: DeviceId): Promise<void>
+}
+
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -397,6 +420,55 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     }
     await transactionDone(transaction)
   }
+
+  async readRestoreRequestState(identityId: IdentityId, deviceId: DeviceId): Promise<VaultRestoreRequestStateRecord | undefined> {
+    if (!identityId || !deviceId) throw new TypeError('restore request identity and device are required')
+    const transaction = this.database.transaction(STORES.restoreState, 'readonly')
+    const completed = transactionDone(transaction)
+    const record = await requestValue<VaultRestoreRequestStateRecord | undefined>(transaction.objectStore(STORES.restoreState).get([identityId, deviceId]))
+    await completed
+    return record && copyRestoreRequestState(record)
+  }
+
+  async writeRestoreRequestState(value: VaultRestoreRequestStateRecord): Promise<void> {
+    assertRestoreRequestState(value)
+    const transaction = this.database.transaction(STORES.restoreState, 'readwrite')
+    transaction.objectStore(STORES.restoreState).put(copyRestoreRequestState(value))
+    await transactionDone(transaction)
+  }
+
+  async noteRestoreRequestAttempt(identityId: IdentityId, deviceId: DeviceId, attemptedAt: string): Promise<void> {
+    if (!identityId || !deviceId || Number.isNaN(Date.parse(attemptedAt))) throw new TypeError('restore request attempt is invalid')
+    const transaction = this.database.transaction(STORES.restoreState, 'readwrite')
+    const store = transaction.objectStore(STORES.restoreState)
+    const request = store.get([identityId, deviceId])
+    request.onsuccess = () => {
+      const record = request.result as VaultRestoreRequestStateRecord | undefined
+      if (!record || record.status !== 'pending') return
+      store.put({ ...copyRestoreRequestState(record), attempts: record.attempts + 1, lastAttemptAt: attemptedAt })
+    }
+    await transactionDone(transaction)
+  }
+
+  async markRestoreRequestSubmitted(identityId: IdentityId, deviceId: DeviceId, submittedAt: string): Promise<void> {
+    if (!identityId || !deviceId || Number.isNaN(Date.parse(submittedAt))) throw new TypeError('restore request submission is invalid')
+    const transaction = this.database.transaction(STORES.restoreState, 'readwrite')
+    const store = transaction.objectStore(STORES.restoreState)
+    const request = store.get([identityId, deviceId])
+    request.onsuccess = () => {
+      const record = request.result as VaultRestoreRequestStateRecord | undefined
+      if (!record) return
+      store.put({ ...copyRestoreRequestState(record), status: 'submitted', submittedAt })
+    }
+    await transactionDone(transaction)
+  }
+
+  async clearRestoreRequestState(identityId: IdentityId, deviceId: DeviceId): Promise<void> {
+    if (!identityId || !deviceId) throw new TypeError('restore request identity and device are required')
+    const transaction = this.database.transaction(STORES.restoreState, 'readwrite')
+    transaction.objectStore(STORES.restoreState).delete([identityId, deviceId])
+    await transactionDone(transaction)
+  }
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -535,6 +607,16 @@ function assertKeyWrap(value: SegmentKeyWrapV1): void {
   }
 }
 
+function assertRestoreRequestState(value: VaultRestoreRequestStateRecord): void {
+  if (!value.identityId || !value.deviceId || value.request.identityId !== value.identityId || value.request.requesterDeviceId !== value.deviceId) throw new TypeError('restore request state identity does not match')
+  assertRestoreRequest(value.request)
+  if (value.status !== 'pending' && value.status !== 'submitted') throw new TypeError('restore request state status is invalid')
+  if (!Number.isSafeInteger(value.attempts) || value.attempts < 0 || Number.isNaN(Date.parse(value.createdAt))) throw new TypeError('restore request state metadata is invalid')
+  if (value.lastAttemptAt !== undefined && Number.isNaN(Date.parse(value.lastAttemptAt))) throw new TypeError('restore request last attempt is invalid')
+  if (value.submittedAt !== undefined && Number.isNaN(Date.parse(value.submittedAt))) throw new TypeError('restore request submission is invalid')
+  if (value.gap.kind !== 'restoreRequired' || value.gap.reason !== value.request.reason) throw new TypeError('restore request state gap is invalid')
+}
+
 function copyKeyWrap(value: SegmentKeyWrapV1): SegmentKeyWrapV1 {
   return {
     ...value,
@@ -543,4 +625,8 @@ function copyKeyWrap(value: SegmentKeyWrapV1): SegmentKeyWrapV1 {
     wrappedSegmentKey: value.wrappedSegmentKey.slice(),
     signature: value.signature.slice(),
   }
+}
+
+function copyRestoreRequestState(value: VaultRestoreRequestStateRecord): VaultRestoreRequestStateRecord {
+  return { ...value, request: { ...value.request, signature: value.request.signature.slice() }, gap: { ...value.gap } }
 }

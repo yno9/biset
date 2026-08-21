@@ -739,7 +739,8 @@ ACK は単なる network receipt ではなく、object/event/manifest が local 
 ```text
 new device or restoreRequired
   → joins/verifies current self MLS group
-  → asks mediator for peer discovery + sends RestoreRequest
+  → durable local restore state に client-generated RestoreRequest を保存
+  → mediator へ同じ request ID を idempotent に送信（応答喪失時は再送）
   → peer receives visible push and opens app
   → peer validates membership and offers manifest
   → manifest diff / chunks / SegmentKeyWrap transfer
@@ -748,6 +749,8 @@ new device or restoreRequired
 ```
 
 transfer は途中停止を許す。chunk hash と manifest root により、何度再開しても同じ結果になるようにする。
+
+`src/vault/restore-workflow.ts` は `restoreRequired` を受けて、署名済み request と gap reason を `vault_restore_state` に先に保存する。network request が失敗した場合は同じ request ID のまま `pending` として残し、次回 wake で再送する。core が受理した後は `submitted` を記録し、control TTL 内に再度同じ request を発行しない。これは transfer state ではなく、**小さい復旧要求だけ**の durable state である。実際の peer offer polling、visible push、approve/deny UI と chunk transfer は後続工程である。
 
 ### 9.5 cursor の原則
 
@@ -906,6 +909,7 @@ object body と event、projection、outbox の durability boundary を明文化
 - ingress offer/pull を受け、validate → vault transaction → `IngressAck` outbox の順に実装する。
 - vault delivery pull、ACK、cursor を実装する。
 - `restoreRequired` を受けたら通常 sync を止め、restore UI/state に遷移する。
+- request を送る前に local durable state へ書き、post の応答喪失は client-generated request ID で再送する。受理済み control TTL 内に重複 request を発行しない。
 - duplicate ingress、duplicate delivery、順序逆転、ACK 再送を idempotent にする。
 
 ### C5. restore UI と PWA 行動
