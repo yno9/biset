@@ -5,6 +5,7 @@ import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
 import type { VaultEventSigner } from '../../src/vault/events.ts'
 import { buildVaultMutation } from '../../src/vault/mutations.ts'
 import { createSegmentKey } from '../../src/vault/objects.ts'
+import { buildOpenPgpPrivateCredential } from '../../src/vault/openpgp-credential.ts'
 
 const signer: VaultEventSigner = {
   deviceId: 'device-a',
@@ -52,5 +53,23 @@ describe('vault delivery projector', () => {
     await expect(projector.verifyAndProject({ version: 1, identityId, objects: [], events: [], keyWraps: [{
       version: 1, identityId, selfGroupId: 'self-group-1', segmentId: 'segment-1', sourceEpoch: '1', recipientEpoch: '1', nonce: new Uint8Array([1]), aad: new Uint8Array([1]), wrappedSegmentKey: new Uint8Array([1]), grantorDeviceId: 'device-a', grantedAt: '2026-08-21T00:00:00.000Z', signature: new Uint8Array([1]),
     }] })).rejects.toThrow('not for the current MLS epoch')
+  })
+
+  test('verifies and persists an OpenPGP credential event without changing the JMAP projection', async () => {
+    const credential = await buildOpenPgpPrivateCredential({
+      version: 1, kind: 'credential.openpgp.private', identityId,
+      fingerprint: '0123456789abcdef0123456789abcdef01234567', privateKey: new Uint8Array([1, 2]), createdAt: '2026-08-21T00:00:00.000Z',
+    }, { identityId, actorDeviceId: 'device-a', actorSeq: 2, parents: [], segmentId: 'segment-1', segmentKey }, signer)
+    const wrap = await createSegmentKeyWrap(new Uint8Array(32).fill(7), segmentKey, {
+      identityId, selfGroupId: 'self-group-1', segmentId: 'segment-1', sourceEpoch: '1', recipientEpoch: '1', grantorDeviceId: 'device-a', grantedAt: '2026-08-21T00:00:00.000Z',
+    }, signer)
+    const projector = new VaultDeliveryProjector({
+      identityId,
+      async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [] } },
+      epochs: { async currentVaultEpoch() { return { selfGroupId: 'self-group-1', epoch: '1' } }, async deriveVaultEpochKey() { return new Uint8Array(32).fill(7) } },
+      verifier: signer,
+    })
+    const output = await projector.verifyAndProject({ version: 1, identityId, objects: [{ ...credential.object, identityId }], events: [credential.event], keyWraps: [wrap] })
+    expect(output.projection).toMatchObject({ mailboxes: [], emails: [] })
   })
 })

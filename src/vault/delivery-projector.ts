@@ -3,6 +3,7 @@ import { reduceLocalJmapProjection } from '../local-jmap/reducer.ts'
 import type { IdentityId, MlsEpoch, SegmentId } from '../protocol/ids.ts'
 import type { SegmentKeyWrapV1, VaultObjectV1 } from '../protocol/vault.ts'
 import { decryptVaultObject } from './objects.ts'
+import { assertOpenPgpCredentialRecord } from './openpgp-credential.ts'
 import type { VaultDeliveryPackV1 } from './delivery-pack.ts'
 import type { VaultDeliveryVerifierProjector } from './delivery-ingest.ts'
 import { verifyVaultEvent, type VaultEventVerifier } from './events.ts'
@@ -51,7 +52,12 @@ export class VaultDeliveryProjector implements VaultDeliveryVerifierProjector {
           key = await resolver.resolveSegmentKey(pack.identityId, object.segmentId)
           keys.set(object.segmentId, key)
         }
-        records.push({ event, plaintext: await decryptVaultObject(key, object) })
+        const plaintext = await decryptVaultObject(key, object)
+        if (event.kind === 'credential.openpgp.set') {
+          assertOpenPgpCredentialRecord(event, object, plaintext)
+        } else {
+          records.push({ event, plaintext })
+        }
       }
       const base = await this.options.currentSnapshot()
       const next = reduceLocalJmapProjection(pack.identityId, base, records)

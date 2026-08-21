@@ -87,6 +87,17 @@ export function openPgpCredentialAad(identityId: IdentityId, segmentId: SegmentI
   return canonicalBytes({ label: 'biset/vault/credential/openpgp-private/aad/v1', identityId, segmentId, fingerprint: normalizeFingerprint(fingerprint) })
 }
 
+/** Confirms a decrypted credential belongs to its signed vault event/object. */
+export function assertOpenPgpCredentialRecord(event: VaultEventV1, object: VaultObjectV1, plaintext: Uint8Array): OpenPgpPrivateCredentialV1 {
+  if (event.kind !== 'credential.openpgp.set' || event.objectRefs.length !== 1 || event.objectRefs[0] !== object.objectId) throw new TypeError('OpenPGP credential event does not reference its object')
+  const credential = decodeOpenPgpPrivateCredential(plaintext)
+  const fingerprint = normalizeFingerprint(credential.fingerprint)
+  if (credential.identityId !== event.identityId || credential.createdAt !== event.createdAt || event.targetIds.length !== 1 || event.targetIds[0] !== `openpgp:${fingerprint}` || !equalBytes(object.aad, openPgpCredentialAad(credential.identityId, object.segmentId, fingerprint))) {
+    throw new TypeError('OpenPGP credential record metadata does not match')
+  }
+  return credential
+}
+
 function assertCredential(value: OpenPgpPrivateCredentialV1): void {
   if (!value.identityId || value.kind !== 'credential.openpgp.private' || value.privateKey.length === 0 || value.privateKey.length > 5 * 1024 * 1024 || Number.isNaN(Date.parse(value.createdAt))) throw new TypeError('OpenPGP credential is invalid')
   normalizeFingerprint(value.fingerprint)
