@@ -54,9 +54,13 @@ export interface VaultObjectV1 {
  */
 export interface SegmentKeyWrapV1 {
   version: 1
+  identityId: IdentityId
+  selfGroupId: string
   segmentId: SegmentId
   sourceEpoch: number
   recipientEpoch: number
+  nonce: Uint8Array
+  aad: Uint8Array
   wrappedSegmentKey: Uint8Array
   grantorDeviceId: DeviceId
   grantedAt: string

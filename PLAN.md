@@ -13,9 +13,9 @@
 - [x] canonical JSON、domain-separated hash、ingress schema validation を実装した。
 - [x] memory-only の bounded `IngressStore` を実装し、TTL、quota、recipient snapshot、一台の authorised ACK、payload 削除をテストした。
 - [x] core を `identity`（anchor）、`mediation`、`adapters` に概念分離し、初期 deployment は一つの `biset-core` binary に統合した。
-- [-] IndexedDB の local vault schema と atomic ingress commit は存在するが、crypto / manifest / ingest workflow は未実装。
+- [-] IndexedDB の local vault schema、atomic ingress commit、object crypto、flat manifest は存在するが、ingest workflow と durable recovery は未実装。
 - [ ] production 用の mediator persistence / MLS device authorizer / HTTP binding はまだ存在しない。
-- [ ] Local JMAP Gateway、MLS VEK/SegmentKey、DIDComm/Mail adapter は未実装である。
+- [ ] Local JMAP Gateway、MLS VEK 導出、DIDComm/Mail adapter は未実装である。SegmentKey の object encryption と、VEK を入力に取る wrap primitive は実装済みである。
 
 **次に着手する工程:** §2.3 の vault delivery protocol と、§3 の durable local vault の基盤。`MemoryIngressStore` を HTTP に公開する前に、device authorization と永続化の境界を設計・実装する。
 
@@ -101,7 +101,7 @@
 ### 3.2 Event / object / manifest
 
 - [-] immutable `VaultEventV1` の ID、署名対象、actor sequence を実装する。signer interface と canonical event ID は実装済み、MLS/device signer 接続は未実装。
-- [-] AES-GCM による encrypted `VaultObjectV1` を実装した。chunked attachment object と VEK/SegmentKey wrap は未実装。
+- [-] AES-GCM による encrypted `VaultObjectV1` と SegmentKey/VEK wrap primitive を実装した。chunked attachment object と MLS exporter 接続は未実装。
 - [-] event signature、parent reference、duplicate event、replay の validation を実装する。署名 verify の interface は実装済み、store-level validation は未実装。
 - [ ] edit / tombstone / read / mailbox / reaction の競合規則を kind ごとに固定する。
 - [x] manifest root と event/object set の diff を実装する。階層 Merkle proof と durable checkpoint は未実装。
@@ -130,8 +130,8 @@
 
 ### 4.2 SegmentKey lifecycle
 
-- [ ] random SegmentKey で payload を一度だけ AEAD encrypt する。
-- [ ] current VEK で `SegmentKeyWrapV1` を作る。
+- [x] random SegmentKey で payload を一度だけ AEAD encrypt する。
+- [-] VEK を入力に取る署名付き `SegmentKeyWrapV1` の AEAD wrap/unwrap を実装した。current VEK の導出と membership check は MLS integration 待ちである。
 - [ ] MLS commit durable acceptance 後に active segment を seal する。
 - [ ] Add/Remove/Update/rekey 後に旧 SegmentKey へ新 object を追記しない。
 - [ ] old ciphertext を mutation せず、新 epoch 向け wrap を作る restore grant を実装する。

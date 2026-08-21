@@ -232,9 +232,13 @@ interface VaultObjectV1 {
 
 interface SegmentKeyWrapV1 {
   version: 1;
+  identityId: IdentityId;
+  selfGroupId: string;
   segmentId: SegmentId;
   sourceEpoch: number;
   recipientEpoch: number;
+  nonce: Uint8Array;
+  aad: Uint8Array;
   wrappedSegmentKey: Uint8Array;
   grantorDeviceId: DeviceId;
   grantedAt: string;
@@ -243,6 +247,8 @@ interface SegmentKeyWrapV1 {
 ```
 
 この方式により、過去 object を新端末へ与えるときに payload を再暗号化・再 upload せず、current VEK で包み直した小さい `SegmentKeyWrapV1` だけを渡せる。
+
+現在 `src/vault/crypto.ts` には、この下位プリミティブを実装している。caller が 32-byte VEK を渡すと、`identityId` / self group / segment / source epoch / recipient epoch / grantor device を canonical AAD に束縛して AES-GCM wrap し、その全体に grantor の署名を付ける。unwrap は metadata と AAD の一致、署名、AEAD tag のすべてを確認する。**ここで渡す VEK が MLS exporter 由来であり、grantor が current member であることの確認はまだ未接続**で、§12 M0/M2 の責務である。
 
 ### 4.4 membership 変更時の必須規則
 
