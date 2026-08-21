@@ -275,5 +275,6 @@
 | 2026-08-21 | `4cff26d` | shared vault delivery で OpenPGP credential を検証・保存し、JMAP projection から分離 |
 | 2026-08-21 | `e67981c` | OpenPGP credential の local atomic commit と shared delivery outbox sink を追加 |
 | 2026-08-21 | `a135e8f` | endpoint-only OpenPGP 鍵生成と vault credential fingerprint / packet 検証を追加 |
+| 2026-08-22 | `411c521` | verified OpenPGP credential から public certificate のみを DID / WKD / Autocrypt 向けに取り出す境界を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
