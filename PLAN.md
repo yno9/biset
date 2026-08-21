@@ -269,5 +269,6 @@
 | 2026-08-21 | `1457a73` | first-party adapter 向け SQLite ingress と offer 時の payload hash 検証を追加 |
 | 2026-08-21 | `709ffe5` | adapter から recipient snapshot を受け取らず、core が accepted self-group roster から ingress 宛先を凍結 |
 | 2026-08-21 | `647c54f` | signed ingress pull / durable ACK の narrow HTTP API と browser transport を追加。external offer は adapter 内部に維持 |
+| 2026-08-21 | `d454d9d` | external ingress の verify/project → atomic local vault commit → ACK outbox 共通境界を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
