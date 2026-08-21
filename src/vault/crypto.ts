@@ -1,5 +1,5 @@
 import { bytesToBase64url, canonicalBytes, equalBytes } from '../protocol/canonical.ts'
-import type { DeviceId, IdentityId, SegmentId } from '../protocol/ids.ts'
+import { assertMlsEpoch, type DeviceId, type IdentityId, type MlsEpoch, type SegmentId } from '../protocol/ids.ts'
 import type { SegmentKeyWrapV1 } from '../protocol/vault.ts'
 
 const KEY_BYTES = 32
@@ -9,8 +9,8 @@ export interface SegmentKeyWrapDraft {
   identityId: IdentityId
   selfGroupId: string
   segmentId: SegmentId
-  sourceEpoch: number
-  recipientEpoch: number
+  sourceEpoch: MlsEpoch
+  recipientEpoch: MlsEpoch
   grantorDeviceId: DeviceId
   grantedAt: string
 }
@@ -109,9 +109,8 @@ function assertDraft(draft: SegmentKeyWrapDraft): void {
   if (!draft.identityId || !draft.selfGroupId || !draft.segmentId || !draft.grantorDeviceId) {
     throw new TypeError('SegmentKeyWrap draft has empty required fields')
   }
-  if (!Number.isSafeInteger(draft.sourceEpoch) || draft.sourceEpoch < 0 || !Number.isSafeInteger(draft.recipientEpoch) || draft.recipientEpoch < 0) {
-    throw new TypeError('SegmentKeyWrap epochs must be non-negative safe integers')
-  }
+  assertMlsEpoch(draft.sourceEpoch)
+  assertMlsEpoch(draft.recipientEpoch)
   if (Number.isNaN(Date.parse(draft.grantedAt))) throw new TypeError('grantedAt must be an ISO date string')
 }
 

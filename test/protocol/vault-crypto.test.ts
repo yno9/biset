@@ -18,8 +18,8 @@ const draft = {
   identityId: 'did:web:alice.example',
   selfGroupId: 'self-group-alice',
   segmentId: 'segment-2026-08',
-  sourceEpoch: 12,
-  recipientEpoch: 13,
+  sourceEpoch: '12',
+  recipientEpoch: '13',
   grantorDeviceId: 'device-a',
   grantedAt: '2026-08-21T00:00:00.000Z',
 }
@@ -38,7 +38,7 @@ describe('SegmentKey wraps', () => {
 
   test('rejects a signed wrap when its protected metadata or signature changes', async () => {
     const wrap = await createSegmentKeyWrap(createSegmentKey(), createSegmentKey(), draft, signer)
-    await expect(unwrapSegmentKey(createSegmentKey(), { ...wrap, recipientEpoch: 14 }, signer)).rejects.toThrow('AAD does not match')
+    await expect(unwrapSegmentKey(createSegmentKey(), { ...wrap, recipientEpoch: '14' }, signer)).rejects.toThrow('AAD does not match')
 
     const changedSignature = wrap.signature.slice()
     changedSignature[0] ^= 0xff

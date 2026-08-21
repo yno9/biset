@@ -3,6 +3,7 @@ import type {
   DeviceId,
   DeliverySeq,
   IdentityId,
+  MlsEpoch,
   SegmentId,
   VaultEventId,
   VaultObjectId,
@@ -57,8 +58,8 @@ export interface SegmentKeyWrapV1 {
   identityId: IdentityId
   selfGroupId: string
   segmentId: SegmentId
-  sourceEpoch: number
-  recipientEpoch: number
+  sourceEpoch: MlsEpoch
+  recipientEpoch: MlsEpoch
   nonce: Uint8Array
   aad: Uint8Array
   wrappedSegmentKey: Uint8Array

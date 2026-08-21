@@ -235,8 +235,8 @@ interface SegmentKeyWrapV1 {
   identityId: IdentityId;
   selfGroupId: string;
   segmentId: SegmentId;
-  sourceEpoch: number;
-  recipientEpoch: number;
+  sourceEpoch: MlsEpoch; // decimal uint64 string
+  recipientEpoch: MlsEpoch; // decimal uint64 string
   nonce: Uint8Array;
   aad: Uint8Array;
   wrappedSegmentKey: Uint8Array;
@@ -949,7 +949,8 @@ core が外部に公開する API には、vault history query を追加しな�
 
 ### M0. VEK 導出 API
 
-- `src/mls/group.ts` の exporter を包む `deriveVaultEpochKey(groupId, epoch)` を作る。
+- `src/mls/vault-epoch.ts` に fixed label/context/32-byte output の `deriveVaultEpochKey(group)` boundary を実装済み。`group` は current self-group ID、decimal uint64 epoch、MLS `exportSecret` だけを渡す。
+- 次に `src/mls/group.ts` の actual exporter をこの boundary に接続する。vault 側には MLS state / exporter secret を渡さない。
 - label/context/length を caller が任意指定できないようにする。
 - MLS state 変更と vault segment seal の transaction/outbox 境界を定義する。
 

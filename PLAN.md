@@ -125,7 +125,7 @@
 
 - [ ] 現行 MLS implementation を `src.bak/` から参照し、新 core に必要な最小 self-group API を抽出する。
 - [ ] device add/remove/current trusted roster projection を実装する。
-- [ ] `deriveVaultEpochKey(groupId, epoch)` を MLS exporter に固定 label/context で結び付ける。
+- [-] fixed label/context/32-byte output の `deriveVaultEpochKey(group)` boundary を実装した。実際の MLS group adapter への接続は未実装。
 - [ ] VEK を永続化しないことを code review / test で保証する。
 
 ### 4.2 SegmentKey lifecycle
