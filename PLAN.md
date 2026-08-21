@@ -130,7 +130,7 @@
 ### 4.1 MLS integration boundary
 
 - [-] new core 用の最小 `MlsSelfGroupProvider` / fixed VEK exporter boundary を抽出した。現行 MLS group implementation の移植は未実装。
-- [-] accepted MLS epoch だけで更新する public trusted-device roster projection と、それを使う delivery / restore authorizer adapter を実装した。actual MLS commit / DID publishing / DID signature verifier との接続は未実装。
+- [-] accepted MLS epoch だけで更新する public trusted-device roster projection と、それを使う delivery / restore authorizer adapter を実装した。SQLite persistence も追加。actual MLS commit / DID publishing / DID signature verifier との接続は未実装。
 - [-] fixed label/context/32-byte output の `deriveVaultEpochKey(group)` boundary を実装した。実際の MLS group adapter への接続は未実装。
 - [ ] VEK を永続化しないことを code review / test で保証する。
 
@@ -254,5 +254,6 @@
 | 2026-08-21 | `d944cbd` | bounded vault delivery の append / pull / ACK HTTP adapter と browser transport を追加 |
 | 2026-08-21 | `8fb0bfa` | authorizer 注入なしでは relay を公開しない安全な core application composition を追加 |
 | 2026-08-21 | `27af8c3` | bounded shared vault delivery を crash-safe SQLite へ永続化し、再起動後 pull を検証 |
+| 2026-08-21 | `7866f95` | accepted MLS device roster の public projection を SQLite 永続化 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

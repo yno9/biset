@@ -39,14 +39,14 @@ export class MemoryTrustedDeviceRoster implements TrustedDeviceRoster {
   private readonly projections = new Map<IdentityId, AcceptedSelfGroupProjectionV1>()
 
   async installAcceptedProjection(projection: AcceptedSelfGroupProjectionV1): Promise<'installed' | 'already-current'> {
-    assertProjection(projection)
+    assertAcceptedSelfGroupProjection(projection)
     const existing = this.projections.get(projection.identityId)
     if (existing) {
       if (existing.selfGroupId !== projection.selfGroupId) throw new TypeError('self group ID cannot change for an identity')
-      const ordering = compareEpoch(projection.epoch, existing.epoch)
+      const ordering = compareMlsEpoch(projection.epoch, existing.epoch)
       if (ordering < 0) throw new TypeError('cannot install a stale MLS projection')
       if (ordering === 0) {
-        if (!sameProjection(existing, projection)) throw new TypeError('same MLS epoch has conflicting device roster')
+        if (!sameAcceptedSelfGroupProjection(existing, projection)) throw new TypeError('same MLS epoch has conflicting device roster')
         return 'already-current'
       }
     }
@@ -72,7 +72,7 @@ export class MemoryTrustedDeviceRoster implements TrustedDeviceRoster {
   }
 }
 
-function assertProjection(value: AcceptedSelfGroupProjectionV1): void {
+export function assertAcceptedSelfGroupProjection(value: AcceptedSelfGroupProjectionV1): void {
   if (value.version !== 1 || !value.identityId || !value.selfGroupId) throw new TypeError('self-group projection has empty required fields')
   assertMlsEpoch(value.epoch)
   if (Number.isNaN(Date.parse(value.acceptedAt))) throw new TypeError('projection acceptedAt must be an ISO date string')
@@ -86,13 +86,13 @@ function assertProjection(value: AcceptedSelfGroupProjectionV1): void {
   }
 }
 
-function compareEpoch(left: MlsEpoch, right: MlsEpoch): number {
+export function compareMlsEpoch(left: MlsEpoch, right: MlsEpoch): number {
   const a = BigInt(left)
   const b = BigInt(right)
   return a < b ? -1 : a > b ? 1 : 0
 }
 
-function sameProjection(left: AcceptedSelfGroupProjectionV1, right: AcceptedSelfGroupProjectionV1): boolean {
+export function sameAcceptedSelfGroupProjection(left: AcceptedSelfGroupProjectionV1, right: AcceptedSelfGroupProjectionV1): boolean {
   return left.identityId === right.identityId
     && left.selfGroupId === right.selfGroupId
     && left.epoch === right.epoch
