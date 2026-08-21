@@ -298,6 +298,8 @@ Forward Secrecy を捨てない。新 leaf は過去 epoch の exporter secret �
 
 OpenPGP 秘密鍵はメール adapter や core の credential DB ではなく、endpoint vault の `credential.openpgp.private` object として扱う。object は通常の vault object と同じく SegmentKey で暗号化し、同一 identity の正規端末だけが current-epoch `SegmentKeyWrapV1` grant を受けて restore できる。新端末と TTL 外端末は、peer restore で raw mail、通常の vault history、OpenPGP credential を同じ approval の下で受け取る。
 
+`src/vault/openpgp-credential.ts` は credential の canonical payload と encrypted vault object / signed `credential.openpgp.set` event を定義する。OpenPGP v4/v6 fingerprint、identity、segment を object AAD と event target に束縛し、非 canonical な secret-key payload は decode 前に拒否する。これは鍵 packet の妥当性検証や OpenPGP library との接続をまだ含まない。
+
 全端末喪失に備える既定の server backup は作らない。必要な利用者だけが、client が作る暗号化 recovery archive を自分で export し、NAS・外部媒体・印刷した recovery key 等で管理する。archive は少なくとも vault snapshot と OpenPGP credential を一体で含む。recovery key は MLS exporter secret、端末鍵、Biset core の credential と混用せず、client が生成・保持する独立した復旧要因とする。archive なしで全端末を失えば、history と OpenPGP 秘密鍵の双方を失う。
 
 OpenPGP は長期 identity key であり、MLS Remove より弱い性質を持つ。端末が一度 credential を得た後は、その端末から鍵を暗号的に回収できない。端末の紛失・侵害で Remove を行う際には、MLS Remove に加えて OpenPGP key rotation / revocation を実施し、新公開鍵を Autocrypt/WKD 等の discovery に反映する。旧鍵は過去 mail の復号用 credential として正規 vault/archive に残せるが、相手が stale な旧公開鍵へ送った将来 mail を、removed device が読めないことまでは保証できない。この限界と鍵変更の UX は product に明示する。

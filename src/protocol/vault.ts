@@ -21,6 +21,7 @@ export type VaultEventKind =
   | 'settings.set'
   | 'transport.result'
   | 'contact-key.set'
+  | 'credential.openpgp.set'
 
 export interface VaultEventV1 {
   version: 1
