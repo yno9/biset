@@ -64,7 +64,12 @@ export interface IngressVaultCommit {
 
 export type IngressCommitResult = 'committed' | 'already-committed'
 
-export class IndexedDbVaultStore {
+/** Narrow read boundary used by local projections without exposing IDB internals. */
+export interface VaultProjectionReader {
+  readProjection(identityId: IdentityId): Promise<unknown | undefined>
+}
+
+export class IndexedDbVaultStore implements VaultProjectionReader {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -109,6 +114,17 @@ export class IndexedDbVaultStore {
       throw error
     }
   }
+
+  async readProjection(identityId: IdentityId): Promise<unknown | undefined> {
+    if (!identityId) throw new TypeError('projection identity is required')
+    const transaction = this.database.transaction(STORES.projection, 'readonly')
+    const completed = transactionDone(transaction)
+    const record = await requestValue<{ identityId: IdentityId; value: unknown } | undefined>(
+      transaction.objectStore(STORES.projection).get(identityId),
+    )
+    await completed
+    return record?.value
+  }
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -146,6 +162,13 @@ function transactionDone(transaction: IDBTransaction): Promise<void> {
     transaction.oncomplete = () => resolve()
     transaction.onabort = () => reject(transaction.error ?? new Error('vault transaction aborted'))
     transaction.onerror = () => undefined
+  })
+}
+
+function requestValue<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error ?? new Error('IndexedDB request failed'))
   })
 }
 

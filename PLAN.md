@@ -90,7 +90,7 @@
 
 ### 3.1 Local persistence abstraction
 
-- [-] `src/vault/store.ts` に browser persistence boundary を定義する。現在は `IndexedDbVaultStore` の concrete implementation のみで、testable abstraction は未抽出。
+- [-] `IndexedDbVaultStore` から projection だけを読む `VaultProjectionReader` boundary を抽出し、Local JMAP adapter に接続した。event/object write と migration の testable abstraction は未抽出。
 - [x] IndexedDB version 1 schema と store 作成を実装する。
 - [x] store: `vault_events`、`vault_objects`、`vault_chunks`、`vault_segments`、`vault_key_wraps` を作る。
 - [x] store: `vault_manifests`、`vault_projection`、`vault_jmap_state`、`vault_outbox`、`vault_delivery_state`、`vault_restore_state` を作る。
@@ -163,11 +163,11 @@
 ### 5.2 Local JMAP Gateway
 
 - [x] `Session` と read-only local account capability を実装する。
-- [-] memory read model 上の `Mailbox/get`、`Email/get`、`Email/query` read path を実装した。IndexedDB vault projection adapter は未実装。
+- [-] memory read model と IndexedDB vault projection adapter 上の `Mailbox/get`、`Email/get`、`Email/query` read path を実装した。projection rebuild は未実装。
 - [ ] `Email/changes`、`Mailbox/changes`、query state を実装する。
 - [ ] `Email/set`、`Mailbox/set`、`Email/import` を immutable vault event へ変換する。
 - [ ] `EmailSubmission/set` を outbound intent に変換する。
-- [-] local read model 経由の blob download / range read を実装した。encrypted vault object/chunk adapter は未実装。
+- [-] local read model 経由の blob download / range read を実装した。encrypted vault object/chunk reader は injectable boundary のみで、実装は未完了。
 - [ ] same UI test を Local/Remote account の両方で実行する。
 
 **完了条件:** Biset account は offline でも JMAP UI で過去 vault を一覧・検索・閲覧できる。

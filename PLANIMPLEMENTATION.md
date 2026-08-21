@@ -588,6 +588,8 @@ UI と email/mailbox/submission helper は `AccountTransport` だけを見る。
 
 `src/local-jmap/gateway.ts` は同じ `AccountTransport` の local 実装である。read model が返す local vault projection から、read-only `Session`、`Mailbox/get`、`Email/get`、`Email/query`、local blob range download を返す。現段階の `MemoryLocalJmapReadModel` は protocol test 用であり、次に IndexedDB の vault projection / encrypted object reader を `LocalJmapReadModel` として実装する。したがって UI は transport の違いを意識せず、remote account と local-vault account の双方へ同じ JMAP call を送れる。
 
+`src/local-jmap/indexeddb.ts` は `VaultProjectionReader` と `LocalVaultBlobReader` を受ける `IndexedDbLocalJmapReadModel` を実装した。IndexedDB store は versioned `LocalJmapProjectionV1` を返し、JMAP layer は identity/version/state を検証して snapshot に変換する。blob reader は別注入なので、JMAP gateway も IndexedDB projection reader も SegmentKey / VEK に依存しない。次に vault object/chunk decryptor が `LocalVaultBlobReader` を実装する。
+
 ## 8. 実装モジュールと現状コードの対応
 
 ### 8.1 新しい論理モジュール

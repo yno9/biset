@@ -33,6 +33,12 @@ export interface LocalJmapSnapshot {
   emails: LocalJmapEmail[]
 }
 
+/** The versioned shape persisted as a local vault's JMAP projection. */
+export interface LocalJmapProjectionV1 extends LocalJmapSnapshot {
+  version: 1
+  identityId: string
+}
+
 /** Read-model boundary: IndexedDB vault projection replaces this memory store. */
 export interface LocalJmapReadModel {
   snapshot(): Promise<LocalJmapSnapshot>
@@ -132,6 +138,31 @@ export class MemoryLocalJmapReadModel implements LocalJmapReadModel {
       throw new RangeError('invalid local JMAP blob range')
     }
     return bytes.slice(start, end)
+  }
+}
+
+export function localJmapSnapshotFromProjection(value: unknown, identityId: string): LocalJmapSnapshot {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('local JMAP projection must be an object')
+  const projection = value as Partial<LocalJmapProjectionV1>
+  if (projection.version !== 1 || projection.identityId !== identityId || typeof projection.state !== 'string') {
+    throw new TypeError('local JMAP projection has an invalid version, identity, or state')
+  }
+  if (!Array.isArray(projection.mailboxes) || !Array.isArray(projection.emails)) throw new TypeError('local JMAP projection lacks mailbox or email lists')
+  for (const mailbox of projection.mailboxes) {
+    if (!mailbox || typeof mailbox.id !== 'string' || !mailbox.id || typeof mailbox.name !== 'string') throw new TypeError('local JMAP projection has an invalid mailbox')
+  }
+  for (const email of projection.emails) {
+    if (!email || typeof email.id !== 'string' || !email.id || typeof email.threadId !== 'string' || !email.threadId
+      || !email.mailboxIds || typeof email.mailboxIds !== 'object' || Array.isArray(email.mailboxIds)
+      || !email.keywords || typeof email.keywords !== 'object' || Array.isArray(email.keywords)
+      || typeof email.receivedAt !== 'string' || Number.isNaN(Date.parse(email.receivedAt))) {
+      throw new TypeError('local JMAP projection has an invalid email')
+    }
+  }
+  return {
+    state: projection.state,
+    mailboxes: projection.mailboxes.map(copyMailbox),
+    emails: projection.emails.map(copyEmail),
   }
 }
 
