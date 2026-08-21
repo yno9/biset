@@ -11,9 +11,10 @@ import type {
   RestoreRequiredReason,
   VaultDeliveryAckV1,
   VaultDeliveryAppendV1,
+  VaultDeliveryPullV1,
   VaultDeliveryItemV1,
 } from '../../protocol/vault.ts'
-import { assertVaultDeliveryAck, assertVaultDeliveryAppend, ProtocolValidationError } from '../../protocol/validate.ts'
+import { assertVaultDeliveryAck, assertVaultDeliveryAppend, assertVaultDeliveryPull, ProtocolValidationError } from '../../protocol/validate.ts'
 
 export interface VaultDeliveryStoreLimits {
   maxPayloadBytes: number
@@ -33,6 +34,7 @@ export interface VaultDeliveryAuthorizer {
   /** The core, rather than an untrusted append caller, freezes this snapshot. */
   recipientsAtAppend(identityId: IdentityId): Promise<DeviceId[]>
   verifyAppend(append: VaultDeliveryAppendV1): Promise<boolean>
+  verifyPull(pull: VaultDeliveryPullV1): Promise<boolean>
   verifyAck(ack: VaultDeliveryAckV1, item: VaultDeliveryItemV1): Promise<boolean>
 }
 
@@ -46,7 +48,7 @@ export interface VaultDeliveryStatus {
 
 export interface VaultDeliveryStore {
   append(input: VaultDeliveryAppendV1, now?: Date): Promise<VaultDeliveryItemV1>
-  pull(identityId: IdentityId, deviceId: DeviceId, after: DeliverySeq, now?: Date): Promise<DeliveryPullResult>
+  pull(input: VaultDeliveryPullV1, now?: Date): Promise<DeliveryPullResult>
   acknowledge(ack: VaultDeliveryAckV1, now?: Date): Promise<void>
   expire(now?: Date): Promise<void>
   status(identityId: IdentityId): Promise<VaultDeliveryStatus>
@@ -142,13 +144,11 @@ export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
     return copyItem(item)
   }
 
-  async pull(identityId: IdentityId, deviceId: DeviceId, after: DeliverySeq, now = new Date()): Promise<DeliveryPullResult> {
-    try {
-      assertDeliverySeq(after)
-    } catch {
-      throw new ProtocolValidationError('after must be an unsigned 64-bit decimal string')
-    }
+  async pull(input: VaultDeliveryPullV1, now = new Date()): Promise<DeliveryPullResult> {
+    assertVaultDeliveryPull(input)
+    if (!(await this.authorizer.verifyPull(input))) throw new ProtocolValidationError('delivery pull is not authorised')
     await this.expire(now)
+    const { identityId, recipientDeviceId: deviceId, after } = input
     const floor = await this.authorizer.deliveryFloor(identityId, deviceId)
     if (!floor) throw new ProtocolValidationError('device is not trusted for this identity')
 

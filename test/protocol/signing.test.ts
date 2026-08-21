@@ -6,6 +6,7 @@ import {
   restoreOfferSigningBytes,
   restoreRequestSigningBytes,
   vaultDeliveryAppendSigningBytes,
+  vaultDeliveryPullSigningBytes,
   vaultDeliveryAckSigningBytes,
 } from '../../src/protocol/signing.ts'
 
@@ -33,6 +34,12 @@ describe('device-control signing bytes', () => {
     expect(equalBytes(vaultDeliveryAppendSigningBytes(append), vaultDeliveryAppendSigningBytes({ ...append, payload: new Uint8Array([9]) }))).toBe(true)
     expect(equalBytes(vaultDeliveryAppendSigningBytes(append), vaultDeliveryAppendSigningBytes({ ...append, appendId: 'event-2' }))).toBe(false)
     expect(equalBytes(vaultDeliveryAppendSigningBytes(append), vaultDeliveryAppendSigningBytes({ ...append, senderDeviceId: 'device-b' }))).toBe(false)
+  })
+
+  test('binds delivery pulls to the recipient device and cursor', () => {
+    const pull = { version: 1 as const, identityId: 'did:web:alice.example', recipientDeviceId: 'device-a', after: '7', requestedAt: '2026-08-21T00:00:00.000Z' }
+    expect(equalBytes(vaultDeliveryPullSigningBytes(pull), vaultDeliveryPullSigningBytes({ ...pull, after: '8' }))).toBe(false)
+    expect(equalBytes(vaultDeliveryPullSigningBytes(pull), vaultDeliveryPullSigningBytes({ ...pull, recipientDeviceId: 'device-b' }))).toBe(false)
   })
 
   test('separates restore request, offer, and cancel messages by type and all expiry fields', () => {

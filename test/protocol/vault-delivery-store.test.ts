@@ -14,8 +14,13 @@ function makeAuthorizer(floors: Record<string, string> = { 'device-a': '1', 'dev
     deliveryFloor: async (_identityId, deviceId) => floors[deviceId],
     recipientsAtAppend: async () => Object.entries(floors).filter(([, floor]) => floor === '1').map(([deviceId]) => deviceId),
     verifyAppend: async (input) => input.senderDeviceId === 'device-a' && input.signature.length > 0,
+    verifyPull: async (input) => input.recipientDeviceId !== 'device-removed' && input.signature.length > 0,
     verifyAck: async () => true,
   }
+}
+
+function pull(deviceId: string, after = '0') {
+  return { version: 1 as const, identityId, recipientDeviceId: deviceId, after, requestedAt: '2026-08-21T01:00:00.000Z', signature: new Uint8Array([9]) }
 }
 
 function append(overrides: Partial<VaultDeliveryAppendV1> = {}): VaultDeliveryAppendV1 {
@@ -51,7 +56,7 @@ describe('MemoryVaultDeliveryStore', () => {
     const store = new MemoryVaultDeliveryStore(makeAuthorizer())
     const item = await store.append(append(), new Date('2026-08-21T00:00:00.000Z'))
     expect(item.seq).toBe('1')
-    expect((await store.pull(identityId, 'device-a', '0', new Date('2026-08-21T01:00:00.000Z'))).kind).toBe('items')
+    expect((await store.pull(pull('device-a'), new Date('2026-08-21T01:00:00.000Z'))).kind).toBe('items')
 
     await store.acknowledge(ack('device-a'), new Date('2026-08-21T01:00:00.000Z'))
     expect(await store.status(identityId)).toMatchObject({ pendingItems: 1, payloadBytes: 3, retainedFrom: '1' })
@@ -59,14 +64,14 @@ describe('MemoryVaultDeliveryStore', () => {
     await store.acknowledge(ack('device-b'), new Date('2026-08-21T01:00:00.000Z'))
     expect(await store.status(identityId)).toMatchObject({ pendingItems: 0, payloadBytes: 0, retainedFrom: '2' })
     await expect(store.acknowledge(ack('device-b'), new Date('2026-08-21T01:01:00.000Z'))).resolves.toBeUndefined()
-    expect(await store.pull(identityId, 'device-a', '1', new Date('2026-08-21T01:00:00.000Z')))
+    expect(await store.pull(pull('device-a', '1'), new Date('2026-08-21T01:00:00.000Z')))
       .toMatchObject({ kind: 'items', items: [], nextCursor: '1' })
   })
 
   test('returns restoreRequired instead of an empty success after TTL expiry', async () => {
     const store = new MemoryVaultDeliveryStore(makeAuthorizer())
     await store.append(append(), new Date('2026-08-21T00:00:00.000Z'))
-    expect(await store.pull(identityId, 'device-b', '0', new Date('2026-08-23T00:00:00.000Z')))
+    expect(await store.pull(pull('device-b'), new Date('2026-08-23T00:00:00.000Z')))
       .toEqual({
         kind: 'restoreRequired',
         requestedCursor: '0',
@@ -79,14 +84,14 @@ describe('MemoryVaultDeliveryStore', () => {
   test('makes a later-joined device restore prior history rather than adding it to an old snapshot', async () => {
     const store = new MemoryVaultDeliveryStore(makeAuthorizer({ 'device-a': '1', 'device-b': '1', 'device-new': '2' }))
     await store.append(append(), new Date('2026-08-21T00:00:00.000Z'))
-    expect(await store.pull(identityId, 'device-new', '0', new Date('2026-08-21T01:00:00.000Z')))
+    expect(await store.pull(pull('device-new'), new Date('2026-08-21T01:00:00.000Z')))
       .toMatchObject({ kind: 'restoreRequired', reason: 'new-device', retainedFrom: '1', latestSeq: '1' })
   })
 
   test('takes the append-time recipient snapshot from the core authorizer, never the append caller', async () => {
     const store = new MemoryVaultDeliveryStore(makeAuthorizer({ 'device-a': '1', 'device-b': '1', 'device-new': '2' }))
     await store.append(append(), new Date('2026-08-21T00:00:00.000Z'))
-    expect(await store.pull(identityId, 'device-b', '0', new Date('2026-08-21T01:00:00.000Z'))).toMatchObject({ kind: 'items', items: [{ seq: '1' }] })
+    expect(await store.pull(pull('device-b'), new Date('2026-08-21T01:00:00.000Z'))).toMatchObject({ kind: 'items', items: [{ seq: '1' }] })
     await expect(store.append({ ...append(), recipientsAtAppend: ['device-a'] } as VaultDeliveryAppendV1)).rejects.toThrow('unknown field recipientsAtAppend')
     await expect(store.append({ ...append(), expiresAt: '2099-01-01T00:00:00.000Z' } as VaultDeliveryAppendV1)).rejects.toThrow('unknown field expiresAt')
   })
@@ -103,6 +108,12 @@ describe('MemoryVaultDeliveryStore', () => {
   test('rejects an unauthorised sender even if its append ID and payload hash are valid', async () => {
     const store = new MemoryVaultDeliveryStore(makeAuthorizer())
     await expect(store.append({ ...append(), senderDeviceId: 'device-removed' })).rejects.toThrow('not authorised')
+  })
+
+  test('rejects a pull whose signed device is no longer authorised', async () => {
+    const store = new MemoryVaultDeliveryStore(makeAuthorizer())
+    await store.append(append())
+    await expect(store.pull(pull('device-removed'))).rejects.toThrow('not authorised')
   })
 
   test('rejects an ACK with a different payload hash', async () => {

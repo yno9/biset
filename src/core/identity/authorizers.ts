@@ -2,7 +2,7 @@ import type { RestoreControlAuthorizer } from '../mediation/restore-control-stor
 import type { IngressAckAuthorizer } from '../mediation/ingress-store.ts'
 import type { VaultDeliveryAuthorizer } from '../mediation/vault-delivery-store.ts'
 import type { IngressAckV1, IngressEnvelopeV1 } from '../../protocol/ingress.ts'
-import type { RestoreCancelV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryItemV1 } from '../../protocol/vault.ts'
+import type { RestoreCancelV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryItemV1, VaultDeliveryPullV1 } from '../../protocol/vault.ts'
 import type { DeviceId, IdentityId } from '../../protocol/ids.ts'
 import type { TrustedDeviceRoster, TrustedDeviceV1 } from './device-roster.ts'
 
@@ -10,6 +10,7 @@ import type { TrustedDeviceRoster, TrustedDeviceV1 } from './device-roster.ts'
 export interface DeviceControlSignatureVerifier {
   verifyIngressAck(ack: IngressAckV1, envelope: IngressEnvelopeV1, device: TrustedDeviceV1): Promise<boolean>
   verifyVaultDeliveryAppend(append: VaultDeliveryAppendV1, device: TrustedDeviceV1): Promise<boolean>
+  verifyVaultDeliveryPull(pull: VaultDeliveryPullV1, device: TrustedDeviceV1): Promise<boolean>
   verifyVaultDeliveryAck(ack: VaultDeliveryAckV1, item: VaultDeliveryItemV1, device: TrustedDeviceV1): Promise<boolean>
   verifyRestoreRequest(request: RestoreRequestV1, device: TrustedDeviceV1): Promise<boolean>
   verifyRestoreOffer(offer: RestoreOfferV1, device: TrustedDeviceV1): Promise<boolean>
@@ -31,7 +32,7 @@ export function rosterBackedIngressAckAuthorizer(
 
 export function rosterBackedVaultDeliveryAuthorizer(
   roster: TrustedDeviceRoster,
-  verifier: Pick<DeviceControlSignatureVerifier, 'verifyVaultDeliveryAppend' | 'verifyVaultDeliveryAck'>,
+  verifier: Pick<DeviceControlSignatureVerifier, 'verifyVaultDeliveryAppend' | 'verifyVaultDeliveryPull' | 'verifyVaultDeliveryAck'>,
 ): VaultDeliveryAuthorizer {
   return {
     deliveryFloor: (identityId, deviceId) => roster.deliveryFloor(identityId, deviceId),
@@ -41,6 +42,10 @@ export function rosterBackedVaultDeliveryAuthorizer(
     async verifyAppend(append) {
       const device = await currentDevice(roster, append.identityId, append.senderDeviceId)
       return device !== undefined && verifier.verifyVaultDeliveryAppend(append, device)
+    },
+    async verifyPull(pull) {
+      const device = await currentDevice(roster, pull.identityId, pull.recipientDeviceId)
+      return device !== undefined && verifier.verifyVaultDeliveryPull(pull, device)
     },
     async verifyAck(ack, item) {
       const device = await currentDevice(roster, ack.identityId, ack.recipientDeviceId)

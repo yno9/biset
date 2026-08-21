@@ -103,6 +103,16 @@ export interface VaultDeliveryAppendV1 {
   signature: Uint8Array
 }
 
+/** Signed request for the next bounded shared-vault delivery range. */
+export interface VaultDeliveryPullV1 {
+  version: 1
+  identityId: IdentityId
+  recipientDeviceId: DeviceId
+  after: DeliverySeq
+  requestedAt: string
+  signature: Uint8Array
+}
+
 export type RestoreRequiredReason =
   | 'ttl-expired'
   | 'retention-quota'

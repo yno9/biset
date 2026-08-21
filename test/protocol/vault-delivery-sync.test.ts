@@ -5,6 +5,7 @@ import type { DeliveryPullResult, VaultDeliveryItemV1 } from '../../src/protocol
 
 const identityId = 'did:web:alice.example'
 const deviceId = 'device-b'
+const signer = { deviceId, async sign() { return new Uint8Array([7]) } }
 
 function item(seq: string): VaultDeliveryItemV1 {
   return { version: 1, identityId, seq, payload: new Uint8Array([Number(seq)]), payloadHash: new Uint8Array([Number(seq)]), createdAt: '2026-08-21T00:00:00.000Z', expiresAt: '2026-08-22T00:00:00.000Z' }
@@ -30,11 +31,11 @@ describe('vault delivery synchronisation', () => {
     const acknowledged: string[] = []
     const ingested: string[] = []
     const output = await synchronizeVaultDelivery(state, {
-      async pull(_identity, _device, after): Promise<DeliveryPullResult> { pulls.push(after); return { kind: 'items', items: [item('2')], nextCursor: '2', retainedFrom: '2', latestSeq: '2' } },
+      async pull(input): Promise<DeliveryPullResult> { pulls.push(input.after); return { kind: 'items', items: [item('2')], nextCursor: '2', retainedFrom: '2', latestSeq: '2' } },
       async acknowledge(value) { acknowledged.push(value.seq) },
     }, {
       async ingest(value) { ingested.push(value.seq); state.cursor = value.seq; state.acks.push(ack(value.seq)) },
-    }, identityId, deviceId)
+    }, signer, identityId, deviceId)
     expect(output).toEqual({ kind: 'synced', ingestedSequences: ['2'] })
     expect(pulls).toEqual(['1'])
     expect(ingested).toEqual(['2'])
@@ -50,7 +51,7 @@ describe('vault delivery synchronisation', () => {
       async acknowledge() { throw new Error('no ACK') },
     }, {
       async ingest() { ingested = true },
-    }, identityId, deviceId)
+    }, signer, identityId, deviceId)
     expect(output).toEqual({ kind: 'restoreRequired', result: { kind: 'restoreRequired', requestedCursor: '1', retainedFrom: '9', latestSeq: '12', reason: 'ttl-expired' } })
     expect(ingested).toBe(false)
   })
@@ -62,7 +63,7 @@ describe('vault delivery synchronisation', () => {
       async acknowledge() { throw new Error('offline') },
     }, {
       async ingest(value) { state.cursor = value.seq; state.acks.push(ack(value.seq)) },
-    }, identityId, deviceId)
+    }, signer, identityId, deviceId)
     expect(output).toEqual({ kind: 'synced', ingestedSequences: ['2'], pendingAckSequence: '2' })
     expect(state.acks[0].attempts).toBe(1)
   })

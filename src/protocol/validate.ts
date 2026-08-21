@@ -6,6 +6,7 @@ import type {
   RestoreRequestV1,
   VaultDeliveryAckV1,
   VaultDeliveryAppendV1,
+  VaultDeliveryPullV1,
 } from './vault.ts'
 
 export class ProtocolValidationError extends Error {
@@ -128,6 +129,21 @@ export function assertVaultDeliveryAck(value: unknown): asserts value is VaultDe
   text(input.recipientDeviceId, 'recipientDeviceId')
   text(input.checkpointId, 'checkpointId')
   time(input.ackedAt, 'ackedAt')
+  bytes(input.signature, 'signature')
+}
+
+export function assertVaultDeliveryPull(value: unknown): asserts value is VaultDeliveryPullV1 {
+  const input = record(value, 'VaultDeliveryPullV1')
+  exactKeys(input, ['version', 'identityId', 'recipientDeviceId', 'after', 'requestedAt', 'signature'], 'VaultDeliveryPullV1')
+  if (input.version !== 1) throw new ProtocolValidationError('VaultDeliveryPullV1.version must be 1')
+  text(input.identityId, 'identityId')
+  text(input.recipientDeviceId, 'recipientDeviceId')
+  try {
+    assertDeliverySeq(input.after)
+  } catch {
+    throw new ProtocolValidationError('after must be an unsigned 64-bit decimal string')
+  }
+  time(input.requestedAt, 'requestedAt')
   bytes(input.signature, 'signature')
 }
 

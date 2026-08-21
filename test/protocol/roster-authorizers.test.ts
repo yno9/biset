@@ -27,6 +27,7 @@ describe('roster-backed mediation authorizers', () => {
     const ingress = rosterBackedIngressAckAuthorizer(value, { async verifyIngressAck() { return true } })
     const delivery = rosterBackedVaultDeliveryAuthorizer(value, {
       async verifyVaultDeliveryAppend(_append, device) { return device.deviceId === 'device-a' },
+      async verifyVaultDeliveryPull(_pull, device) { return device.deviceId === 'device-a' },
       async verifyVaultDeliveryAck() { return true },
     })
     expect(await ingress.isTrustedDevice(identityId, 'device-a')).toBe(true)
@@ -36,6 +37,8 @@ describe('roster-backed mediation authorizers', () => {
     expect(await delivery.recipientsAtAppend(identityId)).toEqual(['device-a'])
     expect(await delivery.verifyAppend({ identityId, senderDeviceId: 'device-a' } as never)).toBe(true)
     expect(await delivery.verifyAppend({ identityId, senderDeviceId: 'device-b' } as never)).toBe(false)
+    expect(await delivery.verifyPull({ identityId, recipientDeviceId: 'device-a' } as never)).toBe(true)
+    expect(await delivery.verifyPull({ identityId, recipientDeviceId: 'device-b' } as never)).toBe(false)
     expect(await delivery.verifyAck({ identityId, recipientDeviceId: 'device-b' } as never, {} as never)).toBe(false)
   })
 

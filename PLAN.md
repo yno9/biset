@@ -118,6 +118,7 @@
 
 - [-] `src/vault/delivery-ingest.ts` と `delivery-projector.ts` に shared vault delivery の hash/pack verify → current MLS wrap / event / object verify → deterministic projection → durable commit → delivery ACK outbox を実装した。raw external ingress は未実装。
 - [x] TTL 内の shared vault delivery は cursor-based pull → ordered ingest → durable ACK outbox flush として同期し、TTL 外は `restoreRequired` を UI 層へ返す。
+- [x] append / pull / ACK はすべて current trusted device の署名を必要とする。HTTP binding はこの型をそのまま使う。
 - [ ] ACK outbox の retry / idempotence を実装する。
 - [ ] crash が ACK 前なら payload を再 pull でき、ACK 後なら local state が必ず存在することを test する。
 - [ ] duplicate ingress ID / payload hash を安全に処理する。
@@ -249,5 +250,6 @@
 | 2026-08-21 | `25042c0` | pull した shared vault delivery を検証・projection・receipt/ACK outbox と一括 commit してから ACK |
 | 2026-08-21 | `bb0a845` | current MLS epoch wrap、event signature、AEAD object を検証して Local JMAP projection を再計算 |
 | 2026-08-21 | `6d96cd5` | cursor-based delivery sync と durable ACK retry、idempotent core ACK を追加 |
+| 2026-08-21 | `faef01d` | signed vault-delivery pull を追加し、device ID のみでは payload を取得できないようにした |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
