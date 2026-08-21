@@ -1,6 +1,6 @@
 import type { SegmentId, IdentityId, MlsEpoch } from '../protocol/ids.ts'
 import type { SegmentKeyWrapReader } from './store.ts'
-import { unwrapSegmentKey, type SegmentKeyWrapSigner } from './crypto.ts'
+import { unwrapSegmentKey, type SegmentKeyWrapVerifier } from './crypto.ts'
 
 export interface CurrentVaultEpoch {
   selfGroupId: string
@@ -22,7 +22,7 @@ export class StoredSegmentKeyResolver {
   constructor(
     private readonly wraps: SegmentKeyWrapReader,
     private readonly epochs: VaultEpochKeyResolver,
-    private readonly signer: SegmentKeyWrapSigner,
+    private readonly signer: SegmentKeyWrapVerifier,
   ) {}
 
   async resolveSegmentKey(identityId: IdentityId, segmentId: SegmentId): Promise<Uint8Array> {

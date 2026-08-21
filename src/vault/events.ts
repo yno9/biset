@@ -19,6 +19,10 @@ export interface VaultEventSigner {
   verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>
 }
 
+export interface VaultEventVerifier {
+  verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>
+}
+
 export function vaultEventSigningBytes(draft: VaultEventDraft): Uint8Array {
   assertDraft(draft)
   return canonicalBytes({
@@ -50,7 +54,7 @@ export async function createVaultEvent(draft: VaultEventDraft, signer: VaultEven
   }
 }
 
-export async function verifyVaultEvent(event: VaultEventV1, signer: VaultEventSigner): Promise<boolean> {
+export async function verifyVaultEvent(event: VaultEventV1, signer: VaultEventVerifier): Promise<boolean> {
   const { id, signature, version, ...draft } = event
   if (version !== 1 || id !== eventId(vaultEventSigningBytes(draft), signature)) return false
   return signer.verify(event.actorDeviceId, vaultEventSigningBytes(draft), signature)

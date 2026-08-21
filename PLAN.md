@@ -116,7 +116,7 @@
 
 ### 3.3 Ingress-to-vault transaction
 
-- [-] `src/vault/delivery-ingest.ts` に shared vault delivery の hash/pack verify → injected verifier/projector → durable commit → delivery ACK outbox を実装した。raw external ingress は未実装。
+- [-] `src/vault/delivery-ingest.ts` と `delivery-projector.ts` に shared vault delivery の hash/pack verify → current MLS wrap / event / object verify → deterministic projection → durable commit → delivery ACK outbox を実装した。raw external ingress は未実装。
 - [ ] ACK outbox の retry / idempotence を実装する。
 - [ ] crash が ACK 前なら payload を再 pull でき、ACK 後なら local state が必ず存在することを test する。
 - [ ] duplicate ingress ID / payload hash を安全に処理する。
@@ -246,5 +246,6 @@
 | 2026-08-21 | `409a6dd` | delivery recipient snapshot / TTL を core policy に移し、idempotent append と causal-order outbox flush を追加 |
 | 2026-08-21 | `ccc2aa9` | shared vault delivery append を current roster の device signature で認可 |
 | 2026-08-21 | `25042c0` | pull した shared vault delivery を検証・projection・receipt/ACK outbox と一括 commit してから ACK |
+| 2026-08-21 | `bb0a845` | current MLS epoch wrap、event signature、AEAD object を検証して Local JMAP projection を再計算 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

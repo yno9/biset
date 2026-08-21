@@ -21,6 +21,10 @@ export interface SegmentKeyWrapSigner {
   verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>
 }
 
+export interface SegmentKeyWrapVerifier {
+  verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>
+}
+
 /**
  * Wraps the random SegmentKey under a current MLS-derived VEK. The caller is
  * responsible for deriving the VEK from the self-group exporter and for
@@ -53,7 +57,7 @@ export async function createSegmentKeyWrap(
 export async function unwrapSegmentKey(
   vaultEpochKey: Uint8Array,
   wrap: SegmentKeyWrapV1,
-  signer: SegmentKeyWrapSigner,
+  signer: SegmentKeyWrapVerifier,
 ): Promise<Uint8Array> {
   assertKey(vaultEpochKey, 'Vault Epoch Key')
   assertWrap(wrap)
