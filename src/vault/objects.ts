@@ -57,6 +57,13 @@ export async function decryptVaultObject(segmentKey: Uint8Array, object: VaultOb
   }
 }
 
+/** Checks content addressing and ciphertext integrity without needing a key. */
+export async function verifyVaultObjectIntegrity(object: VaultObjectV1): Promise<boolean> {
+  return object.version === 1
+    && object.objectId === objectId(object)
+    && equalBytes(object.ciphertextHash, await digest(object.ciphertext))
+}
+
 export function vaultObjectId(object: Omit<VaultObjectV1, 'objectId'> | VaultObjectV1): VaultObjectId {
   return objectId(object)
 }

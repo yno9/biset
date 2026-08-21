@@ -148,9 +148,9 @@
 ### 4.3 Peer restore transfer
 
 - [ ] peer membership verification と restore approval UI contract を実装する。
-- [ ] manifest first、chunk hash、resume token を使う chunked transfer を実装する。
-- [ ] ciphertext と current-epoch SegmentKeyWrap を別々に検証する。
-- [ ] interrupted transfer / stale grant / removed requester / replay の test を書く。
+- [-] manifest first、chunk hash、resume cursor を使う peer transfer frame の作成・検証を実装した。実際の direct/relayed channel と durable import は未実装。
+- [-] frame 内の event signature、ciphertext hash/object ID、current-epoch SegmentKeyWrap を別々に検証する。actual MLS grant verification は未接続。
+- [-] interrupted cursor / tampered frame は test 済み。stale grant / removed requester / replay の channel-level test は未実装。
 - [ ] user-owned archive を peer と同じ restore source interface に追加する。
 
 **完了条件:** mediator history storage なしで、新端末または TTL 外端末が foreground peer から全 vault を検証付きで復元できる。
@@ -262,5 +262,6 @@
 | 2026-08-21 | `d4a2002` | 署名付き restore poll、SQLite の短命 control store、bounded HTTP / browser transport を追加 |
 | 2026-08-21 | `c0957b6` | client が restore gap を durable request state に保存し、同じ request ID で再送する workflow を追加 |
 | 2026-08-21 | `b86d96f` | peer の signed restore poll と、承認後 offer の durable outbox / 再送を追加 |
+| 2026-08-21 | `57b0d34` | manifest-first / resume cursor / frame hash を使う peer-only restore transfer frame を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

@@ -274,6 +274,15 @@ MLS commit（Add / Remove / Update / rekey）が durable に受理されたら�
 
 peer は payload を復号して送る必要がない。既存 ciphertext と、current epoch に向けた key wrap を再配布すればよい。
 
+`src/vault/restore-transfer.ts` は、この peer transfer の core 非依存な frame を定義する。source manifest と requester manifest の diff から不足 event/object だけを取り、`manifestRoot + eventOffset + objectOffset` の resume cursor に束縛した `RestoreTransferChunkV1` を作る。frame hash は event/object/wrap の binary fields を canonical base64url 表現で束縛する。receiver は commit 前に次を確認する。
+
+1. source/requester manifest と cursor が同じ identity/root/diff に属すること。
+2. frame が cursor を必ず前進させること（停止した resume loop を拒否する）。
+3. event signature、object ID/ciphertext hash、必要な object segment ごとの current-epoch wrap。
+4. frame hash と、注入された current-epoch wrap verifier。
+
+これは peer-to-peer/direct relay channel の payload framing であり、mediator HTTP API には接続しない。channel capability、actual MLS grant verification、受信 records の durable import transaction は後続工程である。
+
 既存端末もユーザー所有 archive も存在しなければ、過去 history は復元できない。この限界は UI と recovery flow に明記する。
 
 ### 4.6 Forward Secrecy との関係
