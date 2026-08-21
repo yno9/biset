@@ -59,4 +59,17 @@ describe('SQLite vault delivery store', () => {
     expect(await restarted.status(identityId)).toMatchObject({ pendingItems: 0, payloadBytes: 0 })
     restarted.close()
   })
+
+  test('persists quota eviction as an explicit restore gap across a restart', async () => {
+    const limits = { deliveryTtlMs: 24 * 60 * 60 * 1000, maxPayloadBytes: 1024, maxIdentityPayloadBytes: 4096, maxIdentityPendingItems: 1 }
+    const first = SqliteVaultDeliveryStore.open(path, authorizer, limits)
+    await first.append(append, new Date('2026-08-21T00:00:00.000Z'))
+    await first.append({ ...append, appendId: 'event-2', payload: new Uint8Array([4]), payloadHash: sha256Bytes(new Uint8Array([4])) }, new Date('2026-08-21T00:01:00.000Z'))
+    expect(await first.status(identityId)).toMatchObject({ pendingItems: 1, retainedFrom: '2', latestSeq: '2' })
+    first.close()
+
+    const restarted = SqliteVaultDeliveryStore.open(path, authorizer, limits)
+    expect(await restarted.pull(pull, new Date('2026-08-21T02:00:00.000Z'))).toMatchObject({ kind: 'restoreRequired', reason: 'retention-quota', retainedFrom: '2', latestSeq: '2' })
+    restarted.close()
+  })
 })

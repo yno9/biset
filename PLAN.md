@@ -59,7 +59,7 @@
 - [-] crash-safe な SQLite `VaultDeliveryStore` と core deployment への authorizer/persistence wiring を実装した。restart coverage はあるが、同時操作の coverage は未実装。
 - [ ] tombstone retention / dedup retention / quota eviction の数値を policy として決める。
 - [-] signed shared vault delivery の `append` / `pull` / `ack` を narrow HTTP adapter と browser transport に結び付けた。SQLite を使う production core composition / persistence は実装済み。actual DID resolution / MLS commit の runtime injection は未実装。`status` は core internal のみ。
-- [-] SQLite restart、all-ACK 後の body 消去、ACK 再送、TTL gap の integration test を追加した。同時 ACK、duplicate offer、quota eviction、authorizer rejection の coverage は未実装。
+- [-] SQLite restart、all-ACK 後の body 消去、ACK 再送、TTL/ quota gap の integration test を追加した。同時 ACK、duplicate offer、authorizer rejection の coverage は未実装。
 
 **完了条件:** core restart 後も body を誤って復活させず、未 authorised device の ACK で body を消せない。
 
@@ -70,7 +70,7 @@
 - [x] payload body を一コピー、端末ごとには ACK/cursor だけを持つ in-memory store を実装する。recipient snapshot と TTL は core policy が決定する。
 - [x] all-ACK 時の body 削除を実装する。
 - [x] local delivery outbox の再送を重複配送にしないため、core append を client-generated `appendId` で idempotent にする。
-- [-] TTL / quota expiry 時に `retainedFrom` と gap record を更新する。TTL の durable persistence は検証済み、quota の境界 test は未実装。
+- [x] TTL / quota expiry 時に `retainedFrom` と gap record を更新し、SQLite 再起動後にも正しい restore reason になることを検証する。
 - [x] 古い cursor の pull が必ず `restoreRequired` を返すよう実装する。
 - [x] new device を過去 item の recipient set に遡及追加しない test を書く。
 - [ ] N devices でも payload copy が一つだけである storage test を書く。
@@ -258,5 +258,6 @@
 | 2026-08-21 | `ff483d0` | roster-selected DID public key を使う Ed25519 device-control verifier を追加 |
 | 2026-08-21 | `b068b22` | SQLite roster / delivery / authorizer / DID key verifier / HTTP を一体化した core deployment を追加 |
 | 2026-08-21 | `cfe56a4` | SQLite restart 後の all-ACK body 消去、ACK 再送、TTL restore gap を検証 |
+| 2026-08-21 | `3a8b3cc` | SQLite の quota eviction が再起動後も明示的な restore gap になることを検証 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
