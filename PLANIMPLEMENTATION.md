@@ -991,6 +991,7 @@ core が外部に公開する API には、vault history query を追加しな�
 ### M0. VEK 導出 API
 
 - `src/mls/vault-epoch.ts` に fixed label/context/32-byte output の `deriveVaultEpochKey(group)` boundary を実装済み。`group` は current self-group ID、decimal uint64 epoch、MLS `exportSecret` だけを渡す。
+- `MlsVaultEpochKeyResolver` は `MlsSelfGroupProvider` から live current exporter を得て vault の `VaultEpochKeyResolver` として使う。VEK 導出直前にも group/epoch を再確認し、commit との race は retryable error にする。
 - 次に `src/mls/group.ts` の actual exporter をこの boundary に接続する。vault 側には MLS state / exporter secret を渡さない。
 - label/context/length を caller が任意指定できないようにする。
 - MLS state 変更と vault segment seal の transaction/outbox 境界を定義する。

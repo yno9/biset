@@ -3,6 +3,7 @@ import { bytesToBase64url, equalBytes } from '../../src/protocol/canonical.ts'
 import { mlsEpoch, type MlsEpoch } from '../../src/protocol/ids.ts'
 import {
   deriveVaultEpochKey,
+  MlsVaultEpochKeyResolver,
   VAULT_EPOCH_KEY_LABEL,
   VAULT_EPOCH_KEY_LENGTH,
   vaultEpochKeyContext,
@@ -37,6 +38,24 @@ describe('MLS vault epoch key boundary', () => {
     const max = mlsEpoch(18_446_744_073_709_551_615n)
     expect(max).toBe('18446744073709551615')
     expect(equalBytes(vaultEpochKeyContext('self-group-a', max), vaultEpochKeyContext('self-group-a', max))).toBe(true)
+  })
+
+  test('rejects a VEK derivation when the self-group epoch changed during the operation', async () => {
+    let reads = 0
+    const resolver = new MlsVaultEpochKeyResolver({
+      async currentSelfGroup() {
+        reads += 1
+        return {
+          selfGroupId: 'self-group-a',
+          epoch: reads === 1 ? '7' : '8',
+          async exportSecret(_label, context) {
+            return new Uint8Array(await crypto.subtle.digest('SHA-256', arrayBuffer(context)))
+          },
+        }
+      },
+    })
+    const current = await resolver.currentVaultEpoch('did:web:alice.example')
+    await expect(resolver.deriveVaultEpochKey('did:web:alice.example', current.selfGroupId, current.epoch)).rejects.toThrow('epoch changed')
   })
 })
 

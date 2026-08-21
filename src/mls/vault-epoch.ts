@@ -1,5 +1,6 @@
 import { canonicalBytes } from '../protocol/canonical.ts'
 import { assertMlsEpoch, type MlsEpoch } from '../protocol/ids.ts'
+import type { CurrentVaultEpoch, VaultEpochKeyResolver } from '../vault/segment-key-resolver.ts'
 
 export const VAULT_EPOCH_KEY_LABEL = 'biset/vault/epoch-key/v1'
 export const VAULT_EPOCH_KEY_LENGTH = 32
@@ -13,6 +14,36 @@ export interface MlsEpochExporter {
   readonly selfGroupId: string
   readonly epoch: MlsEpoch
   exportSecret(label: string, context: Uint8Array, length: number): Promise<Uint8Array>
+}
+
+/** The MLS implementation owns the private group state and exposes only its current exporter. */
+export interface MlsSelfGroupProvider {
+  currentSelfGroup(identityId: string): Promise<MlsEpochExporter>
+}
+
+/**
+ * Connects the fixed VEK derivation to a live MLS self group without passing
+ * MLS state or exporter secrets into the vault store. A commit raced between
+ * `currentVaultEpoch` and `deriveVaultEpochKey` is rejected instead of using a
+ * key from a different epoch.
+ */
+export class MlsVaultEpochKeyResolver implements VaultEpochKeyResolver {
+  constructor(private readonly groups: MlsSelfGroupProvider) {}
+
+  async currentVaultEpoch(identityId: string): Promise<CurrentVaultEpoch> {
+    const group = await this.groups.currentSelfGroup(identityId)
+    assertGroup(group)
+    return { selfGroupId: group.selfGroupId, epoch: group.epoch }
+  }
+
+  async deriveVaultEpochKey(identityId: string, selfGroupId: string, epoch: MlsEpoch): Promise<Uint8Array> {
+    const group = await this.groups.currentSelfGroup(identityId)
+    assertGroup(group)
+    if (group.selfGroupId !== selfGroupId || group.epoch !== epoch) {
+      throw new Error('MLS self-group epoch changed; retry vault operation')
+    }
+    return deriveVaultEpochKey(group)
+  }
 }
 
 /**
@@ -42,4 +73,9 @@ export function vaultEpochKeyContext(selfGroupId: string, epoch: MlsEpoch): Uint
     selfGroupId,
     epoch,
   })
+}
+
+function assertGroup(group: MlsEpochExporter): void {
+  if (!group.selfGroupId) throw new TypeError('MLS self group ID must not be empty')
+  assertMlsEpoch(group.epoch)
 }
