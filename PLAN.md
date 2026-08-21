@@ -106,7 +106,7 @@
 - [-] event signature、parent reference、duplicate event、replay の validation を実装する。署名 verify の interface は実装済み、store-level validation は未実装。
 - [ ] edit / tombstone / read / mailbox / reaction の競合規則を kind ごとに固定する。
 - [x] manifest root と event/object set の diff を実装する。階層 Merkle proof と durable checkpoint は未実装。
-- [ ] projection rebuild を実装する。
+- [-] mailbox / keyword / tombstone mutation event の deterministic JMAP projection reducer を実装した。message.add、attachment、full vault scan/checkpoint persistence は未実装。
 - [ ] duplicate、offline concurrent write、interrupted transfer の convergence test を書く。
 
 **完了条件:** 二端末が同じ検証済み event/object 集合から同じ manifest root と JMAP projection を作る。
@@ -163,7 +163,7 @@
 ### 5.2 Local JMAP Gateway
 
 - [x] `Session` と read-only local account capability を実装する。
-- [-] memory read model と IndexedDB vault projection adapter 上の `Mailbox/get`、`Email/get`、`Email/query` read path を実装した。projection rebuild は未実装。
+- [-] memory read model と IndexedDB vault projection adapter 上の `Mailbox/get`、`Email/get`、`Email/query` read path を実装した。state mutation reducer はあるが、full projection rebuild は未実装。
 - [ ] `Email/changes`、`Mailbox/changes`、query state を実装する。
 - [-] `Email/set` の mailbox / keyword / tombstone 更新を immutable vault mutation intent に変換し、encrypted object + signed event builder を実装した。durable transaction、`Mailbox/set`、`Email/import` は未実装。
 - [ ] `EmailSubmission/set` を outbound intent に変換する。

@@ -563,6 +563,8 @@ Local gateway は HTTP server である必要がない。TypeScript の direct t
 
 現在 `src/local-jmap/mutations.ts` は `Email/set` の `mailboxIds`、`keywords`、`destroy` を `mailbox.set`、`keyword.set`、`message.tombstone` の `VaultMutationIntent` に正規化する。`src/vault/mutations.ts` は intent payload を encrypted `VaultObjectV1` とし、その object ID を参照する signed event を組み立てる。object AAD は identity / segment / event kind / target に束縛する。次の vault transaction がこの二つと projection/checkpoint/outbox を一原子的 commit にする。v1 初期は subject/body の直接書換え、`create`、`Email/import` を parser で受け入れず、message object creation 専用 transaction の完成後に追加する。
 
+`src/local-jmap/reducer.ts` は復号・event signature 検証済みの mutation object を event metadata と照合してから projection に適用する。競合する state event は `(createdAt, actorDeviceId, actorSeq, eventId)` の昇順で処理するため全端末で決定的に収束する。`message.tombstone` は tombstone set に残り、並行する mailbox/keyword 更新で message を再出現させない。現段階は既存 message projection への state mutation に限定し、`message.add` と attachment/reply/thread reducer は後続工程である。
+
 `Email.id` は最初の received/sent vault event ID を基礎に安定に導出する。`threadId`、`mailboxIds`、`keywords`、`hasAttachment` は reducer/projection から返す。JMAP の state token は `ProjectionCheckpointV1` を基に作る。
 
 ### 7.4 AccountSession の再定義
