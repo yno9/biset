@@ -100,11 +100,11 @@
 
 ### 3.2 Event / object / manifest
 
-- [ ] immutable `VaultEventV1` の ID、署名対象、actor sequence を実装する。
+- [-] immutable `VaultEventV1` の ID、署名対象、actor sequence を実装する。signer interface と canonical event ID は実装済み、MLS/device signer 接続は未実装。
 - [ ] encrypted `VaultObjectV1` と chunked attachment object を実装する。
-- [ ] event signature、parent reference、duplicate event、replay の validation を実装する。
+- [-] event signature、parent reference、duplicate event、replay の validation を実装する。署名 verify の interface は実装済み、store-level validation は未実装。
 - [ ] edit / tombstone / read / mailbox / reaction の競合規則を kind ごとに固定する。
-- [ ] Merkle manifest、checkpoint、diff を実装する。
+- [x] manifest root と event/object set の diff を実装する。階層 Merkle proof と durable checkpoint は未実装。
 - [ ] projection rebuild を実装する。
 - [ ] duplicate、offline concurrent write、interrupted transfer の convergence test を書く。
 
