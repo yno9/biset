@@ -20,6 +20,8 @@ export interface IngressStoreLimits {
 }
 
 export interface IngressAckAuthorizer {
+  /** Current membership check, required before a snapshot recipient can pull. */
+  isTrustedDevice(identityId: IdentityId, deviceId: DeviceId): Promise<boolean>
   /** Verifies both the device's current authorisation and its ACK signature. */
   verify(ack: IngressAckV1, envelope: IngressEnvelopeV1): Promise<boolean>
 }
@@ -92,6 +94,7 @@ export class MemoryIngressStore implements IngressStore {
 
   async pull(identityId: IdentityId, deviceId: DeviceId, now = new Date()): Promise<IngressEnvelopeV1[]> {
     await this.expire(now)
+    if (!(await this.authorizer.isTrustedDevice(identityId, deviceId))) return []
     return [...this.entries.values()]
       .filter((entry) => entry.status === 'pending' && entry.identityId === identityId && entry.envelope)
       .map((entry) => entry.envelope!)

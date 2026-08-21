@@ -2,7 +2,10 @@ import { describe, expect, test } from 'bun:test'
 import { MemoryIngressStore, type IngressAckAuthorizer } from '../../src/core/mediation/ingress-store.ts'
 import type { IngressAckV1, IngressEnvelopeV1 } from '../../src/protocol/ingress.ts'
 
-const authorizer: IngressAckAuthorizer = { verify: async () => true }
+const authorizer: IngressAckAuthorizer = {
+  isTrustedDevice: async (_identityId, deviceId) => ['device-a', 'device-b'].includes(deviceId),
+  verify: async () => true,
+}
 
 function envelope(overrides: Partial<IngressEnvelopeV1> = {}): IngressEnvelopeV1 {
   return {
@@ -57,6 +60,15 @@ describe('MemoryIngressStore', () => {
     const store = new MemoryIngressStore(authorizer)
     await store.offer(envelope())
     expect(await store.pull('did:webvh:example:alice', 'device-new', new Date('2026-08-21T01:00:00.000Z'))).toEqual([])
+  })
+
+  test('does not expose a snapshot ingress to a device removed after offer', async () => {
+    const store = new MemoryIngressStore({
+      isTrustedDevice: async (_identityId, deviceId) => deviceId === 'device-a',
+      verify: async () => true,
+    })
+    await store.offer(envelope())
+    expect(await store.pull('did:webvh:example:alice', 'device-b', new Date('2026-08-21T01:00:00.000Z'))).toEqual([])
   })
 
   test('expires the payload but retains only a status tombstone', async () => {

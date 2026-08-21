@@ -52,6 +52,7 @@
 - [x] `src/core/mediation/ingress-store.ts` に in-memory reference implementation を作る。
 - [x] payload size、identity 合計 bytes、pending item 数の quota を実装する。
 - [x] recipient snapshot 外の device への pull を拒否する。
+- [x] recipient snapshot に入っていても、pull 時点で trusted roster から Remove 済みなら ingress を渡さない。
 - [x] ACK hash、snapshot、authorizer を確認後に payload を削除し、tombstone だけを残す。
 - [x] expiry で payload を削除する。
 - [-] trusted-device roster を mediation authorizer adapter に接続した。Ingress ACK / delivery ACK の実際の DID signature verifier は未実装。

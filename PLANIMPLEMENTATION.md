@@ -317,6 +317,7 @@ interface IngressAckV1 {
 
 - 端末は payload を decrypt・validate し、local vault と projection への durable transaction を完了した後だけ ACK する。
 - mediator は ACK signer が ACK 時点でも trusted であり、hash と recipient snapshot が一致することを検証する。
+- mediator は pull 時にも recipient snapshot と current trusted roster の両方を確認する。snapshot は offer 時点の配送候補を凍結するためのものであり、MLS Remove 後の端末に未処理 ingress を渡す権利ではない。
 - **trusted な一台** の ACK で ingress body を削除できる。以後の sibling 同期は vault delivery の仕事である。
 - 新規 device は過去 ingress の snapshot に遡って追加しない。
 - TTL、identity あたりの payload bytes / object count、global quota、重複 ingress ID の処理を必ず持つ。
