@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  rosterBackedIngressAckAuthorizer,
+  rosterBackedIngressAuthorizer,
   rosterBackedRestoreControlAuthorizer,
   rosterBackedVaultDeliveryAuthorizer,
 } from '../../src/core/identity/authorizers.ts'
@@ -24,14 +24,14 @@ async function roster(): Promise<MemoryTrustedDeviceRoster> {
 describe('roster-backed mediation authorizers', () => {
   test('uses the current accepted roster rather than caller-supplied device lists', async () => {
     const value = await roster()
-    const ingress = rosterBackedIngressAckAuthorizer(value, { async verifyIngressAck() { return true } })
+    const ingress = rosterBackedIngressAuthorizer(value, { async verifyIngressAck() { return true }, async verifyIngressPull() { return true } })
     const delivery = rosterBackedVaultDeliveryAuthorizer(value, {
       async verifyVaultDeliveryAppend(_append, device) { return device.deviceId === 'device-a' },
       async verifyVaultDeliveryPull(_pull, device) { return device.deviceId === 'device-a' },
       async verifyVaultDeliveryAck() { return true },
     })
-    expect(await ingress.isTrustedDevice(identityId, 'device-a')).toBe(true)
-    expect(await ingress.isTrustedDevice(identityId, 'device-b')).toBe(false)
+    expect(await ingress.verifyPull({ identityId, recipientDeviceId: 'device-a' } as never)).toBe(true)
+    expect(await ingress.verifyPull({ identityId, recipientDeviceId: 'device-b' } as never)).toBe(false)
     expect(await ingress.verify({ recipientDeviceId: 'device-b' } as never, { recipientIdentityId: identityId } as never)).toBe(false)
     expect(await delivery.deliveryFloor(identityId, 'device-a')).toBe('9')
     expect(await delivery.recipientsAtAppend(identityId)).toEqual(['device-a'])

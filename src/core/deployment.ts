@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite'
 import { createBisetCoreFetchHandler } from './app.ts'
-import { rosterBackedIngressAckAuthorizer, rosterBackedRestoreControlAuthorizer, rosterBackedVaultDeliveryAuthorizer } from './identity/authorizers.ts'
+import { rosterBackedIngressAuthorizer, rosterBackedRestoreControlAuthorizer, rosterBackedVaultDeliveryAuthorizer } from './identity/authorizers.ts'
 import { Ed25519DeviceControlSignatureVerifier, type DeviceSigningPublicKeyResolver } from './identity/ed25519-device-control-verifier.ts'
 import { SqliteTrustedDeviceRoster } from './identity/sqlite-device-roster.ts'
 import { SqliteVaultDeliveryStore } from './mediation/sqlite-vault-delivery-store.ts'
@@ -42,7 +42,7 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
   const verifier = new Ed25519DeviceControlSignatureVerifier(options.signingKeys)
   const delivery = new SqliteVaultDeliveryStore(database, rosterBackedVaultDeliveryAuthorizer(roster, verifier), options.deliveryLimits)
   const restoreControl = new SqliteRestoreControlStore(database, rosterBackedRestoreControlAuthorizer(roster, verifier), options.restoreControlLimits)
-  const ingress = new SqliteIngressStore(database, rosterBackedIngressAckAuthorizer(roster, verifier), options.ingressLimits)
+  const ingress = new SqliteIngressStore(database, rosterBackedIngressAuthorizer(roster, verifier), options.ingressLimits)
   const ingressAdapter = new CoreIngressAdapter(roster, ingress)
   return {
     roster,
@@ -50,7 +50,7 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
     restoreControl,
     ingress,
     ingressAdapter,
-    fetch: createBisetCoreFetchHandler({ vaultDeliveryStore: delivery, restoreControlStore: restoreControl }),
+    fetch: createBisetCoreFetchHandler({ vaultDeliveryStore: delivery, restoreControlStore: restoreControl, ingressStore: ingress }),
     close() { database.close() },
   }
 }

@@ -337,7 +337,9 @@ interface IngressAckV1 {
 
 `src/core/mediation/sqlite-ingress-store.ts` はこの状態機械を SQLite に永続化する。offer 時に `protectedPayloadHash == SHA-256(protectedPayload)` を確認し、ACK/expiry 時には payload だけでなく source evidence、transport metadata、recipient snapshot も clear する。tombstone に残るのは ingress ID、identity、expiry、状態だけである。
 
-adapter が core に渡すのは `AdapterIngressOfferV1` であり、ここには `recipientDeviceSnapshot` を置かない。`CoreIngressAdapter` が offer を受理する瞬間に accepted MLS self-group roster を読み、空なら拒否し、得られた device ID 列を `IngressEnvelopeV1` の snapshot として一度だけ凍結する。従って SMTP/DIDComm/ActivityPub adapter は本文・evidence・宛先 identity を翻訳できても、配送対象の端末を追加・省略できない。これは adapter host が呼ぶ内部 API であり、`biset-core` の public HTTP surface に generic ingress offer/pull を出さない。adapter authentication と SMTP/DIDComm/ActivityPub 別の evidence validation は各 adapter の工程である。
+adapter が core に渡すのは `AdapterIngressOfferV1` であり、ここには `recipientDeviceSnapshot` を置かない。`CoreIngressAdapter` が offer を受理する瞬間に accepted MLS self-group roster を読み、空なら拒否し、得られた device ID 列を `IngressEnvelopeV1` の snapshot として一度だけ凍結する。従って SMTP/DIDComm/ActivityPub adapter は本文・evidence・宛先 identity を翻訳できても、配送対象の端末を追加・省略できない。
+
+external adapter が任意 body を入れられる public offer API は出さない。一方、端末が pending body を受け取るための `/v1/ingress/pull` と `/v1/ingress/ack` は narrow API として公開する。pull は `IngressPullV1` の current trusted device による Ed25519 署名を必須とし、snapshot に含まれない device には body を返さない。ACK は vault の durable commit 後だけ送る。これは adapter host が呼ぶ offer 内部 API と、endpoint が使う受信 API を明確に分けるものであり、history / search / generic blob API にはならない。adapter authentication と SMTP/DIDComm/ActivityPub 別の evidence validation は各 adapter の工程である。
 
 ### 5.2 vault delivery buffer
 

@@ -1,9 +1,9 @@
 import { Database } from 'bun:sqlite'
 import { equalBytes, sha256Bytes } from '../../protocol/canonical.ts'
-import type { IngressAckV1, IngressEnvelopeV1 } from '../../protocol/ingress.ts'
-import type { DeviceId, IdentityId, IngressId } from '../../protocol/ids.ts'
-import { assertIngressAck, assertIngressEnvelope, ProtocolValidationError } from '../../protocol/validate.ts'
-import type { IngressAckAuthorizer, IngressStatus, IngressStatusRecord, IngressStore, IngressStoreLimits } from './ingress-store.ts'
+import type { IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from '../../protocol/ingress.ts'
+import type { IngressId } from '../../protocol/ids.ts'
+import { assertIngressAck, assertIngressEnvelope, assertIngressPull, ProtocolValidationError } from '../../protocol/validate.ts'
+import type { IngressAuthorizer, IngressStatus, IngressStatusRecord, IngressStore, IngressStoreLimits } from './ingress-store.ts'
 
 const DEFAULT_LIMITS: IngressStoreLimits = {
   maxPayloadBytes: 25 * 1024 * 1024,
@@ -32,13 +32,13 @@ interface Row {
 export class SqliteIngressStore implements IngressStore {
   private readonly limits: IngressStoreLimits
 
-  constructor(private readonly database: Database, private readonly authorizer: IngressAckAuthorizer, limits: IngressStoreLimits = DEFAULT_LIMITS) {
+  constructor(private readonly database: Database, private readonly authorizer: IngressAuthorizer, limits: IngressStoreLimits = DEFAULT_LIMITS) {
     assertLimits(limits)
     this.limits = limits
     installSchema(database)
   }
 
-  static open(path: string, authorizer: IngressAckAuthorizer, limits?: IngressStoreLimits): SqliteIngressStore {
+  static open(path: string, authorizer: IngressAuthorizer, limits?: IngressStoreLimits): SqliteIngressStore {
     if (!path) throw new TypeError('SQLite ingress store path is required')
     return new SqliteIngressStore(new Database(path), authorizer, limits)
   }
@@ -61,12 +61,13 @@ export class SqliteIngressStore implements IngressStore {
       .run(envelope.ingressId, envelope.recipientIdentityId, envelope.protocol, JSON.stringify(envelope.recipientDeviceSnapshot), envelope.createdAt, envelope.expiresAt, JSON.stringify(envelope.transportMetadata), envelope.sourceEvidence, envelope.protectedPayload, envelope.protectedPayloadHash, 'pending')
   }
 
-  async pull(identityId: IdentityId, deviceId: DeviceId, now = new Date()): Promise<IngressEnvelopeV1[]> {
+  async pull(pull: IngressPullV1, now = new Date()): Promise<IngressEnvelopeV1[]> {
+    assertIngressPull(pull)
     await this.expire(now)
-    if (!(await this.authorizer.isTrustedDevice(identityId, deviceId))) return []
-    return this.database.query<Row, [string]>("SELECT * FROM ingress_entries WHERE identity_id = ? AND status = 'pending' ORDER BY created_at, ingress_id").all(identityId)
+    if (!(await this.authorizer.verifyPull(pull))) throw new ProtocolValidationError('ingress pull is not authorised')
+    return this.database.query<Row, [string]>("SELECT * FROM ingress_entries WHERE identity_id = ? AND status = 'pending' ORDER BY created_at, ingress_id").all(pull.identityId)
       .map(row => envelope(row))
-      .filter(value => value.recipientDeviceSnapshot.includes(deviceId))
+      .filter(value => value.recipientDeviceSnapshot.includes(pull.recipientDeviceId))
   }
 
   async acknowledge(ack: IngressAckV1, now = new Date()): Promise<IngressStatusRecord> {

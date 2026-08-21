@@ -1,6 +1,7 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import {
   ingressAckSigningBytes,
+  ingressPullSigningBytes,
   restoreCancelSigningBytes,
   restoreControlPullSigningBytes,
   restoreOfferSigningBytes,
@@ -9,7 +10,7 @@ import {
   vaultDeliveryAppendSigningBytes,
   vaultDeliveryPullSigningBytes,
 } from '../../protocol/signing.ts'
-import type { IngressAckV1, IngressEnvelopeV1 } from '../../protocol/ingress.ts'
+import type { IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from '../../protocol/ingress.ts'
 import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryItemV1, VaultDeliveryPullV1 } from '../../protocol/vault.ts'
 import type { TrustedDeviceV1 } from './device-roster.ts'
 import type { DeviceControlSignatureVerifier } from './authorizers.ts'
@@ -29,6 +30,10 @@ export class Ed25519DeviceControlSignatureVerifier implements DeviceControlSigna
 
   verifyIngressAck(ack: IngressAckV1, _envelope: IngressEnvelopeV1, device: TrustedDeviceV1): Promise<boolean> {
     return this.verify(device, ingressAckSigningBytes(ack), ack.signature)
+  }
+
+  verifyIngressPull(pull: IngressPullV1, device: TrustedDeviceV1): Promise<boolean> {
+    return this.verify(device, ingressPullSigningBytes(pull), pull.signature)
   }
 
   verifyVaultDeliveryAppend(append: VaultDeliveryAppendV1, device: TrustedDeviceV1): Promise<boolean> {

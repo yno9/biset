@@ -1,5 +1,5 @@
 import { bytesToBase64url, canonicalBytes } from './canonical.ts'
-import type { IngressAckV1 } from './ingress.ts'
+import type { IngressAckV1, IngressPullV1 } from './ingress.ts'
 import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryPullV1 } from './vault.ts'
 
 /**
@@ -17,6 +17,16 @@ export function ingressAckSigningBytes(ack: Omit<IngressAckV1, 'signature'>): Ui
     vaultEventId: ack.vaultEventId,
     checkpointId: ack.checkpointId,
     ackedAt: ack.ackedAt,
+  })
+}
+
+export function ingressPullSigningBytes(pull: Omit<IngressPullV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/ingress-pull/v1',
+    version: pull.version,
+    identityId: pull.identityId,
+    recipientDeviceId: pull.recipientDeviceId,
+    requestedAt: pull.requestedAt,
   })
 }
 

@@ -1,7 +1,7 @@
 import { equalBytes, sha256Bytes } from '../../protocol/canonical.ts'
-import type { IngressAckV1, IngressEnvelopeV1 } from '../../protocol/ingress.ts'
-import type { DeviceId, IdentityId, IngressId } from '../../protocol/ids.ts'
-import { assertIngressAck, assertIngressEnvelope, ProtocolValidationError } from '../../protocol/validate.ts'
+import type { IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from '../../protocol/ingress.ts'
+import type { IdentityId, IngressId } from '../../protocol/ids.ts'
+import { assertIngressAck, assertIngressEnvelope, assertIngressPull, ProtocolValidationError } from '../../protocol/validate.ts'
 
 export type IngressStatus = 'pending' | 'vault-ingested' | 'expired' | 'rejected'
 
@@ -19,16 +19,16 @@ export interface IngressStoreLimits {
   maxIdentityPendingItems: number
 }
 
-export interface IngressAckAuthorizer {
-  /** Current membership check, required before a snapshot recipient can pull. */
-  isTrustedDevice(identityId: IdentityId, deviceId: DeviceId): Promise<boolean>
+export interface IngressAuthorizer {
+  /** Verifies a current device's signed pull before any body is exposed. */
+  verifyPull(pull: IngressPullV1): Promise<boolean>
   /** Verifies both the device's current authorisation and its ACK signature. */
   verify(ack: IngressAckV1, envelope: IngressEnvelopeV1): Promise<boolean>
 }
 
 export interface IngressStore {
   offer(envelope: IngressEnvelopeV1): Promise<void>
-  pull(identityId: IdentityId, deviceId: DeviceId, now?: Date): Promise<IngressEnvelopeV1[]>
+  pull(pull: IngressPullV1, now?: Date): Promise<IngressEnvelopeV1[]>
   acknowledge(ack: IngressAckV1, now?: Date): Promise<IngressStatusRecord>
   expire(now?: Date): Promise<IngressStatusRecord[]>
   status(ingressId: IngressId): Promise<IngressStatusRecord | undefined>
@@ -56,7 +56,7 @@ export class MemoryIngressStore implements IngressStore {
   private readonly entries = new Map<IngressId, Entry>()
 
   constructor(
-    private readonly authorizer: IngressAckAuthorizer,
+    private readonly authorizer: IngressAuthorizer,
     private readonly limits: IngressStoreLimits = DEFAULT_LIMITS,
   ) {}
 
@@ -95,13 +95,14 @@ export class MemoryIngressStore implements IngressStore {
     })
   }
 
-  async pull(identityId: IdentityId, deviceId: DeviceId, now = new Date()): Promise<IngressEnvelopeV1[]> {
+  async pull(pull: IngressPullV1, now = new Date()): Promise<IngressEnvelopeV1[]> {
+    assertIngressPull(pull)
     await this.expire(now)
-    if (!(await this.authorizer.isTrustedDevice(identityId, deviceId))) return []
+    if (!(await this.authorizer.verifyPull(pull))) throw new ProtocolValidationError('ingress pull is not authorised')
     return [...this.entries.values()]
-      .filter((entry) => entry.status === 'pending' && entry.identityId === identityId && entry.envelope)
+      .filter((entry) => entry.status === 'pending' && entry.identityId === pull.identityId && entry.envelope)
       .map((entry) => entry.envelope!)
-      .filter((envelope) => envelope.recipientDeviceSnapshot.includes(deviceId))
+      .filter((envelope) => envelope.recipientDeviceSnapshot.includes(pull.recipientDeviceId))
       .map(copyEnvelope)
   }
 

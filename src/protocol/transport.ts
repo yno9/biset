@@ -1,4 +1,4 @@
-import type { IngressAckV1, IngressEnvelopeV1 } from './ingress.ts'
+import type { AdapterIngressOfferV1, IngressAckV1 } from './ingress.ts'
 import type { DeviceId, IdentityId } from './ids.ts'
 
 export interface RecipientReference {
@@ -35,9 +35,8 @@ export interface PushRequest {
 /** The only host surface available to first-party transport adapters. */
 export interface TransportAdapterHost {
   resolveRecipient(input: RecipientReference): Promise<RecipientResolution>
-  offerIngress(input: IngressEnvelopeV1): Promise<IngressOfferResult>
+  offerIngress(input: AdapterIngressOfferV1): Promise<IngressOfferResult>
   acknowledgeIngress(input: IngressAckV1): Promise<void>
   recordTransportResult(input: TransportResult): Promise<void>
   publishPush(input: PushRequest): Promise<void>
 }
-

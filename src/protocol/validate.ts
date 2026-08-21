@@ -1,4 +1,4 @@
-import type { AdapterIngressOfferV1, IngressAckV1, IngressEnvelopeV1 } from './ingress.ts'
+import type { AdapterIngressOfferV1, IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from './ingress.ts'
 import { assertDeliverySeq } from './ids.ts'
 import type {
   RestoreCancelV1,
@@ -104,6 +104,16 @@ export function assertAdapterIngressOffer(value: unknown): asserts value is Adap
   bytes(input.sourceEvidence, 'sourceEvidence')
   bytes(input.protectedPayload, 'protectedPayload')
   bytes(input.protectedPayloadHash, 'protectedPayloadHash')
+}
+
+export function assertIngressPull(value: unknown): asserts value is IngressPullV1 {
+  const input = record(value, 'IngressPullV1')
+  exactKeys(input, ['version', 'identityId', 'recipientDeviceId', 'requestedAt', 'signature'], 'IngressPullV1')
+  if (input.version !== 1) throw new ProtocolValidationError('IngressPullV1.version must be 1')
+  text(input.identityId, 'identityId')
+  text(input.recipientDeviceId, 'recipientDeviceId')
+  time(input.requestedAt, 'requestedAt')
+  bytes(input.signature, 'signature')
 }
 
 export function assertIngressAck(value: unknown): asserts value is IngressAckV1 {

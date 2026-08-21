@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { MemoryIngressStore, type IngressAckAuthorizer } from '../../src/core/mediation/ingress-store.ts'
+import { MemoryIngressStore, type IngressAuthorizer } from '../../src/core/mediation/ingress-store.ts'
 import { sha256Bytes } from '../../src/protocol/canonical.ts'
-import type { IngressAckV1, IngressEnvelopeV1 } from '../../src/protocol/ingress.ts'
+import type { IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from '../../src/protocol/ingress.ts'
 
-const authorizer: IngressAckAuthorizer = {
-  isTrustedDevice: async (_identityId, deviceId) => ['device-a', 'device-b'].includes(deviceId),
+const authorizer: IngressAuthorizer = {
+  verifyPull: async (pull) => ['device-a', 'device-b', 'device-new'].includes(pull.recipientDeviceId),
   verify: async () => true,
 }
 
@@ -39,12 +39,16 @@ function ack(overrides: Partial<IngressAckV1> = {}): IngressAckV1 {
   }
 }
 
+function pull(recipientDeviceId: string): IngressPullV1 {
+  return { version: 1, identityId: 'did:webvh:example:alice', recipientDeviceId, requestedAt: '2026-08-21T01:00:00.000Z', signature: new Uint8Array([8]) }
+}
+
 describe('MemoryIngressStore', () => {
   test('deletes a payload after one authorised durable ACK', async () => {
     const store = new MemoryIngressStore(authorizer)
     await store.offer(envelope())
 
-    expect((await store.pull('did:webvh:example:alice', 'device-a', new Date('2026-08-21T01:00:00.000Z'))).length).toBe(1)
+    expect((await store.pull(pull('device-a'), new Date('2026-08-21T01:00:00.000Z'))).length).toBe(1)
     await store.acknowledge(ack(), new Date('2026-08-21T01:00:00.000Z'))
 
     expect(await store.status('ingress-1')).toEqual({
@@ -54,22 +58,22 @@ describe('MemoryIngressStore', () => {
       expiresAt: '2026-08-22T00:00:00.000Z',
       payloadRetained: false,
     })
-    expect((await store.pull('did:webvh:example:alice', 'device-b', new Date('2026-08-21T02:00:00.000Z'))).length).toBe(0)
+    expect((await store.pull(pull('device-b'), new Date('2026-08-21T02:00:00.000Z'))).length).toBe(0)
   })
 
   test('does not expose an ingress to a device outside its frozen snapshot', async () => {
     const store = new MemoryIngressStore(authorizer)
     await store.offer(envelope())
-    expect(await store.pull('did:webvh:example:alice', 'device-new', new Date('2026-08-21T01:00:00.000Z'))).toEqual([])
+    expect(await store.pull(pull('device-new'), new Date('2026-08-21T01:00:00.000Z'))).toEqual([])
   })
 
   test('does not expose a snapshot ingress to a device removed after offer', async () => {
     const store = new MemoryIngressStore({
-      isTrustedDevice: async (_identityId, deviceId) => deviceId === 'device-a',
+      verifyPull: async (value) => value.recipientDeviceId === 'device-a',
       verify: async () => true,
     })
     await store.offer(envelope())
-    expect(await store.pull('did:webvh:example:alice', 'device-b', new Date('2026-08-21T01:00:00.000Z'))).toEqual([])
+    await expect(store.pull(pull('device-b'), new Date('2026-08-21T01:00:00.000Z'))).rejects.toThrow('not authorised')
   })
 
   test('expires the payload but retains only a status tombstone', async () => {

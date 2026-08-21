@@ -14,7 +14,7 @@
 - [x] memory-only の bounded `IngressStore` を実装し、TTL、quota、recipient snapshot、一台の authorised ACK、payload 削除をテストした。
 - [x] core を `identity`（anchor）、`mediation`、`adapters` に概念分離し、初期 deployment は一つの `biset-core` binary に統合した。
 - [-] IndexedDB の local vault schema、atomic ingress commit、object crypto、flat manifest は存在するが、ingest workflow と durable recovery は未実装。
-- [-] SQLite roster + SQLite delivery / restore-control + roster authorizer + Ed25519 verifier + narrow HTTP の deployment composition を実装した。actual MLS accepted-commit source / DID resolver cache policy は未実装。
+- [-] SQLite roster + SQLite delivery / restore-control / ingress、roster authorizer、Ed25519 verifier、narrow HTTP の deployment composition を実装した。ingress の endpoint API は signed pull / durable ACK のみで、external offer は adapter 内部に限定する。actual MLS accepted-commit source / DID resolver cache policy は未実装。
 - [ ] Local JMAP Gateway、MLS VEK 導出、DIDComm/Mail adapter は未実装である。SegmentKey の object encryption と、VEK を入力に取る wrap primitive は実装済みである。
 
 **次に着手する工程:** actual MLS accepted-commit source / DID resolver を roster へ接続しつつ、§3.3 の raw external ingress を端末 vault の durable transaction に接続する。ingress は generic public HTTP API にせず、first-party adapter の内部 boundary に限定する。
@@ -56,6 +56,7 @@
 - [x] ACK hash、snapshot、authorizer を確認後に payload を削除し、tombstone だけを残す。
 - [x] expiry で payload を削除する。
 - [x] adapter 入力は recipient device snapshot を持てず、`CoreIngressAdapter` が offer 時点の accepted self-group roster から snapshot を凍結する。
+- [x] endpoint への ingress pull は current trusted device の Ed25519 署名を必須にし、public HTTP は signed pull / durable ACK だけを公開する。external adapter offer は内部 boundary のままにする。
 - [-] trusted-device roster を mediation authorizer adapter に接続し、DID/webvh public-key resolver を入力に取る Ed25519 verifier を実装した。actual DID resolution / key rotation cache は未実装。
 - [-] crash-safe な SQLite `VaultDeliveryStore` / `IngressStore` と core deployment への authorizer/persistence wiring を実装した。ingress は first-party adapter の内部 boundary だけで、公開 HTTP には出していない。restart coverage はあるが、同時操作の coverage は未実装。
 - [ ] tombstone retention / dedup retention / quota eviction の数値を policy として決める。

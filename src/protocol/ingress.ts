@@ -41,6 +41,15 @@ export interface AdapterIngressOfferV1 {
   protectedPayloadHash: Uint8Array
 }
 
+/** A current self-group device's authenticated request for pending ingress. */
+export interface IngressPullV1 {
+  version: 1
+  identityId: IdentityId
+  recipientDeviceId: DeviceId
+  requestedAt: string
+  signature: Uint8Array
+}
+
 /** Sent only after the receiving device has durably committed its vault write. */
 export interface IngressAckV1 {
   version: 1
