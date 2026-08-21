@@ -58,7 +58,7 @@
 - [-] trusted-device roster を mediation authorizer adapter に接続した。Ingress ACK / delivery ACK の実際の DID signature verifier は未実装。
 - [ ] in-memory Map を crash-safe bounded persistence adapter に置換する。
 - [ ] tombstone retention / dedup retention / quota eviction の数値を policy として決める。
-- [ ] `offer` / `pull` / `ack` / `status` を authentication 付き core API に結び付ける。
+- [-] signed shared vault delivery の `append` / `pull` / `ack` を narrow HTTP adapter と browser transport に結び付けた。production core composition / persistence は未実装。`status` は core internal のみ。
 - [ ] restart、同時 ACK、duplicate offer、quota eviction、authorizer rejection の integration test を追加する。
 
 **完了条件:** core restart 後も body を誤って復活させず、未 authorised device の ACK で body を消せない。
@@ -251,5 +251,6 @@
 | 2026-08-21 | `bb0a845` | current MLS epoch wrap、event signature、AEAD object を検証して Local JMAP projection を再計算 |
 | 2026-08-21 | `6d96cd5` | cursor-based delivery sync と durable ACK retry、idempotent core ACK を追加 |
 | 2026-08-21 | `faef01d` | signed vault-delivery pull を追加し、device ID のみでは payload を取得できないようにした |
+| 2026-08-21 | `d944cbd` | bounded vault delivery の append / pull / ACK HTTP adapter と browser transport を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
