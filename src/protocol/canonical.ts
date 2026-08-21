@@ -87,4 +87,3 @@ export function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   for (let index = 0; index < left.length; index += 1) difference |= left[index] ^ right[index]
   return difference === 0
 }
-

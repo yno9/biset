@@ -159,4 +159,3 @@ function copyEnvelope(envelope: IngressEnvelopeV1): IngressEnvelopeV1 {
     protectedPayloadHash: envelope.protectedPayloadHash.slice(),
   }
 }
-

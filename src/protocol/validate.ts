@@ -88,4 +88,3 @@ export function assertIngressAck(value: unknown): asserts value is IngressAckV1 
   time(input.ackedAt, 'ackedAt')
   bytes(input.signature, 'signature')
 }
-
