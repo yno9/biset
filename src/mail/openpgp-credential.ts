@@ -9,6 +9,16 @@ export interface GenerateOpenPgpCredentialOptions {
   supersedesFingerprint?: string
 }
 
+/** Public representation suitable for a DID binding, WKD, or Autocrypt adapter. */
+export interface OpenPgpPublicKeyPublicationV1 {
+  version: 1
+  identityId: IdentityId
+  fingerprint: string
+  armoredPublicKey: string
+  createdAt: string
+  supersedesFingerprint?: string
+}
+
 /**
  * Endpoint-only OpenPGP key generation. The generated private packet is
  * returned for immediate vault encryption; this module never contacts core or
@@ -39,4 +49,24 @@ export async function readOpenPgpPrivateCredential(credential: OpenPgpPrivateCre
   try { key = await openpgp.readPrivateKey({ armoredKey }) } catch { throw new TypeError('OpenPGP credential private key packet is invalid') }
   if (key.getFingerprint().toUpperCase() !== credential.fingerprint.toUpperCase()) throw new TypeError('OpenPGP credential fingerprint does not match private key')
   return key
+}
+
+/**
+ * Derives only the public OpenPGP certificate from a verified credential.
+ * Transport adapters may publish this result, but must never retain or return
+ * `credential.privateKey`.
+ */
+export async function publishableOpenPgpPublicKey(credential: OpenPgpPrivateCredentialV1): Promise<OpenPgpPublicKeyPublicationV1> {
+  const privateKey = await readOpenPgpPrivateCredential(credential)
+  const publicKey = privateKey.toPublic()
+  const fingerprint = publicKey.getFingerprint().toUpperCase()
+  if (fingerprint !== credential.fingerprint.toUpperCase()) throw new TypeError('OpenPGP public key fingerprint does not match credential')
+  return {
+    version: 1,
+    identityId: credential.identityId,
+    fingerprint,
+    armoredPublicKey: publicKey.armor(),
+    createdAt: credential.createdAt,
+    ...(credential.supersedesFingerprint === undefined ? {} : { supersedesFingerprint: credential.supersedesFingerprint.toUpperCase() }),
+  }
 }
