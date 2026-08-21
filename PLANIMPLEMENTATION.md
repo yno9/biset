@@ -561,7 +561,7 @@ Local gateway は HTTP server である必要がない。TypeScript の direct t
 | `EmailSubmission/set` | outbound intent event を append し adapter に引き渡す |
 | blob download | local object/chunk reader |
 
-現在 `src/local-jmap/mutations.ts` は `Email/set` の `mailboxIds`、`keywords`、`destroy` を `mailbox.set`、`keyword.set`、`message.tombstone` の `VaultMutationIntent` に正規化する。intent は projection を直接変更せず、次の vault transaction が payload を encrypted object として保存し、signed event から参照する。v1 初期は subject/body の直接書換え、`create`、`Email/import` を parser で受け入れず、message object creation 専用 transaction の完成後に追加する。
+現在 `src/local-jmap/mutations.ts` は `Email/set` の `mailboxIds`、`keywords`、`destroy` を `mailbox.set`、`keyword.set`、`message.tombstone` の `VaultMutationIntent` に正規化する。`src/vault/mutations.ts` は intent payload を encrypted `VaultObjectV1` とし、その object ID を参照する signed event を組み立てる。object AAD は identity / segment / event kind / target に束縛する。次の vault transaction がこの二つと projection/checkpoint/outbox を一原子的 commit にする。v1 初期は subject/body の直接書換え、`create`、`Email/import` を parser で受け入れず、message object creation 専用 transaction の完成後に追加する。
 
 `Email.id` は最初の received/sent vault event ID を基礎に安定に導出する。`threadId`、`mailboxIds`、`keywords`、`hasAttachment` は reducer/projection から返す。JMAP の state token は `ProjectionCheckpointV1` を基に作る。
 

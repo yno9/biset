@@ -165,7 +165,7 @@
 - [x] `Session` と read-only local account capability を実装する。
 - [-] memory read model と IndexedDB vault projection adapter 上の `Mailbox/get`、`Email/get`、`Email/query` read path を実装した。projection rebuild は未実装。
 - [ ] `Email/changes`、`Mailbox/changes`、query state を実装する。
-- [-] `Email/set` の mailbox / keyword / tombstone 更新を immutable vault mutation intent に変換した。encrypted object + signed event の transaction、`Mailbox/set`、`Email/import` は未実装。
+- [-] `Email/set` の mailbox / keyword / tombstone 更新を immutable vault mutation intent に変換し、encrypted object + signed event builder を実装した。durable transaction、`Mailbox/set`、`Email/import` は未実装。
 - [ ] `EmailSubmission/set` を outbound intent に変換する。
 - [-] encrypted `VaultObjectV1` を SegmentKey resolver で検証・復号する local blob reader と range read を実装した。stored key wrap からの SegmentKey resolver / attachment chunk reader は未実装。
 - [ ] same UI test を Local/Remote account の両方で実行する。
