@@ -33,12 +33,7 @@ export async function buildVaultMutation(
 ): Promise<VaultMutationRecord> {
   assertContext(context, signer)
   if (!intent.kind || intent.targetIds.length === 0 || intent.targetIds.some(id => !id)) throw new TypeError('vault mutation intent is invalid')
-  const plaintext = canonicalBytes({
-    version: 1,
-    kind: intent.kind,
-    targetIds: [...intent.targetIds],
-    payload: intent.payload,
-  })
+  const plaintext = encodeVaultMutationObject(intent)
   const object = await encryptVaultObject(context.segmentKey, {
     segmentId: context.segmentId,
     plaintext,
@@ -55,6 +50,15 @@ export async function buildVaultMutation(
     createdAt: context.createdAt,
   }, signer)
   return { object, event }
+}
+
+export function encodeVaultMutationObject(intent: VaultMutationIntent): Uint8Array {
+  return canonicalBytes({
+    version: 1,
+    kind: intent.kind,
+    targetIds: [...intent.targetIds],
+    payload: intent.payload,
+  })
 }
 
 export function mutationObjectAad(

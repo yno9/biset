@@ -49,6 +49,12 @@ export interface LocalJmapGatewayOptions {
   accountId: string
   identityId: string
   readModel: LocalJmapReadModel
+  mutationSink?: LocalJmapMutationSink
+}
+
+/** Local write implementation; it commits immutable vault records, not rows in this projection. */
+export interface LocalJmapMutationSink {
+  emailSet(arguments_: Record<string, unknown>, snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>>
 }
 
 export class LocalJmapGateway {
@@ -104,6 +110,9 @@ export class LocalJmapGateway {
       case 'Mailbox/get': return ['Mailbox/get', mailboxGet(this.options.accountId, snapshot, call.arguments), call.callId]
       case 'Email/get': return ['Email/get', emailGet(this.options.accountId, snapshot, call.arguments), call.callId]
       case 'Email/query': return ['Email/query', emailQuery(this.options.accountId, snapshot, call.arguments), call.callId]
+      case 'Email/set':
+        if (!this.options.mutationSink) return ['error', { type: 'forbidden', description: 'local vault writes are not configured' }, call.callId]
+        return ['Email/set', await this.options.mutationSink.emailSet(call.arguments, snapshot), call.callId]
       default: return ['error', { type: 'unknownMethod', description: `unsupported local JMAP method: ${call.name}` }, call.callId]
     }
   }

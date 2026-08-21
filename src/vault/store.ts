@@ -62,6 +62,15 @@ export interface IngressVaultCommit {
   ackOutbox: IngressAckOutboxRecord
 }
 
+/** Local UI mutation commit: no ingress receipt/ACK, but the same atomicity. */
+export interface LocalVaultMutationCommit {
+  identityId: IdentityId
+  objects: VaultObjectRecord[]
+  events: VaultEventRecord[]
+  projection: unknown
+  jmapState: unknown
+}
+
 export type IngressCommitResult = 'committed' | 'already-committed'
 
 /** Narrow read boundary used by local projections without exposing IDB internals. */
@@ -136,6 +145,38 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     )
     await completed
     return record?.value
+  }
+
+  /**
+   * Object/event/projection/JMAP state commit for a local JMAP mutation. An
+   * event ID collision makes the whole transaction idempotently a no-op.
+   */
+  async commitLocalMutation(input: LocalVaultMutationCommit): Promise<IngressCommitResult> {
+    assertLocalCommit(input)
+    const transaction = this.database.transaction([
+      STORES.objects,
+      STORES.events,
+      STORES.projection,
+      STORES.jmapState,
+    ], 'readwrite')
+    let duplicate = false
+    const eventStore = transaction.objectStore(STORES.events)
+    for (const event of input.events) {
+      const request = eventStore.add(copyEvent(event))
+      request.onerror = () => {
+        if (request.error?.name === 'ConstraintError') duplicate = true
+      }
+    }
+    for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject(object))
+    transaction.objectStore(STORES.projection).put({ identityId: input.identityId, value: input.projection })
+    transaction.objectStore(STORES.jmapState).put({ identityId: input.identityId, value: input.jmapState })
+    try {
+      await transactionDone(transaction)
+      return 'committed'
+    } catch (error) {
+      if (duplicate) return 'already-committed'
+      throw error
+    }
   }
 
   async readObject(identityId: IdentityId, objectId: VaultObjectId): Promise<VaultObjectRecord | undefined> {
@@ -222,6 +263,12 @@ function assertCommit(input: IngressVaultCommit): void {
   }
   for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('object identity does not match')
   for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('event identity does not match')
+}
+
+function assertLocalCommit(input: LocalVaultMutationCommit): void {
+  if (!input.identityId || input.events.length === 0) throw new TypeError('local mutation commit needs identity and events')
+  for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('local mutation object identity does not match')
+  for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('local mutation event identity does not match')
 }
 
 function copyReceipt(value: IngressReceiptRecord): IngressReceiptRecord {

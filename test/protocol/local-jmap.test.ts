@@ -37,7 +37,7 @@ describe('LocalJmapGateway', () => {
     expect(await local.download('blob-new', { start: 1, end: 2 })).toEqual(new Uint8Array([2, 3]))
     const response = await local.call<{ methodResponses: Array<[string, Record<string, unknown>, string]> }>([
       { name: 'Email/get', arguments: { accountId: 'other' }, callId: 'other' },
-      { name: 'Email/set', arguments: {}, callId: 'set' },
+      { name: 'Unknown/method', arguments: {}, callId: 'unknown' },
     ])
     expect(response.methodResponses.map(response => response[1].type)).toEqual(['accountNotFound', 'unknownMethod'])
   })

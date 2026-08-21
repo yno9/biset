@@ -565,6 +565,8 @@ Local gateway は HTTP server である必要がない。TypeScript の direct t
 
 `src/local-jmap/reducer.ts` は復号・event signature 検証済みの mutation object を event metadata と照合してから projection に適用する。競合する state event は `(createdAt, actorDeviceId, actorSeq, eventId)` の昇順で処理するため全端末で決定的に収束する。`message.tombstone` は tombstone set に残り、並行する mailbox/keyword 更新で message を再出現させない。現段階は既存 message projection への state mutation に限定し、`message.add` と attachment/reply/thread reducer は後続工程である。
 
+`src/local-jmap/vault-mutation-sink.ts` はこの経路を Local JMAP Gateway の `Email/set` へ接続する。sink は actor sequence、parent event、active SegmentKey、signer、transaction committer を注入され、gateway は key を扱わない。intent ごとに object/event を作り、reducer が作った `LocalJmapProjectionV1` と JMAP state を `commitLocalMutation` で同時保存する。現在この transaction は local write の durable point であり、sibling vault-delivery append/outbox を同一の後続 transaction に含める必要がある。
+
 `Email.id` は最初の received/sent vault event ID を基礎に安定に導出する。`threadId`、`mailboxIds`、`keywords`、`hasAttachment` は reducer/projection から返す。JMAP の state token は `ProjectionCheckpointV1` を基に作る。
 
 ### 7.4 AccountSession の再定義
