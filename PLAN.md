@@ -92,7 +92,7 @@
 ### 3.1 Local persistence abstraction
 
 - [-] `IndexedDbVaultStore` から projection だけを読む `VaultProjectionReader` boundary を抽出し、Local JMAP adapter に接続した。event/object write と migration の testable abstraction は未抽出。
-- [x] IndexedDB version 2 schema と store 作成を実装する。
+- [x] IndexedDB version 3 schema と store 作成を実装する。
 - [x] store: `vault_events`、`vault_objects`、`vault_chunks`、`vault_segments`、`vault_key_wraps` を作る。
 - [x] store: `vault_manifests`、`vault_projection`、`vault_jmap_state`、`vault_outbox`、`vault_delivery_state`、`vault_restore_state` を作る。
 - [x] ingress receipt / object / event / projection / JMAP state / ACK outbox を単一 transaction にする。
@@ -116,7 +116,7 @@
 
 ### 3.3 Ingress-to-vault transaction
 
-- [ ] `src/vault/ingest.ts` に raw ingress の validate → object/event → projection → ACK outbox transaction を実装する。
+- [-] `src/vault/delivery-ingest.ts` に shared vault delivery の hash/pack verify → injected verifier/projector → durable commit → delivery ACK outbox を実装した。raw external ingress は未実装。
 - [ ] ACK outbox の retry / idempotence を実装する。
 - [ ] crash が ACK 前なら payload を再 pull でき、ACK 後なら local state が必ず存在することを test する。
 - [ ] duplicate ingress ID / payload hash を安全に処理する。
@@ -245,5 +245,6 @@
 | 2026-08-21 | `39008f4` | Local JMAP mutation と共有 vault-delivery outbox を原子的に保存。canonical delivery pack と MLS key-wrap 同梱を追加 |
 | 2026-08-21 | `409a6dd` | delivery recipient snapshot / TTL を core policy に移し、idempotent append と causal-order outbox flush を追加 |
 | 2026-08-21 | `ccc2aa9` | shared vault delivery append を current roster の device signature で認可 |
+| 2026-08-21 | `25042c0` | pull した shared vault delivery を検証・projection・receipt/ACK outbox と一括 commit してから ACK |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

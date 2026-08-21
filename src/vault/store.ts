@@ -1,9 +1,10 @@
 import type { IngressAckV1 } from '../protocol/ingress.ts'
-import type { IdentityId, VaultEventId, VaultObjectId } from '../protocol/ids.ts'
-import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import { equalBytes } from '../protocol/canonical.ts'
+import type { DeliverySeq, DeviceId, IdentityId, VaultEventId, VaultObjectId } from '../protocol/ids.ts'
+import type { SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
-const DATABASE_VERSION = 2
+const DATABASE_VERSION = 3
 
 const STORES = {
   ingressReceipts: 'vault_ingress_receipts',
@@ -17,6 +18,8 @@ const STORES = {
   jmapState: 'vault_jmap_state',
   outbox: 'vault_outbox',
   deliveryOutbox: 'vault_delivery_outbox',
+  deliveryReceipts: 'vault_delivery_receipts',
+  deliveryAckOutbox: 'vault_delivery_ack_outbox',
   deliveryState: 'vault_delivery_state',
   restoreState: 'vault_restore_state',
   transportStatus: 'transport_status',
@@ -63,6 +66,24 @@ export interface VaultDeliveryOutboxRecord {
   attempts: number
 }
 
+export interface VaultDeliveryReceiptRecord {
+  identityId: IdentityId
+  recipientDeviceId: DeviceId
+  seq: DeliverySeq
+  payloadHash: Uint8Array
+  checkpointId: string
+  committedAt: string
+}
+
+export interface VaultDeliveryAckOutboxRecord {
+  identityId: IdentityId
+  recipientDeviceId: DeviceId
+  seq: DeliverySeq
+  ack: VaultDeliveryAckV1
+  attempts: number
+  createdAt: string
+}
+
 /**
  * All fields are written in one IndexedDB transaction. The caller may send the
  * ACK only after this promise resolves successfully.
@@ -85,6 +106,23 @@ export interface LocalVaultMutationCommit {
   projection: unknown
   jmapState: unknown
   deliveryOutbox: VaultDeliveryOutboxRecord
+}
+
+/**
+ * Receive-side counterpart of LocalVaultMutationCommit. The acknowledgement
+ * becomes sendable only after every listed vault record and the derived local
+ * projection are durably committed together.
+ */
+export interface VaultDeliveryCommit {
+  identityId: IdentityId
+  receipt: VaultDeliveryReceiptRecord
+  delivery: VaultDeliveryItemV1
+  objects: VaultObjectRecord[]
+  events: VaultEventRecord[]
+  keyWraps: SegmentKeyWrapV1[]
+  projection: unknown
+  jmapState: unknown
+  ackOutbox: VaultDeliveryAckOutboxRecord
 }
 
 export type IngressCommitResult = 'committed' | 'already-committed'
@@ -204,6 +242,45 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     }
   }
 
+  async commitDelivery(input: VaultDeliveryCommit): Promise<IngressCommitResult> {
+    assertDeliveryCommit(input)
+    const transaction = this.database.transaction([
+      STORES.deliveryReceipts,
+      STORES.objects,
+      STORES.events,
+      STORES.keyWraps,
+      STORES.projection,
+      STORES.jmapState,
+      STORES.deliveryState,
+      STORES.deliveryAckOutbox,
+    ], 'readwrite')
+    let duplicate = false
+    const receipt = transaction.objectStore(STORES.deliveryReceipts).add(copyDeliveryReceipt(input.receipt))
+    receipt.onerror = () => {
+      if (receipt.error?.name === 'ConstraintError') duplicate = true
+    }
+    for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject(object))
+    for (const event of input.events) transaction.objectStore(STORES.events).put(copyEvent(event))
+    for (const wrap of input.keyWraps) transaction.objectStore(STORES.keyWraps).put(copyKeyWrap(wrap))
+    transaction.objectStore(STORES.projection).put({ identityId: input.identityId, value: input.projection })
+    transaction.objectStore(STORES.jmapState).put({ identityId: input.identityId, value: input.jmapState })
+    transaction.objectStore(STORES.deliveryState).put({
+      identityId: input.identityId,
+      deviceId: input.receipt.recipientDeviceId,
+      cursor: input.receipt.seq,
+      checkpointId: input.receipt.checkpointId,
+      committedAt: input.receipt.committedAt,
+    })
+    transaction.objectStore(STORES.deliveryAckOutbox).put(copyDeliveryAckOutbox(input.ackOutbox))
+    try {
+      await transactionDone(transaction)
+      return 'committed'
+    } catch (error) {
+      if (duplicate) return 'already-committed'
+      throw error
+    }
+  }
+
   async readObject(identityId: IdentityId, objectId: VaultObjectId): Promise<VaultObjectRecord | undefined> {
     if (!identityId || !objectId) throw new TypeError('object identity and ID are required')
     const transaction = this.database.transaction(STORES.objects, 'readonly')
@@ -289,6 +366,8 @@ function createStores(database: IDBDatabase): void {
   createStore(database, STORES.jmapState, 'identityId')
   createStore(database, STORES.outbox, ['identityId', 'ingressId'])
   createStore(database, STORES.deliveryOutbox, ['identityId', 'entryId'])
+  createStore(database, STORES.deliveryReceipts, ['identityId', 'recipientDeviceId', 'seq'])
+  createStore(database, STORES.deliveryAckOutbox, ['identityId', 'recipientDeviceId', 'seq'])
   createStore(database, STORES.deliveryState, ['identityId', 'deviceId'])
   createStore(database, STORES.restoreState, ['identityId', 'deviceId'])
   createStore(database, STORES.transportStatus, ['identityId', 'outboundEventId'])
@@ -333,6 +412,24 @@ function assertLocalCommit(input: LocalVaultMutationCommit): void {
   for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('local mutation event identity does not match')
 }
 
+function assertDeliveryCommit(input: VaultDeliveryCommit): void {
+  if (!input.identityId || input.delivery.identityId !== input.identityId || input.receipt.identityId !== input.identityId || input.ackOutbox.identityId !== input.identityId) {
+    throw new TypeError('delivery commit identity does not match')
+  }
+  if (input.receipt.seq !== input.delivery.seq || input.ackOutbox.seq !== input.delivery.seq || input.ackOutbox.ack.seq !== input.delivery.seq || input.ackOutbox.recipientDeviceId !== input.receipt.recipientDeviceId || input.ackOutbox.ack.recipientDeviceId !== input.receipt.recipientDeviceId) {
+    throw new TypeError('delivery commit receipt and ACK do not match')
+  }
+  if (!equalBytes(input.receipt.payloadHash, input.delivery.payloadHash) || !equalBytes(input.ackOutbox.ack.payloadHash, input.delivery.payloadHash)) {
+    throw new TypeError('delivery commit payload hashes do not match')
+  }
+  if (!input.receipt.checkpointId || !input.receipt.recipientDeviceId || input.receipt.payloadHash.length === 0 || !input.receipt.committedAt || input.ackOutbox.attempts !== 0) {
+    throw new TypeError('delivery receipt or ACK outbox is invalid')
+  }
+  for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('delivery object identity does not match')
+  for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('delivery event identity does not match')
+  for (const wrap of input.keyWraps) if (wrap.identityId !== input.identityId) throw new TypeError('delivery key wrap identity does not match')
+}
+
 function copyReceipt(value: IngressReceiptRecord): IngressReceiptRecord {
   return { ...value, protectedPayloadHash: value.protectedPayloadHash.slice() }
 }
@@ -364,6 +461,17 @@ function copyOutbox(value: IngressAckOutboxRecord): IngressAckOutboxRecord {
 
 function copyDeliveryOutbox(value: VaultDeliveryOutboxRecord): VaultDeliveryOutboxRecord {
   return { ...value, payload: value.payload.slice(), payloadHash: value.payloadHash.slice() }
+}
+
+function copyDeliveryReceipt(value: VaultDeliveryReceiptRecord): VaultDeliveryReceiptRecord {
+  return { ...value, payloadHash: value.payloadHash.slice() }
+}
+
+function copyDeliveryAckOutbox(value: VaultDeliveryAckOutboxRecord): VaultDeliveryAckOutboxRecord {
+  return {
+    ...value,
+    ack: { ...value.ack, payloadHash: value.ack.payloadHash.slice(), signature: value.ack.signature.slice() },
+  }
 }
 
 function assertKeyWrap(value: SegmentKeyWrapV1): void {
