@@ -2,13 +2,14 @@ import type { RestoreControlAuthorizer } from '../mediation/restore-control-stor
 import type { IngressAckAuthorizer } from '../mediation/ingress-store.ts'
 import type { VaultDeliveryAuthorizer } from '../mediation/vault-delivery-store.ts'
 import type { IngressAckV1, IngressEnvelopeV1 } from '../../protocol/ingress.ts'
-import type { RestoreCancelV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryItemV1 } from '../../protocol/vault.ts'
+import type { RestoreCancelV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryItemV1 } from '../../protocol/vault.ts'
 import type { DeviceId, IdentityId } from '../../protocol/ids.ts'
 import type { TrustedDeviceRoster, TrustedDeviceV1 } from './device-roster.ts'
 
 /** Signature verification stays with the identity/MLS adapter, never with mediation. */
 export interface DeviceControlSignatureVerifier {
   verifyIngressAck(ack: IngressAckV1, envelope: IngressEnvelopeV1, device: TrustedDeviceV1): Promise<boolean>
+  verifyVaultDeliveryAppend(append: VaultDeliveryAppendV1, device: TrustedDeviceV1): Promise<boolean>
   verifyVaultDeliveryAck(ack: VaultDeliveryAckV1, item: VaultDeliveryItemV1, device: TrustedDeviceV1): Promise<boolean>
   verifyRestoreRequest(request: RestoreRequestV1, device: TrustedDeviceV1): Promise<boolean>
   verifyRestoreOffer(offer: RestoreOfferV1, device: TrustedDeviceV1): Promise<boolean>
@@ -30,12 +31,16 @@ export function rosterBackedIngressAckAuthorizer(
 
 export function rosterBackedVaultDeliveryAuthorizer(
   roster: TrustedDeviceRoster,
-  verifier: Pick<DeviceControlSignatureVerifier, 'verifyVaultDeliveryAck'>,
+  verifier: Pick<DeviceControlSignatureVerifier, 'verifyVaultDeliveryAppend' | 'verifyVaultDeliveryAck'>,
 ): VaultDeliveryAuthorizer {
   return {
     deliveryFloor: (identityId, deviceId) => roster.deliveryFloor(identityId, deviceId),
     async recipientsAtAppend(identityId) {
       return (await roster.trustedDevices(identityId)).map(device => device.deviceId)
+    },
+    async verifyAppend(append) {
+      const device = await currentDevice(roster, append.identityId, append.senderDeviceId)
+      return device !== undefined && verifier.verifyVaultDeliveryAppend(append, device)
     },
     async verifyAck(ack, item) {
       const device = await currentDevice(roster, ack.identityId, ack.recipientDeviceId)
@@ -46,7 +51,7 @@ export function rosterBackedVaultDeliveryAuthorizer(
 
 export function rosterBackedRestoreControlAuthorizer(
   roster: TrustedDeviceRoster,
-  verifier: Omit<DeviceControlSignatureVerifier, 'verifyVaultDeliveryAck'>,
+  verifier: Pick<DeviceControlSignatureVerifier, 'verifyRestoreRequest' | 'verifyRestoreOffer' | 'verifyRestoreCancel'>,
 ): RestoreControlAuthorizer {
   return {
     isTrustedDevice: (identityId, deviceId) => roster.isTrustedDevice(identityId, deviceId),

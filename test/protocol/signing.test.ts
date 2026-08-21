@@ -5,6 +5,7 @@ import {
   restoreCancelSigningBytes,
   restoreOfferSigningBytes,
   restoreRequestSigningBytes,
+  vaultDeliveryAppendSigningBytes,
   vaultDeliveryAckSigningBytes,
 } from '../../src/protocol/signing.ts'
 
@@ -22,6 +23,16 @@ describe('device-control signing bytes', () => {
     expect(vaultDeliveryAckSigningBytes(ack)).toEqual(vaultDeliveryAckSigningBytes({ ...ack, payloadHash: ack.payloadHash.slice() }))
     expect(equalBytes(vaultDeliveryAckSigningBytes(ack), vaultDeliveryAckSigningBytes({ ...ack, seq: '8' }))).toBe(false)
     expect(equalBytes(vaultDeliveryAckSigningBytes(ack), vaultDeliveryAckSigningBytes({ ...ack, recipientDeviceId: 'device-b' }))).toBe(false)
+  })
+
+  test('binds delivery append authorization to the payload hash, sender, and idempotency key', () => {
+    const append = {
+      version: 1 as const, identityId: 'did:web:alice.example', appendId: 'event-1', payload: new Uint8Array([1]),
+      payloadHash: new Uint8Array([2]), senderDeviceId: 'device-a', sentAt: '2026-08-21T00:00:00.000Z',
+    }
+    expect(equalBytes(vaultDeliveryAppendSigningBytes(append), vaultDeliveryAppendSigningBytes({ ...append, payload: new Uint8Array([9]) }))).toBe(true)
+    expect(equalBytes(vaultDeliveryAppendSigningBytes(append), vaultDeliveryAppendSigningBytes({ ...append, appendId: 'event-2' }))).toBe(false)
+    expect(equalBytes(vaultDeliveryAppendSigningBytes(append), vaultDeliveryAppendSigningBytes({ ...append, senderDeviceId: 'device-b' }))).toBe(false)
   })
 
   test('separates restore request, offer, and cancel messages by type and all expiry fields', () => {

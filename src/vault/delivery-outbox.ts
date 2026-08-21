@@ -1,11 +1,17 @@
 import { equalBytes, sha256Bytes } from '../protocol/canonical.ts'
-import type { IdentityId } from '../protocol/ids.ts'
+import { vaultDeliveryAppendSigningBytes } from '../protocol/signing.ts'
+import type { DeviceId, IdentityId } from '../protocol/ids.ts'
 import type { VaultDeliveryAppendV1 } from '../protocol/vault.ts'
 import type { VaultDeliveryOutboxReader, VaultDeliveryOutboxRecord } from './store.ts'
 
 /** Client-side boundary; HTTP/DIDComm transports will implement this later. */
 export interface VaultDeliveryAppendTransport {
   append(input: VaultDeliveryAppendV1): Promise<void>
+}
+
+export interface VaultDeliveryAppendSigner {
+  readonly deviceId: DeviceId
+  sign(bytes: Uint8Array): Promise<Uint8Array>
 }
 
 export interface VaultDeliveryOutboxFlushResult {
@@ -21,20 +27,27 @@ export interface VaultDeliveryOutboxFlushResult {
 export async function flushVaultDeliveryOutbox(
   outbox: VaultDeliveryOutboxReader,
   transport: VaultDeliveryAppendTransport,
+  signer: VaultDeliveryAppendSigner,
   identityId: IdentityId,
   limit = 32,
+  now: () => Date = () => new Date(),
 ): Promise<VaultDeliveryOutboxFlushResult> {
   const appendedEntryIds: string[] = []
   for (const entry of await outbox.readDeliveryOutbox(identityId, limit)) {
     try {
       assertOutboxEntry(entry)
-      await transport.append({
+      const unsigned = {
         version: 1,
         identityId: entry.identityId,
         appendId: entry.entryId,
         payload: entry.payload,
         payloadHash: entry.payloadHash,
-      })
+        senderDeviceId: signer.deviceId,
+        sentAt: now().toISOString(),
+      } as const
+      const signature = await signer.sign(vaultDeliveryAppendSigningBytes(unsigned))
+      if (signature.length === 0) throw new TypeError('vault delivery append signature is empty')
+      await transport.append({ ...unsigned, signature })
       await outbox.removeDeliveryOutbox(identityId, entry.entryId)
       appendedEntryIds.push(entry.entryId)
     } catch {

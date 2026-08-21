@@ -13,6 +13,7 @@ function makeAuthorizer(floors: Record<string, string> = { 'device-a': '1', 'dev
   return {
     deliveryFloor: async (_identityId, deviceId) => floors[deviceId],
     recipientsAtAppend: async () => Object.entries(floors).filter(([, floor]) => floor === '1').map(([deviceId]) => deviceId),
+    verifyAppend: async (input) => input.senderDeviceId === 'device-a' && input.signature.length > 0,
     verifyAck: async () => true,
   }
 }
@@ -24,6 +25,9 @@ function append(overrides: Partial<VaultDeliveryAppendV1> = {}): VaultDeliveryAp
     appendId: 'event-append-1',
     payload,
     payloadHash: sha256Bytes(payload),
+    senderDeviceId: 'device-a',
+    sentAt: '2026-08-21T00:00:00.000Z',
+    signature: new Uint8Array([9]),
     ...overrides,
   }
 }
@@ -93,6 +97,11 @@ describe('MemoryVaultDeliveryStore', () => {
     expect(retry).toEqual(first)
     expect(await store.status(identityId)).toMatchObject({ latestSeq: '1', pendingItems: 1 })
     await expect(store.append({ ...append(), payload: new Uint8Array([4]), payloadHash: sha256Bytes(new Uint8Array([4]) ) })).rejects.toThrow('different payload')
+  })
+
+  test('rejects an unauthorised sender even if its append ID and payload hash are valid', async () => {
+    const store = new MemoryVaultDeliveryStore(makeAuthorizer())
+    await expect(store.append({ ...append(), senderDeviceId: 'device-removed' })).rejects.toThrow('not authorised')
   })
 
   test('rejects an ACK with a different payload hash', async () => {

@@ -1,6 +1,6 @@
 import { bytesToBase64url, canonicalBytes } from './canonical.ts'
 import type { IngressAckV1 } from './ingress.ts'
-import type { RestoreCancelV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1 } from './vault.ts'
+import type { RestoreCancelV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1 } from './vault.ts'
 
 /**
  * Canonical bytes for device-control signatures. These functions omit only
@@ -30,6 +30,18 @@ export function vaultDeliveryAckSigningBytes(ack: Omit<VaultDeliveryAckV1, 'sign
     recipientDeviceId: ack.recipientDeviceId,
     checkpointId: ack.checkpointId,
     ackedAt: ack.ackedAt,
+  })
+}
+
+export function vaultDeliveryAppendSigningBytes(append: Omit<VaultDeliveryAppendV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/vault-delivery-append/v1',
+    version: append.version,
+    identityId: append.identityId,
+    appendId: append.appendId,
+    payloadHash: bytesToBase64url(append.payloadHash),
+    senderDeviceId: append.senderDeviceId,
+    sentAt: append.sentAt,
   })
 }
 

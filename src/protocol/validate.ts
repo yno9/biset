@@ -100,13 +100,16 @@ export function assertIngressAck(value: unknown): asserts value is IngressAckV1 
 export function assertVaultDeliveryAppend(value: unknown): asserts value is VaultDeliveryAppendV1 {
   const input = record(value, 'VaultDeliveryAppendV1')
   exactKeys(input, [
-    'version', 'identityId', 'appendId', 'payload', 'payloadHash',
+    'version', 'identityId', 'appendId', 'payload', 'payloadHash', 'senderDeviceId', 'sentAt', 'signature',
   ], 'VaultDeliveryAppendV1')
   if (input.version !== 1) throw new ProtocolValidationError('VaultDeliveryAppendV1.version must be 1')
   text(input.identityId, 'identityId')
   text(input.appendId, 'appendId')
   bytes(input.payload, 'payload')
   bytes(input.payloadHash, 'payloadHash')
+  text(input.senderDeviceId, 'senderDeviceId')
+  time(input.sentAt, 'sentAt')
+  bytes(input.signature, 'signature')
 }
 
 export function assertVaultDeliveryAck(value: unknown): asserts value is VaultDeliveryAckV1 {

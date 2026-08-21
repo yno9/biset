@@ -4,6 +4,7 @@ import { flushVaultDeliveryOutbox, type VaultDeliveryAppendTransport } from '../
 import type { VaultDeliveryOutboxReader, VaultDeliveryOutboxRecord } from '../../src/vault/store.ts'
 
 const identityId = 'did:web:alice.example'
+const signer = { deviceId: 'device-a', async sign(bytes: Uint8Array) { return sha256Bytes(bytes) } }
 
 function entry(entryId: string, payload = new Uint8Array([1])): VaultDeliveryOutboxRecord {
   return { identityId, entryId, payload, payloadHash: sha256Bytes(payload), createdAt: '2026-08-21T00:00:00.000Z', attempts: 0 }
@@ -21,7 +22,7 @@ describe('vault delivery outbox', () => {
     const outbox = new MemoryOutbox([entry('event-1'), entry('event-2', new Uint8Array([2]))])
     const appended: string[] = []
     const transport: VaultDeliveryAppendTransport = { async append(input) { appended.push(input.appendId) } }
-    expect(await flushVaultDeliveryOutbox(outbox, transport, identityId)).toEqual({ appendedEntryIds: ['event-1', 'event-2'] })
+    expect(await flushVaultDeliveryOutbox(outbox, transport, signer, identityId, 32, () => new Date('2026-08-21T00:00:00.000Z'))).toEqual({ appendedEntryIds: ['event-1', 'event-2'] })
     expect(appended).toEqual(['event-1', 'event-2'])
     expect(outbox.entries).toEqual([])
   })
@@ -33,7 +34,7 @@ describe('vault delivery outbox', () => {
       appended.push(input.appendId)
       if (input.appendId === 'event-1') throw new Error('offline')
     } }
-    expect(await flushVaultDeliveryOutbox(outbox, transport, identityId)).toEqual({ appendedEntryIds: [], failedEntryId: 'event-1' })
+    expect(await flushVaultDeliveryOutbox(outbox, transport, signer, identityId)).toEqual({ appendedEntryIds: [], failedEntryId: 'event-1' })
     expect(appended).toEqual(['event-1'])
     expect(outbox.entries.map(entry => entry.entryId)).toEqual(['event-1', 'event-2'])
     expect(outbox.entries[0].attempts).toBe(1)

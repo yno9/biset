@@ -244,5 +244,6 @@
 | 2026-08-21 | 作業中 | `biset-core` 内の identity / mediation / adapters 境界へ再編 |
 | 2026-08-21 | `39008f4` | Local JMAP mutation と共有 vault-delivery outbox を原子的に保存。canonical delivery pack と MLS key-wrap 同梱を追加 |
 | 2026-08-21 | `409a6dd` | delivery recipient snapshot / TTL を core policy に移し、idempotent append と causal-order outbox flush を追加 |
+| 2026-08-21 | `ccc2aa9` | shared vault delivery append を current roster の device signature で認可 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

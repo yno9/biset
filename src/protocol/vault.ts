@@ -98,6 +98,9 @@ export interface VaultDeliveryAppendV1 {
   appendId: VaultEventId
   payload: Uint8Array
   payloadHash: Uint8Array
+  senderDeviceId: DeviceId
+  sentAt: string
+  signature: Uint8Array
 }
 
 export type RestoreRequiredReason =

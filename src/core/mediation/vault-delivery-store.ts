@@ -32,6 +32,7 @@ export interface VaultDeliveryAuthorizer {
   deliveryFloor(identityId: IdentityId, deviceId: DeviceId): Promise<DeliverySeq | undefined>
   /** The core, rather than an untrusted append caller, freezes this snapshot. */
   recipientsAtAppend(identityId: IdentityId): Promise<DeviceId[]>
+  verifyAppend(append: VaultDeliveryAppendV1): Promise<boolean>
   verifyAck(ack: VaultDeliveryAckV1, item: VaultDeliveryItemV1): Promise<boolean>
 }
 
@@ -94,6 +95,9 @@ export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
     assertVaultDeliveryAppend(input)
     if (!equalBytes(sha256Bytes(input.payload), input.payloadHash)) {
       throw new ProtocolValidationError('payloadHash must equal SHA-256(payload)')
+    }
+    if (!(await this.authorizer.verifyAppend(input))) {
+      throw new ProtocolValidationError('delivery append is not authorised')
     }
     if (input.payload.length > this.limits.maxPayloadBytes) {
       throw new ProtocolValidationError('delivery payload exceeds maxPayloadBytes')
