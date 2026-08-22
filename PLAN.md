@@ -279,5 +279,6 @@
 | 2026-08-22 | `3044a09` | endpoint-only OpenPGP credential reader を追加し、current epoch の再検証と fail-closed な現行鍵選択を実装 |
 | 2026-08-22 | `d4b2297` | core 非依存の独立 recovery key で vault ciphertext/SegmentKey snapshot を保護する user-owned archive primitive を追加 |
 | 2026-08-22 | `ad05cfb` | local vault 全 record と current SegmentKey から archive snapshot を組み立て、resolver key buffer を消去する export 境界を追加 |
+| 2026-08-22 | `4510a2c` | archive 復元で旧 MLS secret を持ち込まず、新しい current self-group epoch 向け SegmentKey wrap を発行する preparation を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
