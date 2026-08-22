@@ -123,6 +123,7 @@
 - [x] TTL 内の shared vault delivery は cursor-based pull → ordered ingest → durable ACK outbox flush として同期し、TTL 外は `restoreRequired` を UI 層へ返す。
 - [x] append / pull / ACK はすべて current trusted device の署名を必要とする。HTTP binding はこの型をそのまま使う。
 - [x] ACK outbox の retry / idempotence を実装する。
+- [x] signed ingress pull → endpoint ingest → durable ingress ACK outbox flush の client 同期ループを実装した。既存 ACK を pull 前に再送し、今回の ACK は atomic commit 後にだけ送る。
 - [ ] crash が ACK 前なら payload を再 pull でき、ACK 後なら local state が必ず存在することを test する。
 - [ ] duplicate ingress ID / payload hash を安全に処理する。
 

@@ -56,6 +56,13 @@ export interface IngressAckOutboxRecord {
   createdAt: string
 }
 
+/** Durable external-ingress ACK work. A failed network wake must not lose it. */
+export interface IngressAckOutboxReader {
+  readIngressAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, limit?: number): Promise<IngressAckOutboxRecord[]>
+  removeIngressAckOutbox(identityId: IdentityId, ingressId: string): Promise<void>
+  noteIngressAckOutboxAttempt(identityId: IdentityId, ingressId: string): Promise<void>
+}
+
 /**
  * Locally durable work waiting to become one mediator delivery item. Its body
  * is an encrypted shared-vault pack; recipient snapshots and expiry belong to
@@ -237,7 +244,7 @@ export interface VaultRestoreOfferOutboxStore {
   clearRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, RecoveryArchiveImportStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, RecoveryArchiveImportStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, IngressAckOutboxReader, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -294,6 +301,33 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     )
     await completed
     return record?.value
+  }
+
+  async readIngressAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, limit = 32): Promise<IngressAckOutboxRecord[]> {
+    if (!identityId || !recipientDeviceId || !Number.isSafeInteger(limit) || limit < 1) throw new TypeError('ingress ACK outbox query is invalid')
+    const transaction = this.database.transaction(STORES.outbox, 'readonly')
+    const completed = transactionDone(transaction)
+    const values = await requestValue<IngressAckOutboxRecord[]>(transaction.objectStore(STORES.outbox).getAll())
+    await completed
+    return values.filter(value => value.identityId === identityId && value.ack.recipientDeviceId === recipientDeviceId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.ingressId.localeCompare(right.ingressId))
+      .slice(0, limit).map(copyOutbox)
+  }
+
+  async removeIngressAckOutbox(identityId: IdentityId, ingressId: string): Promise<void> {
+    if (!identityId || !ingressId) throw new TypeError('ingress ACK outbox identity and ID are required')
+    const transaction = this.database.transaction(STORES.outbox, 'readwrite')
+    transaction.objectStore(STORES.outbox).delete([identityId, ingressId])
+    await transactionDone(transaction)
+  }
+
+  async noteIngressAckOutboxAttempt(identityId: IdentityId, ingressId: string): Promise<void> {
+    if (!identityId || !ingressId) throw new TypeError('ingress ACK outbox identity and ID are required')
+    const transaction = this.database.transaction(STORES.outbox, 'readwrite')
+    const store = transaction.objectStore(STORES.outbox)
+    const record = await requestValue<IngressAckOutboxRecord | undefined>(store.get([identityId, ingressId]))
+    if (record) store.put({ ...copyOutbox(record), attempts: record.attempts + 1 })
+    await transactionDone(transaction)
   }
 
   /**
