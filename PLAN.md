@@ -290,5 +290,6 @@
 | 2026-08-22 | `af96b84` | strict RFC 3156 multipart/encrypted extractor を追加し、実暗号文で endpoint-only packet decrypt まで結合検証 |
 | 2026-08-22 | `ffed586` | `message.add` の二 object 正本（encrypted JMAP metadata + unchanged raw RFC 5322）と projection / delivery 検証を追加 |
 | 2026-08-22 | `721dfac` | endpoint mail ingress を raw mail vault record とし、ingress ACK と sibling delivery outbox を一 transaction に接続 |
+| 2026-08-22 | `b5e71c6` | external ingress を最初の正規 endpoint に短期 lease し、同時 pull による二重 vault 正本化を防止 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
