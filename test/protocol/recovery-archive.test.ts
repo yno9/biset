@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { buildVaultManifest } from '../../src/vault/manifest.ts'
 import { createSegmentKey, encryptVaultObject } from '../../src/vault/objects.ts'
-import { createRecoveryArchive, createRecoveryKey, openRecoveryArchive, type RecoveryArchiveSnapshotV1 } from '../../src/vault/recovery-archive.ts'
+import { createRecoveryArchive, createRecoveryKey, decodeRecoveryArchive, encodeRecoveryArchive, openRecoveryArchive, type RecoveryArchiveSnapshotV1 } from '../../src/vault/recovery-archive.ts'
 import { createVaultEvent, type VaultEventSigner } from '../../src/vault/events.ts'
-import { equalBytes } from '../../src/protocol/canonical.ts'
+import { bytesToBase64url, equalBytes } from '../../src/protocol/canonical.ts'
 
 const identityId = 'did:web:alice.example'
 const signer: VaultEventSigner = {
@@ -36,6 +36,19 @@ describe('user-owned recovery archive', () => {
   test('does not export a snapshot when any encrypted object lacks its SegmentKey', async () => {
     const snapshot = await fixture()
     await expect(createRecoveryArchive(createRecoveryKey(), { ...snapshot, segmentKeys: [] })).rejects.toThrow('missing a SegmentKey')
+  })
+
+  test('uses a canonical encrypted-only file representation for browser export/import', async () => {
+    const snapshot = await fixture()
+    const recoveryKey = createRecoveryKey()
+    const archive = await createRecoveryArchive(recoveryKey, snapshot)
+    const bytes = encodeRecoveryArchive(archive)
+    const text = new TextDecoder().decode(bytes)
+
+    expect(text).not.toContain(bytesToBase64url(snapshot.segmentKeys[0]!.key))
+    expect(decodeRecoveryArchive(bytes)).toEqual(archive)
+    await expect(openRecoveryArchive(recoveryKey, decodeRecoveryArchive(bytes))).resolves.toMatchObject({ manifest: { root: snapshot.manifest.root } })
+    await expect(() => decodeRecoveryArchive(new TextEncoder().encode(`${text} `))).toThrow('not canonical')
   })
 })
 

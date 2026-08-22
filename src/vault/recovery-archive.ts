@@ -70,7 +70,7 @@ export async function createRecoveryArchive(recoveryKey: Uint8Array, snapshot: R
 /** Decrypts and structurally verifies an archive entirely at the endpoint. */
 export async function openRecoveryArchive(recoveryKey: Uint8Array, archive: RecoveryArchiveV1): Promise<RecoveryArchiveSnapshotV1> {
   assertRecoveryKey(recoveryKey)
-  assertArchiveEnvelope(archive)
+  assertRecoveryArchiveEnvelope(archive)
   if (!equalBytes(archive.ciphertextHash, await digest(archive.ciphertext))) throw new TypeError('recovery archive ciphertext hash does not match')
   const expectedAad = recoveryArchiveAad(archive.identityId, archive.createdAt)
   if (!equalBytes(archive.aad, expectedAad)) throw new TypeError('recovery archive AAD does not match metadata')
@@ -94,6 +94,39 @@ export async function openRecoveryArchive(recoveryKey: Uint8Array, archive: Reco
 export function recoveryArchiveAad(identityId: IdentityId, createdAt: string): Uint8Array {
   if (!identityId || Number.isNaN(Date.parse(createdAt))) throw new TypeError('recovery archive identity and creation time are required')
   return canonicalBytes({ label: 'biset/recovery-archive/aad/v1', identityId, createdAt })
+}
+
+/**
+ * Canonical file payload for browser Blob/File export. It contains only the
+ * already encrypted outer envelope—never a recovery key or plaintext vault
+ * material.
+ */
+export function encodeRecoveryArchive(archive: RecoveryArchiveV1): Uint8Array {
+  assertRecoveryArchiveEnvelope(archive)
+  return canonicalBytes(recoveryArchiveWire(archive))
+}
+
+/** Rejects malformed or merely re-serialised archive files before decryption. */
+export function decodeRecoveryArchive(bytes: Uint8Array): RecoveryArchiveV1 {
+  let input: unknown
+  try { input = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) } catch { throw new TypeError('recovery archive file is not JSON') }
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('recovery archive file must be an object')
+  const value = input as Record<string, unknown>
+  if (value.version !== 1 || value.kind !== 'biset.recovery-archive' || typeof value.identityId !== 'string' || typeof value.createdAt !== 'string' || typeof value.nonce !== 'string' || typeof value.ciphertext !== 'string' || typeof value.ciphertextHash !== 'string' || typeof value.plaintextLength !== 'number' || typeof value.aad !== 'string') throw new TypeError('recovery archive file shape is invalid')
+  const archive: RecoveryArchiveV1 = {
+    version: 1,
+    kind: 'biset.recovery-archive',
+    identityId: value.identityId,
+    createdAt: value.createdAt,
+    nonce: base64urlToBytes(value.nonce),
+    ciphertext: base64urlToBytes(value.ciphertext),
+    ciphertextHash: base64urlToBytes(value.ciphertextHash),
+    plaintextLength: value.plaintextLength,
+    aad: base64urlToBytes(value.aad),
+  }
+  assertRecoveryArchiveEnvelope(archive)
+  if (!equalBytes(bytes, encodeRecoveryArchive(archive))) throw new TypeError('recovery archive file is not canonical')
+  return copyArchive(archive)
 }
 
 export function encodeRecoveryArchiveSnapshot(snapshot: RecoveryArchiveSnapshotV1): Uint8Array {
@@ -156,6 +189,20 @@ function snapshotWire(value: RecoveryArchiveSnapshotV1) {
   }
 }
 
+function recoveryArchiveWire(value: RecoveryArchiveV1) {
+  return {
+    version: value.version,
+    kind: value.kind,
+    identityId: value.identityId,
+    createdAt: value.createdAt,
+    nonce: bytesToBase64url(value.nonce),
+    ciphertext: bytesToBase64url(value.ciphertext),
+    ciphertextHash: bytesToBase64url(value.ciphertextHash),
+    plaintextLength: value.plaintextLength,
+    aad: bytesToBase64url(value.aad),
+  }
+}
+
 function manifestWire(value: VaultManifestV1) { return { version: value.version, identityId: value.identityId, eventIds: value.eventIds, objectIds: value.objectIds, root: value.root, createdAt: value.createdAt } }
 function eventWire(value: VaultEventV1) { return { ...value, signature: bytesToBase64url(value.signature) } }
 function objectWire(value: VaultObjectV1) { return { ...value, nonce: bytesToBase64url(value.nonce), ciphertext: bytesToBase64url(value.ciphertext), ciphertextHash: bytesToBase64url(value.ciphertextHash), aad: bytesToBase64url(value.aad) } }
@@ -190,7 +237,11 @@ function copySnapshot(value: RecoveryArchiveSnapshotV1): RecoveryArchiveSnapshot
   return { ...value, manifest: { ...value.manifest, eventIds: [...value.manifest.eventIds], objectIds: [...value.manifest.objectIds] }, events: value.events.map(event => ({ ...event, targetIds: [...event.targetIds], objectRefs: [...event.objectRefs], parents: [...event.parents], signature: event.signature.slice() })), objects: value.objects.map(object => ({ ...object, nonce: object.nonce.slice(), ciphertext: object.ciphertext.slice(), ciphertextHash: object.ciphertextHash.slice(), aad: object.aad.slice() })), segmentKeys: value.segmentKeys.map(segment => ({ segmentId: segment.segmentId, key: segment.key.slice() })) }
 }
 
-function assertArchiveEnvelope(value: RecoveryArchiveV1): void {
+function copyArchive(value: RecoveryArchiveV1): RecoveryArchiveV1 {
+  return { ...value, nonce: value.nonce.slice(), ciphertext: value.ciphertext.slice(), ciphertextHash: value.ciphertextHash.slice(), aad: value.aad.slice() }
+}
+
+export function assertRecoveryArchiveEnvelope(value: RecoveryArchiveV1): void {
   if (value.version !== 1 || value.kind !== 'biset.recovery-archive' || !value.identityId || Number.isNaN(Date.parse(value.createdAt)) || value.nonce.length !== NONCE_BYTES || value.ciphertext.length === 0 || value.ciphertextHash.length !== 32 || !Number.isSafeInteger(value.plaintextLength) || value.plaintextLength < 0 || value.aad.length === 0) throw new TypeError('recovery archive envelope is invalid')
 }
 
