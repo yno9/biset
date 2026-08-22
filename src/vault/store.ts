@@ -155,6 +155,14 @@ export interface VaultDeliveryCommit {
   ackOutbox: VaultDeliveryAckOutboxRecord
 }
 
+/** Raw archive records are committed together; projection rebuild is a later explicit step. */
+export interface RecoveryArchiveImportCommit {
+  identityId: IdentityId
+  objects: VaultObjectRecord[]
+  events: VaultEventRecord[]
+  keyWraps: SegmentKeyWrapV1[]
+}
+
 export type IngressCommitResult = 'committed' | 'already-committed'
 
 /** Narrow read boundary used by local projections without exposing IDB internals. */
@@ -178,6 +186,10 @@ export interface VaultCredentialEventReader {
 export interface VaultRecordReader {
   readVaultEvents(identityId: IdentityId): Promise<VaultEventRecord[]>
   readVaultObjects(identityId: IdentityId): Promise<VaultObjectRecord[]>
+}
+
+export interface RecoveryArchiveImportStore {
+  commitRecoveryArchive(input: RecoveryArchiveImportCommit): Promise<void>
 }
 
 export interface SegmentKeyWrapReader {
@@ -223,7 +235,7 @@ export interface VaultRestoreOfferOutboxStore {
   clearRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, RecoveryArchiveImportStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -606,6 +618,19 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     transaction.objectStore(STORES.restoreTransferState).put(copyRestoreTransferSession(input.session))
     await transactionDone(transaction)
   }
+
+  /**
+   * Does not write projection/JMAP state: callers must cryptographically
+   * rebuild that view before declaring archive restore complete.
+   */
+  async commitRecoveryArchive(input: RecoveryArchiveImportCommit): Promise<void> {
+    assertRecoveryArchiveImportCommit(input)
+    const transaction = this.database.transaction([STORES.objects, STORES.events, STORES.keyWraps], 'readwrite')
+    for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject(object))
+    for (const event of input.events) transaction.objectStore(STORES.events).put(copyEvent(event))
+    for (const wrap of input.keyWraps) transaction.objectStore(STORES.keyWraps).put(copyKeyWrap(wrap))
+    await transactionDone(transaction)
+  }
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -772,6 +797,13 @@ function assertRestoreTransferChunkCommit(input: RestoreTransferChunkCommit): vo
   for (const object of input.objects) if (object.objectId.length === 0) throw new TypeError('restore transfer object is invalid')
   for (const event of input.events) if (event.identityId !== session.identityId) throw new TypeError('restore transfer event identity does not match')
   for (const wrap of input.keyWraps) if (wrap.identityId !== session.identityId) throw new TypeError('restore transfer key wrap identity does not match')
+}
+
+function assertRecoveryArchiveImportCommit(input: RecoveryArchiveImportCommit): void {
+  if (!input.identityId || input.keyWraps.length === 0) throw new TypeError('recovery archive import is invalid')
+  for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('recovery archive object identity does not match')
+  for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('recovery archive event identity does not match')
+  for (const wrap of input.keyWraps) if (wrap.identityId !== input.identityId) throw new TypeError('recovery archive key wrap identity does not match')
 }
 
 function sameStringLists(left: readonly string[], right: readonly string[]): boolean {
