@@ -45,7 +45,7 @@ export interface RecoveryArchiveV1 {
 
 export async function createRecoveryArchive(recoveryKey: Uint8Array, snapshot: RecoveryArchiveSnapshotV1): Promise<RecoveryArchiveV1> {
   assertRecoveryKey(recoveryKey)
-  await assertSnapshot(snapshot)
+  await assertRecoveryArchiveSnapshot(snapshot)
   const nonce = randomNonce()
   const aad = recoveryArchiveAad(snapshot.identityId, snapshot.createdAt)
   const plaintext = encodeRecoveryArchiveSnapshot(snapshot)
@@ -87,7 +87,7 @@ export async function openRecoveryArchive(recoveryKey: Uint8Array, archive: Reco
   if (plaintext.length !== archive.plaintextLength) throw new TypeError('recovery archive plaintext length does not match')
   const snapshot = decodeRecoveryArchiveSnapshot(plaintext)
   if (snapshot.identityId !== archive.identityId || snapshot.createdAt !== archive.createdAt) throw new TypeError('recovery archive plaintext metadata does not match envelope')
-  await assertSnapshot(snapshot)
+  await assertRecoveryArchiveSnapshot(snapshot)
   return copySnapshot(snapshot)
 }
 
@@ -119,7 +119,8 @@ export function decodeRecoveryArchiveSnapshot(bytes: Uint8Array): RecoveryArchiv
   return snapshot
 }
 
-async function assertSnapshot(snapshot: RecoveryArchiveSnapshotV1): Promise<void> {
+/** Structural validation for a decrypted archive before any local import. */
+export async function assertRecoveryArchiveSnapshot(snapshot: RecoveryArchiveSnapshotV1): Promise<void> {
   if (snapshot.version !== 1 || !snapshot.identityId || Number.isNaN(Date.parse(snapshot.createdAt)) || snapshot.manifest.identityId !== snapshot.identityId || !verifyVaultManifest(snapshot.manifest)) throw new TypeError('recovery archive snapshot is invalid')
   const eventIds = new Set<string>()
   for (const event of snapshot.events) {

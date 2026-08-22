@@ -312,7 +312,7 @@ OpenPGP 秘密鍵はメール adapter や core の credential DB ではなく、
 
 全端末喪失に備える既定の server backup は作らない。必要な利用者だけが、client が作る暗号化 recovery archive を自分で export し、NAS・外部媒体・印刷した recovery key 等で管理する。archive は少なくとも vault snapshot と OpenPGP credential を一体で含む。recovery key は MLS exporter secret、端末鍵、Biset core の credential と混用せず、client が生成・保持する独立した復旧要因とする。archive なしで全端末を失えば、history と OpenPGP 秘密鍵の双方を失う。
 
-`src/vault/recovery-archive.ts` はこの archive の endpoint-only AES-GCM envelope を定義する。encrypted body は manifest、元の event/object ciphertext、各 object を開く SegmentKey を含む。`recovery-archive-export.ts` は IndexedDB の local record reader からその完全 snapshot を作る。MLS exporter secret・VEK・端末 signing key は入れない。復元後は archive 内の SegmentKey を使って既存 object を検証・読出しでき、新しい self group / current epoch が確立した時点で新しい `SegmentKeyWrapV1` を作る。browser file export/import とこの post-import rewrap は後続工程である。
+`src/vault/recovery-archive.ts` はこの archive の endpoint-only AES-GCM envelope を定義する。encrypted body は manifest、元の event/object ciphertext、各 object を開く SegmentKey を含む。`recovery-archive-export.ts` は IndexedDB の local record reader からその完全 snapshot を作る。`recovery-archive-rewrap.ts` は復元後の current self group / current epoch からだけ新しい `SegmentKeyWrapV1` を発行する。MLS exporter secret・VEK・端末 signing key は archive に入れず、re-wrap 後に VEK buffer を消去する。browser file export/import、atomic import、projection rebuild は後続工程である。
 
 OpenPGP は長期 identity key であり、MLS Remove より弱い性質を持つ。端末が一度 credential を得た後は、その端末から鍵を暗号的に回収できない。端末の紛失・侵害で Remove を行う際には、MLS Remove に加えて OpenPGP key rotation / revocation を実施し、新公開鍵を Autocrypt/WKD 等の discovery に反映する。旧鍵は過去 mail の復号用 credential として正規 vault/archive に残せるが、相手が stale な旧公開鍵へ送った将来 mail を、removed device が読めないことまでは保証できない。この限界と鍵変更の UX は product に明示する。
 

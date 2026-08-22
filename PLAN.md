@@ -153,7 +153,7 @@
 - [-] manifest first、chunk hash、resume cursor を使う peer transfer frame の作成・検証と、verified records/session cursor の IndexedDB atomic import を実装した。実際の direct/relayed channel、projection rebuild、browser fault test は未実装。
 - [-] frame 内の event signature、ciphertext hash/object ID、current-epoch SegmentKeyWrap を別々に検証する。actual MLS grant verification は未接続。
 - [-] interrupted cursor / tampered frame は test 済み。stale grant / removed requester / replay の channel-level test は未実装。
-- [-] user-owned archive の endpoint-only AES-GCM envelope と、IndexedDB record reader から全 event/object と必要な SegmentKey を集める export snapshot builder を実装した。browser file export/import と import 後の新 MLS epoch wrap 再発行は未実装。
+- [-] user-owned archive の endpoint-only AES-GCM envelope と、IndexedDB record reader から全 event/object と必要な SegmentKey を集める export snapshot builder を実装した。復元後の current MLS epoch だけへ SegmentKey を再 wrap する preparation も実装した。browser file export/import、atomic import、projection rebuild は未実装。
 
 **完了条件:** mediator history storage なしで、新端末または TTL 外端末が foreground peer から全 vault を検証付きで復元できる。
 

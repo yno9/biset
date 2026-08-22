@@ -87,7 +87,7 @@ describe('MemoryIngressStore', () => {
   test('rejects a forged ACK hash before authorisation is accepted', async () => {
     const store = new MemoryIngressStore(authorizer)
     await store.offer(envelope())
-    await expect(store.acknowledge(ack({ protectedPayloadHash: new Uint8Array([8]) }))).rejects.toThrow('does not match')
+    await expect(store.acknowledge(ack({ protectedPayloadHash: new Uint8Array([8]) }), new Date('2026-08-21T01:00:00.000Z'))).rejects.toThrow('does not match')
   })
 
   test('rejects an adapter offer whose declared body hash is not the body hash', async () => {
