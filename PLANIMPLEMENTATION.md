@@ -310,6 +310,8 @@ OpenPGP 秘密鍵はメール adapter や core の credential DB ではなく、
 
 `src/mail/openpgp-message.ts` は endpoint-only に extracted OpenPGP binary packet を decrypt / optional signature verify する。core が RFC 5322/MIME を解釈することはなく、RFC 3156 MIME extraction と Autocrypt/DeltaChat の意味解釈は mail projector の責務としてこの primitive の外に置く。署名必須の呼び出しは unsigned または invalid signature を成功として扱わない。
 
+`src/mail/rfc3156.ts` は endpoint-only の strict RFC 3156 outer wrapper extractor である。`multipart/encrypted; protocol=application/pgp-encrypted` の二 part 構造、`Version: 1` control part、base64 `application/octet-stream` を検証して OpenPGP packet bytes を返す。core はこの module を呼ばない。decrypted inner MIME の解釈、Autocrypt/DeltaChat protected headers/attachments は後続の mail projector が扱う。
+
 同 module は検証済み credential から fingerprint と armored **public** certificate だけを返す publication boundary も持つ。webvh DID document はこの public binding を署名付きで記録でき、WKD / Autocrypt adapter は同じ certificate を配布できる。SCID は公開鍵の代替ではなく、この binding を持つ DID の自己証明的 identifier として使う。
 
 全端末喪失に備える既定の server backup は作らない。必要な利用者だけが、client が作る暗号化 recovery archive を自分で export し、NAS・外部媒体・印刷した recovery key 等で管理する。archive は少なくとも vault snapshot と OpenPGP credential を一体で含む。recovery key は MLS exporter secret、端末鍵、Biset core の credential と混用せず、client が生成・保持する独立した復旧要因とする。archive なしで全端末を失えば、history と OpenPGP 秘密鍵の双方を失う。
