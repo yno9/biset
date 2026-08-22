@@ -194,6 +194,7 @@
 - [ ] SMTP / upstream JMAP input を raw RFC 5322 ingress に変換する。
 - [ ] RCPT TO と address-to-identity resolution を実装する。
 - [ ] raw mail、envelope、DKIM/ARC evidence を server-side decrypt せずに渡す。
+- [-] endpoint の `MailIngressProjector` は opaque mail ingress を raw RFC 5322 object + encrypted JMAP metadata の `message.add` に変換し、ingress receipt / ACK outbox / sibling vault-delivery outbox を一 transaction に確定する。SMTP listener、address resolution、RFC 5322/MIME metadata parser、OpenPGP/Autocrypt projector は未実装。
 - [-] endpoint-only OpenPGP packet decrypt/optional signature verification と strict RFC 3156 `multipart/encrypted` packet extraction を実装した。Autocrypt、DeltaChat protected headers、SecureJoin、decrypted MIME projector は未実装。
 - [ ] outbound intent から client-side PGP/MIME を作り、SMTP/JMAP Submission する。
 - [ ] `250` 後の TTL expiry policy を **DSN 型**または**4xx 型**のどちらかに決定・実装する。

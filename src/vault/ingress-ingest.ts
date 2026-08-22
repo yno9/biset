@@ -2,7 +2,7 @@ import { equalBytes, sha256Bytes } from '../protocol/canonical.ts'
 import { ingressAckSigningBytes } from '../protocol/signing.ts'
 import type { IngressAckV1, IngressEnvelopeV1 } from '../protocol/ingress.ts'
 import type { DeviceId } from '../protocol/ids.ts'
-import type { VaultEventRecord, VaultObjectRecord, IngressVaultCommit } from './store.ts'
+import type { VaultDeliveryOutboxRecord, VaultEventRecord, VaultObjectRecord, IngressVaultCommit } from './store.ts'
 
 export interface IngressAckSigner {
   readonly deviceId: DeviceId
@@ -17,6 +17,7 @@ export interface IngressVerifierProjector {
     projection: unknown
     jmapState: unknown
     checkpointId: string
+    deliveryOutbox?: VaultDeliveryOutboxRecord
   }>
 }
 
@@ -67,6 +68,7 @@ export async function ingestIngress(
     events: derived.events,
     projection: derived.projection,
     jmapState: derived.jmapState,
+    deliveryOutbox: derived.deliveryOutbox,
     ackOutbox: { identityId: envelope.recipientIdentityId, ingressId: envelope.ingressId, ack, attempts: 0, createdAt: ackedAt },
   })
   return { result, ack }

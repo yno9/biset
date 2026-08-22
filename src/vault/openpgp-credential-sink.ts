@@ -3,7 +3,8 @@ import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../local-jmap/gat
 import type { VaultEventSigner } from './events.ts'
 import { encodeVaultDeliveryPack } from './delivery-pack.ts'
 import { buildOpenPgpPrivateCredential, type OpenPgpCredentialBuildContext, type OpenPgpPrivateCredentialV1 } from './openpgp-credential.ts'
-import type { ActiveVaultSegment, LocalVaultMutationCommitter } from '../local-jmap/vault-mutation-sink.ts'
+import type { LocalVaultMutationCommitter } from '../local-jmap/vault-mutation-sink.ts'
+import { assertActiveVaultSegment, type ActiveVaultSegment } from './active-segment.ts'
 import type { DeviceId, IdentityId, VaultEventId } from '../protocol/ids.ts'
 import type { VaultEventV1 } from '../protocol/vault.ts'
 
@@ -35,7 +36,7 @@ export class OpenPgpCredentialVaultSink {
 
   async store(credential: OpenPgpPrivateCredentialV1): Promise<OpenPgpCredentialStoreResult> {
     const segment = await this.options.activeSegment()
-    assertSegment(this.options.identityId, segment)
+    assertActiveVaultSegment(this.options.identityId, segment, 'OpenPGP credential')
     const record = await buildOpenPgpPrivateCredential(credential, {
       identityId: this.options.identityId,
       actorDeviceId: this.options.actorDeviceId,
@@ -57,11 +58,5 @@ export class OpenPgpCredentialVaultSink {
       deliveryOutbox: { identityId: this.options.identityId, entryId: record.event.id, payload, payloadHash: sha256Bytes(payload), createdAt: credential.createdAt, attempts: 0 },
     })
     return { result, event: record.event }
-  }
-}
-
-function assertSegment(identityId: IdentityId, segment: ActiveVaultSegment): void {
-  if (!segment.segmentId || segment.segmentKey.length !== 32 || segment.keyWraps.length === 0 || segment.keyWraps.some(wrap => wrap.identityId !== identityId || wrap.segmentId !== segment.segmentId)) {
-    throw new TypeError('active vault segment does not match OpenPGP credential identity')
   }
 }

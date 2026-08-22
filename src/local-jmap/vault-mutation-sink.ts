@@ -1,19 +1,15 @@
 import { sha256Bytes } from '../protocol/canonical.ts'
 import type { VaultEventSigner } from '../vault/events.ts'
 import { buildVaultMutation, encodeVaultMutationObject } from '../vault/mutations.ts'
-import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../protocol/ids.ts'
-import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import type { DeviceId, IdentityId, VaultEventId } from '../protocol/ids.ts'
+import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 import { encodeVaultDeliveryPack } from '../vault/delivery-pack.ts'
 import type { LocalJmapMutationSink, LocalJmapProjectionV1, LocalJmapSnapshot } from './gateway.ts'
 import { emailSetToVaultMutationIntents } from './mutations.ts'
 import { reduceLocalJmapProjection } from './reducer.ts'
+import type { ActiveVaultSegment } from '../vault/active-segment.ts'
 
-export interface ActiveVaultSegment {
-  segmentId: SegmentId
-  segmentKey: Uint8Array
-  /** Current MLS epoch wrap(s) needed by another authorised device to open this segment. */
-  keyWraps: SegmentKeyWrapV1[]
-}
+export type { ActiveVaultSegment } from '../vault/active-segment.ts'
 
 export interface LocalVaultMutationCommitter {
   commitLocalMutation(input: {

@@ -125,6 +125,8 @@ export interface IngressVaultCommit {
   events: VaultEventRecord[]
   projection: unknown
   jmapState: unknown
+  /** Present when the endpoint has made the external item part of shared vault state. */
+  deliveryOutbox?: VaultDeliveryOutboxRecord
   ackOutbox: IngressAckOutboxRecord
 }
 
@@ -259,6 +261,7 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
       STORES.projection,
       STORES.jmapState,
       STORES.outbox,
+      STORES.deliveryOutbox,
     ], 'readwrite')
     let duplicate = false
     const receiptStore = transaction.objectStore(STORES.ingressReceipts)
@@ -271,6 +274,7 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     transaction.objectStore(STORES.projection).put({ identityId: input.identityId, value: input.projection })
     transaction.objectStore(STORES.jmapState).put({ identityId: input.identityId, value: input.jmapState })
     transaction.objectStore(STORES.outbox).put(copyOutbox(input.ackOutbox))
+    if (input.deliveryOutbox) transaction.objectStore(STORES.deliveryOutbox).put(copyDeliveryOutbox(input.deliveryOutbox))
 
     try {
       await transactionDone(transaction)
@@ -692,15 +696,22 @@ function assertCommit(input: IngressVaultCommit): void {
   }
   for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('object identity does not match')
   for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('event identity does not match')
+  if (input.deliveryOutbox) assertDeliveryOutbox(input.identityId, input.events, input.deliveryOutbox, 'ingress')
 }
 
 function assertLocalCommit(input: LocalVaultMutationCommit): void {
   if (!input.identityId || input.events.length === 0 || input.deliveryOutbox.identityId !== input.identityId) throw new TypeError('local mutation commit needs matching identity and events')
-  if (!input.deliveryOutbox.entryId || input.deliveryOutbox.payload.length === 0 || input.deliveryOutbox.payloadHash.length === 0 || !Number.isSafeInteger(input.deliveryOutbox.attempts) || input.deliveryOutbox.attempts < 0 || Number.isNaN(Date.parse(input.deliveryOutbox.createdAt))) {
-    throw new TypeError('local mutation delivery outbox is invalid')
-  }
+  assertDeliveryOutbox(input.identityId, input.events, input.deliveryOutbox, 'local mutation')
   for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('local mutation object identity does not match')
   for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('local mutation event identity does not match')
+}
+
+function assertDeliveryOutbox(identityId: IdentityId, events: VaultEventRecord[], outbox: VaultDeliveryOutboxRecord, source: string): void {
+  if (outbox.identityId !== identityId || !events.some(event => event.id === outbox.entryId)
+    || !outbox.entryId || outbox.payload.length === 0 || outbox.payloadHash.length === 0
+    || !Number.isSafeInteger(outbox.attempts) || outbox.attempts < 0 || Number.isNaN(Date.parse(outbox.createdAt))) {
+    throw new TypeError(`${source} delivery outbox is invalid`)
+  }
 }
 
 function assertDeliveryCommit(input: VaultDeliveryCommit): void {
