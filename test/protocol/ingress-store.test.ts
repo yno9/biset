@@ -87,7 +87,17 @@ describe('MemoryIngressStore', () => {
   test('rejects a forged ACK hash before authorisation is accepted', async () => {
     const store = new MemoryIngressStore(authorizer)
     await store.offer(envelope())
+    await store.pull(pull('device-a'), new Date('2026-08-21T01:00:00.000Z'))
     await expect(store.acknowledge(ack({ protectedPayloadHash: new Uint8Array([8]) }), new Date('2026-08-21T01:00:00.000Z'))).rejects.toThrow('does not match')
+  })
+
+  test('leases a body to one endpoint and releases it after the bounded claim expires', async () => {
+    const store = new MemoryIngressStore(authorizer, { maxPayloadBytes: 100, maxIdentityPayloadBytes: 100, maxIdentityPendingItems: 10, claimLeaseMs: 1_000 })
+    await store.offer(envelope())
+    expect(await store.pull(pull('device-a'), new Date('2026-08-21T01:00:00.000Z'))).toHaveLength(1)
+    expect(await store.pull(pull('device-b'), new Date('2026-08-21T01:00:00.500Z'))).toEqual([])
+    await expect(store.acknowledge(ack({ recipientDeviceId: 'device-b' }), new Date('2026-08-21T01:00:00.500Z'))).rejects.toThrow('active ingress claim')
+    expect(await store.pull(pull('device-b'), new Date('2026-08-21T01:00:01.000Z'))).toHaveLength(1)
   })
 
   test('rejects an adapter offer whose declared body hash is not the body hash', async () => {

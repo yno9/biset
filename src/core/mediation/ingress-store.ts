@@ -17,6 +17,8 @@ export interface IngressStoreLimits {
   maxPayloadBytes: number
   maxIdentityPayloadBytes: number
   maxIdentityPendingItems: number
+  /** Short exclusive processing lease after an endpoint receives a body. */
+  claimLeaseMs?: number
 }
 
 export interface IngressAuthorizer {
@@ -39,12 +41,15 @@ interface Entry {
   status: IngressStatus
   identityId: IdentityId
   expiresAt: string
+  claimDeviceId?: string
+  claimExpiresAt?: string
 }
 
 const DEFAULT_LIMITS: IngressStoreLimits = {
   maxPayloadBytes: 25 * 1024 * 1024,
   maxIdentityPayloadBytes: 100 * 1024 * 1024,
   maxIdentityPendingItems: 128,
+  claimLeaseMs: 60_000,
 }
 
 /**
@@ -99,11 +104,20 @@ export class MemoryIngressStore implements IngressStore {
     assertIngressPull(pull)
     await this.expire(now)
     if (!(await this.authorizer.verifyPull(pull))) throw new ProtocolValidationError('ingress pull is not authorised')
-    return [...this.entries.values()]
-      .filter((entry) => entry.status === 'pending' && entry.identityId === pull.identityId && entry.envelope)
-      .map((entry) => entry.envelope!)
-      .filter((envelope) => envelope.recipientDeviceSnapshot.includes(pull.recipientDeviceId))
-      .map(copyEnvelope)
+    const values: IngressEnvelopeV1[] = []
+    for (const entry of this.entries.values()) {
+      if (entry.status !== 'pending' || entry.identityId !== pull.identityId || !entry.envelope) continue
+      if (!entry.envelope.recipientDeviceSnapshot.includes(pull.recipientDeviceId)) continue
+      if (entry.claimExpiresAt && Date.parse(entry.claimExpiresAt) <= now.getTime()) {
+        entry.claimDeviceId = undefined
+        entry.claimExpiresAt = undefined
+      }
+      if (entry.claimDeviceId && entry.claimDeviceId !== pull.recipientDeviceId) continue
+      entry.claimDeviceId = pull.recipientDeviceId
+      entry.claimExpiresAt = leaseExpiry(now, entry.expiresAt, this.limits)
+      values.push(copyEnvelope(entry.envelope))
+    }
+    return values
   }
 
   async acknowledge(ack: IngressAckV1, now = new Date()): Promise<IngressStatusRecord> {
@@ -116,6 +130,9 @@ export class MemoryIngressStore implements IngressStore {
     }
     if (!entry.envelope.recipientDeviceSnapshot.includes(ack.recipientDeviceId)) {
       throw new ProtocolValidationError('ACK device is not in the recipient snapshot')
+    }
+    if (entry.claimDeviceId !== ack.recipientDeviceId || !entry.claimExpiresAt || Date.parse(entry.claimExpiresAt) <= now.getTime()) {
+      throw new ProtocolValidationError('ACK device does not hold the active ingress claim')
     }
     if (!equalBytes(ack.protectedPayloadHash, entry.envelope.protectedPayloadHash)) {
       throw new ProtocolValidationError('ACK payload hash does not match ingress')
@@ -135,6 +152,8 @@ export class MemoryIngressStore implements IngressStore {
       if (entry.status !== 'pending' || Date.parse(entry.expiresAt) > now.getTime()) continue
       entry.envelope = undefined
       entry.status = 'expired'
+      entry.claimDeviceId = undefined
+      entry.claimExpiresAt = undefined
       expired.push(this.toStatus(ingressId, entry))
     }
     return expired
@@ -154,6 +173,12 @@ export class MemoryIngressStore implements IngressStore {
       payloadRetained: entry.envelope !== undefined,
     }
   }
+}
+
+function leaseExpiry(now: Date, envelopeExpiresAt: string, limits: IngressStoreLimits): string {
+  const duration = limits.claimLeaseMs ?? DEFAULT_LIMITS.claimLeaseMs!
+  if (!Number.isSafeInteger(duration) || duration < 1) throw new TypeError('ingress claimLeaseMs must be a positive safe integer')
+  return new Date(Math.min(now.getTime() + duration, Date.parse(envelopeExpiresAt))).toISOString()
 }
 
 function copyEnvelope(envelope: IngressEnvelopeV1): IngressEnvelopeV1 {

@@ -9,6 +9,7 @@ const DEFAULT_LIMITS: IngressStoreLimits = {
   maxPayloadBytes: 25 * 1024 * 1024,
   maxIdentityPayloadBytes: 100 * 1024 * 1024,
   maxIdentityPendingItems: 128,
+  claimLeaseMs: 60_000,
 }
 
 interface Row {
@@ -23,6 +24,8 @@ interface Row {
   protected_payload: Uint8Array
   payload_hash: Uint8Array
   status: IngressStatus
+  claim_device_id: string | null
+  claim_expires_at: string | null
 }
 
 /**
@@ -65,9 +68,16 @@ export class SqliteIngressStore implements IngressStore {
     assertIngressPull(pull)
     await this.expire(now)
     if (!(await this.authorizer.verifyPull(pull))) throw new ProtocolValidationError('ingress pull is not authorised')
-    return this.database.query<Row, [string]>("SELECT * FROM ingress_entries WHERE identity_id = ? AND status = 'pending' ORDER BY created_at, ingress_id").all(pull.identityId)
-      .map(row => envelope(row))
-      .filter(value => value.recipientDeviceSnapshot.includes(pull.recipientDeviceId))
+    const claimExpiresAt = leaseExpiry(now, this.limits)
+    const select = this.database.query<Row, [string, string, string]>("SELECT * FROM ingress_entries WHERE identity_id = ? AND status = 'pending' AND (claim_device_id IS NULL OR claim_expires_at <= ? OR claim_device_id = ?) ORDER BY created_at, ingress_id")
+    const claim = this.database.query('UPDATE ingress_entries SET claim_device_id = ?, claim_expires_at = ? WHERE ingress_id = ? AND status = \'pending\' AND (claim_device_id IS NULL OR claim_expires_at <= ? OR claim_device_id = ?)')
+    const claimed = this.database.transaction(() => select.all(pull.identityId, now.toISOString(), pull.recipientDeviceId)
+      .filter(row => envelope(row).recipientDeviceSnapshot.includes(pull.recipientDeviceId))
+      .flatMap((row) => {
+        const result = claim.run(pull.recipientDeviceId, earliestExpiry(claimExpiresAt, row.expires_at), row.ingress_id, now.toISOString(), pull.recipientDeviceId)
+        return result.changes === 1 ? [row] : []
+      }))()
+    return claimed.map(envelope)
   }
 
   async acknowledge(ack: IngressAckV1, now = new Date()): Promise<IngressStatusRecord> {
@@ -78,6 +88,9 @@ export class SqliteIngressStore implements IngressStore {
     if (row.status !== 'pending') throw new ProtocolValidationError(`ingress is already ${row.status}`)
     const value = envelope(row)
     if (!value.recipientDeviceSnapshot.includes(ack.recipientDeviceId)) throw new ProtocolValidationError('ACK device is not in the recipient snapshot')
+    if (row.claim_device_id !== ack.recipientDeviceId || !row.claim_expires_at || row.claim_expires_at <= now.toISOString()) {
+      throw new ProtocolValidationError('ACK device does not hold the active ingress claim')
+    }
     if (!equalBytes(ack.protectedPayloadHash, value.protectedPayloadHash)) throw new ProtocolValidationError('ACK payload hash does not match ingress')
     if (!(await this.authorizer.verify(ack, value))) throw new ProtocolValidationError('ACK is not authorised')
     this.clearBody(ack.ingressId, 'vault-ingested')
@@ -102,7 +115,7 @@ export class SqliteIngressStore implements IngressStore {
   }
 
   private clearBody(ingressId: IngressId, state: Extract<IngressStatus, 'vault-ingested' | 'expired'>): void {
-    this.database.query("UPDATE ingress_entries SET source_evidence = x'', protected_payload = x'', payload_hash = x'', metadata_json = '{}', recipients_json = '[]', status = ? WHERE ingress_id = ?").run(state, ingressId)
+    this.database.query("UPDATE ingress_entries SET source_evidence = x'', protected_payload = x'', payload_hash = x'', metadata_json = '{}', recipients_json = '[]', claim_device_id = NULL, claim_expires_at = NULL, status = ? WHERE ingress_id = ?").run(state, ingressId)
   }
 }
 
@@ -111,10 +124,14 @@ function installSchema(database: Database): void {
     CREATE TABLE IF NOT EXISTS ingress_entries (
       ingress_id TEXT PRIMARY KEY, identity_id TEXT NOT NULL, protocol TEXT NOT NULL, recipients_json TEXT NOT NULL,
       created_at TEXT NOT NULL, expires_at TEXT NOT NULL, metadata_json TEXT NOT NULL,
-      source_evidence BLOB NOT NULL, protected_payload BLOB NOT NULL, payload_hash BLOB NOT NULL, status TEXT NOT NULL
+      source_evidence BLOB NOT NULL, protected_payload BLOB NOT NULL, payload_hash BLOB NOT NULL, status TEXT NOT NULL,
+      claim_device_id TEXT, claim_expires_at TEXT
     );
     CREATE INDEX IF NOT EXISTS ingress_pending_by_identity ON ingress_entries (identity_id, status, created_at);
   `)
+  const columns = database.query<{ name: string }, []>('PRAGMA table_info(ingress_entries)').all().map(column => column.name)
+  if (!columns.includes('claim_device_id')) database.exec('ALTER TABLE ingress_entries ADD COLUMN claim_device_id TEXT')
+  if (!columns.includes('claim_expires_at')) database.exec('ALTER TABLE ingress_entries ADD COLUMN claim_expires_at TEXT')
 }
 
 function envelope(row: Row): IngressEnvelopeV1 {
@@ -149,4 +166,13 @@ function assertLimits(limits: IngressStoreLimits): void {
   for (const value of [limits.maxPayloadBytes, limits.maxIdentityPayloadBytes, limits.maxIdentityPendingItems]) {
     if (!Number.isSafeInteger(value) || value < 1) throw new TypeError('ingress limits must be positive safe integers')
   }
+  if (limits.claimLeaseMs !== undefined && (!Number.isSafeInteger(limits.claimLeaseMs) || limits.claimLeaseMs < 1)) {
+    throw new TypeError('ingress claimLeaseMs must be a positive safe integer')
+  }
 }
+
+function leaseExpiry(now: Date, limits: IngressStoreLimits): string {
+  const duration = limits.claimLeaseMs ?? DEFAULT_LIMITS.claimLeaseMs!
+  return new Date(now.getTime() + duration).toISOString()
+}
+function earliestExpiry(one: string, two: string): string { return one <= two ? one : two }

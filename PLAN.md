@@ -57,6 +57,7 @@
 - [x] expiry で payload を削除する。
 - [x] adapter 入力は recipient device snapshot を持てず、`CoreIngressAdapter` が offer 時点の accepted self-group roster から snapshot を凍結する。
 - [x] endpoint への ingress pull は current trusted device の Ed25519 署名を必須にし、public HTTP は signed pull / durable ACK だけを公開する。external adapter offer は内部 boundary のままにする。
+- [x] ingress pull は最初に取得した正規端末へ短命の exclusive claim lease を付与する。claim 中は他端末へ同じ body を出さず、claim 端末だけが ACK できる。lease 失効後は別端末が引き継げ、SQLite restart 後も本文一コピーと claim state を維持する。
 - [-] trusted-device roster を mediation authorizer adapter に接続し、DID/webvh public-key resolver を入力に取る Ed25519 verifier を実装した。actual DID resolution / key rotation cache は未実装。
 - [-] crash-safe な SQLite `VaultDeliveryStore` / `IngressStore` と core deployment への authorizer/persistence wiring を実装した。ingress は first-party adapter の内部 boundary だけで、公開 HTTP には出していない。restart coverage はあるが、同時操作の coverage は未実装。
 - [ ] tombstone retention / dedup retention / quota eviction の数値を policy として決める。
@@ -118,7 +119,7 @@
 
 ### 3.3 Ingress-to-vault transaction
 
-- [-] `src/vault/delivery-ingest.ts` と `delivery-projector.ts` に shared vault delivery の hash/pack verify → current MLS wrap / event / object verify → deterministic projection → durable commit → delivery ACK outbox を実装した。`ingress-ingest.ts` に external ingress の verify/project → atomic commit → ACK outbox 境界を実装したが、DIDComm/Mail の具体 decoder/projector は未実装。
+- [-] `src/vault/delivery-ingest.ts` と `delivery-projector.ts` に shared vault delivery の hash/pack verify → current MLS wrap / event / object verify → deterministic projection → durable commit → delivery ACK outbox を実装した。`ingress-ingest.ts` に external ingress の verify/project → atomic commit → ACK outbox 境界を実装し、Mail の concrete projector は存在する。DIDComm decoder と MIME/OpenPGP mail projector は未実装。
 - [x] TTL 内の shared vault delivery は cursor-based pull → ordered ingest → durable ACK outbox flush として同期し、TTL 外は `restoreRequired` を UI 層へ返す。
 - [x] append / pull / ACK はすべて current trusted device の署名を必要とする。HTTP binding はこの型をそのまま使う。
 - [x] ACK outbox の retry / idempotence を実装する。
