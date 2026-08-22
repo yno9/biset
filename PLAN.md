@@ -283,5 +283,6 @@
 | 2026-08-22 | `80639c3` | archive の復号・current epoch rewrap・raw vault record の atomic local import を endpoint-only workflow として追加 |
 | 2026-08-22 | `dffbc5a` | recovery archive の outer ciphertext だけを canonical file として encode/decode する browser export/import 基盤を追加 |
 | 2026-08-22 | `199be4f` | encrypted-only recovery archive を browser Blob/File として扱う境界と identity 非露出 filename を追加 |
+| 2026-08-22 | `079380f` | endpoint-only OpenPGP packet decrypt / optional signature verification を追加し、署名必須時の unsigned 受理を拒否 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
