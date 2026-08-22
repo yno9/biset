@@ -17,7 +17,7 @@ const signer: VaultEventSigner = {
 
 describe('mail ingress projector', () => {
   test('turns one opaque core ingress into raw-mail vault records and a sibling delivery outbox in the same ingress commit', async () => {
-    const raw = new TextEncoder().encode('From: sender@example.test\r\nSubject: opaque to core\r\n\r\nhello')
+    const raw = new TextEncoder().encode('From: sender@example.test\r\nSubject: opaque to core\r\nMessage-ID: <message@example.test>\r\n\r\nhello')
     const envelope: IngressEnvelopeV1 = {
       version: 1, ingressId: 'ingress-1', protocol: 'mail', recipientIdentityId: identityId, recipientDeviceSnapshot: ['device-a'],
       createdAt: '2026-08-22T00:00:00.000Z', expiresAt: '2026-08-23T00:00:00.000Z', transportMetadata: {}, sourceEvidence: new Uint8Array([1]),
@@ -42,7 +42,7 @@ describe('mail ingress projector', () => {
         expect(input.deliveryOutbox?.entryId).toBe(input.events[0].id)
         const pack = decodeVaultDeliveryPack(input.deliveryOutbox!.payload)
         expect(pack.objects.map(object => object.objectId)).toEqual(input.events[0].objectRefs)
-        expect(input.projection).toMatchObject({ emails: [{ blobId: input.events[0].objectRefs[1] }] })
+        expect(input.projection).toMatchObject({ emails: [{ blobId: input.events[0].objectRefs[1], subject: 'opaque to core' }] })
         return 'committed'
       },
     }, () => new Date('2026-08-22T00:01:01.000Z'))

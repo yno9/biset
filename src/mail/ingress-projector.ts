@@ -10,6 +10,7 @@ import { decryptVaultObject } from '../vault/objects.ts'
 import type { VaultEventSigner } from '../vault/events.ts'
 import { buildMailMessageAdd } from '../vault/mail-message.ts'
 import type { VaultDeliveryOutboxRecord, VaultEventRecord, VaultObjectRecord } from '../vault/store.ts'
+import { readRfc5322HeaderSummary } from './rfc5322-headers.ts'
 
 export interface MailIngressProjectorOptions {
   identityId: IdentityId
@@ -52,14 +53,18 @@ export class MailIngressProjector implements IngressVerifierProjector {
     assertActiveVaultSegment(this.options.identityId, segment, 'mail ingress')
     const createdAt = this.now().toISOString()
     const emailId = mailEmailId(envelope)
+    const headers = readRfc5322HeaderSummary(envelope.protectedPayload)
+    const threadId = mailThreadId(envelope.recipientIdentityId, headers.inReplyTo ?? headers.references[0]) ?? emailId
     const record = await buildMailMessageAdd({
       email: {
         id: emailId,
-        threadId: emailId,
+        threadId,
         mailboxIds: { inbox: true },
         keywords: {},
         receivedAt: envelope.createdAt,
         size: envelope.protectedPayload.length,
+        ...(headers.subject === undefined ? {} : { subject: headers.subject }),
+        ...(headers.sentAt === undefined ? {} : { sentAt: headers.sentAt }),
       },
       rawRfc5322: envelope.protectedPayload,
     }, {
@@ -101,6 +106,11 @@ function mailEmailId(envelope: IngressEnvelopeV1): string {
     ingressId: envelope.ingressId,
     protectedPayloadHash: bytesToBase64url(envelope.protectedPayloadHash),
   })
+}
+
+function mailThreadId(identityId: IdentityId, messageId: string | undefined): string | undefined {
+  if (!messageId) return undefined
+  return canonicalHash('biset/vault/mail/thread-id/v1', { identityId, messageId })
 }
 
 function mailObjectRecord<T>(object: T, identityId: IdentityId): T & { identityId: IdentityId } {
