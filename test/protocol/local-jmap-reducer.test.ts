@@ -46,4 +46,32 @@ describe('Local JMAP projection reducer', () => {
     const signedEvent = event({ kind: 'mailbox.set' })
     expect(() => decodeVaultMutation(signedEvent, plaintext('keyword.set', ['email-1'], { emailId: 'email-1', keywords: {} }))).toThrow('does not match')
   })
+
+  test('adds a mail item only when its metadata binds the second reference as the raw RFC 5322 blob', () => {
+    const base = { mailboxes: [{ id: 'inbox', name: 'Inbox', totalEmails: 0, unreadEmails: 0 }], emails: [] }
+    const projection = reduceLocalJmapProjection('did:web:alice.example', base, [{
+      event: event({ kind: 'message.add', targetIds: ['email-1'], objectRefs: ['metadata-1', 'raw-rfc5322-1'] }),
+      plaintext: plaintext('message.add', ['email-1'], {
+        email: {
+          id: 'email-1', blobId: 'raw-rfc5322-1', threadId: 'thread-1', mailboxIds: { inbox: true }, keywords: {},
+          receivedAt: '2026-08-21T00:00:00.000Z', subject: 'Hello', size: 123,
+        },
+      }),
+    }])
+    expect(projection.emails).toEqual([{
+      id: 'email-1', blobId: 'raw-rfc5322-1', threadId: 'thread-1', mailboxIds: { inbox: true }, keywords: {},
+      receivedAt: '2026-08-21T00:00:00.000Z', subject: 'Hello', size: 123,
+    }])
+    expect(projection.mailboxes[0]).toMatchObject({ totalEmails: 1, unreadEmails: 1 })
+  })
+
+  test('refuses message metadata which points at a different raw RFC 5322 object', () => {
+    const base = { mailboxes: [], emails: [] }
+    expect(() => reduceLocalJmapProjection('did:web:alice.example', base, [{
+      event: event({ kind: 'message.add', targetIds: ['email-1'], objectRefs: ['metadata-1', 'raw-rfc5322-1'] }),
+      plaintext: plaintext('message.add', ['email-1'], {
+        email: { id: 'email-1', blobId: 'other-blob', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' },
+      }),
+    }])).toThrow('does not bind')
+  })
 })

@@ -2,7 +2,7 @@ import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../local-jmap/gat
 import { reduceLocalJmapProjection } from '../local-jmap/reducer.ts'
 import type { IdentityId, MlsEpoch, SegmentId } from '../protocol/ids.ts'
 import type { SegmentKeyWrapV1, VaultObjectV1 } from '../protocol/vault.ts'
-import { decryptVaultObject } from './objects.ts'
+import { decryptVaultObject, verifyVaultObjectIntegrity } from './objects.ts'
 import { assertOpenPgpCredentialRecord } from './openpgp-credential.ts'
 import type { VaultDeliveryPackV1 } from './delivery-pack.ts'
 import type { VaultDeliveryVerifierProjector } from './delivery-ingest.ts'
@@ -41,12 +41,23 @@ export class VaultDeliveryProjector implements VaultDeliveryVerifierProjector {
     try {
       const resolver = new StoredSegmentKeyResolver(wraps, this.options.epochs, this.options.verifier)
       const objects = objectMap(pack.objects)
+      for (const object of objects.values()) {
+        if (!(await verifyVaultObjectIntegrity(object))) throw new TypeError('vault delivery object integrity is invalid')
+      }
       const records = []
       for (const event of pack.events) {
         if (!(await verifyVaultEvent(event, this.options.verifier))) throw new TypeError('vault delivery event signature is invalid')
-        if (event.objectRefs.length !== 1) throw new TypeError('vault delivery mutation event must reference exactly one object')
+        const expectedObjectRefs = event.kind === 'message.add' ? 2 : 1
+        if (event.objectRefs.length !== expectedObjectRefs) {
+          throw new TypeError(event.kind === 'message.add'
+            ? 'vault delivery message.add must reference metadata and raw RFC 5322 objects'
+            : 'vault delivery mutation event must reference exactly one object')
+        }
         const object = objects.get(event.objectRefs[0])
         if (!object) throw new TypeError('vault delivery event references an absent object')
+        if (event.kind === 'message.add' && !objects.has(event.objectRefs[1])) {
+          throw new TypeError('vault delivery message.add references an absent raw RFC 5322 object')
+        }
         let key = keys.get(object.segmentId)
         if (!key) {
           key = await resolver.resolveSegmentKey(pack.identityId, object.segmentId)

@@ -2,6 +2,7 @@ import { canonicalHash, type CanonicalValue } from '../protocol/canonical.ts'
 import type { VaultEventV1 } from '../protocol/vault.ts'
 import type { VaultMutationIntent } from './mutations.ts'
 import type { LocalJmapEmail, LocalJmapMailbox, LocalJmapSnapshot } from './gateway.ts'
+import { assertMailMessageEmail } from '../vault/mail-message.ts'
 
 export interface DecryptedMutationRecord {
   event: VaultEventV1
@@ -48,6 +49,13 @@ export function reduceLocalJmapProjection(
       emails.delete(emailId)
       continue
     }
+    if (mutation.kind === 'message.add') {
+      const email = assertMessageAdd(record.event, mutation.payload, emailId)
+      if (tombstones.has(emailId)) continue
+      if (emails.has(emailId)) throw new TypeError('vault message.add conflicts with an existing email')
+      emails.set(emailId, email)
+      continue
+    }
     if (tombstones.has(emailId) || !emails.has(emailId)) continue
     const email = emails.get(emailId)!
     if (mutation.kind === 'mailbox.set') {
@@ -58,7 +66,7 @@ export function reduceLocalJmapProjection(
       email.keywords = truthyMap(payload.keywords, 'keywords')
     }
   }
-  const mailboxes = base.mailboxes.map(copyMailbox)
+  const mailboxes = mailboxCounts(base.mailboxes, emails.values())
   const resultEmails = [...emails.values()].sort((left, right) => left.id.localeCompare(right.id))
   return {
     state: projectionState(identityId, mailboxes, resultEmails),
@@ -132,6 +140,17 @@ function assertPayloadEmailId(payload: VaultMutationIntent['payload'], expected:
   return payload as Record<string, unknown>
 }
 
+/** `message.add` binds its read-model object to the accompanying raw-mail blob. */
+function assertMessageAdd(event: VaultEventV1, payload: VaultMutationIntent['payload'], expected: string): LocalJmapEmail {
+  if (event.objectRefs.length !== 2) throw new TypeError('vault message.add must reference metadata and raw RFC 5322 objects')
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) throw new TypeError('vault message.add payload is invalid')
+  const email = assertMailMessageEmail((payload as Record<string, unknown>).email)
+  if (email.id !== expected || email.blobId !== event.objectRefs[1]) {
+    throw new TypeError('vault message.add does not bind the email to its raw RFC 5322 object')
+  }
+  return email
+}
+
 function truthyMap(value: unknown, name: string): Record<string, true> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`vault mutation ${name} must be an object`)
   const result: Record<string, true> = {}
@@ -140,6 +159,21 @@ function truthyMap(value: unknown, name: string): Record<string, true> {
     if (enabled) result[id] = true
   }
   return result
+}
+
+function mailboxCounts(base: LocalJmapMailbox[], emails: Iterable<LocalJmapEmail>): LocalJmapMailbox[] {
+  const values = base.map(copyMailbox)
+  const counts = new Map(values.map(mailbox => [mailbox.id, { total: 0, unread: 0 }]))
+  for (const email of emails) {
+    const unread = email.keywords.$seen !== true
+    for (const mailboxId of Object.keys(email.mailboxIds)) {
+      const count = counts.get(mailboxId)
+      if (!count) continue
+      count.total += 1
+      if (unread) count.unread += 1
+    }
+  }
+  return values.map((mailbox) => ({ ...mailbox, totalEmails: counts.get(mailbox.id)!.total, unreadEmails: counts.get(mailbox.id)!.unread }))
 }
 
 function copyMailbox(value: LocalJmapMailbox): LocalJmapMailbox { return { ...value } }

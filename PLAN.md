@@ -111,7 +111,7 @@
 - [-] event signature、parent reference、duplicate event、replay の validation を実装する。署名 verify の interface は実装済み、store-level validation は未実装。
 - [ ] edit / tombstone / read / mailbox / reaction の競合規則を kind ごとに固定する。
 - [x] manifest root と event/object set の diff を実装する。階層 Merkle proof と durable checkpoint は未実装。
-- [-] mailbox / keyword / tombstone mutation event の deterministic JMAP projection reducer を実装した。message.add、attachment、full vault scan/checkpoint persistence は未実装。
+- [-] mailbox / keyword / tombstone mutation event の deterministic JMAP projection reducer を実装した。`message.add` は、署名 event の第1 object reference に encrypted JMAP metadata、第2 reference に加工しない raw RFC 5322 blob を束縛する。projection は metadata と blob ID の一致を検証して再構築し、mailbox 件数も再計算する。attachment / decrypted MIME projector / full vault scan checkpoint persistence は未実装。
 - [ ] duplicate、offline concurrent write、interrupted transfer の convergence test を書く。
 
 **完了条件:** 二端末が同じ検証済み event/object 集合から同じ manifest root と JMAP projection を作る。

@@ -6,6 +6,7 @@ import type { VaultEventSigner } from '../../src/vault/events.ts'
 import { buildVaultMutation } from '../../src/vault/mutations.ts'
 import { createSegmentKey } from '../../src/vault/objects.ts'
 import { buildOpenPgpPrivateCredential } from '../../src/vault/openpgp-credential.ts'
+import { buildMailMessageAdd } from '../../src/vault/mail-message.ts'
 
 const signer: VaultEventSigner = {
   deviceId: 'device-a',
@@ -71,5 +72,32 @@ describe('vault delivery projector', () => {
     })
     const output = await projector.verifyAndProject({ version: 1, identityId, objects: [{ ...credential.object, identityId }], events: [credential.event], keyWraps: [wrap] })
     expect(output.projection).toMatchObject({ mailboxes: [], emails: [] })
+  })
+
+  test('projects message.add metadata while retaining the bound raw RFC 5322 object as a vault blob', async () => {
+    const message = await buildMailMessageAdd({
+      email: { id: 'email-2', threadId: 'thread-2', mailboxIds: { inbox: true }, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z', subject: 'Arrived', size: 42 },
+      rawRfc5322: new TextEncoder().encode('From: sender@example.test\r\n\r\nhello'),
+    }, {
+      identityId, actorDeviceId: 'device-a', actorSeq: 3, parents: [], segmentId: 'segment-1', segmentKey, createdAt: '2026-08-21T00:00:00.000Z',
+    }, signer)
+    const wrap = await createSegmentKeyWrap(new Uint8Array(32).fill(7), segmentKey, {
+      identityId, selfGroupId: 'self-group-1', segmentId: 'segment-1', sourceEpoch: '1', recipientEpoch: '1', grantorDeviceId: 'device-a', grantedAt: '2026-08-21T00:00:00.000Z',
+    }, signer)
+    const projector = new VaultDeliveryProjector({
+      identityId,
+      async currentSnapshot() { return { state: 'state-0', mailboxes: [{ id: 'inbox', name: 'Inbox', totalEmails: 0, unreadEmails: 0 }], emails: [] } },
+      epochs: { async currentVaultEpoch() { return { selfGroupId: 'self-group-1', epoch: '1' } }, async deriveVaultEpochKey() { return new Uint8Array(32).fill(7) } },
+      verifier: signer,
+    })
+    const output = await projector.verifyAndProject({
+      version: 1,
+      identityId,
+      objects: [message.metadataObject, message.rawRfc5322Object],
+      events: [message.event],
+      keyWraps: [wrap],
+    })
+    expect(output.projection.emails).toMatchObject([{ id: 'email-2', blobId: message.rawRfc5322Object.objectId, subject: 'Arrived' }])
+    expect(output.projection.mailboxes[0]).toMatchObject({ totalEmails: 1, unreadEmails: 1 })
   })
 })
