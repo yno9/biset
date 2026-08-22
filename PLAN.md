@@ -281,5 +281,6 @@
 | 2026-08-22 | `ad05cfb` | local vault 全 record と current SegmentKey から archive snapshot を組み立て、resolver key buffer を消去する export 境界を追加 |
 | 2026-08-22 | `4510a2c` | archive 復元で旧 MLS secret を持ち込まず、新しい current self-group epoch 向け SegmentKey wrap を発行する preparation を追加 |
 | 2026-08-22 | `80639c3` | archive の復号・current epoch rewrap・raw vault record の atomic local import を endpoint-only workflow として追加 |
+| 2026-08-22 | `dffbc5a` | recovery archive の outer ciphertext だけを canonical file として encode/decode する browser export/import 基盤を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
