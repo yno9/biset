@@ -11,6 +11,10 @@
 //     delivery (PLAN.md §2.3) already serves that role; MLS application
 //     messages are not a second delivery channel for the same content
 //     (PLAN.md's still-open "should submitApplication be ported at all").
+//     `reflectPendingSelfGroupCommits`, below, is NOT this — it pulls and
+//     applies COMMITs only (never application messages), purely so an
+//     existing member's own view of the group (and roster projection) stays
+//     current; it carries no message content anywhere.
 //   - DIDComm transport-key extension handling (memberTransportKeys) and
 //     the stale-leaf recovery escape hatch (staleSelfGroupKids /
 //     recoveryAuthenticationService) — both belong to the DIDComm-device-key
@@ -36,6 +40,7 @@ import {
   groupInfoForExternalJoin,
   isActiveMember,
   joinGroupExternally,
+  processIncoming,
   rekey,
   type OwnKeyPackage,
 } from './group.ts'
@@ -47,11 +52,12 @@ import type { MlsSelfGroupStateStore } from './store.ts'
 import { mlsEpoch, type DeliverySeq } from '../protocol/ids.ts'
 import {
   mlsCommitSubmissionSigningBytes,
+  mlsDeliveriesPullSigningBytes,
   mlsExternalCommitSubmissionSigningBytes,
   mlsGroupCreationSigningBytes,
   mlsGroupInfoPullSigningBytes,
 } from '../protocol/signing.ts'
-import type { MlsCommitSubmissionV1, MlsExternalCommitSubmissionV1, MlsGroupCreationV1, MlsGroupInfoPullV1 } from '../protocol/mls-ds.ts'
+import type { MlsCommitSubmissionV1, MlsDeliveriesPullV1, MlsExternalCommitSubmissionV1, MlsGroupCreationV1, MlsGroupInfoPullV1 } from '../protocol/mls-ds.ts'
 
 /** Domain separator so this hash can never collide with any other use of an identity id as key material. */
 const SELF_GROUP_LABEL = 'biset-self-group/1'
@@ -258,6 +264,62 @@ export async function ensureSelfGroupWithRosterInstall(
   const state = await ensureSelfGroup(store, mlsTransport, identityId, deviceKid, kp, sign, now)
   if (!state || alreadyActive) return state
 
+  await installCurrentRosterProjection(rosterTransport, identityId, deviceKid, state, sign, deliveryFloorForNewDevice, now)
+  return state
+}
+
+/**
+ * Pulls every commit this device's stored self-group state hasn't applied
+ * yet, applies each in epoch order, persists the result, and — if the
+ * epoch actually advanced — calls `installCurrentRosterProjection` so a
+ * device that just joined externally (which cannot install itself, per
+ * `installCurrentRosterProjection`'s own doc comment) gets reflected by an
+ * existing member instead. This is that "existing member notices and
+ * reflects" half of the flow.
+ *
+ * Always pulls from `afterSeq: 0` and filters to entries whose `epoch`
+ * matches this device's own current epoch before applying — the DS's log
+ * for this group also holds entries this very device already produced
+ * (e.g. its own genesis `publishGroupInfo` commit), and re-decrypting one
+ * of those against an already-advanced key schedule fails. A cheaper
+ * incremental cursor (tracking the last-seen `seq` per device) is possible
+ * but not needed yet; the log is capped (`MAX_LOG_PER_GROUP`,
+ * mls-delivery-store.ts) so re-fetching it whole stays bounded.
+ *
+ * Returns undefined when this device has no stored self-group state at all
+ * (nothing to catch up) rather than throwing — that is `ensureSelfGroup`'s
+ * job, not this one's.
+ */
+export async function reflectPendingSelfGroupCommits(
+  store: MlsSelfGroupStateStore,
+  mlsTransport: CoreMlsDeliveryTransport,
+  rosterTransport: CoreRosterInstallTransport,
+  identityId: string,
+  deviceKid: string,
+  sign: SelfGroupSigner,
+  deliveryFloorForNewDevice: () => Promise<DeliverySeq>,
+  now: () => Date = () => new Date(),
+): Promise<ClientState | undefined> {
+  const stored = await store.load(identityId)
+  if (!stored) return undefined
+
+  const groupId = selfGroupIdHex(identityId)
+  const pull: Omit<MlsDeliveriesPullV1, 'signature'> = { version: 1, groupId, identityId, requesterKid: deviceKid, afterSeq: 0, requestedAt: now().toISOString() }
+  const entries = await mlsTransport.pullDeliveries({ ...pull, signature: await sign(mlsDeliveriesPullSigningBytes(pull)) })
+
+  const startEpoch = epochOf(stored.state)
+  let state = stored.state
+  for (const entry of entries) {
+    if (entry.kind !== 'commit' || entry.epoch !== epochOf(state).toString()) continue
+    state = (await processIncoming(state, entry.payload)).state
+  }
+  if (epochOf(state) === startEpoch) return state
+
+  await store.save(identityId, groupId, state)
+  // A 'rejected' outcome here means THIS device is also not yet trusted
+  // under the roster's previous epoch (e.g. it only just external-joined
+  // itself and hasn't been reflected by anyone else either) -- leave it for
+  // whichever device the roster does trust to reflect next time it catches up.
   await installCurrentRosterProjection(rosterTransport, identityId, deviceKid, state, sign, deliveryFloorForNewDevice, now)
   return state
 }

@@ -19,12 +19,10 @@ import { Ed25519DeviceControlSignatureVerifier } from '../../src/core/identity/e
 import { createRosterInstallHttpHandler } from '../../src/core/identity/roster-http.ts'
 import { CoreMlsDeliveryTransport } from '../../src/mls/core-mls-delivery-transport.ts'
 import { CoreRosterInstallTransport } from '../../src/mls/core-roster-install-transport.ts'
-import { epochOf, generateOwnKeyPackage, memberKids, processIncoming } from '../../src/mls/group.ts'
-import { ensureSelfGroupWithRosterInstall, installCurrentRosterProjection, selfGroupIdHex } from '../../src/mls/self-group.ts'
-import { mlsDeliveriesPullSigningBytes } from '../../src/protocol/signing.ts'
+import { generateOwnKeyPackage, memberKids } from '../../src/mls/group.ts'
+import { ensureSelfGroupWithRosterInstall, reflectPendingSelfGroupCommits } from '../../src/mls/self-group.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { OwnKeyPackage } from '../../src/mls/group.ts'
-import type { ClientState } from '../../src/mls/vendor/index.ts'
 
 const dsPath = `/tmp/biset-self-group-roster-ds-${process.pid}-${Date.now()}.sqlite`
 const rosterPath = `/tmp/biset-self-group-roster-db-${process.pid}-${Date.now()}.sqlite`
@@ -70,32 +68,6 @@ function setup(kids: Record<string, OwnKeyPackage>) {
   return { ds, roster, mlsTransport, rosterTransport }
 }
 
-/** Pulls every delivery this device hasn't seen yet and applies it in order
- * -- the minimal stand-in for the catch-up flow self-group.ts's header
- * deliberately leaves out, just enough for this test to give device A a
- * genuine post-join view of the group instead of hand-waving it. */
-async function pullAndApply(
-  transport: CoreMlsDeliveryTransport,
-  state: ClientState,
-  identityId: string,
-  deviceKid: string,
-  sign: (bytes: Uint8Array) => Uint8Array | Promise<Uint8Array>,
-): Promise<ClientState> {
-  const pull = { version: 1 as const, groupId: selfGroupIdHex(identityId), identityId, requesterKid: deviceKid, afterSeq: 0, requestedAt: new Date().toISOString() }
-  const entries = await transport.pullDeliveries({ ...pull, signature: await sign(mlsDeliveriesPullSigningBytes(pull)) })
-  let next = state
-  for (const entry of entries) {
-    // Only a commit made FROM this device's current epoch is one it hasn't
-    // already applied -- the log also holds this very device's own earlier
-    // commits (e.g. its genesis publishGroupInfo), which re-decrypting would
-    // fail against an already-advanced key schedule.
-    if (entry.kind !== 'commit' || entry.epoch !== epochOf(next).toString()) continue
-    const result = await processIncoming(next, entry.payload)
-    next = result.state
-  }
-  return next
-}
-
 describe('roster install atop self-group bootstrap', () => {
   test('genesis device installs its own single-device roster', async () => {
     const kpA = await generateOwnKeyPackage(deviceAKid)
@@ -117,9 +89,10 @@ describe('roster install atop self-group bootstrap', () => {
     const kpA = await generateOwnKeyPackage(deviceAKid)
     const kpB = await generateOwnKeyPackage(deviceBKid)
     const { ds, roster, mlsTransport, rosterTransport } = setup({ [deviceAKid]: kpA, [deviceBKid]: kpB })
+    const storeA = memoryStore()
 
     const stateA = await ensureSelfGroupWithRosterInstall(
-      memoryStore(), mlsTransport, rosterTransport, identityId, deviceAKid, kpA, signerFor(kpA),
+      storeA, mlsTransport, rosterTransport, identityId, deviceAKid, kpA, signerFor(kpA),
       async () => '0',
     )
     expect(stateA).toBeDefined()
@@ -136,22 +109,52 @@ describe('roster install atop self-group bootstrap', () => {
     expect(await roster.isTrustedDevice(identityId, deviceBKid)).toBe(false)
     expect(await roster.isTrustedDevice(identityId, deviceAKid)).toBe(true)
 
-    // Device A only knows the new epoch once it actually processes device
-    // B's external commit -- pulled from the DS the same way a real second
-    // session would, then applied with processIncoming. Only then does its
-    // own view of the group (and so its own roster projection) include B.
-    const stateAAfterB = await pullAndApply(mlsTransport, stateA!, identityId, deviceAKid, signerFor(kpA))
-    expect(new Set(memberKids(stateAAfterB, identityId))).toEqual(new Set([deviceAKid, deviceBKid]))
-
-    // Device A, an existing trusted device, reflects the new epoch on B's behalf.
-    const outcome = await installCurrentRosterProjection(
-      rosterTransport, identityId, deviceAKid, stateAAfterB, signerFor(kpA), async () => '99',
+    // Device A only knows the new epoch once it actually catches up on
+    // device B's external commit -- reflectPendingSelfGroupCommits pulls it
+    // from the DS the same way a real second session would, applies it, and
+    // (since the epoch advanced) reflects the new roster on B's behalf.
+    const stateAAfterB = await reflectPendingSelfGroupCommits(
+      storeA, mlsTransport, rosterTransport, identityId, deviceAKid, signerFor(kpA), async () => '99',
     )
-    expect(outcome).toBe('installed')
+    expect(new Set(memberKids(stateAAfterB!, identityId))).toEqual(new Set([deviceAKid, deviceBKid]))
     expect(await roster.isTrustedDevice(identityId, deviceBKid)).toBe(true)
     expect(await roster.deliveryFloor(identityId, deviceBKid)).toBe('99')
     // Device A's own floor from genesis is untouched by device B's join.
     expect(await roster.deliveryFloor(identityId, deviceAKid)).toBe('0')
+
+    ds.close()
+    roster.close()
+  })
+
+  test('reflectPendingSelfGroupCommits is a no-op when there is nothing new', async () => {
+    const kpA = await generateOwnKeyPackage(deviceAKid)
+    const { ds, roster, mlsTransport, rosterTransport } = setup({ [deviceAKid]: kpA })
+    const storeA = memoryStore()
+
+    const stateA = await ensureSelfGroupWithRosterInstall(
+      storeA, mlsTransport, rosterTransport, identityId, deviceAKid, kpA, signerFor(kpA),
+      async () => '0',
+    )
+    expect(stateA).toBeDefined()
+
+    const brokenRosterTransport = new CoreRosterInstallTransport({ baseUrl: 'https://core.example', fetch: async () => { throw new Error('roster must not be touched when the epoch did not advance') } })
+    const result = await reflectPendingSelfGroupCommits(
+      storeA, mlsTransport, brokenRosterTransport, identityId, deviceAKid, signerFor(kpA), async () => '99',
+    )
+    expect(result).toBe(stateA!)
+
+    ds.close()
+    roster.close()
+  })
+
+  test('reflectPendingSelfGroupCommits returns undefined when this device has no stored self-group state', async () => {
+    const kpA = await generateOwnKeyPackage(deviceAKid)
+    const { ds, roster, mlsTransport, rosterTransport } = setup({ [deviceAKid]: kpA })
+
+    const result = await reflectPendingSelfGroupCommits(
+      memoryStore(), mlsTransport, rosterTransport, identityId, deviceAKid, signerFor(kpA), async () => '0',
+    )
+    expect(result).toBeUndefined()
 
     ds.close()
     roster.close()
