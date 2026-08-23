@@ -1,5 +1,5 @@
 import type { AdapterIngressOfferV1, IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from './ingress.ts'
-import { assertDeliverySeq } from './ids.ts'
+import { assertDeliverySeq, assertOpaqueId } from './ids.ts'
 import type {
   RestoreCancelV1,
   RestoreControlPullV1,
@@ -30,6 +30,17 @@ function text(value: unknown, name: string): asserts value is string {
   if (typeof value !== 'string' || value.length === 0) throw new ProtocolValidationError(`${name} must be a non-empty string`)
 }
 
+/** Opaque IDs (identity/device/ingress/checkpoint/request) get the stricter
+ * bound (`ids.ts`'s `assertOpaqueId`) rather than plain `text`: they end up
+ * as storage keys, not just display strings. */
+function opaqueId(value: unknown, name: string): asserts value is string {
+  try {
+    assertOpaqueId(value, name)
+  } catch (error) {
+    throw new ProtocolValidationError(error instanceof Error ? error.message : `${name} is invalid`)
+  }
+}
+
 function bytes(value: unknown, name: string): asserts value is Uint8Array {
   if (!(value instanceof Uint8Array) || value.length === 0) {
     throw new ProtocolValidationError(`${name} must be a non-empty Uint8Array`)
@@ -54,17 +65,17 @@ export function assertIngressEnvelope(value: unknown): asserts value is IngressE
     'createdAt', 'expiresAt', 'transportMetadata', 'sourceEvidence', 'protectedPayload', 'protectedPayloadHash',
   ], 'IngressEnvelopeV1')
   if (input.version !== 1) throw new ProtocolValidationError('IngressEnvelopeV1.version must be 1')
-  text(input.ingressId, 'ingressId')
+  opaqueId(input.ingressId, 'ingressId')
   if (input.protocol !== 'didcomm' && input.protocol !== 'mail' && input.protocol !== 'activitypub') {
     throw new ProtocolValidationError('protocol is unsupported')
   }
-  text(input.recipientIdentityId, 'recipientIdentityId')
+  opaqueId(input.recipientIdentityId, 'recipientIdentityId')
   if (!Array.isArray(input.recipientDeviceSnapshot) || input.recipientDeviceSnapshot.length === 0) {
     throw new ProtocolValidationError('recipientDeviceSnapshot must be a non-empty array')
   }
   const recipients = new Set<string>()
   for (const deviceId of input.recipientDeviceSnapshot) {
-    text(deviceId, 'recipientDeviceSnapshot entry')
+    opaqueId(deviceId, 'recipientDeviceSnapshot entry')
     if (recipients.has(deviceId)) throw new ProtocolValidationError('recipientDeviceSnapshot has a duplicate device')
     recipients.add(deviceId)
   }
@@ -90,9 +101,9 @@ export function assertAdapterIngressOffer(value: unknown): asserts value is Adap
     'transportMetadata', 'sourceEvidence', 'protectedPayload', 'protectedPayloadHash',
   ], 'AdapterIngressOfferV1')
   if (input.version !== 1) throw new ProtocolValidationError('AdapterIngressOfferV1.version must be 1')
-  text(input.ingressId, 'ingressId')
+  opaqueId(input.ingressId, 'ingressId')
   if (input.protocol !== 'didcomm' && input.protocol !== 'mail' && input.protocol !== 'activitypub') throw new ProtocolValidationError('protocol is unsupported')
-  text(input.recipientIdentityId, 'recipientIdentityId')
+  opaqueId(input.recipientIdentityId, 'recipientIdentityId')
   time(input.createdAt, 'createdAt')
   time(input.expiresAt, 'expiresAt')
   if (Date.parse(input.expiresAt) <= Date.parse(input.createdAt)) throw new ProtocolValidationError('expiresAt must be after createdAt')
@@ -110,8 +121,8 @@ export function assertIngressPull(value: unknown): asserts value is IngressPullV
   const input = record(value, 'IngressPullV1')
   exactKeys(input, ['version', 'identityId', 'recipientDeviceId', 'requestedAt', 'signature'], 'IngressPullV1')
   if (input.version !== 1) throw new ProtocolValidationError('IngressPullV1.version must be 1')
-  text(input.identityId, 'identityId')
-  text(input.recipientDeviceId, 'recipientDeviceId')
+  opaqueId(input.identityId, 'identityId')
+  opaqueId(input.recipientDeviceId, 'recipientDeviceId')
   time(input.requestedAt, 'requestedAt')
   bytes(input.signature, 'signature')
 }
@@ -123,11 +134,11 @@ export function assertIngressAck(value: unknown): asserts value is IngressAckV1 
     'vaultEventId', 'checkpointId', 'ackedAt', 'signature',
   ], 'IngressAckV1')
   if (input.version !== 1) throw new ProtocolValidationError('IngressAckV1.version must be 1')
-  text(input.ingressId, 'ingressId')
+  opaqueId(input.ingressId, 'ingressId')
   bytes(input.protectedPayloadHash, 'protectedPayloadHash')
-  text(input.recipientDeviceId, 'recipientDeviceId')
-  text(input.vaultEventId, 'vaultEventId')
-  text(input.checkpointId, 'checkpointId')
+  opaqueId(input.recipientDeviceId, 'recipientDeviceId')
+  opaqueId(input.vaultEventId, 'vaultEventId')
+  opaqueId(input.checkpointId, 'checkpointId')
   time(input.ackedAt, 'ackedAt')
   bytes(input.signature, 'signature')
 }
@@ -138,11 +149,11 @@ export function assertVaultDeliveryAppend(value: unknown): asserts value is Vaul
     'version', 'identityId', 'appendId', 'payload', 'payloadHash', 'senderDeviceId', 'sentAt', 'signature',
   ], 'VaultDeliveryAppendV1')
   if (input.version !== 1) throw new ProtocolValidationError('VaultDeliveryAppendV1.version must be 1')
-  text(input.identityId, 'identityId')
-  text(input.appendId, 'appendId')
+  opaqueId(input.identityId, 'identityId')
+  opaqueId(input.appendId, 'appendId')
   bytes(input.payload, 'payload')
   bytes(input.payloadHash, 'payloadHash')
-  text(input.senderDeviceId, 'senderDeviceId')
+  opaqueId(input.senderDeviceId, 'senderDeviceId')
   time(input.sentAt, 'sentAt')
   bytes(input.signature, 'signature')
 }
@@ -153,15 +164,15 @@ export function assertVaultDeliveryAck(value: unknown): asserts value is VaultDe
     'version', 'identityId', 'seq', 'payloadHash', 'recipientDeviceId', 'checkpointId', 'ackedAt', 'signature',
   ], 'VaultDeliveryAckV1')
   if (input.version !== 1) throw new ProtocolValidationError('VaultDeliveryAckV1.version must be 1')
-  text(input.identityId, 'identityId')
+  opaqueId(input.identityId, 'identityId')
   try {
     assertDeliverySeq(input.seq)
   } catch {
     throw new ProtocolValidationError('seq must be an unsigned 64-bit decimal string')
   }
   bytes(input.payloadHash, 'payloadHash')
-  text(input.recipientDeviceId, 'recipientDeviceId')
-  text(input.checkpointId, 'checkpointId')
+  opaqueId(input.recipientDeviceId, 'recipientDeviceId')
+  opaqueId(input.checkpointId, 'checkpointId')
   time(input.ackedAt, 'ackedAt')
   bytes(input.signature, 'signature')
 }
@@ -170,8 +181,8 @@ export function assertVaultDeliveryPull(value: unknown): asserts value is VaultD
   const input = record(value, 'VaultDeliveryPullV1')
   exactKeys(input, ['version', 'identityId', 'recipientDeviceId', 'after', 'requestedAt', 'signature'], 'VaultDeliveryPullV1')
   if (input.version !== 1) throw new ProtocolValidationError('VaultDeliveryPullV1.version must be 1')
-  text(input.identityId, 'identityId')
-  text(input.recipientDeviceId, 'recipientDeviceId')
+  opaqueId(input.identityId, 'identityId')
+  opaqueId(input.recipientDeviceId, 'recipientDeviceId')
   try {
     assertDeliverySeq(input.after)
   } catch {
@@ -187,9 +198,9 @@ export function assertRestoreRequest(value: unknown): asserts value is RestoreRe
     'version', 'requestId', 'identityId', 'requesterDeviceId', 'reason', 'knownManifestRoot', 'requestedAt', 'expiresAt', 'signature',
   ], 'RestoreRequestV1')
   if (input.version !== 1) throw new ProtocolValidationError('RestoreRequestV1.version must be 1')
-  text(input.requestId, 'requestId')
-  text(input.identityId, 'identityId')
-  text(input.requesterDeviceId, 'requesterDeviceId')
+  opaqueId(input.requestId, 'requestId')
+  opaqueId(input.identityId, 'identityId')
+  opaqueId(input.requesterDeviceId, 'requesterDeviceId')
   if (!['ttl-expired', 'retention-quota', 'delivery-confirmed', 'new-device'].includes(String(input.reason))) {
     throw new ProtocolValidationError('RestoreRequestV1.reason is unsupported')
   }
@@ -208,12 +219,12 @@ export function assertRestoreOffer(value: unknown): asserts value is RestoreOffe
     'version', 'requestId', 'identityId', 'requesterDeviceId', 'responderDeviceId', 'manifestRoot', 'offeredAt', 'expiresAt', 'signature',
   ], 'RestoreOfferV1')
   if (input.version !== 1) throw new ProtocolValidationError('RestoreOfferV1.version must be 1')
-  text(input.requestId, 'requestId')
-  text(input.identityId, 'identityId')
-  text(input.requesterDeviceId, 'requesterDeviceId')
-  text(input.responderDeviceId, 'responderDeviceId')
+  opaqueId(input.requestId, 'requestId')
+  opaqueId(input.identityId, 'identityId')
+  opaqueId(input.requesterDeviceId, 'requesterDeviceId')
+  opaqueId(input.responderDeviceId, 'responderDeviceId')
   if (input.responderDeviceId === input.requesterDeviceId) throw new ProtocolValidationError('RestoreOfferV1 responder must be a peer')
-  text(input.manifestRoot, 'manifestRoot')
+  opaqueId(input.manifestRoot, 'manifestRoot')
   time(input.offeredAt, 'offeredAt')
   time(input.expiresAt, 'expiresAt')
   if (Date.parse(input.expiresAt) <= Date.parse(input.offeredAt)) {
@@ -226,9 +237,9 @@ export function assertRestoreCancel(value: unknown): asserts value is RestoreCan
   const input = record(value, 'RestoreCancelV1')
   exactKeys(input, ['version', 'requestId', 'identityId', 'requesterDeviceId', 'cancelledAt', 'signature'], 'RestoreCancelV1')
   if (input.version !== 1) throw new ProtocolValidationError('RestoreCancelV1.version must be 1')
-  text(input.requestId, 'requestId')
-  text(input.identityId, 'identityId')
-  text(input.requesterDeviceId, 'requesterDeviceId')
+  opaqueId(input.requestId, 'requestId')
+  opaqueId(input.identityId, 'identityId')
+  opaqueId(input.requesterDeviceId, 'requesterDeviceId')
   time(input.cancelledAt, 'cancelledAt')
   bytes(input.signature, 'signature')
 }
@@ -237,8 +248,8 @@ export function assertRestoreControlPull(value: unknown): asserts value is Resto
   const input = record(value, 'RestoreControlPullV1')
   exactKeys(input, ['version', 'identityId', 'deviceId', 'kind', 'requestedAt', 'signature'], 'RestoreControlPullV1')
   if (input.version !== 1) throw new ProtocolValidationError('RestoreControlPullV1.version must be 1')
-  text(input.identityId, 'identityId')
-  text(input.deviceId, 'deviceId')
+  opaqueId(input.identityId, 'identityId')
+  opaqueId(input.deviceId, 'deviceId')
   if (input.kind !== 'requests' && input.kind !== 'offers') throw new ProtocolValidationError('RestoreControlPullV1.kind is unsupported')
   time(input.requestedAt, 'requestedAt')
   bytes(input.signature, 'signature')

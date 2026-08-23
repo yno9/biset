@@ -41,8 +41,8 @@
 - [x] `src/protocol/ingress.ts` に `IngressEnvelopeV1`、`IngressAckV1`、adapter 入力専用の `AdapterIngressOfferV1` を定義する。
 - [x] `src/protocol/validate.ts` に ingress / ACK の shape validation を実装する。
 - [x] canonical order、hash domain、byte equality、invalid ingress の unit test を追加する。
-- [ ] canonical JSON V1 の値域・Unicode・number の cross-language test vector を `src/protocol/test-vectors.ts` に固定する。
-- [ ] opaque ID の grammar、最大長、生成規則を `ids.ts` と validator に固定する。
+- [x] canonical JSON V1 の値域・Unicode・number の cross-language test vector を `src/protocol/test-vectors.ts` に固定した。null/bool/空文字/空配列/空 object、number（0/-0 の 0 への収束、正負整数、safe integer 境界、小数、指数表記の両方向）、string（quote/backslash の JSON escape、制御文字、埋め込み null 文字、BMP Unicode(非 escape)、astral plane 絵文字(surrogate pair)、**NFC 正規化されない decomposed combining sequence**）、object の key sort 順（locale ではなく code unit 順）を、実装から生成した `json`/`sha256Base64url` の組として固定した。`test/protocol/canonical-json-vectors.test.ts` が全 vector を実装に対して replay し、`canonicalJson` が非有限数を拒否することも確認する——他言語実装が同じ vector を replay して bytes が一致するかを検証できる形にした。
+- [x] opaque ID の grammar、最大長、生成規則を `ids.ts` と validator に固定した。二段構え: (1) 一般境界 `assertOpaqueId`（非空・printable ASCII（制御文字/空白拒否）・最大 512 文字）を `IdentityId`/`DeviceId`/`IngressId`/`CheckpointId` 等の自由形式 ID 全般に適用し、`protocol/validate.ts` の既存 shape assertion（`text()` だった箇所）に実際に配線した——ゆるい境界なので `'device-a'` のような既存 test fixture は全て通る。(2) 生成規則が決定的な 3 種類には厳密な grammar を追加: `VaultEventId`/`VaultObjectId` は常に `domainHash()` 由来の `sha256:` + base64url 32 byte、`SegmentId` は常に `ActiveVaultSegmentManager` が `crypto.randomUUID()` で採番——これらは `assertVaultEventId`/`assertVaultObjectId`/`assertSegmentId` として export し、`test/protocol/opaque-ids.test.ts` で実際に `createVaultEvent`/`encryptVaultObject`/`ActiveVaultSegmentManager.activeSegment` が生成した ID がこの grammar を満たすことを確認した（厳密 grammar は既存 test fixture の "event-1" 等を壊すため、validate.ts の汎用パスには配線していない——alias された type の生成規則を実証するテストとしてのみ使う）。
 - [ ] protocol version negotiation と未知 field / version の互換性 policy を決める。
 
 **完了条件:** client/core が同一 bytes を署名・hash でき、異なる実装言語でも再現可能な vector がある。
@@ -370,5 +370,7 @@
 | 2026-08-24 | 作業中 | PLAN.md §3.2「duplicate / offline concurrent write / interrupted transfer の convergence test」を実装（`test/protocol/local-jmap-reducer.test.ts`）。前段で `core/mediation/` の acknowledge レース bug を 3 箇所修正した流れで、`restore-control-store.ts`/`sqlite-restore-control-store.ts`/`mls-delivery-store.ts` も同じ「await 前の stale read → await 後の無条件 write」パターンが無いか監査した——`offer`/`request`/`cancel` は await の後に読み書きしているか、SQLite 側は FK cascade で保護されており修正不要と判断。convergence test 自体は、同一 record の重複投入が黙って収束せず拒否されること、2 device のオフライン同時書き込みが配信順序に依らず同じ結果に収束すること（LWW）、`commitRestoreTransferChunk` の実設計（生 record 先行コミット→最後に一括 `rebuildLocalJmapProjection`）を反映した二段階 fold が一括 reduce と `state` hash まで完全一致することを確認 |
 
 | 2026-08-24 | 作業中 | PLAN.md §4.1「VEK を永続化しないことを code review / test で保証する」を実装。write 側（`ActiveVaultSegmentManager.mintWrap`）の VEK zeroing を、VEK を capture する fake resolver を使った新規 test（`test/protocol/active-segment.test.ts`）で検証（read 側は既存の `segment-key-resolver.test.ts` で検証済みだった）。残る呼び出し箇所は `finally { vek.fill(0) }` パターンの存在を code review で確認 |
+
+| 2026-08-24 | 作業中 | PLAN.md §2.1「canonical JSON の cross-language test vector」「opaque ID の grammar/最大長/生成規則」を実装。`src/protocol/test-vectors.ts` に number/Unicode/構造の固定 vector（decomposed combining sequence の非正規化を含む）を実装から生成して固定し、`test/protocol/canonical-json-vectors.test.ts` で replay 検証。`ids.ts` に一般境界 `assertOpaqueId`（`validate.ts` の既存 `text()` 箇所に配線、非空・printable ASCII・512 文字上限）と、`VaultEventId`/`VaultObjectId`/`SegmentId` の厳密 grammar（`sha256:`+base64url32 / UUID）を追加し、後者は実際の生成関数（`createVaultEvent`/`encryptVaultObject`/`ActiveVaultSegmentManager`）の出力に対して検証した |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
