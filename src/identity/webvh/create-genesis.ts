@@ -17,6 +17,7 @@ import { nowVersionTime } from './log-io.ts'
 import { buildProof } from './proof.ts'
 import { encodeMultikey } from './multikey.ts'
 import { buildMinimalWebvhState, type SignedWebvhState } from './document.ts'
+import { syncDidWebMirror } from '../web/mirror.ts'
 
 export interface CreateGenesisOptions {
   domain: string
@@ -27,6 +28,10 @@ export interface CreateGenesisOptions {
    * to portable so a later domain move can use the log's own portability
    * mechanism instead of a bare rotation. */
   portable?: boolean
+  /** Also publish a did:web mirror (`mirror.ts`) at the same domain. Off by
+   * default since it only makes sense for the subdomain-per-identity form
+   * (no `pathSegments`) a did:web mirror can actually be reached at. */
+  didWebMirror?: boolean
   fetch?: typeof fetch
 }
 
@@ -73,6 +78,8 @@ export async function createGenesis(opts: CreateGenesisOptions): Promise<{ did: 
     body: serializeLog([entry]),
   })
   if (!response.ok) throw new Error(`createGenesis: PUT failed with HTTP ${response.status} ${await response.text().catch(() => '')}`)
+
+  if (opts.didWebMirror) await syncDidWebMirror(did, real.state, { domain: opts.domain, fetch: fetchValue })
 
   return { did, scid }
 }

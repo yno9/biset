@@ -11,10 +11,12 @@
 // by a rekey" invariant) that deserves its own reviewed change rather than
 // riding in with the add-only case this bootstraps.
 import { encodeMultikey } from './multikey.ts'
+import { parseWebvhDid } from './identifier.ts'
 import { fetchCurrentLog, nowVersionTime, putLog } from './log-io.ts'
 import { entryVersionNumber, generateEntryHash, parametersToWrite, resolveParameters, type LogEntry } from './log.ts'
 import { buildProof } from './proof.ts'
 import type { SignedWebvhState } from './document.ts'
+import { syncDidWebMirror } from '../web/mirror.ts'
 
 export interface AddDeviceVerificationMethodOptions {
   did: string
@@ -25,6 +27,9 @@ export interface AddDeviceVerificationMethodOptions {
   /** Whichever key currently holds updateKeys authority (the root key, in the common no-pre-rotation case). */
   signingPrivateKey: Uint8Array
   signingPublicKey: Uint8Array
+  /** Keep the did:web mirror (`mirror.ts`) at this DID's domain in sync —
+   * must match whatever `createGenesis` was called with for this identity. */
+  didWebMirror?: boolean
   fetch?: typeof fetch
 }
 
@@ -58,4 +63,6 @@ export async function addDeviceVerificationMethod(opts: AddDeviceVerificationMet
   const entry: LogEntry = { ...unsigned, proof: [proof] }
 
   await putLog(url, [...entries, entry], [entry], fetchImpl)
+
+  if (opts.didWebMirror) await syncDidWebMirror(opts.did, state, { domain: parseWebvhDid(opts.did).domain, fetch: fetchImpl })
 }

@@ -331,5 +331,6 @@
 | 2026-08-23 | `7cea395` | `groupInfoFor`/`submitExternalCommit` の認可を device membership から identity 一致に修正（外部 join が構造的に不可能だったバグ） |
 | 2026-08-23 | 作業中 | self-group bootstrap（`src/mls/self-group.ts`、`ensureSelfGroup`）を追加。`pullMlsGroupInfo` の「group 不在」と「認可失敗」混同バグも修正し、実 MLS/実 SQLite DS/実 HTTP を通した genesis + 外部 join の end-to-end test で検証 |
 | 2026-08-23 | 作業中 | roster 取得 API（`GET /v1/roster/:identityId`）を追加し `ensureSelfGroupWithRosterInstall`/`installCurrentRosterProjection` で roster install まで接続。installer 認可ルール（直前 epoch の trusted device のみ）により新規参加者は自己 install できないという設計制約を発見し、既存メンバーが後で反映する前提の設計に修正。`test/protocol/mls-self-group-roster-install.test.ts` で genesis install と `processIncoming` 経由の commit 取り込み→反映を検証 |
+| 2026-08-23 | 作業中 | did:web mirror（`src/identity/web/`）を追加。`createGenesis`/`addDeviceVerificationMethod` に `didWebMirror: true` を渡すと、同じサブドメインの `/.well-known/did.json` に did:webvh の現在 state を did:web 形式（proof なし、SCID を含まない別 DID）で常時上書き同期する。Bluesky の atproto did:web 運用（ハンドルのドメインそのものが did:web domain、path segment なし）との互換のため、did:webvh・did:web とも今後は `biset.md:y` ではなく `y.biset.md` のサブドメイン形式に統一する方針（既存の path 形式 API 自体は後方互換のため残す）。`test/protocol/webvh-did-web-mirror.test.ts` で genesis 時の mirror 発行・device 追加時の再同期・`didWebMirror` 未指定時に何も書かないことを検証 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
