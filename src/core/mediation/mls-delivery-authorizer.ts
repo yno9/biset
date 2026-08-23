@@ -130,10 +130,21 @@ export async function submitMlsExternalCommit(ds: SqliteMlsDeliveryService, veri
   return ds.submitExternalCommit(value.groupId, value.identityId, value.senderKid, value.epoch, value.commit, value.groupInfo)
 }
 
-export async function pullMlsGroupInfo(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsGroupInfoPullV1): Promise<MlsGroupInfoAnswer | undefined> {
-  if (didOfKid(value.requesterKid) !== value.identityId) return undefined
-  if (!(await verifier.verifyGroupInfoPull(value))) return undefined
-  return ds.groupInfoFor(value.groupId, value.identityId)
+export type MlsGroupInfoPullResult = { ok: true; answer: MlsGroupInfoAnswer } | { ok: false }
+
+/**
+ * `ok: false` means unauthorized (bad signature, or `requesterKid` does not
+ * belong to `identityId`); it is NOT what a nonexistent group returns. A
+ * device's very first join attempt asks for a GroupInfo before any group
+ * has been created, and that is exactly the ordinary "fall back to
+ * createSelfGroup" case (self-group.ts's `joinSelfGroupExternally`) — it
+ * must come back as an authorized empty answer (`{ pendingRemovals: [] }`),
+ * never as a 403 indistinguishable from an actual authorization failure.
+ */
+export async function pullMlsGroupInfo(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsGroupInfoPullV1): Promise<MlsGroupInfoPullResult> {
+  if (didOfKid(value.requesterKid) !== value.identityId) return { ok: false }
+  if (!(await verifier.verifyGroupInfoPull(value))) return { ok: false }
+  return { ok: true, answer: ds.groupInfoFor(value.groupId, value.identityId) ?? { pendingRemovals: [] } }
 }
 
 export async function publishMlsKeyPackages(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsKeyPackagePublishV1): Promise<number | undefined> {

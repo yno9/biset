@@ -81,16 +81,22 @@ describe('MLS DS authorizer (signature verification over the sender\'s own devic
     ds.close()
   })
 
-  test('pullMlsGroupInfo returns undefined for an unsigned/forged pull, the answer for a valid one', async () => {
+  test('pullMlsGroupInfo rejects an unsigned/forged pull, answers a valid one, and an unauthorized pull is distinct from "no group yet"', async () => {
     const ds = open()
     ds.createGroup(groupId, identityId, deviceAKid, [])
     ds.submitCommit(groupId, deviceAKid, '0', new Uint8Array([1]), [deviceAKid], undefined, undefined, new Uint8Array([9]))
     const unsigned: Omit<MlsGroupInfoPullV1, 'signature'> = { version: 1, groupId, identityId, requesterKid: deviceAKid, requestedAt: '2026-08-23T00:00:00.000Z' }
     const forged = { ...unsigned, signature: ed25519.sign(mlsGroupInfoPullSigningBytes(unsigned), strangerKey) }
-    expect(await pullMlsGroupInfo(ds, verifier(), forged)).toBeUndefined()
+    expect(await pullMlsGroupInfo(ds, verifier(), forged)).toEqual({ ok: false })
 
     const valid = { ...unsigned, signature: ed25519.sign(mlsGroupInfoPullSigningBytes(unsigned), deviceAKey) }
-    expect(await pullMlsGroupInfo(ds, verifier(), valid)).toEqual({ groupInfo: new Uint8Array([9]), pendingRemovals: [] })
+    expect(await pullMlsGroupInfo(ds, verifier(), valid)).toEqual({ ok: true, answer: { groupInfo: new Uint8Array([9]), pendingRemovals: [] } })
+
+    // A device's very first join attempt, before any group exists at all, is
+    // an authorized empty answer -- not indistinguishable from the forged case above.
+    const beforeGroup: Omit<MlsGroupInfoPullV1, 'signature'> = { version: 1, groupId: 'no-such-group', identityId, requesterKid: deviceAKid, requestedAt: '2026-08-23T00:00:01.000Z' }
+    const validBeforeGroup = { ...beforeGroup, signature: ed25519.sign(mlsGroupInfoPullSigningBytes(beforeGroup), deviceAKey) }
+    expect(await pullMlsGroupInfo(ds, verifier(), validBeforeGroup)).toEqual({ ok: true, answer: { pendingRemovals: [] } })
     ds.close()
   })
 

@@ -70,9 +70,9 @@ export function createMlsDeliveryHttpHandler(
       }
 
       if (path === '/v1/mls/group-info/pull') {
-        const answer = await pullMlsGroupInfo(ds, verifier, decodeMlsGroupInfoPullWire(body))
-        if (!answer) return text(403, 'rejected')
-        return json(200, encodeMlsGroupInfoAnswerWire(answer))
+        const result = await pullMlsGroupInfo(ds, verifier, decodeMlsGroupInfoPullWire(body))
+        if (!result.ok) return text(403, 'rejected')
+        return json(200, encodeMlsGroupInfoAnswerWire(result.answer))
       }
 
       if (path === '/v1/mls/keypackage/publish') {
