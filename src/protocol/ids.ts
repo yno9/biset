@@ -46,3 +46,15 @@ function assertUnsigned64(value: unknown, name: string): asserts value is string
     throw new TypeError(`${name} must be an unsigned 64-bit decimal string`)
   }
 }
+
+/**
+ * The identity behind a device key id — `did:webvh:x#k1` → `did:webvh:x`.
+ * Lives here (not src/mls/identity.ts, which owns the MLS credential shape)
+ * so that code with no business touching MLS state — core's DS authorizer,
+ * in particular — never has to import src/mls/vendor/ just to parse a DID
+ * URL fragment off a string it already has.
+ */
+export function didOfKid(kid: DeviceId): IdentityId {
+  const hash = kid.indexOf('#')
+  return hash < 0 ? kid : kid.slice(0, hash)
+}

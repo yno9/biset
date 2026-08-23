@@ -11,6 +11,7 @@
 // applied to transport-layer control rather than the MLS credential itself.
 import { ed25519 } from '@noble/curves/ed25519.js'
 import type { DeviceSigningPublicKeyResolver } from '../identity/ed25519-device-control-verifier.ts'
+import { didOfKid } from '../../protocol/ids.ts'
 import {
   mlsCommitSubmissionSigningBytes,
   mlsDeliveriesPullSigningBytes,
@@ -115,14 +116,24 @@ export async function submitMlsCommit(ds: SqliteMlsDeliveryService, verifier: Ml
   return ds.submitCommit(value.groupId, value.senderKid, value.epoch, value.commit, value.roster, value.welcome, value.welcomeTo, value.groupInfo)
 }
 
+/**
+ * `groupInfoFor`/`submitExternalCommit` are gated on `identityId`, not
+ * `roster.has(kid)` — a joining device is by definition not yet in the
+ * roster (mls-delivery-store.ts's own comment on why). The signature proves
+ * `senderKid`'s owner controls that key; this extra `didOfKid` check is what
+ * stops that owner from pairing a validly-signed message with SOMEONE ELSE'S
+ * `identityId` to read or join a self-group that is not theirs.
+ */
 export async function submitMlsExternalCommit(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsExternalCommitSubmissionV1): Promise<MlsCommitResult> {
+  if (didOfKid(value.senderKid) !== value.identityId) return { ok: false, reason: 'unauthorized', epoch: '0' }
   if (!(await verifier.verifyExternalCommitSubmission(value))) return { ok: false, reason: 'unauthorized', epoch: '0' }
-  return ds.submitExternalCommit(value.groupId, value.senderKid, value.epoch, value.commit, value.groupInfo)
+  return ds.submitExternalCommit(value.groupId, value.identityId, value.senderKid, value.epoch, value.commit, value.groupInfo)
 }
 
 export async function pullMlsGroupInfo(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsGroupInfoPullV1): Promise<MlsGroupInfoAnswer | undefined> {
+  if (didOfKid(value.requesterKid) !== value.identityId) return undefined
   if (!(await verifier.verifyGroupInfoPull(value))) return undefined
-  return ds.groupInfoFor(value.groupId, value.requesterKid)
+  return ds.groupInfoFor(value.groupId, value.identityId)
 }
 
 export async function publishMlsKeyPackages(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsKeyPackagePublishV1): Promise<number | undefined> {

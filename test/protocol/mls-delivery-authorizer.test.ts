@@ -121,7 +121,7 @@ describe('MLS DS authorizer (signature verification over the sender\'s own devic
 
     const valid = { ...unsigned, signature: ed25519.sign(mlsSelfRemoveSubmissionSigningBytes(unsigned), deviceAKey) }
     expect((await submitMlsSelfRemove(ds, verifier(), valid)).ok).toBe(true)
-    expect(ds.groupInfoFor(groupId, deviceAKid)?.pendingRemovals).toEqual([deviceAKid])
+    expect(ds.groupInfoFor(groupId, identityId)?.pendingRemovals).toEqual([deviceAKid])
     ds.close()
   })
 
@@ -132,12 +132,12 @@ describe('MLS DS authorizer (signature verification over the sender\'s own devic
     const unsigned: Omit<MlsPendingRemovalsClearV1, 'signature'> = { version: 1, groupId, identityId, requesterKid: deviceAKid, clearedKids: [deviceAKid], clearedAt: '2026-08-23T00:00:00.000Z' }
     const forged = { ...unsigned, signature: ed25519.sign(mlsPendingRemovalsClearSigningBytes(unsigned), strangerKey) }
     expect(await clearMlsPendingRemovals(ds, verifier(), forged)).toBe(false)
-    expect(ds.groupInfoFor(groupId, deviceAKid)?.pendingRemovals).toEqual([deviceAKid])
+    expect(ds.groupInfoFor(groupId, identityId)?.pendingRemovals).toEqual([deviceAKid])
 
     // Authorized (device-a's own signature) but device-a never committed, so the DS quietly no-ops.
     const valid = { ...unsigned, signature: ed25519.sign(mlsPendingRemovalsClearSigningBytes(unsigned), deviceAKey) }
     expect(await clearMlsPendingRemovals(ds, verifier(), valid)).toBe(true)
-    expect(ds.groupInfoFor(groupId, deviceAKid)?.pendingRemovals).toEqual([deviceAKid])
+    expect(ds.groupInfoFor(groupId, identityId)?.pendingRemovals).toEqual([deviceAKid])
     ds.close()
   })
 

@@ -50,14 +50,14 @@ describe('SQLite MLS Delivery Service (RFC 9750 §5)', () => {
     ds.close()
   })
 
-  test('groupInfoFor answers ever-members, including one removed by the last commit', () => {
+  test('groupInfoFor is gated on the self-group\'s identity, not device membership', () => {
     const ds = open()
-    ds.createGroup(groupId, identityId, 'device-a', ['device-b'])
+    ds.createGroup(groupId, identityId, 'device-a', [])
     ds.submitCommit(groupId, 'device-a', '0', new Uint8Array([1]), ['device-a'], undefined, undefined, new Uint8Array([9]))
-    expect(ds.groupInfoFor(groupId, 'device-a')).toEqual({ groupInfo: new Uint8Array([9]), pendingRemovals: [] })
-    // device-b was removed from the roster but remains an ever-member.
-    expect(ds.groupInfoFor(groupId, 'device-b')).toEqual({ groupInfo: new Uint8Array([9]), pendingRemovals: [] })
-    expect(ds.groupInfoFor(groupId, 'device-stranger')).toBeUndefined()
+    // A device that has never been a member can still fetch it: that is the
+    // entire point of external join, which starts from exactly this call.
+    expect(ds.groupInfoFor(groupId, identityId)).toEqual({ groupInfo: new Uint8Array([9]), pendingRemovals: [] })
+    expect(ds.groupInfoFor(groupId, 'did:web:stranger.example')).toBeUndefined()
     ds.close()
   })
 
@@ -66,7 +66,7 @@ describe('SQLite MLS Delivery Service (RFC 9750 §5)', () => {
     ds.createGroup(groupId, identityId, 'device-a', [])
     ds.submitCommit(groupId, 'device-a', '0', new Uint8Array([1]), ['device-a'], undefined, undefined, new Uint8Array([9]))
     ds.submitCommit(groupId, 'device-a', '1', new Uint8Array([1]), ['device-a'])
-    expect(ds.groupInfoFor(groupId, 'device-a')?.groupInfo).toBeUndefined()
+    expect(ds.groupInfoFor(groupId, identityId)?.groupInfo).toBeUndefined()
     ds.close()
   })
 
@@ -75,11 +75,11 @@ describe('SQLite MLS Delivery Service (RFC 9750 §5)', () => {
     ds.createGroup(groupId, identityId, 'device-a', ['device-b'])
     const proposed = ds.submitSelfRemove(groupId, 'device-b', '0', new Uint8Array([5]), 'device-b')
     expect(proposed.ok).toBe(true)
-    expect(ds.groupInfoFor(groupId, 'device-a')?.pendingRemovals).toEqual(['device-b'])
+    expect(ds.groupInfoFor(groupId, identityId)?.pendingRemovals).toEqual(['device-b'])
 
     ds.submitCommit(groupId, 'device-a', '0', new Uint8Array([1]), ['device-a'])
     ds.clearPendingRemovals(groupId, 'device-a', ['device-b'])
-    expect(ds.groupInfoFor(groupId, 'device-a')?.pendingRemovals).toEqual([])
+    expect(ds.groupInfoFor(groupId, identityId)?.pendingRemovals).toEqual([])
     ds.close()
   })
 
@@ -89,19 +89,23 @@ describe('SQLite MLS Delivery Service (RFC 9750 §5)', () => {
     ds.submitSelfRemove(groupId, 'device-b', '0', new Uint8Array([5]), 'device-b')
     ds.submitCommit(groupId, 'device-a', '0', new Uint8Array([1]), ['device-a'])
     ds.clearPendingRemovals(groupId, 'device-b', ['device-b']) // device-b did not commit
-    expect(ds.groupInfoFor(groupId, 'device-a')?.pendingRemovals).toEqual(['device-b'])
+    expect(ds.groupInfoFor(groupId, identityId)?.pendingRemovals).toEqual(['device-b'])
     ds.close()
   })
 
-  test('submitExternalCommit requires a published GroupInfo and leaves the roster unchanged', () => {
+  test('submitExternalCommit requires a published GroupInfo, is gated on identity, and adds the joiner to the roster', () => {
     const ds = open()
     ds.createGroup(groupId, identityId, 'device-a', [])
-    expect(ds.submitExternalCommit(groupId, 'device-a', '0', new Uint8Array([1]))).toEqual({ ok: false, reason: 'no-group-info', epoch: '0' })
+    expect(ds.submitExternalCommit(groupId, identityId, 'device-b', '0', new Uint8Array([1]))).toEqual({ ok: false, reason: 'no-group-info', epoch: '0' })
 
     ds.submitCommit(groupId, 'device-a', '0', new Uint8Array([1]), ['device-a'], undefined, undefined, new Uint8Array([9]))
-    const result = ds.submitExternalCommit(groupId, 'device-a', '1', new Uint8Array([2]), new Uint8Array([10]))
+    // device-b has never been in the roster -- it is joining for the first time.
+    const result = ds.submitExternalCommit(groupId, identityId, 'device-b', '1', new Uint8Array([2]), new Uint8Array([10]))
     expect(result.ok).toBe(true)
-    if (result.ok) expect(result.roster).toEqual(['device-a'])
+    if (result.ok) expect(result.roster).toEqual(['device-a', 'device-b'])
+
+    // A different identity cannot use this self-group's external-join path.
+    expect(ds.submitExternalCommit(groupId, 'did:web:stranger.example', 'device-x', '2', new Uint8Array([3]))).toEqual({ ok: false, reason: 'not-a-member', epoch: '2' })
     ds.close()
   })
 

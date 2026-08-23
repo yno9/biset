@@ -27,6 +27,7 @@
 // `credentialType: 'basic'` is the right container: the identity is an opaque
 // byte string to MLS, and its meaning — "a DID URL, resolve it" — lives here.
 import type { Credential } from './vendor/index.ts'
+export { didOfKid } from '../protocol/ids.ts'
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
@@ -49,10 +50,4 @@ export function memberIdOf(credential: Credential): MlsMemberId {
   const hash = kid.indexOf('#')
   if (!kid.startsWith('did:') || hash < 0) throw new Error(`memberIdOf: not a DID URL: ${kid}`)
   return { did: kid.slice(0, hash), kid }
-}
-
-/** The identity behind a device key id — `did:webvh:x#k1` → `did:webvh:x`. */
-export function didOfKid(kid: string): string {
-  const hash = kid.indexOf('#')
-  return hash < 0 ? kid : kid.slice(0, hash)
 }

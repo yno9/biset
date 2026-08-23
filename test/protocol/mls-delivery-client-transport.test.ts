@@ -99,7 +99,7 @@ describe('CoreMlsDeliveryTransport <-> core HTTP handler', () => {
     const clear: Omit<MlsPendingRemovalsClearV1, 'signature'> = { version: 1, groupId, identityId, requesterKid: deviceAKid, clearedKids: [deviceAKid], clearedAt: '2026-08-23T00:00:01.000Z' }
     await transport.clearPendingRemovals({ ...clear, signature: ed25519.sign(mlsPendingRemovalsClearSigningBytes(clear), deviceAKey) })
     // device-a IS the group's last committer (it committed the genesis epoch above), so this clear takes effect.
-    expect(ds.groupInfoFor(groupId, deviceAKid)?.pendingRemovals).toEqual([])
+    expect(ds.groupInfoFor(groupId, identityId)?.pendingRemovals).toEqual([])
 
     const pull: Omit<MlsDeliveriesPullV1, 'signature'> = { version: 1, groupId, identityId, requesterKid: deviceAKid, afterSeq: 0, requestedAt: '2026-08-23T00:00:02.000Z' }
     const entries = await transport.pullDeliveries({ ...pull, signature: ed25519.sign(mlsDeliveriesPullSigningBytes(pull), deviceAKey) })

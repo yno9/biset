@@ -141,10 +141,17 @@ export class SqliteMlsDeliveryService {
     })()
   }
 
-  /** The GroupInfo a member may use to add its own device, plus outstanding self-removals. */
-  groupInfoFor(groupId: string, requester: string): MlsGroupInfoAnswer | undefined {
+  /**
+   * The GroupInfo a member may use to add its own device, plus outstanding
+   * self-removals. Gated on `identityId`, not device membership — a device
+   * asking for this specific group's GroupInfo, in order to join it via
+   * external commit, is BY DEFINITION not yet a member (that is the whole
+   * point of external join). The only thing worth checking here is that the
+   * requester belongs to the identity this self-group actually is.
+   */
+  groupInfoFor(groupId: string, identityId: string): MlsGroupInfoAnswer | undefined {
     const group = this.loadGroup(groupId)
-    if (!group || !group.everMembers.has(requester)) return undefined
+    if (!group || group.identityId !== identityId) return undefined
     return { ...(group.groupInfo ? { groupInfo: group.groupInfo } : {}), pendingRemovals: [...group.pendingRemovals] }
   }
 
@@ -169,19 +176,34 @@ export class SqliteMlsDeliveryService {
     this.saveGroup(group)
   }
 
-  /** Admit an external commit: a device committing itself in, without an existing member adding it.
-   * Safe because the sender must already be in the roster — an identity's own new device, never a stranger. */
-  submitExternalCommit(groupId: string, sender: string, epoch: string, commit: Uint8Array, groupInfo?: Uint8Array): MlsCommitResult {
+  /**
+   * Admit an external commit: a device committing itself in, without an
+   * existing member adding it. Gated on `identityId` matching this
+   * self-group, the same reasoning as `groupInfoFor` — the whole purpose of
+   * external join is to let a device that is not yet in `roster` become a
+   * member, so `roster.has(senderKid)` cannot be the gate here. Safety comes
+   * from the signature (the caller verified `senderKid` really is a device
+   * of `identityId` before calling this) plus MLS itself (the joiner's
+   * credential still has to name a DID the group's Authentication Service
+   * accepts) — never from a stranger being able to name someone else's
+   * `identityId` and a self-generated `senderKid`, which buys them nothing:
+   * MLS validation of the actual commit rejects a credential that does not
+   * belong to this self-group's DID.
+   */
+  submitExternalCommit(groupId: string, identityId: string, senderKid: string, epoch: string, commit: Uint8Array, groupInfo?: Uint8Array): MlsCommitResult {
     const group = this.loadGroup(groupId)
     if (!group) return { ok: false, reason: 'no-such-group', epoch: '0' }
-    if (!group.roster.has(sender)) return { ok: false, reason: 'not-a-member', epoch: group.epoch.toString() }
+    if (group.identityId !== identityId) return { ok: false, reason: 'not-a-member', epoch: group.epoch.toString() }
     if (group.groupInfo === undefined) return { ok: false, reason: 'no-group-info', epoch: group.epoch.toString() }
     if (BigInt(epoch) !== group.epoch) return { ok: false, reason: 'epoch-conflict', epoch: group.epoch.toString() }
     return this.database.transaction((): MlsCommitAccepted => {
       const entry = this.append(group, 'commit', commit, epoch)
       group.epoch = group.epoch + 1n
-      group.lastCommitter = sender
+      group.lastCommitter = senderKid
       group.groupInfo = groupInfo
+      // The joining device becomes a member as of exactly this commit.
+      group.roster.add(senderKid)
+      group.everMembers.add(senderKid)
       this.saveGroup(group)
       return { ok: true, entries: [entry], roster: [...group.roster] }
     })()
