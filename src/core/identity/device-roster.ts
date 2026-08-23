@@ -86,6 +86,27 @@ export function assertAcceptedSelfGroupProjection(value: AcceptedSelfGroupProjec
   }
 }
 
+/**
+ * Strict JSON boundary for reading a roster projection back over HTTP
+ * (`GET /v1/roster/:identityId`, `roster-http.ts`). No signature: a
+ * projection names only public device ids and signing key ids (the same
+ * information a resolved DID document already exposes), so reading it back
+ * needs no authorization beyond knowing the identityId — unlike every
+ * write/pull that touches ciphertext or delivery state.
+ */
+export function encodeAcceptedSelfGroupProjectionWire(value: AcceptedSelfGroupProjectionV1): string {
+  assertAcceptedSelfGroupProjection(value)
+  return JSON.stringify(value)
+}
+
+export function decodeAcceptedSelfGroupProjectionWire(text: string): AcceptedSelfGroupProjectionV1 {
+  let parsed: unknown
+  try { parsed = JSON.parse(text) } catch { throw new TypeError('roster projection body is not JSON') }
+  const value = parsed as AcceptedSelfGroupProjectionV1
+  assertAcceptedSelfGroupProjection(value)
+  return value
+}
+
 export function compareMlsEpoch(left: MlsEpoch, right: MlsEpoch): number {
   const a = BigInt(left)
   const b = BigInt(right)

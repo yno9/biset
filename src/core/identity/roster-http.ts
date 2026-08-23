@@ -1,14 +1,18 @@
 import { installRosterProjection, type DeviceControlSignatureVerifier } from './authorizers.ts'
 import { decodeRosterInstallWire } from './roster-install.ts'
-import type { TrustedDeviceRoster } from './device-roster.ts'
+import { encodeAcceptedSelfGroupProjectionWire, type TrustedDeviceRoster } from './device-roster.ts'
 
 const MAX_BODY_BYTES = 16 * 1024
 
 /**
- * Narrow HTTP boundary for `RosterInstallV1`: the only way a caller can move
- * an `AcceptedSelfGroupProjectionV1` into core's roster over the network.
- * `installRosterProjection` (authorizers.ts) enforces core's DS-only trust
- * model (`PLANMLSARCH.md` §4) — this handler is transport only.
+ * Narrow HTTP boundary for the roster: `POST /v1/roster/install` is the only
+ * way a caller can move an `AcceptedSelfGroupProjectionV1` into core's
+ * roster (`installRosterProjection`, authorizers.ts, enforces core's
+ * DS-only trust model — `PLANMLSARCH.md` §4). `GET /v1/roster/:identityId`
+ * reads the current projection back — unauthenticated, since it names only
+ * public device ids and signing key ids (device-roster.ts's own note on
+ * why) — for a producer to seed `buildAcceptedSelfGroupProjection`'s
+ * `previous` argument before building the next one.
  */
 export function createRosterInstallHttpHandler(
   roster: TrustedDeviceRoster,
@@ -16,8 +20,16 @@ export function createRosterInstallHttpHandler(
 ): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
-      if (request.method !== 'POST') return text(405, 'Method not allowed')
       const path = new URL(request.url).pathname
+
+      if (request.method === 'GET' && path.startsWith('/v1/roster/') && path !== '/v1/roster/install') {
+        const identityId = decodeURIComponent(path.slice('/v1/roster/'.length))
+        const projection = identityId && (await roster.projection(identityId))
+        if (!projection) return text(404, 'Not found')
+        return json(200, encodeAcceptedSelfGroupProjectionWire(projection))
+      }
+
+      if (request.method !== 'POST') return text(405, 'Method not allowed')
       if (path !== '/v1/roster/install') return text(404, 'Not found')
       const install = decodeRosterInstallWire(await requestText(request))
       const outcome = await installRosterProjection(roster, verifier, install)

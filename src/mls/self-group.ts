@@ -41,8 +41,10 @@ import {
 } from './group.ts'
 import type { ClientState } from './vendor/index.ts'
 import type { CoreMlsDeliveryTransport } from './core-mls-delivery-transport.ts'
+import type { CoreRosterInstallTransport } from './core-roster-install-transport.ts'
+import { buildAcceptedSelfGroupProjection, signRosterInstall } from './roster-projection.ts'
 import type { MlsSelfGroupStateStore } from './store.ts'
-import { mlsEpoch } from '../protocol/ids.ts'
+import { mlsEpoch, type DeliverySeq } from '../protocol/ids.ts'
 import {
   mlsCommitSubmissionSigningBytes,
   mlsExternalCommitSubmissionSigningBytes,
@@ -188,5 +190,74 @@ export async function ensureSelfGroup(
   const state = (await joinSelfGroupExternally(transport, identityId, deviceKid, kp, sign, now))
     ?? (await createSelfGroup(transport, identityId, deviceKid, kp, sign, now))
   await store.save(identityId, selfGroupIdHex(identityId), state)
+  return state
+}
+
+/**
+ * Reflects `state`'s current self-group membership into core's roster, as
+ * this device (`deviceKid`) is authorized to.
+ *
+ * `installRosterProjection`'s genesis-vs-post-genesis rule (authorizers.ts)
+ * means only a device the roster ALREADY trusts under the previous epoch may
+ * install the next one — except for a brand-new identity's genesis, whose
+ * own projection vouches for its sole device. A device that just joined
+ * externally is, by construction, not yet in the previous epoch's roster, so
+ * its own install attempt is rejected; some existing member is expected to
+ * call this again once it notices the new epoch (e.g. after processing that
+ * member's commit). That is an ordinary outcome here, not an error — the
+ * caller gets `'rejected'` back rather than a thrown exception so it does
+ * not need to distinguish "I'm not yet trusted" from a real failure.
+ *
+ * `deliveryFloorForNewDevice` is threaded straight to
+ * `buildAcceptedSelfGroupProjection` — see its own doc comment for why it
+ * must be the CURRENT vault-delivery `latestSeq`.
+ */
+export async function installCurrentRosterProjection(
+  rosterTransport: CoreRosterInstallTransport,
+  identityId: string,
+  deviceKid: string,
+  state: ClientState,
+  sign: SelfGroupSigner,
+  deliveryFloorForNewDevice: () => Promise<DeliverySeq>,
+  now: () => Date = () => new Date(),
+): Promise<'installed' | 'already-current' | 'rejected'> {
+  const previous = await rosterTransport.fetchProjection(identityId)
+  const projection = await buildAcceptedSelfGroupProjection(
+    identityId,
+    selfGroupIdHex(identityId),
+    identityId,
+    state,
+    previous,
+    { signingKeyIdForKid: kid => kid, deliveryFloorForNewDevice },
+    now,
+  )
+  const install = await signRosterInstall(projection, deviceKid, sign, now)
+  return rosterTransport.install(install)
+}
+
+/**
+ * `ensureSelfGroup`, followed by `installCurrentRosterProjection` — skipped
+ * entirely when `ensureSelfGroup` found this device already an active
+ * member, since MLS state did not change and there is nothing new to
+ * reflect. See `installCurrentRosterProjection` for why a `'rejected'`
+ * outcome (the ordinary case for a device that just joined as a new,
+ * not-yet-trusted member) is not treated as an error here.
+ */
+export async function ensureSelfGroupWithRosterInstall(
+  store: MlsSelfGroupStateStore,
+  mlsTransport: CoreMlsDeliveryTransport,
+  rosterTransport: CoreRosterInstallTransport,
+  identityId: string,
+  deviceKid: string,
+  kp: OwnKeyPackage,
+  sign: SelfGroupSigner,
+  deliveryFloorForNewDevice: () => Promise<DeliverySeq>,
+  now: () => Date = () => new Date(),
+): Promise<ClientState | undefined> {
+  const alreadyActive = await store.load(identityId).then(stored => stored && isActiveMember(stored.state, deviceKid))
+  const state = await ensureSelfGroup(store, mlsTransport, identityId, deviceKid, kp, sign, now)
+  if (!state || alreadyActive) return state
+
+  await installCurrentRosterProjection(rosterTransport, identityId, deviceKid, state, sign, deliveryFloorForNewDevice, now)
   return state
 }
