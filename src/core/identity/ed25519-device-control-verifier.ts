@@ -14,6 +14,7 @@ import type { IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from '../../proto
 import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryItemV1, VaultDeliveryPullV1 } from '../../protocol/vault.ts'
 import type { TrustedDeviceV1 } from './device-roster.ts'
 import type { DeviceControlSignatureVerifier } from './authorizers.ts'
+import { rosterInstallSigningBytes, type RosterInstallV1 } from './roster-install.ts'
 
 /** DID/webvh adapter boundary. It returns public Ed25519 keys only. */
 export interface DeviceSigningPublicKeyResolver {
@@ -62,6 +63,10 @@ export class Ed25519DeviceControlSignatureVerifier implements DeviceControlSigna
 
   verifyRestoreControlPull(pull: RestoreControlPullV1, device: TrustedDeviceV1): Promise<boolean> {
     return this.verify(device, restoreControlPullSigningBytes(pull), pull.signature)
+  }
+
+  verifyRosterInstall(install: RosterInstallV1, device: TrustedDeviceV1): Promise<boolean> {
+    return this.verify(device, rosterInstallSigningBytes(install), install.signature)
   }
 
   private async verify(device: TrustedDeviceV1, bytes: Uint8Array, signature: Uint8Array): Promise<boolean> {

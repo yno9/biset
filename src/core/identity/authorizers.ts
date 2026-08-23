@@ -4,7 +4,8 @@ import type { VaultDeliveryAuthorizer } from '../mediation/vault-delivery-store.
 import type { IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from '../../protocol/ingress.ts'
 import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryItemV1, VaultDeliveryPullV1 } from '../../protocol/vault.ts'
 import type { DeviceId, IdentityId } from '../../protocol/ids.ts'
-import type { TrustedDeviceRoster, TrustedDeviceV1 } from './device-roster.ts'
+import { assertAcceptedSelfGroupProjection, type TrustedDeviceRoster, type TrustedDeviceV1 } from './device-roster.ts'
+import type { RosterInstallOutcome, RosterInstallV1 } from './roster-install.ts'
 
 /** Signature verification stays with the identity/MLS adapter, never with mediation. */
 export interface DeviceControlSignatureVerifier {
@@ -17,6 +18,7 @@ export interface DeviceControlSignatureVerifier {
   verifyRestoreOffer(offer: RestoreOfferV1, device: TrustedDeviceV1): Promise<boolean>
   verifyRestoreCancel(cancel: RestoreCancelV1, request: RestoreRequestV1, device: TrustedDeviceV1): Promise<boolean>
   verifyRestoreControlPull(pull: RestoreControlPullV1, device: TrustedDeviceV1): Promise<boolean>
+  verifyRosterInstall(install: RosterInstallV1, device: TrustedDeviceV1): Promise<boolean>
 }
 
 export function rosterBackedIngressAuthorizer(
@@ -82,6 +84,32 @@ export function rosterBackedRestoreControlAuthorizer(
       return device !== undefined && verifier.verifyRestoreControlPull(pull, device)
     },
   }
+}
+
+/**
+ * Applies core's DS-only trust model (`PLANMLSARCH.md` §4.1-4.2) to a roster
+ * install: core never inspects MLS Commit content, and only checks that the
+ * installer is a device the roster already trusts. `roster.projection` (not
+ * yet updated by this call) is what "the roster already trusts" means at
+ * this point — a genuinely new identity has no such projection yet, and only
+ * then may the installer attest to itself (the genesis exception: the new
+ * projection's own device list vouches for the installer, since nothing else
+ * can). Epoch monotonicity and same-epoch tie-break are enforced inside
+ * `roster.installAcceptedProjection` itself.
+ */
+export async function installRosterProjection(
+  roster: TrustedDeviceRoster,
+  verifier: Pick<DeviceControlSignatureVerifier, 'verifyRosterInstall'>,
+  install: RosterInstallV1,
+): Promise<RosterInstallOutcome> {
+  assertAcceptedSelfGroupProjection(install.projection)
+  const existing = await roster.projection(install.projection.identityId)
+  const authorizedDevices = existing ? existing.devices : install.projection.devices
+  const installer = authorizedDevices.find(device => device.deviceId === install.installerDeviceId)
+  if (!installer) return 'rejected'
+  const verified = await verifier.verifyRosterInstall(install, installer)
+  if (!verified) return 'rejected'
+  return roster.installAcceptedProjection(install.projection)
 }
 
 async function currentDevice(
