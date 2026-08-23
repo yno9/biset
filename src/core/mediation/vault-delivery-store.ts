@@ -71,11 +71,17 @@ interface IdentityState {
   entriesByAppendId: Map<string, Entry>
 }
 
+/**
+ * 30 days: a device offline for longer than this falls back to peer/archive
+ * restore (`restoreRequired`) rather than catching up through ordinary
+ * delivery. Chosen to tolerate a long vacation/storage-drawer phone without
+ * unbounded mediator retention -- product policy decision, 2026-08-24.
+ */
 const DEFAULT_LIMITS: VaultDeliveryStoreLimits = {
   maxPayloadBytes: 25 * 1024 * 1024,
   maxIdentityPayloadBytes: 100 * 1024 * 1024,
   maxIdentityPendingItems: 128,
-  deliveryTtlMs: 24 * 60 * 60 * 1000,
+  deliveryTtlMs: 30 * 24 * 60 * 60 * 1000,
 }
 
 /**

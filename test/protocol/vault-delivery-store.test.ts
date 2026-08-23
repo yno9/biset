@@ -95,7 +95,10 @@ describe('MemoryVaultDeliveryStore', () => {
   })
 
   test('returns restoreRequired instead of an empty success after TTL expiry', async () => {
-    const store = new MemoryVaultDeliveryStore(makeAuthorizer())
+    // An explicit short TTL, independent of the store's own (30-day
+    // production) default -- this test only cares that expiry produces
+    // restoreRequired, not what the default retention window actually is.
+    const store = new MemoryVaultDeliveryStore(makeAuthorizer(), { maxPayloadBytes: 1024, maxIdentityPayloadBytes: 4096, maxIdentityPendingItems: 4, deliveryTtlMs: 24 * 60 * 60 * 1000 })
     await store.append(append(), new Date('2026-08-21T00:00:00.000Z'))
     expect(await store.pull(pull('device-b'), new Date('2026-08-23T00:00:00.000Z')))
       .toEqual({

@@ -5,11 +5,12 @@ import type { DeliveryPullResult, RestoreRequiredReason, VaultDeliveryAckV1, Vau
 import { assertVaultDeliveryAck, assertVaultDeliveryAppend, assertVaultDeliveryPull, ProtocolValidationError } from '../../protocol/validate.ts'
 import type { VaultDeliveryAuthorizer, VaultDeliveryStatus, VaultDeliveryStore, VaultDeliveryStoreLimits } from './vault-delivery-store.ts'
 
+/** Kept identical to vault-delivery-store.ts's own DEFAULT_LIMITS (see its comment for the retention rationale). */
 const DEFAULT_LIMITS: VaultDeliveryStoreLimits = {
   maxPayloadBytes: 25 * 1024 * 1024,
   maxIdentityPayloadBytes: 100 * 1024 * 1024,
   maxIdentityPendingItems: 128,
-  deliveryTtlMs: 24 * 60 * 60 * 1000,
+  deliveryTtlMs: 30 * 24 * 60 * 60 * 1000,
 }
 
 type State = 'pending' | 'completed' | 'expired'
