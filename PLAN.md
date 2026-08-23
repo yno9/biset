@@ -86,7 +86,7 @@
 - [-] short-lived restore control store を memory / SQLite で実装した。current roster の署名 verifier と bounded persistence に接続済み。actual MLS commit source と peer availability は未実装。
 - [x] restore store の API は request / offer / cancel / signed poll の control 型だけを受け付け、history/blob/chunk を受け付けない。64 KiB HTTP boundary と production storage の restart / expiry / quota test を追加した。
 - [-] `restoreRequired` を受けた client が、署名済み `RestoreRequestV1` を local durable state に先に保存し、同一 request ID で core へ再送する contract を実装した。peer の signed poll と、承認後の `RestoreOfferV1` durable outbox も実装済み。実 UI / transfer approval は未実装。
-- [ ] peer への opaque push / control notification を定義する。
+- [x] peer への opaque push / control notification を定義した（2026-08-24、ユーザーと協議のうえスコープ確定）。今回のスコープは「opaque control message の schema と、core 側で実際に呼ばれる narrow API」まで——実配送手段（Web Push/APNs 等の subscription 登録・購読）は §7 PWA UI 側の別作業として保留。`protocol/vault.ts` に `RestoreNotifyV1`（本文・添付名・会話 metadata を一切含まない、`identityId`/`requestId`/`requesterDeviceId`/`notifyExpiresAt` のみ）を追加した。**意図的に unsigned**: push が届かなくても pull で同じ状態に到達するという既存原則により、偽造/古い notification が届いても被害は無駄な poll 一回分でしかなく、実際の認可は常に署名付き `RestoreControlPullV1` 側が担う。`core/mediation/restore-control-store.ts` に `RestorePushNotifier` interface（`notifyPendingRestore`、best-effort・失敗しても `request()` 自体は失敗させない）と `noopRestorePushNotifier`（実装が無い間の default）を追加し、`notifyPendingRestore` ヘルパーで `MemoryRestoreControlStore`/`SqliteRestoreControlStore` 両方の `request()`——新規 request が実際に受理された時（idempotent な再送時は呼ばない）——から呼ぶよう配線した。`test/protocol/restore-control-store.test.ts`/`sqlite-restore-control-store.test.ts` で、新規 request での通知・再送での非通知・notifier が例外を投げても `request()` 自体は失敗しないことを確認した。
 
 **完了条件:** TTL 外端末は不足を明確に検出でき、peer が不在なら曖昧に同期成功したように見えない。
 
@@ -376,5 +376,7 @@
 | 2026-08-24 | 作業中 | PLAN.md §3.2「kind ごとの競合規則」に着手し、実装済み kind の規則を明文化。過程で `reduceLocalJmapProjection` が `mailbox.set`/`keyword.set` 以外の未知 kind（`message.edit`/`reaction.set` 等、まだ未実装）を黙って無視していた——検出不能なデータロス——ことを発見し、fail closed に修正。edit/read/reaction/thread/settings 自体の設計はまだ未着手 |
 
 | 2026-08-24 | 作業中 | PLAN.md §2.1/§2.2 の policy 決定をユーザーと協議して確定。(1) vault delivery TTL を 24 時間→30 日間に変更（`vault-delivery-store.ts`/`sqlite-vault-delivery-store.ts`）、default TTL に依存していた test を明示的な短い TTL 指定に修正。(2) TTL/quota 設定は当面 code 内 default constant のまま（versioned config への分離は本番運用開始後、実際に値を変えたくなってから）。(3) protocol version negotiation は `exactKeys()` の無条件拒否を恒久方針として維持、将来の wire format 変更は version 番号を上げる形で対応する方針を確定 |
+
+| 2026-08-24 | 作業中 | PLAN.md §2.4「peer への opaque push / control notification を定義する」を実装（ユーザーと協議しスコープを「schema + narrow API 配線まで、実配送は §7 で後回し」に確定）。`protocol/vault.ts` に unsigned な `RestoreNotifyV1`（本文・metadata 一切無し）を追加、`restore-control-store.ts` に `RestorePushNotifier`/`noopRestorePushNotifier`/`notifyPendingRestore` を追加し、両 `RestoreControlStore` 実装の `request()` から新規 request 受理時のみ呼ぶよう配線。notifier の失敗が `request()` を失敗させないことを含めテストで確認 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

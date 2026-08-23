@@ -166,6 +166,26 @@ export interface RestoreControlPullV1 {
   signature: Uint8Array
 }
 
+/**
+ * The entire content of an opaque wake-up push (PLAN.md §2.4). No body,
+ * attachment name, or conversation metadata -- just enough for a peer
+ * device to know it should poll `RestoreControlPullV1{kind:'requests'}`.
+ * Deliberately unsigned: it carries no secret and no actionable claim by
+ * itself (the peer's own signed pull is what actually authenticates
+ * anything), and a forged/stale one costs the receiver nothing worse than
+ * an unnecessary poll. A device that never receives one still reaches the
+ * same state through ordinary polling -- this is a wake-up hint, not a
+ * delivery channel.
+ */
+export interface RestoreNotifyV1 {
+  version: 1
+  identityId: IdentityId
+  requestId: string
+  requesterDeviceId: DeviceId
+  /** A notification delivered after this time is worthless -- the request may already be gone -- and a receiver may discard it unopened. */
+  notifyExpiresAt: string
+}
+
 export type DeliveryPullResult =
   | {
       kind: 'items'

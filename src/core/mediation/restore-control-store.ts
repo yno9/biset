@@ -1,5 +1,5 @@
 import type { DeviceId, IdentityId } from '../../protocol/ids.ts'
-import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1 } from '../../protocol/vault.ts'
+import type { RestoreCancelV1, RestoreControlPullV1, RestoreNotifyV1, RestoreOfferV1, RestoreRequestV1 } from '../../protocol/vault.ts'
 import {
   assertRestoreCancel,
   assertRestoreControlPull,
@@ -19,6 +19,23 @@ export interface RestoreControlAuthorizer {
   verifyOffer(offer: RestoreOfferV1): Promise<boolean>
   verifyCancel(cancel: RestoreCancelV1, request: RestoreRequestV1): Promise<boolean>
   verifyPull(pull: RestoreControlPullV1): Promise<boolean>
+}
+
+/**
+ * The actual wake-up transport (Web Push, APNs, ...) is deliberately not
+ * this interface's concern -- PLAN.md §2.4 only asks that the opaque
+ * control message itself be defined and wired to where a new request is
+ * accepted. A concrete implementation (subscription registration/lookup,
+ * platform push delivery) is §7 PWA UI work, still open; `noopRestorePushNotifier`
+ * is what every store uses until one exists.
+ */
+export interface RestorePushNotifier {
+  /** Best-effort: a failure here must never fail `request()` -- ordinary polling reaches the same state without it. */
+  notifyPendingRestore(notification: RestoreNotifyV1): Promise<void>
+}
+
+export const noopRestorePushNotifier: RestorePushNotifier = {
+  async notifyPendingRestore() {},
 }
 
 export interface RestoreControlStore {
@@ -42,7 +59,10 @@ interface RequestEntry {
 export class MemoryRestoreControlStore implements RestoreControlStore {
   private readonly requests = new Map<string, RequestEntry>()
 
-  constructor(private readonly authorizer: RestoreControlAuthorizer) {}
+  constructor(
+    private readonly authorizer: RestoreControlAuthorizer,
+    private readonly notifier: RestorePushNotifier = noopRestorePushNotifier,
+  ) {}
 
   async request(input: RestoreRequestV1, now = new Date()): Promise<void> {
     assertRestoreRequest(input)
@@ -59,6 +79,7 @@ export class MemoryRestoreControlStore implements RestoreControlStore {
       return
     }
     this.requests.set(key, { request: copyRequest(input), offers: new Map() })
+    await notifyPendingRestore(this.notifier, input)
   }
 
   async pullRequests(input: RestoreControlPullV1, now = new Date()): Promise<RestoreRequestV1[]> {
@@ -149,6 +170,23 @@ export class MemoryRestoreControlStore implements RestoreControlStore {
 
 function requestKey(identityId: IdentityId, requestId: string): string {
   return `${identityId}\u0000${requestId}`
+}
+
+/** Shared by both `RestoreControlStore` implementations so their wake-up behavior can never drift. */
+export async function notifyPendingRestore(notifier: RestorePushNotifier, request: RestoreRequestV1): Promise<void> {
+  const notification: RestoreNotifyV1 = {
+    version: 1,
+    identityId: request.identityId,
+    requestId: request.requestId,
+    requesterDeviceId: request.requesterDeviceId,
+    notifyExpiresAt: request.expiresAt,
+  }
+  try {
+    await notifier.notifyPendingRestore(notification)
+  } catch {
+    // Best-effort by contract (see RestorePushNotifier's doc comment) --
+    // ordinary polling reaches the same state without this ever succeeding.
+  }
 }
 
 function sameRequest(left: RestoreRequestV1, right: RestoreRequestV1): boolean {

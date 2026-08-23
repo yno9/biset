@@ -32,6 +32,25 @@ afterEach(() => {
   }
 })
 
+describe('SQLite restore control store push notifier', () => {
+  test('notifies on a genuinely new request, not on a resubmit, and swallows notifier failures', async () => {
+    let calls = 0
+    const notifier = {
+      async notifyPendingRestore() {
+        calls += 1
+        throw new Error('push transport unavailable')
+      },
+    }
+    const store = SqliteRestoreControlStore.open(path, authorizer, undefined, notifier)
+    const now = new Date('2026-08-21T00:00:00.000Z')
+    await expect(store.request(request(), now)).resolves.toBeUndefined()
+    expect(calls).toBe(1)
+    await store.request(request(), now)
+    expect(calls).toBe(1)
+    store.close()
+  })
+})
+
 describe('SQLite restore control store', () => {
   test('survives restart while retaining only small signed controls', async () => {
     const first = SqliteRestoreControlStore.open(path, authorizer)

@@ -54,6 +54,31 @@ function offer(overrides: Partial<RestoreOfferV1> = {}): RestoreOfferV1 {
   }
 }
 
+describe('RestorePushNotifier wiring', () => {
+  test('notifies on a genuinely new request, not on an idempotent resubmit, and never fails request() if the notifier throws', async () => {
+    const notified: RestoreRequestV1[] = []
+    let calls = 0
+    const notifier = {
+      async notifyPendingRestore(notification: { requestId: string; identityId: string; requesterDeviceId: string; notifyExpiresAt: string }) {
+        calls += 1
+        notified.push(notification as unknown as RestoreRequestV1)
+        throw new Error('push transport unavailable')
+      },
+    }
+    const store = new MemoryRestoreControlStore(authorizer, notifier)
+    const now = new Date('2026-08-21T00:00:00.000Z')
+
+    // A throwing notifier must not surface as a failed request().
+    await expect(store.request(request(), now)).resolves.toBeUndefined()
+    expect(calls).toBe(1)
+    expect(notified[0]).toMatchObject({ requestId: 'restore-1', identityId: 'did:web:alice.example', requesterDeviceId: 'device-c' })
+
+    // The exact same request again (idempotent resubmit) must not notify a second time.
+    await store.request(request(), now)
+    expect(calls).toBe(1)
+  })
+})
+
 describe('restore control store', () => {
   test('relays only small signed restore control between trusted peer devices', async () => {
     const store = new MemoryRestoreControlStore(authorizer)

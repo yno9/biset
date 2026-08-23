@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite'
 import type { DeviceId, IdentityId } from '../../protocol/ids.ts'
 import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1 } from '../../protocol/vault.ts'
 import { assertRestoreCancel, assertRestoreControlPull, assertRestoreOffer, assertRestoreRequest, ProtocolValidationError } from '../../protocol/validate.ts'
-import type { RestoreControlAuthorizer, RestoreControlStore } from './restore-control-store.ts'
+import { noopRestorePushNotifier, notifyPendingRestore, type RestoreControlAuthorizer, type RestorePushNotifier, type RestoreControlStore } from './restore-control-store.ts'
 
 export interface RestoreControlStoreLimits {
   maxIdentityRequests: number
@@ -43,16 +43,21 @@ interface OfferRow {
 export class SqliteRestoreControlStore implements RestoreControlStore {
   private readonly limits: RestoreControlStoreLimits
 
-  constructor(private readonly database: Database, private readonly authorizer: RestoreControlAuthorizer, limits: RestoreControlStoreLimits = DEFAULT_LIMITS) {
+  constructor(
+    private readonly database: Database,
+    private readonly authorizer: RestoreControlAuthorizer,
+    limits: RestoreControlStoreLimits = DEFAULT_LIMITS,
+    private readonly notifier: RestorePushNotifier = noopRestorePushNotifier,
+  ) {
     if (!Number.isSafeInteger(limits.maxIdentityRequests) || limits.maxIdentityRequests < 1) throw new TypeError('maxIdentityRequests must be a positive safe integer')
     if (!Number.isSafeInteger(limits.maxOffersPerRequest) || limits.maxOffersPerRequest < 1) throw new TypeError('maxOffersPerRequest must be a positive safe integer')
     this.limits = limits
     installSchema(database)
   }
 
-  static open(path: string, authorizer: RestoreControlAuthorizer, limits?: RestoreControlStoreLimits): SqliteRestoreControlStore {
+  static open(path: string, authorizer: RestoreControlAuthorizer, limits?: RestoreControlStoreLimits, notifier?: RestorePushNotifier): SqliteRestoreControlStore {
     if (!path) throw new TypeError('SQLite restore control store path is required')
-    return new SqliteRestoreControlStore(new Database(path), authorizer, limits)
+    return new SqliteRestoreControlStore(new Database(path), authorizer, limits, notifier)
   }
 
   close(): void { this.database.close() }
@@ -72,6 +77,7 @@ export class SqliteRestoreControlStore implements RestoreControlStore {
     if (count >= this.limits.maxIdentityRequests) throw new ProtocolValidationError('restore request limit reached')
     this.database.query('INSERT INTO restore_requests (identity_id, request_id, requester_device_id, reason, known_manifest_root, requested_at, expires_at, signature) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(input.identityId, input.requestId, input.requesterDeviceId, input.reason, input.knownManifestRoot ?? null, input.requestedAt, input.expiresAt, input.signature)
+    await notifyPendingRestore(this.notifier, input)
   }
 
   async pullRequests(input: RestoreControlPullV1, now = new Date()): Promise<RestoreRequestV1[]> {
