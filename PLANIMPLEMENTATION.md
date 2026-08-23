@@ -120,8 +120,8 @@ Biset の正本を JMAP/SMTP relay のメールボックスから、各ユーザ
 │ ├─ Ingress buffer（短命・TTL失効）                     │
 │ ├─ Vault-delivery buffer                              │
 │ ├─ ACK / cursor 管理                                   │
-│ ├─ Commit ordering（roster照合）                       │
-│ │    ⚠ DSの信頼範囲は要検討 (PLANMLSARCH §4.1)         │
+│ ├─ Commit ordering（roster照合 / tie-breakのみ）        │
+│ │    DSの信頼範囲は PLANMLSARCH.md §4 で確定            │
 │ └─ Push                                               │
 └──────────────────────────────────────────────────────┘
                                             │
@@ -231,6 +231,14 @@ interface VaultEventV1 {
 MLS self group は、同一 identity の端末を認可し、鍵世代を進める。会話相手との MLS group とは別である。
 
 MLS が直接担当しないものは、過去 vault の自動復号・履歴 archive・端末の物理消去である。新端末が全履歴を得るのは、正規の既存端末が明示的に vault を再配布するからであり、MLS 加入の副作用ではない。
+
+`core`（mediator）は RFC 9750 の Delivery Service（DS）以上の役割を持たない。DS は MLS Commit の暗号内容を検証できず、検証すべきでもない（[`PLANMLSARCH.md`](PLANMLSARCH.md) §2）。core が `AcceptedSelfGroupProjectionV1` を `TrustedDeviceRoster.installAcceptedProjection` へ install する際に許される権限は次の三つに限定する（`PLANMLSARCH.md` §4）。
+
+1. epoch の単調性チェック（stale projection の拒否）。
+2. 同一 epoch 内の tie-break（矛盾する projection の 2 件目以降を拒否し、最初に受理したものを正とする）。
+3. installer の署名が **直前 epoch の trusted device** によるものであることの検証（genesis のみ自己署名で例外）。
+
+1・2 は `MemoryTrustedDeviceRoster` / `SqliteTrustedDeviceRoster` に実装済みである。3（installer の署名認可）と、それを呼び出す実際の MLS accepted-commit producer（`src.bak/mls/group.ts` 相当の移植）はまだ実装されていない。identity/signature key の紐付け認証（RFC 9750 の Authentication Service 相当）は core に持たせず、did:webvh resolver（[`PLANMLSDIDCRED.md`](PLANMLSDIDCRED.md)）が担う。
 
 ### 4.2 Vault Epoch Key (VEK)
 
