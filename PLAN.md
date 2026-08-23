@@ -17,7 +17,7 @@
 - [-] SQLite roster + SQLite delivery / restore-control / ingress、roster authorizer、Ed25519 verifier、narrow HTTP の deployment composition を実装した。ingress の endpoint API は signed pull / durable ACK のみで、external offer は adapter 内部に限定する。actual MLS accepted-commit source / DID resolver cache policy は未実装。
 - [ ] Local JMAP Gateway、MLS VEK 導出、DIDComm/Mail adapter は未実装である。SegmentKey の object encryption と、VEK を入力に取る wrap primitive は実装済みである。
 
-**次に着手する工程:** `PLANMLSARCH.md` で確定した DS 信頼範囲に従い、(1) `src.bak/did/webvh/resolver.ts` を移植した `DeviceSigningPublicKeyResolver` の実装、(2) `src.bak/mls/group.ts` の MLS 暗号処理系の移植と `RosterInstallV1` 署名認可を実装する。ingress は generic public HTTP API にせず、first-party adapter の内部 boundary に限定する方針は維持する。
+**次に着手する工程:** DID resolver・MLS 暗号処理系の移植・`RosterInstallV1` 署名認可までは完了した。残りは (1) accepted MLS commit → `RosterInstallV1` producer（endpoint 側）、(2) その narrow HTTP エンドポイント、(3) `ClientState` から作る `MlsSelfGroupProvider` の具象実装。ingress は generic public HTTP API にせず、first-party adapter の内部 boundary に限定する方針は維持する。
 
 ## 1. 作業上の不変条件
 
@@ -58,7 +58,7 @@
 - [x] adapter 入力は recipient device snapshot を持てず、`CoreIngressAdapter` が offer 時点の accepted self-group roster から snapshot を凍結する。
 - [x] endpoint への ingress pull は current trusted device の Ed25519 署名を必須にし、public HTTP は signed pull / durable ACK だけを公開する。external adapter offer は内部 boundary のままにする。
 - [x] ingress pull は最初に取得した正規端末へ短命の exclusive claim lease を付与する。claim 中は他端末へ同じ body を出さず、claim 端末だけが ACK できる。lease 失効後は別端末が引き継げ、SQLite restart 後も本文一コピーと claim state を維持する。
-- [-] trusted-device roster を mediation authorizer adapter に接続し、DID/webvh public-key resolver を入力に取る Ed25519 verifier を実装した。actual DID resolution / key rotation cache は未実装。real resolver は `src.bak/did/webvh/resolver.ts`（`resolve` + `decodeMultikey`）を移植すれば足り、AS 相当の役割は core に持ち込まない（`PLANMLSARCH.md` §3）。
+- [x] trusted-device roster を mediation authorizer adapter に接続し、DID/webvh public-key resolver を入力に取る Ed25519 verifier を実装した。`src/identity/webvh/`（読み取り専用の resolver、`src.bak/did/webvh/` から移植）を使う `WebvhSigningKeyResolver` が real DID resolution を行う。fail-closed（未解決 DID/fragment は署名検証失敗になる）。key rotation cache は未実装のまま残す。
 - [-] crash-safe な SQLite `VaultDeliveryStore` / `IngressStore` と core deployment への authorizer/persistence wiring を実装した。ingress は first-party adapter の内部 boundary だけで、公開 HTTP には出していない。restart coverage はあるが、同時操作の coverage は未実装。
 - [ ] tombstone retention / dedup retention / quota eviction の数値を policy として決める。
 - [-] signed shared vault delivery の `append` / `pull` / `ack` を narrow HTTP adapter と browser transport に結び付けた。SQLite を使う production core composition / persistence は実装済み。actual DID resolution / MLS commit の runtime injection は未実装。`status` は core internal のみ。
@@ -135,13 +135,16 @@
 ### 4.1 MLS integration boundary
 
 - [x] `PLANMLSARCH.md` に RFC 9420/9750 の原則整理と、core（DS）が roster install 時に検証してよい範囲を確定した。
-- [-] new core 用の最小 `MlsSelfGroupProvider` / fixed VEK exporter boundary を抽出した。現行 MLS group implementation の移植は未実装。
-- [-] accepted MLS epoch だけで更新する public trusted-device roster projection と、それを使う delivery / restore authorizer adapter を実装した。SQLite persistence も追加。actual MLS commit / DID publishing / DID signature verifier との接続は未実装。
-- [x] `installAcceptedProjection` の認可モデル（core=DSが検証してよい範囲）を RFC 9420/9750 に基づき確定した。`PLANMLSARCH.md` を参照。epoch 単調性 + 同一 epoch tie-break は実装済み、installer 署名認可（直前 epoch trusted device、genesis 例外）は未実装。
-- [ ] `RosterInstallV1` 署名型と `verifyRosterInstall` を追加し、直前 epoch trusted device 以外の install を拒否する。
-- [-] fixed label/context/32-byte output の `deriveVaultEpochKey(group)` boundary を実装した。実際の MLS group adapter への接続は未実装。
+- [-] new core 用の最小 `MlsSelfGroupProvider` / fixed VEK exporter boundary を抽出した。`ClientState` から作る具象実装は未実装。
+- [-] accepted MLS epoch だけで更新する public trusted-device roster projection と、それを使う delivery / restore authorizer adapter を実装した。SQLite persistence も追加。DID publishing との接続は未実装（DID signature verifier は実装済み — 上の §2.2 参照）。
+- [x] `installAcceptedProjection` の認可モデル（core=DSが検証してよい範囲）を RFC 9420/9750 に基づき確定した。`PLANMLSARCH.md` を参照。epoch 単調性 + 同一 epoch tie-break は実装済み。
+- [x] `RosterInstallV1` 署名型（`src/core/identity/roster-install.ts`）と `verifyRosterInstall` を追加し、`installRosterProjection`（`src/core/identity/authorizers.ts`）が roster が現に信頼する device 以外（genesis を除く）の install を拒否する。narrow HTTP エンドポイントはまだ無い。
+- [x] `src.bak/mls/vendor/`（vendored ts-mls、RFC 9420 実装 + biset の Remove/UpdatePath セキュリティ修正）と `group.ts`/`identity.ts`/`suite.ts` を `src/mls/` へ移植した。DIDComm transport-key extension（`mlsCapabilities`/`memberTransportKeys`）は削り、DIDComm adapter 実装時に必要なら作り直す。
+- [ ] accepted MLS commit から `AcceptedSelfGroupProjectionV1` を組み立て、`RosterInstallV1` として署名して core へ送る producer（endpoint 側）を実装する。`deliveryFloor` は install 時点の vault-delivery `latestSeq` に設定する方針（`PLANMLSARCH.md` §5 の未決事項）。
+- [ ] `RosterInstallV1` の narrow HTTP エンドポイント（`/v1/roster/install` 相当）を `core/mediation/` に追加する。wire encode/decode は `protocol/ingress-wire.ts` 等の既存パターンに倣う。
+- [-] fixed label/context/32-byte output の `deriveVaultEpochKey(group)` boundary を実装した。`ClientState` から `MlsEpochExporter` を作る具象 `MlsSelfGroupProvider` は未実装。
 - [ ] VEK を永続化しないことを code review / test で保証する。
-- [ ] `src.bak/mls/group.ts` の MLS 暗号処理系を `src/mls/` へ移植し、`MlsSelfGroupProvider` を実装する。DS 通信部分（`self-group.ts`）は新 core API 向けに作り直す。
+- [ ] AS（leaf credential の正当性検証、`setMlsAuthService`）を did:webvh resolver ベースで実装する。`src.bak/mls/authservice.ts` は旧 DIDComm `resolveDidCommDoc`/`keyAgreement` 概念に依存しており、そのままは移植しない。優先度は self-group 運用（DS 通信部分の書き直し）と合わせて後続とする。
 
 ### 4.2 SegmentKey lifecycle
 
@@ -299,6 +302,7 @@
 | 2026-08-22 | `b5e71c6` | external ingress を最初の正規 endpoint に短期 lease し、同時 pull による二重 vault 正本化を防止 |
 | 2026-08-22 | `8401919` | durable ingress ACK outbox を pull 前後に flush する endpoint 同期ループを追加 |
 | 2026-08-23 | `ea66269` | mail の endpoint workflow を sibling vault-delivery outbox append に接続 |
-| 2026-08-23 | 作業中 | `PLANMLSARCH.md` を追加し、core（DS）の roster install 認可モデルを RFC 9420/9750 に基づき確定 |
+| 2026-08-23 | `14f41dd` | `PLANMLSARCH.md` を追加し、core（DS）の roster install 認可モデルを RFC 9420/9750 に基づき確定 |
+| 2026-08-23 | `1e888ae` | 読み取り専用 webvh resolver、vendored ts-mls + group/identity/suite 移植、`RosterInstallV1` installer 認可を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
