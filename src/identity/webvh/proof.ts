@@ -28,6 +28,26 @@ function hashConfigAndDoc(config: ProofConfig, document: object): Uint8Array {
   return out
 }
 
+export function buildProof(
+  document: object,
+  opts: { verificationMethod: string; proofPurpose?: string; created?: string; privateKey: Uint8Array },
+): DataIntegrityProof {
+  const config: ProofConfig = {
+    type: 'DataIntegrityProof',
+    cryptosuite: 'eddsa-jcs-2022',
+    proofPurpose: opts.proofPurpose ?? 'assertionMethod',
+    verificationMethod: opts.verificationMethod,
+    // Conditionally spread rather than always assigning `created: opts.created`
+    // — an explicit `created: undefined` key would still show up in
+    // Object.keys() and get JCS-canonicalized as null-ish, corrupting the
+    // signed bytes relative to a proof that genuinely omits `created`.
+    ...(opts.created ? { created: opts.created } : {}),
+  }
+  const signingInput = hashConfigAndDoc(config, document)
+  const signature = ed25519.sign(signingInput, opts.privateKey)
+  return { ...config, proofValue: 'z' + base58.encode(signature) }
+}
+
 export function verifyProof(document: object, proof: DataIntegrityProof, publicKey: Uint8Array): boolean {
   if (proof.type !== 'DataIntegrityProof' || proof.cryptosuite !== 'eddsa-jcs-2022') return false
   if (!proof.proofValue.startsWith('z')) return false

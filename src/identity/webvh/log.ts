@@ -36,7 +36,10 @@ function entryHashOf(versionId: string): string {
   return m[1]!
 }
 
-function generateEntryHash(predecessorVersionId: string, versionTime: string, parameters: LogParameters, state: object): string {
+/** Computes the entryHash for a new entry not yet given its final versionId.
+ * `predecessorVersionId` is the SCID itself for the genesis entry, or the
+ * full previous entry's versionId otherwise. */
+export function generateEntryHash(predecessorVersionId: string, versionTime: string, parameters: LogParameters, state: object): string {
   return jcsMultihashBase58({ versionId: predecessorVersionId, versionTime, parameters, state })
 }
 
@@ -80,4 +83,8 @@ export function isVersionTimeNotTooFarInFuture(versionTime: string, now = Date.n
 /** JSON Lines: one compact-JSON entry per line, matching what `.well-known/did.jsonl` / anchor's `.../dids/{username}/did.jsonl` serve. */
 export function parseLog(jsonl: string): LogEntry[] {
   return jsonl.split('\n').map(l => l.trim()).filter(Boolean).map(l => JSON.parse(l) as LogEntry)
+}
+
+export function serializeLog(entries: LogEntry[]): string {
+  return entries.map(e => JSON.stringify(e)).join('\n') + '\n'
 }

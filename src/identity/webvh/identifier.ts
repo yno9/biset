@@ -12,6 +12,12 @@ export interface WebvhDidParts {
   pathSegments: string[]
 }
 
+export function buildWebvhDid(parts: { scid: string; domain: string; port?: number; pathSegments?: string[] }): string {
+  const domainPart = parts.port ? `${parts.domain}%3A${parts.port}` : parts.domain
+  const path = parts.pathSegments?.length ? ':' + parts.pathSegments.join(':') : ''
+  return `did:webvh:${parts.scid}:${domainPart}${path}`
+}
+
 export function parseWebvhDid(did: string): WebvhDidParts {
   if (!did.startsWith('did:webvh:')) throw new Error('parseWebvhDid: not a did:webvh identifier')
   const segments = did.slice('did:webvh:'.length).split(':')

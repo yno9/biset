@@ -6,7 +6,8 @@ import { jcsMultihashBase58 } from './hash.ts'
 
 export const SCID_PLACEHOLDER = '{SCID}'
 
-function generateScid(preliminaryEntry: unknown): string {
+/** SCID = base58btc(multihash(JCS(preliminary_entry_with_placeholders), sha256)). */
+export function generateScid(preliminaryEntry: unknown): string {
   return jcsMultihashBase58(preliminaryEntry)
 }
 
