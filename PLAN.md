@@ -113,7 +113,7 @@
 - [ ] edit / tombstone / read / mailbox / reaction の競合規則を kind ごとに固定する。
 - [x] manifest root と event/object set の diff を実装する。階層 Merkle proof と durable checkpoint は未実装。
 - [-] mailbox / keyword / tombstone mutation event の deterministic JMAP projection reducer を実装した。`message.add` は、署名 event の第1 object reference に encrypted JMAP metadata、第2 reference に加工しない raw RFC 5322 blob を束縛する。projection は metadata と blob ID の一致を検証して再構築し、mailbox 件数も再計算する。attachment / decrypted MIME projector / full vault scan checkpoint persistence は未実装。
-- [ ] duplicate、offline concurrent write、interrupted transfer の convergence test を書く。
+- [x] duplicate、offline concurrent write、interrupted transfer の convergence test を書いた（`test/protocol/local-jmap-reducer.test.ts`）。duplicate: 同一 `message.add` record を一 batch 内で二回渡すと reducer が黙って収束せず明示的に拒否すること（dedup は event storage 側の unique keyPath の責務であり reducer の責務ではないことの確認）。offline concurrent write: 2 device がオフラインのまま同じ email に異なる `keyword.set` を書き、配信順序（A→B / B→A）に関わらず同じ最終状態（`createdAt` が新しい方が勝つ LWW）に収束すること。interrupted transfer: `commitRestoreTransferChunk` が「生 record を先にコミットし、最後に一度だけ `rebuildLocalJmapProjection`」する実設計を反映し、causally 正しい record 群を二つの batch に分けて逐次 fold した結果が、一括で reduce した結果（`state` hash まで含めて）と完全一致することを確認した。
 
 **完了条件:** 二端末が同じ検証済み event/object 集合から同じ manifest root と JMAP projection を作る。
 
@@ -366,5 +366,7 @@
 | 2026-08-24 | 作業中 | PLAN.md §2.3「N devices でも payload copy が一つだけである storage test」を実装。5 device 分の recipient を持つ delivery で、append 直後から一部 ACK 後まで `status().payloadBytes` が常に `payload.length` のまま（per-device fanout なら 5 倍になるはず）であること、全 device が同一 item を独立に pull できること、最後の device の ACK で初めて 0 になることを memory/SQLite 両実装で確認 |
 
 | 2026-08-24 | 作業中 | PLAN.md §2.3「crash が ACK 前/後 / duplicate ingress ID・payload hash」を実装。ingress store 版でも `SqliteVaultDeliveryStore` と同じ acknowledge レース bug を `MemoryIngressStore`/`SqliteIngressStore` 両方で発見・修正（`await authorizer.verify` 前の stale state を使って `vault-ingested` を書き込んでいた——SQLite の `clearBody` は status guard すら無かった）。修正前に失敗する regression test で確認。duplicate ingressId（同一/異なる payload hash、restart 後）、異なる ingressId での同一 payload hash 非 dedup、already-ingested への re-ACK 拒否、`commitIngress` の durable transaction と network ACK 送信の間でのクラッシュ耐性（`ackOutbox` row の生存）を追加 |
+
+| 2026-08-24 | 作業中 | PLAN.md §3.2「duplicate / offline concurrent write / interrupted transfer の convergence test」を実装（`test/protocol/local-jmap-reducer.test.ts`）。前段で `core/mediation/` の acknowledge レース bug を 3 箇所修正した流れで、`restore-control-store.ts`/`sqlite-restore-control-store.ts`/`mls-delivery-store.ts` も同じ「await 前の stale read → await 後の無条件 write」パターンが無いか監査した——`offer`/`request`/`cancel` は await の後に読み書きしているか、SQLite 側は FK cascade で保護されており修正不要と判断。convergence test 自体は、同一 record の重複投入が黙って収束せず拒否されること、2 device のオフライン同時書き込みが配信順序に依らず同じ結果に収束すること（LWW）、`commitRestoreTransferChunk` の実設計（生 record 先行コミット→最後に一括 `rebuildLocalJmapProjection`）を反映した二段階 fold が一括 reduce と `state` hash まで完全一致することを確認 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

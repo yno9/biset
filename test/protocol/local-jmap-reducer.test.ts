@@ -65,6 +65,87 @@ describe('Local JMAP projection reducer', () => {
     expect(projection.mailboxes[0]).toMatchObject({ totalEmails: 1, unreadEmails: 1 })
   })
 
+  test('rejects a duplicate message.add rather than silently converging (dedup is the store\'s job, not the reducer\'s)', () => {
+    const base = { mailboxes: [], emails: [] }
+    const add = {
+      event: event({ id: 'event-add-1', kind: 'message.add', targetIds: ['email-1'], objectRefs: ['metadata-1', 'raw-rfc5322-1'] }),
+      plaintext: plaintext('message.add', ['email-1'], {
+        email: { id: 'email-1', blobId: 'raw-rfc5322-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' },
+      }),
+    }
+    // The exact same record twice in one batch -- if the reducer silently
+    // deduped this, it would mask a bug in the caller (event storage's own
+    // unique keyPath is what's actually supposed to prevent this from ever
+    // happening); it must fail loudly instead.
+    expect(() => reduceLocalJmapProjection('did:web:alice.example', base, [add, add])).toThrow('conflicts with an existing email')
+  })
+
+  test('two devices writing to the same email while offline converge to the same result regardless of delivery order', () => {
+    const identityId = 'did:web:alice.example'
+    const base = {
+      mailboxes: [],
+      emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }],
+    }
+    // Device A set a keyword at 00:00; device B set a DIFFERENT keyword one
+    // minute later, on the same email, neither having seen the other's
+    // write (both offline at the time) -- keyword.set replaces the whole
+    // keywords object, so this is a real conflict, not a merge.
+    const fromDeviceA = {
+      event: event({ id: 'event-a', actorDeviceId: 'device-a', actorSeq: 5, kind: 'keyword.set', targetIds: ['email-1'], createdAt: '2026-08-21T00:00:00.000Z' }),
+      plaintext: plaintext('keyword.set', ['email-1'], { emailId: 'email-1', keywords: { '$seen': true } }),
+    }
+    const fromDeviceB = {
+      event: event({ id: 'event-b', actorDeviceId: 'device-b', actorSeq: 3, kind: 'keyword.set', targetIds: ['email-1'], createdAt: '2026-08-21T00:01:00.000Z' }),
+      plaintext: plaintext('keyword.set', ['email-1'], { emailId: 'email-1', keywords: { flagged: true } }),
+    }
+    const deliveredAThenB = reduceLocalJmapProjection(identityId, base, [fromDeviceA, fromDeviceB])
+    const deliveredBThenA = reduceLocalJmapProjection(identityId, base, [fromDeviceB, fromDeviceA])
+    // Convergence: the array order sync happened to deliver records in must
+    // not affect the final state.
+    expect(deliveredAThenB).toEqual(deliveredBThenA)
+    // The later write (device B, createdAt 00:01) wins.
+    expect(deliveredAThenB.emails[0]!.keywords).toEqual({ flagged: true })
+  })
+
+  test('an interrupted-then-resumed transfer, folded incrementally in two batches, converges to the same projection as one uninterrupted batch', () => {
+    const identityId = 'did:web:alice.example'
+    const base = { mailboxes: [], emails: [] }
+    const add = {
+      event: event({ id: 'event-add-1', kind: 'message.add', targetIds: ['email-1'], objectRefs: ['metadata-1', 'raw-rfc5322-1'], createdAt: '2026-08-21T00:00:00.000Z' }),
+      plaintext: plaintext('message.add', ['email-1'], {
+        email: { id: 'email-1', blobId: 'raw-rfc5322-1', threadId: 'thread-1', mailboxIds: { inbox: true }, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' },
+      }),
+    }
+    const mailboxUpdate = {
+      event: event({ id: 'event-mb-1', kind: 'mailbox.set', targetIds: ['email-1'], createdAt: '2026-08-21T00:01:00.000Z' }),
+      plaintext: plaintext('mailbox.set', ['email-1'], { emailId: 'email-1', mailboxIds: { archive: true } }),
+    }
+    const tombstone = {
+      event: event({ id: 'event-ts-1', kind: 'message.tombstone', targetIds: ['email-1'], createdAt: '2026-08-21T00:02:00.000Z' }),
+      plaintext: plaintext('message.tombstone', ['email-1'], { emailId: 'email-1' }),
+    }
+    const allRecords = [add, mailboxUpdate, tombstone]
+
+    const oneShot = reduceLocalJmapProjection(identityId, base, allRecords)
+
+    // The same records, but delivered as two separate batches the way a
+    // transfer interrupted after the first chunk and resumed later would --
+    // each batch only ever contains records whose target the PRIOR batch
+    // already resolved (message.add lands no later than any mutation of the
+    // same email), which is exactly what commitRestoreTransferChunk's own
+    // "commit raw records now, run rebuildLocalJmapProjection once at the
+    // end" design guarantees in production.
+    const afterFirstChunk = reduceLocalJmapProjection(identityId, base, [add, mailboxUpdate])
+    const afterSecondChunk = reduceLocalJmapProjection(
+      identityId,
+      { mailboxes: afterFirstChunk.mailboxes, emails: afterFirstChunk.emails },
+      [tombstone],
+    )
+    expect(afterSecondChunk.emails).toEqual(oneShot.emails)
+    expect(afterSecondChunk.mailboxes).toEqual(oneShot.mailboxes)
+    expect(afterSecondChunk.state).toBe(oneShot.state)
+  })
+
   test('refuses message metadata which points at a different raw RFC 5322 object', () => {
     const base = { mailboxes: [], emails: [] }
     expect(() => reduceLocalJmapProjection('did:web:alice.example', base, [{
