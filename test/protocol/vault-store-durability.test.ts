@@ -75,6 +75,39 @@ describe('IndexedDbVaultStore durability', () => {
     second.close()
   })
 
+  test("a crash between the durable commit and the network ACK send leaves the ACK durably queued, not lost", async () => {
+    // ingestIngress (vault/ingress-ingest.ts) commits the receipt/objects/
+    // events/projection AND the ackOutbox row in one IndexedDB transaction,
+    // strictly before anything sends the ACK over the network -- so a crash
+    // in that window must never lose the ACK: it has to still be sitting in
+    // the durable outbox for the retry loop to flush on next boot.
+    const first = await IndexedDbVaultStore.open()
+    const commit = await buildIngressCommit('ingress-crash')
+    expect(await first.commitIngress(commit)).toBe('committed')
+    first.close()
+
+    const second = await IndexedDbVaultStore.open()
+    const outbox = await second.readIngressAckOutbox(identityId, 'device-a')
+    expect(outbox).toHaveLength(1)
+    expect(outbox[0]!.ingressId).toBe('ingress-crash')
+    expect(outbox[0]!.ack.vaultEventId).toBe(commit.events[0]!.id)
+    expect(outbox[0]!.attempts).toBe(0)
+
+    // And local durable state (the whole point of "ACK 後は local state が
+    // 必ず存在する") is there too, independent of whether the network send
+    // ever happens.
+    expect(await second.readVaultObjects(identityId)).toHaveLength(1)
+    expect(await second.readVaultEvents(identityId)).toHaveLength(1)
+
+    // Once the retry loop actually sends it and gets a response, the outbox
+    // entry is removed -- also durable across a further restart.
+    await second.removeIngressAckOutbox(identityId, 'ingress-crash')
+    second.close()
+    const third = await IndexedDbVaultStore.open()
+    expect(await third.readIngressAckOutbox(identityId, 'device-a')).toEqual([])
+    third.close()
+  })
+
   test('a repeated ingress ID commits its objects/events only once, enforced by the real unique-key constraint', async () => {
     const store = await IndexedDbVaultStore.open()
     const commit = await buildIngressCommit('ingress-dup')

@@ -42,6 +42,47 @@ describe('SQLite ingress store', () => {
     restarted.close()
   })
 
+  test('a concurrent expire() sweep during an in-flight ACK does not resurrect the entry as vault-ingested', async () => {
+    let releaseVerify: (() => void) | undefined
+    const gatedAuthorizer: IngressAuthorizer = {
+      async verifyPull() { return true },
+      async verify() { await new Promise<void>(resolve => { releaseVerify = resolve }); return true },
+    }
+    const store = SqliteIngressStore.open(path, gatedAuthorizer)
+    await store.offer({ ...envelope, expiresAt: '2026-08-21T00:30:00.000Z' })
+    await store.pull(pull('device-a'), new Date('2026-08-21T00:00:00.000Z'))
+
+    const ackPromise = store.acknowledge(ack, new Date('2026-08-21T00:00:00.000Z'))
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+
+    await store.expire(new Date('2026-08-21T01:00:00.000Z'))
+    expect(await store.status('ingress-1')).toMatchObject({ status: 'expired' })
+
+    releaseVerify!()
+    await expect(ackPromise).rejects.toThrow('already expired')
+    expect(await store.status('ingress-1')).toMatchObject({ status: 'expired' })
+    store.close()
+  })
+
+  test('a re-offered ingressId with a different payload hash is rejected across a restart, and re-ACKing an already-ingested one is rejected', async () => {
+    const first = SqliteIngressStore.open(path, authorizer)
+    await first.offer(envelope)
+    await first.pull(pull('device-a'), new Date('2026-08-21T01:00:00.000Z'))
+    await first.acknowledge(ack, new Date('2026-08-21T01:00:00.000Z'))
+    first.close()
+
+    const restarted = SqliteIngressStore.open(path, authorizer)
+    // The same ingressId, resent with a body that hashes differently -- an
+    // adapter bug or a forged retry, never silently accepted as an update.
+    await expect(restarted.offer({ ...envelope, protectedPayload: new Uint8Array([9, 9]), protectedPayloadHash: sha256Bytes(new Uint8Array([9, 9])) }))
+      .rejects.toThrow('already exists with a different payload')
+    // Re-ACKing an ingress this device already durably ingested (e.g. a
+    // retried ACK after the client never saw the first response) must not
+    // silently succeed a second time.
+    await expect(restarted.acknowledge(ack, new Date('2026-08-21T02:00:00.000Z'))).rejects.toThrow('already vault-ingested')
+    restarted.close()
+  })
+
   test('expires a body into a tombstone under the same bounded policy', async () => {
     const store = SqliteIngressStore.open(path, authorizer)
     await store.offer({ ...envelope, expiresAt: '2026-08-21T00:01:00.000Z' })

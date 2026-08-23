@@ -93,8 +93,24 @@ export class SqliteIngressStore implements IngressStore {
     }
     if (!equalBytes(ack.protectedPayloadHash, value.protectedPayloadHash)) throw new ProtocolValidationError('ACK payload hash does not match ingress')
     if (!(await this.authorizer.verify(ack, value))) throw new ProtocolValidationError('ACK is not authorised')
-    this.clearBody(ack.ingressId, 'vault-ingested')
-    return status(this.row(ack.ingressId)!)
+    // `row` was read before the `authorizer.verify` await above, so its
+    // `status`/claim can be stale by now: a concurrent expire() may have
+    // tombstoned this same entry while this call was suspended. Re-check and
+    // write inside one synchronous transaction against a fresh read, rather
+    // than trusting the pre-await snapshot -- clearBody's own UPDATE has no
+    // status guard, so an unconditional call here would silently resurrect
+    // an already-expired row as 'vault-ingested'.
+    const transaction = this.database.transaction((): IngressStatusRecord => {
+      const current = this.row(ack.ingressId)
+      if (!current) throw new ProtocolValidationError('unknown ingressId')
+      if (current.status !== 'pending') throw new ProtocolValidationError(`ingress is already ${current.status}`)
+      if (current.claim_device_id !== ack.recipientDeviceId || !current.claim_expires_at || current.claim_expires_at <= now.toISOString()) {
+        throw new ProtocolValidationError('ACK device does not hold the active ingress claim')
+      }
+      this.clearBody(ack.ingressId, 'vault-ingested')
+      return status(this.row(ack.ingressId)!)
+    })
+    return transaction()
   }
 
   async expire(now = new Date()): Promise<IngressStatusRecord[]> {

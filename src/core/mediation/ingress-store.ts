@@ -140,7 +140,13 @@ export class MemoryIngressStore implements IngressStore {
     if (!(await this.authorizer.verify(ack, entry.envelope))) {
       throw new ProtocolValidationError('ACK is not authorised')
     }
-
+    // Re-check status fresh: a concurrent expire() can tombstone this same
+    // entry while this call was suspended awaiting authorization above, and
+    // writing unconditionally here would silently overwrite that with
+    // 'vault-ingested' instead of respecting the expiry that already happened.
+    if (entry.status !== 'pending' || !entry.envelope) {
+      throw new ProtocolValidationError(`ingress is already ${entry.status}`)
+    }
     entry.envelope = undefined
     entry.status = 'vault-ingested'
     return this.toStatus(ack.ingressId, entry)

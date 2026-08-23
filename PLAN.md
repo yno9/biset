@@ -125,8 +125,8 @@
 - [x] ACK outbox の retry / idempotence を実装する。
 - [x] signed ingress pull → endpoint ingest → durable ingress ACK outbox flush の client 同期ループを実装した。既存 ACK を pull 前に再送し、今回の ACK は atomic commit 後にだけ送る。
 - [x] mail の endpoint workflow は claimed ingress を project/commit/ACK した後、その transaction が積んだ shared vault-delivery outbox を append する。`commit` より前の sibling append は許さない。
-- [ ] crash が ACK 前なら payload を再 pull でき、ACK 後なら local state が必ず存在することを test する。
-- [ ] duplicate ingress ID / payload hash を安全に処理する。
+- [x] crash が ACK 前なら payload を再 pull でき、ACK 後なら local state が必ず存在することを test した（`test/protocol/vault-store-durability.test.ts`）。`ingestIngress`（`vault/ingress-ingest.ts`）は受信 body の検証・projection・receipt/objects/events/`ackOutbox` の書き込みを一つの IndexedDB transaction で確定し、ネットワーク ACK 送信はその後にしか起きない設計——close→再 open で `ackOutbox` row（`readIngressAckOutbox`）と object/event が両方生存していること、`removeIngressAckOutbox` 後は再 open してももう存在しないことを確認し、「commit と network ACK 送信の間でクラッシュしても ACK を失わない」ことを実証した。
+- [x] duplicate ingress ID / payload hash を安全に処理する——実装済みの挙動を test で固定した。**この作業の過程で `MemoryIngressStore`/`SqliteIngressStore` 両方の `acknowledge` に実レース bug を発見・修正した**（`SqliteVaultDeliveryStore.acknowledge` で見つけたのと同じパターン: `authorizer.verify` の await 前に読んだ state を使って書き込んでいたため、await 中に concurrent な `expire()` が同じ entry を tombstone にすると、stale な 'pending' 判定のまま `vault-ingested` で上書きしてしまう——SQLite 版の `clearBody` は UPDATE に status guard すら無かった）。修正前は実際に失敗する regression test で確認済み（`test/protocol/ingress-store.test.ts`/`sqlite-ingress-store.test.ts`）。duplicate ingressId（同一 payload hash=no-op、異なる payload hash=拒否、restart 後も同様）、同一 payload hash が異なる ingressId では別エントリのまま dedup されないこと、already-ingested への re-ACK 拒否を追加した。
 
 **完了条件:** `IngressAckV1` が「端末が受信した」ではなく「vault へ durable commit した」を正しく意味する。
 
@@ -364,5 +364,7 @@
 | 2026-08-24 | 作業中 | PLAN.md §2.3/§3.1「同時 ACK / duplicate offer / authorizer rejection の coverage」を実装。同時 ACK のテストを書く過程で `SqliteVaultDeliveryStore.acknowledge` の実レース bug（`authorizer.verifyAck` の await 前に読んだ stale な `row.state` を使っていたため、expire() と競合すると expired な delivery が completed に蘇り得た）を発見し修正——state の再読み取り+書き込みを一つの同期 transaction に収めた。修正前に実際に失敗する regression test で確認。duplicate offer（同一 offer 再送=no-op、衝突 offer 再送=拒否）と `rosterBackedRestoreControlAuthorizer` の `verifyOffer`/`verifyCancel` 拒否も追加 |
 
 | 2026-08-24 | 作業中 | PLAN.md §2.3「N devices でも payload copy が一つだけである storage test」を実装。5 device 分の recipient を持つ delivery で、append 直後から一部 ACK 後まで `status().payloadBytes` が常に `payload.length` のまま（per-device fanout なら 5 倍になるはず）であること、全 device が同一 item を独立に pull できること、最後の device の ACK で初めて 0 になることを memory/SQLite 両実装で確認 |
+
+| 2026-08-24 | 作業中 | PLAN.md §2.3「crash が ACK 前/後 / duplicate ingress ID・payload hash」を実装。ingress store 版でも `SqliteVaultDeliveryStore` と同じ acknowledge レース bug を `MemoryIngressStore`/`SqliteIngressStore` 両方で発見・修正（`await authorizer.verify` 前の stale state を使って `vault-ingested` を書き込んでいた——SQLite の `clearBody` は status guard すら無かった）。修正前に失敗する regression test で確認。duplicate ingressId（同一/異なる payload hash、restart 後）、異なる ingressId での同一 payload hash 非 dedup、already-ingested への re-ACK 拒否、`commitIngress` の durable transaction と network ACK 送信の間でのクラッシュ耐性（`ackOutbox` row の生存）を追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

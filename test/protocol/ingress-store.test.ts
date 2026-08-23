@@ -61,6 +61,24 @@ describe('MemoryIngressStore', () => {
     expect((await store.pull(pull('device-b'), new Date('2026-08-21T02:00:00.000Z'))).length).toBe(0)
   })
 
+  test('re-ACKing an already-ingested envelope is rejected, not silently accepted again', async () => {
+    const store = new MemoryIngressStore(authorizer)
+    await store.offer(envelope())
+    await store.pull(pull('device-a'), new Date('2026-08-21T01:00:00.000Z'))
+    await store.acknowledge(ack(), new Date('2026-08-21T01:00:00.000Z'))
+    await expect(store.acknowledge(ack(), new Date('2026-08-21T01:01:00.000Z'))).rejects.toThrow('already vault-ingested')
+  })
+
+  test('the same payload hash under a DIFFERENT ingressId is a distinct entry, not deduped', async () => {
+    const store = new MemoryIngressStore(authorizer)
+    await store.offer(envelope())
+    await store.offer(envelope({ ingressId: 'ingress-2' }))
+    expect(await store.status('ingress-1')).toMatchObject({ status: 'pending' })
+    expect(await store.status('ingress-2')).toMatchObject({ status: 'pending' })
+    expect((await store.pull(pull('device-a'), new Date('2026-08-21T01:00:00.000Z'))).map(value => value.ingressId).sort())
+      .toEqual(['ingress-1', 'ingress-2'])
+  })
+
   test('does not expose an ingress to a device outside its frozen snapshot', async () => {
     const store = new MemoryIngressStore(authorizer)
     await store.offer(envelope())
@@ -82,6 +100,34 @@ describe('MemoryIngressStore', () => {
     await store.expire(new Date('2026-08-23T00:00:00.000Z'))
     expect(await store.status('ingress-1')).toMatchObject({ status: 'expired', payloadRetained: false })
     await expect(store.acknowledge(ack(), new Date('2026-08-23T00:00:00.000Z'))).rejects.toThrow('already expired')
+  })
+
+  test('a concurrent expire() sweep during an in-flight ACK does not resurrect the entry as vault-ingested', async () => {
+    // authorizer.verify deliberately suspends (a real DID/roster check can
+    // genuinely take a tick) so a concurrent expire() has a real window to
+    // run while this ACK is mid-flight.
+    let releaseVerify: (() => void) | undefined
+    const gatedAuthorizer: IngressAuthorizer = {
+      verifyPull: async () => true,
+      verify: async () => { await new Promise<void>(resolve => { releaseVerify = resolve }); return true },
+    }
+    const store = new MemoryIngressStore(gatedAuthorizer)
+    await store.offer(envelope({ expiresAt: '2026-08-21T00:30:00.000Z' }))
+    await store.pull(pull('device-a'), new Date('2026-08-21T00:00:00.000Z'))
+
+    const ackPromise = store.acknowledge(ack(), new Date('2026-08-21T00:00:00.000Z'))
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+
+    // While the ACK is suspended, a concurrent operation sweeps this entry
+    // past its expiry.
+    await store.expire(new Date('2026-08-21T01:00:00.000Z'))
+    expect(await store.status('ingress-1')).toMatchObject({ status: 'expired' })
+
+    // Resume the ACK. It must see the FRESH (expired) status, not the stale
+    // 'pending' snapshot checked before suspending.
+    releaseVerify!()
+    await expect(ackPromise).rejects.toThrow('already expired')
+    expect(await store.status('ingress-1')).toMatchObject({ status: 'expired' })
   })
 
   test('rejects a forged ACK hash before authorisation is accepted', async () => {
