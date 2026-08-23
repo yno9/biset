@@ -1,0 +1,110 @@
+// Signature verification for the MLS self-group DS (mls-delivery-store.ts).
+// Each control message is verified against the SENDER'S OWN device key,
+// resolved by DID (DeviceSigningPublicKeyResolver) rather than through
+// TrustedDeviceRoster — the same reason mls-delivery-store.ts's own roster
+// is kept independent of that roster: a commit's sender must be
+// authenticated before the DS can even ask whether it thinks that kid is
+// currently in the group, and TrustedDeviceRoster only reflects commits this
+// DS already accepted and a producer already turned into a signed install.
+// This is the same "resolve the credential kid, check the signature" shape
+// the Authentication Service uses (mls/webvh-authentication-service.ts),
+// applied to transport-layer control rather than the MLS credential itself.
+import { ed25519 } from '@noble/curves/ed25519.js'
+import type { DeviceSigningPublicKeyResolver } from '../identity/ed25519-device-control-verifier.ts'
+import {
+  mlsCommitSubmissionSigningBytes,
+  mlsExternalCommitSubmissionSigningBytes,
+  mlsGroupCreationSigningBytes,
+  mlsGroupInfoPullSigningBytes,
+  mlsKeyPackagePublishSigningBytes,
+  mlsKeyPackageTakeSigningBytes,
+} from '../../protocol/signing.ts'
+import type {
+  MlsCommitSubmissionV1,
+  MlsExternalCommitSubmissionV1,
+  MlsGroupCreationV1,
+  MlsGroupInfoPullV1,
+  MlsKeyPackagePublishV1,
+  MlsKeyPackageTakeV1,
+} from '../../protocol/mls-ds.ts'
+import type { MlsCommitResult, MlsGroupInfoAnswer, SqliteMlsDeliveryService } from './mls-delivery-store.ts'
+
+export interface MlsDsSignatureVerifier {
+  verifyGroupCreation(value: MlsGroupCreationV1): Promise<boolean>
+  verifyCommitSubmission(value: MlsCommitSubmissionV1): Promise<boolean>
+  verifyExternalCommitSubmission(value: MlsExternalCommitSubmissionV1): Promise<boolean>
+  verifyGroupInfoPull(value: MlsGroupInfoPullV1): Promise<boolean>
+  verifyKeyPackagePublish(value: MlsKeyPackagePublishV1): Promise<boolean>
+  verifyKeyPackageTake(value: MlsKeyPackageTakeV1): Promise<boolean>
+}
+
+export class Ed25519MlsDsSignatureVerifier implements MlsDsSignatureVerifier {
+  constructor(private readonly keys: DeviceSigningPublicKeyResolver) {}
+
+  verifyGroupCreation(value: MlsGroupCreationV1): Promise<boolean> {
+    return this.verify(value.creatorKid, mlsGroupCreationSigningBytes(value), value.signature)
+  }
+  verifyCommitSubmission(value: MlsCommitSubmissionV1): Promise<boolean> {
+    return this.verify(value.senderKid, mlsCommitSubmissionSigningBytes(value), value.signature)
+  }
+  verifyExternalCommitSubmission(value: MlsExternalCommitSubmissionV1): Promise<boolean> {
+    return this.verify(value.senderKid, mlsExternalCommitSubmissionSigningBytes(value), value.signature)
+  }
+  verifyGroupInfoPull(value: MlsGroupInfoPullV1): Promise<boolean> {
+    return this.verify(value.requesterKid, mlsGroupInfoPullSigningBytes(value), value.signature)
+  }
+  verifyKeyPackagePublish(value: MlsKeyPackagePublishV1): Promise<boolean> {
+    return this.verify(value.kid, mlsKeyPackagePublishSigningBytes(value), value.signature)
+  }
+  verifyKeyPackageTake(value: MlsKeyPackageTakeV1): Promise<boolean> {
+    return this.verify(value.requesterKid, mlsKeyPackageTakeSigningBytes(value), value.signature)
+  }
+
+  private async verify(kid: string, bytes: Uint8Array, signature: Uint8Array): Promise<boolean> {
+    if (signature.length !== 64) return false
+    const publicKey = await this.keys.resolveEd25519PublicKey(kid)
+    return publicKey !== undefined && publicKey.length === 32 && ed25519.verify(signature, bytes, publicKey)
+  }
+}
+
+export type MlsGroupCreationOutcome = { ok: true; roster: string[] } | { ok: false }
+
+export async function createMlsGroup(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsGroupCreationV1): Promise<MlsGroupCreationOutcome> {
+  if (!(await verifier.verifyGroupCreation(value))) return { ok: false }
+  return { ok: true, ...ds.createGroup(value.groupId, value.identityId, value.creatorKid, value.roster) }
+}
+
+export async function submitMlsCommit(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsCommitSubmissionV1): Promise<MlsCommitResult> {
+  if (!(await verifier.verifyCommitSubmission(value))) return { ok: false, reason: 'unauthorized', epoch: '0' }
+  return ds.submitCommit(value.groupId, value.senderKid, value.epoch, value.commit, value.roster, value.welcome, value.welcomeTo, value.groupInfo)
+}
+
+export async function submitMlsExternalCommit(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsExternalCommitSubmissionV1): Promise<MlsCommitResult> {
+  if (!(await verifier.verifyExternalCommitSubmission(value))) return { ok: false, reason: 'unauthorized', epoch: '0' }
+  return ds.submitExternalCommit(value.groupId, value.senderKid, value.epoch, value.commit, value.groupInfo)
+}
+
+export async function pullMlsGroupInfo(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsGroupInfoPullV1): Promise<MlsGroupInfoAnswer | undefined> {
+  if (!(await verifier.verifyGroupInfoPull(value))) return undefined
+  return ds.groupInfoFor(value.groupId, value.requesterKid)
+}
+
+export async function publishMlsKeyPackages(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsKeyPackagePublishV1): Promise<number | undefined> {
+  if (!(await verifier.verifyKeyPackagePublish(value))) return undefined
+  return ds.publishKeyPackages(value.kid, value.identityId, value.packages)
+}
+
+/**
+ * `isLive` decides which of the identity's published key-package kids are
+ * still real devices (typically `TrustedDeviceRoster.isTrustedDevice`) — the
+ * DS itself has no notion of device liveness beyond what was last committed.
+ */
+export async function takeMlsKeyPackages(
+  ds: SqliteMlsDeliveryService,
+  verifier: MlsDsSignatureVerifier,
+  value: MlsKeyPackageTakeV1,
+  isLive: (kid: string) => Promise<boolean>,
+): Promise<Array<{ kid: string; keyPackage: Uint8Array }> | undefined> {
+  if (!(await verifier.verifyKeyPackageTake(value))) return undefined
+  return ds.takeKeyPackages(value.identityId, isLive)
+}

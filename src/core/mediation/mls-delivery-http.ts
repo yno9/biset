@@ -1,0 +1,103 @@
+import {
+  createMlsGroup,
+  publishMlsKeyPackages,
+  pullMlsGroupInfo,
+  submitMlsCommit,
+  submitMlsExternalCommit,
+  takeMlsKeyPackages,
+  type MlsDsSignatureVerifier,
+} from './mls-delivery-authorizer.ts'
+import {
+  decodeMlsCommitSubmissionWire,
+  decodeMlsExternalCommitSubmissionWire,
+  decodeMlsGroupCreationWire,
+  decodeMlsGroupInfoPullWire,
+  decodeMlsKeyPackagePublishWire,
+  decodeMlsKeyPackageTakeWire,
+  encodeMlsGroupInfoAnswerWire,
+  encodeMlsKeyPackagesTakenWire,
+  MlsDsWireError,
+} from './mls-delivery-wire.ts'
+import type { SqliteMlsDeliveryService } from './mls-delivery-store.ts'
+
+const MAX_BODY_BYTES = 1024 * 1024
+
+/**
+ * Narrow HTTP boundary for the MLS self-group DS (RFC 9750 §5): group
+ * creation, commit submission (ordinary and external), GroupInfo pull, and
+ * the KeyPackage directory. Every route requires the sender's own signature
+ * (mls-delivery-authorizer.ts); this handler is transport only.
+ */
+export function createMlsDeliveryHttpHandler(
+  ds: SqliteMlsDeliveryService,
+  verifier: MlsDsSignatureVerifier,
+  isLiveDevice: (identityId: string, kid: string) => Promise<boolean>,
+): (request: Request) => Promise<Response> {
+  return async (request) => {
+    try {
+      if (request.method !== 'POST') return text(405, 'Method not allowed')
+      const path = new URL(request.url).pathname
+      const body = await requestText(request)
+
+      if (path === '/v1/mls/group/create') {
+        const outcome = await createMlsGroup(ds, verifier, decodeMlsGroupCreationWire(body))
+        if (!outcome.ok) return text(403, 'rejected')
+        return json(201, JSON.stringify({ roster: outcome.roster }))
+      }
+
+      if (path === '/v1/mls/commit/submit') {
+        const result = await submitMlsCommit(ds, verifier, decodeMlsCommitSubmissionWire(body))
+        return commitResponse(result)
+      }
+
+      if (path === '/v1/mls/commit/external') {
+        const result = await submitMlsExternalCommit(ds, verifier, decodeMlsExternalCommitSubmissionWire(body))
+        return commitResponse(result)
+      }
+
+      if (path === '/v1/mls/group-info/pull') {
+        const answer = await pullMlsGroupInfo(ds, verifier, decodeMlsGroupInfoPullWire(body))
+        if (!answer) return text(403, 'rejected')
+        return json(200, encodeMlsGroupInfoAnswerWire(answer))
+      }
+
+      if (path === '/v1/mls/keypackage/publish') {
+        const count = await publishMlsKeyPackages(ds, verifier, decodeMlsKeyPackagePublishWire(body))
+        if (count === undefined) return text(403, 'rejected')
+        return json(200, JSON.stringify({ count }))
+      }
+
+      if (path === '/v1/mls/keypackage/take') {
+        const take = decodeMlsKeyPackageTakeWire(body)
+        const taken = await takeMlsKeyPackages(ds, verifier, take, kid => isLiveDevice(take.identityId, kid))
+        if (taken === undefined) return text(403, 'rejected')
+        return json(200, encodeMlsKeyPackagesTakenWire(taken))
+      }
+
+      return text(404, 'Not found')
+    } catch (error) {
+      if (error instanceof MlsDsWireError || error instanceof RangeError) return text(400, error.message)
+      return text(500, 'Internal server error')
+    }
+  }
+}
+
+function commitResponse(result: { ok: true; roster: string[] } | { ok: false; reason: string; epoch: string }): Response {
+  if (result.ok) return json(201, JSON.stringify({ roster: result.roster }))
+  return json(result.reason === 'unauthorized' ? 403 : 409, JSON.stringify({ reason: result.reason, epoch: result.epoch }))
+}
+
+async function requestText(request: Request): Promise<string> {
+  const length = request.headers.get('content-length')
+  if (length !== null && (!/^[0-9]+$/.test(length) || Number(length) > MAX_BODY_BYTES)) throw new RangeError('MLS DS HTTP body is too large')
+  const bytes = new Uint8Array(await request.arrayBuffer())
+  if (bytes.length > MAX_BODY_BYTES) throw new RangeError('MLS DS HTTP body is too large')
+  return new TextDecoder().decode(bytes)
+}
+
+function json(status: number, body: string): Response {
+  return new Response(body, { status, headers: { 'content-type': 'application/json' } })
+}
+function text(status: number, body: string): Response {
+  return new Response(body, { status, headers: { 'content-type': 'text/plain; charset=utf-8' } })
+}

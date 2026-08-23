@@ -1,6 +1,7 @@
 import { bytesToBase64url, canonicalBytes } from './canonical.ts'
 import type { IngressAckV1, IngressPullV1 } from './ingress.ts'
 import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryPullV1 } from './vault.ts'
+import type { MlsCommitSubmissionV1, MlsExternalCommitSubmissionV1, MlsGroupCreationV1, MlsGroupInfoPullV1, MlsKeyPackagePublishV1, MlsKeyPackageTakeV1 } from './mls-ds.ts'
 
 /**
  * Canonical bytes for device-control signatures. These functions omit only
@@ -113,5 +114,80 @@ export function restoreControlPullSigningBytes(pull: Omit<RestoreControlPullV1, 
     deviceId: pull.deviceId,
     kind: pull.kind,
     requestedAt: pull.requestedAt,
+  })
+}
+
+export function mlsGroupCreationSigningBytes(value: Omit<MlsGroupCreationV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/mls-group-creation/v1',
+    version: value.version,
+    groupId: value.groupId,
+    identityId: value.identityId,
+    creatorKid: value.creatorKid,
+    roster: value.roster,
+    createdAt: value.createdAt,
+  })
+}
+
+export function mlsCommitSubmissionSigningBytes(value: Omit<MlsCommitSubmissionV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/mls-commit-submission/v1',
+    version: value.version,
+    groupId: value.groupId,
+    identityId: value.identityId,
+    senderKid: value.senderKid,
+    epoch: value.epoch,
+    commit: bytesToBase64url(value.commit),
+    roster: value.roster,
+    ...(value.welcome === undefined ? {} : { welcome: bytesToBase64url(value.welcome) }),
+    ...(value.welcomeTo === undefined ? {} : { welcomeTo: value.welcomeTo }),
+    ...(value.groupInfo === undefined ? {} : { groupInfo: bytesToBase64url(value.groupInfo) }),
+    submittedAt: value.submittedAt,
+  })
+}
+
+export function mlsExternalCommitSubmissionSigningBytes(value: Omit<MlsExternalCommitSubmissionV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/mls-external-commit-submission/v1',
+    version: value.version,
+    groupId: value.groupId,
+    identityId: value.identityId,
+    senderKid: value.senderKid,
+    epoch: value.epoch,
+    commit: bytesToBase64url(value.commit),
+    ...(value.groupInfo === undefined ? {} : { groupInfo: bytesToBase64url(value.groupInfo) }),
+    submittedAt: value.submittedAt,
+  })
+}
+
+export function mlsGroupInfoPullSigningBytes(pull: Omit<MlsGroupInfoPullV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/mls-group-info-pull/v1',
+    version: pull.version,
+    groupId: pull.groupId,
+    identityId: pull.identityId,
+    requesterKid: pull.requesterKid,
+    requestedAt: pull.requestedAt,
+  })
+}
+
+export function mlsKeyPackagePublishSigningBytes(value: Omit<MlsKeyPackagePublishV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/mls-keypackage-publish/v1',
+    version: value.version,
+    identityId: value.identityId,
+    kid: value.kid,
+    packages: value.packages.map(bytesToBase64url),
+    publishedAt: value.publishedAt,
+  })
+}
+
+export function mlsKeyPackageTakeSigningBytes(value: Omit<MlsKeyPackageTakeV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/mls-keypackage-take/v1',
+    version: value.version,
+    identityId: value.identityId,
+    requesterKid: value.requesterKid,
+    requestedAt: value.requestedAt,
   })
 }

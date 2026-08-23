@@ -7,6 +7,9 @@ import type { IngressStore } from './mediation/ingress-store.ts'
 import { createRosterInstallHttpHandler } from './identity/roster-http.ts'
 import type { DeviceControlSignatureVerifier } from './identity/authorizers.ts'
 import type { TrustedDeviceRoster } from './identity/device-roster.ts'
+import { createMlsDeliveryHttpHandler } from './mediation/mls-delivery-http.ts'
+import type { MlsDsSignatureVerifier } from './mediation/mls-delivery-authorizer.ts'
+import type { SqliteMlsDeliveryService } from './mediation/mls-delivery-store.ts'
 
 export interface BisetCoreApplicationOptions {
   /**
@@ -21,6 +24,8 @@ export interface BisetCoreApplicationOptions {
   ingressStore?: IngressStore
   /** Roster install plane; requires both the store and its signature verifier. */
   roster?: { store: TrustedDeviceRoster; verifier: Pick<DeviceControlSignatureVerifier, 'verifyRosterInstall'> }
+  /** MLS self-group DS plane (RFC 9750 §5): commit ordering, GroupInfo, KeyPackage directory. */
+  mlsDelivery?: { store: SqliteMlsDeliveryService; verifier: MlsDsSignatureVerifier; isLiveDevice: (identityId: string, kid: string) => Promise<boolean> }
 }
 
 /** Narrow composition root: identity decides authorisation; mediation stores bounded ciphertext. */
@@ -29,6 +34,7 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
   const restoreControl = options.restoreControlStore && createRestoreControlHttpHandler(options.restoreControlStore)
   const ingress = options.ingressStore && createIngressHttpHandler(options.ingressStore)
   const roster = options.roster && createRosterInstallHttpHandler(options.roster.store, options.roster.verifier)
+  const mlsDelivery = options.mlsDelivery && createMlsDeliveryHttpHandler(options.mlsDelivery.store, options.mlsDelivery.verifier, options.mlsDelivery.isLiveDevice)
   return async (request) => {
     const path = new URL(request.url).pathname
     if (path === '/healthz') return Response.json({ ok: true, service: 'biset-core', storage: 'bounded-only' })
@@ -36,6 +42,7 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
     if (path.startsWith('/v1/restore/') && restoreControl) return restoreControl(request)
     if (path.startsWith('/v1/ingress/') && ingress) return ingress(request)
     if (path.startsWith('/v1/roster/') && roster) return roster(request)
+    if (path.startsWith('/v1/mls/') && mlsDelivery) return mlsDelivery(request)
     return new Response('Not found', { status: 404 })
   }
 }

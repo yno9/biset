@@ -9,6 +9,8 @@ import { SqliteRestoreControlStore, type RestoreControlStoreLimits } from './med
 import { SqliteIngressStore } from './mediation/sqlite-ingress-store.ts'
 import type { IngressStoreLimits } from './mediation/ingress-store.ts'
 import { CoreIngressAdapter } from './adapters/ingress.ts'
+import { SqliteMlsDeliveryService } from './mediation/mls-delivery-store.ts'
+import { Ed25519MlsDsSignatureVerifier } from './mediation/mls-delivery-authorizer.ts'
 
 export interface BisetCoreDeploymentOptions {
   databasePath: string
@@ -26,6 +28,7 @@ export interface BisetCoreDeployment {
   /** First-party adapter boundary only; the public core fetch handler does not expose it. */
   readonly ingress: SqliteIngressStore
   readonly ingressAdapter: CoreIngressAdapter
+  readonly mlsDelivery: SqliteMlsDeliveryService
   readonly fetch: (request: Request) => Promise<Response>
   close(): void
 }
@@ -44,13 +47,22 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
   const restoreControl = new SqliteRestoreControlStore(database, rosterBackedRestoreControlAuthorizer(roster, verifier), options.restoreControlLimits)
   const ingress = new SqliteIngressStore(database, rosterBackedIngressAuthorizer(roster, verifier), options.ingressLimits)
   const ingressAdapter = new CoreIngressAdapter(roster, ingress)
+  const mlsDelivery = new SqliteMlsDeliveryService(database)
+  const mlsDeliveryVerifier = new Ed25519MlsDsSignatureVerifier(options.signingKeys)
   return {
     roster,
     delivery,
     restoreControl,
     ingress,
     ingressAdapter,
-    fetch: createBisetCoreFetchHandler({ vaultDeliveryStore: delivery, restoreControlStore: restoreControl, ingressStore: ingress, roster: { store: roster, verifier } }),
+    mlsDelivery,
+    fetch: createBisetCoreFetchHandler({
+      vaultDeliveryStore: delivery,
+      restoreControlStore: restoreControl,
+      ingressStore: ingress,
+      roster: { store: roster, verifier },
+      mlsDelivery: { store: mlsDelivery, verifier: mlsDeliveryVerifier, isLiveDevice: (identityId, kid) => roster.isTrustedDevice(identityId, kid) },
+    }),
     close() { database.close() },
   }
 }
