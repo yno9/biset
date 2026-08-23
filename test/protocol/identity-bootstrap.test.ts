@@ -17,19 +17,22 @@ import { SqliteTrustedDeviceRoster } from '../../src/core/identity/sqlite-device
 import { Ed25519DeviceControlSignatureVerifier } from '../../src/core/identity/ed25519-device-control-verifier.ts'
 import { rosterBackedVaultDeliveryAuthorizer } from '../../src/core/identity/authorizers.ts'
 import { WebvhSigningKeyResolver } from '../../src/core/identity/webvh-signing-key-resolver.ts'
-import { createNewIdentity, maintainSelfGroup, restoreIdentity } from '../../src/identity/bootstrap.ts'
+import { buildVaultCryptoBoundary, createNewIdentity, maintainSelfGroup, restoreIdentity } from '../../src/identity/bootstrap.ts'
 import { seedToMnemonic } from '../../src/identity/seed.ts'
 import { resolve } from '../../src/identity/webvh/resolver.ts'
 import { didWebToHttpsUrl, buildWebDid } from '../../src/identity/web/identifier.ts'
-import { memberKids, setMlsAuthService } from '../../src/mls/group.ts'
+import { epochOf, memberKids, setMlsAuthService } from '../../src/mls/group.ts'
 import { defaultAuthenticationService } from '../../src/mls/vendor/index.ts'
 import { sha256Bytes } from '../../src/protocol/canonical.ts'
+import { mlsEpoch } from '../../src/protocol/ids.ts'
 import { vaultDeliveryAppendSigningBytes } from '../../src/protocol/signing.ts'
 import { fakeAnchor } from './support/webvh-log-fixture.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { MlsKeyPackageStore } from '../../src/mls/keypackage-store.ts'
 import type { IdentityRecord, IdentityRecordStore } from '../../src/identity/record-store.ts'
 import type { OwnKeyPackage } from '../../src/mls/group.ts'
+import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/vault/store.ts'
+import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 
 const dsPath = `/tmp/biset-identity-bootstrap-ds-${process.pid}-${Date.now()}.sqlite`
 const rosterPath = `/tmp/biset-identity-bootstrap-roster-${process.pid}-${Date.now()}.sqlite`
@@ -62,6 +65,32 @@ function memorySelfGroupStore(): MlsSelfGroupStateStore {
   return {
     async save(id, selfGroupId, state) { rows.set(id, { selfGroupId, state }) },
     async load(id) { return rows.get(id) },
+  }
+}
+
+function memoryWrapStore(): SegmentKeyWrapReader & SegmentKeyWrapWriter {
+  const rows = new Map<string, SegmentKeyWrapV1>()
+  const key = (identityId: string, segmentId: string, epoch: string) => `${identityId} ${segmentId} ${epoch}`
+  return {
+    async readSegmentKeyWrap(id, segmentId, epoch) { return rows.get(key(id, segmentId, epoch)) },
+    async writeSegmentKeyWrap(wrap) { rows.set(key(wrap.identityId, wrap.segmentId, wrap.recipientEpoch), wrap) },
+  }
+}
+
+function memorySegmentStore(): ActiveVaultSegmentStore {
+  const rows: VaultSegmentRecord[] = []
+  return {
+    async currentSegment(identityId) { return rows.find(r => r.identityId === identityId && !r.sealed) },
+    async allSegments(identityId) { return rows.filter(r => r.identityId === identityId) },
+    async sealAndActivateSegment(next) {
+      for (const row of rows) if (row.identityId === next.identityId && !row.sealed) row.sealed = true
+      rows.push({ ...next })
+    },
+    async recordSegmentRewrapped(identityId, segmentId, epoch) {
+      const row = rows.find(r => r.identityId === identityId && r.segmentId === segmentId)
+      if (!row) throw new Error('recordSegmentRewrapped: no such segment')
+      row.epoch = epoch
+    },
   }
 }
 
@@ -287,6 +316,61 @@ describe('maintainSelfGroup', () => {
       // NOT '0' -- device B's floor must be the seq AFTER the two items device
       // A already appended, so it never gets handed history predating it.
       expect(await roster.deliveryFloor(created.record.did, restored.record.deviceKid!)).toBe('2')
+
+      ds.close()
+      roster.close()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test("self-grants a re-wrap of this identity's own segments when reflecting another device advances the epoch", async () => {
+    const { anchor, ds, roster, coreHandle } = setupCore()
+
+    const realFetch = globalThis.fetch
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    try {
+      const deviceASelfGroupStore = memorySelfGroupStore()
+      const created = await createNewIdentity(memoryIdentityRecordStore(), deviceASelfGroupStore, memoryKeyPackageStore(), {
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+      })
+
+      // Device A mints an active segment (and its wrap) at whatever epoch its
+      // own genesis left it at -- before device B ever exists.
+      const wraps = memoryWrapStore()
+      const segments = memorySegmentStore()
+      const boundary = buildVaultCryptoBoundary(wraps, segments, deviceASelfGroupStore, created.record)
+      const minted = await boundary.activeSegment()
+      const epochBefore = mlsEpoch(epochOf((await deviceASelfGroupStore.load(created.record.did))!.state))
+      expect((await segments.allSegments(created.record.did))[0]!.epoch).toBe(epochBefore)
+
+      const mnemonic = seedToMnemonic(created.masterSeed)
+      const restored = await restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+      })
+
+      // Device A's own boot-time maintenance reflects device B's join, which
+      // advances device A's own epoch -- and must self-grant a re-wrap of the
+      // segment minted above before its old-epoch exporter secret is gone
+      // for good.
+      const state = await maintainSelfGroup(deviceASelfGroupStore, memoryKeyPackageStore(), created.record, {
+        coreBaseUrl: CORE_ORIGIN, wraps, segments,
+      })
+      expect(new Set(memberKids(state!, created.record.did))).toEqual(new Set([created.record.deviceKid, restored.record.deviceKid]))
+      const epochAfter = mlsEpoch(epochOf(state!))
+      expect(epochAfter).not.toBe(epochBefore)
+
+      // The segment record itself now tracks the new epoch...
+      const record = (await segments.allSegments(created.record.did)).find(s => s.segmentId === minted.segmentId)!
+      expect(record.epoch).toBe(epochAfter)
+
+      // ...and the SegmentKey is still resolvable, unwrapping to the exact
+      // same bytes minted before the epoch advanced. A fresh boundary
+      // confirms this reads through `deviceASelfGroupStore`'s CURRENT state,
+      // not anything cached on the original boundary.
+      const boundaryAfter = buildVaultCryptoBoundary(wraps, segments, deviceASelfGroupStore, created.record)
+      const resolved = await boundaryAfter.resolver.resolveSegmentKey(created.record.did, minted.segmentId)
+      expect(resolved).toEqual(minted.segmentKey)
 
       ds.close()
       roster.close()

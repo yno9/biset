@@ -23,9 +23,9 @@ import { addDeviceVerificationMethod } from './webvh/add-device-verification-met
 import { resolveByDomain } from './webvh/resolver.ts'
 import { decodeMultikey } from './webvh/multikey.ts'
 import type { IdentityRecord, IdentityRecordStore } from './record-store.ts'
-import { generateOwnKeyPackage, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
+import { epochOf, exportSecret, generateOwnKeyPackage, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
 import { webvhAuthenticationService } from '../mls/webvh-authentication-service.ts'
-import { ensureSelfGroupWithRosterInstall, reflectPendingSelfGroupCommits, type SelfGroupSigner } from '../mls/self-group.ts'
+import { ensureSelfGroupWithRosterInstall, reflectPendingSelfGroupCommits, selfGroupIdHex, type SelfGroupSigner } from '../mls/self-group.ts'
 import { ensureKeyPackagePool } from '../mls/key-package-pool.ts'
 import { CoreMlsDeliveryTransport } from '../mls/core-mls-delivery-transport.ts'
 import { CoreRosterInstallTransport } from '../mls/core-roster-install-transport.ts'
@@ -33,18 +33,18 @@ import { CoreVaultDeliveryTransport } from '../vault/core-delivery-transport.ts'
 import { StoredSegmentKeyResolver, type SegmentKeyResolver } from '../vault/segment-key-resolver.ts'
 import { ActiveVaultSegmentManager, type ActiveVaultSegment } from '../vault/active-segment.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter } from '../vault/store.ts'
-import { MlsVaultEpochKeyResolver } from '../mls/vault-epoch.ts'
+import { deriveVaultEpochKey, MlsVaultEpochKeyResolver } from '../mls/vault-epoch.ts'
 import { MlsMembershipSegmentKeyWrapSigner, MlsMembershipSegmentKeyWrapVerifier } from '../mls/segment-key-membership.ts'
 import { StoredMlsSelfGroupProvider, type MlsSelfGroupStateStore } from '../mls/store.ts'
 import type { MlsKeyPackageStore } from '../mls/keypackage-store.ts'
-import { createSegmentKeyWrap, segmentKeyWrapSigningBytes } from '../vault/crypto.ts'
+import { createSegmentKeyWrap, segmentKeyWrapSigningBytes, unwrapSegmentKey } from '../vault/crypto.ts'
 import type { RestoreTransferSource, RestoreTransferVerifier } from '../vault/restore-transfer.ts'
 import { buildVaultManifest } from '../vault/manifest.ts'
 import type { VaultRecordReader } from '../vault/store.ts'
 import { VaultDeliveryProjector } from '../vault/delivery-projector.ts'
 import type { LocalJmapSnapshot } from '../local-jmap/gateway.ts'
 import { equalBytes } from '../protocol/canonical.ts'
-import { deliverySeq, type DeliverySeq } from '../protocol/ids.ts'
+import { deliverySeq, mlsEpoch, type DeliverySeq } from '../protocol/ids.ts'
 import { vaultDeliveryPullSigningBytes } from '../protocol/signing.ts'
 import type { VaultDeliveryPullV1 } from '../protocol/vault.ts'
 import type { ClientState } from '../mls/vendor/index.ts'
@@ -213,6 +213,11 @@ export async function createNewIdentity(
 
 export interface MaintainSelfGroupOptions {
   coreBaseUrl: string
+  /** This identity's own segment stores — needed only for the self-grant
+   * sweep below (a device with no vault content yet may omit both and just
+   * get the plain catch-up/KeyPackage-topup behavior). */
+  wraps?: SegmentKeyWrapReader & SegmentKeyWrapWriter
+  segments?: ActiveVaultSegmentStore
   fetch?: typeof fetch
   now?: () => Date
 }
@@ -233,6 +238,13 @@ export interface MaintainSelfGroupOptions {
  * original `OwnKeyPackage` to still be in memory — the whole point of this
  * running at boot, long after whatever call created or restored the
  * identity has returned.
+ *
+ * When `reflectPendingSelfGroupCommits` actually advances this device's own
+ * epoch, runs `selfGrantSegmentRewraps` before anything else touches the new
+ * state: the just-superseded `ClientState` (`oldState`, still in memory
+ * right here) is the ONLY place its exporter secret will ever exist again
+ * (MLS forward secrecy, RFC 9420 §8.5) — there is no "catch up later" for
+ * this step, unlike the roster/KeyPackage upkeep around it.
  */
 export async function maintainSelfGroup(
   selfGroupStore: MlsSelfGroupStateStore,
@@ -245,7 +257,8 @@ export async function maintainSelfGroup(
   if (!stored) return undefined
 
   const now = opts.now ?? (() => new Date())
-  const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
+  const oldState = stored.state
+  const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(oldState))
   const mlsTransport = new CoreMlsDeliveryTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
   const rosterTransport = new CoreRosterInstallTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
 
@@ -254,9 +267,74 @@ export async function maintainSelfGroup(
     selfGroupStore, mlsTransport, rosterTransport, record.did, record.deviceKid, sign, deliveryFloorForNewDevice, now,
   )
 
+  if (state && opts.wraps && opts.segments && epochOf(state) !== epochOf(oldState)) {
+    await selfGrantSegmentRewraps(opts.segments, opts.wraps, record.did, stored.selfGroupId, record.deviceKid, oldState, state, now)
+  }
+
   await ensureKeyPackagePool(mlsTransport, keyStore, record.did, record.deviceKid, sign, undefined, now)
 
   return state
+}
+
+/**
+ * PLAN.md §4.2's self-grant: re-wrap every one of this identity's OWN
+ * segments still on `oldState`'s epoch for `newState`'s epoch, the moment
+ * `maintainSelfGroup` sees the two differ. A segment with no wrap for
+ * `oldEpoch` (e.g. one only ever wrapped for an even earlier epoch that a
+ * prior boot's self-grant sweep never reached) is left alone rather than
+ * guessed at — the same "unreadable until something re-wraps it" state
+ * `store.ts`'s own `VaultSegmentRecord.epoch` doc comment describes, just
+ * not solved by this particular pass.
+ */
+async function selfGrantSegmentRewraps(
+  segments: ActiveVaultSegmentStore,
+  wraps: SegmentKeyWrapReader & SegmentKeyWrapWriter,
+  identityId: IdentityRecord['did'],
+  selfGroupId: string,
+  deviceKid: string,
+  oldState: ClientState,
+  newState: ClientState,
+  now: () => Date,
+): Promise<void> {
+  const oldEpoch = mlsEpoch(epochOf(oldState))
+  const newEpoch = mlsEpoch(epochOf(newState))
+  const pending = (await segments.allSegments(identityId)).filter(segment => segment.epoch === oldEpoch)
+  if (pending.length === 0) return
+
+  const oldVerifier = new MlsMembershipSegmentKeyWrapVerifier(async () => oldState)
+  const newSigner = new MlsMembershipSegmentKeyWrapSigner(deviceKid, async () => newState)
+  const grantedAt = now().toISOString()
+
+  for (const segment of pending) {
+    const wrap = await wraps.readSegmentKeyWrap(identityId, segment.segmentId, oldEpoch)
+    if (!wrap) continue
+    const oldVek = await deriveVaultEpochKey({ selfGroupId, epoch: oldEpoch, exportSecret: (label, context, length) => exportSecret(oldState, label, context, length) })
+    try {
+      const segmentKey = await unwrapSegmentKey(oldVek, wrap, oldVerifier)
+      try {
+        const newVek = await deriveVaultEpochKey({ selfGroupId, epoch: newEpoch, exportSecret: (label, context, length) => exportSecret(newState, label, context, length) })
+        try {
+          const rewrapped = await createSegmentKeyWrap(newVek, segmentKey, {
+            identityId,
+            selfGroupId,
+            segmentId: segment.segmentId,
+            sourceEpoch: oldEpoch,
+            recipientEpoch: newEpoch,
+            grantorDeviceId: deviceKid,
+            grantedAt,
+          }, newSigner)
+          await wraps.writeSegmentKeyWrap(rewrapped)
+          await segments.recordSegmentRewrapped(identityId, segment.segmentId, newEpoch)
+        } finally {
+          newVek.fill(0)
+        }
+      } finally {
+        segmentKey.fill(0)
+      }
+    } finally {
+      oldVek.fill(0)
+    }
+  }
 }
 
 export interface RestoreIdentityOptions {

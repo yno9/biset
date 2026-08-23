@@ -210,11 +210,23 @@ export interface SegmentKeyWrapWriter {
 }
 
 /** One vault segment: the identifier/key pair every object encrypted under
- * it shares, plus the self-group epoch it was minted for. `sealed` records
- * whether new objects may still be appended to it — PLAN.md §4.2's "seal
- * the active segment after an MLS commit" is exactly this record turning
- * `sealed: true` the moment a newer one becomes current (`sealAndActivateSegment`,
- * below, is the only way that ever happens). */
+ * it shares. `sealed` records whether new objects may still be appended to
+ * it — PLAN.md §4.2's "seal the active segment after an MLS commit" is
+ * exactly this record turning `sealed: true` the moment a newer one becomes
+ * current (`sealAndActivateSegment`, below, is the only way that ever
+ * happens).
+ *
+ * `epoch` is NOT "the epoch this segment was created in" — it is the most
+ * RECENT self-group epoch this identity holds a `SegmentKeyWrap` for, for
+ * THIS segment. A sealed segment's epoch only ever advances when
+ * `recordSegmentRewrapped` runs after a fresh self-grant (PLAN.md §4.2's
+ * restore-grant machinery, `identity/bootstrap.ts`'s `maintainSelfGroup`,
+ * applied to this identity's OWN segments): a `StoredSegmentKeyResolver`
+ * only ever looks up a wrap for the self group's CURRENT epoch, so a sealed
+ * segment whose only wrap is for a long-superseded epoch is unreadable
+ * until something re-wraps it for the current one. Tracking "the epoch we
+ * last confirmed a wrap for" here is what lets that re-wrap step find the
+ * right SOURCE wrap without a separate index. */
 export interface VaultSegmentRecord {
   identityId: IdentityId
   segmentId: SegmentId
@@ -230,6 +242,11 @@ export interface ActiveVaultSegmentStore {
    * none has ever been created. At most one segment is ever current per
    * identity — `sealAndActivateSegment` enforces that by construction. */
   currentSegment(identityId: IdentityId): Promise<VaultSegmentRecord | undefined>
+  /** Every segment (sealed or not) this identity has ever created — for
+   * `maintainSelfGroup`'s self-grant sweep, which must reach every segment
+   * whose wrap might have fallen behind the self group's current epoch, not
+   * only the current one. */
+  allSegments(identityId: IdentityId): Promise<VaultSegmentRecord[]>
   /**
    * Atomically seals whatever segment is currently active for this
    * identity (a no-op if there is none) and activates `next` as the new
@@ -238,6 +255,10 @@ export interface ActiveVaultSegmentStore {
    * recently activated one" are always the same segment.
    */
   sealAndActivateSegment(next: VaultSegmentRecord): Promise<void>
+  /** Records that this segment's wrap is now confirmed current as of
+   * `epoch` — called after a successful self-grant re-wrap
+   * (`maintainSelfGroup`). Never changes `sealed`. */
+  recordSegmentRewrapped(identityId: IdentityId, segmentId: SegmentId, epoch: MlsEpoch): Promise<void>
 }
 
 /** The client retry loop sees only its own encrypted, local append work. */
@@ -503,6 +524,15 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     return current && copySegmentRecord(current)
   }
 
+  async allSegments(identityId: IdentityId): Promise<VaultSegmentRecord[]> {
+    if (!identityId) throw new TypeError('segment identity is required')
+    const transaction = this.database.transaction(STORES.segments, 'readonly')
+    const completed = transactionDone(transaction)
+    const values = await requestValue<VaultSegmentRecord[]>(transaction.objectStore(STORES.segments).getAll())
+    await completed
+    return values.filter(value => value.identityId === identityId).map(copySegmentRecord)
+  }
+
   async sealAndActivateSegment(next: VaultSegmentRecord): Promise<void> {
     assertSegmentRecord(next)
     if (next.sealed) throw new TypeError('a segment must be activated as not sealed')
@@ -513,6 +543,16 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
       if (value.identityId === next.identityId && !value.sealed) store.put({ ...copySegmentRecord(value), sealed: true })
     }
     store.put(copySegmentRecord(next))
+    await transactionDone(transaction)
+  }
+
+  async recordSegmentRewrapped(identityId: IdentityId, segmentId: SegmentId, epoch: MlsEpoch): Promise<void> {
+    if (!identityId || !segmentId || !epoch) throw new TypeError('segment rewrap identity, segment, and epoch are required')
+    const transaction = this.database.transaction(STORES.segments, 'readwrite')
+    const store = transaction.objectStore(STORES.segments)
+    const existing = await requestValue<VaultSegmentRecord | undefined>(store.get([identityId, segmentId]))
+    if (!existing) throw new Error('recordSegmentRewrapped: no such segment')
+    store.put({ ...copySegmentRecord(existing), epoch })
     await transactionDone(transaction)
   }
 

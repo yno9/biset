@@ -3,6 +3,7 @@ import { IndexedDbIdentityRecordStore } from './identity/record-store.ts'
 import { maintainSelfGroup } from './identity/bootstrap.ts'
 import { IndexedDbMlsSelfGroupStore } from './mls/store.ts'
 import { IndexedDbMlsKeyPackageStore } from './mls/keypackage-store.ts'
+import { IndexedDbVaultStore } from './vault/store.ts'
 import { setupNewUserPage } from './ui/account-create.ts'
 
 declare const __BISET_CONFIG__: { coreBaseUrl?: string } | undefined
@@ -45,8 +46,9 @@ export async function bootClient(): Promise<void> {
   if (!coreBaseUrl) return
   const selfGroupStore = new IndexedDbMlsSelfGroupStore()
   const keyStore = new IndexedDbMlsKeyPackageStore()
+  const vaultStore = await IndexedDbVaultStore.open()
   for (const record of records) {
-    await maintainSelfGroup(selfGroupStore, keyStore, record, { coreBaseUrl }).catch(e => {
+    await maintainSelfGroup(selfGroupStore, keyStore, record, { coreBaseUrl, wraps: vaultStore, segments: vaultStore }).catch(e => {
       console.warn(`[maintainSelfGroup] ${record.did}:`, e instanceof Error ? e.message : e)
     })
   }
