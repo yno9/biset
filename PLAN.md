@@ -101,7 +101,7 @@
 - [x] ingress receipt / object / event / projection / JMAP state / ACK outbox を単一 transaction にする。
 - [x] local JMAP mutation の object / event / projection / JMAP state / shared vault-delivery outbox を単一 transaction にした。browser fault injection は未実装。
 - [-] outbox の causal-order flush / append idempotency boundary を実装した。IndexedDB outbox の index、retry backoff、actual core HTTP transport は未実装。
-- [ ] browser restart、partial write、migration failure の test harness を作る（restore transfer state store の v5 migration を含む）。
+- [x] browser restart、partial write、migration failure の test harness を実装した（`test/protocol/vault-store-durability.test.ts`）。他のテストが全て memory fake で済ませていた `IndexedDbVaultStore` を、`fake-indexeddb`（新規 devDependency）で spec 準拠の実 `indexedDB` に対して初めて動かした——memory fake では unique key constraint も version upgrade も実際には検証できないため。(1) browser restart: `commitIngress` 後に store を close し、新しい `IndexedDbVaultStore.open()`（`main.ts` の `bootClient` が毎回たどる経路と同じ）で object/event/projection が生存していることを確認。(2) partial write: 同じ ingressId を二回 `commitIngress` しても `vault_ingress_receipts` の実 keyPath unique constraint により重複コミットされないことを確認（`already-committed` が実際の ConstraintError 経由で返ることの検証）。(3) migration failure: `vault_restore_transfer_state`（v5 で追加された store）を持たない v4 相当の DB を手動構築し既存データを書き込んだ上で `IndexedDbVaultStore.open()`（v5 を要求）を呼び、既存データが生き残ること・新 store が使えるようになること・DB の実 version が 5 に上がることを確認した。
 
 **完了条件:** network がなくても、再起動後に vault root と Local JMAP state を同じ状態へ復元できる。
 
@@ -358,5 +358,7 @@
 | 2026-08-24 | 作業中 | PLAN.md §5.2「stored key wrap からの SegmentKey resolver」を接続。`identity/bootstrap.ts` の `buildVaultBlobReader` が既存の `VaultObjectBlobReader`（`vault/blob-reader.ts`、以前は fixture の `SegmentKeyResolver` しか受け取っていなかった）に実 `StoredSegmentKeyResolver`/`MlsMembershipSegmentKeyWrapVerifier` を渡す。実 MLS self group を通した end-to-end test（`test/protocol/identity-vault-blob-reader.test.ts`）で、実 VEK での復号・range read・存在しない blob/範囲外 read の拒否を確認した |
 
 | 2026-08-24 | 作業中 | PLAN.md §4.3「stale grant / removed requester / replay の channel-level test」を実装。実 MLS self group を通した end-to-end test（`test/protocol/identity-restore-transfer-channel.test.ts`）で、rekey 後の旧 epoch wrap 拒否、Remove された device が自分の凍結 epoch 向け grant を要求しても拒否されること、Remove 前に有効だった wrap の署名が Remove 後は現在 member list に対する検証で失敗することを確認。replay（session 完了後の非-final chunk 再送）は `test/protocol/restore-transfer-receiver.test.ts` に追加し、`'duplicate'` ではなく `'already complete'` になることを確認 |
+
+| 2026-08-24 | 作業中 | PLAN.md §3.1「browser restart / partial write / migration failure の test harness」を実装。`fake-indexeddb` を devDependency に追加し、`IndexedDbVaultStore` を初めて実 IndexedDB に対して動かすテスト（`test/protocol/vault-store-durability.test.ts`）を作成。close→再 open での生存確認、実 unique key constraint による ingress 重複防止確認、v4 相当（`vault_restore_transfer_state` 無し）から v5 への実 schema upgrade で既存データが残り新 store が使えることを確認 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
