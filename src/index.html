@@ -10,7 +10,19 @@
 <!-- CSS inlined by build -->
   </head>
   <body>
-    <main id="app" aria-live="polite"></main>
+    <main id="app" aria-live="polite">
+      <div id="new-user-page" style="display:flex;flex-direction:column;align-items:center;gap:14px">
+        <div style="width:100%;max-width:360px;display:flex;flex-direction:column;gap:14px">
+          <div id="nu-username-row" style="display:flex;align-items:center;border-radius:8px;border:0px solid var(--header-border);background:rgba(128,128,128,0.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);overflow:hidden">
+            <input id="nu-username" type="text" placeholder="username" autocomplete="username" style="flex:1;min-width:0;padding:10px 0 10px 14px;border:none;background:transparent;color:var(--text);font-size:15px;font-family:inherit;outline:none">
+            <span id="nu-dot" style="padding:10px 2px 10px 2px;color:var(--text-dim);font-size:15px;white-space:nowrap;user-select:none">.<span id="nu-apex"></span></span>
+            <button id="nu-submit" type="button" style="padding:10px 12px;border:none;background:var(--accent);color:#fff;font-size:15px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0;align-self:stretch">Create</button>
+          </div>
+          <div id="nu-error" style="color:#ff3b30;font-size:13px;display:none;min-height:18px;text-align:center"></div>
+          <div class="biset-title"><a href="https://biset.md" target="_blank" rel="noopener">biset</a> <a class="biset-version" href="https://github.com/yno9/biset" target="_blank" rel="noopener">beta</a></div>
+        </div>
+      </div>
+    </main>
 <!-- JS inlined by build -->
   </body>
 </html>

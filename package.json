@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/main.ts --outfile=dist/app.js --target=browser --minify-syntax --minify-whitespace --define 'process.env.NODE_ENV=\"production\"' && bun build src/sw.ts --outfile=dist/sw.js --target=browser --minify-syntax --minify-whitespace && bun run scripts/inline.mjs",
-    "dev": "bun build src/main.ts --outfile=dist/app.js --target=browser --watch & bun build src/sw.ts --outfile=dist/sw.js --target=browser --watch & bun run scripts/serve.mjs",
+    "build": "bun build src/main.ts --outfile=dist/app.js --target=browser --format=iife --minify-syntax --minify-whitespace --define 'process.env.NODE_ENV=\"production\"' && bun build src/sw.ts --outfile=dist/sw.js --target=browser --format=iife --minify-syntax --minify-whitespace && bun run scripts/inline.mjs",
+    "dev": "bun build src/main.ts --outfile=dist/app.js --target=browser --format=iife --watch & bun build src/sw.ts --outfile=dist/sw.js --target=browser --format=iife --watch & bun run scripts/serve.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.core.json",
     "build:core": "bun build --compile --target=bun-linux-x64 src/core/index.ts --outfile biset-core",
     "core": "bun run src/core/index.ts",
