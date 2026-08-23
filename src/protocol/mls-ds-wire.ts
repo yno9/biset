@@ -15,7 +15,7 @@ import type {
   MlsPendingRemovalsClearV1,
   MlsSelfRemoveSubmissionV1,
 } from './mls-ds.ts'
-import type { MlsGroupInfoAnswer, MlsLogEntry } from '../core/mediation/mls-delivery-store.ts'
+import type { MlsGroupInfoAnswer, MlsLogEntry } from './mls-ds.ts'
 
 export class MlsDsWireError extends TypeError {}
 
@@ -236,4 +236,129 @@ export function decodeMlsGroupsForPullWire(text: string): MlsGroupsForPullV1 {
 
 export function encodeMlsGroupsForWire(groups: Array<{ groupId: string; epoch: bigint }>): string {
   return JSON.stringify({ groups: groups.map(g => ({ groupId: g.groupId, epoch: g.epoch.toString() })) })
+}
+
+// ------------------------------------------------------------- client side
+//
+// The encode/decode pair for each request is the exact mirror of the
+// decode/encode pair above; both directions live here (rather than one in
+// core/mediation, one in a client transport) so a wire format change can
+// never drift between what core decodes and what a client encodes.
+
+export function encodeMlsGroupCreationWire(value: MlsGroupCreationV1): string {
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+}
+
+export interface MlsGroupRosterResultWire { roster: string[] }
+export function decodeMlsGroupRosterResultWire(text: string): MlsGroupRosterResultWire {
+  const input = record(text)
+  return { roster: requireStringArray(input.roster, 'roster') }
+}
+
+export function encodeMlsCommitSubmissionWire(value: MlsCommitSubmissionV1): string {
+  return JSON.stringify({
+    ...value,
+    commit: bytesToBase64url(value.commit),
+    ...(value.welcome === undefined ? {} : { welcome: bytesToBase64url(value.welcome) }),
+    groupInfo: value.groupInfo === undefined ? undefined : bytesToBase64url(value.groupInfo),
+    signature: bytesToBase64url(value.signature),
+  })
+}
+
+export function encodeMlsExternalCommitSubmissionWire(value: MlsExternalCommitSubmissionV1): string {
+  return JSON.stringify({
+    ...value,
+    commit: bytesToBase64url(value.commit),
+    groupInfo: value.groupInfo === undefined ? undefined : bytesToBase64url(value.groupInfo),
+    signature: bytesToBase64url(value.signature),
+  })
+}
+
+/** A commit endpoint's rejection body — the DS's non-2xx JSON, decoded so a
+ * caller can retry an `epoch-conflict` instead of treating every rejection
+ * as an exception. */
+export interface MlsCommitRejectionWire { reason: string; epoch: string }
+export function decodeMlsCommitRejectionWire(text: string): MlsCommitRejectionWire {
+  const input = record(text)
+  return { reason: requireString(input.reason, 'reason'), epoch: requireString(input.epoch, 'epoch') }
+}
+
+export function encodeMlsGroupInfoPullWire(value: MlsGroupInfoPullV1): string {
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+}
+
+export function decodeMlsGroupInfoAnswerWire(text: string): MlsGroupInfoAnswer {
+  const input = record(text)
+  return { ...(input.groupInfo === undefined ? {} : { groupInfo: requireBinary(input.groupInfo, 'groupInfo') }), pendingRemovals: requireStringArray(input.pendingRemovals, 'pendingRemovals') }
+}
+
+export function encodeMlsKeyPackagePublishWire(value: MlsKeyPackagePublishV1): string {
+  return JSON.stringify({ ...value, packages: value.packages.map(bytesToBase64url), signature: bytesToBase64url(value.signature) })
+}
+
+export interface MlsKeyPackageCountResultWire { count: number }
+export function decodeMlsKeyPackageCountResultWire(text: string): MlsKeyPackageCountResultWire {
+  const input = record(text)
+  return { count: requireInteger(input.count, 'count') }
+}
+
+export function encodeMlsKeyPackageTakeWire(value: MlsKeyPackageTakeV1): string {
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+}
+
+export function decodeMlsKeyPackagesTakenWire(text: string): Array<{ kid: string; keyPackage: Uint8Array }> {
+  const input = record(text)
+  if (!Array.isArray(input.items)) throw new MlsDsWireError('items must be an array')
+  return input.items.map((entry, index) => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new MlsDsWireError(`items[${index}] must be an object`)
+    const item = entry as Record<string, unknown>
+    return { kid: requireString(item.kid, `items[${index}].kid`), keyPackage: requireBinary(item.keyPackage, `items[${index}].keyPackage`) }
+  })
+}
+
+export function encodeMlsSelfRemoveSubmissionWire(value: MlsSelfRemoveSubmissionV1): string {
+  return JSON.stringify({ ...value, proposal: bytesToBase64url(value.proposal), signature: bytesToBase64url(value.signature) })
+}
+
+export function encodeMlsPendingRemovalsClearWire(value: MlsPendingRemovalsClearV1): string {
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+}
+
+export function encodeMlsDeliveriesPullWire(value: MlsDeliveriesPullV1): string {
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+}
+
+export function decodeMlsDeliveriesWire(text: string): MlsLogEntry[] {
+  const input = record(text)
+  if (!Array.isArray(input.entries)) throw new MlsDsWireError('entries must be an array')
+  return input.entries.map((entry, index) => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new MlsDsWireError(`entries[${index}] must be an object`)
+    const value = entry as Record<string, unknown>
+    const kind = value.kind
+    if (kind !== 'commit' && kind !== 'welcome' && kind !== 'proposal') throw new MlsDsWireError(`entries[${index}].kind is invalid`)
+    return { seq: requireInteger(value.seq, `entries[${index}].seq`), kind, payload: requireBinary(value.payload, `entries[${index}].payload`), epoch: requireString(value.epoch, `entries[${index}].epoch`), at: requireString(value.at, `entries[${index}].at`) }
+  })
+}
+
+export function encodeMlsKeyPackageDropWire(value: MlsKeyPackageDropV1): string {
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+}
+
+export function encodeMlsKeyPackageCountPullWire(value: MlsKeyPackageCountPullV1): string {
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+}
+
+export function encodeMlsGroupsForPullWire(value: MlsGroupsForPullV1): string {
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+}
+
+export interface MlsGroupsForResultWire { groupId: string; epoch: string }
+export function decodeMlsGroupsForWire(text: string): MlsGroupsForResultWire[] {
+  const input = record(text)
+  if (!Array.isArray(input.groups)) throw new MlsDsWireError('groups must be an array')
+  return input.groups.map((entry, index) => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new MlsDsWireError(`groups[${index}] must be an object`)
+    const value = entry as Record<string, unknown>
+    return { groupId: requireString(value.groupId, `groups[${index}].groupId`), epoch: requireString(value.epoch, `groups[${index}].epoch`) }
+  })
 }
