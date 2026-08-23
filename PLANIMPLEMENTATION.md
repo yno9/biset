@@ -89,25 +89,63 @@ Biset の正本を JMAP/SMTP relay のメールボックスから、各ユーザ
 
 ```text
 外部送信者 / 外部ネットワーク
-  DIDComm / Mail / ActivityPub
-             │
-             ▼
-     Transport adapter ──┐
-                         ▼
-                  Biset core / mediator
-        endpoint discovery, short ingress buffer,
-        vault-delivery buffer, ACK/cursor, push
-                         │
-              小さい control / 一時暗号文
-                         │
-             ┌───────────┴───────────┐
-             ▼                       ▼
-      Biset client A           Biset client B
-       Local vault              Local vault
-       Local JMAP Gateway       Local JMAP Gateway
-             │                       │
-             └──── MLS self group ───┘
-                membership / epoch keys
+
+┌──────────────────────────┐┌──────────────────────────┐┌──────────────────────────┐
+│SMTP adapter              ││DIDComm adapter           ││ActivityPub adapter       │
+│(jmapsmtp)                ││                          ││                          │
+│                          ││                          ││                          │
+│port 25/587 独立プロセス  ││HTTPS (reverse proxy裏)   ││HTTPS (reverse proxy裏)   │
+│RCPT TO解決・DKIM/ARC検証 ││DID解決・JWE/authcrypt検証││HTTP Signature検証        │
+└──────────────┬───────────┘└──────────────┬───────────┘└──────────────┬───────────┘
+               │                            │                            │
+               └────────────────────────────┼────────────────────────────┘
+                     すべてTransportAdapterHostの4メソッドで正規化
+                                            │
+                                            ▼
+┌──────────────────────────────────────────────────────┐
+│AdapterIngressOfferV1（共通の型）                      │
+│宛先identity / 生payload / source evidence / hash / TTL│
+└──────────────────────────────────────────────────────┘
+                                            │
+                                            ▼
+┌──────────────────────────────────────────────────────┐
+│ Biset core / mediator                                 │
+│                                                        │
+│ ├─ CoreIngressAdapter                                 │
+│ │    offer受理、MLS self-group rosterから              │
+│ │    device snapshotを一度だけ凍結                     │
+│ │                                                      │
+│ ├─ Endpoint discovery                                 │
+│ ├─ KeyPackage / directory service                     │
+│ ├─ Ingress buffer（短命・TTL失効）                     │
+│ ├─ Vault-delivery buffer                              │
+│ ├─ ACK / cursor 管理                                   │
+│ ├─ Commit ordering（roster照合）                       │
+│ │    ⚠ DSの信頼範囲は要検討 (PLANMLSARCH §4.1)         │
+│ └─ Push                                               │
+└──────────────────────────────────────────────────────┘
+                                            │
+             narrow API: /v1/ingress/pull (Ed25519署名必須)
+                        /v1/ingress/ack (durable commit後)
+                                            │
+                    ┌───────────────────────┴───────────────────────┐
+                    ▼                                                 ▼
+             Biset client A                                    Biset client B
+              Local vault                                       Local vault
+              Local JMAP Gateway                                 Local JMAP Gateway
+                    │                                                 │
+                    └──────────────── MLS self group ─────────────────┘
+                    gatekeeper: membership / epoch keys
+                    (byteを動かすのではなく、復号権限を決めるだけ)
+                    │                                                 │
+                    │        (MLSを経由しない、直接アクセス)          │
+                    ▼                                                 ▼
+┌───────────────────────────────────────────┐
+│ Remote (3rd-party) vault                   │
+│ PDS / AP actor endpoint                    │
+│ (public presence, MLSゲートなし)           │
+│ outside biset-core / always-on server      │
+└───────────────────────────────────────────┘
 ```
 
 mediator は二種類の短期 storage を持てる。両者を「mailbox」と呼ばないことが重要である。
@@ -830,7 +868,7 @@ transfer は途中停止を許す。chunk hash と manifest root により、何
 4. **端末への到達と claim**: mediator は online endpoint への control message、または opaque な Web Push で端末 A に知らせる。push に本文・添付名・会話 metadata を入れない。最初に signed pull した正規端末には短命の exclusive ingest claim を記録し、その端末だけへ body を返す。claim は端末 ID と expiry のみで、本文の追加 copy や長期履歴ではない。A が durable ACK を返せば body を削除し、A が失敗すれば claim expiry 後に B/C が引き継ぐ。このため同じ external ingress を複数端末が同時に別々の `message.add` に正本化する競合を防ぐ。
 5. **端末での ingest**: A は ingress を pull し、DIDComm の復号、送信者認証、宛先、replay、payload hash、形式を検証する。成功時は message/blob、`message.add` 等の event、manifest、JMAP projection、ACK outbox を一つの durable transaction として保存する。
 6. **ingress の確定**: A は `IngressAckV1` に ingress ID、payload hash、vault event ID、checkpoint、device signature を入れて送る。mediator は current trusted device であることと hash を検証し、body を削除する。ACK は network receipt ではなく local vault への確定保存を意味する。client の ingress sync は durable ACK outbox を pull 前と ingest 後に flush し、ネットワーク wake が失敗しても commit 済み ACK を次回再送する。
-7. **自端末への複製**: A が作った vault object/event は、共有 body 一コピーの vault delivery stream に append される。B/C は durable save 後に ACK する。TTL 内に戻らない端末には `restoreRequired` を返し、peer/archive restore に切り替える。
+7. **自端末への複製**: A が作った vault object/event は、共有 body 一コピーの vault delivery stream に append される。B/C は durable save 後に ACK する。TTL 内に戻らない端末には `restoreRequired` を返し、peer/archive restore に切り替える。mail endpoint workflow は `claim pull → project → atomic local commit（ingress ACK outbox + delivery outbox）→ ingress ACK flush → vault-delivery append` の順に実行する。従って local commit 前に B/C 向け append を行わない。
 8. **返信**: A はまず local vault に outbound intent と送信 message を記録し、その後 DIDComm adapter が宛先 DID を解決して送信する。外部配送結果は `transport result` event として vault に戻す。
 
 #### 9.6.2 DeltaChat 互換 Mail / Autocrypt / OpenPGP の受信

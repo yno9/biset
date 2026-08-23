@@ -124,6 +124,7 @@
 - [x] append / pull / ACK はすべて current trusted device の署名を必要とする。HTTP binding はこの型をそのまま使う。
 - [x] ACK outbox の retry / idempotence を実装する。
 - [x] signed ingress pull → endpoint ingest → durable ingress ACK outbox flush の client 同期ループを実装した。既存 ACK を pull 前に再送し、今回の ACK は atomic commit 後にだけ送る。
+- [x] mail の endpoint workflow は claimed ingress を project/commit/ACK した後、その transaction が積んだ shared vault-delivery outbox を append する。`commit` より前の sibling append は許さない。
 - [ ] crash が ACK 前なら payload を再 pull でき、ACK 後なら local state が必ず存在することを test する。
 - [ ] duplicate ingress ID / payload hash を安全に処理する。
 
