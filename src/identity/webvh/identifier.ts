@@ -51,6 +51,11 @@ function validatePathSegment(seg: string): string {
   return percentEncodeUpper(decoded)
 }
 
+function didJsonlUrlFor(hostPart: string, pathSegments: string[]): string {
+  if (pathSegments.length === 0) return `https://${hostPart}/.well-known/did.jsonl`
+  return `https://${hostPart}/${pathSegments.map(validatePathSegment).join('/')}/did.jsonl`
+}
+
 /** The DID-to-HTTPS transform (DIDWEBVHFEAT.md §2). Domain normalization
  * (IDNA/Punycode, RFC9233) is delegated to the platform's URL parser rather
  * than reimplemented. */
@@ -58,7 +63,18 @@ export function didToHttpsUrl(did: string): string {
   const { domain, port, pathSegments } = parseWebvhDid(did)
   const hostname = new URL(`https://${domain}`).hostname
   const hostPart = port ? `${hostname}:${port}` : hostname
+  return didJsonlUrlFor(hostPart, pathSegments)
+}
 
-  if (pathSegments.length === 0) return `https://${hostPart}/.well-known/did.jsonl`
-  return `https://${hostPart}/${pathSegments.map(validatePathSegment).join('/')}/did.jsonl`
+/** Same transform as `didToHttpsUrl`, but from a bare domain — no SCID
+ * needed, since a subdomain-per-identity did:webvh (no `pathSegments`,
+ * `create-genesis.ts`'s own convention) has a fixed, SCID-independent
+ * `did.jsonl` location. This is what a recovery-phrase login uses: it knows
+ * only the identity's own subdomain, not its DID string, until AFTER
+ * fetching this URL and reading `state.id` out of the genesis entry
+ * (`resolver.ts`'s `resolveByDomain`). */
+export function domainDidJsonlUrl(domain: string, port?: number): string {
+  const hostname = new URL(`https://${domain}`).hostname
+  const hostPart = port ? `${hostname}:${port}` : hostname
+  return didJsonlUrlFor(hostPart, [])
 }

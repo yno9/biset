@@ -14,7 +14,8 @@ import { Ed25519MlsDsSignatureVerifier } from '../../src/core/mediation/mls-deli
 import { SqliteTrustedDeviceRoster } from '../../src/core/identity/sqlite-device-roster.ts'
 import { Ed25519DeviceControlSignatureVerifier } from '../../src/core/identity/ed25519-device-control-verifier.ts'
 import { WebvhSigningKeyResolver } from '../../src/core/identity/webvh-signing-key-resolver.ts'
-import { createNewIdentity } from '../../src/identity/bootstrap.ts'
+import { createNewIdentity, restoreIdentity } from '../../src/identity/bootstrap.ts'
+import { seedToMnemonic } from '../../src/identity/seed.ts'
 import { resolve } from '../../src/identity/webvh/resolver.ts'
 import { didWebToHttpsUrl, buildWebDid } from '../../src/identity/web/identifier.ts'
 import { memberKids, setMlsAuthService } from '../../src/mls/group.ts'
@@ -88,19 +89,24 @@ function combinedFetch(anchorFetch: typeof fetch, coreHandle: (request: Request)
   }) as typeof fetch
 }
 
+function setupCore() {
+  const anchor = fakeAnchor()
+  const ds = SqliteMlsDeliveryService.open(dsPath)
+  const roster = SqliteTrustedDeviceRoster.open(rosterPath)
+  const keyResolver = new WebvhSigningKeyResolver()
+  const resolveEd25519PublicKey = (kid: string) => keyResolver.resolveEd25519PublicKey(kid)
+  const dsVerifier = new Ed25519MlsDsSignatureVerifier({ resolveEd25519PublicKey })
+  const rosterVerifier = new Ed25519DeviceControlSignatureVerifier({ resolveEd25519PublicKey })
+  const coreHandle = createBisetCoreFetchHandler({
+    roster: { store: roster, verifier: rosterVerifier },
+    mlsDelivery: { store: ds, verifier: dsVerifier, isLiveDevice: async () => true },
+  })
+  return { anchor, ds, roster, coreHandle }
+}
+
 describe('createNewIdentity', () => {
   test('genesis, device verificationMethod, self-group, roster, and KeyPackage pool all land', async () => {
-    const anchor = fakeAnchor()
-    const ds = SqliteMlsDeliveryService.open(dsPath)
-    const roster = SqliteTrustedDeviceRoster.open(rosterPath)
-    const keyResolver = new WebvhSigningKeyResolver()
-    const resolveEd25519PublicKey = (kid: string) => keyResolver.resolveEd25519PublicKey(kid)
-    const dsVerifier = new Ed25519MlsDsSignatureVerifier({ resolveEd25519PublicKey })
-    const rosterVerifier = new Ed25519DeviceControlSignatureVerifier({ resolveEd25519PublicKey })
-    const coreHandle = createBisetCoreFetchHandler({
-      roster: { store: roster, verifier: rosterVerifier },
-      mlsDelivery: { store: ds, verifier: dsVerifier, isLiveDevice: async () => true },
-    })
+    const { anchor, ds, roster, coreHandle } = setupCore()
 
     const realFetch = globalThis.fetch
     globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
@@ -132,6 +138,76 @@ describe('createNewIdentity', () => {
       // Persisted locally, and the KeyPackage pool was topped up at the DS.
       expect(await recordStore.get(created.record.did)).toEqual(created.record)
       expect(keyStore.size()).toBeGreaterThan(0)
+
+      ds.close()
+      roster.close()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+})
+
+describe('restoreIdentity', () => {
+  test('a second device joins the existing identity from its recovery phrase', async () => {
+    const { anchor, ds, roster, coreHandle } = setupCore()
+
+    const realFetch = globalThis.fetch
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    try {
+      const created = await createNewIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+      })
+      const mnemonic = seedToMnemonic(created.masterSeed)
+
+      const restoreRecordStore = memoryIdentityRecordStore()
+      const restored = await restoreIdentity(restoreRecordStore, memorySelfGroupStore(), memoryKeyPackageStore(), {
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+      })
+
+      expect(restored.record.did).toBe(created.record.did)
+      expect(restored.record.deviceKid).not.toBe(created.record.deviceKid)
+      expect(new Set(memberKids(restored.selfGroupState, restored.record.did))).toEqual(new Set([created.record.deviceKid, restored.record.deviceKid]))
+      expect(await restoreRecordStore.get(created.record.did)).toEqual(restored.record)
+
+      ds.close()
+      roster.close()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test('rejects a recovery phrase that does not control the identity at this domain', async () => {
+    const { anchor, ds, roster, coreHandle } = setupCore()
+
+    const realFetch = globalThis.fetch
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    try {
+      await createNewIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+      })
+      const wrongMnemonic = seedToMnemonic(crypto.getRandomValues(new Uint8Array(32)))
+
+      await expect(restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic: wrongMnemonic, deliveryFloorForNewDevice: async () => '0',
+      })).rejects.toThrow('does not control')
+
+      ds.close()
+      roster.close()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test('rejects when no identity exists at the domain', async () => {
+    const { anchor, ds, roster, coreHandle } = setupCore()
+
+    const realFetch = globalThis.fetch
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    try {
+      const mnemonic = seedToMnemonic(crypto.getRandomValues(new Uint8Array(32)))
+      await expect(restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
+        domain: 'nobody.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+      })).rejects.toThrow('no identity found')
 
       ds.close()
       roster.close()

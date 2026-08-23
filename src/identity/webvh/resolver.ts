@@ -13,7 +13,7 @@
 // `service`/`alsoKnownAs` and no `keyAgreement`, which is correct for
 // verificationMethod-only callers and wrong for anything that needs DIDComm
 // routing data.
-import { didToHttpsUrl, parseWebvhDid } from './identifier.ts'
+import { didToHttpsUrl, domainDidJsonlUrl, parseWebvhDid } from './identifier.ts'
 import {
   parseLog, verifyEntryHash, entryVersionNumber, resolveParameters,
   isVersionTimeMonotonic, isVersionTimeNotTooFarInFuture,
@@ -51,6 +51,25 @@ export async function resolve(did: string, init?: RequestInit): Promise<WebvhDid
   if (resp.status === 404) return null
   if (!resp.ok) throw new WebvhResolutionError(`resolve: HTTP ${resp.status} fetching ${url}`)
   return resolveEntries(did, parseLog(await resp.text()))
+}
+
+/** Resolves a subdomain-per-identity did:webvh (no `pathSegments`) from its
+ * bare domain alone, with no DID string needed up front — the caller reads
+ * `state.id` off the fetched genesis entry to learn the DID and its SCID,
+ * same trust boundary as `resolve()` since `resolveEntries` still verifies
+ * every entry against ITS OWN embedded `scid`. This is what a
+ * recovery-phrase login uses: the phrase alone re-derives the root key, not
+ * the DID string (`identity/bootstrap.ts`'s `restoreIdentity`). */
+export async function resolveByDomain(domain: string, port?: number, init?: RequestInit): Promise<WebvhDidDocument | null> {
+  const url = domainDidJsonlUrl(domain, port)
+  const resp = await fetch(url, init)
+  if (resp.status === 404) return null
+  if (!resp.ok) throw new WebvhResolutionError(`resolveByDomain: HTTP ${resp.status} fetching ${url}`)
+  const entries = parseLog(await resp.text())
+  if (entries.length === 0) throw new WebvhResolutionError('resolveByDomain: empty log')
+  const did = (entries[0]!.state as { id?: string }).id
+  if (!did) throw new WebvhResolutionError('resolveByDomain: genesis entry has no state.id')
+  return resolveEntries(did, entries)
 }
 
 /** The verification core of resolve(), split out so a caller that already
