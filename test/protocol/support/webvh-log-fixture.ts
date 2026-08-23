@@ -63,6 +63,30 @@ export function buildGenesisLog(rootPrivateKey: Uint8Array, rootPublicKey: Uint8
   return { did, log: [{ ...unsigned, proof: [proof] }] }
 }
 
+/** A minimal in-memory stand-in for the anchor's did.jsonl endpoint: GET
+ * returns whatever was last stored (404 if nothing was), PUT replaces it
+ * whole, POST appends (matching log-io.ts's putLog, which POSTs new entries
+ * alone and falls back to a whole-log PUT only on 404/405). */
+export function fakeAnchor(): { fetch: typeof fetch } {
+  const store = new Map<string, string>()
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString()
+    if (init?.method === 'PUT') {
+      store.set(url, String(init.body))
+      return new Response('', { status: 200 })
+    }
+    if (init?.method === 'POST') {
+      const existing = store.get(url)
+      if (existing === undefined) return new Response('', { status: 404 })
+      store.set(url, existing + String(init.body))
+      return new Response('', { status: 200 })
+    }
+    const body = store.get(url)
+    return body === undefined ? new Response('', { status: 404 }) : new Response(body, { status: 200 })
+  }) as typeof fetch
+  return { fetch: fetchImpl }
+}
+
 /** Swaps `globalThis.fetch` for one that serves `log` as the DID's did.jsonl
  * (or a 404 when `log` is null) for the duration of `run`. */
 export function withFetch(log: LogEntry[] | null, run: () => Promise<void>): Promise<void> {

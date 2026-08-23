@@ -70,6 +70,28 @@ export function resolveParameters(previous: LogParameters, current: LogParameter
   }
 }
 
+/** What a NON-GENESIS entry should actually WRITE to `parameters` — distinct
+ * from `resolveParameters`' resolved-value output above (every field always
+ * present, what a reader/verifier needs). did:webvh v1.0's inheritance rule
+ * ("if not present in later entries, the previous value continues to
+ * apply") means a field unchanged from the resolved previous value belongs
+ * OMITTED here, not restated — this matters most for `portable`, which
+ * did:webvh v1.0 forbids restating outside the genesis entry at all.
+ * `resolved` is `resolveParameters(previous, current)`; passing it in rather
+ * than recomputing keeps this a pure diff. */
+export function parametersToWrite(previous: LogParameters, resolved: LogParameters): LogParameters {
+  const out: LogParameters = {}
+  if (resolved.method !== previous.method) out.method = resolved.method
+  if (JSON.stringify(resolved.updateKeys) !== JSON.stringify(previous.updateKeys)) out.updateKeys = resolved.updateKeys
+  if (JSON.stringify(resolved.nextKeyHashes) !== JSON.stringify(previous.nextKeyHashes ?? [])) out.nextKeyHashes = resolved.nextKeyHashes
+  if (resolved.portable !== (previous.portable ?? false)) out.portable = resolved.portable
+  if (JSON.stringify(resolved.witness) !== JSON.stringify(previous.witness ?? {})) out.witness = resolved.witness
+  if (JSON.stringify(resolved.watchers) !== JSON.stringify(previous.watchers ?? [])) out.watchers = resolved.watchers
+  if (resolved.deactivated !== (previous.deactivated ?? false)) out.deactivated = resolved.deactivated
+  if (resolved.ttl !== (previous.ttl ?? 3600)) out.ttl = resolved.ttl
+  return out
+}
+
 const FUTURE_SKEW_MS = 5 * 60 * 1000 // spec: reject a versionTime further ahead of "now" than this
 
 export function isVersionTimeMonotonic(previousVersionTime: string, currentVersionTime: string): boolean {

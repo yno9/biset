@@ -7,22 +7,7 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { createGenesis } from '../../src/identity/webvh/create-genesis.ts'
 import { resolve } from '../../src/identity/webvh/resolver.ts'
 import { decodeMultikey } from '../../src/identity/webvh/multikey.ts'
-
-/** A minimal in-memory stand-in for the anchor: PUT stores the body at the
- * URL, GET returns whatever was last stored (404 if nothing was). */
-function fakeAnchor(): { fetch: typeof fetch } {
-  const store = new Map<string, string>()
-  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = input.toString()
-    if (init?.method === 'PUT') {
-      store.set(url, String(init.body))
-      return new Response('', { status: 200 })
-    }
-    const body = store.get(url)
-    return body === undefined ? new Response('', { status: 404 }) : new Response(body, { status: 200 })
-  }) as typeof fetch
-  return { fetch: fetchImpl }
-}
+import { fakeAnchor } from './support/webvh-log-fixture.ts'
 
 describe('createGenesis + resolve', () => {
   test('a genesis this module writes is exactly what the read-only resolver accepts', async () => {

@@ -13,6 +13,7 @@
 import { buildWebvhDid, didToHttpsUrl } from './identifier.ts'
 import { generateScid, SCID_PLACEHOLDER } from './scid.ts'
 import { generateEntryHash, serializeLog, type LogEntry, type LogParameters } from './log.ts'
+import { nowVersionTime } from './log-io.ts'
 import { buildProof } from './proof.ts'
 import { encodeMultikey } from './multikey.ts'
 import { buildMinimalWebvhState, type SignedWebvhState } from './document.ts'
@@ -31,7 +32,7 @@ export interface CreateGenesisOptions {
 
 export async function createGenesis(opts: CreateGenesisOptions): Promise<{ did: string; scid: string }> {
   const updateKey = encodeMultikey(opts.rootPublicKey)
-  const versionTime = new Date().toISOString()
+  const versionTime = nowVersionTime()
   const placeholderDid = buildWebvhDid({ scid: SCID_PLACEHOLDER, domain: opts.domain, pathSegments: opts.pathSegments })
 
   const parameters: LogParameters = {
