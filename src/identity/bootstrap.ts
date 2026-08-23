@@ -34,9 +34,11 @@ import { StoredSegmentKeyResolver, type SegmentKeyResolver } from '../vault/segm
 import { ActiveVaultSegmentManager, type ActiveVaultSegment } from '../vault/active-segment.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter } from '../vault/store.ts'
 import { MlsVaultEpochKeyResolver } from '../mls/vault-epoch.ts'
-import { MlsMembershipSegmentKeyWrapSigner } from '../mls/segment-key-membership.ts'
+import { MlsMembershipSegmentKeyWrapSigner, MlsMembershipSegmentKeyWrapVerifier } from '../mls/segment-key-membership.ts'
 import { StoredMlsSelfGroupProvider, type MlsSelfGroupStateStore } from '../mls/store.ts'
 import type { MlsKeyPackageStore } from '../mls/keypackage-store.ts'
+import { segmentKeyWrapSigningBytes } from '../vault/crypto.ts'
+import type { RestoreTransferVerifier } from '../vault/restore-transfer.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import { deliverySeq, type DeliverySeq } from '../protocol/ids.ts'
 import { vaultDeliveryPullSigningBytes } from '../protocol/signing.ts'
@@ -371,4 +373,31 @@ export function buildVaultCryptoBoundary(
   const segmentManager = new ActiveVaultSegmentManager({ identityId: record.did, segments, wraps, epochs, signer })
 
   return { resolver, signer, activeSegment: () => segmentManager.activeSegment() }
+}
+
+/**
+ * Wires PLAN.md §4.3's "actual MLS grant verification" — `RestoreTransferVerifier`
+ * (`vault/restore-transfer.ts`) has always needed one, but nothing built it
+ * against a real self group. Both halves it asks for — an event's actor and
+ * a SegmentKeyWrap's grantor — are the same "is this device kid currently a
+ * self-group member with this signature key" question
+ * `MlsMembershipSegmentKeyWrapVerifier` already answers (both
+ * `VaultEventVerifier` and `SegmentKeyWrapVerifier` share that
+ * `verify(deviceId, bytes, signature)` shape), so one instance backs both.
+ *
+ * Deliberately takes no local device identity: verifying an incoming
+ * transfer frame is a property of the receiver's OWN current self-group
+ * view, not of who is asking.
+ */
+export function buildRestoreTransferVerifier(selfGroupStore: MlsSelfGroupStateStore, identityId: string): RestoreTransferVerifier {
+  const loadState = async (): Promise<ClientState> => {
+    const stored = await selfGroupStore.load(identityId)
+    if (!stored) throw new Error('buildRestoreTransferVerifier: no self-group state for this identity')
+    return stored.state
+  }
+  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
+  return {
+    eventVerifier: verifier,
+    verifyCurrentEpochWrap: wrap => verifier.verify(wrap.grantorDeviceId, segmentKeyWrapSigningBytes(wrap), wrap.signature),
+  }
 }
