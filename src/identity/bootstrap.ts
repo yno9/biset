@@ -41,6 +41,8 @@ import { createSegmentKeyWrap, segmentKeyWrapSigningBytes } from '../vault/crypt
 import type { RestoreTransferSource, RestoreTransferVerifier } from '../vault/restore-transfer.ts'
 import { buildVaultManifest } from '../vault/manifest.ts'
 import type { VaultRecordReader } from '../vault/store.ts'
+import { VaultDeliveryProjector } from '../vault/delivery-projector.ts'
+import type { LocalJmapSnapshot } from '../local-jmap/gateway.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import { deliverySeq, type DeliverySeq } from '../protocol/ids.ts'
 import { vaultDeliveryPullSigningBytes } from '../protocol/signing.ts'
@@ -488,4 +490,32 @@ export function buildRestoreTransferSource(
       }))
     },
   }
+}
+
+/**
+ * Wires PLAN.md §3.3's shared vault delivery ingest to this identity's
+ * actual self group: `VaultDeliveryProjector` (`vault/delivery-projector.ts`)
+ * has always performed the real verify-then-decrypt-then-project work, but
+ * needed a `VaultEpochKeyResolver` and a `VaultEventVerifier &
+ * SegmentKeyWrapVerifier` to do it against — the same
+ * `MlsVaultEpochKeyResolver`/`MlsMembershipSegmentKeyWrapVerifier` pair
+ * `buildVaultCryptoBoundary` already assembles for local writes.
+ *
+ * `currentSnapshot` is the caller's own read of its current Local JMAP
+ * projection (`local-jmap/gateway.ts`'s `LocalJmapSnapshot`) — this module
+ * has no projection store of its own to read one from.
+ */
+export function buildVaultDeliveryProjector(
+  selfGroupStore: MlsSelfGroupStateStore,
+  identityId: string,
+  currentSnapshot: () => Promise<LocalJmapSnapshot>,
+): VaultDeliveryProjector {
+  const loadState = async (): Promise<ClientState> => {
+    const stored = await selfGroupStore.load(identityId)
+    if (!stored) throw new Error('buildVaultDeliveryProjector: no self-group state for this identity')
+    return stored.state
+  }
+  const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
+  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
+  return new VaultDeliveryProjector({ identityId, currentSnapshot, epochs, verifier })
 }
