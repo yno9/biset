@@ -39,4 +39,31 @@ describe('restore transfer receiver', () => {
     expect(store.commits).toHaveLength(2)
     expect(store.session).toMatchObject({ completed: true, lastChunkHash: second.chunkHash })
   })
+
+  test('replaying an earlier (non-final) chunk after the session is already complete is rejected, not silently accepted', async () => {
+    const object = await encryptVaultObject(createSegmentKey(), { segmentId: 'segment-1', plaintext: new Uint8Array([1]), aad: new Uint8Array([2]) })
+    const event = await createVaultEvent({ identityId, actorDeviceId: 'device-a', actorSeq: 1, kind: 'message.add', targetIds: ['message-1'], objectRefs: [object.objectId], parents: [], createdAt: '2026-08-21T00:00:00.000Z' }, signer)
+    const sourceManifest = buildVaultManifest(identityId, [event.id], [object.objectId], '2026-08-21T00:00:00.000Z')
+    const requesterManifest = buildVaultManifest(identityId, [], [], '2026-08-21T00:00:00.000Z')
+    const wrap = { version: 1 as const, identityId, selfGroupId: 'self-1', segmentId: 'segment-1', sourceEpoch: '2', recipientEpoch: '3', nonce: new Uint8Array([1]), aad: new Uint8Array([2]), wrappedSegmentKey: new Uint8Array([3]), grantorDeviceId: 'device-a', grantedAt: '2026-08-21T00:00:00.000Z', signature: new Uint8Array([4]) }
+    const source: RestoreTransferSource = {
+      async manifest() { return sourceManifest },
+      async readEvents(_identity, ids) { return ids.includes(event.id) ? [event] : [] },
+      async readObjects(_identity, ids) { return ids.includes(object.objectId) ? [object] : [] },
+      async readCurrentEpochWraps(_identity, segments) { return segments.includes('segment-1') ? [wrap] : [] },
+    }
+    const verifier = { eventVerifier: signer, async verifyCurrentEpochWrap() { return true } }
+    const first = await createRestoreTransferChunk(source, requesterManifest, undefined, '3', 1)
+    const second = await createRestoreTransferChunk(source, requesterManifest, first.next, '3', 1)
+    const store = new MemoryReceiverStore()
+    expect((await receiveRestoreTransferChunk(store, 'device-c', first, sourceManifest, requesterManifest, '3', verifier)).kind).toBe('committed')
+    expect((await receiveRestoreTransferChunk(store, 'device-c', second, sourceManifest, requesterManifest, '3', verifier)).kind).toBe('committed')
+
+    // A replay of the FIRST chunk (not the one the completed session actually
+    // ended on) must not be confused with the legitimate final-chunk retry
+    // above -- a stale/replayed early frame after completion is a hard error,
+    // never a silent 'duplicate'.
+    await expect(receiveRestoreTransferChunk(store, 'device-c', first, sourceManifest, requesterManifest, '3', verifier)).rejects.toThrow('already complete')
+    expect(store.commits).toHaveLength(2)
+  })
 })
