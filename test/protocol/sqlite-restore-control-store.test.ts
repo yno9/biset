@@ -47,6 +47,20 @@ describe('SQLite restore control store', () => {
     restarted.close()
   })
 
+  test('resubmitting an identical offer is a silent no-op; resubmitting a conflicting one is rejected', async () => {
+    const store = SqliteRestoreControlStore.open(path, authorizer)
+    const now = new Date('2026-08-21T00:00:00.000Z')
+    await store.request(request(), now)
+    await store.offer(offer(), now)
+
+    await expect(store.offer(offer(), now)).resolves.toBeUndefined()
+    expect(await store.pullOffers(pull('device-c', 'offers'), now)).toEqual([offer()])
+
+    await expect(store.offer(offer({ manifestRoot: 'root-b' }), now)).rejects.toThrow('conflicts with existing responder offer')
+    expect(await store.pullOffers(pull('device-c', 'offers'), now)).toEqual([offer()])
+    store.close()
+  })
+
   test('requires a signed poll and removes expired controls after restart', async () => {
     const first = SqliteRestoreControlStore.open(path, authorizer)
     await first.request(request({ expiresAt: '2026-08-21T00:01:00.000Z' }), new Date('2026-08-21T00:00:00.000Z'))

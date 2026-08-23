@@ -94,9 +94,21 @@ export class SqliteVaultDeliveryStore implements VaultDeliveryStore {
     if (!this.isRecipient(ack.identityId, ack.seq, ack.recipientDeviceId)) throw new ProtocolValidationError('ACK device is not in the recipient snapshot')
     if (!equalBytes(bytes(row.payload_hash), ack.payloadHash)) throw new ProtocolValidationError('ACK payload hash does not match delivery')
     if (!(await this.authorizer.verifyAck(ack, item(row)))) throw new ProtocolValidationError('ACK is not authorised')
-    if (row.state === 'completed' && this.isAcknowledged(ack.identityId, ack.seq, ack.recipientDeviceId)) return
-    if (row.state !== 'pending') throw new ProtocolValidationError(`delivery is already ${row.state}`)
-    const transaction = this.database.transaction(() => {
+    // `row` was read before the `authorizer.verifyAck` await above, so its
+    // `state` can be stale by the time we get here: a concurrent expire()
+    // (or another device's acknowledge()) may have completed/expired this
+    // same row while this call was suspended. Re-check and write inside ONE
+    // synchronous transaction so the decision is made against a fresh read,
+    // not the pre-await snapshot -- otherwise a completing ACK could
+    // resurrect an already-expired row as 'completed'.
+    const transaction = this.database.transaction((): void => {
+      const current = this.database.query<{ state: State }, [string, string]>('SELECT state FROM vault_delivery_entries WHERE identity_id = ? AND seq = ?').get(ack.identityId, ack.seq)
+      if (!current) throw new ProtocolValidationError('unknown delivery sequence')
+      if (current.state === 'completed') {
+        if (this.isAcknowledged(ack.identityId, ack.seq, ack.recipientDeviceId)) return
+        throw new ProtocolValidationError(`delivery is already ${current.state}`)
+      }
+      if (current.state !== 'pending') throw new ProtocolValidationError(`delivery is already ${current.state}`)
       this.database.query('INSERT OR IGNORE INTO vault_delivery_acks (identity_id, seq, device_id) VALUES (?, ?, ?)').run(ack.identityId, ack.seq, ack.recipientDeviceId)
       const recipients = Number(this.database.query<{ count: number }, [string, string]>('SELECT count(*) AS count FROM vault_delivery_recipients WHERE identity_id = ? AND seq = ?').get(ack.identityId, ack.seq)?.count ?? 0)
       const acknowledgements = Number(this.database.query<{ count: number }, [string, string]>('SELECT count(*) AS count FROM vault_delivery_acks WHERE identity_id = ? AND seq = ?').get(ack.identityId, ack.seq)?.count ?? 0)

@@ -70,6 +70,23 @@ describe('restore control store', () => {
     await expect(store.pullRequests(pull('device-a', 'offers'), now)).rejects.toThrow('kind must be requests')
   })
 
+  test('resubmitting an identical offer is a silent no-op; resubmitting a conflicting one is rejected', async () => {
+    const store = new MemoryRestoreControlStore(authorizer)
+    const now = new Date('2026-08-21T00:00:00.000Z')
+    await store.request(request(), now)
+    await store.offer(offer(), now)
+
+    // The exact same offer again -- a client retry after a lost response
+    // must be a no-op, not an error and not a second entry.
+    await expect(store.offer(offer(), now)).resolves.toBeUndefined()
+    expect(await store.pullOffers(pull('device-c', 'offers'), now)).toEqual([offer()])
+
+    // Same (identityId, requestId, responderDeviceId) key, but a different
+    // manifestRoot -- must be rejected, never silently overwrite the original.
+    await expect(store.offer(offer({ manifestRoot: 'root-b' }), now)).rejects.toThrow('conflicts with existing responder offer')
+    expect(await store.pullOffers(pull('device-c', 'offers'), now)).toEqual([offer()])
+  })
+
   test('expires requests and rejects an offer after its request has disappeared', async () => {
     const store = new MemoryRestoreControlStore(authorizer)
     await store.request(request({ expiresAt: '2026-08-21T00:01:00.000Z' }), new Date('2026-08-21T00:00:00.000Z'))

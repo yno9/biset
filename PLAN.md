@@ -59,10 +59,10 @@
 - [x] endpoint への ingress pull は current trusted device の Ed25519 署名を必須にし、public HTTP は signed pull / durable ACK だけを公開する。external adapter offer は内部 boundary のままにする。
 - [x] ingress pull は最初に取得した正規端末へ短命の exclusive claim lease を付与する。claim 中は他端末へ同じ body を出さず、claim 端末だけが ACK できる。lease 失効後は別端末が引き継げ、SQLite restart 後も本文一コピーと claim state を維持する。
 - [x] trusted-device roster を mediation authorizer adapter に接続し、DID/webvh public-key resolver を入力に取る Ed25519 verifier を実装した。`src/identity/webvh/`（読み取り専用の resolver、`src.bak/did/webvh/` から移植）を使う `WebvhSigningKeyResolver` が real DID resolution を行う。fail-closed（未解決 DID/fragment は署名検証失敗になる）。key rotation cache は未実装のまま残す。
-- [-] crash-safe な SQLite `VaultDeliveryStore` / `IngressStore` と core deployment への authorizer/persistence wiring を実装した。ingress は first-party adapter の内部 boundary だけで、公開 HTTP には出していない。restart coverage はあるが、同時操作の coverage は未実装。
+- [x] crash-safe な SQLite `VaultDeliveryStore` / `IngressStore` と core deployment への authorizer/persistence wiring を実装した。ingress は first-party adapter の内部 boundary だけで、公開 HTTP には出していない。restart coverage に加え、同時操作の coverage を実装した——`test/protocol/sqlite-vault-delivery-store.test.ts` に同時 ACK（別 device 二台の同時 ACK、同一 device の自己競合リトライ）を追加。**その過程で実バグを発見・修正**: `SqliteVaultDeliveryStore.acknowledge` が `row.state` を `authorizer.verifyAck` の `await` より前に読んでいたため、その await 中に別の呼び出し（`expire()` 等）が同じ row の state を書き換えると、stale な 'pending' 判定のまま completed に書き込んでしまう（expired な delivery を completed として蘇らせ、`gap_reason` を破壊する）レースが存在した。state の再読み取りと書き込みを一つの同期 SQLite transaction 内に収めて修正し、修正前は実際に失敗する regression test で確認した。
 - [ ] tombstone retention / dedup retention / quota eviction の数値を policy として決める。
 - [-] signed shared vault delivery の `append` / `pull` / `ack` を narrow HTTP adapter と browser transport に結び付けた。SQLite を使う production core composition / persistence は実装済み。actual DID resolution / MLS commit の runtime injection は未実装。`status` は core internal のみ。
-- [-] SQLite restart、all-ACK 後の body 消去、ACK 再送、TTL/ quota gap の integration test を追加した。同時 ACK、duplicate offer、authorizer rejection の coverage は未実装。
+- [x] SQLite restart、all-ACK 後の body 消去、ACK 再送、TTL/ quota gap の integration test を追加した。同時 ACK（`sqlite-vault-delivery-store.test.ts`、実バグ修正込み——上記参照）、duplicate offer（`restore-control-store.test.ts`/`sqlite-restore-control-store.test.ts` に同一 offer の再送=no-op と衝突する offer の再送=拒否を追加）、authorizer rejection（`roster-authorizers.test.ts` に `rosterBackedRestoreControlAuthorizer` の `verifyOffer`/`verifyCancel` の未信頼 device 拒否を追加、従来 `verifyRequest`/`verifyPull` のみだった）を実装した。
 
 **完了条件:** core restart 後も body を誤って復活させず、未 authorised device の ACK で body を消せない。
 
@@ -360,5 +360,7 @@
 | 2026-08-24 | 作業中 | PLAN.md §4.3「stale grant / removed requester / replay の channel-level test」を実装。実 MLS self group を通した end-to-end test（`test/protocol/identity-restore-transfer-channel.test.ts`）で、rekey 後の旧 epoch wrap 拒否、Remove された device が自分の凍結 epoch 向け grant を要求しても拒否されること、Remove 前に有効だった wrap の署名が Remove 後は現在 member list に対する検証で失敗することを確認。replay（session 完了後の非-final chunk 再送）は `test/protocol/restore-transfer-receiver.test.ts` に追加し、`'duplicate'` ではなく `'already complete'` になることを確認 |
 
 | 2026-08-24 | 作業中 | PLAN.md §3.1「browser restart / partial write / migration failure の test harness」を実装。`fake-indexeddb` を devDependency に追加し、`IndexedDbVaultStore` を初めて実 IndexedDB に対して動かすテスト（`test/protocol/vault-store-durability.test.ts`）を作成。close→再 open での生存確認、実 unique key constraint による ingress 重複防止確認、v4 相当（`vault_restore_transfer_state` 無し）から v5 への実 schema upgrade で既存データが残り新 store が使えることを確認 |
+
+| 2026-08-24 | 作業中 | PLAN.md §2.3/§3.1「同時 ACK / duplicate offer / authorizer rejection の coverage」を実装。同時 ACK のテストを書く過程で `SqliteVaultDeliveryStore.acknowledge` の実レース bug（`authorizer.verifyAck` の await 前に読んだ stale な `row.state` を使っていたため、expire() と競合すると expired な delivery が completed に蘇り得た）を発見し修正——state の再読み取り+書き込みを一つの同期 transaction に収めた。修正前に実際に失敗する regression test で確認。duplicate offer（同一 offer 再送=no-op、衝突 offer 再送=拒否）と `rosterBackedRestoreControlAuthorizer` の `verifyOffer`/`verifyCancel` 拒否も追加 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

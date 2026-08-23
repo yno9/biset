@@ -55,4 +55,19 @@ describe('roster-backed mediation authorizers', () => {
     expect(await control.verifyPull({ identityId, deviceId: 'device-a' } as never)).toBe(true)
     expect(await control.verifyPull({ identityId, deviceId: 'device-b' } as never)).toBe(false)
   })
+
+  test('rejects a restore offer or cancel from a device the roster does not currently trust', async () => {
+    const value = await roster()
+    const control = rosterBackedRestoreControlAuthorizer(value, {
+      async verifyRestoreRequest() { return true },
+      async verifyRestoreOffer() { return true },
+      async verifyRestoreCancel() { return true },
+      async verifyRestoreControlPull() { return true },
+    })
+    // device-a is trusted (see roster() above); device-b is not.
+    expect(await control.verifyOffer({ identityId, responderDeviceId: 'device-a' } as never)).toBe(true)
+    expect(await control.verifyOffer({ identityId, responderDeviceId: 'device-b' } as never)).toBe(false)
+    expect(await control.verifyCancel({ identityId, requesterDeviceId: 'device-a' } as never, {} as never)).toBe(true)
+    expect(await control.verifyCancel({ identityId, requesterDeviceId: 'device-b' } as never, {} as never)).toBe(false)
+  })
 })

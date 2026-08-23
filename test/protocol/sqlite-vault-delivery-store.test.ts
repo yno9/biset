@@ -60,6 +60,67 @@ describe('SQLite vault delivery store', () => {
     restarted.close()
   })
 
+  test('two different devices concurrently ACKing the same delivery both record, and completion fires exactly once', async () => {
+    const store = SqliteVaultDeliveryStore.open(path, authorizer)
+    await store.append(append, new Date('2026-08-21T00:00:00.000Z'))
+    await Promise.all([
+      store.acknowledge(ack('device-a'), new Date('2026-08-21T01:00:00.000Z')),
+      store.acknowledge(ack('device-b'), new Date('2026-08-21T01:00:00.000Z')),
+    ])
+    expect(await store.status(identityId)).toMatchObject({ pendingItems: 0, payloadBytes: 0 })
+    store.close()
+  })
+
+  test('the same device concurrently retrying its own ACK does not throw or double count', async () => {
+    const store = SqliteVaultDeliveryStore.open(path, authorizer)
+    await store.append(append, new Date('2026-08-21T00:00:00.000Z'))
+    const results = await Promise.allSettled([
+      store.acknowledge(ack('device-a'), new Date('2026-08-21T01:00:00.000Z')),
+      store.acknowledge(ack('device-a'), new Date('2026-08-21T01:00:00.000Z')),
+    ])
+    expect(results.every(r => r.status === 'fulfilled')).toBe(true)
+    // Only device-a acked so far -- device-b has not, so this is not complete.
+    expect(await store.status(identityId)).toMatchObject({ pendingItems: 1 })
+    store.close()
+  })
+
+  test('a concurrent expire() sweep during an in-flight ACK does not resurrect the entry as completed', async () => {
+    // authorizer.verifyAck deliberately suspends (an async DID/roster check
+    // in a real deployment can genuinely take a tick) so a concurrent
+    // expire() has a real window to run while this ACK is mid-flight -- the
+    // exact race the pre-await `row.state` read in acknowledge() used to miss.
+    let releaseVerify: (() => void) | undefined
+    const gatedAuthorizer: VaultDeliveryAuthorizer = {
+      ...authorizer,
+      async recipientsAtAppend() { return ['device-a'] },
+      async verifyAck() { await new Promise<void>(resolve => { releaseVerify = resolve }); return true },
+    }
+    const limits = { deliveryTtlMs: 60 * 60 * 1000, maxPayloadBytes: 1024, maxIdentityPayloadBytes: 4096, maxIdentityPendingItems: 4 }
+    const store = SqliteVaultDeliveryStore.open(path, gatedAuthorizer, limits)
+    await store.append(append, new Date('2026-08-21T00:00:00.000Z'))
+
+    const ackPromise = store.acknowledge(ack('device-a'), new Date('2026-08-21T00:30:00.000Z'))
+    // Let the ACK's own microtasks run far enough to reach the gate inside verifyAck.
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+
+    // While the ACK is suspended, a concurrent operation (e.g. another
+    // pull()) sweeps this entry past its TTL.
+    await store.expire(new Date('2026-08-21T02:00:00.000Z'))
+    expect((await store.pull({ ...pull, recipientDeviceId: 'device-a' }, new Date('2026-08-21T02:00:00.000Z')))).toMatchObject({ kind: 'restoreRequired', reason: 'ttl-expired' })
+
+    // Resume the ACK. It must see the FRESH (expired) state, not the stale
+    // 'pending' snapshot it read before suspending, and must fail rather
+    // than silently completing an already-expired delivery.
+    releaseVerify!()
+    await expect(ackPromise).rejects.toThrow('already expired')
+
+    // The gap reason must still be the real one -- not clobbered by a
+    // resurrected 'delivery-confirmed'.
+    expect(await store.pull({ ...pull, recipientDeviceId: 'device-a' }, new Date('2026-08-21T02:00:00.000Z')))
+      .toMatchObject({ kind: 'restoreRequired', reason: 'ttl-expired' })
+    store.close()
+  })
+
   test('persists quota eviction as an explicit restore gap across a restart', async () => {
     const limits = { deliveryTtlMs: 24 * 60 * 60 * 1000, maxPayloadBytes: 1024, maxIdentityPayloadBytes: 4096, maxIdentityPendingItems: 1 }
     const first = SqliteVaultDeliveryStore.open(path, authorizer, limits)
