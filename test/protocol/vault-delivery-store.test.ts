@@ -68,6 +68,32 @@ describe('MemoryVaultDeliveryStore', () => {
       .toMatchObject({ kind: 'items', items: [], nextCursor: '1' })
   })
 
+  test('keeps exactly one payload copy in storage no matter how many devices are recipients', async () => {
+    const floors = { 'device-a': '1', 'device-b': '1', 'device-c': '1', 'device-d': '1', 'device-e': '1' }
+    const store = new MemoryVaultDeliveryStore(makeAuthorizer(floors))
+    await store.append(append(), new Date('2026-08-21T00:00:00.000Z'))
+
+    // payloadBytes reflects ONE stored copy, never payload.length * recipients
+    // -- a per-device fanout store would report 5x here.
+    expect(await store.status(identityId)).toMatchObject({ payloadBytes: payload.length, pendingItems: 1 })
+
+    // Every recipient independently sees the same single item.
+    for (const deviceId of Object.keys(floors)) {
+      expect(await store.pull(pull(deviceId), new Date('2026-08-21T01:00:00.000Z')))
+        .toMatchObject({ kind: 'items', items: [{ seq: '1', payload }] })
+    }
+
+    // Storage still holds exactly one copy after some, but not all, ACK.
+    const devices = Object.keys(floors)
+    for (const deviceId of devices.slice(0, -1)) {
+      await store.acknowledge(ack(deviceId), new Date('2026-08-21T01:00:00.000Z'))
+      expect(await store.status(identityId)).toMatchObject({ payloadBytes: payload.length, pendingItems: 1 })
+    }
+    // The final recipient's ACK frees the single copy.
+    await store.acknowledge(ack(devices.at(-1)!), new Date('2026-08-21T01:00:00.000Z'))
+    expect(await store.status(identityId)).toMatchObject({ payloadBytes: 0, pendingItems: 0 })
+  })
+
   test('returns restoreRequired instead of an empty success after TTL expiry', async () => {
     const store = new MemoryVaultDeliveryStore(makeAuthorizer())
     await store.append(append(), new Date('2026-08-21T00:00:00.000Z'))

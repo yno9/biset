@@ -76,7 +76,7 @@
 - [x] TTL / quota expiry 時に `retainedFrom` と gap record を更新し、SQLite 再起動後にも正しい restore reason になることを検証する。
 - [x] 古い cursor の pull が必ず `restoreRequired` を返すよう実装する。
 - [x] new device を過去 item の recipient set に遡及追加しない test を書く。
-- [ ] N devices でも payload copy が一つだけである storage test を書く。
+- [x] N devices でも payload copy が一つだけである storage test を書いた（`test/protocol/vault-delivery-store.test.ts`/`sqlite-vault-delivery-store.test.ts`、5 device）。`status().payloadBytes` が append 直後から一部の device が ACK した段階まで一貫して `payload.length` のまま（fanout 実装なら `payload.length × 5` になるはず）であること、全 device が同一 item を独立に pull できること、最後の device の ACK で初めて 0 になることを確認した。
 
 **完了条件:** per-device DIDComm queue を使わず、共有 body + cursor/ACK だけで sibling devices を TTL 内 catch-up できる。
 
@@ -362,5 +362,7 @@
 | 2026-08-24 | 作業中 | PLAN.md §3.1「browser restart / partial write / migration failure の test harness」を実装。`fake-indexeddb` を devDependency に追加し、`IndexedDbVaultStore` を初めて実 IndexedDB に対して動かすテスト（`test/protocol/vault-store-durability.test.ts`）を作成。close→再 open での生存確認、実 unique key constraint による ingress 重複防止確認、v4 相当（`vault_restore_transfer_state` 無し）から v5 への実 schema upgrade で既存データが残り新 store が使えることを確認 |
 
 | 2026-08-24 | 作業中 | PLAN.md §2.3/§3.1「同時 ACK / duplicate offer / authorizer rejection の coverage」を実装。同時 ACK のテストを書く過程で `SqliteVaultDeliveryStore.acknowledge` の実レース bug（`authorizer.verifyAck` の await 前に読んだ stale な `row.state` を使っていたため、expire() と競合すると expired な delivery が completed に蘇り得た）を発見し修正——state の再読み取り+書き込みを一つの同期 transaction に収めた。修正前に実際に失敗する regression test で確認。duplicate offer（同一 offer 再送=no-op、衝突 offer 再送=拒否）と `rosterBackedRestoreControlAuthorizer` の `verifyOffer`/`verifyCancel` 拒否も追加 |
+
+| 2026-08-24 | 作業中 | PLAN.md §2.3「N devices でも payload copy が一つだけである storage test」を実装。5 device 分の recipient を持つ delivery で、append 直後から一部 ACK 後まで `status().payloadBytes` が常に `payload.length` のまま（per-device fanout なら 5 倍になるはず）であること、全 device が同一 item を独立に pull できること、最後の device の ACK で初めて 0 になることを memory/SQLite 両実装で確認 |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

@@ -13,7 +13,7 @@ const authorizer: VaultDeliveryAuthorizer = {
 }
 const append: VaultDeliveryAppendV1 = { version: 1, identityId, appendId: 'event-1', payload, payloadHash: sha256Bytes(payload), senderDeviceId: 'device-a', sentAt: '2026-08-21T00:00:00.000Z', signature: new Uint8Array([1]) }
 const pull: VaultDeliveryPullV1 = { version: 1, identityId, recipientDeviceId: 'device-b', after: '0', requestedAt: '2026-08-21T00:00:00.000Z', signature: new Uint8Array([1]) }
-function ack(recipientDeviceId: 'device-a' | 'device-b'): VaultDeliveryAckV1 {
+function ack(recipientDeviceId: string): VaultDeliveryAckV1 {
   return { version: 1, identityId, seq: '1', payloadHash: sha256Bytes(payload), recipientDeviceId, checkpointId: `checkpoint-${recipientDeviceId}`, ackedAt: '2026-08-21T01:00:00.000Z', signature: new Uint8Array([1]) }
 }
 
@@ -58,6 +58,29 @@ describe('SQLite vault delivery store', () => {
     expect(await restarted.pull(pull, new Date('2026-08-21T02:00:00.000Z'))).toMatchObject({ kind: 'restoreRequired', reason: 'ttl-expired', retainedFrom: '2', latestSeq: '1' })
     expect(await restarted.status(identityId)).toMatchObject({ pendingItems: 0, payloadBytes: 0 })
     restarted.close()
+  })
+
+  test('keeps exactly one payload copy in storage no matter how many devices are recipients', async () => {
+    const devices = ['device-a', 'device-b', 'device-c', 'device-d', 'device-e']
+    const nDeviceAuthorizer: VaultDeliveryAuthorizer = { ...authorizer, async recipientsAtAppend() { return devices } }
+    const store = SqliteVaultDeliveryStore.open(path, nDeviceAuthorizer)
+    await store.append(append, new Date('2026-08-21T00:00:00.000Z'))
+
+    // payloadBytes reflects ONE stored copy, never payload.length * recipients.
+    expect(await store.status(identityId)).toMatchObject({ payloadBytes: payload.length, pendingItems: 1 })
+
+    for (const deviceId of devices) {
+      expect(await store.pull({ ...pull, recipientDeviceId: deviceId }, new Date('2026-08-21T01:00:00.000Z')))
+        .toMatchObject({ kind: 'items', items: [{ seq: '1', payload }] })
+    }
+
+    for (const deviceId of devices.slice(0, -1)) {
+      await store.acknowledge(ack(deviceId), new Date('2026-08-21T01:00:00.000Z'))
+      expect(await store.status(identityId)).toMatchObject({ payloadBytes: payload.length, pendingItems: 1 })
+    }
+    await store.acknowledge(ack(devices.at(-1)!), new Date('2026-08-21T01:00:00.000Z'))
+    expect(await store.status(identityId)).toMatchObject({ payloadBytes: 0, pendingItems: 0 })
+    store.close()
   })
 
   test('two different devices concurrently ACKing the same delivery both record, and completion fires exactly once', async () => {
