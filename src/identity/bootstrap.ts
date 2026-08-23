@@ -30,7 +30,11 @@ import { ensureKeyPackagePool } from '../mls/key-package-pool.ts'
 import { CoreMlsDeliveryTransport } from '../mls/core-mls-delivery-transport.ts'
 import { CoreRosterInstallTransport } from '../mls/core-roster-install-transport.ts'
 import { CoreVaultDeliveryTransport } from '../vault/core-delivery-transport.ts'
-import type { MlsSelfGroupStateStore } from '../mls/store.ts'
+import { StoredSegmentKeyResolver, type SegmentKeyResolver } from '../vault/segment-key-resolver.ts'
+import type { SegmentKeyWrapReader } from '../vault/store.ts'
+import { MlsVaultEpochKeyResolver } from '../mls/vault-epoch.ts'
+import { MlsMembershipSegmentKeyWrapSigner } from '../mls/segment-key-membership.ts'
+import { StoredMlsSelfGroupProvider, type MlsSelfGroupStateStore } from '../mls/store.ts'
 import type { MlsKeyPackageStore } from '../mls/keypackage-store.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import { deliverySeq, type DeliverySeq } from '../protocol/ids.ts'
@@ -315,4 +319,48 @@ export async function restoreIdentity(
   await recordStore.put(record)
 
   return { record, masterSeed, selfGroupState }
+}
+
+export interface VaultCryptoBoundary {
+  /** Resolves a SegmentKey for reading an already-encrypted vault object. */
+  resolver: SegmentKeyResolver
+  /** Signs (and, via the same underlying membership check, verifies) new
+   * SegmentKeyWraps this device grants — `createSegmentKeyWrap`
+   * (vault/crypto.ts) takes this directly. */
+  signer: MlsMembershipSegmentKeyWrapSigner
+}
+
+/**
+ * Wires PLAN.md §4.2's "actual MLS VEK derivation / membership signer" —
+ * the one piece `vault/segment-key-resolver.ts` and `vault/crypto.ts` were
+ * built to receive but never got — to this identity's actual self-group
+ * state. Local JMAP Gateway / vault mutation code calls this once it has
+ * `record`/`selfGroupStore` in hand (the same two `maintainSelfGroup`
+ * already needs) to get a `SegmentKeyResolver` for decrypting vault objects
+ * and a signer for wrapping new ones.
+ *
+ * Reads the self-group `ClientState` fresh on every resolve/sign/verify
+ * call (via `selfGroupStore.load`) rather than once at construction — MLS
+ * state is immutable and wholesale-replaced on every commit, so a boundary
+ * built once at boot must keep tracking the CURRENT epoch and CURRENT
+ * membership, not the snapshot that existed when this was called.
+ */
+export function buildVaultCryptoBoundary(
+  wraps: SegmentKeyWrapReader,
+  selfGroupStore: MlsSelfGroupStateStore,
+  record: IdentityRecord,
+): VaultCryptoBoundary {
+  if (!record.deviceKid) throw new Error('buildVaultCryptoBoundary: identity has no deviceKid yet')
+  const deviceKid = record.deviceKid
+  const loadState = async (): Promise<ClientState> => {
+    const stored = await selfGroupStore.load(record.did)
+    if (!stored) throw new Error('buildVaultCryptoBoundary: no self-group state for this identity')
+    return stored.state
+  }
+
+  const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
+  const signer = new MlsMembershipSegmentKeyWrapSigner(deviceKid, loadState)
+  const resolver = new StoredSegmentKeyResolver(wraps, epochs, signer)
+
+  return { resolver, signer }
 }

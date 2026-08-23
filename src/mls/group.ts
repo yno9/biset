@@ -343,6 +343,27 @@ export function memberKids(state: ClientState, did: string): string[] {
   return memberList(state).filter(m => m.did === did).map(m => m.kid)
 }
 
+/** The ACTUAL MLS leaf signature key a member kid currently holds, or
+ * undefined if it is not (or no longer) in the group. Same access pattern
+ * webvh-authentication-service.ts's AS callback gets handed by ts-mls
+ * itself; this is for a caller that instead needs to look one up by kid
+ * directly — vault/crypto.ts's SegmentKeyWrap grantor verification
+ * (`mls/segment-key-membership.ts`), which checks against CURRENT self-group
+ * membership rather than a resolved DID document (PLAN.md §4.2: the self
+ * group, not the DID, is the authority on who may grant a SegmentKey right
+ * now). */
+export function memberSignaturePublicKey(state: ClientState, kid: string): Uint8Array | undefined {
+  for (const node of state.ratchetTree) {
+    if (node?.nodeType !== 'leaf') continue
+    try {
+      if (memberIdOf(node.leaf.credential).kid === kid) return node.leaf.signaturePublicKey
+    } catch {
+      continue
+    }
+  }
+  return undefined
+}
+
 // ------------------------------------------------------- external commits
 //
 // How a NEW DEVICE of an identity that is already in a group joins it without
