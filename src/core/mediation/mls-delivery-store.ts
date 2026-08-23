@@ -24,6 +24,9 @@
 // PUSHED... this decides who may PULL"). Conflating the two would make
 // commit ordering depend on a roster update that hasn't happened yet.
 import { Database } from 'bun:sqlite'
+import type { MlsGroupInfoAnswer, MlsLogEntry } from '../../protocol/mls-ds.ts'
+
+export type { MlsGroupInfoAnswer, MlsLogEntry } from '../../protocol/mls-ds.ts'
 
 const MAX_GROUPS = 10_000
 const MAX_ROSTER = 512
@@ -35,19 +38,9 @@ const MAX_PENDING_REMOVALS = 64
 
 export class MlsDsCapacityError extends Error {}
 
-export interface MlsLogEntry {
-  seq: number
-  kind: 'commit' | 'welcome' | 'proposal'
-  payload: Uint8Array
-  epoch: string
-  at: string
-}
-
 export interface MlsCommitAccepted { ok: true; entries: MlsLogEntry[]; roster: string[] }
 export interface MlsCommitRejected { ok: false; reason: 'epoch-conflict' | 'not-a-member' | 'no-such-group' | 'no-group-info' | 'unauthorized'; epoch: string }
 export type MlsCommitResult = MlsCommitAccepted | MlsCommitRejected
-
-export interface MlsGroupInfoAnswer { groupInfo?: Uint8Array; pendingRemovals: string[] }
 
 interface GroupRow {
   group_id: string

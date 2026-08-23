@@ -1,6 +1,6 @@
 // Strict JSON boundary for the MLS self-group DS narrow HTTP API, following
 // the same shape/binary-encoding split as protocol/ingress-wire.ts.
-import { base64urlToBytes, bytesToBase64url } from '../../protocol/canonical.ts'
+import { base64urlToBytes, bytesToBase64url } from './canonical.ts'
 import type {
   MlsCommitSubmissionV1,
   MlsDeliveriesPullV1,
@@ -14,8 +14,8 @@ import type {
   MlsKeyPackageTakeV1,
   MlsPendingRemovalsClearV1,
   MlsSelfRemoveSubmissionV1,
-} from '../../protocol/mls-ds.ts'
-import type { MlsGroupInfoAnswer, MlsLogEntry } from './mls-delivery-store.ts'
+} from './mls-ds.ts'
+import type { MlsGroupInfoAnswer, MlsLogEntry } from '../core/mediation/mls-delivery-store.ts'
 
 export class MlsDsWireError extends TypeError {}
 

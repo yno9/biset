@@ -7,6 +7,17 @@ import type { DeviceId, IdentityId } from './ids.ts'
  * opaque `commit`/`proposal`/`groupInfo` bytes (PLANMLSARCH.md §4.2).
  */
 
+/** One delivered object, as the DS holds it: opaque payload plus the ordering it was given. */
+export interface MlsLogEntry {
+  seq: number
+  kind: 'commit' | 'welcome' | 'proposal'
+  payload: Uint8Array
+  epoch: string
+  at: string
+}
+
+export interface MlsGroupInfoAnswer { groupInfo?: Uint8Array; pendingRemovals: string[] }
+
 export interface MlsGroupCreationV1 {
   version: 1
   groupId: string

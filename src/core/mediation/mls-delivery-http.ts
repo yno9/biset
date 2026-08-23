@@ -31,7 +31,7 @@ import {
   encodeMlsGroupsForWire,
   encodeMlsKeyPackagesTakenWire,
   MlsDsWireError,
-} from './mls-delivery-wire.ts'
+} from '../../protocol/mls-ds-wire.ts'
 import type { SqliteMlsDeliveryService } from './mls-delivery-store.ts'
 
 const MAX_BODY_BYTES = 1024 * 1024
