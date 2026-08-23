@@ -1,6 +1,6 @@
-import { canonicalBytes } from '../../protocol/canonical.ts'
+import { base64urlToBytes, bytesToBase64url, canonicalBytes } from '../../protocol/canonical.ts'
 import type { DeviceId } from '../../protocol/ids.ts'
-import type { AcceptedSelfGroupProjectionV1 } from './device-roster.ts'
+import { assertAcceptedSelfGroupProjection, type AcceptedSelfGroupProjectionV1 } from './device-roster.ts'
 
 /**
  * A signed control message installing an `AcceptedSelfGroupProjectionV1` into
@@ -41,3 +41,39 @@ export function rosterInstallSigningBytes(install: Omit<RosterInstallV1, 'signat
 }
 
 export type RosterInstallOutcome = 'installed' | 'already-current' | 'rejected'
+
+export function assertRosterInstall(value: unknown): asserts value is RosterInstallV1 {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('RosterInstallV1 must be an object')
+  const input = value as Record<string, unknown>
+  const allowed = ['version', 'projection', 'installerDeviceId', 'installedAt', 'signature']
+  for (const key of Object.keys(input)) {
+    if (!allowed.includes(key)) throw new TypeError(`RosterInstallV1 has unknown field ${key}`)
+  }
+  if (input.version !== 1) throw new TypeError('RosterInstallV1.version must be 1')
+  if (typeof input.installerDeviceId !== 'string' || input.installerDeviceId.length === 0) {
+    throw new TypeError('RosterInstallV1.installerDeviceId must be a non-empty string')
+  }
+  if (typeof input.installedAt !== 'string' || Number.isNaN(Date.parse(input.installedAt))) {
+    throw new TypeError('RosterInstallV1.installedAt must be an ISO date string')
+  }
+  if (!(input.signature instanceof Uint8Array) || input.signature.length === 0) {
+    throw new TypeError('RosterInstallV1.signature must be a non-empty Uint8Array')
+  }
+  assertAcceptedSelfGroupProjection(input.projection as AcceptedSelfGroupProjectionV1)
+}
+
+/** Strict JSON boundary for the narrow roster-install HTTP endpoint. */
+export function encodeRosterInstallWire(value: RosterInstallV1): string {
+  assertRosterInstall(value)
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+}
+
+export function decodeRosterInstallWire(text: string): RosterInstallV1 {
+  let parsed: unknown
+  try { parsed = JSON.parse(text) } catch { throw new TypeError('roster install HTTP body is not JSON') }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new TypeError('roster install HTTP body must be an object')
+  const input = parsed as Record<string, unknown>
+  const value = { ...input, signature: typeof input.signature === 'string' ? base64urlToBytes(input.signature) : input.signature }
+  assertRosterInstall(value)
+  return value
+}

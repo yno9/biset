@@ -50,7 +50,7 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
     restoreControl,
     ingress,
     ingressAdapter,
-    fetch: createBisetCoreFetchHandler({ vaultDeliveryStore: delivery, restoreControlStore: restoreControl, ingressStore: ingress }),
+    fetch: createBisetCoreFetchHandler({ vaultDeliveryStore: delivery, restoreControlStore: restoreControl, ingressStore: ingress, roster: { store: roster, verifier } }),
     close() { database.close() },
   }
 }
