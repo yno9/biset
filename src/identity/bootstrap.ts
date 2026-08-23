@@ -29,11 +29,44 @@ import { ensureSelfGroupWithRosterInstall, reflectPendingSelfGroupCommits, type 
 import { ensureKeyPackagePool } from '../mls/key-package-pool.ts'
 import { CoreMlsDeliveryTransport } from '../mls/core-mls-delivery-transport.ts'
 import { CoreRosterInstallTransport } from '../mls/core-roster-install-transport.ts'
+import { CoreVaultDeliveryTransport } from '../vault/core-delivery-transport.ts'
 import type { MlsSelfGroupStateStore } from '../mls/store.ts'
 import type { MlsKeyPackageStore } from '../mls/keypackage-store.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import { deliverySeq, type DeliverySeq } from '../protocol/ids.ts'
+import { vaultDeliveryPullSigningBytes } from '../protocol/signing.ts'
+import type { VaultDeliveryPullV1 } from '../protocol/vault.ts'
 import type { ClientState } from '../mls/vendor/index.ts'
+
+/**
+ * Asks core's own bounded delivery store what its CURRENT `latestSeq` is,
+ * for `deliveryFloorForNewDevice` — the seq a newly-trusted device should
+ * start pulling from (PLAN.md §2.3: never a past one, or it would be
+ * retroactively handed history it never should have received). `after: 0`
+ * throws away whatever `items` comes back with; only `latestSeq` is wanted
+ * here. Requires `deviceKid` to already be a trusted device for
+ * `identityId` — an untrusted device's own pull is refused
+ * (`rosterBackedVaultDeliveryAuthorizer`), which is why this is called from
+ * `maintainSelfGroup` (an EXISTING member reflecting a new one), never from
+ * `restoreIdentity`/`createNewIdentity` (where the calling device is not yet
+ * trusted, or — for genesis — there is no vault content yet for `0` to be
+ * wrong about).
+ */
+async function currentVaultDeliveryLatestSeq(
+  coreBaseUrl: string,
+  identityId: string,
+  deviceKid: string,
+  sign: SelfGroupSigner,
+  fetchImpl: typeof fetch | undefined,
+  now: () => Date,
+): Promise<DeliverySeq> {
+  const transport = new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl, fetch: fetchImpl })
+  const pull: Omit<VaultDeliveryPullV1, 'signature'> = {
+    version: 1, identityId, recipientDeviceId: deviceKid, after: deliverySeq(0n), requestedAt: now().toISOString(),
+  }
+  const result = await transport.pull({ ...pull, signature: await sign(vaultDeliveryPullSigningBytes(pull)) })
+  return result.latestSeq
+}
 
 let authServiceInstalled = false
 /** Idempotent: `setMlsAuthService` is one global (group.ts's own note on
@@ -205,12 +238,7 @@ export async function maintainSelfGroup(
   const mlsTransport = new CoreMlsDeliveryTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
   const rosterTransport = new CoreRosterInstallTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
 
-  // TODO(PLAN.md §2.3/§3.3): should be the CURRENT vault-delivery latestSeq,
-  // not 0 -- only reachable here if THIS device's own roster install is what
-  // ends up installing a device added after it (ordinarily some OTHER
-  // device's own maintainSelfGroup catches a given new device first, so this
-  // path is a fallback, not the common one).
-  const deliveryFloorForNewDevice = async (): Promise<DeliverySeq> => deliverySeq(0n)
+  const deliveryFloorForNewDevice = () => currentVaultDeliveryLatestSeq(opts.coreBaseUrl, record.did, record.deviceKid!, sign, opts.fetch, now)
   const state = await reflectPendingSelfGroupCommits(
     selfGroupStore, mlsTransport, rosterTransport, record.did, record.deviceKid, sign, deliveryFloorForNewDevice, now,
   )

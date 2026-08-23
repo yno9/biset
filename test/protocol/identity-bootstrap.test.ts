@@ -8,11 +8,14 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { Database } from 'bun:sqlite'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { createBisetCoreFetchHandler } from '../../src/core/app.ts'
 import { SqliteMlsDeliveryService } from '../../src/core/mediation/mls-delivery-store.ts'
 import { Ed25519MlsDsSignatureVerifier } from '../../src/core/mediation/mls-delivery-authorizer.ts'
+import { MemoryVaultDeliveryStore } from '../../src/core/mediation/vault-delivery-store.ts'
 import { SqliteTrustedDeviceRoster } from '../../src/core/identity/sqlite-device-roster.ts'
 import { Ed25519DeviceControlSignatureVerifier } from '../../src/core/identity/ed25519-device-control-verifier.ts'
+import { rosterBackedVaultDeliveryAuthorizer } from '../../src/core/identity/authorizers.ts'
 import { WebvhSigningKeyResolver } from '../../src/core/identity/webvh-signing-key-resolver.ts'
 import { createNewIdentity, maintainSelfGroup, restoreIdentity } from '../../src/identity/bootstrap.ts'
 import { seedToMnemonic } from '../../src/identity/seed.ts'
@@ -20,6 +23,8 @@ import { resolve } from '../../src/identity/webvh/resolver.ts'
 import { didWebToHttpsUrl, buildWebDid } from '../../src/identity/web/identifier.ts'
 import { memberKids, setMlsAuthService } from '../../src/mls/group.ts'
 import { defaultAuthenticationService } from '../../src/mls/vendor/index.ts'
+import { sha256Bytes } from '../../src/protocol/canonical.ts'
+import { vaultDeliveryAppendSigningBytes } from '../../src/protocol/signing.ts'
 import { fakeAnchor } from './support/webvh-log-fixture.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { MlsKeyPackageStore } from '../../src/mls/keypackage-store.ts'
@@ -97,11 +102,13 @@ function setupCore() {
   const resolveEd25519PublicKey = (kid: string) => keyResolver.resolveEd25519PublicKey(kid)
   const dsVerifier = new Ed25519MlsDsSignatureVerifier({ resolveEd25519PublicKey })
   const rosterVerifier = new Ed25519DeviceControlSignatureVerifier({ resolveEd25519PublicKey })
+  const vaultDeliveryStore = new MemoryVaultDeliveryStore(rosterBackedVaultDeliveryAuthorizer(roster, rosterVerifier))
   const coreHandle = createBisetCoreFetchHandler({
     roster: { store: roster, verifier: rosterVerifier },
     mlsDelivery: { store: ds, verifier: dsVerifier, isLiveDevice: async () => true },
+    vaultDeliveryStore,
   })
-  return { anchor, ds, roster, coreHandle }
+  return { anchor, ds, roster, vaultDeliveryStore, coreHandle }
 }
 
 describe('createNewIdentity', () => {
@@ -241,6 +248,45 @@ describe('maintainSelfGroup', () => {
       const state = await maintainSelfGroup(deviceASelfGroupStore, memoryKeyPackageStore(), created.record, { coreBaseUrl: CORE_ORIGIN })
       expect(new Set(memberKids(state!, created.record.did))).toEqual(new Set([created.record.deviceKid, restored.record.deviceKid]))
       expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(true)
+
+      ds.close()
+      roster.close()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test('reflects a device restored after real vault content exists with the CURRENT latestSeq, not 0', async () => {
+    const { anchor, ds, roster, vaultDeliveryStore, coreHandle } = setupCore()
+
+    const realFetch = globalThis.fetch
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    try {
+      const deviceASelfGroupStore = memorySelfGroupStore()
+      const created = await createNewIdentity(memoryIdentityRecordStore(), deviceASelfGroupStore, memoryKeyPackageStore(), {
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+      })
+
+      // Device A appends two vault-delivery items before device B ever exists.
+      for (let i = 0; i < 2; i++) {
+        const payload = new TextEncoder().encode(`item-${i}`)
+        const append = {
+          version: 1 as const, identityId: created.record.did, appendId: `evt-${i}`,
+          payload, payloadHash: sha256Bytes(payload), senderDeviceId: created.record.deviceKid!, sentAt: new Date().toISOString(),
+        }
+        await vaultDeliveryStore.append({ ...append, signature: await ed25519.sign(vaultDeliveryAppendSigningBytes(append), (await deviceASelfGroupStore.load(created.record.did))!.state.signaturePrivateKey) })
+      }
+
+      const mnemonic = seedToMnemonic(created.masterSeed)
+      const restored = await restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+      })
+
+      await maintainSelfGroup(deviceASelfGroupStore, memoryKeyPackageStore(), created.record, { coreBaseUrl: CORE_ORIGIN })
+      expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(true)
+      // NOT '0' -- device B's floor must be the seq AFTER the two items device
+      // A already appended, so it never gets handed history predating it.
+      expect(await roster.deliveryFloor(created.record.did, restored.record.deviceKid!)).toBe('2')
 
       ds.close()
       roster.close()
