@@ -179,6 +179,19 @@ export interface VaultProjectionReader {
   readProjection(identityId: IdentityId): Promise<unknown | undefined>
 }
 
+/**
+ * Writes a projection/JMAP-state pair that was NOT derived from a batch of
+ * new events -- `rebuildLocalJmapProjection` (vault/projection-rebuild.ts)
+ * is the only caller: it recomputes the projection from records already
+ * committed, so there is nothing new for `commitLocalMutation`/`commitIngress`/
+ * `commitDelivery` (which all require at least one event) to commit
+ * alongside it. Also the only way a brand-new identity's very first
+ * (all-empty) projection row ever gets written, since nothing else seeds one.
+ */
+export interface VaultProjectionWriter {
+  writeProjection(identityId: IdentityId, projection: unknown, jmapState: unknown): Promise<void>
+}
+
 export interface VaultObjectReader {
   readObject(identityId: IdentityId, objectId: VaultObjectId): Promise<VaultObjectRecord | undefined>
 }
@@ -296,7 +309,7 @@ export interface VaultRestoreOfferOutboxStore {
   clearRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, RecoveryArchiveImportStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressAckOutboxReader, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjectionWriter, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, RecoveryArchiveImportStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressAckOutboxReader, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -353,6 +366,14 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     )
     await completed
     return record?.value
+  }
+
+  async writeProjection(identityId: IdentityId, projection: unknown, jmapState: unknown): Promise<void> {
+    if (!identityId) throw new TypeError('projection identity is required')
+    const transaction = this.database.transaction([STORES.projection, STORES.jmapState], 'readwrite')
+    transaction.objectStore(STORES.projection).put({ identityId, value: projection })
+    transaction.objectStore(STORES.jmapState).put({ identityId, value: jmapState })
+    await transactionDone(transaction)
   }
 
   async readIngressAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, limit = 32): Promise<IngressAckOutboxRecord[]> {

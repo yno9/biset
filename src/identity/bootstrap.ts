@@ -40,9 +40,10 @@ import type { MlsKeyPackageStore } from '../mls/keypackage-store.ts'
 import { createSegmentKeyWrap, segmentKeyWrapSigningBytes, unwrapSegmentKey } from '../vault/crypto.ts'
 import type { RestoreTransferSource, RestoreTransferVerifier } from '../vault/restore-transfer.ts'
 import { buildVaultManifest } from '../vault/manifest.ts'
-import type { VaultRecordReader } from '../vault/store.ts'
+import type { VaultProjectionWriter, VaultRecordReader } from '../vault/store.ts'
 import { VaultDeliveryProjector } from '../vault/delivery-projector.ts'
-import type { LocalJmapSnapshot } from '../local-jmap/gateway.ts'
+import { rebuildLocalJmapProjection } from '../vault/projection-rebuild.ts'
+import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../local-jmap/gateway.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import { deliverySeq, mlsEpoch, type DeliverySeq } from '../protocol/ids.ts'
 import { vaultDeliveryPullSigningBytes } from '../protocol/signing.ts'
@@ -596,4 +597,36 @@ export function buildVaultDeliveryProjector(
   const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
   const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
   return new VaultDeliveryProjector({ identityId, currentSnapshot, epochs, verifier })
+}
+
+/**
+ * Wires PLAN.md §3.2/§5.2's "full projection rebuild" to this identity's
+ * actual self group — the same `MlsVaultEpochKeyResolver`/
+ * `MlsMembershipSegmentKeyWrapVerifier` pair `buildVaultDeliveryProjector`
+ * assembles, handed to `rebuildLocalJmapProjection`
+ * (`vault/projection-rebuild.ts`) instead. Returns a function rather than a
+ * bare promise since this is meant to be called more than once per identity
+ * — at minimum once to seed a brand-new identity's very first (empty)
+ * `vault_projection` row (nothing else does; see `VaultProjectionWriter`'s
+ * own doc comment), and again on demand for disaster recovery.
+ */
+export function buildLocalJmapProjectionRebuild(
+  records: VaultRecordReader,
+  wraps: SegmentKeyWrapReader,
+  projections: VaultProjectionWriter,
+  selfGroupStore: MlsSelfGroupStateStore,
+  identityId: string,
+): () => Promise<LocalJmapProjectionV1> {
+  const loadState = async (): Promise<ClientState> => {
+    const stored = await selfGroupStore.load(identityId)
+    if (!stored) throw new Error('buildLocalJmapProjectionRebuild: no self-group state for this identity')
+    return stored.state
+  }
+  const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
+  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
+  return async () => {
+    const projection = await rebuildLocalJmapProjection({ identityId, records, wraps, epochs, verifier })
+    await projections.writeProjection(identityId, projection, { state: projection.state })
+    return projection
+  }
 }

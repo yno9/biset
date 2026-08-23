@@ -1,13 +1,12 @@
 import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../local-jmap/gateway.ts'
 import { reduceLocalJmapProjection } from '../local-jmap/reducer.ts'
-import type { IdentityId, MlsEpoch, SegmentId } from '../protocol/ids.ts'
-import type { SegmentKeyWrapV1, VaultObjectV1 } from '../protocol/vault.ts'
-import { decryptVaultObject, verifyVaultObjectIntegrity } from './objects.ts'
-import { assertOpenPgpCredentialRecord } from './openpgp-credential.ts'
+import type { IdentityId, MlsEpoch } from '../protocol/ids.ts'
+import type { SegmentKeyWrapV1 } from '../protocol/vault.ts'
 import type { VaultDeliveryPackV1 } from './delivery-pack.ts'
 import type { VaultDeliveryVerifierProjector } from './delivery-ingest.ts'
-import { verifyVaultEvent, type VaultEventVerifier } from './events.ts'
+import type { VaultEventVerifier } from './events.ts'
 import type { SegmentKeyWrapVerifier } from './crypto.ts'
+import { decryptVaultMutationRecords } from './mutation-records.ts'
 import { StoredSegmentKeyResolver, type VaultEpochKeyResolver } from './segment-key-resolver.ts'
 import type { SegmentKeyWrapReader } from './store.ts'
 
@@ -37,46 +36,12 @@ export class VaultDeliveryProjector implements VaultDeliveryVerifierProjector {
     const current = await this.options.epochs.currentVaultEpoch(pack.identityId)
     const wraps = new PackSegmentKeyWrapReader(pack.keyWraps)
     validateCurrentWraps(pack.identityId, pack.keyWraps, current.selfGroupId, current.epoch)
-    const keys = new Map<SegmentId, Uint8Array>()
-    try {
-      const resolver = new StoredSegmentKeyResolver(wraps, this.options.epochs, this.options.verifier)
-      const objects = objectMap(pack.objects)
-      for (const object of objects.values()) {
-        if (!(await verifyVaultObjectIntegrity(object))) throw new TypeError('vault delivery object integrity is invalid')
-      }
-      const records = []
-      for (const event of pack.events) {
-        if (!(await verifyVaultEvent(event, this.options.verifier))) throw new TypeError('vault delivery event signature is invalid')
-        const expectedObjectRefs = event.kind === 'message.add' ? 2 : 1
-        if (event.objectRefs.length !== expectedObjectRefs) {
-          throw new TypeError(event.kind === 'message.add'
-            ? 'vault delivery message.add must reference metadata and raw RFC 5322 objects'
-            : 'vault delivery mutation event must reference exactly one object')
-        }
-        const object = objects.get(event.objectRefs[0])
-        if (!object) throw new TypeError('vault delivery event references an absent object')
-        if (event.kind === 'message.add' && !objects.has(event.objectRefs[1])) {
-          throw new TypeError('vault delivery message.add references an absent raw RFC 5322 object')
-        }
-        let key = keys.get(object.segmentId)
-        if (!key) {
-          key = await resolver.resolveSegmentKey(pack.identityId, object.segmentId)
-          keys.set(object.segmentId, key)
-        }
-        const plaintext = await decryptVaultObject(key, object)
-        if (event.kind === 'credential.openpgp.set') {
-          assertOpenPgpCredentialRecord(event, object, plaintext)
-        } else {
-          records.push({ event, plaintext })
-        }
-      }
-      const base = await this.options.currentSnapshot()
-      const next = reduceLocalJmapProjection(pack.identityId, base, records)
-      const projection: LocalJmapProjectionV1 = { version: 1, identityId: pack.identityId, ...next }
-      return { projection, jmapState: { state: projection.state }, checkpointId: projection.state }
-    } finally {
-      for (const key of keys.values()) key.fill(0)
-    }
+    const resolver = new StoredSegmentKeyResolver(wraps, this.options.epochs, this.options.verifier)
+    const records = await decryptVaultMutationRecords(pack.identityId, pack.events, pack.objects, resolver, this.options.verifier)
+    const base = await this.options.currentSnapshot()
+    const next = reduceLocalJmapProjection(pack.identityId, base, records)
+    const projection: LocalJmapProjectionV1 = { version: 1, identityId: pack.identityId, ...next }
+    return { projection, jmapState: { state: projection.state }, checkpointId: projection.state }
   }
 }
 
@@ -104,15 +69,6 @@ function validateCurrentWraps(identityId: IdentityId, wraps: SegmentKeyWrapV1[],
       throw new TypeError('vault delivery key wrap is not for the current MLS epoch')
     }
   }
-}
-
-function objectMap(objects: VaultObjectV1[]): Map<string, VaultObjectV1> {
-  const values = new Map<string, VaultObjectV1>()
-  for (const object of objects) {
-    if (values.has(object.objectId)) throw new TypeError('vault delivery pack has duplicate object ID')
-    values.set(object.objectId, object)
-  }
-  return values
 }
 
 function wrapKey(identityId: IdentityId, segmentId: string, epoch: string): string {
