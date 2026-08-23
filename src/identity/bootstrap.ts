@@ -40,10 +40,12 @@ import type { MlsKeyPackageStore } from '../mls/keypackage-store.ts'
 import { createSegmentKeyWrap, segmentKeyWrapSigningBytes, unwrapSegmentKey } from '../vault/crypto.ts'
 import type { RestoreTransferSource, RestoreTransferVerifier } from '../vault/restore-transfer.ts'
 import { buildVaultManifest } from '../vault/manifest.ts'
-import type { VaultProjectionWriter, VaultRecordReader } from '../vault/store.ts'
+import type { VaultObjectReader, VaultProjectionWriter, VaultRecordReader } from '../vault/store.ts'
 import { VaultDeliveryProjector } from '../vault/delivery-projector.ts'
 import { rebuildLocalJmapProjection } from '../vault/projection-rebuild.ts'
+import { VaultObjectBlobReader } from '../vault/blob-reader.ts'
 import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../local-jmap/gateway.ts'
+import type { LocalVaultBlobReader } from '../local-jmap/indexeddb.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import { deliverySeq, mlsEpoch, type DeliverySeq } from '../protocol/ids.ts'
 import { vaultDeliveryPullSigningBytes } from '../protocol/signing.ts'
@@ -629,4 +631,30 @@ export function buildLocalJmapProjectionRebuild(
     await projections.writeProjection(identityId, projection, { state: projection.state })
     return projection
   }
+}
+
+/**
+ * Wires PLAN.md §5.2's "stored key wrap からの SegmentKey resolver /
+ * attachment chunk reader" to this identity's actual self group —
+ * `local-jmap/indexeddb.ts`'s `IndexedDbLocalJmapReadModel` takes exactly
+ * this shape (`LocalVaultBlobReader`) for its own `download`. Reuses the
+ * same current-epoch `StoredSegmentKeyResolver`/`MlsMembershipSegmentKeyWrapVerifier`
+ * pairing every other boundary in this module builds; a blob is just
+ * another vault object, decrypted the same way a mutation's is.
+ */
+export function buildVaultBlobReader(
+  objects: VaultObjectReader,
+  wraps: SegmentKeyWrapReader,
+  selfGroupStore: MlsSelfGroupStateStore,
+  identityId: string,
+): LocalVaultBlobReader {
+  const loadState = async (): Promise<ClientState> => {
+    const stored = await selfGroupStore.load(identityId)
+    if (!stored) throw new Error('buildVaultBlobReader: no self-group state for this identity')
+    return stored.state
+  }
+  const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
+  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
+  const resolver = new StoredSegmentKeyResolver(wraps, epochs, verifier)
+  return new VaultObjectBlobReader(objects, resolver)
 }
