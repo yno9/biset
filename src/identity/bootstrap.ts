@@ -31,7 +31,8 @@ import { CoreMlsDeliveryTransport } from '../mls/core-mls-delivery-transport.ts'
 import { CoreRosterInstallTransport } from '../mls/core-roster-install-transport.ts'
 import { CoreVaultDeliveryTransport } from '../vault/core-delivery-transport.ts'
 import { StoredSegmentKeyResolver, type SegmentKeyResolver } from '../vault/segment-key-resolver.ts'
-import type { SegmentKeyWrapReader } from '../vault/store.ts'
+import { ActiveVaultSegmentManager, type ActiveVaultSegment } from '../vault/active-segment.ts'
+import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter } from '../vault/store.ts'
 import { MlsVaultEpochKeyResolver } from '../mls/vault-epoch.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../mls/segment-key-membership.ts'
 import { StoredMlsSelfGroupProvider, type MlsSelfGroupStateStore } from '../mls/store.ts'
@@ -328,16 +329,21 @@ export interface VaultCryptoBoundary {
    * SegmentKeyWraps this device grants — `createSegmentKeyWrap`
    * (vault/crypto.ts) takes this directly. */
   signer: MlsMembershipSegmentKeyWrapSigner
+  /** `vault-mutation-sink.ts`'s `activeSegment()` option, straight from this
+   * boundary's own epoch/signer wiring — mints a fresh SegmentKey and seals
+   * the old one whenever the self-group epoch has moved on (PLAN.md §4.2). */
+  activeSegment(): Promise<ActiveVaultSegment>
 }
 
 /**
  * Wires PLAN.md §4.2's "actual MLS VEK derivation / membership signer" —
- * the one piece `vault/segment-key-resolver.ts` and `vault/crypto.ts` were
- * built to receive but never got — to this identity's actual self-group
- * state. Local JMAP Gateway / vault mutation code calls this once it has
- * `record`/`selfGroupStore` in hand (the same two `maintainSelfGroup`
- * already needs) to get a `SegmentKeyResolver` for decrypting vault objects
- * and a signer for wrapping new ones.
+ * the one piece `vault/segment-key-resolver.ts`, `vault/crypto.ts`, and
+ * `vault/active-segment.ts` were built to receive but never got — to this
+ * identity's actual self-group state. Local JMAP Gateway / vault mutation
+ * code calls this once it has `record`/`selfGroupStore` in hand (the same
+ * two `maintainSelfGroup` already needs) to get a `SegmentKeyResolver` for
+ * decrypting vault objects, a signer for wrapping new ones, and an
+ * `activeSegment()` for `VaultBackedLocalJmapMutationSink`.
  *
  * Reads the self-group `ClientState` fresh on every resolve/sign/verify
  * call (via `selfGroupStore.load`) rather than once at construction — MLS
@@ -346,7 +352,8 @@ export interface VaultCryptoBoundary {
  * membership, not the snapshot that existed when this was called.
  */
 export function buildVaultCryptoBoundary(
-  wraps: SegmentKeyWrapReader,
+  wraps: SegmentKeyWrapReader & SegmentKeyWrapWriter,
+  segments: ActiveVaultSegmentStore,
   selfGroupStore: MlsSelfGroupStateStore,
   record: IdentityRecord,
 ): VaultCryptoBoundary {
@@ -361,6 +368,7 @@ export function buildVaultCryptoBoundary(
   const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
   const signer = new MlsMembershipSegmentKeyWrapSigner(deviceKid, loadState)
   const resolver = new StoredSegmentKeyResolver(wraps, epochs, signer)
+  const segmentManager = new ActiveVaultSegmentManager({ identityId: record.did, segments, wraps, epochs, signer })
 
-  return { resolver, signer }
+  return { resolver, signer, activeSegment: () => segmentManager.activeSegment() }
 }

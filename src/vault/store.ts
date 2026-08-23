@@ -1,6 +1,6 @@
 import type { IngressAckV1 } from '../protocol/ingress.ts'
 import { equalBytes } from '../protocol/canonical.ts'
-import type { DeliverySeq, DeviceId, IdentityId, VaultEventId, VaultObjectId } from '../protocol/ids.ts'
+import type { DeliverySeq, DeviceId, IdentityId, MlsEpoch, SegmentId, VaultEventId, VaultObjectId } from '../protocol/ids.ts'
 import type { DeliveryPullResult, RestoreOfferV1, RestoreRequestV1, SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 import { assertRestoreOffer, assertRestoreRequest } from '../protocol/validate.ts'
 import type { RestoreTransferChunkCommit, RestoreTransferReceiverStore, RestoreTransferSessionV1 } from './restore-transfer-receiver.ts'
@@ -209,6 +209,37 @@ export interface SegmentKeyWrapWriter {
   writeSegmentKeyWrap(wrap: SegmentKeyWrapV1): Promise<void>
 }
 
+/** One vault segment: the identifier/key pair every object encrypted under
+ * it shares, plus the self-group epoch it was minted for. `sealed` records
+ * whether new objects may still be appended to it — PLAN.md §4.2's "seal
+ * the active segment after an MLS commit" is exactly this record turning
+ * `sealed: true` the moment a newer one becomes current (`sealAndActivateSegment`,
+ * below, is the only way that ever happens). */
+export interface VaultSegmentRecord {
+  identityId: IdentityId
+  segmentId: SegmentId
+  segmentKey: Uint8Array
+  selfGroupId: string
+  epoch: MlsEpoch
+  sealed: boolean
+  createdAt: string
+}
+
+export interface ActiveVaultSegmentStore {
+  /** The current (not sealed) segment for this identity, or undefined if
+   * none has ever been created. At most one segment is ever current per
+   * identity — `sealAndActivateSegment` enforces that by construction. */
+  currentSegment(identityId: IdentityId): Promise<VaultSegmentRecord | undefined>
+  /**
+   * Atomically seals whatever segment is currently active for this
+   * identity (a no-op if there is none) and activates `next` as the new
+   * current one. The ONLY way a segment ever becomes current, and the ONLY
+   * way one ever gets sealed — so "the active segment" and "the most
+   * recently activated one" are always the same segment.
+   */
+  sealAndActivateSegment(next: VaultSegmentRecord): Promise<void>
+}
+
 /** The client retry loop sees only its own encrypted, local append work. */
 export interface VaultDeliveryOutboxReader {
   readDeliveryOutbox(identityId: IdentityId, limit?: number): Promise<VaultDeliveryOutboxRecord[]>
@@ -244,7 +275,7 @@ export interface VaultRestoreOfferOutboxStore {
   clearRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, RecoveryArchiveImportStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, IngressAckOutboxReader, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, RecoveryArchiveImportStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressAckOutboxReader, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -460,6 +491,29 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultObjectRe
     )
     await completed
     return wrap && copyKeyWrap(wrap)
+  }
+
+  async currentSegment(identityId: IdentityId): Promise<VaultSegmentRecord | undefined> {
+    if (!identityId) throw new TypeError('segment identity is required')
+    const transaction = this.database.transaction(STORES.segments, 'readonly')
+    const completed = transactionDone(transaction)
+    const values = await requestValue<VaultSegmentRecord[]>(transaction.objectStore(STORES.segments).getAll())
+    await completed
+    const current = values.find(value => value.identityId === identityId && !value.sealed)
+    return current && copySegmentRecord(current)
+  }
+
+  async sealAndActivateSegment(next: VaultSegmentRecord): Promise<void> {
+    assertSegmentRecord(next)
+    if (next.sealed) throw new TypeError('a segment must be activated as not sealed')
+    const transaction = this.database.transaction(STORES.segments, 'readwrite')
+    const store = transaction.objectStore(STORES.segments)
+    const values = await requestValue<VaultSegmentRecord[]>(store.getAll())
+    for (const value of values) {
+      if (value.identityId === next.identityId && !value.sealed) store.put({ ...copySegmentRecord(value), sealed: true })
+    }
+    store.put(copySegmentRecord(next))
+    await transactionDone(transaction)
   }
 
   async readDeliveryOutbox(identityId: IdentityId, limit = 32): Promise<VaultDeliveryOutboxRecord[]> {
@@ -814,6 +868,17 @@ function assertKeyWrap(value: SegmentKeyWrapV1): void {
   if (value.version !== 1 || !value.identityId || !value.selfGroupId || !value.segmentId || !value.recipientEpoch) {
     throw new TypeError('invalid SegmentKeyWrap')
   }
+}
+
+function assertSegmentRecord(value: VaultSegmentRecord): void {
+  if (!value.identityId || !value.segmentId || !value.selfGroupId || !value.epoch || value.segmentKey.length !== 32) {
+    throw new TypeError('invalid vault segment record')
+  }
+  if (Number.isNaN(Date.parse(value.createdAt))) throw new TypeError('vault segment createdAt must be an ISO date string')
+}
+
+function copySegmentRecord(value: VaultSegmentRecord): VaultSegmentRecord {
+  return { ...value, segmentKey: value.segmentKey.slice() }
 }
 
 function assertRestoreRequestState(value: VaultRestoreRequestStateRecord): void {
