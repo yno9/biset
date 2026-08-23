@@ -9,7 +9,11 @@ import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { buildVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
 import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
-import { confirmCommit, createMlsGroup, epochOf, generateOwnKeyPackage, memberKids, rekey } from '../../src/mls/group.ts'
+import {
+  confirmCommit, createMlsGroup, epochOf, exportSecret, generateOwnKeyPackage, groupInfoForExternalJoin,
+  joinGroupExternally, memberKids, processIncoming, rekey, removeMembers,
+} from '../../src/mls/group.ts'
+import { unwrapSegmentKey } from '../../src/vault/crypto.ts'
 import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { mlsEpoch } from '../../src/protocol/ids.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
@@ -19,6 +23,7 @@ import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
 const deviceKid = `${identityId}#device-a`
+const deviceBKid = `${identityId}#device-b`
 
 function memorySelfGroupStore(): MlsSelfGroupStateStore {
   const rows = new Map<string, LoadedMlsSelfGroup>()
@@ -127,5 +132,55 @@ describe('buildVaultCryptoBoundary', () => {
     // The old segment is now sealed; only the new one is current.
     expect(segments.all().find(s => s.segmentId === first.segmentId)?.sealed).toBe(true)
     expect(segments.all().find(s => s.segmentId === third.segmentId)?.sealed).toBe(false)
+  })
+
+  test('a device removed from the self group cannot decrypt a SegmentKey minted after its removal', async () => {
+    // Device A creates the group; device B external-joins it (both real MLS
+    // operations, no DS involved -- device A applies B's commit directly).
+    const kpA = await generateOwnKeyPackage(deviceKid)
+    let stateA = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kpA)
+    const kpB = await generateOwnKeyPackage(deviceBKid)
+    const joinResult = await joinGroupExternally(await groupInfoForExternalJoin(stateA), kpB)
+    const stateB = joinResult.state
+    stateA = (await processIncoming(stateA, joinResult.commit)).state
+    expect(new Set(memberKids(stateA, identityId))).toEqual(new Set([deviceKid, deviceBKid]))
+
+    const selfGroupStoreA = memorySelfGroupStore()
+    await selfGroupStoreA.save(identityId, selfGroupIdHex(identityId), stateA)
+    const recordA: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const segments = memorySegmentStore()
+    const wraps = memoryWrapStore()
+    const boundaryA = buildVaultCryptoBoundary(wraps, segments, selfGroupStoreA, recordA)
+
+    // A segment minted while B is still a member -- B's state at this point
+    // (post-join, pre-removal) could derive this epoch's VEK too, same as A.
+    const beforeRemoval = await boundaryA.activeSegment()
+
+    // Device A removes device B. Device B never receives or applies this
+    // commit -- its own `stateB` is frozen at the pre-removal epoch, exactly
+    // like a removed device that is simply never told anything again.
+    const removeResult = await removeMembers(stateA, [deviceBKid])
+    confirmCommit(removeResult)
+    stateA = removeResult.state
+    await selfGroupStoreA.save(identityId, selfGroupIdHex(identityId), stateA)
+    expect(memberKids(stateA, identityId)).toEqual([deviceKid])
+
+    // A new segment minted AFTER the removal, under the new (post-removal) epoch.
+    const afterRemoval = await boundaryA.activeSegment()
+    expect(afterRemoval.segmentId).not.toBe(beforeRemoval.segmentId)
+    const wrap = afterRemoval.keyWraps[0]!
+
+    // Device B tries to unwrap it using the ONLY VEK its still-pre-removal
+    // state can produce -- its own (stale) epoch's exporter secret. MLS
+    // forward secrecy means this is not the epoch the wrap was actually
+    // encrypted under, so the AEAD tag must fail to verify.
+    const { deriveVaultEpochKey } = await import('../../src/mls/vault-epoch.ts')
+    const staleEpoch = mlsEpoch(epochOf(stateB))
+    const staleVek = await deriveVaultEpochKey({
+      selfGroupId: selfGroupIdHex(identityId), epoch: staleEpoch,
+      exportSecret: (label, ctx, len) => exportSecret(stateB, label, ctx, len),
+    })
+    const verifierThatTrustsAnyone = { verify: async () => true }
+    await expect(unwrapSegmentKey(staleVek, wrap, verifierThatTrustsAnyone)).rejects.toThrow()
   })
 })
