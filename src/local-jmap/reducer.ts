@@ -56,12 +56,22 @@ export function reduceLocalJmapProjection(
       emails.set(emailId, email)
       continue
     }
+    if (mutation.kind !== 'mailbox.set' && mutation.kind !== 'keyword.set') {
+      // `VaultEventKind` (protocol/vault.ts) reserves several kinds
+      // (message.edit/reaction.set/read.set/thread.set/settings.set/...)
+      // no write path produces yet and this reducer has no projection rule
+      // for. Silently dropping a kind it doesn't recognize would be data
+      // loss a device could never detect (sync "succeeds", the mutation is
+      // just gone) -- fail closed instead, the same way message.add's own
+      // conflict check does.
+      throw new TypeError(`vault mutation kind '${mutation.kind}' has no Local JMAP projection rule`)
+    }
     if (tombstones.has(emailId) || !emails.has(emailId)) continue
     const email = emails.get(emailId)!
     if (mutation.kind === 'mailbox.set') {
       const payload = assertPayloadEmailId(mutation.payload, emailId)
       email.mailboxIds = truthyMap(payload.mailboxIds, 'mailboxIds')
-    } else if (mutation.kind === 'keyword.set') {
+    } else {
       const payload = assertPayloadEmailId(mutation.payload, emailId)
       email.keywords = truthyMap(payload.keywords, 'keywords')
     }

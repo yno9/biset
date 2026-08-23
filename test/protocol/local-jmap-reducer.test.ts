@@ -146,6 +146,21 @@ describe('Local JMAP projection reducer', () => {
     expect(afterSecondChunk.state).toBe(oneShot.state)
   })
 
+  test('fails closed on a mutation kind with no projection rule instead of silently dropping it', () => {
+    // VaultEventKind (protocol/vault.ts) reserves kinds (reaction.set here)
+    // no write path produces yet and this reducer has no rule for -- a
+    // future/foreign device emitting one must not have it silently vanish
+    // from sync while everything else appears to succeed.
+    const base = {
+      mailboxes: [],
+      emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }],
+    }
+    expect(() => reduceLocalJmapProjection('did:web:alice.example', base, [{
+      event: event({ kind: 'reaction.set', targetIds: ['email-1'], objectRefs: ['object-a'] }),
+      plaintext: plaintext('reaction.set', ['email-1'], { emailId: 'email-1', emoji: '👍' }),
+    }])).toThrow('has no Local JMAP projection rule')
+  })
+
   test('refuses message metadata which points at a different raw RFC 5322 object', () => {
     const base = { mailboxes: [], emails: [] }
     expect(() => reduceLocalJmapProjection('did:web:alice.example', base, [{
