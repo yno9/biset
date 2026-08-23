@@ -1,20 +1,34 @@
 import {
+  clearMlsPendingRemovals,
   createMlsGroup,
+  dropMlsKeyPackages,
   publishMlsKeyPackages,
+  pullMlsDeliveries,
   pullMlsGroupInfo,
+  pullMlsGroupsFor,
+  pullMlsKeyPackageCount,
   submitMlsCommit,
   submitMlsExternalCommit,
+  submitMlsSelfRemove,
   takeMlsKeyPackages,
   type MlsDsSignatureVerifier,
 } from './mls-delivery-authorizer.ts'
 import {
   decodeMlsCommitSubmissionWire,
+  decodeMlsDeliveriesPullWire,
   decodeMlsExternalCommitSubmissionWire,
   decodeMlsGroupCreationWire,
   decodeMlsGroupInfoPullWire,
+  decodeMlsGroupsForPullWire,
+  decodeMlsKeyPackageCountPullWire,
+  decodeMlsKeyPackageDropWire,
   decodeMlsKeyPackagePublishWire,
   decodeMlsKeyPackageTakeWire,
+  decodeMlsPendingRemovalsClearWire,
+  decodeMlsSelfRemoveSubmissionWire,
+  encodeMlsDeliveriesWire,
   encodeMlsGroupInfoAnswerWire,
+  encodeMlsGroupsForWire,
   encodeMlsKeyPackagesTakenWire,
   MlsDsWireError,
 } from './mls-delivery-wire.ts'
@@ -72,6 +86,41 @@ export function createMlsDeliveryHttpHandler(
         const taken = await takeMlsKeyPackages(ds, verifier, take, kid => isLiveDevice(take.identityId, kid))
         if (taken === undefined) return text(403, 'rejected')
         return json(200, encodeMlsKeyPackagesTakenWire(taken))
+      }
+
+      if (path === '/v1/mls/self-remove/submit') {
+        const result = await submitMlsSelfRemove(ds, verifier, decodeMlsSelfRemoveSubmissionWire(body))
+        return commitResponse(result)
+      }
+
+      if (path === '/v1/mls/pending-removals/clear') {
+        const ok = await clearMlsPendingRemovals(ds, verifier, decodeMlsPendingRemovalsClearWire(body))
+        if (!ok) return text(403, 'rejected')
+        return json(200, '{}')
+      }
+
+      if (path === '/v1/mls/deliveries/pull') {
+        const entries = await pullMlsDeliveries(ds, verifier, decodeMlsDeliveriesPullWire(body))
+        if (entries === undefined) return text(403, 'rejected')
+        return json(200, encodeMlsDeliveriesWire(entries))
+      }
+
+      if (path === '/v1/mls/keypackage/drop') {
+        const ok = await dropMlsKeyPackages(ds, verifier, decodeMlsKeyPackageDropWire(body))
+        if (!ok) return text(403, 'rejected')
+        return json(200, '{}')
+      }
+
+      if (path === '/v1/mls/keypackage/count') {
+        const count = await pullMlsKeyPackageCount(ds, verifier, decodeMlsKeyPackageCountPullWire(body))
+        if (count === undefined) return text(403, 'rejected')
+        return json(200, JSON.stringify({ count }))
+      }
+
+      if (path === '/v1/mls/groups-for') {
+        const groups = await pullMlsGroupsFor(ds, verifier, decodeMlsGroupsForPullWire(body))
+        if (groups === undefined) return text(403, 'rejected')
+        return json(200, encodeMlsGroupsForWire(groups))
       }
 
       return text(404, 'Not found')

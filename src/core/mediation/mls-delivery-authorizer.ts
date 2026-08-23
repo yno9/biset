@@ -13,21 +13,33 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import type { DeviceSigningPublicKeyResolver } from '../identity/ed25519-device-control-verifier.ts'
 import {
   mlsCommitSubmissionSigningBytes,
+  mlsDeliveriesPullSigningBytes,
   mlsExternalCommitSubmissionSigningBytes,
   mlsGroupCreationSigningBytes,
   mlsGroupInfoPullSigningBytes,
+  mlsGroupsForPullSigningBytes,
+  mlsKeyPackageCountPullSigningBytes,
+  mlsKeyPackageDropSigningBytes,
   mlsKeyPackagePublishSigningBytes,
   mlsKeyPackageTakeSigningBytes,
+  mlsPendingRemovalsClearSigningBytes,
+  mlsSelfRemoveSubmissionSigningBytes,
 } from '../../protocol/signing.ts'
 import type {
   MlsCommitSubmissionV1,
+  MlsDeliveriesPullV1,
   MlsExternalCommitSubmissionV1,
   MlsGroupCreationV1,
   MlsGroupInfoPullV1,
+  MlsGroupsForPullV1,
+  MlsKeyPackageCountPullV1,
+  MlsKeyPackageDropV1,
   MlsKeyPackagePublishV1,
   MlsKeyPackageTakeV1,
+  MlsPendingRemovalsClearV1,
+  MlsSelfRemoveSubmissionV1,
 } from '../../protocol/mls-ds.ts'
-import type { MlsCommitResult, MlsGroupInfoAnswer, SqliteMlsDeliveryService } from './mls-delivery-store.ts'
+import type { MlsCommitResult, MlsGroupInfoAnswer, MlsLogEntry, SqliteMlsDeliveryService } from './mls-delivery-store.ts'
 
 export interface MlsDsSignatureVerifier {
   verifyGroupCreation(value: MlsGroupCreationV1): Promise<boolean>
@@ -36,6 +48,12 @@ export interface MlsDsSignatureVerifier {
   verifyGroupInfoPull(value: MlsGroupInfoPullV1): Promise<boolean>
   verifyKeyPackagePublish(value: MlsKeyPackagePublishV1): Promise<boolean>
   verifyKeyPackageTake(value: MlsKeyPackageTakeV1): Promise<boolean>
+  verifySelfRemoveSubmission(value: MlsSelfRemoveSubmissionV1): Promise<boolean>
+  verifyPendingRemovalsClear(value: MlsPendingRemovalsClearV1): Promise<boolean>
+  verifyDeliveriesPull(value: MlsDeliveriesPullV1): Promise<boolean>
+  verifyKeyPackageDrop(value: MlsKeyPackageDropV1): Promise<boolean>
+  verifyKeyPackageCountPull(value: MlsKeyPackageCountPullV1): Promise<boolean>
+  verifyGroupsForPull(value: MlsGroupsForPullV1): Promise<boolean>
 }
 
 export class Ed25519MlsDsSignatureVerifier implements MlsDsSignatureVerifier {
@@ -58,6 +76,24 @@ export class Ed25519MlsDsSignatureVerifier implements MlsDsSignatureVerifier {
   }
   verifyKeyPackageTake(value: MlsKeyPackageTakeV1): Promise<boolean> {
     return this.verify(value.requesterKid, mlsKeyPackageTakeSigningBytes(value), value.signature)
+  }
+  verifySelfRemoveSubmission(value: MlsSelfRemoveSubmissionV1): Promise<boolean> {
+    return this.verify(value.senderKid, mlsSelfRemoveSubmissionSigningBytes(value), value.signature)
+  }
+  verifyPendingRemovalsClear(value: MlsPendingRemovalsClearV1): Promise<boolean> {
+    return this.verify(value.requesterKid, mlsPendingRemovalsClearSigningBytes(value), value.signature)
+  }
+  verifyDeliveriesPull(value: MlsDeliveriesPullV1): Promise<boolean> {
+    return this.verify(value.requesterKid, mlsDeliveriesPullSigningBytes(value), value.signature)
+  }
+  verifyKeyPackageDrop(value: MlsKeyPackageDropV1): Promise<boolean> {
+    return this.verify(value.kid, mlsKeyPackageDropSigningBytes(value), value.signature)
+  }
+  verifyKeyPackageCountPull(value: MlsKeyPackageCountPullV1): Promise<boolean> {
+    return this.verify(value.kid, mlsKeyPackageCountPullSigningBytes(value), value.signature)
+  }
+  verifyGroupsForPull(value: MlsGroupsForPullV1): Promise<boolean> {
+    return this.verify(value.requesterKid, mlsGroupsForPullSigningBytes(value), value.signature)
   }
 
   private async verify(kid: string, bytes: Uint8Array, signature: Uint8Array): Promise<boolean> {
@@ -107,4 +143,38 @@ export async function takeMlsKeyPackages(
 ): Promise<Array<{ kid: string; keyPackage: Uint8Array }> | undefined> {
   if (!(await verifier.verifyKeyPackageTake(value))) return undefined
   return ds.takeKeyPackages(value.identityId, isLive)
+}
+
+export async function submitMlsSelfRemove(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsSelfRemoveSubmissionV1): Promise<MlsCommitResult> {
+  if (!(await verifier.verifySelfRemoveSubmission(value))) return { ok: false, reason: 'unauthorized', epoch: '0' }
+  return ds.submitSelfRemove(value.groupId, value.senderKid, value.epoch, value.proposal, value.removedKid)
+}
+
+/** Returns `false` when the request is unauthorized OR the DS silently no-oped it
+ * (the requester was not the group's last committer — `SqliteMlsDeliveryService`'s own rule). */
+export async function clearMlsPendingRemovals(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsPendingRemovalsClearV1): Promise<boolean> {
+  if (!(await verifier.verifyPendingRemovalsClear(value))) return false
+  ds.clearPendingRemovals(value.groupId, value.requesterKid, value.clearedKids)
+  return true
+}
+
+export async function pullMlsDeliveries(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsDeliveriesPullV1): Promise<MlsLogEntry[] | undefined> {
+  if (!(await verifier.verifyDeliveriesPull(value))) return undefined
+  return ds.deliveriesSince(value.groupId, value.requesterKid, value.afterSeq)
+}
+
+export async function dropMlsKeyPackages(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsKeyPackageDropV1): Promise<boolean> {
+  if (!(await verifier.verifyKeyPackageDrop(value))) return false
+  ds.dropKeyPackages(value.kid)
+  return true
+}
+
+export async function pullMlsKeyPackageCount(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsKeyPackageCountPullV1): Promise<number | undefined> {
+  if (!(await verifier.verifyKeyPackageCountPull(value))) return undefined
+  return ds.keyPackageCount(value.kid)
+}
+
+export async function pullMlsGroupsFor(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsGroupsForPullV1): Promise<Array<{ groupId: string; epoch: bigint }> | undefined> {
+  if (!(await verifier.verifyGroupsForPull(value))) return undefined
+  return ds.groupsFor(value.requesterKid)
 }

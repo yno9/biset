@@ -5,8 +5,11 @@ import { SqliteMlsDeliveryService } from '../../src/core/mediation/mls-delivery-
 import { Ed25519MlsDsSignatureVerifier } from '../../src/core/mediation/mls-delivery-authorizer.ts'
 import { createMlsDeliveryHttpHandler } from '../../src/core/mediation/mls-delivery-http.ts'
 import { bytesToBase64url } from '../../src/protocol/canonical.ts'
-import { mlsCommitSubmissionSigningBytes, mlsGroupCreationSigningBytes, mlsKeyPackagePublishSigningBytes, mlsKeyPackageTakeSigningBytes } from '../../src/protocol/signing.ts'
-import type { MlsCommitSubmissionV1, MlsGroupCreationV1, MlsKeyPackagePublishV1, MlsKeyPackageTakeV1 } from '../../src/protocol/mls-ds.ts'
+import {
+  mlsCommitSubmissionSigningBytes, mlsDeliveriesPullSigningBytes, mlsGroupCreationSigningBytes,
+  mlsKeyPackagePublishSigningBytes, mlsKeyPackageTakeSigningBytes, mlsSelfRemoveSubmissionSigningBytes,
+} from '../../src/protocol/signing.ts'
+import type { MlsCommitSubmissionV1, MlsDeliveriesPullV1, MlsGroupCreationV1, MlsKeyPackagePublishV1, MlsKeyPackageTakeV1, MlsSelfRemoveSubmissionV1 } from '../../src/protocol/mls-ds.ts'
 
 const path = `/tmp/biset-mls-ds-http-${process.pid}-${Date.now()}.sqlite`
 const identityId = 'did:web:alice.example'
@@ -94,6 +97,29 @@ describe('MLS DS HTTP endpoint', () => {
     const { ds, handle } = handler()
     expect((await handle(new Request('https://core.example/v1/mls/nope', { method: 'POST', body: '{}' }))).status).toBe(404)
     expect((await handle(new Request('https://core.example/v1/mls/group/create', { method: 'GET' }))).status).toBe(405)
+    ds.close()
+  })
+
+  test('self-remove/submit then deliveries/pull round-trip through the wire format', async () => {
+    const { ds, handle } = handler()
+    ds.createGroup('group-1', identityId, deviceAKid, [])
+    ds.submitCommit('group-1', deviceAKid, '0', new Uint8Array([1]), [deviceAKid])
+
+    const selfRemove: Omit<MlsSelfRemoveSubmissionV1, 'signature'> = { version: 1, groupId: 'group-1', identityId, senderKid: deviceAKid, epoch: '1', proposal: new Uint8Array([7]), removedKid: deviceAKid, submittedAt: '2026-08-23T00:00:00.000Z' }
+    const selfRemoveResponse = await handle(new Request('https://core.example/v1/mls/self-remove/submit', {
+      method: 'POST',
+      body: body({ ...selfRemove, proposal: bytesToBase64url(selfRemove.proposal), signature: bytesToBase64url(ed25519.sign(mlsSelfRemoveSubmissionSigningBytes(selfRemove), deviceAKey)) }),
+    }))
+    expect(selfRemoveResponse.status).toBe(201)
+
+    const pull: Omit<MlsDeliveriesPullV1, 'signature'> = { version: 1, groupId: 'group-1', identityId, requesterKid: deviceAKid, afterSeq: 0, requestedAt: '2026-08-23T00:01:00.000Z' }
+    const pullResponse = await handle(new Request('https://core.example/v1/mls/deliveries/pull', {
+      method: 'POST',
+      body: body({ ...pull, signature: bytesToBase64url(ed25519.sign(mlsDeliveriesPullSigningBytes(pull), deviceAKey)) }),
+    }))
+    expect(pullResponse.status).toBe(200)
+    const parsed = await pullResponse.json() as { entries: Array<{ seq: number; kind: string }> }
+    expect(parsed.entries.map(e => ({ seq: e.seq, kind: e.kind }))).toEqual([{ seq: 1, kind: 'commit' }, { seq: 2, kind: 'proposal' }])
     ds.close()
   })
 })

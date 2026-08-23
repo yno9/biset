@@ -17,7 +17,7 @@
 - [-] SQLite roster + SQLite delivery / restore-control / ingress、roster authorizer、Ed25519 verifier、narrow HTTP の deployment composition を実装した。ingress の endpoint API は signed pull / durable ACK のみで、external offer は adapter 内部に限定する。actual MLS accepted-commit source / DID resolver cache policy は未実装。
 - [ ] Local JMAP Gateway、MLS VEK 導出、DIDComm/Mail adapter は未実装である。SegmentKey の object encryption と、VEK を入力に取る wrap primitive は実装済みである。
 
-**次に着手する工程:** §4.1 は DID resolver・MLS 暗号処理系の移植・roster install 認可・roster producer・`MlsSelfGroupProvider`・AS・self-group DS 通信（commit ordering / GroupInfo / KeyPackage directory、`src.bak/anchor/mediator/mls-ds.ts` からの移植）まで実装した。残るのは (1) DS 通信の残り 6 操作（self-remove / pending-removals クリア / deliveries pull / KeyPackage drop・count / groupsFor）の認可ラッパーと HTTP、(2) endpoint 側で `group.ts` の commit 生成と DS narrow HTTP API を繋ぐ transport、(3) endpoint 初期化コード自体（`setMlsAuthService` 等の実配線先）。§3.3 の ingress/vault 接続とは独立して進められる。ingress は generic public HTTP API にせず、first-party adapter の内部 boundary に限定する方針は維持する。
+**次に着手する工程:** §4.1 は DID resolver・MLS 暗号処理系の移植・roster install 認可・roster producer・`MlsSelfGroupProvider`・AS・self-group DS 通信（12 操作すべて、`src.bak/anchor/mediator/mls-ds.ts` からの移植）まで実装した。残るのは (1) endpoint（client）側で `group.ts` の commit 生成と DS narrow HTTP API を繋ぐ transport、(2) endpoint 初期化コード自体（`setMlsAuthService` の実配線、self-group の起動・join フロー）、(3) `submitApplication` を移植するかどうかの要否判断。§3.3 の ingress/vault 接続とは独立して進められる。ingress は generic public HTTP API にせず、first-party adapter の内部 boundary に限定する方針は維持する。
 
 ## 1. 作業上の不変条件
 
@@ -153,10 +153,10 @@
 - [x] `SqliteMlsDeliveryService`（`src/core/mediation/mls-delivery-store.ts`）: `createGroup`、`submitCommit`（epoch 一致 + tie-break + Welcome 同梱）、`groupInfoFor`、`submitExternalCommit`（外部 join、GroupInfo 必須）、`submitSelfRemove`/`clearPendingRemovals`、`since`/`deliveriesSince`（ever-member 認可、bounded pull）、KeyPackage directory（`publishKeyPackages`/`takeKeyPackages`/`dropKeyPackages`/`keyPackageCount`、single-use 消費）を SQLite 永続化で実装。`test/protocol/mls-delivery-store.test.ts` で旧実装の意味論（tie-break、ever-member pull、single-use consumption、restart 後の永続化）を検証。
 - [x] `SqliteMlsDeliveryService` 自身の `roster`/`everMembers` は `TrustedDeviceRoster` とは意図的に別管理（DS 内部の未検証な作業 roster、commit の sender 自己申告に基づく — commit を受理した時点ではまだ producer が `RosterInstallV1` を作っていないため、検証済み roster を先に参照できない）。
 - [x] 署名検証（`src/core/mediation/mls-delivery-authorizer.ts`、`Ed25519MlsDsSignatureVerifier`）: 各 control message を **送信者自身の device key**（`DeviceSigningPublicKeyResolver` で DID 解決、`TrustedDeviceRoster` は経由しない）で検証する。AS（`webvh-authentication-service.ts`）と同じ「credential kid を解決して署名確認」という形を、MLS credential 自体ではなく transport 層の control message に適用したもの。`createMlsGroup`/`submitMlsCommit`/`submitMlsExternalCommit`/`pullMlsGroupInfo`/`publishMlsKeyPackages`/`takeMlsKeyPackages` の 6 操作を実装（`submitSelfRemove`/`clearPendingRemovals`/`deliveriesSince`/`dropKeyPackages`/`keyPackageCount`/`groupsFor` はストア側に実装済みだが認可ラッパーは未実装、後続タスク）。
-- [x] protocol 型（`src/protocol/mls-ds.ts`）と signing bytes（`protocol/signing.ts`）、narrow HTTP エンドポイント（`src/core/mediation/mls-delivery-http.ts`、`/v1/mls/group/create` `/v1/mls/commit/submit` `/v1/mls/commit/external` `/v1/mls/group-info/pull` `/v1/mls/keypackage/publish` `/v1/mls/keypackage/take`）を実装し `core/app.ts`・`core/deployment.ts` に配線した。`test/protocol/mls-delivery-authorizer.test.ts`・`test/protocol/mls-delivery-http.test.ts` で偽造署名の拒否と wire round-trip を検証。
-- [ ] 残りの 6 操作（self-remove、pending-removals クリア、deliveries pull、KeyPackage drop/count、groupsFor）の認可ラッパー + HTTP エンドポイント。
+- [x] protocol 型（`src/protocol/mls-ds.ts`）と signing bytes（`protocol/signing.ts`）、narrow HTTP エンドポイント（`src/core/mediation/mls-delivery-http.ts`）を実装し `core/app.ts`・`core/deployment.ts` に配線した。`test/protocol/mls-delivery-authorizer.test.ts`・`test/protocol/mls-delivery-http.test.ts` で偽造署名の拒否と wire round-trip を検証。12 操作すべて（`/v1/mls/group/create` `/v1/mls/commit/submit` `/v1/mls/commit/external` `/v1/mls/group-info/pull` `/v1/mls/keypackage/publish` `/v1/mls/keypackage/take` `/v1/mls/self-remove/submit` `/v1/mls/pending-removals/clear` `/v1/mls/deliveries/pull` `/v1/mls/keypackage/drop` `/v1/mls/keypackage/count` `/v1/mls/groups-for`）に署名認可を実装済み。
 - [ ] `submitApplication`（アプリケーションメッセージのルーティング）は移植していない。self-group では vault delivery（`VaultDeliveryStore`）が同等の役割を担うため、MLS application message 経由のルーティングが実際に必要か要検討。
 - [ ] client（endpoint）側で `group.ts` の commit 生成 API と、ここで実装した DS narrow HTTP API を実際に繋ぐ transport（`vault/core-ingress-transport.ts` 等と同じパターンの `CoreMlsDeliveryTransport` 相当）は未実装。
+- [ ] endpoint 初期化コード自体（`setMlsAuthService` の実配線、self-group の起動・join フロー）は未実装。
 
 ### 4.2 SegmentKey lifecycle
 
@@ -319,6 +319,7 @@
 | 2026-08-23 | 作業中 | accepted MLS commit → `RosterInstallV1` producer と narrow HTTP エンドポイント `/v1/roster/install` を追加し、実 MLS group を使う end-to-end test で検証 |
 | 2026-08-23 | 作業中 | did:webvh ベースの MLS Authentication Service を追加。leaf の実際の signature key と verificationMethod の一致を検証（fail-closed）。custom credential type は vendor 側デコード未実装のため使わず、既存 basic credential の wire 形式のまま |
 | 2026-08-23 | 作業中 | `ClientState` を保持する `MlsSelfGroupStateStore`（`vault/store.ts` とは別 IndexedDB）と、それを使う具象 `MlsSelfGroupProvider` を追加。実 MLS group の genesis/rekey を通した VEK 導出まで検証 |
-| 2026-08-23 | 作業中 | `src.bak/anchor/mediator/mls-ds.ts`（RFC 9750 準拠の既存 DS 実装）を self-group 専用（device kid 単位）に調整して SQLite へ移植。署名認可・narrow HTTP エンドポイントを 6 操作分追加 |
+| 2026-08-23 | `c535a3e` | `src.bak/anchor/mediator/mls-ds.ts`（RFC 9750 準拠の既存 DS 実装）を self-group 専用（device kid 単位）に調整して SQLite へ移植。署名認可・narrow HTTP エンドポイントを 6 操作分追加 |
+| 2026-08-23 | 作業中 | MLS DS の残り 6 操作（self-remove、pending-removals クリア、deliveries pull、KeyPackage drop/count、groupsFor）に署名認可と HTTP エンドポイントを追加。12 操作すべてが揃った |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。

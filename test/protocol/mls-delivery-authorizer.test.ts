@@ -3,14 +3,21 @@ import { rmSync } from 'node:fs'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { SqliteMlsDeliveryService } from '../../src/core/mediation/mls-delivery-store.ts'
 import {
-  createMlsGroup, Ed25519MlsDsSignatureVerifier, publishMlsKeyPackages, pullMlsGroupInfo,
-  submitMlsCommit, submitMlsExternalCommit, takeMlsKeyPackages,
+  clearMlsPendingRemovals, createMlsGroup, dropMlsKeyPackages, Ed25519MlsDsSignatureVerifier,
+  publishMlsKeyPackages, pullMlsDeliveries, pullMlsGroupInfo, pullMlsGroupsFor, pullMlsKeyPackageCount,
+  submitMlsCommit, submitMlsExternalCommit, submitMlsSelfRemove, takeMlsKeyPackages,
 } from '../../src/core/mediation/mls-delivery-authorizer.ts'
 import {
-  mlsCommitSubmissionSigningBytes, mlsExternalCommitSubmissionSigningBytes, mlsGroupCreationSigningBytes,
-  mlsGroupInfoPullSigningBytes, mlsKeyPackagePublishSigningBytes, mlsKeyPackageTakeSigningBytes,
+  mlsCommitSubmissionSigningBytes, mlsDeliveriesPullSigningBytes, mlsExternalCommitSubmissionSigningBytes,
+  mlsGroupCreationSigningBytes, mlsGroupInfoPullSigningBytes, mlsGroupsForPullSigningBytes,
+  mlsKeyPackageCountPullSigningBytes, mlsKeyPackageDropSigningBytes, mlsKeyPackagePublishSigningBytes,
+  mlsKeyPackageTakeSigningBytes, mlsPendingRemovalsClearSigningBytes, mlsSelfRemoveSubmissionSigningBytes,
 } from '../../src/protocol/signing.ts'
-import type { MlsCommitSubmissionV1, MlsExternalCommitSubmissionV1, MlsGroupCreationV1, MlsGroupInfoPullV1, MlsKeyPackagePublishV1, MlsKeyPackageTakeV1 } from '../../src/protocol/mls-ds.ts'
+import type {
+  MlsCommitSubmissionV1, MlsDeliveriesPullV1, MlsExternalCommitSubmissionV1, MlsGroupCreationV1, MlsGroupInfoPullV1,
+  MlsGroupsForPullV1, MlsKeyPackageCountPullV1, MlsKeyPackageDropV1, MlsKeyPackagePublishV1, MlsKeyPackageTakeV1,
+  MlsPendingRemovalsClearV1, MlsSelfRemoveSubmissionV1,
+} from '../../src/protocol/mls-ds.ts'
 
 const path = `/tmp/biset-mls-ds-auth-${process.pid}-${Date.now()}.sqlite`
 const identityId = 'did:web:alice.example'
@@ -102,6 +109,81 @@ describe('MLS DS authorizer (signature verification over the sender\'s own devic
 
     const takeValid = { ...takeUnsigned, signature: ed25519.sign(mlsKeyPackageTakeSigningBytes(takeUnsigned), deviceAKey) }
     expect(await takeMlsKeyPackages(ds, verifier(), takeValid, async () => true)).toEqual([{ kid: deviceAKid, keyPackage: new Uint8Array([1]) }])
+    ds.close()
+  })
+
+  test('submitMlsSelfRemove rejects a forged submission, accepts a valid one', async () => {
+    const ds = open()
+    ds.createGroup(groupId, identityId, deviceAKid, [])
+    const unsigned: Omit<MlsSelfRemoveSubmissionV1, 'signature'> = { version: 1, groupId, identityId, senderKid: deviceAKid, epoch: '0', proposal: new Uint8Array([1]), removedKid: deviceAKid, submittedAt: '2026-08-23T00:00:00.000Z' }
+    const forged = { ...unsigned, signature: ed25519.sign(mlsSelfRemoveSubmissionSigningBytes(unsigned), strangerKey) }
+    expect(await submitMlsSelfRemove(ds, verifier(), forged)).toEqual({ ok: false, reason: 'unauthorized', epoch: '0' })
+
+    const valid = { ...unsigned, signature: ed25519.sign(mlsSelfRemoveSubmissionSigningBytes(unsigned), deviceAKey) }
+    expect((await submitMlsSelfRemove(ds, verifier(), valid)).ok).toBe(true)
+    expect(ds.groupInfoFor(groupId, deviceAKid)?.pendingRemovals).toEqual([deviceAKid])
+    ds.close()
+  })
+
+  test('clearMlsPendingRemovals requires a signature, but a well-authorized non-committer is a silent DS no-op', async () => {
+    const ds = open()
+    ds.createGroup(groupId, identityId, deviceAKid, [])
+    ds.submitSelfRemove(groupId, deviceAKid, '0', new Uint8Array([1]), deviceAKid)
+    const unsigned: Omit<MlsPendingRemovalsClearV1, 'signature'> = { version: 1, groupId, identityId, requesterKid: deviceAKid, clearedKids: [deviceAKid], clearedAt: '2026-08-23T00:00:00.000Z' }
+    const forged = { ...unsigned, signature: ed25519.sign(mlsPendingRemovalsClearSigningBytes(unsigned), strangerKey) }
+    expect(await clearMlsPendingRemovals(ds, verifier(), forged)).toBe(false)
+    expect(ds.groupInfoFor(groupId, deviceAKid)?.pendingRemovals).toEqual([deviceAKid])
+
+    // Authorized (device-a's own signature) but device-a never committed, so the DS quietly no-ops.
+    const valid = { ...unsigned, signature: ed25519.sign(mlsPendingRemovalsClearSigningBytes(unsigned), deviceAKey) }
+    expect(await clearMlsPendingRemovals(ds, verifier(), valid)).toBe(true)
+    expect(ds.groupInfoFor(groupId, deviceAKid)?.pendingRemovals).toEqual([deviceAKid])
+    ds.close()
+  })
+
+  test('pullMlsDeliveries requires a signature and gates on ever-membership', async () => {
+    const ds = open()
+    ds.createGroup(groupId, identityId, deviceAKid, [])
+    ds.submitCommit(groupId, deviceAKid, '0', new Uint8Array([1]), [deviceAKid])
+    const unsigned: Omit<MlsDeliveriesPullV1, 'signature'> = { version: 1, groupId, identityId, requesterKid: deviceAKid, afterSeq: 0, requestedAt: '2026-08-23T00:00:00.000Z' }
+    const forged = { ...unsigned, signature: ed25519.sign(mlsDeliveriesPullSigningBytes(unsigned), strangerKey) }
+    expect(await pullMlsDeliveries(ds, verifier(), forged)).toBeUndefined()
+
+    const valid = { ...unsigned, signature: ed25519.sign(mlsDeliveriesPullSigningBytes(unsigned), deviceAKey) }
+    expect((await pullMlsDeliveries(ds, verifier(), valid))?.map(e => e.seq)).toEqual([1])
+    ds.close()
+  })
+
+  test('dropMlsKeyPackages and pullMlsKeyPackageCount both require the sender\'s own signature', async () => {
+    const ds = open()
+    ds.publishKeyPackages(deviceAKid, identityId, [new Uint8Array([1])])
+
+    const countUnsigned: Omit<MlsKeyPackageCountPullV1, 'signature'> = { version: 1, identityId, kid: deviceAKid, requestedAt: '2026-08-23T00:00:00.000Z' }
+    const countForged = { ...countUnsigned, signature: ed25519.sign(mlsKeyPackageCountPullSigningBytes(countUnsigned), strangerKey) }
+    expect(await pullMlsKeyPackageCount(ds, verifier(), countForged)).toBeUndefined()
+    const countValid = { ...countUnsigned, signature: ed25519.sign(mlsKeyPackageCountPullSigningBytes(countUnsigned), deviceAKey) }
+    expect(await pullMlsKeyPackageCount(ds, verifier(), countValid)).toBe(1)
+
+    const dropUnsigned: Omit<MlsKeyPackageDropV1, 'signature'> = { version: 1, identityId, kid: deviceAKid, droppedAt: '2026-08-23T00:00:00.000Z' }
+    const dropForged = { ...dropUnsigned, signature: ed25519.sign(mlsKeyPackageDropSigningBytes(dropUnsigned), strangerKey) }
+    expect(await dropMlsKeyPackages(ds, verifier(), dropForged)).toBe(false)
+    expect(ds.keyPackageCount(deviceAKid)).toBe(1)
+
+    const dropValid = { ...dropUnsigned, signature: ed25519.sign(mlsKeyPackageDropSigningBytes(dropUnsigned), deviceAKey) }
+    expect(await dropMlsKeyPackages(ds, verifier(), dropValid)).toBe(true)
+    expect(ds.keyPackageCount(deviceAKid)).toBe(0)
+    ds.close()
+  })
+
+  test('pullMlsGroupsFor requires a signature and answers with every group the requester has been in', async () => {
+    const ds = open()
+    ds.createGroup(groupId, identityId, deviceAKid, [])
+    const unsigned: Omit<MlsGroupsForPullV1, 'signature'> = { version: 1, identityId, requesterKid: deviceAKid, requestedAt: '2026-08-23T00:00:00.000Z' }
+    const forged = { ...unsigned, signature: ed25519.sign(mlsGroupsForPullSigningBytes(unsigned), strangerKey) }
+    expect(await pullMlsGroupsFor(ds, verifier(), forged)).toBeUndefined()
+
+    const valid = { ...unsigned, signature: ed25519.sign(mlsGroupsForPullSigningBytes(unsigned), deviceAKey) }
+    expect(await pullMlsGroupsFor(ds, verifier(), valid)).toEqual([{ groupId, epoch: 0n }])
     ds.close()
   })
 })

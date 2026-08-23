@@ -73,3 +73,61 @@ export interface MlsKeyPackageTakeV1 {
   requestedAt: string
   signature: Uint8Array
 }
+
+export interface MlsSelfRemoveSubmissionV1 {
+  version: 1
+  groupId: string
+  identityId: IdentityId
+  senderKid: DeviceId
+  epoch: string
+  proposal: Uint8Array
+  /** The device kid declaring its own removal — normally `senderKid` itself. */
+  removedKid: DeviceId
+  submittedAt: string
+  signature: Uint8Array
+}
+
+export interface MlsPendingRemovalsClearV1 {
+  version: 1
+  groupId: string
+  identityId: IdentityId
+  /** Must be the group's last accepted commit's sender — the DS enforces this itself. */
+  requesterKid: DeviceId
+  clearedKids: DeviceId[]
+  clearedAt: string
+  signature: Uint8Array
+}
+
+export interface MlsDeliveriesPullV1 {
+  version: 1
+  groupId: string
+  identityId: IdentityId
+  requesterKid: DeviceId
+  afterSeq: number
+  requestedAt: string
+  signature: Uint8Array
+}
+
+export interface MlsKeyPackageDropV1 {
+  version: 1
+  identityId: IdentityId
+  kid: DeviceId
+  droppedAt: string
+  signature: Uint8Array
+}
+
+export interface MlsKeyPackageCountPullV1 {
+  version: 1
+  identityId: IdentityId
+  kid: DeviceId
+  requestedAt: string
+  signature: Uint8Array
+}
+
+export interface MlsGroupsForPullV1 {
+  version: 1
+  identityId: IdentityId
+  requesterKid: DeviceId
+  requestedAt: string
+  signature: Uint8Array
+}

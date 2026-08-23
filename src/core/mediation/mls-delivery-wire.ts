@@ -3,13 +3,19 @@
 import { base64urlToBytes, bytesToBase64url } from '../../protocol/canonical.ts'
 import type {
   MlsCommitSubmissionV1,
+  MlsDeliveriesPullV1,
   MlsExternalCommitSubmissionV1,
   MlsGroupCreationV1,
   MlsGroupInfoPullV1,
+  MlsGroupsForPullV1,
+  MlsKeyPackageCountPullV1,
+  MlsKeyPackageDropV1,
   MlsKeyPackagePublishV1,
   MlsKeyPackageTakeV1,
+  MlsPendingRemovalsClearV1,
+  MlsSelfRemoveSubmissionV1,
 } from '../../protocol/mls-ds.ts'
-import type { MlsGroupInfoAnswer } from './mls-delivery-store.ts'
+import type { MlsGroupInfoAnswer, MlsLogEntry } from './mls-delivery-store.ts'
 
 export class MlsDsWireError extends TypeError {}
 
@@ -41,6 +47,11 @@ function requireStringArray(value: unknown, name: string): string[] {
 
 function optionalStringArray(value: unknown, name: string): string[] | undefined {
   return value === undefined ? undefined : requireStringArray(value, name)
+}
+
+function requireInteger(value: unknown, name: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) throw new MlsDsWireError(`${name} must be a non-negative integer`)
+  return value
 }
 
 export function decodeMlsGroupCreationWire(text: string): MlsGroupCreationV1 {
@@ -137,4 +148,92 @@ export function decodeMlsKeyPackageTakeWire(text: string): MlsKeyPackageTakeV1 {
 
 export function encodeMlsKeyPackagesTakenWire(taken: Array<{ kid: string; keyPackage: Uint8Array }>): string {
   return JSON.stringify({ items: taken.map(entry => ({ kid: entry.kid, keyPackage: bytesToBase64url(entry.keyPackage) })) })
+}
+
+export function decodeMlsSelfRemoveSubmissionWire(text: string): MlsSelfRemoveSubmissionV1 {
+  const input = record(text)
+  if (input.version !== 1) throw new MlsDsWireError('MlsSelfRemoveSubmissionV1.version must be 1')
+  return {
+    version: 1,
+    groupId: requireString(input.groupId, 'groupId'),
+    identityId: requireString(input.identityId, 'identityId'),
+    senderKid: requireString(input.senderKid, 'senderKid'),
+    epoch: requireString(input.epoch, 'epoch'),
+    proposal: requireBinary(input.proposal, 'proposal'),
+    removedKid: requireString(input.removedKid, 'removedKid'),
+    submittedAt: requireString(input.submittedAt, 'submittedAt'),
+    signature: requireBinary(input.signature, 'signature'),
+  }
+}
+
+export function decodeMlsPendingRemovalsClearWire(text: string): MlsPendingRemovalsClearV1 {
+  const input = record(text)
+  if (input.version !== 1) throw new MlsDsWireError('MlsPendingRemovalsClearV1.version must be 1')
+  return {
+    version: 1,
+    groupId: requireString(input.groupId, 'groupId'),
+    identityId: requireString(input.identityId, 'identityId'),
+    requesterKid: requireString(input.requesterKid, 'requesterKid'),
+    clearedKids: requireStringArray(input.clearedKids, 'clearedKids'),
+    clearedAt: requireString(input.clearedAt, 'clearedAt'),
+    signature: requireBinary(input.signature, 'signature'),
+  }
+}
+
+export function decodeMlsDeliveriesPullWire(text: string): MlsDeliveriesPullV1 {
+  const input = record(text)
+  if (input.version !== 1) throw new MlsDsWireError('MlsDeliveriesPullV1.version must be 1')
+  return {
+    version: 1,
+    groupId: requireString(input.groupId, 'groupId'),
+    identityId: requireString(input.identityId, 'identityId'),
+    requesterKid: requireString(input.requesterKid, 'requesterKid'),
+    afterSeq: requireInteger(input.afterSeq, 'afterSeq'),
+    requestedAt: requireString(input.requestedAt, 'requestedAt'),
+    signature: requireBinary(input.signature, 'signature'),
+  }
+}
+
+export function encodeMlsDeliveriesWire(entries: MlsLogEntry[]): string {
+  return JSON.stringify({ entries: entries.map(entry => ({ seq: entry.seq, kind: entry.kind, payload: bytesToBase64url(entry.payload), epoch: entry.epoch, at: entry.at })) })
+}
+
+export function decodeMlsKeyPackageDropWire(text: string): MlsKeyPackageDropV1 {
+  const input = record(text)
+  if (input.version !== 1) throw new MlsDsWireError('MlsKeyPackageDropV1.version must be 1')
+  return {
+    version: 1,
+    identityId: requireString(input.identityId, 'identityId'),
+    kid: requireString(input.kid, 'kid'),
+    droppedAt: requireString(input.droppedAt, 'droppedAt'),
+    signature: requireBinary(input.signature, 'signature'),
+  }
+}
+
+export function decodeMlsKeyPackageCountPullWire(text: string): MlsKeyPackageCountPullV1 {
+  const input = record(text)
+  if (input.version !== 1) throw new MlsDsWireError('MlsKeyPackageCountPullV1.version must be 1')
+  return {
+    version: 1,
+    identityId: requireString(input.identityId, 'identityId'),
+    kid: requireString(input.kid, 'kid'),
+    requestedAt: requireString(input.requestedAt, 'requestedAt'),
+    signature: requireBinary(input.signature, 'signature'),
+  }
+}
+
+export function decodeMlsGroupsForPullWire(text: string): MlsGroupsForPullV1 {
+  const input = record(text)
+  if (input.version !== 1) throw new MlsDsWireError('MlsGroupsForPullV1.version must be 1')
+  return {
+    version: 1,
+    identityId: requireString(input.identityId, 'identityId'),
+    requesterKid: requireString(input.requesterKid, 'requesterKid'),
+    requestedAt: requireString(input.requestedAt, 'requestedAt'),
+    signature: requireBinary(input.signature, 'signature'),
+  }
+}
+
+export function encodeMlsGroupsForWire(groups: Array<{ groupId: string; epoch: bigint }>): string {
+  return JSON.stringify({ groups: groups.map(g => ({ groupId: g.groupId, epoch: g.epoch.toString() })) })
 }
