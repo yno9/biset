@@ -14,7 +14,7 @@ import { Ed25519MlsDsSignatureVerifier } from '../../src/core/mediation/mls-deli
 import { SqliteTrustedDeviceRoster } from '../../src/core/identity/sqlite-device-roster.ts'
 import { Ed25519DeviceControlSignatureVerifier } from '../../src/core/identity/ed25519-device-control-verifier.ts'
 import { WebvhSigningKeyResolver } from '../../src/core/identity/webvh-signing-key-resolver.ts'
-import { createNewIdentity, restoreIdentity } from '../../src/identity/bootstrap.ts'
+import { createNewIdentity, maintainSelfGroup, restoreIdentity } from '../../src/identity/bootstrap.ts'
 import { seedToMnemonic } from '../../src/identity/seed.ts'
 import { resolve } from '../../src/identity/webvh/resolver.ts'
 import { didWebToHttpsUrl, buildWebDid } from '../../src/identity/web/identifier.ts'
@@ -208,6 +208,56 @@ describe('restoreIdentity', () => {
       await expect(restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
         domain: 'nobody.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
       })).rejects.toThrow('no identity found')
+
+      ds.close()
+      roster.close()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+})
+
+describe('maintainSelfGroup', () => {
+  test("the genesis device's own boot-time maintenance reflects a second device restored later", async () => {
+    const { anchor, ds, roster, coreHandle } = setupCore()
+
+    const realFetch = globalThis.fetch
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    try {
+      const deviceASelfGroupStore = memorySelfGroupStore()
+      const created = await createNewIdentity(memoryIdentityRecordStore(), deviceASelfGroupStore, memoryKeyPackageStore(), {
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+      })
+      const mnemonic = seedToMnemonic(created.masterSeed)
+
+      const restored = await restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+      })
+      // Device B's own install attempt was rejected -- not yet reflected.
+      expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(false)
+
+      // Device A's own boot-time maintenance (main.ts's bootClient) catches
+      // up on device B's commit and reflects it.
+      const state = await maintainSelfGroup(deviceASelfGroupStore, memoryKeyPackageStore(), created.record, { coreBaseUrl: CORE_ORIGIN })
+      expect(new Set(memberKids(state!, created.record.did))).toEqual(new Set([created.record.deviceKid, restored.record.deviceKid]))
+      expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(true)
+
+      ds.close()
+      roster.close()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test('is a no-op with no stored self-group state', async () => {
+    const { anchor, ds, roster, coreHandle } = setupCore()
+
+    const realFetch = globalThis.fetch
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    try {
+      const record: IdentityRecord = { did: 'did:web:nobody.test.example', deviceKid: 'did:web:nobody.test.example#device-a', rootPublicKey: '', rootPrivateKey: '' }
+      const state = await maintainSelfGroup(memorySelfGroupStore(), memoryKeyPackageStore(), record, { coreBaseUrl: CORE_ORIGIN })
+      expect(state).toBeUndefined()
 
       ds.close()
       roster.close()

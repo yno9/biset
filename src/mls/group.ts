@@ -493,3 +493,14 @@ export function isActiveMember(state: ClientState, kid: string): boolean {
 export function epochOf(state: ClientState): bigint {
   return state.groupContext.epoch
 }
+
+/** THIS device's own MLS leaf signature private key, straight off a stored
+ * self-group `ClientState` — a `ClientState` only ever holds the key
+ * material for the leaf it IS, never another member's, so this is the same
+ * key `generateOwnKeyPackage`'s `OwnKeyPackage.privatePackage` held at join
+ * time. What lets self-group.ts's `SelfGroupSigner` be reconstructed after a
+ * restart without keeping the original `OwnKeyPackage` around separately
+ * (identity/bootstrap.ts's `maintainSelfGroup`). */
+export function ownSignaturePrivateKey(state: ClientState): Uint8Array {
+  return state.signaturePrivateKey
+}

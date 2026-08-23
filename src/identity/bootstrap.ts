@@ -23,10 +23,9 @@ import { addDeviceVerificationMethod } from './webvh/add-device-verification-met
 import { resolveByDomain } from './webvh/resolver.ts'
 import { decodeMultikey } from './webvh/multikey.ts'
 import type { IdentityRecord, IdentityRecordStore } from './record-store.ts'
-import { generateOwnKeyPackage } from '../mls/group.ts'
-import { setMlsAuthService } from '../mls/group.ts'
+import { generateOwnKeyPackage, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
 import { webvhAuthenticationService } from '../mls/webvh-authentication-service.ts'
-import { ensureSelfGroupWithRosterInstall, type SelfGroupSigner } from '../mls/self-group.ts'
+import { ensureSelfGroupWithRosterInstall, reflectPendingSelfGroupCommits, type SelfGroupSigner } from '../mls/self-group.ts'
 import { ensureKeyPackagePool } from '../mls/key-package-pool.ts'
 import { CoreMlsDeliveryTransport } from '../mls/core-mls-delivery-transport.ts'
 import { CoreRosterInstallTransport } from '../mls/core-roster-install-transport.ts'
@@ -166,6 +165,59 @@ export async function createNewIdentity(
   await recordStore.put(record)
 
   return { record, masterSeed, selfGroupState }
+}
+
+export interface MaintainSelfGroupOptions {
+  coreBaseUrl: string
+  fetch?: typeof fetch
+  now?: () => Date
+}
+
+/**
+ * Routine upkeep for an identity this device already belongs to — run once
+ * at boot (`main.ts`'s `bootClient`) rather than at any particular user
+ * action, since neither half needs one: `reflectPendingSelfGroupCommits`
+ * catches this device up on other devices' self-group commits and reflects
+ * the roster once it does (the "existing member notices and reflects" half
+ * `installCurrentRosterProjection`'s own doc comment describes), and
+ * `ensureKeyPackagePool` tops up whatever the DS has run down. A no-op
+ * (returns undefined) when this device has no self-group state at all yet —
+ * that is `registerDeviceAndJoinSelfGroup`'s job, not this one's.
+ *
+ * Reconstructs this device's own `SelfGroupSigner` straight from the stored
+ * `ClientState` (`ownSignaturePrivateKey`) rather than requiring the
+ * original `OwnKeyPackage` to still be in memory — the whole point of this
+ * running at boot, long after whatever call created or restored the
+ * identity has returned.
+ */
+export async function maintainSelfGroup(
+  selfGroupStore: MlsSelfGroupStateStore,
+  keyStore: MlsKeyPackageStore,
+  record: IdentityRecord,
+  opts: MaintainSelfGroupOptions,
+): Promise<ClientState | undefined> {
+  if (!record.deviceKid) return undefined
+  const stored = await selfGroupStore.load(record.did)
+  if (!stored) return undefined
+
+  const now = opts.now ?? (() => new Date())
+  const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
+  const mlsTransport = new CoreMlsDeliveryTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
+  const rosterTransport = new CoreRosterInstallTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
+
+  // TODO(PLAN.md §2.3/§3.3): should be the CURRENT vault-delivery latestSeq,
+  // not 0 -- only reachable here if THIS device's own roster install is what
+  // ends up installing a device added after it (ordinarily some OTHER
+  // device's own maintainSelfGroup catches a given new device first, so this
+  // path is a fallback, not the common one).
+  const deliveryFloorForNewDevice = async (): Promise<DeliverySeq> => deliverySeq(0n)
+  const state = await reflectPendingSelfGroupCommits(
+    selfGroupStore, mlsTransport, rosterTransport, record.did, record.deviceKid, sign, deliveryFloorForNewDevice, now,
+  )
+
+  await ensureKeyPackagePool(mlsTransport, keyStore, record.did, record.deviceKid, sign, undefined, now)
+
+  return state
 }
 
 export interface RestoreIdentityOptions {
