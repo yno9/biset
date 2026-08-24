@@ -389,4 +389,6 @@
 
 | 2026-08-24 | 作業中 | PLAN.md §4.3「recovery archive import 後の projection rebuild」を実確認。`test/protocol/identity-recovery-archive-projection-rebuild.test.ts` を追加し、実 MLS self group で archive 作成 → `importRecoveryArchive`（current epoch への re-wrap込み）→ `buildLocalJmapProjectionRebuild` の一連を通し、archive-imported record から正しい projection が再構築されることを確認（restore-transfer 版と同じ検証パターン、これで §4.3 の projection rebuild は両方の経路とも実証済みになった） |
 
+| 2026-08-24 | 作業中 | 個別に検証してきた断片を繋ぐ capstone end-to-end test を追加した（`test/protocol/identity-end-to-end-mail-sync.test.ts`）。実 core（SQLite MLS DS + SQLite roster、実 HTTP handler）上で、device A が `createNewIdentity` → 実 MLS 署名で mail message を書く（`VaultBackedLocalJmapMutationSink` + `buildVaultCryptoBoundary`）→ device B を `restoreIdentity` で追加 → A の `maintainSelfGroup` が B を roster 反映しつつ既存 segment を self-grant re-wrap → A が実 HTTP（`CoreVaultDeliveryTransport`）で core へ append → B が実 HTTP で pull し自分の実 MLS state で検証・projection（`buildVaultDeliveryProjector`）まで、一つの test で通した。これまでの test は全てこの流れの一部分ずつを別々に検証していたが、create→write→deliver→restore→project が実際に end-to-end で噛み合うことを証明したのはこれが初めて |
+
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
