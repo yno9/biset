@@ -1,24 +1,22 @@
 // Port of src.bak/ui/left-pane.ts's #account page. Per user direction
-// (2026-08-24), this now uses the ORIGINAL renderAccountPage() HTML/CSS
-// verbatim (avatar, name row, DID row + copy, the expandable
-// devices/DID-document panel, the menu button) rather than a hand-shrunk
-// substitute -- only the DATA behind it is cut down to what this rewrite's
-// single-identity/single-local-vault model actually has:
+// (2026-08-24), PAGE_HTML below is the ORIGINAL renderAccountPage() markup
+// verbatim -- every element it had, nothing trimmed for looking
+// unfinished, including pieces this rewrite can't wire up yet (identity
+// menu button, #cmd-acc-list, #cmd-acc-compose-fab, the devices list).
+// Only the DATA behind it is cut down to what this rewrite's single-
+// identity/single-local-vault model actually has:
 //
-//   - avatar/name/DID/copy: real, same as before.
+//   - avatar/name/DID/copy: real.
 //   - the expandable panel's DID document half is real too --
 //     identity/webvh/resolver.ts's resolve() is the same resolution this
 //     rewrite's own bootstrap already trusts, so "click to view devices and
 //     DID document" now actually fetches and shows the live document.
 //   - the devices list stays empty (no device-roster read API wired to the
-//     UI yet -- that's a real gap, not a design choice, unlike the pieces
-//     below).
-//   - the identity menu button, multi-account list (#cmd-acc-list), and
-//     compose fab (#cmd-acc-compose-fab) are hidden outright: display-name
-//     editing/logout/republish/passkey-protect/claim-mail-account and
-//     multi-relay accounts have no corresponding backend or concept here at
-//     all, and a menu button that opens onto nothing is worse than no
-//     button.
+//     UI yet), and the identity menu button/#cmd-acc-list/compose fab have
+//     no click handler (display-name editing/logout/republish/multi-relay
+//     accounts/new-message compose have no corresponding backend or
+//     concept here at all yet) -- present in the DOM, inert for now, same
+//     as every other not-yet-wired element left-pane.ts's own header notes.
 import { render } from './thread.ts'
 import { esc, avatarStyle } from './format.ts'
 import { parseWebvhDid } from '../identity/webvh/identifier.ts'
@@ -39,20 +37,28 @@ export function inAccountMode(): boolean {
   return active
 }
 
+// Verbatim from src.bak/ui/left-pane.ts's renderAccountPage() -- every
+// element it had, including the ones this rewrite can't wire up yet
+// (identity menu button, multi-account list, compose fab). Not trimmed:
+// per user direction, an inert element stays present rather than being
+// removed for looking unfinished.
 const PAGE_HTML = `<div class="cmd-page-content wide-page">
   <div class="cmd-page-section" id="cmd-acc-identity-section">
-    <div id="cmd-acc-identity-fields" title="Click to view DID document">
+    <div id="cmd-acc-identity-fields" title="Click to view devices and DID document">
       <div id="cmd-acc-identity-avatar" class="lp-avatar"></div>
       <div id="cmd-acc-identity-text">
         <div id="cmd-acc-identity-name-row">
           <span id="cmd-acc-identity-name"></span>
+          <span id="cmd-acc-identity-name-edit" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
         </div>
         <div id="cmd-acc-identity-did-row">
           <span id="cmd-acc-identity-did"></span>
           <button id="cmd-acc-identity-copy" type="button" aria-label="Copy DID" title="Copy DID"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
         </div>
       </div>
+      <button id="cmd-acc-identity-menu-btn" type="button" aria-label="Menu"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
     </div>
+    <div id="cmd-acc-sync-stalled" style="display:none"></div>
     <div id="cmd-acc-identity-expanded">
       <div class="acc-storage-header">
         <span class="acc-storage-title">Devices</span>
@@ -66,7 +72,10 @@ const PAGE_HTML = `<div class="cmd-page-content wide-page">
       </div>
       <pre id="cmd-acc-identity-doc"></pre>
     </div>
+    <input id="cmd-acc-identity-devices-import-input" type="file" accept=".zip" style="display:none">
   </div>
+  <div class="cmd-page-section" id="cmd-acc-list"></div>
+  <button id="cmd-acc-compose-fab" class="compose-fab" type="button" aria-label="Compose" title="Compose"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
 </div>`
 
 export function showAccountPage(): void {
