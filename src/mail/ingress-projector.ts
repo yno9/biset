@@ -65,6 +65,7 @@ export class MailIngressProjector implements IngressVerifierProjector {
         size: envelope.protectedPayload.length,
         ...(headers.subject === undefined ? {} : { subject: headers.subject }),
         ...(headers.sentAt === undefined ? {} : { sentAt: headers.sentAt }),
+        ...(headers.from === undefined ? {} : { from: [headers.from] }),
       },
       rawRfc5322: envelope.protectedPayload,
     }, {

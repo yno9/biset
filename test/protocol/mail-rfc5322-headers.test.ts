@@ -27,4 +27,15 @@ describe('endpoint RFC 5322 header summary', () => {
     expect(readRfc5322HeaderSummary(new Uint8Array([0xff, 0x0a, 0x0a]))).toEqual({ references: [] })
     expect(readRfc5322HeaderSummary(new TextEncoder().encode('Subject: no body separator'))).toEqual({ references: [] })
   })
+
+  test('reads From as a name+address pair, matching what buildOutboundRfc5322 writes', () => {
+    const named = new TextEncoder().encode('From: Alice <alice@example.test>\r\n\r\n')
+    expect(readRfc5322HeaderSummary(named).from).toEqual({ email: 'alice@example.test', name: 'Alice' })
+
+    const bare = new TextEncoder().encode('From: bob@example.test\r\n\r\n')
+    expect(readRfc5322HeaderSummary(bare).from).toEqual({ email: 'bob@example.test' })
+
+    const missing = new TextEncoder().encode('Subject: no from\r\n\r\n')
+    expect(readRfc5322HeaderSummary(missing).from).toBeUndefined()
+  })
 })

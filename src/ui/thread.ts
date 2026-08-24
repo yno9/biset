@@ -361,7 +361,24 @@ export function render(smooth = false): void {
   }
 
   const $convTo = document.getElementById('conv-to')
-  if ($convTo) $convTo.textContent = participantsOf(focused.messages.map(p => p.msg))
+  if ($convTo) {
+    // #conv-to holds src.bak's #conv-did/#conv-via badges (DID-mediated/
+    // protocol pills, both unwired here -- no DID/multi-relay concept this
+    // rewrite has). Plain `$convTo.textContent =` destroys those child
+    // elements outright; src.bak's own render() avoided this by grabbing
+    // them first and prepending them back after -- same move here, not the
+    // shortcut that silently deleted them (user-reported: DID/via badges
+    // gone after a re-render).
+    const didBadge = document.getElementById('conv-did')
+    const viaBadge = document.getElementById('conv-via')
+    $convTo.textContent = participantsOf(focused.messages.map(p => p.msg))
+    if (didBadge) $convTo.prepend(didBadge)
+    if (viaBadge) $convTo.appendChild(viaBadge)
+  }
+  const $convCc = document.getElementById('conv-cc')
+  const $convBcc = document.getElementById('conv-bcc')
+  if ($convCc) $convCc.textContent = ''
+  if ($convBcc) $convBcc.textContent = ''
 
   const $convMeta = document.getElementById('conv-meta')
   const $expanded = document.getElementById('conv-meta-expanded')
