@@ -10,7 +10,7 @@
 // app" durability requires simulating.
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
-import { IndexedDbVaultStore, type IngressVaultCommit } from '../../src/vault/store.ts'
+import { IndexedDbVaultStore, type IngressVaultCommit, type LocalVaultMutationCommit } from '../../src/vault/store.ts'
 import { createVaultEvent, type VaultEventSigner } from '../../src/vault/events.ts'
 import { createSegmentKey, encryptVaultObject } from '../../src/vault/objects.ts'
 import { sha256Bytes } from '../../src/protocol/canonical.ts'
@@ -51,6 +51,22 @@ async function buildIngressCommit(ingressId: string): Promise<IngressVaultCommit
     projection: { emails: [] },
     jmapState: { state: 'state-1' },
     ackOutbox: { identityId, ingressId, ack, attempts: 0, createdAt: '2026-08-24T00:00:00.000Z' },
+  }
+}
+
+async function buildLocalMutationCommit(eventId2Suffix: string): Promise<LocalVaultMutationCommit> {
+  const object = await encryptVaultObject(createSegmentKey(), { segmentId: 'segment-1', plaintext: new Uint8Array([4, 5, 6]), aad: new Uint8Array([8]) })
+  const event = await createVaultEvent({
+    identityId, actorDeviceId: 'device-a', actorSeq: 1, kind: 'message.tombstone', targetIds: [`msg-${eventId2Suffix}`], objectRefs: [object.objectId], parents: [], createdAt: '2026-08-24T00:00:00.000Z',
+  }, signer)
+  const payload = new Uint8Array([9, 9, 9])
+  return {
+    identityId,
+    objects: [{ ...object, identityId }],
+    events: [event],
+    projection: { emails: [] },
+    jmapState: { state: 'state-local-1' },
+    deliveryOutbox: { identityId, entryId: event.id, payload, payloadHash: sha256Bytes(payload), createdAt: '2026-08-24T00:00:00.000Z', attempts: 0 },
   }
 }
 
@@ -122,6 +138,25 @@ describe('IndexedDbVaultStore durability', () => {
     const events = await store.readVaultEvents(identityId)
     expect(objects).toHaveLength(1)
     expect(events).toHaveLength(1)
+    store.close()
+  })
+
+  test('a repeated local mutation commit (event.id unchanged) commits only once, enforced by the real unique-key constraint', async () => {
+    // PLAN.md §3.2's "duplicate event" -- commitLocalMutation is the write
+    // path VaultBackedLocalJmapMutationSink uses for the client's OWN
+    // mutations (not ingress), and relies on the exact same vault_events
+    // unique keyPath (`.add()`, not `.put()`) to make a retry after a lost
+    // response idempotent. commitIngress's own dedup is already covered by
+    // the test above; this proves the local-mutation path has the same
+    // real-constraint guarantee, not just a memory-fake approximation.
+    const store = await IndexedDbVaultStore.open()
+    const commit = await buildLocalMutationCommit('dup')
+    expect(await store.commitLocalMutation(commit)).toBe('committed')
+    expect(await store.commitLocalMutation(commit)).toBe('already-committed')
+    const events = await store.readVaultEvents(identityId)
+    const objects = await store.readVaultObjects(identityId)
+    expect(events).toHaveLength(1)
+    expect(objects).toHaveLength(1)
     store.close()
   })
 
