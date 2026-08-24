@@ -18,6 +18,7 @@ import { buildProof } from './proof.ts'
 import { encodeMultikey } from './multikey.ts'
 import { buildMinimalWebvhState, type SignedWebvhState } from './document.ts'
 import { syncDidWebMirror } from '../web/mirror.ts'
+import { defaultFetch } from '../../net-fetch.ts'
 
 export interface CreateGenesisOptions {
   domain: string
@@ -71,7 +72,7 @@ export async function createGenesis(opts: CreateGenesisOptions): Promise<{ did: 
   const proof = buildProof(unsigned, { verificationMethod: `did:key:${updateKey}#${updateKey}`, privateKey: opts.rootPrivateKey, created: versionTime })
   const entry: LogEntry = { ...unsigned, proof: [proof] }
 
-  const fetchValue = opts.fetch ?? fetch
+  const fetchValue = opts.fetch ?? defaultFetch()
   const response = await fetchValue(didToHttpsUrl(did), {
     method: 'PUT',
     headers: { 'Content-Type': 'text/jsonl' },

@@ -9,6 +9,7 @@
 // currently says."
 import { didWebToHttpsUrl, buildWebDid } from './identifier.ts'
 import type { SignedWebvhState } from '../webvh/document.ts'
+import { defaultFetch } from '../../net-fetch.ts'
 
 export interface SyncDidWebMirrorOptions {
   /** The did:webvh identity's own domain segment (`y.biset.md`) — reused
@@ -28,7 +29,7 @@ export function buildDidWebMirrorDocument(webvhDid: string, domain: string, stat
 
 export async function syncDidWebMirror(webvhDid: string, state: SignedWebvhState, opts: SyncDidWebMirrorOptions): Promise<void> {
   const mirrored = buildDidWebMirrorDocument(webvhDid, opts.domain, state)
-  const fetchImpl = opts.fetch ?? fetch
+  const fetchImpl = opts.fetch ?? defaultFetch()
   const response = await fetchImpl(didWebToHttpsUrl(buildWebDid(opts.domain)), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

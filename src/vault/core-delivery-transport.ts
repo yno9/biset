@@ -1,3 +1,4 @@
+import { defaultFetch } from '../net-fetch.ts'
 import type { VaultDeliveryAppendTransport } from './delivery-outbox.ts'
 import type { VaultDeliveryPullTransport } from './delivery-sync.ts'
 import type { VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryPullV1 } from '../protocol/vault.ts'
@@ -22,7 +23,7 @@ export class CoreVaultDeliveryTransport implements VaultDeliveryAppendTransport,
   constructor(options: CoreDeliveryTransportOptions) {
     if (!options.baseUrl) throw new TypeError('core delivery base URL is required')
     this.baseUrl = options.baseUrl.replace(/\/$/, '')
-    this.fetchValue = options.fetch ?? fetch
+    this.fetchValue = options.fetch ?? defaultFetch()
   }
 
   async append(input: VaultDeliveryAppendV1): Promise<void> {

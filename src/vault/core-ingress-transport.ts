@@ -1,3 +1,4 @@
+import { defaultFetch } from '../net-fetch.ts'
 import type { IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from '../protocol/ingress.ts'
 import { decodeIngressPullResultWire, encodeIngressAckWire, encodeIngressPullWire } from '../protocol/ingress-wire.ts'
 
@@ -14,7 +15,7 @@ export class CoreIngressTransport {
   constructor(options: CoreIngressTransportOptions) {
     if (!options.baseUrl) throw new TypeError('core ingress base URL is required')
     this.baseUrl = options.baseUrl.replace(/\/$/, '')
-    this.fetchValue = options.fetch ?? fetch
+    this.fetchValue = options.fetch ?? defaultFetch()
   }
 
   async pull(input: IngressPullV1): Promise<IngressEnvelopeV1[]> {

@@ -1,4 +1,5 @@
 import type { AccountTransport, JmapMethodCall, JmapSession } from './transport.ts'
+import { defaultFetch } from '../net-fetch.ts'
 
 export interface RemoteJmapTransportOptions {
   /** Provider origin or an explicit `/.well-known/jmap` URL. */
@@ -25,7 +26,7 @@ export class RemoteJmapTransport implements AccountTransport {
 
   constructor(private readonly options: RemoteJmapTransportOptions) {
     if (!options.accountId) throw new TypeError('remote JMAP accountId is required')
-    this.fetchImpl = options.fetch ?? fetch
+    this.fetchImpl = options.fetch ?? defaultFetch()
   }
 
   async session(): Promise<JmapSession> {

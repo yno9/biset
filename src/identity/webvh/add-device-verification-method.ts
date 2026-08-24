@@ -17,6 +17,7 @@ import { entryVersionNumber, generateEntryHash, parametersToWrite, resolveParame
 import { buildProof } from './proof.ts'
 import type { SignedWebvhState } from './document.ts'
 import { syncDidWebMirror } from '../web/mirror.ts'
+import { defaultFetch } from '../../net-fetch.ts'
 
 export interface AddDeviceVerificationMethodOptions {
   did: string
@@ -35,7 +36,7 @@ export interface AddDeviceVerificationMethodOptions {
 
 /** Idempotent: a fragment already present in the document's verificationMethod is a no-op, not an error. */
 export async function addDeviceVerificationMethod(opts: AddDeviceVerificationMethodOptions): Promise<void> {
-  const fetchImpl = opts.fetch ?? fetch
+  const fetchImpl = opts.fetch ?? defaultFetch()
   const { url, entries, last } = await fetchCurrentLog(opts.did, fetchImpl)
   const updateKey = encodeMultikey(opts.signingPublicKey)
   if (!(last.parameters.updateKeys ?? []).includes(updateKey)) {

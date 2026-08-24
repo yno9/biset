@@ -1,3 +1,4 @@
+import { defaultFetch } from '../net-fetch.ts'
 import type { MailSubmissionRequestV1, MailSubmissionResultV1 } from '../protocol/mail-submission.ts'
 import { decodeMailSubmissionResultWire, encodeMailSubmissionRequestWire } from '../protocol/mail-submission-wire.ts'
 
@@ -17,7 +18,7 @@ export class CoreMailSubmissionTransport {
   constructor(options: CoreMailSubmissionTransportOptions) {
     if (!options.baseUrl) throw new TypeError('core mail submission base URL is required')
     this.baseUrl = options.baseUrl.replace(/\/$/, '')
-    this.fetchValue = options.fetch ?? fetch
+    this.fetchValue = options.fetch ?? defaultFetch()
   }
 
   async submit(request: MailSubmissionRequestV1): Promise<MailSubmissionResultV1> {

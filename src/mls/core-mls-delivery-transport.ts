@@ -1,3 +1,4 @@
+import { defaultFetch } from '../net-fetch.ts'
 // Browser transport for the MLS self-group DS narrow HTTP API
 // (core/mediation/mls-delivery-http.ts), mirroring vault/core-ingress-transport.ts's
 // shape. Every method sends an already-signed control message (signing is
@@ -62,7 +63,7 @@ export class CoreMlsDeliveryTransport {
   constructor(options: CoreMlsDeliveryTransportOptions) {
     if (!options.baseUrl) throw new TypeError('core MLS delivery base URL is required')
     this.baseUrl = options.baseUrl.replace(/\/$/, '')
-    this.fetchValue = options.fetch ?? fetch
+    this.fetchValue = options.fetch ?? defaultFetch()
   }
 
   async createGroup(input: MlsGroupCreationV1): Promise<string[]> {

@@ -1,3 +1,4 @@
+import { defaultFetch } from '../net-fetch.ts'
 // Client side of the roster narrow HTTP API (core/identity/roster-http.ts),
 // mirroring core-mls-delivery-transport.ts's shape.
 import { decodeAcceptedSelfGroupProjectionWire, type AcceptedSelfGroupProjectionV1 } from '../core/identity/device-roster.ts'
@@ -17,7 +18,7 @@ export class CoreRosterInstallTransport {
   constructor(options: CoreRosterInstallTransportOptions) {
     if (!options.baseUrl) throw new TypeError('core roster install base URL is required')
     this.baseUrl = options.baseUrl.replace(/\/$/, '')
-    this.fetchValue = options.fetch ?? fetch
+    this.fetchValue = options.fetch ?? defaultFetch()
   }
 
   async install(input: RosterInstallV1): Promise<RosterInstallHttpOutcome> {
