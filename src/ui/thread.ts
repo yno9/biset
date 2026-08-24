@@ -366,6 +366,14 @@ export function render(smooth = false): void {
   const $convMeta = document.getElementById('conv-meta')
   const $expanded = document.getElementById('conv-meta-expanded')
   if ($convMeta) {
+    // account-page.ts/compose-page.ts set this to 'none' while their own
+    // page occupies #active-thread; render() is the one place that always
+    // means "a real thread is on screen now", so it's the right place to
+    // unconditionally clear it back -- relying on every hide*Page() call
+    // site to do it first is exactly the kind of state that silently goes
+    // stale (found live: #conv-meta stayed hidden after opening a thread,
+    // user-reported).
+    $convMeta.style.display = ''
     $convMeta.classList.remove('expanded')
     if ($expanded) {
       const firstMsg = focused.messages[0]?.msg
