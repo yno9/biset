@@ -1,5 +1,6 @@
 import { bytesToBase64url, canonicalBytes } from './canonical.ts'
 import type { IngressAckV1, IngressPullV1 } from './ingress.ts'
+import type { MailSubmissionRequestV1 } from './mail-submission.ts'
 import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryPullV1 } from './vault.ts'
 import type {
   MlsCommitSubmissionV1, MlsDeliveriesPullV1, MlsExternalCommitSubmissionV1, MlsGroupCreationV1, MlsGroupInfoPullV1,
@@ -68,6 +69,19 @@ export function vaultDeliveryPullSigningBytes(pull: Omit<VaultDeliveryPullV1, 's
     recipientDeviceId: pull.recipientDeviceId,
     after: pull.after,
     requestedAt: pull.requestedAt,
+  })
+}
+
+export function mailSubmissionSigningBytes(request: Omit<MailSubmissionRequestV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/mail-submission/v1',
+    version: request.version,
+    identityId: request.identityId,
+    deviceId: request.deviceId,
+    mailFrom: request.mailFrom,
+    rcptTo: request.rcptTo,
+    rawRfc5322: bytesToBase64url(request.rawRfc5322),
+    submittedAt: request.submittedAt,
   })
 }
 
