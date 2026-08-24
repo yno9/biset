@@ -7,7 +7,7 @@
 // MutationObserver, and every relay/session/DIDComm import shell.ts used only
 // for those.
 import { loadMessages, render } from './thread.ts'
-import { renderLeftList } from './left-pane.ts'
+import { renderLeftList, setupLeftPane } from './left-pane.ts'
 import type { LocalJmapReadModel } from '../local-jmap/gateway.ts'
 
 export function showApp(): void {
@@ -18,6 +18,7 @@ export function showApp(): void {
   // found" and showing mail).
   const $app = document.getElementById('app')
   if ($app) $app.style.display = 'flex'
+  setupLeftPane()
   render()
   renderLeftList()
 }
