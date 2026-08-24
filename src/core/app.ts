@@ -18,6 +18,8 @@ import { createDidWebHttpHandler } from './webvh/did-web-http.ts'
 import type { DidWebStore } from './webvh/did-web-store.ts'
 import { createRoutingHttpHandler } from './webvh/routing-http.ts'
 import type { RoutingDocStore } from './webvh/routing-store.ts'
+import { createDidCommHttpHandler } from './adapters/didcomm-http.ts'
+import type { DidCommIngressAdapter } from './adapters/didcomm.ts'
 
 export interface BisetCoreApplicationOptions {
   /**
@@ -50,6 +52,10 @@ export interface BisetCoreApplicationOptions {
    * §6.1, didcomm/webvh-routing.ts). Requires `webvh` too -- a routing.json
    * write is validated against the domain's current did:webvh updateKeys. */
   routing?: RoutingDocStore
+  /** DIDComm external ingress (POST /v1/didcomm/ingress, PLAN.md §6.1) --
+   * external ingress/OOB/bootstrap/control only, never a message channel
+   * (see didcomm.ts's own header). */
+  didComm?: { adapter: DidCommIngressAdapter; roster: TrustedDeviceRoster; ttlMs?: number }
 }
 
 // Every narrow-API handler (roster/mls/vault-delivery/restore/ingress/mail)
@@ -78,6 +84,7 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
   const webvh = options.webvh && createWebvhHttpHandler(options.webvh, { domainHeader: 'x-biset-domain' })
   const didWeb = options.webvh && options.didWeb && createDidWebHttpHandler(options.didWeb, options.webvh, { domainHeader: 'x-biset-domain' })
   const routing = options.webvh && options.routing && createRoutingHttpHandler(options.routing, options.webvh, { domainHeader: 'x-biset-domain' })
+  const didComm = options.didComm && createDidCommHttpHandler(options.didComm.adapter, { roster: options.didComm.roster, ttlMs: options.didComm.ttlMs })
   const inner = async (request: Request): Promise<Response> => {
     const path = new URL(request.url).pathname
     if (path === '/healthz') return Response.json({ ok: true, service: 'biset-core', storage: 'bounded-only' })
@@ -90,6 +97,7 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
     if (path.startsWith('/v1/roster/') && roster) return roster(request)
     if (path.startsWith('/v1/mls/') && mlsDelivery) return mlsDelivery(request)
     if (path.startsWith('/v1/mail/') && mailSubmission) return mailSubmission(request)
+    if (path === '/v1/didcomm/ingress' && didComm) return didComm(request)
     return new Response('Not found', { status: 404 })
   }
   return async (request) => {

@@ -16,6 +16,7 @@ import { CoreMailSubmissionAdapter } from './adapters/mail-submission-adapter.ts
 import { WebvhLogStore } from './webvh/webvh-store.ts'
 import { DidWebStore } from './webvh/did-web-store.ts'
 import { RoutingDocStore } from './webvh/routing-store.ts'
+import { DidCommIngressAdapter } from './adapters/didcomm.ts'
 
 export interface BisetCoreDeploymentOptions {
   databasePath: string
@@ -48,6 +49,7 @@ export interface BisetCoreDeployment {
   readonly webvh?: WebvhLogStore
   readonly didWeb?: DidWebStore
   readonly routing?: RoutingDocStore
+  readonly didCommAdapter: DidCommIngressAdapter
   readonly fetch: (request: Request) => Promise<Response>
   close(): void
 }
@@ -74,6 +76,7 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
   const webvh = options.webvhDataDir ? new WebvhLogStore(options.webvhDataDir) : undefined
   const didWeb = options.webvhDataDir ? new DidWebStore(options.webvhDataDir) : undefined
   const routing = options.webvhDataDir ? new RoutingDocStore(options.webvhDataDir) : undefined
+  const didCommAdapter = new DidCommIngressAdapter(ingressAdapter)
   return {
     roster,
     delivery,
@@ -85,6 +88,7 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
     webvh,
     didWeb,
     routing,
+    didCommAdapter,
     fetch: createBisetCoreFetchHandler({
       vaultDeliveryStore: delivery,
       restoreControlStore: restoreControl,
@@ -95,6 +99,7 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
       webvh,
       didWeb,
       routing,
+      didComm: { adapter: didCommAdapter, roster },
     }),
     close() { database.close() },
   }
