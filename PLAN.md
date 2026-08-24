@@ -1,6 +1,6 @@
 # Biset Vault Core — 実装作業工程
 
-*最終更新: 2026-08-23 / 現在の基準 commit: 作業中*
+*最終更新: 2026-08-24 / 現在の基準 commit: 作業中*
 
 この文書は、実装を順番に進めるためのチェックリストである。設計の根拠、wire schema、状態機械、security invariant の詳細は [`PLANIMPLEMENTATION.md`](PLANIMPLEMENTATION.md) を正とする。本書は「次に何を作るか」「どこまで終わったか」「何を満たせば次へ進めるか」を示す。
 
@@ -13,11 +13,11 @@
 - [x] canonical JSON、domain-separated hash、ingress schema validation を実装した。first-party adapter の offer から recipient snapshot を排除し、core が accepted self-group roster から凍結する。
 - [x] memory-only の bounded `IngressStore` を実装し、TTL、quota、recipient snapshot、一台の authorised ACK、payload 削除をテストした。
 - [x] core を `identity`（anchor）、`mediation`、`adapters` に概念分離し、初期 deployment は一つの `biset-core` binary に統合した。
-- [-] IndexedDB の local vault schema、atomic ingress commit、object crypto、flat manifest は存在するが、ingest workflow と durable recovery は未実装。
-- [-] SQLite roster + SQLite delivery / restore-control / ingress、roster authorizer、Ed25519 verifier、narrow HTTP の deployment composition を実装した。ingress の endpoint API は signed pull / durable ACK のみで、external offer は adapter 内部に限定する。actual MLS accepted-commit source / DID resolver cache policy は未実装。
-- [ ] Local JMAP Gateway、MLS VEK 導出、DIDComm/Mail adapter は未実装である。SegmentKey の object encryption と、VEK を入力に取る wrap primitive は実装済みである。
+- [x] IndexedDB の local vault schema、atomic ingress commit、object crypto、flat manifest、ingest workflow、durable recovery を実装した（`vault/ingress-ingest.ts` の `ingestIngress`、`vault-store-durability.test.ts`/`identity-recovery-archive-projection-rebuild.test.ts` で実 IndexedDB・実 MLS を通した crash-safety と復元を確認済み——この行はしばらく古いまま放置されていたので訂正した）。
+- [-] SQLite roster + SQLite delivery / restore-control / ingress、roster authorizer、Ed25519 verifier、narrow HTTP の deployment composition を実装した。ingress の endpoint API は signed pull / durable ACK のみで、external offer は adapter 内部に限定する。DID resolver cache policy は未実装。
+- [-] MLS VEK 導出・MLS self group・SegmentKey の object encryption・VEK を入力に取る wrap primitive・Local JMAP Gateway の read/write path（実 MLS device 署名込み、`test/protocol/identity-end-to-end-mail-sync.test.ts` で create→write→deliver→restore→project を通しで確認済み）は実装済み（この行も同様に古いまま放置されていたので訂正した）。DIDComm adapter はゼロから未着手。Mail adapter は endpoint 側の projector のみ実装済みで SMTP listener 自体は未着手。`Email/changes`/`Mailbox/set`/`EmailSubmission/set` と実際の vault UI 配線（`main.ts` からまだ呼ばれていない）は未実装。
 
-**次に着手する工程:** §4.1 は DID resolver・MLS 暗号処理系の移植・roster install 認可・roster producer・`MlsSelfGroupProvider`・AS・self-group DS 通信（12 操作、core + client transport）・self-group bootstrap（`ensureSelfGroup`）・roster 取得 API と roster install の接続（`ensureSelfGroupWithRosterInstall`/`installCurrentRosterProjection`）・既存メンバーによる新 epoch 検知/反映（`reflectPendingSelfGroupCommits`）・did:web mirror（`src/identity/web/`）・key-package pool（`keypackage-store.ts`/`key-package-pool.ts`）・新規 identity 作成 / 追加 device 復元の end-to-end bootstrap（`identity/bootstrap.ts` の `createNewIdentity`/`restoreIdentity`）・boot 時の self-group 定期メンテナンス（`maintainSelfGroup`、`main.ts` の `bootClient` からの結線、実 vault-delivery `latestSeq` 配線込み）と最小限の new-user/login UI（`src/ui/`）まで実装した。残るのは (1) `restoreIdentity` 自身の `deliveryFloorForNewDevice`（新規参加 device 自身はまだ roster に信頼されておらず vault-delivery pull を呼べないため、`0` 固定のまま — 通常は roster install 自体が rejected になり実害はない）、(2) `src.bak/ui/` の残り（left-pane・account 管理・relay 接続等、9000 行超）の本格移植 — これと `submitApplication` を移植するかどうかの判断は、Vault Core 全体のブートストラップに関わる別の大きな作業として後続に残す。§3.3 の ingress/vault 接続とは独立して進められる。ingress は generic public HTTP API にせず、first-party adapter の内部 boundary に限定する方針は維持する。
+**現在地（2026-08-24 時点）:** §2〜§4 の中核（protocol foundation、mediator、MLS self group、vault crypto、restore transfer/archive）は実装・実 MLS/実 core を通した end-to-end test でほぼ全て検証済み。残っている大きな未着手領域は次の 3 つ: (1) **DIDComm/Mail/ActivityPub adapter**（§6、DIDComm はゼロから未着手、wire format 決定も adapter boundary 移行が先）、(2) **vault UI 本体**（§7、`src.bak/ui/` の本格移植、9000 行超、`VaultBackedLocalJmapMutationSink` 等は実装済みだが `main.ts` から未接続）、(3) **旧 relay からの migration**（§8、import tool 含め全項目未着手）。ingress は generic public HTTP API にせず、first-party adapter の内部 boundary に限定する方針は維持する。
 
 ## 1. 作業上の不変条件
 
