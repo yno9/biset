@@ -110,13 +110,37 @@ export function makeThreadCard(group: ThreadGroup, focused: boolean): HTMLElemen
     ? `<div class="thread-header-row"><span class="thread-header">${esc(group.subject)}</span></div>`
     : `<div class="thread-header-row"><span class="thread-header untitled">no title</span></div>`
 
+  // Verbatim from src.bak/ui/thread.ts's makeThreadCard (2026-08-25, user
+  // direction: HTML/CSS is ported byte-for-byte, never hand-simplified).
+  // reply-compose-btn (new-message mode toggle), reply-subject, and the
+  // attach button/input stay present but unwired -- no corresponding
+  // backend concept yet, same as every other inert element left over from
+  // this restoration.
   const replyBoxHtml = focused && composeConfig
     ? `<div class="reply-box">
-        <textarea class="reply-textarea" rows="1" placeholder="Reply"></textarea>
-        <button type="button" class="t-send-btn" aria-label="Send">
-          <svg viewBox="0 0 24 24"><path d="M2 12L22 2L12 22L10 14L2 12Z"/></svg>
+      <div class="reply-resize-handle"><span></span></div>
+      <div class="reply-attachments" style="display:none"></div>
+      <div class="reply-content">
+        <button class="reply-compose-btn" title="New message">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
         </button>
-      </div>`
+        <input class="reply-subject" type="text" placeholder="Subject (optional)">
+        <textarea rows="1" placeholder="Reply…"></textarea>
+        <button class="reply-attach-btn" type="button" title="Attach file">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <input class="reply-attach-input" type="file" multiple style="display:none">
+        <div class="t-send-wrap">
+          <div class="t-send-avatar"></div>
+          <button class="t-send-btn">
+            <svg viewBox="0 0 24 24"><path d="M2 12L22 2L12 22L10 14L2 12Z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>`
     : ''
   card.innerHTML = `${focused ? '' : hdr}<div class="t-messages"></div>${replyBoxHtml}`
 
@@ -167,7 +191,7 @@ export function makeThreadCard(group: ThreadGroup, focused: boolean): HTMLElemen
 }
 
 function wireReplyBox(card: HTMLElement, group: ThreadGroup, config: ComposeConfig): void {
-  const ta = card.querySelector('.reply-textarea') as HTMLTextAreaElement | null
+  const ta = card.querySelector('.reply-box textarea') as HTMLTextAreaElement | null
   const btn = card.querySelector('.t-send-btn') as HTMLButtonElement | null
   if (!ta || !btn) return
   let sending = false
