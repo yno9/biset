@@ -45,6 +45,21 @@ export interface BisetCoreApplicationOptions {
   didWeb?: DidWebStore
 }
 
+// Every narrow-API handler (roster/mls/vault-delivery/restore/ingress/mail)
+// was built assuming a same-process test fetch or a signed server-to-server
+// caller, never CORS -- found live testing the compose/reply slice: a
+// browser at file:// (or t.biset.md) preflights every POST here and none of
+// them answered with Access-Control-Allow-Origin, so the actual request
+// never even went out. webvh/did-web already set their own CORS headers
+// (webvh-http.ts's WEBVH_CORS predates this), so applying the same set here
+// too is redundant for those two paths but harmless (Headers.set overwrites,
+// not appends).
+const CORS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+}
+
 /** Narrow composition root: identity decides authorisation; mediation stores bounded ciphertext. */
 export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions): (request: Request) => Promise<Response> {
   const vaultDelivery = options.vaultDeliveryStore && createVaultDeliveryHttpHandler(options.vaultDeliveryStore)
@@ -55,7 +70,7 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
   const mailSubmission = options.mailSubmission && createMailSubmissionHttpHandler(options.mailSubmission)
   const webvh = options.webvh && createWebvhHttpHandler(options.webvh, { domainHeader: 'x-biset-domain' })
   const didWeb = options.webvh && options.didWeb && createDidWebHttpHandler(options.didWeb, options.webvh, { domainHeader: 'x-biset-domain' })
-  return async (request) => {
+  const inner = async (request: Request): Promise<Response> => {
     const path = new URL(request.url).pathname
     if (path === '/healthz') return Response.json({ ok: true, service: 'biset-core', storage: 'bounded-only' })
     if (path === '/.well-known/did.jsonl' && webvh) return webvh(request)
@@ -67,5 +82,12 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
     if (path.startsWith('/v1/mls/') && mlsDelivery) return mlsDelivery(request)
     if (path.startsWith('/v1/mail/') && mailSubmission) return mailSubmission(request)
     return new Response('Not found', { status: 404 })
+  }
+  return async (request) => {
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS })
+    const response = await inner(request)
+    const headers = new Headers(response.headers)
+    for (const [key, value] of Object.entries(CORS)) headers.set(key, value)
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
   }
 }
