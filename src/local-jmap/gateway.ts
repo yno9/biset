@@ -55,6 +55,11 @@ export interface LocalJmapGatewayOptions {
 /** Local write implementation; it commits immutable vault records, not rows in this projection. */
 export interface LocalJmapMutationSink {
   emailSet(arguments_: Record<string, unknown>, snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>>
+  /** PLAN.md §6.2's minimal EmailSubmission/set: a single create, no
+   * update/destroy, RFC 8621 undoStatus polling deferred. Optional -- a
+   * sink with no outbound wiring configured simply doesn't support it,
+   * mirroring how emailSet itself is only reachable when a sink exists. */
+  submitMail?(arguments_: Record<string, unknown>, snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>>
 }
 
 export class LocalJmapGateway {
@@ -113,6 +118,9 @@ export class LocalJmapGateway {
       case 'Email/set':
         if (!this.options.mutationSink) return ['error', { type: 'forbidden', description: 'local vault writes are not configured' }, call.callId]
         return ['Email/set', await this.options.mutationSink.emailSet(call.arguments, snapshot), call.callId]
+      case 'EmailSubmission/set':
+        if (!this.options.mutationSink?.submitMail) return ['error', { type: 'forbidden', description: 'outbound mail submission is not configured' }, call.callId]
+        return ['EmailSubmission/set', await this.options.mutationSink.submitMail(call.arguments, snapshot), call.callId]
       default: return ['error', { type: 'unknownMethod', description: `unsupported local JMAP method: ${call.name}` }, call.callId]
     }
   }

@@ -21,6 +21,7 @@ import { mnemonicToSeed } from './seed.ts'
 import { createGenesis } from './webvh/create-genesis.ts'
 import { addDeviceVerificationMethod } from './webvh/add-device-verification-method.ts'
 import { resolveByDomain } from './webvh/resolver.ts'
+import { parseWebvhDid } from './webvh/identifier.ts'
 import { decodeMultikey } from './webvh/multikey.ts'
 import type { IdentityRecord, IdentityRecordStore } from './record-store.ts'
 import { epochOf, exportSecret, generateOwnKeyPackage, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
@@ -48,8 +49,12 @@ import type { LocalJmapProjectionV1, LocalJmapReadModel, LocalJmapSnapshot } fro
 import { IndexedDbLocalJmapReadModel, type LocalVaultBlobReader } from '../local-jmap/indexeddb.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import { deliverySeq, mlsEpoch, type DeliverySeq } from '../protocol/ids.ts'
-import { vaultDeliveryPullSigningBytes } from '../protocol/signing.ts'
+import { mailSubmissionSigningBytes, vaultDeliveryPullSigningBytes } from '../protocol/signing.ts'
 import type { VaultDeliveryPullV1 } from '../protocol/vault.ts'
+import type { MailSubmissionResultV1 } from '../protocol/mail-submission.ts'
+import { CoreMailSubmissionTransport } from '../vault/mail-submission-transport.ts'
+import type { VaultBackedLocalJmapMutationSink } from '../local-jmap/vault-mutation-sink.ts'
+import type { VaultMutationIntent } from '../local-jmap/mutations.ts'
 import type { ClientState } from '../mls/vendor/index.ts'
 
 /**
@@ -678,4 +683,101 @@ export function buildLocalJmapReadModel(
 ): LocalJmapReadModel {
   const blobs = buildVaultBlobReader(vault, vault, selfGroupStore, identityId)
   return new IndexedDbLocalJmapReadModel(vault, identityId, blobs)
+}
+
+/**
+ * PLAN.md §6.2's outbound send: given an already-locally-committed "outbox"
+ * email's raw blob and recipients, signs and submits it for delivery through
+ * the authenticated device -> core narrow API (CoreMailSubmissionTransport),
+ * then records the outcome as an ordinary local vault commit through
+ * VaultBackedLocalJmapMutationSink.commitIntents -- a `transport.result`
+ * event always, plus a `mailbox.set` moving the email out of "outbox" only
+ * when delivery actually succeeded. A temporary-failure leaves it in outbox
+ * for a later retry; there is no scheduler here yet, matching the inbound
+ * side's own deferred DSN handling.
+ *
+ * `mailFrom` is derived, not stored: an identity's DID domain IS its own
+ * subdomain (identity/webvh/identifier.ts's subdomain-per-identity
+ * convention -- the same one mail-recipient-resolver.ts uses server-side to
+ * go the other direction), so `{username}@mail.{apexDomain}` falls out of
+ * the identity's own DID with no new field needed on IdentityRecord.
+ */
+export function buildMailSubmitter(
+  vault: VaultObjectReader & SegmentKeyWrapReader,
+  selfGroupStore: MlsSelfGroupStateStore,
+  record: IdentityRecord,
+  mutationSink: VaultBackedLocalJmapMutationSink,
+  apexDomain: string,
+  coreBaseUrl: string,
+): {
+  submit(emailId: string, blobId: string, rcptTo: string[], snapshot: LocalJmapSnapshot): Promise<MailSubmissionResultV1>
+  submitMail(arguments_: Record<string, unknown>, snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>>
+} {
+  if (!record.deviceKid) throw new Error('buildMailSubmitter: identity has no deviceKid yet')
+  const deviceKid = record.deviceKid
+  const loadState = async (): Promise<ClientState> => {
+    const stored = await selfGroupStore.load(record.did)
+    if (!stored) throw new Error('buildMailSubmitter: no self-group state for this identity')
+    return stored.state
+  }
+  const signer = new MlsMembershipSegmentKeyWrapSigner(deviceKid, loadState)
+  const blobs = buildVaultBlobReader(vault, vault, selfGroupStore, record.did)
+  const transport = new CoreMailSubmissionTransport({ baseUrl: coreBaseUrl })
+  const mailFrom = mailFromForIdentity(record.did, apexDomain)
+
+  return {
+    async submit(emailId, blobId, rcptTo, snapshot) {
+      const rawRfc5322 = await blobs.download(record.did, blobId)
+      const unsigned = { version: 1 as const, identityId: record.did, deviceId: deviceKid, mailFrom, rcptTo, rawRfc5322, submittedAt: new Date().toISOString() }
+      const signature = await signer.sign(mailSubmissionSigningBytes(unsigned))
+      const result = await transport.submit({ ...unsigned, signature })
+
+      const intents: VaultMutationIntent[] = [{
+        kind: 'transport.result',
+        targetIds: [emailId],
+        payload: { emailId, status: result.status, occurredAt: result.occurredAt, ...(result.detail === undefined ? {} : { detail: result.detail }) },
+      }]
+      if (result.status === 'accepted') {
+        intents.push({ kind: 'mailbox.set', targetIds: [emailId], payload: { emailId, mailboxIds: { sent: true } } })
+      }
+      await mutationSink.commitIntents(intents, snapshot)
+      return result
+    },
+
+    /**
+     * PLAN.md §6.2's minimal EmailSubmission/set: `{create: {creationId:
+     * {emailId}}}`, a single submission, no update/destroy, no
+     * onSuccessUpdateEmail hooks. Blocks until delivery completes and
+     * returns synchronously (the same "narrow API, do the real work now"
+     * shape this codebase already uses elsewhere) rather than adding an
+     * async EmailSubmission/get polling model.
+     */
+    async submitMail(arguments_, snapshot) {
+      const create = arguments_.create
+      if (create === null || typeof create !== 'object' || Array.isArray(create)) throw new TypeError('EmailSubmission/set requires create')
+      const entries = Object.entries(create as Record<string, unknown>)
+      if (entries.length !== 1) throw new TypeError('EmailSubmission/set supports exactly one creation per call')
+      const [creationId, spec] = entries[0]!
+      if (spec === null || typeof spec !== 'object' || Array.isArray(spec)) throw new TypeError('EmailSubmission/set creation must be an object')
+      const emailId = (spec as Record<string, unknown>).emailId
+      if (typeof emailId !== 'string' || !emailId) throw new TypeError('EmailSubmission/set creation requires emailId')
+      const email = snapshot.emails.find(candidate => candidate.id === emailId)
+      if (!email) return { notCreated: { [creationId]: { type: 'invalidProperties', description: 'no such email' } } }
+      if (email.mailboxIds.outbox !== true) return { notCreated: { [creationId]: { type: 'invalidProperties', description: 'email is not in the outbox' } } }
+      if (!email.blobId) return { notCreated: { [creationId]: { type: 'invalidProperties', description: 'email has no content' } } }
+      const rcptTo = (email.to ?? []).map(address => address.email).filter((value): value is string => !!value)
+      if (rcptTo.length === 0) return { notCreated: { [creationId]: { type: 'invalidProperties', description: 'email has no recipients' } } }
+      const result = await this.submit(emailId, email.blobId, rcptTo, snapshot)
+      return { created: { [creationId]: { id: `${emailId}-submission`, emailId, sendAt: result.occurredAt, undoStatus: result.status === 'accepted' ? 'final' : 'pending' } } }
+    },
+  }
+}
+
+function mailFromForIdentity(identityId: string, apexDomain: string): string {
+  const { domain } = parseWebvhDid(identityId)
+  const suffix = `.${apexDomain}`
+  if (!domain.endsWith(suffix)) throw new Error(`buildMailSubmitter: identity domain ${domain} is not a subdomain of ${apexDomain}`)
+  const username = domain.slice(0, domain.length - suffix.length)
+  if (!username) throw new Error('buildMailSubmitter: identity domain has no username segment')
+  return `${username}@mail.${apexDomain}`
 }

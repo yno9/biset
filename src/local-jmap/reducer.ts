@@ -56,6 +56,14 @@ export function reduceLocalJmapProjection(
       emails.set(emailId, email)
       continue
     }
+    if (mutation.kind === 'transport.result') {
+      // Deliberately a no-op for the read-model: it's an audit record of an
+      // outbound delivery attempt (identity/bootstrap.ts's buildMailSubmitter),
+      // not a mailbox/keyword change -- the mailbox.set that moves a message
+      // out of "outbox" on success is a separate event in the same commit
+      // and goes through the ordinary path below.
+      continue
+    }
     if (mutation.kind !== 'mailbox.set' && mutation.kind !== 'keyword.set') {
       // `VaultEventKind` (protocol/vault.ts) reserves several kinds
       // (message.edit/reaction.set/read.set/thread.set/settings.set/...)

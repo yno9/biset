@@ -6,6 +6,7 @@ import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 import { encodeVaultDeliveryPack } from '../vault/delivery-pack.ts'
 import type { LocalJmapMutationSink, LocalJmapProjectionV1, LocalJmapSnapshot } from './gateway.ts'
 import { emailSetToVaultMutationIntents } from './mutations.ts'
+import type { VaultMutationIntent } from './mutations.ts'
 import { reduceLocalJmapProjection } from './reducer.ts'
 import type { ActiveVaultSegment } from '../vault/active-segment.ts'
 
@@ -55,7 +56,19 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
   }
 
   async emailSet(arguments_: Record<string, unknown>, snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>> {
-    const intents = emailSetToVaultMutationIntents(arguments_)
+    return this.commitIntents(emailSetToVaultMutationIntents(arguments_), snapshot)
+  }
+
+  /**
+   * The generic commit sequence `emailSet` is a thin JMAP-argument parser
+   * on top of: build each intent into a signed event + encrypted object,
+   * fold them into the projection, commit atomically alongside the delivery
+   * outbox. Exposed directly so other callers with their own intents (mail
+   * submission's `transport.result` + `mailbox.set` pair, see
+   * identity/bootstrap.ts's buildMailSubmitter) reuse this exact,
+   * already-tested pipeline instead of a parallel one.
+   */
+  async commitIntents(intents: VaultMutationIntent[], snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>> {
     const segment = await this.options.activeSegment()
     if (segment.keyWraps.length === 0) throw new TypeError('active vault segment has no current MLS key wrap')
     if (segment.keyWraps.some(wrap => wrap.identityId !== this.options.identityId || wrap.segmentId !== segment.segmentId)) {
