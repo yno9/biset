@@ -33,6 +33,12 @@ export interface AcceptIngressInput {
   identityId: string
   recipientAddress: string
   mailFrom: string
+  /** The domain argument from EHLO/HELO, or undefined if the client sent
+   * neither (can't happen on a path that reaches DATA, since EHLO/HELO is
+   * required first -- kept optional because there is nothing to assert it
+   * against inside this pure module). Connection provenance for
+   * sourceEvidence, not used for routing. */
+  heloDomain: string | undefined
   rawRfc5322: Uint8Array
 }
 
@@ -80,6 +86,7 @@ export class SmtpSession {
   private greeted = false
   private closed = false
   private errorCount = 0
+  private heloDomain: string | undefined
   private mailFrom: string | undefined
   private recipients: PendingRecipient[] = []
   private dataChunks: Uint8Array[] = []
@@ -172,11 +179,13 @@ export class SmtpSession {
     switch (verb) {
       case 'EHLO': {
         this.greeted = true
+        this.heloDomain = rest || undefined
         this.resetTransaction()
         return [reply(ehloResponse(this.deps, rest || this.deps.helloName))]
       }
       case 'HELO': {
         this.greeted = true
+        this.heloDomain = rest || undefined
         this.resetTransaction()
         return [reply(`250 2.0.0 Hello ${rest || this.deps.helloName}`)]
       }
@@ -279,6 +288,7 @@ export class SmtpSession {
         await this.deps.acceptIngress({
           identityId: recipient.resolution.identityId,
           recipientAddress: recipient.address,
+          heloDomain: this.heloDomain,
           mailFrom,
           rawRfc5322,
         })
