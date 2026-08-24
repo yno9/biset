@@ -210,6 +210,22 @@ function topFloor(outer: HTMLElement): number {
   return past && outer.contains(past) ? past.offsetHeight : 0
 }
 
+/** Single source of truth for the reply-dock -> #outer geometry (ported
+ * as-is from src.bak/ui/thread.ts). #reply-dock is position:fixed, so it
+ * doesn't shrink #outer on its own -- #outer's bottom padding has to be
+ * kept equal to the dock's height by hand, or the last message ends up
+ * hidden underneath it. Synchronous: reading offsetHeight forces layout,
+ * so callers that adjust scroll right after see the current padding. */
+export function syncDockPosition(): void {
+  const outer = document.getElementById('outer')
+  const dock = document.getElementById('reply-dock')
+  const h = dock?.offsetHeight ?? 0
+  if (outer) outer.style.paddingBottom = h ? h + 'px' : '0'
+  document.documentElement.style.setProperty('--dock-h', h ? h + 'px' : '0px')
+  const titleRow = document.getElementById('thread-title-row')
+  if (titleRow) document.documentElement.style.setProperty('--thread-title-h', titleRow.offsetHeight + 'px')
+}
+
 const THREAD_BOTTOM_GAP = 14
 
 function updateScrollSpacer(): void {
@@ -289,6 +305,9 @@ export function render(smooth = false): void {
 
   const groups = groupMessages()
   if (!groups.length) {
+    const $dock = document.getElementById('reply-dock')
+    if ($dock) $dock.innerHTML = ''
+    syncDockPosition()
     const $emptyTitle = document.getElementById('header-thread-title')
     if ($emptyTitle) { $emptyTitle.textContent = 'no title'; $emptyTitle.className = 'untitled' }
     const el = document.createElement('div')
@@ -341,6 +360,20 @@ export function render(smooth = false): void {
   }
 
   $active.appendChild(makeThreadCard(focused, true))
+
+  // The reply-box makeThreadCard just built lives inside #focused-thread-card
+  // at this point (needed there so its querySelector-based wiring can find
+  // it), but its real home is #reply-dock -- a fixed dock outside the
+  // scrolling message strip, same as src.bak's own render() always moved it
+  // there. Leaving it inside the card (2026-08-24 compose slice 1's own
+  // first cut) is what put "Reply" and the send button's arrow on top of
+  // each other -- #reply-dock's CSS assumes it lives there, not mid-scroll.
+  const replyBox = document.querySelector('#focused-thread-card .reply-box')
+  const dock = document.getElementById('reply-dock')
+  if (replyBox && dock) dock.replaceChildren(replyBox)
+  else if (dock) dock.innerHTML = ''
+  syncDockPosition()
+
   requestAnimationFrame(() => scrollToFocused(smooth))
 }
 
@@ -378,5 +411,5 @@ export function setupScrollButtons(): void {
   // Re-settle scroll position on viewport resize (rotation, devtools panel,
   // window resize) -- src.bak also resynced its reply-dock's height here,
   // which has no equivalent in this slice's reply-box.
-  window.addEventListener('resize', () => scrollToFocused())
+  window.addEventListener('resize', () => { syncDockPosition(); scrollToFocused() })
 }
