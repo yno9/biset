@@ -22,6 +22,10 @@ import { VaultBackedLocalJmapMutationSink } from './local-jmap/vault-mutation-si
 import type { LocalJmapMutationSink } from './local-jmap/gateway.ts'
 import { LocalJmapGateway, LocalJmapTransport } from './local-jmap/gateway.ts'
 import { buildOutboundRfc5322 } from './mail/rfc5322-builder.ts'
+import { MailIngressProjector } from './mail/ingress-projector.ts'
+import { synchronizeMailIngress } from './mail/ingress-workflow.ts'
+import { CoreIngressTransport } from './vault/core-ingress-transport.ts'
+import { CoreVaultDeliveryTransport } from './vault/core-delivery-transport.ts'
 
 /**
  * New-client bootstrap. The only branch this makes is "does this device
@@ -56,6 +60,7 @@ export async function bootClient(): Promise<void> {
   configureAccountPage({ did: identity.did })
 
   const { apexDomain, coreBaseUrl } = readBisetConfig()
+  let syncMailIngress: (() => Promise<void>) | undefined
   // Reply-send needs the same signing/MLS boundary maintainSelfGroup already
   // requires a deviceKid for -- with neither a core to submit through nor a
   // device identity to sign with, the UI stays read-only, matching how this
@@ -135,12 +140,45 @@ export async function bootClient(): Promise<void> {
         console.warn('[sendMessage]', message)
       },
     })
+
+    // Pulls any mail the core is holding for this device (SMTP listener ->
+    // ingress store -> here), verifies+commits it into the vault as
+    // message.add, ACKs it, then flushes the resulting vault-delivery pack
+    // for sibling devices. Nothing called this before (2026-08-25, found
+    // live: mail arrived at the core and sat in its ingress queue forever,
+    // never once pulled by any client) -- reply/compose's send path and
+    // maintainSelfGroup's catch-up never touched inbound mail at all.
+    syncMailIngress = async () => {
+      const projector = new MailIngressProjector({
+        identityId: identity.did,
+        actorDeviceId: identity.deviceKid!,
+        nextActorSeq: () => sequencer.nextActorSeq(),
+        initialParents: () => sequencer.initialParents(),
+        activeSegment: () => boundary.activeSegment(),
+        currentSnapshot: () => readModel.snapshot(),
+        signer: boundary.signer,
+      })
+      const result = await synchronizeMailIngress({
+        identityId: identity.did,
+        deviceId: identity.deviceKid!,
+        store: vaultStore,
+        ingressTransport: new CoreIngressTransport({ baseUrl: coreBaseUrl }),
+        deliveryTransport: new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl }),
+        signer: boundary.signer,
+        projector,
+        committer: vaultStore,
+      })
+      if (result.ingress.ingestedIngressIds.length > 0) await refreshInbox(readModel)
+    }
   }
 
   showApp()
   await refreshInbox(readModel).catch(e => {
     showSysMsg('Could not load the inbox')
     console.warn('[refreshInbox]', e instanceof Error ? e.message : e)
+  })
+  await syncMailIngress?.().catch(e => {
+    console.warn('[syncMailIngress]', e instanceof Error ? e.message : e)
   })
 
   if (!coreBaseUrl) return
