@@ -11,11 +11,13 @@ import { renderLeftList } from './left-pane.ts'
 import type { LocalJmapReadModel } from '../local-jmap/gateway.ts'
 
 export function showApp(): void {
-  // #mail-app, not the old src.bak #overlay/#app pair -- this rewrite has no
-  // unlock step yet (record-store.ts's secrets are still plaintext, so
-  // there's nothing to wait on between "identity found" and showing mail).
-  const $mailApp = document.getElementById('mail-app')
-  if ($mailApp) $mailApp.style.display = 'flex'
+  // #app is src.bak's own mail-UI container (id restored as-is 2026-08-24,
+  // see PLAN.md §7's progress log) -- distinct from #overlay, which this
+  // rewrite has no use for (no unlock step yet: record-store.ts's secrets
+  // are still plaintext, so there's nothing to wait on between "identity
+  // found" and showing mail).
+  const $app = document.getElementById('app')
+  if ($app) $app.style.display = 'flex'
   render()
   renderLeftList()
 }

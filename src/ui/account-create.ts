@@ -1,14 +1,21 @@
 // New-identity onboarding AND recovery-phrase login (#app's own
-// new-user-page, index.html). Ported at the flow level from
-// src.bak/ui/account-create.ts's submit handler (both its signup and its
-// logInExistingAddress branches), cut down to what identity/bootstrap.ts's
-// createNewIdentity/restoreIdentity actually need. Left out (all present in
-// the pre-rewrite version, none ported yet):
+// new-user-page, index.html -- now src.bak's original DOM, restored as-is
+// per user direction 2026-08-24; see PLAN.md §7's progress log). Ported at
+// the flow level from src.bak/ui/account-create.ts's submit handler (both
+// its signup and its logInExistingAddress branches), cut down to what
+// identity/bootstrap.ts's createNewIdentity/restoreIdentity actually need.
 //
-//   - "is this name already someone's?" DNS-anchor lookup that decided
-//     signup-vs-login automatically (src.bak/did/discovery.ts) -- this
-//     rewrite has no such lookup, so the user picks login explicitly via
-//     the "Log in with a recovery phrase" toggle instead.
+// The original DOM has no explicit signup/login toggle (src.bak's JS used
+// a DNS-anchor lookup this rewrite doesn't have to auto-detect which one a
+// name meant, src.bak/did/discovery.ts) -- with no such lookup, and no new
+// UI element to add (HTML/CSS is being brought back untouched), mode is
+// inferred straight from the existing #nu-phrase field instead: filled in
+// means login, empty means create. All the fields specific to the old
+// did:dht/did:webvh dual scheme or pre-rotation (#nu-sign-phrase, the
+// commented-out did-method toggle) stay untouched/hidden -- no equivalent
+// concept in this rewrite's identity layer.
+//
+// Left out (all present in the pre-rewrite version, none ported yet):
 //   - mail/AP relay reachability gating and provisioning, DIDComm mediator
 //     registration -- all relay-adapter/DIDComm-adapter concerns this
 //     rewrite does not have yet (PLAN.md §6).
@@ -29,7 +36,6 @@ export function randomHex4(): string {
 }
 
 let _wired = false
-let loginMode = false
 
 export function setupNewUserPage(): void {
   if (_wired) return
@@ -39,39 +45,33 @@ export function setupNewUserPage(): void {
   const phraseEl = document.getElementById('nu-phrase') as HTMLTextAreaElement
   const submitBtn = document.getElementById('nu-submit') as HTMLButtonElement
   const errEl = document.getElementById('nu-error')!
-  const apexEl = document.getElementById('nu-apex')
-  const toggleLink = document.getElementById('nu-toggle-login')!
+  const hostnameEl = document.getElementById('nu-hostname')
+  const tosCheckbox = document.getElementById('nu-tos') as HTMLInputElement | null
 
   const { apexDomain } = config()
-  if (apexEl) apexEl.textContent = apexDomain
+  if (hostnameEl) hostnameEl.textContent = apexDomain
   usernameInput.value = randomHex4()
-
-  const applyMode = () => {
-    phraseEl.style.display = loginMode ? '' : 'none'
-    submitBtn.textContent = loginMode ? 'Log in' : 'Create'
-    toggleLink.textContent = loginMode ? 'Create a new identity instead' : 'Log in with a recovery phrase instead'
-    errEl.style.display = 'none'
-  }
-  toggleLink.addEventListener('click', ev => {
-    ev.preventDefault()
-    loginMode = !loginMode
-    applyMode()
-  })
-  applyMode()
+  // No signup/login toggle in this DOM -- the phrase field is always
+  // visible (src.bak had it hidden, shown only after its own now-absent
+  // DNS lookup decided this was a login), and its emptiness is the mode
+  // signal (see file header).
+  phraseEl.style.display = ''
 
   submitBtn.addEventListener('click', async () => {
     const { apexDomain, coreBaseUrl } = config()
     const username = usernameInput.value.trim()
+    const mnemonic = phraseEl.value.trim()
+    const loginMode = mnemonic.length > 0
     errEl.style.display = 'none'
     if (!username) { errEl.textContent = 'Username required'; errEl.style.display = 'block'; return }
     if (!apexDomain) { errEl.textContent = 'apexDomain not set in config'; errEl.style.display = 'block'; return }
     if (!coreBaseUrl) { errEl.textContent = 'coreBaseUrl not set in config'; errEl.style.display = 'block'; return }
+    if (tosCheckbox && !loginMode && !tosCheckbox.checked) {
+      errEl.textContent = 'Please agree to the Terms of Beta-testing'; errEl.style.display = 'block'; return
+    }
     const domain = `${username}.${apexDomain}`
 
     if (loginMode) {
-      const mnemonic = phraseEl.value.trim()
-      if (!mnemonic) { errEl.textContent = 'Paste your 24-word recovery phrase'; errEl.style.display = 'block'; return }
-
       submitBtn.disabled = true
       submitBtn.textContent = 'Logging in…'
       try {
@@ -90,7 +90,7 @@ export function setupNewUserPage(): void {
       } catch (e) {
         errEl.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e))
         errEl.style.display = 'block'
-        submitBtn.textContent = 'Log in'
+        submitBtn.textContent = 'Start'
         submitBtn.disabled = false
       }
       return
@@ -111,7 +111,7 @@ export function setupNewUserPage(): void {
     } catch (e) {
       errEl.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e))
       errEl.style.display = 'block'
-      submitBtn.textContent = 'Create'
+      submitBtn.textContent = 'Start'
       submitBtn.disabled = false
     }
   })
