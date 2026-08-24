@@ -15,6 +15,7 @@ import { setupNewUserPage } from './ui/account-create.ts'
 import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
 import { configureCompose } from './ui/thread.ts'
 import type { ReplySendInput } from './ui/thread.ts'
+import { configureAccountPage } from './ui/account-page.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { VaultBackedLocalJmapMutationSink } from './local-jmap/vault-mutation-sink.ts'
 import type { LocalJmapMutationSink } from './local-jmap/gateway.ts'
@@ -51,6 +52,7 @@ export async function bootClient(): Promise<void> {
   // because there's no account switcher yet (PLAN.md §7 plan, out of scope).
   const identity = records[0]!
   const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did)
+  configureAccountPage({ did: identity.did })
 
   const { apexDomain, coreBaseUrl } = readBisetConfig()
   // Reply-send needs the same signing/MLS boundary maintainSelfGroup already

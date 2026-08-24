@@ -25,6 +25,7 @@ import { groupMessages } from '../mail/message-view.ts'
 import type { ThreadGroup } from '../mail/message-view.ts'
 import { avatarStyle, esc, previewText } from './format.ts'
 import { getFocusedThreadKey, render, setFocusedThreadKey } from './thread.ts'
+import { hideAccountPage, inAccountMode, showAccountPage } from './account-page.ts'
 
 function latestOf(group: ThreadGroup) {
   return group.messages[group.messages.length - 1]!.msg
@@ -50,6 +51,7 @@ function makeLpItem(group: ThreadGroup, active: boolean): HTMLElement {
   `
   a.addEventListener('click', e => {
     e.preventDefault()
+    if (inAccountMode()) hideAccountPage()
     setFocusedThreadKey(group.key)
     render()
     renderLeftList()
@@ -208,11 +210,9 @@ export function setupLeftPane(): void {
 }
 
 /** #lp-hamburger-menu's hover/click open-near-trigger behaviour -- pure DOM
- * positioning, no backend involved, so it stays even though every item
- * inside it (#lp-hmenu-item -> showMenuPage('/account'|'/config')) has
- * nowhere to navigate to yet: this rewrite has neither page. Clicking one
- * just closes the menu instead of silently doing nothing, so hovering
- * doesn't look broken even though the destinations aren't there. */
+ * positioning, no backend involved. `/account` now opens the minimal
+ * identity page (account-page.ts); `/config` still has nowhere to go (no
+ * corresponding settings backend), so that item just closes the menu. */
 function setupHamburgerMenu(): void {
   const menu = document.getElementById('lp-hamburger-menu')
   if (!menu) return
@@ -247,6 +247,7 @@ function setupHamburgerMenu(): void {
       e.stopPropagation()
       menu.classList.remove('open')
       document.getElementById('app')?.classList.remove('show-left')
+      if (item.dataset.page === '/account') showAccountPage()
     })
   }
   document.addEventListener('click', () => menu.classList.remove('open'))
