@@ -48,7 +48,7 @@ import { VaultObjectBlobReader } from '../vault/blob-reader.ts'
 import type { LocalJmapProjectionV1, LocalJmapReadModel, LocalJmapSnapshot } from '../local-jmap/gateway.ts'
 import { IndexedDbLocalJmapReadModel, type LocalVaultBlobReader } from '../local-jmap/indexeddb.ts'
 import { equalBytes } from '../protocol/canonical.ts'
-import { deliverySeq, mlsEpoch, type DeliverySeq } from '../protocol/ids.ts'
+import { deliverySeq, mlsEpoch, type DeliverySeq, type VaultEventId } from '../protocol/ids.ts'
 import { mailSubmissionSigningBytes, vaultDeliveryPullSigningBytes } from '../protocol/signing.ts'
 import type { VaultDeliveryPullV1 } from '../protocol/vault.ts'
 import type { MailSubmissionResultV1 } from '../protocol/mail-submission.ts'
@@ -780,4 +780,34 @@ function mailFromForIdentity(identityId: string, apexDomain: string): string {
   const username = domain.slice(0, domain.length - suffix.length)
   if (!username) throw new Error('buildMailSubmitter: identity domain has no username segment')
   return `${username}@mail.${apexDomain}`
+}
+
+/**
+ * `VaultBackedLocalJmapMutationSink` needs `nextActorSeq()`/`initialParents()`
+ * from every caller, and until now every one has been a test's own trivial
+ * in-memory counter starting at zero. That's wrong for a real device across
+ * page reloads: `actorSeq` feeds the reducer's LWW tie-break
+ * (local-jmap/reducer.ts's `compareEvents`), so starting from zero again
+ * risks colliding with sequences this device already used in a past
+ * session. Seeds from this device's own actual vault history instead.
+ *
+ * `parents` is populated with a real value (the latest event, if any) but
+ * costs nothing to get slightly wrong -- `VaultEventV1.parents` is signed
+ * but confirmed unused by any reader anywhere in this codebase (PLAN.md's
+ * own progress log), so no causal-ordering correctness rides on it.
+ */
+export async function buildActorSequencer(
+  records: VaultRecordReader,
+  identityId: string,
+  deviceId: string,
+): Promise<{ nextActorSeq(): Promise<number>; initialParents(): Promise<VaultEventId[]> }> {
+  const events = await records.readVaultEvents(identityId)
+  const mine = events.filter(event => event.actorDeviceId === deviceId)
+  let seq = 0
+  let latest: VaultEventId | undefined
+  for (const event of mine) if (event.actorSeq >= seq) { seq = event.actorSeq; latest = event.id }
+  return {
+    async nextActorSeq() { seq += 1; return seq },
+    async initialParents() { return latest ? [latest] : [] },
+  }
 }

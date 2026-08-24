@@ -204,3 +204,36 @@ export function emailToMessageView(email: LocalJmapEmail, rawRfc5322: Uint8Array
     blob_id: email.blobId,
   }
 }
+
+// ── Reply context ───────────────────────────────────────────────────────────
+//
+// The reply-only, no-groups version of src.bak/ui/shell.ts's
+// computeConversationRecipients: this rewrite has no DID/multi-relay group
+// concept, so it reduces to "who else is in this thread" (every from/to_addrs
+// entry, minus this identity's own address) and the References chain
+// (oldest -> newest message-id).
+
+export interface ReplyContext {
+  toAddrs: string[]
+  references: string[]
+}
+
+export function computeReplyContext(thread: ProcessedMessage[], selfAddress: string): ReplyContext {
+  const self = selfAddress.toLowerCase()
+  const toAddrs: string[] = []
+  const seen = new Set<string>([self])
+  for (const { msg } of thread) {
+    for (const address of [msg.from, ...(msg.to_addrs ?? [])]) {
+      if (!address) continue
+      const key = address.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      toAddrs.push(address)
+    }
+  }
+  const references = [...thread]
+    .sort((a, b) => a.msg.ts - b.msg.ts)
+    .map(p => p.msg.message_id)
+    .filter(Boolean)
+  return { toAddrs, references }
+}
