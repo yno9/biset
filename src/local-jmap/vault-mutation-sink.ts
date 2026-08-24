@@ -4,7 +4,9 @@ import { buildVaultMutation, encodeVaultMutationObject } from '../vault/mutation
 import type { DeviceId, IdentityId, VaultEventId } from '../protocol/ids.ts'
 import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 import { encodeVaultDeliveryPack } from '../vault/delivery-pack.ts'
-import type { LocalJmapMutationSink, LocalJmapProjectionV1, LocalJmapSnapshot } from './gateway.ts'
+import { decryptVaultObject } from '../vault/objects.ts'
+import { buildMailMessageAdd } from '../vault/mail-message.ts'
+import type { LocalJmapEmail, LocalJmapMutationSink, LocalJmapProjectionV1, LocalJmapSnapshot } from './gateway.ts'
 import { emailSetToVaultMutationIntents } from './mutations.ts'
 import type { VaultMutationIntent } from './mutations.ts'
 import { reduceLocalJmapProjection } from './reducer.ts'
@@ -131,6 +133,67 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
       newState: projection.state,
       ...(updated.size === 0 ? {} : { updated: Object.fromEntries([...updated].map(id => [id, null])) }),
       ...(destroyed.size === 0 ? {} : { destroyed: [...destroyed] }),
+    }
+  }
+
+  /**
+   * Commits a locally-composed message (compose's send path, PLAN.md §7):
+   * a `message.add` with two object refs (encrypted metadata + the opaque
+   * raw RFC 5322 bytes), the same shape MailIngressProjector uses for
+   * inbound mail via buildMailMessageAdd. commitIntents can't be reused
+   * here -- VaultMutationIntent is a single-object-per-intent shape, and
+   * message.add needs two (metadata + raw bytes).
+   */
+  async commitMailMessage(
+    input: { email: Omit<LocalJmapEmail, 'blobId'>; rawRfc5322: Uint8Array },
+    snapshot: LocalJmapSnapshot,
+  ): Promise<Record<string, unknown>> {
+    const segment = await this.options.activeSegment()
+    if (segment.keyWraps.length === 0) throw new TypeError('active vault segment has no current MLS key wrap')
+    if (segment.keyWraps.some(wrap => wrap.identityId !== this.options.identityId || wrap.segmentId !== segment.segmentId)) {
+      throw new TypeError('active vault segment key wrap does not match mutation identity or segment')
+    }
+    const createdAt = this.now().toISOString()
+    const record = await buildMailMessageAdd(input, {
+      identityId: this.options.identityId,
+      actorDeviceId: this.options.actorDeviceId,
+      actorSeq: await this.options.nextActorSeq(),
+      parents: await this.options.initialParents(),
+      segmentId: segment.segmentId,
+      segmentKey: segment.segmentKey,
+      createdAt,
+    }, this.options.signer)
+    const plaintext = await decryptVaultObject(segment.segmentKey, record.metadataObject)
+    const next = reduceLocalJmapProjection(this.options.identityId, {
+      mailboxes: snapshot.mailboxes,
+      emails: snapshot.emails,
+    }, [{ event: record.event, plaintext }])
+    const projection: LocalJmapProjectionV1 = { version: 1, identityId: this.options.identityId, ...next }
+    const objects = [
+      { ...record.metadataObject, identityId: this.options.identityId },
+      { ...record.rawRfc5322Object, identityId: this.options.identityId },
+    ]
+    const payload = encodeVaultDeliveryPack({ version: 1, identityId: this.options.identityId, objects, events: [record.event], keyWraps: segment.keyWraps })
+    await this.options.committer.commitLocalMutation({
+      identityId: this.options.identityId,
+      objects,
+      events: [record.event],
+      projection,
+      jmapState: { state: projection.state },
+      deliveryOutbox: {
+        identityId: this.options.identityId,
+        entryId: record.event.id,
+        payload,
+        payloadHash: sha256Bytes(payload),
+        createdAt,
+        attempts: 0,
+      },
+    })
+    return {
+      accountId: this.options.accountId,
+      oldState: snapshot.state,
+      newState: projection.state,
+      created: { [input.email.id]: { id: input.email.id } },
     }
   }
 }

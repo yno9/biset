@@ -20,13 +20,7 @@ import { IndexedDbMlsSelfGroupStore } from '../mls/store.ts'
 import { IndexedDbMlsKeyPackageStore } from '../mls/keypackage-store.ts'
 import { deliverySeq } from '../protocol/ids.ts'
 import { showMnemonic } from './mnemonic.ts'
-
-declare const __BISET_CONFIG__: { apexDomain?: string; coreBaseUrl?: string } | undefined
-
-function config(): { apexDomain: string; coreBaseUrl: string } {
-  const cfg = (window as unknown as { __BISET_CONFIG__?: typeof __BISET_CONFIG__ }).__BISET_CONFIG__ ?? {}
-  return { apexDomain: cfg.apexDomain ?? '', coreBaseUrl: cfg.coreBaseUrl ?? '' }
-}
+import { readBisetConfig as config } from './config.ts'
 
 export function randomHex4(): string {
   const arr = new Uint32Array(1)

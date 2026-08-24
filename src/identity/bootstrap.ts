@@ -773,7 +773,7 @@ export function buildMailSubmitter(
   }
 }
 
-function mailFromForIdentity(identityId: string, apexDomain: string): string {
+export function mailFromForIdentity(identityId: string, apexDomain: string): string {
   const { domain } = parseWebvhDid(identityId)
   const suffix = `.${apexDomain}`
   if (!domain.endsWith(suffix)) throw new Error(`buildMailSubmitter: identity domain ${domain} is not a subdomain of ${apexDomain}`)

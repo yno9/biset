@@ -60,4 +60,45 @@ describe('VaultBackedLocalJmapMutationSink', () => {
     })
     expect((committed?.projection as { emails: Array<{ keywords: unknown }> }).emails[0].keywords).toEqual({ '$seen': true })
   })
+
+  test('commitMailMessage writes a two-object message.add for a locally-composed message (PLAN.md §7 compose)', async () => {
+    let sequence = 0
+    let committed: Record<string, unknown> | undefined
+    const sink = new VaultBackedLocalJmapMutationSink({
+      accountId: 'biset:did:web:alice.example',
+      identityId: 'did:web:alice.example',
+      actorDeviceId: 'device-a',
+      async nextActorSeq() { sequence += 1; return sequence },
+      async initialParents() { return [] },
+      async activeSegment() {
+        const segmentKey = createSegmentKey()
+        return {
+          segmentId: 'segment-1',
+          segmentKey,
+          keyWraps: [await createSegmentKeyWrap(new Uint8Array(32).fill(7), segmentKey, {
+            identityId: 'did:web:alice.example', selfGroupId: 'self-group-1', segmentId: 'segment-1',
+            sourceEpoch: '1', recipientEpoch: '1', grantorDeviceId: 'device-a', grantedAt: '2026-08-24T00:00:00.000Z',
+          }, signer)],
+        }
+      },
+      signer,
+      committer: { async commitLocalMutation(input) { committed = input as unknown as Record<string, unknown>; return 'committed' } },
+      now: () => new Date('2026-08-24T00:00:00.000Z'),
+    })
+    const result = await sink.commitMailMessage({
+      email: {
+        id: 'email-out-1', threadId: 'thread-out-1', mailboxIds: { outbox: true }, keywords: {},
+        receivedAt: '2026-08-24T00:00:00.000Z', sentAt: '2026-08-24T00:00:00.000Z',
+        from: [{ email: 'alice@mail.example.test' }], to: [{ email: 'bob@mail.other.test' }], subject: 'hi',
+      },
+      rawRfc5322: new TextEncoder().encode('From: alice@mail.example.test\r\nTo: bob@mail.other.test\r\n\r\nhi'),
+    }, { state: 'state-1', mailboxes: [], emails: [] })
+    expect(result).toMatchObject({ oldState: 'state-1', created: { 'email-out-1': { id: 'email-out-1' } } })
+    expect((committed?.events as unknown[])).toHaveLength(1)
+    expect((committed?.objects as unknown[])).toHaveLength(2)
+    expect((committed?.projection as { emails: Array<{ id: string; mailboxIds: unknown; blobId?: string }> }).emails[0]).toMatchObject({
+      id: 'email-out-1', mailboxIds: { outbox: true },
+    })
+    expect((committed?.projection as { emails: Array<{ blobId?: string }> }).emails[0].blobId).toBeTruthy()
+  })
 })

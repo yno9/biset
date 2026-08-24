@@ -1,15 +1,18 @@
 // Ported at the rendering-logic level from src.bak/ui/thread.ts (1107 lines),
-// cut down to what PLAN.md §7's read-only inbox first slice needs: message
-// bubbles, the thread accordion (focused thread + past-threads list), and the
-// scroll mechanics that keep a reader's position stable while it renders.
-// Field names on MailMessageView (src/mail/message-view.ts) intentionally
-// match the old ProcessedMessage['msg'] shape, so this logic ports with the
-// import list changed and little else.
+// cut down to what PLAN.md §7 needs: message bubbles, the thread accordion
+// (focused thread + past-threads list), the scroll mechanics that keep a
+// reader's position stable while it renders, and (compose slice 1) a
+// minimal reply box on the focused thread. Field names on MailMessageView
+// (src/mail/message-view.ts) intentionally match the old
+// ProcessedMessage['msg'] shape, so this logic ports with the import list
+// changed and little else.
 //
 // Left out (all present in the pre-rewrite version, none ported yet):
-//   - compose/reply (the reply-box, sendReply/sendEditRequest/sendDeleteRequest,
-//     the attach/drag-resize/compose-mode machinery) -- send is out of scope
-//     for a read-only slice (PLAN.md §7 plan).
+//   - starting a brand-new conversation (recipient picker, the
+//     reply-compose-btn mode toggle), sendEditRequest/sendDeleteRequest, the
+//     attach/drag-resize machinery, and the optimistic pending-echo bubble
+//     -- reply-only, send-then-refresh is compose slice 1's explicit scope
+//     (PLAN.md §7 plan).
 //   - message actions: edit/delete-for-everyone, the "..." menu, PGP
 //     encrypted/unreadable states, RFC 9078 reactions, attachments (image
 //     lightbox / file chips), the edited-label patch path in addMessage --
@@ -20,11 +23,40 @@
 //     (did/contacts.ts), MLS group-member chips -- this slice reads one
 //     identity's one local vault, not a multi-relay session set.
 //   - the reply-dock height/padding sync (syncDockPosition) -- there is no
-//     dock in this slice, so scroll math needs none of that geometry.
-import { emailToMessageView, groupMessages, latestGroup, processedMessages } from '../mail/message-view.ts'
+//     resizable dock in this slice, so scroll math needs none of that
+//     geometry.
+import { computeReplyContext, emailToMessageView, groupMessages, latestGroup, processedMessages } from '../mail/message-view.ts'
 import type { MailMessageView, ProcessedMessage, ThreadGroup } from '../mail/message-view.ts'
 import { avatarStyle, esc, formatTime, linkify, stripQuoted } from './format.ts'
 import type { LocalJmapReadModel } from '../local-jmap/gateway.ts'
+
+/**
+ * Compose's send path lives in main.ts (it needs the vault mutation sink,
+ * the crypto boundary, and the outbound transport, none of which this
+ * rendering module otherwise depends on). thread.ts stays decoupled from
+ * all of that by taking a single injected callback instead -- also sidesteps
+ * an import cycle, since shell.ts already imports FROM this module.
+ */
+export interface ReplySendInput {
+  toAddrs: string[]
+  subject: string
+  body: string
+  inReplyTo?: string
+  references?: string[]
+}
+
+export interface ComposeConfig {
+  /** This identity's own mail address, excluded from a reply's toAddrs. */
+  selfAddress: string
+  sendReply(input: ReplySendInput): Promise<void>
+  onError?(message: string): void
+}
+
+let composeConfig: ComposeConfig | undefined
+
+export function configureCompose(config: ComposeConfig): void {
+  composeConfig = config
+}
 
 let focusedThreadKey: string | null = null
 
@@ -34,12 +66,14 @@ export function getFocusedThreadKey(): string | null { return focusedThreadKey }
 const threadVisibleCounts = new Map<string, number>()
 
 /** Replaces the whole message set from a fresh snapshot -- this slice has no
- * incremental sync yet, so a refresh is a full reload, not a merge. */
+ * incremental sync yet, so a refresh is a full reload, not a merge. Every
+ * locally-committed message is shown regardless of mailbox: there is no
+ * folder/trash/spam concept yet, and a sent reply lives in outbox then sent,
+ * never inbox, so filtering to inbox would make it vanish after sending. */
 export async function loadMessages(readModel: LocalJmapReadModel): Promise<void> {
   const snapshot = await readModel.snapshot()
-  const inbox = snapshot.emails.filter(email => email.mailboxIds.inbox === true)
   const views: ProcessedMessage[] = []
-  for (const email of inbox) {
+  for (const email of snapshot.emails) {
     if (!email.blobId) continue
     const raw = await readModel.download(email.blobId)
     const msg = emailToMessageView(email, raw)
@@ -76,7 +110,15 @@ export function makeThreadCard(group: ThreadGroup, focused: boolean): HTMLElemen
     ? `<div class="thread-header-row"><span class="thread-header">${esc(group.subject)}</span></div>`
     : `<div class="thread-header-row"><span class="thread-header untitled">no title</span></div>`
 
-  card.innerHTML = `${focused ? '' : hdr}<div class="t-messages"></div>`
+  const replyBoxHtml = focused && composeConfig
+    ? `<div class="reply-box">
+        <textarea class="reply-textarea" rows="1" placeholder="Reply"></textarea>
+        <button type="button" class="t-send-btn" aria-label="Send">
+          <svg viewBox="0 0 24 24"><path d="M2 12L22 2L12 22L10 14L2 12Z"/></svg>
+        </button>
+      </div>`
+    : ''
+  card.innerHTML = `${focused ? '' : hdr}<div class="t-messages"></div>${replyBoxHtml}`
 
   const container = card.querySelector('.t-messages') as HTMLElement
   const allMsgs = group.messages
@@ -117,9 +159,50 @@ export function makeThreadCard(group: ThreadGroup, focused: boolean): HTMLElemen
       setFocusedThreadKey(group.key)
       render()
     })
+  } else if (composeConfig) {
+    wireReplyBox(card, group, composeConfig)
   }
 
   return card
+}
+
+function wireReplyBox(card: HTMLElement, group: ThreadGroup, config: ComposeConfig): void {
+  const ta = card.querySelector('.reply-textarea') as HTMLTextAreaElement | null
+  const btn = card.querySelector('.t-send-btn') as HTMLButtonElement | null
+  if (!ta || !btn) return
+  let sending = false
+  const send = async () => {
+    const body = ta.value.trim()
+    if (!body || sending) return
+    sending = true
+    ta.disabled = true
+    btn.disabled = true
+    try {
+      const { toAddrs, references } = computeReplyContext(group.messages, config.selfAddress)
+      const last = [...group.messages].sort((a, b) => a.msg.ts - b.msg.ts).at(-1)
+      await config.sendReply({
+        toAddrs,
+        subject: group.subject,
+        body,
+        inReplyTo: last?.msg.message_id || undefined,
+        references,
+      })
+      ta.value = ''
+    } catch (e) {
+      config.onError?.(e instanceof Error ? e.message : 'Could not send')
+    } finally {
+      sending = false
+      ta.disabled = false
+      btn.disabled = false
+    }
+  }
+  btn.addEventListener('click', () => { void send() })
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.isComposing && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      void send()
+    }
+  })
 }
 
 function topFloor(outer: HTMLElement): number {
