@@ -14,6 +14,7 @@ import { Ed25519MlsDsSignatureVerifier } from './mediation/mls-delivery-authoriz
 import { rosterBackedMailSubmissionAuthorizer } from './identity/authorizers.ts'
 import { CoreMailSubmissionAdapter } from './adapters/mail-submission-adapter.ts'
 import { WebvhLogStore } from './webvh/webvh-store.ts'
+import { DidWebStore } from './webvh/did-web-store.ts'
 
 export interface BisetCoreDeploymentOptions {
   databasePath: string
@@ -44,6 +45,7 @@ export interface BisetCoreDeployment {
   readonly mlsDelivery: SqliteMlsDeliveryService
   readonly mailSubmissionAdapter?: CoreMailSubmissionAdapter
   readonly webvh?: WebvhLogStore
+  readonly didWeb?: DidWebStore
   readonly fetch: (request: Request) => Promise<Response>
   close(): void
 }
@@ -68,6 +70,7 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
     ? new CoreMailSubmissionAdapter(rosterBackedMailSubmissionAuthorizer(roster, verifier), options.mailHelloName)
     : undefined
   const webvh = options.webvhDataDir ? new WebvhLogStore(options.webvhDataDir) : undefined
+  const didWeb = options.webvhDataDir ? new DidWebStore(options.webvhDataDir) : undefined
   return {
     roster,
     delivery,
@@ -77,6 +80,7 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
     mlsDelivery,
     mailSubmissionAdapter,
     webvh,
+    didWeb,
     fetch: createBisetCoreFetchHandler({
       vaultDeliveryStore: delivery,
       restoreControlStore: restoreControl,
@@ -85,6 +89,7 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
       mlsDelivery: { store: mlsDelivery, verifier: mlsDeliveryVerifier, isLiveDevice: (identityId, kid) => roster.isTrustedDevice(identityId, kid) },
       mailSubmission: mailSubmissionAdapter,
       webvh,
+      didWeb,
     }),
     close() { database.close() },
   }

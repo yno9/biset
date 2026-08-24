@@ -14,6 +14,8 @@ import { createMailSubmissionHttpHandler } from './mediation/mail-submission-htt
 import type { CoreMailSubmissionAdapter } from './adapters/mail-submission-adapter.ts'
 import { createWebvhHttpHandler } from './webvh/webvh-http.ts'
 import type { WebvhLogStore } from './webvh/webvh-store.ts'
+import { createDidWebHttpHandler } from './webvh/did-web-http.ts'
+import type { DidWebStore } from './webvh/did-web-store.ts'
 
 export interface BisetCoreApplicationOptions {
   /**
@@ -37,6 +39,10 @@ export interface BisetCoreApplicationOptions {
    * which this deployment otherwise has no dependency on -- see
    * src/core/webvh/webvh-http.ts's header. */
   webvh?: WebvhLogStore
+  /** did:web mirror hosting (GET/PUT .well-known/did.json), identity/web/
+   * mirror.ts's server side. Requires `webvh` too -- a mirror write is
+   * validated against the domain's current did:webvh state. */
+  didWeb?: DidWebStore
 }
 
 /** Narrow composition root: identity decides authorisation; mediation stores bounded ciphertext. */
@@ -48,10 +54,12 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
   const mlsDelivery = options.mlsDelivery && createMlsDeliveryHttpHandler(options.mlsDelivery.store, options.mlsDelivery.verifier, options.mlsDelivery.isLiveDevice)
   const mailSubmission = options.mailSubmission && createMailSubmissionHttpHandler(options.mailSubmission)
   const webvh = options.webvh && createWebvhHttpHandler(options.webvh, { domainHeader: 'x-biset-domain' })
+  const didWeb = options.webvh && options.didWeb && createDidWebHttpHandler(options.didWeb, options.webvh, { domainHeader: 'x-biset-domain' })
   return async (request) => {
     const path = new URL(request.url).pathname
     if (path === '/healthz') return Response.json({ ok: true, service: 'biset-core', storage: 'bounded-only' })
     if (path === '/.well-known/did.jsonl' && webvh) return webvh(request)
+    if (path === '/.well-known/did.json' && didWeb) return didWeb(request)
     if (path.startsWith('/v1/vault-delivery/') && vaultDelivery) return vaultDelivery(request)
     if (path.startsWith('/v1/restore/') && restoreControl) return restoreControl(request)
     if (path.startsWith('/v1/ingress/') && ingress) return ingress(request)
