@@ -40,12 +40,12 @@ import type { MlsKeyPackageStore } from '../mls/keypackage-store.ts'
 import { createSegmentKeyWrap, segmentKeyWrapSigningBytes, unwrapSegmentKey } from '../vault/crypto.ts'
 import type { RestoreTransferSource, RestoreTransferVerifier } from '../vault/restore-transfer.ts'
 import { buildVaultManifest } from '../vault/manifest.ts'
-import type { VaultObjectReader, VaultProjectionWriter, VaultRecordReader } from '../vault/store.ts'
+import type { VaultObjectReader, VaultProjectionReader, VaultProjectionWriter, VaultRecordReader } from '../vault/store.ts'
 import { VaultDeliveryProjector } from '../vault/delivery-projector.ts'
 import { rebuildLocalJmapProjection } from '../vault/projection-rebuild.ts'
 import { VaultObjectBlobReader } from '../vault/blob-reader.ts'
-import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../local-jmap/gateway.ts'
-import type { LocalVaultBlobReader } from '../local-jmap/indexeddb.ts'
+import type { LocalJmapProjectionV1, LocalJmapReadModel, LocalJmapSnapshot } from '../local-jmap/gateway.ts'
+import { IndexedDbLocalJmapReadModel, type LocalVaultBlobReader } from '../local-jmap/indexeddb.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import { deliverySeq, mlsEpoch, type DeliverySeq } from '../protocol/ids.ts'
 import { vaultDeliveryPullSigningBytes } from '../protocol/signing.ts'
@@ -657,4 +657,25 @@ export function buildVaultBlobReader(
   const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
   const resolver = new StoredSegmentKeyResolver(wraps, epochs, verifier)
   return new VaultObjectBlobReader(objects, resolver)
+}
+
+/**
+ * PLAN.md §7's vault UI needs one thing from the identity layer: a ready
+ * `LocalJmapReadModel` for the account it just found locally. This is that
+ * boundary — it composes `buildVaultBlobReader` (above) with
+ * `IndexedDbLocalJmapReadModel` (`local-jmap/indexeddb.ts`), the same way
+ * every other function in this module composes the MLS/vault-crypto
+ * primitives once so the UI layer never has to know `SegmentKeyResolver`,
+ * `VaultEpochKeyResolver`, or self-group state exist. `vault` doubles as
+ * the `VaultProjectionReader` the read model itself needs and the
+ * `VaultObjectReader` the blob reader needs — `IndexedDbVaultStore`
+ * already implements both, so callers pass one store for both roles.
+ */
+export function buildLocalJmapReadModel(
+  vault: VaultProjectionReader & VaultObjectReader & SegmentKeyWrapReader,
+  selfGroupStore: MlsSelfGroupStateStore,
+  identityId: string,
+): LocalJmapReadModel {
+  const blobs = buildVaultBlobReader(vault, vault, selfGroupStore, identityId)
+  return new IndexedDbLocalJmapReadModel(vault, identityId, blobs)
 }

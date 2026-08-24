@@ -176,12 +176,22 @@ describe('end-to-end: create -> write -> deliver -> restore -> project', () => {
       // through the ordinary Email/set keyword.set path for a second event
       // to prove the sink's OWN write path also lands in the same pack.
       const segment = await boundaryA.activeSegment()
+      // Must precede the sink's own nextActorSeq() call below in the shared
+      // counter -- both events share the same actorDeviceId and createdAt,
+      // so the reducer's LWW sort (createdAt -> actorDeviceId -> actorSeq ->
+      // id) falls through to actorSeq to order message.add before
+      // keyword.set. Leaving this at a fixed actorSeq that happens to
+      // collide with the sink's own first call would make the two events'
+      // relative order depend on their (randomly-keyed, therefore
+      // unpredictable) content-hash ids instead -- and the reducer skips a
+      // keyword.set delivered before its email exists.
+      sequence += 1
       const { metadataObject, rawRfc5322Object, event: addEvent } = await buildMailMessageAdd(
         {
           email: { id: 'msg-1', threadId: 'thread-1', mailboxIds: { inbox: true }, keywords: {}, receivedAt: '2026-08-24T00:00:00.000Z' },
           rawRfc5322: new TextEncoder().encode('Subject: hello from A\r\n\r\nhi B'),
         },
-        { identityId: created.record.did, actorDeviceId: created.record.deviceKid!, actorSeq: 1, parents: [], segmentId: segment.segmentId, segmentKey: segment.segmentKey, createdAt: '2026-08-24T00:00:00.000Z' },
+        { identityId: created.record.did, actorDeviceId: created.record.deviceKid!, actorSeq: sequence, parents: [], segmentId: segment.segmentId, segmentKey: segment.segmentKey, createdAt: '2026-08-24T00:00:00.000Z' },
         boundaryA.signer,
       )
 
