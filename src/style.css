@@ -1,60 +1,88 @@
-:root {
-  --bg: #ffffff;
-  --card: #fafafa;
-  --header-border: rgba(0, 0, 0, 0.08);
-  --text: #1c1c1e;
-  --text-dim: #8e8e93;
-  --input-bg: #fff;
-  --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-  --accent: #00577aa4;
+/* =============================================================================
+   biset — application stylesheet
+   =============================================================================
 
-  color: var(--text);
-  background: var(--bg);
-  font-family: var(--font);
-}
+   ORGANISATION — three layers, in cascade order:
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0d0d0d;
-    --card: #1a1a1a;
-    --header-border: rgba(255, 255, 255, 0.06);
-    --text: #ececec;
-    --text-dim: #5a5a5a;
-    --input-bg: #1a1a1a;
-  }
-}
+     BASE      everything that does NOT depend on viewport width: design tokens,
+               the reset, and the shape of every component (sections 01–24).
+     DESKTOP   @media (min-width: 575px)  — section 25.
+     MOBILE    @media (max-width: 574px)  — section 26.
 
-body {
-  margin: 0;
-  min-height: 100dvh;
-}
+   The rule: if a property's VALUE depends on the viewport, it belongs in
+   DESKTOP and/or MOBILE — never in BASE with the other layer undoing it. BASE
+   holding a desktop-shaped value is exactly how #reply-dock's 10px left gutter
+   leaked into the mobile reply field (2026-08-02, user-reported): the mobile
+   block reset `left` but not `margin-left`, because the desktop value was
+   never labelled as one. Mobile now inherits nothing it has to undo.
 
-#app {
-  display: grid;
-  min-height: 100dvh;
-  place-content: center;
-  gap: 0.5rem;
-  padding: 2rem;
-}
+   Purely decorative :hover rules (no layout effect) may stay in BASE. The ones
+   mobile visibly suffers from — sticky tap-hover on list rows, the keyboard-nav
+   .focused highlight, the pane resize handle — live in DESKTOP.
 
-h1,
-p {
-  margin: 0;
-}
+   `single-col` (the desktop collapse-the-left-pane state) is a DESKTOP-only
+   class: setupLeftPane() only applies it above the breakpoint, and togglePane()
+   strips it below. All rules keyed on it therefore live in section 25.
 
-h1 {
-  font-size: 1.25rem;
-}
+   Breakpoint: 575px. CSS cannot use var() inside a media query, so 574/575
+   appear literally in exactly two places (sections 25 and 26). Change both.
 
-p {
-  color: var(--text-dim);
-}
+   Section 27 (installed PWA / Dynamic Island) stays LAST on purpose: it is
+   scoped by html.pwa-standalone and must win over both viewport layers.
 
-/* ── new-user page (src/ui/account-create.ts) ── */
+   -----------------------------------------------------------------------------
+   TABLE OF CONTENTS
+     01  Brand — title bar
+     02  Design tokens, reset & document
+     03  Legacy header & generic menus
+     04  System toast (#sys-msg)
+     05  App shell — 2-pane layout
+     06  Left pane — shell, header, hamburger
+     07  Left pane — search bar & pane-toggle buttons
+     08  Command palette — pages, forms, new-account panel
+     09  Left pane — new-conversation quick bar
+     10  Left pane — inbox list
+     11  Left pane — search results & suggestions
+     12  App shell — right column
+     13  Thread layout — scroll container, reply dock, scroll buttons
+     14  Past-threads drawer
+     15  Thread title & conversation meta
+     16  Account page — identity, storage, devices
+     17  Thread cards & messages
+     18  Message edit/delete actions
+     19  Attachments, lightbox & reactions
+     20  Reply box
+     21  Inline group composer
+     22  New-conversation composer (/new, /compose)
+     23  Send button, protocol badge & attach
+     24  Auth overlays & new-user page
+     25  DESKTOP layer  (min-width: 575px)
+     26  MOBILE layer   (max-width: 574px)
+     27  Installed PWA — Dynamic Island / notch handling
+   ============================================================================= */
+
+/* Config example for Recursive (variable font):
+     <weight>      300 … 1000
+     <slant>       -15 … 0
+     <casual>        0 … 1
+     <cursive>       0 … 1
+     <monospace>     0 … 1 */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   01  BRAND — title bar
+   ────────────────────────────────────────────────────────────────────────── */
 .biset-title {
+  position: fixed;
+  top: 19px;
+  left: 21px;
   font-family: "Recursive", system-ui, sans-serif;
   font-size: 16px;
   font-weight: 700;
+  font-variation-settings:
+    "slnt" 0,
+    "CASL" 0.5,
+    "CRSV" 0,
+    "MONO" 0;
   color: var(--text);
   opacity: 0.5;
 }
@@ -62,25 +90,179 @@ p {
   text-decoration: none;
   color: var(--text);
 }
+.biset-version:hover {
+  opacity: 1;
+}
 .biset-version {
   font-size: 11px;
   font-weight: 500;
   opacity: 0.7;
   vertical-align: 1px;
 }
-#nu-submit {
-  transition: background 0.12s;
-}
-#nu-submit:hover {
-  background: color-mix(in srgb, var(--accent) 82%, #000) !important;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   02  DESIGN TOKENS, RESET & DOCUMENT
+   ────────────────────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
-/* ── read-only inbox first slice (src/ui/thread.ts, left-pane.ts) ──
-   Adapted, not copy-pasted, from src.bak/style.css sections 04-06/10/12-15/17:
-   most of that CSS is entangled with elements this slice doesn't have
-   (#app.lp-enabled's pane-collapse gate, the hamburger/search chips, the
-   reply dock) -- geometry and color tokens are carried over, that coupling
-   is not. */
+:root {
+  --bg: #ffffff;
+  --card: #fafafa;
+  --header-bg: rgba(245, 245, 247, 0.6);
+  --header-border: rgba(0, 0, 0, 0.08);
+  --text: #1c1c1e;
+  --text-dim: #8e8e93;
+  --input-bg: #fff;
+  --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --accent: #00577aa4;
+  --accent2: #002433a4;
+  --accent3: #7a003da4;
+  --compose-h: 280px;
+  --reply-box-bg: rgba(255, 255, 255, 0.7);
+  /* Higher-alpha glass tone for zones that need to read as "mostly opaque"
+     (e.g. behind the Dynamic Island) while still staying translucent enough
+     for backdrop-filter's blur to actually show through — a fully opaque
+     color there hides the blur entirely and just looks like a flat bar. */
+  --glass-strong-bg: rgba(255, 255, 255, 0.88);
+  --pigeon-eye-color: #4e2626;
+  /* "Background-matched glass" — the left-pane header's two circular buttons
+     sit on --card, the reply box sits on --bg (a different, close-but-not-
+     equal value — reusing one token for both left a faint curved seam where
+     the reply box's rounded corners met --bg). Each set below is tinted to
+     match ITS OWN surface, fill and emboss alike, so at rest it reads as part
+     of the background; only once content (list rows, messages) scrolls
+     underneath does the blur + translucency give it away as glass. */
+  --glass-btn-bg: rgba(250, 250, 250, 0.55);
+  --glass-btn-hi: rgba(255, 255, 255, 0.35);
+  --glass-btn-lo: rgba(250, 250, 250, 0.12);
+  --glass-surface-bg: rgba(255, 255, 255, 0.55);
+  /* This surface is pure white, so a LIGHTER top rim has nowhere to go — the
+     -hi that carries the edge on --card composites to 255 on 255 and vanishes.
+     Here the edge is the bottom rim instead: still "light from above", still
+     reads as raised, and it lands about as far off the background (-2.5) as
+     the left pane's top rim does (+1.75). Dark mode keeps the top rim, which
+     has plenty of room to lighten against a near-black surface. */
+  --glass-surface-hi: rgba(255, 255, 255, 0.35);
+  --glass-surface-lo: rgba(240, 240, 240, 0.17);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d0d0d;
+    --card: #1a1a1a;
+    --header-bg: rgba(13, 13, 13, 0.8);
+    --header-border: rgba(255, 255, 255, 0.06);
+    --text: #ececec;
+    --text-dim: #5a5a5a;
+    --input-bg: #1a1a1a;
+    --reply-box-bg: rgba(26, 26, 26, 0.75);
+    --glass-strong-bg: rgba(26, 26, 26, 0.88);
+    --glass-btn-bg: rgba(26, 26, 26, 0.55);
+    /* Light mode's hi/lo work because they're barely a shade off --card
+       (250→255, 250→250) despite the punchy-looking alpha — the actual
+       lightness shift is tiny, which is what makes it blend instead of
+       reading as a ring. rgba(60,60,60,.4)/rgba(0,0,0,.3) here previously
+       broke that: against a card this dark (26), a 60-grey or true black is
+       a big relative jump, so the button never disappeared into the
+       background. Keep both close to --card's own 26 for the same reason. */
+    --glass-btn-hi: rgba(36, 36, 36, 0.3);
+    --glass-btn-lo: rgba(26, 26, 26, 0.15);
+    /* Same idea, tinted to --bg (13) instead of --card (26) — this is the
+       reply box's own surface, one shade darker than the header buttons'. */
+    --glass-surface-bg: rgba(13, 13, 13, 0.55);
+    --glass-surface-hi: rgba(23, 23, 23, 0.3);
+    --glass-surface-lo: rgba(13, 13, 13, 0.15);
+  }
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 17px;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+input,
+textarea,
+select {
+  font-size: 16px !important;
+}
+
+:root {
+  --header-h: calc(48px + env(safe-area-inset-top));
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   03  LEGACY HEADER & GENERIC MENUS
+   ────────────────────────────────────────────────────────────────────────── */
+#header {
+  display: none !important;
+}
+
+#header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+#header-thread-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+#header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+#menu {
+  position: fixed;
+  top: 48px;
+  right: 12px;
+  background: var(--input-bg);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+  padding: 6px 0;
+  min-width: 160px;
+  z-index: 20;
+  display: none;
+}
+#menu.open {
+  display: block;
+}
+.menu-item {
+  padding: 10px 16px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  display: block;
+}
+.menu-item:hover {
+  background: rgba(128, 128, 128, 0.1);
+}
+.menu-item.danger {
+  color: #ff3b30;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   04  SYSTEM TOAST (#sys-msg)
+   ────────────────────────────────────────────────────────────────────────── */
 #sys-msg {
   position: fixed;
   top: 50%;
@@ -100,27 +282,804 @@ p {
   opacity: 1;
 }
 
-#mail-app {
+/* ─────────────────────────────────────────────────────────────────────────────
+   05  APP SHELL — 2-pane layout
+   ────────────────────────────────────────────────────────────────────────── */
+#app {
   display: flex;
   height: 100dvh;
   overflow: hidden;
-  font-family: system-ui, sans-serif;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   06  LEFT PANE — shell, header, hamburger
+   ────────────────────────────────────────────────────────────────────────── */
 #left-pane {
   flex-shrink: 0;
-  width: 320px;
-  display: flex;
+  display: none;
   flex-direction: column;
   overflow-y: auto;
   overscroll-behavior-y: contain;
   overflow-x: hidden;
   background: var(--card);
   min-height: 0;
+  position: relative;
+  font-family: system-ui, sans-serif;
   font-size: 14px;
 }
+#app.lp-enabled #left-pane {
+  display: flex;
+}
+#app.lp-enabled #header {
+  display: flex;
+}
+
+#left-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: calc(15px + env(safe-area-inset-top)) 16px 15px 14px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  /* Same shape as the conversation header's gradient (section 15), keyed to
+     this pane's own surface: solid --card for the first 10%, then fading out,
+     so rows scrolling up dissolve into the top edge instead of sliding under
+     the search field at full contrast. No blur — the chips carry that. */
+  background: linear-gradient(to bottom, var(--card) 10%, transparent);
+  transform: translateY(0);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+#left-pane-header.lph-hidden {
+  transform: translateY(-100%);
+}
+/* ── header glass chips ──
+   Both header bars — the left pane's and the conversation column's — carry the
+   same pair of circular buttons, so they share one rule and cannot drift.
+   Each chip floats over scrolling content, tinted to match the surface behind
+   it: over empty background it reads as part of that background, not a button;
+   only once content scrolls underneath does the blur give it away as glass. No
+   drop shadow, only a background-matched inset emboss.
+
+   Geometry lives here; the tint lives in the two rules below, because the two
+   headers sit on DIFFERENT surfaces (--card vs --bg) and a chip only vanishes
+   into a background it actually matches. The 40px circle is bigger than the
+   shared #main-toggle rule's 32px — the icon glyphs stay their own svg size,
+   they just get more room around them. */
+#left-pane-header #main-toggle,
+#lp-hamburger-left,
+#thread-title-row #main-toggle-right,
+#thread-title-row #lp-hamburger {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  /* The shared #main-toggle/-right rule dims to 0.55, which read as a
+     different, fainter button next to the hamburger's undimmed glyph. */
+  opacity: 1;
+  color: rgba(120, 120, 128, 0.9);
+  transition: opacity 0.2s ease;
+}
+/* Same scroll-hide treatment as #lp-search-wrap (left) / #header-left
+   (right) — see setupLeftPane's scroll listener in left-pane.ts and #outer's
+   in main.ts. */
+#left-pane-header #main-toggle.lp-search-hidden,
+#lp-hamburger-left.lp-search-hidden,
+#thread-title-row #main-toggle-right.title-hidden,
+#thread-title-row #lp-hamburger.title-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+#left-pane-header #main-toggle:hover,
+#lp-hamburger-left:hover,
+#thread-title-row #main-toggle-right:hover,
+#thread-title-row #lp-hamburger:hover {
+  opacity: 0.8;
+}
+/* Left pane: its own surface is --card. */
+#left-pane-header #main-toggle,
+#lp-hamburger-left {
+  background: var(--glass-btn-bg);
+  box-shadow:
+    inset 0 1px 0 var(--glass-btn-hi),
+    inset 0 -1px 1.5px var(--glass-btn-lo);
+}
+/* Conversation column: --bg, the same surface the reply box sits on. */
+#thread-title-row #main-toggle-right,
+#thread-title-row #lp-hamburger,
+#thread-title-row #header-left {
+  background: var(--glass-surface-bg);
+  box-shadow:
+    inset 0 1px 0 var(--glass-surface-hi),
+    inset 0 -1px 1.5px var(--glass-surface-lo);
+}
+/* An avatar fills the whole circle — no tint behind it. Needs to out-specify
+   the two-ID selectors above, which the plain `#lp-hamburger.has-avatar` rule
+   further down does not. */
+#thread-title-row #lp-hamburger.has-avatar {
+  background: transparent;
+}
+/* The title gets the same material as the buttons flanking it, as a pill that
+   hugs its text (flex: 0 1 auto, so a long subject still shrinks + ellipses
+   rather than stretching the pill across the whole bar). */
+#thread-title-row #header-left {
+  flex: 0 1 auto;
+  /* Keeps the pill hard left against the toggle button. Without it the row's
+     justify-content: space-between would centre a non-flex:1 middle item. */
+  margin-right: auto;
+  height: 40px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  border-radius: 18px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+/* Hidden once the thread scrolls (see #outer's scroll listener in main.ts) —
+   same fade-in-place treatment as #lp-search-wrap.lp-search-hidden, so
+   scrolled content isn't fighting a floating title for attention. */
+#thread-title-row #header-left.title-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.menu-item.with-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.toggle-switch {
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: rgba(128, 128, 128, 0.35);
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+.toggle-switch::after {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.toggle-switch.on {
+  background: var(--accent);
+}
+.toggle-switch.on::after {
+  transform: translateX(16px);
+}
+
+#lp-hamburger {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  padding: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(120, 120, 128, 0.9);
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+#lp-hamburger:hover {
+  opacity: 0.8;
+}
+#lp-hamburger img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: none;
+}
+#lp-hamburger > span {
+  display: none;
+}
+#lp-hamburger-icon {
+  display: flex;
+}
+#lp-hamburger.has-avatar {
+  background: transparent;
+}
+#lp-hamburger.has-avatar img {
+  display: block;
+}
+#lp-hamburger.has-avatar span {
+  display: none;
+}
+#lp-hamburger.has-avatar #lp-hamburger-icon {
+  display: none;
+}
+
+#lp-hamburger-menu {
+  position: fixed;
+  background: var(--card);
+  border-radius: 10px;
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.12),
+    0 1px 4px rgba(0, 0, 0, 0.08);
+  padding: 4px;
+  min-width: 110px;
+  display: none;
+  flex-direction: column;
+  z-index: 200;
+}
+#lp-hamburger-menu.open {
+  display: flex;
+}
+.lp-hmenu-item {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 7px;
+  color: var(--text);
+  text-align: left;
+  width: 100%;
+  font-family: system-ui, sans-serif;
+}
+.lp-hmenu-item:hover {
+  background: rgba(128, 128, 128, 0.1);
+}
+
+/* Size, shape, tint and hover come from the shared header-chip rule above. */
+#lp-hamburger-left {
+  position: relative;
+  border: none;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+#lp-hamburger-left img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: none;
+}
+#lp-hamburger-left > span {
+  display: none;
+}
+#lp-hamburger-left-icon {
+  display: flex;
+}
+#lp-hamburger-left.has-avatar {
+  background: transparent;
+}
+#lp-hamburger-left.has-avatar img {
+  display: block;
+}
+#lp-hamburger-left.has-avatar span {
+  display: none;
+}
+/* With an avatar set, the shared header-chip hover (opacity: 0.8, above)
+   read as the avatar going lighter/washed out — the opposite of the "this
+   is now clickable" cue it's meant to give (2026-08-17, user-reported).
+   No opacity/filter tricks (2026-08-17, user: opacityいじるのやめよう) — a
+   flat gray fill at 80% instead, same technique as .lp-item .lp-avatar's
+   own hover below. z-index, not DOM order, controls the stack: img (auto)
+   under the fill (1) under the icon (2), since the icon is the last real
+   child in the markup (index.html) and would otherwise paint UNDER a
+   same-order ::after fill. */
+/* Cancels the shared header-chip's own opacity dimming (line ~379 above) —
+   this button stays at full opacity; the fill below is the entire hover
+   effect. */
+#lp-hamburger-left.has-avatar:hover {
+  opacity: 1;
+}
+#lp-hamburger-left.has-avatar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+  z-index: 1;
+}
+#lp-hamburger-left.has-avatar:hover::after {
+  opacity: 1;
+}
+#lp-hamburger-left.has-avatar #lp-hamburger-left-icon {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+#lp-hamburger-left.has-avatar:hover #lp-hamburger-left-icon {
+  opacity: 1;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   07  LEFT PANE — search bar & pane-toggle buttons
+   ────────────────────────────────────────────────────────────────────────── */
+#lp-search-wrap {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+  /* Same glass pill as #header-left (thread column) — this pane's own
+     surface is --card, so it uses the --glass-btn-* tint the two flanking
+     circular buttons already use, not --glass-surface-*. Matches their
+     height exactly (40px) rather than approximating it via padding. */
+  height: 40px;
+  box-sizing: border-box;
+  border-radius: 18px;
+  background: var(--glass-btn-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow:
+    inset 0 1px 0 var(--glass-btn-hi),
+    inset 0 -1px 1.5px var(--glass-btn-lo);
+}
+/* Hidden once the list is scrolled (see setupLeftPane's scroll listener in
+   left-pane.ts) — fades in place rather than collapsing width, so the
+   hamburger button on the right doesn't shift position when it goes away. */
+#lp-search-wrap.lp-search-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+#lp-search {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  color: var(--text);
+  outline: none;
+  padding: 0 32px 0 12px;
+  min-width: 0;
+}
+#lp-search::placeholder {
+  color: var(--text-dim);
+}
+#lp-search::-webkit-search-cancel-button {
+  display: none;
+}
+#main-toggle,
+#main-toggle-right,
+#main-toggle-cmd {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--text-dim);
+  opacity: 0.55;
+  transition: opacity 0.15s;
+  padding: 0;
+  flex-shrink: 0;
+}
+#main-toggle:hover,
+#main-toggle-right:hover,
+#main-toggle-cmd:hover {
+  opacity: 1;
+}
+/* default: show split icon */
+#main-toggle .lp-ico-right {
+  display: none;
+}
+#main-toggle-right {
+  display: none;
+}
+#main-toggle-right .lp-ico-split {
+  display: none;
+}
+#main-toggle-cmd {
+  display: none;
+}
+#main-toggle-cmd .lp-ico-split {
+  display: none;
+}
+.lp-cmd-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: "SF Mono", monospace;
+  color: var(--text);
+  margin: 0 8px;
+  transition: background 0.1s;
+}
+.lp-cmd-item:hover,
+.lp-cmd-item.selected {
+  background: rgba(128, 128, 128, 0.18);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   08  COMMAND PALETTE — pages, forms, new-account panel
+   ────────────────────────────────────────────────────────────────────────── */
+#cmd-page-header {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 11;
+  padding: calc(10px + env(safe-area-inset-top)) 12px 10px 16px;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(to bottom, var(--bg) 60%, transparent);
+}
+#cmd-page-header.visible {
+  display: flex;
+}
+#cmd-page-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+#cmd-page-avatar-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: rgba(128, 128, 128, 0.18);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  padding: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(120, 120, 128, 0.9);
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+#cmd-page-avatar-btn:hover {
+  opacity: 0.8;
+}
+#cmd-page-avatar-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: none;
+}
+#cmd-page-avatar-btn.has-avatar {
+  background: transparent;
+}
+#cmd-page-avatar-btn.has-avatar img {
+  display: block;
+}
+#cmd-page-avatar-btn.has-avatar span {
+  display: none;
+}
+#cmd-page {
+  display: none;
+  position: absolute;
+  inset: 0;
+  padding: calc(52px + env(safe-area-inset-top)) 24px 24px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+.cmd-thread-card {
+  padding: 0 24px 40px;
+}
+.cmd-thread-card .cmd-page-content {
+  max-width: 520px;
+  margin: 0 auto;
+  padding-top: 12px;
+}
+.cmd-page-content {
+  max-width: 520px;
+  margin: 0 auto;
+  padding-top: 12px;
+}
+.cmd-page-content h2 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 24px;
+}
+/* Account/config pages: same edge-to-edge treatment as compose (no centered
+     max-width column, no card side padding). */
+.cmd-thread-card:has(.wide-page) {
+  padding: 0 0 40px;
+}
+.cmd-thread-card .cmd-page-content.wide-page,
+.cmd-page-content.wide-page {
+  max-width: none;
+  margin: 0;
+  padding-left: 20px;
+  padding-right: 20px;
+}
+.cmd-page-section {
+  margin-bottom: 28px;
+}
+.cmd-page-section h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+.cmd-page-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--header-border);
+  font-size: 15px;
+}
+/* :last-of-type, not :last-child — a section can end with a non-row sibling
+   (prerotation-rotate-btn, hidden until active) that would otherwise keep
+   this row from being its parent's last CHILD while still being its last
+   ROW, leaving a stray trailing border under it (2026-08-17). */
+.cmd-page-row:last-of-type {
+  border-bottom: none;
+}
+
+.cmd-page-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 22px;
+  border-radius: 10px;
+  border: none;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.cmd-page-btn.primary {
+  background: var(--accent);
+  color: #fff;
+}
+.cmd-page-btn.danger {
+  background: #ff3b30;
+  color: #fff;
+}
+.cmd-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cmd-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 0px solid var(--header-border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 14px;
+}
+.cmd-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* "+ New JMAP account" panel — opens on a Sign up / Log in choice, flush
+   against the trigger card above it (no gap, no tint). */
+#cmd-acc-list {
+  margin-bottom: 0;
+}
+/* flex column + gap is the ONE spacing mechanism between this panel's rows
+   (relay row, choice buttons, signup body, login form) — ad-hoc margin-top
+   on individual rows used to duplicate/fight this (e.g. .cmd-form's own
+   gap:8px only covers ITS children, not the gap before it, so Log in's
+   form had no spacing above it at all; 2026-07-14, user-reported). gap
+   only counts VISIBLE siblings, so hidden rows (display:none) contribute
+   nothing — no need to zero out margins per visibility state. */
+/* Positioned over the card area, growing upward out of the floating
+   "+ New Relay" button that opens it (#cmd-acc-fab, 2026-08-12) — same
+   bottom edge, same centre line, so the expand reads as the button itself
+   unfolding rather than a separate sheet appearing. Fixed rather than
+   in-flow for exactly that reason: it has to land on the button's own
+   coordinates (both get their `left` from positionAccFloating, measured off
+   the right column), not wherever the list happens to end.
+   Same surface as the button and the fields inside it — one flat white. */
+#cmd-acc-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-radius: 16px;
+  padding: 16px;
+  margin-top: 0;
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 61;
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(70vh, calc(100vh - 96px));
+  overflow-y: auto;
+  box-sizing: border-box;
+  background: var(--input-bg);
+  box-shadow:
+    inset 0 1px 0 var(--glass-btn-hi),
+    0 1px 6px rgba(0, 0, 0, 0.1),
+    0 1px 2px rgba(0, 0, 0, 0.06);
+  transform-origin: bottom center;
+  transform: translateX(-50%) translateY(10px) scale(0.94);
+  opacity: 0;
+  transition: transform 0.18s ease, opacity 0.16s ease;
+}
+#cmd-acc-panel.open {
+  transform: translateX(-50%) translateY(0) scale(1);
+  opacity: 1;
+}
+#cmd-acc-choice {
+  display: flex;
+  gap: 10px;
+}
+.cmd-acc-choice-btn {
+  flex: 1;
+  border: 1px solid var(--header-border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 14px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.cmd-acc-choice-btn:hover {
+  border-color: var(--accent);
+}
+/* One shared row shape for all three "+ New JMAP account" input rows (relay,
+   email, password+Add) — they used to diverge (relay-row was missing
+   display:flex/align-items entirely, block vs flex), which showed up as
+   slightly different line-height/left-alignment between rows (2026-07-14,
+   user-reported). */
+.cmd-acc-login-row,
+.cmd-acc-email-row,
+.cmd-acc-password-row,
+.cmd-acc-relay-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cmd-acc-login-row .cmd-page-btn {
+  flex-shrink: 0;
+}
+/* Protocol pill sits INSIDE the relay input, pinned to its right edge —
+   not a separate element after it. */
+.cmd-acc-relay-row {
+  position: relative;
+  font-family: "Recursive", ui-monospace, monospace;
+  font-variation-settings: "MONO" 1;
+}
+.cmd-acc-relay-row .cmd-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding-right: 44px;
+  font-family: inherit;
+}
+/* Log in's Email/Password/Add — same Recursive-mono treatment as the relay
+   row and Sign up body; <input>/<button> don't inherit font-family from an
+   ancestor by default, hence the explicit `inherit` on both children. */
+#cmd-acc-form {
+  font-family: "Recursive", ui-monospace, monospace;
+  font-variation-settings: "MONO" 1;
+}
+#cmd-acc-form .cmd-input,
+#cmd-acc-form .cmd-page-btn {
+  font-family: inherit;
+}
+/* display:contents so the <form> itself generates no box — its rows
+   (email-row, login-row, error) join #cmd-acc-panel's flex column directly
+   and share its ONE gap with the relay row above, instead of the form's own
+   .cmd-form gap (8px) fighting the panel's gap (14px) as two different
+   rhythms stacked on top of each other (2026-07-14, user-reported: still
+   not one consistent 3-row rhythm after the panel-level gap fix). The
+   <form> element still exists in the DOM — submit-on-Enter is unaffected. */
+#cmd-acc-form {
+  display: contents;
+}
+/* Once Sign up/Log in commits to this relay, the field is locked for the
+   rest of that flow — no border, no background, reads as plain text instead
+   of an editable field still sitting above steps that already depend on it. */
+.cmd-acc-relay-row.locked .cmd-input {
+  border-color: transparent;
+  background: none;
+  color: var(--text-dim);
+}
+#cmd-acc-signup-body {
+  font-family: "Recursive", ui-monospace, monospace;
+  font-variation-settings: "MONO" 1;
+}
+#cmd-acc-relay-badge {
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.cmd-acc-error {
+  color: #ff3b30;
+  font-size: 12px;
+  margin-top: 8px;
+}
+#cmd-acc-panel .cmd-page-btn {
+  padding: 8px 18px;
+  font-size: 14px;
+}
+/* ─────────────────────────────────────────────────────────────────────────────
+   09  LEFT PANE — new-conversation quick bar
+   ────────────────────────────────────────────────────────────────────────── */
+#lp-new-wrap {
+  padding: 0 8px 8px;
+  flex-shrink: 0;
+}
+#lp-new-inner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--input-bg);
+  border-radius: 10px;
+  padding: 6px 10px;
+}
+#lp-new-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  color: var(--text);
+  outline: none;
+}
+#lp-new-input::placeholder {
+  color: var(--text-dim);
+}
+#lp-new-cancel {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-dim);
+  padding: 0;
+  line-height: 1;
+}
+#lp-new-cancel:hover {
+  color: var(--text);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   10  LEFT PANE — inbox list
+   ────────────────────────────────────────────────────────────────────────── */
 #left-list-wrap {
   flex: 1;
-  padding: 8px 8px 16px 4px;
+  padding: 0 8px 16px 4px;
   min-height: 0;
 }
 #left-list {
@@ -128,19 +1087,30 @@ p {
   flex-direction: column;
   gap: 2px;
 }
+#left-pane::-webkit-scrollbar {
+  width: 6px;
+}
+#left-pane::-webkit-scrollbar-track {
+  background: transparent;
+}
+#left-pane::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.25);
+  border-radius: 3px;
+}
+#left-pane {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.25) transparent;
+}
+
 .lp-item {
   display: block;
   cursor: pointer;
   text-decoration: none;
   color: inherit;
-  border-radius: 8px;
+
   transition: background 0.12s;
-}
-.lp-item:hover {
-  background: rgba(128, 128, 128, 0.08);
-}
-.lp-item.current {
-  background: rgba(128, 128, 128, 0.12);
+  position: relative;
+  overflow: hidden;
 }
 .lp-inner {
   display: flex;
@@ -149,7 +1119,42 @@ p {
   padding: 12px 12px 12px 10px;
   height: 64px;
   overflow: hidden;
+  transition: transform 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
+.lp-item.focused .lp-thread-list > .lp-thread-row:first-child {
+  background: transparent;
+}
+.lp-item:has(.lp-thread-list > .lp-thread-row:first-child.focused) .lp-inner {
+  background: rgba(128, 128, 128, 0.08);
+}
+.lp-delete-btn {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ff3b30;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  border-radius: 0 10px 10px 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s;
+}
+.lp-item.swiped .lp-inner {
+  transform: translateX(-72px);
+}
+.lp-item.swiped .lp-delete-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .lp-avatar {
   width: 34px;
   height: 34px;
@@ -159,7 +1164,7 @@ p {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 600;
   color: #fff;
   position: relative;
@@ -172,7 +1177,74 @@ p {
   height: 10px;
   border-radius: 50%;
   background: var(--accent);
-  border: 2px solid var(--card);
+  border: 2px solid var(--bg);
+}
+/* Numeric equivalent of unread-dot — same corner, shows a count instead of
+   just presence, so a specific inbox's unread pile is identifiable at a
+   glance (see left-pane.ts makeLpItem / the ios badge debugging thread). */
+.lp-avatar .unread-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border-radius: 50%;
+  background: #007aff;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+a.lp-avatar {
+  text-decoration: none;
+  transition: opacity 0.15s;
+}
+a.lp-avatar:hover {
+  opacity: 0.7;
+}
+.lp-avatar {
+  transition: opacity 0.15s;
+}
+.lp-avatar:hover {
+  opacity: 0.8;
+}
+/* Inbox row avatar specifically (makeLpItem, left-pane.ts) — it's a click
+   target that opens the row's context menu (Archive/Export/Delete), so
+   fading it out on hover read as the wrong direction: "getting lighter"
+   rather than "now clickable" (2026-08-17, user-reported, screenshot).
+   Scoped to .lp-item so the identity-header avatar elsewhere
+   (#cmd-acc-identity-avatar, same .lp-avatar class, no menu of its own)
+   keeps the plain fade above instead. Darkens the avatar itself and
+   overlays the same 3-dot "more" glyph used by every other row-menu
+   trigger in the app (.t-menu-btn, the account-card menuBtn), so the cue
+   reads as "menu", not just "hover". */
+.lp-item .lp-avatar:hover {
+  opacity: 1;
+}
+.lp-item .lp-avatar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-color: rgba(0, 0, 0, 0.15);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Ccircle cx='12' cy='5' r='1.5'/%3E%3Ccircle cx='12' cy='12' r='1.5'/%3E%3Ccircle cx='12' cy='19' r='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 14px 14px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+.lp-item .lp-avatar:hover::after {
+  opacity: 1;
 }
 .lp-info {
   flex: 1;
@@ -191,9 +1263,141 @@ p {
   overflow: hidden;
   text-overflow: ellipsis;
   margin-top: 2px;
-  font-size: 13px;
+}
+.lp-thread-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 14px;
+  color: var(--text-dim);
+  line-height: 1;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+.lp-thread-list {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.lp-thread-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-dim);
+  padding: 10px 16px;
+  cursor: pointer;
+  min-height: 40px;
+}
+.lp-thread-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lp-thread-row-ts {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
+#lp-inbox-menu {
+  position: fixed;
+  background: var(--card);
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  padding: 6px 0;
+  min-width: 140px;
+  z-index: 30;
+  display: none;
+}
+#lp-inbox-menu .menu-item {
+  padding: 10px 16px;
+  cursor: pointer;
+}
+#lp-inbox-menu .menu-item.danger {
+  color: #ff3b30;
+}
+#lp-inbox-menu .menu-item:not(.danger) {
+  color: var(--text);
+}
+.lp-archive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.lp-archive-toggle:hover {
+  background: rgba(128, 128, 128, 0.08);
+}
+.lp-archive-caret {
+  width: 12px;
+  display: inline-block;
+}
+.lp-archived-item {
+  opacity: 0.68;
+}
+
+#lp-empty {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 40px 0;
+}
+/* ─────────────────────────────────────────────────────────────────────────────
+   11  LEFT PANE — search results & suggestions
+   ────────────────────────────────────────────────────────────────────────── */
+.lp-search-result {
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 2px;
+}
+.lp-search-result:hover {
+  background: rgba(128, 128, 128, 0.1);
+}
+.lp-search-header {
+  padding: 6px 10px 4px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.lp-search-status {
+  padding: 8px 12px;
+  color: var(--text-dim);
+}
+.lp-search-contact {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lp-search-subject,
+.lp-search-preview {
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lp-search-preview {
+  opacity: 0.75;
+}
+.lp-search-subject mark,
+.lp-search-preview mark {
+  background: rgba(11, 147, 246, 0.25);
+  border-radius: 2px;
+  color: inherit;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   12  APP SHELL — right column
+   ────────────────────────────────────────────────────────────────────────── */
 #right-col {
   flex: 1;
   display: flex;
@@ -201,226 +1405,152 @@ p {
   overflow: hidden;
   min-width: 0;
 }
+#right-pane {
+  position: relative;
+  max-width: 100%;
+  margin: 0 auto;
+  min-height: calc(100% - var(--thread-title-h, 60px));
+  transition: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   13  THREAD LAYOUT — scroll container, reply dock, scroll buttons
+   ────────────────────────────────────────────────────────────────────────── */
 #outer {
   flex: 1;
   min-height: 0;
   overflow-y: scroll;
   overscroll-behavior-y: contain;
-  padding: 0 4px 4px 4px;
+  scrollbar-width: none;
+  /* Flush to the top, no inset padding here. The notch inset (PWA only) is
+     reserved OUTSIDE this scroll container, on #right-col — see section 27.
+     Anything reserved inside it would scroll away with the content. */
+  padding: 0px 4px 4px 4px;
 }
-#right-pane {
-  position: relative;
-  max-width: 100%;
-  margin: 0 auto;
-}
-#thread-title-row {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  padding: 15px 12px 10px 10px;
-  background: linear-gradient(to bottom, var(--bg) 10%, transparent);
-  flex-shrink: 0;
-  font-family: inherit;
-}
-#header-thread-title {
-  font-weight: 600;
-  opacity: 0.9;
-}
-#header-thread-title.untitled {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-weight: 400;
-  color: var(--text-dim);
-  font-size: 12px;
-}
-#conv-meta {
-  font-size: 13px;
-  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-  color: var(--text-dim);
-  padding: 0 20px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-#conv-meta:empty {
+#outer::-webkit-scrollbar {
   display: none;
-}
-#conv-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  cursor: pointer;
-  user-select: none;
-}
-#conv-to {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-#conv-to:empty {
-  display: none;
-}
-#conv-meta-expanded {
-  display: none;
-  margin-top: 8px;
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-all;
-  background: rgba(128, 128, 128, 0.06);
-  border-radius: 8px;
-  padding: 10px 12px;
-  line-height: 1.6;
-}
-#conv-meta.expanded #conv-to {
-  white-space: normal;
-  overflow: visible;
-}
-#conv-meta.expanded #conv-meta-expanded {
-  display: block;
 }
 
-#active-thread {
-  min-height: 0;
+/* Full-bleed by default. The desktop offset (start at the left pane's right
+   edge, plus its gutter) is in section 25 — putting it here is what used to
+   leave a 10px gap on the left of the mobile reply field. */
+#reply-dock {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  transition: none;
+  transform: translateY(0);
 }
-#scroll-spacer {
-  flex-shrink: 0;
+body.lp-resizing #reply-dock {
+  transition: none;
 }
-.thread-card {
-  background: transparent;
-  border-radius: 10px;
-  overflow: hidden;
-  flex-shrink: 0;
-  transition: background 0.12s;
+body:has(#app.lp-enabled.show-left) #reply-dock {
+  display: none;
 }
-.thread-card.clickable {
-  cursor: pointer;
+body:has(#app.lp-enabled.show-left) #scroll-to-bottom,
+body:has(#app.lp-enabled.show-left) #scroll-to-top {
+  display: none;
 }
-.thread-card.clickable:hover {
-  background: rgba(128, 128, 128, 0.1);
+#reply-dock:empty {
+  display: none;
 }
-.thread-header-row {
-  padding: 26px 16px;
-  border-bottom: 1px solid var(--header-border);
+#reply-dock.group-expanded {
+  bottom: 0;
 }
-.thread-header {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.thread-header.untitled {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-weight: 400;
-  color: var(--text-dim);
-  font-size: 13px;
-}
-.t-messages {
-  padding: 20px 16px 0 12px;
+#reply-dock.group-expanded .reply-box {
+  height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 14px;
 }
-.reply-box {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 12px 16px;
-  margin-top: 12px;
-  border-top: 1px solid var(--header-border);
-}
-.reply-textarea {
+#reply-dock.group-expanded .reply-content {
   flex: 1;
-  border: none;
-  background: var(--input-bg);
-  border-radius: 14px;
-  padding: 8px 12px;
-  font-size: 15px;
-  font-family: var(--font);
-  line-height: 1.4;
-  color: var(--text);
-  resize: none;
-  outline: none;
-  max-height: 40vh;
+  overflow-y: auto;
 }
-.reply-textarea::placeholder {
-  color: var(--text-dim);
+
+:root {
+  --dock-h: 0px;
 }
-.reply-box .t-send-btn {
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
+#scroll-to-bottom {
+  position: fixed;
+  bottom: calc(var(--dock-h) + 5px);
+  right: 16px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  background: var(--accent);
+  background: none;
   border: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  z-index: 11;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.2s,
+    bottom 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  color: var(--text-dim);
 }
-.reply-box .t-send-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
+#scroll-to-bottom.visible {
+  opacity: 1;
+  pointer-events: auto;
 }
-.reply-box .t-send-btn svg {
-  width: 16px;
-  height: 16px;
-  fill: #fff;
-}
-.t-msg {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-.t-avatar {
-  width: 30px;
-  height: 30px;
-  margin: 3px;
+#scroll-to-top {
+  position: fixed;
+  bottom: calc(var(--dock-h) + 5px);
+  right: 16px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
-  font-size: 14px;
-  color: #fff;
-}
-.t-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.t-hdr {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.t-sender {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-.t-time {
-  font-size: 12px;
+  z-index: 11;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.2s,
+    bottom 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   color: var(--text-dim);
 }
-.t-body {
-  font-size: inherit;
-  color: var(--text);
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-break: break-word;
+#scroll-to-top.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+#scroll-to-top.above-bottom {
+  bottom: calc(var(--dock-h) + 5px + 26px + 8px);
+}
+/* ─────────────────────────────────────────────────────────────────────────────
+   14  PAST-THREADS DRAWER
+   ────────────────────────────────────────────────────────────────────────── */
+
+@keyframes pastRowIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .past-row {
+  animation: pastRowIn 0.25s ease;
+}
+
+.past-row {
   cursor: pointer;
-  border-bottom: 1px solid var(--header-border);
+  border-bottom: 1px solid rgba(128, 128, 128, 0.08);
 }
 .past-row:hover {
   background: rgba(128, 128, 128, 0.06);
 }
+
 .past-row-header {
   display: flex;
   align-items: center;
@@ -438,7 +1568,8 @@ p {
   flex: 1;
 }
 .past-row-title.untitled {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-weight: 400;
   color: var(--text-dim);
   font-size: 12px;
@@ -448,21 +1579,2225 @@ p {
   color: var(--text-dim);
   flex-shrink: 0;
 }
+.past-row-time-wrap {
+  flex-shrink: 0;
+}
 
-/* ── shared dialog buttons (src/ui/mnemonic.ts) ── */
-.cmd-page-btn {
+/* ─────────────────────────────────────────────────────────────────────────────
+   15  THREAD TITLE & CONVERSATION META
+   ────────────────────────────────────────────────────────────────────────── */
+#thread-title-row {
+  position: sticky;
+  /* top:0 everywhere, installed PWA included: the Dynamic Island is reserved
+     outside this scroll container (#right-col, section 27), so the sticky
+     anchor has nothing to compensate for and no per-platform variant. */
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(15px + env(safe-area-inset-top)) 12px 10px 10px;
+  /* Solid --bg for the first 10%, then fading out: messages scrolling up
+     dissolve into the top edge instead of sliding under the title still at
+     full contrast. Same shape as the left pane header (section 06), keyed to
+     this column's surface instead of --card. The glass chips are unaffected:
+     their fill is --bg too, so they match this gradient at every stop. */
+  background: linear-gradient(to bottom, var(--bg) 10%, transparent);
+  flex-shrink: 0;
+  gap: 4px;
+  font-family: Recursive;
+}
+/* The 0.9 dim belongs to the TITLE TEXT, not the row. On the row it also
+   thinned the glass chips inside it — their fill and emboss both composited
+   at 90%, which is why they read lighter than the left pane's, whose header
+   has no such dim. */
+#header-thread-title {
+  opacity: 0.9;
+}
+#header-thread-title.untitled {
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-weight: 400;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+#conv-meta {
+  font-size: 13px;
+  font-family:
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text-dim);
+  padding: 0 20px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+#conv-via {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background: rgba(128, 128, 128, 0.12);
+  color: var(--text-dim);
+  border-radius: 5px;
+  padding: 2px 6px;
+  display: none;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+#conv-via:not(:empty) {
   display: inline-flex;
   align-items: center;
-  padding: 10px 22px;
-  border-radius: 10px;
-  border: none;
-  font-size: 15px;
-  font-weight: 500;
+}
+#conv-did {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background: #0891b2;
+  color: #fff;
+  border-radius: 5px;
+  padding: 2px 6px;
+  display: none;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+#conv-did:not(:empty) {
+  display: inline-flex;
+  align-items: center;
   cursor: pointer;
+}
+#conv-to {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+#conv-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+  user-select: none;
+}
+#conv-meta:empty {
+  display: none;
+}
+#conv-to,
+#conv-cc,
+#conv-bcc {
+  font-size: 13px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+#conv-to:empty,
+#conv-cc:empty,
+#conv-bcc:empty {
+  display: none;
+}
+
+#conv-meta-expanded {
+  display: none;
+  margin-top: 8px;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: rgba(128, 128, 128, 0.06);
+  border-radius: 8px;
+  padding: 10px 12px;
+  line-height: 1.6;
+}
+#conv-meta.expanded #conv-to,
+#conv-meta.expanded #conv-cc,
+#conv-meta.expanded #conv-bcc {
+  white-space: normal;
+  overflow: visible;
+}
+#conv-meta.expanded #conv-meta-expanded {
+  display: block;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   16  ACCOUNT PAGE — identity, storage, devices
+   ────────────────────────────────────────────────────────────────────────── */
+/* Account-page identity heading — avatar + [name / shortened DID]. The whole
+   card is the click target to expand Devices/DID Doc (same expand pattern as
+   #conv-meta and the storage cards below) — avatar/name/copy stop
+   propagation to keep their own single-purpose clicks. */
+#cmd-acc-identity-fields {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  /* Matches the relay/storage cards' own row padding (renderAccountsList's
+     row.style.cssText = 'padding:10px 12px') — before this the identity
+     card's content sat flush against the container edge while every card
+     below it was inset 12px, a visible left-edge mismatch. */
+  padding: 10px 12px 10px 6px;
+}
+#cmd-acc-identity-avatar {
+  flex-shrink: 0;
+}
+#cmd-acc-identity-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+#cmd-acc-identity-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  /* Hugs the name text instead of stretching across the card (like
+     #cmd-acc-identity-did-row) — otherwise hover/click would fire over the
+     empty space to the right of a short name too. */
+  align-self: flex-start;
+  max-width: 100%;
+}
+#cmd-acc-identity-name {
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+#cmd-acc-identity-name-edit {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+#cmd-acc-identity-name:hover + #cmd-acc-identity-name-edit {
+  opacity: 0.7;
+}
+#cmd-acc-identity-did-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  position: relative;
+  cursor: pointer;
+  /* Shrink to the DID text + copy button instead of stretching across the
+     card: the row is the tooltip's hover target, and a full-width row would
+     pop the bubble from the empty space to the right of the button too. */
+  align-self: flex-start;
+  max-width: 100%;
+}
+/* The heading shows the DID with its SCID elided; hovering the row bubbles up
+   the full identifier, wrapped, so it can be read (or checked against another
+   device) without the 46 base58 characters occupying the card at rest.
+
+   Every knob lives in these variables — retune the bubble here alone, without
+   touching the rule below or anything in left-pane.ts. Override any of them
+   under the dark-mode block further down if a value needs to differ there. */
+#cmd-acc-identity-did-row {
+  --did-tip-gap: 6px;            /* distance below the DID line */
+  --did-tip-max-width: min(420px, 90vw);
+  --did-tip-pad: 6px 8px;
+  --did-tip-radius: 6px;
+  --did-tip-bg: var(--glass-strong-bg);
+  --did-tip-blur: 16px;          /* 0 disables the frosted backdrop */
+  --did-tip-color: var(--text);
+  --did-tip-border: 1px solid var(--header-border);
+  --did-tip-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --did-tip-font-size: 11px;
+  --did-tip-line-height: 1.45;
+  --did-tip-z: 40;
+}
+#cmd-acc-identity-did-row[data-full-did]:hover::after {
+  content: attr(data-full-did);
+  position: absolute;
+  top: calc(100% + var(--did-tip-gap));
+  left: 0;
+  z-index: var(--did-tip-z);
+  max-width: var(--did-tip-max-width);
+  padding: var(--did-tip-pad);
+  border-radius: var(--did-tip-radius);
+  background: var(--did-tip-bg);
+  backdrop-filter: blur(var(--did-tip-blur));
+  -webkit-backdrop-filter: blur(var(--did-tip-blur));
+  color: var(--did-tip-color);
+  border: var(--did-tip-border);
+  box-shadow: var(--did-tip-shadow);
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--did-tip-font-size);
+  line-height: var(--did-tip-line-height);
+  white-space: normal;
+  word-break: break-all;
+  pointer-events: none;
+}
+#cmd-acc-identity-did {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#cmd-acc-identity-copy {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px;
+  line-height: 0;
+  flex-shrink: 0;
+  border-radius: 4px;
+  opacity: 0.6;
+}
+#cmd-acc-identity-copy:hover {
+  opacity: 1;
+  background: rgba(128, 128, 128, 0.12);
+}
+#cmd-acc-identity-menu-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 6px;
+  line-height: 0;
+  flex-shrink: 0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#cmd-acc-identity-menu-btn:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+#cmd-acc-identity-expanded {
+  display: none;
+  margin-top: 8px;
+  background: rgba(128, 128, 128, 0.06);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+#cmd-acc-identity-doc {
+  margin: 0;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.6;
+}
+#cmd-acc-identity-section.expanded #cmd-acc-identity-expanded {
+  display: block;
+}
+
+/* Per-account "how your data is stored" panel (issue #7) — the whole card is
+   the click target; the solid border between cards opens into a filled
+   surface instead of just a line, same idea as #cmd-acc-identity-expanded /
+   #conv-meta's click-to-expand. */
+.acc-card-wrap .cmd-page-row {
+  cursor: pointer;
+}
+.acc-card-wrap.expanded .cmd-page-row,
+.acc-card-wrap:last-child .cmd-page-row {
+  border-bottom: none;
+}
+.acc-new-account-plus {
+  margin-right: 6px;
+}
+
+/* "+ New Relay": a floating button pinned to the bottom of the RIGHT COLUMN
+   (not the viewport — left-pane.ts's positionAccFloating measures #right-col
+   and writes `left`, kept in step by a ResizeObserver so pane toggles and
+   window resizes follow), and the panel it expands into over the card area.
+
+   Raised, not glass: this one sits ON TOP of content rather than in the
+   header furniture, so it takes the same inset top-rim/bottom-rim emboss the
+   header buttons use (--glass-btn-*, "light from above") plus a drop shadow
+   — deliberately a light one, enough to lift it off the cards without
+   reading as a modal. */
+#cmd-acc-fab {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 999px;
   background: var(--input-bg);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 var(--glass-btn-hi),
+    inset 0 -1px 1.5px var(--glass-btn-lo),
+    0 2px 6px rgba(0, 0, 0, 0.07),
+    0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, opacity 0.14s ease, color 0.14s ease;
+}
+/* Recedes until wanted: dimmed label at rest, full-strength text on hover —
+   it's a standing affordance on a page that's mostly about the accounts
+   already there, not a call to action. */
+#cmd-acc-fab:hover {
+  transform: translateX(-50%) translateY(-1px);
+  color: var(--text);
+  box-shadow:
+    inset 0 1px 0 var(--glass-btn-hi),
+    inset 0 -1px 1.5px var(--glass-btn-lo),
+    0 4px 10px rgba(0, 0, 0, 0.09),
+    0 1px 2px rgba(0, 0, 0, 0.04);
+}
+#cmd-acc-fab:active {
+  transform: translateX(-50%) translateY(1px);
+  box-shadow:
+    inset 0 2px 3px var(--glass-btn-lo),
+    0 1px 4px rgba(0, 0, 0, 0.07);
+}
+/* Hidden while its own panel is open — the panel replaces it in place, so
+   leaving it visible would stack the two. Kept in the layout (opacity +
+   pointer-events, not display) so reopening animates from the same spot. */
+#cmd-acc-fab.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Compose fab — bottom-right corner, round icon-only button, same raised
+   glass treatment as the header buttons. Two instances share this look:
+   #cmd-acc-compose-fab lives in #account's own template (right column) and
+   #lp-compose-fab is persistent chrome in the left pane (2026-08-17, added
+   so mobile's left-pane nav-stack screen has its own compose affordance —
+   see the visibility rules below). Only one is ever shown at a time. */
+.compose-fab {
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: var(--input-bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 var(--glass-btn-hi),
+    inset 0 -1px 1.5px var(--glass-btn-lo),
+    0 2px 6px rgba(0, 0, 0, 0.15),
+    0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, color 0.14s ease;
+}
+.compose-fab:hover {
+  color: var(--text);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 var(--glass-btn-hi),
+    inset 0 -1px 1.5px var(--glass-btn-lo),
+    0 4px 10px rgba(0, 0, 0, 0.18),
+    0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.compose-fab:active {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 2px 3px var(--glass-btn-lo),
+    0 1px 4px rgba(0, 0, 0, 0.12);
+}
+/* Right column's own coordinates — fixed to the viewport like #cmd-acc-fab. */
+#cmd-acc-compose-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+}
+/* A SIBLING of <aside id="left-pane"> in the markup (index.html), not a
+   descendant — #left-pane both scrolls its own content (overflow-y:auto,
+   section 06) AND, on desktop, carries `backdrop-filter: blur()` (the
+   575px+ pane style below) which makes it the containing block for any
+   `position: fixed` descendant too (same rule as `transform`/`filter`).
+   Either way, a fixed/absolute box whose containing block is that same
+   scrolling element still gets carried along by its internal scroll — two
+   different attempts nested inside #left-pane both drifted with the list on
+   scroll (2026-08-17, user-reported twice: once as `position: absolute`,
+   once as `position: fixed` that turned out pane-relative for this exact
+   reason). Living outside #left-pane entirely, with #app itself having no
+   transform/filter of its own, is what actually makes `fixed` mean
+   viewport-fixed here.
+   Hidden by default: shown whenever the left pane is the on-screen column
+   (rules below, desktop split-view and mobile nav-stack respectively) —
+   unconditional on which page is open (user-requested: not #account-only,
+   unlike #cmd-acc-compose-fab). */
+#lp-compose-fab {
+  position: fixed;
+  bottom: 24px;
+  display: none;
+}
+@media (min-width: 575px) {
+  /* Viewport-relative `right`, aimed at the pane's own right edge (which
+     sits at var(--lp-width) from the viewport's left, since #left-pane is
+     #app's first flex child with no left offset) — mirrors #reply-dock's
+     own `left: var(--lp-width)` technique (section 21). */
+  #lp-compose-fab {
+    right: calc(100vw - var(--lp-width, 300px) + 16px);
+  }
+  /* Split view (left pane open, not single-col): compose belongs to
+     whichever column the user is actually looking at — here, the left
+     one — so #account's own copy steps aside when that's the open page. */
+  #app.lp-enabled:not(.single-col)[data-menu-page="/account"] #cmd-acc-compose-fab {
+    display: none;
+  }
+  #app.lp-enabled:not(.single-col) #lp-compose-fab {
+    display: inline-flex;
+  }
+}
+@media (max-width: 574px) {
+  /* The active pane is full viewport width here (section 26), so a plain
+     viewport edge inset lines up with it directly. */
+  #lp-compose-fab {
+    right: 16px;
+  }
+  /* Nav-stack: the left pane is the on-screen one exactly when show-left
+     is set (section 26) — same condition the pane's own slide-in uses. */
+  #app.lp-enabled.show-left[data-menu-page="/account"] #cmd-acc-compose-fab {
+    display: none;
+  }
+  #app.lp-enabled.show-left #lp-compose-fab {
+    display: inline-flex;
+  }
+}
+
+/* Click-outside-to-close only — deliberately NOT dimmed (2026-08-12,
+   user-requested): this panel is an inline affordance on the account page,
+   not a modal interrupting it, and a scrim said otherwise. */
+#cmd-acc-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 59;
+  background: transparent;
+  pointer-events: none;
+}
+#cmd-acc-panel-backdrop.open {
+  pointer-events: auto;
+}
+.acc-storage-panel {
+  display: none;
+  padding: 12px;
+  background: rgba(128, 128, 128, 0.05);
+  border-bottom: 1px solid var(--header-border);
+  font-size: 12px;
+}
+.acc-card-wrap.expanded .acc-storage-panel {
+  display: block;
+}
+.acc-storage-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 8px;
+}
+.acc-storage-title {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.acc-storage-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.acc-storage-icon-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px;
+  line-height: 0;
+  border-radius: 4px;
+  opacity: 0.6;
+}
+.acc-storage-icon-btn:hover {
+  opacity: 1;
+  background: rgba(128, 128, 128, 0.12);
+}
+.acc-storage-icon-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+.acc-storage-tree {
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--text-dim);
+}
+.acc-storage-tree .tree-entry {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+.acc-storage-tree .tree-name {
   color: var(--text);
 }
-.cmd-page-btn.primary {
+.acc-storage-tree .tree-meta {
+  color: var(--text-dim);
+}
+.acc-storage-tree .tree-expandable {
+  cursor: pointer;
+}
+.acc-storage-tree .tree-expandable:hover .tree-name {
+  text-decoration: underline;
+}
+.acc-storage-tree .tree-sublist {
+  display: none;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-left: 20px;
+}
+.acc-device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Also covers the bare "Loading…" text this container holds before the rows
+     exist — without it that placeholder inherited the card's larger size and
+     jumped when the list arrived. */
+  font-size: 13px;
+}
+.acc-device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+}
+.acc-device-label {
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* ─────────────────────────────────────────────────────────────────────────────
+   17  THREAD CARDS & MESSAGES
+   ────────────────────────────────────────────────────────────────────────── */
+#active-thread {
+  min-height: 0;
+}
+#scroll-spacer {
+  flex-shrink: 0;
+}
+
+.thread-card {
+  background: transparent;
+  border-radius: 10px;
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: background 0.12s;
+}
+.thread-card.clickable {
+  cursor: pointer;
+}
+.thread-card.clickable:hover {
+  background: rgba(128, 128, 128, 0.1);
+}
+.t-menu-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+.t-menu-btn:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.thread-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 26px 16px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.08);
+}
+.thread-header {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.thread-header.untitled {
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-weight: 400;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* No padding-bottom here, deliberately. Space below the last message is
+   #scroll-spacer's job alone (ui/thread.ts's updateScrollSpacer), because it
+   has to COLLAPSE when the conversation only just fits — padding cannot, and
+   an unconditional gap spends the same pixels pushing a conversation's own
+   header off the top of the screen (2026-08-02). Reinstating a gap here also
+   re-splits "rest above the dock" from "scroll to the end" into two positions
+   that fight each frame (2026-07-29). */
+.t-messages {
+  padding: 20px 16px 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.t-msg {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.t-avatar {
+  width: 30px;
+  height: 30px;
+  margin: 3px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: #fff;
+}
+
+.t-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.t-hdr {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.t-sender {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.t-msg.me .t-sender {
+  color: var(--accent);
+}
+.t-time {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.t-edited {
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.65;
+  font-style: italic;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   18  MESSAGE EDIT/DELETE ACTIONS
+   ────────────────────────────────────────────────────────────────────────── */
+.t-msg-actions-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  opacity: 0.6;
+  /* Sits directly after the timestamp in normal flow — NOT margin-left:auto.
+     .t-hdr is as wide as the body column, so pushing right parked the button
+     at the far edge of the text block, a position that moved with every
+     message's own line length instead of staying next to the header it
+     belongs to. */
+  flex-shrink: 0;
+}
+.t-msg-actions-btn:hover {
+  opacity: 1;
+  background: rgba(128, 128, 128, 0.12);
+}
+/* Single shared instance, appended to <body> and positioned via JS
+   (getBoundingClientRect of the clicked button) — see openActionsMenu in
+   ui/thread.ts. position:fixed so it isn't clipped by #outer's own scroll
+   overflow when the triggering message is near the bottom of the viewport. */
+.t-msg-actions-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 170px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.t-msg-actions-menu button {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.t-msg-actions-menu button:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+.t-msg-delete-btn {
+  color: #e5484d;
+}
+.t-edit-ta {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--header-border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: inherit;
+  font-family: var(--font);
+  line-height: 1.4;
+  resize: vertical;
+  min-height: 44px;
+}
+.t-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.t-edit-actions button {
+  border: none;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.t-edit-save {
   background: var(--accent);
   color: #fff;
 }
+.t-edit-cancel {
+  background: rgba(128, 128, 128, 0.15);
+  color: var(--text-dim);
+}
+.t-body {
+  font-size: inherit;
+  color: var(--text);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* ─────────────────────────────────────────────────────────────────────────────
+   19  ATTACHMENTS, LIGHTBOX & REACTIONS
+   ────────────────────────────────────────────────────────────────────────── */
+.t-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.t-attachment-img {
+  display: block;
+  border-radius: 10px;
+  overflow: hidden;
+  max-width: 220px;
+  max-height: 220px;
+  line-height: 0;
+  border: none;
+  padding: 0;
+  background: none;
+  cursor: zoom-in;
+}
+.t-attachment-img img {
+  width: 100%;
+  height: 100%;
+  max-width: 220px;
+  max-height: 220px;
+  object-fit: cover;
+  display: block;
+}
+#t-img-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.85);
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  box-sizing: border-box;
+}
+.t-lightbox-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+  cursor: default;
+}
+.t-lightbox-close,
+.t-lightbox-download {
+  position: fixed;
+  top: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.t-lightbox-close {
+  right: 16px;
+}
+.t-lightbox-download {
+  right: 62px;
+}
+.t-lightbox-close:hover,
+.t-lightbox-download:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+.t-attachment-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: var(--text);
+  background: rgba(128, 128, 128, 0.1);
+  text-decoration: none;
+  max-width: 220px;
+  overflow: hidden;
+}
+.t-attachment-file span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.t-attachment-file:hover {
+  background: rgba(128, 128, 128, 0.18);
+}
+.t-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.t-reaction-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  line-height: 1.4;
+  background: rgba(128, 128, 128, 0.14);
+  cursor: default;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   20  REPLY BOX
+   ────────────────────────────────────────────────────────────────────────── */
+.reply-box {
+  background: var(--glass-surface-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow:
+    inset 0 1px 0 var(--glass-surface-hi),
+    inset 0 -1px 1.5px var(--glass-surface-lo);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0 0 16px 0;
+}
+.reply-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 12px;
+}
+.reply-content .reply-compose-btn {
+  margin-top: 2px;
+}
+
+.reply-content textarea {
+  margin-top: 6px;
+}
+.reply-compose-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  opacity: 0.4;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
+  color: var(--text);
+}
+.reply-compose-btn:hover {
+  opacity: 0.8;
+}
+.reply-box.compose-mode .reply-compose-btn {
+  opacity: 1;
+  color: var(--accent);
+}
+.reply-attach-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  margin-top: 2px;
+  opacity: 0.4;
+  transition: opacity 0.15s;
+  color: var(--text);
+}
+.reply-attach-btn:hover {
+  opacity: 0.8;
+}
+.reply-attachments {
+  display: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px 0;
+}
+.reply-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 12px;
+  background: rgba(128, 128, 128, 0.14);
+  color: var(--text-dim);
+  max-width: 180px;
+}
+.reply-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reply-attachment-remove {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.reply-attachment-remove:hover {
+  color: var(--text);
+}
+/* Resize handle: hidden in reply mode, forces flex line break + drag in compose mode */
+.reply-subject {
+  display: none;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 15px;
+  font-family: var(--font);
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+}
+.reply-subject::placeholder {
+  color: var(--text-dim);
+}
+.reply-resize-handle {
+  display: flex;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  flex-shrink: 0;
+  border-radius: 12px 12px 0 0;
+}
+.reply-resize-handle span {
+  display: block;
+  width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(128, 128, 128, 0.25);
+}
+.reply-resize-handle:hover span {
+  background: rgba(128, 128, 128, 0.5);
+}
+
+/* Compose mode */
+.reply-box.compose-mode .reply-content {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0;
+}
+.reply-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+}
+.reply-row-top .reply-subject {
+  display: block;
+  flex: 1;
+  min-width: 0;
+}
+.reply-row-bottom {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 12px;
+}
+.reply-row-bottom textarea {
+  flex: 1;
+  min-width: 0;
+  max-height: none;
+}
+/* ─────────────────────────────────────────────────────────────────────────────
+   21  RECIPIENT ROW — remove button
+   ─────────────────────────────────────────────────────────────────────────────
+   All that is left of the inline group composer: the "×" on a recipient row,
+   which the new-conversation composer below reuses (left-pane.ts's addRow).
+   The `group-` prefix is historical — it is not a hint that a group composer
+   still exists; the rest of that section was deleted once nothing rendered it.
+   ────────────────────────────────────────────────────────────────────────── */
+.group-remove-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px;
+}
+.group-remove-btn:hover {
+  color: var(--text);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   22  NEW-CONVERSATION COMPOSER (/new, /compose)
+   ────────────────────────────────────────────────────────────────────────── */
+.new-compose-card {
+  background: var(--reply-box-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 20px;
+  overflow: hidden;
+  margin: 8px 0 0;
+}
+
+.new-compose-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.new-compose-field:last-of-type {
+  border-bottom: none;
+}
+.new-field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  width: 56px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+.new-field-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 15px;
+  color: var(--text);
+  font-family: inherit;
+  min-width: 0;
+  padding: 0;
+}
+.new-field-input::placeholder {
+  color: var(--text-dim);
+}
+.new-recipients-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.new-recipient-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+/* Strip the native <select> inset so the From value lines up with the text
+     inputs' value column (label 56px + gap 12px). */
+/* The From trigger is a button styled to read like the other field inputs:
+   flush-left, transparent, the protocol pill + address laid out in a row. */
+#new-from.new-from-btn {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0;
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  color: var(--text);
+}
+/* From dropdown popup surface. */
+.new-from-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--reply-box-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+.new-from-menu-item {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.new-from-menu-item:hover {
+  background: rgba(128, 128, 128, 0.14);
+}
+.new-from-menu-item.selected {
+  background: rgba(128, 128, 128, 0.10);
+}
+/* From field's "create account" affordance (shown in place of the address
+   when there's no identity yet) — its own pill, sized for readability as a
+   short call-to-action label rather than a tiny transport badge (a protocol
+   pill's 10px reads fine for 2-3 letters but not for this). Grey by
+   default, darkening on hover. */
+.new-from-create-btn {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  border-radius: 8px;
+  padding: 1px 8px 3px 8px;
+  background: rgba(128, 128, 128, 0.6);
+
+}
+.new-from-create-btn:hover {
+  background: rgba(128, 128, 128, 0.8);
+}
+.new-recipient-row .new-field-input {
+  flex: 1;
+}
+/* Recipient protocol pills — left of the To/Cc/Bcc address, same slot the
+   From field's pill occupies, and pixel-aligned with it: the pill's own
+   6px margin-right is the ONLY spacing to the address text in both places.
+   .new-recipient-row's flex `gap` would otherwise ALSO add its 12px between
+   this element and the input (an extra gap the From button, a single flex
+   container with no such ancestor, never has) — the negative margin below
+   cancels exactly that contribution so the two fields' address text lines
+   up instead of the To field sitting 12px further right. Collapses to
+   nothing (no dead flex-gap at all) until there's a pill to show. */
+.new-recip-protos {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.new-recip-protos:not(:empty) {
+  margin-right: -12px;
+}
+.new-recip-protos:empty {
+  display: none;
+}
+/* Recipient protocol-resolve spinner — right edge of the To/Cc/Bcc field.
+   The [Mail]/[AP]/[DID] pills a did: address ends up with depend on a real
+   DHT/pkarr document resolve, not an instant lookup; this is the only
+   feedback that anything's happening while it's in flight. */
+.recip-loading {
+  display: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-dim);
+  border-top-color: transparent;
+  flex-shrink: 0;
+  align-self: center;
+  opacity: 0.7;
+  animation: recip-loading-spin 0.7s linear infinite;
+}
+.recip-loading[data-active="true"] {
+  display: inline-block;
+}
+@keyframes recip-loading-spin {
+  to { transform: rotate(360deg); }
+}
+/* Cc/Bcc row label doubles as a toggle between the two (left-pane.ts's
+   addRow) — no separate chooser menu. */
+.new-field-label-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+.new-field-label-toggle:hover {
+  color: var(--text);
+}
+.new-compose-body-field {
+  display: flex;
+  gap: 12px;
+  padding: 10px 16px 4px;
+}
+.new-compose-body-field textarea {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 15px;
+  color: var(--text);
+  font-family: inherit;
+  resize: none;
+  min-height: 180px;
+  line-height: 1.5;
+  scrollbar-width: none;
+}
+.new-compose-body-field textarea::-webkit-scrollbar {
+  display: none;
+}
+.new-compose-body-field textarea::placeholder {
+  color: var(--text-dim);
+}
+.new-compose-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px 12px;
+}
+
+/* Full-screen compose: drop the card chrome, fill width + height, let the body
+     textarea flex so the send button lands at the bottom-right of the viewport. */
+.cmd-thread-card:has(.compose-page) {
+  padding: 0;
+}
+.cmd-thread-card .cmd-page-content.compose-page {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  /* height, not min-height — the children below (.new-compose-card,
+     .new-compose-body-field, the textarea) are already built as a
+     flex:1/min-height:0 chain meant to fill and cap at this box's height,
+     with the textarea growing/scrolling internally and the send button
+     row staying put at the bottom. min-height is only a floor, so real
+     content simply grew past it instead, pushing the send button below
+     the viewport on mobile (2026-07-14, user-reported). 100dvh (not
+     100vh) so it tracks the actual visible area, not the address-bar-
+     hidden maximum. The fixed 56px this used to subtract was just wrong
+     (measured live: the actual space above this box is --thread-title-h,
+     already tracked in this file — e.g. #right-pane's own
+     `calc(100% - var(--thread-title-h))` — so reuse it instead of a
+     second, different, hand-guessed constant).
+
+     The notch inset is NOT a separate term: in the installed PWA the title
+     row carries it in its own padding-top (section 27), so the measured
+     --thread-title-h already includes it and subtracting env() as well would
+     take the island off twice. The fallback spells the inset out only because
+     a fallback cannot be measured. */
+  height: calc(100dvh - var(--thread-title-h, calc(62px + env(safe-area-inset-top, 0px))));
+  display: flex;
+  flex-direction: column;
+}
+.compose-page .new-compose-card {
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 0;
+  margin: 0;
+  overflow: visible;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Body fills the remaining height. The textarea grows via flex/stretch rather
+     than height:100% (which doesn't resolve against a flex-grown parent). */
+.compose-page .new-compose-body-field {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 16px;
+  align-items: stretch;
+}
+.compose-page .new-compose-body-field .new-field-label {
+  align-self: flex-start;
+}
+/* Shift the whole value column 10px right (wider label column). */
+.compose-page .new-field-label {
+  width: 66px;
+}
+/* Full-screen compose shows a subtle scrollbar. NOTE: setting the standard
+     `scrollbar-width` makes Chrome IGNORE the ::-webkit-scrollbar-* pseudos, so
+     the colour must come from the standard `scrollbar-color` (thumb track). */
+.compose-page .new-compose-body-field textarea {
+  min-height: 0;
+  height: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.25) transparent;
+}
+.compose-page .new-compose-actions {
+  padding: 8px 16px 26px;
+}
+.new-compose-add-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+  padding: 2px 4px;
+}
+.new-compose-add-btn:hover {
+  opacity: 0.8;
+}
+/* ─────────────────────────────────────────────────────────────────────────────
+   23  SEND BUTTON, PROTOCOL BADGE & ATTACH
+   ────────────────────────────────────────────────────────────────────────── */
+
+.reply-box textarea::-webkit-scrollbar {
+  display: none;
+}
+.reply-box textarea {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  resize: none;
+  outline: none;
+  scrollbar-width: none;
+  font-family: var(--font);
+  line-height: 1.4;
+  color: var(--text);
+}
+.reply-box textarea::placeholder {
+  color: var(--text-dim);
+}
+/* width:0 by default, not just an invisible child — a fixed 32px wrap with
+   nothing visibly rendered inside it still reserves that width in the
+   .reply-content flex row, leaving a dead gap next to the attach button
+   (2026-08-17, user-reported, screenshot). Expanding the wrap itself, not
+   just the button's opacity, is what actually reclaims that space. */
+.t-send-wrap {
+  position: relative;
+  width: 0;
+  height: 32px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.reply-box:has(textarea:not(:placeholder-shown)) .t-send-wrap {
+  width: 32px;
+}
+.t-send-avatar {
+  display: none;
+}
+.t-send-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.t-send-btn {
+  position: absolute;
+  inset: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.t-send-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: #fff;
+}
+/* Compose (#new) send button: no avatar overlay, always visible */
+.t-send-btn.always-send {
+  position: static;
+  opacity: 1;
+}
+
+.attach-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 22px;
+  line-height: 1;
+  padding: 0;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+}
+.attach-btn:hover {
+  opacity: 0.9;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   24  AUTH OVERLAYS & NEW-USER PAGE
+   ────────────────────────────────────────────────────────────────────────── */
+#overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  z-index: 100;
+}
+#owner-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--input-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+}
+#owner-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+#owner-msg {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+#inbox-slots {
+  margin: 0;
+  width: 276px;
+}
+#inbox-slots.connected {
+  border-bottom: 2.5px solid var(--text);
+  gap: 0 !important;
+}
+#inbox-slots.connected .slot-input {
+  border-bottom: none;
+  flex: 1;
+  font-size: calc(260px / var(--slot-n, 5));
+}
+#inbox-slots.connected.focused {
+  border-bottom-color: var(--accent);
+}
+
+#inbox-cursor {
+  position: fixed;
+  height: 2.5px;
+  background: var(--bg);
+  display: none;
+  pointer-events: none;
+  z-index: 101;
+  animation: blink-cursor 1.2s step-end infinite;
+}
+@keyframes blink-cursor {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+#pin-digits {
+  display: flex;
+  gap: 28px;
+  margin: 8px 0;
+}
+.slot-input {
+  width: 48px;
+  height: 68px;
+  box-sizing: border-box;
+  min-width: 0;
+  font-size: 52px;
+  font-weight: 700;
+  text-align: center;
+  background: transparent;
+  border: none;
+  border-bottom: 2.5px solid var(--text);
+  color: var(--text);
+  font-family: var(--font);
+  outline: none;
+  padding: 0;
+  caret-color: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.slot-input:focus {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+.slot-input::selection {
+  background: transparent;
+}
+
+#enter-btn {
+  padding: 10px 28px;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: white;
+  font-size: 15px;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+#enter-btn:hover {
+  opacity: 0.85;
+}
+#pw-error {
+  font-size: 13px;
+  color: #ff3b30;
+  min-height: 18px;
+}
+
+#pw-inline {
+  display: none;
+  width: 276px;
+}
+#pw-inline-input {
+  background: var(--input-bg);
+  border: none;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 15px;
+  font-family: var(--font);
+  color: var(--text);
+  outline: none;
+  width: 100%;
+}
+#pw-inline-input::placeholder {
+  color: var(--text-dim);
+}
+
+#pw-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  z-index: 100;
+}
+#pw-overlay-inbox {
+  font-size: 18px;
+  font-weight: 600;
+}
+#pw-overlay-msg {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+#pw-input-wrap {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+#pw-input {
+  background: var(--input-bg);
+  border: none;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 15px;
+  font-family: var(--font);
+  color: var(--text);
+  outline: none;
+  width: 220px;
+}
+#pw-input::placeholder {
+  color: var(--text-dim);
+}
+#pw-submit {
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: white;
+  font-size: 15px;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+#pw-submit:hover {
+  opacity: 0.85;
+}
+#pw-error2 {
+  font-size: 13px;
+  color: #ff3b30;
+  min-height: 18px;
+}
+#relay-status {
+  display: none;
+  font-size: 13px;
+}
+#overlay-inbox-label {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+#overlay-msg {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-top: -8px;
+}
+/* ── new-user page branding ── */
+#nu-submit {
+  transition: background 0.12s;
+}
+#nu-submit:hover {
+  background: color-mix(in srgb, var(--accent) 82%, #000) !important;
+}
+
+/* Pigeon mascot on #new screen (no-target state).
+     Change --pigeon-eye-color in :root to adjust the eye fill. */
+#pigeon-eye {
+  fill: var(--pigeon-eye-color, #1a1a1a);
+}
+#nu-pigeon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+  image-rendering: pixelated;
+}
+#nu-pigeon svg {
+  width: 96px;
+  height: 96px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   25  DESKTOP LAYER  (min-width: 575px)
+   ─────────────────────────────────────────────────────────────────────────────
+   Values that only make sense when the left pane and the thread sit side by
+   side. Nothing below the breakpoint may depend on these: MOBILE does not undo
+   them, it simply never receives them.
+   ────────────────────────────────────────────────────────────────────────── */
+@media (min-width: 575px) {
+  /* ── left pane: floating card beside the thread ──
+     No top/left margin: keeps #left-pane's own x/y at 0, so #main-toggle
+     lands at the same absolute position as MOBILE (which has no margin at
+     all) without needing a separate padding override here. Right/bottom
+     margin keeps the floating-card look on those two edges. */
+  #left-pane {
+    width: var(--lp-width, 300px);
+    margin: 0 10px 0 0;
+    border-radius: 10px;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow:
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.9),
+      inset 0 0 0 0.5px rgba(255, 255, 255, 0.35),
+      0 3px 4px rgba(0, 0, 0, 0.08),
+      0 1px 3px rgba(0, 0, 0, 0.06);
+    transition:
+      width 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+      margin 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  /* Drag-to-resize. Mouse-only (mousedown, see left-pane.ts) and the mobile
+     pane is full-screen with nothing to resize — desktop-only affordance. */
+  #lp-resize-handle {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    cursor: col-resize;
+    z-index: 10;
+  }
+  #lp-resize-handle:hover {
+    background: rgba(128, 128, 128, 0.15);
+  }
+
+  /* ── single-col: the left pane collapsed to zero width from the right ──
+     Desktop-only state (see the header note on `single-col`). */
+  #app.single-col.lp-enabled #left-pane {
+    width: 0;
+    margin-left: 0;
+    margin-right: 0;
+  }
+  #app.single-col.lp-enabled #header {
+    display: flex;
+  }
+  /* left pane hidden → show the right-hand toggle in the right header */
+  body:has(#app.lp-enabled.single-col) #main-toggle .lp-ico-split {
+    display: none;
+  }
+  body:has(#app.lp-enabled.single-col) #main-toggle .lp-ico-right {
+    display: flex;
+  }
+  body:has(#app.lp-enabled.single-col) #main-toggle-right {
+    display: flex;
+  }
+  body:has(#app.lp-enabled.single-col) #main-toggle-cmd {
+    display: flex;
+  }
+
+  /* ── pointer & keyboard-nav affordances ──
+     :hover sticks after a tap on touch devices, and .focused is the keyboard
+     cursor — both are concepts that only exist up here. MOBILE used to reset
+     each of these back to `background: none`; now it just never gets them. */
+  .lp-item .lp-inner:hover {
+    background: rgba(128, 128, 128, 0.1);
+  }
+  .lp-item.focused .lp-inner {
+    background: rgba(128, 128, 128, 0.08);
+  }
+  .lp-thread-toggle:hover {
+    background: rgba(128, 128, 128, 0.15);
+    color: var(--text);
+  }
+  .lp-thread-row:hover,
+  .lp-thread-row.focused {
+    background: rgba(128, 128, 128, 0.08);
+  }
+
+  /* Per-conversation thread expander: a mobile-only control (see section 26). */
+  .lp-thread-toggle {
+    display: none;
+  }
+
+  /* ── left-pane type scale ──
+     Mirrors the identical list in section 26, which runs exactly 1px larger.
+     Keep both lists in the same order so a change to one is easy to mirror.
+     (#lp-search / #lp-new-input are <input>s, so the global
+     `input, textarea, select { font-size: 16px !important }` in section 02
+     actually wins over both scales — kept here for symmetry.) */
+  .lp-hmenu-item {
+    font-size: 16px;
+  }
+  #lp-search {
+    font-size: 16px;
+  }
+  .lp-cmd-item {
+    font-size: 15px;
+  }
+  #lp-new-input {
+    font-size: 16px;
+  }
+  #lp-new-cancel {
+    font-size: 14px;
+  }
+  .lp-avatar {
+    font-size: 16px;
+  }
+  .lp-name {
+    font-size: 15px;
+  }
+  .lp-preview {
+    font-size: 13px;
+  }
+  .lp-thread-toggle {
+    font-size: 20px;
+  }
+  .lp-thread-row {
+    font-size: 13px;
+  }
+  .lp-thread-row-ts {
+    font-size: 11px;
+  }
+
+  #lp-inbox-menu .menu-item {
+    font-size: 14px;
+  }
+  .lp-archive-toggle {
+    font-size: 13px;
+  }
+  .lp-archive-caret {
+    font-size: 10px;
+  }
+  #lp-empty {
+    font-size: 14px;
+  }
+  .lp-search-header {
+    font-size: 11px;
+  }
+  .lp-search-status {
+    font-size: 13px;
+  }
+  .lp-search-contact {
+    font-size: 13px;
+  }
+  .lp-search-subject,
+  .lp-search-preview {
+    font-size: 12px;
+  }
+
+  /* ── right column ──
+     The thread column is centred in what is left over next to the pane. */
+  #right-pane {
+    width: calc(100vw - var(--lp-width, 300px) - 8px);
+  }
+
+  /* ── reply dock ──
+     Starts at the left pane's right edge; the 10px matches #left-pane's own
+     margin so the dock lines up with the card above it. */
+  #reply-dock {
+    left: var(--lp-width, 300px);
+    margin-left: 10px;
+  }
+  /* Pane collapsed / disabled: the dock spans the window, but its content stays
+     the width the thread column would have had. */
+  #app.single-col.lp-enabled #reply-dock {
+    left: 0;
+    right: 0;
+  }
+  #app.single-col.lp-enabled #reply-dock > * {
+    max-width: calc(100vw - var(--lp-width, 300px) - 8px);
+    margin-left: auto;
+    margin-right: auto;
+  }
+  #app:not(.lp-enabled) #reply-dock {
+    left: 0;
+    right: 0;
+  }
+
+  /* ── reply box: a floating card inside the dock ── */
+  .reply-box {
+    margin: 12px;
+    border-radius: 20px;
+  }
+  #reply-dock.group-expanded .reply-box {
+    border-radius: 12px 12px 0 0;
+  }
+
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   26  MOBILE LAYER  (max-width: 574px)
+   ─────────────────────────────────────────────────────────────────────────────
+   The whole phone/narrow-window story, in one place. Everything here is
+   additive: BASE is already edge-to-edge and chrome-free, so this layer adds
+   the nav-stack behaviour and the touch/readability adjustments — it should
+   never need to undo a desktop value. If you find yourself writing a reset
+   here, the value you are resetting belongs in section 25 instead.
+   ────────────────────────────────────────────────────────────────────────── */
+@media (max-width: 574px) {
+  /* ── header buttons ──
+     The left pane is an overlay, so its own back/avatar button appears while
+     it is showing, and the right header keeps the pane toggle at all times. */
+  body:has(#app.lp-enabled.show-left) #lp-hamburger-left {
+    display: flex;
+  }
+  body:has(#app.lp-enabled) #main-toggle-right {
+    display: flex;
+  }
+  body:has(#app.lp-enabled.show-left) #main-toggle-right {
+    display: none;
+  }
+  body:has(#app.lp-enabled) #main-toggle-cmd {
+    display: flex;
+  }
+  body:has(#app.lp-enabled.show-left) #main-toggle-cmd {
+    display: none;
+  }
+
+  /* ── nav stack: both panes full-screen, sliding push/pop like a native
+     navigation stack. Both stay rendered (no display:none) and are stacked
+     full-screen via position:absolute, with transform picking which one is
+     on/off screen — that swap cannot be animated when display is what
+     toggles, only transform can. ── */
+  #app.lp-enabled {
+    position: relative;
+    overflow: hidden;
+  }
+  #app.lp-enabled #left-pane {
+    display: flex !important;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 2;
+  }
+  #app.lp-enabled.show-left #left-pane {
+    transform: translateX(0);
+  }
+  #app.lp-enabled #right-col {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    transform: translateX(0);
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 1;
+  }
+  #app.lp-enabled.show-left #right-col {
+    transform: translateX(100%);
+  }
+  #app.lp-enabled #header {
+    display: flex;
+  }
+  #right-pane {
+    width: 100%;
+  }
+
+  /* ── touch resets ──
+     :hover is triggered by a tap on touch devices and can stick until the user
+     taps elsewhere; .lp-item is an <a href="#">, which some mobile browsers
+     give their own focus outline/background after a tap. The hover/focused
+     BACKGROUNDS themselves are not reset here — they live in section 25 and
+     never reach this layer. */
+  .lp-item {
+    -webkit-tap-highlight-color: transparent;
+  }
+  .lp-item:focus,
+  .lp-item:focus-visible,
+  .lp-item .lp-inner:focus,
+  .lp-item .lp-inner:focus-visible {
+    outline: none;
+    background: none;
+  }
+
+  /* Per-conversation thread expander — only reachable by touch. */
+  .lp-thread-toggle {
+    display: flex;
+    align-items: center;
+  }
+
+  /* The pane-resize handle is desktop-only (section 25); take it out of flow
+     entirely rather than leaving an unstyled empty div at the top of the list. */
+  #lp-resize-handle {
+    display: none;
+  }
+
+  /* ── left-pane type scale (+1px over section 25) ──
+     Readability at the smaller viewport. Same order as the desktop list. */
+  .lp-hmenu-item {
+    font-size: 17px;
+  }
+  #lp-search {
+    font-size: 17px;
+  }
+  .lp-cmd-item {
+    font-size: 16px;
+  }
+  #lp-new-input {
+    font-size: 17px;
+  }
+  #lp-new-cancel {
+    font-size: 15px;
+  }
+  .lp-avatar {
+    font-size: 17px;
+  }
+  .lp-name {
+    font-size: 16px;
+  }
+  .lp-preview {
+    font-size: 14px;
+  }
+  .lp-thread-toggle {
+    font-size: 21px;
+  }
+  .lp-thread-row {
+    font-size: 14px;
+  }
+  .lp-thread-row-ts {
+    font-size: 12px;
+  }
+
+  #lp-inbox-menu .menu-item {
+    font-size: 15px;
+  }
+  .lp-archive-toggle {
+    font-size: 14px;
+  }
+  .lp-archive-caret {
+    font-size: 11px;
+  }
+  #lp-empty {
+    font-size: 15px;
+  }
+  .lp-search-header {
+    font-size: 12px;
+  }
+  .lp-search-status {
+    font-size: 14px;
+  }
+  .lp-search-contact {
+    font-size: 14px;
+  }
+  .lp-search-subject,
+  .lp-search-preview {
+    font-size: 13px;
+  }
+
+  /* ── compose ──
+     Drop the "Body" label column so the textarea gets the full row width
+     instead of sharing it with a label like From/To/Subject do — the one field
+     that is actually written in benefits from the space (2026-07-14,
+     user-requested). */
+  .compose-page .new-compose-body-field .new-field-label {
+    display: none;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   27  INSTALLED PWA — Dynamic Island / notch handling
+   ────────────────────────────────────────────────────────────────────────── */
+/* Scoped to the installed home-screen app via the .pwa-standalone class set on
+   <html> by the inline detector in index.html — NOT @media (display-mode:
+   standalone), which iOS does not match for a legacy apple-mobile-web-app-capable
+   launch (no web manifest here; iOS exposes navigator.standalone instead). Also
+   avoids a browser landscape notch (where env(safe-area-inset-top) can be
+   non-zero) falsely triggering this, keeping the browser version untouched.
+
+   The shape mirrors the left pane, which is the reference for how this should
+   look: #left-pane scrolls, #left-pane-header sticks at its top, the header's
+   own padding-top carries the inset, and list rows scroll UNDER the header —
+   island included — fading out through its gradient.
+
+   - #outer spans the full column height; the inset is NOT reserved above it.
+     Message content therefore reaches the island, which is the whole point: a
+     gradient only reads as a gradient when there is something behind it to
+     fade. Reserving the inset outside the scroll container instead made the
+     island a structurally dead band with nothing but body --bg behind it, so
+     the --bg→transparent fade composited to a perfectly uniform colour and
+     showed up as a flat slab ("べた塗り", 2026-08-03 user-reported).
+   - #thread-title-row sticks at top:0 and carries the inset in its OWN
+     padding-top, so it is one 129px box spanning island + header, painting one
+     gradient — byte for byte the left header's arrangement (which measures the
+     same 129px, from a 74px padding-top). This is the part that took two tries:
+     pinning it at top:inset instead leaves its 59px flow slot permanently empty
+     above it, and nothing can ever paint there — message content lives AFTER
+     the row in flow, so it can never rise above it. A sticky row that must have
+     content behind it has to pin at 0 and own the inset itself.
+   - #past-threads reserves the inset too. It sits ABOVE the title row in the
+     DOM (the drawer of older threads reads above the current one), so at
+     scrollTop=0 the drawer — not the header — is the topmost thing on screen,
+     and without its own reserve its first row would be jammed under the island.
+
+   Because the row now measures 129px, --thread-title-h (ui/thread.ts's
+   syncDockPosition) carries the inset too — anything subtracting BOTH would
+   double-count it. See .compose-page's height, the one such consumer.
+
+   This also closes the 2026-08-02 report: that fix reserved the inset OUTSIDE
+   the scroll container so nothing could pass under the island, which is what
+   made the band flat. The reserve lives in the sticky header now, which is
+   painted — content passing beneath it fades rather than ghosts.
+
+   Browser testing cannot show any of this: env(safe-area-inset-top) is 0 there,
+   so the whole mechanism is inert. Verify on device. */
+html.pwa-standalone #past-threads {
+  padding-top: env(safe-area-inset-top);
+}
+html.pwa-standalone #thread-title-row {
+  top: 0;
+  padding-top: calc(20px + env(safe-area-inset-top));
+}
+
+/* iOS collapses 100dvh from the large viewport (full screen, 852) to the small
+   one (minus the ~59px Dynamic Island strip, 793) the first time the keyboard
+   appears, and never restores it — so #app (height:100dvh) would shrink ~59px
+   after the first reply and leave a blank strip at the bottom that persists
+   until reload (measured on device: innerHeight 852 → 793 across one keyboard
+   cycle). In the installed PWA there is no URL bar, so the large viewport is
+   the correct, stable full height; pin #app to 100vh (== large / lvh on iOS,
+   which does not collapse). The browser tab keeps the base 100dvh (it needs the
+   dynamic value for the collapsing URL bar). */
+html.pwa-standalone #app {
+  height: 100vh;
+}
+
+/* Group conversation members, in the thread header (ui/thread.ts's
+   renderGroupMembers). Chips rather than a comma list because each one is a
+   control: clicking a member removes them from the group. */
+.conv-members { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 8px; vertical-align: middle }
+.conv-member-chip {
+  font: inherit; font-size: 11px; line-height: 1.4;
+  padding: 1px 7px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border, #d0d0d0); background: transparent; color: inherit; opacity: .8;
+}
+.conv-member-chip:hover { opacity: 1; border-color: #b00020; color: #b00020 }
+.conv-member-add:hover, .conv-member-leave:hover { border-color: var(--border, #d0d0d0); color: inherit }
+.conv-member-leave { opacity: .55 }
