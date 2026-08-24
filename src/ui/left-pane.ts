@@ -119,6 +119,42 @@ export function setupLeftPane(): void {
   for (const id of ['main-toggle', 'main-toggle-right', 'main-toggle-cmd']) {
     document.getElementById(id)?.addEventListener('click', togglePane)
   }
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); togglePane() }
+  })
+
+  // Mobile: swipe right anywhere in the conversation column to reveal the
+  // inbox list. Direction is locked early (a few px of movement) rather
+  // than only at touchend, same as src.bak's own reasoning -- a diagonal
+  // touch judged only at the end both scrolls the message list vertically
+  // AND is judged a swipe, which reads as the screen wobbling.
+  {
+    const rightCol = document.getElementById('right-col')
+    let startX = 0, startY = 0, tracking = false, lockedAxis: 'x' | 'y' | null = null
+    rightCol?.addEventListener('touchstart', e => {
+      if (window.innerWidth > 574) { tracking = false; return }
+      tracking = !!app && !app.classList.contains('show-left')
+      lockedAxis = null
+      startX = e.touches[0]!.clientX
+      startY = e.touches[0]!.clientY
+    }, { passive: true })
+    rightCol?.addEventListener('touchmove', e => {
+      if (!tracking) return
+      const dx = e.touches[0]!.clientX - startX
+      const dy = e.touches[0]!.clientY - startY
+      if (!lockedAxis) {
+        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return
+        lockedAxis = Math.abs(dx) > Math.abs(dy) * 1.5 ? 'x' : 'y'
+      }
+      if (lockedAxis === 'x') e.preventDefault()
+    }, { passive: false })
+    rightCol?.addEventListener('touchend', e => {
+      if (!tracking) return
+      tracking = false
+      const dx = e.changedTouches[0]!.clientX - startX
+      if (lockedAxis === 'x' && dx > 70) app?.classList.add('show-left')
+    }, { passive: true })
+  }
 
   if (window.innerWidth > 574) {
     if (localStorage.getItem('lp-open') === '1') app?.classList.remove('single-col')
@@ -167,4 +203,51 @@ export function setupLeftPane(): void {
   }, { passive: true })
 
   document.getElementById('lp-search')?.addEventListener('input', applyLpSearch)
+
+  setupHamburgerMenu()
+}
+
+/** #lp-hamburger-menu's hover/click open-near-trigger behaviour -- pure DOM
+ * positioning, no backend involved, so it stays even though every item
+ * inside it (#lp-hmenu-item -> showMenuPage('/account'|'/config')) has
+ * nowhere to navigate to yet: this rewrite has neither page. Clicking one
+ * just closes the menu instead of silently doing nothing, so hovering
+ * doesn't look broken even though the destinations aren't there. */
+function setupHamburgerMenu(): void {
+  const menu = document.getElementById('lp-hamburger-menu')
+  if (!menu) return
+  let hideTimer: ReturnType<typeof setTimeout> | null = null
+
+  const showNear = (trigger: HTMLElement) => {
+    const rect = trigger.getBoundingClientRect()
+    menu.style.top = (rect.bottom + 4) + 'px'
+    menu.style.right = (window.innerWidth - rect.right) + 'px'
+    menu.style.left = 'auto'
+    menu.classList.add('open')
+  }
+  const scheduleHide = () => { hideTimer = setTimeout(() => menu.classList.remove('open'), 200) }
+  const cancelHide = () => { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null } }
+
+  menu.addEventListener('mouseenter', cancelHide)
+  menu.addEventListener('mouseleave', scheduleHide)
+
+  for (const id of ['lp-hamburger', 'lp-hamburger-left']) {
+    const btn = document.getElementById(id)
+    if (!btn) continue
+    btn.addEventListener('mouseenter', () => { cancelHide(); showNear(btn) })
+    btn.addEventListener('mouseleave', scheduleHide)
+    btn.addEventListener('click', e => {
+      e.stopPropagation()
+      if (menu.classList.contains('open')) menu.classList.remove('open')
+      else showNear(btn)
+    })
+  }
+  for (const item of document.querySelectorAll<HTMLElement>('.lp-hmenu-item')) {
+    item.addEventListener('click', e => {
+      e.stopPropagation()
+      menu.classList.remove('open')
+      document.getElementById('app')?.classList.remove('show-left')
+    })
+  }
+  document.addEventListener('click', () => menu.classList.remove('open'))
 }

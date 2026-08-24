@@ -343,3 +343,40 @@ export function render(smooth = false): void {
   $active.appendChild(makeThreadCard(focused, true))
   requestAnimationFrame(() => scrollToFocused(smooth))
 }
+
+let _scrollButtonsSetUp = false
+
+/** #scroll-to-top/#scroll-to-bottom's src.bak/main.ts wiring, ported as-is
+ * (pure #outer scroll math, no relay/menu-page concept this rewrite has --
+ * inMenuMode() is always false here, there being no #account/#config/
+ * #compose page to be "in"). */
+export function setupScrollButtons(): void {
+  if (_scrollButtonsSetUp) return
+  _scrollButtonsSetUp = true
+  const outer = document.getElementById('outer')
+  const btn = document.getElementById('scroll-to-bottom')
+  const btnTop = document.getElementById('scroll-to-top')
+  if (!outer) return
+
+  outer.addEventListener('scroll', () => {
+    const distFromBottom = outer.scrollHeight - outer.scrollTop - outer.clientHeight
+    const bottomVisible = distFromBottom > 120
+    btn?.classList.toggle('visible', bottomVisible)
+    const floor = topFloor(outer)
+    btnTop?.classList.toggle('visible', outer.scrollTop > floor + 40)
+    btnTop?.classList.toggle('above-bottom', bottomVisible)
+    const lastMsg = outer.querySelector('.t-messages')?.lastElementChild as HTMLElement | null
+    const lastMsgVisible = !lastMsg || lastMsg.getBoundingClientRect().top < outer.getBoundingClientRect().bottom
+    const titleHidden = outer.scrollTop > floor && bottomVisible && !lastMsgVisible
+    document.getElementById('header-left')?.classList.toggle('title-hidden', titleHidden)
+    document.getElementById('main-toggle-right')?.classList.toggle('title-hidden', titleHidden)
+    document.getElementById('lp-hamburger')?.classList.toggle('title-hidden', titleHidden)
+  }, { passive: true })
+  btn?.addEventListener('click', () => outer.scrollTo({ top: outer.scrollHeight, behavior: 'smooth' }))
+  btnTop?.addEventListener('click', () => outer.scrollTo({ top: topFloor(outer), behavior: 'smooth' }))
+
+  // Re-settle scroll position on viewport resize (rotation, devtools panel,
+  // window resize) -- src.bak also resynced its reply-dock's height here,
+  // which has no equivalent in this slice's reply-box.
+  window.addEventListener('resize', () => scrollToFocused())
+}

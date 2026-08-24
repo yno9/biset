@@ -6,7 +6,7 @@
 // send/compose (addPendingMessage and friends), the mobile-column
 // MutationObserver, and every relay/session/DIDComm import shell.ts used only
 // for those.
-import { loadMessages, render } from './thread.ts'
+import { loadMessages, render, setupScrollButtons } from './thread.ts'
 import { renderLeftList, setupLeftPane } from './left-pane.ts'
 import type { LocalJmapReadModel } from '../local-jmap/gateway.ts'
 
@@ -19,6 +19,7 @@ export function showApp(): void {
   const $app = document.getElementById('app')
   if ($app) $app.style.display = 'flex'
   setupLeftPane()
+  setupScrollButtons()
   render()
   renderLeftList()
 }
