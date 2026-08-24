@@ -12,6 +12,8 @@ import type { MlsDsSignatureVerifier } from './mediation/mls-delivery-authorizer
 import type { SqliteMlsDeliveryService } from './mediation/mls-delivery-store.ts'
 import { createMailSubmissionHttpHandler } from './mediation/mail-submission-http.ts'
 import type { CoreMailSubmissionAdapter } from './adapters/mail-submission-adapter.ts'
+import { createWebvhHttpHandler } from './webvh/webvh-http.ts'
+import type { WebvhLogStore } from './webvh/webvh-store.ts'
 
 export interface BisetCoreApplicationOptions {
   /**
@@ -30,6 +32,11 @@ export interface BisetCoreApplicationOptions {
   mlsDelivery?: { store: SqliteMlsDeliveryService; verifier: MlsDsSignatureVerifier; isLiveDevice: (identityId: string, kid: string) => Promise<boolean> }
   /** Authenticated device -> core outbound mail submission (PLAN.md §6.2). */
   mailSubmission?: CoreMailSubmissionAdapter
+  /** did:webvh log hosting (GET/PUT/POST .well-known/did.jsonl) for the
+   * subdomain-per-identity scheme. Ported from the pre-Vault-Core anchor,
+   * which this deployment otherwise has no dependency on -- see
+   * src/core/webvh/webvh-http.ts's header. */
+  webvh?: WebvhLogStore
 }
 
 /** Narrow composition root: identity decides authorisation; mediation stores bounded ciphertext. */
@@ -40,9 +47,11 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
   const roster = options.roster && createRosterInstallHttpHandler(options.roster.store, options.roster.verifier)
   const mlsDelivery = options.mlsDelivery && createMlsDeliveryHttpHandler(options.mlsDelivery.store, options.mlsDelivery.verifier, options.mlsDelivery.isLiveDevice)
   const mailSubmission = options.mailSubmission && createMailSubmissionHttpHandler(options.mailSubmission)
+  const webvh = options.webvh && createWebvhHttpHandler(options.webvh, { domainHeader: 'x-biset-domain' })
   return async (request) => {
     const path = new URL(request.url).pathname
     if (path === '/healthz') return Response.json({ ok: true, service: 'biset-core', storage: 'bounded-only' })
+    if (path === '/.well-known/did.jsonl' && webvh) return webvh(request)
     if (path.startsWith('/v1/vault-delivery/') && vaultDelivery) return vaultDelivery(request)
     if (path.startsWith('/v1/restore/') && restoreControl) return restoreControl(request)
     if (path.startsWith('/v1/ingress/') && ingress) return ingress(request)

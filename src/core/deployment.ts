@@ -13,6 +13,7 @@ import { SqliteMlsDeliveryService } from './mediation/mls-delivery-store.ts'
 import { Ed25519MlsDsSignatureVerifier } from './mediation/mls-delivery-authorizer.ts'
 import { rosterBackedMailSubmissionAuthorizer } from './identity/authorizers.ts'
 import { CoreMailSubmissionAdapter } from './adapters/mail-submission-adapter.ts'
+import { WebvhLogStore } from './webvh/webvh-store.ts'
 
 export interface BisetCoreDeploymentOptions {
   databasePath: string
@@ -26,6 +27,11 @@ export interface BisetCoreDeploymentOptions {
    * the deployment simply doesn't expose /v1/mail/submit rather than
    * guessing a hostname to announce on this identity's behalf. */
   mailHelloName?: string
+  /** Directory for did:webvh log storage (GET/PUT/POST .well-known/did.jsonl,
+   * subdomain-per-identity scheme). Omitting it is intentionally safe: the
+   * deployment simply doesn't expose the endpoint, matching every other
+   * optional plane here. */
+  webvhDataDir?: string
 }
 
 export interface BisetCoreDeployment {
@@ -37,6 +43,7 @@ export interface BisetCoreDeployment {
   readonly ingressAdapter: CoreIngressAdapter
   readonly mlsDelivery: SqliteMlsDeliveryService
   readonly mailSubmissionAdapter?: CoreMailSubmissionAdapter
+  readonly webvh?: WebvhLogStore
   readonly fetch: (request: Request) => Promise<Response>
   close(): void
 }
@@ -60,6 +67,7 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
   const mailSubmissionAdapter = options.mailHelloName
     ? new CoreMailSubmissionAdapter(rosterBackedMailSubmissionAuthorizer(roster, verifier), options.mailHelloName)
     : undefined
+  const webvh = options.webvhDataDir ? new WebvhLogStore(options.webvhDataDir) : undefined
   return {
     roster,
     delivery,
@@ -68,6 +76,7 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
     ingressAdapter,
     mlsDelivery,
     mailSubmissionAdapter,
+    webvh,
     fetch: createBisetCoreFetchHandler({
       vaultDeliveryStore: delivery,
       restoreControlStore: restoreControl,
@@ -75,6 +84,7 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
       roster: { store: roster, verifier },
       mlsDelivery: { store: mlsDelivery, verifier: mlsDeliveryVerifier, isLiveDevice: (identityId, kid) => roster.isTrustedDevice(identityId, kid) },
       mailSubmission: mailSubmissionAdapter,
+      webvh,
     }),
     close() { database.close() },
   }
