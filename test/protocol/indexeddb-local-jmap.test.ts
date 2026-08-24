@@ -24,6 +24,19 @@ describe('IndexedDbLocalJmapReadModel', () => {
     expect(downloads).toEqual(['did:web:alice.example:blob-1'])
   })
 
+  test('a brand-new identity with no commit yet gets an empty snapshot, not an error', async () => {
+    const model = new IndexedDbLocalJmapReadModel(
+      { async readProjection() { return undefined } },
+      identityId,
+      { async download() { throw new Error('unused') } },
+    )
+    const snapshot = await model.snapshot()
+    expect(snapshot.mailboxes).toEqual([])
+    expect(snapshot.emails).toEqual([])
+    expect(typeof snapshot.state).toBe('string')
+    expect(snapshot.state.length).toBeGreaterThan(0)
+  })
+
   test('rejects a projection that belongs to another identity', () => {
     expect(() => localJmapSnapshotFromProjection({ ...projection, identityId: 'did:web:bob.example' }, identityId)).toThrow('invalid version, identity, or state')
   })

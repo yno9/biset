@@ -1,4 +1,5 @@
 import { localJmapSnapshotFromProjection, type LocalJmapReadModel, type LocalJmapSnapshot } from './gateway.ts'
+import { projectionState } from './reducer.ts'
 import type { VaultProjectionReader } from '../vault/store.ts'
 
 /**
@@ -21,7 +22,11 @@ export class IndexedDbLocalJmapReadModel implements LocalJmapReadModel {
 
   async snapshot(): Promise<LocalJmapSnapshot> {
     const projection = await this.vault.readProjection(this.identityId)
-    if (projection === undefined) throw new Error('local JMAP projection is unavailable')
+    // No commit has ever landed for this identity yet -- true for every
+    // brand-new account right after signup, not an error. Empty mailboxes/
+    // emails, same shape reduceLocalJmapProjection produces from a genuinely
+    // empty base.
+    if (projection === undefined) return { state: projectionState(this.identityId, [], []), mailboxes: [], emails: [] }
     return localJmapSnapshotFromProjection(projection, this.identityId)
   }
 
