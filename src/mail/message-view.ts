@@ -185,7 +185,7 @@ export function latestGroup(groups: ThreadGroup[]): ThreadGroup {
 
 export function emailToMessageView(email: LocalJmapEmail, rawRfc5322: Uint8Array): MailMessageView {
   const headers = readRfc5322HeaderSummary(rawRfc5322)
-  const from = email.from?.[0]
+  const from = email.from?.[0] ?? headers.from
   const ts = Date.parse(email.sentAt ?? email.receivedAt)
   return {
     from: from?.email ?? '',

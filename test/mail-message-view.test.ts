@@ -105,6 +105,14 @@ describe('emailToMessageView', () => {
     expect(view.body).toBe('plain body')
   })
 
+  test('falls back to the raw blob\'s From header when LocalJmapEmail has none (legacy vault data ingested before from was tracked)', () => {
+    const { from: _from, ...emailWithoutFrom } = baseEmail
+    const raw = new TextEncoder().encode('From: Carol <carol@example.com>\r\n\r\nbody')
+    const view = emailToMessageView(emailWithoutFrom as LocalJmapEmail, raw)
+    expect(view.from).toBe('carol@example.com')
+    expect(view.from_name).toBe('Carol')
+  })
+
   test('reflects $seen keyword', () => {
     const seenEmail: LocalJmapEmail = { ...baseEmail, keywords: { '$seen': true } }
     const raw = new TextEncoder().encode('Subject: hello\r\n\r\nbody')
