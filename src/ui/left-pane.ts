@@ -26,6 +26,7 @@ import type { ThreadGroup } from '../mail/message-view.ts'
 import { avatarStyle, esc, previewText } from './format.ts'
 import { getFocusedThreadKey, render, setFocusedThreadKey } from './thread.ts'
 import { hideAccountPage, inAccountMode, showAccountPage } from './account-page.ts'
+import { hideComposePage, inComposeMode, showComposePage } from './compose-page.ts'
 
 function latestOf(group: ThreadGroup) {
   return group.messages[group.messages.length - 1]!.msg
@@ -52,6 +53,7 @@ function makeLpItem(group: ThreadGroup, active: boolean): HTMLElement {
   a.addEventListener('click', e => {
     e.preventDefault()
     if (inAccountMode()) hideAccountPage()
+    if (inComposeMode()) hideComposePage()
     setFocusedThreadKey(group.key)
     render()
     renderLeftList()
@@ -117,6 +119,7 @@ export function setupLeftPane(): void {
   // in. Missed porting this the first time (2026-08-24), which is why the
   // left column and its toggle button were both invisible.
   app?.classList.add('lp-enabled')
+  document.getElementById('lp-compose-fab')?.addEventListener('click', () => showComposePage())
 
   for (const id of ['main-toggle', 'main-toggle-right', 'main-toggle-cmd']) {
     document.getElementById(id)?.addEventListener('click', togglePane)

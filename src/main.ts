@@ -16,6 +16,7 @@ import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
 import { configureCompose } from './ui/thread.ts'
 import type { ReplySendInput } from './ui/thread.ts'
 import { configureAccountPage } from './ui/account-page.ts'
+import { configureComposePage } from './ui/compose-page.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { VaultBackedLocalJmapMutationSink } from './local-jmap/vault-mutation-sink.ts'
 import type { LocalJmapMutationSink } from './local-jmap/gateway.ts'
@@ -121,6 +122,17 @@ export async function bootClient(): Promise<void> {
       onError: message => {
         showSysMsg(message)
         console.warn('[sendReply]', message)
+      },
+    })
+    // Same commit-then-submit function as reply -- buildOutboundRfc5322
+    // treats a missing inReplyTo/references as a fresh thread, so nothing
+    // new-message-specific is needed here.
+    configureComposePage({
+      selfAddress: mailFrom,
+      sendMessage: sendReply,
+      onError: message => {
+        showSysMsg(message)
+        console.warn('[sendMessage]', message)
       },
     })
   }
