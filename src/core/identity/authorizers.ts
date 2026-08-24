@@ -2,6 +2,7 @@ import type { RestoreControlAuthorizer } from '../mediation/restore-control-stor
 import type { IngressAuthorizer } from '../mediation/ingress-store.ts'
 import type { VaultDeliveryAuthorizer } from '../mediation/vault-delivery-store.ts'
 import type { IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from '../../protocol/ingress.ts'
+import type { MailSubmissionRequestV1 } from '../../protocol/mail-submission.ts'
 import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryItemV1, VaultDeliveryPullV1 } from '../../protocol/vault.ts'
 import type { DeviceId, IdentityId } from '../../protocol/ids.ts'
 import { assertAcceptedSelfGroupProjection, type TrustedDeviceRoster, type TrustedDeviceV1 } from './device-roster.ts'
@@ -19,6 +20,26 @@ export interface DeviceControlSignatureVerifier {
   verifyRestoreCancel(cancel: RestoreCancelV1, request: RestoreRequestV1, device: TrustedDeviceV1): Promise<boolean>
   verifyRestoreControlPull(pull: RestoreControlPullV1, device: TrustedDeviceV1): Promise<boolean>
   verifyRosterInstall(install: RosterInstallV1, device: TrustedDeviceV1): Promise<boolean>
+  verifyMailSubmission(request: MailSubmissionRequestV1, device: TrustedDeviceV1): Promise<boolean>
+}
+
+/** A device's mail submission is authorized only when it is a current
+ * trusted member of the identity's self group -- same trust boundary as
+ * every other device-control action, no separate allowlist. */
+export interface MailSubmissionAuthorizer {
+  verify(request: MailSubmissionRequestV1): Promise<boolean>
+}
+
+export function rosterBackedMailSubmissionAuthorizer(
+  roster: TrustedDeviceRoster,
+  verifier: Pick<DeviceControlSignatureVerifier, 'verifyMailSubmission'>,
+): MailSubmissionAuthorizer {
+  return {
+    async verify(request) {
+      const device = await currentDevice(roster, request.identityId, request.deviceId)
+      return device !== undefined && verifier.verifyMailSubmission(request, device)
+    },
+  }
 }
 
 export function rosterBackedIngressAuthorizer(

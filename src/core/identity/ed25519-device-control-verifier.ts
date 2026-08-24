@@ -2,6 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import {
   ingressAckSigningBytes,
   ingressPullSigningBytes,
+  mailSubmissionSigningBytes,
   restoreCancelSigningBytes,
   restoreControlPullSigningBytes,
   restoreOfferSigningBytes,
@@ -11,6 +12,7 @@ import {
   vaultDeliveryPullSigningBytes,
 } from '../../protocol/signing.ts'
 import type { IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from '../../protocol/ingress.ts'
+import type { MailSubmissionRequestV1 } from '../../protocol/mail-submission.ts'
 import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryItemV1, VaultDeliveryPullV1 } from '../../protocol/vault.ts'
 import type { TrustedDeviceV1 } from './device-roster.ts'
 import type { DeviceControlSignatureVerifier } from './authorizers.ts'
@@ -67,6 +69,10 @@ export class Ed25519DeviceControlSignatureVerifier implements DeviceControlSigna
 
   verifyRosterInstall(install: RosterInstallV1, device: TrustedDeviceV1): Promise<boolean> {
     return this.verify(device, rosterInstallSigningBytes(install), install.signature)
+  }
+
+  verifyMailSubmission(request: MailSubmissionRequestV1, device: TrustedDeviceV1): Promise<boolean> {
+    return this.verify(device, mailSubmissionSigningBytes(request), request.signature)
   }
 
   private async verify(device: TrustedDeviceV1, bytes: Uint8Array, signature: Uint8Array): Promise<boolean> {

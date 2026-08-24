@@ -11,6 +11,8 @@ import type { IngressStoreLimits } from './mediation/ingress-store.ts'
 import { CoreIngressAdapter } from './adapters/ingress.ts'
 import { SqliteMlsDeliveryService } from './mediation/mls-delivery-store.ts'
 import { Ed25519MlsDsSignatureVerifier } from './mediation/mls-delivery-authorizer.ts'
+import { rosterBackedMailSubmissionAuthorizer } from './identity/authorizers.ts'
+import { CoreMailSubmissionAdapter } from './adapters/mail-submission-adapter.ts'
 
 export interface BisetCoreDeploymentOptions {
   databasePath: string
@@ -19,6 +21,11 @@ export interface BisetCoreDeploymentOptions {
   deliveryLimits?: VaultDeliveryStoreLimits
   restoreControlLimits?: RestoreControlStoreLimits
   ingressLimits?: IngressStoreLimits
+  /** EHLO name for outbound mail submission (PLAN.md §6.2). Omitting it is
+   * intentionally safe, the same way every other optional plane here is:
+   * the deployment simply doesn't expose /v1/mail/submit rather than
+   * guessing a hostname to announce on this identity's behalf. */
+  mailHelloName?: string
 }
 
 export interface BisetCoreDeployment {
@@ -29,6 +36,7 @@ export interface BisetCoreDeployment {
   readonly ingress: SqliteIngressStore
   readonly ingressAdapter: CoreIngressAdapter
   readonly mlsDelivery: SqliteMlsDeliveryService
+  readonly mailSubmissionAdapter?: CoreMailSubmissionAdapter
   readonly fetch: (request: Request) => Promise<Response>
   close(): void
 }
@@ -49,6 +57,9 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
   const ingressAdapter = new CoreIngressAdapter(roster, ingress)
   const mlsDelivery = new SqliteMlsDeliveryService(database)
   const mlsDeliveryVerifier = new Ed25519MlsDsSignatureVerifier(options.signingKeys)
+  const mailSubmissionAdapter = options.mailHelloName
+    ? new CoreMailSubmissionAdapter(rosterBackedMailSubmissionAuthorizer(roster, verifier), options.mailHelloName)
+    : undefined
   return {
     roster,
     delivery,
@@ -56,12 +67,14 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
     ingress,
     ingressAdapter,
     mlsDelivery,
+    mailSubmissionAdapter,
     fetch: createBisetCoreFetchHandler({
       vaultDeliveryStore: delivery,
       restoreControlStore: restoreControl,
       ingressStore: ingress,
       roster: { store: roster, verifier },
       mlsDelivery: { store: mlsDelivery, verifier: mlsDeliveryVerifier, isLiveDevice: (identityId, kid) => roster.isTrustedDevice(identityId, kid) },
+      mailSubmission: mailSubmissionAdapter,
     }),
     close() { database.close() },
   }

@@ -10,6 +10,8 @@ import type { TrustedDeviceRoster } from './identity/device-roster.ts'
 import { createMlsDeliveryHttpHandler } from './mediation/mls-delivery-http.ts'
 import type { MlsDsSignatureVerifier } from './mediation/mls-delivery-authorizer.ts'
 import type { SqliteMlsDeliveryService } from './mediation/mls-delivery-store.ts'
+import { createMailSubmissionHttpHandler } from './mediation/mail-submission-http.ts'
+import type { CoreMailSubmissionAdapter } from './adapters/mail-submission-adapter.ts'
 
 export interface BisetCoreApplicationOptions {
   /**
@@ -26,6 +28,8 @@ export interface BisetCoreApplicationOptions {
   roster?: { store: TrustedDeviceRoster; verifier: Pick<DeviceControlSignatureVerifier, 'verifyRosterInstall'> }
   /** MLS self-group DS plane (RFC 9750 §5): commit ordering, GroupInfo, KeyPackage directory. */
   mlsDelivery?: { store: SqliteMlsDeliveryService; verifier: MlsDsSignatureVerifier; isLiveDevice: (identityId: string, kid: string) => Promise<boolean> }
+  /** Authenticated device -> core outbound mail submission (PLAN.md §6.2). */
+  mailSubmission?: CoreMailSubmissionAdapter
 }
 
 /** Narrow composition root: identity decides authorisation; mediation stores bounded ciphertext. */
@@ -35,6 +39,7 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
   const ingress = options.ingressStore && createIngressHttpHandler(options.ingressStore)
   const roster = options.roster && createRosterInstallHttpHandler(options.roster.store, options.roster.verifier)
   const mlsDelivery = options.mlsDelivery && createMlsDeliveryHttpHandler(options.mlsDelivery.store, options.mlsDelivery.verifier, options.mlsDelivery.isLiveDevice)
+  const mailSubmission = options.mailSubmission && createMailSubmissionHttpHandler(options.mailSubmission)
   return async (request) => {
     const path = new URL(request.url).pathname
     if (path === '/healthz') return Response.json({ ok: true, service: 'biset-core', storage: 'bounded-only' })
@@ -43,6 +48,7 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
     if (path.startsWith('/v1/ingress/') && ingress) return ingress(request)
     if (path.startsWith('/v1/roster/') && roster) return roster(request)
     if (path.startsWith('/v1/mls/') && mlsDelivery) return mlsDelivery(request)
+    if (path.startsWith('/v1/mail/') && mailSubmission) return mailSubmission(request)
     return new Response('Not found', { status: 404 })
   }
 }
