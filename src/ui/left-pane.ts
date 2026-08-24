@@ -109,6 +109,12 @@ export function setupLeftPane(): void {
   if (_setup) return
   _setup = true
   const app = document.getElementById('app')
+  // Load-bearing, not decoration: #left-pane/#header/#main-toggle's CSS is
+  // all scoped under #app.lp-enabled (style.css) -- without this class none
+  // of that renders at all, no matter what state single-col/show-left are
+  // in. Missed porting this the first time (2026-08-24), which is why the
+  // left column and its toggle button were both invisible.
+  app?.classList.add('lp-enabled')
 
   for (const id of ['main-toggle', 'main-toggle-right', 'main-toggle-cmd']) {
     document.getElementById(id)?.addEventListener('click', togglePane)
