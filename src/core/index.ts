@@ -25,11 +25,11 @@ if (!databasePath) {
   const apexDomain = Bun.env.APEX_DOMAIN
   if (!apexDomain) throw new Error('APEX_DOMAIN is required alongside DATABASE_PATH')
 
-  const core = createBisetCoreDeployment({ databasePath, signingKeys: new WebvhSigningKeyResolver() })
-
   const smtpPort = Number(Bun.env.SMTP_PORT ?? 25)
   const smtpHostname = Bun.env.SMTP_HOSTNAME ?? '0.0.0.0'
   const helloName = Bun.env.SMTP_HELLO_NAME ?? `mail.${apexDomain}`
+
+  const core = createBisetCoreDeployment({ databasePath, signingKeys: new WebvhSigningKeyResolver(), mailHelloName: helloName })
   const certPath = Bun.env.SMTP_TLS_CERT_PATH
   const keyPath = Bun.env.SMTP_TLS_KEY_PATH
   const smtp = createSmtpMailListener({
