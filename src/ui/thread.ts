@@ -372,8 +372,18 @@ export function render(smooth = false): void {
     const didBadge = document.getElementById('conv-did')
     const viaBadge = document.getElementById('conv-via')
     $convTo.textContent = participantsOf(focused.messages.map(p => p.msg))
+    // src.bak's applyConvViaPill prepends #conv-via, then (mail/AP path)
+    // prepends #conv-did last so it lands leftmost -- [did, via, address].
+    // This rewrite has exactly one transport (mail, biset-core), so the pill
+    // is always the same "Mail" label src.bak's relayProtocolLabel used for
+    // a mail-subdomain relay; #conv-did stays unwired (no DID-mediated
+    // contact concept here yet).
+    if (viaBadge) {
+      viaBadge.textContent = 'Mail'
+      viaBadge.style.cssText = 'font-size:10px;font-weight:700;color:#fff;background:#64748b;border-radius:4px;padding:1px 5px;margin-right:6px;flex-shrink:0'
+      $convTo.prepend(viaBadge)
+    }
     if (didBadge) $convTo.prepend(didBadge)
-    if (viaBadge) $convTo.appendChild(viaBadge)
   }
   const $convCc = document.getElementById('conv-cc')
   const $convBcc = document.getElementById('conv-bcc')
