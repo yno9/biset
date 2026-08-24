@@ -233,7 +233,7 @@
 - [-] endpoint-only の RFC 5322 header summary は Subject / Date / Message-ID / References を conservative に取り出して最初の JMAP metadata に使う。RFC 2047、address parser、MIME、OpenPGP protected headers は未実装。
 - [-] endpoint-only OpenPGP packet decrypt/optional signature verification と strict RFC 3156 `multipart/encrypted` packet extraction を実装した。Autocrypt、DeltaChat protected headers、SecureJoin、decrypted MIME projector は未実装。
 - [ ] outbound intent から client-side PGP/MIME を作り、SMTP/JMAP Submission する。
-- [ ] `250` 後の TTL expiry policy を **DSN 型**または**4xx 型**のどちらかに決定・実装する。
+- [-] `250` 後の TTL expiry policy を決定した（2026-08-24、ユーザーと協議）。**短期受理型**（`offerIngress` 成功時点で `250` を返す）に確定——SMTP 側の即時完了を優先し、TTL 切れ時は Biset 側が DSN/permanent failure を発行して失敗を明示する責任を負う。理由: 送信側 MTA のリトライ挙動に依存する非受理型（4xx）より、受信側の状態がユーザーにも実装にも追いやすい。実装は SMTP listener 自体が未着手のため後続——`IngressStore.expire()`（memory/SQLite 両方）は既に期限切れ record を `IngressStatusRecord[]` として返すため、`protocol: 'mail'` の expired record を拾って DSN を生成するフックポイントは既存 API で足りる、追加の store 側変更は不要と判断した。
 - [-] PGP private-key credential は vault / peer restore の対象、全端末喪失への備えはユーザー管理の暗号化 recovery archive、core の恒久 key blob は置かない、と policy を決定した。OpenPGP.js による mail 専用鍵生成/packet 検証、暗号化 credential object/event schema、local atomic commit/outbox、shared delivery の検証・保存、署名/current epoch wrap/object を再検証して現行 credential を fail-closed に選ぶ endpoint-only reader は実装済み。restore approval、rotation / revocation、archive export/import は未実装。
 
 ### 6.3 ActivityPub adapter
@@ -378,5 +378,7 @@
 | 2026-08-24 | 作業中 | PLAN.md §2.1/§2.2 の policy 決定をユーザーと協議して確定。(1) vault delivery TTL を 24 時間→30 日間に変更（`vault-delivery-store.ts`/`sqlite-vault-delivery-store.ts`）、default TTL に依存していた test を明示的な短い TTL 指定に修正。(2) TTL/quota 設定は当面 code 内 default constant のまま（versioned config への分離は本番運用開始後、実際に値を変えたくなってから）。(3) protocol version negotiation は `exactKeys()` の無条件拒否を恒久方針として維持、将来の wire format 変更は version 番号を上げる形で対応する方針を確定 |
 
 | 2026-08-24 | 作業中 | PLAN.md §2.4「peer への opaque push / control notification を定義する」を実装（ユーザーと協議しスコープを「schema + narrow API 配線まで、実配送は §7 で後回し」に確定）。`protocol/vault.ts` に unsigned な `RestoreNotifyV1`（本文・metadata 一切無し）を追加、`restore-control-store.ts` に `RestorePushNotifier`/`noopRestorePushNotifier`/`notifyPendingRestore` を追加し、両 `RestoreControlStore` 実装の `request()` から新規 request 受理時のみ呼ぶよう配線。notifier の失敗が `request()` を失敗させないことを含めテストで確認 |
+
+| 2026-08-24 | 作業中 | PLAN.md §6.2「SMTP `250` 後の TTL expiry policy」を決定（ユーザーと協議）。短期受理型（`offerIngress` 成功時点で `250`、TTL 切れ時は Biset 側が DSN/permanent failure を発行）に確定。SMTP listener 自体は未着手のため実装は後続、既存 `IngressStore.expire()` の戻り値で DSN フックは足りると判断し store 側の変更は無し |
 
 新しい作業を始める際は、該当する checkbox を `[-]` にし、完了時に `[x]`、進捗ログに commit と検証結果を記録する。
