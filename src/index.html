@@ -27,6 +27,45 @@
         </div>
       </div>
     </main>
+    <!--
+      Read-only inbox first slice (PLAN.md §7). DOM subset ported from
+      src.bak/index.html: #left-pane -> #left-list-wrap -> #left-list;
+      #right-col -> #outer -> (#past-threads, #thread-title-row,
+      #right-pane -> (#conv-meta, #active-thread, #scroll-spacer)).
+      Left out: compose (#reply-dock, #lp-compose-fab), settings
+      (#cmd-page*), account menu (#lp-hamburger*), search (#lp-search*),
+      the mobile pane-toggle button, and everything DID/relay-badge
+      (#conv-via/#conv-did) -- all out of scope for this slice, see the
+      plan's "Out of scope" section.
+    -->
+    <div id="mail-app" style="display:none">
+      <aside id="left-pane">
+        <div id="left-list-wrap">
+          <div id="left-list"></div>
+        </div>
+      </aside>
+      <div id="right-col">
+        <div id="outer">
+          <div id="past-threads"></div>
+          <div id="thread-title-row">
+            <div id="header-left">
+              <span id="header-thread-title"></span>
+            </div>
+          </div>
+          <div id="right-pane">
+            <div id="conv-meta">
+              <div id="conv-fields">
+                <div id="conv-to"></div>
+              </div>
+              <div id="conv-meta-expanded"></div>
+            </div>
+            <div id="active-thread"></div>
+            <div id="scroll-spacer"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="sys-msg"></div>
 <!-- JS inlined by build -->
   </body>
 </html>

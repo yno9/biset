@@ -1,30 +1,25 @@
 import type { AccountSession } from './local-jmap/transport.ts'
 import { IndexedDbIdentityRecordStore } from './identity/record-store.ts'
-import { maintainSelfGroup } from './identity/bootstrap.ts'
+import { buildLocalJmapReadModel, maintainSelfGroup } from './identity/bootstrap.ts'
 import { IndexedDbMlsSelfGroupStore } from './mls/store.ts'
 import { IndexedDbMlsKeyPackageStore } from './mls/keypackage-store.ts'
 import { IndexedDbVaultStore } from './vault/store.ts'
 import { setupNewUserPage } from './ui/account-create.ts'
+import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
 
 declare const __BISET_CONFIG__: { coreBaseUrl?: string } | undefined
 
 /**
- * New-client bootstrap. Feature modules are intentionally not imported until
- * the local vault and Local JMAP contracts are implemented.
- *
- * The only branch this makes today is "does this device already have an
- * identity locally": with none, it shows the new-user page
+ * New-client bootstrap. The only branch this makes is "does this device
+ * already have an identity locally": with none, it shows the new-user page
  * (ui/account-create.ts, identity/bootstrap.ts's createNewIdentity). With
- * one, there is no login/vault UI yet to hand off to (PLAN.md §3's local
- * vault ingest workflow and §5's Local JMAP Gateway are both still open),
- * so this just reports the identity found — but still runs
- * `maintainSelfGroup` (self-group catch-up + roster reflection + KeyPackage
- * pool top-up) so an identity found on this device does not silently drift
- * out of sync with other devices just because there is no vault UI to open
- * yet.
+ * one, it opens the read-only inbox first slice (PLAN.md §7's plan) against
+ * the first local identity's vault, and still runs `maintainSelfGroup` for
+ * every local identity (self-group catch-up + roster reflection + KeyPackage
+ * pool top-up) so a second identity on this device doesn't silently drift
+ * out of sync just because there's no account switcher yet.
  */
 export async function bootClient(): Promise<void> {
-  const root = document.querySelector<HTMLElement>('#app') ?? document.body
   const newUserPage = document.getElementById('new-user-page')
 
   const records = await new IndexedDbIdentityRecordStore().list().catch(() => [])
@@ -35,18 +30,23 @@ export async function bootClient(): Promise<void> {
   }
 
   if (newUserPage) newUserPage.style.display = 'none'
-  root.replaceChildren()
-  const heading = document.createElement('h1')
-  heading.textContent = 'biset'
-  const description = document.createElement('p')
-  description.textContent = `Identity found: ${records[0]!.did} — vault UI not implemented yet.`
-  root.append(heading, description)
+
+  const selfGroupStore = new IndexedDbMlsSelfGroupStore()
+  const vaultStore = await IndexedDbVaultStore.open()
+  // Single-account slice: the vault UI reads the first local identity's
+  // vault. maintainSelfGroup below still runs for every identity on this
+  // device, so a second one doesn't silently drift out of sync just because
+  // there's no account switcher yet (PLAN.md §7 plan, out of scope).
+  const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, records[0]!.did)
+  showApp()
+  await refreshInbox(readModel).catch(e => {
+    showSysMsg('Could not load the inbox')
+    console.warn('[refreshInbox]', e instanceof Error ? e.message : e)
+  })
 
   const coreBaseUrl = (window as unknown as { __BISET_CONFIG__?: typeof __BISET_CONFIG__ }).__BISET_CONFIG__?.coreBaseUrl
   if (!coreBaseUrl) return
-  const selfGroupStore = new IndexedDbMlsSelfGroupStore()
   const keyStore = new IndexedDbMlsKeyPackageStore()
-  const vaultStore = await IndexedDbVaultStore.open()
   for (const record of records) {
     await maintainSelfGroup(selfGroupStore, keyStore, record, { coreBaseUrl, wraps: vaultStore, segments: vaultStore }).catch(e => {
       console.warn(`[maintainSelfGroup] ${record.did}:`, e instanceof Error ? e.message : e)
