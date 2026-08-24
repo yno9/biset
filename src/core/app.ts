@@ -16,6 +16,8 @@ import { createWebvhHttpHandler } from './webvh/webvh-http.ts'
 import type { WebvhLogStore } from './webvh/webvh-store.ts'
 import { createDidWebHttpHandler } from './webvh/did-web-http.ts'
 import type { DidWebStore } from './webvh/did-web-store.ts'
+import { createRoutingHttpHandler } from './webvh/routing-http.ts'
+import type { RoutingDocStore } from './webvh/routing-store.ts'
 
 export interface BisetCoreApplicationOptions {
   /**
@@ -43,6 +45,11 @@ export interface BisetCoreApplicationOptions {
    * mirror.ts's server side. Requires `webvh` too -- a mirror write is
    * validated against the domain's current did:webvh state. */
   didWeb?: DidWebStore
+  /** routing.json hosting (GET/PUT .well-known/routing.json), the DIDComm
+   * adapter's non-signed operational-data sibling of did.jsonl (PLAN.md
+   * §6.1, didcomm/webvh-routing.ts). Requires `webvh` too -- a routing.json
+   * write is validated against the domain's current did:webvh updateKeys. */
+  routing?: RoutingDocStore
 }
 
 // Every narrow-API handler (roster/mls/vault-delivery/restore/ingress/mail)
@@ -70,11 +77,13 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
   const mailSubmission = options.mailSubmission && createMailSubmissionHttpHandler(options.mailSubmission)
   const webvh = options.webvh && createWebvhHttpHandler(options.webvh, { domainHeader: 'x-biset-domain' })
   const didWeb = options.webvh && options.didWeb && createDidWebHttpHandler(options.didWeb, options.webvh, { domainHeader: 'x-biset-domain' })
+  const routing = options.webvh && options.routing && createRoutingHttpHandler(options.routing, options.webvh, { domainHeader: 'x-biset-domain' })
   const inner = async (request: Request): Promise<Response> => {
     const path = new URL(request.url).pathname
     if (path === '/healthz') return Response.json({ ok: true, service: 'biset-core', storage: 'bounded-only' })
     if (path === '/.well-known/did.jsonl' && webvh) return webvh(request)
     if (path === '/.well-known/did.json' && didWeb) return didWeb(request)
+    if (path === '/.well-known/routing.json' && routing) return routing(request)
     if (path.startsWith('/v1/vault-delivery/') && vaultDelivery) return vaultDelivery(request)
     if (path.startsWith('/v1/restore/') && restoreControl) return restoreControl(request)
     if (path.startsWith('/v1/ingress/') && ingress) return ingress(request)
