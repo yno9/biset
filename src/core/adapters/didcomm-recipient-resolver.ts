@@ -5,16 +5,23 @@
 // identity from an address (`alice@mail.<apex>` -> try `alice.<apex>`, then
 // resolve to confirm), because SMTP addressing carries no DID. DIDComm's
 // addressing already IS a DID URL -- the JWE recipient header's `kid` is
-// `did:webvh:...#k_<hash>`, the exact same string this rewrite's DeviceId
-// already is (protocol/ids.ts's didOfKid, MLS leaf credential kids;
-// didcomm/devicekid.ts derives DIDComm keyAgreement kids the same way, one
-// device -> one kid shared by both key types). No live DID/routing.json
-// resolution is needed here at all: the kid directly names an identity, and
-// whether that identity currently trusts this specific device is exactly
-// what the roster (populated by an authenticated self-group roster install,
-// not by anything a transport adapter or its packets can influence) already
-// answers -- the same ground-truth check CoreIngressAdapter itself relies on
-// for `recipientDeviceSnapshot`.
+// `did:webvh:...#<fragment>`, so `didOfKid` (protocol/ids.ts) reads the
+// identity straight off it, no live resolution needed.
+//
+// Deliberately does NOT require the exact kid to already equal one of the
+// identity's current MLS-device roster ids -- unlike `didOfKid`, nothing in
+// this rewrite yet guarantees a device's DIDComm keyAgreement kid and its
+// MLS leaf credential kid are the same string (that unification is
+// `identity/bootstrap.ts` device-provisioning work, still pending; see
+// PLAN.md §6.1's last checkbox). `CoreIngressAdapter.offer()` doesn't even
+// read this resolver's own `deviceIds` back -- it re-derives
+// `recipientDeviceSnapshot` from the roster itself -- so this resolver's
+// real job, same as mail-recipient-resolver.ts's own `devices.length === 0`
+// check, is only "does this identity exist and currently trust ANY device":
+// exactly matching an existing device kid isn't what gates safety here --
+// a JWE addressed to a kid nobody actually holds the private key for
+// simply fails to decrypt on every device that pulls it (already covered:
+// the ingress projector's own multidevice-ingress test).
 import { didOfKid } from '../../protocol/ids.ts'
 import type { RecipientReference, RecipientResolution } from '../../protocol/transport.ts'
 import type { TrustedDeviceRoster } from '../identity/device-roster.ts'
@@ -38,7 +45,7 @@ export function createDidCommRecipientResolver(
     if (!identityId.startsWith('did:webvh:')) return undefined
 
     const devices = await roster.trustedDevices(identityId)
-    if (!devices.some(device => device.deviceId === kid)) return undefined
+    if (devices.length === 0) return undefined
     return { identityId, deviceIds: devices.map(device => device.deviceId) }
   }
 }
