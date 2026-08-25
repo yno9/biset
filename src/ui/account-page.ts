@@ -12,11 +12,13 @@
 //     rewrite's own bootstrap already trusts, so "click to view devices and
 //     DID document" now actually fetches and shows the live document.
 //   - the devices list stays empty (no device-roster read API wired to the
-//     UI yet), and the identity menu button/#cmd-acc-list/compose fab have
-//     no click handler (display-name editing/logout/republish/multi-relay
-//     accounts/new-message compose have no corresponding backend or
-//     concept here at all yet) -- present in the DOM, inert for now, same
-//     as every other not-yet-wired element left-pane.ts's own header notes.
+//     UI yet), and #cmd-acc-list/compose fab have no click handler
+//     (multi-relay accounts/new-message compose have no corresponding
+//     backend or concept here at all yet) -- present in the DOM, inert for
+//     now, same as every other not-yet-wired element left-pane.ts's own
+//     header notes. The identity menu button IS wired (identityMenuItems
+//     below) -- Log out is real, the rest of that menu's items stay inert
+//     the same way.
 import { render } from './thread.ts'
 import { esc, avatarStyle } from './format.ts'
 import { parseWebvhDid } from '../identity/webvh/identifier.ts'
@@ -24,6 +26,10 @@ import { resolve } from '../identity/webvh/resolver.ts'
 
 export interface AccountPageConfig {
   did: string
+  /** Confirmed and invoked by the identity menu's "Log out" item
+   * (src.bak/ui/left-pane.ts's confirmAndLogout -- confirm() stays here in
+   * the UI layer, this is just the "actually do it" half). */
+  onLogout?(): Promise<void>
 }
 
 let config: AccountPageConfig | undefined
@@ -35,6 +41,71 @@ export function configureAccountPage(next: AccountPageConfig): void {
 
 export function inAccountMode(): boolean {
   return active
+}
+
+// ── identity menu (dropdown) ────────────────────────────────────────────────
+// Ported from src.bak/ui/left-pane.ts's openDropdownMenu/closeAccountMenu --
+// anchored below-right of the button, closes on outside click/Escape.
+interface MenuItem { label: string; danger?: boolean; onClick: () => void }
+
+let openMenuCleanup: (() => void) | null = null
+
+function closeIdentityMenu(): void {
+  openMenuCleanup?.()
+  openMenuCleanup = null
+}
+
+function openDropdownMenu(anchor: HTMLElement, items: MenuItem[]): void {
+  closeIdentityMenu()
+  const rect = anchor.getBoundingClientRect()
+  const menu = document.createElement('div')
+  menu.style.cssText = `position:fixed;top:${rect.bottom + 4}px;left:${Math.max(8, rect.right - 180)}px;width:180px;background:var(--bg);border:1px solid var(--border, rgba(128,128,128,0.25));border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.18);z-index:10000;padding:4px;font-size:14px`
+  for (const item of items) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.style.cssText = `display:block;width:100%;text-align:left;padding:8px 12px;background:none;border:none;border-radius:6px;cursor:pointer;color:${item.danger ? '#ff3b30' : 'var(--text)'};font-size:14px`
+    b.textContent = item.label
+    b.addEventListener('mouseover', () => { b.style.background = 'rgba(128,128,128,0.12)' })
+    b.addEventListener('mouseout', () => { b.style.background = 'none' })
+    b.addEventListener('click', () => { closeIdentityMenu(); item.onClick() })
+    menu.appendChild(b)
+  }
+  document.body.appendChild(menu)
+  const onDocClick = (ev: MouseEvent) => {
+    if (!menu.contains(ev.target as Node)) closeIdentityMenu()
+  }
+  const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') closeIdentityMenu() }
+  setTimeout(() => document.addEventListener('click', onDocClick), 0)
+  document.addEventListener('keydown', onKey)
+  openMenuCleanup = () => {
+    document.removeEventListener('click', onDocClick)
+    document.removeEventListener('keydown', onKey)
+    menu.remove()
+  }
+}
+
+/** Same item list src.bak's identity menu offered. Only "Log out" is wired
+ * to real behavior -- the rest (passkey protection, message export/import,
+ * edit identity) have no corresponding backend in this rewrite yet, same
+ * "present, inert" treatment as every other not-yet-wired element here
+ * (this file's own header note). Restored 2026-08-25 after being dropped
+ * entirely rather than ported inert -- per user direction, an unwired item
+ * belongs in the menu looking exactly like the rest, not missing. */
+function identityMenuItems(did: string): MenuItem[] {
+  const noop = () => {}
+  return [
+    { label: 'Protect with passkey', onClick: noop },
+    { label: 'Export Messages', onClick: noop },
+    { label: 'Import Messages', onClick: noop },
+    ...(did.startsWith('did:webvh:') ? [{ label: 'Edit identity', onClick: noop }] : []),
+    {
+      label: 'Log out', danger: true, onClick: () => {
+        if (!config?.onLogout) return
+        if (!confirm('Log out and erase ALL local data (accounts, messages, keys)? This cannot be undone.')) return
+        void config.onLogout()
+      },
+    },
+  ]
 }
 
 // Verbatim from src.bak/ui/left-pane.ts's renderAccountPage() -- every
@@ -138,6 +209,11 @@ export function showAccountPage(): void {
   document.getElementById('cmd-acc-identity-copy')?.addEventListener('click', e => {
     e.stopPropagation()
     navigator.clipboard?.writeText(did).catch(() => {})
+  })
+  const menuBtn = document.getElementById('cmd-acc-identity-menu-btn')
+  menuBtn?.addEventListener('click', e => {
+    e.stopPropagation()
+    openDropdownMenu(menuBtn, identityMenuItems(did))
   })
 
   const headerTitle = document.getElementById('header-thread-title')

@@ -69,7 +69,27 @@ export async function bootClient(): Promise<void> {
   // without needing a page reload.
   let identity = records[0]!
   const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did)
-  configureAccountPage({ did: identity.did })
+  configureAccountPage({ did: identity.did, onLogout: logout })
+
+  // Identity menu's "Log out" (account-page.ts's own confirm() already ran
+  // before this is called -- src.bak's confirmAndLogout/logout split, the
+  // same layering here). Reload rather than src.bak's in-place re-render:
+  // this rewrite has no SSE/poll timers or other per-tab state that reload
+  // would need to be avoided for, so the simpler path is safe here even
+  // though the old one deliberately avoided it (a file:// reload bug in a
+  // different, now-removed cleanup step -- see app.ts's old logout header).
+  async function logout(): Promise<void> {
+    try { vaultStore.close() } catch { /* best-effort */ }
+    const databaseNames = ['biset-identity', 'biset-mls-keypackages', 'biset-mls-self-group', 'biset-vault-core']
+    await Promise.all(databaseNames.map(name => new Promise<void>(resolve => {
+      const request = indexedDB.deleteDatabase(name)
+      request.onsuccess = () => resolve()
+      request.onerror = () => resolve()
+      request.onblocked = () => resolve()
+      setTimeout(resolve, 3000) // a step that never settles must not outlive its budget
+    })))
+    location.reload()
+  }
 
   const { apexDomain, coreBaseUrl } = readBisetConfig()
   // Automatic, not opt-in (reversed 2026-08-25 after user feedback -- no
