@@ -1,5 +1,6 @@
 import { canonicalHash, equalBytes, sha256Bytes } from '../protocol/canonical.ts'
 import type { IngressEnvelopeV1 } from '../protocol/ingress.ts'
+import { didOfKid } from '../protocol/ids.ts'
 import type { DeviceId, IdentityId, VaultEventId } from '../protocol/ids.ts'
 import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../local-jmap/gateway.ts'
 import { reduceLocalJmapProjection } from '../local-jmap/reducer.ts'
@@ -8,10 +9,12 @@ import { encodeVaultDeliveryPack } from '../vault/delivery-pack.ts'
 import type { IngressVerifierProjector } from '../vault/ingress-ingest.ts'
 import { decryptVaultObject } from '../vault/objects.ts'
 import { buildVaultMutation } from '../vault/mutations.ts'
+import { buildMailMessageAdd } from '../vault/mail-message.ts'
 import type { VaultEventSigner } from '../vault/events.ts'
 import type { VaultDeliveryOutboxRecord, VaultEventRecord, VaultObjectRecord } from '../vault/store.ts'
 import { parseJwe, protectedHeaderOf, unpackAuthcryptAuto, type SelfKeys, type ResolveSenderKey } from './crypto.ts'
 import { isPing, responseOwedFor } from './trust-ping.ts'
+import { isBasicMessage, basicMessageBodyOf, didCommThreadId } from './basicmessage.ts'
 import type { DidCommPlaintext } from './message.ts'
 import { isExpired } from './message.ts'
 
@@ -44,21 +47,29 @@ export interface DidCommIngressProjectorOptions {
 }
 
 /**
- * Endpoint-only DIDComm ingress projector (PLAN.md §6.1): decrypts a packed
- * JWE with this device's own keyAgreement key, verifies the sender via a
- * live DID resolve, and records the result as a `didcomm.control` vault
- * event -- an audit trail, not a mailbox change (local-jmap/reducer.ts's
- * own no-op case for this kind).
+ * Endpoint-only DIDComm ingress projector: decrypts a packed JWE with this
+ * device's own keyAgreement key and verifies the sender via a live DID
+ * resolve, then dispatches by DIDComm message type:
  *
- * Scope matches PLAN.md §6.1 exactly: external ingress, OOB, bootstrap, and
- * short control only, not a message channel (ongoing content moves through
- * shared vault delivery instead, same as mail -- see crypto.ts's own header
- * on why Forward/per-device fanout isn't ported at all). The only message
- * type this slice actually understands is Trust Ping 2.0, the minimal
- * end-to-end proof that ingress -> decrypt -> vault commit works; OOB
- * invitations and MLS Welcome delivery are later, larger work (this
- * projector's own `unsupported DIDComm message type` error is exactly the
- * fail-closed marker for "not yet implemented", never a silent drop).
+ *   - Trust Ping 2.0 -- an audit-only `didcomm.control` vault event, never a
+ *     mailbox change (local-jmap/reducer.ts's own no-op case for this kind).
+ *     The minimal end-to-end proof that ingress -> decrypt -> vault commit
+ *     works, nothing more.
+ *   - Basic Message 2.0 -- a real 1:1 chat message, filed exactly like
+ *     mail's own `message.add` (buildMailMessageAdd) so it renders through
+ *     the existing thread.ts UI unmodified (confirmed with the user,
+ *     2026-08-25: 1:1 text chat only -- MLS group conversations, push
+ *     wake-up, and DID rotation from src.bak's old channel.ts stay
+ *     explicitly out of scope).
+ *
+ * Anything else PLAN.md §6.1's external-ingress/OOB/bootstrap/control scope
+ * eventually needs (OOB invitations, MLS Welcome delivery) is later, larger
+ * work -- an unrecognized message type fails closed with `unsupported
+ * DIDComm message type`, never a silent drop. Per-device fanout for
+ * self-device history sync stays intentionally unported (crypto.ts's own
+ * header): what changes here is ONLY that a chat message's ongoing content
+ * is now something this projector understands, not a re-introduction of the
+ * old mediator's per-device queue.
  */
 export class DidCommIngressProjector implements IngressVerifierProjector {
   private readonly now: () => Date
@@ -97,28 +108,15 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       throw new TypeError('DIDComm plaintext is not valid JSON')
     }
     if (isExpired(msg)) throw new TypeError('DIDComm message has expired')
-    if (!isPing(msg)) throw new TypeError(`unsupported DIDComm message type for this endpoint slice: ${msg.type}`)
+    if (!isPing(msg) && !isBasicMessage(msg)) throw new TypeError(`unsupported DIDComm message type for this endpoint slice: ${msg.type}`)
 
-    const controlId = didCommControlId(senderKid, msg.id)
-    if (await this.options.alreadyProcessed(controlId)) throw new DidCommReplayError(`DIDComm message ${msg.id} from ${senderKid} was already processed`)
+    const dedupeId = didCommMessageDedupeId(senderKid, msg.id)
+    if (await this.options.alreadyProcessed(dedupeId)) throw new DidCommReplayError(`DIDComm message ${msg.id} from ${senderKid} was already processed`)
 
-    const alg = protectedHeaderOf(jwe)?.alg
     const segment = await this.options.activeSegment()
     assertActiveVaultSegment(this.options.identityId, segment, 'DIDComm ingress')
     const createdAt = this.now().toISOString()
-    const intent = {
-      kind: 'didcomm.control' as const,
-      targetIds: [controlId],
-      payload: {
-        messageId: msg.id,
-        type: msg.type,
-        senderKid,
-        ...(typeof alg === 'string' ? { alg } : {}),
-        responseOwed: responseOwedFor(msg),
-        receivedAt: createdAt,
-      },
-    }
-    const record = await buildVaultMutation(intent, {
+    const context = {
       identityId: this.options.identityId,
       actorDeviceId: this.options.actorDeviceId,
       actorSeq: await this.options.nextActorSeq(),
@@ -126,23 +124,72 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       segmentId: segment.segmentId,
       segmentKey: segment.segmentKey,
       createdAt,
-    }, this.options.signer)
+    }
 
-    const plaintextObject = await decryptVaultObject(segment.segmentKey, record.object)
+    const objectRecords: VaultObjectRecord[] = []
+    let event: VaultEventRecord
+    let decryptedForProjection: { event: VaultEventRecord; plaintext: Uint8Array }
+
+    if (isPing(msg)) {
+      // Trust Ping 2.0: an audit record, never a thread row -- see
+      // local-jmap/reducer.ts's own no-op case for `didcomm.control`.
+      const alg = protectedHeaderOf(jwe)?.alg
+      const record = await buildVaultMutation({
+        kind: 'didcomm.control' as const,
+        targetIds: [dedupeId],
+        payload: {
+          messageId: msg.id, type: msg.type, senderKid,
+          ...(typeof alg === 'string' ? { alg } : {}),
+          responseOwed: responseOwedFor(msg),
+          receivedAt: createdAt,
+        },
+      }, context, this.options.signer)
+      event = identityScopedObject(record.event, this.options.identityId)
+      objectRecords.push(identityScopedObject(record.object, this.options.identityId))
+      decryptedForProjection = { event: record.event, plaintext: await decryptVaultObject(segment.segmentKey, record.object) }
+    } else {
+      // Basic Message 2.0: a chat message, filed exactly like mail's own
+      // message.add (buildMailMessageAdd) -- same reducer, same read model,
+      // same thread.ts UI, no DIDComm-specific rendering path needed. One
+      // thread per correspondent DID pair (didCommThreadId), not per-subject
+      // like mail: a chat's whole point is one continuous conversation.
+      const senderDid = didOfKid(senderKid)
+      const body = basicMessageBodyOf(msg)
+      if (!body) throw new TypeError('DIDComm basicmessage has no readable content')
+      const sentAt = body.sentAt ?? (msg.created_time ? new Date(msg.created_time * 1000).toISOString() : createdAt)
+      const record = await buildMailMessageAdd({
+        email: {
+          id: dedupeId,
+          threadId: didCommThreadId(this.options.identityId, senderDid),
+          mailboxIds: { inbox: true },
+          keywords: {},
+          receivedAt: createdAt,
+          sentAt,
+          from: [{ email: senderDid }],
+          to: [{ email: this.options.identityId }],
+          ...(body.subject ? { subject: body.subject } : {}),
+        },
+        rawRfc5322: new TextEncoder().encode(body.content),
+      }, context, this.options.signer)
+      event = identityScopedObject(record.event, this.options.identityId)
+      objectRecords.push(identityScopedObject(record.metadataObject, this.options.identityId))
+      objectRecords.push(identityScopedObject(record.rawRfc5322Object, this.options.identityId))
+      decryptedForProjection = { event: record.event, plaintext: await decryptVaultObject(segment.segmentKey, record.metadataObject) }
+    }
+
     const snapshot = await this.options.currentSnapshot()
-    const next = reduceLocalJmapProjection(this.options.identityId, { mailboxes: snapshot.mailboxes, emails: snapshot.emails }, [{ event: record.event, plaintext: plaintextObject }])
+    const next = reduceLocalJmapProjection(this.options.identityId, { mailboxes: snapshot.mailboxes, emails: snapshot.emails }, [decryptedForProjection])
     const projection: LocalJmapProjectionV1 = { version: 1, identityId: this.options.identityId, ...next }
-    const objects = [identityScopedObject(record.object, this.options.identityId)]
-    const payload = encodeVaultDeliveryPack({ version: 1, identityId: this.options.identityId, objects, events: [record.event], keyWraps: segment.keyWraps })
+    const payload = encodeVaultDeliveryPack({ version: 1, identityId: this.options.identityId, objects: objectRecords, events: [event], keyWraps: segment.keyWraps })
     return {
-      objects,
-      events: [record.event],
+      objects: objectRecords,
+      events: [event],
       projection,
       jmapState: { state: projection.state },
       checkpointId: projection.state,
       deliveryOutbox: {
         identityId: this.options.identityId,
-        entryId: record.event.id,
+        entryId: event.id,
         payload,
         payloadHash: sha256Bytes(payload),
         createdAt,
@@ -159,14 +206,20 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
  * reason for being their own class rather than a plain Error). */
 export class DidCommReplayError extends Error {}
 
-/** A stable target id for the audit record, keyed by the MESSAGE's own
+/** A stable target/email id for the vault record, keyed by the MESSAGE's own
  * identity (who sent it, what they called it) rather than the ingress
  * envelope's -- deliberately NOT canonicalHash(ingressId, ...) the way
- * mail's emailId is, because the whole point is that a captured JWE
+ * mail's own emailId is, because the whole point is that a captured JWE
  * resubmitted under a brand new ingressId must still land on the same id
- * here for alreadyProcessed to catch it. */
-function didCommControlId(senderKid: string, messageId: string): string {
-  return canonicalHash('biset/vault/didcomm/control-id/v1', { senderKid, messageId })
+ * here for alreadyProcessed to catch it (and, for a basicmessage, for the
+ * SAME reason message.add's own duplicate-id conflict check in
+ * local-jmap/reducer.ts serves as a second, independent line of replay
+ * defense). Shared across both message types this projector understands --
+ * a ping and a chat message from the same sender can never collide with
+ * each other since sender+message-id already uniquely identifies one
+ * specific DIDComm message regardless of its `type`. */
+function didCommMessageDedupeId(senderKid: string, messageId: string): string {
+  return canonicalHash('biset/vault/didcomm/message-dedupe-id/v1', { senderKid, messageId })
 }
 
 function identityScopedObject<T>(object: T, identityId: IdentityId): T & { identityId: IdentityId } {

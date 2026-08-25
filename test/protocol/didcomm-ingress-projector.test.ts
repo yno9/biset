@@ -5,6 +5,8 @@ import type { IngressEnvelopeV1 } from '../../src/protocol/ingress.ts'
 import { packAuthcrypt } from '../../src/didcomm/crypto.ts'
 import { buildPlaintext } from '../../src/didcomm/message.ts'
 import { PING, PING_RESPONSE } from '../../src/didcomm/trust-ping.ts'
+import { BASIC_MESSAGE, didCommThreadId } from '../../src/didcomm/basicmessage.ts'
+import { didOfKid } from '../../src/protocol/ids.ts'
 import { DidCommIngressProjector, DidCommReplayError } from '../../src/didcomm/ingress-projector.ts'
 import { decodeVaultDeliveryPack } from '../../src/vault/delivery-pack.ts'
 import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
@@ -209,11 +211,48 @@ describe('DIDComm ingress projector', () => {
   })
 
   test('an unsupported DIDComm message type is rejected, not silently dropped', async () => {
-    const plaintext = buildPlaintext('https://didcomm.org/basicmessage/2.0/message', { content: 'hi' })
+    const plaintext = buildPlaintext('https://didcomm.org/discover-features/2.0/queries', { content: 'hi' })
     const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, { kid: recipientKid, publicKey: recipientXPub })
     const envelope = envelopeFor(new TextEncoder().encode(JSON.stringify(jwe)))
     const projector = buildProjector()
     await expect(projector.verifyAndProject(envelope)).rejects.toThrow(/unsupported DIDComm message type/)
+  })
+
+  test('a basicmessage decrypts, verifies the sender, and lands as an ordinary message.add email in the recipient\'s own inbox', async () => {
+    const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'hey, are we really chatting over DIDComm now?', sentAt: '2026-08-25T00:00:00.000Z' })
+    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, { kid: recipientKid, publicKey: recipientXPub })
+    const envelope = envelopeFor(new TextEncoder().encode(JSON.stringify(jwe)))
+    const projector = buildProjector()
+
+    const result = await ingestIngress(envelope, signer, projector, {
+      async commitIngress(input) {
+        expect(input.objects).toHaveLength(2) // metadata + raw body, same shape as mail
+        expect(input.events[0]!.kind).toBe('message.add')
+        expect(input.projection).toMatchObject({
+          emails: [{ from: [{ email: didOfKid(senderKid) }], to: [{ email: identityId }], threadId: didCommThreadId(identityId, didOfKid(senderKid)) }],
+        })
+        return 'committed'
+      },
+    })
+    expect(result.ack.vaultEventId).toBeTruthy()
+  })
+
+  test('two different basicmessages between the same pair land in the SAME thread, chat-style (not per-subject like mail)', async () => {
+    const projector = buildProjector()
+    const first = buildPlaintext(BASIC_MESSAGE, { content: 'first message' })
+    const firstJwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(first)), { kid: senderKid, privateKey: senderX }, { kid: recipientKid, publicKey: recipientXPub })
+    let firstThreadId = ''
+    await ingestIngress(envelopeFor(new TextEncoder().encode(JSON.stringify(firstJwe)), 'ingress-1'), signer, projector, {
+      async commitIngress(input) { firstThreadId = (input.projection as { emails: Array<{ threadId: string }> }).emails[0]!.threadId; return 'committed' },
+    })
+
+    const second = buildPlaintext(BASIC_MESSAGE, { content: 'second message' })
+    const secondJwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(second)), { kid: senderKid, privateKey: senderX }, { kid: recipientKid, publicKey: recipientXPub })
+    let secondThreadId = ''
+    await ingestIngress(envelopeFor(new TextEncoder().encode(JSON.stringify(secondJwe)), 'ingress-2'), signer, projector, {
+      async commitIngress(input) { secondThreadId = (input.projection as { emails: Array<{ threadId: string }> }).emails[0]!.threadId; return 'committed' },
+    })
+    expect(firstThreadId).toBe(secondThreadId)
   })
 
   test('an expired message is rejected', async () => {

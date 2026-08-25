@@ -15,14 +15,14 @@
 // rewrite actually carries forward: no mail/AP relay provisioning, no
 // DIDComm mediator registration, no PGP — all relay-adapter or
 // DIDComm-adapter concerns this rewrite does not have yet (PLAN.md §6).
-import { ed25519 } from '@noble/curves/ed25519.js'
+import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { deriveRootKey } from './keys.ts'
 import { mnemonicToSeed } from './seed.ts'
 import { createGenesis } from './webvh/create-genesis.ts'
 import { addDeviceVerificationMethod } from './webvh/add-device-verification-method.ts'
 import { resolveByDomain } from './webvh/resolver.ts'
 import { parseWebvhDid } from './webvh/identifier.ts'
-import { decodeMultikey } from './webvh/multikey.ts'
+import { decodeMultikey, encodeMultikey } from './webvh/multikey.ts'
 import type { IdentityRecord, IdentityRecordStore } from './record-store.ts'
 import { epochOf, exportSecret, generateOwnKeyPackage, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
 import { webvhAuthenticationService } from '../mls/webvh-authentication-service.ts'
@@ -38,6 +38,9 @@ import { deriveVaultEpochKey, MlsVaultEpochKeyResolver } from '../mls/vault-epoc
 import { MlsMembershipSegmentKeyWrapSigner, MlsMembershipSegmentKeyWrapVerifier } from '../mls/segment-key-membership.ts'
 import { StoredMlsSelfGroupProvider, type MlsSelfGroupStateStore } from '../mls/store.ts'
 import type { MlsKeyPackageStore } from '../mls/keypackage-store.ts'
+import { deviceKidFragment } from '../didcomm/devicekid.ts'
+import { publishRoutingPointer } from '../didcomm/webvh-routing-pointer.ts'
+import { buildRoutingDoc, putRouting } from '../didcomm/webvh-routing.ts'
 import { createSegmentKeyWrap, segmentKeyWrapSigningBytes, unwrapSegmentKey } from '../vault/crypto.ts'
 import type { RestoreTransferSource, RestoreTransferVerifier } from '../vault/restore-transfer.ts'
 import { buildVaultManifest } from '../vault/manifest.ts'
@@ -99,6 +102,12 @@ function ensureMlsAuthServiceInstalled(): void {
 
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+}
+
+function fromHex(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return bytes
 }
 
 function randomFragment(): string {
@@ -780,6 +789,51 @@ export function mailFromForIdentity(identityId: string, apexDomain: string): str
   const username = domain.slice(0, domain.length - suffix.length)
   if (!username) throw new Error('buildMailSubmitter: identity domain has no username segment')
   return `${username}@mail.${apexDomain}`
+}
+
+export interface EnableDidCommOptions {
+  /** Where the DIDComm ingress endpoint lives (`core/adapters/didcomm-http.ts`'s
+   * deployment) -- POST /v1/didcomm/ingress under this origin becomes the
+   * routing.json service descriptor's serviceEndpoint. */
+  coreBaseUrl: string
+  fetch?: typeof fetch
+}
+
+/**
+ * Opt-in DIDComm provisioning (PLAN.md §6.1's last checkbox) -- deliberately
+ * NOT part of createNewIdentity/restoreIdentity: this rewrite's DIDComm
+ * scope (external ingress/OOB/bootstrap/control plus 1:1 chat, confirmed
+ * with the user) is not something every identity needs by default, unlike
+ * the MLS self-group registration every device requires just to have a
+ * vault at all.
+ *
+ * Generates a fresh X25519 keypair, derives its kid the same way
+ * didcomm/devicekid.ts always does (deviceKidFragment -- deliberately NOT
+ * `record.deviceKid`, which names a different key: the MLS leaf credential,
+ * not this one), publishes the signed `#routing` log pointer once
+ * (webvh-routing-pointer.ts) and this device's keyAgreement entry +
+ * DIDCommMessaging service descriptor in routing.json (webvh-routing.ts),
+ * then persists the new key on the identity record. Idempotent: a record
+ * that already has `didCommKid` is returned unchanged, nothing republished.
+ */
+export async function enableDidComm(recordStore: IdentityRecordStore, record: IdentityRecord, opts: EnableDidCommOptions): Promise<IdentityRecord> {
+  if (record.didCommKid) return record
+  const x25519PrivateKey = x25519.utils.randomSecretKey()
+  const x25519PublicKey = x25519.getPublicKey(x25519PrivateKey)
+  const didCommKid = `${record.did}${deviceKidFragment(x25519PublicKey)}`
+  const rootPrivateKey = fromHex(record.rootPrivateKey)
+  const rootPublicKey = fromHex(record.rootPublicKey)
+
+  await publishRoutingPointer({ did: record.did, signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey, fetch: opts.fetch })
+  const doc = buildRoutingDoc(record.did, {
+    didCommEndpoint: `${opts.coreBaseUrl.replace(/\/$/, '')}/v1/didcomm/ingress`,
+    keyAgreementKeys: [{ kid: didCommKid, publicKey: x25519PublicKey }],
+  })
+  await putRouting(record.did, doc, { updateKey: encodeMultikey(rootPublicKey), privateKey: rootPrivateKey }, opts.fetch ?? fetch)
+
+  const updated: IdentityRecord = { ...record, didCommKid, didCommX25519PrivateKey: toHex(x25519PrivateKey) }
+  await recordStore.put(updated)
+  return updated
 }
 
 /**

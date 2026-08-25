@@ -25,6 +25,17 @@ export interface IdentityRecord {
    * MLS credential kid's suffix) once it has one. Absent until this device
    * has actually registered a device key for this identity. */
   deviceKid?: string
+  /** This device's own DIDComm keyAgreement kid (didcomm/devicekid.ts's
+   * deviceKidFragment, derived from didCommX25519PrivateKey below) --
+   * deliberately NOT the same string as `deviceKid` above (that names the
+   * MLS leaf credential; this names a different key entirely -- see
+   * identity/bootstrap.ts's `enableDidComm`). Absent until this device has
+   * opted into DIDComm (PLAN.md §6.1's device-provisioning is opt-in, not
+   * automatic -- decided with the user). */
+  didCommKid?: string
+  /** hex. The X25519 private key `didCommKid` names, published in
+   * routing.json's keyAgreement entry. */
+  didCommX25519PrivateKey?: string
 }
 
 export interface IdentityRecordStore {
