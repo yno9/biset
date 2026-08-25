@@ -5,6 +5,8 @@ import {
   buildLocalJmapReadModel,
   buildMailSubmitter,
   buildVaultCryptoBoundary,
+  enableDidComm,
+  fromHex,
   mailFromForIdentity,
   maintainSelfGroup,
 } from './identity/bootstrap.ts'
@@ -26,6 +28,11 @@ import { MailIngressProjector } from './mail/ingress-projector.ts'
 import { synchronizeMailIngress } from './mail/ingress-workflow.ts'
 import { CoreIngressTransport } from './vault/core-ingress-transport.ts'
 import { CoreVaultDeliveryTransport } from './vault/core-delivery-transport.ts'
+import type { IngressVerifierProjector } from './vault/ingress-ingest.ts'
+import { DidCommIngressProjector } from './didcomm/ingress-projector.ts'
+import { resolveDidCommSenderKey } from './didcomm/webvh-resolve.ts'
+import { sendDidCommMessage } from './didcomm/send-message.ts'
+import { didCommThreadId } from './didcomm/basicmessage.ts'
 
 /**
  * New-client bootstrap. The only branch this makes is "does this device
@@ -40,7 +47,8 @@ import { CoreVaultDeliveryTransport } from './vault/core-delivery-transport.ts'
 export async function bootClient(): Promise<void> {
   const newUserPage = document.getElementById('new-user-page')
 
-  const records = await new IndexedDbIdentityRecordStore().list().catch(() => [])
+  const recordStore = new IndexedDbIdentityRecordStore()
+  const records = await recordStore.list().catch(() => [])
   if (records.length === 0) {
     if (newUserPage) newUserPage.style.display = 'flex'
     setupNewUserPage()
@@ -55,12 +63,28 @@ export async function bootClient(): Promise<void> {
   // identity's vault. maintainSelfGroup below still runs for every identity
   // on this device, so a second one doesn't silently drift out of sync just
   // because there's no account switcher yet (PLAN.md §7 plan, out of scope).
-  const identity = records[0]!
+  // `let`, not `const`: enableDidComm (below) updates the record in place
+  // once the user opts in, and every closure that reads it (sendReply,
+  // syncMailIngress) has to see the new didCommKid/didCommX25519PrivateKey
+  // without needing a page reload.
+  let identity = records[0]!
   const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did)
-  configureAccountPage({ did: identity.did })
 
   const { apexDomain, coreBaseUrl } = readBisetConfig()
   let syncMailIngress: (() => Promise<void>) | undefined
+  const renderAccountPageConfig = () => {
+    configureAccountPage({
+      did: identity.did,
+      didCommKid: identity.didCommKid,
+      onEnableDidComm: coreBaseUrl
+        ? async () => {
+            identity = await enableDidComm(recordStore, identity, { coreBaseUrl })
+            renderAccountPageConfig() // re-wires config.didCommKid so the next renderDidCommStatus() call sees it
+          }
+        : undefined,
+    })
+  }
+  renderAccountPageConfig()
   // Reply-send needs the same signing/MLS boundary maintainSelfGroup already
   // requires a deviceKid for -- with neither a core to submit through nor a
   // device identity to sign with, the UI stays read-only, matching how this
@@ -91,7 +115,47 @@ export async function bootClient(): Promise<void> {
     }))
     const mailFrom = mailFromForIdentity(identity.did, apexDomain)
 
+    // A `to` of exactly one DID (not an email address) dispatches over
+    // DIDComm instead of mail -- the same "to" field both transports share
+    // (thread.ts/compose-page.ts have no separate DID input), branching
+    // here rather than in the UI layer. Multiple DIDs at once isn't
+    // supported: 1:1 chat only (confirmed with the user, 2026-08-25), and
+    // mixing a DID with a real email address in one send has no sane
+    // meaning either.
+    const sendDidCommChat = async (toDid: string, input: ReplySendInput): Promise<void> => {
+      if (!identity.didCommKid || !identity.didCommX25519PrivateKey) {
+        throw new Error('Enable DIDComm in account settings before messaging a DID')
+      }
+      const result = await sendDidCommMessage(toDid, input.body, {
+        fromKid: identity.didCommKid,
+        x25519PrivateKey: fromHex(identity.didCommX25519PrivateKey),
+        ...(input.subject ? { subject: input.subject } : {}),
+      })
+      if (!result.ok) throw new Error(result.error)
+      const now = new Date().toISOString()
+      const snapshot = await readModel.snapshot()
+      await mutationSink.commitMailMessage({
+        email: {
+          id: crypto.randomUUID(),
+          threadId: didCommThreadId(identity.did, toDid),
+          mailboxIds: { sent: true },
+          keywords: { '$seen': true },
+          receivedAt: now,
+          sentAt: now,
+          from: [{ email: identity.did }],
+          to: [{ email: toDid }],
+          ...(input.subject ? { subject: input.subject } : {}),
+        },
+        rawRfc5322: new TextEncoder().encode(input.body),
+      }, snapshot)
+      await refreshInbox(readModel)
+    }
+
     const sendReply = async (input: ReplySendInput): Promise<void> => {
+      if (input.toAddrs.length === 1 && input.toAddrs[0]!.startsWith('did:')) {
+        await sendDidCommChat(input.toAddrs[0]!, input)
+        return
+      }
       const { rawRfc5322 } = buildOutboundRfc5322({
         from: mailFrom,
         to: input.toAddrs,
@@ -148,8 +212,15 @@ export async function bootClient(): Promise<void> {
     // live: mail arrived at the core and sat in its ingress queue forever,
     // never once pulled by any client) -- reply/compose's send path and
     // maintainSelfGroup's catch-up never touched inbound mail at all.
+    //
+    // A single pulled batch can hold both protocols at once (the shared
+    // IngressStore doesn't separate them) -- dispatched here by
+    // envelope.protocol to whichever projector actually understands it,
+    // same synchronizeMailIngress/ingestIngress orchestration either way
+    // (that "Mail" in the name predates DIDComm and is otherwise
+    // protocol-agnostic already, see ingress-ingest.ts's own header).
     syncMailIngress = async () => {
-      const projector = new MailIngressProjector({
+      const mailProjector = new MailIngressProjector({
         identityId: identity.did,
         actorDeviceId: identity.deviceKid!,
         nextActorSeq: () => sequencer.nextActorSeq(),
@@ -158,6 +229,33 @@ export async function bootClient(): Promise<void> {
         currentSnapshot: () => readModel.snapshot(),
         signer: boundary.signer,
       })
+      const didCommProjector = identity.didCommKid && identity.didCommX25519PrivateKey
+        ? new DidCommIngressProjector({
+            identityId: identity.did,
+            actorDeviceId: identity.deviceKid!,
+            selfKeys: { kid: identity.didCommKid, x25519PrivateKey: fromHex(identity.didCommX25519PrivateKey) },
+            resolveSenderKey: kid => resolveDidCommSenderKey(kid),
+            // TODO(PLAN.md §6.1): always "not yet seen" -- there is no
+            // committed-dedupe-id lookup wired to this projector yet. Not a
+            // safety gap: message.add's own duplicate-emailId conflict
+            // check (local-jmap/reducer.ts) still rejects a resent
+            // basicmessage using the identical (senderKid, message id)
+            // pair, just louder (a thrown/logged error here rather than a
+            // quiet skip) than a real alreadyProcessed would be.
+            async alreadyProcessed() { return false },
+            nextActorSeq: () => sequencer.nextActorSeq(),
+            initialParents: () => sequencer.initialParents(),
+            activeSegment: () => boundary.activeSegment(),
+            currentSnapshot: () => readModel.snapshot(),
+            signer: boundary.signer,
+          })
+        : undefined
+      const projector: IngressVerifierProjector = {
+        verifyAndProject: envelope => {
+          if (envelope.protocol === 'didcomm' && didCommProjector) return didCommProjector.verifyAndProject(envelope)
+          return mailProjector.verifyAndProject(envelope)
+        },
+      }
       const result = await synchronizeMailIngress({
         identityId: identity.did,
         deviceId: identity.deviceKid!,
