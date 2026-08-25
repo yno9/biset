@@ -64,27 +64,27 @@ export async function bootClient(): Promise<void> {
   // on this device, so a second one doesn't silently drift out of sync just
   // because there's no account switcher yet (PLAN.md §7 plan, out of scope).
   // `let`, not `const`: enableDidComm (below) updates the record in place
-  // once the user opts in, and every closure that reads it (sendReply,
+  // automatically at boot, and every closure that reads it (sendReply,
   // syncMailIngress) has to see the new didCommKid/didCommX25519PrivateKey
   // without needing a page reload.
   let identity = records[0]!
   const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did)
+  configureAccountPage({ did: identity.did })
 
   const { apexDomain, coreBaseUrl } = readBisetConfig()
-  let syncMailIngress: (() => Promise<void>) | undefined
-  const renderAccountPageConfig = () => {
-    configureAccountPage({
-      did: identity.did,
-      didCommKid: identity.didCommKid,
-      onEnableDidComm: coreBaseUrl
-        ? async () => {
-            identity = await enableDidComm(recordStore, identity, { coreBaseUrl })
-            renderAccountPageConfig() // re-wires config.didCommKid so the next renderDidCommStatus() call sees it
-          }
-        : undefined,
+  // Automatic, not opt-in (reversed 2026-08-25 after user feedback -- no
+  // "Enable DIDComm" UI, same as every other identity capability this
+  // rewrite just provisions on its own once a core is configured).
+  // Idempotent (enableDidComm no-ops once didCommKid is already set) and
+  // best-effort: a failure here must not block mail, which the user
+  // actually depends on already working.
+  if (coreBaseUrl) {
+    identity = await enableDidComm(recordStore, identity, { coreBaseUrl }).catch(e => {
+      console.warn('[enableDidComm]', e instanceof Error ? e.message : e)
+      return identity
     })
   }
-  renderAccountPageConfig()
+  let syncMailIngress: (() => Promise<void>) | undefined
   // Reply-send needs the same signing/MLS boundary maintainSelfGroup already
   // requires a deviceKid for -- with neither a core to submit through nor a
   // device identity to sign with, the UI stays read-only, matching how this

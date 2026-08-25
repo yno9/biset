@@ -24,13 +24,6 @@ import { resolve } from '../identity/webvh/resolver.ts'
 
 export interface AccountPageConfig {
   did: string
-  /** This device's DIDComm keyAgreement kid (identity/bootstrap.ts's
-   * enableDidComm), or undefined if this identity hasn't opted in yet.
-   * Undefined also while coreBaseUrl/apexDomain aren't configured -- same
-   * gate the mail send path uses -- since enabling DIDComm without a core
-   * to publish routing.json against has nothing to do. */
-  didCommKid?: string
-  onEnableDidComm?(): Promise<void>
 }
 
 let config: AccountPageConfig | undefined
@@ -78,50 +71,12 @@ const PAGE_HTML = `<div class="cmd-page-content wide-page">
         </div>
       </div>
       <pre id="cmd-acc-identity-doc"></pre>
-      <!-- New section (2026-08-25), not part of src.bak: that build's DIDComm
-           was mediator/queue-based, a different design with no equivalent UI
-           to port. Styled to match the DID:Webvh section above it. -->
-      <div class="acc-storage-header" style="margin-top:12px">
-        <span class="acc-storage-title">DIDComm</span>
-      </div>
-      <div id="cmd-acc-didcomm-status"></div>
     </div>
     <input id="cmd-acc-identity-devices-import-input" type="file" accept=".zip" style="display:none">
   </div>
   <div class="cmd-page-section" id="cmd-acc-list"></div>
   <button id="cmd-acc-compose-fab" class="compose-fab" type="button" aria-label="Compose" title="Compose"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
 </div>`
-
-function renderDidCommStatus(): void {
-  const el = document.getElementById('cmd-acc-didcomm-status')
-  if (!el || !config) return
-  if (config.didCommKid) {
-    el.innerHTML = `<span class="acc-device-empty">${esc(`Enabled — ${config.didCommKid}`)}</span>`
-    return
-  }
-  if (!config.onEnableDidComm) {
-    el.innerHTML = `<span class="acc-device-empty">${esc('Not available (core not configured)')}</span>`
-    return
-  }
-  el.innerHTML = `<button id="cmd-acc-didcomm-enable-btn" class="acc-storage-icon-btn" type="button">${esc('Enable DIDComm')}</button>`
-  document.getElementById('cmd-acc-didcomm-enable-btn')?.addEventListener('click', async e => {
-    e.stopPropagation()
-    const btn = e.currentTarget as HTMLButtonElement
-    btn.disabled = true
-    btn.textContent = 'Enabling…'
-    try {
-      await config!.onEnableDidComm!()
-      renderDidCommStatus()
-    } catch (error) {
-      btn.disabled = false
-      btn.textContent = 'Enable DIDComm'
-      const errorEl = document.createElement('div')
-      errorEl.className = 'acc-device-empty'
-      errorEl.textContent = `Failed: ${error instanceof Error ? error.message : String(error)}`
-      el.appendChild(errorEl)
-    }
-  })
-}
 
 export function showAccountPage(): void {
   const activeEl = document.getElementById('active-thread')
@@ -157,7 +112,6 @@ export function showAccountPage(): void {
     avatarEl.textContent = label.charAt(0).toUpperCase()
   }
   if (devicesEl) devicesEl.innerHTML = `<span class="acc-device-empty">${esc('Device list not available yet')}</span>`
-  renderDidCommStatus()
 
   let docLoaded = false
   const loadDoc = async () => {
@@ -192,6 +146,13 @@ export function showAccountPage(): void {
   if (groupIcon) groupIcon.style.display = 'none'
   const convMeta = document.getElementById('conv-meta')
   if (convMeta) convMeta.style.display = 'none'
+  // A reply box left over from whichever thread was open before navigating
+  // here (thread.ts's own render() moves it into #reply-dock, position:fixed
+  // -- nothing clears it just because a different page now occupies
+  // #active-thread). Found live: the account page showed a stray reply box
+  // floating at the bottom.
+  const dock = document.getElementById('reply-dock')
+  if (dock) dock.innerHTML = ''
 }
 
 export function hideAccountPage(): void {

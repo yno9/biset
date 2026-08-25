@@ -135,6 +135,11 @@ export function showComposePage(): void {
   if (groupIcon) groupIcon.style.display = 'none'
   const convMeta = document.getElementById('conv-meta')
   if (convMeta) convMeta.style.display = 'none'
+  // Same stray-reply-box fix as account-page.ts's showAccountPage: nothing
+  // clears #reply-dock just because a different page now occupies
+  // #active-thread.
+  const dock = document.getElementById('reply-dock')
+  if (dock) dock.innerHTML = ''
 
   document.querySelector<HTMLInputElement>('#new-recipients .new-field-input')?.focus()
 }
