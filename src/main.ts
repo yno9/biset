@@ -73,11 +73,15 @@ export async function bootClient(): Promise<void> {
 
   // Identity menu's "Log out" (account-page.ts's own confirm() already ran
   // before this is called -- src.bak's confirmAndLogout/logout split, the
-  // same layering here). Reload rather than src.bak's in-place re-render:
-  // this rewrite has no SSE/poll timers or other per-tab state that reload
-  // would need to be avoided for, so the simpler path is safe here even
-  // though the old one deliberately avoided it (a file:// reload bug in a
-  // different, now-removed cleanup step -- see app.ts's old logout header).
+  // same layering here). **No page navigation**, matching src.bak's own
+  // logout() exactly and for the identical reason (that function's own
+  // header): logging out doesn't need a fresh document, it needs the app to
+  // land on the right empty-identity UI, which is a RE-RENDER. This
+  // rewrite's own equivalent of "the account page in its zero-account
+  // state" is bootClient()'s own `records.length === 0` branch (the
+  // new-user page) -- re-invoking it in place is exactly that render,
+  // reusing the same logic a real first boot uses rather than inventing a
+  // second "empty" path.
   async function logout(): Promise<void> {
     try { vaultStore.close() } catch { /* best-effort */ }
     const databaseNames = ['biset-identity', 'biset-mls-keypackages', 'biset-mls-self-group', 'biset-vault-core']
@@ -88,7 +92,7 @@ export async function bootClient(): Promise<void> {
       request.onblocked = () => resolve()
       setTimeout(resolve, 3000) // a step that never settles must not outlive its budget
     })))
-    location.reload()
+    await bootClient()
   }
 
   const { apexDomain, coreBaseUrl } = readBisetConfig()
