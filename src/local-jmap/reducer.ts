@@ -64,6 +64,15 @@ export function reduceLocalJmapProjection(
       // and goes through the ordinary path below.
       continue
     }
+    if (mutation.kind === 'didcomm.control') {
+      // Deliberately a no-op for the read-model: an audit record of a
+      // received DIDComm control-plane message (didcomm/ingress-projector.ts,
+      // PLAN.md §6.1's external-ingress/OOB/bootstrap/control scope) --
+      // never a mail/mailbox change. Still an ordinary vault event (advances
+      // actorSeq/state/checkpoint like any other), just one this read model
+      // has nothing to do with.
+      continue
+    }
     if (mutation.kind !== 'mailbox.set' && mutation.kind !== 'keyword.set') {
       // `VaultEventKind` (protocol/vault.ts) reserves several kinds
       // (message.edit/reaction.set/read.set/thread.set/settings.set/...)
