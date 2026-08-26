@@ -15,6 +15,7 @@ import type {
   VaultDeliveryItemV1,
 } from '../../protocol/vault.ts'
 import { assertVaultDeliveryAck, assertVaultDeliveryAppend, assertVaultDeliveryPull, ProtocolValidationError } from '../../protocol/validate.ts'
+import { stableIdKey } from '../../identity/idkey.ts'
 
 export interface VaultDeliveryStoreLimits {
   maxPayloadBytes: number
@@ -88,6 +89,13 @@ const DEFAULT_LIMITS: VaultDeliveryStoreLimits = {
  * Reference implementation of shared vault delivery. Each Entry owns one
  * payload body; device-specific state is limited to an ACK set. Production
  * persistence must retain the same state transitions and gap semantics.
+ *
+ * Keyed by `stableIdKey(identityId)` (the SCID), not the raw identityId --
+ * same reasoning as device-roster.ts's own MemoryTrustedDeviceRoster: a
+ * did:webvh domain move changes the DID string one device at a time, and an
+ * exact-string key would silently split one identity's pending delivery
+ * queue into two the moment the first device's calls started using the new
+ * string.
  */
 export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
   private readonly identities = new Map<IdentityId, IdentityState>()
@@ -111,7 +119,7 @@ export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
       throw new ProtocolValidationError('delivery payload exceeds maxPayloadBytes')
     }
 
-    const existing = this.identities.get(input.identityId)?.entriesByAppendId.get(input.appendId)
+    const existing = this.identities.get(stableIdKey(input.identityId))?.entriesByAppendId.get(input.appendId)
     if (existing) {
       if (!equalBytes(existing.item.payloadHash, input.payloadHash)) {
         throw new ProtocolValidationError('appendId is already bound to a different payload')
@@ -158,7 +166,7 @@ export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
     const floor = await this.authorizer.deliveryFloor(identityId, deviceId)
     if (!floor) throw new ProtocolValidationError('device is not trusted for this identity')
 
-    const state = this.identities.get(identityId)
+    const state = this.identities.get(stableIdKey(identityId))
     const latest = state?.latest ?? 0n
     const retainedFrom = this.retainedFrom(state)
     const requested = BigInt(after)
@@ -185,7 +193,7 @@ export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
   async acknowledge(ack: VaultDeliveryAckV1, now = new Date()): Promise<void> {
     assertVaultDeliveryAck(ack)
     await this.expire(now)
-    const state = this.identities.get(ack.identityId)
+    const state = this.identities.get(stableIdKey(ack.identityId))
     const sequence = BigInt(ack.seq)
     const entry = state?.entries.get(sequence)
     if (!entry) throw new ProtocolValidationError('unknown delivery sequence')
@@ -224,7 +232,7 @@ export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
   }
 
   async status(identityId: IdentityId): Promise<VaultDeliveryStatus> {
-    const state = this.identities.get(identityId)
+    const state = this.identities.get(stableIdKey(identityId))
     return {
       identityId,
       latestSeq: deliverySeq(state?.latest ?? 0n),
@@ -235,10 +243,11 @@ export class MemoryVaultDeliveryStore implements VaultDeliveryStore {
   }
 
   private stateFor(identityId: IdentityId): IdentityState {
-    let state = this.identities.get(identityId)
+    const key = stableIdKey(identityId)
+    let state = this.identities.get(key)
     if (!state) {
       state = { latest: 0n, entries: new Map(), entriesByAppendId: new Map() }
-      this.identities.set(identityId, state)
+      this.identities.set(key, state)
     }
     return state
   }

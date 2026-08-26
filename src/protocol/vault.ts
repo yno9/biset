@@ -22,7 +22,9 @@ export type VaultEventKind =
   | 'transport.result'
   | 'contact-key.set'
   | 'credential.openpgp.set'
+  | 'credential.didcomm.set'
   | 'didcomm.control'
+  | 'didcomm.device-key.set'
 
 export interface VaultEventV1 {
   version: 1

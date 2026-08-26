@@ -321,6 +321,33 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
   }
 
   /**
+   * Domain move (identity/webvh/move.ts) support: every store here is keyed
+   * by identityId (KEY_PATHS above), which is the did:webvh string this
+   * device's identity happens to resolve at right now -- a domain move
+   * changes that string while the identity itself, and every row already
+   * recorded under the old one, stays exactly the same. One multi-store
+   * transaction covering every store, so a failure partway through never
+   * leaves some stores moved and others still under the old key.
+   */
+  async rekeyIdentity(oldIdentityId: IdentityId, newIdentityId: IdentityId): Promise<void> {
+    if (oldIdentityId === newIdentityId) return
+    const storeNames = Object.values(STORES)
+    const transaction = this.database.transaction(storeNames, 'readwrite')
+    for (const name of storeNames) {
+      const keyPath = KEY_PATHS[name]
+      const store = transaction.objectStore(name)
+      const rows = await requestValue<Array<Record<string, unknown>>>(store.getAll())
+      for (const row of rows) {
+        if (row.identityId !== oldIdentityId) continue
+        const oldKey = Array.isArray(keyPath) ? keyPath.map(field => row[field]) : row[keyPath]
+        store.put({ ...row, identityId: newIdentityId })
+        store.delete(oldKey as IDBValidKey)
+      }
+    }
+    await transactionDone(transaction)
+  }
+
+  /**
    * Idempotence is anchored by the ingress receipt's composite key. A repeated
    * ingress aborts before any object/event/projection mutation can commit.
    */
@@ -494,7 +521,7 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     const values = await requestValue<VaultEventRecord[]>(transaction.objectStore(STORES.events).getAll())
     await completed
     return values
-      .filter(value => value.identityId === identityId && value.kind.startsWith('credential.'))
+      .filter(value => value.identityId === identityId && (value.kind.startsWith('credential.') || value.kind === 'contact-key.set'))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
       .map(copyEvent)
   }
@@ -796,25 +823,34 @@ function openDatabase(): Promise<IDBDatabase> {
   })
 }
 
+// Every store's keyPath, `identityId` first (sole key, or the first element
+// of a compound one) -- the single source of truth for createStores below
+// AND rekeyIdentity (IndexedDbVaultStore's own method), which needs to know
+// each store's exact key shape to move a row from its old key to its new
+// one. Kept as one table specifically so the two never drift apart.
+const KEY_PATHS: Record<StoreName, string | string[]> = {
+  [STORES.ingressReceipts]: ['identityId', 'ingressId'],
+  [STORES.objects]: ['identityId', 'objectId'],
+  [STORES.events]: ['identityId', 'id'],
+  [STORES.chunks]: ['identityId', 'objectId', 'chunkIndex'],
+  [STORES.segments]: ['identityId', 'segmentId'],
+  [STORES.keyWraps]: ['identityId', 'segmentId', 'recipientEpoch'],
+  [STORES.manifests]: 'identityId',
+  [STORES.projection]: 'identityId',
+  [STORES.jmapState]: 'identityId',
+  [STORES.outbox]: ['identityId', 'ingressId'],
+  [STORES.deliveryOutbox]: ['identityId', 'entryId'],
+  [STORES.deliveryReceipts]: ['identityId', 'recipientDeviceId', 'seq'],
+  [STORES.deliveryAckOutbox]: ['identityId', 'recipientDeviceId', 'seq'],
+  [STORES.deliveryState]: ['identityId', 'deviceId'],
+  [STORES.restoreState]: ['identityId', 'deviceId'],
+  [STORES.restoreOfferOutbox]: ['identityId', 'requestId', 'responderDeviceId'],
+  [STORES.restoreTransferState]: ['identityId', 'requesterDeviceId'],
+  [STORES.transportStatus]: ['identityId', 'outboundEventId'],
+}
+
 function createStores(database: IDBDatabase): void {
-  createStore(database, STORES.ingressReceipts, ['identityId', 'ingressId'])
-  createStore(database, STORES.objects, ['identityId', 'objectId'])
-  createStore(database, STORES.events, ['identityId', 'id'])
-  createStore(database, STORES.chunks, ['identityId', 'objectId', 'chunkIndex'])
-  createStore(database, STORES.segments, ['identityId', 'segmentId'])
-  createStore(database, STORES.keyWraps, ['identityId', 'segmentId', 'recipientEpoch'])
-  createStore(database, STORES.manifests, 'identityId')
-  createStore(database, STORES.projection, 'identityId')
-  createStore(database, STORES.jmapState, 'identityId')
-  createStore(database, STORES.outbox, ['identityId', 'ingressId'])
-  createStore(database, STORES.deliveryOutbox, ['identityId', 'entryId'])
-  createStore(database, STORES.deliveryReceipts, ['identityId', 'recipientDeviceId', 'seq'])
-  createStore(database, STORES.deliveryAckOutbox, ['identityId', 'recipientDeviceId', 'seq'])
-  createStore(database, STORES.deliveryState, ['identityId', 'deviceId'])
-  createStore(database, STORES.restoreState, ['identityId', 'deviceId'])
-  createStore(database, STORES.restoreOfferOutbox, ['identityId', 'requestId', 'responderDeviceId'])
-  createStore(database, STORES.restoreTransferState, ['identityId', 'requesterDeviceId'])
-  createStore(database, STORES.transportStatus, ['identityId', 'outboundEventId'])
+  for (const name of Object.values(STORES)) createStore(database, name, KEY_PATHS[name])
 }
 
 function createStore(database: IDBDatabase, name: StoreName, keyPath: string | string[]): void {

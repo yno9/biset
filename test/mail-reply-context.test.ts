@@ -42,4 +42,21 @@ describe('computeReplyContext', () => {
   test('an empty thread yields empty results', () => {
     expect(computeReplyContext([], 'me@x.test')).toEqual({ toAddrs: [], references: [] })
   })
+
+  // Found live 2026-08-25: a DIDComm thread's messages carry DIDs, not mail
+  // addresses, in from/to_addrs -- filtering against only the mail address
+  // (thread.ts's old single-string call) left this identity's OWN did
+  // unrecognized as "self", so it ended up in toAddrs alongside the real
+  // recipient. That made toAddrs.length 2 instead of 1, which failed
+  // main.ts's `toAddrs.length === 1 && toAddrs[0].startsWith('did:')`
+  // DIDComm check and silently fell through to a mail submission addressed
+  // to a DID string (the core rejected it: "invalid recipient address").
+  test('multiple self-identifiers: excludes both this identity\'s mail address and its own DID', () => {
+    const thread = [
+      msg({ from: 'did:webvh:abc:me.biset.md', to_addrs: ['did:webvh:xyz:them.biset.md'], message_id: 'm1', ts: 1 }),
+      msg({ from: 'did:webvh:xyz:them.biset.md', to_addrs: ['did:webvh:abc:me.biset.md'], message_id: 'm2', ts: 2 }),
+    ]
+    const { toAddrs } = computeReplyContext(thread, ['me@mail.biset.md', 'did:webvh:abc:me.biset.md'])
+    expect(toAddrs).toEqual(['did:webvh:xyz:them.biset.md'])
+  })
 })

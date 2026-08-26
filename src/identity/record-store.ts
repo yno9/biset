@@ -42,6 +42,11 @@ export interface IdentityRecordStore {
   get(did: string): Promise<IdentityRecord | undefined>
   put(record: IdentityRecord): Promise<void>
   list(): Promise<IdentityRecord[]>
+  /** Records are keyed by `did` (this store's own keyPath) — a domain move
+   * (identity/webvh/move.ts) puts a record under the NEW did, which is a
+   * distinct key, so the OLD one has to be removed explicitly or it lingers
+   * as a stale duplicate `list()` would otherwise also return. */
+  delete(did: string): Promise<void>
 }
 
 const DATABASE_NAME = 'biset-identity'
@@ -54,6 +59,13 @@ export class IndexedDbIdentityRecordStore implements IdentityRecordStore {
   private database(): Promise<IDBDatabase> {
     if (!this.databasePromise) this.databasePromise = openDatabase().catch(error => { this.databasePromise = null; throw error })
     return this.databasePromise
+  }
+
+  /** Releases this instance's connection -- see mls/keypackage-store.ts's
+   * own close() for why this exists (connection accumulation across
+   * logout/signup-retry cycles, found live 2026-08-26). */
+  close(): void {
+    this.databasePromise?.then(db => db.close()).catch(() => {})
   }
 
   async get(did: string): Promise<IdentityRecord | undefined> {
@@ -73,6 +85,13 @@ export class IndexedDbIdentityRecordStore implements IdentityRecordStore {
     const database = await this.database()
     const transaction = database.transaction([STORE_NAME], 'readonly')
     return requestResult<IdentityRecord[]>(transaction.objectStore(STORE_NAME).getAll())
+  }
+
+  async delete(did: string): Promise<void> {
+    const database = await this.database()
+    const transaction = database.transaction([STORE_NAME], 'readwrite')
+    transaction.objectStore(STORE_NAME).delete(did)
+    await transactionDone(transaction)
   }
 }
 

@@ -49,6 +49,13 @@ export class IndexedDbMlsSelfGroupStore implements MlsSelfGroupStateStore {
     return this.databasePromise
   }
 
+  /** Releases this instance's connection -- see keypackage-store.ts's own
+   * close() for why this exists (connection accumulation across logout/
+   * signup-retry cycles, found live 2026-08-26). */
+  close(): void {
+    this.databasePromise?.then(db => db.close()).catch(() => {})
+  }
+
   async save(identityId: string, selfGroupId: string, state: ClientState): Promise<void> {
     const database = await this.database()
     const record: StoredMlsSelfGroup = { identityId, selfGroupId, state: encodeState(state), updatedAt: Date.now() }
@@ -62,6 +69,20 @@ export class IndexedDbMlsSelfGroupStore implements MlsSelfGroupStateStore {
     const transaction = database.transaction([STORE_NAME], 'readonly')
     const record = await requestResult<StoredMlsSelfGroup | undefined>(transaction.objectStore(STORE_NAME).get(identityId))
     return record === undefined ? undefined : { selfGroupId: record.selfGroupId, state: decodeState(record.state) }
+  }
+
+  /** Domain move (identity/webvh/move.ts) support: after
+   * mls/self-group.ts's migrateSelfGroupCredential has already saved this
+   * identity's migrated state under the NEW identityId, the caller uses
+   * this to drop the now-stale row still sitting under the old one --
+   * plain deletion, not a rekey, because migrateSelfGroupCredential's own
+   * save already put the correct (migrated, not merely relabeled) state in
+   * place. */
+  async delete(identityId: string): Promise<void> {
+    const database = await this.database()
+    const transaction = database.transaction([STORE_NAME], 'readwrite')
+    transaction.objectStore(STORE_NAME).delete(identityId)
+    await transactionDone(transaction)
   }
 }
 

@@ -26,6 +26,7 @@ import { isAncestor, LeafIndex, leafToNodeIndex, NodeIndex } from "./treemath.js
 import { constantTimeEqual } from "./util/constantTimeCompare.js"
 import { decodeHpkeCiphertext, hpkeCiphertextEncoder, HPKECiphertext } from "./hpkeCiphertext.js"
 import { InternalError, ValidationError } from "./mlsError.js"
+import { Credential } from "./credential.js"
 
 /** @public */
 export interface UpdatePathNode {
@@ -69,12 +70,25 @@ export interface PathSecret {
   sendTo: number[]
 }
 
+// biset: `newCredential` is an addition, not a fix -- upstream never
+// exposed a way for a committer to change their OWN leaf's credential as
+// part of their own UpdatePath (every other field already comes from
+// `originalLeafNode` unconditionally, credential included). RFC 9420 does
+// not forbid this: the "committer cannot include their own Update
+// proposal" rule (clientState.ts's validateProposals) is specifically
+// about PROPOSALS bundled into a commit, not about what a committer's own
+// UpdatePath LeafNode may contain -- the committer is presenting their own
+// new leaf either way, proposal or not. mls/group.ts's updateOwnCredential
+// (a did:webvh domain move's credential migration) is the one caller;
+// every existing caller (rekey, removeMembers, addMembers, ...) leaves
+// this undefined and gets byte-for-byte the old behavior.
 export async function createUpdatePath(
   originalTree: RatchetTree,
   senderLeafIndex: LeafIndex,
   groupContext: GroupContext,
   signaturePrivateKey: Uint8Array,
   cs: CiphersuiteImpl,
+  newCredential?: Credential,
 ): Promise<[RatchetTree, UpdatePath, PathSecret[], PrivateKey]> {
   const originalLeafNode = originalTree[leafToNodeIndex(senderLeafIndex)]
   if (originalLeafNode === undefined || originalLeafNode.nodeType === "parent")
@@ -106,7 +120,7 @@ export async function createUpdatePath(
     hpkePublicKey: await cs.hpke.exportPublicKey(leafKeypair.publicKey),
     extensions: originalLeafNode.leaf.extensions,
     capabilities: originalLeafNode.leaf.capabilities,
-    credential: originalLeafNode.leaf.credential,
+    credential: newCredential ?? originalLeafNode.leaf.credential,
     signaturePublicKey: originalLeafNode.leaf.signaturePublicKey,
     parentHash: leafParentHash[0],
     groupId: groupContext.groupId,

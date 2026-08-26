@@ -29,6 +29,8 @@ import { computeReplyContext, emailToMessageView, groupMessages, latestGroup, pr
 import type { MailMessageView, ProcessedMessage, ThreadGroup } from '../mail/message-view.ts'
 import { avatarStyle, esc, formatTime, linkify, stripQuoted } from './format.ts'
 import type { LocalJmapReadModel } from '../local-jmap/gateway.ts'
+import { shortWebvhDid, labelForDid, protocolFor, PROTO_COLOR, PROTO_TEXT } from './did-display.ts'
+import type { Proto } from './did-display.ts'
 
 /**
  * Compose's send path lives in main.ts (it needs the vault mutation sink,
@@ -48,6 +50,10 @@ export interface ReplySendInput {
 export interface ComposeConfig {
   /** This identity's own mail address, excluded from a reply's toAddrs. */
   selfAddress: string
+  /** This identity's own DID, when DIDComm is enabled -- also excluded, so a
+   * DIDComm thread's reply doesn't mistake this device's own DID for a
+   * recipient (computeReplyContext's own note explains why that mattered). */
+  selfDid?: string
   sendReply(input: ReplySendInput): Promise<void>
   onError?(message: string): void
 }
@@ -86,7 +92,16 @@ export async function loadMessages(readModel: LocalJmapReadModel): Promise<void>
 export function createMsgEl({ msg, bodyText }: ProcessedMessage): HTMLElement {
   const div = document.createElement('div')
   div.className = 't-msg'
-  const senderName = msg.from_name || msg.from || '?'
+  // A DIDComm message's own from/from_name is always the raw DID. Per-
+  // message sender labels use the bare username (labelForDid: "d157"), not
+  // the fuller did:webvh:d157.biset.md form -- that longer form is for the
+  // ONE-per-thread header pill (displayParticipantsOf below), where it
+  // isn't repeated on every single message the way a bubble's sender name
+  // is (found live, 2026-08-25: showed the whole DID; 2026-08-26: briefly
+  // used the long form here too, corrected -- the long/short split is by
+  // "how often does this repeat on screen", not one rule everywhere).
+  const rawSenderName = msg.from_name || msg.from || '?'
+  const senderName = rawSenderName.startsWith('did:') ? labelForDid(rawSenderName) : rawSenderName
   div.dataset.messageId = msg.message_id
   div.innerHTML = `
     <div class="t-avatar" style="${avatarStyle(msg.from || senderName)}">${senderName.charAt(0).toUpperCase()}</div>
@@ -202,7 +217,7 @@ function wireReplyBox(card: HTMLElement, group: ThreadGroup, config: ComposeConf
     ta.disabled = true
     btn.disabled = true
     try {
-      const { toAddrs, references } = computeReplyContext(group.messages, config.selfAddress)
+      const { toAddrs, references } = computeReplyContext(group.messages, config.selfDid ? [config.selfAddress, config.selfDid] : config.selfAddress)
       const last = [...group.messages].sort((a, b) => a.msg.ts - b.msg.ts).at(-1)
       await config.sendReply({
         toAddrs,
@@ -316,8 +331,42 @@ function makePastRow(g: ThreadGroup): HTMLElement {
   return row
 }
 
+// Excludes this identity's own address(es) -- without this, a 1:1 thread
+// where both sides have sent something (i.e. every real conversation past
+// the first message) always included the reader's own address alongside
+// the actual counterparty, since `from` alternates between the two (found
+// live, 2026-08-26: a DIDComm chat's header/conv-meta showed both DIDs
+// instead of just who the reader was talking to). Returns raw addresses --
+// callers that render this for a human go through displayParticipantsOf
+// below instead; threadProtocol needs the raw did: prefix, which a
+// human-readable label has already thrown away.
 function participantsOf(msgs: MailMessageView[]): string {
-  return [...new Set(msgs.map(m => m.from).filter(Boolean))].join(', ')
+  const self = new Set([composeConfig?.selfAddress, composeConfig?.selfDid].filter((a): a is string => !!a).map(a => a.toLowerCase()))
+  return [...new Set(msgs.map(m => m.from).filter(Boolean))].filter(a => !self.has(a.toLowerCase())).join(', ')
+}
+
+/** participantsOf, but every did:webvh address run through shortWebvhDid --
+ * the human-facing form (did:webvh:d157.biset.md, SCID hidden), everywhere
+ * a participant list is actually shown (the thread header, conv-meta's
+ * "participants:" line). Nobody needs to see the 46-character SCID itself
+ * (found live, 2026-08-26: the header showed the full did:webvh string,
+ * SCID and all, right next to the DID pill that was already saying "this
+ * is a DID"). */
+function displayParticipantsOf(msgs: MailMessageView[]): string {
+  return participantsOf(msgs).split(', ').filter(Boolean).map(a => a.startsWith('did:') ? shortWebvhDid(a) : a).join(', ')
+}
+
+/** The transport this thread actually used -- the FIRST participant's
+ * address shape decides it, same rule main.ts's own sendReply uses to pick
+ * a transport in the first place (a DID recipient sends over DIDComm, never
+ * mixed with mail in one thread). Falls back to 'mail' for a thread with no
+ * participants left after excluding self (shouldn't happen for a real
+ * conversation, but "no pill" would be a worse failure mode than a
+ * possibly-wrong default one). */
+function threadProtocol(msgs: MailMessageView[]): Proto {
+  const participants = participantsOf(msgs)
+  const first = participants.split(', ')[0]
+  return first ? protocolFor(first) : 'mail'
 }
 
 export function render(smooth = false): void {
@@ -371,16 +420,20 @@ export function render(smooth = false): void {
     // gone after a re-render).
     const didBadge = document.getElementById('conv-did')
     const viaBadge = document.getElementById('conv-via')
-    $convTo.textContent = participantsOf(focused.messages.map(p => p.msg))
+    const msgs = focused.messages.map(p => p.msg)
+    $convTo.textContent = displayParticipantsOf(msgs)
     // src.bak's applyConvViaPill prepends #conv-via, then (mail/AP path)
     // prepends #conv-did last so it lands leftmost -- [did, via, address].
-    // This rewrite has exactly one transport (mail, biset-core), so the pill
-    // is always the same "Mail" label src.bak's relayProtocolLabel used for
-    // a mail-subdomain relay; #conv-did stays unwired (no DID-mediated
-    // contact concept here yet).
+    // Mail vs DID actually decided per-thread now (threadProtocol) -- this
+    // used to hardcode 'Mail' unconditionally, written before DIDComm chat
+    // send existed and never revisited once it did (found live, 2026-08-26:
+    // a DIDComm conversation's header still showed a Mail pill). #conv-did
+    // stays unwired (no separate DID-mediated-contact concept from the
+    // transport pill itself here).
     if (viaBadge) {
-      viaBadge.textContent = 'Mail'
-      viaBadge.style.cssText = 'font-size:10px;font-weight:700;color:#fff;background:#64748b;border-radius:4px;padding:1px 5px;margin-right:6px;flex-shrink:0'
+      const proto = threadProtocol(msgs)
+      viaBadge.textContent = PROTO_TEXT[proto]
+      viaBadge.style.cssText = `font-size:10px;font-weight:700;color:#fff;background:${PROTO_COLOR[proto]};border-radius:4px;padding:1px 5px;margin-right:6px;flex-shrink:0`
       $convTo.prepend(viaBadge)
     }
     if (didBadge) $convTo.prepend(didBadge)
@@ -409,8 +462,11 @@ export function render(smooth = false): void {
       if (firstMsg?.in_reply_to) lines.push('in-reply-to: ' + firstMsg.in_reply_to)
       if (firstMsg?.subject) lines.push('subject: ' + firstMsg.subject)
       if (firstMsg?.ts) lines.push('date: ' + new Date(firstMsg.ts).toISOString())
-      lines.push('participants: ' + participantsOf(focused.messages.map(p => p.msg)))
-      lines.push('thread_id: ' + (focusedThreadKey || ''))
+      lines.push('participants: ' + displayParticipantsOf(focused.messages.map(p => p.msg)))
+      // didCommThreadId (didcomm/basicmessage.ts) joins two full DIDs with
+      // '|' for a DIDComm thread's key -- elide each segment the same way,
+      // not just the strings this panel already shortens.
+      lines.push('thread_id: ' + (focusedThreadKey ?? '').split('|').map(s => s.startsWith('did:') ? shortWebvhDid(s) : s).join('|'))
       lines.push('messages: ' + focused.messages.length)
       $expanded.textContent = lines.join('\n')
     }

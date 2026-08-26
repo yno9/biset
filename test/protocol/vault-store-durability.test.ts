@@ -160,6 +160,33 @@ describe('IndexedDbVaultStore durability', () => {
     store.close()
   })
 
+  test('the credential event reader includes persisted private contact-key records', async () => {
+    const store = await IndexedDbVaultStore.open()
+    const object = await encryptVaultObject(createSegmentKey(), { segmentId: 'segment-contact', plaintext: new Uint8Array([1]), aad: new Uint8Array([2]) })
+    const event = await createVaultEvent({
+      identityId,
+      actorDeviceId: 'device-a',
+      actorSeq: 1,
+      kind: 'contact-key.set',
+      targetIds: ['contact-key:bob:peer-kid'],
+      objectRefs: [object.objectId],
+      parents: [],
+      createdAt: '2026-08-27T00:00:00.000Z',
+    }, signer)
+    const payload = new Uint8Array([3])
+    await store.commitLocalMutation({
+      identityId,
+      objects: [{ ...object, identityId }],
+      events: [event],
+      projection: { emails: [] },
+      jmapState: { state: 'contact-state' },
+      deliveryOutbox: { identityId, entryId: event.id, payload, payloadHash: sha256Bytes(payload), createdAt: event.createdAt, attempts: 0 },
+    })
+
+    expect(await store.readCredentialEvents(identityId)).toMatchObject([{ kind: 'contact-key.set', id: event.id }])
+    store.close()
+  })
+
   test('two different ingress IDs both commit and both persist', async () => {
     const store = await IndexedDbVaultStore.open()
     expect(await store.commitIngress(await buildIngressCommit('ingress-a'))).toBe('committed')

@@ -5,7 +5,10 @@ import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { resolveEntries, WebvhResolutionError } from '../../src/identity/webvh/resolver.ts'
 import { WebvhSigningKeyResolver } from '../../src/core/identity/webvh-signing-key-resolver.ts'
-import { buildGenesisLog, signProof, withFetch } from './support/webvh-log-fixture.ts'
+import { createGenesis } from '../../src/identity/webvh/create-genesis.ts'
+import { addDeviceVerificationMethod } from '../../src/identity/webvh/add-device-verification-method.ts'
+import { migrateWebvhLocation } from '../../src/identity/webvh/migrate.ts'
+import { buildGenesisLog, fakeAnchor, signProof, withFetch } from './support/webvh-log-fixture.ts'
 
 describe('webvh resolver (read-only)', () => {
   test('resolveEntries verifies SCID, entryHash and proof, and returns every verificationMethod', () => {
@@ -86,5 +89,43 @@ describe('WebvhSigningKeyResolver (DeviceSigningPublicKeyResolver)', () => {
       const resolver = new WebvhSigningKeyResolver()
       expect(await resolver.resolveEd25519PublicKey(`${did}#device-a`)).toBeUndefined()
     })
+  })
+
+  // Root-cause regression guard for the multi-device domain-move gap
+  // (test/protocol/mls-self-group-move-multidevice.test.ts): a device that
+  // never itself moved must keep resolving under its OWN unchanged
+  // (old-did-prefixed) kid after a SIBLING device's move rewrites the whole
+  // document's id prefix. This is deliberately independent of that MLS-level
+  // test — it isolates the resolver's fragment-matching fix from the whole
+  // self-group/DS stack.
+  test('a never-moved device\'s old kid still resolves after the identity moves', async () => {
+    const rootPrivateKey = ed25519.utils.randomSecretKey()
+    const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
+    const deviceBPrivateKey = ed25519.utils.randomSecretKey()
+    const deviceBPublicKey = ed25519.getPublicKey(deviceBPrivateKey)
+    const anchor = fakeAnchor()
+
+    const { did: oldDid } = await createGenesis({ domain: 'move-src.example', rootPrivateKey, rootPublicKey, fetch: anchor.fetch })
+    await addDeviceVerificationMethod({
+      did: oldDid, fragment: 'device-b', devicePublicKey: deviceBPublicKey,
+      signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey, fetch: anchor.fetch,
+    })
+    const deviceBKid = `${oldDid}#device-b`
+
+    // Someone else's move: only the domain changes, device-b never re-publishes.
+    await migrateWebvhLocation({
+      oldDid, newDomain: 'move-dst.example', signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey, fetch: anchor.fetch,
+    })
+
+    const realFetch = globalThis.fetch
+    globalThis.fetch = anchor.fetch
+    try {
+      const resolver = new WebvhSigningKeyResolver()
+      // Never resolved before -- proves this isn't just the cache papering
+      // over a live-resolution failure, but a genuinely correct first resolve.
+      expect(await resolver.resolveEd25519PublicKey(deviceBKid)).toEqual(deviceBPublicKey)
+    } finally {
+      globalThis.fetch = realFetch
+    }
   })
 })

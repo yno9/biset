@@ -1,4 +1,5 @@
 import { assertDeliverySeq, assertMlsEpoch, type DeliverySeq, type DeviceId, type IdentityId, type MlsEpoch } from '../../protocol/ids.ts'
+import { stableIdKey } from '../../identity/idkey.ts'
 
 export interface TrustedDeviceV1 {
   deviceId: DeviceId
@@ -34,13 +35,26 @@ export interface TrustedDeviceRoster {
  * Reference identity control-plane store. It does not infer membership from
  * DID publication or device activity: only an accepted self-group projection
  * can add or remove a device. In particular TTL never changes this roster.
+ *
+ * Keyed by `stableIdKey(identityId)` (the SCID, not the raw did:webvh
+ * string) — same reasoning as mls/self-group.ts's own selfGroupIdentityKey
+ * and mls/group.ts's memberKids: a did:webvh domain move
+ * (identity/webvh/move.ts) changes the DID string a device's commits carry
+ * while it migrates, one device at a time. Keying this store by the raw
+ * string would silently split ONE identity's roster into two unrelated
+ * entries the moment the first device migrated -- exactly what orphaned a
+ * second, uninvolved device's vault-delivery trust the moment its sibling
+ * device moved (found live, 2026-08-26). `projection.identityId` itself is
+ * left untouched (whatever the caller's own current DID happens to be) --
+ * only the MAP KEY normalizes.
  */
 export class MemoryTrustedDeviceRoster implements TrustedDeviceRoster {
   private readonly projections = new Map<IdentityId, AcceptedSelfGroupProjectionV1>()
 
   async installAcceptedProjection(projection: AcceptedSelfGroupProjectionV1): Promise<'installed' | 'already-current'> {
     assertAcceptedSelfGroupProjection(projection)
-    const existing = this.projections.get(projection.identityId)
+    const key = stableIdKey(projection.identityId)
+    const existing = this.projections.get(key)
     if (existing) {
       if (existing.selfGroupId !== projection.selfGroupId) throw new TypeError('self group ID cannot change for an identity')
       const ordering = compareMlsEpoch(projection.epoch, existing.epoch)
@@ -50,25 +64,25 @@ export class MemoryTrustedDeviceRoster implements TrustedDeviceRoster {
         return 'already-current'
       }
     }
-    this.projections.set(projection.identityId, copyProjection(projection))
+    this.projections.set(key, copyProjection(projection))
     return 'installed'
   }
 
   async projection(identityId: IdentityId): Promise<AcceptedSelfGroupProjectionV1 | undefined> {
-    const value = this.projections.get(identityId)
+    const value = this.projections.get(stableIdKey(identityId))
     return value && copyProjection(value)
   }
 
   async isTrustedDevice(identityId: IdentityId, deviceId: DeviceId): Promise<boolean> {
-    return this.projections.get(identityId)?.devices.some(device => device.deviceId === deviceId) ?? false
+    return this.projections.get(stableIdKey(identityId))?.devices.some(device => device.deviceId === deviceId) ?? false
   }
 
   async deliveryFloor(identityId: IdentityId, deviceId: DeviceId): Promise<DeliverySeq | undefined> {
-    return this.projections.get(identityId)?.devices.find(device => device.deviceId === deviceId)?.deliveryFloor
+    return this.projections.get(stableIdKey(identityId))?.devices.find(device => device.deviceId === deviceId)?.deliveryFloor
   }
 
   async trustedDevices(identityId: IdentityId): Promise<TrustedDeviceV1[]> {
-    return this.projections.get(identityId)?.devices.map(copyDevice) ?? []
+    return this.projections.get(stableIdKey(identityId))?.devices.map(copyDevice) ?? []
   }
 }
 

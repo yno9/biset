@@ -4,6 +4,7 @@ import {
   buildActorSequencer,
   buildLocalJmapReadModel,
   buildMailSubmitter,
+  buildRestoreTransferVerifier,
   buildVaultCryptoBoundary,
   enableDidComm,
   fromHex,
@@ -13,11 +14,11 @@ import {
 import { IndexedDbMlsSelfGroupStore } from './mls/store.ts'
 import { IndexedDbMlsKeyPackageStore } from './mls/keypackage-store.ts'
 import { IndexedDbVaultStore } from './vault/store.ts'
-import { setupNewUserPage } from './ui/account-create.ts'
+import { setOnIdentityCreated } from './ui/account-create.ts'
 import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
 import { configureCompose } from './ui/thread.ts'
 import type { ReplySendInput } from './ui/thread.ts'
-import { configureAccountPage } from './ui/account-page.ts'
+import { configureAccountPage, showAccountPage } from './ui/account-page.ts'
 import { configureComposePage } from './ui/compose-page.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { VaultBackedLocalJmapMutationSink } from './local-jmap/vault-mutation-sink.ts'
@@ -31,34 +32,114 @@ import { CoreVaultDeliveryTransport } from './vault/core-delivery-transport.ts'
 import type { IngressVerifierProjector } from './vault/ingress-ingest.ts'
 import { DidCommIngressProjector } from './didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from './didcomm/webvh-resolve.ts'
-import { sendDidCommMessage } from './didcomm/send-message.ts'
+import { initiateRelationship, sendRelationshipAccept, sendRelationshipMessage, type PendingRelationship } from './didcomm/send-message.ts'
 import { didCommThreadId } from './didcomm/basicmessage.ts'
+import { registerWithMediator, startMediatorPolling, type MediatorPollHandle } from './didcomm/mediator-sync.ts'
+import type { DidCommSender } from './didcomm/mediator-transport.ts'
+import type { DeliveredMessage } from './didcomm/mediator-pickup.ts'
+import { ingestIngress } from './vault/ingress-ingest.ts'
+import { flushVaultDeliveryOutbox } from './vault/delivery-outbox.ts'
+import type { IngressEnvelopeV1 } from './protocol/ingress.ts'
+import { sha256Bytes } from './protocol/canonical.ts'
+import { fetchRouting, putRouting, setRoutingName } from './didcomm/webvh-routing.ts'
+import { activatePreRotation, deactivatePreRotation, rotateToPreRotatedKey } from './identity/webvh/prerotation.ts'
+import { moveWebvhIdentity } from './identity/webvh/move.ts'
+import { adoptPendingMove } from './identity/webvh/adopt-move.ts'
+import { encodeMultikey } from './identity/webvh/multikey.ts'
+import { removeDeviceVerificationMethod } from './identity/webvh/remove-device-verification-method.ts'
+import { removeDeviceFromSelfGroup, type SelfGroupSigner } from './mls/self-group.ts'
+import { ownSignaturePrivateKey } from './mls/group.ts'
+import { CoreMlsDeliveryTransport } from './mls/core-mls-delivery-transport.ts'
+import { DidCommDeviceKeyReader } from './vault/didcomm-device-key-reader.ts'
+import { DidCommDeviceKeyVaultSink } from './vault/didcomm-device-key-sink.ts'
+import { OpenPgpCredentialReader } from './vault/openpgp-credential-reader.ts'
+import { OpenPgpCredentialVaultSink } from './vault/openpgp-credential-sink.ts'
+import { enableOpenPgpMail } from './mail/enable-openpgp.ts'
+import { DidCommCredentialReader } from './vault/didcomm-credential-reader.ts'
+import { DidCommCredentialVaultSink } from './vault/didcomm-credential-sink.ts'
+import { ed25519 } from '@noble/curves/ed25519.js'
+import { ContactKeyReader } from './vault/contact-key-reader.ts'
+import { ContactKeyVaultSink } from './vault/contact-key-sink.ts'
+import type { ContactKeyV1 } from './vault/contact-key.ts'
+import { decodePeerDid2, generatePeerIdentity, publicKeyOf } from './didcomm/peer.ts'
+import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT, relationshipBodyOf, relationshipMediatorService } from './didcomm/relationship.ts'
+import type { DidCommPlaintext } from './didcomm/message.ts'
+import { didOfKid } from './protocol/ids.ts'
+
+let pollTimer: ReturnType<typeof setInterval> | undefined
+let mediatorPollHandles: MediatorPollHandle[] = []
 
 /**
  * New-client bootstrap. The only branch this makes is "does this device
- * already have an identity locally": with none, it shows the new-user page
- * (ui/account-create.ts, identity/bootstrap.ts's createNewIdentity). With
- * one, it opens the vault UI (read model + reply-send, PLAN.md §7) against
- * the first local identity's vault, and still runs `maintainSelfGroup` for
- * every local identity (self-group catch-up + roster reflection + KeyPackage
- * pool top-up) so a second identity on this device doesn't silently drift
- * out of sync just because there's no account switcher yet.
+ * already have an identity locally": with none, this lands on the account
+ * page in its zero-identity state (the signup form mounted inline --
+ * account-page.ts's own showAccountPage) -- src.bak's ACTUAL default page
+ * whenever there's no session (`if (!sessions.length) showMenuPage('/account')`),
+ * not a separate full-page overlay (corrected 2026-08-25 after drifting into
+ * inventing that instead). With one, it opens the vault UI (read model +
+ * reply-send, PLAN.md §7) against the first local identity's vault, and
+ * still runs `maintainSelfGroup` for every local identity (self-group
+ * catch-up + roster reflection + KeyPackage pool top-up) so a second
+ * identity on this device doesn't silently drift out of sync just because
+ * there's no account switcher yet.
  */
+// Registered once, at module load -- a plain function reference, not an
+// import back into this module (see account-create.ts's own note on why:
+// this file is the bundle's entry point, and a dynamic `import('../main.ts')`
+// there used to make it also reachable via another module's import edge,
+// which silently broke bundling -- bootClient was defined but never invoked).
+//
+// Lands back on the account page after bootClient's normal has-identity
+// flow finishes -- src.bak's own signup handler ends the same way
+// (`showMenuPage('/account')`), showing the just-created identity's card,
+// not the (empty, since nothing's arrived yet) inbox bootClient's own
+// showApp() renders by default. showAccountPage lives here, not in
+// account-create.ts, for the identical reason bootClient does: importing it
+// from account-create.ts would close the same kind of cycle (account-page.ts
+// already imports FROM account-create.ts for the inline-mount helpers).
+setOnIdentityCreated(async () => {
+  await bootClient()
+  showAccountPage()
+})
+
 export async function bootClient(): Promise<void> {
-  const newUserPage = document.getElementById('new-user-page')
+  // Cleared unconditionally, before any branch -- logout's own re-entry into
+  // bootClient() lands on the zero-identity branch below, which returns
+  // before the has-identity branch's own clearInterval would ever run,
+  // leaving the OLD interval alive and polling a vault store logout just
+  // closed. A re-registration below (has-identity branch) replaces this.
+  if (pollTimer !== undefined) { clearInterval(pollTimer); pollTimer = undefined }
+  // Same reasoning as pollTimer just above: a re-entry into bootClient()
+  // (logout, most notably) must not leave a PRIOR identity's mediator polls
+  // running against the new session's own vault/readModel.
+  for (const handle of mediatorPollHandles) handle.stop()
+  mediatorPollHandles = []
 
   const recordStore = new IndexedDbIdentityRecordStore()
-  const records = await recordStore.list().catch(() => [])
-  if (records.length === 0) {
-    if (newUserPage) newUserPage.style.display = 'flex'
-    setupNewUserPage()
+  const storedRecords = await recordStore.list().catch(() => [])
+  if (storedRecords.length === 0) {
+    configureAccountPage({ did: null })
+    showApp()
+    showAccountPage()
     return
   }
 
-  if (newUserPage) newUserPage.style.display = 'none'
-
   const selfGroupStore = new IndexedDbMlsSelfGroupStore()
+  const keyStore = new IndexedDbMlsKeyPackageStore()
   const vaultStore = await IndexedDbVaultStore.open()
+  // did:webvh domain move (identity/webvh/adopt-move.ts) -- catches this
+  // device up on ANY identity that moved to a new domain while a SIBLING
+  // device performed the move and this one wasn't looking, before anything
+  // below reads a record's `.did`/`.deviceKid`/`.didCommKid`. A no-op
+  // (returns the record unchanged) for an identity that hasn't moved, or
+  // when resolution fails right now (offline, host unreachable) -- routine
+  // upkeep, not something to block boot on.
+  const records = await Promise.all(storedRecords.map(record =>
+    adoptPendingMove({ recordStore, record, vaultStore, selfGroupStore, keyPackageStore: keyStore }).catch(e => {
+      console.warn(`[adoptPendingMove] ${record.did}:`, e instanceof Error ? e.message : e)
+      return record
+    }),
+  ))
   // Single-account slice: the vault UI reads/writes the first local
   // identity's vault. maintainSelfGroup below still runs for every identity
   // on this device, so a second one doesn't silently drift out of sync just
@@ -69,7 +150,107 @@ export async function bootClient(): Promise<void> {
   // without needing a page reload.
   let identity = records[0]!
   const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did)
-  configureAccountPage({ did: identity.did, onLogout: logout })
+  const { apexDomain, coreBaseUrl, mediatorUrls } = readBisetConfig()
+  // Signs with the ROOT private key (the same key routing.json's own
+  // keyAgreement/alsoKnownAs entries are already signed with, webvh-routing.ts's
+  // DataIntegrityProof) -- account-page.ts never sees key material itself,
+  // only calls this callback.
+  const editName = async (name: string): Promise<void> => {
+    const rootPrivateKey = fromHex(identity.rootPrivateKey)
+    const rootPublicKey = fromHex(identity.rootPublicKey)
+    await setRoutingName(identity.did, name, { updateKey: encodeMultikey(rootPublicKey), privateKey: rootPrivateKey }, fetch)
+  }
+  // Revoke = cut the target device out of MLS membership (so it can't read
+  // anything committed after this point, mls/self-group.ts's own
+  // removeDeviceFromSelfGroup) + drop its verificationMethod entry from the
+  // DID document (so nothing resolving this identity still treats its leaf
+  // key as valid).
+  //
+  // Does NOT touch routing.json's DIDComm keyAgreement entry: since
+  // 2026-08-27 (ARC.md's DIDComm mediator redesign) that key is
+  // IDENTITY-shared, not per-device (vault/didcomm-credential.ts, same
+  // shape as the OpenPGP mail credential) -- every trusted device holds the
+  // SAME private key, so there is no longer a per-device entry to look up
+  // and remove; doing so the old way would have deleted the one shared
+  // entry every REMAINING device still legitimately needs. A revoked device
+  // that copied the shared private key before being cut off can still read
+  // DIDComm messages addressed to it until the shared key is actively
+  // rotated -- the same gap the OpenPGP credential already has
+  // (`supersedesFingerprint` chain exists, no rotation UI/trigger wired
+  // yet). Rotating the DIDComm credential here, the same way, is real
+  // follow-up work, not something this call silently half-does.
+  const revokeDevice = async (targetDeviceKid: string): Promise<void> => {
+    if (!identity.deviceKid) throw new Error('This device has no MLS credential yet')
+    if (!coreBaseUrl) throw new Error('coreBaseUrl not configured')
+    const stored = await selfGroupStore.load(identity.did)
+    if (!stored) throw new Error('No self-group state for this identity')
+    const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
+    const mlsTransport = new CoreMlsDeliveryTransport({ baseUrl: coreBaseUrl })
+    await removeDeviceFromSelfGroup(selfGroupStore, mlsTransport, identity.did, identity.deviceKid, targetDeviceKid, sign)
+    const rootPrivateKey = fromHex(identity.rootPrivateKey)
+    const rootPublicKey = fromHex(identity.rootPublicKey)
+    await removeDeviceVerificationMethod({ did: identity.did, deviceKeyId: targetDeviceKid, signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey })
+  }
+  // did:webvh pre-rotation (identity/webvh/prerotation.ts) — independent of
+  // coreBaseUrl/deviceKid, same reasoning as editName/revokeDevice above:
+  // this is a plain did.jsonl operation against the identity's own domain,
+  // nothing to do with the mail/DIDComm core. The Spare Key phrase itself
+  // (generate/display/prompt) is handled entirely in account-page.ts, which
+  // only ever hands this file the already-revealed key bytes to sign with —
+  // same "root key stays here" split as editName/revokeDevice.
+  const activateKeyRotation = async (nextKeyHash: string): Promise<void> => {
+    const rootPrivateKey = fromHex(identity.rootPrivateKey)
+    const rootPublicKey = fromHex(identity.rootPublicKey)
+    await activatePreRotation({ did: identity.did, signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey, nextKeyHash })
+  }
+  const rotateKeyRotation = async (revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array, nextKeyHash: string): Promise<void> => {
+    const rootPublicKey = fromHex(identity.rootPublicKey)
+    await rotateToPreRotatedKey({ did: identity.did, revealedPrivateKey, revealedPublicKey, identityPublicKey: rootPublicKey, nextKeyHash })
+  }
+  const deactivateKeyRotation = async (revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array): Promise<void> => {
+    const rootPublicKey = fromHex(identity.rootPublicKey)
+    await deactivatePreRotation({ did: identity.did, revealedPrivateKey, revealedPublicKey, identityPublicKey: rootPublicKey })
+  }
+  // did:webvh domain move (identity/webvh/move.ts) — same coreBaseUrl-
+  // independence as editName/revokeDevice/pre-rotation above for the
+  // did.jsonl half; the MLS self-group credential migration half (only
+  // relevant once this device has a deviceKid at all) does need a core to
+  // submit the migration commit through, same as revokeDevice's own MLS
+  // step.
+  const moveIdentity = async (newDomain: string): Promise<string> => {
+    const rootPrivateKey = fromHex(identity.rootPrivateKey)
+    const rootPublicKey = fromHex(identity.rootPublicKey)
+    let mlsTransport: CoreMlsDeliveryTransport | undefined
+    let mlsSign: SelfGroupSigner | undefined
+    if (identity.deviceKid) {
+      if (!coreBaseUrl) throw new Error('coreBaseUrl not configured')
+      const stored = await selfGroupStore.load(identity.did)
+      if (!stored) throw new Error('No self-group state for this identity')
+      mlsSign = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
+      mlsTransport = new CoreMlsDeliveryTransport({ baseUrl: coreBaseUrl })
+    }
+    const moved = await moveWebvhIdentity({
+      recordStore, record: identity, vaultStore, selfGroupStore, keyPackageStore: keyStore,
+      mlsTransport, mlsSign, newDomain, signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey,
+    })
+    identity = moved
+    // A full re-render, same as logout()'s own re-entry into bootClient()
+    // just above -- account-page.ts's own config (did/deviceKid/masterSeed)
+    // was captured at configure time below, not read live, so there is no
+    // lighter way to get the identity card, devices list, and every other
+    // did-scoped closure in this file (editName, revokeDevice, the
+    // pre-rotation trio) onto the new did without going through this same
+    // boot path again.
+    await bootClient()
+    return moved.did
+  }
+  configureAccountPage({
+    did: identity.did, deviceKid: identity.deviceKid, masterSeed: identity.masterSeed,
+    onLogout: logout, onEditName: editName, onRevokeDevice: revokeDevice,
+    onActivateKeyRotation: activateKeyRotation, onRotateKeyRotation: rotateKeyRotation, onDeactivateKeyRotation: deactivateKeyRotation,
+    onMoveIdentity: moveIdentity,
+    showMessage: showSysMsg,
+  })
 
   // Identity menu's "Log out" (account-page.ts's own confirm() already ran
   // before this is called -- src.bak's confirmAndLogout/logout split, the
@@ -83,7 +264,23 @@ export async function bootClient(): Promise<void> {
   // reusing the same logic a real first boot uses rather than inventing a
   // second "empty" path.
   async function logout(): Promise<void> {
+    // Every one of this session's own IndexedDB connections, not just
+    // vaultStore -- selfGroupStore/keyStore/recordStore never closed
+    // anywhere before this (each store class's own close() note explains
+    // why). Left open, a deleteDatabase() call below blocks on it
+    // (IndexedDB won't actually delete a database a live connection still
+    // holds); this function's own onblocked handler just resolves anyway
+    // (a 3s-budget best-effort step), so the delete silently no-opped and
+    // the OLD database survived logout entirely. Across enough logout/
+    // signup-retry cycles in one tab, the accumulated open connections left
+    // this browser's IndexedDB implementation unable to complete even a
+    // brand-new open() at all -- no onsuccess, no onblocked, no onerror,
+    // ever (found live, 2026-08-26; a fresh Incognito window, with no
+    // accumulated connections, worked every time).
     try { vaultStore.close() } catch { /* best-effort */ }
+    try { selfGroupStore.close() } catch { /* best-effort */ }
+    try { keyStore.close() } catch { /* best-effort */ }
+    try { recordStore.close() } catch { /* best-effort */ }
     const databaseNames = ['biset-identity', 'biset-mls-keypackages', 'biset-mls-self-group', 'biset-vault-core']
     await Promise.all(databaseNames.map(name => new Promise<void>(resolve => {
       const request = indexedDB.deleteDatabase(name)
@@ -95,37 +292,161 @@ export async function bootClient(): Promise<void> {
     await bootClient()
   }
 
-  const { apexDomain, coreBaseUrl } = readBisetConfig()
-  // Automatic, not opt-in (reversed 2026-08-25 after user feedback -- no
-  // "Enable DIDComm" UI, same as every other identity capability this
-  // rewrite just provisions on its own once a core is configured).
-  // Idempotent (enableDidComm no-ops once didCommKid is already set) and
-  // best-effort: a failure here must not block mail, which the user
-  // actually depends on already working.
-  if (coreBaseUrl) {
-    identity = await enableDidComm(recordStore, identity, { coreBaseUrl }).catch(e => {
-      console.warn('[enableDidComm]', e instanceof Error ? e.message : e)
-      return identity
-    })
-  }
   let syncMailIngress: (() => Promise<void>) | undefined
   // Reply-send needs the same signing/MLS boundary maintainSelfGroup already
   // requires a deviceKid for -- with neither a core to submit through nor a
   // device identity to sign with, the UI stays read-only, matching how this
   // file has always treated a missing coreBaseUrl.
   if (coreBaseUrl && apexDomain && identity.deviceKid) {
+    // Captured once, before enableDidComm's own `identity = ...` reassignment
+    // below widens `identity.deviceKid` back to `string | undefined` for
+    // TypeScript's control-flow narrowing -- enableDidComm never actually
+    // touches deviceKid (only didCommKid/didCommX25519PrivateKey), but its
+    // return type is the general IdentityRecord, so the narrowing doesn't
+    // survive the reassignment even though the value can't actually change.
+    const deviceKid = identity.deviceKid
     const boundary = buildVaultCryptoBoundary(vaultStore, vaultStore, selfGroupStore, identity)
-    const sequencer = await buildActorSequencer(vaultStore, identity.did, identity.deviceKid)
+    const sequencer = await buildActorSequencer(vaultStore, identity.did, deviceKid)
     const mutationSink = new VaultBackedLocalJmapMutationSink({
       accountId: `biset:${identity.did}`,
       identityId: identity.did,
-      actorDeviceId: identity.deviceKid,
+      actorDeviceId: deviceKid,
       nextActorSeq: () => sequencer.nextActorSeq(),
       initialParents: () => sequencer.initialParents(),
       activeSegment: () => boundary.activeSegment(),
       signer: boundary.signer,
       committer: vaultStore,
     })
+    const eventVerifier = buildRestoreTransferVerifier(selfGroupStore, identity.did).eventVerifier
+    const contactKeyReader = new ContactKeyReader({
+      identityId: identity.did,
+      objects: vaultStore,
+      events: vaultStore,
+      segmentKeys: boundary.resolver,
+      verifier: eventVerifier,
+    })
+    const contactKeySink = new ContactKeyVaultSink({
+      identityId: identity.did,
+      actorDeviceId: deviceKid,
+      nextActorSeq: () => sequencer.nextActorSeq(),
+      initialParents: () => sequencer.initialParents(),
+      activeSegment: () => boundary.activeSegment(),
+      currentSnapshot: () => readModel.snapshot(),
+      signer: boundary.signer,
+      committer: vaultStore,
+    })
+    interface PendingHandshake {
+      pending: PendingRelationship
+      promise: Promise<ContactKeyV1>
+      resolve(value: ContactKeyV1): void
+    }
+    const pendingByOwnKid = new Map<string, PendingHandshake>()
+    const pendingByCounterparty = new Map<string, PendingHandshake>()
+    const relationshipPollKids = new Set<string>()
+    let startRelationshipPoll: (xKid: string, xPriv: Uint8Array, did: string, mediatorUrl: string) => void = () => {
+      throw new Error('DIDComm relationship polling is not initialized')
+    }
+
+    // Automatic, not opt-in (reversed 2026-08-25 after user feedback -- no
+    // "Enable DIDComm" UI, same as every other identity capability this
+    // rewrite just provisions on its own once a core is configured).
+    // Idempotent (no-ops once didCommKid is already set) and best-effort: a
+    // failure here must not block mail, which the user actually depends on
+    // already working. Needs the vault-crypto boundary/sequencer above (the
+    // DIDComm keyAgreement key is identity-shared, read/written through the
+    // vault like the OpenPGP credential below) -- moved here, from an
+    // earlier, lighter-weight call site, when that stopped being optional.
+    {
+      const didCommReader = new DidCommCredentialReader({
+        identityId: identity.did,
+        objects: vaultStore,
+        events: vaultStore,
+        segmentKeys: boundary.resolver,
+        verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did).eventVerifier,
+      })
+      const didCommSink = new DidCommCredentialVaultSink({
+        identityId: identity.did,
+        actorDeviceId: deviceKid,
+        nextActorSeq: () => sequencer.nextActorSeq(),
+        initialParents: () => sequencer.initialParents(),
+        activeSegment: () => boundary.activeSegment(),
+        currentSnapshot: () => readModel.snapshot(),
+        signer: boundary.signer,
+        committer: vaultStore,
+      })
+      identity = await enableDidComm(recordStore, identity, didCommReader, didCommSink, { coreBaseUrl, apexDomain, mediatorUrls }).catch(e => {
+        console.warn('[enableDidComm]', e instanceof Error ? e.message : e)
+        return identity
+      })
+    }
+
+    const mailFrom = mailFromForIdentity(identity.did, apexDomain)
+    // Records this device's own (deviceKid, didCommKid) pairing into the
+    // vault -- private, synced only to this identity's own trusted devices
+    // -- so revokeDevice above can later find and remove the matching
+    // routing.json entry for a device being cut off. Write-once (skipped
+    // once this device's pairing is already there) and best-effort: a
+    // failure here must not block mail, same treatment as enableDidComm
+    // itself above.
+    const didCommKid = identity.didCommKid
+    if (didCommKid) {
+      const deviceKeyReader = new DidCommDeviceKeyReader({
+        identityId: identity.did,
+        objects: vaultStore,
+        events: vaultStore,
+        segmentKeys: boundary.resolver,
+        verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did).eventVerifier,
+      })
+      const existingPairing = await deviceKeyReader.forDeviceKid(deviceKid).catch(() => undefined)
+      if (!existingPairing) {
+        const deviceKeySink = new DidCommDeviceKeyVaultSink({
+          identityId: identity.did,
+          actorDeviceId: deviceKid,
+          nextActorSeq: () => sequencer.nextActorSeq(),
+          initialParents: () => sequencer.initialParents(),
+          activeSegment: () => boundary.activeSegment(),
+          currentSnapshot: () => readModel.snapshot(),
+          signer: boundary.signer,
+          committer: vaultStore,
+        })
+        await deviceKeySink.store({
+          version: 1, kind: 'didcomm.device-key', identityId: identity.did,
+          deviceKid, didCommKid, createdAt: new Date().toISOString(),
+        }).catch(e => console.warn('[didcomm-device-key]', e instanceof Error ? e.message : e))
+      }
+    }
+
+    // Mints this identity's OpenPGP credential the first time any device
+    // reaches this point (private key into the vault, synced identity-wide
+    // -- unlike DIDComm's per-device keys, see enable-openpgp.ts's own
+    // header), publishes the public half into routing.json. Automatic and
+    // best-effort, same treatment as enableDidComm above -- PGP support is
+    // required for mail, but a failure here must still not block sending
+    // or receiving unencrypted mail.
+    {
+      const pgpReader = new OpenPgpCredentialReader({
+        identityId: identity.did,
+        objects: vaultStore,
+        events: vaultStore,
+        segmentKeys: boundary.resolver,
+        verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did).eventVerifier,
+      })
+      const pgpSink = new OpenPgpCredentialVaultSink({
+        identityId: identity.did,
+        actorDeviceId: deviceKid,
+        nextActorSeq: () => sequencer.nextActorSeq(),
+        initialParents: () => sequencer.initialParents(),
+        activeSegment: () => boundary.activeSegment(),
+        currentSnapshot: () => readModel.snapshot(),
+        signer: boundary.signer,
+        committer: vaultStore,
+      })
+      const rootPrivateKey = fromHex(identity.rootPrivateKey)
+      const rootPublicKey = fromHex(identity.rootPublicKey)
+      await enableOpenPgpMail(pgpReader, pgpSink, { updateKey: encodeMultikey(rootPublicKey), privateKey: rootPrivateKey }, { identityId: identity.did, mailAddress: mailFrom })
+        .catch(e => console.warn('[enableOpenPgpMail]', e instanceof Error ? e.message : e))
+    }
+
     const submitter = buildMailSubmitter(vaultStore, selfGroupStore, identity, mutationSink, apexDomain, coreBaseUrl)
     const localMutationSink: LocalJmapMutationSink = {
       emailSet: (arguments_, snapshot) => mutationSink.emailSet(arguments_, snapshot),
@@ -137,7 +458,6 @@ export async function bootClient(): Promise<void> {
       readModel,
       mutationSink: localMutationSink,
     }))
-    const mailFrom = mailFromForIdentity(identity.did, apexDomain)
 
     // A `to` of exactly one DID (not an email address) dispatches over
     // DIDComm instead of mail -- the same "to" field both transports share
@@ -150,11 +470,30 @@ export async function bootClient(): Promise<void> {
       if (!identity.didCommKid || !identity.didCommX25519PrivateKey) {
         throw new Error('Enable DIDComm in account settings before messaging a DID')
       }
-      const result = await sendDidCommMessage(toDid, input.body, {
-        fromKid: identity.didCommKid,
-        x25519PrivateKey: fromHex(identity.didCommX25519PrivateKey),
-        ...(input.subject ? { subject: input.subject } : {}),
-      })
+      let contactKey = await contactKeyReader.currentFor(toDid)
+      if (!contactKey) {
+        let handshake = pendingByCounterparty.get(toDid)
+        if (!handshake) {
+          const initiated = await initiateRelationship(toDid, {
+            fromKid: identity.didCommKid,
+            x25519PrivateKey: fromHex(identity.didCommX25519PrivateKey),
+          })
+          if (!initiated.ok) throw new Error(initiated.error)
+          let resolve!: (value: ContactKeyV1) => void
+          const promise = new Promise<ContactKeyV1>((resolvePromise) => {
+            resolve = resolvePromise
+          })
+          handshake = { pending: initiated.pending, promise, resolve }
+          pendingByOwnKid.set(initiated.pending.peer.xKid, handshake)
+          pendingByCounterparty.set(toDid, handshake)
+          startRelationshipPoll(initiated.pending.peer.xKid, initiated.pending.peer.xPriv, initiated.pending.peer.did, initiated.pending.mediatorUrl)
+        }
+        contactKey = await Promise.race([
+          handshake.promise,
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`relationship handshake with ${toDid} timed out`)), 60_000)),
+        ])
+      }
+      const result = await sendRelationshipMessage(contactKey, input.body, input.subject)
       if (!result.ok) throw new Error(result.error)
       const now = new Date().toISOString()
       const snapshot = await readModel.snapshot()
@@ -211,6 +550,9 @@ export async function bootClient(): Promise<void> {
 
     configureCompose({
       selfAddress: mailFrom,
+      // Same guard as configureComposePage's own selfDid: only claim a DID
+      // identity once DIDComm is actually enabled.
+      selfDid: identity.didCommKid && identity.didCommX25519PrivateKey ? identity.did : undefined,
       sendReply,
       onError: message => {
         showSysMsg(message)
@@ -222,6 +564,10 @@ export async function bootClient(): Promise<void> {
     // new-message-specific is needed here.
     configureComposePage({
       selfAddress: mailFrom,
+      // Only offered as a From option once DIDComm is actually usable --
+      // matches sendDidCommChat's own guard, so "From" never claims a DID
+      // send is possible when it would immediately throw.
+      selfDid: identity.didCommKid && identity.didCommX25519PrivateKey ? identity.did : undefined,
       sendMessage: sendReply,
       onError: message => {
         showSysMsg(message)
@@ -243,22 +589,36 @@ export async function bootClient(): Promise<void> {
     // same synchronizeMailIngress/ingestIngress orchestration either way
     // (that "Mail" in the name predates DIDComm and is otherwise
     // protocol-agnostic already, see ingress-ingest.ts's own header).
-    syncMailIngress = async () => {
-      const mailProjector = new MailIngressProjector({
-        identityId: identity.did,
-        actorDeviceId: identity.deviceKid!,
-        nextActorSeq: () => sequencer.nextActorSeq(),
-        initialParents: () => sequencer.initialParents(),
-        activeSegment: () => boundary.activeSegment(),
-        currentSnapshot: () => readModel.snapshot(),
-        signer: boundary.signer,
-      })
-      const didCommProjector = identity.didCommKid && identity.didCommX25519PrivateKey
+    // Shared by the legacy core-pull path (syncMailIngress, right below) and
+    // the mediator-poll path (further down): both need "this identity's
+    // DIDComm ingress projector, if it has one", and building two divergent
+    // copies is exactly the kind of thing that quietly drifts apart.
+    // Returns undefined once as freely as identity.didCommKid/
+    // didCommX25519PrivateKey do -- an identity that hasn't enabled DIDComm
+    // yet, or (not currently possible, but not asserted against either) had
+    // it revoked mid-session.
+    const resolveAnyDidCommSenderKey = (kid: string): Promise<Uint8Array> => {
+      if (kid.startsWith('did:peer:2.')) {
+        const did = kid.split('#', 1)[0]!
+        return Promise.resolve(publicKeyOf(decodePeerDid2(did), kid))
+      }
+      return resolveDidCommSenderKey(kid)
+    }
+
+    const buildDidCommProjector = (): DidCommIngressProjector | undefined =>
+      identity.didCommKid && identity.didCommX25519PrivateKey
         ? new DidCommIngressProjector({
             identityId: identity.did,
             actorDeviceId: identity.deviceKid!,
-            selfKeys: { kid: identity.didCommKid, x25519PrivateKey: fromHex(identity.didCommX25519PrivateKey) },
-            resolveSenderKey: kid => resolveDidCommSenderKey(kid),
+            resolveOwnKey: async kid => {
+              if (kid === identity.didCommKid) return { kid, x25519PrivateKey: fromHex(identity.didCommX25519PrivateKey!) }
+              const pending = pendingByOwnKid.get(kid)?.pending.peer
+              if (pending) return { kid, x25519PrivateKey: pending.xPriv }
+              const contact = await contactKeyReader.forOwnKid(kid)
+              return contact ? { kid, x25519PrivateKey: contact.ownX25519PrivateKey } : null
+            },
+            resolveSenderKey: resolveAnyDidCommSenderKey,
+            resolveCounterpartyDid: async kid => (await contactKeyReader.forCounterpartyKid(kid))?.counterpartyDid ?? null,
             // TODO(PLAN.md §6.1): always "not yet seen" -- there is no
             // committed-dedupe-id lookup wired to this projector yet. Not a
             // safety gap: message.add's own duplicate-emailId conflict
@@ -274,6 +634,18 @@ export async function bootClient(): Promise<void> {
             signer: boundary.signer,
           })
         : undefined
+
+    syncMailIngress = async () => {
+      const mailProjector = new MailIngressProjector({
+        identityId: identity.did,
+        actorDeviceId: identity.deviceKid!,
+        nextActorSeq: () => sequencer.nextActorSeq(),
+        initialParents: () => sequencer.initialParents(),
+        activeSegment: () => boundary.activeSegment(),
+        currentSnapshot: () => readModel.snapshot(),
+        signer: boundary.signer,
+      })
+      const didCommProjector = buildDidCommProjector()
       const projector: IngressVerifierProjector = {
         verifyAndProject: envelope => {
           if (envelope.protocol === 'didcomm' && didCommProjector) return didCommProjector.verifyAndProject(envelope)
@@ -292,6 +664,144 @@ export async function bootClient(): Promise<void> {
       })
       if (result.ingress.ingestedIngressIds.length > 0) await refreshInbox(readModel)
     }
+
+    // Independent, blind mediators (ARC.md's 2026-08-27 redesign): this
+    // device registers directly with each one configured (self-heal on
+    // every boot -- registerWithMediator's own note) and polls it on its
+    // own cadence, entirely separate from the core-pull loop above. A
+    // delivered message is bridged into the SAME DidCommIngressProjector
+    // (built fresh per call, same as syncMailIngress -- didCommKid/
+    // didCommX25519PrivateKey can't change mid-session today, but nothing
+    // here assumes that) via ingestIngress, so it lands in the vault exactly
+    // like a core-delivered one; the resulting vault-delivery pack still
+    // syncs to sibling devices through biset-core (Phase 1's own point:
+    // ONLY DIDComm delivery moved off it, not this identity's own
+    // multi-device sync).
+    if (identity.didCommKid && identity.didCommX25519PrivateKey) {
+      const didCommKid = identity.didCommKid
+      const own: DidCommSender = { did: identity.did, xKid: didCommKid, xPriv: fromHex(identity.didCommX25519PrivateKey) }
+
+      async function onMessage(msg: DeliveredMessage, recipientKid: string, mediatorUrl: string): Promise<void> {
+        const didCommProjector = buildDidCommProjector()
+        if (!didCommProjector) return
+        const payload = new TextEncoder().encode(JSON.stringify(msg.rawJwe))
+        const envelope: IngressEnvelopeV1 = {
+          version: 1,
+          ingressId: crypto.randomUUID(),
+          protocol: 'didcomm',
+          recipientIdentityId: identity.did,
+          recipientDeviceSnapshot: [identity.deviceKid!],
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          transportMetadata: {},
+          sourceEvidence: new Uint8Array(0),
+          protectedPayload: payload,
+          protectedPayloadHash: sha256Bytes(payload),
+        }
+        await ingestIngress(envelope, boundary.signer, didCommProjector, vaultStore)
+        await flushVaultDeliveryOutbox(vaultStore, new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl }), boundary.signer, identity.did)
+        await handleRelationshipMessage(msg, recipientKid, mediatorUrl)
+        await refreshInbox(readModel)
+      }
+
+      async function handleRelationshipMessage(msg: DeliveredMessage, recipientKid: string, mediatorUrl: string): Promise<void> {
+        const plaintext = msg.plaintext as DidCommPlaintext
+        if (plaintext.type !== RELATIONSHIP_INIT && plaintext.type !== RELATIONSHIP_ACCEPT) return
+        const body = relationshipBodyOf(plaintext)
+        if (!body) throw new TypeError('relationship message body is invalid')
+        const route = relationshipMediatorService(body.relationshipKid)
+        if (route.url !== mediatorUrl) throw new TypeError('relationship mediator does not match the delivery route')
+
+        if (plaintext.type === RELATIONSHIP_INIT) {
+          if (msg.senderKid.startsWith('did:peer:2.')) throw new TypeError('relationship init must be authenticated by a public front-door kid')
+          const counterpartyDid = didOfKid(msg.senderKid)
+          let contact = await contactKeyReader.currentFor(counterpartyDid)
+          if (!contact || contact.counterpartyRelationshipKid !== body.relationshipKid) {
+            const peer = generatePeerIdentity({ uri: route.url, routingKeys: [route.routingKid] })
+            await registerWithMediator(route.url, { did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv })
+            const next: ContactKeyV1 = {
+              version: 1,
+              kind: 'contact-key',
+              identityId: identity.did,
+              counterpartyDid,
+              ownRelationshipKid: peer.xKid,
+              ownX25519PrivateKey: peer.xPriv,
+              ownEd25519PrivateKey: peer.edPriv,
+              counterpartyRelationshipKid: body.relationshipKid,
+              counterpartyPublicKey: body.publicKey,
+              createdAt: new Date().toISOString(),
+              ...(contact ? { supersedesKid: contact.ownRelationshipKid } : {}),
+            }
+            await contactKeySink.store(next)
+            contact = next
+            await flushVaultDeliveryOutbox(vaultStore, new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl }), boundary.signer, identity.did)
+            startRelationshipPoll(peer.xKid, peer.xPriv, peer.did, route.url)
+          }
+          const accepted = await sendRelationshipAccept(contact)
+          if (!accepted.ok) throw new Error(accepted.error)
+          return
+        }
+
+        if (body.relationshipKid !== msg.senderKid) throw new TypeError('relationship accept body does not match its authenticated sender')
+        const pending = pendingByOwnKid.get(recipientKid)
+        if (!pending) {
+          const existing = await contactKeyReader.forOwnKid(recipientKid)
+          if (existing?.counterpartyRelationshipKid === body.relationshipKid) return
+          throw new Error('relationship accept has no pending initiation')
+        }
+        const contact: ContactKeyV1 = {
+          version: 1,
+          kind: 'contact-key',
+          identityId: identity.did,
+          counterpartyDid: pending.pending.counterpartyDid,
+          ownRelationshipKid: pending.pending.peer.xKid,
+          ownX25519PrivateKey: pending.pending.peer.xPriv,
+          ownEd25519PrivateKey: pending.pending.peer.edPriv,
+          counterpartyRelationshipKid: body.relationshipKid,
+          counterpartyPublicKey: body.publicKey,
+          createdAt: new Date().toISOString(),
+        }
+        await contactKeySink.store(contact)
+        await flushVaultDeliveryOutbox(vaultStore, new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl }), boundary.signer, identity.did)
+        pendingByOwnKid.delete(recipientKid)
+        pendingByCounterparty.delete(pending.pending.counterpartyDid)
+        pending.resolve(contact)
+      }
+
+      startRelationshipPoll = (xKid: string, xPriv: Uint8Array, did: string, mediatorUrl: string): void => {
+        if (relationshipPollKids.has(xKid)) return
+        relationshipPollKids.add(xKid)
+        const relationshipOwn: DidCommSender = { did, xKid, xPriv }
+        mediatorPollHandles.push(startMediatorPolling(
+          mediatorUrl,
+          relationshipOwn,
+          resolveAnyDidCommSenderKey,
+          msg => onMessage(msg, xKid, mediatorUrl),
+        ))
+      }
+
+      for (const url of mediatorUrls) {
+        registerWithMediator(url, own).catch(e => console.warn(`[mediator] registration with ${url} failed (will retry next boot):`, e instanceof Error ? e.message : e))
+        mediatorPollHandles.push(startMediatorPolling(url, own, resolveAnyDidCommSenderKey, msg => onMessage(msg, didCommKid, url)))
+      }
+      const knownContactKeys = await contactKeyReader.readAll().catch(e => {
+        console.warn('[relationship] could not restore contact keys:', e instanceof Error ? e.message : e)
+        return []
+      })
+      const counterparties = new Set(knownContactKeys.map(contact => contact.counterpartyDid))
+      for (const counterpartyDid of counterparties) {
+        const contact = await contactKeyReader.currentFor(counterpartyDid).catch(e => {
+          console.warn(`[relationship] current key for ${counterpartyDid} is ambiguous:`, e instanceof Error ? e.message : e)
+          return null
+        })
+        if (!contact) continue
+        const route = relationshipMediatorService(contact.ownRelationshipKid)
+        const ownDid = contact.ownRelationshipKid.split('#', 1)[0]!
+        registerWithMediator(route.url, { did: ownDid, xKid: contact.ownRelationshipKid, xPriv: contact.ownX25519PrivateKey })
+          .catch(e => console.warn(`[relationship] registration with ${route.url} failed:`, e instanceof Error ? e.message : e))
+        startRelationshipPoll(contact.ownRelationshipKid, contact.ownX25519PrivateKey, ownDid, route.url)
+      }
+    }
   }
 
   showApp()
@@ -302,9 +812,22 @@ export async function bootClient(): Promise<void> {
   await syncMailIngress?.().catch(e => {
     console.warn('[syncMailIngress]', e instanceof Error ? e.message : e)
   })
+  // Nothing pulls again after this until the page is reloaded otherwise --
+  // there is no push here (PLAN.md §6.1 explicitly leaves DIDComm push out
+  // of scope), but a plain periodic pull is a different, much simpler thing
+  // that was just never wired as a recurring loop, only this one boot-time
+  // call. Found live, 2026-08-25: a message sent between two open sessions
+  // only showed up "a long time later" -- actually whenever something else
+  // happened to trigger a reboot, not because of any real delay. (Any prior
+  // interval was already cleared at the top of this function.)
+  if (syncMailIngress) {
+    const sync = syncMailIngress
+    pollTimer = setInterval(() => {
+      sync().catch(e => console.warn('[syncMailIngress/poll]', e instanceof Error ? e.message : e))
+    }, 10_000)
+  }
 
   if (!coreBaseUrl) return
-  const keyStore = new IndexedDbMlsKeyPackageStore()
   for (const record of records) {
     await maintainSelfGroup(selfGroupStore, keyStore, record, { coreBaseUrl, wraps: vaultStore, segments: vaultStore }).catch(e => {
       console.warn(`[maintainSelfGroup] ${record.did}:`, e instanceof Error ? e.message : e)

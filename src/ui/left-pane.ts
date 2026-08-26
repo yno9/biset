@@ -25,17 +25,28 @@ import { groupMessages } from '../mail/message-view.ts'
 import type { ThreadGroup } from '../mail/message-view.ts'
 import { avatarStyle, esc, previewText } from './format.ts'
 import { getFocusedThreadKey, render, setFocusedThreadKey } from './thread.ts'
-import { hideAccountPage, inAccountMode, showAccountPage } from './account-page.ts'
+import { hideAccountPage, hideConfigPage, inAccountMode, inConfigMode, showAccountPage, showConfigPage } from './account-page.ts'
 import { hideComposePage, inComposeMode, showComposePage } from './compose-page.ts'
+import { labelForDid } from './did-display.ts'
 
 function latestOf(group: ThreadGroup) {
   return group.messages[group.messages.length - 1]!.msg
 }
 
+// Same DID-vs-display-name reasoning as thread.ts's createMsgEl: a DIDComm
+// message's from/from_name is always the raw DID string, and a bare
+// username (labelForDid: "d157") is the right length for a name repeated
+// once per row in a list, the same as a message bubble's sender name --
+// the fuller did:webvh:d157.biset.md form is for the one-per-thread header
+// pill only (thread.ts's displayParticipantsOf).
+function shortSenderLabel(name: string): string {
+  return name.startsWith('did:') ? labelForDid(name) : name
+}
+
 function makeLpItem(group: ThreadGroup, active: boolean): HTMLElement {
   const latest = latestOf(group)
-  const label = group.subject || latest.from_name || latest.from || 'no title'
-  const avatarSubject = latest.from_name || latest.from || label
+  const label = group.subject || shortSenderLabel(latest.from_name || latest.from || 'no title')
+  const avatarSubject = shortSenderLabel(latest.from_name || latest.from || label)
   const unread = group.messages.some(p => p.msg.seen !== true)
   const a = document.createElement('a')
   a.className = 'lp-item' + (active ? ' current' : '')
@@ -53,6 +64,7 @@ function makeLpItem(group: ThreadGroup, active: boolean): HTMLElement {
   a.addEventListener('click', e => {
     e.preventDefault()
     if (inAccountMode()) hideAccountPage()
+    if (inConfigMode()) hideConfigPage()
     if (inComposeMode()) hideComposePage()
     setFocusedThreadKey(group.key)
     render()
@@ -251,6 +263,7 @@ function setupHamburgerMenu(): void {
       menu.classList.remove('open')
       document.getElementById('app')?.classList.remove('show-left')
       if (item.dataset.page === '/account') showAccountPage()
+      else if (item.dataset.page === '/config') showConfigPage()
     })
   }
   document.addEventListener('click', () => menu.classList.remove('open'))

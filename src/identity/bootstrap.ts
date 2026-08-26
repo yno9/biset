@@ -40,7 +40,11 @@ import { StoredMlsSelfGroupProvider, type MlsSelfGroupStateStore } from '../mls/
 import type { MlsKeyPackageStore } from '../mls/keypackage-store.ts'
 import { deviceKidFragment } from '../didcomm/devicekid.ts'
 import { publishRoutingPointer } from '../didcomm/webvh-routing-pointer.ts'
-import { buildRoutingDoc, putRouting } from '../didcomm/webvh-routing.ts'
+import { buildRoutingDoc, fetchRouting, putRouting, type RoutingDoc, type MediatorRegistration } from '../didcomm/webvh-routing.ts'
+import { registerWithMediator } from '../didcomm/mediator-sync.ts'
+import { DidCommCredentialReader } from '../vault/didcomm-credential-reader.ts'
+import { DidCommCredentialVaultSink } from '../vault/didcomm-credential-sink.ts'
+import type { DidCommPrivateCredentialV1 } from '../vault/didcomm-credential.ts'
 import { createSegmentKeyWrap, segmentKeyWrapSigningBytes, unwrapSegmentKey } from '../vault/crypto.ts'
 import type { RestoreTransferSource, RestoreTransferVerifier } from '../vault/restore-transfer.ts'
 import { buildVaultManifest } from '../vault/manifest.ts'
@@ -794,8 +798,27 @@ export function mailFromForIdentity(identityId: string, apexDomain: string): str
 export interface EnableDidCommOptions {
   /** Where the DIDComm ingress endpoint lives (`core/adapters/didcomm-http.ts`'s
    * deployment) -- POST /v1/didcomm/ingress under this origin becomes the
-   * routing.json service descriptor's serviceEndpoint. */
+   * routing.json service descriptor's serviceEndpoint. Used only as the
+   * FALLBACK: superseded by `mediatorUrls` when at least one registration
+   * there succeeds, and as the last resort when every one of them fails. */
   coreBaseUrl: string
+  /** Independent, blind mediators to register this identity's shared
+   * DIDComm kid with at provisioning time (ARC.md's 2026-08-27 redesign) --
+   * each successfully-registered one becomes a routing.json
+   * DIDCommMessaging entry with `routingKeys` naming it (webvh-routing.ts),
+   * superseding the legacy direct `coreBaseUrl` endpoint. Registration
+   * failures are logged and skipped, never fatal to provisioning: a
+   * mediator being briefly unreachable at signup must not block account
+   * creation. Empty/omitted keeps today's exact behavior (the legacy
+   * direct model, no mediator involved). */
+  mediatorUrls?: string[]
+  /** When given, this identity's derived mail address (mailFromForIdentity)
+   * is published into routing.json's `alsoKnownAs` -- otherwise nothing
+   * anywhere ever asserts the DID<->mail link (found live, 2026-08-26: a
+   * resolved document's alsoKnownAs was always empty). Optional because a
+   * caller with no apexDomain configured has no mail address to derive at
+   * all (main.ts's own read-only-UI fallback). */
+  apexDomain?: string
   fetch?: typeof fetch
 }
 
@@ -807,33 +830,137 @@ export interface EnableDidCommOptions {
  * the MLS self-group registration every device requires just to have a
  * vault at all.
  *
- * Generates a fresh X25519 keypair, derives its kid the same way
- * didcomm/devicekid.ts always does (deviceKidFragment -- deliberately NOT
- * `record.deviceKid`, which names a different key: the MLS leaf credential,
- * not this one), publishes the signed `#routing` log pointer once
- * (webvh-routing-pointer.ts) and this device's keyAgreement entry +
- * DIDCommMessaging service descriptor in routing.json (webvh-routing.ts),
- * then persists the new key on the identity record. Idempotent: a record
- * that already has `didCommKid` is returned unchanged, nothing republished.
+ * The DIDComm keyAgreement key is IDENTITY-shared, not per-device (2026-08-27
+ * redesign, ARC.md's DIDComm mediator section) -- same shape as
+ * vault/openpgp-credential.ts's mail credential, for the same reason: any of
+ * this identity's trusted devices needs to be able to decrypt the SAME
+ * incoming ciphertext, which sharing the actual private key (synced via the
+ * ordinary vault delivery pipeline, `reader`/`sink` below) gets for free,
+ * unlike the earlier per-device scheme where a sender had to guess which of
+ * several published keys some device might be listening on. `reader.readCurrent()`
+ * finds an already-synced credential from another device first; only the
+ * device that happens to reach this point before any sibling ever has does
+ * `sink.store()` mint a fresh one.
+ *
+ * Derives the kid the same way didcomm/devicekid.ts always did
+ * (deviceKidFragment -- deliberately NOT `record.deviceKid`, which names a
+ * different key: the MLS leaf credential, not this one), publishes the
+ * signed `#routing` log pointer once (webvh-routing-pointer.ts) and the
+ * identity's ONE keyAgreement entry + DIDCommMessaging service descriptor in
+ * routing.json (webvh-routing.ts), then persists the key on this device's
+ * own identity record. Idempotent on the KEY setup: a record that already
+ * has `didCommKid` skips straight to ensureAlsoKnownAsPublished below --
+ * still runs every boot (main.ts calls this unconditionally whenever a core
+ * is configured) so an identity provisioned before alsoKnownAs existed
+ * picks it up on its next boot rather than staying stuck without it forever.
+ *
+ * Fetch-merge-put against routing.json, not build-from-scratch-and-replace,
+ * so mlkem/alsoKnownAs/name/openpgp fields already published by something
+ * else survive -- the keyAgreement entry itself is a single-element array
+ * now (REPLACED wholesale, not merged): there is only ever one, identity-wide.
  */
-export async function enableDidComm(recordStore: IdentityRecordStore, record: IdentityRecord, opts: EnableDidCommOptions): Promise<IdentityRecord> {
-  if (record.didCommKid) return record
-  const x25519PrivateKey = x25519.utils.randomSecretKey()
-  const x25519PublicKey = x25519.getPublicKey(x25519PrivateKey)
-  const didCommKid = `${record.did}${deviceKidFragment(x25519PublicKey)}`
+export async function enableDidComm(
+  recordStore: IdentityRecordStore,
+  record: IdentityRecord,
+  reader: DidCommCredentialReader,
+  sink: DidCommCredentialVaultSink,
+  opts: EnableDidCommOptions,
+): Promise<IdentityRecord> {
+  if (record.didCommKid) {
+    await ensureAlsoKnownAsPublished(record, opts).catch(e => console.warn('[enableDidComm] alsoKnownAs backfill failed:', e instanceof Error ? e.message : e))
+    return record
+  }
+
+  let credential: DidCommPrivateCredentialV1
+  try {
+    credential = await reader.readCurrent()
+  } catch (e) {
+    if (!(e instanceof Error) || e.message !== 'no DIDComm credential is available') throw e
+    const x25519PrivateKey = x25519.utils.randomSecretKey()
+    const didCommKid = `${record.did}${deviceKidFragment(x25519.getPublicKey(x25519PrivateKey))}`
+    credential = { version: 1, kind: 'credential.didcomm.private', identityId: record.did, didCommKid, privateKey: x25519PrivateKey, createdAt: new Date().toISOString() }
+    await sink.store(credential)
+  }
+
+  const didCommKid = credential.didCommKid
+  const x25519PublicKey = x25519.getPublicKey(credential.privateKey)
   const rootPrivateKey = fromHex(record.rootPrivateKey)
   const rootPublicKey = fromHex(record.rootPublicKey)
 
   await publishRoutingPointer({ did: record.did, signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey, fetch: opts.fetch })
-  const doc = buildRoutingDoc(record.did, {
-    didCommEndpoint: `${opts.coreBaseUrl.replace(/\/$/, '')}/v1/didcomm/ingress`,
-    keyAgreementKeys: [{ kid: didCommKid, publicKey: x25519PublicKey }],
-  })
-  await putRouting(record.did, doc, { updateKey: encodeMultikey(rootPublicKey), privateKey: rootPrivateKey }, opts.fetch ?? fetch)
 
-  const updated: IdentityRecord = { ...record, didCommKid, didCommX25519PrivateKey: toHex(x25519PrivateKey) }
+  const fetchImpl = opts.fetch ?? fetch
+  const current = await fetchRouting(record.did, fetchImpl).catch(() => null)
+  let alsoKnownAs = current?.alsoKnownAs ? [...current.alsoKnownAs] : undefined
+  if (opts.apexDomain) {
+    try { alsoKnownAs = [...new Set([...(alsoKnownAs ?? []), mailFromForIdentity(record.did, opts.apexDomain)])] }
+    catch { /* identity's domain isn't a subdomain of apexDomain -- nothing to assert */ }
+  }
+  const buildDoc = (service: ReturnType<typeof buildRoutingDoc>): RoutingDoc => ({
+    service: service.service,
+    keyAgreementVerificationMethod: service.keyAgreementVerificationMethod!,
+    ...(current?.mlkemVerificationMethod?.length ? { mlkemVerificationMethod: current.mlkemVerificationMethod } : {}),
+    ...(alsoKnownAs?.length ? { alsoKnownAs } : {}),
+    ...(current?.name ? { name: current.name } : {}),
+    ...(current?.openpgpPublicKey ? { openpgpPublicKey: current.openpgpPublicKey } : {}),
+  })
+  const signing = { updateKey: encodeMultikey(rootPublicKey), privateKey: rootPrivateKey }
+  const keyAgreementKeys = [{ kid: didCommKid, publicKey: x25519PublicKey }]
+
+  // Publish the keyAgreement key FIRST, via the legacy endpoint shape --
+  // registerWithMediator below sends a mediate-request the mediator must
+  // authenticate by resolving THIS identity's own published keyAgreement
+  // entry, so it has to already be live before any registration can
+  // possibly succeed (a chicken-and-egg a did:dht-era identity never had:
+  // its keyAgreement key rode in the DID document itself, published at
+  // genesis, not in a separately-provisioned routing.json).
+  await putRouting(record.did, buildDoc(buildRoutingDoc(record.did, {
+    didCommEndpoint: `${opts.coreBaseUrl.replace(/\/$/, '')}/v1/didcomm/ingress`,
+    keyAgreementKeys,
+  })), signing, fetchImpl)
+
+  // Best-effort: register with each configured mediator, keeping only the
+  // ones that actually succeeded. A mediator down at signup time must not
+  // block account creation -- the legacy publish above already stands as
+  // the fallback when this ends up empty.
+  const mediators: MediatorRegistration[] = []
+  for (const url of opts.mediatorUrls ?? []) {
+    try {
+      const info = await registerWithMediator(url, { did: record.did, xKid: didCommKid, xPriv: credential.privateKey }, fetchImpl)
+      mediators.push({ url, routingKid: info.xKid })
+    } catch (e) {
+      console.warn(`[enableDidComm] could not register with mediator ${url}:`, e instanceof Error ? e.message : e)
+    }
+  }
+
+  if (mediators.length) {
+    await putRouting(record.did, buildDoc(buildRoutingDoc(record.did, { mediators, keyAgreementKeys })), signing, fetchImpl)
+  }
+
+  const updated: IdentityRecord = { ...record, didCommKid, didCommX25519PrivateKey: toHex(credential.privateKey) }
   await recordStore.put(updated)
   return updated
+}
+
+/** Backfills routing.json's alsoKnownAs with this identity's derived mail
+ * address for an identity that already has a didCommKid (so enableDidComm's
+ * own main path above won't touch routing.json again) -- a fetch-modify-put
+ * on the JSON directly, same shape as webvh-routing.ts's own setRoutingName,
+ * so an already-set self-asserted `name` survives untouched. No-op when
+ * there's no apexDomain to derive a mail address from, or the address is
+ * already listed (the common case on every boot after the first). */
+async function ensureAlsoKnownAsPublished(record: IdentityRecord, opts: EnableDidCommOptions): Promise<void> {
+  if (!opts.apexDomain) return
+  let mailFrom: string
+  try { mailFrom = mailFromForIdentity(record.did, opts.apexDomain) }
+  catch { return }
+  const fetchImpl = opts.fetch ?? fetch
+  const current = await fetchRouting(record.did, fetchImpl)
+  if (!current || current.alsoKnownAs?.includes(mailFrom)) return
+  const rootPrivateKey = fromHex(record.rootPrivateKey)
+  const rootPublicKey = fromHex(record.rootPublicKey)
+  const alsoKnownAs = [...new Set([...(current.alsoKnownAs ?? []), mailFrom])]
+  await putRouting(record.did, { ...current, alsoKnownAs }, { updateKey: encodeMultikey(rootPublicKey), privateKey: rootPrivateKey }, fetchImpl)
 }
 
 /**

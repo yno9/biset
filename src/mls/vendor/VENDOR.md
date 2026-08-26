@@ -42,6 +42,18 @@ Every divergence from upstream is marked in the source with a comment starting
   crypto provider, are removed along with their `@hpke/*` dependencies.
 - HPKE (RFC 9180, base mode) is implemented over `@noble/*` in
   `crypto/implementation/noble/`.
+- `updatePath.ts`/`createCommit.ts` — an additive, default-preserving
+  `newCredential`/`ownCredentialUpdate` parameter on `createUpdatePath`/
+  `createCommit`, letting a committer change its OWN leaf's credential via
+  its own UpdatePath in the same commit that would otherwise only rekey it.
+  RFC 9420 restricts what a committer's self-authored *proposal* may
+  contain (no self Update proposal in one's own commit — `clientState.ts`'s
+  `validateProposals`), not what a committer's own path update may carry;
+  this is not a new capability, just exposing a hook upstream never needed.
+  `mls/group.ts`'s `updateOwnCredential` is the one caller, used by domain
+  moves (`identity/webvh/move.ts`) to re-issue a device's MLS credential
+  after its did:webvh identity relocates (ARC.md §4.6). Every existing
+  caller's behavior is unchanged when the new parameter is omitted.
 
 ## Keeping it honest
 

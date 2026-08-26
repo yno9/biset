@@ -24,6 +24,7 @@
 // PUSHED... this decides who may PULL"). Conflating the two would make
 // commit ordering depend on a roster update that hasn't happened yet.
 import { Database } from 'bun:sqlite'
+import { sameIdentity } from '../../identity/idkey.ts'
 import type { MlsGroupInfoAnswer, MlsLogEntry } from '../../protocol/mls-ds.ts'
 
 export type { MlsGroupInfoAnswer, MlsLogEntry } from '../../protocol/mls-ds.ts'
@@ -148,10 +149,20 @@ export class SqliteMlsDeliveryService {
    * external commit, is BY DEFINITION not yet a member (that is the whole
    * point of external join). The only thing worth checking here is that the
    * requester belongs to the identity this self-group actually is.
+   *
+   * `sameIdentity`, not `===`: `group.identityId` is whatever it was at
+   * genesis and this store never updates it, but a did:webvh domain move
+   * (identity/webvh/move.ts) changes the caller's own did:webvh string
+   * while keeping its SCID — the same identity, a different string. An
+   * exact-string gate here would permanently lock a moved identity out of
+   * its own group's GroupInfo. Safe to relax: per submitExternalCommit's
+   * own note below, this check was never the load-bearing security
+   * boundary anyway (signature verification + MLS's own AS credential
+   * check are).
    */
   groupInfoFor(groupId: string, identityId: string): MlsGroupInfoAnswer | undefined {
     const group = this.loadGroup(groupId)
-    if (!group || group.identityId !== identityId) return undefined
+    if (!group || !sameIdentity(group.identityId, identityId)) return undefined
     return { ...(group.groupInfo ? { groupInfo: group.groupInfo } : {}), pendingRemovals: [...group.pendingRemovals] }
   }
 
@@ -189,11 +200,14 @@ export class SqliteMlsDeliveryService {
    * `identityId` and a self-generated `senderKid`, which buys them nothing:
    * MLS validation of the actual commit rejects a credential that does not
    * belong to this self-group's DID.
+   *
+   * `sameIdentity`, not `===` — see groupInfoFor's own note on why an exact
+   * string match would break across a domain move.
    */
   submitExternalCommit(groupId: string, identityId: string, senderKid: string, epoch: string, commit: Uint8Array, groupInfo?: Uint8Array): MlsCommitResult {
     const group = this.loadGroup(groupId)
     if (!group) return { ok: false, reason: 'no-such-group', epoch: '0' }
-    if (group.identityId !== identityId) return { ok: false, reason: 'not-a-member', epoch: group.epoch.toString() }
+    if (!sameIdentity(group.identityId, identityId)) return { ok: false, reason: 'not-a-member', epoch: group.epoch.toString() }
     if (group.groupInfo === undefined) return { ok: false, reason: 'no-group-info', epoch: group.epoch.toString() }
     if (BigInt(epoch) !== group.epoch) return { ok: false, reason: 'epoch-conflict', epoch: group.epoch.toString() }
     return this.database.transaction((): MlsCommitAccepted => {

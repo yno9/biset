@@ -73,6 +73,38 @@ export function reduceLocalJmapProjection(
       // has nothing to do with.
       continue
     }
+    if (mutation.kind === 'didcomm.device-key.set') {
+      // Deliberately a no-op for the read-model: a private
+      // (MLS device kid -> DIDComm keyAgreement kid) pairing
+      // (vault/didcomm-device-key.ts), read only by revokeDevice (main.ts)
+      // directly off the vault events, never projected into mail/mailbox
+      // state.
+      continue
+    }
+    if (mutation.kind === 'credential.didcomm.set') {
+      // Deliberately a no-op for the read-model: the identity-shared DIDComm
+      // keyAgreement private key (vault/didcomm-credential.ts), read only by
+      // DidCommCredentialReader directly off the vault events -- never a
+      // mailbox/keyword change. A sibling device receiving this event via
+      // ordinary vault-delivery sync must not have it rejected here just
+      // because this reducer has no mail-projection rule for it.
+      continue
+    }
+    if (mutation.kind === 'contact-key.set') {
+      // Deliberately a no-op for the read-model: private per-counterparty
+      // DIDComm relationship credentials are read directly from encrypted
+      // vault events and never become mail or mailbox state.
+      continue
+    }
+    if (mutation.kind === 'credential.openpgp.set') {
+      // Deliberately a no-op for the read-model: the identity-shared OpenPGP
+      // mail private key (vault/openpgp-credential-sink.ts), read only by
+      // OpenPgpCredentialReader directly off the vault events -- never a
+      // mailbox/keyword change. A sibling device receiving this event via
+      // ordinary vault-delivery sync must not have it rejected here just
+      // because this reducer has no mail-projection rule for it.
+      continue
+    }
     if (mutation.kind !== 'mailbox.set' && mutation.kind !== 'keyword.set') {
       // `VaultEventKind` (protocol/vault.ts) reserves several kinds
       // (message.edit/reaction.set/read.set/thread.set/settings.set/...)

@@ -25,13 +25,14 @@ import {
   encodeGroupState, decodeGroupState,
   defaultAuthenticationService, defaultKeyRetentionConfig, defaultLifetimeConfig,
   defaultKeyPackageEqualityConfig, defaultPaddingConfig,
-  type AuthenticationService, type Capabilities, type ClientConfig, type ClientState, type KeyPackage,
+  type AuthenticationService, type Capabilities, type ClientConfig, type ClientState, type Credential, type KeyPackage,
   type PrivateKeyPackage, type Proposal, type Welcome,
 } from './vendor/index.ts'
 import { encodeGroupInfo, decodeGroupInfo, ratchetTreeFromExtension } from './vendor/groupInfo.ts'
 import { makeKeyPackageRef } from './vendor/keyPackage.ts'
 import { mlsSuite } from './suite.ts'
 import { credentialFor, memberIdOf, type MlsMemberId } from './identity.ts'
+import { sameIdentity } from '../identity/idkey.ts'
 
 // The Authentication Service (PLANMLS.md §2's AS role). ts-mls asks this
 // whether a leaf's credential really belongs to the signature key in that leaf;
@@ -234,9 +235,35 @@ export async function rekey(state: ClientState): Promise<CommitResult> {
   return commitWith(state, [])
 }
 
-async function commitWith(state: ClientState, extraProposals: Proposal[], ratchetTreeExtension = false): Promise<CommitResult> {
+/** Replaces this device's OWN leaf's credential in place, via its own
+ * UpdatePath — the same physical leaf, same index, same encryption/
+ * signature keys, only the credential (`kid`) changes. The one caller is a
+ * did:webvh domain move (identity/webvh/move.ts): the device's kid embeds
+ * its identity's DID (`${did}#device-hex}`), which the move changes, but
+ * the device itself hasn't.
+ *
+ * Deliberately NOT a bundled Update proposal: RFC 9420 forbids a committer
+ * from including their own self-authored Update proposal in their own
+ * commit (clientState.ts's validateProposals) — found live, 2026-08-26,
+ * trying exactly that. And deliberately NOT `joinGroupExternally`'s
+ * `resync` option either (removing this leaf and re-adding a new one): for
+ * a single-member self-group, that path hits an unrelated bug in the
+ * vendored MLS tree code (extendRatchetTree) when the tree briefly goes
+ * fully blank between the remove and the add.
+ *
+ * What actually works: every commit already carries an UpdatePath for the
+ * committer's OWN leaf (`rekey` above is exactly this, with no proposals at
+ * all) — RFC 9420 places no restriction on what committer puts in THEIR
+ * OWN path update, only on proposals. Upstream's `createUpdatePath` just
+ * never exposed a way to change credential there (`vendor/updatePath.ts`'s
+ * own `// biset:` note on `newCredential`) — this is the one caller. */
+export async function updateOwnCredential(state: ClientState, newKid: string): Promise<CommitResult> {
+  return commitWith(state, [], false, credentialFor(newKid))
+}
+
+async function commitWith(state: ClientState, extraProposals: Proposal[], ratchetTreeExtension = false, ownCredentialUpdate?: Credential): Promise<CommitResult> {
   const suite = await mlsSuite()
-  const result = await createCommit({ state, cipherSuite: suite }, { extraProposals, ratchetTreeExtension })
+  const result = await createCommit({ state, cipherSuite: suite }, { extraProposals, ratchetTreeExtension, ownCredentialUpdate })
   return {
     state: result.newState,
     commit: encodeMlsMessage(result.commit),
@@ -338,9 +365,19 @@ export function memberDids(state: ClientState): string[] {
   return [...new Set(memberList(state).map(m => m.did))]
 }
 
-/** Every device key id a given identity has in this group. */
+/** Every device key id a given identity has in this group.
+ *
+ * `sameIdentity`, not `===`: mid-migration (a did:webvh domain move,
+ * identity/webvh/move.ts), some members' credentials already carry the new
+ * did while others -- devices that haven't caught up yet -- still carry
+ * the old one, same SCID either way. An exact match here would silently
+ * drop the not-yet-migrated devices from every roster/vault-delivery
+ * projection built from this list the moment the FIRST device migrated,
+ * even though they are still cryptographically full members (found live,
+ * 2026-08-26, chasing why an uninvolved second device got locked out of
+ * vault delivery right after its sibling device performed a move). */
 export function memberKids(state: ClientState, did: string): string[] {
-  return memberList(state).filter(m => m.did === did).map(m => m.kid)
+  return memberList(state).filter(m => sameIdentity(m.did, did)).map(m => m.kid)
 }
 
 /** The ACTUAL MLS leaf signature key a member kid currently holds, or
@@ -407,16 +444,21 @@ export async function joinGroupExternally(
    * been revoked from its owner's DID document. Normal joins always use the
    * installed DID Authentication Service. */
   authenticationService?: AuthenticationService,
+  /** True only for a device replacing its OWN existing leaf (a did:webvh
+   * domain move, identity/webvh/move.ts's own credential-migration step,
+   * via generateOwnKeyPackageWithSignatureKey's matching signature key) —
+   * the resulting commit atomically removes that leaf and adds this one.
+   * False (the default) for a genuinely new device joining: resync would
+   * remove whichever existing leaf's signature key happens to match `own`'s,
+   * which for a new device is nobody's and must stay that way. */
+  resync = false,
 ): Promise<CommitResult> {
   const suite = await mlsSuite()
   const groupInfo = decodeGroupInfo(groupInfoBytes, 0)?.[0]
   if (groupInfo === undefined) throw new Error('joinGroupExternally: undecodable group info')
   const { publicMessage, newState } = await joinGroupExternal(
     groupInfo, own.publicPackage, own.privatePackage,
-    // `resync` false: this is a new leaf joining, not a device replacing its
-    // own existing leaf after losing state. Resync would remove the old leaf,
-    // which for a genuinely new device would remove somebody else's.
-    false, suite, undefined, clientConfig(authenticationService),
+    resync, suite, undefined, clientConfig(authenticationService),
   )
   return {
     state: newState,

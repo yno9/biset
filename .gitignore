@@ -4,7 +4,9 @@ config.json
 dist/app-*.js
 deploy.sh
 home/
-test/
+test/*
+!test/contact-key.test.ts
+!test/mediator-relationship-handshake.test.ts
 
 biset-*
 PLAN*

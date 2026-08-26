@@ -4,6 +4,7 @@
     "src/main.ts",
     "src/sw.ts",
     "src/core/index.ts",
+    "src/mediator/index.ts",
     "test/**/*.test.ts",
     "scripts/*.mjs"
   ],

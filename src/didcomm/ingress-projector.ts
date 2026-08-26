@@ -1,4 +1,4 @@
-import { canonicalHash, equalBytes, sha256Bytes } from '../protocol/canonical.ts'
+import { bytesToBase64url, canonicalHash, equalBytes, sha256Bytes } from '../protocol/canonical.ts'
 import type { IngressEnvelopeV1 } from '../protocol/ingress.ts'
 import { didOfKid } from '../protocol/ids.ts'
 import type { DeviceId, IdentityId, VaultEventId } from '../protocol/ids.ts'
@@ -17,15 +17,18 @@ import { isPing, responseOwedFor } from './trust-ping.ts'
 import { isBasicMessage, basicMessageBodyOf, didCommThreadId } from './basicmessage.ts'
 import type { DidCommPlaintext } from './message.ts'
 import { isExpired } from './message.ts'
+import { isRelationshipMessage, relationshipBodyOf } from './relationship.ts'
 
 export interface DidCommIngressProjectorOptions {
   identityId: IdentityId
   actorDeviceId: DeviceId
-  /** This device's own DIDComm keypair -- the kid matches actorDeviceId
-   * exactly (didcomm/devicekid.ts: one derived kid names both the MLS leaf
-   * credential and the keyAgreement entry for a given device). */
-  selfKeys: SelfKeys
+  /** Selects either the public front-door key or a private relationship key
+   * from the JWE's addressed recipient kid. Unknown kids fail closed. */
+  resolveOwnKey(kid: string): SelfKeys | null | Promise<SelfKeys | null>
   resolveSenderKey: ResolveSenderKey
+  /** Maps a private sender kid back to its public counterparty DID for the
+   * user-facing thread. Required only for established relationship chat. */
+  resolveCounterpartyDid?(senderKid: string): string | null | Promise<string | null>
   /** True if a `didcomm.control` event for this exact (senderKid, message id)
    * pair has already been committed -- the caller's job since the answer
    * lives in already-committed local vault state, which this
@@ -100,7 +103,11 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
     const jwe = parseJwe(parsed)
     if (!jwe) throw new TypeError('DIDComm ingress payload is not a well-formed JWE')
 
-    const { plaintext, senderKid } = await unpackAuthcryptAuto(jwe, this.options.selfKeys, this.options.resolveSenderKey)
+    const recipientKid = jwe.recipients[0]?.header.kid
+    if (!recipientKid) throw new TypeError('DIDComm JWE has no recipient kid')
+    const selfKeys = await this.options.resolveOwnKey(recipientKid)
+    if (!selfKeys || selfKeys.kid !== recipientKid) throw new TypeError(`DIDComm recipient kid ${recipientKid} is not available to this endpoint`)
+    const { plaintext, senderKid } = await unpackAuthcryptAuto(jwe, selfKeys, this.options.resolveSenderKey)
     let msg: DidCommPlaintext
     try {
       msg = JSON.parse(new TextDecoder().decode(plaintext)) as DidCommPlaintext
@@ -108,7 +115,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       throw new TypeError('DIDComm plaintext is not valid JSON')
     }
     if (isExpired(msg)) throw new TypeError('DIDComm message has expired')
-    if (!isPing(msg) && !isBasicMessage(msg)) throw new TypeError(`unsupported DIDComm message type for this endpoint slice: ${msg.type}`)
+    if (!isPing(msg) && !isBasicMessage(msg) && !isRelationshipMessage(msg)) throw new TypeError(`unsupported DIDComm message type for this endpoint slice: ${msg.type}`)
 
     const dedupeId = didCommMessageDedupeId(senderKid, msg.id)
     if (await this.options.alreadyProcessed(dedupeId)) throw new DidCommReplayError(`DIDComm message ${msg.id} from ${senderKid} was already processed`)
@@ -130,17 +137,24 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
     let event: VaultEventRecord
     let decryptedForProjection: { event: VaultEventRecord; plaintext: Uint8Array }
 
-    if (isPing(msg)) {
+    if (isPing(msg) || isRelationshipMessage(msg)) {
       // Trust Ping 2.0: an audit record, never a thread row -- see
       // local-jmap/reducer.ts's own no-op case for `didcomm.control`.
       const alg = protectedHeaderOf(jwe)?.alg
+      const relationshipBody = isRelationshipMessage(msg) ? relationshipBodyOf(msg) : null
+      if (isRelationshipMessage(msg) && !relationshipBody) throw new TypeError('DIDComm relationship message has an invalid body')
       const record = await buildVaultMutation({
         kind: 'didcomm.control' as const,
         targetIds: [dedupeId],
         payload: {
           messageId: msg.id, type: msg.type, senderKid,
+          recipientKid,
           ...(typeof alg === 'string' ? { alg } : {}),
-          responseOwed: responseOwedFor(msg),
+          ...(isPing(msg) ? { responseOwed: responseOwedFor(msg) } : {}),
+          ...(relationshipBody ? {
+            relationshipKid: relationshipBody.relationshipKid,
+            relationshipPublicKey: bytesToBase64url(relationshipBody.publicKey),
+          } : {}),
           receivedAt: createdAt,
         },
       }, context, this.options.signer)
@@ -153,7 +167,10 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       // same thread.ts UI, no DIDComm-specific rendering path needed. One
       // thread per correspondent DID pair (didCommThreadId), not per-subject
       // like mail: a chat's whole point is one continuous conversation.
-      const senderDid = didOfKid(senderKid)
+      const senderDid = senderKid.startsWith('did:peer:2.')
+        ? await this.options.resolveCounterpartyDid?.(senderKid)
+        : didOfKid(senderKid)
+      if (!senderDid) throw new TypeError('DIDComm relationship sender is not associated with a counterparty')
       const body = basicMessageBodyOf(msg)
       if (!body) throw new TypeError('DIDComm basicmessage has no readable content')
       const sentAt = body.sentAt ?? (msg.created_time ? new Date(msg.created_time * 1000).toISOString() : createdAt)

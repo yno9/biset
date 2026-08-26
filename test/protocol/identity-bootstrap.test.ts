@@ -17,7 +17,13 @@ import { SqliteTrustedDeviceRoster } from '../../src/core/identity/sqlite-device
 import { Ed25519DeviceControlSignatureVerifier } from '../../src/core/identity/ed25519-device-control-verifier.ts'
 import { rosterBackedVaultDeliveryAuthorizer } from '../../src/core/identity/authorizers.ts'
 import { WebvhSigningKeyResolver } from '../../src/core/identity/webvh-signing-key-resolver.ts'
-import { buildVaultCryptoBoundary, createNewIdentity, maintainSelfGroup, restoreIdentity } from '../../src/identity/bootstrap.ts'
+import { buildVaultCryptoBoundary, createNewIdentity, enableDidComm, maintainSelfGroup, restoreIdentity } from '../../src/identity/bootstrap.ts'
+import { fetchRouting } from '../../src/didcomm/webvh-routing.ts'
+import { DidCommCredentialReader } from '../../src/vault/didcomm-credential-reader.ts'
+import { DidCommCredentialVaultSink } from '../../src/vault/didcomm-credential-sink.ts'
+import { createSegmentKey } from '../../src/vault/objects.ts'
+import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
+import type { VaultEventSigner } from '../../src/vault/events.ts'
 import { seedToMnemonic } from '../../src/identity/seed.ts'
 import { resolve } from '../../src/identity/webvh/resolver.ts'
 import { didWebToHttpsUrl, buildWebDid } from '../../src/identity/web/identifier.ts'
@@ -388,6 +394,128 @@ describe('maintainSelfGroup', () => {
       const record: IdentityRecord = { did: 'did:web:nobody.test.example', deviceKid: 'did:web:nobody.test.example#device-a', rootPublicKey: '', rootPrivateKey: '' }
       const state = await maintainSelfGroup(memorySelfGroupStore(), memoryKeyPackageStore(), record, { coreBaseUrl: CORE_ORIGIN })
       expect(state).toBeUndefined()
+
+      ds.close()
+      roster.close()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+})
+
+// Minimal DidCommCredentialReader/Sink harness -- same shape as
+// test/protocol/enable-openpgp.test.ts's own harness(), for the same reason:
+// enableDidComm's DIDComm keyAgreement key is identity-shared (2026-08-27
+// redesign), read/written through the vault rather than derived locally.
+// `shared` lets two "devices" see the SAME underlying objects/events maps,
+// simulating a real vault-delivery sync having already caught up.
+function sharedDidCommVault(): { objects: Map<string, any>; events: any[]; segmentKey: Uint8Array } {
+  return { objects: new Map(), events: [], segmentKey: createSegmentKey() }
+}
+
+async function didCommHarness(identityId: string, deviceId: string, shared: ReturnType<typeof sharedDidCommVault>, signer: VaultEventSigner) {
+  const wrap = await createSegmentKeyWrap(new Uint8Array(32).fill(7), shared.segmentKey, { identityId, selfGroupId: 'self-group-1', segmentId: 'segment-1', sourceEpoch: '1', recipientEpoch: '1', grantorDeviceId: deviceId, grantedAt: '2026-08-25T00:00:00.000Z' }, signer)
+  let actorSeq = 0
+  const committer = {
+    async commitLocalMutation(input: any) {
+      for (const object of input.objects) shared.objects.set(object.objectId, object)
+      shared.events.push(...input.events)
+      return 'committed' as const
+    },
+  }
+  const reader = new DidCommCredentialReader({
+    identityId,
+    objects: { async readObject(_id: string, objectId: string) { return shared.objects.get(objectId) } },
+    events: { async readCredentialEvents() { return shared.events.map(event => ({ ...event })) } },
+    segmentKeys: { async resolveSegmentKey() { return shared.segmentKey.slice() } },
+    verifier: signer,
+  })
+  const sink = new DidCommCredentialVaultSink({
+    identityId, actorDeviceId: deviceId,
+    async nextActorSeq() { return ++actorSeq },
+    async initialParents() { return shared.events.length ? [shared.events.at(-1)!.id] : [] },
+    async activeSegment() { return { segmentId: 'segment-1', segmentKey: shared.segmentKey, keyWraps: [wrap] } },
+    async currentSnapshot() { return { state: 'state-1', mailboxes: [], emails: [] } },
+    signer, committer,
+  })
+  return { reader, sink }
+}
+
+// Same signing bytes regardless of deviceId, so two "devices" sharing one
+// vault can each verify the other's events -- only `deviceId` differs.
+function didCommTestSigner(deviceId: string): VaultEventSigner {
+  return {
+    deviceId,
+    async sign(bytes) { return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)) },
+    async verify(_deviceId, bytes, signature) {
+      const expected = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
+      return expected.length === signature.length && expected.every((b, i) => b === signature[i])
+    },
+  }
+}
+
+describe('enableDidComm', () => {
+  test('a second device adopts the first device\'s already-synced shared credential instead of minting a competing one', async () => {
+    const { anchor, ds, roster, coreHandle } = setupCore()
+
+    const realFetch = globalThis.fetch
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    try {
+      const deviceARecordStore = memoryIdentityRecordStore()
+      const created = await createNewIdentity(deviceARecordStore, memorySelfGroupStore(), memoryKeyPackageStore(), {
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+      })
+      const mnemonic = seedToMnemonic(created.masterSeed)
+
+      const deviceBRecordStore = memoryIdentityRecordStore()
+      const restored = await restoreIdentity(deviceBRecordStore, memorySelfGroupStore(), memoryKeyPackageStore(), {
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+      })
+
+      // 2026-08-27 redesign: the DIDComm keyAgreement key is identity-shared
+      // (vault/didcomm-credential.ts, same shape as the OpenPGP mail
+      // credential) -- device A mints it once; device B, sharing the SAME
+      // underlying vault (simulating a real vault-delivery sync that has
+      // already caught up), must ADOPT that exact key rather than mint a
+      // competing one, and routing.json keeps exactly one keyAgreement entry
+      // (replaced wholesale on each publish, never merged with a "prior
+      // device's" entry -- there is no such thing anymore).
+      const shared = sharedDidCommVault()
+      const { reader: readerA, sink: sinkA } = await didCommHarness(created.record.did, 'device-a', shared, didCommTestSigner('device-a'))
+      const { reader: readerB, sink: sinkB } = await didCommHarness(created.record.did, 'device-b', shared, didCommTestSigner('device-b'))
+
+      const updatedA = await enableDidComm(deviceARecordStore, created.record, readerA, sinkA, { coreBaseUrl: CORE_ORIGIN })
+      expect(updatedA.didCommKid).toBeDefined()
+      const updatedB = await enableDidComm(deviceBRecordStore, restored.record, readerB, sinkB, { coreBaseUrl: CORE_ORIGIN })
+      expect(updatedB.didCommKid).toBe(updatedA.didCommKid)
+      expect(updatedB.didCommX25519PrivateKey).toBe(updatedA.didCommX25519PrivateKey)
+
+      const routing = await fetchRouting(created.record.did, globalThis.fetch)
+      const kids = (routing?.keyAgreementVerificationMethod ?? []).map(vm => vm.id)
+      expect(kids).toEqual([updatedA.didCommKid])
+
+      ds.close()
+      roster.close()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  test('is idempotent: a record that already has a didCommKid does not regenerate one', async () => {
+    const { anchor, ds, roster, coreHandle } = setupCore()
+
+    const realFetch = globalThis.fetch
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    try {
+      const recordStore = memoryIdentityRecordStore()
+      const created = await createNewIdentity(recordStore, memorySelfGroupStore(), memoryKeyPackageStore(), {
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+      })
+      const { reader, sink } = await didCommHarness(created.record.did, 'device-a', sharedDidCommVault(), didCommTestSigner('device-a'))
+      const first = await enableDidComm(recordStore, created.record, reader, sink, { coreBaseUrl: CORE_ORIGIN })
+      const second = await enableDidComm(recordStore, first, reader, sink, { coreBaseUrl: CORE_ORIGIN })
+      expect(second.didCommKid).toBe(first.didCommKid)
+      expect(second.didCommX25519PrivateKey).toBe(first.didCommX25519PrivateKey)
 
       ds.close()
       roster.close()

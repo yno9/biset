@@ -40,6 +40,7 @@ export {
   joinGroupWithExtensions,
   decodeGroupState,
   encodeGroupState,
+  getOwnLeafNode,
   type GroupState,
   type ClientState,
 } from "./clientState.js"
@@ -182,6 +183,8 @@ export {
   type LeafNodeInfoUpdateOmitted,
   type LeafNodeUpdate,
   type LeafNodeCommit,
+  type LeafNodeTBSUpdate,
+  signLeafNodeUpdate,
 } from "./leafNode.js"
 export { type SecretTree } from "./secretTree.js"
 export { type SecretTreeNode } from "./secretTree.js"

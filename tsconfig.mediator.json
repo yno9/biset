@@ -1,0 +1,21 @@
+{
+  // The standalone mediator (src/mediator/) is its own Bun server deploy
+  // unit, same reasoning as tsconfig.core.json: no DOM lib, so it physically
+  // cannot reach for `localStorage`/`indexedDB`, and `include` is the entry
+  // tree only -- whatever it imports from `didcomm/` gets checked under
+  // these same (DOM-less) rules, which is what proves it stays free of
+  // biset-core/roster/vault coupling (server.ts's own header comment).
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ESNext"],
+    "types": ["bun"]
+  },
+  "include": ["src/mediator/**/*"],
+  "typeRoots": ["node_modules/@types"]
+}

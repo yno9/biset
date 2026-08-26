@@ -1,5 +1,6 @@
 import { addHistoricalReceiverData, makePskIndex, throwIfDefined, validateRatchetTree } from "./clientState.js"
 import { AuthenticatedContentCommit } from "./authenticatedContent.js"
+import { Credential } from "./credential.js"
 import {
   ClientState,
   applyProposals,
@@ -78,6 +79,11 @@ export interface CreateCommitOptions {
   ratchetTreeExtension?: boolean
   groupInfoExtensions?: Extension[]
   authenticatedData?: Uint8Array
+  /** biset: see updatePath.ts's own note on createUpdatePath's matching
+   * parameter -- replaces the COMMITTER's own credential as part of their
+   * own UpdatePath, with no proposal involved. Every other option here is
+   * upstream; this one is biset's. */
+  ownCredentialUpdate?: Credential
 }
 
 /** @public */
@@ -89,6 +95,7 @@ export async function createCommit(context: MLSContext, options?: CreateCommitOp
     ratchetTreeExtension = false,
     authenticatedData = new Uint8Array(),
     groupInfoExtensions = [],
+    ownCredentialUpdate,
   } = options ?? {}
 
   checkCanSendHandshakeMessages(state)
@@ -117,6 +124,7 @@ export async function createCommit(context: MLSContext, options?: CreateCommitOp
         state.groupContext,
         state.signaturePrivateKey,
         cipherSuite,
+        ownCredentialUpdate,
       )
     : [res.tree, undefined, [] as PathSecret[], undefined]
 

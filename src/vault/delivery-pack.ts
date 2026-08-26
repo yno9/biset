@@ -102,7 +102,7 @@ function strings(value: unknown): string[] { if (!Array.isArray(value) || value.
 function nonempty(value: unknown): value is string { return typeof value === 'string' && value.length > 0 }
 function isoDate(value: unknown): value is string { return nonempty(value) && !Number.isNaN(Date.parse(value)) }
 function eventKind(value: unknown): value is VaultEventV1['kind'] {
-  return value === 'message.add' || value === 'message.edit' || value === 'message.tombstone' || value === 'mailbox.set' || value === 'keyword.set' || value === 'thread.set' || value === 'reaction.set' || value === 'read.set' || value === 'settings.set' || value === 'transport.result' || value === 'contact-key.set' || value === 'credential.openpgp.set' || value === 'didcomm.control'
+  return value === 'message.add' || value === 'message.edit' || value === 'message.tombstone' || value === 'mailbox.set' || value === 'keyword.set' || value === 'thread.set' || value === 'reaction.set' || value === 'read.set' || value === 'settings.set' || value === 'transport.result' || value === 'contact-key.set' || value === 'credential.openpgp.set' || value === 'didcomm.control' || value === 'didcomm.device-key.set'
 }
 
 function assertPack(pack: VaultDeliveryPackV1): void {

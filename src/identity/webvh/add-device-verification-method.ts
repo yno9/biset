@@ -5,11 +5,11 @@
 // stance: this IS the MLS leaf key, not a separate device credential).
 //
 // No routing.json write (Vault Core's identity generation doesn't publish
-// that resource — create-genesis.ts's own header), and no removal path:
-// revoking a device's verification method is a real operation (it also has
-// to interact with MLS Remove — see PLAN.md §4.4's "Remove must be followed
-// by a rekey" invariant) that deserves its own reviewed change rather than
-// riding in with the add-only case this bootstraps.
+// that resource — create-genesis.ts's own header). The removal counterpart
+// (revoking a device) is remove-device-verification-method.ts, alongside
+// mls/self-group.ts's removeDeviceFromSelfGroup for the MLS-membership half
+// of the same operation -- built 2026-08-26, deliberately a separate file
+// rather than an add-or-remove branch in this one.
 import { encodeMultikey } from './multikey.ts'
 import { parseWebvhDid } from './identifier.ts'
 import { fetchCurrentLog, nowVersionTime, putLog } from './log-io.ts'

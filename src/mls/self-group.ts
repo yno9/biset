@@ -32,6 +32,7 @@
 // (mls/webvh-authentication-service.ts's "no new key type" stance,
 // PLANMLSDIDCRED.md §2.3).
 import { sha256 } from '@noble/hashes/sha2.js'
+import { parseWebvhDid } from '../identity/webvh/identifier.ts'
 import {
   confirmCommit,
   createMlsGroup,
@@ -40,8 +41,11 @@ import {
   groupInfoForExternalJoin,
   isActiveMember,
   joinGroupExternally,
+  memberKids,
   processIncoming,
   rekey,
+  removeMembers,
+  updateOwnCredential,
   type OwnKeyPackage,
 } from './group.ts'
 import type { ClientState } from './vendor/index.ts'
@@ -67,14 +71,38 @@ const SELF_GROUP_LABEL = 'biset-self-group/1'
  * value (not a Promise) is allowed since callers `await` it regardless. */
 export type SelfGroupSigner = (bytes: Uint8Array) => Uint8Array | Promise<Uint8Array>
 
-/** The self group's id, derived from the identity's own id.
+/** The stable part of an identity id to key the self group off of. A
+ * did:webvh string embeds its domain (`did:webvh:{scid}:{domain}`), which a
+ * domain move (identity/webvh/migrate.ts) changes on purpose while
+ * preserving the SCID — did:webvh v1.0's own portability guarantee. Keying
+ * the self group off the FULL did (as this used to) would silently orphan
+ * every already-synced device and all vault content the moment a domain
+ * moved, since the group id -- and therefore the MLS exporter-derived vault
+ * epoch key chain -- would become a different, unrelated value. Keying off
+ * the SCID instead makes a domain move free of any MLS/vault impact at all,
+ * matching this project's own stated goal (domain portability should be
+ * cheap and unconstrained, not a rare, heavy operation).
+ *
+ * Falls back to the raw identityId when it isn't a did:webvh string (a
+ * generic MLS test fixture like `did:web:alice.example`) -- this file's own
+ * self-group concept doesn't actually require did:webvh, only Vault Core's
+ * real bootstrap path does. */
+function selfGroupIdentityKey(identityId: string): string {
+  try {
+    return parseWebvhDid(identityId).scid
+  } catch {
+    return identityId
+  }
+}
+
+/** The self group's id, derived from the identity's own (SCID-stable) key.
  *
  * Deterministic on purpose: a freshly restored device knows nothing but its
  * seed and must be able to name the group it belongs to before it can ask
  * anyone anything. Random ids would need a lookup service to map identity to
  * group, which is one more thing to keep authoritative. */
 export function selfGroupIdHex(identityId: string): string {
-  const bytes = sha256(new TextEncoder().encode(`${SELF_GROUP_LABEL} ${identityId}`))
+  const bytes = sha256(new TextEncoder().encode(`${SELF_GROUP_LABEL} ${selfGroupIdentityKey(identityId)}`))
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
 }
 
@@ -87,7 +115,7 @@ export async function createSelfGroup(
   sign: SelfGroupSigner,
   now: () => Date = () => new Date(),
 ): Promise<ClientState> {
-  const state = await createMlsGroup(sha256(new TextEncoder().encode(`${SELF_GROUP_LABEL} ${identityId}`)), kp)
+  const state = await createMlsGroup(sha256(new TextEncoder().encode(`${SELF_GROUP_LABEL} ${selfGroupIdentityKey(identityId)}`)), kp)
   const creation: Omit<MlsGroupCreationV1, 'signature'> = {
     version: 1, groupId: selfGroupIdHex(identityId), identityId, creatorKid: deviceKid, roster: [], createdAt: now().toISOString(),
   }
@@ -122,6 +150,138 @@ async function publishGroupInfo(
   const outcome = await transport.submitCommit({ ...submission, signature: await sign(mlsCommitSubmissionSigningBytes(submission)) })
   if (!outcome.ok) throw new Error(`publishGroupInfo: commit rejected (${outcome.reason})`)
   confirmCommit(result)
+  return result.state
+}
+
+/**
+ * Revokes a DIFFERENT device of this same identity from the self group --
+ * "I lost my phone, cut it off." Not self-removal: RFC 9420 forbids a
+ * commit that removes its own committer (group.ts's own note on why
+ * self-removal is a propose-only path); revoking another device has no such
+ * restriction, and is the only case this UI action ever performs (there is
+ * no "remove myself" affordance -- that's what logout already is).
+ *
+ * The removed device cannot read anything committed afterwards -- that's
+ * the entire point, and it's automatic here: group.ts's removeMembers
+ * always produces a commit with a real UpdatePath (its own doc comment),
+ * so every remaining member's exporter secret changes with this commit.
+ * There is no separate "rekey" step to remember; PLAN.md §4.4's "Remove
+ * must be followed by a rekey" is satisfied by construction, not by a
+ * second call.
+ *
+ * Deliberately does NOT touch the DID document or routing.json --
+ * identity/webvh/remove-device-verification-method.ts and
+ * didcomm/webvh-routing.ts's own routing update are separate, independent
+ * cleanup steps a caller runs alongside this one (account-page.ts's own
+ * revoke handler does all three); this function's only job is the MLS
+ * membership change itself.
+ */
+export async function removeDeviceFromSelfGroup(
+  store: MlsSelfGroupStateStore,
+  transport: CoreMlsDeliveryTransport,
+  identityId: string,
+  deviceKid: string,
+  targetKid: string,
+  sign: SelfGroupSigner,
+  now: () => Date = () => new Date(),
+): Promise<ClientState> {
+  const stored = await store.load(identityId)
+  if (!stored) throw new Error('removeDeviceFromSelfGroup: no self-group state for this identity')
+  if (targetKid === deviceKid) throw new Error('removeDeviceFromSelfGroup: cannot remove the committing device itself -- log out on that device instead')
+
+  const result = await removeMembers(stored.state, [targetKid])
+  const submission: Omit<MlsCommitSubmissionV1, 'signature'> = {
+    version: 1,
+    groupId: selfGroupIdHex(identityId),
+    identityId,
+    senderKid: deviceKid,
+    epoch: mlsEpoch(epochOf(stored.state)),
+    commit: result.commit,
+    roster: memberKids(result.state, identityId),
+    groupInfo: await groupInfoForExternalJoin(result.state),
+    submittedAt: now().toISOString(),
+  }
+  const outcome = await transport.submitCommit({ ...submission, signature: await sign(mlsCommitSubmissionSigningBytes(submission)) })
+  if (!outcome.ok) throw new Error(`removeDeviceFromSelfGroup: commit rejected (${outcome.reason})`)
+  confirmCommit(result)
+  await store.save(identityId, selfGroupIdHex(identityId), result.state)
+  return result.state
+}
+
+/**
+ * Migrates this device's own self-group leaf to a NEW credential after a
+ * did:webvh domain move (identity/webvh/move.ts). Same physical device,
+ * same signature key — only the kid changes (`${did}#device-hex}` embeds
+ * the did, which the move rewrote) — but
+ * mls/webvh-authentication-service.ts's validateCredential resolves a
+ * leaf's own credential against the CURRENT document, so the OLD credential
+ * becomes permanently unverifiable the moment the move's own document
+ * substitution lands: without this step, this device would be locked out
+ * of every future DS operation on its own group (found live, 2026-08-26,
+ * before a move ever shipped).
+ *
+ * group.ts's own `updateOwnCredential` does this as a plain Update
+ * proposal, committed by this same device — no tree-shape change, no
+ * external join. An earlier version of this function used RFC 9420 §11's
+ * resync mechanism (remove the old leaf, add a new one via external
+ * commit) instead; abandoned after it turned out to hit an unrelated bug
+ * in the vendored MLS tree code for a single-member group (see
+ * updateOwnCredential's own header) — Update is also the more precise
+ * primitive for "same member, new credential" regardless.
+ *
+ * MUST run in the window identity/webvh/move.ts's own
+ * afterNewLocationWritten hook provides: after the NEW location's
+ * did.jsonl already resolves (so `newDeviceKid` — the credential this
+ * commit installs — validates), but BEFORE the OLD location is told about
+ * the move (so `oldDeviceKid` — this device's CURRENT roster membership,
+ * which `submitCommit`'s own authorization is gated on — still resolves
+ * too). Outside that window there is no ordering that works: run it after
+ * the full move and `oldDeviceKid` is already dead; run it before the new
+ * location exists and `newDeviceKid` isn't resolvable yet either.
+ *
+ * `selfGroupIdHex` itself (SCID-keyed) is unaffected by any of this — only
+ * the ClientState's own leaf content changes, and where the LOCAL row for
+ * it is stored: saved fresh under `newIdentityId` here; the caller is
+ * responsible for dropping the now-stale row under `oldIdentityId`
+ * (`IndexedDbMlsSelfGroupStore.delete`) once this returns.
+ */
+export async function migrateSelfGroupCredential(
+  store: MlsSelfGroupStateStore,
+  transport: CoreMlsDeliveryTransport,
+  oldIdentityId: string,
+  newIdentityId: string,
+  oldDeviceKid: string,
+  newDeviceKid: string,
+  sign: SelfGroupSigner,
+  now: () => Date = () => new Date(),
+): Promise<ClientState> {
+  const stored = await store.load(oldIdentityId)
+  if (!stored) throw new Error('migrateSelfGroupCredential: no self-group state for this identity')
+  const groupId = selfGroupIdHex(oldIdentityId)
+
+  const result = await updateOwnCredential(stored.state, newDeviceKid)
+  const submission: Omit<MlsCommitSubmissionV1, 'signature'> = {
+    version: 1,
+    groupId,
+    identityId: newIdentityId,
+    // The CURRENT roster still only trusts oldDeviceKid -- submitCommit's
+    // own authorization is `group.roster.has(sender)`, so submitting as
+    // the not-yet-installed newDeviceKid would be rejected as
+    // not-a-member even though the commit content itself is what installs
+    // it. oldDeviceKid is still resolvable here (see this function's own
+    // ordering note), so signing/verifying under it is exactly correct
+    // for "the current member submitting a change to itself".
+    senderKid: oldDeviceKid,
+    epoch: mlsEpoch(epochOf(stored.state)),
+    commit: result.commit,
+    roster: memberKids(result.state, newIdentityId),
+    groupInfo: await groupInfoForExternalJoin(result.state),
+    submittedAt: now().toISOString(),
+  }
+  const outcome = await transport.submitCommit({ ...submission, signature: await sign(mlsCommitSubmissionSigningBytes(submission)) })
+  if (!outcome.ok) throw new Error(`migrateSelfGroupCredential: commit rejected (${outcome.reason})`)
+  confirmCommit(result)
+  await store.save(newIdentityId, groupId, result.state)
   return result.state
 }
 

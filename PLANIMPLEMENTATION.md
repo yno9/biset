@@ -87,16 +87,22 @@ Biset の正本を JMAP/SMTP relay のメールボックスから、各ユーザ
 
 ## 2. 全体アーキテクチャ
 
+*2026-08-27 改訂: DIDComm の配送経路を biset-core から切り離し、roster / vault-delivery を一切知らない独立 blind mediator（`src/mediator/`）経由に再設計した（ARC.md「DIDComm 配送層の再設計」）。Mail / ActivityPub、および biset-core 自身の identity hosting（did:webvh / routing.json）・MLS self-group・vault delivery は無改造である。以下の 2.1/2.2 は、この二経路が構造として別物になったことを明示するために diagram を分割した。*
+
+### 2.1 Mail / ActivityPub / DIDComm（legacy fallback）— biset-core 経由
+
 ```text
 外部送信者 / 外部ネットワーク
 
-┌──────────────────────────┐┌──────────────────────────┐┌──────────────────────────┐
-│SMTP adapter              ││DIDComm adapter           ││ActivityPub adapter       │
-│(jmapsmtp)                ││                          ││                          │
-│                          ││                          ││                          │
-│port 25/587 独立プロセス  ││HTTPS (reverse proxy裏)   ││HTTPS (reverse proxy裏)   │
-│RCPT TO解決・DKIM/ARC検証 ││DID解決・JWE/authcrypt検証││HTTP Signature検証        │
-└──────────────┬───────────┘└──────────────┬───────────┘└──────────────┬───────────┘
+┌──────────────────────────┐┌──────────────────────────┐┌──────────────────────────────┐
+│SMTP adapter              ││ActivityPub adapter       ││DIDComm adapter（legacy）      │
+│(jmapsmtp)                ││                          ││direct ingress                 │
+│                          ││                          ││                               │
+│port 25/587 独立プロセス  ││HTTPS (reverse proxy裏)   ││HTTPS、DID解決・authcrypt検証   │
+│RCPT TO解決・DKIM/ARC検証 ││HTTP Signature検証        ││routing.json が mediator未登録  │
+│                          ││                          ││の identity にだけ使われる      │
+│                          ││                          ││fallback（2.2 参照）           │
+└──────────────┬───────────┘└──────────────┬───────────┘└──────────────┬────────────────┘
                │                            │                            │
                └────────────────────────────┼────────────────────────────┘
                      すべてTransportAdapterHostの4メソッドで正規化
@@ -109,7 +115,7 @@ Biset の正本を JMAP/SMTP relay のメールボックスから、各ユーザ
                                             │
                                             ▼
 ┌──────────────────────────────────────────────────────┐
-│ Biset core / mediator                                 │
+│ Biset core                                            │
 │                                                        │
 │ ├─ CoreIngressAdapter                                 │
 │ │    offer受理、MLS self-group rosterから              │
@@ -117,16 +123,20 @@ Biset の正本を JMAP/SMTP relay のメールボックスから、各ユーザ
 │ │                                                      │
 │ ├─ Endpoint discovery                                 │
 │ ├─ KeyPackage / directory service                     │
-│ ├─ Ingress buffer（短命・TTL失効）                     │
-│ ├─ Vault-delivery buffer                              │
+│ ├─ Ingress buffer（短命・TTL失効。mail/AP/legacy DIDComm）│
+│ ├─ Vault-delivery buffer（identity内・端末間、全protocol共通）│
 │ ├─ ACK / cursor 管理                                   │
 │ ├─ Commit ordering（roster照合 / tie-breakのみ）        │
 │ │    DSの信頼範囲は PLANMLSARCH.md §4 で確定            │
-│ └─ Push                                               │
+│ ├─ Push                                               │
+│ └─ did:webvh identity hosting（did.jsonl / routing.json）│
+│      2.2 の独立mediatorも、identityを認証するために      │
+│      routing.jsonをここへ解決しにくる（読み取りのみ）    │
 └──────────────────────────────────────────────────────┘
                                             │
              narrow API: /v1/ingress/pull (Ed25519署名必須)
                         /v1/ingress/ack (durable commit後)
+                        /v1/vault-delivery/* (端末間同期、全protocol共通)
                                             │
                     ┌───────────────────────┴───────────────────────┐
                     ▼                                                 ▼
@@ -148,14 +158,58 @@ Biset の正本を JMAP/SMTP relay のメールボックスから、各ユーザ
 └───────────────────────────────────────────┘
 ```
 
-mediator は二種類の短期 storage を持てる。両者を「mailbox」と呼ばないことが重要である。
+### 2.2 DIDComm — 独立 blind mediator 経由（2026-08-27〜）
 
-| buffer | 入る時点 | 削除条件 | 恒久正本か |
-| --- | --- | --- | --- |
-| ingress buffer | 外部 payload がまだどの端末にも durable save されていない | 現在 trusted な端末一台の署名付き `IngressAck`、または TTL | いいえ |
-| vault delivery buffer | すでに一端末で vault object 化された | append 時の全宛先の durable ACK、または TTL | いいえ |
+```text
+送信者（biset識別子とは限らない、任意のDIDCommエージェント）
+                │
+                │ 1. 受信者のrouting.jsonを解決（biset-coreへGET、識別子の存在は見える）
+                │    routingKeys が非空 → mediator経由と判断
+                ▼
+┌──────────────────────────────────────────────────────────┐
+│authcrypt（受信者のidentity共有keyAgreement鍵、1 identity= │
+│1 kid）→ anoncrypt Forward-wrap（宛先: 登録済みmediatorの   │
+│did:peer kid）── send-message.ts                          │
+└──────────────────────────┬───────────────────────────────┘
+                            │ POST（biset-coreを一切経由しない）
+                            ▼
+┌──────────────────────────────────────────────────────────┐
+│ 独立 DIDComm mediator（src/mediator/、biset-core外の別    │
+│ プロセス・別DB。biset自身が運用してもよいし第三者でもよい。│
+│ 同一identityが複数の独立mediatorに同時登録できる）          │
+│                                                            │
+│ ├─ 自身の身元: did:peer:2（自己証明・網解決不要）           │
+│ ├─ Coordinate Mediation 2.0: mediate-request/grant、       │
+│ │    keylist-update/query                                 │
+│ ├─ Routing 2.0 Forward: 宛先kidが登録済みか検証して queue  │
+│ │    （中身は復号できない・しない）                        │
+│ ├─ Pickup 3.0: status/delivery-request/messages-received  │
+│ └─ ★ roster も vault-delivery も一切知らない（blind）      │
+└──────────────────────────┬───────────────────────────────┘
+                            │ 直接HTTP（mediator-coordinate.ts /
+                            │ mediator-pickup.ts / mediator-sync.ts）
+                            ▼
+                     Biset client（受信者のどれか1台）
+                            │
+                            │ 2. DidCommIngressProjectorで復号・vault event化
+                            │    （biset-coreの旧ingressと同じロジックを再利用）
+                            ▼
+                     Local vault に commit
+                            │
+                            │ 3. 通常のvault delivery（2.1のbiset-core経由、無改造）
+                            ▼
+                     受信者の他の全端末へ同期
+```
 
-通常の vault delivery は「暗号文本体一コピー + 宛先 device ごとの小さい ACK 状態」である。N 台に N 個の payload を複製する per-device fanout を正本配送には使わない。
+mediator が短期に保持できる payload は、biset-core 側（2.1）と独立 DIDComm mediator 側（2.2）とで別物であり、どちらも「mailbox」ではない。
+
+| buffer | どちらの mediator か | 入る時点 | 削除条件 | 恒久正本か |
+| --- | --- | --- | --- | --- |
+| ingress buffer | biset-core（mail / AP / legacy DIDComm） | 外部 payload がまだどの端末にも durable save されていない | 現在 trusted な端末一台の署名付き `IngressAck`、または TTL | いいえ |
+| vault delivery buffer | biset-core（全 protocol 共通・identity 内端末間同期） | すでに一端末で vault object 化された | append 時の全宛先の durable ACK、または TTL | いいえ |
+| Forward queue | 独立 DIDComm mediator（`src/mediator/queue.ts`） | 登録済み kid 宛の Forward が届いた（中身は不透明） | `messages-received` による非破壊 pickup 後の明示 ACK、または 30 日 TTL | いいえ |
+
+通常の vault delivery は「暗号文本体一コピー + 宛先 device ごとの小さい ACK 状態」である。N 台に N 個の payload を複製する per-device fanout を正本配送には使わない — この性質は 2.2 の独立 mediator 経路でも変わらない（DIDComm keyAgreement 鍵を端末ごとではなく identity 全体で共有する設計にしたのは、まさにこの性質を blind mediator の下でも維持するためである）。
 
 ## 3. Vault データモデル
 

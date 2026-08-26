@@ -168,6 +168,17 @@ export function groupMessages(): ThreadGroup[] {
     if (!g.subject && p.msg.subject) g.subject = p.msg.subject
     g.messages.push(p)
   }
+  // Chronological (oldest first), not insertion order -- processedMessages
+  // is appended in whatever order this device happened to load/receive each
+  // message locally, which is NOT the same across two devices in one
+  // conversation (a message this device sent lands before a reply that
+  // actually arrived earlier in wall-clock time, or vice versa). Every
+  // reader here already assumes ascending ts (thread.ts's own
+  // `latestOf` reads `messages[messages.length - 1]` as "the latest"), so
+  // this is the one place that has to actually guarantee it -- found live,
+  // 2026-08-25: two sides of the same DIDComm chat showed "a"/"aa" in
+  // opposite order.
+  for (const g of groups.values()) g.messages.sort((a, b) => a.msg.ts - b.msg.ts)
   return Array.from(groups.values())
 }
 
@@ -218,10 +229,19 @@ export interface ReplyContext {
   references: string[]
 }
 
-export function computeReplyContext(thread: ProcessedMessage[], selfAddress: string): ReplyContext {
-  const self = selfAddress.toLowerCase()
+// `selfAddress` accepts more than one identifier because this identity has
+// more than one under different transports (its mail address AND its own
+// DID, for a DIDComm thread) -- filtering against only the mail address left
+// a DIDComm thread's OWN DID unrecognized as "self", so it landed in
+// `toAddrs` alongside the real recipient. `toAddrs.length` becoming 2
+// instead of 1 then failed main.ts's own `toAddrs.length === 1 &&
+// toAddrs[0].startsWith('did:')` DIDComm check, silently falling through to
+// a mail submission addressed to a DID string (found live, 2026-08-25: the
+// core rejected it with "invalid recipient address").
+export function computeReplyContext(thread: ProcessedMessage[], selfAddress: string | string[]): ReplyContext {
+  const self = (Array.isArray(selfAddress) ? selfAddress : [selfAddress]).map(a => a.toLowerCase())
   const toAddrs: string[] = []
-  const seen = new Set<string>([self])
+  const seen = new Set<string>(self)
   for (const { msg } of thread) {
     for (const address of [msg.from, ...(msg.to_addrs ?? [])]) {
       if (!address) continue

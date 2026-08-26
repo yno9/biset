@@ -209,6 +209,19 @@ export type LeafNodeTBSCommit = LeafNodeData & LeafNodeInfoCommit
 
 export type LeafNodeTBSKeyPackage = LeafNodeData & LeafNodeInfoKeyPackage
 
+// biset: the third LeafNodeTBS variant upstream never named or exported a
+// signer for — signLeafNodeCommit/signLeafNodeKeyPackage below cover the
+// other two, but nothing in this file's own createCommit/joinGroup flows
+// ever needed to construct a self-issued Update proposal, which is exactly
+// what mls/group.ts's updateOwnCredential (a did:webvh domain move's
+// credential migration, see self-group.ts's own header) needs: replace an
+// EXISTING leaf's credential in place via a plain Update proposal, with no
+// tree-shape change at all -- unlike an external-commit resync, which
+// removes and re-adds a leaf and, for a single-member group, hits an
+// unrelated bug in ratchetTree.ts's extendRatchetTree (found live,
+// 2026-08-26, resync approach abandoned for this reason).
+export type LeafNodeTBSUpdate = LeafNodeData & LeafNodeInfoUpdate
+
 export const leafNodeTBSEncoder: BufferEncoder<LeafNodeTBS> = contramapBufferEncoders(
   [leafNodeDataEncoder, leafNodeInfoEncoder],
   (tbs) => [tbs, tbs] as const,
@@ -283,6 +296,18 @@ export async function signLeafNodeKeyPackage(
   signaturePrivateKey: Uint8Array,
   sig: Signature,
 ): Promise<LeafNodeKeyPackage> {
+  return {
+    ...tbs,
+    signature: await signWithLabel(signaturePrivateKey, "LeafNodeTBS", encode(leafNodeTBSEncoder)(tbs), sig),
+  }
+}
+
+// biset: the missing third variant -- see LeafNodeTBSUpdate's own comment above.
+export async function signLeafNodeUpdate(
+  tbs: LeafNodeTBSUpdate,
+  signaturePrivateKey: Uint8Array,
+  sig: Signature,
+): Promise<LeafNodeUpdate> {
   return {
     ...tbs,
     signature: await signWithLabel(signaturePrivateKey, "LeafNodeTBS", encode(leafNodeTBSEncoder)(tbs), sig),

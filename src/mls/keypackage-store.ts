@@ -46,6 +46,22 @@ export class IndexedDbMlsKeyPackageStore implements MlsKeyPackageStore {
     return this.databasePromise
   }
 
+  /** Releases this instance's connection -- every `new IndexedDbMlsKeyPackageStore()`
+   * opens its own, and nothing closed any of them anywhere in this codebase
+   * until now (vault/store.ts's IndexedDbVaultStore was the one exception,
+   * logout()'s own vaultStore.close()). A signup retry (account-create.ts's
+   * submit handler creates a fresh instance per attempt) or a logout/
+   * re-login cycle left the old connection open indefinitely otherwise --
+   * found live, 2026-08-26: after several logout/signup cycles in one tab,
+   * a brand-new `indexedDB.open()` call on this exact database stopped
+   * firing ANY event at all (not onsuccess, not onblocked, not onerror),
+   * hanging every later signup silently forever; a fresh Incognito window
+   * (no accumulated connections) worked fine every time, confirming this
+   * was connection accumulation, not a logic bug. */
+  close(): void {
+    this.databasePromise?.then(db => db.close()).catch(() => {})
+  }
+
   async mint(kid: string, count: number): Promise<OwnKeyPackage[]> {
     const database = await this.database()
     const minted: OwnKeyPackage[] = []
@@ -78,6 +94,22 @@ export class IndexedDbMlsKeyPackageStore implements MlsKeyPackageStore {
       return { publicPackage: decodeKeyPackage(rec.publicWire), privatePackage: rec.privatePackage }
     }
     return undefined
+  }
+
+  /** Domain move (identity/webvh/move.ts) support. Every already-minted
+   * package in the pool carries a `kid` baked into its own SIGNED credential
+   * (mls/group.ts's generateOwnKeyPackage) — unlike a plain JSON field, that
+   * can't be rewritten in place after a move: the credential would no
+   * longer match its own signature. The pool has no other identity-scoping
+   * (its keyPath is the package `ref`, not identityId — this store
+   * implicitly serves whichever one identity this device has), so the only
+   * correct move is to discard the whole pool and let ensureKeyPackagePool
+   * (identity/bootstrap.ts) refill it under the new kid on next boot. */
+  async clear(): Promise<void> {
+    const database = await this.database()
+    const transaction = database.transaction([STORE_NAME], 'readwrite')
+    transaction.objectStore(STORE_NAME).clear()
+    await transactionDone(transaction)
   }
 }
 

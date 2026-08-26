@@ -10,8 +10,14 @@
 // service entry and a device's X25519/ML-KEM-768 keyAgreement keys. Dropped
 // relative to the source: the old JMAPRelay service-list entries (this
 // rewrite's mail adapter resolves recipients from DNS/subdomain convention,
-// not a routing.json relay list — mail-recipient-resolver.ts) and
-// name/alsoKnownAs (nothing in this rewrite reads them yet).
+// not a routing.json relay list — mail-recipient-resolver.ts).
+//
+// alsoKnownAs/name were dropped too at first ("nothing in this rewrite reads
+// them yet") -- restored 2026-08-26 after user feedback: `enableDidComm`
+// (identity/bootstrap.ts) now publishes this identity's own derived mail
+// address into `alsoKnownAs` (nothing else ever asserted the DID<->mail
+// link anywhere), and account-page.ts's "Edit identity" writes a
+// self-asserted `name`.
 import { parseWebvhDid } from '../identity/webvh/identifier.ts'
 import { buildProof, type DataIntegrityProof } from '../identity/webvh/proof.ts'
 import type { WebvhService, WebvhVerificationMethod } from '../identity/webvh/document.ts'
@@ -19,12 +25,21 @@ import { encodeX25519Multikey, encodeMlkem768Multikey } from './multikey.ts'
 import { fragmentOf, mlkemKidFor } from './devicekid.ts'
 
 /** A DIDCommMessaging endpoint as DIDComm v2 defines it: `accept` and
- * `routingKeys` live INSIDE `serviceEndpoint`, not beside it. `routingKeys`
- * is deliberately never populated by buildRoutingDoc: an empty routingKeys
- * (equivalently, the field's absence) is what tells a spec-compliant
- * DIDComm sender NOT to Forward-wrap (see crypto.ts's own header) — this
- * rewrite's adapter is first-party infrastructure, not a blind mediator, so
- * there is never a routing key to name. */
+ * `routingKeys` live INSIDE `serviceEndpoint`, not beside it.
+ *
+ * Until the 2026-08-27 mediator redesign (ARC.md), `routingKeys` was
+ * deliberately never populated here: an empty routingKeys (equivalently,
+ * the field's absence) is what tells a spec-compliant DIDComm sender NOT to
+ * Forward-wrap (see crypto.ts's own header), and this adapter used to be
+ * first-party infrastructure with no routing key to name. Now that
+ * `enableDidComm` can register this identity with an independent, blind
+ * mediator (mediator-sync.ts's `registerWithMediator`), a device WITH one
+ * publishes `routingKeys: [mediatorRoutingKid]` and `uri` pointing at that
+ * mediator's own HTTP endpoint -- telling a sender to authcrypt to
+ * `keyAgreementVerificationMethod` as before, then anoncrypt-Forward-wrap
+ * to the mediator (send-message.ts). A device with no registered mediator
+ * still gets `routingKeys: []` (the legacy `didCommEndpoint` fallback,
+ * `buildRoutingDoc` below) — direct delivery, unchanged. */
 export interface DidCommServiceEndpoint extends Record<string, unknown> {
   uri: string
   accept: string[]
@@ -38,6 +53,31 @@ export interface RoutingDoc {
   // re-derive which is which — the writer already knows.
   keyAgreementVerificationMethod?: WebvhVerificationMethod[]
   mlkemVerificationMethod?: WebvhVerificationMethod[]
+  /** Other identifiers this identity is known to answer to -- currently just
+   * the derived mail address (identity/bootstrap.ts's mailFromForIdentity),
+   * published so a third party resolving the DID can verify the mail<->DID
+   * link instead of taking it on faith. */
+  alsoKnownAs?: string[]
+  /** Self-asserted display name (account-page.ts's "Edit identity") --
+   * unverified, same trust level as any profile display name anywhere. */
+  name?: string
+  /** This identity's current OpenPGP public certificate (mail/enable-openpgp.ts),
+   * published here so any other identity resolving this DID can encrypt
+   * outbound mail to it without a separate WKD/Autocrypt lookup. Unlike
+   * keyAgreementVerificationMethod (one entry per device -- DIDComm's own
+   * multi-recipient JWE support makes that the right shape there), PGP has
+   * no native multi-device story: this is the SAME private key synced
+   * identity-wide across every trusted device via
+   * vault/openpgp-credential.ts, so there is exactly one current public key
+   * to publish, not one per device. */
+  openpgpPublicKey?: RoutingOpenPgpKey
+}
+
+export interface RoutingOpenPgpKey {
+  fingerprint: string
+  armoredPublicKey: string
+  createdAt: string
+  supersedesFingerprint?: string
 }
 
 /** did.jsonl and routing.json are logically beside each other, both under
@@ -56,13 +96,30 @@ export function didToRoutingUrl(did: string): string {
 export interface DidKeyAgreement { kid: string; publicKey: Uint8Array }
 export interface DidMlkemKeyAgreement { kid: string; publicKey: Uint8Array }
 
+/** One independent mediator this identity has registered a kid with
+ * (mediator-sync.ts's `registerWithMediator`). `routingKid` is the
+ * mediator's OWN did:peer keyAgreement kid (what a sender anoncrypts the
+ * Forward envelope to -- decodable straight from the kid string, no
+ * network resolve needed, since did:peer is self-certifying). */
+export interface MediatorRegistration { url: string; routingKid: string }
+
 export interface RoutingInput {
-  /** This identity's DIDComm ingress endpoint (this deployment's
-   * `POST /v1/didcomm/ingress`, e.g. `https://biset.md/v1/didcomm/ingress`)
-   * -- omitted when this identity has no DIDComm-capable device yet. */
+  /** Legacy direct-delivery endpoint (this deployment's own
+   * `POST /v1/didcomm/ingress`) -- superseded by `mediators` when both are
+   * given (buildRoutingDoc below). Kept for an identity that hasn't
+   * registered with any mediator yet; ARC.md's Phase 6 removes this once
+   * the mediator path has fully replaced it. */
   didCommEndpoint?: string
+  /** Independent, blind mediators registered for this identity's shared
+   * DIDComm kid (ARC.md's 2026-08-27 redesign) -- each becomes one
+   * DIDCommMessaging service entry whose `routingKeys` names that
+   * mediator's kid, so a spec-compliant sender Forward-wraps through it
+   * instead of delivering directly. */
+  mediators?: MediatorRegistration[]
   keyAgreementKeys?: DidKeyAgreement[]
   mlkemKeyAgreementKeys?: DidMlkemKeyAgreement[]
+  alsoKnownAs?: string[]
+  name?: string
 }
 
 // A device key's verification-method id is the DID plus its kid fragment —
@@ -81,9 +138,20 @@ function webvhMlkemKeyAgreementId(did: string, kidFragment: string): string {
 /** Builds the whole RoutingDoc. Sorted by kid for a deterministic document;
  * the order carries no meaning. */
 export function buildRoutingDoc(did: string, input: RoutingInput): RoutingDoc {
-  const service: WebvhService[] = input.didCommEndpoint
-    ? [{ id: `${did}#didcomm`, type: 'DIDCommMessaging', serviceEndpoint: { uri: input.didCommEndpoint, accept: ['didcomm/v2'], routingKeys: [] } satisfies DidCommServiceEndpoint }]
-    : []
+  // `mediators` supersedes the legacy direct endpoint when both are given —
+  // a device that has registered with a mediator should stop advertising
+  // the old first-party path, not offer both (a sender would have no way to
+  // choose between two equally-valid-looking entries with different privacy
+  // properties).
+  const service: WebvhService[] = input.mediators?.length
+    ? input.mediators.map((m, i): WebvhService => ({
+        id: `${did}#didcomm${input.mediators!.length > 1 ? `-${i + 1}` : ''}`,
+        type: 'DIDCommMessaging',
+        serviceEndpoint: { uri: m.url, accept: ['didcomm/v2'], routingKeys: [m.routingKid] } satisfies DidCommServiceEndpoint,
+      }))
+    : input.didCommEndpoint
+      ? [{ id: `${did}#didcomm`, type: 'DIDCommMessaging', serviceEndpoint: { uri: input.didCommEndpoint, accept: ['didcomm/v2'], routingKeys: [] } satisfies DidCommServiceEndpoint }]
+      : []
 
   const byKid = (a: { kid: string }, b: { kid: string }) => (a.kid < b.kid ? -1 : a.kid > b.kid ? 1 : 0)
   const kaKeys = [...(input.keyAgreementKeys ?? [])].sort(byKid)
@@ -101,6 +169,8 @@ export function buildRoutingDoc(did: string, input: RoutingInput): RoutingDoc {
     service,
     ...(keyAgreementVerificationMethod.length ? { keyAgreementVerificationMethod } : {}),
     ...(mlkemVerificationMethod.length ? { mlkemVerificationMethod } : {}),
+    ...(input.alsoKnownAs?.length ? { alsoKnownAs: input.alsoKnownAs } : {}),
+    ...(input.name ? { name: input.name } : {}),
   }
 }
 
@@ -135,4 +205,22 @@ export async function putRouting(
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...doc, proof }),
   })
   if (!resp.ok) throw new Error(`putRouting: PUT failed with HTTP ${resp.status} ${await resp.text().catch(() => '')}`)
+}
+
+/** Sets the self-asserted display name, preserving everything else already
+ * in routing.json (service/keyAgreement/mlkem/alsoKnownAs) -- a fetch-modify-
+ * put on the JSON directly rather than going through buildRoutingDoc, which
+ * would need the raw key material re-derived from what's already-published
+ * multibase-encoded verification methods to rebuild them from scratch, for
+ * no benefit here. Throws (rather than silently creating a bare routing.json
+ * with just a name) when this identity hasn't published one yet -- that only
+ * happens via enableDidComm, which main.ts runs automatically at boot
+ * whenever a core is configured, so this should be reachable in practice
+ * only after that has already run at least once. */
+export async function setRoutingName(
+  did: string, name: string, signing: { updateKey: string; privateKey: Uint8Array }, fetchImpl: typeof fetch,
+): Promise<void> {
+  const current = await fetchRouting(did, fetchImpl)
+  if (!current) throw new Error('setRoutingName: this identity has no routing.json to update yet')
+  await putRouting(did, { ...current, name }, signing, fetchImpl)
 }

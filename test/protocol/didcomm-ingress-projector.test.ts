@@ -8,6 +8,8 @@ import { PING, PING_RESPONSE } from '../../src/didcomm/trust-ping.ts'
 import { BASIC_MESSAGE, didCommThreadId } from '../../src/didcomm/basicmessage.ts'
 import { didOfKid } from '../../src/protocol/ids.ts'
 import { DidCommIngressProjector, DidCommReplayError } from '../../src/didcomm/ingress-projector.ts'
+import { generatePeerIdentity } from '../../src/didcomm/peer.ts'
+import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT, relationshipBodyToWire, relationshipMediatorService } from '../../src/didcomm/relationship.ts'
 import { decodeVaultDeliveryPack } from '../../src/vault/delivery-pack.ts'
 import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
 import { decryptVaultObject } from '../../src/vault/objects.ts'
@@ -62,7 +64,7 @@ function autoMarkingAlreadyProcessed(): (id: string) => Promise<boolean> {
 function buildProjector(alreadyProcessed = autoMarkingAlreadyProcessed()) {
   return new DidCommIngressProjector({
     identityId, actorDeviceId: recipientKid,
-    selfKeys: { kid: recipientKid, x25519PrivateKey: recipientX },
+    resolveOwnKey(kid) { return kid === recipientKid ? { kid: recipientKid, x25519PrivateKey: recipientX } : null },
     async resolveSenderKey(kid) { if (kid !== senderKid) throw new Error('unexpected sender kid ' + kid); return senderXPub },
     alreadyProcessed,
     async nextActorSeq() { return 1 },
@@ -176,7 +178,7 @@ describe('DIDComm ingress projector', () => {
     const wrongDeviceX = x25519.utils.randomSecretKey()
     const projector = new DidCommIngressProjector({
       identityId, actorDeviceId: wrongDeviceKid,
-      selfKeys: { kid: wrongDeviceKid, x25519PrivateKey: wrongDeviceX },
+      resolveOwnKey(kid) { return kid === wrongDeviceKid ? { kid: wrongDeviceKid, x25519PrivateKey: wrongDeviceX } : null },
       async resolveSenderKey() { return senderXPub },
       async alreadyProcessed() { return false },
       async nextActorSeq() { return 1 },
@@ -185,7 +187,7 @@ describe('DIDComm ingress projector', () => {
       async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [] } },
       signer: { ...signer, deviceId: wrongDeviceKid },
     })
-    await expect(projector.verifyAndProject(envelope)).rejects.toThrow(/recipient kid not present/)
+    await expect(projector.verifyAndProject(envelope)).rejects.toThrow(/recipient kid .* is not available/)
   })
 
   test('the SAME envelope succeeds for the actually-addressed device after a wrong device declined it (multidevice ingress)', async () => {
@@ -194,7 +196,7 @@ describe('DIDComm ingress projector', () => {
     const wrongDeviceKid = `${identityId}#k_someotherdevice`
     const wrongProjector = new DidCommIngressProjector({
       identityId, actorDeviceId: wrongDeviceKid,
-      selfKeys: { kid: wrongDeviceKid, x25519PrivateKey: x25519.utils.randomSecretKey() },
+      resolveOwnKey(kid) { return kid === wrongDeviceKid ? { kid: wrongDeviceKid, x25519PrivateKey: x25519.utils.randomSecretKey() } : null },
       async resolveSenderKey() { return senderXPub },
       async alreadyProcessed() { return false },
       async nextActorSeq() { return 1 },
@@ -216,6 +218,56 @@ describe('DIDComm ingress projector', () => {
     const envelope = envelopeFor(new TextEncoder().encode(JSON.stringify(jwe)))
     const projector = buildProjector()
     await expect(projector.verifyAndProject(envelope)).rejects.toThrow(/unsupported DIDComm message type/)
+  })
+
+  test('relationship init is recognized as an audit-only control event on the front-door key', async () => {
+    const mediator = generatePeerIdentity()
+    const relationship = generatePeerIdentity({ uri: 'https://mediator-init.test.example', routingKeys: [mediator.xKid] })
+    const plaintext = buildPlaintext(RELATIONSHIP_INIT, relationshipBodyToWire({ relationshipKid: relationship.xKid, publicKey: relationship.xPub }))
+    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, { kid: recipientKid, publicKey: recipientXPub })
+    const result = await buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
+
+    expect(result.events[0]?.kind).toBe('didcomm.control')
+    expect(result.projection.emails).toHaveLength(0)
+    const plaintextObject = await decryptVaultObject(segmentKey, result.objects[0]!)
+    const decoded = JSON.parse(new TextDecoder().decode(plaintextObject)) as { payload: Record<string, unknown> }
+    expect(decoded.payload).toMatchObject({ type: RELATIONSHIP_INIT, senderKid, recipientKid, relationshipKid: relationship.xKid })
+  })
+
+  test('relationship accept selects a private relationship recipient key and verifies a did:peer sender', async () => {
+    const mediator = generatePeerIdentity()
+    const service = { uri: 'https://mediator-accept.test.example', routingKeys: [mediator.xKid] }
+    const recipientRelationship = generatePeerIdentity(service)
+    const senderRelationship = generatePeerIdentity(service)
+    const plaintext = buildPlaintext(RELATIONSHIP_ACCEPT, relationshipBodyToWire({ relationshipKid: senderRelationship.xKid, publicKey: senderRelationship.xPub }))
+    const jwe = packAuthcrypt(
+      new TextEncoder().encode(JSON.stringify(plaintext)),
+      { kid: senderRelationship.xKid, privateKey: senderRelationship.xPriv },
+      { kid: recipientRelationship.xKid, publicKey: recipientRelationship.xPub },
+    )
+    const projector = new DidCommIngressProjector({
+      identityId,
+      actorDeviceId: recipientKid,
+      resolveOwnKey(kid) {
+        return kid === recipientRelationship.xKid
+          ? { kid, x25519PrivateKey: recipientRelationship.xPriv }
+          : kid === recipientKid ? { kid, x25519PrivateKey: recipientX } : null
+      },
+      async resolveSenderKey(kid) {
+        if (kid !== senderRelationship.xKid) throw new Error('unexpected relationship sender')
+        return senderRelationship.xPub
+      },
+      async alreadyProcessed() { return false },
+      async nextActorSeq() { return 1 },
+      async initialParents() { return [] },
+      activeSegment: segmentFor,
+      async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [] } },
+      signer,
+    })
+    const result = await projector.verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
+
+    expect(result.events[0]?.kind).toBe('didcomm.control')
+    expect(relationshipMediatorService(senderRelationship.xKid)).toEqual({ url: service.uri, routingKid: mediator.xKid })
   })
 
   test('a basicmessage decrypts, verifies the sender, and lands as an ordinary message.add email in the recipient\'s own inbox', async () => {

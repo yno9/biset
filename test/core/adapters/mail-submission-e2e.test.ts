@@ -27,7 +27,7 @@ import { buildMailMessageAdd } from '../../../src/vault/mail-message.ts'
 import { IndexedDbVaultStore } from '../../../src/vault/store.ts'
 import { VaultBackedLocalJmapMutationSink } from '../../../src/local-jmap/vault-mutation-sink.ts'
 import { buildLocalJmapProjectionRebuild, buildMailSubmitter, buildVaultCryptoBoundary } from '../../../src/identity/bootstrap.ts'
-import { buildGenesisLog } from '../../protocol/support/webvh-log-fixture.ts'
+import { buildGenesisLog, jcsMultihashBase58 } from '../../protocol/support/webvh-log-fixture.ts'
 import type { IdentityRecord } from '../../../src/identity/record-store.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../../src/mls/store.ts'
 
@@ -86,9 +86,12 @@ describe('outbound send: a real sender vault submits, a real inbound listener re
     // Sender: a syntactically valid did:webvh under a DIFFERENT subdomain
     // ("sender.example") -- never actually resolved over the network in
     // this flow (mailFromForIdentity is a pure local string derivation),
-    // so it only needs to parse, not to be independently publishable. Reuses
-    // the recipient log's own SCID purely for a valid base58 shape.
-    const senderScid = recipientDid.split(':')[2]!
+    // so it only needs to parse, not to be independently publishable. A
+    // DIFFERENT SCID from the recipient's, not reused -- identity/idkey.ts's
+    // stableIdKey (the roster/vault-delivery/self-group id's own SCID-based
+    // partition key, 2026-08-26) treats two DIDs sharing a SCID as the SAME
+    // identity, which sender and recipient very much are not.
+    const senderScid = jcsMultihashBase58('mail-submission-e2e sender')
     const senderDid = `did:webvh:${senderScid}:sender.${APEX_DOMAIN}`
     const sender = await makeIdentity(senderDid, `${senderDid}#device-a`)
 
