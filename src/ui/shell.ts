@@ -26,7 +26,11 @@ export function showApp(): void {
 
 export async function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
   await loadMessages(readModel)
-  render()
+  // Polling refreshes the data model, but must not navigate away from an
+  // explicit menu page. render() repaints #active-thread as a conversation;
+  // calling it while Account/Config/Compose owns that node caused a silent
+  // page switch every ten seconds.
+  if (!document.getElementById('app')?.hasAttribute('data-menu-page')) render()
   renderLeftList()
 }
 

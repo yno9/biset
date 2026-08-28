@@ -1,6 +1,7 @@
 import type { SegmentId, IdentityId, MlsEpoch } from '../protocol/ids.ts'
 import type { SegmentKeyWrapReader } from './store.ts'
 import { unwrapSegmentKey, type SegmentKeyWrapVerifier } from './crypto.ts'
+import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from './storage-root.ts'
 
 export interface CurrentVaultEpoch {
   selfGroupId: string
@@ -28,9 +29,20 @@ export class StoredSegmentKeyResolver implements SegmentKeyResolver {
     private readonly wraps: SegmentKeyWrapReader,
     private readonly epochs: VaultEpochKeyResolver,
     private readonly signer: SegmentKeyWrapVerifier,
+    private readonly storageKek?: Uint8Array,
   ) {}
 
   async resolveSegmentKey(identityId: IdentityId, segmentId: SegmentId): Promise<Uint8Array> {
+    if (this.storageKek) {
+      const stable = await this.wraps.readSegmentKeyWrap(identityId, segmentId, VAULT_STORAGE_EPOCH)
+      if (stable) {
+        if (stable.identityId !== identityId || stable.segmentId !== segmentId || stable.selfGroupId !== VAULT_STORAGE_GROUP_ID || stable.sourceEpoch !== VAULT_STORAGE_EPOCH || stable.recipientEpoch !== VAULT_STORAGE_EPOCH) throw new TypeError('stored Vault storage wrap has invalid metadata')
+        // AES-GCM under the root-derived secret authenticates this local
+        // envelope. Device membership signatures are intentionally not an
+        // at-rest key dependency.
+        return unwrapSegmentKey(this.storageKek, stable, { verify: async () => true })
+      }
+    }
     const current = await this.epochs.currentVaultEpoch(identityId)
     if (!current.selfGroupId) throw new TypeError('current vault self group is empty')
     const wrap = await this.wraps.readSegmentKeyWrap(identityId, segmentId, current.epoch)

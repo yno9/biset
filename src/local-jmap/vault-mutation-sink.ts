@@ -29,6 +29,15 @@ export interface LocalVaultMutationCommitter {
       createdAt: string
       attempts: number
     }
+    didCommOutbox?: {
+      identityId: IdentityId
+      outboundEventId: VaultEventId
+      emailId: string
+      messageId: string
+      toDid: string
+      createdAt: string
+      attempts: number
+    }
   }): Promise<'committed' | 'already-committed'>
 }
 
@@ -145,7 +154,12 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
    * message.add needs two (metadata + raw bytes).
    */
   async commitMailMessage(
-    input: { email: Omit<LocalJmapEmail, 'blobId'>; rawRfc5322: Uint8Array },
+    input: {
+      email: Omit<LocalJmapEmail, 'blobId'>
+      rawRfc5322: Uint8Array
+      /** Atomically enqueue this local message for DIDComm delivery. */
+      didComm?: { messageId: string; toDid: string }
+    },
     snapshot: LocalJmapSnapshot,
   ): Promise<Record<string, unknown>> {
     const segment = await this.options.activeSegment()
@@ -188,6 +202,17 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
         createdAt,
         attempts: 0,
       },
+      ...(input.didComm ? {
+        didCommOutbox: {
+          identityId: this.options.identityId,
+          outboundEventId: record.event.id,
+          emailId: input.email.id,
+          messageId: input.didComm.messageId,
+          toDid: input.didComm.toDid,
+          createdAt,
+          attempts: 0,
+        },
+      } : {}),
     })
     return {
       accountId: this.options.accountId,

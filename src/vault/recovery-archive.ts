@@ -1,4 +1,4 @@
-import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes } from '../protocol/canonical.ts'
+import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes, type CanonicalValue } from '../protocol/canonical.ts'
 import type { IdentityId, SegmentId } from '../protocol/ids.ts'
 import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 import { verifyVaultManifest, type VaultManifestV1 } from './manifest.ts'
@@ -138,17 +138,18 @@ export function decodeRecoveryArchiveSnapshot(bytes: Uint8Array): RecoveryArchiv
   try { input = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) } catch { throw new TypeError('recovery archive snapshot is not JSON') }
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('recovery archive snapshot must be an object')
   const value = input as Record<string, unknown>
+  if (!equalBytes(bytes, canonicalBytes(input as CanonicalValue))) throw new TypeError('recovery archive snapshot is not canonical')
+  exactKeys(value, ['version', 'identityId', 'manifest', 'events', 'objects', 'segmentKeys', 'createdAt'], 'recovery archive snapshot')
   if (value.version !== 1 || typeof value.identityId !== 'string' || typeof value.createdAt !== 'string' || !Array.isArray(value.events) || !Array.isArray(value.objects) || !Array.isArray(value.segmentKeys) || value.manifest === null || typeof value.manifest !== 'object') throw new TypeError('recovery archive snapshot shape is invalid')
   const snapshot: RecoveryArchiveSnapshotV1 = {
     version: 1,
     identityId: value.identityId,
     manifest: manifestFromWire(value.manifest as Record<string, unknown>),
     events: value.events.map(eventFromWire),
-    objects: value.objects.map(objectFromWire),
+    objects: value.objects.map(object => objectFromWire(object, value.identityId as IdentityId)),
     segmentKeys: value.segmentKeys.map(segmentKeyFromWire),
     createdAt: value.createdAt,
   }
-  if (!equalBytes(bytes, encodeRecoveryArchiveSnapshot(snapshot))) throw new TypeError('recovery archive snapshot is not canonical')
   return snapshot
 }
 
@@ -204,10 +205,11 @@ function recoveryArchiveWire(value: RecoveryArchiveV1) {
 }
 
 function manifestWire(value: VaultManifestV1) { return { version: value.version, identityId: value.identityId, eventIds: value.eventIds, objectIds: value.objectIds, root: value.root, createdAt: value.createdAt } }
-function eventWire(value: VaultEventV1) { return { ...value, signature: bytesToBase64url(value.signature) } }
-function objectWire(value: VaultObjectV1) { return { ...value, nonce: bytesToBase64url(value.nonce), ciphertext: bytesToBase64url(value.ciphertext), ciphertextHash: bytesToBase64url(value.ciphertextHash), aad: bytesToBase64url(value.aad) } }
+function eventWire(value: VaultEventV1) { return { version: value.version, id: value.id, identityId: value.identityId, actorDeviceId: value.actorDeviceId, actorSeq: value.actorSeq, kind: value.kind, targetIds: value.targetIds, objectRefs: value.objectRefs, parents: value.parents, createdAt: value.createdAt, signature: bytesToBase64url(value.signature) } }
+function objectWire(value: VaultObjectV1) { return { version: value.version, objectId: value.objectId, segmentId: value.segmentId, nonce: bytesToBase64url(value.nonce), ciphertext: bytesToBase64url(value.ciphertext), ciphertextHash: bytesToBase64url(value.ciphertextHash), plaintextLength: value.plaintextLength, aad: bytesToBase64url(value.aad) } }
 
 function manifestFromWire(value: Record<string, unknown>): VaultManifestV1 {
+  exactKeys(value, ['version', 'identityId', 'eventIds', 'objectIds', 'root', 'createdAt'], 'recovery archive manifest')
   if (value.version !== 1 || typeof value.identityId !== 'string' || !Array.isArray(value.eventIds) || !value.eventIds.every(id => typeof id === 'string') || !Array.isArray(value.objectIds) || !value.objectIds.every(id => typeof id === 'string') || typeof value.root !== 'string' || typeof value.createdAt !== 'string') throw new TypeError('recovery archive manifest shape is invalid')
   return { version: 1, identityId: value.identityId, eventIds: [...value.eventIds], objectIds: [...value.objectIds], root: value.root, createdAt: value.createdAt }
 }
@@ -215,13 +217,21 @@ function manifestFromWire(value: Record<string, unknown>): VaultManifestV1 {
 function eventFromWire(value: unknown): VaultEventV1 {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('recovery archive event shape is invalid')
   const event = value as Record<string, unknown>
+  exactKeys(event, ['version', 'id', 'identityId', 'actorDeviceId', 'actorSeq', 'kind', 'targetIds', 'objectRefs', 'parents', 'createdAt', 'signature'], 'recovery archive event')
   if (event.version !== 1 || typeof event.id !== 'string' || typeof event.identityId !== 'string' || typeof event.actorDeviceId !== 'string' || typeof event.actorSeq !== 'number' || typeof event.kind !== 'string' || !Array.isArray(event.targetIds) || !event.targetIds.every(id => typeof id === 'string') || !Array.isArray(event.objectRefs) || !event.objectRefs.every(id => typeof id === 'string') || !Array.isArray(event.parents) || !event.parents.every(id => typeof id === 'string') || typeof event.createdAt !== 'string' || typeof event.signature !== 'string') throw new TypeError('recovery archive event shape is invalid')
   return { version: 1, id: event.id, identityId: event.identityId, actorDeviceId: event.actorDeviceId, actorSeq: event.actorSeq, kind: event.kind as VaultEventV1['kind'], targetIds: [...event.targetIds], objectRefs: [...event.objectRefs], parents: [...event.parents], createdAt: event.createdAt, signature: base64urlToBytes(event.signature) }
 }
 
-function objectFromWire(value: unknown): VaultObjectV1 {
+function objectFromWire(value: unknown, snapshotIdentityId: IdentityId): VaultObjectV1 {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('recovery archive object shape is invalid')
   const object = value as Record<string, unknown>
+  // Compatibility with checkpoints written before 2026-08-29: the old
+  // encoder spread the IndexedDB VaultObjectRecord and therefore included
+  // its local partition key. It must agree with the authenticated snapshot
+  // identity, and no other extension field is accepted.
+  const legacyIdentity = Object.prototype.hasOwnProperty.call(object, 'identityId')
+  exactKeys(object, legacyIdentity ? ['version', 'identityId', 'objectId', 'segmentId', 'nonce', 'ciphertext', 'ciphertextHash', 'plaintextLength', 'aad'] : ['version', 'objectId', 'segmentId', 'nonce', 'ciphertext', 'ciphertextHash', 'plaintextLength', 'aad'], 'recovery archive object')
+  if (legacyIdentity && object.identityId !== snapshotIdentityId) throw new TypeError('recovery archive object identity does not match snapshot')
   if (object.version !== 1 || typeof object.objectId !== 'string' || typeof object.segmentId !== 'string' || typeof object.nonce !== 'string' || typeof object.ciphertext !== 'string' || typeof object.ciphertextHash !== 'string' || typeof object.plaintextLength !== 'number' || typeof object.aad !== 'string') throw new TypeError('recovery archive object shape is invalid')
   return { version: 1, objectId: object.objectId, segmentId: object.segmentId, nonce: base64urlToBytes(object.nonce), ciphertext: base64urlToBytes(object.ciphertext), ciphertextHash: base64urlToBytes(object.ciphertextHash), plaintextLength: object.plaintextLength, aad: base64urlToBytes(object.aad) }
 }
@@ -229,6 +239,7 @@ function objectFromWire(value: unknown): VaultObjectV1 {
 function segmentKeyFromWire(value: unknown): { segmentId: SegmentId; key: Uint8Array } {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('recovery archive SegmentKey shape is invalid')
   const segment = value as Record<string, unknown>
+  exactKeys(segment, ['segmentId', 'key'], 'recovery archive SegmentKey')
   if (typeof segment.segmentId !== 'string' || typeof segment.key !== 'string') throw new TypeError('recovery archive SegmentKey shape is invalid')
   return { segmentId: segment.segmentId, key: base64urlToBytes(segment.key) }
 }
@@ -251,3 +262,8 @@ async function digest(bytes: Uint8Array): Promise<Uint8Array> { return new Uint8
 async function importRecoveryKey(key: Uint8Array, usages: KeyUsage[]): Promise<CryptoKey> { return crypto.subtle.importKey('raw', arrayBuffer(key), 'AES-GCM', false, usages) }
 function assertRecoveryKey(key: Uint8Array): void { if (key.length !== RECOVERY_KEY_BYTES) throw new TypeError('recovery key must be 32 bytes') }
 function arrayBuffer(bytes: Uint8Array): ArrayBuffer { const copy = new Uint8Array(bytes.length); copy.set(bytes); return copy.buffer }
+function exactKeys(value: Record<string, unknown>, expected: string[], name: string): void {
+  const actual = Object.keys(value).sort()
+  const wanted = [...expected].sort()
+  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) throw new TypeError(`${name} has unexpected fields`)
+}

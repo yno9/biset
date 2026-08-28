@@ -4,7 +4,9 @@
     "src/main.ts",
     "src/sw.ts",
     "src/core/index.ts",
+    "src/anchor/index.ts",
     "src/mediator/index.ts",
+    "src/coordinator/index.ts",
     "test/**/*.test.ts",
     "scripts/*.mjs"
   ],

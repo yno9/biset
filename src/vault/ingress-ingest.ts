@@ -2,7 +2,7 @@ import { equalBytes, sha256Bytes } from '../protocol/canonical.ts'
 import { ingressAckSigningBytes } from '../protocol/signing.ts'
 import type { IngressAckV1, IngressEnvelopeV1 } from '../protocol/ingress.ts'
 import type { DeviceId } from '../protocol/ids.ts'
-import type { VaultDeliveryOutboxRecord, VaultEventRecord, VaultObjectRecord, IngressVaultCommit } from './store.ts'
+import type { VaultDeliveryOutboxRecord, VaultEventRecord, VaultObjectRecord, IngressVaultCommit, IngressReceiptReader } from './store.ts'
 
 export interface IngressAckSigner {
   readonly deviceId: DeviceId
@@ -28,6 +28,10 @@ export interface IngressCommitter {
 export interface IngressIngestResult {
   result: 'committed' | 'already-committed'
   ack: IngressAckV1
+}
+
+export interface TransportIngressIngestResult {
+  result: 'committed' | 'already-committed'
 }
 
 /**
@@ -72,6 +76,44 @@ export async function ingestIngress(
     ackOutbox: { identityId: envelope.recipientIdentityId, ingressId: envelope.ingressId, ack, attempts: 0, createdAt: ackedAt },
   })
   return { result, ack }
+}
+
+/**
+ * Commits ingress from a transport which owns its acknowledgement protocol
+ * (for example DIDComm Pickup `messages-received`). No core IngressAck is
+ * created. A stable transport ingressId plus the receipt lookup makes a
+ * redelivery cheap and lets the caller acknowledge a previously committed
+ * item without projecting it twice.
+ */
+export async function ingestTransportIngress(
+  envelope: IngressEnvelopeV1,
+  projector: IngressVerifierProjector,
+  committer: IngressCommitter & IngressReceiptReader,
+  now: () => Date = () => new Date(),
+): Promise<TransportIngressIngestResult> {
+  assertEnvelope(envelope)
+  const existing = await committer.readIngressReceipt(envelope.recipientIdentityId, envelope.ingressId)
+  if (existing) {
+    if (!equalBytes(existing.protectedPayloadHash, envelope.protectedPayloadHash)) {
+      throw new TypeError('transport ingress ID was reused with a different payload')
+    }
+    return { result: 'already-committed' }
+  }
+  const derived = await projector.verifyAndProject(envelope)
+  if (!derived.checkpointId) throw new TypeError('ingress checkpoint ID is required')
+  const vaultEventId = derived.events[0]?.id
+  if (!vaultEventId) throw new TypeError('ingress projection must create at least one vault event')
+  const committedAt = now().toISOString()
+  const result = await committer.commitIngress({
+    identityId: envelope.recipientIdentityId,
+    receipt: { identityId: envelope.recipientIdentityId, ingressId: envelope.ingressId, protectedPayloadHash: envelope.protectedPayloadHash.slice(), vaultEventId, checkpointId: derived.checkpointId, committedAt },
+    objects: derived.objects,
+    events: derived.events,
+    projection: derived.projection,
+    jmapState: derived.jmapState,
+    deliveryOutbox: derived.deliveryOutbox,
+  })
+  return { result }
 }
 
 function assertEnvelope(value: IngressEnvelopeV1): void {

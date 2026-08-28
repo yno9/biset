@@ -7,7 +7,7 @@
 // a fresh (sealing the old) segment exactly when the self-group epoch moves.
 import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { buildVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
+import { buildVaultCryptoBoundary, repairCurrentLocalSegmentKeyWraps } from '../../src/identity/bootstrap.ts'
 import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
 import {
   confirmCommit, createMlsGroup, epochOf, exportSecret, generateOwnKeyPackage, groupInfoForExternalJoin,
@@ -55,6 +55,12 @@ function memorySegmentStore(): ActiveVaultSegmentStore & { all(): VaultSegmentRe
     async sealAndActivateSegment(next) {
       for (const row of rows) if (row.identityId === next.identityId && !row.sealed) row.sealed = true
       rows.push({ ...next })
+    },
+    async allSegments(id) { return rows.filter(row => row.identityId === id).map(row => ({ ...row, segmentKey: row.segmentKey.slice() })) },
+    async recordSegmentRewrapped(id, segmentId, epoch) {
+      const row = rows.find(value => value.identityId === id && value.segmentId === segmentId)
+      if (!row) throw new Error('missing segment')
+      row.epoch = epoch
     },
     all() { return rows },
   }
@@ -132,6 +138,27 @@ describe('buildVaultCryptoBoundary', () => {
     // The old segment is now sealed; only the new one is current.
     expect(segments.all().find(s => s.segmentId === first.segmentId)?.sealed).toBe(true)
     expect(segments.all().find(s => s.segmentId === third.segmentId)?.sealed).toBe(false)
+  })
+
+  test('repairs a segment that skipped more than one MLS epoch from its endpoint-local key', async () => {
+    const { selfGroupStore, state } = await setupGenesisSelfGroup()
+    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const segments = memorySegmentStore()
+    const wraps = memoryWrapStore()
+    const boundary = buildVaultCryptoBoundary(wraps, segments, selfGroupStore, record)
+    const original = await boundary.activeSegment()
+
+    let current = state
+    for (let index = 0; index < 2; index += 1) {
+      const advanced = await rekey(current)
+      confirmCommit(advanced)
+      current = advanced.state
+    }
+    await selfGroupStore.save(identityId, selfGroupIdHex(identityId), current)
+
+    expect(await repairCurrentLocalSegmentKeyWraps(selfGroupStore, segments, wraps, record)).toBe(1)
+    expect(await boundary.resolver.resolveSegmentKey(identityId, original.segmentId)).toEqual(original.segmentKey)
+    expect(segments.all()[0]!.epoch).toBe(mlsEpoch(epochOf(current)))
   })
 
   test('a device removed from the self group cannot decrypt a SegmentKey minted after its removal', async () => {

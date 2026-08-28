@@ -20,7 +20,7 @@ import type { IngressAckV1 } from '../../src/protocol/ingress.ts'
 // exported, so this test's own knowledge of the schema has to stay in sync
 // by hand if that module ever renames/re-versions it.
 const DATABASE_NAME = 'biset-vault-core'
-const CURRENT_VERSION = 5
+const CURRENT_VERSION = 9
 
 const identityId = 'did:web:alice.example'
 const signer: VaultEventSigner = { deviceId: 'device-a', async sign() { return new Uint8Array([7]) }, async verify(_d, _b, sig) { return sig[0] === 7 } }
@@ -196,7 +196,7 @@ describe('IndexedDbVaultStore durability', () => {
     store.close()
   })
 
-  test('upgrading an older schema (missing the v5 restore-transfer-state store) preserves existing data and adds the new store', async () => {
+  test('upgrading an older schema (missing the v5/v6/v7/v8/v9 stores) preserves existing data and adds the new stores', async () => {
     // Simulate a device whose IndexedDB was last written by a pre-v5 build:
     // every store EXCEPT vault_restore_transfer_state, opened at version 4.
     await new Promise<void>((resolve, reject) => {
@@ -221,7 +221,8 @@ describe('IndexedDbVaultStore durability', () => {
           ['vault_restore_state', ['identityId', 'deviceId']],
           ['vault_restore_offer_outbox', ['identityId', 'requestId', 'responderDeviceId']],
           ['transport_status', ['identityId', 'outboundEventId']],
-          // vault_restore_transfer_state deliberately omitted -- the v5 addition.
+          // vault_restore_transfer_state and didcomm_transport_outbox are
+          // deliberately omitted -- the v5, v6, v7, v8, and v9 additions.
         ] as const) {
           database.createObjectStore(name, { keyPath: keyPath as string | string[] })
         }
@@ -250,6 +251,10 @@ describe('IndexedDbVaultStore durability', () => {
 
     // The v5-only store now exists and is usable.
     expect(await store.readRestoreTransferSession(identityId, 'device-a')).toBeUndefined()
+    // The v6 DIDComm transport outbox was created by the same upgrade.
+    expect(await store.readDidCommOutbox(identityId)).toEqual([])
+    // The v7 local Anchor↔Vault↔Coordinator binding store was also created.
+    expect(await store.readCoordinatorBinding(identityId)).toBeUndefined()
     store.close()
 
     // And the database really did land on the current version, not still on 4.

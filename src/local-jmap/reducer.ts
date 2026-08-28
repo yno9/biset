@@ -40,6 +40,7 @@ export function reduceLocalJmapProjection(
 ): LocalJmapSnapshot {
   const emails = new Map(base.emails.map(email => [email.id, copyEmail(email)]))
   const tombstones = new Set<string>()
+  const addedThisBatch = new Set<string>()
   for (const record of [...records].sort(compareEvents)) {
     const mutation = decodeVaultMutation(record.event, record.plaintext)
     const emailId = mutation.targetIds[0]
@@ -52,8 +53,20 @@ export function reduceLocalJmapProjection(
     if (mutation.kind === 'message.add') {
       const email = assertMessageAdd(record.event, mutation.payload, emailId)
       if (tombstones.has(emailId)) continue
-      if (emails.has(emailId)) throw new TypeError('vault message.add conflicts with an existing email')
+      const existing = emails.get(emailId)
+      if (existing) {
+        if (addedThisBatch.has(emailId)) throw new TypeError('vault message.add conflicts with an existing email')
+        // A DIDComm envelope can be ingested locally before the same signed
+        // mutation reaches this device through Coordinator. The stable
+        // sender+message-id target identifies the same logical message, while
+        // receivedAt, encrypted blob IDs, and mutable mailbox/keyword state
+        // are necessarily device-local. Preserve the first local copy only
+        // when the immutable read-model metadata agrees.
+        if (!sameMessageIdentity(existing, email)) throw new TypeError('vault message.add conflicts with an existing email')
+        continue
+      }
       emails.set(emailId, email)
+      addedThisBatch.add(emailId)
       continue
     }
     if (mutation.kind === 'transport.result') {
@@ -176,6 +189,24 @@ function canonicalAddress(value: { email?: string; name?: string }): CanonicalVa
   return {
     ...(value.email === undefined ? {} : { email: value.email }),
     ...(value.name === undefined ? {} : { name: value.name }),
+  }
+}
+
+function sameMessageIdentity(left: LocalJmapEmail, right: LocalJmapEmail): boolean {
+  return canonicalHash('biset/local-jmap/message-identity/v1', immutableMessageIdentity(left))
+    === canonicalHash('biset/local-jmap/message-identity/v1', immutableMessageIdentity(right))
+}
+
+function immutableMessageIdentity(value: LocalJmapEmail): CanonicalValue {
+  return {
+    id: value.id,
+    threadId: value.threadId,
+    ...(value.sentAt === undefined ? {} : { sentAt: value.sentAt }),
+    ...(value.from === undefined ? {} : { from: value.from.map(canonicalAddress) }),
+    ...(value.to === undefined ? {} : { to: value.to.map(canonicalAddress) }),
+    ...(value.subject === undefined ? {} : { subject: value.subject }),
+    ...(value.preview === undefined ? {} : { preview: value.preview }),
+    ...(value.size === undefined ? {} : { size: value.size }),
   }
 }
 

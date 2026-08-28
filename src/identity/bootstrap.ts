@@ -31,7 +31,7 @@ import { ensureKeyPackagePool } from '../mls/key-package-pool.ts'
 import { CoreMlsDeliveryTransport } from '../mls/core-mls-delivery-transport.ts'
 import { CoreRosterInstallTransport } from '../mls/core-roster-install-transport.ts'
 import { CoreVaultDeliveryTransport } from '../vault/core-delivery-transport.ts'
-import { StoredSegmentKeyResolver, type SegmentKeyResolver } from '../vault/segment-key-resolver.ts'
+import { StoredSegmentKeyResolver, type SegmentKeyResolver, type VaultEpochKeyResolver } from '../vault/segment-key-resolver.ts'
 import { ActiveVaultSegmentManager, type ActiveVaultSegment } from '../vault/active-segment.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter } from '../vault/store.ts'
 import { deriveVaultEpochKey, MlsVaultEpochKeyResolver } from '../mls/vault-epoch.ts'
@@ -63,6 +63,7 @@ import { CoreMailSubmissionTransport } from '../vault/mail-submission-transport.
 import type { VaultBackedLocalJmapMutationSink } from '../local-jmap/vault-mutation-sink.ts'
 import type { VaultMutationIntent } from '../local-jmap/mutations.ts'
 import type { ClientState } from '../mls/vendor/index.ts'
+import { deriveVaultStorageKek, VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../vault/storage-root.ts'
 
 /**
  * Asks core's own bounded delivery store what its CURRENT `latestSeq` is,
@@ -319,7 +320,7 @@ async function selfGrantSegmentRewraps(
 ): Promise<void> {
   const oldEpoch = mlsEpoch(epochOf(oldState))
   const newEpoch = mlsEpoch(epochOf(newState))
-  const pending = (await segments.allSegments(identityId)).filter(segment => segment.epoch === oldEpoch)
+  const pending = (await segments.allSegments(identityId)).filter(segment => segment.selfGroupId !== VAULT_STORAGE_GROUP_ID && segment.epoch === oldEpoch)
   if (pending.length === 0) return
 
   const oldVerifier = new MlsMembershipSegmentKeyWrapVerifier(async () => oldState)
@@ -355,6 +356,69 @@ async function selfGrantSegmentRewraps(
     } finally {
       oldVek.fill(0)
     }
+  }
+}
+
+/**
+ * Repairs a local Vault whose segment metadata is more than one MLS epoch
+ * behind. `selfGrantSegmentRewraps` can use the superseded exporter only at
+ * the exact transition where it is observed; after a crash or a skipped
+ * epoch that secret is intentionally gone. Local Vault segment records also
+ * hold the same random SegmentKey needed for offline reads, so the endpoint
+ * can safely mint a new current-epoch wrap without asking a server or peer.
+ *
+ * This is endpoint-local recovery only. No SegmentKey or identity metadata
+ * leaves IndexedDB, and the replacement wrap is signed by the current MLS
+ * member just like an ordinary self-grant.
+ */
+export async function repairCurrentLocalSegmentKeyWraps(
+  selfGroupStore: MlsSelfGroupStateStore,
+  segments: ActiveVaultSegmentStore,
+  wraps: SegmentKeyWrapReader & SegmentKeyWrapWriter,
+  record: IdentityRecord,
+  now: () => Date = () => new Date(),
+): Promise<number> {
+  if (!record.deviceKid) return 0
+  const stored = await selfGroupStore.load(record.did)
+  if (!stored) return 0
+  const state = stored.state
+  const currentEpoch = mlsEpoch(epochOf(state))
+  const signer = new MlsMembershipSegmentKeyWrapSigner(record.deviceKid, async () => state)
+  const verifier = new MlsMembershipSegmentKeyWrapVerifier(async () => state)
+  const localSegments = await segments.allSegments(record.did)
+  if (localSegments.length === 0) return 0
+  const vek = await deriveVaultEpochKey({ selfGroupId: stored.selfGroupId, epoch: currentEpoch, exportSecret: (label, context, length) => exportSecret(state, label, context, length) })
+  let repaired = 0
+  try {
+    for (const segment of localSegments) {
+      if (segment.selfGroupId !== stored.selfGroupId) throw new TypeError('local Vault segment belongs to another self group')
+      const current = await wraps.readSegmentKeyWrap(record.did, segment.segmentId, currentEpoch)
+      if (current) {
+        const unwrapped = await unwrapSegmentKey(vek, current, verifier)
+        try {
+          if (!equalBytes(unwrapped, segment.segmentKey)) throw new TypeError('local Vault segment key does not match its current wrap')
+        } finally {
+          unwrapped.fill(0)
+        }
+      } else {
+        const replacement = await createSegmentKeyWrap(vek, segment.segmentKey, {
+          identityId: record.did,
+          selfGroupId: stored.selfGroupId,
+          segmentId: segment.segmentId,
+          sourceEpoch: segment.epoch,
+          recipientEpoch: currentEpoch,
+          grantorDeviceId: record.deviceKid,
+          grantedAt: now().toISOString(),
+        }, signer)
+        await wraps.writeSegmentKeyWrap(replacement)
+        repaired += 1
+      }
+      if (segment.epoch !== currentEpoch) await segments.recordSegmentRewrapped(record.did, segment.segmentId, currentEpoch)
+    }
+    return repaired
+  } finally {
+    vek.fill(0)
+    for (const segment of localSegments) segment.segmentKey.fill(0)
   }
 }
 
@@ -428,6 +492,9 @@ export async function restoreIdentity(
 }
 
 export interface VaultCryptoBoundary {
+  /** Current self-group epoch boundary, also used to rewrap a recovered
+   * remote checkpoint before committing it locally. */
+  epochs: VaultEpochKeyResolver
   /** Resolves a SegmentKey for reading an already-encrypted vault object. */
   resolver: SegmentKeyResolver
   /** Signs (and, via the same underlying membership check, verifies) new
@@ -472,10 +539,34 @@ export function buildVaultCryptoBoundary(
 
   const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
   const signer = new MlsMembershipSegmentKeyWrapSigner(deviceKid, loadState)
-  const resolver = new StoredSegmentKeyResolver(wraps, epochs, signer)
-  const segmentManager = new ActiveVaultSegmentManager({ identityId: record.did, segments, wraps, epochs, signer })
+  const storageKek = record.masterSeed ? deriveVaultStorageKek(fromHex(record.masterSeed)) : undefined
+  const resolver = new StoredSegmentKeyResolver(wraps, epochs, signer, storageKek)
+  const segmentManager = new ActiveVaultSegmentManager({ identityId: record.did, segments, wraps, epochs, signer, storageKek })
 
-  return { resolver, signer, activeSegment: () => segmentManager.activeSegment() }
+  return { epochs, resolver, signer, activeSegment: () => segmentManager.activeSegment() }
+}
+
+/** One-time, additive migration: wraps every locally known random SegmentKey
+ * under the stable root-derived storage KEK. Ciphertexts are untouched. */
+export async function migrateLocalSegmentKeysToStorageRoot(
+  segments: ActiveVaultSegmentStore,
+  wraps: SegmentKeyWrapReader & SegmentKeyWrapWriter,
+  record: IdentityRecord,
+  selfGroupStore: MlsSelfGroupStateStore,
+): Promise<void> {
+  if (!record.masterSeed || !record.deviceKid) return
+  const stored = await selfGroupStore.load(record.did)
+  if (!stored) throw new Error('Vault storage migration requires Self Group state')
+  const signer = new MlsMembershipSegmentKeyWrapSigner(record.deviceKid, async () => stored.state)
+  const kek = deriveVaultStorageKek(fromHex(record.masterSeed))
+  try {
+    for (const segment of await segments.allSegments(record.did)) {
+      if (await wraps.readSegmentKeyWrap(record.did, segment.segmentId, VAULT_STORAGE_EPOCH)) continue
+      const wrap = await createSegmentKeyWrap(kek, segment.segmentKey, { identityId: record.did, selfGroupId: VAULT_STORAGE_GROUP_ID, segmentId: segment.segmentId, sourceEpoch: VAULT_STORAGE_EPOCH, recipientEpoch: VAULT_STORAGE_EPOCH, grantorDeviceId: record.deviceKid, grantedAt: new Date().toISOString() }, signer)
+      await wraps.writeSegmentKeyWrap(wrap)
+      await segments.recordSegmentRewrapped(record.did, segment.segmentId, VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID)
+    }
+  } finally { kek.fill(0) }
 }
 
 /**
@@ -608,6 +699,7 @@ export function buildVaultDeliveryProjector(
   selfGroupStore: MlsSelfGroupStateStore,
   identityId: string,
   currentSnapshot: () => Promise<LocalJmapSnapshot>,
+  masterSeedHex?: string,
 ): VaultDeliveryProjector {
   const loadState = async (): Promise<ClientState> => {
     const stored = await selfGroupStore.load(identityId)
@@ -616,7 +708,7 @@ export function buildVaultDeliveryProjector(
   }
   const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
   const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
-  return new VaultDeliveryProjector({ identityId, currentSnapshot, epochs, verifier })
+  return new VaultDeliveryProjector({ identityId, currentSnapshot, epochs, verifier, ...(masterSeedHex ? { storageKek: deriveVaultStorageKek(fromHex(masterSeedHex)) } : {}) })
 }
 
 /**
@@ -636,6 +728,7 @@ export function buildLocalJmapProjectionRebuild(
   projections: VaultProjectionWriter,
   selfGroupStore: MlsSelfGroupStateStore,
   identityId: string,
+  masterSeedHex?: string,
 ): () => Promise<LocalJmapProjectionV1> {
   const loadState = async (): Promise<ClientState> => {
     const stored = await selfGroupStore.load(identityId)
@@ -645,7 +738,7 @@ export function buildLocalJmapProjectionRebuild(
   const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
   const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
   return async () => {
-    const projection = await rebuildLocalJmapProjection({ identityId, records, wraps, epochs, verifier })
+    const projection = await rebuildLocalJmapProjection({ identityId, records, wraps, epochs, verifier, ...(masterSeedHex ? { storageKek: deriveVaultStorageKek(fromHex(masterSeedHex)) } : {}) })
     await projections.writeProjection(identityId, projection, { state: projection.state })
     return projection
   }
@@ -665,6 +758,7 @@ export function buildVaultBlobReader(
   wraps: SegmentKeyWrapReader,
   selfGroupStore: MlsSelfGroupStateStore,
   identityId: string,
+  masterSeedHex?: string,
 ): LocalVaultBlobReader {
   const loadState = async (): Promise<ClientState> => {
     const stored = await selfGroupStore.load(identityId)
@@ -673,7 +767,7 @@ export function buildVaultBlobReader(
   }
   const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
   const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
-  const resolver = new StoredSegmentKeyResolver(wraps, epochs, verifier)
+  const resolver = new StoredSegmentKeyResolver(wraps, epochs, verifier, masterSeedHex ? deriveVaultStorageKek(fromHex(masterSeedHex)) : undefined)
   return new VaultObjectBlobReader(objects, resolver)
 }
 
@@ -693,8 +787,9 @@ export function buildLocalJmapReadModel(
   vault: VaultProjectionReader & VaultObjectReader & SegmentKeyWrapReader,
   selfGroupStore: MlsSelfGroupStateStore,
   identityId: string,
+  masterSeedHex?: string,
 ): LocalJmapReadModel {
-  const blobs = buildVaultBlobReader(vault, vault, selfGroupStore, identityId)
+  const blobs = buildVaultBlobReader(vault, vault, selfGroupStore, identityId, masterSeedHex)
   return new IndexedDbLocalJmapReadModel(vault, identityId, blobs)
 }
 
@@ -734,7 +829,7 @@ export function buildMailSubmitter(
     return stored.state
   }
   const signer = new MlsMembershipSegmentKeyWrapSigner(deviceKid, loadState)
-  const blobs = buildVaultBlobReader(vault, vault, selfGroupStore, record.did)
+  const blobs = buildVaultBlobReader(vault, vault, selfGroupStore, record.did, record.masterSeed)
   const transport = new CoreMailSubmissionTransport({ baseUrl: coreBaseUrl })
   const mailFrom = mailFromForIdentity(record.did, apexDomain)
 

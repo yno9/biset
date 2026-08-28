@@ -43,6 +43,8 @@ export interface DidCommPlaintext {
 export function nowEpochSeconds(): number { return Math.floor(Date.now() / 1000) }
 
 export interface PlaintextOptions {
+  id?: string
+  createdTime?: number
   thid?: string
   pthid?: string
   ack?: string[]
@@ -52,10 +54,10 @@ export interface PlaintextOptions {
 
 export function buildPlaintext(type: string, body: unknown, from?: string, to?: string, opts: PlaintextOptions = {}): DidCommPlaintext {
   const msg: DidCommPlaintext = {
-    id: crypto.randomUUID(),
+    id: opts.id ?? crypto.randomUUID(),
     typ: 'application/didcomm-plain+json',
     type, body,
-    created_time: nowEpochSeconds(),
+    created_time: opts.createdTime ?? nowEpochSeconds(),
   }
   if (from) msg.from = from
   if (to) msg.to = [to]

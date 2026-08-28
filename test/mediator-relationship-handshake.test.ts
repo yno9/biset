@@ -128,7 +128,10 @@ describe('private DIDComm relationship handshake', () => {
         counterpartyPublicKey: acceptBody.publicKey,
         createdAt: '2026-08-27T00:00:01.000Z',
       }
-      expect((await sendRelationshipMessage(bobContact, 'only private kids from here', undefined, fetchImpl)).ok).toBe(true)
+      expect((await sendRelationshipMessage(bobContact, 'only private kids from here', undefined, fetchImpl, {
+        id: 'durable-message-id',
+        sentAt: '2026-08-27T00:00:02.000Z',
+      })).ok).toBe(true)
 
       const continuing = await pickupDeliver(mediatorInfo(), {
         did: aliceRelationship.did,
@@ -138,6 +141,8 @@ describe('private DIDComm relationship handshake', () => {
       expect(continuing).toHaveLength(1)
       expect((continuing[0]!.plaintext as DidCommPlaintext).type).toBe(BASIC_MESSAGE)
       expect((continuing[0]!.plaintext as DidCommPlaintext).body).toMatchObject({ content: 'only private kids from here' })
+      expect((continuing[0]!.plaintext as DidCommPlaintext).id).toBe('durable-message-id')
+      expect((continuing[0]!.plaintext as DidCommPlaintext).created_time).toBe(1_787_788_802)
       expect(continuing[0]!.senderKid).toBe(bobRelationship.xKid)
       expect(continuing[0]!.rawJwe.recipients[0]?.header.kid).toBe(aliceRelationship.xKid)
       expect(JSON.stringify(continuing[0]!.rawJwe)).not.toContain(aliceFrontKid)

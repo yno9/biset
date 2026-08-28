@@ -1,6 +1,6 @@
 import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes, type CanonicalValue } from '../protocol/canonical.ts'
 import { assertMlsEpoch, type IdentityId } from '../protocol/ids.ts'
-import type { SegmentKeyWrapV1, VaultEventV1 } from '../protocol/vault.ts'
+import { VAULT_EVENT_KINDS, type SegmentKeyWrapV1, type VaultEventV1 } from '../protocol/vault.ts'
 import type { VaultObjectRecord } from './store.ts'
 
 export interface VaultDeliveryPackV1 {
@@ -102,7 +102,7 @@ function strings(value: unknown): string[] { if (!Array.isArray(value) || value.
 function nonempty(value: unknown): value is string { return typeof value === 'string' && value.length > 0 }
 function isoDate(value: unknown): value is string { return nonempty(value) && !Number.isNaN(Date.parse(value)) }
 function eventKind(value: unknown): value is VaultEventV1['kind'] {
-  return value === 'message.add' || value === 'message.edit' || value === 'message.tombstone' || value === 'mailbox.set' || value === 'keyword.set' || value === 'thread.set' || value === 'reaction.set' || value === 'read.set' || value === 'settings.set' || value === 'transport.result' || value === 'contact-key.set' || value === 'credential.openpgp.set' || value === 'didcomm.control' || value === 'didcomm.device-key.set'
+  return typeof value === 'string' && (VAULT_EVENT_KINDS as readonly string[]).includes(value)
 }
 
 function assertPack(pack: VaultDeliveryPackV1): void {

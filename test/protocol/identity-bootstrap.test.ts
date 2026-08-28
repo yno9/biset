@@ -39,6 +39,7 @@ import type { IdentityRecord, IdentityRecordStore } from '../../src/identity/rec
 import type { OwnKeyPackage } from '../../src/mls/group.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/vault/store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
+import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../../src/vault/storage-root.ts'
 
 const dsPath = `/tmp/biset-identity-bootstrap-ds-${process.pid}-${Date.now()}.sqlite`
 const rosterPath = `/tmp/biset-identity-bootstrap-roster-${process.pid}-${Date.now()}.sqlite`
@@ -330,7 +331,7 @@ describe('maintainSelfGroup', () => {
     }
   })
 
-  test("self-grants a re-wrap of this identity's own segments when reflecting another device advances the epoch", async () => {
+  test('keeps at-rest SegmentKeys stable when Self Group membership advances the MLS epoch', async () => {
     const { anchor, ds, roster, coreHandle } = setupCore()
 
     const realFetch = globalThis.fetch
@@ -348,17 +349,15 @@ describe('maintainSelfGroup', () => {
       const boundary = buildVaultCryptoBoundary(wraps, segments, deviceASelfGroupStore, created.record)
       const minted = await boundary.activeSegment()
       const epochBefore = mlsEpoch(epochOf((await deviceASelfGroupStore.load(created.record.did))!.state))
-      expect((await segments.allSegments(created.record.did))[0]!.epoch).toBe(epochBefore)
+      expect((await segments.allSegments(created.record.did))[0]).toMatchObject({ epoch: VAULT_STORAGE_EPOCH, selfGroupId: VAULT_STORAGE_GROUP_ID })
 
       const mnemonic = seedToMnemonic(created.masterSeed)
       const restored = await restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
         domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
 
-      // Device A's own boot-time maintenance reflects device B's join, which
-      // advances device A's own epoch -- and must self-grant a re-wrap of the
-      // segment minted above before its old-epoch exporter secret is gone
-      // for good.
+      // Device A reflects device B's join, but storage keys are no longer an
+      // MLS epoch transition side effect.
       const state = await maintainSelfGroup(deviceASelfGroupStore, memoryKeyPackageStore(), created.record, {
         coreBaseUrl: CORE_ORIGIN, wraps, segments,
       })
@@ -366,9 +365,9 @@ describe('maintainSelfGroup', () => {
       const epochAfter = mlsEpoch(epochOf(state!))
       expect(epochAfter).not.toBe(epochBefore)
 
-      // The segment record itself now tracks the new epoch...
+      // The segment remains bound to the stable storage root, not MLS.
       const record = (await segments.allSegments(created.record.did)).find(s => s.segmentId === minted.segmentId)!
-      expect(record.epoch).toBe(epochAfter)
+      expect(record).toMatchObject({ epoch: VAULT_STORAGE_EPOCH, selfGroupId: VAULT_STORAGE_GROUP_ID })
 
       // ...and the SegmentKey is still resolvable, unwrapping to the exact
       // same bytes minted before the epoch advanced. A fresh boundary

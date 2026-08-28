@@ -77,9 +77,63 @@ export class SqliteTrustedDeviceRoster implements TrustedDeviceRoster {
 }
 
 function installSchema(database: Database): void {
+  migrateLegacySchema(database)
   database.exec(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS accepted_self_groups (identity_key TEXT PRIMARY KEY, identity_id TEXT NOT NULL, self_group_id TEXT NOT NULL, epoch TEXT NOT NULL, accepted_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS accepted_self_group_devices (identity_key TEXT NOT NULL, device_id TEXT NOT NULL, delivery_floor TEXT NOT NULL, signing_key_id TEXT NOT NULL, position INTEGER NOT NULL, PRIMARY KEY (identity_key, device_id));
   `)
+}
+
+/**
+ * Before identity moves were supported these tables used the mutable DID as
+ * their primary/foreign key. CREATE TABLE IF NOT EXISTS cannot add the new
+ * stable key column to an existing deployment, so migrate the pair together
+ * before any prepared statement refers to identity_key.
+ */
+function migrateLegacySchema(database: Database): void {
+  const groupColumns = tableColumns(database, 'accepted_self_groups')
+  const deviceColumns = tableColumns(database, 'accepted_self_group_devices')
+  if (groupColumns.length === 0 && deviceColumns.length === 0) return
+  const groupIsLegacy = groupColumns.includes('identity_id') && !groupColumns.includes('identity_key')
+  const deviceIsLegacy = deviceColumns.includes('identity_id') && !deviceColumns.includes('identity_key')
+  if (!groupIsLegacy && !deviceIsLegacy) return
+  if (!groupIsLegacy || !deviceIsLegacy) throw new TypeError('device roster SQLite schema is inconsistent')
+
+  type LegacyGroup = { identity_id: string; self_group_id: string; epoch: string; accepted_at: string }
+  type LegacyDevice = { device_id: string; delivery_floor: string; signing_key_id: string; position: number }
+  const selected = new Map<string, { group: LegacyGroup; devices: LegacyDevice[] }>()
+  const groups = database.query<LegacyGroup, []>('SELECT identity_id, self_group_id, epoch, accepted_at FROM accepted_self_groups').all()
+  for (const group of groups) {
+    const key = stableIdKey(group.identity_id)
+    const devices = database.query<LegacyDevice, [string]>('SELECT device_id, delivery_floor, signing_key_id, position FROM accepted_self_group_devices WHERE identity_id = ? ORDER BY position').all(group.identity_id)
+    const current = selected.get(key)
+    const newer = !current
+      || compareMlsEpoch(group.epoch, current.group.epoch) > 0
+      || (group.epoch === current.group.epoch && group.accepted_at > current.group.accepted_at)
+    if (newer) selected.set(key, { group, devices })
+  }
+
+  database.transaction(() => {
+    database.exec(`
+      CREATE TABLE accepted_self_groups_v2 (identity_key TEXT PRIMARY KEY, identity_id TEXT NOT NULL, self_group_id TEXT NOT NULL, epoch TEXT NOT NULL, accepted_at TEXT NOT NULL);
+      CREATE TABLE accepted_self_group_devices_v2 (identity_key TEXT NOT NULL, device_id TEXT NOT NULL, delivery_floor TEXT NOT NULL, signing_key_id TEXT NOT NULL, position INTEGER NOT NULL, PRIMARY KEY (identity_key, device_id));
+    `)
+    for (const [key, value] of selected) {
+      database.query('INSERT INTO accepted_self_groups_v2 (identity_key, identity_id, self_group_id, epoch, accepted_at) VALUES (?, ?, ?, ?, ?)').run(key, value.group.identity_id, value.group.self_group_id, value.group.epoch, value.group.accepted_at)
+      for (const device of value.devices) {
+        database.query('INSERT INTO accepted_self_group_devices_v2 (identity_key, device_id, delivery_floor, signing_key_id, position) VALUES (?, ?, ?, ?, ?)').run(key, device.device_id, device.delivery_floor, device.signing_key_id, device.position)
+      }
+    }
+    database.exec(`
+      DROP TABLE accepted_self_group_devices;
+      DROP TABLE accepted_self_groups;
+      ALTER TABLE accepted_self_groups_v2 RENAME TO accepted_self_groups;
+      ALTER TABLE accepted_self_group_devices_v2 RENAME TO accepted_self_group_devices;
+    `)
+  })()
+}
+
+function tableColumns(database: Database, table: string): string[] {
+  return database.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all().map(column => column.name)
 }

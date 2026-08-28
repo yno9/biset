@@ -22,11 +22,11 @@ import {
   packAuthcrypt, unpackAuthcrypt, unpackAnoncrypt, b64urlToBytes, parseJwe, protectedHeaderOf,
   type DidCommJWE,
 } from '../didcomm/crypto.ts'
-import { SeenIds } from './replay.ts'
+import { SeenIds, type ReplayGuard } from './replay.ts'
 import { packSigned } from './signature.ts'
 import { ResolvedKeyCache } from './keycache.ts'
-import { MessageQueue, QueueFullError } from './queue.ts'
-import { ConnectionStore, ConnectionFullError } from './connections.ts'
+import { MessageQueue, QueueFullError, type MediatorMessageQueue } from './queue.ts'
+import { ConnectionStore, ConnectionFullError, type MediatorConnectionStore } from './connections.ts'
 import {
   MEDIATE_REQUEST, MEDIATE_GRANT, KEYLIST_UPDATE, KEYLIST_UPDATE_RESPONSE, KEYLIST_QUERY, KEYLIST,
   FORWARD, STATUS_REQUEST, STATUS, DELIVERY_REQUEST, DELIVERY, MESSAGES_RECEIVED,
@@ -81,8 +81,11 @@ const fromHex = (h: string): Uint8Array => new Uint8Array((h.match(/../g) ?? [])
 
 export interface MediatorOptions {
   mediator: PeerIdentity
-  queue?: MessageQueue
-  connections?: ConnectionStore
+  queue?: MediatorMessageQueue
+  connections?: MediatorConnectionStore
+  replay?: ReplayGuard
+  /** Synchronous transaction shared by durable replay and queue stores. */
+  transaction?: <T>(operation: () => T) => T
   /** Resolve a `did:webvh` peer's DIDComm key (X25519) at a SPECIFIC kid --
    * needed to authenticate senders and encrypt replies that identify by
    * did:webvh rather than the self-certifying did:peer. Without this option
@@ -98,12 +101,19 @@ export interface MediatorHandler {
   mediatorDid: string
 }
 
-export function createMediator({ mediator, queue = new MessageQueue(), connections = new ConnectionStore(), resolveDidWebvh }: MediatorOptions): MediatorHandler {
+export function createMediator({
+  mediator,
+  queue = new MessageQueue(),
+  connections = new ConnectionStore(),
+  replay = new SeenIds(),
+  transaction = operation => operation(),
+  resolveDidWebvh,
+}: MediatorOptions): MediatorHandler {
   const ownRecipient = { kid: mediator.xKid, privateKey: mediator.xPriv }
   // Replay guard over every inbound message's `id` -- a re-POSTed anoncrypt
   // Forward would otherwise re-queue the same payload, and a resent
   // authcrypt request would be re-processed.
-  const seen = new SeenIds()
+  const seen = replay
 
   // A did:webvh peer's keyAgreement key, cached by kid -- avoids a network
   // resolve on every authenticated pickup poll. biset's DIDComm keys are
@@ -300,7 +310,10 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
     if (isExpired(msg)) {
       return problemReply(msg, fromDid, earlyReplyKid, 400, 'e.p.msg.expired', 'message expired (expires_time in the past)')
     }
-    if (!seen.check(msg.id)) {
+    // Forward records its replay id in the same durable transaction as the
+    // queued inner JWE. Other messages have no queue acceptance boundary and
+    // can use the replay guard directly here.
+    if (msg.type !== FORWARD && !seen.check(msg.id)) {
       return problemReply(msg, fromDid, earlyReplyKid, 400, 'e.p.crypto.message.dejavu', 'message id {1} has already been processed', [msg.id])
     }
     const replyKid = earlyReplyKid
@@ -387,18 +400,30 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
           return Response.json({ error: 'forward is missing `next` or its attachment' }, { status: 400 })
         }
         const kid = normalizeKid(next)
-        if (!connections.isAuthorized(kid)) {
+        let outcome: 'accepted' | 'not-enrolled' | 'replay'
+        try {
+          outcome = transaction(() => {
+            if (!seen.check(msg.id)) return 'replay'
+            if (!connections.isAuthorized(kid)) return 'not-enrolled'
+            queue.push(kid, JSON.stringify(forwarded))
+            return 'accepted'
+          })
+        } catch (e) {
+          // A durable transaction rolls the replay id back together with the
+          // failed queue insert, so the sender can retry after capacity or
+          // storage recovers. Never acknowledge a body that was not committed.
+          if (e instanceof QueueFullError) return Response.json({ error: String(e.message) }, { status: 503 })
+          throw e
+        }
+        if (outcome === 'replay') {
+          return Response.json({ error: `message id ${msg.id} has already been processed`, code: 'e.p.crypto.message.dejavu' }, { status: 400 })
+        }
+        if (outcome === 'not-enrolled') {
           // A SIGNED problem-report, not a bare HTTP error: a forward is
           // anoncrypt by design, so there is no authenticated sender to
           // authcrypt a reply to, but "I will not queue for that kid" is
           // still something the sender must be able to act on.
           return signedProblem(msg, next, 'e.p.req.not_enroll', 'no keylist-update registered {1}', [kid])
-        }
-        try {
-          queue.push(kid, JSON.stringify(forwarded))
-        } catch (e) {
-          if (e instanceof QueueFullError) return Response.json({ error: String(e.message) }, { status: 503 })
-          throw e
         }
         return new Response(null, { status: 202 })
       }
@@ -422,7 +447,8 @@ export function createMediator({ mediator, queue = new MessageQueue(), connectio
         // since "asked and there was nothing" is exactly as much proof of
         // life as "collected a message".
         connections.touch(kid)
-        const limit: number = (msg.body as any)?.limit ?? 10
+        const askedLimit = Number((msg.body as any)?.limit ?? 10)
+        const limit = Number.isFinite(askedLimit) ? Math.max(1, Math.min(Math.trunc(askedLimit), 100)) : 10
         if (queue.count(kid) === 0) {
           return reply(await packReplyTo(msg, fromDid!, replyKid!, STATUS, { recipient_did: asked, message_count: 0 }))
         }

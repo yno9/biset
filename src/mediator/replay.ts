@@ -15,7 +15,11 @@
 //
 // Insertion-ordered Map == LRU-by-insertion: the first key is always the
 // oldest, so eviction is an O(1) delete of `keys().next()`.
-export class SeenIds {
+export interface ReplayGuard {
+  check(id: string): boolean
+}
+
+export class SeenIds implements ReplayGuard {
   private seen = new Map<string, number>() // id -> expiry epoch ms
 
   constructor(private ttlMs = 10 * 60 * 1000, private max = 50_000) {}

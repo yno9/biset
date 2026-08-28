@@ -46,8 +46,12 @@ import { readBisetConfig } from './config.ts'
 // generated bundle defined `bootClient` but never invoked it, and the app
 // silently never booted at all (found live, 2026-08-25 -- a totally blank
 // page with no console error, since nothing had run yet to error).
-let onIdentityCreated: (() => Promise<void>) | undefined
-export function setOnIdentityCreated(fn: () => Promise<void>): void {
+interface IdentityCreatedOptions {
+  coordinatorPopup?: Window
+}
+
+let onIdentityCreated: ((reason: 'created' | 'restored', options?: IdentityCreatedOptions) => Promise<void>) | undefined
+export function setOnIdentityCreated(fn: (reason: 'created' | 'restored', options?: IdentityCreatedOptions) => Promise<void>): void {
   onIdentityCreated = fn
 }
 
@@ -194,7 +198,7 @@ export function setupNewUserPage(): void {
   })
 
   submitBtn.addEventListener('click', async () => {
-    const { apexDomain, coreBaseUrl } = readBisetConfig()
+    const { apexDomain, anchorBaseUrl, anchorOidcClientId, coreBaseUrl, coordinatorUrl } = readBisetConfig()
     const username = usernameInput.value.trim()
     if (!username) { errEl.textContent = 'Username required'; errEl.style.display = 'block'; return }
     if (!apexDomain || !coreBaseUrl) { errEl.textContent = 'apexDomain/coreBaseUrl not set in config.json'; errEl.style.display = 'block'; return }
@@ -206,6 +210,20 @@ export function setupNewUserPage(): void {
     if (loginDomain) {
       const phrase = phraseEl?.value.trim() ?? ''
       if (!phrase) { errEl.textContent = `${loginDomain} already exists — paste its 24-word Root Key phrase to log in`; errEl.style.display = 'block'; phraseEl?.focus(); return }
+      // Reserve the browser window synchronously while this click still has
+      // user activation. Identity recovery performs network and IndexedDB
+      // awaits before Coordinator OIDC can be constructed; opening the
+      // popup only afterwards is rejected by normal popup blockers and made
+      // automatic restore appear to do nothing.
+      const coordinatorPopup = anchorBaseUrl && anchorOidcClientId && coordinatorUrl
+        ? window.open('about:blank', 'biset-anchor-login', 'popup,width=520,height=720') ?? undefined
+        : undefined
+      if (coordinatorPopup) {
+        try {
+          coordinatorPopup.document.title = 'Biset Vault restore'
+          coordinatorPopup.document.body.textContent = 'Preparing encrypted Vault restore…'
+        } catch { /* the Anchor navigation will replace this page shortly */ }
+      }
       submitBtn.disabled = true
       submitBtn.textContent = 'Logging in…'
       errEl.style.display = 'none'
@@ -228,8 +246,9 @@ export function setupNewUserPage(): void {
           selfGroupStore.close()
           keyStore.close()
         }
-        await onIdentityCreated?.()
+        await onIdentityCreated?.('restored', { coordinatorPopup })
       } catch (e) {
+        try { coordinatorPopup?.close() } catch {}
         errEl.textContent = 'Log in failed: ' + (e instanceof Error ? e.message : String(e))
         errEl.style.display = 'block'
         submitBtn.textContent = signupButtonLabel(loginDomain)
@@ -282,7 +301,7 @@ export function setupNewUserPage(): void {
       // a real first load uses, now that an identity exists locally for it
       // to find -- via the callback main.ts registered (setOnIdentityCreated
       // above), never an import of main.ts itself.
-      await onIdentityCreated?.()
+      await onIdentityCreated?.('created')
     } catch (e) {
       errEl.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e))
       errEl.style.display = 'block'

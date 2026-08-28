@@ -97,6 +97,12 @@ export interface AccountPageConfig {
    * key (and, if this device has a self group, the MLS leaf key) this
    * needs to sign with. Resolves to the new did on success. */
   onMoveIdentity?(newDomain: string): Promise<string>
+  /** Starts the user-gesture-bound OpenID4VP + OIDC PKCE popup flow. */
+  onConnectCoordinator?(): Promise<void>
+  onCreateCoordinatorInvitation?(): Promise<{ invitation: string; expiresAt: string }>
+  onJoinCoordinatorInvitation?(invitation: string): Promise<void>
+  onResumeCoordinatorJoin?(): Promise<void>
+  onApproveCoordinatorDevice?(): Promise<void>
   /** src.bak's showSysMsg (shell.ts) -- injected rather than imported
    * directly: shell.ts -> left-pane.ts -> account-page.ts already, so an
    * import the other way round would close a cycle (main.ts hit the same
@@ -611,6 +617,28 @@ export function hideConfigPage(): void {
 function identityMenuItems(did: string): MenuItem[] {
   const noop = () => {}
   return [
+    ...(config?.onConnectCoordinator ? [{ label: 'Connect coordinator', onClick: () => {
+      void config?.onConnectCoordinator?.().then(() => config?.showMessage?.('Coordinator connected')).catch(error => config?.showMessage?.(error instanceof Error ? error.message : String(error)))
+    } }] : []),
+    ...(config?.onCreateCoordinatorInvitation ? [{ label: 'Invite coordinator device', onClick: () => {
+      void config?.onCreateCoordinatorInvitation?.().then(async value => {
+        try { await navigator.clipboard.writeText(value.invitation) } catch {}
+        prompt(`Invitation expires ${new Date(value.expiresAt).toLocaleTimeString()}. Copy this code to the other device:`, value.invitation)
+      }).catch(error => config?.showMessage?.(error instanceof Error ? error.message : String(error)))
+    } }] : []),
+    ...(config?.onApproveCoordinatorDevice ? [{ label: 'Approve coordinator device', onClick: () => {
+      void config?.onApproveCoordinatorDevice?.().then(() => config?.showMessage?.('Coordinator device approved')).catch(error => config?.showMessage?.(error instanceof Error ? error.message : String(error)))
+    } }] : []),
+    ...(config?.onJoinCoordinatorInvitation ? [{ label: 'Join coordinator vault', onClick: () => {
+      const invitation = prompt('Enter the coordinator invitation code:')?.trim()
+      if (!invitation) return
+      config?.showMessage?.('Waiting for approval on the existing device…')
+      void config?.onJoinCoordinatorInvitation?.(invitation).then(() => config?.showMessage?.('Coordinator Vault joined')).catch(error => config?.showMessage?.(error instanceof Error ? error.message : String(error)))
+    } }] : []),
+    ...(config?.onResumeCoordinatorJoin ? [{ label: 'Resume coordinator join', onClick: () => {
+      config?.showMessage?.('Waiting for approval on the existing device…')
+      void config?.onResumeCoordinatorJoin?.().then(() => config?.showMessage?.('Coordinator Vault joined')).catch(error => config?.showMessage?.(error instanceof Error ? error.message : String(error)))
+    } }] : []),
     { label: 'Protect with passkey', onClick: noop },
     { label: 'Export Messages', onClick: noop },
     { label: 'Import Messages', onClick: noop },

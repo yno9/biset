@@ -9,6 +9,9 @@
 import type { IdentityId, SegmentId } from '../protocol/ids.ts'
 import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 import { decryptVaultObject, verifyVaultObjectIntegrity } from './objects.ts'
+import { assertContactKeyRecord } from './contact-key.ts'
+import { assertDidCommCredentialRecord } from './didcomm-credential.ts'
+import { assertDidCommDeviceKeyRecord } from './didcomm-device-key.ts'
 import { assertOpenPgpCredentialRecord } from './openpgp-credential.ts'
 import { verifyVaultEvent, type VaultEventVerifier } from './events.ts'
 import type { SegmentKeyResolver } from './segment-key-resolver.ts'
@@ -17,11 +20,10 @@ import type { DecryptedMutationRecord } from '../local-jmap/reducer.ts'
 /**
  * Checks every object's content-addressed integrity and every event's
  * signature before decrypting anything, resolves each referenced segment's
- * key at most once, and pulls `credential.openpgp.set` events out of the
- * returned records -- that kind never feeds the JMAP projection reducer,
- * only `assertOpenPgpCredentialRecord`'s own validation. Fails closed (an
- * exception, not a partial result) the instant any object or event does not
- * check out.
+ * key at most once. Private credential/key records use their dedicated
+ * validators and never feed the JMAP projection reducer; ordinary mutation
+ * objects are returned for projection. Fails closed (an exception, not a
+ * partial result) the instant any object or event does not check out.
  */
 export async function decryptVaultMutationRecords(
   identityId: IdentityId,
@@ -58,6 +60,12 @@ export async function decryptVaultMutationRecords(
       const plaintext = await decryptVaultObject(key, object)
       if (event.kind === 'credential.openpgp.set') {
         assertOpenPgpCredentialRecord(event, object, plaintext)
+      } else if (event.kind === 'credential.didcomm.set') {
+        assertDidCommCredentialRecord(event, object, plaintext)
+      } else if (event.kind === 'didcomm.device-key.set') {
+        assertDidCommDeviceKeyRecord(event, object, plaintext)
+      } else if (event.kind === 'contact-key.set') {
+        assertContactKeyRecord(event, object, plaintext)
       } else {
         records.push({ event, plaintext })
       }

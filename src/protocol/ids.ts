@@ -9,6 +9,11 @@ export type VaultEventId = string
 export type VaultObjectId = string
 export type SegmentId = string
 export type CheckpointId = string
+/** Random 256-bit identifier for a Vault partition. It is never derived from
+ * a DID, SCID, domain, mail address, or OIDC subject. */
+export type VaultId = `vlt_${string}`
+/** Opaque, Vault-local member identifier. */
+export type VaultMemberId = string
 /** Decimal unsigned-64 representation. Strings keep the wire format JSON-safe. */
 export type DeliverySeq = string
 /** MLS epoch as a decimal unsigned-64 string. MLS epochs must not pass through JS Number. */
@@ -57,6 +62,15 @@ export function assertVaultObjectId(value: unknown): asserts value is VaultObjec
 
 /** `SegmentId` is always minted by `ActiveVaultSegmentManager` via `crypto.randomUUID()` (vault/active-segment.ts). */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const VAULT_ID = /^vlt_[A-Za-z0-9_-]{43}$/
+
+export function assertVaultId(value: unknown): asserts value is VaultId {
+  if (typeof value !== 'string' || !VAULT_ID.test(value)) throw new TypeError('vaultId must be vlt_ followed by 256-bit base64url')
+}
+
+export function assertVaultMemberId(value: unknown): asserts value is VaultMemberId {
+  assertOpaqueId(value, 'vault member id', 128)
+}
 
 export function assertSegmentId(value: unknown): asserts value is SegmentId {
   if (typeof value !== 'string' || !UUID.test(value)) throw new TypeError('segment id must be a UUID')

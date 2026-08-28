@@ -1,0 +1,6 @@
+mediator.biset.md {
+    request_body {
+        max_size 2MB
+    }
+    reverse_proxy 127.0.0.1:8791
+}

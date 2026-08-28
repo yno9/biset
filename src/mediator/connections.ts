@@ -85,7 +85,19 @@ const MAX_KEYS_PER_CONNECTION = 32
 
 export class ConnectionFullError extends Error {}
 
-export class ConnectionStore {
+export interface MediatorConnectionStore {
+  register(clientDid: string): void
+  touch(recipientKid: string): void
+  addKey(clientDid: string, recipientKid: string, asGiven?: string, publicKeyHex?: string): boolean
+  keyFor(recipientKid: string): string | undefined
+  removeKey(clientDid: string, recipientKid: string): boolean
+  ownsKey(clientDid: string, recipientKid: string): boolean
+  isAuthorized(recipientKid: string): boolean
+  listKeys(clientDid: string): string[]
+  listKeysWithActivity(clientDid: string): Array<{ kid: string; asGiven: string; lastSeen?: number }>
+}
+
+export class ConnectionStore implements MediatorConnectionStore {
   private byClientDid = new Map<string, Connection>()
   private persistPath?: string
 

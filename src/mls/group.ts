@@ -106,8 +106,13 @@ export type IncomingResult =
  * unimplemented), which the roster/vault path this module serves does not
  * need. */
 export async function generateOwnKeyPackage(kid: string): Promise<OwnKeyPackage> {
+  return generateOwnKeyPackageForCredential(credentialFor(kid))
+}
+
+/** Generates a KeyPackage for an application-defined BasicCredential. */
+export async function generateOwnKeyPackageForCredential(credential: Credential): Promise<OwnKeyPackage> {
   const suite = await mlsSuite()
-  const kp = await generateKeyPackage(credentialFor(kid), defaultCapabilities(), defaultLifetime, [], suite, [])
+  const kp = await generateKeyPackage(credential, defaultCapabilities(), defaultLifetime, [], suite, [])
   return { publicPackage: kp.publicPackage, privatePackage: kp.privatePackage }
 }
 
@@ -153,8 +158,12 @@ function toHex(bytes: Uint8Array): string {
 /** Create a group with only us in it. `groupId` is the application's own id
  * for the conversation (biset uses a random 32-byte value, see store.ts). */
 export async function createMlsGroup(groupId: Uint8Array, own: OwnKeyPackage): Promise<ClientState> {
+  return createMlsGroupWithAuthenticationService(groupId, own, authService)
+}
+
+export async function createMlsGroupWithAuthenticationService(groupId: Uint8Array, own: OwnKeyPackage, authenticationService: AuthenticationService): Promise<ClientState> {
   const suite = await mlsSuite()
-  return createGroup(groupId, own.publicPackage, own.privatePackage, [], suite, clientConfig())
+  return createGroup(groupId, own.publicPackage, own.privatePackage, [], suite, clientConfig(authenticationService))
 }
 
 /** Commit an Add for each of `keyPackages`. The returned `welcome` goes to the
@@ -282,10 +291,21 @@ function encodeWelcome(welcome: Welcome): Uint8Array {
  * keeps Welcomes small and, more importantly, keeps the tree out of a message
  * that has to be individually encrypted to every joiner. */
 export async function joinMlsGroup(welcomeBytes: Uint8Array, own: OwnKeyPackage, ratchetTree?: ClientState['ratchetTree']): Promise<ClientState> {
+  return joinMlsGroupWithAuthenticationService(welcomeBytes, own, authService, ratchetTree)
+}
+
+/** Join a group whose BasicCredential profile has its own authentication
+ * service (the opaque Vault profile is the non-identity caller). */
+export async function joinMlsGroupWithAuthenticationService(
+  welcomeBytes: Uint8Array,
+  own: OwnKeyPackage,
+  authenticationService: AuthenticationService,
+  ratchetTree?: ClientState['ratchetTree'],
+): Promise<ClientState> {
   const suite = await mlsSuite()
   const msg = decodeMlsMessage(welcomeBytes, 0)?.[0]
   if (msg?.wireformat !== 'mls_welcome') throw new Error(`joinMlsGroup: not a welcome (${msg?.wireformat ?? 'undecodable'})`)
-  return joinGroup(msg.welcome, own.publicPackage, own.privatePackage, emptyPskIndex, suite, ratchetTree, undefined, clientConfig())
+  return joinGroup(msg.welcome, own.publicPackage, own.privatePackage, emptyPskIndex, suite, ratchetTree, undefined, clientConfig(authenticationService))
 }
 
 /** Encrypt an application message. The bytes returned are the innermost layer
@@ -531,9 +551,13 @@ export function encodeState(state: ClientState): Uint8Array {
  * then fails inside ts-mls on a missing keyRetentionConfig, so this pairing is
  * not optional and is why callers never touch decodeGroupState directly. */
 export function decodeState(bytes: Uint8Array): ClientState {
+  return decodeStateWithAuthenticationService(bytes, authService)
+}
+
+export function decodeStateWithAuthenticationService(bytes: Uint8Array, authenticationService: AuthenticationService): ClientState {
   const decoded = decodeGroupState(bytes, 0)?.[0]
   if (decoded === undefined) throw new Error('decodeState: undecodable group state')
-  return { ...decoded, clientConfig: clientConfig() }
+  return { ...decoded, clientConfig: clientConfig(authenticationService) }
 }
 
 /** Is this device still an active member of the group this state describes?

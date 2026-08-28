@@ -13,9 +13,9 @@ import { SqliteMlsDeliveryService } from './mediation/mls-delivery-store.ts'
 import { Ed25519MlsDsSignatureVerifier } from './mediation/mls-delivery-authorizer.ts'
 import { rosterBackedMailSubmissionAuthorizer } from './identity/authorizers.ts'
 import { CoreMailSubmissionAdapter } from './adapters/mail-submission-adapter.ts'
-import { WebvhLogStore } from './webvh/webvh-store.ts'
-import { DidWebStore } from './webvh/did-web-store.ts'
-import { RoutingDocStore } from './webvh/routing-store.ts'
+import { WebvhLogStore } from '../anchor/webvh/webvh-store.ts'
+import { DidWebStore } from '../anchor/webvh/did-web-store.ts'
+import { RoutingDocStore } from '../anchor/webvh/routing-store.ts'
 import { DidCommIngressAdapter } from './adapters/didcomm.ts'
 
 export interface BisetCoreDeploymentOptions {

@@ -269,7 +269,7 @@ describe('end-to-end: create -> write -> deliver -> restore -> project', () => {
 
       const pack = decodeVaultDeliveryPack(result.items[0]!.payload)
       const baseSnapshot: LocalJmapSnapshot = { state: '0', mailboxes: [{ id: 'inbox', name: 'Inbox', totalEmails: 0, unreadEmails: 0 }], emails: [] }
-      const projectorB = buildVaultDeliveryProjector(selfGroupStoreB, created.record.did, async () => baseSnapshot)
+      const projectorB = buildVaultDeliveryProjector(selfGroupStoreB, created.record.did, async () => baseSnapshot, restored.record.masterSeed)
       const projected = await projectorB.verifyAndProject(pack)
 
       expect(projected.projection.emails).toHaveLength(1)

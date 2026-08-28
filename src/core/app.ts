@@ -12,12 +12,12 @@ import type { MlsDsSignatureVerifier } from './mediation/mls-delivery-authorizer
 import type { SqliteMlsDeliveryService } from './mediation/mls-delivery-store.ts'
 import { createMailSubmissionHttpHandler } from './mediation/mail-submission-http.ts'
 import type { CoreMailSubmissionAdapter } from './adapters/mail-submission-adapter.ts'
-import { createWebvhHttpHandler } from './webvh/webvh-http.ts'
-import type { WebvhLogStore } from './webvh/webvh-store.ts'
-import { createDidWebHttpHandler } from './webvh/did-web-http.ts'
-import type { DidWebStore } from './webvh/did-web-store.ts'
-import { createRoutingHttpHandler } from './webvh/routing-http.ts'
-import type { RoutingDocStore } from './webvh/routing-store.ts'
+import { createWebvhHttpHandler } from '../anchor/webvh/webvh-http.ts'
+import type { WebvhLogStore } from '../anchor/webvh/webvh-store.ts'
+import { createDidWebHttpHandler } from '../anchor/webvh/did-web-http.ts'
+import type { DidWebStore } from '../anchor/webvh/did-web-store.ts'
+import { createRoutingHttpHandler } from '../anchor/webvh/routing-http.ts'
+import type { RoutingDocStore } from '../anchor/webvh/routing-store.ts'
 import { createDidCommHttpHandler } from './adapters/didcomm-http.ts'
 import type { DidCommIngressAdapter } from './adapters/didcomm.ts'
 
@@ -41,7 +41,8 @@ export interface BisetCoreApplicationOptions {
   /** did:webvh log hosting (GET/PUT/POST .well-known/did.jsonl) for the
    * subdomain-per-identity scheme. Ported from the pre-Vault-Core anchor,
    * which this deployment otherwise has no dependency on -- see
-   * src/core/webvh/webvh-http.ts's header. */
+   * src/anchor/webvh/webvh-http.ts's header. This compatibility
+   * mount is transitional; new deployments use biset-anchor directly. */
   webvh?: WebvhLogStore
   /** did:web mirror hosting (GET/PUT .well-known/did.json), identity/web/
    * mirror.ts's server side. Requires `webvh` too -- a mirror write is

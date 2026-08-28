@@ -31,8 +31,8 @@ const MAX_PER_RECIPIENT = 256
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
 
 export class QueueFullError extends Error {
-  constructor(recipientKid: string) {
-    super(`mediator: queue full for ${recipientKid}`)
+  constructor(recipientKid: string, reason = 'queue full') {
+    super(`mediator: ${reason} for ${recipientKid}`)
   }
 }
 
@@ -51,9 +51,18 @@ export class QueueFullError extends Error {
  * opaque as ever — this says who queued it, never what it says. */
 export interface QueuedMessage { id: string; packed: string; queuedAt?: number; silent?: boolean }
 
+export interface MediatorMessageQueue {
+  push(recipientKid: string, packedMessage: string, opts?: { silent?: boolean }): string
+  count(recipientKid: string): number
+  loudCount(recipientKid: string): number
+  clear(recipientKid: string): void
+  peek(recipientKid: string, limit: number): QueuedMessage[]
+  remove(recipientKid: string, ids: string[]): number
+}
+
 interface StoredEntry { kid: string; messages: QueuedMessage[] }
 
-export class MessageQueue {
+export class MessageQueue implements MediatorMessageQueue {
   private queues = new Map<string, QueuedMessage[]>()
   private persistPath?: string
 

@@ -90,10 +90,16 @@ export async function initiateRelationship(toDid: string, opts: SendDidCommMessa
 }
 
 /** Sends chat content only through an already-established private route. */
-export async function sendRelationshipMessage(contactKey: ContactKeyV1, content: string, subject?: string, fetchImpl: typeof fetch = defaultFetch()): Promise<DidCommSendResult> {
+export async function sendRelationshipMessage(
+  contactKey: ContactKeyV1,
+  content: string,
+  subject?: string,
+  fetchImpl: typeof fetch = defaultFetch(),
+  message?: { id: string; sentAt: string },
+): Promise<DidCommSendResult> {
   return sendPrivateRelationshipMessage(contactKey, BASIC_MESSAGE, {
-    content, sentAt: new Date().toISOString(), ...(subject ? { subject } : {}),
-  }, fetchImpl)
+    content, sentAt: message?.sentAt ?? new Date().toISOString(), ...(subject ? { subject } : {}),
+  }, fetchImpl, message ? { id: message.id, createdTime: Math.floor(Date.parse(message.sentAt) / 1000) } : undefined)
 }
 
 export async function sendRelationshipAccept(contactKey: ContactKeyV1, fetchImpl: typeof fetch = defaultFetch()): Promise<DidCommSendResult> {
@@ -202,7 +208,7 @@ async function frontDoorMediatorRoute(toDid: string, fetchImpl: typeof fetch): P
   return { url: value.uri, routingKid: value.routingKeys[0] }
 }
 
-async function sendPrivateRelationshipMessage(contactKey: ContactKeyV1, type: string, body: unknown, fetchImpl: typeof fetch): Promise<DidCommSendResult> {
+async function sendPrivateRelationshipMessage(contactKey: ContactKeyV1, type: string, body: unknown, fetchImpl: typeof fetch, message?: { id: string; createdTime: number }): Promise<DidCommSendResult> {
   let route: ReturnType<typeof relationshipMediatorService>
   let recipientPublicKey: Uint8Array
   try {
@@ -214,7 +220,7 @@ async function sendPrivateRelationshipMessage(contactKey: ContactKeyV1, type: st
   }
   const ownDid = contactKey.ownRelationshipKid.split('#', 1)[0]!
   const recipientDid = contactKey.counterpartyRelationshipKid.split('#', 1)[0]!
-  const plaintext = buildPlaintext(type, body, ownDid, recipientDid)
+  const plaintext = buildPlaintext(type, body, ownDid, recipientDid, message)
   const inner = packAuthcrypt(
     new TextEncoder().encode(JSON.stringify(plaintext)),
     { kid: contactKey.ownRelationshipKid, privateKey: contactKey.ownX25519PrivateKey },

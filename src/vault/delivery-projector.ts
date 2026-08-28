@@ -9,12 +9,14 @@ import type { SegmentKeyWrapVerifier } from './crypto.ts'
 import { decryptVaultMutationRecords } from './mutation-records.ts'
 import { StoredSegmentKeyResolver, type VaultEpochKeyResolver } from './segment-key-resolver.ts'
 import type { SegmentKeyWrapReader } from './store.ts'
+import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from './storage-root.ts'
 
 export interface VaultDeliveryProjectorOptions {
   identityId: IdentityId
   currentSnapshot(): Promise<LocalJmapSnapshot>
   epochs: VaultEpochKeyResolver
   verifier: VaultEventVerifier & SegmentKeyWrapVerifier
+  storageKek?: Uint8Array
 }
 
 /**
@@ -33,16 +35,25 @@ export class VaultDeliveryProjector implements VaultDeliveryVerifierProjector {
     checkpointId: string
   }> {
     if (pack.identityId !== this.options.identityId) throw new TypeError('vault delivery pack identity is not local identity')
-    const current = await this.options.epochs.currentVaultEpoch(pack.identityId)
     const wraps = new PackSegmentKeyWrapReader(pack.keyWraps)
-    validateCurrentWraps(pack.identityId, pack.keyWraps, current.selfGroupId, current.epoch)
-    const resolver = new StoredSegmentKeyResolver(wraps, this.options.epochs, this.options.verifier)
+    if (this.options.storageKek && pack.keyWraps.every(wrap => wrap.selfGroupId === VAULT_STORAGE_GROUP_ID && wrap.recipientEpoch === VAULT_STORAGE_EPOCH)) {
+      validateStableWraps(pack.identityId, pack.keyWraps)
+    } else {
+      const current = await this.options.epochs.currentVaultEpoch(pack.identityId)
+      validateCurrentWraps(pack.identityId, pack.keyWraps, current.selfGroupId, current.epoch)
+    }
+    const resolver = new StoredSegmentKeyResolver(wraps, this.options.epochs, this.options.verifier, this.options.storageKek)
     const records = await decryptVaultMutationRecords(pack.identityId, pack.events, pack.objects, resolver, this.options.verifier)
     const base = await this.options.currentSnapshot()
     const next = reduceLocalJmapProjection(pack.identityId, base, records)
     const projection: LocalJmapProjectionV1 = { version: 1, identityId: pack.identityId, ...next }
     return { projection, jmapState: { state: projection.state }, checkpointId: projection.state }
   }
+}
+
+function validateStableWraps(identityId: IdentityId, wraps: SegmentKeyWrapV1[]): void {
+  if (wraps.length === 0) throw new TypeError('vault delivery pack has no Vault storage key wraps')
+  for (const wrap of wraps) if (wrap.identityId !== identityId || wrap.selfGroupId !== VAULT_STORAGE_GROUP_ID || wrap.sourceEpoch !== VAULT_STORAGE_EPOCH || wrap.recipientEpoch !== VAULT_STORAGE_EPOCH) throw new TypeError('vault delivery key wrap is not for stable Vault storage')
 }
 
 class PackSegmentKeyWrapReader implements SegmentKeyWrapReader {

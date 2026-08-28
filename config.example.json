@@ -1,5 +1,8 @@
 {
-  "hostname": "biset.md",
-  "mail_url": "https://mail.biset.md",
-  "ap_url": "https://ap.biset.md"
+  "apexDomain": "biset.md",
+  "anchorBaseUrl": "https://biset.md",
+  "anchorOidcClientId": "biset-client",
+  "coreBaseUrl": "https://biset.md",
+  "mediatorUrls": ["https://mediator.biset.md"],
+  "coordinatorUrl": "https://coordinator.biset.md"
 }

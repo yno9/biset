@@ -179,6 +179,7 @@ export class SqliteVaultDeliveryStore implements VaultDeliveryStore {
 }
 
 function installSchema(database: Database): void {
+  migrateLegacySchema(database)
   database.exec(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS vault_delivery_identities (identity_key TEXT PRIMARY KEY, latest_seq TEXT NOT NULL);
@@ -191,6 +192,66 @@ function installSchema(database: Database): void {
     CREATE TABLE IF NOT EXISTS vault_delivery_acks (identity_key TEXT NOT NULL, seq TEXT NOT NULL, device_id TEXT NOT NULL, PRIMARY KEY (identity_key, seq, device_id));
     CREATE INDEX IF NOT EXISTS vault_delivery_pending ON vault_delivery_entries (identity_key, state, seq);
   `)
+}
+
+/** Migrates the pre-domain-move schema, whose four tables were partitioned
+ * by the mutable DID (`identity_id`), to the stable SCID-derived key. The
+ * whole family moves in one transaction so entries can never become
+ * detached from their identity cursor or recipient/ACK rows. */
+function migrateLegacySchema(database: Database): void {
+  const tables = ['vault_delivery_identities', 'vault_delivery_entries', 'vault_delivery_recipients', 'vault_delivery_acks'] as const
+  const columns = tables.map(table => tableColumns(database, table))
+  if (columns.every(value => value.length === 0)) return
+  const legacy = columns.map(value => value.includes('identity_id') && !value.includes('identity_key'))
+  if (legacy.every(value => !value)) return
+  if (!legacy.every(Boolean)) throw new TypeError('vault delivery SQLite schema is inconsistent')
+
+  type LegacyIdentity = { identity_id: string; latest_seq: string }
+  type LegacyEntry = EntryRow & { identity_id: string }
+  type LegacyDeviceRow = { seq: string; device_id: string }
+  const identities = database.query<LegacyIdentity, []>('SELECT identity_id, latest_seq FROM vault_delivery_identities').all()
+  const seen = new Set<string>()
+
+  database.transaction(() => {
+    database.exec(`
+      CREATE TABLE vault_delivery_identities_v2 (identity_key TEXT PRIMARY KEY, latest_seq TEXT NOT NULL);
+      CREATE TABLE vault_delivery_entries_v2 (
+        identity_key TEXT NOT NULL, identity_id TEXT NOT NULL, seq TEXT NOT NULL, append_id TEXT NOT NULL, payload BLOB NOT NULL, payload_hash BLOB NOT NULL,
+        created_at TEXT NOT NULL, expires_at TEXT NOT NULL, state TEXT NOT NULL, gap_reason TEXT,
+        PRIMARY KEY (identity_key, seq), UNIQUE (identity_key, append_id)
+      );
+      CREATE TABLE vault_delivery_recipients_v2 (identity_key TEXT NOT NULL, seq TEXT NOT NULL, device_id TEXT NOT NULL, PRIMARY KEY (identity_key, seq, device_id));
+      CREATE TABLE vault_delivery_acks_v2 (identity_key TEXT NOT NULL, seq TEXT NOT NULL, device_id TEXT NOT NULL, PRIMARY KEY (identity_key, seq, device_id));
+    `)
+    for (const identity of identities) {
+      const key = stableIdKey(identity.identity_id)
+      if (seen.has(key)) throw new TypeError('legacy vault delivery rows collide after stable identity normalization')
+      seen.add(key)
+      database.query('INSERT INTO vault_delivery_identities_v2 VALUES (?, ?)').run(key, identity.latest_seq)
+      const entries = database.query<LegacyEntry, [string]>('SELECT * FROM vault_delivery_entries WHERE identity_id = ?').all(identity.identity_id)
+      for (const entry of entries) {
+        database.query('INSERT INTO vault_delivery_entries_v2 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(key, entry.identity_id, entry.seq, entry.append_id, entry.payload, entry.payload_hash, entry.created_at, entry.expires_at, entry.state, entry.gap_reason)
+      }
+      const recipients = database.query<LegacyDeviceRow, [string]>('SELECT seq, device_id FROM vault_delivery_recipients WHERE identity_id = ?').all(identity.identity_id)
+      for (const row of recipients) database.query('INSERT INTO vault_delivery_recipients_v2 VALUES (?, ?, ?)').run(key, row.seq, row.device_id)
+      const acknowledgements = database.query<LegacyDeviceRow, [string]>('SELECT seq, device_id FROM vault_delivery_acks WHERE identity_id = ?').all(identity.identity_id)
+      for (const row of acknowledgements) database.query('INSERT INTO vault_delivery_acks_v2 VALUES (?, ?, ?)').run(key, row.seq, row.device_id)
+    }
+    database.exec(`
+      DROP TABLE vault_delivery_acks;
+      DROP TABLE vault_delivery_recipients;
+      DROP TABLE vault_delivery_entries;
+      DROP TABLE vault_delivery_identities;
+      ALTER TABLE vault_delivery_identities_v2 RENAME TO vault_delivery_identities;
+      ALTER TABLE vault_delivery_entries_v2 RENAME TO vault_delivery_entries;
+      ALTER TABLE vault_delivery_recipients_v2 RENAME TO vault_delivery_recipients;
+      ALTER TABLE vault_delivery_acks_v2 RENAME TO vault_delivery_acks;
+    `)
+  })()
+}
+
+function tableColumns(database: Database, table: string): string[] {
+  return database.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all().map(column => column.name)
 }
 
 function item(row: EntryRow): VaultDeliveryItemV1 {

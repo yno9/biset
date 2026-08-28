@@ -2,14 +2,18 @@ import type { AccountSession } from './local-jmap/transport.ts'
 import { IndexedDbIdentityRecordStore } from './identity/record-store.ts'
 import {
   buildActorSequencer,
+  buildLocalJmapProjectionRebuild,
   buildLocalJmapReadModel,
   buildMailSubmitter,
   buildRestoreTransferVerifier,
   buildVaultCryptoBoundary,
+  buildVaultDeliveryProjector,
   enableDidComm,
   fromHex,
   mailFromForIdentity,
   maintainSelfGroup,
+  migrateLocalSegmentKeysToStorageRoot,
+  repairCurrentLocalSegmentKeyWraps,
 } from './identity/bootstrap.ts'
 import { IndexedDbMlsSelfGroupStore } from './mls/store.ts'
 import { IndexedDbMlsKeyPackageStore } from './mls/keypackage-store.ts'
@@ -37,10 +41,10 @@ import { didCommThreadId } from './didcomm/basicmessage.ts'
 import { registerWithMediator, startMediatorPolling, type MediatorPollHandle } from './didcomm/mediator-sync.ts'
 import type { DidCommSender } from './didcomm/mediator-transport.ts'
 import type { DeliveredMessage } from './didcomm/mediator-pickup.ts'
-import { ingestIngress } from './vault/ingress-ingest.ts'
+import { ingestTransportIngress } from './vault/ingress-ingest.ts'
 import { flushVaultDeliveryOutbox } from './vault/delivery-outbox.ts'
 import type { IngressEnvelopeV1 } from './protocol/ingress.ts'
-import { sha256Bytes } from './protocol/canonical.ts'
+import { canonicalHash, equalBytes, sha256Bytes } from './protocol/canonical.ts'
 import { fetchRouting, putRouting, setRoutingName } from './didcomm/webvh-routing.ts'
 import { activatePreRotation, deactivatePreRotation, rotateToPreRotatedKey } from './identity/webvh/prerotation.ts'
 import { moveWebvhIdentity } from './identity/webvh/move.ts'
@@ -64,10 +68,27 @@ import type { ContactKeyV1 } from './vault/contact-key.ts'
 import { decodePeerDid2, generatePeerIdentity, publicKeyOf } from './didcomm/peer.ts'
 import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT, relationshipBodyOf, relationshipMediatorService } from './didcomm/relationship.ts'
 import type { DidCommPlaintext } from './didcomm/message.ts'
-import { didOfKid } from './protocol/ids.ts'
+import { deliverySeq, didOfKid } from './protocol/ids.ts'
+import { IndexedDbBisetLoginWalletCredentialStore } from './oid4vp/wallet-store.ts'
+import { BisetOid4vpWallet, discoverTrustedAnchorOid4vpIssuer } from './oid4vp/wallet.ts'
+import { AnchorOidcPkceClient } from './oidc/client.ts'
+import { VaultCoordinatorTransport } from './vault/coordinator-transport.ts'
+import { flushCoordinatorDeliveryOutbox, flushCoordinatorStreamOutbox, synchronizeCoordinatorDelivery, synchronizeCoordinatorStream } from './vault/coordinator-sync.ts'
+import { ingestVaultDelivery } from './vault/delivery-ingest.ts'
+import { advanceVaultCoordinatorGroup, createAndProvisionVaultCoordinator } from './vault/coordinator-lifecycle.ts'
+import type { LocalVaultCoordinatorBindingV1 } from './vault/store.ts'
+import { createVaultMlsJoinCandidate, joinVaultMlsFromWelcome, prepareVaultMlsAdd, restoreVaultMlsJoinCandidate } from './mls/vault-group.ts'
+import { vaultMlsKeyPackageSigningBytes, vaultMlsMemberRequestSigningBytes, vaultMlsTransitionSigningBytes } from './protocol/vault-mls-ds.ts'
+import { vaultCoordinatorCheckpointSigningBytes, vaultCoordinatorPullSigningBytes } from './protocol/coordinator.ts'
+import { createRecoveryArchiveSnapshot } from './vault/recovery-archive-export.ts'
+import { createCoordinatorCheckpoint, createPortableCoordinatorCheckpoint, deriveCoordinatorRecoveryKek, openCoordinatorCheckpoint, openPortableCoordinatorCheckpoint } from './vault/coordinator-checkpoint.ts'
+import { rewrapRecoveryArchiveForCurrentEpoch } from './vault/recovery-archive-rewrap.ts'
+import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from './vault/storage-root.ts'
 
 let pollTimer: ReturnType<typeof setInterval> | undefined
+let coordinatorPollTimer: ReturnType<typeof setInterval> | undefined
 let mediatorPollHandles: MediatorPollHandle[] = []
+let autoConnectCoordinator: (() => Promise<void>) | undefined
 
 /**
  * New-client bootstrap. The only branch this makes is "does this device
@@ -97,18 +118,33 @@ let mediatorPollHandles: MediatorPollHandle[] = []
 // account-create.ts, for the identical reason bootClient does: importing it
 // from account-create.ts would close the same kind of cycle (account-page.ts
 // already imports FROM account-create.ts for the inline-mount helpers).
-setOnIdentityCreated(async () => {
-  await bootClient()
+setOnIdentityCreated(async (reason, options) => {
+  await bootClient({ coordinatorLoginPopup: options?.coordinatorPopup })
   showAccountPage()
+  if (reason === 'restored' && autoConnectCoordinator) {
+    showSysMsg('Restoring encrypted Vault from Coordinator…')
+    try {
+      await autoConnectCoordinator()
+      showSysMsg('Coordinator Vault restored')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn('[coordinator/automatic-restore]', message)
+      showSysMsg(`Vault restored; Coordinator connection failed: ${message}`)
+    }
+  } else {
+    try { options?.coordinatorPopup?.close() } catch {}
+  }
 })
 
-export async function bootClient(): Promise<void> {
+export async function bootClient(options: { coordinatorLoginPopup?: Window } = {}): Promise<void> {
+  autoConnectCoordinator = undefined
   // Cleared unconditionally, before any branch -- logout's own re-entry into
   // bootClient() lands on the zero-identity branch below, which returns
   // before the has-identity branch's own clearInterval would ever run,
   // leaving the OLD interval alive and polling a vault store logout just
   // closed. A re-registration below (has-identity branch) replaces this.
   if (pollTimer !== undefined) { clearInterval(pollTimer); pollTimer = undefined }
+  if (coordinatorPollTimer !== undefined) { clearInterval(coordinatorPollTimer); coordinatorPollTimer = undefined }
   // Same reasoning as pollTimer just above: a re-entry into bootClient()
   // (logout, most notably) must not leave a PRIOR identity's mediator polls
   // running against the new session's own vault/readModel.
@@ -127,6 +163,7 @@ export async function bootClient(): Promise<void> {
   const selfGroupStore = new IndexedDbMlsSelfGroupStore()
   const keyStore = new IndexedDbMlsKeyPackageStore()
   const vaultStore = await IndexedDbVaultStore.open()
+  const loginWalletStore = new IndexedDbBisetLoginWalletCredentialStore()
   // did:webvh domain move (identity/webvh/adopt-move.ts) -- catches this
   // device up on ANY identity that moved to a new domain while a SIBLING
   // device performed the move and this one wasn't looking, before anything
@@ -140,6 +177,11 @@ export async function bootClient(): Promise<void> {
       return record
     }),
   ))
+  for (let index = 0; index < storedRecords.length; index += 1) {
+    const before = storedRecords[index]!
+    const after = records[index]!
+    if (before.did !== after.did) await loginWalletStore.rekeyIdentity(before.did, after.did).catch(error => console.warn('[OID4VP wallet rekey]', error))
+  }
   // Single-account slice: the vault UI reads/writes the first local
   // identity's vault. maintainSelfGroup below still runs for every identity
   // on this device, so a second one doesn't silently drift out of sync just
@@ -149,8 +191,83 @@ export async function bootClient(): Promise<void> {
   // syncMailIngress) has to see the new didCommKid/didCommX25519PrivateKey
   // without needing a page reload.
   let identity = records[0]!
-  const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did)
-  const { apexDomain, coreBaseUrl, mediatorUrls } = readBisetConfig()
+  const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did, identity.masterSeed)
+  const { apexDomain, anchorBaseUrl, anchorOidcClientId, coreBaseUrl, mediatorUrls, coordinatorUrl } = readBisetConfig()
+  // Catch up MLS and repair every local SegmentKey wrap before any inbox,
+  // credential, or relationship reader attempts decryption. Running this
+  // near the end of boot used to render an empty inbox first; if a segment
+  // had skipped more than one epoch, the transition-only self-grant could
+  // not repair it at all on later reloads.
+  if (coreBaseUrl) {
+    for (const record of records) {
+      await maintainSelfGroup(selfGroupStore, keyStore, record, { coreBaseUrl, wraps: vaultStore, segments: vaultStore }).catch(e => {
+        console.warn(`[maintainSelfGroup] ${record.did}:`, e instanceof Error ? e.message : e)
+      })
+    }
+  }
+  for (const record of records) {
+    await repairCurrentLocalSegmentKeyWraps(selfGroupStore, vaultStore, vaultStore, record).catch(e => {
+      console.warn(`[repairCurrentLocalSegmentKeyWraps] ${record.did}:`, e instanceof Error ? e.message : e)
+    })
+  }
+  for (const record of records) {
+    await migrateLocalSegmentKeysToStorageRoot(vaultStore, vaultStore, record, selfGroupStore).catch(e => {
+      console.warn(`[vault-storage/migrate] ${record.did}:`, e instanceof Error ? e.message : e)
+    })
+  }
+  let coordinatorOidc: AnchorOidcPkceClient | undefined
+  let coordinatorOidcInitialization: Promise<AnchorOidcPkceClient> | undefined
+  let connectCoordinator: (() => Promise<void>) | undefined
+  let createCoordinatorInvitation: (() => Promise<{ invitation: string; expiresAt: string }>) | undefined
+  let joinCoordinatorInvitation: ((invitation: string) => Promise<void>) | undefined
+  let approveCoordinatorDevice: (() => Promise<void>) | undefined
+  let coordinatorBindingActive = false
+  let flushCoordinatorOutbox: (() => Promise<{ appendedEntryIds: string[]; failedEntryId?: string; failureReason?: string }>) | undefined
+  const coordinatorConfigured = !!(anchorBaseUrl && anchorOidcClientId && coordinatorUrl && identity.deviceKid)
+  const ensureCoordinatorOidc = async (): Promise<AnchorOidcPkceClient> => {
+    if (coordinatorOidc) return coordinatorOidc
+    if (!coordinatorConfigured) throw new Error('Coordinator login is not configured')
+    coordinatorOidcInitialization ??= (async () => {
+      const trust = await discoverTrustedAnchorOid4vpIssuer(anchorBaseUrl)
+      const wallet = new BisetOid4vpWallet({ identityId: identity.did, trust, store: loginWalletStore })
+      if (!(await wallet.current())) {
+        await wallet.enroll({
+          did: identity.did,
+          authenticationVerificationMethod: `${identity.did}#key-1`,
+          authenticationPrivateKey: fromHex(identity.rootPrivateKey),
+        })
+      }
+      return new AnchorOidcPkceClient({
+        issuer: anchorBaseUrl,
+        clientId: anchorOidcClientId,
+        audience: coordinatorUrl,
+        allowedScopes: ['vault.create', 'vault.group.install', 'vault.append', 'vault.pull', 'vault.ack'],
+        wallet,
+        openPopup: (url, target, features) => {
+          const reserved = options.coordinatorLoginPopup
+          options.coordinatorLoginPopup = undefined
+          if (reserved && !reserved.closed) return reserved
+          return window.open(url, target, features)
+        },
+      })
+    })()
+    try {
+      coordinatorOidc = await coordinatorOidcInitialization
+      return coordinatorOidc
+    } finally {
+      coordinatorOidcInitialization = undefined
+    }
+  }
+  if (coordinatorConfigured) {
+    try {
+      await ensureCoordinatorOidc()
+    } catch (error) {
+      console.warn(`[OID4VP enrollment] ${identity.did}:`, error instanceof Error ? error.message : error)
+    }
+  }
+  const initialCoordinatorBinding = await vaultStore.readCoordinatorBinding(identity.did).catch(() => undefined)
+  const initialCoordinatorPendingJoin = initialCoordinatorBinding ? undefined : await vaultStore.readCoordinatorPendingJoin(identity.did).catch(() => undefined)
+  void initialCoordinatorPendingJoin
   // Signs with the ROOT private key (the same key routing.json's own
   // keyAgreement/alsoKnownAs entries are already signed with, webvh-routing.ts's
   // DataIntegrityProof) -- account-page.ts never sees key material itself,
@@ -218,6 +335,7 @@ export async function bootClient(): Promise<void> {
   // submit the migration commit through, same as revokeDevice's own MLS
   // step.
   const moveIdentity = async (newDomain: string): Promise<string> => {
+    const previousDid = identity.did
     const rootPrivateKey = fromHex(identity.rootPrivateKey)
     const rootPublicKey = fromHex(identity.rootPublicKey)
     let mlsTransport: CoreMlsDeliveryTransport | undefined
@@ -233,6 +351,7 @@ export async function bootClient(): Promise<void> {
       recordStore, record: identity, vaultStore, selfGroupStore, keyPackageStore: keyStore,
       mlsTransport, mlsSign, newDomain, signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey,
     })
+    await loginWalletStore.rekeyIdentity(previousDid, moved.did)
     identity = moved
     // A full re-render, same as logout()'s own re-entry into bootClient()
     // just above -- account-page.ts's own config (did/deviceKid/masterSeed)
@@ -249,6 +368,10 @@ export async function bootClient(): Promise<void> {
     onLogout: logout, onEditName: editName, onRevokeDevice: revokeDevice,
     onActivateKeyRotation: activateKeyRotation, onRotateKeyRotation: rotateKeyRotation, onDeactivateKeyRotation: deactivateKeyRotation,
     onMoveIdentity: moveIdentity,
+    onConnectCoordinator: coordinatorConfigured ? async () => {
+      if (!connectCoordinator) throw new Error('Coordinator is still initializing')
+      await connectCoordinator()
+    } : undefined,
     showMessage: showSysMsg,
   })
 
@@ -281,7 +404,8 @@ export async function bootClient(): Promise<void> {
     try { selfGroupStore.close() } catch { /* best-effort */ }
     try { keyStore.close() } catch { /* best-effort */ }
     try { recordStore.close() } catch { /* best-effort */ }
-    const databaseNames = ['biset-identity', 'biset-mls-keypackages', 'biset-mls-self-group', 'biset-vault-core']
+    try { loginWalletStore.close() } catch { /* best-effort */ }
+    const databaseNames = ['biset-identity', 'biset-mls-keypackages', 'biset-mls-self-group', 'biset-vault-core', 'biset-wallet']
     await Promise.all(databaseNames.map(name => new Promise<void>(resolve => {
       const request = indexedDB.deleteDatabase(name)
       request.onsuccess = () => resolve()
@@ -293,6 +417,7 @@ export async function bootClient(): Promise<void> {
   }
 
   let syncMailIngress: (() => Promise<void>) | undefined
+  let flushDidCommTransportOutbox: (() => Promise<void>) | undefined
   // Reply-send needs the same signing/MLS boundary maintainSelfGroup already
   // requires a deviceKid for -- with neither a core to submit through nor a
   // device identity to sign with, the UI stays read-only, matching how this
@@ -306,6 +431,20 @@ export async function bootClient(): Promise<void> {
     // survive the reassignment even though the value can't actually change.
     const deviceKid = identity.deviceKid
     const boundary = buildVaultCryptoBoundary(vaultStore, vaultStore, selfGroupStore, identity)
+    const flushReplicationOutbox = async () => {
+      if (coordinatorBindingActive) {
+        if (coordinatorOidc?.hasFreshAccessToken() && flushCoordinatorOutbox) {
+          const result = await flushCoordinatorOutbox()
+          if (result.failedEntryId) console.warn(`[coordinator/outbox] ${result.failedEntryId}: ${result.failureReason ?? 'append failed'}`)
+          return result
+        }
+        // Once an opaque Coordinator binding exists, never leak/fallback to
+        // the legacy identity-keyed Core route. Retain the durable outbox
+        // until the user renews the short-lived token.
+        return { appendedEntryIds: [] }
+      }
+      return flushVaultDeliveryOutbox(vaultStore, new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl }), boundary.signer, identity.did)
+    }
     const sequencer = await buildActorSequencer(vaultStore, identity.did, deviceKid)
     const mutationSink = new VaultBackedLocalJmapMutationSink({
       accountId: `biset:${identity.did}`,
@@ -466,7 +605,7 @@ export async function bootClient(): Promise<void> {
     // supported: 1:1 chat only (confirmed with the user, 2026-08-25), and
     // mixing a DID with a real email address in one send has no sane
     // meaning either.
-    const sendDidCommChat = async (toDid: string, input: ReplySendInput): Promise<void> => {
+    const ensureDidCommContact = async (toDid: string): Promise<ContactKeyV1> => {
       if (!identity.didCommKid || !identity.didCommX25519PrivateKey) {
         throw new Error('Enable DIDComm in account settings before messaging a DID')
       }
@@ -493,15 +632,76 @@ export async function bootClient(): Promise<void> {
           new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`relationship handshake with ${toDid} timed out`)), 60_000)),
         ])
       }
-      const result = await sendRelationshipMessage(contactKey, input.body, input.subject)
-      if (!result.ok) throw new Error(result.error)
+      return contactKey
+    }
+
+    let flushingDidComm = false
+    flushDidCommTransportOutbox = async (): Promise<void> => {
+      if (flushingDidComm) return
+      flushingDidComm = true
+      try {
+        const queued = await vaultStore.readDidCommOutbox(identity.did)
+        for (const item of queued) {
+          const snapshot = await readModel.snapshot()
+          const email = snapshot.emails.find(candidate => candidate.id === item.emailId)
+          if (!email) {
+            console.warn(`[didcomm/outbox] ${item.emailId}: local message is missing`)
+            continue
+          }
+          // A prior attempt delivered and committed the sent transition but
+          // crashed before deleting the transport row. Do not send it again.
+          if (email.mailboxIds.sent === true && email.mailboxIds.outbox !== true) {
+            await vaultStore.removeDidCommOutbox(identity.did, item.outboundEventId)
+            continue
+          }
+          if (!email.blobId) {
+            console.warn(`[didcomm/outbox] ${item.emailId}: local message has no body object`)
+            continue
+          }
+          await vaultStore.noteDidCommOutboxAttempt(identity.did, item.outboundEventId, new Date().toISOString())
+          try {
+            const contactKey = await ensureDidCommContact(item.toDid)
+            const content = new TextDecoder().decode(await readModel.download(email.blobId))
+            const result = await sendRelationshipMessage(contactKey, content, email.subject, undefined, {
+              id: item.messageId,
+              sentAt: email.sentAt ?? item.createdAt,
+            })
+            if (!result.ok) throw new Error(result.error)
+            const latest = await readModel.snapshot()
+            await mutationSink.commitIntents([{
+              kind: 'transport.result',
+              targetIds: [item.emailId],
+              payload: { emailId: item.emailId, status: 'accepted', occurredAt: new Date().toISOString(), transport: 'didcomm' },
+            }, {
+              kind: 'mailbox.set',
+              targetIds: [item.emailId],
+              payload: { emailId: item.emailId, mailboxIds: { sent: true } },
+            }], latest)
+            await vaultStore.removeDidCommOutbox(identity.did, item.outboundEventId)
+            await flushReplicationOutbox()
+          } catch (error) {
+            console.warn(`[didcomm/outbox] ${item.emailId}:`, error instanceof Error ? error.message : error)
+            break
+          }
+        }
+      } finally {
+        flushingDidComm = false
+      }
+    }
+
+    const sendDidCommChat = async (toDid: string, input: ReplySendInput): Promise<void> => {
+      if (!identity.didCommKid || !identity.didCommX25519PrivateKey) {
+        throw new Error('Enable DIDComm in account settings before messaging a DID')
+      }
       const now = new Date().toISOString()
+      const emailId = crypto.randomUUID()
+      const messageId = crypto.randomUUID()
       const snapshot = await readModel.snapshot()
       await mutationSink.commitMailMessage({
         email: {
-          id: crypto.randomUUID(),
+          id: emailId,
           threadId: didCommThreadId(identity.did, toDid),
-          mailboxIds: { sent: true },
+          mailboxIds: { outbox: true },
           keywords: { '$seen': true },
           receivedAt: now,
           sentAt: now,
@@ -510,7 +710,10 @@ export async function bootClient(): Promise<void> {
           ...(input.subject ? { subject: input.subject } : {}),
         },
         rawRfc5322: new TextEncoder().encode(input.body),
+        didComm: { messageId, toDid },
       }, snapshot)
+      await refreshInbox(readModel)
+      await flushDidCommTransportOutbox?.()
       await refreshInbox(readModel)
     }
 
@@ -658,6 +861,7 @@ export async function bootClient(): Promise<void> {
         store: vaultStore,
         ingressTransport: new CoreIngressTransport({ baseUrl: coreBaseUrl }),
         deliveryTransport: new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl }),
+        flushDelivery: flushReplicationOutbox,
         signer: boundary.signer,
         projector,
         committer: vaultStore,
@@ -672,8 +876,9 @@ export async function bootClient(): Promise<void> {
     // delivered message is bridged into the SAME DidCommIngressProjector
     // (built fresh per call, same as syncMailIngress -- didCommKid/
     // didCommX25519PrivateKey can't change mid-session today, but nothing
-    // here assumes that) via ingestIngress, so it lands in the vault exactly
-    // like a core-delivered one; the resulting vault-delivery pack still
+    // here assumes that) via the transport-neutral vault commit path, so it
+    // lands in the vault exactly like a core-delivered one without creating
+    // a core-specific ingress ACK; the resulting vault-delivery pack still
     // syncs to sibling devices through biset-core (Phase 1's own point:
     // ONLY DIDComm delivery moved off it, not this identity's own
     // multi-device sync).
@@ -687,7 +892,7 @@ export async function bootClient(): Promise<void> {
         const payload = new TextEncoder().encode(JSON.stringify(msg.rawJwe))
         const envelope: IngressEnvelopeV1 = {
           version: 1,
-          ingressId: crypto.randomUUID(),
+          ingressId: canonicalHash('biset/didcomm-mediator-ingress/v1', { mediatorUrl, recipientKid, queueId: msg.ackId }),
           protocol: 'didcomm',
           recipientIdentityId: identity.did,
           recipientDeviceSnapshot: [identity.deviceKid!],
@@ -698,8 +903,8 @@ export async function bootClient(): Promise<void> {
           protectedPayload: payload,
           protectedPayloadHash: sha256Bytes(payload),
         }
-        await ingestIngress(envelope, boundary.signer, didCommProjector, vaultStore)
-        await flushVaultDeliveryOutbox(vaultStore, new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl }), boundary.signer, identity.did)
+        await ingestTransportIngress(envelope, didCommProjector, vaultStore)
+        await flushReplicationOutbox()
         await handleRelationshipMessage(msg, recipientKid, mediatorUrl)
         await refreshInbox(readModel)
       }
@@ -734,7 +939,7 @@ export async function bootClient(): Promise<void> {
             }
             await contactKeySink.store(next)
             contact = next
-            await flushVaultDeliveryOutbox(vaultStore, new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl }), boundary.signer, identity.did)
+            await flushReplicationOutbox()
             startRelationshipPoll(peer.xKid, peer.xPriv, peer.did, route.url)
           }
           const accepted = await sendRelationshipAccept(contact)
@@ -762,7 +967,7 @@ export async function bootClient(): Promise<void> {
           createdAt: new Date().toISOString(),
         }
         await contactKeySink.store(contact)
-        await flushVaultDeliveryOutbox(vaultStore, new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl }), boundary.signer, identity.did)
+        await flushReplicationOutbox()
         pendingByOwnKid.delete(recipientKid)
         pendingByCounterparty.delete(pending.pending.counterpartyDid)
         pending.resolve(contact)
@@ -781,7 +986,6 @@ export async function bootClient(): Promise<void> {
       }
 
       for (const url of mediatorUrls) {
-        registerWithMediator(url, own).catch(e => console.warn(`[mediator] registration with ${url} failed (will retry next boot):`, e instanceof Error ? e.message : e))
         mediatorPollHandles.push(startMediatorPolling(url, own, resolveAnyDidCommSenderKey, msg => onMessage(msg, didCommKid, url)))
       }
       const knownContactKeys = await contactKeyReader.readAll().catch(e => {
@@ -797,10 +1001,11 @@ export async function bootClient(): Promise<void> {
         if (!contact) continue
         const route = relationshipMediatorService(contact.ownRelationshipKid)
         const ownDid = contact.ownRelationshipKid.split('#', 1)[0]!
-        registerWithMediator(route.url, { did: ownDid, xKid: contact.ownRelationshipKid, xPriv: contact.ownX25519PrivateKey })
-          .catch(e => console.warn(`[relationship] registration with ${route.url} failed:`, e instanceof Error ? e.message : e))
         startRelationshipPoll(contact.ownRelationshipKid, contact.ownX25519PrivateKey, ownDid, route.url)
       }
+      await flushDidCommTransportOutbox().catch(e => {
+        console.warn('[didcomm/outbox/boot]', e instanceof Error ? e.message : e)
+      })
     }
   }
 
@@ -820,18 +1025,338 @@ export async function bootClient(): Promise<void> {
   // only showed up "a long time later" -- actually whenever something else
   // happened to trigger a reboot, not because of any real delay. (Any prior
   // interval was already cleared at the top of this function.)
-  if (syncMailIngress) {
+  if (syncMailIngress || flushDidCommTransportOutbox) {
     const sync = syncMailIngress
+    const flushDidComm = flushDidCommTransportOutbox
     pollTimer = setInterval(() => {
-      sync().catch(e => console.warn('[syncMailIngress/poll]', e instanceof Error ? e.message : e))
+      sync?.().catch(e => console.warn('[syncMailIngress/poll]', e instanceof Error ? e.message : e))
+      flushDidComm?.().then(() => refreshInbox(readModel)).catch(e => console.warn('[didcomm/outbox/poll]', e instanceof Error ? e.message : e))
     }, 10_000)
   }
 
-  if (!coreBaseUrl) return
-  for (const record of records) {
-    await maintainSelfGroup(selfGroupStore, keyStore, record, { coreBaseUrl, wraps: vaultStore, segments: vaultStore }).catch(e => {
-      console.warn(`[maintainSelfGroup] ${record.did}:`, e instanceof Error ? e.message : e)
-    })
+  if (coordinatorConfigured) {
+    const boundary = buildVaultCryptoBoundary(vaultStore, vaultStore, selfGroupStore, identity)
+    const projector = buildVaultDeliveryProjector(selfGroupStore, identity.did, () => readModel.snapshot(), identity.masterSeed)
+    let synchronizeCoordinator: (() => Promise<void>) | undefined
+    let activeCoordinatorBinding = initialCoordinatorBinding
+    type CoordinatorCheckpointState = 'missing' | 'current' | 'restored'
+    const restoreLatestCoordinatorCheckpoint = async (
+      vaultId: import('./protocol/ids.ts').VaultId,
+      route: string,
+      transport: VaultCoordinatorTransport,
+      options: { forceRewrap?: boolean } = {},
+    ): Promise<CoordinatorCheckpointState> => {
+      const checkpoint = await transport.pullCheckpoint({ version: 1, vaultId })
+      const localCursor = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)
+      if (!checkpoint) return 'missing'
+      if (!options.forceRewrap && BigInt(checkpoint.coveredSeq) <= BigInt(localCursor)) return 'current'
+      if (!identity.masterSeed) throw new Error('Coordinator checkpoint restore requires the identity master seed')
+      if (!equalBytes(sha256Bytes(checkpoint.payload), checkpoint.payloadHash)) throw new Error('Coordinator checkpoint payload hash is invalid')
+      const recoveryKek = deriveCoordinatorRecoveryKek(fromHex(identity.masterSeed), vaultId, route)
+      let snapshot: Awaited<ReturnType<typeof openCoordinatorCheckpoint>> | undefined
+      try {
+        snapshot = await openCoordinatorCheckpoint(recoveryKek, checkpoint.payload, { vaultId, coveredSeq: checkpoint.coveredSeq, coordinatorUrl: route })
+        if (snapshot.identityId !== identity.did) throw new Error('Coordinator checkpoint belongs to another identity')
+        const records = await rewrapRecoveryArchiveForCurrentEpoch(snapshot, boundary.epochs, boundary.signer, new Date().toISOString())
+        await vaultStore.commitRecoveryArchive({
+          identityId: identity.did,
+          events: records.events.map(event => ({ ...event, identityId: identity.did })),
+          objects: records.objects.map(object => ({ ...object, identityId: identity.did })),
+          keyWraps: records.keyWraps,
+        })
+        for (const segment of snapshot.segmentKeys) await vaultStore.sealAndActivateSegment({ identityId: identity.did, segmentId: segment.segmentId, segmentKey: segment.key, selfGroupId: VAULT_STORAGE_GROUP_ID, epoch: VAULT_STORAGE_EPOCH, sealed: false, createdAt: snapshot.createdAt })
+        await migrateLocalSegmentKeysToStorageRoot(vaultStore, vaultStore, identity, selfGroupStore)
+        const projection = await buildLocalJmapProjectionRebuild(vaultStore, vaultStore, vaultStore, selfGroupStore, identity.did, identity.masterSeed)()
+        await vaultStore.advanceDeliveryCursor(identity.did, identity.deviceKid!, checkpoint.coveredSeq, projection.state, new Date().toISOString())
+        await refreshInbox(readModel)
+        return 'restored'
+      } finally {
+        recoveryKek.fill(0)
+        if (snapshot) for (const segment of snapshot.segmentKeys) segment.key.fill(0)
+      }
+    }
+    const needsCheckpointRewrap = async (): Promise<boolean> => {
+      const current = await boundary.epochs.currentVaultEpoch(identity.did)
+      const objects = await vaultStore.readVaultObjects(identity.did)
+      for (const segmentId of new Set(objects.map(object => object.segmentId))) {
+        if (!(await vaultStore.readSegmentKeyWrap(identity.did, segmentId, current.epoch))) return true
+      }
+      return false
+    }
+    const configureCoordinator = (binding: LocalVaultCoordinatorBindingV1, oidc: AnchorOidcPkceClient): void => {
+      if (new URL(binding.coordinatorUrl).origin !== new URL(coordinatorUrl).origin) throw new Error('local binding does not match configured Coordinator origin')
+      const transport = new VaultCoordinatorTransport({ baseUrl: binding.coordinatorUrl, accessTokens: oidc })
+      const memberSigner = {
+        memberId: binding.localMemberId,
+        async sign(bytes: Uint8Array) { return ed25519.sign(bytes, binding.memberSignaturePrivateKey) },
+      }
+      activeCoordinatorBinding = binding
+      coordinatorBindingActive = true
+      flushCoordinatorOutbox = () => flushCoordinatorDeliveryOutbox(
+        vaultStore, transport, memberSigner, identity.did,
+        binding.groupView.vaultId, binding.groupView.groupEpoch,
+      )
+      synchronizeCoordinator = async () => {
+        // Sequence equality proves delivery completeness, not decryptability.
+        // Older local Vaults can have every object and cursor while lacking
+        // a wrap for the current self-group epoch. In that case re-apply the
+        // complete checkpoint solely to recover SegmentKeys and mint current
+        // wraps; commitRecoveryArchive remains additive/idempotent.
+        const checkpointState = await restoreLatestCoordinatorCheckpoint(
+          binding.groupView.vaultId,
+          binding.coordinatorUrl,
+          transport,
+          { forceRewrap: await needsCheckpointRewrap() },
+        )
+        const flushed = await flushCoordinatorOutbox!()
+        if (flushed.failedEntryId) throw new Error(`Coordinator outbox append failed: ${flushed.failureReason ?? flushed.failedEntryId}`)
+        const result = await synchronizeCoordinatorDelivery(
+          vaultStore, transport,
+          { ingest: item => ingestVaultDelivery(item, boundary.signer, projector, vaultStore) },
+          memberSigner, identity.did, identity.deviceKid!, binding.groupView.vaultId,
+        )
+        if (result.kind === 'restoreRequired') showSysMsg('Coordinator history gap: restore is required')
+        if (result.kind === 'synced') {
+          if (result.ingestedSequences.length > 0) await refreshInbox(readModel)
+          // Existing deployments may already have acknowledged delivery rows
+          // whose bodies predate durable checkpoints. Seed the first complete
+          // checkpoint even when this client had no new mutation to flush.
+          if (!result.pendingAckSequence && (checkpointState === 'missing' || result.ingestedSequences.length > 0 || flushed.appendedEntryIds.length > 0)) {
+            if (!identity.masterSeed) throw new Error('Coordinator recovery checkpoint requires the identity master seed')
+            const coveredSeq = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)
+            const createdAt = new Date().toISOString()
+            const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, identity.did, createdAt)
+            const recoveryKek = deriveCoordinatorRecoveryKek(fromHex(identity.masterSeed), binding.groupView.vaultId, binding.coordinatorUrl)
+            try {
+              const payload = await createCoordinatorCheckpoint(recoveryKek, snapshot, { vaultId: binding.groupView.vaultId, coveredSeq, coordinatorUrl: binding.coordinatorUrl })
+              const unsigned = { version: 1 as const, vaultId: binding.groupView.vaultId, writerMemberId: binding.localMemberId, coveredSeq, payloadHash: sha256Bytes(payload), createdAt }
+              await transport.putCheckpoint({ ...unsigned, payload, signature: ed25519.sign(vaultCoordinatorCheckpointSigningBytes(unsigned), binding.memberSignaturePrivateKey) })
+            } finally {
+              recoveryKek.fill(0)
+              for (const segment of snapshot.segmentKeys) segment.key.fill(0)
+            }
+          }
+        }
+      }
+    }
+    if (initialCoordinatorBinding && coordinatorOidc) configureCoordinator(initialCoordinatorBinding, coordinatorOidc)
+    connectCoordinator = async () => {
+      const oidc = await ensureCoordinatorOidc()
+      await oidc.authorize()
+      let binding = await vaultStore.readCoordinatorBinding(identity.did)
+      if (!binding) {
+        const transport = new VaultCoordinatorTransport({ baseUrl: coordinatorUrl, accessTokens: oidc })
+        const owned = await transport.ownedVaults()
+        if (owned.length > 1) throw new Error('More than one Coordinator Vault belongs to this login')
+        if (owned.length === 1) {
+          if (!joinCoordinatorInvitation) throw new Error('Coordinator join is still initializing')
+          await joinCoordinatorInvitation('')
+          return
+        }
+        binding = await createAndProvisionVaultCoordinator(vaultStore, transport, identity.did, coordinatorUrl)
+        configureCoordinator(binding, oidc)
+        showSysMsg('Coordinator Vault created')
+      } else configureCoordinator(binding, oidc)
+      await synchronizeCoordinator?.()
+    }
+    const signedMemberRequest = async (binding: LocalVaultCoordinatorBindingV1, afterEpoch = binding.groupView.groupEpoch) => {
+      const unsigned = { version: 1 as const, vaultId: binding.groupView.vaultId, memberId: binding.localMemberId, afterEpoch, requestedAt: new Date().toISOString() }
+      return { ...unsigned, signature: ed25519.sign(vaultMlsMemberRequestSigningBytes(unsigned), binding.memberSignaturePrivateKey) }
+    }
+    createCoordinatorInvitation = async () => {
+      const oidc = await ensureCoordinatorOidc()
+      await oidc.authorize()
+      const binding = activeCoordinatorBinding
+      if (!binding) throw new Error('Connect this device to the Coordinator first')
+      const transport = new VaultCoordinatorTransport({ baseUrl: binding.coordinatorUrl, accessTokens: oidc })
+      return transport.createMlsInvitation(await signedMemberRequest(binding))
+    }
+    approveCoordinatorDevice = async () => {
+      const oidc = await ensureCoordinatorOidc()
+      await oidc.authorize()
+      const binding = activeCoordinatorBinding
+      if (!binding) throw new Error('This device has no Coordinator Vault')
+      const transport = new VaultCoordinatorTransport({ baseUrl: binding.coordinatorUrl, accessTokens: oidc })
+      const packages = await transport.pullMlsKeyPackages(await signedMemberRequest(binding))
+      if (packages.length === 0) return
+      const pullUnsigned = { version: 1 as const, vaultId: binding.groupView.vaultId, recipientMemberId: binding.localMemberId, after: '0', requestedAt: new Date().toISOString() }
+      const head = await transport.pull({ ...pullUnsigned, signature: ed25519.sign(vaultCoordinatorPullSigningBytes(pullUnsigned), binding.memberSignaturePrivateKey) })
+      const floor = deliverySeq(BigInt(head.latestSeq) + 1n)
+      const pending = await prepareVaultMlsAdd({ encodedState: binding.vaultMlsState, groupView: binding.groupView, localMemberId: binding.localMemberId, memberSignaturePrivateKey: binding.memberSignaturePrivateKey }, packages[0]!.keyPackage, floor)
+      const transitionUnsigned = { version: 1 as const, groupView: pending.groupView, commit: pending.commit, welcomes: [{ memberId: pending.memberId, payload: pending.welcome }], submittedAt: new Date().toISOString() }
+      const transition = { ...transitionUnsigned, signature: ed25519.sign(vaultMlsTransitionSigningBytes(transitionUnsigned), binding.memberSignaturePrivateKey) }
+      const updated = await advanceVaultCoordinatorGroup(vaultStore, transport, identity.did, {
+        groupView: pending.groupView,
+        transition,
+        vaultMlsState: pending.encodedState,
+        localMemberId: binding.localMemberId,
+        memberSignaturePrivateKey: binding.memberSignaturePrivateKey,
+        updatedAt: new Date().toISOString(),
+      })
+      pending.confirm()
+      configureCoordinator(updated, oidc)
+    }
+    joinCoordinatorInvitation = async invitation => {
+      if (activeCoordinatorBinding) throw new Error('This device already has a Coordinator Vault')
+      const oidc = await ensureCoordinatorOidc()
+      await oidc.authorize()
+      const transport = new VaultCoordinatorTransport({ baseUrl: coordinatorUrl, accessTokens: oidc })
+      let pending = await vaultStore.readCoordinatorPendingJoin(identity.did)
+      if (pending && Date.parse(pending.expiresAt) <= Date.now()) {
+        await vaultStore.clearCoordinatorPendingJoin(identity.did)
+        pending = undefined
+      }
+      const resuming = pending !== undefined
+      if (!pending) {
+        const vaultId = invitation
+          ? (await transport.redeemMlsInvitation({ version: 1, invitation, redeemedAt: new Date().toISOString() })).vaultId
+          : await (async () => {
+            const owned = await transport.ownedVaults()
+            if (owned.length !== 1) throw new Error(owned.length === 0 ? 'No Coordinator Vault exists for this login' : 'More than one Coordinator Vault belongs to this login')
+            return owned[0]!.vaultId
+          })()
+        const candidate = await createVaultMlsJoinCandidate()
+        const now = new Date()
+        pending = {
+          version: 1, identityId: identity.did, coordinatorUrl: coordinatorUrl.replace(/\/$/, ''), vaultId, memberId: candidate.memberId,
+          encodedKeyPackage: candidate.encodedKeyPackage,
+          initPrivateKey: candidate.ownKeyPackage.privatePackage.initPrivateKey,
+          hpkePrivateKey: candidate.ownKeyPackage.privatePackage.hpkePrivateKey,
+          signaturePrivateKey: candidate.ownKeyPackage.privatePackage.signaturePrivateKey,
+          createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + 10 * 60 * 1000).toISOString(),
+        }
+        // Persist before publish: a crash after the server accepts the public
+        // KeyPackage must not lose the only private half that can open Welcome.
+        await vaultStore.writeCoordinatorPendingJoin(pending)
+      }
+      if (new URL(pending.coordinatorUrl).origin !== new URL(coordinatorUrl).origin) throw new Error('pending join does not match configured Coordinator origin')
+      const vaultId = pending.vaultId
+      const candidate = restoreVaultMlsJoinCandidate(pending)
+      // Recovery is authorized by the root-phrase-derived key and OIDC owner,
+      // not by current routing membership. Restore the complete opaque
+      // checkpoint before waiting for another device to install the MLS Add.
+      await restoreLatestCoordinatorCheckpoint(vaultId, coordinatorUrl, transport)
+      const pullWelcome = async () => {
+        const requestUnsigned = { version: 1 as const, vaultId, memberId: candidate.memberId, afterEpoch: '0', requestedAt: new Date().toISOString() }
+        return transport.pullMlsWelcome({ ...requestUnsigned, signature: ed25519.sign(vaultMlsMemberRequestSigningBytes(requestUnsigned), candidate.memberSignaturePrivateKey) })
+      }
+      // A crash may have happened after the Add was accepted. In that case
+      // the member is already active and re-publishing a KeyPackage is
+      // correctly rejected; recover the existing Welcome first.
+      let delivered = resuming ? await pullWelcome().catch(() => null) : null
+      if (!delivered) {
+        const packageUnsigned = { version: 1 as const, vaultId, memberId: candidate.memberId, signaturePublicKey: ed25519.getPublicKey(candidate.memberSignaturePrivateKey), keyPackage: candidate.encodedKeyPackage, publishedAt: pending.createdAt }
+        await transport.publishMlsKeyPackage({ ...packageUnsigned, signature: ed25519.sign(vaultMlsKeyPackageSigningBytes(packageUnsigned), candidate.memberSignaturePrivateKey) })
+      }
+      // Access tokens are intentionally short-lived and getAccessToken never
+      // opens a popup outside a user gesture. Keep this wait inside the fresh
+      // login window; a timed-out attempt can use a newly issued invitation.
+      const deadline = Date.now() + 30_000
+      while (Date.now() < deadline) {
+        try {
+          delivered ??= await pullWelcome()
+          if (delivered) {
+            const joined = await joinVaultMlsFromWelcome(candidate, delivered.welcome, delivered.groupView)
+            const now = new Date().toISOString()
+            const binding: LocalVaultCoordinatorBindingV1 = { version: 1, identityId: identity.did, coordinatorUrl: coordinatorUrl.replace(/\/$/, ''), groupView: delivered.groupView, vaultMlsState: joined.encodedState, localMemberId: candidate.memberId, memberSignaturePrivateKey: joined.memberSignaturePrivateKey, createdAt: now, updatedAt: now }
+            await vaultStore.commitCoordinatorJoin(binding)
+            configureCoordinator(binding, oidc)
+            await synchronizeCoordinator?.()
+            return
+          }
+        } catch (error) {
+          // Before the existing member installs the Add, this candidate is
+          // not active yet and Welcome pull correctly returns 400. Retry.
+          console.debug('[coordinator/join-wait]', error instanceof Error ? error.message : error)
+        }
+        await new Promise(resolve => setTimeout(resolve, 2_000))
+      }
+      throw new Error('Coordinator membership is pending automatic approval')
+    }
+
+    // Coordinator v2 cut-over. Self Group (maintained above through the core
+    // RFC 9420 DS) is now the sole device-membership group. Coordinator only
+    // stores one OIDC-owner-scoped ordered stream and its latest checkpoint.
+    // The v1 lifecycle remains read-only migration code for this release;
+    // none of its invite/approve/join entry points are exposed by the UI.
+    let streamTransport: VaultCoordinatorTransport | undefined
+    let streamVaultId: import('./protocol/ids.ts').VaultId | undefined
+    const synchronizeStream = async (): Promise<void> => {
+      if (!streamTransport || !streamVaultId) return
+      const transport = streamTransport
+      const vaultId = streamVaultId
+      const checkpoint = await transport.pullStreamCheckpoint(vaultId)
+      const checkpointNeedsUpgrade = checkpoint ? (() => { try { return (JSON.parse(new TextDecoder().decode(checkpoint.payload)) as { version?: unknown }).version === 1 } catch { return false } })() : false
+      const localCursor = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)
+      if (checkpoint && BigInt(checkpoint.coveredSeq) > BigInt(localCursor)) {
+        if (!identity.masterSeed) throw new Error('Coordinator checkpoint restore requires the identity master seed')
+        if (!equalBytes(sha256Bytes(checkpoint.payload), checkpoint.payloadHash)) throw new Error('Coordinator checkpoint payload hash is invalid')
+        let snapshot: Awaited<ReturnType<typeof openCoordinatorCheckpoint>> | undefined
+        try {
+          snapshot = await openPortableCoordinatorCheckpoint(fromHex(identity.masterSeed), checkpoint.payload, { vaultId, coveredSeq: checkpoint.coveredSeq, coordinatorUrl })
+          if (snapshot.identityId !== identity.did) throw new Error('Coordinator checkpoint belongs to another identity')
+          const records = await rewrapRecoveryArchiveForCurrentEpoch(snapshot, boundary.epochs, boundary.signer, new Date().toISOString())
+          await vaultStore.commitRecoveryArchive({ identityId: identity.did, events: records.events, objects: records.objects.map(object => ({ ...object, identityId: identity.did })), keyWraps: records.keyWraps })
+          for (const segment of snapshot.segmentKeys) await vaultStore.sealAndActivateSegment({ identityId: identity.did, segmentId: segment.segmentId, segmentKey: segment.key, selfGroupId: VAULT_STORAGE_GROUP_ID, epoch: VAULT_STORAGE_EPOCH, sealed: false, createdAt: snapshot.createdAt })
+          await migrateLocalSegmentKeysToStorageRoot(vaultStore, vaultStore, identity, selfGroupStore)
+          const projection = await buildLocalJmapProjectionRebuild(vaultStore, vaultStore, vaultStore, selfGroupStore, identity.did, identity.masterSeed)()
+          await vaultStore.advanceDeliveryCursor(identity.did, identity.deviceKid!, checkpoint.coveredSeq, projection.state, new Date().toISOString())
+        } finally {
+          if (snapshot) for (const segment of snapshot.segmentKeys) segment.key.fill(0)
+        }
+      }
+
+      const flushed = await flushCoordinatorStreamOutbox(vaultStore, transport, identity.did, vaultId)
+      if (flushed.failedEntryId) throw new Error(`Coordinator stream append failed: ${flushed.failureReason ?? flushed.failedEntryId}`)
+      const synced = await synchronizeCoordinatorStream(vaultStore, transport, { ingest: item => ingestVaultDelivery(item, boundary.signer, projector, vaultStore) }, identity.did, identity.deviceKid!, vaultId)
+      if (synced.ingestedSequences.length > 0) await refreshInbox(readModel)
+
+      // A checkpoint, not device ACKs, is the only server-side compaction
+      // boundary. Any device can replace it after reaching the stream head.
+      const coveredSeq = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)
+      if (coveredSeq === synced.latestSeq && (flushed.appendedEntryIds.length > 0 || !checkpoint || checkpointNeedsUpgrade)) {
+        if (!identity.masterSeed) throw new Error('Coordinator checkpoint requires the identity master seed')
+        const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, identity.did, new Date().toISOString())
+        try {
+          const payload = await createPortableCoordinatorCheckpoint(fromHex(identity.masterSeed), snapshot, { vaultId, coveredSeq })
+          await transport.putStreamCheckpoint({ version: 2, vaultId, coveredSeq, payload, payloadHash: sha256Bytes(payload) })
+        } finally {
+          for (const segment of snapshot.segmentKeys) segment.key.fill(0)
+        }
+      }
+    }
+    const activateCoordinatorStream = async (oidc: AnchorOidcPkceClient): Promise<void> => {
+      streamTransport = new VaultCoordinatorTransport({ baseUrl: coordinatorUrl, accessTokens: oidc })
+      streamVaultId = (await streamTransport.defaultStream()).vaultId
+      coordinatorBindingActive = true
+      flushCoordinatorOutbox = () => flushCoordinatorStreamOutbox(vaultStore, streamTransport!, identity.did, streamVaultId!)
+      await synchronizeStream()
+    }
+    connectCoordinator = async () => {
+      const oidc = await ensureCoordinatorOidc()
+      await oidc.authorize()
+      await activateCoordinatorStream(oidc)
+    }
+    synchronizeCoordinator = synchronizeStream
+    createCoordinatorInvitation = undefined
+    approveCoordinatorDevice = undefined
+    joinCoordinatorInvitation = undefined
+    autoConnectCoordinator = connectCoordinator
+    // A prior explicit login leaves a rotating refresh token in the local
+    // wallet. Resume polling without another popup on every ordinary boot.
+    void (async () => {
+      const oidc = await ensureCoordinatorOidc()
+      if (await oidc.hasRefreshSession()) await activateCoordinatorStream(oidc)
+    })().catch(error => console.warn('[coordinator/session-resume]', error instanceof Error ? error.message : error))
+    let coordinatorPollBusy = false
+    coordinatorPollTimer = setInterval(() => {
+      if (!streamTransport || !streamVaultId) return
+      if (coordinatorPollBusy) return
+      coordinatorPollBusy = true
+      void (async () => {
+        await synchronizeCoordinator?.()
+      })().catch(error => console.warn('[coordinator/poll]', error instanceof Error ? error.message : error)).finally(() => { coordinatorPollBusy = false })
+    }, 10_000)
   }
 }
 

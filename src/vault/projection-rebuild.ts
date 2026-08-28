@@ -22,6 +22,7 @@ export interface RebuildLocalJmapProjectionOptions {
   wraps: SegmentKeyWrapReader
   epochs: VaultEpochKeyResolver
   verifier: VaultEventVerifier & SegmentKeyWrapVerifier
+  storageKek?: Uint8Array
 }
 
 /**
@@ -42,7 +43,7 @@ export async function rebuildLocalJmapProjection(opts: RebuildLocalJmapProjectio
     opts.records.readVaultEvents(identityId),
     opts.records.readVaultObjects(identityId),
   ])
-  const resolver = new StoredSegmentKeyResolver(opts.wraps, opts.epochs, opts.verifier)
+  const resolver = new StoredSegmentKeyResolver(opts.wraps, opts.epochs, opts.verifier, opts.storageKek)
   const records = await decryptVaultMutationRecords(identityId, events, objects, resolver, opts.verifier)
   const snapshot = reduceLocalJmapProjection(identityId, { mailboxes: [], emails: [] }, records)
   return { version: 1, identityId, ...snapshot }

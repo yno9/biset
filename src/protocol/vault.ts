@@ -9,22 +9,25 @@ import type {
   VaultObjectId,
 } from './ids.ts'
 
-export type VaultEventKind =
-  | 'message.add'
-  | 'message.edit'
-  | 'message.tombstone'
-  | 'mailbox.set'
-  | 'keyword.set'
-  | 'thread.set'
-  | 'reaction.set'
-  | 'read.set'
-  | 'settings.set'
-  | 'transport.result'
-  | 'contact-key.set'
-  | 'credential.openpgp.set'
-  | 'credential.didcomm.set'
-  | 'didcomm.control'
-  | 'didcomm.device-key.set'
+export const VAULT_EVENT_KINDS = [
+  'message.add',
+  'message.edit',
+  'message.tombstone',
+  'mailbox.set',
+  'keyword.set',
+  'thread.set',
+  'reaction.set',
+  'read.set',
+  'settings.set',
+  'transport.result',
+  'contact-key.set',
+  'credential.openpgp.set',
+  'credential.didcomm.set',
+  'didcomm.control',
+  'didcomm.device-key.set',
+] as const
+
+export type VaultEventKind = typeof VAULT_EVENT_KINDS[number]
 
 export interface VaultEventV1 {
   version: 1

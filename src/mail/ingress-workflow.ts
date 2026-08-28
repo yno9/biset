@@ -13,6 +13,8 @@ export interface MailIngressWorkflowOptions {
   store: IngressAckOutboxReader & VaultDeliveryOutboxReader
   ingressTransport: IngressPullTransport
   deliveryTransport: VaultDeliveryAppendTransport
+  /** Optional cutover hook for a Vault Coordinator binding. */
+  flushDelivery?: () => Promise<VaultDeliveryOutboxFlushResult>
   signer: IngressAckSigner & IngressPullSigner & VaultDeliveryAppendSigner
   projector: IngressVerifierProjector
   committer: IngressCommitter
@@ -38,10 +40,11 @@ export async function synchronizeMailIngress(options: MailIngressWorkflowOptions
   }
   const limit = options.limit ?? 32
   const now = options.now ?? (() => new Date())
-  const deliveryBefore = await flushVaultDeliveryOutbox(options.store, options.deliveryTransport, options.signer, options.identityId, limit, now)
+  const flushDelivery = options.flushDelivery ?? (() => flushVaultDeliveryOutbox(options.store, options.deliveryTransport, options.signer, options.identityId, limit, now))
+  const deliveryBefore = await flushDelivery()
   const ingress = await synchronizeIngress(options.store, options.ingressTransport, {
     ingest: envelope => ingestIngress(envelope, options.signer, options.projector, options.committer, now),
   }, options.signer, options.identityId, options.deviceId, limit, now)
-  const deliveryAfter = await flushVaultDeliveryOutbox(options.store, options.deliveryTransport, options.signer, options.identityId, limit, now)
+  const deliveryAfter = await flushDelivery()
   return { ingress, deliveryBefore, deliveryAfter }
 }

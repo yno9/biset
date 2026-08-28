@@ -1,12 +1,15 @@
 import type { IngressAckV1 } from '../protocol/ingress.ts'
 import { equalBytes } from '../protocol/canonical.ts'
-import type { DeliverySeq, DeviceId, IdentityId, MlsEpoch, SegmentId, VaultEventId, VaultObjectId } from '../protocol/ids.ts'
+import type { DeliverySeq, DeviceId, IdentityId, MlsEpoch, SegmentId, VaultEventId, VaultId, VaultMemberId, VaultObjectId } from '../protocol/ids.ts'
 import type { DeliveryPullResult, RestoreOfferV1, RestoreRequestV1, SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 import { assertRestoreOffer, assertRestoreRequest } from '../protocol/validate.ts'
+import { ed25519 } from '@noble/curves/ed25519.js'
+import { assertVaultMlsBinding } from '../mls/vault-group.ts'
+import { assertVaultGroupView, type VaultGroupViewV1 } from '../protocol/vault-group-view.ts'
 import type { RestoreTransferChunkCommit, RestoreTransferReceiverStore, RestoreTransferSessionV1 } from './restore-transfer-receiver.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
-const DATABASE_VERSION = 5
+const DATABASE_VERSION = 9
 
 const STORES = {
   ingressReceipts: 'vault_ingress_receipts',
@@ -27,6 +30,9 @@ const STORES = {
   restoreOfferOutbox: 'vault_restore_offer_outbox',
   restoreTransferState: 'vault_restore_transfer_state',
   transportStatus: 'transport_status',
+  didCommOutbox: 'didcomm_transport_outbox',
+  coordinatorBinding: 'vault_coordinator_binding',
+  coordinatorPendingJoin: 'vault_coordinator_pending_join',
 } as const
 
 type StoreName = (typeof STORES)[keyof typeof STORES]
@@ -77,6 +83,24 @@ export interface VaultDeliveryOutboxRecord {
   attempts: number
 }
 
+/** Durable DIDComm send intent. Message content stays in encrypted vault objects. */
+export interface DidCommTransportOutboxRecord {
+  identityId: IdentityId
+  outboundEventId: VaultEventId
+  emailId: string
+  messageId: string
+  toDid: string
+  createdAt: string
+  attempts: number
+  lastAttemptAt?: string
+}
+
+export interface DidCommTransportOutboxStore {
+  readDidCommOutbox(identityId: IdentityId, limit?: number): Promise<DidCommTransportOutboxRecord[]>
+  noteDidCommOutboxAttempt(identityId: IdentityId, outboundEventId: VaultEventId, attemptedAt: string): Promise<void>
+  removeDidCommOutbox(identityId: IdentityId, outboundEventId: VaultEventId): Promise<void>
+}
+
 export interface VaultDeliveryReceiptRecord {
   identityId: IdentityId
   recipientDeviceId: DeviceId
@@ -93,6 +117,45 @@ export interface VaultDeliveryAckOutboxRecord {
   ack: VaultDeliveryAckV1
   attempts: number
   createdAt: string
+}
+
+/**
+ * Client-local bridge between a public identity partition and an opaque
+ * Vault. Neither Anchor nor Coordinator receives this record as a whole.
+ */
+export interface LocalVaultCoordinatorBindingV1 {
+  version: 1
+  identityId: IdentityId
+  coordinatorUrl: string
+  groupView: VaultGroupViewV1
+  /** Encoded private ClientState for the Vault-specific MLS group. */
+  vaultMlsState: Uint8Array
+  localMemberId: string
+  memberSignaturePrivateKey: Uint8Array
+  createdAt: string
+  updatedAt: string
+}
+
+export interface LocalVaultCoordinatorBindingStore {
+  readCoordinatorBinding(identityId: IdentityId): Promise<LocalVaultCoordinatorBindingV1 | undefined>
+  writeCoordinatorBinding(value: LocalVaultCoordinatorBindingV1): Promise<void>
+  clearCoordinatorBinding(identityId: IdentityId): Promise<void>
+}
+
+/** One-shot private KeyPackage material retained only while a second device
+ * waits for the existing member to approve its MLS Add. */
+export interface LocalVaultCoordinatorPendingJoinV1 {
+  version: 1
+  identityId: IdentityId
+  coordinatorUrl: string
+  vaultId: VaultId
+  memberId: VaultMemberId
+  encodedKeyPackage: Uint8Array
+  initPrivateKey: Uint8Array
+  hpkePrivateKey: Uint8Array
+  signaturePrivateKey: Uint8Array
+  createdAt: string
+  expiresAt: string
 }
 
 /** Durable client-side intent to ask a trusted peer for a foreground restore. */
@@ -134,7 +197,12 @@ export interface IngressVaultCommit {
   jmapState: unknown
   /** Present when the endpoint has made the external item part of shared vault state. */
   deliveryOutbox?: VaultDeliveryOutboxRecord
-  ackOutbox: IngressAckOutboxRecord
+  /** Core ingress requires this; transports with their own ACK protocol do not. */
+  ackOutbox?: IngressAckOutboxRecord
+}
+
+export interface IngressReceiptReader {
+  readIngressReceipt(identityId: IdentityId, ingressId: string): Promise<IngressReceiptRecord | undefined>
 }
 
 /** Local UI mutation commit: no ingress receipt/ACK, but the same atomicity. */
@@ -145,6 +213,7 @@ export interface LocalVaultMutationCommit {
   projection: unknown
   jmapState: unknown
   deliveryOutbox: VaultDeliveryOutboxRecord
+  didCommOutbox?: DidCommTransportOutboxRecord
 }
 
 /**
@@ -271,7 +340,7 @@ export interface ActiveVaultSegmentStore {
   /** Records that this segment's wrap is now confirmed current as of
    * `epoch` — called after a successful self-grant re-wrap
    * (`maintainSelfGroup`). Never changes `sealed`. */
-  recordSegmentRewrapped(identityId: IdentityId, segmentId: SegmentId, epoch: MlsEpoch): Promise<void>
+  recordSegmentRewrapped(identityId: IdentityId, segmentId: SegmentId, epoch: MlsEpoch, selfGroupId?: string): Promise<void>
 }
 
 /** The client retry loop sees only its own encrypted, local append work. */
@@ -309,7 +378,7 @@ export interface VaultRestoreOfferOutboxStore {
   clearRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjectionWriter, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, RecoveryArchiveImportStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressAckOutboxReader, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjectionWriter, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, RecoveryArchiveImportStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressReceiptReader, IngressAckOutboxReader, DidCommTransportOutboxStore, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore, LocalVaultCoordinatorBindingStore {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -353,15 +422,16 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
    */
   async commitIngress(input: IngressVaultCommit): Promise<IngressCommitResult> {
     assertCommit(input)
-    const transaction = this.database.transaction([
+    const stores: StoreName[] = [
       STORES.ingressReceipts,
       STORES.objects,
       STORES.events,
       STORES.projection,
       STORES.jmapState,
-      STORES.outbox,
       STORES.deliveryOutbox,
-    ], 'readwrite')
+    ]
+    if (input.ackOutbox) stores.push(STORES.outbox)
+    const transaction = this.database.transaction(stores, 'readwrite')
     let duplicate = false
     const receiptStore = transaction.objectStore(STORES.ingressReceipts)
     const receiptRequest = receiptStore.add(copyReceipt(input.receipt))
@@ -372,7 +442,7 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     for (const event of input.events) transaction.objectStore(STORES.events).put(copyEvent(event))
     transaction.objectStore(STORES.projection).put({ identityId: input.identityId, value: input.projection })
     transaction.objectStore(STORES.jmapState).put({ identityId: input.identityId, value: input.jmapState })
-    transaction.objectStore(STORES.outbox).put(copyOutbox(input.ackOutbox))
+    if (input.ackOutbox) transaction.objectStore(STORES.outbox).put(copyOutbox(input.ackOutbox))
     if (input.deliveryOutbox) transaction.objectStore(STORES.deliveryOutbox).put(copyDeliveryOutbox(input.deliveryOutbox))
 
     try {
@@ -382,6 +452,15 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
       if (duplicate) return 'already-committed'
       throw error
     }
+  }
+
+  async readIngressReceipt(identityId: IdentityId, ingressId: string): Promise<IngressReceiptRecord | undefined> {
+    if (!identityId || !ingressId) throw new TypeError('ingress receipt identity and ID are required')
+    const transaction = this.database.transaction(STORES.ingressReceipts, 'readonly')
+    const completed = transactionDone(transaction)
+    const receipt = await requestValue<IngressReceiptRecord | undefined>(transaction.objectStore(STORES.ingressReceipts).get([identityId, ingressId]))
+    await completed
+    return receipt && copyReceipt(receipt)
   }
 
   async readProjection(identityId: IdentityId): Promise<unknown | undefined> {
@@ -436,13 +515,15 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
    */
   async commitLocalMutation(input: LocalVaultMutationCommit): Promise<IngressCommitResult> {
     assertLocalCommit(input)
-    const transaction = this.database.transaction([
+    const stores: StoreName[] = [
       STORES.objects,
       STORES.events,
       STORES.projection,
       STORES.jmapState,
       STORES.deliveryOutbox,
-    ], 'readwrite')
+    ]
+    if (input.didCommOutbox) stores.push(STORES.didCommOutbox)
+    const transaction = this.database.transaction(stores, 'readwrite')
     let duplicate = false
     const eventStore = transaction.objectStore(STORES.events)
     for (const event of input.events) {
@@ -455,6 +536,7 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     transaction.objectStore(STORES.projection).put({ identityId: input.identityId, value: input.projection })
     transaction.objectStore(STORES.jmapState).put({ identityId: input.identityId, value: input.jmapState })
     transaction.objectStore(STORES.deliveryOutbox).put(copyDeliveryOutbox(input.deliveryOutbox))
+    if (input.didCommOutbox) transaction.objectStore(STORES.didCommOutbox).put(copyDidCommOutbox(input.didCommOutbox))
     try {
       await transactionDone(transaction)
       return 'committed'
@@ -462,6 +544,33 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
       if (duplicate) return 'already-committed'
       throw error
     }
+  }
+
+  async readDidCommOutbox(identityId: IdentityId, limit = 32): Promise<DidCommTransportOutboxRecord[]> {
+    if (!identityId || !Number.isSafeInteger(limit) || limit < 1) throw new TypeError('DIDComm outbox identity and positive limit are required')
+    const transaction = this.database.transaction(STORES.didCommOutbox, 'readonly')
+    const completed = transactionDone(transaction)
+    const values = await requestValue<DidCommTransportOutboxRecord[]>(transaction.objectStore(STORES.didCommOutbox).getAll())
+    await completed
+    return values.filter(value => value.identityId === identityId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.outboundEventId.localeCompare(right.outboundEventId))
+      .slice(0, limit).map(copyDidCommOutbox)
+  }
+
+  async noteDidCommOutboxAttempt(identityId: IdentityId, outboundEventId: VaultEventId, attemptedAt: string): Promise<void> {
+    if (!identityId || !outboundEventId || Number.isNaN(Date.parse(attemptedAt))) throw new TypeError('DIDComm outbox attempt is invalid')
+    const transaction = this.database.transaction(STORES.didCommOutbox, 'readwrite')
+    const store = transaction.objectStore(STORES.didCommOutbox)
+    const record = await requestValue<DidCommTransportOutboxRecord | undefined>(store.get([identityId, outboundEventId]))
+    if (record) store.put(copyDidCommOutbox({ ...record, attempts: record.attempts + 1, lastAttemptAt: attemptedAt }))
+    await transactionDone(transaction)
+  }
+
+  async removeDidCommOutbox(identityId: IdentityId, outboundEventId: VaultEventId): Promise<void> {
+    if (!identityId || !outboundEventId) throw new TypeError('DIDComm outbox identity and event ID are required')
+    const transaction = this.database.transaction(STORES.didCommOutbox, 'readwrite')
+    transaction.objectStore(STORES.didCommOutbox).delete([identityId, outboundEventId])
+    await transactionDone(transaction)
   }
 
   async commitDelivery(input: VaultDeliveryCommit): Promise<IngressCommitResult> {
@@ -594,13 +703,13 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     await transactionDone(transaction)
   }
 
-  async recordSegmentRewrapped(identityId: IdentityId, segmentId: SegmentId, epoch: MlsEpoch): Promise<void> {
+  async recordSegmentRewrapped(identityId: IdentityId, segmentId: SegmentId, epoch: MlsEpoch, selfGroupId?: string): Promise<void> {
     if (!identityId || !segmentId || !epoch) throw new TypeError('segment rewrap identity, segment, and epoch are required')
     const transaction = this.database.transaction(STORES.segments, 'readwrite')
     const store = transaction.objectStore(STORES.segments)
     const existing = await requestValue<VaultSegmentRecord | undefined>(store.get([identityId, segmentId]))
     if (!existing) throw new Error('recordSegmentRewrapped: no such segment')
-    store.put({ ...copySegmentRecord(existing), epoch })
+    store.put({ ...copySegmentRecord(existing), epoch, ...(selfGroupId === undefined ? {} : { selfGroupId }) })
     await transactionDone(transaction)
   }
 
@@ -615,6 +724,65 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.entryId.localeCompare(right.entryId))
       .slice(0, limit)
       .map(copyDeliveryOutbox)
+  }
+
+  async readCoordinatorBinding(identityId: IdentityId): Promise<LocalVaultCoordinatorBindingV1 | undefined> {
+    if (!identityId) throw new TypeError('Coordinator binding identity is required')
+    const transaction = this.database.transaction(STORES.coordinatorBinding, 'readonly')
+    const completed = transactionDone(transaction)
+    const value = await requestValue<LocalVaultCoordinatorBindingV1 | undefined>(transaction.objectStore(STORES.coordinatorBinding).get(identityId))
+    await completed
+    return value && copyCoordinatorBinding(value)
+  }
+
+  async writeCoordinatorBinding(value: LocalVaultCoordinatorBindingV1): Promise<void> {
+    assertCoordinatorBinding(value)
+    const transaction = this.database.transaction(STORES.coordinatorBinding, 'readwrite')
+    transaction.objectStore(STORES.coordinatorBinding).put(copyCoordinatorBinding(value))
+    await transactionDone(transaction)
+  }
+
+  async clearCoordinatorBinding(identityId: IdentityId): Promise<void> {
+    if (!identityId) throw new TypeError('Coordinator binding identity is required')
+    const transaction = this.database.transaction(STORES.coordinatorBinding, 'readwrite')
+    transaction.objectStore(STORES.coordinatorBinding).delete(identityId)
+    await transactionDone(transaction)
+  }
+
+  async readCoordinatorPendingJoin(identityId: IdentityId): Promise<LocalVaultCoordinatorPendingJoinV1 | undefined> {
+    if (!identityId) throw new TypeError('Coordinator pending join identity is required')
+    const transaction = this.database.transaction(STORES.coordinatorPendingJoin, 'readonly')
+    const completed = transactionDone(transaction)
+    const value = await requestValue<LocalVaultCoordinatorPendingJoinV1 | undefined>(transaction.objectStore(STORES.coordinatorPendingJoin).get(identityId))
+    await completed
+    return value && copyCoordinatorPendingJoin(value)
+  }
+
+  async writeCoordinatorPendingJoin(value: LocalVaultCoordinatorPendingJoinV1): Promise<void> {
+    assertCoordinatorPendingJoin(value)
+    const transaction = this.database.transaction(STORES.coordinatorPendingJoin, 'readwrite')
+    transaction.objectStore(STORES.coordinatorPendingJoin).put(copyCoordinatorPendingJoin(value))
+    await transactionDone(transaction)
+  }
+
+  async clearCoordinatorPendingJoin(identityId: IdentityId): Promise<void> {
+    if (!identityId) throw new TypeError('Coordinator pending join identity is required')
+    const transaction = this.database.transaction(STORES.coordinatorPendingJoin, 'readwrite')
+    transaction.objectStore(STORES.coordinatorPendingJoin).delete(identityId)
+    await transactionDone(transaction)
+  }
+
+  async commitCoordinatorJoin(binding: LocalVaultCoordinatorBindingV1): Promise<void> {
+    assertCoordinatorBinding(binding)
+    const transaction = this.database.transaction([STORES.coordinatorBinding, STORES.coordinatorPendingJoin], 'readwrite')
+    const pending = await requestValue<LocalVaultCoordinatorPendingJoinV1 | undefined>(transaction.objectStore(STORES.coordinatorPendingJoin).get(binding.identityId))
+    if (!pending || pending.vaultId !== binding.groupView.vaultId || pending.memberId !== binding.localMemberId) {
+      transaction.abort()
+      throw new Error('Coordinator binding does not match the pending join')
+    }
+    transaction.objectStore(STORES.coordinatorBinding).put(copyCoordinatorBinding(binding))
+    transaction.objectStore(STORES.coordinatorPendingJoin).delete(binding.identityId)
+    await transactionDone(transaction)
   }
 
   async removeDeliveryOutbox(identityId: IdentityId, entryId: VaultEventId): Promise<void> {
@@ -646,6 +814,21 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     )
     await completed
     return record?.cursor ?? '0'
+  }
+
+  /** Advances a restored device to the remote checkpoint's covered
+   * sequence only after records and projection are durable. */
+  async advanceDeliveryCursor(identityId: IdentityId, recipientDeviceId: DeviceId, cursor: DeliverySeq, checkpointId: string, committedAt: string): Promise<void> {
+    if (!identityId || !recipientDeviceId || !cursor || !checkpointId || Number.isNaN(Date.parse(committedAt))) throw new TypeError('restored delivery cursor is invalid')
+    const transaction = this.database.transaction(STORES.deliveryState, 'readwrite')
+    const store = transaction.objectStore(STORES.deliveryState)
+    const existing = await requestValue<{ cursor?: DeliverySeq } | undefined>(store.get([identityId, recipientDeviceId]))
+    if (existing?.cursor && BigInt(existing.cursor) > BigInt(cursor)) {
+      transaction.abort()
+      throw new TypeError('restored delivery cursor cannot move backwards')
+    }
+    store.put({ identityId, deviceId: recipientDeviceId, cursor, checkpointId, committedAt })
+    await transactionDone(transaction)
   }
 
   async readDeliveryAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, limit = 32): Promise<VaultDeliveryAckOutboxRecord[]> {
@@ -816,7 +999,15 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION)
-    request.onupgradeneeded = () => createStores(request.result)
+    request.onupgradeneeded = event => {
+      createStores(request.result)
+      // v8 replaced the transitional routing-only Coordinator binding with
+      // one that contains the actual Vault-specific private MLS state. A v7
+      // row cannot be upgraded cryptographically, so discard only that
+      // opt-in binding; local Vault content remains untouched and can be
+      // provisioned again after an explicit login.
+      if (event.oldVersion > 0 && event.oldVersion < 8) request.transaction?.objectStore(STORES.coordinatorBinding).clear()
+    }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error ?? new Error('failed to open vault database'))
     request.onblocked = () => reject(new Error('vault database upgrade is blocked by another client'))
@@ -847,6 +1038,9 @@ const KEY_PATHS: Record<StoreName, string | string[]> = {
   [STORES.restoreOfferOutbox]: ['identityId', 'requestId', 'responderDeviceId'],
   [STORES.restoreTransferState]: ['identityId', 'requesterDeviceId'],
   [STORES.transportStatus]: ['identityId', 'outboundEventId'],
+  [STORES.didCommOutbox]: ['identityId', 'outboundEventId'],
+  [STORES.coordinatorBinding]: 'identityId',
+  [STORES.coordinatorPendingJoin]: 'identityId',
 }
 
 function createStores(database: IDBDatabase): void {
@@ -873,10 +1067,10 @@ function requestValue<T>(request: IDBRequest<T>): Promise<T> {
 }
 
 function assertCommit(input: IngressVaultCommit): void {
-  if (!input.identityId || input.receipt.identityId !== input.identityId || input.ackOutbox.identityId !== input.identityId) {
+  if (!input.identityId || input.receipt.identityId !== input.identityId || (input.ackOutbox && input.ackOutbox.identityId !== input.identityId)) {
     throw new TypeError('ingress commit identity does not match')
   }
-  if (input.receipt.ingressId !== input.ackOutbox.ingressId || input.receipt.ingressId !== input.ackOutbox.ack.ingressId) {
+  if (input.ackOutbox && (input.receipt.ingressId !== input.ackOutbox.ingressId || input.receipt.ingressId !== input.ackOutbox.ack.ingressId)) {
     throw new TypeError('ingress receipt and ACK outbox do not match')
   }
   for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('object identity does not match')
@@ -887,6 +1081,12 @@ function assertCommit(input: IngressVaultCommit): void {
 function assertLocalCommit(input: LocalVaultMutationCommit): void {
   if (!input.identityId || input.events.length === 0 || input.deliveryOutbox.identityId !== input.identityId) throw new TypeError('local mutation commit needs matching identity and events')
   assertDeliveryOutbox(input.identityId, input.events, input.deliveryOutbox, 'local mutation')
+  if (input.didCommOutbox) {
+    const value = input.didCommOutbox
+    if (value.identityId !== input.identityId || !input.events.some(event => event.id === value.outboundEventId) || !value.emailId || !value.messageId || !value.toDid.startsWith('did:') || value.attempts !== 0 || Number.isNaN(Date.parse(value.createdAt))) {
+      throw new TypeError('local mutation DIDComm outbox is invalid')
+    }
+  }
   for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('local mutation object identity does not match')
   for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('local mutation event identity does not match')
 }
@@ -950,6 +1150,10 @@ function copyDeliveryOutbox(value: VaultDeliveryOutboxRecord): VaultDeliveryOutb
   return { ...value, payload: value.payload.slice(), payloadHash: value.payloadHash.slice() }
 }
 
+function copyDidCommOutbox(value: DidCommTransportOutboxRecord): DidCommTransportOutboxRecord {
+  return { ...value }
+}
+
 function copyDeliveryReceipt(value: VaultDeliveryReceiptRecord): VaultDeliveryReceiptRecord {
   return { ...value, payloadHash: value.payloadHash.slice() }
 }
@@ -959,6 +1163,56 @@ function copyDeliveryAckOutbox(value: VaultDeliveryAckOutboxRecord): VaultDelive
     ...value,
     ack: { ...value.ack, payloadHash: value.ack.payloadHash.slice(), signature: value.ack.signature.slice() },
   }
+}
+
+function assertCoordinatorBinding(value: LocalVaultCoordinatorBindingV1): void {
+  if (value.version !== 1 || !value.identityId || !value.localMemberId || !(value.vaultMlsState instanceof Uint8Array) || value.vaultMlsState.length === 0) throw new TypeError('local Coordinator binding identity, member, or MLS state is invalid')
+  assertVaultGroupView(value.groupView)
+  const member = value.groupView.members.find(candidate => candidate.memberId === value.localMemberId)
+  if (!member || value.memberSignaturePrivateKey.length !== 32 || !equalBytes(ed25519.getPublicKey(value.memberSignaturePrivateKey), member.signaturePublicKey)) {
+    throw new TypeError('local Coordinator binding key does not match the accepted group view')
+  }
+  assertVaultMlsBinding({ encodedState: value.vaultMlsState, groupView: value.groupView, localMemberId: value.localMemberId, memberSignaturePrivateKey: value.memberSignaturePrivateKey })
+  let url: URL
+  try { url = new URL(value.coordinatorUrl) } catch { throw new TypeError('local Coordinator URL is invalid') }
+  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password || url.search || url.hash) throw new TypeError('local Coordinator URL must be an HTTP(S) origin or base path')
+  assertCanonicalTimestamp(value.createdAt, 'Coordinator binding createdAt')
+  assertCanonicalTimestamp(value.updatedAt, 'Coordinator binding updatedAt')
+  if (Date.parse(value.updatedAt) < Date.parse(value.createdAt)) throw new TypeError('Coordinator binding updatedAt precedes createdAt')
+}
+
+function copyCoordinatorBinding(value: LocalVaultCoordinatorBindingV1): LocalVaultCoordinatorBindingV1 {
+  return {
+    ...value,
+    vaultMlsState: value.vaultMlsState.slice(),
+    memberSignaturePrivateKey: value.memberSignaturePrivateKey.slice(),
+    groupView: {
+      ...value.groupView,
+      groupId: value.groupView.groupId.slice(),
+      confirmedTranscriptHash: value.groupView.confirmedTranscriptHash.slice(),
+      signature: value.groupView.signature.slice(),
+      members: value.groupView.members.map(member => ({ ...member, signaturePublicKey: member.signaturePublicKey.slice() })),
+    },
+  }
+}
+
+function assertCoordinatorPendingJoin(value: LocalVaultCoordinatorPendingJoinV1): void {
+  if (value.version !== 1 || !value.identityId || !/^vlt_[A-Za-z0-9_-]{43}$/.test(value.vaultId) || !/^vmb_[A-Za-z0-9_-]{43}$/.test(value.memberId) || value.encodedKeyPackage.length === 0 || value.encodedKeyPackage.length > 1024 * 1024) throw new TypeError('local Coordinator pending join is invalid')
+  if (value.initPrivateKey.length === 0 || value.hpkePrivateKey.length === 0 || value.signaturePrivateKey.length !== 32) throw new TypeError('local Coordinator pending join key material is invalid')
+  let url: URL
+  try { url = new URL(value.coordinatorUrl) } catch { throw new TypeError('local Coordinator pending join URL is invalid') }
+  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password || url.search || url.hash) throw new TypeError('local Coordinator pending join URL is invalid')
+  assertCanonicalTimestamp(value.createdAt, 'Coordinator pending join createdAt')
+  assertCanonicalTimestamp(value.expiresAt, 'Coordinator pending join expiresAt')
+  if (Date.parse(value.expiresAt) <= Date.parse(value.createdAt)) throw new TypeError('Coordinator pending join expiry is invalid')
+}
+
+function copyCoordinatorPendingJoin(value: LocalVaultCoordinatorPendingJoinV1): LocalVaultCoordinatorPendingJoinV1 {
+  return { ...value, encodedKeyPackage: value.encodedKeyPackage.slice(), initPrivateKey: value.initPrivateKey.slice(), hpkePrivateKey: value.hpkePrivateKey.slice(), signaturePrivateKey: value.signaturePrivateKey.slice() }
+}
+
+function assertCanonicalTimestamp(value: string, name: string): void {
+  if (!Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) throw new TypeError(`${name} must be a canonical ISO timestamp`)
 }
 
 function assertKeyWrap(value: SegmentKeyWrapV1): void {

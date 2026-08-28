@@ -63,12 +63,23 @@ export function startMediatorPolling(
   const fetchImpl = opts.fetch ?? defaultFetch()
   let stopped = false
   let inFlight = false
+  let registered = false
 
   const tick = async () => {
     if (stopped || inFlight) return
     inFlight = true
     try {
-      const mediator = await fetchMediatorInfo(mediatorUrl, fetchImpl)
+      // Enrollment is part of the polling invariant, not a fire-and-forget
+      // caller precondition. In particular the first tick runs immediately:
+      // racing it against a separate keylist-update used to produce a noisy
+      // e.p.req.not_enroll problem report on every fresh page boot. Keeping
+      // `registered` false after a failure also makes a live tab self-heal
+      // when the mediator was unavailable at boot, rather than waiting for
+      // the next full page reload to attempt registration again.
+      const mediator = registered
+        ? await fetchMediatorInfo(mediatorUrl, fetchImpl)
+        : await registerWithMediator(mediatorUrl, own, fetchImpl)
+      registered = true
       const delivered = await pickupDeliver(mediator, own, resolveSenderKey, 10, fetchImpl)
       const ackIds: string[] = []
       for (const msg of delivered) {

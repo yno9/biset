@@ -9,7 +9,7 @@
 // Any did:webvh identity can migrate through this — a biset one, a
 // stranger's hand-rolled document, an identity minted by a wholly different
 // implementation — as long as its host serves the plain GET/PUT/POST
-// did.jsonl contract (core/webvh/did-web-http.ts's routing is one such
+// did.jsonl contract (anchor/webvh/did-web-http.ts's routing is one such
 // host, not the only one that could be).
 //
 // Ported verbatim from src.bak/did/webvh/migrate.ts — the string-

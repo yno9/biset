@@ -23,7 +23,23 @@ export class CoreIngressTransport {
   }
 
   async acknowledge(input: IngressAckV1): Promise<void> {
-    await this.post('/v1/ingress/ack', encodeIngressAckWire(input))
+    const response = await this.fetchValue(`${this.baseUrl}/v1/ingress/ack`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: encodeIngressAckWire(input),
+    })
+    const text = await response.text()
+    if (response.ok) return
+    // The vault commit and its ACK outbox record are atomic, so these
+    // tombstone answers mean only that the remote body is already gone.
+    // Retrying such an ACK forever cannot recover anything and used to pin
+    // the first outbox row permanently, preventing every later ACK from
+    // being flushed. Other 400s (bad signature/hash/claim) remain failures.
+    if (response.status === 400 && (
+      text === 'unknown ingressId'
+      || text === 'ingress is already vault-ingested'
+      || text === 'ingress is already expired'
+      || text === 'ingress is already rejected'
+    )) return
+    throw new Error(`core ingress request failed (${response.status}): ${text.slice(0, 256)}`)
   }
 
   private async post(path: string, body: string): Promise<string> {
