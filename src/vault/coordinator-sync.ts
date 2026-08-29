@@ -39,6 +39,12 @@ export interface VaultCoordinatorStreamTransport {
   pullStream(value: { version: 2; vaultId: VaultId; after: DeliverySeq }): Promise<VaultStreamPullResultV2>
 }
 
+/** A device at the stream head must refresh a stale recovery checkpoint even
+ * when its durable outbox was already flushed by the immediate mutation path. */
+export function coordinatorStreamCheckpointIsBehind(checkpointCoveredSeq: DeliverySeq | undefined, coveredSeq: DeliverySeq): boolean {
+  return checkpointCoveredSeq === undefined || BigInt(checkpointCoveredSeq) < BigInt(coveredSeq)
+}
+
 /** v2 has no Coordinator-local member, epoch, recipient fanout, or ACK. */
 export async function flushCoordinatorStreamOutbox(
   outbox: VaultDeliveryOutboxReader,

@@ -79,7 +79,7 @@ import { IndexedDbBisetLoginWalletCredentialStore } from './oid4vp/wallet-store.
 import { BisetOid4vpWallet, discoverTrustedAnchorOid4vpIssuer } from './oid4vp/wallet.ts'
 import { AnchorOidcPkceClient } from './oidc/client.ts'
 import { VaultCoordinatorTransport } from './vault/coordinator-transport.ts'
-import { flushCoordinatorDeliveryOutbox, flushCoordinatorStreamOutbox, synchronizeCoordinatorDelivery, synchronizeCoordinatorStream } from './vault/coordinator-sync.ts'
+import { coordinatorStreamCheckpointIsBehind, flushCoordinatorDeliveryOutbox, flushCoordinatorStreamOutbox, synchronizeCoordinatorDelivery, synchronizeCoordinatorStream } from './vault/coordinator-sync.ts'
 import { ingestVaultDelivery } from './vault/delivery-ingest.ts'
 import { advanceVaultCoordinatorGroup, createAndProvisionVaultCoordinator } from './vault/coordinator-lifecycle.ts'
 import type { LocalVaultCoordinatorBindingV1 } from './vault/store.ts'
@@ -1406,7 +1406,8 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       // A checkpoint, not device ACKs, is the only server-side compaction
       // boundary. Any device can replace it after reaching the stream head.
       const coveredSeq = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)
-      if (coveredSeq === synced.latestSeq && (flushed.appendedEntryIds.length > 0 || !checkpoint || checkpointNeedsUpgrade)) {
+      const checkpointBehind = coordinatorStreamCheckpointIsBehind(checkpoint?.coveredSeq, coveredSeq)
+      if (coveredSeq === synced.latestSeq && (flushed.appendedEntryIds.length > 0 || checkpointBehind || checkpointNeedsUpgrade)) {
         if (!identity.masterSeed) throw new Error('Coordinator checkpoint requires the identity master seed')
         const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, identity.did, new Date().toISOString())
         try {
