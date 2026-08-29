@@ -58,7 +58,7 @@ import { equalBytes } from '../protocol/canonical.ts'
 import { deliverySeq, mlsEpoch, type DeliverySeq, type VaultEventId } from '../protocol/ids.ts'
 import { mailSubmissionSigningBytes, vaultDeliveryPullSigningBytes } from '../protocol/signing.ts'
 import type { VaultDeliveryPullV1 } from '../protocol/vault.ts'
-import type { MailSubmissionResultV1 } from '../protocol/mail-submission.ts'
+import type { MailSubmissionRequestV1, MailSubmissionResultV1 } from '../protocol/mail-submission.ts'
 import { CoreMailSubmissionTransport } from '../vault/mail-submission-transport.ts'
 import type { VaultBackedLocalJmapMutationSink } from '../local-jmap/vault-mutation-sink.ts'
 import type { VaultMutationIntent } from '../local-jmap/mutations.ts'
@@ -810,6 +810,10 @@ export function buildLocalJmapReadModel(
  * go the other direction), so `{username}@mail.{apexDomain}` falls out of
  * the identity's own DID with no new field needed on IdentityRecord.
  */
+export interface MailSubmissionTransport {
+  submit(request: MailSubmissionRequestV1): Promise<MailSubmissionResultV1>
+}
+
 export function buildMailSubmitter(
   vault: VaultObjectReader & SegmentKeyWrapReader,
   selfGroupStore: MlsSelfGroupStateStore,
@@ -817,6 +821,11 @@ export function buildMailSubmitter(
   mutationSink: VaultBackedLocalJmapMutationSink,
   apexDomain: string,
   coreBaseUrl: string,
+  /** Overrides the default core-HTTP submission path (Mail Mediator's
+   * MailMediatorSubmissionTransport, PLAN_biset-mail-mediator.md) --
+   * everything else (signing, emailId, mailbox transitions) is unchanged,
+   * since this only decides WHERE the signed request goes. */
+  transportOverride?: MailSubmissionTransport,
 ): {
   submit(emailId: string, blobId: string, rcptTo: string[], snapshot: LocalJmapSnapshot): Promise<MailSubmissionResultV1>
   submitMail(arguments_: Record<string, unknown>, snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>>
@@ -830,7 +839,7 @@ export function buildMailSubmitter(
   }
   const signer = new MlsMembershipSegmentKeyWrapSigner(deviceKid, loadState)
   const blobs = buildVaultBlobReader(vault, vault, selfGroupStore, record.did, record.masterSeed)
-  const transport = new CoreMailSubmissionTransport({ baseUrl: coreBaseUrl })
+  const transport = transportOverride ?? new CoreMailSubmissionTransport({ baseUrl: coreBaseUrl })
   const mailFrom = mailFromForIdentity(record.did, apexDomain)
 
   return {

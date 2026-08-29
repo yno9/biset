@@ -1,0 +1,20 @@
+{
+  // The standalone mail mediator (src/mail-mediator/) is its own Bun server
+  // deploy unit, same reasoning as tsconfig.mediator.json: no DOM lib, and
+  // `include` is the entry tree only -- this is what proves it never grows
+  // an import from biset-core/roster/vault (PLAN_biset-mail-mediator.md
+  // section 2 "所有しないもの").
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ESNext"],
+    "types": ["bun"]
+  },
+  "include": ["src/mail-mediator/**/*"],
+  "typeRoots": ["node_modules/@types"]
+}

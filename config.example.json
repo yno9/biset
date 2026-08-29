@@ -4,5 +4,6 @@
   "anchorOidcClientId": "biset-client",
   "coreBaseUrl": "https://biset.md",
   "mediatorUrls": ["https://mediator.biset.md"],
+  "mailMediatorUrls": [],
   "coordinatorUrl": "https://coordinator.biset.md"
 }

@@ -2,7 +2,7 @@
 // main.ts each need apexDomain/coreBaseUrl, so this is read in one place
 // rather than two copies of the same window-global reach-through drifting
 // apart.
-declare const __BISET_CONFIG__: { apexDomain?: string; anchorBaseUrl?: string; anchorOidcClientId?: string; coreBaseUrl?: string; mediatorUrls?: string[]; coordinatorUrl?: string } | undefined
+declare const __BISET_CONFIG__: { apexDomain?: string; anchorBaseUrl?: string; anchorOidcClientId?: string; coreBaseUrl?: string; mediatorUrls?: string[]; mailMediatorUrls?: string[]; coordinatorUrl?: string } | undefined
 
 export interface BisetConfig {
   apexDomain: string
@@ -19,6 +19,10 @@ export interface BisetConfig {
    * exactly as before (no mediator involved at all). Additive and opt-in on
    * purpose: production currently opts into https://mediator.biset.md. */
   mediatorUrls: string[]
+  /** Independent Mail Mediators this deployment binds mail routes with
+   * (PLAN_biset-mail-mediator.md) -- same additive/opt-in shape as
+   * `mediatorUrls`. Empty/unset means no mail pickup/submit is attempted. */
+  mailMediatorUrls: string[]
   /** Optional: a single-device Vault works without a Coordinator. */
   coordinatorUrl: string
 }
@@ -31,6 +35,7 @@ export function readBisetConfig(): BisetConfig {
     anchorOidcClientId: cfg.anchorOidcClientId ?? '',
     coreBaseUrl: cfg.coreBaseUrl ?? '',
     mediatorUrls: cfg.mediatorUrls ?? [],
+    mailMediatorUrls: cfg.mailMediatorUrls ?? [],
     coordinatorUrl: cfg.coordinatorUrl ?? '',
   }
 }
