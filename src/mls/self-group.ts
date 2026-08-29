@@ -46,7 +46,6 @@ import {
   processIncoming,
   rekey,
   removeMembers,
-  updateOwnCredential,
   type OwnKeyPackage,
 } from './group.ts'
 import type { ClientState } from './vendor/index.ts'
@@ -210,83 +209,6 @@ export async function removeDeviceFromSelfGroup(
 }
 
 /**
- * Migrates this device's own self-group leaf to a NEW credential after a
- * did:webvh domain move (identity/webvh/move.ts). Same physical device,
- * same signature key — only the kid changes (`${did}#device-hex}` embeds
- * the did, which the move rewrote) — but
- * mls/webvh-authentication-service.ts's validateCredential resolves a
- * leaf's own credential against the CURRENT document, so the OLD credential
- * becomes permanently unverifiable the moment the move's own document
- * substitution lands: without this step, this device would be locked out
- * of every future DS operation on its own group (found live, 2026-08-26,
- * before a move ever shipped).
- *
- * group.ts's own `updateOwnCredential` does this as a plain Update
- * proposal, committed by this same device — no tree-shape change, no
- * external join. An earlier version of this function used RFC 9420 §11's
- * resync mechanism (remove the old leaf, add a new one via external
- * commit) instead; abandoned after it turned out to hit an unrelated bug
- * in the vendored MLS tree code for a single-member group (see
- * updateOwnCredential's own header) — Update is also the more precise
- * primitive for "same member, new credential" regardless.
- *
- * MUST run in the window identity/webvh/move.ts's own
- * afterNewLocationWritten hook provides: after the NEW location's
- * did.jsonl already resolves (so `newDeviceKid` — the credential this
- * commit installs — validates), but BEFORE the OLD location is told about
- * the move (so `oldDeviceKid` — this device's CURRENT roster membership,
- * which `submitCommit`'s own authorization is gated on — still resolves
- * too). Outside that window there is no ordering that works: run it after
- * the full move and `oldDeviceKid` is already dead; run it before the new
- * location exists and `newDeviceKid` isn't resolvable yet either.
- *
- * `selfGroupIdHex` itself (SCID-keyed) is unaffected by any of this — only
- * the ClientState's own leaf content changes, and where the LOCAL row for
- * it is stored: saved fresh under `newIdentityId` here; the caller is
- * responsible for dropping the now-stale row under `oldIdentityId`
- * (`IndexedDbMlsSelfGroupStore.delete`) once this returns.
- */
-export async function migrateSelfGroupCredential(
-  store: MlsSelfGroupStateStore,
-  transport: CoordinatorMlsDeliveryTransport,
-  oldIdentityId: string,
-  newIdentityId: string,
-  oldDeviceKid: string,
-  newDeviceKid: string,
-  sign: SelfGroupSigner,
-  now: () => Date = () => new Date(),
-): Promise<ClientState> {
-  const stored = await store.load(oldIdentityId)
-  if (!stored) throw new Error('migrateSelfGroupCredential: no self-group state for this identity')
-  const groupId = selfGroupIdHex(oldIdentityId)
-
-  const result = await updateOwnCredential(stored.state, newDeviceKid)
-  const submission: Omit<MlsCommitSubmissionV1, 'signature'> = {
-    version: 1,
-    groupId,
-    identityId: newIdentityId,
-    // The CURRENT roster still only trusts oldDeviceKid -- submitCommit's
-    // own authorization is `group.roster.has(sender)`, so submitting as
-    // the not-yet-installed newDeviceKid would be rejected as
-    // not-a-member even though the commit content itself is what installs
-    // it. oldDeviceKid is still resolvable here (see this function's own
-    // ordering note), so signing/verifying under it is exactly correct
-    // for "the current member submitting a change to itself".
-    senderKid: oldDeviceKid,
-    epoch: mlsEpoch(epochOf(stored.state)),
-    commit: result.commit,
-    roster: memberKids(result.state, newIdentityId),
-    groupInfo: await groupInfoForExternalJoin(result.state),
-    submittedAt: now().toISOString(),
-  }
-  const outcome = await transport.submitCommit({ ...submission, signature: await sign(mlsCommitSubmissionSigningBytes(submission)) })
-  if (!outcome.ok) throw new Error(`migrateSelfGroupCredential: commit rejected (${outcome.reason})`)
-  confirmCommit(result)
-  await store.save(newIdentityId, groupId, result.state)
-  return result.state
-}
-
-/**
  * Join this identity's self group as a NEW DEVICE, with no other device of
  * ours needing to be online — RFC 9420 §11's external commit against the
  * GroupInfo the DS holds.
@@ -395,7 +317,7 @@ export async function installCurrentRosterProjection(
     identityId,
     state,
     previous,
-    { signingKeyIdForKid: kid => kid, deliveryFloorForNewDevice },
+    { deliveryFloorForNewDevice },
     now,
   )
   const install = await signRosterInstall(projection, deviceKid, sign, now)

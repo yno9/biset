@@ -25,6 +25,7 @@ export interface MlsGroupCreationV1 {
   creatorKid: DeviceId
   roster: DeviceId[]
   createdAt: string
+  deviceCredential?: Uint8Array
   signature: Uint8Array
 }
 
@@ -43,6 +44,7 @@ export interface MlsCommitSubmissionV1 {
   welcomeTo?: DeviceId[]
   groupInfo?: Uint8Array
   submittedAt: string
+  deviceCredential?: Uint8Array
   signature: Uint8Array
 }
 
@@ -55,6 +57,7 @@ export interface MlsExternalCommitSubmissionV1 {
   commit: Uint8Array
   groupInfo?: Uint8Array
   submittedAt: string
+  deviceCredential?: Uint8Array
   signature: Uint8Array
 }
 
@@ -64,6 +67,7 @@ export interface MlsGroupInfoPullV1 {
   identityId: IdentityId
   requesterKid: DeviceId
   requestedAt: string
+  deviceCredential?: Uint8Array
   signature: Uint8Array
 }
 
@@ -73,6 +77,7 @@ export interface MlsKeyPackagePublishV1 {
   kid: DeviceId
   packages: Uint8Array[]
   publishedAt: string
+  deviceCredential?: Uint8Array
   signature: Uint8Array
 }
 
@@ -82,6 +87,7 @@ export interface MlsKeyPackageTakeV1 {
   /** The current member requesting key packages, so it can add a new device. */
   requesterKid: DeviceId
   requestedAt: string
+  deviceCredential?: Uint8Array
   signature: Uint8Array
 }
 
@@ -95,6 +101,7 @@ export interface MlsSelfRemoveSubmissionV1 {
   /** The device kid declaring its own removal — normally `senderKid` itself. */
   removedKid: DeviceId
   submittedAt: string
+  deviceCredential?: Uint8Array
   signature: Uint8Array
 }
 
@@ -106,6 +113,7 @@ export interface MlsPendingRemovalsClearV1 {
   requesterKid: DeviceId
   clearedKids: DeviceId[]
   clearedAt: string
+  deviceCredential?: Uint8Array
   signature: Uint8Array
 }
 
@@ -116,6 +124,7 @@ export interface MlsDeliveriesPullV1 {
   requesterKid: DeviceId
   afterSeq: number
   requestedAt: string
+  deviceCredential?: Uint8Array
   signature: Uint8Array
 }
 
@@ -124,6 +133,7 @@ export interface MlsKeyPackageDropV1 {
   identityId: IdentityId
   kid: DeviceId
   droppedAt: string
+  deviceCredential?: Uint8Array
   signature: Uint8Array
 }
 
@@ -132,6 +142,7 @@ export interface MlsKeyPackageCountPullV1 {
   identityId: IdentityId
   kid: DeviceId
   requestedAt: string
+  deviceCredential?: Uint8Array
   signature: Uint8Array
 }
 
@@ -140,5 +151,6 @@ export interface MlsGroupsForPullV1 {
   identityId: IdentityId
   requesterKid: DeviceId
   requestedAt: string
+  deviceCredential?: Uint8Array
   signature: Uint8Array
 }

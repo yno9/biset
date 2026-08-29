@@ -56,9 +56,9 @@ import { activatePreRotation, deactivatePreRotation, rotateToPreRotatedKey } fro
 import { moveWebvhIdentity } from './identity/webvh/move.ts'
 import { adoptPendingMove } from './identity/webvh/adopt-move.ts'
 import { encodeMultikey } from './identity/webvh/multikey.ts'
-import { removeDeviceVerificationMethod } from './identity/webvh/remove-device-verification-method.ts'
 import { removeDeviceFromSelfGroup, type SelfGroupSigner } from './mls/self-group.ts'
-import { ownSignaturePrivateKey } from './mls/group.ts'
+import { memberKids, ownMlsDeviceCredential, ownSignaturePrivateKey } from './mls/group.ts'
+import { encodeMlsDeviceCredential } from './mls/device-credential.ts'
 import { CoordinatorMlsDeliveryTransport } from './mls/coordinator-mls-delivery-transport.ts'
 import { DidCommDeviceKeyReader } from './vault/didcomm-device-key-reader.ts'
 import { DidCommDeviceKeyVaultSink } from './vault/didcomm-device-key-sink.ts'
@@ -178,7 +178,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   // when resolution fails right now (offline, host unreachable) -- routine
   // upkeep, not something to block boot on.
   const records = await Promise.all(storedRecords.map(record =>
-    adoptPendingMove({ recordStore, record, vaultStore, selfGroupStore, keyPackageStore: keyStore }).catch(e => {
+    adoptPendingMove({ recordStore, record, vaultStore, selfGroupStore }).catch(e => {
       console.warn(`[adoptPendingMove] ${record.did}:`, e instanceof Error ? e.message : e)
       return record
     }),
@@ -230,10 +230,14 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   let coordinatorBindingActive = false
   let flushCoordinatorOutbox: (() => Promise<{ appendedEntryIds: string[]; failedEntryId?: string; failureReason?: string }>) | undefined
   const coordinatorConfigured = !!(anchorBaseUrl && anchorOidcClientId && coordinatorUrl && identity.deviceKid)
+  let vaultDevices = await selfGroupStore.load(identity.did).then(stored => stored
+    ? memberKids(stored.state, identity.did).map(deviceId => ({ deviceId, current: deviceId === identity.deviceKid }))
+    : []).catch(() => [])
   let vaultCardStatus: VaultCardStatus | undefined = coordinatorConfigured ? {
-    state: 'checking', coordinatorUrl, detail: 'Checking saved login session',
+    state: 'checking', coordinatorUrl, detail: 'Checking saved login session', devices: vaultDevices,
   } : undefined
   const setVaultCard = (next: VaultCardStatus): void => {
+    next = { ...next, devices: vaultDevices }
     if (vaultCardStatus && JSON.stringify(vaultCardStatus) === JSON.stringify(next)) return
     vaultCardStatus = next
     updateVaultCardStatus(next)
@@ -293,9 +297,8 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   }
   // Revoke = cut the target device out of MLS membership (so it can't read
   // anything committed after this point, mls/self-group.ts's own
-  // removeDeviceFromSelfGroup) + drop its verificationMethod entry from the
-  // DID document (so nothing resolving this identity still treats its leaf
-  // key as valid).
+  // removeDeviceFromSelfGroup). The DID document is Root-only; device
+  // revocation is represented exclusively by Self Group membership.
   //
   // Does NOT touch routing.json's DIDComm keyAgreement entry: since
   // 2026-08-27 (ARC.md's DIDComm mediator redesign) that key is
@@ -316,11 +319,10 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     const stored = await selfGroupStore.load(identity.did)
     if (!stored) throw new Error('No self-group state for this identity')
     const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
-    const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: coordinatorUrl })
-    await removeDeviceFromSelfGroup(selfGroupStore, mlsTransport, identity.did, identity.deviceKid, targetDeviceKid, sign)
-    const rootPrivateKey = fromHex(identity.rootPrivateKey)
-    const rootPublicKey = fromHex(identity.rootPublicKey)
-    await removeDeviceVerificationMethod({ did: identity.did, deviceKeyId: targetDeviceKid, signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey })
+    const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: coordinatorUrl, deviceCredential: encodeMlsDeviceCredential(ownMlsDeviceCredential(stored.state)) })
+    const state = await removeDeviceFromSelfGroup(selfGroupStore, mlsTransport, identity.did, identity.deviceKid, targetDeviceKid, sign)
+    vaultDevices = memberKids(state, identity.did).map(deviceId => ({ deviceId, current: deviceId === identity.deviceKid }))
+    if (vaultCardStatus) setVaultCard(vaultCardStatus)
   }
   // did:webvh pre-rotation (identity/webvh/prerotation.ts) — independent of
   // coreBaseUrl/deviceKid, same reasoning as editName/revokeDevice above:
@@ -344,26 +346,15 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   }
   // did:webvh domain move (identity/webvh/move.ts) — same coreBaseUrl-
   // independence as editName/revokeDevice/pre-rotation above for the
-  // did.jsonl half; the MLS self-group credential migration half (only
-  // relevant once this device has a deviceKid at all) does need a core to
-  // submit the migration commit through, same as revokeDevice's own MLS
-  // step.
+  // did.jsonl move plus local DID-keyed store migration. MLS credentials are
+  // stable Root-signed objects and require no move-time commit.
   const moveIdentity = async (newDomain: string): Promise<string> => {
     const previousDid = identity.did
     const rootPrivateKey = fromHex(identity.rootPrivateKey)
     const rootPublicKey = fromHex(identity.rootPublicKey)
-    let mlsTransport: CoordinatorMlsDeliveryTransport | undefined
-    let mlsSign: SelfGroupSigner | undefined
-    if (identity.deviceKid) {
-      if (!coordinatorUrl) throw new Error('coordinatorUrl not configured')
-      const stored = await selfGroupStore.load(identity.did)
-      if (!stored) throw new Error('No self-group state for this identity')
-      mlsSign = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
-      mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: coordinatorUrl })
-    }
     const moved = await moveWebvhIdentity({
-      recordStore, record: identity, vaultStore, selfGroupStore, keyPackageStore: keyStore,
-      mlsTransport, mlsSign, newDomain, signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey,
+      recordStore, record: identity, vaultStore, selfGroupStore,
+      newDomain, signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey,
     })
     await loginWalletStore.rekeyIdentity(previousDid, moved.did)
     identity = moved
@@ -378,7 +369,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     return moved.did
   }
   configureAccountPage({
-    did: identity.did, deviceKid: identity.deviceKid, masterSeed: identity.masterSeed,
+    did: identity.did, masterSeed: identity.masterSeed,
     onLogout: logout, onEditName: editName, onRevokeDevice: revokeDevice,
     onActivateKeyRotation: activateKeyRotation, onRotateKeyRotation: rotateKeyRotation, onDeactivateKeyRotation: deactivateKeyRotation,
     onMoveIdentity: moveIdentity,

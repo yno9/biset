@@ -1,7 +1,7 @@
 // The passive counterpart to move.ts: a device that did NOT perform a
 // domain move still needs to notice one happened (moved by a SIBLING
 // device sharing this identity) and keep its own local bookkeeping
-// (IdentityRecord, vault store, self-group row, KeyPackage pool) pointed at
+// (IdentityRecord, vault store, self-group row) pointed at
 // the identity's CURRENT location. Without this, every future
 // add-device/revoke/routing-publish this device performs would still
 // target the stale OLD location -- a permanent did:webvh log fork (the
@@ -9,16 +9,8 @@
 // revocation this device issues would never reach anyone resolving the
 // identity's real, current document.
 //
-// Deliberately does NOT run mls/self-group.ts's migrateSelfGroupCredential:
-// this device's own MLS leaf credential can safely keep naming its old
-// did-prefix indefinitely. core/identity/webvh-signing-key-resolver.ts and
-// mls/webvh-authentication-service.ts both match a kid by its `#fragment`
-// against the resolved document's OWN current id, not the full kid
-// verbatim, specifically so a device that never re-issues its own
-// credential keeps validating through any number of a SIBLING's moves.
-// Re-issuing it is a nice-to-have for long-term resilience against the
-// ORIGINAL domain someday disappearing entirely, not something correctness
-// here depends on.
+// MLS device credentials and KeyPackages remain unchanged: the credential
+// is Root-signed and its original DID resolves through the move chain.
 //
 // Converges one hop per call, even across back-to-back moves this device
 // missed entirely, as long as each intermediate domain is still resolvable
@@ -32,14 +24,12 @@ import { resolve } from './resolver.ts'
 import type { IdentityRecord, IdentityRecordStore } from '../record-store.ts'
 import type { IndexedDbVaultStore } from '../../vault/store.ts'
 import type { IndexedDbMlsSelfGroupStore } from '../../mls/store.ts'
-import type { IndexedDbMlsKeyPackageStore } from '../../mls/keypackage-store.ts'
 
 export interface AdoptPendingMoveOptions {
   recordStore: IdentityRecordStore
   record: IdentityRecord
   vaultStore: IndexedDbVaultStore
   selfGroupStore: IndexedDbMlsSelfGroupStore
-  keyPackageStore: IndexedDbMlsKeyPackageStore
 }
 
 /** Checks whether `record`'s identity has moved to a new domain since this
@@ -63,7 +53,8 @@ export async function adoptPendingMove(opts: AdoptPendingMoveOptions): Promise<I
   const movedRecord: IdentityRecord = {
     ...opts.record,
     did: newDid,
-    ...(opts.record.deviceKid ? { deviceKid: rewrite(opts.record.deviceKid) } : {}),
+    // MLS device ids are Root-authorized credentials and remain stable
+    // across a same-SCID location move.
     ...(opts.record.didCommKid ? { didCommKid: rewrite(opts.record.didCommKid) } : {}),
   }
   await opts.recordStore.put(movedRecord)
@@ -75,12 +66,5 @@ export async function adoptPendingMove(opts: AdoptPendingMoveOptions): Promise<I
     await opts.selfGroupStore.save(newDid, stored.selfGroupId, stored.state)
     await opts.selfGroupStore.delete(oldDid)
   }
-  // Same reasoning as move.ts's own tail: an already-minted KeyPackage's kid
-  // is baked into its signed credential and cannot be carried over; the
-  // pool just needs refilling under the (unchanged) device kid, which
-  // ensureKeyPackagePool (identity/bootstrap.ts, called every boot) already
-  // does on its own.
-  await opts.keyPackageStore.clear()
-
   return movedRecord
 }

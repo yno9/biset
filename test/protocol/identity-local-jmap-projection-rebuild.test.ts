@@ -5,8 +5,10 @@
 // it through VaultProjectionWriter -- including the brand-new-identity case
 // where NOTHING has seeded a `vault_projection` row yet.
 import { describe, expect, test } from 'bun:test'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { buildLocalJmapProjectionRebuild, buildVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
 import { createMlsGroup, generateOwnKeyPackage } from '../../src/mls/group.ts'
+import { createMlsDeviceCredential } from '../../src/mls/device-credential.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
 import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { buildMailMessageAdd } from '../../src/vault/mail-message.ts'
@@ -16,7 +18,14 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
-const deviceKid = `${identityId}#device-a`
+const rootPrivateKey = ed25519.utils.randomSecretKey()
+const leafPrivateKey = ed25519.utils.randomSecretKey()
+const deviceCredential = createMlsDeviceCredential(identityId, ed25519.getPublicKey(leafPrivateKey), rootPrivateKey)
+const deviceKid = deviceCredential.deviceKid
+
+function ownKeyPackage() {
+  return generateOwnKeyPackage(deviceCredential, leafPrivateKey)
+}
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
@@ -79,7 +88,7 @@ function memoryProjectionStore(): { readProjection(id: string): Promise<unknown>
 
 describe('buildLocalJmapProjectionRebuild', () => {
   test('seeds an empty projection for a brand-new identity with no stored events', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await ownKeyPackage()
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
@@ -101,7 +110,7 @@ describe('buildLocalJmapProjectionRebuild', () => {
   })
 
   test('rebuilds the full projection from every stored message.add, matching a fresh replay', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await ownKeyPackage()
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
@@ -139,7 +148,7 @@ describe('buildLocalJmapProjectionRebuild', () => {
   })
 
   test('rejects a rebuild whose event was signed by a device never in the self group', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await ownKeyPackage()
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)

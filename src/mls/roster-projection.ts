@@ -6,19 +6,11 @@
 import { mlsEpoch, type DeliverySeq, type IdentityId } from '../protocol/ids.ts'
 import type { AcceptedSelfGroupProjectionV1, TrustedDeviceV1 } from '../core/identity/device-roster.ts'
 import { rosterInstallSigningBytes, type RosterInstallV1 } from '../core/identity/roster-install.ts'
-import { epochOf, memberList } from './group.ts'
+import { epochOf, memberDeviceCredentialBytes, memberList, memberSignaturePublicKey } from './group.ts'
 import type { ClientState } from './vendor/index.ts'
+import { sameIdentity } from '../identity/idkey.ts'
 
 export interface RosterProjectionDeviceSource {
-  /**
-   * Maps an MLS leaf's credential kid (`did#kN`) to the DID-URL signing key
-   * id the roster's Ed25519 verifier resolves. The MLS credential and the
-   * roster's `signingKeyId` are not guaranteed to be the same string in
-   * general (`PLANMLSDIDCRED.md` §4's open items — the device-credential
-   * design is not finalized); this seam is what lets the caller own that
-   * mapping instead of this module guessing at it.
-   */
-  signingKeyIdForKid(kid: string): string
   /**
    * `deliveryFloor` for a device the roster has not seen before: the
    * vault-delivery seq it starts pulling from. Must be the CURRENT
@@ -45,16 +37,20 @@ export async function buildAcceptedSelfGroupProjection(
   source: RosterProjectionDeviceSource,
   now: () => Date = () => new Date(),
 ): Promise<AcceptedSelfGroupProjectionV1> {
-  const kids = memberList(state).filter(member => member.did === did).map(member => member.kid)
+  const kids = memberList(state).filter(member => sameIdentity(member.did, did)).map(member => member.kid)
   if (kids.length === 0) throw new Error('buildAcceptedSelfGroupProjection: identity has no active device in this self group')
   const previousByDeviceId = new Map((previous?.devices ?? []).map(device => [device.deviceId, device]))
   const devices: TrustedDeviceV1[] = []
   for (const kid of kids) {
     const existing = previousByDeviceId.get(kid)
+    const signingPublicKey = memberSignaturePublicKey(state, kid)
+    const deviceCredential = memberDeviceCredentialBytes(state, kid)
+    if (!signingPublicKey || !deviceCredential) throw new Error(`MLS member ${kid} has no verifiable device credential`)
     devices.push({
       deviceId: kid,
       deliveryFloor: existing ? existing.deliveryFloor : await source.deliveryFloorForNewDevice(),
-      signingKeyId: source.signingKeyIdForKid(kid),
+      signingPublicKey,
+      deviceCredential,
     })
   }
   return {

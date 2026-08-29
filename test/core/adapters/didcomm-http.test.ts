@@ -34,7 +34,7 @@ async function buildHandler() {
   const roster = new MemoryTrustedDeviceRoster()
   await roster.installAcceptedProjection({
     version: 1, identityId: did, selfGroupId: 'self-group-1', epoch: '1', acceptedAt: '2026-08-24T00:00:00.000Z',
-    devices: [{ deviceId: kid, deliveryFloor: '1', signingKeyId: kid }],
+    devices: [{ deviceId: kid, deliveryFloor: '1', signingPublicKey: new Uint8Array(32), deviceCredential: new Uint8Array([1]) }],
   })
   const store = new MemoryIngressStore(permissive)
   const coreIngress = new CoreIngressAdapter(roster, store)

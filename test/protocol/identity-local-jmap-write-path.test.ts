@@ -10,7 +10,8 @@
 // local-write-to-shared-delivery path actually interoperates on real keys.
 import { describe, expect, test } from 'bun:test'
 import { buildVaultCryptoBoundary, buildVaultDeliveryProjector } from '../../src/identity/bootstrap.ts'
-import { createMlsGroup, generateOwnKeyPackage } from '../../src/mls/group.ts'
+import { createMlsGroup } from '../../src/mls/group.ts'
+import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { LocalJmapGateway, LocalJmapTransport, MemoryLocalJmapReadModel, type LocalJmapSnapshot } from '../../src/local-jmap/gateway.ts'
 import { VaultBackedLocalJmapMutationSink, type LocalVaultMutationCommitter } from '../../src/local-jmap/vault-mutation-sink.ts'
@@ -22,7 +23,6 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
-const deviceKid = `${identityId}#device-a`
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
@@ -66,7 +66,9 @@ function memorySegmentStore(): ActiveVaultSegmentStore {
 
 describe('local JMAP write path with a real MLS device signer', () => {
   test('Email/set signs with the real MLS leaf key, and a separate real MLS verifier accepts and projects it', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const device = await mlsDeviceFixture(identityId)
+    const deviceKid = device.kid
+    const kp = device.own
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)

@@ -30,13 +30,14 @@ describe('Coordinator Self Group MLS Delivery Service', () => {
     const handler = createVaultCoordinatorFetchHandler({ store, accessTokens, mlsDelivery: mlsHandler })
 
     const unsigned = { version: 1 as const, groupId: 'group-a', identityId: 'did:webvh:test:alice.example', creatorKid: kid, roster: [], createdAt: '2026-08-29T00:00:00.000Z' }
-    const body = encodeMlsGroupCreationWire({ ...unsigned, signature: ed25519.sign(mlsGroupCreationSigningBytes(unsigned), secret) })
+    const deviceCredential = new Uint8Array([1])
+    const body = encodeMlsGroupCreationWire({ ...unsigned, deviceCredential, signature: ed25519.sign(mlsGroupCreationSigningBytes(unsigned), secret) })
     const response = await handler(new Request('https://coordinator.example/v1/mls/group/create', { method: 'POST', headers: { 'content-type': 'application/json' }, body }))
     expect(response.status).toBe(201)
     expect(response.headers.get('access-control-allow-origin')).toBe('*')
     expect(await response.json()).toEqual({ roster: [kid] })
 
-    const rejected = await handler(new Request('https://coordinator.example/v1/mls/group/create', { method: 'POST', headers: { 'content-type': 'application/json' }, body: encodeMlsGroupCreationWire({ ...unsigned, groupId: 'group-b', signature: new Uint8Array(64) }) }))
+    const rejected = await handler(new Request('https://coordinator.example/v1/mls/group/create', { method: 'POST', headers: { 'content-type': 'application/json' }, body: encodeMlsGroupCreationWire({ ...unsigned, groupId: 'group-b', deviceCredential, signature: new Uint8Array(64) }) }))
     expect(rejected.status).toBe(403)
   })
 

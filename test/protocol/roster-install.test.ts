@@ -11,14 +11,9 @@ const deviceBKey = ed25519.utils.randomSecretKey()
 const deviceBPublicKey = ed25519.getPublicKey(deviceBKey)
 const strangerKey = ed25519.utils.randomSecretKey()
 
-const keys: Record<string, Uint8Array> = {
-  'did:web:alice.example#device-a-sign': deviceAPublicKey,
-  'did:web:alice.example#device-b-sign': deviceBPublicKey,
-}
-
 function verifier() {
   return new Ed25519DeviceControlSignatureVerifier({
-    async resolveEd25519PublicKey(keyId) { return keys[keyId] },
+    async resolveEd25519PublicKey(_keyId, _identityId, credential) { return credential[0] === 1 ? deviceAPublicKey : credential[0] === 2 ? deviceBPublicKey : undefined },
   })
 }
 
@@ -28,7 +23,7 @@ function projection(overrides: Partial<AcceptedSelfGroupProjectionV1> = {}): Acc
     identityId: 'did:web:alice.example',
     selfGroupId: 'self-group-alice',
     epoch: '1',
-    devices: [{ deviceId: 'device-a', deliveryFloor: '0', signingKeyId: 'did:web:alice.example#device-a-sign' }],
+    devices: [{ deviceId: 'device-a', deliveryFloor: '0', signingPublicKey: deviceAPublicKey, deviceCredential: new Uint8Array([1]) }],
     acceptedAt: '2026-08-23T00:00:00.000Z',
     ...overrides,
   }
@@ -63,8 +58,8 @@ describe('installRosterProjection (core as MLS DS)', () => {
     const next = projection({
       epoch: '2',
       devices: [
-        { deviceId: 'device-a', deliveryFloor: '0', signingKeyId: 'did:web:alice.example#device-a-sign' },
-        { deviceId: 'device-b', deliveryFloor: '5', signingKeyId: 'did:web:alice.example#device-b-sign' },
+        { deviceId: 'device-a', deliveryFloor: '0', signingPublicKey: deviceAPublicKey, deviceCredential: new Uint8Array([1]) },
+        { deviceId: 'device-b', deliveryFloor: '5', signingPublicKey: deviceBPublicKey, deviceCredential: new Uint8Array([2]) },
       ],
       acceptedAt: '2026-08-23T00:01:00.000Z',
     })
@@ -84,7 +79,7 @@ describe('installRosterProjection (core as MLS DS)', () => {
     // signing an install that adds itself.
     const forged = projection({
       epoch: '2',
-      devices: [{ deviceId: 'device-b', deliveryFloor: '0', signingKeyId: 'did:web:alice.example#device-b-sign' }],
+      devices: [{ deviceId: 'device-b', deliveryFloor: '0', signingPublicKey: deviceBPublicKey, deviceCredential: new Uint8Array([2]) }],
       acceptedAt: '2026-08-23T00:01:00.000Z',
     })
     const install = signedInstall({ version: 1, projection: forged, installerDeviceId: 'device-b', installedAt: '2026-08-23T00:01:00.000Z' }, deviceBKey)
@@ -106,7 +101,7 @@ describe('installRosterProjection (core as MLS DS)', () => {
       deviceAKey,
     ))
 
-    const conflicting = projection({ devices: [{ deviceId: 'device-a', deliveryFloor: '9', signingKeyId: 'did:web:alice.example#device-a-sign' }] })
+    const conflicting = projection({ devices: [{ deviceId: 'device-a', deliveryFloor: '9', signingPublicKey: deviceAPublicKey, deviceCredential: new Uint8Array([1]) }] })
     const install = signedInstall({ version: 1, projection: conflicting, installerDeviceId: 'device-a', installedAt: '2026-08-23T00:00:01.000Z' }, deviceAKey)
     await expect(installRosterProjection(roster, verifier(), install)).rejects.toThrow('conflicting device roster')
   })

@@ -22,6 +22,7 @@ import { createSmtpMailListener } from '../../../src/core/adapters/mail-smtp-lis
 import { CoreIngressTransport } from '../../../src/vault/core-ingress-transport.ts'
 import { ingressPullSigningBytes } from '../../../src/protocol/signing.ts'
 import { createMlsGroup, generateOwnKeyPackage, ownSignaturePrivateKey } from '../../../src/mls/group.ts'
+import { createMlsDeviceCredential } from '../../../src/mls/device-credential.ts'
 import { selfGroupIdHex } from '../../../src/mls/self-group.ts'
 import { buildMailMessageAdd } from '../../../src/vault/mail-message.ts'
 import { IndexedDbVaultStore } from '../../../src/vault/store.ts'
@@ -49,14 +50,16 @@ function memorySelfGroupStore(): MlsSelfGroupStateStore {
   }
 }
 
-async function makeIdentity(did: string, deviceKid: string) {
-  const kp = await generateOwnKeyPackage(deviceKid)
+async function makeIdentity(did: string, rootPrivateKey = ed25519.utils.randomSecretKey()) {
+  const leafPrivateKey = ed25519.utils.randomSecretKey()
+  const credential = createMlsDeviceCredential(did, ed25519.getPublicKey(leafPrivateKey), rootPrivateKey)
+  const kp = await generateOwnKeyPackage(credential, leafPrivateKey)
   const state = await createMlsGroup(hexToBytes(selfGroupIdHex(did)), kp)
   const selfGroupStore = memorySelfGroupStore()
   await selfGroupStore.save(did, selfGroupIdHex(did), state)
   const publicKey = ed25519.getPublicKey(ownSignaturePrivateKey(state))
-  const record: IdentityRecord = { did, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
-  return { record, selfGroupStore, publicKey }
+  const record: IdentityRecord = { did, deviceKid: credential.deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+  return { record, selfGroupStore, publicKey, deviceCredential: kp.publicPackage.leafNode.credential.identity }
 }
 
 const sqlitePaths: string[] = []
@@ -80,7 +83,7 @@ describe('outbound send: a real sender vault submits, a real inbound listener re
     const rootPrivateKey = ed25519.utils.randomSecretKey()
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
     const { did: recipientDid, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [])
-    const recipient = await makeIdentity(recipientDid, `${recipientDid}#device-a`)
+    const recipient = await makeIdentity(recipientDid, rootPrivateKey)
     const recipientAddress = `test@mail.${APEX_DOMAIN}`
 
     // Sender: a syntactically valid did:webvh under a DIFFERENT subdomain
@@ -93,7 +96,7 @@ describe('outbound send: a real sender vault submits, a real inbound listener re
     // identity, which sender and recipient very much are not.
     const senderScid = jcsMultihashBase58('mail-submission-e2e sender')
     const senderDid = `did:webvh:${senderScid}:sender.${APEX_DOMAIN}`
-    const sender = await makeIdentity(senderDid, `${senderDid}#device-a`)
+    const sender = await makeIdentity(senderDid)
 
     const databasePath = `/tmp/biset-mail-e2e-${process.pid}-${Date.now()}.sqlite`
     sqlitePaths.push(databasePath)
@@ -110,11 +113,11 @@ describe('outbound send: a real sender vault submits, a real inbound listener re
     const verifier = new Ed25519DeviceControlSignatureVerifier(signingKeys)
     await roster.installAcceptedProjection({
       version: 1, identityId: sender.record.did, selfGroupId: 'self-sender', epoch: '1', acceptedAt: '2026-08-24T00:00:00.000Z',
-      devices: [{ deliveryFloor: '1', deviceId: sender.record.deviceKid!, signingKeyId: sender.record.deviceKid! }],
+      devices: [{ deliveryFloor: '1', deviceId: sender.record.deviceKid!, signingPublicKey: sender.publicKey, deviceCredential: sender.deviceCredential }],
     })
     await roster.installAcceptedProjection({
       version: 1, identityId: recipient.record.did, selfGroupId: 'self-recipient', epoch: '1', acceptedAt: '2026-08-24T00:00:00.000Z',
-      devices: [{ deliveryFloor: '1', deviceId: recipient.record.deviceKid!, signingKeyId: recipient.record.deviceKid! }],
+      devices: [{ deliveryFloor: '1', deviceId: recipient.record.deviceKid!, signingPublicKey: recipient.publicKey, deviceCredential: recipient.deviceCredential }],
     })
 
     const ingressStore = new SqliteIngressStore(database, rosterBackedIngressAuthorizer(roster, verifier))

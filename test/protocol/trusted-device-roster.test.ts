@@ -8,8 +8,8 @@ function projection(overrides: Partial<AcceptedSelfGroupProjectionV1> = {}): Acc
     selfGroupId: 'self-group-alice',
     epoch: '7',
     devices: [
-      { deviceId: 'device-a', deliveryFloor: '1', signingKeyId: 'did:web:alice.example#device-a-sign' },
-      { deviceId: 'device-b', deliveryFloor: '4', signingKeyId: 'did:web:alice.example#device-b-sign' },
+      { deviceId: 'device-a', deliveryFloor: '1', signingPublicKey: new Uint8Array(32).fill(1), deviceCredential: new Uint8Array([1]) },
+      { deviceId: 'device-b', deliveryFloor: '4', signingPublicKey: new Uint8Array(32).fill(2), deviceCredential: new Uint8Array([2]) },
     ],
     acceptedAt: '2026-08-21T00:00:00.000Z',
     ...overrides,
@@ -31,7 +31,7 @@ describe('trusted device roster', () => {
     await roster.installAcceptedProjection(projection())
     await roster.installAcceptedProjection(projection({
       epoch: '8',
-      devices: [{ deviceId: 'device-a', deliveryFloor: '1', signingKeyId: 'did:web:alice.example#device-a-sign' }],
+      devices: [{ deviceId: 'device-a', deliveryFloor: '1', signingPublicKey: new Uint8Array(32).fill(1), deviceCredential: new Uint8Array([1]) }],
       acceptedAt: '2026-08-21T00:01:00.000Z',
     }))
     expect(await roster.isTrustedDevice('did:web:alice.example', 'device-b')).toBe(false)

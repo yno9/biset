@@ -1,12 +1,15 @@
 import { assertDeliverySeq, assertMlsEpoch, type DeliverySeq, type DeviceId, type IdentityId, type MlsEpoch } from '../../protocol/ids.ts'
+import { base64urlToBytes, bytesToBase64url, equalBytes } from '../../protocol/canonical.ts'
 import { stableIdKey } from '../../identity/idkey.ts'
 
 export interface TrustedDeviceV1 {
   deviceId: DeviceId
   /** First vault-delivery sequence this device may obtain by ordinary pull. */
   deliveryFloor: DeliverySeq
-  /** Public only; private signing/transport/MLS keys never enter core. */
-  signingKeyId: string
+  /** Public leaf key and its Root-signed MLS credential, projected from the
+   * accepted group state. Private MLS material never enters core. */
+  signingPublicKey: Uint8Array
+  deviceCredential: Uint8Array
 }
 
 /**
@@ -93,7 +96,7 @@ export function assertAcceptedSelfGroupProjection(value: AcceptedSelfGroupProjec
   if (value.devices.length === 0) throw new TypeError('self-group projection must contain at least one device')
   const ids = new Set<string>()
   for (const device of value.devices) {
-    if (!device.deviceId || !device.signingKeyId) throw new TypeError('trusted device has empty required fields')
+    if (!device.deviceId || device.signingPublicKey.length !== 32 || device.deviceCredential.length === 0) throw new TypeError('trusted device has invalid required fields')
     assertDeliverySeq(device.deliveryFloor)
     if (ids.has(device.deviceId)) throw new TypeError('self-group projection has a duplicate device')
     ids.add(device.deviceId)
@@ -110,13 +113,21 @@ export function assertAcceptedSelfGroupProjection(value: AcceptedSelfGroupProjec
  */
 export function encodeAcceptedSelfGroupProjectionWire(value: AcceptedSelfGroupProjectionV1): string {
   assertAcceptedSelfGroupProjection(value)
-  return JSON.stringify(value)
+  return JSON.stringify({ ...value, devices: value.devices.map(device => ({ ...device, signingPublicKey: bytesToBase64url(device.signingPublicKey), deviceCredential: bytesToBase64url(device.deviceCredential) })) })
 }
 
 export function decodeAcceptedSelfGroupProjectionWire(text: string): AcceptedSelfGroupProjectionV1 {
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { throw new TypeError('roster projection body is not JSON') }
-  const value = parsed as AcceptedSelfGroupProjectionV1
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new TypeError('roster projection must be an object')
+  const input = parsed as Record<string, unknown>
+  if (!Array.isArray(input.devices)) throw new TypeError('roster projection devices must be an array')
+  const value = { ...input, devices: input.devices.map(entry => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new TypeError('trusted device must be an object')
+    const device = entry as Record<string, unknown>
+    if (typeof device.signingPublicKey !== 'string' || typeof device.deviceCredential !== 'string') throw new TypeError('trusted device keys must be base64url strings')
+    return { ...device, signingPublicKey: base64urlToBytes(device.signingPublicKey), deviceCredential: base64urlToBytes(device.deviceCredential) }
+  }) } as unknown as AcceptedSelfGroupProjectionV1
   assertAcceptedSelfGroupProjection(value)
   return value
 }
@@ -137,7 +148,8 @@ export function sameAcceptedSelfGroupProjection(left: AcceptedSelfGroupProjectio
       const other = right.devices[index]
       return device.deviceId === other.deviceId
         && device.deliveryFloor === other.deliveryFloor
-        && device.signingKeyId === other.signingKeyId
+        && equalBytes(device.signingPublicKey, other.signingPublicKey)
+        && equalBytes(device.deviceCredential, other.deviceCredential)
     })
 }
 
@@ -146,5 +158,5 @@ function copyProjection(value: AcceptedSelfGroupProjectionV1): AcceptedSelfGroup
 }
 
 function copyDevice(value: TrustedDeviceV1): TrustedDeviceV1 {
-  return { ...value }
+  return { ...value, signingPublicKey: value.signingPublicKey.slice(), deviceCredential: value.deviceCredential.slice() }
 }

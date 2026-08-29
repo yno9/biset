@@ -14,10 +14,13 @@ import { ensureKeyPackagePool } from '../../src/mls/key-package-pool.ts'
 import { mlsKeyPackageCountPullSigningBytes, mlsKeyPackageTakeSigningBytes } from '../../src/protocol/signing.ts'
 import type { MlsKeyPackageStore } from '../../src/mls/keypackage-store.ts'
 import type { OwnKeyPackage } from '../../src/mls/group.ts'
+import { encodeMlsDeviceCredential } from '../../src/mls/device-credential.ts'
+import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 
 const dsPath = `/tmp/biset-key-package-pool-${process.pid}-${Date.now()}.sqlite`
 const identityId = 'did:web:alice.example'
-const deviceKid = `${identityId}#device-a`
+const device = await mlsDeviceFixture(identityId)
+const deviceKid = device.kid
 
 afterEach(() => {
   for (const suffix of ['', '-wal', '-shm']) {
@@ -30,10 +33,10 @@ afterEach(() => {
 function memoryKeyPackageStore(): MlsKeyPackageStore & { size(): number } {
   const byRef = new Map<string, OwnKeyPackage>()
   return {
-    async mint(kid, count) {
+    async mint(kid, credential, signaturePrivateKey, count) {
       const minted: OwnKeyPackage[] = []
       for (let i = 0; i < count; i++) {
-        const own = await generateOwnKeyPackage(kid)
+        const own = await generateOwnKeyPackage(credential, signaturePrivateKey)
         byRef.set(await keyPackageRefOf(own.publicPackage), own)
         minted.push(own)
       }
@@ -56,7 +59,7 @@ function setup(kids: Record<string, OwnKeyPackage>) {
     async resolveEd25519PublicKey(kid) { return kids[kid]?.publicPackage.leafNode.signaturePublicKey },
   })
   const handle = createMlsDeliveryHttpHandler(ds, verifier, async () => true)
-  const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: (input, init) => handle(new Request(input, init)) })
+  const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', deviceCredential: encodeMlsDeviceCredential(device.credential), fetch: (input, init) => handle(new Request(input, init)) })
   return { ds, handle, transport }
 }
 
@@ -67,11 +70,11 @@ async function freshCount(transport: CoordinatorMlsDeliveryTransport, deviceKid:
 
 describe('ensureKeyPackagePool', () => {
   test('mints and publishes up to target when the DS pool is empty', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const { ds, transport } = setup({ [deviceKid]: kp })
     const keyStore = memoryKeyPackageStore()
 
-    await ensureKeyPackagePool(transport, keyStore, identityId, deviceKid, signerFor(kp), 5)
+    await ensureKeyPackagePool(transport, keyStore, identityId, deviceKid, device.credential, device.signaturePrivateKey, signerFor(kp), 5)
 
     expect(keyStore.size()).toBe(5)
     expect(await freshCount(transport, deviceKid, signerFor(kp))).toBe(5)
@@ -80,33 +83,34 @@ describe('ensureKeyPackagePool', () => {
   })
 
   test('is a no-op once the DS pool already meets target', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const { ds, handle, transport } = setup({ [deviceKid]: kp })
     const keyStore = memoryKeyPackageStore()
 
-    await ensureKeyPackagePool(transport, keyStore, identityId, deviceKid, signerFor(kp), 5)
+    await ensureKeyPackagePool(transport, keyStore, identityId, deviceKid, device.credential, device.signaturePrivateKey, signerFor(kp), 5)
     expect(keyStore.size()).toBe(5)
 
     const guardedTransport = new CoordinatorMlsDeliveryTransport({
       baseUrl: 'https://core.example',
+      deviceCredential: encodeMlsDeviceCredential(device.credential),
       fetch: (input, init) => {
         const request = new Request(input, init)
         if (new URL(request.url).pathname === '/v1/mls/keypackage/publish') throw new Error('publish must not be called when the pool is already full')
         return handle(request)
       },
     })
-    await ensureKeyPackagePool(guardedTransport, keyStore, identityId, deviceKid, signerFor(kp), 5)
+    await ensureKeyPackagePool(guardedTransport, keyStore, identityId, deviceKid, device.credential, device.signaturePrivateKey, signerFor(kp), 5)
     expect(keyStore.size()).toBe(5)
 
     ds.close()
   })
 
   test('tops up only the shortfall after some packages were consumed', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const { ds, transport } = setup({ [deviceKid]: kp })
     const keyStore = memoryKeyPackageStore()
 
-    await ensureKeyPackagePool(transport, keyStore, identityId, deviceKid, signerFor(kp), 5)
+    await ensureKeyPackagePool(transport, keyStore, identityId, deviceKid, device.credential, device.signaturePrivateKey, signerFor(kp), 5)
     expect(await freshCount(transport, deviceKid, signerFor(kp))).toBe(5)
 
     // Simulate the DS handing packages out for another device's Welcome.
@@ -115,7 +119,7 @@ describe('ensureKeyPackagePool', () => {
     expect(taken.length).toBeGreaterThan(0)
     expect(await freshCount(transport, deviceKid, signerFor(kp))).toBeLessThan(5)
 
-    await ensureKeyPackagePool(transport, keyStore, identityId, deviceKid, signerFor(kp), 5)
+    await ensureKeyPackagePool(transport, keyStore, identityId, deviceKid, device.credential, device.signaturePrivateKey, signerFor(kp), 5)
     expect(await freshCount(transport, deviceKid, signerFor(kp))).toBe(5)
 
     ds.close()

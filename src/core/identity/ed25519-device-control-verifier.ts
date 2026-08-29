@@ -17,10 +17,11 @@ import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequ
 import type { TrustedDeviceV1 } from './device-roster.ts'
 import type { DeviceControlSignatureVerifier } from './authorizers.ts'
 import { rosterInstallSigningBytes, type RosterInstallV1 } from './roster-install.ts'
+import { equalBytes } from '../../protocol/canonical.ts'
 
 /** DID/webvh adapter boundary. It returns public Ed25519 keys only. */
 export interface DeviceSigningPublicKeyResolver {
-  resolveEd25519PublicKey(signingKeyId: string): Promise<Uint8Array | undefined>
+  resolveEd25519PublicKey(signingKeyId: string, identityId: string, deviceCredential: Uint8Array): Promise<Uint8Array | undefined>
 }
 
 /**
@@ -68,7 +69,7 @@ export class Ed25519DeviceControlSignatureVerifier implements DeviceControlSigna
   }
 
   verifyRosterInstall(install: RosterInstallV1, device: TrustedDeviceV1): Promise<boolean> {
-    return this.verify(device, rosterInstallSigningBytes(install), install.signature)
+    return this.verifyRosterCredential(install, device)
   }
 
   verifyMailSubmission(request: MailSubmissionRequestV1, device: TrustedDeviceV1): Promise<boolean> {
@@ -77,7 +78,14 @@ export class Ed25519DeviceControlSignatureVerifier implements DeviceControlSigna
 
   private async verify(device: TrustedDeviceV1, bytes: Uint8Array, signature: Uint8Array): Promise<boolean> {
     if (signature.length !== 64) return false
-    const publicKey = await this.keys.resolveEd25519PublicKey(device.signingKeyId)
-    return publicKey !== undefined && publicKey.length === 32 && ed25519.verify(signature, bytes, publicKey)
+    return device.signingPublicKey.length === 32 && ed25519.verify(signature, bytes, device.signingPublicKey)
+  }
+
+  private async verifyRosterCredential(install: RosterInstallV1, device: TrustedDeviceV1): Promise<boolean> {
+    if (install.signature.length !== 64) return false
+    const credentialKey = await this.keys.resolveEd25519PublicKey(device.deviceId, install.projection.identityId, device.deviceCredential)
+    return credentialKey !== undefined
+      && equalBytes(credentialKey, device.signingPublicKey)
+      && ed25519.verify(install.signature, rosterInstallSigningBytes(install), device.signingPublicKey)
   }
 }

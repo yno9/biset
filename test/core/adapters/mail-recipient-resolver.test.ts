@@ -13,7 +13,7 @@ async function rosterWithDevice(identityId: string): Promise<MemoryTrustedDevice
   const roster = new MemoryTrustedDeviceRoster()
   await roster.installAcceptedProjection({
     version: 1, identityId, selfGroupId: 'self-group-1', epoch: '1', acceptedAt: '2026-08-24T00:00:00.000Z',
-    devices: [{ deviceId: 'device-a', deliveryFloor: '1', signingKeyId: `${identityId}#device-a` }],
+    devices: [{ deviceId: 'device-a', deliveryFloor: '1', signingPublicKey: new Uint8Array(32), deviceCredential: new Uint8Array([1]) }],
   })
   return roster
 }

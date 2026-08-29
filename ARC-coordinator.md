@@ -542,7 +542,7 @@ checkpoint coveredSeq:  22
 | `src/coordinator/mls-delivery-store.ts` | Self Group MLS DS log、GroupInfo、KeyPackage |
 | `src/coordinator/mls-delivery-authorizer.ts` | signed MLS DS control authorization |
 | `src/coordinator/mls-delivery-http.ts` | MLS DS compatibility HTTP routes |
-| `src/coordinator/webvh-signing-key-resolver.ts` | current did:webvh device key解決 |
+| `src/coordinator/webvh-signing-key-resolver.ts` | did:webvh Root Key解決とRoot署名付きMLS device credential検証 |
 | `src/protocol/coordinator-stream.ts` | strict v2 wire schema |
 | `src/vault/coordinator-transport.ts` | browser-side HTTP client |
 | `src/vault/coordinator-sync.ts` | outbox flush、pull、local cursor bridge |

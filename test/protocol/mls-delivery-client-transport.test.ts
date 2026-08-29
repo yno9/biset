@@ -38,7 +38,7 @@ function setup() {
   const ds = SqliteMlsDeliveryService.open(path)
   const verifier = new Ed25519MlsDsSignatureVerifier({ async resolveEd25519PublicKey(kid) { return kid === deviceAKid ? deviceAPublicKey : undefined } })
   const handle = createMlsDeliveryHttpHandler(ds, verifier, async () => true)
-  const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: (input, init) => handle(new Request(input, init)) })
+  const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', deviceCredential: new Uint8Array([1]), fetch: (input, init) => handle(new Request(input, init)) })
   return { ds, transport }
 }
 

@@ -9,6 +9,7 @@
 import { describe, expect, test } from 'bun:test'
 import { buildRestoreTransferSource, buildRestoreTransferVerifier } from '../../src/identity/bootstrap.ts'
 import { createMlsGroup, epochOf, exportSecret, generateOwnKeyPackage } from '../../src/mls/group.ts'
+import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
 import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { deriveVaultEpochKey } from '../../src/mls/vault-epoch.ts'
@@ -24,7 +25,8 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
-const deviceKid = `${identityId}#device-a`
+const device = await mlsDeviceFixture(identityId)
+const deviceKid = device.kid
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
@@ -58,7 +60,7 @@ function memoryRecordReader(events: VaultEventV1[], objects: VaultObjectV1[]): V
 
 describe('buildRestoreTransferSource', () => {
   test('a restore-transfer chunk built by the source verifies, and the requester decrypts the transferred object', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
@@ -116,7 +118,7 @@ describe('buildRestoreTransferSource', () => {
   })
 
   test('readCurrentEpochWraps refuses to grant for an epoch that is not this device\'s own current one', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)

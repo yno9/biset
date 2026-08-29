@@ -153,8 +153,8 @@ SCIDを使う理由は次の通りである。
 master seed
   → Root Key
   → did:webvh genesis
-  → random device leaf key / KeyPackage
-  → leaf public keyをDID verificationMethodへ追加
+  → random device leaf key
+  → Root Key署名付きdevice credential / KeyPackage
   → Self Group作成
   → GroupInfo公開
   → legacy roster APIへgenesis projection
@@ -167,13 +167,13 @@ root phrase
   → Root Keyを再導出
   → 対象domainのDID documentのRoot公開鍵と照合
   → 新device leaf keyを生成
-  → Root KeyでDID verificationMethodへ追加
+  → Root Keyでdevice credentialへ署名
   → GroupInfoをpull
   → RFC 9420 External Join
   → 新ClientStateをIndexedDBへ保存
 ```
 
-このため、現行設計では**有効なRoot phraseを持つ端末は既存端末の手動approveなしでSelf Groupへ参加できる**。Root phraseによるDID control証明がadmissionである。
+このため、現行設計では**有効なRoot phraseを持つ端末は既存端末の手動approveなしでSelf Groupへ参加できる**。Root署名付きdevice credentialがadmissionであり、DID documentを端末rosterとして更新しない。
 
 ### 4.5 Boot maintenance
 
@@ -222,22 +222,27 @@ Self Group state、KeyPackage store、Local Vaultを別databaseにしている�
 
 ## 6. CredentialとAuthentication Service
 
-Self Group leafのBasicCredentialはdeviceのDID URLである。
+Self Group leafのBasicCredentialはcanonical JSONで符号化したRoot署名付きdevice credentialである。
 
 ```text
-did:webvh:<SCID>:<domain>#device-<random>
+version
+identityId
+deviceKid = identityId + "#device-" + hash(signaturePublicKey)
+signaturePublicKey
+rootSignature
 ```
 
 `src/mls/webvh-authentication-service.ts`はcredentialを次のように検証する。
 
-1. credentialからDIDとfragmentを読む。
-2. did:webvh logをresolveし、hash chainと署名を検証する。
-3. current DID documentの同じfragmentを持つ`verificationMethod`を探す。
-4. そのEd25519公開鍵とMLS leaf signature public keyが一致するか比較する。
+1. credentialをstrictかつcanonicalにdecodeする。
+2. `deviceKid`が`identityId`とdevice公開鍵から決定論的に導出されていることを確認する。
+3. did:webvh logをresolveし、hash chainと署名を検証する。
+4. current DID documentの`${document.id}#key-1`だけをRoot Keyとして読む。
+5. `rootSignature`を検証し、credential内の公開鍵とMLS leaf signature public keyが一致するか比較する。
 
-単に「DID documentに同じkid文字列がある」だけではなく、leafが実際に持つ公開鍵との一致まで確認する。
+端末公開鍵はDID documentへ掲載しない。端末membershipの正本はSelf Groupであり、DID documentはRoot authorityだけを公開する。
 
-domain moveではDID prefixが変わるため、fragmentを安定部分としてcurrent documentへ対応させる。移転を実行するdevice自身のleaf credentialはUpdatePathで新DID prefixへ更新し、他deviceの旧prefix leafもSCID同一性の範囲で検証可能にしている。
+domain moveでもcredentialとKeyPackageは更新しない。旧`identityId`はdid:webvh move chainを通じて同じRoot Keyへ解決され、request側identityとの同一性はSCIDで比較する。このためmove専用MLS commitは不要である。
 
 ## 7. Server側のMLS Delivery Service
 
@@ -290,7 +295,7 @@ POST /v1/mls/pending-removals/clear
 POST /v1/mls/groups-for
 ```
 
-control requestはdevice leafのEd25519 private keyで署名し、serverはDID documentから公開鍵をresolveして検証する。
+control requestはdevice leafのEd25519 private keyで署名し、Root署名付きdevice credentialをrequestへ添付する。serverはDID documentからRoot Keyだけをresolveし、credentialを検証して得たdevice公開鍵でcontrol署名を検証する。
 
 Delivery ServiceはMLS wire objectを復号・parseしない。通常commitについては、現在のDS rosterにいる署名済みsenderとepoch一致を確認し、最初に届いたcommitを受理する。外部joinは`senderKid`がrequestの`identityId`に属し、そのDID keyで署名できることを確認する。
 
@@ -309,7 +314,8 @@ AcceptedSelfGroupProjectionV1
   epoch
   devices[]
     deviceId
-    signingKeyId
+    signingPublicKey
+    deviceCredential
     deliveryFloor
 ```
 
@@ -362,7 +368,7 @@ Self Group Remove Commitは、removed leafが将来のSelf Group epoch secretを
 - Anchor/CoordinatorのOIDC refresh session
 - master seedから得る安定Vault storage KEK
 
-MLS revokeだけではこれらを消せない。特にCoordinator v2はSelf Groupを参照せずOIDC ownerで認可するため、**MLS device revokeとCoordinator session revokeは現在別のauthority domain**である。完全な端末喪失対応には、DID key削除、mediator routing更新、Self Group Removeに加え、Anchor session/token revoke policyを明確にする必要がある。
+MLS revokeだけではこれらを消せない。特にCoordinator v2はSelf Groupを参照せずOIDC ownerで認可するため、**MLS device revokeとCoordinator session revokeは現在別のauthority domain**である。完全な端末喪失対応には、mediator routing更新、Self Group Removeに加え、Anchor session/token revoke policyを明確にする必要がある。MLS device keyはDID documentに存在しないため、DID key削除は手順に含まれない。
 
 ## 10. Coordinatorとの境界
 

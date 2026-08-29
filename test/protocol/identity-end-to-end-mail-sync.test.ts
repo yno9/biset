@@ -96,11 +96,11 @@ function memorySegmentStore(): ActiveVaultSegmentStore {
 function memoryKeyPackageStore(): MlsKeyPackageStore {
   const byRef = new Map<string, OwnKeyPackage>()
   return {
-    async mint(kid, count) {
+    async mint(kid, credential, signaturePrivateKey, count) {
       const { generateOwnKeyPackage, keyPackageRefOf } = await import('../../src/mls/group.ts')
       const minted: OwnKeyPackage[] = []
       for (let i = 0; i < count; i++) {
-        const own = await generateOwnKeyPackage(kid)
+        const own = await generateOwnKeyPackage(credential, signaturePrivateKey)
         byRef.set(await keyPackageRefOf(own.publicPackage), own)
         minted.push(own)
       }
@@ -124,7 +124,7 @@ function setupCore() {
   const ds = SqliteMlsDeliveryService.open(dsPath)
   const roster = SqliteTrustedDeviceRoster.open(rosterPath)
   const keyResolver = new WebvhSigningKeyResolver()
-  const resolveEd25519PublicKey = (kid: string) => keyResolver.resolveEd25519PublicKey(kid)
+  const resolveEd25519PublicKey = (kid: string, identityId: string, credential: Uint8Array) => keyResolver.resolveEd25519PublicKey(kid, identityId, credential)
   const dsVerifier = new Ed25519MlsDsSignatureVerifier({ resolveEd25519PublicKey })
   const mlsHandle = createMlsDeliveryHttpHandler(ds, dsVerifier, async () => true)
   const rosterVerifier = new Ed25519DeviceControlSignatureVerifier({ resolveEd25519PublicKey })

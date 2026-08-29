@@ -5,7 +5,10 @@ import { SqliteTrustedDeviceRoster } from '../../src/core/identity/sqlite-device
 const path = `/tmp/biset-roster-${process.pid}-${Date.now()}.sqlite`
 const projection = {
   version: 1 as const, identityId: 'did:web:alice.example', selfGroupId: 'self-group-1', epoch: '7', acceptedAt: '2026-08-21T00:00:00.000Z',
-  devices: [{ deviceId: 'device-a', deliveryFloor: '1', signingKeyId: 'did:web:alice.example#device-a' }, { deviceId: 'device-b', deliveryFloor: '4', signingKeyId: 'did:web:alice.example#device-b' }],
+  devices: [
+    { deviceId: 'device-a', deliveryFloor: '1', signingPublicKey: new Uint8Array(32).fill(1), deviceCredential: new Uint8Array([1]) },
+    { deviceId: 'device-b', deliveryFloor: '4', signingPublicKey: new Uint8Array(32).fill(2), deviceCredential: new Uint8Array([2]) },
+  ],
 }
 
 afterEach(() => { try { rmSync(path) } catch {} })

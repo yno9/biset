@@ -53,66 +53,75 @@ export type MlsDsCommitResult = { ok: true; roster: string[] } | { ok: false; re
 
 export interface CoordinatorMlsDeliveryTransportOptions {
   baseUrl: string
+  /** Canonical Root-signed MLS BasicCredential identity bytes. */
+  deviceCredential: Uint8Array
   fetch?: typeof fetch
 }
 
 export class CoordinatorMlsDeliveryTransport {
   private readonly fetchValue: typeof fetch
   private readonly baseUrl: string
+  private readonly deviceCredential: Uint8Array
 
   constructor(options: CoordinatorMlsDeliveryTransportOptions) {
     if (!options.baseUrl) throw new TypeError('Coordinator MLS delivery base URL is required')
     this.baseUrl = options.baseUrl.replace(/\/$/, '')
+    if (options.deviceCredential.length === 0) throw new TypeError('Coordinator MLS device credential is required')
+    this.deviceCredential = options.deviceCredential.slice()
     this.fetchValue = options.fetch ?? defaultFetch()
   }
 
   async createGroup(input: MlsGroupCreationV1): Promise<string[]> {
-    return decodeMlsGroupRosterResultWire(await this.post('/v1/mls/group/create', encodeMlsGroupCreationWire(input))).roster
+    return decodeMlsGroupRosterResultWire(await this.post('/v1/mls/group/create', encodeMlsGroupCreationWire(this.authenticated(input)))).roster
   }
 
   /** `ok: false` on a normal MLS tie-break loss (epoch-conflict) or an unauthorized sender — never thrown, so a caller can retry against the new epoch. */
   submitCommit(input: MlsCommitSubmissionV1): Promise<MlsDsCommitResult> {
-    return this.postCommit('/v1/mls/commit/submit', encodeMlsCommitSubmissionWire(input))
+    return this.postCommit('/v1/mls/commit/submit', encodeMlsCommitSubmissionWire(this.authenticated(input)))
   }
 
   submitExternalCommit(input: MlsExternalCommitSubmissionV1): Promise<MlsDsCommitResult> {
-    return this.postCommit('/v1/mls/commit/external', encodeMlsExternalCommitSubmissionWire(input))
+    return this.postCommit('/v1/mls/commit/external', encodeMlsExternalCommitSubmissionWire(this.authenticated(input)))
   }
 
   submitSelfRemove(input: MlsSelfRemoveSubmissionV1): Promise<MlsDsCommitResult> {
-    return this.postCommit('/v1/mls/self-remove/submit', encodeMlsSelfRemoveSubmissionWire(input))
+    return this.postCommit('/v1/mls/self-remove/submit', encodeMlsSelfRemoveSubmissionWire(this.authenticated(input)))
   }
 
   async pullGroupInfo(input: MlsGroupInfoPullV1): Promise<MlsGroupInfoAnswer> {
-    return decodeMlsGroupInfoAnswerWire(await this.post('/v1/mls/group-info/pull', encodeMlsGroupInfoPullWire(input)))
+    return decodeMlsGroupInfoAnswerWire(await this.post('/v1/mls/group-info/pull', encodeMlsGroupInfoPullWire(this.authenticated(input))))
   }
 
   async clearPendingRemovals(input: MlsPendingRemovalsClearV1): Promise<void> {
-    await this.post('/v1/mls/pending-removals/clear', encodeMlsPendingRemovalsClearWire(input))
+    await this.post('/v1/mls/pending-removals/clear', encodeMlsPendingRemovalsClearWire(this.authenticated(input)))
   }
 
   async pullDeliveries(input: MlsDeliveriesPullV1): Promise<MlsLogEntry[]> {
-    return decodeMlsDeliveriesWire(await this.post('/v1/mls/deliveries/pull', encodeMlsDeliveriesPullWire(input)))
+    return decodeMlsDeliveriesWire(await this.post('/v1/mls/deliveries/pull', encodeMlsDeliveriesPullWire(this.authenticated(input))))
   }
 
   async publishKeyPackages(input: MlsKeyPackagePublishV1): Promise<number> {
-    return decodeMlsKeyPackageCountResultWire(await this.post('/v1/mls/keypackage/publish', encodeMlsKeyPackagePublishWire(input))).count
+    return decodeMlsKeyPackageCountResultWire(await this.post('/v1/mls/keypackage/publish', encodeMlsKeyPackagePublishWire(this.authenticated(input)))).count
   }
 
   async takeKeyPackages(input: MlsKeyPackageTakeV1): Promise<Array<{ kid: string; keyPackage: Uint8Array }>> {
-    return decodeMlsKeyPackagesTakenWire(await this.post('/v1/mls/keypackage/take', encodeMlsKeyPackageTakeWire(input)))
+    return decodeMlsKeyPackagesTakenWire(await this.post('/v1/mls/keypackage/take', encodeMlsKeyPackageTakeWire(this.authenticated(input))))
   }
 
   async dropKeyPackages(input: MlsKeyPackageDropV1): Promise<void> {
-    await this.post('/v1/mls/keypackage/drop', encodeMlsKeyPackageDropWire(input))
+    await this.post('/v1/mls/keypackage/drop', encodeMlsKeyPackageDropWire(this.authenticated(input)))
   }
 
   async keyPackageCount(input: MlsKeyPackageCountPullV1): Promise<number> {
-    return decodeMlsKeyPackageCountResultWire(await this.post('/v1/mls/keypackage/count', encodeMlsKeyPackageCountPullWire(input))).count
+    return decodeMlsKeyPackageCountResultWire(await this.post('/v1/mls/keypackage/count', encodeMlsKeyPackageCountPullWire(this.authenticated(input)))).count
   }
 
   async groupsFor(input: MlsGroupsForPullV1): Promise<MlsGroupsForResultWire[]> {
-    return decodeMlsGroupsForWire(await this.post('/v1/mls/groups-for', encodeMlsGroupsForPullWire(input)))
+    return decodeMlsGroupsForWire(await this.post('/v1/mls/groups-for', encodeMlsGroupsForPullWire(this.authenticated(input))))
+  }
+
+  private authenticated<T extends object>(input: T): T & { deviceCredential: Uint8Array } {
+    return { ...input, deviceCredential: this.deviceCredential }
   }
 
   private async postCommit(path: string, body: string): Promise<MlsDsCommitResult> {

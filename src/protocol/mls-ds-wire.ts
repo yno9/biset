@@ -40,6 +40,10 @@ function optionalBinary(value: unknown, name: string): Uint8Array | undefined {
   return value === undefined ? undefined : requireBinary(value, name)
 }
 
+function requireDeviceCredential(value: unknown): Uint8Array {
+  return requireBinary(value, 'deviceCredential')
+}
+
 function requireStringArray(value: unknown, name: string): string[] {
   if (!Array.isArray(value) || value.some(entry => typeof entry !== 'string')) throw new MlsDsWireError(`${name} must be an array of strings`)
   return [...value] as string[]
@@ -64,6 +68,7 @@ export function decodeMlsGroupCreationWire(text: string): MlsGroupCreationV1 {
     creatorKid: requireString(input.creatorKid, 'creatorKid'),
     roster: requireStringArray(input.roster, 'roster'),
     createdAt: requireString(input.createdAt, 'createdAt'),
+    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -83,6 +88,7 @@ export function decodeMlsCommitSubmissionWire(text: string): MlsCommitSubmission
     welcomeTo: optionalStringArray(input.welcomeTo, 'welcomeTo'),
     groupInfo: optionalBinary(input.groupInfo, 'groupInfo'),
     submittedAt: requireString(input.submittedAt, 'submittedAt'),
+    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -99,6 +105,7 @@ export function decodeMlsExternalCommitSubmissionWire(text: string): MlsExternal
     commit: requireBinary(input.commit, 'commit'),
     groupInfo: optionalBinary(input.groupInfo, 'groupInfo'),
     submittedAt: requireString(input.submittedAt, 'submittedAt'),
+    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -112,6 +119,7 @@ export function decodeMlsGroupInfoPullWire(text: string): MlsGroupInfoPullV1 {
     identityId: requireString(input.identityId, 'identityId'),
     requesterKid: requireString(input.requesterKid, 'requesterKid'),
     requestedAt: requireString(input.requestedAt, 'requestedAt'),
+    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -130,6 +138,7 @@ export function decodeMlsKeyPackagePublishWire(text: string): MlsKeyPackagePubli
     kid: requireString(input.kid, 'kid'),
     packages: input.packages.map((entry, index) => requireBinary(entry, `packages[${index}]`)),
     publishedAt: requireString(input.publishedAt, 'publishedAt'),
+    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -142,6 +151,7 @@ export function decodeMlsKeyPackageTakeWire(text: string): MlsKeyPackageTakeV1 {
     identityId: requireString(input.identityId, 'identityId'),
     requesterKid: requireString(input.requesterKid, 'requesterKid'),
     requestedAt: requireString(input.requestedAt, 'requestedAt'),
+    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -162,6 +172,7 @@ export function decodeMlsSelfRemoveSubmissionWire(text: string): MlsSelfRemoveSu
     proposal: requireBinary(input.proposal, 'proposal'),
     removedKid: requireString(input.removedKid, 'removedKid'),
     submittedAt: requireString(input.submittedAt, 'submittedAt'),
+    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -176,6 +187,7 @@ export function decodeMlsPendingRemovalsClearWire(text: string): MlsPendingRemov
     requesterKid: requireString(input.requesterKid, 'requesterKid'),
     clearedKids: requireStringArray(input.clearedKids, 'clearedKids'),
     clearedAt: requireString(input.clearedAt, 'clearedAt'),
+    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -190,6 +202,7 @@ export function decodeMlsDeliveriesPullWire(text: string): MlsDeliveriesPullV1 {
     requesterKid: requireString(input.requesterKid, 'requesterKid'),
     afterSeq: requireInteger(input.afterSeq, 'afterSeq'),
     requestedAt: requireString(input.requestedAt, 'requestedAt'),
+    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -206,6 +219,7 @@ export function decodeMlsKeyPackageDropWire(text: string): MlsKeyPackageDropV1 {
     identityId: requireString(input.identityId, 'identityId'),
     kid: requireString(input.kid, 'kid'),
     droppedAt: requireString(input.droppedAt, 'droppedAt'),
+    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -218,6 +232,7 @@ export function decodeMlsKeyPackageCountPullWire(text: string): MlsKeyPackageCou
     identityId: requireString(input.identityId, 'identityId'),
     kid: requireString(input.kid, 'kid'),
     requestedAt: requireString(input.requestedAt, 'requestedAt'),
+    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -230,6 +245,7 @@ export function decodeMlsGroupsForPullWire(text: string): MlsGroupsForPullV1 {
     identityId: requireString(input.identityId, 'identityId'),
     requesterKid: requireString(input.requesterKid, 'requesterKid'),
     requestedAt: requireString(input.requestedAt, 'requestedAt'),
+    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -246,7 +262,7 @@ export function encodeMlsGroupsForWire(groups: Array<{ groupId: string; epoch: b
 // never drift between what core decodes and what a client encodes.
 
 export function encodeMlsGroupCreationWire(value: MlsGroupCreationV1): string {
-  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
 }
 
 export interface MlsGroupRosterResultWire { roster: string[] }
@@ -261,6 +277,7 @@ export function encodeMlsCommitSubmissionWire(value: MlsCommitSubmissionV1): str
     commit: bytesToBase64url(value.commit),
     ...(value.welcome === undefined ? {} : { welcome: bytesToBase64url(value.welcome) }),
     groupInfo: value.groupInfo === undefined ? undefined : bytesToBase64url(value.groupInfo),
+    deviceCredential: bytesToBase64url(value.deviceCredential!),
     signature: bytesToBase64url(value.signature),
   })
 }
@@ -270,6 +287,7 @@ export function encodeMlsExternalCommitSubmissionWire(value: MlsExternalCommitSu
     ...value,
     commit: bytesToBase64url(value.commit),
     groupInfo: value.groupInfo === undefined ? undefined : bytesToBase64url(value.groupInfo),
+    deviceCredential: bytesToBase64url(value.deviceCredential!),
     signature: bytesToBase64url(value.signature),
   })
 }
@@ -284,7 +302,7 @@ export function decodeMlsCommitRejectionWire(text: string): MlsCommitRejectionWi
 }
 
 export function encodeMlsGroupInfoPullWire(value: MlsGroupInfoPullV1): string {
-  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
 }
 
 export function decodeMlsGroupInfoAnswerWire(text: string): MlsGroupInfoAnswer {
@@ -293,7 +311,7 @@ export function decodeMlsGroupInfoAnswerWire(text: string): MlsGroupInfoAnswer {
 }
 
 export function encodeMlsKeyPackagePublishWire(value: MlsKeyPackagePublishV1): string {
-  return JSON.stringify({ ...value, packages: value.packages.map(bytesToBase64url), signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, packages: value.packages.map(bytesToBase64url), deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
 }
 
 export interface MlsKeyPackageCountResultWire { count: number }
@@ -303,7 +321,7 @@ export function decodeMlsKeyPackageCountResultWire(text: string): MlsKeyPackageC
 }
 
 export function encodeMlsKeyPackageTakeWire(value: MlsKeyPackageTakeV1): string {
-  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
 }
 
 export function decodeMlsKeyPackagesTakenWire(text: string): Array<{ kid: string; keyPackage: Uint8Array }> {
@@ -317,15 +335,15 @@ export function decodeMlsKeyPackagesTakenWire(text: string): Array<{ kid: string
 }
 
 export function encodeMlsSelfRemoveSubmissionWire(value: MlsSelfRemoveSubmissionV1): string {
-  return JSON.stringify({ ...value, proposal: bytesToBase64url(value.proposal), signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, proposal: bytesToBase64url(value.proposal), deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
 }
 
 export function encodeMlsPendingRemovalsClearWire(value: MlsPendingRemovalsClearV1): string {
-  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
 }
 
 export function encodeMlsDeliveriesPullWire(value: MlsDeliveriesPullV1): string {
-  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
 }
 
 export function decodeMlsDeliveriesWire(text: string): MlsLogEntry[] {
@@ -341,15 +359,15 @@ export function decodeMlsDeliveriesWire(text: string): MlsLogEntry[] {
 }
 
 export function encodeMlsKeyPackageDropWire(value: MlsKeyPackageDropV1): string {
-  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
 }
 
 export function encodeMlsKeyPackageCountPullWire(value: MlsKeyPackageCountPullV1): string {
-  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
 }
 
 export function encodeMlsGroupsForPullWire(value: MlsGroupsForPullV1): string {
-  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
 }
 
 export interface MlsGroupsForResultWire { groupId: string; epoch: string }

@@ -14,6 +14,7 @@ import {
   joinGroupExternally, processIncoming, rekey, removeMembers,
 } from '../../src/mls/group.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
+import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { deriveVaultEpochKey } from '../../src/mls/vault-epoch.ts'
 import { createVaultEvent } from '../../src/vault/events.ts'
@@ -28,8 +29,10 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
-const deviceKid = `${identityId}#device-a`
-const deviceBKid = `${identityId}#device-b`
+const deviceA = await mlsDeviceFixture(identityId)
+const deviceB = await mlsDeviceFixture(identityId, deviceA.rootPrivateKey)
+const deviceKid = deviceA.kid
+const deviceBKid = deviceB.kid
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
@@ -63,7 +66,7 @@ function memoryRecordReader(events: VaultEventV1[], objects: VaultObjectV1[]): V
 
 describe('peer restore transfer channel security', () => {
   test('a wrap for a superseded epoch is rejected once the source has rekeyed past it', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
     let state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
@@ -119,9 +122,9 @@ describe('peer restore transfer channel security', () => {
   test('a removed device cannot obtain a fresh restore grant for its own (frozen) epoch', async () => {
     // Device A creates the group; device B external-joins it -- both real
     // MLS operations, matching identity-vault-crypto.test.ts's Remove test.
-    const kpA = await generateOwnKeyPackage(deviceKid)
+    const kpA = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
     let stateA = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kpA)
-    const kpB = await generateOwnKeyPackage(deviceBKid)
+    const kpB = await generateOwnKeyPackage(deviceB.credential, deviceB.signaturePrivateKey)
     const joinResult = await joinGroupExternally(await groupInfoForExternalJoin(stateA), kpB)
     const stateB = joinResult.state
     stateA = (await processIncoming(stateA, joinResult.commit)).state
@@ -161,9 +164,9 @@ describe('peer restore transfer channel security', () => {
   })
 
   test('a wrap signed by a now-removed grantor no longer verifies, even though the signature itself is valid', async () => {
-    const kpA = await generateOwnKeyPackage(deviceKid)
+    const kpA = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
     let stateA = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kpA)
-    const kpB = await generateOwnKeyPackage(deviceBKid)
+    const kpB = await generateOwnKeyPackage(deviceB.credential, deviceB.signaturePrivateKey)
     const joinResult = await joinGroupExternally(await groupInfoForExternalJoin(stateA), kpB)
     const stateB = joinResult.state
     stateA = (await processIncoming(stateA, joinResult.commit)).state

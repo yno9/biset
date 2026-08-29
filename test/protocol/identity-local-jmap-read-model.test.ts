@@ -7,7 +7,8 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { buildLocalJmapProjectionRebuild, buildLocalJmapReadModel, buildVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
-import { createMlsGroup, generateOwnKeyPackage } from '../../src/mls/group.ts'
+import { createMlsGroup } from '../../src/mls/group.ts'
+import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { buildMailMessageAdd } from '../../src/vault/mail-message.ts'
 import { IndexedDbVaultStore } from '../../src/vault/store.ts'
@@ -16,7 +17,6 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
 const identityId = 'did:web:alice.example'
-const deviceKid = `${identityId}#device-a`
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
@@ -43,7 +43,9 @@ afterEach(async () => {
 
 describe('buildLocalJmapReadModel', () => {
   test('reflects a committed mail message and decrypts its raw RFC 5322 blob, through real IndexedDB and a real MLS self group', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const device = await mlsDeviceFixture(identityId)
+    const deviceKid = device.kid
+    const kp = device.own
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)

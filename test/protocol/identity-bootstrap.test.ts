@@ -3,7 +3,7 @@
 // REAL DID resolution
 // (WebvhSigningKeyResolver) for both the MLS DS's and the roster's signature
 // verification -- confirms the whole identity-creation flow (genesis ->
-// device verificationMethod -> self-group -> roster -> KeyPackage pool)
+// Root-signed MLS credential -> self-group -> roster -> KeyPackage pool)
 // actually interoperates, not just against hand-built fixtures.
 import { afterEach, describe, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
@@ -106,11 +106,11 @@ function memorySegmentStore(): ActiveVaultSegmentStore {
 function memoryKeyPackageStore(): MlsKeyPackageStore & { size(): number } {
   const byRef = new Map<string, OwnKeyPackage>()
   return {
-    async mint(kid, count) {
+    async mint(kid, credential, signaturePrivateKey, count) {
       const { generateOwnKeyPackage, keyPackageRefOf } = await import('../../src/mls/group.ts')
       const minted: OwnKeyPackage[] = []
       for (let i = 0; i < count; i++) {
-        const own = await generateOwnKeyPackage(kid)
+        const own = await generateOwnKeyPackage(credential, signaturePrivateKey)
         byRef.set(await keyPackageRefOf(own.publicPackage), own)
         minted.push(own)
       }
@@ -139,7 +139,7 @@ function setupCore() {
   const ds = SqliteMlsDeliveryService.open(dsPath)
   const roster = SqliteTrustedDeviceRoster.open(rosterPath)
   const keyResolver = new WebvhSigningKeyResolver()
-  const resolveEd25519PublicKey = (kid: string) => keyResolver.resolveEd25519PublicKey(kid)
+  const resolveEd25519PublicKey = (kid: string, identityId: string, credential: Uint8Array) => keyResolver.resolveEd25519PublicKey(kid, identityId, credential)
   const dsVerifier = new Ed25519MlsDsSignatureVerifier({ resolveEd25519PublicKey })
   const mlsHandle = createMlsDeliveryHttpHandler(ds, dsVerifier, async () => true)
   const rosterVerifier = new Ed25519DeviceControlSignatureVerifier({ resolveEd25519PublicKey })
@@ -152,7 +152,7 @@ function setupCore() {
 }
 
 describe('createNewIdentity', () => {
-  test('genesis, device verificationMethod, self-group, roster, and KeyPackage pool all land', async () => {
+  test('genesis, Root-only DID document, self-group, roster, and KeyPackage pool all land', async () => {
     const { anchor, ds, roster, coreHandle, mlsHandle } = setupCore()
 
     const realFetch = globalThis.fetch
@@ -170,9 +170,10 @@ describe('createNewIdentity', () => {
       expect(created.record.deviceKid).toContain(created.record.did)
       expect(memberKids(created.selfGroupState, created.record.did)).toEqual([created.record.deviceKid])
 
-      // did:webvh actually resolves, with this device's key present.
+      // did:webvh resolves with only the stable Root Key. MLS device keys
+      // are carried by Root-signed credentials, not published in the DID doc.
       const doc = await resolve(created.record.did)
-      expect(doc?.verificationMethod.some(vm => vm.id === created.record.deviceKid)).toBe(true)
+      expect(doc?.verificationMethod.map(vm => vm.id)).toEqual([`${created.record.did}#key-1`])
 
       // did:web mirror was published at the same subdomain.
       const mirrorResponse = await anchor.fetch(didWebToHttpsUrl(buildWebDid('y.test.example')))

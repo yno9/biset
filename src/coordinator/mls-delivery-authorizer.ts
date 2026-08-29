@@ -11,6 +11,7 @@
 // applied to transport-layer control rather than the MLS credential itself.
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { didOfKid } from '../protocol/ids.ts'
+import { sameIdentity } from '../identity/idkey.ts'
 import {
   mlsCommitSubmissionSigningBytes,
   mlsDeliveriesPullSigningBytes,
@@ -43,7 +44,7 @@ import type { MlsCommitResult, MlsGroupInfoAnswer, MlsLogEntry, SqliteMlsDeliver
 
 /** Public-key lookup boundary for signed MLS DS control requests. */
 export interface DeviceSigningPublicKeyResolver {
-  resolveEd25519PublicKey(signingKeyId: string): Promise<Uint8Array | undefined>
+  resolveEd25519PublicKey(signingKeyId: string, identityId: string, deviceCredential: Uint8Array | undefined): Promise<Uint8Array | undefined>
 }
 
 export interface MlsDsSignatureVerifier {
@@ -65,45 +66,45 @@ export class Ed25519MlsDsSignatureVerifier implements MlsDsSignatureVerifier {
   constructor(private readonly keys: DeviceSigningPublicKeyResolver) {}
 
   verifyGroupCreation(value: MlsGroupCreationV1): Promise<boolean> {
-    return this.verify(value.creatorKid, mlsGroupCreationSigningBytes(value), value.signature)
+    return this.verify(value.creatorKid, value.identityId, value.deviceCredential, mlsGroupCreationSigningBytes(value), value.signature)
   }
   verifyCommitSubmission(value: MlsCommitSubmissionV1): Promise<boolean> {
-    return this.verify(value.senderKid, mlsCommitSubmissionSigningBytes(value), value.signature)
+    return this.verify(value.senderKid, value.identityId, value.deviceCredential, mlsCommitSubmissionSigningBytes(value), value.signature)
   }
   verifyExternalCommitSubmission(value: MlsExternalCommitSubmissionV1): Promise<boolean> {
-    return this.verify(value.senderKid, mlsExternalCommitSubmissionSigningBytes(value), value.signature)
+    return this.verify(value.senderKid, value.identityId, value.deviceCredential, mlsExternalCommitSubmissionSigningBytes(value), value.signature)
   }
   verifyGroupInfoPull(value: MlsGroupInfoPullV1): Promise<boolean> {
-    return this.verify(value.requesterKid, mlsGroupInfoPullSigningBytes(value), value.signature)
+    return this.verify(value.requesterKid, value.identityId, value.deviceCredential, mlsGroupInfoPullSigningBytes(value), value.signature)
   }
   verifyKeyPackagePublish(value: MlsKeyPackagePublishV1): Promise<boolean> {
-    return this.verify(value.kid, mlsKeyPackagePublishSigningBytes(value), value.signature)
+    return this.verify(value.kid, value.identityId, value.deviceCredential, mlsKeyPackagePublishSigningBytes(value), value.signature)
   }
   verifyKeyPackageTake(value: MlsKeyPackageTakeV1): Promise<boolean> {
-    return this.verify(value.requesterKid, mlsKeyPackageTakeSigningBytes(value), value.signature)
+    return this.verify(value.requesterKid, value.identityId, value.deviceCredential, mlsKeyPackageTakeSigningBytes(value), value.signature)
   }
   verifySelfRemoveSubmission(value: MlsSelfRemoveSubmissionV1): Promise<boolean> {
-    return this.verify(value.senderKid, mlsSelfRemoveSubmissionSigningBytes(value), value.signature)
+    return this.verify(value.senderKid, value.identityId, value.deviceCredential, mlsSelfRemoveSubmissionSigningBytes(value), value.signature)
   }
   verifyPendingRemovalsClear(value: MlsPendingRemovalsClearV1): Promise<boolean> {
-    return this.verify(value.requesterKid, mlsPendingRemovalsClearSigningBytes(value), value.signature)
+    return this.verify(value.requesterKid, value.identityId, value.deviceCredential, mlsPendingRemovalsClearSigningBytes(value), value.signature)
   }
   verifyDeliveriesPull(value: MlsDeliveriesPullV1): Promise<boolean> {
-    return this.verify(value.requesterKid, mlsDeliveriesPullSigningBytes(value), value.signature)
+    return this.verify(value.requesterKid, value.identityId, value.deviceCredential, mlsDeliveriesPullSigningBytes(value), value.signature)
   }
   verifyKeyPackageDrop(value: MlsKeyPackageDropV1): Promise<boolean> {
-    return this.verify(value.kid, mlsKeyPackageDropSigningBytes(value), value.signature)
+    return this.verify(value.kid, value.identityId, value.deviceCredential, mlsKeyPackageDropSigningBytes(value), value.signature)
   }
   verifyKeyPackageCountPull(value: MlsKeyPackageCountPullV1): Promise<boolean> {
-    return this.verify(value.kid, mlsKeyPackageCountPullSigningBytes(value), value.signature)
+    return this.verify(value.kid, value.identityId, value.deviceCredential, mlsKeyPackageCountPullSigningBytes(value), value.signature)
   }
   verifyGroupsForPull(value: MlsGroupsForPullV1): Promise<boolean> {
-    return this.verify(value.requesterKid, mlsGroupsForPullSigningBytes(value), value.signature)
+    return this.verify(value.requesterKid, value.identityId, value.deviceCredential, mlsGroupsForPullSigningBytes(value), value.signature)
   }
 
-  private async verify(kid: string, bytes: Uint8Array, signature: Uint8Array): Promise<boolean> {
+  private async verify(kid: string, identityId: string, credential: Uint8Array | undefined, bytes: Uint8Array, signature: Uint8Array): Promise<boolean> {
     if (signature.length !== 64) return false
-    const publicKey = await this.keys.resolveEd25519PublicKey(kid)
+    const publicKey = await this.keys.resolveEd25519PublicKey(kid, identityId, credential)
     return publicKey !== undefined && publicKey.length === 32 && ed25519.verify(signature, bytes, publicKey)
   }
 }
@@ -129,7 +130,7 @@ export async function submitMlsCommit(ds: SqliteMlsDeliveryService, verifier: Ml
  * `identityId` to read or join a self-group that is not theirs.
  */
 export async function submitMlsExternalCommit(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsExternalCommitSubmissionV1): Promise<MlsCommitResult> {
-  if (didOfKid(value.senderKid) !== value.identityId) return { ok: false, reason: 'unauthorized', epoch: '0' }
+  if (!sameIdentity(didOfKid(value.senderKid), value.identityId)) return { ok: false, reason: 'unauthorized', epoch: '0' }
   if (!(await verifier.verifyExternalCommitSubmission(value))) return { ok: false, reason: 'unauthorized', epoch: '0' }
   return ds.submitExternalCommit(value.groupId, value.identityId, value.senderKid, value.epoch, value.commit, value.groupInfo)
 }
@@ -146,7 +147,7 @@ export type MlsGroupInfoPullResult = { ok: true; answer: MlsGroupInfoAnswer } | 
  * never as a 403 indistinguishable from an actual authorization failure.
  */
 export async function pullMlsGroupInfo(ds: SqliteMlsDeliveryService, verifier: MlsDsSignatureVerifier, value: MlsGroupInfoPullV1): Promise<MlsGroupInfoPullResult> {
-  if (didOfKid(value.requesterKid) !== value.identityId) return { ok: false }
+  if (!sameIdentity(didOfKid(value.requesterKid), value.identityId)) return { ok: false }
   if (!(await verifier.verifyGroupInfoPull(value))) return { ok: false }
   return { ok: true, answer: ds.groupInfoFor(value.groupId, value.identityId) ?? { pendingRemovals: [] } }
 }

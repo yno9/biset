@@ -1,10 +1,8 @@
 // biset's own domain-move wrapper around migrate.ts's abstract core: carries
 // routing.json to the new location (via migrateWebvhLocation's
 // afterNewLocationWritten hook — the same whole-document string
-// substitution the signed log itself gets), migrates this device's own MLS
-// self-group credential (mls/self-group.ts's migrateSelfGroupCredential),
-// re-keys this device's local IdentityRecord (record-store.ts's own
-// keyPath), and re-keys/clears the other local IndexedDB databases that are
+// substitution the signed log itself gets), re-keys this device's local
+// IdentityRecord (record-store.ts's own keyPath), and re-keys the local stores
 // ALSO keyed by this identity's did:webvh string.
 //
 // Four separate things had to be found and fixed here before a domain move
@@ -19,31 +17,9 @@
 //      vault would go dark the moment `identity.did` changed, even though
 //      the underlying MLS group and vault content are both still
 //      completely intact.
-//   3. This device's own MLS leaf CREDENTIAL still names the OLD did
-//      (`${did}#device-hex}`) even after (1) and (2) — and
-//      mls/webvh-authentication-service.ts's validateCredential resolves a
-//      credential against the CURRENT document, which after the move no
-//      longer lists that old-prefixed id anywhere. Without
-//      migrateSelfGroupCredential (mls/group.ts's updateOwnCredential,
-//      committed via this device's own UpdatePath — see its own header for
-//      why an external-commit resync and a bundled Update proposal were
-//      both tried and abandoned first), this device would be permanently
-//      locked out of its own group the moment the move landed.
-//   4. Ordering trap on top of (3): the migration commit's own submission
-//      still has to be SIGNED and VERIFIED under `oldDeviceKid` (core's DS
-//      authorizes `submitCommit` by current roster membership, which is
-//      still the OLD kid at this point — see migrateSelfGroupCredential's
-//      own note). Running the migration strictly AFTER the did:webvh move
-//      landed is therefore a deadlock: `oldDeviceKid` is already
-//      unresolvable by then, so the DS-side signature check fails before
-//      the commit that would replace it ever gets submitted.
-//      migrateWebvhLocation's own afterNewLocationWritten hook exists for
-//      exactly this shape of problem — it runs in the window where the NEW
-//      location's document already resolves (so the new credential the
-//      commit installs validates once anyone processes it) but the OLD
-//      location hasn't been told about the move yet (so `oldDeviceKid`
-//      still resolves too) — the only point where both are simultaneously
-//      valid, which the migration commit's own submission needs.
+//   3. MLS device credentials deliberately remain unchanged. They are signed
+//      by the stable Root Key and their old DID resolves through the webvh
+//      move chain, so no MLS commit or KeyPackage invalidation is needed.
 //
 // Deliberately narrower than src.bak's own moveWebvhIdentity: no multi-relay
 // alias sync (loadStoredAccounts/aliasAccountOnRelay), no separate mediator
@@ -58,24 +34,12 @@ import { defaultFetch } from '../../net-fetch.ts'
 import type { IdentityRecord, IdentityRecordStore } from '../record-store.ts'
 import type { IndexedDbVaultStore } from '../../vault/store.ts'
 import type { IndexedDbMlsSelfGroupStore } from '../../mls/store.ts'
-import type { IndexedDbMlsKeyPackageStore } from '../../mls/keypackage-store.ts'
-import { migrateSelfGroupCredential, type SelfGroupSigner } from '../../mls/self-group.ts'
-import type { CoordinatorMlsDeliveryTransport } from '../../mls/coordinator-mls-delivery-transport.ts'
 
 export interface MoveWebvhIdentityOptions {
   recordStore: IdentityRecordStore
   record: IdentityRecord
   vaultStore: IndexedDbVaultStore
   selfGroupStore: IndexedDbMlsSelfGroupStore
-  keyPackageStore: IndexedDbMlsKeyPackageStore
-  /** Required, and only used, when `record.deviceKid` is set (this device
-   * has already joined a self group) — migrateSelfGroupCredential's own
-   * commit submission. */
-  mlsTransport?: CoordinatorMlsDeliveryTransport
-  /** Signs with this device's MLS leaf signature key — a DIFFERENT key from
-   * `signingPrivateKey` below, which signs the did:webvh log/routing.json
-   * instead. Same conditional requirement as `mlsTransport`. */
-  mlsSign?: SelfGroupSigner
   newDomain: string
   signingPrivateKey: Uint8Array
   signingPublicKey: Uint8Array
@@ -86,12 +50,9 @@ export interface MoveWebvhIdentityOptions {
 }
 
 /** Moves this identity's did:webvh document to a new domain (same SCID),
- * carries routing.json over, migrates this device's own self-group
- * credential, and re-keys every local record. Every local field that
- * embeds the old DID as a string prefix (`deviceKid`, `didCommKid`) is
- * rewritten the same way the document's own verificationMethod ids are —
- * otherwise a subsequent DIDComm send or revoke would target a kid string
- * that no longer resolves anywhere. */
+ * carries routing.json over and re-keys every DID-keyed local record. The
+ * DIDComm kid is location-bound and rewritten; the Root-signed MLS device
+ * kid remains stable. */
 export async function moveWebvhIdentity(opts: MoveWebvhIdentityOptions): Promise<IdentityRecord> {
   const fetchImpl = opts.fetch ?? defaultFetch()
   const oldDid = opts.record.did
@@ -104,21 +65,10 @@ export async function moveWebvhIdentity(opts: MoveWebvhIdentityOptions): Promise
     signingPublicKey: opts.signingPublicKey,
     ...(opts.nextKeyHash ? { nextKeyHash: opts.nextKeyHash } : {}),
     fetch: fetchImpl,
-    // Runs after the NEW location's did.jsonl exists but BEFORE the OLD
-    // location is told about the move -- see this file's own header (point
-    // 4) on why the self-group credential migration specifically needs
-    // this window, not "after the move completes".
+    // Runs after the new location exists so routing authorization can be
+    // checked against its current update key.
     afterNewLocationWritten: async newDid => {
       const rewrite = rewriteFor(newDid)
-      if (opts.record.deviceKid) {
-        if (!opts.mlsTransport || !opts.mlsSign) throw new Error('moveWebvhIdentity: this device has a self group (deviceKid is set) -- mlsTransport and mlsSign are required')
-        const newDeviceKid = rewrite(opts.record.deviceKid)
-        await migrateSelfGroupCredential(
-          opts.selfGroupStore, opts.mlsTransport, oldDid, newDid, opts.record.deviceKid, newDeviceKid, opts.mlsSign,
-        )
-        await opts.selfGroupStore.delete(oldDid)
-      }
-
       const current = await fetchRouting(oldDid, fetchImpl)
       if (!current) return // nothing published yet -- nothing to carry over
       const carried = JSON.parse(JSON.stringify(current).split(oldDid).join(newDid)) as RoutingDoc
@@ -134,18 +84,19 @@ export async function moveWebvhIdentity(opts: MoveWebvhIdentityOptions): Promise
   const movedRecord: IdentityRecord = {
     ...opts.record,
     did: newDid,
-    ...(opts.record.deviceKid ? { deviceKid: rewrite(opts.record.deviceKid) } : {}),
+    // Root-signed MLS device credentials are immutable and remain valid
+    // across a same-SCID move; their original DID resolves through the move
+    // chain. Unlike DID document fragments, the device kid is not rewritten.
     ...(opts.record.didCommKid ? { didCommKid: rewrite(opts.record.didCommKid) } : {}),
   }
   await opts.recordStore.put(movedRecord)
   await opts.recordStore.delete(oldDid)
 
   await opts.vaultStore.rekeyIdentity(oldDid, newDid)
-  // See this file's own header -- an already-minted KeyPackage's kid is
-  // baked into its signed credential and cannot be carried over; the pool
-  // just needs refilling under the new kid, which ensureKeyPackagePool
-  // (identity/bootstrap.ts, called every boot) already does on its own.
-  await opts.keyPackageStore.clear()
-
+  const storedSelfGroup = await opts.selfGroupStore.load(oldDid)
+  if (storedSelfGroup) {
+    await opts.selfGroupStore.save(newDid, storedSelfGroup.selfGroupId, storedSelfGroup.state)
+    await opts.selfGroupStore.delete(oldDid)
+  }
   return movedRecord
 }

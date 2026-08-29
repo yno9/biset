@@ -6,8 +6,8 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { resolveEntries, WebvhResolutionError } from '../../src/identity/webvh/resolver.ts'
 import { WebvhSigningKeyResolver } from '../../src/core/identity/webvh-signing-key-resolver.ts'
 import { createGenesis } from '../../src/identity/webvh/create-genesis.ts'
-import { addDeviceVerificationMethod } from '../../src/identity/webvh/add-device-verification-method.ts'
 import { migrateWebvhLocation } from '../../src/identity/webvh/migrate.ts'
+import { createMlsDeviceCredential, encodeMlsDeviceCredential } from '../../src/mls/device-credential.ts'
 import { buildGenesisLog, fakeAnchor, signProof, withFetch } from './support/webvh-log-fixture.ts'
 
 describe('webvh resolver (read-only)', () => {
@@ -42,52 +42,59 @@ describe('webvh resolver (read-only)', () => {
 })
 
 describe('WebvhSigningKeyResolver (DeviceSigningPublicKeyResolver)', () => {
-  test('resolves the device key listed in verificationMethod', async () => {
+  test('resolves a Root-signed device credential without a device verificationMethod', async () => {
     const rootPrivateKey = ed25519.utils.randomSecretKey()
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
     const devicePrivateKey = ed25519.utils.randomSecretKey()
     const devicePublicKey = ed25519.getPublicKey(devicePrivateKey)
-    const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [{ fragment: 'device-a', publicKey: devicePublicKey }])
+    const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [])
+    const credential = createMlsDeviceCredential(did, devicePublicKey, rootPrivateKey)
 
     await withFetch(log, async () => {
       const resolver = new WebvhSigningKeyResolver()
-      const resolved = await resolver.resolveEd25519PublicKey(`${did}#device-a`)
+      const resolved = await resolver.resolveEd25519PublicKey(credential.deviceKid, did, encodeMlsDeviceCredential(credential))
       expect(resolved).toEqual(devicePublicKey)
     })
   })
 
-  test('fails closed on an unlisted fragment', async () => {
+  test('fails closed when the requested kid does not match the credential', async () => {
     const rootPrivateKey = ed25519.utils.randomSecretKey()
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
+    const devicePublicKey = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
     const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [])
+    const credential = createMlsDeviceCredential(did, devicePublicKey, rootPrivateKey)
 
     await withFetch(log, async () => {
       const resolver = new WebvhSigningKeyResolver()
-      expect(await resolver.resolveEd25519PublicKey(`${did}#device-a`)).toBeUndefined()
+      expect(await resolver.resolveEd25519PublicKey(`${did}#wrong`, did, encodeMlsDeviceCredential(credential))).toBeUndefined()
     })
   })
 
   test('fails closed when the DID has no log', async () => {
     await withFetch(null, async () => {
       const resolver = new WebvhSigningKeyResolver()
-      expect(await resolver.resolveEd25519PublicKey('did:webvh:deadbeef:test.example#device-a')).toBeUndefined()
+      const did = 'did:webvh:deadbeef:test.example'
+      const credential = createMlsDeviceCredential(did, ed25519.getPublicKey(ed25519.utils.randomSecretKey()), ed25519.utils.randomSecretKey())
+      expect(await resolver.resolveEd25519PublicKey(credential.deviceKid, did, encodeMlsDeviceCredential(credential))).toBeUndefined()
     })
   })
 
-  test('fails closed on a malformed signing key id (no fragment)', async () => {
+  test('fails closed on a malformed credential', async () => {
     const resolver = new WebvhSigningKeyResolver()
-    expect(await resolver.resolveEd25519PublicKey('did:webvh:deadbeef:test.example')).toBeUndefined()
+    expect(await resolver.resolveEd25519PublicKey('did:webvh:deadbeef:test.example', 'did:webvh:deadbeef:test.example', new Uint8Array([1]))).toBeUndefined()
   })
 
   test('fails closed when the log fails verification', async () => {
     const rootPrivateKey = ed25519.utils.randomSecretKey()
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
-    const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [{ fragment: 'device-a', publicKey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()) }])
+    const devicePublicKey = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
+    const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [])
+    const credential = createMlsDeviceCredential(did, devicePublicKey, rootPrivateKey)
     const tampered = [{ ...log[0]!, state: { ...log[0]!.state, name: 'injected' } }]
 
     await withFetch(tampered, async () => {
       const resolver = new WebvhSigningKeyResolver()
-      expect(await resolver.resolveEd25519PublicKey(`${did}#device-a`)).toBeUndefined()
+      expect(await resolver.resolveEd25519PublicKey(credential.deviceKid, did, encodeMlsDeviceCredential(credential))).toBeUndefined()
     })
   })
 
@@ -106,11 +113,8 @@ describe('WebvhSigningKeyResolver (DeviceSigningPublicKeyResolver)', () => {
     const anchor = fakeAnchor()
 
     const { did: oldDid } = await createGenesis({ domain: 'move-src.example', rootPrivateKey, rootPublicKey, fetch: anchor.fetch })
-    await addDeviceVerificationMethod({
-      did: oldDid, fragment: 'device-b', devicePublicKey: deviceBPublicKey,
-      signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey, fetch: anchor.fetch,
-    })
-    const deviceBKid = `${oldDid}#device-b`
+    const credential = createMlsDeviceCredential(oldDid, deviceBPublicKey, rootPrivateKey)
+    const deviceBKid = credential.deviceKid
 
     // Someone else's move: only the domain changes, device-b never re-publishes.
     await migrateWebvhLocation({
@@ -123,7 +127,7 @@ describe('WebvhSigningKeyResolver (DeviceSigningPublicKeyResolver)', () => {
       const resolver = new WebvhSigningKeyResolver()
       // Never resolved before -- proves this isn't just the cache papering
       // over a live-resolution failure, but a genuinely correct first resolve.
-      expect(await resolver.resolveEd25519PublicKey(deviceBKid)).toEqual(deviceBPublicKey)
+      expect(await resolver.resolveEd25519PublicKey(deviceBKid, oldDid, encodeMlsDeviceCredential(credential))).toEqual(deviceBPublicKey)
     } finally {
       globalThis.fetch = realFetch
     }

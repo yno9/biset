@@ -9,7 +9,7 @@ describe('mail ingress adapter', () => {
   test('keeps RFC 5322 opaque and delegates the recipient snapshot to core', async () => {
     const identityId = 'did:web:alice.example'
     const roster = new MemoryTrustedDeviceRoster()
-    await roster.installAcceptedProjection({ version: 1, identityId, selfGroupId: 'self', epoch: '1', acceptedAt: '2026-08-21T00:00:00.000Z', devices: [{ deviceId: 'device-a', deliveryFloor: '1', signingKeyId: `${identityId}#device-a` }] })
+    await roster.installAcceptedProjection({ version: 1, identityId, selfGroupId: 'self', epoch: '1', acceptedAt: '2026-08-21T00:00:00.000Z', devices: [{ deviceId: 'device-a', deliveryFloor: '1', signingPublicKey: new Uint8Array(32), deviceCredential: new Uint8Array([1]) }] })
     const seen: IngressEnvelopeV1[] = []
     const store: IngressStore = { async offer(value) { seen.push(value) }, async pull() { return [] }, async acknowledge() { throw new Error('unused') }, async expire() { return [] }, async status() { return undefined } }
     const adapter = new MailIngressAdapter(new CoreIngressAdapter(roster, store))

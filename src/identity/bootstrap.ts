@@ -1,5 +1,5 @@
-// Identity bootstrap, end to end: this device's own MLS leaf key registered
-// as a verificationMethod, self-group membership, roster reflection, and
+// Identity bootstrap, end to end: this device's Root-signed MLS credential,
+// self-group membership, roster reflection, and
 // KeyPackage pool top-up — everything Vault Core's identity bootstrap needs
 // before any vault content can be read or written (PLAN.md §4.1's
 // roster/VEK boundary). Two entry points share that machinery
@@ -19,12 +19,12 @@ import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { deriveRootKey } from './keys.ts'
 import { mnemonicToSeed } from './seed.ts'
 import { createGenesis } from './webvh/create-genesis.ts'
-import { addDeviceVerificationMethod } from './webvh/add-device-verification-method.ts'
 import { resolveByDomain } from './webvh/resolver.ts'
 import { mailFromForIdentity } from './webvh/identifier.ts'
 import { decodeMultikey, encodeMultikey } from './webvh/multikey.ts'
 import type { IdentityRecord, IdentityRecordStore } from './record-store.ts'
-import { epochOf, exportSecret, generateOwnKeyPackage, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
+import { epochOf, exportSecret, generateOwnKeyPackage, ownMlsDeviceCredential, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
+import { createMlsDeviceCredential, encodeMlsDeviceCredential } from '../mls/device-credential.ts'
 import { webvhAuthenticationService } from '../mls/webvh-authentication-service.ts'
 import { ensureSelfGroupWithRosterInstall, reflectPendingSelfGroupCommits, selfGroupIdHex, type SelfGroupSigner } from '../mls/self-group.ts'
 import { ensureKeyPackagePool } from '../mls/key-package-pool.ts'
@@ -115,11 +115,6 @@ export function fromHex(hex: string): Uint8Array {
   return bytes
 }
 
-function randomFragment(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(8))
-  return `device-${toHex(bytes)}`
-}
-
 export interface CreateNewIdentityOptions {
   /** This identity's own subdomain (`y.biset.md`) — used unchanged for both
    * did:webvh (identifier.ts's subdomain form) and the did:web mirror. */
@@ -154,8 +149,8 @@ interface RegisterDeviceOptions {
 
 /**
  * The machinery `createNewIdentity` and `restoreIdentity` share once a DID
- * and its root key are in hand: mint this device's own MLS leaf key,
- * register it as a verificationMethod, join the self group (creating it if
+ * and its Root Key are in hand: mint this device's MLS leaf key and
+ * Root-signed credential, join the self group (creating it if
  * this is the genesis device, external-joining otherwise —
  * `ensureSelfGroupWithRosterInstall` decides which), and top up the
  * KeyPackage pool.
@@ -163,24 +158,19 @@ interface RegisterDeviceOptions {
 async function registerDeviceAndJoinSelfGroup(
   did: string,
   rootPrivateKey: Uint8Array,
-  rootPublicKey: Uint8Array,
   selfGroupStore: MlsSelfGroupStateStore,
   keyStore: MlsKeyPackageStore,
   opts: RegisterDeviceOptions,
 ): Promise<{ deviceKid: string; selfGroupState: ClientState }> {
   ensureMlsAuthServiceInstalled()
 
-  const fragment = randomFragment()
-  const deviceKid = `${did}#${fragment}`
-  const kp = await generateOwnKeyPackage(deviceKid)
-  await addDeviceVerificationMethod({
-    did, fragment, devicePublicKey: kp.publicPackage.leafNode.signaturePublicKey,
-    signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey,
-    didWebMirror: opts.didWebMirror, fetch: opts.fetch,
-  })
+  const deviceSignaturePrivateKey = ed25519.utils.randomSecretKey()
+  const deviceCredential = createMlsDeviceCredential(did, ed25519.getPublicKey(deviceSignaturePrivateKey), rootPrivateKey)
+  const deviceKid = deviceCredential.deviceKid
+  const kp = await generateOwnKeyPackage(deviceCredential, deviceSignaturePrivateKey)
 
   const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, kp.privatePackage.signaturePrivateKey)
-  const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: opts.mlsDeliveryBaseUrl, fetch: opts.fetch })
+  const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: opts.mlsDeliveryBaseUrl, deviceCredential: encodeMlsDeviceCredential(deviceCredential), fetch: opts.fetch })
   const rosterTransport = new CoreRosterInstallTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
 
   const selfGroupState = await ensureSelfGroupWithRosterInstall(
@@ -188,15 +178,15 @@ async function registerDeviceAndJoinSelfGroup(
   )
   if (!selfGroupState) throw new Error('registerDeviceAndJoinSelfGroup: self-group bootstrap did not produce a state')
 
-  await ensureKeyPackagePool(mlsTransport, keyStore, did, deviceKid, sign, undefined, opts.now)
+  await ensureKeyPackagePool(mlsTransport, keyStore, did, deviceKid, deviceCredential, deviceSignaturePrivateKey, sign, undefined, opts.now)
 
   return { deviceKid, selfGroupState }
 }
 
 /**
- * Creates a brand-new identity: did:webvh genesis, this device registered as
- * its first verificationMethod (also its first — and, for now, only — self
- * group member), and the identity persisted locally. Throws if the identity
+ * Creates a brand-new identity: did:webvh genesis, this device authorized by
+ * a Root-signed credential as the first self-group member, and the identity
+ * persisted locally. Throws if the identity
  * anchor (genesis PUT) or the core self-group API is unreachable — same
  * fail-fast rule the pre-rewrite signup form used.
  *
@@ -223,7 +213,7 @@ export async function createNewIdentity(
   // The genesis device is the roster's own first (and, at this point, only)
   // trusted device — it starts pulling vault delivery from whatever the
   // CURRENT latestSeq is, which for a brand-new identity is the beginning.
-  const { deviceKid, selfGroupState } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, root.publicKey, selfGroupStore, keyStore, {
+  const { deviceKid, selfGroupState } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, selfGroupStore, keyStore, {
     coreBaseUrl: opts.coreBaseUrl, mlsDeliveryBaseUrl: opts.mlsDeliveryBaseUrl, didWebMirror: opts.didWebMirror, fetch: opts.fetch, now,
     deliveryFloorForNewDevice: async () => deliverySeq(0n),
   })
@@ -285,7 +275,8 @@ export async function maintainSelfGroup(
   const now = opts.now ?? (() => new Date())
   const oldState = stored.state
   const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(oldState))
-  const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: opts.mlsDeliveryBaseUrl, fetch: opts.fetch })
+  const deviceCredential = ownMlsDeviceCredential(oldState)
+  const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: opts.mlsDeliveryBaseUrl, deviceCredential: encodeMlsDeviceCredential(deviceCredential), fetch: opts.fetch })
   const rosterTransport = new CoreRosterInstallTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
 
   const deliveryFloorForNewDevice = () => currentVaultDeliveryLatestSeq(opts.coreBaseUrl, record.did, record.deviceKid!, sign, opts.fetch, now)
@@ -297,7 +288,7 @@ export async function maintainSelfGroup(
     await selfGrantSegmentRewraps(opts.segments, opts.wraps, record.did, stored.selfGroupId, record.deviceKid, oldState, state, now)
   }
 
-  await ensureKeyPackagePool(mlsTransport, keyStore, record.did, record.deviceKid, sign, undefined, now)
+  await ensureKeyPackagePool(mlsTransport, keyStore, record.did, record.deviceKid, deviceCredential, ownSignaturePrivateKey(state ?? oldState), sign, undefined, now)
 
   return state
 }
@@ -483,7 +474,7 @@ export async function restoreIdentity(
   }
   const did = doc.id
 
-  const { deviceKid, selfGroupState } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, root.publicKey, selfGroupStore, keyStore, {
+  const { deviceKid, selfGroupState } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, selfGroupStore, keyStore, {
     coreBaseUrl: opts.coreBaseUrl, mlsDeliveryBaseUrl: opts.mlsDeliveryBaseUrl, didWebMirror: opts.didWebMirror, fetch: opts.fetch, now,
     deliveryFloorForNewDevice: opts.deliveryFloorForNewDevice,
   })

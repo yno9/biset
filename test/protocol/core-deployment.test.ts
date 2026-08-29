@@ -20,7 +20,7 @@ describe('core deployment composition', () => {
       databasePath: path,
       signingKeys: { async resolveEd25519PublicKey(keyId) { return keyId === `${identityId}#device-a` ? publicKey : undefined } },
     })
-    await core.roster.installAcceptedProjection({ version: 1, identityId, selfGroupId: 'self-group-1', epoch: '1', acceptedAt: '2099-08-21T00:00:00.000Z', devices: [{ deviceId: 'device-a', deliveryFloor: '1', signingKeyId: `${identityId}#device-a` }] })
+    await core.roster.installAcceptedProjection({ version: 1, identityId, selfGroupId: 'self-group-1', epoch: '1', acceptedAt: '2099-08-21T00:00:00.000Z', devices: [{ deviceId: 'device-a', deliveryFloor: '1', signingPublicKey: publicKey, deviceCredential: new Uint8Array([1]) }] })
     const transport = new CoreVaultDeliveryTransport({ baseUrl: 'https://core.example', fetch: (input, init) => core.fetch(new Request(input, init)) })
     const payload = new Uint8Array([1, 2, 3])
     const appendUnsigned = { version: 1 as const, identityId, appendId: 'event-1', payload, payloadHash: sha256Bytes(payload), senderDeviceId: 'device-a', sentAt: '2099-08-21T00:00:00.000Z' }

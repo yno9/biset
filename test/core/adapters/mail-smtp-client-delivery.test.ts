@@ -37,7 +37,7 @@ function makeCore() {
 async function installRoster(core: ReturnType<typeof makeCore>) {
   await core.roster.installAcceptedProjection({
     version: 1, identityId, selfGroupId: 'self-group-1', epoch: '1', acceptedAt: '2099-08-21T00:00:00.000Z',
-    devices: [{ deviceId: 'device-a', deliveryFloor: '1', signingKeyId: deviceKid }],
+    devices: [{ deviceId: 'device-a', deliveryFloor: '1', signingPublicKey: devicePublicKey, deviceCredential: new Uint8Array([1]) }],
   })
 }
 

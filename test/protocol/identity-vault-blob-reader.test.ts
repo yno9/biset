@@ -5,6 +5,7 @@
 import { describe, expect, test } from 'bun:test'
 import { buildVaultBlobReader, buildVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
 import { createMlsGroup, generateOwnKeyPackage } from '../../src/mls/group.ts'
+import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { encryptVaultObject } from '../../src/vault/objects.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
@@ -13,7 +14,8 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
-const deviceKid = `${identityId}#device-a`
+const device = await mlsDeviceFixture(identityId)
+const deviceKid = device.kid
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
@@ -65,7 +67,7 @@ function memoryObjectStore(): { readObject(identityId: string, objectId: string)
 
 describe('buildVaultBlobReader', () => {
   test('decrypts a vault object through a real self-group VEK and serves a range of the plaintext', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
@@ -90,7 +92,7 @@ describe('buildVaultBlobReader', () => {
   })
 
   test('rejects an unknown blob ID', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
@@ -100,7 +102,7 @@ describe('buildVaultBlobReader', () => {
   })
 
   test('rejects an out-of-range request', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)

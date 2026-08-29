@@ -14,11 +14,14 @@ import { generateOwnKeyPackage, memberKids } from '../../src/mls/group.ts'
 import { ensureSelfGroup } from '../../src/mls/self-group.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { OwnKeyPackage } from '../../src/mls/group.ts'
+import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 
 const path = `/tmp/biset-self-group-bootstrap-${process.pid}-${Date.now()}.sqlite`
 const identityId = 'did:web:alice.example'
-const deviceAKid = `${identityId}#device-a`
-const deviceBKid = `${identityId}#device-b`
+const deviceA = await mlsDeviceFixture(identityId)
+const deviceB = await mlsDeviceFixture(identityId, deviceA.rootPrivateKey)
+const deviceAKid = deviceA.kid
+const deviceBKid = deviceB.kid
 
 afterEach(() => {
   for (const suffix of ['', '-wal', '-shm']) {
@@ -48,14 +51,14 @@ function setup(kids: Record<string, OwnKeyPackage>) {
     async resolveEd25519PublicKey(kid) { return kids[kid]?.publicPackage.leafNode.signaturePublicKey },
   })
   const handle = createMlsDeliveryHttpHandler(ds, verifier, async () => true)
-  const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: (input, init) => handle(new Request(input, init)) })
+  const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', deviceCredential: new Uint8Array([1]), fetch: (input, init) => handle(new Request(input, init)) })
   return { ds, transport }
 }
 
 describe('self-group bootstrap (createSelfGroup / joinSelfGroupExternally / ensureSelfGroup)', () => {
   test('first device creates the self group, second device joins externally with no other device online', async () => {
-    const kpA = await generateOwnKeyPackage(deviceAKid)
-    const kpB = await generateOwnKeyPackage(deviceBKid)
+    const kpA = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
+    const kpB = await generateOwnKeyPackage(deviceB.credential, deviceB.signaturePrivateKey)
     const { ds, transport } = setup({ [deviceAKid]: kpA, [deviceBKid]: kpB })
 
     const stateA = await ensureSelfGroup(memoryStore(), transport, identityId, deviceAKid, kpA, signerFor(kpA))
@@ -72,14 +75,14 @@ describe('self-group bootstrap (createSelfGroup / joinSelfGroupExternally / ensu
   })
 
   test('ensureSelfGroup is idempotent: an already-active device never touches the transport again', async () => {
-    const kp = await generateOwnKeyPackage(deviceAKid)
+    const kp = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
     const { ds, transport } = setup({ [deviceAKid]: kp })
     const store = memoryStore()
     const sign = signerFor(kp)
     const first = await ensureSelfGroup(store, transport, identityId, deviceAKid, kp, sign)
     expect(first).toBeDefined()
 
-    const brokenTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: async () => { throw new Error('transport must not be used for an already-active device') } })
+    const brokenTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', deviceCredential: new Uint8Array([1]), fetch: async () => { throw new Error('transport must not be used for an already-active device') } })
     const second = await ensureSelfGroup(store, brokenTransport, identityId, deviceAKid, kp, sign)
     expect(second).toBe(first)
     ds.close()

@@ -19,7 +19,7 @@
 //     forward secrecy the group is here for.
 import {
   createGroup, joinGroup, joinGroupExternal, createGroupInfoWithExternalPubAndRatchetTree,
-  generateKeyPackage, createApplicationMessage, createCommit, createProposal,
+  generateKeyPackage, generateKeyPackageWithKey, createApplicationMessage, createCommit, createProposal,
   processMessage, encodeMlsMessage, decodeMlsMessage, mlsExporter, zeroOutUint8Array,
   defaultCapabilities, defaultLifetime, emptyPskIndex, acceptAll,
   encodeGroupState, decodeGroupState,
@@ -32,13 +32,16 @@ import { encodeGroupInfo, decodeGroupInfo, ratchetTreeFromExtension } from './ve
 import { makeKeyPackageRef } from './vendor/keyPackage.ts'
 import { mlsSuite } from './suite.ts'
 import { credentialFor, memberIdOf, type MlsMemberId } from './identity.ts'
+import { mlsDeviceCredentialOf, type MlsDeviceCredentialV1 } from './device-credential.ts'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { sameIdentity } from '../identity/idkey.ts'
+import { equalBytes } from '../protocol/canonical.ts'
 
 // The Authentication Service (PLANMLS.md §2's AS role). ts-mls asks this
 // whether a leaf's credential really belongs to the signature key in that leaf;
 // its own default answers "yes" to everything, which is exactly the hole
-// Phase 2 fills by resolving the DID URL in the credential and checking the
-// fragment is still a listed key.
+// production service fills by resolving the stable Root Key and validating
+// the Root-signed device credential against the actual leaf key.
 //
 // It is a settable module-level hook rather than a parameter because it must
 // apply to state restored from disk too, where no call site is nearby to pass
@@ -97,16 +100,22 @@ export type IncomingResult =
   | { state: ClientState; kind: 'state' }
   | { state: ClientState; kind: 'message'; message: Uint8Array; sender?: MlsMemberId }
 
-/** Generate this device's key package. `kid` is its DIDComm device key id
- * (`did#kN`) — see identity.ts for why that, and only that, is the credential.
+/** Generate this device's KeyPackage with its fixed leaf signing key and
+ * Root-signed device credential.
  *
  * biset's DIDComm transport keys (X25519/ML-KEM, carried in the leaf as a
  * private-use extension in the pre-rewrite implementation) are not part of
  * this boundary — they belong to the DIDComm adapter (PLAN.md §6.1,
  * unimplemented), which the roster/vault path this module serves does not
  * need. */
-export async function generateOwnKeyPackage(kid: string): Promise<OwnKeyPackage> {
-  return generateOwnKeyPackageForCredential(credentialFor(kid))
+export async function generateOwnKeyPackage(value: MlsDeviceCredentialV1, signaturePrivateKey: Uint8Array): Promise<OwnKeyPackage> {
+  if (!equalBytes(ed25519.getPublicKey(signaturePrivateKey), value.signaturePublicKey)) throw new TypeError('MLS device credential does not match the signing private key')
+  const suite = await mlsSuite()
+  const kp = await generateKeyPackageWithKey(
+    credentialFor(value), defaultCapabilities(), defaultLifetime, [],
+    { signKey: signaturePrivateKey, publicKey: value.signaturePublicKey }, suite, [],
+  )
+  return { publicPackage: kp.publicPackage, privatePackage: kp.privatePackage }
 }
 
 /** Generates a KeyPackage for an application-defined BasicCredential. */
@@ -244,35 +253,9 @@ export async function rekey(state: ClientState): Promise<CommitResult> {
   return commitWith(state, [])
 }
 
-/** Replaces this device's OWN leaf's credential in place, via its own
- * UpdatePath — the same physical leaf, same index, same encryption/
- * signature keys, only the credential (`kid`) changes. The one caller is a
- * did:webvh domain move (identity/webvh/move.ts): the device's kid embeds
- * its identity's DID (`${did}#device-hex}`), which the move changes, but
- * the device itself hasn't.
- *
- * Deliberately NOT a bundled Update proposal: RFC 9420 forbids a committer
- * from including their own self-authored Update proposal in their own
- * commit (clientState.ts's validateProposals) — found live, 2026-08-26,
- * trying exactly that. And deliberately NOT `joinGroupExternally`'s
- * `resync` option either (removing this leaf and re-adding a new one): for
- * a single-member self-group, that path hits an unrelated bug in the
- * vendored MLS tree code (extendRatchetTree) when the tree briefly goes
- * fully blank between the remove and the add.
- *
- * What actually works: every commit already carries an UpdatePath for the
- * committer's OWN leaf (`rekey` above is exactly this, with no proposals at
- * all) — RFC 9420 places no restriction on what committer puts in THEIR
- * OWN path update, only on proposals. Upstream's `createUpdatePath` just
- * never exposed a way to change credential there (`vendor/updatePath.ts`'s
- * own `// biset:` note on `newCredential`) — this is the one caller. */
-export async function updateOwnCredential(state: ClientState, newKid: string): Promise<CommitResult> {
-  return commitWith(state, [], false, credentialFor(newKid))
-}
-
-async function commitWith(state: ClientState, extraProposals: Proposal[], ratchetTreeExtension = false, ownCredentialUpdate?: Credential): Promise<CommitResult> {
+async function commitWith(state: ClientState, extraProposals: Proposal[], ratchetTreeExtension = false): Promise<CommitResult> {
   const suite = await mlsSuite()
-  const result = await createCommit({ state, cipherSuite: suite }, { extraProposals, ratchetTreeExtension, ownCredentialUpdate })
+  const result = await createCommit({ state, cipherSuite: suite }, { extraProposals, ratchetTreeExtension })
   return {
     state: result.newState,
     commit: encodeMlsMessage(result.commit),
@@ -421,6 +404,16 @@ export function memberSignaturePublicKey(state: ClientState, kid: string): Uint8
   return undefined
 }
 
+export function memberDeviceCredentialBytes(state: ClientState, kid: string): Uint8Array | undefined {
+  for (const node of state.ratchetTree) {
+    if (node?.nodeType !== 'leaf') continue
+    try {
+      if (memberIdOf(node.leaf.credential).kid === kid && node.leaf.credential.credentialType === 'basic') return node.leaf.credential.identity.slice()
+    } catch { continue }
+  }
+  return undefined
+}
+
 // ------------------------------------------------------- external commits
 //
 // How a NEW DEVICE of an identity that is already in a group joins it without
@@ -429,11 +422,9 @@ export function memberSignaturePublicKey(state: ClientState, kid: string): Uint8
 // The alternative — "an existing device must add you" — is the safer default
 // for a stranger, and it is what `addMembers` does. But for one's OWN devices
 // it would be a real regression: today a restored device is usable the moment
-// the seed is entered, because holding the seed lets it publish itself into
-// its own DID document. External commits keep exactly that property, and the
-// check that makes it safe is the same one the DID layer already performs:
-// the joiner's credential is `did#kN`, and the AS resolves that DID and
-// verifies the fragment is a currently-listed key of it (mls/authservice.ts).
+// the seed is entered, because holding the seed authorizes a new device
+// credential. External commits keep exactly that property: the AS resolves
+// the Root Key and verifies the credential's Root signature.
 // The Delivery Service enforces the matching rule on its side — an external
 // commit is admitted only when the joiner's DID is ALREADY in the roster, so
 // this can add a device to an identity that is a member, and never an
@@ -590,4 +581,13 @@ export function epochOf(state: ClientState): bigint {
  * (identity/bootstrap.ts's `maintainSelfGroup`). */
 export function ownSignaturePrivateKey(state: ClientState): Uint8Array {
   return state.signaturePrivateKey
+}
+
+export function ownMlsDeviceCredential(state: ClientState): MlsDeviceCredentialV1 {
+  const ownPublicKey = ed25519.getPublicKey(state.signaturePrivateKey)
+  for (const node of state.ratchetTree) {
+    if (node?.nodeType !== 'leaf' || !equalBytes(node.leaf.signaturePublicKey, ownPublicKey)) continue
+    return mlsDeviceCredentialOf(node.leaf.credential)
+  }
+  throw new Error('stored MLS state has no credential for its own signing key')
 }

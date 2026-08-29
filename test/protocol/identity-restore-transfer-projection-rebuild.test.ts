@@ -10,6 +10,7 @@
 import { describe, expect, test } from 'bun:test'
 import { buildLocalJmapProjectionRebuild, buildRestoreTransferSource, buildRestoreTransferVerifier, buildVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
 import { createMlsGroup, epochOf, generateOwnKeyPackage } from '../../src/mls/group.ts'
+import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
 import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { buildMailMessageAdd } from '../../src/vault/mail-message.ts'
@@ -23,7 +24,8 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
-const deviceKid = `${identityId}#device-a`
+const device = await mlsDeviceFixture(identityId)
+const deviceKid = device.kid
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
@@ -88,7 +90,7 @@ function memoryReceiverStore(): RestoreTransferReceiverStore & VaultRecordReader
 
 describe('projection rebuild after a real peer restore transfer', () => {
   test('reconstructs the correct Local JMAP projection from records a restore transfer actually committed', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)

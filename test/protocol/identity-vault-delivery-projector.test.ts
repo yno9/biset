@@ -8,6 +8,7 @@
 import { describe, expect, test } from 'bun:test'
 import { buildVaultCryptoBoundary, buildVaultDeliveryProjector } from '../../src/identity/bootstrap.ts'
 import { createMlsGroup, generateOwnKeyPackage } from '../../src/mls/group.ts'
+import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
 import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { buildVaultMutation } from '../../src/vault/mutations.ts'
@@ -19,7 +20,8 @@ import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 import type { LocalJmapSnapshot } from '../../src/local-jmap/gateway.ts'
 
 const identityId = 'did:web:alice.example'
-const deviceKid = `${identityId}#device-a`
+const device = await mlsDeviceFixture(identityId)
+const deviceKid = device.kid
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
@@ -57,7 +59,7 @@ function memorySegmentStore(): ActiveVaultSegmentStore {
 
 describe('buildVaultDeliveryProjector', () => {
   test('verifies and projects a real vault-delivery pack end to end', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
@@ -88,7 +90,7 @@ describe('buildVaultDeliveryProjector', () => {
   })
 
   test('rejects a pack whose event was signed by a device never in the self group', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)

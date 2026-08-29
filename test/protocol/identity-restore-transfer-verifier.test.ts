@@ -6,6 +6,7 @@
 import { describe, expect, test } from 'bun:test'
 import { buildRestoreTransferVerifier } from '../../src/identity/bootstrap.ts'
 import { createMlsGroup, generateOwnKeyPackage, memberKids } from '../../src/mls/group.ts'
+import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
 import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { createVaultEvent, verifyVaultEvent } from '../../src/vault/events.ts'
@@ -15,7 +16,8 @@ import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/s
 import type { ClientState } from '../../src/mls/vendor/index.ts'
 
 const identityId = 'did:web:alice.example'
-const deviceKid = `${identityId}#device-a`
+const device = await mlsDeviceFixture(identityId)
+const deviceKid = device.kid
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
@@ -33,7 +35,7 @@ function memorySelfGroupStore(state: ClientState): MlsSelfGroupStateStore {
 
 describe('buildRestoreTransferVerifier', () => {
   test('accepts an event and a SegmentKeyWrap from a real current self-group member', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore(state)
     const loadState = async () => (await selfGroupStore.load(identityId))!.state
@@ -60,7 +62,7 @@ describe('buildRestoreTransferVerifier', () => {
   })
 
   test('rejects an event actor and a wrap grantor that were never in the self group', async () => {
-    const kp = await generateOwnKeyPackage(deviceKid)
+    const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
     const selfGroupStore = memorySelfGroupStore(state)
     expect(memberKids(state, identityId)).toEqual([deviceKid])

@@ -34,7 +34,8 @@ export function rosterInstallSigningBytes(install: Omit<RosterInstallV1, 'signat
       devices: projection.devices.map(device => ({
         deviceId: device.deviceId,
         deliveryFloor: device.deliveryFloor,
-        signingKeyId: device.signingKeyId,
+        signingPublicKey: bytesToBase64url(device.signingPublicKey),
+        deviceCredential: bytesToBase64url(device.deviceCredential),
       })),
     },
   })
@@ -65,7 +66,18 @@ export function assertRosterInstall(value: unknown): asserts value is RosterInst
 /** Strict JSON boundary for the narrow roster-install HTTP endpoint. */
 export function encodeRosterInstallWire(value: RosterInstallV1): string {
   assertRosterInstall(value)
-  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({
+    ...value,
+    projection: {
+      ...value.projection,
+      devices: value.projection.devices.map(device => ({
+        ...device,
+        signingPublicKey: bytesToBase64url(device.signingPublicKey),
+        deviceCredential: bytesToBase64url(device.deviceCredential),
+      })),
+    },
+    signature: bytesToBase64url(value.signature),
+  })
 }
 
 export function decodeRosterInstallWire(text: string): RosterInstallV1 {
@@ -73,7 +85,21 @@ export function decodeRosterInstallWire(text: string): RosterInstallV1 {
   try { parsed = JSON.parse(text) } catch { throw new TypeError('roster install HTTP body is not JSON') }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new TypeError('roster install HTTP body must be an object')
   const input = parsed as Record<string, unknown>
-  const value = { ...input, signature: typeof input.signature === 'string' ? base64urlToBytes(input.signature) : input.signature }
+  const projectionInput = input.projection as Record<string, unknown> | undefined
+  const devicesInput = projectionInput?.devices
+  const projection = projectionInput && Array.isArray(devicesInput) ? {
+    ...projectionInput,
+    devices: devicesInput.map(device => {
+      if (device === null || typeof device !== 'object' || Array.isArray(device)) return device
+      const entry = device as Record<string, unknown>
+      return {
+        ...entry,
+        signingPublicKey: typeof entry.signingPublicKey === 'string' ? base64urlToBytes(entry.signingPublicKey) : entry.signingPublicKey,
+        deviceCredential: typeof entry.deviceCredential === 'string' ? base64urlToBytes(entry.deviceCredential) : entry.deviceCredential,
+      }
+    }),
+  } : input.projection
+  const value = { ...input, projection, signature: typeof input.signature === 'string' ? base64urlToBytes(input.signature) : input.signature }
   assertRosterInstall(value)
   return value
 }

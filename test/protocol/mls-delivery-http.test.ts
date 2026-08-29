@@ -30,7 +30,9 @@ function handler() {
   return { ds, handle }
 }
 
-function body(json: unknown): string { return JSON.stringify(json) }
+function body(json: unknown): string {
+  return JSON.stringify(json && typeof json === 'object' ? { ...json, deviceCredential: bytesToBase64url(new Uint8Array([1])) } : json)
+}
 
 describe('MLS DS HTTP endpoint', () => {
   test('group/create then commit/submit round-trips through the wire format', async () => {

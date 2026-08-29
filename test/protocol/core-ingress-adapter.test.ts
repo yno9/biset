@@ -44,8 +44,8 @@ describe('core ingress adapter', () => {
       epoch: '1',
       acceptedAt: '2026-08-21T00:00:00.000Z',
       devices: [
-        { deviceId: 'device-a', deliveryFloor: '1', signingKeyId: `${identityId}#device-a` },
-        { deviceId: 'device-b', deliveryFloor: '1', signingKeyId: `${identityId}#device-b` },
+        { deviceId: 'device-a', deliveryFloor: '1', signingPublicKey: new Uint8Array(32).fill(1), deviceCredential: new Uint8Array([1]) },
+        { deviceId: 'device-b', deliveryFloor: '1', signingPublicKey: new Uint8Array(32).fill(2), deviceCredential: new Uint8Array([2]) },
       ],
     })
     const captured: IngressEnvelopeV1[] = []

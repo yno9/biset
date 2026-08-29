@@ -1,53 +1,39 @@
 // What an MLS leaf claims to be, and how that claim maps onto a biset identity.
 //
 // MLS gives every leaf a Credential. RFC 9420 leaves its contents to the
-// application, and PLANMLS.md §2 assigns the Authentication Service role to
-// the DID layer — so the credential is nothing but a **DIDComm device key id**,
-// the exact `did#kN` string `didcomm/register.ts` already mints and publishes
-// in the identity's DID document:
-//
-//     did:webvh:example.com:alice#k1
-//
-// That form is deliberate:
+// application. Biset uses a Root-signed device credential containing the
+// stable identity id, a derived device id, and that leaf's Ed25519 public key.
+// The device key is deliberately not published in the DID document:
 //
 //   - **One leaf per device**, not per identity. Every biset device already has
-//     its own `_k1`, registers itself with the mediator and appears as its own
-//     `keyAgreement` entry (ARC.md "Every device of an identity is a separate
-//     DIDComm peer"). A group whose leaves were per-identity would have to
+//     its own leaf. A group whose leaves were per-identity would have to
 //     share MLS private state between devices — exactly the thing MLS's
 //     forward secrecy is designed to make impossible.
-//   - **Resolvable as-is.** The DID part names a document; the fragment names a
-//     key inside it. Verifying a leaf is therefore "resolve the DID, check the
-//     fragment is still listed" — no new registry, no new wire format
-//     (Phase 2 / PLANMLS.md §4 "AS レイヤーの統合" builds on exactly this).
-//   - **Revocation comes free.** A device removed from the DID document (see
-//     `did/didcomm-devices.ts`) stops verifying, and its MLS leaf is then
-//     removed by an ordinary Remove proposal.
+//   - **Root-authorized.** Validation resolves only `${did}#key-1`, verifies
+//     the embedded Root signature, then checks the embedded key against the
+//     actual MLS leaf key.
+//   - **Self Group is the roster.** Revocation is an MLS Remove; DID document
+//     mutation is neither required nor authoritative.
 //
-// `credentialType: 'basic'` is the right container: the identity is an opaque
-// byte string to MLS, and its meaning — "a DID URL, resolve it" — lives here.
-import type { Credential } from './vendor/index.ts'
+// `credentialType: 'basic'` is the right container: MLS transports the
+// canonical credential bytes while biset's Authentication Service interprets
+// and validates them.
+import type { Credential } from './vendor/credential.ts'
+import { credentialForMlsDevice, mlsDeviceCredentialOf, type MlsDeviceCredentialV1 } from './device-credential.ts'
 export { didOfKid } from '../protocol/ids.ts'
 
-const enc = new TextEncoder()
-const dec = new TextDecoder()
-
-/** A DIDComm device key id: `<did>#<fragment>`, one per device. */
+/** An MLS device identity, one leaf per device. */
 export interface MlsMemberId { did: string; kid: string }
 
-/** The `did#kN` string as MLS sees it. */
-export function credentialFor(kid: string): Credential {
-  if (!kid.includes('#')) throw new Error(`credentialFor: not a DID URL with a key fragment: ${kid}`)
-  return { credentialType: 'basic', identity: enc.encode(kid) }
+/** The Root-signed device credential as MLS sees it. */
+export function credentialFor(value: MlsDeviceCredentialV1): Credential {
+  return credentialForMlsDevice(value)
 }
 
 /** Reads a leaf's credential back. Throws on anything that isn't ours —
- * an X.509 credential, or a basic one that isn't a `did#kN` DID URL, is not a
+ * an X.509 credential, or a BasicCredential not encoded by biset, is not a
  * biset member and must not be silently treated as one. */
 export function memberIdOf(credential: Credential): MlsMemberId {
-  if (credential.credentialType !== 'basic') throw new Error(`memberIdOf: unsupported credential type ${credential.credentialType}`)
-  const kid = dec.decode(credential.identity)
-  const hash = kid.indexOf('#')
-  if (!kid.startsWith('did:') || hash < 0) throw new Error(`memberIdOf: not a DID URL: ${kid}`)
-  return { did: kid.slice(0, hash), kid }
+  const value = mlsDeviceCredentialOf(credential)
+  return { did: value.identityId, kid: value.deviceKid }
 }

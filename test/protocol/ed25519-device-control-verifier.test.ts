@@ -5,12 +5,12 @@ import { ingressPullSigningBytes, restoreControlPullSigningBytes, vaultDeliveryP
 
 const privateKey = ed25519.utils.randomSecretKey()
 const publicKey = ed25519.getPublicKey(privateKey)
-const device = { deviceId: 'device-a', deliveryFloor: '1', signingKeyId: 'did:web:alice.example#device-a' }
+const device = { deviceId: 'device-a', deliveryFloor: '1', signingPublicKey: publicKey, deviceCredential: new Uint8Array([1]) }
 
 describe('Ed25519 device control verifier', () => {
-  test('resolves only the roster-selected public key ID and verifies the canonical pull bytes', async () => {
+  test('uses only the roster-projected public key and verifies the canonical pull bytes', async () => {
     const verifier = new Ed25519DeviceControlSignatureVerifier({
-      async resolveEd25519PublicKey(keyId) { return keyId === device.signingKeyId ? publicKey : undefined },
+      async resolveEd25519PublicKey() { return undefined },
     })
     const unsigned = { version: 1 as const, identityId: 'did:web:alice.example', recipientDeviceId: 'device-a', after: '7', requestedAt: '2026-08-21T00:00:00.000Z' }
     const pull = { ...unsigned, signature: ed25519.sign(vaultDeliveryPullSigningBytes(unsigned), privateKey) }
@@ -18,16 +18,17 @@ describe('Ed25519 device control verifier', () => {
     expect(await verifier.verifyVaultDeliveryPull({ ...pull, after: '8' }, device)).toBe(false)
   })
 
-  test('does not accept a valid signature under a different roster key ID', async () => {
+  test('does not accept a signature under a different key from the roster projection', async () => {
     const verifier = new Ed25519DeviceControlSignatureVerifier({ async resolveEd25519PublicKey() { return undefined } })
     const unsigned = { version: 1 as const, identityId: 'did:web:alice.example', recipientDeviceId: 'device-a', after: '7', requestedAt: '2026-08-21T00:00:00.000Z' }
     const pull = { ...unsigned, signature: ed25519.sign(vaultDeliveryPullSigningBytes(unsigned), privateKey) }
-    expect(await verifier.verifyVaultDeliveryPull(pull, device)).toBe(false)
+    const otherDevice = { ...device, signingPublicKey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()) }
+    expect(await verifier.verifyVaultDeliveryPull(pull, otherDevice)).toBe(false)
   })
 
   test('verifies ingress retrieval as a distinct signed device control', async () => {
     const verifier = new Ed25519DeviceControlSignatureVerifier({
-      async resolveEd25519PublicKey(keyId) { return keyId === device.signingKeyId ? publicKey : undefined },
+      async resolveEd25519PublicKey() { return undefined },
     })
     const unsigned = { version: 1 as const, identityId: 'did:web:alice.example', recipientDeviceId: 'device-a', requestedAt: '2026-08-21T00:00:00.000Z' }
     const pull = { ...unsigned, signature: ed25519.sign(ingressPullSigningBytes(unsigned), privateKey) }
@@ -37,7 +38,7 @@ describe('Ed25519 device control verifier', () => {
 
   test('verifies a restore poll as a distinct signed device control', async () => {
     const verifier = new Ed25519DeviceControlSignatureVerifier({
-      async resolveEd25519PublicKey(keyId) { return keyId === device.signingKeyId ? publicKey : undefined },
+      async resolveEd25519PublicKey() { return undefined },
     })
     const unsigned = { version: 1 as const, identityId: 'did:web:alice.example', deviceId: 'device-a', kind: 'requests' as const, requestedAt: '2026-08-21T00:00:00.000Z' }
     const pull = { ...unsigned, signature: ed25519.sign(restoreControlPullSigningBytes(unsigned), privateKey) }

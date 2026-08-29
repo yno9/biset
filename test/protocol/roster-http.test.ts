@@ -7,7 +7,6 @@ import { encodeRosterInstallWire, rosterInstallSigningBytes, type RosterInstallV
 
 const deviceAKey = ed25519.utils.randomSecretKey()
 const deviceAPublicKey = ed25519.getPublicKey(deviceAKey)
-const signingKeyId = 'did:web:alice.example#device-a-sign'
 
 function projection(): AcceptedSelfGroupProjectionV1 {
   return {
@@ -15,7 +14,7 @@ function projection(): AcceptedSelfGroupProjectionV1 {
     identityId: 'did:web:alice.example',
     selfGroupId: 'self-group-alice',
     epoch: '1',
-    devices: [{ deviceId: 'device-a', deliveryFloor: '0', signingKeyId }],
+    devices: [{ deviceId: 'device-a', deliveryFloor: '0', signingPublicKey: deviceAPublicKey, deviceCredential: new Uint8Array([1]) }],
     acceptedAt: '2026-08-23T00:00:00.000Z',
   }
 }
@@ -28,7 +27,7 @@ function signedInstall(signerKey: Uint8Array): RosterInstallV1 {
 function handler() {
   const roster = new MemoryTrustedDeviceRoster()
   const verifier = new Ed25519DeviceControlSignatureVerifier({
-    async resolveEd25519PublicKey(keyId) { return keyId === signingKeyId ? deviceAPublicKey : undefined },
+    async resolveEd25519PublicKey(keyId, _identityId, credential) { return keyId === 'device-a' && credential[0] === 1 ? deviceAPublicKey : undefined },
   })
   return { roster, handle: createRosterInstallHttpHandler(roster, verifier) }
 }

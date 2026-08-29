@@ -8,6 +8,10 @@ import { describe, expect, test } from 'bun:test'
 import { createMlsGroup, generateOwnKeyPackage, rekey } from '../../src/mls/group.ts'
 import { StoredMlsSelfGroupProvider, type LoadedMlsSelfGroup, type MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import { MlsVaultEpochKeyResolver } from '../../src/mls/vault-epoch.ts'
+import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
+
+const identityId = 'did:web:alice.example'
+const device = await mlsDeviceFixture(identityId)
 
 function memoryStore(): MlsSelfGroupStateStore {
   const rows = new Map<string, LoadedMlsSelfGroup>()
@@ -19,7 +23,7 @@ function memoryStore(): MlsSelfGroupStateStore {
 
 describe('StoredMlsSelfGroupProvider', () => {
   test('round-trips a real ClientState and exposes its exporter secret', async () => {
-    const own = await generateOwnKeyPackage('did:web:alice.example#device-a')
+    const own = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const state = await createMlsGroup(crypto.getRandomValues(new Uint8Array(32)), own)
     const store = memoryStore()
     await store.save('did:web:alice.example', 'self-group-alice', state)
@@ -39,7 +43,7 @@ describe('StoredMlsSelfGroupProvider', () => {
   })
 
   test('feeds MlsVaultEpochKeyResolver: VEK changes across a rekey, matches across two reads at the same epoch', async () => {
-    const own = await generateOwnKeyPackage('did:web:alice.example#device-a')
+    const own = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
     const genesis = await createMlsGroup(crypto.getRandomValues(new Uint8Array(32)), own)
     const store = memoryStore()
     await store.save('did:web:alice.example', 'self-group-alice', genesis)

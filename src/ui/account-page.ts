@@ -52,10 +52,6 @@ export interface AccountPageConfig {
    * that design exactly rather than inventing a "default page is the inbox"
    * model this rewrite never actually had. */
   did: string | null
-  /** This device's own MLS device kid (identity/bootstrap.ts's
-   * IdentityRecord.deviceKid) -- labels the matching row in the devices
-   * list as "(this device)" once it resolves. */
-  deviceKid?: string
   /** hex (identity/record-store.ts's IdentityRecord.masterSeed) -- the ONE
    * piece of key material this file is handed directly rather than through
    * a callback: showing the Root Key phrase on demand (the Config modal's
@@ -125,6 +121,7 @@ export interface VaultCardStatus {
   latestSeq?: string
   checkpointSeq?: string
   detail?: string
+  devices?: Array<{ deviceId: string; current: boolean }>
 }
 
 let config: AccountPageConfig | undefined
@@ -137,7 +134,7 @@ export function configureAccountPage(next: AccountPageConfig): void {
 
 /** Update only the Vault card when the background Coordinator session moves
  * between checking/connected/error states. Repainting the whole account page
- * here would close an open identity menu or collapsed-device panel every ten
+ * here would close an open identity menu or expanded Vault panel every ten
  * seconds, so this intentionally targets the one reusable relay-card slot. */
 export function updateVaultCardStatus(status: VaultCardStatus): void {
   if (!config?.did) return
@@ -685,7 +682,7 @@ function identityMenuItems(did: string): MenuItem[] {
 // removed for looking unfinished.
 const PAGE_HTML = `<div class="cmd-page-content wide-page">
   <div class="cmd-page-section" id="cmd-acc-identity-section">
-    <div id="cmd-acc-identity-fields" title="Click to view devices and DID document">
+    <div id="cmd-acc-identity-fields" title="Click to view DID document">
       <div id="cmd-acc-identity-avatar" class="lp-avatar"></div>
       <div id="cmd-acc-identity-text">
         <div id="cmd-acc-identity-name-row">
@@ -702,10 +699,6 @@ const PAGE_HTML = `<div class="cmd-page-content wide-page">
     <div id="cmd-acc-sync-stalled" style="display:none"></div>
     <div id="cmd-acc-identity-expanded">
       <div class="acc-storage-header">
-        <span class="acc-storage-title">Devices</span>
-      </div>
-      <div id="cmd-acc-identity-devices" class="acc-device-list"></div>
-      <div class="acc-storage-header" style="margin-top:12px">
         <span class="acc-storage-title">DID:Webvh</span>
         <div class="acc-storage-actions">
           <button id="cmd-acc-identity-sync-btn" class="acc-storage-icon-btn" type="button" aria-label="Sync" title="Sync"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
@@ -833,6 +826,52 @@ function renderVaultCard(): void {
   addDetail('Checkpoint', status.checkpointSeq ?? '—')
   if (status.detail) addDetail('Status', status.detail)
   panel.append(panelHeader, details)
+  if (status.devices?.length) {
+    const devicesHeader = document.createElement('div')
+    devicesHeader.className = 'acc-storage-header'
+    devicesHeader.style.marginTop = '14px'
+    const devicesTitle = document.createElement('span')
+    devicesTitle.className = 'acc-storage-title'
+    devicesTitle.textContent = 'Devices'
+    devicesHeader.appendChild(devicesTitle)
+    const devices = document.createElement('div')
+    devices.className = 'acc-device-list'
+    for (const device of status.devices) {
+      const line = document.createElement('div')
+      line.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;font-size:13px'
+      const id = document.createElement('span')
+      id.style.cssText = 'font-family:ui-monospace,monospace;color:var(--text-dim)'
+      const fragment = device.deviceId.includes('#') ? device.deviceId.slice(device.deviceId.indexOf('#')) : device.deviceId
+      id.textContent = fragment.length > 18 ? `${fragment.slice(0, 10)}…` : fragment
+      id.title = device.deviceId
+      line.appendChild(id)
+      if (device.current) {
+        const tag = document.createElement('span')
+        tag.textContent = 'this device'
+        tag.style.cssText = 'font-size:10px;font-weight:700;color:var(--accent);flex-shrink:0'
+        line.appendChild(tag)
+      } else if (config?.onRevokeDevice) {
+        const revoke = document.createElement('button')
+        revoke.type = 'button'
+        revoke.textContent = 'Revoke'
+        revoke.style.cssText = 'font-size:11px;font-weight:700;color:#ff3b30;background:none;border:none;cursor:pointer;padding:2px 4px'
+        revoke.addEventListener('click', event => {
+          event.stopPropagation()
+          if (!confirm('Revoke this device from the Vault?')) return
+          revoke.disabled = true
+          revoke.textContent = 'Revoking…'
+          void config?.onRevokeDevice?.(device.deviceId).catch(error => {
+            config?.showMessage?.(error instanceof Error ? error.message : String(error))
+            revoke.disabled = false
+            revoke.textContent = 'Revoke'
+          })
+        })
+        line.appendChild(revoke)
+      }
+      devices.appendChild(line)
+    }
+    panel.append(devicesHeader, devices)
+  }
   wrap.append(row, panel)
   row.addEventListener('click', () => wrap.classList.toggle('expanded'))
   list.appendChild(wrap)
@@ -901,7 +940,6 @@ export function showAccountPage(): void {
   const didEl = document.getElementById('cmd-acc-identity-did')
   const avatarEl = document.getElementById('cmd-acc-identity-avatar')
   const docEl = document.getElementById('cmd-acc-identity-doc')
-  const devicesEl = document.getElementById('cmd-acc-identity-devices')
   const section = document.getElementById('cmd-acc-identity-section')
   const fields = document.getElementById('cmd-acc-identity-fields')
 
@@ -935,68 +973,6 @@ export function showAccountPage(): void {
     avatarEl.setAttribute('style', avatarStyle(label))
     avatarEl.textContent = label.charAt(0).toUpperCase()
   }
-  if (devicesEl) devicesEl.innerHTML = `<span class="acc-device-empty">Loading…</span>`
-  // The device list has no read API of its own -- it's derived from the
-  // resolved DID document's verificationMethod, the same one loadDoc below
-  // already fetches for the JSON viewer (registerDeviceAndJoinSelfGroup,
-  // identity/bootstrap.ts, appends one `#device-{hex}` entry per device
-  // that's ever joined the self group; `#key-1` is the root key, not a
-  // device, and routing.json's own keyAgreement/mlkem entries use `#k_`/
-  // `#kk_` fragments -- neither matches). Found live, 2026-08-26: this said
-  // "Device list not available yet" unconditionally even though the data
-  // was already sitting right there in the same document this page already
-  // resolves.
-  resolveWithRouting(did).then(doc => {
-    if (!devicesEl) return
-    const deviceIds = (doc?.verificationMethod ?? [])
-      .map(vm => vm.id)
-      .filter(id => id.includes('#device-'))
-    if (!deviceIds.length) { devicesEl.innerHTML = `<span class="acc-device-empty">${esc('No devices found')}</span>`; return }
-    devicesEl.innerHTML = ''
-    for (const id of deviceIds) {
-      const fragment = id.slice(id.indexOf('#device-') + 1)
-      const isThisDevice = id === config?.deviceKid
-      const row = document.createElement('div')
-      row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;font-size:13px'
-      const label = document.createElement('span')
-      label.style.cssText = 'font-family:ui-monospace,monospace;color:var(--text-dim)'
-      label.textContent = fragment.length > 16 ? `#${fragment.slice(1, 9)}…` : `#${fragment}`
-      label.title = id
-      row.appendChild(label)
-      if (isThisDevice) {
-        const tag = document.createElement('span')
-        tag.textContent = 'this device'
-        tag.style.cssText = 'font-size:10px;font-weight:700;color:var(--accent);flex-shrink:0'
-        row.appendChild(tag)
-      } else if (config?.onRevokeDevice) {
-        // Never offered for the current device's own row -- self-revoke
-        // makes no sense (that's what logout already is, and
-        // removeDeviceFromSelfGroup's own guard rejects it outright).
-        const revokeBtn = document.createElement('button')
-        revokeBtn.type = 'button'
-        revokeBtn.textContent = 'Revoke'
-        revokeBtn.style.cssText = 'font-size:11px;font-weight:700;color:#ff3b30;background:none;border:none;cursor:pointer;flex-shrink:0;padding:2px 4px'
-        revokeBtn.addEventListener('click', async () => {
-          if (!confirm(`Revoke this device? It will lose access to this identity's vault immediately and cannot be undone.`)) return
-          revokeBtn.disabled = true
-          revokeBtn.textContent = 'Revoking…'
-          try {
-            await config!.onRevokeDevice!(id)
-            row.remove()
-          } catch (e) {
-            config?.showMessage?.('Revoke failed: ' + (e instanceof Error ? e.message : String(e)))
-            revokeBtn.disabled = false
-            revokeBtn.textContent = 'Revoke'
-          }
-        })
-        row.appendChild(revokeBtn)
-      }
-      devicesEl.appendChild(row)
-    }
-  }).catch(() => {
-    if (devicesEl) devicesEl.innerHTML = `<span class="acc-device-empty">${esc('Could not resolve devices')}</span>`
-  })
-
   let docLoaded = false
   const loadDoc = async () => {
     if (!docEl) return

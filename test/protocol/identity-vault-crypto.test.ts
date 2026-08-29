@@ -14,6 +14,7 @@ import {
   joinGroupExternally, memberKids, processIncoming, rekey, removeMembers,
 } from '../../src/mls/group.ts'
 import { unwrapSegmentKey } from '../../src/vault/crypto.ts'
+import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { mlsEpoch } from '../../src/protocol/ids.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
@@ -22,8 +23,10 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
-const deviceKid = `${identityId}#device-a`
-const deviceBKid = `${identityId}#device-b`
+const deviceA = await mlsDeviceFixture(identityId)
+const deviceB = await mlsDeviceFixture(identityId, deviceA.rootPrivateKey)
+const deviceKid = deviceA.kid
+const deviceBKid = deviceB.kid
 
 function memorySelfGroupStore(): MlsSelfGroupStateStore {
   const rows = new Map<string, LoadedMlsSelfGroup>()
@@ -67,7 +70,7 @@ function memorySegmentStore(): ActiveVaultSegmentStore & { all(): VaultSegmentRe
 }
 
 async function setupGenesisSelfGroup() {
-  const kp = await generateOwnKeyPackage(deviceKid)
+  const kp = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
   const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
   const selfGroupStore = memorySelfGroupStore()
   await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
@@ -164,9 +167,9 @@ describe('buildVaultCryptoBoundary', () => {
   test('a device removed from the self group cannot decrypt a SegmentKey minted after its removal', async () => {
     // Device A creates the group; device B external-joins it (both real MLS
     // operations, no DS involved -- device A applies B's commit directly).
-    const kpA = await generateOwnKeyPackage(deviceKid)
+    const kpA = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
     let stateA = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kpA)
-    const kpB = await generateOwnKeyPackage(deviceBKid)
+    const kpB = await generateOwnKeyPackage(deviceB.credential, deviceB.signaturePrivateKey)
     const joinResult = await joinGroupExternally(await groupInfoForExternalJoin(stateA), kpB)
     const stateB = joinResult.state
     stateA = (await processIncoming(stateA, joinResult.commit)).state

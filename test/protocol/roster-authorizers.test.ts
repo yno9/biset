@@ -15,7 +15,7 @@ async function roster(): Promise<MemoryTrustedDeviceRoster> {
     identityId,
     selfGroupId: 'self-group-alice',
     epoch: '4',
-    devices: [{ deviceId: 'device-a', deliveryFloor: '9', signingKeyId: 'did:web:alice.example#device-a-sign' }],
+    devices: [{ deviceId: 'device-a', deliveryFloor: '9', signingPublicKey: new Uint8Array(32).fill(1), deviceCredential: new Uint8Array([1]) }],
     acceptedAt: '2026-08-21T00:00:00.000Z',
   })
   return value
@@ -45,7 +45,7 @@ describe('roster-backed mediation authorizers', () => {
   test('passes public key identity only for a currently trusted restore signer', async () => {
     const value = await roster()
     const control = rosterBackedRestoreControlAuthorizer(value, {
-      async verifyRestoreRequest(_request, device) { return device.signingKeyId.endsWith('#device-a-sign') },
+      async verifyRestoreRequest(_request, device) { return device.signingPublicKey[0] === 1 },
       async verifyRestoreOffer() { return true },
       async verifyRestoreCancel() { return true },
       async verifyRestoreControlPull(_pull, device) { return device.deviceId === 'device-a' },

@@ -23,12 +23,15 @@ import { generateOwnKeyPackage, memberKids } from '../../src/mls/group.ts'
 import { ensureSelfGroupWithRosterInstall, reflectPendingSelfGroupCommits } from '../../src/mls/self-group.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { OwnKeyPackage } from '../../src/mls/group.ts'
+import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 
 const dsPath = `/tmp/biset-self-group-roster-ds-${process.pid}-${Date.now()}.sqlite`
 const rosterPath = `/tmp/biset-self-group-roster-db-${process.pid}-${Date.now()}.sqlite`
 const identityId = 'did:web:alice.example'
-const deviceAKid = `${identityId}#device-a`
-const deviceBKid = `${identityId}#device-b`
+const deviceA = await mlsDeviceFixture(identityId)
+const deviceB = await mlsDeviceFixture(identityId, deviceA.rootPrivateKey)
+const deviceAKid = deviceA.kid
+const deviceBKid = deviceB.kid
 
 afterEach(() => {
   for (const base of [dsPath, rosterPath]) {
@@ -58,7 +61,7 @@ function setup(kids: Record<string, OwnKeyPackage>) {
   const ds = SqliteMlsDeliveryService.open(dsPath)
   const dsVerifier = new Ed25519MlsDsSignatureVerifier({ resolveEd25519PublicKey })
   const dsHandle = createMlsDeliveryHttpHandler(ds, dsVerifier, async () => true)
-  const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: (input, init) => dsHandle(new Request(input, init)) })
+  const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', deviceCredential: new Uint8Array([1]), fetch: (input, init) => dsHandle(new Request(input, init)) })
 
   const roster = SqliteTrustedDeviceRoster.open(rosterPath)
   const rosterVerifier = new Ed25519DeviceControlSignatureVerifier({ resolveEd25519PublicKey })
@@ -70,7 +73,7 @@ function setup(kids: Record<string, OwnKeyPackage>) {
 
 describe('roster install atop self-group bootstrap', () => {
   test('genesis device installs its own single-device roster', async () => {
-    const kpA = await generateOwnKeyPackage(deviceAKid)
+    const kpA = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
     const { ds, roster, mlsTransport, rosterTransport } = setup({ [deviceAKid]: kpA })
 
     const stateA = await ensureSelfGroupWithRosterInstall(
@@ -86,8 +89,8 @@ describe('roster install atop self-group bootstrap', () => {
   })
 
   test('a newly-joined device cannot install itself; the existing device reflects it instead', async () => {
-    const kpA = await generateOwnKeyPackage(deviceAKid)
-    const kpB = await generateOwnKeyPackage(deviceBKid)
+    const kpA = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
+    const kpB = await generateOwnKeyPackage(deviceB.credential, deviceB.signaturePrivateKey)
     const { ds, roster, mlsTransport, rosterTransport } = setup({ [deviceAKid]: kpA, [deviceBKid]: kpB })
     const storeA = memoryStore()
 
@@ -127,7 +130,7 @@ describe('roster install atop self-group bootstrap', () => {
   })
 
   test('reflectPendingSelfGroupCommits is a no-op when there is nothing new', async () => {
-    const kpA = await generateOwnKeyPackage(deviceAKid)
+    const kpA = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
     const { ds, roster, mlsTransport, rosterTransport } = setup({ [deviceAKid]: kpA })
     const storeA = memoryStore()
 
@@ -148,7 +151,7 @@ describe('roster install atop self-group bootstrap', () => {
   })
 
   test('reflectPendingSelfGroupCommits returns undefined when this device has no stored self-group state', async () => {
-    const kpA = await generateOwnKeyPackage(deviceAKid)
+    const kpA = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
     const { ds, roster, mlsTransport, rosterTransport } = setup({ [deviceAKid]: kpA })
 
     const result = await reflectPendingSelfGroupCommits(
