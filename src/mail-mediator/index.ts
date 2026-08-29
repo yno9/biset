@@ -30,6 +30,9 @@ const smtpHostname = Bun.env.MAIL_MEDIATOR_SMTP_HOST ?? '0.0.0.0'
 const allowedOrigins = new Set((Bun.env.MAIL_MEDIATOR_ALLOWED_ORIGINS ?? '').split(',').map(v => v.trim()).filter(Boolean))
 const maxRequestBytes = envInteger('MAIL_MEDIATOR_MAX_REQUEST_BYTES', 2 * 1024 * 1024, 1024, 64 * 1024 * 1024)
 const pickupLeaseMs = envInteger('MAIL_MEDIATOR_PICKUP_LEASE_MS', 5 * 60 * 1000, 1000, 24 * 60 * 60 * 1000)
+// Outbound recipient allowlist (revised PLAN section 12): empty/unset
+// keeps today's exact behavior (no restriction at all).
+const allowedRecipientDomains = (Bun.env.MAIL_MEDIATOR_ALLOWED_RECIPIENT_DOMAINS ?? '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean)
 
 const smtpTls = Bun.env.MAIL_MEDIATOR_TLS_CERT_PATH && Bun.env.MAIL_MEDIATOR_TLS_KEY_PATH
   ? { certPath: Bun.env.MAIL_MEDIATOR_TLS_CERT_PATH, keyPath: Bun.env.MAIL_MEDIATOR_TLS_KEY_PATH }
@@ -67,10 +70,13 @@ const { handle, mediatorDid } = createMailMediator({
   transaction: store.transaction,
   verifyMailAddressCredential,
   submitOutbound: buildSmtpSubmitOutbound(smtpHelloName),
+  allowedRecipientDomains,
+  contactHistory: store,
   pickupLeaseMs,
 })
 
 const smtp = createSmtpMailListener({
+  contactHistory: store,
   hostname: smtpHostname,
   port: smtpPort,
   helloName: smtpHelloName,

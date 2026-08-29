@@ -125,4 +125,12 @@ describe('SqliteMailMediatorStore', () => {
   test('ready() reports true for a healthy database', () => {
     expect(store.ready()).toBe(true)
   })
+
+  test('contact history record/hasContact round-trips, is case-insensitive, and scoped per-address', () => {
+    expect(store.hasContact('y@biset.md', 'sender@example.com')).toBe(false)
+    store.record('y@biset.md', 'Sender@Example.com')
+    expect(store.hasContact('y@biset.md', 'sender@example.com')).toBe(true)
+    expect(store.hasContact('other@biset.md', 'sender@example.com')).toBe(false)
+    expect(() => store.record('y@biset.md', 'sender@example.com')).not.toThrow() // idempotent
+  })
 })

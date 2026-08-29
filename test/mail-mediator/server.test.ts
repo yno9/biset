@@ -13,6 +13,7 @@ import { packAuthcrypt, unpackAuthcrypt, parseJwe } from '../../src/didcomm/cryp
 import { buildPlaintext, type DidCommPlaintext } from '../../src/didcomm/message.ts'
 import { routeBindBodyToWire, submitBodyToWire, type RecipientSubmitStatus } from '../../src/mail-mediator/protocol.ts'
 import { issueBisetMailAddressCredential, verifyBisetMailAddressCredential } from '../../src/oid4vp/mail-address-profile.ts'
+import { ContactHistoryStore } from '../../src/mail-mediator/contact-history-store.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 const fromUtf8 = (b: Uint8Array) => new TextDecoder().decode(b)
@@ -222,5 +223,73 @@ describe('Mail Mediator (route-bind + pickup + ack + submit)', () => {
     expect((plaintext.body as any).code).toContain('not-bound')
     const okPickup = await request(post, mediator, newRelationship, 'https://biset.md/mail-mediator/1.0/pickup-request', { address: ADDRESS })
     expect((okPickup.plaintext.body as any).items).toEqual([])
+  })
+})
+
+describe('Mail Mediator outbound recipient allowlist', () => {
+  test('with no allowlist configured, any recipient is accepted (unchanged default behavior)', async () => {
+    const { mediator, post } = freshMailMediator({ submitOutbound: async record => record.rcptTo.map(recipient => ({ recipient, status: 'accepted' as const })) })
+    const relationship = generatePeerIdentity()
+    await bind(post, mediator, relationship, 'gen-1')
+    const { plaintext } = await request(post, mediator, relationship, 'https://biset.md/mail-mediator/1.0/submit', submitBodyToWire({
+      idempotencyKey: 'idem-1', mailFrom: ADDRESS, rcptTo: ['anyone@anywhere.example'], rawRfc5322: new Uint8Array([1]),
+    }))
+    expect((plaintext.body as any).state).toBe('in-flight')
+  })
+
+  test('a recipient under an allowed domain is accepted', async () => {
+    const { mediator, post } = freshMailMediator({
+      allowedRecipientDomains: ['biset.md'],
+      submitOutbound: async record => record.rcptTo.map(recipient => ({ recipient, status: 'accepted' as const })),
+    })
+    const relationship = generatePeerIdentity()
+    await bind(post, mediator, relationship, 'gen-1')
+    const { plaintext } = await request(post, mediator, relationship, 'https://biset.md/mail-mediator/1.0/submit', submitBodyToWire({
+      idempotencyKey: 'idem-1', mailFrom: ADDRESS, rcptTo: ['someone@biset.md'], rawRfc5322: new Uint8Array([1]),
+    }))
+    expect((plaintext.body as any).state).toBe('in-flight')
+  })
+
+  test('a recipient neither under an allowed domain nor a known contact is refused outright when it is the only one', async () => {
+    const { mediator, post } = freshMailMediator({ allowedRecipientDomains: ['biset.md'] })
+    const relationship = generatePeerIdentity()
+    await bind(post, mediator, relationship, 'gen-1')
+    const { plaintext } = await request(post, mediator, relationship, 'https://biset.md/mail-mediator/1.0/submit', submitBodyToWire({
+      idempotencyKey: 'idem-1', mailFrom: ADDRESS, rcptTo: ['stranger@outside.example'], rawRfc5322: new Uint8Array([1]),
+    }))
+    expect((plaintext.body as any).code).toContain('recipient-not-allowed')
+  })
+
+  test('a known contact (recorded via contactHistory) is accepted even outside the allowed domain', async () => {
+    const contactHistory = new ContactHistoryStore()
+    contactHistory.record(ADDRESS, 'friend@outside.example')
+    const { mediator, post } = freshMailMediator({
+      allowedRecipientDomains: ['biset.md'], contactHistory,
+      submitOutbound: async record => record.rcptTo.map(recipient => ({ recipient, status: 'accepted' as const })),
+    })
+    const relationship = generatePeerIdentity()
+    await bind(post, mediator, relationship, 'gen-1')
+    const { plaintext } = await request(post, mediator, relationship, 'https://biset.md/mail-mediator/1.0/submit', submitBodyToWire({
+      idempotencyKey: 'idem-1', mailFrom: ADDRESS, rcptTo: ['friend@outside.example'], rawRfc5322: new Uint8Array([1]),
+    }))
+    expect((plaintext.body as any).state).toBe('in-flight')
+  })
+
+  test('a mix of allowed and disallowed recipients: allowed ones dispatch, disallowed ones report permanent-failure', async () => {
+    const { mediator, post } = freshMailMediator({
+      allowedRecipientDomains: ['biset.md'],
+      submitOutbound: async record => record.rcptTo.map(recipient => ({ recipient, status: 'accepted' as const })),
+    })
+    const relationship = generatePeerIdentity()
+    await bind(post, mediator, relationship, 'gen-1')
+    await request(post, mediator, relationship, 'https://biset.md/mail-mediator/1.0/submit', submitBodyToWire({
+      idempotencyKey: 'idem-1', mailFrom: ADDRESS, rcptTo: ['ok@biset.md', 'stranger@outside.example'], rawRfc5322: new Uint8Array([1]),
+    }))
+    await Promise.resolve()
+    const status = await request(post, mediator, relationship, 'https://biset.md/mail-mediator/1.0/submit-status-request', { idempotencyKey: 'idem-1' })
+    expect((status.plaintext.body as any).state).toBe('completed')
+    const results = (status.plaintext.body as any).results
+    expect(results).toContainEqual({ recipient: 'ok@biset.md', status: 'accepted' })
+    expect(results).toContainEqual({ recipient: 'stranger@outside.example', status: 'permanent-failure', detail: 'recipient not allowed' })
   })
 })

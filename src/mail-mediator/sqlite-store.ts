@@ -12,6 +12,7 @@ import type { ReplayGuard } from '../mediator/replay.ts'
 import { RouteStoreFullError, type MailRouteStore, type MailRoute, type RouteHolder } from './route-store.ts'
 import { SpoolFullError, type MailSpoolStore, type SpoolRecord, type EnqueueInput } from './spool-store.ts'
 import { SubmissionStoreFullError, type MailSubmissionStore, type SubmissionRecord, type RecipientResult } from './submission-store.ts'
+import { ContactHistoryFullError, type MailContactHistoryStore } from './contact-history-store.ts'
 
 export interface SqliteMailMediatorLimits {
   maxAddresses: number
@@ -20,6 +21,7 @@ export interface SqliteMailMediatorLimits {
   maxSubmissionRecords: number
   replayTtlMs: number
   maxReplayIds: number
+  maxContactsPerAddress: number
 }
 
 export const DEFAULT_SQLITE_MAIL_MEDIATOR_LIMITS: SqliteMailMediatorLimits = {
@@ -29,6 +31,7 @@ export const DEFAULT_SQLITE_MAIL_MEDIATOR_LIMITS: SqliteMailMediatorLimits = {
   maxSubmissionRecords: 100_000,
   replayTtlMs: 10 * 60 * 1000,
   maxReplayIds: 50_000,
+  maxContactsPerAddress: 10_000,
 }
 
 interface IdentityRow { public_url: string; x_priv: string; ed_priv: string }
@@ -44,7 +47,7 @@ interface SubmissionRow {
   state: string; results: string | null; created_at: string
 }
 
-export class SqliteMailMediatorStore implements MailRouteStore, MailSpoolStore, MailSubmissionStore, ReplayGuard {
+export class SqliteMailMediatorStore implements MailRouteStore, MailSpoolStore, MailSubmissionStore, MailContactHistoryStore, ReplayGuard {
   readonly limits: SqliteMailMediatorLimits
 
   constructor(private readonly database: Database, limits: Partial<SqliteMailMediatorLimits> = {}) {
@@ -274,6 +277,30 @@ export class SqliteMailMediatorStore implements MailRouteStore, MailSpoolStore, 
     return row ? rowToSubmissionRecord(row) : undefined
   }
 
+  // ---- MailContactHistoryStore ----
+
+  record(address: string, counterpartyAddress: string): void {
+    const key = counterpartyAddress.toLowerCase()
+    this.transaction(() => {
+      const already = this.database.query<{ present: number }, [string, string]>(
+        'SELECT 1 AS present FROM mail_contact_history WHERE address = ? AND counterparty_address = ?',
+      ).get(address, key)
+      if (!already) {
+        const count = this.scalar('SELECT count(*) AS value FROM mail_contact_history WHERE address = ?', address)
+        if (count >= this.limits.maxContactsPerAddress) throw new ContactHistoryFullError(`mail-mediator: too many known contacts for ${address}`)
+      }
+      this.database.query(
+        'INSERT INTO mail_contact_history (address, counterparty_address, first_seen_at) VALUES (?, ?, ?) ON CONFLICT(address, counterparty_address) DO NOTHING',
+      ).run(address, key, new Date().toISOString())
+    })
+  }
+
+  hasContact(address: string, counterpartyAddress: string): boolean {
+    return !!this.database.query<{ present: number }, [string, string]>(
+      'SELECT 1 AS present FROM mail_contact_history WHERE address = ? AND counterparty_address = ?',
+    ).get(address, counterpartyAddress.toLowerCase())
+  }
+
   // ---- ReplayGuard ----
 
   check(id: string): boolean {
@@ -402,5 +429,11 @@ function installSchema(database: Database): void {
       recorded_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS mail_mediator_replay_ids_expiry ON mail_mediator_replay_ids(expires_at);
+    CREATE TABLE IF NOT EXISTS mail_contact_history (
+      address TEXT NOT NULL,
+      counterparty_address TEXT NOT NULL,
+      first_seen_at TEXT NOT NULL,
+      PRIMARY KEY (address, counterparty_address)
+    );
   `)
 }

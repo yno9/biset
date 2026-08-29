@@ -22,6 +22,8 @@ import { SmtpIngressCongestionError, SmtpSession } from './smtp-protocol.ts'
 import type { AcceptIngressInput, SmtpEffect } from './smtp-protocol.ts'
 import { SpoolFullError, type MailSpoolStore } from './spool-store.ts'
 import type { MailRouteStore } from './route-store.ts'
+import { verifyDkimSignatures } from './dkim.ts'
+import type { MailContactHistoryStore } from './contact-history-store.ts'
 
 export interface SmtpMailListenerTlsFileConfig {
   certPath: string
@@ -40,6 +42,17 @@ export interface SmtpMailListenerOptions {
   ttlMs?: number
   routes: MailRouteStore
   spool: MailSpoolStore
+  /** Optional: when given, an accepted message's DKIM signatures are
+   * verified and, if one aligns with the envelope MAIL FROM's domain,
+   * the sender is recorded as a known contact for the recipient
+   * (server.ts's outbound recipient allowlist). Omitting it just skips
+   * this bookkeeping -- inbound accept/spool behavior is unaffected
+   * either way. */
+  contactHistory?: MailContactHistoryStore
+  /** Injectable DNS TXT resolver for DKIM public-key lookup (dkim.ts's
+   * own DkimVerifyOptions.resolveTxt) -- defaults to real DNS; tests
+   * inject a fake to avoid a network dependency. */
+  resolveDkimTxt?: (name: string) => Promise<string[]>
   now?: () => string
 }
 
@@ -83,6 +96,13 @@ export function createSmtpMailListener(options: SmtpMailListenerOptions): SmtpMa
     } catch (error) {
       if (error instanceof SpoolFullError) throw new SmtpIngressCongestionError(error.message)
       throw error
+    }
+    if (options.contactHistory) {
+      // Best-effort, after the spool commit that already decided
+      // accept/reject: a DKIM/DNS hiccup here must not turn an otherwise
+      // good message into a 4xx/5xx, since the message is already
+      // durably spooled by this point.
+      void recordKnownContactIfDkimAligned(options.contactHistory, input, options.resolveDkimTxt).catch(() => {})
     }
   }
 
@@ -172,4 +192,21 @@ function toUint8Array(data: Buffer | Uint8Array): Uint8Array {
 
 function toHex(bytes: Uint8Array): string {
   return [...bytes].map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+/** Records `mailFrom` as a known contact for `recipientAddress` only if
+ * at least one verified DKIM signature's `d=` domain matches (or is a
+ * parent of) the ENVELOPE mailFrom's domain -- this is what makes the
+ * allowlist entry mean something ("the domain that controls this address
+ * vouched for this exact message"), not just "some domain somewhere
+ * signed something". A domain that never published this address's
+ * relationship (a DKIM pass for an unrelated domain) grants nothing. */
+async function recordKnownContactIfDkimAligned(
+  contactHistory: MailContactHistoryStore, input: AcceptIngressInput, resolveTxt?: (name: string) => Promise<string[]>,
+): Promise<void> {
+  const mailFromDomain = input.mailFrom.split('@')[1]?.toLowerCase()
+  if (!mailFromDomain) return
+  const signatures = await verifyDkimSignatures(input.rawRfc5322, { resolveTxt })
+  const aligned = signatures.some(sig => mailFromDomain === sig.domain || mailFromDomain.endsWith(`.${sig.domain}`))
+  if (aligned) contactHistory.record(input.recipientAddress, input.mailFrom)
 }

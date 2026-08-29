@@ -39,6 +39,7 @@ import {
 import { RouteStore, RouteStoreFullError, type MailRouteStore } from './route-store.ts'
 import { SpoolStore, type MailSpoolStore } from './spool-store.ts'
 import { SubmissionStore, SubmissionStoreFullError, type MailSubmissionStore, type RecipientResult, type SubmissionRecord } from './submission-store.ts'
+import { ContactHistoryStore, type MailContactHistoryStore } from './contact-history-store.ts'
 
 const DIDCOMM_CT = 'application/didcomm-encrypted+json'
 const DEFAULT_PICKUP_LEASE_MS = 5 * 60 * 1000
@@ -69,6 +70,13 @@ export interface MailMediatorOptions {
    * temporary-failure for every recipient, never left permanently
    * in-flight. */
   submitOutbound: (record: SubmissionRecord) => Promise<RecipientResult[]>
+  /** Outbound recipient allowlist (revised PLAN section 12): a `submit`
+   * recipient must be under one of these domains, or already a known
+   * contact (contactHistory.hasContact, populated by DKIM-verified
+   * inbound mail -- smtp-listener.ts). Empty/omitted keeps today's exact
+   * behavior (no recipient restriction at all). */
+  allowedRecipientDomains?: string[]
+  contactHistory?: MailContactHistoryStore
   now?: () => string
   pickupLeaseMs?: number
 }
@@ -87,9 +95,23 @@ export function createMailMediator({
   transaction = operation => operation(),
   verifyMailAddressCredential,
   submitOutbound,
+  allowedRecipientDomains = [],
+  contactHistory = new ContactHistoryStore(),
   now = () => new Date().toISOString(),
   pickupLeaseMs = DEFAULT_PICKUP_LEASE_MS,
 }: MailMediatorOptions): MailMediatorHandler {
+  const normalizedAllowedDomains = allowedRecipientDomains.map(d => d.toLowerCase())
+
+  /** No restriction configured at all keeps today's exact behavior (any
+   * recipient). Otherwise a recipient must be under an allowed domain,
+   * or already a known contact of the SENDING address (one-directional
+   * trust -- see contact-history-store.ts's own header). */
+  function isAllowedRecipient(senderAddress: string, recipient: string): boolean {
+    if (normalizedAllowedDomains.length === 0) return true
+    const domain = recipient.split('@')[1]?.toLowerCase()
+    if (domain && normalizedAllowedDomains.some(allowed => domain === allowed || domain.endsWith(`.${allowed}`))) return true
+    return contactHistory.hasContact(senderAddress, recipient)
+  }
   const ownRecipient = { kid: mediator.xKid, privateKey: mediator.xPriv }
   const seen = replay
 
@@ -263,23 +285,36 @@ export function createMailMediator({
         if (body.mailFrom !== address) {
           return problemReply(msg, fromDid, senderKid, senderKey, 403, 'e.p.mail.from-mismatch', "mailFrom does not match this route's address")
         }
+        // Recipient-unit, not a whole-request reject (PLAN section 12's
+        // own "複数recipientの部分成功を単一booleanへ潰さない" rule):
+        // a disallowed recipient is reported back as permanent-failure
+        // for THAT address, while allowed ones still go out.
+        const allowedRecipients = body.rcptTo.filter(r => isAllowedRecipient(address, r))
+        const disallowedRecipients = body.rcptTo.filter(r => !isAllowedRecipient(address, r))
+        if (allowedRecipients.length === 0) {
+          return problemReply(msg, fromDid, senderKid, senderKey, 403, 'e.p.mail.recipient-not-allowed', 'no recipient is allowed for this address')
+        }
         let acquired
         try {
-          acquired = submissions.acquire(body.idempotencyKey, body.mailFrom, body.rcptTo, body.rawRfc5322, now())
+          acquired = submissions.acquire(body.idempotencyKey, body.mailFrom, allowedRecipients, body.rawRfc5322, now())
         } catch (e) {
           if (e instanceof SubmissionStoreFullError) {
             return problemReply(msg, fromDid, senderKid, senderKey, 503, 'e.p.mail.storage', 'mail mediator is at capacity')
           }
           throw e
         }
+        const disallowedResults: RecipientResult[] = disallowedRecipients.map(recipient => (
+          { recipient, status: 'permanent-failure', detail: 'recipient not allowed' }
+        ))
         if (acquired.started) {
           submitOutbound(acquired.record)
-            .then(results => submissions.complete(body.idempotencyKey, results))
+            .then(results => submissions.complete(body.idempotencyKey, [...results, ...disallowedResults]))
             .catch(error => {
               console.error('[mail-mediator] submitOutbound failed:', error)
-              submissions.complete(body.idempotencyKey, body.rcptTo.map(recipient => ({
-                recipient, status: 'temporary-failure' as const, detail: 'outbound dispatch failed',
-              })))
+              submissions.complete(body.idempotencyKey, [
+                ...allowedRecipients.map(recipient => ({ recipient, status: 'temporary-failure' as const, detail: 'outbound dispatch failed' })),
+                ...disallowedResults,
+              ])
             })
         }
         const result: SubmitResultBody = acquired.record.state === 'completed'

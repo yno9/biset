@@ -2,13 +2,18 @@ import { describe, expect, test } from 'bun:test'
 import { connect } from 'node:net'
 import { connect as tlsConnect } from 'node:tls'
 import type { Socket } from 'node:net'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { createSmtpMailListener } from '../../src/mail-mediator/smtp-listener.ts'
 import { RouteStore } from '../../src/mail-mediator/route-store.ts'
 import { SpoolStore } from '../../src/mail-mediator/spool-store.ts'
+import { ContactHistoryStore } from '../../src/mail-mediator/contact-history-store.ts'
+import { buildSignedMessage, bytesToBase64 } from './support/dkim-fixture.ts'
 
 const certPath = `${import.meta.dir}/../fixtures/smtp-tls-cert.pem`
 const keyPath = `${import.meta.dir}/../fixtures/smtp-tls-key.pem`
 const ADDRESS = 'alice@mail.test.example'
+const dkimPrivateKey = ed25519.utils.randomSecretKey()
+const dkimPublicKey = ed25519.getPublicKey(dkimPrivateKey)
 
 function boundRoutes(): RouteStore {
   const routes = new RouteStore()
@@ -118,6 +123,97 @@ describe('SMTP mail listener', () => {
       upgraded.end()
 
       expect(spool.pendingCount(ADDRESS)).toBe(1)
+    } finally {
+      listener.stop()
+    }
+  })
+
+  test('a DKIM-verified, aligned sender is recorded as a known contact', async () => {
+    const routes = boundRoutes()
+    const spool = new SpoolStore()
+    const contactHistory = new ContactHistoryStore()
+    const listener = createSmtpMailListener({
+      port: 0, helloName: 'mail.test.example', routes, spool, contactHistory,
+      resolveDkimTxt: async name => name === 'sel1._domainkey.example.test' ? [`v=DKIM1; k=ed25519; p=${bytesToBase64(dkimPublicKey)}`] : [],
+    })
+    try {
+      const raw = await buildSignedMessage(
+        [{ name: 'From', value: ' sender@example.test' }, { name: 'To', value: ` ${ADDRESS}` }],
+        'hello\r\n',
+        { domain: 'example.test', selector: 'sel1', algorithm: 'ed25519-sha256', sign: input => ed25519.sign(input, dkimPrivateKey) },
+      )
+      const socket = await connectRaw(listener.port)
+      await readReply(socket)
+      socket.write('EHLO client.example\r\n'); await readReply(socket)
+      socket.write('MAIL FROM:<sender@example.test>\r\n'); await readReply(socket)
+      socket.write(`RCPT TO:<${ADDRESS}>\r\n`); await readReply(socket)
+      socket.write('DATA\r\n'); await readReply(socket)
+      socket.write(Buffer.from(raw))
+      socket.write('.\r\n')
+      expect(await readReply(socket)).toContain('250')
+      socket.end()
+
+      // The DKIM check runs fire-and-forget after the spool commit
+      // (smtp-listener.ts's own note) -- give its microtasks a chance
+      // to land before asserting.
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(contactHistory.hasContact(ADDRESS, 'sender@example.test')).toBe(true)
+    } finally {
+      listener.stop()
+    }
+  })
+
+  test('an unsigned message is NOT recorded as a known contact', async () => {
+    const routes = boundRoutes()
+    const spool = new SpoolStore()
+    const contactHistory = new ContactHistoryStore()
+    const listener = createSmtpMailListener({ port: 0, helloName: 'mail.test.example', routes, spool, contactHistory })
+    try {
+      const socket = await connectRaw(listener.port)
+      await readReply(socket)
+      socket.write('EHLO client.example\r\n'); await readReply(socket)
+      socket.write('MAIL FROM:<sender@example.test>\r\n'); await readReply(socket)
+      socket.write(`RCPT TO:<${ADDRESS}>\r\n`); await readReply(socket)
+      socket.write('DATA\r\n'); await readReply(socket)
+      socket.write('Subject: hi\r\n\r\nno signature here\r\n.\r\n')
+      expect(await readReply(socket)).toContain('250')
+      socket.end()
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(contactHistory.hasContact(ADDRESS, 'sender@example.test')).toBe(false)
+    } finally {
+      listener.stop()
+    }
+  })
+
+  test('a DKIM-verified but UNALIGNED signature (d= does not match MAIL FROM domain) is NOT recorded', async () => {
+    const routes = boundRoutes()
+    const spool = new SpoolStore()
+    const contactHistory = new ContactHistoryStore()
+    const listener = createSmtpMailListener({
+      port: 0, helloName: 'mail.test.example', routes, spool, contactHistory,
+      resolveDkimTxt: async name => name === 'sel1._domainkey.unrelated.example' ? [`v=DKIM1; k=ed25519; p=${bytesToBase64(dkimPublicKey)}`] : [],
+    })
+    try {
+      // Signed by unrelated.example, but the envelope MAIL FROM claims
+      // example.test -- a valid signature for a domain that never
+      // vouched for THIS address must grant nothing.
+      const raw = await buildSignedMessage(
+        [{ name: 'From', value: ' sender@example.test' }, { name: 'To', value: ` ${ADDRESS}` }],
+        'hello\r\n',
+        { domain: 'unrelated.example', selector: 'sel1', algorithm: 'ed25519-sha256', sign: input => ed25519.sign(input, dkimPrivateKey) },
+      )
+      const socket = await connectRaw(listener.port)
+      await readReply(socket)
+      socket.write('EHLO client.example\r\n'); await readReply(socket)
+      socket.write('MAIL FROM:<sender@example.test>\r\n'); await readReply(socket)
+      socket.write(`RCPT TO:<${ADDRESS}>\r\n`); await readReply(socket)
+      socket.write('DATA\r\n'); await readReply(socket)
+      socket.write(Buffer.from(raw))
+      socket.write('.\r\n')
+      expect(await readReply(socket)).toContain('250')
+      socket.end()
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(contactHistory.hasContact(ADDRESS, 'sender@example.test')).toBe(false)
     } finally {
       listener.stop()
     }
