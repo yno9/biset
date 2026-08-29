@@ -59,7 +59,7 @@ import { encodeMultikey } from './identity/webvh/multikey.ts'
 import { removeDeviceVerificationMethod } from './identity/webvh/remove-device-verification-method.ts'
 import { removeDeviceFromSelfGroup, type SelfGroupSigner } from './mls/self-group.ts'
 import { ownSignaturePrivateKey } from './mls/group.ts'
-import { CoreMlsDeliveryTransport } from './mls/core-mls-delivery-transport.ts'
+import { CoordinatorMlsDeliveryTransport } from './mls/coordinator-mls-delivery-transport.ts'
 import { DidCommDeviceKeyReader } from './vault/didcomm-device-key-reader.ts'
 import { DidCommDeviceKeyVaultSink } from './vault/didcomm-device-key-sink.ts'
 import { OpenPgpCredentialReader } from './vault/openpgp-credential-reader.ts'
@@ -204,9 +204,9 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   // near the end of boot used to render an empty inbox first; if a segment
   // had skipped more than one epoch, the transition-only self-grant could
   // not repair it at all on later reloads.
-  if (coreBaseUrl) {
+  if (coreBaseUrl && coordinatorUrl) {
     for (const record of records) {
-      await maintainSelfGroup(selfGroupStore, keyStore, record, { coreBaseUrl, wraps: vaultStore, segments: vaultStore }).catch(e => {
+      await maintainSelfGroup(selfGroupStore, keyStore, record, { coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl, wraps: vaultStore, segments: vaultStore }).catch(e => {
         console.warn(`[maintainSelfGroup] ${record.did}:`, e instanceof Error ? e.message : e)
       })
     }
@@ -304,11 +304,11 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   // follow-up work, not something this call silently half-does.
   const revokeDevice = async (targetDeviceKid: string): Promise<void> => {
     if (!identity.deviceKid) throw new Error('This device has no MLS credential yet')
-    if (!coreBaseUrl) throw new Error('coreBaseUrl not configured')
+    if (!coordinatorUrl) throw new Error('coordinatorUrl not configured')
     const stored = await selfGroupStore.load(identity.did)
     if (!stored) throw new Error('No self-group state for this identity')
     const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
-    const mlsTransport = new CoreMlsDeliveryTransport({ baseUrl: coreBaseUrl })
+    const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: coordinatorUrl })
     await removeDeviceFromSelfGroup(selfGroupStore, mlsTransport, identity.did, identity.deviceKid, targetDeviceKid, sign)
     const rootPrivateKey = fromHex(identity.rootPrivateKey)
     const rootPublicKey = fromHex(identity.rootPublicKey)
@@ -344,14 +344,14 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     const previousDid = identity.did
     const rootPrivateKey = fromHex(identity.rootPrivateKey)
     const rootPublicKey = fromHex(identity.rootPublicKey)
-    let mlsTransport: CoreMlsDeliveryTransport | undefined
+    let mlsTransport: CoordinatorMlsDeliveryTransport | undefined
     let mlsSign: SelfGroupSigner | undefined
     if (identity.deviceKid) {
-      if (!coreBaseUrl) throw new Error('coreBaseUrl not configured')
+      if (!coordinatorUrl) throw new Error('coordinatorUrl not configured')
       const stored = await selfGroupStore.load(identity.did)
       if (!stored) throw new Error('No self-group state for this identity')
       mlsSign = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
-      mlsTransport = new CoreMlsDeliveryTransport({ baseUrl: coreBaseUrl })
+      mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: coordinatorUrl })
     }
     const moved = await moveWebvhIdentity({
       recordStore, record: identity, vaultStore, selfGroupStore, keyPackageStore: keyStore,

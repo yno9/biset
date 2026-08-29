@@ -1,15 +1,15 @@
 // End-to-end self-group bootstrap: a real MLS ClientState, a real DS
 // (SqliteMlsDeliveryService) behind the real HTTP handler, and
-// CoreMlsDeliveryTransport in between -- confirms createSelfGroup and
+// CoordinatorMlsDeliveryTransport in between -- confirms createSelfGroup and
 // joinSelfGroupExternally actually interoperate through the whole stack,
 // not just against hand-built fixtures.
 import { afterEach, describe, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { SqliteMlsDeliveryService } from '../../src/core/mediation/mls-delivery-store.ts'
-import { Ed25519MlsDsSignatureVerifier } from '../../src/core/mediation/mls-delivery-authorizer.ts'
-import { createMlsDeliveryHttpHandler } from '../../src/core/mediation/mls-delivery-http.ts'
-import { CoreMlsDeliveryTransport } from '../../src/mls/core-mls-delivery-transport.ts'
+import { SqliteMlsDeliveryService } from '../../src/coordinator/mls-delivery-store.ts'
+import { Ed25519MlsDsSignatureVerifier } from '../../src/coordinator/mls-delivery-authorizer.ts'
+import { createMlsDeliveryHttpHandler } from '../../src/coordinator/mls-delivery-http.ts'
+import { CoordinatorMlsDeliveryTransport } from '../../src/mls/coordinator-mls-delivery-transport.ts'
 import { generateOwnKeyPackage, memberKids } from '../../src/mls/group.ts'
 import { ensureSelfGroup } from '../../src/mls/self-group.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
@@ -48,7 +48,7 @@ function setup(kids: Record<string, OwnKeyPackage>) {
     async resolveEd25519PublicKey(kid) { return kids[kid]?.publicPackage.leafNode.signaturePublicKey },
   })
   const handle = createMlsDeliveryHttpHandler(ds, verifier, async () => true)
-  const transport = new CoreMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: (input, init) => handle(new Request(input, init)) })
+  const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: (input, init) => handle(new Request(input, init)) })
   return { ds, transport }
 }
 
@@ -79,7 +79,7 @@ describe('self-group bootstrap (createSelfGroup / joinSelfGroupExternally / ensu
     const first = await ensureSelfGroup(store, transport, identityId, deviceAKid, kp, sign)
     expect(first).toBeDefined()
 
-    const brokenTransport = new CoreMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: async () => { throw new Error('transport must not be used for an already-active device') } })
+    const brokenTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: async () => { throw new Error('transport must not be used for an already-active device') } })
     const second = await ensureSelfGroup(store, brokenTransport, identityId, deviceAKid, kp, sign)
     expect(second).toBe(first)
     ds.close()

@@ -60,7 +60,7 @@ import type { IndexedDbVaultStore } from '../../vault/store.ts'
 import type { IndexedDbMlsSelfGroupStore } from '../../mls/store.ts'
 import type { IndexedDbMlsKeyPackageStore } from '../../mls/keypackage-store.ts'
 import { migrateSelfGroupCredential, type SelfGroupSigner } from '../../mls/self-group.ts'
-import type { CoreMlsDeliveryTransport } from '../../mls/core-mls-delivery-transport.ts'
+import type { CoordinatorMlsDeliveryTransport } from '../../mls/coordinator-mls-delivery-transport.ts'
 
 export interface MoveWebvhIdentityOptions {
   recordStore: IdentityRecordStore
@@ -71,7 +71,7 @@ export interface MoveWebvhIdentityOptions {
   /** Required, and only used, when `record.deviceKid` is set (this device
    * has already joined a self group) — migrateSelfGroupCredential's own
    * commit submission. */
-  mlsTransport?: CoreMlsDeliveryTransport
+  mlsTransport?: CoordinatorMlsDeliveryTransport
   /** Signs with this device's MLS leaf signature key — a DIFFERENT key from
    * `signingPrivateKey` below, which signs the did:webvh log/routing.json
    * instead. Same conditional requirement as `mlsTransport`. */

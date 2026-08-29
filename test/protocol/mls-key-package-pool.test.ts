@@ -5,10 +5,10 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { SqliteMlsDeliveryService } from '../../src/core/mediation/mls-delivery-store.ts'
-import { Ed25519MlsDsSignatureVerifier } from '../../src/core/mediation/mls-delivery-authorizer.ts'
-import { createMlsDeliveryHttpHandler } from '../../src/core/mediation/mls-delivery-http.ts'
-import { CoreMlsDeliveryTransport } from '../../src/mls/core-mls-delivery-transport.ts'
+import { SqliteMlsDeliveryService } from '../../src/coordinator/mls-delivery-store.ts'
+import { Ed25519MlsDsSignatureVerifier } from '../../src/coordinator/mls-delivery-authorizer.ts'
+import { createMlsDeliveryHttpHandler } from '../../src/coordinator/mls-delivery-http.ts'
+import { CoordinatorMlsDeliveryTransport } from '../../src/mls/coordinator-mls-delivery-transport.ts'
 import { generateOwnKeyPackage, keyPackageRefOf } from '../../src/mls/group.ts'
 import { ensureKeyPackagePool } from '../../src/mls/key-package-pool.ts'
 import { mlsKeyPackageCountPullSigningBytes, mlsKeyPackageTakeSigningBytes } from '../../src/protocol/signing.ts'
@@ -56,11 +56,11 @@ function setup(kids: Record<string, OwnKeyPackage>) {
     async resolveEd25519PublicKey(kid) { return kids[kid]?.publicPackage.leafNode.signaturePublicKey },
   })
   const handle = createMlsDeliveryHttpHandler(ds, verifier, async () => true)
-  const transport = new CoreMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: (input, init) => handle(new Request(input, init)) })
+  const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: (input, init) => handle(new Request(input, init)) })
   return { ds, handle, transport }
 }
 
-async function freshCount(transport: CoreMlsDeliveryTransport, deviceKid: string, sign: (bytes: Uint8Array) => Uint8Array | Promise<Uint8Array>): Promise<number> {
+async function freshCount(transport: CoordinatorMlsDeliveryTransport, deviceKid: string, sign: (bytes: Uint8Array) => Uint8Array | Promise<Uint8Array>): Promise<number> {
   const pull = { version: 1 as const, identityId, kid: deviceKid, requestedAt: new Date().toISOString() }
   return transport.keyPackageCount({ ...pull, signature: await sign(mlsKeyPackageCountPullSigningBytes(pull)) })
 }
@@ -87,7 +87,7 @@ describe('ensureKeyPackagePool', () => {
     await ensureKeyPackagePool(transport, keyStore, identityId, deviceKid, signerFor(kp), 5)
     expect(keyStore.size()).toBe(5)
 
-    const guardedTransport = new CoreMlsDeliveryTransport({
+    const guardedTransport = new CoordinatorMlsDeliveryTransport({
       baseUrl: 'https://core.example',
       fetch: (input, init) => {
         const request = new Request(input, init)

@@ -28,7 +28,7 @@ import { epochOf, exportSecret, generateOwnKeyPackage, ownSignaturePrivateKey, s
 import { webvhAuthenticationService } from '../mls/webvh-authentication-service.ts'
 import { ensureSelfGroupWithRosterInstall, reflectPendingSelfGroupCommits, selfGroupIdHex, type SelfGroupSigner } from '../mls/self-group.ts'
 import { ensureKeyPackagePool } from '../mls/key-package-pool.ts'
-import { CoreMlsDeliveryTransport } from '../mls/core-mls-delivery-transport.ts'
+import { CoordinatorMlsDeliveryTransport } from '../mls/coordinator-mls-delivery-transport.ts'
 import { CoreRosterInstallTransport } from '../mls/core-roster-install-transport.ts'
 import { CoreVaultDeliveryTransport } from '../vault/core-delivery-transport.ts'
 import { StoredSegmentKeyResolver, type SegmentKeyResolver, type VaultEpochKeyResolver } from '../vault/segment-key-resolver.ts'
@@ -128,6 +128,8 @@ export interface CreateNewIdentityOptions {
    * deployment) — a separate concern from `domain`, which only names the
    * did:webvh/did:web genesis location. */
   coreBaseUrl: string
+  /** Coordinator-hosted RFC 9750 Delivery Service. */
+  mlsDeliveryBaseUrl: string
   /** Generated if omitted — the only reason to pass one in is a test. */
   masterSeed?: Uint8Array
   didWebMirror?: boolean
@@ -143,6 +145,7 @@ export interface CreatedIdentity {
 
 interface RegisterDeviceOptions {
   coreBaseUrl: string
+  mlsDeliveryBaseUrl: string
   didWebMirror?: boolean
   fetch?: typeof fetch
   now: () => Date
@@ -177,7 +180,7 @@ async function registerDeviceAndJoinSelfGroup(
   })
 
   const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, kp.privatePackage.signaturePrivateKey)
-  const mlsTransport = new CoreMlsDeliveryTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
+  const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: opts.mlsDeliveryBaseUrl, fetch: opts.fetch })
   const rosterTransport = new CoreRosterInstallTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
 
   const selfGroupState = await ensureSelfGroupWithRosterInstall(
@@ -221,7 +224,7 @@ export async function createNewIdentity(
   // trusted device — it starts pulling vault delivery from whatever the
   // CURRENT latestSeq is, which for a brand-new identity is the beginning.
   const { deviceKid, selfGroupState } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, root.publicKey, selfGroupStore, keyStore, {
-    coreBaseUrl: opts.coreBaseUrl, didWebMirror: opts.didWebMirror, fetch: opts.fetch, now,
+    coreBaseUrl: opts.coreBaseUrl, mlsDeliveryBaseUrl: opts.mlsDeliveryBaseUrl, didWebMirror: opts.didWebMirror, fetch: opts.fetch, now,
     deliveryFloorForNewDevice: async () => deliverySeq(0n),
   })
 
@@ -235,6 +238,7 @@ export async function createNewIdentity(
 
 export interface MaintainSelfGroupOptions {
   coreBaseUrl: string
+  mlsDeliveryBaseUrl: string
   /** This identity's own segment stores — needed only for the self-grant
    * sweep below (a device with no vault content yet may omit both and just
    * get the plain catch-up/KeyPackage-topup behavior). */
@@ -281,7 +285,7 @@ export async function maintainSelfGroup(
   const now = opts.now ?? (() => new Date())
   const oldState = stored.state
   const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(oldState))
-  const mlsTransport = new CoreMlsDeliveryTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
+  const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: opts.mlsDeliveryBaseUrl, fetch: opts.fetch })
   const rosterTransport = new CoreRosterInstallTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
 
   const deliveryFloorForNewDevice = () => currentVaultDeliveryLatestSeq(opts.coreBaseUrl, record.did, record.deviceKid!, sign, opts.fetch, now)
@@ -427,6 +431,7 @@ export interface RestoreIdentityOptions {
    * originally called with for it. */
   domain: string
   coreBaseUrl: string
+  mlsDeliveryBaseUrl: string
   /** The 24-word BIP39 recovery phrase (identity/seed.ts). */
   mnemonic: string
   /**
@@ -479,7 +484,7 @@ export async function restoreIdentity(
   const did = doc.id
 
   const { deviceKid, selfGroupState } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, root.publicKey, selfGroupStore, keyStore, {
-    coreBaseUrl: opts.coreBaseUrl, didWebMirror: opts.didWebMirror, fetch: opts.fetch, now,
+    coreBaseUrl: opts.coreBaseUrl, mlsDeliveryBaseUrl: opts.mlsDeliveryBaseUrl, didWebMirror: opts.didWebMirror, fetch: opts.fetch, now,
     deliveryFloorForNewDevice: opts.deliveryFloorForNewDevice,
   })
 

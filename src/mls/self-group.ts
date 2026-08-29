@@ -1,5 +1,6 @@
 // The self-group bootstrap: making this device a member of its identity's
-// MLS self group, over the DS narrow HTTP API (core-mls-delivery-transport.ts)
+// MLS self group, over Coordinator's DS narrow HTTP API
+// (coordinator-mls-delivery-transport.ts)
 // and RFC 9750's own external-join mechanism (RFC 9420 §11).
 //
 // Ported at the state-machine level from src.bak/mls/self-group.ts, trimmed
@@ -49,7 +50,7 @@ import {
   type OwnKeyPackage,
 } from './group.ts'
 import type { ClientState } from './vendor/index.ts'
-import type { CoreMlsDeliveryTransport } from './core-mls-delivery-transport.ts'
+import type { CoordinatorMlsDeliveryTransport } from './coordinator-mls-delivery-transport.ts'
 import type { CoreRosterInstallTransport } from './core-roster-install-transport.ts'
 import { buildAcceptedSelfGroupProjection, signRosterInstall } from './roster-projection.ts'
 import type { MlsSelfGroupStateStore } from './store.ts'
@@ -108,7 +109,7 @@ export function selfGroupIdHex(identityId: string): string {
 
 /** Create the self group. Done once per identity, by its first device. */
 export async function createSelfGroup(
-  transport: CoreMlsDeliveryTransport,
+  transport: CoordinatorMlsDeliveryTransport,
   identityId: string,
   deviceKid: string,
   kp: OwnKeyPackage,
@@ -128,7 +129,7 @@ export async function createSelfGroup(
 
 /** Advance the group by an empty commit whose only purpose is to leave a fresh GroupInfo with the DS. */
 async function publishGroupInfo(
-  transport: CoreMlsDeliveryTransport,
+  transport: CoordinatorMlsDeliveryTransport,
   identityId: string,
   deviceKid: string,
   state: ClientState,
@@ -178,7 +179,7 @@ async function publishGroupInfo(
  */
 export async function removeDeviceFromSelfGroup(
   store: MlsSelfGroupStateStore,
-  transport: CoreMlsDeliveryTransport,
+  transport: CoordinatorMlsDeliveryTransport,
   identityId: string,
   deviceKid: string,
   targetKid: string,
@@ -247,7 +248,7 @@ export async function removeDeviceFromSelfGroup(
  */
 export async function migrateSelfGroupCredential(
   store: MlsSelfGroupStateStore,
-  transport: CoreMlsDeliveryTransport,
+  transport: CoordinatorMlsDeliveryTransport,
   oldIdentityId: string,
   newIdentityId: string,
   oldDeviceKid: string,
@@ -297,7 +298,7 @@ export async function migrateSelfGroupCredential(
  * Both are ordinary, expected outcomes, not failures.
  */
 export async function joinSelfGroupExternally(
-  transport: CoreMlsDeliveryTransport,
+  transport: CoordinatorMlsDeliveryTransport,
   identityId: string,
   deviceKid: string,
   kp: OwnKeyPackage,
@@ -343,7 +344,7 @@ export async function joinSelfGroupExternally(
  */
 export async function ensureSelfGroup(
   store: MlsSelfGroupStateStore,
-  transport: CoreMlsDeliveryTransport,
+  transport: CoordinatorMlsDeliveryTransport,
   identityId: string,
   deviceKid: string,
   kp: OwnKeyPackage,
@@ -411,7 +412,7 @@ export async function installCurrentRosterProjection(
  */
 export async function ensureSelfGroupWithRosterInstall(
   store: MlsSelfGroupStateStore,
-  mlsTransport: CoreMlsDeliveryTransport,
+  mlsTransport: CoordinatorMlsDeliveryTransport,
   rosterTransport: CoreRosterInstallTransport,
   identityId: string,
   deviceKid: string,
@@ -452,7 +453,7 @@ export async function ensureSelfGroupWithRosterInstall(
  */
 export async function reflectPendingSelfGroupCommits(
   store: MlsSelfGroupStateStore,
-  mlsTransport: CoreMlsDeliveryTransport,
+  mlsTransport: CoordinatorMlsDeliveryTransport,
   rosterTransport: CoreRosterInstallTransport,
   identityId: string,
   deviceKid: string,

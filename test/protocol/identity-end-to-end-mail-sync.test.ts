@@ -1,6 +1,6 @@
 // The capstone integration test this session's piecewise work never tied
-// together: two REAL devices of one identity, a REAL core (SQLite MLS DS +
-// SQLite roster behind the actual HTTP handler, same as
+// together: two REAL devices of one identity, a real Coordinator MLS DS plus
+// a separately composed SQLite roster endpoint (same as
 // identity-bootstrap.test.ts), device A creates an identity and writes a
 // local mail message through the real production write path
 // (VaultBackedLocalJmapMutationSink + buildVaultCryptoBoundary's real MLS
@@ -16,8 +16,9 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { createBisetCoreFetchHandler } from '../../src/core/app.ts'
-import { SqliteMlsDeliveryService } from '../../src/core/mediation/mls-delivery-store.ts'
-import { Ed25519MlsDsSignatureVerifier } from '../../src/core/mediation/mls-delivery-authorizer.ts'
+import { SqliteMlsDeliveryService } from '../../src/coordinator/mls-delivery-store.ts'
+import { Ed25519MlsDsSignatureVerifier } from '../../src/coordinator/mls-delivery-authorizer.ts'
+import { createMlsDeliveryHttpHandler } from '../../src/coordinator/mls-delivery-http.ts'
 import { MemoryVaultDeliveryStore } from '../../src/core/mediation/vault-delivery-store.ts'
 import { SqliteTrustedDeviceRoster } from '../../src/core/identity/sqlite-device-roster.ts'
 import { Ed25519DeviceControlSignatureVerifier } from '../../src/core/identity/ed25519-device-control-verifier.ts'
@@ -45,6 +46,7 @@ import type { SegmentKeyWrapV1, VaultDeliveryPullV1 } from '../../src/protocol/v
 const dsPath = `/tmp/biset-e2e-mail-ds-${process.pid}-${Date.now()}.sqlite`
 const rosterPath = `/tmp/biset-e2e-mail-roster-${process.pid}-${Date.now()}.sqlite`
 const CORE_ORIGIN = 'https://core.test.example'
+const COORDINATOR_ORIGIN = 'https://coordinator.test.example'
 
 afterEach(() => {
   for (const base of [dsPath, rosterPath]) {
@@ -108,9 +110,10 @@ function memoryKeyPackageStore(): MlsKeyPackageStore {
   }
 }
 
-function combinedFetch(anchorFetch: typeof fetch, coreHandle: (request: Request) => Promise<Response>): typeof fetch {
+function combinedFetch(anchorFetch: typeof fetch, coreHandle: (request: Request) => Promise<Response>, mlsHandle: (request: Request) => Promise<Response>): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init)
+    if (request.url.startsWith(COORDINATOR_ORIGIN)) return mlsHandle(request)
     if (request.url.startsWith(CORE_ORIGIN)) return coreHandle(request)
     return anchorFetch(input, init)
   }) as typeof fetch
@@ -123,26 +126,26 @@ function setupCore() {
   const keyResolver = new WebvhSigningKeyResolver()
   const resolveEd25519PublicKey = (kid: string) => keyResolver.resolveEd25519PublicKey(kid)
   const dsVerifier = new Ed25519MlsDsSignatureVerifier({ resolveEd25519PublicKey })
+  const mlsHandle = createMlsDeliveryHttpHandler(ds, dsVerifier, async () => true)
   const rosterVerifier = new Ed25519DeviceControlSignatureVerifier({ resolveEd25519PublicKey })
   const vaultDeliveryStore = new MemoryVaultDeliveryStore(rosterBackedVaultDeliveryAuthorizer(roster, rosterVerifier))
   const coreHandle = createBisetCoreFetchHandler({
     roster: { store: roster, verifier: rosterVerifier },
-    mlsDelivery: { store: ds, verifier: dsVerifier, isLiveDevice: async () => true },
     vaultDeliveryStore,
   })
-  return { anchor, ds, roster, vaultDeliveryStore, coreHandle }
+  return { anchor, ds, roster, vaultDeliveryStore, coreHandle, mlsHandle }
 }
 
 describe('end-to-end: create -> write -> deliver -> restore -> project', () => {
   test('device B, added after device A already wrote mail, receives and projects it through real core HTTP and real MLS', async () => {
-    const { anchor, ds, roster, coreHandle } = setupCore()
+    const { anchor, ds, roster, coreHandle, mlsHandle } = setupCore()
     const realFetch = globalThis.fetch
-    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle, mlsHandle)
     try {
       // Device A creates the identity and writes a mail message locally.
       const selfGroupStoreA = memorySelfGroupStore()
       const created = await createNewIdentity(memoryIdentityRecordStore(), selfGroupStoreA, memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN,
       })
       const wrapsA = memoryWrapStore()
       // The SAME segments store instance must back both buildVaultCryptoBoundary
@@ -212,7 +215,7 @@ describe('end-to-end: create -> write -> deliver -> restore -> project', () => {
       const mnemonic = seedToMnemonic(created.masterSeed)
       const selfGroupStoreB = memorySelfGroupStore()
       const restored = await restoreIdentity(memoryIdentityRecordStore(), selfGroupStoreB, memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
       // B's own install was rejected (not yet trusted) -- A's boot-time
       // maintenance is what actually reflects B into the roster AND
@@ -220,7 +223,7 @@ describe('end-to-end: create -> write -> deliver -> restore -> project', () => {
       // (identity/bootstrap.ts's selfGrantSegmentRewraps).
       expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(false)
       await maintainSelfGroup(selfGroupStoreA, memoryKeyPackageStore(), created.record, {
-        coreBaseUrl: CORE_ORIGIN, wraps: wrapsA, segments: segmentsA,
+        coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, wraps: wrapsA, segments: segmentsA,
       })
       expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(true)
 

@@ -1,5 +1,5 @@
 // Keeps this device's published KeyPackage pool topped up at the DS
-// (core-mls-delivery-transport.ts), so another of this identity's devices
+// (coordinator-mls-delivery-transport.ts), so another of this identity's devices
 // can external-join the self group without this device needing to be online
 // at that moment.
 //
@@ -10,7 +10,7 @@
 // first and mints only the shortfall, never assumes anything about how many
 // remain from local state.
 import { encodeKeyPackage, type OwnKeyPackage } from './group.ts'
-import type { CoreMlsDeliveryTransport } from './core-mls-delivery-transport.ts'
+import type { CoordinatorMlsDeliveryTransport } from './coordinator-mls-delivery-transport.ts'
 import { KEY_PACKAGE_POOL_TARGET, type MlsKeyPackageStore } from './keypackage-store.ts'
 import { mlsKeyPackageCountPullSigningBytes, mlsKeyPackagePublishSigningBytes } from '../protocol/signing.ts'
 import type { MlsKeyPackageCountPullV1, MlsKeyPackagePublishV1 } from '../protocol/mls-ds.ts'
@@ -22,7 +22,7 @@ import type { SelfGroupSigner } from './self-group.ts'
  * transport's publish endpoint) when the DS already holds `target` or more.
  */
 export async function ensureKeyPackagePool(
-  transport: CoreMlsDeliveryTransport,
+  transport: CoordinatorMlsDeliveryTransport,
   keyStore: MlsKeyPackageStore,
   identityId: string,
   deviceKid: string,

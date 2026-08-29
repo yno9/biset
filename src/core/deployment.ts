@@ -9,8 +9,6 @@ import { SqliteRestoreControlStore, type RestoreControlStoreLimits } from './med
 import { SqliteIngressStore } from './mediation/sqlite-ingress-store.ts'
 import type { IngressStoreLimits } from './mediation/ingress-store.ts'
 import { CoreIngressAdapter } from './adapters/ingress.ts'
-import { SqliteMlsDeliveryService } from './mediation/mls-delivery-store.ts'
-import { Ed25519MlsDsSignatureVerifier } from './mediation/mls-delivery-authorizer.ts'
 import { rosterBackedMailSubmissionAuthorizer } from './identity/authorizers.ts'
 import { CoreMailSubmissionAdapter } from './adapters/mail-submission-adapter.ts'
 import { WebvhLogStore } from '../anchor/webvh/webvh-store.ts'
@@ -44,7 +42,6 @@ export interface BisetCoreDeployment {
   /** First-party adapter boundary only; the public core fetch handler does not expose it. */
   readonly ingress: SqliteIngressStore
   readonly ingressAdapter: CoreIngressAdapter
-  readonly mlsDelivery: SqliteMlsDeliveryService
   readonly mailSubmissionAdapter?: CoreMailSubmissionAdapter
   readonly webvh?: WebvhLogStore
   readonly didWeb?: DidWebStore
@@ -68,8 +65,6 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
   const restoreControl = new SqliteRestoreControlStore(database, rosterBackedRestoreControlAuthorizer(roster, verifier), options.restoreControlLimits)
   const ingress = new SqliteIngressStore(database, rosterBackedIngressAuthorizer(roster, verifier), options.ingressLimits)
   const ingressAdapter = new CoreIngressAdapter(roster, ingress)
-  const mlsDelivery = new SqliteMlsDeliveryService(database)
-  const mlsDeliveryVerifier = new Ed25519MlsDsSignatureVerifier(options.signingKeys)
   const mailSubmissionAdapter = options.mailHelloName
     ? new CoreMailSubmissionAdapter(rosterBackedMailSubmissionAuthorizer(roster, verifier), options.mailHelloName)
     : undefined
@@ -83,7 +78,6 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
     restoreControl,
     ingress,
     ingressAdapter,
-    mlsDelivery,
     mailSubmissionAdapter,
     webvh,
     didWeb,
@@ -94,7 +88,6 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
       restoreControlStore: restoreControl,
       ingressStore: ingress,
       roster: { store: roster, verifier },
-      mlsDelivery: { store: mlsDelivery, verifier: mlsDeliveryVerifier, isLiveDevice: (identityId, kid) => roster.isTrustedDevice(identityId, kid) },
       mailSubmission: mailSubmissionAdapter,
       webvh,
       didWeb,

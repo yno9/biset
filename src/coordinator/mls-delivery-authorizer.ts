@@ -10,8 +10,7 @@
 // the Authentication Service uses (mls/webvh-authentication-service.ts),
 // applied to transport-layer control rather than the MLS credential itself.
 import { ed25519 } from '@noble/curves/ed25519.js'
-import type { DeviceSigningPublicKeyResolver } from '../identity/ed25519-device-control-verifier.ts'
-import { didOfKid } from '../../protocol/ids.ts'
+import { didOfKid } from '../protocol/ids.ts'
 import {
   mlsCommitSubmissionSigningBytes,
   mlsDeliveriesPullSigningBytes,
@@ -25,7 +24,7 @@ import {
   mlsKeyPackageTakeSigningBytes,
   mlsPendingRemovalsClearSigningBytes,
   mlsSelfRemoveSubmissionSigningBytes,
-} from '../../protocol/signing.ts'
+} from '../protocol/signing.ts'
 import type {
   MlsCommitSubmissionV1,
   MlsDeliveriesPullV1,
@@ -39,8 +38,13 @@ import type {
   MlsKeyPackageTakeV1,
   MlsPendingRemovalsClearV1,
   MlsSelfRemoveSubmissionV1,
-} from '../../protocol/mls-ds.ts'
+} from '../protocol/mls-ds.ts'
 import type { MlsCommitResult, MlsGroupInfoAnswer, MlsLogEntry, SqliteMlsDeliveryService } from './mls-delivery-store.ts'
+
+/** Public-key lookup boundary for signed MLS DS control requests. */
+export interface DeviceSigningPublicKeyResolver {
+  resolveEd25519PublicKey(signingKeyId: string): Promise<Uint8Array | undefined>
+}
 
 export interface MlsDsSignatureVerifier {
   verifyGroupCreation(value: MlsGroupCreationV1): Promise<boolean>

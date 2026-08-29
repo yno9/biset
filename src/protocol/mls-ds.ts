@@ -2,7 +2,7 @@ import type { DeviceId, IdentityId } from './ids.ts'
 
 /**
  * Signed control messages for the MLS self-group Delivery Service
- * (`core/mediation/mls-delivery-store.ts`, RFC 9750 §5). Every field the DS
+ * (`coordinator/mls-delivery-store.ts`, RFC 9750 §5). Every field the DS
  * uses to decide anything is authenticated; the DS itself never inspects the
  * opaque `commit`/`proposal`/`groupInfo` bytes (PLANMLSARCH.md §4.2).
  */

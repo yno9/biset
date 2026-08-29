@@ -31,10 +31,18 @@ import {
   encodeMlsGroupsForWire,
   encodeMlsKeyPackagesTakenWire,
   MlsDsWireError,
-} from '../../protocol/mls-ds-wire.ts'
-import type { SqliteMlsDeliveryService } from './mls-delivery-store.ts'
+} from '../protocol/mls-ds-wire.ts'
+import { MlsDsCapacityError, type SqliteMlsDeliveryService } from './mls-delivery-store.ts'
 
 const MAX_BODY_BYTES = 1024 * 1024
+const SELF_GROUP_MLS_PATHS = new Set([
+  '/v1/mls/group/create', '/v1/mls/commit/submit', '/v1/mls/commit/external',
+  '/v1/mls/group-info/pull', '/v1/mls/keypackage/publish', '/v1/mls/keypackage/take',
+  '/v1/mls/self-remove/submit', '/v1/mls/pending-removals/clear', '/v1/mls/deliveries/pull',
+  '/v1/mls/keypackage/drop', '/v1/mls/keypackage/count', '/v1/mls/groups-for',
+])
+
+export function isSelfGroupMlsDeliveryPath(path: string): boolean { return SELF_GROUP_MLS_PATHS.has(path) }
 
 /**
  * Narrow HTTP boundary for the MLS self-group DS (RFC 9750 §5): group
@@ -49,8 +57,9 @@ export function createMlsDeliveryHttpHandler(
 ): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
-      if (request.method !== 'POST') return text(405, 'Method not allowed')
       const path = new URL(request.url).pathname
+      if (!isSelfGroupMlsDeliveryPath(path)) return text(404, 'Not found')
+      if (request.method !== 'POST') return text(405, 'Method not allowed')
       const body = await requestText(request)
 
       if (path === '/v1/mls/group/create') {
@@ -125,7 +134,7 @@ export function createMlsDeliveryHttpHandler(
 
       return text(404, 'Not found')
     } catch (error) {
-      if (error instanceof MlsDsWireError || error instanceof RangeError) return text(400, error.message)
+      if (error instanceof MlsDsWireError || error instanceof MlsDsCapacityError || error instanceof RangeError || error instanceof TypeError) return text(400, error.message)
       return text(500, 'Internal server error')
     }
   }
@@ -137,6 +146,8 @@ function commitResponse(result: { ok: true; roster: string[] } | { ok: false; re
 }
 
 async function requestText(request: Request): Promise<string> {
+  const contentType = request.headers.get('content-type')
+  if (contentType?.split(';', 1)[0].trim().toLowerCase() !== 'application/json') throw new TypeError('Content-Type must be application/json')
   const length = request.headers.get('content-length')
   if (length !== null && (!/^[0-9]+$/.test(length) || Number(length) > MAX_BODY_BYTES)) throw new RangeError('MLS DS HTTP body is too large')
   const bytes = new Uint8Array(await request.arrayBuffer())

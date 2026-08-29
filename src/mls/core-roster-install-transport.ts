@@ -1,6 +1,6 @@
 import { defaultFetch } from '../net-fetch.ts'
 // Client side of the roster narrow HTTP API (core/identity/roster-http.ts),
-// mirroring core-mls-delivery-transport.ts's shape.
+// mirroring coordinator-mls-delivery-transport.ts's shape.
 import { decodeAcceptedSelfGroupProjectionWire, type AcceptedSelfGroupProjectionV1 } from '../core/identity/device-roster.ts'
 import { encodeRosterInstallWire, type RosterInstallV1 } from '../core/identity/roster-install.ts'
 

@@ -7,9 +7,6 @@ import type { IngressStore } from './mediation/ingress-store.ts'
 import { createRosterInstallHttpHandler } from './identity/roster-http.ts'
 import type { DeviceControlSignatureVerifier } from './identity/authorizers.ts'
 import type { TrustedDeviceRoster } from './identity/device-roster.ts'
-import { createMlsDeliveryHttpHandler } from './mediation/mls-delivery-http.ts'
-import type { MlsDsSignatureVerifier } from './mediation/mls-delivery-authorizer.ts'
-import type { SqliteMlsDeliveryService } from './mediation/mls-delivery-store.ts'
 import { createMailSubmissionHttpHandler } from './mediation/mail-submission-http.ts'
 import type { CoreMailSubmissionAdapter } from './adapters/mail-submission-adapter.ts'
 import { createWebvhHttpHandler } from '../anchor/webvh/webvh-http.ts'
@@ -34,8 +31,6 @@ export interface BisetCoreApplicationOptions {
   ingressStore?: IngressStore
   /** Roster install plane; requires both the store and its signature verifier. */
   roster?: { store: TrustedDeviceRoster; verifier: Pick<DeviceControlSignatureVerifier, 'verifyRosterInstall'> }
-  /** MLS self-group DS plane (RFC 9750 §5): commit ordering, GroupInfo, KeyPackage directory. */
-  mlsDelivery?: { store: SqliteMlsDeliveryService; verifier: MlsDsSignatureVerifier; isLiveDevice: (identityId: string, kid: string) => Promise<boolean> }
   /** Authenticated device -> core outbound mail submission (PLAN.md §6.2). */
   mailSubmission?: CoreMailSubmissionAdapter
   /** did:webvh log hosting (GET/PUT/POST .well-known/did.jsonl) for the
@@ -80,7 +75,6 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
   const restoreControl = options.restoreControlStore && createRestoreControlHttpHandler(options.restoreControlStore)
   const ingress = options.ingressStore && createIngressHttpHandler(options.ingressStore)
   const roster = options.roster && createRosterInstallHttpHandler(options.roster.store, options.roster.verifier)
-  const mlsDelivery = options.mlsDelivery && createMlsDeliveryHttpHandler(options.mlsDelivery.store, options.mlsDelivery.verifier, options.mlsDelivery.isLiveDevice)
   const mailSubmission = options.mailSubmission && createMailSubmissionHttpHandler(options.mailSubmission)
   const webvh = options.webvh && createWebvhHttpHandler(options.webvh, { domainHeader: 'x-biset-domain' })
   const didWeb = options.webvh && options.didWeb && createDidWebHttpHandler(options.didWeb, options.webvh, { domainHeader: 'x-biset-domain' })
@@ -96,7 +90,6 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
     if (path.startsWith('/v1/restore/') && restoreControl) return restoreControl(request)
     if (path.startsWith('/v1/ingress/') && ingress) return ingress(request)
     if (path.startsWith('/v1/roster/') && roster) return roster(request)
-    if (path.startsWith('/v1/mls/') && mlsDelivery) return mlsDelivery(request)
     if (path.startsWith('/v1/mail/') && mailSubmission) return mailSubmission(request)
     if (path === '/v1/didcomm/ingress' && didComm) return didComm(request)
     return new Response('Not found', { status: 404 })

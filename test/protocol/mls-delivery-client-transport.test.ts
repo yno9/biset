@@ -1,14 +1,14 @@
-// End-to-end: CoreMlsDeliveryTransport (client) against
-// createMlsDeliveryHttpHandler (core), through the shared protocol/mls-ds-wire.ts
+// End-to-end: CoordinatorMlsDeliveryTransport (client) against
+// createMlsDeliveryHttpHandler (Coordinator), through the shared protocol/mls-ds-wire.ts
 // encode/decode -- confirms the client and server sides of the wire actually
 // agree, not just that each one independently parses its own fixtures.
 import { afterEach, describe, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { SqliteMlsDeliveryService } from '../../src/core/mediation/mls-delivery-store.ts'
-import { Ed25519MlsDsSignatureVerifier } from '../../src/core/mediation/mls-delivery-authorizer.ts'
-import { createMlsDeliveryHttpHandler } from '../../src/core/mediation/mls-delivery-http.ts'
-import { CoreMlsDeliveryTransport } from '../../src/mls/core-mls-delivery-transport.ts'
+import { SqliteMlsDeliveryService } from '../../src/coordinator/mls-delivery-store.ts'
+import { Ed25519MlsDsSignatureVerifier } from '../../src/coordinator/mls-delivery-authorizer.ts'
+import { createMlsDeliveryHttpHandler } from '../../src/coordinator/mls-delivery-http.ts'
+import { CoordinatorMlsDeliveryTransport } from '../../src/mls/coordinator-mls-delivery-transport.ts'
 import {
   mlsCommitSubmissionSigningBytes, mlsDeliveriesPullSigningBytes, mlsGroupCreationSigningBytes,
   mlsGroupInfoPullSigningBytes, mlsGroupsForPullSigningBytes, mlsKeyPackageCountPullSigningBytes,
@@ -38,11 +38,11 @@ function setup() {
   const ds = SqliteMlsDeliveryService.open(path)
   const verifier = new Ed25519MlsDsSignatureVerifier({ async resolveEd25519PublicKey(kid) { return kid === deviceAKid ? deviceAPublicKey : undefined } })
   const handle = createMlsDeliveryHttpHandler(ds, verifier, async () => true)
-  const transport = new CoreMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: (input, init) => handle(new Request(input, init)) })
+  const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: (input, init) => handle(new Request(input, init)) })
   return { ds, transport }
 }
 
-describe('CoreMlsDeliveryTransport <-> core HTTP handler', () => {
+describe('CoordinatorMlsDeliveryTransport <-> Coordinator HTTP handler', () => {
   test('createGroup then submitCommit round-trip, and a stale-epoch retry surfaces as ok:false, not a throw', async () => {
     const { ds, transport } = setup()
     const creation: Omit<MlsGroupCreationV1, 'signature'> = { version: 1, groupId, identityId, creatorKid: deviceAKid, roster: [], createdAt: '2026-08-23T00:00:00.000Z' }
@@ -59,7 +59,7 @@ describe('CoreMlsDeliveryTransport <-> core HTTP handler', () => {
     ds.close()
   })
 
-  test('pullGroupInfo decodes the answer core encoded', async () => {
+  test('pullGroupInfo decodes the answer Coordinator encoded', async () => {
     const { ds, transport } = setup()
     ds.createGroup(groupId, identityId, deviceAKid, [])
     ds.submitCommit(groupId, deviceAKid, '0', new Uint8Array([1]), [deviceAKid], undefined, undefined, new Uint8Array([9]))

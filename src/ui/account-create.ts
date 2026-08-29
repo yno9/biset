@@ -201,7 +201,7 @@ export function setupNewUserPage(): void {
     const { apexDomain, anchorBaseUrl, anchorOidcClientId, coreBaseUrl, coordinatorUrl } = readBisetConfig()
     const username = usernameInput.value.trim()
     if (!username) { errEl.textContent = 'Username required'; errEl.style.display = 'block'; return }
-    if (!apexDomain || !coreBaseUrl) { errEl.textContent = 'apexDomain/coreBaseUrl not set in config.json'; errEl.style.display = 'block'; return }
+    if (!apexDomain || !coreBaseUrl || !coordinatorUrl) { errEl.textContent = 'apexDomain/coreBaseUrl/coordinatorUrl not set in config.json'; errEl.style.display = 'block'; return }
 
     // An existing address logs in instead of signing up -- checked BEFORE
     // the terms checkbox, same as src.bak: an existing identity already
@@ -233,7 +233,7 @@ export function setupNewUserPage(): void {
         const keyStore = new IndexedDbMlsKeyPackageStore()
         try {
           await restoreIdentity(recordStore, selfGroupStore, keyStore, {
-            domain: loginDomain, coreBaseUrl, mnemonic: phrase,
+            domain: loginDomain, coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl, mnemonic: phrase,
             // Restoring the identity's ONLY device (this rewrite's whole
             // scope, no multi-device) -- see this file's header for why 0
             // is the correct floor here, not a shortcut: there's no OTHER
@@ -281,7 +281,7 @@ export function setupNewUserPage(): void {
       // same underlying cause, two different leak sites).
       let masterSeed: Uint8Array
       try {
-        ;({ masterSeed } = await createNewIdentity(recordStore, selfGroupStore, keyStore, { domain, coreBaseUrl }))
+        ;({ masterSeed } = await createNewIdentity(recordStore, selfGroupStore, keyStore, { domain, coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl }))
       } finally {
         recordStore.close()
         selfGroupStore.close()

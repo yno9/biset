@@ -13,7 +13,7 @@
 // Ported from src.bak/anchor/mediator/server.ts, trimmed to Coordinate
 // Mediation 2.0 + Routing 2.0 Forward + Pickup 3.0 -- MLS transport
 // (mls-transport.ts/mls-ds.ts) is out of scope (biset's MLS DS is a
-// different wire protocol, core/mediation/mls-delivery-store.ts, already
+// different wire protocol, coordinator/mls-delivery-store.ts, already
 // live) and Web Push is deferred (design doc's Phase 3 minimum).
 import { decodePeerDid2, publicKeyOf, type PeerIdentity, type PeerDidDoc } from '../didcomm/peer.ts'
 import { buildPlaintext, isExpired, type DidCommPlaintext } from '../didcomm/message.ts'

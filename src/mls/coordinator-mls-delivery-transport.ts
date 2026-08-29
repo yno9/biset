@@ -1,15 +1,15 @@
 import { defaultFetch } from '../net-fetch.ts'
 // Browser transport for the MLS self-group DS narrow HTTP API
-// (core/mediation/mls-delivery-http.ts), mirroring vault/core-ingress-transport.ts's
+// (coordinator/mls-delivery-http.ts), mirroring the other narrow transports'
 // shape. Every method sends an already-signed control message (signing is
 // the caller's job, using this identity's MLS leaf key — see
 // mls/webvh-authentication-service.ts and PLANMLSARCH.md §4.1.1) and decodes
-// whatever core answers with, over protocol/mls-ds-wire.ts's shared
+// whatever Coordinator answers with, over protocol/mls-ds-wire.ts's shared
 // encode/decode pair.
 //
-// Not yet used by anything: the endpoint-side self-group bootstrap (join a
-// group, hold ClientState across a commit, retry on epoch-conflict) has not
-// been written. This is only the wire.
+// Used by identity creation/restore, boot maintenance, device revocation and
+// did:webvh domain moves. Public roster projection remains a separate legacy
+// transport until Anchor owns that control-plane state.
 import type {
   MlsCommitSubmissionV1,
   MlsDeliveriesPullV1,
@@ -51,17 +51,17 @@ import {
 
 export type MlsDsCommitResult = { ok: true; roster: string[] } | { ok: false; reason: string; epoch: string }
 
-export interface CoreMlsDeliveryTransportOptions {
+export interface CoordinatorMlsDeliveryTransportOptions {
   baseUrl: string
   fetch?: typeof fetch
 }
 
-export class CoreMlsDeliveryTransport {
+export class CoordinatorMlsDeliveryTransport {
   private readonly fetchValue: typeof fetch
   private readonly baseUrl: string
 
-  constructor(options: CoreMlsDeliveryTransportOptions) {
-    if (!options.baseUrl) throw new TypeError('core MLS delivery base URL is required')
+  constructor(options: CoordinatorMlsDeliveryTransportOptions) {
+    if (!options.baseUrl) throw new TypeError('Coordinator MLS delivery base URL is required')
     this.baseUrl = options.baseUrl.replace(/\/$/, '')
     this.fetchValue = options.fetch ?? defaultFetch()
   }
@@ -120,13 +120,13 @@ export class CoreMlsDeliveryTransport {
     const text = await response.text()
     if (response.status === 201) return { ok: true, ...decodeMlsGroupRosterResultWire(text) }
     if (response.status === 403 || response.status === 409) return { ok: false, ...decodeMlsCommitRejectionWire(text) }
-    throw new Error(`core MLS delivery request failed (${response.status}): ${text.slice(0, 256)}`)
+    throw new Error(`Coordinator MLS delivery request failed (${response.status}): ${text.slice(0, 256)}`)
   }
 
   private async post(path: string, body: string): Promise<string> {
     const response = await this.fetchValue(`${this.baseUrl}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body })
     const text = await response.text()
-    if (!response.ok) throw new Error(`core MLS delivery request failed (${response.status}): ${text.slice(0, 256)}`)
+    if (!response.ok) throw new Error(`Coordinator MLS delivery request failed (${response.status}): ${text.slice(0, 256)}`)
     return text
   }
 }

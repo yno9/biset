@@ -2,8 +2,10 @@
 
 > 調査・更新日: 2026-08-29（Asia/Tokyo）  
 > 対象: `~/biset` の現行worktreeおよびproduction `https://coordinator.biset.md`  
-> 状態: Coordinator v2がproduction稼働中。v1は移行互換として残存。  
+> 状態: Coordinator v2がproduction稼働中。Self Group MLS DS統合はworktreeで実装済み、production release待ち。既存Self Group履歴は移行しない。
 > この文書は将来計画ではなく、現時点の実装を正として記述する。
+
+> 2026-08-29設計決定: 現行v2 stream/checkpointに加え、Client単独では成立しないMLS Delivery ServiceをCoordinatorへ統合した。MLS暗号・private state・group policyはClientに残す。現段階のwireはSelf Group profileであり、Conversation Group用opaque protocolは次段階である。
 
 ## 1. 結論
 
@@ -15,7 +17,9 @@
 2. 一つの単調増加するopaque ordered log
 3. 最新の完全暗号化checkpoint
 
-Coordinatorは端末membershipを管理しない。端末集合、追加、削除、revokeはcore上のRFC 9420 Self Groupだけが管理する。Coordinator固有のMLS group、member、KeyPackage、Welcome、Invite、Approve、per-device fan-out、ACKはv2から除去された。
+Coordinatorは端末membershipを管理しない。端末集合、追加、削除、revokeはRFC 9420 Self Groupだけが管理する。Self Group DS/rosterの現行code pathには廃止済み`biset-core`由来の互換実装が残るが、Coreを正式コンポーネントとして復活させるものではない。Coordinator固有のMLS group、member、KeyPackage、Welcome、Invite、Approve、per-device fan-out、ACKはv2から除去された。
+
+統合したMLS DSは、この廃止した「Coordinator固有Vault MLS membership」の復活ではない。Self Groupが生成したopaque MLS wireを、Clientの代わりに保存・順序付け・配送する。将来は同じ責務境界をConversation Group用のopaque group-scoped protocolへ一般化する。
 
 ```text
                     Anchor
@@ -67,12 +71,27 @@ Coordinatorは端末membershipを管理しない。端末集合、追加、削�
 - push通知
 - 複数Coordinator間のconsensus
 
-### 2.3 他コンポーネントとの関係
+### 2.3 追加済みの責務: MLS Delivery Service
+
+Self Group profileとして、Coordinatorは次を担う。
+
+- KeyPackage directory
+- GroupInfo、Ratchet Tree、Welcome delivery
+- opaque MLS wireのordered log
+- epoch conflict serialization
+- offline member向けretention
+- idempotence、cursor、quota、TTL、GC
+
+CoordinatorはMLS messageを復号せず、Add/Removeの可否を決めず、private `ClientState`やepoch secretを保持しない。membershipの正本は引き続きClientが検証したMLS stateである。
+
+MLS DSはowner-scoped Vault streamと別のAPI/DB namespace (`mls_ds_*`) にした。現行Self Group requestはDID leaf署名を検証するためDID/kidを含む。Conversation Groupは複数のOIDC ownerを跨ぐため、次段階ではVaultのpairwise `owner_subject`をgroup ownerとして再利用せず、opaque group handleとgroup-scoped capabilityまたはMLS leaf署名へ一般化する。
+
+### 2.4 他コンポーネントとの関係
 
 | コンポーネント | Coordinatorから見た役割 | 共有するもの |
 |---|---|---|
 | Anchor | OIDC issuer / authorization server | issuer、JWKS、pairwise subject、scope |
-| Self Group / core MLS DS | 端末membershipの唯一の正本 | Coordinatorとは直接接続しない |
+| Self Group / Client MLS | 端末membershipの唯一の正本 | opaque MLS wireとrouting handleのみ |
 | DIDComm mediator | 外部messageの一時transport | Coordinatorとは直接接続しない |
 | Mail mediator | SMTP互換transport | Coordinatorとは直接接続しない |
 | Local Vault | 暗号化長期正本とprojection | opaque delivery pack、checkpoint |
@@ -500,13 +519,13 @@ access tokenとrefresh tokenはbearer credentialである。端末local malware�
 | OIDC issuer | `https://biset.md` |
 | UI | `https://t.biset.md`およびlocal `file://` build |
 
-2026-08-29時点の移行直後production snapshot:
+2026-08-29 08時台（JST）のproduction snapshot:
 
 ```text
-v2 streams:          1
-stream latestSeq:   20
-v2 entries:          3  (seq 18..20)
-checkpoint covered: 17
+v2 streams:              1
+stream latestSeq:       23
+retained entry bodies:   1
+checkpoint coveredSeq:  22
 ```
 
 この値は運用中に変化するため、障害調査時にはSQLiteを再確認する。
@@ -520,6 +539,10 @@ checkpoint covered: 17
 | `src/coordinator/app.ts` | HTTP routes、scope、CORS、error mapping |
 | `src/coordinator/store.ts` | SQLite v1/v2 state machine |
 | `src/coordinator/auth.ts` | OIDC JWT access-token verification |
+| `src/coordinator/mls-delivery-store.ts` | Self Group MLS DS log、GroupInfo、KeyPackage |
+| `src/coordinator/mls-delivery-authorizer.ts` | signed MLS DS control authorization |
+| `src/coordinator/mls-delivery-http.ts` | MLS DS compatibility HTTP routes |
+| `src/coordinator/webvh-signing-key-resolver.ts` | current did:webvh device key解決 |
 | `src/protocol/coordinator-stream.ts` | strict v2 wire schema |
 | `src/vault/coordinator-transport.ts` | browser-side HTTP client |
 | `src/vault/coordinator-sync.ts` | outbox flush、pull、local cursor bridge |
@@ -537,6 +560,7 @@ checkpoint covered: 17
 - `test/coordinator/coordinator-checkpoint.test.ts`
 - `test/coordinator/coordinator-http.test.ts`
 - `test/coordinator/coordinator-auth.test.ts`
+- `test/coordinator/self-group-mls-delivery.test.ts`
 - `test/anchor/oidc.test.ts`
 - `test/anchor/oidc-client.test.ts`
 - `test/anchor/oidc-sqlite.test.ts`
@@ -552,8 +576,7 @@ checkpoint covered: 17
 3. 将来の第三者group chatは別Conversation Groupとして同じMLS基盤を使う。
 4. CoordinatorはMLS membershipを持たない。
 5. Vault at-rest keyはMLS epochから独立させる。
-6. Coordinatorはowner-scoped logと完全checkpointだけを永続化する。
+6. Coordinatorはowner-scoped Vault log/checkpointと、別namespaceのgroup-scoped MLS DS stateを永続化する。
 7. 新端末はRoot login → Self Group External Join → OIDC → checkpoint restoreで自動参加する。
 8. compactionはACKではなく完全checkpointを境界にする。
 9. v1は移行完了まで削除しないが、新機能を追加しない。
-

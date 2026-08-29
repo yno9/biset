@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
-import { MlsDsCapacityError, SqliteMlsDeliveryService } from '../../src/core/mediation/mls-delivery-store.ts'
+import { MlsDsCapacityError, SqliteMlsDeliveryService } from '../../src/coordinator/mls-delivery-store.ts'
 
 const path = `/tmp/biset-mls-ds-${process.pid}-${Date.now()}.sqlite`
 const identityId = 'did:web:alice.example'

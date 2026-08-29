@@ -11,13 +11,13 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { Database } from 'bun:sqlite'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { SqliteMlsDeliveryService } from '../../src/core/mediation/mls-delivery-store.ts'
-import { Ed25519MlsDsSignatureVerifier } from '../../src/core/mediation/mls-delivery-authorizer.ts'
-import { createMlsDeliveryHttpHandler } from '../../src/core/mediation/mls-delivery-http.ts'
+import { SqliteMlsDeliveryService } from '../../src/coordinator/mls-delivery-store.ts'
+import { Ed25519MlsDsSignatureVerifier } from '../../src/coordinator/mls-delivery-authorizer.ts'
+import { createMlsDeliveryHttpHandler } from '../../src/coordinator/mls-delivery-http.ts'
 import { SqliteTrustedDeviceRoster } from '../../src/core/identity/sqlite-device-roster.ts'
 import { Ed25519DeviceControlSignatureVerifier } from '../../src/core/identity/ed25519-device-control-verifier.ts'
 import { createRosterInstallHttpHandler } from '../../src/core/identity/roster-http.ts'
-import { CoreMlsDeliveryTransport } from '../../src/mls/core-mls-delivery-transport.ts'
+import { CoordinatorMlsDeliveryTransport } from '../../src/mls/coordinator-mls-delivery-transport.ts'
 import { CoreRosterInstallTransport } from '../../src/mls/core-roster-install-transport.ts'
 import { generateOwnKeyPackage, memberKids } from '../../src/mls/group.ts'
 import { ensureSelfGroupWithRosterInstall, reflectPendingSelfGroupCommits } from '../../src/mls/self-group.ts'
@@ -58,7 +58,7 @@ function setup(kids: Record<string, OwnKeyPackage>) {
   const ds = SqliteMlsDeliveryService.open(dsPath)
   const dsVerifier = new Ed25519MlsDsSignatureVerifier({ resolveEd25519PublicKey })
   const dsHandle = createMlsDeliveryHttpHandler(ds, dsVerifier, async () => true)
-  const mlsTransport = new CoreMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: (input, init) => dsHandle(new Request(input, init)) })
+  const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: 'https://core.example', fetch: (input, init) => dsHandle(new Request(input, init)) })
 
   const roster = SqliteTrustedDeviceRoster.open(rosterPath)
   const rosterVerifier = new Ed25519DeviceControlSignatureVerifier({ resolveEd25519PublicKey })

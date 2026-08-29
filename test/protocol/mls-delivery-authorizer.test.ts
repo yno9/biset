@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { SqliteMlsDeliveryService } from '../../src/core/mediation/mls-delivery-store.ts'
+import { SqliteMlsDeliveryService } from '../../src/coordinator/mls-delivery-store.ts'
 import {
   clearMlsPendingRemovals, createMlsGroup, dropMlsKeyPackages, Ed25519MlsDsSignatureVerifier,
   publishMlsKeyPackages, pullMlsDeliveries, pullMlsGroupInfo, pullMlsGroupsFor, pullMlsKeyPackageCount,
   submitMlsCommit, submitMlsExternalCommit, submitMlsSelfRemove, takeMlsKeyPackages,
-} from '../../src/core/mediation/mls-delivery-authorizer.ts'
+} from '../../src/coordinator/mls-delivery-authorizer.ts'
 import {
   mlsCommitSubmissionSigningBytes, mlsDeliveriesPullSigningBytes, mlsExternalCommitSubmissionSigningBytes,
   mlsGroupCreationSigningBytes, mlsGroupInfoPullSigningBytes, mlsGroupsForPullSigningBytes,

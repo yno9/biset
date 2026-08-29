@@ -14,6 +14,7 @@ import {
 import { authorizeBearer, VaultAuthenticationError, VaultAuthenticationUnavailableError, VaultAuthorizationError, type VaultAccessTokenVerifier } from './auth.ts'
 import { SqliteVaultCoordinatorStore, VaultCoordinatorConflictError, VaultCoordinatorNotFoundError, VaultCoordinatorStoreError } from './store.ts'
 import { decodeVaultStreamAppend, decodeVaultStreamCheckpointPull, decodeVaultStreamCheckpointPut, decodeVaultStreamPull, encodeVaultStream, encodeVaultStreamCheckpoint, encodeVaultStreamPullResult } from '../protocol/coordinator-stream.ts'
+import { isSelfGroupMlsDeliveryPath } from './mls-delivery-http.ts'
 
 const MAX_BODY_BYTES = 40 * 1024 * 1024
 const CORS_HEADERS = {
@@ -26,6 +27,9 @@ const CORS_HEADERS = {
 export interface VaultCoordinatorApplicationOptions {
   store: SqliteVaultCoordinatorStore
   accessTokens: VaultAccessTokenVerifier
+  /** RFC 9750 Self/Conversation Group DS. It authenticates its own signed
+   * protocol controls and therefore does not use the Vault OIDC namespace. */
+  mlsDelivery?: (request: Request) => Promise<Response>
 }
 
 export function createVaultCoordinatorFetchHandler(options: VaultCoordinatorApplicationOptions): (request: Request) => Promise<Response> {
@@ -33,6 +37,9 @@ export function createVaultCoordinatorFetchHandler(options: VaultCoordinatorAppl
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS })
     const path = new URL(request.url).pathname
     if (path === '/healthz' && request.method === 'GET') return json(200, { ok: true, service: 'biset-coordinator' })
+    if (options.mlsDelivery && isSelfGroupMlsDeliveryPath(path)) {
+      return withCors(await options.mlsDelivery(request))
+    }
     if (request.method !== 'POST') return text(405, 'Method not allowed')
     try {
       if (path === '/v2/vaults/default') {
@@ -157,3 +164,8 @@ function bearerError(status: number, error: string, description: string): Respon
 function json(status: number, value: unknown): Response { return rawJson(status, JSON.stringify(value)) }
 function rawJson(status: number, body: string): Response { return new Response(body, { status, headers: { ...CORS_HEADERS, 'content-type': 'application/json' } }) }
 function text(status: number, body: string): Response { return new Response(body, { status, headers: { ...CORS_HEADERS, 'content-type': 'text/plain; charset=utf-8' } }) }
+function withCors(response: Response): Response {
+  const headers = new Headers(response.headers)
+  for (const [name, value] of Object.entries(CORS_HEADERS)) headers.set(name, value)
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}

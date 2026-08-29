@@ -1,5 +1,7 @@
 # Biset アーキテクチャ
 
+> Coordinatorについては2026-08-29のv2再設計後、[ARC-coordinator.md](ARC-coordinator.md)を現行実装の正本とする。MLSについては[ARC-MLS.md](ARC-MLS.md)を現行実装の正本とする。本書に残る「Coordinator固有MLS」「VEK/current epoch wrapによるVault at-rest鍵管理」「per-device ACK」の記述は調査時点の旧設計であり、Coordinator v2には適用しない。
+
 > 調査基準日: 2026-08-26（Asia/Tokyo）
 > 調査対象: `~/biset` の commit `3237c8bb659b92c9a8333a63ad29ef651b9af1d3`
 > 状態: 現行コードを正とした実装アーキテクチャ。将来案は明示的に区別する。

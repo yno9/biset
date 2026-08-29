@@ -1,6 +1,6 @@
 // End-to-end: createNewIdentity against a real did:webvh anchor (fakeAnchor),
-// a real core (SqliteMlsDeliveryService + SqliteTrustedDeviceRoster behind
-// createBisetCoreFetchHandler), and REAL DID resolution
+// a real Coordinator MLS DS plus a separately composed roster endpoint, and
+// REAL DID resolution
 // (WebvhSigningKeyResolver) for both the MLS DS's and the roster's signature
 // verification -- confirms the whole identity-creation flow (genesis ->
 // device verificationMethod -> self-group -> roster -> KeyPackage pool)
@@ -10,8 +10,9 @@ import { rmSync } from 'node:fs'
 import { Database } from 'bun:sqlite'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { createBisetCoreFetchHandler } from '../../src/core/app.ts'
-import { SqliteMlsDeliveryService } from '../../src/core/mediation/mls-delivery-store.ts'
-import { Ed25519MlsDsSignatureVerifier } from '../../src/core/mediation/mls-delivery-authorizer.ts'
+import { SqliteMlsDeliveryService } from '../../src/coordinator/mls-delivery-store.ts'
+import { Ed25519MlsDsSignatureVerifier } from '../../src/coordinator/mls-delivery-authorizer.ts'
+import { createMlsDeliveryHttpHandler } from '../../src/coordinator/mls-delivery-http.ts'
 import { MemoryVaultDeliveryStore } from '../../src/core/mediation/vault-delivery-store.ts'
 import { SqliteTrustedDeviceRoster } from '../../src/core/identity/sqlite-device-roster.ts'
 import { Ed25519DeviceControlSignatureVerifier } from '../../src/core/identity/ed25519-device-control-verifier.ts'
@@ -44,6 +45,7 @@ import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../../src/vault/sto
 const dsPath = `/tmp/biset-identity-bootstrap-ds-${process.pid}-${Date.now()}.sqlite`
 const rosterPath = `/tmp/biset-identity-bootstrap-roster-${process.pid}-${Date.now()}.sqlite`
 const CORE_ORIGIN = 'https://core.test.example'
+const COORDINATOR_ORIGIN = 'https://coordinator.test.example'
 
 afterEach(() => {
   for (const base of [dsPath, rosterPath]) {
@@ -119,12 +121,14 @@ function memoryKeyPackageStore(): MlsKeyPackageStore & { size(): number } {
   }
 }
 
-/** Routes by origin to the anchor (any host) or to core (CORE_ORIGIN) --
+/** Routes by origin to Anchor, the transitional roster/core endpoint, or
+ * Coordinator MLS DS --
  * real DID resolution (WebvhSigningKeyResolver) needs globalThis.fetch
  * itself to reach both, since it takes no fetch parameter of its own. */
-function combinedFetch(anchorFetch: typeof fetch, coreHandle: (request: Request) => Promise<Response>): typeof fetch {
+function combinedFetch(anchorFetch: typeof fetch, coreHandle: (request: Request) => Promise<Response>, mlsHandle: (request: Request) => Promise<Response>): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init)
+    if (request.url.startsWith(COORDINATOR_ORIGIN)) return mlsHandle(request)
     if (request.url.startsWith(CORE_ORIGIN)) return coreHandle(request)
     return anchorFetch(input, init)
   }) as typeof fetch
@@ -137,29 +141,29 @@ function setupCore() {
   const keyResolver = new WebvhSigningKeyResolver()
   const resolveEd25519PublicKey = (kid: string) => keyResolver.resolveEd25519PublicKey(kid)
   const dsVerifier = new Ed25519MlsDsSignatureVerifier({ resolveEd25519PublicKey })
+  const mlsHandle = createMlsDeliveryHttpHandler(ds, dsVerifier, async () => true)
   const rosterVerifier = new Ed25519DeviceControlSignatureVerifier({ resolveEd25519PublicKey })
   const vaultDeliveryStore = new MemoryVaultDeliveryStore(rosterBackedVaultDeliveryAuthorizer(roster, rosterVerifier))
   const coreHandle = createBisetCoreFetchHandler({
     roster: { store: roster, verifier: rosterVerifier },
-    mlsDelivery: { store: ds, verifier: dsVerifier, isLiveDevice: async () => true },
     vaultDeliveryStore,
   })
-  return { anchor, ds, roster, vaultDeliveryStore, coreHandle }
+  return { anchor, ds, roster, vaultDeliveryStore, coreHandle, mlsHandle }
 }
 
 describe('createNewIdentity', () => {
   test('genesis, device verificationMethod, self-group, roster, and KeyPackage pool all land', async () => {
-    const { anchor, ds, roster, coreHandle } = setupCore()
+    const { anchor, ds, roster, coreHandle, mlsHandle } = setupCore()
 
     const realFetch = globalThis.fetch
-    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle, mlsHandle)
     try {
       const recordStore = memoryIdentityRecordStore()
       const selfGroupStore = memorySelfGroupStore()
       const keyStore = memoryKeyPackageStore()
 
       const created = await createNewIdentity(recordStore, selfGroupStore, keyStore, {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, didWebMirror: true,
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, didWebMirror: true,
       })
 
       expect(created.record.did).toContain('did:webvh:')
@@ -192,19 +196,19 @@ describe('createNewIdentity', () => {
 
 describe('restoreIdentity', () => {
   test('a second device joins the existing identity from its recovery phrase', async () => {
-    const { anchor, ds, roster, coreHandle } = setupCore()
+    const { anchor, ds, roster, coreHandle, mlsHandle } = setupCore()
 
     const realFetch = globalThis.fetch
-    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle, mlsHandle)
     try {
       const created = await createNewIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN,
       })
       const mnemonic = seedToMnemonic(created.masterSeed)
 
       const restoreRecordStore = memoryIdentityRecordStore()
       const restored = await restoreIdentity(restoreRecordStore, memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
 
       expect(restored.record.did).toBe(created.record.did)
@@ -220,18 +224,18 @@ describe('restoreIdentity', () => {
   })
 
   test('rejects a recovery phrase that does not control the identity at this domain', async () => {
-    const { anchor, ds, roster, coreHandle } = setupCore()
+    const { anchor, ds, roster, coreHandle, mlsHandle } = setupCore()
 
     const realFetch = globalThis.fetch
-    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle, mlsHandle)
     try {
       await createNewIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN,
       })
       const wrongMnemonic = seedToMnemonic(crypto.getRandomValues(new Uint8Array(32)))
 
       await expect(restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic: wrongMnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic: wrongMnemonic, deliveryFloorForNewDevice: async () => '0',
       })).rejects.toThrow('does not control')
 
       ds.close()
@@ -242,14 +246,14 @@ describe('restoreIdentity', () => {
   })
 
   test('rejects when no identity exists at the domain', async () => {
-    const { anchor, ds, roster, coreHandle } = setupCore()
+    const { anchor, ds, roster, coreHandle, mlsHandle } = setupCore()
 
     const realFetch = globalThis.fetch
-    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle, mlsHandle)
     try {
       const mnemonic = seedToMnemonic(crypto.getRandomValues(new Uint8Array(32)))
       await expect(restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'nobody.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'nobody.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
       })).rejects.toThrow('no identity found')
 
       ds.close()
@@ -262,26 +266,26 @@ describe('restoreIdentity', () => {
 
 describe('maintainSelfGroup', () => {
   test("the genesis device's own boot-time maintenance reflects a second device restored later", async () => {
-    const { anchor, ds, roster, coreHandle } = setupCore()
+    const { anchor, ds, roster, coreHandle, mlsHandle } = setupCore()
 
     const realFetch = globalThis.fetch
-    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle, mlsHandle)
     try {
       const deviceASelfGroupStore = memorySelfGroupStore()
       const created = await createNewIdentity(memoryIdentityRecordStore(), deviceASelfGroupStore, memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN,
       })
       const mnemonic = seedToMnemonic(created.masterSeed)
 
       const restored = await restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
       // Device B's own install attempt was rejected -- not yet reflected.
       expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(false)
 
       // Device A's own boot-time maintenance (main.ts's bootClient) catches
       // up on device B's commit and reflects it.
-      const state = await maintainSelfGroup(deviceASelfGroupStore, memoryKeyPackageStore(), created.record, { coreBaseUrl: CORE_ORIGIN })
+      const state = await maintainSelfGroup(deviceASelfGroupStore, memoryKeyPackageStore(), created.record, { coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN })
       expect(new Set(memberKids(state!, created.record.did))).toEqual(new Set([created.record.deviceKid, restored.record.deviceKid]))
       expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(true)
 
@@ -293,14 +297,14 @@ describe('maintainSelfGroup', () => {
   })
 
   test('reflects a device restored after real vault content exists with the CURRENT latestSeq, not 0', async () => {
-    const { anchor, ds, roster, vaultDeliveryStore, coreHandle } = setupCore()
+    const { anchor, ds, roster, vaultDeliveryStore, coreHandle, mlsHandle } = setupCore()
 
     const realFetch = globalThis.fetch
-    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle, mlsHandle)
     try {
       const deviceASelfGroupStore = memorySelfGroupStore()
       const created = await createNewIdentity(memoryIdentityRecordStore(), deviceASelfGroupStore, memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN,
       })
 
       // Device A appends two vault-delivery items before device B ever exists.
@@ -315,10 +319,10 @@ describe('maintainSelfGroup', () => {
 
       const mnemonic = seedToMnemonic(created.masterSeed)
       const restored = await restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
 
-      await maintainSelfGroup(deviceASelfGroupStore, memoryKeyPackageStore(), created.record, { coreBaseUrl: CORE_ORIGIN })
+      await maintainSelfGroup(deviceASelfGroupStore, memoryKeyPackageStore(), created.record, { coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN })
       expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(true)
       // NOT '0' -- device B's floor must be the seq AFTER the two items device
       // A already appended, so it never gets handed history predating it.
@@ -332,14 +336,14 @@ describe('maintainSelfGroup', () => {
   })
 
   test('keeps at-rest SegmentKeys stable when Self Group membership advances the MLS epoch', async () => {
-    const { anchor, ds, roster, coreHandle } = setupCore()
+    const { anchor, ds, roster, coreHandle, mlsHandle } = setupCore()
 
     const realFetch = globalThis.fetch
-    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle, mlsHandle)
     try {
       const deviceASelfGroupStore = memorySelfGroupStore()
       const created = await createNewIdentity(memoryIdentityRecordStore(), deviceASelfGroupStore, memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN,
       })
 
       // Device A mints an active segment (and its wrap) at whatever epoch its
@@ -353,13 +357,13 @@ describe('maintainSelfGroup', () => {
 
       const mnemonic = seedToMnemonic(created.masterSeed)
       const restored = await restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
 
       // Device A reflects device B's join, but storage keys are no longer an
       // MLS epoch transition side effect.
       const state = await maintainSelfGroup(deviceASelfGroupStore, memoryKeyPackageStore(), created.record, {
-        coreBaseUrl: CORE_ORIGIN, wraps, segments,
+        coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, wraps, segments,
       })
       expect(new Set(memberKids(state!, created.record.did))).toEqual(new Set([created.record.deviceKid, restored.record.deviceKid]))
       const epochAfter = mlsEpoch(epochOf(state!))
@@ -385,13 +389,13 @@ describe('maintainSelfGroup', () => {
   })
 
   test('is a no-op with no stored self-group state', async () => {
-    const { anchor, ds, roster, coreHandle } = setupCore()
+    const { anchor, ds, roster, coreHandle, mlsHandle } = setupCore()
 
     const realFetch = globalThis.fetch
-    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle, mlsHandle)
     try {
       const record: IdentityRecord = { did: 'did:web:nobody.test.example', deviceKid: 'did:web:nobody.test.example#device-a', rootPublicKey: '', rootPrivateKey: '' }
-      const state = await maintainSelfGroup(memorySelfGroupStore(), memoryKeyPackageStore(), record, { coreBaseUrl: CORE_ORIGIN })
+      const state = await maintainSelfGroup(memorySelfGroupStore(), memoryKeyPackageStore(), record, { coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN })
       expect(state).toBeUndefined()
 
       ds.close()
@@ -455,20 +459,20 @@ function didCommTestSigner(deviceId: string): VaultEventSigner {
 
 describe('enableDidComm', () => {
   test('a second device adopts the first device\'s already-synced shared credential instead of minting a competing one', async () => {
-    const { anchor, ds, roster, coreHandle } = setupCore()
+    const { anchor, ds, roster, coreHandle, mlsHandle } = setupCore()
 
     const realFetch = globalThis.fetch
-    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle, mlsHandle)
     try {
       const deviceARecordStore = memoryIdentityRecordStore()
       const created = await createNewIdentity(deviceARecordStore, memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN,
       })
       const mnemonic = seedToMnemonic(created.masterSeed)
 
       const deviceBRecordStore = memoryIdentityRecordStore()
       const restored = await restoreIdentity(deviceBRecordStore, memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
 
       // 2026-08-27 redesign: the DIDComm keyAgreement key is identity-shared
@@ -501,14 +505,14 @@ describe('enableDidComm', () => {
   })
 
   test('is idempotent: a record that already has a didCommKid does not regenerate one', async () => {
-    const { anchor, ds, roster, coreHandle } = setupCore()
+    const { anchor, ds, roster, coreHandle, mlsHandle } = setupCore()
 
     const realFetch = globalThis.fetch
-    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle)
+    globalThis.fetch = combinedFetch(anchor.fetch, coreHandle, mlsHandle)
     try {
       const recordStore = memoryIdentityRecordStore()
       const created = await createNewIdentity(recordStore, memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN,
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN,
       })
       const { reader, sink } = await didCommHarness(created.record.did, 'device-a', sharedDidCommVault(), didCommTestSigner('device-a'))
       const first = await enableDidComm(recordStore, created.record, reader, sink, { coreBaseUrl: CORE_ORIGIN })
