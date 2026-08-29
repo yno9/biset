@@ -99,6 +99,10 @@ export interface AccountPageConfig {
   onMoveIdentity?(newDomain: string): Promise<string>
   /** Starts the user-gesture-bound OpenID4VP + OIDC PKCE popup flow. */
   onConnectCoordinator?(): Promise<void>
+  /** Live status for the identity's encrypted Coordinator-backed Vault.
+   * This deliberately contains operational metadata only; neither the
+   * Coordinator's OIDC subject nor any key material belongs in the UI. */
+  vault?: VaultCardStatus
   onCreateCoordinatorInvitation?(): Promise<{ invitation: string; expiresAt: string }>
   onJoinCoordinatorInvitation?(invitation: string): Promise<void>
   onResumeCoordinatorJoin?(): Promise<void>
@@ -111,12 +115,34 @@ export interface AccountPageConfig {
   showMessage?(text: string): void
 }
 
+type VaultCardState = 'checking' | 'connecting' | 'syncing' | 'connected' | 'reconnect-required' | 'error'
+
+export interface VaultCardStatus {
+  state: VaultCardState
+  coordinatorUrl: string
+  vaultId?: string
+  localSeq?: string
+  latestSeq?: string
+  checkpointSeq?: string
+  detail?: string
+}
+
 let config: AccountPageConfig | undefined
 let active = false
 let configPageActive = false
 
 export function configureAccountPage(next: AccountPageConfig): void {
   config = next
+}
+
+/** Update only the Vault card when the background Coordinator session moves
+ * between checking/connected/error states. Repainting the whole account page
+ * here would close an open identity menu or collapsed-device panel every ten
+ * seconds, so this intentionally targets the one reusable relay-card slot. */
+export function updateVaultCardStatus(status: VaultCardStatus): void {
+  if (!config?.did) return
+  config.vault = status
+  if (active) renderVaultCard()
 }
 
 export function inAccountMode(): boolean {
@@ -617,9 +643,6 @@ export function hideConfigPage(): void {
 function identityMenuItems(did: string): MenuItem[] {
   const noop = () => {}
   return [
-    ...(config?.onConnectCoordinator ? [{ label: 'Connect coordinator', onClick: () => {
-      void config?.onConnectCoordinator?.().then(() => config?.showMessage?.('Coordinator connected')).catch(error => config?.showMessage?.(error instanceof Error ? error.message : String(error)))
-    } }] : []),
     ...(config?.onCreateCoordinatorInvitation ? [{ label: 'Invite coordinator device', onClick: () => {
       void config?.onCreateCoordinatorInvitation?.().then(async value => {
         try { await navigator.clipboard.writeText(value.invitation) } catch {}
@@ -696,6 +719,125 @@ const PAGE_HTML = `<div class="cmd-page-content wide-page">
   <button id="cmd-acc-compose-fab" class="compose-fab" type="button" aria-label="Compose" title="Compose"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
 </div>`
 
+function coordinatorHost(url: string): string {
+  try { return new URL(url).host } catch { return url }
+}
+
+function shortenedOpaqueId(value: string): string {
+  return value.length > 24 ? `${value.slice(0, 12)}…${value.slice(-8)}` : value
+}
+
+/** The old relay card's visual grammar, now used for the one persistence
+ * service this client actually has: dot + service/address heading, compact
+ * stats, and a click-to-expand storage panel. */
+function renderVaultCard(): void {
+  const list = document.getElementById('cmd-acc-list')
+  const status = config?.vault
+  if (!list || !status) return
+  const wasExpanded = document.getElementById('cmd-acc-vault-card')?.classList.contains('expanded') ?? false
+  list.replaceChildren()
+
+  const colors: Record<VaultCardState, string> = {
+    checking: '#8e8e93', connecting: '#ff9500', syncing: '#0a84ff',
+    connected: '#34c759', 'reconnect-required': '#ff9500', error: '#ff3b30',
+  }
+  const labels: Record<VaultCardState, string> = {
+    checking: 'Checking connection…', connecting: 'Connecting…', syncing: 'Syncing…',
+    connected: 'Connected', 'reconnect-required': 'Reconnect required', error: 'Connection error',
+  }
+
+  const wrap = document.createElement('div')
+  wrap.className = 'acc-card-wrap'
+  if (wasExpanded) wrap.classList.add('expanded')
+  wrap.id = 'cmd-acc-vault-card'
+  const row = document.createElement('div')
+  row.className = 'cmd-page-row'
+  row.style.cssText = 'gap:12px;align-items:center;padding:10px 12px'
+  const left = document.createElement('div')
+  left.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:4px'
+  const head = document.createElement('div')
+  head.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0'
+  const dot = document.createElement('span')
+  dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${colors[status.state]}`
+  const title = document.createElement('span')
+  title.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--accent2, #888);flex-shrink:0'
+  title.textContent = 'Vault'
+  const sep = document.createElement('span')
+  sep.style.cssText = 'color:var(--text-dim);flex-shrink:0'
+  sep.textContent = ':'
+  const endpoint = document.createElement('span')
+  endpoint.style.cssText = 'font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
+  endpoint.textContent = coordinatorHost(status.coordinatorUrl)
+  head.append(dot, title, sep, endpoint)
+
+  const stats = document.createElement('div')
+  stats.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:var(--text-dim)'
+  const state = document.createElement('span')
+  state.textContent = labels[status.state]
+  state.style.color = status.state === 'error' ? '#ff3b30' : status.state === 'reconnect-required' ? '#ff9500' : ''
+  stats.appendChild(state)
+  if (status.latestSeq !== undefined) {
+    const sync = document.createElement('span')
+    sync.textContent = `Sync: ${status.localSeq ?? '…'}/${status.latestSeq}`
+    stats.appendChild(sync)
+  }
+  if (status.checkpointSeq !== undefined) {
+    const checkpoint = document.createElement('span')
+    checkpoint.textContent = `Checkpoint: ${status.checkpointSeq}`
+    stats.appendChild(checkpoint)
+  }
+  left.append(head, stats)
+  row.appendChild(left)
+
+  if ((status.state === 'reconnect-required' || status.state === 'error') && config?.onConnectCoordinator) {
+    const reconnect = document.createElement('button')
+    reconnect.type = 'button'
+    reconnect.className = 'cmd-page-btn primary'
+    reconnect.style.cssText = 'padding:6px 10px;font-size:12px;flex-shrink:0'
+    reconnect.textContent = 'Reconnect'
+    reconnect.addEventListener('click', event => {
+      event.stopPropagation()
+      reconnect.disabled = true
+      void config?.onConnectCoordinator?.()
+        .then(() => config?.showMessage?.('Vault connected'))
+        .catch(error => config?.showMessage?.(error instanceof Error ? error.message : String(error)))
+        .finally(() => { reconnect.disabled = false })
+    })
+    row.appendChild(reconnect)
+  }
+
+  const panel = document.createElement('div')
+  panel.className = 'acc-storage-panel'
+  const panelHeader = document.createElement('div')
+  panelHeader.className = 'acc-storage-header'
+  const panelTitle = document.createElement('span')
+  panelTitle.className = 'acc-storage-title'
+  panelTitle.textContent = 'Coordinator'
+  panelHeader.appendChild(panelTitle)
+  const details = document.createElement('div')
+  details.className = 'acc-storage-tree'
+  details.style.cssText = 'display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 12px;color:var(--text-dim)'
+  const addDetail = (name: string, value: string | undefined, titleText?: string) => {
+    if (value === undefined) return
+    const key = document.createElement('span')
+    key.textContent = name
+    const val = document.createElement('span')
+    val.style.cssText = 'font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)'
+    val.textContent = value
+    if (titleText) val.title = titleText
+    details.append(key, val)
+  }
+  addDetail('Endpoint', status.coordinatorUrl)
+  addDetail('Vault ID', status.vaultId ? shortenedOpaqueId(status.vaultId) : '—', status.vaultId)
+  addDetail('Stream', status.latestSeq === undefined ? '—' : `${status.localSeq ?? '…'} / ${status.latestSeq}`)
+  addDetail('Checkpoint', status.checkpointSeq ?? '—')
+  if (status.detail) addDetail('Status', status.detail)
+  panel.append(panelHeader, details)
+  wrap.append(row, panel)
+  row.addEventListener('click', () => wrap.classList.toggle('expanded'))
+  list.appendChild(wrap)
+}
+
 export function showAccountPage(): void {
   const activeEl = document.getElementById('active-thread')
   const past = document.getElementById('past-threads')
@@ -753,6 +895,7 @@ export function showAccountPage(): void {
   card.innerHTML = PAGE_HTML
   activeEl.innerHTML = ''
   activeEl.appendChild(card)
+  renderVaultCard()
 
   const nameEl = document.getElementById('cmd-acc-identity-name')
   const didEl = document.getElementById('cmd-acc-identity-did')

@@ -22,7 +22,7 @@ import { setOnIdentityCreated } from './ui/account-create.ts'
 import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
 import { configureCompose } from './ui/thread.ts'
 import type { ReplySendInput } from './ui/thread.ts'
-import { configureAccountPage, showAccountPage } from './ui/account-page.ts'
+import { configureAccountPage, showAccountPage, updateVaultCardStatus, type VaultCardStatus } from './ui/account-page.ts'
 import { configureComposePage } from './ui/compose-page.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { VaultBackedLocalJmapMutationSink } from './local-jmap/vault-mutation-sink.ts'
@@ -127,15 +127,15 @@ let autoConnectCoordinator: (() => Promise<void>) | undefined
 setOnIdentityCreated(async (reason, options) => {
   await bootClient({ coordinatorLoginPopup: options?.coordinatorPopup })
   showAccountPage()
-  if (reason === 'restored' && autoConnectCoordinator) {
-    showSysMsg('Restoring encrypted Vault from Coordinator…')
+  if (autoConnectCoordinator) {
+    showSysMsg(reason === 'restored' ? 'Restoring encrypted Vault from Coordinator…' : 'Connecting encrypted Vault…')
     try {
       await autoConnectCoordinator()
-      showSysMsg('Coordinator Vault restored')
+      showSysMsg(reason === 'restored' ? 'Coordinator Vault restored' : 'Vault connected')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      console.warn('[coordinator/automatic-restore]', message)
-      showSysMsg(`Vault restored; Coordinator connection failed: ${message}`)
+      console.warn('[coordinator/automatic-connect]', message)
+      showSysMsg(`Coordinator connection failed: ${message}`)
     }
   } else {
     try { options?.coordinatorPopup?.close() } catch {}
@@ -230,6 +230,14 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   let coordinatorBindingActive = false
   let flushCoordinatorOutbox: (() => Promise<{ appendedEntryIds: string[]; failedEntryId?: string; failureReason?: string }>) | undefined
   const coordinatorConfigured = !!(anchorBaseUrl && anchorOidcClientId && coordinatorUrl && identity.deviceKid)
+  let vaultCardStatus: VaultCardStatus | undefined = coordinatorConfigured ? {
+    state: 'checking', coordinatorUrl, detail: 'Checking saved login session',
+  } : undefined
+  const setVaultCard = (next: VaultCardStatus): void => {
+    if (vaultCardStatus && JSON.stringify(vaultCardStatus) === JSON.stringify(next)) return
+    vaultCardStatus = next
+    updateVaultCardStatus(next)
+  }
   const ensureCoordinatorOidc = async (): Promise<AnchorOidcPkceClient> => {
     if (coordinatorOidc) return coordinatorOidc
     if (!coordinatorConfigured) throw new Error('Coordinator login is not configured')
@@ -374,6 +382,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     onLogout: logout, onEditName: editName, onRevokeDevice: revokeDevice,
     onActivateKeyRotation: activateKeyRotation, onRotateKeyRotation: rotateKeyRotation, onDeactivateKeyRotation: deactivateKeyRotation,
     onMoveIdentity: moveIdentity,
+    vault: vaultCardStatus,
     onConnectCoordinator: coordinatorConfigured ? async () => {
       if (!connectCoordinator) throw new Error('Coordinator is still initializing')
       await connectCoordinator()
@@ -1373,11 +1382,12 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     // none of its invite/approve/join entry points are exposed by the UI.
     let streamTransport: VaultCoordinatorTransport | undefined
     let streamVaultId: import('./protocol/ids.ts').VaultId | undefined
-    const synchronizeStream = async (): Promise<void> => {
-      if (!streamTransport || !streamVaultId) return
+    const synchronizeStreamOnce = async (): Promise<{ localSeq: string; latestSeq: string; checkpointSeq?: string } | undefined> => {
+      if (!streamTransport || !streamVaultId) return undefined
       const transport = streamTransport
       const vaultId = streamVaultId
       const checkpoint = await transport.pullStreamCheckpoint(vaultId)
+      let checkpointSeq = checkpoint?.coveredSeq
       const checkpointNeedsUpgrade = checkpoint ? (() => { try { return (JSON.parse(new TextDecoder().decode(checkpoint.payload)) as { version?: unknown }).version === 1 } catch { return false } })() : false
       const localCursor = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)
       if (checkpoint && BigInt(checkpoint.coveredSeq) > BigInt(localCursor)) {
@@ -1413,12 +1423,35 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         try {
           const payload = await createPortableCoordinatorCheckpoint(fromHex(identity.masterSeed), snapshot, { vaultId, coveredSeq })
           await transport.putStreamCheckpoint({ version: 2, vaultId, coveredSeq, payload, payloadHash: sha256Bytes(payload) })
+          checkpointSeq = coveredSeq
         } finally {
           for (const segment of snapshot.segmentKeys) segment.key.fill(0)
         }
       }
+      return { localSeq: coveredSeq, latestSeq: synced.latestSeq, ...(checkpointSeq === undefined ? {} : { checkpointSeq }) }
+    }
+    const synchronizeStream = async (): Promise<void> => {
+      if (!streamTransport || !streamVaultId) return
+      // Keep an already-green card stable during the routine ten-second
+      // poll. "Syncing" is useful during first connection/error recovery,
+      // but flashing the card blue forever is just visual noise.
+      if (vaultCardStatus?.state !== 'connected') {
+        setVaultCard({ state: 'syncing', coordinatorUrl, vaultId: streamVaultId, detail: 'Synchronizing encrypted Vault' })
+      }
+      try {
+        const result = await synchronizeStreamOnce()
+        setVaultCard({
+          state: 'connected', coordinatorUrl, vaultId: streamVaultId,
+          ...(result ?? {}), detail: 'Encrypted stream is current',
+        })
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        setVaultCard({ state: 'error', coordinatorUrl, vaultId: streamVaultId, detail })
+        throw error
+      }
     }
     const activateCoordinatorStream = async (oidc: AnchorOidcPkceClient): Promise<void> => {
+      setVaultCard({ state: 'connecting', coordinatorUrl, detail: 'Opening Coordinator stream' })
       streamTransport = new VaultCoordinatorTransport({ baseUrl: coordinatorUrl, accessTokens: oidc })
       streamVaultId = (await streamTransport.defaultStream()).vaultId
       coordinatorBindingActive = true
@@ -1426,9 +1459,16 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       await synchronizeStream()
     }
     connectCoordinator = async () => {
+      setVaultCard({ state: 'connecting', coordinatorUrl, vaultId: streamVaultId, detail: 'Waiting for Anchor login' })
       const oidc = await ensureCoordinatorOidc()
-      await oidc.authorize()
-      await activateCoordinatorStream(oidc)
+      try {
+        await oidc.authorize()
+        await activateCoordinatorStream(oidc)
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        setVaultCard({ state: 'error', coordinatorUrl, vaultId: streamVaultId, detail })
+        throw error
+      }
     }
     synchronizeCoordinator = synchronizeStream
     createCoordinatorInvitation = undefined
@@ -1440,7 +1480,12 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     void (async () => {
       const oidc = await ensureCoordinatorOidc()
       if (await oidc.hasRefreshSession()) await activateCoordinatorStream(oidc)
-    })().catch(error => console.warn('[coordinator/session-resume]', error instanceof Error ? error.message : error))
+      else if (vaultCardStatus?.state === 'checking') setVaultCard({ state: 'reconnect-required', coordinatorUrl, detail: 'No saved login session' })
+    })().catch(error => {
+      const detail = error instanceof Error ? error.message : String(error)
+      setVaultCard({ state: 'error', coordinatorUrl, vaultId: streamVaultId, detail })
+      console.warn('[coordinator/session-resume]', detail)
+    })
     let coordinatorPollBusy = false
     coordinatorPollTimer = setInterval(() => {
       if (!streamTransport || !streamVaultId) return

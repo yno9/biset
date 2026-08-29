@@ -259,6 +259,19 @@ export function setupNewUserPage(): void {
 
     if (!tosInput.checked) { errEl.textContent = 'Please agree to the Terms of Beta-testing'; errEl.style.display = 'block'; return }
 
+    // New identities join their Coordinator Vault automatically too. Keep a
+    // popup reserved from this user gesture because identity creation and the
+    // mandatory Root Key display both finish before OIDC navigation begins.
+    const coordinatorPopup = anchorBaseUrl && anchorOidcClientId && coordinatorUrl
+      ? window.open('about:blank', 'biset-anchor-login', 'popup,width=520,height=720') ?? undefined
+      : undefined
+    if (coordinatorPopup) {
+      try {
+        coordinatorPopup.document.title = 'Biset Vault setup'
+        coordinatorPopup.document.body.textContent = 'Preparing encrypted Vault…'
+      } catch { /* the Anchor navigation will replace this page shortly */ }
+    }
+
     submitBtn.disabled = true
     submitBtn.textContent = 'Creating…'
     errEl.style.display = 'none'
@@ -301,8 +314,9 @@ export function setupNewUserPage(): void {
       // a real first load uses, now that an identity exists locally for it
       // to find -- via the callback main.ts registered (setOnIdentityCreated
       // above), never an import of main.ts itself.
-      await onIdentityCreated?.('created')
+      await onIdentityCreated?.('created', { coordinatorPopup })
     } catch (e) {
+      try { coordinatorPopup?.close() } catch {}
       errEl.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e))
       errEl.style.display = 'block'
       submitBtn.textContent = 'Start'
