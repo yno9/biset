@@ -1,12 +1,13 @@
 // ensureMailRelationship, driven against a real in-process Mail Mediator
 // (same "fetch dispatches straight into the handler" pattern as
-// test/mail-mediator-client.test.ts) with an in-memory Vault
-// reader/sink pair (same pattern as
-// test/vault/mail-relationship-credential-{reader,sink}.test.ts).
+// test/mail-mediator-client.test.ts) and a fake Anchor mail-address-
+// credential endpoint (issuing a REAL BisetMailAddressOwnershipCredential,
+// verified by the mediator the same way production would).
 import { describe, expect, test } from 'bun:test'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { generatePeerIdentity } from '../../src/didcomm/peer.ts'
 import { createMailMediator } from '../../src/mail-mediator/server.ts'
-import type { DidCommSender } from '../../src/didcomm/mediator-transport.ts'
+import { issueBisetMailAddressCredential, verifyBisetMailAddressCredential } from '../../src/oid4vp/mail-address-profile.ts'
 import { ensureMailRelationship } from '../../src/identity/mail-relationship.ts'
 import { MailRelationshipCredentialReader } from '../../src/vault/mail-relationship-credential-reader.ts'
 import { MailRelationshipCredentialVaultSink } from '../../src/vault/mail-relationship-credential-sink.ts'
@@ -23,27 +24,48 @@ const signer: VaultEventSigner = {
   async verify(deviceId, bytes, signature) { return deviceId === 'device-a' && equalBytes(signature, await this.sign(bytes)) },
 }
 const ADDRESS = 'y@biset.md'
+const ANCHOR_ISSUER = 'https://anchor.test.example'
+const ANCHOR_SIGNING_KEY_ID = `${ANCHOR_ISSUER}/oid4vp/jwks#mail-address-credential-eddsa-1`
 
-function freshMailMediator() {
-  const url = `https://mail-mediator-${crypto.randomUUID()}.test.example`
-  const mediatorIdentity = generatePeerIdentity({ uri: url, accept: ['didcomm/v2'] })
-  const frontDoorPeer = generatePeerIdentity()
+function freshAnchorAndMediator() {
+  const anchorSigningPrivateKey = ed25519.utils.randomSecretKey()
+  const anchorSigningPublicKey = ed25519.getPublicKey(anchorSigningPrivateKey)
+  const identityDid = `did:webvh:${'1'.repeat(46)}:e6d5.biset.md`
+
+  const mediatorUrl = `https://mail-mediator-${crypto.randomUUID()}.test.example`
+  const mediatorIdentity = generatePeerIdentity({ uri: mediatorUrl, accept: ['didcomm/v2'] })
   const { handle } = createMailMediator({
     mediator: mediatorIdentity,
-    resolveMailOperationalKid: async kid => (kid === frontDoorPeer.xKid ? { address: ADDRESS, publicKey: frontDoorPeer.xPub } : null),
+    verifyMailAddressCredential: (token, now) => {
+      const claims = verifyBisetMailAddressCredential(token, { issuer: ANCHOR_ISSUER, signingKeyId: ANCHOR_SIGNING_KEY_ID, signingPublicKey: anchorSigningPublicKey, now: new Date(now) })
+      return { address: claims.credentialSubject.address, relationshipDid: claims.cnf.relationshipDid }
+    },
     submitOutbound: async () => [],
   })
+
   const fetchImpl: typeof fetch = async (input, init) => {
-    const reqUrl = new URL(String(input))
+    const url = String(input)
+    if (url === `${ANCHOR_ISSUER}/oid4vp/mail-address-credential/challenge`) {
+      return Response.json({ challenge: 'fixed-test-challenge', expires_at: new Date(Date.now() + 300_000).toISOString() })
+    }
+    if (url === `${ANCHOR_ISSUER}/oid4vp/mail-address-credential/issue`) {
+      const body = JSON.parse(String(init?.body)) as { did: string; relationship_did: string }
+      const now = new Date()
+      const credential = issueBisetMailAddressCredential({
+        issuer: ANCHOR_ISSUER, signingKeyId: ANCHOR_SIGNING_KEY_ID, signingPrivateKey: anchorSigningPrivateKey,
+        address: ADDRESS, relationshipDid: body.relationship_did,
+        validFrom: new Date(now.getTime() - 60_000), validUntil: new Date(now.getTime() + 3_600_000),
+      })
+      return Response.json({ credential, expires_at: new Date(now.getTime() + 3_600_000).toISOString() }, { status: 201 })
+    }
+    const reqUrl = new URL(url)
     const res = await handle(new Request(reqUrl, init), reqUrl)
     return res ?? new Response('not found', { status: 404 })
   }
-  return { url, frontDoor: { did: frontDoorPeer.did, xKid: frontDoorPeer.xKid, xPriv: frontDoorPeer.xPriv } satisfies DidCommSender, fetchImpl }
+
+  return { identityDid, mediatorUrl, anchorBaseUrl: ANCHOR_ISSUER, fetchImpl }
 }
 
-/** A trivially in-memory reader/sink pair sharing one array of committed
- * records -- storing through the sink makes it visible to the reader,
- * exactly the property ensureMailRelationship's own second call relies on. */
 function makeReaderSink(identityId: string): { reader: MailRelationshipCredentialReader; sink: MailRelationshipCredentialVaultSink } {
   const records: Array<{ event: any; object: any }> = []
   const objects = new Map<string, any>()
@@ -67,9 +89,6 @@ function makeReaderSink(identityId: string): { reader: MailRelationshipCredentia
     async currentSnapshot() { return { state: 'state-1', mailboxes: [], emails: [] } },
     signer,
     committer: {
-      // The sink already built the encrypted object/event pair -- this
-      // just records what it committed so the reader (sharing `records`
-      // and `objects` above) can see it on a later call.
       async commitLocalMutation(input: any) {
         objects.set(input.objects[0].objectId, input.objects[0])
         records.push({ event: input.events[0], object: input.objects[0] } as any)
@@ -82,22 +101,22 @@ function makeReaderSink(identityId: string): { reader: MailRelationshipCredentia
 }
 
 describe('ensureMailRelationship', () => {
-  test('mints a fresh relationship and binds it when none exists yet', async () => {
-    const { url, frontDoor, fetchImpl } = freshMailMediator()
-    const { reader, sink } = makeReaderSink(frontDoor.did)
+  test('mints a fresh relationship, obtains a VC from Anchor, and binds it', async () => {
+    const { identityDid, mediatorUrl, anchorBaseUrl, fetchImpl } = freshAnchorAndMediator()
+    const { reader, sink } = makeReaderSink(identityDid)
 
-    const credential = await ensureMailRelationship(reader, sink, frontDoor, ADDRESS, url, fetchImpl)
-    expect(credential.mediatorUrl).toBe(url)
+    const credential = await ensureMailRelationship(reader, sink, identityDid, ADDRESS, mediatorUrl, anchorBaseUrl, fetchImpl)
+    expect(credential.mediatorUrl).toBe(mediatorUrl)
     expect(credential.address).toBe(ADDRESS)
     expect(credential.relationshipDid.startsWith('did:peer:2.')).toBe(true)
   })
 
   test('a second call reuses the already-bound relationship without re-binding', async () => {
-    const { url, frontDoor, fetchImpl } = freshMailMediator()
-    const { reader, sink } = makeReaderSink(frontDoor.did)
+    const { identityDid, mediatorUrl, anchorBaseUrl, fetchImpl } = freshAnchorAndMediator()
+    const { reader, sink } = makeReaderSink(identityDid)
 
-    const first = await ensureMailRelationship(reader, sink, frontDoor, ADDRESS, url, fetchImpl)
-    const second = await ensureMailRelationship(reader, sink, frontDoor, ADDRESS, url, fetchImpl)
+    const first = await ensureMailRelationship(reader, sink, identityDid, ADDRESS, mediatorUrl, anchorBaseUrl, fetchImpl)
+    const second = await ensureMailRelationship(reader, sink, identityDid, ADDRESS, mediatorUrl, anchorBaseUrl, fetchImpl)
     expect(second.relationshipDid).toBe(first.relationshipDid)
   })
 })

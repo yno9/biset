@@ -8,9 +8,10 @@
 // section 2).
 import { createMailMediator } from './server.ts'
 import { createSmtpMailListener } from './smtp-listener.ts'
-import { resolveMailOperationalKid } from './resolve-operational-kid.ts'
 import { buildSmtpSubmitOutbound } from './submit-outbound.ts'
 import { SqliteMailMediatorStore } from './sqlite-store.ts'
+import { verifyBisetMailAddressCredential } from '../oid4vp/mail-address-profile.ts'
+import { base64urlToBytes } from '../protocol/canonical.ts'
 
 const publicUrl = Bun.env.MAIL_MEDIATOR_PUBLIC_URL
 if (!publicUrl) throw new Error('MAIL_MEDIATOR_PUBLIC_URL is required')
@@ -34,6 +35,26 @@ const smtpTls = Bun.env.MAIL_MEDIATOR_TLS_CERT_PATH && Bun.env.MAIL_MEDIATOR_TLS
   ? { certPath: Bun.env.MAIL_MEDIATOR_TLS_CERT_PATH, keyPath: Bun.env.MAIL_MEDIATOR_TLS_KEY_PATH }
   : undefined
 
+// Verifies route-bind's BisetMailAddressOwnershipCredential against
+// Anchor's fixed, injected signing key -- no network resolve of any kind
+// (this mediator never talks to Anchor directly; Anchor's public key is
+// deployment config, same trust-anchor shape as a TLS root store).
+const anchorIssuer = Bun.env.MAIL_MEDIATOR_ANCHOR_ISSUER
+if (!anchorIssuer) throw new Error('MAIL_MEDIATOR_ANCHOR_ISSUER is required')
+const anchorMailCredentialSigningKeyId = Bun.env.MAIL_MEDIATOR_ANCHOR_MAIL_CREDENTIAL_SIGNING_KEY_ID
+if (!anchorMailCredentialSigningKeyId) throw new Error('MAIL_MEDIATOR_ANCHOR_MAIL_CREDENTIAL_SIGNING_KEY_ID is required')
+const anchorMailCredentialPublicKeyRaw = Bun.env.MAIL_MEDIATOR_ANCHOR_MAIL_CREDENTIAL_PUBLIC_KEY
+if (!anchorMailCredentialPublicKeyRaw) throw new Error('MAIL_MEDIATOR_ANCHOR_MAIL_CREDENTIAL_PUBLIC_KEY is required')
+const anchorMailCredentialPublicKey = base64urlToBytes(anchorMailCredentialPublicKeyRaw)
+
+function verifyMailAddressCredential(token: string, now: string): { address: string; relationshipDid: string } {
+  const claims = verifyBisetMailAddressCredential(token, {
+    issuer: anchorIssuer!, signingKeyId: anchorMailCredentialSigningKeyId!,
+    signingPublicKey: anchorMailCredentialPublicKey, now: new Date(now),
+  })
+  return { address: claims.credentialSubject.address, relationshipDid: claims.cnf.relationshipDid }
+}
+
 const store = SqliteMailMediatorStore.open(databasePath)
 const mediator = store.loadIdentity(publicUrl)
 
@@ -44,7 +65,7 @@ const { handle, mediatorDid } = createMailMediator({
   submissions: store,
   replay: store,
   transaction: store.transaction,
-  resolveMailOperationalKid,
+  verifyMailAddressCredential,
   submitOutbound: buildSmtpSubmitOutbound(smtpHelloName),
   pickupLeaseMs,
 })

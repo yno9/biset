@@ -19,10 +19,12 @@ import type { RecipientSubmitStatus } from '../mail-mediator/protocol.ts'
 
 export interface MailMediatorSubmissionTransportOptions {
   mediatorUrl: string
-  /** This identity's shared didCommKid -- the front-door credential
-   * ensureMailRelationship authenticates route-bind with, if a
-   * relationship for this mediator does not already exist. */
-  frontDoor: DidCommSender
+  /** This identity's own stable did:webvh and Anchor's base URL --
+   * ensureMailRelationship uses these to request a
+   * BisetMailAddressOwnershipCredential if a relationship for this
+   * mediator does not already exist. */
+  identityDid: string
+  anchorBaseUrl: string
   relationshipReader: MailRelationshipCredentialReader
   relationshipSink: MailRelationshipCredentialVaultSink
   fetch?: typeof fetch
@@ -43,7 +45,7 @@ export class MailMediatorSubmissionTransport {
   async submit(request: MailSubmissionRequestV1): Promise<MailSubmissionResultV1> {
     const credential = await ensureMailRelationship(
       this.options.relationshipReader, this.options.relationshipSink,
-      this.options.frontDoor, request.mailFrom, this.options.mediatorUrl, this.fetchImpl,
+      this.options.identityDid, request.mailFrom, this.options.mediatorUrl, this.options.anchorBaseUrl, this.fetchImpl,
     )
     const relationshipXKid = decodePeerDid2(credential.relationshipDid).keyAgreement[0]!
     const relationship: DidCommSender = { did: credential.relationshipDid, xKid: relationshipXKid, xPriv: credential.privateKey }

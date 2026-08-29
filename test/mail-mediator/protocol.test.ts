@@ -14,6 +14,7 @@ describe('mail-mediator protocol wire encoding', () => {
       pickupPublicKey: new Uint8Array(32).fill(7),
       routeGeneration: 'gen-1',
       expiresAt: '2030-01-01T00:00:00.000Z',
+      mailAddressCredential: 'header.payload.signature',
     }
     const wire = JSON.parse(JSON.stringify(routeBindBodyToWire(body)))
     const decoded = routeBindBodyOf(wire)

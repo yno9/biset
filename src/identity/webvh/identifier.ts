@@ -78,3 +78,18 @@ export function domainDidJsonlUrl(domain: string, port?: number): string {
   const hostPart = port ? `${hostname}:${port}` : hostname
   return didJsonlUrlFor(hostPart, [])
 }
+
+/** `{username}@mail.{apexDomain}` from an identity's own subdomain-per-
+ * identity DID -- moved here (from identity/bootstrap.ts) so both the
+ * Client (buildMailSubmitter) and Anchor (mail address credential
+ * issuance, src/anchor/oid4vp.ts) can derive the same address from the
+ * same DID without a Client -> Anchor import (bootstrap.ts pulls in DOM
+ * APIs the Anchor's DOM-less tsconfig rejects). */
+export function mailFromForIdentity(identityId: string, apexDomain: string): string {
+  const { domain } = parseWebvhDid(identityId)
+  const suffix = `.${apexDomain}`
+  if (!domain.endsWith(suffix)) throw new Error(`mailFromForIdentity: identity domain ${domain} is not a subdomain of ${apexDomain}`)
+  const username = domain.slice(0, domain.length - suffix.length)
+  if (!username) throw new Error('mailFromForIdentity: identity domain has no username segment')
+  return `${username}@mail.${apexDomain}`
+}

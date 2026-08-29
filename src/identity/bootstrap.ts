@@ -21,7 +21,7 @@ import { mnemonicToSeed } from './seed.ts'
 import { createGenesis } from './webvh/create-genesis.ts'
 import { addDeviceVerificationMethod } from './webvh/add-device-verification-method.ts'
 import { resolveByDomain } from './webvh/resolver.ts'
-import { parseWebvhDid } from './webvh/identifier.ts'
+import { mailFromForIdentity } from './webvh/identifier.ts'
 import { decodeMultikey, encodeMultikey } from './webvh/multikey.ts'
 import type { IdentityRecord, IdentityRecordStore } from './record-store.ts'
 import { epochOf, exportSecret, generateOwnKeyPackage, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
@@ -890,14 +890,7 @@ export function buildMailSubmitter(
   }
 }
 
-export function mailFromForIdentity(identityId: string, apexDomain: string): string {
-  const { domain } = parseWebvhDid(identityId)
-  const suffix = `.${apexDomain}`
-  if (!domain.endsWith(suffix)) throw new Error(`buildMailSubmitter: identity domain ${domain} is not a subdomain of ${apexDomain}`)
-  const username = domain.slice(0, domain.length - suffix.length)
-  if (!username) throw new Error('buildMailSubmitter: identity domain has no username segment')
-  return `${username}@mail.${apexDomain}`
-}
+export { mailFromForIdentity }
 
 export interface EnableDidCommOptions {
   /** Where the DIDComm ingress endpoint lives (`core/adapters/didcomm-http.ts`'s

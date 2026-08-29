@@ -21,6 +21,8 @@ test/*
 !test/vault/**
 !test/identity/
 !test/identity/**
+!test/oid4vp/
+!test/oid4vp/**
 
 biset-*
 PLAN*

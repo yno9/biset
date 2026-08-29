@@ -599,10 +599,11 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     // otherwise -- switching submission paths must never regress a device
     // that hasn't enabled DIDComm at all.
     const mailMediatorSubmissionUrl = mailMediatorUrls[0]
-    const mailMediatorTransport = mailMediatorSubmissionUrl && identity.didCommKid && identity.didCommX25519PrivateKey
+    const mailMediatorTransport = mailMediatorSubmissionUrl && anchorBaseUrl
       ? new MailMediatorSubmissionTransport({
           mediatorUrl: mailMediatorSubmissionUrl,
-          frontDoor: { did: identity.did, xKid: identity.didCommKid, xPriv: fromHex(identity.didCommX25519PrivateKey) },
+          identityDid: identity.did,
+          anchorBaseUrl,
           relationshipReader: new MailRelationshipCredentialReader({
             identityId: identity.did, objects: vaultStore, events: vaultStore,
             segmentKeys: boundary.resolver, verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did).eventVerifier,
@@ -1053,13 +1054,14 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       }
 
       // Mail Mediator route bind + pickup poll (PLAN_biset-mail-mediator.md
-      // section 4): `own` (this identity's shared didCommKid) is the
-      // FRONT-DOOR authentication for route-bind only -- the mediator
-      // never sees it again once a relationship credential exists.
+      // section 4, revised to a VC-based route-bind): route-bind carries
+      // a BisetMailAddressOwnershipCredential Anchor issues for a fresh
+      // relationship identity -- the mediator never learns this
+      // identity's own did:webvh at any point, not even at bind time.
       // Best-effort per mediator, same treatment as enableDidComm: a
-      // mediator briefly unreachable at boot must not block mail already
-      // working through core/SMTP.
-      for (const url of mailMediatorUrls) {
+      // mediator or Anchor briefly unreachable at boot must not block
+      // mail already working through core/SMTP.
+      for (const url of anchorBaseUrl ? mailMediatorUrls : []) {
         const mailRelReader = new MailRelationshipCredentialReader({
           identityId: identity.did, objects: vaultStore, events: vaultStore,
           segmentKeys: boundary.resolver, verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did).eventVerifier,
@@ -1070,7 +1072,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
           activeSegment: () => boundary.activeSegment(), currentSnapshot: () => readModel.snapshot(),
           signer: boundary.signer, committer: vaultStore,
         })
-        ensureMailRelationship(mailRelReader, mailRelSink, own, mailFrom, url)
+        ensureMailRelationship(mailRelReader, mailRelSink, identity.did, mailFrom, url, anchorBaseUrl)
           .then(credential => {
             const relationshipXKid = decodePeerDid2(credential.relationshipDid).keyAgreement[0]!
             const relationship: DidCommSender = { did: credential.relationshipDid, xKid: relationshipXKid, xPriv: credential.privateKey }

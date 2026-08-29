@@ -15,21 +15,22 @@ import {
   type SubmitBody, type SubmitResultBody,
 } from '../mail-mediator/protocol.ts'
 
-/** Sends route-bind authcrypt'd from the address's PUBLIC front-door
- * kid (`frontDoor` -- the identity-shared didCommKid). Throws (via
- * sendAndUnpack's DidCommProblemError) if the mediator refuses the bind,
- * e.g. `e.p.mail.front-door-required` for a stale/mismatched claim. */
+/** Sends route-bind authcrypt'd from the RELATIONSHIP identity itself
+ * (`relationship`) -- there is no separate front-door tier any more.
+ * Authorization comes entirely from `body.mailAddressCredential` (a
+ * BisetMailAddressOwnershipCredential, src/oid4vp/mail-address-profile.ts).
+ * Throws (via sendAndUnpack's DidCommProblemError) if the mediator
+ * refuses the credential, e.g. `e.p.mail.credential-mismatch` for a
+ * stale/mismatched claim. */
 export async function bindMailRoute(
-  mediator: MediatorInfo, frontDoor: DidCommSender, body: RouteBindBody, fetchImpl: typeof fetch = defaultFetch(),
+  mediator: MediatorInfo, relationship: DidCommSender, body: RouteBindBody, fetchImpl: typeof fetch = defaultFetch(),
 ): Promise<RouteBindResultBody> {
-  const reply = await sendAndUnpack(mediator, frontDoor, ROUTE_BIND, routeBindBodyToWire(body), fetchImpl)
+  const reply = await sendAndUnpack(mediator, relationship, ROUTE_BIND, routeBindBodyToWire(body), fetchImpl)
   if (reply.type !== ROUTE_BIND_RESULT) throw new Error(`bindMailRoute: unexpected reply type ${reply.type}`)
   return reply.body as RouteBindResultBody
 }
 
-/** Every call below is authcrypt'd from the bound RELATIONSHIP identity,
- * never the front-door one -- passing `frontDoor` here is refused by the
- * mediator (server.ts's own front-door/relationship-kid split). */
+/** Every call below is authcrypt'd from the bound RELATIONSHIP identity. */
 export async function pickupMail(
   mediator: MediatorInfo, relationship: DidCommSender, limit = 10, fetchImpl: typeof fetch = defaultFetch(),
 ): Promise<{ address: string; items: PickupItem[] }> {

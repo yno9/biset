@@ -16,6 +16,9 @@ export interface BisetAnchorApplicationOptions {
   domainHeader?: string
   oidc?: AnchorOidcProvider
   oid4vp?: AnchorOid4vpProvider
+  /** Required only to serve /oid4vp/mail-address-credential/issue --
+   * mailFromForIdentity's own subdomain-per-identity derivation needs it. */
+  apexDomain?: string
 }
 
 /** Public identity-document plane. It deliberately has no mailbox, relay,
@@ -55,6 +58,8 @@ export function createBisetAnchorFetchHandler(options: BisetAnchorApplicationOpt
     if (options.oid4vp && path === '/oid4vp/wallet-bridge.js' && request.method === 'GET') return options.oid4vp.walletBridgeScript()
     if (options.oid4vp && path === '/oid4vp/enrollment/challenge' && request.method === 'POST') return withCors(await options.oid4vp.beginEnrollment(request, options.webvh))
     if (options.oid4vp && path === '/oid4vp/enrollment/complete' && request.method === 'POST') return withCors(await options.oid4vp.completeEnrollment(request, options.webvh))
+    if (options.oid4vp && path === '/oid4vp/mail-address-credential/challenge' && request.method === 'POST') return withCors(await options.oid4vp.beginMailAddressChallenge(request))
+    if (options.oid4vp && options.apexDomain && path === '/oid4vp/mail-address-credential/issue' && request.method === 'POST') return withCors(await options.oid4vp.completeMailAddressIssuance(request, options.apexDomain))
     if (path === '/.well-known/did.jsonl') return webvh(request)
     if (path === '/.well-known/did.json') return didWeb(request)
     if (path === '/.well-known/routing.json') return routing(request)

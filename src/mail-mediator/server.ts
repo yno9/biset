@@ -11,28 +11,23 @@
 // "所有しないもの": Vault ID, MLS group, device roster, mail/JMAP
 // projection are all out of scope here).
 //
-// Two authentication tiers, not one: `route-bind` must arrive authcrypt'd
-// from the address's PUBLIC mail operational kid (verified against its
-// did:webvh routing document via `resolveMailOperationalKid`); every other
-// message type must arrive from a `relationshipKid` this mediator already
-// bound for that address (route-store.ts's own index). A route-bind from
-// an already-bound relationship kid, or a pickup/submit from the front-door
-// kid, are both refused -- PLAN section 4 steps 4-5 draw that line on
-// purpose (front-door kid: initial contact only; relationship kid: all
-// continuing operations).
-//
-// `resolveMailOperationalKid` resolves BY KID ALONE, not `(address, kid)`:
-// route-bind's claimed address lives inside the still-encrypted JWE body,
-// so nothing outside it is known before the sender's key is resolved and
-// the ciphertext opened. Resolving from the kid's own DID (whatever the
-// resolver reads to answer -- routing.json/alsoKnownAs) breaks that
-// ordering problem, and the address it reports back is then checked
-// against what route-bind's body actually claims (dispatch's ROUTE_BIND
-// case) -- an address mismatch is treated as a forged claim, not trusted.
-import { type PeerIdentity } from '../didcomm/peer.ts'
+// Every message here, INCLUDING route-bind, authcrypts from the
+// RELATIONSHIP identity itself (a did:peer:2, self-certifying) --
+// there is no front-door tier any more. Authorization for route-bind
+// comes from a BisetMailAddressOwnershipCredential
+// (src/oid4vp/mail-address-profile.ts) carried in its body: Anchor's
+// signature proves `address` belongs to `cnf.relationshipDid`, and this
+// dispatch checks that `cnf.relationshipDid` against
+// `didOfKid(senderKid)` -- the DID the authcrypt envelope was actually
+// sent from. This mediator therefore never resolves a did:webvh document
+// or learns the identity's own DID at any point (the earlier
+// resolveMailOperationalKid design did, at bind time only -- this
+// removes even that).
+import { decodePeerDid2, publicKeyOf, type PeerIdentity } from '../didcomm/peer.ts'
 import { buildPlaintext, isExpired, type DidCommPlaintext } from '../didcomm/message.ts'
 import { buildProblemReport } from '../didcomm/problems.ts'
 import { packAuthcrypt, unpackAuthcrypt, parseJwe, protectedHeaderOf } from '../didcomm/crypto.ts'
+import { didOfKid } from '../protocol/ids.ts'
 import type { ReplayGuard } from '../mediator/replay.ts'
 import { SeenIds } from '../mediator/replay.ts'
 import {
@@ -56,13 +51,16 @@ export interface MailMediatorOptions {
   replay?: ReplayGuard
   /** Synchronous transaction shared by durable replay/route/spool stores. */
   transaction?: <T>(operation: () => T) => T
-  /** Resolves a kid to the address it is currently published as this
-   * mediator's front-door mail operational key for, plus the key itself.
-   * Null means "does not resolve as a mail operational kid at all" (not
-   * every kid needs to -- a relationship kid never reaches this resolver,
-   * see resolveSender below). Pure HTTP against the public did:webvh
-   * routing document, no biset-core dependency. */
-  resolveMailOperationalKid: (kid: string) => Promise<{ address: string; publicKey: Uint8Array } | null>
+  /** Verifies a BisetMailAddressOwnershipCredential JWT (Anchor's
+   * signature, validity window, claim shape) and returns its claims.
+   * Throws on any failure -- there is no "null means unverifiable" case,
+   * unlike the old resolveMailOperationalKid, since this never needs a
+   * network resolve (Anchor's signing key is a fixed, injected value).
+   * Kept as an injected function rather than importing
+   * verifyBisetMailAddressCredential directly so this module still has
+   * no import from `oid4vp/` at the type level -- only the caller
+   * (index.ts) wires that dependency in. */
+  verifyMailAddressCredential: (token: string, now: string) => { address: string; relationshipDid: string }
   /** Actually dials SMTP for an acquired submission and returns each
    * recipient's outcome. Invoked fire-and-forget from the `submit`
    * handler (async model -- PLAN section 12, revised): the client polls
@@ -87,7 +85,7 @@ export function createMailMediator({
   submissions = new SubmissionStore(),
   replay = new SeenIds(),
   transaction = operation => operation(),
-  resolveMailOperationalKid,
+  verifyMailAddressCredential,
   submitOutbound,
   now = () => new Date().toISOString(),
   pickupLeaseMs = DEFAULT_PICKUP_LEASE_MS,
@@ -128,22 +126,17 @@ export function createMailMediator({
 
   class Malformed extends Error {}
 
-  /** Resolves a sender's kid to its key, plus (only for a front-door
-   * resolve) the address the published document says it belongs to. An
-   * already-bound relationship kid resolves purely from route-store --
-   * no network, and no frontDoorAddress (it isn't one). */
-  async function resolveSender(senderKid: string): Promise<{ publicKey: Uint8Array; frontDoorAddress?: string }> {
-    const boundAddress = routes.addressForRelationshipKid(senderKid)
-    if (boundAddress) {
-      const holder = routes.holderFor(boundAddress, senderKid)
-      if (holder) return { publicKey: holder.pickupPublicKey }
-    }
-    const resolved = await resolveMailOperationalKid(senderKid)
-    if (!resolved) throw new Error(`${senderKid} did not resolve as a mail operational kid`)
-    return { publicKey: resolved.publicKey, frontDoorAddress: resolved.address }
+  /** did:peer:2 is self-certifying -- the sender's public key is decoded
+   * straight out of its own DID, no network resolve of any kind. This is
+   * the ONLY resolution path now: there is no front-door tier left to
+   * fall back to. */
+  function resolveSenderKey(senderKid: string): Uint8Array {
+    const did = didOfKid(senderKid)
+    if (!did.startsWith('did:peer:2.')) throw new Error(`${senderKid} is not a did:peer:2 kid`)
+    return publicKeyOf(decodePeerDid2(did), senderKid)
   }
 
-  async function unpack(raw: string): Promise<{ msg: DidCommPlaintext; senderKid: string; senderKey: Uint8Array; frontDoorAddress?: string }> {
+  async function unpack(raw: string): Promise<{ msg: DidCommPlaintext; senderKid: string; senderKey: Uint8Array }> {
     let body: unknown
     try {
       body = JSON.parse(raw)
@@ -155,15 +148,8 @@ export function createMailMediator({
     const header = protectedHeaderOf(jwe)
     if (!header) throw new Malformed('the protected header is not readable')
 
-    let resolution: { publicKey: Uint8Array; frontDoorAddress?: string } | undefined
-    const { plaintext, senderKid } = await unpackAuthcrypt(jwe, ownRecipient, async kid => {
-      resolution = await resolveSender(kid)
-      return resolution.publicKey
-    })
-    return {
-      msg: JSON.parse(new TextDecoder().decode(plaintext)), senderKid,
-      senderKey: resolution!.publicKey, frontDoorAddress: resolution!.frontDoorAddress,
-    }
+    const { plaintext, senderKid } = await unpackAuthcrypt(jwe, ownRecipient, kid => resolveSenderKey(kid))
+    return { msg: JSON.parse(new TextDecoder().decode(plaintext)), senderKid, senderKey: resolveSenderKey(senderKid) }
   }
 
   async function handle(req: Request, url: URL): Promise<Response | null> {
@@ -175,9 +161,8 @@ export function createMailMediator({
     let msg: DidCommPlaintext
     let senderKid: string
     let senderKey: Uint8Array
-    let frontDoorAddress: string | undefined
     try {
-      ;({ msg, senderKid, senderKey, frontDoorAddress } = await unpack(await req.text()))
+      ;({ msg, senderKid, senderKey } = await unpack(await req.text()))
     } catch (e) {
       if (e instanceof Malformed) return Response.json({ error: e.message }, { status: 400 })
       return Response.json({ error: 'could not authenticate this message' }, { status: 401 })
@@ -197,25 +182,31 @@ export function createMailMediator({
     }
 
     try {
-      return await dispatch(msg, fromDid, senderKid, senderKey, frontDoorAddress)
+      return await dispatch(msg, fromDid, senderKid, senderKey)
     } catch (e) {
       return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
     }
   }
 
-  async function dispatch(
-    msg: DidCommPlaintext, fromDid: string, senderKid: string, senderKey: Uint8Array, frontDoorAddress: string | undefined,
-  ): Promise<Response> {
+  async function dispatch(msg: DidCommPlaintext, fromDid: string, senderKid: string, senderKey: Uint8Array): Promise<Response> {
     switch (msg.type) {
       case ROUTE_BIND: {
         const body = routeBindBodyOf(msg.body)
         if (!body) return Response.json({ error: 'malformed route-bind body' }, { status: 400 })
-        // Must have resolved via the front door, for exactly the address
-        // it claims -- a relationship kid (frontDoorAddress undefined) or
-        // a front-door kid published for a DIFFERENT address are both
-        // forged claims, not merely unverified ones.
-        if (frontDoorAddress !== body.address) {
-          return problemReply(msg, fromDid, senderKid, senderKey, 403, 'e.p.mail.front-door-required', 'route-bind must come from the published mail operational kid for this exact address')
+        let vc: { address: string; relationshipDid: string }
+        try {
+          vc = verifyMailAddressCredential(body.mailAddressCredential, now())
+        } catch (e) {
+          return problemReply(msg, fromDid, senderKid, senderKey, 403, 'e.p.mail.credential-invalid', e instanceof Error ? e.message : 'mail address credential is invalid')
+        }
+        // Both checks matter independently: the VC's address must match
+        // what THIS request claims (a stale VC for a since-rotated
+        // address must not silently bind the wrong route), and the VC's
+        // relationshipDid must match who actually sent THIS message (a
+        // VC minted for one relationship can't authorize a bind on
+        // another's behalf, even if somehow relayed).
+        if (vc.address !== body.address || vc.relationshipDid !== didOfKid(senderKid)) {
+          return problemReply(msg, fromDid, senderKid, senderKey, 403, 'e.p.mail.credential-mismatch', 'mail address credential does not match this request')
         }
         let route
         try {

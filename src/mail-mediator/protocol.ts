@@ -7,6 +7,13 @@
 // Namespaced under biset.md, not didcomm.org -- these are biset-specific
 // message types, not part of the DIDComm org's own protocol suite. Mirrors
 // didcomm/relationship.ts's own https://biset.md/relationship/1.0/... choice.
+//
+// route-bind's authorization was revised from "front-door kid + did:webvh
+// alsoKnownAs resolve" to a VC (BisetMailAddressOwnershipCredential,
+// src/oid4vp/mail-address-profile.ts): every message here, INCLUDING
+// route-bind, is now authcrypt'd from the relationship's own did:peer:2
+// identity -- the mediator never resolves a did:webvh document or learns
+// the identity's own DID at any point.
 import { base64urlToBytes, bytesToBase64url } from '../protocol/canonical.ts'
 
 export const ROUTE_BIND = 'https://biset.md/mail-mediator/1.0/route-bind'
@@ -19,15 +26,19 @@ export const SUBMIT_STATUS_REQUEST = 'https://biset.md/mail-mediator/1.0/submit-
 export const SUBMIT_RESULT = 'https://biset.md/mail-mediator/1.0/submit-result'
 
 /**
- * Client -> Mediator. Sent authcrypt'd from the address's public mail
- * operational kid (the front-door key, published in the address's
- * did:webvh routing document) -- the mediator verifies the authcrypt
- * sender kid against that document before accepting the bind.
- *
- * `relationshipKid`/`pickupPublicKey` name a NEW key the client just
- * generated for this relationship: after a successful bind, every
- * subsequent pickup/submit must authcrypt from `relationshipKid`, never
- * from the front-door kid again (PLAN section 4, steps 4-5).
+ * Client -> Mediator. Sent authcrypt'd from the RELATIONSHIP kid itself
+ * (a did:peer:2 identity, self-certifying -- no did:webvh resolve
+ * involved at all). Authorization comes entirely from
+ * `mailAddressCredential`: a BisetMailAddressOwnershipCredential
+ * (src/oid4vp/mail-address-profile.ts) issued by Anchor, binding
+ * `address` to `cnf.relationshipDid` WITHOUT ever naming the identity's
+ * own did:webvh -- the mediator checks the VC's signature, its
+ * `credentialSubject.address` against `address` below, and its
+ * `cnf.relationshipDid` against the authcrypt sender's own DID
+ * (didOfKid(senderKid)). Proof of holding the relationship's private key
+ * is what authcrypt itself already proves; there is no separate
+ * presentation-layer signature on top (mail-address-profile.ts's header
+ * explains why one would be redundant).
  */
 export interface RouteBindBody {
   address: string
@@ -35,6 +46,7 @@ export interface RouteBindBody {
   pickupPublicKey: Uint8Array
   routeGeneration: string
   expiresAt: string
+  mailAddressCredential: string
 }
 
 export interface RouteBindWireBody {
@@ -43,6 +55,7 @@ export interface RouteBindWireBody {
   pickupPublicKey: string
   routeGeneration: string
   expiresAt: string
+  mailAddressCredential: string
 }
 
 export function routeBindBodyToWire(body: RouteBindBody): RouteBindWireBody {
@@ -52,16 +65,17 @@ export function routeBindBodyToWire(body: RouteBindBody): RouteBindWireBody {
 export function routeBindBodyOf(body: unknown): RouteBindBody | null {
   const value = asRecord(body)
   if (!value) return null
-  const { address, relationshipKid, pickupPublicKey, routeGeneration, expiresAt } = value
+  const { address, relationshipKid, pickupPublicKey, routeGeneration, expiresAt, mailAddressCredential } = value
   if (typeof address !== 'string' || !address) return null
   if (typeof relationshipKid !== 'string' || !relationshipKid) return null
   if (typeof pickupPublicKey !== 'string') return null
   if (typeof routeGeneration !== 'string' || !routeGeneration) return null
   if (typeof expiresAt !== 'string' || !expiresAt) return null
+  if (typeof mailAddressCredential !== 'string' || !mailAddressCredential) return null
   try {
     const key = base64urlToBytes(pickupPublicKey)
     if (key.length !== 32) return null
-    return { address, relationshipKid, pickupPublicKey: key, routeGeneration, expiresAt }
+    return { address, relationshipKid, pickupPublicKey: key, routeGeneration, expiresAt, mailAddressCredential }
   } catch {
     return null
   }

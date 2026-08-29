@@ -78,6 +78,7 @@ export function createPersistentAnchorOid4vpOidcProvider(options: Omit<Persisten
       issuer: options.issuer,
       store: state,
       credentialSigningPrivateKey: secrets.credentialSigningPrivateKey,
+      mailAddressSigningPrivateKey: secrets.mailAddressCredentialSigningPrivateKey,
       walletAuthorizationEndpoint: options.walletAuthorizationEndpoint,
       now: options.now,
     })
