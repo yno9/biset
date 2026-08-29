@@ -1373,11 +1373,36 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     // none of its invite/approve/join entry points are exposed by the UI.
     let streamTransport: VaultCoordinatorTransport | undefined
     let streamVaultId: import('./protocol/ids.ts').VaultId | undefined
+    const catchUpSelfGroupBeforeVaultRead = async (): Promise<void> => {
+      // A newly restored sibling is authorized by an MLS external commit
+      // before it can append anything to this identity's Coordinator stream.
+      // Reflect that causally-earlier commit before verifying an event the
+      // sibling signed. Boot-time maintenance alone is insufficient: an
+      // already-open first device can observe the sibling's checkpoint on
+      // the next ten-second Vault poll while its local Self Group is still
+      // one epoch behind (found live with 8f41.biset.md, 2026-08-30).
+      if (!coreBaseUrl) throw new Error('Self Group roster endpoint is not configured')
+      const state = await maintainSelfGroup(selfGroupStore, keyStore, identity, {
+        coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl,
+        wraps: vaultStore, segments: vaultStore,
+      })
+      if (!state) return
+      const nextDevices = memberKids(state, identity.did).map(deviceId => ({ deviceId, current: deviceId === identity.deviceKid }))
+      if (JSON.stringify(nextDevices) !== JSON.stringify(vaultDevices)) {
+        vaultDevices = nextDevices
+        if (vaultCardStatus) setVaultCard(vaultCardStatus)
+      }
+    }
     const synchronizeStreamOnce = async (): Promise<{ localSeq: string; latestSeq: string; checkpointSeq?: string } | undefined> => {
       if (!streamTransport || !streamVaultId) return undefined
       const transport = streamTransport
       const vaultId = streamVaultId
       const checkpoint = await transport.pullStreamCheckpoint(vaultId)
+      // Pull the checkpoint first, then catch up MLS. Any device whose event
+      // can be present in that immutable response necessarily committed its
+      // Self Group membership before publishing it, so this ordering closes
+      // the join/checkpoint race instead of merely making it less likely.
+      await catchUpSelfGroupBeforeVaultRead()
       let checkpointSeq = checkpoint?.coveredSeq
       const checkpointNeedsUpgrade = checkpoint ? (() => { try { return (JSON.parse(new TextDecoder().decode(checkpoint.payload)) as { version?: unknown }).version === 1 } catch { return false } })() : false
       const localCursor = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)

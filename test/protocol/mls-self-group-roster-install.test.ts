@@ -21,6 +21,8 @@ import { CoordinatorMlsDeliveryTransport } from '../../src/mls/coordinator-mls-d
 import { CoreRosterInstallTransport } from '../../src/mls/core-roster-install-transport.ts'
 import { generateOwnKeyPackage, memberKids } from '../../src/mls/group.ts'
 import { ensureSelfGroupWithRosterInstall, reflectPendingSelfGroupCommits } from '../../src/mls/self-group.ts'
+import { MlsMembershipSegmentKeyWrapSigner, MlsMembershipSegmentKeyWrapVerifier } from '../../src/mls/segment-key-membership.ts'
+import { createVaultEvent, verifyVaultEvent } from '../../src/vault/events.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { OwnKeyPackage } from '../../src/mls/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
@@ -124,6 +126,24 @@ describe('roster install atop self-group bootstrap', () => {
     expect(await roster.deliveryFloor(identityId, deviceBKid)).toBe('99')
     // Device A's own floor from genesis is untouched by device B's join.
     expect(await roster.deliveryFloor(identityId, deviceAKid)).toBe('0')
+
+    // This is the Coordinator ordering invariant: B may publish a Vault
+    // event immediately after its external commit. A cannot authenticate
+    // that event against its stale pre-join state, but can as soon as it
+    // reflects the causally-earlier Self Group commit. Vault checkpoint
+    // restore must therefore perform this reflection before projection.
+    const event = await createVaultEvent({
+      identityId,
+      actorDeviceId: deviceBKid,
+      actorSeq: 1,
+      kind: 'didcomm.control',
+      targetIds: ['join-ordering'],
+      objectRefs: ['sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'],
+      parents: [],
+      createdAt: '2026-08-30T00:00:00.000Z',
+    }, new MlsMembershipSegmentKeyWrapSigner(deviceBKid, async () => stateB!))
+    expect(await verifyVaultEvent(event, new MlsMembershipSegmentKeyWrapVerifier(async () => stateA!))).toBe(false)
+    expect(await verifyVaultEvent(event, new MlsMembershipSegmentKeyWrapVerifier(async () => stateAAfterB!))).toBe(true)
 
     ds.close()
     roster.close()
