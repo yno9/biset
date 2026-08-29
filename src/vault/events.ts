@@ -15,12 +15,13 @@ export interface VaultEventDraft {
 
 export interface VaultEventSigner {
   readonly deviceId: DeviceId
+  deviceCredential?(): Promise<Uint8Array>
   sign(bytes: Uint8Array): Promise<Uint8Array>
-  verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>
+  verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array, deviceCredential?: Uint8Array): Promise<boolean>
 }
 
 export interface VaultEventVerifier {
-  verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>
+  verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array, deviceCredential?: Uint8Array): Promise<boolean>
 }
 
 export function vaultEventSigningBytes(draft: VaultEventDraft): Uint8Array {
@@ -43,10 +44,12 @@ export async function createVaultEvent(draft: VaultEventDraft, signer: VaultEven
   const unsigned = vaultEventSigningBytes(draft)
   const signature = await signer.sign(unsigned)
   if (signature.length === 0) throw new TypeError('event signature must not be empty')
+  const actorCredential = await signer.deviceCredential?.()
   return {
     version: 1,
     id: eventId(unsigned, signature),
     ...draft,
+    ...(actorCredential ? { actorCredential: actorCredential.slice() } : {}),
     targetIds: [...draft.targetIds],
     objectRefs: [...draft.objectRefs],
     parents: [...draft.parents],
@@ -55,9 +58,9 @@ export async function createVaultEvent(draft: VaultEventDraft, signer: VaultEven
 }
 
 export async function verifyVaultEvent(event: VaultEventV1, signer: VaultEventVerifier): Promise<boolean> {
-  const { id, signature, version, ...draft } = event
+  const { id, signature, version, actorCredential, ...draft } = event
   if (version !== 1 || id !== eventId(vaultEventSigningBytes(draft), signature)) return false
-  return signer.verify(event.actorDeviceId, vaultEventSigningBytes(draft), signature)
+  return signer.verify(event.actorDeviceId, vaultEventSigningBytes(draft), signature, actorCredential)
 }
 
 function eventId(unsigned: Uint8Array, signature: Uint8Array): VaultEventId {

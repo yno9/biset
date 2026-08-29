@@ -57,9 +57,10 @@ import { moveWebvhIdentity } from './identity/webvh/move.ts'
 import { adoptPendingMove } from './identity/webvh/adopt-move.ts'
 import { encodeMultikey } from './identity/webvh/multikey.ts'
 import { removeDeviceFromSelfGroup, type SelfGroupSigner } from './mls/self-group.ts'
-import { memberKids, ownMlsDeviceCredential, ownSignaturePrivateKey } from './mls/group.ts'
+import { memberDeviceCredentialBytes, memberKids, ownMlsDeviceCredential, ownSignaturePrivateKey } from './mls/group.ts'
 import { encodeMlsDeviceCredential } from './mls/device-credential.ts'
 import { CoordinatorMlsDeliveryTransport } from './mls/coordinator-mls-delivery-transport.ts'
+import { CoreRosterInstallTransport } from './mls/core-roster-install-transport.ts'
 import { DidCommDeviceKeyReader } from './vault/didcomm-device-key-reader.ts'
 import { DidCommDeviceKeyVaultSink } from './vault/didcomm-device-key-sink.ts'
 import { OpenPgpCredentialReader } from './vault/openpgp-credential-reader.ts'
@@ -462,7 +463,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       signer: boundary.signer,
       committer: vaultStore,
     })
-    const eventVerifier = buildRestoreTransferVerifier(selfGroupStore, identity.did).eventVerifier
+    const eventVerifier = buildRestoreTransferVerifier(selfGroupStore, identity.did, fromHex(identity.rootPublicKey)).eventVerifier
     const contactKeyReader = new ContactKeyReader({
       identityId: identity.did,
       objects: vaultStore,
@@ -507,7 +508,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         objects: vaultStore,
         events: vaultStore,
         segmentKeys: boundary.resolver,
-        verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did).eventVerifier,
+        verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did, fromHex(identity.rootPublicKey)).eventVerifier,
       })
       const didCommSink = new DidCommCredentialVaultSink({
         identityId: identity.did,
@@ -540,7 +541,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         objects: vaultStore,
         events: vaultStore,
         segmentKeys: boundary.resolver,
-        verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did).eventVerifier,
+        verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did, fromHex(identity.rootPublicKey)).eventVerifier,
       })
       const existingPairing = await deviceKeyReader.forDeviceKid(deviceKid).catch(() => undefined)
       if (!existingPairing) {
@@ -574,7 +575,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         objects: vaultStore,
         events: vaultStore,
         segmentKeys: boundary.resolver,
-        verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did).eventVerifier,
+        verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did, fromHex(identity.rootPublicKey)).eventVerifier,
       })
       const pgpSink = new OpenPgpCredentialVaultSink({
         identityId: identity.did,
@@ -606,7 +607,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
           anchorBaseUrl,
           relationshipReader: new MailRelationshipCredentialReader({
             identityId: identity.did, objects: vaultStore, events: vaultStore,
-            segmentKeys: boundary.resolver, verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did).eventVerifier,
+            segmentKeys: boundary.resolver, verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did, fromHex(identity.rootPublicKey)).eventVerifier,
           }),
           relationshipSink: new MailRelationshipCredentialVaultSink({
             identityId: identity.did, actorDeviceId: deviceKid,
@@ -1064,7 +1065,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       for (const url of anchorBaseUrl ? mailMediatorUrls : []) {
         const mailRelReader = new MailRelationshipCredentialReader({
           identityId: identity.did, objects: vaultStore, events: vaultStore,
-          segmentKeys: boundary.resolver, verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did).eventVerifier,
+          segmentKeys: boundary.resolver, verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did, fromHex(identity.rootPublicKey)).eventVerifier,
         })
         const mailRelSink = new MailRelationshipCredentialVaultSink({
           identityId: identity.did, actorDeviceId: deviceKid,
@@ -1393,6 +1394,27 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         if (vaultCardStatus) setVaultCard(vaultCardStatus)
       }
     }
+    const eventCredentialHistory = async (): Promise<Map<string, Uint8Array>> => {
+      const credentials = new Map<string, Uint8Array>()
+      const stored = await selfGroupStore.load(identity.did)
+      if (stored) {
+        for (const deviceId of memberKids(stored.state, identity.did)) {
+          const credential = memberDeviceCredentialBytes(stored.state, deviceId)
+          if (credential) credentials.set(deviceId, credential)
+        }
+      }
+      // One-time bridge for checkpoints written before Vault events carried
+      // their own Root-authorized actor credential. The old public roster may
+      // still retain a device that has since been removed from the current
+      // Self Group, which is exactly the historical key needed to upgrade its
+      // already-signed events. New checkpoints become self-contained and no
+      // longer depend on this legacy projection.
+      if (coreBaseUrl) {
+        const projection = await new CoreRosterInstallTransport({ baseUrl: coreBaseUrl }).fetchProjection(identity.did).catch(() => undefined)
+        for (const device of projection?.devices ?? []) if (!credentials.has(device.deviceId)) credentials.set(device.deviceId, device.deviceCredential)
+      }
+      return credentials
+    }
     const synchronizeStreamOnce = async (): Promise<{ localSeq: string; latestSeq: string; checkpointSeq?: string } | undefined> => {
       if (!streamTransport || !streamVaultId) return undefined
       const transport = streamTransport
@@ -1404,6 +1426,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       // the join/checkpoint race instead of merely making it less likely.
       await catchUpSelfGroupBeforeVaultRead()
       let checkpointSeq = checkpoint?.coveredSeq
+      let checkpointNeedsEventCredentialUpgrade = false
       const checkpointNeedsUpgrade = checkpoint ? (() => { try { return (JSON.parse(new TextDecoder().decode(checkpoint.payload)) as { version?: unknown }).version === 1 } catch { return false } })() : false
       const localCursor = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)
       if (checkpoint && BigInt(checkpoint.coveredSeq) > BigInt(localCursor)) {
@@ -1413,6 +1436,15 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         try {
           snapshot = await openPortableCoordinatorCheckpoint(fromHex(identity.masterSeed), checkpoint.payload, { vaultId, coveredSeq: checkpoint.coveredSeq, coordinatorUrl })
           if (snapshot.identityId !== identity.did) throw new Error('Coordinator checkpoint belongs to another identity')
+          if (snapshot.events.some(event => !event.actorCredential)) {
+            const credentials = await eventCredentialHistory()
+            snapshot.events = snapshot.events.map(event => {
+              if (event.actorCredential) return event
+              const actorCredential = credentials.get(event.actorDeviceId)
+              return actorCredential ? { ...event, actorCredential: actorCredential.slice() } : event
+            })
+            checkpointNeedsEventCredentialUpgrade = snapshot.events.every(event => !!event.actorCredential)
+          }
           const records = await rewrapRecoveryArchiveForCurrentEpoch(snapshot, boundary.epochs, boundary.signer, new Date().toISOString())
           await vaultStore.commitRecoveryArchive({ identityId: identity.did, events: records.events, objects: records.objects.map(object => ({ ...object, identityId: identity.did })), keyWraps: records.keyWraps })
           for (const segment of snapshot.segmentKeys) await vaultStore.sealAndActivateSegment({ identityId: identity.did, segmentId: segment.segmentId, segmentKey: segment.key, selfGroupId: VAULT_STORAGE_GROUP_ID, epoch: VAULT_STORAGE_EPOCH, sealed: false, createdAt: snapshot.createdAt })
@@ -1433,7 +1465,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       // boundary. Any device can replace it after reaching the stream head.
       const coveredSeq = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)
       const checkpointBehind = coordinatorStreamCheckpointIsBehind(checkpoint?.coveredSeq, coveredSeq)
-      if (coveredSeq === synced.latestSeq && (flushed.appendedEntryIds.length > 0 || checkpointBehind || checkpointNeedsUpgrade)) {
+      if (coveredSeq === synced.latestSeq && (flushed.appendedEntryIds.length > 0 || checkpointBehind || checkpointNeedsUpgrade || checkpointNeedsEventCredentialUpgrade)) {
         if (!identity.masterSeed) throw new Error('Coordinator checkpoint requires the identity master seed')
         const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, identity.did, new Date().toISOString())
         try {

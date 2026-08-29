@@ -1,12 +1,11 @@
-// Adapts MLS self-group membership to vault/crypto.ts's SegmentKeyWrap
-// grantor signer/verifier boundary. A SegmentKeyWrap's grantor is checked
-// against the CURRENT self-group member list, not a resolved DID document:
-// the self group (not the DID) is the authority on who may grant a
-// SegmentKey right now (PLAN.md §4.2) — a device the self group has
-// removed must not still be able to verify (or, worse, forge) a grant just
-// because its DID document has not caught up yet.
+// Adapts MLS device keys to the two different Vault verification questions:
+// a SegmentKeyWrap grant is checked against CURRENT Self Group membership,
+// while an immutable historical Vault event may carry its Root-authorized
+// actor credential and remains verifiable after that actor is removed. A
+// revoke must prevent future grants, not corrupt already-valid history.
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { memberSignaturePublicKey, ownSignaturePrivateKey } from './group.ts'
+import { memberSignaturePublicKey, ownMlsDeviceCredential, ownSignaturePrivateKey } from './group.ts'
+import { decodeMlsDeviceCredential, encodeMlsDeviceCredential, verifyMlsDeviceCredential } from './device-credential.ts'
 import type { ClientState } from './vendor/index.ts'
 import type { SegmentKeyWrapSigner, SegmentKeyWrapVerifier } from '../vault/crypto.ts'
 import type { DeviceId } from '../protocol/ids.ts'
@@ -18,9 +17,21 @@ import type { DeviceId } from '../protocol/ids.ts'
  * pin itself to that boot's snapshot. Async because the ordinary source is
  * `MlsSelfGroupStateStore.load` (an IndexedDB read), not memory. */
 export class MlsMembershipSegmentKeyWrapVerifier implements SegmentKeyWrapVerifier {
-  constructor(private readonly state: () => Promise<ClientState>) {}
+  constructor(
+    private readonly state: () => Promise<ClientState>,
+    private readonly rootPublicKey?: Uint8Array,
+  ) {}
 
-  async verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array): Promise<boolean> {
+  async verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array, deviceCredential?: Uint8Array): Promise<boolean> {
+    if (deviceCredential && this.rootPublicKey) {
+      try {
+        const credential = decodeMlsDeviceCredential(deviceCredential)
+        return credential.deviceKid === deviceId
+          && verifyMlsDeviceCredential(credential, this.rootPublicKey)
+          && signature.length === 64
+          && ed25519.verify(signature, bytes, credential.signaturePublicKey)
+      } catch { return false }
+    }
     const publicKey = memberSignaturePublicKey(await this.state(), deviceId)
     if (!publicKey) return false
     if (signature.length !== 64 || publicKey.length !== 32) return false
@@ -48,7 +59,11 @@ export class MlsMembershipSegmentKeyWrapSigner implements SegmentKeyWrapSigner {
     return ed25519.sign(bytes, ownSignaturePrivateKey(await this.state()))
   }
 
-  verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array): Promise<boolean> {
-    return this.verifier.verify(deviceId, bytes, signature)
+  async deviceCredential(): Promise<Uint8Array> {
+    return encodeMlsDeviceCredential(ownMlsDeviceCredential(await this.state()))
+  }
+
+  verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array, deviceCredential?: Uint8Array): Promise<boolean> {
+    return this.verifier.verify(deviceId, bytes, signature, deviceCredential)
   }
 }

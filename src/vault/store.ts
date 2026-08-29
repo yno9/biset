@@ -1132,7 +1132,7 @@ function copyObject(value: VaultObjectRecord): VaultObjectRecord {
 }
 
 function copyEvent(value: VaultEventRecord): VaultEventRecord {
-  return { ...value, targetIds: [...value.targetIds], objectRefs: [...value.objectRefs], parents: [...value.parents], signature: value.signature.slice() }
+  return { ...value, ...(value.actorCredential ? { actorCredential: value.actorCredential.slice() } : {}), targetIds: [...value.targetIds], objectRefs: [...value.objectRefs], parents: [...value.parents], signature: value.signature.slice() }
 }
 
 function copyOutbox(value: IngressAckOutboxRecord): IngressAckOutboxRecord {

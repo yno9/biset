@@ -44,6 +44,7 @@ function eventToWire(event: VaultEventV1): { [key: string]: CanonicalValue } {
   return {
     version: event.version, id: event.id, identityId: event.identityId, actorDeviceId: event.actorDeviceId, actorSeq: event.actorSeq,
     kind: event.kind, targetIds: [...event.targetIds], objectRefs: [...event.objectRefs], parents: [...event.parents], createdAt: event.createdAt,
+    ...(event.actorCredential ? { actorCredential: bytesToBase64url(event.actorCredential) } : {}),
     signature: bytesToBase64url(event.signature),
   }
 }
@@ -80,7 +81,7 @@ function wireObject(value: unknown, identityId: IdentityId): VaultObjectRecord {
 function wireEvent(value: unknown, identityId: IdentityId): VaultEventV1 {
   const input = object(value, 'vault delivery event')
   if (input.version !== 1 || input.identityId !== identityId || !nonempty(input.id) || !nonempty(input.actorDeviceId) || !eventKind(input.kind) || !Number.isSafeInteger(input.actorSeq) || (input.actorSeq as number) < 0 || !isoDate(input.createdAt)) throw new TypeError('vault delivery event is invalid')
-  return { version: 1, id: input.id, identityId, actorDeviceId: input.actorDeviceId, actorSeq: input.actorSeq as number, kind: input.kind as VaultEventV1['kind'], targetIds: strings(input.targetIds), objectRefs: strings(input.objectRefs), parents: strings(input.parents), createdAt: input.createdAt, signature: binary(input.signature) }
+  return { version: 1, id: input.id, identityId, actorDeviceId: input.actorDeviceId, ...(input.actorCredential === undefined ? {} : { actorCredential: binary(input.actorCredential) }), actorSeq: input.actorSeq as number, kind: input.kind as VaultEventV1['kind'], targetIds: strings(input.targetIds), objectRefs: strings(input.objectRefs), parents: strings(input.parents), createdAt: input.createdAt, signature: binary(input.signature) }
 }
 
 function wireWrap(value: unknown, identityId: IdentityId): SegmentKeyWrapV1 {

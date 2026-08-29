@@ -335,12 +335,15 @@ genesis以外のprojection更新は、**一つ前のlegacy rosterですでにtru
 
 ### 9.1 MLSがまだ担う部分
 
-Vault eventはactor deviceのMLS leaf Ed25519 keyで署名する。SegmentKeyWrapもgrantor deviceの同じkeyで署名する。受信側はcurrent Self Group stateから該当deviceの公開鍵を得て検証する。
+Vault eventはactor deviceのMLS leaf Ed25519 keyで署名し、Root署名済みdevice credentialをeventへ添付する。受信側はRoot Keyでcredentialを検証し、そこに束縛されたleaf公開鍵でevent署名を検証する。このためactorを後でRemoveしても、そのdeviceがmembership中に作った過去eventの正当性は失われず、checkpointを再構築できる。
+
+SegmentKeyWrapもgrantor deviceの同じkeyで署名するが、こちらはcurrent Self Group stateから公開鍵を得る。過去eventのauthenticityと、現在新しいkey grantを行えるauthorizationを分離している。
 
 したがってSelf Groupは現在、Vaultに対して次の問いに答えるauthorization boundaryでもある。
 
 ```text
-「このmutation/wrapを作ったdeviceは、現在このidentityのmemberか」
+historical event: 「Rootが認可したdeviceがこのeventへ署名したか」
+current wrap:     「このgrantを作ったdeviceは現在memberか」
 ```
 
 Local Vaultのreader/writerを構築するにもSelf Group stateが必要である。MLSは単にAccount画面のdevice listを作る補助ではない。

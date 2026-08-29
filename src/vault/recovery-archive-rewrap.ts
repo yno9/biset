@@ -52,6 +52,6 @@ export async function rewrapRecoveryArchiveForCurrentEpoch(
   }
 }
 
-function copyEvent(value: VaultEventV1): VaultEventV1 { return { ...value, targetIds: [...value.targetIds], objectRefs: [...value.objectRefs], parents: [...value.parents], signature: value.signature.slice() } }
+function copyEvent(value: VaultEventV1): VaultEventV1 { return { ...value, ...(value.actorCredential ? { actorCredential: value.actorCredential.slice() } : {}), targetIds: [...value.targetIds], objectRefs: [...value.objectRefs], parents: [...value.parents], signature: value.signature.slice() } }
 function copyObject(value: VaultObjectV1): VaultObjectV1 { return { ...value, nonce: value.nonce.slice(), ciphertext: value.ciphertext.slice(), ciphertextHash: value.ciphertextHash.slice(), aad: value.aad.slice() } }
 function copyWrap(value: SegmentKeyWrapV1): SegmentKeyWrapV1 { return { ...value, nonce: value.nonce.slice(), aad: value.aad.slice(), wrappedSegmentKey: value.wrappedSegmentKey.slice(), signature: value.signature.slice() } }

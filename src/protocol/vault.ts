@@ -35,6 +35,10 @@ export interface VaultEventV1 {
   id: VaultEventId
   identityId: IdentityId
   actorDeviceId: DeviceId
+  /** Root-authorized MLS device credential used to verify this historical
+   * event after the actor is no longer a current Self Group member. Older
+   * local/checkpoint records may omit it and are enriched during restore. */
+  actorCredential?: Uint8Array
   actorSeq: number
   kind: VaultEventKind
   targetIds: string[]

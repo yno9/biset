@@ -579,13 +579,13 @@ export async function migrateLocalSegmentKeysToStorageRoot(
  * transfer frame is a property of the receiver's OWN current self-group
  * view, not of who is asking.
  */
-export function buildRestoreTransferVerifier(selfGroupStore: MlsSelfGroupStateStore, identityId: string): RestoreTransferVerifier {
+export function buildRestoreTransferVerifier(selfGroupStore: MlsSelfGroupStateStore, identityId: string, rootPublicKey?: Uint8Array): RestoreTransferVerifier {
   const loadState = async (): Promise<ClientState> => {
     const stored = await selfGroupStore.load(identityId)
     if (!stored) throw new Error('buildRestoreTransferVerifier: no self-group state for this identity')
     return stored.state
   }
-  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
+  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState, rootPublicKey)
   return {
     eventVerifier: verifier,
     verifyCurrentEpochWrap: wrap => verifier.verify(wrap.grantorDeviceId, segmentKeyWrapSigningBytes(wrap), wrap.signature),
@@ -703,7 +703,8 @@ export function buildVaultDeliveryProjector(
     return stored.state
   }
   const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
-  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
+  const rootPublicKey = masterSeedHex ? deriveRootKey(fromHex(masterSeedHex)).publicKey : undefined
+  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState, rootPublicKey)
   return new VaultDeliveryProjector({ identityId, currentSnapshot, epochs, verifier, ...(masterSeedHex ? { storageKek: deriveVaultStorageKek(fromHex(masterSeedHex)) } : {}) })
 }
 
@@ -732,7 +733,8 @@ export function buildLocalJmapProjectionRebuild(
     return stored.state
   }
   const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
-  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
+  const rootPublicKey = masterSeedHex ? deriveRootKey(fromHex(masterSeedHex)).publicKey : undefined
+  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState, rootPublicKey)
   return async () => {
     const projection = await rebuildLocalJmapProjection({ identityId, records, wraps, epochs, verifier, ...(masterSeedHex ? { storageKek: deriveVaultStorageKek(fromHex(masterSeedHex)) } : {}) })
     await projections.writeProjection(identityId, projection, { state: projection.state })

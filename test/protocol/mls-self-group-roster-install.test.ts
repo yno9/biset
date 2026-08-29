@@ -142,7 +142,12 @@ describe('roster install atop self-group bootstrap', () => {
       parents: [],
       createdAt: '2026-08-30T00:00:00.000Z',
     }, new MlsMembershipSegmentKeyWrapSigner(deviceBKid, async () => stateB!))
+    expect(event.actorCredential).toBeDefined()
     expect(await verifyVaultEvent(event, new MlsMembershipSegmentKeyWrapVerifier(async () => stateA!))).toBe(false)
+    // Historical validity is independent of current membership: the Root-
+    // authorized credential embedded by B verifies even against A's stale
+    // pre-join tree (and continues to do so after B is later removed).
+    expect(await verifyVaultEvent(event, new MlsMembershipSegmentKeyWrapVerifier(async () => stateA!, ed25519.getPublicKey(deviceA.rootPrivateKey)))).toBe(true)
     expect(await verifyVaultEvent(event, new MlsMembershipSegmentKeyWrapVerifier(async () => stateAAfterB!))).toBe(true)
 
     ds.close()

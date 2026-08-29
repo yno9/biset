@@ -205,7 +205,7 @@ function recoveryArchiveWire(value: RecoveryArchiveV1) {
 }
 
 function manifestWire(value: VaultManifestV1) { return { version: value.version, identityId: value.identityId, eventIds: value.eventIds, objectIds: value.objectIds, root: value.root, createdAt: value.createdAt } }
-function eventWire(value: VaultEventV1) { return { version: value.version, id: value.id, identityId: value.identityId, actorDeviceId: value.actorDeviceId, actorSeq: value.actorSeq, kind: value.kind, targetIds: value.targetIds, objectRefs: value.objectRefs, parents: value.parents, createdAt: value.createdAt, signature: bytesToBase64url(value.signature) } }
+function eventWire(value: VaultEventV1) { return { version: value.version, id: value.id, identityId: value.identityId, actorDeviceId: value.actorDeviceId, ...(value.actorCredential ? { actorCredential: bytesToBase64url(value.actorCredential) } : {}), actorSeq: value.actorSeq, kind: value.kind, targetIds: value.targetIds, objectRefs: value.objectRefs, parents: value.parents, createdAt: value.createdAt, signature: bytesToBase64url(value.signature) } }
 function objectWire(value: VaultObjectV1) { return { version: value.version, objectId: value.objectId, segmentId: value.segmentId, nonce: bytesToBase64url(value.nonce), ciphertext: bytesToBase64url(value.ciphertext), ciphertextHash: bytesToBase64url(value.ciphertextHash), plaintextLength: value.plaintextLength, aad: bytesToBase64url(value.aad) } }
 
 function manifestFromWire(value: Record<string, unknown>): VaultManifestV1 {
@@ -217,9 +217,11 @@ function manifestFromWire(value: Record<string, unknown>): VaultManifestV1 {
 function eventFromWire(value: unknown): VaultEventV1 {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('recovery archive event shape is invalid')
   const event = value as Record<string, unknown>
-  exactKeys(event, ['version', 'id', 'identityId', 'actorDeviceId', 'actorSeq', 'kind', 'targetIds', 'objectRefs', 'parents', 'createdAt', 'signature'], 'recovery archive event')
+  const hasCredential = Object.prototype.hasOwnProperty.call(event, 'actorCredential')
+  exactKeys(event, ['version', 'id', 'identityId', 'actorDeviceId', ...(hasCredential ? ['actorCredential'] : []), 'actorSeq', 'kind', 'targetIds', 'objectRefs', 'parents', 'createdAt', 'signature'], 'recovery archive event')
   if (event.version !== 1 || typeof event.id !== 'string' || typeof event.identityId !== 'string' || typeof event.actorDeviceId !== 'string' || typeof event.actorSeq !== 'number' || typeof event.kind !== 'string' || !Array.isArray(event.targetIds) || !event.targetIds.every(id => typeof id === 'string') || !Array.isArray(event.objectRefs) || !event.objectRefs.every(id => typeof id === 'string') || !Array.isArray(event.parents) || !event.parents.every(id => typeof id === 'string') || typeof event.createdAt !== 'string' || typeof event.signature !== 'string') throw new TypeError('recovery archive event shape is invalid')
-  return { version: 1, id: event.id, identityId: event.identityId, actorDeviceId: event.actorDeviceId, actorSeq: event.actorSeq, kind: event.kind as VaultEventV1['kind'], targetIds: [...event.targetIds], objectRefs: [...event.objectRefs], parents: [...event.parents], createdAt: event.createdAt, signature: base64urlToBytes(event.signature) }
+  if (hasCredential && typeof event.actorCredential !== 'string') throw new TypeError('recovery archive event credential is invalid')
+  return { version: 1, id: event.id, identityId: event.identityId, actorDeviceId: event.actorDeviceId, ...(hasCredential ? { actorCredential: base64urlToBytes(event.actorCredential as string) } : {}), actorSeq: event.actorSeq, kind: event.kind as VaultEventV1['kind'], targetIds: [...event.targetIds], objectRefs: [...event.objectRefs], parents: [...event.parents], createdAt: event.createdAt, signature: base64urlToBytes(event.signature) }
 }
 
 function objectFromWire(value: unknown, snapshotIdentityId: IdentityId): VaultObjectV1 {
@@ -245,7 +247,7 @@ function segmentKeyFromWire(value: unknown): { segmentId: SegmentId; key: Uint8A
 }
 
 function copySnapshot(value: RecoveryArchiveSnapshotV1): RecoveryArchiveSnapshotV1 {
-  return { ...value, manifest: { ...value.manifest, eventIds: [...value.manifest.eventIds], objectIds: [...value.manifest.objectIds] }, events: value.events.map(event => ({ ...event, targetIds: [...event.targetIds], objectRefs: [...event.objectRefs], parents: [...event.parents], signature: event.signature.slice() })), objects: value.objects.map(object => ({ ...object, nonce: object.nonce.slice(), ciphertext: object.ciphertext.slice(), ciphertextHash: object.ciphertextHash.slice(), aad: object.aad.slice() })), segmentKeys: value.segmentKeys.map(segment => ({ segmentId: segment.segmentId, key: segment.key.slice() })) }
+  return { ...value, manifest: { ...value.manifest, eventIds: [...value.manifest.eventIds], objectIds: [...value.manifest.objectIds] }, events: value.events.map(event => ({ ...event, ...(event.actorCredential ? { actorCredential: event.actorCredential.slice() } : {}), targetIds: [...event.targetIds], objectRefs: [...event.objectRefs], parents: [...event.parents], signature: event.signature.slice() })), objects: value.objects.map(object => ({ ...object, nonce: object.nonce.slice(), ciphertext: object.ciphertext.slice(), ciphertextHash: object.ciphertextHash.slice(), aad: object.aad.slice() })), segmentKeys: value.segmentKeys.map(segment => ({ segmentId: segment.segmentId, key: segment.key.slice() })) }
 }
 
 function copyArchive(value: RecoveryArchiveV1): RecoveryArchiveV1 {
