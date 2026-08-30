@@ -122,15 +122,37 @@ export async function installRosterProjection(
   roster: TrustedDeviceRoster,
   verifier: Pick<DeviceControlSignatureVerifier, 'verifyRosterInstall'>,
   install: RosterInstallV1,
+  latestDeliverySeq?: (identityId: IdentityId) => Promise<import('../../protocol/ids.ts').DeliverySeq>,
 ): Promise<RosterInstallOutcome> {
   assertAcceptedSelfGroupProjection(install.projection)
   const existing = await roster.projection(install.projection.identityId)
-  const authorizedDevices = existing ? existing.devices : install.projection.devices
-  const installer = authorizedDevices.find(device => device.deviceId === install.installerDeviceId)
+  // Admission is controlled by the proposed leaf's current-generation
+  // Root+Sign-authorized MLS credential. Requiring the installer to remain
+  // in core's previous cache strands a restored device whenever the old
+  // endpoint is offline, and also makes a successfully rotated credential
+  // unverifiable because the cached credential belongs to the old Sign
+  // generation. The WebVH resolver used by verifyRosterInstall rejects an
+  // old generation, so a rotated-out endpoint cannot use this path.
+  const installer = install.projection.devices.find(device => device.deviceId === install.installerDeviceId)
   if (!installer) return 'rejected'
   const verified = await verifier.verifyRosterInstall(install, installer)
   if (!verified) return 'rejected'
-  return roster.installAcceptedProjection(install.projection)
+  let projection = install.projection
+  if (latestDeliverySeq) {
+    const latest = await latestDeliverySeq(projection.identityId)
+    const priorFloors = new Map(existing?.devices.map(device => [device.deviceId, device.deliveryFloor]) ?? [])
+    projection = {
+      ...projection,
+      devices: projection.devices.map(device => ({
+        ...device,
+        // Existing devices keep their original admission floor. A genuinely
+        // new endpoint begins after everything already accepted by core;
+        // this value is server-derived, never trusted from the install body.
+        deliveryFloor: priorFloors.get(device.deviceId) ?? latest,
+      })),
+    }
+  }
+  return roster.installAcceptedProjection(projection)
 }
 
 async function currentDevice(

@@ -191,6 +191,18 @@ export class SqliteAnchorOidcState implements AnchorAuthorizationCodeStore, Anch
     return transaction()
   }
 
+  async activateGeneration(rootSubject: string, generation: string, activatedAt: number): Promise<void> {
+    this.database.transaction(() => {
+      this.database.query(`UPDATE oid4vp_login_credentials
+        SET revoked_at = COALESCE(revoked_at, ?)
+        WHERE root_subject = ? AND generation <> ?`).run(activatedAt, rootSubject, generation)
+      this.database.query('DELETE FROM oid4vp_sessions WHERE root_subject = ? AND generation <> ?').run(rootSubject, generation)
+      this.database.query('DELETE FROM oid4vp_completions WHERE root_subject = ? AND generation <> ?').run(rootSubject, generation)
+      this.database.query('DELETE FROM oidc_authorization_codes WHERE root_subject = ? AND generation <> ?').run(rootSubject, generation)
+      this.database.query('DELETE FROM oidc_refresh_tokens WHERE root_subject = ? AND generation <> ?').run(rootSubject, generation)
+    })()
+  }
+
   async putCredential(value: AnchorLoginCredentialRecord): Promise<void> {
     this.database.query(`INSERT INTO oid4vp_login_credentials
       (credential_id, credential_hash, account_ref, root_subject, generation, holder_key_id, issued_at, expires_at, revoked_at)

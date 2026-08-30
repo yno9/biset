@@ -30,7 +30,11 @@ export interface BisetCoreApplicationOptions {
   /** Endpoint-signed ingress pull/ACK plane; never an external adapter offer API. */
   ingressStore?: IngressStore
   /** Roster install plane; requires both the store and its signature verifier. */
-  roster?: { store: TrustedDeviceRoster; verifier: Pick<DeviceControlSignatureVerifier, 'verifyRosterInstall'> }
+  roster?: {
+    store: TrustedDeviceRoster
+    verifier: Pick<DeviceControlSignatureVerifier, 'verifyRosterInstall'>
+    latestDeliverySeq?: (identityId: import('../protocol/ids.ts').IdentityId) => Promise<import('../protocol/ids.ts').DeliverySeq>
+  }
   /** Authenticated device -> core outbound mail submission (PLAN.md §6.2). */
   mailSubmission?: CoreMailSubmissionAdapter
   /** did:webvh log hosting (GET/PUT/POST .well-known/did.jsonl) for the
@@ -74,7 +78,7 @@ export function createBisetCoreFetchHandler(options: BisetCoreApplicationOptions
   const vaultDelivery = options.vaultDeliveryStore && createVaultDeliveryHttpHandler(options.vaultDeliveryStore)
   const restoreControl = options.restoreControlStore && createRestoreControlHttpHandler(options.restoreControlStore)
   const ingress = options.ingressStore && createIngressHttpHandler(options.ingressStore)
-  const roster = options.roster && createRosterInstallHttpHandler(options.roster.store, options.roster.verifier)
+  const roster = options.roster && createRosterInstallHttpHandler(options.roster.store, options.roster.verifier, options.roster.latestDeliverySeq)
   const mailSubmission = options.mailSubmission && createMailSubmissionHttpHandler(options.mailSubmission)
   const webvh = options.webvh && createWebvhHttpHandler(options.webvh, { domainHeader: 'x-biset-domain' })
   const didWeb = options.webvh && options.didWeb && createDidWebHttpHandler(options.didWeb, options.webvh, { domainHeader: 'x-biset-domain' })

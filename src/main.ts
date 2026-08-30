@@ -341,6 +341,10 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
     const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: coordinatorUrl, deviceCredential: encodeMlsDeviceCredential(credential) })
     const state = await rotateSelfGroupGeneration(selfGroupStore, transport, identity.did, deviceKid, credential, sign)
+    if (!coreBaseUrl) throw new Error('Self Group roster endpoint is not configured')
+    await maintainSelfGroup(selfGroupStore, keyStore, identity, {
+      coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl, wraps: vaultStore, segments: vaultStore,
+    })
     vaultDevices = memberKids(state, identity.did).map(deviceId => ({ deviceId, current: deviceId === identity.deviceKid }))
     await coordinatorOidc?.clear().catch(() => {})
     coordinatorOidc = undefined

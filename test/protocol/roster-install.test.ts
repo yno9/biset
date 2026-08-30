@@ -68,24 +68,44 @@ describe('installRosterProjection (core as MLS DS)', () => {
     expect(await roster.isTrustedDevice('did:web:alice.example', 'device-b')).toBe(true)
   })
 
-  test('post-genesis: a device the CURRENT roster does not trust cannot install a new epoch, even if it signs its own way in', async () => {
+  test('post-genesis: a current Root+Sign-authorized restored device can replace a stale cached roster', async () => {
     const roster = new MemoryTrustedDeviceRoster()
     await installRosterProjection(roster, verifier(), signedInstall(
       { version: 1, projection: projection(), installerDeviceId: 'device-a', installedAt: '2026-08-23T00:00:00.000Z' },
       deviceAKey,
     ))
 
-    // device-b is not yet a trusted device; it cannot bootstrap itself in by
-    // signing an install that adds itself.
-    const forged = projection({
+    const restored = projection({
       epoch: '2',
       devices: [{ deviceId: 'device-b', deliveryFloor: '0', signingPublicKey: deviceBPublicKey, deviceCredential: new Uint8Array([2]) }],
       acceptedAt: '2026-08-23T00:01:00.000Z',
     })
-    const install = signedInstall({ version: 1, projection: forged, installerDeviceId: 'device-b', installedAt: '2026-08-23T00:01:00.000Z' }, deviceBKey)
-    expect(await installRosterProjection(roster, verifier(), install)).toBe('rejected')
-    expect(await roster.isTrustedDevice('did:web:alice.example', 'device-a')).toBe(true)
-    expect(await roster.isTrustedDevice('did:web:alice.example', 'device-b')).toBe(false)
+    const install = signedInstall({ version: 1, projection: restored, installerDeviceId: 'device-b', installedAt: '2026-08-23T00:01:00.000Z' }, deviceBKey)
+    expect(await installRosterProjection(roster, verifier(), install)).toBe('installed')
+    expect(await roster.isTrustedDevice('did:web:alice.example', 'device-a')).toBe(false)
+    expect(await roster.isTrustedDevice('did:web:alice.example', 'device-b')).toBe(true)
+  })
+
+  test('server replaces a newly admitted device floor with its own latest delivery sequence', async () => {
+    const roster = new MemoryTrustedDeviceRoster()
+    await installRosterProjection(roster, verifier(), signedInstall(
+      { version: 1, projection: projection(), installerDeviceId: 'device-a', installedAt: '2026-08-23T00:00:00.000Z' },
+      deviceAKey,
+    ), async () => '0')
+    const next = projection({
+      epoch: '2',
+      devices: [
+        { deviceId: 'device-a', deliveryFloor: '99', signingPublicKey: deviceAPublicKey, deviceCredential: new Uint8Array([1]) },
+        { deviceId: 'device-b', deliveryFloor: '0', signingPublicKey: deviceBPublicKey, deviceCredential: new Uint8Array([2]) },
+      ],
+      acceptedAt: '2026-08-23T00:01:00.000Z',
+    })
+    const install = signedInstall({ version: 1, projection: next, installerDeviceId: 'device-b', installedAt: '2026-08-23T00:01:00.000Z' }, deviceBKey)
+    expect(await installRosterProjection(roster, verifier(), install, async () => '17')).toBe('installed')
+    const accepted = await roster.projection('did:web:alice.example')
+    expect(accepted?.devices.map(device => [device.deviceId, device.deliveryFloor])).toEqual([
+      ['device-a', '0'], ['device-b', '17'],
+    ])
   })
 
   test('rejects a well-formed install whose signature does not match the claimed installer', async () => {

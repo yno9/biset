@@ -291,7 +291,16 @@ export async function maintainSelfGroup(
   const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: opts.mlsDeliveryBaseUrl, deviceCredential: encodeMlsDeviceCredential(deviceCredential), fetch: opts.fetch })
   const rosterTransport = new CoreRosterInstallTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
 
-  const deliveryFloorForNewDevice = () => currentVaultDeliveryLatestSeq(opts.coreBaseUrl, record.did, record.deviceKid!, sign, opts.fetch, now)
+  const deliveryFloorForNewDevice = async () => {
+    const projection = await rosterTransport.fetchProjection(record.did)
+    // A current roster member can ask core for the exact latest sequence.
+    // A newly restored/current-generation member cannot use the old roster
+    // yet; zero is only a wire placeholder in that case because production
+    // core replaces every new member floor with its server-side latestSeq.
+    return projection?.devices.some(device => device.deviceId === record.deviceKid)
+      ? currentVaultDeliveryLatestSeq(opts.coreBaseUrl, record.did, record.deviceKid!, sign, opts.fetch, now)
+      : deliverySeq(0n)
+  }
   const state = await reflectPendingSelfGroupCommits(
     selfGroupStore, mlsTransport, rosterTransport, record.did, record.deviceKid, sign, deliveryFloorForNewDevice, now,
   )
@@ -302,10 +311,11 @@ export async function maintainSelfGroup(
   // boot. Repair that exact missing-genesis case idempotently. A zero floor is
   // correct here: without an installed roster core could not have accepted
   // any vault delivery for this identity yet.
-  if (!(await rosterTransport.fetchProjection(record.did))) {
+  const acceptedProjection = await rosterTransport.fetchProjection(record.did)
+  if (!acceptedProjection || BigInt(acceptedProjection.epoch) < epochOf(state ?? oldState)) {
     await installCurrentRosterProjection(
       rosterTransport, record.did, record.deviceKid, state ?? oldState, sign,
-      async () => deliverySeq(0n), now,
+      deliveryFloorForNewDevice, now,
     )
   }
 

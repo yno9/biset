@@ -142,7 +142,10 @@ export function sameAcceptedSelfGroupProjection(left: AcceptedSelfGroupProjectio
   return left.identityId === right.identityId
     && left.selfGroupId === right.selfGroupId
     && left.epoch === right.epoch
-    && left.acceptedAt === right.acceptedAt
+    // acceptedAt is receipt metadata, not MLS state. Two devices may
+    // independently reflect the exact same epoch at different wall-clock
+    // times; treating that timestamp as a tie-break conflict strands the
+    // second reflector even though every security-relevant field agrees.
     && left.devices.length === right.devices.length
     && left.devices.every((device, index) => {
       const other = right.devices[index]

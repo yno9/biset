@@ -65,6 +65,9 @@ export interface AnchorOid4vpEnrollmentChallenge {
 
 export interface AnchorOid4vpStore {
   accountRef(rootSubject: string): Promise<string>
+  /** Makes one WebVH generation current for login and invalidates every
+   * credential/session minted under an older Sign generation. */
+  activateGeneration(rootSubject: string, generation: string, activatedAt: number): Promise<void>
   putCredential(record: AnchorLoginCredentialRecord): Promise<void>
   credential(credentialId: string): Promise<AnchorLoginCredentialRecord | undefined>
   revokeCredential(credentialId: string, revokedAt: number): Promise<boolean>
@@ -94,6 +97,15 @@ export class MemoryAnchorOid4vpStore implements AnchorOid4vpStore {
     const accountRef = randomToken(32)
     this.accounts.set(rootSubject, accountRef)
     return accountRef
+  }
+  async activateGeneration(rootSubject: string, generation: string, activatedAt: number): Promise<void> {
+    for (const [id, value] of this.credentials) {
+      if (value.rootSubject === rootSubject && value.generation !== generation && value.revokedAt === undefined) {
+        this.credentials.set(id, { ...value, revokedAt: activatedAt })
+      }
+    }
+    for (const [hash, value] of this.sessions) if (value.rootSubject === rootSubject && value.generation !== generation) this.sessions.delete(hash)
+    for (const [hash, value] of this.completions) if (value.rootSubject === rootSubject && value.generation !== generation) this.completions.delete(hash)
   }
   async putCredential(value: AnchorLoginCredentialRecord): Promise<void> { if (this.credentials.has(value.credentialId)) throw new Error('credential ID already exists'); this.credentials.set(value.credentialId, { ...value }) }
   async credential(id: string): Promise<AnchorLoginCredentialRecord | undefined> { const value = this.credentials.get(id); return value && { ...value } }
@@ -164,6 +176,7 @@ export class AnchorOid4vpProvider implements AnchorSubjectAuthenticator {
     const validFrom = new Date(now.getTime() - 60_000)
     const expiresAt = new Date(now.getTime() + this.credentialTtl * 1000)
     const accountRef = await this.options.store.accountRef(rootSubject)
+    await this.options.store.activateGeneration(rootSubject, generation, seconds(now))
     const credential = issueBisetAnchorLoginCredential({
       issuer: this.issuer, signingKeyId: this.signingKeyId,
       signingPrivateKey: this.options.credentialSigningPrivateKey,

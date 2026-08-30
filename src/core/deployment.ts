@@ -87,7 +87,7 @@ export function createBisetCoreDeployment(options: BisetCoreDeploymentOptions): 
       vaultDeliveryStore: delivery,
       restoreControlStore: restoreControl,
       ingressStore: ingress,
-      roster: { store: roster, verifier },
+      roster: { store: roster, verifier, latestDeliverySeq: async identityId => (await delivery.status(identityId)).latestSeq },
       mailSubmission: mailSubmissionAdapter,
       webvh,
       didWeb,

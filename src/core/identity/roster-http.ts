@@ -17,6 +17,7 @@ const MAX_BODY_BYTES = 16 * 1024
 export function createRosterInstallHttpHandler(
   roster: TrustedDeviceRoster,
   verifier: Pick<DeviceControlSignatureVerifier, 'verifyRosterInstall'>,
+  latestDeliverySeq?: (identityId: import('../../protocol/ids.ts').IdentityId) => Promise<import('../../protocol/ids.ts').DeliverySeq>,
 ): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
@@ -32,7 +33,7 @@ export function createRosterInstallHttpHandler(
       if (request.method !== 'POST') return text(405, 'Method not allowed')
       if (path !== '/v1/roster/install') return text(404, 'Not found')
       const install = decodeRosterInstallWire(await requestText(request))
-      const outcome = await installRosterProjection(roster, verifier, install)
+      const outcome = await installRosterProjection(roster, verifier, install, latestDeliverySeq)
       if (outcome === 'rejected') return text(403, 'rejected')
       return json(outcome === 'installed' ? 201 : 200, JSON.stringify({ outcome }))
     } catch (error) {

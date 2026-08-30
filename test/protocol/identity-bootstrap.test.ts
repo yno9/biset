@@ -145,7 +145,7 @@ function setupCore() {
   const rosterVerifier = new Ed25519DeviceControlSignatureVerifier({ resolveEd25519PublicKey })
   const vaultDeliveryStore = new MemoryVaultDeliveryStore(rosterBackedVaultDeliveryAuthorizer(roster, rosterVerifier))
   const coreHandle = createBisetCoreFetchHandler({
-    roster: { store: roster, verifier: rosterVerifier },
+    roster: { store: roster, verifier: rosterVerifier, latestDeliverySeq: async identityId => (await vaultDeliveryStore.status(identityId)).latestSeq },
     vaultDeliveryStore,
   })
   return { anchor, ds, roster, vaultDeliveryStore, coreHandle, mlsHandle }
@@ -314,8 +314,9 @@ describe('maintainSelfGroup', () => {
       const restored = await restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
         domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, signMnemonic: mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
-      // Device B's own install attempt was rejected -- not yet reflected.
-      expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(false)
+      // Root + current Sign authorization lets the restored device reflect
+      // its already-accepted external MLS commit without the old endpoint.
+      expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(true)
 
       // Device A's own boot-time maintenance (main.ts's bootClient) catches
       // up on device B's commit and reflects it.

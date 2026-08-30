@@ -217,11 +217,10 @@ describe('end-to-end: create -> write -> deliver -> restore -> project', () => {
       const restored = await restoreIdentity(memoryIdentityRecordStore(), selfGroupStoreB, memoryKeyPackageStore(), {
         domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, signMnemonic: mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
-      // B's own install was rejected (not yet trusted) -- A's boot-time
-      // maintenance is what actually reflects B into the roster AND
-      // self-grants a re-wrap of A's existing segment to the new epoch
-      // (identity/bootstrap.ts's selfGrantSegmentRewraps).
-      expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(false)
+      // B's Root + current-Sign credential reflects its accepted external
+      // commit immediately. A still performs boot-time maintenance to catch
+      // up its local MLS state and self-grant the new-epoch wrap.
+      expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(true)
       await maintainSelfGroup(selfGroupStoreA, memoryKeyPackageStore(), created.record, {
         coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, wraps: wrapsA, segments: segmentsA,
       })

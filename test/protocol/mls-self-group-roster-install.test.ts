@@ -90,7 +90,7 @@ describe('roster install atop self-group bootstrap', () => {
     roster.close()
   })
 
-  test('a newly-joined device cannot install itself; the existing device reflects it instead', async () => {
+  test('a newly-joined current-generation device installs itself and the existing device converges idempotently', async () => {
     const kpA = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
     const kpB = await generateOwnKeyPackage(deviceB.credential, deviceB.signaturePrivateKey)
     const { ds, roster, mlsTransport, rosterTransport } = setup({ [deviceAKid]: kpA, [deviceBKid]: kpB })
@@ -109,15 +109,15 @@ describe('roster install atop self-group bootstrap', () => {
     expect(stateB).toBeDefined()
     expect(new Set(memberKids(stateB!, identityId))).toEqual(new Set([deviceAKid, deviceBKid]))
 
-    // Device B's own install attempt was rejected: it is not yet a trusted
-    // device under the previous (device-A-only) epoch.
-    expect(await roster.isTrustedDevice(identityId, deviceBKid)).toBe(false)
+    // Device B is Root + current-Sign authorized and may reflect the
+    // external commit immediately; no online approval from A is required.
+    expect(await roster.isTrustedDevice(identityId, deviceBKid)).toBe(true)
     expect(await roster.isTrustedDevice(identityId, deviceAKid)).toBe(true)
 
     // Device A only knows the new epoch once it actually catches up on
     // device B's external commit -- reflectPendingSelfGroupCommits pulls it
     // from the DS the same way a real second session would, applies it, and
-    // (since the epoch advanced) reflects the new roster on B's behalf.
+    // (since the epoch advanced) confirms the same roster idempotently.
     const stateAAfterB = await reflectPendingSelfGroupCommits(
       storeA, mlsTransport, rosterTransport, identityId, deviceAKid, signerFor(kpA), async () => '99',
     )
