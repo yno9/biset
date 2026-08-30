@@ -5,6 +5,12 @@
   // tree only -- whatever it imports from `didcomm/` gets checked under
   // these same (DOM-less) rules, which is what proves it stays free of
   // biset-core/roster/vault coupling (server.ts's own header comment).
+  //
+  // `mail-plugin/` is excluded on purpose: it's the mediator+mail-plugin
+  // deploy (this project's own "B", the A/B mediator split), a genuinely
+  // separate deploy unit that DOES reuse core/adapters/mail-smtp-protocol.ts
+  // -- checked instead under tsconfig.mail-plugin.json, so this project keeps
+  // proving the blind mediator (server.ts, "A") never gains that coupling.
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
@@ -17,5 +23,6 @@
     "types": ["bun"]
   },
   "include": ["src/mediator/**/*"],
+  "exclude": ["src/mediator/mail-plugin/**"],
   "typeRoots": ["node_modules/@types"]
 }

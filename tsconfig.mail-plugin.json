@@ -1,0 +1,22 @@
+{
+  // The mediator+mail-plugin deploy ("B" in the A/B split -- src/mediator/
+  // index.ts alone is "A"). Its own project, not folded into
+  // tsconfig.mediator.json, precisely because it DOES import
+  // core/adapters/mail-smtp-protocol.ts and smtp-socket-server.ts (reused
+  // rather than re-forked, per the 2026-08-30 decision) -- keeping A's own
+  // tsconfig excluding this directory is what still proves the blind
+  // mediator itself (server.ts) never gains that coupling.
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ESNext"],
+    "types": ["bun"]
+  },
+  "include": ["src/mediator/mail-plugin/**/*"],
+  "typeRoots": ["node_modules/@types"]
+}

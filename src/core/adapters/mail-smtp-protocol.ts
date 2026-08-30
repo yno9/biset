@@ -29,8 +29,16 @@ export interface SmtpRecipientResolution {
   deviceIds: string[]
 }
 
-export interface AcceptIngressInput {
-  identityId: string
+/** `TResolution` is whatever `resolveRecipient` returns for a RCPT this
+ * session accepted -- biset-core's own identityId+deviceIds shape by
+ * default, but genuinely just an opaque payload as far as this pure state
+ * machine is concerned: it never reads a field off it, only carries it from
+ * `resolveRecipient` through to `acceptIngress` per recipient (feedback:
+ * unify common logic -- mediator/mail-plugin's own SMTP listener has no
+ * identityId/deviceIds concept at all, and reuses this exact class with a
+ * `resolution: undefined` shape instead of forking a near-duplicate copy of
+ * the whole EHLO/MAIL/RCPT/DATA/STARTTLS grammar). */
+export interface AcceptIngressInput<TResolution = SmtpRecipientResolution> {
   recipientAddress: string
   mailFrom: string
   /** The domain argument from EHLO/HELO, or undefined if the client sent
@@ -40,6 +48,7 @@ export interface AcceptIngressInput {
    * sourceEvidence, not used for routing. */
   heloDomain: string | undefined
   rawRfc5322: Uint8Array
+  resolution: TResolution
 }
 
 /** Thrown by an injected `acceptIngress` to signal store congestion
@@ -53,7 +62,7 @@ export type SmtpEffect =
   | { kind: 'starttls' }
   | { kind: 'close' }
 
-export interface SmtpSessionDeps {
+export interface SmtpSessionDeps<TResolution = SmtpRecipientResolution> {
   /** Announced in the greeting and echoed in the EHLO response context. */
   helloName: string
   /** Advertise STARTTLS this session -- false once already TLS, or when no
@@ -65,8 +74,8 @@ export interface SmtpSessionDeps {
    * banner desyncs every later reply by one command). */
   sendGreeting: boolean
   maxMessageBytes: number
-  resolveRecipient(reference: { address: string }): Promise<SmtpRecipientResolution | undefined>
-  acceptIngress(input: AcceptIngressInput): Promise<void>
+  resolveRecipient(reference: { address: string }): Promise<TResolution | undefined>
+  acceptIngress(input: AcceptIngressInput<TResolution>): Promise<void>
 }
 
 const ERROR_THRESHOLD = 3
@@ -74,13 +83,13 @@ const MAX_COMMAND_LINE_BYTES = 4096
 
 type Mode = 'command' | 'data'
 
-interface PendingRecipient {
+interface PendingRecipient<TResolution> {
   address: string
-  resolution: SmtpRecipientResolution
+  resolution: TResolution
 }
 
-export class SmtpSession {
-  private readonly deps: SmtpSessionDeps
+export class SmtpSession<TResolution = SmtpRecipientResolution> {
+  private readonly deps: SmtpSessionDeps<TResolution>
   private buffer: Uint8Array = new Uint8Array(0)
   private mode: Mode = 'command'
   private greeted = false
@@ -88,13 +97,13 @@ export class SmtpSession {
   private errorCount = 0
   private heloDomain: string | undefined
   private mailFrom: string | undefined
-  private recipients: PendingRecipient[] = []
+  private recipients: PendingRecipient<TResolution>[] = []
   private dataChunks: Uint8Array[] = []
   private dataBytes = 0
   private dataOverflow = false
   private greetingSent = false
 
-  constructor(deps: SmtpSessionDeps) {
+  constructor(deps: SmtpSessionDeps<TResolution>) {
     this.deps = deps
   }
 
@@ -247,7 +256,7 @@ export class SmtpSession {
     // passed to resolveRecipient, matching the SMTPUTF8-unsupported EHLO
     // capability list (no SMTPUTF8 advertised).
     if (!isAsciiPrintable(address)) return [reply('550 5.6.7 Non-ASCII recipient address is not supported')]
-    let resolution: SmtpRecipientResolution | undefined
+    let resolution: TResolution | undefined
     try {
       resolution = await this.deps.resolveRecipient({ address: address.toLowerCase() })
     } catch {
@@ -286,11 +295,11 @@ export class SmtpSession {
     for (const recipient of recipients) {
       try {
         await this.deps.acceptIngress({
-          identityId: recipient.resolution.identityId,
           recipientAddress: recipient.address,
           heloDomain: this.heloDomain,
           mailFrom,
           rawRfc5322,
+          resolution: recipient.resolution,
         })
         succeeded += 1
       } catch (error) {
@@ -376,7 +385,7 @@ export function parsePath(rest: string, prefix: string): string | undefined {
   return address.length === 0 ? undefined : address
 }
 
-function ehloResponse(deps: SmtpSessionDeps, domain: string): string {
+function ehloResponse(deps: { maxMessageBytes: number; tlsAdvertised: boolean }, domain: string): string {
   const caps = ['PIPELINING', '8BITMIME', 'ENHANCEDSTATUSCODES', `SIZE ${deps.maxMessageBytes}`]
   if (deps.tlsAdvertised) caps.push('STARTTLS')
   const lines = [`250-Hello ${domain}`, ...caps.map((cap, index) => `250${index === caps.length - 1 ? ' ' : '-'}${cap}`)]
