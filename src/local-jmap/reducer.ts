@@ -103,14 +103,6 @@ export function reduceLocalJmapProjection(
       // because this reducer has no mail-projection rule for it.
       continue
     }
-    if (mutation.kind === 'credential.mail-relationship.set') {
-      // Deliberately a no-op for the read-model: a private, per-mail-mediator
-      // relationship credential (vault/mail-relationship-credential.ts,
-      // PLAN_biset-mail-mediator.md section 4's relationship kid), read only
-      // by MailRelationshipCredentialReader directly off the vault events --
-      // never mail or mailbox state.
-      continue
-    }
     if (mutation.kind === 'contact-key.set') {
       // Deliberately a no-op for the read-model: private per-counterparty
       // DIDComm relationship credentials are read directly from encrypted

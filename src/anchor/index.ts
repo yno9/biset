@@ -22,7 +22,6 @@ const anchor = createBisetAnchorDeployment({
   domainHeader: Bun.env.ANCHOR_DOMAIN_HEADER ?? 'x-biset-domain',
   oidc: authentication?.oidc,
   oid4vp: authentication?.oid4vp,
-  apexDomain: Bun.env.ANCHOR_APEX_DOMAIN,
 })
 
 Bun.serve({ port, fetch: anchor.fetch })

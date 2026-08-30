@@ -41,12 +41,6 @@ import { didCommThreadId } from './didcomm/basicmessage.ts'
 import { registerWithMediator, startMediatorPolling, type MediatorPollHandle } from './didcomm/mediator-sync.ts'
 import type { DidCommSender } from './didcomm/mediator-transport.ts'
 import type { DeliveredMessage } from './didcomm/mediator-pickup.ts'
-import { startMailMediatorPolling } from './didcomm/mail-mediator-sync.ts'
-import type { PickupItem } from './mail-mediator/protocol.ts'
-import { MailRelationshipCredentialReader } from './vault/mail-relationship-credential-reader.ts'
-import { MailRelationshipCredentialVaultSink } from './vault/mail-relationship-credential-sink.ts'
-import { ensureMailRelationship } from './identity/mail-relationship.ts'
-import { MailMediatorSubmissionTransport } from './vault/mail-mediator-submission-transport.ts'
 import { ingestTransportIngress } from './vault/ingress-ingest.ts'
 import { flushVaultDeliveryOutbox } from './vault/delivery-outbox.ts'
 import type { IngressEnvelopeV1 } from './protocol/ingress.ts'
@@ -199,7 +193,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   // without needing a page reload.
   let identity = records[0]!
   const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did, identity.masterSeed)
-  const { apexDomain, anchorBaseUrl, anchorOidcClientId, coreBaseUrl, mediatorUrls, mailMediatorUrls, coordinatorUrl } = readBisetConfig()
+  const { apexDomain, anchorBaseUrl, anchorOidcClientId, coreBaseUrl, mediatorUrls, coordinatorUrl } = readBisetConfig()
   // Catch up MLS and repair every local SegmentKey wrap before any inbox,
   // credential, or relationship reader attempts decryption. Running this
   // near the end of boot used to render an empty inbox first; if a segment
@@ -593,31 +587,13 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         .catch(e => console.warn('[enableOpenPgpMail]', e instanceof Error ? e.message : e))
     }
 
-    // Mail Mediator outbound submission (PLAN_biset-mail-mediator.md
-    // section 12): opt-in via the first configured mailMediatorUrls entry,
-    // only once this identity's front-door DIDComm credential exists.
-    // Falls back to buildMailSubmitter's own default (CoreMailSubmissionTransport)
-    // otherwise -- switching submission paths must never regress a device
-    // that hasn't enabled DIDComm at all.
-    const mailMediatorSubmissionUrl = mailMediatorUrls[0]
-    const mailMediatorTransport = mailMediatorSubmissionUrl && anchorBaseUrl
-      ? new MailMediatorSubmissionTransport({
-          mediatorUrl: mailMediatorSubmissionUrl,
-          identityDid: identity.did,
-          anchorBaseUrl,
-          relationshipReader: new MailRelationshipCredentialReader({
-            identityId: identity.did, objects: vaultStore, events: vaultStore,
-            segmentKeys: boundary.resolver, verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did, fromHex(identity.rootPublicKey)).eventVerifier,
-          }),
-          relationshipSink: new MailRelationshipCredentialVaultSink({
-            identityId: identity.did, actorDeviceId: deviceKid,
-            nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(),
-            activeSegment: () => boundary.activeSegment(), currentSnapshot: () => readModel.snapshot(),
-            signer: boundary.signer, committer: vaultStore,
-          }),
-        })
-      : undefined
-    const submitter = buildMailSubmitter(vaultStore, selfGroupStore, identity, mutationSink, apexDomain, coreBaseUrl, mailMediatorTransport)
+    // TODO(mail-plugin bridge redesign): outbound submission via the
+    // DIDComm-mediator-plus-mail-plugin will replace CoreMailSubmissionTransport
+    // here once the plugin's `submit` message type exists (front-door kid
+    // sends directly, no relationship credential/VC layer -- see the
+    // redesign discussion). Falls back to buildMailSubmitter's own default
+    // for now.
+    const submitter = buildMailSubmitter(vaultStore, selfGroupStore, identity, mutationSink, apexDomain, coreBaseUrl)
     const localMutationSink: LocalJmapMutationSink = {
       emailSet: (arguments_, snapshot) => mutationSink.emailSet(arguments_, snapshot),
       submitMail: (arguments_, snapshot) => submitter.submitMail(arguments_, snapshot),
@@ -917,39 +893,13 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       const didCommKid = identity.didCommKid
       const own: DidCommSender = { did: identity.did, xKid: didCommKid, xPriv: fromHex(identity.didCommX25519PrivateKey) }
 
-      // Mail Mediator pickup bridge (PLAN_biset-mail-mediator.md section
-      // 4): the raw RFC 5322 bytes a spooled item carries are handed
-      // straight to the SAME MailIngressProjector core's own SMTP path
-      // uses (mail/ingress-projector.ts), via `protocol: 'mail'` --
-      // there is no separate "DIDComm-mail" ingress kind, just a
-      // different transport landing on the identical vault-commit shape.
-      async function onMailMediatorItem(item: PickupItem, mediatorUrl: string): Promise<void> {
-        const mailProjector = new MailIngressProjector({
-          identityId: identity.did,
-          actorDeviceId: identity.deviceKid!,
-          nextActorSeq: () => sequencer.nextActorSeq(),
-          initialParents: () => sequencer.initialParents(),
-          activeSegment: () => boundary.activeSegment(),
-          currentSnapshot: () => readModel.snapshot(),
-          signer: boundary.signer,
-        })
-        const envelope: IngressEnvelopeV1 = {
-          version: 1,
-          ingressId: canonicalHash('biset/mail-mediator-ingress/v1', { mediatorUrl, spoolId: item.spoolId }),
-          protocol: 'mail',
-          recipientIdentityId: identity.did,
-          recipientDeviceSnapshot: [identity.deviceKid!],
-          createdAt: item.createdAt,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-          transportMetadata: {},
-          sourceEvidence: new Uint8Array(0),
-          protectedPayload: item.encryptedBody,
-          protectedPayloadHash: sha256Bytes(item.encryptedBody),
-        }
-        await ingestTransportIngress(envelope, mailProjector, vaultStore)
-        await flushReplicationOutbox()
-        await refreshInbox(readModel)
-      }
+      // TODO(mail-plugin bridge redesign): inbound mail will arrive as an
+      // ordinary DIDComm message (Forward-delivered by a mediator+mail-plugin
+      // instance, authcrypt'd to this identity's own didCommKid) rather than
+      // through mail-mediator-specific pickup polling. Once that message
+      // type exists, add a branch here (alongside RELATIONSHIP_INIT/ACCEPT
+      // below) that builds the same MailIngressProjector `protocol: 'mail'`
+      // envelope this core SMTP path already uses.
 
       async function onMessage(msg: DeliveredMessage, recipientKid: string, mediatorUrl: string): Promise<void> {
         const didCommProjector = buildDidCommProjector()
@@ -1054,33 +1004,10 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         mediatorPollHandles.push(startMediatorPolling(url, own, resolveAnyDidCommSenderKey, msg => onMessage(msg, didCommKid, url)))
       }
 
-      // Mail Mediator route bind + pickup poll (PLAN_biset-mail-mediator.md
-      // section 4, revised to a VC-based route-bind): route-bind carries
-      // a BisetMailAddressOwnershipCredential Anchor issues for a fresh
-      // relationship identity -- the mediator never learns this
-      // identity's own did:webvh at any point, not even at bind time.
-      // Best-effort per mediator, same treatment as enableDidComm: a
-      // mediator or Anchor briefly unreachable at boot must not block
-      // mail already working through core/SMTP.
-      for (const url of anchorBaseUrl ? mailMediatorUrls : []) {
-        const mailRelReader = new MailRelationshipCredentialReader({
-          identityId: identity.did, objects: vaultStore, events: vaultStore,
-          segmentKeys: boundary.resolver, verifier: buildRestoreTransferVerifier(selfGroupStore, identity.did, fromHex(identity.rootPublicKey)).eventVerifier,
-        })
-        const mailRelSink = new MailRelationshipCredentialVaultSink({
-          identityId: identity.did, actorDeviceId: deviceKid,
-          nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(),
-          activeSegment: () => boundary.activeSegment(), currentSnapshot: () => readModel.snapshot(),
-          signer: boundary.signer, committer: vaultStore,
-        })
-        ensureMailRelationship(mailRelReader, mailRelSink, identity.did, mailFrom, url, anchorBaseUrl)
-          .then(credential => {
-            const relationshipXKid = decodePeerDid2(credential.relationshipDid).keyAgreement[0]!
-            const relationship: DidCommSender = { did: credential.relationshipDid, xKid: relationshipXKid, xPriv: credential.privateKey }
-            mediatorPollHandles.push(startMailMediatorPolling(url, relationship, credential.address, item => onMailMediatorItem(item, url)))
-          })
-          .catch(e => console.warn('[mail-mediator]', e instanceof Error ? e.message : e))
-      }
+      // TODO(mail-plugin bridge redesign): inbound mail no longer needs its
+      // own bind/poll loop here -- it arrives via the SAME mediatorUrls
+      // polling loop above (a mediator+mail-plugin instance Forwards it in
+      // as an ordinary DIDComm message to this identity's own didCommKid).
       const knownContactKeys = await contactKeyReader.readAll().catch(e => {
         console.warn('[relationship] could not restore contact keys:', e instanceof Error ? e.message : e)
         return []

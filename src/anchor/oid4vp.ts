@@ -11,14 +11,12 @@ import {
   verifyBisetLoginPresentation,
   type P256PublicJwk,
 } from '../oid4vp/profile.ts'
-import { issueBisetMailAddressCredential } from '../oid4vp/mail-address-profile.ts'
 import type { AnchorAuthenticatedSubject, AnchorSubjectAuthenticator } from './oidc.ts'
 import { parseLog } from '../identity/webvh/log.ts'
-import { parseWebvhDid, mailFromForIdentity } from '../identity/webvh/identifier.ts'
+import { parseWebvhDid } from '../identity/webvh/identifier.ts'
 import { resolveEntries } from '../identity/webvh/resolver.ts'
 import { decodeMultikey } from '../identity/webvh/multikey.ts'
 import { verifyProof, type DataIntegrityProof } from '../identity/webvh/proof.ts'
-import { decodePeerDid2, publicKeyOf } from '../didcomm/peer.ts'
 import type { WebvhLogStore } from './webvh/webvh-store.ts'
 
 export interface AnchorLoginCredentialRecord {
@@ -62,22 +60,6 @@ export interface AnchorOid4vpEnrollmentChallenge {
   expiresAt: number
 }
 
-/** Challenge for proving ownership of a NEW did:peer:2 relationship
- * identity, scoped to whichever `rootSubject` is already logged in
- * (`authenticate`'s own session cookie) -- this is the mail address
- * credential's issuance gate (PLAN_biset-mail-mediator.md section 4,
- * revised), a smaller/simpler cousin of AnchorOid4vpEnrollmentChallenge:
- * that one verifies a did:webvh's `authentication` key via a full Data
- * Integrity proof over a structured document; this one verifies a
- * did:peer:2's `authentication` key via a bare Ed25519 signature over the
- * challenge string, since a did:peer:2 has no document of its own to sign. */
-export interface AnchorMailAddressChallenge {
-  challengeHash: string
-  relationshipDid: string
-  rootSubject: string
-  expiresAt: number
-}
-
 export interface AnchorOid4vpStore {
   accountRef(rootSubject: string): Promise<string>
   putCredential(record: AnchorLoginCredentialRecord): Promise<void>
@@ -92,8 +74,6 @@ export interface AnchorOid4vpStore {
   session(sessionHash: string): Promise<AnchorOid4vpSession | undefined>
   putEnrollmentChallenge(value: AnchorOid4vpEnrollmentChallenge): Promise<void>
   takeEnrollmentChallenge(challengeHash: string): Promise<AnchorOid4vpEnrollmentChallenge | undefined>
-  putMailAddressChallenge(value: AnchorMailAddressChallenge): Promise<void>
-  takeMailAddressChallenge(challengeHash: string): Promise<AnchorMailAddressChallenge | undefined>
 }
 
 export class MemoryAnchorOid4vpStore implements AnchorOid4vpStore {
@@ -104,7 +84,6 @@ export class MemoryAnchorOid4vpStore implements AnchorOid4vpStore {
   private readonly completions = new Map<string, AnchorOid4vpCompletion>()
   private readonly sessions = new Map<string, AnchorOid4vpSession>()
   private readonly enrollments = new Map<string, AnchorOid4vpEnrollmentChallenge>()
-  private readonly mailAddressChallenges = new Map<string, AnchorMailAddressChallenge>()
 
   async accountRef(rootSubject: string): Promise<string> {
     const existing = this.accounts.get(rootSubject)
@@ -125,8 +104,6 @@ export class MemoryAnchorOid4vpStore implements AnchorOid4vpStore {
   async session(hash: string): Promise<AnchorOid4vpSession | undefined> { const value = this.sessions.get(hash); return value && { ...value } }
   async putEnrollmentChallenge(value: AnchorOid4vpEnrollmentChallenge): Promise<void> { this.enrollments.set(value.challengeHash, { ...value }) }
   async takeEnrollmentChallenge(hash: string): Promise<AnchorOid4vpEnrollmentChallenge | undefined> { const value = this.enrollments.get(hash); this.enrollments.delete(hash); return value && { ...value } }
-  async putMailAddressChallenge(value: AnchorMailAddressChallenge): Promise<void> { this.mailAddressChallenges.set(value.challengeHash, { ...value }) }
-  async takeMailAddressChallenge(hash: string): Promise<AnchorMailAddressChallenge | undefined> { const value = this.mailAddressChallenges.get(hash); this.mailAddressChallenges.delete(hash); return value && { ...value } }
 }
 
 export interface AnchorOid4vpProviderOptions {
@@ -140,16 +117,6 @@ export interface AnchorOid4vpProviderOptions {
   completionTtlSeconds?: number
   sessionTtlSeconds?: number
   enrollmentTtlSeconds?: number
-  /** Ed25519 signing key for BisetMailAddressOwnershipCredential
-   * (src/oid4vp/mail-address-profile.ts) -- separate from
-   * `credentialSigningPrivateKey` (P-256, the login credential's own key)
-   * since the two profiles use different algorithms (EdDSA vs ES256).
-   * Optional: omitting it disables beginMailAddressChallenge/
-   * completeMailAddressIssuance (both throw), for a deployment that
-   * hasn't opted into Mail Mediator VC-based route-bind yet. */
-  mailAddressSigningPrivateKey?: Uint8Array
-  mailAddressSigningKeyId?: string
-  mailAddressCredentialTtlSeconds?: number
   now?: () => Date
 }
 
@@ -165,8 +132,6 @@ export class AnchorOid4vpProvider implements AnchorSubjectAuthenticator {
   private readonly completionTtl: number
   private readonly sessionTtl: number
   private readonly enrollmentTtl: number
-  private readonly mailAddressSigningKeyId?: string
-  private readonly mailAddressCredentialTtl: number
 
   constructor(private readonly options: AnchorOid4vpProviderOptions) {
     this.issuer = origin(options.issuer)
@@ -181,19 +146,10 @@ export class AnchorOid4vpProvider implements AnchorSubjectAuthenticator {
     this.completionTtl = ttl(options.completionTtlSeconds ?? 120, 30, 300, 'completion')
     this.sessionTtl = ttl(options.sessionTtlSeconds ?? 60 * 60 * 12, 300, 60 * 60 * 24 * 7, 'session')
     this.enrollmentTtl = ttl(options.enrollmentTtlSeconds ?? 300, 30, 600, 'enrollment')
-    if (options.mailAddressSigningPrivateKey) {
-      this.mailAddressSigningKeyId = options.mailAddressSigningKeyId ?? `${this.issuer}/oid4vp/jwks#mail-address-credential-eddsa-1`
-      if (options.mailAddressSigningPrivateKey.length !== 32 || !this.mailAddressSigningKeyId.startsWith(`${this.issuer}/`)) throw new TypeError('mail address credential signing key is invalid')
-    }
-    this.mailAddressCredentialTtl = ttl(options.mailAddressCredentialTtlSeconds ?? 60 * 60 * 24, 60, 60 * 60 * 24 * 7, 'mail address credential')
   }
 
   jwks(): Record<string, unknown> {
-    const keys: Record<string, unknown>[] = [{ ...p256PublicJwk(this.options.credentialSigningPrivateKey), alg: 'ES256', use: 'sig', kid: this.signingKeyId }]
-    if (this.options.mailAddressSigningPrivateKey && this.mailAddressSigningKeyId) {
-      keys.push({ kty: 'OKP', crv: 'Ed25519', x: bytesToBase64url(ed25519.getPublicKey(this.options.mailAddressSigningPrivateKey)), alg: 'EdDSA', use: 'sig', kid: this.mailAddressSigningKeyId })
-    }
-    return { keys }
+    return { keys: [{ ...p256PublicJwk(this.options.credentialSigningPrivateKey), alg: 'ES256', use: 'sig', kid: this.signingKeyId }] }
   }
 
   async issueCredential(rootSubject: string, holderPublicKey: P256PublicJwk): Promise<{ credential: string; expiresAt: string }> {
@@ -406,65 +362,6 @@ export class AnchorOid4vpProvider implements AnchorSubjectAuthenticator {
     return new Response(BRIDGE_SCRIPT, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } })
   }
 
-  /** Step 1 of Mail Address Credential issuance: a client already logged
-   * in (session cookie) asks for a challenge to prove it holds a NEW
-   * did:peer:2 relationship identity's private key. Scoped to the
-   * session's own `rootSubject` so a stolen/replayed challenge can't be
-   * completed under a different login. */
-  async beginMailAddressChallenge(request: Request): Promise<Response> {
-    const auth = await this.authenticate(request)
-    if (!auth) return problem(401, 'unauthenticated')
-    let input: Record<string, unknown>
-    try { input = await jsonObject(request, 4 * 1024) } catch { return problem(400, 'invalid_request') }
-    if (typeof input.relationship_did !== 'string' || !input.relationship_did.startsWith('did:peer:2.')) return problem(400, 'invalid_request')
-    const challenge = randomToken(32)
-    const expiresAtSeconds = seconds(this.now()) + this.enrollmentTtl
-    await this.options.store.putMailAddressChallenge({
-      challengeHash: hashToken(challenge), relationshipDid: input.relationship_did, rootSubject: auth.subject, expiresAt: expiresAtSeconds,
-    })
-    return Response.json({ challenge, expires_at: new Date(expiresAtSeconds * 1000).toISOString() }, { headers: noStore() })
-  }
-
-  /** Step 2: verifies the challenge signature (the relationship's own
-   * Ed25519 authentication key, self-certifying from its did:peer:2
-   * string -- no document to resolve), confirms `did` belongs to the
-   * SAME logged-in session (`webvh:${scid}` === auth.subject, so a
-   * session can't mint a credential for a DID it doesn't own), derives
-   * `address` from `did` (identity/webvh/identifier.ts's own
-   * subdomain-per-identity convention), and issues a
-   * BisetMailAddressOwnershipCredential naming ONLY `address` and the
-   * relationship DID -- never `did` itself. */
-  async completeMailAddressIssuance(request: Request, apexDomain: string): Promise<Response> {
-    if (!this.options.mailAddressSigningPrivateKey || !this.mailAddressSigningKeyId) return problem(404, 'not_supported')
-    const auth = await this.authenticate(request)
-    if (!auth) return problem(401, 'unauthenticated')
-    let input: Record<string, unknown>
-    try { input = await jsonObject(request, 8 * 1024) } catch { return problem(400, 'invalid_request') }
-    if (typeof input.did !== 'string' || typeof input.relationship_did !== 'string' || typeof input.challenge !== 'string' || typeof input.signature !== 'string') return problem(400, 'invalid_request')
-    const stored = await this.options.store.takeMailAddressChallenge(hashToken(input.challenge))
-    const now = this.now()
-    if (!stored || stored.expiresAt <= seconds(now) || stored.relationshipDid !== input.relationship_did || stored.rootSubject !== auth.subject) return problem(400, 'invalid_challenge')
-    let scid: string
-    try { scid = parseWebvhDid(input.did).scid } catch { return problem(400, 'invalid_request') }
-    if (`webvh:${scid}` !== auth.subject) return problem(403, 'did_mismatch')
-    let signatureValid = false
-    try {
-      const doc = decodePeerDid2(input.relationship_did)
-      const authKid = doc.authentication[0]
-      if (!authKid) throw new Error('relationship DID has no authentication key')
-      signatureValid = ed25519.verify(base64urlToBytes(input.signature), new TextEncoder().encode(input.challenge), publicKeyOf(doc, authKid))
-    } catch { return problem(400, 'invalid_request') }
-    if (!signatureValid) return problem(400, 'invalid_signature')
-    let address: string
-    try { address = mailFromForIdentity(input.did, apexDomain) } catch { return problem(400, 'invalid_request') }
-    const validFrom = new Date(now.getTime() - 60_000)
-    const validUntil = new Date(now.getTime() + this.mailAddressCredentialTtl * 1000)
-    const credential = issueBisetMailAddressCredential({
-      issuer: this.issuer, signingKeyId: this.mailAddressSigningKeyId, signingPrivateKey: this.options.mailAddressSigningPrivateKey,
-      address, relationshipDid: input.relationship_did, validFrom, validUntil,
-    })
-    return Response.json({ credential, expires_at: validUntil.toISOString() }, { status: 201, headers: noStore() })
-  }
 }
 
 const BRIDGE_SCRIPT = `(() => {

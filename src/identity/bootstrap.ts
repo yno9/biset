@@ -819,10 +819,9 @@ export function buildMailSubmitter(
   mutationSink: VaultBackedLocalJmapMutationSink,
   apexDomain: string,
   coreBaseUrl: string,
-  /** Overrides the default core-HTTP submission path (Mail Mediator's
-   * MailMediatorSubmissionTransport, PLAN_biset-mail-mediator.md) --
-   * everything else (signing, emailId, mailbox transitions) is unchanged,
-   * since this only decides WHERE the signed request goes. */
+  /** Overrides the default core-HTTP submission path -- everything else
+   * (signing, emailId, mailbox transitions) is unchanged, since this only
+   * decides WHERE the signed request goes. */
   transportOverride?: MailSubmissionTransport,
 ): {
   submit(emailId: string, blobId: string, rcptTo: string[], snapshot: LocalJmapSnapshot): Promise<MailSubmissionResultV1>

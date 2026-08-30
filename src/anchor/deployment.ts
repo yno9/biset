@@ -10,7 +10,6 @@ export interface BisetAnchorDeploymentOptions {
   domainHeader?: string
   oidc?: AnchorOidcProvider
   oid4vp?: AnchorOid4vpProvider
-  apexDomain?: string
 }
 
 export interface BisetAnchorDeployment {
@@ -38,7 +37,6 @@ export function createBisetAnchorDeployment(options: BisetAnchorDeploymentOption
       domainHeader: options.domainHeader,
       oidc: options.oidc,
       oid4vp: options.oid4vp,
-      apexDomain: options.apexDomain,
     }),
   }
 }

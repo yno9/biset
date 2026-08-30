@@ -1,10 +1,8 @@
 import { Database } from 'bun:sqlite'
 import { p256 } from '@noble/curves/nist.js'
-import { ed25519 } from '@noble/curves/ed25519.js'
 import type { AnchorAuthorizationCodeStore, AuthorizationCodeRecord, RefreshTokenRecord } from './oidc.ts'
 import type {
   AnchorLoginCredentialRecord,
-  AnchorMailAddressChallenge,
   AnchorOid4vpCompletion,
   AnchorOid4vpEnrollmentChallenge,
   AnchorOid4vpSession,
@@ -31,7 +29,6 @@ export interface AnchorOidcSecrets {
   signingPrivateKey: Uint8Array
   pairwiseSecret: Uint8Array
   credentialSigningPrivateKey: Uint8Array
-  mailAddressCredentialSigningPrivateKey: Uint8Array
 }
 
 /** Durable, one-use authorization codes and stable OIDC issuer secrets. */
@@ -109,13 +106,6 @@ export class SqliteAnchorOidcState implements AnchorAuthorizationCodeStore, Anch
         expires_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS oid4vp_enrollment_challenges_expiry ON oid4vp_enrollment_challenges(expires_at);
-      CREATE TABLE IF NOT EXISTS oid4vp_mail_address_challenges (
-        challenge_hash TEXT PRIMARY KEY,
-        relationship_did TEXT NOT NULL,
-        root_subject TEXT NOT NULL,
-        expires_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS oid4vp_mail_address_challenges_expiry ON oid4vp_mail_address_challenges(expires_at);
     `)
   }
 
@@ -131,7 +121,6 @@ export class SqliteAnchorOidcState implements AnchorAuthorizationCodeStore, Anch
       signingPrivateKey: this.secret('es256-signing-private-key', () => p256.keygen().secretKey),
       pairwiseSecret: this.secret('pairwise-subject-secret', () => crypto.getRandomValues(new Uint8Array(32))),
       credentialSigningPrivateKey: this.secret('oid4vp-credential-es256-signing-private-key', () => p256.keygen().secretKey),
-      mailAddressCredentialSigningPrivateKey: this.secret('oid4vp-mail-address-credential-eddsa-signing-private-key', () => ed25519.utils.randomSecretKey()),
     }
   }
 
@@ -180,7 +169,7 @@ export class SqliteAnchorOidcState implements AnchorAuthorizationCodeStore, Anch
   expire(now = new Date()): number {
     const expiry = Math.floor(now.getTime() / 1000)
     return this.database.transaction(() => [
-      'oidc_authorization_codes', 'oidc_refresh_tokens', 'oid4vp_transactions', 'oid4vp_completions', 'oid4vp_sessions', 'oid4vp_enrollment_challenges', 'oid4vp_mail_address_challenges',
+      'oidc_authorization_codes', 'oidc_refresh_tokens', 'oid4vp_transactions', 'oid4vp_completions', 'oid4vp_sessions', 'oid4vp_enrollment_challenges',
     ].reduce((total, table) => total + this.database.query(`DELETE FROM ${table} WHERE expires_at <= ?`).run(expiry).changes, 0))()
   }
 
@@ -266,19 +255,6 @@ export class SqliteAnchorOidcState implements AnchorAuthorizationCodeStore, Anch
     })()
   }
 
-  async putMailAddressChallenge(value: AnchorMailAddressChallenge): Promise<void> {
-    this.database.query('INSERT INTO oid4vp_mail_address_challenges (challenge_hash, relationship_did, root_subject, expires_at) VALUES (?, ?, ?, ?)')
-      .run(value.challengeHash, value.relationshipDid, value.rootSubject, value.expiresAt)
-  }
-
-  async takeMailAddressChallenge(challengeHash: string): Promise<AnchorMailAddressChallenge | undefined> {
-    return this.database.transaction(() => {
-      const row = this.database.query<MailAddressChallengeRow, [string]>('SELECT * FROM oid4vp_mail_address_challenges WHERE challenge_hash = ?').get(challengeHash)
-      this.database.query('DELETE FROM oid4vp_mail_address_challenges WHERE challenge_hash = ?').run(challengeHash)
-      return row ? { challengeHash: row.challenge_hash, relationshipDid: row.relationship_did, rootSubject: row.root_subject, expiresAt: row.expires_at } : undefined
-    })()
-  }
-
   private secret(name: string, generate: () => Uint8Array): Uint8Array {
     const existing = this.database.query<{ value: Uint8Array }, [string]>('SELECT value FROM oidc_secrets WHERE name = ?').get(name)
     if (existing) return new Uint8Array(existing.value)
@@ -293,7 +269,6 @@ interface TransactionRow { transaction_id: string; state: string; nonce: string;
 interface CompletionRow { response_code_hash: string; root_subject: string; authenticated_at: number; return_url: string; expires_at: number }
 interface SessionRow { session_hash: string; root_subject: string; authenticated_at: number; expires_at: number }
 interface EnrollmentRow { challenge_hash: string; did: string; holder_key_id: string; expires_at: number }
-interface MailAddressChallengeRow { challenge_hash: string; relationship_did: string; root_subject: string; expires_at: number }
 function credentialRow(row: CredentialRow): AnchorLoginCredentialRecord { return { credentialId: row.credential_id, credentialHash: row.credential_hash, accountRef: row.account_ref, rootSubject: row.root_subject, holderKeyId: row.holder_key_id, issuedAt: row.issued_at, expiresAt: row.expires_at, ...(row.revoked_at === null ? {} : { revokedAt: row.revoked_at }) } }
 function transactionRow(row: TransactionRow): AnchorOid4vpTransaction { return { transactionId: row.transaction_id, state: row.state, nonce: row.nonce, returnUrl: row.return_url, expiresAt: row.expires_at } }
 function completionRow(row: CompletionRow): AnchorOid4vpCompletion { return { responseCodeHash: row.response_code_hash, rootSubject: row.root_subject, authenticatedAt: row.authenticated_at, returnUrl: row.return_url, expiresAt: row.expires_at } }
