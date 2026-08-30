@@ -28,7 +28,7 @@ import type { IdentityRecord, IdentityRecordStore } from './record-store.ts'
 import { epochOf, exportSecret, generateOwnKeyPackage, ownMlsDeviceCredential, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
 import { createMlsDeviceCredential, encodeMlsDeviceCredential } from '../mls/device-credential.ts'
 import { webvhAuthenticationService } from '../mls/webvh-authentication-service.ts'
-import { ensureSelfGroupWithRosterInstall, reflectPendingSelfGroupCommits, selfGroupIdHex, type SelfGroupSigner } from '../mls/self-group.ts'
+import { ensureSelfGroupWithRosterInstall, installCurrentRosterProjection, reflectPendingSelfGroupCommits, selfGroupIdHex, type SelfGroupSigner } from '../mls/self-group.ts'
 import { ensureKeyPackagePool } from '../mls/key-package-pool.ts'
 import { CoordinatorMlsDeliveryTransport } from '../mls/coordinator-mls-delivery-transport.ts'
 import { CoreRosterInstallTransport } from '../mls/core-roster-install-transport.ts'
@@ -295,6 +295,19 @@ export async function maintainSelfGroup(
   const state = await reflectPendingSelfGroupCommits(
     selfGroupStore, mlsTransport, rosterTransport, record.did, record.deviceKid, sign, deliveryFloorForNewDevice, now,
   )
+
+  // A transient or version-skew failure during genesis can leave the local
+  // self group durable while core has no roster at all. There is then no MLS
+  // epoch transition for the normal reflection path to notice on the next
+  // boot. Repair that exact missing-genesis case idempotently. A zero floor is
+  // correct here: without an installed roster core could not have accepted
+  // any vault delivery for this identity yet.
+  if (!(await rosterTransport.fetchProjection(record.did))) {
+    await installCurrentRosterProjection(
+      rosterTransport, record.did, record.deviceKid, state ?? oldState, sign,
+      async () => deliverySeq(0n), now,
+    )
+  }
 
   if (state && opts.wraps && opts.segments && epochOf(state) !== epochOf(oldState)) {
     await selfGrantSegmentRewraps(opts.segments, opts.wraps, record.did, stored.selfGroupId, record.deviceKid, oldState, state, now)

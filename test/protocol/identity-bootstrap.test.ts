@@ -266,6 +266,39 @@ describe('restoreIdentity', () => {
 })
 
 describe('maintainSelfGroup', () => {
+  test('repairs a missing genesis roster after an earlier install failure', async () => {
+    const { anchor, ds, roster, coreHandle, mlsHandle } = setupCore()
+
+    const realFetch = globalThis.fetch
+    let rejectFirstInstall = true
+    const fetchWithTransientRosterFailure: typeof fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (rejectFirstInstall && url === `${CORE_ORIGIN}/v1/roster/install` && init?.method === 'POST') {
+        rejectFirstInstall = false
+        return new Response('rejected', { status: 403 })
+      }
+      return combinedFetch(anchor.fetch, coreHandle, mlsHandle)(input, init)
+    }
+    globalThis.fetch = fetchWithTransientRosterFailure
+    try {
+      const selfGroupStore = memorySelfGroupStore()
+      const created = await createNewIdentity(memoryIdentityRecordStore(), selfGroupStore, memoryKeyPackageStore(), {
+        domain: 'repair.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN,
+      })
+      expect(await roster.projection(created.record.did)).toBeUndefined()
+
+      await maintainSelfGroup(selfGroupStore, memoryKeyPackageStore(), created.record, {
+        coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN,
+      })
+      expect(await roster.isTrustedDevice(created.record.did, created.record.deviceKid!)).toBe(true)
+
+      ds.close()
+      roster.close()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
   test("the genesis device's own boot-time maintenance reflects a second device restored later", async () => {
     const { anchor, ds, roster, coreHandle, mlsHandle } = setupCore()
 
