@@ -21,7 +21,7 @@ export interface AnchorAuthenticatedSubject {
 }
 
 export interface AnchorSubjectAuthenticator {
-  authenticate(request: Request): Promise<AnchorAuthenticatedSubject | null>
+  authenticate(request: Request, options?: { force: boolean }): Promise<AnchorAuthenticatedSubject | null>
   /** Starts an interactive login when no authenticated session exists. */
   beginAuthentication?(request: Request): Promise<Response>
 }
@@ -148,7 +148,9 @@ export class AnchorOidcProvider {
     }
     const scopes = parseScopes(value('scope'))
     if (!scopes.includes('openid') || scopes.some(scope => scope !== 'openid' && !client.allowedScopes.includes(scope))) return redirectError(redirectUri, state, 'invalid_scope')
-    const authenticated = await this.options.authenticator.authenticate(request)
+    const prompt = value('prompt')
+    if (prompt && prompt !== 'login') return redirectError(redirectUri, state, 'invalid_request')
+    const authenticated = await this.options.authenticator.authenticate(request, { force: prompt === 'login' })
     if (!authenticated) return this.options.authenticator.beginAuthentication
       ? this.options.authenticator.beginAuthentication(request)
       : oauthError(401, 'login_required', 'Anchor login is required')

@@ -234,7 +234,12 @@ export class AnchorOid4vpProvider implements AnchorSubjectAuthenticator {
     return Response.json({ format: BISET_LOGIN_CREDENTIAL_FORMAT, credential: issued.credential, expires_at: issued.expiresAt }, { status: 201, headers: noStore() })
   }
 
-  async authenticate(request: Request): Promise<AnchorAuthenticatedSubject | null> {
+  async authenticate(request: Request, options?: { force: boolean }): Promise<AnchorAuthenticatedSubject | null> {
+    // OIDC prompt=login must not reuse the browser-wide Anchor cookie. A
+    // Biset client can hold a different local identity in the same browser;
+    // accepting the previous identity's cookie would attach that new Root
+    // seed to the old identity's Coordinator stream.
+    if (options?.force) return null
     const token = cookie(request.headers.get('cookie'), '__Host-biset_anchor_session')
     if (!token) return null
     const value = await this.options.store.session(hashToken(token))

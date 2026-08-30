@@ -90,6 +90,11 @@ export class AnchorOidcPkceClient implements VaultCoordinatorAccessTokenProvider
       authorize.searchParams.set('client_id', this.options.clientId)
       authorize.searchParams.set('redirect_uri', this.redirectUri)
       authorize.searchParams.set('response_type', 'code')
+      // An interactive authorization is identity selection, not merely a
+      // check for any Anchor cookie. Resume uses the identity-scoped refresh
+      // token and never reaches this path; here we must present the current
+      // Biset Wallet credential even if another identity logged in earlier.
+      authorize.searchParams.set('prompt', 'login')
       authorize.searchParams.set('wallet_origin', applicationOrigin())
       authorize.searchParams.set('scope', `openid ${this.options.allowedScopes.join(' ')}`)
       authorize.searchParams.set('state', state)
@@ -155,7 +160,10 @@ export class AnchorOidcPkceClient implements VaultCoordinatorAccessTokenProvider
     return this.refreshing
   }
 
-  clear(): void { this.cached = undefined; void this.options.wallet.clearRefreshToken(this.options.clientId) }
+  async clear(): Promise<void> {
+    this.cached = undefined
+    await this.options.wallet.clearRefreshToken(this.options.clientId)
+  }
 
   hasFreshAccessToken(): boolean {
     return !!this.cached && this.cached.expiresAt > seconds(this.now()) + 30

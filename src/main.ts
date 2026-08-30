@@ -1434,8 +1434,20 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
           ...(result ?? {}), detail: 'Encrypted stream is current',
         })
       } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error)
+        let detail = error instanceof Error ? error.message : String(error)
+        if (detail === 'Coordinator checkpoint key cannot be unwrapped') {
+          // The browser-wide Anchor cookie may have selected another local
+          // identity's subject. Never overwrite that subject's checkpoint:
+          // discard only this identity-scoped refresh session and require an
+          // explicit prompt=login retry with the current Wallet credential.
+          await coordinatorOidc?.clear()
+          streamTransport = undefined
+          coordinatorBindingActive = false
+          flushCoordinatorOutbox = undefined
+          detail = 'Coordinator login belongs to another identity. Reconnect to authenticate this identity.'
+        }
         setVaultCard({ state: 'error', coordinatorUrl, vaultId: streamVaultId, detail })
+        if (detail !== (error instanceof Error ? error.message : String(error))) throw new Error(detail, { cause: error })
         throw error
       }
     }
