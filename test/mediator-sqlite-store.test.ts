@@ -65,6 +65,19 @@ describe('SqliteMediatorStore', () => {
     second.close()
   }))
 
+  test('mail plugin identity is stable across restarts and independent of the mediator\'s and relay poller\'s own identities', () => withDatabase(path => {
+    const first = SqliteMediatorStore.open(path)
+    const ownIdentity = first.loadIdentity('https://mediator.example')
+    const pollerIdentity = first.loadRelayPollerIdentity()
+    const mailPluginIdentity = first.loadMailPluginIdentity()
+    expect(new Set([ownIdentity.did, pollerIdentity.did, mailPluginIdentity.did]).size).toBe(3)
+    first.close()
+
+    const second = SqliteMediatorStore.open(path)
+    expect(second.loadMailPluginIdentity().did).toBe(mailPluginIdentity.did)
+    second.close()
+  }))
+
   test('mediator identity, connection keylist, opaque queue, and replay IDs survive restart', () => withDatabase(path => {
     const first = SqliteMediatorStore.open(path)
     const identity = first.loadIdentity('https://mediator.example')

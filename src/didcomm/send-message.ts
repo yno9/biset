@@ -16,7 +16,7 @@ import { packAuthcrypt, packAuthcryptHybrid, type DidCommJWE } from './crypto.ts
 import { mlkemKidFor } from './devicekid.ts'
 import { buildPlaintext } from './message.ts'
 import { BASIC_MESSAGE } from './basicmessage.ts'
-import { wrapForward } from './forward-wrap.ts'
+import { wrapForward, wrapForwardChain } from './forward-wrap.ts'
 import { decodePeerDid2, generatePeerIdentity, publicKeyOf, type PeerIdentity } from './peer.ts'
 import type { DidCommServiceEndpoint } from './webvh-routing.ts'
 import { defaultFetch } from '../net-fetch.ts'
@@ -129,8 +129,10 @@ async function sendFrontDoorMessage(toDid: string, type: string, body: unknown, 
   // recipient has registered with an independent, blind mediator: deliver
   // Forward-wrapped through it rather than authcrypt'ing straight to
   // `endpoint.uri` (the legacy first-party-infra model, still supported for
-  // an identity that hasn't migrated yet).
-  const mediatorRoutingKid = endpoint.routingKeys?.[0]
+  // an identity that hasn't migrated yet). The full array is a hop chain
+  // (forward-wrap.ts's `wrapForwardChain`, outermost/closest-to-sender
+  // first) -- not just its first entry.
+  const routingKeys = endpoint.routingKeys ?? []
 
   const keyAgreementIds = new Set(doc.keyAgreement ?? [])
   const kaVm = doc.verificationMethod.find(v => keyAgreementIds.has(v.id))
@@ -173,11 +175,11 @@ async function sendFrontDoorMessage(toDid: string, type: string, body: unknown, 
     jwe = packAuthcrypt(plaintextBytes, sender, { kid: kaVm.id, publicKey: recipientPublicKey })
   }
   let outbound: DidCommJWE = jwe
-  if (mediatorRoutingKid) {
+  if (routingKeys.length > 0) {
     try {
-      outbound = wrapForward(jwe, kaVm.id, mediatorRoutingKid)
+      outbound = wrapForwardChain(jwe, kaVm.id, routingKeys)
     } catch {
-      return { ok: false, error: `${toDid}'s registered mediator routing key ${mediatorRoutingKid} is not a valid did:peer kid` }
+      return { ok: false, error: `${toDid}'s registered mediator routing keys (${routingKeys.join(', ')}) are not valid did:peer kids` }
     }
   }
   const response = await fetchImpl(endpoint.uri, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(outbound) })

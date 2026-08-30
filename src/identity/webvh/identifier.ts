@@ -93,3 +93,20 @@ export function mailFromForIdentity(identityId: string, apexDomain: string): str
   if (!username) throw new Error('mailFromForIdentity: identity domain has no username segment')
   return `${username}@mail.${apexDomain}`
 }
+
+/** The inverse of `mailFromForIdentity`: `{username}@mail.{apexDomain}` ->
+ * the identity's own subdomain (`{username}.{apexDomain}`) -- no SCID, no
+ * signed-log resolve, just the same deterministic naming convention run
+ * backward. What the mail plugin bridge (mediator/mail-plugin/bridge.ts)
+ * uses to turn an inbound SMTP recipient address into a domain it can fetch
+ * routing.json from directly (didcomm/webvh-routing.ts's
+ * `fetchRoutingByDomain`) -- the did:webvh<->mail mapping this derives is
+ * already public, so there is nothing this lookup needs to keep hidden. */
+export function identityDomainForMailAddress(address: string, apexDomain: string): string {
+  const at = address.indexOf('@')
+  if (at <= 0) throw new Error(`identityDomainForMailAddress: ${address} is not a valid mail address`)
+  const username = address.slice(0, at)
+  const host = address.slice(at + 1)
+  if (host !== `mail.${apexDomain}`) throw new Error(`identityDomainForMailAddress: ${address} is not a mail.${apexDomain} address`)
+  return `${username}.${apexDomain}`
+}

@@ -26,3 +26,30 @@ export function wrapForward(inner: DidCommJWE, next: string, routingKid: string)
   forward.attachments = [{ id: 'inner', data: { json: inner } }]
   return packAnoncrypt(new TextEncoder().encode(JSON.stringify(forward)), { kid: routingKid, publicKey: mediatorPublicKey })
 }
+
+/** Nests one Forward per entry in `routingKeys` (webvh-routing.ts's own
+ * ordering: outermost/closest-to-sender first, same as DIDComm Routing
+ * 2.0's own `routingKeys` semantics) around `inner`, addressed at
+ * `finalKid` -- the recipient's real keyAgreement kid. Building from the
+ * LAST entry outward: the innermost Forward names `finalKid` as `next` and
+ * is anoncrypt'd to `routingKeys[routingKeys.length - 1]`; each Forward
+ * built after that names the PREVIOUS hop's kid as `next`. The result is
+ * what a sender POSTs to `routingKeys[0]`'s own published endpoint --
+ * that hop, and every hop after it, needs no code aware of chaining (the
+ * 2026-08-30 hop-chain discussion): each one just Forwards to whatever
+ * `next` names, which for every hop but the last is another hop's kid, and
+ * for the last is the real recipient's.
+ *
+ * `routingKeys.length === 0` throws -- a caller with no mediator at all
+ * should skip calling this and deliver `inner` directly, same as
+ * send-message.ts's own `mediatorRoutingKid` check. */
+export function wrapForwardChain(inner: DidCommJWE, finalKid: string, routingKeys: readonly string[]): DidCommJWE {
+  if (routingKeys.length === 0) throw new Error('wrapForwardChain: at least one routing key is required')
+  let outbound = inner
+  let next = finalKid
+  for (let i = routingKeys.length - 1; i >= 0; i--) {
+    outbound = wrapForward(outbound, next, routingKeys[i]!)
+    next = routingKeys[i]!
+  }
+  return outbound
+}

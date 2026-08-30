@@ -176,4 +176,50 @@ describe('sendDidCommMessage', () => {
       expect(msg.body.content).toBe('via mediator')
     })
   })
+
+  // Hop chaining (2026-08-30 discussion): a `routingKeys` array with more
+  // than one entry nests one Forward per hop, outermost first -- the
+  // sender POSTs only to hop1, which never sees anything but an ordinary
+  // Forward addressed to hop2's kid.
+  test('nests one Forward per hop when routingKeys names a chain', () => {
+    const hop1 = generatePeerIdentity({ uri: 'https://hop1.test.example', accept: ['didcomm/v2'] })
+    const hop2 = generatePeerIdentity()
+    const routingJson = {
+      service: [{ id: `${recipientDid}#didcomm`, type: 'DIDCommMessaging', serviceEndpoint: { uri: 'https://hop1.test.example', accept: ['didcomm/v2'], routingKeys: [hop1.xKid, hop2.xKid] } }],
+      keyAgreementVerificationMethod: [{ id: recipientKid, type: 'Multikey', controller: recipientDid, publicKeyMultibase: encodeX25519Multikey(recipientXPub) }],
+    }
+    const captured: { body?: string; url?: string } = {}
+    const fetchImpl = (async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.endsWith('/did.jsonl')) return new Response(log.map(e => JSON.stringify(e)).join('\n') + '\n', { status: 200 })
+      if (url.endsWith('/routing.json')) return new Response(JSON.stringify(routingJson), { status: 200 })
+      if (url === 'https://hop1.test.example') { captured.url = url; captured.body = init?.body as string; return new Response(null, { status: 202 }) }
+      return new Response('unexpected request: ' + url, { status: 500 })
+    }) as typeof fetch
+    return withCombinedFetch(fetchImpl, async (fi) => {
+      const result = await sendDidCommMessage(recipientDid, 'via two hops', { fromKid: senderKid, x25519PrivateKey: senderX, fetch: fi })
+      expect(result.ok).toBe(true)
+      expect(captured.url).toBe('https://hop1.test.example')
+
+      const outerToHop1 = parseJwe(JSON.parse(captured.body!))
+      expect(outerToHop1).not.toBeNull()
+      const forwardToHop1Bytes = await unpackAnoncrypt(outerToHop1!, { kid: hop1.xKid, privateKey: hop1.xPriv })
+      const forwardToHop1 = JSON.parse(new TextDecoder().decode(forwardToHop1Bytes))
+      expect(forwardToHop1.type).toBe('https://didcomm.org/routing/2.0/forward')
+      expect(forwardToHop1.body.next).toBe(hop2.xKid)
+
+      const outerToHop2 = parseJwe(forwardToHop1.attachments[0].data.json)
+      expect(outerToHop2).not.toBeNull()
+      const forwardToHop2Bytes = await unpackAnoncrypt(outerToHop2!, { kid: hop2.xKid, privateKey: hop2.xPriv })
+      const forwardToHop2 = JSON.parse(new TextDecoder().decode(forwardToHop2Bytes))
+      expect(forwardToHop2.type).toBe('https://didcomm.org/routing/2.0/forward')
+      expect(forwardToHop2.body.next).toBe(recipientKid)
+
+      const inner = parseJwe(forwardToHop2.attachments[0].data.json)
+      expect(inner).not.toBeNull()
+      const { plaintext } = await unpackAuthcrypt(inner!, { kid: recipientKid, privateKey: recipientX }, async () => x25519.getPublicKey(senderX))
+      const msg = JSON.parse(new TextDecoder().decode(plaintext))
+      expect(msg.body.content).toBe('via two hops')
+    })
+  })
 })

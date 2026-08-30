@@ -31,6 +31,7 @@ export const DEFAULT_SQLITE_MEDIATOR_LIMITS: SqliteMediatorLimits = {
 
 interface IdentityRow { public_url: string; x_priv: string; ed_priv: string }
 interface RelayPollerIdentityRow { x_priv: string; ed_priv: string }
+interface MailPluginIdentityRow { x_priv: string; ed_priv: string }
 interface QueueRow { id: string; packed: string; queued_at: number; silent: number }
 
 /** Single-writer production persistence for the blind mediator. The same
@@ -89,6 +90,30 @@ export class SqliteMediatorStore implements MediatorConnectionStore, MediatorMes
       const xPriv = x25519.utils.randomSecretKey()
       const edPriv = ed25519.utils.randomSecretKey()
       this.database.query('INSERT INTO relay_poller_identity (singleton, x_priv, ed_priv) VALUES (1, ?, ?)')
+        .run(b64url(xPriv), b64url(edPriv))
+      row = { x_priv: b64url(xPriv), ed_priv: b64url(edPriv) }
+    }
+    return identityFromKeys(b64urlDecodeToBytes(row.x_priv), b64urlDecodeToBytes(row.ed_priv))
+  }
+
+  /** The mail plugin's own did:peer key (mediator/mail-plugin/bridge.ts) --
+   * the `sender` an inbound-mail Forward is authcrypt'd from. Kept separate
+   * from both this mediator's own identity and the relay poller's: unlike
+   * the poller it never registers a keylist with anyone, and unlike the
+   * mediator's own identity it is never dereferenced as a did.json -- a
+   * recipient only ever learns it from the `from` field of an already-
+   * authcrypt'd message it could decrypt. Authcrypt (not anoncrypt) purely
+   * because the client's mediator-polling pipeline
+   * (didcomm/mediator-pickup.ts's `pickupDeliver`) only ever tries to
+   * unpack a queued item as authcrypt -- there is no DIDComm-level
+   * authentication claim actually being made about the ORIGINAL SMTP
+   * sender here, who has no DIDComm identity at all. */
+  loadMailPluginIdentity(): PeerIdentity {
+    let row = this.database.query<MailPluginIdentityRow, []>('SELECT x_priv, ed_priv FROM mail_plugin_identity WHERE singleton = 1').get()
+    if (!row) {
+      const xPriv = x25519.utils.randomSecretKey()
+      const edPriv = ed25519.utils.randomSecretKey()
+      this.database.query('INSERT INTO mail_plugin_identity (singleton, x_priv, ed_priv) VALUES (1, ?, ?)')
         .run(b64url(xPriv), b64url(edPriv))
       row = { x_priv: b64url(xPriv), ed_priv: b64url(edPriv) }
     }
@@ -303,6 +328,11 @@ function installSchema(database: Database): void {
       ed_priv TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS relay_poller_identity (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      x_priv TEXT NOT NULL,
+      ed_priv TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS mail_plugin_identity (
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
       x_priv TEXT NOT NULL,
       ed_priv TEXT NOT NULL

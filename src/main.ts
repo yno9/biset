@@ -37,6 +37,7 @@ import type { IngressVerifierProjector } from './vault/ingress-ingest.ts'
 import { DidCommIngressProjector } from './didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from './didcomm/webvh-resolve.ts'
 import { initiateRelationship, sendRelationshipAccept, sendRelationshipMessage, type PendingRelationship } from './didcomm/send-message.ts'
+import { MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyOf } from './didcomm/mail-bridge.ts'
 import { didCommThreadId } from './didcomm/basicmessage.ts'
 import { registerWithMediator, startMediatorPolling, type MediatorPollHandle } from './didcomm/mediator-sync.ts'
 import type { DidCommSender } from './didcomm/mediator-transport.ts'
@@ -845,16 +846,22 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
           })
         : undefined
 
+    // Shared with the mediator-poll path's mail-bridge branch (onMessage,
+    // further down): a mediator+mail-plugin instance's inbound-mail Forward
+    // needs the exact same projector the legacy core-pull path already
+    // builds here, not a second divergent copy of the same constructor call.
+    const buildMailProjector = (): MailIngressProjector => new MailIngressProjector({
+      identityId: identity.did,
+      actorDeviceId: identity.deviceKid!,
+      nextActorSeq: () => sequencer.nextActorSeq(),
+      initialParents: () => sequencer.initialParents(),
+      activeSegment: () => boundary.activeSegment(),
+      currentSnapshot: () => readModel.snapshot(),
+      signer: boundary.signer,
+    })
+
     syncMailIngress = async () => {
-      const mailProjector = new MailIngressProjector({
-        identityId: identity.did,
-        actorDeviceId: identity.deviceKid!,
-        nextActorSeq: () => sequencer.nextActorSeq(),
-        initialParents: () => sequencer.initialParents(),
-        activeSegment: () => boundary.activeSegment(),
-        currentSnapshot: () => readModel.snapshot(),
-        signer: boundary.signer,
-      })
+      const mailProjector = buildMailProjector()
       const didCommProjector = buildDidCommProjector()
       const projector: IngressVerifierProjector = {
         verifyAndProject: envelope => {
@@ -893,15 +900,34 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       const didCommKid = identity.didCommKid
       const own: DidCommSender = { did: identity.did, xKid: didCommKid, xPriv: fromHex(identity.didCommX25519PrivateKey) }
 
-      // TODO(mail-plugin bridge redesign): inbound mail will arrive as an
-      // ordinary DIDComm message (Forward-delivered by a mediator+mail-plugin
-      // instance, authcrypt'd to this identity's own didCommKid) rather than
-      // through mail-mediator-specific pickup polling. Once that message
-      // type exists, add a branch here (alongside RELATIONSHIP_INIT/ACCEPT
-      // below) that builds the same MailIngressProjector `protocol: 'mail'`
-      // envelope this core SMTP path already uses.
-
+      // Inbound mail arrives as an ordinary DIDComm message -- Forward-
+      // delivered by a mediator+mail-plugin instance, authcrypt'd from its
+      // own persisted bridge identity to this identity's didCommKid
+      // (mediator/mail-plugin/bridge.ts) -- through this SAME mediatorUrls
+      // polling loop, not a mail-mediator-specific pickup loop.
       async function onMessage(msg: DeliveredMessage, recipientKid: string, mediatorUrl: string): Promise<void> {
+        const plaintext = msg.plaintext as DidCommPlaintext
+        if (plaintext.type === MAIL_BRIDGE_INBOUND) {
+          const body = mailBridgeInboundBodyOf(plaintext)
+          if (!body) throw new TypeError('mail bridge inbound message body is invalid')
+          const envelope: IngressEnvelopeV1 = {
+            version: 1,
+            ingressId: canonicalHash('biset/mail-bridge-mediator-ingress/v1', { mediatorUrl, recipientKid, queueId: msg.ackId }),
+            protocol: 'mail',
+            recipientIdentityId: identity.did,
+            recipientDeviceSnapshot: [identity.deviceKid!],
+            createdAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+            transportMetadata: { smtpEnvelope: body.smtpEnvelope },
+            sourceEvidence: new Uint8Array(0),
+            protectedPayload: body.rawRfc5322,
+            protectedPayloadHash: sha256Bytes(body.rawRfc5322),
+          }
+          await ingestTransportIngress(envelope, buildMailProjector(), vaultStore)
+          await flushReplicationOutbox()
+          await refreshInbox(readModel)
+          return
+        }
         const didCommProjector = buildDidCommProjector()
         if (!didCommProjector) return
         const payload = new TextEncoder().encode(JSON.stringify(msg.rawJwe))

@@ -184,6 +184,27 @@ export async function fetchRouting(did: string, fetchImpl: typeof fetch, init?: 
   return (await resp.json()) as RoutingDoc
 }
 
+/** Same transform as `didToRoutingUrl`, but from a bare domain -- no SCID
+ * needed, mirroring `domainDidJsonlUrl` in identifier.ts. What the mail
+ * plugin bridge uses (mediator/mail-plugin/bridge.ts): an inbound
+ * address's did:webvh<->mail mapping is already public (the whole reason
+ * the earlier VC-based design was dropped, 2026-08-30), so there is
+ * nothing to gain from resolving the full signed did:webvh log just to
+ * reach the same routing.json a domain-only GET already serves. */
+export function domainRoutingJsonUrl(domain: string, port?: number): string {
+  const hostname = new URL(`https://${domain}`).hostname
+  const hostPart = port ? `${hostname}:${port}` : hostname
+  return `https://${hostPart}/.well-known/routing.json`
+}
+
+/** `fetchRouting`'s domain-only counterpart. */
+export async function fetchRoutingByDomain(domain: string, fetchImpl: typeof fetch, port?: number): Promise<RoutingDoc | null> {
+  const resp = await fetchImpl(domainRoutingJsonUrl(domain, port))
+  if (resp.status === 404) return null
+  if (!resp.ok) throw new Error(`fetchRoutingByDomain: GET failed with HTTP ${resp.status}`)
+  return (await resp.json()) as RoutingDoc
+}
+
 /** Whole-document PUT — unlike did.jsonl there is no history to preserve, so
  * there is no append/CAS concern to design around.
  *
