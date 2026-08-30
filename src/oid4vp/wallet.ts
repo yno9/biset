@@ -8,8 +8,10 @@ import {
   type P256PublicJwk,
 } from './profile.ts'
 import type { BisetLoginWalletCredential, BisetLoginWalletCredentialStore } from './wallet-store.ts'
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { p256 } from '@noble/curves/nist.js'
 import { buildProof } from '../identity/webvh/proof.ts'
+import { encodeMultikey } from '../identity/webvh/multikey.ts'
 
 export interface TrustedAnchorOid4vpIssuer {
   issuer: string
@@ -82,7 +84,9 @@ export class BisetOid4vpWallet {
   async clearRefreshToken(clientId: string): Promise<void> { await this.options.store.removeOidcRefreshSession(this.options.identityId, this.issuer, clientId) }
 
   async enroll(options: { did: string; authenticationVerificationMethod: string; authenticationPrivateKey: Uint8Array }): Promise<BisetLoginWalletCredential> {
-    if (!options.did.startsWith('did:webvh:') || !options.authenticationVerificationMethod.startsWith(`${options.did}#`) || options.authenticationPrivateKey.length !== 32) throw new TypeError('Anchor enrollment authority is invalid')
+    if (!options.did.startsWith('did:webvh:') || options.authenticationPrivateKey.length !== 32) throw new TypeError('Anchor enrollment authority is invalid')
+    const authenticationMultikey = encodeMultikey(ed25519.getPublicKey(options.authenticationPrivateKey))
+    if (options.authenticationVerificationMethod !== `did:key:${authenticationMultikey}#${authenticationMultikey}`) throw new TypeError('Anchor enrollment authority is invalid')
     const holderPrivateKey = p256.utils.randomSecretKey()
     const fetchImpl = this.options.fetch ?? fetch
     const challengeResponse = await fetchImpl(`${this.issuer}/oid4vp/enrollment/challenge`, {
