@@ -45,6 +45,7 @@ export class BisetOid4vpWallet {
   private readonly issuer: string
   constructor(private readonly options: {
     identityId: string
+    generation: string
     trust: TrustedAnchorOid4vpIssuer
     store: BisetLoginWalletCredentialStore
     fetch?: typeof fetch
@@ -66,14 +67,14 @@ export class BisetOid4vpWallet {
     const record: BisetLoginWalletCredential = {
       version: 1, identityId: this.options.identityId, issuer: this.issuer,
       credentialId: claims.id, credential, holderPrivateKey: holderPrivateKey.slice(),
-      expiresAt: claims.validUntil, installedAt: now.toISOString(),
+      expiresAt: claims.validUntil, installedAt: now.toISOString(), generation: claims.credentialSubject.generation,
     }
     await this.options.store.put(record)
     return { ...record, holderPrivateKey: record.holderPrivateKey.slice() }
   }
 
   async current(): Promise<BisetLoginWalletCredential | undefined> {
-    return this.options.store.current(this.options.identityId, this.issuer, (this.options.now ?? (() => new Date()))())
+    return this.options.store.current(this.options.identityId, this.issuer, (this.options.now ?? (() => new Date()))(), this.options.generation)
   }
 
   async refreshToken(clientId: string): Promise<string | undefined> { return (await this.options.store.oidcRefreshSession(this.options.identityId, this.issuer, clientId))?.refreshToken }
@@ -115,7 +116,7 @@ export class BisetOid4vpWallet {
     if (!response.ok) throw new Error(`OID4VP request failed (${response.status})`)
     const request = assertRequestObject(await response.json(), this.issuer)
     const now = (this.options.now ?? (() => new Date()))()
-    const credential = await this.options.store.current(this.options.identityId, this.issuer, now)
+    const credential = await this.options.store.current(this.options.identityId, this.issuer, now, this.options.generation)
     if (!credential) throw new Error('no current Anchor login credential is available')
     const vpToken = createBisetLoginPresentation({
       credential: credential.credential,

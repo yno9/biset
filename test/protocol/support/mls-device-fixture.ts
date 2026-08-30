@@ -5,7 +5,7 @@ import { generateOwnKeyPackage } from '../../../src/mls/group.ts'
 /** Test-only constructor for a Root-authorized MLS device. */
 export async function mlsDeviceFixture(identityId: string, rootPrivateKey = ed25519.utils.randomSecretKey()) {
   const signaturePrivateKey = ed25519.utils.randomSecretKey()
-  const credential = createMlsDeviceCredential(identityId, ed25519.getPublicKey(signaturePrivateKey), rootPrivateKey)
+  const credential = createMlsDeviceCredential(identityId, '1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ed25519.getPublicKey(signaturePrivateKey), rootPrivateKey, rootPrivateKey)
   return {
     kid: credential.deviceKid,
     credential,

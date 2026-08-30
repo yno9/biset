@@ -39,7 +39,7 @@ export interface CreateGenesisOptions {
   fetch?: typeof fetch
 }
 
-export async function createGenesis(opts: CreateGenesisOptions): Promise<{ did: string; scid: string }> {
+export async function createGenesis(opts: CreateGenesisOptions): Promise<{ did: string; scid: string; versionId: string }> {
   // Older low-level fixtures call this JavaScript function without the
   // TypeScript-required field. Keep that compatibility strictly inside the
   // test process; production must never publish an unrecoverable commitment.
@@ -91,5 +91,5 @@ export async function createGenesis(opts: CreateGenesisOptions): Promise<{ did: 
 
   if (opts.didWebMirror) await syncDidWebMirror(did, real.state, { domain: opts.domain, fetch: fetchValue })
 
-  return { did, scid }
+  return { did, scid, versionId }
 }

@@ -375,7 +375,7 @@ Self Group Remove Commitは、removed leafが将来のSelf Group epoch secretを
 - Anchor/CoordinatorのOIDC refresh session
 - master seedから得る安定Vault storage KEK
 
-MLS revokeだけではこれらを消せない。特にCoordinator v2はSelf Groupを参照せずOIDC ownerで認可するため、**MLS device revokeとCoordinator session revokeは現在別のauthority domain**である。完全な端末喪失対応には、mediator routing更新、Self Group Removeに加え、Anchor session/token revoke policyを明確にする必要がある。MLS device keyはDID documentに存在しないため、DID key削除は手順に含まれない。
+個別device revokeは廃止し、Sign rotationを唯一の一括世代交代にした。MLS device credential v2は履歴検証用Root署名に加え、WebVH `versionId`と現行Sign署名を持つ。rotation実行Clientは同じleaf署名鍵の資格情報を新世代へ更新し、他のSelf Group leafを一つのCommitで全削除する。CoordinatorのMLS admissionは検証済みWebVH logの現行`updateKeys`・`versionId`と一致する資格情報だけを許すため、旧端末はRoot keyを保持していても再参加できない。過去Vault eventはRoot署名で引き続き検証できる。DID documentへdevice keyを戻す必要はない。
 
 ## 10. Coordinatorとの境界
 
@@ -489,7 +489,7 @@ Serverはopaque MLS commitをparseせず、Clientが提出するDS rosterとCore
 
 ### 12.7 UI文言と実際のrevoke境界
 
-Account UIはdevice revokeを「Vault accessを直ちに失う」と表現しているが、既取得plaintext、master seed、安定storage KEK、独立したOIDC sessionまではMLS Removeで消えない。UIとsession revoke policyを現行architectureに合わせる必要がある。
+Account UIの個別device revokeは廃止した。Sign rotation後、実行端末以外はSelf Groupの次epochへ進めず、現行Sign世代によるAnchor enrollmentもできない。Coordinator v2の旧OIDC token拒否は実行端末がVault cardから一度Reconnectし、新世代tokenをCoordinatorへ提示した時点で確定する。既取得plaintextや既に複製されたRoot phraseを遠隔消去できない点は変わらない。
 
 ## 13. 現行の正本となる責務分割
 

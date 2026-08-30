@@ -24,6 +24,7 @@ export interface AnchorLoginCredentialRecord {
   credentialHash: string
   accountRef: string
   rootSubject: string
+  generation: string
   holderKeyId: string
   issuedAt: number
   expiresAt: number
@@ -41,6 +42,7 @@ export interface AnchorOid4vpTransaction {
 export interface AnchorOid4vpCompletion {
   responseCodeHash: string
   rootSubject: string
+  generation: string
   authenticatedAt: number
   returnUrl: string
   expiresAt: number
@@ -49,6 +51,7 @@ export interface AnchorOid4vpCompletion {
 export interface AnchorOid4vpSession {
   sessionHash: string
   rootSubject: string
+  generation: string
   authenticatedAt: number
   expiresAt: number
 }
@@ -152,7 +155,7 @@ export class AnchorOid4vpProvider implements AnchorSubjectAuthenticator {
     return { keys: [{ ...p256PublicJwk(this.options.credentialSigningPrivateKey), alg: 'ES256', use: 'sig', kid: this.signingKeyId }] }
   }
 
-  async issueCredential(rootSubject: string, holderPublicKey: P256PublicJwk): Promise<{ credential: string; expiresAt: string }> {
+  async issueCredential(rootSubject: string, generation: string, holderPublicKey: P256PublicJwk): Promise<{ credential: string; expiresAt: string }> {
     if (!subjectValue(rootSubject)) throw new TypeError('Anchor root subject is invalid')
     const now = this.now()
     // A freshly issued credential is presented by a different clock (the
@@ -164,11 +167,11 @@ export class AnchorOid4vpProvider implements AnchorSubjectAuthenticator {
     const credential = issueBisetAnchorLoginCredential({
       issuer: this.issuer, signingKeyId: this.signingKeyId,
       signingPrivateKey: this.options.credentialSigningPrivateKey,
-      accountRef, holderPublicKey, validFrom, validUntil: expiresAt,
+      accountRef, generation, holderPublicKey, validFrom, validUntil: expiresAt,
     })
     const id = credentialPayload(credential).id
     await this.options.store.putCredential({
-      credentialId: id, credentialHash: hashToken(credential), accountRef, rootSubject,
+      credentialId: id, credentialHash: hashToken(credential), accountRef, rootSubject, generation,
       holderKeyId: p256JwkThumbprint(holderPublicKey),
       issuedAt: seconds(now), expiresAt: seconds(expiresAt),
     })
@@ -218,19 +221,25 @@ export class AnchorOid4vpProvider implements AnchorSubjectAuthenticator {
     const now = this.now()
     if (!stored || stored.expiresAt <= seconds(now) || stored.did !== document.did || stored.holderKeyId !== p256JwkThumbprint(document.holder_jwk) || Date.parse(document.expires_at) !== stored.expiresAt * 1000) return problem(400, 'invalid_enrollment')
     let resolved
+    let entries
     let scid: string
     try {
       const parts = parseWebvhDid(document.did)
       scid = parts.scid
-      resolved = resolveHostedDid(webvh, document.did, parts.domain)
+      const raw = webvh.read(parts.domain)
+      if (!raw) return problem(400, 'invalid_enrollment')
+      entries = parseLog(raw)
+      resolved = resolveEntries(document.did, entries)
     } catch { return problem(400, 'invalid_enrollment') }
-    if (!resolved || !resolved.authentication.includes(proof.verificationMethod)) return problem(400, 'invalid_enrollment')
-    const method = resolved.verificationMethod.find(value => value.id === proof.verificationMethod)
-    if (!method) return problem(400, 'invalid_enrollment')
+    const last = entries?.at(-1)
+    const updateKeys = last?.parameters.updateKeys ?? []
+    if (!resolved || !last || updateKeys.length !== 1) return problem(400, 'invalid_enrollment')
+    const expectedMethod = `did:key:${updateKeys[0]}#${updateKeys[0]}`
+    if (proof.verificationMethod !== expectedMethod) return problem(400, 'invalid_enrollment')
     let valid = false
-    try { valid = verifyProof(document, proof, decodeMultikey(method.publicKeyMultibase)) } catch {}
+    try { valid = verifyProof(document, proof, decodeMultikey(updateKeys[0]!)) } catch {}
     if (!valid) return problem(400, 'invalid_enrollment')
-    const issued = await this.issueCredential(`webvh:${scid}`, document.holder_jwk)
+    const issued = await this.issueCredential(`webvh:${scid}`, last.versionId, document.holder_jwk)
     return Response.json({ format: BISET_LOGIN_CREDENTIAL_FORMAT, credential: issued.credential, expires_at: issued.expiresAt }, { status: 201, headers: noStore() })
   }
 
@@ -245,7 +254,7 @@ export class AnchorOid4vpProvider implements AnchorSubjectAuthenticator {
     const value = await this.options.store.session(hashToken(token))
     const now = seconds(this.now())
     if (!value || value.expiresAt <= now || !subjectValue(value.rootSubject)) return null
-    return { subject: value.rootSubject, authenticatedAt: new Date(value.authenticatedAt * 1000) }
+    return { subject: value.rootSubject, generation: value.generation, authenticatedAt: new Date(value.authenticatedAt * 1000) }
   }
 
   async beginAuthentication(request: Request): Promise<Response> {
@@ -326,7 +335,7 @@ export class AnchorOid4vpProvider implements AnchorSubjectAuthenticator {
     if (!record || record.revokedAt !== undefined || record.expiresAt <= nowSeconds || record.accountRef !== accountRef || record.credentialHash !== hashToken(verified.credentialToken) || record.holderKeyId !== verified.holderKeyId) return problem(400, 'invalid_vp_token')
     const responseCode = randomToken(32)
     await this.options.store.putCompletion({
-      responseCodeHash: hashToken(responseCode), rootSubject: record.rootSubject,
+      responseCodeHash: hashToken(responseCode), rootSubject: record.rootSubject, generation: record.generation,
       authenticatedAt: nowSeconds, returnUrl: transaction.returnUrl,
       expiresAt: nowSeconds + this.completionTtl,
     })
@@ -343,7 +352,7 @@ export class AnchorOid4vpProvider implements AnchorSubjectAuthenticator {
     if (!completion || completion.expiresAt <= seconds(now)) return problem(400, 'invalid_response_code')
     const sessionToken = randomToken(32)
     await this.options.store.putSession({
-      sessionHash: hashToken(sessionToken), rootSubject: completion.rootSubject,
+      sessionHash: hashToken(sessionToken), rootSubject: completion.rootSubject, generation: completion.generation,
       authenticatedAt: completion.authenticatedAt, expiresAt: seconds(now) + this.sessionTtl,
     })
     return new Response(null, {

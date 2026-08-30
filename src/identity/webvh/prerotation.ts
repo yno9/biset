@@ -63,7 +63,7 @@ export interface RotateToPreRotatedKeyOptions {
 
 /** Consumes the current Spare commitment and installs its replacement in
  * one entry, so nextKeyHashes is never empty. */
-export async function rotateToPreRotatedKey(opts: RotateToPreRotatedKeyOptions): Promise<void> {
+export async function rotateToPreRotatedKey(opts: RotateToPreRotatedKeyOptions): Promise<string> {
   if (!opts.nextKeyHash) throw new TypeError('rotateToPreRotatedKey: next Spare Key commitment is required')
   const fetchImpl = opts.fetch ?? defaultFetch()
   const { url, entries, last } = await fetchCurrentLog(opts.did, fetchImpl)
@@ -92,4 +92,5 @@ export async function rotateToPreRotatedKey(opts: RotateToPreRotatedKeyOptions):
   const entry: LogEntry = { ...unsigned, proof: [proof] }
 
   await putLog(url, [...entries, entry], [entry], fetchImpl)
+  return versionId
 }

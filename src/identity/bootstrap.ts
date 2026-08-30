@@ -164,6 +164,8 @@ interface RegisterDeviceOptions {
 async function registerDeviceAndJoinSelfGroup(
   did: string,
   rootPrivateKey: Uint8Array,
+  signPrivateKey: Uint8Array,
+  generation: string,
   selfGroupStore: MlsSelfGroupStateStore,
   keyStore: MlsKeyPackageStore,
   opts: RegisterDeviceOptions,
@@ -171,7 +173,7 @@ async function registerDeviceAndJoinSelfGroup(
   ensureMlsAuthServiceInstalled()
 
   const deviceSignaturePrivateKey = ed25519.utils.randomSecretKey()
-  const deviceCredential = createMlsDeviceCredential(did, ed25519.getPublicKey(deviceSignaturePrivateKey), rootPrivateKey)
+  const deviceCredential = createMlsDeviceCredential(did, generation, ed25519.getPublicKey(deviceSignaturePrivateKey), rootPrivateKey, signPrivateKey)
   const deviceKid = deviceCredential.deviceKid
   const kp = await generateOwnKeyPackage(deviceCredential, deviceSignaturePrivateKey)
 
@@ -213,7 +215,7 @@ export async function createNewIdentity(
   const root = deriveRootKey(masterSeed)
   const spareSeed = opts.spareSeed ?? crypto.getRandomValues(new Uint8Array(32))
   const nextKeyHash = multikeyHashBase58(encodeMultikey(ed25519.getPublicKey(spareSeed)))
-  const { did } = await createGenesis({
+  const { did, versionId } = await createGenesis({
     domain: opts.domain, rootPrivateKey: root.privateKey, rootPublicKey: root.publicKey,
     nextKeyHash,
     didWebMirror: opts.didWebMirror, fetch: opts.fetch,
@@ -222,13 +224,14 @@ export async function createNewIdentity(
   // The genesis device is the roster's own first (and, at this point, only)
   // trusted device — it starts pulling vault delivery from whatever the
   // CURRENT latestSeq is, which for a brand-new identity is the beginning.
-  const { deviceKid, selfGroupState } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, selfGroupStore, keyStore, {
+  const { deviceKid, selfGroupState } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, root.privateKey, versionId, selfGroupStore, keyStore, {
     coreBaseUrl: opts.coreBaseUrl, mlsDeliveryBaseUrl: opts.mlsDeliveryBaseUrl, didWebMirror: opts.didWebMirror, fetch: opts.fetch, now,
     deliveryFloorForNewDevice: async () => deliverySeq(0n),
   })
 
   const record: IdentityRecord = {
-    did, masterSeed: toHex(masterSeed), rootPublicKey: toHex(root.publicKey), rootPrivateKey: toHex(root.privateKey), deviceKid,
+    did, masterSeed: toHex(masterSeed), rootPublicKey: toHex(root.publicKey), rootPrivateKey: toHex(root.privateKey),
+    signPublicKey: toHex(root.publicKey), signPrivateKey: toHex(root.privateKey), generation: versionId, deviceKid,
   }
   await recordStore.put(record)
 
@@ -493,16 +496,18 @@ export async function restoreIdentity(
   const normalizedRoot = opts.mnemonic.trim().toLowerCase().replace(/\s+/g, ' ')
   const normalizedSign = opts.signMnemonic.trim().toLowerCase().replace(/\s+/g, ' ')
   const signSeed = mnemonicToSeed(normalizedSign)
-  const signPublicKey = normalizedSign === normalizedRoot ? deriveRootKey(signSeed).publicKey : ed25519.getPublicKey(signSeed)
+  const signPrivateKey = normalizedSign === normalizedRoot ? deriveRootKey(signSeed).privateKey : signSeed
+  const signPublicKey = ed25519.getPublicKey(signPrivateKey)
   if (encodeMultikey(signPublicKey) !== updateKeys[0]) throw new Error('restoreIdentity: Sign Key phrase is not current for this identity')
 
-  const { deviceKid, selfGroupState } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, selfGroupStore, keyStore, {
+  const { deviceKid, selfGroupState } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, signPrivateKey, last.versionId, selfGroupStore, keyStore, {
     coreBaseUrl: opts.coreBaseUrl, mlsDeliveryBaseUrl: opts.mlsDeliveryBaseUrl, didWebMirror: opts.didWebMirror, fetch: opts.fetch, now,
     deliveryFloorForNewDevice: opts.deliveryFloorForNewDevice,
   })
 
   const record: IdentityRecord = {
-    did, masterSeed: toHex(masterSeed), rootPublicKey: toHex(root.publicKey), rootPrivateKey: toHex(root.privateKey), deviceKid,
+    did, masterSeed: toHex(masterSeed), rootPublicKey: toHex(root.publicKey), rootPrivateKey: toHex(root.privateKey),
+    signPublicKey: toHex(signPublicKey), signPrivateKey: toHex(signPrivateKey), generation: last.versionId, deviceKid,
   }
   await recordStore.put(record)
 
@@ -1000,10 +1005,10 @@ export async function enableDidComm(
 
   const didCommKid = credential.didCommKid
   const x25519PublicKey = x25519.getPublicKey(credential.privateKey)
-  const rootPrivateKey = fromHex(record.rootPrivateKey)
-  const rootPublicKey = fromHex(record.rootPublicKey)
+  const signPrivateKey = fromHex(record.signPrivateKey)
+  const signPublicKey = fromHex(record.signPublicKey)
 
-  await publishRoutingPointer({ did: record.did, signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey, fetch: opts.fetch })
+  await publishRoutingPointer({ did: record.did, signingPrivateKey: signPrivateKey, signingPublicKey: signPublicKey, fetch: opts.fetch })
 
   const fetchImpl = opts.fetch ?? fetch
   const current = await fetchRouting(record.did, fetchImpl).catch(() => null)
@@ -1025,7 +1030,7 @@ export async function enableDidComm(
     ...(current?.name ? { name: current.name } : {}),
     ...(current?.openpgpPublicKey ? { openpgpPublicKey: current.openpgpPublicKey } : {}),
   })
-  const signing = { updateKey: encodeMultikey(rootPublicKey), privateKey: rootPrivateKey }
+  const signing = { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }
   const keyAgreementKeys = [{ kid: didCommKid, publicKey: x25519PublicKey }]
 
   // Publish the keyAgreement key FIRST, via the legacy endpoint shape --
@@ -1078,10 +1083,10 @@ async function ensureAlsoKnownAsPublished(record: IdentityRecord, opts: EnableDi
   const fetchImpl = opts.fetch ?? fetch
   const current = await fetchRouting(record.did, fetchImpl)
   if (!current || current.alsoKnownAs?.includes(mailFrom)) return
-  const rootPrivateKey = fromHex(record.rootPrivateKey)
-  const rootPublicKey = fromHex(record.rootPublicKey)
+  const signPrivateKey = fromHex(record.signPrivateKey)
+  const signPublicKey = fromHex(record.signPublicKey)
   const alsoKnownAs = [...new Set([...(current.alsoKnownAs ?? []), mailFrom])]
-  await putRouting(record.did, { ...current, alsoKnownAs }, { updateKey: encodeMultikey(rootPublicKey), privateKey: rootPrivateKey }, fetchImpl)
+  await putRouting(record.did, { ...current, alsoKnownAs }, { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, fetchImpl)
 }
 
 /**

@@ -1,7 +1,7 @@
 // What an MLS leaf claims to be, and how that claim maps onto a biset identity.
 //
 // MLS gives every leaf a Credential. RFC 9420 leaves its contents to the
-// application. Biset uses a Root-signed device credential containing the
+// application. Biset uses a generation-bound device credential containing the
 // stable identity id, a derived device id, and that leaf's Ed25519 public key.
 // The device key is deliberately not published in the DID document:
 //
@@ -19,14 +19,14 @@
 // canonical credential bytes while biset's Authentication Service interprets
 // and validates them.
 import type { Credential } from './vendor/credential.ts'
-import { credentialForMlsDevice, mlsDeviceCredentialOf, type MlsDeviceCredentialV1 } from './device-credential.ts'
+import { credentialForMlsDevice, mlsDeviceCredentialOf, type MlsDeviceCredentialV2 } from './device-credential.ts'
 export { didOfKid } from '../protocol/ids.ts'
 
 /** An MLS device identity, one leaf per device. */
 export interface MlsMemberId { did: string; kid: string }
 
-/** The Root-signed device credential as MLS sees it. */
-export function credentialFor(value: MlsDeviceCredentialV1): Credential {
+/** The generation-bound device credential as MLS sees it. */
+export function credentialFor(value: MlsDeviceCredentialV2): Credential {
   return credentialForMlsDevice(value)
 }
 

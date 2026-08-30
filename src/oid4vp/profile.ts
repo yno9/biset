@@ -23,6 +23,7 @@ export interface BisetAnchorLoginCredentialClaims {
   credentialSubject: {
     id: string
     type: 'BisetAnchorAccount'
+    generation: string
   }
   cnf: { jwk: P256PublicJwk }
 }
@@ -32,6 +33,7 @@ export interface IssueBisetLoginCredentialOptions {
   signingKeyId: string
   signingPrivateKey: Uint8Array
   accountRef: string
+  generation: string
   holderPublicKey: P256PublicJwk
   validFrom: Date
   validUntil: Date
@@ -84,7 +86,7 @@ export function issueBisetAnchorLoginCredential(options: IssueBisetLoginCredenti
     issuer,
     validFrom: options.validFrom.toISOString(),
     validUntil: options.validUntil.toISOString(),
-    credentialSubject: { id: `urn:biset:anchor-account:${options.accountRef}`, type: 'BisetAnchorAccount' },
+    credentialSubject: { id: `urn:biset:anchor-account:${options.accountRef}`, type: 'BisetAnchorAccount', generation: assertGeneration(options.generation) },
     cnf: { jwk: copyJwk(options.holderPublicKey) },
   }
   return signJwt({ alg: 'ES256', kid: options.signingKeyId, typ: 'vc+jwt', cty: 'vc' }, claims as unknown as CanonicalValue, options.signingPrivateKey)
@@ -198,9 +200,9 @@ function assertCredentialClaims(value: Record<string, unknown>): BisetAnchorLogi
   if (!exactKeys(value, allowed) || !Array.isArray(value['@context']) || value['@context'].length !== 1 || value['@context'][0] !== VC_CONTEXT || !Array.isArray(value.type) || value.type.length !== 2 || value.type[0] !== 'VerifiableCredential' || value.type[1] !== BISET_LOGIN_CREDENTIAL_TYPE || typeof value.id !== 'string' || typeof value.issuer !== 'string' || typeof value.validFrom !== 'string' || typeof value.validUntil !== 'string') throw new TypeError('login credential shape is invalid')
   const subject = object(value.credentialSubject, 'credential subject')
   const cnf = object(value.cnf, 'credential confirmation')
-  if (!exactKeys(subject, ['id', 'type']) || typeof subject.id !== 'string' || subject.type !== 'BisetAnchorAccount' || !exactKeys(cnf, ['jwk'])) throw new TypeError('login credential subject is invalid')
+  if (!exactKeys(subject, ['generation', 'id', 'type']) || typeof subject.id !== 'string' || subject.type !== 'BisetAnchorAccount' || typeof subject.generation !== 'string' || !exactKeys(cnf, ['jwk'])) throw new TypeError('login credential subject is invalid')
   const jwk = assertP256Jwk(cnf.jwk)
-  const result = { ...value, credentialSubject: { id: subject.id, type: 'BisetAnchorAccount' as const }, cnf: { jwk } } as unknown as BisetAnchorLoginCredentialClaims
+  const result = { ...value, credentialSubject: { id: subject.id, type: 'BisetAnchorAccount' as const, generation: assertGeneration(subject.generation) }, cnf: { jwk } } as unknown as BisetAnchorLoginCredentialClaims
   accountRefFromCredential(result)
   if (!/^urn:uuid:[0-9a-f-]{36}$/i.test(result.id) || Number.isNaN(Date.parse(result.validFrom)) || Number.isNaN(Date.parse(result.validUntil))) throw new TypeError('login credential values are invalid')
   return result
@@ -233,5 +235,6 @@ function exactKeys(value: Record<string, unknown>, keys: string[]): boolean { re
 function object(value: unknown, name: string): Record<string, unknown> { if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(`${name} is invalid`); return value as Record<string, unknown> }
 function copyJwk(value: P256PublicJwk): P256PublicJwk { return { kty: value.kty, crv: value.crv, x: value.x, y: value.y } }
 function opaque(value: string): boolean { return typeof value === 'string' && /^[A-Za-z0-9._~-]{1,512}$/.test(value) }
+function assertGeneration(value: string): string { if (!/^[1-9][0-9]*-[A-Za-z0-9_-]{20,200}$/.test(value)) throw new TypeError('WebVH generation is invalid'); return value }
 function httpsOrigin(value: string, name: string): string { const url = new URL(value); if (url.protocol !== 'https:' || url.pathname !== '/' || url.search || url.hash || url.username || url.password) throw new TypeError(`${name} must be an HTTPS origin`); return url.origin }
 function httpsUrl(value: string, name: string): string { const url = new URL(value); if (url.protocol !== 'https:' || url.username || url.password || url.hash) throw new TypeError(`${name} must be an HTTPS URL`); return url.href }

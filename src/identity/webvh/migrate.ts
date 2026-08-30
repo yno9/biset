@@ -75,7 +75,7 @@ export interface MigrateLocationOptions {
  * location, and write the resulting log to both the new location (full PUT,
  * nothing there yet) and the old one (append, so a peer holding only the old
  * DID string keeps resolving and lands on the new state). */
-export async function migrateWebvhLocation(opts: MigrateLocationOptions): Promise<{ newDid: string; scid: string }> {
+export async function migrateWebvhLocation(opts: MigrateLocationOptions): Promise<{ newDid: string; scid: string; versionId: string }> {
   const fetchImpl = opts.fetch ?? defaultFetch()
   const { entries, last } = await fetchCurrentLog(opts.oldDid, fetchImpl)
 
@@ -139,5 +139,5 @@ export async function migrateWebvhLocation(opts: MigrateLocationOptions): Promis
   if (opts.afterNewLocationWritten) await opts.afterNewLocationWritten(newDid)
   await putLog(didToHttpsUrl(opts.oldDid), moved, [moved[moved.length - 1]!], fetchImpl)
 
-  return { newDid, scid }
+  return { newDid, scid, versionId }
 }

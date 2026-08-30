@@ -57,7 +57,7 @@ export async function moveWebvhIdentity(opts: MoveWebvhIdentityOptions): Promise
   const oldDid = opts.record.did
   const rewriteFor = (newDid: string) => (value: string): string => value.split(oldDid).join(newDid)
 
-  const { newDid } = await migrateWebvhLocation({
+  const { newDid, versionId } = await migrateWebvhLocation({
     oldDid,
     newDomain: opts.newDomain,
     signingPrivateKey: opts.signingPrivateKey,
@@ -83,6 +83,9 @@ export async function moveWebvhIdentity(opts: MoveWebvhIdentityOptions): Promise
   const movedRecord: IdentityRecord = {
     ...opts.record,
     did: newDid,
+    signPrivateKey: hex(opts.signingPrivateKey),
+    signPublicKey: hex(opts.signingPublicKey),
+    generation: versionId,
     // Root-signed MLS device credentials are immutable and remain valid
     // across a same-SCID move; their original DID resolves through the move
     // chain. Unlike DID document fragments, the device kid is not rewritten.
@@ -99,3 +102,5 @@ export async function moveWebvhIdentity(opts: MoveWebvhIdentityOptions): Promise
   }
   return movedRecord
 }
+
+function hex(value: Uint8Array): string { return Array.from(value, byte => byte.toString(16).padStart(2, '0')).join('') }

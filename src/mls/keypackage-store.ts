@@ -9,7 +9,7 @@
 // reasoning as `mls/store.ts`'s own header: unrelated key material, unrelated
 // migrations.
 import { decodeKeyPackage, encodeKeyPackage, generateOwnKeyPackage, keyPackageRefOf, welcomeRecipientRefs, type OwnKeyPackage } from './group.ts'
-import type { MlsDeviceCredentialV1 } from './device-credential.ts'
+import type { MlsDeviceCredentialV2 } from './device-credential.ts'
 
 /** How many unused key packages this device keeps published — a key package
  * is single-use, so the pool is what lets several devices invite this one
@@ -31,7 +31,7 @@ interface StoredKeyPackage {
 export interface MlsKeyPackageStore {
   /** Mints `count` fresh key packages, keeps their private halves, and
    * returns them (public + private) for the caller to publish. */
-  mint(kid: string, credential: MlsDeviceCredentialV1, signaturePrivateKey: Uint8Array, count: number): Promise<OwnKeyPackage[]>
+  mint(kid: string, credential: MlsDeviceCredentialV2, signaturePrivateKey: Uint8Array, count: number): Promise<OwnKeyPackage[]>
   /** Finds and consumes the key package a Welcome was addressed to.
    * Undefined when none of the Welcome's recipients is us — an ordinary
    * outcome (a resent Welcome after this device already joined and deleted
@@ -63,7 +63,7 @@ export class IndexedDbMlsKeyPackageStore implements MlsKeyPackageStore {
     this.databasePromise?.then(db => db.close()).catch(() => {})
   }
 
-  async mint(kid: string, credential: MlsDeviceCredentialV1, signaturePrivateKey: Uint8Array, count: number): Promise<OwnKeyPackage[]> {
+  async mint(kid: string, credential: MlsDeviceCredentialV2, signaturePrivateKey: Uint8Array, count: number): Promise<OwnKeyPackage[]> {
     const database = await this.database()
     const minted: OwnKeyPackage[] = []
     for (let i = 0; i < count; i++) {

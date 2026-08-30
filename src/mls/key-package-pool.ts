@@ -15,7 +15,7 @@ import { KEY_PACKAGE_POOL_TARGET, type MlsKeyPackageStore } from './keypackage-s
 import { mlsKeyPackageCountPullSigningBytes, mlsKeyPackagePublishSigningBytes } from '../protocol/signing.ts'
 import type { MlsKeyPackageCountPullV1, MlsKeyPackagePublishV1 } from '../protocol/mls-ds.ts'
 import type { SelfGroupSigner } from './self-group.ts'
-import type { MlsDeviceCredentialV1 } from './device-credential.ts'
+import type { MlsDeviceCredentialV2 } from './device-credential.ts'
 
 /**
  * Tops up this device's published KeyPackage pool at the DS to `target`,
@@ -27,7 +27,7 @@ export async function ensureKeyPackagePool(
   keyStore: MlsKeyPackageStore,
   identityId: string,
   deviceKid: string,
-  deviceCredential: MlsDeviceCredentialV1,
+  deviceCredential: MlsDeviceCredentialV2,
   signaturePrivateKey: Uint8Array,
   sign: SelfGroupSigner,
   target: number = KEY_PACKAGE_POOL_TARGET,

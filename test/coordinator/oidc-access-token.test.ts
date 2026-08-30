@@ -14,6 +14,7 @@ describe('Vault Coordinator OIDC access-token verification', () => {
       client_id: 'biset-client',
       jti: 'token-1',
       scope: 'vault.create vault.pull',
+      biset_generation: `1-${'a'.repeat(32)}`,
       iat: Math.floor(now.getTime() / 1000),
       exp: Math.floor(now.getTime() / 1000) + 300,
     })
@@ -31,6 +32,7 @@ describe('Vault Coordinator OIDC access-token verification', () => {
     })
     const principal = await verifier.verify(token, now)
     expect(principal.subject).toBe('pairwise-coordinator-subject')
+    expect(principal.generation).toBe(`1-${'a'.repeat(32)}`)
     expect([...principal.scopes]).toEqual(['vault.create', 'vault.pull'])
     expect(requests).toHaveLength(2)
     await verifier.verify(token, now)
@@ -43,7 +45,7 @@ describe('Vault Coordinator OIDC access-token verification', () => {
     const fetchImpl: typeof fetch = async () => Response.json({ keys: [{ ...publicJwk, kid: 'key-1', alg: 'RS256' }] })
     const verifier = new OidcJwtAccessTokenVerifier({ issuer: 'https://anchor.biset.md', audience: 'https://coordinator.biset.md', jwksUri: 'https://anchor.biset.md/jwks', fetch: fetchImpl })
     const now = new Date('2026-08-27T00:00:00.000Z')
-    const claims = { iss: 'https://anchor.biset.md', sub: 'opaque', aud: 'https://other.example', client_id: 'biset-client', jti: 'token-2', scope: 'vault.pull', iat: Math.floor(now.getTime() / 1000), exp: Math.floor(now.getTime() / 1000) + 60 }
+    const claims = { iss: 'https://anchor.biset.md', sub: 'opaque', aud: 'https://other.example', client_id: 'biset-client', jti: 'token-2', scope: 'vault.pull', biset_generation: `1-${'a'.repeat(32)}`, iat: Math.floor(now.getTime() / 1000), exp: Math.floor(now.getTime() / 1000) + 60 }
     await expect(verifier.verify(await jwt(keys.privateKey, claims), now)).rejects.toBeInstanceOf(VaultAuthenticationError)
     await expect(verifier.verify(await jwt(keys.privateKey, claims, 'JWT'), now)).rejects.toBeInstanceOf(VaultAuthenticationError)
   })

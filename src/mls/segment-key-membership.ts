@@ -5,7 +5,7 @@
 // revoke must prevent future grants, not corrupt already-valid history.
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { memberSignaturePublicKey, ownMlsDeviceCredential, ownSignaturePrivateKey } from './group.ts'
-import { decodeMlsDeviceCredential, encodeMlsDeviceCredential, verifyMlsDeviceCredential } from './device-credential.ts'
+import { decodeMlsDeviceCredential, encodeMlsDeviceCredential, verifyMlsDeviceCredentialRoot } from './device-credential.ts'
 import type { ClientState } from './vendor/index.ts'
 import type { SegmentKeyWrapSigner, SegmentKeyWrapVerifier } from '../vault/crypto.ts'
 import type { DeviceId } from '../protocol/ids.ts'
@@ -27,7 +27,7 @@ export class MlsMembershipSegmentKeyWrapVerifier implements SegmentKeyWrapVerifi
       try {
         const credential = decodeMlsDeviceCredential(deviceCredential)
         return credential.deviceKid === deviceId
-          && verifyMlsDeviceCredential(credential, this.rootPublicKey)
+          && verifyMlsDeviceCredentialRoot(credential, this.rootPublicKey)
           && signature.length === 64
           && ed25519.verify(signature, bytes, credential.signaturePublicKey)
       } catch { return false }

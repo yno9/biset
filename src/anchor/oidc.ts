@@ -17,6 +17,8 @@ export interface AnchorOidcClient {
 export interface AnchorAuthenticatedSubject {
   /** Anchor-local stable account identifier. It is never emitted directly. */
   subject: string
+  /** Opaque WebVH versionId proven by the current Sign key. */
+  generation: string
   authenticatedAt?: Date
 }
 
@@ -31,6 +33,7 @@ export interface AuthorizationCodeRecord {
   clientId: string
   redirectUri: string
   rootSubject: string
+  generation: string
   sectorIdentifier: string
   audience: string
   scopes: string[]
@@ -51,6 +54,7 @@ export interface RefreshTokenRecord {
   tokenHash: string
   clientId: string
   rootSubject: string
+  generation: string
   sectorIdentifier: string
   audience: string
   scopes: string[]
@@ -154,12 +158,12 @@ export class AnchorOidcProvider {
     if (!authenticated) return this.options.authenticator.beginAuthentication
       ? this.options.authenticator.beginAuthentication(request)
       : oauthError(401, 'login_required', 'Anchor login is required')
-    if (!opaque(authenticated.subject, 512)) return oauthError(401, 'login_required', 'Anchor login is required')
+    if (!opaque(authenticated.subject, 512) || !generationValue(authenticated.generation)) return oauthError(401, 'login_required', 'Anchor login is required')
     const code = randomToken(32)
     const now = this.now()
     await this.options.codes.put({
       codeHash: tokenHash(code), clientId: client.clientId, redirectUri,
-      rootSubject: authenticated.subject, sectorIdentifier: client.sectorIdentifier,
+      rootSubject: authenticated.subject, generation: authenticated.generation, sectorIdentifier: client.sectorIdentifier,
       audience: client.audience, scopes: scopes.filter(scope => scope !== 'openid'),
       codeChallenge, nonce,
       authenticatedAt: Math.floor((authenticated.authenticatedAt ?? now).getTime() / 1000),
@@ -209,14 +213,14 @@ export class AnchorOidcProvider {
     return Response.json({ access_token: accessToken, token_type: 'Bearer', expires_in: this.accessTtl, scope: grant.scopes.join(' '), refresh_token: refreshToken }, { headers: noStoreHeaders() })
   }
 
-  private accessToken(grant: Pick<RefreshTokenRecord, 'rootSubject' | 'sectorIdentifier' | 'audience' | 'clientId' | 'scopes'>, nowSeconds: number): string {
+  private accessToken(grant: Pick<RefreshTokenRecord, 'rootSubject' | 'generation' | 'sectorIdentifier' | 'audience' | 'clientId' | 'scopes'>, nowSeconds: number): string {
     const subject = pairwiseSubject(this.options.pairwiseSecret, grant.sectorIdentifier, grant.rootSubject)
-    return this.jwt('at+jwt', { iss: this.issuer, sub: subject, aud: grant.audience, client_id: grant.clientId, jti: randomToken(16), scope: grant.scopes.join(' '), iat: nowSeconds, exp: nowSeconds + this.accessTtl })
+    return this.jwt('at+jwt', { iss: this.issuer, sub: subject, aud: grant.audience, client_id: grant.clientId, jti: randomToken(16), scope: grant.scopes.join(' '), biset_generation: grant.generation, iat: nowSeconds, exp: nowSeconds + this.accessTtl })
   }
 
-  private async rotateRefreshToken(grant: Pick<RefreshTokenRecord, 'rootSubject' | 'sectorIdentifier' | 'audience' | 'clientId' | 'scopes'>, nowSeconds: number): Promise<string> {
+  private async rotateRefreshToken(grant: Pick<RefreshTokenRecord, 'rootSubject' | 'generation' | 'sectorIdentifier' | 'audience' | 'clientId' | 'scopes'>, nowSeconds: number): Promise<string> {
     const token = randomToken(32)
-    await this.options.codes.putRefresh({ tokenHash: tokenHash(token), clientId: grant.clientId, rootSubject: grant.rootSubject, sectorIdentifier: grant.sectorIdentifier, audience: grant.audience, scopes: [...grant.scopes], expiresAt: nowSeconds + this.refreshTtl })
+    await this.options.codes.putRefresh({ tokenHash: tokenHash(token), clientId: grant.clientId, rootSubject: grant.rootSubject, generation: grant.generation, sectorIdentifier: grant.sectorIdentifier, audience: grant.audience, scopes: [...grant.scopes], expiresAt: nowSeconds + this.refreshTtl })
     return token
   }
 
@@ -257,6 +261,7 @@ function positiveTtl(value: number, name: string): number { if (!Number.isSafeIn
 function refreshTtl(value: number): number { if (!Number.isSafeInteger(value) || value < 3600 || value > 365 * 24 * 60 * 60) throw new TypeError('refresh token TTL is invalid'); return value }
 function opaque(value: string, max: number): boolean { return value.length > 0 && value.length <= max && /^[\x21-\x7e]+$/.test(value) }
 function scopeName(value: string): boolean { return /^[A-Za-z0-9._:-]{1,128}$/.test(value) }
+function generationValue(value: string): boolean { return typeof value === 'string' && /^[1-9][0-9]*-[A-Za-z0-9_-]{20,200}$/.test(value) }
 function parseScopes(value: string): string[] { const scopes = value.split(' ').filter(Boolean); return scopes.length > 0 && scopes.every(scopeName) && new Set(scopes).size === scopes.length ? scopes : [] }
 function single(values: URLSearchParams, name: string): string { const found = values.getAll(name); return found.length === 1 ? found[0]! : '' }
 function randomToken(bytes: number): string { return bytesToBase64url(crypto.getRandomValues(new Uint8Array(bytes))) }

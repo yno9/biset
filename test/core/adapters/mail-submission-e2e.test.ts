@@ -52,7 +52,7 @@ function memorySelfGroupStore(): MlsSelfGroupStateStore {
 
 async function makeIdentity(did: string, rootPrivateKey = ed25519.utils.randomSecretKey()) {
   const leafPrivateKey = ed25519.utils.randomSecretKey()
-  const credential = createMlsDeviceCredential(did, ed25519.getPublicKey(leafPrivateKey), rootPrivateKey)
+  const credential = createMlsDeviceCredential(did, '1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ed25519.getPublicKey(leafPrivateKey), rootPrivateKey, rootPrivateKey)
   const kp = await generateOwnKeyPackage(credential, leafPrivateKey)
   const state = await createMlsGroup(hexToBytes(selfGroupIdHex(did)), kp)
   const selfGroupStore = memorySelfGroupStore()

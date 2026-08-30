@@ -20,7 +20,7 @@ import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/pr
 const identityId = 'did:web:alice.example'
 const rootPrivateKey = ed25519.utils.randomSecretKey()
 const leafPrivateKey = ed25519.utils.randomSecretKey()
-const deviceCredential = createMlsDeviceCredential(identityId, ed25519.getPublicKey(leafPrivateKey), rootPrivateKey)
+const deviceCredential = createMlsDeviceCredential(identityId, '1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ed25519.getPublicKey(leafPrivateKey), rootPrivateKey, rootPrivateKey)
 const deviceKid = deviceCredential.deviceKid
 
 function ownKeyPackage() {

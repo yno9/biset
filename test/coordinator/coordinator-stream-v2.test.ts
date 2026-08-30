@@ -44,6 +44,16 @@ describe('owner-scoped Coordinator v2 stream', () => {
     const schema = database.query<{ sql: string }, []>("SELECT sql FROM sqlite_master WHERE type='table' AND name LIKE 'vault_stream%'").all().map(row => row.sql.toLowerCase()).join('\n')
     for (const forbidden of ['device', 'member', 'mls', 'did', 'scid', 'domain', 'mail', 'identity']) expect(schema).not.toContain(forbidden)
   })
+
+  test('advances the opaque owner generation monotonically and rejects an older token', async () => {
+    const { handler } = setup()
+    const first = await post(handler, '/v2/vaults/default', { version: 2 }, 'alice:create:1')
+    expect(first.status).toBe(200)
+    const stream = await first.json() as { vaultId: string }
+    expect((await post(handler, '/v2/vaults/default', { version: 2 }, 'alice:create:2')).status).toBe(200)
+    expect((await post(handler, '/v2/entries/pull', { version: 2, vaultId: stream.vaultId, after: '0' }, 'alice:pull:1')).status).toBe(401)
+    expect((await post(handler, '/v2/entries/pull', { version: 2, vaultId: stream.vaultId, after: '0' }, 'alice:pull:2')).status).toBe(200)
+  })
 })
 
 function setup(): { handler: ReturnType<typeof createVaultCoordinatorFetchHandler>; database: Database } {
@@ -51,9 +61,9 @@ function setup(): { handler: ReturnType<typeof createVaultCoordinatorFetchHandle
   databases.push(database)
   const verifier: VaultAccessTokenVerifier = {
     async verify(token): Promise<VaultAccessPrincipal> {
-      const [subject, operation] = token.split(':')
+      const [subject, operation, generationNumber = '1'] = token.split(':')
       if (!subject || !operation) throw new Error('bad test token')
-      return { subject, scopes: new Set([`vault.${operation}`]), expiresAt: Number.MAX_SAFE_INTEGER }
+      return { subject, generation: `${generationNumber}-${generationNumber === '1' ? 'a' : 'b'.repeat(32)}`.replace(/^1-a$/, `1-${'a'.repeat(32)}`), scopes: new Set([`vault.${operation}`]), expiresAt: Number.MAX_SAFE_INTEGER }
     },
   }
   return { database, handler: createVaultCoordinatorFetchHandler({ store: new SqliteVaultCoordinatorStore(database), accessTokens: verifier }) }

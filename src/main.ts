@@ -51,9 +51,9 @@ import { rotateToPreRotatedKey } from './identity/webvh/prerotation.ts'
 import { moveWebvhIdentity } from './identity/webvh/move.ts'
 import { adoptPendingMove } from './identity/webvh/adopt-move.ts'
 import { encodeMultikey } from './identity/webvh/multikey.ts'
-import { removeDeviceFromSelfGroup, type SelfGroupSigner } from './mls/self-group.ts'
+import { rotateSelfGroupGeneration, type SelfGroupSigner } from './mls/self-group.ts'
 import { memberDeviceCredentialBytes, memberKids, ownMlsDeviceCredential, ownSignaturePrivateKey } from './mls/group.ts'
-import { encodeMlsDeviceCredential } from './mls/device-credential.ts'
+import { createMlsDeviceCredential, encodeMlsDeviceCredential } from './mls/device-credential.ts'
 import { CoordinatorMlsDeliveryTransport } from './mls/coordinator-mls-delivery-transport.ts'
 import { CoreRosterInstallTransport } from './mls/core-roster-install-transport.ts'
 import { DidCommDeviceKeyReader } from './vault/didcomm-device-key-reader.ts'
@@ -87,6 +87,7 @@ import { createCoordinatorCheckpoint, createPortableCoordinatorCheckpoint, deriv
 import { rewrapRecoveryArchiveForCurrentEpoch } from './vault/recovery-archive-rewrap.ts'
 import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from './vault/storage-root.ts'
 
+const hex = (value: Uint8Array): string => Array.from(value, byte => byte.toString(16).padStart(2, '0')).join('')
 let pollTimer: ReturnType<typeof setInterval> | undefined
 let coordinatorPollTimer: ReturnType<typeof setInterval> | undefined
 let mediatorPollHandles: MediatorPollHandle[] = []
@@ -154,7 +155,13 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   mediatorPollHandles = []
 
   const recordStore = new IndexedDbIdentityRecordStore()
-  const storedRecords = await recordStore.list().catch(() => [])
+  const loadedRecords = await recordStore.list().catch(() => [])
+  // Credential v2 intentionally has no compatibility path: an old
+  // Root-authorized record would defeat Sign-generation revocation. Remove
+  // only its identity index so the UI returns to explicit restore instead
+  // of crashing on missing Sign material.
+  const storedRecords = loadedRecords.filter(record => record.signPrivateKey && record.signPublicKey && record.generation)
+  for (const record of loadedRecords) if (!storedRecords.includes(record)) await recordStore.delete(record.did).catch(() => {})
   if (storedRecords.length === 0) {
     configureAccountPage({ did: null })
     showApp()
@@ -195,6 +202,25 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   let identity = records[0]!
   const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did, identity.masterSeed)
   const { apexDomain, anchorBaseUrl, anchorOidcClientId, coreBaseUrl, mediatorUrls, coordinatorUrl } = readBisetConfig()
+  // A WebVH PUT can succeed while the following MLS submission loses the
+  // network. Reconcile the executing leaf before ordinary maintenance so
+  // rotation is retryable after reload instead of leaving a stranded Vault.
+  if (coordinatorUrl) {
+    for (const record of records) {
+      if (!record.deviceKid) continue
+      const stored = await selfGroupStore.load(record.did).catch(() => undefined)
+      if (!stored || ownMlsDeviceCredential(stored.state).generation === record.generation) continue
+      try {
+        const prior = ownMlsDeviceCredential(stored.state)
+        const credential = createMlsDeviceCredential(record.did, record.generation, prior.signaturePublicKey, fromHex(record.rootPrivateKey), fromHex(record.signPrivateKey))
+        const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
+        const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: coordinatorUrl, deviceCredential: encodeMlsDeviceCredential(credential) })
+        await rotateSelfGroupGeneration(selfGroupStore, transport, record.did, record.deviceKid, credential, sign)
+      } catch (error) {
+        console.warn(`[rotation/reconcile] ${record.did}:`, error instanceof Error ? error.message : error)
+      }
+    }
+  }
   // Catch up MLS and repair every local SegmentKey wrap before any inbox,
   // credential, or relationship reader attempts decryption. Running this
   // near the end of boot used to render an empty inbox first; if a segment
@@ -243,12 +269,12 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     if (!coordinatorConfigured) throw new Error('Coordinator login is not configured')
     coordinatorOidcInitialization ??= (async () => {
       const trust = await discoverTrustedAnchorOid4vpIssuer(anchorBaseUrl)
-      const wallet = new BisetOid4vpWallet({ identityId: identity.did, trust, store: loginWalletStore })
+      const wallet = new BisetOid4vpWallet({ identityId: identity.did, generation: identity.generation, trust, store: loginWalletStore })
       if (!(await wallet.current())) {
         await wallet.enroll({
           did: identity.did,
-          authenticationVerificationMethod: `${identity.did}#key-1`,
-          authenticationPrivateKey: fromHex(identity.rootPrivateKey),
+          authenticationVerificationMethod: `did:key:${encodeMultikey(fromHex(identity.signPublicKey))}#${encodeMultikey(fromHex(identity.signPublicKey))}`,
+          authenticationPrivateKey: fromHex(identity.signPrivateKey),
         })
       }
       return new AnchorOidcPkceClient({
@@ -282,56 +308,48 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   const initialCoordinatorBinding = await vaultStore.readCoordinatorBinding(identity.did).catch(() => undefined)
   const initialCoordinatorPendingJoin = initialCoordinatorBinding ? undefined : await vaultStore.readCoordinatorPendingJoin(identity.did).catch(() => undefined)
   void initialCoordinatorPendingJoin
-  // Signs with the ROOT private key (the same key routing.json's own
+  // Signs with the current Sign key (the key routing.json authorization
   // keyAgreement/alsoKnownAs entries are already signed with, webvh-routing.ts's
   // DataIntegrityProof) -- account-page.ts never sees key material itself,
   // only calls this callback.
   const editName = async (name: string): Promise<void> => {
-    const rootPrivateKey = fromHex(identity.rootPrivateKey)
-    const rootPublicKey = fromHex(identity.rootPublicKey)
-    await setRoutingName(identity.did, name, { updateKey: encodeMultikey(rootPublicKey), privateKey: rootPrivateKey }, fetch)
-  }
-  // Revoke = cut the target device out of MLS membership (so it can't read
-  // anything committed after this point, mls/self-group.ts's own
-  // removeDeviceFromSelfGroup). The DID document is Root-only; device
-  // revocation is represented exclusively by Self Group membership.
-  //
-  // Does NOT touch routing.json's DIDComm keyAgreement entry: since
-  // 2026-08-27 (ARC.md's DIDComm mediator redesign) that key is
-  // IDENTITY-shared, not per-device (vault/didcomm-credential.ts, same
-  // shape as the OpenPGP mail credential) -- every trusted device holds the
-  // SAME private key, so there is no longer a per-device entry to look up
-  // and remove; doing so the old way would have deleted the one shared
-  // entry every REMAINING device still legitimately needs. A revoked device
-  // that copied the shared private key before being cut off can still read
-  // DIDComm messages addressed to it until the shared key is actively
-  // rotated -- the same gap the OpenPGP credential already has
-  // (`supersedesFingerprint` chain exists, no rotation UI/trigger wired
-  // yet). Rotating the DIDComm credential here, the same way, is real
-  // follow-up work, not something this call silently half-does.
-  const revokeDevice = async (targetDeviceKid: string): Promise<void> => {
-    if (!identity.deviceKid) throw new Error('This device has no MLS credential yet')
-    if (!coordinatorUrl) throw new Error('coordinatorUrl not configured')
-    const stored = await selfGroupStore.load(identity.did)
-    if (!stored) throw new Error('No self-group state for this identity')
-    const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
-    const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: coordinatorUrl, deviceCredential: encodeMlsDeviceCredential(ownMlsDeviceCredential(stored.state)) })
-    const state = await removeDeviceFromSelfGroup(selfGroupStore, mlsTransport, identity.did, identity.deviceKid, targetDeviceKid, sign)
-    vaultDevices = memberKids(state, identity.did).map(deviceId => ({ deviceId, current: deviceId === identity.deviceKid }))
-    if (vaultCardStatus) setVaultCard(vaultCardStatus)
+    const signPrivateKey = fromHex(identity.signPrivateKey)
+    const signPublicKey = fromHex(identity.signPublicKey)
+    await setRoutingName(identity.did, name, { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, fetch)
   }
   // did:webvh pre-rotation (identity/webvh/prerotation.ts) — independent of
-  // coreBaseUrl/deviceKid, same reasoning as editName/revokeDevice above:
+  // coreBaseUrl/deviceKid, same reasoning as editName above:
   // this is a plain did.jsonl operation against the identity's own domain,
   // nothing to do with the mail/DIDComm core. The Spare Key phrase itself
   // (generate/display/prompt) is handled entirely in account-page.ts, which
   // only ever hands this file the already-revealed key bytes to sign with —
-  // same "root key stays here" split as editName/revokeDevice.
+  // same "key stays here" split as editName.
   const rotateKeyRotation = async (revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array, nextKeyHash: string): Promise<void> => {
-    await rotateToPreRotatedKey({ did: identity.did, revealedPrivateKey, revealedPublicKey, nextKeyHash })
+    if (!identity.deviceKid || !coordinatorUrl) throw new Error('This device is not connected to the Coordinator self group')
+    const deviceKid = identity.deviceKid
+    const generation = await rotateToPreRotatedKey({ did: identity.did, revealedPrivateKey, revealedPublicKey, nextKeyHash })
+    const previousCredential = await loginWalletStore.current(identity.did, anchorBaseUrl).catch(() => undefined)
+    identity = { ...identity, signPrivateKey: hex(revealedPrivateKey), signPublicKey: hex(revealedPublicKey), generation }
+    await recordStore.put(identity)
+    if (previousCredential) await loginWalletStore.remove(identity.did, anchorBaseUrl, previousCredential.credentialId)
+    if (anchorOidcClientId) await loginWalletStore.removeOidcRefreshSession(identity.did, anchorBaseUrl, anchorOidcClientId)
+
+    const stored = await selfGroupStore.load(identity.did)
+    if (!stored) throw new Error('No self-group state for this identity')
+    const oldCredential = ownMlsDeviceCredential(stored.state)
+    const credential = createMlsDeviceCredential(identity.did, generation, oldCredential.signaturePublicKey, fromHex(identity.rootPrivateKey), revealedPrivateKey)
+    const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
+    const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: coordinatorUrl, deviceCredential: encodeMlsDeviceCredential(credential) })
+    const state = await rotateSelfGroupGeneration(selfGroupStore, transport, identity.did, deviceKid, credential, sign)
+    vaultDevices = memberKids(state, identity.did).map(deviceId => ({ deviceId, current: deviceId === identity.deviceKid }))
+    await coordinatorOidc?.clear().catch(() => {})
+    coordinatorOidc = undefined
+    coordinatorBindingActive = false
+    flushCoordinatorOutbox = undefined
+    if (vaultCardStatus) setVaultCard({ ...vaultCardStatus, state: 'reconnect-required', detail: 'Sign generation rotated. Reconnect once to activate it at the Coordinator.' })
   }
   // did:webvh domain move (identity/webvh/move.ts) — same coreBaseUrl-
-  // independence as editName/revokeDevice/pre-rotation above for the
+  // independence as editName/pre-rotation above for the
   // did.jsonl move plus local DID-keyed store migration. MLS credentials are
   // stable Root-signed objects and require no move-time commit.
   const moveIdentity = async (newDomain: string, revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array, nextKeyHash: string): Promise<string> => {
@@ -346,7 +364,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     // just above -- account-page.ts's own config (did/deviceKid/masterSeed)
     // was captured at configure time below, not read live, so there is no
     // lighter way to get the identity card, devices list, and every other
-    // did-scoped closure in this file (editName, revokeDevice, the
+    // did-scoped closure in this file (editName and the
     // pre-rotation trio) onto the new did without going through this same
     // boot path again.
     await bootClient()
@@ -354,7 +372,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   }
   configureAccountPage({
     did: identity.did, masterSeed: identity.masterSeed,
-    onLogout: logout, onEditName: editName, onRevokeDevice: revokeDevice,
+    onLogout: logout, onEditName: editName,
     onRotateKeyRotation: rotateKeyRotation,
     onMoveIdentity: moveIdentity,
     vault: vaultCardStatus,
@@ -570,9 +588,9 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         signer: boundary.signer,
         committer: vaultStore,
       })
-      const rootPrivateKey = fromHex(identity.rootPrivateKey)
-      const rootPublicKey = fromHex(identity.rootPublicKey)
-      await enableOpenPgpMail(pgpReader, pgpSink, { updateKey: encodeMultikey(rootPublicKey), privateKey: rootPrivateKey }, { identityId: identity.did, mailAddress: mailFrom })
+      const signPrivateKey = fromHex(identity.signPrivateKey)
+      const signPublicKey = fromHex(identity.signPublicKey)
+      await enableOpenPgpMail(pgpReader, pgpSink, { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, { identityId: identity.did, mailAddress: mailFrom })
         .catch(e => console.warn('[enableOpenPgpMail]', e instanceof Error ? e.message : e))
     }
 

@@ -18,7 +18,7 @@ describe('webvh Authentication Service', () => {
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
     const leafSignaturePublicKey = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
     const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [])
-    const credential = credentialFor(createMlsDeviceCredential(did, leafSignaturePublicKey, rootPrivateKey))
+    const credential = credentialFor(createMlsDeviceCredential(did, log[0]!.versionId, leafSignaturePublicKey, rootPrivateKey, rootPrivateKey))
 
     await withFetch(log, async () => {
       expect(await webvhAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(true)
@@ -31,7 +31,7 @@ describe('webvh Authentication Service', () => {
     const leafSignaturePublicKey = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
     const impostorPublicKey = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
     const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [])
-    const credential = credentialFor(createMlsDeviceCredential(did, impostorPublicKey, rootPrivateKey))
+    const credential = credentialFor(createMlsDeviceCredential(did, log[0]!.versionId, impostorPublicKey, rootPrivateKey, rootPrivateKey))
 
     await withFetch(log, async () => {
       expect(await webvhAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(false)
@@ -43,7 +43,7 @@ describe('webvh Authentication Service', () => {
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
     const leafSignaturePublicKey = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
     const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [])
-    const credential = credentialFor(createMlsDeviceCredential(did, leafSignaturePublicKey, ed25519.utils.randomSecretKey()))
+    const credential = credentialFor(createMlsDeviceCredential(did, log[0]!.versionId, leafSignaturePublicKey, rootPrivateKey, ed25519.utils.randomSecretKey()))
 
     await withFetch(log, async () => {
       expect(await webvhAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(false)
@@ -52,7 +52,8 @@ describe('webvh Authentication Service', () => {
 
   test('fails closed when the DID cannot be resolved', async () => {
     const leafSignaturePublicKey = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
-    const credential = credentialFor(createMlsDeviceCredential('did:webvh:deadbeef:test.example', leafSignaturePublicKey, ed25519.utils.randomSecretKey()))
+    const authority = ed25519.utils.randomSecretKey()
+    const credential = credentialFor(createMlsDeviceCredential('did:webvh:deadbeef:test.example', '1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', leafSignaturePublicKey, authority, authority))
     await withFetch(null, async () => {
       expect(await webvhAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(false)
     })
@@ -77,11 +78,11 @@ describe('webvh Authentication Service', () => {
     const currentSparePublicKey = ed25519.getPublicKey(currentSparePrivateKey)
     const currentSpareHash = multikeyHashBase58(encodeMultikey(currentSparePublicKey))
 
-    const { did: oldDid } = await createGenesis({
+    const { did: oldDid, versionId } = await createGenesis({
       domain: 'move-src.example', rootPrivateKey, rootPublicKey,
       nextKeyHash: currentSpareHash, fetch: anchor.fetch,
     })
-    const credential = credentialFor(createMlsDeviceCredential(oldDid, leafSignaturePublicKey, rootPrivateKey))
+    const credential = credentialFor(createMlsDeviceCredential(oldDid, versionId, leafSignaturePublicKey, rootPrivateKey, rootPrivateKey))
 
     // Someone else's move: only the domain changes, device-b never re-issues its credential.
     const nextSparePrivateKey = ed25519.utils.randomSecretKey()
@@ -95,7 +96,7 @@ describe('webvh Authentication Service', () => {
     const realFetch = globalThis.fetch
     globalThis.fetch = anchor.fetch
     try {
-      expect(await webvhAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(true)
+      expect(await webvhAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(false)
     } finally {
       globalThis.fetch = realFetch
     }

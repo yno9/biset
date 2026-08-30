@@ -32,7 +32,7 @@ import { encodeGroupInfo, decodeGroupInfo, ratchetTreeFromExtension } from './ve
 import { makeKeyPackageRef } from './vendor/keyPackage.ts'
 import { mlsSuite } from './suite.ts'
 import { credentialFor, memberIdOf, type MlsMemberId } from './identity.ts'
-import { mlsDeviceCredentialOf, type MlsDeviceCredentialV1 } from './device-credential.ts'
+import { mlsDeviceCredentialOf, type MlsDeviceCredentialV2 } from './device-credential.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { sameIdentity } from '../identity/idkey.ts'
 import { equalBytes } from '../protocol/canonical.ts'
@@ -41,7 +41,7 @@ import { equalBytes } from '../protocol/canonical.ts'
 // whether a leaf's credential really belongs to the signature key in that leaf;
 // its own default answers "yes" to everything, which is exactly the hole
 // production service fills by resolving the stable Root Key and validating
-// the Root-signed device credential against the actual leaf key.
+// the generation-bound device credential against the actual leaf key.
 //
 // It is a settable module-level hook rather than a parameter because it must
 // apply to state restored from disk too, where no call site is nearby to pass
@@ -101,14 +101,14 @@ export type IncomingResult =
   | { state: ClientState; kind: 'message'; message: Uint8Array; sender?: MlsMemberId }
 
 /** Generate this device's KeyPackage with its fixed leaf signing key and
- * Root-signed device credential.
+ * generation-bound device credential.
  *
  * biset's DIDComm transport keys (X25519/ML-KEM, carried in the leaf as a
  * private-use extension in the pre-rewrite implementation) are not part of
  * this boundary — they belong to the DIDComm adapter (PLAN.md §6.1,
  * unimplemented), which the roster/vault path this module serves does not
  * need. */
-export async function generateOwnKeyPackage(value: MlsDeviceCredentialV1, signaturePrivateKey: Uint8Array): Promise<OwnKeyPackage> {
+export async function generateOwnKeyPackage(value: MlsDeviceCredentialV2, signaturePrivateKey: Uint8Array): Promise<OwnKeyPackage> {
   if (!equalBytes(ed25519.getPublicKey(signaturePrivateKey), value.signaturePublicKey)) throw new TypeError('MLS device credential does not match the signing private key')
   const suite = await mlsSuite()
   const kp = await generateKeyPackageWithKey(
@@ -212,6 +212,18 @@ export async function removeMembers(state: ClientState, kids: string[]): Promise
   return commitWith(state, proposals)
 }
 
+/** Atomically advances this leaf's Sign-generation credential and removes
+ * every stale sibling selected by the caller in the same MLS epoch. */
+export async function rotateOwnCredentialAndRemoveMembers(state: ClientState, value: MlsDeviceCredentialV2, kids: string[]): Promise<CommitResult> {
+  const members = memberList(state)
+  const proposals: Proposal[] = kids.map(kid => {
+    const found = members.find(member => member.kid === kid)
+    if (!found) throw new Error(`rotateOwnCredentialAndRemoveMembers: not a member: ${kid}`)
+    return { proposalType: 'remove', remove: { removed: found.leafIndex } }
+  })
+  return commitWith(state, proposals, false, credentialFor(value))
+}
+
 /** Like removeMembers, but by leaf index rather than kid. Needed exactly when
  * kid-based lookup breaks down: two leaves sharing the same kid (self-group.ts's
  * joinSelfGroup self-heal, for a device that lost its local group state and
@@ -253,9 +265,9 @@ export async function rekey(state: ClientState): Promise<CommitResult> {
   return commitWith(state, [])
 }
 
-async function commitWith(state: ClientState, extraProposals: Proposal[], ratchetTreeExtension = false): Promise<CommitResult> {
+async function commitWith(state: ClientState, extraProposals: Proposal[], ratchetTreeExtension = false, ownCredentialUpdate?: Credential): Promise<CommitResult> {
   const suite = await mlsSuite()
-  const result = await createCommit({ state, cipherSuite: suite }, { extraProposals, ratchetTreeExtension })
+  const result = await createCommit({ state, cipherSuite: suite }, { extraProposals, ratchetTreeExtension, ...(ownCredentialUpdate ? { ownCredentialUpdate } : {}) })
   return {
     state: result.newState,
     commit: encodeMlsMessage(result.commit),
@@ -583,7 +595,7 @@ export function ownSignaturePrivateKey(state: ClientState): Uint8Array {
   return state.signaturePrivateKey
 }
 
-export function ownMlsDeviceCredential(state: ClientState): MlsDeviceCredentialV1 {
+export function ownMlsDeviceCredential(state: ClientState): MlsDeviceCredentialV2 {
   const ownPublicKey = ed25519.getPublicKey(state.signaturePrivateKey)
   for (const node of state.ratchetTree) {
     if (node?.nodeType !== 'leaf' || !equalBytes(node.leaf.signaturePublicKey, ownPublicKey)) continue

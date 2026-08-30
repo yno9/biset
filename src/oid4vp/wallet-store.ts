@@ -7,11 +7,12 @@ export interface BisetLoginWalletCredential {
   holderPrivateKey: Uint8Array
   expiresAt: string
   installedAt: string
+  generation: string
 }
 
 export interface BisetLoginWalletCredentialStore {
   put(value: BisetLoginWalletCredential): Promise<void>
-  current(identityId: string, issuer: string, now?: Date): Promise<BisetLoginWalletCredential | undefined>
+  current(identityId: string, issuer: string, now?: Date, generation?: string): Promise<BisetLoginWalletCredential | undefined>
   remove(identityId: string, issuer: string, credentialId: string): Promise<void>
   rekeyIdentity(oldIdentityId: string, newIdentityId: string): Promise<void>
   putOidcRefreshSession(value: BisetOidcRefreshSession): Promise<void>
@@ -39,11 +40,11 @@ export class IndexedDbBisetLoginWalletCredentialStore implements BisetLoginWalle
     await done(transaction)
   }
 
-  async current(identityId: string, issuer: string, now = new Date()): Promise<BisetLoginWalletCredential | undefined> {
+  async current(identityId: string, issuer: string, now = new Date(), generation?: string): Promise<BisetLoginWalletCredential | undefined> {
     const database = await this.database()
     const transaction = database.transaction(STORE, 'readonly')
     const rows = await result<BisetLoginWalletCredential[]>(transaction.objectStore(STORE).index('by_identity_issuer').getAll([identityId, issuer]))
-    const current = rows.filter(row => Date.parse(row.expiresAt) > now.getTime()).sort((left, right) => Date.parse(right.installedAt) - Date.parse(left.installedAt))[0]
+    const current = rows.filter(row => Date.parse(row.expiresAt) > now.getTime() && (generation === undefined || row.generation === generation)).sort((left, right) => Date.parse(right.installedAt) - Date.parse(left.installedAt))[0]
     return current && copy(current)
   }
 
@@ -115,7 +116,7 @@ export class IndexedDbBisetLoginWalletCredentialStore implements BisetLoginWalle
 }
 
 function assertRecord(value: BisetLoginWalletCredential): void {
-  if (value.version !== 1 || !value.identityId || !/^https:\/\//.test(value.issuer) || !value.credentialId || value.credential.split('.').length !== 3 || value.holderPrivateKey.length !== 32 || Number.isNaN(Date.parse(value.expiresAt)) || Number.isNaN(Date.parse(value.installedAt))) throw new TypeError('Biset Wallet login credential is invalid')
+  if (value.version !== 1 || !value.identityId || !/^https:\/\//.test(value.issuer) || !value.credentialId || value.credential.split('.').length !== 3 || value.holderPrivateKey.length !== 32 || !value.generation || Number.isNaN(Date.parse(value.expiresAt)) || Number.isNaN(Date.parse(value.installedAt))) throw new TypeError('Biset Wallet login credential is invalid')
 }
 function assertSession(value: BisetOidcRefreshSession): void { if (value.version !== 1 || !value.identityId || !/^https:\/\//.test(value.issuer) || !value.clientId || !/^[A-Za-z0-9_-]{43}$/.test(value.refreshToken) || Number.isNaN(Date.parse(value.updatedAt))) throw new TypeError('Biset Wallet OIDC refresh session is invalid') }
 function copy(value: BisetLoginWalletCredential): BisetLoginWalletCredential { return { ...value, holderPrivateKey: value.holderPrivateKey.slice() } }

@@ -53,7 +53,7 @@ export type MlsDsCommitResult = { ok: true; roster: string[] } | { ok: false; re
 
 export interface CoordinatorMlsDeliveryTransportOptions {
   baseUrl: string
-  /** Canonical Root-signed MLS BasicCredential identity bytes. */
+  /** Canonical generation-bound MLS BasicCredential identity bytes. */
   deviceCredential: Uint8Array
   fetch?: typeof fetch
 }

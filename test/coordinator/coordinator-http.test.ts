@@ -119,7 +119,7 @@ function setup(): { handler: ReturnType<typeof createVaultCoordinatorFetchHandle
     async verify(token): Promise<VaultAccessPrincipal> {
       const [subject, operation] = token.split(':')
       if (!subject || !operation) throw new Error('invalid test token')
-      return { subject, scopes: new Set([`vault.${operation}`]), expiresAt: Number.MAX_SAFE_INTEGER }
+      return { subject, generation: `1-${'a'.repeat(32)}`, scopes: new Set([`vault.${operation}`]), expiresAt: Number.MAX_SAFE_INTEGER }
     },
   }
   return { handler: createVaultCoordinatorFetchHandler({ store, accessTokens: verifier }), database }

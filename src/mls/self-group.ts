@@ -46,9 +46,11 @@ import {
   processIncoming,
   rekey,
   removeMembers,
+  rotateOwnCredentialAndRemoveMembers,
   type OwnKeyPackage,
 } from './group.ts'
 import type { ClientState } from './vendor/index.ts'
+import type { MlsDeviceCredentialV2 } from './device-credential.ts'
 import type { CoordinatorMlsDeliveryTransport } from './coordinator-mls-delivery-transport.ts'
 import type { CoreRosterInstallTransport } from './core-roster-install-transport.ts'
 import { buildAcceptedSelfGroupProjection, signRosterInstall } from './roster-projection.ts'
@@ -203,6 +205,34 @@ export async function removeDeviceFromSelfGroup(
   }
   const outcome = await transport.submitCommit({ ...submission, signature: await sign(mlsCommitSubmissionSigningBytes(submission)) })
   if (!outcome.ok) throw new Error(`removeDeviceFromSelfGroup: commit rejected (${outcome.reason})`)
+  confirmCommit(result)
+  await store.save(identityId, selfGroupIdHex(identityId), result.state)
+  return result.state
+}
+
+/** Sign rotation is the sole revocation operation: keep this leaf, replace
+ * its credential with the new Sign generation, and remove all siblings. */
+export async function rotateSelfGroupGeneration(
+  store: MlsSelfGroupStateStore,
+  transport: CoordinatorMlsDeliveryTransport,
+  identityId: string,
+  deviceKid: string,
+  credential: MlsDeviceCredentialV2,
+  sign: SelfGroupSigner,
+  now: () => Date = () => new Date(),
+): Promise<ClientState> {
+  const stored = await store.load(identityId)
+  if (!stored) throw new Error('rotateSelfGroupGeneration: no self-group state for this identity')
+  const stale = memberKids(stored.state, identityId).filter(kid => kid !== deviceKid)
+  const result = await rotateOwnCredentialAndRemoveMembers(stored.state, credential, stale)
+  const submission: Omit<MlsCommitSubmissionV1, 'signature'> = {
+    version: 1, groupId: selfGroupIdHex(identityId), identityId, senderKid: deviceKid,
+    epoch: mlsEpoch(epochOf(stored.state)), commit: result.commit,
+    roster: memberKids(result.state, identityId), groupInfo: await groupInfoForExternalJoin(result.state),
+    submittedAt: now().toISOString(),
+  }
+  const outcome = await transport.submitCommit({ ...submission, signature: await sign(mlsCommitSubmissionSigningBytes(submission)) })
+  if (!outcome.ok) throw new Error(`rotateSelfGroupGeneration: commit rejected (${outcome.reason})`)
   confirmCommit(result)
   await store.save(identityId, selfGroupIdHex(identityId), result.state)
   return result.state

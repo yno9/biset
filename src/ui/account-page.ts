@@ -58,7 +58,7 @@ export interface AccountPageConfig {
    * click-to-reveal row) has to happen in the UI layer regardless (same as
    * account-create.ts's own initial showMnemonic call at signup), so there
    * is no "stays in main.ts" boundary to preserve here the way there is
-   * for editName/revokeDevice, which never need to look at key material at
+   * for editName/rotation, which never need to look at key material at
    * all. */
   masterSeed?: string
   /** Confirmed and invoked by the identity menu's "Log out" item
@@ -70,12 +70,6 @@ export interface AccountPageConfig {
    * closure, since it holds the root key this needs to sign with; this file
    * never sees key material. */
   onEditName?(name: string): Promise<void>
-  /** Revokes a DIFFERENT device from this identity's self group (MLS
-   * removal + DID document verificationMethod removal, main.ts's own
-   * closure -- same key-material-stays-in-main.ts reasoning as onEditName).
-   * Never offered for the current device's own row (see the devices-list
-   * render below) -- self-revoke is what logout already is. */
-  onRevokeDevice?(targetDeviceKid: string): Promise<void>
   /** Reveals the current Spare Key (typed in by the user, this file's own
    * promptForMnemonic) and commits a newly generated Spare in the same
    * permanent-pre-rotation transition. */
@@ -801,23 +795,6 @@ function renderVaultCard(): void {
         tag.textContent = 'this device'
         tag.style.cssText = 'font-size:10px;font-weight:700;color:var(--accent);flex-shrink:0'
         line.appendChild(tag)
-      } else if (config?.onRevokeDevice) {
-        const revoke = document.createElement('button')
-        revoke.type = 'button'
-        revoke.textContent = 'Revoke'
-        revoke.style.cssText = 'font-size:11px;font-weight:700;color:#ff3b30;background:none;border:none;cursor:pointer;padding:2px 4px'
-        revoke.addEventListener('click', event => {
-          event.stopPropagation()
-          if (!confirm('Revoke this device from the Vault?')) return
-          revoke.disabled = true
-          revoke.textContent = 'Revoking…'
-          void config?.onRevokeDevice?.(device.deviceId).catch(error => {
-            config?.showMessage?.(error instanceof Error ? error.message : String(error))
-            revoke.disabled = false
-            revoke.textContent = 'Revoke'
-          })
-        })
-        line.appendChild(revoke)
       }
       devices.appendChild(line)
     }

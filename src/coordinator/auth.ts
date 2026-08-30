@@ -3,6 +3,8 @@ import { base64urlToBytes } from '../protocol/canonical.ts'
 export interface VaultAccessPrincipal {
   /** Pairwise subject scoped to the Coordinator audience. Never a DID/SCID. */
   subject: string
+  /** Opaque Anchor-attested WebVH versionId; Coordinator sees no DID/SCID. */
+  generation: string
   scopes: ReadonlySet<string>
   expiresAt: number
 }
@@ -124,8 +126,9 @@ function validateClaims(claims: Record<string, unknown>, issuer: string, audienc
   if (claims.nbf !== undefined && (typeof claims.nbf !== 'number' || !Number.isSafeInteger(claims.nbf) || claims.nbf > nowSeconds)) throw new VaultAuthenticationError('access token is not active')
   if (typeof claims.iat !== 'number' || !Number.isSafeInteger(claims.iat) || claims.iat > nowSeconds + 60) throw new VaultAuthenticationError('access token issued-at time is invalid')
   if (typeof claims.scope !== 'string') throw new VaultAuthenticationError('access token scope is invalid')
+  if (typeof claims.biset_generation !== 'string' || !/^[1-9][0-9]*-[A-Za-z0-9_-]{20,200}$/.test(claims.biset_generation)) throw new VaultAuthenticationError('access token generation is invalid')
   const scopes = claims.scope.split(' ').filter(Boolean)
-  return { subject: claims.sub, scopes: new Set(scopes), expiresAt: claims.exp }
+  return { subject: claims.sub, generation: claims.biset_generation, scopes: new Set(scopes), expiresAt: claims.exp }
 }
 
 function jsonPart(value: string): unknown {

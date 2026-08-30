@@ -32,6 +32,7 @@ import type { VaultStreamAppendV2, VaultStreamCheckpointPutV2, VaultStreamCheckp
 
 export class VaultCoordinatorStoreError extends Error {}
 export class VaultCoordinatorConflictError extends VaultCoordinatorStoreError {}
+export class VaultCoordinatorGenerationError extends VaultCoordinatorStoreError {}
 export class VaultCoordinatorNotFoundError extends VaultCoordinatorStoreError {}
 
 export interface VaultCoordinatorStoreLimits {
@@ -73,15 +74,17 @@ export class SqliteVaultCoordinatorStore {
 
   /** Returns the one owner-scoped stream. Existing v1 Vaults are adopted
    * lazily, preserving their id, sequence head, and latest checkpoint. */
-  defaultStream(ownerSubject: string): VaultStreamV2 {
+  defaultStream(ownerSubject: string, generation: string): VaultStreamV2 {
     const transaction = this.database.transaction(() => {
-      let stream = this.database.query<{ vault_id: VaultId; latest_seq: DeliverySeq }, [string]>('SELECT vault_id, latest_seq FROM vault_streams WHERE owner_subject=?').get(ownerSubject)
+      let stream = this.database.query<{ vault_id: VaultId; latest_seq: DeliverySeq; generation: string }, [string]>('SELECT vault_id, latest_seq, generation FROM vault_streams WHERE owner_subject=?').get(ownerSubject)
       if (!stream) {
         const legacy = this.database.query<{ vault_id: VaultId; latest_seq: DeliverySeq }, [string]>('SELECT vault_id, latest_seq FROM vaults WHERE owner_subject=? ORDER BY vault_id LIMIT 1').get(ownerSubject)
         const vaultId = legacy?.vault_id ?? (`vlt_${bytesToBase64url(crypto.getRandomValues(new Uint8Array(32)))}` as VaultId)
         const latestSeq = legacy?.latest_seq ?? deliverySeq(0n)
-        this.database.query('INSERT INTO vault_streams (vault_id, owner_subject, latest_seq) VALUES (?, ?, ?)').run(vaultId, ownerSubject, latestSeq)
-        stream = { vault_id: vaultId, latest_seq: latestSeq }
+        this.database.query('INSERT INTO vault_streams (vault_id, owner_subject, latest_seq, generation) VALUES (?, ?, ?, ?)').run(vaultId, ownerSubject, latestSeq, generation)
+        stream = { vault_id: vaultId, latest_seq: latestSeq, generation }
+      } else {
+        this.assertOrAdvanceGeneration(stream.vault_id, ownerSubject, generation)
       }
       const checkpoint = this.streamCheckpointRow(stream.vault_id)
       return { version: 2 as const, vaultId: stream.vault_id, latestSeq: stream.latest_seq, ...(checkpoint ? { checkpointSeq: checkpoint.covered_seq } : {}) }
@@ -89,8 +92,8 @@ export class SqliteVaultCoordinatorStore {
     return transaction()
   }
 
-  appendStream(input: VaultStreamAppendV2, ownerSubject: string, now = new Date()): VaultStreamItemV2 {
-    this.assertStreamOwner(input.vaultId, ownerSubject)
+  appendStream(input: VaultStreamAppendV2, ownerSubject: string, generation: string, now = new Date()): VaultStreamItemV2 {
+    this.assertOrAdvanceGeneration(input.vaultId, ownerSubject, generation)
     if (input.payload.length === 0 || input.payload.length > this.limits.maxPayloadBytes) throw new VaultCoordinatorStoreError('stream payload size is invalid')
     if (!equalBytes(sha256Bytes(input.payload), input.payloadHash)) throw new VaultCoordinatorStoreError('payloadHash must equal SHA-256(payload)')
     const existing = this.database.query<{ seq: DeliverySeq; payload: Uint8Array; payload_hash: Uint8Array; created_at: string }, [string, string]>('SELECT seq, payload, payload_hash, created_at FROM vault_stream_entries WHERE vault_id=? AND append_id=?').get(input.vaultId, input.appendId)
@@ -110,16 +113,16 @@ export class SqliteVaultCoordinatorStore {
     return { version: 2, vaultId: input.vaultId, seq, payload: input.payload.slice(), payloadHash: input.payloadHash.slice(), createdAt }
   }
 
-  pullStream(vaultId: VaultId, after: DeliverySeq, ownerSubject: string): VaultStreamPullResultV2 {
-    this.assertStreamOwner(vaultId, ownerSubject)
+  pullStream(vaultId: VaultId, after: DeliverySeq, ownerSubject: string, generation: string): VaultStreamPullResultV2 {
+    this.assertOrAdvanceGeneration(vaultId, ownerSubject, generation)
     const stream = this.stream(vaultId)
     const rows = this.database.query<{ seq: DeliverySeq; payload: Uint8Array; payload_hash: Uint8Array; created_at: string }, [string]>("SELECT seq, payload, payload_hash, created_at FROM vault_stream_entries WHERE vault_id=? AND length(payload)>0 ORDER BY length(seq), seq").all(vaultId)
     const items = rows.filter(row => BigInt(row.seq) > BigInt(after)).map(row => ({ version: 2 as const, vaultId, seq: row.seq, payload: bytes(row.payload), payloadHash: bytes(row.payload_hash), createdAt: row.created_at }))
     return { version: 2, items, nextCursor: items.at(-1)?.seq ?? after, latestSeq: stream.latest_seq }
   }
 
-  putStreamCheckpoint(input: VaultStreamCheckpointPutV2, ownerSubject: string, now = new Date()): void {
-    this.assertStreamOwner(input.vaultId, ownerSubject)
+  putStreamCheckpoint(input: VaultStreamCheckpointPutV2, ownerSubject: string, generation: string, now = new Date()): void {
+    this.assertOrAdvanceGeneration(input.vaultId, ownerSubject, generation)
     if (input.payload.length === 0 || input.payload.length > this.limits.maxCheckpointBytes) throw new VaultCoordinatorStoreError('checkpoint payload size is invalid')
     if (!equalBytes(sha256Bytes(input.payload), input.payloadHash)) throw new VaultCoordinatorStoreError('payloadHash must equal SHA-256(payload)')
     if (BigInt(input.coveredSeq) > BigInt(this.stream(input.vaultId).latest_seq)) throw new VaultCoordinatorStoreError('checkpoint cannot cover a future stream sequence')
@@ -133,8 +136,8 @@ export class SqliteVaultCoordinatorStore {
     this.database.query("UPDATE vault_stream_entries SET payload=x'' WHERE vault_id=? AND (length(seq)<length(?) OR (length(seq)=length(?) AND seq<=?))").run(input.vaultId, input.coveredSeq, input.coveredSeq, input.coveredSeq)
   }
 
-  pullStreamCheckpoint(vaultId: VaultId, ownerSubject: string): VaultStreamCheckpointV2 | null {
-    this.assertStreamOwner(vaultId, ownerSubject)
+  pullStreamCheckpoint(vaultId: VaultId, ownerSubject: string, generation: string): VaultStreamCheckpointV2 | null {
+    this.assertOrAdvanceGeneration(vaultId, ownerSubject, generation)
     const row = this.streamCheckpointRow(vaultId)
     return row ? { version: 2, vaultId, coveredSeq: row.covered_seq, payload: bytes(row.payload), payloadHash: bytes(row.payload_hash), createdAt: row.created_at } : null
   }
@@ -414,9 +417,15 @@ export class SqliteVaultCoordinatorStore {
     if (row.owner_subject !== subject) throw new VaultCoordinatorNotFoundError('Vault not found')
   }
 
-  private assertStreamOwner(vaultId: VaultId, subject: string): void {
-    const row = this.database.query<{ owner_subject: string }, [string]>('SELECT owner_subject FROM vault_streams WHERE vault_id=?').get(vaultId)
+  private assertOrAdvanceGeneration(vaultId: VaultId, subject: string, generation: string): void {
+    const incoming = generationNumber(generation)
+    const row = this.database.query<{ owner_subject: string; generation: string }, [string]>('SELECT owner_subject, generation FROM vault_streams WHERE vault_id=?').get(vaultId)
     if (!row || row.owner_subject !== subject) throw new VaultCoordinatorNotFoundError('Vault stream not found')
+    if (row.generation === generation) return
+    const current = row.generation ? generationNumber(row.generation) : 0n
+    if (incoming <= current) throw new VaultCoordinatorGenerationError('Vault access generation is obsolete')
+    const updated = this.database.query('UPDATE vault_streams SET generation=? WHERE vault_id=? AND generation=?').run(generation, vaultId, row.generation)
+    if (updated.changes !== 1) return this.assertOrAdvanceGeneration(vaultId, subject, generation)
   }
 
   private stream(vaultId: VaultId): { latest_seq: DeliverySeq } {
@@ -495,13 +504,14 @@ function installSchema(database: Database): void {
     CREATE TABLE IF NOT EXISTS mls_invitations (invitation_hash TEXT PRIMARY KEY, vault_id TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT, FOREIGN KEY(vault_id) REFERENCES vaults(vault_id));
     CREATE TABLE IF NOT EXISTS vault_checkpoints (vault_id TEXT PRIMARY KEY, covered_seq TEXT NOT NULL, writer_member_id TEXT NOT NULL, payload BLOB NOT NULL, payload_hash BLOB NOT NULL, created_at TEXT NOT NULL, signature BLOB NOT NULL, FOREIGN KEY(vault_id) REFERENCES vaults(vault_id));
     CREATE INDEX IF NOT EXISTS entries_pending ON entries(vault_id, state, seq);
-    CREATE TABLE IF NOT EXISTS vault_streams (vault_id TEXT PRIMARY KEY, owner_subject TEXT NOT NULL UNIQUE, latest_seq TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS vault_streams (vault_id TEXT PRIMARY KEY, owner_subject TEXT NOT NULL UNIQUE, latest_seq TEXT NOT NULL, generation TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS vault_stream_entries (vault_id TEXT NOT NULL, seq TEXT NOT NULL, append_id TEXT NOT NULL, payload BLOB NOT NULL, payload_hash BLOB NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(vault_id, seq), UNIQUE(vault_id, append_id), FOREIGN KEY(vault_id) REFERENCES vault_streams(vault_id));
     CREATE TABLE IF NOT EXISTS vault_stream_checkpoints (vault_id TEXT PRIMARY KEY, covered_seq TEXT NOT NULL, payload BLOB NOT NULL, payload_hash BLOB NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(vault_id) REFERENCES vault_streams(vault_id));
   `)
   addColumnIfMissing(database, 'entries', 'sender_member_id', 'TEXT')
   addColumnIfMissing(database, 'entries', 'sent_at', 'TEXT')
   addColumnIfMissing(database, 'entries', 'append_signature', 'BLOB')
+  addColumnIfMissing(database, 'vault_streams', 'generation', "TEXT NOT NULL DEFAULT ''")
 }
 
 function addColumnIfMissing(database: Database, table: string, column: string, type: string): void {
@@ -525,3 +535,8 @@ function transitionFingerprint(value: VaultMlsTransitionV1): string {
   return `sha256:${bytesToBase64url(sha256Bytes(bytes))}`
 }
 function invitationHash(value: string): string { return `sha256:${bytesToBase64url(sha256Bytes(new TextEncoder().encode(`biset/vault-invitation/v1\0${value}`)))}` }
+function generationNumber(value: string): bigint {
+  const match = value.match(/^([1-9][0-9]*)-[A-Za-z0-9_-]{20,200}$/)
+  if (!match) throw new VaultCoordinatorGenerationError('Vault access generation is invalid')
+  return BigInt(match[1]!)
+}

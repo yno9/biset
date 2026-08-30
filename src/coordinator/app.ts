@@ -12,7 +12,7 @@ import {
   encodeVaultMlsInvitationRedemption,
 } from '../protocol/vault-mls-ds.ts'
 import { authorizeBearer, VaultAuthenticationError, VaultAuthenticationUnavailableError, VaultAuthorizationError, type VaultAccessTokenVerifier } from './auth.ts'
-import { SqliteVaultCoordinatorStore, VaultCoordinatorConflictError, VaultCoordinatorNotFoundError, VaultCoordinatorStoreError } from './store.ts'
+import { SqliteVaultCoordinatorStore, VaultCoordinatorConflictError, VaultCoordinatorGenerationError, VaultCoordinatorNotFoundError, VaultCoordinatorStoreError } from './store.ts'
 import { decodeVaultStreamAppend, decodeVaultStreamCheckpointPull, decodeVaultStreamCheckpointPut, decodeVaultStreamPull, encodeVaultStream, encodeVaultStreamCheckpoint, encodeVaultStreamPullResult } from '../protocol/coordinator-stream.ts'
 import { isSelfGroupMlsDeliveryPath } from './mls-delivery-http.ts'
 
@@ -46,27 +46,27 @@ export function createVaultCoordinatorFetchHandler(options: VaultCoordinatorAppl
         const principal = await authorizeBearer(request, options.accessTokens, 'vault.create')
         const input = JSON.parse(await requestText(request)) as unknown
         if (input === null || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 1 || (input as Record<string, unknown>).version !== 2) throw new TypeError('default Vault stream request is invalid')
-        return rawJson(200, encodeVaultStream(options.store.defaultStream(principal.subject)))
+        return rawJson(200, encodeVaultStream(options.store.defaultStream(principal.subject, principal.generation)))
       }
       if (path === '/v2/entries/append') {
         const principal = await authorizeBearer(request, options.accessTokens, 'vault.append')
-        const item = options.store.appendStream(decodeVaultStreamAppend(await requestText(request)), principal.subject)
+        const item = options.store.appendStream(decodeVaultStreamAppend(await requestText(request)), principal.subject, principal.generation)
         return json(202, { seq: item.seq })
       }
       if (path === '/v2/entries/pull') {
         const principal = await authorizeBearer(request, options.accessTokens, 'vault.pull')
         const input = decodeVaultStreamPull(await requestText(request))
-        return rawJson(200, encodeVaultStreamPullResult(options.store.pullStream(input.vaultId, input.after, principal.subject)))
+        return rawJson(200, encodeVaultStreamPullResult(options.store.pullStream(input.vaultId, input.after, principal.subject, principal.generation)))
       }
       if (path === '/v2/checkpoints/put') {
         const principal = await authorizeBearer(request, options.accessTokens, 'vault.append')
-        options.store.putStreamCheckpoint(decodeVaultStreamCheckpointPut(await requestText(request)), principal.subject)
+        options.store.putStreamCheckpoint(decodeVaultStreamCheckpointPut(await requestText(request)), principal.subject, principal.generation)
         return json(202, {})
       }
       if (path === '/v2/checkpoints/pull') {
         const principal = await authorizeBearer(request, options.accessTokens, 'vault.pull')
         const input = decodeVaultStreamCheckpointPull(await requestText(request))
-        return rawJson(200, encodeVaultStreamCheckpoint(options.store.pullStreamCheckpoint(input.vaultId, principal.subject)))
+        return rawJson(200, encodeVaultStreamCheckpoint(options.store.pullStreamCheckpoint(input.vaultId, principal.subject, principal.generation)))
       }
       if (path === '/v1/vaults') {
         const principal = await authorizeBearer(request, options.accessTokens, 'vault.create')
@@ -141,6 +141,7 @@ export function createVaultCoordinatorFetchHandler(options: VaultCoordinatorAppl
       if (error instanceof VaultAuthenticationError) return bearerError(401, 'invalid_token', error.message)
       if (error instanceof VaultAuthenticationUnavailableError) return text(503, error.message)
       if (error instanceof VaultAuthorizationError) return bearerError(403, 'insufficient_scope', error.message)
+      if (error instanceof VaultCoordinatorGenerationError) return bearerError(401, 'invalid_token', error.message)
       if (error instanceof VaultCoordinatorNotFoundError) return text(404, error.message)
       if (error instanceof VaultCoordinatorConflictError) return text(409, error.message)
       if (error instanceof VaultCoordinatorStoreError || error instanceof TypeError || error instanceof RangeError) return text(400, error.message)

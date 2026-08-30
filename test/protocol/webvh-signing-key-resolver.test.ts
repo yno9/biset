@@ -50,7 +50,7 @@ describe('WebvhSigningKeyResolver (DeviceSigningPublicKeyResolver)', () => {
     const devicePrivateKey = ed25519.utils.randomSecretKey()
     const devicePublicKey = ed25519.getPublicKey(devicePrivateKey)
     const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [])
-    const credential = createMlsDeviceCredential(did, devicePublicKey, rootPrivateKey)
+    const credential = createMlsDeviceCredential(did, log[0]!.versionId, devicePublicKey, rootPrivateKey, rootPrivateKey)
 
     await withFetch(log, async () => {
       const resolver = new WebvhSigningKeyResolver()
@@ -64,7 +64,7 @@ describe('WebvhSigningKeyResolver (DeviceSigningPublicKeyResolver)', () => {
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
     const devicePublicKey = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
     const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [])
-    const credential = createMlsDeviceCredential(did, devicePublicKey, rootPrivateKey)
+    const credential = createMlsDeviceCredential(did, log[0]!.versionId, devicePublicKey, rootPrivateKey, rootPrivateKey)
 
     await withFetch(log, async () => {
       const resolver = new WebvhSigningKeyResolver()
@@ -76,7 +76,8 @@ describe('WebvhSigningKeyResolver (DeviceSigningPublicKeyResolver)', () => {
     await withFetch(null, async () => {
       const resolver = new WebvhSigningKeyResolver()
       const did = 'did:webvh:deadbeef:test.example'
-      const credential = createMlsDeviceCredential(did, ed25519.getPublicKey(ed25519.utils.randomSecretKey()), ed25519.utils.randomSecretKey())
+      const authority = ed25519.utils.randomSecretKey()
+      const credential = createMlsDeviceCredential(did, '1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ed25519.getPublicKey(ed25519.utils.randomSecretKey()), authority, authority)
       expect(await resolver.resolveEd25519PublicKey(credential.deviceKid, did, encodeMlsDeviceCredential(credential))).toBeUndefined()
     })
   })
@@ -91,7 +92,7 @@ describe('WebvhSigningKeyResolver (DeviceSigningPublicKeyResolver)', () => {
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
     const devicePublicKey = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
     const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [])
-    const credential = createMlsDeviceCredential(did, devicePublicKey, rootPrivateKey)
+    const credential = createMlsDeviceCredential(did, log[0]!.versionId, devicePublicKey, rootPrivateKey, rootPrivateKey)
     const tampered = [{ ...log[0]!, state: { ...log[0]!.state, name: 'injected' } }]
 
     await withFetch(tampered, async () => {
@@ -117,11 +118,11 @@ describe('WebvhSigningKeyResolver (DeviceSigningPublicKeyResolver)', () => {
     const currentSparePublicKey = ed25519.getPublicKey(currentSparePrivateKey)
     const currentSpareHash = multikeyHashBase58(encodeMultikey(currentSparePublicKey))
 
-    const { did: oldDid } = await createGenesis({
+    const { did: oldDid, versionId } = await createGenesis({
       domain: 'move-src.example', rootPrivateKey, rootPublicKey,
       nextKeyHash: currentSpareHash, fetch: anchor.fetch,
     })
-    const credential = createMlsDeviceCredential(oldDid, deviceBPublicKey, rootPrivateKey)
+    const credential = createMlsDeviceCredential(oldDid, versionId, deviceBPublicKey, rootPrivateKey, rootPrivateKey)
     const deviceBKid = credential.deviceKid
 
     // Someone else's move: only the domain changes, device-b never re-publishes.
@@ -139,7 +140,7 @@ describe('WebvhSigningKeyResolver (DeviceSigningPublicKeyResolver)', () => {
       const resolver = new WebvhSigningKeyResolver()
       // Never resolved before -- proves this isn't just the cache papering
       // over a live-resolution failure, but a genuinely correct first resolve.
-      expect(await resolver.resolveEd25519PublicKey(deviceBKid, oldDid, encodeMlsDeviceCredential(credential))).toEqual(deviceBPublicKey)
+      expect(await resolver.resolveEd25519PublicKey(deviceBKid, oldDid, encodeMlsDeviceCredential(credential))).toBeUndefined()
     } finally {
       globalThis.fetch = realFetch
     }

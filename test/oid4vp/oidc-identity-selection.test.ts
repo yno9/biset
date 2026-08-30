@@ -17,7 +17,7 @@ describe('OIDC identity selection', () => {
       authenticator: {
         async authenticate(_request, options) {
           forced = options?.force === true
-          return options?.force ? null : { subject: 'stale-browser-session' }
+          return options?.force ? null : { subject: 'stale-browser-session', generation: `1-${'a'.repeat(32)}` }
         },
         async beginAuthentication() { return new Response('wallet login', { status: 202 }) },
       },

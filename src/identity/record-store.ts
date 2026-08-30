@@ -20,6 +20,11 @@ export interface IdentityRecord {
   masterSeed?: string
   rootPublicKey: string // hex
   rootPrivateKey: string // hex
+  /** Current WebVH update (Sign) key and log generation. The initial Sign
+   * key equals Root; every pre-rotation replaces these three fields. */
+  signPublicKey: string // hex
+  signPrivateKey: string // hex
+  generation: string // WebVH versionId
   /** This device's own self-group verification method fragment
    * (identity/webvh/add-device-verification-method.ts's `fragment`, and the
    * MLS credential kid's suffix) once it has one. Absent until this device

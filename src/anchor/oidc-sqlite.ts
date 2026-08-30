@@ -16,6 +16,7 @@ interface CodeRow {
   client_id: string
   redirect_uri: string
   root_subject: string
+  generation: string
   sector_identifier: string
   audience: string
   scopes_json: string
@@ -107,6 +108,11 @@ export class SqliteAnchorOidcState implements AnchorAuthorizationCodeStore, Anch
       );
       CREATE INDEX IF NOT EXISTS oid4vp_enrollment_challenges_expiry ON oid4vp_enrollment_challenges(expires_at);
     `)
+    addColumnIfMissing(database, 'oidc_authorization_codes', 'generation', "TEXT NOT NULL DEFAULT ''")
+    addColumnIfMissing(database, 'oidc_refresh_tokens', 'generation', "TEXT NOT NULL DEFAULT ''")
+    addColumnIfMissing(database, 'oid4vp_login_credentials', 'generation', "TEXT NOT NULL DEFAULT ''")
+    addColumnIfMissing(database, 'oid4vp_completions', 'generation', "TEXT NOT NULL DEFAULT ''")
+    addColumnIfMissing(database, 'oid4vp_sessions', 'generation', "TEXT NOT NULL DEFAULT ''")
   }
 
   static open(path: string): SqliteAnchorOidcState {
@@ -126,9 +132,9 @@ export class SqliteAnchorOidcState implements AnchorAuthorizationCodeStore, Anch
 
   async put(value: AuthorizationCodeRecord): Promise<void> {
     this.database.query(`INSERT INTO oidc_authorization_codes
-      (code_hash, client_id, redirect_uri, root_subject, sector_identifier, audience, scopes_json, code_challenge, nonce, authenticated_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(value.codeHash, value.clientId, value.redirectUri, value.rootSubject, value.sectorIdentifier, value.audience, JSON.stringify(value.scopes), value.codeChallenge, value.nonce, value.authenticatedAt, value.expiresAt)
+      (code_hash, client_id, redirect_uri, root_subject, generation, sector_identifier, audience, scopes_json, code_challenge, nonce, authenticated_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(value.codeHash, value.clientId, value.redirectUri, value.rootSubject, value.generation, value.sectorIdentifier, value.audience, JSON.stringify(value.scopes), value.codeChallenge, value.nonce, value.authenticatedAt, value.expiresAt)
   }
 
   async take(codeHash: string): Promise<AuthorizationCodeRecord | undefined> {
@@ -144,26 +150,26 @@ export class SqliteAnchorOidcState implements AnchorAuthorizationCodeStore, Anch
     if (!Array.isArray(scopes) || !scopes.every(scope => typeof scope === 'string')) throw new Error('stored OIDC authorization code scopes are corrupt')
     return {
       codeHash: row.code_hash, clientId: row.client_id, redirectUri: row.redirect_uri,
-      rootSubject: row.root_subject, sectorIdentifier: row.sector_identifier,
+      rootSubject: row.root_subject, generation: row.generation, sectorIdentifier: row.sector_identifier,
       audience: row.audience, scopes, codeChallenge: row.code_challenge, nonce: row.nonce,
       authenticatedAt: row.authenticated_at, expiresAt: row.expires_at,
     }
   }
 
   async putRefresh(value: RefreshTokenRecord): Promise<void> {
-    this.database.query('INSERT INTO oidc_refresh_tokens (token_hash, client_id, root_subject, sector_identifier, audience, scopes_json, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(value.tokenHash, value.clientId, value.rootSubject, value.sectorIdentifier, value.audience, JSON.stringify(value.scopes), value.expiresAt)
+    this.database.query('INSERT INTO oidc_refresh_tokens (token_hash, client_id, root_subject, generation, sector_identifier, audience, scopes_json, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(value.tokenHash, value.clientId, value.rootSubject, value.generation, value.sectorIdentifier, value.audience, JSON.stringify(value.scopes), value.expiresAt)
   }
 
   async takeRefresh(tokenHash: string): Promise<RefreshTokenRecord | undefined> {
     const row = this.database.transaction(() => {
-      const value = this.database.query<{ token_hash: string; client_id: string; root_subject: string; sector_identifier: string; audience: string; scopes_json: string; expires_at: number }, [string]>('SELECT * FROM oidc_refresh_tokens WHERE token_hash=?').get(tokenHash)
+      const value = this.database.query<{ token_hash: string; client_id: string; root_subject: string; generation: string; sector_identifier: string; audience: string; scopes_json: string; expires_at: number }, [string]>('SELECT * FROM oidc_refresh_tokens WHERE token_hash=?').get(tokenHash)
       this.database.query('DELETE FROM oidc_refresh_tokens WHERE token_hash=?').run(tokenHash)
       return value
     })()
     if (!row) return undefined
     const scopes = JSON.parse(row.scopes_json) as unknown
     if (!Array.isArray(scopes) || !scopes.every(value => typeof value === 'string')) throw new Error('stored OIDC refresh token scopes are corrupt')
-    return { tokenHash: row.token_hash, clientId: row.client_id, rootSubject: row.root_subject, sectorIdentifier: row.sector_identifier, audience: row.audience, scopes, expiresAt: row.expires_at }
+    return { tokenHash: row.token_hash, clientId: row.client_id, rootSubject: row.root_subject, generation: row.generation, sectorIdentifier: row.sector_identifier, audience: row.audience, scopes, expiresAt: row.expires_at }
   }
 
   expire(now = new Date()): number {
@@ -187,9 +193,9 @@ export class SqliteAnchorOidcState implements AnchorAuthorizationCodeStore, Anch
 
   async putCredential(value: AnchorLoginCredentialRecord): Promise<void> {
     this.database.query(`INSERT INTO oid4vp_login_credentials
-      (credential_id, credential_hash, account_ref, root_subject, holder_key_id, issued_at, expires_at, revoked_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(value.credentialId, value.credentialHash, value.accountRef, value.rootSubject, value.holderKeyId, value.issuedAt, value.expiresAt, value.revokedAt ?? null)
+      (credential_id, credential_hash, account_ref, root_subject, generation, holder_key_id, issued_at, expires_at, revoked_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(value.credentialId, value.credentialHash, value.accountRef, value.rootSubject, value.generation, value.holderKeyId, value.issuedAt, value.expiresAt, value.revokedAt ?? null)
   }
 
   async credential(credentialId: string): Promise<AnchorLoginCredentialRecord | undefined> {
@@ -220,8 +226,8 @@ export class SqliteAnchorOidcState implements AnchorAuthorizationCodeStore, Anch
   }
 
   async putCompletion(value: AnchorOid4vpCompletion): Promise<void> {
-    this.database.query('INSERT INTO oid4vp_completions (response_code_hash, root_subject, authenticated_at, return_url, expires_at) VALUES (?, ?, ?, ?, ?)')
-      .run(value.responseCodeHash, value.rootSubject, value.authenticatedAt, value.returnUrl, value.expiresAt)
+    this.database.query('INSERT INTO oid4vp_completions (response_code_hash, root_subject, generation, authenticated_at, return_url, expires_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(value.responseCodeHash, value.rootSubject, value.generation, value.authenticatedAt, value.returnUrl, value.expiresAt)
   }
 
   async takeCompletion(responseCodeHash: string): Promise<AnchorOid4vpCompletion | undefined> {
@@ -233,8 +239,8 @@ export class SqliteAnchorOidcState implements AnchorAuthorizationCodeStore, Anch
   }
 
   async putSession(value: AnchorOid4vpSession): Promise<void> {
-    this.database.query('INSERT INTO oid4vp_sessions (session_hash, root_subject, authenticated_at, expires_at) VALUES (?, ?, ?, ?)')
-      .run(value.sessionHash, value.rootSubject, value.authenticatedAt, value.expiresAt)
+    this.database.query('INSERT INTO oid4vp_sessions (session_hash, root_subject, generation, authenticated_at, expires_at) VALUES (?, ?, ?, ?, ?)')
+      .run(value.sessionHash, value.rootSubject, value.generation, value.authenticatedAt, value.expiresAt)
   }
 
   async session(sessionHash: string): Promise<AnchorOid4vpSession | undefined> {
@@ -264,12 +270,17 @@ export class SqliteAnchorOidcState implements AnchorAuthorizationCodeStore, Anch
   }
 }
 
-interface CredentialRow { credential_id: string; credential_hash: string; account_ref: string; root_subject: string; holder_key_id: string; issued_at: number; expires_at: number; revoked_at: number | null }
+interface CredentialRow { credential_id: string; credential_hash: string; account_ref: string; root_subject: string; generation: string; holder_key_id: string; issued_at: number; expires_at: number; revoked_at: number | null }
 interface TransactionRow { transaction_id: string; state: string; nonce: string; return_url: string; expires_at: number }
-interface CompletionRow { response_code_hash: string; root_subject: string; authenticated_at: number; return_url: string; expires_at: number }
-interface SessionRow { session_hash: string; root_subject: string; authenticated_at: number; expires_at: number }
+interface CompletionRow { response_code_hash: string; root_subject: string; generation: string; authenticated_at: number; return_url: string; expires_at: number }
+interface SessionRow { session_hash: string; root_subject: string; generation: string; authenticated_at: number; expires_at: number }
 interface EnrollmentRow { challenge_hash: string; did: string; holder_key_id: string; expires_at: number }
-function credentialRow(row: CredentialRow): AnchorLoginCredentialRecord { return { credentialId: row.credential_id, credentialHash: row.credential_hash, accountRef: row.account_ref, rootSubject: row.root_subject, holderKeyId: row.holder_key_id, issuedAt: row.issued_at, expiresAt: row.expires_at, ...(row.revoked_at === null ? {} : { revokedAt: row.revoked_at }) } }
+function credentialRow(row: CredentialRow): AnchorLoginCredentialRecord { return { credentialId: row.credential_id, credentialHash: row.credential_hash, accountRef: row.account_ref, rootSubject: row.root_subject, generation: row.generation, holderKeyId: row.holder_key_id, issuedAt: row.issued_at, expiresAt: row.expires_at, ...(row.revoked_at === null ? {} : { revokedAt: row.revoked_at }) } }
 function transactionRow(row: TransactionRow): AnchorOid4vpTransaction { return { transactionId: row.transaction_id, state: row.state, nonce: row.nonce, returnUrl: row.return_url, expiresAt: row.expires_at } }
-function completionRow(row: CompletionRow): AnchorOid4vpCompletion { return { responseCodeHash: row.response_code_hash, rootSubject: row.root_subject, authenticatedAt: row.authenticated_at, returnUrl: row.return_url, expiresAt: row.expires_at } }
-function sessionRow(row: SessionRow): AnchorOid4vpSession { return { sessionHash: row.session_hash, rootSubject: row.root_subject, authenticatedAt: row.authenticated_at, expiresAt: row.expires_at } }
+function completionRow(row: CompletionRow): AnchorOid4vpCompletion { return { responseCodeHash: row.response_code_hash, rootSubject: row.root_subject, generation: row.generation, authenticatedAt: row.authenticated_at, returnUrl: row.return_url, expiresAt: row.expires_at } }
+function sessionRow(row: SessionRow): AnchorOid4vpSession { return { sessionHash: row.session_hash, rootSubject: row.root_subject, generation: row.generation, authenticatedAt: row.authenticated_at, expiresAt: row.expires_at } }
+
+function addColumnIfMissing(database: Database, table: string, column: string, definition: string): void {
+  const columns = database.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all()
+  if (!columns.some(value => value.name === column)) database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+}
