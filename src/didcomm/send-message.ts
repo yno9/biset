@@ -12,11 +12,11 @@
 // sendReply already commits).
 import { resolveWithRouting } from './webvh-resolve.ts'
 import { decodeX25519Multikey, decodeMlkem768Multikey } from './multikey.ts'
-import { packAuthcrypt, packAuthcryptHybrid, packAnoncrypt, type DidCommJWE } from './crypto.ts'
+import { packAuthcrypt, packAuthcryptHybrid, type DidCommJWE } from './crypto.ts'
 import { mlkemKidFor } from './devicekid.ts'
 import { buildPlaintext } from './message.ts'
 import { BASIC_MESSAGE } from './basicmessage.ts'
-import { FORWARD } from './mediator-protocol.ts'
+import { wrapForward } from './forward-wrap.ts'
 import { decodePeerDid2, generatePeerIdentity, publicKeyOf, type PeerIdentity } from './peer.ts'
 import type { DidCommServiceEndpoint } from './webvh-routing.ts'
 import { defaultFetch } from '../net-fetch.ts'
@@ -174,18 +174,11 @@ async function sendFrontDoorMessage(toDid: string, type: string, body: unknown, 
   }
   let outbound: DidCommJWE = jwe
   if (mediatorRoutingKid) {
-    // did:peer is self-certifying -- the mediator's own kid decodes to its
-    // public key directly, no network resolve needed (unlike `toDid`
-    // itself, which just went through a real did:webvh resolve above).
-    let mediatorPublicKey: Uint8Array
     try {
-      mediatorPublicKey = publicKeyOf(decodePeerDid2(mediatorRoutingKid.split('#')[0]!), mediatorRoutingKid)
+      outbound = wrapForward(jwe, kaVm.id, mediatorRoutingKid)
     } catch {
       return { ok: false, error: `${toDid}'s registered mediator routing key ${mediatorRoutingKid} is not a valid did:peer kid` }
     }
-    const forward = buildPlaintext(FORWARD, { next: kaVm.id })
-    forward.attachments = [{ id: 'inner', data: { json: jwe } }]
-    outbound = packAnoncrypt(new TextEncoder().encode(JSON.stringify(forward)), { kid: mediatorRoutingKid, publicKey: mediatorPublicKey })
   }
   const response = await fetchImpl(endpoint.uri, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(outbound) })
   if (response.status !== 202) {
@@ -226,15 +219,12 @@ async function sendPrivateRelationshipMessage(contactKey: ContactKeyV1, type: st
     { kid: contactKey.ownRelationshipKid, privateKey: contactKey.ownX25519PrivateKey },
     { kid: contactKey.counterpartyRelationshipKid, publicKey: recipientPublicKey },
   )
-  let mediatorPublicKey: Uint8Array
+  let outbound: DidCommJWE
   try {
-    mediatorPublicKey = publicKeyOf(decodePeerDid2(route.routingKid.split('#', 1)[0]!), route.routingKid)
+    outbound = wrapForward(inner, contactKey.counterpartyRelationshipKid, route.routingKid)
   } catch {
     return { ok: false, error: 'private relationship mediator routing kid is invalid' }
   }
-  const forward = buildPlaintext(FORWARD, { next: contactKey.counterpartyRelationshipKid })
-  forward.attachments = [{ id: 'inner', data: { json: inner } }]
-  const outbound = packAnoncrypt(new TextEncoder().encode(JSON.stringify(forward)), { kid: route.routingKid, publicKey: mediatorPublicKey })
   const response = await fetchImpl(route.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(outbound) })
   if (response.status !== 202) return { ok: false, error: `send failed: HTTP ${response.status} ${(await response.text().catch(() => '')).slice(0, 256)}` }
   return { ok: true }
