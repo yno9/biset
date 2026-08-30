@@ -7,6 +7,10 @@
 
 > 2026-08-29設計決定: MLSでClient処理できるものはすべてClientへ置き、Client単独では成立しないDelivery Service機能はCoordinatorへ移す。以下では現行実装と確定済み移行先を明示的に区別する。
 
+> 2026-08-30設計決定: Biset identityはgenesisから永久にdid:webvh pre-rotationをactiveとする。初期は`Root Key = Sign Key`、独立生成したSpare Keyのhashをgenesisの`nextKeyHashes`へ入れる。activate/deactivateは製品lifecycleから削除し、常に一つのSpare commitmentを保つ。新端末参加はRoot phraseとcurrent Sign phraseの両方を要求する（初回rotation前は同じRoot phraseを二役として検証）。
+
+> 実装境界: permanent-pre-rotation genesis、初回Spare表示、Root+Sign restore検証、deactivate削除は実装済み。Sign rotationをBiset Identity GenerationとしてMLS device credential、Self Group、Coordinator、Vault/DIDComm/Mail鍵世代へ伝播させる部分は次段階である。現行のRoot署名付きMLS credentialのままではserver-side世代失効は完成しない。
+
 ## 1. 結論
 
 「MLSはbiset-uiに完全に組み込まれているか」という質問には、次のように答えるのが正確である。

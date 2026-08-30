@@ -38,14 +38,14 @@ export interface PublishRoutingPointerOptions {
 export async function publishRoutingPointer(opts: PublishRoutingPointerOptions): Promise<void> {
   const fetchImpl = opts.fetch ?? defaultFetch()
   const { url, entries, last } = await fetchCurrentLog(opts.did, fetchImpl)
+  const previousState = last.state as SignedWebvhState
+  const pointerId = `${opts.did}#routing`
+  if (previousState.service.some(s => s.id === pointerId)) return
+
   const updateKey = encodeMultikey(opts.signingPublicKey)
   if (!(last.parameters.updateKeys ?? []).includes(updateKey)) {
     throw new Error('publishRoutingPointer: local signing key is not authorized by the document\'s current updateKeys')
   }
-
-  const previousState = last.state as SignedWebvhState
-  const pointerId = `${opts.did}#routing`
-  if (previousState.service.some(s => s.id === pointerId)) return
 
   const state: SignedWebvhState = {
     ...previousState,

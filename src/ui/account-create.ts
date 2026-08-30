@@ -35,6 +35,8 @@ import { deliverySeq } from '../protocol/ids.ts'
 import { IndexedDbMlsSelfGroupStore } from '../mls/store.ts'
 import { IndexedDbMlsKeyPackageStore } from '../mls/keypackage-store.ts'
 import { readBisetConfig } from './config.ts'
+import { encodeMultikey } from '../identity/webvh/multikey.ts'
+import { ed25519 } from '@noble/curves/ed25519.js'
 
 // Set once by main.ts (a plain function reference, not an import back to
 // it) so the submit handler below can re-run the boot routine after
@@ -123,11 +125,8 @@ export function unmountNewUserPageInline(): void {
 
 // Both did:dht/did:webvh method-toggle buttons in the markup
 // (nu-did-dht-btn/nu-did-webvh-btn) are inert: did:webvh is the only method
-// this rewrite ever creates. #nu-sign-phrase (a Sign Key second phrase) is
-// inert too -- pre-rotation/key-rotation is genuinely out of scope (PLAN.md
-// §6.1), so a restored identity's Root Key phrase is always sufficient here
-// (its own document's updateKeys never diverges from #key-1, since nothing
-// in this rewrite ever rotates them).
+// this rewrite ever creates. Restore requires Root and current Sign phrases;
+// in the initial generation both inputs intentionally contain Root phrase.
 
 // setupNewUserPage is called from more than one route (main.ts's zero-
 // identity boot branch) and route()-style re-entry would otherwise stack up
@@ -151,6 +150,7 @@ export function setupNewUserPage(): void {
   const tosInput = document.getElementById('nu-tos') as HTMLInputElement
   const tosIcon = document.getElementById('nu-tos-icon')!
   const phraseEl = document.getElementById('nu-phrase') as HTMLTextAreaElement | null
+  const signPhraseEl = document.getElementById('nu-sign-phrase') as HTMLTextAreaElement | null
 
   tosInput.addEventListener('change', () => {
     tosIcon.style.opacity = tosInput.checked ? '1' : '0.3'
@@ -172,6 +172,10 @@ export function setupNewUserPage(): void {
     if (phraseEl) {
       phraseEl.style.display = domain ? '' : 'none'
       if (!domain) phraseEl.value = ''
+    }
+    if (signPhraseEl) {
+      signPhraseEl.style.display = domain ? '' : 'none'
+      if (!domain) signPhraseEl.value = ''
     }
   }
   usernameInput.addEventListener('input', () => {
@@ -210,6 +214,8 @@ export function setupNewUserPage(): void {
     if (loginDomain) {
       const phrase = phraseEl?.value.trim() ?? ''
       if (!phrase) { errEl.textContent = `${loginDomain} already exists — paste its 24-word Root Key phrase to log in`; errEl.style.display = 'block'; phraseEl?.focus(); return }
+      const signPhrase = signPhraseEl?.value.trim() ?? ''
+      if (!signPhrase) { errEl.textContent = `${loginDomain} already exists — paste its current 24-word Sign Key phrase to log in`; errEl.style.display = 'block'; signPhraseEl?.focus(); return }
       // Reserve the browser window synchronously while this click still has
       // user activation. Identity recovery performs network and IndexedDB
       // awaits before Coordinator OIDC can be constructed; opening the
@@ -233,7 +239,7 @@ export function setupNewUserPage(): void {
         const keyStore = new IndexedDbMlsKeyPackageStore()
         try {
           await restoreIdentity(recordStore, selfGroupStore, keyStore, {
-            domain: loginDomain, coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl, mnemonic: phrase,
+            domain: loginDomain, coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl, mnemonic: phrase, signMnemonic: signPhrase,
             // Restoring the identity's ONLY device (this rewrite's whole
             // scope, no multi-device) -- see this file's header for why 0
             // is the correct floor here, not a shortcut: there's no OTHER
@@ -278,6 +284,25 @@ export function setupNewUserPage(): void {
 
     try {
       const domain = `${username}.${apexDomain}`
+      // Both recovery secrets must reach the user BEFORE genesis becomes
+      // authoritative. Publishing first and then losing/closing the tab
+      // between the two dialogs would create a permanently pre-rotated
+      // identity whose first Spare Key was never recoverable.
+      const masterSeed = crypto.getRandomValues(new Uint8Array(32))
+      const spareSeed = crypto.getRandomValues(new Uint8Array(32))
+      const { showMnemonic, showMnemonicOnce } = await import('./mnemonic.ts')
+      const { seedToMnemonic } = await import('../identity/seed.ts')
+      await new Promise<void>(resolve => {
+        showMnemonic(masterSeed, { firstTime: true, onClose: resolve })
+      })
+      await showMnemonicOnce(seedToMnemonic(spareSeed), {
+        firstTime: true,
+        title: 'Spare Key',
+        badges: ['SPARE KEY'],
+        fingerprint: encodeMultikey(ed25519.getPublicKey(spareSeed)),
+        subtitle: 'Keep this apart from the Root Key. It is required for the first key rotation and will become the next Sign Key.',
+      })
+
       const recordStore = new IndexedDbIdentityRecordStore()
       const selfGroupStore = new IndexedDbMlsSelfGroupStore()
       const keyStore = new IndexedDbMlsKeyPackageStore()
@@ -292,23 +317,15 @@ export function setupNewUserPage(): void {
       // implementation unable to complete even a brand-new open() at all
       // (found live, 2026-08-26, alongside main.ts's own logout() gap --
       // same underlying cause, two different leak sites).
-      let masterSeed: Uint8Array
       try {
-        ;({ masterSeed } = await createNewIdentity(recordStore, selfGroupStore, keyStore, { domain, coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl }))
+        await createNewIdentity(recordStore, selfGroupStore, keyStore, {
+          domain, coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl, masterSeed, spareSeed,
+        })
       } finally {
         recordStore.close()
         selfGroupStore.close()
         keyStore.close()
       }
-
-      // Show the recovery phrase before handing off to bootClient — this is
-      // the only copy, and bootClient's own render replaces #new-user-page's
-      // spot in the DOM once it re-runs.
-      const { showMnemonic } = await import('./mnemonic.ts')
-      await new Promise<void>(resolve => {
-        showMnemonic(masterSeed, { firstTime: true, onClose: resolve })
-      })
-
       // No page navigation, same reasoning as logout (main.ts's own logout,
       // src.bak's original "no reload" fix): re-invoke the same boot routine
       // a real first load uses, now that an identity exists locally for it

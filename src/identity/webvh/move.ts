@@ -43,9 +43,8 @@ export interface MoveWebvhIdentityOptions {
   newDomain: string
   signingPrivateKey: Uint8Array
   signingPublicKey: Uint8Array
-  /** See migrate.ts's own note — required, and only valid, while
-   * pre-rotation is active. */
-  nextKeyHash?: string
+  /** Fresh Spare commitment required by Biset's permanent pre-rotation. */
+  nextKeyHash: string
   fetch?: typeof globalThis.fetch
 }
 
@@ -63,7 +62,7 @@ export async function moveWebvhIdentity(opts: MoveWebvhIdentityOptions): Promise
     newDomain: opts.newDomain,
     signingPrivateKey: opts.signingPrivateKey,
     signingPublicKey: opts.signingPublicKey,
-    ...(opts.nextKeyHash ? { nextKeyHash: opts.nextKeyHash } : {}),
+    nextKeyHash: opts.nextKeyHash,
     fetch: fetchImpl,
     // Runs after the new location exists so routing authorization can be
     // checked against its current update key.

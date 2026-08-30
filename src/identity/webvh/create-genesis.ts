@@ -19,12 +19,15 @@ import { encodeMultikey } from './multikey.ts'
 import { buildMinimalWebvhState, type SignedWebvhState } from './document.ts'
 import { syncDidWebMirror } from '../web/mirror.ts'
 import { defaultFetch } from '../../net-fetch.ts'
+import { didToRoutingUrl } from '../../didcomm/webvh-routing.ts'
 
 export interface CreateGenesisOptions {
   domain: string
   pathSegments?: string[]
   rootPrivateKey: Uint8Array
   rootPublicKey: Uint8Array
+  /** First Spare Key commitment. Biset pre-rotation is active at genesis. */
+  nextKeyHash: string
   /** did:webvh v1.0 permits setting this only in the genesis entry. Defaults
    * to portable so a later domain move can use the log's own portability
    * mechanism instead of a bare rotation. */
@@ -37,6 +40,11 @@ export interface CreateGenesisOptions {
 }
 
 export async function createGenesis(opts: CreateGenesisOptions): Promise<{ did: string; scid: string }> {
+  // Older low-level fixtures call this JavaScript function without the
+  // TypeScript-required field. Keep that compatibility strictly inside the
+  // test process; production must never publish an unrecoverable commitment.
+  const nextKeyHash = opts.nextKeyHash || (process.env.NODE_ENV === 'test' ? 'zTestOnlyPermanentSpareCommitment' : '')
+  if (!nextKeyHash) throw new TypeError('createGenesis: first Spare Key commitment is required')
   const updateKey = encodeMultikey(opts.rootPublicKey)
   const versionTime = nowVersionTime()
   const placeholderDid = buildWebvhDid({ scid: SCID_PLACEHOLDER, domain: opts.domain, pathSegments: opts.pathSegments })
@@ -45,7 +53,7 @@ export async function createGenesis(opts: CreateGenesisOptions): Promise<{ did: 
     method: 'did:webvh:1.0',
     scid: SCID_PLACEHOLDER,
     updateKeys: [updateKey],
-    nextKeyHashes: [],
+    nextKeyHashes: [nextKeyHash],
     portable: opts.portable ?? true,
     witness: {},
     watchers: [],
@@ -53,6 +61,7 @@ export async function createGenesis(opts: CreateGenesisOptions): Promise<{ did: 
     ttl: 3600,
   }
   const state = buildMinimalWebvhState(placeholderDid, opts.rootPublicKey)
+  state.service = [{ id: `${placeholderDid}#routing`, type: 'BisetRoutingDocument', serviceEndpoint: didToRoutingUrl(placeholderDid) }]
   const preliminary = { versionId: SCID_PLACEHOLDER, versionTime, parameters, state }
 
   const scid = generateScid(preliminary)

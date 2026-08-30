@@ -19,6 +19,8 @@
 
 Coordinatorは端末membershipを管理しない。端末集合、追加、削除、revokeはRFC 9420 Self Groupだけが管理する。Self Group DS/rosterの現行code pathには廃止済み`biset-core`由来の互換実装が残るが、Coreを正式コンポーネントとして復活させるものではない。Coordinator固有のMLS group、member、KeyPackage、Welcome、Invite、Approve、per-device fan-out、ACKはv2から除去された。
 
+2026-08-30に個別device revokeをSign Key rotationベースの一括世代交代へ置き換える方針を決定した。Clientのpermanent pre-rotationとRoot+current-Sign restoreは実装済みだが、Coordinator v2はまだOIDC owner tokenのみでstreamを認可する。Sign rotation後に旧generationをserver-sideで拒否するcredential/request署名は未実装である。
+
 統合したMLS DSは、この廃止した「Coordinator固有Vault MLS membership」の復活ではない。Self Groupが生成したopaque MLS wireを、Clientの代わりに保存・順序付け・配送する。将来は同じ責務境界をConversation Group用のopaque group-scoped protocolへ一般化する。
 
 ```text

@@ -215,7 +215,7 @@ describe('end-to-end: create -> write -> deliver -> restore -> project', () => {
       const mnemonic = seedToMnemonic(created.masterSeed)
       const selfGroupStoreB = memorySelfGroupStore()
       const restored = await restoreIdentity(memoryIdentityRecordStore(), selfGroupStoreB, memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, signMnemonic: mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
       // B's own install was rejected (not yet trusted) -- A's boot-time
       // maintenance is what actually reflects B into the roster AND

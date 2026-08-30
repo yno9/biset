@@ -27,8 +27,12 @@ describe('createGenesis + resolve', () => {
       expect(doc?.verificationMethod[0]?.id).toBe(`${did}#key-1`)
       expect(decodeMultikey(doc!.verificationMethod[0]!.publicKeyMultibase)).toEqual(rootPublicKey)
       expect(doc?.authentication).toEqual([`${did}#key-1`])
-      // No routing.json write: the minimal state carries nothing beyond identity.
-      expect(doc?.service).toEqual([])
+      // The immutable routing pointer is in genesis, so ordinary routing
+      // publication never needs to append another WebVH entry.
+      expect(doc?.service).toEqual([{
+        id: `${did}#routing`, type: 'BisetRoutingDocument',
+        serviceEndpoint: 'https://test.example/.well-known/routing.json',
+      }])
       expect(doc?.alsoKnownAs).toEqual([])
     } finally {
       globalThis.fetch = realFetch

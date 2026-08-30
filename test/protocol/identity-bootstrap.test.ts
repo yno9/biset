@@ -209,7 +209,7 @@ describe('restoreIdentity', () => {
 
       const restoreRecordStore = memoryIdentityRecordStore()
       const restored = await restoreIdentity(restoreRecordStore, memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, signMnemonic: mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
 
       expect(restored.record.did).toBe(created.record.did)
@@ -236,7 +236,7 @@ describe('restoreIdentity', () => {
       const wrongMnemonic = seedToMnemonic(crypto.getRandomValues(new Uint8Array(32)))
 
       await expect(restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic: wrongMnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic: wrongMnemonic, signMnemonic: wrongMnemonic, deliveryFloorForNewDevice: async () => '0',
       })).rejects.toThrow('does not control')
 
       ds.close()
@@ -254,7 +254,7 @@ describe('restoreIdentity', () => {
     try {
       const mnemonic = seedToMnemonic(crypto.getRandomValues(new Uint8Array(32)))
       await expect(restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'nobody.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'nobody.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, signMnemonic: mnemonic, deliveryFloorForNewDevice: async () => '0',
       })).rejects.toThrow('no identity found')
 
       ds.close()
@@ -279,7 +279,7 @@ describe('maintainSelfGroup', () => {
       const mnemonic = seedToMnemonic(created.masterSeed)
 
       const restored = await restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, signMnemonic: mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
       // Device B's own install attempt was rejected -- not yet reflected.
       expect(await roster.isTrustedDevice(created.record.did, restored.record.deviceKid!)).toBe(false)
@@ -320,7 +320,7 @@ describe('maintainSelfGroup', () => {
 
       const mnemonic = seedToMnemonic(created.masterSeed)
       const restored = await restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, signMnemonic: mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
 
       await maintainSelfGroup(deviceASelfGroupStore, memoryKeyPackageStore(), created.record, { coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN })
@@ -358,7 +358,7 @@ describe('maintainSelfGroup', () => {
 
       const mnemonic = seedToMnemonic(created.masterSeed)
       const restored = await restoreIdentity(memoryIdentityRecordStore(), memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, signMnemonic: mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
 
       // Device A reflects device B's join, but storage keys are no longer an
@@ -473,7 +473,7 @@ describe('enableDidComm', () => {
 
       const deviceBRecordStore = memoryIdentityRecordStore()
       const restored = await restoreIdentity(deviceBRecordStore, memorySelfGroupStore(), memoryKeyPackageStore(), {
-        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, deliveryFloorForNewDevice: async () => '0',
+        domain: 'y.test.example', coreBaseUrl: CORE_ORIGIN, mlsDeliveryBaseUrl: COORDINATOR_ORIGIN, mnemonic, signMnemonic: mnemonic, deliveryFloorForNewDevice: async () => '0',
       })
 
       // 2026-08-27 redesign: the DIDComm keyAgreement key is identity-shared

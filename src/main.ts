@@ -47,7 +47,7 @@ import { flushVaultDeliveryOutbox } from './vault/delivery-outbox.ts'
 import type { IngressEnvelopeV1 } from './protocol/ingress.ts'
 import { canonicalHash, equalBytes, sha256Bytes } from './protocol/canonical.ts'
 import { fetchRouting, putRouting, setRoutingName } from './didcomm/webvh-routing.ts'
-import { activatePreRotation, deactivatePreRotation, rotateToPreRotatedKey } from './identity/webvh/prerotation.ts'
+import { rotateToPreRotatedKey } from './identity/webvh/prerotation.ts'
 import { moveWebvhIdentity } from './identity/webvh/move.ts'
 import { adoptPendingMove } from './identity/webvh/adopt-move.ts'
 import { encodeMultikey } from './identity/webvh/multikey.ts'
@@ -327,30 +327,18 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   // (generate/display/prompt) is handled entirely in account-page.ts, which
   // only ever hands this file the already-revealed key bytes to sign with —
   // same "root key stays here" split as editName/revokeDevice.
-  const activateKeyRotation = async (nextKeyHash: string): Promise<void> => {
-    const rootPrivateKey = fromHex(identity.rootPrivateKey)
-    const rootPublicKey = fromHex(identity.rootPublicKey)
-    await activatePreRotation({ did: identity.did, signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey, nextKeyHash })
-  }
   const rotateKeyRotation = async (revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array, nextKeyHash: string): Promise<void> => {
-    const rootPublicKey = fromHex(identity.rootPublicKey)
-    await rotateToPreRotatedKey({ did: identity.did, revealedPrivateKey, revealedPublicKey, identityPublicKey: rootPublicKey, nextKeyHash })
-  }
-  const deactivateKeyRotation = async (revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array): Promise<void> => {
-    const rootPublicKey = fromHex(identity.rootPublicKey)
-    await deactivatePreRotation({ did: identity.did, revealedPrivateKey, revealedPublicKey, identityPublicKey: rootPublicKey })
+    await rotateToPreRotatedKey({ did: identity.did, revealedPrivateKey, revealedPublicKey, nextKeyHash })
   }
   // did:webvh domain move (identity/webvh/move.ts) — same coreBaseUrl-
   // independence as editName/revokeDevice/pre-rotation above for the
   // did.jsonl move plus local DID-keyed store migration. MLS credentials are
   // stable Root-signed objects and require no move-time commit.
-  const moveIdentity = async (newDomain: string): Promise<string> => {
+  const moveIdentity = async (newDomain: string, revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array, nextKeyHash: string): Promise<string> => {
     const previousDid = identity.did
-    const rootPrivateKey = fromHex(identity.rootPrivateKey)
-    const rootPublicKey = fromHex(identity.rootPublicKey)
     const moved = await moveWebvhIdentity({
       recordStore, record: identity, vaultStore, selfGroupStore,
-      newDomain, signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey,
+      newDomain, signingPrivateKey: revealedPrivateKey, signingPublicKey: revealedPublicKey, nextKeyHash,
     })
     await loginWalletStore.rekeyIdentity(previousDid, moved.did)
     identity = moved
@@ -367,7 +355,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   configureAccountPage({
     did: identity.did, masterSeed: identity.masterSeed,
     onLogout: logout, onEditName: editName, onRevokeDevice: revokeDevice,
-    onActivateKeyRotation: activateKeyRotation, onRotateKeyRotation: rotateKeyRotation, onDeactivateKeyRotation: deactivateKeyRotation,
+    onRotateKeyRotation: rotateKeyRotation,
     onMoveIdentity: moveIdentity,
     vault: vaultCardStatus,
     onConnectCoordinator: coordinatorConfigured ? async () => {

@@ -32,7 +32,7 @@ import { resolveWithRouting } from '../didcomm/webvh-resolve.ts'
 import { shortWebvhDid } from './did-display.ts'
 import { showComposePage } from './compose-page.ts'
 import { mountNewUserPageInline, unmountNewUserPageInline, setupNewUserPage } from './account-create.ts'
-import { isPreRotationActive, currentNextKeyHashes } from '../identity/webvh/prerotation.ts'
+import { currentNextKeyHashes } from '../identity/webvh/prerotation.ts'
 import { showMnemonic, showMnemonicOnce, promptForMnemonic } from './mnemonic.ts'
 import { fromHex } from '../identity/bootstrap.ts'
 import { seedToMnemonic, mnemonicToSeed } from '../identity/seed.ts'
@@ -76,23 +76,12 @@ export interface AccountPageConfig {
    * Never offered for the current device's own row (see the devices-list
    * render below) -- self-revoke is what logout already is. */
   onRevokeDevice?(targetDeviceKid: string): Promise<void>
-  /** Turns pre-rotation on (identity/webvh/prerotation.ts's
-   * activatePreRotation), signed with the Root Key that stays in main.ts.
-   * `nextKeyHash` is computed here from a freshly generated Spare Key that
-   * this file generates, displays once, and never hands over raw. */
-  onActivateKeyRotation?(nextKeyHash: string): Promise<void>
   /** Reveals the current Spare Key (typed in by the user, this file's own
-   * promptForMnemonic) to rotate to a new one — main.ts combines it with
-   * the Root Key's public half for the entry's fallback-authority field. */
+   * promptForMnemonic) and commits a newly generated Spare in the same
+   * permanent-pre-rotation transition. */
   onRotateKeyRotation?(revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array, nextKeyHash: string): Promise<void>
-  /** Same reveal, but turns pre-rotation back off and returns update
-   * authority to the Root Key. */
-  onDeactivateKeyRotation?(revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array): Promise<void>
-  /** Moves this identity to a new domain (identity/webvh/move.ts's
-   * moveWebvhIdentity) -- main.ts's own closure, since it holds the root
-   * key (and, if this device has a self group, the MLS leaf key) this
-   * needs to sign with. Resolves to the new did on success. */
-  onMoveIdentity?(newDomain: string): Promise<string>
+  /** A domain move is also a permanent-pre-rotation transition. */
+  onMoveIdentity?(newDomain: string, revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array, nextKeyHash: string): Promise<string>
   /** Starts the user-gesture-bound OpenID4VP + OIDC PKCE popup flow. */
   onConnectCoordinator?(): Promise<void>
   /** Live status for the identity's encrypted Coordinator-backed Vault.
@@ -384,7 +373,15 @@ function openEditIdentityModal(did: string): void {
 
     setSubmitEnabled(false); submit.textContent = 'Saving…'
     try {
-      const newDid = await config!.onMoveIdentity!(domain)
+      const expectedHashes = await currentNextKeyHashes(did)
+      const phrase = await promptForMnemonic({ title: 'Current Spare Key', badges: ['SPARE KEY'], expectedHashes, subtitle: 'A domain move is also a permanent pre-rotation transition.' })
+      if (!phrase) return
+      const revealed = spareKeyFromSeed(mnemonicToSeed(phrase))
+      const nextSeed = crypto.getRandomValues(new Uint8Array(32))
+      const nextSpare = spareKeyFromSeed(nextSeed)
+      const nextKeyHash = multikeyHashBase58(encodeMultikey(nextSpare.publicKey))
+      await showMnemonicOnce(seedToMnemonic(nextSeed), { firstTime: false, title: 'New Spare Key', badges: ['SPARE KEY'], fingerprint: encodeMultikey(nextSpare.publicKey), subtitle: 'Write this down. The previous Spare Key becomes the current Sign Key when the move completes.' })
+      const newDid = await config!.onMoveIdentity!(domain, revealed.privateKey, revealed.publicKey, nextKeyHash)
       okEl.textContent = `Saved — now ${newDid}`
       okEl.style.display = 'block'
       setTimeout(dismiss, 1200)
@@ -438,12 +435,12 @@ const CONFIG_PAGE_HTML = `<div class="cmd-page-content wide-page">
       <div class="cmd-page-section">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
           <h3 style="margin:0">Key rotation</h3>
-          <div class="toggle-switch" id="config-prerotation-toggle" style="cursor:pointer"></div>
+          <span style="font-size:12px;font-weight:800;color:var(--accent)">Always active</span>
         </div>
         <div style="display:flex;align-items:center;gap:10px;padding:6px 0">
-          <button id="prerotation-rotate-btn" class="cmd-page-btn primary" style="display:none;padding:4px 12px;font-size:11px;font-weight:900;text-transform:uppercase;border-radius:20px;flex-shrink:0">Rotate</button>
-          <span style="font-size:13px;color:var(--text-dim);flex-shrink:0">Sign Key:</span>
-          <span id="config-prerotation-key" style="font-family:ui-monospace,monospace;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;cursor:pointer" title="Click to show the Sign Key phrase"></span>
+          <button id="prerotation-rotate-btn" class="cmd-page-btn primary" style="padding:4px 12px;font-size:11px;font-weight:900;text-transform:uppercase;border-radius:20px;flex-shrink:0">Rotate</button>
+          <span style="font-size:13px;color:var(--text-dim);flex-shrink:0">Next Spare commitment:</span>
+          <span id="config-prerotation-key" style="font-family:ui-monospace,monospace;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0"></span>
         </div>
         <div style="display:flex;align-items:center;gap:10px;padding:6px 0">
           <button id="prerotation-revoke-btn" class="cmd-page-btn primary" style="display:none;padding:4px 12px;font-size:11px;font-weight:900;text-transform:uppercase;border-radius:20px;flex-shrink:0">Revoke</button>
@@ -526,65 +523,20 @@ export function showConfigPage(): void {
   activeEl.innerHTML = ''
   activeEl.appendChild(card)
 
-  const preRotTog = card.querySelector<HTMLElement>('#config-prerotation-toggle')!
   const rotateBtn = card.querySelector<HTMLButtonElement>('#prerotation-rotate-btn')!
   const preRotKey = card.querySelector<HTMLElement>('#config-prerotation-key')!
   const rootKey = card.querySelector<HTMLElement>('#config-rootkey')!
 
-  const refreshKeyLabel = async (): Promise<void> => {
-    try {
-      preRotKey.textContent = (await currentNextKeyHashes(did))[0] ?? ''
-    } catch {
-      preRotKey.textContent = ''
-    }
-  }
   rootKey.textContent = did
-
-  const reflect = (active: boolean): void => {
-    preRotTog.classList.toggle('on', active)
-    rotateBtn.style.display = active ? '' : 'none'
-  }
 
   const refresh = async (): Promise<void> => {
     try {
-      reflect(await isPreRotationActive(did))
-    } catch { /* leave the toggle as-is; a transient resolve failure isn't worth surfacing here */ }
-    await refreshKeyLabel()
+      const hashes = await currentNextKeyHashes(did)
+      if (hashes.length !== 1) throw new Error('identity does not satisfy permanent pre-rotation invariants')
+      preRotKey.textContent = hashes[0]!
+    } catch (e) { preRotKey.textContent = e instanceof Error ? e.message : String(e) }
   }
   void refresh()
-
-  preRotTog.addEventListener('click', async () => {
-    const active = preRotTog.classList.contains('on')
-    if (!active) {
-      if (!config?.onActivateKeyRotation) return
-      try {
-        const seed = crypto.getRandomValues(new Uint8Array(32))
-        const spare = spareKeyFromSeed(seed)
-        const nextKeyHash = multikeyHashBase58(encodeMultikey(spare.publicKey))
-        await showMnemonicOnce(seedToMnemonic(seed), {
-          firstTime: true, title: 'Spare Key', badges: ['SPARE KEY'], fingerprint: encodeMultikey(spare.publicKey),
-          subtitle: 'Write this down and keep it apart from your Root Key phrase. It is the only way to rotate or turn off key rotation later — losing it is as final as losing the Root Key.',
-        })
-        await config.onActivateKeyRotation(nextKeyHash)
-        await refresh()
-      } catch (e) {
-        config?.showMessage?.(e instanceof Error ? e.message : String(e))
-      }
-      return
-    }
-    if (!config?.onDeactivateKeyRotation) return
-    if (!confirm('Turn off key rotation and return full control to the Root Key?')) return
-    try {
-      const expectedHashes = await currentNextKeyHashes(did)
-      const phrase = await promptForMnemonic({ title: 'Current Spare Key', badges: ['SPARE KEY'], expectedHashes, subtitle: 'Enter the current Spare Key phrase to deactivate key rotation.' })
-      if (!phrase) return
-      const revealed = spareKeyFromSeed(mnemonicToSeed(phrase))
-      await config.onDeactivateKeyRotation(revealed.privateKey, revealed.publicKey)
-      await refresh()
-    } catch (e) {
-      config?.showMessage?.(e instanceof Error ? e.message : String(e))
-    }
-  })
 
   rotateBtn.addEventListener('click', async () => {
     if (!config?.onRotateKeyRotation) return
@@ -599,7 +551,7 @@ export function showConfigPage(): void {
       const nextKeyHash = multikeyHashBase58(encodeMultikey(nextSpare.publicKey))
       await showMnemonicOnce(seedToMnemonic(nextSeed), {
         firstTime: false, title: 'New Spare Key', badges: ['SPARE KEY'], fingerprint: encodeMultikey(nextSpare.publicKey),
-        subtitle: 'Write this down. The previous Spare Key phrase no longer works.',
+        subtitle: 'Write this down for the next rotation. Keep the previous Spare phrase too: it is now the current Sign phrase required when adding a device.',
       })
       await config.onRotateKeyRotation(revealed.privateKey, revealed.publicKey, nextKeyHash)
       await refresh()
@@ -614,7 +566,6 @@ export function showConfigPage(): void {
   // a rotated-to Spare/Sign Key phrase once shown (prerotation.ts's own
   // header) -- that absence IS the design, not a gap. Root Key reveal is a
   // real capability (masterSeed is on disk); the click just needs it.
-  preRotKey.addEventListener('click', () => config?.showMessage?.('The Sign Key phrase is never stored -- it was only ever shown once, when key rotation was last enabled or rotated'))
   rootKey.addEventListener('click', () => {
     if (!config?.masterSeed) return
     showMnemonic(fromHex(config.masterSeed), { firstTime: false })

@@ -126,16 +126,17 @@ Peer restore は現在の MLS member による署名と current-epoch grant を�
 1. 32-byte master seed を生成する。
 2. seed を 24-word BIP39 mnemonic として利用者に提示する。
 3. SLIP-0010 の `m/0'` から Ed25519 Root Key を導出する。
-4. subdomain ごとの did:webvh genesis を `/.well-known/did.jsonl` に作成する。
-5. 端末固有の MLS KeyPackage / leaf signature key を生成し、`#device-{random}` verification method として追加する。
-6. SCID 由来の MLS self-group を作成または external join し、core roster を反映する。
-7. identity record と MLS state を IndexedDB に保存する。
+4. 独立のSpare Keyを生成し、phraseをRoot phraseと別に提示する。
+5. `updateKeys=[Root]`、`nextKeyHashes=[hash(Spare)]`とrouting pointerを含むdid:webvh genesisを作る。pre-rotationはこの時点から永久にactiveである。
+6. 端末固有の MLS KeyPackage / leaf signature key を生成する。
+7. SCID 由来の MLS self-group を作成または external join し、roster を反映する。
+8. identity record と MLS state を IndexedDB に保存する。Spare private keyは保存しない。
 
 メール address は独立して発行せず、`did:webvh:{scid}:{username}.{apexDomain}` の domain から `{username}@mail.{apexDomain}` を導出する。`routing.json.alsoKnownAs` にも best-effort で掲載する。
 
 ### 5.2 mnemonic によるログイン
 
-Onboarding UI は入力 domain が既に resolve できる場合、signup から login へ切り替える。`restoreIdentity` は mnemonic から Root Key を再導出し、resolved document の最初の verification method と公開鍵が一致することを確認してから新しい端末 leaf を登録する。
+Onboarding UI は入力 domain が既に resolve できる場合、signup から login へ切り替える。`restoreIdentity`はRoot phraseに加えてcurrent Sign phraseを要求し、did:webvh current `updateKeys`と照合する。初回rotation前はRootがSignを兼ねるため、同じRoot phraseを両方に入力する。
 
 現行 UI は `deliveryFloorForNewDevice = 0` を渡し、「唯一の端末を失った後の全面復旧」として扱う。しかし、Vault delivery の pull と archive/peer restore は boot path に接続されていないため、mnemonic login だけで過去の Vault 本体が復元されるわけではない。さらに複数端末が生きている identity に floor 0 で参加させると、コード内コメントが掲げる forward-secrecy 方針と衝突する。製品 UI 上の前提と protocol capability を明確に分ける必要がある。
 
@@ -213,7 +214,8 @@ Self-group ID は `SHA-256("biset-self-group/1 " + SCID)` で決定論的に導�
 |---|---|---|---|---|
 | Master seed / 24-word Root Key phrase | identity | Client local `IdentityRecord` に hex 平文 | mnemonic を利用者が外部保管 | 自動 rotation なし |
 | Root Ed25519 key | identity | Client local `IdentityRecord` に private key 平文 | did:webvh updateKeys、routing.json 署名 | pre-rotation で権限移行可能 |
-| Spare/Sign Ed25519 key | rotation 世代 | アプリは永続保存せず phrase を一度表示 | hash のみ `nextKeyHashes` | 一回使用後に次世代へ |
+| Sign Ed25519 key | identity generation | アプリは永続保存せずphraseを利用者が保管 | current `updateKeys` | 初期はRootと同一、rotationで旧Spareへ移行 |
+| Spare Ed25519 key | next generation | アプリは永続保存せずphraseを一度表示 | hashのみ`nextKeyHashes`へ常に一つ公開 | rotation時にSignへ昇格し新Spareを同時commit |
 | MLS leaf signature/private group state | device | MLS IndexedDB | public verification method、KeyPackage | MLS UpdatePath / credential migration |
 | MLS HPKE leaf material | device/epoch | MLS state | MLS tree / KeyPackage | commit により更新 |
 | VEK | identity + epoch | 永続保存しない | 同 epoch member が exporter から導出 | epoch ごとに変更 |

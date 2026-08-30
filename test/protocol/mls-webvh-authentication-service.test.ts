@@ -8,6 +8,8 @@ import { createMlsDeviceCredential } from '../../src/mls/device-credential.ts'
 import { webvhAuthenticationService } from '../../src/mls/webvh-authentication-service.ts'
 import { createGenesis } from '../../src/identity/webvh/create-genesis.ts'
 import { migrateWebvhLocation } from '../../src/identity/webvh/migrate.ts'
+import { encodeMultikey } from '../../src/identity/webvh/multikey.ts'
+import { multikeyHashBase58 } from '../../src/identity/webvh/hash.ts'
 import { buildGenesisLog, fakeAnchor, withFetch } from './support/webvh-log-fixture.ts'
 
 describe('webvh Authentication Service', () => {
@@ -71,13 +73,23 @@ describe('webvh Authentication Service', () => {
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
     const leafSignaturePublicKey = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
     const anchor = fakeAnchor()
+    const currentSparePrivateKey = ed25519.utils.randomSecretKey()
+    const currentSparePublicKey = ed25519.getPublicKey(currentSparePrivateKey)
+    const currentSpareHash = multikeyHashBase58(encodeMultikey(currentSparePublicKey))
 
-    const { did: oldDid } = await createGenesis({ domain: 'move-src.example', rootPrivateKey, rootPublicKey, fetch: anchor.fetch })
+    const { did: oldDid } = await createGenesis({
+      domain: 'move-src.example', rootPrivateKey, rootPublicKey,
+      nextKeyHash: currentSpareHash, fetch: anchor.fetch,
+    })
     const credential = credentialFor(createMlsDeviceCredential(oldDid, leafSignaturePublicKey, rootPrivateKey))
 
     // Someone else's move: only the domain changes, device-b never re-issues its credential.
+    const nextSparePrivateKey = ed25519.utils.randomSecretKey()
+    const nextKeyHash = multikeyHashBase58(encodeMultikey(ed25519.getPublicKey(nextSparePrivateKey)))
     await migrateWebvhLocation({
-      oldDid, newDomain: 'move-dst.example', signingPrivateKey: rootPrivateKey, signingPublicKey: rootPublicKey, fetch: anchor.fetch,
+      oldDid, newDomain: 'move-dst.example',
+      signingPrivateKey: currentSparePrivateKey, signingPublicKey: currentSparePublicKey,
+      nextKeyHash, fetch: anchor.fetch,
     })
 
     const realFetch = globalThis.fetch

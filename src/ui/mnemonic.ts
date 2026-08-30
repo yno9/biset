@@ -1,5 +1,5 @@
 // Recovery-phrase (BIP39 24-word) display. This is the ONLY safety valve for
-// the rotation-less root identity: lose the phrase and the identity is
+// the stable Root identity: lose the phrase and the identity is
 // unrecoverable, so it must be shown at least once at creation
 // (account-create.ts's own call). Re-display on demand (src.bak's
 // showStoredMnemonic) needed did/store.ts's passkey-gated reveal, which has
@@ -155,9 +155,9 @@ export function showMnemonic(masterSecret: Uint8Array, opts: { firstTime: boolea
   // At genesis, updateKeys and #key-1 start out as the exact same key
   // (webvh/publish.ts's createGenesis) — this phrase genuinely controls
   // both until the first activate/rotate/revoke ever moves updateKeys away.
-  // Safe precisely because there is no SPARE KEY yet (nextKeyHashes is
-  // empty): sharing one phrase between root and sign only becomes a problem
-  // once a lever exists to leak — PLANROTATION.md §3.1's rejected option D.
+  // Permanent pre-rotation is already active at genesis. Root and Sign are
+  // intentionally identical in generation zero; signup displays the first
+  // independent Spare phrase immediately before publishing genesis.
   renderPhrase(box, dismiss, seedToMnemonic(masterSecret), {
     ...opts,
     badges: ['ROOT KEY', 'SIGN KEY'],

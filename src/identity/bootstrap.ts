@@ -22,6 +22,8 @@ import { createGenesis } from './webvh/create-genesis.ts'
 import { resolveByDomain } from './webvh/resolver.ts'
 import { mailFromForIdentity } from './webvh/identifier.ts'
 import { decodeMultikey, encodeMultikey } from './webvh/multikey.ts'
+import { multikeyHashBase58 } from './webvh/hash.ts'
+import { fetchCurrentLog } from './webvh/log-io.ts'
 import type { IdentityRecord, IdentityRecordStore } from './record-store.ts'
 import { epochOf, exportSecret, generateOwnKeyPackage, ownMlsDeviceCredential, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
 import { createMlsDeviceCredential, encodeMlsDeviceCredential } from '../mls/device-credential.ts'
@@ -127,6 +129,8 @@ export interface CreateNewIdentityOptions {
   mlsDeliveryBaseUrl: string
   /** Generated if omitted — the only reason to pass one in is a test. */
   masterSeed?: Uint8Array
+  /** Independent first Spare Key seed; generated when omitted. */
+  spareSeed?: Uint8Array
   didWebMirror?: boolean
   fetch?: typeof fetch
   now?: () => Date
@@ -135,6 +139,8 @@ export interface CreateNewIdentityOptions {
 export interface CreatedIdentity {
   record: IdentityRecord
   masterSeed: Uint8Array
+  /** Creation-only; never persisted in IdentityRecord. */
+  spareSeed?: Uint8Array
   selfGroupState: ClientState
 }
 
@@ -205,8 +211,11 @@ export async function createNewIdentity(
 
   const masterSeed = opts.masterSeed ?? crypto.getRandomValues(new Uint8Array(32))
   const root = deriveRootKey(masterSeed)
+  const spareSeed = opts.spareSeed ?? crypto.getRandomValues(new Uint8Array(32))
+  const nextKeyHash = multikeyHashBase58(encodeMultikey(ed25519.getPublicKey(spareSeed)))
   const { did } = await createGenesis({
     domain: opts.domain, rootPrivateKey: root.privateKey, rootPublicKey: root.publicKey,
+    nextKeyHash,
     didWebMirror: opts.didWebMirror, fetch: opts.fetch,
   })
 
@@ -223,7 +232,7 @@ export async function createNewIdentity(
   }
   await recordStore.put(record)
 
-  return { record, masterSeed, selfGroupState }
+  return { record, masterSeed, spareSeed, selfGroupState }
 }
 
 export interface MaintainSelfGroupOptions {
@@ -425,6 +434,8 @@ export interface RestoreIdentityOptions {
   mlsDeliveryBaseUrl: string
   /** The 24-word BIP39 recovery phrase (identity/seed.ts). */
   mnemonic: string
+  /** Current Sign phrase. Initially this is the same phrase as Root. */
+  signMnemonic: string
   /**
    * The vault-delivery seq THIS DEVICE should start pulling from — must be
    * the CURRENT `latestSeq`, never a past one (PLAN.md §2.3: a new device is
@@ -473,6 +484,17 @@ export async function restoreIdentity(
     throw new Error('restoreIdentity: this recovery phrase does not control the identity at this domain')
   }
   const did = doc.id
+
+  const { last } = await fetchCurrentLog(did, opts.fetch)
+  const updateKeys = last.parameters.updateKeys ?? []
+  if (updateKeys.length !== 1 || (last.parameters.nextKeyHashes?.length ?? 0) !== 1) {
+    throw new Error('restoreIdentity: identity does not satisfy permanent pre-rotation invariants')
+  }
+  const normalizedRoot = opts.mnemonic.trim().toLowerCase().replace(/\s+/g, ' ')
+  const normalizedSign = opts.signMnemonic.trim().toLowerCase().replace(/\s+/g, ' ')
+  const signSeed = mnemonicToSeed(normalizedSign)
+  const signPublicKey = normalizedSign === normalizedRoot ? deriveRootKey(signSeed).publicKey : ed25519.getPublicKey(signSeed)
+  if (encodeMultikey(signPublicKey) !== updateKeys[0]) throw new Error('restoreIdentity: Sign Key phrase is not current for this identity')
 
   const { deviceKid, selfGroupState } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, selfGroupStore, keyStore, {
     coreBaseUrl: opts.coreBaseUrl, mlsDeliveryBaseUrl: opts.mlsDeliveryBaseUrl, didWebMirror: opts.didWebMirror, fetch: opts.fetch, now,
@@ -985,6 +1007,11 @@ export async function enableDidComm(
 
   const fetchImpl = opts.fetch ?? fetch
   const current = await fetchRouting(record.did, fetchImpl).catch(() => null)
+  if (current?.keyAgreementVerificationMethod?.some(method => method.id === didCommKid)) {
+    const updated: IdentityRecord = { ...record, didCommKid, didCommX25519PrivateKey: toHex(credential.privateKey) }
+    await recordStore.put(updated)
+    return updated
+  }
   let alsoKnownAs = current?.alsoKnownAs ? [...current.alsoKnownAs] : undefined
   if (opts.apexDomain) {
     try { alsoKnownAs = [...new Set([...(alsoKnownAs ?? []), mailFromForIdentity(record.did, opts.apexDomain)])] }
