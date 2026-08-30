@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { AnchorOidcProvider, MemoryAnchorAuthorizationCodeStore } from '../../src/anchor/oidc.ts'
+import { AnchorOid4vpProvider, MemoryAnchorOid4vpStore } from '../../src/anchor/oid4vp.ts'
 import { bytesToBase64url } from '../../src/protocol/canonical.ts'
 
 describe('OIDC identity selection', () => {
@@ -38,5 +39,23 @@ describe('OIDC identity selection', () => {
     expect(forced).toBeTrue()
     expect(response.status).toBe(202)
     expect(await response.text()).toBe('wallet login')
+  })
+
+  test('Wallet authentication consumes prompt=login before returning to authorize', async () => {
+    const store = new MemoryAnchorOid4vpStore()
+    const oid4vp = new AnchorOid4vpProvider({
+      issuer: 'https://anchor.biset.md', store,
+      credentialSigningPrivateKey: new Uint8Array(32).fill(7),
+    })
+    const response = await oid4vp.beginAuthentication(new Request(
+      'https://anchor.biset.md/oauth/authorize?client_id=client&state=s&wallet_origin=null&prompt=login',
+    ))
+    const location = new URL(response.headers.get('location')!)
+    const requestUri = new URL(location.searchParams.get('request_uri')!)
+    const transaction = await store.transaction(requestUri.pathname.split('/').pop()!)
+    const returnUrl = new URL(transaction!.returnUrl)
+    expect(returnUrl.searchParams.get('prompt')).toBeNull()
+    expect(returnUrl.searchParams.get('client_id')).toBe('client')
+    expect(returnUrl.searchParams.get('state')).toBe('s')
   })
 })

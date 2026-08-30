@@ -258,6 +258,11 @@ export class AnchorOid4vpProvider implements AnchorSubjectAuthenticator {
     const incoming = new URL(request.url)
     if (incoming.pathname !== '/oauth/authorize') throw new TypeError('OID4VP return URL is invalid')
     const returnUrl = new URL(`${incoming.pathname}${incoming.search}`, this.issuer)
+    // prompt=login has now done its job: this transaction will mint a fresh
+    // Anchor session for the selected Wallet identity. Keeping the flag on
+    // the return URL would reject that brand-new session and start the same
+    // OID4VP transaction forever.
+    returnUrl.searchParams.delete('prompt')
     const openerOrigin = incoming.searchParams.get('wallet_origin') ?? ''
     if (openerOrigin !== 'null') {
       const parsed = new URL(openerOrigin)
