@@ -30,6 +30,7 @@ export const DEFAULT_SQLITE_MEDIATOR_LIMITS: SqliteMediatorLimits = {
 }
 
 interface IdentityRow { public_url: string; x_priv: string; ed_priv: string }
+interface RelayPollerIdentityRow { x_priv: string; ed_priv: string }
 interface QueueRow { id: string; packed: string; queued_at: number; silent: number }
 
 /** Single-writer production persistence for the blind mediator. The same
@@ -73,6 +74,25 @@ export class SqliteMediatorStore implements MediatorConnectionStore, MediatorMes
     }
     const service: PeerService = { uri: row.public_url, accept: ['didcomm/v2'] }
     return identityFromKeys(b64urlDecodeToBytes(row.x_priv), b64urlDecodeToBytes(row.ed_priv), service)
+  }
+
+  /** The relay poller's own did:peer key (mediator/relay-poller.ts) --
+   * persisted separately from `loadIdentity`'s own key because it is a
+   * downstream CLIENT identity registered with an upstream mediator for
+   * hop-chaining, not this mediator's own published/dereferenced one. No
+   * `publicUrl` to pin: unlike this mediator's own did.json, nobody ever
+   * dereferences the poller's DID over HTTP -- an upstream mediator only
+   * ever anoncrypts TO its self-certifying kid, never resolves it. */
+  loadRelayPollerIdentity(): PeerIdentity {
+    let row = this.database.query<RelayPollerIdentityRow, []>('SELECT x_priv, ed_priv FROM relay_poller_identity WHERE singleton = 1').get()
+    if (!row) {
+      const xPriv = x25519.utils.randomSecretKey()
+      const edPriv = ed25519.utils.randomSecretKey()
+      this.database.query('INSERT INTO relay_poller_identity (singleton, x_priv, ed_priv) VALUES (1, ?, ?)')
+        .run(b64url(xPriv), b64url(edPriv))
+      row = { x_priv: b64url(xPriv), ed_priv: b64url(edPriv) }
+    }
+    return identityFromKeys(b64urlDecodeToBytes(row.x_priv), b64urlDecodeToBytes(row.ed_priv))
   }
 
   ready(): boolean {
@@ -279,6 +299,11 @@ function installSchema(database: Database): void {
     CREATE TABLE IF NOT EXISTS mediator_identity (
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
       public_url TEXT NOT NULL,
+      x_priv TEXT NOT NULL,
+      ed_priv TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS relay_poller_identity (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
       x_priv TEXT NOT NULL,
       ed_priv TEXT NOT NULL
     );

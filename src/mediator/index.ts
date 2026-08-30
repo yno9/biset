@@ -5,6 +5,7 @@ import { resolveDidCommSenderKey } from '../didcomm/webvh-resolve.ts'
 import { createMediator } from './server.ts'
 import { SqliteMediatorStore } from './sqlite-store.ts'
 import { IpRateLimiter } from './rate-limit.ts'
+import { startRelayPoller, type RelayPollHandle } from './relay-poller.ts'
 
 const publicUrl = Bun.env.MEDIATOR_PUBLIC_URL
 if (!publicUrl) throw new Error('MEDIATOR_PUBLIC_URL is required')
@@ -90,6 +91,36 @@ const expiryTimer = setInterval(() => {
 }, 60_000)
 expiryTimer.unref()
 
+// Hop-chaining (2026-08-30 discussion): when this mediator is itself named
+// as an intermediate hop in some recipient's routing.json, an upstream
+// mediator queues Forward-wrapped messages for this relay poller's own kid
+// rather than delivering them directly. Polling it and re-Forwarding into
+// our own `handle` (below) requires no changes to either mediator's
+// dispatch loop -- see relay-poller.ts's own header.
+const relayUpstreamUrl = Bun.env.MEDIATOR_RELAY_UPSTREAM_URL
+let relayPoller: RelayPollHandle | undefined
+if (relayUpstreamUrl) {
+  const relayIdentity = store.loadRelayPollerIdentity()
+  relayPoller = startRelayPoller(
+    relayUpstreamUrl,
+    { did: relayIdentity.did, xKid: relayIdentity.xKid, xPriv: relayIdentity.xPriv },
+    mediator.xKid,
+    async (outbound) => {
+      const request = new Request('https://internal.invalid/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/didcomm-encrypted+json' },
+        body: JSON.stringify(outbound),
+      })
+      const response = await handle(request, new URL(request.url))
+      if (!response || response.status !== 202) {
+        throw new Error(`relay re-forward was not accepted: HTTP ${response?.status ?? 'null'}`)
+      }
+    },
+    { onError: error => log('error', 'relay poll error', { error: errorMessage(error) }) },
+  )
+  log('info', 'relay poller started', { upstream: relayUpstreamUrl, relayKid: relayIdentity.xKid })
+}
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => { void shutdown(signal) })
 }
@@ -100,6 +131,7 @@ async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return
   shuttingDown = true
   clearInterval(expiryTimer)
+  relayPoller?.stop()
   log('info', 'mediator shutting down', { signal })
   await server.stop(false)
   store.close()

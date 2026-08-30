@@ -8,21 +8,20 @@ test/*
 !test/contact-key.test.ts
 !test/mediator-relationship-handshake.test.ts
 !test/mediator-sqlite-store.test.ts
-!test/mail-mediator-client.test.ts
 !test/transport-ingress-ingest.test.ts
 !test/vault-transport-boundaries.test.ts
 !test/identity-server/
 !test/identity-server/**
 !test/coordinator/
 !test/coordinator/**
-!test/mail-mediator/
-!test/mail-mediator/**
 !test/vault/
 !test/vault/**
 !test/identity/
 !test/identity/**
 !test/oid4vp/
 !test/oid4vp/**
+!test/mediator/
+!test/mediator/**
 
 biset-*
 PLAN*

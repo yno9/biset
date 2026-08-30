@@ -53,6 +53,18 @@ describe('SqliteMediatorStore', () => {
     third.close()
   }))
 
+  test('relay poller identity is stable across restarts and independent of the mediator\'s own identity', () => withDatabase(path => {
+    const first = SqliteMediatorStore.open(path)
+    const ownIdentity = first.loadIdentity('https://mediator.example')
+    const pollerIdentity = first.loadRelayPollerIdentity()
+    expect(pollerIdentity.did).not.toBe(ownIdentity.did)
+    first.close()
+
+    const second = SqliteMediatorStore.open(path)
+    expect(second.loadRelayPollerIdentity().did).toBe(pollerIdentity.did)
+    second.close()
+  }))
+
   test('mediator identity, connection keylist, opaque queue, and replay IDs survive restart', () => withDatabase(path => {
     const first = SqliteMediatorStore.open(path)
     const identity = first.loadIdentity('https://mediator.example')

@@ -34,7 +34,7 @@ export async function fetchMediatorInfo(mediatorUrl: string, fetchImpl: typeof f
   if (cached) return cached
   const resp = await fetchImpl(`${trimSlash(mediatorUrl)}/.well-known/did.json`)
   if (!resp.ok) throw new Error(`fetchMediatorInfo: HTTP ${resp.status}`)
-  const doc: PeerDidDoc = await resp.json()
+  const doc = await resp.json() as PeerDidDoc
   const xKid = doc.keyAgreement[0]
   if (!xKid) throw new Error(`fetchMediatorInfo: ${doc.id} has no keyAgreement key`)
   const info: MediatorInfo = { url: mediatorUrl, did: doc.id, xKid, xPub: publicKeyOf(doc, xKid) }
