@@ -13,6 +13,7 @@
         "@scure/bip32": "^2.2.0",
         "@scure/bip39": "^2.2.0",
         "bittorrent-dht": "^11.0.12",
+        "cborg": "^6.1.1",
         "hash-wasm": "^4.12.0",
         "jmap-jam": "^0.13.1",
         "openpgp": "^6.3.1",
@@ -152,6 +153,8 @@
     "bittorrent-dht": ["bittorrent-dht@11.0.12", "", { "dependencies": { "bencode": "^4.0.1", "debug": "^4.4.3", "k-bucket": "^5.1.0", "k-rpc": "^5.1.0", "last-one-wins": "^1.0.4", "lru": "^3.1.0", "randombytes": "^2.1.0", "record-cache": "^1.2.0" } }, "sha512-bFmQq874HMIBon/6KNMf/U1OG+UxJ0UzI9oPra2IRlZLuPA7VwBiA7uEpWaO2ww8G76OFjxB1p1XCOS94FuCPQ=="],
 
     "bun-types": ["bun-types@1.4.0", "", { "dependencies": { "@types/node": "*" } }, "sha512-iIKw23BspnQQYd3prITOBxeUsxBHnwzX6YJfGMuNOZzeNcMmVqzIIVGRm1l69ogaPQmb4wB6BN8mA5bE9YuC5Q=="],
+
+    "cborg": ["cborg@6.1.1", "", { "bin": { "cborg": "lib/bin.js" } }, "sha512-Ci8+V1OMFtqea8EXicsATqV+3kEqCGXCicM+5MEzpKTxqy58WMzhJUjtUqAjfWpKPZ0wpG8F+u5mC8Xy/0Zevg=="],
 
     "chrome-dgram": ["chrome-dgram@3.0.6", "", { "dependencies": { "inherits": "^2.0.4", "run-series": "^1.1.9" } }, "sha512-bqBsUuaOiXiqxXt/zA/jukNJJ4oaOtc7ciwqJpZVEaaXwwxqgI2/ZdG02vXYWUhHGziDlvGMQWk0qObgJwVYKA=="],
 

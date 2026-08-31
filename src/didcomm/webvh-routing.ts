@@ -103,6 +103,22 @@ export interface DidMlkemKeyAgreement { kid: string; publicKey: Uint8Array }
  * network resolve needed, since did:peer is self-certifying). */
 export interface MediatorRegistration { url: string; routingKid: string }
 
+/** This identity's Conversation Group MLS Delivery Service endpoint
+ * (mls-ds/http.ts, PLAN_biset-mls-ds.md §11-7). Published as its own
+ * service entry alongside `DIDCommMessaging` rather than folded into it --
+ * biset's own DIDComm-binding path (mls-ds-1.0.md, Phase 2b) still exists
+ * as a separate, independent access path to the same DS engine, so the two
+ * transports get two discoverable entries. A third party that resolves
+ * this DID and already knows how to reach a `MimiDeliveryService` entry
+ * can connect directly, skipping DIDComm mediator relay entirely --
+ * PLAN_biset-mls-ds.md §11-7's "mediator-less" finding, made resolvable.
+ * `MimiDeliveryService` is a biset-defined type, not a registered MIMI/DID
+ * spec term -- MIMI itself doesn't standardize DID-based provider discovery
+ * (confirmed by research, not just unfound). Publishing it anyway is a
+ * "works for biset now, and for anyone else who adopts the same service
+ * type later" bet, not a claim of any existing standard. */
+export interface MimiProviderRegistration { url: string }
+
 export interface RoutingInput {
   /** Legacy direct-delivery endpoint (this deployment's own
    * `POST /v1/didcomm/ingress`) -- superseded by `mediators` when both are
@@ -116,6 +132,9 @@ export interface RoutingInput {
    * mediator's kid, so a spec-compliant sender Forward-wraps through it
    * instead of delivering directly. */
   mediators?: MediatorRegistration[]
+  /** This identity's Conversation Group DS, if it has registered one --
+   * see MimiProviderRegistration's own note. */
+  mimiProvider?: MimiProviderRegistration
   keyAgreementKeys?: DidKeyAgreement[]
   mlkemKeyAgreementKeys?: DidMlkemKeyAgreement[]
   alsoKnownAs?: string[]
@@ -143,7 +162,7 @@ export function buildRoutingDoc(did: string, input: RoutingInput): RoutingDoc {
   // the old first-party path, not offer both (a sender would have no way to
   // choose between two equally-valid-looking entries with different privacy
   // properties).
-  const service: WebvhService[] = input.mediators?.length
+  const didCommService: WebvhService[] = input.mediators?.length
     ? input.mediators.map((m, i): WebvhService => ({
         id: `${did}#didcomm${input.mediators!.length > 1 ? `-${i + 1}` : ''}`,
         type: 'DIDCommMessaging',
@@ -152,6 +171,12 @@ export function buildRoutingDoc(did: string, input: RoutingInput): RoutingDoc {
     : input.didCommEndpoint
       ? [{ id: `${did}#didcomm`, type: 'DIDCommMessaging', serviceEndpoint: { uri: input.didCommEndpoint, accept: ['didcomm/v2'], routingKeys: [] } satisfies DidCommServiceEndpoint }]
       : []
+  // Listed alongside DIDCommMessaging, not instead of it -- a resolver that
+  // doesn't recognize `MimiDeliveryService` simply sees one extra service
+  // entry and falls back to DIDComm, same graceful-degradation shape as any
+  // unrecognized service type in DID Core.
+  const mimiService: WebvhService[] = input.mimiProvider ? [{ id: `${did}#mimi-ds`, type: 'MimiDeliveryService', serviceEndpoint: input.mimiProvider.url }] : []
+  const service: WebvhService[] = [...didCommService, ...mimiService]
 
   const byKid = (a: { kid: string }, b: { kid: string }) => (a.kid < b.kid ? -1 : a.kid > b.kid ? 1 : 0)
   const kaKeys = [...(input.keyAgreementKeys ?? [])].sort(byKid)

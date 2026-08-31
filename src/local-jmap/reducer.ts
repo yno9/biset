@@ -118,14 +118,41 @@ export function reduceLocalJmapProjection(
       // because this reducer has no mail-projection rule for it.
       continue
     }
+    if (mutation.kind === 'message.edit') {
+      // MimiContent `replaces` with a non-null body (PLAN-mimi.md §4.3): an
+      // existing email's blobId (and optionally subject) move to newly
+      // encrypted content. Same "mutate the target's state, not its
+      // identity" shape as mailbox.set/keyword.set below -- the edited
+      // email keeps its original id/threadId/inReplyTo.
+      if (tombstones.has(emailId) || !emails.has(emailId)) continue
+      const email = emails.get(emailId)!
+      const edit = assertMessageEdit(record.event, mutation.payload, emailId)
+      email.blobId = edit.blobId
+      if (edit.subject !== undefined) email.subject = edit.subject
+      email.edited = true
+      continue
+    }
+    if (mutation.kind === 'reaction.set') {
+      // MimiContent reaction/reaction-retraction (PLAN-mimi.md §4.5): one
+      // emoji per sender, `emoji: null` removing that sender's entry rather
+      // than clearing the whole map (a second sender's reaction on the same
+      // message must survive the first sender's retraction).
+      if (tombstones.has(emailId) || !emails.has(emailId)) continue
+      const email = emails.get(emailId)!
+      const reaction = assertReactionSet(mutation.payload, emailId)
+      const reactions = { ...(email.reactions ?? {}) }
+      if (reaction.emoji === null) delete reactions[reaction.sender]
+      else reactions[reaction.sender] = reaction.emoji
+      email.reactions = Object.keys(reactions).length > 0 ? reactions : undefined
+      continue
+    }
     if (mutation.kind !== 'mailbox.set' && mutation.kind !== 'keyword.set') {
       // `VaultEventKind` (protocol/vault.ts) reserves several kinds
-      // (message.edit/reaction.set/read.set/thread.set/settings.set/...)
-      // no write path produces yet and this reducer has no projection rule
-      // for. Silently dropping a kind it doesn't recognize would be data
-      // loss a device could never detect (sync "succeeds", the mutation is
-      // just gone) -- fail closed instead, the same way message.add's own
-      // conflict check does.
+      // (read.set/thread.set/settings.set/...) no write path produces yet
+      // and this reducer has no projection rule for. Silently dropping a
+      // kind it doesn't recognize would be data loss a device could never
+      // detect (sync "succeeds", the mutation is just gone) -- fail closed
+      // instead, the same way message.add's own conflict check does.
       throw new TypeError(`vault mutation kind '${mutation.kind}' has no Local JMAP projection rule`)
     }
     if (tombstones.has(emailId) || !emails.has(emailId)) continue
@@ -182,6 +209,9 @@ function canonicalEmail(value: LocalJmapEmail): CanonicalValue {
     ...(value.subject === undefined ? {} : { subject: value.subject }),
     ...(value.preview === undefined ? {} : { preview: value.preview }),
     ...(value.size === undefined ? {} : { size: value.size }),
+    ...(value.inReplyTo === undefined ? {} : { inReplyTo: value.inReplyTo }),
+    ...(value.reactions === undefined ? {} : { reactions: { ...value.reactions } }),
+    ...(value.edited === undefined ? {} : { edited: value.edited }),
   }
 }
 
@@ -207,6 +237,7 @@ function immutableMessageIdentity(value: LocalJmapEmail): CanonicalValue {
     ...(value.subject === undefined ? {} : { subject: value.subject }),
     ...(value.preview === undefined ? {} : { preview: value.preview }),
     ...(value.size === undefined ? {} : { size: value.size }),
+    ...(value.inReplyTo === undefined ? {} : { inReplyTo: value.inReplyTo }),
   }
 }
 
@@ -239,6 +270,29 @@ function assertMessageAdd(event: VaultEventV1, payload: VaultMutationIntent['pay
     throw new TypeError('vault message.add does not bind the email to its raw RFC 5322 object')
   }
   return email
+}
+
+/** `message.edit` binds its read-model object to a NEW raw-mail blob, same
+ * binding shape as `message.add` (vault/mail-message.ts's buildMailMessageEdit). */
+function assertMessageEdit(event: VaultEventV1, payload: VaultMutationIntent['payload'], expected: string): { blobId: string; subject?: string } {
+  if (event.objectRefs.length !== 2) throw new TypeError('vault message.edit must reference metadata and raw RFC 5322 objects')
+  const record = assertPayloadEmailId(payload, expected)
+  const blobId = record.blobId
+  if (typeof blobId !== 'string' || !blobId || blobId !== event.objectRefs[1]) {
+    throw new TypeError('vault message.edit does not bind the email to its raw RFC 5322 object')
+  }
+  const subject = record.subject
+  if (subject !== undefined && typeof subject !== 'string') throw new TypeError('vault message.edit subject is invalid')
+  return { blobId, ...(subject === undefined ? {} : { subject }) }
+}
+
+function assertReactionSet(payload: VaultMutationIntent['payload'], expected: string): { sender: string; emoji: string | null } {
+  const record = assertPayloadEmailId(payload, expected)
+  const sender = record.sender
+  const emoji = record.emoji
+  if (typeof sender !== 'string' || !sender) throw new TypeError('vault reaction.set sender is invalid')
+  if (emoji !== null && (typeof emoji !== 'string' || !emoji)) throw new TypeError('vault reaction.set emoji is invalid')
+  return { sender, emoji: emoji as string | null }
 }
 
 function truthyMap(value: unknown, name: string): Record<string, true> {
@@ -274,5 +328,6 @@ function copyEmail(value: LocalJmapEmail): LocalJmapEmail {
     keywords: { ...value.keywords },
     from: value.from?.map(value => ({ ...value })),
     to: value.to?.map(value => ({ ...value })),
+    reactions: value.reactions ? { ...value.reactions } : undefined,
   }
 }

@@ -139,6 +139,14 @@ export interface MailMessageView {
   seen?: boolean
   keywords?: Record<string, boolean>
   blob_id?: string
+  /** PLAN-mimi.md §4.5. Array shape (not the Vault's Record<sender, emoji>)
+   * to match src.bak's ProcessedMessage['msg']['reactions'] -- this is the
+   * one field renderReactionsHtml (ported verbatim, thread.ts) reads.
+   * Absent for ordinary mail/1:1 DIDComm chat -- only Conversation Group
+   * messages carry this. */
+  reactions?: Array<{ from: string; emoji: string }>
+  /** PLAN-mimi.md §4.3: set once any message.edit has landed on this email. */
+  edited?: boolean
 }
 
 export interface ProcessedMessage {
@@ -206,13 +214,22 @@ export function emailToMessageView(email: LocalJmapEmail, rawRfc5322: Uint8Array
     ts: Number.isNaN(ts) ? 0 : ts,
     message_id: headers.messageId ?? email.id,
     jmap_id: email.id,
-    in_reply_to: headers.inReplyTo ?? '',
+    // Falls back to email.inReplyTo (PLAN-mimi.md §4.2, MimiContent
+    // inReplyTo carried as a Vault email id) when there's no RFC 5322
+    // In-Reply-To header to read -- a Conversation Group message has no
+    // MIME headers at all (its rawRfc5322 is just the SinglePart bytes),
+    // so without this fallback every reply in a group thread would show up
+    // as an unthreaded top-level message despite computeThreadKeys already
+    // knowing how to chain them by id.
+    in_reply_to: headers.inReplyTo || email.inReplyTo || '',
     references: headers.references,
     thread_id: email.threadId,
     to_addrs: (email.to ?? []).map(recipient => recipient.email ?? recipient.name ?? '').filter(Boolean),
     seen: email.keywords['$seen'] === true,
     keywords: email.keywords,
     blob_id: email.blobId,
+    reactions: email.reactions ? Object.entries(email.reactions).map(([from, emoji]) => ({ from, emoji })) : undefined,
+    edited: email.edited,
   }
 }
 

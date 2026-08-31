@@ -25,6 +25,19 @@ export interface LocalJmapEmail {
   subject?: string
   preview?: string
   size?: number
+  /** MimiContent `inReplyTo` (PLAN-mimi.md §4.2), the id of the message this
+   * one replies to. Immutable, set only at `message.add` time -- unlike
+   * `blobId`/`reactions`, a reply's target never changes after creation. */
+  inReplyTo?: string
+  /** Set by the reducer once any `message.edit` has been applied (PLAN-mimi.md
+   * §4.3) -- content itself carries no "this was edited" marker (the new
+   * blobId just replaces the old one), so the UI needs this to show a
+   * DeltaChat-style "(edited)" label. */
+  edited?: boolean
+  /** MimiContent reaction state (PLAN-mimi.md §4.5), one emoji per sender
+   * (did/kid) who has reacted. A `reaction.set` with `emoji: null` for a
+   * given sender removes that sender's entry, not the whole field. */
+  reactions?: Record<string, string>
 }
 
 export interface LocalJmapSnapshot {
@@ -237,5 +250,6 @@ function copyEmail(value: LocalJmapEmail): LocalJmapEmail {
     keywords: { ...value.keywords },
     from: value.from?.map(value => ({ ...value })),
     to: value.to?.map(value => ({ ...value })),
+    reactions: value.reactions ? { ...value.reactions } : undefined,
   }
 }

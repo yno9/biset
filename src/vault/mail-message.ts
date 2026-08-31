@@ -67,6 +67,59 @@ export async function buildMailMessageAdd(
   return { metadataObject, rawRfc5322Object, event }
 }
 
+export interface MailMessageEditRecord {
+  /** The new content: a second, independent encrypted object -- the
+   * original `message.add`'s objects are never touched (Vault events are
+   * append-only, PLAN-mimi.md §4.3). */
+  metadataObject: VaultObjectV1
+  rawRfc5322Object: VaultObjectV1
+  event: VaultEventV1
+}
+
+/**
+ * MimiContent `replaces` with a non-null body (PLAN-mimi.md §4.3, an edit):
+ * points an EXISTING email's `blobId` at freshly-encrypted content, the same
+ * "target's mutable state changes, target's identity doesn't" shape as
+ * `mailbox.set`/`keyword.set` (local-jmap/mutations.ts) rather than a new
+ * `message.add`. The edited email keeps its original `id`/`threadId`/
+ * `inReplyTo` -- only `blobId` (and optionally `subject`) move.
+ */
+export async function buildMailMessageEdit(
+  input: { emailId: string; rawRfc5322: Uint8Array; subject?: string },
+  context: MailMessageBuildContext,
+  signer: VaultEventSigner,
+): Promise<MailMessageEditRecord> {
+  assertContext(context, signer)
+  if (!input.emailId) throw new TypeError('mail message edit requires an emailId')
+  if (!(input.rawRfc5322 instanceof Uint8Array)) throw new TypeError('raw RFC 5322 message must be bytes')
+  const rawRfc5322Object = await encryptVaultObject(context.segmentKey, {
+    segmentId: context.segmentId,
+    plaintext: input.rawRfc5322,
+    aad: rawRfc5322ObjectAad(context.identityId, context.segmentId),
+  })
+  const intent = {
+    kind: 'message.edit' as const,
+    targetIds: [input.emailId],
+    payload: { emailId: input.emailId, blobId: rawRfc5322Object.objectId, ...(input.subject === undefined ? {} : { subject: input.subject }) },
+  }
+  const metadataObject = await encryptVaultObject(context.segmentKey, {
+    segmentId: context.segmentId,
+    plaintext: encodeVaultMutationObject(intent),
+    aad: mutationObjectAad(context.identityId, context.segmentId, intent.kind, intent.targetIds),
+  })
+  const event = await createVaultEvent({
+    identityId: context.identityId,
+    actorDeviceId: context.actorDeviceId,
+    actorSeq: context.actorSeq,
+    kind: 'message.edit',
+    targetIds: [input.emailId],
+    objectRefs: [metadataObject.objectId, rawRfc5322Object.objectId],
+    parents: [...context.parents],
+    createdAt: context.createdAt,
+  }, signer)
+  return { metadataObject, rawRfc5322Object, event }
+}
+
 /** Distinct AAD prevents raw mail from being mistaken for a mutation record. */
 export function rawRfc5322ObjectAad(identityId: IdentityId, segmentId: SegmentId): Uint8Array {
   if (!identityId || !segmentId) throw new TypeError('raw RFC 5322 AAD requires identity and segment')
@@ -98,9 +151,9 @@ export function assertMailMessageEmail(value: unknown): LocalJmapEmail {
   }
   if (email.from !== undefined) result.from = addresses(email.from, 'from')
   if (email.to !== undefined) result.to = addresses(email.to, 'to')
-  for (const field of ['subject', 'preview'] as const) {
+  for (const field of ['subject', 'preview', 'inReplyTo'] as const) {
     if (email[field] !== undefined) {
-      if (typeof email[field] !== 'string') throw new TypeError(`mail message ${field} is invalid`)
+      if (typeof email[field] !== 'string' || !email[field]) throw new TypeError(`mail message ${field} is invalid`)
       result[field] = email[field]
     }
   }
@@ -108,6 +161,17 @@ export function assertMailMessageEmail(value: unknown): LocalJmapEmail {
   if (size !== undefined) {
     if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 0) throw new TypeError('mail message size is invalid')
     result.size = size
+  }
+  if (email.reactions !== undefined) result.reactions = reactionsMap(email.reactions)
+  return result
+}
+
+function reactionsMap(value: unknown): Record<string, string> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('mail message reactions must be an object')
+  const result: Record<string, string> = {}
+  for (const [sender, emoji] of Object.entries(value as Record<string, unknown>)) {
+    if (!nonEmptyString(sender) || !nonEmptyString(emoji)) throw new TypeError('mail message reactions is invalid')
+    result[sender] = emoji
   }
   return result
 }
@@ -161,6 +225,8 @@ function canonicalMailMessageEmail(email: LocalJmapEmail): CanonicalValue {
     ...(email.subject === undefined ? {} : { subject: email.subject }),
     ...(email.preview === undefined ? {} : { preview: email.preview }),
     ...(email.size === undefined ? {} : { size: email.size }),
+    ...(email.inReplyTo === undefined ? {} : { inReplyTo: email.inReplyTo }),
+    ...(email.reactions === undefined ? {} : { reactions: { ...email.reactions } }),
   }
 }
 

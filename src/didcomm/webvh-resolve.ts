@@ -87,3 +87,18 @@ export async function resolveDidCommSenderKey(senderKid: string, fetchImpl: type
   if (!vm) throw new Error(`resolveDidCommSenderKey: ${senderKid} is not a published keyAgreement entry`)
   return decodeX25519Multikey(vm.publicKeyMultibase)
 }
+
+/** Resolves this identity's registered MimiDeliveryService endpoint, if it
+ * published one (webvh-routing.ts's `mimiProvider`) -- the DID-based
+ * discovery path PLAN_biset-mls-ds.md §11-7 describes: a caller that
+ * already knows how to reach a `MimiDeliveryService` entry can connect to
+ * this identity's Conversation Group DS directly, no DIDComm mediator
+ * relay needed. Returns undefined for an identity with no such entry
+ * (no Conversation Group DS registered, or it hasn't been resolved yet) --
+ * not an error, since most identities won't have one. */
+export async function resolveMimiProviderUrl(did: string, fetchImpl: typeof fetch = defaultFetch()): Promise<string | undefined> {
+  const doc = await resolveWithRouting(did, fetchImpl)
+  if (!doc) return undefined
+  const entry = doc.service.find(s => s.type === 'MimiDeliveryService')
+  return entry && typeof entry.serviceEndpoint === 'string' ? entry.serviceEndpoint : undefined
+}

@@ -40,6 +40,7 @@
     "@scure/bip32": "^2.2.0",
     "@scure/bip39": "^2.2.0",
     "bittorrent-dht": "^11.0.12",
+    "cborg": "^6.1.1",
     "hash-wasm": "^4.12.0",
     "jmap-jam": "^0.13.1",
     "openpgp": "^6.3.1"

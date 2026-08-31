@@ -22,6 +22,21 @@ test/*
 !test/oid4vp/**
 !test/mediator/
 !test/mediator/**
+!test/mls-ds/
+!test/mls-ds/**
+!test/mls/
+!test/mls/**
+!test/didcomm-webvh-routing-mediators.test.ts
+# A negated pattern for a file cannot re-include it while an ANCESTOR
+# directory is still excluded (gitignore(5)) -- `test/*` above excludes the
+# `test/protocol` directory itself, so re-including it, re-excluding its
+# contents, then re-including only these two files is the only way to pull
+# just them in without also pulling in every other untracked file already
+# sitting in test/protocol/ for unrelated reasons.
+!test/protocol/
+test/protocol/*
+!test/protocol/conversation-mls-ds-signing.test.ts
+!test/protocol/webvh-resolve-mimi-provider.test.ts
 
 biset-*
 PLAN*

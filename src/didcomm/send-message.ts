@@ -109,7 +109,13 @@ export async function sendRelationshipAccept(contactKey: ContactKeyV1, fetchImpl
   }), fetchImpl)
 }
 
-async function sendFrontDoorMessage(toDid: string, type: string, body: unknown, opts: SendDidCommMessageOptions): Promise<DidCommSendResult> {
+/** The generic "resolve routing.json, authcrypt (Forward-wrapped if the
+ * recipient registered a mediator), POST" primitive `sendDidCommMessage`/
+ * `initiateRelationship` are thin wrappers around -- exported so a caller
+ * needing an arbitrary `type`/`body` (mls-ds/fanout.ts's `message-notify`
+ * delivery, mls-ds-1.0.md §5.2) doesn't have to reimplement routing.json
+ * resolution and Forward-wrapping to get one. */
+export async function sendFrontDoorMessage(toDid: string, type: string, body: unknown, opts: SendDidCommMessageOptions): Promise<DidCommSendResult> {
   const fetchImpl = opts.fetch ?? defaultFetch()
   let doc: Awaited<ReturnType<typeof resolveWithRouting>>
   try {

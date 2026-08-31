@@ -89,6 +89,18 @@ export async function loadMessages(readModel: LocalJmapReadModel): Promise<void>
   processedMessages.push(...views)
 }
 
+// Ported verbatim from src.bak/ui/thread.ts (PLAN-mimi.md §4.5/§4.3):
+// Conversation Group reactions/edits, one t-reaction-chip per reactor (no
+// count-collapsing -- each reactor's own emoji stays its own chip) and an
+// "edited" label next to the timestamp. Attachments and the msg-actions
+// menu stay out of scope (this file's own header comment).
+function renderReactionsHtml(reactions: MailMessageView['reactions']): string {
+  if (!reactions?.length) return ''
+  return `<div class="t-reactions">${reactions.map(r =>
+    `<span class="t-reaction-chip" title="${esc(r.from)}">${esc(r.emoji)}</span>`
+  ).join('')}</div>`
+}
+
 export function createMsgEl({ msg, bodyText }: ProcessedMessage): HTMLElement {
   const div = document.createElement('div')
   div.className = 't-msg'
@@ -109,8 +121,10 @@ export function createMsgEl({ msg, bodyText }: ProcessedMessage): HTMLElement {
       <div class="t-hdr">
         <span class="t-sender">${esc(senderName)}</span>
         <span class="t-time">${formatTime(msg.ts)}</span>
+        ${msg.edited ? '<span class="t-edited">edited</span>' : ''}
       </div>
       <div class="t-body">${linkify(esc(stripQuoted(bodyText)))}</div>
+      ${renderReactionsHtml(msg.reactions)}
     </div>
   `
   return div

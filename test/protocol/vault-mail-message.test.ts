@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { equalBytes } from '../../src/protocol/canonical.ts'
 import { decryptVaultObject } from '../../src/vault/objects.ts'
-import { buildMailMessageAdd, rawRfc5322ObjectAad } from '../../src/vault/mail-message.ts'
+import { buildMailMessageAdd, buildMailMessageEdit, rawRfc5322ObjectAad } from '../../src/vault/mail-message.ts'
 import { createSegmentKey } from '../../src/vault/objects.ts'
 import { verifyVaultEvent, type VaultEventSigner } from '../../src/vault/events.ts'
 
@@ -40,6 +40,29 @@ describe('mail message vault record', () => {
           receivedAt: '2026-08-21T00:00:00.000Z', subject: 'Hello', size: raw.length,
         },
       },
+    })
+  })
+
+  test('message.edit encrypts NEW raw RFC 5322 bytes independently and binds blobId/subject to it (PLAN-mimi.md §4.3)', async () => {
+    const segmentKey = createSegmentKey()
+    const editedRaw = new TextEncoder().encode('From: alice@example.test\r\nSubject: corrected\r\n\r\ncorrected bytes\r\n')
+    const record = await buildMailMessageEdit({
+      emailId: 'email-1', rawRfc5322: editedRaw, subject: 'corrected',
+    }, {
+      identityId: 'did:web:alice.example', actorDeviceId: 'device-a', actorSeq: 6, parents: ['event-a'],
+      segmentId: 'segment-1', segmentKey, createdAt: '2026-08-21T00:01:00.000Z',
+    }, signer)
+
+    expect(record.event.kind).toBe('message.edit')
+    expect(record.event.targetIds).toEqual(['email-1'])
+    expect(record.event.objectRefs).toEqual([record.metadataObject.objectId, record.rawRfc5322Object.objectId])
+    expect(await verifyVaultEvent(record.event, signer)).toBe(true)
+    expect(await decryptVaultObject(segmentKey, record.rawRfc5322Object)).toEqual(editedRaw)
+    expect(JSON.parse(new TextDecoder().decode(await decryptVaultObject(segmentKey, record.metadataObject)))).toEqual({
+      version: 1,
+      kind: 'message.edit',
+      targetIds: ['email-1'],
+      payload: { emailId: 'email-1', blobId: record.rawRfc5322Object.objectId, subject: 'corrected' },
     })
   })
 })

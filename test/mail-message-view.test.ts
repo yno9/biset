@@ -119,4 +119,29 @@ describe('emailToMessageView', () => {
     expect(emailToMessageView(seenEmail, raw).seen).toBe(true)
     expect(emailToMessageView(baseEmail, raw).seen).toBe(false)
   })
+
+  test('falls back to LocalJmapEmail.inReplyTo when the raw blob has no In-Reply-To header (PLAN-mimi.md §4.2, Conversation Group messages have no MIME headers at all)', () => {
+    const replyEmail: LocalJmapEmail = { ...baseEmail, inReplyTo: 'earlier-message-id' }
+    const raw = new TextEncoder().encode('hello group')
+    expect(emailToMessageView(replyEmail, raw).in_reply_to).toBe('earlier-message-id')
+  })
+
+  test('a raw blob In-Reply-To header still wins over LocalJmapEmail.inReplyTo', () => {
+    const replyEmail: LocalJmapEmail = { ...baseEmail, inReplyTo: 'vault-side-id' }
+    const raw = new TextEncoder().encode('In-Reply-To: <mime-header-id@example.com>\r\n\r\nbody')
+    expect(emailToMessageView(replyEmail, raw).in_reply_to).toBe('mime-header-id@example.com')
+  })
+
+  test('converts reactions from the Vault Record<sender, emoji> shape to the array shape thread.ts renders', () => {
+    const reactedEmail: LocalJmapEmail = { ...baseEmail, reactions: { alice: '👍', bob: '❤️' } }
+    const raw = new TextEncoder().encode('body')
+    expect(emailToMessageView(reactedEmail, raw).reactions).toEqual([{ from: 'alice', emoji: '👍' }, { from: 'bob', emoji: '❤️' }])
+  })
+
+  test('carries the edited flag through', () => {
+    const editedEmail: LocalJmapEmail = { ...baseEmail, edited: true }
+    const raw = new TextEncoder().encode('body')
+    expect(emailToMessageView(editedEmail, raw).edited).toBe(true)
+    expect(emailToMessageView(baseEmail, raw).edited).toBeUndefined()
+  })
 })

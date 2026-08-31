@@ -147,17 +147,19 @@ describe('Local JMAP projection reducer', () => {
   })
 
   test('fails closed on a mutation kind with no projection rule instead of silently dropping it', () => {
-    // VaultEventKind (protocol/vault.ts) reserves kinds (reaction.set here)
+    // VaultEventKind (protocol/vault.ts) reserves kinds (thread.set here)
     // no write path produces yet and this reducer has no rule for -- a
     // future/foreign device emitting one must not have it silently vanish
-    // from sync while everything else appears to succeed.
+    // from sync while everything else appears to succeed. (reaction.set and
+    // message.edit moved to their own describe blocks below once
+    // PLAN-mimi.md's Vault projection gave them a rule.)
     const base = {
       mailboxes: [],
       emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }],
     }
     expect(() => reduceLocalJmapProjection('did:web:alice.example', base, [{
-      event: event({ kind: 'reaction.set', targetIds: ['email-1'], objectRefs: ['object-a'] }),
-      plaintext: plaintext('reaction.set', ['email-1'], { emailId: 'email-1', emoji: '👍' }),
+      event: event({ kind: 'thread.set', targetIds: ['email-1'], objectRefs: ['object-a'] }),
+      plaintext: plaintext('thread.set', ['email-1'], { emailId: 'email-1' }),
     }])).toThrow('has no Local JMAP projection rule')
   })
 
@@ -169,5 +171,77 @@ describe('Local JMAP projection reducer', () => {
         email: { id: 'email-1', blobId: 'other-blob', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' },
       }),
     }])).toThrow('does not bind')
+  })
+
+  describe('message.edit (PLAN-mimi.md §4.3, MimiContent replaces with a body)', () => {
+    test('moves blobId (and optionally subject) without changing id/threadId/inReplyTo', () => {
+      const base = {
+        mailboxes: [],
+        emails: [{ id: 'email-1', blobId: 'raw-v1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z', inReplyTo: 'email-0', subject: 'original' }],
+      }
+      const projection = reduceLocalJmapProjection('did:web:alice.example', base, [{
+        event: event({ kind: 'message.edit', targetIds: ['email-1'], objectRefs: ['metadata-2', 'raw-v2'] }),
+        plaintext: plaintext('message.edit', ['email-1'], { emailId: 'email-1', blobId: 'raw-v2', subject: 'corrected' }),
+      }])
+      expect(projection.emails).toEqual([{
+        id: 'email-1', blobId: 'raw-v2', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z',
+        inReplyTo: 'email-0', subject: 'corrected', edited: true, from: undefined, to: undefined, reactions: undefined,
+      }])
+    })
+
+    test('sets the edited flag once any message.edit has landed', () => {
+      const base = { mailboxes: [], emails: [{ id: 'email-1', blobId: 'raw-v1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }] }
+      const projection = reduceLocalJmapProjection('did:web:alice.example', base, [{
+        event: event({ kind: 'message.edit', targetIds: ['email-1'], objectRefs: ['metadata-2', 'raw-v2'] }),
+        plaintext: plaintext('message.edit', ['email-1'], { emailId: 'email-1', blobId: 'raw-v2' }),
+      }])
+      expect(projection.emails[0].edited).toBe(true)
+    })
+
+    test('refuses an edit whose blobId does not match the event objectRefs', () => {
+      const base = { mailboxes: [], emails: [{ id: 'email-1', blobId: 'raw-v1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }] }
+      expect(() => reduceLocalJmapProjection('did:web:alice.example', base, [{
+        event: event({ kind: 'message.edit', targetIds: ['email-1'], objectRefs: ['metadata-2', 'raw-v2'] }),
+        plaintext: plaintext('message.edit', ['email-1'], { emailId: 'email-1', blobId: 'a-different-blob' }),
+      }])).toThrow('does not bind')
+    })
+
+    test('silently ignores an edit targeting a tombstoned or unknown email (same as mailbox.set/keyword.set)', () => {
+      const base = { mailboxes: [], emails: [] }
+      const projection = reduceLocalJmapProjection('did:web:alice.example', base, [{
+        event: event({ kind: 'message.edit', targetIds: ['email-missing'], objectRefs: ['metadata-2', 'raw-v2'] }),
+        plaintext: plaintext('message.edit', ['email-missing'], { emailId: 'email-missing', blobId: 'raw-v2' }),
+      }])
+      expect(projection.emails).toEqual([])
+    })
+  })
+
+  describe('reaction.set (PLAN-mimi.md §4.5, MimiContent reaction/retraction)', () => {
+    test('adds one emoji per sender, keyed independently', () => {
+      const base = { mailboxes: [], emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }] }
+      const projection = reduceLocalJmapProjection('did:web:alice.example', base, [
+        { event: event({ id: 'e1', kind: 'reaction.set', targetIds: ['email-1'] }), plaintext: plaintext('reaction.set', ['email-1'], { emailId: 'email-1', sender: 'alice', emoji: '👍' }) },
+        { event: event({ id: 'e2', kind: 'reaction.set', targetIds: ['email-1'] }), plaintext: plaintext('reaction.set', ['email-1'], { emailId: 'email-1', sender: 'bob', emoji: '❤️' }) },
+      ])
+      expect(projection.emails[0].reactions).toEqual({ alice: '👍', bob: '❤️' })
+    })
+
+    test('a retraction (emoji: null) removes only that sender, leaving others intact', () => {
+      const base = { mailboxes: [], emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z', reactions: { alice: '👍', bob: '❤️' } }] }
+      const projection = reduceLocalJmapProjection('did:web:alice.example', base, [{
+        event: event({ kind: 'reaction.set', targetIds: ['email-1'] }),
+        plaintext: plaintext('reaction.set', ['email-1'], { emailId: 'email-1', sender: 'alice', emoji: null }),
+      }])
+      expect(projection.emails[0].reactions).toEqual({ bob: '❤️' })
+    })
+
+    test('retracting the last reaction clears the field entirely rather than leaving an empty object', () => {
+      const base = { mailboxes: [], emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z', reactions: { alice: '👍' } }] }
+      const projection = reduceLocalJmapProjection('did:web:alice.example', base, [{
+        event: event({ kind: 'reaction.set', targetIds: ['email-1'] }),
+        plaintext: plaintext('reaction.set', ['email-1'], { emailId: 'email-1', sender: 'alice', emoji: null }),
+      }])
+      expect(projection.emails[0].reactions).toBeUndefined()
+    })
   })
 })
