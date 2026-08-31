@@ -2,23 +2,29 @@
 // docs/protocols/mls-ds-1.0.md), ported from
 // coordinator/mls-delivery-store.ts's Self Group DS with `identityId`
 // dropped throughout (PLAN_biset-mls-ds.md §7, decided 2026-08-31: `(groupId,
-// senderKid)` is the whole membership model, no single-owner identity
+// senderId)` is the whole membership model, no single-owner identity
 // concept). This is a NEW module, not a modification of the Self Group one
 // -- that file is untouched.
 //
+// **Revision (identity-blind DS)**: `senderId`/`creatorId`/etc. are now
+// `GroupLocalId`s (conversation-mls-ds.ts's own note) rather than DID kids.
+// This store never sees, stores, or could reconstruct a real DID from
+// anything it's handed -- there is no `group_info` column and no
+// `groupInfoFor`/`submitExternalCommit` methods any more (GroupInfo's
+// ratchet tree is what leaked every member's real MLS credential, RFC 9420
+// requiring it to be plaintext-readable for external join; joining is
+// Welcome-only now, and Welcome is HPKE-opaque to this store). `roster` is
+// a delta (`addedIds`/`removedIds`) rather than a submitter-declared full
+// snapshot -- the store already owns the authoritative Set, so it no
+// longer needs to trust (or even receive) the whole thing on every commit.
+// `groupsFor` is gone too: "every group this id belongs to" is meaningless
+// once an id is single-group and throwaway by construction.
+//
 // Consequences of dropping identityId, all making this simpler than the
 // Self Group version rather than just different:
-//   - `groupInfoFor`/`submitExternalCommit` no longer gate on "does this
-//     requester belong to the group's owner identity" (there is no owner
-//     identity). The gate becomes: knowing `groupId` is itself the
-//     invitation (PLAN_biset-mls-ds.md §11-2's bootstrap/invitation
-//     protocol is what's expected to keep groupId non-guessable; this store
-//     doesn't invent a second gate on top of that). GroupInfo itself carries
-//     no group secret (RFC 9420) -- this mirrors MLS's own external-join
-//     design, where GroupInfo is meant to be shared with a prospective joiner.
 //   - KeyPackage take has no "every live device of this identity" fan-out
 //     (there is no identity to enumerate devices of) -- a Conversation
-//     Group take always names one `targetKid` (conversation-mls-ds.ts's own
+//     Group take always names one `targetId` (conversation-mls-ds.ts's own
 //     ConversationKeyPackageTakeV1), so it's a single take-one-and-consume,
 //     no async liveness check needed.
 //
@@ -26,11 +32,12 @@
 // exist here with no Self Group equivalent -- PLAN-mimi.md's finding that
 // Self Group's DS never carries application data (Vault sync uses a
 // separate ordered log) but a Conversation Group's does, since fanning
-// that out IS this DS's job.
+// that out IS this DS's job here (delivered by pull only now -- see
+// conversation-mls-ds.ts's header for why push/DIDComm binding is gone).
 import { Database } from 'bun:sqlite'
-import type { ConversationGroupInfoAnswer, ConversationLogEntry, ConversationLogEntryKind } from '../protocol/conversation-mls-ds.ts'
+import type { ConversationLogEntry, ConversationLogEntryKind, GroupLocalId } from '../protocol/conversation-mls-ds.ts'
 
-export type { ConversationGroupInfoAnswer, ConversationLogEntry } from '../protocol/conversation-mls-ds.ts'
+export type { ConversationLogEntry } from '../protocol/conversation-mls-ds.ts'
 
 const MAX_GROUPS = 10_000
 const MAX_ROSTER = 512
@@ -55,7 +62,7 @@ const CONVERSATION_DELIVERY_TABLES: ConversationDeliveryTables = {
 }
 
 export interface ConversationCommitAccepted { ok: true; entries: ConversationLogEntry[]; roster: string[] }
-export interface ConversationCommitRejected { ok: false; reason: 'epoch-conflict' | 'not-a-member' | 'no-such-group' | 'no-group-info' | 'unauthorized'; epoch: string }
+export interface ConversationCommitRejected { ok: false; reason: 'epoch-conflict' | 'not-a-member' | 'no-such-group' | 'unauthorized'; epoch: string }
 export type ConversationCommitResult = ConversationCommitAccepted | ConversationCommitRejected
 
 interface GroupRow {
@@ -64,7 +71,6 @@ interface GroupRow {
   ever_members_json: string
   epoch: string
   next_seq: number
-  group_info: Uint8Array | null
   pending_removals_json: string
   last_committer: string | null
   created_at: string
@@ -72,11 +78,10 @@ interface GroupRow {
 
 interface Group {
   groupId: string
-  roster: Set<string>
-  everMembers: Set<string>
+  roster: Set<GroupLocalId>
+  everMembers: Set<GroupLocalId>
   epoch: bigint
   nextSeq: number
-  groupInfo?: Uint8Array
   pendingRemovals: string[]
   lastCommitter?: string
 }
@@ -84,9 +89,11 @@ interface Group {
 /**
  * The Conversation Group DS role and KeyPackage store. Never parses an MLS
  * object, holds no group key, cannot read a message or an application
- * PrivateMessage. Its whole job: admit one commit (or application message)
- * per epoch (first arrival wins for commits), number what it accepts, and
- * hand back what a member asks for.
+ * PrivateMessage -- and, since the revision above, never sees anything
+ * shaped like a real identity either: every id it stores is a group-local
+ * public key with no path back to a DID. Its whole job: admit one commit
+ * (or application message) per epoch (first arrival wins for commits),
+ * number what it accepts, and hand back what a member asks for.
  */
 export class SqliteConversationDeliveryService {
   private readonly tables: ConversationDeliveryTables
@@ -105,41 +112,36 @@ export class SqliteConversationDeliveryService {
 
   // ------------------------------------------------------------------ groups
 
-  /** Take on the DS role for a group. Idempotent for the same creator. */
-  createGroup(groupId: string, creatorKid: string, roster: string[]): { roster: string[] } {
+  /** Take on the DS role for a group. Idempotent for the same creator. No
+   * prior roster to check membership against -- `creatorId` needs no proof
+   * beyond its own signature (conversation-mls-ds.ts's own note on why
+   * group-create can be entirely self-authorized). */
+  createGroup(groupId: string, creatorId: GroupLocalId): { roster: string[] } {
     const existing = this.loadGroup(groupId)
     if (existing) {
-      if (!existing.roster.has(creatorKid)) throw new ConversationDsCapacityError(`group ${groupId} already exists and ${creatorKid} is not in it`)
+      if (!existing.roster.has(creatorId)) throw new ConversationDsCapacityError(`group ${groupId} already exists and ${creatorId} is not in it`)
       return { roster: [...existing.roster] }
     }
     if (this.groupCount() >= MAX_GROUPS) throw new ConversationDsCapacityError('DS is at capacity for Conversation Groups')
-    if (roster.length > MAX_ROSTER) throw new ConversationDsCapacityError(`roster of ${roster.length} exceeds the maximum of ${MAX_ROSTER}`)
-    const rosterSet = new Set([creatorKid, ...roster])
+    const rosterSet = new Set([creatorId])
     this.insertGroup({ groupId, roster: rosterSet, everMembers: new Set(rosterSet), epoch: 0n, nextSeq: 1, pendingRemovals: [] })
     return { roster: [...rosterSet] }
   }
 
-  /** Every group kid `deviceKid` has ever been a member of. */
-  groupsFor(deviceKid: string, limit = 256): Array<{ groupId: string; epoch: bigint }> {
-    const rows = this.database.query<GroupRow, []>(`SELECT * FROM ${this.tables.groups}`).all()
-    const found: Array<{ groupId: string; epoch: bigint }> = []
-    for (const row of rows) {
-      if (!parseStringArray(row.ever_members_json).includes(deviceKid)) continue
-      found.push({ groupId: row.group_id, epoch: BigInt(row.epoch) })
-      if (found.length >= limit) break
-    }
-    return found
-  }
-
   roster(groupId: string): string[] { return [...(this.loadGroup(groupId)?.roster ?? [])] }
 
-  /** Admit (or refuse) a commit -- the one place the DS is authoritative. */
-  submitCommit(groupId: string, sender: string, epoch: string, commit: Uint8Array, roster: string[], welcome?: Uint8Array, welcomeTo?: string[], groupInfo?: Uint8Array): ConversationCommitResult {
+  /** Admit (or refuse) a commit -- the one place the DS is authoritative.
+   * `addedIds`/`removedIds` are a DELTA against the roster THIS STORE
+   * already owns, not a submitter-declared snapshot -- the submitter only
+   * needs to know who they're adding or removing, never the whole current
+   * membership (a second reason this is simpler than the first version,
+   * independent of the privacy motivation). */
+  submitCommit(groupId: string, sender: GroupLocalId, epoch: string, commit: Uint8Array, addedIds: GroupLocalId[] = [], removedIds: GroupLocalId[] = [], welcome?: Uint8Array): ConversationCommitResult {
     const group = this.loadGroup(groupId)
     if (!group) return { ok: false, reason: 'no-such-group', epoch: '0' }
     if (!group.roster.has(sender)) return { ok: false, reason: 'not-a-member', epoch: group.epoch.toString() }
     if (BigInt(epoch) !== group.epoch) return { ok: false, reason: 'epoch-conflict', epoch: group.epoch.toString() }
-    if (roster.length > MAX_ROSTER) return { ok: false, reason: 'not-a-member', epoch: group.epoch.toString() }
+    if (group.roster.size + addedIds.length > MAX_ROSTER) return { ok: false, reason: 'not-a-member', epoch: group.epoch.toString() }
 
     return this.database.transaction((): ConversationCommitAccepted => {
       const entries: ConversationLogEntry[] = []
@@ -147,19 +149,22 @@ export class SqliteConversationDeliveryService {
       entries.push(this.append(group, 'commit', commit, epoch))
       group.epoch = group.epoch + 1n
       group.lastCommitter = sender
-      group.roster = new Set([...roster, ...(welcomeTo ?? [])])
-      for (const kid of group.roster) group.everMembers.add(kid)
+      const next = new Set(group.roster)
+      for (const id of addedIds) next.add(id)
+      for (const id of removedIds) next.delete(id)
+      group.roster = next
+      for (const id of group.roster) group.everMembers.add(id)
       this.trimEverMembers(group)
-      group.groupInfo = groupInfo
       this.saveGroup(group)
       return { ok: true, entries, roster: [...group.roster] }
     })()
   }
 
   /** Fan out an application message -- no epoch/roster change, just a log
-   * entry the recipient side (message-notify, mls-ds-1.0.md §5.2) delivers.
-   * The one operation with no Self Group DS equivalent (PLAN-mimi.md). */
-  submitMessage(groupId: string, sender: string, epoch: string, privateMessage: Uint8Array): ConversationCommitResult {
+   * entry a puller sees via `deliveries-pull` (no push any more, see
+   * conversation-mls-ds.ts's header). The one operation with no Self Group
+   * DS equivalent (PLAN-mimi.md). */
+  submitMessage(groupId: string, sender: GroupLocalId, epoch: string, privateMessage: Uint8Array): ConversationCommitResult {
     const group = this.loadGroup(groupId)
     if (!group) return { ok: false, reason: 'no-such-group', epoch: '0' }
     if (!group.roster.has(sender)) return { ok: false, reason: 'not-a-member', epoch: group.epoch.toString() }
@@ -171,28 +176,13 @@ export class SqliteConversationDeliveryService {
     })()
   }
 
-  /**
-   * The GroupInfo a prospective member may use to join via external commit,
-   * plus outstanding self-removals. Gated on nothing but `groupId` existing
-   * -- unlike Self Group's `groupInfoFor`, there is no owner identity to
-   * check membership of. Knowing `groupId` (expected to come from an
-   * out-of-band invitation, PLAN_biset-mls-ds.md §11-2, not yet designed)
-   * IS the authorization here; GroupInfo itself carries no group secret
-   * (RFC 9420 designs it to be shareable with a joiner).
-   */
-  groupInfoFor(groupId: string): ConversationGroupInfoAnswer | undefined {
-    const group = this.loadGroup(groupId)
-    if (!group) return undefined
-    return { ...(group.groupInfo ? { groupInfo: group.groupInfo } : {}), pendingRemovals: [...group.pendingRemovals] }
-  }
-
   /** Record a device's declaration that it is removing itself. */
-  submitSelfRemove(groupId: string, sender: string, epoch: string, proposal: Uint8Array, kid: string): ConversationCommitResult {
+  submitSelfRemove(groupId: string, sender: GroupLocalId, epoch: string, proposal: Uint8Array, id: GroupLocalId): ConversationCommitResult {
     const group = this.loadGroup(groupId)
     if (!group) return { ok: false, reason: 'no-such-group', epoch: '0' }
     if (!group.everMembers.has(sender)) return { ok: false, reason: 'not-a-member', epoch: group.epoch.toString() }
     return this.database.transaction((): ConversationCommitAccepted => {
-      if (!group.pendingRemovals.includes(kid) && group.pendingRemovals.length < MAX_PENDING_REMOVALS) group.pendingRemovals.push(kid)
+      if (!group.pendingRemovals.includes(id) && group.pendingRemovals.length < MAX_PENDING_REMOVALS) group.pendingRemovals.push(id)
       const entry = this.append(group, 'proposal', proposal, epoch)
       this.saveGroup(group)
       return { ok: true, entries: [entry], roster: [...group.roster] }
@@ -200,36 +190,11 @@ export class SqliteConversationDeliveryService {
   }
 
   /** Forget self-removal declarations that were carried out by the last accepted commit. */
-  clearPendingRemovals(groupId: string, requester: string, kids: string[]): void {
+  clearPendingRemovals(groupId: string, requester: GroupLocalId, ids: string[]): void {
     const group = this.loadGroup(groupId)
     if (!group || group.lastCommitter !== requester) return
-    group.pendingRemovals = group.pendingRemovals.filter(k => !kids.includes(k))
+    group.pendingRemovals = group.pendingRemovals.filter(id => !ids.includes(id))
     this.saveGroup(group)
-  }
-
-  /**
-   * Admit an external commit: a device committing itself in, without an
-   * existing member adding it. Safety comes from the signature (the caller
-   * verified `senderKid` really controls that key) plus MLS itself (the
-   * joiner's credential still has to name something this Conversation
-   * Group's Authentication Service accepts) -- never from `roster.has`,
-   * which by definition excludes a joiner who isn't a member yet.
-   */
-  submitExternalCommit(groupId: string, senderKid: string, epoch: string, commit: Uint8Array, groupInfo?: Uint8Array): ConversationCommitResult {
-    const group = this.loadGroup(groupId)
-    if (!group) return { ok: false, reason: 'no-such-group', epoch: '0' }
-    if (group.groupInfo === undefined) return { ok: false, reason: 'no-group-info', epoch: group.epoch.toString() }
-    if (BigInt(epoch) !== group.epoch) return { ok: false, reason: 'epoch-conflict', epoch: group.epoch.toString() }
-    return this.database.transaction((): ConversationCommitAccepted => {
-      const entry = this.append(group, 'commit', commit, epoch)
-      group.epoch = group.epoch + 1n
-      group.lastCommitter = senderKid
-      group.groupInfo = groupInfo
-      group.roster.add(senderKid)
-      group.everMembers.add(senderKid)
-      this.saveGroup(group)
-      return { ok: true, entries: [entry], roster: [...group.roster] }
-    })()
   }
 
   /** Deliveries after `afterSeq`. Empty when the gap is older than the retained log. */
@@ -240,7 +205,7 @@ export class SqliteConversationDeliveryService {
   }
 
   /** The authorised form: gated on ever-membership, bounded per pull. Undefined means "not yours". */
-  deliveriesSince(groupId: string, requester: string, afterSeq: number, limit = MAX_DELIVERIES_PER_PULL): ConversationLogEntry[] | undefined {
+  deliveriesSince(groupId: string, requester: GroupLocalId, afterSeq: number, limit = MAX_DELIVERIES_PER_PULL): ConversationLogEntry[] | undefined {
     const group = this.loadGroup(groupId)
     if (!group || !group.everMembers.has(requester)) return undefined
     return this.since(groupId, afterSeq).slice(0, limit)
@@ -257,9 +222,9 @@ export class SqliteConversationDeliveryService {
 
   private trimEverMembers(group: Group): void {
     if (group.everMembers.size <= MAX_EVER_MEMBERS) return
-    for (const kid of [...group.everMembers]) {
+    for (const id of [...group.everMembers]) {
       if (group.everMembers.size <= MAX_EVER_MEMBERS) break
-      if (!group.roster.has(kid)) group.everMembers.delete(kid)
+      if (!group.roster.has(id)) group.everMembers.delete(id)
     }
   }
 
@@ -276,60 +241,59 @@ export class SqliteConversationDeliveryService {
       everMembers: new Set(parseStringArray(row.ever_members_json)),
       epoch: BigInt(row.epoch),
       nextSeq: row.next_seq,
-      groupInfo: row.group_info === null ? undefined : new Uint8Array(row.group_info),
       pendingRemovals: parseStringArray(row.pending_removals_json),
       lastCommitter: row.last_committer ?? undefined,
     }
   }
 
-  private insertGroup(group: Omit<Group, 'lastCommitter' | 'groupInfo'>): void {
+  private insertGroup(group: Omit<Group, 'lastCommitter'>): void {
     this.database.query(`INSERT INTO ${this.tables.groups}
-      (group_id, roster_json, ever_members_json, epoch, next_seq, group_info, pending_removals_json, last_committer, created_at)
-      VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, ?)`)
+      (group_id, roster_json, ever_members_json, epoch, next_seq, pending_removals_json, last_committer, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`)
       .run(group.groupId, JSON.stringify([...group.roster]), JSON.stringify([...group.everMembers]), group.epoch.toString(), group.nextSeq, JSON.stringify(group.pendingRemovals), new Date().toISOString())
   }
 
   private saveGroup(group: Group): void {
     this.database.query(`UPDATE ${this.tables.groups} SET
-      roster_json = ?, ever_members_json = ?, epoch = ?, next_seq = ?, group_info = ?, pending_removals_json = ?, last_committer = ?
+      roster_json = ?, ever_members_json = ?, epoch = ?, next_seq = ?, pending_removals_json = ?, last_committer = ?
       WHERE group_id = ?`)
-      .run(JSON.stringify([...group.roster]), JSON.stringify([...group.everMembers]), group.epoch.toString(), group.nextSeq, group.groupInfo ?? null, JSON.stringify(group.pendingRemovals), group.lastCommitter ?? null, group.groupId)
+      .run(JSON.stringify([...group.roster]), JSON.stringify([...group.everMembers]), group.epoch.toString(), group.nextSeq, JSON.stringify(group.pendingRemovals), group.lastCommitter ?? null, group.groupId)
   }
 
   // ------------------------------------------------------------ key packages
 
   /** Add to a device's published key packages (single-use; the DS deletes each as it hands it out). */
-  publishKeyPackages(kid: string, packages: Uint8Array[]): number {
-    const existing = this.database.query<{ count: number }, [string]>(`SELECT count(*) AS count FROM ${this.tables.keyPackages} WHERE kid = ?`).get(kid)!.count
+  publishKeyPackages(id: GroupLocalId, packages: Uint8Array[]): number {
+    const existing = this.database.query<{ count: number }, [string]>(`SELECT count(*) AS count FROM ${this.tables.keyPackages} WHERE kid = ?`).get(id)!.count
     const room = Math.max(0, MAX_KEY_PACKAGES_PER_KID - existing)
     const toInsert = packages.slice(0, room)
     if (toInsert.length > 0) {
       const insert = this.database.query(`INSERT INTO ${this.tables.keyPackages} (kid, package, created_at) VALUES (?, ?, ?)`)
-      this.database.transaction(() => { for (const kp of toInsert) insert.run(kid, kp, new Date().toISOString()) })()
+      this.database.transaction(() => { for (const kp of toInsert) insert.run(id, kp, new Date().toISOString()) })()
     }
-    return this.database.query<{ count: number }, [string]>(`SELECT count(*) AS count FROM ${this.tables.keyPackages} WHERE kid = ?`).get(kid)!.count
+    return this.database.query<{ count: number }, [string]>(`SELECT count(*) AS count FROM ${this.tables.keyPackages} WHERE kid = ?`).get(id)!.count
   }
 
   /** Forget a device's published key packages (deregistration). */
-  dropKeyPackages(kid: string): void {
-    this.database.query(`DELETE FROM ${this.tables.keyPackages} WHERE kid = ?`).run(kid)
+  dropKeyPackages(id: GroupLocalId): void {
+    this.database.query(`DELETE FROM ${this.tables.keyPackages} WHERE kid = ?`).run(id)
   }
 
-  /** Take (consume) one key package for `targetKid` -- no liveness fan-out
+  /** Take (consume) one key package for `targetId` -- no liveness fan-out
    * needed (unlike Self Group's takeKeyPackages), a Conversation Group take
    * always names exactly one target. */
-  takeKeyPackage(targetKid: string): { keyPackage: Uint8Array } | undefined {
+  takeKeyPackage(targetId: GroupLocalId): { keyPackage: Uint8Array } | undefined {
     const row = this.database.query<{ id: number; package: Uint8Array }, [string]>(
       `SELECT id, package FROM ${this.tables.keyPackages} WHERE kid = ? ORDER BY id LIMIT 1`,
-    ).get(targetKid)
+    ).get(targetId)
     if (!row) return undefined
     this.database.query(`DELETE FROM ${this.tables.keyPackages} WHERE id = ?`).run(row.id)
     return { keyPackage: new Uint8Array(row.package) }
   }
 
   /** How many unused key packages a device has left. */
-  keyPackageCount(kid: string): number {
-    return this.database.query<{ count: number }, [string]>(`SELECT count(*) AS count FROM ${this.tables.keyPackages} WHERE kid = ?`).get(kid)!.count
+  keyPackageCount(id: GroupLocalId): number {
+    return this.database.query<{ count: number }, [string]>(`SELECT count(*) AS count FROM ${this.tables.keyPackages} WHERE kid = ?`).get(id)!.count
   }
 }
 
@@ -337,7 +301,7 @@ function installSchema(database: Database, tables: ConversationDeliveryTables): 
   database.exec(`
     CREATE TABLE IF NOT EXISTS ${tables.groups} (
       group_id TEXT PRIMARY KEY, roster_json TEXT NOT NULL, ever_members_json TEXT NOT NULL,
-      epoch TEXT NOT NULL, next_seq INTEGER NOT NULL, group_info BLOB, pending_removals_json TEXT NOT NULL,
+      epoch TEXT NOT NULL, next_seq INTEGER NOT NULL, pending_removals_json TEXT NOT NULL,
       last_committer TEXT, created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS ${tables.log} (

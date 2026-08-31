@@ -7,10 +7,7 @@ import { bytesToBase64url, canonicalBytes } from './canonical.ts'
 import type {
   ConversationCommitSubmitV1,
   ConversationDeliveriesPullV1,
-  ConversationExternalCommitSubmitV1,
   ConversationGroupCreateV1,
-  ConversationGroupInfoPullV1,
-  ConversationGroupsForPullV1,
   ConversationKeyPackageCountPullV1,
   ConversationKeyPackageDropV1,
   ConversationKeyPackagePublishV1,
@@ -25,8 +22,7 @@ export function conversationGroupCreateSigningBytes(value: Omit<ConversationGrou
     label: 'biset/conversation-mls-group-create/v1',
     version: value.version,
     groupId: value.groupId,
-    creatorKid: value.creatorKid,
-    roster: value.roster,
+    creatorId: value.creatorId,
     createdAt: value.createdAt,
   })
 }
@@ -36,37 +32,13 @@ export function conversationCommitSubmitSigningBytes(value: Omit<ConversationCom
     label: 'biset/conversation-mls-commit-submit/v1',
     version: value.version,
     groupId: value.groupId,
-    senderKid: value.senderKid,
+    senderId: value.senderId,
     epoch: value.epoch,
     commit: bytesToBase64url(value.commit),
-    roster: value.roster,
+    ...(value.addedIds === undefined ? {} : { addedIds: value.addedIds }),
+    ...(value.removedIds === undefined ? {} : { removedIds: value.removedIds }),
     ...(value.welcome === undefined ? {} : { welcome: bytesToBase64url(value.welcome) }),
-    ...(value.welcomeTo === undefined ? {} : { welcomeTo: value.welcomeTo }),
-    ...(value.groupInfo === undefined ? {} : { groupInfo: bytesToBase64url(value.groupInfo) }),
     submittedAt: value.submittedAt,
-  })
-}
-
-export function conversationExternalCommitSubmitSigningBytes(value: Omit<ConversationExternalCommitSubmitV1, 'signature'>): Uint8Array {
-  return canonicalBytes({
-    label: 'biset/conversation-mls-external-commit-submit/v1',
-    version: value.version,
-    groupId: value.groupId,
-    senderKid: value.senderKid,
-    epoch: value.epoch,
-    commit: bytesToBase64url(value.commit),
-    groupInfo: bytesToBase64url(value.groupInfo),
-    submittedAt: value.submittedAt,
-  })
-}
-
-export function conversationGroupInfoPullSigningBytes(value: Omit<ConversationGroupInfoPullV1, 'signature'>): Uint8Array {
-  return canonicalBytes({
-    label: 'biset/conversation-mls-group-info-pull/v1',
-    version: value.version,
-    groupId: value.groupId,
-    requesterKid: value.requesterKid,
-    requestedAt: value.requestedAt,
   })
 }
 
@@ -74,7 +46,7 @@ export function conversationKeyPackagePublishSigningBytes(value: Omit<Conversati
   return canonicalBytes({
     label: 'biset/conversation-mls-keypackage-publish/v1',
     version: value.version,
-    kid: value.kid,
+    id: value.id,
     packages: value.packages.map(bytesToBase64url),
     publishedAt: value.publishedAt,
   })
@@ -84,8 +56,8 @@ export function conversationKeyPackageTakeSigningBytes(value: Omit<ConversationK
   return canonicalBytes({
     label: 'biset/conversation-mls-keypackage-take/v1',
     version: value.version,
-    requesterKid: value.requesterKid,
-    targetKid: value.targetKid,
+    requesterId: value.requesterId,
+    targetId: value.targetId,
     requestedAt: value.requestedAt,
   })
 }
@@ -95,10 +67,10 @@ export function conversationSelfRemoveSubmitSigningBytes(value: Omit<Conversatio
     label: 'biset/conversation-mls-self-remove-submit/v1',
     version: value.version,
     groupId: value.groupId,
-    senderKid: value.senderKid,
+    senderId: value.senderId,
     epoch: value.epoch,
     proposal: bytesToBase64url(value.proposal),
-    removedKid: value.removedKid,
+    removedId: value.removedId,
     submittedAt: value.submittedAt,
   })
 }
@@ -108,8 +80,8 @@ export function conversationPendingRemovalsClearSigningBytes(value: Omit<Convers
     label: 'biset/conversation-mls-pending-removals-clear/v1',
     version: value.version,
     groupId: value.groupId,
-    requesterKid: value.requesterKid,
-    clearedKids: value.clearedKids,
+    requesterId: value.requesterId,
+    clearedIds: value.clearedIds,
     clearedAt: value.clearedAt,
   })
 }
@@ -119,7 +91,7 @@ export function conversationDeliveriesPullSigningBytes(value: Omit<ConversationD
     label: 'biset/conversation-mls-deliveries-pull/v1',
     version: value.version,
     groupId: value.groupId,
-    requesterKid: value.requesterKid,
+    requesterId: value.requesterId,
     afterSeq: value.afterSeq,
     requestedAt: value.requestedAt,
   })
@@ -129,7 +101,7 @@ export function conversationKeyPackageDropSigningBytes(value: Omit<ConversationK
   return canonicalBytes({
     label: 'biset/conversation-mls-keypackage-drop/v1',
     version: value.version,
-    kid: value.kid,
+    id: value.id,
     droppedAt: value.droppedAt,
   })
 }
@@ -138,16 +110,7 @@ export function conversationKeyPackageCountPullSigningBytes(value: Omit<Conversa
   return canonicalBytes({
     label: 'biset/conversation-mls-keypackage-count-pull/v1',
     version: value.version,
-    kid: value.kid,
-    requestedAt: value.requestedAt,
-  })
-}
-
-export function conversationGroupsForPullSigningBytes(value: Omit<ConversationGroupsForPullV1, 'signature'>): Uint8Array {
-  return canonicalBytes({
-    label: 'biset/conversation-mls-groups-for-pull/v1',
-    version: value.version,
-    requesterKid: value.requesterKid,
+    id: value.id,
     requestedAt: value.requestedAt,
   })
 }
@@ -157,7 +120,7 @@ export function conversationMessageSubmitSigningBytes(value: Omit<ConversationMe
     label: 'biset/conversation-mls-message-submit/v1',
     version: value.version,
     groupId: value.groupId,
-    senderKid: value.senderKid,
+    senderId: value.senderId,
     epoch: value.epoch,
     privateMessage: bytesToBase64url(value.privateMessage),
     submittedAt: value.submittedAt,

@@ -1,24 +1,19 @@
 // Narrow HTTP boundary for the Conversation Group DS (mls-ds-1.0.md), mirroring
-// coordinator/mls-delivery-http.ts's transport-only design. Chosen as the
-// FIRST transport to implement (2026-08-31, user direction) ahead of the
-// DIDComm envelope binding docs/protocols/mls-ds-1.0.md describes -- the
-// engine (mls-ds/store.ts, authorizer.ts) is transport-agnostic by
-// construction, so a DIDComm adapter can be added later that decrypts an
-// envelope and calls the same authorizer functions this handler does; this
-// file exists to get something end-to-end testable sooner, not as a
-// replacement for the DIDComm binding.
+// coordinator/mls-delivery-http.ts's transport-only design. The ONLY
+// transport now (a DIDComm envelope binding existed briefly but was
+// deleted, not just left unwired -- conversation-mls-ds.ts's header
+// explains why: push delivery required resolving a real DID to route to,
+// which is exactly the kind of leak this DS's identity-blind redesign
+// closes. Every control-message need (including catching up on new
+// messages) goes through this narrow request/response API.
 import {
   clearConversationPendingRemovals,
   createConversationGroup,
   dropConversationKeyPackages,
-  Ed25519ConversationDsSignatureVerifier,
   publishConversationKeyPackages,
   pullConversationDeliveries,
-  pullConversationGroupInfo,
-  pullConversationGroupsFor,
   pullConversationKeyPackageCount,
   submitConversationCommit,
-  submitConversationExternalCommit,
   submitConversationMessage,
   submitConversationSelfRemove,
   takeConversationKeyPackage,
@@ -28,10 +23,7 @@ import {
   ConversationDsWireError,
   decodeConversationCommitSubmitWire,
   decodeConversationDeliveriesPullWire,
-  decodeConversationExternalCommitSubmitWire,
   decodeConversationGroupCreateWire,
-  decodeConversationGroupInfoPullWire,
-  decodeConversationGroupsForPullWire,
   decodeConversationKeyPackageCountPullWire,
   decodeConversationKeyPackageDropWire,
   decodeConversationKeyPackagePublishWire,
@@ -40,18 +32,16 @@ import {
   decodeConversationPendingRemovalsClearWire,
   decodeConversationSelfRemoveSubmitWire,
   encodeConversationDeliveriesWire,
-  encodeConversationGroupInfoAnswerWire,
-  encodeConversationGroupsForWire,
   encodeConversationKeyPackageTakenWire,
 } from '../protocol/conversation-mls-ds-wire.ts'
 import { ConversationDsCapacityError, type SqliteConversationDeliveryService } from './store.ts'
 
 const MAX_BODY_BYTES = 1024 * 1024
 const CONVERSATION_MLS_PATHS = new Set([
-  '/v1/conversation-mls/group/create', '/v1/conversation-mls/commit/submit', '/v1/conversation-mls/commit/external',
-  '/v1/conversation-mls/group-info/pull', '/v1/conversation-mls/keypackage/publish', '/v1/conversation-mls/keypackage/take',
+  '/v1/conversation-mls/group/create', '/v1/conversation-mls/commit/submit',
+  '/v1/conversation-mls/keypackage/publish', '/v1/conversation-mls/keypackage/take',
   '/v1/conversation-mls/self-remove/submit', '/v1/conversation-mls/pending-removals/clear', '/v1/conversation-mls/deliveries/pull',
-  '/v1/conversation-mls/keypackage/drop', '/v1/conversation-mls/keypackage/count', '/v1/conversation-mls/groups-for',
+  '/v1/conversation-mls/keypackage/drop', '/v1/conversation-mls/keypackage/count',
   '/v1/conversation-mls/message/submit',
 ])
 
@@ -82,16 +72,6 @@ export function createConversationDeliveryHttpHandler(
 
       if (path === '/v1/conversation-mls/commit/submit') {
         return commitResponse(await submitConversationCommit(ds, verifier, decodeConversationCommitSubmitWire(body)))
-      }
-
-      if (path === '/v1/conversation-mls/commit/external') {
-        return commitResponse(await submitConversationExternalCommit(ds, verifier, decodeConversationExternalCommitSubmitWire(body)))
-      }
-
-      if (path === '/v1/conversation-mls/group-info/pull') {
-        const result = await pullConversationGroupInfo(ds, verifier, decodeConversationGroupInfoPullWire(body))
-        if (!result.ok) return text(403, 'rejected')
-        return json(200, encodeConversationGroupInfoAnswerWire(result.answer))
       }
 
       if (path === '/v1/conversation-mls/keypackage/publish') {
@@ -131,12 +111,6 @@ export function createConversationDeliveryHttpHandler(
         const count = await pullConversationKeyPackageCount(ds, verifier, decodeConversationKeyPackageCountPullWire(body))
         if (count === undefined) return text(403, 'rejected')
         return json(200, JSON.stringify({ count }))
-      }
-
-      if (path === '/v1/conversation-mls/groups-for') {
-        const groups = await pullConversationGroupsFor(ds, verifier, decodeConversationGroupsForPullWire(body))
-        if (groups === undefined) return text(403, 'rejected')
-        return json(200, encodeConversationGroupsForWire(groups))
       }
 
       if (path === '/v1/conversation-mls/message/submit') {

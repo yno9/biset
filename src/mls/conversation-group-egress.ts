@@ -16,6 +16,7 @@ import type { ClientState } from './vendor/index.ts'
 import { memberList } from './group.ts'
 import { sendConversationApplicationMessage, type ConversationGroupSigner } from './conversation-group.ts'
 import type { ConversationMlsDeliveryTransport } from '../mls-ds/client-transport.ts'
+import type { GroupLocalId } from '../protocol/conversation-mls-ds.ts'
 import { computeMimiMessageId, encodeMimiContent, mimiRoomUri, DISPOSITION_RENDER, type MessageId, type MimiContent } from './mimi-content.ts'
 import { didOfKid } from '../protocol/ids.ts'
 
@@ -23,7 +24,14 @@ export interface SendConversationTextMessageInput {
   state: ClientState
   transport: ConversationMlsDeliveryTransport
   groupId: string
+  /** This device's real MLS leaf kid -- used ONLY for the MimiContent
+   * `senderUri`/messageId computation and for filtering `otherMembers`
+   * (both client-visible, never DS-facing). */
   deviceKid: string
+  /** This device's group-local id for THIS group -- the DS-facing signing
+   * identity `sendConversationApplicationMessage` submits with. Unrelated
+   * to `deviceKid`; see conversation-group.ts's header. */
+  senderId: GroupLocalId
   text: string
   /** Set for a reply -- PLAN-mimi.md §4.2. Omit for an ordinary message. */
   inReplyTo?: MessageId
@@ -67,6 +75,6 @@ export async function sendConversationTextMessage(input: SendConversationTextMes
   const messageId = await computeMimiMessageId(senderUri, roomUri, encoded, salt)
   const senderDid = didOfKid(input.deviceKid)
   const otherMembers = memberList(input.state).map(m => m.did).filter(did => did !== senderDid)
-  const state = await sendConversationApplicationMessage(input.state, input.transport, input.groupId, input.deviceKid, encoded, input.sign, now)
+  const state = await sendConversationApplicationMessage(input.state, input.transport, input.groupId, input.senderId, encoded, input.sign, now)
   return { state, content, messageId, otherMembers }
 }

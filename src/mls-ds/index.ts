@@ -1,28 +1,14 @@
 // Production entrypoint for the standalone Conversation Group MLS Delivery
-// Service ("biset-mls-ds"). HTTP transport (Phase 2a) serves immediately;
-// the DIDComm transport (Phase 2b, `deployment.handleDidCommMessage`) is
-// exposed but not yet wired to an inbound source here -- Phase 3 connects
-// it to a mediator pickup loop or direct ingress.
-import { hexToBytes } from '../protocol/canonical.ts'
+// Service ("biset-mls-ds"). HTTP is the only transport -- no DID/DIDComm
+// identity for this service to configure at all any more; it never sends
+// anything (fanout.ts was deleted) and never resolves anything (authorizer.ts
+// verifies against the group-local id embedded in each request).
 import { createConversationDsDeployment } from './deployment.ts'
 
 const databasePath = Bun.env.CONVERSATION_DS_DATABASE_PATH
 if (!databasePath) throw new Error('CONVERSATION_DS_DATABASE_PATH is required')
 
-const self = Bun.env.CONVERSATION_DS_DID
-if (!self) throw new Error('CONVERSATION_DS_DID is required')
-
-const fromKid = Bun.env.CONVERSATION_DS_DIDCOMM_KID
-if (!fromKid) throw new Error('CONVERSATION_DS_DIDCOMM_KID is required')
-
-const x25519PrivateKeyHex = Bun.env.CONVERSATION_DS_X25519_PRIVATE_KEY
-if (!x25519PrivateKeyHex) throw new Error('CONVERSATION_DS_X25519_PRIVATE_KEY is required')
-
-const deployment = createConversationDsDeployment({
-  databasePath,
-  self,
-  sendOpts: { fromKid, x25519PrivateKey: hexToBytes(x25519PrivateKeyHex) },
-})
+const deployment = createConversationDsDeployment({ databasePath })
 
 const port = envInteger('PORT', 8792, 1, 65_535)
 Bun.serve({ port, fetch: deployment.fetch })

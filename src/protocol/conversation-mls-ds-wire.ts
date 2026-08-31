@@ -1,17 +1,15 @@
 // Strict JSON boundary for the Conversation Group DS narrow HTTP API,
 // mirroring mls-ds-wire.ts's shape/binary-encoding split minus `identityId`
-// throughout (PLAN_biset-mls-ds.md §7) plus `targetKid` on KeyPackage take
-// and the new message-submit/message-notify pair (conversation-mls-ds.ts's
-// own note: the one operation with no Self Group equivalent).
+// throughout (PLAN_biset-mls-ds.md §7) plus `targetId` on KeyPackage take
+// and message-submit (conversation-mls-ds.ts's own note: the one operation
+// with no Self Group equivalent). No `deviceCredential` field anywhere --
+// the group-local id itself IS the verification key (conversation-mls-ds.ts's
+// header explains why).
 import { base64urlToBytes, bytesToBase64url } from './canonical.ts'
 import type {
   ConversationCommitSubmitV1,
   ConversationDeliveriesPullV1,
-  ConversationExternalCommitSubmitV1,
   ConversationGroupCreateV1,
-  ConversationGroupInfoAnswer,
-  ConversationGroupInfoPullV1,
-  ConversationGroupsForPullV1,
   ConversationKeyPackageCountPullV1,
   ConversationKeyPackageDropV1,
   ConversationKeyPackagePublishV1,
@@ -45,10 +43,6 @@ function optionalBinary(value: unknown, name: string): Uint8Array | undefined {
   return value === undefined ? undefined : requireBinary(value, name)
 }
 
-function requireDeviceCredential(value: unknown): Uint8Array {
-  return requireBinary(value, 'deviceCredential')
-}
-
 function requireStringArray(value: unknown, name: string): string[] {
   if (!Array.isArray(value) || value.some(entry => typeof entry !== 'string')) throw new ConversationDsWireError(`${name} must be an array of strings`)
   return [...value] as string[]
@@ -71,10 +65,8 @@ export function decodeConversationGroupCreateWire(text: string): ConversationGro
   return {
     version: 1,
     groupId: requireString(input.groupId, 'groupId'),
-    creatorKid: requireString(input.creatorKid, 'creatorKid'),
-    roster: requireStringArray(input.roster, 'roster'),
+    creatorId: requireString(input.creatorId, 'creatorId'),
     createdAt: requireString(input.createdAt, 'createdAt'),
-    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -85,50 +77,15 @@ export function decodeConversationCommitSubmitWire(text: string): ConversationCo
   return {
     version: 1,
     groupId: requireString(input.groupId, 'groupId'),
-    senderKid: requireString(input.senderKid, 'senderKid'),
+    senderId: requireString(input.senderId, 'senderId'),
     epoch: requireString(input.epoch, 'epoch'),
     commit: requireBinary(input.commit, 'commit'),
-    roster: requireStringArray(input.roster, 'roster'),
+    addedIds: optionalStringArray(input.addedIds, 'addedIds'),
+    removedIds: optionalStringArray(input.removedIds, 'removedIds'),
     welcome: optionalBinary(input.welcome, 'welcome'),
-    welcomeTo: optionalStringArray(input.welcomeTo, 'welcomeTo'),
-    groupInfo: optionalBinary(input.groupInfo, 'groupInfo'),
     submittedAt: requireString(input.submittedAt, 'submittedAt'),
-    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
-}
-
-export function decodeConversationExternalCommitSubmitWire(text: string): ConversationExternalCommitSubmitV1 {
-  const input = record(text)
-  if (input.version !== 1) throw new ConversationDsWireError('ConversationExternalCommitSubmitV1.version must be 1')
-  return {
-    version: 1,
-    groupId: requireString(input.groupId, 'groupId'),
-    senderKid: requireString(input.senderKid, 'senderKid'),
-    epoch: requireString(input.epoch, 'epoch'),
-    commit: requireBinary(input.commit, 'commit'),
-    groupInfo: requireBinary(input.groupInfo, 'groupInfo'),
-    submittedAt: requireString(input.submittedAt, 'submittedAt'),
-    deviceCredential: requireDeviceCredential(input.deviceCredential),
-    signature: requireBinary(input.signature, 'signature'),
-  }
-}
-
-export function decodeConversationGroupInfoPullWire(text: string): ConversationGroupInfoPullV1 {
-  const input = record(text)
-  if (input.version !== 1) throw new ConversationDsWireError('ConversationGroupInfoPullV1.version must be 1')
-  return {
-    version: 1,
-    groupId: requireString(input.groupId, 'groupId'),
-    requesterKid: requireString(input.requesterKid, 'requesterKid'),
-    requestedAt: requireString(input.requestedAt, 'requestedAt'),
-    deviceCredential: requireDeviceCredential(input.deviceCredential),
-    signature: requireBinary(input.signature, 'signature'),
-  }
-}
-
-export function encodeConversationGroupInfoAnswerWire(value: ConversationGroupInfoAnswer): string {
-  return JSON.stringify({ ...(value.groupInfo ? { groupInfo: bytesToBase64url(value.groupInfo) } : {}), pendingRemovals: value.pendingRemovals })
 }
 
 export function decodeConversationKeyPackagePublishWire(text: string): ConversationKeyPackagePublishV1 {
@@ -137,10 +94,9 @@ export function decodeConversationKeyPackagePublishWire(text: string): Conversat
   if (!Array.isArray(input.packages)) throw new ConversationDsWireError('packages must be an array')
   return {
     version: 1,
-    kid: requireString(input.kid, 'kid'),
+    id: requireString(input.id, 'id'),
     packages: input.packages.map((entry, index) => requireBinary(entry, `packages[${index}]`)),
     publishedAt: requireString(input.publishedAt, 'publishedAt'),
-    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -150,10 +106,9 @@ export function decodeConversationKeyPackageTakeWire(text: string): Conversation
   if (input.version !== 1) throw new ConversationDsWireError('ConversationKeyPackageTakeV1.version must be 1')
   return {
     version: 1,
-    requesterKid: requireString(input.requesterKid, 'requesterKid'),
-    targetKid: requireString(input.targetKid, 'targetKid'),
+    requesterId: requireString(input.requesterId, 'requesterId'),
+    targetId: requireString(input.targetId, 'targetId'),
     requestedAt: requireString(input.requestedAt, 'requestedAt'),
-    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -168,12 +123,11 @@ export function decodeConversationSelfRemoveSubmitWire(text: string): Conversati
   return {
     version: 1,
     groupId: requireString(input.groupId, 'groupId'),
-    senderKid: requireString(input.senderKid, 'senderKid'),
+    senderId: requireString(input.senderId, 'senderId'),
     epoch: requireString(input.epoch, 'epoch'),
     proposal: requireBinary(input.proposal, 'proposal'),
-    removedKid: requireString(input.removedKid, 'removedKid'),
+    removedId: requireString(input.removedId, 'removedId'),
     submittedAt: requireString(input.submittedAt, 'submittedAt'),
-    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -184,10 +138,9 @@ export function decodeConversationPendingRemovalsClearWire(text: string): Conver
   return {
     version: 1,
     groupId: requireString(input.groupId, 'groupId'),
-    requesterKid: requireString(input.requesterKid, 'requesterKid'),
-    clearedKids: requireStringArray(input.clearedKids, 'clearedKids'),
+    requesterId: requireString(input.requesterId, 'requesterId'),
+    clearedIds: requireStringArray(input.clearedIds, 'clearedIds'),
     clearedAt: requireString(input.clearedAt, 'clearedAt'),
-    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -198,10 +151,9 @@ export function decodeConversationDeliveriesPullWire(text: string): Conversation
   return {
     version: 1,
     groupId: requireString(input.groupId, 'groupId'),
-    requesterKid: requireString(input.requesterKid, 'requesterKid'),
+    requesterId: requireString(input.requesterId, 'requesterId'),
     afterSeq: requireInteger(input.afterSeq, 'afterSeq'),
     requestedAt: requireString(input.requestedAt, 'requestedAt'),
-    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -220,9 +172,8 @@ export function decodeConversationKeyPackageDropWire(text: string): Conversation
   if (input.version !== 1) throw new ConversationDsWireError('ConversationKeyPackageDropV1.version must be 1')
   return {
     version: 1,
-    kid: requireString(input.kid, 'kid'),
+    id: requireString(input.id, 'id'),
     droppedAt: requireString(input.droppedAt, 'droppedAt'),
-    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -232,27 +183,10 @@ export function decodeConversationKeyPackageCountPullWire(text: string): Convers
   if (input.version !== 1) throw new ConversationDsWireError('ConversationKeyPackageCountPullV1.version must be 1')
   return {
     version: 1,
-    kid: requireString(input.kid, 'kid'),
+    id: requireString(input.id, 'id'),
     requestedAt: requireString(input.requestedAt, 'requestedAt'),
-    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
-}
-
-export function decodeConversationGroupsForPullWire(text: string): ConversationGroupsForPullV1 {
-  const input = record(text)
-  if (input.version !== 1) throw new ConversationDsWireError('ConversationGroupsForPullV1.version must be 1')
-  return {
-    version: 1,
-    requesterKid: requireString(input.requesterKid, 'requesterKid'),
-    requestedAt: requireString(input.requestedAt, 'requestedAt'),
-    deviceCredential: requireDeviceCredential(input.deviceCredential),
-    signature: requireBinary(input.signature, 'signature'),
-  }
-}
-
-export function encodeConversationGroupsForWire(groups: Array<{ groupId: string; epoch: bigint }>): string {
-  return JSON.stringify({ groups: groups.map(g => ({ groupId: g.groupId, epoch: g.epoch.toString() })) })
 }
 
 export function decodeConversationMessageSubmitWire(text: string): ConversationMessageSubmitV1 {
@@ -261,11 +195,10 @@ export function decodeConversationMessageSubmitWire(text: string): ConversationM
   return {
     version: 1,
     groupId: requireString(input.groupId, 'groupId'),
-    senderKid: requireString(input.senderKid, 'senderKid'),
+    senderId: requireString(input.senderId, 'senderId'),
     epoch: requireString(input.epoch, 'epoch'),
     privateMessage: requireBinary(input.privateMessage, 'privateMessage'),
     submittedAt: requireString(input.submittedAt, 'submittedAt'),
-    deviceCredential: requireDeviceCredential(input.deviceCredential),
     signature: requireBinary(input.signature, 'signature'),
   }
 }
@@ -277,7 +210,7 @@ export function decodeConversationMessageSubmitWire(text: string): ConversationM
 // and what a client encodes.
 
 export function encodeConversationGroupCreateWire(value: ConversationGroupCreateV1): string {
-  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
 }
 
 export interface ConversationGroupRosterResultWire { roster: string[] }
@@ -291,18 +224,6 @@ export function encodeConversationCommitSubmitWire(value: ConversationCommitSubm
     ...value,
     commit: bytesToBase64url(value.commit),
     ...(value.welcome === undefined ? {} : { welcome: bytesToBase64url(value.welcome) }),
-    groupInfo: value.groupInfo === undefined ? undefined : bytesToBase64url(value.groupInfo),
-    deviceCredential: bytesToBase64url(value.deviceCredential!),
-    signature: bytesToBase64url(value.signature),
-  })
-}
-
-export function encodeConversationExternalCommitSubmitWire(value: ConversationExternalCommitSubmitV1): string {
-  return JSON.stringify({
-    ...value,
-    commit: bytesToBase64url(value.commit),
-    groupInfo: bytesToBase64url(value.groupInfo),
-    deviceCredential: bytesToBase64url(value.deviceCredential!),
     signature: bytesToBase64url(value.signature),
   })
 }
@@ -316,17 +237,8 @@ export function decodeConversationCommitRejectionWire(text: string): Conversatio
   return { reason: requireString(input.reason, 'reason'), epoch: requireString(input.epoch, 'epoch') }
 }
 
-export function encodeConversationGroupInfoPullWire(value: ConversationGroupInfoPullV1): string {
-  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
-}
-
-export function decodeConversationGroupInfoAnswerWire(text: string): ConversationGroupInfoAnswer {
-  const input = record(text)
-  return { ...(input.groupInfo === undefined ? {} : { groupInfo: requireBinary(input.groupInfo, 'groupInfo') }), pendingRemovals: requireStringArray(input.pendingRemovals, 'pendingRemovals') }
-}
-
 export function encodeConversationKeyPackagePublishWire(value: ConversationKeyPackagePublishV1): string {
-  return JSON.stringify({ ...value, packages: value.packages.map(bytesToBase64url), deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, packages: value.packages.map(bytesToBase64url), signature: bytesToBase64url(value.signature) })
 }
 
 export interface ConversationKeyPackageCountResultWire { count: number }
@@ -336,7 +248,7 @@ export function decodeConversationKeyPackageCountResultWire(text: string): Conve
 }
 
 export function encodeConversationKeyPackageTakeWire(value: ConversationKeyPackageTakeV1): string {
-  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
 }
 
 export function decodeConversationKeyPackageTakenWire(text: string): { keyPackage: Uint8Array } | undefined {
@@ -346,15 +258,15 @@ export function decodeConversationKeyPackageTakenWire(text: string): { keyPackag
 }
 
 export function encodeConversationSelfRemoveSubmitWire(value: ConversationSelfRemoveSubmitV1): string {
-  return JSON.stringify({ ...value, proposal: bytesToBase64url(value.proposal), deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, proposal: bytesToBase64url(value.proposal), signature: bytesToBase64url(value.signature) })
 }
 
 export function encodeConversationPendingRemovalsClearWire(value: ConversationPendingRemovalsClearV1): string {
-  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
 }
 
 export function encodeConversationDeliveriesPullWire(value: ConversationDeliveriesPullV1): string {
-  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
 }
 
 export function decodeConversationDeliveriesWire(text: string): ConversationLogEntry[] {
@@ -374,28 +286,13 @@ export function decodeConversationDeliveriesWire(text: string): ConversationLogE
 }
 
 export function encodeConversationKeyPackageDropWire(value: ConversationKeyPackageDropV1): string {
-  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
 }
 
 export function encodeConversationKeyPackageCountPullWire(value: ConversationKeyPackageCountPullV1): string {
-  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
-}
-
-export function encodeConversationGroupsForPullWire(value: ConversationGroupsForPullV1): string {
-  return JSON.stringify({ ...value, deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
-}
-
-export interface ConversationGroupsForResultWire { groupId: string; epoch: string }
-export function decodeConversationGroupsForWire(text: string): ConversationGroupsForResultWire[] {
-  const input = record(text)
-  if (!Array.isArray(input.groups)) throw new ConversationDsWireError('groups must be an array')
-  return input.groups.map((entry, index) => {
-    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new ConversationDsWireError(`groups[${index}] must be an object`)
-    const value = entry as Record<string, unknown>
-    return { groupId: requireString(value.groupId, `groups[${index}].groupId`), epoch: requireString(value.epoch, `groups[${index}].epoch`) }
-  })
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
 }
 
 export function encodeConversationMessageSubmitWire(value: ConversationMessageSubmitV1): string {
-  return JSON.stringify({ ...value, privateMessage: bytesToBase64url(value.privateMessage), deviceCredential: bytesToBase64url(value.deviceCredential!), signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ ...value, privateMessage: bytesToBase64url(value.privateMessage), signature: bytesToBase64url(value.signature) })
 }

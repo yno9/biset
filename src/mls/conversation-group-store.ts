@@ -6,33 +6,50 @@
 // means losing forward access to a group, and a device may belong to many
 // Conversation Groups at once (unlike self-group's one-row-per-identity
 // shape), so the schema differs enough to want its own migrations.
+//
+// **Identity-blind DS revision**: also holds this device's own group-local
+// Ed25519 private key for the group (conversation-group.ts's
+// `randomGroupLocalKeypair`) and a locally-known `GroupLocalId ↔ mlsKid`
+// roster mapping. That mapping is deliberately partial -- this device only
+// ever learns the entries it directly witnessed (as inviter, from
+// conversation-group-invite.ts's join exchange; as invitee, its own).
+// Propagating the full mapping to every member would need a new
+// group-control application message, out of scope for now
+// (PLAN_biset-mls-ds.md §11).
 import { decodeState, encodeState } from './group.ts'
 import type { ClientState } from './vendor/index.ts'
+import type { GroupLocalId } from '../protocol/conversation-mls-ds.ts'
 
 const DATABASE_NAME = 'biset-mls-conversation-group'
 const DATABASE_VERSION = 1
 const STORE_NAME = 'conversation-group-state'
 
+export interface ConversationGroupRosterEntry { groupLocalId: GroupLocalId; mlsKid: string }
+
 interface StoredConversationGroup {
   groupId: string
   state: Uint8Array
   /** The highest `ConversationLogEntry.seq` (mls-ds/store.ts) this device
-   * has already applied for this group -- the cursor a poll-based catch-up
-   * (`pullDeliveries(..., afterSeq: lastSeenSeq)`) resumes from, and what a
-   * push-delivered message-notify entry's own `seq` is checked against
-   * before applying (out-of-order/duplicate delivery must not double-apply
-   * a commit against already-advanced state). */
+   * has already applied for this group -- the cursor
+   * `conversation-group-sync.ts`'s poll-based catch-up
+   * (`pullDeliveries(..., afterSeq: lastSeenSeq)`) resumes from. */
   lastSeenSeq: number
+  /** This device's own group-local private key for this specific group --
+   * never reused across groups (conversation-group.ts's own note on why). */
+  ownGroupLocalPrivateKey: Uint8Array
+  roster: ConversationGroupRosterEntry[]
   updatedAt: number
 }
 
 export interface LoadedConversationGroup {
   state: ClientState
   lastSeenSeq: number
+  ownGroupLocalPrivateKey: Uint8Array
+  roster: ConversationGroupRosterEntry[]
 }
 
 export interface MlsConversationGroupStateStore {
-  save(groupId: string, state: ClientState, lastSeenSeq: number): Promise<void>
+  save(groupId: string, state: ClientState, lastSeenSeq: number, ownGroupLocalPrivateKey: Uint8Array, roster: ConversationGroupRosterEntry[]): Promise<void>
   load(groupId: string): Promise<LoadedConversationGroup | undefined>
   /** Every group this device currently holds state for -- the poll-based
    * catch-up loop's own "which groups do I even need to ask about" list,
@@ -56,9 +73,9 @@ export class IndexedDbMlsConversationGroupStore implements MlsConversationGroupS
     this.databasePromise?.then(db => db.close()).catch(() => {})
   }
 
-  async save(groupId: string, state: ClientState, lastSeenSeq: number): Promise<void> {
+  async save(groupId: string, state: ClientState, lastSeenSeq: number, ownGroupLocalPrivateKey: Uint8Array, roster: ConversationGroupRosterEntry[]): Promise<void> {
     const database = await this.database()
-    const record: StoredConversationGroup = { groupId, state: encodeState(state), lastSeenSeq, updatedAt: Date.now() }
+    const record: StoredConversationGroup = { groupId, state: encodeState(state), lastSeenSeq, ownGroupLocalPrivateKey, roster, updatedAt: Date.now() }
     const transaction = database.transaction([STORE_NAME], 'readwrite')
     transaction.objectStore(STORE_NAME).put(record)
     await transactionDone(transaction)
@@ -68,7 +85,10 @@ export class IndexedDbMlsConversationGroupStore implements MlsConversationGroupS
     const database = await this.database()
     const transaction = database.transaction([STORE_NAME], 'readonly')
     const record = await requestResult<StoredConversationGroup | undefined>(transaction.objectStore(STORE_NAME).get(groupId))
-    return record === undefined ? undefined : { state: decodeState(record.state), lastSeenSeq: record.lastSeenSeq }
+    return record === undefined ? undefined : {
+      state: decodeState(record.state), lastSeenSeq: record.lastSeenSeq,
+      ownGroupLocalPrivateKey: record.ownGroupLocalPrivateKey, roster: record.roster,
+    }
   }
 
   async listGroupIds(): Promise<string[]> {

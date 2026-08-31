@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { ed25519 } from '@noble/curves/ed25519.js'
+import { bytesToHex } from '../../src/protocol/canonical.ts'
 import { SqliteConversationDeliveryService } from '../../src/mls-ds/store.ts'
 import { Ed25519ConversationDsSignatureVerifier } from '../../src/mls-ds/authorizer.ts'
 import { createConversationDeliveryHttpHandler } from '../../src/mls-ds/http.ts'
@@ -17,8 +18,7 @@ import type {
 
 const path = `/tmp/biset-conversation-ds-http-${process.pid}-${Date.now()}.sqlite`
 const aliceKey = ed25519.utils.randomSecretKey()
-const alicePublicKey = ed25519.getPublicKey(aliceKey)
-const aliceKid = 'did:web:alice.example#key-1'
+const aliceId = bytesToHex(ed25519.getPublicKey(aliceKey))
 
 afterEach(() => {
   for (const suffix of ['', '-wal', '-shm']) {
@@ -28,30 +28,29 @@ afterEach(() => {
 
 function handler() {
   const ds = SqliteConversationDeliveryService.open(path)
-  const verifier = new Ed25519ConversationDsSignatureVerifier({ async resolveEd25519PublicKey(kid) { return kid === aliceKid ? alicePublicKey : undefined } })
-  const handle = createConversationDeliveryHttpHandler(ds, verifier)
+  const handle = createConversationDeliveryHttpHandler(ds, new Ed25519ConversationDsSignatureVerifier())
   return { ds, handle }
 }
 
 function body(json: unknown): string {
-  return JSON.stringify(json && typeof json === 'object' ? { ...json, deviceCredential: bytesToBase64url(new Uint8Array([1])) } : json)
+  return JSON.stringify(json)
 }
 
-describe('Conversation Group DS HTTP endpoint (first transport, DIDComm binding to follow)', () => {
+describe('Conversation Group DS HTTP endpoint (identity-blind: no deviceCredential field, no DIDComm binding)', () => {
   test('group/create then commit/submit round-trips through the wire format', async () => {
     const { ds, handle } = handler()
-    const creation: Omit<ConversationGroupCreateV1, 'signature'> = { version: 1, groupId: 'group-1', creatorKid: aliceKid, roster: [], createdAt: '2026-08-31T00:00:00.000Z' }
+    const creation: Omit<ConversationGroupCreateV1, 'signature'> = { version: 1, groupId: 'group-1', creatorId: aliceId, createdAt: '2026-08-31T00:00:00.000Z' }
     const createResponse = await handle(new Request('https://mls-ds.example/v1/conversation-mls/group/create', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: body({ ...creation, signature: bytesToBase64url(ed25519.sign(conversationGroupCreateSigningBytes(creation), aliceKey)) }),
     }))
     expect(createResponse.status).toBe(201)
-    expect(await createResponse.json()).toEqual({ roster: [aliceKid] })
+    expect(await createResponse.json()).toEqual({ roster: [aliceId] })
 
     const commit: Omit<ConversationCommitSubmitV1, 'signature'> = {
-      version: 1, groupId: 'group-1', senderKid: aliceKid, epoch: '0',
-      commit: new Uint8Array([1, 2, 3]), roster: [aliceKid], submittedAt: '2026-08-31T00:01:00.000Z',
+      version: 1, groupId: 'group-1', senderId: aliceId, epoch: '0',
+      commit: new Uint8Array([1, 2, 3]), submittedAt: '2026-08-31T00:01:00.000Z',
     }
     const commitResponse = await handle(new Request('https://mls-ds.example/v1/conversation-mls/commit/submit', {
       method: 'POST',
@@ -59,17 +58,17 @@ describe('Conversation Group DS HTTP endpoint (first transport, DIDComm binding 
       body: body({ ...commit, commit: bytesToBase64url(commit.commit), signature: bytesToBase64url(ed25519.sign(conversationCommitSubmitSigningBytes(commit), aliceKey)) }),
     }))
     expect(commitResponse.status).toBe(201)
-    expect(await commitResponse.json()).toEqual({ roster: [aliceKid] })
+    expect(await commitResponse.json()).toEqual({ roster: [aliceId] })
     ds.close()
   })
 
   test('a forged commit submission is rejected with 403 and does not advance the epoch', async () => {
     const { ds, handle } = handler()
     const strangerKey = ed25519.utils.randomSecretKey()
-    ds.createGroup('group-1', aliceKid, [])
+    ds.createGroup('group-1', aliceId)
     const commit: Omit<ConversationCommitSubmitV1, 'signature'> = {
-      version: 1, groupId: 'group-1', senderKid: aliceKid, epoch: '0',
-      commit: new Uint8Array([1]), roster: [aliceKid], submittedAt: '2026-08-31T00:00:00.000Z',
+      version: 1, groupId: 'group-1', senderId: aliceId, epoch: '0',
+      commit: new Uint8Array([1]), submittedAt: '2026-08-31T00:00:00.000Z',
     }
     const response = await handle(new Request('https://mls-ds.example/v1/conversation-mls/commit/submit', {
       method: 'POST',
@@ -77,13 +76,13 @@ describe('Conversation Group DS HTTP endpoint (first transport, DIDComm binding 
       body: body({ ...commit, commit: bytesToBase64url(commit.commit), signature: bytesToBase64url(ed25519.sign(conversationCommitSubmitSigningBytes(commit), strangerKey)) }),
     }))
     expect(response.status).toBe(403)
-    expect(ds.roster('group-1')).toEqual([aliceKid])
+    expect(ds.roster('group-1')).toEqual([aliceId])
     ds.close()
   })
 
   test('key package publish then take round-trips binary packages through base64url', async () => {
     const { ds, handle } = handler()
-    const publish: Omit<ConversationKeyPackagePublishV1, 'signature'> = { version: 1, kid: aliceKid, packages: [new Uint8Array([9, 9])], publishedAt: '2026-08-31T00:00:00.000Z' }
+    const publish: Omit<ConversationKeyPackagePublishV1, 'signature'> = { version: 1, id: aliceId, packages: [new Uint8Array([9, 9])], publishedAt: '2026-08-31T00:00:00.000Z' }
     const publishResponse = await handle(new Request('https://mls-ds.example/v1/conversation-mls/keypackage/publish', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -92,7 +91,7 @@ describe('Conversation Group DS HTTP endpoint (first transport, DIDComm binding 
     expect(publishResponse.status).toBe(200)
     expect(await publishResponse.json()).toEqual({ count: 1 })
 
-    const take: Omit<ConversationKeyPackageTakeV1, 'signature'> = { version: 1, requesterKid: aliceKid, targetKid: aliceKid, requestedAt: '2026-08-31T00:01:00.000Z' }
+    const take: Omit<ConversationKeyPackageTakeV1, 'signature'> = { version: 1, requesterId: aliceId, targetId: aliceId, requestedAt: '2026-08-31T00:01:00.000Z' }
     const takeResponse = await handle(new Request('https://mls-ds.example/v1/conversation-mls/keypackage/take', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -107,15 +106,19 @@ describe('Conversation Group DS HTTP endpoint (first transport, DIDComm binding 
     const { ds, handle } = handler()
     expect((await handle(new Request('https://mls-ds.example/v1/conversation-mls/nope', { method: 'POST', body: '{}' }))).status).toBe(404)
     expect((await handle(new Request('https://mls-ds.example/v1/conversation-mls/group/create', { method: 'GET' }))).status).toBe(405)
+    // Removed endpoints (GroupInfo/external-commit/groups-for) are simply unknown paths now.
+    expect((await handle(new Request('https://mls-ds.example/v1/conversation-mls/group-info/pull', { method: 'POST', body: '{}' }))).status).toBe(404)
+    expect((await handle(new Request('https://mls-ds.example/v1/conversation-mls/commit/external', { method: 'POST', body: '{}' }))).status).toBe(404)
+    expect((await handle(new Request('https://mls-ds.example/v1/conversation-mls/groups-for', { method: 'POST', body: '{}' }))).status).toBe(404)
     ds.close()
   })
 
   test('self-remove/submit then deliveries/pull round-trip through the wire format', async () => {
     const { ds, handle } = handler()
-    ds.createGroup('group-1', aliceKid, [])
-    ds.submitCommit('group-1', aliceKid, '0', new Uint8Array([1]), [aliceKid])
+    ds.createGroup('group-1', aliceId)
+    ds.submitCommit('group-1', aliceId, '0', new Uint8Array([1]))
 
-    const selfRemove: Omit<ConversationSelfRemoveSubmitV1, 'signature'> = { version: 1, groupId: 'group-1', senderKid: aliceKid, epoch: '1', proposal: new Uint8Array([7]), removedKid: aliceKid, submittedAt: '2026-08-31T00:00:00.000Z' }
+    const selfRemove: Omit<ConversationSelfRemoveSubmitV1, 'signature'> = { version: 1, groupId: 'group-1', senderId: aliceId, epoch: '1', proposal: new Uint8Array([7]), removedId: aliceId, submittedAt: '2026-08-31T00:00:00.000Z' }
     const selfRemoveResponse = await handle(new Request('https://mls-ds.example/v1/conversation-mls/self-remove/submit', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -123,7 +126,7 @@ describe('Conversation Group DS HTTP endpoint (first transport, DIDComm binding 
     }))
     expect(selfRemoveResponse.status).toBe(201)
 
-    const pull: Omit<ConversationDeliveriesPullV1, 'signature'> = { version: 1, groupId: 'group-1', requesterKid: aliceKid, afterSeq: 0, requestedAt: '2026-08-31T00:01:00.000Z' }
+    const pull: Omit<ConversationDeliveriesPullV1, 'signature'> = { version: 1, groupId: 'group-1', requesterId: aliceId, afterSeq: 0, requestedAt: '2026-08-31T00:01:00.000Z' }
     const pullResponse = await handle(new Request('https://mls-ds.example/v1/conversation-mls/deliveries/pull', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -137,9 +140,9 @@ describe('Conversation Group DS HTTP endpoint (first transport, DIDComm binding 
 
   test('message/submit (no Self Group equivalent) round-trips application data and rejects a stale epoch', async () => {
     const { ds, handle } = handler()
-    ds.createGroup('group-1', aliceKid, [])
+    ds.createGroup('group-1', aliceId)
 
-    const submit: Omit<ConversationMessageSubmitV1, 'signature'> = { version: 1, groupId: 'group-1', senderKid: aliceKid, epoch: '0', privateMessage: new Uint8Array([4, 5, 6]), submittedAt: '2026-08-31T00:00:00.000Z' }
+    const submit: Omit<ConversationMessageSubmitV1, 'signature'> = { version: 1, groupId: 'group-1', senderId: aliceId, epoch: '0', privateMessage: new Uint8Array([4, 5, 6]), submittedAt: '2026-08-31T00:00:00.000Z' }
     const response = await handle(new Request('https://mls-ds.example/v1/conversation-mls/message/submit', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -147,7 +150,7 @@ describe('Conversation Group DS HTTP endpoint (first transport, DIDComm binding 
     }))
     expect(response.status).toBe(201)
 
-    const stale: Omit<ConversationMessageSubmitV1, 'signature'> = { version: 1, groupId: 'group-1', senderKid: aliceKid, epoch: '99', privateMessage: new Uint8Array([1]), submittedAt: '2026-08-31T00:00:01.000Z' }
+    const stale: Omit<ConversationMessageSubmitV1, 'signature'> = { version: 1, groupId: 'group-1', senderId: aliceId, epoch: '99', privateMessage: new Uint8Array([1]), submittedAt: '2026-08-31T00:00:01.000Z' }
     const staleResponse = await handle(new Request('https://mls-ds.example/v1/conversation-mls/message/submit', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
