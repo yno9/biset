@@ -28,10 +28,12 @@ import { decryptVaultObject } from '../vault/objects.ts'
 import type { VaultEventSigner } from '../vault/events.ts'
 import type { VaultEventRecord, VaultObjectRecord } from '../vault/store.ts'
 import { epochOf, memberList } from './group.ts'
+import type { ClientState } from './vendor/index.ts'
 import { receiveConversationEntry, type ConversationGroupSigner } from './conversation-group.ts'
 import { computeMimiMessageId, decodeMimiContent, mimiRoomUri } from './mimi-content.ts'
 import { projectMimiConversationMessage } from './mimi-content-projector.ts'
 import type { ConversationGroupRosterEntry, MlsConversationGroupStateStore } from './conversation-group-store.ts'
+import type { ConversationLogEntry } from '../protocol/conversation-mls-ds.ts'
 
 export interface ConversationGroupVaultRecord {
   objects: VaultObjectRecord[]
@@ -40,10 +42,13 @@ export interface ConversationGroupVaultRecord {
   jmapState: { state: string }
 }
 
-export interface ConversationGroupSyncOptions {
-  stateStore: MlsConversationGroupStateStore
-  transport: ConversationMlsDeliveryTransport
-  sign: ConversationGroupSigner
+/** Everything `applyConversationGroupLogEntry` needs to turn one entry into
+ * a Vault record -- a subset of `ConversationGroupSyncOptions` (that also
+ * carries `stateStore`/`transport`/`sign`, which only the pull loop needs).
+ * Shared by both the pull loop below AND, once a caller wires it up, a live
+ * `conversation-group-watch.ts` connection's `onEntry` -- neither this type
+ * nor the function using it knows or cares which one is calling. */
+export interface ConversationGroupApplyOptions {
   identityId: IdentityId
   actorDeviceId: DeviceId
   nextActorSeq(): Promise<number>
@@ -57,15 +62,81 @@ export interface ConversationGroupSyncOptions {
   now?: () => Date
 }
 
+export interface ConversationGroupSyncOptions extends ConversationGroupApplyOptions {
+  stateStore: MlsConversationGroupStateStore
+  transport: ConversationMlsDeliveryTransport
+  sign: ConversationGroupSigner
+}
+
 export interface ConversationGroupSyncResult { applied: number }
 
-/** Pulls and applies every entry after this device's stored cursor for
- * `groupId`. Throws if this device holds no local state for the group at
- * all (join first -- conversation-group-invite.ts's bootstrap flow). A
- * `'welcome'`-kind entry is skipped here (already-joined devices have
+export interface ConversationGroupApplyResult {
+  state: ClientState
+  /** True only for an application entry that decoded to a Vault mutation
+   * and was committed -- a commit/proposal/welcome, or an application
+   * entry skipped by the epoch guard, advances `state` (or doesn't) with
+   * nothing to commit. */
+  committed: boolean
+}
+
+/** Applies ONE deliveries entry against `state` -- the per-entry step
+ * `syncConversationGroupDeliveries` loops over, extracted so a live watch
+ * connection (conversation-group-watch.ts) can call it one entry at a time
+ * instead of only ever in a pulled batch. A caller driving both a
+ * poll-sync and a live watch for the SAME group concurrently is
+ * responsible for serializing its own calls into this function -- there is
+ * no internal mutex here (not a new limitation this extraction
+ * introduces; the pull loop below was never safe to run twice
+ * concurrently for the same group either, this just makes the first
+ * caller for whom it could plausibly matter explicit about it).
+ *
+ * A `'welcome'`-kind entry is a no-op here (already-joined devices have
  * nothing to do with a Welcome; a NEW joiner consumes theirs once via
- * `joinMlsGroup`, outside this steady-state loop, same as
+ * `joinMlsGroup`, outside this steady-state path entirely, same as
  * conversation-group.ts's own `receiveConversationEntry` doc note). */
+export async function applyConversationGroupLogEntry(
+  entry: ConversationLogEntry,
+  state: ClientState,
+  groupId: string,
+  options: ConversationGroupApplyOptions,
+): Promise<ConversationGroupApplyResult> {
+  const now = options.now ?? (() => new Date())
+
+  if (entry.kind === 'welcome') return { state, committed: false }
+
+  if (entry.kind === 'commit' || entry.kind === 'proposal') {
+    // Only apply a commit/proposal from THIS device's own current epoch --
+    // the DS's log for this group also holds entries this device already
+    // reflects some other way (most commonly: the very commit that added
+    // it, already folded into the state a fresh joiner got via
+    // `joinMlsGroup` from the Welcome, outside this loop entirely).
+    // Re-decrypting one of those against an already-advanced key schedule
+    // fails. Same guard self-group.ts's own `reflectPendingSelfGroupCommits`
+    // uses, and for the same reason.
+    if (entry.epoch === epochOf(state).toString()) state = (await receiveConversationEntry(state, entry.payload)).state
+    return { state, committed: false }
+  }
+
+  // entry.kind === 'application'. Same epoch guard as commits/proposals
+  // above, for a different reason: a message from strictly before this
+  // device's current epoch is one it was never issued key material for
+  // (a fresh Welcome-based joiner starts AT the join epoch, with no
+  // historical receiver data for anything earlier -- group.ts's
+  // processIncoming would throw "epoch too old" rather than silently
+  // fail, so this is checked up front instead of caught after the fact).
+  if (entry.epoch !== epochOf(state).toString()) return { state, committed: false }
+  const received = await receiveConversationEntry(state, entry.payload)
+  state = received.state
+  if (received.plaintext === undefined || received.sender === undefined) return { state, committed: false }
+  const record = await buildVaultRecord(options, groupId, state, received.plaintext, received.sender, now)
+  await options.commitVaultRecord(record)
+  return { state, committed: true }
+}
+
+/** Pulls and applies every entry after this device's stored cursor for
+ * `groupId`, via `applyConversationGroupLogEntry` above. Throws if this
+ * device holds no local state for the group at all (join first --
+ * conversation-group-invite.ts's bootstrap flow). */
 export async function syncConversationGroupDeliveries(groupId: string, options: ConversationGroupSyncOptions): Promise<ConversationGroupSyncResult> {
   const stored = await options.stateStore.load(groupId)
   if (!stored) throw new Error(`syncConversationGroupDeliveries: no local state for group ${groupId}`)
@@ -81,42 +152,9 @@ export async function syncConversationGroupDeliveries(groupId: string, options: 
   let applied = 0
 
   for (const entry of [...entries].sort((a, b) => a.seq - b.seq)) {
-    if (entry.kind === 'welcome') {
-      lastSeenSeq = entry.seq
-      await options.stateStore.save(groupId, state, lastSeenSeq, stored.ownGroupLocalPrivateKey, roster)
-      continue
-    }
-    if (entry.kind === 'commit' || entry.kind === 'proposal') {
-      // Only apply a commit/proposal from THIS device's own current epoch --
-      // the DS's log for this group also holds entries this device already
-      // reflects some other way (most commonly: the very commit that added
-      // it, already folded into the state a fresh joiner got via
-      // `joinMlsGroup` from the Welcome, outside this loop entirely).
-      // Re-decrypting one of those against an already-advanced key schedule
-      // fails. Same guard self-group.ts's own `reflectPendingSelfGroupCommits`
-      // uses, and for the same reason.
-      if (entry.epoch === epochOf(state).toString()) state = (await receiveConversationEntry(state, entry.payload)).state
-      lastSeenSeq = entry.seq
-      await options.stateStore.save(groupId, state, lastSeenSeq, stored.ownGroupLocalPrivateKey, roster)
-      continue
-    }
-
-    // entry.kind === 'application'. Same epoch guard as commits/proposals
-    // above, for a different reason: a message from strictly before this
-    // device's current epoch is one it was never issued key material for
-    // (a fresh Welcome-based joiner starts AT the join epoch, with no
-    // historical receiver data for anything earlier -- group.ts's
-    // processIncoming would throw "epoch too old" rather than silently
-    // fail, so this is checked up front instead of caught after the fact).
-    if (entry.epoch === epochOf(state).toString()) {
-      const received = await receiveConversationEntry(state, entry.payload)
-      state = received.state
-      if (received.plaintext !== undefined && received.sender !== undefined) {
-        const record = await buildVaultRecord(options, groupId, state, received.plaintext, received.sender, now)
-        await options.commitVaultRecord(record)
-        applied++
-      }
-    }
+    const result = await applyConversationGroupLogEntry(entry, state, groupId, options)
+    state = result.state
+    if (result.committed) applied++
     lastSeenSeq = entry.seq
     await options.stateStore.save(groupId, state, lastSeenSeq, stored.ownGroupLocalPrivateKey, roster)
   }
@@ -125,9 +163,9 @@ export async function syncConversationGroupDeliveries(groupId: string, options: 
 }
 
 async function buildVaultRecord(
-  options: ConversationGroupSyncOptions,
+  options: ConversationGroupApplyOptions,
   groupId: string,
-  state: Awaited<ReturnType<typeof receiveConversationEntry>>['state'],
+  state: ClientState,
   plaintext: Uint8Array,
   senderMlsKid: string,
   now: () => Date,

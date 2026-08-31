@@ -5,6 +5,7 @@
 import { Ed25519ConversationDsSignatureVerifier } from './authorizer.ts'
 import { createConversationDeliveryHttpHandler } from './http.ts'
 import { SqliteConversationDeliveryService } from './store.ts'
+import { ConversationWatchTokenIssuer } from './watch-token.ts'
 
 export interface ConversationDsDeploymentOptions {
   databasePath: string
@@ -13,9 +14,10 @@ export interface ConversationDsDeploymentOptions {
 export function createConversationDsDeployment(options: ConversationDsDeploymentOptions) {
   const ds = SqliteConversationDeliveryService.open(options.databasePath)
   const verifier = new Ed25519ConversationDsSignatureVerifier()
+  const watchTokens = new ConversationWatchTokenIssuer()
   return {
     ds,
-    fetch: createConversationDeliveryHttpHandler(ds, verifier),
+    fetch: createConversationDeliveryHttpHandler(ds, verifier, watchTokens),
     close(): void { ds.close() },
   }
 }

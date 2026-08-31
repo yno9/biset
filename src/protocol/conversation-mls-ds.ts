@@ -166,6 +166,22 @@ export interface ConversationDeliveriesPullV1 {
   signature: Uint8Array
 }
 
+/** Mints a short-lived watch token for `GET /v1/conversation-mls/deliveries/stream`
+ * (mls-ds/http.ts) -- an SSE connection the requester opens itself, so the
+ * DS never needs to resolve or store a delivery address (contrast the
+ * deleted `message-notify` push, conversation-mls-ds.ts's own header). Same
+ * fields and same everMembers gate as `ConversationDeliveriesPullV1`, minus
+ * `afterSeq` -- that becomes the `/stream` request's own query param, not
+ * part of this signed mint request, since one token may be used to resume
+ * a connection at whatever seq the client last saw. */
+export interface ConversationDeliveriesWatchV1 {
+  version: 1
+  groupId: string
+  requesterId: GroupLocalId
+  requestedAt: string
+  signature: Uint8Array
+}
+
 export interface ConversationKeyPackageDropV1 {
   version: 1
   id: GroupLocalId

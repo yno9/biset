@@ -10,15 +10,16 @@ import { bytesToHex } from '../../src/protocol/canonical.ts'
 import { SqliteConversationDeliveryService } from '../../src/mls-ds/store.ts'
 import { Ed25519ConversationDsSignatureVerifier } from '../../src/mls-ds/authorizer.ts'
 import { createConversationDeliveryHttpHandler } from '../../src/mls-ds/http.ts'
+import { ConversationWatchTokenIssuer } from '../../src/mls-ds/watch-token.ts'
 import { ConversationMlsDeliveryTransport } from '../../src/mls-ds/client-transport.ts'
 import {
-  conversationCommitSubmitSigningBytes, conversationDeliveriesPullSigningBytes, conversationGroupCreateSigningBytes,
+  conversationCommitSubmitSigningBytes, conversationDeliveriesPullSigningBytes, conversationDeliveriesWatchSigningBytes, conversationGroupCreateSigningBytes,
   conversationKeyPackageCountPullSigningBytes,
   conversationKeyPackageDropSigningBytes, conversationKeyPackagePublishSigningBytes, conversationKeyPackageTakeSigningBytes,
   conversationMessageSubmitSigningBytes, conversationPendingRemovalsClearSigningBytes, conversationSelfRemoveSubmitSigningBytes,
 } from '../../src/protocol/conversation-mls-ds-signing.ts'
 import type {
-  ConversationCommitSubmitV1, ConversationDeliveriesPullV1, ConversationGroupCreateV1,
+  ConversationCommitSubmitV1, ConversationDeliveriesPullV1, ConversationDeliveriesWatchV1, ConversationGroupCreateV1,
   ConversationKeyPackageCountPullV1, ConversationKeyPackageDropV1, ConversationKeyPackagePublishV1,
   ConversationKeyPackageTakeV1, ConversationMessageSubmitV1, ConversationPendingRemovalsClearV1, ConversationSelfRemoveSubmitV1,
 } from '../../src/protocol/conversation-mls-ds.ts'
@@ -36,7 +37,7 @@ afterEach(() => {
 
 function setup() {
   const ds = SqliteConversationDeliveryService.open(path)
-  const handle = createConversationDeliveryHttpHandler(ds, new Ed25519ConversationDsSignatureVerifier())
+  const handle = createConversationDeliveryHttpHandler(ds, new Ed25519ConversationDsSignatureVerifier(), new ConversationWatchTokenIssuer())
   const transport = new ConversationMlsDeliveryTransport({ baseUrl: 'https://mls-ds.example', fetch: (input, init) => handle(new Request(input, init)) })
   return { ds, transport }
 }
@@ -100,6 +101,18 @@ describe('ConversationMlsDeliveryTransport <-> Conversation Group DS HTTP handle
     const accepted = await transport.submitMessage({ ...submit, signature: ed25519.sign(conversationMessageSubmitSigningBytes(submit), aliceKey) })
     expect(accepted.ok).toBe(true)
     expect(ds.deliveriesSince(groupId, aliceId, 0)?.map(e => e.kind)).toEqual(['application'])
+    ds.close()
+  })
+
+  test('watchDeliveries mints a token and streamUrl builds a URL carrying it, matching the DS\'s own GET route', async () => {
+    const { ds, transport } = setup()
+    ds.createGroup(groupId, aliceId)
+    const watch: Omit<ConversationDeliveriesWatchV1, 'signature'> = { version: 1, groupId, requesterId: aliceId, requestedAt: '2026-08-31T00:00:00.000Z' }
+    const { token, expiresAt } = await transport.watchDeliveries({ ...watch, signature: ed25519.sign(conversationDeliveriesWatchSigningBytes(watch), aliceKey) })
+    expect(typeof token).toBe('string')
+    expect(new Date(expiresAt).getTime()).toBeGreaterThan(Date.now())
+    const url = transport.streamUrl(token, 0)
+    expect(url).toBe(`https://mls-ds.example/v1/conversation-mls/deliveries/stream?token=${token}&afterSeq=0`)
     ds.close()
   })
 })

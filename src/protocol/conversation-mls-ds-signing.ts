@@ -7,6 +7,7 @@ import { bytesToBase64url, canonicalBytes } from './canonical.ts'
 import type {
   ConversationCommitSubmitV1,
   ConversationDeliveriesPullV1,
+  ConversationDeliveriesWatchV1,
   ConversationGroupCreateV1,
   ConversationKeyPackageCountPullV1,
   ConversationKeyPackageDropV1,
@@ -93,6 +94,16 @@ export function conversationDeliveriesPullSigningBytes(value: Omit<ConversationD
     groupId: value.groupId,
     requesterId: value.requesterId,
     afterSeq: value.afterSeq,
+    requestedAt: value.requestedAt,
+  })
+}
+
+export function conversationDeliveriesWatchSigningBytes(value: Omit<ConversationDeliveriesWatchV1, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/conversation-mls-deliveries-watch/v1',
+    version: value.version,
+    groupId: value.groupId,
+    requesterId: value.requesterId,
     requestedAt: value.requestedAt,
   })
 }

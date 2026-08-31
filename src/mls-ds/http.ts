@@ -10,6 +10,7 @@ import {
   clearConversationPendingRemovals,
   createConversationGroup,
   dropConversationKeyPackages,
+  issueConversationDeliveriesWatch,
   publishConversationKeyPackages,
   pullConversationDeliveries,
   pullConversationKeyPackageCount,
@@ -21,8 +22,10 @@ import {
 } from './authorizer.ts'
 import {
   ConversationDsWireError,
+  conversationDeliveryEntryJson,
   decodeConversationCommitSubmitWire,
   decodeConversationDeliveriesPullWire,
+  decodeConversationDeliveriesWatchWire,
   decodeConversationGroupCreateWire,
   decodeConversationKeyPackageCountPullWire,
   decodeConversationKeyPackageDropWire,
@@ -35,12 +38,14 @@ import {
   encodeConversationKeyPackageTakenWire,
 } from '../protocol/conversation-mls-ds-wire.ts'
 import { ConversationDsCapacityError, type SqliteConversationDeliveryService } from './store.ts'
+import type { ConversationWatchTokenIssuer } from './watch-token.ts'
 
 const MAX_BODY_BYTES = 1024 * 1024
 const CONVERSATION_MLS_PATHS = new Set([
   '/v1/conversation-mls/group/create', '/v1/conversation-mls/commit/submit',
   '/v1/conversation-mls/keypackage/publish', '/v1/conversation-mls/keypackage/take',
   '/v1/conversation-mls/self-remove/submit', '/v1/conversation-mls/pending-removals/clear', '/v1/conversation-mls/deliveries/pull',
+  '/v1/conversation-mls/deliveries/watch', '/v1/conversation-mls/deliveries/stream',
   '/v1/conversation-mls/keypackage/drop', '/v1/conversation-mls/keypackage/count',
   '/v1/conversation-mls/message/submit',
 ])
@@ -49,18 +54,28 @@ export function isConversationMlsDeliveryPath(path: string): boolean { return CO
 
 /**
  * Narrow HTTP boundary for the Conversation Group DS (RFC 9750 §5, biset's
- * own docs/protocols/mls-ds-1.0.md semantics carried here over HTTP instead
- * of DIDComm for now). Every route requires the sender's own signature
- * (mls-ds/authorizer.ts); this handler is transport only.
+ * own docs/protocols/mls-ds-1.0.md semantics carried here over HTTP). Every
+ * route requires the sender's own signature (mls-ds/authorizer.ts) EXCEPT
+ * `GET /deliveries/stream`, which can't carry one (`EventSource` sends no
+ * body) -- that route instead requires possession of a token minted by the
+ * signed `POST /deliveries/watch` (watch-token.ts). This handler is
+ * transport only.
  */
 export function createConversationDeliveryHttpHandler(
   ds: SqliteConversationDeliveryService,
   verifier: ConversationDsSignatureVerifier,
+  watchTokens: ConversationWatchTokenIssuer,
 ): (request: Request) => Promise<Response> {
   return async (request) => {
     try {
       const path = new URL(request.url).pathname
       if (!isConversationMlsDeliveryPath(path)) return text(404, 'Not found')
+
+      if (path === '/v1/conversation-mls/deliveries/stream') {
+        if (request.method !== 'GET') return text(405, 'Method not allowed')
+        return streamDeliveries(ds, watchTokens, new URL(request.url))
+      }
+
       if (request.method !== 'POST') return text(405, 'Method not allowed')
       const body = await requestText(request)
 
@@ -101,6 +116,12 @@ export function createConversationDeliveryHttpHandler(
         return json(200, encodeConversationDeliveriesWire(entries))
       }
 
+      if (path === '/v1/conversation-mls/deliveries/watch') {
+        const issued = await issueConversationDeliveriesWatch(ds, verifier, watchTokens, decodeConversationDeliveriesWatchWire(body))
+        if (issued === undefined) return text(403, 'rejected')
+        return json(200, JSON.stringify(issued))
+      }
+
       if (path === '/v1/conversation-mls/keypackage/drop') {
         const ok = await dropConversationKeyPackages(ds, verifier, decodeConversationKeyPackageDropWire(body))
         if (!ok) return text(403, 'rejected')
@@ -128,6 +149,42 @@ export function createConversationDeliveryHttpHandler(
 function commitResponse(result: { ok: true; roster: string[] } | { ok: false; reason: string; epoch: string }): Response {
   if (result.ok) return json(201, JSON.stringify({ roster: result.roster }))
   return json(result.reason === 'unauthorized' ? 403 : 409, JSON.stringify({ reason: result.reason, epoch: result.epoch }))
+}
+
+/** `GET /deliveries/stream`: resolve the watch token, send the backlog
+ * after `afterSeq`, then subscribe for the live tail. Backlog and
+ * subscribe both run synchronously within `start()` with no `await`
+ * between them -- Bun's single-threaded event loop makes that gap
+ * genuinely race-free (nothing else can run between the two calls), so an
+ * entry can never be delivered twice or dropped at the boundary. */
+function streamDeliveries(ds: SqliteConversationDeliveryService, watchTokens: ConversationWatchTokenIssuer, url: URL): Response {
+  const token = url.searchParams.get('token')
+  const afterSeqRaw = url.searchParams.get('afterSeq')
+  if (!token || afterSeqRaw === null || !/^[0-9]+$/.test(afterSeqRaw)) return text(400, 'token and afterSeq query parameters are required')
+  const record = watchTokens.resolve(token)
+  if (!record) return text(403, 'invalid or expired watch token')
+  const afterSeq = Number(afterSeqRaw)
+
+  let cursor = afterSeq
+  let unsubscribe: (() => void) | undefined
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const send = (entry: Parameters<typeof conversationDeliveryEntryJson>[0]) => {
+        const json = conversationDeliveryEntryJson(entry)
+        controller.enqueue(encoder.encode(`id: ${json.seq}\ndata: ${JSON.stringify(json)}\n\n`))
+        cursor = json.seq
+      }
+      for (const entry of ds.deliveriesSince(record.groupId, record.requesterId, afterSeq) ?? []) send(entry)
+      unsubscribe = ds.subscribe(record.groupId, entries => {
+        for (const entry of entries) if (entry.seq > cursor) send(entry)
+      })
+    },
+    cancel() {
+      unsubscribe?.()
+    },
+  })
+  return new Response(stream, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' } })
 }
 
 async function requestText(request: Request): Promise<string> {

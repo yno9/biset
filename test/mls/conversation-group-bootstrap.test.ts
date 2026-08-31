@@ -13,6 +13,7 @@ import { buildPlaintext } from '../../src/didcomm/message.ts'
 import { SqliteConversationDeliveryService } from '../../src/mls-ds/store.ts'
 import { Ed25519ConversationDsSignatureVerifier } from '../../src/mls-ds/authorizer.ts'
 import { createConversationDeliveryHttpHandler } from '../../src/mls-ds/http.ts'
+import { ConversationWatchTokenIssuer } from '../../src/mls-ds/watch-token.ts'
 import { ConversationMlsDeliveryTransport } from '../../src/mls-ds/client-transport.ts'
 import { conversationKeyPackagePublishSigningBytes, conversationKeyPackageTakeSigningBytes } from '../../src/protocol/conversation-mls-ds-signing.ts'
 import type { ConversationKeyPackagePublishV1, ConversationKeyPackageTakeV1 } from '../../src/protocol/conversation-mls-ds.ts'
@@ -59,7 +60,7 @@ function memoryStateStore(): MlsConversationGroupStateStore {
 describe('Conversation Group peer-to-peer bootstrap (identity-blind DS)', () => {
   test('invite -> join-ready -> add -> welcome-ready -> sync, with nothing DID-shaped ever reaching the DS', async () => {
     const ds = SqliteConversationDeliveryService.open(path)
-    const handle = createConversationDeliveryHttpHandler(ds, new Ed25519ConversationDsSignatureVerifier())
+    const handle = createConversationDeliveryHttpHandler(ds, new Ed25519ConversationDsSignatureVerifier(), new ConversationWatchTokenIssuer())
     const transport = new ConversationMlsDeliveryTransport({ baseUrl: 'https://mls-ds.example', fetch: (input, init) => handle(new Request(input, init)) })
 
     // --- Step 1: alice creates the group (self-signed, zero DID touches the DS) ---

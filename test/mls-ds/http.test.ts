@@ -5,14 +5,15 @@ import { bytesToHex } from '../../src/protocol/canonical.ts'
 import { SqliteConversationDeliveryService } from '../../src/mls-ds/store.ts'
 import { Ed25519ConversationDsSignatureVerifier } from '../../src/mls-ds/authorizer.ts'
 import { createConversationDeliveryHttpHandler } from '../../src/mls-ds/http.ts'
+import { ConversationWatchTokenIssuer } from '../../src/mls-ds/watch-token.ts'
 import { bytesToBase64url } from '../../src/protocol/canonical.ts'
 import {
-  conversationCommitSubmitSigningBytes, conversationDeliveriesPullSigningBytes, conversationGroupCreateSigningBytes,
+  conversationCommitSubmitSigningBytes, conversationDeliveriesPullSigningBytes, conversationDeliveriesWatchSigningBytes, conversationGroupCreateSigningBytes,
   conversationKeyPackagePublishSigningBytes, conversationKeyPackageTakeSigningBytes, conversationMessageSubmitSigningBytes,
   conversationSelfRemoveSubmitSigningBytes,
 } from '../../src/protocol/conversation-mls-ds-signing.ts'
 import type {
-  ConversationCommitSubmitV1, ConversationDeliveriesPullV1, ConversationGroupCreateV1, ConversationKeyPackagePublishV1,
+  ConversationCommitSubmitV1, ConversationDeliveriesPullV1, ConversationDeliveriesWatchV1, ConversationGroupCreateV1, ConversationKeyPackagePublishV1,
   ConversationKeyPackageTakeV1, ConversationMessageSubmitV1, ConversationSelfRemoveSubmitV1,
 } from '../../src/protocol/conversation-mls-ds.ts'
 
@@ -28,7 +29,7 @@ afterEach(() => {
 
 function handler() {
   const ds = SqliteConversationDeliveryService.open(path)
-  const handle = createConversationDeliveryHttpHandler(ds, new Ed25519ConversationDsSignatureVerifier())
+  const handle = createConversationDeliveryHttpHandler(ds, new Ed25519ConversationDsSignatureVerifier(), new ConversationWatchTokenIssuer())
   return { ds, handle }
 }
 
@@ -158,6 +159,69 @@ describe('Conversation Group DS HTTP endpoint (identity-blind: no deviceCredenti
     }))
     expect(staleResponse.status).toBe(409)
     expect(await staleResponse.json()).toEqual({ reason: 'epoch-conflict', epoch: '0' })
+    ds.close()
+  })
+
+  test('deliveries/watch mints a token (rejecting a forged mint), and GET deliveries/stream serves backlog then live entries, unsubscribing on cancel', async () => {
+    const { ds, handle } = handler()
+    ds.createGroup('group-1', aliceId)
+    ds.submitCommit('group-1', aliceId, '0', new Uint8Array([1])) // backlog: one commit at seq 1
+
+    const watch: Omit<ConversationDeliveriesWatchV1, 'signature'> = { version: 1, groupId: 'group-1', requesterId: aliceId, requestedAt: '2026-08-31T00:00:00.000Z' }
+    const forged = await handle(new Request('https://mls-ds.example/v1/conversation-mls/deliveries/watch', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: body({ ...watch, signature: bytesToBase64url(ed25519.sign(conversationDeliveriesWatchSigningBytes(watch), ed25519.utils.randomSecretKey())) }),
+    }))
+    expect(forged.status).toBe(403)
+
+    const watchResponse = await handle(new Request('https://mls-ds.example/v1/conversation-mls/deliveries/watch', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: body({ ...watch, signature: bytesToBase64url(ed25519.sign(conversationDeliveriesWatchSigningBytes(watch), aliceKey)) }),
+    }))
+    expect(watchResponse.status).toBe(200)
+    const { token } = await watchResponse.json() as { token: string; expiresAt: string }
+    expect(typeof token).toBe('string')
+
+    const streamResponse = await handle(new Request(`https://mls-ds.example/v1/conversation-mls/deliveries/stream?token=${token}&afterSeq=0`))
+    expect(streamResponse.status).toBe(200)
+    expect(streamResponse.headers.get('content-type')).toBe('text/event-stream')
+    expect(ds.subscriberCount('group-1')).toBe(1)
+
+    const reader = streamResponse.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    async function readFrame(): Promise<string> {
+      while (!buffer.includes('\n\n')) {
+        const { value, done } = await reader.read()
+        if (done) throw new Error('stream ended unexpectedly')
+        buffer += decoder.decode(value, { stream: true })
+      }
+      const idx = buffer.indexOf('\n\n')
+      const frame = buffer.slice(0, idx)
+      buffer = buffer.slice(idx + 2)
+      return frame
+    }
+
+    const backlogFrame = await readFrame()
+    expect(backlogFrame).toContain('id: 1')
+    expect(backlogFrame).toMatch(/"kind":"commit"/)
+
+    ds.submitMessage('group-1', aliceId, '1', new Uint8Array([9]))
+    const liveFrame = await readFrame()
+    expect(liveFrame).toContain('id: 2')
+    expect(liveFrame).toMatch(/"kind":"application"/)
+
+    await reader.cancel()
+    expect(ds.subscriberCount('group-1')).toBe(0)
+    ds.close()
+  })
+
+  test('GET deliveries/stream rejects a missing or invalid/expired token', async () => {
+    const { ds, handle } = handler()
+    const missing = await handle(new Request('https://mls-ds.example/v1/conversation-mls/deliveries/stream?afterSeq=0'))
+    expect(missing.status).toBe(400)
+    const invalid = await handle(new Request('https://mls-ds.example/v1/conversation-mls/deliveries/stream?token=nope&afterSeq=0'))
+    expect(invalid.status).toBe(403)
     ds.close()
   })
 })

@@ -9,6 +9,7 @@ import { base64urlToBytes, bytesToBase64url } from './canonical.ts'
 import type {
   ConversationCommitSubmitV1,
   ConversationDeliveriesPullV1,
+  ConversationDeliveriesWatchV1,
   ConversationGroupCreateV1,
   ConversationKeyPackageCountPullV1,
   ConversationKeyPackageDropV1,
@@ -158,13 +159,39 @@ export function decodeConversationDeliveriesPullWire(text: string): Conversation
   }
 }
 
+export function decodeConversationDeliveriesWatchWire(text: string): ConversationDeliveriesWatchV1 {
+  const input = record(text)
+  if (input.version !== 1) throw new ConversationDsWireError('ConversationDeliveriesWatchV1.version must be 1')
+  return {
+    version: 1,
+    groupId: requireString(input.groupId, 'groupId'),
+    requesterId: requireString(input.requesterId, 'requesterId'),
+    requestedAt: requireString(input.requestedAt, 'requestedAt'),
+    signature: requireBinary(input.signature, 'signature'),
+  }
+}
+
+export interface ConversationDeliveriesWatchTokenWire { token: string; expiresAt: string }
+export function decodeConversationDeliveriesWatchTokenWire(text: string): ConversationDeliveriesWatchTokenWire {
+  const input = record(text)
+  return { token: requireString(input.token, 'token'), expiresAt: requireString(input.expiresAt, 'expiresAt') }
+}
+
 function decodeLogEntryKind(value: unknown, name: string): ConversationLogEntry['kind'] {
   if (value !== 'commit' && value !== 'welcome' && value !== 'proposal' && value !== 'application') throw new ConversationDsWireError(`${name} is invalid`)
   return value
 }
 
+/** One entry's JSON shape, shared between the batch `deliveries/pull`
+ * response (`encodeConversationDeliveriesWire` below) and `GET
+ * /deliveries/stream`'s per-frame `data:` payload (mls-ds/http.ts) -- same
+ * fields either way, so the two transports can never quietly drift apart. */
+export function conversationDeliveryEntryJson(entry: ConversationLogEntry): { seq: number; kind: string; payload: string; epoch: string; at: string } {
+  return { seq: entry.seq, kind: entry.kind, payload: bytesToBase64url(entry.payload), epoch: entry.epoch, at: entry.at }
+}
+
 export function encodeConversationDeliveriesWire(entries: ConversationLogEntry[]): string {
-  return JSON.stringify({ entries: entries.map(entry => ({ seq: entry.seq, kind: entry.kind, payload: bytesToBase64url(entry.payload), epoch: entry.epoch, at: entry.at })) })
+  return JSON.stringify({ entries: entries.map(conversationDeliveryEntryJson) })
 }
 
 export function decodeConversationKeyPackageDropWire(text: string): ConversationKeyPackageDropV1 {
@@ -266,6 +293,10 @@ export function encodeConversationPendingRemovalsClearWire(value: ConversationPe
 }
 
 export function encodeConversationDeliveriesPullWire(value: ConversationDeliveriesPullV1): string {
+  return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
+}
+
+export function encodeConversationDeliveriesWatchWire(value: ConversationDeliveriesWatchV1): string {
   return JSON.stringify({ ...value, signature: bytesToBase64url(value.signature) })
 }
 

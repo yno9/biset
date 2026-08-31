@@ -152,4 +152,47 @@ describe('SQLite Conversation Group Delivery Service (mls-ds-1.0.md, identity-bl
     }
     ds.close()
   })
+
+  test('canWatch matches deliveriesSince\'s own everMembers gate exactly', () => {
+    const ds = open()
+    ds.createGroup(groupId, 'a')
+    ds.submitCommit(groupId, 'a', '0', new Uint8Array([1]), ['b'])
+    expect(ds.canWatch(groupId, 'a')).toBe(true)
+    expect(ds.canWatch(groupId, 'b')).toBe(true)
+    expect(ds.canWatch(groupId, 'stranger')).toBe(false)
+    expect(ds.canWatch('no-such-group', 'a')).toBe(false)
+    ds.close()
+  })
+
+  test('subscribe delivers commit, message, and self-remove entries as they are appended; unsubscribe stops delivery', () => {
+    const ds = open()
+    ds.createGroup(groupId, 'a')
+    const received: string[] = []
+    const unsubscribe = ds.subscribe(groupId, entries => { for (const entry of entries) received.push(entry.kind) })
+
+    ds.submitCommit(groupId, 'a', '0', new Uint8Array([1]), ['b'], [], new Uint8Array([2]))
+    expect(received).toEqual(['welcome', 'commit'])
+
+    ds.submitMessage(groupId, 'a', '1', new Uint8Array([3]))
+    expect(received).toEqual(['welcome', 'commit', 'application'])
+
+    ds.submitSelfRemove(groupId, 'b', '1', new Uint8Array([4]), 'b')
+    expect(received).toEqual(['welcome', 'commit', 'application', 'proposal'])
+
+    unsubscribe()
+    ds.submitMessage(groupId, 'a', '1', new Uint8Array([5]))
+    expect(received).toEqual(['welcome', 'commit', 'application', 'proposal']) // unchanged -- no longer subscribed
+    ds.close()
+  })
+
+  test('a subscriber only sees entries for ITS OWN group, never another group\'s', () => {
+    const ds = open()
+    ds.createGroup('group-1', 'a')
+    ds.createGroup('group-2', 'c')
+    const seenByGroup1: string[] = []
+    ds.subscribe('group-1', entries => { for (const entry of entries) seenByGroup1.push(entry.kind) })
+    ds.submitMessage('group-2', 'c', '0', new Uint8Array([1]))
+    expect(seenByGroup1).toEqual([])
+    ds.close()
+  })
 })

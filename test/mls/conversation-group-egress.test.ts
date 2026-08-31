@@ -11,6 +11,7 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { SqliteConversationDeliveryService } from '../../src/mls-ds/store.ts'
 import { Ed25519ConversationDsSignatureVerifier } from '../../src/mls-ds/authorizer.ts'
 import { createConversationDeliveryHttpHandler } from '../../src/mls-ds/http.ts'
+import { ConversationWatchTokenIssuer } from '../../src/mls-ds/watch-token.ts'
 import { ConversationMlsDeliveryTransport } from '../../src/mls-ds/client-transport.ts'
 import { addMembersToConversationGroup, createConversationGroup, randomGroupLocalKeypair, receiveConversationEntry } from '../../src/mls/conversation-group.ts'
 import { sendConversationTextMessage } from '../../src/mls/conversation-group-egress.ts'
@@ -39,7 +40,7 @@ const signer: VaultEventSigner = {
 describe('sendConversationTextMessage', () => {
   test('composes a MimiContent, submits it, and bob decrypts the identical content -- both sides agree on messageId', async () => {
     const ds = SqliteConversationDeliveryService.open(path)
-    const handle = createConversationDeliveryHttpHandler(ds, new Ed25519ConversationDsSignatureVerifier())
+    const handle = createConversationDeliveryHttpHandler(ds, new Ed25519ConversationDsSignatureVerifier(), new ConversationWatchTokenIssuer())
     const transport = new ConversationMlsDeliveryTransport({ baseUrl: 'https://mls-ds.example', fetch: (input, init) => handle(new Request(input, init)) })
     const groupId = 'group-egress-1'
 

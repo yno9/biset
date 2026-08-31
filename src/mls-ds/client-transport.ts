@@ -11,6 +11,7 @@ import { defaultFetch } from '../net-fetch.ts'
 import type {
   ConversationCommitSubmitV1,
   ConversationDeliveriesPullV1,
+  ConversationDeliveriesWatchV1,
   ConversationGroupCreateV1,
   ConversationKeyPackageCountPullV1,
   ConversationKeyPackageDropV1,
@@ -23,12 +24,14 @@ import type {
 } from '../protocol/conversation-mls-ds.ts'
 import {
   decodeConversationCommitRejectionWire,
+  decodeConversationDeliveriesWatchTokenWire,
   decodeConversationDeliveriesWire,
   decodeConversationGroupRosterResultWire,
   decodeConversationKeyPackageCountResultWire,
   decodeConversationKeyPackageTakenWire,
   encodeConversationCommitSubmitWire,
   encodeConversationDeliveriesPullWire,
+  encodeConversationDeliveriesWatchWire,
   encodeConversationGroupCreateWire,
   encodeConversationKeyPackageCountPullWire,
   encodeConversationKeyPackageDropWire,
@@ -83,6 +86,21 @@ export class ConversationMlsDeliveryTransport {
 
   async pullDeliveries(input: ConversationDeliveriesPullV1): Promise<ConversationLogEntry[]> {
     return decodeConversationDeliveriesWire(await this.post('/v1/conversation-mls/deliveries/pull', encodeConversationDeliveriesPullWire(input)))
+  }
+
+  /** Mints a short-lived token authorizing `streamUrl`'s `GET
+   * /deliveries/stream` connection -- the request that CAN carry a
+   * signature (`EventSource` itself can't). */
+  async watchDeliveries(input: ConversationDeliveriesWatchV1): Promise<{ token: string; expiresAt: string }> {
+    return decodeConversationDeliveriesWatchTokenWire(await this.post('/v1/conversation-mls/deliveries/watch', encodeConversationDeliveriesWatchWire(input)))
+  }
+
+  /** A plain URL, not a `fetch` call -- `EventSource` opens this itself
+   * (mls/conversation-group-watch.ts). `token` must come from
+   * `watchDeliveries`; `afterSeq` is the caller's own resume cursor (0 for
+   * a fresh connection with no prior catch-up). */
+  streamUrl(token: string, afterSeq: number): string {
+    return `${this.baseUrl}/v1/conversation-mls/deliveries/stream?token=${encodeURIComponent(token)}&afterSeq=${afterSeq}`
   }
 
   async publishKeyPackages(input: ConversationKeyPackagePublishV1): Promise<number> {

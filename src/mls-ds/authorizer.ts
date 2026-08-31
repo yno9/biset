@@ -13,6 +13,7 @@ import { hexToBytes } from '../protocol/canonical.ts'
 import {
   conversationCommitSubmitSigningBytes,
   conversationDeliveriesPullSigningBytes,
+  conversationDeliveriesWatchSigningBytes,
   conversationGroupCreateSigningBytes,
   conversationKeyPackageCountPullSigningBytes,
   conversationKeyPackageDropSigningBytes,
@@ -25,6 +26,7 @@ import {
 import type {
   ConversationCommitSubmitV1,
   ConversationDeliveriesPullV1,
+  ConversationDeliveriesWatchV1,
   ConversationGroupCreateV1,
   ConversationKeyPackageCountPullV1,
   ConversationKeyPackageDropV1,
@@ -36,6 +38,7 @@ import type {
   ConversationSelfRemoveSubmitV1,
 } from '../protocol/conversation-mls-ds.ts'
 import type { ConversationCommitResult, SqliteConversationDeliveryService } from './store.ts'
+import type { ConversationWatchTokenIssuer } from './watch-token.ts'
 
 export interface ConversationDsSignatureVerifier {
   verifyGroupCreate(value: ConversationGroupCreateV1): Promise<boolean>
@@ -45,6 +48,7 @@ export interface ConversationDsSignatureVerifier {
   verifySelfRemoveSubmit(value: ConversationSelfRemoveSubmitV1): Promise<boolean>
   verifyPendingRemovalsClear(value: ConversationPendingRemovalsClearV1): Promise<boolean>
   verifyDeliveriesPull(value: ConversationDeliveriesPullV1): Promise<boolean>
+  verifyDeliveriesWatch(value: ConversationDeliveriesWatchV1): Promise<boolean>
   verifyKeyPackageDrop(value: ConversationKeyPackageDropV1): Promise<boolean>
   verifyKeyPackageCountPull(value: ConversationKeyPackageCountPullV1): Promise<boolean>
   verifyMessageSubmit(value: ConversationMessageSubmitV1): Promise<boolean>
@@ -71,6 +75,9 @@ export class Ed25519ConversationDsSignatureVerifier implements ConversationDsSig
   }
   async verifyDeliveriesPull(value: ConversationDeliveriesPullV1): Promise<boolean> {
     return this.verify(value.requesterId, conversationDeliveriesPullSigningBytes(value), value.signature)
+  }
+  async verifyDeliveriesWatch(value: ConversationDeliveriesWatchV1): Promise<boolean> {
+    return this.verify(value.requesterId, conversationDeliveriesWatchSigningBytes(value), value.signature)
   }
   async verifyKeyPackageDrop(value: ConversationKeyPackageDropV1): Promise<boolean> {
     return this.verify(value.id, conversationKeyPackageDropSigningBytes(value), value.signature)
@@ -132,6 +139,23 @@ export async function clearConversationPendingRemovals(ds: SqliteConversationDel
 export async function pullConversationDeliveries(ds: SqliteConversationDeliveryService, verifier: ConversationDsSignatureVerifier, value: ConversationDeliveriesPullV1): Promise<ConversationLogEntry[] | undefined> {
   if (!(await verifier.verifyDeliveriesPull(value))) return undefined
   return ds.deliveriesSince(value.groupId, value.requesterId, value.afterSeq)
+}
+
+/** Mints a `GET /deliveries/stream` watch token -- same authorization gate
+ * as `pullConversationDeliveries` (`ds.canWatch`, store.ts's own note on
+ * why it isn't stricter than that). Undefined for an unsigned/forged
+ * request OR a requester who has never been a member; a stream connection
+ * itself never re-verifies a signature (it can't -- `EventSource` carries
+ * no body), so this mint step is the only place authorization happens. */
+export async function issueConversationDeliveriesWatch(
+  ds: SqliteConversationDeliveryService,
+  verifier: ConversationDsSignatureVerifier,
+  tokenIssuer: ConversationWatchTokenIssuer,
+  value: ConversationDeliveriesWatchV1,
+): Promise<{ token: string; expiresAt: string } | undefined> {
+  if (!(await verifier.verifyDeliveriesWatch(value))) return undefined
+  if (!ds.canWatch(value.groupId, value.requesterId)) return undefined
+  return tokenIssuer.issue(value.groupId, value.requesterId)
 }
 
 export async function dropConversationKeyPackages(ds: SqliteConversationDeliveryService, verifier: ConversationDsSignatureVerifier, value: ConversationKeyPackageDropV1): Promise<boolean> {

@@ -97,6 +97,13 @@ interface Group {
  */
 export class SqliteConversationDeliveryService {
   private readonly tables: ConversationDeliveryTables
+  /** In-process pub/sub for `GET /deliveries/stream` (mls-ds/http.ts) --
+   * live SSE delivery within this one server process, consistent with the
+   * DS already being single-process/single-SQLite-file (no cross-process
+   * fan-out exists or is needed yet). Never crosses a request boundary on
+   * its own; a subscriber is only ever another synchronous call within
+   * this same process (a stream handler's `start()`). */
+  private readonly watchers = new Map<string, Set<(entries: ConversationLogEntry[]) => void>>()
 
   constructor(private readonly database: Database) {
     this.tables = CONVERSATION_DELIVERY_TABLES
@@ -130,6 +137,40 @@ export class SqliteConversationDeliveryService {
 
   roster(groupId: string): string[] { return [...(this.loadGroup(groupId)?.roster ?? [])] }
 
+  /** How many live `subscribe` listeners a group currently has -- test/
+   * observability only (confirming a stream's `cancel()` actually
+   * unsubscribed), not used by any production code path. */
+  subscriberCount(groupId: string): number { return this.watchers.get(groupId)?.size ?? 0 }
+
+  /** Same gate `deliveriesSince` uses -- whether `GET /deliveries/stream`
+   * should mint this requester a watch token at all (mls-ds/authorizer.ts's
+   * `issueConversationDeliveriesWatch`). Deliberately not stricter than
+   * `everMembers`: a removed member's post-removal pull visibility is a
+   * pre-existing property of this DS (see `deliveriesSince`'s own doc
+   * comment), and watch should not diverge from what pull already allows. */
+  canWatch(groupId: string, requester: GroupLocalId): boolean {
+    return this.loadGroup(groupId)?.everMembers.has(requester) ?? false
+  }
+
+  /** Subscribe to every new log entry appended for `groupId`, from this
+   * moment forward -- returns an unsubscribe function. Used only by
+   * `GET /deliveries/stream`'s live tail; the backlog before that point is
+   * still `deliveriesSince`'s job (see that stream handler's own ordering
+   * note on why calling both in the same synchronous tick is race-free). */
+  subscribe(groupId: string, listener: (entries: ConversationLogEntry[]) => void): () => void {
+    let set = this.watchers.get(groupId)
+    if (!set) { set = new Set(); this.watchers.set(groupId, set) }
+    set.add(listener)
+    return () => {
+      set!.delete(listener)
+      if (set!.size === 0) this.watchers.delete(groupId)
+    }
+  }
+
+  private notify(groupId: string, entries: ConversationLogEntry[]): void {
+    for (const listener of this.watchers.get(groupId) ?? []) listener(entries)
+  }
+
   /** Admit (or refuse) a commit -- the one place the DS is authoritative.
    * `addedIds`/`removedIds` are a DELTA against the roster THIS STORE
    * already owns, not a submitter-declared snapshot -- the submitter only
@@ -156,6 +197,7 @@ export class SqliteConversationDeliveryService {
       for (const id of group.roster) group.everMembers.add(id)
       this.trimEverMembers(group)
       this.saveGroup(group)
+      this.notify(groupId, entries)
       return { ok: true, entries, roster: [...group.roster] }
     })()
   }
@@ -172,6 +214,7 @@ export class SqliteConversationDeliveryService {
     return this.database.transaction((): ConversationCommitAccepted => {
       const entry = this.append(group, 'application', privateMessage, epoch)
       this.saveGroup(group)
+      this.notify(groupId, [entry])
       return { ok: true, entries: [entry], roster: [...group.roster] }
     })()
   }
@@ -185,6 +228,7 @@ export class SqliteConversationDeliveryService {
       if (!group.pendingRemovals.includes(id) && group.pendingRemovals.length < MAX_PENDING_REMOVALS) group.pendingRemovals.push(id)
       const entry = this.append(group, 'proposal', proposal, epoch)
       this.saveGroup(group)
+      this.notify(groupId, [entry])
       return { ok: true, entries: [entry], roster: [...group.roster] }
     })()
   }
