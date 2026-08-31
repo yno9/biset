@@ -10,15 +10,11 @@
 // commitMailMessage (no DIDComm-specific vault-commit code needed: a chat
 // message's local echo is exactly the same message.add shape mail's own
 // sendReply already commits).
-import { resolveWithRouting } from './webvh-resolve.ts'
-import { decodeX25519Multikey, decodeMlkem768Multikey } from './multikey.ts'
-import { packAuthcrypt, packAuthcryptHybrid, type DidCommJWE } from './crypto.ts'
-import { mlkemKidFor } from './devicekid.ts'
+import { packAuthcrypt, type DidCommJWE } from './crypto.ts'
 import { buildPlaintext } from './message.ts'
 import { BASIC_MESSAGE } from './basicmessage.ts'
-import { wrapForward, wrapForwardChain } from './forward-wrap.ts'
+import { wrapForward } from './forward-wrap.ts'
 import { decodePeerDid2, generatePeerIdentity, publicKeyOf, type PeerIdentity } from './peer.ts'
-import type { DidCommServiceEndpoint } from './webvh-routing.ts'
 import { defaultFetch } from '../net-fetch.ts'
 import { registerWithMediator } from './mediator-sync.ts'
 import {
@@ -29,18 +25,9 @@ import {
 import type { ContactKeyV1 } from '../vault/contact-key.ts'
 import type { DidCommSender } from './mediator-transport.ts'
 import { x25519 } from '@noble/curves/ed25519.js'
+import { frontDoorMediatorRoute, sendFrontDoorMessage, type DidCommSendResult, type SendDidCommMessageOptions } from './front-door-send.ts'
 
-export type DidCommSendResult = { ok: true } | { ok: false; error: string }
-
-export interface SendDidCommMessageOptions {
-  /** This device's own DIDComm kid (identity/bootstrap.ts's `enableDidComm`
-   * -- didcomm/devicekid.ts's deviceKidFragment, distinct from the MLS
-   * leaf's own deviceKid). */
-  fromKid: string
-  x25519PrivateKey: Uint8Array
-  subject?: string
-  fetch?: typeof fetch
-}
+export { sendFrontDoorMessage, type DidCommSendResult, type SendDidCommMessageOptions }
 
 export interface PendingRelationship {
   counterpartyDid: string
@@ -107,106 +94,6 @@ export async function sendRelationshipAccept(contactKey: ContactKeyV1, fetchImpl
     relationshipKid: contactKey.ownRelationshipKid,
     publicKey: x25519.getPublicKey(contactKey.ownX25519PrivateKey),
   }), fetchImpl)
-}
-
-/** The generic "resolve routing.json, authcrypt (Forward-wrapped if the
- * recipient registered a mediator), POST" primitive `sendDidCommMessage`/
- * `initiateRelationship` are thin wrappers around -- exported so a caller
- * needing an arbitrary `type`/`body` (mls-ds/fanout.ts's `message-notify`
- * delivery, mls-ds-1.0.md §5.2) doesn't have to reimplement routing.json
- * resolution and Forward-wrapping to get one. */
-export async function sendFrontDoorMessage(toDid: string, type: string, body: unknown, opts: SendDidCommMessageOptions): Promise<DidCommSendResult> {
-  const fetchImpl = opts.fetch ?? defaultFetch()
-  let doc: Awaited<ReturnType<typeof resolveWithRouting>>
-  try {
-    doc = await resolveWithRouting(toDid, fetchImpl)
-  } catch (error) {
-    return { ok: false, error: `could not resolve ${toDid}: ${error instanceof Error ? error.message : String(error)}` }
-  }
-  if (!doc) return { ok: false, error: `${toDid} does not resolve to a published identity` }
-
-  const service = doc.service.find(s => s.type === 'DIDCommMessaging')
-  const serviceEndpoint = service?.serviceEndpoint
-  const endpoint = serviceEndpoint && typeof serviceEndpoint === 'object' && !Array.isArray(serviceEndpoint)
-    ? (serviceEndpoint as Partial<DidCommServiceEndpoint>)
-    : undefined
-  if (!endpoint || typeof endpoint.uri !== 'string' || !endpoint.uri) return { ok: false, error: `${toDid} has no DIDComm service endpoint published` }
-  // A non-empty routingKeys (webvh-routing.ts's own header) means the
-  // recipient has registered with an independent, blind mediator: deliver
-  // Forward-wrapped through it rather than authcrypt'ing straight to
-  // `endpoint.uri` (the legacy first-party-infra model, still supported for
-  // an identity that hasn't migrated yet). The full array is a hop chain
-  // (forward-wrap.ts's `wrapForwardChain`, outermost/closest-to-sender
-  // first) -- not just its first entry.
-  const routingKeys = endpoint.routingKeys ?? []
-
-  const keyAgreementIds = new Set(doc.keyAgreement ?? [])
-  const kaVm = doc.verificationMethod.find(v => keyAgreementIds.has(v.id))
-  if (!kaVm) return { ok: false, error: `${toDid} has no keyAgreement key published -- they need to enable DIDComm first` }
-  let recipientPublicKey: Uint8Array
-  try {
-    recipientPublicKey = decodeX25519Multikey(kaVm.publicKeyMultibase)
-  } catch {
-    return { ok: false, error: `${toDid}'s published keyAgreement key is not a valid X25519 key` }
-  }
-
-  const plaintext = buildPlaintext(type, body, opts.fromKid.split('#', 1)[0], toDid)
-  const plaintextBytes = new TextEncoder().encode(JSON.stringify(plaintext))
-  const sender = { kid: opts.fromKid, privateKey: opts.x25519PrivateKey }
-
-  // Upgrade to the hybrid X25519+ML-KEM-768 authcrypt whenever the recipient
-  // published an ML-KEM entry alongside their X25519 one (mlkemKidFor's
-  // naming convention -- devicekid.ts) -- this is the only production path
-  // that ever reaches packAuthcryptHybrid; without it the fully-implemented,
-  // tested PQ-hybrid mode was unreachable and every message stayed exposed
-  // to harvest-now-decrypt-later even between two devices that both
-  // supported it (found live, 2026-08-26). Falls back to classical authcrypt
-  // on any malformed mlkem entry rather than failing the send outright.
-  let mlkemVm: (typeof doc.verificationMethod)[number] | undefined
-  try {
-    const mlkemId = mlkemKidFor(kaVm.id)
-    mlkemVm = doc.verificationMethod.find(v => v.id === mlkemId)
-  } catch {
-    mlkemVm = undefined
-  }
-  let jwe: DidCommJWE
-  if (mlkemVm) {
-    try {
-      const mlkemPublicKey = decodeMlkem768Multikey(mlkemVm.publicKeyMultibase)
-      jwe = packAuthcryptHybrid(plaintextBytes, sender, { kid: kaVm.id, x25519PublicKey: recipientPublicKey, mlkemPublicKey })
-    } catch {
-      jwe = packAuthcrypt(plaintextBytes, sender, { kid: kaVm.id, publicKey: recipientPublicKey })
-    }
-  } else {
-    jwe = packAuthcrypt(plaintextBytes, sender, { kid: kaVm.id, publicKey: recipientPublicKey })
-  }
-  let outbound: DidCommJWE = jwe
-  if (routingKeys.length > 0) {
-    try {
-      outbound = wrapForwardChain(jwe, kaVm.id, routingKeys)
-    } catch {
-      return { ok: false, error: `${toDid}'s registered mediator routing keys (${routingKeys.join(', ')}) are not valid did:peer kids` }
-    }
-  }
-  const response = await fetchImpl(endpoint.uri, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(outbound) })
-  if (response.status !== 202) {
-    return { ok: false, error: `send failed: HTTP ${response.status} ${(await response.text().catch(() => '')).slice(0, 256)}` }
-  }
-  return { ok: true }
-}
-
-async function frontDoorMediatorRoute(toDid: string, fetchImpl: typeof fetch): Promise<{ url: string; routingKid: string }> {
-  const doc = await resolveWithRouting(toDid, fetchImpl)
-  if (!doc) throw new Error(`${toDid} does not resolve to a published identity`)
-  const service = doc.service.find(value => value.type === 'DIDCommMessaging')
-  const endpoint = service?.serviceEndpoint
-  if (!endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) throw new Error(`${toDid} has no DIDComm mediator service published`)
-  const value = endpoint as Partial<DidCommServiceEndpoint>
-  if (!value.uri || !value.routingKeys?.[0]) throw new Error(`${toDid} has no independent DIDComm mediator published`)
-  // Decode before registration so a hostile routing document cannot make us
-  // enroll a private key against a malformed/non-self-certifying route.
-  publicKeyOf(decodePeerDid2(value.routingKeys[0].split('#', 1)[0]!), value.routingKeys[0])
-  return { url: value.uri, routingKid: value.routingKeys[0] }
 }
 
 async function sendPrivateRelationshipMessage(contactKey: ContactKeyV1, type: string, body: unknown, fetchImpl: typeof fetch, message?: { id: string; createdTime: number }): Promise<DidCommSendResult> {

@@ -5,7 +5,7 @@
 // messages are the exception because fanning them out to everyone but the
 // sender IS the point of routing them through a DS at all (PLAN-mimi.md's
 // finding: this is the one operation Self Group's DS has no equivalent of).
-import { sendFrontDoorMessage, type DidCommSendResult, type SendDidCommMessageOptions } from '../didcomm/send-message.ts'
+import { sendFrontDoorMessage, type DidCommSendResult, type SendDidCommMessageOptions } from '../didcomm/front-door-send.ts'
 import { bytesToBase64url } from '../protocol/canonical.ts'
 import { didOfKid } from '../protocol/ids.ts'
 import * as T from './didcomm-types.ts'

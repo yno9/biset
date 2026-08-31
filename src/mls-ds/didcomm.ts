@@ -14,7 +14,7 @@
 import { buildPlaintext, type DidCommPlaintext } from '../didcomm/message.ts'
 import { buildProblemReport } from '../didcomm/problems.ts'
 import { bytesToBase64url } from '../protocol/canonical.ts'
-import type { SendDidCommMessageOptions } from '../didcomm/send-message.ts'
+import type { SendDidCommMessageOptions } from '../didcomm/front-door-send.ts'
 import { fanOutApplicationMessage } from './fanout.ts'
 import {
   clearConversationPendingRemovals,

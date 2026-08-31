@@ -1,15 +1,10 @@
 // ── Hex ───────────────────────────────────────────────────────────────────────
 // Was independently duplicated in 5 files (custom-domain.ts, account-create.ts,
 // did/dht/publish.ts, ui/left-pane.ts, did/contacts.ts) — one copy here instead.
-export function hexToBytes(hex: string): Uint8Array {
-  const out = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return out
-}
-
-export function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
-}
+// Moved to protocol/canonical.ts (2026-08-31) so DOM-less deploy units can
+// use it without this file's DOM-dependent half; re-exported here unchanged
+// for every existing caller of utils.ts.
+export { hexToBytes, bytesToHex } from './protocol/canonical.ts'
 
 // ── DID service endpoints ────────────────────────────────────────────────────
 // did:dht's DidService.serviceEndpoint is always string[] (dht/document.ts);

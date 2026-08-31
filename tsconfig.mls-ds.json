@@ -1,0 +1,22 @@
+{
+  // The standalone Conversation Group DS (src/mls-ds/) is its own Bun server
+  // deploy unit, same reasoning as tsconfig.coordinator.json: no DOM lib, so
+  // `include` being the entry tree only is what proves it stays free of
+  // vault/UI-only coupling even though it legitimately depends on
+  // identity/webvh/ (DID resolution, Sign-key credential verification) and
+  // didcomm/ (routing.json resolution, outbound send for message-notify
+  // fan-out) -- both DOM-less already.
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ESNext"],
+    "types": ["bun"]
+  },
+  "include": ["src/mls-ds/**/*"],
+  "typeRoots": ["node_modules/@types"]
+}

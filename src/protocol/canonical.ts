@@ -110,3 +110,17 @@ export function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   for (let index = 0; index < left.length; index += 1) difference |= left[index] ^ right[index]
   return difference === 0
 }
+
+/** Moved from utils.ts (2026-08-31) so DOM-less deploy units (mls-ds/,
+ * mediator/) can use it without pulling in utils.ts's DOM-dependent half
+ * (its own account-page/left-pane helpers) -- utils.ts re-exports both for
+ * existing callers. */
+export function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return out
+}
+
+export function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+}
