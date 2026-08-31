@@ -36,6 +36,7 @@ import {
   memberList,
   processIncoming,
   rekey,
+  removeMembers,
   type OwnKeyPackage,
 } from './group.ts'
 import type { ClientState, KeyPackage } from './vendor/index.ts'
@@ -225,11 +226,55 @@ export async function addMembersToConversationGroup(
   return result.state
 }
 
+/** Advances the group by a commit that removes `removedKids` -- unlike Self
+ * Group's `removeDeviceFromSelfGroup` (which revokes another device of the
+ * SAME identity as the committer), a Conversation Group has no notion of
+ * "this identity's devices": `removedKids` may name devices of any member,
+ * across any number of distinct identities, in one commit. RFC 9420
+ * forbids a commit that removes its own committer (group.ts's own note on
+ * `removeMembers`), so `removedKids` must not include `deviceKid` -- there
+ * is no self-removal wrapper here yet, same as self-group.ts (its own
+ * `leaveSelfGroup` referenced in group.ts's comments does not actually
+ * exist either; `proposeSelfRemoval` + `transport.submitSelfRemove` are
+ * available but unwrapped, for either group kind). */
+export async function removeMembersFromConversationGroup(
+  state: ClientState,
+  transport: ConversationMlsDeliveryTransport,
+  groupId: string,
+  deviceKid: string,
+  removedKids: string[],
+  sign: ConversationGroupSigner,
+  now: () => Date = () => new Date(),
+): Promise<ClientState> {
+  if (removedKids.includes(deviceKid)) throw new TypeError('removeMembersFromConversationGroup: cannot remove the committing device itself')
+  const result = await removeMembers(state, removedKids)
+  const submission: Omit<ConversationCommitSubmitV1, 'signature'> = {
+    version: 1,
+    groupId,
+    senderKid: deviceKid,
+    epoch: mlsEpoch(epochOf(state)),
+    commit: result.commit,
+    roster: memberList(result.state).map(m => m.kid),
+    groupInfo: await groupInfoForExternalJoin(result.state),
+    submittedAt: now().toISOString(),
+  }
+  const outcome = await transport.submitCommit({ ...submission, signature: await sign(conversationCommitSubmitSigningBytes(submission)) })
+  if (!outcome.ok) throw new Error(`removeMembersFromConversationGroup: commit rejected (${outcome.reason})`)
+  confirmCommit(result)
+  return result.state
+}
+
 export interface ConversationIncomingEntry {
   state: ClientState
   /** Set only when the entry was an application message -- a commit/
    * proposal advances `state` with no plaintext to hand back. */
   plaintext?: Uint8Array
+  /** The kid MLS itself authenticated as the sender -- set alongside
+   * `plaintext` whenever `processIncoming` could resolve the sending leaf's
+   * credential (group.ts's `memberAt`). A Vault projection MUST attribute a
+   * message to this, never to anything self-reported inside the plaintext
+   * (group.ts's own `processIncoming` doc comment on why). */
+  sender?: string
 }
 
 /** Applies one deliveries-pull/message-notify entry -- a commit/proposal
@@ -238,5 +283,5 @@ export interface ConversationIncomingEntry {
  * decode, not this function's). */
 export async function receiveConversationEntry(state: ClientState, payload: Uint8Array): Promise<ConversationIncomingEntry> {
   const result = await processIncoming(state, payload)
-  return result.kind === 'message' ? { state: result.state, plaintext: result.message } : { state: result.state }
+  return result.kind === 'message' ? { state: result.state, plaintext: result.message, ...(result.sender ? { sender: result.sender.kid } : {}) } : { state: result.state }
 }

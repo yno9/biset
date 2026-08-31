@@ -20,9 +20,10 @@ import {
   joinConversationGroupExternally,
   randomConversationGroupId,
   receiveConversationEntry,
+  removeMembersFromConversationGroup,
   sendConversationApplicationMessage,
 } from '../../src/mls/conversation-group.ts'
-import { joinMlsGroup } from '../../src/mls/group.ts'
+import { joinMlsGroup, memberList } from '../../src/mls/group.ts'
 import type { OwnKeyPackage } from '../../src/mls/group.ts'
 import { mlsDeviceFixture } from '../protocol/support/mls-device-fixture.ts'
 
@@ -113,5 +114,39 @@ describe('conversation-group.ts end-to-end', () => {
     const bobState = await joinConversationGroupExternally(transport, groupId, bob.kid, groupInfo!, bob.own, bobSign)
     expect(bobState).toBeDefined()
     expect(bobState!.ratchetTree.filter(n => n?.nodeType === 'leaf').length).toBe(2)
+  })
+
+  test('alice removes bob; bob can no longer read messages sent afterwards', async () => {
+    const { transport } = setup()
+    const groupId = randomConversationGroupId()
+    const aliceSign = signerFor(alice.own)
+    const bobSign = signerFor(bob.own)
+
+    let aliceState = await createConversationGroup(transport, groupId, alice.kid, alice.own, aliceSign)
+    aliceState = await addMembersToConversationGroup(aliceState, transport, groupId, alice.kid, [bob.own.publicPackage], [bob.kid], aliceSign)
+    const entries = await pullDeliveries(transport, groupId, bob.kid, bobSign)
+    let bobState = await joinMlsGroup(entries.find(e => e.kind === 'welcome')!.payload, bob.own, undefined)
+
+    aliceState = await removeMembersFromConversationGroup(aliceState, transport, groupId, alice.kid, [bob.kid], aliceSign)
+    expect(memberList(aliceState).map(m => m.kid)).toEqual([alice.kid])
+
+    const sent = await sendConversationApplicationMessage(aliceState, transport, groupId, alice.kid, new TextEncoder().encode('bob is gone now'), aliceSign)
+    aliceState = sent
+
+    // Bob's stale state can process the removal commit itself (still a
+    // member as far as it knows when that commit arrives) but must not be
+    // able to read anything sent afterwards -- the same forward-secrecy
+    // guarantee test/mls-core.test.ts pins for Self Group's removeMembers.
+    // store.ts's deliveriesSince gates on everMembers (never shrunk by a
+    // removal), so bob's pull itself still succeeds; only decryption must fail.
+    const afterRemoval = await pullDeliveries(transport, groupId, bob.kid, bobSign, entries[entries.length - 1]!.seq)
+    expect(afterRemoval.map(e => e.kind)).toEqual(['commit', 'application'])
+    bobState = (await receiveConversationEntry(bobState, afterRemoval[0]!.payload)).state
+    let bobCouldRead = false
+    try {
+      const r = await receiveConversationEntry(bobState, afterRemoval[1]!.payload)
+      bobCouldRead = r.plaintext !== undefined
+    } catch { /* expected: bob's state can't decrypt a later epoch */ }
+    expect(bobCouldRead).toBe(false)
   })
 })

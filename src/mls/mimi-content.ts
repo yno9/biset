@@ -179,3 +179,55 @@ function decodeNestedPart(value: unknown): NestedPart {
  * Vault projection (§4) branches on. */
 export const DISPOSITION_RENDER = 1
 export const DISPOSITION_REACTION = 2
+
+/** draft-ietf-mimi-content-09 §3.3's content-addressed MessageId:
+ * `hashAlg(1B) || SHA-256(u16be(len(senderUri)) || senderUri ||
+ * u16be(len(roomUri)) || roomUri || message || salt)[0..31)`, where
+ * `message` is the FULL encoded MimiContent CBOR array (salt included) and
+ * `salt` is then appended a second time (the spec's own length-extension
+ * mitigation) -- not a typo, `content.salt` really does appear twice: once
+ * inside the encoded `message` bytes, once again as the trailing field.
+ *
+ * `senderUri`/`roomUri` are biset's own convention pending PLAN-mimi.md
+ * §4.7's still-open interop mapping: this device's own MLS credential kid
+ * (`did#fragment` -- what MLS actually authenticates a sender as, finer
+ * grained than a bare DID) and `mimiRoomUri(groupId)` below. Both must be
+ * embedded in `content.extensions` by the sender (senderUri/roomUri) so a
+ * recipient can recompute the SAME id from the SAME inputs without a
+ * server round trip -- the whole reason MessageId is content-addressed
+ * rather than DS-assigned (a DS seq number is not known to the sender
+ * until after submission, but `replaces`/`inReplyTo` on the sender's own
+ * FOLLOW-UP messages must already be able to name this one). */
+export async function computeMimiMessageId(senderUri: string, roomUri: string, encodedContent: Uint8Array, salt: Uint8Array): Promise<MessageId> {
+  if (salt.length !== 16) throw new MimiContentError('computeMimiMessageId: salt must be 16 bytes')
+  const senderUriBytes = new TextEncoder().encode(senderUri)
+  const roomUriBytes = new TextEncoder().encode(roomUri)
+  const input = new Uint8Array(2 + senderUriBytes.length + 2 + roomUriBytes.length + encodedContent.length + salt.length)
+  let offset = 0
+  offset = writeU16BE(input, offset, senderUriBytes.length)
+  input.set(senderUriBytes, offset); offset += senderUriBytes.length
+  offset = writeU16BE(input, offset, roomUriBytes.length)
+  input.set(roomUriBytes, offset); offset += roomUriBytes.length
+  input.set(encodedContent, offset); offset += encodedContent.length
+  input.set(salt, offset)
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', input))
+  const id = new Uint8Array(32)
+  id[0] = 0x01 // hashAlg: SHA-256, per the spec's own default
+  id.set(digest.subarray(0, 31), 1)
+  return id
+}
+
+/** biset's own room URI convention for a Conversation Group (PLAN-mimi.md
+ * §4.7) -- a URN rather than the spec's example `mimi://` scheme, since
+ * `groupId` is an opaque 32-byte hex value with no host to hang a `mimi://`
+ * authority off of. */
+export function mimiRoomUri(groupId: string): string {
+  return `urn:biset:conversation-group:${groupId}`
+}
+
+function writeU16BE(target: Uint8Array, offset: number, value: number): number {
+  if (value > 0xffff) throw new MimiContentError('computeMimiMessageId: URI is too long to encode a 16-bit length prefix')
+  target[offset] = (value >>> 8) & 0xff
+  target[offset + 1] = value & 0xff
+  return offset + 2
+}

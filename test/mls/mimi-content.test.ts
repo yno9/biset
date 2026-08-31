@@ -3,8 +3,10 @@ import { encode as cborEncode, rfc8949EncodeOptions } from 'cborg'
 import {
   DISPOSITION_REACTION,
   DISPOSITION_RENDER,
+  computeMimiMessageId,
   decodeMimiContent,
   encodeMimiContent,
+  mimiRoomUri,
   MimiContentError,
   type MimiContent,
 } from '../../src/mls/mimi-content.ts'
@@ -121,5 +123,33 @@ describe('MimiContent encode/decode', () => {
     const nestedPart = [DISPOSITION_RENDER, 'en', 9]
     const bytes = cborEncode([salt(), null, new Uint8Array(0), null, null, new Map(), nestedPart], rfc8949EncodeOptions)
     expect(() => decodeMimiContent(bytes)).toThrow(/unknown cardinality/)
+  })
+})
+
+describe('computeMimiMessageId', () => {
+  test('is deterministic: the same inputs always produce the same id', async () => {
+    const value = plainText('hello group')
+    const encoded = encodeMimiContent(value)
+    const a = await computeMimiMessageId('did:web:alice.example#device-a', mimiRoomUri('group-1'), encoded, value.salt)
+    const b = await computeMimiMessageId('did:web:alice.example#device-a', mimiRoomUri('group-1'), encoded, value.salt)
+    expect(a).toEqual(b)
+    expect(a).toHaveLength(32)
+    expect(a[0]).toBe(1) // hashAlg: SHA-256
+  })
+
+  test('changing any input changes the id', async () => {
+    const value = plainText('hello group')
+    const encoded = encodeMimiContent(value)
+    const base = await computeMimiMessageId('did:web:alice.example#device-a', mimiRoomUri('group-1'), encoded, value.salt)
+    const differentSender = await computeMimiMessageId('did:web:bob.example#device-a', mimiRoomUri('group-1'), encoded, value.salt)
+    const differentRoom = await computeMimiMessageId('did:web:alice.example#device-a', mimiRoomUri('group-2'), encoded, value.salt)
+    const differentContent = await computeMimiMessageId('did:web:alice.example#device-a', mimiRoomUri('group-1'), encodeMimiContent(plainText('different')), value.salt)
+    expect(differentSender).not.toEqual(base)
+    expect(differentRoom).not.toEqual(base)
+    expect(differentContent).not.toEqual(base)
+  })
+
+  test('rejects a salt that is not 16 bytes', async () => {
+    await expect(computeMimiMessageId('s', 'r', new Uint8Array(0), new Uint8Array(15))).rejects.toThrow(MimiContentError)
   })
 })
