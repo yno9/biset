@@ -38,7 +38,7 @@ export function keyMaterialSigningBytes(value: Omit<KeyMaterialRequest, 'signatu
   return canonicalBytes({
     label: 'biset/mimi-key-material/v1', version: value.version, protocol: value.protocol,
     requestingUser: value.requestingUser, targetUser: value.targetUser, roomId: value.roomId,
-    acceptableCiphersuites: value.acceptableCiphersuites, requiredCapabilities: capabilitiesValue(value.requiredCapabilities), requester: visibleCredentialValue(value.requester),
+    acceptableCiphersuites: value.acceptableCiphersuites, requiredCapabilities: capabilitiesValue(value.requiredCapabilities), requester: credentialValue(value.requester),
   })
 }
 
@@ -69,18 +69,18 @@ export function updateRoomSigningBytes(value: Omit<UpdateRoomRequest, 'signature
 
 export function deliveriesPullSigningBytes(value: Omit<DeliveriesPullRequest, 'signature'>): Uint8Array {
   return canonicalBytes({
-    label: 'biset/mimi-deliveries-pull/v1', version: value.version, roomId: value.roomId, requester: visibleCredentialValue(value.requester), afterSeq: value.afterSeq, requestedAt: value.requestedAt,
+    label: 'biset/mimi-deliveries-pull/v1', version: value.version, roomId: value.roomId, requester: credentialValue(value.requester), afterSeq: value.afterSeq, requestedAt: value.requestedAt,
   })
 }
 
 export function deliveriesWatchSigningBytes(value: Omit<DeliveriesWatchRequest, 'signature'>): Uint8Array {
   return canonicalBytes({
-    label: 'biset/mimi-deliveries-watch/v1', version: value.version, roomId: value.roomId, requester: visibleCredentialValue(value.requester), requestedAt: value.requestedAt,
+    label: 'biset/mimi-deliveries-watch/v1', version: value.version, roomId: value.roomId, requester: credentialValue(value.requester), requestedAt: value.requestedAt,
   })
 }
 
 export function submitMessageSigningBytes(value: Omit<SubmitMessageRequest, 'signature'>): Uint8Array {
-  return canonicalBytes({ label: 'biset/mimi-submit-message/v1', version: value.version, protocol: value.protocol, roomId: value.roomId, sender: visibleCredentialValue(value.sender), epoch: value.epoch, appMessage: bytesToBase64url(value.appMessage), frankingTag: bytesToBase64url(value.frankAAD.frankingTag), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, submittedAt: value.submittedAt })
+  return canonicalBytes({ label: 'biset/mimi-submit-message/v1', version: value.version, protocol: value.protocol, roomId: value.roomId, sender: credentialValue(value.sender), epoch: value.epoch, appMessage: bytesToBase64url(value.appMessage), frankingTag: bytesToBase64url(value.frankAAD.frankingTag), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, submittedAt: value.submittedAt })
 }
 
 export async function authorizeUpdate(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: UpdateRoomRequest): Promise<boolean> {
@@ -93,15 +93,13 @@ export async function authorizeUpdate(store: SqliteMimiStore, verifier: MimiSign
 }
 
 export async function authorizeKeyMaterial(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: KeyMaterialRequest): Promise<boolean> {
-  if (value.requestingUser !== value.requester.user) return false
+  if (value.requestingUser !== credentialUser(value.requester)) return false
   if (!(await verifier.verify(value.requester, keyMaterialSigningBytes(value), value.signature))) return false
   const room = store.room(value.roomId)
   return room !== undefined && credentialMatchesRoom(room, value.requester)
 }
 
 export async function authorizeKeyPackagePublish(verifier: MimiSignatureVerifier, value: KeyPackagePublishRequest): Promise<boolean> {
-  // Pseudonymous publication is intentionally deferred to Phase 2.
-  if (value.credential.kind !== 'visible') return false
   return verifier.verify(value.credential, keyPackagePublishSigningBytes(value), value.signature)
 }
 
@@ -127,10 +125,12 @@ export function keyMaterialResponse(targetUser: string, packages: ReturnType<Sql
 }
 
 function credentialMatchesRoom(room: ReturnType<SqliteMimiStore['room']>, signer: MimiCredential): boolean {
-  const user = signer.kind === 'visible' ? signer.user : signer.userPseudonym
+  const user = credentialUser(signer)
   if (!room || !room.participantList.participants.some(participant => participant.user === user)) return false
   return room.memberCredentials.some(credential => credential.kind === signer.kind && equalBytes(credential.signaturePublicKey, signer.signaturePublicKey) && (credential.kind === 'visible' && signer.kind === 'visible' ? credential.client === signer.client : credential.kind === 'pseudonymous' && signer.kind === 'pseudonymous' ? credential.clientPseudonym === signer.clientPseudonym : false))
 }
+
+function credentialUser(credential: MimiCredential): string { return credential.kind === 'visible' ? credential.user : credential.userPseudonym }
 
 function visibleCredentialValue(value: VisibleCredential): CanonicalValue {
   return { kind: value.kind, user: value.user, client: value.client, credential: bytesToBase64url(value.credential), signaturePublicKey: bytesToBase64url(value.signaturePublicKey) }

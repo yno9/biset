@@ -103,6 +103,23 @@ describe('MIMI Phase 0 HTTP flow', () => {
     expect(await Promise.all(joinedCredentials.map(item => decryptIdentityLink(epochTwo, anonRoomId, item.identityLinkCiphertext).then(bytes => decoder.decode(bytes))))).toEqual(['did:web:alice', 'did:web:bob'])
     await expect(decryptIdentityLink(epochOne, anonRoomId, aliceAtEpochTwo.identityLinkCiphertext)).rejects.toThrow()
 
+    const pullUnsigned = { version: 1 as const, roomId: anonRoomId, requester: credential, afterSeq: 0, requestedAt: at }
+    const pull = { ...pullUnsigned, signature: ed25519.sign(deliveriesPullSigningBytes(pullUnsigned), secret) }
+    const pulled = await deployment.fetch(post('/v1/mimi/deliveries/pull', encodeDeliveriesPullRequestWire(pull)))
+    expect(pulled.status).toBe(200)
+    expect(decodeDeliveriesWire(await pulled.text()).map(entry => entry.kind)).toEqual(['commit', 'welcome', 'commit'])
+
+    const watchUnsigned = { version: 1 as const, roomId: anonRoomId, requester: credential, requestedAt: at }
+    const watch = { ...watchUnsigned, signature: ed25519.sign(deliveriesWatchSigningBytes(watchUnsigned), secret) }
+    expect((await deployment.fetch(post('/v1/mimi/deliveries/watch', encodeDeliveriesWatchRequestWire(watch)))).status).toBe(200)
+
+    const messageUnsigned = { version: 1 as const, protocol: 'mls10' as const, roomId: anonRoomId, sender: credential, epoch: '2', appMessage: new Uint8Array([5]), frankAAD: { frankingTag: new Uint8Array(32).fill(7) }, frankingSignatureCiphersuite: 1, submittedAt: at }
+    const message = { ...messageUnsigned, signature: ed25519.sign(submitMessageSigningBytes(messageUnsigned), secret) }
+    expect((await deployment.fetch(post(`/submitMessage/${encodeURIComponent(anonRoomId)}`, encodeSubmitMessageRequestWire(message)))).status).toBe(200)
+    const afterMessage = { ...pullUnsigned, afterSeq: 3 }
+    const afterMessageSigned = { ...afterMessage, signature: ed25519.sign(deliveriesPullSigningBytes(afterMessage), secret) }
+    expect(decodeDeliveriesWire(await (await deployment.fetch(post('/v1/mimi/deliveries/pull', encodeDeliveriesPullRequestWire(afterMessageSigned)))).text()).map(entry => entry.kind)).toEqual(['application'])
+
     const removeUnsigned = {
       version: 1 as const, protocol: 'mls10' as const, roomId: anonRoomId, sender: credential, epoch: '2',
       bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([4]) },

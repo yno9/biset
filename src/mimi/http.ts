@@ -30,7 +30,7 @@ import { verifyMimiProviderRequest, type VerifiedProviderPeer } from './provider
 import { decodeMimiFanoutBatchWire, fanoutFingerprint } from './fanout.ts'
 import type { MimiAssetProxy } from './asset-proxy.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
-import type { MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
+import type { MimiCredential, MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
 import type { MimiWatchTokenIssuer } from './watch-token.ts'
 
 const MAX_BODY_BYTES = 1024 * 1024
@@ -153,7 +153,7 @@ export function createMimiHttpHandler(
       if (path.startsWith(KEY_MATERIAL_PREFIX)) {
         const targetUser = pathParameter(path, KEY_MATERIAL_PREFIX, 'target user')
         const value = decodeKeyMaterialRequestWire(body)
-        if (mode === 'anon') return error(403, 'not-allowed', 'visible credentials are not accepted by an anon-mode deployment')
+        if (!credentialMatchesMode(value.requester, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (value.targetUser !== targetUser) return error(400, 'bad-request', 'target user path does not match request body')
         if (!(await authorizeKeyMaterial(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room membership was rejected')
         return json(200, encodeKeyMaterialResponseWire(keyMaterialResponse(value.targetUser, store.takeKeyPackages(value.targetUser, value.requiredCapabilities))))
@@ -174,31 +174,32 @@ export function createMimiHttpHandler(
       if (path.startsWith(SUBMIT_MESSAGE_PREFIX)) {
         const roomId = pathParameter(path, SUBMIT_MESSAGE_PREFIX, 'room ID')
         const value = decodeSubmitMessageRequestWire(body)
-        if (mode === 'anon') return error(403, 'not-allowed', 'visible credentials are not accepted by an anon-mode deployment')
+        if (!credentialMatchesMode(value.sender, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (value.roomId !== roomId) return error(400, 'bad-request', 'room ID path does not match request body')
         if (!(await authorizeSubmitMessage(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         const keys = store.frankingKeys(roomId)
         if (!keys) return error(404, 'not-found', 'room does not exist')
         const acceptedTimestamp = Date.parse(value.submittedAt)
         if (!Number.isFinite(acceptedTimestamp) || acceptedTimestamp < 0) return error(400, 'bad-request', 'submittedAt must be a valid post-1970 timestamp')
-        const frank = frankMessage(keys, { aad: value.frankAAD, senderUri: value.sender.user, roomUri: roomId, acceptedTimestamp: String(acceptedTimestamp), ciphersuite: value.frankingSignatureCiphersuite })
-        const result = store.submitMessage(roomId, value.sender.user, value.epoch, value.appMessage, frank, value.submittedAt)
+        const senderUri = credentialUser(value.sender)
+        const frank = frankMessage(keys, { aad: value.frankAAD, senderUri, roomUri: roomId, acceptedTimestamp: String(acceptedTimestamp), ciphersuite: value.frankingSignatureCiphersuite })
+        const result = store.submitMessage(roomId, senderUri, value.epoch, value.appMessage, frank, value.submittedAt)
         if (!result.ok) return json(409, encodeSubmitMessageResponseWire({ status: 'epochTooOld', currentEpoch: result.currentEpoch }))
         return json(200, encodeSubmitMessageResponseWire({ status: 'accepted', acceptedTimestamp: value.submittedAt, frank }))
       }
 
       if (path === DELIVERY_PULL_PATH) {
         const value = decodeDeliveriesPullRequestWire(body)
-        if (mode === 'anon') return error(403, 'not-allowed', 'visible credentials are not accepted by an anon-mode deployment')
+        if (!credentialMatchesMode(value.requester, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (!(await authorizeDeliveriesPull(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
-        return json(200, encodeDeliveriesWire(store.deliveriesSince(value.roomId, value.requester.user, value.afterSeq) ?? []))
+        return json(200, encodeDeliveriesWire(store.deliveriesSince(value.roomId, credentialUser(value.requester), value.afterSeq) ?? []))
       }
 
       if (path === DELIVERY_WATCH_PATH) {
         const value = decodeDeliveriesWatchRequestWire(body)
-        if (mode === 'anon') return error(403, 'not-allowed', 'visible credentials are not accepted by an anon-mode deployment')
+        if (!credentialMatchesMode(value.requester, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (!(await authorizeDeliveriesWatch(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
-        return json(200, encodeDeliveriesWatchTokenWire(watchTokens.issue(value.roomId, value.requester.user)))
+        return json(200, encodeDeliveriesWatchTokenWire(watchTokens.issue(value.roomId, credentialUser(value.requester))))
       }
 
       return error(404, 'not-found', 'Not found')
@@ -221,6 +222,14 @@ async function verifiedFederationPeer(request: Request, federation: MimiFederati
 }
 
 function sameDomain(left: string, right: string): boolean { return left.toLowerCase().replace(/\.$/, '') === right.toLowerCase().replace(/\.$/, '') }
+
+function credentialMatchesMode(credential: MimiCredential, mode: MimiDeploymentMode): boolean {
+  return mode === 'anon' ? credential.kind === 'pseudonymous' : credential.kind === 'visible'
+}
+
+function credentialUser(credential: MimiCredential): string {
+  return credential.kind === 'visible' ? credential.user : credential.userPseudonym
+}
 
 /**
  * Authenticated SSE tail.  Backlog and subscribe happen in the same

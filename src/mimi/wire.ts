@@ -365,7 +365,7 @@ export function decodeKeyPackagePublishWire(text: string): KeyPackagePublishRequ
 export function encodeKeyMaterialRequestWire(value: KeyMaterialRequest): string {
   return JSON.stringify({
     version: value.version, protocol: value.protocol, requestingUser: value.requestingUser, targetUser: value.targetUser, roomId: value.roomId,
-    acceptableCiphersuites: value.acceptableCiphersuites, requiredCapabilities: capabilitiesJson(value.requiredCapabilities), requester: visibleCredentialJson(value.requester), signature: bytesToBase64url(value.signature),
+    acceptableCiphersuites: value.acceptableCiphersuites, requiredCapabilities: capabilitiesJson(value.requiredCapabilities), requester: credentialJson(value.requester), signature: bytesToBase64url(value.signature),
   })
 }
 
@@ -376,7 +376,7 @@ export function decodeKeyMaterialRequestWire(text: string): KeyMaterialRequest {
     version: 1, protocol: requireProtocol(input.protocol, 'KeyMaterialRequest.protocol'),
     requestingUser: requireString(input.requestingUser, 'KeyMaterialRequest.requestingUser'), targetUser: requireString(input.targetUser, 'KeyMaterialRequest.targetUser'), roomId: requireString(input.roomId, 'KeyMaterialRequest.roomId'),
     acceptableCiphersuites: requireIntegerArray(input.acceptableCiphersuites, 'KeyMaterialRequest.acceptableCiphersuites'),
-    requiredCapabilities: decodeCapabilities(input.requiredCapabilities, 'KeyMaterialRequest.requiredCapabilities'), requester: decodeVisibleCredential(input.requester, 'KeyMaterialRequest.requester'),
+    requiredCapabilities: decodeCapabilities(input.requiredCapabilities, 'KeyMaterialRequest.requiredCapabilities'), requester: decodeCredential(input.requester, 'KeyMaterialRequest.requester'),
     signature: requireBinary(input.signature, 'KeyMaterialRequest.signature'),
   }
 }
@@ -480,12 +480,12 @@ export function decodeUpdateRoomResponseWire(text: string): UpdateRoomResponse {
 }
 
 export function encodeSubmitMessageRequestWire(value: SubmitMessageRequest): string {
-  return JSON.stringify({ version: value.version, protocol: value.protocol, roomId: value.roomId, sender: visibleCredentialJson(value.sender), epoch: value.epoch, appMessage: bytesToBase64url(value.appMessage), frankAAD: frankAADJson(value.frankAAD), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, submittedAt: value.submittedAt, signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ version: value.version, protocol: value.protocol, roomId: value.roomId, sender: credentialJson(value.sender), epoch: value.epoch, appMessage: bytesToBase64url(value.appMessage), frankAAD: frankAADJson(value.frankAAD), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, submittedAt: value.submittedAt, signature: bytesToBase64url(value.signature) })
 }
 export function decodeSubmitMessageRequestWire(text: string): SubmitMessageRequest {
   const input = record(text)
   if (input.version !== 1) throw new MimiWireError('SubmitMessageRequest.version must be 1')
-  return { version: 1, protocol: requireProtocol(input.protocol, 'SubmitMessageRequest.protocol'), roomId: requireString(input.roomId, 'SubmitMessageRequest.roomId'), sender: decodeVisibleCredential(input.sender, 'SubmitMessageRequest.sender'), epoch: requireEpoch(input.epoch, 'SubmitMessageRequest.epoch'), appMessage: requireBinary(input.appMessage, 'SubmitMessageRequest.appMessage'), frankAAD: decodeFrankAAD(input.frankAAD, 'SubmitMessageRequest.frankAAD'), frankingSignatureCiphersuite: requireInteger(input.frankingSignatureCiphersuite, 'SubmitMessageRequest.frankingSignatureCiphersuite'), submittedAt: requireString(input.submittedAt, 'SubmitMessageRequest.submittedAt'), signature: requireBinary(input.signature, 'SubmitMessageRequest.signature') }
+  return { version: 1, protocol: requireProtocol(input.protocol, 'SubmitMessageRequest.protocol'), roomId: requireString(input.roomId, 'SubmitMessageRequest.roomId'), sender: decodeCredential(input.sender, 'SubmitMessageRequest.sender'), epoch: requireEpoch(input.epoch, 'SubmitMessageRequest.epoch'), appMessage: requireBinary(input.appMessage, 'SubmitMessageRequest.appMessage'), frankAAD: decodeFrankAAD(input.frankAAD, 'SubmitMessageRequest.frankAAD'), frankingSignatureCiphersuite: requireInteger(input.frankingSignatureCiphersuite, 'SubmitMessageRequest.frankingSignatureCiphersuite'), submittedAt: requireString(input.submittedAt, 'SubmitMessageRequest.submittedAt'), signature: requireBinary(input.signature, 'SubmitMessageRequest.signature') }
 }
 export function encodeSubmitMessageResponseWire(value: SubmitMessageResponse): string { return JSON.stringify({ status: value.status, acceptedTimestamp: value.acceptedTimestamp, currentEpoch: value.currentEpoch, frank: value.frank === undefined ? undefined : JSON.parse(encodeFrankWire(value.frank)) }) }
 
@@ -498,7 +498,7 @@ export function decodeSubmitMessageResponseWire(text: string): SubmitMessageResp
 // --------------------------------------------------------------- deliveries
 
 function deliveriesRequesterJson(value: DeliveriesPullRequest | DeliveriesWatchRequest): JsonRecord {
-  return { version: value.version, roomId: value.roomId, requester: visibleCredentialJson(value.requester), requestedAt: value.requestedAt, signature: bytesToBase64url(value.signature) }
+  return { version: value.version, roomId: value.roomId, requester: credentialJson(value.requester), requestedAt: value.requestedAt, signature: bytesToBase64url(value.signature) }
 }
 
 export function encodeDeliveriesPullRequestWire(value: DeliveriesPullRequest): string {
@@ -508,7 +508,7 @@ export function encodeDeliveriesPullRequestWire(value: DeliveriesPullRequest): s
 export function decodeDeliveriesPullRequestWire(text: string): DeliveriesPullRequest {
   const input = record(text)
   if (input.version !== 1) throw new MimiWireError('DeliveriesPullRequest.version must be 1')
-  return { version: 1, roomId: requireString(input.roomId, 'DeliveriesPullRequest.roomId'), requester: decodeVisibleCredential(input.requester, 'DeliveriesPullRequest.requester'), afterSeq: requireInteger(input.afterSeq, 'DeliveriesPullRequest.afterSeq'), requestedAt: requireString(input.requestedAt, 'DeliveriesPullRequest.requestedAt'), signature: requireBinary(input.signature, 'DeliveriesPullRequest.signature') }
+  return { version: 1, roomId: requireString(input.roomId, 'DeliveriesPullRequest.roomId'), requester: decodeCredential(input.requester, 'DeliveriesPullRequest.requester'), afterSeq: requireInteger(input.afterSeq, 'DeliveriesPullRequest.afterSeq'), requestedAt: requireString(input.requestedAt, 'DeliveriesPullRequest.requestedAt'), signature: requireBinary(input.signature, 'DeliveriesPullRequest.signature') }
 }
 
 export function encodeDeliveriesWatchRequestWire(value: DeliveriesWatchRequest): string { return JSON.stringify(deliveriesRequesterJson(value)) }
@@ -516,7 +516,7 @@ export function encodeDeliveriesWatchRequestWire(value: DeliveriesWatchRequest):
 export function decodeDeliveriesWatchRequestWire(text: string): DeliveriesWatchRequest {
   const input = record(text)
   if (input.version !== 1) throw new MimiWireError('DeliveriesWatchRequest.version must be 1')
-  return { version: 1, roomId: requireString(input.roomId, 'DeliveriesWatchRequest.roomId'), requester: decodeVisibleCredential(input.requester, 'DeliveriesWatchRequest.requester'), requestedAt: requireString(input.requestedAt, 'DeliveriesWatchRequest.requestedAt'), signature: requireBinary(input.signature, 'DeliveriesWatchRequest.signature') }
+  return { version: 1, roomId: requireString(input.roomId, 'DeliveriesWatchRequest.roomId'), requester: decodeCredential(input.requester, 'DeliveriesWatchRequest.requester'), requestedAt: requireString(input.requestedAt, 'DeliveriesWatchRequest.requestedAt'), signature: requireBinary(input.signature, 'DeliveriesWatchRequest.signature') }
 }
 
 function deliveryEntryJson(value: MimiDeliveryEntry): JsonRecord {

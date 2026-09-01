@@ -15,10 +15,10 @@ export class MimiClientTransport {
     this.fetchValue = options.fetch ?? defaultFetch()
   }
   async update(mode: MimiClientMode, input: UpdateRoomRequest) { return decodeUpdateRoomResponseWire(await this.post(mode, `/update/${encodeURIComponent(input.roomId)}`, encodeUpdateRoomRequestWire(input))) }
-  async keyMaterial(mode: 'normal', input: KeyMaterialRequest) { return decodeKeyMaterialResponseWire(await this.post(mode, `/keyMaterial/${encodeURIComponent(input.targetUser)}`, encodeKeyMaterialRequestWire(input))) }
-  async submitMessage(mode: 'normal', input: SubmitMessageRequest) { return decodeSubmitMessageResponseWire(await this.post(mode, `/submitMessage/${encodeURIComponent(input.roomId)}`, encodeSubmitMessageRequestWire(input))) }
-  async pullDeliveries(mode: 'normal', input: DeliveriesPullRequest): Promise<MimiDeliveryEntry[]> { return decodeDeliveriesWire(await this.post(mode, '/v1/mimi/deliveries/pull', encodeDeliveriesPullRequestWire(input))) }
-  async watchDeliveries(mode: 'normal', input: DeliveriesWatchRequest): Promise<{ token: string; expiresAt: string }> { return decodeDeliveriesWatchTokenWire(await this.post(mode, '/v1/mimi/deliveries/watch', encodeDeliveriesWatchRequestWire(input))) }
+  async keyMaterial(mode: MimiClientMode, input: KeyMaterialRequest) { return decodeKeyMaterialResponseWire(await this.post(mode, `/keyMaterial/${encodeURIComponent(input.targetUser)}`, encodeKeyMaterialRequestWire(input))) }
+  async submitMessage(mode: MimiClientMode, input: SubmitMessageRequest) { return decodeSubmitMessageResponseWire(await this.post(mode, `/submitMessage/${encodeURIComponent(input.roomId)}`, encodeSubmitMessageRequestWire(input))) }
+  async pullDeliveries(mode: MimiClientMode, input: DeliveriesPullRequest): Promise<MimiDeliveryEntry[]> { return decodeDeliveriesWire(await this.post(mode, '/v1/mimi/deliveries/pull', encodeDeliveriesPullRequestWire(input))) }
+  async watchDeliveries(mode: MimiClientMode, input: DeliveriesWatchRequest): Promise<{ token: string; expiresAt: string }> { return decodeDeliveriesWatchTokenWire(await this.post(mode, '/v1/mimi/deliveries/watch', encodeDeliveriesWatchRequestWire(input))) }
   streamUrl(mode: MimiClientMode, token: string, afterSeq: number): string { if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new TypeError('delivery cursor is invalid'); return `${this.baseUrls[mode]}/v1/mimi/deliveries/stream?token=${encodeURIComponent(token)}&afterSeq=${afterSeq}` }
   private async post(mode: MimiClientMode, path: string, body: string): Promise<string> { const response = await this.fetchValue(`${this.baseUrls[mode]}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body }); const text = await response.text(); if (!response.ok) throw new Error(`MIMI request failed (${response.status}): ${text.slice(0, 256)}`); return text }
 }

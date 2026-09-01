@@ -169,7 +169,7 @@ export interface KeyMaterialRequest {
   roomId: MimiRoomId
   acceptableCiphersuites: number[]
   requiredCapabilities: MlsRequiredCapabilities
-  requester: VisibleCredential
+  requester: MimiCredential
   signature: Uint8Array
 }
 
@@ -282,7 +282,7 @@ export interface SubmitMessageRequest {
   version: 1
   protocol: MimiProtocolVersion
   roomId: MimiRoomId
-  sender: VisibleCredential
+  sender: MimiCredential
   epoch: MimiEpoch
   appMessage: Uint8Array
   frankAAD: FrankAAD
@@ -313,7 +313,7 @@ export interface MimiDeliveryEntry {
 export interface DeliveriesPullRequest {
   version: 1
   roomId: MimiRoomId
-  requester: VisibleCredential
+  requester: MimiCredential
   afterSeq: number
   requestedAt: string
   signature: Uint8Array
@@ -322,7 +322,7 @@ export interface DeliveriesPullRequest {
 export interface DeliveriesWatchRequest {
   version: 1
   roomId: MimiRoomId
-  requester: VisibleCredential
+  requester: MimiCredential
   requestedAt: string
   signature: Uint8Array
 }
