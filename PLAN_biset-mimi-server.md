@@ -274,7 +274,7 @@ identity_link_key(epoch) = exportSecret(state, "mimi mmr identity-link", groupId
 - [x] **0.8 テスト** (完了: 2026-09-01, `test/mimi/store.test.ts`, `test/mimi/http.test.ts`, `test/mimi/wire.test.ts`): `test/mimi/store.test.ts`, `test/mimi/http.test.ts`, `test/mimi/wire.test.ts`。biset内で3台のクライアントがroom作成→member追加→KeyPackage交換→**0.5.1経由でcommitを受信する**ところまで一通り行えることをE2Eで確認する。
   - 参照実装: `test/mls-ds/store.test.ts`, `test/mls-ds/http.test.ts`
   - depends on: 0.5, 0.5.1, 0.6, 0.7
-- [ ] **0.9 Phase 0 release gate確認**（§10）: biset内の3+デバイスでroom作成・commit・KeyPackage交換が通しで動くことを確認し、このワークシートの本項目にチェックを入れる。ここまで完了しないとPhase 1に着手しない。
+- [~] **0.9 Phase 0 release gate確認** (agent: /root, 開始: 2026-09-01)（§10）: biset内の3+デバイスでroom作成・commit・KeyPackage交換が通しで動くことを確認し、このワークシートの本項目にチェックを入れる。ここまで完了しないとPhase 1に着手しない。
   - depends on: 0.8
 
 ### Phase 1: Franking
