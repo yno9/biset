@@ -41,6 +41,16 @@ function signedUpdate(sender: Client, value: Parameters<typeof updateRoomSigning
 }
 
 describe('MIMI Phase 0 HTTP flow', () => {
+  test('anon mode rejects a visible-credential room creation before it can reach storage', async () => {
+    const alice = client('did:web:alice', 'phone', 1)
+    const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'anon' })
+    const unsigned = { version: 1 as const, protocol: 'mls10' as const, roomId, sender: alice.credential, epoch: '0', bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([1]) }, initialState: { basePolicy: new Uint8Array(), participantList: { participants: [{ user: alice.credential.user, roleIndex: 1 }] }, memberCredentials: [alice.credential], metadata: { roomUri: roomId, roomName: 'reject' } }, submittedAt: at }
+    const response = await deployment.fetch(post(`/update/${encodeURIComponent(roomId)}`, encodeUpdateRoomRequestWire(signedUpdate(alice, unsigned))))
+    expect(response.status).toBe(403)
+    expect(deployment.store.room(roomId)).toBeUndefined()
+    deployment.close()
+  })
+
   test('three clients create, add, claim KeyPackages, then receive a commit through biset delivery APIs', async () => {
     const alice = client('did:web:alice', 'phone', 1)
     const bob = client('did:web:bob', 'laptop', 2)

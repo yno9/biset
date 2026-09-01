@@ -28,7 +28,7 @@ export function createMimiDeployment(options: MimiDeploymentOptions) {
   const store = SqliteMimiStore.open(options.databasePath)
   const verifier = new Ed25519MimiSignatureVerifier()
   const watchTokens = new MimiWatchTokenIssuer()
-  const inner = createMimiHttpHandler(store, verifier, watchTokens)
+  const inner = createMimiHttpHandler(store, verifier, watchTokens, options.mode)
   return {
     mode: options.mode,
     store,

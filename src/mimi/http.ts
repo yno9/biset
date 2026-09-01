@@ -25,7 +25,7 @@ import {
 } from './wire.ts'
 import { frankMessage } from './franking.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
-import type { MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
+import type { MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
 import type { MimiWatchTokenIssuer } from './watch-token.ts'
 
 const MAX_BODY_BYTES = 1024 * 1024
@@ -51,6 +51,7 @@ export function createMimiHttpHandler(
   store: SqliteMimiStore,
   verifier: MimiSignatureVerifier,
   watchTokens: MimiWatchTokenIssuer,
+  mode: MimiDeploymentMode,
 ): (request: Request) => Promise<Response> {
   return async request => {
     try {
@@ -66,6 +67,7 @@ export function createMimiHttpHandler(
       if (path.startsWith(KEY_MATERIAL_PREFIX)) {
         const targetUser = pathParameter(path, KEY_MATERIAL_PREFIX, 'target user')
         const value = decodeKeyMaterialRequestWire(body)
+        if (mode === 'anon') return error(403, 'not-allowed', 'visible credentials are not accepted by an anon-mode deployment')
         if (value.targetUser !== targetUser) return error(400, 'bad-request', 'target user path does not match request body')
         if (!(await authorizeKeyMaterial(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room membership was rejected')
         return json(200, encodeKeyMaterialResponseWire(keyMaterialResponse(value.targetUser, store.takeKeyPackages(value.targetUser, value.requiredCapabilities))))
@@ -74,6 +76,7 @@ export function createMimiHttpHandler(
       if (path.startsWith(UPDATE_PREFIX)) {
         const roomId = pathParameter(path, UPDATE_PREFIX, 'room ID')
         const value = decodeUpdateRoomRequestWire(body)
+        if (mode === 'anon') return error(403, 'not-allowed', 'visible credentials are not accepted by an anon-mode deployment')
         if (value.roomId !== roomId) return error(400, 'bad-request', 'room ID path does not match request body')
         if (!(await authorizeUpdate(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         const result = store.submitUpdate(value)
@@ -84,6 +87,7 @@ export function createMimiHttpHandler(
       if (path.startsWith(SUBMIT_MESSAGE_PREFIX)) {
         const roomId = pathParameter(path, SUBMIT_MESSAGE_PREFIX, 'room ID')
         const value = decodeSubmitMessageRequestWire(body)
+        if (mode === 'anon') return error(403, 'not-allowed', 'visible credentials are not accepted by an anon-mode deployment')
         if (value.roomId !== roomId) return error(400, 'bad-request', 'room ID path does not match request body')
         if (!(await authorizeSubmitMessage(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         const keys = store.frankingKeys(roomId)
@@ -98,12 +102,14 @@ export function createMimiHttpHandler(
 
       if (path === DELIVERY_PULL_PATH) {
         const value = decodeDeliveriesPullRequestWire(body)
+        if (mode === 'anon') return error(403, 'not-allowed', 'visible credentials are not accepted by an anon-mode deployment')
         if (!(await authorizeDeliveriesPull(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         return json(200, encodeDeliveriesWire(store.deliveriesSince(value.roomId, value.requester.user, value.afterSeq) ?? []))
       }
 
       if (path === DELIVERY_WATCH_PATH) {
         const value = decodeDeliveriesWatchRequestWire(body)
+        if (mode === 'anon') return error(403, 'not-allowed', 'visible credentials are not accepted by an anon-mode deployment')
         if (!(await authorizeDeliveriesWatch(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         return json(200, encodeDeliveriesWatchTokenWire(watchTokens.issue(value.roomId, value.requester.user)))
       }

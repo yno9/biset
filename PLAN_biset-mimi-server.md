@@ -304,7 +304,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 2.1
 - [x] **2.3 PseudonymousCredential型・wire** (完了: 2026-09-01, `src/mimi/protocol-types.ts`, `src/mimi/wire.ts`, `test/mimi/wire.test.ts`): `src/mimi/protocol-types.ts`/`wire.ts`に追加。
   - depends on: 2.1
-- [~] **2.4 authorizer.ts拡張** (agent: /root, 開始: 2026-09-01): `mode === 'anon'`のインスタンスでは`PseudonymousCredential`以外のroom作成/commitを拒否する（実credentialが誤ってanon-modeインスタンスに混入することを防ぐ、構造的なガード）。normal-modeのインスタンスでは今まで通り。
+- [x] **2.4 authorizer.ts拡張** (完了: 2026-09-01, `src/mimi/http.ts`, `src/mimi/deployment.ts`, `test/mimi/http.test.ts`): `mode === 'anon'`のインスタンスでは`PseudonymousCredential`以外のroom作成/commitを拒否する（実credentialが誤ってanon-modeインスタンスに混入することを防ぐ、構造的なガード）。normal-modeのインスタンスでは今まで通り。
   - depends on: 2.3
 - [ ] **2.5 テスト**: 新規参加者が既存メンバー全員の実credentialをidentity_link_ciphertext経由で復号できることを確認。epoch進行後、破棄したはずの旧epoch鍵で過去のciphertextが復号できないことを確認する回帰テスト（§10で明示的に要求されている）。anon-modeインスタンスへ実credentialでのroom作成を試みて拒否されることも確認する（2.4のガード）。
   - depends on: 2.2, 2.4
