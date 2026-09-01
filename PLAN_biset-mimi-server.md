@@ -599,7 +599,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
 
 ### 19.7 作業ワークシート（§13/§16と同じ規約：着手前`[ ]`→`[~] (agent: ..., 開始: ...)`、完了時`[x] (完了: ..., 関連ファイル)`）
 
-- [ ] **19.a 設計確認（最優先、他タスクをブロックする）**: 19.8の未確定事項（roomId命名規則、chunking方式の最終確認、`appendId`冪等性の置き場所）を決定し、本節に追記する。
+- [~] **19.a 設計確認（最優先、他タスクをブロックする）**: 19.8の未確定事項（roomId命名規則、chunking方式の最終確認、`appendId`冪等性の置き場所）を決定し、本節に追記する。 (agent: Codex, 開始: 2026-09-02)
   - depends on: なし
 - [ ] **19.b `MimiDeliveryEntry.kind`拡張とcheckpoint圧縮ロジック**: protocol-types.ts / store.ts / wire.tsへの実装（19.4）。
   - depends on: 19.a
