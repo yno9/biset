@@ -209,6 +209,7 @@ identity_link_key(epoch) = exportSecret(state, "mimi mmr identity-link", groupId
 - Phase 1: frankingされたmessageの受信者検証が通る。frankingなしのmessageは拒否される。
 - Phase 2: anon modeのroomで、新規参加者が既存メンバー全員の実credentialをidentity_link_ciphertext経由で復号できる。epoch進行後、破棄したはずの旧epoch鍵で過去のciphertextが復号できないことを確認する回帰テストを書く。
 - Phase 3: 最低1つの外部（または自前の別インスタンス2台構成）hub/follower間でroomを共有できる。
+- Phase 6: 本物の署名済み MLS PublicMessage Commit で、room作成・member追加・room metadata・participant list・franking agent の AppData 更新が通る。`mimi.biset.md` と `mimi-anon.biset.md` の本番 HTTPS でこれを確認し、directory が広告する `groupInfo` は privacy policy に従う明示的な 403 `not-allowed` を返す。
 
 ## 11. 未決事項
 
@@ -471,5 +472,5 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: なし（6.0-6.5と並行可）
 - [x] **6.9（項目17）`proxyDownload`のOblivious HTTP対応要否判断**: spec §5.10.3（行2778-2833）を読み、対応するかスコープ外とするかを決めて明文化する。対応しないなら[asset-proxy.ts](src/mimi/asset-proxy.ts)にその旨のコメントを追加する。 (完了: 2026-09-01, 関連: `src/mimi/asset-proxy.ts`; RFC 9458 Gatewayはスコープ外でありOHTTP対応を広告しない。従って完全準拠hubの要件は未達)
   - depends on: なし（6.0-6.5と並行可）
-- [~] **6.10 Phase 6 release gate確認**: §10に正式なgateとして追記した上で確認する——本物のMLS wire commitを使ったroom作成→member追加→AppSync（またはprivate-use拡張）経由でのroom名/participant list反映が、本番HTTPSに対する実検証で確認できること。`groupInfo`のdirectory整合も同時に確認する。 (agent: Codex, 開始: 2026-09-01)
+- [x] **6.10 Phase 6 release gate確認**: §10に正式なgateとして追記した上で確認する——本物のMLS wire commitを使ったroom作成→member追加→AppSync（またはprivate-use拡張）経由でのroom名/participant list反映が、本番HTTPSに対する実検証で確認できること。`groupInfo`のdirectory整合も同時に確認する。 (完了: 2026-09-01, 関連: §10, `test/mimi/http.test.ts`; normal/anon本番で署名済み初期commit・participant更新を各200確認、directory 200 / advertised groupInfo は明示的403確認)
   - depends on: 6.5, 6.6
