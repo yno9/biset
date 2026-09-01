@@ -40,6 +40,7 @@ import type { MimiWatchTokenIssuer } from './watch-token.ts'
 const MAX_BODY_BYTES = 1024 * 1024
 const KEY_MATERIAL_PREFIX = '/keyMaterial/'
 const UPDATE_PREFIX = '/update/'
+const GROUP_INFO_PREFIX = '/groupInfo/'
 const SUBMIT_MESSAGE_PREFIX = '/submitMessage/'
 const REQUEST_CONSENT_PREFIX = '/requestConsent/'
 const UPDATE_CONSENT_PREFIX = '/updateConsent/'
@@ -57,7 +58,7 @@ const DELIVERY_STREAM_PATH = '/v1/mimi/deliveries/stream'
 const KEY_PACKAGE_PUBLISH_PATH = '/v1/mimi/keypackage/publish'
 
 function isMimiHttpPath(path: string): boolean {
-  return path.startsWith(KEY_MATERIAL_PREFIX) || path.startsWith(UPDATE_PREFIX)
+  return path.startsWith(KEY_MATERIAL_PREFIX) || path.startsWith(UPDATE_PREFIX) || path.startsWith(GROUP_INFO_PREFIX)
     || path.startsWith(SUBMIT_MESSAGE_PREFIX)
     || path.startsWith(REQUEST_CONSENT_PREFIX) || path.startsWith(UPDATE_CONSENT_PREFIX) || path.startsWith(IDENTIFIER_QUERY_PREFIX)
     || path.startsWith(NOTIFY_PREFIX)
@@ -121,6 +122,15 @@ export function createMimiHttpHandler(
         const result = store.acceptProviderFanout(roomId, peer.providerDomain, await fanoutFingerprint(body), batch.entries)
         if (result === 'noSuchRoom') return error(404, 'not-found', 'room does not exist')
         return new Response(null, { status: 201 })
+      }
+
+      // The directory advertises this standardized endpoint, but biset does
+      // not permit external joins: a GroupInfo ratchet tree would disclose
+      // visible credentials to an unauthenticated joiner.  Be explicit rather
+      // than returning the previous misleading 404.
+      if (path.startsWith(GROUP_INFO_PREFIX)) {
+        pathParameter(path, GROUP_INFO_PREFIX, 'room ID')
+        return error(403, 'not-allowed', 'external joins are disabled by this provider privacy policy')
       }
 
       if (path.startsWith(REPORT_ABUSE_PREFIX)) {

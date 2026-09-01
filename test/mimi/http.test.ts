@@ -91,6 +91,13 @@ describe('MIMI Phase 0 HTTP flow', () => {
     deployment.close()
   })
 
+  test('groupInfo is explicitly forbidden because external join leaks GroupInfo membership', async () => {
+    const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'normal' })
+    const response = await deployment.fetch(post(`/groupInfo/${encodeURIComponent(roomId)}`, '{}'))
+    expect(response.status).toBe(403)
+    deployment.close()
+  })
+
   test('anon mode accepts a pseudonymous room creation and subsequent commit without a visible identifier', async () => {
     const secret = ed25519.utils.randomSecretKey()
     const bobSecret = ed25519.utils.randomSecretKey()
