@@ -445,7 +445,7 @@ function decodeRoomStateUpdate(value: unknown, name: string): RoomStateUpdate {
 
 export function encodeUpdateRoomRequestWire(value: UpdateRoomRequest): string {
   return JSON.stringify({
-    version: value.version, protocol: value.protocol, roomId: value.roomId, sender: visibleCredentialJson(value.sender), epoch: value.epoch, bundle: handshakeBundleJson(value.bundle),
+    version: value.version, protocol: value.protocol, roomId: value.roomId, sender: credentialJson(value.sender), epoch: value.epoch, bundle: handshakeBundleJson(value.bundle),
     stateUpdate: optional(value.stateUpdate, roomStateUpdateJson),
     initialState: value.initialState === undefined ? undefined : { basePolicy: bytesToBase64url(value.initialState.basePolicy), participantList: participantListJson(value.initialState.participantList), memberCredentials: value.initialState.memberCredentials.map(credentialJson), metadata: roomMetadataJson(value.initialState.metadata) },
     submittedAt: value.submittedAt, signature: bytesToBase64url(value.signature),
@@ -458,7 +458,7 @@ export function decodeUpdateRoomRequestWire(text: string): UpdateRoomRequest {
   const initialStateInput = input.initialState === undefined ? undefined : requireRecord(input.initialState, 'UpdateRoomRequest.initialState')
   return {
     version: 1, protocol: requireProtocol(input.protocol, 'UpdateRoomRequest.protocol'), roomId: requireString(input.roomId, 'UpdateRoomRequest.roomId'),
-    sender: decodeVisibleCredential(input.sender, 'UpdateRoomRequest.sender'), epoch: requireEpoch(input.epoch, 'UpdateRoomRequest.epoch'), bundle: decodeHandshakeBundle(input.bundle, 'UpdateRoomRequest.bundle'),
+    sender: decodeCredential(input.sender, 'UpdateRoomRequest.sender'), epoch: requireEpoch(input.epoch, 'UpdateRoomRequest.epoch'), bundle: decodeHandshakeBundle(input.bundle, 'UpdateRoomRequest.bundle'),
     stateUpdate: input.stateUpdate === undefined ? undefined : decodeRoomStateUpdate(input.stateUpdate, 'UpdateRoomRequest.stateUpdate'),
     initialState: initialStateInput === undefined ? undefined : {
       basePolicy: requireBinary(initialStateInput.basePolicy, 'UpdateRoomRequest.initialState.basePolicy'), participantList: decodeParticipantList(initialStateInput.participantList, 'UpdateRoomRequest.initialState.participantList'),

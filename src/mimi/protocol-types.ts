@@ -232,7 +232,7 @@ export interface UpdateRoomRequest {
   version: 1
   protocol: MimiProtocolVersion
   roomId: MimiRoomId
-  sender: VisibleCredential
+  sender: MimiCredential
   epoch: MimiEpoch
   bundle: HandshakeBundle
   stateUpdate?: RoomStateUpdate

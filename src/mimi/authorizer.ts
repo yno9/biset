@@ -25,11 +25,11 @@ import type {
 import type { SqliteMimiStore } from './store.ts'
 
 export interface MimiSignatureVerifier {
-  verify(credential: VisibleCredential, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>
+  verify(credential: MimiCredential, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>
 }
 
 export class Ed25519MimiSignatureVerifier implements MimiSignatureVerifier {
-  async verify(credential: VisibleCredential, bytes: Uint8Array, signature: Uint8Array): Promise<boolean> {
+  async verify(credential: MimiCredential, bytes: Uint8Array, signature: Uint8Array): Promise<boolean> {
     return signature.length === 64 && credential.signaturePublicKey.length === 32 && ed25519.verify(signature, bytes, credential.signaturePublicKey)
   }
 }
@@ -57,7 +57,7 @@ export function keyPackagePublishSigningBytes(value: Omit<KeyPackagePublishReque
 export function updateRoomSigningBytes(value: Omit<UpdateRoomRequest, 'signature'>): Uint8Array {
   return canonicalBytes({
     label: 'biset/mimi-update-room/v1', version: value.version, protocol: value.protocol, roomId: value.roomId,
-    sender: visibleCredentialValue(value.sender), epoch: value.epoch, bundle: handshakeBundleValue(value.bundle),
+    sender: credentialValue(value.sender), epoch: value.epoch, bundle: handshakeBundleValue(value.bundle),
     ...(value.stateUpdate === undefined ? {} : { stateUpdate: roomStateUpdateValue(value.stateUpdate) }),
     ...(value.initialState === undefined ? {} : { initialState: {
       basePolicy: bytesToBase64url(value.initialState.basePolicy), participantList: participantListValue(value.initialState.participantList),
@@ -126,9 +126,10 @@ export function keyMaterialResponse(targetUser: string, packages: ReturnType<Sql
   }
 }
 
-function credentialMatchesRoom(room: ReturnType<SqliteMimiStore['room']>, signer: VisibleCredential): boolean {
-  if (!room || !room.participantList.participants.some(participant => participant.user === signer.user)) return false
-  return room.memberCredentials.some(credential => credential.kind === 'visible' && credential.user === signer.user && credential.client === signer.client && equalBytes(credential.signaturePublicKey, signer.signaturePublicKey))
+function credentialMatchesRoom(room: ReturnType<SqliteMimiStore['room']>, signer: MimiCredential): boolean {
+  const user = signer.kind === 'visible' ? signer.user : signer.userPseudonym
+  if (!room || !room.participantList.participants.some(participant => participant.user === user)) return false
+  return room.memberCredentials.some(credential => credential.kind === signer.kind && equalBytes(credential.signaturePublicKey, signer.signaturePublicKey) && (credential.kind === 'visible' && signer.kind === 'visible' ? credential.client === signer.client : credential.kind === 'pseudonymous' && signer.kind === 'pseudonymous' ? credential.clientPseudonym === signer.clientPseudonym : false))
 }
 
 function visibleCredentialValue(value: VisibleCredential): CanonicalValue {

@@ -76,7 +76,8 @@ export function createMimiHttpHandler(
       if (path.startsWith(UPDATE_PREFIX)) {
         const roomId = pathParameter(path, UPDATE_PREFIX, 'room ID')
         const value = decodeUpdateRoomRequestWire(body)
-        if (mode === 'anon') return error(403, 'not-allowed', 'visible credentials are not accepted by an anon-mode deployment')
+        if (mode === 'anon' && value.sender.kind !== 'pseudonymous') return error(403, 'not-allowed', 'anon-mode deployments accept only pseudonymous credentials')
+        if (mode === 'normal' && value.sender.kind !== 'visible') return error(403, 'not-allowed', 'normal-mode deployments accept only visible credentials')
         if (value.roomId !== roomId) return error(400, 'bad-request', 'room ID path does not match request body')
         if (!(await authorizeUpdate(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         const result = store.submitUpdate(value)

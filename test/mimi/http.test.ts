@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { createMimiDeployment } from '../../src/mimi/deployment.ts'
+import { decryptIdentityLink, encryptIdentityLink } from '../../src/mimi/anon/identity-link.ts'
 import {
   deliveriesPullSigningBytes,
   deliveriesWatchSigningBytes,
@@ -21,7 +22,7 @@ import {
   encodeSubmitMessageRequestWire,
   encodeUpdateRoomRequestWire,
 } from '../../src/mimi/wire.ts'
-import type { VisibleCredential } from '../../src/mimi/protocol-types.ts'
+import type { PseudonymousCredential, VisibleCredential } from '../../src/mimi/protocol-types.ts'
 
 interface Client { credential: VisibleCredential; secret: Uint8Array }
 
@@ -48,6 +49,68 @@ describe('MIMI Phase 0 HTTP flow', () => {
     const response = await deployment.fetch(post(`/update/${encodeURIComponent(roomId)}`, encodeUpdateRoomRequestWire(signedUpdate(alice, unsigned))))
     expect(response.status).toBe(403)
     expect(deployment.store.room(roomId)).toBeUndefined()
+    deployment.close()
+  })
+
+  test('anon mode accepts a pseudonymous room creation and subsequent commit without a visible identifier', async () => {
+    const secret = ed25519.utils.randomSecretKey()
+    const bobSecret = ed25519.utils.randomSecretKey()
+    const epochOne = { async exportSecret() { return new Uint8Array(32).fill(1) } }
+    const epochTwo = { async exportSecret() { return new Uint8Array(32).fill(2) } }
+    const encoder = new TextEncoder()
+    const decoder = new TextDecoder()
+    const credential: PseudonymousCredential = {
+      kind: 'pseudonymous',
+      userPseudonym: 'mimi://anon.example/u/8e1d21d4-2ebd-4b7c-9d35-16a8fb355d09',
+      clientPseudonym: 'mimi://anon.example/c/5d6e5eeb-ed84-46fd-a2a8-66f79d23dfcf',
+      signaturePublicKey: ed25519.getPublicKey(secret),
+      identityLinkCiphertext: await encryptIdentityLink(epochOne, 'mimi://anon.example/r/opaque-room', encoder.encode('did:web:alice')),
+      signature: new Uint8Array(64),
+    }
+    const bob: PseudonymousCredential = {
+      kind: 'pseudonymous',
+      userPseudonym: 'mimi://anon.example/u/38079f19-c42a-4e4e-bf31-7cd903a06c2a',
+      clientPseudonym: 'mimi://anon.example/c/2cebc41f-73fb-4e99-ad88-ddaf6cb31e5d',
+      signaturePublicKey: ed25519.getPublicKey(bobSecret),
+      identityLinkCiphertext: await encryptIdentityLink(epochTwo, 'mimi://anon.example/r/opaque-room', encoder.encode('did:web:bob')),
+      signature: new Uint8Array(64),
+    }
+    const anonRoomId = 'mimi://anon.example/r/opaque-room'
+    const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'anon' })
+    const initialUnsigned = {
+      version: 1 as const, protocol: 'mls10' as const, roomId: anonRoomId, sender: credential, epoch: '0',
+      bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([1]) },
+      initialState: {
+        basePolicy: new Uint8Array(), participantList: { participants: [{ user: credential.userPseudonym, roleIndex: 1, clientIds: [credential.clientPseudonym] }] },
+        memberCredentials: [credential], metadata: { roomUri: anonRoomId, roomName: 'opaque' },
+      }, submittedAt: at,
+    }
+    const initial = { ...initialUnsigned, signature: ed25519.sign(updateRoomSigningBytes(initialUnsigned), secret) }
+    expect((await deployment.fetch(post(`/update/${encodeURIComponent(anonRoomId)}`, encodeUpdateRoomRequestWire(initial)))).status).toBe(200)
+
+    const aliceAtEpochTwo = { ...credential, identityLinkCiphertext: await encryptIdentityLink(epochTwo, anonRoomId, encoder.encode('did:web:alice')) }
+    const addUnsigned = {
+      version: 1 as const, protocol: 'mls10' as const, roomId: anonRoomId, sender: credential, epoch: '1',
+      bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([2]), welcome: new Uint8Array([3]) },
+      stateUpdate: {
+        participantList: { participants: [{ user: credential.userPseudonym, roleIndex: 1 }, { user: bob.userPseudonym, roleIndex: 1, clientIds: [bob.clientPseudonym] }] },
+        memberCredentials: [aliceAtEpochTwo, bob],
+      }, submittedAt: at,
+    }
+    const add = { ...addUnsigned, signature: ed25519.sign(updateRoomSigningBytes(addUnsigned), secret) }
+    expect((await deployment.fetch(post(`/update/${encodeURIComponent(anonRoomId)}`, encodeUpdateRoomRequestWire(add)))).status).toBe(200)
+    const joinedCredentials = deployment.store.room(anonRoomId)?.memberCredentials ?? []
+    expect(await Promise.all(joinedCredentials.map(item => decryptIdentityLink(epochTwo, anonRoomId, item.identityLinkCiphertext).then(bytes => decoder.decode(bytes))))).toEqual(['did:web:alice', 'did:web:bob'])
+    await expect(decryptIdentityLink(epochOne, anonRoomId, aliceAtEpochTwo.identityLinkCiphertext)).rejects.toThrow()
+
+    const removeUnsigned = {
+      version: 1 as const, protocol: 'mls10' as const, roomId: anonRoomId, sender: credential, epoch: '2',
+      bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([4]) },
+      stateUpdate: { participantList: { participants: [{ user: credential.userPseudonym, roleIndex: 1 }] }, memberCredentials: [aliceAtEpochTwo] }, submittedAt: at,
+    }
+    const remove = { ...removeUnsigned, signature: ed25519.sign(updateRoomSigningBytes(removeUnsigned), secret) }
+    expect((await deployment.fetch(post(`/update/${encodeURIComponent(anonRoomId)}`, encodeUpdateRoomRequestWire(remove)))).status).toBe(200)
+    expect(deployment.store.room(anonRoomId)?.memberCredentials).toEqual([aliceAtEpochTwo])
     deployment.close()
   })
 

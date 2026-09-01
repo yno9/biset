@@ -109,7 +109,7 @@ export class SqliteMimiStore {
       if (request.initialState !== undefined) return { ok: false, reason: 'roomExists', message: 'room already exists' }
 
       const state = decodeRoomStateWire(existing.state_json)
-      if (!isParticipant(state, request.sender.user)) return { ok: false, reason: 'notAllowed', message: 'sender is not an active participant' }
+      if (!isParticipant(state, credentialUser(request.sender))) return { ok: false, reason: 'notAllowed', message: 'sender is not an active participant' }
       if (request.epoch !== state.epoch) return { ok: false, reason: 'wrongEpoch', currentEpoch: state.epoch, message: 'MLS epoch does not match hub state' }
 
       const next = applyStateUpdate(state, request)
@@ -219,7 +219,7 @@ export class SqliteMimiStore {
     try { validateRoomState(state) } catch (error) {
       return { ok: false, reason: 'invalidProposal', message: error instanceof Error ? error.message : 'invalid initial room state' }
     }
-    if (!isParticipant(state, request.sender.user) || !containsCredential(state.memberCredentials, request.sender)) {
+    if (!isParticipant(state, credentialUser(request.sender)) || !containsCredential(state.memberCredentials, request.sender)) {
       return { ok: false, reason: 'notAllowed', message: 'creator must be an initial participant' }
     }
     const entries = this.appendBundle(request.roomId, 1, request, state.epoch)
@@ -306,6 +306,10 @@ function containsCredential(credentials: MimiCredential[], required: MimiCredent
     if (candidate.kind === 'pseudonymous' && required.kind === 'pseudonymous') return candidate.clientPseudonym === required.clientPseudonym && equalBytes(candidate.signaturePublicKey, required.signaturePublicKey)
     return false
   })
+}
+
+function credentialUser(credential: MimiCredential): MimiUserUri {
+  return credential.kind === 'visible' ? credential.user : credential.userPseudonym
 }
 
 function isParticipant(state: RoomState, user: MimiUserUri): boolean { return state.participantList.participants.some(participant => participant.user === user) }
