@@ -455,9 +455,9 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: なし
 - [x] **6.1（項目12）MLSエンジンへのコンポーネント実装** (agent: Codex, 完了: 2026-09-01): `src/mls/vendor/appData.ts`に`app_data_dictionary (0x0006)`／`AppDataUpdate (0x0008)`のTLS codec・dictionary更新規則を実装し、commit処理がUpdatePathなしでGroupContextを更新するようにした。`src/mimi/app-data.ts`にはMIMIの`0x0020`--`0x0023`のTLS codec、participant差分適用を追加した。MLS core testで2 memberが同一AppData componentをcommitで収束することを確認済み。
   - depends on: 6.0
-- [~] **6.2（項目12）`update/{roomId}`のAppSync対応** (agent: Codex, 開始: 2026-09-01): [http.ts](src/mimi/http.ts)の`update`ハンドラを書き換え、`proposalOrCommit`を実際にMLS wire formatとしてパースし、6.1のコンポーネントから参加者リスト・room policyを抽出する。既存の`initialState`/`stateUpdate`というJSON sidecar（[protocol-types.ts:244-256](src/mimi/protocol-types.ts)）は廃止するか、最低限「MLS commit内容とJSON申告の不一致を拒否する」検証を追加する。
+- [x] **6.2（項目12）`update/{roomId}`のAppSync対応** (agent: Codex, 完了: 2026-09-01): `mls-appsync.ts`が完全なMLS PublicMessage Commitだけをdecodeし、direct `AppDataUpdate`を抽出する。初回作成もparticipant_listとroom_metadataを含む実MLS Commitを必須にし、既存roomのparticipant/metadata sidecarはMLS内容との不一致で400拒否する。ProposalRefのみのcommitは、hubが署名済み元proposalを保持していない限り検証不能なため拒否する。
   - depends on: 6.1
-- [ ] **6.3（項目12）`room_metadata`コンポーネントへの切り替え**: [store.ts](src/mimi/store.ts)のmetadata取り扱いを6.1のコンポーネント経由に変更する。
+- [x] **6.3（項目12）`room_metadata`コンポーネントへの切り替え** (agent: Codex, 完了: 2026-09-01): `0x0023`をTLS codecでdecodeし、初期作成・以後のcommitともMLS AppDataUpdateの値だけをroom metadataとして永続化する。JSON metadataは互換性検査用の一致申告に降格した。
   - depends on: 6.1
 - [ ] **6.4（項目12・14統合）`franking_signature_key`のGroupContext配布**: hubの`FrankingKeyMaterial.signingPublicKey`（[franking.ts](src/mimi/franking.ts)）をGroupContext拡張経由でクライアントへ配布する経路を実装する。現状はDB内保持のみで、受信者が`verifyFrank`に使う公開鍵の入手経路が実質存在しない——§15.3項目14の調査もここで行う。
   - depends on: 6.1
