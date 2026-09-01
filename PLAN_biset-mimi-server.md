@@ -250,7 +250,7 @@ identity_link_key(epoch) = exportSecret(state, "mimi mmr identity-link", groupId
 - [x] **0.1 型定義** (完了: 2026-09-01, `src/mimi/protocol-types.ts`): `RoomState`/`ParticipantListData`/`UserRolePair`/`RoomMetadata`/KeyPackage関連の型/Update・Commit submission bodyの型/エラー形状を定義する（§4, §5, §7の型を先取りして置いてよいが、Phase 0で使わないフィールドは`?`にして後続フェーズで埋める）。
   - 参照実装: `src/protocol/conversation-mls-ds.ts`
   - depends on: なし
-- [~] **0.2 wire encoding** (agent: /root, 開始: 2026-09-01): `src/mimi/wire.ts`。0.1の型のJSON+base64urlエンコード/デコード。
+- [x] **0.2 wire encoding** (完了: 2026-09-01, `src/mimi/wire.ts`): `src/mimi/wire.ts`。0.1の型のJSON+base64urlエンコード/デコード。
   - 参照実装: `src/protocol/conversation-mls-ds-wire.ts`
   - depends on: 0.1
 - [ ] **0.3 room state store**: `src/mimi/store.ts`。SQLite永続化。room作成、epoch管理、participant list（実credential含む）、KeyPackage directory（publish/take）。ordered logの設計は`mls-ds/store.ts`を踏襲するが、rosterの中身が実credential/DIDを含む点が構造的な違い（§4の対比表参照）。
