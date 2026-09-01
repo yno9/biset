@@ -268,7 +268,7 @@ identity_link_key(epoch) = exportSecret(state, "mimi mmr identity-link", groupId
 - [x] **0.6 デプロイメント** (完了: 2026-09-01, `src/mimi/deployment.ts`): `src/mimi/deployment.ts`。Bun.serve wrapper、CORS、**`idleTimeout: 255`を最初から設定する**（このセッションで踏んだSSE/heartbeatの罠を再現しない——0.5では長寿命接続は無いが、0.5.1のクライアント配信watchと、Phase 3の`notify`実装時にこの設定が既にあることが重要）。
   - 参照実装: `src/mls-ds/deployment.ts`（コメントに罠の詳細な記録あり、必ず読むこと）
   - depends on: 0.5, 0.5.1
-- [~] **0.7 entrypoint** (agent: /root, 開始: 2026-09-01): `src/mimi/index.ts`。store/authorizer/http/deploymentの配線。
+- [x] **0.7 entrypoint** (完了: 2026-09-01, `src/mimi/index.ts`): `src/mimi/index.ts`。store/authorizer/http/deploymentの配線。
   - 参照実装: `src/mls-ds/index.ts`
   - depends on: 0.3, 0.4, 0.6
 - [ ] **0.8 テスト**: `test/mimi/store.test.ts`, `test/mimi/http.test.ts`, `test/mimi/wire.test.ts`。biset内で3台のクライアントがroom作成→member追加→KeyPackage交換→**0.5.1経由でcommitを受信する**ところまで一通り行えることをE2Eで確認する。
