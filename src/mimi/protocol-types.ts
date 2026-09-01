@@ -199,6 +199,29 @@ export interface KeyMaterialResponse {
   clients: ClientKeyMaterial[]
 }
 
+/** draft §5.7 explicit provider-to-provider consent operation. */
+export type MimiConsentOperation = 'cancel' | 'request' | 'grant' | 'revoke'
+
+export interface MimiConsentEntry {
+  consentOperation: MimiConsentOperation
+  requesterUri: MimiUserUri
+  targetUri: MimiUserUri
+  roomId?: MimiRoomId
+  /** Optional immediately-usable KeyPackages attached to a grant. */
+  clientKeyPackages?: PublishedKeyPackage[]
+}
+
+export type MimiIdentifierSearchType = 'handle' | 'nick' | 'email' | 'phone' | 'partialName' | 'wholeProfile' | 'oidcStdClaim' | 'vcardField'
+export interface MimiIdentifierQueryElement {
+  searchType: MimiIdentifierSearchType
+  searchValue: string
+  fieldName?: string
+}
+export interface MimiIdentifierRequest { queryElements: MimiIdentifierQueryElement[] }
+export type MimiIdentifierQueryCode = 'success' | 'notFound' | 'ambiguous' | 'forbidden' | 'unsupportedField'
+export interface MimiIdentifierProfile { stableUri: MimiUserUri; fields: { fieldSource: 'oidcStdClaim' | 'vcardField'; fieldName: string; fieldValue: string }[] }
+export interface MimiIdentifierResponse { responseCode: MimiIdentifierQueryCode; foundProfiles: MimiIdentifierProfile[] }
+
 /** MIMI update's committed/proposed MLS handshake material (draft §5.3). */
 export interface HandshakeBundle {
   kind: 'commit' | 'proposal'

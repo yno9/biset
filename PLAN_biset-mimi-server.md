@@ -321,7 +321,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 2.7
 - [x] **3.2 directory.ts** (完了: 2026-09-01, `src/mimi/directory.ts`, `src/mimi/http.ts`, `src/mimi/deployment.ts`, `test/mimi/directory.test.ts`): spec §5.1の全endpoint URI templateを返すwell-known directoryを追加。公開HTTPS originは`MIMI_PUBLIC_BASE_URL`で固定可能で、未指定時のみ受信originを使用する。
   - depends on: 3.1
-- [~] **3.3 同意/存在確認系エンドポイント** (agent: Codex, 開始: 2026-09-01): `requestConsent`/`updateConsent`/`identifierQuery`（spec行2219, 2220, 2346）。
+- [x] **3.3 同意/存在確認系エンドポイント** (完了: 2026-09-01, `src/mimi/federation.ts`, `src/mimi/http.ts`, `src/mimi/store.ts`, `test/mimi/federation.test.ts`): ConsentScopeをSQLiteへ永続化し、request/cancel・grant/revoke、grant添付KeyPackage、privacy-aware identifier directory hookを実装。これらprovider専用endpointは、TLS終端が渡す検証済みpeerとFrom/Hostを照合できる`MimiFederationOptions.authenticatePeer`なしには403で拒否する。
   - depends on: 3.1
 - [ ] **3.4 fanout**: `POST /notify/{roomId}`（spec行1924）。0.6で設定済みの`idleTimeout`が効いてくる箇所。
   - depends on: 3.1

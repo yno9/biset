@@ -25,6 +25,8 @@ import {
 } from './wire.ts'
 import { frankMessage } from './franking.ts'
 import { createMimiProtocolDirectory, MIMI_PROTOCOL_DIRECTORY_PATH } from './directory.ts'
+import { decodeMimiConsentEntryWire, decodeMimiIdentifierRequestWire, encodeMimiIdentifierResponseWire, noIdentifiers, type MimiIdentifierDirectory } from './federation.ts'
+import { verifyMimiProviderRequest, type VerifiedProviderPeer } from './provider-transport.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
 import type { MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
 import type { MimiWatchTokenIssuer } from './watch-token.ts'
@@ -33,6 +35,9 @@ const MAX_BODY_BYTES = 1024 * 1024
 const KEY_MATERIAL_PREFIX = '/keyMaterial/'
 const UPDATE_PREFIX = '/update/'
 const SUBMIT_MESSAGE_PREFIX = '/submitMessage/'
+const REQUEST_CONSENT_PREFIX = '/requestConsent/'
+const UPDATE_CONSENT_PREFIX = '/updateConsent/'
+const IDENTIFIER_QUERY_PREFIX = '/identifierQuery/'
 const DELIVERY_PULL_PATH = '/v1/mimi/deliveries/pull'
 const DELIVERY_WATCH_PATH = '/v1/mimi/deliveries/watch'
 const DELIVERY_STREAM_PATH = '/v1/mimi/deliveries/stream'
@@ -40,8 +45,19 @@ const DELIVERY_STREAM_PATH = '/v1/mimi/deliveries/stream'
 function isMimiHttpPath(path: string): boolean {
   return path.startsWith(KEY_MATERIAL_PREFIX) || path.startsWith(UPDATE_PREFIX)
     || path.startsWith(SUBMIT_MESSAGE_PREFIX)
+    || path.startsWith(REQUEST_CONSENT_PREFIX) || path.startsWith(UPDATE_CONSENT_PREFIX) || path.startsWith(IDENTIFIER_QUERY_PREFIX)
     || path === DELIVERY_PULL_PATH || path === DELIVERY_WATCH_PATH || path === DELIVERY_STREAM_PATH || path === MIMI_PROTOCOL_DIRECTORY_PATH
 }
+
+/** The HTTPS listener/TLS terminator supplies a verified client-cert peer. */
+export interface MimiFederationOptions {
+  providerDomain: string
+  authenticatePeer(request: Request): Promise<VerifiedProviderPeer | undefined>
+  identifierDirectory?: MimiIdentifierDirectory
+  now?: () => string
+}
+
+class MimiProviderAuthenticationError extends Error {}
 
 /**
  * MIMI draft §5.2 / §5.3 provider-facing routes.  Biset's calls arrive from
@@ -54,6 +70,7 @@ export function createMimiHttpHandler(
   watchTokens: MimiWatchTokenIssuer,
   mode: MimiDeploymentMode,
   publicBaseUrl?: string,
+  federation?: MimiFederationOptions,
 ): (request: Request) => Promise<Response> {
   return async request => {
     try {
@@ -69,6 +86,34 @@ export function createMimiHttpHandler(
       }
       if (request.method !== 'POST') return error(405, 'bad-request', 'Method not allowed')
       const body = await requestText(request)
+
+      if (path.startsWith(REQUEST_CONSENT_PREFIX)) {
+        const targetDomain = pathParameter(path, REQUEST_CONSENT_PREFIX, 'target domain')
+        const peer = await verifiedFederationPeer(request, federation)
+        if (!sameDomain(targetDomain, federation!.providerDomain)) return error(400, 'bad-request', 'target domain does not identify this provider')
+        const entry = decodeMimiConsentEntryWire(body)
+        if (entry.consentOperation !== 'request' && entry.consentOperation !== 'cancel') return error(400, 'bad-request', 'requestConsent requires request or cancel')
+        store.recordConsent(entry, peer.providerDomain, federation!.now?.() ?? new Date().toISOString())
+        return new Response(null, { status: 201 })
+      }
+
+      if (path.startsWith(UPDATE_CONSENT_PREFIX)) {
+        const requesterDomain = pathParameter(path, UPDATE_CONSENT_PREFIX, 'requester domain')
+        const peer = await verifiedFederationPeer(request, federation)
+        if (!sameDomain(requesterDomain, federation!.providerDomain)) return error(400, 'bad-request', 'requester domain does not identify this provider')
+        const entry = decodeMimiConsentEntryWire(body)
+        if (entry.consentOperation !== 'grant' && entry.consentOperation !== 'revoke') return error(400, 'bad-request', 'updateConsent requires grant or revoke')
+        store.recordConsent(entry, peer.providerDomain, federation!.now?.() ?? new Date().toISOString())
+        return new Response(null, { status: 201 })
+      }
+
+      if (path.startsWith(IDENTIFIER_QUERY_PREFIX)) {
+        const targetDomain = pathParameter(path, IDENTIFIER_QUERY_PREFIX, 'target domain')
+        const peer = await verifiedFederationPeer(request, federation)
+        if (!sameDomain(targetDomain, federation!.providerDomain)) return error(400, 'bad-request', 'identifier query domain does not identify this provider')
+        const response = await (federation!.identifierDirectory ?? noIdentifiers).query(decodeMimiIdentifierRequestWire(body), peer.providerDomain)
+        return json(200, encodeMimiIdentifierResponseWire(response))
+      }
 
       if (path.startsWith(KEY_MATERIAL_PREFIX)) {
         const targetUser = pathParameter(path, KEY_MATERIAL_PREFIX, 'target user')
@@ -123,6 +168,7 @@ export function createMimiHttpHandler(
 
       return error(404, 'not-found', 'Not found')
     } catch (cause) {
+      if (cause instanceof MimiProviderAuthenticationError) return error(403, 'unauthorized', 'provider mTLS authentication or identity binding was rejected')
       if (cause instanceof MimiWireError || cause instanceof MimiStoreCapacityError || cause instanceof MimiStoreStateError || cause instanceof RangeError || cause instanceof TypeError) {
         return error(400, 'bad-request', cause.message)
       }
@@ -130,6 +176,16 @@ export function createMimiHttpHandler(
     }
   }
 }
+
+async function verifiedFederationPeer(request: Request, federation: MimiFederationOptions | undefined): Promise<VerifiedProviderPeer> {
+  if (!federation) throw new MimiProviderAuthenticationError()
+  const peer = await federation.authenticatePeer(request)
+  if (!peer) throw new MimiProviderAuthenticationError()
+  try { verifyMimiProviderRequest(request, federation.providerDomain, peer) } catch { throw new MimiProviderAuthenticationError() }
+  return peer
+}
+
+function sameDomain(left: string, right: string): boolean { return left.toLowerCase().replace(/\.$/, '') === right.toLowerCase().replace(/\.$/, '') }
 
 /**
  * Authenticated SSE tail.  Backlog and subscribe happen in the same

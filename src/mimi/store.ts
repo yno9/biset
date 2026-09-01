@@ -6,6 +6,7 @@
 import { Database } from 'bun:sqlite'
 import { equalBytes } from '../protocol/canonical.ts'
 import { createFrankingKeyMaterial, type FrankingKeyMaterial } from './franking.ts'
+import { decodeMimiConsentEntryWire, encodeMimiConsentEntryWire } from './federation.ts'
 import { decodeFrankWire, encodeFrankWire } from './wire.ts'
 import {
   decodeRoomStateWire,
@@ -13,6 +14,7 @@ import {
 } from './wire.ts'
 import type {
   KeyPackagePublishRequest,
+  MimiConsentEntry,
   MimiCredential,
   MimiDeliveryEntry,
   MimiDeliveryKind,
@@ -53,6 +55,7 @@ interface KeyPackageRow {
   source_provider: string | null
 }
 interface FrankingKeyRow { hub_key: Uint8Array; signing_private_key: Uint8Array; signing_public_key: Uint8Array }
+interface ConsentRow { entry_json: string; source_provider: string; updated_at: string }
 
 /** Hub-owned room state, ordered local deliveries, and KeyPackage directory. */
 export class SqliteMimiStore {
@@ -181,6 +184,23 @@ export class SqliteMimiStore {
 
   keyPackageCount(user: MimiUserUri): number {
     return this.database.query<{ count: number }, [string]>('SELECT COUNT(*) AS count FROM mimi_key_packages WHERE user_uri = ?').get(user)?.count ?? 0
+  }
+
+  /** Durable provider-to-provider consent state keyed by draft §5.7 ConsentScope. */
+  recordConsent(entry: MimiConsentEntry, sourceProvider: string, receivedAt: string): void {
+    const roomScope = entry.roomId ?? ''
+    if (entry.consentOperation === 'cancel') {
+      this.database.query('DELETE FROM mimi_consents WHERE requester_uri = ? AND target_uri = ? AND room_id = ?').run(entry.requesterUri, entry.targetUri, roomScope)
+      return
+    }
+    this.database.query(
+      'INSERT INTO mimi_consents (requester_uri, target_uri, room_id, entry_json, source_provider, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(requester_uri, target_uri, room_id) DO UPDATE SET entry_json = excluded.entry_json, source_provider = excluded.source_provider, updated_at = excluded.updated_at',
+    ).run(entry.requesterUri, entry.targetUri, roomScope, encodeMimiConsentEntryWire(entry), sourceProvider, receivedAt)
+  }
+
+  consent(requesterUri: MimiUserUri, targetUri: MimiUserUri, roomId?: MimiRoomId): { entry: MimiConsentEntry; sourceProvider: string; updatedAt: string } | undefined {
+    const row = this.database.query<ConsentRow, [string, string, string]>('SELECT entry_json, source_provider, updated_at FROM mimi_consents WHERE requester_uri = ? AND target_uri = ? AND room_id = ?').get(requesterUri, targetUri, roomId ?? '')
+    return row == null ? undefined : { entry: decodeMimiConsentEntryWire(row.entry_json), sourceProvider: row.source_provider, updatedAt: row.updated_at }
   }
 
   submitMessage(roomId: MimiRoomId, sender: MimiUserUri, epoch: MimiEpoch, payload: Uint8Array, frank: Frank, acceptedAt: string): { ok: true; entry: MimiDeliveryEntry } | { ok: false; currentEpoch?: MimiEpoch } {
@@ -384,6 +404,15 @@ function installSchema(database: Database): void {
       signing_private_key BLOB NOT NULL,
       signing_public_key BLOB NOT NULL,
       FOREIGN KEY(room_id) REFERENCES mimi_rooms(room_id)
+    );
+    CREATE TABLE IF NOT EXISTS mimi_consents (
+      requester_uri TEXT NOT NULL,
+      target_uri TEXT NOT NULL,
+      room_id TEXT NOT NULL,
+      entry_json TEXT NOT NULL,
+      source_provider TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (requester_uri, target_uri, room_id)
     );
   `)
   const columns = database.query<{ name: string }, []>('PRAGMA table_info(mimi_deliveries)').all()

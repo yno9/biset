@@ -1,6 +1,6 @@
 /** Composition root for one standalone biset-mimi provider deployment. */
 import { Ed25519MimiSignatureVerifier } from './authorizer.ts'
-import { createMimiHttpHandler } from './http.ts'
+import { createMimiHttpHandler, type MimiFederationOptions } from './http.ts'
 import { SqliteMimiStore } from './store.ts'
 import { MimiWatchTokenIssuer } from './watch-token.ts'
 import type { MimiDeploymentMode } from './protocol-types.ts'
@@ -17,6 +17,7 @@ export interface MimiDeploymentOptions {
   mode: MimiDeploymentMode
   /** Public HTTPS origin advertised by the MIMI well-known directory. */
   publicBaseUrl?: string
+  federation?: MimiFederationOptions
 }
 
 export interface MimiServerOptions extends MimiDeploymentOptions { port: number }
@@ -30,7 +31,7 @@ export function createMimiDeployment(options: MimiDeploymentOptions) {
   const store = SqliteMimiStore.open(options.databasePath)
   const verifier = new Ed25519MimiSignatureVerifier()
   const watchTokens = new MimiWatchTokenIssuer()
-  const inner = createMimiHttpHandler(store, verifier, watchTokens, options.mode, options.publicBaseUrl)
+  const inner = createMimiHttpHandler(store, verifier, watchTokens, options.mode, options.publicBaseUrl, options.federation)
   return {
     mode: options.mode,
     store,
