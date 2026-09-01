@@ -461,7 +461,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: 6.1
 - [x] **6.4（項目12・14統合）`franking_signature_key`のGroupContext配布** (agent: Codex, 完了: 2026-09-01): creatorはbiset拡張`GET /v1/mimi/franking-agent/{roomId}`でhubのroom固有公開鍵を先に取得し、初回MLS Commitの`0x0021` componentへ入れる。hubはprepared private keyとcomponent公開鍵が一致しない作成を拒否し、受理時にキーをroomへatomically移す。受信者は永続化されたGroupContext componentから`verifyFrank`用公開鍵を得る。
   - depends on: 6.1
-- [ ] **6.5（項目12）テスト・回帰確認**: `test/mimi/http.test.ts`等を本物のMLS wire formatでのroom作成・member追加に書き換え、typecheck・全テストスイート（`bun run test`）を実行する。本番（`mimi.biset.md`/`mimi-anon.biset.md`）に対する実HTTPS検証で、本物のMLS commitを使ったroom作成→member追加→AppSync（または6.0(B)のprivate-use拡張）経由でのroom名/participant list反映を確認する。
+- [~] **6.5（項目12）テスト・回帰確認**: `test/mimi/http.test.ts`等を本物のMLS wire formatでのroom作成・member追加に書き換え、typecheck・全テストスイート（`bun run test`）を実行する。本番（`mimi.biset.md`/`mimi-anon.biset.md`）に対する実HTTPS検証で、本物のMLS commitを使ったroom作成→member追加→AppSync（または6.0(B)のprivate-use拡張）経由でのroom名/participant list反映を確認する。 (agent: Codex, 開始: 2026-09-01)
   - depends on: 6.2, 6.3, 6.4
 - [x] **6.6（項目13）`groupInfo/{roomId}`の扱いを確定する** (agent: Codex, 完了: 2026-09-01): (c)を採用。directoryには標準endpointとして残し、`POST /groupInfo/{roomId}`は必ず明示的な403 `not-allowed`を返す。これはexternal join用GroupInfoのratchet treeがvisible credentialを漏らすためであり、従来の虚偽の404を解消する。
   - depends on: なし（6.0-6.5と並行可）
