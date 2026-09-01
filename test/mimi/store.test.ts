@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { SqliteMimiStore } from '../../src/mimi/store.ts'
 import { frankMessage, verifyFrank } from '../../src/mimi/franking.ts'
+import { RoomPseudonymIssuer } from '../../src/mimi/anon/pseudonym.ts'
 import type { UpdateRoomRequest, VisibleCredential } from '../../src/mimi/protocol-types.ts'
 
 const at = '2026-09-01T00:00:00.000Z'
@@ -21,6 +22,13 @@ function initialUpdate(): UpdateRoomRequest {
 }
 
 describe('MIMI SQLite store', () => {
+  test('pseudonyms are stable within one room and unlinkable across rooms', () => {
+    const issuer = new RoomPseudonymIssuer('mimi.example.test')
+    expect(issuer.userPseudonym('room-a', alice.user)).toBe(issuer.userPseudonym('room-a', alice.user))
+    expect(issuer.userPseudonym('room-a', alice.user)).not.toBe(issuer.userPseudonym('room-b', alice.user))
+    expect(issuer.clientPseudonym('room-a', alice.client)).toMatch(/^mimi:\/\/mimi\.example\.test\/u\/[0-9a-f-]{36}$/)
+  })
+
   test('serializes room commits, records deliveries, and atomically consumes compatible KeyPackages', () => {
     const store = new SqliteMimiStore(new Database(':memory:'))
     const created = store.submitUpdate(initialUpdate())
