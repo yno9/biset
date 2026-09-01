@@ -354,7 +354,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 5.0
 - [x] **5.2 pseudonymous credential binding** (完了: 2026-09-01, `src/mimi/anon/identity-link.ts`, `src/mimi/{protocol-types,wire,authorizer}.ts`, `test/mimi/identity-link.test.ts`): draft §6.1どおりPseudonymousCredential本体を4フィールドへ是正し、暗号化IdentityLinkTBE内のTBS署名と復号済み実credentialの署名鍵検証をclient側primitiveとして実装。pseudonym改竄と実credential鍵不一致を拒否する。
   - depends on: 5.0
-- [~] **5.3 conversation room migration** (agent: Codex, 開始: 2026-09-01): E2E offer/accept/cutoverとlocal-only room mappingを実装し、server historyをコピーしない新room移行を通しで検証する。
+- [x] **5.3 conversation room migration** (完了: 2026-09-01, `src/mls/mimi-room-migration.ts`, `test/mls/mimi-room-migration.test.ts`): anon新roomだけを含むE2E migration offer/accept/cutover state machineと、old/new mappingを専用local IndexedDBへ保存するstoreを実装。offer wireへold room IDを投影せず、新roomのローカル検証前のcutoverを拒否する。
   - depends on: 5.1, 5.2
 - [ ] **5.4 Self Group deployment spike**: owner-only `biset-mimi-self`を別プロセスとして試作し、Vault recoveryとthird-party負荷隔離を検証する。
   - depends on: 5.1, 5.2
