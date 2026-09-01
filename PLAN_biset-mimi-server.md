@@ -607,7 +607,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: 19.a
 - [~] **19.d メタデータ平文漏洩の是正確認**: 実際にVault entryの中身がMLS暗号化層の内側に入り、hubから`VaultDeliveryPackV1`内部のフィールドが一切見えないことをテスト・実HTTPS検証で確認する（19.3）。 (agent: Codex, 開始: 2026-09-02)
   - depends on: 19.b
-- [ ] **19.e クライアント側移植**: `src/vault/mimi-vault-sync.ts`（新規）実装、`main.ts`の`synchronizeStreamOnce`呼び出し元をcoordinator-transportからこちらへ切り替え（19.5）。
+- [~] **19.e クライアント側移植**: `src/vault/mimi-vault-sync.ts`（新規）実装、`main.ts`の`synchronizeStreamOnce`呼び出し元をcoordinator-transportからこちらへ切り替え（19.5）。 (agent: Codex, 開始: 2026-09-02)
   - depends on: 19.b, 19.c
 - [ ] **19.f テスト・実HTTPS検証**: `bun run typecheck`・`bun run test`、`biset-mimi-self`に対する実HTTPS End-to-End（entry送受信、checkpoint圧縮、chunk結合、新端末onboarding後のVault復元）。
   - depends on: 19.b, 19.c, 19.e
