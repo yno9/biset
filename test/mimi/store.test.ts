@@ -6,6 +6,7 @@ import { RoomPseudonymIssuer } from '../../src/mimi/anon/pseudonym.ts'
 import { decryptIdentityLink, encryptIdentityLink } from '../../src/mimi/anon/identity-link.ts'
 import type { UpdateRoomRequest, VisibleCredential } from '../../src/mimi/protocol-types.ts'
 import type { MimiMlsStateTransition } from '../../src/mimi/mls-appsync.ts'
+import { createMlsGroup, encryptApplication, generateOwnKeyPackageForCredential } from '../../src/mls/group.ts'
 
 const at = '2026-09-01T00:00:00.000Z'
 const roomId = 'mimi://example.test/r/store'
@@ -142,6 +143,19 @@ describe('MIMI SQLite store', () => {
     const retry = store.submitMessage(roomId, alice.user, '1', new Uint8Array([1]), frank, '2026-09-02T00:00:00.000Z', 'C'.repeat(24))
     expect(retry).toMatchObject({ ok: true, entry: { seq: first.ok ? first.entry.seq : -1, acceptedAt: at } })
     expect(() => store.submitMessage(roomId, alice.user, '1', new Uint8Array([2]), frank, at, 'C'.repeat(24))).toThrow('deliveryId is bound')
+    store.close()
+  })
+
+  test('stores an MLS-encrypted Vault payload without exposing its event metadata', async () => {
+    const store = new SqliteMimiStore(new Database(':memory:')); expect(createInitial(store).ok).toBe(true)
+    const own = await generateOwnKeyPackageForCredential({ credentialType: 'basic', identity: new TextEncoder().encode(alice.client) })
+    const group = await createMlsGroup(new TextEncoder().encode(roomId), own)
+    const plaintext = new TextEncoder().encode('{"kind":"message.add","targetIds":["private-target"]}')
+    const encrypted = await encryptApplication(group, plaintext)
+    expect(new TextDecoder().decode(encrypted.wire)).not.toContain('message.add')
+    const keys = store.frankingKeys(roomId)!, frank = frankMessage(keys, { aad: { frankingTag: new Uint8Array(32).fill(3) }, senderUri: alice.user, roomUri: roomId, acceptedTimestamp: '1', ciphersuite: 1 })
+    expect(store.submitMessage(roomId, alice.user, '1', encrypted.wire, frank, at, 'D'.repeat(24)).ok).toBe(true)
+    expect(new TextDecoder().decode(store.deliveriesSince(roomId, alice.user, 0)!.at(-1)!.payload)).not.toContain('private-target')
     store.close()
   })
 
