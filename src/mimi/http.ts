@@ -80,11 +80,13 @@ export function createMimiHttpHandler(
   mode: MimiDeploymentMode,
   publicBaseUrl?: string,
   federation?: MimiFederationOptions,
+  selfOwnerUser?: string,
 ): (request: Request) => Promise<Response> {
   return async request => {
     try {
       const path = new URL(request.url).pathname
       if (!isMimiHttpPath(path)) return error(404, 'not-found', 'Not found')
+      if (mode === 'self' && isFederationPath(path)) return error(403, 'not-allowed', 'self-mode deployments do not expose federation endpoints')
       if (path === MIMI_PROTOCOL_DIRECTORY_PATH) {
         if (request.method !== 'GET') return error(405, 'bad-request', 'Method not allowed')
         return json(200, JSON.stringify(createMimiProtocolDirectory(publicBaseUrl ?? new URL(request.url).origin)))
@@ -153,7 +155,7 @@ export function createMimiHttpHandler(
       if (path.startsWith(KEY_MATERIAL_PREFIX)) {
         const targetUser = pathParameter(path, KEY_MATERIAL_PREFIX, 'target user')
         const value = decodeKeyMaterialRequestWire(body)
-        if (!credentialMatchesMode(value.requester, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
+        if (!credentialAllowed(value.requester, mode, selfOwnerUser)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (value.targetUser !== targetUser) return error(400, 'bad-request', 'target user path does not match request body')
         if (!(await authorizeKeyMaterial(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room membership was rejected')
         return json(200, encodeKeyMaterialResponseWire(keyMaterialResponse(value.targetUser, store.takeKeyPackages(value.targetUser, value.requiredCapabilities))))
@@ -162,8 +164,7 @@ export function createMimiHttpHandler(
       if (path.startsWith(UPDATE_PREFIX)) {
         const roomId = pathParameter(path, UPDATE_PREFIX, 'room ID')
         const value = decodeUpdateRoomRequestWire(body)
-        if (mode === 'anon' && value.sender.kind !== 'pseudonymous') return error(403, 'not-allowed', 'anon-mode deployments accept only pseudonymous credentials')
-        if (mode === 'normal' && value.sender.kind !== 'visible') return error(403, 'not-allowed', 'normal-mode deployments accept only visible credentials')
+        if (!credentialAllowed(value.sender, mode, selfOwnerUser) || (mode === 'self' && !selfUpdateOwned(value, selfOwnerUser))) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential or room state`)
         if (value.roomId !== roomId) return error(400, 'bad-request', 'room ID path does not match request body')
         if (!(await authorizeUpdate(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         const result = store.submitUpdate(value)
@@ -174,7 +175,7 @@ export function createMimiHttpHandler(
       if (path.startsWith(SUBMIT_MESSAGE_PREFIX)) {
         const roomId = pathParameter(path, SUBMIT_MESSAGE_PREFIX, 'room ID')
         const value = decodeSubmitMessageRequestWire(body)
-        if (!credentialMatchesMode(value.sender, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
+        if (!credentialAllowed(value.sender, mode, selfOwnerUser)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (value.roomId !== roomId) return error(400, 'bad-request', 'room ID path does not match request body')
         if (!(await authorizeSubmitMessage(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         const keys = store.frankingKeys(roomId)
@@ -190,14 +191,14 @@ export function createMimiHttpHandler(
 
       if (path === DELIVERY_PULL_PATH) {
         const value = decodeDeliveriesPullRequestWire(body)
-        if (!credentialMatchesMode(value.requester, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
+        if (!credentialAllowed(value.requester, mode, selfOwnerUser)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (!(await authorizeDeliveriesPull(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         return json(200, encodeDeliveriesWire(store.deliveriesSince(value.roomId, credentialUser(value.requester), value.afterSeq) ?? []))
       }
 
       if (path === DELIVERY_WATCH_PATH) {
         const value = decodeDeliveriesWatchRequestWire(body)
-        if (!credentialMatchesMode(value.requester, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
+        if (!credentialAllowed(value.requester, mode, selfOwnerUser)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (!(await authorizeDeliveriesWatch(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         return json(200, encodeDeliveriesWatchTokenWire(watchTokens.issue(value.roomId, credentialUser(value.requester))))
       }
@@ -223,12 +224,23 @@ async function verifiedFederationPeer(request: Request, federation: MimiFederati
 
 function sameDomain(left: string, right: string): boolean { return left.toLowerCase().replace(/\.$/, '') === right.toLowerCase().replace(/\.$/, '') }
 
-function credentialMatchesMode(credential: MimiCredential, mode: MimiDeploymentMode): boolean {
-  return mode === 'anon' ? credential.kind === 'pseudonymous' : credential.kind === 'visible'
+function credentialAllowed(credential: MimiCredential, mode: MimiDeploymentMode, selfOwnerUser: string | undefined): boolean {
+  if (mode === 'anon') return credential.kind === 'pseudonymous'
+  return credential.kind === 'visible' && (mode !== 'self' || credential.user === selfOwnerUser)
 }
 
 function credentialUser(credential: MimiCredential): string {
   return credential.kind === 'visible' ? credential.user : credential.userPseudonym
+}
+
+function selfUpdateOwned(value: import('./protocol-types.ts').UpdateRoomRequest, selfOwnerUser: string | undefined): boolean {
+  if (!selfOwnerUser) return false
+  const states = [value.initialState, value.stateUpdate]
+  return states.every(state => state === undefined || (state.memberCredentials === undefined || state.memberCredentials.every(credential => credential.kind === 'visible' && credential.user === selfOwnerUser)) && (state.participantList === undefined || state.participantList.participants.every(participant => participant.user === selfOwnerUser)))
+}
+
+function isFederationPath(path: string): boolean {
+  return path.startsWith(REQUEST_CONSENT_PREFIX) || path.startsWith(UPDATE_CONSENT_PREFIX) || path.startsWith(IDENTIFIER_QUERY_PREFIX) || path.startsWith(NOTIFY_PREFIX) || path.startsWith(PROXY_DOWNLOAD_PREFIX) || path.startsWith(REPORT_ABUSE_PREFIX)
 }
 
 /**

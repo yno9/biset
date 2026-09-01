@@ -42,6 +42,20 @@ function signedUpdate(sender: Client, value: Parameters<typeof updateRoomSigning
 }
 
 describe('MIMI Phase 0 HTTP flow', () => {
+  test('self mode requires one owner, rejects another visible identity, and exposes no federation routes', async () => {
+    const owner = client('did:web:owner', 'phone', 9)
+    const other = client('did:web:other', 'phone', 10)
+    expect(() => createMimiDeployment({ databasePath: ':memory:', mode: 'self' })).toThrow('selfOwnerUser')
+    const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'self', selfOwnerUser: owner.credential.user })
+    const unsigned = (sender: Client, id: string) => ({ version: 1 as const, protocol: 'mls10' as const, roomId: id, sender: sender.credential, epoch: '0', bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([1]) }, initialState: { basePolicy: new Uint8Array(), participantList: { participants: [{ user: sender.credential.user, roleIndex: 1 }] }, memberCredentials: [sender.credential], metadata: { roomUri: id, roomName: 'self' } }, submittedAt: at })
+    const own = unsigned(owner, 'mimi://self.example/r/owner')
+    expect((await deployment.fetch(post(`/update/${encodeURIComponent(own.roomId)}`, encodeUpdateRoomRequestWire(signedUpdate(owner, own))))).status).toBe(200)
+    const rejected = unsigned(other, 'mimi://self.example/r/other')
+    expect((await deployment.fetch(post(`/update/${encodeURIComponent(rejected.roomId)}`, encodeUpdateRoomRequestWire(signedUpdate(other, rejected))))).status).toBe(403)
+    expect((await deployment.fetch(post('/requestConsent/self.example', '{}'))).status).toBe(403)
+    deployment.close()
+  })
+
   test('anon mode rejects a visible-credential room creation before it can reach storage', async () => {
     const alice = client('did:web:alice', 'phone', 1)
     const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'anon' })

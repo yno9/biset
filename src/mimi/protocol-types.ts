@@ -19,7 +19,7 @@ export type MimiEpoch = string
 
 export type MimiProtocolVersion = 'mls10'
 /** Process-wide isolation mode; never a room-level switch. */
-export type MimiDeploymentMode = 'normal' | 'anon'
+export type MimiDeploymentMode = 'normal' | 'anon' | 'self'
 
 /** The basic, non-MMR MLS credential accepted during Phase 0 and Phase 1. */
 export interface VisibleCredential {
