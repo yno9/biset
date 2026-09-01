@@ -31,7 +31,7 @@ import { frankMessage, verifyFrank } from './franking.ts'
 import { createMimiProtocolDirectory, MIMI_PROTOCOL_DIRECTORY_PATH } from './directory.ts'
 import { decodeMimiAbuseReportWire, encodeMimiAbuseReportWire, decodeMimiConsentEntryWire, decodeMimiIdentifierRequestWire, encodeMimiIdentifierResponseWire, noIdentifiers, type MimiIdentifierDirectory } from './federation.ts'
 import { verifyMimiProviderRequest, type VerifiedProviderPeer } from './provider-transport.ts'
-import { decodeMimiFanoutBatchWire, fanoutFingerprint } from './fanout.ts'
+import { decodeMimiFanoutBatchWire, fanoutDeliveries, fanoutFingerprint } from './fanout.ts'
 import { extractMimiMlsStateTransition } from './mls-appsync.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import type { MimiAssetProxy } from './asset-proxy.ts'
@@ -131,7 +131,8 @@ export function createMimiHttpHandler(
         const roomId = pathParameter(path, NOTIFY_PREFIX, 'room ID')
         const peer = await verifiedFederationPeer(request, federation)
         const batch = decodeMimiFanoutBatchWire(body)
-        const result = store.acceptProviderFanout(roomId, peer.providerDomain, await fanoutFingerprint(body), batch.entries)
+        const room = store.room(roomId)
+        const result = room === undefined ? 'noSuchRoom' : store.acceptProviderFanout(roomId, peer.providerDomain, await fanoutFingerprint(body), fanoutDeliveries(batch, room.epoch))
         if (result === 'noSuchRoom') return error(404, 'not-found', 'room does not exist')
         return new Response(null, { status: 201 })
       }

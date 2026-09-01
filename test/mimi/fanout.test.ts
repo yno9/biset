@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { MimiFanoutDispatcher, decodeMimiFanoutBatchWire, encodeMimiFanoutBatchWire, fanoutFingerprint } from '../../src/mimi/fanout.ts'
 import { MimiProviderTransport } from '../../src/mimi/provider-transport.ts'
+import { encodeMlsMessage } from '../../src/mls/vendor/index.ts'
 
-const batch = { timestamp: '1770000000000', entries: [{ seq: 1, kind: 'commit' as const, payload: new Uint8Array([1]), epoch: '1', acceptedAt: '2026-09-01T00:00:00.000Z' }] }
+const commit = encodeMlsMessage({ version: 'mls10', wireformat: 'mls_public_message', publicMessage: { content: { groupId: new Uint8Array([1]), epoch: 1n, sender: { senderType: 'member', leafIndex: 0 }, authenticatedData: new Uint8Array(), contentType: 'commit', commit: { proposals: [], path: undefined } }, auth: { contentType: 'commit', signature: new Uint8Array(), confirmationTag: new Uint8Array() }, senderType: 'member', membershipTag: new Uint8Array() } })
+const batch = { messages: [{ timestamp: '1770000000000', protocol: 'mls10' as const, message: commit }] }
 
 describe('MIMI provider fanout', () => {
-  test('round-trips a bounded JSON fanout batch with a stable replay fingerprint', async () => {
+  test('round-trips a FanoutMessage batch with a stable replay fingerprint', async () => {
     const wire = encodeMimiFanoutBatchWire(batch)
     expect(decodeMimiFanoutBatchWire(wire)).toEqual(batch)
     expect(await fanoutFingerprint(wire)).toBe(await fanoutFingerprint(wire))

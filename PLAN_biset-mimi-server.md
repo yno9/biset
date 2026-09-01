@@ -466,7 +466,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: 6.2, 6.3, 6.4
 - [x] **6.6（項目13）`groupInfo/{roomId}`の扱いを確定する** (agent: Codex, 完了: 2026-09-01): (c)を採用。directoryには標準endpointとして残し、`POST /groupInfo/{roomId}`は必ず明示的な403 `not-allowed`を返す。これはexternal join用GroupInfoのratchet treeがvisible credentialを漏らすためであり、従来の虚偽の404を解消する。
   - depends on: なし（6.0-6.5と並行可）
-- [~] **6.7（項目15）`notify/{roomId}`のFanoutMessage構造照合**: spec行1886-2020を読み、[fanout.ts](src/mimi/fanout.ts)のFanoutMessage/FanoutBatch相当の構造を1フィールドずつ突き合わせる。ズレがあれば修正する。 (agent: Codex, 開始: 2026-09-01)
+- [x] **6.7（項目15）`notify/{roomId}`のFanoutMessage構造照合**: spec行1886-2020を読み、[fanout.ts](src/mimi/fanout.ts)のFanoutMessage/FanoutBatch相当の構造を1フィールドずつ突き合わせる。ズレがあれば修正する。 (完了: 2026-09-01, 関連: `src/mimi/fanout.ts`, `src/mimi/http.ts`, `test/mimi/{fanout,federation-gate}.test.ts`; timestamp/protocol/MLSMessageと種別ごとのfrank/RatchetTreeOption/moreProposals/externalProposalsを保持し、受信時に完全なMLS wireを検証)
   - depends on: なし（6.0-6.5と並行可）
 - [x] **6.8（項目16）`identifierQuery`のプライバシー配慮ガイダンス確認**: spec行2337-2562（Xavier/Yolanda/Zach例含む）を読み、[federation.ts](src/mimi/federation.ts)の実装と突き合わせる。 (完了: 2026-09-01, 関連: `src/mimi/federation.ts`; 既定はnotFound、mTLS済み provider に限定し、導入時のdirectoryへAND検索・ユーザーごとの可検索性を必須化)
   - depends on: なし（6.0-6.5と並行可）

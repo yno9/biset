@@ -2,12 +2,14 @@ import { describe, expect, test } from 'bun:test'
 import { createMimiDeployment } from '../../src/mimi/deployment.ts'
 import { MimiFanoutDispatcher } from '../../src/mimi/fanout.ts'
 import { MimiProviderTransport } from '../../src/mimi/provider-transport.ts'
+import { encodeMlsMessage } from '../../src/mls/vendor/index.ts'
 import type { UpdateRoomRequest, VisibleCredential } from '../../src/mimi/protocol-types.ts'
 import type { MimiMlsStateTransition } from '../../src/mimi/mls-appsync.ts'
 
 const roomId = 'mimi://hub.example/r/shared'
 const at = '2026-09-01T00:00:00.000Z'
 const member: VisibleCredential = { kind: 'visible', user: 'did:web:member', client: 'did:web:member#device', credential: new Uint8Array([1]), signaturePublicKey: new Uint8Array(32).fill(2) }
+const fanoutCommit = encodeMlsMessage({ version: 'mls10', wireformat: 'mls_public_message', publicMessage: { content: { groupId: new Uint8Array([1]), epoch: 1n, sender: { senderType: 'member', leafIndex: 0 }, authenticatedData: new Uint8Array(), contentType: 'commit', commit: { proposals: [], path: undefined } }, auth: { contentType: 'commit', signature: new Uint8Array(), confirmationTag: new Uint8Array() }, senderType: 'member', membershipTag: new Uint8Array() } })
 
 function initial(): UpdateRoomRequest { return { version: 1, protocol: 'mls10', roomId, sender: member, epoch: '0', bundle: { kind: 'commit', proposalOrCommit: new Uint8Array([1]) }, initialState: { basePolicy: new Uint8Array(), participantList: { participants: [{ user: member.user, roleIndex: 1, clientIds: [member.client] }] }, memberCredentials: [member], metadata: { roomUri: roomId, roomName: 'shared' } }, submittedAt: at, signature: new Uint8Array() } }
 
@@ -25,8 +27,8 @@ describe('MIMI Phase 3 federation release gate', () => {
     const accepted = hub.store.submitUpdate(update)
     if (!accepted.ok) throw new Error('hub update failed')
     const transport = new MimiProviderTransport({ sourceProviderDomain: 'hub.example', tls: { cert: 'cert', key: 'key' }, fetchImpl: async (input, init) => { const { tls: _tls, ...requestInit } = init ?? {}; return follower.fetch(new Request(input, requestInit)) } })
-    await new MimiFanoutDispatcher(transport).send({ providerBaseUrl: 'https://follower.example', roomId }, { timestamp: '1770000000000', entries: accepted.entries })
-    expect(follower.store.deliveriesSince(roomId, member.user, 0)?.some(entry => entry.payload[0] === 9)).toBe(true)
+    await new MimiFanoutDispatcher(transport).send({ providerBaseUrl: 'https://follower.example', roomId }, { messages: [{ timestamp: '1770000000000', protocol: 'mls10', message: fanoutCommit }] })
+    expect(follower.store.deliveriesSince(roomId, member.user, 0)?.some(entry => entry.payload.length === fanoutCommit.length && entry.payload.every((byte, index) => byte === fanoutCommit[index]))).toBe(true)
     hub.close(); follower.close()
   })
 })
