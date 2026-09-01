@@ -7,6 +7,7 @@ import {
   authorizeKeyPackagePublish,
   keyPackagePublishSigningBytes,
   keyMaterialSigningBytes,
+  submitMessageSigningBytes,
   updateRoomSigningBytes,
 } from '../../src/mimi/authorizer.ts'
 import {
@@ -16,6 +17,8 @@ import {
   encodeDeliveriesPullRequestWire,
   encodeDeliveriesWatchRequestWire,
   encodeKeyMaterialRequestWire,
+  decodeFrankWire,
+  encodeSubmitMessageRequestWire,
   encodeUpdateRoomRequestWire,
 } from '../../src/mimi/wire.ts'
 import type { VisibleCredential } from '../../src/mimi/protocol-types.ts'
@@ -116,6 +119,20 @@ describe('MIMI Phase 0 HTTP flow', () => {
     expect((await deployment.fetch(post(`/update/${encodeURIComponent(roomId)}`, encodeUpdateRoomRequestWire(signedUpdate(alice, proposalUnsigned))))).status).toBe(200)
     const live = await reader.read()
     expect(new TextDecoder().decode(live.value)).toContain('"kind":"proposal"')
+
+    const messageUnsigned = { version: 1 as const, protocol: 'mls10' as const, roomId, sender: alice.credential, epoch: '3', appMessage: new Uint8Array([7, 8]), frankAAD: { frankingTag: new Uint8Array(32).fill(9) }, frankingSignatureCiphersuite: 1, submittedAt: at }
+    const message = { ...messageUnsigned, signature: ed25519.sign(submitMessageSigningBytes(messageUnsigned), alice.secret) }
+    const messageResponse = await deployment.fetch(post(`/submitMessage/${encodeURIComponent(roomId)}`, encodeSubmitMessageRequestWire(message)))
+    expect(messageResponse.status).toBe(200)
+    const accepted = await messageResponse.json() as { status: string; frank?: unknown }
+    expect(accepted.status).toBe('accepted')
+    expect(decodeFrankWire(JSON.stringify(accepted.frank)).serverFrank).toHaveLength(32)
+    const frankedLive = await reader.read()
+    expect(new TextDecoder().decode(frankedLive.value)).toContain('"kind":"application"')
+
+    const malformed = JSON.parse(encodeSubmitMessageRequestWire(message)) as Record<string, unknown>
+    delete malformed.frankAAD
+    expect((await deployment.fetch(post(`/submitMessage/${encodeURIComponent(roomId)}`, JSON.stringify(malformed)))).status).toBe(400)
     await reader.cancel()
     expect(deployment.store.subscriberCount(roomId)).toBe(0)
     deployment.close()
