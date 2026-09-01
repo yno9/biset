@@ -295,7 +295,7 @@ identity_link_key(epoch) = exportSecret(state, "mimi mmr identity-link", groupId
 
 anon modeは**room単位のフラグではなく、プロセス単位の運用モード**（§0改訂、2026-09-01）。`biset-mimi`を`MIMI_MODE=anon`で動かした別プロセス・別DBのインスタンスが「anon-mode instance」であり、そこに作られたroomは常にpseudonymous credentialのみを受け付ける。
 
-- [ ] **2.0 deployment.tsのmode対応**: `src/mimi/deployment.ts`の`createMimiDeployment()`に`mode: 'normal' | 'anon'`を追加し、DBパス・起動ログにmodeを反映する。`src/mimi/index.ts`で環境変数`MIMI_MODE`を読んで渡す。
+- [~] **2.0 deployment.tsのmode対応** (agent: /root, 開始: 2026-09-01): `src/mimi/deployment.ts`の`createMimiDeployment()`に`mode: 'normal' | 'anon'`を追加し、DBパス・起動ログにmodeを反映する。`src/mimi/index.ts`で環境変数`MIMI_MODE`を読んで渡す。
   - depends on: 1.5
 - [ ] **2.1 pseudonym発行**: `src/mimi/anon/pseudonym.ts`。§7.4準拠（providerドメイン付きrandom UUID、room単位で不変・room間で無関係）。
   - depends on: 2.0
