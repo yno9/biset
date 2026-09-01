@@ -1,0 +1,18 @@
+{
+  // `biset-mimi` is a standalone Bun provider deployment.  Keep this
+  // compilation boundary DOM-free so that a MIMI server cannot accidentally
+  // acquire browser/UI dependencies through the main application tree.
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ESNext"],
+    "types": ["bun"]
+  },
+  "include": ["src/mimi/**/*"],
+  "typeRoots": ["node_modules/@types"]
+}

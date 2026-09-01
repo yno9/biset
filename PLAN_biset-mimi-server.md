@@ -244,10 +244,10 @@ identity_link_key(epoch) = exportSecret(state, "mimi mmr identity-link", groupId
 
 ### Phase 0: 最小限・単一hub・フェデレーションなし
 
-- [~] **0.0 tsconfig/ビルド配線** (agent: /root, 開始: 2026-09-01): `tsconfig.mimi.json`を新設（`tsconfig.mls-ds.json`を複製・調整）。`package.json`に`build:mimi`スクリプトと`typecheck`複合コマンドへの追加を行う。
+- [x] **0.0 tsconfig/ビルド配線** (完了: 2026-09-01, `tsconfig.mimi.json`, `package.json`): `tsconfig.mimi.json`を新設（`tsconfig.mls-ds.json`を複製・調整）。`package.json`に`build:mimi`スクリプトと`typecheck`複合コマンドへの追加を行う。
   - 参照実装: `tsconfig.mls-ds.json`, `package.json`の`build:mls-ds`/`typecheck`
   - depends on: なし（最初に着手可能）
-- [~] **0.1 型定義** (agent: /root, 開始: 2026-09-01): `src/mimi/protocol-types.ts`。`RoomState`/`ParticipantListData`/`UserRolePair`/`RoomMetadata`/KeyPackage関連の型/Update・Commit submission bodyの型/エラー形状を定義する（§4, §5, §7の型を先取りして置いてよいが、Phase 0で使わないフィールドは`?`にして後続フェーズで埋める）。
+- [x] **0.1 型定義** (完了: 2026-09-01, `src/mimi/protocol-types.ts`): `RoomState`/`ParticipantListData`/`UserRolePair`/`RoomMetadata`/KeyPackage関連の型/Update・Commit submission bodyの型/エラー形状を定義する（§4, §5, §7の型を先取りして置いてよいが、Phase 0で使わないフィールドは`?`にして後続フェーズで埋める）。
   - 参照実装: `src/protocol/conversation-mls-ds.ts`
   - depends on: なし
 - [ ] **0.2 wire encoding**: `src/mimi/wire.ts`。0.1の型のJSON+base64urlエンコード/デコード。
