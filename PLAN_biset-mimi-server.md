@@ -603,7 +603,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: なし
 - [x] **19.b `MimiDeliveryEntry.kind`拡張とcheckpoint圧縮ロジック**: protocol-types.ts / store.ts / wire.tsへの実装（19.4）。 (完了: 2026-09-02, 関連: `src/mimi/{protocol-types,wire,authorizer,http,store}.ts`, `test/mimi/store.test.ts`; 署名済みmanifest、単調coveredSeq、同値再送、applicationだけの圧縮を実装)
   - depends on: 19.a
-- [ ] **19.c chunking実装**: 大きいentry/checkpointの分割送信・受信側再構成（19.2）。クライアント側（19.5の新モジュール）とhub側双方。
+- [~] **19.c chunking実装**: 大きいentry/checkpointの分割送信・受信側再構成（19.2）。クライアント側（19.5の新モジュール）とhub側双方。 (agent: Codex, 開始: 2026-09-02)
   - depends on: 19.a
 - [ ] **19.d メタデータ平文漏洩の是正確認**: 実際にVault entryの中身がMLS暗号化層の内側に入り、hubから`VaultDeliveryPackV1`内部のフィールドが一切見えないことをテスト・実HTTPS検証で確認する（19.3）。
   - depends on: 19.b
