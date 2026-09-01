@@ -279,7 +279,7 @@ identity_link_key(epoch) = exportSecret(state, "mimi mmr identity-link", groupId
 
 ### Phase 1: Franking
 
-- [ ] **1.1 franking型**: `src/mimi/protocol-types.ts`に`FrankAAD`/`FrankingAgentData`を追加。wire.tsも追従。
+- [~] **1.1 franking型** (agent: /root, 開始: 2026-09-01): `src/mimi/protocol-types.ts`に`FrankAAD`/`FrankingAgentData`を追加。wire.tsも追従。
   - depends on: 0.9
 - [ ] **1.2 franking実装**: `src/mimi/franking.ts`。§6の3ステップ（送信者tag埋め込み・hub処理・受信者検証）のうちhub側処理を実装する（送受信のMLS層自体はclient側実装、`biset-mimi`が扱うのはhub処理のみ）。room単位の`hub_key`生成・保管を`store.ts`に追加。
   - 参照実装: なし（biset初のfranking実装、spec §5.4.1を一次資料として直接実装する）
