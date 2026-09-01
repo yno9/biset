@@ -459,7 +459,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: 6.1
 - [x] **6.3（項目12）`room_metadata`コンポーネントへの切り替え** (agent: Codex, 完了: 2026-09-01): `0x0023`をTLS codecでdecodeし、初期作成・以後のcommitともMLS AppDataUpdateの値だけをroom metadataとして永続化する。JSON metadataは互換性検査用の一致申告に降格した。
   - depends on: 6.1
-- [ ] **6.4（項目12・14統合）`franking_signature_key`のGroupContext配布**: hubの`FrankingKeyMaterial.signingPublicKey`（[franking.ts](src/mimi/franking.ts)）をGroupContext拡張経由でクライアントへ配布する経路を実装する。現状はDB内保持のみで、受信者が`verifyFrank`に使う公開鍵の入手経路が実質存在しない——§15.3項目14の調査もここで行う。
+- [~] **6.4（項目12・14統合）`franking_signature_key`のGroupContext配布** (agent: Codex, 開始: 2026-09-01): hubの`FrankingKeyMaterial.signingPublicKey`（[franking.ts](src/mimi/franking.ts)）をGroupContext拡張経由でクライアントへ配布する経路を実装する。現状はDB内保持のみで、受信者が`verifyFrank`に使う公開鍵の入手経路が実質存在しない——§15.3項目14の調査もここで行う。
   - depends on: 6.1
 - [ ] **6.5（項目12）テスト・回帰確認**: `test/mimi/http.test.ts`等を本物のMLS wire formatでのroom作成・member追加に書き換え、typecheck・全テストスイート（`bun run test`）を実行する。本番（`mimi.biset.md`/`mimi-anon.biset.md`）に対する実HTTPS検証で、本物のMLS commitを使ったroom作成→member追加→AppSync（または6.0(B)のprivate-use拡張）経由でのroom名/participant list反映を確認する。
   - depends on: 6.2, 6.3, 6.4
