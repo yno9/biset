@@ -299,7 +299,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 1.5
 - [x] **2.1 pseudonym発行** (完了: 2026-09-01, `src/mimi/anon/pseudonym.ts`, `test/mimi/store.test.ts`): `src/mimi/anon/pseudonym.ts`。§7.4準拠（providerドメイン付きrandom UUID、room単位で不変・room間で無関係）。
   - depends on: 2.0
-- [~] **2.2 identity-link再暗号化** (agent: /root, 開始: 2026-09-01): `src/mimi/anon/identity-link.ts`。§7.2のexportSecretベース方式。`src/mls/group.ts`の`exportSecret`をhub側から呼べる形で使う（hub自体はMLS秘密状態を持たないので、**再暗号化は実際にはclient側=commit送信者が行い、hubはciphertextを運ぶだけ**であることに注意——hubがexportSecretを計算することはない。この役割分担をここで明確にすること）。
+- [x] **2.2 identity-link再暗号化** (完了: 2026-09-01, `src/mimi/anon/identity-link.ts`, `test/mimi/store.test.ts`): `src/mimi/anon/identity-link.ts`。§7.2のexportSecretベース方式。`src/mls/group.ts`の`exportSecret`をhub側から呼べる形で使う（hub自体はMLS秘密状態を持たないので、**再暗号化は実際にはclient側=commit送信者が行い、hubはciphertextを運ぶだけ**であることに注意——hubがexportSecretを計算することはない。この役割分担をここで明確にすること）。
   - 参照実装: `src/mls/group.ts`の`exportSecret`
   - depends on: 2.1
 - [ ] **2.3 PseudonymousCredential型・wire**: `src/mimi/protocol-types.ts`/`wire.ts`に追加。

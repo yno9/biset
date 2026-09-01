@@ -3,6 +3,7 @@ import { Database } from 'bun:sqlite'
 import { SqliteMimiStore } from '../../src/mimi/store.ts'
 import { frankMessage, verifyFrank } from '../../src/mimi/franking.ts'
 import { RoomPseudonymIssuer } from '../../src/mimi/anon/pseudonym.ts'
+import { decryptIdentityLink, encryptIdentityLink } from '../../src/mimi/anon/identity-link.ts'
 import type { UpdateRoomRequest, VisibleCredential } from '../../src/mimi/protocol-types.ts'
 
 const at = '2026-09-01T00:00:00.000Z'
@@ -27,6 +28,14 @@ describe('MIMI SQLite store', () => {
     expect(issuer.userPseudonym('room-a', alice.user)).toBe(issuer.userPseudonym('room-a', alice.user))
     expect(issuer.userPseudonym('room-a', alice.user)).not.toBe(issuer.userPseudonym('room-b', alice.user))
     expect(issuer.clientPseudonym('room-a', alice.client)).toMatch(/^mimi:\/\/mimi\.example\.test\/u\/[0-9a-f-]{36}$/)
+  })
+
+  test('identity links are client-side epoch-exporter ciphertexts, not hub keys', async () => {
+    const exporter = { async exportSecret(_label: string, context: Uint8Array) { return new Uint8Array(32).fill(context[context.length - 1]!) } }
+    const ciphertext = await encryptIdentityLink(exporter, roomId, new Uint8Array([1, 2, 3]))
+    expect(ciphertext).not.toEqual(new Uint8Array([1, 2, 3]))
+    expect(await decryptIdentityLink(exporter, roomId, ciphertext)).toEqual(new Uint8Array([1, 2, 3]))
+    await expect(decryptIdentityLink({ async exportSecret() { return new Uint8Array(32).fill(9) } }, roomId, ciphertext)).rejects.toThrow()
   })
 
   test('serializes room commits, records deliveries, and atomically consumes compatible KeyPackages', () => {
