@@ -92,6 +92,8 @@ export interface RoomState {
   epoch: MimiEpoch
   basePolicy: Uint8Array
   participantList: ParticipantListData
+  /** MLS credentials for current local leaves, indexed by client identity. */
+  memberCredentials: MimiCredential[]
   metadata: RoomMetadata
   groupInfo?: Uint8Array
   ratchetTree?: Uint8Array
@@ -179,6 +181,19 @@ export interface HandshakeBundle {
 }
 
 /**
+ * The server-visible state transition carried alongside an MLS handshake.
+ * In a future AppSync integration these values are reconstructed directly
+ * from the authenticated AppDataUpdate proposal; Phase 0 carries them at the
+ * client/provider boundary so the hub can enforce its participant-list gate.
+ */
+export interface RoomStateUpdate {
+  basePolicy?: Uint8Array
+  participantList?: ParticipantListData
+  memberCredentials?: MimiCredential[]
+  metadata?: RoomMetadata
+}
+
+/**
  * Biset's authenticated client-to-hub representation of draft §5.3's
  * UpdateRequest.  The draft does not specify provider-internal client
  * authentication, hence sender and signature are explicit here.
@@ -190,8 +205,9 @@ export interface UpdateRoomRequest {
   sender: VisibleCredential
   epoch: MimiEpoch
   bundle: HandshakeBundle
+  stateUpdate?: RoomStateUpdate
   /** Present when this is the initial commit that creates the room. */
-  initialState?: Pick<RoomState, 'basePolicy' | 'participantList' | 'metadata'>
+  initialState?: Pick<RoomState, 'basePolicy' | 'participantList' | 'memberCredentials' | 'metadata'>
   submittedAt: string
   signature: Uint8Array
 }

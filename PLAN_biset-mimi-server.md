@@ -253,7 +253,7 @@ identity_link_key(epoch) = exportSecret(state, "mimi mmr identity-link", groupId
 - [x] **0.2 wire encoding** (完了: 2026-09-01, `src/mimi/wire.ts`): `src/mimi/wire.ts`。0.1の型のJSON+base64urlエンコード/デコード。
   - 参照実装: `src/protocol/conversation-mls-ds-wire.ts`
   - depends on: 0.1
-- [~] **0.3 room state store** (agent: /root, 開始: 2026-09-01): `src/mimi/store.ts`。SQLite永続化。room作成、epoch管理、participant list（実credential含む）、KeyPackage directory（publish/take）。ordered logの設計は`mls-ds/store.ts`を踏襲するが、rosterの中身が実credential/DIDを含む点が構造的な違い（§4の対比表参照）。
+- [x] **0.3 room state store** (完了: 2026-09-01, `src/mimi/store.ts`, `src/mimi/protocol-types.ts`, `src/mimi/wire.ts`): `src/mimi/store.ts`。SQLite永続化。room作成、epoch管理、participant list（実credential含む）、KeyPackage directory（publish/take）。ordered logの設計は`mls-ds/store.ts`を踏襲するが、rosterの中身が実credential/DIDを含む点が構造的な違い（§4の対比表参照）。
   - 参照実装: `src/mls-ds/store.ts`
   - depends on: 0.1
 - [ ] **0.4 認可**: `src/mimi/authorizer.ts`。client→hub（Phase 0では常にbiset自身がhub）のリクエスト署名検証。spec自体はprovider内部のclient-server認証方式を規定していない（line 358「the MIMI protocol only defines interactions between service providers' servers」）ので、実credentialの署名鍵によるEd25519署名検証として実装してよい（`mls-ds-1.0.md`のGroupLocalId方式と同じ形だが、鍵が実credentialの署名鍵である点が違う）。

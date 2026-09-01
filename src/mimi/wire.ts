@@ -22,6 +22,7 @@ import type {
   RichDescription,
   RoomMetadata,
   RoomState,
+  RoomStateUpdate,
   UpdateRoomRequest,
   UpdateRoomResponse,
   UserRolePair,
@@ -248,7 +249,7 @@ function decodeRoomMetadata(value: unknown, name: string): RoomMetadata {
 export function roomStateJson(value: RoomState): JsonRecord {
   return {
     roomId: value.roomId, protocol: value.protocol, epoch: value.epoch,
-    basePolicy: bytesToBase64url(value.basePolicy), participantList: participantListJson(value.participantList), metadata: roomMetadataJson(value.metadata),
+    basePolicy: bytesToBase64url(value.basePolicy), participantList: participantListJson(value.participantList), memberCredentials: value.memberCredentials.map(credentialJson), metadata: roomMetadataJson(value.metadata),
     groupInfo: optional(value.groupInfo, bytesToBase64url), ratchetTree: optional(value.ratchetTree, bytesToBase64url),
     createdAt: value.createdAt, updatedAt: value.updatedAt,
   }
@@ -261,7 +262,9 @@ export function decodeRoomStateWire(text: string): RoomState {
   return {
     roomId: requireString(input.roomId, 'RoomState.roomId'), protocol: requireProtocol(input.protocol, 'RoomState.protocol'), epoch: requireEpoch(input.epoch, 'RoomState.epoch'),
     basePolicy: requireBinary(input.basePolicy, 'RoomState.basePolicy'),
-    participantList: decodeParticipantList(input.participantList, 'RoomState.participantList'), metadata: decodeRoomMetadata(input.metadata, 'RoomState.metadata'),
+    participantList: decodeParticipantList(input.participantList, 'RoomState.participantList'),
+    memberCredentials: (() => { if (!Array.isArray(input.memberCredentials)) throw new MimiWireError('RoomState.memberCredentials must be an array'); return input.memberCredentials.map((entry, index) => decodeCredential(entry, `RoomState.memberCredentials[${index}]`)) })(),
+    metadata: decodeRoomMetadata(input.metadata, 'RoomState.metadata'),
     groupInfo: optionalBinary(input.groupInfo, 'RoomState.groupInfo'), ratchetTree: optionalBinary(input.ratchetTree, 'RoomState.ratchetTree'),
     createdAt: requireString(input.createdAt, 'RoomState.createdAt'), updatedAt: requireString(input.updatedAt, 'RoomState.updatedAt'),
   }
@@ -363,10 +366,30 @@ function decodeHandshakeBundle(value: unknown, name: string): HandshakeBundle {
   }
 }
 
+function roomStateUpdateJson(value: RoomStateUpdate): JsonRecord {
+  return {
+    basePolicy: optional(value.basePolicy, bytesToBase64url),
+    participantList: optional(value.participantList, participantListJson),
+    memberCredentials: optional(value.memberCredentials, entries => entries.map(credentialJson)),
+    metadata: optional(value.metadata, roomMetadataJson),
+  }
+}
+
+function decodeRoomStateUpdate(value: unknown, name: string): RoomStateUpdate {
+  const input = requireRecord(value, name)
+  return {
+    basePolicy: optionalBinary(input.basePolicy, `${name}.basePolicy`),
+    participantList: input.participantList === undefined ? undefined : decodeParticipantList(input.participantList, `${name}.participantList`),
+    memberCredentials: input.memberCredentials === undefined ? undefined : (() => { if (!Array.isArray(input.memberCredentials)) throw new MimiWireError(`${name}.memberCredentials must be an array`); return input.memberCredentials.map((entry, index) => decodeCredential(entry, `${name}.memberCredentials[${index}]`)) })(),
+    metadata: input.metadata === undefined ? undefined : decodeRoomMetadata(input.metadata, `${name}.metadata`),
+  }
+}
+
 export function encodeUpdateRoomRequestWire(value: UpdateRoomRequest): string {
   return JSON.stringify({
     version: value.version, protocol: value.protocol, roomId: value.roomId, sender: visibleCredentialJson(value.sender), epoch: value.epoch, bundle: handshakeBundleJson(value.bundle),
-    initialState: value.initialState === undefined ? undefined : { basePolicy: bytesToBase64url(value.initialState.basePolicy), participantList: participantListJson(value.initialState.participantList), metadata: roomMetadataJson(value.initialState.metadata) },
+    stateUpdate: optional(value.stateUpdate, roomStateUpdateJson),
+    initialState: value.initialState === undefined ? undefined : { basePolicy: bytesToBase64url(value.initialState.basePolicy), participantList: participantListJson(value.initialState.participantList), memberCredentials: value.initialState.memberCredentials.map(credentialJson), metadata: roomMetadataJson(value.initialState.metadata) },
     submittedAt: value.submittedAt, signature: bytesToBase64url(value.signature),
   })
 }
@@ -378,8 +401,11 @@ export function decodeUpdateRoomRequestWire(text: string): UpdateRoomRequest {
   return {
     version: 1, protocol: requireProtocol(input.protocol, 'UpdateRoomRequest.protocol'), roomId: requireString(input.roomId, 'UpdateRoomRequest.roomId'),
     sender: decodeVisibleCredential(input.sender, 'UpdateRoomRequest.sender'), epoch: requireEpoch(input.epoch, 'UpdateRoomRequest.epoch'), bundle: decodeHandshakeBundle(input.bundle, 'UpdateRoomRequest.bundle'),
+    stateUpdate: input.stateUpdate === undefined ? undefined : decodeRoomStateUpdate(input.stateUpdate, 'UpdateRoomRequest.stateUpdate'),
     initialState: initialStateInput === undefined ? undefined : {
-      basePolicy: requireBinary(initialStateInput.basePolicy, 'UpdateRoomRequest.initialState.basePolicy'), participantList: decodeParticipantList(initialStateInput.participantList, 'UpdateRoomRequest.initialState.participantList'), metadata: decodeRoomMetadata(initialStateInput.metadata, 'UpdateRoomRequest.initialState.metadata'),
+      basePolicy: requireBinary(initialStateInput.basePolicy, 'UpdateRoomRequest.initialState.basePolicy'), participantList: decodeParticipantList(initialStateInput.participantList, 'UpdateRoomRequest.initialState.participantList'),
+      memberCredentials: (() => { if (!Array.isArray(initialStateInput.memberCredentials)) throw new MimiWireError('UpdateRoomRequest.initialState.memberCredentials must be an array'); return initialStateInput.memberCredentials.map((entry, index) => decodeCredential(entry, `UpdateRoomRequest.initialState.memberCredentials[${index}]`)) })(),
+      metadata: decodeRoomMetadata(initialStateInput.metadata, 'UpdateRoomRequest.initialState.metadata'),
     },
     submittedAt: requireString(input.submittedAt, 'UpdateRoomRequest.submittedAt'), signature: requireBinary(input.signature, 'UpdateRoomRequest.signature'),
   }
