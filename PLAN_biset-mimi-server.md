@@ -448,7 +448,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
 
 §13と同じ規約に従う——着手前に`[ ]`→`[~] (agent: ..., 開始: ...)`、完了時に`[x] (完了: ..., 関連ファイル)`。**6.0-6.5（項目12、AppSync実装）が最優先**——これが終わるまでPhase 3のフェデレーション検証は無意味（§15.0参照）。6.6-6.9は独立しており、6.0-6.5と並行して着手してよい。
 
-- [ ] **6.0 前提調査・設計判断（最優先、他タスクをブロックする）**: `I-D.ietf-mls-extensions`§4.6（`app_data_dictionary`拡張、`AppDataUpdate`proposal）と`I-D.barnes-mls-appsync`の原文を取得し、MIMIの4コンポーネント（`frank_aad`/`franking_signature_key`/`participant_list`/`room_metadata`、`0x0020`-`0x0023`）の符号化方式を確認する。その上で二択を選び、このワークシートに追記してから6.1以降に進む：
+- [~] **6.0 前提調査・設計判断（最優先、他タスクをブロックする）** (agent: Codex, 開始: 2026-09-01): `I-D.ietf-mls-extensions`§4.6（`app_data_dictionary`拡張、`AppDataUpdate`proposal）と`I-D.barnes-mls-appsync`の原文を取得し、MIMIの4コンポーネント（`frank_aad`/`franking_signature_key`/`participant_list`/`room_metadata`、`0x0020`-`0x0023`）の符号化方式を確認する。その上で二択を選び、このワークシートに追記してから6.1以降に進む：
   - **(A) 正式実装**: `app_data_dictionary`拡張・`AppDataUpdate`proposalをMLSエンジンに実装し、IANA登録値そのままの`0x0020`-`0x0023`を使う。外部の本物のMIMI providerとバイト互換になる唯一の道。
   - **(B) 暫定実装**: 既存の`group_context_extensions`proposal（RFC 9420標準、type 7、[group.ts](src/mls/group.ts)の`setRoomMetadata`が0xF000のprivate-use拡張で今セッション既に実証済み）に、同等の情報をprivate-use拡張として載せる。実装は速いが**外部providerとはバイト非互換のまま**——「MLS commitが state の唯一の権威になる」という§15.2のアーキテクチャ目標は満たすが、真の相互運用は満たさない。
   - 参照実装: `src/mls/group.ts`の`setRoomMetadata`/`roomMetadataOf`（0xF000 private-use拡張の実装パターン）
