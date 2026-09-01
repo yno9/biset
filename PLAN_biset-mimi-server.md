@@ -310,7 +310,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 2.2, 2.4
 - [x] **2.6 デプロイ設定** (完了: 2026-09-01, `ops/biset-mimi-normal.service.example`, `ops/biset-mimi-anon.service.example`, `ops/mimi-*.env.example`): `biset-mimi-normal.service`/`biset-mimi-anon.service`相当のsystemd unit定義・env fileのテンプレートを用意する（本番デプロイはこのフェーズの範囲外だが、2つのプロセスとして動かせることをローカルで確認する分の設定は用意する）。
   - depends on: 2.4
-- [~] **2.7 Phase 2 release gate確認** (agent: Codex, 開始: 2026-09-01)（§10）。
+- [x] **2.7 Phase 2 release gate確認** (完了: 2026-09-01, `bun run typecheck`, `bun test test/mimi`, `bun run build:mimi`): anon roomで仮名credentialによる作成・Add・Removeを通し、新規参加者が現epochのidentity linkを全件復号できること、旧epoch鍵で再暗号化後のciphertextが復号できないことを確認した。
   - depends on: 2.5, 2.6
 
 ### Phase 3: 実フェデレーション
