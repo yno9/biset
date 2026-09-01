@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { createMimiDeployment } from '../../src/mimi/deployment.ts'
 import { encodeMimiConsentEntryWire } from '../../src/mimi/federation.ts'
+import { encodeMimiAbuseReportWire } from '../../src/mimi/federation.ts'
 
 const target = 'target.example'
 const source = 'source.example'
@@ -37,6 +38,13 @@ describe('MIMI consent and identifier provider endpoints', () => {
     const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'normal' })
     const response = await deployment.fetch(post(`/requestConsent/${target}`, encodeMimiConsentEntryWire({ consentOperation: 'request', requesterUri: 'did:web:requester', targetUri: 'did:web:target' })))
     expect(response.status).toBe(403)
+    deployment.close()
+  })
+
+  test('requires valid hub franking evidence for an abuse report', async () => {
+    const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'normal', federation: { providerDomain: target, authenticatePeer: async () => ({ providerDomain: source }) } })
+    const roomId = 'mimi://target.example/r/missing'
+    expect((await deployment.fetch(post(`/reportAbuse/${encodeURIComponent(roomId)}`, encodeMimiAbuseReportWire({ allegedAbuserUri: 'did:web:abuser', reasonCode: 0, note: '', messages: [] })))).status).toBe(404)
     deployment.close()
   })
 })

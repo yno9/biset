@@ -327,7 +327,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 3.1
 - [x] **3.5 room-policy.ts** (完了: 2026-09-01, `src/mimi/room-policy.ts`, `test/mimi/room-policy.test.ts`): draft-04のrole/capability/遷移/人数制約を評価するpure evaluatorを実装。現時点ではcomponent ID/TLS encoding未確定のためopaqueな`basePolicy`の独自解釈はせず、将来のMLS extension decoderから接続する。
   - depends on: 3.0
-- [~] **3.6 reportAbuse/proxyDownload** (agent: Codex, 開始: 2026-09-01): 残り2エンドポイント（spec行2568, 2713）。
+- [x] **3.6 reportAbuse/proxyDownload** (完了: 2026-09-01, `src/mimi/asset-proxy.ts`, `src/mimi/federation.ts`, `src/mimi/http.ts`, `src/mimi/store.ts`, `test/mimi/asset-proxy.test.ts`, `test/mimi/federation.test.ts`): 許可済みHTTPS asset hostだけをリダイレクトなし・サイズ上限付きで中継するproxyDownloadと、hub franking証跡を検証してSQLiteへ保存するreportAbuseを追加。
   - depends on: 3.1
 - [ ] **3.7 Phase 3 release gate確認**（§10、最低1つの外部または自前2台構成でのhub/follower間room共有）。
   - depends on: 3.2, 3.3, 3.4, 3.5, 3.6
