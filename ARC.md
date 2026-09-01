@@ -35,36 +35,55 @@ Biset は、メールと DIDComm のデータを利用者の端末側で長期�
 
 ## 3. システム全体像
 
+> 本節は2026-09-02時点のbiset-mimi（`src/mimi/`）の状態を反映するよう更新した。他の節（§4以降）は引き続き調査基準日2026-08-26のcommit `3237c8b`を対象とする——biset-mimiの詳細設計・実装状況の正本は[PLAN_biset-mimi-server.md](PLAN_biset-mimi-server.md)である。
+
 ```text
 ┌──────────────────────── Biset Client（ブラウザ） ────────────────────────┐
 │ UI ─ Local JMAP Gateway ─ Projection                                    │
 │                  │                                                       │
 │        IndexedDB Vault（暗号文 object + 署名 event + key wrap）          │
 │                  │                                                       │
-│   did:webvh / MLS self-group / Mail / DIDComm / Restore endpoint logic  │
-└───────────────┬──────────────────────────────┬────────────────────────────┘
-                │ signed narrow HTTP           │ DIDComm v2 encrypted HTTP
-                ▼                              ▼
-┌──────────────── Biset Core ─────────────┐  ┌── Standalone Mediator ─────┐
-│ did.jsonl / did.json / routing.json     │  │ did:peer identity          │
-│ trusted-device roster / MLS DS          │  │ Coordinate Mediation 2.0   │
-│ bounded ingress / vault delivery        │  │ Routing 2.0 Forward        │
-│ restore control only / SMTP in & out    │  │ Message Pickup 3.0         │
-│ SQLite: bounded/public state only       │  │ bounded blind JWE queue    │
-└───────────────┬─────────────────────────┘  └────────────────────────────┘
-                │ SMTP / DNS MX
-                ▼
-          外部メールシステム
+│  did:webvh / MLS self-group / Mail / DIDComm / Conversation Group /     │
+│  Restore endpoint logic                                                 │
+└──┬──────────┬───────────────┬────────────────┬─────────────────╳────────┘
+   │signed    │DIDComm v2     │Conversation     │opaque Vault      ╳ client
+   │narrow    │encrypted HTTP │Group wire       │delivery          ╳ 側の呼
+   │HTTP      │               │（biset独自、     │（coordinator）    ╳ 出し経
+   │          │               │ MIMI specでは無い）│                  ╳ 路が無い
+   ▼          ▼               ▼                 ▼                  
+┌─ Core ───┐┌─ Mediator ───┐┌─ biset-mls-ds ──┐┌─ Coordinator ───┐┌─ biset-mimi ──────┐
+│did.jsonl ││did:peer      ││"Conversation    ││Vaultデータプレーン││MIMI spec完全準拠の  │
+│roster    ││identity      ││ Group"配送。     ││のみに役割縮小中   ││group-chat hub。3   │
+│ingress   ││Coordinate    ││過渡的な独自実装、 ││（§19でbiset-mimiへ││プロセス本番稼働中   │
+│SMTP      ││Mediation 2.0 ││将来biset-mimiへ  ││統合予定、未着手） ││(normal/anon/self)、│
+│legacy MLS││Routing 2.0   ││置き換えて廃盤予定 ││                 ││だがUIからの呼出し経 │
+│DS        ││Pickup 3.0    ││                 ││                 ││路が存在しない       │
+└────┬─────┘└──────────────┘└─────────────────┘└─────────────────┘└────────────────────┘
+     │ SMTP / DNS MX
+     ▼
+外部メールシステム
 ```
 
-Bisetの目標構成は四つの主要コンポーネントである。
+Bisetの目標構成は六つの主要コンポーネントである。現行の製品UIから実際に呼び出されているか（接続状況）はコンポーネントごとに大きく異なり、これが3.1で述べるDIDComm・Conversation Group・biset-mimiの関係を理解する鍵になる。
 
-1. **Anchor** — `src/anchor/index.ts` を入口とするidentity provider。公開DID/domain/addressとOIDCを担当する。
-2. **Mediator** — transport protocolsの一時配送。現状のDIDComm実装は`src/mediator/index.ts`を入口とし、Mailは別adapter/storeとして分離する。
+1. **Anchor** — `src/anchor/index.ts` を入口とするidentity provider。公開DID/domain/addressとOIDCを担当する。UI/bootに接続済み。
+2. **Mediator** — DIDCommの一時配送（store-and-forward）。`src/mediator/index.ts`を入口とし、UI/bootに接続済み、本番稼働中（`mediator.biset.md`）。
 3. **Vault** — `src/main.ts`内で動くClient local storage。暗号化長期正本、projection、秘密、server間bindingを保持する。
-4. **Coordinator** — `src/coordinator/index.ts`を入口とし、opaque Vault deliveryと複数端末間の永続性・収束を担当する。
+4. **Coordinator** — `src/coordinator/index.ts`を入口とし、opaque Vault deliveryと複数端末間の永続性・収束を担当する。UI/bootに接続済み、本番稼働中。役割はVaultデータプレーンのみへ縮小しつつある（§19、後述）。
+5. **biset-mls-ds**（`src/mls-ds/index.ts`）— "Conversation Group"と呼ぶ、biset独自実装の複数人グループチャット配送。MLSベースだが、IETF MIMI specそのものではなく先行して作られた独自wireプロトコル（`src/protocol/conversation-mls-ds*.ts`）を使う。`src/mls/conversation-group*.ts`経由でUI/bootに接続済み、本番稼働中（`mls-ds.biset.md`）——**現時点で実際にユーザーが使えるグループチャットはこれ**。将来biset-mimiへ置き換えて廃盤にする計画である。
+6. **biset-mimi**（`src/mimi/index.ts`）— IETF `draft-ietf-mimi-protocol`に完全準拠したgroup-chat hub。設計・実装状況の正本は[PLAN_biset-mimi-server.md](PLAN_biset-mimi-server.md)。`normal`/`anon`/`self`（`allowExternalJoin=true`）の3プロセスとして本番稼働中（`mimi.biset.md`/`mimi-anon.biset.md`/`mimi-self.biset.md`）だが、**`main.ts`からの呼び出し経路が存在しない**。クライアント側transport（`src/mls/mimi-client-transport.ts`の`MimiClientTransport`）は`test/mimi/*.test.ts`と手動検証スクリプトからしか使われておらず、UIのどの操作からも到達しない。§1の判定基準に従えば「部品実装済み」であり「実装済み」ではない。
 
-`src/core/index.ts`は移行中のcompatibility compositionであり、最終構成の主要コンポーネントではない。`src/protocol/`は各境界が共有するwire schema、canonical encoding、ID、署名対象byte列を定義する。browser、anchor、mediator、coordinator、legacy coreは別々のTypeScript設定で型検査する。
+`src/core/index.ts`は移行中のcompatibility compositionであり、最終構成の主要コンポーネントではない。`src/protocol/`は各境界が共有するwire schema、canonical encoding、ID、署名対象byte列を定義する。browser、anchor、mediator、coordinator、mls-ds、mimi、legacy coreは別々のTypeScript設定（`tsconfig.*.json`）で型検査する。
+
+### 3.1 DIDComm・Conversation Group・biset-mimiの関係（並存する3系統、統合されていない）
+
+この3つは互いに独立した配送経路であり、コード上で一つのパイプに統合されているわけではない。「共存」しているように見えるのは、biset-mimiが完全に独立したインフラとしてサーバー側だけ動いているためであり、実際のメッセージがこの3つの間を行き来したり、統合された経路を通ったりしているわけではない。
+
+- **DIDComm**（Mediator経由）は1:1のダイレクトメッセージ専用。§12で詳述。MIMIハブは一切経由しない——唯一の接点は、DID documentが発見用メタデータとして`MimiDeliveryService`エントリ（biset独自、非標準）を任意で公開できる点だけで、実際の配送はこれを経由しない。
+- **Conversation Group**（biset-mls-ds経由）は現行の複数人グループチャット。`mimi-content.ts`による本文エンコーディングや`resolveMimiProviderUrl`によるMIMI provider directory解決など、MIMI specの語彙・概念を部分的に先取りして使っている箇所はあるが、実際の配送プロトコル自体（`ConversationDeliveriesPullV1`等、`src/protocol/conversation-mls-ds*.ts`）はMIMI wireそのものではなく、biset独自の先行実装である。
+- **biset-mimi**は上記いずれとも無関係の、独立した第三の実装——IETF specに完全準拠したhubをゼロから構築したもの。現状はサーバーとして本番稼働しているだけで、clientからは一切到達できない。
+
+現行の構想（PLAN_biset-mimi-server.md §14/§18/§19）は、Conversation Group（biset-mls-ds）とCoordinatorのVaultデータプレーンの両方を、最終的にbiset-mimiへ一本化し、biset-mls-dsとcoordinatorの2つの独立サービスを退役させることである。そのための client側の配線（`main.ts`をbiset-mimiのendpointへ実際に向ける作業）自体は、本節時点でまだ着手されていない。
 
 Anchorの認証は二層である。third party、Coordinatorから見える外側は通常のOpenID Connect Authorization Code + PKCEである。そのOIDC authorization endpointが必要とするinteractive authenticationだけをOpenID4VP 1.0 Verifierが担当する。WalletはAnchor発行のholder-bound Login Credentialを提示し、Anchorは検証結果を内部principalへ変換してOIDC処理を再開する。
 
