@@ -317,7 +317,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
 
 - [x] **3.0 前提調査** (完了: 2026-09-01, [draft-ietf-mimi-room-policy-04](https://datatracker.ietf.org/doc/html/draft-ietf-mimi-room-policy-04), §11-1更新): role/capability/遷移/人数制約、GroupContext componentへの格納、component IDが未確定であることを確認し、3.5を意味論のpure evaluatorとして実装する方針を確定した。
   - depends on: 2.7
-- [~] **3.1 provider-transport.ts** (agent: Codex, 開始: 2026-09-01): mTLS + From/Hostヘッダによるprovider間認証（spec §4.1）。
+- [x] **3.1 provider-transport.ts** (完了: 2026-09-01, `src/mimi/provider-transport.ts`, `test/mimi/provider-transport.test.ts`): HTTPSのみのoutbound transport、client certificate/keyを必須にしたBun TLS設定、`Host`/`From: mimi@<source-domain>`生成、TLS終端で検証済みのpeer domainとFromを照合するinbound helperを実装。header単独を認証として扱わず、provider endpointを接続する後続タスクではこのpeer照合を必須にする。
   - depends on: 2.7
 - [ ] **3.2 directory.ts**: `GET /.well-known/mimi-protocol-directory`（spec行1023）。
   - depends on: 3.1
