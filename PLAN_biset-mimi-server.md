@@ -455,7 +455,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: なし
 - [x] **6.1（項目12）MLSエンジンへのコンポーネント実装** (agent: Codex, 完了: 2026-09-01): `src/mls/vendor/appData.ts`に`app_data_dictionary (0x0006)`／`AppDataUpdate (0x0008)`のTLS codec・dictionary更新規則を実装し、commit処理がUpdatePathなしでGroupContextを更新するようにした。`src/mimi/app-data.ts`にはMIMIの`0x0020`--`0x0023`のTLS codec、participant差分適用を追加した。MLS core testで2 memberが同一AppData componentをcommitで収束することを確認済み。
   - depends on: 6.0
-- [ ] **6.2（項目12）`update/{roomId}`のAppSync対応**: [http.ts](src/mimi/http.ts)の`update`ハンドラを書き換え、`proposalOrCommit`を実際にMLS wire formatとしてパースし、6.1のコンポーネントから参加者リスト・room policyを抽出する。既存の`initialState`/`stateUpdate`というJSON sidecar（[protocol-types.ts:244-256](src/mimi/protocol-types.ts)）は廃止するか、最低限「MLS commit内容とJSON申告の不一致を拒否する」検証を追加する。
+- [~] **6.2（項目12）`update/{roomId}`のAppSync対応** (agent: Codex, 開始: 2026-09-01): [http.ts](src/mimi/http.ts)の`update`ハンドラを書き換え、`proposalOrCommit`を実際にMLS wire formatとしてパースし、6.1のコンポーネントから参加者リスト・room policyを抽出する。既存の`initialState`/`stateUpdate`というJSON sidecar（[protocol-types.ts:244-256](src/mimi/protocol-types.ts)）は廃止するか、最低限「MLS commit内容とJSON申告の不一致を拒否する」検証を追加する。
   - depends on: 6.1
 - [ ] **6.3（項目12）`room_metadata`コンポーネントへの切り替え**: [store.ts](src/mimi/store.ts)のmetadata取り扱いを6.1のコンポーネント経由に変更する。
   - depends on: 6.1
