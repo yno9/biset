@@ -339,6 +339,8 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 3.7
 - [x] **4.2 normal/anon振り分けロジック** (完了: 2026-09-01, [MIMI client routing](PLAN_biset-mimi-client-routing.md), `src/mls/mimi-client-routing.ts`, `test/mls/mimi-client-routing.test.ts`): 検証済みpeer capabilityだけを入力に、全参加者がanon MMR v1対応ならanonを選択するpure selectorを追加。`require-anon`は正常系への暗黙downgradeをせず、normal/anonの選択はroom作成時だけに固定する。
   - depends on: 4.1
+- [~] **4.3 anon-mode client配信経路** (agent: Codex, 開始: 2026-09-01): routing確認で判明したnormal限定のKeyMaterial/message/delivery APIを、pseudonymous credentialを扱えるように是正する。anon roomでcommit/application entryをpull/watch経由で実際に受信する回帰テストを追加する。
+  - depends on: 4.2
 
 ### Phase 5: 将来統合（現時点では着手しない）
 
