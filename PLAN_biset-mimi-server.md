@@ -334,7 +334,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
 
 ### Phase 4: クライアント統合
 
-- [ ] **4.1 mimi-client-transport.ts**: `src/mls/mimi-client-transport.ts`。
+- [~] **4.1 mimi-client-transport.ts** (agent: Codex, 開始: 2026-09-01): `src/mls/mimi-client-transport.ts`。
   - 参照実装: `src/mls-ds/client-transport.ts`
   - depends on: 3.7
 - [ ] **4.2 normal/anon振り分けロジック**: 別文書（相手のcapability discoveryに基づく自動選択、このセッションの前半で合意した設計）と接続する。この文書には設計を書かず、別文書へのリンクをここに追加する。
