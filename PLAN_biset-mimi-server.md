@@ -594,8 +594,8 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
 ### 19.6 既存ユーザーの移行・coordinator退役の順序
 
 1. 本節の設計を実装、`biset-mimi-self`に対して新規ロジックをテスト・実HTTPS検証（§18.4と同じ手法）。
-2. **既存Vaultデータの移行**——現行coordinatorに保存済みの各ユーザーのVault（entries + 最新checkpoint）を、対応するSelf Group roomの`mimi_deliveries`へ一括投入するワンショット移行スクリプトが新たに必要。これは本設計の範囲外の別タスクとして切り出す（19.7に項目立てする）。ユーザーへの言明どおり「実データは存在しない、全てテストデータ」なので、移行の正確性より前に「新規ロジックが正しく動くこと」を先に検証してよい——実移行は最後でよい。
-3. 全員の切り替えが終わったら、coordinatorのVaultルート・関連テーブル（`vault_streams`, `vault_stream_checkpoints`, v1 legacy分含む）を削除し、coordinatorプロセス自体を停止・退役する。
+2. **既存Vaultデータの移行は不要——削除してよい**（2026-09-02、ユーザーの明示指示）。現行coordinatorに保存済みのVaultデータは全てテストデータであり、実データは存在しない（§18で述べた既存の標準許可「リスクはない。実データも存在しない」と同じ前提）。よって移行スクリプトは作らない。coordinator退役時にVaultテーブル（`vault_streams`, `vault_stream_checkpoints`, v1 legacy分含む）ごと単純に破棄する。
+3. 全員の切り替えが終わったら、coordinatorのVaultルート・関連テーブルを削除し、coordinatorプロセス自体を停止・退役する。
 
 ### 19.7 作業ワークシート（§13/§16と同じ規約：着手前`[ ]`→`[~] (agent: ..., 開始: ...)`、完了時`[x] (完了: ..., 関連ファイル)`）
 
@@ -611,10 +611,8 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: 19.b, 19.c
 - [ ] **19.f テスト・実HTTPS検証**: `bun run typecheck`・`bun run test`、`biset-mimi-self`に対する実HTTPS End-to-End（entry送受信、checkpoint圧縮、chunk結合、新端末onboarding後のVault復元）。
   - depends on: 19.b, 19.c, 19.e
-- [ ] **19.g 既存Vaultデータの移行スクリプト**: coordinatorの既存Vault(entries+checkpoint)を対応するSelf Group roomへ一括投入するワンショットツール（19.6の2番目）。実データがまだ存在しない現状では優先度低——後回し可。
+- [ ] **19.h coordinator退役**: 既存Vaultデータの移行は不要（19.6、2026-09-02にユーザーが明示指示——実データ無し、全てテストデータにつき削除可）。Vaultルート・テーブルを削除し、プロセス停止・systemd無効化する（19.6の3番目）。
   - depends on: 19.f
-- [ ] **19.h coordinator退役**: Vaultルート・テーブル削除、プロセス停止・systemd無効化（19.6の3番目）。
-  - depends on: 19.g
 
 ### 19.8 実装前に確認・決定すべき未確定事項
 
