@@ -469,7 +469,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: なし（6.0-6.5と並行可）
 - [x] **6.8（項目16）`identifierQuery`のプライバシー配慮ガイダンス確認**: spec行2337-2562（Xavier/Yolanda/Zach例含む）を読み、[federation.ts](src/mimi/federation.ts)の実装と突き合わせる。 (完了: 2026-09-01, 関連: `src/mimi/federation.ts`; 既定はnotFound、mTLS済み provider に限定し、導入時のdirectoryへAND検索・ユーザーごとの可検索性を必須化)
   - depends on: なし（6.0-6.5と並行可）
-- [ ] **6.9（項目17）`proxyDownload`のOblivious HTTP対応要否判断**: spec §5.10.3（行2778-2833）を読み、対応するかスコープ外とするかを決めて明文化する。対応しないなら[asset-proxy.ts](src/mimi/asset-proxy.ts)にその旨のコメントを追加する。
+- [~] **6.9（項目17）`proxyDownload`のOblivious HTTP対応要否判断**: spec §5.10.3（行2778-2833）を読み、対応するかスコープ外とするかを決めて明文化する。対応しないなら[asset-proxy.ts](src/mimi/asset-proxy.ts)にその旨のコメントを追加する。 (agent: Codex, 開始: 2026-09-01)
   - depends on: なし（6.0-6.5と並行可）
 - [ ] **6.10 Phase 6 release gate確認**: §10に正式なgateとして追記した上で確認する——本物のMLS wire commitを使ったroom作成→member追加→AppSync（またはprivate-use拡張）経由でのroom名/participant list反映が、本番HTTPSに対する実検証で確認できること。`groupInfo`のdirectory整合も同時に確認する。
   - depends on: 6.5, 6.6
