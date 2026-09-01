@@ -288,7 +288,7 @@ identity_link_key(epoch) = exportSecret(state, "mimi mmr identity-link", groupId
   - depends on: 1.2
 - [x] **1.4 テスト** (完了: 2026-09-01, `test/mimi/store.test.ts`, `test/mimi/http.test.ts`): frankingされたmessageの受信者検証が通ること、frankingなしのmessageが拒否されることを確認する。
   - depends on: 1.3
-- [~] **1.5 Phase 1 release gate確認** (agent: /root, 開始: 2026-09-01)（§10）。
+- [x] **1.5 Phase 1 release gate確認** (完了: 2026-09-01, `test/mimi/store.test.ts`, `test/mimi/http.test.ts`, `bun run typecheck`)（§10）。
   - depends on: 1.4
 
 ### Phase 2: Anon Mode（プロセス分離込み、§0参照）
