@@ -1,7 +1,7 @@
 /** Browser/client transport for a MIMI provider's local client boundary. */
 import { defaultFetch } from '../net-fetch.ts'
-import type { DeliveriesPullRequest, DeliveriesWatchRequest, KeyMaterialRequest, KeyPackagePublishRequest, SubmitMessageRequest, UpdateRoomRequest, MimiDeliveryEntry } from '../mimi/protocol-types.ts'
-import { decodeDeliveriesWire, decodeDeliveriesWatchTokenWire, decodeKeyMaterialResponseWire, decodeKeyPackagePublishResponseWire, decodeSubmitMessageResponseWire, decodeUpdateRoomResponseWire, encodeDeliveriesPullRequestWire, encodeDeliveriesWatchRequestWire, encodeKeyMaterialRequestWire, encodeKeyPackagePublishWire, encodeSubmitMessageRequestWire, encodeUpdateRoomRequestWire } from '../mimi/wire.ts'
+import type { DeliveriesPullRequest, DeliveriesWatchRequest, KeyMaterialRequest, KeyPackagePublishRequest, SubmitMessageRequest, SubmitVaultCheckpointRequest, UpdateRoomRequest, MimiDeliveryEntry } from '../mimi/protocol-types.ts'
+import { decodeDeliveriesWire, decodeDeliveriesWatchTokenWire, decodeKeyMaterialResponseWire, decodeKeyPackagePublishResponseWire, decodeSubmitMessageResponseWire, decodeSubmitVaultCheckpointResponseWire, decodeUpdateRoomResponseWire, encodeDeliveriesPullRequestWire, encodeDeliveriesWatchRequestWire, encodeKeyMaterialRequestWire, encodeKeyPackagePublishWire, encodeSubmitMessageRequestWire, encodeSubmitVaultCheckpointRequestWire, encodeUpdateRoomRequestWire } from '../mimi/wire.ts'
 
 export interface MimiClientTransportOptions { normalBaseUrl: string; anonBaseUrl: string; fetch?: typeof fetch }
 export type MimiClientMode = 'normal' | 'anon'
@@ -22,6 +22,7 @@ export class MimiClientTransport {
    * unspecified. */
   async publishKeyPackages(mode: MimiClientMode, input: KeyPackagePublishRequest) { return decodeKeyPackagePublishResponseWire(await this.post(mode, '/v1/mimi/keypackage/publish', encodeKeyPackagePublishWire(input))) }
   async submitMessage(mode: MimiClientMode, input: SubmitMessageRequest) { return decodeSubmitMessageResponseWire(await this.post(mode, `/submitMessage/${encodeURIComponent(input.roomId)}`, encodeSubmitMessageRequestWire(input))) }
+  async submitVaultCheckpoint(mode: MimiClientMode, input: SubmitVaultCheckpointRequest) { return decodeSubmitVaultCheckpointResponseWire(await this.post(mode, `/v1/mimi/vault-checkpoint/${encodeURIComponent(input.roomId)}`, encodeSubmitVaultCheckpointRequestWire(input))) }
   async pullDeliveries(mode: MimiClientMode, input: DeliveriesPullRequest): Promise<MimiDeliveryEntry[]> { return decodeDeliveriesWire(await this.post(mode, '/v1/mimi/deliveries/pull', encodeDeliveriesPullRequestWire(input))) }
   async watchDeliveries(mode: MimiClientMode, input: DeliveriesWatchRequest): Promise<{ token: string; expiresAt: string }> { return decodeDeliveriesWatchTokenWire(await this.post(mode, '/v1/mimi/deliveries/watch', encodeDeliveriesWatchRequestWire(input))) }
   streamUrl(mode: MimiClientMode, token: string, afterSeq: number): string { if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new TypeError('delivery cursor is invalid'); return `${this.baseUrls[mode]}/v1/mimi/deliveries/stream?token=${encodeURIComponent(token)}&afterSeq=${afterSeq}` }
