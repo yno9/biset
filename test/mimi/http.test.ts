@@ -14,10 +14,12 @@ import {
 import {
   decodeDeliveriesWire,
   decodeKeyMaterialResponseWire,
+  decodeKeyPackagePublishResponseWire,
   decodeUpdateRoomResponseWire,
   encodeDeliveriesPullRequestWire,
   encodeDeliveriesWatchRequestWire,
   encodeKeyMaterialRequestWire,
+  encodeKeyPackagePublishWire,
   decodeFrankWire,
   encodeSubmitMessageRequestWire,
   encodeUpdateRoomRequestWire,
@@ -161,17 +163,30 @@ describe('MIMI Phase 0 HTTP flow', () => {
     expect(created.status).toBe(200)
     expect(decodeUpdateRoomResponseWire(await created.text()).status).toBe('success')
 
+    // Real clients can only ever reach the store through this HTTP route --
+    // it does not exist in the MIMI draft, and its absence was found live
+    // (2026-09-01): keyMaterial always returned noCompatibleMaterial because
+    // nothing could ever publish into it.
     const bobPublishUnsigned = {
       version: 1, credential: bob.credential,
-      packages: [{ reference: new Uint8Array([10]), user: bob.credential.user, client: bob.credential.client, keyPackage: new Uint8Array([11]), publishedAt: at }], publishedAt: at, signature: new Uint8Array(),
+      packages: [{ reference: new Uint8Array([10]), user: bob.credential.user, client: bob.credential.client, keyPackage: new Uint8Array([11]), publishedAt: at }], publishedAt: at,
     }
     const bobPublish = { ...bobPublishUnsigned, signature: ed25519.sign(keyPackagePublishSigningBytes(bobPublishUnsigned), bob.secret) }
     expect(await authorizeKeyPackagePublish({ verify: async (credential, bytes, signature) => ed25519.verify(signature, bytes, credential.signaturePublicKey) }, bobPublish)).toBe(true)
-    deployment.store.publishKeyPackages(bobPublish)
-    deployment.store.publishKeyPackages({
+    const bobPublishResponse = await deployment.fetch(post('/v1/mimi/keypackage/publish', encodeKeyPackagePublishWire(bobPublish)))
+    expect(bobPublishResponse.status).toBe(200)
+    expect(decodeKeyPackagePublishResponseWire(await bobPublishResponse.text())).toEqual({ published: 1 })
+
+    const charliePublishUnsigned = {
       version: 1, credential: charlie.credential,
-      packages: [{ reference: new Uint8Array([12]), user: charlie.credential.user, client: charlie.credential.client, keyPackage: new Uint8Array([13]), publishedAt: at }], publishedAt: at, signature: new Uint8Array(),
-    })
+      packages: [{ reference: new Uint8Array([12]), user: charlie.credential.user, client: charlie.credential.client, keyPackage: new Uint8Array([13]), publishedAt: at }], publishedAt: at,
+    }
+    const charliePublish = { ...charliePublishUnsigned, signature: ed25519.sign(keyPackagePublishSigningBytes(charliePublishUnsigned), charlie.secret) }
+    expect((await deployment.fetch(post('/v1/mimi/keypackage/publish', encodeKeyPackagePublishWire(charliePublish)))).status).toBe(200)
+
+    // A forged publish (wrong signer) must be rejected, not silently stored.
+    const forgedPublish = { ...charliePublishUnsigned, signature: ed25519.sign(keyPackagePublishSigningBytes(charliePublishUnsigned), bob.secret) }
+    expect((await deployment.fetch(post('/v1/mimi/keypackage/publish', encodeKeyPackagePublishWire(forgedPublish)))).status).toBe(403)
 
     const bobMaterial = await requestKeyMaterial(deployment.fetch, alice, bob.credential.user)
     expect(bobMaterial.clients).toEqual([{ client: bob.credential.client, status: 'success', keyPackage: new Uint8Array([11]), capabilities: undefined }])

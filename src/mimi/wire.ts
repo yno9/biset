@@ -12,6 +12,7 @@ import type {
   KeyMaterialRequest,
   KeyMaterialResponse,
   KeyPackagePublishRequest,
+  KeyPackagePublishResponse,
   MimiCredential,
   MimiDeliveryEntry,
   MimiDeliveryKind,
@@ -359,6 +360,15 @@ export function decodeKeyPackagePublishWire(text: string): KeyPackagePublishRequ
     packages: input.packages.map((entry, index) => decodePublishedKeyPackage(entry, `KeyPackagePublishRequest.packages[${index}]`)),
     publishedAt: requireString(input.publishedAt, 'KeyPackagePublishRequest.publishedAt'), signature: requireBinary(input.signature, 'KeyPackagePublishRequest.signature'),
   }
+}
+
+export function encodeKeyPackagePublishResponseWire(value: KeyPackagePublishResponse): string {
+  return JSON.stringify({ published: value.published })
+}
+
+export function decodeKeyPackagePublishResponseWire(text: string): KeyPackagePublishResponse {
+  const input = record(text)
+  return { published: requireInteger(input.published, 'KeyPackagePublishResponse.published') }
 }
 
 export function encodeKeyMaterialRequestWire(value: KeyMaterialRequest): string {

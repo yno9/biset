@@ -149,13 +149,27 @@ export interface PublishedKeyPackage {
   sourceProvider?: MimiProviderUri
 }
 
-/** Internal/provider-local publication operation; client-server publication is outside the MIMI draft. */
+/**
+ * Publishes this client's own spare KeyPackages so another member can later
+ * add it to a room (`keyMaterial` only ever reads from this store, it never
+ * writes to it). The MIMI draft leaves how a provider originally acquires a
+ * user's KeyPackages unspecified ("client-server publication is outside the
+ * MIMI draft") -- biset fills that gap with its own client-facing route
+ * (`/v1/mimi/keypackage/publish`, http.ts), the same way it does for
+ * `deliveries/pull`/`watch` (§5.1, PLAN_biset-mimi-server.md). Without this
+ * route no client can ever be added to a room: `keyMaterial` would have
+ * nothing to return.
+ */
 export interface KeyPackagePublishRequest {
   version: 1
   credential: MimiCredential
   packages: PublishedKeyPackage[]
   publishedAt: string
   signature: Uint8Array
+}
+
+export interface KeyPackagePublishResponse {
+  published: number
 }
 
 /** draft §5.2 KeyMaterialRequest, plus biset's client-to-hub signature. */

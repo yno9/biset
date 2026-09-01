@@ -1,6 +1,7 @@
 /** Narrow HTTP boundary for MIMI provider endpoints implemented in Phase 0. */
 import {
   authorizeKeyMaterial,
+  authorizeKeyPackagePublish,
   authorizeUpdate,
   authorizeDeliveriesPull,
   authorizeDeliveriesWatch,
@@ -10,11 +11,13 @@ import {
 } from './authorizer.ts'
 import {
   decodeKeyMaterialRequestWire,
+  decodeKeyPackagePublishWire,
   decodeDeliveriesPullRequestWire,
   decodeDeliveriesWatchRequestWire,
   decodeUpdateRoomRequestWire,
   decodeSubmitMessageRequestWire,
   encodeKeyMaterialResponseWire,
+  encodeKeyPackagePublishResponseWire,
   encodeDeliveriesWire,
   encodeDeliveriesWatchTokenWire,
   encodeMimiErrorWire,
@@ -46,6 +49,11 @@ const REPORT_ABUSE_PREFIX = '/reportAbuse/'
 const DELIVERY_PULL_PATH = '/v1/mimi/deliveries/pull'
 const DELIVERY_WATCH_PATH = '/v1/mimi/deliveries/watch'
 const DELIVERY_STREAM_PATH = '/v1/mimi/deliveries/stream'
+/** Biset's own extension (§5.1, PLAN_biset-mimi-server.md) -- the MIMI draft
+ * leaves how a provider originally acquires a user's KeyPackages
+ * unspecified, so without this route `keyMaterial` has nothing to ever
+ * return and no client can be added to a room. */
+const KEY_PACKAGE_PUBLISH_PATH = '/v1/mimi/keypackage/publish'
 
 function isMimiHttpPath(path: string): boolean {
   return path.startsWith(KEY_MATERIAL_PREFIX) || path.startsWith(UPDATE_PREFIX)
@@ -55,6 +63,7 @@ function isMimiHttpPath(path: string): boolean {
     || path.startsWith(PROXY_DOWNLOAD_PREFIX)
     || path.startsWith(REPORT_ABUSE_PREFIX)
     || path === DELIVERY_PULL_PATH || path === DELIVERY_WATCH_PATH || path === DELIVERY_STREAM_PATH || path === MIMI_PROTOCOL_DIRECTORY_PATH
+    || path === KEY_PACKAGE_PUBLISH_PATH
 }
 
 /** The HTTPS listener/TLS terminator supplies a verified client-cert peer. */
@@ -159,6 +168,14 @@ export function createMimiHttpHandler(
         if (value.targetUser !== targetUser) return error(400, 'bad-request', 'target user path does not match request body')
         if (!(await authorizeKeyMaterial(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room membership was rejected')
         return json(200, encodeKeyMaterialResponseWire(keyMaterialResponse(value.targetUser, store.takeKeyPackages(value.targetUser, value.requiredCapabilities))))
+      }
+
+      if (path === KEY_PACKAGE_PUBLISH_PATH) {
+        const value = decodeKeyPackagePublishWire(body)
+        if (!credentialAllowed(value.credential, mode, selfOwnerUser)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
+        if (!(await authorizeKeyPackagePublish(verifier, value))) return error(403, 'unauthorized', 'request signature was rejected')
+        const published = store.publishKeyPackages(value)
+        return json(200, encodeKeyPackagePublishResponseWire({ published }))
       }
 
       if (path.startsWith(UPDATE_PREFIX)) {
