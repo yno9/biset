@@ -489,6 +489,12 @@ export function decodeSubmitMessageRequestWire(text: string): SubmitMessageReque
 }
 export function encodeSubmitMessageResponseWire(value: SubmitMessageResponse): string { return JSON.stringify({ status: value.status, acceptedTimestamp: value.acceptedTimestamp, currentEpoch: value.currentEpoch, frank: value.frank === undefined ? undefined : JSON.parse(encodeFrankWire(value.frank)) }) }
 
+export function decodeSubmitMessageResponseWire(text: string): SubmitMessageResponse {
+  const input = record(text)
+  if (input.status !== 'accepted' && input.status !== 'notAllowed' && input.status !== 'epochTooOld') throw new MimiWireError('SubmitMessageResponse.status is invalid')
+  return { status: input.status, acceptedTimestamp: optionalString(input.acceptedTimestamp, 'SubmitMessageResponse.acceptedTimestamp'), currentEpoch: input.currentEpoch === undefined ? undefined : requireEpoch(input.currentEpoch, 'SubmitMessageResponse.currentEpoch'), frank: input.frank === undefined ? undefined : decodeFrankWire(JSON.stringify(input.frank)) }
+}
+
 // --------------------------------------------------------------- deliveries
 
 function deliveriesRequesterJson(value: DeliveriesPullRequest | DeliveriesWatchRequest): JsonRecord {
