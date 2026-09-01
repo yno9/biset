@@ -524,6 +524,105 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
 
 `typecheck`・全テストスイート（`bun run test`）は無傷でパス。本番`biset-mimi-normal`/`biset-mimi-anon`とも再ビルド・再デプロイ・再検証済み。
 
+## 19. Vaultをbiset-mimiへ統合する設計（`biset-coordinator`退役の最後の穴、2026-09-02）
+
+§18で`biset-mimi-self`（`allowExternalJoin=true`のnormalモード、`mimi-self.biset.md`）を本番稼働させ、実HTTPSでexternal joinのEnd-to-Endを確認した（§18.4）。coordinatorが残す最後の役割は**Vaultデータプレーン**（`/v1/vaults`, `/v2/vaults/default`, `/v1/checkpoints/*`, `/v2/checkpoints/*`, `/v1/deliveries/*`, `/v2/entries/*`）——ユーザーの実データ（メール本文・連絡先鍵・設定等、`src/protocol/vault.ts`の`VAULT_EVENT_KINDS`）を保持する、1オーナー1ストリームのappend-only暗号化ログ＋圧縮checkpointの仕組みである。本節はこれをbiset-mimiへ統合する設計であり、他のエージェントへの実装引き継ぎを前提に書く。
+
+### 19.0 中心方針（最重要、実装前に必ず理解すること）
+
+**Vaultを独立したデータプレーンとして移植しない。MIMIのroom inbox（`mimi_deliveries`テーブル、既存の`submitMessage`/`deliveries pull`/`stream`機構）自体が、Self Groupの最新stateのスナップショットになる。**
+
+これは「別エンドポイント・別ストレージ系統を新設してVaultの見た目を再現する」設計（当初検討したGroupInfo方式のcheckpoint側路——§7の調査時点の初期案）を明確に却下し、代わりに以下を選んだということである。
+
+- Vaultの「entry」は、既存の`POST /submitMessage/{roomId}`でそのまま流す。新しいwire型もエンドポイントも要らない。
+- Vaultの「checkpoint」（圧縮スナップショット）は、**同じinboxに載る新しい`kind`の配送**として扱う。独立したHPKE封印request/response（GroupInfo方式）は導入しない——理由は、そもそも新端末のオンボーディングは既にexternal join(`groupInfo/{roomId}`, §18)で解決済みであり、checkpointが本当に必要としているのは「このroomの`deliveries pull(afterSeq=0)`を辿るだけで、圧縮済みの最新stateに到達できること」だけだからである。それは新しいエンドポイントではなく、既存inboxの中の1レコードの意味論を拡張するだけで実現できる。
+- **Vault用roomと、Self GroupのMLSデバイス管理用room（§18で言うallowExternalJoinのroom）は同一roomである**。1ユーザー＝1room＝1 inbox。そのroomのMLS commit（add/remove proposal）がデバイス集合を管理し、同じroomのapplication kind配送がVaultの実データを運び、同じroomの新kind配送がcheckpointを運ぶ。coordinatorが今「Self Group MLS管理」と「Vault storage」を別処理系（`mls-delivery-http.ts`のSELF_GROUP_MLS_PATHS vs `app.ts`のVaultルート）に分けているのは、historicalな事情（v1がVault独自のMLS membershipを持っていた名残、Q5参照）であり、本設計ではその分離自体を解消する。
+
+### 19.1 Vault概念 → MIMI概念のマッピング
+
+| Vault (coordinator) | biset-mimi | 備考 |
+|---|---|---|
+| 1オーナー1 Vault（`owner_subject` UNIQUE） | 1ユーザー1room（`allowExternalJoin=true`のnormalモードroom、`biset-mimi-self`上） | roomId生成規則は要確認（19.8参照） |
+| `vaultId`（`vlt_<random256bit>`、identity非依存） | `roomId` | 既存のroomId命名規則（`mimi://...`）をそのまま使ってよいか、identity非依存性を保つため別途ランダムid方式にすべきかは要確認 |
+| entry（`payload`, `appendId`, hub割当`seq`） | `mimi_deliveries`の`kind: 'application'`配送（`submitMessage`経由、hub割当`seq`は既存`mimi_rooms.next_seq`をそのまま流用） | 既存コード変更なし。ただし`appendId`による冪等性は現行`submitMessage`に無い概念——19.4参照 |
+| checkpoint（`coveredSeq`, 全体snapshot最大100MB） | 新しい`kind: 'vaultCheckpoint'`配送（後述19.2のchunking込み） | hub-visibleな`coveredSeq`フィールドを持つ点はVaultと同じ（franking AADや`epoch`が既に配送メタデータとしてhubに見えているのと同格） |
+| checkpoint到達後の圧縮（`payload = x''`でtombstone化） | hubが`vaultCheckpoint`配送受理時、同roomの`application`kindで`seq <= coveredSeq`の`payload`列を空にする | `src/coordinator/store.ts:136`（v2）・`:315-318`（v1）の圧縮ロジックをほぼそのまま移植する。冪等性・単調増加制約（`coveredSeq`は後退不可、同値再送は先着優先）も含めて踏襲する |
+| `/v2/entries/pull`（cursor=`seq`） | 既存`POST /v1/mimi/deliveries/pull`・`GET /v1/mimi/deliveries/stream` | 変更不要。新端末や長期オフライン端末の追いつきも、既存の`afterSeq`ベースのpull/SSEでそのまま賄える |
+| v1 legacyのACK・per-recipient snapshot | 廃止 | v2で既に廃止済みの概念であり、本設計でも復活させない |
+| Vault独自のMLS device management（`vault_members`等、v1 legacy） | 廃止、Self Group room自体のMLS commit（add/remove）に一本化 | §19.0で述べた統合そのもの |
+
+### 19.2 サイズ制約とchunking方針
+
+現行`MAX_BODY_BYTES = 1024 * 1024`（[http.ts:47](src/mimi/http.ts:47)、全POSTエンドポイント共通のHTTPボディ上限）に対し、Vault entryは最大25MB、checkpointは最大100MB——3〜4桁違う。
+
+**推奨: 上限緩和ではなくchunkingを選ぶ。** 理由:
+- MIMIプロトコル全体の「メッセージは小さい」という設計哲学（1MiB上限は`submitMessage`だけでなく全エンドポイント共通の意図的な制約）を、Vault専用に例外を空けて崩したくない。
+- 単一HTTPリクエストで100MBを受ける実装は、メモリ・タイムアウト・リトライ設計の負担が大きい。既存のper-room `seq`ベースのpullは、そもそも複数の小さな配送を順序保証つきで運ぶ仕組みなので、chunkingと相性が良い。
+- hub側の変更が最小で済む——新しいHTTPボディ上限の分岐を増やさず、新しい`kind`の意味論を1つ足すだけでよい。
+
+具体設計（案、19.8で最終確認要）: Vaultの1エントリ・1checkpointを複数の`application`kind配送（既存submitMessageそのまま、既存1MiB上限内に収まるチャンク）に分割して連続送信する。checkpointの場合、実データのchunk群を送った後（または前）に、小さな`vaultCheckpointManifest`的なkindの配送を1通だけ送る——これがhubに見える唯一の新規メタデータで、`coveredSeq`・チャンク数・全体ハッシュ程度を持つ。hubはこのmanifest受理をトリガーに`coveredSeq`以下のapplication payloadを圧縮する。クライアント側はpull時にmanifestを見つけたら、それに紐づくchunk群を結合して復元する。
+
+### 19.3 メタデータ平文漏洩の是正（AskUserQuestionで「直す」を選択済み）
+
+現行Vaultの既知ギャップ（`ARC-coordinator.md`§11.3, Q7で確認済み）: entry payload内部のJSON構造（`VaultDeliveryPackV1`）で、event種別（`"message.add"`等の文字列）・`targetIds`・timestampが平文——coordinatorはこれをパースしないが、生バイトを見れば読める。
+
+本設計での解消: Vault entryの中身（`VaultDeliveryPackV1`相当）は丸ごと**MLS `PrivateMessage`として暗号化**されて`appMessage`に入る（既存の`submitMessage`の`appMessage`は既にそういう扱い——[franking調査Q5]参照、hubは`appMessage`を一切パースしない完全opaqueなバイト列として扱う）。hubから見える範囲は既存のsubmitMessage経路が元々晒しているものだけ——sender credential、roomId、timestamp、32byte `frankingTag`、`epoch`、ciphersuite、そして`kind`文字列（`"application"`または新設の`"vaultCheckpoint"`系）。`VaultDeliveryPackV1`内部のevent種別やtargetIdsはMLS暗号化層の内側に完全に入るため、hubには一切見えなくなる——構造的な解消。
+
+残る検討点: checkpointの`coveredSeq`自体はhubに見える必要がある（圧縮判断に使うため）。これはVault自身の`coveredSeq`も元々coordinatorに見えていた情報と同格であり、後退ではない。
+
+### 19.4 新規実装が必要な箇所
+
+- [src/mimi/protocol-types.ts](src/mimi/protocol-types.ts): `MimiDeliveryEntry.kind`（現行`'commit' | 'proposal' | 'welcome' | 'application'`）に`'vaultCheckpoint'`等を追加。checkpoint manifest配送用のフィールド（`coveredSeq`, chunk情報）を持つ型を追加。
+- [src/mimi/store.ts](src/mimi/store.ts): `submitMessage`（[store.ts:245-257](src/mimi/store.ts:245)）に相当する新しいcheckpoint受理経路を追加し、受理時に`mimi_deliveries`の`application`kind・`seq <= coveredSeq`の`payload`列を空にする圧縮処理を実装する。[src/coordinator/store.ts:136](src/coordinator/store.ts:136)（v2）の`coveredSeq`検証（後退不可・単調性・同値再送の冪等性）をそのまま移植する。
+- [src/mimi/wire.ts](src/mimi/wire.ts): 上記の新しいrequest/response・delivery entryのencode/decode追加。
+- **entryの冪等性（`appendId`相当）**: 現行`submitMessage`にこの概念が無い。クライアント再送時に同じ内容が重複`seq`で積まれてよいのか（既存のVaultは`appendId`+`payloadHash`一致なら同じ`seq`を返す設計）、それとも冪等性はクライアント側のoutbox管理（`main.ts`の既存ローカルoutbox、変更対象からいったん除外）に完全に任せてよいのか——**要確認、19.8参照**。
+- `biset-mimi-self`デプロイ自体（`MimiDeploymentOptions`）に新しいフラグは不要という理解——`allowExternalJoin=true`の既存normalモードのままでよい。
+
+### 19.5 クライアント側の移植対象
+
+現行:
+- [src/vault/coordinator-transport.ts](src/vault/coordinator-transport.ts)（fetchラッパー、scope別bearer token）
+- [src/vault/coordinator-sync.ts](src/vault/coordinator-sync.ts)（`synchronizeCoordinatorStream`, `flushCoordinatorStreamOutbox`）
+- [src/vault/coordinator-checkpoint.ts](src/vault/coordinator-checkpoint.ts)（checkpointの暗号化/復号）
+- [src/vault/coordinator-lifecycle.ts](src/vault/coordinator-lifecycle.ts)（Vault作成、v1 legacy専用）
+- [src/main.ts:1859-1921](src/main.ts:1859)の`synchronizeStreamOnce`（pull checkpoint → Self Group追いつき → outbox flush → pull entries → 必要ならcheckpoint再構築）
+
+これらを、biset-mimiの`MimiClientTransport`（既存、`submitMessage`/`deliveries pull`/`stream`を持つ）を使う新しいモジュール（例: `src/vault/mimi-vault-sync.ts`）へ置き換える。`synchronizeStreamOnce`の構造自体（checkpoint起点で追いつき、outboxをflushし、以後をpullし、caught-upならcheckpoint再構築）は本設計でもほぼそのまま使える——「checkpointをpullする」の実体が「`deliveries pull(afterSeq=0)`した結果から直近の`vaultCheckpoint`manifestを見つける」に変わるだけで、専用エンドポイントが1つ減る分むしろ単純化する。
+
+認証は、Vault独自のbearer token scope（`vault.create|vault.group.install|vault.append|vault.pull|vault.ack`）から、biset-mimiの既存認証（credential + Ed25519署名、room参加者チェック）へ一本化する。
+
+### 19.6 既存ユーザーの移行・coordinator退役の順序
+
+1. 本節の設計を実装、`biset-mimi-self`に対して新規ロジックをテスト・実HTTPS検証（§18.4と同じ手法）。
+2. **既存Vaultデータの移行**——現行coordinatorに保存済みの各ユーザーのVault（entries + 最新checkpoint）を、対応するSelf Group roomの`mimi_deliveries`へ一括投入するワンショット移行スクリプトが新たに必要。これは本設計の範囲外の別タスクとして切り出す（19.7に項目立てする）。ユーザーへの言明どおり「実データは存在しない、全てテストデータ」なので、移行の正確性より前に「新規ロジックが正しく動くこと」を先に検証してよい——実移行は最後でよい。
+3. 全員の切り替えが終わったら、coordinatorのVaultルート・関連テーブル（`vault_streams`, `vault_stream_checkpoints`, v1 legacy分含む）を削除し、coordinatorプロセス自体を停止・退役する。
+
+### 19.7 作業ワークシート（§13/§16と同じ規約：着手前`[ ]`→`[~] (agent: ..., 開始: ...)`、完了時`[x] (完了: ..., 関連ファイル)`）
+
+- [ ] **19.a 設計確認（最優先、他タスクをブロックする）**: 19.8の未確定事項（roomId命名規則、chunking方式の最終確認、`appendId`冪等性の置き場所）を決定し、本節に追記する。
+  - depends on: なし
+- [ ] **19.b `MimiDeliveryEntry.kind`拡張とcheckpoint圧縮ロジック**: protocol-types.ts / store.ts / wire.tsへの実装（19.4）。
+  - depends on: 19.a
+- [ ] **19.c chunking実装**: 大きいentry/checkpointの分割送信・受信側再構成（19.2）。クライアント側（19.5の新モジュール）とhub側双方。
+  - depends on: 19.a
+- [ ] **19.d メタデータ平文漏洩の是正確認**: 実際にVault entryの中身がMLS暗号化層の内側に入り、hubから`VaultDeliveryPackV1`内部のフィールドが一切見えないことをテスト・実HTTPS検証で確認する（19.3）。
+  - depends on: 19.b
+- [ ] **19.e クライアント側移植**: `src/vault/mimi-vault-sync.ts`（新規）実装、`main.ts`の`synchronizeStreamOnce`呼び出し元をcoordinator-transportからこちらへ切り替え（19.5）。
+  - depends on: 19.b, 19.c
+- [ ] **19.f テスト・実HTTPS検証**: `bun run typecheck`・`bun run test`、`biset-mimi-self`に対する実HTTPS End-to-End（entry送受信、checkpoint圧縮、chunk結合、新端末onboarding後のVault復元）。
+  - depends on: 19.b, 19.c, 19.e
+- [ ] **19.g 既存Vaultデータの移行スクリプト**: coordinatorの既存Vault(entries+checkpoint)を対応するSelf Group roomへ一括投入するワンショットツール（19.6の2番目）。実データがまだ存在しない現状では優先度低——後回し可。
+  - depends on: 19.f
+- [ ] **19.h coordinator退役**: Vaultルート・テーブル削除、プロセス停止・systemd無効化（19.6の3番目）。
+  - depends on: 19.g
+
+### 19.8 実装前に確認・決定すべき未確定事項
+
+- **roomId命名規則**: coordinatorの`vaultId`はidentity（DID/domain/mail address）に一切依存しないランダムid（`vlt_<random256bit>`）だった——identityが後で変わってもVaultが引き継がれるようにするため（`store.ts:59`の設計コメント）。Self Group roomのroomIdも同じ性質（identity非依存・ランダム）にすべきか、それとも現行のroomId命名パターン（`mimi://...`ホスト付き文字列）のままでよいか。[project_biset_domain_portability_constraint](file:///Users/n/.claude/projects/-Users-n-biset/memory/project_biset_domain_portability_constraint.md)の既存方針（サブドメイン/apexドメインは後で変更可能であるべき）と直接関係するため要確認。
+- **chunking方式の最終確認**: 19.2で提案したmanifest+chunk方式でよいか、それとも上限緩和側を選ぶ理由が別にあるか。
+- **entryの冪等性（`appendId`相当）の置き場所**: hub側に持たせるか（Vaultと同じ）、クライアント側outbox管理だけに任せるか。
+- **1MiB上限のchunkサイズそのもの**: base64url膨張後1MiB以内に収める場合、raw chunkサイズは概ね700KB程度が上限になる（Q4調査結果）。25MB entryなら約36チャンク、100MB checkpointなら約143チャンク——1回の同期でこれだけの`submitMessage`往復が発生することの実用上の影響（レイテンシ・SSEの配送量）を軽く見積もっておく。
+
 ## 18. `biset-coordinator`置き換えに向けて: `self`モード廃止と`allowExternalJoin`（2026-09-01）
 
 §14で示したビジョン（Self Group = 本人1人のMIMI room）を実際に進めるにあたり、いくつか設計判断をやり直した。
