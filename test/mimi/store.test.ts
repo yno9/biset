@@ -5,6 +5,7 @@ import { frankMessage, verifyFrank } from '../../src/mimi/franking.ts'
 import { RoomPseudonymIssuer } from '../../src/mimi/anon/pseudonym.ts'
 import { decryptIdentityLink, encryptIdentityLink } from '../../src/mimi/anon/identity-link.ts'
 import type { UpdateRoomRequest, VisibleCredential } from '../../src/mimi/protocol-types.ts'
+import type { MimiMlsStateTransition } from '../../src/mimi/mls-appsync.ts'
 
 const at = '2026-09-01T00:00:00.000Z'
 const roomId = 'mimi://example.test/r/store'
@@ -20,6 +21,15 @@ function initialUpdate(): UpdateRoomRequest {
     },
     submittedAt: at, signature: new Uint8Array(),
   }
+}
+
+function createInitial(store: SqliteMimiStore) {
+  const frankingSignatureKey = store.prepareFrankingKeys(roomId).signingPublicKey
+  const transition: MimiMlsStateTransition = {
+    participantListUpdates: [{ changedRoleParticipants: [], removedIndices: [], addedParticipants: [{ user: alice.user, roleIndex: 1 }] }],
+    roomMetadata: { roomUri: roomId, roomName: 'Store' }, frankingAgent: { frankingSignatureKey, credential: new Uint8Array() },
+  }
+  return store.submitUpdate(initialUpdate(), transition)
 }
 
 describe('MIMI SQLite store', () => {
@@ -63,7 +73,7 @@ describe('MIMI SQLite store', () => {
 
   test('serializes room commits, records deliveries, and atomically consumes compatible KeyPackages', () => {
     const store = new SqliteMimiStore(new Database(':memory:'))
-    const created = store.submitUpdate(initialUpdate())
+    const created = createInitial(store)
     expect(created.ok).toBe(true)
     if (!created.ok) throw new Error('unreachable')
     expect(created.state.epoch).toBe('1')
@@ -95,7 +105,7 @@ describe('MIMI SQLite store', () => {
 
   test('creates stable room-local franking keys and produces verifiable context-bound evidence', () => {
     const store = new SqliteMimiStore(new Database(':memory:'))
-    expect(store.submitUpdate(initialUpdate()).ok).toBe(true)
+    expect(createInitial(store).ok).toBe(true)
     const keys = store.frankingKeys(roomId)
     expect(keys).toBeDefined()
     if (!keys) throw new Error('unreachable')
@@ -108,7 +118,7 @@ describe('MIMI SQLite store', () => {
 
   test('accepts a provider fanout exactly once and exposes it through local delivery', () => {
     const store = new SqliteMimiStore(new Database(':memory:'))
-    expect(store.submitUpdate(initialUpdate()).ok).toBe(true)
+    expect(createInitial(store).ok).toBe(true)
     const entries = [{ seq: 99, kind: 'proposal' as const, payload: new Uint8Array([42]), epoch: '1', acceptedAt: at }]
     expect(store.acceptProviderFanout(roomId, 'hub.example', 'body-hash', entries)).toBe('accepted')
     expect(store.acceptProviderFanout(roomId, 'hub.example', 'body-hash', entries)).toBe('duplicate')

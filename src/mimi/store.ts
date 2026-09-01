@@ -39,6 +39,10 @@ const MAX_KEY_PACKAGES_PER_CLIENT = 32
 const MAX_DELIVERIES_PER_ROOM = 256
 const MAX_DELIVERIES_PER_PULL = 32
 const MAX_PROVIDER_FANOUT_DEDUPES = 4_096
+// Public key preparation happens before a room exists. Bound it separately
+// from rooms so unauthenticated franking-agent lookups cannot grow SQLite
+// without limit.
+const MAX_PENDING_FRANKING_KEYS = MAX_ROOMS
 
 export class MimiStoreCapacityError extends Error {}
 export class MimiStoreStateError extends Error {}
@@ -270,6 +274,8 @@ export class SqliteMimiStore {
     if (active) return copyFrankingKeys(active)
     const pending = this.database.query<FrankingKeyRow, [string]>('SELECT hub_key, signing_private_key, signing_public_key FROM mimi_pending_franking_keys WHERE room_id = ?').get(roomId)
     if (pending) return copyFrankingKeys(pending)
+    const pendingCount = this.database.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM mimi_pending_franking_keys').get()?.count ?? 0
+    if (pendingCount >= MAX_PENDING_FRANKING_KEYS) throw new MimiStoreCapacityError('pending franking-key capacity reached')
     const created = createFrankingKeyMaterial()
     this.database.query('INSERT INTO mimi_pending_franking_keys (room_id, hub_key, signing_private_key, signing_public_key) VALUES (?, ?, ?, ?)').run(roomId, created.hubKey, created.signingPrivateKey, created.signingPublicKey)
     return created

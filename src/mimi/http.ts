@@ -33,6 +33,7 @@ import { decodeMimiAbuseReportWire, encodeMimiAbuseReportWire, decodeMimiConsent
 import { verifyMimiProviderRequest, type VerifiedProviderPeer } from './provider-transport.ts'
 import { decodeMimiFanoutBatchWire, fanoutFingerprint } from './fanout.ts'
 import { extractMimiMlsStateTransition } from './mls-appsync.ts'
+import { equalBytes } from '../protocol/canonical.ts'
 import type { MimiAssetProxy } from './asset-proxy.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
 import type { MimiCredential, MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
@@ -212,6 +213,14 @@ export function createMimiHttpHandler(
         const mlsTransition = value.bundle.kind === 'commit'
           ? extractMimiMlsStateTransition(value.bundle.proposalOrCommit)
           : undefined
+        // The hub key alone is not its complete AppData identity: bind its
+        // advertised credential to this exact HTTPS origin as well, so a
+        // creator cannot substitute an arbitrary agent credential while
+        // retaining a hub-generated public key.
+        if (value.initialState !== undefined && mlsTransition?.frankingAgent !== undefined
+          && !equalBytes(mlsTransition.frankingAgent.credential, new TextEncoder().encode(publicBaseUrl ?? new URL(request.url).origin))) {
+          return error(400, 'bad-request', 'franking_signature_key credential does not match this hub')
+        }
         const result = store.submitUpdate(value, mlsTransition)
         if (result.ok) return json(200, encodeUpdateRoomResponseWire({ status: 'success', acceptedTimestamp: value.submittedAt }))
         return updateError(result.reason, result.message, result.currentEpoch)

@@ -26,8 +26,11 @@ import {
   encodeUpdateRoomRequestWire,
 } from '../../src/mimi/wire.ts'
 import type { PseudonymousCredential, VisibleCredential } from '../../src/mimi/protocol-types.ts'
-import { encodeMlsMessage } from '../../src/mls/vendor/index.ts'
+import { createCommit, encodeMlsMessage } from '../../src/mls/vendor/index.ts'
+import { encodeWelcome } from '../../src/mls/vendor/welcome.ts'
 import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../../src/mimi/app-data.ts'
+import { createMlsGroup, generateOwnKeyPackageForCredential } from '../../src/mls/group.ts'
+import { mlsSuite } from '../../src/mls/suite.ts'
 
 interface Client { credential: VisibleCredential; secret: Uint8Array }
 
@@ -48,7 +51,7 @@ function signedUpdate(sender: Client, value: Parameters<typeof updateRoomSigning
 
 /** A structurally real MLS PublicMessage Commit. Signature validation belongs
  * to the MLS group clients; the hub parses its authenticated AppDataUpdate. */
-function participantCommit(room: string, epoch: string, before: { user: string; roleIndex: number }[], after: { user: string; roleIndex: number }[], roomName?: string, frankingSignatureKey?: Uint8Array): Uint8Array {
+function participantCommit(room: string, epoch: string, before: { user: string; roleIndex: number }[], after: { user: string; roleIndex: number }[], roomName?: string, frankingSignatureKey?: Uint8Array, frankingCredential = new TextEncoder().encode('https://mimi.test')): Uint8Array {
   const proposals = [{ proposalOrRefType: 'proposal' as const, proposal: { proposalType: 'app_data_update' as const, appDataUpdate: {
     componentId: 0x0022, operation: 'update' as const, update: encodeMimiParticipantListUpdate({ changedRoleParticipants: [], removedIndices: before.map((_value, index) => index), addedParticipants: after }),
   } } }]
@@ -56,7 +59,7 @@ function participantCommit(room: string, epoch: string, before: { user: string; 
     componentId: 0x0023, operation: 'update' as const, update: encodeMimiRoomMetadata({ roomUri: room, roomName }),
   } } })
   if (frankingSignatureKey !== undefined) proposals.push({ proposalOrRefType: 'proposal' as const, proposal: { proposalType: 'app_data_update' as const, appDataUpdate: {
-    componentId: 0x0021, operation: 'update' as const, update: encodeMimiFrankingAgent({ frankingSignatureKey, credential: new Uint8Array() }),
+    componentId: 0x0021, operation: 'update' as const, update: encodeMimiFrankingAgent({ frankingSignatureKey, credential: frankingCredential }),
   } } })
   return encodeMlsMessage({
     version: 'mls10', wireformat: 'mls_public_message',
@@ -107,6 +110,52 @@ describe('MIMI Phase 0 HTTP flow', () => {
     const response = await deployment.fetch(new Request(`http://local/v1/mimi/franking-agent/${encodeURIComponent(roomId)}`))
     expect(response.status).toBe(200)
     expect(decodeFrankingAgentDataWire(await response.text()).frankingSignatureKey).toEqual(deployment.store.prepareFrankingKeys(roomId).signingPublicKey)
+    deployment.close()
+  })
+
+  test('accepts signed MLS commits which create a room and add a member through MIMI AppData', async () => {
+    const alice = client('did:web:alice-live', 'phone', 41)
+    const bob = client('did:web:bob-live', 'laptop', 42)
+    const liveRoom = 'mimi://example.test/r/genuine-mls-wire'
+    const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'normal', publicBaseUrl: 'https://mimi.example.test' })
+    const own = await generateOwnKeyPackageForCredential({ credentialType: 'basic', identity: new TextEncoder().encode(alice.credential.client) })
+    const bobOwn = await generateOwnKeyPackageForCredential({ credentialType: 'basic', identity: new TextEncoder().encode(bob.credential.client) })
+    const suite = await mlsSuite()
+    let group = await createMlsGroup(new TextEncoder().encode(liveRoom), own)
+    const proposal = (componentId: number, update: Uint8Array) => ({ proposalType: 'app_data_update' as const, appDataUpdate: { componentId, operation: 'update' as const, update } })
+    const aliceParticipant = { user: alice.credential.user, roleIndex: 1, clientIds: [alice.credential.client] }
+    const metadata = { roomUri: liveRoom, roomName: 'Genuine MLS wire room' }
+    const initialCommit = await createCommit({ state: group, cipherSuite: suite }, {
+      wireAsPublicMessage: true,
+      extraProposals: [
+        proposal(0x0021, encodeMimiFrankingAgent({ frankingSignatureKey: deployment.store.prepareFrankingKeys(liveRoom).signingPublicKey, credential: new TextEncoder().encode('https://mimi.example.test') })),
+        proposal(0x0022, encodeMimiParticipantListUpdate({ changedRoleParticipants: [], removedIndices: [], addedParticipants: [aliceParticipant] })),
+        proposal(0x0023, encodeMimiRoomMetadata(metadata)),
+      ],
+    })
+    const initialUnsigned = {
+      version: 1 as const, protocol: 'mls10' as const, roomId: liveRoom, sender: alice.credential, epoch: '0',
+      bundle: { kind: 'commit' as const, proposalOrCommit: encodeMlsMessage(initialCommit.commit) },
+      initialState: { basePolicy: new Uint8Array(), participantList: { participants: [aliceParticipant] }, memberCredentials: [alice.credential], metadata }, submittedAt: at,
+    }
+    expect((await deployment.fetch(post(`/update/${encodeURIComponent(liveRoom)}`, encodeUpdateRoomRequestWire(signedUpdate(alice, initialUnsigned))))).status).toBe(200)
+    group = initialCommit.newState
+
+    const both = [aliceParticipant, { user: bob.credential.user, roleIndex: 1, clientIds: [bob.credential.client] }]
+    const addCommit = await createCommit({ state: group, cipherSuite: suite }, {
+      wireAsPublicMessage: true,
+      extraProposals: [
+        { proposalType: 'add' as const, add: { keyPackage: bobOwn.publicPackage } },
+        proposal(0x0022, encodeMimiParticipantListUpdate({ changedRoleParticipants: [], removedIndices: [], addedParticipants: [{ user: bob.credential.user, roleIndex: 1 }] })),
+      ],
+    })
+    const addUnsigned = {
+      version: 1 as const, protocol: 'mls10' as const, roomId: liveRoom, sender: alice.credential, epoch: '1',
+      bundle: { kind: 'commit' as const, proposalOrCommit: encodeMlsMessage(addCommit.commit), welcome: encodeWelcome(addCommit.welcome!) },
+      stateUpdate: { participantList: { participants: both }, memberCredentials: [alice.credential, bob.credential] }, submittedAt: '2026-09-01T00:00:01.000Z',
+    }
+    expect((await deployment.fetch(post(`/update/${encodeURIComponent(liveRoom)}`, encodeUpdateRoomRequestWire(signedUpdate(alice, addUnsigned))))).status).toBe(200)
+    expect(deployment.store.room(liveRoom)?.participantList.participants.map(({ user, roleIndex }) => ({ user, roleIndex }))).toEqual(both.map(({ user, roleIndex }) => ({ user, roleIndex })))
     deployment.close()
   })
 
