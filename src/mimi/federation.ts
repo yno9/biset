@@ -1,7 +1,8 @@
 /** JSON boundary and provider-owned hooks for draft §5.7 and §5.8. */
 import { base64urlToBytes, bytesToBase64url } from '../protocol/canonical.ts'
 import type { MimiConsentEntry, MimiIdentifierQueryElement, MimiIdentifierRequest, MimiIdentifierResponse, PublishedKeyPackage } from './protocol-types.ts'
-import { MimiWireError } from './wire.ts'
+import { decodeFrankWire, encodeFrankWire, MimiWireError } from './wire.ts'
+import type { MimiAbuseReport } from './protocol-types.ts'
 
 export interface MimiIdentifierDirectory {
   query(request: MimiIdentifierRequest, sourceProviderDomain: string): Promise<MimiIdentifierResponse>
@@ -34,6 +35,14 @@ export function encodeMimiIdentifierResponseWire(value: MimiIdentifierResponse):
   return JSON.stringify({ responseCode: value.responseCode, foundProfiles: value.foundProfiles.map(profile => ({ stableUri: profile.stableUri, fields: profile.fields })) })
 }
 
+export function decodeMimiAbuseReportWire(wire: string): MimiAbuseReport {
+  const input = object(JSONValue(wire), 'AbuseReport')
+  if (!Array.isArray(input.messages) || input.messages.length > 32) throw new MimiWireError('AbuseReport.messages must be an array of at most 32 entries')
+  return { reportingUser: optionalString(input.reportingUser, 'AbuseReport.reportingUser'), allegedAbuserUri: string(input.allegedAbuserUri, 'AbuseReport.allegedAbuserUri'), reasonCode: integer(input.reasonCode, 'AbuseReport.reasonCode'), note: text(input.note, 'AbuseReport.note'), messages: input.messages.map((item, index) => { const entry = object(item, `AbuseReport.messages[${index}]`); return { messageContent: binary(entry.messageContent, `AbuseReport.messages[${index}].messageContent`), frank: decodeFrankWire(JSON.stringify(entry.frank)), acceptedTimestamp: string(entry.acceptedTimestamp, `AbuseReport.messages[${index}].acceptedTimestamp`) } }) }
+}
+
+export function encodeMimiAbuseReportWire(value: MimiAbuseReport): string { return JSON.stringify({ ...(value.reportingUser === undefined ? {} : { reportingUser: value.reportingUser }), allegedAbuserUri: value.allegedAbuserUri, reasonCode: value.reasonCode, note: value.note, messages: value.messages.map(message => ({ messageContent: bytesToBase64url(message.messageContent), frank: JSON.parse(encodeFrankWire(message.frank)), acceptedTimestamp: message.acceptedTimestamp })) }) }
+
 function queryElement(value: unknown, name: string): MimiIdentifierQueryElement {
   const input = object(value, name)
   const searchType = input.searchType
@@ -57,5 +66,7 @@ function packageValue(value: unknown, name: string): PublishedKeyPackage {
 function JSONValue(text: string): unknown { try { return JSON.parse(text) } catch { throw new MimiWireError('MIMI HTTP body is not JSON') } }
 function object(value: unknown, name: string): Record<string, unknown> { if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new MimiWireError(`${name} must be an object`); return value as Record<string, unknown> }
 function string(value: unknown, name: string): string { if (typeof value !== 'string' || value.length === 0) throw new MimiWireError(`${name} must be a non-empty string`); return value }
+function text(value: unknown, name: string): string { if (typeof value !== 'string') throw new MimiWireError(`${name} must be a string`); return value }
+function integer(value: unknown, name: string): number { if (!Number.isSafeInteger(value) || (value as number) < 0) throw new MimiWireError(`${name} must be a non-negative integer`); return value as number }
 function optionalString(value: unknown, name: string): string | undefined { return value === undefined ? undefined : string(value, name) }
 function binary(value: unknown, name: string): Uint8Array { if (typeof value !== 'string') throw new MimiWireError(`${name} must be base64url`); try { return base64urlToBytes(value) } catch { throw new MimiWireError(`${name} must be base64url`) } }

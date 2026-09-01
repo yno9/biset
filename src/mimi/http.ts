@@ -23,11 +23,12 @@ import {
   MimiWireError,
   deliveryEntryWireJson,
 } from './wire.ts'
-import { frankMessage } from './franking.ts'
+import { frankMessage, verifyFrank } from './franking.ts'
 import { createMimiProtocolDirectory, MIMI_PROTOCOL_DIRECTORY_PATH } from './directory.ts'
-import { decodeMimiConsentEntryWire, decodeMimiIdentifierRequestWire, encodeMimiIdentifierResponseWire, noIdentifiers, type MimiIdentifierDirectory } from './federation.ts'
+import { decodeMimiAbuseReportWire, encodeMimiAbuseReportWire, decodeMimiConsentEntryWire, decodeMimiIdentifierRequestWire, encodeMimiIdentifierResponseWire, noIdentifiers, type MimiIdentifierDirectory } from './federation.ts'
 import { verifyMimiProviderRequest, type VerifiedProviderPeer } from './provider-transport.ts'
 import { decodeMimiFanoutBatchWire, fanoutFingerprint } from './fanout.ts'
+import type { MimiAssetProxy } from './asset-proxy.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
 import type { MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
 import type { MimiWatchTokenIssuer } from './watch-token.ts'
@@ -40,6 +41,8 @@ const REQUEST_CONSENT_PREFIX = '/requestConsent/'
 const UPDATE_CONSENT_PREFIX = '/updateConsent/'
 const IDENTIFIER_QUERY_PREFIX = '/identifierQuery/'
 const NOTIFY_PREFIX = '/notify/'
+const PROXY_DOWNLOAD_PREFIX = '/proxyDownload/'
+const REPORT_ABUSE_PREFIX = '/reportAbuse/'
 const DELIVERY_PULL_PATH = '/v1/mimi/deliveries/pull'
 const DELIVERY_WATCH_PATH = '/v1/mimi/deliveries/watch'
 const DELIVERY_STREAM_PATH = '/v1/mimi/deliveries/stream'
@@ -49,6 +52,8 @@ function isMimiHttpPath(path: string): boolean {
     || path.startsWith(SUBMIT_MESSAGE_PREFIX)
     || path.startsWith(REQUEST_CONSENT_PREFIX) || path.startsWith(UPDATE_CONSENT_PREFIX) || path.startsWith(IDENTIFIER_QUERY_PREFIX)
     || path.startsWith(NOTIFY_PREFIX)
+    || path.startsWith(PROXY_DOWNLOAD_PREFIX)
+    || path.startsWith(REPORT_ABUSE_PREFIX)
     || path === DELIVERY_PULL_PATH || path === DELIVERY_WATCH_PATH || path === DELIVERY_STREAM_PATH || path === MIMI_PROTOCOL_DIRECTORY_PATH
 }
 
@@ -57,6 +62,7 @@ export interface MimiFederationOptions {
   providerDomain: string
   authenticatePeer(request: Request): Promise<VerifiedProviderPeer | undefined>
   identifierDirectory?: MimiIdentifierDirectory
+  assetProxy?: MimiAssetProxy
   now?: () => string
 }
 
@@ -87,6 +93,12 @@ export function createMimiHttpHandler(
         if (request.method !== 'GET') return error(405, 'bad-request', 'Method not allowed')
         return streamDeliveries(store, watchTokens, new URL(request.url))
       }
+      if (path.startsWith(PROXY_DOWNLOAD_PREFIX)) {
+        if (request.method !== 'GET') return error(405, 'bad-request', 'Method not allowed')
+        await verifiedFederationPeer(request, federation)
+        if (!federation?.assetProxy) return error(403, 'not-allowed', 'asset proxy is not configured')
+        return federation.assetProxy.download(pathParameter(path, PROXY_DOWNLOAD_PREFIX, 'download URL'))
+      }
       if (request.method !== 'POST') return error(405, 'bad-request', 'Method not allowed')
       const body = await requestText(request)
 
@@ -96,6 +108,17 @@ export function createMimiHttpHandler(
         const batch = decodeMimiFanoutBatchWire(body)
         const result = store.acceptProviderFanout(roomId, peer.providerDomain, await fanoutFingerprint(body), batch.entries)
         if (result === 'noSuchRoom') return error(404, 'not-found', 'room does not exist')
+        return new Response(null, { status: 201 })
+      }
+
+      if (path.startsWith(REPORT_ABUSE_PREFIX)) {
+        const roomId = pathParameter(path, REPORT_ABUSE_PREFIX, 'room ID')
+        const peer = await verifiedFederationPeer(request, federation)
+        const report = decodeMimiAbuseReportWire(body)
+        const keys = store.frankingKeys(roomId)
+        if (!keys) return error(404, 'not-found', 'room does not exist')
+        if (!report.messages.every(message => message.frank.context.roomUri === roomId && message.frank.context.acceptedTimestamp === message.acceptedTimestamp && verifyFrank(keys.signingPublicKey, message.frank))) return error(400, 'bad-request', 'abuse report contains invalid franking evidence')
+        store.recordAbuseReport(roomId, peer.providerDomain, encodeMimiAbuseReportWire(report), federation!.now?.() ?? new Date().toISOString())
         return new Response(null, { status: 201 })
       }
 

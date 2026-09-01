@@ -204,6 +204,10 @@ export class SqliteMimiStore {
     return row == null ? undefined : { entry: decodeMimiConsentEntryWire(row.entry_json), sourceProvider: row.source_provider, updatedAt: row.updated_at }
   }
 
+  recordAbuseReport(roomId: MimiRoomId, sourceProvider: string, reportJson: string, receivedAt: string): void {
+    this.database.query('INSERT INTO mimi_abuse_reports (room_id, source_provider, report_json, received_at) VALUES (?, ?, ?, ?)').run(roomId, sourceProvider, reportJson, receivedAt)
+  }
+
   /** Accepts a follower-facing hub batch exactly once, then wakes local SSE clients. */
   acceptProviderFanout(roomId: MimiRoomId, sourceProvider: string, bodyHash: string, entries: MimiDeliveryEntry[]): 'accepted' | 'duplicate' | 'noSuchRoom' {
     return this.database.transaction(() => {
@@ -442,6 +446,7 @@ function installSchema(database: Database): void {
       received_at TEXT NOT NULL,
       PRIMARY KEY (source_provider, body_hash)
     );
+    CREATE TABLE IF NOT EXISTS mimi_abuse_reports (id INTEGER PRIMARY KEY, room_id TEXT NOT NULL, source_provider TEXT NOT NULL, report_json TEXT NOT NULL, received_at TEXT NOT NULL);
   `)
   const columns = database.query<{ name: string }, []>('PRAGMA table_info(mimi_deliveries)').all()
   if (!columns.some(column => column.name === 'frank_json')) database.run('ALTER TABLE mimi_deliveries ADD COLUMN frank_json TEXT')

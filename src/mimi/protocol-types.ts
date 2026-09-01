@@ -222,6 +222,9 @@ export type MimiIdentifierQueryCode = 'success' | 'notFound' | 'ambiguous' | 'fo
 export interface MimiIdentifierProfile { stableUri: MimiUserUri; fields: { fieldSource: 'oidcStdClaim' | 'vcardField'; fieldName: string; fieldValue: string }[] }
 export interface MimiIdentifierResponse { responseCode: MimiIdentifierQueryCode; foundProfiles: MimiIdentifierProfile[] }
 
+export interface MimiAbusiveMessage { messageContent: Uint8Array; frank: Frank; acceptedTimestamp: string }
+export interface MimiAbuseReport { reportingUser?: MimiUserUri; allegedAbuserUri: MimiUserUri; reasonCode: number; note: string; messages: MimiAbusiveMessage[] }
+
 /** MIMI update's committed/proposed MLS handshake material (draft §5.3). */
 export interface HandshakeBundle {
   kind: 'commit' | 'proposal'
