@@ -4,6 +4,8 @@ import { createMimiDeployment } from '../../src/mimi/deployment.ts'
 import {
   deliveriesPullSigningBytes,
   deliveriesWatchSigningBytes,
+  authorizeKeyPackagePublish,
+  keyPackagePublishSigningBytes,
   keyMaterialSigningBytes,
   updateRoomSigningBytes,
 } from '../../src/mimi/authorizer.ts'
@@ -54,10 +56,13 @@ describe('MIMI Phase 0 HTTP flow', () => {
     expect(created.status).toBe(200)
     expect(decodeUpdateRoomResponseWire(await created.text()).status).toBe('success')
 
-    deployment.store.publishKeyPackages({
+    const bobPublishUnsigned = {
       version: 1, credential: bob.credential,
       packages: [{ reference: new Uint8Array([10]), user: bob.credential.user, client: bob.credential.client, keyPackage: new Uint8Array([11]), publishedAt: at }], publishedAt: at, signature: new Uint8Array(),
-    })
+    }
+    const bobPublish = { ...bobPublishUnsigned, signature: ed25519.sign(keyPackagePublishSigningBytes(bobPublishUnsigned), bob.secret) }
+    expect(await authorizeKeyPackagePublish({ verify: async (credential, bytes, signature) => ed25519.verify(signature, bytes, credential.signaturePublicKey) }, bobPublish)).toBe(true)
+    deployment.store.publishKeyPackages(bobPublish)
     deployment.store.publishKeyPackages({
       version: 1, credential: charlie.credential,
       packages: [{ reference: new Uint8Array([12]), user: charlie.credential.user, client: charlie.credential.client, keyPackage: new Uint8Array([13]), publishedAt: at }], publishedAt: at, signature: new Uint8Array(),

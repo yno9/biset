@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import {
   decodeRoomStateWire,
+  decodeDeliveriesWatchTokenWire,
+  decodeKeyPackagePublishWire,
+  decodeMimiErrorWire,
   decodeUpdateRoomRequestWire,
+  encodeKeyPackagePublishWire,
   encodeRoomStateWire,
   encodeUpdateRoomRequestWire,
   MimiWireError,
@@ -43,5 +47,12 @@ describe('MIMI JSON/base64url wire', () => {
     const invalid = JSON.parse(encodeRoomStateWire(state)) as Record<string, unknown>
     invalid.epoch = '18446744073709551616'
     expect(() => decodeRoomStateWire(JSON.stringify(invalid))).toThrow(MimiWireError)
+  })
+
+  test('round-trips KeyPackage publication and small response objects', () => {
+    const publication = { version: 1 as const, credential: alice, packages: [{ reference: new Uint8Array([11]), user: alice.user, client: alice.client, keyPackage: new Uint8Array([12]), publishedAt: state.createdAt }], publishedAt: state.createdAt, signature: new Uint8Array([13]) }
+    expect(decodeKeyPackagePublishWire(encodeKeyPackagePublishWire(publication))).toEqual(publication)
+    expect(decodeDeliveriesWatchTokenWire('{"token":"token","expiresAt":"2026-09-01T00:00:00.000Z"}')).toEqual({ token: 'token', expiresAt: '2026-09-01T00:00:00.000Z' })
+    expect(decodeMimiErrorWire('{"error":"not-found","message":"missing"}')).toEqual({ error: 'not-found', message: 'missing' })
   })
 })

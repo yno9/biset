@@ -31,7 +31,7 @@ const DELIVERY_PULL_PATH = '/v1/mimi/deliveries/pull'
 const DELIVERY_WATCH_PATH = '/v1/mimi/deliveries/watch'
 const DELIVERY_STREAM_PATH = '/v1/mimi/deliveries/stream'
 
-export function isMimiHttpPath(path: string): boolean {
+function isMimiHttpPath(path: string): boolean {
   return path.startsWith(KEY_MATERIAL_PREFIX) || path.startsWith(UPDATE_PREFIX)
     || path === DELIVERY_PULL_PATH || path === DELIVERY_WATCH_PATH || path === DELIVERY_STREAM_PATH
 }

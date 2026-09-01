@@ -246,7 +246,7 @@ function decodeRoomMetadata(value: unknown, name: string): RoomMetadata {
   }
 }
 
-export function roomStateJson(value: RoomState): JsonRecord {
+function roomStateJson(value: RoomState): JsonRecord {
   return {
     roomId: value.roomId, protocol: value.protocol, epoch: value.epoch,
     basePolicy: bytesToBase64url(value.basePolicy), participantList: participantListJson(value.participantList), memberCredentials: value.memberCredentials.map(credentialJson), metadata: roomMetadataJson(value.metadata),
