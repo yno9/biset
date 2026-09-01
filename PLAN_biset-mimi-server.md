@@ -315,7 +315,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
 
 ### Phase 3: 実フェデレーション
 
-- [ ] **3.0 前提調査**: `draft-ietf-mimi-room-policy`の内容を取得・確認する（§11未決事項1）。この結果次第で3.5（room-policy.ts）の設計が変わるため、3.5より先に必ず行う。
+- [~] **3.0 前提調査** (agent: Codex, 開始: 2026-09-01): `draft-ietf-mimi-room-policy`の内容を取得・確認する（§11未決事項1）。この結果次第で3.5（room-policy.ts）の設計が変わるため、3.5より先に必ず行う。
   - depends on: 2.7
 - [ ] **3.1 provider-transport.ts**: mTLS + From/Hostヘッダによるprovider間認証（spec §4.1）。
   - depends on: 2.7
