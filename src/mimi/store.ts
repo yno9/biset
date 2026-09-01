@@ -30,7 +30,7 @@ import type {
   Frank,
   MimiDeploymentMode,
 } from './protocol-types.ts'
-import type { MimiMlsStateTransition } from './mls-appsync.ts'
+import type { AddedMlsLeaf, MimiMlsStateTransition } from './mls-appsync.ts'
 
 const MAX_ROOMS = 10_000
 const MAX_PARTICIPANTS = 512
@@ -393,6 +393,9 @@ function applyMlsStateUpdate(state: RoomState, request: UpdateRoomRequest, trans
   if (sidecar?.participantList !== undefined && !sameParticipantList(sidecar.participantList, participantList)) throw new MimiStoreStateError('participantList sidecar disagrees with MLS AppDataUpdate')
   if (sidecar?.metadata !== undefined && !sameMetadata(sidecar.metadata, transition.roomMetadata ?? state.metadata)) throw new MimiStoreStateError('metadata sidecar disagrees with MLS AppDataUpdate')
   if (sidecar?.basePolicy !== undefined) throw new MimiStoreStateError('basePolicy sidecar is not an MLS AppDataUpdate')
+  if (sidecar?.memberCredentials !== undefined) {
+    assertAddedCredentialsBackedByMls(state.participantList, sidecar.memberCredentials, transition.addedLeaves)
+  }
   return {
     ...state,
     participantList,
@@ -401,6 +404,31 @@ function applyMlsStateUpdate(state: RoomState, request: UpdateRoomRequest, trans
     memberCredentials: sidecar?.memberCredentials ?? state.memberCredentials,
     groupInfo: request.bundle.groupInfo ?? state.groupInfo,
     ratchetTree: request.bundle.ratchetTree ?? state.ratchetTree,
+  }
+}
+
+/** `participant_list`'s AppData component carries only `{user, roleIndex}`
+ * (draft §7.5) -- it never asserts a credential or signature key. Without
+ * this check, a committer's claim that some URI now has a given MLS
+ * credential would be trusted exactly as blindly as the pre-Phase-6 JSON
+ * sidecar was (§17-18, PLAN_biset-mimi-server.md). A real `add` proposal's
+ * KeyPackage in the SAME authenticated commit is the one thing that can
+ * actually back such a claim, so every credential offered for a user who
+ * was not already a participant must byte-match one. */
+function assertAddedCredentialsBackedByMls(previousList: ParticipantListData, offeredCredentials: MimiCredential[], addedLeaves: AddedMlsLeaf[]): void {
+  const previousUsers = new Set(previousList.participants.map(participant => participant.user))
+  for (const credential of offeredCredentials) {
+    if (previousUsers.has(credentialUser(credential))) continue
+    // Anon-mode's pseudonymous credential is verified by the client, not the
+    // hub (identity-link.ts's decryptAndVerifyIdentityLink) -- the hub never
+    // holds the MLS exporter secret needed to open it, and this function
+    // does not know whether an anon-mode leaf's underlying MLS Credential
+    // wraps that pseudonymous structure the same way a visible credential's
+    // raw bytes do. Leaving it unchecked here rather than guessing at a
+    // byte-match is deliberate; it is not a gap this fix claims to close.
+    if (credential.kind !== 'visible') continue
+    const backed = addedLeaves.some(leaf => equalBytes(leaf.credential, credential.credential) && equalBytes(leaf.signaturePublicKey, credential.signaturePublicKey))
+    if (!backed) throw new MimiStoreStateError(`credential for new participant ${credential.user} does not match any add proposal's KeyPackage in this commit`)
   }
 }
 

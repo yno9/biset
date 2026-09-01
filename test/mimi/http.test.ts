@@ -26,7 +26,8 @@ import {
   encodeUpdateRoomRequestWire,
 } from '../../src/mimi/wire.ts'
 import type { PseudonymousCredential, VisibleCredential } from '../../src/mimi/protocol-types.ts'
-import { createCommit, encodeMlsMessage } from '../../src/mls/vendor/index.ts'
+import { createCommit, encodeMlsMessage, type KeyPackage } from '../../src/mls/vendor/index.ts'
+import { encodeCredential } from '../../src/mls/vendor/credential.ts'
 import { encodeWelcome } from '../../src/mls/vendor/welcome.ts'
 import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../../src/mimi/app-data.ts'
 import { createMlsGroup, generateOwnKeyPackageForCredential } from '../../src/mls/group.ts'
@@ -36,6 +37,15 @@ interface Client { credential: VisibleCredential; secret: Uint8Array }
 
 const at = '2026-09-01T00:00:00.000Z'
 const roomId = 'mimi://example.test/r/e2e'
+
+/** Store.ts's assertAddedCredentialsBackedByMls (§17-18) requires a newly
+ * added participant's VisibleCredential to byte-match a real `add`
+ * proposal's KeyPackage LeafNode in the same commit -- so any test that adds
+ * a member via a genuine MLS commit must derive its MimiCredential from that
+ * same KeyPackage, not from an unrelated ad-hoc keypair. */
+function credentialFromKeyPackage(user: string, client: string, kp: KeyPackage): VisibleCredential {
+  return { kind: 'visible', user, client, credential: encodeCredential(kp.leafNode.credential), signaturePublicKey: kp.leafNode.signaturePublicKey }
+}
 
 function client(user: string, fragment: string, marker: number): Client {
   const secret = ed25519.utils.randomSecretKey()
@@ -51,10 +61,16 @@ function signedUpdate(sender: Client, value: Parameters<typeof updateRoomSigning
 
 /** A structurally real MLS PublicMessage Commit. Signature validation belongs
  * to the MLS group clients; the hub parses its authenticated AppDataUpdate. */
-function participantCommit(room: string, epoch: string, before: { user: string; roleIndex: number }[], after: { user: string; roleIndex: number }[], roomName?: string, frankingSignatureKey?: Uint8Array, frankingCredential = new TextEncoder().encode('https://mimi.test')): Uint8Array {
-  const proposals = [{ proposalOrRefType: 'proposal' as const, proposal: { proposalType: 'app_data_update' as const, appDataUpdate: {
-    componentId: 0x0022, operation: 'update' as const, update: encodeMimiParticipantListUpdate({ changedRoleParticipants: [], removedIndices: before.map((_value, index) => index), addedParticipants: after }),
-  } } }]
+function participantCommit(room: string, epoch: string, before: { user: string; roleIndex: number }[], after: { user: string; roleIndex: number }[], roomName?: string, frankingSignatureKey?: Uint8Array, frankingCredential = new TextEncoder().encode('https://mimi.test'), addKeyPackages: KeyPackage[] = []): Uint8Array {
+  const proposals: { proposalOrRefType: 'proposal'; proposal: { proposalType: 'app_data_update'; appDataUpdate: { componentId: number; operation: 'update'; update: Uint8Array } } | { proposalType: 'add'; add: { keyPackage: KeyPackage } } }[] = [
+    // A genuine add proposal per newly-added member's real KeyPackage --
+    // required since store.ts's assertAddedCredentialsBackedByMls (§17-18)
+    // now rejects a participant_list claim for anyone not backed by one.
+    ...addKeyPackages.map(keyPackage => ({ proposalOrRefType: 'proposal' as const, proposal: { proposalType: 'add' as const, add: { keyPackage } } })),
+    { proposalOrRefType: 'proposal' as const, proposal: { proposalType: 'app_data_update' as const, appDataUpdate: {
+      componentId: 0x0022, operation: 'update' as const, update: encodeMimiParticipantListUpdate({ changedRoleParticipants: [], removedIndices: before.map((_value, index) => index), addedParticipants: after }),
+    } } },
+  ]
   if (roomName !== undefined) proposals.push({ proposalOrRefType: 'proposal' as const, proposal: { proposalType: 'app_data_update' as const, appDataUpdate: {
     componentId: 0x0023, operation: 'update' as const, update: encodeMimiRoomMetadata({ roomUri: room, roomName }),
   } } })
@@ -115,11 +131,17 @@ describe('MIMI Phase 0 HTTP flow', () => {
 
   test('accepts signed MLS commits which create a room and add a member through MIMI AppData', async () => {
     const alice = client('did:web:alice-live', 'phone', 41)
-    const bob = client('did:web:bob-live', 'laptop', 42)
+    const bobUser = 'did:web:bob-live'
+    const bobClient = `${bobUser}#laptop`
     const liveRoom = 'mimi://example.test/r/genuine-mls-wire'
     const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'normal', publicBaseUrl: 'https://mimi.example.test' })
     const own = await generateOwnKeyPackageForCredential({ credentialType: 'basic', identity: new TextEncoder().encode(alice.credential.client) })
-    const bobOwn = await generateOwnKeyPackageForCredential({ credentialType: 'basic', identity: new TextEncoder().encode(bob.credential.client) })
+    const bobOwn = await generateOwnKeyPackageForCredential({ credentialType: 'basic', identity: new TextEncoder().encode(bobClient) })
+    // Bob's MimiCredential is derived from his real KeyPackage's LeafNode
+    // (not an unrelated ad-hoc keypair) -- store.ts's
+    // assertAddedCredentialsBackedByMls requires the two to match byte for
+    // byte for a newly-added participant (§17-18).
+    const bob = { credential: credentialFromKeyPackage(bobUser, bobClient, bobOwn.publicPackage) }
     const suite = await mlsSuite()
     let group = await createMlsGroup(new TextEncoder().encode(liveRoom), own)
     const proposal = (componentId: number, update: Uint8Array) => ({ proposalType: 'app_data_update' as const, appDataUpdate: { componentId, operation: 'update' as const, update } })
@@ -239,8 +261,14 @@ describe('MIMI Phase 0 HTTP flow', () => {
 
   test('three clients create, add, claim KeyPackages, then receive a commit through biset delivery APIs', async () => {
     const alice = client('did:web:alice', 'phone', 1)
-    const bob = client('did:web:bob', 'laptop', 2)
-    const charlie = client('did:web:charlie', 'tablet', 3)
+    // Bob and Charlie are added via real MLS `add` proposals below, so their
+    // MimiCredential (and the private key that signs their own later
+    // requests) must be derived from real KeyPackages -- assertAddedCredentialsBackedByMls
+    // (§17-18) checks this by matching bytes, not just trusting the sidecar.
+    const bobOwn = await generateOwnKeyPackageForCredential({ credentialType: 'basic', identity: new TextEncoder().encode('did:web:bob#laptop') })
+    const charlieOwn = await generateOwnKeyPackageForCredential({ credentialType: 'basic', identity: new TextEncoder().encode('did:web:charlie#tablet') })
+    const bob = { credential: credentialFromKeyPackage('did:web:bob', 'did:web:bob#laptop', bobOwn.publicPackage), secret: bobOwn.privatePackage.signaturePrivateKey }
+    const charlie = { credential: credentialFromKeyPackage('did:web:charlie', 'did:web:charlie#tablet', charlieOwn.publicPackage), secret: charlieOwn.privatePackage.signaturePrivateKey }
     const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'normal' })
     const frankingSignatureKey = deployment.store.prepareFrankingKeys(roomId).signingPublicKey
 
@@ -286,7 +314,7 @@ describe('MIMI Phase 0 HTTP flow', () => {
 
     const addBobUnsigned = {
       version: 1 as const, protocol: 'mls10' as const, roomId, sender: alice.credential, epoch: '1',
-      bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(roomId, '1', [{ user: alice.credential.user, roleIndex: 1 }], [{ user: alice.credential.user, roleIndex: 1 }, { user: bob.credential.user, roleIndex: 1 }]), welcome: new Uint8Array([3]) },
+      bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(roomId, '1', [{ user: alice.credential.user, roleIndex: 1 }], [{ user: alice.credential.user, roleIndex: 1 }, { user: bob.credential.user, roleIndex: 1 }], undefined, undefined, undefined, [bobOwn.publicPackage]), welcome: new Uint8Array([3]) },
       stateUpdate: {
         participantList: { participants: [{ user: alice.credential.user, roleIndex: 1, clientIds: [alice.credential.client] }, { user: bob.credential.user, roleIndex: 1, clientIds: [bob.credential.client] }] },
         memberCredentials: [alice.credential, bob.credential],
@@ -299,7 +327,7 @@ describe('MIMI Phase 0 HTTP flow', () => {
 
     const addCharlieUnsigned = {
       version: 1 as const, protocol: 'mls10' as const, roomId, sender: bob.credential, epoch: '2',
-      bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(roomId, '2', [{ user: alice.credential.user, roleIndex: 1 }, { user: bob.credential.user, roleIndex: 1 }], [{ user: alice.credential.user, roleIndex: 1 }, { user: bob.credential.user, roleIndex: 1 }, { user: charlie.credential.user, roleIndex: 1 }]), welcome: new Uint8Array([5]) },
+      bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(roomId, '2', [{ user: alice.credential.user, roleIndex: 1 }, { user: bob.credential.user, roleIndex: 1 }], [{ user: alice.credential.user, roleIndex: 1 }, { user: bob.credential.user, roleIndex: 1 }, { user: charlie.credential.user, roleIndex: 1 }], undefined, undefined, undefined, [charlieOwn.publicPackage]), welcome: new Uint8Array([5]) },
       stateUpdate: {
         participantList: { participants: [{ user: alice.credential.user, roleIndex: 1 }, { user: bob.credential.user, roleIndex: 1 }, { user: charlie.credential.user, roleIndex: 1, clientIds: [charlie.credential.client] }] },
         memberCredentials: [alice.credential, bob.credential, charlie.credential],

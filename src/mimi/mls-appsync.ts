@@ -3,6 +3,7 @@
  * inspected here.  MIMI AppDataUpdate proposals for provider-visible room
  * state therefore have to arrive in an MLS PublicMessage. */
 import { decodeMlsMessage, type AppDataUpdate } from '../mls/vendor/index.ts'
+import { encodeCredential } from '../mls/vendor/credential.ts'
 import { decodeExact, decodeMimiFrankingAgent, decodeMimiParticipantListUpdate, decodeMimiRoomMetadata, type ParticipantListUpdate } from './app-data.ts'
 import {
   MIMI_FRANKING_SIGNATURE_KEY_COMPONENT,
@@ -11,10 +12,19 @@ import {
 } from './app-data.ts'
 import type { FrankingAgentData, RoomMetadata } from './protocol-types.ts'
 
+/** An MLS leaf actually being added by a real `add` proposal in this same
+ * Commit -- the only thing that can back a claim that some URI now has this
+ * real MLS credential/signature key (§17-18, PLAN_biset-mimi-server.md: the
+ * `participant_list` AppData component itself carries only `{user,
+ * roleIndex}`, never a credential, so this is the sole cryptographic anchor
+ * available for a newly-added member's identity). */
+export interface AddedMlsLeaf { credential: Uint8Array; signaturePublicKey: Uint8Array }
+
 export interface MimiMlsStateTransition {
   participantListUpdates: ParticipantListUpdate[]
   roomMetadata?: RoomMetadata
   frankingAgent?: FrankingAgentData
+  addedLeaves: AddedMlsLeaf[]
 }
 
 export class MimiMlsWireError extends TypeError {}
@@ -30,10 +40,15 @@ export function extractMimiMlsStateTransition(bytes: Uint8Array): MimiMlsStateTr
   const content = decoded[0].publicMessage.content
   if (content.contentType !== 'commit') throw new MimiMlsWireError('room-state update must be an MLS Commit')
 
-  const transition: MimiMlsStateTransition = { participantListUpdates: [] }
+  const transition: MimiMlsStateTransition = { participantListUpdates: [], addedLeaves: [] }
   for (const proposalOrRef of content.commit.proposals) {
     if (proposalOrRef.proposalOrRefType !== 'proposal') throw new MimiMlsWireError('MLS Commit must carry direct AppDataUpdate proposals')
     const proposal = proposalOrRef.proposal
+    if (proposal.proposalType === 'add') {
+      const leaf = proposal.add.keyPackage.leafNode
+      transition.addedLeaves.push({ credential: encodeCredential(leaf.credential), signaturePublicKey: leaf.signaturePublicKey })
+      continue
+    }
     if (proposal.proposalType !== 'app_data_update') continue
     acceptMimiAppDataUpdate(transition, proposal.appDataUpdate)
   }

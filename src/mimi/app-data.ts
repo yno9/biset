@@ -62,7 +62,10 @@ export function applyMimiParticipantListUpdate(current: ParticipantListData, upd
   }
   const removed = new Set<number>()
   for (const index of update.removedIndices) {
-    if (!Number.isInteger(index) || index < 0 || index >= next.length || removed.has(index)) throw new TypeError('invalid or duplicate participant removal index')
+    // draft §7.5 (line 3090-3092): a commit is invalid if it operates on the
+    // same user more than once across changedRoleParticipants and
+    // removedIndices combined, not just within one list.
+    if (!Number.isInteger(index) || index < 0 || index >= next.length || removed.has(index) || changed.has(index)) throw new TypeError('invalid or duplicate participant removal index')
     removed.add(index)
   }
   return { participants: [...next.filter((_value, index) => !removed.has(index)), ...update.addedParticipants.map(value => ({ ...value }))] }

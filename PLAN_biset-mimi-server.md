@@ -502,14 +502,24 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
 
 ### 17.2 まだ残っている、または新たに気づいた点
 
-- **`memberCredentials`は依然としてJSON sidecarが権威**（[store.ts:401](src/mimi/store.ts)）。`participant_list`のAppDataコンポーネント自体は`{user, roleIndex}`のペアしか運ばず、各userの実際のMLS Credential/SignaturePublicKeyまでは含まない（spec の`UserRolePair`自体がそういう設計）。そのため「このuser URIが本当にこのMLS leafのcredentialを持っているか」の対応付けは、依然としてbiset独自のJSON（`memberCredentials`配列）を信じる形のまま——ratchet_tree extension（LeafNodeのcredential）から導出していない。§15.2で指摘した問題の**一段階狭いバージョンが残っている**：room state（誰が何のroleか、room名は何か）は今回で暗号学的に権威あるものになったが、「その参加者の実際の鍵が何か」の対応付けはまだ信頼ベース。Phase 3で実フェデレーションを試みる際、ここが次のボトルネックになる可能性が高い——新規の未決事項として追加する価値がある。
-- **`ParticipantListUpdate`の重複操作チェックが仕様より緩い**（[app-data.ts:55-68](src/mimi/app-data.ts)の`applyMimiParticipantListUpdate`）。spec 行3090-3092「A single commit is not valid if it contain any combination of Participant list updates that operate on... the same user... more than once」——「any combination」なので、同じuserIndexが`changedRoleParticipants`と`removedIndices`の両方に出現するケースも本来は無効。現在の実装はそれぞれのリスト内でのみ重複チェックしており、リスト間のチェックが無い。実害は小さい（意味のある攻撃は考えにくい）が、byte-for-byte準拠を目指すなら直す価値がある。
+- ~~`memberCredentials`は依然としてJSON sidecarが権威~~ → **18として修正済み（下記）**。
+- ~~`ParticipantListUpdate`の重複操作チェックが仕様より緩い~~ → **修正済み**（[app-data.ts](src/mimi/app-data.ts)の`applyMimiParticipantListUpdate`に、`removedIndices`側で`changed.has(index)`も見るクロスリストチェックを追加。spec行3090-3092の「any combination」要求どおりになった）。
 - **franking `context`のバイト列化は依然としてbiset独自形式**（§15.1既述の通り、[franking.ts](src/mimi/franking.ts)の`frankingContextBytes`）。hub内部にしか関わらないため実害は小さいが、真のwire互換ではない——Phase 6のスコープ外だったので未着手のまま。
 - **項目15-17（notify/identifierQuery/proxyDownload）は§16の報告を信頼したのみで、本セッションでは独立再検証していない**——次の監査サイクルでの確認を推奨する。
 - MLS commit自体の**内部署名（`auth.signature`/`membershipTag`）はhubで検証されていない**（テストでも空`Uint8Array`が使われ、それで通る）。認証は依然としてbiset独自の外側Ed25519署名（`UpdateRoomRequest.signature`、credentialの`signaturePublicKey`で検証）に一本化されている——単一hub運用では実害はないが、真に独立した外部MIMI providerがMLS原生の署名だけで送ってきた場合には検証経路が無い。Phase 3の相互運用性はこの意味でもまだ先の課題として残る。
 
 ### 17.3 結論と次の一手
 
-`update/{roomId}`のAppSync実装というPhase 6の核心目標は達成された——「JSONを信じるだけ」から「MLS commitの中身を検証する」への移行は実際に機能しており、本番で確認できた。ただし「room stateの信頼性」が上がった分、「そのroom stateの主体（credential）の信頼性」という一段階深い課題が可視化された（17.2の`memberCredentials`の件）。次の監査サイクルではこれを新しい最優先項目として扱うのが良い。
+`update/{roomId}`のAppSync実装というPhase 6の核心目標は達成された——「JSONを信じるだけ」から「MLS commitの中身を検証する」への移行は実際に機能しており、本番で確認できた。「room stateの信頼性」が上がった分見えた「そのroom stateの主体（credential）の信頼性」という一段階深い課題（旧未決事項18）も、以下の通り同日中に対処した。
 
-**新規未決事項18**: `memberCredentials`のMLS ratchet_tree由来検証——`participant_list`のuser URIと実際のMLS leaf credential/signature keyの対応付けを、JSON sidecarではなくratchet_tree extension（またはGroupInfo）から導出する経路を設計する。
+### 17.4 未決事項18の対応: `memberCredentials`のMLS `add`proposal由来検証（2026-09-01）
+
+**方針**: `participant_list`コンポーネント自体は`{user, roleIndex}`しか運ばずcredentialを含まない（spec §7.5のUserRolePair自体がそういう設計）ため、ratchet_treeまでは踏み込まず、**同一commit内の実MLS `add`proposalのKeyPackage**を新規参加者のcredentialの裏付けとして要求する形にした——spec自身の例示フロー（line 1461-1466「Alice creates a Commit containing an AppSync proposal adding Bob... and Add proposals for all Bob's MLS clients」）が、まさにこの2つ（AppSync + Add proposal）が同一commitに同居する設計を示している。
+
+- [src/mimi/mls-appsync.ts](src/mimi/mls-appsync.ts): `extractMimiMlsStateTransition`が同一commit内の`add`proposalも収集し、各KeyPackageのLeafNodeから`credential`/`signaturePublicKey`を抽出する（`addedLeaves`）。
+- [src/mimi/store.ts](src/mimi/store.ts): `applyMlsStateUpdate`が新規`assertAddedCredentialsBackedByMls`を呼ぶ——sidecarの`memberCredentials`のうち、直前のparticipant listに無かった（＝新規参加の）user分については、`addedLeaves`のいずれかとbyte一致することを要求する。一致しなければ`invalidProposal`で拒否。
+- **anon-mode（pseudonymous credential）はこのチェックの対象外**——anon-modeの身元検証はクライアント側の`decryptAndVerifyIdentityLink`（hubはexporter secretを持たないため検証不能）が担当する別の仕組みであり、pseudonymous credentialの実際のMLS上のバイト表現がvisible credentialと同じ比較方法で扱えるか未確認のまま無理に実装しない、という判断。
+- テスト: `test/mimi/http.test.ts`の既存2ケース（真のMLS commitでcredentialを追加するケース）を、ダミーの無関係な鍵ではなく実際に生成したKeyPackageからcredentialを導出する形に修正——これにより「参加者リストへの追加を主張しているが、それを裏付ける本物のadd proposalが無い」という、まさにこの監査で見つかった攻撃パターンをテスト自体が検出するようになった。
+- **実HTTPS検証（`mimi.biset.md`）で確認**: (1) 本物のKeyPackageを伴わない偽の「Bobが追加された」という主張 → `400 credential for new participant ... does not match any add proposal's KeyPackage in this commit`で拒否。(2) 実際に`add`proposalでBobのKeyPackageを含めた場合 → `200 success`で受理。
+
+`typecheck`・全テストスイート（`bun run test`）は無傷でパス。本番`biset-mimi-normal`/`biset-mimi-anon`とも再ビルド・再デプロイ・再検証済み。
