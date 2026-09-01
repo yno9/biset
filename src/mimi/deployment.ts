@@ -15,6 +15,8 @@ export interface MimiDeploymentOptions {
   databasePath: string
   /** Each mode must use its own process and SQLite file. */
   mode: MimiDeploymentMode
+  /** Public HTTPS origin advertised by the MIMI well-known directory. */
+  publicBaseUrl?: string
 }
 
 export interface MimiServerOptions extends MimiDeploymentOptions { port: number }
@@ -28,7 +30,7 @@ export function createMimiDeployment(options: MimiDeploymentOptions) {
   const store = SqliteMimiStore.open(options.databasePath)
   const verifier = new Ed25519MimiSignatureVerifier()
   const watchTokens = new MimiWatchTokenIssuer()
-  const inner = createMimiHttpHandler(store, verifier, watchTokens, options.mode)
+  const inner = createMimiHttpHandler(store, verifier, watchTokens, options.mode, options.publicBaseUrl)
   return {
     mode: options.mode,
     store,

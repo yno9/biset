@@ -319,7 +319,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 2.7
 - [x] **3.1 provider-transport.ts** (完了: 2026-09-01, `src/mimi/provider-transport.ts`, `test/mimi/provider-transport.test.ts`): HTTPSのみのoutbound transport、client certificate/keyを必須にしたBun TLS設定、`Host`/`From: mimi@<source-domain>`生成、TLS終端で検証済みのpeer domainとFromを照合するinbound helperを実装。header単独を認証として扱わず、provider endpointを接続する後続タスクではこのpeer照合を必須にする。
   - depends on: 2.7
-- [~] **3.2 directory.ts** (agent: Codex, 開始: 2026-09-01): `GET /.well-known/mimi-protocol-directory`（spec行1023）。
+- [x] **3.2 directory.ts** (完了: 2026-09-01, `src/mimi/directory.ts`, `src/mimi/http.ts`, `src/mimi/deployment.ts`, `test/mimi/directory.test.ts`): spec §5.1の全endpoint URI templateを返すwell-known directoryを追加。公開HTTPS originは`MIMI_PUBLIC_BASE_URL`で固定可能で、未指定時のみ受信originを使用する。
   - depends on: 3.1
 - [ ] **3.3 同意/存在確認系エンドポイント**: `requestConsent`/`updateConsent`/`identifierQuery`（spec行2219, 2220, 2346）。
   - depends on: 3.1

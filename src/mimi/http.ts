@@ -24,6 +24,7 @@ import {
   deliveryEntryWireJson,
 } from './wire.ts'
 import { frankMessage } from './franking.ts'
+import { createMimiProtocolDirectory, MIMI_PROTOCOL_DIRECTORY_PATH } from './directory.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
 import type { MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
 import type { MimiWatchTokenIssuer } from './watch-token.ts'
@@ -39,7 +40,7 @@ const DELIVERY_STREAM_PATH = '/v1/mimi/deliveries/stream'
 function isMimiHttpPath(path: string): boolean {
   return path.startsWith(KEY_MATERIAL_PREFIX) || path.startsWith(UPDATE_PREFIX)
     || path.startsWith(SUBMIT_MESSAGE_PREFIX)
-    || path === DELIVERY_PULL_PATH || path === DELIVERY_WATCH_PATH || path === DELIVERY_STREAM_PATH
+    || path === DELIVERY_PULL_PATH || path === DELIVERY_WATCH_PATH || path === DELIVERY_STREAM_PATH || path === MIMI_PROTOCOL_DIRECTORY_PATH
 }
 
 /**
@@ -52,11 +53,16 @@ export function createMimiHttpHandler(
   verifier: MimiSignatureVerifier,
   watchTokens: MimiWatchTokenIssuer,
   mode: MimiDeploymentMode,
+  publicBaseUrl?: string,
 ): (request: Request) => Promise<Response> {
   return async request => {
     try {
       const path = new URL(request.url).pathname
       if (!isMimiHttpPath(path)) return error(404, 'not-found', 'Not found')
+      if (path === MIMI_PROTOCOL_DIRECTORY_PATH) {
+        if (request.method !== 'GET') return error(405, 'bad-request', 'Method not allowed')
+        return json(200, JSON.stringify(createMimiProtocolDirectory(publicBaseUrl ?? new URL(request.url).origin)))
+      }
       if (path === DELIVERY_STREAM_PATH) {
         if (request.method !== 'GET') return error(405, 'bad-request', 'Method not allowed')
         return streamDeliveries(store, watchTokens, new URL(request.url))
