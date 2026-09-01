@@ -467,7 +467,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: なし（6.0-6.5と並行可）
 - [~] **6.7（項目15）`notify/{roomId}`のFanoutMessage構造照合**: spec行1886-2020を読み、[fanout.ts](src/mimi/fanout.ts)のFanoutMessage/FanoutBatch相当の構造を1フィールドずつ突き合わせる。ズレがあれば修正する。 (agent: Codex, 開始: 2026-09-01)
   - depends on: なし（6.0-6.5と並行可）
-- [~] **6.8（項目16）`identifierQuery`のプライバシー配慮ガイダンス確認**: spec行2337-2562（Xavier/Yolanda/Zach例含む）を読み、[federation.ts](src/mimi/federation.ts)の実装と突き合わせる。 (agent: Codex, 開始: 2026-09-01)
+- [x] **6.8（項目16）`identifierQuery`のプライバシー配慮ガイダンス確認**: spec行2337-2562（Xavier/Yolanda/Zach例含む）を読み、[federation.ts](src/mimi/federation.ts)の実装と突き合わせる。 (完了: 2026-09-01, 関連: `src/mimi/federation.ts`; 既定はnotFound、mTLS済み provider に限定し、導入時のdirectoryへAND検索・ユーザーごとの可検索性を必須化)
   - depends on: なし（6.0-6.5と並行可）
 - [ ] **6.9（項目17）`proxyDownload`のOblivious HTTP対応要否判断**: spec §5.10.3（行2778-2833）を読み、対応するかスコープ外とするかを決めて明文化する。対応しないなら[asset-proxy.ts](src/mimi/asset-proxy.ts)にその旨のコメントを追加する。
   - depends on: なし（6.0-6.5と並行可）

@@ -5,9 +5,26 @@ import { decodeFrankWire, encodeFrankWire, MimiWireError } from './wire.ts'
 import type { MimiAbuseReport } from './protocol-types.ts'
 
 export interface MimiIdentifierDirectory {
+  /**
+   * The sole policy decision point for identifier search.  Implementations
+   * MUST apply every QueryElement with AND semantics and return profiles only
+   * for fields that this user has explicitly made searchable under the
+   * provider's policy.  In particular, partialName / wholeProfile must not
+   * silently turn a non-queryable account into a directory result.  Return
+   * `forbidden`, `unsupportedField`, `ambiguous`, or `notFound` rather than
+   * exposing a profile when that policy does not permit a match.
+   *
+   * `sourceProviderDomain` is supplied only after the HTTP boundary has
+   * authenticated the requesting provider with mTLS.  Do not use this hook
+   * as a general-purpose local user lookup API.
+   */
   query(request: MimiIdentifierRequest, sourceProviderDomain: string): Promise<MimiIdentifierResponse>
 }
 
+/** Privacy-preserving default: a deployment is never queryable merely
+ * because it enables federation.  Operators must intentionally install a
+ * policy-enforcing directory implementation before any identifier can be
+ * disclosed (the Xavier/Yolanda/Zach cases in draft §5.8). */
 export const noIdentifiers: MimiIdentifierDirectory = {
   async query(): Promise<MimiIdentifierResponse> { return { responseCode: 'notFound', foundProfiles: [] } },
 }
