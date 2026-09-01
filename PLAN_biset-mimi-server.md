@@ -259,7 +259,7 @@ identity_link_key(epoch) = exportSecret(state, "mimi mmr identity-link", groupId
 - [x] **0.4 認可** (完了: 2026-09-01, `src/mimi/authorizer.ts`): `src/mimi/authorizer.ts`。client→hub（Phase 0では常にbiset自身がhub）のリクエスト署名検証。spec自体はprovider内部のclient-server認証方式を規定していない（line 358「the MIMI protocol only defines interactions between service providers' servers」）ので、実credentialの署名鍵によるEd25519署名検証として実装してよい（`mls-ds-1.0.md`のGroupLocalId方式と同じ形だが、鍵が実credentialの署名鍵である点が違う）。
   - 参照実装: `src/mls-ds/authorizer.ts`
   - depends on: 0.1
-- [~] **0.5 HTTPルーティング** (agent: /root, 開始: 2026-09-01): `src/mimi/http.ts`。Phase 0対象の2エンドポイントのみ実装: `POST /keyMaterial/{targetUser}`（spec行1053）、`POST /update/{roomId}`（spec行1357、room作成・commit/proposal提出）。
+- [x] **0.5 HTTPルーティング** (完了: 2026-09-01, `src/mimi/http.ts`): `src/mimi/http.ts`。Phase 0対象の2エンドポイントのみ実装: `POST /keyMaterial/{targetUser}`（spec行1053）、`POST /update/{roomId}`（spec行1357、room作成・commit/proposal提出）。
   - 参照実装: `src/mls-ds/http.ts`
   - depends on: 0.2, 0.3, 0.4
 - [ ] **0.5.1 クライアント向け配信経路（spec範囲外、biset独自、§5.1参照）**: `/v1/mimi/deliveries/pull`・`/v1/mimi/deliveries/watch`・`/v1/mimi/deliveries/stream`を`http.ts`に追加する。**specの`notify/{roomId}`はprovider間専用でありこれの代わりにならない**——別物として実装すること。watch-tokenの発行・SSE配信は`mls-ds/watch-token.ts`と`mls-ds/http.ts`の`streamFor`をそのまま踏襲し、**`: connected`の即時flushを最初から入れる**（このセッションで踏んだ罠、0.6のidleTimeout設定とセットで効く）。
