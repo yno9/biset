@@ -443,3 +443,33 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
 15. **`notify/{roomId}`のFanoutMessage構造の詳細照合**（spec行1886-2020）。
 16. **`identifierQuery`のプライバシー配慮ガイダンス（spec行2337-2562の例）との整合確認**。
 17. **`proxyDownload`のOblivious HTTP対応（spec §5.10.3）の要否判断**——非対応なら明示的にスコープ外と記載する。
+
+## 16. Phase 6 作業ワークシート（§15監査結果への対応、マルチエージェント協働用）
+
+§13と同じ規約に従う——着手前に`[ ]`→`[~] (agent: ..., 開始: ...)`、完了時に`[x] (完了: ..., 関連ファイル)`。**6.0-6.5（項目12、AppSync実装）が最優先**——これが終わるまでPhase 3のフェデレーション検証は無意味（§15.0参照）。6.6-6.9は独立しており、6.0-6.5と並行して着手してよい。
+
+- [ ] **6.0 前提調査・設計判断（最優先、他タスクをブロックする）**: `I-D.ietf-mls-extensions`§4.6（`app_data_dictionary`拡張、`AppDataUpdate`proposal）と`I-D.barnes-mls-appsync`の原文を取得し、MIMIの4コンポーネント（`frank_aad`/`franking_signature_key`/`participant_list`/`room_metadata`、`0x0020`-`0x0023`）の符号化方式を確認する。その上で二択を選び、このワークシートに追記してから6.1以降に進む：
+  - **(A) 正式実装**: `app_data_dictionary`拡張・`AppDataUpdate`proposalをMLSエンジンに実装し、IANA登録値そのままの`0x0020`-`0x0023`を使う。外部の本物のMIMI providerとバイト互換になる唯一の道。
+  - **(B) 暫定実装**: 既存の`group_context_extensions`proposal（RFC 9420標準、type 7、[group.ts](src/mls/group.ts)の`setRoomMetadata`が0xF000のprivate-use拡張で今セッション既に実証済み）に、同等の情報をprivate-use拡張として載せる。実装は速いが**外部providerとはバイト非互換のまま**——「MLS commitが state の唯一の権威になる」という§15.2のアーキテクチャ目標は満たすが、真の相互運用は満たさない。
+  - 参照実装: `src/mls/group.ts`の`setRoomMetadata`/`roomMetadataOf`（0xF000 private-use拡張の実装パターン）
+  - depends on: なし
+- [ ] **6.1（項目12）MLSエンジンへのコンポーネント実装**: 6.0の判断に従い、`src/mls/vendor/`（または新規モジュール）へ4コンポーネント相当のproposal/extension処理を実装する。(A)なら新しいproposal type/extension typeの符号化・検証を`vendor/defaultProposalType.ts`/`vendor/defaultExtensionType.ts`相当に追加。(B)なら`group.ts`の`ROOM_METADATA_EXTENSION_TYPE`パターンに倣い、`participant_list`/`franking_signature_key`用のprivate-use extension typeを追加で確保する。
+  - depends on: 6.0
+- [ ] **6.2（項目12）`update/{roomId}`のAppSync対応**: [http.ts](src/mimi/http.ts)の`update`ハンドラを書き換え、`proposalOrCommit`を実際にMLS wire formatとしてパースし、6.1のコンポーネントから参加者リスト・room policyを抽出する。既存の`initialState`/`stateUpdate`というJSON sidecar（[protocol-types.ts:244-256](src/mimi/protocol-types.ts)）は廃止するか、最低限「MLS commit内容とJSON申告の不一致を拒否する」検証を追加する。
+  - depends on: 6.1
+- [ ] **6.3（項目12）`room_metadata`コンポーネントへの切り替え**: [store.ts](src/mimi/store.ts)のmetadata取り扱いを6.1のコンポーネント経由に変更する。
+  - depends on: 6.1
+- [ ] **6.4（項目12・14統合）`franking_signature_key`のGroupContext配布**: hubの`FrankingKeyMaterial.signingPublicKey`（[franking.ts](src/mimi/franking.ts)）をGroupContext拡張経由でクライアントへ配布する経路を実装する。現状はDB内保持のみで、受信者が`verifyFrank`に使う公開鍵の入手経路が実質存在しない——§15.3項目14の調査もここで行う。
+  - depends on: 6.1
+- [ ] **6.5（項目12）テスト・回帰確認**: `test/mimi/http.test.ts`等を本物のMLS wire formatでのroom作成・member追加に書き換え、typecheck・全テストスイート（`bun run test`）を実行する。本番（`mimi.biset.md`/`mimi-anon.biset.md`）に対する実HTTPS検証で、本物のMLS commitを使ったroom作成→member追加→AppSync（または6.0(B)のprivate-use拡張）経由でのroom名/participant list反映を確認する。
+  - depends on: 6.2, 6.3, 6.4
+- [ ] **6.6（項目13）`groupInfo/{roomId}`の扱いを確定する**: 3択——(a) 実装する、(b) directoryからURLを外す、(c) 常に`notAuthorized`/403を明示的に返す。`biset-mls-ds`が同じ理由（漏洩経路①、GroupInfoのratchet treeが平文で実credentialを含む、[PLAN_biset-mls-ds.md §0](PLAN_biset-mls-ds.md)）でexternal joinを廃止した経緯を踏まえると(c)を推奨。いずれを選ぶにせよ[directory.ts](src/mimi/directory.ts)との整合を取ること——「対応を謳うが404が返る」状態（本セッションで実HTTPS確認済み）を解消する。
+  - depends on: なし（6.0-6.5と並行可）
+- [ ] **6.7（項目15）`notify/{roomId}`のFanoutMessage構造照合**: spec行1886-2020を読み、[fanout.ts](src/mimi/fanout.ts)のFanoutMessage/FanoutBatch相当の構造を1フィールドずつ突き合わせる。ズレがあれば修正する。
+  - depends on: なし（6.0-6.5と並行可）
+- [ ] **6.8（項目16）`identifierQuery`のプライバシー配慮ガイダンス確認**: spec行2337-2562（Xavier/Yolanda/Zach例含む）を読み、[federation.ts](src/mimi/federation.ts)の実装と突き合わせる。
+  - depends on: なし（6.0-6.5と並行可）
+- [ ] **6.9（項目17）`proxyDownload`のOblivious HTTP対応要否判断**: spec §5.10.3（行2778-2833）を読み、対応するかスコープ外とするかを決めて明文化する。対応しないなら[asset-proxy.ts](src/mimi/asset-proxy.ts)にその旨のコメントを追加する。
+  - depends on: なし（6.0-6.5と並行可）
+- [ ] **6.10 Phase 6 release gate確認**: §10に正式なgateとして追記した上で確認する——本物のMLS wire commitを使ったroom作成→member追加→AppSync（またはprivate-use拡張）経由でのroom名/participant list反映が、本番HTTPSに対する実検証で確認できること。`groupInfo`のdirectory整合も同時に確認する。
+  - depends on: 6.5, 6.6
