@@ -18,6 +18,7 @@ import type {
   MimiCredential,
   MlsRequiredCapabilities,
   RoomStateUpdate,
+  SubmitMessageRequest,
   UpdateRoomRequest,
   VisibleCredential,
 } from './protocol-types.ts'
@@ -78,6 +79,10 @@ export function deliveriesWatchSigningBytes(value: Omit<DeliveriesWatchRequest, 
   })
 }
 
+export function submitMessageSigningBytes(value: Omit<SubmitMessageRequest, 'signature'>): Uint8Array {
+  return canonicalBytes({ label: 'biset/mimi-submit-message/v1', version: value.version, protocol: value.protocol, roomId: value.roomId, sender: visibleCredentialValue(value.sender), epoch: value.epoch, appMessage: bytesToBase64url(value.appMessage), frankingTag: bytesToBase64url(value.frankAAD.frankingTag), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, submittedAt: value.submittedAt })
+}
+
 export async function authorizeUpdate(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: UpdateRoomRequest): Promise<boolean> {
   if (!(await verifier.verify(value.sender, updateRoomSigningBytes(value), value.signature))) return false
   const room = store.room(value.roomId)
@@ -106,6 +111,10 @@ export async function authorizeDeliveriesPull(store: SqliteMimiStore, verifier: 
 
 export async function authorizeDeliveriesWatch(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: DeliveriesWatchRequest): Promise<boolean> {
   return (await verifier.verify(value.requester, deliveriesWatchSigningBytes(value), value.signature)) && credentialMatchesRoom(store.room(value.roomId), value.requester)
+}
+
+export async function authorizeSubmitMessage(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: SubmitMessageRequest): Promise<boolean> {
+  return (await verifier.verify(value.sender, submitMessageSigningBytes(value), value.signature)) && credentialMatchesRoom(store.room(value.roomId), value.sender)
 }
 
 /** Turns the store's single-use KeyPackage take into draft §5.2 status data. */

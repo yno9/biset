@@ -250,6 +250,26 @@ export interface UpdateRoomResponse {
   errorDescription?: string
 }
 
+export interface SubmitMessageRequest {
+  version: 1
+  protocol: MimiProtocolVersion
+  roomId: MimiRoomId
+  sender: VisibleCredential
+  epoch: MimiEpoch
+  appMessage: Uint8Array
+  frankAAD: FrankAAD
+  frankingSignatureCiphersuite: number
+  submittedAt: string
+  signature: Uint8Array
+}
+
+export interface SubmitMessageResponse {
+  status: 'accepted' | 'notAllowed' | 'epochTooOld'
+  acceptedTimestamp?: string
+  currentEpoch?: MimiEpoch
+  frank?: Frank
+}
+
 /** An opaque item delivered from a hub to one of its local clients. */
 export type MimiDeliveryKind = 'commit' | 'proposal' | 'welcome' | 'application'
 
@@ -259,6 +279,7 @@ export interface MimiDeliveryEntry {
   payload: Uint8Array
   epoch: MimiEpoch
   acceptedAt: string
+  frank?: Frank
 }
 
 export interface DeliveriesPullRequest {

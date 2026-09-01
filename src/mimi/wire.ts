@@ -27,6 +27,8 @@ import type {
   RoomState,
   RoomStateUpdate,
   ServerFrankingContext,
+  SubmitMessageRequest,
+  SubmitMessageResponse,
   UpdateRoomRequest,
   UpdateRoomResponse,
   UserRolePair,
@@ -477,6 +479,16 @@ export function decodeUpdateRoomResponseWire(text: string): UpdateRoomResponse {
   return { status: input.status, acceptedTimestamp: optionalString(input.acceptedTimestamp, 'UpdateRoomResponse.acceptedTimestamp'), currentEpoch: input.currentEpoch === undefined ? undefined : requireEpoch(input.currentEpoch, 'UpdateRoomResponse.currentEpoch'), invalidProposals: optionalBinaryArray(input.invalidProposals, 'UpdateRoomResponse.invalidProposals'), errorDescription: optionalString(input.errorDescription, 'UpdateRoomResponse.errorDescription') }
 }
 
+export function encodeSubmitMessageRequestWire(value: SubmitMessageRequest): string {
+  return JSON.stringify({ version: value.version, protocol: value.protocol, roomId: value.roomId, sender: visibleCredentialJson(value.sender), epoch: value.epoch, appMessage: bytesToBase64url(value.appMessage), frankAAD: frankAADJson(value.frankAAD), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, submittedAt: value.submittedAt, signature: bytesToBase64url(value.signature) })
+}
+export function decodeSubmitMessageRequestWire(text: string): SubmitMessageRequest {
+  const input = record(text)
+  if (input.version !== 1) throw new MimiWireError('SubmitMessageRequest.version must be 1')
+  return { version: 1, protocol: requireProtocol(input.protocol, 'SubmitMessageRequest.protocol'), roomId: requireString(input.roomId, 'SubmitMessageRequest.roomId'), sender: decodeVisibleCredential(input.sender, 'SubmitMessageRequest.sender'), epoch: requireEpoch(input.epoch, 'SubmitMessageRequest.epoch'), appMessage: requireBinary(input.appMessage, 'SubmitMessageRequest.appMessage'), frankAAD: decodeFrankAAD(input.frankAAD, 'SubmitMessageRequest.frankAAD'), frankingSignatureCiphersuite: requireInteger(input.frankingSignatureCiphersuite, 'SubmitMessageRequest.frankingSignatureCiphersuite'), submittedAt: requireString(input.submittedAt, 'SubmitMessageRequest.submittedAt'), signature: requireBinary(input.signature, 'SubmitMessageRequest.signature') }
+}
+export function encodeSubmitMessageResponseWire(value: SubmitMessageResponse): string { return JSON.stringify({ status: value.status, acceptedTimestamp: value.acceptedTimestamp, currentEpoch: value.currentEpoch, frank: value.frank === undefined ? undefined : JSON.parse(encodeFrankWire(value.frank)) }) }
+
 // --------------------------------------------------------------- deliveries
 
 function deliveriesRequesterJson(value: DeliveriesPullRequest | DeliveriesWatchRequest): JsonRecord {
@@ -502,14 +514,14 @@ export function decodeDeliveriesWatchRequestWire(text: string): DeliveriesWatchR
 }
 
 function deliveryEntryJson(value: MimiDeliveryEntry): JsonRecord {
-  return { seq: value.seq, kind: value.kind, payload: bytesToBase64url(value.payload), epoch: value.epoch, acceptedAt: value.acceptedAt }
+  return { seq: value.seq, kind: value.kind, payload: bytesToBase64url(value.payload), epoch: value.epoch, acceptedAt: value.acceptedAt, frank: value.frank === undefined ? undefined : JSON.parse(encodeFrankWire(value.frank)) }
 }
 
 function decodeDeliveryEntry(value: unknown, name: string): MimiDeliveryEntry {
   const input = requireRecord(value, name)
   const kind = input.kind
   if (kind !== 'commit' && kind !== 'proposal' && kind !== 'welcome' && kind !== 'application') throw new MimiWireError(`${name}.kind is invalid`)
-  return { seq: requireInteger(input.seq, `${name}.seq`), kind: kind as MimiDeliveryKind, payload: requireBinary(input.payload, `${name}.payload`), epoch: requireEpoch(input.epoch, `${name}.epoch`), acceptedAt: requireString(input.acceptedAt, `${name}.acceptedAt`) }
+  return { seq: requireInteger(input.seq, `${name}.seq`), kind: kind as MimiDeliveryKind, payload: requireBinary(input.payload, `${name}.payload`), epoch: requireEpoch(input.epoch, `${name}.epoch`), acceptedAt: requireString(input.acceptedAt, `${name}.acceptedAt`), frank: input.frank === undefined ? undefined : decodeFrankWire(JSON.stringify(input.frank)) }
 }
 
 export function encodeDeliveriesWire(entries: MimiDeliveryEntry[]): string { return JSON.stringify({ entries: entries.map(deliveryEntryJson) }) }

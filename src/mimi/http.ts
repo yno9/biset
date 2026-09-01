@@ -4,6 +4,7 @@ import {
   authorizeUpdate,
   authorizeDeliveriesPull,
   authorizeDeliveriesWatch,
+  authorizeSubmitMessage,
   keyMaterialResponse,
   type MimiSignatureVerifier,
 } from './authorizer.ts'
@@ -12,14 +13,17 @@ import {
   decodeDeliveriesPullRequestWire,
   decodeDeliveriesWatchRequestWire,
   decodeUpdateRoomRequestWire,
+  decodeSubmitMessageRequestWire,
   encodeKeyMaterialResponseWire,
   encodeDeliveriesWire,
   encodeDeliveriesWatchTokenWire,
   encodeMimiErrorWire,
   encodeUpdateRoomResponseWire,
+  encodeSubmitMessageResponseWire,
   MimiWireError,
   deliveryEntryWireJson,
 } from './wire.ts'
+import { frankMessage } from './franking.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
 import type { MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
 import type { MimiWatchTokenIssuer } from './watch-token.ts'
@@ -27,12 +31,14 @@ import type { MimiWatchTokenIssuer } from './watch-token.ts'
 const MAX_BODY_BYTES = 1024 * 1024
 const KEY_MATERIAL_PREFIX = '/keyMaterial/'
 const UPDATE_PREFIX = '/update/'
+const SUBMIT_MESSAGE_PREFIX = '/submitMessage/'
 const DELIVERY_PULL_PATH = '/v1/mimi/deliveries/pull'
 const DELIVERY_WATCH_PATH = '/v1/mimi/deliveries/watch'
 const DELIVERY_STREAM_PATH = '/v1/mimi/deliveries/stream'
 
 function isMimiHttpPath(path: string): boolean {
   return path.startsWith(KEY_MATERIAL_PREFIX) || path.startsWith(UPDATE_PREFIX)
+    || path.startsWith(SUBMIT_MESSAGE_PREFIX)
     || path === DELIVERY_PULL_PATH || path === DELIVERY_WATCH_PATH || path === DELIVERY_STREAM_PATH
 }
 
@@ -73,6 +79,19 @@ export function createMimiHttpHandler(
         const result = store.submitUpdate(value)
         if (result.ok) return json(200, encodeUpdateRoomResponseWire({ status: 'success', acceptedTimestamp: value.submittedAt }))
         return updateError(result.reason, result.message, result.currentEpoch)
+      }
+
+      if (path.startsWith(SUBMIT_MESSAGE_PREFIX)) {
+        const roomId = pathParameter(path, SUBMIT_MESSAGE_PREFIX, 'room ID')
+        const value = decodeSubmitMessageRequestWire(body)
+        if (value.roomId !== roomId) return error(400, 'bad-request', 'room ID path does not match request body')
+        if (!(await authorizeSubmitMessage(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
+        const keys = store.frankingKeys(roomId)
+        if (!keys) return error(404, 'not-found', 'room does not exist')
+        const frank = frankMessage(keys, { aad: value.frankAAD, senderUri: value.sender.user, roomUri: roomId, acceptedTimestamp: value.submittedAt, ciphersuite: value.frankingSignatureCiphersuite })
+        const result = store.submitMessage(roomId, value.sender.user, value.epoch, value.appMessage, frank, value.submittedAt)
+        if (!result.ok) return json(409, encodeSubmitMessageResponseWire({ status: 'epochTooOld', currentEpoch: result.currentEpoch }))
+        return json(200, encodeSubmitMessageResponseWire({ status: 'accepted', acceptedTimestamp: value.submittedAt, frank }))
       }
 
       if (path === DELIVERY_PULL_PATH) {

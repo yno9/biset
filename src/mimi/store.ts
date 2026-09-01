@@ -6,6 +6,7 @@
 import { Database } from 'bun:sqlite'
 import { equalBytes } from '../protocol/canonical.ts'
 import { createFrankingKeyMaterial, type FrankingKeyMaterial } from './franking.ts'
+import { decodeFrankWire, encodeFrankWire } from './wire.ts'
 import {
   decodeRoomStateWire,
   encodeRoomStateWire,
@@ -22,6 +23,7 @@ import type {
   PublishedKeyPackage,
   RoomState,
   UpdateRoomRequest,
+  Frank,
 } from './protocol-types.ts'
 
 const MAX_ROOMS = 10_000
@@ -39,7 +41,7 @@ export type MimiUpdateStoreResult =
   | { ok: false; reason: 'wrongEpoch' | 'notAllowed' | 'invalidProposal' | 'roomExists'; currentEpoch?: MimiEpoch; message: string }
 
 interface RoomRow { room_id: string; state_json: string; next_seq: number }
-interface DeliveryRow { seq: number; kind: MimiDeliveryKind; payload: Uint8Array; epoch: string; accepted_at: string }
+interface DeliveryRow { seq: number; kind: MimiDeliveryKind; payload: Uint8Array; epoch: string; accepted_at: string; frank_json: string | null }
 interface KeyPackageRow {
   reference: Uint8Array
   user_uri: string
@@ -91,7 +93,7 @@ export class SqliteMimiStore {
   deliveriesSince(roomId: MimiRoomId, user: MimiUserUri, afterSeq: number, limit = MAX_DELIVERIES_PER_PULL): MimiDeliveryEntry[] | undefined {
     if (!this.canReceive(roomId, user)) return undefined
     return this.database.query<DeliveryRow, [string, number, number]>(
-      'SELECT seq, kind, payload, epoch, accepted_at FROM mimi_deliveries WHERE room_id = ? AND seq > ? ORDER BY seq LIMIT ?',
+      'SELECT seq, kind, payload, epoch, accepted_at, frank_json FROM mimi_deliveries WHERE room_id = ? AND seq > ? ORDER BY seq LIMIT ?',
     ).all(roomId, afterSeq, limit).map(deliveryFromRow)
   }
 
@@ -181,6 +183,20 @@ export class SqliteMimiStore {
     return this.database.query<{ count: number }, [string]>('SELECT COUNT(*) AS count FROM mimi_key_packages WHERE user_uri = ?').get(user)?.count ?? 0
   }
 
+  submitMessage(roomId: MimiRoomId, sender: MimiUserUri, epoch: MimiEpoch, payload: Uint8Array, frank: Frank, acceptedAt: string): { ok: true; entry: MimiDeliveryEntry } | { ok: false; currentEpoch?: MimiEpoch } {
+    return this.database.transaction((): { ok: true; entry: MimiDeliveryEntry } | { ok: false; currentEpoch?: MimiEpoch } => {
+      const row = this.roomRow(roomId)
+      if (!row) return { ok: false }
+      const state = decodeRoomStateWire(row.state_json)
+      if (!isParticipant(state, sender) || state.epoch !== epoch) return { ok: false, currentEpoch: state.epoch }
+      const entry: MimiDeliveryEntry = { seq: row.next_seq, kind: 'application', payload: new Uint8Array(payload), epoch, acceptedAt, frank }
+      this.database.query('INSERT INTO mimi_deliveries (room_id, seq, kind, payload, epoch, accepted_at, frank_json) VALUES (?, ?, ?, ?, ?, ?, ?)').run(roomId, entry.seq, entry.kind, entry.payload, entry.epoch, entry.acceptedAt, encodeFrankWire(frank))
+      this.saveRoom({ ...state, updatedAt: acceptedAt }, row.next_seq + 1)
+      this.notify(roomId, [entry])
+      return { ok: true, entry }
+    })()
+  }
+
   /** Per-room secrets for hub franking; never appear in RoomState or wire JSON. */
   frankingKeys(roomId: MimiRoomId): FrankingKeyMaterial | undefined {
     if (!this.roomRow(roomId)) return undefined
@@ -218,7 +234,7 @@ export class SqliteMimiStore {
     const entries: MimiDeliveryEntry[] = []
     const append = (kind: MimiDeliveryKind, payload: Uint8Array) => {
       const entry: MimiDeliveryEntry = { seq: firstSeq + entries.length, kind, payload: new Uint8Array(payload), epoch, acceptedAt: request.submittedAt }
-      this.database.query('INSERT INTO mimi_deliveries (room_id, seq, kind, payload, epoch, accepted_at) VALUES (?, ?, ?, ?, ?, ?)').run(roomId, entry.seq, entry.kind, entry.payload, entry.epoch, entry.acceptedAt)
+      this.database.query('INSERT INTO mimi_deliveries (room_id, seq, kind, payload, epoch, accepted_at, frank_json) VALUES (?, ?, ?, ?, ?, ?, NULL)').run(roomId, entry.seq, entry.kind, entry.payload, entry.epoch, entry.acceptedAt)
       entries.push(entry)
     }
     if (request.bundle.kind === 'commit') {
@@ -301,7 +317,7 @@ function nextEpoch(epoch: MimiEpoch): MimiEpoch {
 }
 
 function deliveryFromRow(row: DeliveryRow): MimiDeliveryEntry {
-  return { seq: row.seq, kind: row.kind, payload: new Uint8Array(row.payload), epoch: row.epoch, acceptedAt: row.accepted_at }
+  return { seq: row.seq, kind: row.kind, payload: new Uint8Array(row.payload), epoch: row.epoch, acceptedAt: row.accepted_at, frank: row.frank_json === null ? undefined : decodeFrankWire(row.frank_json) }
 }
 
 function validatePackageForCredential(item: PublishedKeyPackage, credential: MimiCredential): void {
@@ -343,6 +359,7 @@ function installSchema(database: Database): void {
       payload BLOB NOT NULL,
       epoch TEXT NOT NULL,
       accepted_at TEXT NOT NULL,
+      frank_json TEXT,
       PRIMARY KEY (room_id, seq)
     );
     CREATE INDEX IF NOT EXISTS mimi_deliveries_room_seq ON mimi_deliveries (room_id, seq);
@@ -365,6 +382,8 @@ function installSchema(database: Database): void {
       FOREIGN KEY(room_id) REFERENCES mimi_rooms(room_id)
     );
   `)
+  const columns = database.query<{ name: string }, []>('PRAGMA table_info(mimi_deliveries)').all()
+  if (!columns.some(column => column.name === 'frank_json')) database.run('ALTER TABLE mimi_deliveries ADD COLUMN frank_json TEXT')
 }
 
 function copyFrankingKeys(row: FrankingKeyRow): FrankingKeyMaterial {
