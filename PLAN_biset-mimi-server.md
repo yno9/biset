@@ -24,7 +24,7 @@ biset は現在 `biset-mls-ds`（identity-blind、`GroupLocalId`方式、biset�
 
 **さらに将来的な統合（`biset-coordinator`の置き換え）**: `biset-coordinator`が担うSelf Group DS（本人の複数端末間でのVault同期用MLS DS、第三者は関与しない）も、長期的には`biset-mimi`に統合できる可能性が高い。spec §7.5が「1人のuserが複数clientを持つroom」を最初から前提にしていることに着目すると、**Self Group = 参加者が本人1人（複数device=複数MLS leaf）だけのMIMI room**という特殊形として素直にモデル化できる。つまりbisetの最終的なhub型サービスは、原理的には`biset-mimi`だけに一本化しうる。これは§14で方向性のみ記録し、**具体設計はまだ行わない**（理由: Self Group同期には可用性要件がthird-partyトラフィックと根本的に異なり、[PLAN_biset-mls-ds.md §2](PLAN_biset-mls-ds.md)が元々`biset-coordinator`と`biset-mls-ds`を分離した理由そのものが、この統合でも解決すべき課題として残るため）。
 
-クライアント側の振り分け（相手がbiset内部かどうか、anon/normalどちらを使うか、を自動選択する仕組み）は別文書で扱う（本文書はサーバー実装のみ）。
+クライアント側の振り分け（相手がbiset内部かどうか、anon/normalどちらを使うか、を自動選択する仕組み）は [MIMI client routing](PLAN_biset-mimi-client-routing.md) で扱う（本文書はサーバー実装のみ）。
 
 ## 1. 目的・スコープ
 
@@ -39,7 +39,7 @@ biset は現在 `biset-mls-ds`（identity-blind、`GroupLocalId`方式、biset�
 **含まないもの（明確に別スコープ）**:
 - application message の中身の解釈（MimiContent、CBOR）→ [PLAN-mimi.md](PLAN-mimi.md)がクライアント側で既に担当。`biset-mimi`自体はcontentをopaqueに扱う（spec自身もそう規定——line 9「This document does not define the plaintext content format carried inside an MLS application message」）。
 - room policy の役割/権限体系そのもの → `draft-ietf-mimi-room-policy`が別ドラフト。本文書は spec が要求するフック（role_index、permission check）だけ用意し、**具体的なロール定義は Phase 3 で別文書化する**（§11未決事項1）。
-- クライアント側のtransport振り分けUI/UX → 前回までの議論で合意した「相手のcapabilityで自動選択」の実装は別文書。
+- クライアント側のtransport振り分けUI/UX → [MIMI client routing](PLAN_biset-mimi-client-routing.md) が、相手のcapabilityによる自動選択とroom非移行を規定する。
 
 ## 2. ディレクトリ構成
 
@@ -337,7 +337,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
 - [x] **4.1 mimi-client-transport.ts** (完了: 2026-09-01, `src/mls/mimi-client-transport.ts`, `test/mls/mimi-client-transport.test.ts`): normal/anon別originを必須にしたclient transportを追加。update、KeyMaterial、message、deliveries pull/watch/SSEをMIMI wire経由で扱う。
   - 参照実装: `src/mls-ds/client-transport.ts`
   - depends on: 3.7
-- [~] **4.2 normal/anon振り分けロジック** (agent: Codex, 開始: 2026-09-01): 別文書（相手のcapability discoveryに基づく自動選択、このセッションの前半で合意した設計）と接続する。この文書には設計を書かず、別文書へのリンクをここに追加する。
+- [x] **4.2 normal/anon振り分けロジック** (完了: 2026-09-01, [MIMI client routing](PLAN_biset-mimi-client-routing.md), `src/mls/mimi-client-routing.ts`, `test/mls/mimi-client-routing.test.ts`): 検証済みpeer capabilityだけを入力に、全参加者がanon MMR v1対応ならanonを選択するpure selectorを追加。`require-anon`は正常系への暗黙downgradeをせず、normal/anonの選択はroom作成時だけに固定する。
   - depends on: 4.1
 
 ### Phase 5: 将来統合（現時点では着手しない）
