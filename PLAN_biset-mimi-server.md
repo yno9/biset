@@ -551,4 +551,15 @@ coordinatorの設計（`PLAN_biset-coordinator.md`）は、root keyで復元し�
 - [src/mimi/wire.ts](src/mimi/wire.ts): 対応するJSON+base64urlのencode/decode一式、および封印前のGroupInfoRatchetTreeTBE相当を`encodeGroupInfoRatchetTreeBundle`としてbiset独自JSON形式で実装（spec本文のTLS Presentation Language形式ではない、§3の既存方針通り）。
 - テスト（`test/mimi/http.test.ts`）: 実際にHPKE鍵ペアを生成し、既存参加者と同じuser URIを持つ「新端末」がGroupInfoを取得・復号でき、無関係な第三者は`notAuthorized`、存在しないroomは`noSuchRoom`になることをEnd-to-Endで確認。
 
-`typecheck`・全テストスイート無傷でパス。**本番へのデプロイ・実HTTPS検証はまだ**——次のステップ。
+`typecheck`・全テストスイート無傷でパス。
+
+### 18.4 本番デプロイ・実HTTPS検証完了（2026-09-01）
+
+v1に3つ目のプロセス`biset-mimi-self`を追加した——`biset-mimi-normal`/`biset-mimi-anon`と全く同じバイナリ、`MIMI_MODE=normal`・`MIMI_ALLOW_EXTERNAL_JOIN=true`・独立DB(`/var/lib/biset-mimi-self/mimi-self.sqlite`)・独立ポート(8796)だけが違う。
+
+- `/etc/biset/mimi-self.env`、`/etc/systemd/system/biset-mimi-self.service`を新規作成、`systemctl enable --now`。
+- Caddyに`mimi-self.biset.md`ブロックを追加（`mimi.biset.md`/`mimi-anon.biset.md`と同じ`tls { alpn http/1.1 }`パターン）、`caddy validate`→`caddy reload`。
+- 既存の`biset-mimi-normal`/`biset-mimi-anon`もこのフェーズの変更を含む最新バイナリへ再デプロイ・再起動し、`mimi.biset.md`の`groupInfo`が引き続き`403 not-allowed`を返すこと（挙動不変）を確認。
+- `https://mimi-self.biset.md`に対し実際にHTTPS越しでEnd-to-Endを実行——room作成（`franking-agent` GET→鍵取得→commitに埋め込み→`/update`）、所有者の新端末が`/groupInfo`でGroupInfo+ratchet_treeを取得・HPKE復号・hub署名検証まで成功、無関係な第三者は`notAuthorized`、存在しないroomは`noSuchRoom`を確認。ローカルテスト(`:memory:`)と完全に同じ結果が実配線でも再現。
+
+残る最大の穴は§Pending（Vault data plane: `/v1/vaults`, `/v2/entries/*`, `/v2/checkpoints/*`）——`biset-coordinator`にはこれらの相当機能があるが`biset-mimi`には未設計。これが片付くまで`biset-coordinator`は退役できない。
