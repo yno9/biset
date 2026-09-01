@@ -356,7 +356,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 5.0
 - [x] **5.3 conversation room migration** (完了: 2026-09-01, `src/mls/mimi-room-migration.ts`, `test/mls/mimi-room-migration.test.ts`): anon新roomだけを含むE2E migration offer/accept/cutover state machineと、old/new mappingを専用local IndexedDBへ保存するstoreを実装。offer wireへold room IDを投影せず、新roomのローカル検証前のcutoverを拒否する。
   - depends on: 5.1, 5.2
-- [ ] **5.4 Self Group deployment spike**: owner-only `biset-mimi-self`を別プロセスとして試作し、Vault recoveryとthird-party負荷隔離を検証する。
+- [~] **5.4 Self Group deployment spike** (agent: Codex, 開始: 2026-09-01): owner-only `biset-mimi-self`を別プロセスとして試作し、Vault recoveryとthird-party負荷隔離を検証する。
   - depends on: 5.1, 5.2
 
 ## 14. 将来ビジョン（方向性のみ、具体設計はまだ行わない）
