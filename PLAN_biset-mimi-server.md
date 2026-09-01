@@ -601,7 +601,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
 
 - [x] **19.a 設計確認（最優先、他タスクをブロックする）**: 19.8の未確定事項（roomId命名規則、chunking方式の最終確認、`appendId`冪等性の置き場所）を決定し、本節に追記する。 (完了: 2026-09-02, 関連: §19.8; random room URI・manifest+chunk・hub側冪等性を確定)
   - depends on: なし
-- [ ] **19.b `MimiDeliveryEntry.kind`拡張とcheckpoint圧縮ロジック**: protocol-types.ts / store.ts / wire.tsへの実装（19.4）。
+- [~] **19.b `MimiDeliveryEntry.kind`拡張とcheckpoint圧縮ロジック**: protocol-types.ts / store.ts / wire.tsへの実装（19.4）。 (agent: Codex, 開始: 2026-09-02)
   - depends on: 19.a
 - [ ] **19.c chunking実装**: 大きいentry/checkpointの分割送信・受信側再構成（19.2）。クライアント側（19.5の新モジュール）とhub側双方。
   - depends on: 19.a
