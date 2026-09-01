@@ -337,7 +337,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
 - [x] **4.1 mimi-client-transport.ts** (完了: 2026-09-01, `src/mls/mimi-client-transport.ts`, `test/mls/mimi-client-transport.test.ts`): normal/anon別originを必須にしたclient transportを追加。update、KeyMaterial、message、deliveries pull/watch/SSEをMIMI wire経由で扱う。
   - 参照実装: `src/mls-ds/client-transport.ts`
   - depends on: 3.7
-- [ ] **4.2 normal/anon振り分けロジック**: 別文書（相手のcapability discoveryに基づく自動選択、このセッションの前半で合意した設計）と接続する。この文書には設計を書かず、別文書へのリンクをここに追加する。
+- [~] **4.2 normal/anon振り分けロジック** (agent: Codex, 開始: 2026-09-01): 別文書（相手のcapability discoveryに基づく自動選択、このセッションの前半で合意した設計）と接続する。この文書には設計を書かず、別文書へのリンクをここに追加する。
   - depends on: 4.1
 
 ### Phase 5: 将来統合（現時点では着手しない）
