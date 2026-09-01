@@ -390,3 +390,56 @@ biset-mimi-self（未設計）# 本人複数端末同期（旧biset-coordinator�
 ```
 
 `biset-coordinator`・`biset-mls-ds`・`biset-didcomm-mediator`はいずれ廃止対象（mediatorの廃止は前々回までの議論、招待/通知の最小blind relayとしての役割が残るかは別途要検討）。
+
+## 15. 仕様準拠監査（2026-09-01、`mimi-protocol-06.md`原文照合）
+
+> 手法: `mimi-protocol-06.md`（本リポジトリ直下、draft-ietf-mimi-protocol、2026-04版）を該当箇所ごとに読み直し、`src/mimi/*`の実装と1行単位で突き合わせた。行番号は`mimi-protocol-06.md`のもの。一部は`https://mimi.biset.md`への実HTTPS呼び出しで裏取りした。
+
+### 15.0 総評
+
+**メッセージフロー・エンドポイント構成・エラーコード体系はspecに忠実。ただし「room状態（参加者リスト・room metadata・franking鍵）をMLSの実ワイヤ構造に埋め込む」という、spec設計の根幹をなす仕組みが実装されていない。** 現状は「MLSの本物のCommit/Proposalバイト列は完全に不透明のまま扱い、参加者リストやroom名などの“読める情報”は別立てのJSONサイドチャネルで運ぶ」という、biset-mls-dsから引き継いだ設計思想になっている。これは実装者自身が[protocol-types.ts:253-256](src/mimi/protocol-types.ts)のコメントで明示的に認めている暫定措置（"Phase 0 carries them at the client/provider boundary... In a future AppSync integration these values are reconstructed directly from the authenticated AppDataUpdate proposal"）——隠れたバグではなく、意図された簡略化。ただし**この簡略化がある限り、外部の本物のMIMI provider/clientとは相互運用できない**（本物のMLS commitを送ってくる相手を、biset-mimiは解釈できない）。「Phase 3で相互運用を検証する」という現在の計画は、この根本的な差し替えが終わるまで意味を持たない。
+
+### 15.1 エンドポイントごとの照合結果
+
+| Endpoint | spec行 | 準拠状況 |
+|---|---|---|
+| `GET /.well-known/mimi-protocol-directory` | 1013-1044 | ✅ ほぼ完全一致。フィールド名・構造ともspecの例示JSONとそのまま対応（[directory.ts](src/mimi/directory.ts)）。 |
+| `POST /keyMaterial/{targetUser}` | 1046-1345 | ✅ `KeyMaterialUserCode`（success/partialSuccess/incompatibleProtocol/noCompatibleMaterial/userUnknown/noConsent/noConsentForThisRoom/userDeleted、line 1237-1247）・`KeyMaterialClientCode`（success/keyMaterialExhausted/nothingCompatible、line 1249-1254）とも[protocol-types.ts](src/mimi/protocol-types.ts)の`KeyMaterialUserStatus`/`KeyMaterialClientStatus`に一字一句一致。`roomId`必須の理由（Welcome routing、line 1056-1059）も踏襲。 |
+| `POST /update/{roomId}` | 1349-1523 | ❌ **重大な不一致**。specは参加者リスト変更・room policy変更を「AppSync proposal（applicationId: `mimiParticipantList`/`mimiRoomPolicy`）としてMLSの実Commitに埋め込む」ことを要求する（line 1359-1364）。biset実装は`proposalOrCommit`を完全な不透明バイト列として扱い（`new Uint8Array([1])`のようなダミー値でも通る、本セッションの実HTTPS検証で確認済み）、参加者リスト・credential・room metadataは別フィールド（`initialState`/`stateUpdate`）としてJSONで並行して送る——spec本文にこの仕組みは存在しない。§15.2で詳述。 |
+| `POST /submitMessage/{roomId}` + franking | 1523-1885 | 🟡 概ね準拠。franking_tagをAAD化する・hubがsenderをfollowerに漏らさない・franking_integrity_signatureで検証可能にする、というspecの設計思想（line 1860-1884）は[franking.ts](src/mimi/franking.ts)に正しく再現されている。ただしHMACに渡す`context`のバイト列化がspecのTLS Presentation Language準拠ではなく、bisetの`canonicalBytes`独自形式（`frankingContextBytes`）——hub内部にしか関わらない値なので実害は小さいが、厳密な意味でのwire互換ではない。 |
+| `POST /notify/{roomId}`（fanout） | 1886-2020 | 🟡 未精査。[fanout.ts](src/mimi/fanout.ts)にmTLS transport経由のbatch送受信・重複排除は実装されているが、spec行1886-1924の`FanoutMessage`の正確なフィールド一致は本監査では未確認——別途要精査（§15.3未決事項へ追加）。 |
+| `POST /groupInfo/{roomId}`（external join） | 2021-2205 | ❌ **未実装、かつdirectoryが虚偽の広告をしている**。`http.ts`のルーティングに`groupInfo`は一切存在せず、実際に`https://mimi.biset.md/groupInfo/{roomId}`へPOSTすると**404**（本セッションで実HTTPS確認済み）。一方[directory.ts](src/mimi/directory.ts)の`createMimiProtocolDirectory`は無条件に`groupInfo`のURLテンプレートを返す——**「対応している」と嘘をついているエンドポイントが存在する**状態。external join自体はbiset-mls-dsが漏洩経路①として意図的に削除した機能（[PLAN_biset-mls-ds.md §0](PLAN_biset-mls-ds.md)）なので、biset-mimiでも同じ理由で未実装なのは設計判断としてはあり得るが、それなら**directoryからこのURLを外すか、常に`notAuthorized`相当を返すべき**——今のまま放置すると外部providerに「サポートしている」と誤認させる。 |
+| `POST /requestConsent/{targetDomain}` / `POST /updateConsent/{requesterDomain}` | 2206-2336 | ✅ `ConsentEntry`（consentOperation/requesterUri/targetUri/roomId/clientKeyPackages、line 2262-2272）の構造は[protocol-types.ts](src/mimi/protocol-types.ts)の`MimiConsentEntry`とほぼ一致。`consent_extensions`（AppDataDictionary拡張点、line 2332-2335）のみ未実装——現時点で使い道が無いので実害は小さい。 |
+| `POST /identifierQuery/{domain}` | 2337-2562 | 🟡 型（`MimiIdentifierSearchType`等）は妥当に見えるが、spec本文2337-2562の検索フィールド網羅性・プライバシー配慮のガイダンス（Xavier/Yolanda/Zach例）との細部一致は本監査では未確認。 |
+| `POST /reportAbuse/{roomId}` | 2563-2639 | ✅ franking証跡の検証（`verifyFrank`）を経由してから記録する、という設計はspecの意図と一致。 |
+| `GET/POST /proxyDownload/{downloadUrl}` | 2640-2833 | 🟡 [asset-proxy.ts](src/mimi/asset-proxy.ts)が許可ホスト限定・サイズ上限付きで実装済みだが、spec §5.10.3のOblivious HTTP経由ダウンロード（line 2778-2833）は明確に未実装（ロードマップ上も対象外と思われるが、明示的な非対応の記載が無い）。 |
+| `POST /v1/mimi/deliveries/pull`\|`watch`\|`stream` | spec範囲外 | ✅ §5.1で文書化済みのbiset独自拡張。spec自体がclient-hub間の配信経路を規定していないことの穴埋め。 |
+| `POST /v1/mimi/keypackage/publish` | spec範囲外 | ✅ 本セッションで新規追加（前回参照）。同じくbiset独自拡張として正しい位置づけ。 |
+
+### 15.2 §15.1の核心: AppSync／app_data_dictionaryが一切実装されていない
+
+spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登録する4つのMLS GroupContext拡張コンポーネントを定義している:
+
+| コンポーネント | 値 | 用途 |
+|---|---|---|
+| `frank_aad` | `0x0020` | AAD側、franking tag |
+| `franking_signature_key` | `0x0021` | GroupContext側、hub署名鍵 |
+| `participant_list` | `0x0022` | GroupContext側、参加者リスト |
+| `room_metadata` | `0x0023` | GroupContext側、room名等 |
+
+これらの値・`app_data_dictionary`・`AppDataUpdate`のいずれも、`src/mimi/`と`src/mls/`のどこにも実装されていない（本監査でgrep確認済み）。つまり:
+
+- room metadataは`RoomMetadata`という**biset独自のJSON構造体**として`initialState.metadata`に載せているだけで、spec §7.6が要求する「GroupContext拡張のAppDataUpdate proposalとしてMLS commitに埋め込む」形になっていない。
+- participant listも同様、spec §7.5・§10.3が要求する`participant_list`コンポーネントではなく、biset独自の`ParticipantListData`をJSONで並行送信しているだけ。
+- franking鍵の共有方法（`franking_signature_key`コンポーネント、GroupContext経由でメンバー全員に配布）も未実装——bisetはhub側の`FrankingKeyMaterial`をDB内に保持するだけで、MLS GroupContext経由でクライアントに配布する仕組みが無い（クライアント側がfranking検証に使う公開鍵をどう入手するかの経路が実質欠落している可能性がある——要確認、§15.3未決事項へ追加）。
+
+これは実装者自身が「Phase 0の暫定措置」として認めている通りのものだが、**この監査で改めて明確にしておくべきは、これが「細部の食い違い」ではなく「spec全体のE2E信頼モデルの根幹」だということ**。spec設計では、hubは「MLSのCommitを実際にMLSとして検証できる（AppSync proposalを解釈できる）」ことが前提になっており、それによって「room stateの変更はMLSの暗号学的な合意（proposal-commitパラダイム、line 2973-2987）に紐づく」という保証が成り立つ。biset実装は「JSON側で言われたことをそのまま信じる」形になっており、**MLS commit自体の正当性（実際にそのcommitが本当にそのparticipant list変更を含意しているか）を検証していない**——`initialState`/`stateUpdate`のJSONと`proposalOrCommit`のバイト列の整合性はどこでもチェックされていない。
+
+### 15.3 本監査で新たに追加する未決事項
+
+12. **（最優先）`update/{roomId}`のAppSync実装** — `proposalOrCommit`を実際にMLS wire formatとしてパースし、`mimiParticipantList`/`mimiRoomPolicy`のAppSync proposalから参加者リスト・policy変更を抽出する。現在の`initialState`/`stateUpdate`という独自JSON sidecarを廃止するか、最低限「JSON側の申告とMLS commitの内容が矛盾しないことを検証する」処理を追加する。§7・§10の4コンポーネント（`0x0020`-`0x0023`）をGroupContext拡張として実装する必要がある。**Phase 3のフェデレーションを名乗る前に必須**。
+13. **`groupInfo/{roomId}`の扱いを確定する** — 未実装のまま放置せず、(a) directoryから外す、(b) 実装する、(c) 常に`notAuthorized`を明示的に返す、のいずれかを選ぶ。現状の「directoryは対応を謳うが404が返る」は外部providerとの相互運用を試みた瞬間に見つかる明白な不具合。
+14. **franking鍵（`franking_signature_key`）のクライアント配布経路の確認** — receiver側が`verifyFrank`に使う公開鍵をどうやって安全に入手するか、実際のクライアント実装（`mimi-client-transport.ts`等）でのフローを確認する。GroupContext経由でない場合、経路自体を明文化する。
+15. **`notify/{roomId}`のFanoutMessage構造の詳細照合**（spec行1886-2020）。
+16. **`identifierQuery`のプライバシー配慮ガイダンス（spec行2337-2562の例）との整合確認**。
+17. **`proxyDownload`のOblivious HTTP対応（spec §5.10.3）の要否判断**——非対応なら明示的にスコープ外と記載する。
