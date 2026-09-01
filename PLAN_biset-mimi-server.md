@@ -212,7 +212,7 @@ identity_link_key(epoch) = exportSecret(state, "mimi mmr identity-link", groupId
 
 ## 11. 未決事項
 
-1. **room policy（役割/権限体系）の具体設計** — `draft-ietf-mimi-room-policy`の内容を別途調査してから確定する。今は`room-policy.ts`にフックだけ用意する。
+1. **room policy（役割/権限体系）の具体設計** — 2026-09-01に最新版 [draft-ietf-mimi-room-policy-04](https://datatracker.ietf.org/doc/html/draft-ietf-mimi-room-policy-04)（2026-07-06、Internet-Draftであり未確定）を確認した。各Participantはちょうど1つの`role_index`を持ち、roleはcapability・人数/active人数制約・許可されたrole遷移を持つ。Add/Remove/role変更はこの三点を検証し、role定義変更とParticipant List変更を同一commitに含めてはならない。role定義はMLS GroupContextの`app_data_dictionary` componentであり、component IDはなおTBDである。従って3.5は、まずdraftの意味論をそのまま表す**純粋なpolicy evaluator**（symbolic capability名、role/遷移/人数制約の検証）として実装し、現行のopaqueな`basePolicy` byte列を独自JSONとして解釈・保存しない。最終component IDとTLS wire形式が確定した時点で、MLS extensionからこのevaluatorへ入力するdecoderを追加する。
 2. **他社MIMI実装の実際のwire形式** — JSON採用を決めたが、実際に相互接続するprovider次第でアダプタが要る可能性がある。Phase 3で確認する。
 3. **anon modeの再暗号化コストの実測** — §7.3。大規模room未対応の可能性を許容するか、別の緩和策（例: 変更があったメンバーの差分だけ再暗号化）を検討するかは実装しながら判断する。
 4. **frankingのhub_key漏洩時の対応** — spec自身のtrust modelの限界であり、biset固有の対応策があるかは要検討。
@@ -315,7 +315,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
 
 ### Phase 3: 実フェデレーション
 
-- [~] **3.0 前提調査** (agent: Codex, 開始: 2026-09-01): `draft-ietf-mimi-room-policy`の内容を取得・確認する（§11未決事項1）。この結果次第で3.5（room-policy.ts）の設計が変わるため、3.5より先に必ず行う。
+- [x] **3.0 前提調査** (完了: 2026-09-01, [draft-ietf-mimi-room-policy-04](https://datatracker.ietf.org/doc/html/draft-ietf-mimi-room-policy-04), §11-1更新): role/capability/遷移/人数制約、GroupContext componentへの格納、component IDが未確定であることを確認し、3.5を意味論のpure evaluatorとして実装する方針を確定した。
   - depends on: 2.7
 - [ ] **3.1 provider-transport.ts**: mTLS + From/Hostヘッダによるprovider間認証（spec §4.1）。
   - depends on: 2.7
