@@ -1,4 +1,16 @@
-/** Safe hub-side asset proxy: never turn the MIMI hub into an open proxy. */
+/**
+ * Safe hub-side direct asset proxy: never turn the MIMI hub into an open
+ * proxy.  This implements the authenticated `proxyDownload` path, but is
+ * deliberately **not** an RFC 9458 OHTTP Gateway: it receives a plain HTTPS
+ * request from the peer provider and therefore cannot provide OHTTP's relay /
+ * gateway unlinkability.  No OHTTP configuration endpoint or capability is
+ * advertised by this deployment.
+ *
+ * draft-ietf-mimi-protocol-06 §5.10.3 makes a gateway required for a fully
+ * conformant hub.  Biset scopes that optional deployment role out until it
+ * can be supplied with a real OHTTP gateway, peer-asset registration, and
+ * relay integration; operators must not describe this class as OHTTP-capable.
+ */
 export interface MimiAssetProxyOptions {
   allowedAssetHosts: readonly string[]
   fetchImpl?: typeof fetch
