@@ -21,6 +21,7 @@ import {
   encodeDeliveriesWire,
   encodeDeliveriesWatchTokenWire,
   encodeMimiErrorWire,
+  encodeFrankingAgentDataWire,
   encodeUpdateRoomResponseWire,
   encodeSubmitMessageResponseWire,
   MimiWireError,
@@ -56,6 +57,7 @@ const DELIVERY_STREAM_PATH = '/v1/mimi/deliveries/stream'
  * unspecified, so without this route `keyMaterial` has nothing to ever
  * return and no client can be added to a room. */
 const KEY_PACKAGE_PUBLISH_PATH = '/v1/mimi/keypackage/publish'
+const FRANKING_AGENT_PREFIX = '/v1/mimi/franking-agent/'
 
 function isMimiHttpPath(path: string): boolean {
   return path.startsWith(KEY_MATERIAL_PREFIX) || path.startsWith(UPDATE_PREFIX) || path.startsWith(GROUP_INFO_PREFIX)
@@ -65,7 +67,7 @@ function isMimiHttpPath(path: string): boolean {
     || path.startsWith(PROXY_DOWNLOAD_PREFIX)
     || path.startsWith(REPORT_ABUSE_PREFIX)
     || path === DELIVERY_PULL_PATH || path === DELIVERY_WATCH_PATH || path === DELIVERY_STREAM_PATH || path === MIMI_PROTOCOL_DIRECTORY_PATH
-    || path === KEY_PACKAGE_PUBLISH_PATH
+    || path === KEY_PACKAGE_PUBLISH_PATH || path.startsWith(FRANKING_AGENT_PREFIX)
 }
 
 /** The HTTPS listener/TLS terminator supplies a verified client-cert peer. */
@@ -105,6 +107,15 @@ export function createMimiHttpHandler(
       if (path === DELIVERY_STREAM_PATH) {
         if (request.method !== 'GET') return error(405, 'bad-request', 'Method not allowed')
         return streamDeliveries(store, watchTokens, new URL(request.url))
+      }
+      if (path.startsWith(FRANKING_AGENT_PREFIX)) {
+        if (request.method !== 'GET') return error(405, 'bad-request', 'Method not allowed')
+        const roomId = pathParameter(path, FRANKING_AGENT_PREFIX, 'room ID')
+        const keys = store.prepareFrankingKeys(roomId)
+        // This provider credential is the public HTTPS identity asserted by
+        // the directory. Deployments with a real MLS credential may replace
+        // this opaque byte string without changing the component wire shape.
+        return json(200, encodeFrankingAgentDataWire({ frankingSignatureKey: keys.signingPublicKey, credential: new TextEncoder().encode(publicBaseUrl ?? new URL(request.url).origin) }))
       }
       if (path.startsWith(PROXY_DOWNLOAD_PREFIX)) {
         if (request.method !== 'GET') return error(405, 'bad-request', 'Method not allowed')

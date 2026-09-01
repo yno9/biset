@@ -262,6 +262,19 @@ export class SqliteMimiStore {
     return created
   }
 
+  /** Allocates the hub key a creator must place in the initial
+   * `franking_signature_key` AppData component. It is held separately until
+   * the matching initial MLS commit is accepted. */
+  prepareFrankingKeys(roomId: MimiRoomId): FrankingKeyMaterial {
+    const active = this.database.query<FrankingKeyRow, [string]>('SELECT hub_key, signing_private_key, signing_public_key FROM mimi_franking_keys WHERE room_id = ?').get(roomId)
+    if (active) return copyFrankingKeys(active)
+    const pending = this.database.query<FrankingKeyRow, [string]>('SELECT hub_key, signing_private_key, signing_public_key FROM mimi_pending_franking_keys WHERE room_id = ?').get(roomId)
+    if (pending) return copyFrankingKeys(pending)
+    const created = createFrankingKeyMaterial()
+    this.database.query('INSERT INTO mimi_pending_franking_keys (room_id, hub_key, signing_private_key, signing_public_key) VALUES (?, ?, ?, ?)').run(roomId, created.hubKey, created.signingPrivateKey, created.signingPublicKey)
+    return created
+  }
+
   private createFromInitialUpdate(request: UpdateRoomRequest, transition: MimiMlsStateTransition | undefined): MimiUpdateStoreResult {
     if (!request.initialState) return { ok: false, reason: 'notAllowed', message: 'room does not exist' }
     if (!transition || request.bundle.kind !== 'commit') return { ok: false, reason: 'invalidProposal', message: 'initial room state requires an MLS AppDataUpdate Commit' }
@@ -271,6 +284,9 @@ export class SqliteMimiStore {
       (current, update) => applyMimiParticipantListUpdate(current, update), { participants: [] },
     )
     if (!transition.roomMetadata) return { ok: false, reason: 'invalidProposal', message: 'initial room state requires room_metadata AppDataUpdate' }
+    if (!transition.frankingAgent) return { ok: false, reason: 'invalidProposal', message: 'initial room state requires franking_signature_key AppDataUpdate' }
+    const preparedFranking = this.prepareFrankingKeys(request.roomId)
+    if (!equalBytes(preparedFranking.signingPublicKey, transition.frankingAgent.frankingSignatureKey)) return { ok: false, reason: 'invalidProposal', message: 'franking_signature_key does not match the hub-prepared key' }
     if (!sameParticipantList(request.initialState.participantList, participantList)) return { ok: false, reason: 'invalidProposal', message: 'initial participantList sidecar disagrees with MLS AppDataUpdate' }
     if (!sameMetadata(request.initialState.metadata, transition.roomMetadata)) return { ok: false, reason: 'invalidProposal', message: 'initial metadata sidecar disagrees with MLS AppDataUpdate' }
     const state: RoomState = {
@@ -287,7 +303,8 @@ export class SqliteMimiStore {
     const entries = this.appendBundle(request.roomId, 1, request, state.epoch)
     state.epoch = request.bundle.kind === 'commit' ? nextEpoch(state.epoch) : state.epoch
     this.saveRoom(state, 1 + entries.length)
-    this.frankingKeys(request.roomId)
+    this.database.query('INSERT OR REPLACE INTO mimi_franking_keys (room_id, hub_key, signing_private_key, signing_public_key) VALUES (?, ?, ?, ?)').run(request.roomId, preparedFranking.hubKey, preparedFranking.signingPrivateKey, preparedFranking.signingPublicKey)
+    this.database.query('DELETE FROM mimi_pending_franking_keys WHERE room_id = ?').run(request.roomId)
     this.notify(request.roomId, entries)
     return { ok: true, state, entries }
   }
@@ -494,6 +511,12 @@ function installSchema(database: Database): void {
       signing_private_key BLOB NOT NULL,
       signing_public_key BLOB NOT NULL,
       FOREIGN KEY(room_id) REFERENCES mimi_rooms(room_id)
+    );
+    CREATE TABLE IF NOT EXISTS mimi_pending_franking_keys (
+      room_id TEXT PRIMARY KEY NOT NULL,
+      hub_key BLOB NOT NULL,
+      signing_private_key BLOB NOT NULL,
+      signing_public_key BLOB NOT NULL
     );
     CREATE TABLE IF NOT EXISTS mimi_consents (
       requester_uri TEXT NOT NULL,
