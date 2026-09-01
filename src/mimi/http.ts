@@ -31,6 +31,7 @@ import { createMimiProtocolDirectory, MIMI_PROTOCOL_DIRECTORY_PATH } from './dir
 import { decodeMimiAbuseReportWire, encodeMimiAbuseReportWire, decodeMimiConsentEntryWire, decodeMimiIdentifierRequestWire, encodeMimiIdentifierResponseWire, noIdentifiers, type MimiIdentifierDirectory } from './federation.ts'
 import { verifyMimiProviderRequest, type VerifiedProviderPeer } from './provider-transport.ts'
 import { decodeMimiFanoutBatchWire, fanoutFingerprint } from './fanout.ts'
+import { extractMimiMlsStateTransition } from './mls-appsync.ts'
 import type { MimiAssetProxy } from './asset-proxy.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
 import type { MimiCredential, MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
@@ -184,7 +185,15 @@ export function createMimiHttpHandler(
         if (!credentialAllowed(value.sender, mode, selfOwnerUser) || (mode === 'self' && !selfUpdateOwned(value, selfOwnerUser))) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential or room state`)
         if (value.roomId !== roomId) return error(400, 'bad-request', 'room ID path does not match request body')
         if (!(await authorizeUpdate(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
-        const result = store.submitUpdate(value)
+        // Existing rooms derive provider-visible state from an MLS Public
+        // Commit. Initial room creation remains a one-time envelope until the
+        // MIMI room-policy component has a stable initial-state assignment.
+        const mlsTransition = store.room(roomId) === undefined
+          ? undefined
+          : value.bundle.kind === 'commit'
+            ? extractMimiMlsStateTransition(value.bundle.proposalOrCommit)
+            : undefined
+        const result = store.submitUpdate(value, mlsTransition)
         if (result.ok) return json(200, encodeUpdateRoomResponseWire({ status: 'success', acceptedTimestamp: value.submittedAt }))
         return updateError(result.reason, result.message, result.currentEpoch)
       }

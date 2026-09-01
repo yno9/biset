@@ -308,7 +308,7 @@ function roomStateJson(value: RoomState): JsonRecord {
   return {
     roomId: value.roomId, protocol: value.protocol, epoch: value.epoch,
     basePolicy: bytesToBase64url(value.basePolicy), participantList: participantListJson(value.participantList), memberCredentials: value.memberCredentials.map(credentialJson), metadata: roomMetadataJson(value.metadata),
-    groupInfo: optional(value.groupInfo, bytesToBase64url), ratchetTree: optional(value.ratchetTree, bytesToBase64url),
+    frankingAgent: optional(value.frankingAgent, frankingAgentDataJson), groupInfo: optional(value.groupInfo, bytesToBase64url), ratchetTree: optional(value.ratchetTree, bytesToBase64url),
     createdAt: value.createdAt, updatedAt: value.updatedAt,
   }
 }
@@ -322,7 +322,7 @@ export function decodeRoomStateWire(text: string): RoomState {
     basePolicy: requireBinary(input.basePolicy, 'RoomState.basePolicy'),
     participantList: decodeParticipantList(input.participantList, 'RoomState.participantList'),
     memberCredentials: (() => { if (!Array.isArray(input.memberCredentials)) throw new MimiWireError('RoomState.memberCredentials must be an array'); return input.memberCredentials.map((entry, index) => decodeCredential(entry, `RoomState.memberCredentials[${index}]`)) })(),
-    metadata: decodeRoomMetadata(input.metadata, 'RoomState.metadata'),
+    metadata: decodeRoomMetadata(input.metadata, 'RoomState.metadata'), frankingAgent: input.frankingAgent === undefined ? undefined : decodeFrankingAgentData(input.frankingAgent, 'RoomState.frankingAgent'),
     groupInfo: optionalBinary(input.groupInfo, 'RoomState.groupInfo'), ratchetTree: optionalBinary(input.ratchetTree, 'RoomState.ratchetTree'),
     createdAt: requireString(input.createdAt, 'RoomState.createdAt'), updatedAt: requireString(input.updatedAt, 'RoomState.updatedAt'),
   }

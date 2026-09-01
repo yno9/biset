@@ -12,6 +12,7 @@ export const defaultProposalTypes = {
   reinit: 5,
   external_init: 6,
   group_context_extensions: 7,
+  app_data_update: 8,
 } as const
 
 /** @public */

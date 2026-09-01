@@ -453,7 +453,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - **(B) 暫定実装**: 既存の`group_context_extensions`proposal（RFC 9420標準、type 7、[group.ts](src/mls/group.ts)の`setRoomMetadata`が0xF000のprivate-use拡張で今セッション既に実証済み）に、同等の情報をprivate-use拡張として載せる。実装は速いが**外部providerとはバイト非互換のまま**——「MLS commitが state の唯一の権威になる」という§15.2のアーキテクチャ目標は満たすが、真の相互運用は満たさない。
   - 参照実装: `src/mls/group.ts`の`setRoomMetadata`/`roomMetadataOf`（0xF000 private-use拡張の実装パターン）
   - depends on: なし
-- [~] **6.1（項目12）MLSエンジンへのコンポーネント実装** (agent: Codex, 開始: 2026-09-01): 6.0の判断に従い、`src/mls/vendor/`（または新規モジュール）へ4コンポーネント相当のproposal/extension処理を実装する。(A)なら新しいproposal type/extension typeの符号化・検証を`vendor/defaultProposalType.ts`/`vendor/defaultExtensionType.ts`相当に追加。(B)なら`group.ts`の`ROOM_METADATA_EXTENSION_TYPE`パターンに倣い、`participant_list`/`franking_signature_key`用のprivate-use extension typeを追加で確保する。
+- [x] **6.1（項目12）MLSエンジンへのコンポーネント実装** (agent: Codex, 完了: 2026-09-01): `src/mls/vendor/appData.ts`に`app_data_dictionary (0x0006)`／`AppDataUpdate (0x0008)`のTLS codec・dictionary更新規則を実装し、commit処理がUpdatePathなしでGroupContextを更新するようにした。`src/mimi/app-data.ts`にはMIMIの`0x0020`--`0x0023`のTLS codec、participant差分適用を追加した。MLS core testで2 memberが同一AppData componentをcommitで収束することを確認済み。
   - depends on: 6.0
 - [ ] **6.2（項目12）`update/{roomId}`のAppSync対応**: [http.ts](src/mimi/http.ts)の`update`ハンドラを書き換え、`proposalOrCommit`を実際にMLS wire formatとしてパースし、6.1のコンポーネントから参加者リスト・room policyを抽出する。既存の`initialState`/`stateUpdate`というJSON sidecar（[protocol-types.ts:244-256](src/mimi/protocol-types.ts)）は廃止するか、最低限「MLS commit内容とJSON申告の不一致を拒否する」検証を追加する。
   - depends on: 6.1

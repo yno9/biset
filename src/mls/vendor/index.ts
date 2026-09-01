@@ -4,6 +4,13 @@ export { defaultProposalTypes, type DefaultProposalTypeName } from "./defaultPro
 
 export { defaultExtensionTypes, type DefaultExtensionTypeName } from "./defaultExtensionType.js"
 
+export {
+  APP_DATA_DICTIONARY_EXTENSION_TYPE, APP_DATA_UPDATE_PROPOSAL_TYPE,
+  appDataComponent, appDataDictionaryFrom, decodeAppDataDictionary, decodeAppDataUpdate,
+  encodeAppDataDictionary, encodeAppDataUpdate, replaceAppDataComponents,
+  type AppDataDictionary, type AppDataUpdate, type ComponentData,
+} from './appData.js'
+
 export { type PrivateKeyPath } from "./privateKeyPath.js"
 
 export { type RatchetTree } from "./ratchetTree.js"

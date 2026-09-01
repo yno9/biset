@@ -22,6 +22,7 @@ import {
   generateKeyPackage, generateKeyPackageWithKey, createApplicationMessage, createCommit, createProposal,
   processMessage, encodeMlsMessage, decodeMlsMessage, mlsExporter, zeroOutUint8Array,
   defaultCapabilities, defaultLifetime, emptyPskIndex, acceptAll,
+  APP_DATA_DICTIONARY_EXTENSION_TYPE, APP_DATA_UPDATE_PROPOSAL_TYPE,
   encodeGroupState, decodeGroupState,
   defaultAuthenticationService, defaultKeyRetentionConfig, defaultLifetimeConfig,
   defaultKeyPackageEqualityConfig, defaultPaddingConfig,
@@ -141,7 +142,11 @@ export async function generateOwnKeyPackageForCredential(credential: Credential)
  * codebase avoids elsewhere. */
 function capabilitiesWithRoomMetadataSupport(): Capabilities {
   const base = defaultCapabilities()
-  return { ...base, extensions: [...base.extensions, ROOM_METADATA_EXTENSION_TYPE] }
+  return {
+    ...base,
+    extensions: [...base.extensions, ROOM_METADATA_EXTENSION_TYPE, APP_DATA_DICTIONARY_EXTENSION_TYPE],
+    proposals: [...base.proposals, APP_DATA_UPDATE_PROPOSAL_TYPE],
+  }
 }
 
 /** MLS wire encoding of a key package — what gets published and fetched. */
@@ -344,9 +349,17 @@ export async function setRoomMetadata(state: ClientState, metadata: RoomMetadata
   return commitWith(state, proposals)
 }
 
-async function commitWith(state: ClientState, extraProposals: Proposal[], ratchetTreeExtension = false, ownCredentialUpdate?: Credential): Promise<CommitResult> {
+/** Commit a complete next value for an application component in the MLS
+ * `app_data_dictionary`.  Component-specific update validation belongs to the
+ * application that owns the component; this is the wire-level MLS primitive. */
+export async function setAppDataComponent(state: ClientState, componentId: number, data: Uint8Array): Promise<CommitResult> {
+  if (!Number.isInteger(componentId) || componentId < 0 || componentId > 0xffff) throw new TypeError('MLS component ID must be uint16')
+  return commitWith(state, [{ proposalType: 'app_data_update', appDataUpdate: { componentId, operation: 'update', update: data } }], false, undefined, true)
+}
+
+async function commitWith(state: ClientState, extraProposals: Proposal[], ratchetTreeExtension = false, ownCredentialUpdate?: Credential, wireAsPublicMessage = false): Promise<CommitResult> {
   const suite = await mlsSuite()
-  const result = await createCommit({ state, cipherSuite: suite }, { extraProposals, ratchetTreeExtension, ...(ownCredentialUpdate ? { ownCredentialUpdate } : {}) })
+  const result = await createCommit({ state, cipherSuite: suite }, { extraProposals, ratchetTreeExtension, wireAsPublicMessage, ...(ownCredentialUpdate ? { ownCredentialUpdate } : {}) })
   return {
     state: result.newState,
     commit: encodeMlsMessage(result.commit),

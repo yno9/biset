@@ -25,6 +25,8 @@ import {
   encodeUpdateRoomRequestWire,
 } from '../../src/mimi/wire.ts'
 import type { PseudonymousCredential, VisibleCredential } from '../../src/mimi/protocol-types.ts'
+import { encodeMlsMessage } from '../../src/mls/vendor/index.ts'
+import { encodeMimiParticipantListUpdate } from '../../src/mimi/app-data.ts'
 
 interface Client { credential: VisibleCredential; secret: Uint8Array }
 
@@ -41,6 +43,23 @@ function client(user: string, fragment: string, marker: number): Client {
 
 function signedUpdate(sender: Client, value: Parameters<typeof updateRoomSigningBytes>[0]) {
   return { ...value, signature: ed25519.sign(updateRoomSigningBytes(value), sender.secret) }
+}
+
+/** A structurally real MLS PublicMessage Commit. Signature validation belongs
+ * to the MLS group clients; the hub parses its authenticated AppDataUpdate. */
+function participantCommit(room: string, epoch: string, before: { user: string; roleIndex: number }[], after: { user: string; roleIndex: number }[]): Uint8Array {
+  return encodeMlsMessage({
+    version: 'mls10', wireformat: 'mls_public_message',
+    publicMessage: {
+      content: {
+        groupId: new TextEncoder().encode(room), epoch: BigInt(epoch), sender: { senderType: 'member', leafIndex: 0 }, authenticatedData: new Uint8Array(), contentType: 'commit',
+        commit: { proposals: [{ proposalOrRefType: 'proposal', proposal: { proposalType: 'app_data_update', appDataUpdate: {
+          componentId: 0x0022, operation: 'update', update: encodeMimiParticipantListUpdate({ changedRoleParticipants: [], removedIndices: before.map((_value, index) => index), addedParticipants: after }),
+        } } }], path: undefined },
+      },
+      auth: { contentType: 'commit', signature: new Uint8Array(), confirmationTag: new Uint8Array() }, senderType: 'member', membershipTag: new Uint8Array(),
+    },
+  })
 }
 
 describe('MIMI Phase 0 HTTP flow', () => {
@@ -105,7 +124,7 @@ describe('MIMI Phase 0 HTTP flow', () => {
     const aliceAtEpochTwo = { ...credential, identityLinkCiphertext: await encryptIdentityLink(epochTwo, anonRoomId, encoder.encode('did:web:alice')) }
     const addUnsigned = {
       version: 1 as const, protocol: 'mls10' as const, roomId: anonRoomId, sender: credential, epoch: '1',
-      bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([2]), welcome: new Uint8Array([3]) },
+      bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(anonRoomId, '1', [{ user: credential.userPseudonym, roleIndex: 1 }], [{ user: credential.userPseudonym, roleIndex: 1 }, { user: bob.userPseudonym, roleIndex: 1 }]), welcome: new Uint8Array([3]) },
       stateUpdate: {
         participantList: { participants: [{ user: credential.userPseudonym, roleIndex: 1 }, { user: bob.userPseudonym, roleIndex: 1, clientIds: [bob.clientPseudonym] }] },
         memberCredentials: [aliceAtEpochTwo, bob],
@@ -136,7 +155,7 @@ describe('MIMI Phase 0 HTTP flow', () => {
 
     const removeUnsigned = {
       version: 1 as const, protocol: 'mls10' as const, roomId: anonRoomId, sender: credential, epoch: '2',
-      bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([4]) },
+      bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(anonRoomId, '2', [{ user: credential.userPseudonym, roleIndex: 1 }, { user: bob.userPseudonym, roleIndex: 1 }], [{ user: credential.userPseudonym, roleIndex: 1 }]) },
       stateUpdate: { participantList: { participants: [{ user: credential.userPseudonym, roleIndex: 1 }] }, memberCredentials: [aliceAtEpochTwo] }, submittedAt: at,
     }
     const remove = { ...removeUnsigned, signature: ed25519.sign(updateRoomSigningBytes(removeUnsigned), secret) }
@@ -193,7 +212,7 @@ describe('MIMI Phase 0 HTTP flow', () => {
 
     const addBobUnsigned = {
       version: 1 as const, protocol: 'mls10' as const, roomId, sender: alice.credential, epoch: '1',
-      bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([2]), welcome: new Uint8Array([3]) },
+      bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(roomId, '1', [{ user: alice.credential.user, roleIndex: 1 }], [{ user: alice.credential.user, roleIndex: 1 }, { user: bob.credential.user, roleIndex: 1 }]), welcome: new Uint8Array([3]) },
       stateUpdate: {
         participantList: { participants: [{ user: alice.credential.user, roleIndex: 1, clientIds: [alice.credential.client] }, { user: bob.credential.user, roleIndex: 1, clientIds: [bob.credential.client] }] },
         memberCredentials: [alice.credential, bob.credential],
@@ -206,7 +225,7 @@ describe('MIMI Phase 0 HTTP flow', () => {
 
     const addCharlieUnsigned = {
       version: 1 as const, protocol: 'mls10' as const, roomId, sender: bob.credential, epoch: '2',
-      bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([4]), welcome: new Uint8Array([5]) },
+      bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(roomId, '2', [{ user: alice.credential.user, roleIndex: 1 }, { user: bob.credential.user, roleIndex: 1 }], [{ user: alice.credential.user, roleIndex: 1 }, { user: bob.credential.user, roleIndex: 1 }, { user: charlie.credential.user, roleIndex: 1 }]), welcome: new Uint8Array([5]) },
       stateUpdate: {
         participantList: { participants: [{ user: alice.credential.user, roleIndex: 1 }, { user: bob.credential.user, roleIndex: 1 }, { user: charlie.credential.user, roleIndex: 1, clientIds: [charlie.credential.client] }] },
         memberCredentials: [alice.credential, bob.credential, charlie.credential],

@@ -10,6 +10,7 @@ export const defaultExtensionTypes = {
   required_capabilities: 3,
   external_pub: 4,
   external_senders: 5,
+  app_data_dictionary: 6,
 } as const
 
 /** @public */

@@ -9,6 +9,7 @@ import { decodePskId, pskIdEncoder, PreSharedKeyID } from "./presharedkey.js"
 import { decodeDefaultProposalType, defaultProposalTypeEncoder } from "./defaultProposalType.js"
 import { decodeProtocolVersion, protocolVersionEncoder, ProtocolVersionName } from "./protocolVersion.js"
 import { decodeLeafNodeUpdate, leafNodeEncoder, LeafNodeUpdate } from "./leafNode.js"
+import { AppDataUpdate, appDataUpdateEncoder, decodeAppDataUpdate } from './appData.js'
 
 /** @public */
 export interface Add {
@@ -142,6 +143,12 @@ export interface ProposalGroupContextExtensions {
   groupContextExtensions: GroupContextExtensions
 }
 
+/** `draft-ietf-mls-extensions`-10 §4.7. */
+export interface ProposalAppDataUpdate {
+  proposalType: 'app_data_update'
+  appDataUpdate: AppDataUpdate
+}
+
 /** @public */
 export interface ProposalCustom {
   proposalType: number
@@ -157,6 +164,7 @@ export type Proposal =
   | ProposalReinit
   | ProposalExternalInit
   | ProposalGroupContextExtensions
+  | ProposalAppDataUpdate
   | ProposalCustom
 
 export const proposalAddEncoder: BufferEncoder<ProposalAdd> = contramapBufferEncoders(
@@ -211,6 +219,12 @@ export const encodeProposalGroupContextExtensions: Encoder<ProposalGroupContextE
   proposalGroupContextExtensionsEncoder,
 )
 
+export const proposalAppDataUpdateEncoder: BufferEncoder<ProposalAppDataUpdate> = contramapBufferEncoders(
+  [defaultProposalTypeEncoder, appDataUpdateEncoder],
+  (p) => [p.proposalType, p.appDataUpdate] as const,
+)
+export const encodeProposalAppDataUpdate: Encoder<ProposalAppDataUpdate> = encode(proposalAppDataUpdateEncoder)
+
 export const proposalCustomEncoder: BufferEncoder<ProposalCustom> = contramapBufferEncoders(
   [uint16Encoder, varLenDataEncoder],
   (p) => [p.proposalType, p.proposalData] as const,
@@ -234,6 +248,8 @@ export const proposalEncoder: BufferEncoder<Proposal> = (p) => {
       return proposalExternalInitEncoder(p)
     case "group_context_extensions":
       return proposalGroupContextExtensionsEncoder(p)
+    case 'app_data_update':
+      return proposalAppDataUpdateEncoder(p)
     default:
       return proposalCustomEncoder(p)
   }
@@ -270,6 +286,11 @@ export const decodeProposalGroupContextExtensions: Decoder<ProposalGroupContextE
   (groupContextExtensions) => ({ proposalType: "group_context_extensions", groupContextExtensions }),
 )
 
+export const decodeProposalAppDataUpdate: Decoder<ProposalAppDataUpdate> = mapDecoder(
+  decodeAppDataUpdate,
+  appDataUpdate => ({ proposalType: 'app_data_update', appDataUpdate }),
+)
+
 export function decodeProposalCustom(proposalType: number): Decoder<ProposalCustom> {
   return mapDecoder(decodeVarLenData, (proposalData) => ({ proposalType, proposalData }))
 }
@@ -291,6 +312,8 @@ export const decodeProposal: Decoder<Proposal> = orDecoder(
         return decodeProposalExternalInit
       case "group_context_extensions":
         return decodeProposalGroupContextExtensions
+      case 'app_data_update':
+        return decodeProposalAppDataUpdate
     }
   }),
   flatMapDecoder(decodeUint16, (n) => decodeProposalCustom(n)),

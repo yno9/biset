@@ -124,6 +124,8 @@ export interface RoomState {
   /** MLS credentials for current local leaves, indexed by client identity. */
   memberCredentials: MimiCredential[]
   metadata: RoomMetadata
+  /** Hub signing public key and credential, authenticated in MLS GroupContext. */
+  frankingAgent?: FrankingAgentData
   groupInfo?: Uint8Array
   ratchetTree?: Uint8Array
   createdAt: string

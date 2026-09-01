@@ -8,6 +8,7 @@ import { equalBytes } from '../protocol/canonical.ts'
 import { createFrankingKeyMaterial, type FrankingKeyMaterial } from './franking.ts'
 import { decodeMimiConsentEntryWire, encodeMimiConsentEntryWire } from './federation.ts'
 import { decodeFrankWire, encodeFrankWire } from './wire.ts'
+import { applyMimiParticipantListUpdate } from './app-data.ts'
 import {
   decodeRoomStateWire,
   encodeRoomStateWire,
@@ -28,6 +29,7 @@ import type {
   Frank,
   MimiDeploymentMode,
 } from './protocol-types.ts'
+import type { MimiMlsStateTransition } from './mls-appsync.ts'
 
 const MAX_ROOMS = 10_000
 const MAX_PARTICIPANTS = 512
@@ -110,7 +112,7 @@ export class SqliteMimiStore {
    * remains client/MLS-engine work; this method serializes the one accepted
    * commit per epoch and stores the associated participant state atomically.
    */
-  submitUpdate(request: UpdateRoomRequest): MimiUpdateStoreResult {
+  submitUpdate(request: UpdateRoomRequest, mlsTransition?: MimiMlsStateTransition): MimiUpdateStoreResult {
     this.assertCredentialModes(request.sender, request.initialState?.memberCredentials, request.stateUpdate?.memberCredentials)
     return this.database.transaction((): MimiUpdateStoreResult => {
       const existing = this.roomRow(request.roomId)
@@ -121,7 +123,7 @@ export class SqliteMimiStore {
       if (!isParticipant(state, credentialUser(request.sender))) return { ok: false, reason: 'notAllowed', message: 'sender is not an active participant' }
       if (request.epoch !== state.epoch) return { ok: false, reason: 'wrongEpoch', currentEpoch: state.epoch, message: 'MLS epoch does not match hub state' }
 
-      const next = applyStateUpdate(state, request)
+      const next = mlsTransition === undefined ? applyStateUpdate(state, request) : applyMlsStateUpdate(state, request, mlsTransition)
       try { validateRoomState(next) } catch (error) {
         return { ok: false, reason: 'invalidProposal', message: error instanceof Error ? error.message : 'invalid room state update' }
       }
@@ -346,6 +348,37 @@ function applyStateUpdate(state: RoomState, request: UpdateRoomRequest): RoomSta
     groupInfo: request.bundle.groupInfo ?? state.groupInfo,
     ratchetTree: request.bundle.ratchetTree ?? state.ratchetTree,
   }
+}
+
+/** The committed AppDataUpdate, not the provider JSON envelope, is the source
+ * of truth whenever a client supplied an MLS-appsync transition.  The optional
+ * envelope remains only for key-to-client bookkeeping that MLS cannot expose
+ * to a hub without an Authentication Service adapter. */
+function applyMlsStateUpdate(state: RoomState, request: UpdateRoomRequest, transition: MimiMlsStateTransition): RoomState {
+  const participantList = transition.participantListUpdates.reduce(
+    (current, update) => applyMimiParticipantListUpdate(current, update), state.participantList,
+  )
+  const sidecar = request.stateUpdate
+  if (sidecar?.participantList !== undefined && !sameParticipantList(sidecar.participantList, participantList)) throw new MimiStoreStateError('participantList sidecar disagrees with MLS AppDataUpdate')
+  if (sidecar?.metadata !== undefined && !sameMetadata(sidecar.metadata, transition.roomMetadata ?? state.metadata)) throw new MimiStoreStateError('metadata sidecar disagrees with MLS AppDataUpdate')
+  if (sidecar?.basePolicy !== undefined) throw new MimiStoreStateError('basePolicy sidecar is not an MLS AppDataUpdate')
+  return {
+    ...state,
+    participantList,
+    metadata: transition.roomMetadata ?? state.metadata,
+    frankingAgent: transition.frankingAgent ?? state.frankingAgent,
+    memberCredentials: sidecar?.memberCredentials ?? state.memberCredentials,
+    groupInfo: request.bundle.groupInfo ?? state.groupInfo,
+    ratchetTree: request.bundle.ratchetTree ?? state.ratchetTree,
+  }
+}
+
+function sameParticipantList(left: RoomState['participantList'], right: RoomState['participantList']): boolean {
+  return left.participants.length === right.participants.length && left.participants.every((value, index) => value.user === right.participants[index]?.user && value.roleIndex === right.participants[index]?.roleIndex)
+}
+
+function sameMetadata(left: RoomState['metadata'], right: RoomState['metadata']): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 function validateRoomState(state: RoomState): void {

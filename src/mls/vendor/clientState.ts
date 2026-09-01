@@ -47,6 +47,7 @@ import { ProposalOrRef } from "./proposalOrRefType.js"
 import {
   Proposal,
   ProposalAdd,
+  ProposalAppDataUpdate,
   ProposalExternalInit,
   ProposalGroupContextExtensions,
   ProposalPSK,
@@ -56,6 +57,7 @@ import {
   Reinit,
   Remove,
 } from "./proposal.js"
+import { APP_DATA_DICTIONARY_EXTENSION_TYPE, replaceAppDataComponents } from './appData.js'
 import { pathToRoot } from "./pathSecrets.js"
 import {
   PrivateKeyPath,
@@ -313,6 +315,7 @@ export interface Proposals {
   reinit: { senderLeafIndex: number | undefined; proposal: ProposalReinit }[]
   external_init: { senderLeafIndex: number | undefined; proposal: ProposalExternalInit }[]
   group_context_extensions: { senderLeafIndex: number | undefined; proposal: ProposalGroupContextExtensions }[]
+  app_data_update: { senderLeafIndex: number | undefined; proposal: ProposalAppDataUpdate }[]
 }
 
 const emptyProposals: Proposals = {
@@ -323,6 +326,7 @@ const emptyProposals: Proposals = {
   reinit: [],
   external_init: [],
   group_context_extensions: [],
+  app_data_update: [],
 }
 
 function flattenExtensions(groupContextExtensions: { proposal: ProposalGroupContextExtensions }[]): Extension[] {
@@ -419,6 +423,15 @@ async function validateProposals(
   if (multipleGroupContextExtensions)
     return new ValidationError("Commit cannot contain multiple GroupContextExtensions proposals")
 
+  const appDataUpdatesByComponent = new Map<number, Set<string>>()
+  for (const { proposal } of p.app_data_update) {
+    const operations = appDataUpdatesByComponent.get(proposal.appDataUpdate.componentId) ?? new Set<string>()
+    operations.add(proposal.appDataUpdate.operation)
+    appDataUpdatesByComponent.set(proposal.appDataUpdate.componentId, operations)
+  }
+  if ([...appDataUpdatesByComponent.values()].some(operations => operations.has('remove') && operations.size > 1))
+    return new ValidationError('AppDataUpdate cannot mix remove and update for one component')
+
   const allExtensions = flattenExtensions(p.group_context_extensions)
 
   const requiredCapabilities = allExtensions.find((e) => e.extensionType === "required_capabilities")
@@ -440,6 +453,14 @@ async function validateProposals(
     if (!allAdditionsSupportCapabilities)
       return new ValidationError("Commit contains add proposals of member without required capabilities")
   }
+
+  const appDataChangedByGce = allExtensions.some(extension => extension.extensionType === APP_DATA_DICTIONARY_EXTENSION_TYPE)
+  const requiresAppDataUpdate = requiredCapabilities !== undefined && (() => {
+    const decoded = decodeRequiredCapabilities(requiredCapabilities.extensionData, 0)
+    return decoded !== undefined && decoded[0].proposalTypes.includes(8)
+  })()
+  if (requiresAppDataUpdate && appDataChangedByGce)
+    return new ValidationError('GroupContextExtensions must not modify app_data_dictionary when AppDataUpdate is required')
 
   return await validateExternalSenders(allExtensions, authService)
 }
@@ -702,6 +723,7 @@ function validateExternalInit(grouped: Proposals): ValidationError | undefined {
   if (
     grouped.add.length > 0 ||
     grouped.group_context_extensions.length > 0 ||
+    grouped.app_data_update.length > 0 ||
     grouped.reinit.length > 0 ||
     grouped.update.length > 0
   )
@@ -787,7 +809,20 @@ export async function applyProposals(
       ),
     )
 
-    const newExtensions = flattenExtensions(grouped.group_context_extensions)
+    const extensionsAfterGroupContextProposal = grouped.group_context_extensions.length > 0
+      ? flattenExtensions(grouped.group_context_extensions)
+      : state.groupContext.extensions
+    let newExtensions = extensionsAfterGroupContextProposal
+    if (grouped.app_data_update.length > 0) {
+      try {
+        newExtensions = replaceAppDataComponents(
+          extensionsAfterGroupContextProposal,
+          grouped.app_data_update.map(({ proposal }) => proposal.appDataUpdate),
+        )
+      } catch (error) {
+        throw new ValidationError(error instanceof Error ? error.message : 'invalid AppDataUpdate')
+      }
+    }
 
     const [mutatedTree, addedLeafNodes] = await applyTreeMutations(
       state.ratchetTree,

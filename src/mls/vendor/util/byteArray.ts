@@ -12,7 +12,8 @@ export function bytesToArrayBuffer(b: Uint8Array): ArrayBuffer {
   }
 }
 
-export function toBufferSource(b: Uint8Array): BufferSource {
+/** DOM-free equivalent of WebCrypto's BufferSource, for the Bun-only MIMI build. */
+export function toBufferSource(b: Uint8Array): Uint8Array<ArrayBuffer> | ArrayBuffer {
   if (b.buffer instanceof ArrayBuffer) return b as Uint8Array<ArrayBuffer>
   const ab = new ArrayBuffer(b.byteLength)
   const arr = new Uint8Array(ab)
