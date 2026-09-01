@@ -31,4 +31,20 @@ export function joinMimiVaultChunks(chunks: MimiVaultChunk[]): Uint8Array {
   const result = new Uint8Array(sorted.reduce((sum, chunk) => sum + chunk.payload.length, 0)); let offset = 0; for (const chunk of sorted) { result.set(chunk.payload, offset); offset += chunk.payload.length }
   if (!equalBytes(sha256Bytes(result), first.payloadHash)) throw new TypeError('Vault chunk payload hash is invalid'); return result
 }
+/** Sends ciphertext-ready chunks in order, then commits the small manifest.
+ * The caller encrypts each encoded chunk as its own MLS PrivateMessage and
+ * signs the normal MIMI client request; this module never receives MLS keys. */
+export async function sendMimiVaultCheckpoint(
+  payload: Uint8Array,
+  coveredSeq: number,
+  sender: { sendChunk(chunk: Uint8Array, deliveryId: string): Promise<void>; sendManifest(manifest: { coveredSeq: number; transferId: string; chunkCount: number; payloadHash: Uint8Array }): Promise<void> },
+  transferId = bytesToBase64url(crypto.getRandomValues(new Uint8Array(32))),
+): Promise<{ coveredSeq: number; transferId: string; chunkCount: number; payloadHash: Uint8Array }> {
+  if (!Number.isSafeInteger(coveredSeq) || coveredSeq < 0) throw new TypeError('Vault checkpoint covered sequence is invalid')
+  const chunks = splitMimiVaultPayload(payload, transferId)
+  for (const chunk of chunks) await sender.sendChunk(encodeMimiVaultChunk(chunk), `${transferId}-${chunk.ordinal}`)
+  const manifest = { coveredSeq, transferId, chunkCount: chunks.length, payloadHash: chunks[0]!.payloadHash.slice() }
+  await sender.sendManifest(manifest)
+  return manifest
+}
 function assertChunk(value: MimiVaultChunk): void { if (!/^[A-Za-z0-9_-]{16,128}$/.test(value.transferId) || !Number.isSafeInteger(value.ordinal) || !Number.isSafeInteger(value.count) || value.ordinal < 0 || value.count < 1 || value.ordinal >= value.count || value.count > 256 || value.payload.length < 1 || value.payload.length > MIMI_VAULT_CHUNK_BYTES || value.payloadHash.length !== 32) throw new TypeError('Vault chunk is invalid') }

@@ -555,12 +555,14 @@ export function decodeUpdateRoomResponseWire(text: string): UpdateRoomResponse {
 }
 
 export function encodeSubmitMessageRequestWire(value: SubmitMessageRequest): string {
-  return JSON.stringify({ version: value.version, protocol: value.protocol, roomId: value.roomId, sender: credentialJson(value.sender), epoch: value.epoch, appMessage: bytesToBase64url(value.appMessage), frankAAD: frankAADJson(value.frankAAD), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, submittedAt: value.submittedAt, signature: bytesToBase64url(value.signature) })
+  return JSON.stringify({ version: value.version, protocol: value.protocol, roomId: value.roomId, sender: credentialJson(value.sender), epoch: value.epoch, appMessage: bytesToBase64url(value.appMessage), deliveryId: value.deliveryId, frankAAD: frankAADJson(value.frankAAD), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, submittedAt: value.submittedAt, signature: bytesToBase64url(value.signature) })
 }
 export function decodeSubmitMessageRequestWire(text: string): SubmitMessageRequest {
   const input = record(text)
   if (input.version !== 1) throw new MimiWireError('SubmitMessageRequest.version must be 1')
-  return { version: 1, protocol: requireProtocol(input.protocol, 'SubmitMessageRequest.protocol'), roomId: requireString(input.roomId, 'SubmitMessageRequest.roomId'), sender: decodeCredential(input.sender, 'SubmitMessageRequest.sender'), epoch: requireEpoch(input.epoch, 'SubmitMessageRequest.epoch'), appMessage: requireBinary(input.appMessage, 'SubmitMessageRequest.appMessage'), frankAAD: decodeFrankAAD(input.frankAAD, 'SubmitMessageRequest.frankAAD'), frankingSignatureCiphersuite: requireInteger(input.frankingSignatureCiphersuite, 'SubmitMessageRequest.frankingSignatureCiphersuite'), submittedAt: requireString(input.submittedAt, 'SubmitMessageRequest.submittedAt'), signature: requireBinary(input.signature, 'SubmitMessageRequest.signature') }
+  const deliveryId = input.deliveryId === undefined ? undefined : requireString(input.deliveryId, 'SubmitMessageRequest.deliveryId')
+  if (deliveryId !== undefined && !/^[A-Za-z0-9_-]{16,256}$/.test(deliveryId)) throw new MimiWireError('SubmitMessageRequest.deliveryId is invalid')
+  return { version: 1, protocol: requireProtocol(input.protocol, 'SubmitMessageRequest.protocol'), roomId: requireString(input.roomId, 'SubmitMessageRequest.roomId'), sender: decodeCredential(input.sender, 'SubmitMessageRequest.sender'), epoch: requireEpoch(input.epoch, 'SubmitMessageRequest.epoch'), appMessage: requireBinary(input.appMessage, 'SubmitMessageRequest.appMessage'), ...(deliveryId === undefined ? {} : { deliveryId }), frankAAD: decodeFrankAAD(input.frankAAD, 'SubmitMessageRequest.frankAAD'), frankingSignatureCiphersuite: requireInteger(input.frankingSignatureCiphersuite, 'SubmitMessageRequest.frankingSignatureCiphersuite'), submittedAt: requireString(input.submittedAt, 'SubmitMessageRequest.submittedAt'), signature: requireBinary(input.signature, 'SubmitMessageRequest.signature') }
 }
 export function encodeSubmitMessageResponseWire(value: SubmitMessageResponse): string { return JSON.stringify({ status: value.status, acceptedTimestamp: value.acceptedTimestamp, currentEpoch: value.currentEpoch, frank: value.frank === undefined ? undefined : JSON.parse(encodeFrankWire(value.frank)) }) }
 

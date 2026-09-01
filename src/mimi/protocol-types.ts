@@ -354,6 +354,8 @@ export interface SubmitMessageRequest {
   sender: MimiCredential
   epoch: MimiEpoch
   appMessage: Uint8Array
+  /** Opaque client-generated replay key.  Vault uses this for appendId-equivalent idempotency. */
+  deliveryId?: string
   frankAAD: FrankAAD
   frankingSignatureCiphersuite: number
   submittedAt: string

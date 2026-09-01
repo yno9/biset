@@ -4,7 +4,7 @@
  * list and MLS credentials required by a specification-conformant hub.
  */
 import { Database } from 'bun:sqlite'
-import { equalBytes } from '../protocol/canonical.ts'
+import { equalBytes, sha256Bytes } from '../protocol/canonical.ts'
 import { createFrankingKeyMaterial, type FrankingKeyMaterial } from './franking.ts'
 import { decodeMimiConsentEntryWire, encodeMimiConsentEntryWire } from './federation.ts'
 import { decodeFrankWire, decodeVaultCheckpointManifestWire, encodeFrankWire, encodeVaultCheckpointManifestWire } from './wire.ts'
@@ -243,14 +243,24 @@ export class SqliteMimiStore {
     })()
   }
 
-  submitMessage(roomId: MimiRoomId, sender: MimiUserUri, epoch: MimiEpoch, payload: Uint8Array, frank: Frank, acceptedAt: string): { ok: true; entry: MimiDeliveryEntry } | { ok: false; currentEpoch?: MimiEpoch } {
+  submitMessage(roomId: MimiRoomId, sender: MimiUserUri, epoch: MimiEpoch, payload: Uint8Array, frank: Frank, acceptedAt: string, deliveryId?: string): { ok: true; entry: MimiDeliveryEntry } | { ok: false; currentEpoch?: MimiEpoch } {
     return this.database.transaction((): { ok: true; entry: MimiDeliveryEntry } | { ok: false; currentEpoch?: MimiEpoch } => {
       const row = this.roomRow(roomId)
       if (!row) return { ok: false }
       const state = decodeRoomStateWire(row.state_json)
       if (!isParticipant(state, sender) || state.epoch !== epoch) return { ok: false, currentEpoch: state.epoch }
+      if (deliveryId !== undefined) {
+        const prior = this.database.query<{ payload_hash: Uint8Array; seq: number }, [string, string, string]>('SELECT payload_hash, seq FROM mimi_message_idempotency WHERE room_id = ? AND sender_uri = ? AND delivery_id = ?').get(roomId, sender, deliveryId)
+        if (prior) {
+          if (!equalBytes(new Uint8Array(prior.payload_hash), sha256Bytes(payload))) throw new MimiStoreStateError('deliveryId is bound to another payload')
+          const existing = this.database.query<DeliveryRow, [string, number]>('SELECT seq, kind, payload, epoch, accepted_at, frank_json, vault_checkpoint_json FROM mimi_deliveries WHERE room_id = ? AND seq = ?').get(roomId, prior.seq)
+          if (!existing) throw new MimiStoreStateError('idempotent delivery is missing')
+          return { ok: true, entry: deliveryFromRow(existing) }
+        }
+      }
       const entry: MimiDeliveryEntry = { seq: row.next_seq, kind: 'application', payload: new Uint8Array(payload), epoch, acceptedAt, frank }
       this.database.query('INSERT INTO mimi_deliveries (room_id, seq, kind, payload, epoch, accepted_at, frank_json) VALUES (?, ?, ?, ?, ?, ?, ?)').run(roomId, entry.seq, entry.kind, entry.payload, entry.epoch, entry.acceptedAt, encodeFrankWire(frank))
+      if (deliveryId !== undefined) this.database.query('INSERT INTO mimi_message_idempotency (room_id, sender_uri, delivery_id, payload_hash, seq) VALUES (?, ?, ?, ?, ?)').run(roomId, sender, deliveryId, sha256Bytes(payload), entry.seq)
       this.saveRoom({ ...state, updatedAt: acceptedAt }, row.next_seq + 1)
       this.notify(roomId, [entry])
       return { ok: true, entry }
@@ -608,6 +618,11 @@ function installSchema(database: Database): void {
       manifest_json TEXT NOT NULL,
       delivery_seq INTEGER NOT NULL,
       FOREIGN KEY(room_id) REFERENCES mimi_rooms(room_id)
+    );
+    CREATE TABLE IF NOT EXISTS mimi_message_idempotency (
+      room_id TEXT NOT NULL, sender_uri TEXT NOT NULL, delivery_id TEXT NOT NULL,
+      payload_hash BLOB NOT NULL, seq INTEGER NOT NULL,
+      PRIMARY KEY (room_id, sender_uri, delivery_id)
     );
     CREATE TABLE IF NOT EXISTS mimi_abuse_reports (id INTEGER PRIMARY KEY, room_id TEXT NOT NULL, source_provider TEXT NOT NULL, report_json TEXT NOT NULL, received_at TEXT NOT NULL);
   `)

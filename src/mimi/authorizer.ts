@@ -83,7 +83,7 @@ export function deliveriesWatchSigningBytes(value: Omit<DeliveriesWatchRequest, 
 }
 
 export function submitMessageSigningBytes(value: Omit<SubmitMessageRequest, 'signature'>): Uint8Array {
-  return canonicalBytes({ label: 'biset/mimi-submit-message/v1', version: value.version, protocol: value.protocol, roomId: value.roomId, sender: credentialValue(value.sender), epoch: value.epoch, appMessage: bytesToBase64url(value.appMessage), frankingTag: bytesToBase64url(value.frankAAD.frankingTag), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, submittedAt: value.submittedAt })
+  return canonicalBytes({ label: 'biset/mimi-submit-message/v1', version: value.version, protocol: value.protocol, roomId: value.roomId, sender: credentialValue(value.sender), epoch: value.epoch, appMessage: bytesToBase64url(value.appMessage), ...(value.deliveryId === undefined ? {} : { deliveryId: value.deliveryId }), frankingTag: bytesToBase64url(value.frankAAD.frankingTag), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, submittedAt: value.submittedAt })
 }
 
 export function submitVaultCheckpointSigningBytes(value: Omit<SubmitVaultCheckpointRequest, 'signature'>): Uint8Array {

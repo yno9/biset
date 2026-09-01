@@ -262,7 +262,7 @@ export function createMimiHttpHandler(
         if (!Number.isFinite(acceptedTimestamp) || acceptedTimestamp < 0) return error(400, 'bad-request', 'submittedAt must be a valid post-1970 timestamp')
         const senderUri = credentialUser(value.sender)
         const frank = frankMessage(keys, { aad: value.frankAAD, senderUri, roomUri: roomId, acceptedTimestamp: String(acceptedTimestamp), ciphersuite: value.frankingSignatureCiphersuite })
-        const result = store.submitMessage(roomId, senderUri, value.epoch, value.appMessage, frank, value.submittedAt)
+        const result = store.submitMessage(roomId, senderUri, value.epoch, value.appMessage, frank, value.submittedAt, value.deliveryId)
         if (!result.ok) return json(409, encodeSubmitMessageResponseWire({ status: 'epochTooOld', currentEpoch: result.currentEpoch }))
         return json(200, encodeSubmitMessageResponseWire({ status: 'accepted', acceptedTimestamp: value.submittedAt, frank }))
       }

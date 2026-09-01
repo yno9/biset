@@ -135,6 +135,16 @@ describe('MIMI SQLite store', () => {
     store.close()
   })
 
+  test('deduplicates a Vault deliveryId but rejects rebinding it to another payload', () => {
+    const store = new SqliteMimiStore(new Database(':memory:')); expect(createInitial(store).ok).toBe(true)
+    const keys = store.frankingKeys(roomId)!, frank = frankMessage(keys, { aad: { frankingTag: new Uint8Array(32).fill(2) }, senderUri: alice.user, roomUri: roomId, acceptedTimestamp: '1', ciphersuite: 1 })
+    const first = store.submitMessage(roomId, alice.user, '1', new Uint8Array([1]), frank, at, 'C'.repeat(24))
+    const retry = store.submitMessage(roomId, alice.user, '1', new Uint8Array([1]), frank, '2026-09-02T00:00:00.000Z', 'C'.repeat(24))
+    expect(retry).toMatchObject({ ok: true, entry: { seq: first.ok ? first.entry.seq : -1, acceptedAt: at } })
+    expect(() => store.submitMessage(roomId, alice.user, '1', new Uint8Array([2]), frank, at, 'C'.repeat(24))).toThrow('deliveryId is bound')
+    store.close()
+  })
+
   test('accepts a provider fanout exactly once and exposes it through local delivery', () => {
     const store = new SqliteMimiStore(new Database(':memory:'))
     expect(createInitial(store).ok).toBe(true)
