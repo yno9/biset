@@ -265,7 +265,7 @@ identity_link_key(epoch) = exportSecret(state, "mimi mmr identity-link", groupId
 - [x] **0.5.1 クライアント向け配信経路（spec範囲外、biset独自、§5.1参照）** (完了: 2026-09-01, `src/mimi/http.ts`, `src/mimi/watch-token.ts`): `/v1/mimi/deliveries/pull`・`/v1/mimi/deliveries/watch`・`/v1/mimi/deliveries/stream`を`http.ts`に追加する。**specの`notify/{roomId}`はprovider間専用でありこれの代わりにならない**——別物として実装すること。watch-tokenの発行・SSE配信は`mls-ds/watch-token.ts`と`mls-ds/http.ts`の`streamFor`をそのまま踏襲し、**`: connected`の即時flushを最初から入れる**（このセッションで踏んだ罠、0.6のidleTimeout設定とセットで効く）。
   - 参照実装: `src/mls-ds/watch-token.ts`, `src/mls-ds/http.ts`の`streamDeliveries`相当部分
   - depends on: 0.2, 0.3, 0.4
-- [~] **0.6 デプロイメント** (agent: /root, 開始: 2026-09-01): `src/mimi/deployment.ts`。Bun.serve wrapper、CORS、**`idleTimeout: 255`を最初から設定する**（このセッションで踏んだSSE/heartbeatの罠を再現しない——0.5では長寿命接続は無いが、0.5.1のクライアント配信watchと、Phase 3の`notify`実装時にこの設定が既にあることが重要）。
+- [x] **0.6 デプロイメント** (完了: 2026-09-01, `src/mimi/deployment.ts`): `src/mimi/deployment.ts`。Bun.serve wrapper、CORS、**`idleTimeout: 255`を最初から設定する**（このセッションで踏んだSSE/heartbeatの罠を再現しない——0.5では長寿命接続は無いが、0.5.1のクライアント配信watchと、Phase 3の`notify`実装時にこの設定が既にあることが重要）。
   - 参照実装: `src/mls-ds/deployment.ts`（コメントに罠の詳細な記録あり、必ず読むこと）
   - depends on: 0.5, 0.5.1
 - [ ] **0.7 entrypoint**: `src/mimi/index.ts`。store/authorizer/http/deploymentの配線。
