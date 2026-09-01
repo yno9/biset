@@ -3,6 +3,7 @@ import { Ed25519MimiSignatureVerifier } from './authorizer.ts'
 import { createMimiHttpHandler } from './http.ts'
 import { SqliteMimiStore } from './store.ts'
 import { MimiWatchTokenIssuer } from './watch-token.ts'
+import type { MimiDeploymentMode } from './protocol-types.ts'
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -10,7 +11,11 @@ const CORS: Record<string, string> = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 }
 
-export interface MimiDeploymentOptions { databasePath: string }
+export interface MimiDeploymentOptions {
+  databasePath: string
+  /** Each mode must use its own process and SQLite file. */
+  mode: MimiDeploymentMode
+}
 
 export interface MimiServerOptions extends MimiDeploymentOptions { port: number }
 
@@ -25,6 +30,7 @@ export function createMimiDeployment(options: MimiDeploymentOptions) {
   const watchTokens = new MimiWatchTokenIssuer()
   const inner = createMimiHttpHandler(store, verifier, watchTokens)
   return {
+    mode: options.mode,
     store,
     async fetch(request: Request): Promise<Response> {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS })

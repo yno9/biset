@@ -45,7 +45,7 @@ describe('MIMI Phase 0 HTTP flow', () => {
     const alice = client('did:web:alice', 'phone', 1)
     const bob = client('did:web:bob', 'laptop', 2)
     const charlie = client('did:web:charlie', 'tablet', 3)
-    const deployment = createMimiDeployment({ databasePath: ':memory:' })
+    const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'normal' })
 
     const initialUnsigned = {
       version: 1 as const, protocol: 'mls10' as const, roomId, sender: alice.credential, epoch: '0',
