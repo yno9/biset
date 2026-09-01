@@ -26,7 +26,7 @@ import {
 } from '../../src/mimi/wire.ts'
 import type { PseudonymousCredential, VisibleCredential } from '../../src/mimi/protocol-types.ts'
 import { encodeMlsMessage } from '../../src/mls/vendor/index.ts'
-import { encodeMimiParticipantListUpdate } from '../../src/mimi/app-data.ts'
+import { encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../../src/mimi/app-data.ts'
 
 interface Client { credential: VisibleCredential; secret: Uint8Array }
 
@@ -47,15 +47,19 @@ function signedUpdate(sender: Client, value: Parameters<typeof updateRoomSigning
 
 /** A structurally real MLS PublicMessage Commit. Signature validation belongs
  * to the MLS group clients; the hub parses its authenticated AppDataUpdate. */
-function participantCommit(room: string, epoch: string, before: { user: string; roleIndex: number }[], after: { user: string; roleIndex: number }[]): Uint8Array {
+function participantCommit(room: string, epoch: string, before: { user: string; roleIndex: number }[], after: { user: string; roleIndex: number }[], roomName?: string): Uint8Array {
+  const proposals = [{ proposalOrRefType: 'proposal' as const, proposal: { proposalType: 'app_data_update' as const, appDataUpdate: {
+    componentId: 0x0022, operation: 'update' as const, update: encodeMimiParticipantListUpdate({ changedRoleParticipants: [], removedIndices: before.map((_value, index) => index), addedParticipants: after }),
+  } } }]
+  if (roomName !== undefined) proposals.push({ proposalOrRefType: 'proposal' as const, proposal: { proposalType: 'app_data_update' as const, appDataUpdate: {
+    componentId: 0x0023, operation: 'update' as const, update: encodeMimiRoomMetadata({ roomUri: room, roomName }),
+  } } })
   return encodeMlsMessage({
     version: 'mls10', wireformat: 'mls_public_message',
     publicMessage: {
       content: {
         groupId: new TextEncoder().encode(room), epoch: BigInt(epoch), sender: { senderType: 'member', leafIndex: 0 }, authenticatedData: new Uint8Array(), contentType: 'commit',
-        commit: { proposals: [{ proposalOrRefType: 'proposal', proposal: { proposalType: 'app_data_update', appDataUpdate: {
-          componentId: 0x0022, operation: 'update', update: encodeMimiParticipantListUpdate({ changedRoleParticipants: [], removedIndices: before.map((_value, index) => index), addedParticipants: after }),
-        } } }], path: undefined },
+        commit: { proposals, path: undefined },
       },
       auth: { contentType: 'commit', signature: new Uint8Array(), confirmationTag: new Uint8Array() }, senderType: 'member', membershipTag: new Uint8Array(),
     },
@@ -68,7 +72,7 @@ describe('MIMI Phase 0 HTTP flow', () => {
     const other = client('did:web:other', 'phone', 10)
     expect(() => createMimiDeployment({ databasePath: ':memory:', mode: 'self' })).toThrow('selfOwnerUser')
     const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'self', selfOwnerUser: owner.credential.user })
-    const unsigned = (sender: Client, id: string) => ({ version: 1 as const, protocol: 'mls10' as const, roomId: id, sender: sender.credential, epoch: '0', bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([1]) }, initialState: { basePolicy: new Uint8Array(), participantList: { participants: [{ user: sender.credential.user, roleIndex: 1 }] }, memberCredentials: [sender.credential], metadata: { roomUri: id, roomName: 'self' } }, submittedAt: at })
+    const unsigned = (sender: Client, id: string) => ({ version: 1 as const, protocol: 'mls10' as const, roomId: id, sender: sender.credential, epoch: '0', bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(id, '0', [], [{ user: sender.credential.user, roleIndex: 1 }], 'self') }, initialState: { basePolicy: new Uint8Array(), participantList: { participants: [{ user: sender.credential.user, roleIndex: 1 }] }, memberCredentials: [sender.credential], metadata: { roomUri: id, roomName: 'self' } }, submittedAt: at })
     const own = unsigned(owner, 'mimi://self.example/r/owner')
     expect((await deployment.fetch(post(`/update/${encodeURIComponent(own.roomId)}`, encodeUpdateRoomRequestWire(signedUpdate(owner, own))))).status).toBe(200)
     const rejected = unsigned(other, 'mimi://self.example/r/other')
@@ -80,7 +84,7 @@ describe('MIMI Phase 0 HTTP flow', () => {
   test('anon mode rejects a visible-credential room creation before it can reach storage', async () => {
     const alice = client('did:web:alice', 'phone', 1)
     const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'anon' })
-    const unsigned = { version: 1 as const, protocol: 'mls10' as const, roomId, sender: alice.credential, epoch: '0', bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([1]) }, initialState: { basePolicy: new Uint8Array(), participantList: { participants: [{ user: alice.credential.user, roleIndex: 1 }] }, memberCredentials: [alice.credential], metadata: { roomUri: roomId, roomName: 'reject' } }, submittedAt: at }
+    const unsigned = { version: 1 as const, protocol: 'mls10' as const, roomId, sender: alice.credential, epoch: '0', bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(roomId, '0', [], [{ user: alice.credential.user, roleIndex: 1 }], 'reject') }, initialState: { basePolicy: new Uint8Array(), participantList: { participants: [{ user: alice.credential.user, roleIndex: 1 }] }, memberCredentials: [alice.credential], metadata: { roomUri: roomId, roomName: 'reject' } }, submittedAt: at }
     const response = await deployment.fetch(post(`/update/${encodeURIComponent(roomId)}`, encodeUpdateRoomRequestWire(signedUpdate(alice, unsigned))))
     expect(response.status).toBe(403)
     expect(deployment.store.room(roomId)).toBeUndefined()
@@ -112,7 +116,7 @@ describe('MIMI Phase 0 HTTP flow', () => {
     const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'anon' })
     const initialUnsigned = {
       version: 1 as const, protocol: 'mls10' as const, roomId: anonRoomId, sender: credential, epoch: '0',
-      bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([1]) },
+      bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(anonRoomId, '0', [], [{ user: credential.userPseudonym, roleIndex: 1 }], 'opaque') },
       initialState: {
         basePolicy: new Uint8Array(), participantList: { participants: [{ user: credential.userPseudonym, roleIndex: 1, clientIds: [credential.clientPseudonym] }] },
         memberCredentials: [credential], metadata: { roomUri: anonRoomId, roomName: 'opaque' },
@@ -172,7 +176,7 @@ describe('MIMI Phase 0 HTTP flow', () => {
 
     const initialUnsigned = {
       version: 1 as const, protocol: 'mls10' as const, roomId, sender: alice.credential, epoch: '0',
-      bundle: { kind: 'commit' as const, proposalOrCommit: new Uint8Array([1]) },
+      bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(roomId, '0', [], [{ user: alice.credential.user, roleIndex: 1 }], 'Three devices') },
       initialState: {
         basePolicy: new Uint8Array(), participantList: { participants: [{ user: alice.credential.user, roleIndex: 1, clientIds: [alice.credential.client] }] },
         memberCredentials: [alice.credential], metadata: { roomUri: roomId, roomName: 'Three devices' },

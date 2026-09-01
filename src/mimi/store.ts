@@ -25,6 +25,7 @@ import type {
   MlsRequiredCapabilities,
   PublishedKeyPackage,
   RoomState,
+  ParticipantListData,
   UpdateRoomRequest,
   Frank,
   MimiDeploymentMode,
@@ -116,7 +117,7 @@ export class SqliteMimiStore {
     this.assertCredentialModes(request.sender, request.initialState?.memberCredentials, request.stateUpdate?.memberCredentials)
     return this.database.transaction((): MimiUpdateStoreResult => {
       const existing = this.roomRow(request.roomId)
-      if (!existing) return this.createFromInitialUpdate(request)
+      if (!existing) return this.createFromInitialUpdate(request, mlsTransition)
       if (request.initialState !== undefined) return { ok: false, reason: 'roomExists', message: 'room already exists' }
 
       const state = decodeRoomStateWire(existing.state_json)
@@ -261,13 +262,20 @@ export class SqliteMimiStore {
     return created
   }
 
-  private createFromInitialUpdate(request: UpdateRoomRequest): MimiUpdateStoreResult {
+  private createFromInitialUpdate(request: UpdateRoomRequest, transition: MimiMlsStateTransition | undefined): MimiUpdateStoreResult {
     if (!request.initialState) return { ok: false, reason: 'notAllowed', message: 'room does not exist' }
+    if (!transition || request.bundle.kind !== 'commit') return { ok: false, reason: 'invalidProposal', message: 'initial room state requires an MLS AppDataUpdate Commit' }
     if (request.epoch !== '0') return { ok: false, reason: 'wrongEpoch', currentEpoch: '0', message: 'initial room epoch must be 0' }
     if (this.roomCount() >= MAX_ROOMS) throw new MimiStoreCapacityError('MIMI room capacity reached')
+    const participantList = transition.participantListUpdates.reduce<ParticipantListData>(
+      (current, update) => applyMimiParticipantListUpdate(current, update), { participants: [] },
+    )
+    if (!transition.roomMetadata) return { ok: false, reason: 'invalidProposal', message: 'initial room state requires room_metadata AppDataUpdate' }
+    if (!sameParticipantList(request.initialState.participantList, participantList)) return { ok: false, reason: 'invalidProposal', message: 'initial participantList sidecar disagrees with MLS AppDataUpdate' }
+    if (!sameMetadata(request.initialState.metadata, transition.roomMetadata)) return { ok: false, reason: 'invalidProposal', message: 'initial metadata sidecar disagrees with MLS AppDataUpdate' }
     const state: RoomState = {
       roomId: request.roomId, protocol: request.protocol, epoch: '0', basePolicy: request.initialState.basePolicy,
-      participantList: request.initialState.participantList, memberCredentials: request.initialState.memberCredentials, metadata: request.initialState.metadata,
+      participantList, memberCredentials: request.initialState.memberCredentials, metadata: transition.roomMetadata, frankingAgent: transition.frankingAgent,
       groupInfo: request.bundle.groupInfo, ratchetTree: request.bundle.ratchetTree, createdAt: request.submittedAt, updatedAt: request.submittedAt,
     }
     try { validateRoomState(state) } catch (error) {

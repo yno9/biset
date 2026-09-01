@@ -463,7 +463,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: 6.1
 - [ ] **6.5（項目12）テスト・回帰確認**: `test/mimi/http.test.ts`等を本物のMLS wire formatでのroom作成・member追加に書き換え、typecheck・全テストスイート（`bun run test`）を実行する。本番（`mimi.biset.md`/`mimi-anon.biset.md`）に対する実HTTPS検証で、本物のMLS commitを使ったroom作成→member追加→AppSync（または6.0(B)のprivate-use拡張）経由でのroom名/participant list反映を確認する。
   - depends on: 6.2, 6.3, 6.4
-- [ ] **6.6（項目13）`groupInfo/{roomId}`の扱いを確定する**: 3択——(a) 実装する、(b) directoryからURLを外す、(c) 常に`notAuthorized`/403を明示的に返す。`biset-mls-ds`が同じ理由（漏洩経路①、GroupInfoのratchet treeが平文で実credentialを含む、[PLAN_biset-mls-ds.md §0](PLAN_biset-mls-ds.md)）でexternal joinを廃止した経緯を踏まえると(c)を推奨。いずれを選ぶにせよ[directory.ts](src/mimi/directory.ts)との整合を取ること——「対応を謳うが404が返る」状態（本セッションで実HTTPS確認済み）を解消する。
+- [~] **6.6（項目13）`groupInfo/{roomId}`の扱いを確定する** (agent: Codex, 開始: 2026-09-01): 3択——(a) 実装する、(b) directoryからURLを外す、(c) 常に`notAuthorized`/403を明示的に返す。`biset-mls-ds`が同じ理由（漏洩経路①、GroupInfoのratchet treeが平文で実credentialを含む、[PLAN_biset-mls-ds.md §0](PLAN_biset-mls-ds.md)）でexternal joinを廃止した経緯を踏まえると(c)を推奨。いずれを選ぶにせよ[directory.ts](src/mimi/directory.ts)との整合を取ること——「対応を謳うが404が返る」状態（本セッションで実HTTPS確認済み）を解消する。
   - depends on: なし（6.0-6.5と並行可）
 - [ ] **6.7（項目15）`notify/{roomId}`のFanoutMessage構造照合**: spec行1886-2020を読み、[fanout.ts](src/mimi/fanout.ts)のFanoutMessage/FanoutBatch相当の構造を1フィールドずつ突き合わせる。ズレがあれば修正する。
   - depends on: なし（6.0-6.5と並行可）

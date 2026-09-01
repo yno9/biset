@@ -188,11 +188,9 @@ export function createMimiHttpHandler(
         // Existing rooms derive provider-visible state from an MLS Public
         // Commit. Initial room creation remains a one-time envelope until the
         // MIMI room-policy component has a stable initial-state assignment.
-        const mlsTransition = store.room(roomId) === undefined
-          ? undefined
-          : value.bundle.kind === 'commit'
-            ? extractMimiMlsStateTransition(value.bundle.proposalOrCommit)
-            : undefined
+        const mlsTransition = value.bundle.kind === 'commit'
+          ? extractMimiMlsStateTransition(value.bundle.proposalOrCommit)
+          : undefined
         const result = store.submitUpdate(value, mlsTransition)
         if (result.ok) return json(200, encodeUpdateRoomResponseWire({ status: 'success', acceptedTimestamp: value.submittedAt }))
         return updateError(result.reason, result.message, result.currentEpoch)
