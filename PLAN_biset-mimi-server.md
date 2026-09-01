@@ -395,6 +395,8 @@ biset-mimi-self（未設計）# 本人複数端末同期（旧biset-coordinator�
 ## 15. 仕様準拠監査（2026-09-01、`mimi-protocol-06.md`原文照合）
 
 > 手法: `mimi-protocol-06.md`（本リポジトリ直下、draft-ietf-mimi-protocol、2026-04版）を該当箇所ごとに読み直し、`src/mimi/*`の実装と1行単位で突き合わせた。行番号は`mimi-protocol-06.md`のもの。一部は`https://mimi.biset.md`への実HTTPS呼び出しで裏取りした。
+>
+> **状態（2026-09-01追記）: 以下の❌評価（`update`/`groupInfo`/franking鍵配布）は§16 Phase 6で解消済み。** 監査時点の記録として本文はそのまま残し、各行に解決状況を追記した。§16完了後の再監査結果は§17参照。
 
 ### 15.0 総評
 
@@ -406,10 +408,10 @@ biset-mimi-self（未設計）# 本人複数端末同期（旧biset-coordinator�
 |---|---|---|
 | `GET /.well-known/mimi-protocol-directory` | 1013-1044 | ✅ ほぼ完全一致。フィールド名・構造ともspecの例示JSONとそのまま対応（[directory.ts](src/mimi/directory.ts)）。 |
 | `POST /keyMaterial/{targetUser}` | 1046-1345 | ✅ `KeyMaterialUserCode`（success/partialSuccess/incompatibleProtocol/noCompatibleMaterial/userUnknown/noConsent/noConsentForThisRoom/userDeleted、line 1237-1247）・`KeyMaterialClientCode`（success/keyMaterialExhausted/nothingCompatible、line 1249-1254）とも[protocol-types.ts](src/mimi/protocol-types.ts)の`KeyMaterialUserStatus`/`KeyMaterialClientStatus`に一字一句一致。`roomId`必須の理由（Welcome routing、line 1056-1059）も踏襲。 |
-| `POST /update/{roomId}` | 1349-1523 | ❌ **重大な不一致**。specは参加者リスト変更・room policy変更を「AppSync proposal（applicationId: `mimiParticipantList`/`mimiRoomPolicy`）としてMLSの実Commitに埋め込む」ことを要求する（line 1359-1364）。biset実装は`proposalOrCommit`を完全な不透明バイト列として扱い（`new Uint8Array([1])`のようなダミー値でも通る、本セッションの実HTTPS検証で確認済み）、参加者リスト・credential・room metadataは別フィールド（`initialState`/`stateUpdate`）としてJSONで並行して送る——spec本文にこの仕組みは存在しない。§15.2で詳述。 |
+| `POST /update/{roomId}` | 1349-1523 | ❌→✅ **監査時点は重大な不一致だったが、§16 Phase 6で解消**。specは参加者リスト変更・room policy変更を「AppSync proposal（applicationId: `mimiParticipantList`/`mimiRoomPolicy`）としてMLSの実Commitに埋め込む」ことを要求する（line 1359-1364）。監査時点のbiset実装は`proposalOrCommit`を完全な不透明バイト列として扱い（`new Uint8Array([1])`のようなダミー値でも通っていた）、参加者リスト・credential・room metadataは別フィールド（`initialState`/`stateUpdate`）としてJSONで並行して送るだけだった。Phase 6（6.0-6.5）で`app_data_dictionary`/`AppDataUpdate`（draft-ietf-mls-extensions-10 §4.6-4.7）を正式実装し、`update/{roomId}`が実MLS PublicMessage Commitから`participant_list`/`room_metadata`/`franking_signature_key`（`0x0022`/`0x0023`/`0x0021`）を抽出・検証するようになった。§17で再検証済み（bareバイト列は400で拒否、sidecarとMLS内容の不一致は400で拒否）。 |
 | `POST /submitMessage/{roomId}` + franking | 1523-1885 | 🟡 概ね準拠。franking_tagをAAD化する・hubがsenderをfollowerに漏らさない・franking_integrity_signatureで検証可能にする、というspecの設計思想（line 1860-1884）は[franking.ts](src/mimi/franking.ts)に正しく再現されている。ただしHMACに渡す`context`のバイト列化がspecのTLS Presentation Language準拠ではなく、bisetの`canonicalBytes`独自形式（`frankingContextBytes`）——hub内部にしか関わらない値なので実害は小さいが、厳密な意味でのwire互換ではない。 |
 | `POST /notify/{roomId}`（fanout） | 1886-2020 | 🟡 未精査。[fanout.ts](src/mimi/fanout.ts)にmTLS transport経由のbatch送受信・重複排除は実装されているが、spec行1886-1924の`FanoutMessage`の正確なフィールド一致は本監査では未確認——別途要精査（§15.3未決事項へ追加）。 |
-| `POST /groupInfo/{roomId}`（external join） | 2021-2205 | ❌ **未実装、かつdirectoryが虚偽の広告をしている**。`http.ts`のルーティングに`groupInfo`は一切存在せず、実際に`https://mimi.biset.md/groupInfo/{roomId}`へPOSTすると**404**（本セッションで実HTTPS確認済み）。一方[directory.ts](src/mimi/directory.ts)の`createMimiProtocolDirectory`は無条件に`groupInfo`のURLテンプレートを返す——**「対応している」と嘘をついているエンドポイントが存在する**状態。external join自体はbiset-mls-dsが漏洩経路①として意図的に削除した機能（[PLAN_biset-mls-ds.md §0](PLAN_biset-mls-ds.md)）なので、biset-mimiでも同じ理由で未実装なのは設計判断としてはあり得るが、それなら**directoryからこのURLを外すか、常に`notAuthorized`相当を返すべき**——今のまま放置すると外部providerに「サポートしている」と誤認させる。 |
+| `POST /groupInfo/{roomId}`（external join） | 2021-2205 | ❌→✅ **監査時点はdirectoryが虚偽の広告をしていたが、§16 Phase 6（6.6）で解消**。監査時点は`http.ts`にルーティング自体が無く404だったが、directoryは無条件に`groupInfo`のURLを広告していた。Phase 6で(c)案（常に明示的な拒否を返す）を採用——external joinはGroupInfoのratchet treeが実credentialを漏らす（biset-mls-dsが同じ理由で削除、[PLAN_biset-mls-ds.md §0](PLAN_biset-mls-ds.md)）ため実装せず、`POST /groupInfo/{roomId}`は常に403 `not-allowed`を返すよう明示化。§17で実HTTPS確認済み。 |
 | `POST /requestConsent/{targetDomain}` / `POST /updateConsent/{requesterDomain}` | 2206-2336 | ✅ `ConsentEntry`（consentOperation/requesterUri/targetUri/roomId/clientKeyPackages、line 2262-2272）の構造は[protocol-types.ts](src/mimi/protocol-types.ts)の`MimiConsentEntry`とほぼ一致。`consent_extensions`（AppDataDictionary拡張点、line 2332-2335）のみ未実装——現時点で使い道が無いので実害は小さい。 |
 | `POST /identifierQuery/{domain}` | 2337-2562 | 🟡 型（`MimiIdentifierSearchType`等）は妥当に見えるが、spec本文2337-2562の検索フィールド網羅性・プライバシー配慮のガイダンス（Xavier/Yolanda/Zach例）との細部一致は本監査では未確認。 |
 | `POST /reportAbuse/{roomId}` | 2563-2639 | ✅ franking証跡の検証（`verifyFrank`）を経由してから記録する、という設計はspecの意図と一致。 |
@@ -428,22 +430,24 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
 | `participant_list` | `0x0022` | GroupContext側、参加者リスト |
 | `room_metadata` | `0x0023` | GroupContext側、room名等 |
 
-これらの値・`app_data_dictionary`・`AppDataUpdate`のいずれも、`src/mimi/`と`src/mls/`のどこにも実装されていない（本監査でgrep確認済み）。つまり:
+監査時点、これらの値・`app_data_dictionary`・`AppDataUpdate`のいずれも`src/mimi/`と`src/mls/`のどこにも実装されていなかった（grep確認済み）。つまり監査時点は:
 
-- room metadataは`RoomMetadata`という**biset独自のJSON構造体**として`initialState.metadata`に載せているだけで、spec §7.6が要求する「GroupContext拡張のAppDataUpdate proposalとしてMLS commitに埋め込む」形になっていない。
-- participant listも同様、spec §7.5・§10.3が要求する`participant_list`コンポーネントではなく、biset独自の`ParticipantListData`をJSONで並行送信しているだけ。
-- franking鍵の共有方法（`franking_signature_key`コンポーネント、GroupContext経由でメンバー全員に配布）も未実装——bisetはhub側の`FrankingKeyMaterial`をDB内に保持するだけで、MLS GroupContext経由でクライアントに配布する仕組みが無い（クライアント側がfranking検証に使う公開鍵をどう入手するかの経路が実質欠落している可能性がある——要確認、§15.3未決事項へ追加）。
+- room metadataは`RoomMetadata`という**biset独自のJSON構造体**として`initialState.metadata`に載せているだけで、spec §7.6が要求する「GroupContext拡張のAppDataUpdate proposalとしてMLS commitに埋め込む」形になっていなかった。
+- participant listも同様、spec §7.5・§10.3が要求する`participant_list`コンポーネントではなく、biset独自の`ParticipantListData`をJSONで並行送信しているだけだった。
+- franking鍵の共有方法（`franking_signature_key`コンポーネント、GroupContext経由でメンバー全員に配布）も未実装だった。
 
-これは実装者自身が「Phase 0の暫定措置」として認めている通りのものだが、**この監査で改めて明確にしておくべきは、これが「細部の食い違い」ではなく「spec全体のE2E信頼モデルの根幹」だということ**。spec設計では、hubは「MLSのCommitを実際にMLSとして検証できる（AppSync proposalを解釈できる）」ことが前提になっており、それによって「room stateの変更はMLSの暗号学的な合意（proposal-commitパラダイム、line 2973-2987）に紐づく」という保証が成り立つ。biset実装は「JSON側で言われたことをそのまま信じる」形になっており、**MLS commit自体の正当性（実際にそのcommitが本当にそのparticipant list変更を含意しているか）を検証していない**——`initialState`/`stateUpdate`のJSONと`proposalOrCommit`のバイト列の整合性はどこでもチェックされていない。
+**→ 全て§16 Phase 6で解消**（[src/mls/vendor/appData.ts](src/mls/vendor/appData.ts)が`app_data_dictionary`(`0x0006`)/`AppDataUpdate`(`0x0008`)、[src/mimi/app-data.ts](src/mimi/app-data.ts)がMIMIの4コンポーネント`0x0020`-`0x0023`を実装、[src/mimi/mls-appsync.ts](src/mimi/mls-appsync.ts)が実MLS PublicMessage Commitから抽出）。詳細は§17。
+
+これは実装者自身が「Phase 0の暫定措置」として認めていた通りのものだったが、この監査で明確にした核心は「細部の食い違い」ではなく「spec全体のE2E信頼モデルの根幹」だという点——監査時点のbiset実装は「JSON側で言われたことをそのまま信じる」形になっており、MLS commit自体の正当性を検証していなかった。§16はまさにこの根幹を直したものであり、パッチではなく正しい優先度づけだった。
 
 ### 15.3 本監査で新たに追加する未決事項
 
-12. **（最優先）`update/{roomId}`のAppSync実装** — `proposalOrCommit`を実際にMLS wire formatとしてパースし、`mimiParticipantList`/`mimiRoomPolicy`のAppSync proposalから参加者リスト・policy変更を抽出する。現在の`initialState`/`stateUpdate`という独自JSON sidecarを廃止するか、最低限「JSON側の申告とMLS commitの内容が矛盾しないことを検証する」処理を追加する。§7・§10の4コンポーネント（`0x0020`-`0x0023`）をGroupContext拡張として実装する必要がある。**Phase 3のフェデレーションを名乗る前に必須**。
-13. **`groupInfo/{roomId}`の扱いを確定する** — 未実装のまま放置せず、(a) directoryから外す、(b) 実装する、(c) 常に`notAuthorized`を明示的に返す、のいずれかを選ぶ。現状の「directoryは対応を謳うが404が返る」は外部providerとの相互運用を試みた瞬間に見つかる明白な不具合。
-14. **franking鍵（`franking_signature_key`）のクライアント配布経路の確認** — receiver側が`verifyFrank`に使う公開鍵をどうやって安全に入手するか、実際のクライアント実装（`mimi-client-transport.ts`等）でのフローを確認する。GroupContext経由でない場合、経路自体を明文化する。
-15. **`notify/{roomId}`のFanoutMessage構造の詳細照合**（spec行1886-2020）。
-16. **`identifierQuery`のプライバシー配慮ガイダンス（spec行2337-2562の例）との整合確認**。
-17. **`proxyDownload`のOblivious HTTP対応（spec §5.10.3）の要否判断**——非対応なら明示的にスコープ外と記載する。
+12. ~~（最優先）`update/{roomId}`のAppSync実装~~ → **§16 6.0-6.5で完了、§17で再検証済み**。
+13. ~~`groupInfo/{roomId}`の扱いを確定する~~ → **§16 6.6で完了（(c)案）、§17で再検証済み**。
+14. ~~franking鍵（`franking_signature_key`）のクライアント配布経路の確認~~ → **§16 6.4で完了**（`GET /v1/mimi/franking-agent/{roomId}`で作成前にhub鍵を取得し、初回commitの`0x0021`componentへ含める設計。§17で再検証済み）。
+15. `notify/{roomId}`のFanoutMessage構造の詳細照合（spec行1886-2020）→ §16 6.7で完了と報告されている（§17では独立再検証していない、要フォローアップ）。
+16. `identifierQuery`のプライバシー配慮ガイダンス（spec行2337-2562の例）との整合確認 → §16 6.8で完了と報告されている（§17では独立再検証していない、要フォローアップ）。
+17. `proxyDownload`のOblivious HTTP対応（spec §5.10.3）の要否判断 → §16 6.9で完了と報告されている（スコープ外と明記、RFC 9458非対応なので完全準拠hubではない旨も記録済み）。
 
 ## 16. Phase 6 作業ワークシート（§15監査結果への対応、マルチエージェント協働用）
 
@@ -474,3 +478,38 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: なし（6.0-6.5と並行可）
 - [x] **6.10 Phase 6 release gate確認**: §10に正式なgateとして追記した上で確認する——本物のMLS wire commitを使ったroom作成→member追加→AppSync（またはprivate-use拡張）経由でのroom名/participant list反映が、本番HTTPSに対する実検証で確認できること。`groupInfo`のdirectory整合も同時に確認する。 (完了: 2026-09-01, 関連: §10, `test/mimi/http.test.ts`; normal/anon本番で署名済み初期commit・participant更新を各200確認、directory 200 / advertised groupInfo は明示的403確認)
   - depends on: 6.5, 6.6
+
+## 17. Phase 6 独立再検証（2026-09-01、別セッションによる実装完了後）
+
+> 実装したagentとは別に、typecheck・全テストスイート・実HTTPS本番検証（`mimi.biset.md`）で独立に再確認した。
+
+### 17.0 総評
+
+**§15で指摘した核心的な不一致（AppSync未実装、groupInfoの虚偽広告）は実際に解消されている。** 実装の質は高く、単なるパッチではなく、正しい一次資料（`draft-ietf-mls-extensions-10`）に基づく本格的な実装になっている。以下、確認できたこと・まだ残っていることを分けて記録する。
+
+### 17.1 確認できたこと（コード照合 + 実HTTPS検証）
+
+- `bun run typecheck`・`bun run test`（全208+ファイル）とも無傷でパス。
+- [src/mls/vendor/appData.ts](src/mls/vendor/appData.ts): `app_data_dictionary`(`0x0006`)・`AppDataUpdate`(`0x0008`)のTLS codec実装は構造的に妥当（componentIdでソート済み・重複拒否、update/removeの2オペレーション）。
+- [src/mimi/app-data.ts](src/mimi/app-data.ts): `ParticipantListUpdate`（`changedRoleParticipants`/`removedIndices`/`addedParticipants`）は spec 行3052-3072 の`UserindexRolePair`/`ParticipantListUpdate`構造と**フィールド順まで含めて一致**。`RoomMetaData`（room_uri/room_name/room_descriptions/room_avatar/room_subject/room_mood）も spec 行3158-3166 と1対1で一致。
+- [src/mimi/mls-appsync.ts](src/mimi/mls-appsync.ts): 実MLS PublicMessage Commitのみを受理し、ProposalRef（未認証の参照）は明示的に拒否している（コメント曰く「これを許すと元のJSON sidecarの信用問題を再現する」——正しい理解）。
+- [src/mimi/store.ts](src/mimi/store.ts)の`createFromInitialUpdate`/`applyMlsStateUpdate`: room作成・以後の更新とも、JSON sidecarが存在する場合はMLS AppDataUpdateの内容と**完全一致しないと拒否**される（`sameParticipantList`/`sameMetadata`）。`basePolicy`のsidecarは常に拒否（MLS側に対応するコンポーネントが無いことを正しく認識している）。
+- **実HTTPS検証（`https://mimi.biset.md`）で4点確認**:
+  1. 本物のMLS AppData Commit（participant_list + room_metadata + franking_signature_keyのAppDataUpdateを含む）でのroom作成 → `200 success`
+  2. 監査時点で通っていた「bare opaque bytes」（`new Uint8Array([1])`）でのroom作成 → **`400 room-state update must be a complete MLS PublicMessage`で正しく拒否**（§15で指摘した穴が塞がれたことの直接証拠）
+  3. `POST /groupInfo/{roomId}` → **`403 not-allowed: external joins are disabled by this provider privacy policy`**（虚偽の404が解消）
+  4. sidecarのroom名とMLS commit内のroom名を意図的に食い違わせたリクエスト → **`400 initial metadata sidecar disagrees with MLS AppDataUpdate`で正しく拒否**
+
+### 17.2 まだ残っている、または新たに気づいた点
+
+- **`memberCredentials`は依然としてJSON sidecarが権威**（[store.ts:401](src/mimi/store.ts)）。`participant_list`のAppDataコンポーネント自体は`{user, roleIndex}`のペアしか運ばず、各userの実際のMLS Credential/SignaturePublicKeyまでは含まない（spec の`UserRolePair`自体がそういう設計）。そのため「このuser URIが本当にこのMLS leafのcredentialを持っているか」の対応付けは、依然としてbiset独自のJSON（`memberCredentials`配列）を信じる形のまま——ratchet_tree extension（LeafNodeのcredential）から導出していない。§15.2で指摘した問題の**一段階狭いバージョンが残っている**：room state（誰が何のroleか、room名は何か）は今回で暗号学的に権威あるものになったが、「その参加者の実際の鍵が何か」の対応付けはまだ信頼ベース。Phase 3で実フェデレーションを試みる際、ここが次のボトルネックになる可能性が高い——新規の未決事項として追加する価値がある。
+- **`ParticipantListUpdate`の重複操作チェックが仕様より緩い**（[app-data.ts:55-68](src/mimi/app-data.ts)の`applyMimiParticipantListUpdate`）。spec 行3090-3092「A single commit is not valid if it contain any combination of Participant list updates that operate on... the same user... more than once」——「any combination」なので、同じuserIndexが`changedRoleParticipants`と`removedIndices`の両方に出現するケースも本来は無効。現在の実装はそれぞれのリスト内でのみ重複チェックしており、リスト間のチェックが無い。実害は小さい（意味のある攻撃は考えにくい）が、byte-for-byte準拠を目指すなら直す価値がある。
+- **franking `context`のバイト列化は依然としてbiset独自形式**（§15.1既述の通り、[franking.ts](src/mimi/franking.ts)の`frankingContextBytes`）。hub内部にしか関わらないため実害は小さいが、真のwire互換ではない——Phase 6のスコープ外だったので未着手のまま。
+- **項目15-17（notify/identifierQuery/proxyDownload）は§16の報告を信頼したのみで、本セッションでは独立再検証していない**——次の監査サイクルでの確認を推奨する。
+- MLS commit自体の**内部署名（`auth.signature`/`membershipTag`）はhubで検証されていない**（テストでも空`Uint8Array`が使われ、それで通る）。認証は依然としてbiset独自の外側Ed25519署名（`UpdateRoomRequest.signature`、credentialの`signaturePublicKey`で検証）に一本化されている——単一hub運用では実害はないが、真に独立した外部MIMI providerがMLS原生の署名だけで送ってきた場合には検証経路が無い。Phase 3の相互運用性はこの意味でもまだ先の課題として残る。
+
+### 17.3 結論と次の一手
+
+`update/{roomId}`のAppSync実装というPhase 6の核心目標は達成された——「JSONを信じるだけ」から「MLS commitの中身を検証する」への移行は実際に機能しており、本番で確認できた。ただし「room stateの信頼性」が上がった分、「そのroom stateの主体（credential）の信頼性」という一段階深い課題が可視化された（17.2の`memberCredentials`の件）。次の監査サイクルではこれを新しい最優先項目として扱うのが良い。
+
+**新規未決事項18**: `memberCredentials`のMLS ratchet_tree由来検証——`participant_list`のuser URIと実際のMLS leaf credential/signature keyの対応付けを、JSON sidecarではなくratchet_tree extension（またはGroupInfo）から導出する経路を設計する。
