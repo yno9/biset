@@ -94,4 +94,14 @@ describe('MIMI SQLite store', () => {
     expect(verifyFrank(keys.signingPublicKey, { ...frank, context: { ...frank.context, senderUri: 'did:web:mallory' } })).toBe(false)
     store.close()
   })
+
+  test('accepts a provider fanout exactly once and exposes it through local delivery', () => {
+    const store = new SqliteMimiStore(new Database(':memory:'))
+    expect(store.submitUpdate(initialUpdate()).ok).toBe(true)
+    const entries = [{ seq: 99, kind: 'proposal' as const, payload: new Uint8Array([42]), epoch: '1', acceptedAt: at }]
+    expect(store.acceptProviderFanout(roomId, 'hub.example', 'body-hash', entries)).toBe('accepted')
+    expect(store.acceptProviderFanout(roomId, 'hub.example', 'body-hash', entries)).toBe('duplicate')
+    expect(store.deliveriesSince(roomId, alice.user, 0)?.map(entry => entry.payload)).toContainEqual(new Uint8Array([42]))
+    store.close()
+  })
 })

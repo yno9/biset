@@ -27,6 +27,7 @@ import { frankMessage } from './franking.ts'
 import { createMimiProtocolDirectory, MIMI_PROTOCOL_DIRECTORY_PATH } from './directory.ts'
 import { decodeMimiConsentEntryWire, decodeMimiIdentifierRequestWire, encodeMimiIdentifierResponseWire, noIdentifiers, type MimiIdentifierDirectory } from './federation.ts'
 import { verifyMimiProviderRequest, type VerifiedProviderPeer } from './provider-transport.ts'
+import { decodeMimiFanoutBatchWire, fanoutFingerprint } from './fanout.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
 import type { MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
 import type { MimiWatchTokenIssuer } from './watch-token.ts'
@@ -38,6 +39,7 @@ const SUBMIT_MESSAGE_PREFIX = '/submitMessage/'
 const REQUEST_CONSENT_PREFIX = '/requestConsent/'
 const UPDATE_CONSENT_PREFIX = '/updateConsent/'
 const IDENTIFIER_QUERY_PREFIX = '/identifierQuery/'
+const NOTIFY_PREFIX = '/notify/'
 const DELIVERY_PULL_PATH = '/v1/mimi/deliveries/pull'
 const DELIVERY_WATCH_PATH = '/v1/mimi/deliveries/watch'
 const DELIVERY_STREAM_PATH = '/v1/mimi/deliveries/stream'
@@ -46,6 +48,7 @@ function isMimiHttpPath(path: string): boolean {
   return path.startsWith(KEY_MATERIAL_PREFIX) || path.startsWith(UPDATE_PREFIX)
     || path.startsWith(SUBMIT_MESSAGE_PREFIX)
     || path.startsWith(REQUEST_CONSENT_PREFIX) || path.startsWith(UPDATE_CONSENT_PREFIX) || path.startsWith(IDENTIFIER_QUERY_PREFIX)
+    || path.startsWith(NOTIFY_PREFIX)
     || path === DELIVERY_PULL_PATH || path === DELIVERY_WATCH_PATH || path === DELIVERY_STREAM_PATH || path === MIMI_PROTOCOL_DIRECTORY_PATH
 }
 
@@ -86,6 +89,15 @@ export function createMimiHttpHandler(
       }
       if (request.method !== 'POST') return error(405, 'bad-request', 'Method not allowed')
       const body = await requestText(request)
+
+      if (path.startsWith(NOTIFY_PREFIX)) {
+        const roomId = pathParameter(path, NOTIFY_PREFIX, 'room ID')
+        const peer = await verifiedFederationPeer(request, federation)
+        const batch = decodeMimiFanoutBatchWire(body)
+        const result = store.acceptProviderFanout(roomId, peer.providerDomain, await fanoutFingerprint(body), batch.entries)
+        if (result === 'noSuchRoom') return error(404, 'not-found', 'room does not exist')
+        return new Response(null, { status: 201 })
+      }
 
       if (path.startsWith(REQUEST_CONSENT_PREFIX)) {
         const targetDomain = pathParameter(path, REQUEST_CONSENT_PREFIX, 'target domain')

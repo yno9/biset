@@ -323,7 +323,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 3.1
 - [x] **3.3 同意/存在確認系エンドポイント** (完了: 2026-09-01, `src/mimi/federation.ts`, `src/mimi/http.ts`, `src/mimi/store.ts`, `test/mimi/federation.test.ts`): ConsentScopeをSQLiteへ永続化し、request/cancel・grant/revoke、grant添付KeyPackage、privacy-aware identifier directory hookを実装。これらprovider専用endpointは、TLS終端が渡す検証済みpeerとFrom/Hostを照合できる`MimiFederationOptions.authenticatePeer`なしには403で拒否する。
   - depends on: 3.1
-- [~] **3.4 fanout** (agent: Codex, 開始: 2026-09-01): `POST /notify/{roomId}`（spec行1924）。0.6で設定済みの`idleTimeout`が効いてくる箇所。
+- [x] **3.4 fanout** (完了: 2026-09-01, `src/mimi/fanout.ts`, `src/mimi/http.ts`, `src/mimi/store.ts`, `test/mimi/fanout.test.ts`, `test/mimi/store.test.ts`): mTLS transport経由の`/notify/{roomId}`送信、Fanout batch wire、SHA-256 body fingerprint、受信側のprovider+body単位SQLite重複排除、ローカルdelivery/SSEへの一回だけの取り込みを実装。
   - depends on: 3.1
 - [x] **3.5 room-policy.ts** (完了: 2026-09-01, `src/mimi/room-policy.ts`, `test/mimi/room-policy.test.ts`): draft-04のrole/capability/遷移/人数制約を評価するpure evaluatorを実装。現時点ではcomponent ID/TLS encoding未確定のためopaqueな`basePolicy`の独自解釈はせず、将来のMLS extension decoderから接続する。
   - depends on: 3.0

@@ -34,6 +34,7 @@ const MAX_CREDENTIALS = 2_048
 const MAX_KEY_PACKAGES_PER_CLIENT = 32
 const MAX_DELIVERIES_PER_ROOM = 256
 const MAX_DELIVERIES_PER_PULL = 32
+const MAX_PROVIDER_FANOUT_DEDUPES = 4_096
 
 export class MimiStoreCapacityError extends Error {}
 export class MimiStoreStateError extends Error {}
@@ -201,6 +202,27 @@ export class SqliteMimiStore {
   consent(requesterUri: MimiUserUri, targetUri: MimiUserUri, roomId?: MimiRoomId): { entry: MimiConsentEntry; sourceProvider: string; updatedAt: string } | undefined {
     const row = this.database.query<ConsentRow, [string, string, string]>('SELECT entry_json, source_provider, updated_at FROM mimi_consents WHERE requester_uri = ? AND target_uri = ? AND room_id = ?').get(requesterUri, targetUri, roomId ?? '')
     return row == null ? undefined : { entry: decodeMimiConsentEntryWire(row.entry_json), sourceProvider: row.source_provider, updatedAt: row.updated_at }
+  }
+
+  /** Accepts a follower-facing hub batch exactly once, then wakes local SSE clients. */
+  acceptProviderFanout(roomId: MimiRoomId, sourceProvider: string, bodyHash: string, entries: MimiDeliveryEntry[]): 'accepted' | 'duplicate' | 'noSuchRoom' {
+    return this.database.transaction(() => {
+      const room = this.roomRow(roomId)
+      if (!room) return 'noSuchRoom' as const
+      try {
+        this.database.query('INSERT INTO mimi_provider_fanout_dedupes (source_provider, body_hash, received_at) VALUES (?, ?, ?)').run(sourceProvider, bodyHash, new Date().toISOString())
+      } catch (error) {
+        if (String(error).includes('UNIQUE')) return 'duplicate' as const
+        throw error
+      }
+      const state = decodeRoomStateWire(room.state_json)
+      const accepted = entries.map((entry, index) => ({ ...entry, seq: room.next_seq + index, payload: new Uint8Array(entry.payload), frank: entry.frank }))
+      for (const entry of accepted) this.database.query('INSERT INTO mimi_deliveries (room_id, seq, kind, payload, epoch, accepted_at, frank_json) VALUES (?, ?, ?, ?, ?, ?, ?)').run(roomId, entry.seq, entry.kind, entry.payload, entry.epoch, entry.acceptedAt, entry.frank === undefined ? null : encodeFrankWire(entry.frank))
+      this.saveRoom({ ...state, updatedAt: accepted.at(-1)?.acceptedAt ?? state.updatedAt }, room.next_seq + accepted.length)
+      this.database.query('DELETE FROM mimi_provider_fanout_dedupes WHERE rowid NOT IN (SELECT rowid FROM mimi_provider_fanout_dedupes ORDER BY received_at DESC, rowid DESC LIMIT ?)').run(MAX_PROVIDER_FANOUT_DEDUPES)
+      this.notify(roomId, accepted)
+      return 'accepted' as const
+    })()
   }
 
   submitMessage(roomId: MimiRoomId, sender: MimiUserUri, epoch: MimiEpoch, payload: Uint8Array, frank: Frank, acceptedAt: string): { ok: true; entry: MimiDeliveryEntry } | { ok: false; currentEpoch?: MimiEpoch } {
@@ -413,6 +435,12 @@ function installSchema(database: Database): void {
       source_provider TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (requester_uri, target_uri, room_id)
+    );
+    CREATE TABLE IF NOT EXISTS mimi_provider_fanout_dedupes (
+      source_provider TEXT NOT NULL,
+      body_hash TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      PRIMARY KEY (source_provider, body_hash)
     );
   `)
   const columns = database.query<{ name: string }, []>('PRAGMA table_info(mimi_deliveries)').all()
