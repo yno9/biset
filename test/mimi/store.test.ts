@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { SqliteMimiStore } from '../../src/mimi/store.ts'
+import { frankMessage, verifyFrank } from '../../src/mimi/franking.ts'
 import type { UpdateRoomRequest, VisibleCredential } from '../../src/mimi/protocol-types.ts'
 
 const at = '2026-09-01T00:00:00.000Z'
@@ -49,6 +50,19 @@ describe('MIMI SQLite store', () => {
     })
     expect(store.takeKeyPackages(bob.user, { extensions: [7] }).map(item => item.keyPackage)).toEqual([new Uint8Array([21])])
     expect(store.keyPackageCount(bob.user)).toBe(1)
+    store.close()
+  })
+
+  test('creates stable room-local franking keys and produces verifiable context-bound evidence', () => {
+    const store = new SqliteMimiStore(new Database(':memory:'))
+    expect(store.submitUpdate(initialUpdate()).ok).toBe(true)
+    const keys = store.frankingKeys(roomId)
+    expect(keys).toBeDefined()
+    if (!keys) throw new Error('unreachable')
+    expect(store.frankingKeys(roomId)).toEqual(keys)
+    const frank = frankMessage(keys, { aad: { frankingTag: new Uint8Array(32).fill(9) }, senderUri: alice.user, roomUri: roomId, acceptedTimestamp: '1', ciphersuite: 1 })
+    expect(verifyFrank(keys.signingPublicKey, frank)).toBe(true)
+    expect(verifyFrank(keys.signingPublicKey, { ...frank, context: { ...frank.context, senderUri: 'did:web:mallory' } })).toBe(false)
     store.close()
   })
 })

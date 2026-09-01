@@ -5,6 +5,7 @@
  */
 import { Database } from 'bun:sqlite'
 import { equalBytes } from '../protocol/canonical.ts'
+import { createFrankingKeyMaterial, type FrankingKeyMaterial } from './franking.ts'
 import {
   decodeRoomStateWire,
   encodeRoomStateWire,
@@ -49,6 +50,7 @@ interface KeyPackageRow {
   expires_at: string | null
   source_provider: string | null
 }
+interface FrankingKeyRow { hub_key: Uint8Array; signing_private_key: Uint8Array; signing_public_key: Uint8Array }
 
 /** Hub-owned room state, ordered local deliveries, and KeyPackage directory. */
 export class SqliteMimiStore {
@@ -179,6 +181,16 @@ export class SqliteMimiStore {
     return this.database.query<{ count: number }, [string]>('SELECT COUNT(*) AS count FROM mimi_key_packages WHERE user_uri = ?').get(user)?.count ?? 0
   }
 
+  /** Per-room secrets for hub franking; never appear in RoomState or wire JSON. */
+  frankingKeys(roomId: MimiRoomId): FrankingKeyMaterial | undefined {
+    if (!this.roomRow(roomId)) return undefined
+    const found = this.database.query<FrankingKeyRow, [string]>('SELECT hub_key, signing_private_key, signing_public_key FROM mimi_franking_keys WHERE room_id = ?').get(roomId)
+    if (found) return copyFrankingKeys(found)
+    const created = createFrankingKeyMaterial()
+    this.database.query('INSERT INTO mimi_franking_keys (room_id, hub_key, signing_private_key, signing_public_key) VALUES (?, ?, ?, ?)').run(roomId, created.hubKey, created.signingPrivateKey, created.signingPublicKey)
+    return created
+  }
+
   private createFromInitialUpdate(request: UpdateRoomRequest): MimiUpdateStoreResult {
     if (!request.initialState) return { ok: false, reason: 'notAllowed', message: 'room does not exist' }
     if (request.epoch !== '0') return { ok: false, reason: 'wrongEpoch', currentEpoch: '0', message: 'initial room epoch must be 0' }
@@ -197,6 +209,7 @@ export class SqliteMimiStore {
     const entries = this.appendBundle(request.roomId, 1, request, state.epoch)
     state.epoch = request.bundle.kind === 'commit' ? nextEpoch(state.epoch) : state.epoch
     this.saveRoom(state, 1 + entries.length)
+    this.frankingKeys(request.roomId)
     this.notify(request.roomId, entries)
     return { ok: true, state, entries }
   }
@@ -344,5 +357,16 @@ function installSchema(database: Database): void {
       source_provider TEXT
     );
     CREATE INDEX IF NOT EXISTS mimi_key_packages_user ON mimi_key_packages (user_uri, client_uri, published_at);
+    CREATE TABLE IF NOT EXISTS mimi_franking_keys (
+      room_id TEXT PRIMARY KEY NOT NULL,
+      hub_key BLOB NOT NULL,
+      signing_private_key BLOB NOT NULL,
+      signing_public_key BLOB NOT NULL,
+      FOREIGN KEY(room_id) REFERENCES mimi_rooms(room_id)
+    );
   `)
+}
+
+function copyFrankingKeys(row: FrankingKeyRow): FrankingKeyMaterial {
+  return { hubKey: new Uint8Array(row.hub_key), signingPrivateKey: new Uint8Array(row.signing_private_key), signingPublicKey: new Uint8Array(row.signing_public_key) }
 }
