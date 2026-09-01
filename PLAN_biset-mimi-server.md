@@ -308,7 +308,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 2.3
 - [x] **2.5 テスト** (完了: 2026-09-01, `test/mimi/store.test.ts`, `test/mimi/http.test.ts`): 新規参加者が既存メンバー全員の実credentialをidentity_link_ciphertext経由で復号できることを確認。epoch進行後、破棄したはずの旧epoch鍵で過去のciphertextが復号できないことを確認する回帰テスト（§10で明示的に要求されている）。anon-modeインスタンスへ実credentialでのroom作成を試みて拒否されることも確認する（2.4のガード）。
   - depends on: 2.2, 2.4
-- [ ] **2.6 デプロイ設定**: `biset-mimi-normal.service`/`biset-mimi-anon.service`相当のsystemd unit定義・env fileのテンプレートを用意する（本番デプロイはこのフェーズの範囲外だが、2つのプロセスとして動かせることをローカルで確認する分の設定は用意する）。
+- [~] **2.6 デプロイ設定** (agent: /root, 開始: 2026-09-01): `biset-mimi-normal.service`/`biset-mimi-anon.service`相当のsystemd unit定義・env fileのテンプレートを用意する（本番デプロイはこのフェーズの範囲外だが、2つのプロセスとして動かせることをローカルで確認する分の設定は用意する）。
   - depends on: 2.4
 - [ ] **2.7 Phase 2 release gate確認**（§10）。
   - depends on: 2.5, 2.6
