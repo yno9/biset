@@ -216,8 +216,8 @@ identity_link_key(epoch) = exportSecret(state, "mimi mmr identity-link", groupId
 2. **他社MIMI実装の実際のwire形式** — JSON採用を決めたが、実際に相互接続するprovider次第でアダプタが要る可能性がある。Phase 3で確認する。
 3. **anon modeの再暗号化コストの実測** — §7.3。大規模room未対応の可能性を許容するか、別の緩和策（例: 変更があったメンバーの差分だけ再暗号化）を検討するかは実装しながら判断する。
 4. **frankingのhub_key漏洩時の対応** — spec自身のtrust modelの限界であり、biset固有の対応策があるかは要検討。
-5. **`biset-mls-ds`の廃盤条件・移行手順（新規、2026-09-01）** — 「`biset-mimi`（anon-mode）が今の`biset-mls-ds`と同等以上のidentity-blindness保証を満たす」ことをどう検証・宣言するか（§10 release gateの拡張が必要）。既存`biset-mls-ds`上の稼働中roomをどう移行するか（`GroupLocalId`→`PseudonymousCredential`の変換は非自明——両者は暗号的に無関係な仕組みであり、単純な変換式は無い可能性が高い。roomを作り直す形の移行になるかもしれない）。
-6. **`biset-coordinator`（Self Group DS）統合の是非・設計（新規、2026-09-01）** — §0/§14で方向性のみ記録。「room=本人1人・複数device」という統合は魅力的だが、[PLAN_biset-mls-ds.md §2](PLAN_biset-mls-ds.md)がcoordinatorとmls-dsを分離した可用性上の理由（third-partyトラフィックがVault同期の可用性を脅かすリスク）が、この統合でも同様に問題になる。normal/anonに加えて**3つ目のプロセス（self-group専用）**が要るのか、それとも別の分離策があるのか、Phase 3完了後に別途設計する。
+5. **`biset-mls-ds`の廃盤条件・移行手順** — [MIMI transition and Self Group isolation](PLAN_biset-mimi-transition.md)に、置換判定の6条件と「credential/stateは変換せず、新anon roomへE2E再招待する」移行手順を記録した。pseudonymous credentialのorigin/binding検証が未実装のため、**廃盤はまだ許可されない**。
+6. **`biset-coordinator`（Self Group DS）統合の是非・設計** — 同文書に、normal/anonと共有しないowner-only第3プロセス`biset-mimi-self`という提案を記録した。Vault同期の可用性要件を満たす検証まで、CoordinatorのSelf Group DSを維持する。
 
 ## 12. 出典
 
@@ -344,10 +344,18 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
 
 ### Phase 5: 将来統合（現時点では着手しない）
 
-§14の通り、`biset-mls-ds`の廃盤と`biset-coordinator`統合は方向性のみ確定していて具体設計がまだない。**このフェーズのタスクは意図的にまだ列挙しない**——§11未決事項5・6の設計が終わってから、この節にタスクを追記する。今この節を見たagentは、ここに着手するのではなく§11未決事項5・6の調査・設計提案をまず行うこと。
+§14の方向性に対する最初の安全設計は [MIMI transition and Self Group isolation](PLAN_biset-mimi-transition.md) に記録した。廃盤・移行・Self Group置換を開始するには、同文書のrelease reviewと下記の依存タスクを完了する必要がある。
 
-- [~] **5.0 移行・Self Group統合の設計提案** (agent: Codex, 開始: 2026-09-01): §11-5・6について、anon-modeがidentity-blind DSを置換可能と判断するための証拠、暗号状態を変換しないroom移行、Self Groupをthird-party負荷から隔離する配置を設計文書にまとめる。
+- [x] **5.0 移行・Self Group統合の設計提案** (完了: 2026-09-01, [MIMI transition and Self Group isolation](PLAN_biset-mimi-transition.md)): identity-blindness判定の6条件、旧credential/stateを変換しない新room再招待、normal/anonと隔離するowner-only Self Groupプロセスを設計した。pseudonymous credentialのorigin/bindingが未解決なため廃盤は禁止する。
   - depends on: 4.3
+- [ ] **5.1 isolation and anonymity gate**: anon DB/log/configuration監査、mode混入拒否、2プロセス結合テストを追加し、5.0の置換条件1・2・3・5・6を検証可能にする。
+  - depends on: 5.0
+- [ ] **5.2 pseudonymous credential binding**: anon credentialのissuer/binding検証規則を確定・実装し、改竄/なりすましを拒否する独立テストを追加する。
+  - depends on: 5.0
+- [ ] **5.3 conversation room migration**: E2E offer/accept/cutoverとlocal-only room mappingを実装し、server historyをコピーしない新room移行を通しで検証する。
+  - depends on: 5.1, 5.2
+- [ ] **5.4 Self Group deployment spike**: owner-only `biset-mimi-self`を別プロセスとして試作し、Vault recoveryとthird-party負荷隔離を検証する。
+  - depends on: 5.1, 5.2
 
 ## 14. 将来ビジョン（方向性のみ、具体設計はまだ行わない）
 
