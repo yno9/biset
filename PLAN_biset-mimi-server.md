@@ -325,7 +325,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 3.1
 - [ ] **3.4 fanout**: `POST /notify/{roomId}`（spec行1924）。0.6で設定済みの`idleTimeout`が効いてくる箇所。
   - depends on: 3.1
-- [ ] **3.5 room-policy.ts**: role/permission体系の実装。
+- [~] **3.5 room-policy.ts** (agent: Codex, 開始: 2026-09-01): role/permission体系の実装。
   - depends on: 3.0
 - [ ] **3.6 reportAbuse/proxyDownload**: 残り2エンドポイント（spec行2568, 2713）。
   - depends on: 3.1
