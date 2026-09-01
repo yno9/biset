@@ -302,7 +302,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
 - [x] **2.2 identity-link再暗号化** (完了: 2026-09-01, `src/mimi/anon/identity-link.ts`, `test/mimi/store.test.ts`): `src/mimi/anon/identity-link.ts`。§7.2のexportSecretベース方式。`src/mls/group.ts`の`exportSecret`をhub側から呼べる形で使う（hub自体はMLS秘密状態を持たないので、**再暗号化は実際にはclient側=commit送信者が行い、hubはciphertextを運ぶだけ**であることに注意——hubがexportSecretを計算することはない。この役割分担をここで明確にすること）。
   - 参照実装: `src/mls/group.ts`の`exportSecret`
   - depends on: 2.1
-- [ ] **2.3 PseudonymousCredential型・wire**: `src/mimi/protocol-types.ts`/`wire.ts`に追加。
+- [~] **2.3 PseudonymousCredential型・wire** (agent: /root, 開始: 2026-09-01): `src/mimi/protocol-types.ts`/`wire.ts`に追加。
   - depends on: 2.1
 - [ ] **2.4 authorizer.ts拡張**: `mode === 'anon'`のインスタンスでは`PseudonymousCredential`以外のroom作成/commitを拒否する（実credentialが誤ってanon-modeインスタンスに混入することを防ぐ、構造的なガード）。normal-modeのインスタンスでは今まで通り。
   - depends on: 2.3
