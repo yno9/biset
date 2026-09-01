@@ -15,7 +15,7 @@
 // commit/save failure partway through a batch safely stalls the cursor at
 // the true last-good point rather than skipping an entry.
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { bytesToHex } from '../protocol/canonical.ts'
+import { bytesToHex, sha256Bytes } from '../protocol/canonical.ts'
 import { didOfKid, type DeviceId, type IdentityId } from '../protocol/ids.ts'
 import type { VaultEventId } from '../protocol/ids.ts'
 import { conversationDeliveriesPullSigningBytes } from '../protocol/conversation-mls-ds-signing.ts'
@@ -25,13 +25,14 @@ import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../local-jmap/gat
 import { reduceLocalJmapProjection } from '../local-jmap/reducer.ts'
 import { assertActiveVaultSegment, type ActiveVaultSegment } from '../vault/active-segment.ts'
 import { decryptVaultObject } from '../vault/objects.ts'
+import { encodeVaultDeliveryPack } from '../vault/delivery-pack.ts'
 import type { VaultEventSigner } from '../vault/events.ts'
 import type { VaultEventRecord, VaultObjectRecord } from '../vault/store.ts'
 import { epochOf, memberList } from './group.ts'
 import type { ClientState } from './vendor/index.ts'
 import { receiveConversationEntry, type ConversationGroupSigner } from './conversation-group.ts'
 import { computeMimiMessageId, decodeMimiContent, mimiRoomUri } from './mimi-content.ts'
-import { projectMimiConversationMessage } from './mimi-content-projector.ts'
+import { projectMimiConversationMessage, type MimiConversationMessageInput } from './mimi-content-projector.ts'
 import type { ConversationGroupRosterEntry, MlsConversationGroupStateStore } from './conversation-group-store.ts'
 import type { ConversationLogEntry } from '../protocol/conversation-mls-ds.ts'
 
@@ -40,6 +41,20 @@ export interface ConversationGroupVaultRecord {
   events: VaultEventRecord[]
   projection: LocalJmapProjectionV1
   jmapState: { state: string }
+  /** Required by `LocalVaultMutationCommitter.commitLocalMutation`
+   * (local-jmap/vault-mutation-sink.ts) so this device's OTHER trusted
+   * devices learn of a received Conversation Group message too -- without
+   * this, a sibling device would silently never see it (found during the
+   * delivery-wiring pass: `commitMailMessage`'s own record always builds
+   * one via `encodeVaultDeliveryPack`; this module's own record didn't). */
+  deliveryOutbox: {
+    identityId: IdentityId
+    entryId: VaultEventId
+    payload: Uint8Array
+    payloadHash: Uint8Array
+    createdAt: string
+    attempts: number
+  }
 }
 
 /** Everything `applyConversationGroupLogEntry` needs to turn one entry into
@@ -156,7 +171,7 @@ export async function syncConversationGroupDeliveries(groupId: string, options: 
     state = result.state
     if (result.committed) applied++
     lastSeenSeq = entry.seq
-    await options.stateStore.save(groupId, state, lastSeenSeq, stored.ownGroupLocalPrivateKey, roster)
+    await options.stateStore.save(groupId, state, lastSeenSeq, stored.ownGroupLocalPrivateKey, roster, stored.dsBaseUrl, stored.dsProviderDid)
   }
 
   return { applied }
@@ -178,8 +193,27 @@ async function buildVaultRecord(
   const senderDid = didOfKid(senderMlsKid)
   const otherMembers = memberList(state).map(m => m.did).filter(did => did !== senderDid)
 
+  return buildConversationGroupVaultRecord(
+    { content, messageId, groupId, senderDid: senderUri, otherMembers, receivedAt: now().toISOString() },
+    options, now,
+  )
+}
+
+/** The shared "MimiContent -> committable Vault record" half of both the
+ * receive path (buildVaultRecord above, decode+classify first) and the send
+ * path (main.ts's own outbound flow, which already has `content`/`messageId`
+ * from `sendConversationTextMessage` and needs no decode step) -- unifying
+ * this was worth doing once main.ts's own send path needed the exact same
+ * projectMimiConversationMessage -> decrypt-for-projection -> reduce ->
+ * deliveryOutbox sequence a second time (feedback_unify_common_logic.md:
+ * two copies of this would drift). */
+export async function buildConversationGroupVaultRecord(
+  input: MimiConversationMessageInput,
+  options: Pick<ConversationGroupApplyOptions, 'identityId' | 'actorDeviceId' | 'nextActorSeq' | 'initialParents' | 'activeSegment' | 'currentSnapshot' | 'signer'>,
+  now: () => Date,
+): Promise<ConversationGroupVaultRecord> {
   const segment = await options.activeSegment()
-  assertActiveVaultSegment(options.identityId, segment, 'Conversation Group sync')
+  assertActiveVaultSegment(options.identityId, segment, 'Conversation Group')
   const createdAt = now().toISOString()
   const context = {
     identityId: options.identityId,
@@ -190,9 +224,7 @@ async function buildVaultRecord(
     segmentKey: segment.segmentKey,
     createdAt,
   }
-  const record = await projectMimiConversationMessage({
-    content, messageId, groupId, senderDid: senderUri, otherMembers, receivedAt: createdAt,
-  }, context, options.signer)
+  const record = await projectMimiConversationMessage(input, context, options.signer)
 
   // Every kind projectMimiConversationMessage produces (add/edit/delete/
   // reaction) puts the mutation's own JSON payload in objects[0] --
@@ -204,5 +236,16 @@ async function buildVaultRecord(
   const decryptedForProjection = { event: record.events[0]!, plaintext: await decryptVaultObject(segment.segmentKey, record.objects[0]!) }
   const next = reduceLocalJmapProjection(options.identityId, { mailboxes: snapshot.mailboxes, emails: snapshot.emails }, [decryptedForProjection])
   const projection: LocalJmapProjectionV1 = { version: 1, identityId: options.identityId, ...next }
-  return { objects: record.objects, events: record.events, projection, jmapState: { state: projection.state } }
+  const payload = encodeVaultDeliveryPack({ version: 1, identityId: options.identityId, objects: record.objects, events: record.events, keyWraps: segment.keyWraps })
+  return {
+    objects: record.objects, events: record.events, projection, jmapState: { state: projection.state },
+    deliveryOutbox: {
+      identityId: options.identityId,
+      entryId: record.events.at(-1)!.id,
+      payload,
+      payloadHash: sha256Bytes(payload),
+      createdAt,
+      attempts: 0,
+    },
+  }
 }

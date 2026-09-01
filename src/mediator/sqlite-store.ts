@@ -40,6 +40,11 @@ interface QueueRow { id: string; packed: string; queued_at: number; silent: numb
  * enters this database. */
 export class SqliteMediatorStore implements MediatorConnectionStore, MediatorMessageQueue, ReplayGuard {
   readonly limits: SqliteMediatorLimits
+  // In-process pub/sub for `GET /stream` (server.ts) -- same shape and same
+  // "never persisted, never crosses a process boundary" scope as
+  // mls-ds/store.ts's own `watchers`. SQLite backs durability; this is
+  // purely the live-tail notification on top of it.
+  private readonly watchers = new Map<string, Set<(messages: QueuedMessage[]) => void>>()
 
   constructor(private readonly database: Database, limits: Partial<SqliteMediatorLimits> = {}) {
     this.limits = { ...DEFAULT_SQLITE_MEDIATOR_LIMITS, ...limits }
@@ -214,9 +219,25 @@ export class SqliteMediatorStore implements MediatorConnectionStore, MediatorMes
     if (Number(usage.count) >= this.limits.maxQueueItemsPerRecipient) throw new QueueFullError(recipientKid, 'item quota exceeded')
     if (Number(usage.bytes) + size > this.limits.maxQueueBytesPerRecipient) throw new QueueFullError(recipientKid, 'byte quota exceeded')
     const id = crypto.randomUUID()
+    const queuedAt = Date.now()
     this.database.query('INSERT INTO queued_messages (id, recipient_kid, packed, size_bytes, queued_at, silent) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, recipientKid, packedMessage, size, Date.now(), opts.silent ? 1 : 0)
+      .run(id, recipientKid, packedMessage, size, queuedAt, opts.silent ? 1 : 0)
+    this.notify(recipientKid, [{ id, packed: packedMessage, queuedAt, ...(opts.silent ? { silent: true } : {}) }])
     return id
+  }
+
+  subscribe(recipientKid: string, listener: (messages: QueuedMessage[]) => void): () => void {
+    let set = this.watchers.get(recipientKid)
+    if (!set) { set = new Set(); this.watchers.set(recipientKid, set) }
+    set.add(listener)
+    return () => {
+      set!.delete(listener)
+      if (set!.size === 0) this.watchers.delete(recipientKid)
+    }
+  }
+
+  private notify(recipientKid: string, messages: QueuedMessage[]): void {
+    for (const listener of this.watchers.get(recipientKid) ?? []) listener(messages)
   }
 
   count(recipientKid: string): number {

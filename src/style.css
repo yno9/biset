@@ -1698,6 +1698,22 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   display: none;
 }
 
+/* Conversation Group members, in the thread header (ui/thread.ts's
+   renderGroupMembers). Ported verbatim from src.bak/style.css -- chips
+   rather than a comma list, one per member. Dropped relative to the source:
+   .conv-member-leave (that chip class is never produced here; no leave/
+   remove-member UI exists in this rewrite, same scope cut src.bak itself
+   made for the identical reason -- no permission model for who may remove
+   whom). */
+.conv-members { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 8px; vertical-align: middle }
+.conv-member-chip {
+  font: inherit; font-size: 11px; line-height: 1.4;
+  padding: 1px 7px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border, #d0d0d0); background: transparent; color: inherit; opacity: .8;
+}
+.conv-member-chip:hover { opacity: 1; border-color: #b00020; color: #b00020 }
+.conv-member-add:hover { border-color: var(--border, #d0d0d0); color: inherit }
+
 #conv-meta-expanded {
   display: none;
   margin-top: 8px;

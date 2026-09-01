@@ -112,7 +112,7 @@ export async function generateOwnKeyPackage(value: MlsDeviceCredentialV2, signat
   if (!equalBytes(ed25519.getPublicKey(signaturePrivateKey), value.signaturePublicKey)) throw new TypeError('MLS device credential does not match the signing private key')
   const suite = await mlsSuite()
   const kp = await generateKeyPackageWithKey(
-    credentialFor(value), defaultCapabilities(), defaultLifetime, [],
+    credentialFor(value), capabilitiesWithRoomMetadataSupport(), defaultLifetime, [],
     { signKey: signaturePrivateKey, publicKey: value.signaturePublicKey }, suite, [],
   )
   return { publicPackage: kp.publicPackage, privatePackage: kp.privatePackage }
@@ -121,8 +121,27 @@ export async function generateOwnKeyPackage(value: MlsDeviceCredentialV2, signat
 /** Generates a KeyPackage for an application-defined BasicCredential. */
 export async function generateOwnKeyPackageForCredential(credential: Credential): Promise<OwnKeyPackage> {
   const suite = await mlsSuite()
-  const kp = await generateKeyPackage(credential, defaultCapabilities(), defaultLifetime, [], suite, [])
+  const kp = await generateKeyPackage(credential, capabilitiesWithRoomMetadataSupport(), defaultLifetime, [], suite, [])
   return { publicPackage: kp.publicPackage, privatePackage: kp.privatePackage }
+}
+
+/** `defaultCapabilities()` plus a declared understanding of the room-metadata
+ * private-use extension (ROOM_METADATA_EXTENSION_TYPE, defined further down
+ * this file) -- RFC 9420 requires every leaf ADDED to a group to declare
+ * capability support for whatever non-default extensions are ALREADY active
+ * in that group's GroupContext (vendor/clientState.ts's Add-proposal
+ * validation), so a KeyPackage generated without this fails to join ANY
+ * Conversation Group that already has a room name set (found live,
+ * 2026-09-01: "Added leaf node that doesn't support extension in
+ * GroupContext" for exactly this reason). Declared unconditionally, on
+ * every KeyPackage this app ever generates (including Self Group leaves,
+ * which will simply never encounter the extension) -- the alternative, a
+ * second capabilities set used only for Conversation Group KeyPackages,
+ * would be the exact kind of divergent-but-parallel implementation this
+ * codebase avoids elsewhere. */
+function capabilitiesWithRoomMetadataSupport(): Capabilities {
+  const base = defaultCapabilities()
+  return { ...base, extensions: [...base.extensions, ROOM_METADATA_EXTENSION_TYPE] }
 }
 
 /** MLS wire encoding of a key package — what gets published and fetched. */
@@ -263,6 +282,66 @@ export async function proposeSelfRemoval(state: ClientState): Promise<{ state: C
  * committed since* the compromise, not of the protocol standing still. */
 export async function rekey(state: ClientState): Promise<CommitResult> {
   return commitWith(state, [])
+}
+
+// Room metadata (a Conversation Group's display name -- PLAN-mimi.md's own
+// "biset conforms to MLS/JMAP/DIDComm/MIMI" scope). MIMI's actual mechanism
+// (draft-ietf-mimi-protocol §5.3/§7.6) is an "AppSync" proposal with
+// applicationId `mimiRoomPolicy`, defined by a SEPARATE, still-unstable
+// companion draft (draft-barnes-mls-appsync) whose own IANA section reads
+// "TODO: Register ApplicationData proposal" -- there is no assigned
+// proposal_type to implement against yet, and building against an
+// unassigned wire format would break the moment real numbers land.
+//
+// Until that stabilizes, this uses RFC 9420's OWN native `group_context_extensions`
+// proposal (already fully implemented by this vendored library -- no core
+// crypto changes needed) with a PRIVATE-USE extension type
+// (ROOM_METADATA_EXTENSION_TYPE, 0xF000 -- RFC 9420's registries reserve
+// 0xF000-0xFFFF for exactly this). This keeps the property MIMI's own
+// design is actually FOR: the name lives in the group's own cryptographic
+// state, converged via an ordinary commit like any membership change, and
+// every future joiner inherits the CURRENT value automatically through
+// their own Welcome's embedded GroupContext -- no separate propagation
+// channel (a DIDComm invite field, PLAN-mimi.md's earlier, now-removed
+// approach) is needed at all. It is NOT the eventual MIMI wire format; once
+// draft-barnes-mls-appsync's proposal_type is assigned, this extension
+// should be replaced by a real AppSync proposal carrying `mimiRoomPolicy`.
+const ROOM_METADATA_EXTENSION_TYPE = 0xf000
+
+export interface RoomMetadata {
+  name?: string
+}
+
+/** The group's current room metadata, read live off `state.groupContext.extensions`
+ * -- the same "ask the tree/context, don't cache a copy" principle
+ * `memberList` already follows for membership. undefined for a group that
+ * has never had one set (every Conversation Group before this feature, and
+ * any created without a name). */
+export function roomMetadataOf(state: ClientState): RoomMetadata | undefined {
+  const extension = state.groupContext.extensions.find(e => e.extensionType === ROOM_METADATA_EXTENSION_TYPE)
+  if (!extension) return undefined
+  try {
+    return JSON.parse(new TextDecoder().decode(extension.extensionData)) as RoomMetadata
+  } catch {
+    return undefined
+  }
+}
+
+/** Commits a change to the group's room metadata -- any current member may
+ * call this (no `canChangeRoomName`-style capability/role model exists for
+ * Conversation Groups yet, the same scope cut already applied to
+ * add/remove). Preserves every OTHER extension already on the group:
+ * `group_context_extensions` proposal replaces the WHOLE extensions list
+ * (RFC 9420), not just the one entry, so this reads the current list first
+ * rather than assuming room metadata is the only extension ever present. */
+export async function setRoomMetadata(state: ClientState, metadata: RoomMetadata): Promise<CommitResult> {
+  const extensionData = new TextEncoder().encode(JSON.stringify(metadata))
+  const extensions = [
+    ...state.groupContext.extensions.filter(e => e.extensionType !== ROOM_METADATA_EXTENSION_TYPE),
+    { extensionType: ROOM_METADATA_EXTENSION_TYPE, extensionData },
+  ]
+  const proposals: Proposal[] = [{ proposalType: 'group_context_extensions', groupContextExtensions: { extensions } }]
+  return commitWith(state, proposals)
 }
 
 async function commitWith(state: ClientState, extraProposals: Proposal[], ratchetTreeExtension = false, ownCredentialUpdate?: Credential): Promise<CommitResult> {

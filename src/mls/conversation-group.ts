@@ -42,6 +42,7 @@ import {
   ownMlsDeviceCredential,
   processIncoming,
   removeMembers,
+  setRoomMetadata,
   type OwnKeyPackage,
 } from './group.ts'
 import type { ClientState, KeyPackage } from './vendor/index.ts'
@@ -168,6 +169,32 @@ export async function addMembersToConversationGroup(
   }
   const outcome = await transport.submitCommit({ ...submission, signature: await sign(conversationCommitSubmitSigningBytes(submission)) })
   if (!outcome.ok) throw new Error(`addMembersToConversationGroup: commit rejected (${outcome.reason})`)
+  confirmCommit(result)
+  return result.state
+}
+
+/** Commits a change to the group's room metadata (currently just a display
+ * name -- group.ts's `setRoomMetadata` own header explains why this rides
+ * RFC 9420's native `group_context_extensions` proposal, a private-use
+ * extension, rather than MIMI's own still-unassigned AppSync mechanism).
+ * No `addedIds`/`removedIds`/`welcome` -- this commit changes no
+ * membership, so `ConversationCommitSubmitV1`'s optional fields for those
+ * stay entirely unset, same shape `rekey`'s own empty commit would submit. */
+export async function setConversationGroupRoomName(
+  state: ClientState,
+  transport: ConversationMlsDeliveryTransport,
+  groupId: string,
+  senderId: GroupLocalId,
+  name: string,
+  sign: ConversationGroupSigner,
+  now: () => Date = () => new Date(),
+): Promise<ClientState> {
+  const result = await setRoomMetadata(state, { name })
+  const submission: Omit<ConversationCommitSubmitV1, 'signature'> = {
+    version: 1, groupId, senderId, epoch: mlsEpoch(epochOf(state)), commit: result.commit, submittedAt: now().toISOString(),
+  }
+  const outcome = await transport.submitCommit({ ...submission, signature: await sign(conversationCommitSubmitSigningBytes(submission)) })
+  if (!outcome.ok) throw new Error(`setConversationGroupRoomName: commit rejected (${outcome.reason})`)
   confirmCommit(result)
   return result.state
 }

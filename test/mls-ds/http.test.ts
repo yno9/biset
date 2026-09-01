@@ -191,15 +191,21 @@ describe('Conversation Group DS HTTP endpoint (identity-blind: no deviceCredenti
     const decoder = new TextDecoder()
     let buffer = ''
     async function readFrame(): Promise<string> {
-      while (!buffer.includes('\n\n')) {
-        const { value, done } = await reader.read()
-        if (done) throw new Error('stream ended unexpectedly')
-        buffer += decoder.decode(value, { stream: true })
+      for (;;) {
+        while (!buffer.includes('\n\n')) {
+          const { value, done } = await reader.read()
+          if (done) throw new Error('stream ended unexpectedly')
+          buffer += decoder.decode(value, { stream: true })
+        }
+        const idx = buffer.indexOf('\n\n')
+        const frame = buffer.slice(0, idx)
+        buffer = buffer.slice(idx + 2)
+        // A `:`-prefixed line is an SSE comment (the connect-flush and the
+        // 15s heartbeat, both http.ts) -- EventSource never surfaces these
+        // as a message, so a reader that mimics real client behavior skips
+        // them too rather than asserting on them.
+        if (!frame.startsWith(':')) return frame
       }
-      const idx = buffer.indexOf('\n\n')
-      const frame = buffer.slice(0, idx)
-      buffer = buffer.slice(idx + 2)
-      return frame
     }
 
     const backlogFrame = await readFrame()

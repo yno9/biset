@@ -421,6 +421,20 @@ export async function repairCurrentLocalSegmentKeyWraps(
   let repaired = 0
   try {
     for (const segment of localSegments) {
+      // A segment already on the storage-root scheme (vault/storage-root.ts)
+      // is wrapped under a stable, root-derived KEK, not an epoch-derived
+      // VEK -- there is no "more than one self-group epoch behind" concept
+      // for it to repair, so it isn't this function's concern. Every fresh
+      // Vault (ActiveVaultSegmentManager's stableActiveSegment path,
+      // vault/active-segment.ts) creates its segments under this scheme
+      // from the start, so without this skip every identity throws here on
+      // every single boot -- selfGrantSegmentRewraps just above already
+      // excludes these the same way (its own `.filter(segment =>
+      // segment.selfGroupId !== VAULT_STORAGE_GROUP_ID ...)`); this
+      // function had no matching exclusion (found live, 2026-08-31: the
+      // mismatch fired unconditionally, caught and only ever logged as
+      // "local Vault segment belongs to another self group").
+      if (segment.selfGroupId === VAULT_STORAGE_GROUP_ID) continue
       if (segment.selfGroupId !== stored.selfGroupId) throw new TypeError('local Vault segment belongs to another self group')
       const current = await wraps.readSegmentKeyWrap(record.did, segment.segmentId, currentEpoch)
       if (current) {
@@ -1110,6 +1124,32 @@ async function ensureAlsoKnownAsPublished(record: IdentityRecord, opts: EnableDi
   const signPublicKey = fromHex(record.signPublicKey)
   const alsoKnownAs = [...new Set([...(current.alsoKnownAs ?? []), mailFrom])]
   await putRouting(record.did, { ...current, alsoKnownAs }, { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, fetchImpl)
+}
+
+/**
+ * Publishes this identity's Conversation Group MLS Delivery Service endpoint
+ * into routing.json's `mimiProvider` (webvh-routing.ts's `MimiProviderRegistration`)
+ * -- what lets a peer this identity invites into a group resolve `ds` (the
+ * inviter's own DID, conversation-group-invite.ts's `ConversationGroupInviteBody`)
+ * back to an actual base URL via `resolveMimiProviderUrl`, the same way
+ * `ensureAlsoKnownAsPublished` above backfills `alsoKnownAs`. Idempotent
+ * (no-ops once the current document already names this exact URL) and
+ * best-effort in the same sense every other "enable X" step in this file is
+ * -- called from main.ts only once a `conversationMlsDsBaseUrl` is actually
+ * configured, so an unconfigured deployment never even attempts it.
+ *
+ * Fetch-merge-put, not build-from-scratch: the same reasoning as
+ * `ensureAlsoKnownAsPublished` -- keyAgreement/mlkem/alsoKnownAs/name/openpgp
+ * already published by enableDidComm/enableOpenPgpMail/editName must survive
+ * untouched.
+ */
+export async function ensureMimiProviderPublished(record: IdentityRecord, dsBaseUrl: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const current = await fetchRouting(record.did, fetchImpl)
+  if (!current || current.service.some(s => s.type === 'MimiDeliveryService' && s.serviceEndpoint === dsBaseUrl)) return
+  const signPrivateKey = fromHex(record.signPrivateKey)
+  const signPublicKey = fromHex(record.signPublicKey)
+  const service = [...current.service.filter(s => s.type !== 'MimiDeliveryService'), { id: `${record.did}#mimi-ds`, type: 'MimiDeliveryService', serviceEndpoint: dsBaseUrl }]
+  await putRouting(record.did, { ...current, service }, { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, fetchImpl)
 }
 
 /**

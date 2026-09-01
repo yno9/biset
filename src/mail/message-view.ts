@@ -256,6 +256,21 @@ export interface ReplyContext {
 // a mail submission addressed to a DID string (found live, 2026-08-25: the
 // core rejected it with "invalid recipient address").
 export function computeReplyContext(thread: ProcessedMessage[], selfAddress: string | string[]): ReplyContext {
+  // A Conversation Group thread's "recipient" is the group itself
+  // (`mls:<groupId>`, mls/mimi-content-projector.ts's `mlsGroupAddress`),
+  // never the per-participant from/to_addrs union the generic algorithm
+  // below computes -- that union would hand main.ts's `sendReply` N-1 raw
+  // DIDs instead of one group address, which it has no way to tell apart
+  // from "reply to N-1 different 1:1 recipients at once" (not a thing this
+  // app supports). `references` still comes from the ordinary chain below;
+  // Conversation Group sends don't use it (MimiContent's own `inReplyTo`,
+  // carried separately as `ReplySendInput.inReplyTo`, is what matters there),
+  // but there's no harm in it being present.
+  const groupThreadId = thread[0]?.msg.thread_id
+  if (groupThreadId?.startsWith('mls:')) {
+    const references = [...thread].sort((a, b) => a.msg.ts - b.msg.ts).map(p => p.msg.message_id).filter(Boolean)
+    return { toAddrs: [groupThreadId], references }
+  }
   const self = (Array.isArray(selfAddress) ? selfAddress : [selfAddress]).map(a => a.toLowerCase())
   const toAddrs: string[] = []
   const seen = new Set<string>(self)

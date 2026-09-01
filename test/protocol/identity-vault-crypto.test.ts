@@ -16,6 +16,7 @@ import {
 import { unwrapSegmentKey } from '../../src/vault/crypto.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { selfGroupIdHex } from '../../src/mls/self-group.ts'
+import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../../src/vault/storage-root.ts'
 import { mlsEpoch } from '../../src/protocol/ids.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/vault/store.ts'
@@ -162,6 +163,27 @@ describe('buildVaultCryptoBoundary', () => {
     expect(await repairCurrentLocalSegmentKeyWraps(selfGroupStore, segments, wraps, record)).toBe(1)
     expect(await boundary.resolver.resolveSegmentKey(identityId, original.segmentId)).toEqual(original.segmentKey)
     expect(segments.all()[0]!.epoch).toBe(mlsEpoch(epochOf(current)))
+  })
+
+  // Found live, 2026-08-31: every fresh Vault's very first segment is
+  // created straight onto the storage-root scheme (a stable, root-derived
+  // KEK -- vault/active-segment.ts's stableActiveSegment path, taken
+  // whenever record.masterSeed is set, which every real identity has).
+  // That segment's selfGroupId is the shared VAULT_STORAGE_GROUP_ID
+  // constant, never stored.selfGroupId (the per-identity self-group id) --
+  // so without an explicit skip, this loop's own mismatch check threw
+  // unconditionally, on every boot, for every identity.
+  test('skips a segment already on the storage-root scheme instead of throwing', async () => {
+    const { selfGroupStore } = await setupGenesisSelfGroup()
+    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const segments = memorySegmentStore()
+    const wraps = memoryWrapStore()
+    await segments.sealAndActivateSegment({
+      identityId, segmentId: 'storage-root-segment', segmentKey: new Uint8Array(32).fill(7),
+      selfGroupId: VAULT_STORAGE_GROUP_ID, epoch: VAULT_STORAGE_EPOCH, sealed: false, createdAt: new Date().toISOString(),
+    })
+    expect(await repairCurrentLocalSegmentKeyWraps(selfGroupStore, segments, wraps, record)).toBe(0)
+    expect(segments.all()[0]!.selfGroupId).toBe(VAULT_STORAGE_GROUP_ID) // untouched, not "repaired" onto the self-group scheme
   })
 
   test('a device removed from the self group cannot decrypt a SegmentKey minted after its removal', async () => {

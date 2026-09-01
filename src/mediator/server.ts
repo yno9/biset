@@ -30,7 +30,10 @@ import { ConnectionStore, ConnectionFullError, type MediatorConnectionStore } fr
 import {
   MEDIATE_REQUEST, MEDIATE_GRANT, KEYLIST_UPDATE, KEYLIST_UPDATE_RESPONSE, KEYLIST_QUERY, KEYLIST,
   FORWARD, STATUS_REQUEST, STATUS, DELIVERY_REQUEST, DELIVERY, MESSAGES_RECEIVED,
+  WATCH_REQUEST, WATCH_GRANT,
 } from '../didcomm/mediator-protocol.ts'
+import { MediatorWatchTokenIssuer } from './watch-token.ts'
+import type { QueuedMessage } from './queue.ts'
 
 const DIDCOMM_CT = 'application/didcomm-encrypted+json'
 
@@ -93,6 +96,7 @@ export interface MediatorOptions {
    * `resolveDidCommSenderKey` is a ready-made implementation -- pure HTTP
    * against the public did:webvh log, no biset-core dependency. */
   resolveDidWebvh?: (did: string, kid: string) => Promise<Uint8Array | null>
+  watchTokens?: MediatorWatchTokenIssuer
 }
 
 export interface MediatorHandler {
@@ -108,6 +112,7 @@ export function createMediator({
   replay = new SeenIds(),
   transaction = operation => operation(),
   resolveDidWebvh,
+  watchTokens = new MediatorWatchTokenIssuer(),
 }: MediatorOptions): MediatorHandler {
   const ownRecipient = { kid: mediator.xKid, privateKey: mediator.xPriv }
   // Replay guard over every inbound message's `id` -- a re-POSTed anoncrypt
@@ -274,9 +279,64 @@ export function createMediator({
     return { msg: JSON.parse(new TextDecoder().decode(plaintext)), senderKid }
   }
 
+  /** `GET /stream?token=...` -- the live half of pickup, authorized by a
+   * token WATCH_REQUEST minted (this device already proved it owns the kid
+   * to get one). Sends whatever's ALREADY queued as the initial batch, then
+   * tails `queue.subscribe` for anything pushed after -- same shape and
+   * same synchronous-backlog-then-subscribe ordering mls-ds/http.ts's
+   * `streamDeliveries` uses (race-free by construction: nothing can be
+   * queued for this kid between the peek and the subscribe call without
+   * this single-threaded event loop running both first). The client still
+   * owns un-authcrypting each frame and acking it via the ordinary
+   * MESSAGES_RECEIVED POST -- this route only replaces "how do I know
+   * something arrived", not the rest of Pickup 3.0. */
+  function streamFor(url: URL): Response {
+    const token = url.searchParams.get('token')
+    if (!token) return new Response('token query parameter is required', { status: 400 })
+    const record = watchTokens.resolve(token)
+    if (!record) return new Response('invalid or expired watch token', { status: 403 })
+    const { recipientKid } = record
+    const encoder = new TextEncoder()
+    let unsubscribe: (() => void) | undefined
+    let heartbeat: ReturnType<typeof setInterval> | undefined
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        // Flush the response headers immediately: an empty backlog (the
+        // common case for a fresh connection) otherwise enqueues nothing
+        // here, and fetch()/EventSource do not resolve/open until the first
+        // byte of the body arrives -- found live 2026-09-01, a fresh watch
+        // connection took a full 15s (one heartbeat interval) just to open,
+        // masquerading as the exact poll-interval latency this stream exists
+        // to eliminate. See mls-ds/http.ts's identical fix/note.
+        controller.enqueue(encoder.encode(': connected\n\n'))
+        const send = (m: QueuedMessage) => {
+          const frame = { id: m.id, jwe: JSON.parse(m.packed) }
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(frame)}\n\n`))
+        }
+        for (const m of queue.peek(recipientKid, 100)) send(m)
+        unsubscribe = queue.subscribe(recipientKid, messages => {
+          for (const m of messages) send(m)
+        })
+        // Same Bun.serve idle-timeout gotcha as mls-ds/http.ts's stream
+        // (default 10s, deployment.ts also raises it explicitly) -- a quiet
+        // recipient with nothing queued would otherwise have its connection
+        // killed out from under it.
+        heartbeat = setInterval(() => controller.enqueue(encoder.encode(': ping\n\n')), 15_000)
+      },
+      cancel() {
+        unsubscribe?.()
+        if (heartbeat !== undefined) clearInterval(heartbeat)
+      },
+    })
+    return new Response(stream, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' } })
+  }
+
   async function handle(req: Request, url: URL): Promise<Response | null> {
     if (req.method === 'GET' && url.pathname === '/.well-known/did.json') {
       return Response.json(mediator.doc)
+    }
+    if (req.method === 'GET' && url.pathname === '/stream') {
+      return streamFor(url)
     }
     if (url.pathname !== '/' || req.method !== 'POST') return null
 
@@ -435,6 +495,15 @@ export function createMediator({
         if (denied) return denied
         connections.touch(kid)
         return reply(await packReplyTo(msg, fromDid!, replyKid!, STATUS, { recipient_did: asked, message_count: queue.count(kid) }))
+      }
+
+      case WATCH_REQUEST: {
+        const kid = normalizeKid((msg.body as any)?.recipient_did ?? fromDid!)
+        const denied = await denyUnlessOwned(msg, fromDid, replyKid, kid)
+        if (denied) return denied
+        connections.touch(kid)
+        const { token, expiresAt } = watchTokens.issue(kid)
+        return reply(await packReplyTo(msg, fromDid!, replyKid!, WATCH_GRANT, { token, expires_at: expiresAt }))
       }
 
       case DELIVERY_REQUEST: {

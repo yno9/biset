@@ -167,9 +167,19 @@ function streamDeliveries(ds: SqliteConversationDeliveryService, watchTokens: Co
 
   let cursor = afterSeq
   let unsubscribe: (() => void) | undefined
+  let heartbeat: ReturnType<typeof setInterval> | undefined
   const encoder = new TextEncoder()
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
+      // Flush the response headers immediately, before anything else: a
+      // stream that enqueues no bytes here (an empty backlog is the common
+      // case) sends nothing until the heartbeat below first fires, and
+      // fetch()/EventSource do not resolve/open until the first byte of the
+      // body arrives -- found live 2026-09-01, a fresh connection with
+      // nothing queued took a full 15s (one heartbeat interval) just to
+      // report "connected", masquerading as the very poll-interval latency
+      // this stream exists to eliminate.
+      controller.enqueue(encoder.encode(': connected\n\n'))
       const send = (entry: Parameters<typeof conversationDeliveryEntryJson>[0]) => {
         const json = conversationDeliveryEntryJson(entry)
         controller.enqueue(encoder.encode(`id: ${json.seq}\ndata: ${JSON.stringify(json)}\n\n`))
@@ -179,9 +189,23 @@ function streamDeliveries(ds: SqliteConversationDeliveryService, watchTokens: Co
       unsubscribe = ds.subscribe(record.groupId, entries => {
         for (const entry of entries) if (entry.seq > cursor) send(entry)
       })
+      // A `:`-prefixed line is an SSE comment -- EventSource never fires
+      // onmessage for it, so the client (conversation-group-watch.ts) is
+      // unaffected. Without this, a quiet group (the common case: no new
+      // messages between the two `send` call sites above) writes zero bytes
+      // for as long as the group stays quiet, and Bun.serve's own idle
+      // timeout (~10s, found live 2026-09-01: every real connection through
+      // Caddy died at 9.7-11.6s with "unexpected EOF", surfacing to the
+      // browser as a CORS failure since a Caddy-generated 502 carries none
+      // of this handler's own Access-Control-Allow-Origin) then kills the
+      // TCP connection out from under the stream -- indistinguishable from
+      // a real network failure to the client, which just reconnects (a new
+      // token, a new doomed connection) forever.
+      heartbeat = setInterval(() => controller.enqueue(encoder.encode(': ping\n\n')), 15_000)
     },
     cancel() {
       unsubscribe?.()
+      if (heartbeat !== undefined) clearInterval(heartbeat)
     },
   })
   return new Response(stream, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' } })

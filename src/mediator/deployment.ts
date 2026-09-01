@@ -93,6 +93,15 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
     hostname: options.hostname ?? '127.0.0.1',
     port: options.port,
     maxRequestBodySize: maxRequestBytes,
+    // Bun.serve's own idleTimeout defaults to 10s -- far too short for
+    // `GET /stream`'s long-lived SSE connection (server.ts's `streamFor`).
+    // Found live in mls-ds's own identical stream (2026-09-01): every real
+    // connection died at ~10s with "unexpected EOF" through the reverse
+    // proxy, surfacing to the browser as an opaque CORS failure rather than
+    // a timeout. Raised to Bun's max as defense in depth alongside
+    // server.ts's own 15s heartbeat, which is what actually keeps a quiet
+    // recipient's connection from ever going idle in the first place.
+    idleTimeout: 255,
     async fetch(request) {
       const url = new URL(request.url)
       if (request.method === 'OPTIONS') {

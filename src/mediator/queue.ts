@@ -58,6 +58,13 @@ export interface MediatorMessageQueue {
   clear(recipientKid: string): void
   peek(recipientKid: string, limit: number): QueuedMessage[]
   remove(recipientKid: string, ids: string[]): number
+  /** Subscribe to every message newly `push`ed for `recipientKid`, from this
+   * moment forward -- the live half of `GET /stream` (server.ts), mirroring
+   * mls-ds/store.ts's own `subscribe`. In-process pub/sub only: never
+   * persisted, never crosses a request boundary except as a synchronous
+   * listener call within this same server process. Returns an unsubscribe
+   * function. */
+  subscribe(recipientKid: string, listener: (messages: QueuedMessage[]) => void): () => void
 }
 
 interface StoredEntry { kid: string; messages: QueuedMessage[] }
@@ -65,6 +72,7 @@ interface StoredEntry { kid: string; messages: QueuedMessage[] }
 export class MessageQueue implements MediatorMessageQueue {
   private queues = new Map<string, QueuedMessage[]>()
   private persistPath?: string
+  private readonly watchers = new Map<string, Set<(messages: QueuedMessage[]) => void>>()
 
   /** `persistPath`, when given, is loaded on construction and rewritten after
    * every mutation — omit it (tests, an ephemeral mediator) to keep the old
@@ -130,7 +138,22 @@ export class MessageQueue implements MediatorMessageQueue {
     q.push(entry)
     this.queues.set(recipientKid, q)
     this.save()
+    this.notify(recipientKid, [entry])
     return id
+  }
+
+  subscribe(recipientKid: string, listener: (messages: QueuedMessage[]) => void): () => void {
+    let set = this.watchers.get(recipientKid)
+    if (!set) { set = new Set(); this.watchers.set(recipientKid, set) }
+    set.add(listener)
+    return () => {
+      set!.delete(listener)
+      if (set!.size === 0) this.watchers.delete(recipientKid)
+    }
+  }
+
+  private notify(recipientKid: string, messages: QueuedMessage[]): void {
+    for (const listener of this.watchers.get(recipientKid) ?? []) listener(messages)
   }
 
   count(recipientKid: string): number {

@@ -38,6 +38,28 @@ interface StoredConversationGroup {
    * never reused across groups (conversation-group.ts's own note on why). */
   ownGroupLocalPrivateKey: Uint8Array
   roster: ConversationGroupRosterEntry[]
+  /** This group's Conversation Group DS base URL -- needed to reconstruct a
+   * `ConversationMlsDeliveryTransport` after a page reload, when there is no
+   * invite message or fresh `resolveMimiProviderUrl` lookup to get it from
+   * again. Learned once, at create/join time (main.ts), and never changes
+   * for the life of this group locally (a DS migration is out of scope). */
+  dsBaseUrl: string
+  /** The DID to put in `ConversationGroupInviteBody.ds` (conversation-group-invite.ts)
+   * when THIS device invites someone else into this group -- the DID whose
+   * document actually publishes `dsBaseUrl` as a `MimiDeliveryService`
+   * entry, which an invitee resolves via `resolveMimiProviderUrl`. For the
+   * device that created the group, this is its own DID; for a device that
+   * was itself invited, it's whatever `ds` arrived in ITS OWN invite,
+   * carried forward -- there is no other way to recover it (`dsBaseUrl`
+   * alone is just a URL, not proof of which DID vouches for it). */
+  dsProviderDid: string
+  /** Display-only name from compose's Subject field at group-creation time
+   * (conversation-group-invite.ts's `ConversationGroupInviteBody.groupName`)
+   * -- the DS has no name concept, and a Conversation Group message's own
+   * email carries no `subject` (MimiContent has no such field), so without
+   * storing this separately the thread header has nothing to show but "no
+   * title" forever. undefined for a group nobody named. */
+  groupName?: string
   updatedAt: number
 }
 
@@ -46,10 +68,13 @@ export interface LoadedConversationGroup {
   lastSeenSeq: number
   ownGroupLocalPrivateKey: Uint8Array
   roster: ConversationGroupRosterEntry[]
+  dsBaseUrl: string
+  dsProviderDid: string
+  groupName?: string
 }
 
 export interface MlsConversationGroupStateStore {
-  save(groupId: string, state: ClientState, lastSeenSeq: number, ownGroupLocalPrivateKey: Uint8Array, roster: ConversationGroupRosterEntry[]): Promise<void>
+  save(groupId: string, state: ClientState, lastSeenSeq: number, ownGroupLocalPrivateKey: Uint8Array, roster: ConversationGroupRosterEntry[], dsBaseUrl: string, dsProviderDid: string, groupName?: string): Promise<void>
   load(groupId: string): Promise<LoadedConversationGroup | undefined>
   /** Every group this device currently holds state for -- the poll-based
    * catch-up loop's own "which groups do I even need to ask about" list,
@@ -73,11 +98,20 @@ export class IndexedDbMlsConversationGroupStore implements MlsConversationGroupS
     this.databasePromise?.then(db => db.close()).catch(() => {})
   }
 
-  async save(groupId: string, state: ClientState, lastSeenSeq: number, ownGroupLocalPrivateKey: Uint8Array, roster: ConversationGroupRosterEntry[]): Promise<void> {
+  // `groupName` is merged from whatever's already stored when the caller
+  // doesn't pass one -- `put` replaces the whole record, and most callers
+  // (every ordinary receive/send re-save) have no opinion on the name at
+  // all; without this merge, the first such call after a named group was
+  // created would silently erase the name it took a separate round trip to
+  // learn in the first place.
+  async save(groupId: string, state: ClientState, lastSeenSeq: number, ownGroupLocalPrivateKey: Uint8Array, roster: ConversationGroupRosterEntry[], dsBaseUrl: string, dsProviderDid: string, groupName?: string): Promise<void> {
     const database = await this.database()
-    const record: StoredConversationGroup = { groupId, state: encodeState(state), lastSeenSeq, ownGroupLocalPrivateKey, roster, updatedAt: Date.now() }
     const transaction = database.transaction([STORE_NAME], 'readwrite')
-    transaction.objectStore(STORE_NAME).put(record)
+    const store = transaction.objectStore(STORE_NAME)
+    const existing = await requestResult<StoredConversationGroup | undefined>(store.get(groupId))
+    const resolvedName = groupName ?? existing?.groupName
+    const record: StoredConversationGroup = { groupId, state: encodeState(state), lastSeenSeq, ownGroupLocalPrivateKey, roster, dsBaseUrl, dsProviderDid, ...(resolvedName !== undefined ? { groupName: resolvedName } : {}), updatedAt: Date.now() }
+    store.put(record)
     await transactionDone(transaction)
   }
 
@@ -88,6 +122,8 @@ export class IndexedDbMlsConversationGroupStore implements MlsConversationGroupS
     return record === undefined ? undefined : {
       state: decodeState(record.state), lastSeenSeq: record.lastSeenSeq,
       ownGroupLocalPrivateKey: record.ownGroupLocalPrivateKey, roster: record.roster,
+      dsBaseUrl: record.dsBaseUrl, dsProviderDid: record.dsProviderDid,
+      ...(record.groupName !== undefined ? { groupName: record.groupName } : {}),
     }
   }
 

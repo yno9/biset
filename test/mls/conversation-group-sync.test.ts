@@ -35,10 +35,10 @@ const signer: VaultEventSigner = {
 }
 
 function memoryStateStore(initial?: { groupId: string; state: ClientState; ownGroupLocalPrivateKey: Uint8Array; roster: ConversationGroupRosterEntry[] }): MlsConversationGroupStateStore {
-  const rows = new Map<string, { state: ClientState; lastSeenSeq: number; ownGroupLocalPrivateKey: Uint8Array; roster: ConversationGroupRosterEntry[] }>()
-  if (initial) rows.set(initial.groupId, { state: initial.state, lastSeenSeq: 0, ownGroupLocalPrivateKey: initial.ownGroupLocalPrivateKey, roster: initial.roster })
+  const rows = new Map<string, { state: ClientState; lastSeenSeq: number; ownGroupLocalPrivateKey: Uint8Array; roster: ConversationGroupRosterEntry[]; dsBaseUrl: string; dsProviderDid: string }>()
+  if (initial) rows.set(initial.groupId, { state: initial.state, lastSeenSeq: 0, ownGroupLocalPrivateKey: initial.ownGroupLocalPrivateKey, roster: initial.roster, dsBaseUrl: 'https://mls-ds.example', dsProviderDid: 'did:web:alice.example' })
   return {
-    async save(groupId, state, lastSeenSeq, ownGroupLocalPrivateKey, roster) { rows.set(groupId, { state, lastSeenSeq, ownGroupLocalPrivateKey, roster }) },
+    async save(groupId, state, lastSeenSeq, ownGroupLocalPrivateKey, roster, dsBaseUrl, dsProviderDid) { rows.set(groupId, { state, lastSeenSeq, ownGroupLocalPrivateKey, roster, dsBaseUrl, dsProviderDid }) },
     async load(groupId) { return rows.get(groupId) },
     async listGroupIds() { return [...rows.keys()] },
   }

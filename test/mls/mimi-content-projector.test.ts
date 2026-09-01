@@ -83,7 +83,7 @@ describe('classifyMimiContent', () => {
 })
 
 describe('projectMimiConversationMessage', () => {
-  test('an ordinary group message becomes message.add with groupId as threadId and roster as recipients', async () => {
+  test('an ordinary group message becomes message.add with mls:<groupId> as threadId and roster as recipients', async () => {
     const ctx = context()
     const record = await projectMimiConversationMessage({
       content: plainContent('hello group'), messageId: id(11), groupId: 'group-1', senderDid: 'did:web:alice.example', otherMembers: ['did:web:bob.example'], receivedAt: '2026-08-31T00:00:01.000Z',
@@ -93,7 +93,7 @@ describe('projectMimiConversationMessage', () => {
     const metadataObject = record.objects[0]
     const decrypted = JSON.parse(new TextDecoder().decode(await decryptVaultObject(ctx.segmentKey, metadataObject))) as { payload: { email: Record<string, unknown> } }
     expect(decrypted.payload.email.id).toBe(messageIdToEmailId(id(11)))
-    expect(decrypted.payload.email.threadId).toBe('group-1')
+    expect(decrypted.payload.email.threadId).toBe('mls:group-1')
     expect(decrypted.payload.email.from).toEqual([{ email: 'did:web:alice.example' }])
     expect(decrypted.payload.email.to).toEqual([{ email: 'did:web:bob.example' }])
     const rawRfc5322Object = record.objects[1]

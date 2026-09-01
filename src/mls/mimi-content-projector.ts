@@ -30,6 +30,24 @@ export function messageIdToEmailId(id: MessageId): string {
   return bytesToBase64url(id)
 }
 
+/** A Conversation Group's `threadId`/reply-recipient address -- the same
+ * `mls:<groupId>` convention src.bak used for both its `group_id` field and
+ * its "to" recipient shape, adopted here too so `sendReply`'s dispatch, the
+ * thread header's "is this a group" check, and this projector's own
+ * `threadId` are all driven by one `startsWith('mls:')` test instead of a
+ * separate translation table between a raw-hex groupId and an addressable
+ * recipient string. */
+export function mlsGroupAddress(groupId: string): string {
+  return `mls:${groupId}`
+}
+
+/** Inverse of `mlsGroupAddress`. Throws on anything not shaped like one --
+ * every call site already gated entry on `startsWith('mls:')` first. */
+export function parseMlsGroupAddress(address: string): string {
+  if (!address.startsWith('mls:')) throw new MimiContentProjectionError(`not a Conversation Group address: ${address}`)
+  return address.slice('mls:'.length)
+}
+
 export class MimiContentProjectionError extends TypeError {}
 
 export type MimiConversationOperation =
@@ -109,7 +127,7 @@ export async function projectMimiConversationMessage(
     if (part.kind !== 'single') throw new MimiContentProjectionError('an ordinary message must have a SinglePart body')
     const email: Omit<LocalJmapEmail, 'blobId'> = {
       id: emailId,
-      threadId: input.groupId,
+      threadId: mlsGroupAddress(input.groupId),
       mailboxIds: { inbox: true },
       keywords: {},
       receivedAt: input.receivedAt,

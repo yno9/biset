@@ -24,7 +24,7 @@ import {
 import { addMembersToConversationGroup, createConversationGroup, randomConversationGroupId, randomGroupLocalKeypair } from '../../src/mls/conversation-group.ts'
 import { syncConversationGroupDeliveries, type ConversationGroupVaultRecord } from '../../src/mls/conversation-group-sync.ts'
 import type { ConversationGroupRosterEntry, MlsConversationGroupStateStore } from '../../src/mls/conversation-group-store.ts'
-import { decodeKeyPackage, encodeKeyPackage, joinMlsGroup, type ClientState } from '../../src/mls/group.ts'
+import { decodeKeyPackage, encodeKeyPackage, joinMlsGroup, keyPackageRefOf, welcomeRecipientRefs, type ClientState } from '../../src/mls/group.ts'
 import { encodeMimiContent, mimiRoomUri, DISPOSITION_RENDER, type MimiContent } from '../../src/mls/mimi-content.ts'
 import { sendConversationApplicationMessage } from '../../src/mls/conversation-group.ts'
 import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
@@ -36,6 +36,7 @@ import { mlsDeviceFixture } from '../protocol/support/mls-device-fixture.ts'
 const bobIdentityId = 'did:web:bob.example'
 const alice = await mlsDeviceFixture('did:web:alice.example')
 const bob = await mlsDeviceFixture(bobIdentityId)
+const carol = await mlsDeviceFixture('did:web:carol.example')
 
 const signer: VaultEventSigner = {
   deviceId: bob.kid,
@@ -49,9 +50,9 @@ afterEach(() => {
 })
 
 function memoryStateStore(): MlsConversationGroupStateStore {
-  const rows = new Map<string, { state: ClientState; lastSeenSeq: number; ownGroupLocalPrivateKey: Uint8Array; roster: ConversationGroupRosterEntry[] }>()
+  const rows = new Map<string, { state: ClientState; lastSeenSeq: number; ownGroupLocalPrivateKey: Uint8Array; roster: ConversationGroupRosterEntry[]; dsBaseUrl: string; dsProviderDid: string }>()
   return {
-    async save(groupId, state, lastSeenSeq, ownGroupLocalPrivateKey, roster) { rows.set(groupId, { state, lastSeenSeq, ownGroupLocalPrivateKey, roster }) },
+    async save(groupId, state, lastSeenSeq, ownGroupLocalPrivateKey, roster, dsBaseUrl, dsProviderDid) { rows.set(groupId, { state, lastSeenSeq, ownGroupLocalPrivateKey, roster, dsBaseUrl, dsProviderDid }) },
     async load(groupId) { return rows.get(groupId) },
     async listGroupIds() { return [...rows.keys()] },
   }
@@ -105,7 +106,7 @@ describe('Conversation Group peer-to-peer bootstrap (identity-blind DS)', () => 
     const welcomeEntry = initialEntries!.find(e => e.kind === 'welcome')!
     const bobState = await joinMlsGroup(welcomeEntry.payload, bob.own, undefined)
     const stateStore = memoryStateStore()
-    await stateStore.save(groupId, bobState, 0, bobLocal.privateKey, [])
+    await stateStore.save(groupId, bobState, 0, bobLocal.privateKey, [], 'https://mls-ds.example', 'did:web:alice.example')
 
     // --- Step 8: alice sends a message; bob catches up via the ordinary sync loop ---
     const content: MimiContent = {
@@ -141,6 +142,64 @@ describe('Conversation Group peer-to-peer bootstrap (identity-blind DS)', () => 
       expect(id.startsWith('did:')).toBe(false)
       expect(id).not.toContain('#')
     }
+    ds.close()
+  })
+
+  // Found live, 2026-09-01: a group with 2+ invitees puts more than one
+  // 'welcome' entry in the same pulled backlog (one per Add commit) -- the
+  // SECOND invitee's own join used to grab whichever 'welcome' came first
+  // in seq order (the FIRST invitee's, addressed to a KeyPackage they never
+  // held), and `joinMlsGroup` threw "No matching secret found" forever
+  // (nothing ever clears the resulting stale pending state, so a mediator
+  // redelivery of the same WELCOME_READY just re-triggered the identical
+  // failure). The fix: a Welcome names the KeyPackageRef(s) it carries
+  // secrets for (welcomeRecipientRefs) -- match against the joiner's own
+  // ref, the same way mls/keypackage-store.ts's takeForWelcome already does
+  // for the Self Group KeyPackage pool, instead of taking the first
+  // 'welcome' in the pulled list unconditionally.
+  test('adding a SECOND member picks the correct Welcome out of a multi-welcome backlog, not the first one', async () => {
+    const ds = SqliteConversationDeliveryService.open(path)
+    const handle = createConversationDeliveryHttpHandler(ds, new Ed25519ConversationDsSignatureVerifier(), new ConversationWatchTokenIssuer())
+    const transport = new ConversationMlsDeliveryTransport({ baseUrl: 'https://mls-ds.example', fetch: (input, init) => handle(new Request(input, init)) })
+
+    const groupId = randomConversationGroupId()
+    const created = await createConversationGroup(transport, groupId, alice.own)
+    let aliceState = created.state
+    const aliceSign = (bytes: Uint8Array) => ed25519.sign(bytes, created.ownGroupLocal.privateKey)
+
+    // Bob joins first (exactly as the single-invitee test above).
+    const bobLocal = randomGroupLocalKeypair()
+    const bobPublish: Omit<ConversationKeyPackagePublishV1, 'signature'> = { version: 1, id: bobLocal.id, packages: [encodeKeyPackage(bob.own.publicPackage)], publishedAt: new Date().toISOString() }
+    await transport.publishKeyPackages({ ...bobPublish, signature: ed25519.sign(conversationKeyPackagePublishSigningBytes(bobPublish), bobLocal.privateKey) })
+    const bobTake: Omit<ConversationKeyPackageTakeV1, 'signature'> = { version: 1, requesterId: created.ownGroupLocal.id, targetId: bobLocal.id, requestedAt: new Date().toISOString() }
+    const bobTaken = await transport.takeKeyPackage({ ...bobTake, signature: aliceSign(conversationKeyPackageTakeSigningBytes(bobTake)) })
+    aliceState = await addMembersToConversationGroup(aliceState, transport, groupId, created.ownGroupLocal.id, [{ keyPackage: decodeKeyPackage(bobTaken!.keyPackage), groupLocalId: bobLocal.id }], aliceSign)
+
+    // Carol joins second, AFTER bob's Add commit already put a 'welcome'
+    // entry (bob's) in the log ahead of hers.
+    const carolLocal = randomGroupLocalKeypair()
+    const carolPublish: Omit<ConversationKeyPackagePublishV1, 'signature'> = { version: 1, id: carolLocal.id, packages: [encodeKeyPackage(carol.own.publicPackage)], publishedAt: new Date().toISOString() }
+    await transport.publishKeyPackages({ ...carolPublish, signature: ed25519.sign(conversationKeyPackagePublishSigningBytes(carolPublish), carolLocal.privateKey) })
+    const carolTake: Omit<ConversationKeyPackageTakeV1, 'signature'> = { version: 1, requesterId: created.ownGroupLocal.id, targetId: carolLocal.id, requestedAt: new Date().toISOString() }
+    const carolTaken = await transport.takeKeyPackage({ ...carolTake, signature: aliceSign(conversationKeyPackageTakeSigningBytes(carolTake)) })
+    aliceState = await addMembersToConversationGroup(aliceState, transport, groupId, created.ownGroupLocal.id, [{ keyPackage: decodeKeyPackage(carolTaken!.keyPackage), groupLocalId: carolLocal.id }], aliceSign)
+
+    // Carol pulls: the backlog now holds BOTH welcomes. The naive
+    // `entries.find(e => e.kind === 'welcome')` would return bob's (seq
+    // order), not hers.
+    const entries = await ds.deliveriesSince(groupId, carolLocal.id, 0)!
+    const welcomeEntries = entries.filter(e => e.kind === 'welcome')
+    expect(welcomeEntries.length).toBe(2) // bob's AND carol's are both in carol's own pulled backlog
+
+    const naive = welcomeEntries[0]!
+    await expect(joinMlsGroup(naive.payload, carol.own, undefined)).rejects.toThrow(/No matching secret found/)
+
+    const carolOwnRef = await keyPackageRefOf(carol.own.publicPackage)
+    const correct = welcomeEntries.find(e => welcomeRecipientRefs(e.payload).includes(carolOwnRef))
+    expect(correct).toBeDefined()
+    const carolState = await joinMlsGroup(correct!.payload, carol.own, undefined)
+    expect(carolState).toBeDefined()
+
     ds.close()
   })
 })

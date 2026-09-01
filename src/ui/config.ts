@@ -2,7 +2,7 @@
 // main.ts each need apexDomain/coreBaseUrl, so this is read in one place
 // rather than two copies of the same window-global reach-through drifting
 // apart.
-declare const __BISET_CONFIG__: { apexDomain?: string; anchorBaseUrl?: string; anchorOidcClientId?: string; coreBaseUrl?: string; mediatorUrls?: string[]; coordinatorUrl?: string } | undefined
+declare const __BISET_CONFIG__: { apexDomain?: string; anchorBaseUrl?: string; anchorOidcClientId?: string; coreBaseUrl?: string; mediatorUrls?: string[]; coordinatorUrl?: string; conversationMlsDsBaseUrl?: string } | undefined
 
 export interface BisetConfig {
   apexDomain: string
@@ -21,6 +21,14 @@ export interface BisetConfig {
   mediatorUrls: string[]
   /** Optional: a single-device Vault works without a Coordinator. */
   coordinatorUrl: string
+  /** Optional: this deployment's Conversation Group MLS Delivery Service
+   * (mls-ds/http.ts). Empty disables CREATING a new Conversation Group from
+   * this device (main.ts) -- receiving an invite into, and participating
+   * in, a group someone else created needs no local config at all, since
+   * that group's own DS URL is learned from the invite (resolved via
+   * `resolveMimiProviderUrl`) or, after the first join, from this device's
+   * own `conversation-group-store.ts` row. */
+  conversationMlsDsBaseUrl: string
 }
 
 export function readBisetConfig(): BisetConfig {
@@ -32,5 +40,6 @@ export function readBisetConfig(): BisetConfig {
     coreBaseUrl: cfg.coreBaseUrl ?? '',
     mediatorUrls: cfg.mediatorUrls ?? [],
     coordinatorUrl: cfg.coordinatorUrl ?? '',
+    conversationMlsDsBaseUrl: cfg.conversationMlsDsBaseUrl ?? '',
   }
 }
