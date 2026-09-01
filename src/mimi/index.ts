@@ -5,11 +5,13 @@ const databasePath = Bun.env.MIMI_DATABASE_PATH
 if (!databasePath) throw new Error('MIMI_DATABASE_PATH is required')
 const mode = deploymentMode(Bun.env.MIMI_MODE)
 const publicBaseUrl = Bun.env.MIMI_PUBLIC_BASE_URL
-const selfOwnerUser = Bun.env.MIMI_SELF_OWNER_USER
+// Only ever set true for a deployment dedicated to Self Group traffic --
+// see MimiDeploymentOptions.allowExternalJoin's doc comment (deployment.ts).
+const allowExternalJoin = Bun.env.MIMI_ALLOW_EXTERNAL_JOIN === 'true'
 
 const port = envInteger('PORT', 8793, 1, 65_535)
-const deployment = serveMimiDeployment({ databasePath, mode, port, publicBaseUrl, selfOwnerUser })
-console.info(`biset-mimi (${mode}) listening on :${port}`)
+const deployment = serveMimiDeployment({ databasePath, mode, port, publicBaseUrl, allowExternalJoin })
+console.info(`biset-mimi (${mode}${allowExternalJoin ? ', external join enabled' : ''}) listening on :${port}`)
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
@@ -26,7 +28,7 @@ function envInteger(name: string, fallback: number, min: number, max: number): n
   return value
 }
 
-function deploymentMode(value: string | undefined): 'normal' | 'anon' | 'self' {
-  if (value === 'normal' || value === 'anon' || value === 'self') return value
-  throw new TypeError('MIMI_MODE must be normal, anon, or self')
+function deploymentMode(value: string | undefined): 'normal' | 'anon' {
+  if (value === 'normal' || value === 'anon') return value
+  throw new TypeError('MIMI_MODE must be normal or anon')
 }

@@ -523,3 +523,32 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
 - **実HTTPS検証（`mimi.biset.md`）で確認**: (1) 本物のKeyPackageを伴わない偽の「Bobが追加された」という主張 → `400 credential for new participant ... does not match any add proposal's KeyPackage in this commit`で拒否。(2) 実際に`add`proposalでBobのKeyPackageを含めた場合 → `200 success`で受理。
 
 `typecheck`・全テストスイート（`bun run test`）は無傷でパス。本番`biset-mimi-normal`/`biset-mimi-anon`とも再ビルド・再デプロイ・再検証済み。
+
+## 18. `biset-coordinator`置き換えに向けて: `self`モード廃止と`allowExternalJoin`（2026-09-01）
+
+§14で示したビジョン（Self Group = 本人1人のMIMI room）を実際に進めるにあたり、いくつか設計判断をやり直した。
+
+### 18.1 決定: `self`という独立モードは廃止する
+
+以前実装した`MimiDeploymentMode = 'normal' | 'anon' | 'self'`の`self`は、**デプロイ起動時に固定された単一の所有者(`selfOwnerUser`)しか使えない**という設計だった——これは「ユーザー1人につき専用プロセスを1つ立てる」ことを意味し、実際のユーザー数でスケールしない（5.4が"spike"止まりだった理由）。
+
+正しい理解は「**third-partyグループとの可用性分離はプロセスレベルの話であって、コードレベルの話ではない**」ということ。`self`用の特別なコード（`credentialAllowed`の所有者チェック、`selfUpdateOwned`、federation route拒否）を全て削除し、`MimiDeploymentMode`は`'normal' | 'anon'`の2つだけにした。Self Group/Vault用のデプロイは、**third-party用と全く同じ`normal`モードのコード**を、別プロセス・別ポート・別DBとして立てるだけになる——コードは完全に1つ、`git diff`で差分ゼロ。
+
+### 18.2 唯一残った実際の差: external join
+
+coordinatorの設計（`PLAN_biset-coordinator.md`）は、root keyで復元した新端末が**他の端末が1台もオンラインでなくても**自分のSelf Groupに入れることを前提にしている。これはexternal join（`GroupInfo`取得→external commit）でしか実現できない。third-partyのgroup chatではexternal joinを許すとGroupInfoのratchet treeが実credentialを漏らすため意図的に403にしていた（Phase 6, 6.6）が、Self Groupでは「漏らす相手」がそもそも存在しない（部屋の所有者は１人だけ）。
+
+これを新しい`mode`にせず、**`MimiDeploymentOptions.allowExternalJoin: boolean`という1つの設定フラグ**にした（デフォルト`false`、third-party用デプロイはこのまま）。Self/Vault用デプロイだけ`true`にする。
+
+### 18.3 `POST /groupInfo/{roomId}`を実装した（spec §5.6準拠）
+
+これまで「常に403」だった未実装のエンドポイントを、実際にspec §5.6の`GroupInfoRequest`/`GroupInfoResponse`のセマンティクスで実装した。
+
+- [src/mimi/protocol-types.ts](src/mimi/protocol-types.ts): `GroupInfoRequest`/`GroupInfoResponse`/`GroupInfoCode`を追加。
+- [src/mimi/authorizer.ts](src/mimi/authorizer.ts): `groupInfoRequestSigningBytes`/`groupInfoResponseSigningBytes`、`authorizeGroupInfoRequest`（署名検証のみ——参加者チェックはhttp.ts側、新しいdeviceのcredentialは初見が前提のため）、`userIsRoomParticipant`（**exact credential一致ではなくuser URI一致**——新端末は今まさに初めて見るcredentialを持っているのが前提）。
+- [src/mimi/group-info.ts](src/mimi/group-info.ts)（新規）: `sealGroupInfoResponse`。room保存済みの`groupInfo`/`ratchetTree`（opaqueバイト列、既存の`HandshakeBundle.groupInfo`/`ratchetTree`フィールド経由で既に保存されていたが、今まで配信経路が無かった）を、requesterの`groupInfoPublicKey`へ`encryptWithLabel`（vendor engineの既存HPKE実装、`"GroupInfo and ratchet_tree encryption"`ラベル）でHPKE封印し、**roomのfranking鍵（Ed25519）をhub_senderとして再利用**して署名する——新しい鍵体系を増やさず、既存のfranking_signature_keyという「hubの識別子」をそのまま流用した。
+- pending proposalsは追跡していないため常に空リスト——ドキュメント化済みの意図的な簡略化（spec自体は追跡を要求するが、初回の新端末onboardingという主要ユースケースでは実害が薄い）。
+- [src/mimi/wire.ts](src/mimi/wire.ts): 対応するJSON+base64urlのencode/decode一式、および封印前のGroupInfoRatchetTreeTBE相当を`encodeGroupInfoRatchetTreeBundle`としてbiset独自JSON形式で実装（spec本文のTLS Presentation Language形式ではない、§3の既存方針通り）。
+- テスト（`test/mimi/http.test.ts`）: 実際にHPKE鍵ペアを生成し、既存参加者と同じuser URIを持つ「新端末」がGroupInfoを取得・復号でき、無関係な第三者は`notAuthorized`、存在しないroomは`noSuchRoom`になることをEnd-to-Endで確認。
+
+`typecheck`・全テストスイート無傷でパス。**本番へのデプロイ・実HTTPS検証はまだ**——次のステップ。

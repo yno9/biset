@@ -12,6 +12,8 @@ import type { CanonicalValue } from '../protocol/canonical.ts'
 import type {
   DeliveriesPullRequest,
   DeliveriesWatchRequest,
+  GroupInfoRequest,
+  GroupInfoResponse,
   KeyMaterialRequest,
   KeyMaterialResponse,
   KeyPackagePublishRequest,
@@ -113,6 +115,36 @@ export async function authorizeDeliveriesWatch(store: SqliteMimiStore, verifier:
 
 export async function authorizeSubmitMessage(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: SubmitMessageRequest): Promise<boolean> {
   return (await verifier.verify(value.sender, submitMessageSigningBytes(value), value.signature)) && credentialMatchesRoom(store.room(value.roomId), value.sender)
+}
+
+export function groupInfoRequestSigningBytes(value: Omit<GroupInfoRequest, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/mimi-group-info-request/v1', version: value.version, protocol: value.protocol, cipherSuite: value.cipherSuite,
+    requester: credentialValue(value.requester), groupInfoPublicKey: bytesToBase64url(value.groupInfoPublicKey), requestedAt: value.requestedAt,
+  })
+}
+
+export function groupInfoResponseSigningBytes(value: Omit<GroupInfoResponse, 'signature'>): Uint8Array {
+  return canonicalBytes({
+    label: 'biset/mimi-group-info-response/v1', version: value.version, roomId: value.roomId, status: value.status,
+    ...(value.cipherSuite === undefined ? {} : { cipherSuite: value.cipherSuite }),
+    ...(value.hubSenderSignatureKey === undefined ? {} : { hubSenderSignatureKey: bytesToBase64url(value.hubSenderSignatureKey) }),
+    ...(value.hubSenderCredential === undefined ? {} : { hubSenderCredential: bytesToBase64url(value.hubSenderCredential) }),
+    ...(value.encryptedGroupInfoAndTree === undefined ? {} : { encryptedGroupInfoAndTree: { kemOutput: bytesToBase64url(value.encryptedGroupInfoAndTree.kemOutput), ciphertext: bytesToBase64url(value.encryptedGroupInfoAndTree.ciphertext) } }),
+  })
+}
+
+/** Signature proves possession; the room membership check that follows is by
+ * stable user URI, not by exact credential -- the whole point of external
+ * join is that the requester's device/credential is brand new and has never
+ * been seen by this room before (§18, PLAN_biset-mimi-server.md). */
+export async function authorizeGroupInfoRequest(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: GroupInfoRequest): Promise<boolean> {
+  if (!(await verifier.verify(value.requester, groupInfoRequestSigningBytes(value), value.signature))) return false
+  return value.requester.kind === 'visible'
+}
+
+export function userIsRoomParticipant(room: ReturnType<SqliteMimiStore['room']>, user: string): boolean {
+  return room !== undefined && room.participantList.participants.some(participant => participant.user === user)
 }
 
 /** Turns the store's single-use KeyPackage take into draft §5.2 status data. */

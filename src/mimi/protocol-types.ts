@@ -18,8 +18,16 @@ export type MimiProviderUri = string
 export type MimiEpoch = string
 
 export type MimiProtocolVersion = 'mls10'
-/** Process-wide isolation mode; never a room-level switch. */
-export type MimiDeploymentMode = 'normal' | 'anon' | 'self'
+/**
+ * Process-wide isolation mode; never a room-level switch. There is no
+ * distinct 'self' mode: a Self Group (one user's own multiple devices) is
+ * just an ordinary 'normal'-mode room whose participant list happens to
+ * have one user. A dedicated deployment for that traffic (separate from
+ * third-party groups, for availability isolation -- PLAN_biset-mimi-server.md
+ * §14/§18) runs this exact 'normal' code with `allowExternalJoin: true`
+ * (deployment.ts), not a different mode.
+ */
+export type MimiDeploymentMode = 'normal' | 'anon'
 
 /** The basic, non-MMR MLS credential accepted during Phase 0 and Phase 1. */
 export interface VisibleCredential {
@@ -239,6 +247,52 @@ export interface MimiIdentifierResponse { responseCode: MimiIdentifierQueryCode;
 
 export interface MimiAbusiveMessage { messageContent: Uint8Array; frank: Frank; acceptedTimestamp: string }
 export interface MimiAbuseReport { reportingUser?: MimiUserUri; allegedAbuserUri: MimiUserUri; reasonCode: number; note: string; messages: MimiAbusiveMessage[] }
+
+/**
+ * draft §5.6 external join (`POST /groupInfo/{roomId}`). Disabled by default
+ * (`allowExternalJoin: false`, deployment.ts) since a GroupInfo ratchet tree
+ * is plaintext-readable and would disclose every member's real credential to
+ * an unauthenticated joiner -- the same reason biset-mls-ds never implemented
+ * it for third-party rooms. It is enabled only for a deployment dedicated to
+ * Self Group traffic, where the only members are ever the room's own owner's
+ * devices, and a new device recovering from its root key has no other device
+ * online to add it via an ordinary `add` proposal instead.
+ */
+export interface GroupInfoRequest {
+  version: 1
+  protocol: MimiProtocolVersion
+  cipherSuite: number
+  requester: MimiCredential
+  /** HPKE public key the response is encrypted to (draft: groupInfoPublicKey). */
+  groupInfoPublicKey: Uint8Array
+  requestedAt: string
+  signature: Uint8Array
+}
+
+export type GroupInfoCode = 'success' | 'notAuthorized' | 'noSuchRoom'
+
+/** The room's stored GroupInfo/ratchet_tree, HPKE-sealed to the requester's
+ * groupInfoPublicKey. Pending (uncommitted) proposals are not tracked by
+ * this store, so that list is always empty -- a documented simplification,
+ * not a wire-format gap. */
+export interface GroupInfoRatchetTreeBundle {
+  groupInfo: Uint8Array
+  ratchetTree?: Uint8Array
+}
+
+export interface GroupInfoResponse {
+  version: 1
+  roomId: MimiRoomId
+  status: GroupInfoCode
+  cipherSuite?: number
+  /** draft's ExternalSender `hub_sender` -- reuses the room's franking
+   * signing key as the hub's identity, the same key clients already trust
+   * for franking_signature_key (protocol-types.ts's FrankingAgentData). */
+  hubSenderSignatureKey?: Uint8Array
+  hubSenderCredential?: Uint8Array
+  encryptedGroupInfoAndTree?: { kemOutput: Uint8Array; ciphertext: Uint8Array }
+  signature?: Uint8Array
+}
 
 /** MIMI update's committed/proposed MLS handshake material (draft §5.3). */
 export interface HandshakeBundle {

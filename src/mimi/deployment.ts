@@ -18,8 +18,16 @@ export interface MimiDeploymentOptions {
   /** Public HTTPS origin advertised by the MIMI well-known directory. */
   publicBaseUrl?: string
   federation?: MimiFederationOptions
-  /** Required only by the isolated owner-only Self Group deployment. */
-  selfOwnerUser?: string
+  /**
+   * Enables `POST /groupInfo/{roomId}` (draft §5.6 external join) instead of
+   * the default explicit refusal. Only turn this on for a deployment
+   * dedicated to Self Group traffic (one user's own devices) -- a GroupInfo
+   * ratchet tree discloses every member's real credential to whoever fetches
+   * it, which is fine when the only possible members are the room's own
+   * owner, and a serious leak for a third-party room (protocol-types.ts's
+   * GroupInfoRequest doc comment). Defaults to false.
+   */
+  allowExternalJoin?: boolean
 }
 
 export interface MimiServerOptions extends MimiDeploymentOptions { port: number }
@@ -30,13 +38,10 @@ export interface MimiServerOptions extends MimiDeploymentOptions { port: number 
  * process signals and listening configuration.
  */
 export function createMimiDeployment(options: MimiDeploymentOptions) {
-  if (options.mode === 'self' && !options.selfOwnerUser) throw new TypeError('self-mode MIMI deployment requires selfOwnerUser')
-  if (options.mode !== 'self' && options.selfOwnerUser !== undefined) throw new TypeError('selfOwnerUser is valid only for self-mode MIMI deployments')
-  if (options.mode === 'self' && options.federation !== undefined) throw new TypeError('self-mode MIMI deployment must not enable federation')
   const store = SqliteMimiStore.open(options.databasePath, options.mode)
   const verifier = new Ed25519MimiSignatureVerifier()
   const watchTokens = new MimiWatchTokenIssuer()
-  const inner = createMimiHttpHandler(store, verifier, watchTokens, options.mode, options.publicBaseUrl, options.federation, options.selfOwnerUser)
+  const inner = createMimiHttpHandler(store, verifier, watchTokens, options.mode, options.publicBaseUrl, options.federation, options.allowExternalJoin ?? false)
   return {
     mode: options.mode,
     store,

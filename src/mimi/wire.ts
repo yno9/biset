@@ -8,6 +8,8 @@ import type {
   Frank,
   FrankAAD,
   FrankingAgentData,
+  GroupInfoRequest,
+  GroupInfoResponse,
   HandshakeBundle,
   KeyMaterialRequest,
   KeyMaterialResponse,
@@ -205,6 +207,67 @@ function decodeFrankingAgentData(value: unknown, name: string): FrankingAgentDat
 export function encodeFrankingAgentDataWire(value: FrankingAgentData): string { return JSON.stringify(frankingAgentDataJson(value)) }
 
 export function decodeFrankingAgentDataWire(text: string): FrankingAgentData { return decodeFrankingAgentData(record(text, 'FrankingAgentData'), 'FrankingAgentData') }
+
+// -------------------------------------------------------------- group info
+
+export function encodeGroupInfoRequestWire(value: GroupInfoRequest): string {
+  return JSON.stringify({
+    version: value.version, protocol: value.protocol, cipherSuite: value.cipherSuite, requester: credentialJson(value.requester),
+    groupInfoPublicKey: bytesToBase64url(value.groupInfoPublicKey), requestedAt: value.requestedAt, signature: bytesToBase64url(value.signature),
+  })
+}
+
+export function decodeGroupInfoRequestWire(text: string): GroupInfoRequest {
+  const input = record(text, 'GroupInfoRequest')
+  if (input.version !== 1) throw new MimiWireError('GroupInfoRequest.version must be 1')
+  return {
+    version: 1, protocol: requireProtocol(input.protocol, 'GroupInfoRequest.protocol'), cipherSuite: requireInteger(input.cipherSuite, 'GroupInfoRequest.cipherSuite'),
+    requester: decodeCredential(input.requester, 'GroupInfoRequest.requester'), groupInfoPublicKey: requireBinary(input.groupInfoPublicKey, 'GroupInfoRequest.groupInfoPublicKey'),
+    requestedAt: requireString(input.requestedAt, 'GroupInfoRequest.requestedAt'), signature: requireBinary(input.signature, 'GroupInfoRequest.signature'),
+  }
+}
+
+export function encodeGroupInfoResponseWire(value: GroupInfoResponse): string {
+  return JSON.stringify({
+    version: value.version, roomId: value.roomId, status: value.status,
+    ...(value.cipherSuite === undefined ? {} : { cipherSuite: value.cipherSuite }),
+    ...(value.hubSenderSignatureKey === undefined ? {} : { hubSenderSignatureKey: bytesToBase64url(value.hubSenderSignatureKey) }),
+    ...(value.hubSenderCredential === undefined ? {} : { hubSenderCredential: bytesToBase64url(value.hubSenderCredential) }),
+    ...(value.encryptedGroupInfoAndTree === undefined ? {} : { encryptedGroupInfoAndTree: { kemOutput: bytesToBase64url(value.encryptedGroupInfoAndTree.kemOutput), ciphertext: bytesToBase64url(value.encryptedGroupInfoAndTree.ciphertext) } }),
+    ...(value.signature === undefined ? {} : { signature: bytesToBase64url(value.signature) }),
+  })
+}
+
+export function decodeGroupInfoResponseWire(text: string): GroupInfoResponse {
+  const input = record(text, 'GroupInfoResponse')
+  if (input.version !== 1) throw new MimiWireError('GroupInfoResponse.version must be 1')
+  const status = input.status
+  if (status !== 'success' && status !== 'notAuthorized' && status !== 'noSuchRoom') throw new MimiWireError('GroupInfoResponse.status is invalid')
+  const encryptedGroupInfoAndTree = input.encryptedGroupInfoAndTree === undefined ? undefined : (() => {
+    const bundle = requireRecord(input.encryptedGroupInfoAndTree, 'GroupInfoResponse.encryptedGroupInfoAndTree')
+    return { kemOutput: requireBinary(bundle.kemOutput, 'GroupInfoResponse.encryptedGroupInfoAndTree.kemOutput'), ciphertext: requireBinary(bundle.ciphertext, 'GroupInfoResponse.encryptedGroupInfoAndTree.ciphertext') }
+  })()
+  return {
+    version: 1, roomId: requireString(input.roomId, 'GroupInfoResponse.roomId'), status,
+    cipherSuite: input.cipherSuite === undefined ? undefined : requireInteger(input.cipherSuite, 'GroupInfoResponse.cipherSuite'),
+    hubSenderSignatureKey: optionalBinary(input.hubSenderSignatureKey, 'GroupInfoResponse.hubSenderSignatureKey'),
+    hubSenderCredential: optionalBinary(input.hubSenderCredential, 'GroupInfoResponse.hubSenderCredential'),
+    encryptedGroupInfoAndTree, signature: optionalBinary(input.signature, 'GroupInfoResponse.signature'),
+  }
+}
+
+/** The Distribution-Service-supplied bundle before HPKE sealing (draft's
+ * GroupInfoRatchetTreeTBE, §5.6) -- biset's own JSON encoding rather than the
+ * draft's TLS presentation form, consistent with §3's wire policy. Pending
+ * proposals are never populated (protocol-types.ts's doc comment). */
+export function encodeGroupInfoRatchetTreeBundle(groupInfo: Uint8Array, ratchetTree: Uint8Array | undefined): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify({ groupInfo: bytesToBase64url(groupInfo), ratchetTree: ratchetTree === undefined ? undefined : bytesToBase64url(ratchetTree), pendingProposals: [] }))
+}
+
+export function decodeGroupInfoRatchetTreeBundle(bytes: Uint8Array): { groupInfo: Uint8Array; ratchetTree?: Uint8Array } {
+  const input = record(new TextDecoder().decode(bytes), 'GroupInfoRatchetTreeBundle')
+  return { groupInfo: requireBinary(input.groupInfo, 'GroupInfoRatchetTreeBundle.groupInfo'), ratchetTree: optionalBinary(input.ratchetTree, 'GroupInfoRatchetTreeBundle.ratchetTree') }
+}
 
 function frankingContextJson(value: ServerFrankingContext): JsonRecord {
   return { senderUri: value.senderUri, roomUri: value.roomUri, acceptedTimestamp: value.acceptedTimestamp }

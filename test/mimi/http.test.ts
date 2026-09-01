@@ -6,6 +6,8 @@ import {
   deliveriesPullSigningBytes,
   deliveriesWatchSigningBytes,
   authorizeKeyPackagePublish,
+  groupInfoRequestSigningBytes,
+  groupInfoResponseSigningBytes,
   keyPackagePublishSigningBytes,
   keyMaterialSigningBytes,
   submitMessageSigningBytes,
@@ -13,11 +15,14 @@ import {
 } from '../../src/mimi/authorizer.ts'
 import {
   decodeDeliveriesWire,
+  decodeGroupInfoResponseWire,
+  decodeGroupInfoRatchetTreeBundle,
   decodeKeyMaterialResponseWire,
   decodeKeyPackagePublishResponseWire,
   decodeUpdateRoomResponseWire,
   encodeDeliveriesPullRequestWire,
   encodeDeliveriesWatchRequestWire,
+  encodeGroupInfoRequestWire,
   encodeKeyMaterialRequestWire,
   encodeKeyPackagePublishWire,
   decodeFrankWire,
@@ -28,6 +33,7 @@ import {
 import type { PseudonymousCredential, VisibleCredential } from '../../src/mimi/protocol-types.ts'
 import { createCommit, encodeMlsMessage, type KeyPackage } from '../../src/mls/vendor/index.ts'
 import { encodeCredential } from '../../src/mls/vendor/credential.ts'
+import { decryptWithLabel } from '../../src/mls/vendor/crypto/hpke.ts'
 import { encodeWelcome } from '../../src/mls/vendor/welcome.ts'
 import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../../src/mimi/app-data.ts'
 import { createMlsGroup, generateOwnKeyPackageForCredential } from '../../src/mls/group.ts'
@@ -90,17 +96,55 @@ function participantCommit(room: string, epoch: string, before: { user: string; 
 }
 
 describe('MIMI Phase 0 HTTP flow', () => {
-  test('self mode requires one owner, rejects another visible identity, and exposes no federation routes', async () => {
+  test('allowExternalJoin lets an existing participant\'s new device fetch GroupInfo, but not a stranger', async () => {
+    // There is no distinct 'self' mode: a Self Group deployment is this same
+    // 'normal' code with allowExternalJoin turned on (PLAN_biset-mimi-server.md
+    // §14/§18) -- availability isolation from third-party rooms is a
+    // deployment/process choice, not a code-level mode.
     const owner = client('did:web:owner', 'phone', 9)
-    const other = client('did:web:other', 'phone', 10)
-    expect(() => createMimiDeployment({ databasePath: ':memory:', mode: 'self' })).toThrow('selfOwnerUser')
-    const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'self', selfOwnerUser: owner.credential.user })
-    const unsigned = (sender: Client, id: string) => ({ version: 1 as const, protocol: 'mls10' as const, roomId: id, sender: sender.credential, epoch: '0', bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(id, '0', [], [{ user: sender.credential.user, roleIndex: 1 }], 'self', deployment.store.prepareFrankingKeys(id).signingPublicKey) }, initialState: { basePolicy: new Uint8Array(), participantList: { participants: [{ user: sender.credential.user, roleIndex: 1 }] }, memberCredentials: [sender.credential], metadata: { roomUri: id, roomName: 'self' } }, submittedAt: at })
-    const own = unsigned(owner, 'mimi://self.example/r/owner')
-    expect((await deployment.fetch(post(`/update/${encodeURIComponent(own.roomId)}`, encodeUpdateRoomRequestWire(signedUpdate(owner, own))))).status).toBe(200)
-    const rejected = unsigned(other, 'mimi://self.example/r/other')
-    expect((await deployment.fetch(post(`/update/${encodeURIComponent(rejected.roomId)}`, encodeUpdateRoomRequestWire(signedUpdate(other, rejected))))).status).toBe(403)
-    expect((await deployment.fetch(post('/requestConsent/self.example', '{}'))).status).toBe(403)
+    const stranger = client('did:web:stranger', 'phone', 10)
+    const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'normal', allowExternalJoin: true })
+    const externalJoinRoom = 'mimi://self.example/r/owner'
+    const frankingKey = deployment.store.prepareFrankingKeys(externalJoinRoom).signingPublicKey
+    const groupInfoBytes = new TextEncoder().encode('opaque genuine GroupInfo bytes')
+    const ratchetTreeBytes = new TextEncoder().encode('opaque genuine ratchet_tree bytes')
+    const initialUnsigned = {
+      version: 1 as const, protocol: 'mls10' as const, roomId: externalJoinRoom, sender: owner.credential, epoch: '0',
+      bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(externalJoinRoom, '0', [], [{ user: owner.credential.user, roleIndex: 1 }], 'self', frankingKey), groupInfo: groupInfoBytes, ratchetTree: ratchetTreeBytes },
+      initialState: { basePolicy: new Uint8Array(), participantList: { participants: [{ user: owner.credential.user, roleIndex: 1 }] }, memberCredentials: [owner.credential], metadata: { roomUri: externalJoinRoom, roomName: 'self' } },
+      submittedAt: at,
+    }
+    expect((await deployment.fetch(post(`/update/${encodeURIComponent(externalJoinRoom)}`, encodeUpdateRoomRequestWire(signedUpdate(owner, initialUnsigned))))).status).toBe(200)
+
+    const suite = await mlsSuite()
+    const newDeviceHpke = await suite.hpke.generateKeyPair()
+    const newDeviceHpkePublicKey = await suite.hpke.exportPublicKey(newDeviceHpke.publicKey)
+    const newDevice = client('did:web:owner', 'laptop', 11) // same user URI as owner, brand-new device credential
+
+    // The owner's own new device: authorized because its `user` matches an
+    // existing participant, even though its device credential is brand new.
+    const ownRequestUnsigned = { version: 1 as const, protocol: 'mls10' as const, cipherSuite: 1, requester: newDevice.credential, groupInfoPublicKey: newDeviceHpkePublicKey, requestedAt: at }
+    const ownRequest = { ...ownRequestUnsigned, signature: ed25519.sign(groupInfoRequestSigningBytes(ownRequestUnsigned), newDevice.secret) }
+    const ownResponse = await deployment.fetch(post(`/groupInfo/${encodeURIComponent(externalJoinRoom)}`, encodeGroupInfoRequestWire(ownRequest)))
+    expect(ownResponse.status).toBe(200)
+    const decoded = decodeGroupInfoResponseWire(await ownResponse.text())
+    expect(decoded.status).toBe('success')
+    expect(decoded.hubSenderSignatureKey).toEqual(frankingKey)
+    expect(ed25519.verify(decoded.signature!, groupInfoResponseSigningBytes(decoded), decoded.hubSenderSignatureKey!)).toBe(true)
+    const plaintext = await decryptWithLabel(newDeviceHpke.privateKey, 'GroupInfo and ratchet_tree encryption', new TextEncoder().encode(externalJoinRoom), decoded.encryptedGroupInfoAndTree!.kemOutput, decoded.encryptedGroupInfoAndTree!.ciphertext, suite.hpke)
+    const bundle = decodeGroupInfoRatchetTreeBundle(plaintext)
+    expect(bundle.groupInfo).toEqual(groupInfoBytes)
+    expect(bundle.ratchetTree).toEqual(ratchetTreeBytes)
+
+    // A stranger (different user URI, never a participant): refused.
+    const strangerRequestUnsigned = { version: 1 as const, protocol: 'mls10' as const, cipherSuite: 1, requester: stranger.credential, groupInfoPublicKey: newDeviceHpkePublicKey, requestedAt: at }
+    const strangerRequest = { ...strangerRequestUnsigned, signature: ed25519.sign(groupInfoRequestSigningBytes(strangerRequestUnsigned), stranger.secret) }
+    const strangerResponse = await deployment.fetch(post(`/groupInfo/${encodeURIComponent(externalJoinRoom)}`, encodeGroupInfoRequestWire(strangerRequest)))
+    expect(decodeGroupInfoResponseWire(await strangerResponse.text()).status).toBe('notAuthorized')
+
+    // A room that doesn't exist.
+    const noSuchRoomResponse = await deployment.fetch(post(`/groupInfo/${encodeURIComponent('mimi://self.example/r/does-not-exist')}`, encodeGroupInfoRequestWire(strangerRequest)))
+    expect(decodeGroupInfoResponseWire(await noSuchRoomResponse.text()).status).toBe('noSuchRoom')
     deployment.close()
   })
 

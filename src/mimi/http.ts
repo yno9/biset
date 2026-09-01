@@ -1,5 +1,6 @@
 /** Narrow HTTP boundary for MIMI provider endpoints implemented in Phase 0. */
 import {
+  authorizeGroupInfoRequest,
   authorizeKeyMaterial,
   authorizeKeyPackagePublish,
   authorizeUpdate,
@@ -7,15 +8,18 @@ import {
   authorizeDeliveriesWatch,
   authorizeSubmitMessage,
   keyMaterialResponse,
+  userIsRoomParticipant,
   type MimiSignatureVerifier,
 } from './authorizer.ts'
 import {
+  decodeGroupInfoRequestWire,
   decodeKeyMaterialRequestWire,
   decodeKeyPackagePublishWire,
   decodeDeliveriesPullRequestWire,
   decodeDeliveriesWatchRequestWire,
   decodeUpdateRoomRequestWire,
   decodeSubmitMessageRequestWire,
+  encodeGroupInfoResponseWire,
   encodeKeyMaterialResponseWire,
   encodeKeyPackagePublishResponseWire,
   encodeDeliveriesWire,
@@ -28,6 +32,7 @@ import {
   deliveryEntryWireJson,
 } from './wire.ts'
 import { frankMessage, verifyFrank } from './franking.ts'
+import { sealGroupInfoResponse } from './group-info.ts'
 import { createMimiProtocolDirectory, MIMI_PROTOCOL_DIRECTORY_PATH } from './directory.ts'
 import { decodeMimiAbuseReportWire, encodeMimiAbuseReportWire, decodeMimiConsentEntryWire, decodeMimiIdentifierRequestWire, encodeMimiIdentifierResponseWire, noIdentifiers, type MimiIdentifierDirectory } from './federation.ts'
 import { verifyMimiProviderRequest, type VerifiedProviderPeer } from './provider-transport.ts'
@@ -36,7 +41,7 @@ import { extractMimiMlsStateTransition } from './mls-appsync.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import type { MimiAssetProxy } from './asset-proxy.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
-import type { MimiCredential, MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
+import type { GroupInfoResponse, MimiCredential, MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
 import type { MimiWatchTokenIssuer } from './watch-token.ts'
 
 const MAX_BODY_BYTES = 1024 * 1024
@@ -94,13 +99,12 @@ export function createMimiHttpHandler(
   mode: MimiDeploymentMode,
   publicBaseUrl?: string,
   federation?: MimiFederationOptions,
-  selfOwnerUser?: string,
+  allowExternalJoin = false,
 ): (request: Request) => Promise<Response> {
   return async request => {
     try {
       const path = new URL(request.url).pathname
       if (!isMimiHttpPath(path)) return error(404, 'not-found', 'Not found')
-      if (mode === 'self' && isFederationPath(path)) return error(403, 'not-allowed', 'self-mode deployments do not expose federation endpoints')
       if (path === MIMI_PROTOCOL_DIRECTORY_PATH) {
         if (request.method !== 'GET') return error(405, 'bad-request', 'Method not allowed')
         return json(200, JSON.stringify(createMimiProtocolDirectory(publicBaseUrl ?? new URL(request.url).origin)))
@@ -137,13 +141,27 @@ export function createMimiHttpHandler(
         return new Response(null, { status: 201 })
       }
 
-      // The directory advertises this standardized endpoint, but biset does
-      // not permit external joins: a GroupInfo ratchet tree would disclose
-      // visible credentials to an unauthenticated joiner.  Be explicit rather
-      // than returning the previous misleading 404.
       if (path.startsWith(GROUP_INFO_PREFIX)) {
-        pathParameter(path, GROUP_INFO_PREFIX, 'room ID')
-        return error(403, 'not-allowed', 'external joins are disabled by this provider privacy policy')
+        const roomId = pathParameter(path, GROUP_INFO_PREFIX, 'room ID')
+        // Off by default: a GroupInfo ratchet tree discloses every member's
+        // real credential to whoever fetches it. Only a deployment dedicated
+        // to Self Group traffic (deployment.ts's allowExternalJoin) turns
+        // this on, where the only possible members are the room's own owner.
+        if (!allowExternalJoin) return error(403, 'not-allowed', 'external joins are disabled by this provider privacy policy')
+        const value = decodeGroupInfoRequestWire(body)
+        if (!(await authorizeGroupInfoRequest(store, verifier, value))) return error(403, 'unauthorized', 'request signature was rejected')
+        const room = store.room(roomId)
+        if (!room) return json(200, encodeGroupInfoResponseWire({ version: 1, roomId, status: 'noSuchRoom' }))
+        if (!userIsRoomParticipant(room, credentialUser(value.requester)) || !room.groupInfo) {
+          return json(200, encodeGroupInfoResponseWire({ version: 1, roomId, status: 'notAuthorized' }))
+        }
+        const keys = store.frankingKeys(roomId)
+        if (!keys) return json(200, encodeGroupInfoResponseWire({ version: 1, roomId, status: 'notAuthorized' }))
+        const response: GroupInfoResponse = await sealGroupInfoResponse(
+          roomId, room.groupInfo, room.ratchetTree, value.groupInfoPublicKey,
+          room.frankingAgent?.credential ?? new TextEncoder().encode(publicBaseUrl ?? new URL(request.url).origin), keys,
+        )
+        return json(200, encodeGroupInfoResponseWire(response))
       }
 
       if (path.startsWith(REPORT_ABUSE_PREFIX)) {
@@ -188,7 +206,7 @@ export function createMimiHttpHandler(
       if (path.startsWith(KEY_MATERIAL_PREFIX)) {
         const targetUser = pathParameter(path, KEY_MATERIAL_PREFIX, 'target user')
         const value = decodeKeyMaterialRequestWire(body)
-        if (!credentialAllowed(value.requester, mode, selfOwnerUser)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
+        if (!credentialAllowed(value.requester, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (value.targetUser !== targetUser) return error(400, 'bad-request', 'target user path does not match request body')
         if (!(await authorizeKeyMaterial(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room membership was rejected')
         return json(200, encodeKeyMaterialResponseWire(keyMaterialResponse(value.targetUser, store.takeKeyPackages(value.targetUser, value.requiredCapabilities))))
@@ -196,7 +214,7 @@ export function createMimiHttpHandler(
 
       if (path === KEY_PACKAGE_PUBLISH_PATH) {
         const value = decodeKeyPackagePublishWire(body)
-        if (!credentialAllowed(value.credential, mode, selfOwnerUser)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
+        if (!credentialAllowed(value.credential, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (!(await authorizeKeyPackagePublish(verifier, value))) return error(403, 'unauthorized', 'request signature was rejected')
         const published = store.publishKeyPackages(value)
         return json(200, encodeKeyPackagePublishResponseWire({ published }))
@@ -205,7 +223,7 @@ export function createMimiHttpHandler(
       if (path.startsWith(UPDATE_PREFIX)) {
         const roomId = pathParameter(path, UPDATE_PREFIX, 'room ID')
         const value = decodeUpdateRoomRequestWire(body)
-        if (!credentialAllowed(value.sender, mode, selfOwnerUser) || (mode === 'self' && !selfUpdateOwned(value, selfOwnerUser))) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential or room state`)
+        if (!credentialAllowed(value.sender, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (value.roomId !== roomId) return error(400, 'bad-request', 'room ID path does not match request body')
         if (!(await authorizeUpdate(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         // Existing rooms derive provider-visible state from an MLS Public
@@ -230,7 +248,7 @@ export function createMimiHttpHandler(
       if (path.startsWith(SUBMIT_MESSAGE_PREFIX)) {
         const roomId = pathParameter(path, SUBMIT_MESSAGE_PREFIX, 'room ID')
         const value = decodeSubmitMessageRequestWire(body)
-        if (!credentialAllowed(value.sender, mode, selfOwnerUser)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
+        if (!credentialAllowed(value.sender, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (value.roomId !== roomId) return error(400, 'bad-request', 'room ID path does not match request body')
         if (!(await authorizeSubmitMessage(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         const keys = store.frankingKeys(roomId)
@@ -246,14 +264,14 @@ export function createMimiHttpHandler(
 
       if (path === DELIVERY_PULL_PATH) {
         const value = decodeDeliveriesPullRequestWire(body)
-        if (!credentialAllowed(value.requester, mode, selfOwnerUser)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
+        if (!credentialAllowed(value.requester, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (!(await authorizeDeliveriesPull(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         return json(200, encodeDeliveriesWire(store.deliveriesSince(value.roomId, credentialUser(value.requester), value.afterSeq) ?? []))
       }
 
       if (path === DELIVERY_WATCH_PATH) {
         const value = decodeDeliveriesWatchRequestWire(body)
-        if (!credentialAllowed(value.requester, mode, selfOwnerUser)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
+        if (!credentialAllowed(value.requester, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (!(await authorizeDeliveriesWatch(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         return json(200, encodeDeliveriesWatchTokenWire(watchTokens.issue(value.roomId, credentialUser(value.requester))))
       }
@@ -279,23 +297,12 @@ async function verifiedFederationPeer(request: Request, federation: MimiFederati
 
 function sameDomain(left: string, right: string): boolean { return left.toLowerCase().replace(/\.$/, '') === right.toLowerCase().replace(/\.$/, '') }
 
-function credentialAllowed(credential: MimiCredential, mode: MimiDeploymentMode, selfOwnerUser: string | undefined): boolean {
-  if (mode === 'anon') return credential.kind === 'pseudonymous'
-  return credential.kind === 'visible' && (mode !== 'self' || credential.user === selfOwnerUser)
+function credentialAllowed(credential: MimiCredential, mode: MimiDeploymentMode): boolean {
+  return mode === 'anon' ? credential.kind === 'pseudonymous' : credential.kind === 'visible'
 }
 
 function credentialUser(credential: MimiCredential): string {
   return credential.kind === 'visible' ? credential.user : credential.userPseudonym
-}
-
-function selfUpdateOwned(value: import('./protocol-types.ts').UpdateRoomRequest, selfOwnerUser: string | undefined): boolean {
-  if (!selfOwnerUser) return false
-  const states = [value.initialState, value.stateUpdate]
-  return states.every(state => state === undefined || (state.memberCredentials === undefined || state.memberCredentials.every(credential => credential.kind === 'visible' && credential.user === selfOwnerUser)) && (state.participantList === undefined || state.participantList.participants.every(participant => participant.user === selfOwnerUser)))
-}
-
-function isFederationPath(path: string): boolean {
-  return path.startsWith(REQUEST_CONSENT_PREFIX) || path.startsWith(UPDATE_CONSENT_PREFIX) || path.startsWith(IDENTIFIER_QUERY_PREFIX) || path.startsWith(NOTIFY_PREFIX) || path.startsWith(PROXY_DOWNLOAD_PREFIX) || path.startsWith(REPORT_ABUSE_PREFIX)
 }
 
 /**
