@@ -5,6 +5,9 @@ import type {
   DeliveriesPullRequest,
   DeliveriesWatchRequest,
   DeliveriesWatchToken,
+  Frank,
+  FrankAAD,
+  FrankingAgentData,
   HandshakeBundle,
   KeyMaterialRequest,
   KeyMaterialResponse,
@@ -23,6 +26,7 @@ import type {
   RoomMetadata,
   RoomState,
   RoomStateUpdate,
+  ServerFrankingContext,
   UpdateRoomRequest,
   UpdateRoomResponse,
   UserRolePair,
@@ -167,6 +171,58 @@ function decodeCredential(value: unknown, name: string): MimiCredential {
   if (input.kind === 'visible') return decodeVisibleCredential(input, name)
   if (input.kind === 'pseudonymous') return decodePseudonymousCredential(input, name)
   throw new MimiWireError(`${name}.kind is invalid`)
+}
+
+// ---------------------------------------------------------------- franking
+
+function frankAADJson(value: FrankAAD): JsonRecord { return { frankingTag: bytesToBase64url(value.frankingTag) } }
+
+function decodeFrankAAD(value: unknown, name: string): FrankAAD {
+  const input = requireRecord(value, name)
+  const frankingTag = requireBinary(input.frankingTag, `${name}.frankingTag`)
+  if (frankingTag.length !== 32) throw new MimiWireError(`${name}.frankingTag must be 32 bytes`)
+  return { frankingTag }
+}
+
+export function encodeFrankAADWire(value: FrankAAD): string {
+  if (value.frankingTag.length !== 32) throw new MimiWireError('FrankAAD.frankingTag must be 32 bytes')
+  return JSON.stringify(frankAADJson(value))
+}
+
+export function decodeFrankAADWire(text: string): FrankAAD { return decodeFrankAAD(record(text, 'FrankAAD'), 'FrankAAD') }
+
+function frankingAgentDataJson(value: FrankingAgentData): JsonRecord {
+  return { frankingSignatureKey: bytesToBase64url(value.frankingSignatureKey), credential: bytesToBase64url(value.credential) }
+}
+
+function decodeFrankingAgentData(value: unknown, name: string): FrankingAgentData {
+  const input = requireRecord(value, name)
+  return { frankingSignatureKey: requireBinary(input.frankingSignatureKey, `${name}.frankingSignatureKey`), credential: requireBinary(input.credential, `${name}.credential`) }
+}
+
+export function encodeFrankingAgentDataWire(value: FrankingAgentData): string { return JSON.stringify(frankingAgentDataJson(value)) }
+
+export function decodeFrankingAgentDataWire(text: string): FrankingAgentData { return decodeFrankingAgentData(record(text, 'FrankingAgentData'), 'FrankingAgentData') }
+
+function frankingContextJson(value: ServerFrankingContext): JsonRecord {
+  return { senderUri: value.senderUri, roomUri: value.roomUri, acceptedTimestamp: value.acceptedTimestamp }
+}
+
+function decodeFrankingContext(value: unknown, name: string): ServerFrankingContext {
+  const input = requireRecord(value, name)
+  return { senderUri: requireString(input.senderUri, `${name}.senderUri`), roomUri: requireString(input.roomUri, `${name}.roomUri`), acceptedTimestamp: requireEpoch(input.acceptedTimestamp, `${name}.acceptedTimestamp`) }
+}
+
+export function encodeFrankWire(value: Frank): string {
+  if (value.serverFrank.length !== 32) throw new MimiWireError('Frank.serverFrank must be 32 bytes')
+  return JSON.stringify({ serverFrank: bytesToBase64url(value.serverFrank), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, context: frankingContextJson(value.context), frankingIntegritySignature: bytesToBase64url(value.frankingIntegritySignature) })
+}
+
+export function decodeFrankWire(text: string): Frank {
+  const input = record(text, 'Frank')
+  const serverFrank = requireBinary(input.serverFrank, 'Frank.serverFrank')
+  if (serverFrank.length !== 32) throw new MimiWireError('Frank.serverFrank must be 32 bytes')
+  return { serverFrank, frankingSignatureCiphersuite: requireInteger(input.frankingSignatureCiphersuite, 'Frank.frankingSignatureCiphersuite'), context: decodeFrankingContext(input.context, 'Frank.context'), frankingIntegritySignature: requireBinary(input.frankingIntegritySignature, 'Frank.frankingIntegritySignature') }
 }
 
 // --------------------------------------------------------------- room state

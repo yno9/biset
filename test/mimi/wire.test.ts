@@ -2,10 +2,16 @@ import { describe, expect, test } from 'bun:test'
 import {
   decodeRoomStateWire,
   decodeDeliveriesWatchTokenWire,
+  decodeFrankAADWire,
+  decodeFrankWire,
+  decodeFrankingAgentDataWire,
   decodeKeyPackagePublishWire,
   decodeMimiErrorWire,
   decodeUpdateRoomRequestWire,
   encodeKeyPackagePublishWire,
+  encodeFrankAADWire,
+  encodeFrankWire,
+  encodeFrankingAgentDataWire,
   encodeRoomStateWire,
   encodeUpdateRoomRequestWire,
   MimiWireError,
@@ -54,5 +60,14 @@ describe('MIMI JSON/base64url wire', () => {
     expect(decodeKeyPackagePublishWire(encodeKeyPackagePublishWire(publication))).toEqual(publication)
     expect(decodeDeliveriesWatchTokenWire('{"token":"token","expiresAt":"2026-09-01T00:00:00.000Z"}')).toEqual({ token: 'token', expiresAt: '2026-09-01T00:00:00.000Z' })
     expect(decodeMimiErrorWire('{"error":"not-found","message":"missing"}')).toEqual({ error: 'not-found', message: 'missing' })
+  })
+
+  test('round-trips fixed-size franking values and rejects a short tag', () => {
+    const tag = new Uint8Array(32).fill(1)
+    expect(decodeFrankAADWire(encodeFrankAADWire({ frankingTag: tag }))).toEqual({ frankingTag: tag })
+    expect(decodeFrankingAgentDataWire(encodeFrankingAgentDataWire({ frankingSignatureKey: new Uint8Array([2]), credential: new Uint8Array([3]) }))).toEqual({ frankingSignatureKey: new Uint8Array([2]), credential: new Uint8Array([3]) })
+    const frank = { serverFrank: new Uint8Array(32).fill(4), frankingSignatureCiphersuite: 1, context: { senderUri: alice.user, roomUri: roomId, acceptedTimestamp: '1' }, frankingIntegritySignature: new Uint8Array([5]) }
+    expect(decodeFrankWire(encodeFrankWire(frank))).toEqual(frank)
+    expect(() => encodeFrankAADWire({ frankingTag: new Uint8Array(31) })).toThrow(MimiWireError)
   })
 })

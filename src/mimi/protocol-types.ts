@@ -47,6 +47,34 @@ export interface PseudonymousCredential {
 
 export type MimiCredential = VisibleCredential | PseudonymousCredential
 
+/** draft §5.4.1 Safe AAD component, bound to the MLS PrivateMessage. */
+export interface FrankAAD {
+  /** HMAC-SHA256 output: exactly 32 bytes. */
+  frankingTag: Uint8Array
+}
+
+/** draft §5.4.1 GroupContext component identifying the hub signing key. */
+export interface FrankingAgentData {
+  frankingSignatureKey: Uint8Array
+  /** Serialized MLS Credential of the hub's franking agent. */
+  credential: Uint8Array
+}
+
+export interface ServerFrankingContext {
+  senderUri: MimiUserUri
+  roomUri: MimiRoomId
+  /** UNIX milliseconds as a decimal uint64 string. */
+  acceptedTimestamp: string
+}
+
+/** Server-generated franking evidence carried with an accepted message. */
+export interface Frank {
+  serverFrank: Uint8Array
+  frankingSignatureCiphersuite: number
+  context: ServerFrankingContext
+  frankingIntegritySignature: Uint8Array
+}
+
 /** One user and its exactly-one room role (draft §7.5). */
 export interface UserRolePair {
   user: MimiUserUri
