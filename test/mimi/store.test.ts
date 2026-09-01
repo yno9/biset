@@ -38,6 +38,18 @@ describe('MIMI SQLite store', () => {
     await expect(decryptIdentityLink({ async exportSecret() { return new Uint8Array(32).fill(9) } }, roomId, ciphertext)).rejects.toThrow()
   })
 
+  test('a joining member decrypts every current identity link, while a discarded epoch key cannot open the next epoch', async () => {
+    const epochOne = { async exportSecret() { return new Uint8Array(32).fill(1) } }
+    const epochTwo = { async exportSecret() { return new Uint8Array(32).fill(2) } }
+    const encoder = new TextEncoder()
+    const decoder = new TextDecoder()
+    const links = await Promise.all(['did:web:alice', 'did:web:bob'].map(identity => encryptIdentityLink(epochOne, roomId, encoder.encode(identity))))
+    expect(await Promise.all(links.map(link => decryptIdentityLink(epochOne, roomId, link).then(decoder.decode.bind(decoder))))).toEqual(['did:web:alice', 'did:web:bob'])
+    const reencrypted = await encryptIdentityLink(epochTwo, roomId, encoder.encode('did:web:alice'))
+    await expect(decryptIdentityLink(epochOne, roomId, reencrypted)).rejects.toThrow()
+    expect(decoder.decode(await decryptIdentityLink(epochTwo, roomId, reencrypted))).toBe('did:web:alice')
+  })
+
   test('serializes room commits, records deliveries, and atomically consumes compatible KeyPackages', () => {
     const store = new SqliteMimiStore(new Database(':memory:'))
     const created = store.submitUpdate(initialUpdate())
