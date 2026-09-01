@@ -140,7 +140,7 @@ function credentialValue(value: MimiCredential): CanonicalValue {
   if (value.kind === 'visible') return visibleCredentialValue(value)
   return {
     kind: value.kind, clientPseudonym: value.clientPseudonym, userPseudonym: value.userPseudonym,
-    signaturePublicKey: bytesToBase64url(value.signaturePublicKey), identityLinkCiphertext: bytesToBase64url(value.identityLinkCiphertext), signature: bytesToBase64url(value.signature),
+    signaturePublicKey: bytesToBase64url(value.signaturePublicKey), identityLinkCiphertext: bytesToBase64url(value.identityLinkCiphertext),
   }
 }
 

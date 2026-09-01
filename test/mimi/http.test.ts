@@ -65,7 +65,6 @@ describe('MIMI Phase 0 HTTP flow', () => {
       clientPseudonym: 'mimi://anon.example/c/5d6e5eeb-ed84-46fd-a2a8-66f79d23dfcf',
       signaturePublicKey: ed25519.getPublicKey(secret),
       identityLinkCiphertext: await encryptIdentityLink(epochOne, 'mimi://anon.example/r/opaque-room', encoder.encode('did:web:alice')),
-      signature: new Uint8Array(64),
     }
     const bob: PseudonymousCredential = {
       kind: 'pseudonymous',
@@ -73,7 +72,6 @@ describe('MIMI Phase 0 HTTP flow', () => {
       clientPseudonym: 'mimi://anon.example/c/2cebc41f-73fb-4e99-ad88-ddaf6cb31e5d',
       signaturePublicKey: ed25519.getPublicKey(bobSecret),
       identityLinkCiphertext: await encryptIdentityLink(epochTwo, 'mimi://anon.example/r/opaque-room', encoder.encode('did:web:bob')),
-      signature: new Uint8Array(64),
     }
     const anonRoomId = 'mimi://anon.example/r/opaque-room'
     const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'anon' })

@@ -147,7 +147,7 @@ function pseudonymousCredentialJson(value: PseudonymousCredential): JsonRecord {
   return {
     kind: value.kind, clientPseudonym: value.clientPseudonym, userPseudonym: value.userPseudonym,
     signaturePublicKey: bytesToBase64url(value.signaturePublicKey),
-    identityLinkCiphertext: bytesToBase64url(value.identityLinkCiphertext), signature: bytesToBase64url(value.signature),
+    identityLinkCiphertext: bytesToBase64url(value.identityLinkCiphertext),
   }
 }
 
@@ -160,7 +160,6 @@ function decodePseudonymousCredential(value: unknown, name: string): Pseudonymou
     userPseudonym: requireString(input.userPseudonym, `${name}.userPseudonym`),
     signaturePublicKey: requireBinary(input.signaturePublicKey, `${name}.signaturePublicKey`),
     identityLinkCiphertext: requireBinary(input.identityLinkCiphertext, `${name}.identityLinkCiphertext`),
-    signature: requireBinary(input.signature, `${name}.signature`),
   }
 }
 

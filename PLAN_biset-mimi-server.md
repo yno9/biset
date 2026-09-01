@@ -352,7 +352,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 5.0
 - [ ] **5.1b operational anonymity gate**: service account/DB path/log sink/backup/rate-limitの分離をデプロイ環境で監査し、2プロセス結合試験と運用release reviewを5.0の条件1・2・5・6に対して実施する。
   - depends on: 5.0
-- [~] **5.2 pseudonymous credential binding** (agent: Codex, 開始: 2026-09-01): anon credentialのissuer/binding検証規則を確定・実装し、改竄/なりすましを拒否する独立テストを追加する。
+- [x] **5.2 pseudonymous credential binding** (完了: 2026-09-01, `src/mimi/anon/identity-link.ts`, `src/mimi/{protocol-types,wire,authorizer}.ts`, `test/mimi/identity-link.test.ts`): draft §6.1どおりPseudonymousCredential本体を4フィールドへ是正し、暗号化IdentityLinkTBE内のTBS署名と復号済み実credentialの署名鍵検証をclient側primitiveとして実装。pseudonym改竄と実credential鍵不一致を拒否する。
   - depends on: 5.0
 - [ ] **5.3 conversation room migration**: E2E offer/accept/cutoverとlocal-only room mappingを実装し、server historyをコピーしない新room移行を通しで検証する。
   - depends on: 5.1, 5.2

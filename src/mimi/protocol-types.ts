@@ -44,7 +44,6 @@ export interface PseudonymousCredential {
   userPseudonym: MimiUserUri
   signaturePublicKey: Uint8Array
   identityLinkCiphertext: Uint8Array
-  signature: Uint8Array
 }
 
 export type MimiCredential = VisibleCredential | PseudonymousCredential

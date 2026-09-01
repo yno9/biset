@@ -16,11 +16,11 @@ The declaration requires all of the following, recorded in a release review rath
 1. **Process boundary:** normal, anon, and Self Group deployments have distinct service accounts, SQLite paths, network listeners, TLS identities, backups, log sinks, and rate-limit budgets.  A normal-process compromise must not grant filesystem or database access to anon data.
 2. **Schema and request audit:** the anon database, logs, metrics labels, error reports, and ingress API must contain neither a real DID/client identifier nor an old `GroupLocalId`.  The only member identifiers visible to the anon provider are room-scoped pseudonyms and their signing public keys.
 3. **End-to-end capability:** a pseudonymous client can create, add/remove, publish/claim KeyPackages, submit a franked application message, and pull/watch its deliveries without using the normal provider.  Mixed credential types and cross-mode routes are rejected.
-4. **Cryptographic properties:** every current member can decrypt the current epoch's identity links; an erased previous exporter secret cannot decrypt a later epoch's links; a removed member cannot decrypt post-removal links.  The pseudonymous credential's origin/binding validation must be specified and independently reviewed before this gate can pass.
+4. **Cryptographic properties:** every current member can decrypt the current epoch's identity links; an erased previous exporter secret cannot decrypt a later epoch's links; a removed member cannot decrypt post-removal links.  The client must run the §6.1 IdentityLinkTBE TBS-signature and real-credential/signing-key verifier before accepting a pseudonymous MLS leaf; the primitive exists, but connection to the full room-acceptance flow remains a release-gate item.
 5. **Metadata comparison:** review confirms the remaining provider-visible metadata (room-scoped pseudonym, membership/epoch timing, ciphertext size and timing, franking evidence) is no broader than the explicitly accepted replacement threat model.  MIMI cannot claim to hide traffic analysis, and that limitation must be disclosed.
 6. **Operational readiness:** two independent anon deployments complete the federation gate under capacity limits, backup/restore exercises pass, and a fail-closed configuration test rejects accidental normal/anon co-location.
 
-Current code satisfies only portions of 3 and 4; specifically, it now carries pseudonymous update, message, pull, and watch requests, but it does not yet define or independently validate the pseudonymous-credential origin/binding.  Consequently **no decommission decision is authorized**.
+Current code satisfies only portions of 3 and 4; specifically, it carries pseudonymous update, message, pull, and watch requests and provides an independently tested IdentityLinkTBE verifier, but the full client room-acceptance flow has not yet invoked that verifier.  Consequently **no decommission decision is authorized**.
 
 ## Conversation-room migration protocol
 
@@ -40,6 +40,6 @@ The proposed `biset-mimi-self` deployment has an allowlist of exactly one owner 
 ## Follow-up implementation tasks
 
 - **5.1b operational anonymity gate:** audit service accounts, paths, log sinks, backups, and rate limits in the deployment environment, then run the two-process release review.  The completed 5.1 code guard already binds a SQLite database to one mode and rejects mixed credential types.
-- **5.2 pseudonymous credential binding:** specify the issuer and verification rule, then implement and independently test it before accepting anon credentials as a replacement guarantee.
+- **5.2 completed primitive:** the §6.1 IdentityLinkTBE verifier is implemented and independently tested.  Its mandatory integration into room acceptance is part of the migration client flow.
 - **5.3 conversation migration client flow:** implement the E2E offer/accept/cutover state machine and local-only old/new mapping; do not copy server history.
 - **5.4 self deployment spike:** implement a separate `biset-mimi-self` process behind owner-only authorization and prove Vault recovery and third-party-load isolation before any Coordinator retirement plan.
