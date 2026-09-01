@@ -599,7 +599,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
 
 ### 19.7 作業ワークシート（§13/§16と同じ規約：着手前`[ ]`→`[~] (agent: ..., 開始: ...)`、完了時`[x] (完了: ..., 関連ファイル)`）
 
-- [~] **19.a 設計確認（最優先、他タスクをブロックする）**: 19.8の未確定事項（roomId命名規則、chunking方式の最終確認、`appendId`冪等性の置き場所）を決定し、本節に追記する。 (agent: Codex, 開始: 2026-09-02)
+- [x] **19.a 設計確認（最優先、他タスクをブロックする）**: 19.8の未確定事項（roomId命名規則、chunking方式の最終確認、`appendId`冪等性の置き場所）を決定し、本節に追記する。 (完了: 2026-09-02, 関連: §19.8; random room URI・manifest+chunk・hub側冪等性を確定)
   - depends on: なし
 - [ ] **19.b `MimiDeliveryEntry.kind`拡張とcheckpoint圧縮ロジック**: protocol-types.ts / store.ts / wire.tsへの実装（19.4）。
   - depends on: 19.a
@@ -616,10 +616,10 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
 
 ### 19.8 実装前に確認・決定すべき未確定事項
 
-- **roomId命名規則**: coordinatorの`vaultId`はidentity（DID/domain/mail address）に一切依存しないランダムid（`vlt_<random256bit>`）だった——identityが後で変わってもVaultが引き継がれるようにするため（`store.ts:59`の設計コメント）。Self Group roomのroomIdも同じ性質（identity非依存・ランダム）にすべきか、それとも現行のroomId命名パターン（`mimi://...`ホスト付き文字列）のままでよいか。[project_biset_domain_portability_constraint](file:///Users/n/.claude/projects/-Users-n-biset/memory/project_biset_domain_portability_constraint.md)の既存方針（サブドメイン/apexドメインは後で変更可能であるべき）と直接関係するため要確認。
-- **chunking方式の最終確認**: 19.2で提案したmanifest+chunk方式でよいか、それとも上限緩和側を選ぶ理由が別にあるか。
-- **entryの冪等性（`appendId`相当）の置き場所**: hub側に持たせるか（Vaultと同じ）、クライアント側outbox管理だけに任せるか。
-- **1MiB上限のchunkサイズそのもの**: base64url膨張後1MiB以内に収める場合、raw chunkサイズは概ね700KB程度が上限になる（Q4調査結果）。25MB entryなら約36チャンク、100MB checkpointなら約143チャンク——1回の同期でこれだけの`submitMessage`往復が発生することの実用上の影響（レイテンシ・SSEの配送量）を軽く見積もっておく。
+- **roomId命名規則（決定）**: `mimi://mimi-self.biset.md/r/vault-<base64url(random 32 bytes)>` とする。provider URI はMIMI room IDに必要だが、suffixは256-bit乱数のみでDID・domain・mail addressを含まない。provider移転時は既存room IDを不変のopaque IDとしてtransport設定から到達させ、identityのdomain変更でroomを再生成しない。
+- **chunking方式（決定）**: 上限緩和はしない。MLS暗号化済みのVault payloadを、transfer ID・ordinal・count・全体SHA-256を持つクライアント内のopaque envelopeで分割し、既存`submitMessage`で順に配送する。checkpointでは全chunkの後に、`coveredSeq`・transfer ID・count・hashだけを持つ署名済み`vaultCheckpoint` manifestを送る。hubはmanifestを認証・単調性検査して圧縮するが、暗号文chunkの内容を読まない。
+- **entryの冪等性（決定）**: client outboxだけには委ねない。`SubmitMessageRequest`へランダムなopaque `deliveryId`を追加し、hubは`(roomId, sender client, deliveryId)`をpayload SHA-256とhub seqに一意に永続化する。同じID・同じhashは元の受理結果を返し、同じID・異なるhashは競合として拒否する。これは応答喪失後の再送で二重Vault eventを作らないためであり、Vault v2の`appendId`契約を保つ。
+- **1MiB上限のchunkサイズ（決定）**: raw payloadは1 chunkあたり最大`700 * 1024` bytesとする。JSON/base64url・credential・franking等の余白を残すためであり、25MB entryは最大37、100MB checkpointは最大147 chunkとなる。同期実装は逐次送信・逐次再構成し、全chunkを同時にメモリへ載せない。
 
 ## 18. `biset-coordinator`置き換えに向けて: `self`モード廃止と`allowExternalJoin`（2026-09-01）
 
