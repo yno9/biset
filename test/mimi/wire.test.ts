@@ -62,6 +62,12 @@ describe('MIMI JSON/base64url wire', () => {
     expect(decodeMimiErrorWire('{"error":"not-found","message":"missing"}')).toEqual({ error: 'not-found', message: 'missing' })
   })
 
+  test('round-trips a PseudonymousCredential without a real user URI', () => {
+    const credential = { kind: 'pseudonymous' as const, clientPseudonym: 'mimi://provider.test/u/client', userPseudonym: 'mimi://provider.test/u/user', signaturePublicKey: new Uint8Array([1]), identityLinkCiphertext: new Uint8Array([2, 3]), signature: new Uint8Array([4]) }
+    const publication = { version: 1 as const, credential, packages: [{ reference: new Uint8Array([5]), user: credential.userPseudonym, client: credential.clientPseudonym, keyPackage: new Uint8Array([6]), publishedAt: state.createdAt }], publishedAt: state.createdAt, signature: new Uint8Array([7]) }
+    expect(decodeKeyPackagePublishWire(encodeKeyPackagePublishWire(publication))).toEqual(publication)
+  })
+
   test('round-trips fixed-size franking values and rejects a short tag', () => {
     const tag = new Uint8Array(32).fill(1)
     expect(decodeFrankAADWire(encodeFrankAADWire({ frankingTag: tag }))).toEqual({ frankingTag: tag })
