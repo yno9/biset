@@ -39,7 +39,7 @@ The proposed `biset-mimi-self` deployment has an allowlist of exactly one owner 
 
 ## Follow-up implementation tasks
 
-- **5.1 isolation and anonymity gate:** add configuration/schema/logging checks and a two-process integration harness for the six replacement criteria.
+- **5.1b operational anonymity gate:** audit service accounts, paths, log sinks, backups, and rate limits in the deployment environment, then run the two-process release review.  The completed 5.1 code guard already binds a SQLite database to one mode and rejects mixed credential types.
 - **5.2 pseudonymous credential binding:** specify the issuer and verification rule, then implement and independently test it before accepting anon credentials as a replacement guarantee.
 - **5.3 conversation migration client flow:** implement the E2E offer/accept/cutover state machine and local-only old/new mapping; do not copy server history.
 - **5.4 self deployment spike:** implement a separate `biset-mimi-self` process behind owner-only authorization and prove Vault recovery and third-party-load isolation before any Coordinator retirement plan.

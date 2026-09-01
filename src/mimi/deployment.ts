@@ -28,7 +28,7 @@ export interface MimiServerOptions extends MimiDeploymentOptions { port: number 
  * process signals and listening configuration.
  */
 export function createMimiDeployment(options: MimiDeploymentOptions) {
-  const store = SqliteMimiStore.open(options.databasePath)
+  const store = SqliteMimiStore.open(options.databasePath, options.mode)
   const verifier = new Ed25519MimiSignatureVerifier()
   const watchTokens = new MimiWatchTokenIssuer()
   const inner = createMimiHttpHandler(store, verifier, watchTokens, options.mode, options.publicBaseUrl, options.federation)

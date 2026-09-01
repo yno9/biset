@@ -30,6 +30,17 @@ describe('MIMI SQLite store', () => {
     expect(issuer.clientPseudonym('room-a', alice.client)).toMatch(/^mimi:\/\/mimi\.example\.test\/u\/[0-9a-f-]{36}$/)
   })
 
+  test('pins each persisted database to one deployment mode and rejects visible state in anon mode', () => {
+    const database = new Database(':memory:')
+    const normal = new SqliteMimiStore(database, 'normal')
+    expect(() => new SqliteMimiStore(database, 'anon')).toThrow('belongs to normal-mode')
+    normal.close()
+
+    const anon = new SqliteMimiStore(new Database(':memory:'), 'anon')
+    expect(() => anon.submitUpdate(initialUpdate())).toThrow('anon-mode database rejects visible credentials')
+    anon.close()
+  })
+
   test('identity links are client-side epoch-exporter ciphertexts, not hub keys', async () => {
     const exporter = { async exportSecret(_label: string, context: Uint8Array) { return new Uint8Array(32).fill(context[context.length - 1]!) } }
     const ciphertext = await encryptIdentityLink(exporter, roomId, new Uint8Array([1, 2, 3]))

@@ -348,7 +348,9 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
 
 - [x] **5.0 移行・Self Group統合の設計提案** (完了: 2026-09-01, [MIMI transition and Self Group isolation](PLAN_biset-mimi-transition.md)): identity-blindness判定の6条件、旧credential/stateを変換しない新room再招待、normal/anonと隔離するowner-only Self Groupプロセスを設計した。pseudonymous credentialのorigin/bindingが未解決なため廃盤は禁止する。
   - depends on: 4.3
-- [~] **5.1 isolation and anonymity gate** (agent: Codex, 開始: 2026-09-01): anon DB/log/configuration監査、mode混入拒否、2プロセス結合テストを追加し、5.0の置換条件1・2・3・5・6を検証可能にする。
+- [x] **5.1 persisted mode isolation** (完了: 2026-09-01, `src/mimi/store.ts`, `src/mimi/deployment.ts`, `test/mimi/store.test.ts`): SQLite DBへ初回起動modeを永続固定し、同一DBを別modeで開くこと、およびanon DBにvisible credentialを直接保存することをstore層で拒否する。
+  - depends on: 5.0
+- [ ] **5.1b operational anonymity gate**: service account/DB path/log sink/backup/rate-limitの分離をデプロイ環境で監査し、2プロセス結合試験と運用release reviewを5.0の条件1・2・5・6に対して実施する。
   - depends on: 5.0
 - [ ] **5.2 pseudonymous credential binding**: anon credentialのissuer/binding検証規則を確定・実装し、改竄/なりすましを拒否する独立テストを追加する。
   - depends on: 5.0

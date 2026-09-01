@@ -26,6 +26,7 @@ import type {
   RoomState,
   UpdateRoomRequest,
   Frank,
+  MimiDeploymentMode,
 } from './protocol-types.ts'
 
 const MAX_ROOMS = 10_000
@@ -62,11 +63,14 @@ interface ConsentRow { entry_json: string; source_provider: string; updated_at: 
 export class SqliteMimiStore {
   private readonly watchers = new Map<MimiRoomId, Set<(entries: MimiDeliveryEntry[]) => void>>()
 
-  constructor(private readonly database: Database) { installSchema(database) }
+  constructor(private readonly database: Database, private readonly mode?: MimiDeploymentMode) {
+    installSchema(database)
+    if (mode !== undefined) this.bindDeploymentMode(mode)
+  }
 
-  static open(path: string): SqliteMimiStore {
+  static open(path: string, mode?: MimiDeploymentMode): SqliteMimiStore {
     if (!path) throw new TypeError('SQLite MIMI database path is required')
-    return new SqliteMimiStore(new Database(path))
+    return new SqliteMimiStore(new Database(path), mode)
   }
 
   close(): void { this.database.close() }
@@ -107,6 +111,7 @@ export class SqliteMimiStore {
    * commit per epoch and stores the associated participant state atomically.
    */
   submitUpdate(request: UpdateRoomRequest): MimiUpdateStoreResult {
+    this.assertCredentialModes(request.sender, request.initialState?.memberCredentials, request.stateUpdate?.memberCredentials)
     return this.database.transaction((): MimiUpdateStoreResult => {
       const existing = this.roomRow(request.roomId)
       if (!existing) return this.createFromInitialUpdate(request)
@@ -132,6 +137,7 @@ export class SqliteMimiStore {
 
   /** Publishes locally-held spare KeyPackages.  Publication is a provider-internal operation in the MIMI draft. */
   publishKeyPackages(request: KeyPackagePublishRequest): number {
+    this.assertCredentialModes(request.credential)
     if (request.packages.length === 0) throw new MimiStoreStateError('at least one KeyPackage is required')
     return this.database.transaction(() => {
       let published = 0
@@ -311,6 +317,22 @@ export class SqliteMimiStore {
   private notify(roomId: MimiRoomId, entries: MimiDeliveryEntry[]): void {
     for (const listener of this.watchers.get(roomId) ?? []) listener(entries)
   }
+
+  private bindDeploymentMode(mode: MimiDeploymentMode): void {
+    const saved = this.database.query<{ value: string }, [string]>('SELECT value FROM mimi_deployment_metadata WHERE name = ?').get('mode')?.value
+    if (saved === undefined) {
+      this.database.query('INSERT INTO mimi_deployment_metadata (name, value) VALUES (?, ?)').run('mode', mode)
+      return
+    }
+    if (saved !== mode) throw new MimiStoreStateError(`MIMI database belongs to ${saved}-mode and cannot be opened as ${mode}-mode`)
+  }
+
+  private assertCredentialModes(sender: MimiCredential, ...groups: Array<MimiCredential[] | undefined>): void {
+    if (this.mode === undefined) return
+    const credentials = [sender, ...groups.flatMap(group => group ?? [])]
+    const expected = this.mode === 'anon' ? 'pseudonymous' : 'visible'
+    if (credentials.some(credential => credential.kind !== expected)) throw new MimiStoreStateError(`${this.mode}-mode database rejects ${expected === 'visible' ? 'pseudonymous' : 'visible'} credentials`)
+  }
 }
 
 function applyStateUpdate(state: RoomState, request: UpdateRoomRequest): RoomState {
@@ -397,6 +419,7 @@ function isExpired(value: string | null, now: Date): boolean { return value !== 
 
 function installSchema(database: Database): void {
   database.run(`
+    CREATE TABLE IF NOT EXISTS mimi_deployment_metadata (name TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS mimi_rooms (
       room_id TEXT PRIMARY KEY NOT NULL,
       state_json TEXT NOT NULL,
