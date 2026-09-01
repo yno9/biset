@@ -7,7 +7,7 @@ import { Database } from 'bun:sqlite'
 import { equalBytes } from '../protocol/canonical.ts'
 import { createFrankingKeyMaterial, type FrankingKeyMaterial } from './franking.ts'
 import { decodeMimiConsentEntryWire, encodeMimiConsentEntryWire } from './federation.ts'
-import { decodeFrankWire, encodeFrankWire } from './wire.ts'
+import { decodeFrankWire, decodeVaultCheckpointManifestWire, encodeFrankWire, encodeVaultCheckpointManifestWire } from './wire.ts'
 import { applyMimiParticipantListUpdate } from './app-data.ts'
 import {
   decodeRoomStateWire,
@@ -29,6 +29,7 @@ import type {
   UpdateRoomRequest,
   Frank,
   MimiDeploymentMode,
+  SubmitVaultCheckpointRequest,
 } from './protocol-types.ts'
 import type { AddedMlsLeaf, MimiMlsStateTransition } from './mls-appsync.ts'
 
@@ -52,7 +53,7 @@ export type MimiUpdateStoreResult =
   | { ok: false; reason: 'wrongEpoch' | 'notAllowed' | 'invalidProposal' | 'roomExists'; currentEpoch?: MimiEpoch; message: string }
 
 interface RoomRow { room_id: string; state_json: string; next_seq: number }
-interface DeliveryRow { seq: number; kind: MimiDeliveryKind; payload: Uint8Array; epoch: string; accepted_at: string; frank_json: string | null }
+interface DeliveryRow { seq: number; kind: MimiDeliveryKind; payload: Uint8Array; epoch: string; accepted_at: string; frank_json: string | null; vault_checkpoint_json: string | null }
 interface KeyPackageRow {
   reference: Uint8Array
   user_uri: string
@@ -108,7 +109,7 @@ export class SqliteMimiStore {
   deliveriesSince(roomId: MimiRoomId, user: MimiUserUri, afterSeq: number, limit = MAX_DELIVERIES_PER_PULL): MimiDeliveryEntry[] | undefined {
     if (!this.canReceive(roomId, user)) return undefined
     return this.database.query<DeliveryRow, [string, number, number]>(
-      'SELECT seq, kind, payload, epoch, accepted_at, frank_json FROM mimi_deliveries WHERE room_id = ? AND seq > ? ORDER BY seq LIMIT ?',
+      'SELECT seq, kind, payload, epoch, accepted_at, frank_json, vault_checkpoint_json FROM mimi_deliveries WHERE room_id = ? AND seq > ? ORDER BY seq LIMIT ?',
     ).all(roomId, afterSeq, limit).map(deliveryFromRow)
   }
 
@@ -253,6 +254,39 @@ export class SqliteMimiStore {
       this.saveRoom({ ...state, updatedAt: acceptedAt }, row.next_seq + 1)
       this.notify(roomId, [entry])
       return { ok: true, entry }
+    })()
+  }
+
+  /** Accept a signed Vault checkpoint manifest and compact only application
+   * deliveries it covers.  The checkpoint chunks stay opaque application
+   * messages after coveredSeq, so this store never handles their plaintext. */
+  submitVaultCheckpoint(request: SubmitVaultCheckpointRequest): { ok: true; entry: MimiDeliveryEntry } | { ok: false; reason: 'epochTooOld' | 'conflict'; currentEpoch?: MimiEpoch } {
+    return this.database.transaction(() => {
+      const row = this.roomRow(request.roomId)
+      if (!row) return { ok: false as const, reason: 'epochTooOld' as const }
+      const state = decodeRoomStateWire(row.state_json)
+      if (!isParticipant(state, credentialUser(request.sender)) || state.epoch !== request.epoch) return { ok: false as const, reason: 'epochTooOld' as const, currentEpoch: state.epoch }
+      const existing = this.database.query<{ covered_seq: number; manifest_json: string; delivery_seq: number }, [string]>('SELECT covered_seq, manifest_json, delivery_seq FROM mimi_vault_checkpoints WHERE room_id = ?').get(request.roomId)
+      const manifestJson = encodeVaultCheckpointManifestWire(request.manifest)
+      if (existing) {
+        if (request.manifest.coveredSeq < existing.covered_seq) return { ok: false as const, reason: 'conflict' as const }
+        if (request.manifest.coveredSeq === existing.covered_seq) {
+          if (existing.manifest_json !== manifestJson) return { ok: false as const, reason: 'conflict' as const }
+          const entry = this.database.query<DeliveryRow, [string, number]>('SELECT seq, kind, payload, epoch, accepted_at, frank_json, vault_checkpoint_json FROM mimi_deliveries WHERE room_id = ? AND seq = ?').get(request.roomId, existing.delivery_seq)
+          if (!entry) throw new MimiStoreStateError('Vault checkpoint delivery is missing')
+          return { ok: true as const, entry: deliveryFromRow(entry) }
+        }
+      }
+      // next_seq is the upcoming manifest sequence, so no checkpoint may
+      // claim to cover it or a future delivery.
+      if (request.manifest.coveredSeq >= row.next_seq) return { ok: false as const, reason: 'conflict' as const }
+      const entry: MimiDeliveryEntry = { seq: row.next_seq, kind: 'vaultCheckpoint', payload: new Uint8Array(), epoch: state.epoch, acceptedAt: request.submittedAt, vaultCheckpoint: request.manifest }
+      this.database.query('INSERT INTO mimi_deliveries (room_id, seq, kind, payload, epoch, accepted_at, frank_json, vault_checkpoint_json) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)').run(request.roomId, entry.seq, entry.kind, entry.payload, entry.epoch, entry.acceptedAt, manifestJson)
+      this.database.query('INSERT INTO mimi_vault_checkpoints (room_id, covered_seq, manifest_json, delivery_seq) VALUES (?, ?, ?, ?) ON CONFLICT(room_id) DO UPDATE SET covered_seq=excluded.covered_seq, manifest_json=excluded.manifest_json, delivery_seq=excluded.delivery_seq').run(request.roomId, request.manifest.coveredSeq, manifestJson, entry.seq)
+      this.database.query("UPDATE mimi_deliveries SET payload=x'' WHERE room_id = ? AND kind = 'application' AND seq <= ?").run(request.roomId, request.manifest.coveredSeq)
+      this.saveRoom({ ...state, updatedAt: request.submittedAt }, row.next_seq + 1)
+      this.notify(request.roomId, [entry])
+      return { ok: true as const, entry }
     })()
   }
 
@@ -481,7 +515,7 @@ function nextEpoch(epoch: MimiEpoch): MimiEpoch {
 }
 
 function deliveryFromRow(row: DeliveryRow): MimiDeliveryEntry {
-  return { seq: row.seq, kind: row.kind, payload: new Uint8Array(row.payload), epoch: row.epoch, acceptedAt: row.accepted_at, frank: row.frank_json === null ? undefined : decodeFrankWire(row.frank_json) }
+  return { seq: row.seq, kind: row.kind, payload: new Uint8Array(row.payload), epoch: row.epoch, acceptedAt: row.accepted_at, frank: row.frank_json === null ? undefined : decodeFrankWire(row.frank_json), ...(row.vault_checkpoint_json === null ? {} : { vaultCheckpoint: decodeVaultCheckpointManifestWire(row.vault_checkpoint_json) }) }
 }
 
 function validatePackageForCredential(item: PublishedKeyPackage, credential: MimiCredential): void {
@@ -525,6 +559,7 @@ function installSchema(database: Database): void {
       epoch TEXT NOT NULL,
       accepted_at TEXT NOT NULL,
       frank_json TEXT,
+      vault_checkpoint_json TEXT,
       PRIMARY KEY (room_id, seq)
     );
     CREATE INDEX IF NOT EXISTS mimi_deliveries_room_seq ON mimi_deliveries (room_id, seq);
@@ -567,10 +602,18 @@ function installSchema(database: Database): void {
       received_at TEXT NOT NULL,
       PRIMARY KEY (source_provider, body_hash)
     );
+    CREATE TABLE IF NOT EXISTS mimi_vault_checkpoints (
+      room_id TEXT PRIMARY KEY NOT NULL,
+      covered_seq INTEGER NOT NULL,
+      manifest_json TEXT NOT NULL,
+      delivery_seq INTEGER NOT NULL,
+      FOREIGN KEY(room_id) REFERENCES mimi_rooms(room_id)
+    );
     CREATE TABLE IF NOT EXISTS mimi_abuse_reports (id INTEGER PRIMARY KEY, room_id TEXT NOT NULL, source_provider TEXT NOT NULL, report_json TEXT NOT NULL, received_at TEXT NOT NULL);
   `)
   const columns = database.query<{ name: string }, []>('PRAGMA table_info(mimi_deliveries)').all()
   if (!columns.some(column => column.name === 'frank_json')) database.run('ALTER TABLE mimi_deliveries ADD COLUMN frank_json TEXT')
+  if (!columns.some(column => column.name === 'vault_checkpoint_json')) database.run('ALTER TABLE mimi_deliveries ADD COLUMN vault_checkpoint_json TEXT')
 }
 
 function copyFrankingKeys(row: FrankingKeyRow): FrankingKeyMaterial {

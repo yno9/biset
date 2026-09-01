@@ -7,6 +7,7 @@ import {
   authorizeDeliveriesPull,
   authorizeDeliveriesWatch,
   authorizeSubmitMessage,
+  authorizeSubmitVaultCheckpoint,
   keyMaterialResponse,
   userIsRoomParticipant,
   type MimiSignatureVerifier,
@@ -19,6 +20,7 @@ import {
   decodeDeliveriesWatchRequestWire,
   decodeUpdateRoomRequestWire,
   decodeSubmitMessageRequestWire,
+  decodeSubmitVaultCheckpointRequestWire,
   encodeGroupInfoResponseWire,
   encodeKeyMaterialResponseWire,
   encodeKeyPackagePublishResponseWire,
@@ -28,6 +30,7 @@ import {
   encodeFrankingAgentDataWire,
   encodeUpdateRoomResponseWire,
   encodeSubmitMessageResponseWire,
+  encodeSubmitVaultCheckpointResponseWire,
   MimiWireError,
   deliveryEntryWireJson,
 } from './wire.ts'
@@ -49,6 +52,7 @@ const KEY_MATERIAL_PREFIX = '/keyMaterial/'
 const UPDATE_PREFIX = '/update/'
 const GROUP_INFO_PREFIX = '/groupInfo/'
 const SUBMIT_MESSAGE_PREFIX = '/submitMessage/'
+const SUBMIT_VAULT_CHECKPOINT_PREFIX = '/v1/mimi/vault-checkpoint/'
 const REQUEST_CONSENT_PREFIX = '/requestConsent/'
 const UPDATE_CONSENT_PREFIX = '/updateConsent/'
 const IDENTIFIER_QUERY_PREFIX = '/identifierQuery/'
@@ -68,6 +72,7 @@ const FRANKING_AGENT_PREFIX = '/v1/mimi/franking-agent/'
 function isMimiHttpPath(path: string): boolean {
   return path.startsWith(KEY_MATERIAL_PREFIX) || path.startsWith(UPDATE_PREFIX) || path.startsWith(GROUP_INFO_PREFIX)
     || path.startsWith(SUBMIT_MESSAGE_PREFIX)
+    || path.startsWith(SUBMIT_VAULT_CHECKPOINT_PREFIX)
     || path.startsWith(REQUEST_CONSENT_PREFIX) || path.startsWith(UPDATE_CONSENT_PREFIX) || path.startsWith(IDENTIFIER_QUERY_PREFIX)
     || path.startsWith(NOTIFY_PREFIX)
     || path.startsWith(PROXY_DOWNLOAD_PREFIX)
@@ -260,6 +265,17 @@ export function createMimiHttpHandler(
         const result = store.submitMessage(roomId, senderUri, value.epoch, value.appMessage, frank, value.submittedAt)
         if (!result.ok) return json(409, encodeSubmitMessageResponseWire({ status: 'epochTooOld', currentEpoch: result.currentEpoch }))
         return json(200, encodeSubmitMessageResponseWire({ status: 'accepted', acceptedTimestamp: value.submittedAt, frank }))
+      }
+
+      if (path.startsWith(SUBMIT_VAULT_CHECKPOINT_PREFIX)) {
+        const roomId = pathParameter(path, SUBMIT_VAULT_CHECKPOINT_PREFIX, 'room ID')
+        const value = decodeSubmitVaultCheckpointRequestWire(body)
+        if (!credentialAllowed(value.sender, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
+        if (value.roomId !== roomId) return error(400, 'bad-request', 'room ID path does not match request body')
+        if (!(await authorizeSubmitVaultCheckpoint(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
+        const result = store.submitVaultCheckpoint(value)
+        if (result.ok) return json(200, encodeSubmitVaultCheckpointResponseWire({ status: 'accepted', acceptedTimestamp: result.entry.acceptedAt }))
+        return json(result.reason === 'conflict' ? 409 : 409, encodeSubmitVaultCheckpointResponseWire({ status: result.reason, currentEpoch: result.currentEpoch }))
       }
 
       if (path === DELIVERY_PULL_PATH) {

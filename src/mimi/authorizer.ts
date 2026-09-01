@@ -21,6 +21,7 @@ import type {
   MlsRequiredCapabilities,
   RoomStateUpdate,
   SubmitMessageRequest,
+  SubmitVaultCheckpointRequest,
   UpdateRoomRequest,
   VisibleCredential,
 } from './protocol-types.ts'
@@ -85,6 +86,10 @@ export function submitMessageSigningBytes(value: Omit<SubmitMessageRequest, 'sig
   return canonicalBytes({ label: 'biset/mimi-submit-message/v1', version: value.version, protocol: value.protocol, roomId: value.roomId, sender: credentialValue(value.sender), epoch: value.epoch, appMessage: bytesToBase64url(value.appMessage), frankingTag: bytesToBase64url(value.frankAAD.frankingTag), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, submittedAt: value.submittedAt })
 }
 
+export function submitVaultCheckpointSigningBytes(value: Omit<SubmitVaultCheckpointRequest, 'signature'>): Uint8Array {
+  return canonicalBytes({ label: 'biset/mimi-vault-checkpoint/v1', version: value.version, protocol: value.protocol, roomId: value.roomId, sender: credentialValue(value.sender), epoch: value.epoch, manifest: { coveredSeq: value.manifest.coveredSeq, transferId: value.manifest.transferId, chunkCount: value.manifest.chunkCount, payloadHash: bytesToBase64url(value.manifest.payloadHash) }, submittedAt: value.submittedAt })
+}
+
 export async function authorizeUpdate(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: UpdateRoomRequest): Promise<boolean> {
   if (!(await verifier.verify(value.sender, updateRoomSigningBytes(value), value.signature))) return false
   const room = store.room(value.roomId)
@@ -115,6 +120,9 @@ export async function authorizeDeliveriesWatch(store: SqliteMimiStore, verifier:
 
 export async function authorizeSubmitMessage(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: SubmitMessageRequest): Promise<boolean> {
   return (await verifier.verify(value.sender, submitMessageSigningBytes(value), value.signature)) && credentialMatchesRoom(store.room(value.roomId), value.sender)
+}
+export async function authorizeSubmitVaultCheckpoint(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: SubmitVaultCheckpointRequest): Promise<boolean> {
+  return (await verifier.verify(value.sender, submitVaultCheckpointSigningBytes(value), value.signature)) && credentialMatchesRoom(store.room(value.roomId), value.sender)
 }
 
 export function groupInfoRequestSigningBytes(value: Omit<GroupInfoRequest, 'signature'>): Uint8Array {

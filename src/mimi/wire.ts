@@ -32,9 +32,12 @@ import type {
   ServerFrankingContext,
   SubmitMessageRequest,
   SubmitMessageResponse,
+  SubmitVaultCheckpointRequest,
+  SubmitVaultCheckpointResponse,
   UpdateRoomRequest,
   UpdateRoomResponse,
   UserRolePair,
+  VaultCheckpointManifest,
   VisibleCredential,
 } from './protocol-types.ts'
 
@@ -567,6 +570,42 @@ export function decodeSubmitMessageResponseWire(text: string): SubmitMessageResp
   return { status: input.status, acceptedTimestamp: optionalString(input.acceptedTimestamp, 'SubmitMessageResponse.acceptedTimestamp'), currentEpoch: input.currentEpoch === undefined ? undefined : requireEpoch(input.currentEpoch, 'SubmitMessageResponse.currentEpoch'), frank: input.frank === undefined ? undefined : decodeFrankWire(JSON.stringify(input.frank)) }
 }
 
+function vaultCheckpointManifestJson(value: VaultCheckpointManifest): JsonRecord {
+  if (!Number.isSafeInteger(value.coveredSeq) || value.coveredSeq < 0) throw new MimiWireError('VaultCheckpointManifest.coveredSeq is invalid')
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(value.transferId)) throw new MimiWireError('VaultCheckpointManifest.transferId is invalid')
+  if (!Number.isSafeInteger(value.chunkCount) || value.chunkCount < 1 || value.chunkCount > 256) throw new MimiWireError('VaultCheckpointManifest.chunkCount is invalid')
+  if (value.payloadHash.length !== 32) throw new MimiWireError('VaultCheckpointManifest.payloadHash must be SHA-256')
+  return { coveredSeq: value.coveredSeq, transferId: value.transferId, chunkCount: value.chunkCount, payloadHash: bytesToBase64url(value.payloadHash) }
+}
+function decodeVaultCheckpointManifest(value: unknown, name: string): VaultCheckpointManifest {
+  const input = requireRecord(value, name)
+  const coveredSeq = requireInteger(input.coveredSeq, `${name}.coveredSeq`)
+  const transferId = requireString(input.transferId, `${name}.transferId`)
+  const chunkCount = requireInteger(input.chunkCount, `${name}.chunkCount`)
+  const payloadHash = requireBinary(input.payloadHash, `${name}.payloadHash`)
+  return vaultCheckpointManifestFrom({ coveredSeq, transferId, chunkCount, payloadHash }, name)
+}
+function vaultCheckpointManifestFrom(value: VaultCheckpointManifest, name: string): VaultCheckpointManifest {
+  vaultCheckpointManifestJson(value)
+  return { coveredSeq: value.coveredSeq, transferId: value.transferId, chunkCount: value.chunkCount, payloadHash: new Uint8Array(value.payloadHash) }
+}
+export function encodeVaultCheckpointManifestWire(value: VaultCheckpointManifest): string { return JSON.stringify(vaultCheckpointManifestJson(value)) }
+export function decodeVaultCheckpointManifestWire(text: string): VaultCheckpointManifest { return decodeVaultCheckpointManifest(record(text, 'VaultCheckpointManifest'), 'VaultCheckpointManifest') }
+export function encodeSubmitVaultCheckpointRequestWire(value: SubmitVaultCheckpointRequest): string {
+  return JSON.stringify({ version: value.version, protocol: value.protocol, roomId: value.roomId, sender: credentialJson(value.sender), epoch: value.epoch, manifest: vaultCheckpointManifestJson(value.manifest), submittedAt: value.submittedAt, signature: bytesToBase64url(value.signature) })
+}
+export function decodeSubmitVaultCheckpointRequestWire(text: string): SubmitVaultCheckpointRequest {
+  const input = record(text)
+  if (input.version !== 1) throw new MimiWireError('SubmitVaultCheckpointRequest.version must be 1')
+  return { version: 1, protocol: requireProtocol(input.protocol, 'SubmitVaultCheckpointRequest.protocol'), roomId: requireString(input.roomId, 'SubmitVaultCheckpointRequest.roomId'), sender: decodeCredential(input.sender, 'SubmitVaultCheckpointRequest.sender'), epoch: requireEpoch(input.epoch, 'SubmitVaultCheckpointRequest.epoch'), manifest: decodeVaultCheckpointManifest(input.manifest, 'SubmitVaultCheckpointRequest.manifest'), submittedAt: requireString(input.submittedAt, 'SubmitVaultCheckpointRequest.submittedAt'), signature: requireBinary(input.signature, 'SubmitVaultCheckpointRequest.signature') }
+}
+export function encodeSubmitVaultCheckpointResponseWire(value: SubmitVaultCheckpointResponse): string { return JSON.stringify({ status: value.status, acceptedTimestamp: value.acceptedTimestamp, currentEpoch: value.currentEpoch }) }
+export function decodeSubmitVaultCheckpointResponseWire(text: string): SubmitVaultCheckpointResponse {
+  const input = record(text)
+  if (input.status !== 'accepted' && input.status !== 'epochTooOld' && input.status !== 'conflict') throw new MimiWireError('SubmitVaultCheckpointResponse.status is invalid')
+  return { status: input.status, acceptedTimestamp: optionalString(input.acceptedTimestamp, 'SubmitVaultCheckpointResponse.acceptedTimestamp'), currentEpoch: input.currentEpoch === undefined ? undefined : requireEpoch(input.currentEpoch, 'SubmitVaultCheckpointResponse.currentEpoch') }
+}
+
 // --------------------------------------------------------------- deliveries
 
 function deliveriesRequesterJson(value: DeliveriesPullRequest | DeliveriesWatchRequest): JsonRecord {
@@ -592,14 +631,16 @@ export function decodeDeliveriesWatchRequestWire(text: string): DeliveriesWatchR
 }
 
 function deliveryEntryJson(value: MimiDeliveryEntry): JsonRecord {
-  return { seq: value.seq, kind: value.kind, payload: bytesToBase64url(value.payload), epoch: value.epoch, acceptedAt: value.acceptedAt, frank: value.frank === undefined ? undefined : JSON.parse(encodeFrankWire(value.frank)) }
+  return { seq: value.seq, kind: value.kind, payload: bytesToBase64url(value.payload), epoch: value.epoch, acceptedAt: value.acceptedAt, frank: value.frank === undefined ? undefined : JSON.parse(encodeFrankWire(value.frank)), vaultCheckpoint: value.vaultCheckpoint === undefined ? undefined : vaultCheckpointManifestJson(value.vaultCheckpoint) }
 }
 
 function decodeDeliveryEntry(value: unknown, name: string): MimiDeliveryEntry {
   const input = requireRecord(value, name)
   const kind = input.kind
-  if (kind !== 'commit' && kind !== 'proposal' && kind !== 'welcome' && kind !== 'application') throw new MimiWireError(`${name}.kind is invalid`)
-  return { seq: requireInteger(input.seq, `${name}.seq`), kind: kind as MimiDeliveryKind, payload: requireBinary(input.payload, `${name}.payload`), epoch: requireEpoch(input.epoch, `${name}.epoch`), acceptedAt: requireString(input.acceptedAt, `${name}.acceptedAt`), frank: input.frank === undefined ? undefined : decodeFrankWire(JSON.stringify(input.frank)) }
+  if (kind !== 'commit' && kind !== 'proposal' && kind !== 'welcome' && kind !== 'application' && kind !== 'vaultCheckpoint') throw new MimiWireError(`${name}.kind is invalid`)
+  const vaultCheckpoint = input.vaultCheckpoint === undefined ? undefined : decodeVaultCheckpointManifest(input.vaultCheckpoint, `${name}.vaultCheckpoint`)
+  if ((kind === 'vaultCheckpoint') !== (vaultCheckpoint !== undefined)) throw new MimiWireError(`${name}.vaultCheckpoint must be present only for vaultCheckpoint deliveries`)
+  return { seq: requireInteger(input.seq, `${name}.seq`), kind: kind as MimiDeliveryKind, payload: requireBinary(input.payload, `${name}.payload`), epoch: requireEpoch(input.epoch, `${name}.epoch`), acceptedAt: requireString(input.acceptedAt, `${name}.acceptedAt`), frank: input.frank === undefined ? undefined : decodeFrankWire(JSON.stringify(input.frank)), ...(vaultCheckpoint === undefined ? {} : { vaultCheckpoint }) }
 }
 
 export function encodeDeliveriesWire(entries: MimiDeliveryEntry[]): string { return JSON.stringify({ entries: entries.map(deliveryEntryJson) }) }

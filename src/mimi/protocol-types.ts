@@ -367,8 +367,34 @@ export interface SubmitMessageResponse {
   frank?: Frank
 }
 
+/** Hub-visible manifest for an MLS-encrypted Vault checkpoint.  `transferId`
+ * links only opaque client-side chunks; the hub never parses their payload. */
+export interface VaultCheckpointManifest {
+  coveredSeq: number
+  transferId: string
+  chunkCount: number
+  payloadHash: Uint8Array
+}
+
+export interface SubmitVaultCheckpointRequest {
+  version: 1
+  protocol: MimiProtocolVersion
+  roomId: MimiRoomId
+  sender: MimiCredential
+  epoch: MimiEpoch
+  manifest: VaultCheckpointManifest
+  submittedAt: string
+  signature: Uint8Array
+}
+
+export interface SubmitVaultCheckpointResponse {
+  status: 'accepted' | 'epochTooOld' | 'conflict'
+  acceptedTimestamp?: string
+  currentEpoch?: MimiEpoch
+}
+
 /** An opaque item delivered from a hub to one of its local clients. */
-export type MimiDeliveryKind = 'commit' | 'proposal' | 'welcome' | 'application'
+export type MimiDeliveryKind = 'commit' | 'proposal' | 'welcome' | 'application' | 'vaultCheckpoint'
 
 export interface MimiDeliveryEntry {
   seq: number
@@ -377,6 +403,7 @@ export interface MimiDeliveryEntry {
   epoch: MimiEpoch
   acceptedAt: string
   frank?: Frank
+  vaultCheckpoint?: VaultCheckpointManifest
 }
 
 export interface DeliveriesPullRequest {

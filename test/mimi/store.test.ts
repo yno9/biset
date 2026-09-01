@@ -116,6 +116,25 @@ describe('MIMI SQLite store', () => {
     store.close()
   })
 
+  test('accepts a monotonic Vault checkpoint manifest and compacts only covered application payloads', () => {
+    const store = new SqliteMimiStore(new Database(':memory:'))
+    expect(createInitial(store).ok).toBe(true)
+    const keys = store.frankingKeys(roomId)!
+    const submit = (payload: Uint8Array) => store.submitMessage(roomId, alice.user, '1', payload, frankMessage(keys, { aad: { frankingTag: new Uint8Array(32).fill(1) }, senderUri: alice.user, roomUri: roomId, acceptedTimestamp: '1', ciphersuite: 1 }), at)
+    expect(submit(new Uint8Array([10])).ok).toBe(true)
+    expect(submit(new Uint8Array([11])).ok).toBe(true)
+    const manifest = { coveredSeq: 2, transferId: 'A'.repeat(24), chunkCount: 2, payloadHash: new Uint8Array(32).fill(7) }
+    const checkpoint = store.submitVaultCheckpoint({ version: 1, protocol: 'mls10', roomId, sender: alice, epoch: '1', manifest, submittedAt: at, signature: new Uint8Array() })
+    expect(checkpoint).toMatchObject({ ok: true, entry: { kind: 'vaultCheckpoint', vaultCheckpoint: manifest } })
+    const entries = store.deliveriesSince(roomId, alice.user, 0)!
+    expect(entries.find(entry => entry.seq === 2)?.payload).toEqual(new Uint8Array())
+    expect(entries.find(entry => entry.seq === 3)?.payload).toEqual(new Uint8Array([11]))
+    expect(entries.at(-1)).toMatchObject({ kind: 'vaultCheckpoint', vaultCheckpoint: manifest })
+    expect(store.submitVaultCheckpoint({ version: 1, protocol: 'mls10', roomId, sender: alice, epoch: '1', manifest, submittedAt: at, signature: new Uint8Array() })).toMatchObject({ ok: true, entry: { seq: checkpoint.ok ? checkpoint.entry.seq : -1 } })
+    expect(store.submitVaultCheckpoint({ version: 1, protocol: 'mls10', roomId, sender: alice, epoch: '1', manifest: { ...manifest, payloadHash: new Uint8Array(32).fill(8) }, submittedAt: at, signature: new Uint8Array() })).toMatchObject({ ok: false, reason: 'conflict' })
+    store.close()
+  })
+
   test('accepts a provider fanout exactly once and exposes it through local delivery', () => {
     const store = new SqliteMimiStore(new Database(':memory:'))
     expect(createInitial(store).ok).toBe(true)
