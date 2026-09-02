@@ -10,9 +10,6 @@
 #             anchor とは別プロセスで共存。webvh log は今も anchor 側の役目のまま
 #             （src/core にはその機能がない、test/protocol/support/webvh-log-fixture.ts の
 #             コメント参照）。Caddy の biset.md ブロックで /v1/* だけをこちらへ転送する。
-#   coordinator: Vault persistence + MLS Delivery Service src/coordinator/index.ts
-#             → v1:/opt/biset/bin/biset-coordinator (systemd biset-coordinator.service,
-#             listen 127.0.0.1:8792, coordinator.biset.md)
 #   smtp    : メールrelay      ~/biset/jmapsmtp     → v1:/root/jmapsmtp/      (systemd jmapsmtp, mail.biset.md)
 #   ap      : ActivityPub relay ~/go-jmapap         → v1:/root/jmapap/        (systemd jmapap,   ap.biset.md)
 #   relay   : smtp + ap をまとめて
@@ -38,7 +35,7 @@
 #   replace github.com/yno9/go-jmapserver => /Users/n/go-jmapserver
 # を持つので、core を直したら ap のバイナリを作り直す必要がある。
 #
-# 使い方: ./deploy.sh [app|landing|anchor|core|coordinator|didcomm-mediator|smtp|ap|relay|all]   (引数なし = all)
+# 使い方: ./deploy.sh [app|landing|anchor|core|didcomm-mediator|smtp|ap|relay|all]   (引数なし = all)
 set -euo pipefail
 
 HOST=v1
@@ -48,8 +45,6 @@ ANCHOR_HOST=v1
 ANCHOR_DST=/opt/biset/bin
 CORE_HOST=v1
 CORE_DST=/root/biset/core
-COORDINATOR_HOST=v1
-COORDINATOR_DST=/opt/biset/bin
 DIDCOMM_MEDIATOR_HOST=v1
 DIDCOMM_MEDIATOR_DST=/opt/biset/didcomm-mediator
 DIDCOMM_MEDIATOR_PUBLIC_HOST="${DIDCOMM_MEDIATOR_PUBLIC_HOST:-mediator.biset.md}"
@@ -186,35 +181,6 @@ deploy_core() {
   ssh "$CORE_HOST" "curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/healthz" | grep -q "^200$" \
     || fail "core: ヘルスチェック失敗（/healthz が200を返さない）"
   echo "✓ core OK"
-}
-
-deploy_coordinator() {
-  echo "== coordinator: test + build (linux-x64 cross-compile) =="
-  ( cd "$ROOT" && bun test test/coordinator/coordinator-http.test.ts test/coordinator/coordinator-stream-v2.test.ts test/coordinator/self-group-mls-delivery.test.ts ) \
-    || fail "coordinator: test失敗（本番に出さない）"
-  ( cd "$ROOT" && bun run build:coordinator )
-  [ -f "$ROOT/biset-coordinator" ] || fail "biset-coordinator がない"
-  file "$ROOT/biset-coordinator" | grep -q "x86-64" \
-    || fail "biset-coordinator がx86_64バイナリでない"
-
-  echo "== coordinator: upload + swap =="
-  scp "$ROOT/biset-coordinator" "$COORDINATOR_HOST:$COORDINATOR_DST/biset-coordinator.new"
-  ssh "$COORDINATOR_HOST" "
-    set -e
-    file $COORDINATOR_DST/biset-coordinator.new | grep -q x86-64
-    chmod 0755 $COORDINATOR_DST/biset-coordinator.new
-    if [ -f $COORDINATOR_DST/biset-coordinator ]; then
-      cp -p $COORDINATOR_DST/biset-coordinator $COORDINATOR_DST/biset-coordinator.bak-\$(date +%Y%m%d-%H%M%S)
-    fi
-    mv $COORDINATOR_DST/biset-coordinator.new $COORDINATOR_DST/biset-coordinator
-    systemctl restart biset-coordinator.service
-    sleep 1
-    systemctl is-active --quiet biset-coordinator.service
-    curl -fsS http://127.0.0.1:8792/healthz >/dev/null
-  " || fail "coordinator: restart/readiness失敗（直前binaryへ手動rollback）"
-  curl -fsS https://coordinator.biset.md/healthz >/dev/null \
-    || fail "coordinator: 公開HTTPS health check失敗"
-  echo "✓ coordinator OK"
 }
 
 deploy_didcomm_mediator() {
@@ -373,7 +339,6 @@ case "$target" in
   landing) deploy_landing ;;
   anchor)  deploy_anchor ;;
   core)    deploy_core ;;
-  coordinator) deploy_coordinator ;;
   didcomm-mediator) deploy_didcomm_mediator ;;
   smtp)    deploy_smtp ;;
   ap)      deploy_ap ;;
@@ -381,7 +346,7 @@ case "$target" in
   # core は意図的に all に含めない — まだ実験段階（2026-08-24 追加）で、
   # 既存の anchor/smtp/ap のデプロイと同列の自動対象にはしない。
   all)     deploy_app; deploy_landing; deploy_anchor; deploy_smtp; deploy_ap ;;
-  *)       fail "unknown target: $target (app|landing|anchor|core|coordinator|didcomm-mediator|smtp|ap|relay|all)" ;;
+  *)       fail "unknown target: $target (app|landing|anchor|core|didcomm-mediator|smtp|ap|relay|all)" ;;
 esac
 
 echo "== done: $target =="

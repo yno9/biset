@@ -229,7 +229,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   // A WebVH PUT can succeed while the following MLS submission loses the
   // network. Reconcile the executing leaf before ordinary maintenance so
   // rotation is retryable after reload instead of leaving a stranded Vault.
-  if (coordinatorUrl) {
+  if (coordinatorUrl && !mimiSelfBaseUrl) {
     for (const record of records) {
       if (!record.deviceKid) continue
       const stored = await selfGroupStore.load(record.did).catch(() => undefined)
@@ -250,7 +250,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   // near the end of boot used to render an empty inbox first; if a segment
   // had skipped more than one epoch, the transition-only self-grant could
   // not repair it at all on later reloads.
-  if (coreBaseUrl && coordinatorUrl) {
+  if (coreBaseUrl && coordinatorUrl && !mimiSelfBaseUrl) {
     for (const record of records) {
       await maintainSelfGroup(selfGroupStore, keyStore, record, { coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl, wraps: vaultStore, segments: vaultStore }).catch(e => {
         console.warn(`[maintainSelfGroup] ${record.did}:`, e instanceof Error ? e.message : e)
