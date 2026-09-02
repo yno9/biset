@@ -11,13 +11,14 @@ import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoo
 import { deliveriesPullSigningBytes, submitMessageSigningBytes, submitVaultCheckpointSigningBytes, updateRoomSigningBytes } from '../src/mimi/authorizer.ts'
 import { decodeDeliveriesWire, decodeFrankingAgentDataWire, decodeSubmitMessageResponseWire, decodeSubmitVaultCheckpointResponseWire, decodeUpdateRoomResponseWire, encodeDeliveriesPullRequestWire, encodeSubmitMessageRequestWire, encodeSubmitVaultCheckpointRequestWire, encodeUpdateRoomRequestWire } from '../src/mimi/wire.ts'
 import { sendMimiVaultCheckpoint } from '../src/vault/mimi-vault-sync.ts'
+import { encodeVaultDeliveryPack } from '../src/vault/delivery-pack.ts'
 
 const baseUrl = (process.env.MIMI_SELF_URL ?? 'https://mimi-self.biset.md').replace(/\/$/, '')
 const now = () => new Date().toISOString()
 const roomId = `mimi://mimi-self.biset.md/r/vault-${bytesToBase64url(crypto.getRandomValues(new Uint8Array(32)))}`
 const user = `did:biset:live-vault-${crypto.randomUUID()}`
 const client = `${user}#device`
-const marker = `message.add/private-target/${crypto.randomUUID()}`
+const marker = `private-target-${crypto.randomUUID()}`
 
 async function request(path: string, body?: string): Promise<string> {
   const response = await fetch(`${baseUrl}${path}`, body === undefined ? undefined : { method: 'POST', headers: { 'content-type': 'application/json' }, body })
@@ -66,7 +67,11 @@ async function sendApplication(plaintext: Uint8Array, deliveryId: string): Promi
   state = encrypted.state
 }
 
-await sendApplication(new TextEncoder().encode(marker), 'live-application-00000001')
+const vaultPack = encodeVaultDeliveryPack({
+  version: 1, identityId: user, objects: [], keyWraps: [],
+  events: [{ version: 1, id: `evt-${crypto.randomUUID()}`, identityId: user, actorDeviceId: client, actorSeq: 1, kind: 'message.add', targetIds: [marker], objectRefs: [], parents: [], createdAt: now(), signature: new Uint8Array(64) }],
+})
+await sendApplication(vaultPack, 'live-application-00000001')
 const pullUnsigned = () => ({ version: 1 as const, roomId, requester: credential, afterSeq: 0, requestedAt: now() })
 const pull = async () => {
   const unsigned = pullUnsigned()
@@ -74,7 +79,8 @@ const pull = async () => {
 }
 const before = await pull()
 const application = before.find(entry => entry.kind === 'application')
-if (!application || new TextDecoder().decode(application.payload).includes(marker)) throw new Error('hub-visible application payload contains Vault plaintext')
+const hubVisible = new TextDecoder().decode(application?.payload)
+if (!application || hubVisible.includes('message.add') || hubVisible.includes(marker)) throw new Error('hub-visible application payload contains VaultDeliveryPack plaintext')
 
 const checkpointMarker = `checkpoint-private-target/${crypto.randomUUID()}`
 const manifest = await sendMimiVaultCheckpoint(new TextEncoder().encode(checkpointMarker), application.seq, {
