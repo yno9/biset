@@ -40,6 +40,7 @@ test('a freshly restored device obtains GroupInfo and externally joins its owner
 
   expect(sender.client).toBe(restoredDevice)
   expect(restoredRecord.roomId).toBe(created.roomId)
+  expect(restoredRecord.deliveryCursor).toBe(2)
   expect(deployment.store.room(created.roomId)?.memberCredentials.map(member => member.kind === 'visible' ? member.client : '')).toEqual([firstDevice, restoredDevice])
   deployment.close()
 })

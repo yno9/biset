@@ -4,7 +4,7 @@
  * from the MLS GroupId: MIMI routes by room URI while MLS keeps its GroupId
  * cryptographic and opaque. */
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { bytesToBase64url } from '../protocol/canonical.ts'
+import { bytesToBase64url, equalBytes } from '../protocol/canonical.ts'
 import { createMlsGroup, confirmCommit, generateOwnKeyPackage, groupInfoEpoch, groupInfoForExternalJoin, joinGroupExternally } from './group.ts'
 import type { MlsDeviceCredentialV2 } from './device-credential.ts'
 import { createCommit, encodeMlsMessage } from './vendor/index.ts'
@@ -12,7 +12,7 @@ import { encodeCredential } from './vendor/credential.ts'
 import { mlsSuite } from './suite.ts'
 import { decryptWithLabel } from './vendor/crypto/hpke.ts'
 import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../mimi/app-data.ts'
-import { groupInfoRequestSigningBytes, groupInfoResponseSigningBytes, updateRoomSigningBytes } from '../mimi/authorizer.ts'
+import { deliveriesPullSigningBytes, groupInfoRequestSigningBytes, groupInfoResponseSigningBytes, updateRoomSigningBytes } from '../mimi/authorizer.ts'
 import { decodeGroupInfoRatchetTreeBundle } from '../mimi/wire.ts'
 import { memberIdOf } from './identity.ts'
 import type { MimiClientMode, MimiClientTransport } from './mimi-client-transport.ts'
@@ -144,8 +144,13 @@ export async function joinMimiVaultRoom(options: JoinMimiVaultRoomOptions): Prom
   }
   const accepted = await options.transport.update(mode, { ...unsigned, signature: ed25519.sign(updateRoomSigningBytes(unsigned), options.signaturePrivateKey) })
   if (accepted.status !== 'success') throw new Error(`MIMI Vault external join commit failed: ${accepted.status}`)
+  // A new member cannot decrypt application ciphertexts from before its own
+  // external commit (MLS forward secrecy). Start its provider cursor at that
+  // commit so the next ordinary sync waits for a fresh post-join checkpoint
+  // from an existing device instead of trying to replay old chunks.
+  const deliveryCursor = await externalJoinDeliveryCursor(options, sender, joined.commit)
   try {
-    await options.stateStore.saveMimiVault(options.identityId, { roomId: options.roomId, selfGroupId: options.selfGroupId, state: joined.state })
+    await options.stateStore.saveMimiVault(options.identityId, { roomId: options.roomId, selfGroupId: options.selfGroupId, state: joined.state, deliveryCursor })
   } catch (error) {
     throw new Error('MIMI Vault external join was accepted but local state could not be saved', { cause: error })
   }
@@ -155,4 +160,17 @@ export async function joinMimiVaultRoom(options: JoinMimiVaultRoomOptions): Prom
 
 function equalPublicKey(left: Uint8Array, right: Uint8Array): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+async function externalJoinDeliveryCursor(options: JoinMimiVaultRoomOptions, sender: VisibleCredential, commit: Uint8Array): Promise<number> {
+  let afterSeq = 0
+  for (let page = 0; page < 1024; page++) {
+    const unsigned = { version: 1 as const, roomId: options.roomId, requester: sender, afterSeq, requestedAt: (options.now ?? (() => new Date()))().toISOString() }
+    const entries = await options.transport.pullDeliveries(options.mode ?? 'self', { ...unsigned, signature: ed25519.sign(deliveriesPullSigningBytes(unsigned), options.signaturePrivateKey) })
+    const ownCommit = entries.find(entry => entry.kind === 'commit' && equalBytes(entry.payload, commit))
+    if (ownCommit) return ownCommit.seq
+    if (entries.length < 32) break
+    afterSeq = entries.at(-1)!.seq
+  }
+  throw new Error('MIMI Vault external join commit was accepted but its delivery was not found')
 }
