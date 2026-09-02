@@ -7,4 +7,9 @@ describe('MIMI client transport', () => {
     expect(transport.streamUrl('normal', 'a b', 0)).toBe('https://normal.example/v1/mimi/deliveries/stream?token=a%20b&afterSeq=0')
     expect(transport.streamUrl('anon', 't', 7)).toBe('https://anon.example/v1/mimi/deliveries/stream?token=t&afterSeq=7')
   })
+
+  test('routes the isolated Self/Vault room to its configured normal-mode deployment', () => {
+    const transport = new MimiClientTransport({ normalBaseUrl: 'https://normal.example/', anonBaseUrl: 'https://anon.example/', selfBaseUrl: 'https://self.example/' })
+    expect(transport.streamUrl('self', 't', 7)).toBe('https://self.example/v1/mimi/deliveries/stream?token=t&afterSeq=7')
+  })
 })

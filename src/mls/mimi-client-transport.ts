@@ -3,15 +3,25 @@ import { defaultFetch } from '../net-fetch.ts'
 import type { DeliveriesPullRequest, DeliveriesWatchRequest, KeyMaterialRequest, KeyPackagePublishRequest, SubmitMessageRequest, SubmitVaultCheckpointRequest, UpdateRoomRequest, MimiDeliveryEntry } from '../mimi/protocol-types.ts'
 import { decodeDeliveriesWire, decodeDeliveriesWatchTokenWire, decodeKeyMaterialResponseWire, decodeKeyPackagePublishResponseWire, decodeSubmitMessageResponseWire, decodeSubmitVaultCheckpointResponseWire, decodeUpdateRoomResponseWire, encodeDeliveriesPullRequestWire, encodeDeliveriesWatchRequestWire, encodeKeyMaterialRequestWire, encodeKeyPackagePublishWire, encodeSubmitMessageRequestWire, encodeSubmitVaultCheckpointRequestWire, encodeUpdateRoomRequestWire } from '../mimi/wire.ts'
 
-export interface MimiClientTransportOptions { normalBaseUrl: string; anonBaseUrl: string; fetch?: typeof fetch }
-export type MimiClientMode = 'normal' | 'anon'
+export interface MimiClientTransportOptions {
+  normalBaseUrl: string
+  anonBaseUrl: string
+  /** Dedicated normal-mode endpoint for the one-user Self/Vault room. */
+  selfBaseUrl?: string
+  fetch?: typeof fetch
+}
+export type MimiClientMode = 'normal' | 'anon' | 'self'
 
 export class MimiClientTransport {
   private readonly fetchValue: typeof fetch
   private readonly baseUrls: Record<MimiClientMode, string>
   constructor(options: MimiClientTransportOptions) {
     if (!options.normalBaseUrl || !options.anonBaseUrl) throw new TypeError('normal and anon MIMI base URLs are required')
-    this.baseUrls = { normal: options.normalBaseUrl.replace(/\/$/, ''), anon: options.anonBaseUrl.replace(/\/$/, '') }
+    this.baseUrls = {
+      normal: options.normalBaseUrl.replace(/\/$/, ''),
+      anon: options.anonBaseUrl.replace(/\/$/, ''),
+      self: (options.selfBaseUrl ?? options.normalBaseUrl).replace(/\/$/, ''),
+    }
     this.fetchValue = options.fetch ?? defaultFetch()
   }
   async update(mode: MimiClientMode, input: UpdateRoomRequest) { return decodeUpdateRoomResponseWire(await this.post(mode, `/update/${encodeURIComponent(input.roomId)}`, encodeUpdateRoomRequestWire(input))) }
