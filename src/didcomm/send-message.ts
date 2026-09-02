@@ -22,6 +22,7 @@ import {
   relationshipBodyToWire,
   relationshipMediatorService,
 } from './relationship.ts'
+import { GROUP_INVITE, GROUP_MESSAGE, type GroupInviteBody, type GroupMessageBody } from './group-chat.ts'
 import type { ContactKeyV1 } from '../vault/contact-key.ts'
 import type { DidCommSender } from './mediator-transport.ts'
 import { x25519 } from '@noble/curves/ed25519.js'
@@ -94,6 +95,26 @@ export async function sendRelationshipAccept(contactKey: ContactKeyV1, fetchImpl
     relationshipKid: contactKey.ownRelationshipKid,
     publicKey: x25519.getPublicKey(contactKey.ownX25519PrivateKey),
   }), fetchImpl)
+}
+
+/** DIDComm group chat (group-chat.ts): both control/content types ride the
+ * SAME established pairwise relationship channel every ordinary 1:1
+ * message does -- unlike Conversation Groups' own invite (which goes over
+ * the front door, since MLS's own crypto is what establishes membership
+ * there), full-mesh group chat already REQUIRES a pairwise ContactKeyV1
+ * with every member before anything group-related can happen, so there is
+ * no separate bootstrap channel to reach for. */
+export async function sendGroupInvite(contactKey: ContactKeyV1, body: GroupInviteBody, fetchImpl: typeof fetch = defaultFetch()): Promise<DidCommSendResult> {
+  return sendPrivateRelationshipMessage(contactKey, GROUP_INVITE, body, fetchImpl)
+}
+
+export async function sendGroupChatMessage(
+  contactKey: ContactKeyV1,
+  body: GroupMessageBody,
+  fetchImpl: typeof fetch = defaultFetch(),
+  message?: { id: string; sentAt: string },
+): Promise<DidCommSendResult> {
+  return sendPrivateRelationshipMessage(contactKey, GROUP_MESSAGE, body, fetchImpl, message ? { id: message.id, createdTime: Math.floor(Date.parse(message.sentAt) / 1000) } : undefined)
 }
 
 async function sendPrivateRelationshipMessage(contactKey: ContactKeyV1, type: string, body: unknown, fetchImpl: typeof fetch, message?: { id: string; createdTime: number }): Promise<DidCommSendResult> {

@@ -271,6 +271,14 @@ export function computeReplyContext(thread: ProcessedMessage[], selfAddress: str
     const references = [...thread].sort((a, b) => a.msg.ts - b.msg.ts).map(p => p.msg.message_id).filter(Boolean)
     return { toAddrs: [groupThreadId], references }
   }
+  // Same reasoning as the mls: branch just above, for DIDComm's OWN
+  // full-mesh group chat (didcomm/group-chat.ts's `didcommGroupAddress`,
+  // `didcomm-group:<groupId>`) -- a distinct address scheme kept mutually
+  // exclusive with both `mls:` and 1:1 DIDComm's own DID-pair addressing.
+  if (groupThreadId?.startsWith('didcomm-group:')) {
+    const references = [...thread].sort((a, b) => a.msg.ts - b.msg.ts).map(p => p.msg.message_id).filter(Boolean)
+    return { toAddrs: [groupThreadId], references }
+  }
   const self = (Array.isArray(selfAddress) ? selfAddress : [selfAddress]).map(a => a.toLowerCase())
   const toAddrs: string[] = []
   const seen = new Set<string>(self)

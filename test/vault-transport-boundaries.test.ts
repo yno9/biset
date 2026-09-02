@@ -37,15 +37,15 @@ describe('IndexedDB transport boundaries', () => {
         projection: {},
         jmapState: {},
         deliveryOutbox: { identityId, entryId: eventId, payload: new Uint8Array([1]), payloadHash: new Uint8Array([2]), createdAt, attempts: 0 },
-        didCommOutbox: { identityId, outboundEventId: eventId, emailId: 'email-1', messageId: 'message-1', toDid: 'did:example:bob', createdAt, attempts: 0 },
+        didCommOutbox: [{ identityId, outboundEventId: eventId, emailId: 'email-1', messageId: 'message-1', toDid: 'did:example:bob', createdAt, attempts: 0 }],
       })
 
       expect(await store.readDidCommOutbox(identityId)).toEqual([{
         identityId, outboundEventId: eventId, emailId: 'email-1', messageId: 'message-1', toDid: 'did:example:bob', createdAt, attempts: 0,
       }])
-      await store.noteDidCommOutboxAttempt(identityId, eventId, '2026-08-27T00:00:01.000Z')
+      await store.noteDidCommOutboxAttempt(identityId, eventId, 'did:example:bob', '2026-08-27T00:00:01.000Z')
       expect((await store.readDidCommOutbox(identityId))[0]).toMatchObject({ attempts: 1, lastAttemptAt: '2026-08-27T00:00:01.000Z' })
-      await store.removeDidCommOutbox(identityId, eventId)
+      await store.removeDidCommOutbox(identityId, eventId, 'did:example:bob')
       expect(await store.readDidCommOutbox(identityId)).toEqual([])
     } finally {
       store.close()

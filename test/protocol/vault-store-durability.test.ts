@@ -20,7 +20,7 @@ import type { IngressAckV1 } from '../../src/protocol/ingress.ts'
 // exported, so this test's own knowledge of the schema has to stay in sync
 // by hand if that module ever renames/re-versions it.
 const DATABASE_NAME = 'biset-vault-core'
-const CURRENT_VERSION = 9
+const CURRENT_VERSION = 10
 
 const identityId = 'did:web:alice.example'
 const signer: VaultEventSigner = { deviceId: 'device-a', async sign() { return new Uint8Array([7]) }, async verify(_d, _b, sig) { return sig[0] === 7 } }

@@ -7,7 +7,7 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import type { RestoreTransferChunkCommit, RestoreTransferReceiverStore, RestoreTransferSessionV1 } from './restore-transfer-receiver.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
-const DATABASE_VERSION = 9
+const DATABASE_VERSION = 10
 
 const STORES = {
   ingressReceipts: 'vault_ingress_receipts',
@@ -93,8 +93,8 @@ export interface DidCommTransportOutboxRecord {
 
 export interface DidCommTransportOutboxStore {
   readDidCommOutbox(identityId: IdentityId, limit?: number): Promise<DidCommTransportOutboxRecord[]>
-  noteDidCommOutboxAttempt(identityId: IdentityId, outboundEventId: VaultEventId, attemptedAt: string): Promise<void>
-  removeDidCommOutbox(identityId: IdentityId, outboundEventId: VaultEventId): Promise<void>
+  noteDidCommOutboxAttempt(identityId: IdentityId, outboundEventId: VaultEventId, toDid: string, attemptedAt: string): Promise<void>
+  removeDidCommOutbox(identityId: IdentityId, outboundEventId: VaultEventId, toDid: string): Promise<void>
 }
 
 export interface VaultDeliveryReceiptRecord {
@@ -170,7 +170,11 @@ export interface LocalVaultMutationCommit {
   projection: unknown
   jmapState: unknown
   deliveryOutbox: VaultDeliveryOutboxRecord
-  didCommOutbox?: DidCommTransportOutboxRecord
+  /** One row per recipient -- a group message's single commit still needs
+   * N delivery-queue rows, one per fan-out target
+   * (didcomm/group-chat.ts's full-mesh design). A 1:1 chat message is the
+   * one-element case. */
+  didCommOutbox?: DidCommTransportOutboxRecord[]
 }
 
 /**
@@ -479,7 +483,7 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
       STORES.jmapState,
       STORES.deliveryOutbox,
     ]
-    if (input.didCommOutbox) stores.push(STORES.didCommOutbox)
+    if (input.didCommOutbox?.length) stores.push(STORES.didCommOutbox)
     const transaction = this.database.transaction(stores, 'readwrite')
     let duplicate = false
     const eventStore = transaction.objectStore(STORES.events)
@@ -493,7 +497,7 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     transaction.objectStore(STORES.projection).put({ identityId: input.identityId, value: input.projection })
     transaction.objectStore(STORES.jmapState).put({ identityId: input.identityId, value: input.jmapState })
     transaction.objectStore(STORES.deliveryOutbox).put(copyDeliveryOutbox(input.deliveryOutbox))
-    if (input.didCommOutbox) transaction.objectStore(STORES.didCommOutbox).put(copyDidCommOutbox(input.didCommOutbox))
+    for (const row of input.didCommOutbox ?? []) transaction.objectStore(STORES.didCommOutbox).put(copyDidCommOutbox(row))
     try {
       await transactionDone(transaction)
       return 'committed'
@@ -510,23 +514,23 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     const values = await requestValue<DidCommTransportOutboxRecord[]>(transaction.objectStore(STORES.didCommOutbox).getAll())
     await completed
     return values.filter(value => value.identityId === identityId)
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.outboundEventId.localeCompare(right.outboundEventId))
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.outboundEventId.localeCompare(right.outboundEventId) || left.toDid.localeCompare(right.toDid))
       .slice(0, limit).map(copyDidCommOutbox)
   }
 
-  async noteDidCommOutboxAttempt(identityId: IdentityId, outboundEventId: VaultEventId, attemptedAt: string): Promise<void> {
-    if (!identityId || !outboundEventId || Number.isNaN(Date.parse(attemptedAt))) throw new TypeError('DIDComm outbox attempt is invalid')
+  async noteDidCommOutboxAttempt(identityId: IdentityId, outboundEventId: VaultEventId, toDid: string, attemptedAt: string): Promise<void> {
+    if (!identityId || !outboundEventId || !toDid || Number.isNaN(Date.parse(attemptedAt))) throw new TypeError('DIDComm outbox attempt is invalid')
     const transaction = this.database.transaction(STORES.didCommOutbox, 'readwrite')
     const store = transaction.objectStore(STORES.didCommOutbox)
-    const record = await requestValue<DidCommTransportOutboxRecord | undefined>(store.get([identityId, outboundEventId]))
+    const record = await requestValue<DidCommTransportOutboxRecord | undefined>(store.get([identityId, outboundEventId, toDid]))
     if (record) store.put(copyDidCommOutbox({ ...record, attempts: record.attempts + 1, lastAttemptAt: attemptedAt }))
     await transactionDone(transaction)
   }
 
-  async removeDidCommOutbox(identityId: IdentityId, outboundEventId: VaultEventId): Promise<void> {
-    if (!identityId || !outboundEventId) throw new TypeError('DIDComm outbox identity and event ID are required')
+  async removeDidCommOutbox(identityId: IdentityId, outboundEventId: VaultEventId, toDid: string): Promise<void> {
+    if (!identityId || !outboundEventId || !toDid) throw new TypeError('DIDComm outbox identity, event ID, and recipient are required')
     const transaction = this.database.transaction(STORES.didCommOutbox, 'readwrite')
-    transaction.objectStore(STORES.didCommOutbox).delete([identityId, outboundEventId])
+    transaction.objectStore(STORES.didCommOutbox).delete([identityId, outboundEventId, toDid])
     await transactionDone(transaction)
   }
 
@@ -917,6 +921,30 @@ function openDatabase(): Promise<IDBDatabase> {
       if (event.oldVersion > 0 && event.oldVersion < 8 && request.transaction?.objectStoreNames.contains('vault_coordinator_binding')) {
         request.transaction.objectStore('vault_coordinator_binding').clear()
       }
+      // v10 widened the DIDComm outbox's key from [identityId,
+      // outboundEventId] to [identityId, outboundEventId, toDid] -- one
+      // logical message can now need N delivery-queue rows (one per
+      // fan-out recipient, didcomm/group-chat.ts's full-mesh design), which
+      // the old 2-part key could not distinguish. IndexedDB cannot alter an
+      // existing store's keyPath in place, so a client upgrading from
+      // before v10 gets its rows preserved by hand: every existing row
+      // already carries a `toDid` field, just not as part of its key yet,
+      // so re-putting it under the new store recovers the identical
+      // composite key with no data loss (an in-flight queued send must not
+      // silently vanish on upgrade).
+      // >= 6, not > 0: the store itself didn't exist before v6, so a
+      // client older than that gets a freshly-created, already-correctly-
+      // keyed store from createStores above -- nothing to migrate.
+      if (event.oldVersion >= 6 && event.oldVersion < 10 && request.transaction?.objectStoreNames.contains(STORES.didCommOutbox)) {
+        const legacy = request.transaction.objectStore(STORES.didCommOutbox)
+        const getAll = legacy.getAll()
+        getAll.onsuccess = () => {
+          const rows = getAll.result as DidCommTransportOutboxRecord[]
+          request.result.deleteObjectStore(STORES.didCommOutbox)
+          const fresh = request.result.createObjectStore(STORES.didCommOutbox, { keyPath: KEY_PATHS[STORES.didCommOutbox] })
+          for (const row of rows) fresh.put(row)
+        }
+      }
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error ?? new Error('failed to open vault database'))
@@ -948,7 +976,7 @@ const KEY_PATHS: Record<StoreName, string | string[]> = {
   [STORES.restoreOfferOutbox]: ['identityId', 'requestId', 'responderDeviceId'],
   [STORES.restoreTransferState]: ['identityId', 'requesterDeviceId'],
   [STORES.transportStatus]: ['identityId', 'outboundEventId'],
-  [STORES.didCommOutbox]: ['identityId', 'outboundEventId'],
+  [STORES.didCommOutbox]: ['identityId', 'outboundEventId', 'toDid'],
 }
 
 function createStores(database: IDBDatabase): void {
@@ -989,8 +1017,7 @@ function assertCommit(input: IngressVaultCommit): void {
 function assertLocalCommit(input: LocalVaultMutationCommit): void {
   if (!input.identityId || input.events.length === 0 || input.deliveryOutbox.identityId !== input.identityId) throw new TypeError('local mutation commit needs matching identity and events')
   assertDeliveryOutbox(input.identityId, input.events, input.deliveryOutbox, 'local mutation')
-  if (input.didCommOutbox) {
-    const value = input.didCommOutbox
+  for (const value of input.didCommOutbox ?? []) {
     if (value.identityId !== input.identityId || !input.events.some(event => event.id === value.outboundEventId) || !value.emailId || !value.messageId || !value.toDid.startsWith('did:') || value.attempts !== 0 || Number.isNaN(Date.parse(value.createdAt))) {
       throw new TypeError('local mutation DIDComm outbox is invalid')
     }

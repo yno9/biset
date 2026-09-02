@@ -29,7 +29,11 @@ export interface LocalVaultMutationCommitter {
       createdAt: string
       attempts: number
     }
-    didCommOutbox?: {
+    /** One row per recipient -- a group message's single `message.add`
+     * commit still needs N delivery-queue rows, one per fan-out target
+     * (didcomm/group-chat.ts's own full-mesh design). A 1:1 chat message
+     * is just the one-element case. */
+    didCommOutbox?: Array<{
       identityId: IdentityId
       outboundEventId: VaultEventId
       emailId: string
@@ -37,7 +41,7 @@ export interface LocalVaultMutationCommitter {
       toDid: string
       createdAt: string
       attempts: number
-    }
+    }>
   }): Promise<'committed' | 'already-committed'>
 }
 
@@ -157,8 +161,10 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
     input: {
       email: Omit<LocalJmapEmail, 'blobId'>
       rawRfc5322: Uint8Array
-      /** Atomically enqueue this local message for DIDComm delivery. */
-      didComm?: { messageId: string; toDid: string }
+      /** Atomically enqueue this local message for DIDComm delivery -- one
+       * entry per recipient (a 1:1 chat message passes a single-element
+       * array; a DIDComm group message's fan-out passes one per member). */
+      didComm?: Array<{ messageId: string; toDid: string }>
     },
     snapshot: LocalJmapSnapshot,
   ): Promise<Record<string, unknown>> {
@@ -202,16 +208,16 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
         createdAt,
         attempts: 0,
       },
-      ...(input.didComm ? {
-        didCommOutbox: {
+      ...(input.didComm?.length ? {
+        didCommOutbox: input.didComm.map(entry => ({
           identityId: this.options.identityId,
           outboundEventId: record.event.id,
           emailId: input.email.id,
-          messageId: input.didComm.messageId,
-          toDid: input.didComm.toDid,
+          messageId: entry.messageId,
+          toDid: entry.toDid,
           createdAt,
           attempts: 0,
-        },
+        })),
       } : {}),
     })
     return {

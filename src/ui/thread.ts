@@ -64,6 +64,15 @@ export interface ConversationGroupUiHooks {
   groupName(groupId: string): Promise<string | undefined>
 }
 
+/** The read-only member strip a DIDComm group chat thread needs
+ * (didcomm/group-chat-store.ts's roster) -- no `invite` counterpart:
+ * membership changes after creation are out of scope for v1
+ * (group-chat.ts's own header). */
+export interface DidCommGroupUiHooks {
+  membersOf(groupId: string): Promise<string[]>
+  groupName(groupId: string): Promise<string | undefined>
+}
+
 export interface ComposeConfig {
   /** This identity's own mail address, excluded from a reply's toAddrs. */
   selfAddress: string
@@ -77,6 +86,10 @@ export interface ComposeConfig {
    * own coreBaseUrl/deviceKid guard) -- a group thread's header then just
    * shows the plain participant list, same as before this existed. */
   group?: ConversationGroupUiHooks
+  /** DIDComm group chat's own read-only counterpart -- always present once
+   * DIDComm itself is enabled (group-chat-store.ts has no server dependency
+   * to gate on). */
+  didcommGroup?: DidCommGroupUiHooks
 }
 
 let composeConfig: ComposeConfig | undefined
@@ -190,6 +203,43 @@ function renderGroupMembers(host: HTMLElement, groupId: string): void {
         refresh()
       })
     }, 'conv-member-add')
+  }).catch(() => {})
+}
+
+/** The DIDComm group chat counterpart of renderGroupMembers above -- same
+ * chip shape/classes, read-only (no "+" chip): membership changes after
+ * creation are out of scope for v1, so there's no `invite` operation to
+ * wire a click handler to. */
+function renderDidCommGroupMembers(host: HTMLElement, groupId: string): void {
+  const label = document.createElement('span')
+  label.textContent = 'Group'
+  host.textContent = ''
+  host.appendChild(label)
+  const strip = document.createElement('span')
+  strip.className = 'conv-members'
+  host.appendChild(strip)
+  const hooks = composeConfig?.didcommGroup
+  if (!hooks) return
+
+  const chip = (label: string, title: string): void => {
+    const el = document.createElement('span')
+    el.className = 'conv-member-chip conv-member-static'
+    el.textContent = label
+    el.title = title
+    strip.appendChild(el)
+  }
+
+  hooks.groupName(groupId).then(name => {
+    if (!name) return
+    label.textContent = name
+    const headerTitle = document.getElementById('header-thread-title')
+    if (headerTitle) { headerTitle.textContent = name; headerTitle.className = '' }
+  }).catch(() => {})
+
+  hooks.membersOf(groupId).then(members => {
+    for (const did of members.filter(m => m !== composeConfig?.selfDid)) {
+      chip(did.startsWith('did:') ? labelForDid(did) : did, did)
+    }
   }).catch(() => {})
 }
 
@@ -546,6 +596,7 @@ export function render(smooth = false): void {
     // shape as the plain-text branch below, so didBadge/viaBadge's re-prepend
     // further down still works either way.
     if (msgs[0]?.thread_id.startsWith('mls:')) renderGroupMembers($convTo, msgs[0].thread_id.slice('mls:'.length))
+    else if (msgs[0]?.thread_id.startsWith('didcomm-group:')) renderDidCommGroupMembers($convTo, msgs[0].thread_id.slice('didcomm-group:'.length))
     else $convTo.textContent = displayParticipantsOf(msgs)
     // src.bak's applyConvViaPill prepends #conv-via, then (mail/AP path)
     // prepends #conv-did last so it lands leftmost -- [did, via, address].

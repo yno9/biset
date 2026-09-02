@@ -167,9 +167,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       // same thread.ts UI, no DIDComm-specific rendering path needed. One
       // thread per correspondent DID pair (didCommThreadId), not per-subject
       // like mail: a chat's whole point is one continuous conversation.
-      const senderDid = senderKid.startsWith('did:peer:2.')
-        ? await this.options.resolveCounterpartyDid?.(senderKid)
-        : didOfKid(senderKid)
+      const senderDid = await resolveDidCommSenderDid(senderKid, kid => this.options.resolveCounterpartyDid?.(kid) ?? null)
       if (!senderDid) throw new TypeError('DIDComm relationship sender is not associated with a counterparty')
       const body = basicMessageBodyOf(msg)
       if (!body) throw new TypeError('DIDComm basicmessage has no readable content')
@@ -235,8 +233,21 @@ export class DidCommReplayError extends Error {}
  * a ping and a chat message from the same sender can never collide with
  * each other since sender+message-id already uniquely identifies one
  * specific DIDComm message regardless of its `type`. */
-function didCommMessageDedupeId(senderKid: string, messageId: string): string {
+export function didCommMessageDedupeId(senderKid: string, messageId: string): string {
   return canonicalHash('biset/vault/didcomm/message-dedupe-id/v1', { senderKid, messageId })
+}
+
+/** A private relationship kid (`did:peer:2...`) has no public DID of its
+ * own -- the caller's `resolveCounterpartyDid` looks up which established
+ * `ContactKeyV1` it belongs to. A public front-door kid IS a fragment of a
+ * real DID already (`didOfKid`). Shared by both the 1:1 basicmessage path
+ * above and any other DIDComm feature (e.g. group chat) that needs to turn
+ * an authenticated sender kid into a human-facing DID the same way. */
+export async function resolveDidCommSenderDid(
+  senderKid: string,
+  resolveCounterpartyDid: (kid: string) => string | null | Promise<string | null>,
+): Promise<string | null> {
+  return senderKid.startsWith('did:peer:2.') ? await resolveCounterpartyDid(senderKid) : didOfKid(senderKid)
 }
 
 function identityScopedObject<T>(object: T, identityId: IdentityId): T & { identityId: IdentityId } {

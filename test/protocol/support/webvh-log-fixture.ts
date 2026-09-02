@@ -35,10 +35,10 @@ export function signProof(document: object, verificationMethod: string, privateK
  * `verificationMethod` carrying the root key at #key-1 plus every extra
  * verification method the caller supplies (device signing keys, MLS leaf
  * signature keys, etc). */
-export function buildGenesisLog(rootPrivateKey: Uint8Array, rootPublicKey: Uint8Array, extraVerificationMethods: Array<{ fragment: string; publicKey: Uint8Array }>): { did: string; log: LogEntry[] } {
+export function buildGenesisLog(rootPrivateKey: Uint8Array, rootPublicKey: Uint8Array, extraVerificationMethods: Array<{ fragment: string; publicKey: Uint8Array }>, domain = 'test.example'): { did: string; log: LogEntry[] } {
   const updateKey = encodeMultikey(rootPublicKey)
   const versionTime = '2026-08-23T00:00:00.000Z'
-  const placeholderDid = 'did:webvh:{SCID}:test.example'
+  const placeholderDid = `did:webvh:{SCID}:${domain}`
   const parameters: LogParameters = { method: 'did:webvh:1.0', scid: '{SCID}', updateKeys: [updateKey], nextKeyHashes: [], portable: false, witness: {}, watchers: [], deactivated: false, ttl: 3600 }
   const rootKeyId = `${placeholderDid}#key-1`
   const state = {

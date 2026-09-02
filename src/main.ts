@@ -38,9 +38,16 @@ import { CoreVaultDeliveryTransport } from './vault/core-delivery-transport.ts'
 import type { IngressVerifierProjector } from './vault/ingress-ingest.ts'
 import { DidCommIngressProjector } from './didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from './didcomm/webvh-resolve.ts'
-import { initiateRelationship, sendRelationshipAccept, sendRelationshipMessage, type PendingRelationship } from './didcomm/send-message.ts'
+import { initiateRelationship, sendRelationshipAccept, sendRelationshipMessage, sendGroupInvite, sendGroupChatMessage, type PendingRelationship } from './didcomm/send-message.ts'
 import { MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyOf } from './didcomm/mail-bridge.ts'
 import { didCommThreadId } from './didcomm/basicmessage.ts'
+import {
+  GROUP_INVITE, GROUP_MESSAGE, didcommGroupAddress, parseDidCommGroupAddress, randomDidCommGroupId,
+  groupInviteBodyOf, groupMessageBodyOf, buildDidCommGroupMessageVaultRecord,
+  type GroupInviteBody, type GroupMessageBody,
+} from './didcomm/group-chat.ts'
+import { IndexedDbDidCommGroupChatStore } from './didcomm/group-chat-store.ts'
+import { didCommMessageDedupeId, resolveDidCommSenderDid } from './didcomm/ingress-projector.ts'
 import { registerWithMediator, type MediatorPollHandle } from './didcomm/mediator-sync.ts'
 import { watchMediator } from './didcomm/mediator-watch.ts'
 import type { DidCommSender } from './didcomm/mediator-transport.ts'
@@ -430,6 +437,12 @@ export async function bootClient(): Promise<void> {
     // (randomGroupLocalKeypair) that's the ONLY thing the DS itself ever
     // sees (conversation-group.ts's own header explains the split).
     const conversationGroupStore = new IndexedDbMlsConversationGroupStore()
+    // DIDComm-native group chat (group-chat.ts) -- full-mesh pairwise
+    // fan-out over the SAME ContactKeyV1 relationships 1:1 chat already
+    // uses, no MLS. Device-local roster cache only (not vault-synced across
+    // this identity's own devices in v1), same accepted limitation
+    // conversation-group-store.ts's own header documents for its roster.
+    const groupChatStore = new IndexedDbDidCommGroupChatStore()
     const conversationGroupWatches = new Map<string, ConversationGroupWatch>()
     // Keyed by groupId. Deliberately in-memory only (the gap between
     // receiving CONVERSATION_GROUP_INVITE and CONVERSATION_GROUP_WELCOME_READY
@@ -819,37 +832,55 @@ export async function bootClient(): Promise<void> {
           // A prior attempt delivered and committed the sent transition but
           // crashed before deleting the transport row. Do not send it again.
           if (email.mailboxIds.sent === true && email.mailboxIds.outbox !== true) {
-            await vaultStore.removeDidCommOutbox(identity.did, item.outboundEventId)
+            await vaultStore.removeDidCommOutbox(identity.did, item.outboundEventId, item.toDid)
             continue
           }
           if (!email.blobId) {
             console.warn(`[didcomm/outbox] ${item.emailId}: local message has no body object`)
             continue
           }
-          await vaultStore.noteDidCommOutboxAttempt(identity.did, item.outboundEventId, new Date().toISOString())
+          await vaultStore.noteDidCommOutboxAttempt(identity.did, item.outboundEventId, item.toDid, new Date().toISOString())
           try {
             const contactKey = await ensureDidCommContact(item.toDid)
             const content = new TextDecoder().decode(await readModel.download(email.blobId))
-            const result = await sendRelationshipMessage(contactKey, content, email.subject, undefined, {
-              id: item.messageId,
-              sentAt: email.sentAt ?? item.createdAt,
-            })
+            const result = email.threadId.startsWith('didcomm-group:')
+              ? await sendGroupChatMessage(contactKey, { groupId: parseDidCommGroupAddress(email.threadId), content, ...(email.subject ? { subject: email.subject } : {}) }, undefined, {
+                  id: item.messageId,
+                  sentAt: email.sentAt ?? item.createdAt,
+                })
+              : await sendRelationshipMessage(contactKey, content, email.subject, undefined, {
+                  id: item.messageId,
+                  sentAt: email.sentAt ?? item.createdAt,
+                })
             if (!result.ok) throw new Error(result.error)
+            // N recipient rows for one group message share the SAME
+            // emailId -- guard the mailbox.set so the second, third, ...
+            // recipient's own delivery doesn't redundantly re-commit
+            // {sent:true} on an email that already has it (harmless either
+            // way, this just avoids the wasted round trip).
             const latest = await readModel.snapshot()
+            const alreadySent = latest.emails.find(candidate => candidate.id === item.emailId)?.mailboxIds.sent === true
             await mutationSink.commitIntents([{
               kind: 'transport.result',
               targetIds: [item.emailId],
               payload: { emailId: item.emailId, status: 'accepted', occurredAt: new Date().toISOString(), transport: 'didcomm' },
-            }, {
-              kind: 'mailbox.set',
+            }, ...(alreadySent ? [] : [{
+              kind: 'mailbox.set' as const,
               targetIds: [item.emailId],
               payload: { emailId: item.emailId, mailboxIds: { sent: true } },
-            }], latest)
-            await vaultStore.removeDidCommOutbox(identity.did, item.outboundEventId)
+            }])], latest)
+            await vaultStore.removeDidCommOutbox(identity.did, item.outboundEventId, item.toDid)
             await flushReplicationOutbox()
           } catch (error) {
-            console.warn(`[didcomm/outbox] ${item.emailId}:`, error instanceof Error ? error.message : error)
-            break
+            console.warn(`[didcomm/outbox] ${item.emailId} -> ${item.toDid}:`, error instanceof Error ? error.message : error)
+            // Per-recipient, not per-batch: one unreachable fan-out target
+            // (a group member whose mesh connection isn't up yet) must not
+            // stall delivery to every OTHER recipient queued behind it in
+            // this same flush pass (found live, 2026-09-03 -- this used to
+            // `break`, which was harmless for 1:1's single-item queues but
+            // wrong the moment a group message shares a flush pass with
+            // multiple recipients).
+            continue
           }
         }
       } finally {
@@ -878,12 +909,82 @@ export async function bootClient(): Promise<void> {
           ...(input.subject ? { subject: input.subject } : {}),
         },
         rawRfc5322: new TextEncoder().encode(input.body),
-        didComm: { messageId, toDid },
+        didComm: [{ messageId, toDid }],
       }, snapshot)
       await refreshInbox(readModel)
       await flushDidCommTransportOutbox?.()
       await refreshInbox(readModel)
       void triggerMimiVaultSync?.()
+    }
+
+    // Shared "commit local echo + fan out via the outbox" tail for DIDComm
+    // group chat -- used by BOTH group creation (after inviting) and
+    // ordinary replies to an existing group thread. Reads the roster fresh
+    // from groupChatStore rather than taking `toDids` as an argument, so
+    // both call sites converge on one path.
+    const sendDidCommGroupMessage = async (groupId: string, input: ReplySendInput): Promise<void> => {
+      const roster = await groupChatStore.load(groupId)
+      if (!roster) throw new Error(`No local roster for DIDComm group ${groupId}`)
+      const toDids = roster.members.filter(m => m !== identity.did)
+      const messageId = crypto.randomUUID()
+      const emailId = crypto.randomUUID()
+      const now = new Date().toISOString()
+      const snapshot = await readModel.snapshot()
+      await mutationSink.commitMailMessage({
+        email: {
+          id: emailId,
+          threadId: didcommGroupAddress(groupId),
+          mailboxIds: { outbox: true },
+          keywords: { '$seen': true },
+          receivedAt: now,
+          sentAt: now,
+          from: [{ email: identity.did }],
+          to: toDids.map(email => ({ email })),
+          ...(input.subject ? { subject: input.subject } : {}),
+        },
+        rawRfc5322: new TextEncoder().encode(input.body),
+        didComm: toDids.map(toDid => ({ messageId, toDid })),
+      }, snapshot)
+      await refreshInbox(readModel)
+      await flushDidCommTransportOutbox?.()
+      await refreshInbox(readModel)
+      void triggerMimiVaultSync?.()
+    }
+
+    // Compose's "2+ DID recipients" branch (sendReply's dispatch, below):
+    // full-mesh group creation, no MLS. Every member needs a pairwise
+    // ContactKeyV1 with every OTHER member (group-chat.ts's own header) --
+    // this device already has one with itself's not needed, and with each
+    // invitee via ensureDidCommContact below; the invitees mesh-complete
+    // with EACH OTHER on their own once they receive the invite
+    // (handleDidCommGroupInvite above).
+    const createAndSendDidCommGroup = async (toDids: string[], input: ReplySendInput): Promise<void> => {
+      if (!identity.didCommKid || !identity.didCommX25519PrivateKey) throw new Error('Enable DIDComm in account settings before starting a group')
+      const groupId = randomDidCommGroupId()
+      const members = [identity.did, ...toDids]
+      const now = new Date().toISOString()
+      await groupChatStore.save({ groupId, members, ...(input.subject ? { name: input.subject } : {}), createdAt: now, updatedAt: now })
+
+      const unreachable: string[] = []
+      for (const toDid of toDids) {
+        try {
+          const contactKey = await ensureDidCommContact(toDid)
+          const sent = await sendGroupInvite(contactKey, { groupId, members, ...(input.subject ? { name: input.subject } : {}) })
+          if (!sent.ok) throw new Error(sent.error)
+        } catch (error) {
+          unreachable.push(toDid)
+          console.warn(`[didcomm-group/invite] ${toDid}:`, error instanceof Error ? error.message : error)
+        }
+      }
+      if (unreachable.length) showSysMsg(`Could not invite: ${unreachable.join(', ')} -- they'll receive this once reachable`)
+
+      // Queue the founding message for EVERY member regardless of invite
+      // success above -- flushDidCommTransportOutbox's own
+      // ensureDidCommContact retries the handshake again on every poll, so
+      // an unreachable member still eventually gets it. No forward-secrecy
+      // concern here (unlike MLS), so no separate "wait for join" step is
+      // needed either.
+      await sendDidCommGroupMessage(groupId, input)
     }
 
     const sendReply = async (input: ReplySendInput): Promise<void> => {
@@ -895,11 +996,20 @@ export async function bootClient(): Promise<void> {
         await sendDidCommChat(input.toAddrs[0]!, input)
         return
       }
+      if (input.toAddrs.length === 1 && input.toAddrs[0]!.startsWith('didcomm-group:')) {
+        await sendDidCommGroupMessage(parseDidCommGroupAddress(input.toAddrs[0]!), input)
+        return
+      }
       // 2+ DID recipients (never mixed with mail -- same rule the 1-DID
-      // branch above already applies) starts a new Conversation Group,
-      // mirroring src.bak's own "visible.length >= 2" compose branch.
+      // branch above already applies) starts a new DIDComm group chat,
+      // full-mesh, no MLS (mirroring src.bak's own "visible.length >= 2"
+      // compose branch, but replacing what used to create a Conversation
+      // Group: Conversation Groups are retired from active deployment,
+      // createAndSendConversationGroup throws unconditionally now, so this
+      // branch was already dead functionality -- this is its replacement,
+      // not a removal of anything still working).
       if (input.toAddrs.length >= 2 && input.toAddrs.every(addr => addr.startsWith('did:'))) {
-        await createAndSendConversationGroup(input.toAddrs, input)
+        await createAndSendDidCommGroup(input.toAddrs, input)
         return
       }
       const { rawRfc5322 } = buildOutboundRfc5322({
@@ -976,6 +1086,14 @@ export async function bootClient(): Promise<void> {
           if (!stored) return undefined
           return roomMetadataOf(stored.state)?.name ?? stored.groupName
         },
+      },
+      // DIDComm group chat's own read-only counterpart -- membersOf/
+      // groupName read straight from groupChatStore's device-local roster
+      // cache (no server round trip, no invite operation: see
+      // ComposeConfig.didcommGroup's own doc comment for why).
+      didcommGroup: {
+        membersOf: async groupId => (await groupChatStore.load(groupId))?.members ?? [],
+        groupName: async groupId => (await groupChatStore.load(groupId))?.name,
       },
     })
     // Same commit-then-submit function as reply -- buildOutboundRfc5322
@@ -1146,6 +1264,14 @@ export async function bootClient(): Promise<void> {
           await handleConversationGroupHandshake(plaintext, msg.senderKid)
           return
         }
+        // DIDComm group chat (group-chat.ts) -- same reason as the
+        // Conversation Group intercept just above: neither type carries
+        // Basic Message/relationship content, so both must never reach the
+        // generic didCommProjector.verifyAndProject below.
+        if (plaintext.type === GROUP_INVITE || plaintext.type === GROUP_MESSAGE) {
+          await handleDidCommGroupMessage(plaintext, msg.senderKid)
+          return
+        }
         const didCommProjector = buildDidCommProjector()
         if (!didCommProjector) return
         const payload = new TextEncoder().encode(JSON.stringify(msg.rawJwe))
@@ -1167,6 +1293,74 @@ export async function bootClient(): Promise<void> {
         await handleRelationshipMessage(msg, recipientKid, mediatorUrl)
         await refreshInbox(readModel)
         void triggerMimiVaultSync?.()
+      }
+
+      // DIDComm group chat (group-chat.ts) -- full-mesh pairwise fan-out,
+      // no MLS. Both control (GROUP_INVITE) and content (GROUP_MESSAGE)
+      // arrive over the SAME established pairwise relationship channel
+      // every ordinary 1:1 message does (send-message.ts's own note on
+      // why), so this dispatches purely on `plaintext.type`, no separate
+      // handshake state machine to track.
+      async function handleDidCommGroupMessage(plaintext: DidCommPlaintext, senderKid: string): Promise<void> {
+        if (plaintext.type === GROUP_INVITE) {
+          const body = groupInviteBodyOf(plaintext)
+          if (!body) throw new TypeError('DIDComm group invite body is invalid')
+          await handleDidCommGroupInvite(body)
+          return
+        }
+        const body = groupMessageBodyOf(plaintext)
+        if (!body) throw new TypeError('DIDComm group message body is invalid')
+        await handleDidCommGroupContent(plaintext, body, senderKid)
+      }
+
+      // Merges the invited roster locally, then mesh-completes: for every
+      // listed member this device doesn't already hold a ContactKeyV1 for,
+      // fires (not awaits serially) ensureDidCommContact -- awaiting each
+      // one in turn here would stall every OTHER message queued behind
+      // this one on the same mediator poll behind a per-member 60s
+      // handshake budget. Idempotent on redelivery for free: `merge`
+      // unions the same member set into itself (a no-op), and
+      // ensureDidCommContact already no-ops for a member it's already
+      // contacted or mid-handshake with.
+      async function handleDidCommGroupInvite(body: GroupInviteBody): Promise<void> {
+        const now = new Date().toISOString()
+        await groupChatStore.merge(body.groupId, { members: body.members, ...(body.name ? { name: body.name } : {}), updatedAt: now })
+        for (const member of body.members) {
+          if (member === identity.did) continue
+          ensureDidCommContact(member).catch(e => console.warn(`[didcomm-group/mesh] ${member}:`, e instanceof Error ? e.message : e))
+        }
+      }
+
+      // Unknown groupId (the invite hasn't arrived yet, e.g. reordered
+      // delivery): log and drop, don't buffer. A whole second piece of
+      // durable state to replay-on-invite-arrival isn't worth it for a v1
+      // feature that already accepts coarser gaps (no cross-device roster
+      // sync at all) -- the cost is bounded to the one reordered message;
+      // every later message to this group succeeds normally once the
+      // invite lands. Mirrors Conversation Groups' own out-of-order
+      // handling (handleConversationGroupJoinReady et al. above).
+      async function handleDidCommGroupContent(plaintext: DidCommPlaintext, body: GroupMessageBody, senderKid: string): Promise<void> {
+        const senderDid = await resolveDidCommSenderDid(senderKid, kid => contactKeyReader.forCounterpartyKid(kid).then(c => c?.counterpartyDid ?? null))
+        if (!senderDid) throw new TypeError('DIDComm group message sender is not associated with a counterparty')
+        const roster = await groupChatStore.load(body.groupId)
+        if (!roster) {
+          console.warn(`[didcomm-group] message for unknown group ${body.groupId} from ${senderDid} -- dropping (invite has not arrived yet)`)
+          return
+        }
+        const createdAt = new Date().toISOString()
+        const sentAt = body.sentAt ?? (plaintext.created_time ? new Date(plaintext.created_time * 1000).toISOString() : createdAt)
+        const record = await buildDidCommGroupMessageVaultRecord({
+          content: body.content, emailId: didCommMessageDedupeId(senderKid, plaintext.id), groupId: body.groupId, senderDid,
+          otherMembers: roster.members.filter(m => m !== senderDid), receivedAt: createdAt, sentAt,
+          ...(body.subject ? { subject: body.subject } : {}),
+        }, {
+          identityId: identity.did, actorDeviceId: deviceKid,
+          nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(),
+          activeSegment: () => boundary.activeSegment(), currentSnapshot: () => readModel.snapshot(), signer: boundary.signer,
+        })
+        await vaultStore.commitLocalMutation({ identityId: identity.did, ...record })
+        await flushReplicationOutbox()
+        await refreshInbox(readModel)
       }
 
       // Conversation Group invite handshake (conversation-group-invite.ts's
