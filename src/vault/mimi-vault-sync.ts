@@ -20,6 +20,7 @@ export interface MimiVaultMlsReceiver {
 export interface MimiVaultPayload { transferId: string; payload: Uint8Array; finalSequence: number }
 export interface MimiVaultCheckpointPayload extends MimiVaultPayload { manifest: VaultCheckpointManifest }
 export interface MimiVaultDecodedBatch { deliveries: MimiVaultPayload[]; checkpoints: MimiVaultCheckpointPayload[]; latestSequence: number }
+export interface MimiVaultSynchronizationResult { appendedEntryIds: VaultEventId[]; ingestedSequences: DeliverySeq[]; checkpoints: MimiVaultCheckpointPayload[]; latestSequence: number }
 
 /** Collects every bounded pull page before chunk reconstruction. A 100MB
  * checkpoint can span 256 chunks while a provider page contains only 32. */
@@ -42,6 +43,36 @@ export async function pullMimiVaultPages(
     cursor = page.at(-1)!.seq
   }
   throw new Error('MIMI Vault pull exceeded its bounded page count')
+}
+
+/** One MIMI Vault pass: obtain all pages, apply a newest checkpoint first,
+ * ingest complete encrypted delivery packs, then flush local outbox work.
+ * The callbacks keep Vault projection and MLS private keys out of this
+ * transport module. */
+export async function synchronizeMimiVault(input: {
+  pull: (request: DeliveriesPullRequest) => Promise<MimiDeliveryEntry[]>
+  signPull: (unsigned: Omit<DeliveriesPullRequest, 'signature'>) => Promise<Uint8Array> | Uint8Array
+  pullRequest: Omit<DeliveriesPullRequest, 'afterSeq' | 'signature'>
+  receiver: MimiVaultMlsReceiver
+  outbox: VaultDeliveryOutboxReader
+  sender: MimiVaultMlsSender
+  identityId: IdentityId
+  ingest(payload: Uint8Array, sequence: DeliverySeq): Promise<void>
+  restoreCheckpoint?(checkpoint: MimiVaultCheckpointPayload): Promise<void>
+  afterSeq?: number
+}): Promise<MimiVaultSynchronizationResult> {
+  const entries = await pullMimiVaultPages(input.pull, input.signPull, input.pullRequest, input.afterSeq ?? 0)
+  const decoded = await decodeMimiVaultBatch(entries, input.receiver)
+  for (const checkpoint of decoded.checkpoints) await input.restoreCheckpoint?.(checkpoint)
+  const ingestedSequences: DeliverySeq[] = []
+  for (const delivery of decoded.deliveries) {
+    const sequence = mimiVaultSequence(delivery.finalSequence)
+    await input.ingest(delivery.payload, sequence)
+    ingestedSequences.push(sequence)
+  }
+  const flushed = await flushMimiVaultOutbox(input.outbox, input.sender, input.identityId)
+  if (flushed.failedEntryId) throw new Error(`MIMI Vault outbox append failed: ${flushed.failureReason ?? flushed.failedEntryId}`)
+  return { appendedEntryIds: flushed.appendedEntryIds, ingestedSequences, checkpoints: decoded.checkpoints, latestSequence: decoded.latestSequence }
 }
 
 /** Flush local VaultDeliveryPack records as opaque MLS-encrypted MIMI chunks.

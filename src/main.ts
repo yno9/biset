@@ -105,6 +105,11 @@ import { createRecoveryArchiveSnapshot } from './vault/recovery-archive-export.t
 import { createCoordinatorCheckpoint, createPortableCoordinatorCheckpoint, deriveCoordinatorRecoveryKek, openCoordinatorCheckpoint, openPortableCoordinatorCheckpoint } from './vault/coordinator-checkpoint.ts'
 import { rewrapRecoveryArchiveForCurrentEpoch } from './vault/recovery-archive-rewrap.ts'
 import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from './vault/storage-root.ts'
+import { MimiClientTransport } from './mls/mimi-client-transport.ts'
+import { PersistedMimiVaultSession } from './mls/mimi-vault-session.ts'
+import { createMimiVaultRoom } from './mls/mimi-vault-room.ts'
+import { synchronizeMimiVault } from './vault/mimi-vault-sync.ts'
+import { deliveriesPullSigningBytes } from './mimi/authorizer.ts'
 
 const hex = (value: Uint8Array): string => Array.from(value, byte => byte.toString(16).padStart(2, '0')).join('')
 let pollTimer: ReturnType<typeof setInterval> | undefined
@@ -270,12 +275,13 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   let approveCoordinatorDevice: (() => Promise<void>) | undefined
   let coordinatorBindingActive = false
   let flushCoordinatorOutbox: (() => Promise<{ appendedEntryIds: string[]; failedEntryId?: string; failureReason?: string }>) | undefined
-  const coordinatorConfigured = !!(anchorBaseUrl && anchorOidcClientId && coordinatorUrl && identity.deviceKid)
+  const mimiVaultConfigured = !!(mimiSelfBaseUrl && identity.deviceKid)
+  const coordinatorConfigured = !mimiVaultConfigured && !!(anchorBaseUrl && anchorOidcClientId && coordinatorUrl && identity.deviceKid)
   let vaultDevices = await selfGroupStore.load(identity.did).then(stored => stored
     ? memberKids(stored.state, identity.did).map(deviceId => ({ deviceId, current: deviceId === identity.deviceKid }))
     : []).catch(() => [])
-  let vaultCardStatus: VaultCardStatus | undefined = coordinatorConfigured ? {
-    state: 'checking', coordinatorUrl, detail: 'Checking saved login session', devices: vaultDevices,
+  let vaultCardStatus: VaultCardStatus | undefined = (coordinatorConfigured || mimiVaultConfigured) ? {
+    state: 'checking', coordinatorUrl: mimiVaultConfigured ? mimiSelfBaseUrl : coordinatorUrl, detail: mimiVaultConfigured ? 'Opening MIMI Self Vault' : 'Checking saved login session', devices: vaultDevices,
   } : undefined
   const setVaultCard = (next: VaultCardStatus): void => {
     next = { ...next, devices: vaultDevices }
@@ -1995,6 +2001,57 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       void (async () => {
         await synchronizeCoordinator?.()
       })().catch(error => console.warn('[coordinator/poll]', error instanceof Error ? error.message : error)).finally(() => { coordinatorPollBusy = false })
+    }, 10_000)
+  } else if (mimiVaultConfigured && identity.deviceKid) {
+    // Self/Vault traffic is a normal-mode MIMI room on its isolated provider.
+    // There is deliberately no Anchor/OIDC token here: membership plus the
+    // MLS leaf signature authenticate every request.
+    const provider = new URL(mimiSelfBaseUrl)
+    const transport = new MimiClientTransport({ normalBaseUrl: mimiSelfBaseUrl, anonBaseUrl: mimiSelfBaseUrl, selfBaseUrl: mimiSelfBaseUrl })
+    let room = await selfGroupStore.loadMimiVault(identity.did)
+    if (!room) {
+      const stored = await selfGroupStore.load(identity.did)
+      const credential = stored
+        ? ownMlsDeviceCredential(stored.state)
+        : createMlsDeviceCredential(identity.did, identity.generation, fromHex(identity.signPublicKey), fromHex(identity.rootPrivateKey), fromHex(identity.signPrivateKey))
+      await createMimiVaultRoom({
+        identityId: identity.did, deviceId: identity.deviceKid, selfGroupId: stored?.selfGroupId ?? 'mimi-vault', credential,
+        signaturePrivateKey: stored ? ownSignaturePrivateKey(stored.state) : fromHex(identity.signPrivateKey), transport, stateStore: selfGroupStore,
+        providerHost: provider.hostname,
+      })
+      room = await selfGroupStore.loadMimiVault(identity.did)
+    }
+    if (!room) throw new Error('MIMI Vault room initialization did not persist')
+    const mlsCredential = ownMlsDeviceCredential(room.state)
+    const session = new PersistedMimiVaultSession({
+      identityId: identity.did, mode: 'self', transport, stateStore: selfGroupStore,
+      credential: { kind: 'visible', user: identity.did, client: identity.deviceKid, credential: encodeMlsDeviceCredential(mlsCredential), signaturePublicKey: mlsCredential.signaturePublicKey },
+      sign: bytes => ed25519.sign(bytes, ownSignaturePrivateKey(room!.state)),
+    })
+    const boundary = buildVaultCryptoBoundary(vaultStore, vaultStore, selfGroupStore, identity)
+    const projector = buildVaultDeliveryProjector(selfGroupStore, identity.did, () => readModel.snapshot(), identity.masterSeed)
+    const synchronizeMimi = async (): Promise<void> => {
+      setVaultCard({ state: 'syncing', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, detail: 'Synchronizing encrypted MIMI Vault' })
+      const result = await synchronizeMimiVault({
+        pull: value => transport.pullDeliveries('self', value),
+        signPull: unsigned => ed25519.sign(deliveriesPullSigningBytes(unsigned), ownSignaturePrivateKey(room!.state)),
+        pullRequest: { version: 1, roomId: room!.roomId, requester: { kind: 'visible', user: identity.did, client: identity.deviceKid!, credential: encodeMlsDeviceCredential(ownMlsDeviceCredential(room!.state)), signaturePublicKey: ownMlsDeviceCredential(room!.state).signaturePublicKey }, requestedAt: new Date().toISOString() },
+        receiver: session, outbox: vaultStore, sender: session, identityId: identity.did,
+        ingest: async (payload, seq) => { await ingestVaultDelivery({ version: 1, identityId: identity.did, seq, payload, payloadHash: sha256Bytes(payload), createdAt: new Date().toISOString(), expiresAt: '9999-12-31T23:59:59.999Z' }, boundary.signer, projector, vaultStore) },
+      })
+      if (result.ingestedSequences.length) await refreshInbox(readModel)
+      setVaultCard({ state: 'connected', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, localSeq: String(await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)), latestSeq: String(result.latestSequence), detail: 'Encrypted MIMI Vault is current' })
+    }
+    await synchronizeMimi()
+    let mimiPollBusy = false
+    coordinatorPollTimer = setInterval(() => {
+      if (mimiPollBusy) return
+      mimiPollBusy = true
+      void synchronizeMimi().catch(error => {
+        const detail = error instanceof Error ? error.message : String(error)
+        setVaultCard({ state: 'error', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, detail })
+        console.warn('[mimi-vault/poll]', detail)
+      }).finally(() => { mimiPollBusy = false })
     }, 10_000)
   }
 }

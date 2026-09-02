@@ -76,6 +76,10 @@ export class PersistedMimiVaultSession implements MimiVaultMlsSender, MimiVaultM
     if (record.pending) throw new Error('MIMI Vault has a pending local application delivery')
     if (entry.kind === 'vaultCheckpoint') return undefined
     if (entry.kind === 'application' && record.ownApplicationHashes?.includes(pendingCipherHash(entry.payload))) return undefined
+    // The room inbox retains its initial and historical commits.  This state
+    // already includes any commit from an earlier pass, so feeding an old
+    // commit back to MLS would be an epoch rollback rather than a catch-up.
+    if (entry.kind !== 'application' && BigInt(entry.epoch) < epochOf(record.state)) return undefined
     const result = await processIncoming(record.state, entry.payload)
     await this.options.stateStore.saveMimiVault(this.options.identityId, { ...record, state: result.state })
     return result.kind === 'message' ? result.message : undefined
