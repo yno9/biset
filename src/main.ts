@@ -10,6 +10,7 @@ import {
   buildVaultCryptoBoundary,
   buildVaultDeliveryProjector,
   enableDidComm,
+  ensureMimiCoreRoster,
   ensureMimiProviderPublished,
   ensureMimiVaultRoom,
   fromHex,
@@ -289,6 +290,13 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   // all of them). ensureMimiVaultRoom's own doc comment covers why this
   // same call is repeated again, cheaply, further down.
   const mimiVaultRoom = mimiVaultConfigured ? await ensureMimiVaultRoom(identity, selfGroupStore, mimiSelfBaseUrl) : undefined
+  // Core mail ingress authorization checks core's OWN roster, entirely
+  // separate from the MIMI room's own membership above -- best-effort,
+  // same treatment as every other capability this function just provisions
+  // on its own (see enableDidComm's own note on that convention).
+  if (mimiVaultRoom && coreBaseUrl) {
+    await ensureMimiCoreRoster(identity, mimiVaultRoom, coreBaseUrl).catch(e => console.warn('[mimi-vault/core-roster]', e instanceof Error ? e.message : e))
+  }
   let vaultDevices = await selfGroupStore.load(identity.did).then(stored => stored
     ? memberKids(stored.state, identity.did).map(deviceId => ({ deviceId, current: deviceId === identity.deviceKid }))
     : []).catch(() => [])
