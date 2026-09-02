@@ -111,7 +111,8 @@ import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from './vault/storage-roo
 import { MimiClientTransport } from './mls/mimi-client-transport.ts'
 import { PersistedMimiVaultSession } from './mls/mimi-vault-session.ts'
 import { createMimiVaultRoom, joinMimiVaultRoom } from './mls/mimi-vault-room.ts'
-import { sendMimiVaultCheckpoint, synchronizeMimiVault } from './vault/mimi-vault-sync.ts'
+import { pullMimiVaultPages, sendMimiVaultCheckpoint, synchronizeMimiVault } from './vault/mimi-vault-sync.ts'
+import type { DeliveriesPullRequest } from './mimi/protocol-types.ts'
 import { deliveriesPullSigningBytes } from './mimi/authorizer.ts'
 
 const hex = (value: Uint8Array): string => Array.from(value, byte => byte.toString(16).padStart(2, '0')).join('')
@@ -2046,10 +2047,11 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       // not replayed on every ten-second poll.
       const beforeSync = await selfGroupStore.loadMimiVault(identity.did)
       const providerCursor = beforeSync?.deliveryCursor ?? 0
+      const pull = (value: DeliveriesPullRequest) => transport.pullDeliveries('self', value)
+      const signPull = (unsigned: Omit<DeliveriesPullRequest, 'signature'>) => ed25519.sign(deliveriesPullSigningBytes(unsigned), ownSignaturePrivateKey(room!.state))
+      const pullRequestBase = (): Omit<DeliveriesPullRequest, 'afterSeq' | 'signature'> => ({ version: 1, roomId: room!.roomId, requester: { kind: 'visible', user: identity.did, client: identity.deviceKid!, credential: encodeMlsDeviceCredential(ownMlsDeviceCredential(room!.state)), signaturePublicKey: ownMlsDeviceCredential(room!.state).signaturePublicKey }, requestedAt: new Date().toISOString() })
       const result = await synchronizeMimiVault({
-        pull: value => transport.pullDeliveries('self', value),
-        signPull: unsigned => ed25519.sign(deliveriesPullSigningBytes(unsigned), ownSignaturePrivateKey(room!.state)),
-        pullRequest: { version: 1, roomId: room!.roomId, requester: { kind: 'visible', user: identity.did, client: identity.deviceKid!, credential: encodeMlsDeviceCredential(ownMlsDeviceCredential(room!.state)), signaturePublicKey: ownMlsDeviceCredential(room!.state).signaturePublicKey }, requestedAt: new Date().toISOString() },
+        pull, signPull, pullRequest: pullRequestBase(),
         receiver: session, outbox: vaultStore, sender: session, identityId: identity.did,
         afterSeq: providerCursor,
         ingest: async (payload, seq) => { await ingestVaultDelivery({ version: 1, identityId: identity.did, seq, payload, payloadHash: sha256Bytes(payload), createdAt: new Date().toISOString(), expiresAt: '9999-12-31T23:59:59.999Z' }, boundary.signer, projector, vaultStore) },
@@ -2076,11 +2078,32 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         await selfGroupStore.saveMimiVault(identity.did, { ...current, deliveryCursor: result.latestSequence })
       }
       if (result.ingestedSequences.length) await refreshInbox(readModel)
-      if (result.latestSequence > 1 && result.checkpoints.length === 0 && identity.masterSeed) {
+      if (result.latestSequence > 1 && !result.sawCheckpointManifest && identity.masterSeed) {
         const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, identity.did, new Date().toISOString())
         try {
           const payload = await createPortableCoordinatorCheckpoint(fromHex(identity.masterSeed), snapshot, { vaultId: room!.roomId as never, coveredSeq: deliverySeq(BigInt(result.latestSequence)) })
           await sendMimiVaultCheckpoint(payload, result.latestSequence, session)
+          // The checkpoint's own chunk+manifest just landed at new sequence
+          // numbers `synchronizeMimiVault` above never saw (it pulled and
+          // computed `result.latestSequence` BEFORE this checkpoint existed),
+          // so the delivery cursor saved above does not cover them yet. Left
+          // alone, the NEXT sync re-pulls from that stale cursor, and this
+          // device recognizes its own just-sent checkpoint chunk as an echo
+          // (PersistedMimiVaultSession's ownApplicationHashes) and silently
+          // drops it from decode -- while the checkpoint manifest itself is
+          // still decoded normally, so `decodeMimiVaultBatch` finds a
+          // manifest with no matching chunks and throws "Vault checkpoint
+          // chunks are incomplete", forever, on every sync from here on
+          // (found live, 2026-09-02). A raw pull (no decode, just sequence
+          // numbers -- this device already has this checkpoint's plaintext
+          // in `snapshot` above, no need to reconstruct it from chunks) is
+          // enough to learn how far to advance past it.
+          const afterCheckpoint = await pullMimiVaultPages(pull, signPull, pullRequestBase(), result.latestSequence)
+          const newLatest = afterCheckpoint.reduce((max, entry) => Math.max(max, entry.seq), result.latestSequence)
+          if (newLatest > result.latestSequence) {
+            const current = await selfGroupStore.loadMimiVault(identity.did)
+            if (current) await selfGroupStore.saveMimiVault(identity.did, { ...current, deliveryCursor: newLatest })
+          }
         } finally { for (const segment of snapshot.segmentKeys) segment.key.fill(0) }
       }
       setVaultCard({ state: 'connected', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, localSeq: String(await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)), latestSeq: String(result.latestSequence), detail: 'Encrypted MIMI Vault is current' })

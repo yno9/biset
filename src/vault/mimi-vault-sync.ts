@@ -19,8 +19,26 @@ export interface MimiVaultMlsReceiver {
 }
 export interface MimiVaultPayload { transferId: string; payload: Uint8Array; finalSequence: number }
 export interface MimiVaultCheckpointPayload extends MimiVaultPayload { manifest: VaultCheckpointManifest }
-export interface MimiVaultDecodedBatch { deliveries: MimiVaultPayload[]; checkpoints: MimiVaultCheckpointPayload[]; latestSequence: number }
-export interface MimiVaultSynchronizationResult { appendedEntryIds: VaultEventId[]; ingestedSequences: DeliverySeq[]; checkpoints: MimiVaultCheckpointPayload[]; latestSequence: number }
+export interface MimiVaultDecodedBatch {
+  deliveries: MimiVaultPayload[]
+  checkpoints: MimiVaultCheckpointPayload[]
+  latestSequence: number
+  /** True when a checkpoint manifest was observed in this batch, whether or
+   * not its chunks could be reconstructed into `checkpoints` above -- see
+   * that field's own note in `decodeMimiVaultBatch`'s doc comment for why a
+   * manifest can be unreconstructable without being an error. A caller
+   * deciding whether to CREATE a new checkpoint should gate on this, not on
+   * `checkpoints.length`, or it will keep creating redundant ones every
+   * sync round whenever the existing one can never be reconstructed. */
+  sawCheckpointManifest: boolean
+}
+export interface MimiVaultSynchronizationResult {
+  appendedEntryIds: VaultEventId[]
+  ingestedSequences: DeliverySeq[]
+  checkpoints: MimiVaultCheckpointPayload[]
+  latestSequence: number
+  sawCheckpointManifest: boolean
+}
 
 /** Collects every bounded pull page before chunk reconstruction. A 100MB
  * checkpoint can span 256 chunks while a provider page contains only 32. */
@@ -72,7 +90,7 @@ export async function synchronizeMimiVault(input: {
   }
   const flushed = await flushMimiVaultOutbox(input.outbox, input.sender, input.identityId)
   if (flushed.failedEntryId) throw new Error(`MIMI Vault outbox append failed: ${flushed.failureReason ?? flushed.failedEntryId}`)
-  return { appendedEntryIds: flushed.appendedEntryIds, ingestedSequences, checkpoints: decoded.checkpoints, latestSequence: decoded.latestSequence }
+  return { appendedEntryIds: flushed.appendedEntryIds, ingestedSequences, checkpoints: decoded.checkpoints, latestSequence: decoded.latestSequence, sawCheckpointManifest: decoded.sawCheckpointManifest }
 }
 
 /** Flush local VaultDeliveryPack records as opaque MLS-encrypted MIMI chunks.
@@ -111,7 +129,20 @@ export async function sendMimiVaultCheckpoint(payload: Uint8Array, coveredSeq: n
 }
 
 /** Reconstructs complete Vault transfers from one or more contiguous pull
- * pages.  Tombstoned application rows are deliberately ignored. */
+ * pages.  Tombstoned application rows are deliberately ignored.
+ *
+ * A manifest whose chunks cannot be reconstructed (missing or disagreeing
+ * with the manifest) is skipped, not thrown -- the device that ORIGINALLY
+ * created a checkpoint sees exactly this on every later re-pull that
+ * includes it: `receiver.receive` recognizes that chunk as its own already-
+ * sent echo (`ownApplicationHashes`) and returns undefined for it, forever,
+ * while the checkpoint manifest itself decodes normally every time (found
+ * live, 2026-09-02) -- there is no way to distinguish that from genuine
+ * corruption from here, but a creating device never needs to reconstruct
+ * its own checkpoint's payload from chunks anyway (it already has the
+ * plaintext it built the checkpoint from), so treating it as merely
+ * unreconstructable -- not a hard failure that would otherwise brick
+ * syncing permanently -- is correct either way. */
 export async function decodeMimiVaultBatch(entries: readonly MimiDeliveryEntry[], receiver: MimiVaultMlsReceiver): Promise<MimiVaultDecodedBatch> {
   const chunks = new Map<string, Array<{ chunk: MimiVaultChunk; seq: number }>>()
   const manifests: Array<{ manifest: VaultCheckpointManifest; seq: number }> = []
@@ -138,10 +169,12 @@ export async function decodeMimiVaultBatch(entries: readonly MimiDeliveryEntry[]
   const claimed = new Set<string>()
   for (const { manifest, seq } of manifests) {
     const values = chunks.get(manifest.transferId)
-    if (!values || values.length !== manifest.chunkCount) throw new TypeError('Vault checkpoint chunks are incomplete')
-    const payload = joinMimiVaultChunks(values.map(value => value.chunk))
-    if (!equalBytes(sha256Bytes(payload), manifest.payloadHash) || values.some(value => value.chunk.count !== manifest.chunkCount || !equalBytes(value.chunk.payloadHash, manifest.payloadHash))) throw new TypeError('Vault checkpoint manifest disagrees with chunks')
-    checkpoints.push({ transferId: manifest.transferId, payload, finalSequence: Math.max(seq, ...values.map(value => value.seq)), manifest: { ...manifest, payloadHash: manifest.payloadHash.slice() } })
+    if (values && values.length === manifest.chunkCount) {
+      const payload = joinMimiVaultChunks(values.map(value => value.chunk))
+      if (equalBytes(sha256Bytes(payload), manifest.payloadHash) && values.every(value => value.chunk.count === manifest.chunkCount && equalBytes(value.chunk.payloadHash, manifest.payloadHash))) {
+        checkpoints.push({ transferId: manifest.transferId, payload, finalSequence: Math.max(seq, ...values.map(value => value.seq)), manifest: { ...manifest, payloadHash: manifest.payloadHash.slice() } })
+      }
+    }
     claimed.add(manifest.transferId)
   }
   const deliveries: MimiVaultPayload[] = []
@@ -151,7 +184,7 @@ export async function decodeMimiVaultBatch(entries: readonly MimiDeliveryEntry[]
   }
   deliveries.sort((left, right) => left.finalSequence - right.finalSequence)
   checkpoints.sort((left, right) => left.finalSequence - right.finalSequence)
-  return { deliveries, checkpoints, latestSequence }
+  return { deliveries, checkpoints, latestSequence, sawCheckpointManifest: manifests.length > 0 }
 }
 
 export function mimiVaultSequence(sequence: number): DeliverySeq {
