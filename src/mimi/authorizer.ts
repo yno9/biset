@@ -99,6 +99,15 @@ export async function authorizeUpdate(store: SqliteMimiStore, verifier: MimiSign
   return room === undefined ? value.initialState !== undefined : credentialMatchesRoom(room, value.sender)
 }
 
+/** Self-room external join: a freshly restored device has a new MLS
+ * credential, so exact client-key matching cannot precede its first commit.
+ * This is intentionally narrower than ordinary update authorization and the
+ * HTTP layer enables it only for an allowExternalJoin deployment. */
+export async function authorizeExternalJoinUpdate(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: UpdateRoomRequest): Promise<boolean> {
+  if (value.initialState !== undefined || value.bundle.kind !== 'commit' || value.sender.kind !== 'visible') return false
+  return (await verifier.verify(value.sender, updateRoomSigningBytes(value), value.signature)) && userIsRoomParticipant(store.room(value.roomId), value.sender.user)
+}
+
 export async function authorizeKeyMaterial(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: KeyMaterialRequest): Promise<boolean> {
   if (value.requestingUser !== credentialUser(value.requester)) return false
   if (!(await verifier.verify(value.requester, keyMaterialSigningBytes(value), value.signature))) return false

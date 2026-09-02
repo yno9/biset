@@ -136,6 +136,28 @@ describe('MIMI Phase 0 HTTP flow', () => {
     expect(bundle.groupInfo).toEqual(groupInfoBytes)
     expect(bundle.ratchetTree).toEqual(ratchetTreeBytes)
 
+    // Fetching GroupInfo is only the first half of external join.  The
+    // external committer has a new leaf key, so ordinary exact-credential
+    // authorization cannot admit this first commit.  The self deployment
+    // accepts precisely this signed commit for an already-participating user.
+    const restoredOwn = await generateOwnKeyPackageForCredential({ credentialType: 'basic', identity: new TextEncoder().encode('did:web:owner#restored-laptop') })
+    const restored = {
+      credential: credentialFromKeyPackage('did:web:owner', 'did:web:owner#restored-laptop', restoredOwn.publicPackage),
+      secret: restoredOwn.privatePackage.signaturePrivateKey,
+    }
+    const externalCommitUnsigned = {
+      version: 1 as const, protocol: 'mls10' as const, roomId: externalJoinRoom, sender: restored.credential, epoch: '1',
+      bundle: { kind: 'commit' as const, proposalOrCommit: participantCommit(externalJoinRoom, '1', [{ user: owner.credential.user, roleIndex: 1 }], [{ user: owner.credential.user, roleIndex: 1 }], undefined, undefined, undefined, [restoredOwn.publicPackage]) },
+      stateUpdate: {
+        participantList: { participants: [{ user: owner.credential.user, roleIndex: 1, clientIds: [owner.credential.client, restored.credential.client] }] },
+        memberCredentials: [owner.credential, restored.credential],
+      },
+      submittedAt: at,
+    }
+    const externalCommit = { ...externalCommitUnsigned, signature: ed25519.sign(updateRoomSigningBytes(externalCommitUnsigned), restored.secret) }
+    expect((await deployment.fetch(post(`/update/${encodeURIComponent(externalJoinRoom)}`, encodeUpdateRoomRequestWire(externalCommit)))).status).toBe(200)
+    expect(deployment.store.room(externalJoinRoom)?.memberCredentials).toContainEqual(restored.credential)
+
     // A stranger (different user URI, never a participant): refused.
     const strangerRequestUnsigned = { version: 1 as const, protocol: 'mls10' as const, cipherSuite: 1, requester: stranger.credential, groupInfoPublicKey: newDeviceHpkePublicKey, requestedAt: at }
     const strangerRequest = { ...strangerRequestUnsigned, signature: ed25519.sign(groupInfoRequestSigningBytes(strangerRequestUnsigned), stranger.secret) }

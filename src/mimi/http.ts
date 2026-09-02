@@ -1,6 +1,7 @@
 /** Narrow HTTP boundary for MIMI provider endpoints implemented in Phase 0. */
 import {
   authorizeGroupInfoRequest,
+  authorizeExternalJoinUpdate,
   authorizeKeyMaterial,
   authorizeKeyPackagePublish,
   authorizeUpdate,
@@ -230,7 +231,7 @@ export function createMimiHttpHandler(
         const value = decodeUpdateRoomRequestWire(body)
         if (!credentialAllowed(value.sender, mode)) return error(403, 'not-allowed', `${mode}-mode deployment rejected this credential`)
         if (value.roomId !== roomId) return error(400, 'bad-request', 'room ID path does not match request body')
-        if (!(await authorizeUpdate(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
+        if (!(await authorizeUpdate(store, verifier, value)) && !(allowExternalJoin && await authorizeExternalJoinUpdate(store, verifier, value))) return error(403, 'unauthorized', 'request signature or room credential was rejected')
         // Existing rooms derive provider-visible state from an MLS Public
         // Commit. Initial room creation remains a one-time envelope until the
         // MIMI room-policy component has a stable initial-state assignment.
