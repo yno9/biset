@@ -609,7 +609,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: 19.b
 - [x] **19.e クライアント側移植**: `src/vault/mimi-vault-sync.ts`（新規）実装、`main.ts`の`synchronizeStreamOnce`呼び出し元をcoordinator-transportからこちらへ切り替え（19.5）。 (完了: 2026-09-02, 関連: `src/{main.ts,mls/mimi-vault-{room,session}.ts,vault/mimi-vault-sync.ts}`; durable MLS retry・MIMI inbox checkpoint復元/圧縮・Self endpoint切替)
   - depends on: 19.b, 19.c
-- [ ] **19.f テスト・実HTTPS検証**: `bun run typecheck`・`bun run test`、`biset-mimi-self`に対する実HTTPS End-to-End（entry送受信、checkpoint圧縮、chunk結合、新端末onboarding後のVault復元）。
+- [~] **19.f テスト・実HTTPS検証**: `bun run typecheck`・`bun run test`、`biset-mimi-self`に対する実HTTPS End-to-End（entry送受信、checkpoint圧縮、chunk結合、新端末onboarding後のVault復元）。 (agent: Codex, 開始: 2026-09-02)
   - depends on: 19.b, 19.c, 19.e
 - [ ] **19.h coordinator退役**: 既存Vaultデータの移行は不要（19.6、2026-09-02にユーザーが明示指示——実データ無し、全てテストデータにつき削除可）。Vaultルート・テーブルを削除し、プロセス停止・systemd無効化する（19.6の3番目）。
   - depends on: 19.f
