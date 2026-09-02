@@ -17,6 +17,7 @@ import { decodeState, encodeState, epochOf, exportSecret } from './group.ts'
 import type { ClientState } from './vendor/index.ts'
 import { mlsEpoch } from '../protocol/ids.ts'
 import type { MlsEpochExporter, MlsSelfGroupProvider } from './vault-epoch.ts'
+import type { MimiVaultPendingApplication, MimiVaultSessionRecord, MimiVaultSessionStateStore } from './mimi-vault-session.ts'
 
 const DATABASE_NAME = 'biset-mls-self-group'
 const DATABASE_VERSION = 1
@@ -27,6 +28,8 @@ interface StoredMlsSelfGroup {
   selfGroupId: string
   state: Uint8Array
   updatedAt: number
+  /** Present only after this self group has moved to the MIMI Vault room. */
+  mimiVault?: { roomId: string; pending?: MimiVaultPendingApplication }
 }
 
 export interface LoadedMlsSelfGroup {
@@ -39,7 +42,7 @@ export interface MlsSelfGroupStateStore {
   load(identityId: string): Promise<LoadedMlsSelfGroup | undefined>
 }
 
-export class IndexedDbMlsSelfGroupStore implements MlsSelfGroupStateStore {
+export class IndexedDbMlsSelfGroupStore implements MlsSelfGroupStateStore, MimiVaultSessionStateStore {
   private databasePromise: Promise<IDBDatabase> | null = null
 
   private database(): Promise<IDBDatabase> {
@@ -58,9 +61,14 @@ export class IndexedDbMlsSelfGroupStore implements MlsSelfGroupStateStore {
 
   async save(identityId: string, selfGroupId: string, state: ClientState): Promise<void> {
     const database = await this.database()
-    const record: StoredMlsSelfGroup = { identityId, selfGroupId, state: encodeState(state), updatedAt: Date.now() }
     const transaction = database.transaction([STORE_NAME], 'readwrite')
-    transaction.objectStore(STORE_NAME).put(record)
+    const store = transaction.objectStore(STORE_NAME)
+    const current = await requestResult<StoredMlsSelfGroup | undefined>(store.get(identityId))
+    const record: StoredMlsSelfGroup = {
+      identityId, selfGroupId, state: encodeState(state), updatedAt: Date.now(),
+      ...(current?.mimiVault === undefined ? {} : { mimiVault: copyMimiVaultMetadata(current.mimiVault) }),
+    }
+    store.put(record)
     await transactionDone(transaction)
   }
 
@@ -71,6 +79,24 @@ export class IndexedDbMlsSelfGroupStore implements MlsSelfGroupStateStore {
     return record === undefined ? undefined : { selfGroupId: record.selfGroupId, state: decodeState(record.state) }
   }
 
+  async loadMimiVault(identityId: string): Promise<MimiVaultSessionRecord | undefined> {
+    const database = await this.database()
+    const transaction = database.transaction([STORE_NAME], 'readonly')
+    const record = await requestResult<StoredMlsSelfGroup | undefined>(transaction.objectStore(STORE_NAME).get(identityId))
+    if (!record?.mimiVault) return undefined
+    return { roomId: record.mimiVault.roomId, selfGroupId: record.selfGroupId, state: decodeState(record.state), ...(record.mimiVault.pending === undefined ? {} : { pending: copyMimiVaultPending(record.mimiVault.pending) }) }
+  }
+
+  async saveMimiVault(identityId: string, value: MimiVaultSessionRecord): Promise<void> {
+    const database = await this.database()
+    const transaction = database.transaction([STORE_NAME], 'readwrite')
+    transaction.objectStore(STORE_NAME).put({
+      identityId, selfGroupId: value.selfGroupId, state: encodeState(value.state), updatedAt: Date.now(),
+      mimiVault: { roomId: value.roomId, ...(value.pending === undefined ? {} : { pending: copyMimiVaultPending(value.pending) }) },
+    } satisfies StoredMlsSelfGroup)
+    await transactionDone(transaction)
+  }
+
   /** Domain-move support: after the unchanged self-group state is saved
    * under the new identity id, drop the stale old-keyed row. */
   async delete(identityId: string): Promise<void> {
@@ -79,6 +105,13 @@ export class IndexedDbMlsSelfGroupStore implements MlsSelfGroupStateStore {
     transaction.objectStore(STORE_NAME).delete(identityId)
     await transactionDone(transaction)
   }
+}
+
+function copyMimiVaultPending(value: MimiVaultPendingApplication): MimiVaultPendingApplication {
+  return { deliveryId: value.deliveryId, plaintextHash: value.plaintextHash.slice(), appMessage: value.appMessage.slice() }
+}
+function copyMimiVaultMetadata(value: NonNullable<StoredMlsSelfGroup['mimiVault']>): NonNullable<StoredMlsSelfGroup['mimiVault']> {
+  return { roomId: value.roomId, ...(value.pending === undefined ? {} : { pending: copyMimiVaultPending(value.pending) }) }
 }
 
 /**
