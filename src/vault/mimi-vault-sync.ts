@@ -81,12 +81,33 @@ export async function synchronizeMimiVault(input: {
 }): Promise<MimiVaultSynchronizationResult> {
   const entries = await pullMimiVaultPages(input.pull, input.signPull, input.pullRequest, input.afterSeq ?? 0)
   const decoded = await decodeMimiVaultBatch(entries, input.receiver)
-  for (const checkpoint of decoded.checkpoints) await input.restoreCheckpoint?.(checkpoint)
+  for (const checkpoint of decoded.checkpoints) {
+    try {
+      await input.restoreCheckpoint?.(checkpoint)
+    } catch (error) {
+      // Same reasoning as the ingest loop just below: one already-decoded
+      // delivery failing to apply locally (e.g. a local-projection identity
+      // conflict) must not re-block every OTHER item in this batch, or any
+      // later batch, forever -- the cursor still advances past this pull
+      // regardless (decoded.latestSequence, computed above, independent of
+      // what ingest/restoreCheckpoint do), so a skip here is permanent,
+      // same as an undecryptable entry: there is no "try again next poll"
+      // for content the hub already delivered once (found live, 2026-09-02,
+      // for the ingest loop's own version of this: "[mimi-vault/poll] vault
+      // message.add conflicts with an existing email", blocking the whole
+      // round on every single poll from then on).
+      console.warn('[mimi-vault/checkpoint] restore failed, skipping:', error instanceof Error ? error.message : error)
+    }
+  }
   const ingestedSequences: DeliverySeq[] = []
   for (const delivery of decoded.deliveries) {
     const sequence = mimiVaultSequence(delivery.finalSequence)
-    await input.ingest(delivery.payload, sequence)
-    ingestedSequences.push(sequence)
+    try {
+      await input.ingest(delivery.payload, sequence)
+      ingestedSequences.push(sequence)
+    } catch (error) {
+      console.warn('[mimi-vault/ingest] delivery could not be applied locally, skipping:', error instanceof Error ? error.message : error)
+    }
   }
   let flushed = await flushMimiVaultOutbox(input.outbox, input.sender, input.identityId)
   if (flushed.failedEntryId && flushed.failureReason?.includes('epochTooOld')) {
