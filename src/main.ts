@@ -2082,6 +2082,21 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     })
     const boundary = buildVaultCryptoBoundary(vaultStore, vaultStore, selfGroupStore, identity)
     const projector = buildVaultDeliveryProjector(selfGroupStore, identity.did, () => readModel.snapshot(), identity.masterSeed)
+    // Debounces checkpoint auto-recreation (below) across THIS device's own
+    // back-to-back sync rounds. Live SSE pushes (mimi-vault-watch.ts) mean
+    // every sibling device now reacts to a change within milliseconds
+    // instead of waiting out a 10s poll -- multiple devices independently
+    // noticing "no checkpoint in this batch" and racing to recreate their
+    // own, all within the same few seconds, was found live 2026-09-02 to
+    // scramble sender-ratchet generation ordering across the resulting
+    // burst of near-simultaneous submissions ("Desired gen in the past",
+    // permanently losing whichever message a receiver processed out of
+    // order). A cooldown does not make the race impossible -- two devices
+    // can still both be first through the gate right as it reopens -- but
+    // makes the common case (this device's OWN sync loop reacting to a
+    // cascade of pushes from ITS OWN prior recreation, plus a sibling doing
+    // the same) far less likely to collide.
+    let lastCheckpointRecreateAt = 0
     const synchronizeMimi = async (): Promise<void> => {
       setVaultCard({ state: 'syncing', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, detail: 'Synchronizing encrypted MIMI Vault' })
       // Provider sequence is separate from the Vault event cursor.  Keep it
@@ -2120,7 +2135,8 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         await selfGroupStore.saveMimiVault(identity.did, { ...current, deliveryCursor: result.latestSequence })
       }
       if (result.ingestedSequences.length) await refreshInbox(readModel)
-      if (result.latestSequence > 1 && !result.sawCheckpointManifest && identity.masterSeed) {
+      if (result.latestSequence > 1 && !result.sawCheckpointManifest && identity.masterSeed && Date.now() - lastCheckpointRecreateAt > 5_000) {
+        lastCheckpointRecreateAt = Date.now()
         const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, identity.did, new Date().toISOString())
         try {
           const payload = await createPortableCoordinatorCheckpoint(fromHex(identity.masterSeed), snapshot, { vaultId: room!.roomId as never, coveredSeq: deliverySeq(BigInt(result.latestSequence)) })
