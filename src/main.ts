@@ -230,6 +230,31 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   let identity = records[0]!
   const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did, identity.masterSeed)
   const { apexDomain, anchorBaseUrl, anchorOidcClientId, coreBaseUrl, mediatorUrls, coordinatorUrl, mimiSelfBaseUrl, conversationMlsDsBaseUrl } = readBisetConfig()
+  const mimiVaultConfigured = !!(mimiSelfBaseUrl && identity.deviceKid)
+  const coordinatorConfigured = !mimiVaultConfigured && !!(anchorBaseUrl && anchorOidcClientId && coordinatorUrl && identity.deviceKid)
+  // Ensured here, before EVERY self-group reader below -- not just
+  // vaultDevices/buildVaultCryptoBoundary/enableDidComm further down, but
+  // also the repairCurrentLocalSegmentKeyWraps/migrateLocalSegmentKeysToStorageRoot
+  // loops right below this. A MIMI-driven identity's self-group state IS
+  // this room's own ClientState (store.ts's `saveMimiVault` writes the same
+  // row `load` reads), so on this device's very first boot ever, before this
+  // room exists, every one of those readers would otherwise fail once each
+  // (found live, 2026-09-02: this used to only be ensured much later, past
+  // all of them -- and even after moving it before vaultDevices, still
+  // after these two loops specifically, which is why
+  // migrateLocalSegmentKeysToStorageRoot kept logging "Vault storage
+  // migration requires Self Group state" on a fresh account's very first
+  // boot even once the room itself was working). ensureMimiVaultRoom's own
+  // doc comment covers why this same call is repeated again, cheaply,
+  // further down.
+  const mimiVaultRoom = mimiVaultConfigured ? await ensureMimiVaultRoom(identity, selfGroupStore, mimiSelfBaseUrl) : undefined
+  // Core mail ingress authorization checks core's OWN roster, entirely
+  // separate from the MIMI room's own membership above -- best-effort,
+  // same treatment as every other capability this function just provisions
+  // on its own (see enableDidComm's own note on that convention).
+  if (mimiVaultRoom && coreBaseUrl) {
+    await ensureMimiCoreRoster(identity, mimiVaultRoom, coreBaseUrl).catch(e => console.warn('[mimi-vault/core-roster]', e instanceof Error ? e.message : e))
+  }
   // A WebVH PUT can succeed while the following MLS submission loses the
   // network. Reconcile the executing leaf before ordinary maintenance so
   // rotation is retryable after reload instead of leaving a stranded Vault.
@@ -279,25 +304,6 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   let approveCoordinatorDevice: (() => Promise<void>) | undefined
   let coordinatorBindingActive = false
   let flushCoordinatorOutbox: (() => Promise<{ appendedEntryIds: string[]; failedEntryId?: string; failureReason?: string }>) | undefined
-  const mimiVaultConfigured = !!(mimiSelfBaseUrl && identity.deviceKid)
-  const coordinatorConfigured = !mimiVaultConfigured && !!(anchorBaseUrl && anchorOidcClientId && coordinatorUrl && identity.deviceKid)
-  // Ensured here, BEFORE any of this function's self-group readers below
-  // (vaultDevices right here, buildVaultCryptoBoundary/enableDidComm/mail
-  // ingress further down) -- a MIMI-driven identity's self-group state IS
-  // this room's own ClientState (store.ts's `saveMimiVault` writes the same
-  // row `load` reads), so on this device's very first boot ever, before this
-  // room exists, every one of those readers would otherwise fail once each
-  // (found live, 2026-09-02: this used to only be ensured much later, past
-  // all of them). ensureMimiVaultRoom's own doc comment covers why this
-  // same call is repeated again, cheaply, further down.
-  const mimiVaultRoom = mimiVaultConfigured ? await ensureMimiVaultRoom(identity, selfGroupStore, mimiSelfBaseUrl) : undefined
-  // Core mail ingress authorization checks core's OWN roster, entirely
-  // separate from the MIMI room's own membership above -- best-effort,
-  // same treatment as every other capability this function just provisions
-  // on its own (see enableDidComm's own note on that convention).
-  if (mimiVaultRoom && coreBaseUrl) {
-    await ensureMimiCoreRoster(identity, mimiVaultRoom, coreBaseUrl).catch(e => console.warn('[mimi-vault/core-roster]', e instanceof Error ? e.message : e))
-  }
   let vaultDevices = await selfGroupStore.load(identity.did).then(stored => stored
     ? memberKids(stored.state, identity.did).map(deviceId => ({ deviceId, current: deviceId === identity.deviceKid }))
     : []).catch(() => [])
