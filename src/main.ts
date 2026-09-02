@@ -728,7 +728,16 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     // same reason (a page reload must not silently stop listening to a group
     // this device already joined). Best-effort per group: one group's
     // transport failure must not stop the rest from being resumed.
-    for (const groupId of await conversationGroupStore.listGroupIds().catch(() => [])) {
+    //
+    // Conversation Groups retired from active deployment 2026-09-02
+    // (conversationMlsDsBaseUrl no longer configured) -- this store is
+    // origin-wide, not scoped to a deployment, so any locally-known group
+    // from before retirement survives untouched. Without this guard,
+    // watchConversationGroupDeliveries's own reconnect-with-setTimeout loop
+    // retries against a DS that no longer exists FOREVER, one uncapped loop
+    // per stale local group, spamming the console indefinitely (found live,
+    // 2026-09-02, right after retirement).
+    for (const groupId of conversationMlsDsBaseUrl ? await conversationGroupStore.listGroupIds().catch(() => []) : []) {
       await conversationGroupStore.load(groupId).then(stored => {
         if (stored) startConversationGroupWatch(groupId, stored)
       }).catch(e => console.warn(`[conversation-group/resume] ${groupId}:`, e instanceof Error ? e.message : e))
