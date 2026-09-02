@@ -2208,16 +2208,34 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     // it only wakes runMimiSyncNow, which re-runs the existing, already
     // hardened pull-based pipeline (checkpoint collation, epochTooOld
     // retry, the permanently-undecryptable skip, sentAt-agnostic identity
-    // merge). mimiPollBusy already coalesces a burst of pushes (e.g. a
-    // checkpoint's own chunk immediately followed by its manifest) into
-    // one sync pass.
+    // merge).
+    //
+    // Debounced, not immediate: a checkpoint's chunk(s) and its manifest are
+    // separate, sequential HTTP submissions (sendMimiVaultCheckpoint), never
+    // atomic -- reacting to the FIRST push in that sequence used to pull
+    // mid-submission, see an application chunk with no manifest yet in this
+    // same batch, and (correctly, per decodeMimiVaultBatch's own claiming
+    // logic) treat it as an ordinary delivery, which then failed to parse
+    // as one ("vault delivery pack header is invalid", found live,
+    // 2026-09-02, even with the earlier checkpoint-recreation cooldown
+    // already in place -- that one only reduces how often MULTIPLE devices
+    // race each other, not the inherent multi-step-submission window a
+    // SINGLE device's own checkpoint always has). Resetting this timer on
+    // every push and only syncing once pushes have been quiet for a beat
+    // lets one sender's own multi-step submission finish landing before
+    // anyone reacts -- still a large win over the 10s polling this
+    // replaced, just not literally instant.
+    let watchDebounceTimer: ReturnType<typeof setTimeout> | undefined
     const watchCursor = await selfGroupStore.loadMimiVault(identity.did).then(stored => stored?.deliveryCursor ?? 0)
     mimiVaultWatchHandle = watchMimiVaultDeliveries({
       transport, roomId: room.roomId,
       requester: { kind: 'visible', user: identity.did, client: identity.deviceKid, credential: encodeMlsDeviceCredential(mlsCredential), signaturePublicKey: mlsCredential.signaturePublicKey },
       sign: bytes => ed25519.sign(bytes, ownSignaturePrivateKey(room!.state)),
       afterSeq: watchCursor,
-      onEntry: () => { void runMimiSyncNow() },
+      onEntry: () => {
+        if (watchDebounceTimer !== undefined) clearTimeout(watchDebounceTimer)
+        watchDebounceTimer = setTimeout(() => { watchDebounceTimer = undefined; void runMimiSyncNow() }, 1_500)
+      },
       onError: error => console.warn('[mimi-vault/watch]', error instanceof Error ? error.message : error),
     })
   }
