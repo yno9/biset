@@ -2123,16 +2123,32 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       }
       setVaultCard({ state: 'connected', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, localSeq: String(await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)), latestSeq: String(result.latestSequence), detail: 'Encrypted MIMI Vault is current' })
     }
-    await synchronizeMimi()
+    // A hung underlying fetch (no timeout of its own -- MimiClientTransport
+    // never had one) would otherwise leave a round of sync stuck forever:
+    // the UNGUARDED initial call below would never let bootClient reach the
+    // interval registration at all, and a hang inside the interval's own
+    // tick would leave `mimiPollBusy` wedged true, so every later tick's
+    // `if (mimiPollBusy) return` then silently no-ops, permanently, with no
+    // error ever logged -- exactly what "an initial reload-triggered
+    // catch-up eventually works, but nothing new arrives after that" looks
+    // like from outside (found live, 2026-09-02). Racing against a timeout
+    // can't cancel the stuck fetch itself, but it unblocks THIS code so the
+    // next attempt (the interval's next tick) gets a fresh try instead of
+    // finding everything wedged on.
+    const runMimiSync = (): Promise<void> => {
+      const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('MIMI Vault sync timed out')), 25_000))
+      return Promise.race([synchronizeMimi(), timeout]).catch(error => {
+        const detail = error instanceof Error ? error.message : String(error)
+        setVaultCard({ state: 'error', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, detail })
+        console.warn('[mimi-vault/poll]', detail)
+      })
+    }
+    await runMimiSync()
     let mimiPollBusy = false
     coordinatorPollTimer = setInterval(() => {
       if (mimiPollBusy) return
       mimiPollBusy = true
-      void synchronizeMimi().catch(error => {
-        const detail = error instanceof Error ? error.message : String(error)
-        setVaultCard({ state: 'error', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, detail })
-        console.warn('[mimi-vault/poll]', detail)
-      }).finally(() => { mimiPollBusy = false })
+      void runMimiSync().finally(() => { mimiPollBusy = false })
     }, 10_000)
   }
 }
