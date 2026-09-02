@@ -231,7 +231,18 @@ function immutableMessageIdentity(value: LocalJmapEmail): CanonicalValue {
   return {
     id: value.id,
     threadId: value.threadId,
-    ...(value.sentAt === undefined ? {} : { sentAt: value.sentAt }),
+    // sentAt deliberately excluded, same treatment as receivedAt above --
+    // when the DIDComm sender omits its own sentAt/created_time,
+    // ingress-projector.ts's inbound path falls back to THIS DEVICE'S OWN
+    // local receipt time, making it not actually immutable/sender-asserted
+    // in that case. Two of this identity's own devices independently
+    // receiving the exact same message (same deterministic dedupeId,
+    // sameMessageIdentity's whole point) each fall back at a different
+    // real-world instant, so comparing sentAt made two representations of
+    // the identical message look like a genuine collision and throw (found
+    // live, 2026-09-02: "vault message.add conflicts with an existing
+    // email", every single poll, for a message every device involved could
+    // already see was the same one).
     ...(value.from === undefined ? {} : { from: value.from.map(canonicalAddress) }),
     ...(value.to === undefined ? {} : { to: value.to.map(canonicalAddress) }),
     ...(value.subject === undefined ? {} : { subject: value.subject }),
