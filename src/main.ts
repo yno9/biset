@@ -2097,6 +2097,20 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     // cascade of pushes from ITS OWN prior recreation, plus a sibling doing
     // the same) far less likely to collide.
     let lastCheckpointRecreateAt = 0
+    // Surfaces account-page.ts's "Checkpoint" detail row, which the MIMI
+    // branch never populated at all (only the legacy coordinator path's own
+    // synchronizeStreamOnce ever set VaultCardStatus.checkpointSeq) --
+    // showed a permanent "—" regardless of whether checkpoints were
+    // actually working (found live, 2026-09-02: they were, this was purely
+    // a missing wire, not a functional gap). Not the same as localSeq
+    // (vaultStore's own delivery cursor, which keeps advancing past
+    // whatever a checkpoint restore set it to as ordinary events get
+    // ingested afterward) -- this tracks specifically the most recent
+    // checkpoint this device has itself either restored or created, in
+    // memory only (there is no persisted "last checkpoint" field to read
+    // this back from, so it resets on reload; that matches every other
+    // Vault card field, which is also live-session-only).
+    let lastKnownCheckpointSeq: string | undefined
     const synchronizeMimi = async (): Promise<void> => {
       setVaultCard({ state: 'syncing', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, detail: 'Synchronizing encrypted MIMI Vault' })
       // Provider sequence is separate from the Vault event cursor.  Keep it
@@ -2126,6 +2140,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
             for (const segment of snapshot.segmentKeys) await vaultStore.sealAndActivateSegment({ identityId: identity.did, segmentId: segment.segmentId, segmentKey: segment.key, selfGroupId: VAULT_STORAGE_GROUP_ID, epoch: VAULT_STORAGE_EPOCH, sealed: false, createdAt: snapshot.createdAt })
             const projection = await buildLocalJmapProjectionRebuild(vaultStore, vaultStore, vaultStore, selfGroupStore, identity.did, identity.masterSeed)()
             await vaultStore.advanceDeliveryCursor(identity.did, identity.deviceKid!, deliverySeq(BigInt(checkpoint.manifest.coveredSeq)), projection.state, new Date().toISOString())
+            lastKnownCheckpointSeq = String(checkpoint.manifest.coveredSeq)
           } finally { for (const segment of snapshot.segmentKeys) segment.key.fill(0) }
         },
       })
@@ -2143,6 +2158,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
           let published = true
           try {
             await sendMimiVaultCheckpoint(payload, result.latestSequence, session)
+            lastKnownCheckpointSeq = String(result.latestSequence)
           } catch (error) {
             // A sibling device's own checkpoint can land between this
             // device's pull and its own manifest submission -- the hub
@@ -2185,7 +2201,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
           }
         } finally { for (const segment of snapshot.segmentKeys) segment.key.fill(0) }
       }
-      setVaultCard({ state: 'connected', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, localSeq: String(await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)), latestSeq: String(result.latestSequence), detail: 'Encrypted MIMI Vault is current' })
+      setVaultCard({ state: 'connected', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, localSeq: String(await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)), latestSeq: String(result.latestSequence), ...(lastKnownCheckpointSeq === undefined ? {} : { checkpointSeq: lastKnownCheckpointSeq }), detail: 'Encrypted MIMI Vault is current' })
     }
     // A hung underlying fetch (no timeout of its own -- MimiClientTransport
     // never had one) would otherwise leave a round of sync stuck forever:
