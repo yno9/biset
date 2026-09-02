@@ -607,7 +607,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: 19.a
 - [x] **19.d メタデータ平文漏洩の是正確認**: 実際にVault entryの中身がMLS暗号化層の内側に入り、hubから`VaultDeliveryPackV1`内部のフィールドが一切見えないことをテスト・実HTTPS検証で確認する（19.3）。 (完了: 2026-09-02, 関連: `test/mimi/store.test.ts`, `scripts/verify-mimi-vault-live.ts`; Self実HTTPSで暗号文entry・chunk・manifest圧縮まで確認)
   - depends on: 19.b
-- [~] **19.e クライアント側移植**: `src/vault/mimi-vault-sync.ts`（新規）実装、`main.ts`の`synchronizeStreamOnce`呼び出し元をcoordinator-transportからこちらへ切り替え（19.5）。 (agent: Codex, 開始: 2026-09-02)
+- [x] **19.e クライアント側移植**: `src/vault/mimi-vault-sync.ts`（新規）実装、`main.ts`の`synchronizeStreamOnce`呼び出し元をcoordinator-transportからこちらへ切り替え（19.5）。 (完了: 2026-09-02, 関連: `src/{main.ts,mls/mimi-vault-{room,session}.ts,vault/mimi-vault-sync.ts}`; durable MLS retry・MIMI inbox checkpoint復元/圧縮・Self endpoint切替)
   - depends on: 19.b, 19.c
 - [ ] **19.f テスト・実HTTPS検証**: `bun run typecheck`・`bun run test`、`biset-mimi-self`に対する実HTTPS End-to-End（entry送受信、checkpoint圧縮、chunk結合、新端末onboarding後のVault復元）。
   - depends on: 19.b, 19.c, 19.e
