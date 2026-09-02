@@ -1,7 +1,10 @@
 /** Opaque Vault payload chunks carried inside MLS application messages. */
 import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes, sha256Bytes } from '../protocol/canonical.ts'
 
-export const MIMI_VAULT_CHUNK_BYTES = 700 * 1024
+/** Raw plaintext budget.  An MLS PrivateMessage plus JSON/base64 request
+ * framing expands this on the wire; 500KiB remains safely below the shared
+ * 1MiB HTTP cap while 700KiB did not in real HTTPS verification. */
+export const MIMI_VAULT_CHUNK_BYTES = 500 * 1024
 export interface MimiVaultChunk { transferId: string; ordinal: number; count: number; payloadHash: Uint8Array; payload: Uint8Array }
 
 export function splitMimiVaultPayload(payload: Uint8Array, transferId = bytesToBase64url(crypto.getRandomValues(new Uint8Array(32)))): MimiVaultChunk[] {

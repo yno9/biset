@@ -82,8 +82,8 @@ const application = before.find(entry => entry.kind === 'application')
 const hubVisible = new TextDecoder().decode(application?.payload)
 if (!application || hubVisible.includes('message.add') || hubVisible.includes(marker)) throw new Error('hub-visible application payload contains VaultDeliveryPack plaintext')
 
-const checkpointMarker = `checkpoint-private-target/${crypto.randomUUID()}`
-const manifest = await sendMimiVaultCheckpoint(new TextEncoder().encode(checkpointMarker), application.seq, {
+const checkpointPayload = new Uint8Array(500 * 1024 + 1).fill(0x5a)
+const manifest = await sendMimiVaultCheckpoint(checkpointPayload, application.seq, {
   sendApplication,
   async sendCheckpoint(value) {
     const unsigned = { version: 1 as const, protocol: 'mls10' as const, roomId, sender: credential, epoch: '1', manifest: value, submittedAt: now() }
@@ -94,5 +94,6 @@ const manifest = await sendMimiVaultCheckpoint(new TextEncoder().encode(checkpoi
 const after = await pull()
 const compacted = after.find(entry => entry.seq === application.seq)
 const checkpoint = after.find(entry => entry.kind === 'vaultCheckpoint')
-if (!compacted || compacted.payload.length !== 0 || !checkpoint?.vaultCheckpoint || checkpoint.vaultCheckpoint.transferId !== manifest.transferId) throw new Error('checkpoint compaction or manifest retrieval failed')
+const checkpointChunks = after.filter(entry => entry.kind === 'application' && entry.seq > application.seq)
+if (!compacted || compacted.payload.length !== 0 || !checkpoint?.vaultCheckpoint || checkpoint.vaultCheckpoint.transferId !== manifest.transferId || manifest.chunkCount !== 2 || checkpointChunks.length !== 2) throw new Error('multi-chunk checkpoint compaction or manifest retrieval failed')
 console.log(JSON.stringify({ verified: true, baseUrl, roomId, applicationSeq: application.seq, checkpointSeq: checkpoint.seq, chunkCount: manifest.chunkCount }))

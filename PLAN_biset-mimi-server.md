@@ -617,7 +617,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
 ### 19.8 実装前に確認・決定すべき未確定事項
 
 - **roomId命名規則（決定）**: `mimi://mimi-self.biset.md/r/vault-<base64url(random 32 bytes)>` とする。provider URI はMIMI room IDに必要だが、suffixは256-bit乱数のみでDID・domain・mail addressを含まない。provider移転時は既存room IDを不変のopaque IDとしてtransport設定から到達させ、identityのdomain変更でroomを再生成しない。
-- **chunking方式（決定）**: 上限緩和はしない。MLS暗号化済みのVault payloadを、transfer ID・ordinal・count・全体SHA-256を持つクライアント内のopaque envelopeで分割し、既存`submitMessage`で順に配送する。checkpointでは全chunkの後に、`coveredSeq`・transfer ID・count・hashだけを持つ署名済み`vaultCheckpoint` manifestを送る。hubはmanifestを認証・単調性検査して圧縮するが、暗号文chunkの内容を読まない。
+- **chunking方式（決定）**: 上限緩和はしない。raw payloadは500KiB以下に分割する（MLS PrivateMessageとJSON/base64 framing後も共有1MiB HTTP上限内に収めるため。700KiBは実HTTPSで超過を確認）。transfer ID・ordinal・count・全体SHA-256を持つクライアント内のopaque envelopeを既存`submitMessage`で順に配送する。checkpointでは全chunkの後に、`coveredSeq`・transfer ID・count・hashだけを持つ署名済み`vaultCheckpoint` manifestを送る。hubはmanifestを認証・単調性検査して圧縮するが、暗号文chunkの内容を読まない。
 - **entryの冪等性（決定）**: client outboxだけには委ねない。`SubmitMessageRequest`へランダムなopaque `deliveryId`を追加し、hubは`(roomId, sender client, deliveryId)`をpayload SHA-256とhub seqに一意に永続化する。同じID・同じhashは元の受理結果を返し、同じID・異なるhashは競合として拒否する。これは応答喪失後の再送で二重Vault eventを作らないためであり、Vault v2の`appendId`契約を保つ。
 - **1MiB上限のchunkサイズ（決定）**: raw payloadは1 chunkあたり最大`700 * 1024` bytesとする。JSON/base64url・credential・franking等の余白を残すためであり、25MB entryは最大37、100MB checkpointは最大147 chunkとなる。同期実装は逐次送信・逐次再構成し、全chunkを同時にメモリへ載せない。
 
