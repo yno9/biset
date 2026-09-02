@@ -7,7 +7,6 @@
     "src/anchor/index.ts",
     "src/mediator/index.ts",
     "src/mediator/mail-plugin/index.ts",
-    "src/coordinator/index.ts",
     "src/mimi/index.ts",
     "test/**/*.test.ts",
     "scripts/*.mjs"

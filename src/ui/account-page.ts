@@ -70,22 +70,13 @@ export interface AccountPageConfig {
    * closure, since it holds the root key this needs to sign with; this file
    * never sees key material. */
   onEditName?(name: string): Promise<void>
-  /** Reveals the current Spare Key (typed in by the user, this file's own
-   * promptForMnemonic) and commits a newly generated Spare in the same
-   * permanent-pre-rotation transition. */
-  onRotateKeyRotation?(revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array, nextKeyHash: string): Promise<void>
   /** A domain move is also a permanent-pre-rotation transition. */
   onMoveIdentity?(newDomain: string, revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array, nextKeyHash: string): Promise<string>
-  /** Starts the user-gesture-bound OpenID4VP + OIDC PKCE popup flow. */
-  onConnectCoordinator?(): Promise<void>
-  /** Live status for the identity's encrypted Coordinator-backed Vault.
-   * This deliberately contains operational metadata only; neither the
-   * Coordinator's OIDC subject nor any key material belongs in the UI. */
+  /** Live status for the identity's encrypted Vault (MIMI Self Vault --
+   * the retired Coordinator backend this card used to also cover is gone).
+   * This deliberately contains operational metadata only; no key material
+   * belongs in the UI. */
   vault?: VaultCardStatus
-  onCreateCoordinatorInvitation?(): Promise<{ invitation: string; expiresAt: string }>
-  onJoinCoordinatorInvitation?(invitation: string): Promise<void>
-  onResumeCoordinatorJoin?(): Promise<void>
-  onApproveCoordinatorDevice?(): Promise<void>
   /** Drops one sibling leaf ("zombie device") from the Self/Vault MLS room.
    * MIMI-only (vault.devices only ever has a Remove button rendered when
    * this is set) -- the retired coordinator never had an individual-removal
@@ -120,7 +111,7 @@ export function configureAccountPage(next: AccountPageConfig): void {
   config = next
 }
 
-/** Update only the Vault card when the background Coordinator session moves
+/** Update only the Vault card when the background MIMI Vault session moves
  * between checking/connected/error states. Repainting the whole account page
  * here would close an open identity menu or expanded Vault panel every ten
  * seconds, so this intentionally targets the one reusable relay-card slot. */
@@ -522,7 +513,6 @@ export function showConfigPage(): void {
   activeEl.innerHTML = ''
   activeEl.appendChild(card)
 
-  const rotateBtn = card.querySelector<HTMLButtonElement>('#prerotation-rotate-btn')!
   const preRotKey = card.querySelector<HTMLElement>('#config-prerotation-key')!
   const rootKey = card.querySelector<HTMLElement>('#config-rootkey')!
 
@@ -537,29 +527,12 @@ export function showConfigPage(): void {
   }
   void refresh()
 
-  rotateBtn.addEventListener('click', async () => {
-    if (!config?.onRotateKeyRotation) return
-    rotateBtn.disabled = true
-    try {
-      const expectedHashes = await currentNextKeyHashes(did)
-      const phrase = await promptForMnemonic({ title: 'Current Spare Key', badges: ['SPARE KEY'], expectedHashes, subtitle: 'Enter the Spare Key phrase shown the last time key rotation was enabled or rotated.' })
-      if (!phrase) return
-      const revealed = spareKeyFromSeed(mnemonicToSeed(phrase))
-      const nextSeed = crypto.getRandomValues(new Uint8Array(32))
-      const nextSpare = spareKeyFromSeed(nextSeed)
-      const nextKeyHash = multikeyHashBase58(encodeMultikey(nextSpare.publicKey))
-      await showMnemonicOnce(seedToMnemonic(nextSeed), {
-        firstTime: false, title: 'New Spare Key', badges: ['SPARE KEY'], fingerprint: encodeMultikey(nextSpare.publicKey),
-        subtitle: 'Write this down for the next rotation. Keep the previous Spare phrase too: it is now the current Sign phrase required when adding a device.',
-      })
-      await config.onRotateKeyRotation(revealed.privateKey, revealed.publicKey, nextKeyHash)
-      await refresh()
-    } catch (e) {
-      config?.showMessage?.(e instanceof Error ? e.message : String(e))
-    } finally {
-      rotateBtn.disabled = false
-    }
-  })
+  // #prerotation-rotate-btn is intentionally left with no click wiring here:
+  // Spare Key rotation used to commit through the Coordinator self-group,
+  // which has been retired outright and has no MIMI-native replacement yet
+  // (key-rotation work is deferred). Present in the DOM, inert for now --
+  // same treatment this file's own header already gives every other
+  // not-yet-wired element (the devices list, #cmd-acc-list, and so on).
 
   // Sign Key reveal has no wiring to give it: biset never retains a copy of
   // a rotated-to Spare/Sign Key phrase once shown (prerotation.ts's own
@@ -590,25 +563,6 @@ export function hideConfigPage(): void {
 function identityMenuItems(did: string): MenuItem[] {
   const noop = () => {}
   return [
-    ...(config?.onCreateCoordinatorInvitation ? [{ label: 'Invite coordinator device', onClick: () => {
-      void config?.onCreateCoordinatorInvitation?.().then(async value => {
-        try { await navigator.clipboard.writeText(value.invitation) } catch {}
-        prompt(`Invitation expires ${new Date(value.expiresAt).toLocaleTimeString()}. Copy this code to the other device:`, value.invitation)
-      }).catch(error => config?.showMessage?.(error instanceof Error ? error.message : String(error)))
-    } }] : []),
-    ...(config?.onApproveCoordinatorDevice ? [{ label: 'Approve coordinator device', onClick: () => {
-      void config?.onApproveCoordinatorDevice?.().then(() => config?.showMessage?.('Coordinator device approved')).catch(error => config?.showMessage?.(error instanceof Error ? error.message : String(error)))
-    } }] : []),
-    ...(config?.onJoinCoordinatorInvitation ? [{ label: 'Join coordinator vault', onClick: () => {
-      const invitation = prompt('Enter the coordinator invitation code:')?.trim()
-      if (!invitation) return
-      config?.showMessage?.('Waiting for approval on the existing device…')
-      void config?.onJoinCoordinatorInvitation?.(invitation).then(() => config?.showMessage?.('Coordinator Vault joined')).catch(error => config?.showMessage?.(error instanceof Error ? error.message : String(error)))
-    } }] : []),
-    ...(config?.onResumeCoordinatorJoin ? [{ label: 'Resume coordinator join', onClick: () => {
-      config?.showMessage?.('Waiting for approval on the existing device…')
-      void config?.onResumeCoordinatorJoin?.().then(() => config?.showMessage?.('Coordinator Vault joined')).catch(error => config?.showMessage?.(error instanceof Error ? error.message : String(error)))
-    } }] : []),
     { label: 'Protect with passkey', onClick: noop },
     { label: 'Export Messages', onClick: noop },
     { label: 'Import Messages', onClick: noop },
@@ -732,22 +686,11 @@ function renderVaultCard(): void {
   left.append(head, stats)
   row.appendChild(left)
 
-  if ((status.state === 'reconnect-required' || status.state === 'error') && config?.onConnectCoordinator) {
-    const reconnect = document.createElement('button')
-    reconnect.type = 'button'
-    reconnect.className = 'cmd-page-btn primary'
-    reconnect.style.cssText = 'padding:6px 10px;font-size:12px;flex-shrink:0'
-    reconnect.textContent = 'Reconnect'
-    reconnect.addEventListener('click', event => {
-      event.stopPropagation()
-      reconnect.disabled = true
-      void config?.onConnectCoordinator?.()
-        .then(() => config?.showMessage?.('Vault connected'))
-        .catch(error => config?.showMessage?.(error instanceof Error ? error.message : String(error)))
-        .finally(() => { reconnect.disabled = false })
-    })
-    row.appendChild(reconnect)
-  }
+  // A reconnect-required/error state used to offer a "Reconnect" button here
+  // (Coordinator's OIDC re-auth). MIMI has no equivalent user action --
+  // membership plus the MLS leaf signature authenticate every request, so
+  // recovering from either state is automatic on the next sync poll rather
+  // than something a click drives.
 
   const panel = document.createElement('div')
   panel.className = 'acc-storage-panel'
@@ -755,7 +698,7 @@ function renderVaultCard(): void {
   panelHeader.className = 'acc-storage-header'
   const panelTitle = document.createElement('span')
   panelTitle.className = 'acc-storage-title'
-  panelTitle.textContent = 'Coordinator'
+  panelTitle.textContent = 'Details'
   panelHeader.appendChild(panelTitle)
   const details = document.createElement('div')
   details.className = 'acc-storage-tree'

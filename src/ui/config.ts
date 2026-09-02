@@ -2,15 +2,14 @@
 // main.ts each need apexDomain/coreBaseUrl, so this is read in one place
 // rather than two copies of the same window-global reach-through drifting
 // apart.
-declare const __BISET_CONFIG__: { apexDomain?: string; anchorBaseUrl?: string; anchorOidcClientId?: string; coreBaseUrl?: string; mediatorUrls?: string[]; coordinatorUrl?: string; mimiSelfBaseUrl?: string; conversationMlsDsBaseUrl?: string } | undefined
+declare const __BISET_CONFIG__: { apexDomain?: string; anchorBaseUrl?: string; anchorOidcClientId?: string; coreBaseUrl?: string; mediatorUrls?: string[]; mimiSelfBaseUrl?: string; conversationMlsDsBaseUrl?: string } | undefined
 
 export interface BisetConfig {
   apexDomain: string
   /** Public identity-provider endpoint. Empty while the legacy Core
    * compatibility mount remains authoritative. */
   anchorBaseUrl: string
-  /** Static public-client registration at Anchor. Empty keeps interactive
-   * Coordinator login disabled. */
+  /** Static public-client registration at Anchor. */
   anchorOidcClientId: string
   coreBaseUrl: string
   /** Independent, blind DIDComm mediators this deployment registers new
@@ -19,8 +18,6 @@ export interface BisetConfig {
    * exactly as before (no mediator involved at all). Additive and opt-in on
    * purpose: production currently opts into https://mediator.biset.md. */
   mediatorUrls: string[]
-  /** Optional: a single-device Vault works without a Coordinator. */
-  coordinatorUrl: string
   /** Dedicated normal-mode MIMI endpoint for the owner's Self/Vault room. */
   mimiSelfBaseUrl: string
   /** Optional: this deployment's Conversation Group MLS Delivery Service
@@ -41,7 +38,6 @@ export function readBisetConfig(): BisetConfig {
     anchorOidcClientId: cfg.anchorOidcClientId ?? '',
     coreBaseUrl: cfg.coreBaseUrl ?? '',
     mediatorUrls: cfg.mediatorUrls ?? [],
-    coordinatorUrl: cfg.coordinatorUrl ?? '',
     mimiSelfBaseUrl: cfg.mimiSelfBaseUrl ?? '',
     conversationMlsDsBaseUrl: cfg.conversationMlsDsBaseUrl ?? '',
   }

@@ -196,7 +196,7 @@ describe('IndexedDbVaultStore durability', () => {
     store.close()
   })
 
-  test('upgrading an older schema (missing the v5/v6/v7/v8/v9 stores) preserves existing data and adds the new stores', async () => {
+  test('upgrading an older schema (missing the v5/v6 stores) preserves existing data and adds the new stores', async () => {
     // Simulate a device whose IndexedDB was last written by a pre-v5 build:
     // every store EXCEPT vault_restore_transfer_state, opened at version 4.
     await new Promise<void>((resolve, reject) => {
@@ -222,7 +222,10 @@ describe('IndexedDbVaultStore durability', () => {
           ['vault_restore_offer_outbox', ['identityId', 'requestId', 'responderDeviceId']],
           ['transport_status', ['identityId', 'outboundEventId']],
           // vault_restore_transfer_state and didcomm_transport_outbox are
-          // deliberately omitted -- the v5, v6, v7, v8, and v9 additions.
+          // deliberately omitted -- the v5 and v6 additions. (v7/v8 added
+          // the since-retired Coordinator binding stores, and v9 added
+          // nothing new to the schema -- both are migration-behavior-only
+          // version bumps now, not store additions.)
         ] as const) {
           database.createObjectStore(name, { keyPath: keyPath as string | string[] })
         }
@@ -253,8 +256,6 @@ describe('IndexedDbVaultStore durability', () => {
     expect(await store.readRestoreTransferSession(identityId, 'device-a')).toBeUndefined()
     // The v6 DIDComm transport outbox was created by the same upgrade.
     expect(await store.readDidCommOutbox(identityId)).toEqual([])
-    // The v7 local Anchor↔Vault↔Coordinator binding store was also created.
-    expect(await store.readCoordinatorBinding(identityId)).toBeUndefined()
     store.close()
 
     // And the database really did land on the current version, not still on 4.

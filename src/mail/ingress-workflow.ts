@@ -13,7 +13,7 @@ export interface MailIngressWorkflowOptions {
   store: IngressAckOutboxReader & VaultDeliveryOutboxReader
   ingressTransport: IngressPullTransport
   deliveryTransport: VaultDeliveryAppendTransport
-  /** Optional cutover hook for a Vault Coordinator binding. */
+  /** Optional hook to flush a durable Vault delivery outbox alongside this sync. */
   flushDelivery?: () => Promise<VaultDeliveryOutboxFlushResult>
   signer: IngressAckSigner & IngressPullSigner & VaultDeliveryAppendSigner
   projector: IngressVerifierProjector

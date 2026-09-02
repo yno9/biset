@@ -29,18 +29,14 @@ import type { IdentityRecord, IdentityRecordStore } from './record-store.ts'
 import { epochOf, exportSecret, generateOwnKeyPackage, ownMlsDeviceCredential, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
 import { createMlsDeviceCredential, encodeMlsDeviceCredential, type MlsDeviceCredentialV2 } from '../mls/device-credential.ts'
 import { webvhAuthenticationService } from '../mls/webvh-authentication-service.ts'
-import { ensureSelfGroupWithRosterInstall, installCurrentRosterProjection, reflectPendingSelfGroupCommits, selfGroupIdHex, type SelfGroupSigner } from '../mls/self-group.ts'
-import { ensureKeyPackagePool } from '../mls/key-package-pool.ts'
-import { CoordinatorMlsDeliveryTransport } from '../mls/coordinator-mls-delivery-transport.ts'
+import { installCurrentRosterProjection, type SelfGroupSigner } from '../mls/self-group.ts'
 import { CoreRosterInstallTransport } from '../mls/core-roster-install-transport.ts'
-import { CoreVaultDeliveryTransport } from '../vault/core-delivery-transport.ts'
 import { StoredSegmentKeyResolver, type SegmentKeyResolver, type VaultEpochKeyResolver } from '../vault/segment-key-resolver.ts'
 import { ActiveVaultSegmentManager, type ActiveVaultSegment } from '../vault/active-segment.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter } from '../vault/store.ts'
 import { deriveVaultEpochKey, MlsVaultEpochKeyResolver } from '../mls/vault-epoch.ts'
 import { MlsMembershipSegmentKeyWrapSigner, MlsMembershipSegmentKeyWrapVerifier } from '../mls/segment-key-membership.ts'
 import { StoredMlsSelfGroupProvider, type MlsSelfGroupStateStore } from '../mls/store.ts'
-import type { MlsKeyPackageStore } from '../mls/keypackage-store.ts'
 import { deviceKidFragment } from '../didcomm/devicekid.ts'
 import { publishRoutingPointer } from '../didcomm/webvh-routing-pointer.ts'
 import { buildRoutingDoc, fetchRouting, putRouting, setRoutingMimiVaultRoom, mimiVaultRoomFromRouting, type RoutingDoc, type MediatorRegistration } from '../didcomm/webvh-routing.ts'
@@ -71,36 +67,6 @@ import type { VaultMutationIntent } from '../local-jmap/mutations.ts'
 import type { ClientState } from '../mls/vendor/index.ts'
 import { deriveVaultStorageKek, VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../vault/storage-root.ts'
 
-/**
- * Asks core's own bounded delivery store what its CURRENT `latestSeq` is,
- * for `deliveryFloorForNewDevice` — the seq a newly-trusted device should
- * start pulling from (PLAN.md §2.3: never a past one, or it would be
- * retroactively handed history it never should have received). `after: 0`
- * throws away whatever `items` comes back with; only `latestSeq` is wanted
- * here. Requires `deviceKid` to already be a trusted device for
- * `identityId` — an untrusted device's own pull is refused
- * (`rosterBackedVaultDeliveryAuthorizer`), which is why this is called from
- * `maintainSelfGroup` (an EXISTING member reflecting a new one), never from
- * `restoreIdentity`/`createNewIdentity` (where the calling device is not yet
- * trusted, or — for genesis — there is no vault content yet for `0` to be
- * wrong about).
- */
-async function currentVaultDeliveryLatestSeq(
-  coreBaseUrl: string,
-  identityId: string,
-  deviceKid: string,
-  sign: SelfGroupSigner,
-  fetchImpl: typeof fetch | undefined,
-  now: () => Date,
-): Promise<DeliverySeq> {
-  const transport = new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl, fetch: fetchImpl })
-  const pull: Omit<VaultDeliveryPullV1, 'signature'> = {
-    version: 1, identityId, recipientDeviceId: deviceKid, after: deliverySeq(0n), requestedAt: now().toISOString(),
-  }
-  const result = await transport.pull({ ...pull, signature: await sign(vaultDeliveryPullSigningBytes(pull)) })
-  return result.latestSeq
-}
-
 let authServiceInstalled = false
 /** Idempotent: `setMlsAuthService` is one global (group.ts's own note on
  * why), so calling this more than once across a session's several
@@ -125,29 +91,12 @@ export interface CreateNewIdentityOptions {
   /** This identity's own subdomain (`y.biset.md`) — used unchanged for both
    * did:webvh (identifier.ts's subdomain form) and the did:web mirror. */
   domain: string
-  /** Where the self-group DS/roster narrow HTTP API lives (`core/app.ts`'s
-   * deployment) — a separate concern from `domain`, which only names the
-   * did:webvh/did:web genesis location. Legacy coordinator path only (see
-   * `mlsDeliveryBaseUrl`) — omit both when the caller drives Self/Vault
-   * membership through biset-mimi instead (PLAN_biset-mimi-server.md §18);
-   * that happens as its own step after this returns, driven by the
-   * deployment's own `mimiSelfBaseUrl` config, never hardcoded here. */
-  coreBaseUrl?: string
-  /** Coordinator-hosted RFC 9750 Delivery Service (retired in production,
-   * PLAN_biset-mimi-server.md §19.h) — optional now. When omitted, this
-   * device's MLS credential/deviceKid is still derived (that part was
-   * always a local computation, no network round trip), but no self-group
-   * join is attempted here; the caller is responsible for the biset-mimi
-   * equivalent (`ensureMimiVaultRoom`-shaped logic, mirrored from
-   * main.ts's own boot flow) once this returns. */
-  mlsDeliveryBaseUrl?: string
   /** Generated if omitted — the only reason to pass one in is a test. */
   masterSeed?: Uint8Array
   /** Independent first Spare Key seed; generated when omitted. */
   spareSeed?: Uint8Array
   didWebMirror?: boolean
   fetch?: typeof fetch
-  now?: () => Date
 }
 
 export interface CreatedIdentity {
@@ -155,95 +104,42 @@ export interface CreatedIdentity {
   masterSeed: Uint8Array
   /** Creation-only; never persisted in IdentityRecord. */
   spareSeed?: Uint8Array
-  /** Only set when `mlsDeliveryBaseUrl` (the legacy coordinator path) was
-   * provided. Undefined when this device's Self/Vault membership is
-   * biset-mimi-driven instead — `record.deviceKid` is populated either way. */
-  selfGroupState?: ClientState
-}
-
-interface RegisterDeviceOptions {
-  coreBaseUrl?: string
-  mlsDeliveryBaseUrl?: string
-  didWebMirror?: boolean
-  fetch?: typeof fetch
-  now: () => Date
-  deliveryFloorForNewDevice?: () => Promise<DeliverySeq>
 }
 
 /**
  * The machinery `createNewIdentity` and `restoreIdentity` share once a DID
  * and its Root Key are in hand: mint this device's MLS leaf key and
- * Root-signed credential, join the self group (creating it if
- * this is the genesis device, external-joining otherwise —
- * `ensureSelfGroupWithRosterInstall` decides which), and top up the
- * KeyPackage pool.
+ * Root-signed credential. Self/Vault membership itself is a separate,
+ * later step the caller drives through biset-mimi (`ensureMimiVaultRoom`,
+ * main.ts's own boot flow) -- this only derives the purely local values
+ * (deviceKid, deviceSignaturePrivateKey) that step needs to reconstruct
+ * this device's credential (found live, 2026-09-02: main.ts's
+ * `mimiVaultConfigured` boot branch had no key to reconstruct this device's
+ * own credential from, and fell back to the wrong key entirely, throwing
+ * "MIMI Vault device credential does not match this identity device").
  */
-async function registerDeviceAndJoinSelfGroup(
+function registerDevice(
   did: string,
   rootPrivateKey: Uint8Array,
   signPrivateKey: Uint8Array,
   generation: string,
-  selfGroupStore: MlsSelfGroupStateStore,
-  keyStore: MlsKeyPackageStore,
-  opts: RegisterDeviceOptions,
-): Promise<{ deviceKid: string; selfGroupState?: ClientState; deviceSignaturePrivateKey?: Uint8Array }> {
+): { deviceKid: string; deviceSignaturePrivateKey: Uint8Array } {
   ensureMlsAuthServiceInstalled()
-
   const deviceSignaturePrivateKey = ed25519.utils.randomSecretKey()
   const deviceCredential = createMlsDeviceCredential(did, generation, ed25519.getPublicKey(deviceSignaturePrivateKey), rootPrivateKey, signPrivateKey)
-  const deviceKid = deviceCredential.deviceKid
-
-  // The legacy coordinator self-group join is now opt-in (only when the
-  // caller supplies its base URL) -- deviceKid above is a purely local
-  // computation either way, so a caller driving Self/Vault membership
-  // through biset-mimi instead (the deployment's own `mimiSelfBaseUrl`,
-  // never hardcoded here) has everything it needs without this branch. The
-  // coordinator path stores `deviceSignaturePrivateKey` inside the
-  // self-group ClientState it creates below (recoverable via
-  // `ownSignaturePrivateKey`); skipping that path means nothing else would
-  // ever durably hold this random per-device key, so it must be returned
-  // here for the caller to persist on `IdentityRecord` instead (found live,
-  // 2026-09-02: main.ts's `mimiVaultConfigured` boot branch had no key to
-  // reconstruct this device's own credential from, and fell back to the
-  // wrong key entirely, throwing "MIMI Vault device credential does not
-  // match this identity device").
-  if (!opts.mlsDeliveryBaseUrl || !opts.coreBaseUrl || !opts.deliveryFloorForNewDevice) return { deviceKid, deviceSignaturePrivateKey }
-
-  const kp = await generateOwnKeyPackage(deviceCredential, deviceSignaturePrivateKey)
-  const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, kp.privatePackage.signaturePrivateKey)
-  const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: opts.mlsDeliveryBaseUrl, deviceCredential: encodeMlsDeviceCredential(deviceCredential), fetch: opts.fetch })
-  const rosterTransport = new CoreRosterInstallTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
-
-  const selfGroupState = await ensureSelfGroupWithRosterInstall(
-    selfGroupStore, mlsTransport, rosterTransport, did, deviceKid, kp, sign, opts.deliveryFloorForNewDevice, opts.now,
-  )
-  if (!selfGroupState) throw new Error('registerDeviceAndJoinSelfGroup: self-group bootstrap did not produce a state')
-
-  await ensureKeyPackagePool(mlsTransport, keyStore, did, deviceKid, deviceCredential, deviceSignaturePrivateKey, sign, undefined, opts.now)
-
-  return { deviceKid, selfGroupState }
+  return { deviceKid: deviceCredential.deviceKid, deviceSignaturePrivateKey }
 }
 
 /**
  * Creates a brand-new identity: did:webvh genesis, this device authorized by
  * a Root-signed credential as the first self-group member, and the identity
- * persisted locally. Throws if the identity
- * anchor (genesis PUT) or the core self-group API is unreachable — same
- * fail-fast rule the pre-rewrite signup form used.
- *
- * `selfGroupStore`/`keyStore` are injected (rather than this module picking
- * `IndexedDbMlsSelfGroupStore`/`IndexedDbMlsKeyPackageStore` itself) so this
- * whole flow can run end to end against in-memory fakes outside a browser —
- * the real caller passes the IndexedDB-backed stores.
+ * persisted locally. Throws if the identity anchor (genesis PUT) is
+ * unreachable — same fail-fast rule the pre-rewrite signup form used.
  */
 export async function createNewIdentity(
   recordStore: IdentityRecordStore,
-  selfGroupStore: MlsSelfGroupStateStore,
-  keyStore: MlsKeyPackageStore,
   opts: CreateNewIdentityOptions,
 ): Promise<CreatedIdentity> {
-  const now = opts.now ?? (() => new Date())
-
   const masterSeed = opts.masterSeed ?? crypto.getRandomValues(new Uint8Array(32))
   const root = deriveRootKey(masterSeed)
   const spareSeed = opts.spareSeed ?? crypto.getRandomValues(new Uint8Array(32))
@@ -254,173 +150,16 @@ export async function createNewIdentity(
     didWebMirror: opts.didWebMirror, fetch: opts.fetch,
   })
 
-  // The genesis device is the roster's own first (and, at this point, only)
-  // trusted device — it starts pulling vault delivery from whatever the
-  // CURRENT latestSeq is, which for a brand-new identity is the beginning.
-  const { deviceKid, selfGroupState, deviceSignaturePrivateKey } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, root.privateKey, versionId, selfGroupStore, keyStore, {
-    coreBaseUrl: opts.coreBaseUrl, mlsDeliveryBaseUrl: opts.mlsDeliveryBaseUrl, didWebMirror: opts.didWebMirror, fetch: opts.fetch, now,
-    deliveryFloorForNewDevice: async () => deliverySeq(0n),
-  })
+  const { deviceKid, deviceSignaturePrivateKey } = registerDevice(did, root.privateKey, root.privateKey, versionId)
 
   const record: IdentityRecord = {
     did, masterSeed: toHex(masterSeed), rootPublicKey: toHex(root.publicKey), rootPrivateKey: toHex(root.privateKey),
     signPublicKey: toHex(root.publicKey), signPrivateKey: toHex(root.privateKey), generation: versionId, deviceKid,
-    ...(deviceSignaturePrivateKey ? { deviceSignaturePrivateKey: toHex(deviceSignaturePrivateKey) } : {}),
+    deviceSignaturePrivateKey: toHex(deviceSignaturePrivateKey),
   }
   await recordStore.put(record)
 
-  return { record, masterSeed, spareSeed, selfGroupState }
-}
-
-export interface MaintainSelfGroupOptions {
-  coreBaseUrl: string
-  mlsDeliveryBaseUrl: string
-  /** This identity's own segment stores — needed only for the self-grant
-   * sweep below (a device with no vault content yet may omit both and just
-   * get the plain catch-up/KeyPackage-topup behavior). */
-  wraps?: SegmentKeyWrapReader & SegmentKeyWrapWriter
-  segments?: ActiveVaultSegmentStore
-  fetch?: typeof fetch
-  now?: () => Date
-}
-
-/**
- * Routine upkeep for an identity this device already belongs to — run once
- * at boot (`main.ts`'s `bootClient`) rather than at any particular user
- * action, since neither half needs one: `reflectPendingSelfGroupCommits`
- * catches this device up on other devices' self-group commits and reflects
- * the roster once it does (the "existing member notices and reflects" half
- * `installCurrentRosterProjection`'s own doc comment describes), and
- * `ensureKeyPackagePool` tops up whatever the DS has run down. A no-op
- * (returns undefined) when this device has no self-group state at all yet —
- * that is `registerDeviceAndJoinSelfGroup`'s job, not this one's.
- *
- * Reconstructs this device's own `SelfGroupSigner` straight from the stored
- * `ClientState` (`ownSignaturePrivateKey`) rather than requiring the
- * original `OwnKeyPackage` to still be in memory — the whole point of this
- * running at boot, long after whatever call created or restored the
- * identity has returned.
- *
- * When `reflectPendingSelfGroupCommits` actually advances this device's own
- * epoch, runs `selfGrantSegmentRewraps` before anything else touches the new
- * state: the just-superseded `ClientState` (`oldState`, still in memory
- * right here) is the ONLY place its exporter secret will ever exist again
- * (MLS forward secrecy, RFC 9420 §8.5) — there is no "catch up later" for
- * this step, unlike the roster/KeyPackage upkeep around it.
- */
-export async function maintainSelfGroup(
-  selfGroupStore: MlsSelfGroupStateStore,
-  keyStore: MlsKeyPackageStore,
-  record: IdentityRecord,
-  opts: MaintainSelfGroupOptions,
-): Promise<ClientState | undefined> {
-  if (!record.deviceKid) return undefined
-  const stored = await selfGroupStore.load(record.did)
-  if (!stored) return undefined
-
-  const now = opts.now ?? (() => new Date())
-  const oldState = stored.state
-  const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(oldState))
-  const deviceCredential = ownMlsDeviceCredential(oldState)
-  const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: opts.mlsDeliveryBaseUrl, deviceCredential: encodeMlsDeviceCredential(deviceCredential), fetch: opts.fetch })
-  const rosterTransport = new CoreRosterInstallTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
-
-  const deliveryFloorForNewDevice = async () => {
-    const projection = await rosterTransport.fetchProjection(record.did)
-    // A current roster member can ask core for the exact latest sequence.
-    // A newly restored/current-generation member cannot use the old roster
-    // yet; zero is only a wire placeholder in that case because production
-    // core replaces every new member floor with its server-side latestSeq.
-    return projection?.devices.some(device => device.deviceId === record.deviceKid)
-      ? currentVaultDeliveryLatestSeq(opts.coreBaseUrl, record.did, record.deviceKid!, sign, opts.fetch, now)
-      : deliverySeq(0n)
-  }
-  const state = await reflectPendingSelfGroupCommits(
-    selfGroupStore, mlsTransport, rosterTransport, record.did, record.deviceKid, sign, deliveryFloorForNewDevice, now,
-  )
-
-  // A transient or version-skew failure during genesis can leave the local
-  // self group durable while core has no roster at all. There is then no MLS
-  // epoch transition for the normal reflection path to notice on the next
-  // boot. Repair that exact missing-genesis case idempotently. A zero floor is
-  // correct here: without an installed roster core could not have accepted
-  // any vault delivery for this identity yet.
-  const acceptedProjection = await rosterTransport.fetchProjection(record.did)
-  if (!acceptedProjection || BigInt(acceptedProjection.epoch) < epochOf(state ?? oldState)) {
-    await installCurrentRosterProjection(
-      rosterTransport, record.did, record.deviceKid, state ?? oldState, sign,
-      deliveryFloorForNewDevice, now,
-    )
-  }
-
-  if (state && opts.wraps && opts.segments && epochOf(state) !== epochOf(oldState)) {
-    await selfGrantSegmentRewraps(opts.segments, opts.wraps, record.did, stored.selfGroupId, record.deviceKid, oldState, state, now)
-  }
-
-  await ensureKeyPackagePool(mlsTransport, keyStore, record.did, record.deviceKid, deviceCredential, ownSignaturePrivateKey(state ?? oldState), sign, undefined, now)
-
-  return state
-}
-
-/**
- * PLAN.md §4.2's self-grant: re-wrap every one of this identity's OWN
- * segments still on `oldState`'s epoch for `newState`'s epoch, the moment
- * `maintainSelfGroup` sees the two differ. A segment with no wrap for
- * `oldEpoch` (e.g. one only ever wrapped for an even earlier epoch that a
- * prior boot's self-grant sweep never reached) is left alone rather than
- * guessed at — the same "unreadable until something re-wraps it" state
- * `store.ts`'s own `VaultSegmentRecord.epoch` doc comment describes, just
- * not solved by this particular pass.
- */
-async function selfGrantSegmentRewraps(
-  segments: ActiveVaultSegmentStore,
-  wraps: SegmentKeyWrapReader & SegmentKeyWrapWriter,
-  identityId: IdentityRecord['did'],
-  selfGroupId: string,
-  deviceKid: string,
-  oldState: ClientState,
-  newState: ClientState,
-  now: () => Date,
-): Promise<void> {
-  const oldEpoch = mlsEpoch(epochOf(oldState))
-  const newEpoch = mlsEpoch(epochOf(newState))
-  const pending = (await segments.allSegments(identityId)).filter(segment => segment.selfGroupId !== VAULT_STORAGE_GROUP_ID && segment.epoch === oldEpoch)
-  if (pending.length === 0) return
-
-  const oldVerifier = new MlsMembershipSegmentKeyWrapVerifier(async () => oldState)
-  const newSigner = new MlsMembershipSegmentKeyWrapSigner(deviceKid, async () => newState)
-  const grantedAt = now().toISOString()
-
-  for (const segment of pending) {
-    const wrap = await wraps.readSegmentKeyWrap(identityId, segment.segmentId, oldEpoch)
-    if (!wrap) continue
-    const oldVek = await deriveVaultEpochKey({ selfGroupId, epoch: oldEpoch, exportSecret: (label, context, length) => exportSecret(oldState, label, context, length) })
-    try {
-      const segmentKey = await unwrapSegmentKey(oldVek, wrap, oldVerifier)
-      try {
-        const newVek = await deriveVaultEpochKey({ selfGroupId, epoch: newEpoch, exportSecret: (label, context, length) => exportSecret(newState, label, context, length) })
-        try {
-          const rewrapped = await createSegmentKeyWrap(newVek, segmentKey, {
-            identityId,
-            selfGroupId,
-            segmentId: segment.segmentId,
-            sourceEpoch: oldEpoch,
-            recipientEpoch: newEpoch,
-            grantorDeviceId: deviceKid,
-            grantedAt,
-          }, newSigner)
-          await wraps.writeSegmentKeyWrap(rewrapped)
-          await segments.recordSegmentRewrapped(identityId, segment.segmentId, newEpoch)
-        } finally {
-          newVek.fill(0)
-        }
-      } finally {
-        segmentKey.fill(0)
-      }
-    } finally {
-      oldVek.fill(0)
-    }
-  }
+  return { record, masterSeed, spareSeed }
 }
 
 /**
@@ -462,11 +201,9 @@ export async function repairCurrentLocalSegmentKeyWraps(
       // Vault (ActiveVaultSegmentManager's stableActiveSegment path,
       // vault/active-segment.ts) creates its segments under this scheme
       // from the start, so without this skip every identity throws here on
-      // every single boot -- selfGrantSegmentRewraps just above already
-      // excludes these the same way (its own `.filter(segment =>
-      // segment.selfGroupId !== VAULT_STORAGE_GROUP_ID ...)`); this
-      // function had no matching exclusion (found live, 2026-08-31: the
-      // mismatch fired unconditionally, caught and only ever logged as
+      // every single boot; this function had no matching exclusion (found
+      // live, 2026-08-31: the mismatch fired unconditionally, caught and
+      // only ever logged as
       // "local Vault segment belongs to another self group").
       if (segment.selfGroupId === VAULT_STORAGE_GROUP_ID) continue
       if (segment.selfGroupId !== stored.selfGroupId) throw new TypeError('local Vault segment belongs to another self group')
@@ -504,34 +241,12 @@ export interface RestoreIdentityOptions {
   /** The identity's own subdomain — same value `createNewIdentity` was
    * originally called with for it. */
   domain: string
-  /** Legacy coordinator path only — see `mlsDeliveryBaseUrl`. Omit both when
-   * the caller drives Self/Vault membership through biset-mimi instead. */
-  coreBaseUrl?: string
-  /** Coordinator-hosted RFC 9750 Delivery Service (retired in production).
-   * Optional now — when omitted, this device's credential/deviceKid is
-   * still derived locally, but no self-group join happens here; the caller
-   * runs the biset-mimi equivalent afterward, driven by its own
-   * `mimiSelfBaseUrl` config. */
-  mlsDeliveryBaseUrl?: string
   /** The 24-word BIP39 recovery phrase (identity/seed.ts). */
   mnemonic: string
   /** Current Sign phrase. Initially this is the same phrase as Root. */
   signMnemonic: string
-  /**
-   * The vault-delivery seq THIS DEVICE should start pulling from — must be
-   * the CURRENT `latestSeq`, never a past one (PLAN.md §2.3: a new device is
-   * never retroactively added as a pending recipient of history it never
-   * should have received). Vault delivery's own pull API is not wired up to
-   * this module yet, so the caller must supply it; there is no safe default
-   * here the way genesis's `0` is, since an existing identity may already
-   * have real vault content. Only meaningful alongside `mlsDeliveryBaseUrl`
-   * (the legacy coordinator path) -- biset-mimi's own external-join
-   * (`joinMimiVaultRoom`) works out its own delivery cursor independently.
-   */
-  deliveryFloorForNewDevice?: () => Promise<DeliverySeq>
   didWebMirror?: boolean
   fetch?: typeof fetch
-  now?: () => Date
 }
 
 /**
@@ -546,16 +261,12 @@ export interface RestoreIdentityOptions {
  * `add-device-verification-method.ts` only ever appends, so this stays the
  * one this identity's genesis minted) is checked against the phrase's own
  * derived key before anything else happens: a wrong phrase, or someone
- * else's identity, must never register a device or touch the self group.
+ * else's identity, must never register a device.
  */
 export async function restoreIdentity(
   recordStore: IdentityRecordStore,
-  selfGroupStore: MlsSelfGroupStateStore,
-  keyStore: MlsKeyPackageStore,
   opts: RestoreIdentityOptions,
 ): Promise<CreatedIdentity> {
-  const now = opts.now ?? (() => new Date())
-
   const masterSeed = mnemonicToSeed(opts.mnemonic)
   const root = deriveRootKey(masterSeed)
 
@@ -580,19 +291,16 @@ export async function restoreIdentity(
   const signPublicKey = ed25519.getPublicKey(signPrivateKey)
   if (encodeMultikey(signPublicKey) !== updateKeys[0]) throw new Error('restoreIdentity: Sign Key phrase is not current for this identity')
 
-  const { deviceKid, selfGroupState, deviceSignaturePrivateKey } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, signPrivateKey, last.versionId, selfGroupStore, keyStore, {
-    coreBaseUrl: opts.coreBaseUrl, mlsDeliveryBaseUrl: opts.mlsDeliveryBaseUrl, didWebMirror: opts.didWebMirror, fetch: opts.fetch, now,
-    deliveryFloorForNewDevice: opts.deliveryFloorForNewDevice,
-  })
+  const { deviceKid, deviceSignaturePrivateKey } = registerDevice(did, root.privateKey, signPrivateKey, last.versionId)
 
   const record: IdentityRecord = {
     did, masterSeed: toHex(masterSeed), rootPublicKey: toHex(root.publicKey), rootPrivateKey: toHex(root.privateKey),
     signPublicKey: toHex(signPublicKey), signPrivateKey: toHex(signPrivateKey), generation: last.versionId, deviceKid,
-    ...(deviceSignaturePrivateKey ? { deviceSignaturePrivateKey: toHex(deviceSignaturePrivateKey) } : {}),
+    deviceSignaturePrivateKey: toHex(deviceSignaturePrivateKey),
   }
   await recordStore.put(record)
 
-  return { record, masterSeed, selfGroupState }
+  return { record, masterSeed }
 }
 
 export interface VaultCryptoBoundary {
@@ -616,9 +324,8 @@ export interface VaultCryptoBoundary {
  * the one piece `vault/segment-key-resolver.ts`, `vault/crypto.ts`, and
  * `vault/active-segment.ts` were built to receive but never got — to this
  * identity's actual self-group state. Local JMAP Gateway / vault mutation
- * code calls this once it has `record`/`selfGroupStore` in hand (the same
- * two `maintainSelfGroup` already needs) to get a `SegmentKeyResolver` for
- * decrypting vault objects, a signer for wrapping new ones, and an
+ * code calls this once it has `record`/`selfGroupStore` in hand to get a
+ * `SegmentKeyResolver` for decrypting vault objects, a signer for wrapping new ones, and an
  * `activeSegment()` for `VaultBackedLocalJmapMutationSink`.
  *
  * Reads the self-group `ClientState` fresh on every resolve/sign/verify

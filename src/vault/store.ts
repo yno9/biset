@@ -4,8 +4,6 @@ import type { DeliverySeq, DeviceId, IdentityId, MlsEpoch, SegmentId, VaultEvent
 import type { DeliveryPullResult, RestoreOfferV1, RestoreRequestV1, SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 import { assertRestoreOffer, assertRestoreRequest } from '../protocol/validate.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { assertVaultMlsBinding } from '../mls/vault-group.ts'
-import { assertVaultGroupView, type VaultGroupViewV1 } from '../protocol/vault-group-view.ts'
 import type { RestoreTransferChunkCommit, RestoreTransferReceiverStore, RestoreTransferSessionV1 } from './restore-transfer-receiver.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
@@ -31,8 +29,6 @@ const STORES = {
   restoreTransferState: 'vault_restore_transfer_state',
   transportStatus: 'transport_status',
   didCommOutbox: 'didcomm_transport_outbox',
-  coordinatorBinding: 'vault_coordinator_binding',
-  coordinatorPendingJoin: 'vault_coordinator_pending_join',
 } as const
 
 type StoreName = (typeof STORES)[keyof typeof STORES]
@@ -117,45 +113,6 @@ export interface VaultDeliveryAckOutboxRecord {
   ack: VaultDeliveryAckV1
   attempts: number
   createdAt: string
-}
-
-/**
- * Client-local bridge between a public identity partition and an opaque
- * Vault. Neither Anchor nor Coordinator receives this record as a whole.
- */
-export interface LocalVaultCoordinatorBindingV1 {
-  version: 1
-  identityId: IdentityId
-  coordinatorUrl: string
-  groupView: VaultGroupViewV1
-  /** Encoded private ClientState for the Vault-specific MLS group. */
-  vaultMlsState: Uint8Array
-  localMemberId: string
-  memberSignaturePrivateKey: Uint8Array
-  createdAt: string
-  updatedAt: string
-}
-
-export interface LocalVaultCoordinatorBindingStore {
-  readCoordinatorBinding(identityId: IdentityId): Promise<LocalVaultCoordinatorBindingV1 | undefined>
-  writeCoordinatorBinding(value: LocalVaultCoordinatorBindingV1): Promise<void>
-  clearCoordinatorBinding(identityId: IdentityId): Promise<void>
-}
-
-/** One-shot private KeyPackage material retained only while a second device
- * waits for the existing member to approve its MLS Add. */
-export interface LocalVaultCoordinatorPendingJoinV1 {
-  version: 1
-  identityId: IdentityId
-  coordinatorUrl: string
-  vaultId: VaultId
-  memberId: VaultMemberId
-  encodedKeyPackage: Uint8Array
-  initPrivateKey: Uint8Array
-  hpkePrivateKey: Uint8Array
-  signaturePrivateKey: Uint8Array
-  createdAt: string
-  expiresAt: string
 }
 
 /** Durable client-side intent to ask a trusted peer for a foreground restore. */
@@ -378,7 +335,7 @@ export interface VaultRestoreOfferOutboxStore {
   clearRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjectionWriter, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, RecoveryArchiveImportStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressReceiptReader, IngressAckOutboxReader, DidCommTransportOutboxStore, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore, LocalVaultCoordinatorBindingStore {
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjectionWriter, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, RecoveryArchiveImportStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressReceiptReader, IngressAckOutboxReader, DidCommTransportOutboxStore, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -726,65 +683,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
       .map(copyDeliveryOutbox)
   }
 
-  async readCoordinatorBinding(identityId: IdentityId): Promise<LocalVaultCoordinatorBindingV1 | undefined> {
-    if (!identityId) throw new TypeError('Coordinator binding identity is required')
-    const transaction = this.database.transaction(STORES.coordinatorBinding, 'readonly')
-    const completed = transactionDone(transaction)
-    const value = await requestValue<LocalVaultCoordinatorBindingV1 | undefined>(transaction.objectStore(STORES.coordinatorBinding).get(identityId))
-    await completed
-    return value && copyCoordinatorBinding(value)
-  }
-
-  async writeCoordinatorBinding(value: LocalVaultCoordinatorBindingV1): Promise<void> {
-    assertCoordinatorBinding(value)
-    const transaction = this.database.transaction(STORES.coordinatorBinding, 'readwrite')
-    transaction.objectStore(STORES.coordinatorBinding).put(copyCoordinatorBinding(value))
-    await transactionDone(transaction)
-  }
-
-  async clearCoordinatorBinding(identityId: IdentityId): Promise<void> {
-    if (!identityId) throw new TypeError('Coordinator binding identity is required')
-    const transaction = this.database.transaction(STORES.coordinatorBinding, 'readwrite')
-    transaction.objectStore(STORES.coordinatorBinding).delete(identityId)
-    await transactionDone(transaction)
-  }
-
-  async readCoordinatorPendingJoin(identityId: IdentityId): Promise<LocalVaultCoordinatorPendingJoinV1 | undefined> {
-    if (!identityId) throw new TypeError('Coordinator pending join identity is required')
-    const transaction = this.database.transaction(STORES.coordinatorPendingJoin, 'readonly')
-    const completed = transactionDone(transaction)
-    const value = await requestValue<LocalVaultCoordinatorPendingJoinV1 | undefined>(transaction.objectStore(STORES.coordinatorPendingJoin).get(identityId))
-    await completed
-    return value && copyCoordinatorPendingJoin(value)
-  }
-
-  async writeCoordinatorPendingJoin(value: LocalVaultCoordinatorPendingJoinV1): Promise<void> {
-    assertCoordinatorPendingJoin(value)
-    const transaction = this.database.transaction(STORES.coordinatorPendingJoin, 'readwrite')
-    transaction.objectStore(STORES.coordinatorPendingJoin).put(copyCoordinatorPendingJoin(value))
-    await transactionDone(transaction)
-  }
-
-  async clearCoordinatorPendingJoin(identityId: IdentityId): Promise<void> {
-    if (!identityId) throw new TypeError('Coordinator pending join identity is required')
-    const transaction = this.database.transaction(STORES.coordinatorPendingJoin, 'readwrite')
-    transaction.objectStore(STORES.coordinatorPendingJoin).delete(identityId)
-    await transactionDone(transaction)
-  }
-
-  async commitCoordinatorJoin(binding: LocalVaultCoordinatorBindingV1): Promise<void> {
-    assertCoordinatorBinding(binding)
-    const transaction = this.database.transaction([STORES.coordinatorBinding, STORES.coordinatorPendingJoin], 'readwrite')
-    const pending = await requestValue<LocalVaultCoordinatorPendingJoinV1 | undefined>(transaction.objectStore(STORES.coordinatorPendingJoin).get(binding.identityId))
-    if (!pending || pending.vaultId !== binding.groupView.vaultId || pending.memberId !== binding.localMemberId) {
-      transaction.abort()
-      throw new Error('Coordinator binding does not match the pending join')
-    }
-    transaction.objectStore(STORES.coordinatorBinding).put(copyCoordinatorBinding(binding))
-    transaction.objectStore(STORES.coordinatorPendingJoin).delete(binding.identityId)
-    await transactionDone(transaction)
-  }
-
   async removeDeliveryOutbox(identityId: IdentityId, entryId: VaultEventId): Promise<void> {
     if (!identityId || !entryId) throw new TypeError('delivery outbox identity and entry ID are required')
     const transaction = this.database.transaction(STORES.deliveryOutbox, 'readwrite')
@@ -1005,8 +903,20 @@ function openDatabase(): Promise<IDBDatabase> {
       // one that contains the actual Vault-specific private MLS state. A v7
       // row cannot be upgraded cryptographically, so discard only that
       // opt-in binding; local Vault content remains untouched and can be
-      // provisioned again after an explicit login.
-      if (event.oldVersion > 0 && event.oldVersion < 8) request.transaction?.objectStore(STORES.coordinatorBinding).clear()
+      // provisioned again after an explicit login. Coordinator itself (and
+      // the object store's own schema entry) is gone as of this version, so
+      // createStores above no longer creates 'vault_coordinator_binding' --
+      // a client already past v8 still physically has it (the schema that
+      // created it was live when their DB was last upgraded) and this still
+      // clears it by its literal name, but a client jumping straight from
+      // well before v8 (nothing here ever created the store for them) must
+      // not blindly call .objectStore() on a name that was never created --
+      // that throws synchronously and aborts the WHOLE upgrade transaction,
+      // not just this cleanup step, taking every other store's migration
+      // down with it.
+      if (event.oldVersion > 0 && event.oldVersion < 8 && request.transaction?.objectStoreNames.contains('vault_coordinator_binding')) {
+        request.transaction.objectStore('vault_coordinator_binding').clear()
+      }
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error ?? new Error('failed to open vault database'))
@@ -1039,8 +949,6 @@ const KEY_PATHS: Record<StoreName, string | string[]> = {
   [STORES.restoreTransferState]: ['identityId', 'requesterDeviceId'],
   [STORES.transportStatus]: ['identityId', 'outboundEventId'],
   [STORES.didCommOutbox]: ['identityId', 'outboundEventId'],
-  [STORES.coordinatorBinding]: 'identityId',
-  [STORES.coordinatorPendingJoin]: 'identityId',
 }
 
 function createStores(database: IDBDatabase): void {
@@ -1163,52 +1071,6 @@ function copyDeliveryAckOutbox(value: VaultDeliveryAckOutboxRecord): VaultDelive
     ...value,
     ack: { ...value.ack, payloadHash: value.ack.payloadHash.slice(), signature: value.ack.signature.slice() },
   }
-}
-
-function assertCoordinatorBinding(value: LocalVaultCoordinatorBindingV1): void {
-  if (value.version !== 1 || !value.identityId || !value.localMemberId || !(value.vaultMlsState instanceof Uint8Array) || value.vaultMlsState.length === 0) throw new TypeError('local Coordinator binding identity, member, or MLS state is invalid')
-  assertVaultGroupView(value.groupView)
-  const member = value.groupView.members.find(candidate => candidate.memberId === value.localMemberId)
-  if (!member || value.memberSignaturePrivateKey.length !== 32 || !equalBytes(ed25519.getPublicKey(value.memberSignaturePrivateKey), member.signaturePublicKey)) {
-    throw new TypeError('local Coordinator binding key does not match the accepted group view')
-  }
-  assertVaultMlsBinding({ encodedState: value.vaultMlsState, groupView: value.groupView, localMemberId: value.localMemberId, memberSignaturePrivateKey: value.memberSignaturePrivateKey })
-  let url: URL
-  try { url = new URL(value.coordinatorUrl) } catch { throw new TypeError('local Coordinator URL is invalid') }
-  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password || url.search || url.hash) throw new TypeError('local Coordinator URL must be an HTTP(S) origin or base path')
-  assertCanonicalTimestamp(value.createdAt, 'Coordinator binding createdAt')
-  assertCanonicalTimestamp(value.updatedAt, 'Coordinator binding updatedAt')
-  if (Date.parse(value.updatedAt) < Date.parse(value.createdAt)) throw new TypeError('Coordinator binding updatedAt precedes createdAt')
-}
-
-function copyCoordinatorBinding(value: LocalVaultCoordinatorBindingV1): LocalVaultCoordinatorBindingV1 {
-  return {
-    ...value,
-    vaultMlsState: value.vaultMlsState.slice(),
-    memberSignaturePrivateKey: value.memberSignaturePrivateKey.slice(),
-    groupView: {
-      ...value.groupView,
-      groupId: value.groupView.groupId.slice(),
-      confirmedTranscriptHash: value.groupView.confirmedTranscriptHash.slice(),
-      signature: value.groupView.signature.slice(),
-      members: value.groupView.members.map(member => ({ ...member, signaturePublicKey: member.signaturePublicKey.slice() })),
-    },
-  }
-}
-
-function assertCoordinatorPendingJoin(value: LocalVaultCoordinatorPendingJoinV1): void {
-  if (value.version !== 1 || !value.identityId || !/^vlt_[A-Za-z0-9_-]{43}$/.test(value.vaultId) || !/^vmb_[A-Za-z0-9_-]{43}$/.test(value.memberId) || value.encodedKeyPackage.length === 0 || value.encodedKeyPackage.length > 1024 * 1024) throw new TypeError('local Coordinator pending join is invalid')
-  if (value.initPrivateKey.length === 0 || value.hpkePrivateKey.length === 0 || value.signaturePrivateKey.length !== 32) throw new TypeError('local Coordinator pending join key material is invalid')
-  let url: URL
-  try { url = new URL(value.coordinatorUrl) } catch { throw new TypeError('local Coordinator pending join URL is invalid') }
-  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password || url.search || url.hash) throw new TypeError('local Coordinator pending join URL is invalid')
-  assertCanonicalTimestamp(value.createdAt, 'Coordinator pending join createdAt')
-  assertCanonicalTimestamp(value.expiresAt, 'Coordinator pending join expiresAt')
-  if (Date.parse(value.expiresAt) <= Date.parse(value.createdAt)) throw new TypeError('Coordinator pending join expiry is invalid')
-}
-
-function copyCoordinatorPendingJoin(value: LocalVaultCoordinatorPendingJoinV1): LocalVaultCoordinatorPendingJoinV1 {
-  return { ...value, encodedKeyPackage: value.encodedKeyPackage.slice(), initPrivateKey: value.initPrivateKey.slice(), hpkePrivateKey: value.hpkePrivateKey.slice(), signaturePrivateKey: value.signaturePrivateKey.slice() }
 }
 
 function assertCanonicalTimestamp(value: string, name: string): void {

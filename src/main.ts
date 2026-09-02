@@ -15,12 +15,10 @@ import {
   ensureMimiVaultRoom,
   fromHex,
   mailFromForIdentity,
-  maintainSelfGroup,
   migrateLocalSegmentKeysToStorageRoot,
   repairCurrentLocalSegmentKeyWraps,
 } from './identity/bootstrap.ts'
 import { IndexedDbMlsSelfGroupStore } from './mls/store.ts'
-import { IndexedDbMlsKeyPackageStore } from './mls/keypackage-store.ts'
 import { IndexedDbVaultStore } from './vault/store.ts'
 import { setOnIdentityCreated } from './ui/account-create.ts'
 import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
@@ -52,14 +50,11 @@ import { flushVaultDeliveryOutbox } from './vault/delivery-outbox.ts'
 import type { IngressEnvelopeV1 } from './protocol/ingress.ts'
 import { base64urlToBytes, canonicalHash, equalBytes, sha256Bytes } from './protocol/canonical.ts'
 import { fetchRouting, mimiVaultRoomFromRouting, putRouting, setRoutingMimiVaultRoom, setRoutingName } from './didcomm/webvh-routing.ts'
-import { rotateToPreRotatedKey } from './identity/webvh/prerotation.ts'
 import { moveWebvhIdentity } from './identity/webvh/move.ts'
 import { adoptPendingMove } from './identity/webvh/adopt-move.ts'
 import { encodeMultikey } from './identity/webvh/multikey.ts'
-import { rotateSelfGroupGeneration, type SelfGroupSigner } from './mls/self-group.ts'
 import { decodeKeyPackage, encodeKeyPackage, generateOwnKeyPackage, joinMlsGroup, keyPackageRefOf, memberDeviceCredentialBytes, memberKids, memberList, ownMlsDeviceCredential, ownSignaturePrivateKey, roomMetadataOf, welcomeRecipientRefs, type OwnKeyPackage } from './mls/group.ts'
 import { createMlsDeviceCredential, encodeMlsDeviceCredential } from './mls/device-credential.ts'
-import { CoordinatorMlsDeliveryTransport } from './mls/coordinator-mls-delivery-transport.ts'
 import { CoreRosterInstallTransport } from './mls/core-roster-install-transport.ts'
 import { IndexedDbMlsConversationGroupStore, type LoadedConversationGroup } from './mls/conversation-group-store.ts'
 import type { ClientState } from './mls/vendor/index.ts'
@@ -94,18 +89,9 @@ import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT, relationshipBodyOf, relationshi
 import type { DidCommPlaintext } from './didcomm/message.ts'
 import { deliverySeq, didOfKid } from './protocol/ids.ts'
 import { IndexedDbBisetLoginWalletCredentialStore } from './oid4vp/wallet-store.ts'
-import { BisetOid4vpWallet, discoverTrustedAnchorOid4vpIssuer } from './oid4vp/wallet.ts'
-import { AnchorOidcPkceClient } from './oidc/client.ts'
-import { VaultCoordinatorTransport } from './vault/coordinator-transport.ts'
-import { coordinatorStreamCheckpointIsBehind, flushCoordinatorDeliveryOutbox, flushCoordinatorStreamOutbox, synchronizeCoordinatorDelivery, synchronizeCoordinatorStream } from './vault/coordinator-sync.ts'
 import { ingestVaultDelivery } from './vault/delivery-ingest.ts'
-import { advanceVaultCoordinatorGroup, createAndProvisionVaultCoordinator } from './vault/coordinator-lifecycle.ts'
-import type { LocalVaultCoordinatorBindingV1 } from './vault/store.ts'
-import { createVaultMlsJoinCandidate, joinVaultMlsFromWelcome, prepareVaultMlsAdd, restoreVaultMlsJoinCandidate } from './mls/vault-group.ts'
-import { vaultMlsKeyPackageSigningBytes, vaultMlsMemberRequestSigningBytes, vaultMlsTransitionSigningBytes } from './protocol/vault-mls-ds.ts'
-import { vaultCoordinatorCheckpointSigningBytes, vaultCoordinatorPullSigningBytes } from './protocol/coordinator.ts'
 import { createRecoveryArchiveSnapshot } from './vault/recovery-archive-export.ts'
-import { createCoordinatorCheckpoint, createPortableCoordinatorCheckpoint, deriveCoordinatorRecoveryKek, openCoordinatorCheckpoint, openPortableCoordinatorCheckpoint } from './vault/coordinator-checkpoint.ts'
+import { createPortableCoordinatorCheckpoint, openPortableCoordinatorCheckpoint } from './vault/vault-checkpoint.ts'
 import { rewrapRecoveryArchiveForCurrentEpoch } from './vault/recovery-archive-rewrap.ts'
 import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from './vault/storage-root.ts'
 import { MimiClientTransport } from './mls/mimi-client-transport.ts'
@@ -118,10 +104,8 @@ import { deliveriesPullSigningBytes } from './mimi/authorizer.ts'
 
 const hex = (value: Uint8Array): string => Array.from(value, byte => byte.toString(16).padStart(2, '0')).join('')
 let pollTimer: ReturnType<typeof setInterval> | undefined
-let coordinatorPollTimer: ReturnType<typeof setInterval> | undefined
 let mimiVaultWatchHandle: { close(): void } | undefined
 let mediatorPollHandles: MediatorPollHandle[] = []
-let autoConnectCoordinator: (() => Promise<void>) | undefined
 
 /**
  * New-client bootstrap. The only branch this makes is "does this device
@@ -151,33 +135,18 @@ let autoConnectCoordinator: (() => Promise<void>) | undefined
 // account-create.ts, for the identical reason bootClient does: importing it
 // from account-create.ts would close the same kind of cycle (account-page.ts
 // already imports FROM account-create.ts for the inline-mount helpers).
-setOnIdentityCreated(async (reason, options) => {
-  await bootClient({ coordinatorLoginPopup: options?.coordinatorPopup })
+setOnIdentityCreated(async () => {
+  await bootClient()
   showAccountPage()
-  if (autoConnectCoordinator) {
-    showSysMsg(reason === 'restored' ? 'Restoring encrypted Vault from Coordinator…' : 'Connecting encrypted Vault…')
-    try {
-      await autoConnectCoordinator()
-      showSysMsg(reason === 'restored' ? 'Coordinator Vault restored' : 'Vault connected')
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      console.warn('[coordinator/automatic-connect]', message)
-      showSysMsg(`Coordinator connection failed: ${message}`)
-    }
-  } else {
-    try { options?.coordinatorPopup?.close() } catch {}
-  }
 })
 
-export async function bootClient(options: { coordinatorLoginPopup?: Window } = {}): Promise<void> {
-  autoConnectCoordinator = undefined
+export async function bootClient(): Promise<void> {
   // Cleared unconditionally, before any branch -- logout's own re-entry into
   // bootClient() lands on the zero-identity branch below, which returns
   // before the has-identity branch's own clearInterval would ever run,
   // leaving the OLD interval alive and polling a vault store logout just
   // closed. A re-registration below (has-identity branch) replaces this.
   if (pollTimer !== undefined) { clearInterval(pollTimer); pollTimer = undefined }
-  if (coordinatorPollTimer !== undefined) { clearInterval(coordinatorPollTimer); coordinatorPollTimer = undefined }
   if (mimiVaultWatchHandle !== undefined) { mimiVaultWatchHandle.close(); mimiVaultWatchHandle = undefined }
   // Same reasoning as pollTimer just above: a re-entry into bootClient()
   // (logout, most notably) must not leave a PRIOR identity's mediator polls
@@ -201,7 +170,6 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   }
 
   const selfGroupStore = new IndexedDbMlsSelfGroupStore()
-  const keyStore = new IndexedDbMlsKeyPackageStore()
   const vaultStore = await IndexedDbVaultStore.open()
   const loginWalletStore = new IndexedDbBisetLoginWalletCredentialStore()
   // did:webvh domain move (identity/webvh/adopt-move.ts) -- catches this
@@ -232,9 +200,8 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   // without needing a page reload.
   let identity = records[0]!
   const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did, identity.masterSeed)
-  const { apexDomain, anchorBaseUrl, anchorOidcClientId, coreBaseUrl, mediatorUrls, coordinatorUrl, mimiSelfBaseUrl, conversationMlsDsBaseUrl } = readBisetConfig()
+  const { apexDomain, coreBaseUrl, mediatorUrls, mimiSelfBaseUrl, conversationMlsDsBaseUrl } = readBisetConfig()
   const mimiVaultConfigured = !!(mimiSelfBaseUrl && identity.deviceKid)
-  const coordinatorConfigured = !mimiVaultConfigured && !!(anchorBaseUrl && anchorOidcClientId && coordinatorUrl && identity.deviceKid)
   // Ensured here, before EVERY self-group reader below -- not just
   // vaultDevices/buildVaultCryptoBoundary/enableDidComm further down, but
   // also the repairCurrentLocalSegmentKeyWraps/migrateLocalSegmentKeysToStorageRoot
@@ -258,37 +225,11 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   if (mimiVaultRoom && coreBaseUrl) {
     await ensureMimiCoreRoster(identity, mimiVaultRoom, coreBaseUrl).catch(e => console.warn('[mimi-vault/core-roster]', e instanceof Error ? e.message : e))
   }
-  // A WebVH PUT can succeed while the following MLS submission loses the
-  // network. Reconcile the executing leaf before ordinary maintenance so
-  // rotation is retryable after reload instead of leaving a stranded Vault.
-  if (coordinatorUrl && !mimiSelfBaseUrl) {
-    for (const record of records) {
-      if (!record.deviceKid) continue
-      const stored = await selfGroupStore.load(record.did).catch(() => undefined)
-      if (!stored || ownMlsDeviceCredential(stored.state).generation === record.generation) continue
-      try {
-        const prior = ownMlsDeviceCredential(stored.state)
-        const credential = createMlsDeviceCredential(record.did, record.generation, prior.signaturePublicKey, fromHex(record.rootPrivateKey), fromHex(record.signPrivateKey))
-        const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
-        const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: coordinatorUrl, deviceCredential: encodeMlsDeviceCredential(credential) })
-        await rotateSelfGroupGeneration(selfGroupStore, transport, record.did, record.deviceKid, credential, sign)
-      } catch (error) {
-        console.warn(`[rotation/reconcile] ${record.did}:`, error instanceof Error ? error.message : error)
-      }
-    }
-  }
   // Catch up MLS and repair every local SegmentKey wrap before any inbox,
   // credential, or relationship reader attempts decryption. Running this
   // near the end of boot used to render an empty inbox first; if a segment
   // had skipped more than one epoch, the transition-only self-grant could
   // not repair it at all on later reloads.
-  if (coreBaseUrl && coordinatorUrl && !mimiSelfBaseUrl) {
-    for (const record of records) {
-      await maintainSelfGroup(selfGroupStore, keyStore, record, { coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl, wraps: vaultStore, segments: vaultStore }).catch(e => {
-        console.warn(`[maintainSelfGroup] ${record.did}:`, e instanceof Error ? e.message : e)
-      })
-    }
-  }
   for (const record of records) {
     await repairCurrentLocalSegmentKeyWraps(selfGroupStore, vaultStore, vaultStore, record).catch(e => {
       console.warn(`[repairCurrentLocalSegmentKeyWraps] ${record.did}:`, e instanceof Error ? e.message : e)
@@ -299,19 +240,11 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       console.warn(`[vault-storage/migrate] ${record.did}:`, e instanceof Error ? e.message : e)
     })
   }
-  let coordinatorOidc: AnchorOidcPkceClient | undefined
-  let coordinatorOidcInitialization: Promise<AnchorOidcPkceClient> | undefined
-  let connectCoordinator: (() => Promise<void>) | undefined
-  let createCoordinatorInvitation: (() => Promise<{ invitation: string; expiresAt: string }>) | undefined
-  let joinCoordinatorInvitation: ((invitation: string) => Promise<void>) | undefined
-  let approveCoordinatorDevice: (() => Promise<void>) | undefined
-  let coordinatorBindingActive = false
-  let flushCoordinatorOutbox: (() => Promise<{ appendedEntryIds: string[]; failedEntryId?: string; failureReason?: string }>) | undefined
   let vaultDevices = await selfGroupStore.load(identity.did).then(stored => stored
     ? memberKids(stored.state, identity.did).map(deviceId => ({ deviceId, current: deviceId === identity.deviceKid }))
     : []).catch(() => [])
-  let vaultCardStatus: VaultCardStatus | undefined = (coordinatorConfigured || mimiVaultConfigured) ? {
-    state: 'checking', coordinatorUrl: mimiVaultConfigured ? mimiSelfBaseUrl : coordinatorUrl, detail: mimiVaultConfigured ? 'Opening MIMI Self Vault' : 'Checking saved login session', devices: vaultDevices,
+  let vaultCardStatus: VaultCardStatus | undefined = mimiVaultConfigured ? {
+    state: 'checking', coordinatorUrl: mimiSelfBaseUrl, detail: 'Opening MIMI Self Vault', devices: vaultDevices,
   } : undefined
   const setVaultCard = (next: VaultCardStatus): void => {
     next = { ...next, devices: vaultDevices }
@@ -319,50 +252,6 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     vaultCardStatus = next
     updateVaultCardStatus(next)
   }
-  const ensureCoordinatorOidc = async (): Promise<AnchorOidcPkceClient> => {
-    if (coordinatorOidc) return coordinatorOidc
-    if (!coordinatorConfigured) throw new Error('Coordinator login is not configured')
-    coordinatorOidcInitialization ??= (async () => {
-      const trust = await discoverTrustedAnchorOid4vpIssuer(anchorBaseUrl)
-      const wallet = new BisetOid4vpWallet({ identityId: identity.did, generation: identity.generation, trust, store: loginWalletStore })
-      if (!(await wallet.current())) {
-        await wallet.enroll({
-          did: identity.did,
-          authenticationVerificationMethod: `did:key:${encodeMultikey(fromHex(identity.signPublicKey))}#${encodeMultikey(fromHex(identity.signPublicKey))}`,
-          authenticationPrivateKey: fromHex(identity.signPrivateKey),
-        })
-      }
-      return new AnchorOidcPkceClient({
-        issuer: anchorBaseUrl,
-        clientId: anchorOidcClientId,
-        audience: coordinatorUrl,
-        allowedScopes: ['vault.create', 'vault.group.install', 'vault.append', 'vault.pull', 'vault.ack'],
-        wallet,
-        openPopup: (url, target, features) => {
-          const reserved = options.coordinatorLoginPopup
-          options.coordinatorLoginPopup = undefined
-          if (reserved && !reserved.closed) return reserved
-          return window.open(url, target, features)
-        },
-      })
-    })()
-    try {
-      coordinatorOidc = await coordinatorOidcInitialization
-      return coordinatorOidc
-    } finally {
-      coordinatorOidcInitialization = undefined
-    }
-  }
-  if (coordinatorConfigured) {
-    try {
-      await ensureCoordinatorOidc()
-    } catch (error) {
-      console.warn(`[OID4VP enrollment] ${identity.did}:`, error instanceof Error ? error.message : error)
-    }
-  }
-  const initialCoordinatorBinding = await vaultStore.readCoordinatorBinding(identity.did).catch(() => undefined)
-  const initialCoordinatorPendingJoin = initialCoordinatorBinding ? undefined : await vaultStore.readCoordinatorPendingJoin(identity.did).catch(() => undefined)
-  void initialCoordinatorPendingJoin
   // Signs with the current Sign key (the key routing.json authorization
   // keyAgreement/alsoKnownAs entries are already signed with, webvh-routing.ts's
   // DataIntegrityProof) -- account-page.ts never sees key material itself,
@@ -372,48 +261,14 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     const signPublicKey = fromHex(identity.signPublicKey)
     await setRoutingName(identity.did, name, { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, defaultFetch())
   }
-  // did:webvh pre-rotation (identity/webvh/prerotation.ts) — independent of
-  // coreBaseUrl/deviceKid, same reasoning as editName above:
-  // this is a plain did.jsonl operation against the identity's own domain,
-  // nothing to do with the mail/DIDComm core. The Spare Key phrase itself
-  // (generate/display/prompt) is handled entirely in account-page.ts, which
-  // only ever hands this file the already-revealed key bytes to sign with —
-  // same "key stays here" split as editName.
-  const rotateKeyRotation = async (revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array, nextKeyHash: string): Promise<void> => {
-    if (!identity.deviceKid || !coordinatorUrl) throw new Error('This device is not connected to the Coordinator self group')
-    const deviceKid = identity.deviceKid
-    const generation = await rotateToPreRotatedKey({ did: identity.did, revealedPrivateKey, revealedPublicKey, nextKeyHash })
-    const previousCredential = await loginWalletStore.current(identity.did, anchorBaseUrl).catch(() => undefined)
-    identity = { ...identity, signPrivateKey: hex(revealedPrivateKey), signPublicKey: hex(revealedPublicKey), generation }
-    await recordStore.put(identity)
-    if (previousCredential) await loginWalletStore.remove(identity.did, anchorBaseUrl, previousCredential.credentialId)
-    if (anchorOidcClientId) await loginWalletStore.removeOidcRefreshSession(identity.did, anchorBaseUrl, anchorOidcClientId)
-
-    const stored = await selfGroupStore.load(identity.did)
-    if (!stored) throw new Error('No self-group state for this identity')
-    const oldCredential = ownMlsDeviceCredential(stored.state)
-    const credential = createMlsDeviceCredential(identity.did, generation, oldCredential.signaturePublicKey, fromHex(identity.rootPrivateKey), revealedPrivateKey)
-    const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, ownSignaturePrivateKey(stored.state))
-    const transport = new CoordinatorMlsDeliveryTransport({ baseUrl: coordinatorUrl, deviceCredential: encodeMlsDeviceCredential(credential) })
-    const state = await rotateSelfGroupGeneration(selfGroupStore, transport, identity.did, deviceKid, credential, sign)
-    if (!coreBaseUrl) throw new Error('Self Group roster endpoint is not configured')
-    await maintainSelfGroup(selfGroupStore, keyStore, identity, {
-      coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl, wraps: vaultStore, segments: vaultStore,
-    })
-    vaultDevices = memberKids(state, identity.did).map(deviceId => ({ deviceId, current: deviceId === identity.deviceKid }))
-    await coordinatorOidc?.clear().catch(() => {})
-    coordinatorOidc = undefined
-    coordinatorBindingActive = false
-    flushCoordinatorOutbox = undefined
-    if (vaultCardStatus) setVaultCard({ ...vaultCardStatus, state: 'reconnect-required', detail: 'Sign generation rotated. Reconnect once to activate it at the Coordinator.' })
-  }
   // MIMI-native individual device removal ("zombie device" cleanup) — the
-  // coordinator's own two mechanisms (self-group.ts's removeDeviceFromSelfGroup
-  // / rotateSelfGroupGeneration, both hard-wired to
-  // CoordinatorMlsDeliveryTransport.submitCommit) are dead code for a
-  // MIMI-configured identity, which has no such transport. mimiVaultRoom's
-  // own state IS this identity's self-group state (ensureMimiVaultRoom's doc
-  // comment; store.ts's saveMimiVault writes the same row selfGroupStore.load
+  // Coordinator subsystem this app used to run (self-group.ts's
+  // removeDeviceFromSelfGroup/rotateSelfGroupGeneration, both hard-wired to
+  // CoordinatorMlsDeliveryTransport.submitCommit) has since been deleted
+  // outright, not merely dead code in this branch -- there is no non-MIMI
+  // identity shape left to worry about. mimiVaultRoom's own state IS this
+  // identity's self-group state (ensureMimiVaultRoom's doc comment;
+  // store.ts's saveMimiVault writes the same row selfGroupStore.load
   // reads), so vaultDevices only needs updating here, not re-derived from a
   // second source.
   const removeVaultDevice = async (targetDeviceId: string): Promise<void> => {
@@ -450,14 +305,9 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   configureAccountPage({
     did: identity.did, masterSeed: identity.masterSeed,
     onLogout: logout, onEditName: editName,
-    onRotateKeyRotation: rotateKeyRotation,
     onMoveIdentity: moveIdentity,
     onRemoveVaultDevice: mimiVaultRoom ? removeVaultDevice : undefined,
     vault: vaultCardStatus,
-    onConnectCoordinator: coordinatorConfigured ? async () => {
-      if (!connectCoordinator) throw new Error('Coordinator is still initializing')
-      await connectCoordinator()
-    } : undefined,
     showMessage: showSysMsg,
   })
 
@@ -474,7 +324,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   // second "empty" path.
   async function logout(): Promise<void> {
     // Every one of this session's own IndexedDB connections, not just
-    // vaultStore -- selfGroupStore/keyStore/recordStore never closed
+    // vaultStore -- selfGroupStore/recordStore never closed
     // anywhere before this (each store class's own close() note explains
     // why). Left open, a deleteDatabase() call below blocks on it
     // (IndexedDB won't actually delete a database a live connection still
@@ -488,7 +338,6 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     // accumulated connections, worked every time).
     try { vaultStore.close() } catch { /* best-effort */ }
     try { selfGroupStore.close() } catch { /* best-effort */ }
-    try { keyStore.close() } catch { /* best-effort */ }
     try { recordStore.close() } catch { /* best-effort */ }
     try { loginWalletStore.close() } catch { /* best-effort */ }
     const databaseNames = ['biset-identity', 'biset-mls-keypackages', 'biset-mls-self-group', 'biset-vault-core', 'biset-wallet']
@@ -538,17 +387,6 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       // sendReply never did, which is why only inbound message relay was
       // affected -- it simply waited out the same race and lost every time).
       if (mimiVaultConfigured) return { appendedEntryIds: [] }
-      if (coordinatorBindingActive) {
-        if (coordinatorOidc?.hasFreshAccessToken() && flushCoordinatorOutbox) {
-          const result = await flushCoordinatorOutbox()
-          if (result.failedEntryId) console.warn(`[coordinator/outbox] ${result.failedEntryId}: ${result.failureReason ?? 'append failed'}`)
-          return result
-        }
-        // Once an opaque Coordinator binding exists, never leak/fallback to
-        // the legacy identity-keyed Core route. Retain the durable outbox
-        // until the user renews the short-lived token.
-        return { appendedEntryIds: [] }
-      }
       return flushVaultDeliveryOutbox(vaultStore, new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl }), boundary.signer, identity.did)
     }
     const sequencer = await buildActorSequencer(vaultStore, identity.did, deviceKid)
@@ -1656,435 +1494,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     }, 10_000)
   }
 
-  if (coordinatorConfigured) {
-    const boundary = buildVaultCryptoBoundary(vaultStore, vaultStore, selfGroupStore, identity)
-    const projector = buildVaultDeliveryProjector(selfGroupStore, identity.did, () => readModel.snapshot(), identity.masterSeed)
-    let synchronizeCoordinator: (() => Promise<void>) | undefined
-    let activeCoordinatorBinding = initialCoordinatorBinding
-    type CoordinatorCheckpointState = 'missing' | 'current' | 'restored'
-    const restoreLatestCoordinatorCheckpoint = async (
-      vaultId: import('./protocol/ids.ts').VaultId,
-      route: string,
-      transport: VaultCoordinatorTransport,
-      options: { forceRewrap?: boolean } = {},
-    ): Promise<CoordinatorCheckpointState> => {
-      const checkpoint = await transport.pullCheckpoint({ version: 1, vaultId })
-      const localCursor = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)
-      if (!checkpoint) return 'missing'
-      if (!options.forceRewrap && BigInt(checkpoint.coveredSeq) <= BigInt(localCursor)) return 'current'
-      if (!identity.masterSeed) throw new Error('Coordinator checkpoint restore requires the identity master seed')
-      if (!equalBytes(sha256Bytes(checkpoint.payload), checkpoint.payloadHash)) throw new Error('Coordinator checkpoint payload hash is invalid')
-      const recoveryKek = deriveCoordinatorRecoveryKek(fromHex(identity.masterSeed), vaultId, route)
-      let snapshot: Awaited<ReturnType<typeof openCoordinatorCheckpoint>> | undefined
-      try {
-        snapshot = await openCoordinatorCheckpoint(recoveryKek, checkpoint.payload, { vaultId, coveredSeq: checkpoint.coveredSeq, coordinatorUrl: route })
-        if (snapshot.identityId !== identity.did) throw new Error('Coordinator checkpoint belongs to another identity')
-        const records = await rewrapRecoveryArchiveForCurrentEpoch(snapshot, boundary.epochs, boundary.signer, new Date().toISOString())
-        await vaultStore.commitRecoveryArchive({
-          identityId: identity.did,
-          events: records.events.map(event => ({ ...event, identityId: identity.did })),
-          objects: records.objects.map(object => ({ ...object, identityId: identity.did })),
-          keyWraps: records.keyWraps,
-        })
-        for (const segment of snapshot.segmentKeys) await vaultStore.sealAndActivateSegment({ identityId: identity.did, segmentId: segment.segmentId, segmentKey: segment.key, selfGroupId: VAULT_STORAGE_GROUP_ID, epoch: VAULT_STORAGE_EPOCH, sealed: false, createdAt: snapshot.createdAt })
-        await migrateLocalSegmentKeysToStorageRoot(vaultStore, vaultStore, identity, selfGroupStore)
-        const projection = await buildLocalJmapProjectionRebuild(vaultStore, vaultStore, vaultStore, selfGroupStore, identity.did, identity.masterSeed)()
-        await vaultStore.advanceDeliveryCursor(identity.did, identity.deviceKid!, checkpoint.coveredSeq, projection.state, new Date().toISOString())
-        await refreshInbox(readModel)
-        return 'restored'
-      } finally {
-        recoveryKek.fill(0)
-        if (snapshot) for (const segment of snapshot.segmentKeys) segment.key.fill(0)
-      }
-    }
-    const needsCheckpointRewrap = async (): Promise<boolean> => {
-      const current = await boundary.epochs.currentVaultEpoch(identity.did)
-      const objects = await vaultStore.readVaultObjects(identity.did)
-      for (const segmentId of new Set(objects.map(object => object.segmentId))) {
-        if (!(await vaultStore.readSegmentKeyWrap(identity.did, segmentId, current.epoch))) return true
-      }
-      return false
-    }
-    const configureCoordinator = (binding: LocalVaultCoordinatorBindingV1, oidc: AnchorOidcPkceClient): void => {
-      if (new URL(binding.coordinatorUrl).origin !== new URL(coordinatorUrl).origin) throw new Error('local binding does not match configured Coordinator origin')
-      const transport = new VaultCoordinatorTransport({ baseUrl: binding.coordinatorUrl, accessTokens: oidc })
-      const memberSigner = {
-        memberId: binding.localMemberId,
-        async sign(bytes: Uint8Array) { return ed25519.sign(bytes, binding.memberSignaturePrivateKey) },
-      }
-      activeCoordinatorBinding = binding
-      coordinatorBindingActive = true
-      flushCoordinatorOutbox = () => flushCoordinatorDeliveryOutbox(
-        vaultStore, transport, memberSigner, identity.did,
-        binding.groupView.vaultId, binding.groupView.groupEpoch,
-      )
-      synchronizeCoordinator = async () => {
-        // Sequence equality proves delivery completeness, not decryptability.
-        // Older local Vaults can have every object and cursor while lacking
-        // a wrap for the current self-group epoch. In that case re-apply the
-        // complete checkpoint solely to recover SegmentKeys and mint current
-        // wraps; commitRecoveryArchive remains additive/idempotent.
-        const checkpointState = await restoreLatestCoordinatorCheckpoint(
-          binding.groupView.vaultId,
-          binding.coordinatorUrl,
-          transport,
-          { forceRewrap: await needsCheckpointRewrap() },
-        )
-        const flushed = await flushCoordinatorOutbox!()
-        if (flushed.failedEntryId) throw new Error(`Coordinator outbox append failed: ${flushed.failureReason ?? flushed.failedEntryId}`)
-        const result = await synchronizeCoordinatorDelivery(
-          vaultStore, transport,
-          { ingest: item => ingestVaultDelivery(item, boundary.signer, projector, vaultStore) },
-          memberSigner, identity.did, identity.deviceKid!, binding.groupView.vaultId,
-        )
-        if (result.kind === 'restoreRequired') showSysMsg('Coordinator history gap: restore is required')
-        if (result.kind === 'synced') {
-          if (result.ingestedSequences.length > 0) await refreshInbox(readModel)
-          // Existing deployments may already have acknowledged delivery rows
-          // whose bodies predate durable checkpoints. Seed the first complete
-          // checkpoint even when this client had no new mutation to flush.
-          if (!result.pendingAckSequence && (checkpointState === 'missing' || result.ingestedSequences.length > 0 || flushed.appendedEntryIds.length > 0)) {
-            if (!identity.masterSeed) throw new Error('Coordinator recovery checkpoint requires the identity master seed')
-            const coveredSeq = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)
-            const createdAt = new Date().toISOString()
-            const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, identity.did, createdAt)
-            const recoveryKek = deriveCoordinatorRecoveryKek(fromHex(identity.masterSeed), binding.groupView.vaultId, binding.coordinatorUrl)
-            try {
-              const payload = await createCoordinatorCheckpoint(recoveryKek, snapshot, { vaultId: binding.groupView.vaultId, coveredSeq, coordinatorUrl: binding.coordinatorUrl })
-              const unsigned = { version: 1 as const, vaultId: binding.groupView.vaultId, writerMemberId: binding.localMemberId, coveredSeq, payloadHash: sha256Bytes(payload), createdAt }
-              await transport.putCheckpoint({ ...unsigned, payload, signature: ed25519.sign(vaultCoordinatorCheckpointSigningBytes(unsigned), binding.memberSignaturePrivateKey) })
-            } finally {
-              recoveryKek.fill(0)
-              for (const segment of snapshot.segmentKeys) segment.key.fill(0)
-            }
-          }
-        }
-      }
-    }
-    if (initialCoordinatorBinding && coordinatorOidc) configureCoordinator(initialCoordinatorBinding, coordinatorOidc)
-    connectCoordinator = async () => {
-      const oidc = await ensureCoordinatorOidc()
-      await oidc.authorize()
-      let binding = await vaultStore.readCoordinatorBinding(identity.did)
-      if (!binding) {
-        const transport = new VaultCoordinatorTransport({ baseUrl: coordinatorUrl, accessTokens: oidc })
-        const owned = await transport.ownedVaults()
-        if (owned.length > 1) throw new Error('More than one Coordinator Vault belongs to this login')
-        if (owned.length === 1) {
-          if (!joinCoordinatorInvitation) throw new Error('Coordinator join is still initializing')
-          await joinCoordinatorInvitation('')
-          return
-        }
-        binding = await createAndProvisionVaultCoordinator(vaultStore, transport, identity.did, coordinatorUrl)
-        configureCoordinator(binding, oidc)
-        showSysMsg('Coordinator Vault created')
-      } else configureCoordinator(binding, oidc)
-      await synchronizeCoordinator?.()
-    }
-    const signedMemberRequest = async (binding: LocalVaultCoordinatorBindingV1, afterEpoch = binding.groupView.groupEpoch) => {
-      const unsigned = { version: 1 as const, vaultId: binding.groupView.vaultId, memberId: binding.localMemberId, afterEpoch, requestedAt: new Date().toISOString() }
-      return { ...unsigned, signature: ed25519.sign(vaultMlsMemberRequestSigningBytes(unsigned), binding.memberSignaturePrivateKey) }
-    }
-    createCoordinatorInvitation = async () => {
-      const oidc = await ensureCoordinatorOidc()
-      await oidc.authorize()
-      const binding = activeCoordinatorBinding
-      if (!binding) throw new Error('Connect this device to the Coordinator first')
-      const transport = new VaultCoordinatorTransport({ baseUrl: binding.coordinatorUrl, accessTokens: oidc })
-      return transport.createMlsInvitation(await signedMemberRequest(binding))
-    }
-    approveCoordinatorDevice = async () => {
-      const oidc = await ensureCoordinatorOidc()
-      await oidc.authorize()
-      const binding = activeCoordinatorBinding
-      if (!binding) throw new Error('This device has no Coordinator Vault')
-      const transport = new VaultCoordinatorTransport({ baseUrl: binding.coordinatorUrl, accessTokens: oidc })
-      const packages = await transport.pullMlsKeyPackages(await signedMemberRequest(binding))
-      if (packages.length === 0) return
-      const pullUnsigned = { version: 1 as const, vaultId: binding.groupView.vaultId, recipientMemberId: binding.localMemberId, after: '0', requestedAt: new Date().toISOString() }
-      const head = await transport.pull({ ...pullUnsigned, signature: ed25519.sign(vaultCoordinatorPullSigningBytes(pullUnsigned), binding.memberSignaturePrivateKey) })
-      const floor = deliverySeq(BigInt(head.latestSeq) + 1n)
-      const pending = await prepareVaultMlsAdd({ encodedState: binding.vaultMlsState, groupView: binding.groupView, localMemberId: binding.localMemberId, memberSignaturePrivateKey: binding.memberSignaturePrivateKey }, packages[0]!.keyPackage, floor)
-      const transitionUnsigned = { version: 1 as const, groupView: pending.groupView, commit: pending.commit, welcomes: [{ memberId: pending.memberId, payload: pending.welcome }], submittedAt: new Date().toISOString() }
-      const transition = { ...transitionUnsigned, signature: ed25519.sign(vaultMlsTransitionSigningBytes(transitionUnsigned), binding.memberSignaturePrivateKey) }
-      const updated = await advanceVaultCoordinatorGroup(vaultStore, transport, identity.did, {
-        groupView: pending.groupView,
-        transition,
-        vaultMlsState: pending.encodedState,
-        localMemberId: binding.localMemberId,
-        memberSignaturePrivateKey: binding.memberSignaturePrivateKey,
-        updatedAt: new Date().toISOString(),
-      })
-      pending.confirm()
-      configureCoordinator(updated, oidc)
-    }
-    joinCoordinatorInvitation = async invitation => {
-      if (activeCoordinatorBinding) throw new Error('This device already has a Coordinator Vault')
-      const oidc = await ensureCoordinatorOidc()
-      await oidc.authorize()
-      const transport = new VaultCoordinatorTransport({ baseUrl: coordinatorUrl, accessTokens: oidc })
-      let pending = await vaultStore.readCoordinatorPendingJoin(identity.did)
-      if (pending && Date.parse(pending.expiresAt) <= Date.now()) {
-        await vaultStore.clearCoordinatorPendingJoin(identity.did)
-        pending = undefined
-      }
-      const resuming = pending !== undefined
-      if (!pending) {
-        const vaultId = invitation
-          ? (await transport.redeemMlsInvitation({ version: 1, invitation, redeemedAt: new Date().toISOString() })).vaultId
-          : await (async () => {
-            const owned = await transport.ownedVaults()
-            if (owned.length !== 1) throw new Error(owned.length === 0 ? 'No Coordinator Vault exists for this login' : 'More than one Coordinator Vault belongs to this login')
-            return owned[0]!.vaultId
-          })()
-        const candidate = await createVaultMlsJoinCandidate()
-        const now = new Date()
-        pending = {
-          version: 1, identityId: identity.did, coordinatorUrl: coordinatorUrl.replace(/\/$/, ''), vaultId, memberId: candidate.memberId,
-          encodedKeyPackage: candidate.encodedKeyPackage,
-          initPrivateKey: candidate.ownKeyPackage.privatePackage.initPrivateKey,
-          hpkePrivateKey: candidate.ownKeyPackage.privatePackage.hpkePrivateKey,
-          signaturePrivateKey: candidate.ownKeyPackage.privatePackage.signaturePrivateKey,
-          createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + 10 * 60 * 1000).toISOString(),
-        }
-        // Persist before publish: a crash after the server accepts the public
-        // KeyPackage must not lose the only private half that can open Welcome.
-        await vaultStore.writeCoordinatorPendingJoin(pending)
-      }
-      if (new URL(pending.coordinatorUrl).origin !== new URL(coordinatorUrl).origin) throw new Error('pending join does not match configured Coordinator origin')
-      const vaultId = pending.vaultId
-      const candidate = restoreVaultMlsJoinCandidate(pending)
-      // Recovery is authorized by the root-phrase-derived key and OIDC owner,
-      // not by current routing membership. Restore the complete opaque
-      // checkpoint before waiting for another device to install the MLS Add.
-      await restoreLatestCoordinatorCheckpoint(vaultId, coordinatorUrl, transport)
-      const pullWelcome = async () => {
-        const requestUnsigned = { version: 1 as const, vaultId, memberId: candidate.memberId, afterEpoch: '0', requestedAt: new Date().toISOString() }
-        return transport.pullMlsWelcome({ ...requestUnsigned, signature: ed25519.sign(vaultMlsMemberRequestSigningBytes(requestUnsigned), candidate.memberSignaturePrivateKey) })
-      }
-      // A crash may have happened after the Add was accepted. In that case
-      // the member is already active and re-publishing a KeyPackage is
-      // correctly rejected; recover the existing Welcome first.
-      let delivered = resuming ? await pullWelcome().catch(() => null) : null
-      if (!delivered) {
-        const packageUnsigned = { version: 1 as const, vaultId, memberId: candidate.memberId, signaturePublicKey: ed25519.getPublicKey(candidate.memberSignaturePrivateKey), keyPackage: candidate.encodedKeyPackage, publishedAt: pending.createdAt }
-        await transport.publishMlsKeyPackage({ ...packageUnsigned, signature: ed25519.sign(vaultMlsKeyPackageSigningBytes(packageUnsigned), candidate.memberSignaturePrivateKey) })
-      }
-      // Access tokens are intentionally short-lived and getAccessToken never
-      // opens a popup outside a user gesture. Keep this wait inside the fresh
-      // login window; a timed-out attempt can use a newly issued invitation.
-      const deadline = Date.now() + 30_000
-      while (Date.now() < deadline) {
-        try {
-          delivered ??= await pullWelcome()
-          if (delivered) {
-            const joined = await joinVaultMlsFromWelcome(candidate, delivered.welcome, delivered.groupView)
-            const now = new Date().toISOString()
-            const binding: LocalVaultCoordinatorBindingV1 = { version: 1, identityId: identity.did, coordinatorUrl: coordinatorUrl.replace(/\/$/, ''), groupView: delivered.groupView, vaultMlsState: joined.encodedState, localMemberId: candidate.memberId, memberSignaturePrivateKey: joined.memberSignaturePrivateKey, createdAt: now, updatedAt: now }
-            await vaultStore.commitCoordinatorJoin(binding)
-            configureCoordinator(binding, oidc)
-            await synchronizeCoordinator?.()
-            return
-          }
-        } catch (error) {
-          // Before the existing member installs the Add, this candidate is
-          // not active yet and Welcome pull correctly returns 400. Retry.
-          console.debug('[coordinator/join-wait]', error instanceof Error ? error.message : error)
-        }
-        await new Promise(resolve => setTimeout(resolve, 2_000))
-      }
-      throw new Error('Coordinator membership is pending automatic approval')
-    }
-
-    // Coordinator v2 cut-over. Self Group (maintained above through the core
-    // RFC 9420 DS) is now the sole device-membership group. Coordinator only
-    // stores one OIDC-owner-scoped ordered stream and its latest checkpoint.
-    // The v1 lifecycle remains read-only migration code for this release;
-    // none of its invite/approve/join entry points are exposed by the UI.
-    let streamTransport: VaultCoordinatorTransport | undefined
-    let streamVaultId: import('./protocol/ids.ts').VaultId | undefined
-    const catchUpSelfGroupBeforeVaultRead = async (): Promise<void> => {
-      // A newly restored sibling is authorized by an MLS external commit
-      // before it can append anything to this identity's Coordinator stream.
-      // Reflect that causally-earlier commit before verifying an event the
-      // sibling signed. Boot-time maintenance alone is insufficient: an
-      // already-open first device can observe the sibling's checkpoint on
-      // the next ten-second Vault poll while its local Self Group is still
-      // one epoch behind (found live with 8f41.biset.md, 2026-08-30).
-      if (!coreBaseUrl) throw new Error('Self Group roster endpoint is not configured')
-      const state = await maintainSelfGroup(selfGroupStore, keyStore, identity, {
-        coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl,
-        wraps: vaultStore, segments: vaultStore,
-      })
-      if (!state) return
-      const nextDevices = memberKids(state, identity.did).map(deviceId => ({ deviceId, current: deviceId === identity.deviceKid }))
-      if (JSON.stringify(nextDevices) !== JSON.stringify(vaultDevices)) {
-        vaultDevices = nextDevices
-        if (vaultCardStatus) setVaultCard(vaultCardStatus)
-      }
-    }
-    const eventCredentialHistory = async (): Promise<Map<string, Uint8Array>> => {
-      const credentials = new Map<string, Uint8Array>()
-      const stored = await selfGroupStore.load(identity.did)
-      if (stored) {
-        for (const deviceId of memberKids(stored.state, identity.did)) {
-          const credential = memberDeviceCredentialBytes(stored.state, deviceId)
-          if (credential) credentials.set(deviceId, credential)
-        }
-      }
-      // One-time bridge for checkpoints written before Vault events carried
-      // their own Root-authorized actor credential. The old public roster may
-      // still retain a device that has since been removed from the current
-      // Self Group, which is exactly the historical key needed to upgrade its
-      // already-signed events. New checkpoints become self-contained and no
-      // longer depend on this legacy projection.
-      if (coreBaseUrl) {
-        const projection = await new CoreRosterInstallTransport({ baseUrl: coreBaseUrl }).fetchProjection(identity.did).catch(() => undefined)
-        for (const device of projection?.devices ?? []) if (!credentials.has(device.deviceId)) credentials.set(device.deviceId, device.deviceCredential)
-      }
-      return credentials
-    }
-    const synchronizeStreamOnce = async (): Promise<{ localSeq: string; latestSeq: string; checkpointSeq?: string } | undefined> => {
-      if (!streamTransport || !streamVaultId) return undefined
-      const transport = streamTransport
-      const vaultId = streamVaultId
-      const checkpoint = await transport.pullStreamCheckpoint(vaultId)
-      // Pull the checkpoint first, then catch up MLS. Any device whose event
-      // can be present in that immutable response necessarily committed its
-      // Self Group membership before publishing it, so this ordering closes
-      // the join/checkpoint race instead of merely making it less likely.
-      await catchUpSelfGroupBeforeVaultRead()
-      let checkpointSeq = checkpoint?.coveredSeq
-      let checkpointNeedsEventCredentialUpgrade = false
-      const checkpointNeedsUpgrade = checkpoint ? (() => { try { return (JSON.parse(new TextDecoder().decode(checkpoint.payload)) as { version?: unknown }).version === 1 } catch { return false } })() : false
-      const localCursor = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)
-      if (checkpoint && BigInt(checkpoint.coveredSeq) > BigInt(localCursor)) {
-        if (!identity.masterSeed) throw new Error('Coordinator checkpoint restore requires the identity master seed')
-        if (!equalBytes(sha256Bytes(checkpoint.payload), checkpoint.payloadHash)) throw new Error('Coordinator checkpoint payload hash is invalid')
-        let snapshot: Awaited<ReturnType<typeof openCoordinatorCheckpoint>> | undefined
-        try {
-          snapshot = await openPortableCoordinatorCheckpoint(fromHex(identity.masterSeed), checkpoint.payload, { vaultId, coveredSeq: checkpoint.coveredSeq, coordinatorUrl })
-          if (snapshot.identityId !== identity.did) throw new Error('Coordinator checkpoint belongs to another identity')
-          if (snapshot.events.some(event => !event.actorCredential)) {
-            const credentials = await eventCredentialHistory()
-            snapshot.events = snapshot.events.map(event => {
-              if (event.actorCredential) return event
-              const actorCredential = credentials.get(event.actorDeviceId)
-              return actorCredential ? { ...event, actorCredential: actorCredential.slice() } : event
-            })
-            checkpointNeedsEventCredentialUpgrade = snapshot.events.every(event => !!event.actorCredential)
-          }
-          const records = await rewrapRecoveryArchiveForCurrentEpoch(snapshot, boundary.epochs, boundary.signer, new Date().toISOString())
-          await vaultStore.commitRecoveryArchive({ identityId: identity.did, events: records.events, objects: records.objects.map(object => ({ ...object, identityId: identity.did })), keyWraps: records.keyWraps })
-          for (const segment of snapshot.segmentKeys) await vaultStore.sealAndActivateSegment({ identityId: identity.did, segmentId: segment.segmentId, segmentKey: segment.key, selfGroupId: VAULT_STORAGE_GROUP_ID, epoch: VAULT_STORAGE_EPOCH, sealed: false, createdAt: snapshot.createdAt })
-          await migrateLocalSegmentKeysToStorageRoot(vaultStore, vaultStore, identity, selfGroupStore)
-          const projection = await buildLocalJmapProjectionRebuild(vaultStore, vaultStore, vaultStore, selfGroupStore, identity.did, identity.masterSeed)()
-          await vaultStore.advanceDeliveryCursor(identity.did, identity.deviceKid!, checkpoint.coveredSeq, projection.state, new Date().toISOString())
-        } finally {
-          if (snapshot) for (const segment of snapshot.segmentKeys) segment.key.fill(0)
-        }
-      }
-
-      const flushed = await flushCoordinatorStreamOutbox(vaultStore, transport, identity.did, vaultId)
-      if (flushed.failedEntryId) throw new Error(`Coordinator stream append failed: ${flushed.failureReason ?? flushed.failedEntryId}`)
-      const synced = await synchronizeCoordinatorStream(vaultStore, transport, { ingest: item => ingestVaultDelivery(item, boundary.signer, projector, vaultStore) }, identity.did, identity.deviceKid!, vaultId)
-      if (synced.ingestedSequences.length > 0) await refreshInbox(readModel)
-
-      // A checkpoint, not device ACKs, is the only server-side compaction
-      // boundary. Any device can replace it after reaching the stream head.
-      const coveredSeq = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)
-      const checkpointBehind = coordinatorStreamCheckpointIsBehind(checkpoint?.coveredSeq, coveredSeq)
-      if (coveredSeq === synced.latestSeq && (flushed.appendedEntryIds.length > 0 || checkpointBehind || checkpointNeedsUpgrade || checkpointNeedsEventCredentialUpgrade)) {
-        if (!identity.masterSeed) throw new Error('Coordinator checkpoint requires the identity master seed')
-        const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, identity.did, new Date().toISOString())
-        try {
-          const payload = await createPortableCoordinatorCheckpoint(fromHex(identity.masterSeed), snapshot, { vaultId, coveredSeq })
-          await transport.putStreamCheckpoint({ version: 2, vaultId, coveredSeq, payload, payloadHash: sha256Bytes(payload) })
-          checkpointSeq = coveredSeq
-        } finally {
-          for (const segment of snapshot.segmentKeys) segment.key.fill(0)
-        }
-      }
-      return { localSeq: coveredSeq, latestSeq: synced.latestSeq, ...(checkpointSeq === undefined ? {} : { checkpointSeq }) }
-    }
-    const synchronizeStream = async (): Promise<void> => {
-      if (!streamTransport || !streamVaultId) return
-      // Keep an already-green card stable during the routine ten-second
-      // poll. "Syncing" is useful during first connection/error recovery,
-      // but flashing the card blue forever is just visual noise.
-      if (vaultCardStatus?.state !== 'connected') {
-        setVaultCard({ state: 'syncing', coordinatorUrl, vaultId: streamVaultId, detail: 'Synchronizing encrypted Vault' })
-      }
-      try {
-        const result = await synchronizeStreamOnce()
-        setVaultCard({
-          state: 'connected', coordinatorUrl, vaultId: streamVaultId,
-          ...(result ?? {}), detail: 'Encrypted stream is current',
-        })
-      } catch (error) {
-        let detail = error instanceof Error ? error.message : String(error)
-        if (detail === 'Coordinator checkpoint key cannot be unwrapped') {
-          // The browser-wide Anchor cookie may have selected another local
-          // identity's subject. Never overwrite that subject's checkpoint:
-          // discard only this identity-scoped refresh session and require an
-          // explicit prompt=login retry with the current Wallet credential.
-          await coordinatorOidc?.clear()
-          streamTransport = undefined
-          coordinatorBindingActive = false
-          flushCoordinatorOutbox = undefined
-          detail = 'Coordinator login belongs to another identity. Reconnect to authenticate this identity.'
-        }
-        setVaultCard({ state: 'error', coordinatorUrl, vaultId: streamVaultId, detail })
-        if (detail !== (error instanceof Error ? error.message : String(error))) throw new Error(detail, { cause: error })
-        throw error
-      }
-    }
-    const activateCoordinatorStream = async (oidc: AnchorOidcPkceClient): Promise<void> => {
-      setVaultCard({ state: 'connecting', coordinatorUrl, detail: 'Opening Coordinator stream' })
-      streamTransport = new VaultCoordinatorTransport({ baseUrl: coordinatorUrl, accessTokens: oidc })
-      streamVaultId = (await streamTransport.defaultStream()).vaultId
-      coordinatorBindingActive = true
-      flushCoordinatorOutbox = () => flushCoordinatorStreamOutbox(vaultStore, streamTransport!, identity.did, streamVaultId!)
-      await synchronizeStream()
-    }
-    connectCoordinator = async () => {
-      setVaultCard({ state: 'connecting', coordinatorUrl, vaultId: streamVaultId, detail: 'Waiting for Anchor login' })
-      const oidc = await ensureCoordinatorOidc()
-      try {
-        await oidc.authorize()
-        await activateCoordinatorStream(oidc)
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error)
-        setVaultCard({ state: 'error', coordinatorUrl, vaultId: streamVaultId, detail })
-        throw error
-      }
-    }
-    synchronizeCoordinator = synchronizeStream
-    createCoordinatorInvitation = undefined
-    approveCoordinatorDevice = undefined
-    joinCoordinatorInvitation = undefined
-    autoConnectCoordinator = connectCoordinator
-    // A prior explicit login leaves a rotating refresh token in the local
-    // wallet. Resume polling without another popup on every ordinary boot.
-    void (async () => {
-      const oidc = await ensureCoordinatorOidc()
-      if (await oidc.hasRefreshSession()) await activateCoordinatorStream(oidc)
-      else if (vaultCardStatus?.state === 'checking') setVaultCard({ state: 'reconnect-required', coordinatorUrl, detail: 'No saved login session' })
-    })().catch(error => {
-      const detail = error instanceof Error ? error.message : String(error)
-      setVaultCard({ state: 'error', coordinatorUrl, vaultId: streamVaultId, detail })
-      console.warn('[coordinator/session-resume]', detail)
-    })
-    let coordinatorPollBusy = false
-    coordinatorPollTimer = setInterval(() => {
-      if (!streamTransport || !streamVaultId) return
-      if (coordinatorPollBusy) return
-      coordinatorPollBusy = true
-      void (async () => {
-        await synchronizeCoordinator?.()
-      })().catch(error => console.warn('[coordinator/poll]', error instanceof Error ? error.message : error)).finally(() => { coordinatorPollBusy = false })
-    }, 10_000)
-  } else if (mimiVaultConfigured && identity.deviceKid) {
+  if (mimiVaultConfigured && identity.deviceKid) {
     // Self/Vault traffic is a normal-mode MIMI room on its isolated provider.
     // There is deliberately no Anchor/OIDC token here: membership plus the
     // MLS leaf signature authenticate every request. Already ensured once,

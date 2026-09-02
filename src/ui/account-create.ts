@@ -31,9 +31,6 @@
 import { IndexedDbIdentityRecordStore } from '../identity/record-store.ts'
 import { createNewIdentity, restoreIdentity } from '../identity/bootstrap.ts'
 import { resolveByDomain } from '../identity/webvh/resolver.ts'
-import { deliverySeq } from '../protocol/ids.ts'
-import { IndexedDbMlsSelfGroupStore } from '../mls/store.ts'
-import { IndexedDbMlsKeyPackageStore } from '../mls/keypackage-store.ts'
 import { readBisetConfig } from './config.ts'
 import { encodeMultikey } from '../identity/webvh/multikey.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
@@ -48,12 +45,8 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 // generated bundle defined `bootClient` but never invoked it, and the app
 // silently never booted at all (found live, 2026-08-25 -- a totally blank
 // page with no console error, since nothing had run yet to error).
-interface IdentityCreatedOptions {
-  coordinatorPopup?: Window
-}
-
-let onIdentityCreated: ((reason: 'created' | 'restored', options?: IdentityCreatedOptions) => Promise<void>) | undefined
-export function setOnIdentityCreated(fn: (reason: 'created' | 'restored', options?: IdentityCreatedOptions) => Promise<void>): void {
+let onIdentityCreated: ((reason: 'created' | 'restored') => Promise<void>) | undefined
+export function setOnIdentityCreated(fn: (reason: 'created' | 'restored') => Promise<void>): void {
   onIdentityCreated = fn
 }
 
@@ -202,18 +195,14 @@ export function setupNewUserPage(): void {
   })
 
   submitBtn.addEventListener('click', async () => {
-    const { apexDomain, anchorBaseUrl, anchorOidcClientId, coreBaseUrl, coordinatorUrl, mimiSelfBaseUrl } = readBisetConfig()
+    const { apexDomain, mimiSelfBaseUrl } = readBisetConfig()
     const username = usernameInput.value.trim()
     if (!username) { errEl.textContent = 'Username required'; errEl.style.display = 'block'; return }
-    // coreBaseUrl/coordinatorUrl are the legacy Self Group path -- optional
-    // now that biset-mimi (mimiSelfBaseUrl) can drive the same membership
-    // instead (identity/bootstrap.ts's registerDeviceAndJoinSelfGroup skips
-    // its coordinator branch entirely when they're absent, and the next
-    // normal boot picks up Self/Vault room creation/join from
-    // `identity.deviceKid` on its own -- see main.ts's `mimiVaultConfigured`
-    // branch). apexDomain is the one thing genuinely always required.
+    // apexDomain is the one thing genuinely always required; mimiSelfBaseUrl
+    // is now the only Self/Vault membership path (the old Coordinator/core
+    // Self Group route this used to fall back to has been retired entirely).
     if (!apexDomain) { errEl.textContent = 'apexDomain not set in config.json'; errEl.style.display = 'block'; return }
-    if (!coordinatorUrl && !mimiSelfBaseUrl) { errEl.textContent = 'Neither coordinatorUrl nor mimiSelfBaseUrl is set in config.json -- Self Group cannot be established'; errEl.style.display = 'block'; return }
+    if (!mimiSelfBaseUrl) { errEl.textContent = 'mimiSelfBaseUrl is not set in config.json -- Self Group cannot be established'; errEl.style.display = 'block'; return }
 
     // An existing address logs in instead of signing up -- checked BEFORE
     // the terms checkbox, same as src.bak: an existing identity already
@@ -224,45 +213,18 @@ export function setupNewUserPage(): void {
       if (!phrase) { errEl.textContent = `${loginDomain} already exists — paste its 24-word Root Key phrase to log in`; errEl.style.display = 'block'; phraseEl?.focus(); return }
       const signPhrase = signPhraseEl?.value.trim() ?? ''
       if (!signPhrase) { errEl.textContent = `${loginDomain} already exists — paste its current 24-word Sign Key phrase to log in`; errEl.style.display = 'block'; signPhraseEl?.focus(); return }
-      // Reserve the browser window synchronously while this click still has
-      // user activation. Identity recovery performs network and IndexedDB
-      // awaits before Coordinator OIDC can be constructed; opening the
-      // popup only afterwards is rejected by normal popup blockers and made
-      // automatic restore appear to do nothing.
-      const coordinatorPopup = anchorBaseUrl && anchorOidcClientId && coordinatorUrl
-        ? window.open('about:blank', 'biset-anchor-login', 'popup,width=520,height=720') ?? undefined
-        : undefined
-      if (coordinatorPopup) {
-        try {
-          coordinatorPopup.document.title = 'Biset Vault restore'
-          coordinatorPopup.document.body.textContent = 'Preparing encrypted Vault restore…'
-        } catch { /* the Anchor navigation will replace this page shortly */ }
-      }
       submitBtn.disabled = true
       submitBtn.textContent = 'Logging in…'
       errEl.style.display = 'none'
       try {
         const recordStore = new IndexedDbIdentityRecordStore()
-        const selfGroupStore = new IndexedDbMlsSelfGroupStore()
-        const keyStore = new IndexedDbMlsKeyPackageStore()
         try {
-          await restoreIdentity(recordStore, selfGroupStore, keyStore, {
-            domain: loginDomain, coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl, mnemonic: phrase, signMnemonic: signPhrase,
-            // Restoring the identity's ONLY device (this rewrite's whole
-            // scope, no multi-device) -- see this file's header for why 0
-            // is the correct floor here, not a shortcut: there's no OTHER
-            // active device whose forward secrecy a full catch-up could
-            // violate, and "restore" means getting the whole vault back.
-            deliveryFloorForNewDevice: async () => deliverySeq(0n),
-          })
+          await restoreIdentity(recordStore, { domain: loginDomain, mnemonic: phrase, signMnemonic: signPhrase })
         } finally {
           recordStore.close()
-          selfGroupStore.close()
-          keyStore.close()
         }
-        await onIdentityCreated?.('restored', { coordinatorPopup })
+        await onIdentityCreated?.('restored')
       } catch (e) {
-        try { coordinatorPopup?.close() } catch {}
         errEl.textContent = 'Log in failed: ' + (e instanceof Error ? e.message : String(e))
         errEl.style.display = 'block'
         submitBtn.textContent = signupButtonLabel(loginDomain)
@@ -272,19 +234,6 @@ export function setupNewUserPage(): void {
     }
 
     if (!tosInput.checked) { errEl.textContent = 'Please agree to the Terms of Beta-testing'; errEl.style.display = 'block'; return }
-
-    // New identities join their Coordinator Vault automatically too. Keep a
-    // popup reserved from this user gesture because identity creation and the
-    // mandatory Root Key display both finish before OIDC navigation begins.
-    const coordinatorPopup = anchorBaseUrl && anchorOidcClientId && coordinatorUrl
-      ? window.open('about:blank', 'biset-anchor-login', 'popup,width=520,height=720') ?? undefined
-      : undefined
-    if (coordinatorPopup) {
-      try {
-        coordinatorPopup.document.title = 'Biset Vault setup'
-        coordinatorPopup.document.body.textContent = 'Preparing encrypted Vault…'
-      } catch { /* the Anchor navigation will replace this page shortly */ }
-    }
 
     submitBtn.disabled = true
     submitBtn.textContent = 'Creating…'
@@ -312,13 +261,11 @@ export function setupNewUserPage(): void {
       })
 
       const recordStore = new IndexedDbIdentityRecordStore()
-      const selfGroupStore = new IndexedDbMlsSelfGroupStore()
-      const keyStore = new IndexedDbMlsKeyPackageStore()
-      // Closed immediately after use, success or failure -- these are
-      // throwaway, one-per-attempt instances (a retried signup after an
-      // error creates a fresh set), and nothing downstream reuses them:
+      // Closed immediately after use, success or failure -- this is a
+      // throwaway, one-per-attempt instance (a retried signup after an
+      // error creates a fresh one), and nothing downstream reuses it:
       // onIdentityCreated below triggers bootClient(), which opens its OWN
-      // connections to these same databases from scratch. Left open, each
+      // connection to this same database from scratch. Left open, each
       // attempt accumulated one more stale connection with nothing left
       // referencing it in this scope -- across enough retries in one tab,
       // that accumulation was enough to leave the browser's IndexedDB
@@ -326,22 +273,17 @@ export function setupNewUserPage(): void {
       // (found live, 2026-08-26, alongside main.ts's own logout() gap --
       // same underlying cause, two different leak sites).
       try {
-        await createNewIdentity(recordStore, selfGroupStore, keyStore, {
-          domain, coreBaseUrl, mlsDeliveryBaseUrl: coordinatorUrl, masterSeed, spareSeed,
-        })
+        await createNewIdentity(recordStore, { domain, masterSeed, spareSeed })
       } finally {
         recordStore.close()
-        selfGroupStore.close()
-        keyStore.close()
       }
       // No page navigation, same reasoning as logout (main.ts's own logout,
       // src.bak's original "no reload" fix): re-invoke the same boot routine
       // a real first load uses, now that an identity exists locally for it
       // to find -- via the callback main.ts registered (setOnIdentityCreated
       // above), never an import of main.ts itself.
-      await onIdentityCreated?.('created', { coordinatorPopup })
+      await onIdentityCreated?.('created')
     } catch (e) {
-      try { coordinatorPopup?.close() } catch {}
       errEl.textContent = 'Error: ' + (e instanceof Error ? e.message : String(e))
       errEl.style.display = 'block'
       submitBtn.textContent = 'Start'

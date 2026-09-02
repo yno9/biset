@@ -6,14 +6,13 @@ deploy.sh
 home/
 test/*
 !test/contact-key.test.ts
+!test/didcomm-group-mesh.test.ts
 !test/mediator-relationship-handshake.test.ts
 !test/mediator-sqlite-store.test.ts
 !test/transport-ingress-ingest.test.ts
 !test/vault-transport-boundaries.test.ts
 !test/identity-server/
 !test/identity-server/**
-!test/coordinator/
-!test/coordinator/**
 !test/vault/
 !test/vault/**
 !test/identity/
@@ -37,6 +36,8 @@ test/*
 test/protocol/*
 !test/protocol/conversation-mls-ds-signing.test.ts
 !test/protocol/webvh-resolve-mimi-provider.test.ts
+!test/protocol/didcomm-group-chat.test.ts
+!test/protocol/didcomm-group-chat-store.test.ts
 
 biset-*
 PLAN*

@@ -23,8 +23,11 @@ export function deriveVaultRecoveryKek(masterSeed: Uint8Array, vaultId: VaultId)
   return hkdf(sha256, masterSeed, salt, canonicalBytes({ label: 'biset/vault-recovery-kek/info/v2' }), KEY_BYTES)
 }
 
-/** v2 is portable between Coordinator operators: server origin is routing,
- * not part of durable storage identity. */
+/** v2 is portable between Vault operators (formerly "Coordinator", now the
+ * MIMI Self Vault): server origin is routing, not part of durable storage
+ * identity. `openPortableCoordinatorCheckpoint` below still decodes the v1
+ * envelope shape for any checkpoint written by the retired Coordinator
+ * backend before the MIMI migration -- everything now WRITES only v2. */
 export async function createPortableCoordinatorCheckpoint(masterSeed: Uint8Array, snapshot: RecoveryArchiveSnapshotV1, context: { vaultId: VaultId; coveredSeq: DeliverySeq }): Promise<Uint8Array> {
   const kek = deriveVaultRecoveryKek(masterSeed, context.vaultId)
   const aad = canonicalBytes({ label: 'biset/vault-checkpoint/aad/v2', vaultId: context.vaultId, coveredSeq: context.coveredSeq })
@@ -63,53 +66,6 @@ export function deriveCoordinatorRecoveryKek(masterSeed: Uint8Array, vaultId: Va
   return hkdf(sha256, masterSeed, salt, canonicalBytes({ label: 'biset/coordinator/recovery-kek/info/v1' }), KEY_BYTES)
 }
 
-/** Encrypts a complete Vault snapshot with a fresh random data key, itself
- * wrapped by the root-phrase-derived KEK. No identity metadata is exposed in
- * the serialized envelope. */
-export async function createCoordinatorCheckpoint(
-  recoveryKek: Uint8Array,
-  snapshot: RecoveryArchiveSnapshotV1,
-  context: { vaultId: VaultId; coveredSeq: DeliverySeq; coordinatorUrl: string },
-): Promise<Uint8Array> {
-  assertKey(recoveryKek)
-  const aad = checkpointAad(context)
-  const dataKey = crypto.getRandomValues(new Uint8Array(KEY_BYTES))
-  const wrapNonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES))
-  const dataNonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES))
-  try {
-    const wrappedDataKey = await aesEncrypt(recoveryKek, wrapNonce, aad, dataKey)
-    const plaintext = encodeRecoveryArchiveSnapshot(snapshot)
-    const ciphertext = await aesEncrypt(dataKey, dataNonce, aad, plaintext)
-    return encodeEnvelope({ version: 1, wrapNonce, wrappedDataKey, dataNonce, ciphertext, ciphertextHash: sha256(ciphertext), plaintextLength: plaintext.length })
-  } finally {
-    dataKey.fill(0)
-  }
-}
-
-export async function openCoordinatorCheckpoint(
-  recoveryKek: Uint8Array,
-  payload: Uint8Array,
-  context: { vaultId: VaultId; coveredSeq: DeliverySeq; coordinatorUrl: string },
-): Promise<RecoveryArchiveSnapshotV1> {
-  assertKey(recoveryKek)
-  const envelope = decodeEnvelope(payload)
-  if (!equalBytes(envelope.ciphertextHash, sha256(envelope.ciphertext))) throw new TypeError('Coordinator checkpoint ciphertext hash does not match')
-  const aad = checkpointAad(context)
-  let dataKey: Uint8Array
-  try { dataKey = await aesDecrypt(recoveryKek, envelope.wrapNonce, aad, envelope.wrappedDataKey) }
-  catch { throw new TypeError('Coordinator checkpoint key cannot be unwrapped') }
-  try {
-    if (dataKey.length !== KEY_BYTES) throw new TypeError('Coordinator checkpoint data key is invalid')
-    let plaintext: Uint8Array
-    try { plaintext = await aesDecrypt(dataKey, envelope.dataNonce, aad, envelope.ciphertext) }
-    catch { throw new TypeError('Coordinator checkpoint cannot be decrypted') }
-    if (plaintext.length !== envelope.plaintextLength) throw new TypeError('Coordinator checkpoint plaintext length does not match')
-    return decodeRecoveryArchiveSnapshot(plaintext)
-  } finally {
-    dataKey.fill(0)
-  }
-}
-
 function checkpointAad(context: { vaultId: VaultId; coveredSeq: DeliverySeq; coordinatorUrl: string }): Uint8Array {
   return canonicalBytes({ label: 'biset/coordinator/checkpoint/aad/v1', vaultId: context.vaultId, coveredSeq: context.coveredSeq, coordinatorOrigin: coordinatorOrigin(context.coordinatorUrl) })
 }
@@ -142,5 +98,4 @@ async function aesDecrypt(key: Uint8Array, nonce: Uint8Array, aad: Uint8Array, c
   return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buffer(nonce), additionalData: buffer(aad) }, await crypto.subtle.importKey('raw', buffer(key), 'AES-GCM', false, ['decrypt']), buffer(ciphertext)))
 }
 function buffer(value: Uint8Array): ArrayBuffer { return Uint8Array.from(value).buffer }
-function assertKey(value: Uint8Array): void { if (value.length !== KEY_BYTES) throw new TypeError('Coordinator recovery KEK must contain 32 bytes') }
 function coordinatorOrigin(value: string): string { const url = new URL(value); if (url.protocol !== 'https:' || url.username || url.password) throw new TypeError('Coordinator URL must be HTTPS'); return url.origin }

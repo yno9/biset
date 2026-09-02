@@ -2,7 +2,6 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { base64urlToBytes, bytesToBase64url } from '../protocol/canonical.ts'
 import { handleBisetOid4vpBridgeMessage } from '../oid4vp/file-bridge.ts'
 import type { BisetOid4vpWallet } from '../oid4vp/wallet.ts'
-import type { VaultCoordinatorAccessTokenProvider, VaultCoordinatorScope } from '../vault/coordinator-transport.ts'
 
 interface OidcMetadata {
   issuer: string
@@ -27,11 +26,16 @@ interface OidcJwk extends JsonWebKey {
   y: string
 }
 
+/** A client-registered permission string, opaque to this file -- scoped and
+ * validated entirely by whatever OIDC resource server the caller points
+ * `audience` at. */
+export type AnchorOidcScope = string
+
 export interface AnchorOidcPkceClientOptions {
   issuer: string
   clientId: string
   audience: string
-  allowedScopes: VaultCoordinatorScope[]
+  allowedScopes: AnchorOidcScope[]
   wallet: BisetOid4vpWallet
   fetch?: typeof fetch
   openPopup?: (url: string, target: string, features: string) => Window | null
@@ -43,7 +47,7 @@ export interface AnchorOidcPkceClientOptions {
 /** OIDC public client for the file:// UI. Access tokens stay in memory;
  * a rotating refresh token is kept in the device-local Wallet so polling
  * resumes after reload without another interactive login. */
-export class AnchorOidcPkceClient implements VaultCoordinatorAccessTokenProvider {
+export class AnchorOidcPkceClient {
   private readonly issuer: string
   private readonly audience: string
   private readonly redirectUri: string
@@ -62,7 +66,7 @@ export class AnchorOidcPkceClient implements VaultCoordinatorAccessTokenProvider
     if (!/^[\x21-\x7e]{1,512}$/.test(options.clientId) || options.allowedScopes.length === 0 || new Set(options.allowedScopes).size !== options.allowedScopes.length) throw new TypeError('OIDC public client configuration is invalid')
   }
 
-  async getAccessToken(scope: VaultCoordinatorScope): Promise<string> {
+  async getAccessToken(scope: AnchorOidcScope): Promise<string> {
     if (!this.options.allowedScopes.includes(scope)) throw new TypeError(`OIDC client does not allow ${scope}`)
     if (this.cached && this.cached.expiresAt > seconds(this.now()) + 30 && this.cached.scopes.has(scope)) return this.cached.token
     const token = await this.refreshAccessToken()
