@@ -10,6 +10,7 @@ import {
   buildVaultDeliveryProjector,
   enableDidComm,
   ensureMimiProviderPublished,
+  ensureRoutingDocument,
   fromHex,
   mailFromForIdentity,
   maintainSelfGroup,
@@ -2024,6 +2025,15 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     const signaturePrivateKey = stored ? ownSignaturePrivateKey(stored.state) : fromHex(identity.deviceSignaturePrivateKey!)
     if (credential.deviceKid !== identity.deviceKid) throw new Error('MIMI Vault device credential does not match this identity device')
     const selfGroupId = stored?.selfGroupId ?? 'mimi-vault'
+    // A MIMI-only identity never goes through enableDidComm's own
+    // first-ever routing.json creation (that path needs a self-group
+    // ClientState this identity doesn't have) -- without this, the
+    // setRoutingMimiVaultRoom publish below would fail forever ("this
+    // identity has no routing.json to update yet"), and a second device
+    // could never discover this room. Best-effort, same treatment as every
+    // other routing.json step in this branch: a transient failure here must
+    // not block the vault room itself from working locally.
+    await ensureRoutingDocument(identity, fetch).catch(error => console.warn('[mimi-vault/routing-bootstrap]', error instanceof Error ? error.message : error))
     const routedRoom = await fetchRouting(identity.did, fetch)
       .then(doc => mimiVaultRoomFromRouting(doc, mimiSelfBaseUrl))
       .catch(error => { console.warn('[mimi-vault/routing-read]', error instanceof Error ? error.message : error); return undefined })

@@ -1194,6 +1194,31 @@ export async function ensureMimiProviderPublished(record: IdentityRecord, dsBase
 }
 
 /**
+ * Publishes an empty routing.json for an identity that has none yet.
+ * Every other "ensure X published" helper here (`ensureAlsoKnownAsPublished`,
+ * `ensureMimiProviderPublished`, and `setRoutingMimiVaultRoom` in
+ * webvh-routing.ts) is fetch-modify-put against an EXISTING document and
+ * refuses to create one from scratch -- historically the first-ever
+ * routing.json was only ever created inside `enableDidComm` (bundled with
+ * its own DIDComm keyAgreement publish), which is best-effort and requires
+ * a self-group `ClientState` (`buildVaultCryptoBoundary`) that a MIMI-only
+ * identity (no coordinator self-group) never has. Without this, such an
+ * identity's MIMI Vault room pointer could never be published at all --
+ * found live, 2026-09-02: `setRoutingMimiVaultRoom` threw "this identity
+ * has no routing.json to update yet" on every single boot, meaning a
+ * second device could never discover the room. Idempotent: no-ops once a
+ * document already exists (whoever gets there first, DIDComm or this, wins
+ * -- both start from the same empty shape).
+ */
+export async function ensureRoutingDocument(record: IdentityRecord, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const signPrivateKey = fromHex(record.signPrivateKey)
+  const signPublicKey = fromHex(record.signPublicKey)
+  await publishRoutingPointer({ did: record.did, signingPrivateKey: signPrivateKey, signingPublicKey: signPublicKey, fetch: fetchImpl })
+  if (await fetchRouting(record.did, fetchImpl)) return
+  await putRouting(record.did, buildRoutingDoc(record.did, {}), { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, fetchImpl)
+}
+
+/**
  * `VaultBackedLocalJmapMutationSink` needs `nextActorSeq()`/`initialParents()`
  * from every caller, and until now every one has been a test's own trivial
  * in-memory counter starting at zero. That's wrong for a real device across
