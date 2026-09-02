@@ -202,10 +202,18 @@ export function setupNewUserPage(): void {
   })
 
   submitBtn.addEventListener('click', async () => {
-    const { apexDomain, anchorBaseUrl, anchorOidcClientId, coreBaseUrl, coordinatorUrl } = readBisetConfig()
+    const { apexDomain, anchorBaseUrl, anchorOidcClientId, coreBaseUrl, coordinatorUrl, mimiSelfBaseUrl } = readBisetConfig()
     const username = usernameInput.value.trim()
     if (!username) { errEl.textContent = 'Username required'; errEl.style.display = 'block'; return }
-    if (!apexDomain || !coreBaseUrl || !coordinatorUrl) { errEl.textContent = 'apexDomain/coreBaseUrl/coordinatorUrl not set in config.json'; errEl.style.display = 'block'; return }
+    // coreBaseUrl/coordinatorUrl are the legacy Self Group path -- optional
+    // now that biset-mimi (mimiSelfBaseUrl) can drive the same membership
+    // instead (identity/bootstrap.ts's registerDeviceAndJoinSelfGroup skips
+    // its coordinator branch entirely when they're absent, and the next
+    // normal boot picks up Self/Vault room creation/join from
+    // `identity.deviceKid` on its own -- see main.ts's `mimiVaultConfigured`
+    // branch). apexDomain is the one thing genuinely always required.
+    if (!apexDomain) { errEl.textContent = 'apexDomain not set in config.json'; errEl.style.display = 'block'; return }
+    if (!coordinatorUrl && !mimiSelfBaseUrl) { errEl.textContent = 'Neither coordinatorUrl nor mimiSelfBaseUrl is set in config.json -- Self Group cannot be established'; errEl.style.display = 'block'; return }
 
     // An existing address logs in instead of signing up -- checked BEFORE
     // the terms checkbox, same as src.bak: an existing identity already

@@ -123,10 +123,20 @@ export interface CreateNewIdentityOptions {
   domain: string
   /** Where the self-group DS/roster narrow HTTP API lives (`core/app.ts`'s
    * deployment) — a separate concern from `domain`, which only names the
-   * did:webvh/did:web genesis location. */
-  coreBaseUrl: string
-  /** Coordinator-hosted RFC 9750 Delivery Service. */
-  mlsDeliveryBaseUrl: string
+   * did:webvh/did:web genesis location. Legacy coordinator path only (see
+   * `mlsDeliveryBaseUrl`) — omit both when the caller drives Self/Vault
+   * membership through biset-mimi instead (PLAN_biset-mimi-server.md §18);
+   * that happens as its own step after this returns, driven by the
+   * deployment's own `mimiSelfBaseUrl` config, never hardcoded here. */
+  coreBaseUrl?: string
+  /** Coordinator-hosted RFC 9750 Delivery Service (retired in production,
+   * PLAN_biset-mimi-server.md §19.h) — optional now. When omitted, this
+   * device's MLS credential/deviceKid is still derived (that part was
+   * always a local computation, no network round trip), but no self-group
+   * join is attempted here; the caller is responsible for the biset-mimi
+   * equivalent (`ensureMimiVaultRoom`-shaped logic, mirrored from
+   * main.ts's own boot flow) once this returns. */
+  mlsDeliveryBaseUrl?: string
   /** Generated if omitted — the only reason to pass one in is a test. */
   masterSeed?: Uint8Array
   /** Independent first Spare Key seed; generated when omitted. */
@@ -141,16 +151,19 @@ export interface CreatedIdentity {
   masterSeed: Uint8Array
   /** Creation-only; never persisted in IdentityRecord. */
   spareSeed?: Uint8Array
-  selfGroupState: ClientState
+  /** Only set when `mlsDeliveryBaseUrl` (the legacy coordinator path) was
+   * provided. Undefined when this device's Self/Vault membership is
+   * biset-mimi-driven instead — `record.deviceKid` is populated either way. */
+  selfGroupState?: ClientState
 }
 
 interface RegisterDeviceOptions {
-  coreBaseUrl: string
-  mlsDeliveryBaseUrl: string
+  coreBaseUrl?: string
+  mlsDeliveryBaseUrl?: string
   didWebMirror?: boolean
   fetch?: typeof fetch
   now: () => Date
-  deliveryFloorForNewDevice: () => Promise<DeliverySeq>
+  deliveryFloorForNewDevice?: () => Promise<DeliverySeq>
 }
 
 /**
@@ -169,14 +182,21 @@ async function registerDeviceAndJoinSelfGroup(
   selfGroupStore: MlsSelfGroupStateStore,
   keyStore: MlsKeyPackageStore,
   opts: RegisterDeviceOptions,
-): Promise<{ deviceKid: string; selfGroupState: ClientState }> {
+): Promise<{ deviceKid: string; selfGroupState?: ClientState }> {
   ensureMlsAuthServiceInstalled()
 
   const deviceSignaturePrivateKey = ed25519.utils.randomSecretKey()
   const deviceCredential = createMlsDeviceCredential(did, generation, ed25519.getPublicKey(deviceSignaturePrivateKey), rootPrivateKey, signPrivateKey)
   const deviceKid = deviceCredential.deviceKid
-  const kp = await generateOwnKeyPackage(deviceCredential, deviceSignaturePrivateKey)
 
+  // The legacy coordinator self-group join is now opt-in (only when the
+  // caller supplies its base URL) -- deviceKid above is a purely local
+  // computation either way, so a caller driving Self/Vault membership
+  // through biset-mimi instead (the deployment's own `mimiSelfBaseUrl`,
+  // never hardcoded here) has everything it needs without this branch.
+  if (!opts.mlsDeliveryBaseUrl || !opts.coreBaseUrl || !opts.deliveryFloorForNewDevice) return { deviceKid }
+
+  const kp = await generateOwnKeyPackage(deviceCredential, deviceSignaturePrivateKey)
   const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, kp.privatePackage.signaturePrivateKey)
   const mlsTransport = new CoordinatorMlsDeliveryTransport({ baseUrl: opts.mlsDeliveryBaseUrl, deviceCredential: encodeMlsDeviceCredential(deviceCredential), fetch: opts.fetch })
   const rosterTransport = new CoreRosterInstallTransport({ baseUrl: opts.coreBaseUrl, fetch: opts.fetch })
@@ -470,8 +490,15 @@ export interface RestoreIdentityOptions {
   /** The identity's own subdomain — same value `createNewIdentity` was
    * originally called with for it. */
   domain: string
-  coreBaseUrl: string
-  mlsDeliveryBaseUrl: string
+  /** Legacy coordinator path only — see `mlsDeliveryBaseUrl`. Omit both when
+   * the caller drives Self/Vault membership through biset-mimi instead. */
+  coreBaseUrl?: string
+  /** Coordinator-hosted RFC 9750 Delivery Service (retired in production).
+   * Optional now — when omitted, this device's credential/deviceKid is
+   * still derived locally, but no self-group join happens here; the caller
+   * runs the biset-mimi equivalent afterward, driven by its own
+   * `mimiSelfBaseUrl` config. */
+  mlsDeliveryBaseUrl?: string
   /** The 24-word BIP39 recovery phrase (identity/seed.ts). */
   mnemonic: string
   /** Current Sign phrase. Initially this is the same phrase as Root. */
@@ -483,9 +510,11 @@ export interface RestoreIdentityOptions {
    * should have received). Vault delivery's own pull API is not wired up to
    * this module yet, so the caller must supply it; there is no safe default
    * here the way genesis's `0` is, since an existing identity may already
-   * have real vault content.
+   * have real vault content. Only meaningful alongside `mlsDeliveryBaseUrl`
+   * (the legacy coordinator path) -- biset-mimi's own external-join
+   * (`joinMimiVaultRoom`) works out its own delivery cursor independently.
    */
-  deliveryFloorForNewDevice: () => Promise<DeliverySeq>
+  deliveryFloorForNewDevice?: () => Promise<DeliverySeq>
   didWebMirror?: boolean
   fetch?: typeof fetch
   now?: () => Date

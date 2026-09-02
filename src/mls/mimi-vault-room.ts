@@ -29,7 +29,13 @@ export interface CreateMimiVaultRoomOptions {
   transport: MimiClientTransport
   stateStore: MimiVaultSessionStateStore
   mode?: MimiClientMode
-  providerHost?: string
+  /** The Self/Vault provider's own domain (the deployment's `mimiSelfBaseUrl`
+   * config, e.g. `new URL(mimiSelfBaseUrl).hostname`) -- required, not
+   * defaulted: this becomes part of the room's own URI
+   * (`mimi://{providerHost}/r/vault-...`), so a caller that forgets to pass
+   * it must fail loudly rather than silently mint a room URI naming the
+   * wrong provider. */
+  providerHost: string
   now?: () => Date
 }
 
@@ -53,7 +59,7 @@ export interface JoinMimiVaultRoomOptions {
 export async function createMimiVaultRoom(options: CreateMimiVaultRoomOptions): Promise<CreatedMimiVaultRoom> {
   const mode = options.mode ?? 'self'
   const now = options.now ?? (() => new Date())
-  const providerHost = options.providerHost ?? 'mimi-self.biset.md'
+  const providerHost = options.providerHost
   if (!options.identityId || !options.deviceId || !options.selfGroupId || !/^[A-Za-z0-9.-]+$/.test(providerHost)) throw new TypeError('MIMI Vault room identity is invalid')
   const roomId = `mimi://${providerHost}/r/vault-${bytesToBase64url(crypto.getRandomValues(new Uint8Array(32)))}`
   const own = await generateOwnKeyPackage(options.credential, options.signaturePrivateKey)
