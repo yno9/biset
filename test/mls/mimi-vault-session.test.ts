@@ -4,7 +4,7 @@ import { PersistedMimiVaultSession, type MimiVaultSessionRecord } from '../../sr
 
 test('a lost MIMI response reuses the durable MLS PrivateMessage and delivery ID', async () => {
   const own = await generateOwnKeyPackageForCredential({ credentialType: 'basic', identity: new TextEncoder().encode('client') })
-  const initial: MimiVaultSessionRecord = { roomId: 'mimi://self.example/r/vault-test', selfGroupId: 'self', state: await createMlsGroup(new Uint8Array(32).fill(1), own) }
+  const initial: MimiVaultSessionRecord = { roomId: 'mimi://self.example/r/vault-test', selfGroupId: 'self', state: await createMlsGroup(new Uint8Array(32).fill(1), own), deliveryCursor: 7 }
   let stored = initial
   const submissions: Uint8Array[] = []
   let fails = true
@@ -23,5 +23,6 @@ test('a lost MIMI response reuses the durable MLS PrivateMessage and delivery ID
   await session.sendApplication(plaintext, 'A'.repeat(24))
   expect(submissions[1]).toEqual(submissions[0])
   expect(stored.pending).toBeUndefined()
+  expect(stored.deliveryCursor).toBe(7)
   await expect(session.receive({ seq: 1, kind: 'application', payload: submissions[0]!, epoch: '0', acceptedAt: '2026-09-02T00:00:00.000Z' })).resolves.toBeUndefined()
 })

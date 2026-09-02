@@ -26,6 +26,10 @@ export interface MimiVaultSessionRecord {
    * their own post-send PrivateMessages (the desired generation is past), so
    * these are recognized and skipped when the room inbox echoes them back. */
   ownApplicationHashes?: string[]
+  /** Last completely processed provider delivery. This is a transport cursor,
+   * not a Vault event cursor: it also advances across handshakes and echoed
+   * application ciphertexts. */
+  deliveryCursor?: number
 }
 export interface MimiVaultSessionStateStore {
   loadMimiVault(identityId: string): Promise<MimiVaultSessionRecord | undefined>

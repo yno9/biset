@@ -1066,6 +1066,7 @@ export async function enableDidComm(
     ...(alsoKnownAs?.length ? { alsoKnownAs } : {}),
     ...(current?.name ? { name: current.name } : {}),
     ...(current?.openpgpPublicKey ? { openpgpPublicKey: current.openpgpPublicKey } : {}),
+    ...(current?.mimiVaultRoom ? { mimiVaultRoom: current.mimiVaultRoom } : {}),
   })
   const signing = { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }
   const keyAgreementKeys = [{ kid: didCommKid, publicKey: x25519PublicKey }]

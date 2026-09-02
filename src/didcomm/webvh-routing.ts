@@ -71,6 +71,15 @@ export interface RoutingDoc {
    * vault/openpgp-credential.ts, so there is exactly one current public key
    * to publish, not one per device. */
   openpgpPublicKey?: RoutingOpenPgpKey
+  /** Opaque location of this identity's one-user MIMI Vault room.  The room
+   * URI is random and carries neither Vault content nor a key; publishing it
+   * lets a freshly restored device request its HPKE-sealed GroupInfo. */
+  mimiVaultRoom?: RoutingMimiVaultRoom
+}
+
+export interface RoutingMimiVaultRoom {
+  roomId: string
+  providerUrl: string
 }
 
 export interface RoutingOpenPgpKey {
@@ -269,4 +278,32 @@ export async function setRoutingName(
   const current = await fetchRouting(did, fetchImpl)
   if (!current) throw new Error('setRoutingName: this identity has no routing.json to update yet')
   await putRouting(did, { ...current, name }, signing, fetchImpl)
+}
+
+/** Reads a self-room pointer only when it is anchored at the configured
+ * HTTPS provider. routing.json is public input, so a malformed or redirected
+ * pointer is never handed to the MLS external-join path. */
+export function mimiVaultRoomFromRouting(doc: RoutingDoc | null, providerUrl: string): string | undefined {
+  const value = doc?.mimiVaultRoom
+  if (!value || typeof value.roomId !== 'string' || typeof value.providerUrl !== 'string') return undefined
+  try {
+    const provider = new URL(providerUrl)
+    const declared = new URL(value.providerUrl)
+    const room = new URL(value.roomId)
+    if (provider.protocol !== 'https:' || declared.protocol !== 'https:' || provider.origin !== declared.origin || room.protocol !== 'mimi:' || room.hostname !== provider.hostname || !/^\/r\/vault-[A-Za-z0-9_-]{43}$/.test(room.pathname)) return undefined
+    return value.roomId
+  } catch { return undefined }
+}
+
+/** Fetch-merge-sign the opaque self-room pointer without disturbing any
+ * DIDComm, mail, or Conversation-MLS routing fields. */
+export async function setRoutingMimiVaultRoom(
+  did: string, roomId: string, providerUrl: string, signing: { updateKey: string; privateKey: Uint8Array }, fetchImpl: typeof fetch,
+): Promise<void> {
+  const current = await fetchRouting(did, fetchImpl)
+  if (!current) throw new Error('setRoutingMimiVaultRoom: this identity has no routing.json to update yet')
+  const checked = mimiVaultRoomFromRouting({ ...current, mimiVaultRoom: { roomId, providerUrl } }, providerUrl)
+  if (!checked) throw new TypeError('MIMI Vault room pointer is invalid')
+  if (current.mimiVaultRoom?.roomId === roomId && current.mimiVaultRoom.providerUrl === providerUrl) return
+  await putRouting(did, { ...current, mimiVaultRoom: { roomId, providerUrl } }, signing, fetchImpl)
 }

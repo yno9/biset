@@ -48,7 +48,7 @@ import { ingestTransportIngress } from './vault/ingress-ingest.ts'
 import { flushVaultDeliveryOutbox } from './vault/delivery-outbox.ts'
 import type { IngressEnvelopeV1 } from './protocol/ingress.ts'
 import { base64urlToBytes, canonicalHash, equalBytes, sha256Bytes } from './protocol/canonical.ts'
-import { fetchRouting, putRouting, setRoutingName } from './didcomm/webvh-routing.ts'
+import { fetchRouting, mimiVaultRoomFromRouting, putRouting, setRoutingMimiVaultRoom, setRoutingName } from './didcomm/webvh-routing.ts'
 import { rotateToPreRotatedKey } from './identity/webvh/prerotation.ts'
 import { moveWebvhIdentity } from './identity/webvh/move.ts'
 import { adoptPendingMove } from './identity/webvh/adopt-move.ts'
@@ -107,7 +107,7 @@ import { rewrapRecoveryArchiveForCurrentEpoch } from './vault/recovery-archive-r
 import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from './vault/storage-root.ts'
 import { MimiClientTransport } from './mls/mimi-client-transport.ts'
 import { PersistedMimiVaultSession } from './mls/mimi-vault-session.ts'
-import { createMimiVaultRoom } from './mls/mimi-vault-room.ts'
+import { createMimiVaultRoom, joinMimiVaultRoom } from './mls/mimi-vault-room.ts'
 import { sendMimiVaultCheckpoint, synchronizeMimiVault } from './vault/mimi-vault-sync.ts'
 import { deliveriesPullSigningBytes } from './mimi/authorizer.ts'
 
@@ -2009,19 +2009,36 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     const provider = new URL(mimiSelfBaseUrl)
     const transport = new MimiClientTransport({ normalBaseUrl: mimiSelfBaseUrl, anonBaseUrl: mimiSelfBaseUrl, selfBaseUrl: mimiSelfBaseUrl })
     let room = await selfGroupStore.loadMimiVault(identity.did)
+    const stored = await selfGroupStore.load(identity.did)
+    const credential = stored
+      ? ownMlsDeviceCredential(stored.state)
+      : createMlsDeviceCredential(identity.did, identity.generation, fromHex(identity.signPublicKey), fromHex(identity.rootPrivateKey), fromHex(identity.signPrivateKey))
+    const signaturePrivateKey = stored ? ownSignaturePrivateKey(stored.state) : fromHex(identity.signPrivateKey)
+    if (credential.deviceKid !== identity.deviceKid) throw new Error('MIMI Vault device credential does not match this identity device')
+    const selfGroupId = stored?.selfGroupId ?? 'mimi-vault'
+    const routedRoom = await fetchRouting(identity.did, fetch)
+      .then(doc => mimiVaultRoomFromRouting(doc, mimiSelfBaseUrl))
+      .catch(error => { console.warn('[mimi-vault/routing-read]', error instanceof Error ? error.message : error); return undefined })
+    if (!room && routedRoom) {
+      await joinMimiVaultRoom({
+        identityId: identity.did, deviceId: credential.deviceKid, selfGroupId, roomId: routedRoom, credential, signaturePrivateKey, transport, stateStore: selfGroupStore,
+      })
+      room = await selfGroupStore.loadMimiVault(identity.did)
+    }
     if (!room) {
-      const stored = await selfGroupStore.load(identity.did)
-      const credential = stored
-        ? ownMlsDeviceCredential(stored.state)
-        : createMlsDeviceCredential(identity.did, identity.generation, fromHex(identity.signPublicKey), fromHex(identity.rootPrivateKey), fromHex(identity.signPrivateKey))
       await createMimiVaultRoom({
-        identityId: identity.did, deviceId: identity.deviceKid, selfGroupId: stored?.selfGroupId ?? 'mimi-vault', credential,
-        signaturePrivateKey: stored ? ownSignaturePrivateKey(stored.state) : fromHex(identity.signPrivateKey), transport, stateStore: selfGroupStore,
+        identityId: identity.did, deviceId: credential.deviceKid, selfGroupId, credential, signaturePrivateKey, transport, stateStore: selfGroupStore,
         providerHost: provider.hostname,
       })
       room = await selfGroupStore.loadMimiVault(identity.did)
     }
     if (!room) throw new Error('MIMI Vault room initialization did not persist')
+    // The random room URI is the sole bootstrap pointer for a restored
+    // device; it is signed routing metadata, not Vault content or key
+    // material. Retry best-effort on each boot if routing is temporarily out.
+    await setRoutingMimiVaultRoom(identity.did, room.roomId, mimiSelfBaseUrl, {
+      updateKey: encodeMultikey(fromHex(identity.signPublicKey)), privateKey: fromHex(identity.signPrivateKey),
+    }, fetch).catch(error => console.warn('[mimi-vault/routing-publish]', error instanceof Error ? error.message : error))
     const mlsCredential = ownMlsDeviceCredential(room.state)
     const session = new PersistedMimiVaultSession({
       identityId: identity.did, mode: 'self', transport, stateStore: selfGroupStore,
@@ -2032,14 +2049,24 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     const projector = buildVaultDeliveryProjector(selfGroupStore, identity.did, () => readModel.snapshot(), identity.masterSeed)
     const synchronizeMimi = async (): Promise<void> => {
       setVaultCard({ state: 'syncing', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, detail: 'Synchronizing encrypted MIMI Vault' })
+      // Provider sequence is separate from the Vault event cursor.  Keep it
+      // with the encrypted MLS state so historical commits/checkpoints are
+      // not replayed on every ten-second poll.
+      const beforeSync = await selfGroupStore.loadMimiVault(identity.did)
+      const providerCursor = beforeSync?.deliveryCursor ?? 0
       const result = await synchronizeMimiVault({
         pull: value => transport.pullDeliveries('self', value),
         signPull: unsigned => ed25519.sign(deliveriesPullSigningBytes(unsigned), ownSignaturePrivateKey(room!.state)),
         pullRequest: { version: 1, roomId: room!.roomId, requester: { kind: 'visible', user: identity.did, client: identity.deviceKid!, credential: encodeMlsDeviceCredential(ownMlsDeviceCredential(room!.state)), signaturePublicKey: ownMlsDeviceCredential(room!.state).signaturePublicKey }, requestedAt: new Date().toISOString() },
         receiver: session, outbox: vaultStore, sender: session, identityId: identity.did,
+        afterSeq: providerCursor,
         ingest: async (payload, seq) => { await ingestVaultDelivery({ version: 1, identityId: identity.did, seq, payload, payloadHash: sha256Bytes(payload), createdAt: new Date().toISOString(), expiresAt: '9999-12-31T23:59:59.999Z' }, boundary.signer, projector, vaultStore) },
         restoreCheckpoint: async checkpoint => {
           if (!identity.masterSeed) throw new Error('MIMI Vault checkpoint restore requires the identity master seed')
+          const localCursor = await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)
+          // An older manifest is still valid ciphertext, but it cannot add
+          // anything after a newer Vault checkpoint is already restored.
+          if (BigInt(checkpoint.manifest.coveredSeq) <= BigInt(localCursor)) return
           const snapshot = await openPortableCoordinatorCheckpoint(fromHex(identity.masterSeed), checkpoint.payload, { vaultId: room!.roomId as never, coveredSeq: deliverySeq(BigInt(checkpoint.manifest.coveredSeq)), coordinatorUrl: mimiSelfBaseUrl })
           try {
             if (snapshot.identityId !== identity.did) throw new Error('MIMI Vault checkpoint belongs to another identity')
@@ -2051,6 +2078,11 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
           } finally { for (const segment of snapshot.segmentKeys) segment.key.fill(0) }
         },
       })
+      if (result.latestSequence > providerCursor) {
+        const current = await selfGroupStore.loadMimiVault(identity.did)
+        if (!current) throw new Error('MIMI Vault state disappeared while synchronizing')
+        await selfGroupStore.saveMimiVault(identity.did, { ...current, deliveryCursor: result.latestSequence })
+      }
       if (result.ingestedSequences.length) await refreshInbox(readModel)
       if (result.latestSequence > 1 && result.checkpoints.length === 0 && identity.masterSeed) {
         const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, identity.did, new Date().toISOString())

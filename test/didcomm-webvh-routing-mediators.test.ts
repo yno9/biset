@@ -4,7 +4,7 @@
 // spec-compliant sender to Forward-wrap instead of delivering directly --
 // and supersedes the legacy `didCommEndpoint` entry when both are given.
 import { describe, expect, test } from 'bun:test'
-import { buildRoutingDoc } from '../src/didcomm/webvh-routing.ts'
+import { buildRoutingDoc, mimiVaultRoomFromRouting } from '../src/didcomm/webvh-routing.ts'
 
 const DID = 'did:webvh:alice.example'
 
@@ -76,5 +76,16 @@ describe('buildRoutingDoc: MimiDeliveryService (PLAN_biset-mls-ds.md §11-7)', (
   test('no mimiProvider: no MimiDeliveryService entry', () => {
     const doc = buildRoutingDoc(DID, { didCommEndpoint: 'https://core.example/v1/didcomm/ingress' })
     expect(doc.service.some(s => s.type === 'MimiDeliveryService')).toBe(false)
+  })
+})
+
+describe('MIMI Vault self-room routing', () => {
+  const provider = 'https://mimi-self.example'
+  const roomId = 'mimi://mimi-self.example/r/vault-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+
+  test('accepts only the opaque room URI on the configured HTTPS provider', () => {
+    expect(mimiVaultRoomFromRouting({ service: [], mimiVaultRoom: { roomId, providerUrl: provider } }, provider)).toBe(roomId)
+    expect(mimiVaultRoomFromRouting({ service: [], mimiVaultRoom: { roomId: 'mimi://else.example/r/vault-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', providerUrl: provider } }, provider)).toBeUndefined()
+    expect(mimiVaultRoomFromRouting({ service: [], mimiVaultRoom: { roomId, providerUrl: 'http://mimi-self.example' } }, provider)).toBeUndefined()
   })
 })
