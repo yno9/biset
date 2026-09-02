@@ -110,6 +110,7 @@ import { rewrapRecoveryArchiveForCurrentEpoch } from './vault/recovery-archive-r
 import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from './vault/storage-root.ts'
 import { MimiClientTransport } from './mls/mimi-client-transport.ts'
 import { PersistedMimiVaultSession } from './mls/mimi-vault-session.ts'
+import { watchMimiVaultDeliveries } from './mls/mimi-vault-watch.ts'
 import { createMimiVaultRoom, joinMimiVaultRoom } from './mls/mimi-vault-room.ts'
 import { pullMimiVaultPages, sendMimiVaultCheckpoint, synchronizeMimiVault } from './vault/mimi-vault-sync.ts'
 import type { DeliveriesPullRequest } from './mimi/protocol-types.ts'
@@ -118,6 +119,7 @@ import { deliveriesPullSigningBytes } from './mimi/authorizer.ts'
 const hex = (value: Uint8Array): string => Array.from(value, byte => byte.toString(16).padStart(2, '0')).join('')
 let pollTimer: ReturnType<typeof setInterval> | undefined
 let coordinatorPollTimer: ReturnType<typeof setInterval> | undefined
+let mimiVaultWatchHandle: { close(): void } | undefined
 let mediatorPollHandles: MediatorPollHandle[] = []
 let autoConnectCoordinator: (() => Promise<void>) | undefined
 
@@ -176,6 +178,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   // closed. A re-registration below (has-identity branch) replaces this.
   if (pollTimer !== undefined) { clearInterval(pollTimer); pollTimer = undefined }
   if (coordinatorPollTimer !== undefined) { clearInterval(coordinatorPollTimer); coordinatorPollTimer = undefined }
+  if (mimiVaultWatchHandle !== undefined) { mimiVaultWatchHandle.close(); mimiVaultWatchHandle = undefined }
   // Same reasoning as pollTimer just above: a re-entry into bootClient()
   // (logout, most notably) must not leave a PRIOR identity's mediator polls
   // running against the new session's own vault/readModel.
@@ -2176,14 +2179,31 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     // Lets a just-committed local send (this device's own reply/DIDComm
     // chat, or a just-relayed inbound message this device is passing on to
     // its siblings) reach the hub immediately, instead of waiting out
-    // whatever is left of the current 10s tick -- the OTHER half of the
-    // latency (the sibling device's own next poll) is a separate, larger
-    // redesign (a push/SSE subscription in place of polling, matching what
-    // the now-retired Conversation Group's own `watch` used) that this
-    // does not attempt.
+    // whatever was left of a polling interval.
     triggerMimiVaultSync = runMimiSyncNow
     await runMimiSyncNow()
-    coordinatorPollTimer = setInterval(() => { void runMimiSyncNow() }, 10_000)
+    // Polling replaced with a live SSE subscription (mimi-vault-watch.ts,
+    // same shape as the now-retired Conversation Group's own `watch`) --
+    // this closes the OTHER half of cross-device latency triggerMimiVaultSync
+    // above does not (that one only speeds up THIS device's own sends; a
+    // sibling device still needed to wait out its own next poll tick to
+    // notice anything, up to 10s, found live 2026-09-02 to be the entire
+    // remaining gap). `onEntry` never processes the pushed entry itself --
+    // it only wakes runMimiSyncNow, which re-runs the existing, already
+    // hardened pull-based pipeline (checkpoint collation, epochTooOld
+    // retry, the permanently-undecryptable skip, sentAt-agnostic identity
+    // merge). mimiPollBusy already coalesces a burst of pushes (e.g. a
+    // checkpoint's own chunk immediately followed by its manifest) into
+    // one sync pass.
+    const watchCursor = await selfGroupStore.loadMimiVault(identity.did).then(stored => stored?.deliveryCursor ?? 0)
+    mimiVaultWatchHandle = watchMimiVaultDeliveries({
+      transport, roomId: room.roomId,
+      requester: { kind: 'visible', user: identity.did, client: identity.deviceKid, credential: encodeMlsDeviceCredential(mlsCredential), signaturePublicKey: mlsCredential.signaturePublicKey },
+      sign: bytes => ed25519.sign(bytes, ownSignaturePrivateKey(room!.state)),
+      afterSeq: watchCursor,
+      onEntry: () => { void runMimiSyncNow() },
+      onError: error => console.warn('[mimi-vault/watch]', error instanceof Error ? error.message : error),
+    })
   }
 }
 

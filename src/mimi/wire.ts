@@ -636,7 +636,7 @@ function deliveryEntryJson(value: MimiDeliveryEntry): JsonRecord {
   return { seq: value.seq, kind: value.kind, payload: bytesToBase64url(value.payload), epoch: value.epoch, acceptedAt: value.acceptedAt, frank: value.frank === undefined ? undefined : JSON.parse(encodeFrankWire(value.frank)), vaultCheckpoint: value.vaultCheckpoint === undefined ? undefined : vaultCheckpointManifestJson(value.vaultCheckpoint) }
 }
 
-function decodeDeliveryEntry(value: unknown, name: string): MimiDeliveryEntry {
+export function decodeDeliveryEntry(value: unknown, name: string): MimiDeliveryEntry {
   const input = requireRecord(value, name)
   const kind = input.kind
   if (kind !== 'commit' && kind !== 'proposal' && kind !== 'welcome' && kind !== 'application' && kind !== 'vaultCheckpoint') throw new MimiWireError(`${name}.kind is invalid`)
