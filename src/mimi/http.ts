@@ -40,8 +40,12 @@ import { sealGroupInfoResponse } from './group-info.ts'
 import { createMimiProtocolDirectory, MIMI_PROTOCOL_DIRECTORY_PATH } from './directory.ts'
 import { decodeMimiAbuseReportWire, encodeMimiAbuseReportWire, decodeMimiConsentEntryWire, decodeMimiIdentifierRequestWire, encodeMimiIdentifierResponseWire, noIdentifiers, type MimiIdentifierDirectory } from './federation.ts'
 import { verifyMimiProviderRequest, type VerifiedProviderPeer } from './provider-transport.ts'
-import { decodeMimiFanoutBatchWire, fanoutDeliveries, fanoutFingerprint } from './fanout.ts'
+import { decodeMimiFanoutBatchWire, fanoutDeliveries, fanoutFingerprint, MimiFanoutDispatcher, type MimiFanoutMessage } from './fanout.ts'
+import { mimiUriProviderDomain } from './mimi-uri.ts'
+import { resolveMimiProviderBaseUrl } from './provider-directory-client.ts'
 import { extractMimiMlsStateTransition } from './mls-appsync.ts'
+import { encodeMlsMessage } from '../mls/vendor/index.ts'
+import { decodeWelcome } from '../mls/vendor/welcome.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import type { MimiAssetProxy } from './asset-proxy.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
@@ -89,6 +93,19 @@ export interface MimiFederationOptions {
   identifierDirectory?: MimiIdentifierDirectory
   assetProxy?: MimiAssetProxy
   now?: () => string
+  /** Absent: this hub only ever receives federation traffic (inbound
+   * `/notify`, requestConsent, etc.) and never initiates it -- rooms that
+   * gain a remote participant simply never fan out to them. Present: after
+   * a local room update/message is accepted, its MLSMessage bytes are
+   * pushed to every remote provider represented in the room's current
+   * participant list, best-effort (fire-and-forget; a peer being
+   * unreachable never fails the local accept -- see dispatchFanout). */
+  outbound?: {
+    dispatcher: MimiFanoutDispatcher
+    /** Defaults to resolveMimiProviderBaseUrl (directory-based discovery);
+     * overridable for tests. */
+    resolveProviderBaseUrl?(domain: string): Promise<string>
+  }
 }
 
 class MimiProviderAuthenticationError extends Error {}
@@ -247,7 +264,31 @@ export function createMimiHttpHandler(
           return error(400, 'bad-request', 'franking_signature_key credential does not match this hub')
         }
         const result = store.submitUpdate(value, mlsTransition)
-        if (result.ok) return json(200, encodeUpdateRoomResponseWire({ status: 'success', acceptedTimestamp: value.submittedAt }))
+        if (result.ok) {
+          const acceptedAt = Date.parse(value.submittedAt)
+          if (Number.isFinite(acceptedAt) && acceptedAt >= 0) {
+            const timestamp = String(acceptedAt)
+            // A Welcome FanoutMessage requires ratchetTreeOption (fanout.ts's
+            // validate()) -- skip fanning it out (still fans out the commit)
+            // if the bundle has a welcome but no accompanying ratchet_tree.
+            // HandshakeBundle.welcome is a bare Welcome struct (the shape
+            // store.ts already stores it as for local delivery), but a
+            // FanoutMessage.message must be a *complete* MLSMessage (fanout.ts
+            // classify()) -- decode and re-wrap it.
+            const welcomeMessage = (() => {
+              if (!value.bundle.welcome || !value.bundle.ratchetTree) return undefined
+              const decoded = decodeWelcome(value.bundle.welcome, 0)
+              if (!decoded || decoded[1] !== value.bundle.welcome.length) return undefined
+              return { timestamp, protocol: 'mls10' as const, message: encodeMlsMessage({ version: 'mls10', wireformat: 'mls_welcome', welcome: decoded[0] }), ratchetTreeOption: value.bundle.ratchetTree }
+            })()
+            const messages: MimiFanoutMessage[] = [
+              { timestamp, protocol: 'mls10', message: value.bundle.proposalOrCommit, ...(value.bundle.kind === 'proposal' && value.bundle.moreProposals ? { moreProposals: value.bundle.moreProposals } : {}) },
+              ...(welcomeMessage ? [welcomeMessage] : []),
+            ]
+            dispatchFanout(store, federation, roomId, messages)
+          }
+          return json(200, encodeUpdateRoomResponseWire({ status: 'success', acceptedTimestamp: value.submittedAt }))
+        }
         return updateError(result.reason, result.message, result.currentEpoch)
       }
 
@@ -265,6 +306,7 @@ export function createMimiHttpHandler(
         const frank = frankMessage(keys, { aad: value.frankAAD, senderUri, roomUri: roomId, acceptedTimestamp: String(acceptedTimestamp), ciphersuite: value.frankingSignatureCiphersuite })
         const result = store.submitMessage(roomId, senderUri, value.epoch, value.appMessage, frank, value.submittedAt, value.deliveryId)
         if (!result.ok) return json(409, encodeSubmitMessageResponseWire({ status: 'epochTooOld', currentEpoch: result.currentEpoch }))
+        dispatchFanout(store, federation, roomId, [{ timestamp: String(acceptedTimestamp), protocol: 'mls10', message: value.appMessage, frank }])
         return json(200, encodeSubmitMessageResponseWire({ status: 'accepted', acceptedTimestamp: value.submittedAt, frank }))
       }
 
@@ -313,6 +355,40 @@ async function verifiedFederationPeer(request: Request, federation: MimiFederati
 }
 
 function sameDomain(left: string, right: string): boolean { return left.toLowerCase().replace(/\.$/, '') === right.toLowerCase().replace(/\.$/, '') }
+
+/**
+ * Fire-and-forget federation fanout after a local room update/message is
+ * accepted. Dispatches the same batch to every remote provider domain
+ * represented in the room's *current* participant list -- deliberately not
+ * filtered per-message (a Welcome, say, is only meaningful to its one new
+ * member's provider), matching the existing local-delivery model where
+ * every room participant receives every delivery and simply skips what
+ * isn't theirs (store.ts's own `welcome` append is room-wide, not
+ * per-recipient). A peer being unreachable, slow, or on an unconfigured
+ * domain never fails or delays the local accept response -- this always
+ * runs detached from the request handler and only logs on failure.
+ */
+function dispatchFanout(store: SqliteMimiStore, federation: MimiFederationOptions | undefined, roomId: string, messages: MimiFanoutMessage[]): void {
+  if (!federation?.outbound || messages.length === 0) return
+  const room = store.room(roomId)
+  if (!room) return
+  const resolve = federation.outbound.resolveProviderBaseUrl ?? resolveMimiProviderBaseUrl
+  const remoteDomains = new Set(
+    room.participantList.participants
+      .map(participant => { try { return mimiUriProviderDomain(participant.user) } catch { return undefined } })
+      .filter((domain): domain is string => domain !== undefined && !sameDomain(domain, federation.providerDomain)),
+  )
+  for (const domain of remoteDomains) {
+    void (async () => {
+      try {
+        const providerBaseUrl = await resolve(domain)
+        await federation.outbound!.dispatcher.send({ providerBaseUrl, roomId }, { messages })
+      } catch (cause) {
+        console.warn(`[mimi/federation] fanout of room ${roomId} to ${domain} failed:`, cause)
+      }
+    })()
+  }
+}
 
 function credentialAllowed(credential: MimiCredential, mode: MimiDeploymentMode): boolean {
   return mode === 'anon' ? credential.kind === 'pseudonymous' : credential.kind === 'visible'

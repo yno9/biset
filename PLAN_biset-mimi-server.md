@@ -660,3 +660,31 @@ v1に3つ目のプロセス`biset-mimi-self`を追加した——`biset-mimi-nor
 - `https://mimi-self.biset.md`に対し実際にHTTPS越しでEnd-to-Endを実行——room作成（`franking-agent` GET→鍵取得→commitに埋め込み→`/update`）、所有者の新端末が`/groupInfo`でGroupInfo+ratchet_treeを取得・HPKE復号・hub署名検証まで成功、無関係な第三者は`notAuthorized`、存在しないroomは`noSuchRoom`を確認。ローカルテスト(`:memory:`)と完全に同じ結果が実配線でも再現。
 
 残る最大の穴は§Pending（Vault data plane: `/v1/vaults`, `/v2/entries/*`, `/v2/checkpoints/*`）——`biset-coordinator`にはこれらの相当機能があるが`biset-mimi`には未設計。これが片付くまで`biset-coordinator`は退役できない。
+
+## 20. Federation outbound dispatchの配線（2026-09-02）
+
+Phase 3（§13/§10.1）で「independent hub/follower間でmTLS-bound `/notify`を通したhub commitがfollowerのlocal deliveryへ到達すること」は確認済みだったが、それは**手動で`/notify`をPOSTしてpeer pushをシミュレートしたテスト**（`federation-gate.test.ts`）——「ローカルのroom更新/message送信が受理されるたびに、hubが自発的にリモート参加者のいるproviderへfanoutする」という**トリガー自体**は未配線のままだった（`MimiFanoutDispatcher.send`はコードにあるがどこからも呼ばれていなかった）。本節はこの配線と、その過程で見つかった別の穴を記録する。
+
+### 20.1 実装したもの
+
+- [src/mimi/mimi-uri.ts](src/mimi/mimi-uri.ts)（新規）: `mimiUriProviderDomain(uri)`——`mimi://domain/u/...`形式のURI（spec行344-352）からprovider domainを取り出す。`WHATWG URL`パーサは非specialスキームでも`//`付きなら authority を正しく解釈することを確認済み（`mimi://a.example/u/alice`→`hostname: 'a.example'`）。
+- [src/mimi/provider-directory-client.ts](src/mimi/provider-directory-client.ts)（新規）: `resolveMimiProviderBaseUrl(domain)`——`https://{domain}/.well-known/mimi-protocol-directory`を取得し、`notify`フィールドのoriginを返す。identity domainと実際のhub originが一致すると仮定せず、自分自身が配るのと同じdirectory機構で相手にも問い合わせる設計。
+- [src/mimi/http.ts](src/mimi/http.ts): `MimiFederationOptions`に`outbound?: { dispatcher: MimiFanoutDispatcher; resolveProviderBaseUrl?(domain): Promise<string> }`を追加（未設定なら今まで通りoutboundなし）。`dispatchFanout(...)`——`/update`・`/submitMessage`が受理された直後、roomの**現在の**participant listのうちローカルでない（`federation.providerDomain`と一致しない）domainを集め、それぞれへ`MimiFanoutDispatcher.send`する。**fire-and-forget**——ローカルのレスポンスは待たせず、相手が不通でもローカルの受理は失敗しない（ログのみ）。Welcomeは`HandshakeBundle.welcome`がbare `Welcome`構造体（ローカル配送と同じ形）のため、`decodeWelcome`→`encodeMlsMessage({wireformat:'mls_welcome',...})`で完全なMLSMessageへ包み直してから送る（`fanout.ts`の`validate()`が完全なMLSMessageを要求するため）。
+- [test/mimi/federation-dispatch.test.ts](test/mimi/federation-dispatch.test.ts)（新規）: 本物のMLS commit（`add` proposal + AppSync）でhub上にroomを作り、`mimi://follower.example/u/bob`という別providerのユーザーを追加するcommitを`/update`で送るだけで（`MimiFanoutDispatcher.send`を一切手動で呼ばずに）followerのstoreへcommit・welcome・その後のapplication messageが自動的に届くことを確認。
+
+`bun run typecheck`（全7 tsconfig）・`bun run test test/mimi`（38 files）・`bun run build:mimi`、いずれも無傷。
+
+### 20.2 テスト中に見つかった別の穴: followerは未知のroomのfanoutを拒否する
+
+`store.ts`の`acceptProviderFanout`（[store.ts:226](src/mimi/store.ts:226)）は、**そのroomが自分のstoreに既に存在する場合しか受理しない**（`if (!room) return 'noSuchRoom'`）——受信したcommitからroomを新規作成するブートストラップ機構が無い。実際に`federation-dispatch.test.ts`のroom作成commitをfollowerへfanoutしたところ、事前にfollower側でroomを（テストの都合で`store.submitUpdate`を直接呼んで）作っていなければ`404 noSuchRoom`で拒否されることを確認した。
+
+これは§20.1で直した「outbound dispatchのトリガー」とは別の、もう一段深い穴——「Aliceが初めてBobを（別providerの）新しいroomへ招待する」という、まさにこのPLAN文書冒頭で例に出した新規送信フローが、outbound dispatchが直っても依然として完結しない。理由：Bobのprovider（follower）は、Bobが実際に参加する前提のroomをまだ一度も知らない状態でfanoutを受け取ることになるが、現在の実装はそれを拒否する。
+
+**未解決**（次の一手）：`acceptProviderFanout`（あるいは新しい経路）が、未知のroomIdに対する最初のfanoutを「room作成」として受理できるようにする必要がある。ただし単純に「知らないroomなら何でも作る」のは危険——biset自身のroomと同じAppSync検証（`extractMimiMlsStateTransition`、`assertAddedCredentialsBackedByMls`相当）をfederation受信経路でも通す設計が要る。加えて、biset自身の`/update`にある「franking_signature_key credentialは自分自身のHTTPS originと一致しなければならない」というチェック（[http.ts:245-248](src/mimi/http.ts:245)）は「呼び出し元が自分がそのroomのホームhubだ」という前提に立っており、followerとして他providerのroomを鏡映しにする操作には**そのまま使えない**（`federation-gate.test.ts`・`federation-dispatch.test.ts`とも、この理由でテストのroom seedingは低レベルの`store.submitUpdate`直接呼び出しでこのチェックを迂回している）。
+
+### 20.3 本番投入にまだ必要なもの（未着手、20.1のコードとは別スコープ）
+
+- biset-mimiの各ドメイン用TLSクライアント証明書（Caddyが既に持つLet's Encryptサーバー証明書を、outbound用クライアント証明書として流用できる可能性が高い——ACME証明書は通常EKUをserverAuthに制限しないため。要確認）。
+- Caddy側で`/notify`等federation専用routeへのクライアント証明書要求・検証（`client_auth { mode request }`——`require`ではなく`request`。通常のクライアント（ブラウザ）はクライアント証明書を持たないため、site全体を`require`にすると壊れる）、検証済みpeerの識別情報をBunプロセスへヘッダ経由で転送する設定。**Caddyが公開CAに対するクライアント証明書検証を素直にサポートするかは未検証**——ここは実装前に要調査。
+- 本番用`authenticatePeer`実装（Caddyが転送するヘッダを読む）、`index.ts`への`federation`オプションの配線（現状`index.ts`は`federation`を一切渡していない——本番は federation 機能全体がOFF）。
+- 検証：biset自身が別ドメインの2台目インスタンスを立てて、実際のmTLSハンドシェイク〜dispatch〜受信までを実配線で確認する（本物の外部MIMIプロバイダは現状世に存在しないため）。
