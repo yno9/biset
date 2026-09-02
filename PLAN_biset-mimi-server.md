@@ -605,7 +605,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: 19.a
 - [x] **19.c chunking実装**: 大きいentry/checkpointの分割送信・受信側再構成（19.2）。クライアント側（19.5の新モジュール）とhub側双方。 (完了: 2026-09-02, 関連: `src/vault/mimi-vault-chunks.ts`, `src/mls/mimi-client-transport.ts`, `src/mimi/store.ts`, `test/vault-mimi-chunks.test.ts`; 700KiB chunk、全体hash、順次送信・manifest後送信、hub側manifest/圧縮を実装)
   - depends on: 19.a
-- [~] **19.d メタデータ平文漏洩の是正確認**: 実際にVault entryの中身がMLS暗号化層の内側に入り、hubから`VaultDeliveryPackV1`内部のフィールドが一切見えないことをテスト・実HTTPS検証で確認する（19.3）。 (agent: Codex, 開始: 2026-09-02)
+- [x] **19.d メタデータ平文漏洩の是正確認**: 実際にVault entryの中身がMLS暗号化層の内側に入り、hubから`VaultDeliveryPackV1`内部のフィールドが一切見えないことをテスト・実HTTPS検証で確認する（19.3）。 (完了: 2026-09-02, 関連: `test/mimi/store.test.ts`, `scripts/verify-mimi-vault-live.ts`; Self実HTTPSで暗号文entry・chunk・manifest圧縮まで確認)
   - depends on: 19.b
 - [~] **19.e クライアント側移植**: `src/vault/mimi-vault-sync.ts`（新規）実装、`main.ts`の`synchronizeStreamOnce`呼び出し元をcoordinator-transportからこちらへ切り替え（19.5）。 (agent: Codex, 開始: 2026-09-02)
   - depends on: 19.b, 19.c
