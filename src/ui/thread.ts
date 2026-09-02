@@ -479,6 +479,18 @@ export function render(smooth = false): void {
   const $past = document.getElementById('past-threads')
   const $active = document.getElementById('active-thread')
   if (!$past || !$active) return
+  // A background refresh (background MIMI sync landing new content, most
+  // often -- far more frequent since this session's own move to live SSE
+  // push) rebuilds the reply box's textarea from scratch below, same as
+  // every other node in #active-thread. Losing whatever the user was
+  // mid-typing, silently, on a timer they have no control over, is exactly
+  // the kind of thing the conv-did/conv-via badge preservation just above
+  // this function already exists to avoid for other nodes (found live,
+  // 2026-09-02: reported as "unrelated periodic refresh randomly clears
+  // what I'm typing", traced to this rebuild -- no visible cause from the
+  // user's side, since nothing about typing itself triggers it).
+  const $prevReply = document.querySelector<HTMLTextAreaElement>('#reply-dock .reply-box textarea, #focused-thread-card .reply-box textarea')
+  const preservedReply = $prevReply ? { value: $prevReply.value, hadFocus: document.activeElement === $prevReply, selectionStart: $prevReply.selectionStart, selectionEnd: $prevReply.selectionEnd } : undefined
   $past.innerHTML = ''
   $active.innerHTML = ''
 
@@ -601,6 +613,16 @@ export function render(smooth = false): void {
   if (replyBox && dock) dock.replaceChildren(replyBox)
   else if (dock) dock.innerHTML = ''
   syncDockPosition()
+  if (preservedReply?.value) {
+    const $newReply = document.querySelector<HTMLTextAreaElement>('#reply-dock .reply-box textarea')
+    if ($newReply) {
+      $newReply.value = preservedReply.value
+      if (preservedReply.hadFocus) {
+        $newReply.focus()
+        $newReply.setSelectionRange(preservedReply.selectionStart, preservedReply.selectionEnd)
+      }
+    }
+  }
 
   requestAnimationFrame(() => scrollToFocused(smooth))
 }
