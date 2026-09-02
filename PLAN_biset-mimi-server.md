@@ -603,23 +603,23 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: なし
 - [x] **19.b `MimiDeliveryEntry.kind`拡張とcheckpoint圧縮ロジック**: protocol-types.ts / store.ts / wire.tsへの実装（19.4）。 (完了: 2026-09-02, 関連: `src/mimi/{protocol-types,wire,authorizer,http,store}.ts`, `test/mimi/store.test.ts`; 署名済みmanifest、単調coveredSeq、同値再送、applicationだけの圧縮を実装)
   - depends on: 19.a
-- [x] **19.c chunking実装**: 大きいentry/checkpointの分割送信・受信側再構成（19.2）。クライアント側（19.5の新モジュール）とhub側双方。 (完了: 2026-09-02, 関連: `src/vault/mimi-vault-chunks.ts`, `src/mls/mimi-client-transport.ts`, `src/mimi/store.ts`, `test/vault-mimi-chunks.test.ts`; 700KiB chunk、全体hash、順次送信・manifest後送信、hub側manifest/圧縮を実装)
+- [x] **19.c chunking実装**: 大きいentry/checkpointの分割送信・受信側再構成（19.2）。クライアント側（19.5の新モジュール）とhub側双方。 (完了: 2026-09-02, 関連: `src/vault/mimi-vault-chunks.ts`, `src/mls/mimi-client-transport.ts`, `src/mimi/store.ts`, `test/vault-mimi-chunks.test.ts`; 500KiB chunk、全体hash、順次送信・manifest後送信、hub側manifest/圧縮を実装)
   - depends on: 19.a
 - [x] **19.d メタデータ平文漏洩の是正確認**: 実際にVault entryの中身がMLS暗号化層の内側に入り、hubから`VaultDeliveryPackV1`内部のフィールドが一切見えないことをテスト・実HTTPS検証で確認する（19.3）。 (完了: 2026-09-02, 関連: `test/mimi/store.test.ts`, `scripts/verify-mimi-vault-live.ts`; Self実HTTPSで暗号文entry・chunk・manifest圧縮まで確認)
   - depends on: 19.b
 - [x] **19.e クライアント側移植**: `src/vault/mimi-vault-sync.ts`（新規）実装、`main.ts`の`synchronizeStreamOnce`呼び出し元をcoordinator-transportからこちらへ切り替え（19.5）。 (完了: 2026-09-02, 関連: `src/{main.ts,mls/mimi-vault-{room,session}.ts,vault/mimi-vault-sync.ts}`; durable MLS retry・MIMI inbox checkpoint復元/圧縮・Self endpoint切替)
   - depends on: 19.b, 19.c
-- [~] **19.f テスト・実HTTPS検証**: `bun run typecheck`・`bun run test`、`biset-mimi-self`に対する実HTTPS End-to-End（entry送受信、checkpoint圧縮、chunk結合、新端末onboarding後のVault復元）。 (agent: Codex, 開始: 2026-09-02)
+- [x] **19.f テスト・実HTTPS検証**: `bun run typecheck`・`bun run test`、`biset-mimi-self`に対する実HTTPS End-to-End（entry送受信、checkpoint圧縮、chunk結合、新端末onboarding後のVault復元）。 (完了: 2026-09-02, 関連: `scripts/verify-mimi-vault-{live,onboarding-live}.ts`, `test/{vault-mimi-sync,mls/mimi-vault-room}.test.ts`, commits `8c6a949`, `221dc55`, `36600cb`; 実HTTPSで外部join→元端末受信→post-join checkpoint復元まで確認、全typecheck/testと公開app配信確認)
   - depends on: 19.b, 19.c, 19.e
 - [ ] **19.h coordinator退役**: 既存Vaultデータの移行は不要（19.6、2026-09-02にユーザーが明示指示——実データ無し、全てテストデータにつき削除可）。Vaultルート・テーブルを削除し、プロセス停止・systemd無効化する（19.6の3番目）。
   - depends on: 19.f
 
 ### 19.8 実装前に確認・決定すべき未確定事項
 
-- **roomId命名規則（決定）**: `mimi://mimi-self.biset.md/r/vault-<base64url(random 32 bytes)>` とする。provider URI はMIMI room IDに必要だが、suffixは256-bit乱数のみでDID・domain・mail addressを含まない。provider移転時は既存room IDを不変のopaque IDとしてtransport設定から到達させ、identityのdomain変更でroomを再生成しない。
+- **roomId命名規則（決定）**: `mimi://mimi-self.biset.md/r/vault-<base64url(random 32 bytes)>` とする。provider URI はMIMI room IDに必要だが、suffixは256-bit乱数のみでDID・domain・mail addressを含まない。provider移転時は既存room IDを不変のopaque IDとしてtransport設定から到達させ、identityのdomain変更でroomを再生成しない。新端末用にはこのopaque URIだけを署名済み`routing.json`の`mimiVaultRoom`へ置き、設定済みHTTPS providerと一致するURIだけを受理する。Vault内容・鍵・checkpointはこの公開ポインタに含めない。
 - **chunking方式（決定）**: 上限緩和はしない。raw payloadは500KiB以下に分割する（MLS PrivateMessageとJSON/base64 framing後も共有1MiB HTTP上限内に収めるため。700KiBは実HTTPSで超過を確認）。transfer ID・ordinal・count・全体SHA-256を持つクライアント内のopaque envelopeを既存`submitMessage`で順に配送する。checkpointでは全chunkの後に、`coveredSeq`・transfer ID・count・hashだけを持つ署名済み`vaultCheckpoint` manifestを送る。hubはmanifestを認証・単調性検査して圧縮するが、暗号文chunkの内容を読まない。
 - **entryの冪等性（決定）**: client outboxだけには委ねない。`SubmitMessageRequest`へランダムなopaque `deliveryId`を追加し、hubは`(roomId, sender client, deliveryId)`をpayload SHA-256とhub seqに一意に永続化する。同じID・同じhashは元の受理結果を返し、同じID・異なるhashは競合として拒否する。これは応答喪失後の再送で二重Vault eventを作らないためであり、Vault v2の`appendId`契約を保つ。
-- **1MiB上限のchunkサイズ（決定）**: raw payloadは1 chunkあたり最大`700 * 1024` bytesとする。JSON/base64url・credential・franking等の余白を残すためであり、25MB entryは最大37、100MB checkpointは最大147 chunkとなる。同期実装は逐次送信・逐次再構成し、全chunkを同時にメモリへ載せない。
+- **1MiB上限のchunkサイズ（決定）**: raw payloadは1 chunkあたり最大`500 * 1024` bytesとする。実HTTPSで700KiBがMLS暗号化・JSON/base64 framing後に共有1MiB HTTP上限を越えることを確認したため、十分な余白を確保した。25MB entryは最大52、100MB checkpointは最大205 chunkとなる。同期実装は逐次送信・逐次再構成し、全chunkを同時にメモリへ載せない。
 
 ## 18. `biset-coordinator`置き換えに向けて: `self`モード廃止と`allowExternalJoin`（2026-09-01）
 
