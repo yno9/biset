@@ -88,7 +88,32 @@ export async function synchronizeMimiVault(input: {
     await input.ingest(delivery.payload, sequence)
     ingestedSequences.push(sequence)
   }
-  const flushed = await flushMimiVaultOutbox(input.outbox, input.sender, input.identityId)
+  let flushed = await flushMimiVaultOutbox(input.outbox, input.sender, input.identityId)
+  if (flushed.failedEntryId && flushed.failureReason?.includes('epochTooOld')) {
+    // A sibling device's own commit can land between this pull and this
+    // send -- the hub rejects an application message against a stale
+    // epoch, and by construction this device only just discovered whatever
+    // commit made it stale (the pull above already happened before that
+    // commit was known). One more pull+decode round catches this device's
+    // own MLS state up to the CURRENT epoch before retrying, rather than
+    // treating an ordinary, expected race as a hard failure that leaves
+    // the outbox stuck until something else happens to retry it (found
+    // live, 2026-09-02, reproduced against real production: a device's own
+    // send failed with epochTooOld immediately after a sibling device
+    // joined, until this device separately re-pulled first).
+    const followUp = await pullMimiVaultPages(input.pull, input.signPull, input.pullRequest, decoded.latestSequence)
+    const followUpDecoded = await decodeMimiVaultBatch(followUp, input.receiver)
+    for (const checkpoint of followUpDecoded.checkpoints) await input.restoreCheckpoint?.(checkpoint)
+    for (const delivery of followUpDecoded.deliveries) {
+      const sequence = mimiVaultSequence(delivery.finalSequence)
+      await input.ingest(delivery.payload, sequence)
+      ingestedSequences.push(sequence)
+    }
+    decoded.checkpoints.push(...followUpDecoded.checkpoints)
+    decoded.latestSequence = Math.max(decoded.latestSequence, followUpDecoded.latestSequence)
+    decoded.sawCheckpointManifest ||= followUpDecoded.sawCheckpointManifest
+    flushed = await flushMimiVaultOutbox(input.outbox, input.sender, input.identityId)
+  }
   if (flushed.failedEntryId) throw new Error(`MIMI Vault outbox append failed: ${flushed.failureReason ?? flushed.failedEntryId}`)
   return { appendedEntryIds: flushed.appendedEntryIds, ingestedSequences, checkpoints: decoded.checkpoints, latestSequence: decoded.latestSequence, sawCheckpointManifest: decoded.sawCheckpointManifest }
 }
