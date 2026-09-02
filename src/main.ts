@@ -482,6 +482,12 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
 
   let syncMailIngress: (() => Promise<void>) | undefined
   let flushDidCommTransportOutbox: (() => Promise<void>) | undefined
+  /** Best-effort nudge: ask the MIMI Vault sync loop to run right now
+   * instead of waiting out whatever's left of its 10s tick. Set once,
+   * inside the mimiVaultConfigured branch further down -- undefined for
+   * any other deployment shape, so every call site below treats a missing
+   * trigger as "nothing to nudge" rather than throwing. */
+  let triggerMimiVaultSync: (() => Promise<void>) | undefined
   // Reply-send needs the same signing/MLS boundary maintainSelfGroup already
   // requires a deviceKid for -- with neither a core to submit through nor a
   // device identity to sign with, the UI stays read-only, matching how this
@@ -1017,6 +1023,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       await refreshInbox(readModel)
       await flushDidCommTransportOutbox?.()
       await refreshInbox(readModel)
+      void triggerMimiVaultSync?.()
     }
 
     const sendReply = async (input: ReplySendInput): Promise<void> => {
@@ -1062,6 +1069,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
       }, snapshot)
       await transport.call([{ name: 'EmailSubmission/set', callId: 's1', arguments: { create: { s1: { emailId } } } }])
       await refreshInbox(readModel)
+      void triggerMimiVaultSync?.()
     }
 
     configureCompose({
@@ -1266,6 +1274,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
           await ingestTransportIngress(envelope, buildMailProjector(), vaultStore)
           await flushReplicationOutbox()
           await refreshInbox(readModel)
+          void triggerMimiVaultSync?.()
           return
         }
         // Conversation Group invite handshake (conversation-group-invite.ts) --
@@ -1297,6 +1306,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         await flushReplicationOutbox()
         await handleRelationshipMessage(msg, recipientKid, mediatorUrl)
         await refreshInbox(readModel)
+        void triggerMimiVaultSync?.()
       }
 
       // Conversation Group invite handshake (conversation-group-invite.ts's
@@ -2157,13 +2167,23 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         console.warn('[mimi-vault/poll]', detail)
       })
     }
-    await runMimiSync()
     let mimiPollBusy = false
-    coordinatorPollTimer = setInterval(() => {
-      if (mimiPollBusy) return
+    const runMimiSyncNow = (): Promise<void> => {
+      if (mimiPollBusy) return Promise.resolve()
       mimiPollBusy = true
-      void runMimiSync().finally(() => { mimiPollBusy = false })
-    }, 10_000)
+      return runMimiSync().finally(() => { mimiPollBusy = false })
+    }
+    // Lets a just-committed local send (this device's own reply/DIDComm
+    // chat, or a just-relayed inbound message this device is passing on to
+    // its siblings) reach the hub immediately, instead of waiting out
+    // whatever is left of the current 10s tick -- the OTHER half of the
+    // latency (the sibling device's own next poll) is a separate, larger
+    // redesign (a push/SSE subscription in place of polling, matching what
+    // the now-retired Conversation Group's own `watch` used) that this
+    // does not attempt.
+    triggerMimiVaultSync = runMimiSyncNow
+    await runMimiSyncNow()
+    coordinatorPollTimer = setInterval(() => { void runMimiSyncNow() }, 10_000)
   }
 }
 
