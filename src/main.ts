@@ -2140,7 +2140,27 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, identity.did, new Date().toISOString())
         try {
           const payload = await createPortableCoordinatorCheckpoint(fromHex(identity.masterSeed), snapshot, { vaultId: room!.roomId as never, coveredSeq: deliverySeq(BigInt(result.latestSequence)) })
-          await sendMimiVaultCheckpoint(payload, result.latestSequence, session)
+          let published = true
+          try {
+            await sendMimiVaultCheckpoint(payload, result.latestSequence, session)
+          } catch (error) {
+            // A sibling device's own checkpoint can land between this
+            // device's pull and its own manifest submission -- the hub
+            // deliberately rejects a redundant/stale one with 409 conflict
+            // (mimi/store.ts's submitVaultCheckpoint) rather than silently
+            // overwriting a fresher checkpoint someone else just published.
+            // That is the intended outcome of the race, not a failure: this
+            // device's own next ordinary pull already picks up whichever
+            // checkpoint the hub kept, same as always -- nothing here needs
+            // fixing (found live, 2026-09-02: surfaced as a bare "MIMI
+            // request failed (409)" error state on every debounce-quieted
+            // sync that happened to lose this race, even though sync
+            // itself had already succeeded moments before).
+            if (!(error instanceof Error) || !error.message.includes('conflict')) throw error
+            console.info('[mimi-vault/checkpoint] a sibling device already published a fresher checkpoint, skipping')
+            published = false
+          }
+          if (published) {
           // The checkpoint's own chunk+manifest just landed at new sequence
           // numbers `synchronizeMimiVault` above never saw (it pulled and
           // computed `result.latestSequence` BEFORE this checkpoint existed),
@@ -2161,6 +2181,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
           if (newLatest > result.latestSequence) {
             const current = await selfGroupStore.loadMimiVault(identity.did)
             if (current) await selfGroupStore.saveMimiVault(identity.did, { ...current, deliveryCursor: newLatest })
+          }
           }
         } finally { for (const segment of snapshot.segmentKeys) segment.key.fill(0) }
       }
