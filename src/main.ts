@@ -496,6 +496,20 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     const deviceKid = identity.deviceKid
     const boundary = buildVaultCryptoBoundary(vaultStore, vaultStore, selfGroupStore, identity)
     const flushReplicationOutbox = async () => {
+      // A MIMI-driven identity's delivery outbox is exclusively
+      // flushMimiVaultOutbox's job (synchronizeMimi's own poll, every 10s) --
+      // nothing else ever reads from core's legacy /v1/deliveries endpoint
+      // for this identity's sibling devices, so calling it here is not just
+      // useless but actively harmful: flushVaultDeliveryOutbox below shares
+      // the SAME outbox row this identity's real (MIMI) flush needs, and
+      // removes it the moment core's endpoint returns success -- deleting a
+      // just-received DIDComm message's own relay-onward entry before the
+      // next MIMI poll ever gets a chance to send it, permanently losing it
+      // for every sibling device (found live, 2026-09-02: only inbound
+      // DIDComm/mail-bridge handling ever called this explicitly; outbound
+      // sendReply never did, which is why only inbound message relay was
+      // affected -- it simply waited out the same race and lost every time).
+      if (mimiVaultConfigured) return { appendedEntryIds: [] }
       if (coordinatorBindingActive) {
         if (coordinatorOidc?.hasFreshAccessToken() && flushCoordinatorOutbox) {
           const result = await flushCoordinatorOutbox()
