@@ -202,7 +202,14 @@ export async function removeMimiVaultDevice(options: RemoveMimiVaultDeviceOption
   const senderLeaf = findRoomLeaf(record.state, options.identityId, options.deviceId)
   if (!senderLeaf) throw new Error('removeMimiVaultDevice: this device is not a member of the room')
   const epoch = String(epochOf(record.state))
-  const result = await removeMembers(record.state, [options.targetDeviceId])
+  // The hub has no MLS epoch secrets, so it can only see proposals inside a
+  // wire-level PublicMessage (mls-appsync.ts's extractMimiMlsStateTransition
+  // throws "room-state update must be a complete MLS PublicMessage"
+  // otherwise, surfaced to the client as a bare 400) -- createMimiVaultRoom's
+  // own initial commit already opts into this for the identical reason;
+  // removeMembers defaults to a private-wire commit for its other callers
+  // (self-group.ts, conversation-group.ts), which is wrong here.
+  const result = await removeMembers(record.state, [options.targetDeviceId], true)
   const members: VisibleCredential[] = []
   for (const node of result.state.ratchetTree) {
     if (node?.nodeType !== 'leaf') continue

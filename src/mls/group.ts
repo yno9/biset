@@ -226,14 +226,14 @@ export async function addMembers(state: ClientState, keyPackages: KeyPackage[]):
  * that (`vendor/clientState.ts`'s `needsUpdatePath`), and
  * test/mls-core.test.ts pins the behaviour so a re-sync cannot quietly undo
  * it. */
-export async function removeMembers(state: ClientState, kids: string[]): Promise<CommitResult> {
+export async function removeMembers(state: ClientState, kids: string[], wireAsPublicMessage = false): Promise<CommitResult> {
   const members = memberList(state)
   const proposals: Proposal[] = kids.map(kid => {
     const found = members.find(m => m.kid === kid)
     if (!found) throw new Error(`removeMembers: not a member: ${kid}`)
     return { proposalType: 'remove', remove: { removed: found.leafIndex } }
   })
-  return commitWith(state, proposals)
+  return commitWith(state, proposals, false, undefined, wireAsPublicMessage)
 }
 
 /** Atomically advances this leaf's Sign-generation credential and removes
