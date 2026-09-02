@@ -23,4 +23,5 @@ test('a lost MIMI response reuses the durable MLS PrivateMessage and delivery ID
   await session.sendApplication(plaintext, 'A'.repeat(24))
   expect(submissions[1]).toEqual(submissions[0])
   expect(stored.pending).toBeUndefined()
+  await expect(session.receive({ seq: 1, kind: 'application', payload: submissions[0]!, epoch: '0', acceptedAt: '2026-09-02T00:00:00.000Z' })).resolves.toBeUndefined()
 })

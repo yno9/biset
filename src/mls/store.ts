@@ -29,7 +29,7 @@ interface StoredMlsSelfGroup {
   state: Uint8Array
   updatedAt: number
   /** Present only after this self group has moved to the MIMI Vault room. */
-  mimiVault?: { roomId: string; pending?: MimiVaultPendingApplication }
+  mimiVault?: { roomId: string; pending?: MimiVaultPendingApplication; ownApplicationHashes?: string[] }
 }
 
 export interface LoadedMlsSelfGroup {
@@ -84,7 +84,11 @@ export class IndexedDbMlsSelfGroupStore implements MlsSelfGroupStateStore, MimiV
     const transaction = database.transaction([STORE_NAME], 'readonly')
     const record = await requestResult<StoredMlsSelfGroup | undefined>(transaction.objectStore(STORE_NAME).get(identityId))
     if (!record?.mimiVault) return undefined
-    return { roomId: record.mimiVault.roomId, selfGroupId: record.selfGroupId, state: decodeState(record.state), ...(record.mimiVault.pending === undefined ? {} : { pending: copyMimiVaultPending(record.mimiVault.pending) }) }
+    return {
+      roomId: record.mimiVault.roomId, selfGroupId: record.selfGroupId, state: decodeState(record.state),
+      ...(record.mimiVault.pending === undefined ? {} : { pending: copyMimiVaultPending(record.mimiVault.pending) }),
+      ...(record.mimiVault.ownApplicationHashes === undefined ? {} : { ownApplicationHashes: [...record.mimiVault.ownApplicationHashes] }),
+    }
   }
 
   async saveMimiVault(identityId: string, value: MimiVaultSessionRecord): Promise<void> {
@@ -92,7 +96,7 @@ export class IndexedDbMlsSelfGroupStore implements MlsSelfGroupStateStore, MimiV
     const transaction = database.transaction([STORE_NAME], 'readwrite')
     transaction.objectStore(STORE_NAME).put({
       identityId, selfGroupId: value.selfGroupId, state: encodeState(value.state), updatedAt: Date.now(),
-      mimiVault: { roomId: value.roomId, ...(value.pending === undefined ? {} : { pending: copyMimiVaultPending(value.pending) }) },
+      mimiVault: { roomId: value.roomId, ...(value.pending === undefined ? {} : { pending: copyMimiVaultPending(value.pending) }), ...(value.ownApplicationHashes === undefined ? {} : { ownApplicationHashes: [...value.ownApplicationHashes] }) },
     } satisfies StoredMlsSelfGroup)
     await transactionDone(transaction)
   }
@@ -111,7 +115,7 @@ function copyMimiVaultPending(value: MimiVaultPendingApplication): MimiVaultPend
   return { deliveryId: value.deliveryId, plaintextHash: value.plaintextHash.slice(), appMessage: value.appMessage.slice() }
 }
 function copyMimiVaultMetadata(value: NonNullable<StoredMlsSelfGroup['mimiVault']>): NonNullable<StoredMlsSelfGroup['mimiVault']> {
-  return { roomId: value.roomId, ...(value.pending === undefined ? {} : { pending: copyMimiVaultPending(value.pending) }) }
+  return { roomId: value.roomId, ...(value.pending === undefined ? {} : { pending: copyMimiVaultPending(value.pending) }), ...(value.ownApplicationHashes === undefined ? {} : { ownApplicationHashes: [...value.ownApplicationHashes] }) }
 }
 
 /**

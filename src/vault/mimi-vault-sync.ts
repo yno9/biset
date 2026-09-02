@@ -71,7 +71,9 @@ export async function decodeMimiVaultBatch(entries: readonly MimiDeliveryEntry[]
       await receiver.receive(entry)
     } else if (entry.payload.length !== 0) {
       const plaintext = await receiver.receive(entry)
-      if (plaintext === undefined) throw new TypeError('MLS application delivery did not decrypt')
+      // A session returns undefined for this device's echoed PrivateMessage:
+      // the sender chain has already consumed that generation locally.
+      if (plaintext === undefined) continue
       const chunk = decodeMimiVaultChunk(plaintext)
       const current = chunks.get(chunk.transferId) ?? []
       current.push({ chunk, seq: entry.seq })

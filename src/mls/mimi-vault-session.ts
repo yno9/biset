@@ -4,7 +4,7 @@
  * request is attempted.  If the response is lost, the next attempt submits
  * the exact same bytes and delivery ID; it never encrypts the plaintext a
  * second time from a stale ratchet state. */
-import { equalBytes, sha256Bytes } from '../protocol/canonical.ts'
+import { bytesToBase64url, equalBytes, sha256Bytes } from '../protocol/canonical.ts'
 import { epochOf, encryptApplication, processIncoming } from './group.ts'
 import type { ClientState } from './vendor/index.ts'
 import type { MimiClientMode, MimiClientTransport } from './mimi-client-transport.ts'
@@ -22,6 +22,10 @@ export interface MimiVaultSessionRecord {
   selfGroupId: string
   state: ClientState
   pending?: MimiVaultPendingApplication
+  /** Recent ciphertexts sent by this device. MLS sender chains cannot process
+   * their own post-send PrivateMessages (the desired generation is past), so
+   * these are recognized and skipped when the room inbox echoes them back. */
+  ownApplicationHashes?: string[]
 }
 export interface MimiVaultSessionStateStore {
   loadMimiVault(identityId: string): Promise<MimiVaultSessionRecord | undefined>
@@ -53,7 +57,10 @@ export class PersistedMimiVaultSession implements MimiVaultMlsSender, MimiVaultM
       await this.options.stateStore.saveMimiVault(this.options.identityId, record)
     }
     await this.submitApplication(record, record.pending!)
-    await this.options.stateStore.saveMimiVault(this.options.identityId, { ...record, pending: undefined })
+    await this.options.stateStore.saveMimiVault(this.options.identityId, {
+      ...record, pending: undefined,
+      ownApplicationHashes: rememberOwnApplication(record.ownApplicationHashes, pendingCipherHash(record.pending!)),
+    })
   }
 
   async sendCheckpoint(manifest: VaultCheckpointManifest): Promise<void> {
@@ -68,6 +75,7 @@ export class PersistedMimiVaultSession implements MimiVaultMlsSender, MimiVaultM
     const record = await this.requiredRecord()
     if (record.pending) throw new Error('MIMI Vault has a pending local application delivery')
     if (entry.kind === 'vaultCheckpoint') return undefined
+    if (entry.kind === 'application' && record.ownApplicationHashes?.includes(pendingCipherHash(entry.payload))) return undefined
     const result = await processIncoming(record.state, entry.payload)
     await this.options.stateStore.saveMimiVault(this.options.identityId, { ...record, state: result.state })
     return result.kind === 'message' ? result.message : undefined
@@ -88,4 +96,12 @@ export class PersistedMimiVaultSession implements MimiVaultMlsSender, MimiVaultM
     if (!record) throw new Error('MIMI Vault room is not initialized')
     return record
   }
+}
+
+function pendingCipherHash(value: Pick<MimiVaultPendingApplication, 'appMessage'> | Uint8Array): string {
+  const bytes = value instanceof Uint8Array ? value : value.appMessage
+  return bytesToBase64url(sha256Bytes(bytes))
+}
+function rememberOwnApplication(previous: readonly string[] | undefined, value: string): string[] {
+  return [...new Set([...(previous ?? []), value])].slice(-512)
 }
