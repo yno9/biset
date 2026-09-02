@@ -1,4 +1,5 @@
 import type { AccountSession } from './local-jmap/transport.ts'
+import { defaultFetch } from './net-fetch.ts'
 import { IndexedDbIdentityRecordStore } from './identity/record-store.ts'
 import {
   buildActorSequencer,
@@ -351,7 +352,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   const editName = async (name: string): Promise<void> => {
     const signPrivateKey = fromHex(identity.signPrivateKey)
     const signPublicKey = fromHex(identity.signPublicKey)
-    await setRoutingName(identity.did, name, { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, fetch)
+    await setRoutingName(identity.did, name, { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, defaultFetch())
   }
   // did:webvh pre-rotation (identity/webvh/prerotation.ts) — independent of
   // coreBaseUrl/deviceKid, same reasoning as editName above:

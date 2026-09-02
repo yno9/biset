@@ -24,6 +24,7 @@ import { mailFromForIdentity } from './webvh/identifier.ts'
 import { decodeMultikey, encodeMultikey } from './webvh/multikey.ts'
 import { multikeyHashBase58 } from './webvh/hash.ts'
 import { fetchCurrentLog } from './webvh/log-io.ts'
+import { defaultFetch } from '../net-fetch.ts'
 import type { IdentityRecord, IdentityRecordStore } from './record-store.ts'
 import { epochOf, exportSecret, generateOwnKeyPackage, ownMlsDeviceCredential, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
 import { createMlsDeviceCredential, encodeMlsDeviceCredential, type MlsDeviceCredentialV2 } from '../mls/device-credential.ts'
@@ -1090,7 +1091,7 @@ export async function enableDidComm(
 
   await publishRoutingPointer({ did: record.did, signingPrivateKey: signPrivateKey, signingPublicKey: signPublicKey, fetch: opts.fetch })
 
-  const fetchImpl = opts.fetch ?? fetch
+  const fetchImpl = opts.fetch ?? defaultFetch()
   const current = await fetchRouting(record.did, fetchImpl).catch(() => null)
   if (current?.keyAgreementVerificationMethod?.some(method => method.id === didCommKid)) {
     const updated: IdentityRecord = { ...record, didCommKid, didCommX25519PrivateKey: toHex(credential.privateKey) }
@@ -1161,7 +1162,7 @@ async function ensureAlsoKnownAsPublished(record: IdentityRecord, opts: EnableDi
   let mailFrom: string
   try { mailFrom = mailFromForIdentity(record.did, opts.apexDomain) }
   catch { return }
-  const fetchImpl = opts.fetch ?? fetch
+  const fetchImpl = opts.fetch ?? defaultFetch()
   const current = await fetchRouting(record.did, fetchImpl)
   if (!current || current.alsoKnownAs?.includes(mailFrom)) return
   const signPrivateKey = fromHex(record.signPrivateKey)
@@ -1187,7 +1188,7 @@ async function ensureAlsoKnownAsPublished(record: IdentityRecord, opts: EnableDi
  * already published by enableDidComm/enableOpenPgpMail/editName must survive
  * untouched.
  */
-export async function ensureMimiProviderPublished(record: IdentityRecord, dsBaseUrl: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+export async function ensureMimiProviderPublished(record: IdentityRecord, dsBaseUrl: string, fetchImpl: typeof fetch = defaultFetch()): Promise<void> {
   const current = await fetchRouting(record.did, fetchImpl)
   if (!current || current.service.some(s => s.type === 'MimiDeliveryService' && s.serviceEndpoint === dsBaseUrl)) return
   const signPrivateKey = fromHex(record.signPrivateKey)
@@ -1213,7 +1214,7 @@ export async function ensureMimiProviderPublished(record: IdentityRecord, dsBase
  * document already exists (whoever gets there first, DIDComm or this, wins
  * -- both start from the same empty shape).
  */
-export async function ensureRoutingDocument(record: IdentityRecord, fetchImpl: typeof fetch = fetch): Promise<void> {
+export async function ensureRoutingDocument(record: IdentityRecord, fetchImpl: typeof fetch = defaultFetch()): Promise<void> {
   const signPrivateKey = fromHex(record.signPrivateKey)
   const signPublicKey = fromHex(record.signPublicKey)
   await publishRoutingPointer({ did: record.did, signingPrivateKey: signPrivateKey, signingPublicKey: signPublicKey, fetch: fetchImpl })
@@ -1257,7 +1258,7 @@ export async function ensureMimiVaultRoom(
   identity: IdentityRecord,
   selfGroupStore: MlsSelfGroupStateStore & MimiVaultSessionStateStore,
   mimiSelfBaseUrl: string,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = defaultFetch(),
 ): Promise<EnsuredMimiVaultRoom> {
   if (!identity.deviceKid) throw new Error('ensureMimiVaultRoom: identity has no deviceKid yet')
   const provider = new URL(mimiSelfBaseUrl)
