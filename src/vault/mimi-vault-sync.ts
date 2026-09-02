@@ -199,7 +199,25 @@ export async function decodeMimiVaultBatch(entries: readonly MimiDeliveryEntry[]
       if (!entry.vaultCheckpoint) throw new TypeError('Vault checkpoint delivery has no manifest')
       manifests.push({ manifest: entry.vaultCheckpoint, seq: entry.seq })
     } else if (entry.kind !== 'application') {
-      await receiver.receive(entry)
+      // Unlike an application entry's undecryptable-generation case just
+      // below, skipping a commit is not a clean recovery: this device's
+      // local epoch can never advance past it, so every later commit and
+      // application in this room will keep failing the same way from here
+      // on -- this device needs a logout + restore (a fresh external-join
+      // leaf) to use this room again. Still better than the alternative:
+      // before this, one unverifiable commit aborted the WHOLE batch and
+      // repeated the identical error on every single poll forever, which
+      // is strictly worse and gives no signal beyond "still broken" (found
+      // live, 2026-09-02: a device that had just submitted its OWN removal
+      // commit got stuck this way receiving a SIBLING's commit afterward,
+      // root cause not pinned down under real multi-hour session history
+      // despite clean synthetic reproduction attempts).
+      try {
+        await receiver.receive(entry)
+      } catch (error) {
+        console.error('[mimi-vault/decode] commit could not be verified -- this device can no longer sync this Vault room; log out and restore to recover:', error instanceof Error ? error.message : error)
+        continue
+      }
     } else if (entry.payload.length !== 0) {
       let plaintext: Uint8Array | undefined
       try {
