@@ -147,6 +147,62 @@ describe('MIMI federation outbound dispatch (automatic, not manually triggered)'
 
     hub.close(); follower.close()
   })
+
+  test('a genesis commit that already includes a remote member bootstraps the room on the follower with no manual seeding', async () => {
+    const genesisRoomId = 'mimi://hub.example/r/genesis-with-remote-member'
+    const alice = client('mimi://hub.example/u/alice', 'phone', 51)
+    const bobUser = 'mimi://follower.example/u/bob'
+    const bobClient = `${bobUser}#laptop`
+    const follower = createMimiDeployment({ databasePath: ':memory:', mode: 'normal', federation: { providerDomain: 'follower.example', authenticatePeer: async () => ({ providerDomain: 'hub.example' }) } })
+    const hub = createMimiDeployment({
+      databasePath: ':memory:', mode: 'normal', publicBaseUrl: 'https://mimi.hub.example',
+      federation: {
+        providerDomain: 'hub.example',
+        authenticatePeer: async () => undefined,
+        outbound: { dispatcher: new MimiFanoutDispatcher(directTransport('hub.example', follower)), resolveProviderBaseUrl: async domain => `https://${domain}` },
+      },
+    })
+
+    const own = await generateOwnKeyPackageForCredential({ credentialType: 'basic', identity: new TextEncoder().encode(alice.credential.client) })
+    const bobOwn = await generateOwnKeyPackageForCredential({ credentialType: 'basic', identity: new TextEncoder().encode(bobClient) })
+    const bob = { credential: credentialFromKeyPackage(bobUser, bobClient, bobOwn.publicPackage) }
+    const suite = await mlsSuite()
+    const group = await createMlsGroup(new TextEncoder().encode(genesisRoomId), own)
+    const proposal = (componentId: number, update: Uint8Array) => ({ proposalType: 'app_data_update' as const, appDataUpdate: { componentId, operation: 'update' as const, update } })
+    const aliceParticipant = { user: alice.credential.user, roleIndex: 1, clientIds: [alice.credential.client] }
+    const bobParticipant = { user: bob.credential.user, roleIndex: 1, clientIds: [bob.credential.client] }
+    const metadata = { roomUri: genesisRoomId, roomName: 'genesis with remote member' }
+
+    // Bob is an *initial* member here -- his `add` proposal rides the same
+    // genesis commit as room_metadata/franking_signature_key, so the
+    // fanned-out commit is self-sufficient bootstrap material for the
+    // follower (store.ts's createFromProviderFanout's documented scope).
+    const genesisCommit = await createCommit({ state: group, cipherSuite: suite }, {
+      wireAsPublicMessage: true,
+      extraProposals: [
+        { proposalType: 'add' as const, add: { keyPackage: bobOwn.publicPackage } },
+        proposal(0x0021, encodeMimiFrankingAgent({ frankingSignatureKey: hub.store.prepareFrankingKeys(genesisRoomId).signingPublicKey, credential: new TextEncoder().encode('https://mimi.hub.example') })),
+        proposal(0x0022, encodeMimiParticipantListUpdate({ changedRoleParticipants: [], removedIndices: [], addedParticipants: [aliceParticipant, bobParticipant] })),
+        proposal(0x0023, encodeMimiRoomMetadata(metadata)),
+      ],
+    })
+    const genesisUnsigned = {
+      version: 1 as const, protocol: 'mls10' as const, roomId: genesisRoomId, sender: alice.credential, epoch: '0',
+      bundle: { kind: 'commit' as const, proposalOrCommit: encodeMlsMessage(genesisCommit.commit), welcome: encodeWelcome(genesisCommit.welcome!), ratchetTree: new Uint8Array([9, 9, 9]) },
+      initialState: { basePolicy: new Uint8Array(), participantList: { participants: [aliceParticipant, bobParticipant] }, memberCredentials: [alice.credential, bob.credential], metadata }, submittedAt: at,
+    }
+
+    expect(follower.store.room(genesisRoomId)).toBeUndefined()
+    expect((await hub.fetch(post(`/update/${encodeURIComponent(genesisRoomId)}`, encodeUpdateRoomRequestWire(signedUpdate(alice, genesisUnsigned))))).status).toBe(200)
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    const bootstrapped = follower.store.room(genesisRoomId)
+    expect(bootstrapped).toBeDefined()
+    expect(bootstrapped?.participantList.participants.map(p => p.user).sort()).toEqual([alice.credential.user, bob.credential.user].sort())
+    expect(bootstrapped?.metadata.roomName).toBe('genesis with remote member')
+
+    hub.close(); follower.close()
+  })
 })
 
 function post(path: string, body: string): Request {

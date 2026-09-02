@@ -49,7 +49,7 @@ import { decodeWelcome } from '../mls/vendor/welcome.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import type { MimiAssetProxy } from './asset-proxy.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
-import type { GroupInfoResponse, MimiCredential, MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
+import type { GroupInfoResponse, MimiCredential, MimiDeliveryEntry, MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
 import type { MimiWatchTokenIssuer } from './watch-token.ts'
 
 const MAX_BODY_BYTES = 1024 * 1024
@@ -159,8 +159,15 @@ export function createMimiHttpHandler(
         const peer = await verifiedFederationPeer(request, federation)
         const batch = decodeMimiFanoutBatchWire(body)
         const room = store.room(roomId)
-        const result = room === undefined ? 'noSuchRoom' : store.acceptProviderFanout(roomId, peer.providerDomain, await fanoutFingerprint(body), fanoutDeliveries(batch, room.epoch))
+        // '0' is a harmless placeholder epoch when the room is unknown --
+        // it only ever affects a Welcome entry's reported epoch, and the
+        // commit entry (which bootstrap extraction actually reads) always
+        // carries its own real epoch regardless (fanout.ts's classify()).
+        const entries = fanoutDeliveries(batch, room?.epoch ?? '0')
+        const bootstrap = room === undefined ? bootstrapTransitionFromFanout(entries) : undefined
+        const result = store.acceptProviderFanout(roomId, peer.providerDomain, await fanoutFingerprint(body), entries, bootstrap)
         if (result === 'noSuchRoom') return error(404, 'not-found', 'room does not exist')
+        if (result === 'invalidBootstrap') return error(400, 'bad-request', 'first-contact fanout is not a self-sufficient room-creation commit')
         return new Response(null, { status: 201 })
       }
 
@@ -355,6 +362,20 @@ async function verifiedFederationPeer(request: Request, federation: MimiFederati
 }
 
 function sameDomain(left: string, right: string): boolean { return left.toLowerCase().replace(/\.$/, '') === right.toLowerCase().replace(/\.$/, '') }
+
+/**
+ * A room's genesis commit is self-sufficient bootstrap material -- see
+ * store.ts's createFromProviderFanout for exactly what "self-sufficient"
+ * requires and what a later, non-genesis add-commit is still missing.
+ * Returns undefined (not a throw) for any commit that doesn't extract
+ * cleanly, so an unknown room with unusable fanout content is refused the
+ * same way as one with no bootstrap material at all.
+ */
+function bootstrapTransitionFromFanout(entries: MimiDeliveryEntry[]) {
+  const commit = entries.find(entry => entry.kind === 'commit')
+  if (!commit) return undefined
+  try { return extractMimiMlsStateTransition(commit.payload) } catch { return undefined }
+}
 
 /**
  * Fire-and-forget federation fanout after a local room update/message is

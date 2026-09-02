@@ -680,7 +680,13 @@ Phase 3（§13/§10.1）で「independent hub/follower間でmTLS-bound `/notify`
 
 これは§20.1で直した「outbound dispatchのトリガー」とは別の、もう一段深い穴——「Aliceが初めてBobを（別providerの）新しいroomへ招待する」という、まさにこのPLAN文書冒頭で例に出した新規送信フローが、outbound dispatchが直っても依然として完結しない。理由：Bobのprovider（follower）は、Bobが実際に参加する前提のroomをまだ一度も知らない状態でfanoutを受け取ることになるが、現在の実装はそれを拒否する。
 
-**未解決**（次の一手）：`acceptProviderFanout`（あるいは新しい経路）が、未知のroomIdに対する最初のfanoutを「room作成」として受理できるようにする必要がある。ただし単純に「知らないroomなら何でも作る」のは危険——biset自身のroomと同じAppSync検証（`extractMimiMlsStateTransition`、`assertAddedCredentialsBackedByMls`相当）をfederation受信経路でも通す設計が要る。加えて、biset自身の`/update`にある「franking_signature_key credentialは自分自身のHTTPS originと一致しなければならない」というチェック（[http.ts:245-248](src/mimi/http.ts:245)）は「呼び出し元が自分がそのroomのホームhubだ」という前提に立っており、followerとして他providerのroomを鏡映しにする操作には**そのまま使えない**（`federation-gate.test.ts`・`federation-dispatch.test.ts`とも、この理由でテストのroom seedingは低レベルの`store.submitUpdate`直接呼び出しでこのチェックを迂回している）。
+**部分的に解決した（2026-09-02、同日中）**: `store.ts`に`createFromProviderFanout`を追加し、`acceptProviderFanout`が未知のroomIdへのfanoutを、その**commitがroom作成に自己完結している場合に限り**新規room作成として受理できるようにした（[store.ts:225](src/mimi/store.ts:225)、[http.ts:157](src/mimi/http.ts:157)の`bootstrapTransitionFromFanout`）。「自己完結」とは、genesis commit自体に`add`（Bobを含む）・`participant_list`・`room_metadata`・`franking_signature_key`のAppDataUpdateが全て乗っている場合——`test/mimi/federation-dispatch.test.ts`の新規テストで、Bobを初期メンバーに含むgenesis commitを`hub`の`/update`へ送るだけで（手動seeding無しに）`follower`側へroomが自動作成されることを確認した。
+
+**まだ解決していない部分**（スコープ外として明記）：
+1. **後からメンバーが追加されるケース**（roomが既に存在する状態で、後続のcommitで初めてBobが追加される——本セクション冒頭で最初に見つかった元のテストケースがまさにこれ）は、まだ動かない。理由：後続の「メンバー追加」commitは通常`room_metadata`/`franking_signature_key`を再送しない（変更が無いので送る必要が無い——実際`test/mimi/http.test.ts`の`add`テストでもこの2つは送られていない）。したがってbootstrapに必要な情報がその1つのcommitだけでは揃わない。これを解決するには、followerがhome providerへ「このroomの現在のstateをくれ」と問い合わせる**新しいprovider間エンドポイント**が要る——現状存在しない、未設計。
+2. **`memberCredentials`が空のまま作られる**（[store.ts:225-243](src/mimi/store.ts:225)のdocコメントに理由を明記）——MLS credentialのエンコーディングはMIMI上で実装依存であり、fanoutされた`add` proposalの生バイトだけから「このleafはどのローカル参加者のものか」を汎用的に特定する信頼できる方法が無い。結果、`credentialMatchesRoom`（`authorizer.ts`）による完全一致要求のため、**bootstrapされたroomでも、followerのローカル参加者（Bob）はまだ`deliveries pull`/`submitMessage`を呼べない**——room自体は作られるが、Bob自身がそこへ参加してくる経路（Welcomeを処理した後、自分の credential を home hub 側の記録と一致させる自己登録の仕組み）がまだ無い。これは新しいwireプロトコル面の設計判断であり、次のセッションで着手前に方針を確認する。
+
+加えて、biset自身の`/update`にある「franking_signature_key credentialは自分自身のHTTPS originと一致しなければならない」というチェック（[http.ts](src/mimi/http.ts)、`/update`ハンドラ内）は「呼び出し元が自分がそのroomのホームhubだ」という前提に立っており、followerとして他providerのroomを鏡映しにする操作には引き続き**そのまま使えない**——ただしこれは`/update`（ローカルクライアント向け）の話であり、今回追加した`/notify`経由のbootstrap（`createFromProviderFanout`）はこのチェックを最初から経由しない別経路なので、この制約と衝突しない。
 
 ### 20.3 本番投入にまだ必要なもの（未着手、20.1のコードとは別スコープ）
 

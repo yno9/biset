@@ -222,11 +222,36 @@ export class SqliteMimiStore {
     this.database.query('INSERT INTO mimi_abuse_reports (room_id, source_provider, report_json, received_at) VALUES (?, ?, ?, ?)').run(roomId, sourceProvider, reportJson, receivedAt)
   }
 
-  /** Accepts a follower-facing hub batch exactly once, then wakes local SSE clients. */
-  acceptProviderFanout(roomId: MimiRoomId, sourceProvider: string, bodyHash: string, entries: MimiDeliveryEntry[]): 'accepted' | 'duplicate' | 'noSuchRoom' {
+  /**
+   * Accepts a follower-facing hub batch exactly once, then wakes local SSE
+   * clients. `bootstrap` (the room-creation commit's extracted AppSync
+   * transition) lets a provider that has never heard of `roomId` create a
+   * local mirror of it on first contact -- without it, fanout for an
+   * unknown room is refused (PLAN_biset-mimi-server.md §20.2's gap).
+   *
+   * `memberCredentials` on a bootstrapped room is deliberately left empty:
+   * unlike `createFromInitialUpdate` (a local client's own signed
+   * `initialState` sidecar, cross-checked against the commit), there is no
+   * trustworthy source here for which added MLS leaf belongs to which
+   * local participant -- credential encoding is implementation-defined per
+   * MIMI, so nothing about a leaf's opaque bytes reliably says whose
+   * device it is. `credentialMatchesRoom` (authorizer.ts) requires an
+   * exact match here, so a bootstrapped room's own local participants
+   * cannot yet pull/submit until they self-register their credential --
+   * this needs a self-registration path (a local participant proves via
+   * signature that a specific added leaf is its own), not yet designed or
+   * built. Bootstrapping is scoped to *creating the room record*, not to
+   * making it locally usable end-to-end.
+   */
+  acceptProviderFanout(roomId: MimiRoomId, sourceProvider: string, bodyHash: string, entries: MimiDeliveryEntry[], bootstrap?: MimiMlsStateTransition): 'accepted' | 'duplicate' | 'noSuchRoom' | 'invalidBootstrap' {
     return this.database.transaction(() => {
-      const room = this.roomRow(roomId)
-      if (!room) return 'noSuchRoom' as const
+      let room = this.roomRow(roomId)
+      if (!room) {
+        if (!bootstrap) return 'noSuchRoom' as const
+        if (!this.createFromProviderFanout(roomId, bootstrap)) return 'invalidBootstrap' as const
+        room = this.roomRow(roomId)
+        if (!room) return 'invalidBootstrap' as const
+      }
       try {
         this.database.query('INSERT INTO mimi_provider_fanout_dedupes (source_provider, body_hash, received_at) VALUES (?, ?, ?)').run(sourceProvider, bodyHash, new Date().toISOString())
       } catch (error) {
@@ -323,6 +348,44 @@ export class SqliteMimiStore {
     const created = createFrankingKeyMaterial()
     this.database.query('INSERT INTO mimi_pending_franking_keys (room_id, hub_key, signing_private_key, signing_public_key) VALUES (?, ?, ?, ?)').run(roomId, created.hubKey, created.signingPrivateKey, created.signingPublicKey)
     return created
+  }
+
+  /**
+   * Bootstraps a local mirror of a room this provider has never heard of,
+   * from a fanned-out commit's extracted AppSync transition. Scoped to only
+   * the case where that one commit is self-sufficient to create a valid
+   * room -- i.e. it is (or behaves like) the room's genesis commit, and
+   * already carries room_metadata + franking_signature_key alongside the
+   * participant being added here. A later add-to-an-existing-room commit
+   * (the common case once a room has been running a while) typically omits
+   * both, since neither needs to change just to add a member -- bootstrapping
+   * from that shape would need this provider to separately fetch the room's
+   * current state from its home provider, which no endpoint exists for yet.
+   * That gap is intentionally left open rather than half-solved here.
+   *
+   * memberCredentials is left empty -- see acceptProviderFanout's doc
+   * comment for why, and what remains before a bootstrapped room is usable
+   * end-to-end by this provider's own local participants.
+   */
+  private createFromProviderFanout(roomId: MimiRoomId, transition: MimiMlsStateTransition): boolean {
+    if (!transition.roomMetadata || !transition.frankingAgent) return false
+    if (this.roomCount() >= MAX_ROOMS) throw new MimiStoreCapacityError('MIMI room capacity reached')
+    const participantList = transition.participantListUpdates.reduce<ParticipantListData>(
+      (current, update) => applyMimiParticipantListUpdate(current, update), { participants: [] },
+    )
+    const state: RoomState = {
+      // The genesis commit this bootstraps from moves the room to epoch 1
+      // (mirroring createFromInitialUpdate's own post-commit bump) -- the
+      // caller (acceptProviderFanout) reuses this saved state as-is for its
+      // own subsequent saveRoom call, so the epoch must already be correct
+      // here, not left at the pre-commit value.
+      roomId, protocol: 'mls10', epoch: nextEpoch('0'), basePolicy: new Uint8Array(),
+      participantList, memberCredentials: [], metadata: transition.roomMetadata, frankingAgent: transition.frankingAgent,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    }
+    try { validateRoomState(state) } catch { return false }
+    this.saveRoom(state, 1)
+    return true
   }
 
   private createFromInitialUpdate(request: UpdateRoomRequest, transition: MimiMlsStateTransition | undefined): MimiUpdateStoreResult {
