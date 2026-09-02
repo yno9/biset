@@ -180,7 +180,30 @@ export async function decodeMimiVaultBatch(entries: readonly MimiDeliveryEntry[]
     } else if (entry.kind !== 'application') {
       await receiver.receive(entry)
     } else if (entry.payload.length !== 0) {
-      const plaintext = await receiver.receive(entry)
+      let plaintext: Uint8Array | undefined
+      try {
+        plaintext = await receiver.receive(entry)
+      } catch (error) {
+        // An application message's secret-tree generation can fall outside
+        // this device's retained window -- MLS forward secrecy deliberately
+        // discards a skipped generation's key once enough later generations
+        // (from the SAME sender) have been processed, so this is not a bug
+        // to retry: the plaintext is gone forever, no matter how many more
+        // times this same entry is re-pulled. Throwing here (as receive()
+        // itself still does, for every caller that isn't this loop) used to
+        // abort the ENTIRE batch on this one permanently-undecryptable
+        // entry, forever, on every single poll from here on -- even the
+        // rest of THIS SAME batch, let alone anything genuinely new next
+        // time, never got a chance to be processed (found live, 2026-09-02:
+        // "[mimi-vault/poll] Desired gen in the past", repeating every poll,
+        // with real newer content already sitting on the hub the whole
+        // time). Skipping just this one entry is the only thing to do with
+        // an already-lost message; every other entry in this batch, and
+        // every batch after it, deserves the chance this one no longer can
+        // use.
+        console.warn('[mimi-vault/decode] application entry is permanently undecryptable, skipping:', error instanceof Error ? error.message : error)
+        continue
+      }
       // A session returns undefined for this device's echoed PrivateMessage:
       // the sender chain has already consumed that generation locally.
       if (plaintext === undefined) continue
