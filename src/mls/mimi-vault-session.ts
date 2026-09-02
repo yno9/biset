@@ -60,7 +60,29 @@ export class PersistedMimiVaultSession implements MimiVaultMlsSender, MimiVaultM
       record = { ...record, state: encrypted.state, pending: { deliveryId, plaintextHash, appMessage: encrypted.wire } }
       await this.options.stateStore.saveMimiVault(this.options.identityId, record)
     }
-    await this.submitApplication(record, record.pending!)
+    try {
+      await this.submitApplication(record, record.pending!)
+    } catch (error) {
+      // The hub never accepted this ciphertext (that's what epochTooOld
+      // means -- rejected, not stored), so nothing is lost by discarding it
+      // and re-encrypting the SAME plaintext fresh against the device's
+      // now-current epoch, rather than retrying the exact same bytes
+      // forever: a ciphertext is permanently bound to the epoch it was
+      // encrypted under and can never become valid for a later one. A
+      // pending record left over from a much earlier attempt (this device
+      // offline across several epoch changes, say) would otherwise retry
+      // this same doomed ciphertext on every future send AND -- since
+      // receive() below refuses to process anything while a pending
+      // application exists -- block this device from receiving ANYTHING
+      // else either, forever (found live, 2026-09-02: reproduced the
+      // one-round race separately in synchronizeMimiVault; this is the
+      // same failure mode's permanent, already-stale variant).
+      if (!(error instanceof Error) || !error.message.includes('epochTooOld')) throw error
+      const encrypted = await encryptApplication(record.state, plaintext)
+      record = { ...record, state: encrypted.state, pending: { deliveryId, plaintextHash, appMessage: encrypted.wire } }
+      await this.options.stateStore.saveMimiVault(this.options.identityId, record)
+      await this.submitApplication(record, record.pending!)
+    }
     await this.options.stateStore.saveMimiVault(this.options.identityId, {
       ...record, pending: undefined,
       ownApplicationHashes: rememberOwnApplication(record.ownApplicationHashes, pendingCipherHash(record.pending!)),
