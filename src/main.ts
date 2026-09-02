@@ -220,7 +220,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   // without needing a page reload.
   let identity = records[0]!
   const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did, identity.masterSeed)
-  const { apexDomain, anchorBaseUrl, anchorOidcClientId, coreBaseUrl, mediatorUrls, coordinatorUrl, conversationMlsDsBaseUrl } = readBisetConfig()
+  const { apexDomain, anchorBaseUrl, anchorOidcClientId, coreBaseUrl, mediatorUrls, coordinatorUrl, mimiSelfBaseUrl, conversationMlsDsBaseUrl } = readBisetConfig()
   // A WebVH PUT can succeed while the following MLS submission loses the
   // network. Reconcile the executing leaf before ordinary maintenance so
   // rotation is retryable after reload instead of leaving a stranded Vault.
