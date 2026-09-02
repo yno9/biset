@@ -108,7 +108,7 @@ import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from './vault/storage-roo
 import { MimiClientTransport } from './mls/mimi-client-transport.ts'
 import { PersistedMimiVaultSession } from './mls/mimi-vault-session.ts'
 import { createMimiVaultRoom } from './mls/mimi-vault-room.ts'
-import { synchronizeMimiVault } from './vault/mimi-vault-sync.ts'
+import { sendMimiVaultCheckpoint, synchronizeMimiVault } from './vault/mimi-vault-sync.ts'
 import { deliveriesPullSigningBytes } from './mimi/authorizer.ts'
 
 const hex = (value: Uint8Array): string => Array.from(value, byte => byte.toString(16).padStart(2, '0')).join('')
@@ -2038,8 +2038,27 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
         pullRequest: { version: 1, roomId: room!.roomId, requester: { kind: 'visible', user: identity.did, client: identity.deviceKid!, credential: encodeMlsDeviceCredential(ownMlsDeviceCredential(room!.state)), signaturePublicKey: ownMlsDeviceCredential(room!.state).signaturePublicKey }, requestedAt: new Date().toISOString() },
         receiver: session, outbox: vaultStore, sender: session, identityId: identity.did,
         ingest: async (payload, seq) => { await ingestVaultDelivery({ version: 1, identityId: identity.did, seq, payload, payloadHash: sha256Bytes(payload), createdAt: new Date().toISOString(), expiresAt: '9999-12-31T23:59:59.999Z' }, boundary.signer, projector, vaultStore) },
+        restoreCheckpoint: async checkpoint => {
+          if (!identity.masterSeed) throw new Error('MIMI Vault checkpoint restore requires the identity master seed')
+          const snapshot = await openPortableCoordinatorCheckpoint(fromHex(identity.masterSeed), checkpoint.payload, { vaultId: room!.roomId as never, coveredSeq: deliverySeq(BigInt(checkpoint.manifest.coveredSeq)), coordinatorUrl: mimiSelfBaseUrl })
+          try {
+            if (snapshot.identityId !== identity.did) throw new Error('MIMI Vault checkpoint belongs to another identity')
+            const records = await rewrapRecoveryArchiveForCurrentEpoch(snapshot, boundary.epochs, boundary.signer, new Date().toISOString())
+            await vaultStore.commitRecoveryArchive({ identityId: identity.did, events: records.events, objects: records.objects.map(object => ({ ...object, identityId: identity.did })), keyWraps: records.keyWraps })
+            for (const segment of snapshot.segmentKeys) await vaultStore.sealAndActivateSegment({ identityId: identity.did, segmentId: segment.segmentId, segmentKey: segment.key, selfGroupId: VAULT_STORAGE_GROUP_ID, epoch: VAULT_STORAGE_EPOCH, sealed: false, createdAt: snapshot.createdAt })
+            const projection = await buildLocalJmapProjectionRebuild(vaultStore, vaultStore, vaultStore, selfGroupStore, identity.did, identity.masterSeed)()
+            await vaultStore.advanceDeliveryCursor(identity.did, identity.deviceKid!, deliverySeq(BigInt(checkpoint.manifest.coveredSeq)), projection.state, new Date().toISOString())
+          } finally { for (const segment of snapshot.segmentKeys) segment.key.fill(0) }
+        },
       })
       if (result.ingestedSequences.length) await refreshInbox(readModel)
+      if (result.latestSequence > 1 && result.checkpoints.length === 0 && identity.masterSeed) {
+        const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, identity.did, new Date().toISOString())
+        try {
+          const payload = await createPortableCoordinatorCheckpoint(fromHex(identity.masterSeed), snapshot, { vaultId: room!.roomId as never, coveredSeq: deliverySeq(BigInt(result.latestSequence)) })
+          await sendMimiVaultCheckpoint(payload, result.latestSequence, session)
+        } finally { for (const segment of snapshot.segmentKeys) segment.key.fill(0) }
+      }
       setVaultCard({ state: 'connected', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, localSeq: String(await vaultStore.readDeliveryCursor(identity.did, identity.deviceKid!)), latestSeq: String(result.latestSequence), detail: 'Encrypted MIMI Vault is current' })
     }
     await synchronizeMimi()
