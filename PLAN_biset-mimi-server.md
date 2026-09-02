@@ -611,7 +611,7 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: 19.b, 19.c
 - [x] **19.f テスト・実HTTPS検証**: `bun run typecheck`・`bun run test`、`biset-mimi-self`に対する実HTTPS End-to-End（entry送受信、checkpoint圧縮、chunk結合、新端末onboarding後のVault復元）。 (完了: 2026-09-02, 関連: `scripts/verify-mimi-vault-{live,onboarding-live}.ts`, `test/{vault-mimi-sync,mls/mimi-vault-room}.test.ts`, commits `8c6a949`, `221dc55`, `36600cb`; 実HTTPSで外部join→元端末受信→post-join checkpoint復元まで確認、全typecheck/testと公開app配信確認)
   - depends on: 19.b, 19.c, 19.e
-- [ ] **19.h coordinator退役**: 既存Vaultデータの移行は不要（19.6、2026-09-02にユーザーが明示指示——実データ無し、全てテストデータにつき削除可）。Vaultルート・テーブルを削除し、プロセス停止・systemd無効化する（19.6の3番目）。
+- [~] **19.h coordinator退役**: 既存Vaultデータの移行は不要（19.6、2026-09-02にユーザーが明示指示——実データ無し、全てテストデータにつき削除可）。Vaultルート・テーブルを削除し、プロセス停止・systemd無効化する（19.6の3番目）。 (agent: Codex, 開始: 2026-09-02)
   - depends on: 19.f
 
 ### 19.8 実装前に確認・決定すべき未確定事項
