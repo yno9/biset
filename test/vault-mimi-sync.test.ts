@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { sha256Bytes } from '../src/protocol/canonical.ts'
-import { decodeMimiVaultBatch, flushMimiVaultOutbox, sendMimiVaultCheckpoint } from '../src/vault/mimi-vault-sync.ts'
+import { decodeMimiVaultBatch, flushMimiVaultOutbox, pullMimiVaultPages, sendMimiVaultCheckpoint } from '../src/vault/mimi-vault-sync.ts'
 import { encodeMimiVaultChunk, splitMimiVaultPayload } from '../src/vault/mimi-vault-chunks.ts'
 
 test('MIMI Vault outbox uses stable per-chunk delivery IDs and retains failed work', async () => {
@@ -27,4 +27,13 @@ test('checkpoint manifest is sent after its encrypted chunks', async () => {
   const order: string[] = []
   const manifest = await sendMimiVaultCheckpoint(new Uint8Array([4]), 2, { async sendApplication(_payload, deliveryId) { order.push(deliveryId) }, async sendCheckpoint(value) { order.push(`checkpoint:${value.transferId}`) } })
   expect(order).toEqual([expect.any(String), `checkpoint:${manifest.transferId}`])
+})
+
+test('MIMI Vault pulls all 32-item pages before chunk reconstruction', async () => {
+  const first = Array.from({ length: 32 }, (_, index) => ({ seq: index + 1, kind: 'application' as const, payload: new Uint8Array([index]), epoch: '1', acceptedAt: '2026-09-02T00:00:00.000Z' }))
+  const second = [{ seq: 33, kind: 'application' as const, payload: new Uint8Array([33]), epoch: '1', acceptedAt: '2026-09-02T00:00:00.000Z' }]
+  const result = await pullMimiVaultPages(async request => request.afterSeq === 0 ? first : second, async () => new Uint8Array(64), {
+    version: 1, roomId: 'mimi://self.example/r/vault-test', requester: { kind: 'visible', user: 'did:example:me', client: 'client', credential: new Uint8Array([1]), signaturePublicKey: new Uint8Array(32) }, requestedAt: '2026-09-02T00:00:00.000Z',
+  })
+  expect(result).toHaveLength(33)
 })

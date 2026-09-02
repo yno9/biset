@@ -3,7 +3,7 @@
  * ciphertext for one delivery ID. */
 import { bytesToBase64url, equalBytes, sha256Bytes } from '../protocol/canonical.ts'
 import type { DeliverySeq, IdentityId, VaultEventId } from '../protocol/ids.ts'
-import type { MimiDeliveryEntry, VaultCheckpointManifest } from '../mimi/protocol-types.ts'
+import type { DeliveriesPullRequest, MimiDeliveryEntry, VaultCheckpointManifest } from '../mimi/protocol-types.ts'
 import { decodeMimiVaultChunk, encodeMimiVaultChunk, joinMimiVaultChunks, splitMimiVaultPayload, type MimiVaultChunk } from './mimi-vault-chunks.ts'
 import type { VaultDeliveryOutboxReader } from './store.ts'
 
@@ -20,6 +20,29 @@ export interface MimiVaultMlsReceiver {
 export interface MimiVaultPayload { transferId: string; payload: Uint8Array; finalSequence: number }
 export interface MimiVaultCheckpointPayload extends MimiVaultPayload { manifest: VaultCheckpointManifest }
 export interface MimiVaultDecodedBatch { deliveries: MimiVaultPayload[]; checkpoints: MimiVaultCheckpointPayload[]; latestSequence: number }
+
+/** Collects every bounded pull page before chunk reconstruction. A 100MB
+ * checkpoint can span 256 chunks while a provider page contains only 32. */
+export async function pullMimiVaultPages(
+  pull: (request: DeliveriesPullRequest) => Promise<MimiDeliveryEntry[]>,
+  sign: (unsigned: Omit<DeliveriesPullRequest, 'signature'>) => Promise<Uint8Array> | Uint8Array,
+  input: Omit<DeliveriesPullRequest, 'afterSeq' | 'signature'>,
+  afterSeq = 0,
+  pageSize = 32,
+): Promise<MimiDeliveryEntry[]> {
+  if (!Number.isSafeInteger(afterSeq) || afterSeq < 0 || !Number.isSafeInteger(pageSize) || pageSize < 1) throw new TypeError('MIMI Vault pull cursor is invalid')
+  const all: MimiDeliveryEntry[] = []
+  let cursor = afterSeq
+  for (let pages = 0; pages < 1024; pages++) {
+    const unsigned = { ...input, afterSeq: cursor }
+    const page = await pull({ ...unsigned, signature: await sign(unsigned) })
+    if (page.some((entry, index) => !Number.isSafeInteger(entry.seq) || entry.seq <= cursor || (index > 0 && entry.seq <= page[index - 1]!.seq))) throw new TypeError('MIMI Vault pull page is not strictly ordered')
+    all.push(...page)
+    if (page.length < pageSize) return all
+    cursor = page.at(-1)!.seq
+  }
+  throw new Error('MIMI Vault pull exceeded its bounded page count')
+}
 
 /** Flush local VaultDeliveryPack records as opaque MLS-encrypted MIMI chunks.
  * An outbox record leaves local storage only after all chunks are accepted. */
