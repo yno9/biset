@@ -694,3 +694,40 @@ Phase 3（§13/§10.1）で「independent hub/follower間でmTLS-bound `/notify`
 - Caddy側で`/notify`等federation専用routeへのクライアント証明書要求・検証（`client_auth { mode request }`——`require`ではなく`request`。通常のクライアント（ブラウザ）はクライアント証明書を持たないため、site全体を`require`にすると壊れる）、検証済みpeerの識別情報をBunプロセスへヘッダ経由で転送する設定。**Caddyが公開CAに対するクライアント証明書検証を素直にサポートするかは未検証**——ここは実装前に要調査。
 - 本番用`authenticatePeer`実装（Caddyが転送するヘッダを読む）、`index.ts`への`federation`オプションの配線（現状`index.ts`は`federation`を一切渡していない——本番は federation 機能全体がOFF）。
 - 検証：biset自身が別ドメインの2台目インスタンスを立てて、実際のmTLSハンドシェイク〜dispatch〜受信までを実配線で確認する（本物の外部MIMIプロバイダは現状世に存在しないため）。
+
+## 21. hubの認証モデルを本物のMLS PublicMessage署名検証へ（2026-09-02、spec §9/§7.4に基づく）
+
+§20.2で見つかった2つの未解決点（後からのメンバー追加のbootstrap、`memberCredentials`の出所）は、どちらもbiset独自の回避策（新しいprovider間state-sync endpoint、新しいcredential自己登録endpoint）を発明しないと解けないように見えていた。だが`mimi-protocol-06.md`を読み直すと、specは既に答えを持っていた。
+
+### 21.1 spec本文が示す、本来あるべき認証モデル
+
+- **§9 Security Considerations**：「room actionのpolicyを強制するhubに対し、actorは自分の身元を、MLSのPublicMessage署名形式＋MLSが提示するidentity credentialを使って認証する」。
+- **§7.4 Authenticating proposals**：hub・followerサーバー自身のproposal発行権限は、group自体が持つRFC 9420標準の`external_senders`拡張（証明書リスト）で管理される。「followerのユーザーが参加者になったら、そのfollowerの証明書を`external_senders`へ追加する（普通のMIMI commitとして）」——新しいendpointではなく、既存のcommitフローの一部。
+
+つまり、hubが参加者を認可する本来の方法は、**biset独自の外側Ed25519署名＋`memberCredentials`サイドカーの厳密byte一致**ではなく、**PublicMessageの内部署名を、その時点のratchet tree上の該当leafの署名鍵と照合して検証する**こと。これが本来動けば、§20.2の2つの穴は副産物として消える——sidecar自体が要らなくなるので、federationでも自然に機能する。
+
+これは新しい発見ではなく、§17.2で既に記録していた既知のgap（「MLS commit自体の内部署名はhubで検証されていない...単一hub運用では実害はないが、真に独立した外部MIMI providerがMLS原生の署名だけで送ってきた場合には検証経路が無い」）と同じ根——今回の2つの行き詰まりは、その省略の副作用だったとわかった。
+
+### 21.2 実装したもの：`src/mls/vendor/publicGroupState.ts`（新規）
+
+hubは実際のMLS groupのmemberではない（秘密鍵を一切持たない）。RFC 9420のDelivery Service設計は、まさにこの「メンバーではない観測者が、tree構造・署名鍵といった**公開情報だけ**を追跡する」モデルを前提にしている。vendored MLSライブラリ（`src/mls/vendor/`）は、この公開部分を扱う関数を既にほぼ全て持っていた（`validateRatchetTree`・`applyUpdatePath`・`nextEpochContext`・`findSignaturePublicKey`・`verifyFramedContentSignature`）——ただしどれも`ClientState`（秘密鍵込みの型）に紐づく形で使われていた。
+
+新規`PublicGroupState`型（`{groupContext, ratchetTree, confirmationTag, unappliedProposals}`）と、以下の関数を実装：
+
+- `initialPublicGroupState(ratchetTree, groupContext, authService, cs)` — genesis状態の初期化（`validateRatchetTree`で構造検証）。
+- `verifyPublicMessageSignature(state, message, wireformat, cs)` — PublicMessageの内部署名を、tree上の該当leafの鍵（またはexternal_senders拡張の鍵）と照合するだけの独立した検証（commit適用とは別に、application/proposalメッセージ単体にも使える）。
+- `applyPublicCommit(state, message, authService, cs)` — 署名検証→`applyProposals`（既存の唯一の実装を、秘密鍵フィールドがダミーの`placeholderClientState`経由で再利用——ダミー値が読まれるのは`external_init`分岐が計算する`externalInitSecret`だけで、その値自体は捨てる）→`applyUpdatePath`で公開tree効果を適用→`nextEpochContext`でepoch/tree hash/transcript hashを進める。
+
+**意図的にできないこと（省略ではなく、MLSの設計上不可能）**：confirmation tag・membership tagの検証は、epoch secret（実メンバーしか持たない）に依存するため、非メンバーのhubには原理的に不可能。hubが検証できるのは「誰が送ったか（署名）」と「tree構造の整合性（parent hash・tree hash）」まで——epoch secret自体の内部整合性は実メンバー側の責任、というのがRFC 9420のDelivery Serviceモデルそのもの。
+
+### 21.3 実地検証
+
+`test/mls-vendor-public-group-state.test.ts`：実際に2人（Alice作成→Bob追加）のMLS groupを組み、本物のclient側`ClientState`が計算する`ratchetTree`/`groupContext`/`confirmationTag`と、このtrackerが同じcommitバイト列だけから独立に計算した結果を突き合わせ、**完全一致**することを確認した。署名を改ざんしたcommitは`verifyPublicMessageSignature`が`false`を返し、`applyPublicCommit`が例外を投げることも確認済み。`bun run typecheck`（全構成）・`bun run test`（全体）とも無傷。
+
+### 21.4 未解決：genesisのconfirmationTagをhubがどう知るか
+
+テストでは、genesis状態のconfirmationTagを実clientの`group.confirmationTag`から直接シードした——**この値は公開情報から独立に導出できない**（group生成時のepoch-0鍵材料から計算される、実メンバー間でしか自明に共有されない値）。本番でhubがこれをどう受け取るかは未設計——`HandshakeBundle`に新しいフィールドを足すか、それとも別の手当てが要るか、次のセッションで検討する。
+
+### 21.5 まだ配線されていない：store.ts/http.tsへの統合
+
+このtrackerは今のところ**独立した、検証済みの部品**であり、biset-mimiの既存認証経路（`credentialMatchesRoom`、`assertAddedCredentialsBackedByMls`）にはまだ接続していない。本番稼働中の3プロセス（normal/anon/self）の認証モデルを差し替える話なので、配線は別の意思決定・別の作業として次に進める。§20.2の2つの穴（後からのメンバー追加bootstrap、`memberCredentials`の出所）は、この配線が終わって初めて解消される見込み。
