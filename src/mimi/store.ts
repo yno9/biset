@@ -32,6 +32,9 @@ import type {
   SubmitVaultCheckpointRequest,
 } from './protocol-types.ts'
 import type { AddedMlsLeaf, MimiMlsStateTransition } from './mls-appsync.ts'
+import { decodeGroupContext, encodeGroupContext } from '../mls/vendor/groupContext.js'
+import { decodeRatchetTree, encodeRatchetTree } from '../mls/vendor/ratchetTree.js'
+import type { PublicGroupState } from '../mls/vendor/publicGroupState.js'
 
 const MAX_ROOMS = 10_000
 const MAX_PARTICIPANTS = 512
@@ -65,6 +68,7 @@ interface KeyPackageRow {
   source_provider: string | null
 }
 interface FrankingKeyRow { hub_key: Uint8Array; signing_private_key: Uint8Array; signing_public_key: Uint8Array }
+interface MlsPublicStateRow { group_context: Uint8Array; ratchet_tree: Uint8Array; confirmation_tag: Uint8Array }
 interface ConsentRow { entry_json: string; source_provider: string; updated_at: string }
 
 /** Hub-owned room state, ordered local deliveries, and KeyPackage directory. */
@@ -333,6 +337,41 @@ export class SqliteMimiStore {
     const created = createFrankingKeyMaterial()
     this.database.query('INSERT INTO mimi_franking_keys (room_id, hub_key, signing_private_key, signing_public_key) VALUES (?, ?, ?, ?)').run(roomId, created.hubKey, created.signingPrivateKey, created.signingPublicKey)
     return created
+  }
+
+  /**
+   * The room's tracked MLS public group state (PLAN_biset-mimi-server.md
+   * §21), if any -- a room only has one once a client has supplied a
+   * verifiable GroupInfo (bootstrapPublicGroupStateFromGroupInfo). Sync,
+   * unlike the async verification/application that produces the value
+   * saved here -- callers do that work outside a transaction, then persist
+   * the result through these plain accessors (mirroring dispatchFanout's
+   * own fire-and-forget-after-accept shape in http.ts, for the same reason:
+   * `Database.transaction()`'s callback must stay synchronous).
+   */
+  mlsPublicState(roomId: MimiRoomId): PublicGroupState | undefined {
+    const row = this.database.query<MlsPublicStateRow, [string]>('SELECT group_context, ratchet_tree, confirmation_tag FROM mimi_mls_public_state WHERE room_id = ?').get(roomId)
+    if (!row) return undefined
+    const groupContext = decodeGroupContext(row.group_context, 0)
+    const ratchetTree = decodeRatchetTree(row.ratchet_tree, 0)
+    if (!groupContext || !ratchetTree) return undefined
+    return { groupContext: groupContext[0], ratchetTree: ratchetTree[0], confirmationTag: new Uint8Array(row.confirmation_tag), unappliedProposals: {} }
+  }
+
+  saveMlsPublicState(roomId: MimiRoomId, state: PublicGroupState): void {
+    if (!this.roomRow(roomId)) return
+    this.database.query(
+      'INSERT INTO mimi_mls_public_state (room_id, group_context, ratchet_tree, confirmation_tag) VALUES (?, ?, ?, ?) ON CONFLICT(room_id) DO UPDATE SET group_context = excluded.group_context, ratchet_tree = excluded.ratchet_tree, confirmation_tag = excluded.confirmation_tag',
+    ).run(roomId, encodeGroupContext(state.groupContext), encodeRatchetTree(state.ratchetTree), state.confirmationTag)
+  }
+
+  /** Stops tracking a room's MLS public state -- used when applying a
+   * commit against it fails for any reason (fail-open: this only ever
+   * takes away the extra, tree-based credential check credentialMatchesRoom
+   * can use; it never affects the sidecar-based check every room already
+   * had, so a tracking failure can't regress previously-working traffic). */
+  clearMlsPublicState(roomId: MimiRoomId): void {
+    this.database.query('DELETE FROM mimi_mls_public_state WHERE room_id = ?').run(roomId)
   }
 
   /** Allocates the hub key a creator must place in the initial
@@ -688,6 +727,13 @@ function installSchema(database: Database): void {
       PRIMARY KEY (room_id, sender_uri, delivery_id)
     );
     CREATE TABLE IF NOT EXISTS mimi_abuse_reports (id INTEGER PRIMARY KEY, room_id TEXT NOT NULL, source_provider TEXT NOT NULL, report_json TEXT NOT NULL, received_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS mimi_mls_public_state (
+      room_id TEXT PRIMARY KEY NOT NULL,
+      group_context BLOB NOT NULL,
+      ratchet_tree BLOB NOT NULL,
+      confirmation_tag BLOB NOT NULL,
+      FOREIGN KEY(room_id) REFERENCES mimi_rooms(room_id)
+    );
   `)
   const columns = database.query<{ name: string }, []>('PRAGMA table_info(mimi_deliveries)').all()
   if (!columns.some(column => column.name === 'frank_json')) database.run('ALTER TABLE mimi_deliveries ADD COLUMN frank_json TEXT')

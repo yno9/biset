@@ -32,6 +32,7 @@
 import type { CiphersuiteImpl } from './crypto/ciphersuite.js'
 import type { GroupContext } from './groupContext.js'
 import type { RatchetTree } from './ratchetTree.js'
+import { addLeafNode } from './ratchetTree.js'
 import { treeHashRoot } from './treeHash.js'
 import type { UnappliedProposals } from './unappliedProposals.js'
 import type { AuthenticationService } from './authenticationService.js'
@@ -43,7 +44,7 @@ import { emptyPskIndex } from './pskIndex.js'
 import { findSignaturePublicKey } from './publicMessage.js'
 import type { PublicMessage } from './publicMessage.js'
 import { verifyFramedContentSignature } from './framedContent.js'
-import { toLeafIndex } from './treemath.js'
+import { nodeToLeafIndex, toLeafIndex } from './treemath.js'
 import { ValidationError } from './mlsError.js'
 
 /** @public */
@@ -106,8 +107,24 @@ export async function applyPublicCommit(
   let tree = result.tree
   if (message.content.commit.path !== undefined) {
     const additionalResult = result.additionalResult
-    const committerLeafIndex = senderLeafIndex ?? (additionalResult.kind === 'externalCommit' ? additionalResult.newMemberLeafIndex : undefined)
-    if (committerLeafIndex === undefined) throw new ValidationError('Cannot verify commit leaf node because no committer leaf index found')
+    // A member commit's UpdatePath applies against its own existing leaf
+    // (already present in `result.tree`) -- no tree-shape change needed
+    // first. An external commit's new leaf does NOT exist in `result.tree`
+    // yet (applyProposals's externalCommit branch only computes *where* it
+    // will eventually land, via findBlankLeafNodeIndexOrExtend, without
+    // inserting it): addLeafNode must actually extend the tree first, the
+    // same way the real (member-side) processCommit does in
+    // processMessages.ts's applyTreeUpdate. Skipping this and calling
+    // applyUpdatePath directly against the un-extended tree fed treemath
+    // functions (filteredDirectPath et al.) a leaf index outside the
+    // tree's actual width -- not a throw, an infinite loop (found live,
+    // 2026-09-02, via test/mls/mimi-vault-room.test.ts hanging).
+    const committerLeafIndex = senderLeafIndex ?? (() => {
+      if (additionalResult.kind !== 'externalCommit') throw new ValidationError('Cannot verify commit leaf node because no committer leaf index found')
+      const [extended, leafNodeIndex] = addLeafNode(tree, message.content.commit.path!.leafNode)
+      tree = extended
+      return nodeToLeafIndex(leafNodeIndex)
+    })()
     const leafErr = await validateLeafNodeUpdateOrCommit(message.content.commit.path.leafNode, committerLeafIndex, groupContextWithExtensions, authService, cs.signature)
     if (leafErr) throw leafErr
     tree = await applyUpdatePath(tree, committerLeafIndex, message.content.commit.path, cs.hash, additionalResult.kind === 'externalCommit')

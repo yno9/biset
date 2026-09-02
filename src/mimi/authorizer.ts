@@ -18,6 +18,7 @@ import type {
   KeyMaterialResponse,
   KeyPackagePublishRequest,
   MimiCredential,
+  MimiRoomId,
   MlsRequiredCapabilities,
   RoomStateUpdate,
   SubmitMessageRequest,
@@ -26,6 +27,7 @@ import type {
   VisibleCredential,
 } from './protocol-types.ts'
 import type { SqliteMimiStore } from './store.ts'
+import { encodeCredential } from '../mls/vendor/credential.ts'
 
 export interface MimiSignatureVerifier {
   verify(credential: MimiCredential, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>
@@ -96,7 +98,7 @@ export async function authorizeUpdate(store: SqliteMimiStore, verifier: MimiSign
   // An initial update is the one self-authenticated entry point.  Its signer
   // must be in `initialState`; the store enforces that invariant.  Once a
   // room exists, pin both user/client and public key to its persisted leaf.
-  return room === undefined ? value.initialState !== undefined : credentialMatchesRoom(room, value.sender)
+  return room === undefined ? value.initialState !== undefined : credentialMatchesRoom(store, value.roomId, value.sender)
 }
 
 /** Self-room external join: a freshly restored device has a new MLS
@@ -112,7 +114,7 @@ export async function authorizeKeyMaterial(store: SqliteMimiStore, verifier: Mim
   if (value.requestingUser !== credentialUser(value.requester)) return false
   if (!(await verifier.verify(value.requester, keyMaterialSigningBytes(value), value.signature))) return false
   const room = store.room(value.roomId)
-  return room !== undefined && credentialMatchesRoom(room, value.requester)
+  return room !== undefined && credentialMatchesRoom(store, value.roomId, value.requester)
 }
 
 export async function authorizeKeyPackagePublish(verifier: MimiSignatureVerifier, value: KeyPackagePublishRequest): Promise<boolean> {
@@ -120,18 +122,18 @@ export async function authorizeKeyPackagePublish(verifier: MimiSignatureVerifier
 }
 
 export async function authorizeDeliveriesPull(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: DeliveriesPullRequest): Promise<boolean> {
-  return (await verifier.verify(value.requester, deliveriesPullSigningBytes(value), value.signature)) && credentialMatchesRoom(store.room(value.roomId), value.requester)
+  return (await verifier.verify(value.requester, deliveriesPullSigningBytes(value), value.signature)) && credentialMatchesRoom(store, value.roomId, value.requester)
 }
 
 export async function authorizeDeliveriesWatch(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: DeliveriesWatchRequest): Promise<boolean> {
-  return (await verifier.verify(value.requester, deliveriesWatchSigningBytes(value), value.signature)) && credentialMatchesRoom(store.room(value.roomId), value.requester)
+  return (await verifier.verify(value.requester, deliveriesWatchSigningBytes(value), value.signature)) && credentialMatchesRoom(store, value.roomId, value.requester)
 }
 
 export async function authorizeSubmitMessage(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: SubmitMessageRequest): Promise<boolean> {
-  return (await verifier.verify(value.sender, submitMessageSigningBytes(value), value.signature)) && credentialMatchesRoom(store.room(value.roomId), value.sender)
+  return (await verifier.verify(value.sender, submitMessageSigningBytes(value), value.signature)) && credentialMatchesRoom(store, value.roomId, value.sender)
 }
 export async function authorizeSubmitVaultCheckpoint(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: SubmitVaultCheckpointRequest): Promise<boolean> {
-  return (await verifier.verify(value.sender, submitVaultCheckpointSigningBytes(value), value.signature)) && credentialMatchesRoom(store.room(value.roomId), value.sender)
+  return (await verifier.verify(value.sender, submitVaultCheckpointSigningBytes(value), value.signature)) && credentialMatchesRoom(store, value.roomId, value.sender)
 }
 
 export function groupInfoRequestSigningBytes(value: Omit<GroupInfoRequest, 'signature'>): Uint8Array {
@@ -173,10 +175,37 @@ export function keyMaterialResponse(targetUser: string, packages: ReturnType<Sql
   }
 }
 
-function credentialMatchesRoom(room: ReturnType<SqliteMimiStore['room']>, signer: MimiCredential): boolean {
+/**
+ * Two independent ways a request's claimed credential can be trusted, tried
+ * in order -- either is sufficient:
+ *
+ * 1. The original biset sidecar check: exact match against `memberCredentials`
+ *    (populated from a client-signed `initialState`/`stateUpdate` sidecar,
+ *    cross-checked at commit time against real `add` proposals for anyone
+ *    newly added -- store.ts's `assertAddedCredentialsBackedByMls`).
+ * 2. (PLAN_biset-mimi-server.md §21) If the room has tracked MLS public
+ *    state (mlsPublicState -- present once a client has supplied a
+ *    verifiable GroupInfo), the claimed (credential, signaturePublicKey)
+ *    pair matching some real leaf in the *actual tracked ratchet tree*, for
+ *    a user currently in the participant list. This is the spec's own
+ *    model (§9: authenticate via the MLS PublicMessage/credential
+ *    machinery itself) and needs no sidecar at all -- it is why this also
+ *    closes PLAN §20.2's federation gaps (a federated room's own local
+ *    participant was never going to have a memberCredentials sidecar
+ *    entry, since nothing client-signed ever proposed one).
+ *
+ * Kept as an OR, not a replacement: rooms with no tracked state (still the
+ * common case) behave exactly as before this existed.
+ */
+function credentialMatchesRoom(store: SqliteMimiStore, roomId: MimiRoomId, signer: MimiCredential): boolean {
+  const room = store.room(roomId)
   const user = credentialUser(signer)
   if (!room || !room.participantList.participants.some(participant => participant.user === user)) return false
-  return room.memberCredentials.some(credential => credential.kind === signer.kind && equalBytes(credential.signaturePublicKey, signer.signaturePublicKey) && (credential.kind === 'visible' && signer.kind === 'visible' ? credential.client === signer.client : credential.kind === 'pseudonymous' && signer.kind === 'pseudonymous' ? credential.clientPseudonym === signer.clientPseudonym : false))
+  if (room.memberCredentials.some(credential => credential.kind === signer.kind && equalBytes(credential.signaturePublicKey, signer.signaturePublicKey) && (credential.kind === 'visible' && signer.kind === 'visible' ? credential.client === signer.client : credential.kind === 'pseudonymous' && signer.kind === 'pseudonymous' ? credential.clientPseudonym === signer.clientPseudonym : false))) return true
+  if (signer.kind !== 'visible') return false
+  const tracked = store.mlsPublicState(roomId)
+  if (!tracked) return false
+  return tracked.ratchetTree.some(node => node?.nodeType === 'leaf' && equalBytes(node.leaf.signaturePublicKey, signer.signaturePublicKey) && equalBytes(encodeCredential(node.leaf.credential), signer.credential))
 }
 
 function credentialUser(credential: MimiCredential): string { return credential.kind === 'visible' ? credential.user : credential.userPseudonym }

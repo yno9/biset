@@ -44,12 +44,16 @@ import { decodeMimiFanoutBatchWire, fanoutDeliveries, fanoutFingerprint, MimiFan
 import { mimiUriProviderDomain } from './mimi-uri.ts'
 import { resolveMimiProviderBaseUrl } from './provider-directory-client.ts'
 import { extractMimiMlsStateTransition } from './mls-appsync.ts'
-import { encodeMlsMessage } from '../mls/vendor/index.ts'
+import { decodeMlsMessage, encodeMlsMessage } from '../mls/vendor/index.ts'
 import { decodeWelcome } from '../mls/vendor/welcome.ts'
+import { defaultAuthenticationService } from '../mls/vendor/authenticationService.ts'
+import { applyPublicCommit } from '../mls/vendor/publicGroupState.ts'
+import { mlsSuite } from '../mls/suite.ts'
+import { bootstrapPublicGroupStateFromGroupInfo } from './mls-group-info-bootstrap.ts'
 import { equalBytes } from '../protocol/canonical.ts'
 import type { MimiAssetProxy } from './asset-proxy.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
-import type { GroupInfoResponse, MimiCredential, MimiDeliveryEntry, MimiDeploymentMode, MimiErrorResponse, UpdateRoomResponse } from './protocol-types.ts'
+import type { GroupInfoResponse, MimiCredential, MimiDeliveryEntry, MimiDeploymentMode, MimiErrorResponse, UpdateRoomRequest, UpdateRoomResponse } from './protocol-types.ts'
 import type { MimiWatchTokenIssuer } from './watch-token.ts'
 
 const MAX_BODY_BYTES = 1024 * 1024
@@ -294,6 +298,7 @@ export function createMimiHttpHandler(
             ]
             dispatchFanout(store, federation, roomId, messages)
           }
+          void trackMlsPublicState(store, roomId, value)
           return json(200, encodeUpdateRoomResponseWire({ status: 'success', acceptedTimestamp: value.submittedAt }))
         }
         return updateError(result.reason, result.message, result.currentEpoch)
@@ -389,6 +394,51 @@ function bootstrapTransitionFromFanout(entries: MimiDeliveryEntry[]) {
  * domain never fails or delays the local accept response -- this always
  * runs detached from the request handler and only logs on failure.
  */
+/**
+ * Best-effort, fire-and-forget MLS public tree tracking (PLAN_biset-mimi-
+ * server.md §21) after a locally-accepted `/update`. `Database.transaction`
+ * (store.submitUpdate) must stay synchronous, so this real crypto work runs
+ * detached, after the accept has already happened and its response is on
+ * its way -- mirroring dispatchFanout's own shape just above.
+ *
+ * A new room only starts being tracked if its creator supplied a verifiable
+ * `bundle.groupInfo` (optional; rooms without one behave exactly as before
+ * this feature existed). An existing tracked room's state is kept current
+ * by applying each subsequent commit -- if that ever fails for any reason
+ * (a structurally-invalid commit, a bug, anything), tracking is dropped for
+ * that room rather than surfaced as an error: this mechanism only ever
+ * *adds* an extra, tree-verified path credentialMatchesRoom (authorizer.ts)
+ * can use, on top of the sidecar check every room already had, so losing
+ * tracking can never regress previously-working traffic.
+ */
+function trackMlsPublicState(store: SqliteMimiStore, roomId: string, value: UpdateRoomRequest): Promise<void> {
+  return (async () => {
+    try {
+      const suite = await mlsSuite()
+      const existing = value.initialState === undefined ? store.mlsPublicState(roomId) : undefined
+      if (value.initialState !== undefined) {
+        if (!value.bundle.groupInfo) return
+        store.saveMlsPublicState(roomId, await bootstrapPublicGroupStateFromGroupInfo(value.bundle.groupInfo, defaultAuthenticationService, suite))
+        return
+      }
+      if (!existing || value.bundle.kind !== 'commit') return
+      const decoded = decodeMlsMessage(value.bundle.proposalOrCommit, 0)
+      if (!decoded || decoded[1] !== value.bundle.proposalOrCommit.length || decoded[0].wireformat !== 'mls_public_message') { store.clearMlsPublicState(roomId); return }
+      store.saveMlsPublicState(roomId, await applyPublicCommit(existing, decoded[0].publicMessage, defaultAuthenticationService, suite))
+    } catch (cause) {
+      console.warn(`[mimi/mls-public-state] tracking for room ${roomId} stopped:`, cause)
+      // Best-effort cleanup of a best-effort mechanism: if the store itself
+      // is already gone (e.g. a test closed its :memory: database right
+      // after the HTTP response it triggered this detached work from --
+      // deployment.close() has always been safe to call immediately after
+      // any prior request, and this fire-and-forget tracking must not
+      // change that), swallow this too rather than produce a second,
+      // unhandled rejection on top of the first warning.
+      try { store.clearMlsPublicState(roomId) } catch { /* store already closed; nothing left to clean up */ }
+    }
+  })()
+}
+
 function dispatchFanout(store: SqliteMimiStore, federation: MimiFederationOptions | undefined, roomId: string, messages: MimiFanoutMessage[]): void {
   if (!federation?.outbound || messages.length === 0) return
   const room = store.room(roomId)

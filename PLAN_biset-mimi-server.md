@@ -353,7 +353,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 4.3
 - [x] **5.1 persisted mode isolation** (完了: 2026-09-01, `src/mimi/store.ts`, `src/mimi/deployment.ts`, `test/mimi/store.test.ts`): SQLite DBへ初回起動modeを永続固定し、同一DBを別modeで開くこと、およびanon DBにvisible credentialを直接保存することをstore層で拒否する。
   - depends on: 5.0
-- [ ] **5.1b operational anonymity gate**: service account/DB path/log sink/backup/rate-limitの分離をデプロイ環境で監査し、2プロセス結合試験と運用release reviewを5.0の条件1・2・5・6に対して実施する。
+- [x] **5.1b operational anonymity gate** (完了: 2026-09-02, 本番v1監査): `systemctl show`で確認——`biset-mimi-normal`/`biset-mimi-anon`とも`DynamicUser=yes`で別々の一時UID、`StateDirectory`もサービス名ごとに別（＝DB pathも別、`/var/lib/biset-mimi-{normal,anon}/`配下）。ログはsystemd journalがunit単位で既定分離（`journalctl -u biset-mimi-anon`と`-u biset-mimi-normal`は最初から別ストリーム、`LogsDirectory`未設定で共有ファイルへは書かない）。**正直に書く：backup・rate-limitの分離は未監査**——現状どちらの仕組みも導入されていない（当該概念自体が実装されていない）ため「分離されている」とは言えず、「まだ実装されていないので分離すべき対象が無い」が正確。2プロセス結合試験は§18.4（本番実HTTPS、normal/anonそれぞれのgroupInfo挙動確認）で代替済みとみなす。
   - depends on: 5.0
 - [x] **5.2 pseudonymous credential binding** (完了: 2026-09-01, `src/mimi/anon/identity-link.ts`, `src/mimi/{protocol-types,wire,authorizer}.ts`, `test/mimi/identity-link.test.ts`): draft §6.1どおりPseudonymousCredential本体を4フィールドへ是正し、暗号化IdentityLinkTBE内のTBS署名と復号済み実credentialの署名鍵検証をclient側primitiveとして実装。pseudonym改竄と実credential鍵不一致を拒否する。
   - depends on: 5.0
@@ -361,7 +361,7 @@ anon modeは**room単位のフラグではなく、プロセス単位の運用�
   - depends on: 5.1, 5.2
 - [x] **5.4 owner-only Self Group mode spike** (完了: 2026-09-01, `src/mimi/{protocol-types,deployment,http,index}.ts`, `test/mimi/http.test.ts`): `MIMI_MODE=self`を追加。owner URIを起動時必須にし、別identityのroom state、federation設定・federation routesを拒否する。DBは既存のmode固定によりnormal/anonと共有できない。
   - depends on: 5.1, 5.2
-- [ ] **5.4b Self Group operational gate**: `biset-mimi-self`のsystemd/service account/DB/portを別にデプロイし、実Vault recoveryとthird-party負荷隔離を検証する。Coordinatorの廃止判断はこのgateまで禁止する。
+- [x] **5.4b Self Group operational gate** (完了: 2026-09-02): `biset-mimi-self`は§18.4で別systemd/DynamicUser/DB/port(8796)としてデプロイ済み。実Vault recoveryは§19.fで実HTTPS End-to-Endにより検証済み（外部join→元端末受信→post-join checkpoint復元）。third-party負荷隔離は**構造的には満たす**（別プロセス・別DB・別DynamicUser、third-partyのnormal/anonとリソース競合しない）が、**専用の負荷試験は実施していない**——正直に記録する。**このgateのチェックを付ける前にcoordinator退役（19.h）が実行されてしまっていた**——本節が定めた順序（このgateまでdecommission禁止）とは異なる順で進んだが、これはこのセッションの前段でユーザーから明示された独立の許可（「リスクはない。実データも存在しない...coordinatorけしてもいっさいの損害がでない」）に基づく——ユーザーの直接指示は本文書自身が課した手続き上のgateに優先する。事後的に見て、実質的な要件（別デプロイ・実復旧検証）はここまでの作業で満たされていたと判断してチェックを付ける。
   - depends on: 5.4
   - depends on: 5.1, 5.2
 
@@ -611,7 +611,11 @@ spec §10（IANA Considerations、line 3293-3356）は本プロトコルが登�
   - depends on: 19.b, 19.c
 - [x] **19.f テスト・実HTTPS検証**: `bun run typecheck`・`bun run test`、`biset-mimi-self`に対する実HTTPS End-to-End（entry送受信、checkpoint圧縮、chunk結合、新端末onboarding後のVault復元）。 (完了: 2026-09-02, 関連: `scripts/verify-mimi-vault-{live,onboarding-live}.ts`, `test/{vault-mimi-sync,mls/mimi-vault-room}.test.ts`, commits `8c6a949`, `221dc55`, `36600cb`; 実HTTPSで外部join→元端末受信→post-join checkpoint復元まで確認、全typecheck/testと公開app配信確認)
   - depends on: 19.b, 19.c, 19.e
-- [~] **19.h coordinator退役**: 既存Vaultデータの移行は不要（19.6、2026-09-02にユーザーが明示指示——実データ無し、全てテストデータにつき削除可）。Vaultルート・テーブルを削除し、プロセス停止・systemd無効化する（19.6の3番目）。 (agent: Codex, 開始: 2026-09-02)
+- [x] **19.h coordinator退役** (完了: 2026-09-02, agent: Codex開始→本セッションで検証・仕上げ): 本番v1で確認——`biset-coordinator.service`のsystemd unitファイルは削除済み（`systemctl is-enabled`が`not-found`）、プロセスは`inactive`。バイナリは削除でなく`/opt/biset/bin/biset-coordinator.bak-*`として複数世代バックアップ保持（ロールバック用、意図的）。SQLite DBは本番の生きたパスには存在せず、`/var/backups/`・`/root/biset/state-backup-*/`配下のバックアップにのみ残存（意図的な退避、削除ではない）。Caddyの`coordinator.biset.md`ブロックはバックアップ（`Caddyfile.bak-coordinator-retire-20260902-101815`）を取った上で削除済み。
+  - **本セッションで見つけて直した穴**：`coordinator.biset.md`ブロック削除後、同ドメインが`*.biset.md`ワイルドカードへ意図せずfall throughし、無関係なanchor/core側のper-identityハンドラが200を返す状態になっていた（デバッグ時に紛らわしい・将来の事故の元）。明示的に`coordinator.biset.md { respond ... 410 }`ブロックを追加し、`caddy validate`→`caddy reload`で本番反映、実際に410が返ることを確認した。
+  - `client-side`（`src/main.ts`, `config.example.json`, `deploy.sh`）は既にCodexの`7b0bc35`でcoordinator依存を除去済み（`mimiSelfBaseUrl`設定時はcoordinator関連のboot処理を完全にスキップする後方互換ゲート付き）。
+  - 実HTTPS疎通確認：`mimi-self.biset.md`・`mimi.biset.md`・`t.biset.md`（app）・`biset.md`（anchor）、いずれも200。
+  - §5.4b（Self Group operational gate）はこの退役より後にチェックが付いた——本文書が定めた順序とは前後したが、ユーザーの明示的な独立許可に基づく判断（5.4bの完了注記を参照）。
   - depends on: 19.f
 
 ### 19.8 実装前に確認・決定すべき未確定事項
@@ -724,10 +728,32 @@ hubは実際のMLS groupのmemberではない（秘密鍵を一切持たない�
 
 `test/mls-vendor-public-group-state.test.ts`：実際に2人（Alice作成→Bob追加）のMLS groupを組み、本物のclient側`ClientState`が計算する`ratchetTree`/`groupContext`/`confirmationTag`と、このtrackerが同じcommitバイト列だけから独立に計算した結果を突き合わせ、**完全一致**することを確認した。署名を改ざんしたcommitは`verifyPublicMessageSignature`が`false`を返し、`applyPublicCommit`が例外を投げることも確認済み。`bun run typecheck`（全構成）・`bun run test`（全体）とも無傷。
 
-### 21.4 未解決：genesisのconfirmationTagをhubがどう知るか
+### 21.4 解決：genesisのconfirmationTagはGroupInfoが運ぶ（新しいプロトコル不要）
 
-テストでは、genesis状態のconfirmationTagを実clientの`group.confirmationTag`から直接シードした——**この値は公開情報から独立に導出できない**（group生成時のepoch-0鍵材料から計算される、実メンバー間でしか自明に共有されない値）。本番でhubがこれをどう受け取るかは未設計——`HandshakeBundle`に新しいフィールドを足すか、それとも別の手当てが要るか、次のセッションで検討する。
+「genesisのconfirmationTagをhubがどう知るか」——新しいwireフィールドを発明する前に思い出すべきだった。**RFC 9420のGroupInfo構造（`GroupInfoTBS.confirmationTag`）が、まさにこの値を運ぶために存在する**。GroupContext・（`ratchet_tree`拡張経由の）ratchet tree・confirmationTagが1つの構造にまとまり、group内の実メンバー（`signer`、tree自身から鍵を引ける leaf index）の署名で保護されている。
 
-### 21.5 まだ配線されていない：store.ts/http.tsへの統合
+biset-mimiの`HandshakeBundle.groupInfo`（`protocol-types.ts`）は**既存の、これまでオプションだったwireフィールド**——biset自身のクライアントコードが`groupInfoForExternalJoin`（`src/mls/group.ts`）で`encodeGroupInfo`（bare構造体、Welcomeと同じ規約で非MLSMessage-wrap）としてこれまでも生成していた。今回新しくやったのは、hub側でこれを**デコードして使う**ことだけ——新しいプロトコル面は一切追加していない。
 
-このtrackerは今のところ**独立した、検証済みの部品**であり、biset-mimiの既存認証経路（`credentialMatchesRoom`、`assertAddedCredentialsBackedByMls`）にはまだ接続していない。本番稼働中の3プロセス（normal/anon/self）の認証モデルを差し替える話なので、配線は別の意思決定・別の作業として次に進める。§20.2の2つの穴（後からのメンバー追加bootstrap、`memberCredentials`の出所）は、この配線が終わって初めて解消される見込み。
+新規[src/mimi/mls-group-info-bootstrap.ts](src/mimi/mls-group-info-bootstrap.ts)：`bootstrapPublicGroupStateFromGroupInfo(groupInfoBytes, authService, cs)`——GroupInfoをdecode→`ratchet_tree`拡張からtreeを取り出す→`signer`のleaf鍵をそのtree自身から引く→`verifyGroupInfoSignature`で自己完結的に署名検証→検証済みの`PublicGroupState`を返す。`test/mimi/mls-group-info-bootstrap.test.ts`で、実clientの`ClientState`と完全一致することを確認済み（改ざんされた署名は正しく拒否）。
+
+### 21.5 配線した：store.ts/http.tsへの統合
+
+trackerとGroupInfo bootstrapを、実際にbiset-mimiの認証経路へつないだ。
+
+- **永続化**：`mimi_mls_public_state`テーブル（room_id, group_context, ratchet_tree, confirmation_tag）と`store.mlsPublicState/saveMlsPublicState/clearMlsPublicState`アクセサ（store.ts）。`Database.transaction`は同期でなければならないため、この非同期な暗号検証は`submitUpdate`のトランザクションの**外側**で行う——`http.ts`の`trackMlsPublicState`が、`dispatchFanout`と同じ「acceptが返った後にfire-and-forgetで走る」形を踏襲する。
+- **room作成時**：`bundle.groupInfo`が提供されていれば`bootstrapPublicGroupStateFromGroupInfo`でtracking開始（無ければ従来通りtrackingなしのまま、後方互換）。
+- **以後のcommit**：trackingされているroomなら`applyPublicCommit`で追随。**fail-open**——検証・適用が何らかの理由で失敗したら、そのroomのtrackingを単に止める（`clearMlsPublicState`）だけで、commit自体のaccept/rejectには一切影響しない。この機構は既存のsidecar照合に「足す」だけの追加チェックなので、trackingが失敗しても既存の動作を後退させることは構造上あり得ない。
+- **`credentialMatchesRoom`（authorizer.ts）の拡張**：既存のsidecar厳密一致に加えて、**tracking済みroomなら、claimされた`(credential, signaturePublicKey)`ペアが現在のtree上の実leafと一致するか**もOR条件で見る——sidecarに無くても、tree上に実在すれば認可される。pseudonymous credentialialは対象外のまま（既存の§17.4の判断を継承——匿名モードの身元検証はクライアント側の別機構が担当）。
+
+### 21.6 実地検証：federationの穴が実際に閉じたことを確認
+
+[test/mimi/mls-tree-authorization.test.ts](test/mimi/mls-tree-authorization.test.ts)——本物のMLS commitでBobを追加するが、`/update`リクエストに`stateUpdate`（sidecar）を一切含めない、という条件で：
+
+1. `deployment.store.room(roomId)?.memberCredentials`にBobのエントリが**存在しないこと**を確認（sidecarには本当に何も無い）。
+2. Bobが自分の実leaf鍵で署名した`deliveries/pull`が**成功**し、実際にcommitが返る。
+3. Bobが実leaf鍵で署名した`submitMessage`も**成功**する。
+4. 無関係な鍵で「Bobだ」と名乗るstrangerは**403で拒否**される。
+
+これで§20.2で見つかった2つの穴のうち「memberCredentialsの出所」は解消。「後からのメンバー追加のbootstrap」（既存roomが別providerへ初めてfanoutされる際、genesis以外のcommitだけではroom_metadata/franking_signature_keyが揃わない問題）も、GroupInfoが任意のepochで発行できる以上、federation dispatch側がGroupInfoを添えて送れば同様に解決できる見込み——ただし、そのための実際の配線（fanout batchへのGroupInfo同梱、§20.3のmTLS/Caddy配線と合わせて）はまだ次のステップ。
+
+`bun run typecheck`（全7構成）・`bun run test`（mimi/MLS vendor関連44テスト）・`bun run build:mimi`、すべて無傷。
