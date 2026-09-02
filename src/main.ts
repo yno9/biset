@@ -10,7 +10,7 @@ import {
   buildVaultDeliveryProjector,
   enableDidComm,
   ensureMimiProviderPublished,
-  ensureRoutingDocument,
+  ensureMimiVaultRoom,
   fromHex,
   mailFromForIdentity,
   maintainSelfGroup,
@@ -278,6 +278,16 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   let flushCoordinatorOutbox: (() => Promise<{ appendedEntryIds: string[]; failedEntryId?: string; failureReason?: string }>) | undefined
   const mimiVaultConfigured = !!(mimiSelfBaseUrl && identity.deviceKid)
   const coordinatorConfigured = !mimiVaultConfigured && !!(anchorBaseUrl && anchorOidcClientId && coordinatorUrl && identity.deviceKid)
+  // Ensured here, BEFORE any of this function's self-group readers below
+  // (vaultDevices right here, buildVaultCryptoBoundary/enableDidComm/mail
+  // ingress further down) -- a MIMI-driven identity's self-group state IS
+  // this room's own ClientState (store.ts's `saveMimiVault` writes the same
+  // row `load` reads), so on this device's very first boot ever, before this
+  // room exists, every one of those readers would otherwise fail once each
+  // (found live, 2026-09-02: this used to only be ensured much later, past
+  // all of them). ensureMimiVaultRoom's own doc comment covers why this
+  // same call is repeated again, cheaply, further down.
+  const mimiVaultRoom = mimiVaultConfigured ? await ensureMimiVaultRoom(identity, selfGroupStore, mimiSelfBaseUrl) : undefined
   let vaultDevices = await selfGroupStore.load(identity.did).then(stored => stored
     ? memberKids(stored.state, identity.did).map(deviceId => ({ deviceId, current: deviceId === identity.deviceKid }))
     : []).catch(() => [])
@@ -2006,57 +2016,12 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
   } else if (mimiVaultConfigured && identity.deviceKid) {
     // Self/Vault traffic is a normal-mode MIMI room on its isolated provider.
     // There is deliberately no Anchor/OIDC token here: membership plus the
-    // MLS leaf signature authenticate every request.
-    const provider = new URL(mimiSelfBaseUrl)
-    const transport = new MimiClientTransport({ normalBaseUrl: mimiSelfBaseUrl, anonBaseUrl: mimiSelfBaseUrl, selfBaseUrl: mimiSelfBaseUrl })
-    let room = await selfGroupStore.loadMimiVault(identity.did)
-    const stored = await selfGroupStore.load(identity.did)
-    // Without a coordinator self-group, this device's own MLS leaf
-    // signature key lives only on `identity.deviceSignaturePrivateKey`
-    // (identity/bootstrap.ts's `registerDeviceAndJoinSelfGroup`) -- it is a
-    // random per-device key, not derivable from Root/Sign, so there is no
-    // fallback if it's missing (found live, 2026-09-02: reusing
-    // `identity.signPublicKey` here produced a credential whose deviceKid
-    // never matched `identity.deviceKid`).
-    if (!stored && !identity.deviceSignaturePrivateKey) throw new Error('MIMI Vault device has no signature key to reconstruct its credential from')
-    const credential = stored
-      ? ownMlsDeviceCredential(stored.state)
-      : createMlsDeviceCredential(identity.did, identity.generation, ed25519.getPublicKey(fromHex(identity.deviceSignaturePrivateKey!)), fromHex(identity.rootPrivateKey), fromHex(identity.signPrivateKey))
-    const signaturePrivateKey = stored ? ownSignaturePrivateKey(stored.state) : fromHex(identity.deviceSignaturePrivateKey!)
-    if (credential.deviceKid !== identity.deviceKid) throw new Error('MIMI Vault device credential does not match this identity device')
-    const selfGroupId = stored?.selfGroupId ?? 'mimi-vault'
-    // A MIMI-only identity never goes through enableDidComm's own
-    // first-ever routing.json creation (that path needs a self-group
-    // ClientState this identity doesn't have) -- without this, the
-    // setRoutingMimiVaultRoom publish below would fail forever ("this
-    // identity has no routing.json to update yet"), and a second device
-    // could never discover this room. Best-effort, same treatment as every
-    // other routing.json step in this branch: a transient failure here must
-    // not block the vault room itself from working locally.
-    await ensureRoutingDocument(identity, fetch).catch(error => console.warn('[mimi-vault/routing-bootstrap]', error instanceof Error ? error.message : error))
-    const routedRoom = await fetchRouting(identity.did, fetch)
-      .then(doc => mimiVaultRoomFromRouting(doc, mimiSelfBaseUrl))
-      .catch(error => { console.warn('[mimi-vault/routing-read]', error instanceof Error ? error.message : error); return undefined })
-    if (!room && routedRoom) {
-      await joinMimiVaultRoom({
-        identityId: identity.did, deviceId: credential.deviceKid, selfGroupId, roomId: routedRoom, credential, signaturePrivateKey, transport, stateStore: selfGroupStore,
-      })
-      room = await selfGroupStore.loadMimiVault(identity.did)
-    }
-    if (!room) {
-      await createMimiVaultRoom({
-        identityId: identity.did, deviceId: credential.deviceKid, selfGroupId, credential, signaturePrivateKey, transport, stateStore: selfGroupStore,
-        providerHost: provider.hostname,
-      })
-      room = await selfGroupStore.loadMimiVault(identity.did)
-    }
-    if (!room) throw new Error('MIMI Vault room initialization did not persist')
-    // The random room URI is the sole bootstrap pointer for a restored
-    // device; it is signed routing metadata, not Vault content or key
-    // material. Retry best-effort on each boot if routing is temporarily out.
-    await setRoutingMimiVaultRoom(identity.did, room.roomId, mimiSelfBaseUrl, {
-      updateKey: encodeMultikey(fromHex(identity.signPublicKey)), privateKey: fromHex(identity.signPrivateKey),
-    }, fetch).catch(error => console.warn('[mimi-vault/routing-publish]', error instanceof Error ? error.message : error))
+    // MLS leaf signature authenticate every request. Already ensured once,
+    // early in this function, before buildVaultCryptoBoundary/enableDidComm
+    // needed it to exist -- this second call is then just a fast local read
+    // plus a best-effort routing-publish retry (ensureMimiVaultRoom's own
+    // doc comment).
+    const { credential, signaturePrivateKey, room, transport } = mimiVaultRoom ?? await ensureMimiVaultRoom(identity, selfGroupStore, mimiSelfBaseUrl)
     const mlsCredential = ownMlsDeviceCredential(room.state)
     const session = new PersistedMimiVaultSession({
       identityId: identity.did, mode: 'self', transport, stateStore: selfGroupStore,

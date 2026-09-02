@@ -26,7 +26,7 @@ import { multikeyHashBase58 } from './webvh/hash.ts'
 import { fetchCurrentLog } from './webvh/log-io.ts'
 import type { IdentityRecord, IdentityRecordStore } from './record-store.ts'
 import { epochOf, exportSecret, generateOwnKeyPackage, ownMlsDeviceCredential, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
-import { createMlsDeviceCredential, encodeMlsDeviceCredential } from '../mls/device-credential.ts'
+import { createMlsDeviceCredential, encodeMlsDeviceCredential, type MlsDeviceCredentialV2 } from '../mls/device-credential.ts'
 import { webvhAuthenticationService } from '../mls/webvh-authentication-service.ts'
 import { ensureSelfGroupWithRosterInstall, installCurrentRosterProjection, reflectPendingSelfGroupCommits, selfGroupIdHex, type SelfGroupSigner } from '../mls/self-group.ts'
 import { ensureKeyPackagePool } from '../mls/key-package-pool.ts'
@@ -42,7 +42,10 @@ import { StoredMlsSelfGroupProvider, type MlsSelfGroupStateStore } from '../mls/
 import type { MlsKeyPackageStore } from '../mls/keypackage-store.ts'
 import { deviceKidFragment } from '../didcomm/devicekid.ts'
 import { publishRoutingPointer } from '../didcomm/webvh-routing-pointer.ts'
-import { buildRoutingDoc, fetchRouting, putRouting, type RoutingDoc, type MediatorRegistration } from '../didcomm/webvh-routing.ts'
+import { buildRoutingDoc, fetchRouting, putRouting, setRoutingMimiVaultRoom, mimiVaultRoomFromRouting, type RoutingDoc, type MediatorRegistration } from '../didcomm/webvh-routing.ts'
+import { createMimiVaultRoom, joinMimiVaultRoom } from '../mls/mimi-vault-room.ts'
+import { MimiClientTransport } from '../mls/mimi-client-transport.ts'
+import type { MimiVaultSessionRecord, MimiVaultSessionStateStore } from '../mls/mimi-vault-session.ts'
 import { registerWithMediator } from '../didcomm/mediator-sync.ts'
 import { DidCommCredentialReader } from '../vault/didcomm-credential-reader.ts'
 import { DidCommCredentialVaultSink } from '../vault/didcomm-credential-sink.ts'
@@ -1216,6 +1219,93 @@ export async function ensureRoutingDocument(record: IdentityRecord, fetchImpl: t
   await publishRoutingPointer({ did: record.did, signingPrivateKey: signPrivateKey, signingPublicKey: signPublicKey, fetch: fetchImpl })
   if (await fetchRouting(record.did, fetchImpl)) return
   await putRouting(record.did, buildRoutingDoc(record.did, {}), { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, fetchImpl)
+}
+
+export interface EnsuredMimiVaultRoom {
+  credential: MlsDeviceCredentialV2
+  signaturePrivateKey: Uint8Array
+  selfGroupId: string
+  room: MimiVaultSessionRecord
+  transport: MimiClientTransport
+  provider: URL
+}
+
+/**
+ * Ensures this identity's MIMI Vault room exists locally: joins it (via
+ * routing.json's published pointer) if a sibling device already created it,
+ * creates it if this is the first device, and (re)publishes the routing
+ * pointer either way. Idempotent -- a room already known locally
+ * (`selfGroupStore.loadMimiVault`) short-circuits everything past that
+ * check to a single local read plus a best-effort routing-publish retry.
+ *
+ * There is exactly ONE self-group concept for a MIMI-driven identity, not a
+ * "coordinator" one and a separate "MIMI" one -- this room's own
+ * `ClientState` IS what `selfGroupStore.load` returns once it exists
+ * (store.ts's `saveMimiVault` writes the same row `save` does), which is
+ * why `buildVaultCryptoBoundary`/`enableDidComm`/mail ingress all keep
+ * working against it with no code of their own aware that MIMI is
+ * involved. The only reason this needs calling from two places in
+ * main.ts's `bootClient` (once early, before those self-group readers, and
+ * again where the room's own sync loop is wired up) is that the room does
+ * not exist yet on this device's very first boot -- every self-group
+ * reader that already ran before this used to run is why they logged "no
+ * self-group state for this identity" once each, every time, not just on
+ * that first boot (found live, 2026-09-02: this was previously ensured
+ * only late in `bootClient`, well after those readers).
+ */
+export async function ensureMimiVaultRoom(
+  identity: IdentityRecord,
+  selfGroupStore: MlsSelfGroupStateStore & MimiVaultSessionStateStore,
+  mimiSelfBaseUrl: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<EnsuredMimiVaultRoom> {
+  if (!identity.deviceKid) throw new Error('ensureMimiVaultRoom: identity has no deviceKid yet')
+  const provider = new URL(mimiSelfBaseUrl)
+  const transport = new MimiClientTransport({ normalBaseUrl: mimiSelfBaseUrl, anonBaseUrl: mimiSelfBaseUrl, selfBaseUrl: mimiSelfBaseUrl, fetch: fetchImpl })
+  let room = await selfGroupStore.loadMimiVault(identity.did)
+  const stored = await selfGroupStore.load(identity.did)
+  // Without a coordinator self-group, this device's own MLS leaf signature
+  // key lives only on `identity.deviceSignaturePrivateKey`
+  // (`registerDeviceAndJoinSelfGroup` above) -- it is a random per-device
+  // key, not derivable from Root/Sign, so there is no fallback if it's
+  // missing (found live, 2026-09-02: reusing `identity.signPublicKey` here
+  // produced a credential whose deviceKid never matched `identity.deviceKid`).
+  if (!stored && !identity.deviceSignaturePrivateKey) throw new Error('MIMI Vault device has no signature key to reconstruct its credential from')
+  const credential = stored
+    ? ownMlsDeviceCredential(stored.state)
+    : createMlsDeviceCredential(identity.did, identity.generation, ed25519.getPublicKey(fromHex(identity.deviceSignaturePrivateKey!)), fromHex(identity.rootPrivateKey), fromHex(identity.signPrivateKey))
+  const signaturePrivateKey = stored ? ownSignaturePrivateKey(stored.state) : fromHex(identity.deviceSignaturePrivateKey!)
+  if (credential.deviceKid !== identity.deviceKid) throw new Error('MIMI Vault device credential does not match this identity device')
+  const selfGroupId = stored?.selfGroupId ?? 'mimi-vault'
+
+  // A MIMI-only identity never goes through enableDidComm's own first-ever
+  // routing.json creation (that path needs a self-group ClientState that,
+  // before THIS function has run even once, doesn't exist yet either) --
+  // without this, the setRoutingMimiVaultRoom publish below would fail
+  // forever ("this identity has no routing.json to update yet"), and a
+  // second device could never discover this room. Best-effort: a transient
+  // failure here must not block the vault room itself from working locally.
+  await ensureRoutingDocument(identity, fetchImpl).catch(error => console.warn('[mimi-vault/routing-bootstrap]', error instanceof Error ? error.message : error))
+  const routedRoom = await fetchRouting(identity.did, fetchImpl)
+    .then(doc => mimiVaultRoomFromRouting(doc, mimiSelfBaseUrl))
+    .catch(error => { console.warn('[mimi-vault/routing-read]', error instanceof Error ? error.message : error); return undefined })
+  if (!room && routedRoom) {
+    await joinMimiVaultRoom({ identityId: identity.did, deviceId: credential.deviceKid, selfGroupId, roomId: routedRoom, credential, signaturePrivateKey, transport, stateStore: selfGroupStore })
+    room = await selfGroupStore.loadMimiVault(identity.did)
+  }
+  if (!room) {
+    await createMimiVaultRoom({ identityId: identity.did, deviceId: credential.deviceKid, selfGroupId, credential, signaturePrivateKey, transport, stateStore: selfGroupStore, providerHost: provider.hostname })
+    room = await selfGroupStore.loadMimiVault(identity.did)
+  }
+  if (!room) throw new Error('MIMI Vault room initialization did not persist')
+  // The random room URI is the sole bootstrap pointer for a restored
+  // device; it is signed routing metadata, not Vault content or key
+  // material. Retry best-effort on each boot if routing is temporarily out.
+  await setRoutingMimiVaultRoom(identity.did, room.roomId, mimiSelfBaseUrl, {
+    updateKey: encodeMultikey(fromHex(identity.signPublicKey)), privateKey: fromHex(identity.signPrivateKey),
+  }, fetchImpl).catch(error => console.warn('[mimi-vault/routing-publish]', error instanceof Error ? error.message : error))
+
+  return { credential, signaturePrivateKey, selfGroupId, room, transport, provider }
 }
 
 /**
