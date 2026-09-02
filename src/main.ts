@@ -2010,10 +2010,18 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     const transport = new MimiClientTransport({ normalBaseUrl: mimiSelfBaseUrl, anonBaseUrl: mimiSelfBaseUrl, selfBaseUrl: mimiSelfBaseUrl })
     let room = await selfGroupStore.loadMimiVault(identity.did)
     const stored = await selfGroupStore.load(identity.did)
+    // Without a coordinator self-group, this device's own MLS leaf
+    // signature key lives only on `identity.deviceSignaturePrivateKey`
+    // (identity/bootstrap.ts's `registerDeviceAndJoinSelfGroup`) -- it is a
+    // random per-device key, not derivable from Root/Sign, so there is no
+    // fallback if it's missing (found live, 2026-09-02: reusing
+    // `identity.signPublicKey` here produced a credential whose deviceKid
+    // never matched `identity.deviceKid`).
+    if (!stored && !identity.deviceSignaturePrivateKey) throw new Error('MIMI Vault device has no signature key to reconstruct its credential from')
     const credential = stored
       ? ownMlsDeviceCredential(stored.state)
-      : createMlsDeviceCredential(identity.did, identity.generation, fromHex(identity.signPublicKey), fromHex(identity.rootPrivateKey), fromHex(identity.signPrivateKey))
-    const signaturePrivateKey = stored ? ownSignaturePrivateKey(stored.state) : fromHex(identity.signPrivateKey)
+      : createMlsDeviceCredential(identity.did, identity.generation, ed25519.getPublicKey(fromHex(identity.deviceSignaturePrivateKey!)), fromHex(identity.rootPrivateKey), fromHex(identity.signPrivateKey))
+    const signaturePrivateKey = stored ? ownSignaturePrivateKey(stored.state) : fromHex(identity.deviceSignaturePrivateKey!)
     if (credential.deviceKid !== identity.deviceKid) throw new Error('MIMI Vault device credential does not match this identity device')
     const selfGroupId = stored?.selfGroupId ?? 'mimi-vault'
     const routedRoom = await fetchRouting(identity.did, fetch)

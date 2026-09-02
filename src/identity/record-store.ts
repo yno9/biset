@@ -41,6 +41,16 @@ export interface IdentityRecord {
   /** hex. The X25519 private key `didCommKid` names, published in
    * routing.json's keyAgreement entry. */
   didCommX25519PrivateKey?: string
+  /** hex. This device's own MLS leaf signature private key -- the one
+   * `deviceKid` above is a fingerprint of (device-credential.ts's
+   * `mlsDeviceKid`). Random per device, generated once in
+   * `registerDeviceAndJoinSelfGroup` and otherwise unrecoverable, so it must
+   * be persisted somewhere durable. When the legacy coordinator path ran,
+   * it lived inside the self-group `ClientState` instead (self-group
+   * store.ts) and this field is left unset; only a biset-mimi-driven
+   * device (no coordinator self-group at all) needs it here, since nothing
+   * else durable holds it. */
+  deviceSignaturePrivateKey?: string
 }
 
 export interface IdentityRecordStore {

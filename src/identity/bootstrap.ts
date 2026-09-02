@@ -182,7 +182,7 @@ async function registerDeviceAndJoinSelfGroup(
   selfGroupStore: MlsSelfGroupStateStore,
   keyStore: MlsKeyPackageStore,
   opts: RegisterDeviceOptions,
-): Promise<{ deviceKid: string; selfGroupState?: ClientState }> {
+): Promise<{ deviceKid: string; selfGroupState?: ClientState; deviceSignaturePrivateKey?: Uint8Array }> {
   ensureMlsAuthServiceInstalled()
 
   const deviceSignaturePrivateKey = ed25519.utils.randomSecretKey()
@@ -193,8 +193,17 @@ async function registerDeviceAndJoinSelfGroup(
   // caller supplies its base URL) -- deviceKid above is a purely local
   // computation either way, so a caller driving Self/Vault membership
   // through biset-mimi instead (the deployment's own `mimiSelfBaseUrl`,
-  // never hardcoded here) has everything it needs without this branch.
-  if (!opts.mlsDeliveryBaseUrl || !opts.coreBaseUrl || !opts.deliveryFloorForNewDevice) return { deviceKid }
+  // never hardcoded here) has everything it needs without this branch. The
+  // coordinator path stores `deviceSignaturePrivateKey` inside the
+  // self-group ClientState it creates below (recoverable via
+  // `ownSignaturePrivateKey`); skipping that path means nothing else would
+  // ever durably hold this random per-device key, so it must be returned
+  // here for the caller to persist on `IdentityRecord` instead (found live,
+  // 2026-09-02: main.ts's `mimiVaultConfigured` boot branch had no key to
+  // reconstruct this device's own credential from, and fell back to the
+  // wrong key entirely, throwing "MIMI Vault device credential does not
+  // match this identity device").
+  if (!opts.mlsDeliveryBaseUrl || !opts.coreBaseUrl || !opts.deliveryFloorForNewDevice) return { deviceKid, deviceSignaturePrivateKey }
 
   const kp = await generateOwnKeyPackage(deviceCredential, deviceSignaturePrivateKey)
   const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, kp.privatePackage.signaturePrivateKey)
@@ -244,7 +253,7 @@ export async function createNewIdentity(
   // The genesis device is the roster's own first (and, at this point, only)
   // trusted device — it starts pulling vault delivery from whatever the
   // CURRENT latestSeq is, which for a brand-new identity is the beginning.
-  const { deviceKid, selfGroupState } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, root.privateKey, versionId, selfGroupStore, keyStore, {
+  const { deviceKid, selfGroupState, deviceSignaturePrivateKey } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, root.privateKey, versionId, selfGroupStore, keyStore, {
     coreBaseUrl: opts.coreBaseUrl, mlsDeliveryBaseUrl: opts.mlsDeliveryBaseUrl, didWebMirror: opts.didWebMirror, fetch: opts.fetch, now,
     deliveryFloorForNewDevice: async () => deliverySeq(0n),
   })
@@ -252,6 +261,7 @@ export async function createNewIdentity(
   const record: IdentityRecord = {
     did, masterSeed: toHex(masterSeed), rootPublicKey: toHex(root.publicKey), rootPrivateKey: toHex(root.privateKey),
     signPublicKey: toHex(root.publicKey), signPrivateKey: toHex(root.privateKey), generation: versionId, deviceKid,
+    ...(deviceSignaturePrivateKey ? { deviceSignaturePrivateKey: toHex(deviceSignaturePrivateKey) } : {}),
   }
   await recordStore.put(record)
 
@@ -566,7 +576,7 @@ export async function restoreIdentity(
   const signPublicKey = ed25519.getPublicKey(signPrivateKey)
   if (encodeMultikey(signPublicKey) !== updateKeys[0]) throw new Error('restoreIdentity: Sign Key phrase is not current for this identity')
 
-  const { deviceKid, selfGroupState } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, signPrivateKey, last.versionId, selfGroupStore, keyStore, {
+  const { deviceKid, selfGroupState, deviceSignaturePrivateKey } = await registerDeviceAndJoinSelfGroup(did, root.privateKey, signPrivateKey, last.versionId, selfGroupStore, keyStore, {
     coreBaseUrl: opts.coreBaseUrl, mlsDeliveryBaseUrl: opts.mlsDeliveryBaseUrl, didWebMirror: opts.didWebMirror, fetch: opts.fetch, now,
     deliveryFloorForNewDevice: opts.deliveryFloorForNewDevice,
   })
@@ -574,6 +584,7 @@ export async function restoreIdentity(
   const record: IdentityRecord = {
     did, masterSeed: toHex(masterSeed), rootPublicKey: toHex(root.publicKey), rootPrivateKey: toHex(root.privateKey),
     signPublicKey: toHex(signPublicKey), signPrivateKey: toHex(signPrivateKey), generation: last.versionId, deviceKid,
+    ...(deviceSignaturePrivateKey ? { deviceSignaturePrivateKey: toHex(deviceSignaturePrivateKey) } : {}),
   }
   await recordStore.put(record)
 
