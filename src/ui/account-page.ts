@@ -86,6 +86,11 @@ export interface AccountPageConfig {
   onJoinCoordinatorInvitation?(invitation: string): Promise<void>
   onResumeCoordinatorJoin?(): Promise<void>
   onApproveCoordinatorDevice?(): Promise<void>
+  /** Drops one sibling leaf ("zombie device") from the Self/Vault MLS room.
+   * MIMI-only (vault.devices only ever has a Remove button rendered when
+   * this is set) -- the retired coordinator never had an individual-removal
+   * entry point wired to the UI at all. */
+  onRemoveVaultDevice?(deviceId: string): Promise<void>
   /** src.bak's showSysMsg (shell.ts) -- injected rather than imported
    * directly: shell.ts -> left-pane.ts -> account-page.ts already, so an
    * import the other way round would close a cycle (main.ts hit the same
@@ -795,6 +800,26 @@ function renderVaultCard(): void {
         tag.textContent = 'this device'
         tag.style.cssText = 'font-size:10px;font-weight:700;color:var(--accent);flex-shrink:0'
         line.appendChild(tag)
+      } else if (config?.onRemoveVaultDevice) {
+        const remove = document.createElement('button')
+        remove.type = 'button'
+        remove.className = 'cmd-page-btn'
+        remove.style.cssText = 'padding:2px 8px;font-size:10px;font-weight:700;flex-shrink:0;color:#ff3b30'
+        remove.textContent = 'Remove'
+        remove.addEventListener('click', event => {
+          event.stopPropagation()
+          if (!confirm(`Remove this device (${device.deviceId}) from the Vault? It will stop syncing immediately.`)) return
+          remove.disabled = true
+          remove.textContent = '…'
+          void config?.onRemoveVaultDevice?.(device.deviceId)
+            .then(() => config?.showMessage?.('Device removed'))
+            .catch(error => {
+              config?.showMessage?.(error instanceof Error ? error.message : String(error))
+              remove.disabled = false
+              remove.textContent = 'Remove'
+            })
+        })
+        line.appendChild(remove)
       }
       devices.appendChild(line)
     }

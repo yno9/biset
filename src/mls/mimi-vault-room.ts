@@ -5,9 +5,10 @@
  * cryptographic and opaque. */
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { bytesToBase64url, equalBytes } from '../protocol/canonical.ts'
-import { createMlsGroup, confirmCommit, generateOwnKeyPackage, groupInfoEpoch, groupInfoForExternalJoin, joinGroupExternally } from './group.ts'
+import { createMlsGroup, confirmCommit, epochOf, generateOwnKeyPackage, groupInfoEpoch, groupInfoForExternalJoin, joinGroupExternally, removeMembers } from './group.ts'
 import type { MlsDeviceCredentialV2 } from './device-credential.ts'
 import { createCommit, encodeMlsMessage } from './vendor/index.ts'
+import type { ClientState } from './vendor/index.ts'
 import { encodeCredential } from './vendor/credential.ts'
 import { mlsSuite } from './suite.ts'
 import { decryptWithLabel } from './vendor/crypto/hpke.ts'
@@ -166,6 +167,76 @@ export async function joinMimiVaultRoom(options: JoinMimiVaultRoomOptions): Prom
 
 function equalPublicKey(left: Uint8Array, right: Uint8Array): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+export interface RemoveMimiVaultDeviceOptions {
+  identityId: string
+  /** This device's own kid -- the leaf submitting the Remove commit. */
+  deviceId: string
+  /** The sibling leaf's kid to drop (a stale/"zombie" device). */
+  targetDeviceId: string
+  signaturePrivateKey: Uint8Array
+  transport: MimiClientTransport
+  stateStore: MimiVaultSessionStateStore
+  mode?: MimiClientMode
+  now?: () => Date
+}
+
+/** Individual-member removal (§5.3's "Removing an active user from a
+ * participant list" -- read from mimi-protocol-06.md, 2026-09-02): the same
+ * `POST /update/{roomId}` endpoint createMimiVaultRoom/joinMimiVaultRoom
+ * already use, this time carrying a plain MLS Remove proposal's Commit
+ * instead of a room-creation or external-join one. Neither retired
+ * coordinator mechanism (self-group.ts's removeDeviceFromSelfGroup /
+ * rotateSelfGroupGeneration) works here -- both are hard-wired to
+ * CoordinatorMlsDeliveryTransport.submitCommit, which no MIMI-configured
+ * identity has. This is that missing MIMI-native equivalent of the former:
+ * drop exactly one stale leaf, leaving every other member (including the
+ * caller) untouched. */
+export async function removeMimiVaultDevice(options: RemoveMimiVaultDeviceOptions): Promise<VisibleCredential[]> {
+  const mode = options.mode ?? 'self'
+  const now = options.now ?? (() => new Date())
+  if (options.targetDeviceId === options.deviceId) throw new Error('removeMimiVaultDevice: cannot remove the committing device itself -- log out on that device instead')
+  const record = await options.stateStore.loadMimiVault(options.identityId)
+  if (!record) throw new Error('removeMimiVaultDevice: no MIMI Vault room state for this identity')
+  const senderLeaf = findRoomLeaf(record.state, options.identityId, options.deviceId)
+  if (!senderLeaf) throw new Error('removeMimiVaultDevice: this device is not a member of the room')
+  const epoch = String(epochOf(record.state))
+  const result = await removeMembers(record.state, [options.targetDeviceId])
+  const members: VisibleCredential[] = []
+  for (const node of result.state.ratchetTree) {
+    if (node?.nodeType !== 'leaf') continue
+    const member = memberIdOf(node.leaf.credential)
+    if (member.did !== options.identityId) throw new Error('MIMI Vault device removal found a non-owner member')
+    members.push({ kind: 'visible', user: member.did, client: member.kid, credential: encodeCredential(node.leaf.credential), signaturePublicKey: node.leaf.signaturePublicKey })
+  }
+  const clientIds = [...new Set(members.map(member => member.client))]
+  const unsigned = {
+    version: 1 as const, protocol: 'mls10' as const, roomId: record.roomId, sender: senderLeaf, epoch,
+    bundle: { kind: 'commit' as const, proposalOrCommit: result.commit, groupInfo: await groupInfoForExternalJoin(result.state) },
+    stateUpdate: { participantList: { participants: [{ user: options.identityId, roleIndex: 1, clientIds }] }, memberCredentials: members },
+    submittedAt: now().toISOString(),
+  }
+  const accepted = await options.transport.update(mode, { ...unsigned, signature: ed25519.sign(updateRoomSigningBytes(unsigned), options.signaturePrivateKey) })
+  if (accepted.status !== 'success') throw new Error(`MIMI Vault device removal commit failed: ${accepted.status}`)
+  try {
+    await options.stateStore.saveMimiVault(options.identityId, { ...record, state: result.state })
+  } catch (error) {
+    throw new Error('MIMI Vault device removal was accepted but local state could not be saved', { cause: error })
+  }
+  confirmCommit(result)
+  return members
+}
+
+function findRoomLeaf(state: ClientState, identityId: string, deviceId: string): VisibleCredential | undefined {
+  for (const node of state.ratchetTree) {
+    if (node?.nodeType !== 'leaf') continue
+    const member = memberIdOf(node.leaf.credential)
+    if (member.did === identityId && member.kid === deviceId) {
+      return { kind: 'visible', user: member.did, client: member.kid, credential: encodeCredential(node.leaf.credential), signaturePublicKey: node.leaf.signaturePublicKey }
+    }
+  }
+  return undefined
 }
 
 async function externalJoinDeliveryCursor(options: JoinMimiVaultRoomOptions, sender: VisibleCredential, commit: Uint8Array): Promise<number> {

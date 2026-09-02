@@ -111,7 +111,7 @@ import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from './vault/storage-roo
 import { MimiClientTransport } from './mls/mimi-client-transport.ts'
 import { PersistedMimiVaultSession } from './mls/mimi-vault-session.ts'
 import { watchMimiVaultDeliveries } from './mls/mimi-vault-watch.ts'
-import { createMimiVaultRoom, joinMimiVaultRoom } from './mls/mimi-vault-room.ts'
+import { createMimiVaultRoom, joinMimiVaultRoom, removeMimiVaultDevice } from './mls/mimi-vault-room.ts'
 import { pullMimiVaultPages, sendMimiVaultCheckpoint, synchronizeMimiVault } from './vault/mimi-vault-sync.ts'
 import type { DeliveriesPullRequest } from './mimi/protocol-types.ts'
 import { deliveriesPullSigningBytes } from './mimi/authorizer.ts'
@@ -407,6 +407,24 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     flushCoordinatorOutbox = undefined
     if (vaultCardStatus) setVaultCard({ ...vaultCardStatus, state: 'reconnect-required', detail: 'Sign generation rotated. Reconnect once to activate it at the Coordinator.' })
   }
+  // MIMI-native individual device removal ("zombie device" cleanup) — the
+  // coordinator's own two mechanisms (self-group.ts's removeDeviceFromSelfGroup
+  // / rotateSelfGroupGeneration, both hard-wired to
+  // CoordinatorMlsDeliveryTransport.submitCommit) are dead code for a
+  // MIMI-configured identity, which has no such transport. mimiVaultRoom's
+  // own state IS this identity's self-group state (ensureMimiVaultRoom's doc
+  // comment; store.ts's saveMimiVault writes the same row selfGroupStore.load
+  // reads), so vaultDevices only needs updating here, not re-derived from a
+  // second source.
+  const removeVaultDevice = async (targetDeviceId: string): Promise<void> => {
+    if (!mimiVaultRoom) throw new Error('MIMI Vault is not configured for this identity')
+    const members = await removeMimiVaultDevice({
+      identityId: identity.did, deviceId: mimiVaultRoom.credential.deviceKid, targetDeviceId,
+      signaturePrivateKey: mimiVaultRoom.signaturePrivateKey, transport: mimiVaultRoom.transport, stateStore: selfGroupStore,
+    })
+    vaultDevices = members.map(member => ({ deviceId: member.client, current: member.client === mimiVaultRoom!.credential.deviceKid }))
+    if (vaultCardStatus) setVaultCard(vaultCardStatus)
+  }
   // did:webvh domain move (identity/webvh/move.ts) — same coreBaseUrl-
   // independence as editName/pre-rotation above for the
   // did.jsonl move plus local DID-keyed store migration. MLS credentials are
@@ -434,6 +452,7 @@ export async function bootClient(options: { coordinatorLoginPopup?: Window } = {
     onLogout: logout, onEditName: editName,
     onRotateKeyRotation: rotateKeyRotation,
     onMoveIdentity: moveIdentity,
+    onRemoveVaultDevice: mimiVaultRoom ? removeVaultDevice : undefined,
     vault: vaultCardStatus,
     onConnectCoordinator: coordinatorConfigured ? async () => {
       if (!connectCoordinator) throw new Error('Coordinator is still initializing')
