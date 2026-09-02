@@ -1,7 +1,7 @@
 /** Browser/client transport for a MIMI provider's local client boundary. */
 import { defaultFetch } from '../net-fetch.ts'
-import type { DeliveriesPullRequest, DeliveriesWatchRequest, KeyMaterialRequest, KeyPackagePublishRequest, SubmitMessageRequest, SubmitVaultCheckpointRequest, UpdateRoomRequest, MimiDeliveryEntry } from '../mimi/protocol-types.ts'
-import { decodeDeliveriesWire, decodeDeliveriesWatchTokenWire, decodeKeyMaterialResponseWire, decodeKeyPackagePublishResponseWire, decodeSubmitMessageResponseWire, decodeSubmitVaultCheckpointResponseWire, decodeUpdateRoomResponseWire, encodeDeliveriesPullRequestWire, encodeDeliveriesWatchRequestWire, encodeKeyMaterialRequestWire, encodeKeyPackagePublishWire, encodeSubmitMessageRequestWire, encodeSubmitVaultCheckpointRequestWire, encodeUpdateRoomRequestWire } from '../mimi/wire.ts'
+import type { DeliveriesPullRequest, DeliveriesWatchRequest, GroupInfoRequest, KeyMaterialRequest, KeyPackagePublishRequest, SubmitMessageRequest, SubmitVaultCheckpointRequest, UpdateRoomRequest, MimiDeliveryEntry } from '../mimi/protocol-types.ts'
+import { decodeDeliveriesWire, decodeDeliveriesWatchTokenWire, decodeFrankingAgentDataWire, decodeGroupInfoResponseWire, decodeKeyMaterialResponseWire, decodeKeyPackagePublishResponseWire, decodeSubmitMessageResponseWire, decodeSubmitVaultCheckpointResponseWire, decodeUpdateRoomResponseWire, encodeDeliveriesPullRequestWire, encodeDeliveriesWatchRequestWire, encodeGroupInfoRequestWire, encodeKeyMaterialRequestWire, encodeKeyPackagePublishWire, encodeSubmitMessageRequestWire, encodeSubmitVaultCheckpointRequestWire, encodeUpdateRoomRequestWire } from '../mimi/wire.ts'
 
 export interface MimiClientTransportOptions {
   normalBaseUrl: string
@@ -25,6 +25,8 @@ export class MimiClientTransport {
     this.fetchValue = options.fetch ?? defaultFetch()
   }
   async update(mode: MimiClientMode, input: UpdateRoomRequest) { return decodeUpdateRoomResponseWire(await this.post(mode, `/update/${encodeURIComponent(input.roomId)}`, encodeUpdateRoomRequestWire(input))) }
+  async frankingAgent(mode: MimiClientMode, roomId: string) { return decodeFrankingAgentDataWire(await this.get(mode, `/v1/mimi/franking-agent/${encodeURIComponent(roomId)}`)) }
+  async groupInfo(mode: MimiClientMode, roomId: string, input: GroupInfoRequest) { return decodeGroupInfoResponseWire(await this.post(mode, `/groupInfo/${encodeURIComponent(roomId)}`, encodeGroupInfoRequestWire(input))) }
   async keyMaterial(mode: MimiClientMode, input: KeyMaterialRequest) { return decodeKeyMaterialResponseWire(await this.post(mode, `/keyMaterial/${encodeURIComponent(input.targetUser)}`, encodeKeyMaterialRequestWire(input))) }
   /** Biset's own extension (§5.1, PLAN_biset-mimi-server.md) -- publishes
    * this client's own spare KeyPackages so someone else can later add it to
@@ -37,4 +39,5 @@ export class MimiClientTransport {
   async watchDeliveries(mode: MimiClientMode, input: DeliveriesWatchRequest): Promise<{ token: string; expiresAt: string }> { return decodeDeliveriesWatchTokenWire(await this.post(mode, '/v1/mimi/deliveries/watch', encodeDeliveriesWatchRequestWire(input))) }
   streamUrl(mode: MimiClientMode, token: string, afterSeq: number): string { if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new TypeError('delivery cursor is invalid'); return `${this.baseUrls[mode]}/v1/mimi/deliveries/stream?token=${encodeURIComponent(token)}&afterSeq=${afterSeq}` }
   private async post(mode: MimiClientMode, path: string, body: string): Promise<string> { const response = await this.fetchValue(`${this.baseUrls[mode]}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body }); const text = await response.text(); if (!response.ok) throw new Error(`MIMI request failed (${response.status}): ${text.slice(0, 256)}`); return text }
+  private async get(mode: MimiClientMode, path: string): Promise<string> { const response = await this.fetchValue(`${this.baseUrls[mode]}${path}`); const text = await response.text(); if (!response.ok) throw new Error(`MIMI request failed (${response.status}): ${text.slice(0, 256)}`); return text }
 }

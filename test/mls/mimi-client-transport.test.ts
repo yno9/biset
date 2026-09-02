@@ -12,4 +12,14 @@ describe('MIMI client transport', () => {
     const transport = new MimiClientTransport({ normalBaseUrl: 'https://normal.example/', anonBaseUrl: 'https://anon.example/', selfBaseUrl: 'https://self.example/' })
     expect(transport.streamUrl('self', 't', 7)).toBe('https://self.example/v1/mimi/deliveries/stream?token=t&afterSeq=7')
   })
+
+  test('uses the selected provider for initial franking-agent discovery', async () => {
+    const calls: string[] = []
+    const transport = new MimiClientTransport({
+      normalBaseUrl: 'https://normal.example/', anonBaseUrl: 'https://anon.example/', selfBaseUrl: 'https://self.example/',
+      fetch: async input => { calls.push(String(input)); return new Response(JSON.stringify({ frankingSignatureKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', credential: 'AQ' })) },
+    })
+    await transport.frankingAgent('self', 'mimi://self.example/r/vault-test')
+    expect(calls).toEqual(['https://self.example/v1/mimi/franking-agent/mimi%3A%2F%2Fself.example%2Fr%2Fvault-test'])
+  })
 })
