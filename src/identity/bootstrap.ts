@@ -607,8 +607,10 @@ export function buildLocalJmapReadModel(
 /**
  * PLAN.md §6.2's outbound send: given an already-locally-committed "outbox"
  * email's raw blob and recipients, signs and submits it for delivery through
- * the authenticated device -> core narrow API (CoreMailSubmissionTransport),
- * then records the outcome as an ordinary local vault commit through
+ * the identity's authenticated mail-plugin submission endpoint
+ * (CoreMailSubmissionTransport, POSTing to a standalone mediator +
+ * mail-plugin deploy, not biset-core -- retired 2026-09-04), then records
+ * the outcome as an ordinary local vault commit through
  * VaultBackedLocalJmapMutationSink.commitIntents -- a `transport.result`
  * event always, plus a `mailbox.set` moving the email out of "outbox" only
  * when delivery actually succeeded. A temporary-failure leaves it in outbox
@@ -631,8 +633,8 @@ export function buildMailSubmitter(
   record: IdentityRecord,
   mutationSink: VaultBackedLocalJmapMutationSink,
   apexDomain: string,
-  coreBaseUrl: string,
-  /** Overrides the default core-HTTP submission path -- everything else
+  mailSubmitBaseUrl: string,
+  /** Overrides the default HTTP submission path -- everything else
    * (signing, emailId, mailbox transitions) is unchanged, since this only
    * decides WHERE the signed request goes. */
   transportOverride?: MailSubmissionTransport,
@@ -642,14 +644,17 @@ export function buildMailSubmitter(
 } {
   if (!record.deviceKid) throw new Error('buildMailSubmitter: identity has no deviceKid yet')
   const deviceKid = record.deviceKid
-  const loadState = async (): Promise<ClientState> => {
-    const stored = await selfGroupStore.load(record.did)
-    if (!stored) throw new Error('buildMailSubmitter: no self-group state for this identity')
-    return stored.state
-  }
-  const signer = new MlsMembershipSegmentKeyWrapSigner(deviceKid, loadState)
+  // Signs with the identity's CURRENT did:webvh update key (Root, or its
+  // post-rotation successor) -- NOT an MLS device credential. The server
+  // side (mediator/mail-plugin/mail-submission-http.ts) verifies against
+  // resolveCurrentUpdateKeys, the exact same public, self-certifying
+  // authority a routing.json update itself signs with, so there is no
+  // separate device roster to register with or keep in sync (the old
+  // MLS-credential/biset-core-roster design was retired 2026-09-04
+  // alongside biset-core itself -- see that handler's own header for why).
+  const signer = { sign: (bytes: Uint8Array) => ed25519.sign(bytes, fromHex(record.signPrivateKey)) }
   const blobs = buildVaultBlobReader(vault, vault, selfGroupStore, record.did, record.masterSeed)
-  const transport = transportOverride ?? new CoreMailSubmissionTransport({ baseUrl: coreBaseUrl })
+  const transport = transportOverride ?? new CoreMailSubmissionTransport({ baseUrl: mailSubmitBaseUrl })
   const mailFrom = mailFromForIdentity(record.did, apexDomain)
 
   return {

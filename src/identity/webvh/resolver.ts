@@ -53,6 +53,32 @@ export async function resolve(did: string, init?: RequestInit): Promise<WebvhDid
   return resolveEntries(did, parseLog(await resp.text()))
 }
 
+/** Resolves an identity's CURRENT did:webvh update keys -- the same
+ * authority a routing.json/did.jsonl update itself must sign with (Root, or
+ * its post-rotation successor). Reuses `resolveEntries`'s own full verified
+ * walk (SCID, entryHash chain, proof-against-predecessor-authorized-keys)
+ * so this carries the identical trust `resolve()` itself does; the only
+ * difference is what gets returned -- `resolveEntries` computes and then
+ * discards the final `parameters.updateKeys` on its way to building a
+ * WebvhDidDocument, so this re-walks the SAME already-parsed, already-
+ * verified entries with the cheap, non-cryptographic `resolveParameters`
+ * merge (no separate trust decision, just reading back a value the prior
+ * call already established was authentic). Used by a caller that needs to
+ * verify a signature was made by "whoever currently controls this
+ * identity" without needing a full WebvhDidDocument (mail-plugin's outbound
+ * submission auth: see mediator/mail-plugin/mail-submission-http.ts). */
+export async function resolveCurrentUpdateKeys(did: string, init?: RequestInit): Promise<string[]> {
+  const url = didToHttpsUrl(did)
+  const resp = await fetch(url, init)
+  if (resp.status === 404) return []
+  if (!resp.ok) throw new WebvhResolutionError(`resolveCurrentUpdateKeys: HTTP ${resp.status} fetching ${url}`)
+  const entries = parseLog(await resp.text())
+  if (!resolveEntries(did, entries)) return [] // deactivated -- anything else invalid already threw
+  let resolved: LogParameters = {}
+  for (const entry of entries) resolved = resolveParameters(resolved, entry.parameters)
+  return resolved.updateKeys ?? []
+}
+
 /** Resolves a subdomain-per-identity did:webvh (no `pathSegments`) from its
  * bare domain alone, with no DID string needed up front — the caller reads
  * `state.id` off the fetched genesis entry to learn the DID and its SCID,

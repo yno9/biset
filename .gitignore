@@ -35,7 +35,7 @@ test/*
 !test/protocol/
 test/protocol/*
 !test/protocol/conversation-mls-ds-signing.test.ts
-!test/protocol/webvh-resolve-mimi-provider.test.ts
+!test/protocol/webvh-current-update-keys.test.ts
 !test/protocol/didcomm-group-chat.test.ts
 !test/protocol/didcomm-group-chat-store.test.ts
 

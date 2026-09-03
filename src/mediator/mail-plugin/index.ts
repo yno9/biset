@@ -6,6 +6,7 @@
 // relationship credential, or VC layer (2026-08-30 redesign).
 import { createMediatorDeployment } from '../deployment.ts'
 import { createMailPluginListener } from './listener.ts'
+import { createMailSubmissionHttpHandler } from './mail-submission-http.ts'
 
 const publicUrl = Bun.env.MEDIATOR_PUBLIC_URL
 if (!publicUrl) throw new Error('MEDIATOR_PUBLIC_URL is required')
@@ -52,14 +53,34 @@ const smtpListener = createMailPluginListener({
     : {}),
 })
 
+// Outbound submission gets its OWN Bun.serve on a separate internal port,
+// not a route folded into deployment.ts's own fetch handler -- that handler
+// is shared verbatim with index.ts's plain "A" mediator, and this plugin's
+// whole design principle (see this file's own header) is additive, never
+// changing what the shared deployment does. Caddy fronts both ports under
+// the SAME public mediator.biset.md, routing /v1/mail/submit here and
+// everything else to `deployment`'s own port (see ops/ for the Caddyfile
+// block, `/v1/mail/submit` needs to be listed BEFORE the catch-all).
+const mailSubmissionHandler = createMailSubmissionHttpHandler({ hostname: smtpHelloName, apexDomain })
+const mailSubmissionServer = Bun.serve({
+  hostname: Bun.env.MAIL_PLUGIN_SUBMIT_HOST ?? '127.0.0.1',
+  port: envInteger('MAIL_PLUGIN_SUBMIT_PORT', 8792, 1, 65_535),
+  fetch: mailSubmissionHandler,
+})
+
 console.info(JSON.stringify({
   at: new Date().toISOString(), level: 'info', message: 'mail plugin SMTP listener started',
   port: smtpListener.port, apexDomain, senderKid: senderIdentity.xKid,
+}))
+console.info(JSON.stringify({
+  at: new Date().toISOString(), level: 'info', message: 'mail plugin submission HTTP started',
+  port: mailSubmissionServer.port,
 }))
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     smtpListener.stop()
+    mailSubmissionServer.stop()
     void deployment.shutdown(signal)
   })
 }

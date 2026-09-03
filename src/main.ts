@@ -516,13 +516,16 @@ export async function bootClient(): Promise<void> {
         .catch(e => console.warn('[enableOpenPgpMail]', e instanceof Error ? e.message : e))
     }
 
-    // TODO(mail-plugin bridge redesign): outbound submission via the
-    // DIDComm-mediator-plus-mail-plugin will replace CoreMailSubmissionTransport
-    // here once the plugin's `submit` message type exists (front-door kid
-    // sends directly, no relationship credential/VC layer -- see the
-    // redesign discussion). Falls back to buildMailSubmitter's own default
-    // for now.
-    const submitter = buildMailSubmitter(vaultStore, selfGroupStore, identity, mutationSink, apexDomain, coreBaseUrl)
+    // Outbound submission goes to the mediator+mail-plugin deploy's own
+    // /v1/mail/submit (mediator/mail-plugin/mail-submission-http.ts),
+    // POSTing through the SAME public URL this device already talks to for
+    // DIDComm -- no separate mail-specific endpoint configuration. Signed
+    // with the identity's current did:webvh update key, not a device
+    // credential, so there is nothing to register ahead of time (see that
+    // handler's own header for why -- biset-core's roster-backed design
+    // this TODO used to point at was retired 2026-09-04 along with core
+    // itself).
+    const submitter = buildMailSubmitter(vaultStore, selfGroupStore, identity, mutationSink, apexDomain, mediatorUrls[0] ?? '')
     const localMutationSink: LocalJmapMutationSink = {
       emailSet: (arguments_, snapshot) => mutationSink.emailSet(arguments_, snapshot),
       submitMail: (arguments_, snapshot) => submitter.submitMail(arguments_, snapshot),

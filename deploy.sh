@@ -225,16 +225,23 @@ deploy_didcomm_mediator() {
 # above, not a second process: mail-plugin's own createMediatorDeployment call
 # would otherwise fight the plain mediator over the same sqlite file. This
 # swaps that one binary for the superset build (mediator core + an inbound
-# SMTP listener on :25) and assumes the unit already carries the one-time
-# setup a fresh binary swap alone can't provide: AmbientCapabilities=
-# CAP_NET_BIND_SERVICE (DynamicUser can't bind :25 otherwise) and
-# LoadCredential= entries copying mail.biset.md's Caddy-managed TLS cert/key
-# into the service's own credentials dir for STARTTLS (that cert directory
-# is root-only 0700, unreadable by the dynamic unprivileged UID directly) --
-# see /etc/systemd/system/biset-didcomm-mediator.service on v1 (2026-09-03
-# setup) for the exact directives. Retire this target the same way
-# deploy_core was retired if the plan direction changes and mail-plugin is
-# dropped instead of kept -- swap the binary back with deploy_didcomm_mediator.
+# SMTP listener on :25 + an outbound-submission HTTP server on :8792, added
+# 2026-09-04) and assumes the unit/Caddy already carry the one-time setup a
+# fresh binary swap alone can't provide:
+#   - AmbientCapabilities=CAP_NET_BIND_SERVICE (DynamicUser can't bind :25
+#     otherwise) and LoadCredential= entries copying mail.biset.md's
+#     Caddy-managed TLS cert/key into the service's own credentials dir for
+#     STARTTLS (that cert directory is root-only 0700, unreadable by the
+#     dynamic unprivileged UID directly) -- see
+#     /etc/systemd/system/biset-didcomm-mediator.service on v1 (2026-09-03
+#     setup) for the exact directives.
+#   - Caddy's mediator.biset.md block must route /v1/mail/submit to :8792
+#     BEFORE its own catch-all to :8791 -- see /root/caddy/Caddyfile on v1
+#     (2026-09-04 setup, Caddyfile.bak-before-mail-submit-* has the prior
+#     version) for the exact handle-block ordering.
+# Retire this target the same way deploy_core was retired if the plan
+# direction changes and mail-plugin is dropped instead of kept -- swap the
+# binary back with deploy_didcomm_mediator.
 deploy_mail_plugin() {
   echo "== mail-plugin: protocol + durability tests =="
   ( cd "$ROOT" && bun test \
@@ -244,7 +251,9 @@ deploy_mail_plugin() {
       test/mediator-sqlite-store.test.ts \
       test/mediator/mail-plugin/bridge.test.ts \
       test/mediator/mail-plugin/listener.test.ts \
-      test/mediator/mail-plugin/mail-smtp-protocol.test.ts ) \
+      test/mediator/mail-plugin/mail-smtp-protocol.test.ts \
+      test/mediator/mail-plugin/mail-submission-http.test.ts \
+      test/protocol/webvh-current-update-keys.test.ts ) \
     || fail "mail-plugin: test失敗（本番に出さない）"
 
   echo "== mail-plugin: build (linux-x64 cross-compile) =="
@@ -297,12 +306,19 @@ deploy_mail_plugin() {
     systemctl is-active --quiet biset-didcomm-mediator.service
     curl -fsS http://127.0.0.1:8791/readyz >/dev/null
     ss -tln | grep -q ':25 ' || exit 1
+    ss -tln | grep -q ':8792 ' || exit 1
   " || fail "mail-plugin: restart/readiness失敗（直前binaryへ手動rollback: biset-didcomm-mediator.bak-* を戻してsystemctl restart）"
 
   curl -fsS "https://$DIDCOMM_MEDIATOR_PUBLIC_HOST/.well-known/did.json" \
     | grep -q '"id"' \
     || fail "mail-plugin: 公開HTTPS endpoint検証失敗"
-  echo "✓ mail-plugin OK (https://$DIDCOMM_MEDIATOR_PUBLIC_HOST + SMTP :25)"
+  # A malformed body must 400 through the FULL public path (Caddy →
+  # /v1/mail/submit → :8792 → decodeMailSubmissionRequestWire), not 404
+  # (Caddy routing broken) or 502 (upstream down) -- confirms the whole
+  # chain without needing a real signed identity to test against.
+  [ "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "https://$DIDCOMM_MEDIATOR_PUBLIC_HOST/v1/mail/submit" -d '{}')" = "400" ] \
+    || fail "mail-plugin: /v1/mail/submit ルーティング検証失敗（Caddyの:8792配線を確認）"
+  echo "✓ mail-plugin OK (https://$DIDCOMM_MEDIATOR_PUBLIC_HOST + SMTP :25 + submit :8792)"
 }
 
 # ── relay (Go) ────────────────────────────────────────────────────────────────
