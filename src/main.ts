@@ -1772,7 +1772,19 @@ export async function bootClient(): Promise<void> {
         if (!current) throw new Error('MIMI Vault state disappeared while synchronizing')
         await selfGroupStore.saveMimiVault(identity.did, { ...current, deliveryCursor: result.latestSequence })
       }
-      if (result.ingestedSequences.length) await refreshInbox(readModel)
+      // A successful checkpoint restore (below) populates vault_objects/
+      // vault_events directly via commitRecoveryArchive +
+      // buildLocalJmapProjectionRebuild -- it never touches
+      // ingestedSequences (that only counts the ordinary per-message
+      // ingest loop) and never called refreshInbox itself either, so a
+      // device recovering its ENTIRE history through a checkpoint restore
+      // alone (no ordinary deliveries in the same round) had that history
+      // sitting correctly in IndexedDB with nothing on screen to show for
+      // it (found live, 2026-09-03: a device recovered via a fresh
+      // checkpoint after this session's own chunk/manifest-correlation
+      // fix, synced a brand-new message fine, but every message from
+      // before stayed invisible until an unrelated reload).
+      if (result.ingestedSequences.length || result.checkpoints.length) await refreshInbox(readModel)
       if (result.latestSequence > 1 && !result.sawCheckpointManifest && identity.masterSeed && Date.now() - lastCheckpointRecreateAt > 5_000) {
         lastCheckpointRecreateAt = Date.now()
         const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, identity.did, new Date().toISOString())
