@@ -879,36 +879,10 @@ async function ensureAlsoKnownAsPublished(record: IdentityRecord, opts: EnableDi
 }
 
 /**
- * Publishes this identity's Conversation Group MLS Delivery Service endpoint
- * into routing.json's `mimiProvider` (webvh-routing.ts's `MimiProviderRegistration`)
- * -- what lets a peer this identity invites into a group resolve `ds` (the
- * inviter's own DID, conversation-group-invite.ts's `ConversationGroupInviteBody`)
- * back to an actual base URL via `resolveMimiProviderUrl`, the same way
- * `ensureAlsoKnownAsPublished` above backfills `alsoKnownAs`. Idempotent
- * (no-ops once the current document already names this exact URL) and
- * best-effort in the same sense every other "enable X" step in this file is
- * -- called from main.ts only once a `conversationMlsDsBaseUrl` is actually
- * configured, so an unconfigured deployment never even attempts it.
- *
- * Fetch-merge-put, not build-from-scratch: the same reasoning as
- * `ensureAlsoKnownAsPublished` -- keyAgreement/mlkem/alsoKnownAs/name/openpgp
- * already published by enableDidComm/enableOpenPgpMail/editName must survive
- * untouched.
- */
-export async function ensureMimiProviderPublished(record: IdentityRecord, dsBaseUrl: string, fetchImpl: typeof fetch = defaultFetch()): Promise<void> {
-  const current = await fetchRouting(record.did, fetchImpl)
-  if (!current || current.service.some(s => s.type === 'MimiDeliveryService' && s.serviceEndpoint === dsBaseUrl)) return
-  const signPrivateKey = fromHex(record.signPrivateKey)
-  const signPublicKey = fromHex(record.signPublicKey)
-  const service = [...current.service.filter(s => s.type !== 'MimiDeliveryService'), { id: `${record.did}#mimi-ds`, type: 'MimiDeliveryService', serviceEndpoint: dsBaseUrl }]
-  await putRouting(record.did, { ...current, service }, { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, fetchImpl)
-}
-
-/**
  * Publishes an empty routing.json for an identity that has none yet.
  * Every other "ensure X published" helper here (`ensureAlsoKnownAsPublished`,
- * `ensureMimiProviderPublished`, and `setRoutingMimiVaultRoom` in
- * webvh-routing.ts) is fetch-modify-put against an EXISTING document and
+ * and `setRoutingMimiVaultRoom` in webvh-routing.ts) is fetch-modify-put
+ * against an EXISTING document and
  * refuses to create one from scratch -- historically the first-ever
  * routing.json was only ever created inside `enableDidComm` (bundled with
  * its own DIDComm keyAgreement publish), which is best-effort and requires

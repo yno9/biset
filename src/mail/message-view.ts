@@ -256,25 +256,27 @@ export interface ReplyContext {
 // a mail submission addressed to a DID string (found live, 2026-08-25: the
 // core rejected it with "invalid recipient address").
 export function computeReplyContext(thread: ProcessedMessage[], selfAddress: string | string[]): ReplyContext {
-  // A Conversation Group thread's "recipient" is the group itself
-  // (`mls:<groupId>`, mls/mimi-content-projector.ts's `mlsGroupAddress`),
+  // A DIDComm group chat thread's "recipient" is the group itself
+  // (`didcomm-group:<groupId>`, didcomm/group-chat.ts's `didcommGroupAddress`),
   // never the per-participant from/to_addrs union the generic algorithm
   // below computes -- that union would hand main.ts's `sendReply` N-1 raw
   // DIDs instead of one group address, which it has no way to tell apart
   // from "reply to N-1 different 1:1 recipients at once" (not a thing this
-  // app supports). `references` still comes from the ordinary chain below;
-  // Conversation Group sends don't use it (MimiContent's own `inReplyTo`,
-  // carried separately as `ReplySendInput.inReplyTo`, is what matters there),
-  // but there's no harm in it being present.
+  // app supports). `references` still comes from the ordinary chain below.
+  //
+  // An OLD `mls:<groupId>` thread (Conversation Groups, retired from active
+  // deployment) deliberately has NO special case here any more: main.ts's
+  // sendReply dropped its `mls:` send branch entirely, so keeping this
+  // thread's toAddrs pinned to the dead group address would only route a
+  // reply into the mail-submission fallback, addressed to the literal
+  // string "mls:...". Falling through to the generic algorithm below
+  // instead reads this thread's real per-message from/to_addrs (real DIDs,
+  // mimi-content-projector.ts's old `projectMimiConversationMessage` always
+  // wrote actual DIDs there, never the group address) and lands the reply
+  // in whichever live branch fits: a single other DID goes to 1:1 DIDComm
+  // chat, multiple DIDs start a fresh DIDComm group chat (createAndSendDidCommGroup)
+  // with the same membership -- a graceful forward-migration, not a crash.
   const groupThreadId = thread[0]?.msg.thread_id
-  if (groupThreadId?.startsWith('mls:')) {
-    const references = [...thread].sort((a, b) => a.msg.ts - b.msg.ts).map(p => p.msg.message_id).filter(Boolean)
-    return { toAddrs: [groupThreadId], references }
-  }
-  // Same reasoning as the mls: branch just above, for DIDComm's OWN
-  // full-mesh group chat (didcomm/group-chat.ts's `didcommGroupAddress`,
-  // `didcomm-group:<groupId>`) -- a distinct address scheme kept mutually
-  // exclusive with both `mls:` and 1:1 DIDComm's own DID-pair addressing.
   if (groupThreadId?.startsWith('didcomm-group:')) {
     const references = [...thread].sort((a, b) => a.msg.ts - b.msg.ts).map(p => p.msg.message_id).filter(Boolean)
     return { toAddrs: [groupThreadId], references }

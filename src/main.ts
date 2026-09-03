@@ -11,7 +11,6 @@ import {
   buildVaultDeliveryProjector,
   enableDidComm,
   ensureMimiCoreRoster,
-  ensureMimiProviderPublished,
   ensureMimiVaultRoom,
   fromHex,
   mailFromForIdentity,
@@ -55,31 +54,14 @@ import type { DeliveredMessage } from './didcomm/mediator-pickup.ts'
 import { ingestTransportIngress } from './vault/ingress-ingest.ts'
 import { flushVaultDeliveryOutbox } from './vault/delivery-outbox.ts'
 import type { IngressEnvelopeV1 } from './protocol/ingress.ts'
-import { base64urlToBytes, canonicalHash, equalBytes, sha256Bytes } from './protocol/canonical.ts'
+import { canonicalHash, equalBytes, sha256Bytes } from './protocol/canonical.ts'
 import { fetchRouting, mimiVaultRoomFromRouting, putRouting, setRoutingMimiVaultRoom, setRoutingName } from './didcomm/webvh-routing.ts'
 import { moveWebvhIdentity } from './identity/webvh/move.ts'
 import { adoptPendingMove } from './identity/webvh/adopt-move.ts'
 import { encodeMultikey } from './identity/webvh/multikey.ts'
-import { decodeKeyPackage, encodeKeyPackage, generateOwnKeyPackage, joinMlsGroup, keyPackageRefOf, memberDeviceCredentialBytes, memberKids, memberList, ownMlsDeviceCredential, ownSignaturePrivateKey, roomMetadataOf, welcomeRecipientRefs, type OwnKeyPackage } from './mls/group.ts'
+import { memberDeviceCredentialBytes, memberKids, ownMlsDeviceCredential, ownSignaturePrivateKey } from './mls/group.ts'
 import { createMlsDeviceCredential, encodeMlsDeviceCredential } from './mls/device-credential.ts'
 import { CoreRosterInstallTransport } from './mls/core-roster-install-transport.ts'
-import { IndexedDbMlsConversationGroupStore, type LoadedConversationGroup } from './mls/conversation-group-store.ts'
-import type { ClientState } from './mls/vendor/index.ts'
-import { ConversationMlsDeliveryTransport } from './mls-ds/client-transport.ts'
-import { watchConversationGroupDeliveries, type ConversationGroupWatch } from './mls/conversation-group-watch.ts'
-import { applyConversationGroupLogEntry, buildConversationGroupVaultRecord } from './mls/conversation-group-sync.ts'
-import type { ConversationLogEntry } from './protocol/conversation-mls-ds.ts'
-import { addMembersToConversationGroup, createConversationGroup, randomConversationGroupId, randomGroupLocalKeypair, setConversationGroupRoomName } from './mls/conversation-group.ts'
-import { sendConversationTextMessage } from './mls/conversation-group-egress.ts'
-import { parseMlsGroupAddress } from './mls/mimi-content-projector.ts'
-import {
-  CONVERSATION_GROUP_INVITE, CONVERSATION_GROUP_JOIN_READY, CONVERSATION_GROUP_WELCOME_READY,
-  conversationGroupInviteBodyOf, conversationGroupJoinReadyBodyOf, conversationGroupWelcomeReadyBodyOf,
-  sendConversationGroupInvite, sendConversationGroupJoinReady, sendConversationGroupWelcomeReady,
-} from './mls/conversation-group-invite.ts'
-import { conversationKeyPackagePublishSigningBytes, conversationKeyPackageTakeSigningBytes, conversationDeliveriesPullSigningBytes } from './protocol/conversation-mls-ds-signing.ts'
-import type { ConversationKeyPackagePublishV1, ConversationKeyPackageTakeV1, ConversationDeliveriesPullV1 } from './protocol/conversation-mls-ds.ts'
-import { resolveMimiProviderUrl } from './didcomm/webvh-resolve.ts'
 import { DidCommDeviceKeyReader } from './vault/didcomm-device-key-reader.ts'
 import { DidCommDeviceKeyVaultSink } from './vault/didcomm-device-key-sink.ts'
 import { OpenPgpCredentialReader } from './vault/openpgp-credential-reader.ts'
@@ -109,7 +91,6 @@ import { pullMimiVaultPages, sendMimiVaultCheckpoint, synchronizeMimiVault } fro
 import type { DeliveriesPullRequest } from './mimi/protocol-types.ts'
 import { deliveriesPullSigningBytes } from './mimi/authorizer.ts'
 
-const hex = (value: Uint8Array): string => Array.from(value, byte => byte.toString(16).padStart(2, '0')).join('')
 let pollTimer: ReturnType<typeof setInterval> | undefined
 let mimiVaultWatchHandle: { close(): void } | undefined
 let mediatorPollHandles: MediatorPollHandle[] = []
@@ -207,7 +188,7 @@ export async function bootClient(): Promise<void> {
   // without needing a page reload.
   let identity = records[0]!
   const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did, identity.masterSeed)
-  const { apexDomain, coreBaseUrl, mediatorUrls, mimiSelfBaseUrl, conversationMlsDsBaseUrl } = readBisetConfig()
+  const { apexDomain, coreBaseUrl, mediatorUrls, mimiSelfBaseUrl } = readBisetConfig()
   const mimiVaultConfigured = !!(mimiSelfBaseUrl && identity.deviceKid)
   // Ensured here, before EVERY self-group reader below -- not just
   // vaultDevices/buildVaultCryptoBoundary/enableDidComm further down, but
@@ -426,215 +407,11 @@ export async function bootClient(): Promise<void> {
       committer: vaultStore,
     })
 
-    // Conversation Group (MIMI/mls-ds) delivery wiring -- send, live receive
-    // (SSE watch), catch-up receive (pull, via applyConversationGroupLogEntry),
-    // and the peer-to-peer invite handshake (conversation-group-invite.ts).
-    // Reuses this device's OWN self-group MLS leaf credential
-    // (ownMlsDeviceCredential/ownSignaturePrivateKey off selfGroupStore's
-    // state) for every Conversation Group KeyPackage this device generates --
-    // the same real, DID-bound identity every member's MLS leaf already
-    // carries, distinct from the group-local Ed25519 keypair
-    // (randomGroupLocalKeypair) that's the ONLY thing the DS itself ever
-    // sees (conversation-group.ts's own header explains the split).
-    const conversationGroupStore = new IndexedDbMlsConversationGroupStore()
     // DIDComm-native group chat (group-chat.ts) -- full-mesh pairwise
     // fan-out over the SAME ContactKeyV1 relationships 1:1 chat already
     // uses, no MLS. Device-local roster cache only (not vault-synced across
-    // this identity's own devices in v1), same accepted limitation
-    // conversation-group-store.ts's own header documents for its roster.
+    // this identity's own devices in v1), accepted limitation for v1.
     const groupChatStore = new IndexedDbDidCommGroupChatStore()
-    const conversationGroupWatches = new Map<string, ConversationGroupWatch>()
-    // Keyed by groupId. Deliberately in-memory only (the gap between
-    // receiving CONVERSATION_GROUP_INVITE and CONVERSATION_GROUP_WELCOME_READY
-    // has no ClientState yet, so there's nothing conversation-group-store.ts's
-    // schema could hold for it) -- both sides of the handshake are automated
-    // (auto-accept, no confirmation UI) and normally close in one round trip;
-    // a tab closed mid-handshake just loses the invite, and the inviter has
-    // to resend it. Accepted MVP limitation, not a silent gap.
-    const pendingConversationGroupJoins = new Map<string, { ownKeyPackage: OwnKeyPackage; ownGroupLocalPrivateKey: Uint8Array; dsBaseUrl: string; dsProviderDid: string; groupName?: string }>()
-    // Keyed by groupId, populated only while createAndSendConversationGroup
-    // is waiting for its just-invited members to actually join before
-    // sending the compose box's own first message (below) -- MLS forward
-    // secrecy means a member who joins AFTER a message was sent can never
-    // decrypt it (the same property that makes a removed member unable to
-    // read anything after their removal), so a "create group, invite, and
-    // immediately send" that doesn't wait guarantees the founding message
-    // is unreadable by every invitee (found live, 2026-09-01: the very
-    // first message a user typed while creating a group never arrived
-    // anywhere). `handleConversationGroupJoinReady` (this device acting as
-    // inviter) resolves an entry here once every invited member it's
-    // waiting on has been added.
-    const pendingGroupFounding = new Map<string, { remaining: Set<string>; resolve(): void }>()
-    // A live SSE entry (startConversationGroupWatch's onEntry) and a local
-    // send/join-handshake step both read-modify-write the SAME stored
-    // ClientState+cursor for one group -- conversation-group-sync.ts's own
-    // header note ("no internal mutex, the caller serializes") applies here,
-    // now that this is the first caller actually running a watch and a send
-    // concurrently for the same group. One promise chain per groupId.
-    const conversationGroupQueues = new Map<string, Promise<unknown>>()
-    function enqueueConversationGroupWork<T>(groupId: string, work: () => Promise<T>): Promise<T> {
-      const prior = conversationGroupQueues.get(groupId) ?? Promise.resolve()
-      const result = prior.then(work, work)
-      conversationGroupQueues.set(groupId, result.catch(() => {}))
-      return result
-    }
-
-    const startConversationGroupWatch = (groupId: string, stored: Pick<LoadedConversationGroup, 'ownGroupLocalPrivateKey' | 'lastSeenSeq' | 'dsBaseUrl'>): void => {
-      if (conversationGroupWatches.has(groupId)) return
-      const transport = new ConversationMlsDeliveryTransport({ baseUrl: stored.dsBaseUrl })
-      const requesterId = hex(ed25519.getPublicKey(stored.ownGroupLocalPrivateKey))
-      const sign = (bytes: Uint8Array) => ed25519.sign(bytes, stored.ownGroupLocalPrivateKey)
-      const watch = watchConversationGroupDeliveries({
-        transport, groupId, requesterId, sign, afterSeq: stored.lastSeenSeq,
-        onEntry: entry => { void enqueueConversationGroupWork(groupId, () => handleConversationGroupEntry(groupId, entry)) },
-        onError: error => console.warn(`[conversation-group/watch] ${groupId}:`, error instanceof Error ? error.message : error),
-      })
-      conversationGroupWatches.set(groupId, watch)
-    }
-
-    const handleConversationGroupEntry = async (groupId: string, entry: ConversationLogEntry): Promise<void> => {
-      const stored = await conversationGroupStore.load(groupId)
-      if (!stored) return // no longer joined locally
-      const result = await applyConversationGroupLogEntry(entry, stored.state, groupId, {
-        identityId: identity.did,
-        actorDeviceId: deviceKid,
-        nextActorSeq: () => sequencer.nextActorSeq(),
-        initialParents: () => sequencer.initialParents(),
-        activeSegment: () => boundary.activeSegment(),
-        currentSnapshot: () => readModel.snapshot(),
-        signer: boundary.signer,
-        async commitVaultRecord(record) { await vaultStore.commitLocalMutation({ identityId: identity.did, ...record }) },
-      })
-      await conversationGroupStore.save(groupId, result.state, entry.seq, stored.ownGroupLocalPrivateKey, stored.roster, stored.dsBaseUrl, stored.dsProviderDid)
-      if (result.committed) {
-        await flushReplicationOutbox()
-        await refreshInbox(readModel)
-      }
-    }
-
-    // Network-first, unlike sendDidCommChat's local-first/outbox pattern --
-    // the DS's epoch ordering is authoritative for whether this send is even
-    // valid (stale epoch, removed from group), so a rejected submission must
-    // never leave a local copy behind. Only on success does this build the
-    // sender's own Vault copy, via the SAME buildConversationGroupVaultRecord
-    // helper handleConversationGroupEntry's receive path uses (mimi
-    // encoding stays owned by sendConversationTextMessage either way --
-    // this function never touches MimiContent bytes itself).
-    const sendConversationGroupMessage = (groupId: string, text: string, inReplyTo?: string): Promise<void> =>
-      enqueueConversationGroupWork(groupId, async () => {
-        const stored = await conversationGroupStore.load(groupId)
-        if (!stored) throw new Error(`No local state for Conversation Group ${groupId}`)
-        const transport = new ConversationMlsDeliveryTransport({ baseUrl: stored.dsBaseUrl })
-        const senderId = hex(ed25519.getPublicKey(stored.ownGroupLocalPrivateKey))
-        const sign = (bytes: Uint8Array) => ed25519.sign(bytes, stored.ownGroupLocalPrivateKey)
-        const sent = await sendConversationTextMessage({
-          state: stored.state, transport, groupId, deviceKid, senderId, text,
-          ...(inReplyTo ? { inReplyTo: base64urlToBytes(inReplyTo) } : {}),
-          sign,
-        })
-        const now = new Date().toISOString()
-        const record = await buildConversationGroupVaultRecord({
-          content: sent.content, messageId: sent.messageId, groupId, senderDid: didOfKid(deviceKid),
-          otherMembers: sent.otherMembers, receivedAt: now,
-        }, {
-          identityId: identity.did,
-          actorDeviceId: deviceKid,
-          nextActorSeq: () => sequencer.nextActorSeq(),
-          initialParents: () => sequencer.initialParents(),
-          activeSegment: () => boundary.activeSegment(),
-          currentSnapshot: () => readModel.snapshot(),
-          signer: boundary.signer,
-        }, () => new Date())
-        await vaultStore.commitLocalMutation({ identityId: identity.did, ...record })
-        await conversationGroupStore.save(groupId, sent.state, stored.lastSeenSeq, stored.ownGroupLocalPrivateKey, stored.roster, stored.dsBaseUrl, stored.dsProviderDid)
-        await flushReplicationOutbox()
-        await refreshInbox(readModel)
-      })
-
-    // Compose's "2+ DID recipients" branch (sendReply's dispatch, below):
-    // creates the group (self-signed, the DS never learns this device's real
-    // DID -- createConversationGroup's own header), invites each recipient
-    // over the SAME 1:1 front-door DIDComm channel RELATIONSHIP_INIT already
-    // uses (conversation-group-invite.ts: "no new crypto"), and sends the
-    // compose box's own text as the group's first message.
-    const createAndSendConversationGroup = async (toDids: string[], input: ReplySendInput): Promise<void> => {
-      if (!conversationMlsDsBaseUrl) throw new Error('Conversation Groups are not configured on this deployment')
-      if (!identity.didCommKid || !identity.didCommX25519PrivateKey) throw new Error('Enable DIDComm before starting a group')
-      const selfGroup = await selfGroupStore.load(identity.did)
-      if (!selfGroup) throw new Error('No self-group state for this identity')
-      const kp = await generateOwnKeyPackage(ownMlsDeviceCredential(selfGroup.state), ownSignaturePrivateKey(selfGroup.state))
-      const groupId = randomConversationGroupId()
-      const transport = new ConversationMlsDeliveryTransport({ baseUrl: conversationMlsDsBaseUrl })
-      const created = await createConversationGroup(transport, groupId, kp)
-      let groupState = created.state
-      const groupLocalSign = (bytes: Uint8Array) => ed25519.sign(bytes, created.ownGroupLocal.privateKey)
-      // Set the room name BEFORE inviting anyone, if compose gave one --
-      // every invitee's own Welcome embeds the GroupContext as of the
-      // commit that added them, so committing the name first means every
-      // future joiner inherits it for free (mls/group.ts's own
-      // setRoomMetadata header explains the mechanism and why it's not yet
-      // MIMI's own AppSync wire format). No separate propagation channel
-      // needed -- this REPLACES the old approach of stuffing groupName into
-      // the invite DIDComm payload as this device's single source of truth,
-      // though that field is still sent too (conversationGroupStore.save's
-      // own trailing arg below), as a display hint for the brief window
-      // before an invitee has actually joined and has MLS state to read a
-      // name from at all.
-      if (input.subject) groupState = await setConversationGroupRoomName(groupState, transport, groupId, created.ownGroupLocal.id, input.subject, groupLocalSign)
-      await conversationGroupStore.save(groupId, groupState, 0, created.ownGroupLocal.privateKey, [], conversationMlsDsBaseUrl, identity.did, input.subject || undefined)
-      startConversationGroupWatch(groupId, { ownGroupLocalPrivateKey: created.ownGroupLocal.privateKey, lastSeenSeq: 0, dsBaseUrl: conversationMlsDsBaseUrl })
-      const sendOpts = { fromKid: identity.didCommKid, x25519PrivateKey: fromHex(identity.didCommX25519PrivateKey) }
-      const failedInvites: string[] = []
-      const invited: string[] = []
-      for (const toDid of toDids) {
-        const result = await sendConversationGroupInvite(toDid, { groupId, ds: identity.did, ...(input.subject ? { groupName: input.subject } : {}) }, sendOpts)
-        if (result.ok) invited.push(toDid)
-        else failedInvites.push(toDid)
-      }
-      if (failedInvites.length) showSysMsg(`Could not invite: ${failedInvites.join(', ')}`)
-
-      // Wait for every successfully-invited DID's join-ready round trip to
-      // land (handleConversationGroupJoinReady resolves this as each one
-      // completes) before sending -- up to a timeout, matching
-      // ensureDidCommContact's own 60s relationship-handshake budget above,
-      // since this is the identical shape of wait (an async peer-to-peer
-      // round trip this device does not control the other side's timing
-      // of). Sends to whoever DID make it in time rather than not at all --
-      // a slow/offline invitee misses the founding message (same
-      // unavoidable forward-secrecy consequence as before, just now scoped
-      // to just them instead of everyone) but the group is not left silent
-      // forever waiting on someone who may never respond.
-      if (invited.length > 0) {
-        showSysMsg('Waiting for invited members to join before sending…')
-        const remaining = new Set(invited)
-        const allJoined = new Promise<boolean>(resolve => { pendingGroupFounding.set(groupId, { remaining, resolve: () => resolve(true) }) })
-        const timedOut = new Promise<boolean>(resolve => setTimeout(() => resolve(false), 60_000))
-        const ok = await Promise.race([allJoined, timedOut])
-        pendingGroupFounding.delete(groupId)
-        if (!ok && remaining.size > 0) showSysMsg(`Still waiting to hear back from: ${[...remaining].join(', ')} -- sending to whoever's in so far`)
-      }
-      await sendConversationGroupMessage(groupId, input.body)
-    }
-
-    // Resumes every group this device already belongs to -- mirrors
-    // startRelationshipPoll's own boot-time restore loop just below for the
-    // same reason (a page reload must not silently stop listening to a group
-    // this device already joined). Best-effort per group: one group's
-    // transport failure must not stop the rest from being resumed.
-    //
-    // Conversation Groups retired from active deployment 2026-09-02
-    // (conversationMlsDsBaseUrl no longer configured) -- this store is
-    // origin-wide, not scoped to a deployment, so any locally-known group
-    // from before retirement survives untouched. Without this guard,
-    // watchConversationGroupDeliveries's own reconnect-with-setTimeout loop
-    // retries against a DS that no longer exists FOREVER, one uncapped loop
-    // per stale local group, spamming the console indefinitely (found live,
-    // 2026-09-02, right after retirement).
-    for (const groupId of conversationMlsDsBaseUrl ? await conversationGroupStore.listGroupIds().catch(() => []) : []) {
-      await conversationGroupStore.load(groupId).then(stored => {
-        if (stored) startConversationGroupWatch(groupId, stored)
-      }).catch(e => console.warn(`[conversation-group/resume] ${groupId}:`, e instanceof Error ? e.message : e))
-    }
 
     interface PendingHandshake {
       pending: PendingRelationship
@@ -746,19 +523,6 @@ export async function bootClient(): Promise<void> {
       const signPublicKey = fromHex(identity.signPublicKey)
       await enableOpenPgpMail(pgpReader, pgpSink, { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, { identityId: identity.did, mailAddress: mailFrom })
         .catch(e => console.warn('[enableOpenPgpMail]', e instanceof Error ? e.message : e))
-    }
-
-    // Publishes this identity's Conversation Group DS endpoint into its own
-    // routing.json (identity/bootstrap.ts's ensureMimiProviderPublished) so a
-    // peer this identity later invites into a group it creates can resolve
-    // `ds: identity.did` back to an actual URL. Automatic and best-effort,
-    // same treatment as enableOpenPgpMail above -- only attempted at all once
-    // a Conversation Group DS is actually configured for this deployment;
-    // unconfigured (the common case today) skips this entirely, same as
-    // createAndSendConversationGroup's own guard.
-    if (conversationMlsDsBaseUrl) {
-      await ensureMimiProviderPublished(identity, conversationMlsDsBaseUrl)
-        .catch(e => console.warn('[ensureMimiProviderPublished]', e instanceof Error ? e.message : e))
     }
 
     // TODO(mail-plugin bridge redesign): outbound submission via the
@@ -988,10 +752,6 @@ export async function bootClient(): Promise<void> {
     }
 
     const sendReply = async (input: ReplySendInput): Promise<void> => {
-      if (input.toAddrs.length === 1 && input.toAddrs[0]!.startsWith('mls:')) {
-        await sendConversationGroupMessage(parseMlsGroupAddress(input.toAddrs[0]!), input.body, input.inReplyTo)
-        return
-      }
       if (input.toAddrs.length === 1 && input.toAddrs[0]!.startsWith('did:')) {
         await sendDidCommChat(input.toAddrs[0]!, input)
         return
@@ -1003,11 +763,7 @@ export async function bootClient(): Promise<void> {
       // 2+ DID recipients (never mixed with mail -- same rule the 1-DID
       // branch above already applies) starts a new DIDComm group chat,
       // full-mesh, no MLS (mirroring src.bak's own "visible.length >= 2"
-      // compose branch, but replacing what used to create a Conversation
-      // Group: Conversation Groups are retired from active deployment,
-      // createAndSendConversationGroup throws unconditionally now, so this
-      // branch was already dead functionality -- this is its replacement,
-      // not a removal of anything still working).
+      // compose branch).
       if (input.toAddrs.length >= 2 && input.toAddrs.every(addr => addr.startsWith('did:'))) {
         await createAndSendDidCommGroup(input.toAddrs, input)
         return
@@ -1051,41 +807,6 @@ export async function bootClient(): Promise<void> {
       onError: message => {
         showSysMsg(message)
         console.warn('[sendReply]', message)
-      },
-      // Membership always reads live from THIS device's own locally-held
-      // ClientState -- works regardless of conversationMlsDsBaseUrl (a
-      // device that only ever receives invites, never creates a group
-      // itself, still needs its member-chip strip to render). Inviting a
-      // new member needs identity.didCommKid the same way createAndSendConversationGroup
-      // does; that guard lives inside the hook itself so the strip renders
-      // even before DIDComm is enabled, and only the "+" click fails.
-      group: {
-        membersOf: async groupId => {
-          const stored = await conversationGroupStore.load(groupId)
-          return stored ? memberList(stored.state).map(m => m.did) : []
-        },
-        invite: async (groupId, toDid) => {
-          const stored = await conversationGroupStore.load(groupId)
-          if (!stored) return { ok: false, error: 'Unknown group' }
-          if (!identity.didCommKid || !identity.didCommX25519PrivateKey) return { ok: false, error: 'Enable DIDComm in account settings first' }
-          const result = await sendConversationGroupInvite(
-            toDid, { groupId, ds: stored.dsProviderDid },
-            { fromKid: identity.didCommKid, x25519PrivateKey: fromHex(identity.didCommX25519PrivateKey) },
-          )
-          return result.ok ? { ok: true } : { ok: false, error: result.error }
-        },
-        // The MLS-committed name (group.ts's roomMetadataOf) is authoritative
-        // -- it's what every member, including a future joiner, actually
-        // converges on. The locally-cached invite-time hint
-        // (conversationGroupStore's own `groupName`) is only a fallback for
-        // the narrow window before this device has ever seen the group's
-        // committed metadata at all (e.g. a group created by an old build,
-        // before this mechanism existed).
-        groupName: async groupId => {
-          const stored = await conversationGroupStore.load(groupId)
-          if (!stored) return undefined
-          return roomMetadataOf(stored.state)?.name ?? stored.groupName
-        },
       },
       // DIDComm group chat's own read-only counterpart -- membersOf/
       // groupName read straight from groupChatStore's device-local roster
@@ -1255,19 +976,11 @@ export async function bootClient(): Promise<void> {
           void triggerMimiVaultSync?.()
           return
         }
-        // Conversation Group invite handshake (conversation-group-invite.ts) --
-        // none of these three carry Basic Message/relationship content, so
-        // they must never reach the generic didCommProjector.verifyAndProject
+        // DIDComm group chat (group-chat.ts) -- neither GROUP_INVITE nor
+        // GROUP_MESSAGE carries Basic Message/relationship content, so both
+        // must never reach the generic didCommProjector.verifyAndProject
         // below: it throws "unsupported DIDComm message type" for anything
         // outside its own allow-list (ping/basicmessage/relationship).
-        if (plaintext.type === CONVERSATION_GROUP_INVITE || plaintext.type === CONVERSATION_GROUP_JOIN_READY || plaintext.type === CONVERSATION_GROUP_WELCOME_READY) {
-          await handleConversationGroupHandshake(plaintext, msg.senderKid)
-          return
-        }
-        // DIDComm group chat (group-chat.ts) -- same reason as the
-        // Conversation Group intercept just above: neither type carries
-        // Basic Message/relationship content, so both must never reach the
-        // generic didCommProjector.verifyAndProject below.
         if (plaintext.type === GROUP_INVITE || plaintext.type === GROUP_MESSAGE) {
           await handleDidCommGroupMessage(plaintext, msg.senderKid)
           return
@@ -1337,8 +1050,7 @@ export async function bootClient(): Promise<void> {
       // feature that already accepts coarser gaps (no cross-device roster
       // sync at all) -- the cost is bounded to the one reordered message;
       // every later message to this group succeeds normally once the
-      // invite lands. Mirrors Conversation Groups' own out-of-order
-      // handling (handleConversationGroupJoinReady et al. above).
+      // invite lands.
       async function handleDidCommGroupContent(plaintext: DidCommPlaintext, body: GroupMessageBody, senderKid: string): Promise<void> {
         const senderDid = await resolveDidCommSenderDid(senderKid, kid => contactKeyReader.forCounterpartyKid(kid).then(c => c?.counterpartyDid ?? null))
         if (!senderDid) throw new TypeError('DIDComm group message sender is not associated with a counterparty')
@@ -1360,188 +1072,6 @@ export async function bootClient(): Promise<void> {
         })
         await vaultStore.commitLocalMutation({ identityId: identity.did, ...record })
         await flushReplicationOutbox()
-        await refreshInbox(readModel)
-      }
-
-      // Conversation Group invite handshake (conversation-group-invite.ts's
-      // own 3-step flow) -- auto-accept, no confirmation UI (confirmed with
-      // the user: matches src.bak's synchronous-invite behavior even though
-      // this backend's accept is async under the hood). Each step is
-      // serialized through enqueueConversationGroupWork under the SAME
-      // groupId a concurrent live-watch entry for that group would use, so
-      // the two can never race each other's read-modify-write of the
-      // group's stored state.
-      async function handleConversationGroupHandshake(plaintext: DidCommPlaintext, senderKid: string): Promise<void> {
-        const fromDid = didOfKid(senderKid)
-        if (plaintext.type === CONVERSATION_GROUP_INVITE) {
-          const body = conversationGroupInviteBodyOf(plaintext)
-          if (!body) throw new TypeError('conversation group invite body is invalid')
-          await enqueueConversationGroupWork(body.groupId, () => handleConversationGroupInvite(body, fromDid))
-          return
-        }
-        if (plaintext.type === CONVERSATION_GROUP_JOIN_READY) {
-          const body = conversationGroupJoinReadyBodyOf(plaintext)
-          if (!body) throw new TypeError('conversation group join-ready body is invalid')
-          await enqueueConversationGroupWork(body.groupId, () => handleConversationGroupJoinReady(body, fromDid))
-          return
-        }
-        const body = conversationGroupWelcomeReadyBodyOf(plaintext)
-        if (!body) throw new TypeError('conversation group welcome-ready body is invalid')
-        await enqueueConversationGroupWork(body.groupId, () => handleConversationGroupWelcomeReady(body))
-      }
-
-      // Step 1 (invitee side): generate a fresh, single-group, throwaway
-      // group-local keypair + this device's ordinary MLS KeyPackage (the
-      // SAME real device credential every self-group leaf already carries),
-      // publish the KeyPackage under that group-local id, tell the inviter
-      // it's ready. `body.ds` is the INVITER's own DID -- resolved fresh via
-      // resolveMimiProviderUrl rather than trusted as a URL directly, so a
-      // later DS migration on the inviter's side needs no re-invite.
-      async function handleConversationGroupInvite(body: { groupId: string; ds: string; groupName?: string }, inviterDid: string): Promise<void> {
-        if (!identity.didCommKid || !identity.didCommX25519PrivateKey) return
-        // A mediator redelivers anything it hasn't seen acked yet, so this
-        // exact invite can arrive more than once (found live, 2026-09-01).
-        // Minting a FRESH KeyPackage/group-local keypair on every delivery
-        // would silently invalidate a Welcome the inviter may have already
-        // built against the first one -- joinMlsGroup then throws "No
-        // matching secret found", forever (nothing here ever clears the
-        // stale pending entry, so a redelivery keeps re-triggering the same
-        // mismatch). Idempotent instead: already joined, or already waiting
-        // on a Welcome, is a no-op / a re-announce, never a fresh mint.
-        if (await conversationGroupStore.load(body.groupId)) return
-        const existingPending = pendingConversationGroupJoins.get(body.groupId)
-        if (existingPending) {
-          const groupLocalId = hex(ed25519.getPublicKey(existingPending.ownGroupLocalPrivateKey))
-          const joinReady = await sendConversationGroupJoinReady(
-            inviterDid, { groupId: body.groupId, groupLocalId },
-            { fromKid: identity.didCommKid, x25519PrivateKey: fromHex(identity.didCommX25519PrivateKey) },
-          )
-          if (!joinReady.ok) console.warn(`[conversation-group/invite] (redelivered) could not tell ${inviterDid} we're ready:`, joinReady.error)
-          return
-        }
-        const dsBaseUrl = await resolveMimiProviderUrl(body.ds).catch(() => undefined)
-        if (!dsBaseUrl) { console.warn(`[conversation-group/invite] ${inviterDid} has no MimiDeliveryService published`); return }
-        const selfGroup = await selfGroupStore.load(identity.did)
-        if (!selfGroup) { console.warn('[conversation-group/invite] no self-group state yet'); return }
-        const kp = await generateOwnKeyPackage(ownMlsDeviceCredential(selfGroup.state), ownSignaturePrivateKey(selfGroup.state))
-        const groupLocal = randomGroupLocalKeypair()
-        const publish: Omit<ConversationKeyPackagePublishV1, 'signature'> = {
-          version: 1, id: groupLocal.id, packages: [encodeKeyPackage(kp.publicPackage)], publishedAt: new Date().toISOString(),
-        }
-        const transport = new ConversationMlsDeliveryTransport({ baseUrl: dsBaseUrl })
-        await transport.publishKeyPackages({ ...publish, signature: ed25519.sign(conversationKeyPackagePublishSigningBytes(publish), groupLocal.privateKey) })
-        pendingConversationGroupJoins.set(body.groupId, { ownKeyPackage: kp, ownGroupLocalPrivateKey: groupLocal.privateKey, dsBaseUrl, dsProviderDid: body.ds, groupName: body.groupName })
-        const joinReady = await sendConversationGroupJoinReady(
-          inviterDid, { groupId: body.groupId, groupLocalId: groupLocal.id },
-          { fromKid: identity.didCommKid, x25519PrivateKey: fromHex(identity.didCommX25519PrivateKey) },
-        )
-        if (!joinReady.ok) console.warn(`[conversation-group/invite] could not tell ${inviterDid} we're ready:`, joinReady.error)
-      }
-
-      // Step 2 (inviter side): take the invitee's freshly-published
-      // KeyPackage, commit an Add for it, tell the invitee to pull.
-      async function handleConversationGroupJoinReady(body: { groupId: string; groupLocalId: string }, inviteeDid: string): Promise<void> {
-        if (!identity.didCommKid || !identity.didCommX25519PrivateKey) return
-        const stored = await conversationGroupStore.load(body.groupId)
-        if (!stored) { console.warn(`[conversation-group/join-ready] no local state for ${body.groupId}`); return }
-        const transport = new ConversationMlsDeliveryTransport({ baseUrl: stored.dsBaseUrl })
-        const ownGroupLocalId = hex(ed25519.getPublicKey(stored.ownGroupLocalPrivateKey))
-        const sign = (bytes: Uint8Array) => ed25519.sign(bytes, stored.ownGroupLocalPrivateKey)
-        const take: Omit<ConversationKeyPackageTakeV1, 'signature'> = {
-          version: 1, requesterId: ownGroupLocalId, targetId: body.groupLocalId, requestedAt: new Date().toISOString(),
-        }
-        const taken = await transport.takeKeyPackage({ ...take, signature: sign(conversationKeyPackageTakeSigningBytes(take)) })
-        if (!taken) { console.warn(`[conversation-group/join-ready] ${inviteeDid}'s KeyPackage was not available`); return }
-        const keyPackage = decodeKeyPackage(taken.keyPackage)
-        // The KeyPackage `transport.takeKeyPackage` just returned is gone
-        // from the DS's pool NOW, irreversibly, whether or not the commit
-        // below actually succeeds -- so a failure here must be retried
-        // in-place (fresh state, same already-taken KeyPackage) rather than
-        // left to throw uncaught. An uncaught throw here previously
-        // propagated all the way to the mediator poll loop, which leaves an
-        // `onMessage` failure "queued for retry" -- redelivering this SAME
-        // join-ready later, at which point the KeyPackage is ALREADY GONE,
-        // so `takeKeyPackage` above returns undefined and the invitee is
-        // permanently stuck (found live, 2026-09-01: "KeyPackage was not
-        // available", the invitee never joins, and the only way out was
-        // re-inviting them with a fresh KeyPackage from scratch).
-        let currentState = stored.state
-        let nextState: ClientState | undefined
-        const attempts = 3
-        for (let attempt = 1; attempt <= attempts; attempt++) {
-          try {
-            nextState = await addMembersToConversationGroup(currentState, transport, body.groupId, ownGroupLocalId, [{ keyPackage, groupLocalId: body.groupLocalId }], sign)
-            break
-          } catch (error) {
-            console.warn(`[conversation-group/join-ready] commit attempt ${attempt}/${attempts} for ${inviteeDid} failed:`, error instanceof Error ? error.message : error)
-            if (attempt === attempts) {
-              console.warn(`[conversation-group/join-ready] giving up on ${inviteeDid} -- their KeyPackage is now spent; they need a fresh invite to try again`)
-              return
-            }
-            // Someone else's commit landed first (an epoch-conflict is the
-            // expected reason, but any rejection gets the same retry --
-            // there is nothing better to do with the already-spent
-            // KeyPackage than try again from wherever the group actually
-            // is now): re-read the current state a live watch entry
-            // (handleConversationGroupEntry) may have already advanced
-            // concurrently, and retry the exact same Add from there.
-            const refreshed = await conversationGroupStore.load(body.groupId)
-            if (!refreshed) { console.warn(`[conversation-group/join-ready] group ${body.groupId} vanished mid-retry`); return }
-            currentState = refreshed.state
-          }
-        }
-        if (!nextState) return
-        await conversationGroupStore.save(body.groupId, nextState, stored.lastSeenSeq, stored.ownGroupLocalPrivateKey, stored.roster, stored.dsBaseUrl, stored.dsProviderDid)
-        const welcomeReady = await sendConversationGroupWelcomeReady(
-          inviteeDid, { groupId: body.groupId },
-          { fromKid: identity.didCommKid, x25519PrivateKey: fromHex(identity.didCommX25519PrivateKey) },
-        )
-        if (!welcomeReady.ok) console.warn(`[conversation-group/join-ready] could not tell ${inviteeDid} to pull:`, welcomeReady.error)
-        // Tell createAndSendConversationGroup's own wait (above) that this
-        // member is in, if it's still waiting on this group at all -- a
-        // reply/invite issued outside that flow (an existing group's own
-        // "+" add-member chip) never populated pendingGroupFounding, so
-        // this is a no-op then, same as it is once every invitee this
-        // founding wait cared about has already resolved it.
-        const founding = pendingGroupFounding.get(body.groupId)
-        if (founding) {
-          founding.remaining.delete(inviteeDid)
-          if (founding.remaining.size === 0) founding.resolve()
-        }
-        await flushReplicationOutbox()
-        await refreshInbox(readModel)
-      }
-
-      // Step 3 (invitee side): pull the Welcome the inviter's commit just
-      // produced, join, persist real local state (the pending in-memory
-      // entry is retired here), start this group's live watch.
-      async function handleConversationGroupWelcomeReady(body: { groupId: string }): Promise<void> {
-        const pending = pendingConversationGroupJoins.get(body.groupId)
-        if (!pending) { console.warn(`[conversation-group/welcome-ready] no pending join for ${body.groupId}`); return }
-        const transport = new ConversationMlsDeliveryTransport({ baseUrl: pending.dsBaseUrl })
-        const ownGroupLocalId = hex(ed25519.getPublicKey(pending.ownGroupLocalPrivateKey))
-        const pull: Omit<ConversationDeliveriesPullV1, 'signature'> = {
-          version: 1, groupId: body.groupId, requesterId: ownGroupLocalId, afterSeq: 0, requestedAt: new Date().toISOString(),
-        }
-        const entries = await transport.pullDeliveries({ ...pull, signature: ed25519.sign(conversationDeliveriesPullSigningBytes(pull), pending.ownGroupLocalPrivateKey) })
-        // A group with 2+ pending invitees can have MULTIPLE 'welcome'
-        // entries in this same pulled backlog (one per Add commit) -- the
-        // first one in seq order is not necessarily ours. A Welcome names
-        // the KeyPackageRef(s) it carries secrets for; match against ours
-        // rather than grabbing the first 'welcome' unconditionally (found
-        // live, 2026-09-01: the SECOND invitee added to a group always
-        // grabbed the FIRST invitee's Welcome instead, and joinMlsGroup then
-        // threw "No matching secret found" forever -- self-group's own
-        // KeyPackage pool, mls/keypackage-store.ts's takeForWelcome, already
-        // does this exact match; this path just hadn't been given the same
-        // treatment).
-        const ownKeyPackageRef = await keyPackageRefOf(pending.ownKeyPackage.publicPackage)
-        const welcomeEntry = entries.find(entry => entry.kind === 'welcome' && welcomeRecipientRefs(entry.payload).includes(ownKeyPackageRef))
-        if (!welcomeEntry) { console.warn(`[conversation-group/welcome-ready] no matching welcome entry for ${body.groupId}`); return }
-        const state = await joinMlsGroup(welcomeEntry.payload, pending.ownKeyPackage, undefined)
-        await conversationGroupStore.save(body.groupId, state, welcomeEntry.seq, pending.ownGroupLocalPrivateKey, [], pending.dsBaseUrl, pending.dsProviderDid, pending.groupName)
-        pendingConversationGroupJoins.delete(body.groupId)
-        startConversationGroupWatch(body.groupId, { ownGroupLocalPrivateKey: pending.ownGroupLocalPrivateKey, lastSeenSeq: welcomeEntry.seq, dsBaseUrl: pending.dsBaseUrl })
         await refreshInbox(readModel)
       }
 

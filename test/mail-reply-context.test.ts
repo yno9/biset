@@ -60,19 +60,21 @@ describe('computeReplyContext', () => {
     expect(toAddrs).toEqual(['did:webvh:xyz:them.biset.md'])
   })
 
-  // A Conversation Group thread's toAddrs is the single group address, not
-  // the per-participant union -- main.ts's sendReply dispatch tells a group
-  // send apart from a 1:1 DID send by toAddrs.length === 1, so handing back
-  // every other member as a separate entry (what the generic algorithm above
-  // would do, reading from/to_addrs the same as any other thread) would
-  // misroute a group reply into the N-DID group-creation branch instead.
-  test('a Conversation Group thread (mls: threadId) replies to the group address, not its participants', () => {
+  // An OLD Conversation Group thread (mls: threadId, retired from active
+  // deployment) has no special case any more: main.ts's sendReply dropped
+  // its `mls:` send branch entirely, so this now falls through to the
+  // generic per-participant union like any other thread -- landing the
+  // reply on the real DIDs the old messages carried (mimi-content-projector.ts's
+  // old projector always wrote actual member DIDs, never the group address
+  // itself), which sendReply then routes to 1:1 DIDComm chat or a fresh
+  // DIDComm group chat depending on how many there are. Not a crash, just a
+  // forward-migration off a retired transport.
+  test('an old Conversation Group thread (mls: threadId) replies to its participants, not the dead group address', () => {
     const thread = [
       msg({ from: 'did:webvh:abc:alice.biset.md', to_addrs: ['did:webvh:xyz:bob.biset.md', 'did:webvh:def:carol.biset.md'], thread_id: 'mls:group-1', message_id: 'm1', ts: 1 }),
       msg({ from: 'did:webvh:xyz:bob.biset.md', to_addrs: ['did:webvh:abc:alice.biset.md', 'did:webvh:def:carol.biset.md'], thread_id: 'mls:group-1', message_id: 'm2', ts: 2 }),
     ]
-    const { toAddrs, references } = computeReplyContext(thread, ['me@mail.biset.md', 'did:webvh:abc:alice.biset.md'])
-    expect(toAddrs).toEqual(['mls:group-1'])
-    expect(references).toEqual(['m1', 'm2'])
+    const { toAddrs } = computeReplyContext(thread, ['me@mail.biset.md', 'did:webvh:abc:alice.biset.md'])
+    expect(toAddrs.sort()).toEqual(['did:webvh:def:carol.biset.md', 'did:webvh:xyz:bob.biset.md'])
   })
 })

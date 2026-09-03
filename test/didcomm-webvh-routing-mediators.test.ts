@@ -56,29 +56,6 @@ describe('buildRoutingDoc: mediator registrations', () => {
   })
 })
 
-describe('buildRoutingDoc: MimiDeliveryService (PLAN_biset-mls-ds.md §11-7)', () => {
-  test('a registered Conversation Group DS produces a MimiDeliveryService entry alongside DIDComm, not instead of it', () => {
-    const doc = buildRoutingDoc(DID, {
-      mediators: [{ url: 'https://mediator.example', routingKid: 'did:peer:2.Ez6Mk...#key-1' }],
-      mimiProvider: { url: 'https://mls-ds.example' },
-    })
-    expect(doc.service).toEqual([
-      { id: `${DID}#didcomm`, type: 'DIDCommMessaging', serviceEndpoint: { uri: 'https://mediator.example', accept: ['didcomm/v2'], routingKeys: ['did:peer:2.Ez6Mk...#key-1'] } },
-      { id: `${DID}#mimi-ds`, type: 'MimiDeliveryService', serviceEndpoint: 'https://mls-ds.example' },
-    ])
-  })
-
-  test('a MimiDeliveryService entry with no DIDComm registration at all', () => {
-    const doc = buildRoutingDoc(DID, { mimiProvider: { url: 'https://mls-ds.example' } })
-    expect(doc.service).toEqual([{ id: `${DID}#mimi-ds`, type: 'MimiDeliveryService', serviceEndpoint: 'https://mls-ds.example' }])
-  })
-
-  test('no mimiProvider: no MimiDeliveryService entry', () => {
-    const doc = buildRoutingDoc(DID, { didCommEndpoint: 'https://core.example/v1/didcomm/ingress' })
-    expect(doc.service.some(s => s.type === 'MimiDeliveryService')).toBe(false)
-  })
-})
-
 describe('MIMI Vault self-room routing', () => {
   const provider = 'https://mimi-self.example'
   const roomId = 'mimi://mimi-self.example/r/vault-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'

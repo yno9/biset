@@ -47,23 +47,6 @@ export interface ReplySendInput {
   references?: string[]
 }
 
-/** The two Conversation Group operations the member-chip strip needs --
- * injected the same way `sendReply` is (main.ts owns the MLS state/DS
- * transport this rendering module has no business touching directly). */
-export interface ConversationGroupUiHooks {
-  /** Live membership (including self), read from the group's own MLS
-   * ratchet tree -- PLAN_biset-mls-ds.md's own rule: the tree decides who's
-   * in, not who has spoken (a silent member has no messages; a removed one
-   * still has old ones). */
-  membersOf(groupId: string): Promise<string[]>
-  invite(groupId: string, toDid: string): Promise<{ ok: boolean; error?: string }>
-  /** The display name given at group-creation time (compose's Subject
-   * field, conversation-group-invite.ts's `groupName` -- display-only, the
-   * DS itself has no name concept). undefined for a group with none (or one
-   * this device hasn't looked up yet). */
-  groupName(groupId: string): Promise<string | undefined>
-}
-
 /** The read-only member strip a DIDComm group chat thread needs
  * (didcomm/group-chat-store.ts's roster) -- no `invite` counterpart:
  * membership changes after creation are out of scope for v1
@@ -82,10 +65,6 @@ export interface ComposeConfig {
   selfDid?: string
   sendReply(input: ReplySendInput): Promise<void>
   onError?(message: string): void
-  /** Omitted entirely when Conversation Groups aren't wired up (main.ts's
-   * own coreBaseUrl/deviceKid guard) -- a group thread's header then just
-   * shows the plain participant list, same as before this existed. */
-  group?: ConversationGroupUiHooks
   /** DIDComm group chat's own read-only counterpart -- always present once
    * DIDComm itself is enabled (group-chat-store.ts has no server dependency
    * to gate on). */
@@ -135,81 +114,12 @@ function renderReactionsHtml(reactions: MailMessageView['reactions']): string {
   ).join('')}</div>`
 }
 
-/** The members strip for a Conversation Group thread: who is in it, and (the
- * one operation this rewrite's backend supports so far) adding someone.
- * Ported from src.bak/ui/thread.ts's own `renderGroupMembers` -- same chip
- * shape/classes (`.conv-members`/`.conv-member-chip`/`.conv-member-static`/
- * `.conv-member-add`), same "read live from the tree, not the message list"
- * principle (this file's header doc on `ConversationGroupUiHooks.membersOf`)
- * -- rewired to call through `composeConfig.group` instead of importing
- * did/didcomm/channel.ts directly (that module doesn't exist in this
- * rewrite; conversation-group.ts's MLS state lives in main.ts, which this
- * file stays decoupled from, same as sendReply above).
- *
- * Remove/leave-group chips are deliberately NOT ported: src.bak's own
- * `.conv-member-leave` was already dead CSS with no wired affordance (no
- * permission model for who may remove whom), and this backend has the
- * identical gap (conversation-group-store.ts's own note: a device only ever
- * learns the `GroupLocalId`s it directly witnessed, not the full roster
- * mapping needed to issue a remove for an arbitrary member). */
-function renderGroupMembers(host: HTMLElement, groupId: string): void {
-  // A dedicated label node, not `host.textContent =` -- this gets updated
-  // AGAIN once the async groupName lookup below resolves, and clobbering
-  // the whole host at that point would take the already-appended chip strip
-  // with it.
-  const label = document.createElement('span')
-  label.textContent = 'Group'
-  host.textContent = ''
-  host.appendChild(label)
-  const strip = document.createElement('span')
-  strip.className = 'conv-members'
-  host.appendChild(strip)
-  const hooks = composeConfig?.group
-  if (!hooks) return
-  const refresh = () => { renderGroupMembers(host, groupId) }
-
-  const chip = (label: string, title: string, onClick: () => void, cls = ''): HTMLButtonElement => {
-    const el = document.createElement('button')
-    el.type = 'button'
-    el.className = `conv-member-chip${cls ? ' ' + cls : ''}`
-    el.textContent = label
-    el.title = title
-    el.addEventListener('click', ev => { ev.stopPropagation(); onClick() })
-    strip.appendChild(el)
-    return el
-  }
-
-  // The header's own #header-thread-title has no group-name source of its
-  // own (a Conversation Group email carries no `subject` -- MimiContent has
-  // no such field, mimi-content-projector.ts's own header) -- update it
-  // from the SAME lookup this label uses, rather than leaving it stuck on
-  // "no title" forever for every group thread.
-  hooks.groupName(groupId).then(name => {
-    if (!name) return
-    label.textContent = name
-    const headerTitle = document.getElementById('header-thread-title')
-    if (headerTitle) { headerTitle.textContent = name; headerTitle.className = '' }
-  }).catch(() => {})
-
-  hooks.membersOf(groupId).then(members => {
-    for (const did of members.filter(m => m !== composeConfig?.selfDid)) {
-      chip(did.startsWith('did:') ? labelForDid(did) : did, did, () => {}, 'conv-member-static')
-    }
-    chip('+', 'Add someone to this group', () => {
-      const did = window.prompt('DID of the person to add')?.trim()
-      if (!did) return
-      void hooks.invite(groupId, did).then(result => {
-        if (!result.ok) composeConfig?.onError?.(result.error || 'Could not add them')
-        refresh()
-      })
-    }, 'conv-member-add')
-  }).catch(() => {})
-}
-
-/** The DIDComm group chat counterpart of renderGroupMembers above -- same
- * chip shape/classes, read-only (no "+" chip): membership changes after
- * creation are out of scope for v1, so there's no `invite` operation to
- * wire a click handler to. */
+/** The member strip for a DIDComm group chat thread: who is in it, read-only
+ * (no "+" chip): membership changes after creation are out of scope for v1
+ * (group-chat.ts's own header). Ported from src.bak/ui/thread.ts's own
+ * `renderGroupMembers` -- same chip shape/classes
+ * (`.conv-members`/`.conv-member-chip`/`.conv-member-static`), just with no
+ * `invite` operation to wire a click handler to. */
 function renderDidCommGroupMembers(host: HTMLElement, groupId: string): void {
   const label = document.createElement('span')
   label.textContent = 'Group'
@@ -589,14 +499,13 @@ export function render(smooth = false): void {
     const didBadge = document.getElementById('conv-did')
     const viaBadge = document.getElementById('conv-via')
     const msgs = focused.messages.map(p => p.msg)
-    // A Conversation Group thread (mimi-content-projector.ts's own
-    // `mls:<groupId>` threadId convention) shows the live member-chip strip
-    // instead of the plain participant list -- renderGroupMembers does its
-    // own host.textContent write, same destroy-then-reappend-by-reference
-    // shape as the plain-text branch below, so didBadge/viaBadge's re-prepend
+    // A DIDComm group chat thread (group-chat.ts's own `didcomm-group:<groupId>`
+    // threadId convention) shows the live member-chip strip instead of the
+    // plain participant list -- renderDidCommGroupMembers does its own
+    // host.textContent write, same destroy-then-reappend-by-reference shape
+    // as the plain-text branch below, so didBadge/viaBadge's re-prepend
     // further down still works either way.
-    if (msgs[0]?.thread_id.startsWith('mls:')) renderGroupMembers($convTo, msgs[0].thread_id.slice('mls:'.length))
-    else if (msgs[0]?.thread_id.startsWith('didcomm-group:')) renderDidCommGroupMembers($convTo, msgs[0].thread_id.slice('didcomm-group:'.length))
+    if (msgs[0]?.thread_id.startsWith('didcomm-group:')) renderDidCommGroupMembers($convTo, msgs[0].thread_id.slice('didcomm-group:'.length))
     else $convTo.textContent = displayParticipantsOf(msgs)
     // src.bak's applyConvViaPill prepends #conv-via, then (mail/AP path)
     // prepends #conv-did last so it lands leftmost -- [did, via, address].
