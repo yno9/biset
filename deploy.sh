@@ -30,7 +30,12 @@
 #   replace github.com/yno9/go-jmapserver => /Users/n/go-jmapserver
 # を持つので、core を直したら ap のバイナリを作り直す必要がある。
 #
-# 使い方: ./deploy.sh [app|landing|anchor|didcomm-mediator|smtp|ap|relay|all]   (引数なし = all)
+# 使い方: ./deploy.sh [app|landing|anchor|didcomm-mediator|mail-plugin|smtp|ap|relay|all]   (引数なし = all)
+#   mail-plugin は didcomm-mediator と同じ biset-didcomm-mediator.service/DB
+#   を奪い合う排他ターゲット（同じsqliteを2プロセスで開けない）。どちらか
+#   一方だけが本番で動く。core retirement後の現行方針（2026-09-03時点）で
+#   はmail-pluginが本番稼働中。didcomm-mediatorへ戻す時は同じ手順で
+#   deploy_didcomm_mediatorを流す。
 set -euo pipefail
 
 HOST=v1
@@ -215,6 +220,91 @@ deploy_didcomm_mediator() {
   echo "✓ didcomm-mediator OK (https://$DIDCOMM_MEDIATOR_PUBLIC_HOST)"
 }
 
+# mediator + mail-plugin (src/mediator/mail-plugin/index.ts) -- the SAME
+# biset-didcomm-mediator.service/binary path/database as deploy_didcomm_mediator
+# above, not a second process: mail-plugin's own createMediatorDeployment call
+# would otherwise fight the plain mediator over the same sqlite file. This
+# swaps that one binary for the superset build (mediator core + an inbound
+# SMTP listener on :25) and assumes the unit already carries the one-time
+# setup a fresh binary swap alone can't provide: AmbientCapabilities=
+# CAP_NET_BIND_SERVICE (DynamicUser can't bind :25 otherwise) and
+# LoadCredential= entries copying mail.biset.md's Caddy-managed TLS cert/key
+# into the service's own credentials dir for STARTTLS (that cert directory
+# is root-only 0700, unreadable by the dynamic unprivileged UID directly) --
+# see /etc/systemd/system/biset-didcomm-mediator.service on v1 (2026-09-03
+# setup) for the exact directives. Retire this target the same way
+# deploy_core was retired if the plan direction changes and mail-plugin is
+# dropped instead of kept -- swap the binary back with deploy_didcomm_mediator.
+deploy_mail_plugin() {
+  echo "== mail-plugin: protocol + durability tests =="
+  ( cd "$ROOT" && bun test \
+      test/mediator-server.test.ts \
+      test/mediator-client.test.ts \
+      test/mediator-relationship-handshake.test.ts \
+      test/mediator-sqlite-store.test.ts \
+      test/mediator/mail-plugin/bridge.test.ts \
+      test/mediator/mail-plugin/listener.test.ts \
+      test/mediator/mail-plugin/mail-smtp-protocol.test.ts ) \
+    || fail "mail-plugin: test失敗（本番に出さない）"
+
+  echo "== mail-plugin: build (linux-x64 cross-compile) =="
+  ( cd "$ROOT" && bun run build:mail-plugin )
+  [ -f "$ROOT/biset-mediator-mail-plugin" ] || fail "biset-mediator-mail-plugin がない"
+  file "$ROOT/biset-mediator-mail-plugin" | grep -q "x86-64" \
+    || fail "biset-mediator-mail-plugin がx86_64バイナリでない"
+
+  ssh "$DIDCOMM_MEDIATOR_HOST" "
+    systemctl cat biset-didcomm-mediator.service | grep -q AmbientCapabilities
+  " || fail "mail-plugin: remote unitにAmbientCapabilities未設定（:25 bindできない。手動セットアップが要る、ops/を参照）"
+
+  echo "== mail-plugin: upload =="
+  local transfer_dir binary_sha
+  transfer_dir="$(mktemp -d)"
+  binary_sha="$(shasum -a 256 "$ROOT/biset-mediator-mail-plugin" | awk '{print $1}')"
+  gzip -9 -c "$ROOT/biset-mediator-mail-plugin" > "$transfer_dir/biset-mediator-mail-plugin.gz"
+  rsync -a "$transfer_dir/biset-mediator-mail-plugin.gz" \
+    "$DIDCOMM_MEDIATOR_HOST:$DIDCOMM_MEDIATOR_DST/biset-mediator-mail-plugin.new.gz" \
+    || { rm -rf "$transfer_dir"; fail "mail-plugin: compressed upload失敗"; }
+  rm -rf "$transfer_dir"
+  ssh "$DIDCOMM_MEDIATOR_HOST" "
+    set -e
+    cd $DIDCOMM_MEDIATOR_DST
+    gzip -dc biset-mediator-mail-plugin.new.gz > /root/biset-mediator-mail-plugin.candidate
+    test \"\$(sha256sum /root/biset-mediator-mail-plugin.candidate | awk '{print \$1}')\" = $binary_sha
+    mv /root/biset-mediator-mail-plugin.candidate biset-didcomm-mediator.new
+    rm -f biset-mediator-mail-plugin.new.gz
+  " || fail "mail-plugin: remote展開/checksum検証失敗"
+  ssh "$DIDCOMM_MEDIATOR_HOST" "file $DIDCOMM_MEDIATOR_DST/biset-didcomm-mediator.new" | grep -q "x86-64" \
+    || fail "mail-plugin: remote binaryがx86_64でない"
+
+  echo "== mail-plugin: swap + restart =="
+  ssh "$DIDCOMM_MEDIATOR_HOST" "
+    set -e
+    if [ -f /var/lib/biset-didcomm-mediator/mediator.sqlite ]; then
+      install -d -m 0700 /var/backups/biset-didcomm-mediator
+      sqlite3 /var/lib/biset-didcomm-mediator/mediator.sqlite \
+        \".backup '/var/backups/biset-didcomm-mediator/mediator-\$(date +%Y%m%d-%H%M%S).sqlite'\"
+    fi
+    cd $DIDCOMM_MEDIATOR_DST
+    chmod 0755 biset-didcomm-mediator.new
+    systemctl stop biset-didcomm-mediator.service
+    if [ -f biset-didcomm-mediator ]; then
+      mv biset-didcomm-mediator biset-didcomm-mediator.bak-\$(date +%Y%m%d-%H%M%S)
+    fi
+    mv biset-didcomm-mediator.new biset-didcomm-mediator
+    systemctl start biset-didcomm-mediator.service
+    sleep 1
+    systemctl is-active --quiet biset-didcomm-mediator.service
+    curl -fsS http://127.0.0.1:8791/readyz >/dev/null
+    ss -tln | grep -q ':25 ' || exit 1
+  " || fail "mail-plugin: restart/readiness失敗（直前binaryへ手動rollback: biset-didcomm-mediator.bak-* を戻してsystemctl restart）"
+
+  curl -fsS "https://$DIDCOMM_MEDIATOR_PUBLIC_HOST/.well-known/did.json" \
+    | grep -q '"id"' \
+    || fail "mail-plugin: 公開HTTPS endpoint検証失敗"
+  echo "✓ mail-plugin OK (https://$DIDCOMM_MEDIATOR_PUBLIC_HOST + SMTP :25)"
+}
+
 # ── relay (Go) ────────────────────────────────────────────────────────────────
 # smtp と ap は systemd unit 名・設置先・公開ホストが違うだけで手順は同一なので
 # 1つの関数に集約する。config.json と data/ はサーバー側の資産 — バイナリ
@@ -302,11 +392,12 @@ case "$target" in
   landing) deploy_landing ;;
   anchor)  deploy_anchor ;;
   didcomm-mediator) deploy_didcomm_mediator ;;
+  mail-plugin) deploy_mail_plugin ;;
   smtp)    deploy_smtp ;;
   ap)      deploy_ap ;;
   relay)   deploy_smtp; deploy_ap ;;
   all)     deploy_app; deploy_landing; deploy_anchor; deploy_smtp; deploy_ap ;;
-  *)       fail "unknown target: $target (app|landing|anchor|didcomm-mediator|smtp|ap|relay|all)" ;;
+  *)       fail "unknown target: $target (app|landing|anchor|didcomm-mediator|mail-plugin|smtp|ap|relay|all)" ;;
 esac
 
 echo "== done: $target =="
