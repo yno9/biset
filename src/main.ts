@@ -1297,6 +1297,15 @@ export async function bootClient(): Promise<void> {
           } finally { for (const segment of snapshot.segmentKeys) segment.key.fill(0) }
         },
       })
+      // synchronizeMimiVault itself never throws -- an outbox-flush failure
+      // comes back as a `gaps` entry like every other kind of loss, so this
+      // device's own send retries next poll instead of wedging (mimi-vault-
+      // sync.ts's own doc comment). This callsite still surfaces it as an
+      // error state the same way an exception used to, matching the
+      // previous behavior (deliveryCursor/refreshInbox/checkpoint-recreate
+      // below never ran on this path before either).
+      const outboxFlushFailure = result.gaps.find(gap => gap.kind === 'outbox-flush-failed')
+      if (outboxFlushFailure) throw new Error(`MIMI Vault outbox append failed: ${outboxFlushFailure.detail}`)
       if (result.latestSequence > providerCursor) {
         const current = await selfGroupStore.loadMimiVault(identity.did)
         if (!current) throw new Error('MIMI Vault state disappeared while synchronizing')
@@ -1315,7 +1324,18 @@ export async function bootClient(): Promise<void> {
       // fix, synced a brand-new message fine, but every message from
       // before stayed invisible until an unrelated reload).
       if (result.ingestedSequences.length || result.checkpoints.length) await refreshInbox(readModel)
-      if (result.latestSequence > 1 && !result.sawCheckpointManifest && identity.masterSeed && Date.now() - lastCheckpointRecreateAt > 5_000) {
+      // `result.gaps.length === 0` guards against a device whose OWN local
+      // Vault is incomplete this round (an undecryptable entry, a failed
+      // ingest, a still-unreconstructed checkpoint...) confidently
+      // publishing a checkpoint anyway -- it would be checkpointing content
+      // it itself never fully received, and a sibling restoring from that
+      // checkpoint loses whatever this device silently skipped, discarding
+      // real history nobody actually lost (found live, 2026-09-02: exactly
+      // this, root-caused via a side-by-side comparison of two devices'
+      // actual message histories after PLAN-SIMPIFY.md's `gaps` reporting
+      // made the condition expressible at all -- deferred until then rather
+      // than patched in as an ad hoc boolean).
+      if (result.latestSequence > 1 && !result.sawCheckpointManifest && result.gaps.length === 0 && identity.masterSeed && Date.now() - lastCheckpointRecreateAt > 5_000) {
         lastCheckpointRecreateAt = Date.now()
         const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, identity.did, new Date().toISOString())
         try {

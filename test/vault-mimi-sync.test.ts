@@ -74,6 +74,46 @@ test('synchronizeMimiVault recovers a checkpoint whose chunk was pulled in an ea
   expect(result.checkpoints).toHaveLength(1)
 })
 
+test('synchronizeMimiVault reports an undecryptable application entry as a gap instead of only logging it', async () => {
+  // The `gaps` report (PLAN-SIMPIFY.md direction B) is what main.ts's
+  // checkpoint auto-recreate gate now checks before publishing -- a device
+  // whose own batch had an unrecoverable loss must not confidently claim
+  // its local state is a complete "latest" for siblings to restore from.
+  const good = splitMimiVaultPayload(new Uint8Array([1]), 'D'.repeat(24))[0]!
+  const entries: MimiDeliveryEntry[] = [
+    { seq: 1, kind: 'application', payload: encodeMimiVaultChunk(good), epoch: '1', acceptedAt: '2026-09-02T00:00:00.000Z' },
+    { seq: 2, kind: 'application', payload: new Uint8Array([9, 9, 9]), epoch: '1', acceptedAt: '2026-09-02T00:00:00.000Z' },
+  ]
+  const ingested: unknown[] = []
+  const result = await synchronizeMimiVault({
+    pull: async () => entries, signPull: async () => new Uint8Array(64),
+    pullRequest: { version: 1, roomId: 'mimi://self.example/r/vault-test', requester: { kind: 'visible', user: 'did:example:me', client: 'client', credential: new Uint8Array([1]), signaturePublicKey: new Uint8Array(32) }, requestedAt: '2026-09-02T00:00:00.000Z' },
+    receiver: { async receive(entry) { if (entry.seq === 2) throw new Error('Desired gen in the past'); return entry.payload } },
+    outbox: { async readDeliveryOutbox() { return [] } },
+    sender: { async sendApplication() {}, async sendCheckpoint() {} },
+    identityId: 'did:example:me' as never,
+    async ingest(payload) { ingested.push(payload) },
+  })
+  expect(ingested).toHaveLength(1) // the one good entry still applies despite the other's loss
+  expect(result.gaps).toEqual([{ kind: 'undecryptable-application', detail: expect.stringContaining('Desired gen in the past') }])
+})
+
+test('synchronizeMimiVault never throws when the outbox flush fails, reporting it as a gap instead', async () => {
+  const result = await synchronizeMimiVault({
+    pull: async () => [], signPull: async () => new Uint8Array(64),
+    pullRequest: { version: 1, roomId: 'mimi://self.example/r/vault-test', requester: { kind: 'visible', user: 'did:example:me', client: 'client', credential: new Uint8Array([1]), signaturePublicKey: new Uint8Array(32) }, requestedAt: '2026-09-02T00:00:00.000Z' },
+    receiver: { async receive() { return undefined } },
+    outbox: {
+      async readDeliveryOutbox() { return [{ identityId: 'did:example:me', entryId: 'evt-bad' as never, payload: new Uint8Array(), payloadHash: new Uint8Array(32) }] },
+      async removeDeliveryOutbox() {}, async noteDeliveryOutboxAttempt() {},
+    },
+    sender: { async sendApplication() {}, async sendCheckpoint() {} },
+    identityId: 'did:example:me' as never,
+    async ingest() {},
+  })
+  expect(result.gaps).toEqual([{ kind: 'outbox-flush-failed', detail: expect.any(String) }])
+})
+
 test('MIMI Vault pulls all 32-item pages before chunk reconstruction', async () => {
   const first = Array.from({ length: 32 }, (_, index) => ({ seq: index + 1, kind: 'application' as const, payload: new Uint8Array([index]), epoch: '1', acceptedAt: '2026-09-02T00:00:00.000Z' }))
   const second = [{ seq: 33, kind: 'application' as const, payload: new Uint8Array([33]), epoch: '1', acceptedAt: '2026-09-02T00:00:00.000Z' }]
