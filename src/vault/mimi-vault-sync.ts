@@ -31,6 +31,16 @@ export interface MimiVaultDecodedBatch {
    * `checkpoints.length`, or it will keep creating redundant ones every
    * sync round whenever the existing one can never be reconstructed. */
   sawCheckpointManifest: boolean
+  /** Every manifest seen in this batch whose chunks could NOT be
+   * reconstructed into `checkpoints` -- `synchronizeMimiVault`'s own signal
+   * to retry with a wider pull window (see its own note on why: the chunk
+   * and manifest are submitted as separate, non-atomic deliveries, so they
+   * can land in different sync rounds). Includes the device's OWN just-sent
+   * checkpoint too (its chunks echo back as `undefined`, so it never
+   * reconstructs from this side either) -- that case is harmless, not a bug,
+   * but this function has no way to tell the two apart, so the caller's own
+   * warning has to say so. */
+  unreconstructedCheckpoints: Array<{ manifest: VaultCheckpointManifest; seq: number }>
 }
 export interface MimiVaultSynchronizationResult {
   appendedEntryIds: VaultEventId[]
@@ -81,6 +91,74 @@ export async function synchronizeMimiVault(input: {
 }): Promise<MimiVaultSynchronizationResult> {
   const entries = await pullMimiVaultPages(input.pull, input.signPull, input.pullRequest, input.afterSeq ?? 0)
   const decoded = await decodeMimiVaultBatch(entries, input.receiver)
+  // A checkpoint's chunk(s) and its manifest are separate, non-atomic
+  // deliveries (sendMimiVaultCheckpoint sends the chunk(s) first, then the
+  // manifest in its own follow-up call) -- if this device's pull window
+  // starts partway between them (a long-suspended tab waking up, or a
+  // sibling's SSE-triggered pull landing in that exact gap), the manifest
+  // arrives with no matching chunk in THIS batch and can never be
+  // reconstructed from here alone. Before, this was silently unrecoverable
+  // forever: decoded.latestSequence still advances past the manifest
+  // (below), so no later poll would ever re-pull it either (found live,
+  // 2026-09-02: a device stuck for hours with an empty inbox and zero
+  // console output -- decodeMimiVaultBatch's own "unreconstructable
+  // manifest" case was deliberately silent, written for the checkpoint's
+  // OWN creator seeing its echoed chunks skip, never audited for what it
+  // means when a DIFFERENT device hits the same code path for a real gap).
+  // One retry, pulling from well before the earliest unreconstructed
+  // manifest instead of from this round's own cursor, catches the
+  // ordinary case (chunk and manifest split by one poll boundary) without
+  // needing to persist any cross-round state.
+  if (decoded.unreconstructedCheckpoints.length) {
+    // Pulls from well before the earliest unreconstructed manifest -- but
+    // `pull` has no upper bound, so this necessarily re-fetches everything
+    // THIS round already pulled too. Filtering the retry pull down to
+    // entries strictly before this round's own starting point avoids ever
+    // handing an already-processed entry to `receiver.receive` a second
+    // time (MLS forward secrecy has already discarded an already-decrypted
+    // application message's generation key -- re-decrypting it would fail
+    // and log a spurious "permanently undecryptable" warning for a message
+    // that, in fact, decrypted fine the first time). Correlated directly
+    // against the already-known manifests here, not through a second
+    // decodeMimiVaultBatch call -- that function only correlates a
+    // manifest against chunks it sees in the SAME call, and the retry
+    // batch (by construction) never contains the manifest itself again.
+    const CHECKPOINT_RETRY_MARGIN = 64
+    const earliestSeq = Math.min(...decoded.unreconstructedCheckpoints.map(u => u.seq))
+    const retryFrom = Math.max(0, earliestSeq - CHECKPOINT_RETRY_MARGIN)
+    const alreadyPulledFrom = input.afterSeq ?? 0
+    const retryEntries = (await pullMimiVaultPages(input.pull, input.signPull, input.pullRequest, retryFrom))
+      .filter(entry => entry.seq <= alreadyPulledFrom)
+    const retryChunks = new Map<string, Array<{ chunk: MimiVaultChunk; seq: number }>>()
+    for (const entry of retryEntries) {
+      if (entry.kind !== 'application' || entry.payload.length === 0) continue
+      let plaintext: Uint8Array | undefined
+      try {
+        plaintext = await input.receiver.receive(entry)
+      } catch {
+        continue // genuinely undecryptable here too -- nothing new to report, decodeMimiVaultBatch's own warning already covers this class of loss
+      }
+      if (plaintext === undefined) continue
+      const chunk = decodeMimiVaultChunk(plaintext)
+      const current = retryChunks.get(chunk.transferId) ?? []
+      current.push({ chunk, seq: entry.seq })
+      retryChunks.set(chunk.transferId, current)
+    }
+    const recovered = new Set<string>()
+    for (const { manifest, seq } of decoded.unreconstructedCheckpoints) {
+      const values = retryChunks.get(manifest.transferId)
+      if (!values || values.length !== manifest.chunkCount) continue
+      const payload = joinMimiVaultChunks(values.map(value => value.chunk))
+      if (!equalBytes(sha256Bytes(payload), manifest.payloadHash) || !values.every(value => value.chunk.count === manifest.chunkCount && equalBytes(value.chunk.payloadHash, manifest.payloadHash))) continue
+      decoded.checkpoints.push({ transferId: manifest.transferId, payload, finalSequence: Math.max(seq, ...values.map(value => value.seq)), manifest: { ...manifest, payloadHash: manifest.payloadHash.slice() } })
+      recovered.add(manifest.transferId)
+    }
+    const stillMissing = decoded.unreconstructedCheckpoints.filter(u => !recovered.has(u.manifest.transferId))
+    if (stillMissing.length) {
+      console.warn('[mimi-vault/checkpoint] still unreconstructable after a wider retry pull -- if this is not this device\'s own checkpoint, the Vault will look stale/empty until a sibling device creates a fresh one:',
+        stillMissing.map(u => `${u.manifest.transferId}@${u.seq}`).join(', '))
+    }
+  }
   for (const checkpoint of decoded.checkpoints) {
     try {
       await input.restoreCheckpoint?.(checkpoint)
@@ -253,16 +331,31 @@ export async function decodeMimiVaultBatch(entries: readonly MimiDeliveryEntry[]
     }
   }
   const checkpoints: MimiVaultCheckpointPayload[] = []
+  const unreconstructedCheckpoints: Array<{ manifest: VaultCheckpointManifest; seq: number }> = []
   const claimed = new Set<string>()
   for (const { manifest, seq } of manifests) {
     const values = chunks.get(manifest.transferId)
+    let reconstructed = false
     if (values && values.length === manifest.chunkCount) {
       const payload = joinMimiVaultChunks(values.map(value => value.chunk))
       if (equalBytes(sha256Bytes(payload), manifest.payloadHash) && values.every(value => value.chunk.count === manifest.chunkCount && equalBytes(value.chunk.payloadHash, manifest.payloadHash))) {
         checkpoints.push({ transferId: manifest.transferId, payload, finalSequence: Math.max(seq, ...values.map(value => value.seq)), manifest: { ...manifest, payloadHash: manifest.payloadHash.slice() } })
+        reconstructed = true
       }
     }
+    if (!reconstructed) unreconstructedCheckpoints.push({ manifest, seq })
     claimed.add(manifest.transferId)
+  }
+  if (unreconstructedCheckpoints.length) {
+    // Benign for the device that created this exact checkpoint (its own
+    // chunks echo back as `undefined` and never even reach `chunks` above,
+    // by design -- decodeMimiVaultBatch has no way to tell that apart from
+    // a sibling device genuinely missing the chunk, hence the hedge below).
+    // synchronizeMimiVault retries with a wider pull window right after
+    // this; if THAT also comes back empty for the same transferId, the
+    // manifest is unreconstructable this round, not a one-off.
+    console.warn('[mimi-vault/checkpoint] a manifest arrived without its full chunk set (harmless if this device created it, otherwise a real gap -- retrying with a wider pull):',
+      unreconstructedCheckpoints.map(u => `${u.manifest.transferId}@${u.seq}`).join(', '))
   }
   const deliveries: MimiVaultPayload[] = []
   for (const [transferId, values] of chunks) {
@@ -271,7 +364,7 @@ export async function decodeMimiVaultBatch(entries: readonly MimiDeliveryEntry[]
   }
   deliveries.sort((left, right) => left.finalSequence - right.finalSequence)
   checkpoints.sort((left, right) => left.finalSequence - right.finalSequence)
-  return { deliveries, checkpoints, latestSequence, sawCheckpointManifest: manifests.length > 0 }
+  return { deliveries, checkpoints, latestSequence, sawCheckpointManifest: manifests.length > 0, unreconstructedCheckpoints }
 }
 
 export function mimiVaultSequence(sequence: number): DeliverySeq {

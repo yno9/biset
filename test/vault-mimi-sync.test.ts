@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test'
 import { sha256Bytes } from '../src/protocol/canonical.ts'
-import { decodeMimiVaultBatch, flushMimiVaultOutbox, pullMimiVaultPages, sendMimiVaultCheckpoint } from '../src/vault/mimi-vault-sync.ts'
+import { decodeMimiVaultBatch, flushMimiVaultOutbox, pullMimiVaultPages, sendMimiVaultCheckpoint, synchronizeMimiVault } from '../src/vault/mimi-vault-sync.ts'
 import { encodeMimiVaultChunk, splitMimiVaultPayload } from '../src/vault/mimi-vault-chunks.ts'
+import type { MimiDeliveryEntry } from '../src/mimi/protocol-types.ts'
 
 test('MIMI Vault outbox uses stable per-chunk delivery IDs and retains failed work', async () => {
   const payload = new Uint8Array([1, 2, 3]); const removed: string[] = []; const attempts: string[] = []; const sent: string[] = []
@@ -27,6 +28,50 @@ test('checkpoint manifest is sent after its encrypted chunks', async () => {
   const order: string[] = []
   const manifest = await sendMimiVaultCheckpoint(new Uint8Array([4]), 2, { async sendApplication(_payload, deliveryId) { order.push(deliveryId) }, async sendCheckpoint(value) { order.push(`checkpoint:${value.transferId}`) } })
   expect(order).toEqual([expect.any(String), `checkpoint:${manifest.transferId}`])
+})
+
+test('synchronizeMimiVault recovers a checkpoint whose chunk was pulled in an earlier round than its manifest', async () => {
+  // Reproduces the found-live bug (2026-09-02): sendMimiVaultCheckpoint
+  // submits the chunk, then the manifest, as two separate deliveries. If
+  // this device's pull window starts strictly AFTER the chunk's seq but
+  // AT/BEFORE the manifest's, the manifest arrives alone -- before this
+  // fix, decodeMimiVaultBatch would silently drop it forever (the cursor
+  // advances past it regardless), leaving the Vault permanently stuck with
+  // no error at all.
+  const checkpointChunk = splitMimiVaultPayload(new Uint8Array([9, 10, 11]), 'C'.repeat(24))[0]!
+  const manifestEntry: MimiDeliveryEntry = {
+    seq: 11, kind: 'vaultCheckpoint', payload: new Uint8Array(), epoch: '1', acceptedAt: '2026-09-02T00:00:00.000Z',
+    vaultCheckpoint: { coveredSeq: 10, transferId: checkpointChunk.transferId, chunkCount: 1, payloadHash: checkpointChunk.payloadHash },
+  }
+  const chunkEntry: MimiDeliveryEntry = { seq: 5, kind: 'application', payload: encodeMimiVaultChunk(checkpointChunk), epoch: '1', acceptedAt: '2026-09-02T00:00:00.000Z' }
+
+  // This device's own pull starts at afterSeq=10 -- past the chunk (seq 5,
+  // already consumed in some earlier round this test doesn't model), right
+  // at the manifest (seq 11).
+  const pullCalls: number[] = []
+  const pull = async (request: { afterSeq: number }) => {
+    pullCalls.push(request.afterSeq)
+    if (request.afterSeq === 10) return [manifestEntry]
+    // The retry's wider pull, from well before seq 5 -- a real hub would
+    // return everything since then, chunk and manifest both.
+    return [chunkEntry, manifestEntry]
+  }
+  const restored: unknown[] = []
+  const result = await synchronizeMimiVault({
+    pull, signPull: async () => new Uint8Array(64),
+    pullRequest: { version: 1, roomId: 'mimi://self.example/r/vault-test', requester: { kind: 'visible', user: 'did:example:me', client: 'client', credential: new Uint8Array([1]), signaturePublicKey: new Uint8Array(32) }, requestedAt: '2026-09-02T00:00:00.000Z' },
+    receiver: { async receive(entry) { return entry.kind === 'application' ? entry.payload : undefined } },
+    outbox: { async readDeliveryOutbox() { return [] } },
+    sender: { async sendApplication() {}, async sendCheckpoint() {} },
+    identityId: 'did:example:me' as never,
+    async ingest() {},
+    async restoreCheckpoint(checkpoint) { restored.push(checkpoint) },
+    afterSeq: 10,
+  })
+  expect(pullCalls).toEqual([10, 0]) // the original pull, then the retry from afterSeq=0 (5 - margin, clamped)
+  expect(restored).toHaveLength(1)
+  expect((restored[0] as { payload: Uint8Array }).payload).toEqual(checkpointChunk.payload)
+  expect(result.checkpoints).toHaveLength(1)
 })
 
 test('MIMI Vault pulls all 32-item pages before chunk reconstruction', async () => {
