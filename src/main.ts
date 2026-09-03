@@ -593,16 +593,30 @@ export async function bootClient(): Promise<void> {
             console.warn(`[didcomm/outbox] ${item.emailId}: local message is missing`)
             continue
           }
-          // A prior attempt delivered and committed the sent transition but
-          // crashed before deleting the transport row. Do not send it again.
-          if (email.mailboxIds.sent === true && email.mailboxIds.outbox !== true) {
-            await vaultStore.removeDidCommOutbox(identity.did, item.outboundEventId, item.toDid)
-            continue
-          }
           if (!email.blobId) {
             console.warn(`[didcomm/outbox] ${item.emailId}: local message has no body object`)
             continue
           }
+          // No "already sent, crashed before cleanup" fast path here on
+          // purpose -- there used to be one, gated on the SHARED email's
+          // mailboxIds.sent/outbox flags, but mailbox.set (local-jmap/
+          // reducer.ts) REPLACES mailboxIds wholesale rather than merging.
+          // For a group message, N outbox rows (one per recipient) share
+          // ONE emailId: the first recipient's successful send legitimately
+          // clears `outbox` off that shared email as part of its own
+          // mailbox.set{sent:true}, which made every OTHER recipient's row
+          // in the SAME flush pass look like a stale post-crash leftover
+          // and get silently deleted here without ever actually sending
+          // (found live, 2026-09-03: a 2-recipient group founding message
+          // only ever reached whichever recipient's outbox row happened to
+          // be processed first, with zero console output for the other --
+          // both `sent`/`outbox` are per-EMAIL, but "was this delivered to
+          // THIS toDid" is inherently per-ROW, and nothing tracked that).
+          // A genuine crash-before-cleanup instead just means one retried
+          // send with the SAME item.messageId below -- the receiving side's
+          // own dedupe (didCommMessageDedupeId, keyed by senderKid+message
+          // id) already makes that a harmless no-op, so there is nothing to
+          // guard against here.
           await vaultStore.noteDidCommOutboxAttempt(identity.did, item.outboundEventId, item.toDid, new Date().toISOString())
           try {
             const contactKey = await ensureDidCommContact(item.toDid)
