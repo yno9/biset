@@ -91,19 +91,18 @@ export function mailFromForIdentity(identityId: string, apexDomain: string): str
   if (!domain.endsWith(suffix)) throw new Error(`mailFromForIdentity: identity domain ${domain} is not a subdomain of ${apexDomain}`)
   const username = domain.slice(0, domain.length - suffix.length)
   if (!username) throw new Error('mailFromForIdentity: identity domain has no username segment')
-  // Bare apex is canonical (2026-09-04 -- `mail.` used to be mandatory, but
-  // that's not the address a sender naturally types, and MX for the bare
-  // apex already points at the same server: `user@apexDomain` genuinely
-  // works over real SMTP, `user@mail.apexDomain` was a self-imposed
-  // restriction found live when an external sender's message to the
-  // former bounced 550 "no such user"). `identityDomainForMailAddress`
-  // below still accepts BOTH forms on the way in.
+  // Bare apex is canonical, and the ONLY form accepted (2026-09-04 -- `mail.`
+  // used to be mandatory, but that's not the address a sender naturally
+  // types, and MX for the bare apex already points at the same server:
+  // `user@apexDomain` genuinely works over real SMTP, `user@mail.apexDomain`
+  // was a self-imposed restriction found live when an external sender's
+  // message to the former bounced 550 "no such user"). No back-compat
+  // fallback for the old `mail.`-prefixed form -- `identityDomainForMailAddress`
+  // below rejects it same as any other wrong host.
   return `${username}@${apexDomain}`
 }
 
-/** The inverse of `mailFromForIdentity`: `{username}@{apexDomain}` (or the
- * older `{username}@mail.{apexDomain}`, still accepted on inbound so a
- * sender who already has that address saved keeps working) -> the
+/** The inverse of `mailFromForIdentity`: `{username}@{apexDomain}` -> the
  * identity's own subdomain (`{username}.{apexDomain}`) -- no SCID, no
  * signed-log resolve, just the same deterministic naming convention run
  * backward. What the mail plugin bridge (mediator/mail-plugin/bridge.ts)
@@ -116,6 +115,6 @@ export function identityDomainForMailAddress(address: string, apexDomain: string
   if (at <= 0) throw new Error(`identityDomainForMailAddress: ${address} is not a valid mail address`)
   const username = address.slice(0, at)
   const host = address.slice(at + 1)
-  if (host !== apexDomain && host !== `mail.${apexDomain}`) throw new Error(`identityDomainForMailAddress: ${address} is not a ${apexDomain} address`)
+  if (host !== apexDomain) throw new Error(`identityDomainForMailAddress: ${address} is not a ${apexDomain} address`)
   return `${username}.${apexDomain}`
 }

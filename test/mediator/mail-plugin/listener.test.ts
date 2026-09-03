@@ -72,7 +72,7 @@ describe('mail plugin SMTP listener', () => {
       await readReply(socket) // 220 banner
       socket.write('EHLO client.example\r\n'); await readReply(socket)
       socket.write('MAIL FROM:<a@example.com>\r\n'); await readReply(socket)
-      socket.write('RCPT TO:<y@mail.biset.md>\r\n')
+      socket.write('RCPT TO:<y@biset.md>\r\n')
       expect(await readReply(socket)).toContain('250')
       socket.write('DATA\r\n'); await readReply(socket)
       const body = 'Subject: hi\r\n\r\nhello world\r\n.\r\n'
@@ -104,7 +104,7 @@ describe('mail plugin SMTP listener', () => {
       await readReply(socket)
       socket.write('EHLO client.example\r\n'); await readReply(socket)
       socket.write('MAIL FROM:<a@example.com>\r\n'); await readReply(socket)
-      socket.write('RCPT TO:<nobody@mail.biset.md>\r\n')
+      socket.write('RCPT TO:<nobody@biset.md>\r\n')
       expect(await readReply(socket)).toContain('550')
       socket.end()
     } finally {

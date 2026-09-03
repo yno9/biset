@@ -10,13 +10,13 @@ describe('mail address <-> did:webvh domain (identifier.ts)', () => {
     expect(identityDomainForMailAddress('y@biset.md', 'biset.md')).toBe('y.biset.md')
   })
 
-  test('identityDomainForMailAddress also accepts the older mail.{apexDomain} form on inbound', () => {
+  test('identityDomainForMailAddress rejects the old mail.{apexDomain} form -- no back-compat fallback', () => {
     // Bare apex became canonical 2026-09-04 (found live: an external
     // sender's message to user@apexDomain -- what a sender naturally
     // types, and what MX for the bare apex already resolves to -- bounced
     // 550 "no such user" because only the mail.-prefixed form was ever
-    // accepted). Both forms route to the same identity.
-    expect(identityDomainForMailAddress('y@mail.biset.md', 'biset.md')).toBe('y.biset.md')
+    // accepted). The old form is just a wrong host now, same as any other.
+    expect(() => identityDomainForMailAddress('y@mail.biset.md', 'biset.md')).toThrow(/is not a biset\.md address/)
   })
 
   test('round-trips for an arbitrary username', () => {

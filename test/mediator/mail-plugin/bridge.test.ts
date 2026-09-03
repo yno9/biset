@@ -42,8 +42,8 @@ describe('buildInboundMailForward', () => {
   test('fails clearly when the recipient has no routing.json', async () => {
     const sender = generatePeerIdentity()
     const result = await buildInboundMailForward(
-      'y@mail.biset.md', 'biset.md',
-      { rawRfc5322: utf8('Subject: hi\r\n\r\nbody'), smtpEnvelope: 'MAIL FROM:<a@example.com> RCPT TO:<y@mail.biset.md>' },
+      'y@biset.md', 'biset.md',
+      { rawRfc5322: utf8('Subject: hi\r\n\r\nbody'), smtpEnvelope: 'MAIL FROM:<a@example.com> RCPT TO:<y@biset.md>' },
       { kid: sender.xKid, privateKey: sender.xPriv },
       fetchServing(undefined),
     )
@@ -61,8 +61,8 @@ describe('buildInboundMailForward', () => {
     }
     const rawRfc5322 = utf8('Subject: hello\r\n\r\nbody text')
     const result = await buildInboundMailForward(
-      'y@mail.biset.md', 'biset.md',
-      { rawRfc5322, smtpEnvelope: 'MAIL FROM:<a@example.com> RCPT TO:<y@mail.biset.md>' },
+      'y@biset.md', 'biset.md',
+      { rawRfc5322, smtpEnvelope: 'MAIL FROM:<a@example.com> RCPT TO:<y@biset.md>' },
       { kid: sender.xKid, privateKey: sender.xPriv },
       fetchServing(routingJson),
     )
@@ -77,7 +77,7 @@ describe('buildInboundMailForward', () => {
     const body = mailBridgeInboundBodyOf(msg)
     expect(body).not.toBeNull()
     expect(new TextDecoder().decode(body!.rawRfc5322)).toBe('Subject: hello\r\n\r\nbody text')
-    expect(body!.smtpEnvelope).toBe('MAIL FROM:<a@example.com> RCPT TO:<y@mail.biset.md>')
+    expect(body!.smtpEnvelope).toBe('MAIL FROM:<a@example.com> RCPT TO:<y@biset.md>')
   })
 
   test('Forward-wraps through the recipient\'s full hop chain', async () => {
@@ -91,8 +91,8 @@ describe('buildInboundMailForward', () => {
       keyAgreementVerificationMethod: [{ id: recipientKid, type: 'Multikey', controller: recipientDid, publicKeyMultibase: encodeX25519Multikey(recipientXPub) }],
     }
     const result = await buildInboundMailForward(
-      'y@mail.biset.md', 'biset.md',
-      { rawRfc5322: utf8('Subject: via hops\r\n\r\nbody'), smtpEnvelope: 'MAIL FROM:<a@example.com> RCPT TO:<y@mail.biset.md>' },
+      'y@biset.md', 'biset.md',
+      { rawRfc5322: utf8('Subject: via hops\r\n\r\nbody'), smtpEnvelope: 'MAIL FROM:<a@example.com> RCPT TO:<y@biset.md>' },
       { kid: sender.xKid, privateKey: sender.xPriv },
       fetchServing(routingJson),
     )
@@ -114,6 +114,6 @@ describe('buildInboundMailForward', () => {
     const innerJwe = parseJwe(toHop2.attachments[0].data.json)
     const { plaintext } = await unpackAuthcrypt(innerJwe!, { kid: recipientKid, privateKey: recipientX }, async () => sender.xPub)
     const msg = JSON.parse(new TextDecoder().decode(plaintext))
-    expect(mailBridgeInboundBodyOf(msg)?.smtpEnvelope).toBe('MAIL FROM:<a@example.com> RCPT TO:<y@mail.biset.md>')
+    expect(mailBridgeInboundBodyOf(msg)?.smtpEnvelope).toBe('MAIL FROM:<a@example.com> RCPT TO:<y@biset.md>')
   })
 })
