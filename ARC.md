@@ -44,21 +44,22 @@ Biset は、メールと DIDComm のデータを利用者の端末側で長期�
 │                  │                                                       │
 │  did:webvh / Self Vault MLS group / Mail / DIDComm 1:1 /                │
 │  DIDComm group chat / Restore endpoint logic                            │
-└──┬──────────┬───────────────┬────────────────────────────╳──────────────┘
-   │signed    │DIDComm v2     │DIDComm v2 group           ╳ client
-   │narrow    │encrypted HTTP │chat（フルメッシュ           ╳ 側の呼
-   │HTTP      │（1:1）        │pairwise fan-out、MLS無し）  ╳ 出し経
-   │          │               │                            ╳ 路が無い
-   ▼          ▼               ▼                            
-┌─ Core ───┐┌─ Mediator ───┐┌────── biset-mimi ─────────────────────────┐
-│did.jsonl ││did:peer       ││IETF draft-ietf-mimi-protocol準拠のMLS DS。 │
-│roster    ││identity       ││3プロセス本番稼働: normal/anon（group chat   │
-│ingress   ││SQLite queue   ││ hub、client未配線）、self（このidentityの  │
-│SMTP      ││Coordinate/    ││Self Vaultとして main.ts から実配線済み）    │
-│legacy    ││Pickup/relay-  ││                                            │
-│Vault     ││hop            ││                                            │
-│delivery  ││               ││                                            │
-└────┬─────┘└──────────────┘└────────────────────────────────────────────┘
+└──┬──────────┬─────────────────────────────┬─────────────────────────────┘
+   │signed    │DIDComm v2 encrypted HTTP     │MIMI Vault sync wire
+   │narrow    │（1:1・group chat の両方が    │（DIDComm ではない、
+   │HTTP      │ 同じ経路。group chat は      │ biset-mimi 独自 protocol。
+   │          │ full-mesh pairwise fan-out、 │ self モードだけに向く）
+   │          │ 共有 MLS state を持たない）  │
+   ▼          ▼                              ▼
+┌─ Core ───┐┌─ Mediator ───────────────────┐┌─ biset-mimi (self = Vault) ─┐  ┌─ biset-mimi (group = hub) ──┐
+│did.jsonl ││did:peer identity              ││このidentityのSelf Vault用。   │  │normal/anon モード。           │
+│roster    ││SQLite queue                   ││main.ts から実配線済み——      │  │複数 OIDC owner を跨ぐ一般     │
+│ingress   ││Coordinate/Pickup/relay-hop    ││Vault mutation を運ぶ MLS      │  │group chat hub。                │
+│SMTP      ││1:1・group chat 両方をここで   ││application message チャネル  │  │client からの呼び出し経路なし  │
+│legacy    ││authcrypt/pickup する          ││                              │  │（サーバーとして稼働のみ）     │
+│Vault     ││                                ││                              │  │                                │
+│delivery  ││                                ││                              │  │                                │
+└────┬─────┘└───────────────────────────────┘└──────────────────────────────┘  └────────────────────────────────┘
      │ SMTP / DNS MX
      ▼
 外部メールシステム
@@ -83,7 +84,6 @@ Bisetの主要コンポーネントは五つである。現行の製品UIから�
 | Mail (SMTP/JMAP) | 従来のメール | 稼働中（§11） |
 | DIDComm 1:1 chat | ペアワイズ・共有鍵なし | 稼働中（§12.2〜12.5） |
 | DIDComm group chat | フルメッシュ・ペアワイズfan-out、MLS無し | 稼働中、2026-09-03追加（§12.6） |
-| ~~MLS Conversation Groups~~ | ~~MLS共有鍵グループ~~ | **完全削除済み**（2026-09-03、commit `7369f15`） |
 | MIMI Self Vault | 単一identityの複数端末同期（対人チャットではない） | 稼働中（§9） |
 
 このうち後の4つは互いに独立した実装であり、コード上で一つのパイプに統合されているわけではない。
