@@ -36,7 +36,7 @@ describe('buildInboundMailForward', () => {
       fetchServing(undefined),
     )
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error).toMatch(/is not a mail\.biset\.md address/)
+    if (!result.ok) expect(result.error).toMatch(/is not a biset\.md address/)
   })
 
   test('fails clearly when the recipient has no routing.json', async () => {

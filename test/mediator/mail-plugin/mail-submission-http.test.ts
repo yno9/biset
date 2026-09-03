@@ -19,7 +19,7 @@ function unsignedRequest(overrides: Partial<Omit<MailSubmissionRequestV1, 'signa
     version: 1,
     identityId,
     deviceId: 'device-1',
-    mailFrom: 'alice@mail.biset.example',
+    mailFrom: 'alice@biset.example',
     rcptTo: ['bob@external.example'],
     rawRfc5322: new TextEncoder().encode('Subject: hi\r\n\r\nhello'),
     submittedAt: '2026-09-04T00:00:00.000Z',
@@ -80,7 +80,7 @@ describe('createMailSubmissionHttpHandler', () => {
     const rootPrivateKey = ed25519.utils.randomSecretKey()
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
     // Validly signed by alice's own key, but claiming to send AS a different mailbox.
-    const unsigned = unsignedRequest({ mailFrom: 'someone-else@mail.biset.example' })
+    const unsigned = unsignedRequest({ mailFrom: 'someone-else@biset.example' })
     const signature = ed25519.sign(mailSubmissionSigningBytes(unsigned), rootPrivateKey)
 
     let deliverMailCalled = false
