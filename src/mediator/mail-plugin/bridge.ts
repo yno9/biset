@@ -7,7 +7,7 @@
 // Split into resolve (network -- RCPT TO time, listener.ts's own
 // resolveRecipient) and pack (pure -- DATA time, once per accepted
 // recipient) so a multi-recipient SMTP transaction resolves each address
-// exactly once, at the point core/adapters/mail-smtp-protocol.ts's
+// exactly once, at the point this directory's own mail-smtp-protocol.ts's
 // SmtpSession already carries a per-recipient `resolution` from RCPT
 // through to acceptIngress (that generic parameter's whole reason for
 // existing -- see its own header).

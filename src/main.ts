@@ -10,7 +10,6 @@ import {
   buildVaultCryptoBoundary,
   buildVaultDeliveryProjector,
   enableDidComm,
-  ensureMimiCoreRoster,
   ensureMimiVaultRoom,
   fromHex,
   mailFromForIdentity,
@@ -61,7 +60,6 @@ import { adoptPendingMove } from './identity/webvh/adopt-move.ts'
 import { encodeMultikey } from './identity/webvh/multikey.ts'
 import { memberDeviceCredentialBytes, memberKids, ownMlsDeviceCredential, ownSignaturePrivateKey } from './mls/group.ts'
 import { createMlsDeviceCredential, encodeMlsDeviceCredential } from './mls/device-credential.ts'
-import { CoreRosterInstallTransport } from './mls/core-roster-install-transport.ts'
 import { DidCommDeviceKeyReader } from './vault/didcomm-device-key-reader.ts'
 import { DidCommDeviceKeyVaultSink } from './vault/didcomm-device-key-sink.ts'
 import { OpenPgpCredentialReader } from './vault/openpgp-credential-reader.ts'
@@ -206,13 +204,6 @@ export async function bootClient(): Promise<void> {
   // doc comment covers why this same call is repeated again, cheaply,
   // further down.
   const mimiVaultRoom = mimiVaultConfigured ? await ensureMimiVaultRoom(identity, selfGroupStore, mimiSelfBaseUrl) : undefined
-  // Core mail ingress authorization checks core's OWN roster, entirely
-  // separate from the MIMI room's own membership above -- best-effort,
-  // same treatment as every other capability this function just provisions
-  // on its own (see enableDidComm's own note on that convention).
-  if (mimiVaultRoom && coreBaseUrl) {
-    await ensureMimiCoreRoster(identity, mimiVaultRoom, coreBaseUrl).catch(e => console.warn('[mimi-vault/core-roster]', e instanceof Error ? e.message : e))
-  }
   // Catch up MLS and repair every local SegmentKey wrap before any inbox,
   // credential, or relationship reader attempts decryption. Running this
   // near the end of boot used to render an empty inbox first; if a segment

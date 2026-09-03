@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import {
   parsePath, SmtpIngressCongestionError, SmtpSession, splitCommandLine,
-} from '../../../src/core/adapters/mail-smtp-protocol.ts'
-import type { AcceptIngressInput, SmtpEffect, SmtpRecipientResolution, SmtpSessionDeps } from '../../../src/core/adapters/mail-smtp-protocol.ts'
+} from '../../../src/mediator/mail-plugin/mail-smtp-protocol.ts'
+import type { AcceptIngressInput, SmtpEffect, SmtpRecipientResolution, SmtpSessionDeps } from '../../../src/mediator/mail-plugin/mail-smtp-protocol.ts'
 
 function enc(text: string): Uint8Array {
   return new TextEncoder().encode(text)

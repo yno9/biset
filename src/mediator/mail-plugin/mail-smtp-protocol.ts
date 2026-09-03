@@ -1,8 +1,8 @@
 // Pure, socket-agnostic inbound SMTP session state machine (PLAN.md §6.2).
 // No node:net/bun import here on purpose -- fed bytes via feed(), returns an
 // ordered list of effects (replies to write, a STARTTLS request, a close
-// request) for the socket-owning caller (mail-smtp-listener.ts) to perform.
-// Fully unit-testable with plain byte arrays and stub async deps.
+// request) for the socket-owning caller (this directory's listener.ts) to
+// perform. Fully unit-testable with plain byte arrays and stub async deps.
 //
 // Protocol shape (command grammar, STARTTLS discard-on-upgrade semantics,
 // 3-strikes error handling) is adapted from the archived Rust relay's

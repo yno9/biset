@@ -1,11 +1,11 @@
-// The Bun.listen/STARTTLS socket plumbing mail-smtp-listener.ts owns, pulled
-// out generic over `TResolution` so mediator/mail-plugin/listener.ts can
-// reuse the exact same connection handling (greeting, plaintext data,
-// STARTTLS upgrade discarding pre-upgrade session state, TLS data) instead
-// of a second copy of it (feedback: unify common logic -- this is the one
-// file in the mail adapter that touches a real socket, same as this file's
-// own predecessor's header already said of itself). Still nothing here
-// touches node:net/node:tls; Bun.listen/socket.upgradeTLS only.
+// Generic Bun.listen/STARTTLS socket plumbing (connection handling:
+// greeting, plaintext data, STARTTLS upgrade discarding pre-upgrade session
+// state, TLS data), parameterized over `TResolution` -- listener.ts's own
+// SMTP server composes this. Formerly lived in src/core/adapters/, shared
+// with biset-core's own SMTP listener; moved here 2026-09-03 when
+// biset-core was retired (mail was never actually received through it) and
+// this plugin became the sole consumer. Still nothing here touches
+// node:net/node:tls; Bun.listen/socket.upgradeTLS only.
 import { SmtpSession, type AcceptIngressInput, type SmtpEffect, type SmtpSessionDeps } from './mail-smtp-protocol.ts'
 
 export interface SmtpSocketServerTlsFileConfig {

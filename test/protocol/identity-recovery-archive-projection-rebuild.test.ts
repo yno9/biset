@@ -13,7 +13,6 @@ import { buildLocalJmapProjectionRebuild } from '../../src/identity/bootstrap.ts
 import { createMlsGroup, generateOwnKeyPackage } from '../../src/mls/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
-import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { MlsVaultEpochKeyResolver } from '../../src/mls/vault-epoch.ts'
 import { StoredMlsSelfGroupProvider } from '../../src/mls/store.ts'
 import { createRecoveryArchive, createRecoveryKey, type RecoveryArchiveSnapshotV1 } from '../../src/vault/recovery-archive.ts'
@@ -26,14 +25,9 @@ import type { RecoveryArchiveImportCommit, SegmentKeyWrapReader, VaultRecordRead
 import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
+const selfGroupId = 'test-self-group'
 const device = await mlsDeviceFixture(identityId)
 const deviceKid = device.kid
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return bytes
-}
 
 function memorySelfGroupStore(): MlsSelfGroupStateStore {
   const rows = new Map<string, LoadedMlsSelfGroup>()
@@ -64,9 +58,9 @@ function memoryArchiveTarget(): { commitRecoveryArchive(input: RecoveryArchiveIm
 describe('projection rebuild after a real recovery archive import', () => {
   test('reconstructs the correct Local JMAP projection from archive-imported records, re-wrapped to the current real MLS epoch', async () => {
     const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
-    const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
+    const state = await createMlsGroup(new TextEncoder().encode(selfGroupId), kp)
     const selfGroupStore = memorySelfGroupStore()
-    await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
+    await selfGroupStore.save(identityId, selfGroupId, state)
 
     // Build the pre-loss snapshot: a real mail item this same device wrote
     // before its local storage was lost, encrypted under a segment key the
@@ -105,7 +99,7 @@ describe('projection rebuild after a real recovery archive import', () => {
     const target = memoryArchiveTarget()
     const imported = await importRecoveryArchive(archive, recoveryKey, epochs, signer, target, '2026-08-24T01:00:00.000Z')
     expect(imported.keyWraps).toHaveLength(1)
-    expect(imported.keyWraps[0]!.selfGroupId).toBe(selfGroupIdHex(identityId))
+    expect(imported.keyWraps[0]!.selfGroupId).toBe(selfGroupId)
 
     // Rebuild: exactly what importRecoveryArchive's own doc comment says the
     // caller must still do before presenting the account as restored.

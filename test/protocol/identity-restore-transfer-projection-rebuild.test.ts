@@ -12,7 +12,6 @@ import { buildLocalJmapProjectionRebuild, buildRestoreTransferSource, buildResto
 import { createMlsGroup, epochOf, generateOwnKeyPackage } from '../../src/mls/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
-import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { buildMailMessageAdd } from '../../src/vault/mail-message.ts'
 import { buildVaultManifest } from '../../src/vault/manifest.ts'
 import { createRestoreTransferChunk, verifyRestoreTransferChunk } from '../../src/vault/restore-transfer.ts'
@@ -24,14 +23,9 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
+const selfGroupId = 'test-self-group'
 const device = await mlsDeviceFixture(identityId)
 const deviceKid = device.kid
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return bytes
-}
 
 function memorySelfGroupStore(): MlsSelfGroupStateStore {
   const rows = new Map<string, LoadedMlsSelfGroup>()
@@ -91,9 +85,9 @@ function memoryReceiverStore(): RestoreTransferReceiverStore & VaultRecordReader
 describe('projection rebuild after a real peer restore transfer', () => {
   test('reconstructs the correct Local JMAP projection from records a restore transfer actually committed', async () => {
     const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
-    const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
+    const state = await createMlsGroup(new TextEncoder().encode(selfGroupId), kp)
     const selfGroupStore = memorySelfGroupStore()
-    await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
+    await selfGroupStore.save(identityId, selfGroupId, state)
     const epoch = mlsEpoch(epochOf(state))
 
     // The source device already has a real mail item.

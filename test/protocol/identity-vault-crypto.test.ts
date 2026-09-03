@@ -15,7 +15,6 @@ import {
 } from '../../src/mls/group.ts'
 import { unwrapSegmentKey } from '../../src/vault/crypto.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
-import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../../src/vault/storage-root.ts'
 import { mlsEpoch } from '../../src/protocol/ids.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
@@ -24,6 +23,7 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
+const selfGroupId = 'test-self-group'
 const deviceA = await mlsDeviceFixture(identityId)
 const deviceB = await mlsDeviceFixture(identityId, deviceA.rootPrivateKey)
 const deviceKid = deviceA.kid
@@ -35,12 +35,6 @@ function memorySelfGroupStore(): MlsSelfGroupStateStore {
     async save(id, selfGroupId, state) { rows.set(id, { selfGroupId, state }) },
     async load(id) { return rows.get(id) },
   }
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return bytes
 }
 
 function memoryWrapStore(): SegmentKeyWrapReader & SegmentKeyWrapWriter {
@@ -72,9 +66,9 @@ function memorySegmentStore(): ActiveVaultSegmentStore & { all(): VaultSegmentRe
 
 async function setupGenesisSelfGroup() {
   const kp = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
-  const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
+  const state = await createMlsGroup(new TextEncoder().encode(selfGroupId), kp)
   const selfGroupStore = memorySelfGroupStore()
-  await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
+  await selfGroupStore.save(identityId, selfGroupId, state)
   expect(memberKids(state, identityId)).toEqual([deviceKid])
   return { selfGroupStore, state }
 }
@@ -89,11 +83,11 @@ describe('buildVaultCryptoBoundary', () => {
     const { deriveVaultEpochKey } = await import('../../src/mls/vault-epoch.ts')
     const { exportSecret } = await import('../../src/mls/group.ts')
     const epoch = mlsEpoch(epochOf(state))
-    const vek = await deriveVaultEpochKey({ selfGroupId: selfGroupIdHex(identityId), epoch, exportSecret: (label, ctx, len) => exportSecret(state, label, ctx, len) })
+    const vek = await deriveVaultEpochKey({ selfGroupId: selfGroupId, epoch, exportSecret: (label, ctx, len) => exportSecret(state, label, ctx, len) })
 
     const segmentKey = crypto.getRandomValues(new Uint8Array(32))
     const wrap = await createSegmentKeyWrap(vek, segmentKey, {
-      identityId, selfGroupId: selfGroupIdHex(identityId), segmentId: 'segment-1',
+      identityId, selfGroupId: selfGroupId, segmentId: 'segment-1',
       sourceEpoch: epoch, recipientEpoch: epoch, grantorDeviceId: deviceKid, grantedAt: new Date().toISOString(),
     }, boundary.signer)
     await wraps.writeSegmentKeyWrap(wrap)
@@ -133,7 +127,7 @@ describe('buildVaultCryptoBoundary', () => {
     // the same way reflectPendingSelfGroupCommits/maintainSelfGroup would.
     const result = await rekey(state)
     confirmCommit(result)
-    await selfGroupStore.save(identityId, selfGroupIdHex(identityId), result.state)
+    await selfGroupStore.save(identityId, selfGroupId, result.state)
 
     const third = await boundary.activeSegment()
     expect(third.segmentId).not.toBe(first.segmentId)
@@ -158,7 +152,7 @@ describe('buildVaultCryptoBoundary', () => {
       confirmCommit(advanced)
       current = advanced.state
     }
-    await selfGroupStore.save(identityId, selfGroupIdHex(identityId), current)
+    await selfGroupStore.save(identityId, selfGroupId, current)
 
     expect(await repairCurrentLocalSegmentKeyWraps(selfGroupStore, segments, wraps, record)).toBe(1)
     expect(await boundary.resolver.resolveSegmentKey(identityId, original.segmentId)).toEqual(original.segmentKey)
@@ -190,7 +184,7 @@ describe('buildVaultCryptoBoundary', () => {
     // Device A creates the group; device B external-joins it (both real MLS
     // operations, no DS involved -- device A applies B's commit directly).
     const kpA = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
-    let stateA = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kpA)
+    let stateA = await createMlsGroup(new TextEncoder().encode(selfGroupId), kpA)
     const kpB = await generateOwnKeyPackage(deviceB.credential, deviceB.signaturePrivateKey)
     const joinResult = await joinGroupExternally(await groupInfoForExternalJoin(stateA), kpB)
     const stateB = joinResult.state
@@ -198,7 +192,7 @@ describe('buildVaultCryptoBoundary', () => {
     expect(new Set(memberKids(stateA, identityId))).toEqual(new Set([deviceKid, deviceBKid]))
 
     const selfGroupStoreA = memorySelfGroupStore()
-    await selfGroupStoreA.save(identityId, selfGroupIdHex(identityId), stateA)
+    await selfGroupStoreA.save(identityId, selfGroupId, stateA)
     const recordA: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
     const segments = memorySegmentStore()
     const wraps = memoryWrapStore()
@@ -214,7 +208,7 @@ describe('buildVaultCryptoBoundary', () => {
     const removeResult = await removeMembers(stateA, [deviceBKid])
     confirmCommit(removeResult)
     stateA = removeResult.state
-    await selfGroupStoreA.save(identityId, selfGroupIdHex(identityId), stateA)
+    await selfGroupStoreA.save(identityId, selfGroupId, stateA)
     expect(memberKids(stateA, identityId)).toEqual([deviceKid])
 
     // A new segment minted AFTER the removal, under the new (post-removal) epoch.
@@ -229,7 +223,7 @@ describe('buildVaultCryptoBoundary', () => {
     const { deriveVaultEpochKey } = await import('../../src/mls/vault-epoch.ts')
     const staleEpoch = mlsEpoch(epochOf(stateB))
     const staleVek = await deriveVaultEpochKey({
-      selfGroupId: selfGroupIdHex(identityId), epoch: staleEpoch,
+      selfGroupId: selfGroupId, epoch: staleEpoch,
       exportSecret: (label, ctx, len) => exportSecret(stateB, label, ctx, len),
     })
     const verifierThatTrustsAnyone = { verify: async () => true }

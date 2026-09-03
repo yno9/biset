@@ -15,7 +15,6 @@ import {
 } from '../../src/mls/group.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
-import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { deriveVaultEpochKey } from '../../src/mls/vault-epoch.ts'
 import { createVaultEvent } from '../../src/vault/events.ts'
 import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
@@ -29,16 +28,11 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
+const selfGroupId = 'test-self-group'
 const deviceA = await mlsDeviceFixture(identityId)
 const deviceB = await mlsDeviceFixture(identityId, deviceA.rootPrivateKey)
 const deviceKid = deviceA.kid
 const deviceBKid = deviceB.kid
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return bytes
-}
 
 function memorySelfGroupStore(): MlsSelfGroupStateStore {
   const rows = new Map<string, LoadedMlsSelfGroup>()
@@ -67,9 +61,9 @@ function memoryRecordReader(events: VaultEventV1[], objects: VaultObjectV1[]): V
 describe('peer restore transfer channel security', () => {
   test('a wrap for a superseded epoch is rejected once the source has rekeyed past it', async () => {
     const kp = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
-    let state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
+    let state = await createMlsGroup(new TextEncoder().encode(selfGroupId), kp)
     const selfGroupStore = memorySelfGroupStore()
-    await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
+    await selfGroupStore.save(identityId, selfGroupId, state)
     const staleEpoch = mlsEpoch(epochOf(state))
 
     const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
@@ -81,9 +75,9 @@ describe('peer restore transfer channel security', () => {
     const segmentKey = createSegmentKey()
     const loadState = async () => state
     const signer = new MlsMembershipSegmentKeyWrapSigner(deviceKid, loadState)
-    const vek = await deriveVaultEpochKey({ selfGroupId: selfGroupIdHex(identityId), epoch: staleEpoch, exportSecret: (label, ctx, len) => exportSecret(state, label, ctx, len) })
+    const vek = await deriveVaultEpochKey({ selfGroupId: selfGroupId, epoch: staleEpoch, exportSecret: (label, ctx, len) => exportSecret(state, label, ctx, len) })
     await wraps.writeSegmentKeyWrap(await createSegmentKeyWrap(vek, segmentKey, {
-      identityId, selfGroupId: selfGroupIdHex(identityId), segmentId: 'segment-1',
+      identityId, selfGroupId: selfGroupId, segmentId: 'segment-1',
       sourceEpoch: staleEpoch, recipientEpoch: staleEpoch, grantorDeviceId: deviceKid, grantedAt: new Date().toISOString(),
     }, signer))
 
@@ -107,7 +101,7 @@ describe('peer restore transfer channel security', () => {
     const result = await rekey(state)
     confirmCommit(result)
     state = result.state
-    await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
+    await selfGroupStore.save(identityId, selfGroupId, state)
     const currentEpoch = mlsEpoch(epochOf(state))
     expect(currentEpoch).not.toBe(staleEpoch)
 
@@ -123,7 +117,7 @@ describe('peer restore transfer channel security', () => {
     // Device A creates the group; device B external-joins it -- both real
     // MLS operations, matching identity-vault-crypto.test.ts's Remove test.
     const kpA = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
-    let stateA = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kpA)
+    let stateA = await createMlsGroup(new TextEncoder().encode(selfGroupId), kpA)
     const kpB = await generateOwnKeyPackage(deviceB.credential, deviceB.signaturePrivateKey)
     const joinResult = await joinGroupExternally(await groupInfoForExternalJoin(stateA), kpB)
     const stateB = joinResult.state
@@ -131,7 +125,7 @@ describe('peer restore transfer channel security', () => {
     const staleEpochForB = mlsEpoch(epochOf(stateB))
 
     const selfGroupStoreA = memorySelfGroupStore()
-    await selfGroupStoreA.save(identityId, selfGroupIdHex(identityId), stateA)
+    await selfGroupStoreA.save(identityId, selfGroupId, stateA)
     const recordA: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
     const wraps = memoryWrapStore()
 
@@ -151,7 +145,7 @@ describe('peer restore transfer channel security', () => {
     const removeResult = await removeMembers(stateA, [deviceBKid])
     confirmCommit(removeResult)
     stateA = removeResult.state
-    await selfGroupStoreA.save(identityId, selfGroupIdHex(identityId), stateA)
+    await selfGroupStoreA.save(identityId, selfGroupId, stateA)
     expect(mlsEpoch(epochOf(stateA))).not.toBe(staleEpochForB)
 
     // B (still believing its own pre-removal epoch is current) asks A's
@@ -165,7 +159,7 @@ describe('peer restore transfer channel security', () => {
 
   test('a wrap signed by a now-removed grantor no longer verifies, even though the signature itself is valid', async () => {
     const kpA = await generateOwnKeyPackage(deviceA.credential, deviceA.signaturePrivateKey)
-    let stateA = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kpA)
+    let stateA = await createMlsGroup(new TextEncoder().encode(selfGroupId), kpA)
     const kpB = await generateOwnKeyPackage(deviceB.credential, deviceB.signaturePrivateKey)
     const joinResult = await joinGroupExternally(await groupInfoForExternalJoin(stateA), kpB)
     const stateB = joinResult.state
@@ -176,17 +170,17 @@ describe('peer restore transfer channel security', () => {
     // Device B grants a wrap for the shared epoch WHILE still a member --
     // a legitimate grant at the moment it was signed.
     const vek = await deriveVaultEpochKey({
-      selfGroupId: selfGroupIdHex(identityId), epoch: sharedEpoch,
+      selfGroupId: selfGroupId, epoch: sharedEpoch,
       exportSecret: (label, ctx, len) => exportSecret(stateB, label, ctx, len),
     })
     const signerB = new MlsMembershipSegmentKeyWrapSigner(deviceBKid, async () => stateB)
     const wrap = await createSegmentKeyWrap(vek, createSegmentKey(), {
-      identityId, selfGroupId: selfGroupIdHex(identityId), segmentId: 'segment-1',
+      identityId, selfGroupId: selfGroupId, segmentId: 'segment-1',
       sourceEpoch: sharedEpoch, recipientEpoch: sharedEpoch, grantorDeviceId: deviceBKid, grantedAt: new Date().toISOString(),
     }, signerB)
 
     const selfGroupStoreA = memorySelfGroupStore()
-    await selfGroupStoreA.save(identityId, selfGroupIdHex(identityId), stateA)
+    await selfGroupStoreA.save(identityId, selfGroupId, stateA)
     const verifierBeforeRemoval = buildRestoreTransferVerifier(selfGroupStoreA, identityId)
     expect(await verifierBeforeRemoval.verifyCurrentEpochWrap(wrap)).toBe(true)
 
@@ -196,7 +190,7 @@ describe('peer restore transfer channel security', () => {
     const removeResult = await removeMembers(stateA, [deviceBKid])
     confirmCommit(removeResult)
     stateA = removeResult.state
-    await selfGroupStoreA.save(identityId, selfGroupIdHex(identityId), stateA)
+    await selfGroupStoreA.save(identityId, selfGroupId, stateA)
 
     const verifierAfterRemoval = buildRestoreTransferVerifier(selfGroupStoreA, identityId)
     expect(await verifierAfterRemoval.verifyCurrentEpochWrap(wrap)).toBe(false)

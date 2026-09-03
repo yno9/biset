@@ -9,7 +9,6 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { buildLocalJmapProjectionRebuild, buildLocalJmapReadModel, buildVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
 import { createMlsGroup } from '../../src/mls/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
-import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { buildMailMessageAdd } from '../../src/vault/mail-message.ts'
 import { IndexedDbVaultStore } from '../../src/vault/store.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
@@ -17,12 +16,7 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
 const identityId = 'did:web:alice.example'
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return bytes
-}
+const selfGroupId = 'test-self-group'
 
 function memorySelfGroupStore(): MlsSelfGroupStateStore {
   const rows = new Map<string, LoadedMlsSelfGroup>()
@@ -46,9 +40,9 @@ describe('buildLocalJmapReadModel', () => {
     const device = await mlsDeviceFixture(identityId)
     const deviceKid = device.kid
     const kp = device.own
-    const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
+    const state = await createMlsGroup(new TextEncoder().encode(selfGroupId), kp)
     const selfGroupStore = memorySelfGroupStore()
-    await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
+    await selfGroupStore.save(identityId, selfGroupId, state)
 
     const store = await IndexedDbVaultStore.open()
     const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }

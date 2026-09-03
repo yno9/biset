@@ -11,7 +11,6 @@ import { buildRestoreTransferSource, buildRestoreTransferVerifier } from '../../
 import { createMlsGroup, epochOf, exportSecret, generateOwnKeyPackage } from '../../src/mls/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
-import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { deriveVaultEpochKey } from '../../src/mls/vault-epoch.ts'
 import { createVaultEvent } from '../../src/vault/events.ts'
 import { createSegmentKeyWrap, unwrapSegmentKey } from '../../src/vault/crypto.ts'
@@ -25,14 +24,9 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
+const selfGroupId = 'test-self-group'
 const device = await mlsDeviceFixture(identityId)
 const deviceKid = device.kid
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return bytes
-}
 
 function memorySelfGroupStore(): MlsSelfGroupStateStore {
   const rows = new Map<string, LoadedMlsSelfGroup>()
@@ -61,9 +55,9 @@ function memoryRecordReader(events: VaultEventV1[], objects: VaultObjectV1[]): V
 describe('buildRestoreTransferSource', () => {
   test('a restore-transfer chunk built by the source verifies, and the requester decrypts the transferred object', async () => {
     const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
-    const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
+    const state = await createMlsGroup(new TextEncoder().encode(selfGroupId), kp)
     const selfGroupStore = memorySelfGroupStore()
-    await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
+    await selfGroupStore.save(identityId, selfGroupId, state)
     const epoch = mlsEpoch(epochOf(state))
 
     // Device A already has one segment (with real content in it) from before
@@ -73,9 +67,9 @@ describe('buildRestoreTransferSource', () => {
     const segmentKey = createSegmentKey()
     const loadState = async () => state
     const signer = new MlsMembershipSegmentKeyWrapSigner(deviceKid, loadState)
-    const vek = await deriveVaultEpochKey({ selfGroupId: selfGroupIdHex(identityId), epoch, exportSecret: (label, ctx, len) => exportSecret(state, label, ctx, len) })
+    const vek = await deriveVaultEpochKey({ selfGroupId: selfGroupId, epoch, exportSecret: (label, ctx, len) => exportSecret(state, label, ctx, len) })
     const originalWrap = await createSegmentKeyWrap(vek, segmentKey, {
-      identityId, selfGroupId: selfGroupIdHex(identityId), segmentId: 'segment-1',
+      identityId, selfGroupId: selfGroupId, segmentId: 'segment-1',
       sourceEpoch: epoch, recipientEpoch: epoch, grantorDeviceId: deviceKid, grantedAt: new Date().toISOString(),
     }, signer)
     const wraps = memoryWrapStore()
@@ -108,7 +102,7 @@ describe('buildRestoreTransferSource', () => {
     expect(ok).toBe(true)
 
     // The requester unwraps the SAME SegmentKey via its own VEK for this epoch...
-    const requesterVek = await deriveVaultEpochKey({ selfGroupId: selfGroupIdHex(identityId), epoch, exportSecret: (label, ctx, len) => exportSecret(state, label, ctx, len) })
+    const requesterVek = await deriveVaultEpochKey({ selfGroupId: selfGroupId, epoch, exportSecret: (label, ctx, len) => exportSecret(state, label, ctx, len) })
     const unwrapped = await unwrapSegmentKey(requesterVek, chunk.keyWraps[0]!, verifier.eventVerifier)
     expect(unwrapped).toEqual(segmentKey)
 
@@ -119,9 +113,9 @@ describe('buildRestoreTransferSource', () => {
 
   test('readCurrentEpochWraps refuses to grant for an epoch that is not this device\'s own current one', async () => {
     const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
-    const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
+    const state = await createMlsGroup(new TextEncoder().encode(selfGroupId), kp)
     const selfGroupStore = memorySelfGroupStore()
-    await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
+    await selfGroupStore.save(identityId, selfGroupId, state)
 
     const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
     const source = buildRestoreTransferSource(memoryRecordReader([], []), memoryWrapStore(), selfGroupStore, record)

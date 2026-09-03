@@ -10,7 +10,6 @@ import { buildVaultCryptoBoundary, buildVaultDeliveryProjector } from '../../src
 import { createMlsGroup, generateOwnKeyPackage } from '../../src/mls/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
-import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { buildVaultMutation } from '../../src/vault/mutations.ts'
 import { encodeVaultDeliveryPack, decodeVaultDeliveryPack } from '../../src/vault/delivery-pack.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
@@ -20,14 +19,9 @@ import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 import type { LocalJmapSnapshot } from '../../src/local-jmap/gateway.ts'
 
 const identityId = 'did:web:alice.example'
+const selfGroupId = 'test-self-group'
 const device = await mlsDeviceFixture(identityId)
 const deviceKid = device.kid
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return bytes
-}
 
 function memorySelfGroupStore(): MlsSelfGroupStateStore {
   const rows = new Map<string, LoadedMlsSelfGroup>()
@@ -60,9 +54,9 @@ function memorySegmentStore(): ActiveVaultSegmentStore {
 describe('buildVaultDeliveryProjector', () => {
   test('verifies and projects a real vault-delivery pack end to end', async () => {
     const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
-    const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
+    const state = await createMlsGroup(new TextEncoder().encode(selfGroupId), kp)
     const selfGroupStore = memorySelfGroupStore()
-    await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
+    await selfGroupStore.save(identityId, selfGroupId, state)
 
     const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
     const wraps = memoryWrapStore()
@@ -91,9 +85,9 @@ describe('buildVaultDeliveryProjector', () => {
 
   test('rejects a pack whose event was signed by a device never in the self group', async () => {
     const kp = await generateOwnKeyPackage(device.credential, device.signaturePrivateKey)
-    const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
+    const state = await createMlsGroup(new TextEncoder().encode(selfGroupId), kp)
     const selfGroupStore = memorySelfGroupStore()
-    await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
+    await selfGroupStore.save(identityId, selfGroupId, state)
 
     const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
     const wraps = memoryWrapStore()

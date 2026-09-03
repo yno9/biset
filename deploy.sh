@@ -5,11 +5,6 @@
 #   anchor  : Identity Provider + did:webvh host src/anchor/*
 #             → v1:/opt/biset/bin/biset-anchor (systemd biset-anchor.service,
 #             listen 127.0.0.1:8788)。旧anchor.service:8770は2026-08-30に廃止・削除済み。
-#   core    : Vault Core（narrow mediation API・mail submission 等、PLAN.md） src/core/index.ts
-#             → v1:/root/biset/core/  (systemd biset-core.service, listen 127.0.0.1:8790)
-#             anchor とは別プロセスで共存。webvh log は今も anchor 側の役目のまま
-#             （src/core にはその機能がない、test/protocol/support/webvh-log-fixture.ts の
-#             コメント参照）。Caddy の biset.md ブロックで /v1/* だけをこちらへ転送する。
 #   smtp    : メールrelay      ~/biset/jmapsmtp     → v1:/root/jmapsmtp/      (systemd jmapsmtp, mail.biset.md)
 #   ap      : ActivityPub relay ~/go-jmapap         → v1:/root/jmapap/        (systemd jmapap,   ap.biset.md)
 #   relay   : smtp + ap をまとめて
@@ -35,7 +30,7 @@
 #   replace github.com/yno9/go-jmapserver => /Users/n/go-jmapserver
 # を持つので、core を直したら ap のバイナリを作り直す必要がある。
 #
-# 使い方: ./deploy.sh [app|landing|anchor|core|didcomm-mediator|smtp|ap|relay|all]   (引数なし = all)
+# 使い方: ./deploy.sh [app|landing|anchor|didcomm-mediator|smtp|ap|relay|all]   (引数なし = all)
 set -euo pipefail
 
 HOST=v1
@@ -43,8 +38,6 @@ APP_DST=/root/biset/app
 LANDING_DST=/root/biset/home
 ANCHOR_HOST=v1
 ANCHOR_DST=/opt/biset/bin
-CORE_HOST=v1
-CORE_DST=/root/biset/core
 DIDCOMM_MEDIATOR_HOST=v1
 DIDCOMM_MEDIATOR_DST=/opt/biset/didcomm-mediator
 DIDCOMM_MEDIATOR_PUBLIC_HOST="${DIDCOMM_MEDIATOR_PUBLIC_HOST:-mediator.biset.md}"
@@ -151,36 +144,6 @@ deploy_anchor() {
   curl -fsS https://biset.md/.well-known/openid-configuration >/dev/null \
     || fail "anchor: 公開OIDC discovery失敗"
   echo "✓ anchor OK"
-}
-
-deploy_core() {
-  echo "== core: build (linux-x64 cross-compile) =="
-  ( cd "$ROOT" && bun run build:core )
-  [ -f "$ROOT/biset-core" ] || fail "biset-core がない"
-  file "$ROOT/biset-core" | grep -q "x86-64" || fail "biset-core がx86_64バイナリでない（クロスビルド失敗）"
-
-  echo "== core: upload → $CORE_HOST:$CORE_DST =="
-  scp "$ROOT/biset-core" "$CORE_HOST:$CORE_DST/biset-core.new"
-
-  echo "== core: verify arch on remote =="
-  ssh "$CORE_HOST" "file $CORE_DST/biset-core.new" | grep -q "x86-64" || fail "core: リモートのbiset-core.newがx86_64でない"
-
-  echo "== core: swap + restart (systemd) =="
-  ssh "$CORE_HOST" "
-    set -e
-    cd $CORE_DST
-    chmod +x biset-core.new
-    [ -f biset-core ] && mv biset-core biset-core.bak-\$(date +%Y%m%d-%H%M%S)
-    mv biset-core.new biset-core
-    systemctl restart biset-core.service
-    sleep 1
-    systemctl is-active --quiet biset-core.service
-  " || fail "core: restart失敗（旧バイナリへの手動ロールバックが必要: $CORE_DST/biset-core.bak-* を biset-core に戻して systemctl restart biset-core.service）"
-
-  echo "== core: verify (health) =="
-  ssh "$CORE_HOST" "curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/healthz" | grep -q "^200$" \
-    || fail "core: ヘルスチェック失敗（/healthz が200を返さない）"
-  echo "✓ core OK"
 }
 
 deploy_didcomm_mediator() {
@@ -338,15 +301,12 @@ case "$target" in
   app)     deploy_app ;;
   landing) deploy_landing ;;
   anchor)  deploy_anchor ;;
-  core)    deploy_core ;;
   didcomm-mediator) deploy_didcomm_mediator ;;
   smtp)    deploy_smtp ;;
   ap)      deploy_ap ;;
   relay)   deploy_smtp; deploy_ap ;;
-  # core は意図的に all に含めない — まだ実験段階（2026-08-24 追加）で、
-  # 既存の anchor/smtp/ap のデプロイと同列の自動対象にはしない。
   all)     deploy_app; deploy_landing; deploy_anchor; deploy_smtp; deploy_ap ;;
-  *)       fail "unknown target: $target (app|landing|anchor|core|didcomm-mediator|smtp|ap|relay|all)" ;;
+  *)       fail "unknown target: $target (app|landing|anchor|didcomm-mediator|smtp|ap|relay|all)" ;;
 esac
 
 echo "== done: $target =="

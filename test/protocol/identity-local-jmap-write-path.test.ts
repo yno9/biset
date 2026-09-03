@@ -12,7 +12,6 @@ import { describe, expect, test } from 'bun:test'
 import { buildVaultCryptoBoundary, buildVaultDeliveryProjector } from '../../src/identity/bootstrap.ts'
 import { createMlsGroup } from '../../src/mls/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
-import { selfGroupIdHex } from '../../src/mls/self-group.ts'
 import { LocalJmapGateway, LocalJmapTransport, MemoryLocalJmapReadModel, type LocalJmapSnapshot } from '../../src/local-jmap/gateway.ts'
 import { VaultBackedLocalJmapMutationSink, type LocalVaultMutationCommitter } from '../../src/local-jmap/vault-mutation-sink.ts'
 import { decodeVaultDeliveryPack } from '../../src/vault/delivery-pack.ts'
@@ -23,12 +22,7 @@ import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return bytes
-}
+const selfGroupId = 'test-self-group'
 
 function memorySelfGroupStore(): MlsSelfGroupStateStore {
   const rows = new Map<string, LoadedMlsSelfGroup>()
@@ -69,9 +63,9 @@ describe('local JMAP write path with a real MLS device signer', () => {
     const device = await mlsDeviceFixture(identityId)
     const deviceKid = device.kid
     const kp = device.own
-    const state = await createMlsGroup(hexToBytes(selfGroupIdHex(identityId)), kp)
+    const state = await createMlsGroup(new TextEncoder().encode(selfGroupId), kp)
     const selfGroupStore = memorySelfGroupStore()
-    await selfGroupStore.save(identityId, selfGroupIdHex(identityId), state)
+    await selfGroupStore.save(identityId, selfGroupId, state)
 
     const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
     const wraps = memoryWrapStore()

@@ -29,8 +29,6 @@ import type { IdentityRecord, IdentityRecordStore } from './record-store.ts'
 import { epochOf, exportSecret, generateOwnKeyPackage, ownMlsDeviceCredential, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
 import { createMlsDeviceCredential, encodeMlsDeviceCredential, type MlsDeviceCredentialV2 } from '../mls/device-credential.ts'
 import { webvhAuthenticationService } from '../mls/webvh-authentication-service.ts'
-import { installCurrentRosterProjection, type SelfGroupSigner } from '../mls/self-group.ts'
-import { CoreRosterInstallTransport } from '../mls/core-roster-install-transport.ts'
 import { StoredSegmentKeyResolver, type SegmentKeyResolver, type VaultEpochKeyResolver } from '../vault/segment-key-resolver.ts'
 import { ActiveVaultSegmentManager, type ActiveVaultSegment } from '../vault/active-segment.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter } from '../vault/store.ts'
@@ -988,37 +986,6 @@ export async function ensureMimiVaultRoom(
   }, fetchImpl).catch(error => console.warn('[mimi-vault/routing-publish]', error instanceof Error ? error.message : error))
 
   return { credential, signaturePrivateKey, selfGroupId, room, transport, provider }
-}
-
-/**
- * Reflects this MIMI-established device into core's OWN roster projection.
- * Core's mail ingress authorization (`rosterBackedVaultDeliveryAuthorizer`)
- * checks that roster, entirely independent of the MIMI room's own
- * membership -- `ensureMimiVaultRoom` above has never touched it, and
- * nothing else does for a MIMI-established device either, so core's
- * ingress-pull endpoint refuses it forever ("ingress pull is not
- * authorised") without this (found live, 2026-09-02). Idempotent and
- * best-effort, same treatment as every other "ensure X" step here.
- *
- * Genesis-only for now (`deliverySeq(0n)`, matching `createNewIdentity`'s
- * own floor for its first device) -- safe to call on every boot regardless
- * (`buildAcceptedSelfGroupProjection` only ever calls
- * `deliveryFloorForNewDevice` for a device truly new to the roster; an
- * already-installed one keeps its own real floor untouched). A SECOND
- * device joining an already-populated core roster still needs an EXISTING
- * trusted device to reflect it in -- the same open limitation the
- * coordinator path has always had (`installCurrentRosterProjection`'s own
- * doc comment), not something new here.
- */
-export async function ensureMimiCoreRoster(
-  identity: IdentityRecord,
-  room: EnsuredMimiVaultRoom,
-  coreBaseUrl: string,
-  fetchImpl: typeof fetch = defaultFetch(),
-): Promise<void> {
-  const rosterTransport = new CoreRosterInstallTransport({ baseUrl: coreBaseUrl, fetch: fetchImpl })
-  const sign: SelfGroupSigner = bytes => ed25519.sign(bytes, room.signaturePrivateKey)
-  await installCurrentRosterProjection(rosterTransport, identity.did, room.credential.deviceKid, room.room.state, sign, async () => deliverySeq(0n))
 }
 
 /**
