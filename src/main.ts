@@ -367,11 +367,21 @@ export async function bootClient(): Promise<void> {
    * any other deployment shape, so every call site below treats a missing
    * trigger as "nothing to nudge" rather than throwing. */
   let triggerMimiVaultSync: (() => Promise<void>) | undefined
-  // Reply-send needs the same signing/MLS boundary maintainSelfGroup already
-  // requires a deviceKid for -- with neither a core to submit through nor a
-  // device identity to sign with, the UI stays read-only, matching how this
-  // file has always treated a missing coreBaseUrl.
-  if (coreBaseUrl && apexDomain && identity.deviceKid) {
+  // Reply-send needs the signing/MLS boundary maintainSelfGroup already
+  // requires a deviceKid for -- without a device identity to sign with, the
+  // UI stays read-only. coreBaseUrl dropped from this gate 2026-09-04: core
+  // is fully retired (no production config sets it any more), and this
+  // condition used to require it -- silently disabling this ENTIRE block
+  // (enableDidComm, mediator polling/registration, mail submit/ingress,
+  // group chat, contact-key relationships, outbox flush -- essentially
+  // everything below) in every production deployment since core was
+  // removed, with no error: `coreBaseUrl` was simply always falsy, so
+  // nothing in here ever ran, and nothing outside it could tell (found
+  // live: a queued mediator message for a real identity was never once
+  // polled for, with zero console output of any kind, because
+  // startMediatorPolling/mediatorPollHandles are set up inside this same
+  // block, further down).
+  if (apexDomain && identity.deviceKid) {
     // Captured once, before enableDidComm's own `identity = ...` reassignment
     // below widens `identity.deviceKid` back to `string | undefined` for
     // TypeScript's control-flow narrowing -- enableDidComm never actually
@@ -944,7 +954,13 @@ export async function bootClient(): Promise<void> {
       signer: boundary.signer,
     })
 
-    syncMailIngress = async () => {
+    // core is fully retired -- no production config sets coreBaseUrl any
+    // more, so this legacy core-pull path (superseded by the independent-
+    // mediator poll further down, ARC.md's 2026-08-27 redesign) now has
+    // nowhere to pull from. Left assigned unconditionally, it used to run
+    // on every poll tick anyway, pointlessly constructing CoreIngressTransport/
+    // CoreVaultDeliveryTransport against an undefined baseUrl.
+    if (coreBaseUrl) syncMailIngress = async () => {
       const mailProjector = buildMailProjector()
       const didCommProjector = buildDidCommProjector()
       const projector: IngressVerifierProjector = {
