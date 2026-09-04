@@ -1,6 +1,6 @@
 import { hkdf } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
-import { canonicalBytes } from '../protocol/canonical.ts'
+import { canonicalBytes } from '../shared/protocol/canonical.ts'
 
 export const VAULT_STORAGE_GROUP_ID = 'urn:biset:vault-storage:v2'
 export const VAULT_STORAGE_EPOCH = '0'

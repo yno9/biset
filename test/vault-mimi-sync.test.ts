@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { sha256Bytes } from '../src/protocol/canonical.ts'
+import { sha256Bytes } from '../src/shared/protocol/canonical.ts'
 import { decodeMimiVaultBatch, flushMimiVaultOutbox, pullMimiVaultPages, sendMimiVaultCheckpoint, synchronizeMimiVault } from '../src/vault/mimi-vault-sync.ts'
 import { encodeMimiVaultChunk, splitMimiVaultPayload } from '../src/vault/mimi-vault-chunks.ts'
 import type { MimiDeliveryEntry } from '../src/mimi/protocol-types.ts'

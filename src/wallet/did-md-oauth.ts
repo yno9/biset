@@ -12,7 +12,7 @@ import { verifyProof, type DataIntegrityProof } from '../identity/webvh/proof.ts
 import { fetchCurrentLog } from '../identity/webvh/log-io.ts'
 import { resolveByDomain, resolveEntries } from '../identity/webvh/resolver.ts'
 import { decodeMlsDeviceCredential, verifyMlsDeviceCredential, verifyMlsDeviceCredentialRoot, type MlsDeviceCredentialV2 } from '../mls/device-credential.ts'
-import { base64urlToBytes } from '../protocol/canonical.ts'
+import { base64urlToBytes } from '../shared/protocol/canonical.ts'
 import { fetchRouting, mimiVaultRoomFromRouting } from '../didcomm/webvh-routing.ts'
 import { deviceKid } from '../didcomm/devicekid.ts'
 import { fetchMediatorInfo } from '../didcomm/mediator-coordinate.ts'

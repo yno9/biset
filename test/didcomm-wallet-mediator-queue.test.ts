@@ -17,8 +17,8 @@
 // shape (acknowledged, queue empty).
 import { describe, expect, test } from 'bun:test'
 import { x25519 } from '@noble/curves/ed25519.js'
-import { equalBytes, sha256Bytes } from '../src/protocol/canonical.ts'
-import type { IngressEnvelopeV1 } from '../src/protocol/ingress.ts'
+import { equalBytes, sha256Bytes } from '../src/shared/protocol/canonical.ts'
+import type { IngressEnvelopeV1 } from '../src/shared/protocol/ingress.ts'
 import { packAuthcrypt, packAnoncrypt } from '../src/didcomm/crypto.ts'
 import { buildPlaintext } from '../src/didcomm/message.ts'
 import { PING } from '../src/didcomm/trust-ping.ts'

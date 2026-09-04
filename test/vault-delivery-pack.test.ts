@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { VAULT_EVENT_KINDS, type VaultEventKind } from '../src/protocol/vault.ts'
+import { VAULT_EVENT_KINDS, type VaultEventKind } from '../src/shared/protocol/vault.ts'
 import { decodeVaultDeliveryPack, encodeVaultDeliveryPack } from '../src/vault/delivery-pack.ts'
 
 describe('vault delivery pack', () => {

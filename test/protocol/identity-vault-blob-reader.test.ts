@@ -10,7 +10,7 @@ import { encryptVaultObject } from '../../src/vault/objects.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultObjectRecord, VaultSegmentRecord } from '../../src/vault/store.ts'
 import type { IdentityRecord } from '../../src/identity/record-store.ts'
-import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
+import type { SegmentKeyWrapV1 } from '../../src/shared/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
 const selfGroupId = 'test-self-group'

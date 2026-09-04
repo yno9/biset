@@ -4,7 +4,7 @@
  * from the MLS GroupId: MIMI routes by room URI while MLS keeps its GroupId
  * cryptographic and opaque. */
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { bytesToBase64url, equalBytes } from '../protocol/canonical.ts'
+import { bytesToBase64url, equalBytes } from '../shared/protocol/canonical.ts'
 import { createMlsGroup, confirmCommit, epochOf, generateOwnKeyPackage, groupInfoEpoch, groupInfoForExternalJoin, joinGroupExternally, removeMembers } from './group.ts'
 import type { MlsDeviceCredentialV2 } from './device-credential.ts'
 import { createCommit, encodeMlsMessage } from './vendor/index.ts'

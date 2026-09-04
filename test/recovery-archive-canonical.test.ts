@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { canonicalBytes, type CanonicalValue } from '../src/protocol/canonical.ts'
+import { canonicalBytes, type CanonicalValue } from '../src/shared/protocol/canonical.ts'
 import { buildVaultManifest } from '../src/vault/manifest.ts'
 import { decodeRecoveryArchiveSnapshot, encodeRecoveryArchiveSnapshot } from '../src/vault/recovery-archive.ts'
 

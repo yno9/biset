@@ -1,6 +1,6 @@
-import { canonicalBytes, domainHash } from '../protocol/canonical.ts'
-import type { DeviceId, IdentityId, VaultEventId, VaultObjectId } from '../protocol/ids.ts'
-import type { VaultEventKind, VaultEventV1 } from '../protocol/vault.ts'
+import { canonicalBytes, domainHash } from '../shared/protocol/canonical.ts'
+import type { DeviceId, IdentityId, VaultEventId, VaultObjectId } from '../shared/protocol/ids.ts'
+import type { VaultEventKind, VaultEventV1 } from '../shared/protocol/vault.ts'
 
 export interface VaultEventDraft {
   identityId: IdentityId

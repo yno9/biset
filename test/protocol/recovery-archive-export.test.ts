@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { createVaultEvent, type VaultEventSigner } from '../../src/vault/events.ts'
 import { createSegmentKey, encryptVaultObject } from '../../src/vault/objects.ts'
 import { createRecoveryArchiveSnapshot } from '../../src/vault/recovery-archive-export.ts'
-import { equalBytes } from '../../src/protocol/canonical.ts'
+import { equalBytes } from '../../src/shared/protocol/canonical.ts'
 
 const identityId = 'did:web:alice.example'
 const signer: VaultEventSigner = {

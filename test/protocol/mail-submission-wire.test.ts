@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { mailSubmissionSigningBytes } from '../../src/protocol/signing.ts'
+import { mailSubmissionSigningBytes } from '../../src/shared/protocol/signing.ts'
 import {
   decodeMailSubmissionRequestWire, decodeMailSubmissionResultWire,
   encodeMailSubmissionRequestWire, encodeMailSubmissionResultWire,
-} from '../../src/protocol/mail-submission-wire.ts'
-import type { MailSubmissionRequestV1, MailSubmissionResultV1 } from '../../src/protocol/mail-submission.ts'
+} from '../../src/shared/protocol/mail-submission-wire.ts'
+import type { MailSubmissionRequestV1, MailSubmissionResultV1 } from '../../src/shared/protocol/mail-submission.ts'
 
 describe('mail submission wire', () => {
   test('request round-trips through encode/decode', () => {

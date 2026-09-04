@@ -13,8 +13,8 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { IndexedDbVaultStore, type IngressVaultCommit, type LocalVaultMutationCommit } from '../../src/vault/store.ts'
 import { createVaultEvent, type VaultEventSigner } from '../../src/vault/events.ts'
 import { createSegmentKey, encryptVaultObject } from '../../src/vault/objects.ts'
-import { sha256Bytes } from '../../src/protocol/canonical.ts'
-import type { IngressAckV1 } from '../../src/protocol/ingress.ts'
+import { sha256Bytes } from '../../src/shared/protocol/canonical.ts'
+import type { IngressAckV1 } from '../../src/shared/protocol/ingress.ts'
 
 // Must match DATABASE_NAME/DATABASE_VERSION in src/vault/store.ts -- not
 // exported, so this test's own knowledge of the schema has to stay in sync

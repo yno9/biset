@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes, sha256Bytes } from '../../src/protocol/canonical.ts'
-import type { IngressEnvelopeV1 } from '../../src/protocol/ingress.ts'
+import { equalBytes, sha256Bytes } from '../../src/shared/protocol/canonical.ts'
+import type { IngressEnvelopeV1 } from '../../src/shared/protocol/ingress.ts'
 import { MailIngressProjector } from '../../src/mail/ingress-projector.ts'
 import { decodeVaultDeliveryPack } from '../../src/vault/delivery-pack.ts'
 import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'

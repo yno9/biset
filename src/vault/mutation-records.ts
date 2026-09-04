@@ -6,8 +6,8 @@
 // to carry their own copy of this loop; factored out here so the two never
 // drift on what counts as a valid mutation event (feedback: unify common
 // logic instead of letting near-identical implementations diverge).
-import type { IdentityId, SegmentId } from '../protocol/ids.ts'
-import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import type { IdentityId, SegmentId } from '../shared/protocol/ids.ts'
+import type { VaultEventV1, VaultObjectV1 } from '../shared/protocol/vault.ts'
 import { decryptVaultObject, verifyVaultObjectIntegrity } from './objects.ts'
 import { assertContactKeyRecord } from './contact-key.ts'
 import { assertDidCommCredentialRecord } from './didcomm-credential.ts'

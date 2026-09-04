@@ -11,7 +11,7 @@
 // alone and routed to MailIngressProjector instead of DidCommIngressProjector,
 // carrying the raw RFC 5322 bytes this core's own SMTP ingress already knows
 // how to project (core/adapters/mail.ts's `MailIngressInput`).
-import { base64urlToBytes, bytesToBase64url } from '../protocol/canonical.ts'
+import { base64urlToBytes, bytesToBase64url } from '../shared/protocol/canonical.ts'
 
 export const MAIL_BRIDGE_INBOUND = 'https://biset.md/mail-bridge/1.0/inbound'
 

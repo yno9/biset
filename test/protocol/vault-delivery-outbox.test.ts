@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { sha256Bytes } from '../../src/protocol/canonical.ts'
+import { sha256Bytes } from '../../src/shared/protocol/canonical.ts'
 import { flushVaultDeliveryOutbox, type VaultDeliveryAppendTransport } from '../../src/vault/delivery-outbox.ts'
 import type { VaultDeliveryOutboxReader, VaultDeliveryOutboxRecord } from '../../src/vault/store.ts'
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { restoreRequestSigningBytes } from '../../src/protocol/signing.ts'
-import type { RestoreRequestV1 } from '../../src/protocol/vault.ts'
+import { restoreRequestSigningBytes } from '../../src/shared/protocol/signing.ts'
+import type { RestoreRequestV1 } from '../../src/shared/protocol/vault.ts'
 import { pollRestoreOffers, pollRestoreRequests, requestRestoreForGap, submitRestoreOffer } from '../../src/vault/restore-workflow.ts'
 import type { VaultRestoreOfferOutboxRecord, VaultRestoreOfferOutboxStore, VaultRestoreRequestStateRecord, VaultRestoreRequestStateStore } from '../../src/vault/store.ts'
 

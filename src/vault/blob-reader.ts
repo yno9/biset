@@ -1,5 +1,5 @@
 import type { LocalVaultBlobReader } from '../local-jmap/indexeddb.ts'
-import type { SegmentId, VaultObjectId } from '../protocol/ids.ts'
+import type { SegmentId, VaultObjectId } from '../shared/protocol/ids.ts'
 import { decryptVaultObject } from './objects.ts'
 import type { VaultObjectReader } from './store.ts'
 

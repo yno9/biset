@@ -10,7 +10,7 @@ import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
 import { createVaultEvent, verifyVaultEvent } from '../../src/vault/events.ts'
 import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
-import { mlsEpoch } from '../../src/protocol/ids.ts'
+import { mlsEpoch } from '../../src/shared/protocol/ids.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { ClientState } from '../../src/mls/vendor/index.ts'
 

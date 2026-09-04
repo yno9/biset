@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { bytesToBase64url, equalBytes } from '../../src/protocol/canonical.ts'
-import { mlsEpoch, type MlsEpoch } from '../../src/protocol/ids.ts'
+import { bytesToBase64url, equalBytes } from '../../src/shared/protocol/canonical.ts'
+import { mlsEpoch, type MlsEpoch } from '../../src/shared/protocol/ids.ts'
 import {
   deriveVaultEpochKey,
   MlsVaultEpochKeyResolver,

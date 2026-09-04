@@ -22,7 +22,7 @@ import { buildVaultManifest } from '../../src/vault/manifest.ts'
 import { createSegmentKey } from '../../src/vault/objects.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { RecoveryArchiveImportCommit, SegmentKeyWrapReader, VaultRecordReader } from '../../src/vault/store.ts'
-import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/protocol/vault.ts'
+import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/shared/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
 const selfGroupId = 'test-self-group'

@@ -1,6 +1,6 @@
-import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes, type CanonicalValue } from '../protocol/canonical.ts'
-import type { IdentityId, SegmentId } from '../protocol/ids.ts'
-import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes, type CanonicalValue } from '../shared/protocol/canonical.ts'
+import type { IdentityId, SegmentId } from '../shared/protocol/ids.ts'
+import type { VaultEventV1, VaultObjectV1 } from '../shared/protocol/vault.ts'
 import { verifyVaultManifest, type VaultManifestV1 } from './manifest.ts'
 import { verifyVaultObjectIntegrity } from './objects.ts'
 

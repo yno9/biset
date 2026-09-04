@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { synchronizeVaultDelivery } from '../../src/vault/delivery-sync.ts'
 import type { VaultDeliveryAckOutboxReader, VaultDeliveryAckOutboxRecord, VaultDeliveryCursorReader } from '../../src/vault/store.ts'
-import type { DeliveryPullResult, VaultDeliveryItemV1 } from '../../src/protocol/vault.ts'
+import type { DeliveryPullResult, VaultDeliveryItemV1 } from '../../src/shared/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
 const deviceId = 'device-b'

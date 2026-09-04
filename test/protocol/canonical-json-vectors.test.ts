@@ -5,8 +5,8 @@
 // (non-TypeScript) implementation replaying the same `value`s should
 // reproduce the same `json` text and `sha256Base64url` hash byte for byte.
 import { describe, expect, test } from 'bun:test'
-import { canonicalJson, canonicalBytes, sha256Bytes, bytesToBase64url } from '../../src/protocol/canonical.ts'
-import { CANONICAL_JSON_VECTORS } from '../../src/protocol/test-vectors.ts'
+import { canonicalJson, canonicalBytes, sha256Bytes, bytesToBase64url } from '../../src/shared/protocol/canonical.ts'
+import { CANONICAL_JSON_VECTORS } from '../../src/shared/protocol/test-vectors.ts'
 
 describe('canonical JSON V1 cross-language vectors', () => {
   for (const vector of CANONICAL_JSON_VECTORS) {

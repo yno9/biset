@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { sha256Bytes } from '../../src/protocol/canonical.ts'
-import type { IngressEnvelopeV1 } from '../../src/protocol/ingress.ts'
+import { sha256Bytes } from '../../src/shared/protocol/canonical.ts'
+import type { IngressEnvelopeV1 } from '../../src/shared/protocol/ingress.ts'
 import { synchronizeMailIngress } from '../../src/mail/ingress-workflow.ts'
 import type { IngressAckOutboxRecord, VaultDeliveryOutboxRecord } from '../../src/vault/store.ts'
 

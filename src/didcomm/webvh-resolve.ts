@@ -11,7 +11,7 @@ import type { WebvhDidDocument } from '../identity/webvh/document.ts'
 import { defaultFetch } from '../net-fetch.ts'
 import { fetchRouting, type RoutingDoc } from './webvh-routing.ts'
 import { decodeX25519Multikey } from './multikey.ts'
-import { didOfKid } from '../protocol/ids.ts'
+import { didOfKid } from '../shared/protocol/ids.ts'
 
 /** `routing === null` means "no routing.json exists for this identity" —
  * this identity simply hasn't provisioned a DIDComm-capable device yet.

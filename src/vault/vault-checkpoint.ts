@@ -1,7 +1,7 @@
 import { hkdf } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
-import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes } from '../protocol/canonical.ts'
-import type { DeliverySeq, VaultId } from '../protocol/ids.ts'
+import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes } from '../shared/protocol/canonical.ts'
+import type { DeliverySeq, VaultId } from '../shared/protocol/ids.ts'
 import { decodeRecoveryArchiveSnapshot, encodeRecoveryArchiveSnapshot, type RecoveryArchiveSnapshotV1 } from './recovery-archive.ts'
 
 const KEY_BYTES = 32

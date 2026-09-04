@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes } from '../../src/protocol/canonical.ts'
+import { equalBytes } from '../../src/shared/protocol/canonical.ts'
 import { emailSetToVaultMutationIntents } from '../../src/local-jmap/mutations.ts'
 import { decryptVaultObject } from '../../src/vault/objects.ts'
 import { createSegmentKey } from '../../src/vault/objects.ts'

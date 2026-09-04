@@ -1,6 +1,6 @@
-import { bytesToBase64url, canonicalBytes, equalBytes } from '../protocol/canonical.ts'
-import { assertMlsEpoch, type DeviceId, type IdentityId, type MlsEpoch, type SegmentId } from '../protocol/ids.ts'
-import type { SegmentKeyWrapV1 } from '../protocol/vault.ts'
+import { bytesToBase64url, canonicalBytes, equalBytes } from '../shared/protocol/canonical.ts'
+import { assertMlsEpoch, type DeviceId, type IdentityId, type MlsEpoch, type SegmentId } from '../shared/protocol/ids.ts'
+import type { SegmentKeyWrapV1 } from '../shared/protocol/vault.ts'
 
 const KEY_BYTES = 32
 const NONCE_BYTES = 12

@@ -9,7 +9,7 @@
 // re-fetching anything over the network.
 import type { LocalJmapProjectionV1 } from '../local-jmap/gateway.ts'
 import { reduceLocalJmapProjection } from '../local-jmap/reducer.ts'
-import type { IdentityId } from '../protocol/ids.ts'
+import type { IdentityId } from '../shared/protocol/ids.ts'
 import { decryptVaultMutationRecords } from './mutation-records.ts'
 import type { VaultEventVerifier } from './events.ts'
 import type { SegmentKeyWrapVerifier } from './crypto.ts'

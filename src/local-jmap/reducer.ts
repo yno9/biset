@@ -1,5 +1,5 @@
-import { canonicalHash, type CanonicalValue } from '../protocol/canonical.ts'
-import type { VaultEventV1 } from '../protocol/vault.ts'
+import { canonicalHash, type CanonicalValue } from '../shared/protocol/canonical.ts'
+import type { VaultEventV1 } from '../shared/protocol/vault.ts'
 import type { VaultMutationIntent } from './mutations.ts'
 import type { LocalJmapEmail, LocalJmapMailbox, LocalJmapSnapshot } from './gateway.ts'
 import { assertMailMessageEmail } from '../vault/mail-message.ts'

@@ -1,6 +1,6 @@
-import { bytesToBase64url, canonicalHash, equalBytes } from '../protocol/canonical.ts'
-import type { SegmentId, VaultObjectId } from '../protocol/ids.ts'
-import type { VaultObjectV1 } from '../protocol/vault.ts'
+import { bytesToBase64url, canonicalHash, equalBytes } from '../shared/protocol/canonical.ts'
+import type { SegmentId, VaultObjectId } from '../shared/protocol/ids.ts'
+import type { VaultObjectV1 } from '../shared/protocol/vault.ts'
 
 const AES_GCM_KEY_BYTES = 32
 const AES_GCM_NONCE_BYTES = 12

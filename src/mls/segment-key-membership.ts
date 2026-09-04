@@ -8,7 +8,7 @@ import { memberSignaturePublicKey, ownMlsDeviceCredential, ownSignaturePrivateKe
 import { decodeMlsDeviceCredential, encodeMlsDeviceCredential, verifyMlsDeviceCredentialRoot } from './device-credential.ts'
 import type { ClientState } from './vendor/index.ts'
 import type { SegmentKeyWrapSigner, SegmentKeyWrapVerifier } from '../vault/crypto.ts'
-import type { DeviceId } from '../protocol/ids.ts'
+import type { DeviceId } from '../shared/protocol/ids.ts'
 
 /** `state` is a thunk rather than a fixed value so a long-lived resolver
  * always checks against whatever this identity's self-group state most

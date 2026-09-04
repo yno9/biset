@@ -1,6 +1,6 @@
-import { vaultDeliveryPullSigningBytes } from '../protocol/signing.ts'
-import type { DeliveryPullResult, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultDeliveryPullV1 } from '../protocol/vault.ts'
-import type { DeviceId, IdentityId } from '../protocol/ids.ts'
+import { vaultDeliveryPullSigningBytes } from '../shared/protocol/signing.ts'
+import type { DeliveryPullResult, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultDeliveryPullV1 } from '../shared/protocol/vault.ts'
+import type { DeviceId, IdentityId } from '../shared/protocol/ids.ts'
 import type { VaultDeliveryAckOutboxReader, VaultDeliveryCursorReader } from './store.ts'
 
 export interface VaultDeliveryPullTransport {

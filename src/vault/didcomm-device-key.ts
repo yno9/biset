@@ -22,9 +22,9 @@
 // per device, read back across devices via the vault" pattern), trimmed of
 // its rotation/supersedes machinery -- there is nothing to rotate here,
 // only one pairing per device for as long as that device exists.
-import { canonicalBytes, equalBytes } from '../protocol/canonical.ts'
-import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../protocol/ids.ts'
-import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import { canonicalBytes, equalBytes } from '../shared/protocol/canonical.ts'
+import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../shared/protocol/ids.ts'
+import type { VaultEventV1, VaultObjectV1 } from '../shared/protocol/vault.ts'
 import { createVaultEvent, type VaultEventSigner } from './events.ts'
 import { encryptVaultObject } from './objects.ts'
 import type { VaultCredentialKind } from './credential-store.ts'

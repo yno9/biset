@@ -1,6 +1,6 @@
-import { restoreControlPullSigningBytes, restoreOfferSigningBytes, restoreRequestSigningBytes } from '../protocol/signing.ts'
-import type { DeliveryPullResult, RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1 } from '../protocol/vault.ts'
-import type { DeviceId, IdentityId } from '../protocol/ids.ts'
+import { restoreControlPullSigningBytes, restoreOfferSigningBytes, restoreRequestSigningBytes } from '../shared/protocol/signing.ts'
+import type { DeliveryPullResult, RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1 } from '../shared/protocol/vault.ts'
+import type { DeviceId, IdentityId } from '../shared/protocol/ids.ts'
 
 /**
  * The signed restore control plane, as a contract rather than a deployment.

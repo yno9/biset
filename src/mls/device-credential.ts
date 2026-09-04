@@ -1,7 +1,7 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { base58 } from '@scure/base'
-import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes } from '../protocol/canonical.ts'
+import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes } from '../shared/protocol/canonical.ts'
 
 export interface CredentialLike { credentialType: string }
 

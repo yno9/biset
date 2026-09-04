@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes } from '../../src/protocol/canonical.ts'
+import { equalBytes } from '../../src/shared/protocol/canonical.ts'
 import { LocalJmapGateway, LocalJmapTransport, MemoryLocalJmapReadModel } from '../../src/local-jmap/gateway.ts'
 import { VaultBackedLocalJmapMutationSink } from '../../src/local-jmap/vault-mutation-sink.ts'
 import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'

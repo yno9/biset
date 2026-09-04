@@ -2,7 +2,7 @@
  * Run with `bun scripts/verify-mimi-vault-live.ts`; it never uses a real
  * identity or an existing room. */
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { bytesToBase64url } from '../src/protocol/canonical.ts'
+import { bytesToBase64url } from '../src/shared/protocol/canonical.ts'
 import { createMlsGroup, encryptApplication, generateOwnKeyPackageForCredential } from '../src/mls/group.ts'
 import { createCommit, encodeMlsMessage } from '../src/mls/vendor/index.ts'
 import { encodeCredential } from '../src/mls/vendor/credential.ts'

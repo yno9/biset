@@ -1,5 +1,5 @@
 import * as openpgp from 'openpgp'
-import type { IdentityId } from '../protocol/ids.ts'
+import type { IdentityId } from '../shared/protocol/ids.ts'
 import type { OpenPgpPrivateCredentialV1 } from '../vault/openpgp-credential.ts'
 
 export interface GenerateOpenPgpCredentialOptions {

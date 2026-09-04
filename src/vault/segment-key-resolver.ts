@@ -1,4 +1,4 @@
-import type { SegmentId, IdentityId, MlsEpoch } from '../protocol/ids.ts'
+import type { SegmentId, IdentityId, MlsEpoch } from '../shared/protocol/ids.ts'
 import type { SegmentKeyWrapReader } from './store.ts'
 import { unwrapSegmentKey, type SegmentKeyWrapVerifier } from './crypto.ts'
 import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from './storage-root.ts'

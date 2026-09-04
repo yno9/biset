@@ -1,5 +1,5 @@
 /** Opaque Vault payload chunks carried inside MLS application messages. */
-import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes, sha256Bytes } from '../protocol/canonical.ts'
+import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes, sha256Bytes } from '../shared/protocol/canonical.ts'
 
 /** Raw plaintext budget.  An MLS PrivateMessage plus JSON/base64 request
  * framing expands this on the wire; 500KiB remains safely below the shared

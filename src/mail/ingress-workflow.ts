@@ -1,4 +1,4 @@
-import type { DeviceId, IdentityId } from '../protocol/ids.ts'
+import type { DeviceId, IdentityId } from '../shared/protocol/ids.ts'
 import type { IngressAckSigner, IngressCommitter, IngressVerifierProjector } from '../vault/ingress-ingest.ts'
 import { ingestIngress } from '../vault/ingress-ingest.ts'
 import type { IngressPullSigner, IngressPullTransport } from '../vault/ingress-sync.ts'

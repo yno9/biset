@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { IngressAckV1, IngressEnvelopeV1 } from '../../src/protocol/ingress.ts'
+import type { IngressAckV1, IngressEnvelopeV1 } from '../../src/shared/protocol/ingress.ts'
 import { synchronizeIngress } from '../../src/vault/ingress-sync.ts'
 import type { IngressAckOutboxReader, IngressAckOutboxRecord } from '../../src/vault/store.ts'
 

@@ -4,7 +4,7 @@ import { RECOVERY_ARCHIVE_MEDIA_TYPE, readRecoveryArchiveFile, recoveryArchiveBl
 import { createSegmentKey, encryptVaultObject } from '../../src/vault/objects.ts'
 import { createVaultEvent, type VaultEventSigner } from '../../src/vault/events.ts'
 import { buildVaultManifest } from '../../src/vault/manifest.ts'
-import { equalBytes } from '../../src/protocol/canonical.ts'
+import { equalBytes } from '../../src/shared/protocol/canonical.ts'
 
 const identityId = 'did:web:alice.example'
 const signer: VaultEventSigner = {

@@ -36,7 +36,7 @@ import { credentialFor, memberIdOf, type MlsMemberId } from './identity.ts'
 import { mlsDeviceCredentialOf, type MlsDeviceCredentialV2 } from './device-credential.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { sameIdentity } from '../identity/idkey.ts'
-import { equalBytes } from '../protocol/canonical.ts'
+import { equalBytes } from '../shared/protocol/canonical.ts'
 
 // The Authentication Service (PLANMLS.md §2's AS role). ts-mls asks this
 // whether a leaf's credential really belongs to the signature key in that leaf;

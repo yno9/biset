@@ -1,7 +1,7 @@
-import { equalBytes, sha256Bytes } from '../protocol/canonical.ts'
-import { ingressAckSigningBytes } from '../protocol/signing.ts'
-import type { IngressAckV1, IngressEnvelopeV1 } from '../protocol/ingress.ts'
-import type { DeviceId } from '../protocol/ids.ts'
+import { equalBytes, sha256Bytes } from '../shared/protocol/canonical.ts'
+import { ingressAckSigningBytes } from '../shared/protocol/signing.ts'
+import type { IngressAckV1, IngressEnvelopeV1 } from '../shared/protocol/ingress.ts'
+import type { DeviceId } from '../shared/protocol/ids.ts'
 import type { VaultDeliveryOutboxRecord, VaultEventRecord, VaultObjectRecord, IngressVaultCommit, IngressReceiptReader } from './store.ts'
 
 export interface IngressAckSigner {

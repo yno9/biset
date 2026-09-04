@@ -1,5 +1,5 @@
-import type { IdentityId, MlsEpoch } from '../protocol/ids.ts'
-import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import type { IdentityId, MlsEpoch } from '../shared/protocol/ids.ts'
+import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../shared/protocol/vault.ts'
 import type { VaultManifestV1 } from './manifest.ts'
 import type { RestoreTransferChunkV1, RestoreTransferCursorV1, RestoreTransferVerifier } from './restore-transfer.ts'
 import { verifyRestoreTransferChunk } from './restore-transfer.ts'

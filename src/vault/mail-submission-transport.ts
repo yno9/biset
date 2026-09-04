@@ -1,6 +1,6 @@
 import { defaultFetch } from '../net-fetch.ts'
-import type { MailSubmissionRequestV1, MailSubmissionResultV1 } from '../protocol/mail-submission.ts'
-import { decodeMailSubmissionResultWire, encodeMailSubmissionRequestWire } from '../protocol/mail-submission-wire.ts'
+import type { MailSubmissionRequestV1, MailSubmissionResultV1 } from '../shared/protocol/mail-submission.ts'
+import { decodeMailSubmissionResultWire, encodeMailSubmissionRequestWire } from '../shared/protocol/mail-submission-wire.ts'
 
 export interface CoreMailSubmissionTransportOptions {
   baseUrl: string

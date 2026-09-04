@@ -1,5 +1,5 @@
-import type { CanonicalValue } from '../protocol/canonical.ts'
-import type { VaultEventKind } from '../protocol/vault.ts'
+import type { CanonicalValue } from '../shared/protocol/canonical.ts'
+import type { VaultEventKind } from '../shared/protocol/vault.ts'
 
 /**
  * Plain, validated intent before vault transaction encryption. The transaction

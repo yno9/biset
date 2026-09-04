@@ -1,5 +1,5 @@
-import type { IdentityId } from '../protocol/ids.ts'
-import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import type { IdentityId } from '../shared/protocol/ids.ts'
+import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../shared/protocol/vault.ts'
 import { createSegmentKeyWrap, type SegmentKeyWrapSigner } from './crypto.ts'
 import { assertRecoveryArchiveSnapshot, type RecoveryArchiveSnapshotV1 } from './recovery-archive.ts'
 import type { VaultEpochKeyResolver } from './segment-key-resolver.ts'

@@ -1,7 +1,7 @@
-import { equalBytes, sha256Bytes } from '../protocol/canonical.ts'
-import { vaultDeliveryAppendSigningBytes } from '../protocol/signing.ts'
-import type { DeviceId, IdentityId } from '../protocol/ids.ts'
-import type { VaultDeliveryAppendV1 } from '../protocol/vault.ts'
+import { equalBytes, sha256Bytes } from '../shared/protocol/canonical.ts'
+import { vaultDeliveryAppendSigningBytes } from '../shared/protocol/signing.ts'
+import type { DeviceId, IdentityId } from '../shared/protocol/ids.ts'
+import type { VaultDeliveryAppendV1 } from '../shared/protocol/vault.ts'
 import type { VaultDeliveryOutboxReader, VaultDeliveryOutboxRecord } from './store.ts'
 
 /** Client-side boundary; HTTP/DIDComm transports will implement this later. */

@@ -4,7 +4,7 @@
  * request is attempted.  If the response is lost, the next attempt submits
  * the exact same bytes and delivery ID; it never encrypts the plaintext a
  * second time from a stale ratchet state. */
-import { bytesToBase64url, equalBytes, sha256Bytes } from '../protocol/canonical.ts'
+import { bytesToBase64url, equalBytes, sha256Bytes } from '../shared/protocol/canonical.ts'
 import { epochOf, encryptApplication, processIncoming } from './group.ts'
 import type { ClientState } from './vendor/index.ts'
 import type { MimiClientMode, MimiClientTransport } from './mimi-client-transport.ts'

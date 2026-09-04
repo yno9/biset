@@ -8,8 +8,8 @@
 // one copy silently left the other three wrong.
 import type { LocalJmapSnapshot } from '../local-jmap/gateway.ts'
 import type { LocalVaultMutationCommitter } from '../local-jmap/vault-mutation-sink.ts'
-import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../protocol/ids.ts'
-import type { VaultEventKind, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../shared/protocol/ids.ts'
+import type { VaultEventKind, VaultEventV1, VaultObjectV1 } from '../shared/protocol/vault.ts'
 import { assertActiveVaultSegment, type ActiveVaultSegment } from './active-segment.ts'
 import { buildVaultCommit } from './commit.ts'
 import { verifyVaultEvent, type VaultEventSigner, type VaultEventVerifier } from './events.ts'

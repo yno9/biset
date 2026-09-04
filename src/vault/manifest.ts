@@ -1,5 +1,5 @@
-import { canonicalHash } from '../protocol/canonical.ts'
-import type { IdentityId, VaultEventId, VaultObjectId } from '../protocol/ids.ts'
+import { canonicalHash } from '../shared/protocol/canonical.ts'
+import type { IdentityId, VaultEventId, VaultObjectId } from '../shared/protocol/ids.ts'
 
 export interface VaultManifestV1 {
   version: 1

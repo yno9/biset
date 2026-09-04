@@ -1,4 +1,4 @@
-import type { IdentityId, SegmentId } from '../protocol/ids.ts'
+import type { IdentityId, SegmentId } from '../shared/protocol/ids.ts'
 import { buildVaultManifest } from './manifest.ts'
 import type { RecoveryArchiveSnapshotV1 } from './recovery-archive.ts'
 import type { SegmentKeyResolver } from './segment-key-resolver.ts'

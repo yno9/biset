@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { canonicalBytes } from '../../src/protocol/canonical.ts'
+import { canonicalBytes } from '../../src/shared/protocol/canonical.ts'
 import { decodeVaultMutation, reduceLocalJmapProjection } from '../../src/local-jmap/reducer.ts'
-import type { VaultEventV1 } from '../../src/protocol/vault.ts'
+import type { VaultEventV1 } from '../../src/shared/protocol/vault.ts'
 
 function event(overrides: Partial<VaultEventV1> = {}): VaultEventV1 {
   return {

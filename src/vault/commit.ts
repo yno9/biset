@@ -16,9 +16,9 @@
 // sees, and the segment check is not uniform across call sites today (see
 // local-jmap/vault-mutation-sink.ts) -- folding it in here would be a
 // behaviour change, not a refactor.
-import { sha256Bytes } from '../protocol/canonical.ts'
-import type { IdentityId } from '../protocol/ids.ts'
-import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import { sha256Bytes } from '../shared/protocol/canonical.ts'
+import type { IdentityId } from '../shared/protocol/ids.ts'
+import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../shared/protocol/vault.ts'
 import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../local-jmap/gateway.ts'
 import { reduceLocalJmapProjection, type DecryptedMutationRecord } from '../local-jmap/reducer.ts'
 import { encodeVaultDeliveryPack } from './delivery-pack.ts'

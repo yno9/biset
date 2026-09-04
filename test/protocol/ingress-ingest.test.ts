@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes, sha256Bytes } from '../../src/protocol/canonical.ts'
-import { ingressAckSigningBytes } from '../../src/protocol/signing.ts'
-import type { IngressEnvelopeV1 } from '../../src/protocol/ingress.ts'
+import { equalBytes, sha256Bytes } from '../../src/shared/protocol/canonical.ts'
+import { ingressAckSigningBytes } from '../../src/shared/protocol/signing.ts'
+import type { IngressEnvelopeV1 } from '../../src/shared/protocol/ingress.ts'
 import { ingestIngress } from '../../src/vault/ingress-ingest.ts'
 
 const body = new Uint8Array([1, 2])

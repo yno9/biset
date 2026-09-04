@@ -1,5 +1,5 @@
-import type { IdentityId, SegmentId } from '../protocol/ids.ts'
-import type { SegmentKeyWrapV1 } from '../protocol/vault.ts'
+import type { IdentityId, SegmentId } from '../shared/protocol/ids.ts'
+import type { SegmentKeyWrapV1 } from '../shared/protocol/vault.ts'
 import { createSegmentKeyWrap, type SegmentKeyWrapSigner } from './crypto.ts'
 import type { VaultEpochKeyResolver } from './segment-key-resolver.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from './store.ts'

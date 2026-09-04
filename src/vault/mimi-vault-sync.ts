@@ -1,8 +1,8 @@
 /** Vault-to-MIMI data-plane boundary.  MLS state and retry ciphertext live
  * behind the supplied session so a lost HTTP response cannot create a second
  * ciphertext for one delivery ID. */
-import { bytesToBase64url, equalBytes, sha256Bytes } from '../protocol/canonical.ts'
-import type { DeliverySeq, IdentityId, VaultEventId } from '../protocol/ids.ts'
+import { bytesToBase64url, equalBytes, sha256Bytes } from '../shared/protocol/canonical.ts'
+import type { DeliverySeq, IdentityId, VaultEventId } from '../shared/protocol/ids.ts'
 import type { DeliveriesPullRequest, MimiDeliveryEntry, VaultCheckpointManifest } from '../mimi/protocol-types.ts'
 import { decodeMimiVaultChunk, encodeMimiVaultChunk, joinMimiVaultChunks, splitMimiVaultPayload, type MimiVaultChunk } from './mimi-vault-chunks.ts'
 import type { VaultDeliveryOutboxReader } from './store.ts'

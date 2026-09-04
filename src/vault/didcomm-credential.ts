@@ -14,9 +14,9 @@
 // ciphertext, which is also the property a future blind mediator (ARC.md's
 // DIDComm mediator redesign) needs: one registered kid, one Forward-wrapped
 // copy, whichever device is polling picks it up.
-import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes } from '../protocol/canonical.ts'
-import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../protocol/ids.ts'
-import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
+import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes } from '../shared/protocol/canonical.ts'
+import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../shared/protocol/ids.ts'
+import type { VaultEventV1, VaultObjectV1 } from '../shared/protocol/vault.ts'
 import { createVaultEvent, type VaultEventSigner } from './events.ts'
 import { encryptVaultObject } from './objects.ts'
 import { x25519 } from '@noble/curves/ed25519.js'

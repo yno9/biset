@@ -1,7 +1,7 @@
-import { equalBytes, sha256Bytes } from '../protocol/canonical.ts'
-import { vaultDeliveryAckSigningBytes } from '../protocol/signing.ts'
-import type { DeviceId, IdentityId } from '../protocol/ids.ts'
-import type { VaultDeliveryAckV1, VaultDeliveryItemV1 } from '../protocol/vault.ts'
+import { equalBytes, sha256Bytes } from '../shared/protocol/canonical.ts'
+import { vaultDeliveryAckSigningBytes } from '../shared/protocol/signing.ts'
+import type { DeviceId, IdentityId } from '../shared/protocol/ids.ts'
+import type { VaultDeliveryAckV1, VaultDeliveryItemV1 } from '../shared/protocol/vault.ts'
 import { decodeVaultDeliveryPack, type VaultDeliveryPackV1 } from './delivery-pack.ts'
 import type { VaultDeliveryCommit } from './store.ts'
 

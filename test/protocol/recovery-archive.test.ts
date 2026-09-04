@@ -3,7 +3,7 @@ import { buildVaultManifest } from '../../src/vault/manifest.ts'
 import { createSegmentKey, encryptVaultObject } from '../../src/vault/objects.ts'
 import { createRecoveryArchive, createRecoveryKey, decodeRecoveryArchive, encodeRecoveryArchive, openRecoveryArchive, type RecoveryArchiveSnapshotV1 } from '../../src/vault/recovery-archive.ts'
 import { createVaultEvent, type VaultEventSigner } from '../../src/vault/events.ts'
-import { bytesToBase64url, equalBytes } from '../../src/protocol/canonical.ts'
+import { bytesToBase64url, equalBytes } from '../../src/shared/protocol/canonical.ts'
 
 const identityId = 'did:web:alice.example'
 const signer: VaultEventSigner = {

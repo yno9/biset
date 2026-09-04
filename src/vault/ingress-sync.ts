@@ -1,6 +1,6 @@
-import { ingressPullSigningBytes } from '../protocol/signing.ts'
-import type { IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from '../protocol/ingress.ts'
-import type { DeviceId, IdentityId } from '../protocol/ids.ts'
+import { ingressPullSigningBytes } from '../shared/protocol/signing.ts'
+import type { IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from '../shared/protocol/ingress.ts'
+import type { DeviceId, IdentityId } from '../shared/protocol/ids.ts'
 import type { IngressAckOutboxReader } from './store.ts'
 
 export interface IngressPullTransport {

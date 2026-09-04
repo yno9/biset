@@ -1,6 +1,6 @@
-import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes, type CanonicalValue } from '../protocol/canonical.ts'
-import { assertMlsEpoch, type IdentityId } from '../protocol/ids.ts'
-import { VAULT_EVENT_KINDS, type SegmentKeyWrapV1, type VaultEventV1 } from '../protocol/vault.ts'
+import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes, type CanonicalValue } from '../shared/protocol/canonical.ts'
+import { assertMlsEpoch, type IdentityId } from '../shared/protocol/ids.ts'
+import { VAULT_EVENT_KINDS, type SegmentKeyWrapV1, type VaultEventV1 } from '../shared/protocol/vault.ts'
 import type { VaultObjectRecord } from './store.ts'
 
 export interface VaultDeliveryPackV1 {

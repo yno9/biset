@@ -7,8 +7,8 @@
  * credential cannot replace an existing member's signing key.
  */
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { bytesToBase64url, canonicalBytes, equalBytes } from '../protocol/canonical.ts'
-import type { CanonicalValue } from '../protocol/canonical.ts'
+import { bytesToBase64url, canonicalBytes, equalBytes } from '../shared/protocol/canonical.ts'
+import type { CanonicalValue } from '../shared/protocol/canonical.ts'
 import type {
   DeliveriesPullRequest,
   DeliveriesWatchRequest,

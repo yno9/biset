@@ -16,11 +16,11 @@ import {
 import { unwrapSegmentKey } from '../../src/vault/crypto.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../../src/vault/storage-root.ts'
-import { mlsEpoch } from '../../src/protocol/ids.ts'
+import { mlsEpoch } from '../../src/shared/protocol/ids.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/vault/store.ts'
 import type { IdentityRecord } from '../../src/identity/record-store.ts'
-import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
+import type { SegmentKeyWrapV1 } from '../../src/shared/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
 const selfGroupId = 'test-self-group'

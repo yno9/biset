@@ -17,7 +17,7 @@ import type { OpenPgpCredentialReader } from '../vault/openpgp-credential-reader
 import type { OpenPgpCredentialVaultSink } from '../vault/openpgp-credential-sink.ts'
 import type { OpenPgpPrivateCredentialV1 } from '../vault/openpgp-credential.ts'
 import { fetchRouting, putRouting, type RoutingOpenPgpKey } from '../didcomm/webvh-routing.ts'
-import type { IdentityId } from '../protocol/ids.ts'
+import type { IdentityId } from '../shared/protocol/ids.ts'
 
 export interface EnableOpenPgpMailOptions {
   identityId: IdentityId

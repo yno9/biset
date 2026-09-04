@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes } from '../../src/protocol/canonical.ts'
+import { equalBytes } from '../../src/shared/protocol/canonical.ts'
 import { createRecoveryArchive, createRecoveryKey, type RecoveryArchiveSnapshotV1 } from '../../src/vault/recovery-archive.ts'
 import { importRecoveryArchive } from '../../src/vault/recovery-archive-import.ts'
 import { createVaultEvent, type VaultEventSigner } from '../../src/vault/events.ts'

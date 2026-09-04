@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes, sha256Bytes } from '../../src/protocol/canonical.ts'
+import { equalBytes, sha256Bytes } from '../../src/shared/protocol/canonical.ts'
 import { decryptVaultObject } from '../../src/vault/objects.ts'
 import { buildOpenPgpPrivateCredential, decodeOpenPgpPrivateCredential, openPgpCredentialAad } from '../../src/vault/openpgp-credential.ts'
 import type { VaultEventSigner } from '../../src/vault/events.ts'

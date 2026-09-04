@@ -50,7 +50,7 @@ import { defaultAuthenticationService } from '../mls/vendor/authenticationServic
 import { applyPublicCommit } from '../mls/vendor/publicGroupState.ts'
 import { mlsSuite } from '../mls/suite.ts'
 import { bootstrapPublicGroupStateFromGroupInfo } from './mls-group-info-bootstrap.ts'
-import { equalBytes } from '../protocol/canonical.ts'
+import { equalBytes } from '../shared/protocol/canonical.ts'
 import type { MimiAssetProxy } from './asset-proxy.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
 import type { GroupInfoResponse, MimiCredential, MimiDeliveryEntry, MimiDeploymentMode, MimiErrorResponse, UpdateRoomRequest, UpdateRoomResponse } from './protocol-types.ts'

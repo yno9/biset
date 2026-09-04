@@ -17,13 +17,13 @@
 //      keys (resolveCurrentUpdateKeys) -- a public, self-certifying fact
 //      anyone can check, no separate credential registration needed.
 import { deliverMail, type MailDeliveryResult } from './smtp-client.ts'
-import { decodeMailSubmissionRequestWire, encodeMailSubmissionResultWire } from '../../protocol/mail-submission-wire.ts'
-import { mailSubmissionSigningBytes } from '../../protocol/signing.ts'
+import { decodeMailSubmissionRequestWire, encodeMailSubmissionResultWire } from '../../shared/protocol/mail-submission-wire.ts'
+import { mailSubmissionSigningBytes } from '../../shared/protocol/signing.ts'
 import { mailFromForIdentity } from '../../identity/webvh/identifier.ts'
 import { resolveCurrentUpdateKeys } from '../../identity/webvh/resolver.ts'
 import { decodeMultikey } from '../../identity/webvh/multikey.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import type { MailSubmissionRequestV1, MailSubmissionResultV1 } from '../../protocol/mail-submission.ts'
+import type { MailSubmissionRequestV1, MailSubmissionResultV1 } from '../../shared/protocol/mail-submission.ts'
 
 const MAX_BODY_BYTES = 25 * 1024 * 1024
 const WELL_KNOWN_PATH = '/v1/mail/submit'
