@@ -102,7 +102,7 @@ async function deliverToHost(
         // extractCompleteReply), so any leftover bytes here are exactly
         // that kind of pipelined-across-the-boundary data.
         if (reader.hasBufferedBytes()) throw new Error('server pipelined bytes across the TLS boundary')
-        const tlsReader = await upgradeReader(reader, tlsOptions ?? {})
+        const tlsReader = await upgradeReader(reader, tlsOptions)
         reader.detach()
         reader = tlsReader
         ehlo = await greet(reader, helloName) // extension list does not carry over the upgrade
@@ -228,11 +228,20 @@ async function connectReader(connect: typeof Bun.connect, host: string, port: nu
   return readerFrom(socket, state)
 }
 
-async function upgradeReader(reader: ReplyReader, tlsOptions: Bun.TLSOptions): Promise<ReplyReader> {
+async function upgradeReader(reader: ReplyReader, tlsOptions: Bun.TLSOptions | undefined): Promise<ReplyReader> {
   const state = makeReaderState()
   return new Promise((resolve, reject) => {
+    // `tls: {}` throws "Expected \"tls\" option" at runtime in Bun 1.4 --
+    // its native binding treats an empty options object as invalid, unlike
+    // what Bun.TLSOptions's own type (all-optional fields) implies. `true`
+    // is Bun's actual spelling for "upgrade with default TLS, no custom
+    // options" (found live, 2026-09-04: every outbound relay attempt
+    // failed with that exact error, since deliverToHost's caller default
+    // was `tlsOptions ?? {}` -- this is the first time this restored-
+    // verbatim-from-core codepath was ever exercised against a real STARTTLS
+    // server).
     const [, tlsSocket] = reader.socket.upgradeTLS({
-      tls: tlsOptions,
+      tls: tlsOptions && Object.keys(tlsOptions).length > 0 ? tlsOptions : true,
       socket: {
         open(socket) { resolve(readerFrom(socket, state)) },
         data(_socket, chunk) { feed(state, chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk)) },
