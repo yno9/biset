@@ -126,6 +126,32 @@ setOnIdentityCreated(async () => {
   showAccountPage()
 })
 
+// Every IndexedDB database this app opens, device-local and meaningless
+// without an owning identity record in biset-identity -- shared by logout()
+// (explicit, this device is deliberately dropping the identity) and
+// bootClient()'s own zero-identity branch below (silent, defensive: a
+// crash mid-signup, a corrupted store, or any other path that reaches "no
+// identity" without ever going through logout() would otherwise leave
+// this device's SECONDARY stores stale/orphaned indefinitely, with no way
+// for an end user to notice or clear them -- found live, 2026-09-04, on a
+// device stuck rendering the zero-identity page with unrelated console
+// silence). Deleting a database with zero rows is a fast no-op, so running
+// this on every ordinary fresh-install boot costs nothing.
+const ALL_LOCAL_DATABASE_NAMES = [
+  'biset-identity', 'biset-mls-keypackages', 'biset-mls-self-group',
+  'biset-vault-core', 'biset-wallet', 'biset-didcomm-group-chat',
+]
+
+async function deleteLocalDatabases(names: readonly string[]): Promise<void> {
+  await Promise.all(names.map(name => new Promise<void>(resolve => {
+    const request = indexedDB.deleteDatabase(name)
+    request.onsuccess = () => resolve()
+    request.onerror = () => resolve()
+    request.onblocked = () => resolve()
+    setTimeout(resolve, 3000) // a step that never settles must not outlive its budget
+  })))
+}
+
 export async function bootClient(): Promise<void> {
   // Cleared unconditionally, before any branch -- logout's own re-entry into
   // bootClient() lands on the zero-identity branch below, which returns
@@ -149,6 +175,11 @@ export async function bootClient(): Promise<void> {
   const storedRecords = loadedRecords.filter(record => record.signPrivateKey && record.signPublicKey && record.generation)
   for (const record of loadedRecords) if (!storedRecords.includes(record)) await recordStore.delete(record.did).catch(() => {})
   if (storedRecords.length === 0) {
+    // No local identity owns them -- see ALL_LOCAL_DATABASE_NAMES's comment.
+    // biset-identity itself is excluded: already reconciled just above, and
+    // this recordStore connection stays open past this branch's `return`
+    // (unrelated to this cleanup), which would otherwise block its delete.
+    await deleteLocalDatabases(ALL_LOCAL_DATABASE_NAMES.filter(name => name !== 'biset-identity'))
     configureAccountPage({ did: null })
     showApp()
     showAccountPage()
@@ -319,14 +350,12 @@ export async function bootClient(): Promise<void> {
     try { selfGroupStore.close() } catch { /* best-effort */ }
     try { recordStore.close() } catch { /* best-effort */ }
     try { loginWalletStore.close() } catch { /* best-effort */ }
-    const databaseNames = ['biset-identity', 'biset-mls-keypackages', 'biset-mls-self-group', 'biset-vault-core', 'biset-wallet']
-    await Promise.all(databaseNames.map(name => new Promise<void>(resolve => {
-      const request = indexedDB.deleteDatabase(name)
-      request.onsuccess = () => resolve()
-      request.onerror = () => resolve()
-      request.onblocked = () => resolve()
-      setTimeout(resolve, 3000) // a step that never settles must not outlive its budget
-    })))
+    // biset-didcomm-group-chat used to be missing from this list entirely
+    // (found 2026-09-04 while adding bootClient()'s own zero-identity-branch
+    // cleanup, ALL_LOCAL_DATABASE_NAMES's comment) -- every logout left that
+    // store's rows behind indefinitely, orphaned the moment this device's
+    // identity record was gone.
+    await deleteLocalDatabases(ALL_LOCAL_DATABASE_NAMES)
     await bootClient()
   }
 
