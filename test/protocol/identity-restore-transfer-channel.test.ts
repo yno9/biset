@@ -142,7 +142,7 @@ describe('peer restore transfer channel security', () => {
     // Device A removes device B -- B never receives or applies this commit,
     // its own `stateB`/epoch stays frozen at the pre-removal value, exactly
     // like a device that is simply never told anything again.
-    const removeResult = await removeMembers(stateA, [deviceBKid])
+    const removeResult = await removeMembers(stateA, [deviceBKid], false)
     confirmCommit(removeResult)
     stateA = removeResult.state
     await selfGroupStoreA.save(identityId, selfGroupId, stateA)
@@ -187,7 +187,7 @@ describe('peer restore transfer channel security', () => {
     // A removes B. The wrap B already signed is untouched (SegmentKeyWraps
     // are immutable, signed objects), but verification always checks
     // CURRENT membership, not membership at grant time.
-    const removeResult = await removeMembers(stateA, [deviceBKid])
+    const removeResult = await removeMembers(stateA, [deviceBKid], false)
     confirmCommit(removeResult)
     stateA = removeResult.state
     await selfGroupStoreA.save(identityId, selfGroupId, stateA)

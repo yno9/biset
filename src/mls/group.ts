@@ -225,8 +225,18 @@ export async function addMembers(state: ClientState, keyPackages: KeyPackage[]):
  * removed member derives along with everyone else. The vendored fork fixes
  * that (`vendor/clientState.ts`'s `needsUpdatePath`), and
  * test/mls-core.test.ts pins the behaviour so a re-sync cannot quietly undo
- * it. */
-export async function removeMembers(state: ClientState, kids: string[], wireAsPublicMessage = false): Promise<CommitResult> {
+ * it.
+ *
+ * `wireAsPublicMessage` has NO default on purpose. It used to default to
+ * `false` for the since-deleted self-group.ts / conversation-group.ts
+ * callers, and that default is wrong for the only caller left in the app:
+ * mimi-vault-room.ts's removeMimiVaultDevice, whose commit goes to the MIMI
+ * hub as a room-state update and is rejected with 400 ("room-state update
+ * must be a complete MLS PublicMessage") unless it is `true`. Rather than
+ * swap one silently-wrong default for another (the tests below deliberately
+ * exercise the private-wire framing), every caller now has to say which wire
+ * framing its delivery service expects. */
+export async function removeMembers(state: ClientState, kids: string[], wireAsPublicMessage: boolean): Promise<CommitResult> {
   const members = memberList(state)
   const proposals: Proposal[] = kids.map(kid => {
     const found = members.find(m => m.kid === kid)

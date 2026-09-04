@@ -16,7 +16,7 @@ import {
   setRoomMetadata, roomMetadataOf,
   setAppDataComponent,
 } from '../src/mls/group.ts'
-import { appDataComponent } from '../src/mls/vendor/index.ts'
+import { appDataComponent, decodeMlsMessage } from '../src/mls/vendor/index.ts'
 import { createMlsDeviceCredential } from '../src/mls/device-credential.ts'
 
 let fails = 0
@@ -112,7 +112,7 @@ let carolGroup = await joinMlsGroup(bobAdds.welcome!, carol, bobGroup.ratchetTre
 ok('carol joined at epoch 2', epochOf(carolGroup) === 2n)
 
 // Removing an identity means removing every device it has in the group.
-const removal = await removeMembers(aliceGroup, memberKids(aliceGroup, 'did:webvh:example.com:bob'))
+const removal = await removeMembers(aliceGroup, memberKids(aliceGroup, 'did:webvh:example.com:bob'), false)
 aliceGroup = removal.state
 ok('remove advanced the epoch', epochOf(aliceGroup) === 3n)
 ok('both of bobs devices are gone', memberDids(aliceGroup).join(',') === `${ALICE_DID},${CAROL_DID}`, memberDids(aliceGroup).join(','))
@@ -151,7 +151,7 @@ carolGroup = (await processIncoming(carolGroup, withErin.commit)).state
 let erinGroup = await joinMlsGroup(withErin.welcome!, erin)
 ok('erin joined', memberDids(erinGroup).length === 3)
 
-const soloRemoval = await removeMembers(aliceGroup, [ERIN])
+const soloRemoval = await removeMembers(aliceGroup, [ERIN], false)
 aliceGroup = soloRemoval.state
 carolGroup = (await processIncoming(carolGroup, soloRemoval.commit)).state
 // Erin applies the commit that removes her: she is marked removed, and must
@@ -201,6 +201,23 @@ ok('carol converges on the same name via the commit', roomMetadataOf(carolGroup)
 const renamed = await setRoomMetadata(aliceGroup, { name: 'Renamed Trip' })
 aliceGroup = renamed.state
 ok('the name can be changed again (not a write-once field)', roomMetadataOf(aliceGroup)?.name === 'Renamed Trip')
+
+// removeMembers' wire framing is the caller's choice and must actually reach
+// the wire. mimi-vault-room.ts's removeMimiVaultDevice passes `true` because
+// the MIMI hub rejects a room-state update that is not a complete
+// PublicMessage ("room-state update must be a complete MLS PublicMessage",
+// HTTP 400); the deleted self-group/conversation-group callers wanted `false`
+// and used to own the (silently wrong for MIMI) default. Both framings are
+// pinned here so neither can be quietly re-defaulted.
+const carolKids = memberKids(aliceGroup, CAROL_DID)
+const publicWire = await removeMembers(aliceGroup, carolKids, true)
+const privateWire = await removeMembers(aliceGroup, carolKids, false)
+ok('removeMembers(..., true) emits a PublicMessage commit',
+  decodeMlsMessage(publicWire.commit, 0)?.[0]?.wireformat === 'mls_public_message',
+  String(decodeMlsMessage(publicWire.commit, 0)?.[0]?.wireformat))
+ok('removeMembers(..., false) emits a PrivateMessage commit',
+  decodeMlsMessage(privateWire.commit, 0)?.[0]?.wireformat === 'mls_private_message',
+  String(decodeMlsMessage(privateWire.commit, 0)?.[0]?.wireformat))
 
 // A leaf that isn't a biset DID URL must not be read as a member.
 let rejected = false

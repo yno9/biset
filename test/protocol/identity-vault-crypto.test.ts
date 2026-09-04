@@ -205,7 +205,7 @@ describe('buildVaultCryptoBoundary', () => {
     // Device A removes device B. Device B never receives or applies this
     // commit -- its own `stateB` is frozen at the pre-removal epoch, exactly
     // like a removed device that is simply never told anything again.
-    const removeResult = await removeMembers(stateA, [deviceBKid])
+    const removeResult = await removeMembers(stateA, [deviceBKid], false)
     confirmCommit(removeResult)
     stateA = removeResult.state
     await selfGroupStoreA.save(identityId, selfGroupId, stateA)
