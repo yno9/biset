@@ -10,7 +10,7 @@
 
 Biset は、メールと DIDComm のデータを利用者の端末側で長期保管し、サーバーを恒久的なメールボックスやメッセージ履歴にしない通信クライアントである。本書は、現行コードの構成、信頼境界、暗号鍵、状態遷移、配送・復旧経路、運用方法、および未完成部分を一つの資料にまとめる。
 
-リポジトリ直下の `PLAN.md` には実装経緯や将来計画も含まれる（`PLANIMPLEMENTATION.md` は 2026-09-05 に削除され、本書がその役割を引き継いだ）。本書ではそれを参考にしつつ、実際に `src/` と `test/` に存在し、呼び出し経路へ接続されているものを「実装済み」と判定する。クラスやテストだけが存在し、ブラウザの起動経路へ未接続のものは「部品実装済み」とする。
+リポジトリ直下の `PLAN.md` は現在 did.md Wallet login の設計だけを扱う（旧「Biset 再構築ロードマップ」は 2026-09-05 に置き換えられ、`PLANIMPLEMENTATION.md` も同日削除された——両者の役割は本書が引き継いだ）。簡素化作業の経緯と未解決issueは `PLAN-simplify.md` にある。本書はそれらを参考にしつつ、実際に `src/` と `test/` に存在し、呼び出し経路へ接続されているものを「実装済み」と判定する。クラスやテストだけが存在し、ブラウザの起動経路へ未接続のものは「部品実装済み」とする。
 
 **この節の背景（2026-09-03〜04の変化）**: 前回調査（commit `11f0a62`）時点では `biset-core`（`src/core/`）がAnchor・Mediator・Vault・biset-mimiと並ぶ五番目の主要コンポーネントとして存在し、SMTP受信、outbound mail relay、did:webvh/routing.json公開文書ホスティング、device rosterに基づくmail ingress-pull認可とlegacy Vault delivery、legacy DIDComm ingress fallbackを一手に担っていた。commit `99e08c0`（2026-09-03「core: remove src/core/ entirely, retired 2026-09-03」）で`src/core/`はディレクトリごと削除され、以後のcommitでその責務は次のように再配分された。
 
