@@ -367,7 +367,19 @@ checkpoint KEK の置き場として用意された跡に見える（要確認�
 `buildLocalJmapReadModel` / `buildVaultDeliveryProjector` の `masterSeed` は optional 引数で、
 wallet は MLS epoch wrap のみで動作する。それ以外は削除対象か、wallet 側に等価物がある。
 
-### wallet 経路で見つかった実バグ（native 削除後に残る側）
+### wallet 経路で見つかった実バグ（native 削除後に残る側）→ ✅ 修正済み（`4a5554d` `0371a48`）
+
+3件とも「修正前のコードに対して回帰テストが落ちること」を実際に確認したうえで修正した。
+さらに調査で**seed 経路も同じ poison message の罠を1 type 分だけ抱えている**ことが判明——
+既知の4 type は分岐するが、それ以外は同じ projector に落ちる。今日の既知 type はすべて処理されるので
+現時点では到達不能だが、**新しいメッセージ type が1つ増えた瞬間に再現する**。同じガードを入れた。
+両経路と projector が1つの allow-list（`isProjectableDidCommIngress`）を共有する形にしたので、
+ガードと projector の実際の挙動がずれることはなくなった。
+
+25秒タイムアウトも `withVaultSyncTimeout` に一本化した。**どちらの経路もタイマーを clear していなかった**——
+1秒で終わったラウンドも25秒間タイマーを保持し、ポーリング間隔の方が短いため蓄積する。
+
+以下は修正前の記録:
 
 1. **グループ招待が poison message になる**。`handleWalletDidCommMessage`（`main.ts:490`）は type 分岐なしで
    すべて `DidCommIngressProjector` に渡すが、同 projector は ping/basicmessage/relationship 以外を throw する。
@@ -399,7 +411,7 @@ wallet は MLS epoch wrap のみで動作する。それ以外は削除対象か
 
 | | 内容 | 状態 |
 |---|---|---|
-| **W1** | wallet 経路の実バグ3件を直す（残る側なので最優先） | 🔵実行中 |
+| **W1** | wallet 経路の実バグ3件を直す（残る側なので最優先） | ✅完了 `4a5554d` `0371a48` |
 | **W2** | 二重配線の統合（上の表。まず完全同一の3件から） | 未着手 |
 | **W3** | wallet 経路の機能穴を埋める: ①関係確立 INIT/ACCEPT ②送信 outbox ③グループチャット ④mail 受信 | 未着手・**要設計** |
 | **W4** | メールアドレス採番と送信署名鍵の設計（did.md ホストの DID にどう mail を持たせるか） | 未着手・**要判断** |
