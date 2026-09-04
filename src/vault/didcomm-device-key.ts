@@ -27,6 +27,8 @@ import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../protocol/
 import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 import { createVaultEvent, type VaultEventSigner } from './events.ts'
 import { encryptVaultObject } from './objects.ts'
+import type { VaultCredentialKind } from './credential-store.ts'
+import type { VaultRecordReader } from './store.ts'
 
 export interface DidCommDeviceKeyV1 {
   version: 1
@@ -137,4 +139,18 @@ function assertDeviceKey(value: DidCommDeviceKeyV1): void {
   if (!value.identityId || value.kind !== 'didcomm.device-key' || !value.deviceKid || !value.didCommKid || Number.isNaN(Date.parse(value.createdAt))) {
     throw new TypeError('DIDComm device-key record is invalid')
   }
+}
+
+/** Descriptor consumed by vault/credential-store.ts's generic reader and sink. */
+export const didCommDeviceKeyKind: VaultCredentialKind<DidCommDeviceKeyV1, VaultRecordReader> = {
+  eventKind: 'didcomm.device-key.set',
+  label: 'DIDComm device-key',
+  // `assertActiveVaultSegment`'s purpose string has always spelled this
+  // one "device key"; the error-message noun spells it "device-key".
+  segmentLabel: 'DIDComm device key',
+  readEvents: (events, identityId) => events.readVaultEvents(identityId),
+  assert: assertDidCommDeviceKeyRecord,
+  build: buildDidCommDeviceKeyRecord,
+  createdAtOf: value => value.createdAt,
+  copy: value => ({ ...value }),
 }

@@ -21,6 +21,8 @@ import { createVaultEvent, type VaultEventSigner } from './events.ts'
 import { encryptVaultObject } from './objects.ts'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { deviceKidFragment } from '../didcomm/devicekid.ts'
+import type { VaultCredentialKind } from './credential-store.ts'
+import type { VaultCredentialEventReader } from './store.ts'
 
 export interface DidCommPrivateCredentialV1 {
   version: 1
@@ -123,4 +125,16 @@ function assertCredential(value: DidCommPrivateCredentialV1): void {
 
 function copyCredential(value: DidCommPrivateCredentialV1): DidCommPrivateCredentialV1 {
   return { ...value, privateKey: value.privateKey.slice() }
+}
+
+/** Descriptor consumed by vault/credential-store.ts's generic reader and sink. */
+export const didCommCredentialKind: VaultCredentialKind<DidCommPrivateCredentialV1, VaultCredentialEventReader> = {
+  eventKind: 'credential.didcomm.set',
+  label: 'DIDComm credential',
+  segmentLabel: 'DIDComm credential',
+  readEvents: (events, identityId) => events.readCredentialEvents(identityId),
+  assert: assertDidCommCredentialRecord,
+  build: buildDidCommPrivateCredential,
+  createdAtOf: value => value.createdAt,
+  copy: copyCredential,
 }

@@ -3,6 +3,8 @@ import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../protocol/
 import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 import { createVaultEvent, type VaultEventSigner } from './events.ts'
 import { encryptVaultObject } from './objects.ts'
+import type { VaultCredentialKind } from './credential-store.ts'
+import type { VaultCredentialEventReader } from './store.ts'
 
 export interface OpenPgpPrivateCredentialV1 {
   version: 1
@@ -112,4 +114,16 @@ function normalizeFingerprint(value: string): string {
 
 function copyCredential(value: OpenPgpPrivateCredentialV1): OpenPgpPrivateCredentialV1 {
   return { ...value, fingerprint: normalizeFingerprint(value.fingerprint), privateKey: value.privateKey.slice(), ...(value.supersedesFingerprint === undefined ? {} : { supersedesFingerprint: normalizeFingerprint(value.supersedesFingerprint) }) }
+}
+
+/** Descriptor consumed by vault/credential-store.ts's generic reader and sink. */
+export const openPgpCredentialKind: VaultCredentialKind<OpenPgpPrivateCredentialV1, VaultCredentialEventReader> = {
+  eventKind: 'credential.openpgp.set',
+  label: 'OpenPGP credential',
+  segmentLabel: 'OpenPGP credential',
+  readEvents: (events, identityId) => events.readCredentialEvents(identityId),
+  assert: assertOpenPgpCredentialRecord,
+  build: buildOpenPgpPrivateCredential,
+  createdAtOf: value => value.createdAt,
+  copy: copyCredential,
 }
