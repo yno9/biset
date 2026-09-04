@@ -2,9 +2,8 @@ import { bytesToBase64url, canonicalHash, equalBytes, sha256Bytes } from '../pro
 import type { IngressEnvelopeV1 } from '../protocol/ingress.ts'
 import type { DeviceId, IdentityId, VaultEventId } from '../protocol/ids.ts'
 import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../local-jmap/gateway.ts'
-import { reduceLocalJmapProjection } from '../local-jmap/reducer.ts'
 import { assertActiveVaultSegment, type ActiveVaultSegment } from '../vault/active-segment.ts'
-import { encodeVaultDeliveryPack } from '../vault/delivery-pack.ts'
+import { buildVaultCommit } from '../vault/commit.ts'
 import type { IngressVerifierProjector } from '../vault/ingress-ingest.ts'
 import { decryptVaultObject } from '../vault/objects.ts'
 import type { VaultEventSigner } from '../vault/events.ts'
@@ -78,26 +77,16 @@ export class MailIngressProjector implements IngressVerifierProjector {
       createdAt,
     }, this.options.signer)
     const plaintext = await decryptVaultObject(segment.segmentKey, record.metadataObject)
-    const snapshot = await this.options.currentSnapshot()
-    const next = reduceLocalJmapProjection(this.options.identityId, { mailboxes: snapshot.mailboxes, emails: snapshot.emails }, [{ event: record.event, plaintext }])
-    const projection: LocalJmapProjectionV1 = { version: 1, identityId: this.options.identityId, ...next }
-    const objects = [mailObjectRecord(record.metadataObject, this.options.identityId), mailObjectRecord(record.rawRfc5322Object, this.options.identityId)]
-    const payload = encodeVaultDeliveryPack({ version: 1, identityId: this.options.identityId, objects, events: [record.event], keyWraps: segment.keyWraps })
-    return {
-      objects,
+    const commit = buildVaultCommit({
+      identityId: this.options.identityId,
+      objects: [record.metadataObject, record.rawRfc5322Object],
       events: [record.event],
-      projection,
-      jmapState: { state: projection.state },
-      checkpointId: projection.state,
-      deliveryOutbox: {
-        identityId: this.options.identityId,
-        entryId: record.event.id,
-        payload,
-        payloadHash: sha256Bytes(payload),
-        createdAt,
-        attempts: 0,
-      },
-    }
+      keyWraps: segment.keyWraps,
+      createdAt,
+      snapshot: await this.options.currentSnapshot(),
+      reduce: [{ event: record.event, plaintext }],
+    })
+    return { ...commit, checkpointId: commit.projection.state }
   }
 }
 
@@ -114,8 +103,5 @@ function mailThreadId(identityId: IdentityId, messageId: string | undefined): st
   return canonicalHash('biset/vault/mail/thread-id/v1', { identityId, messageId })
 }
 
-function mailObjectRecord<T>(object: T, identityId: IdentityId): T & { identityId: IdentityId } {
-  return { ...object, identityId }
-}
 
 function sameHash(payload: Uint8Array, expected: Uint8Array): boolean { return equalBytes(sha256Bytes(payload), expected) }

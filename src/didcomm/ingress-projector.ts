@@ -3,9 +3,8 @@ import type { IngressEnvelopeV1 } from '../protocol/ingress.ts'
 import { didOfKid } from '../protocol/ids.ts'
 import type { DeviceId, IdentityId, VaultEventId } from '../protocol/ids.ts'
 import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../local-jmap/gateway.ts'
-import { reduceLocalJmapProjection } from '../local-jmap/reducer.ts'
 import { assertActiveVaultSegment, type ActiveVaultSegment } from '../vault/active-segment.ts'
-import { encodeVaultDeliveryPack } from '../vault/delivery-pack.ts'
+import { buildVaultCommit } from '../vault/commit.ts'
 import type { IngressVerifierProjector } from '../vault/ingress-ingest.ts'
 import { decryptVaultObject } from '../vault/objects.ts'
 import { buildVaultMutation } from '../vault/mutations.ts'
@@ -192,25 +191,16 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       decryptedForProjection = { event: record.event, plaintext: await decryptVaultObject(segment.segmentKey, record.metadataObject) }
     }
 
-    const snapshot = await this.options.currentSnapshot()
-    const next = reduceLocalJmapProjection(this.options.identityId, { mailboxes: snapshot.mailboxes, emails: snapshot.emails }, [decryptedForProjection])
-    const projection: LocalJmapProjectionV1 = { version: 1, identityId: this.options.identityId, ...next }
-    const payload = encodeVaultDeliveryPack({ version: 1, identityId: this.options.identityId, objects: objectRecords, events: [event], keyWraps: segment.keyWraps })
-    return {
+    const commit = buildVaultCommit({
+      identityId: this.options.identityId,
       objects: objectRecords,
       events: [event],
-      projection,
-      jmapState: { state: projection.state },
-      checkpointId: projection.state,
-      deliveryOutbox: {
-        identityId: this.options.identityId,
-        entryId: event.id,
-        payload,
-        payloadHash: sha256Bytes(payload),
-        createdAt,
-        attempts: 0,
-      },
-    }
+      keyWraps: segment.keyWraps,
+      createdAt,
+      snapshot: await this.options.currentSnapshot(),
+      reduce: [decryptedForProjection],
+    })
+    return { ...commit, checkpointId: commit.projection.state }
   }
 }
 
@@ -249,6 +239,7 @@ export async function resolveDidCommSenderDid(
 ): Promise<string | null> {
   return senderKid.startsWith('did:peer:2.') ? await resolveCounterpartyDid(senderKid) : didOfKid(senderKid)
 }
+
 
 function identityScopedObject<T>(object: T, identityId: IdentityId): T & { identityId: IdentityId } {
   return { ...object, identityId }

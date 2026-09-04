@@ -6,13 +6,12 @@
 // resolution and zeroing, the atomic local-commit plus shared-delivery
 // outbox entry) was previously hand-copied four times, so a fix applied to
 // one copy silently left the other three wrong.
-import { sha256Bytes } from '../protocol/canonical.ts'
-import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../local-jmap/gateway.ts'
+import type { LocalJmapSnapshot } from '../local-jmap/gateway.ts'
 import type { LocalVaultMutationCommitter } from '../local-jmap/vault-mutation-sink.ts'
 import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../protocol/ids.ts'
 import type { VaultEventKind, VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
 import { assertActiveVaultSegment, type ActiveVaultSegment } from './active-segment.ts'
-import { encodeVaultDeliveryPack } from './delivery-pack.ts'
+import { buildVaultCommit } from './commit.ts'
 import { verifyVaultEvent, type VaultEventSigner, type VaultEventVerifier } from './events.ts'
 import { decryptVaultObject } from './objects.ts'
 import type { SegmentKeyResolver } from './segment-key-resolver.ts'
@@ -172,31 +171,17 @@ export class VaultCredentialSink<T> {
       segmentId: segment.segmentId,
       segmentKey: segment.segmentKey,
     } satisfies VaultCredentialBuildContext, this.options.signer)
-    const snapshot = await this.options.currentSnapshot()
-    const projection: LocalJmapProjectionV1 = {
-      version: 1,
+    // No `reduce`: a private credential is deliberately invisible to the
+    // user-facing JMAP projection, so the snapshot passes through untouched.
+    const commit = buildVaultCommit({
       identityId: this.options.identityId,
-      state: snapshot.state,
-      mailboxes: snapshot.mailboxes,
-      emails: snapshot.emails,
-    }
-    const object = { ...record.object, identityId: this.options.identityId }
-    const payload = encodeVaultDeliveryPack({ version: 1, identityId: this.options.identityId, objects: [object], events: [record.event], keyWraps: segment.keyWraps })
-    const result = await this.options.committer.commitLocalMutation({
-      identityId: this.options.identityId,
-      objects: [object],
+      objects: [record.object],
       events: [record.event],
-      projection,
-      jmapState: { state: projection.state },
-      deliveryOutbox: {
-        identityId: this.options.identityId,
-        entryId: record.event.id,
-        payload,
-        payloadHash: sha256Bytes(payload),
-        createdAt: this.kind.createdAtOf(value),
-        attempts: 0,
-      },
+      keyWraps: segment.keyWraps,
+      createdAt: this.kind.createdAtOf(value),
+      snapshot: await this.options.currentSnapshot(),
     })
+    const result = await this.options.committer.commitLocalMutation({ identityId: this.options.identityId, ...commit })
     return { result, event: record.event }
   }
 }

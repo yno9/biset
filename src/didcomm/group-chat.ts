@@ -14,13 +14,12 @@
 // group-chat-store.ts's own header), no name changes, no leave, no
 // edit/delete/reaction -- matching 1:1 DIDComm chat's own current scope
 // (ingress-projector.ts's header).
-import { bytesToHex, sha256Bytes } from '../protocol/canonical.ts'
+import { bytesToHex } from '../protocol/canonical.ts'
 import type { DeviceId, IdentityId, VaultEventId } from '../protocol/ids.ts'
 import type { LocalJmapEmail, LocalJmapProjectionV1, LocalJmapSnapshot } from '../local-jmap/gateway.ts'
-import { reduceLocalJmapProjection } from '../local-jmap/reducer.ts'
 import { assertActiveVaultSegment, type ActiveVaultSegment } from '../vault/active-segment.ts'
+import { buildVaultCommit } from '../vault/commit.ts'
 import { decryptVaultObject } from '../vault/objects.ts'
-import { encodeVaultDeliveryPack } from '../vault/delivery-pack.ts'
 import type { VaultEventSigner } from '../vault/events.ts'
 import type { VaultEventRecord, VaultObjectRecord } from '../vault/store.ts'
 import { buildMailMessageAdd } from '../vault/mail-message.ts'
@@ -175,25 +174,14 @@ export async function buildDidCommGroupMessageVaultRecord(
   }
   const record = await buildMailMessageAdd({ email, rawRfc5322: new TextEncoder().encode(input.content) }, context, options.signer)
 
-  const objects: VaultObjectRecord[] = [
-    { ...record.metadataObject, identityId: options.identityId },
-    { ...record.rawRfc5322Object, identityId: options.identityId },
-  ]
   const event: VaultEventRecord = { ...record.event, identityId: options.identityId }
-  const snapshot = await options.currentSnapshot()
-  const decryptedForProjection = { event, plaintext: await decryptVaultObject(segment.segmentKey, record.metadataObject) }
-  const next = reduceLocalJmapProjection(options.identityId, { mailboxes: snapshot.mailboxes, emails: snapshot.emails }, [decryptedForProjection])
-  const projection: LocalJmapProjectionV1 = { version: 1, identityId: options.identityId, ...next }
-  const payload = encodeVaultDeliveryPack({ version: 1, identityId: options.identityId, objects, events: [event], keyWraps: segment.keyWraps })
-  return {
-    objects, events: [event], projection, jmapState: { state: projection.state },
-    deliveryOutbox: {
-      identityId: options.identityId,
-      entryId: event.id,
-      payload,
-      payloadHash: sha256Bytes(payload),
-      createdAt,
-      attempts: 0,
-    },
-  }
+  return buildVaultCommit({
+    identityId: options.identityId,
+    objects: [record.metadataObject, record.rawRfc5322Object],
+    events: [event],
+    keyWraps: segment.keyWraps,
+    createdAt,
+    snapshot: await options.currentSnapshot(),
+    reduce: [{ event, plaintext: await decryptVaultObject(segment.segmentKey, record.metadataObject) }],
+  })
 }

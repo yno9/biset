@@ -1,15 +1,13 @@
-import { sha256Bytes } from '../protocol/canonical.ts'
 import type { VaultEventSigner } from '../vault/events.ts'
 import { buildVaultMutation, encodeVaultMutationObject } from '../vault/mutations.ts'
 import type { DeviceId, IdentityId, VaultEventId } from '../protocol/ids.ts'
 import type { VaultEventV1, VaultObjectV1 } from '../protocol/vault.ts'
-import { encodeVaultDeliveryPack } from '../vault/delivery-pack.ts'
+import { buildVaultCommit } from '../vault/commit.ts'
 import { decryptVaultObject } from '../vault/objects.ts'
 import { buildMailMessageAdd } from '../vault/mail-message.ts'
 import type { LocalJmapEmail, LocalJmapMutationSink, LocalJmapProjectionV1, LocalJmapSnapshot } from './gateway.ts'
 import { emailSetToVaultMutationIntents } from './mutations.ts'
 import type { VaultMutationIntent } from './mutations.ts'
-import { reduceLocalJmapProjection } from './reducer.ts'
 import type { ActiveVaultSegment } from '../vault/active-segment.ts'
 
 export type { ActiveVaultSegment } from '../vault/active-segment.ts'
@@ -105,39 +103,17 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
       records.push({ ...record, plaintext: encodeVaultMutationObject(intent) })
       parents = [record.event.id]
     }
-    const next = reduceLocalJmapProjection(this.options.identityId, {
-      mailboxes: snapshot.mailboxes,
-      emails: snapshot.emails,
-    }, records)
-    const projection: LocalJmapProjectionV1 = {
-      version: 1,
+    const commit = buildVaultCommit({
       identityId: this.options.identityId,
-      ...next,
-    }
-    const objects = records.map(record => ({ ...record.object, identityId: this.options.identityId }))
-    const events = records.map(record => record.event)
-    const payload = encodeVaultDeliveryPack({
-      version: 1,
-      identityId: this.options.identityId,
-      objects,
-      events,
+      objects: records.map(record => record.object),
+      events: records.map(record => record.event),
       keyWraps: segment.keyWraps,
+      createdAt,
+      snapshot,
+      reduce: records,
     })
-    await this.options.committer.commitLocalMutation({
-      identityId: this.options.identityId,
-      objects,
-      events,
-      projection,
-      jmapState: { state: projection.state },
-      deliveryOutbox: {
-        identityId: this.options.identityId,
-        entryId: events.at(-1)!.id,
-        payload,
-        payloadHash: sha256Bytes(payload),
-        createdAt,
-        attempts: 0,
-      },
-    })
+    const projection = commit.projection
+    await this.options.committer.commitLocalMutation({ identityId: this.options.identityId, ...commit })
     const destroyed = new Set(records.filter(record => record.event.kind === 'message.tombstone').flatMap(record => record.event.targetIds))
     const updated = new Set(records.filter(record => record.event.kind !== 'message.tombstone').flatMap(record => record.event.targetIds))
     return {
@@ -184,30 +160,19 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
       createdAt,
     }, this.options.signer)
     const plaintext = await decryptVaultObject(segment.segmentKey, record.metadataObject)
-    const next = reduceLocalJmapProjection(this.options.identityId, {
-      mailboxes: snapshot.mailboxes,
-      emails: snapshot.emails,
-    }, [{ event: record.event, plaintext }])
-    const projection: LocalJmapProjectionV1 = { version: 1, identityId: this.options.identityId, ...next }
-    const objects = [
-      { ...record.metadataObject, identityId: this.options.identityId },
-      { ...record.rawRfc5322Object, identityId: this.options.identityId },
-    ]
-    const payload = encodeVaultDeliveryPack({ version: 1, identityId: this.options.identityId, objects, events: [record.event], keyWraps: segment.keyWraps })
+    const commit = buildVaultCommit({
+      identityId: this.options.identityId,
+      objects: [record.metadataObject, record.rawRfc5322Object],
+      events: [record.event],
+      keyWraps: segment.keyWraps,
+      createdAt,
+      snapshot,
+      reduce: [{ event: record.event, plaintext }],
+    })
+    const projection = commit.projection
     await this.options.committer.commitLocalMutation({
       identityId: this.options.identityId,
-      objects,
-      events: [record.event],
-      projection,
-      jmapState: { state: projection.state },
-      deliveryOutbox: {
-        identityId: this.options.identityId,
-        entryId: record.event.id,
-        payload,
-        payloadHash: sha256Bytes(payload),
-        createdAt,
-        attempts: 0,
-      },
+      ...commit,
       ...(input.didComm?.length ? {
         didCommOutbox: input.didComm.map(entry => ({
           identityId: this.options.identityId,
