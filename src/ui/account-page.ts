@@ -43,7 +43,10 @@ import { openDisplayNameModal, openEditIdentityModal } from './account/identity-
 // menu page (config-page.ts). They stay re-exported from here so main.ts and
 // ui/left-pane.ts keep importing the account page's API from one module.
 export { configureAccountPage } from './account/state.ts'
-export type { AccountPageConfig, VaultCardStatus } from './account/state.ts'
+// VaultCardStatus only: main.ts holds one to pass to updateVaultCardStatus.
+// AccountPageConfig is configureAccountPage's parameter type and has no
+// caller outside account/, so it stays internal (S7's rule).
+export type { VaultCardStatus } from './account/state.ts'
 export { showConfigPage, hideConfigPage, inConfigMode } from './account/config-page.ts'
 
 let active = false

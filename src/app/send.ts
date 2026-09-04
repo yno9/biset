@@ -213,7 +213,8 @@ async function sendDidCommGroupMessage(ctx: SendContext, groupId: string, input:
 // this device already has one with itself's not needed, and with each
 // invitee via ensureDidCommContact below; the invitees mesh-complete
 // with EACH OTHER on their own once they receive the invite
-// (handleDidCommGroupInvite above).
+// (main.ts's handleDidCommGroupInvite -- the receive side stayed there
+// when this send path moved out).
 async function createAndSendDidCommGroup(ctx: SendContext, toDids: string[], input: ReplySendInput): Promise<void> {
   const identity = ctx.identity()
   if (!identity.didCommKid || !identity.didCommX25519PrivateKey) throw new Error('Enable DIDComm in account settings before starting a group')
