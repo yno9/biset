@@ -2,14 +2,10 @@ import { createBisetAnchorFetchHandler } from './app.ts'
 import { DidWebStore } from './webvh/did-web-store.ts'
 import { RoutingDocStore } from './webvh/routing-store.ts'
 import { ensureWebvhDataDir, WebvhLogStore } from './webvh/webvh-store.ts'
-import type { AnchorOidcProvider } from './oidc.ts'
-import type { AnchorOid4vpProvider } from './oid4vp.ts'
 
 export interface BisetAnchorDeploymentOptions {
   dataDir: string
   domainHeader?: string
-  oidc?: AnchorOidcProvider
-  oid4vp?: AnchorOid4vpProvider
 }
 
 export interface BisetAnchorDeployment {
@@ -35,8 +31,6 @@ export function createBisetAnchorDeployment(options: BisetAnchorDeploymentOption
       didWeb,
       routing,
       domainHeader: options.domainHeader,
-      oidc: options.oidc,
-      oid4vp: options.oid4vp,
     }),
   }
 }

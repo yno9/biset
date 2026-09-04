@@ -73,7 +73,6 @@ import { decodePeerDid2, generatePeerIdentity, publicKeyOf } from './didcomm/pee
 import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT, relationshipBodyOf, relationshipMediatorService } from './didcomm/relationship.ts'
 import type { DidCommPlaintext } from './didcomm/message.ts'
 import { deliverySeq, didOfKid } from './protocol/ids.ts'
-import { IndexedDbBisetLoginWalletCredentialStore } from './oid4vp/wallet-store.ts'
 import { ingestVaultDelivery } from './vault/delivery-ingest.ts'
 import { createRecoveryArchiveSnapshot } from './vault/recovery-archive-export.ts'
 import { createPortableCoordinatorCheckpoint, openPortableCoordinatorCheckpoint } from './vault/vault-checkpoint.ts'
@@ -141,7 +140,7 @@ setOnWalletConnected(async () => {
 // this on every ordinary fresh-install boot costs nothing.
 const ALL_LOCAL_DATABASE_NAMES = [
   'biset-identity', 'biset-mls-keypackages', 'biset-mls-self-group',
-  'biset-vault-core', 'biset-wallet', 'biset-didcomm-group-chat',
+  'biset-vault-core', 'biset-didcomm-group-chat',
 ]
 
 async function deleteLocalDatabases(names: readonly string[]): Promise<void> {
@@ -785,7 +784,6 @@ export async function bootClient(): Promise<void> {
 
   const selfGroupStore = new IndexedDbMlsSelfGroupStore()
   const vaultStore = await IndexedDbVaultStore.open()
-  const loginWalletStore = new IndexedDbBisetLoginWalletCredentialStore()
   // did:webvh domain move (identity/webvh/adopt-move.ts) -- catches this
   // device up on ANY identity that moved to a new domain while a SIBLING
   // device performed the move and this one wasn't looking, before anything
@@ -799,11 +797,6 @@ export async function bootClient(): Promise<void> {
       return record
     }),
   ))
-  for (let index = 0; index < storedRecords.length; index += 1) {
-    const before = storedRecords[index]!
-    const after = records[index]!
-    if (before.did !== after.did) await loginWalletStore.rekeyIdentity(before.did, after.did).catch(error => console.warn('[OID4VP wallet rekey]', error))
-  }
   // Single-account slice: the vault UI reads/writes the first local
   // identity's vault. maintainSelfGroup below still runs for every identity
   // on this device, so a second one doesn't silently drift out of sync just
@@ -894,12 +887,10 @@ export async function bootClient(): Promise<void> {
   // did.jsonl move plus local DID-keyed store migration. MLS credentials are
   // stable Root-signed objects and require no move-time commit.
   const moveIdentity = async (newDomain: string, revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array, nextKeyHash: string): Promise<string> => {
-    const previousDid = identity.did
     const moved = await moveWebvhIdentity({
       recordStore, record: identity, vaultStore, selfGroupStore,
       newDomain, signingPrivateKey: revealedPrivateKey, signingPublicKey: revealedPublicKey, nextKeyHash,
     })
-    await loginWalletStore.rekeyIdentity(previousDid, moved.did)
     identity = moved
     // A full re-render, same as logout()'s own re-entry into bootClient()
     // just above -- account-page.ts's own config (did/deviceKid/masterSeed)
@@ -948,7 +939,6 @@ export async function bootClient(): Promise<void> {
     try { vaultStore.close() } catch { /* best-effort */ }
     try { selfGroupStore.close() } catch { /* best-effort */ }
     try { recordStore.close() } catch { /* best-effort */ }
-    try { loginWalletStore.close() } catch { /* best-effort */ }
     // biset-didcomm-group-chat used to be missing from this list entirely
     // (found 2026-09-04 while adding bootClient()'s own zero-identity-branch
     // cleanup, ALL_LOCAL_DATABASE_NAMES's comment) -- every logout left that

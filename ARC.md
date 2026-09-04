@@ -568,7 +568,7 @@ legacy core Vault delivery（§9.3）とMIMI Self Vaultの並存は、biset-core
 ### 17.1 Client
 
 - `bun run build` — `src/main.ts` と `src/sw.ts` を browser IIFE に bundle し、`scripts/inline.mjs` で `dist/index.html` に inline 化する。
-- Runtime config — `window.__BISET_CONFIG__` の `apexDomain`、`coreBaseUrl`、`mediatorUrls`、`mimiSelfBaseUrl`、`anchorBaseUrl`、`anchorOidcClientId`。**`coreBaseUrl`は今も設定型（`readBisetConfig`）に残っているが、production configはこれを設定せず、参照先（biset-core）自体が存在しないため、事実上意味を失った設定項目である**（§12.1・§15.2のリスク14）。
+- Runtime config — `window.__BISET_CONFIG__` の `apexDomain`、`mediatorUrls`、`mimiSelfBaseUrl`。旧native login用の`anchorBaseUrl`と`anchorOidcClientId`は削除済み。
 - `mediatorUrls` が未設定時、`enableDidComm`は空origin由来の動作しないURLを一時的にrouting.jsonへpublishする——旧ARC.mdが記述していた「legacy core DIDComm pathへのfallback」は、core撤去後は実質的に機能しない（§12.1）。`mimiSelfBaseUrl`が未設定であればMIMI Self Vault機能全体が起動せず、legacy core Vault delivery相当のコードパスへ分岐するが、これも同様にサーバー側実体を欠く（§9.3）。production configはmediatorUrls・mimiSelfBaseUrlのいずれも設定済みであり、これらの分岐は実運用では発生しない。
 
 ### 17.2 Anchor environment
@@ -578,8 +578,6 @@ legacy core Vault delivery（§9.3）とMIMI Self Vaultの並存は、biset-core
 | `PORT` | 既定 8788 |
 | `ANCHOR_DATA_DIR` | 必須。did:webvh/did:web/routing.json文書の永続化先。**2026-09-03以前はbiset-coreの`/root/biset/core/data`とディレクトリを共有していた（coreは`src/anchor/webvh/*`のstore classを間借りしていただけ）が、core retirement前に独立した`/root/biset/webvh-data`へ移行済み**（`/etc/biset/anchor.env`） |
 | `ANCHOR_DOMAIN_HEADER` | 既定 `x-biset-domain` |
-| `ANCHOR_ISSUER` / `ANCHOR_OIDC_CLIENTS_JSON` | 両方あればOIDC/OpenID4VP有効化。片方だけの設定はエラー |
-| `ANCHOR_WALLET_AUTHORIZATION_ENDPOINT` | OpenID4VP Wallet authorization endpoint（任意） |
 
 `bun run build:anchor` は Linux x64 向け standalone Bun binary を生成する。
 
