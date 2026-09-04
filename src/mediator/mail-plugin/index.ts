@@ -61,7 +61,11 @@ const smtpListener = createMailPluginListener({
 // the SAME public mediator.biset.md, routing /v1/mail/submit here and
 // everything else to `deployment`'s own port (see ops/ for the Caddyfile
 // block, `/v1/mail/submit` needs to be listed BEFORE the catch-all).
-const mailSubmissionHandler = createMailSubmissionHttpHandler({ hostname: smtpHelloName, apexDomain })
+const mailSubmissionHandler = createMailSubmissionHttpHandler({
+  hostname: smtpHelloName,
+  apexDomain,
+  allowedOrigins: new Set((Bun.env.MEDIATOR_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean)),
+})
 const mailSubmissionServer = Bun.serve({
   hostname: Bun.env.MAIL_PLUGIN_SUBMIT_HOST ?? '127.0.0.1',
   port: envInteger('MAIL_PLUGIN_SUBMIT_PORT', 8792, 1, 65_535),

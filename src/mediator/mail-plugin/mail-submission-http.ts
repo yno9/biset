@@ -36,26 +36,54 @@ export interface MailSubmissionHttpOptions {
   resolveUpdateKeys?: (identityId: string) => Promise<string[]>
   /** DI for tests -- defaults to the real outbound SMTP client. */
   deliverMailFn?: typeof deliverMail
+  /** Same allowlist deployment.ts's own shared mediator fetch handler
+   * enforces (MEDIATOR_ALLOWED_ORIGINS) -- this endpoint runs on its OWN
+   * Bun.serve (this file's own header explains why), so it never inherited
+   * that handler's CORS/origin checks, and had none of its own at all: a
+   * browser POSTing here cross-origin (index.ts's compose UI is always a
+   * different origin than mediator.biset.md) got no
+   * Access-Control-Allow-Origin on the OPTIONS preflight and failed before
+   * the actual POST was ever sent (found live, 2026-09-04). Defaults to
+   * empty (reject every cross-origin call) rather than allow-all, matching
+   * deployment.ts's own default. */
+  allowedOrigins?: Set<string>
 }
 
 export function createMailSubmissionHttpHandler(opts: MailSubmissionHttpOptions): (request: Request) => Promise<Response> {
   const resolveUpdateKeys = opts.resolveUpdateKeys ?? resolveCurrentUpdateKeys
   const deliverMailFn = opts.deliverMailFn ?? deliverMail
+  const allowedOrigins = opts.allowedOrigins ?? new Set<string>()
   return async function handleMailSubmission(request: Request): Promise<Response> {
-    if (new URL(request.url).pathname !== WELL_KNOWN_PATH) return text(404, 'Not found')
-    if (request.method !== 'POST') return text(405, 'Method not allowed')
+    const origin = request.headers.get('origin')
+    if (request.method === 'OPTIONS') {
+      if (!origin || !allowedOrigins.has(origin)) return new Response(null, { status: 403 })
+      return new Response(null, { status: 204, headers: corsHeaders(origin) })
+    }
+    if (origin && !allowedOrigins.has(origin)) return text(403, 'origin not allowed', origin)
+    if (new URL(request.url).pathname !== WELL_KNOWN_PATH) return text(404, 'Not found', origin)
+    if (request.method !== 'POST') return text(405, 'Method not allowed', origin)
     try {
       const parsed = decodeMailSubmissionRequestWire(await requestText(request))
-      if (!(await isAuthorised(parsed, opts.apexDomain, resolveUpdateKeys))) return text(403, 'mail submission is not authorised')
+      if (!(await isAuthorised(parsed, opts.apexDomain, resolveUpdateKeys))) return text(403, 'mail submission is not authorised', origin)
       const results = await deliverMailFn(
         { hostname: opts.hostname },
         { mailFrom: parsed.mailFrom, rcptTo: parsed.rcptTo, rawRfc5322: parsed.rawRfc5322 },
       )
-      return json(200, encodeMailSubmissionResultWire(collapseResults(results)))
+      return json(200, encodeMailSubmissionResultWire(collapseResults(results)), origin)
     } catch (error) {
-      if (error instanceof TypeError || error instanceof RangeError) return text(400, error.message)
-      return text(500, 'Internal server error')
+      if (error instanceof TypeError || error instanceof RangeError) return text(400, error.message, origin)
+      return text(500, 'Internal server error', origin)
     }
+  }
+}
+
+function corsHeaders(origin: string): Record<string, string> {
+  return {
+    'access-control-allow-origin': origin,
+    'access-control-allow-methods': 'POST, OPTIONS',
+    'access-control-allow-headers': 'Content-Type',
+    'access-control-max-age': '600',
+    'vary': 'Origin',
   }
 }
 
@@ -102,9 +130,9 @@ async function requestText(request: Request): Promise<string> {
   return new TextDecoder().decode(bytes)
 }
 
-function json(status: number, body: string): Response {
-  return new Response(body, { status, headers: { 'content-type': 'application/json' } })
+function json(status: number, body: string, origin: string | null): Response {
+  return new Response(body, { status, headers: { 'content-type': 'application/json', ...(origin ? corsHeaders(origin) : {}) } })
 }
-function text(status: number, body: string): Response {
-  return new Response(body + '\n', { status, headers: { 'content-type': 'text/plain; charset=utf-8' } })
+function text(status: number, body: string, origin: string | null): Response {
+  return new Response(body + '\n', { status, headers: { 'content-type': 'text/plain; charset=utf-8', ...(origin ? corsHeaders(origin) : {}) } })
 }
