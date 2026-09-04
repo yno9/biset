@@ -188,6 +188,20 @@ S7 の残りを片付ける途中で、**より深刻な問題**が見つかっ�
 - biset-mimi の anon モード（`mimi/anon/*` `room-policy.ts`）— client からの呼び出し経路なし
 - その他（`local-jmap/accounts.ts` `remote.ts` `mls/mimi-room-migration.ts` ほか）
 
+**23件の分類**（`bun run reachability` で再取得できる。「テストが通る」は「本番で動く」を意味しない）:
+
+| 分類 | ファイル | 判断 |
+|---|---|---|
+| **未完成機能（部品はあるが配線が無い）** | `vault/restore-workflow.ts` `restore-transfer*.ts`<br>`vault/recovery-archive-{file,import}.ts` | §5-1。**復旧経路2本が動いていない** |
+| | `mail/openpgp-message.ts` `mail/rfc3156.ts` `mail/ingress-workflow.ts` | ARC.md §2.2 がスコープ外と明記 |
+| | `local-jmap/accounts.ts` `local-jmap/remote.ts` | リモートJMAPアカウント |
+| | `oid4vp/wallet.ts` `oid4vp/file-bridge.ts` `oidc/client.ts` | Anchor OIDC ログイン。<br>did.md Wallet（`src/wallet/`）とは**別実装**で、そちらは配線済み |
+| **旧アーキ由来（core撤去で経路が消滅）** | `vault/delivery-outbox.ts` `delivery-sync.ts` `ingress-sync.ts` | §5-8 の wire 3ファイルと同根 |
+| **サーバ側の未使用モード** | `mimi/anon/{identity-link,pseudonym}.ts` `mimi/room-policy.ts` | client からの呼び出し経路が無い（ARC.md §3 記載） |
+| **将来機能の下ごしらえ** | `mls/keypackage-store.ts` | 現行 Self Vault は external join を使い KeyPackage を要さない |
+| | `mls/mimi-client-routing.ts` `mls/mimi-room-migration.ts` | anon room への移行機構 |
+| **テスト専用で正常** | `protocol/test-vectors.ts`<br>`mls/vendor/crypto/{kdf,signature}.ts` | ベクタ定義と vendored fork。問題なし |
+
 → **コードベースが複雑に見える理由の一つがこれ**: 動いているコードと、まだ動いていない部品が、
 同じディレクトリに区別なく同居している。読む人は毎回「これは生きているのか」を自分で判定させられる。
 
@@ -304,6 +318,42 @@ S2 (テストをgitへ)  ─┴→ S3段階1 (credential generic化) → S3段�
 
 → **WIP がコミットまたは stash されるまで、S4 / S5 / S6 は着手できない。**
 
+## 3.6 方針変更: native login 廃止（2026-09-05、ユーザー指示）
+
+**biset 自前のログイン（BIP39 seed から identity を作り、Anchor が OIDC provider として認証する方式）を廃止し、
+外部の did IdP（現状 did.md）ログインに一本化する。native login 関連コードは全削除。**
+
+これは簡素化計画にとって**追い風**である——§1.2 で指摘した「Wallet 経路が同じ配線をもう一組、別実装で持っている＝二重配線」が、
+片方を消すことで根本的に解消する。S4（bootClient 分解）はこの削除の**後**にやる方が、対象が半分になる。
+
+### 調査で確定した範囲（2026-09-05）
+
+**N1. クライアントの native login**（`main.ts` `ui/` `identity/` で完結。`src/wallet/` は seed 系を一切使わないことを確認済み）
+- `identity/bootstrap.ts` の `createNewIdentity` / `restoreIdentity` と関連ヘルパ
+- `identity/seed.ts` `slip10.ts` `keys.ts`（BIP39/SLIP-10 由来の鍵導出）
+- `ui/mnemonic.ts`（337行）、`ui/account-create.ts` の native 部分（username / TOS / 24語 phrase / sign phrase フォームと submit ハンドラ）
+- `identity/record-store.ts`（seed ベースの IdentityRecord。Wallet アカウントはこれを持たない）
+- `main.ts` の `storedRecords` 経路一式 → **`configureWalletAccountIfPresent()` が唯一の入口になる**
+
+**N2. Anchor の認証サーバー**（1,147行）
+- `anchor/oidc.ts` `oidc-sqlite.ts` `oidc-deployment.ts` `oid4vp.ts`（OIDC provider + OpenID4VP Verifier）
+- クライアント側の対（`src/oid4vp/` 全4ファイル、`src/oidc/client.ts`）——**呼び出し元は `main.ts` のみ**であることを確認済み
+- これで §3.5 の「tests-only 23件」のうち `oid4vp/*` `oidc/client.ts` の3件が**削除で解消**する
+
+**N3. 自前 did:webvh の発行・鍵ローテーション・ドメイン移転**
+- `identity/webvh/create-genesis.ts` `prerotation.ts` `move.ts` `migrate.ts` `adopt-move.ts`
+- did.md が identity の発行元になるため、biset 側が genesis を書く経路は不要
+- §5-5 の「MLS self-group 世代ローテーションの MIMI 版が無い」は**この変更で論点ごと消える可能性がある**（要確認）
+
+**N4. Anchor の did:webvh 公開文書ホスティング**（`anchor/webvh/*`、判断保留）
+- did.md がホストするなら不要だが、**既存ユーザーの DID が biset ドメインに残っている**場合の移行を考える必要がある。
+  N1〜N3 を終えてから改めて判断する
+
+### 残すもの
+- `identity/webvh/{resolver,identifier,log,log-io,proof,document,multikey,hash,jcs}.ts` —
+  **他人の DID を解決する**ために必須。native login とは無関係
+- `src/wallet/`（did.md OAuth）、Vault、DIDComm、MIMI、mail — すべて
+
 ## 4. やらないこと（明示）
 - 機能の削除・仕様変更。S1 で「消えている機能」を見つけたら、消すのではなく**issueとして記録して残す**（core経由restoreが該当する可能性あり）
 - HTML/CSS の書き換え・簡略化（`src.bak` verbatim 方針）
@@ -321,10 +371,23 @@ S2 (テストをgitへ)  ─┴→ S3段階1 (credential generic化) → S3段�
    `src/staged/` のようなディレクトリへ移す、あるいは各ファイル先頭に統一マーカーを置くなど。
    移動は import 書き換えを伴い WIP と衝突するため、本計画では提案のみ。
 
-1. **restore 機能に実装も呼び出し元もない**（S1で判明）。`restore-workflow.ts` / `restore-transfer*.ts` /
-   `protocol/restore-control-wire.ts` は存在するが、`RestoreControlTransport` の実装クラスは
-   `src/` `test/` のどこにも無く、本番の呼び出し経路も無い。テストだけが動かしている。
-   **「復旧に必要な履歴を取得する」は ARC.md §2.1 の設計原則の一つ**なので、単なる死コードとして消してよいものではない。要判断。
+1. **復旧経路が2つとも未配線**（S1で判明、S12の到達可能性チェックで全容確定）。
+   ARC.md §2.1 は「復旧に必要な履歴を、biset-mimi Self Vault の checkpoint、信頼済み peer、または
+   **利用者管理の暗号化 archive** から取得する」を設計原則に挙げているが、後ろ2つが動いていない:
+
+   | 経路 | 状態 |
+   |---|---|
+   | biset-mimi Self Vault の checkpoint | ✅稼働（`main.ts` から実配線） |
+   | 信頼済み peer からの restore | ❌ `restore-workflow.ts` / `restore-transfer*.ts` は存在するが、
+     `RestoreControlTransport` の**実装クラスが `src/` `test/` のどこにも無く**、本番の呼び出し経路も無い |
+   | 利用者管理の暗号化 archive | ❌ `recovery-archive-file.ts`（Blob 書き出し / File 読み込み）も
+     `recovery-archive-import.ts` も**どこからも呼ばれていない**。
+     `recovery-archive-export.ts` だけは到達可能だが、それは**MIMI checkpoint を作るため**に
+     `createRecoveryArchiveSnapshot` が使われているだけで、ユーザー向けのバックアップ機能ではない |
+
+   つまり **端末が1台になった時の復旧手段が、実質 Self Vault checkpoint 一本**である。
+   部品はすべて実装され、テストも通っている——**配線だけが無い**。
+   これは「死コードだから消す」案件ではなく「**未完成の機能**」であり、消すか完成させるかの判断が要る。
 2. `CoreMailSubmissionTransport`（`vault/mail-submission-transport.ts`）は**生きている**（mediator の mail plugin に POST する）。
    `Core` prefix だけが legacy。改名候補。
 3. `test/preview-normalisation.test.ts` は 0 テストしか実行していない。
