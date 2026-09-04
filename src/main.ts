@@ -175,6 +175,14 @@ function withVaultSyncTimeout<T>(work: Promise<T>): Promise<T> {
   })
 }
 
+function resolveAnyDidCommSenderKey(kid: string): Promise<Uint8Array> {
+  if (kid.startsWith('did:peer:2.')) {
+    const did = kid.split('#', 1)[0]!
+    return Promise.resolve(publicKeyOf(decodePeerDid2(did), kid))
+  }
+  return resolveDidCommSenderKey(kid)
+}
+
 async function configureWalletAccountIfPresent(): Promise<boolean> {
   let session
   try {
@@ -454,13 +462,6 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
         // Public first-contact messages resolve from did:webvh.  Once a
         // relationship is established, continuing DIDComm traffic is signed
         // by a did:peer key embedded in its own identifier instead.
-        const resolveWalletSenderKey = async (kid: string): Promise<Uint8Array> => {
-          if (kid.startsWith('did:peer:2.')) {
-            const peerDid = kid.split('#', 1)[0]!
-            return publicKeyOf(decodePeerDid2(peerDid), kid)
-          }
-          return resolveDidCommSenderKey(kid)
-        }
         const walletDidCommProjector = new DidCommIngressProjector({
           identityId: device.did,
           actorDeviceId: device.credential.deviceKid,
@@ -469,7 +470,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
             const contact = await walletContactKeyReader.forOwnKid(kid)
             return contact ? { kid, x25519PrivateKey: contact.ownX25519PrivateKey } : null
           },
-          resolveSenderKey: resolveWalletSenderKey,
+          resolveSenderKey: resolveAnyDidCommSenderKey,
           resolveCounterpartyDid: async kid => (await walletContactKeyReader.forCounterpartyKid(kid))?.counterpartyDid ?? null,
           async alreadyProcessed() { return false },
           nextActorSeq: () => sequencer.nextActorSeq(),
@@ -486,7 +487,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
           const watch = watchMediator({
             mediatorUrl,
             own: { did, xKid, xPriv },
-            resolveSenderKey: resolveWalletSenderKey,
+            resolveSenderKey: resolveAnyDidCommSenderKey,
             onMessage: message => handleWalletDidCommMessage(message, xKid, mediatorUrl),
             onError: error => console.warn('[did.md Wallet relationship watch]', error),
           })
@@ -576,7 +577,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
         const watch = watchMediator({
           mediatorUrl: didCommDevice.mediatorUrl,
           own: { did: didCommDevice.did, xKid: didCommDevice.xKid, xPriv: didCommDevice.x25519PrivateKey },
-          resolveSenderKey: resolveWalletSenderKey,
+          resolveSenderKey: resolveAnyDidCommSenderKey,
           onMessage: message => handleWalletDidCommMessage(message, didCommDevice.xKid, didCommDevice.mediatorUrl),
           onError: error => console.warn('[did.md Wallet DIDComm watch]', error),
         })
@@ -1275,14 +1276,6 @@ export async function bootClient(): Promise<void> {
     // didCommX25519PrivateKey do -- an identity that hasn't enabled DIDComm
     // yet, or (not currently possible, but not asserted against either) had
     // it revoked mid-session.
-    const resolveAnyDidCommSenderKey = (kid: string): Promise<Uint8Array> => {
-      if (kid.startsWith('did:peer:2.')) {
-        const did = kid.split('#', 1)[0]!
-        return Promise.resolve(publicKeyOf(decodePeerDid2(did), kid))
-      }
-      return resolveDidCommSenderKey(kid)
-    }
-
     const buildDidCommProjector = (): DidCommIngressProjector | undefined =>
       identity.didCommKid && identity.didCommX25519PrivateKey
         ? new DidCommIngressProjector({
