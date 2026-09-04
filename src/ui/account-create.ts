@@ -34,6 +34,13 @@ import { resolveByDomain } from '../identity/webvh/resolver.ts'
 import { readBisetConfig } from './config.ts'
 import { encodeMultikey } from '../identity/webvh/multikey.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
+import {
+  beginDidMdWalletLogin,
+  completeDidMdWalletCallback,
+  disconnectDidMdWallet,
+  restoreDidMdWalletSession,
+  type DidMdActiveSession,
+} from '../wallet/did-md-oauth.ts'
 
 // Set once by main.ts (a plain function reference, not an import back to
 // it) so the submit handler below can re-run the boot routine after
@@ -48,6 +55,10 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 let onIdentityCreated: ((reason: 'created' | 'restored') => Promise<void>) | undefined
 export function setOnIdentityCreated(fn: (reason: 'created' | 'restored') => Promise<void>): void {
   onIdentityCreated = fn
+}
+let onWalletConnected: (() => Promise<void>) | undefined
+export function setOnWalletConnected(fn: () => Promise<void>): void {
+  onWalletConnected = fn
 }
 
 export function randomHex4(): string {
@@ -144,6 +155,62 @@ export function setupNewUserPage(): void {
   const tosIcon = document.getElementById('nu-tos-icon')!
   const phraseEl = document.getElementById('nu-phrase') as HTMLTextAreaElement | null
   const signPhraseEl = document.getElementById('nu-sign-phrase') as HTMLTextAreaElement | null
+  const walletHandleEl = document.getElementById('nu-wallet-handle') as HTMLInputElement | null
+  const walletLoginButton = document.getElementById('nu-wallet-login') as HTMLButtonElement | null
+  const walletSessionEl = document.getElementById('nu-wallet-session') as HTMLDivElement | null
+  const walletResultEl = document.getElementById('nu-wallet-result') as HTMLDivElement | null
+
+  const walletResult = (message: string, error = false) => {
+    if (!walletResultEl) return
+    walletResultEl.textContent = message
+    walletResultEl.style.display = 'block'
+    walletResultEl.style.color = error ? '#ff3b30' : 'var(--text-dim)'
+  }
+  const showWalletSession = (session: DidMdActiveSession | undefined) => {
+    if (!walletSessionEl) return
+    walletSessionEl.replaceChildren()
+    walletSessionEl.style.display = session ? 'flex' : 'none'
+    if (!session) return
+    const label = document.createElement('span')
+    label.textContent = `Connected · ${session.handle} · device capability until ${new Date(session.capabilityExpiresAt).toLocaleDateString()}`
+    const actions = document.createElement('span')
+    actions.style.display = 'flex'; actions.style.gap = '6px'
+    const disconnect = document.createElement('button')
+    disconnect.type = 'button'; disconnect.textContent = 'Disconnect'; disconnect.style.cssText = 'border:0;background:transparent;color:var(--text-dim);font:inherit;cursor:pointer'
+    disconnect.addEventListener('click', () => {
+      void disconnectDidMdWallet().then(() => { showWalletSession(undefined); walletResult('This browser was disconnected. The remote capability remains revocable from did.md Wallet.') })
+    })
+    actions.append(disconnect)
+    walletSessionEl.append(label, actions)
+  }
+
+  // A callback is consumed before ordinary session restore.  Its code is
+  // one-use and the URL is cleared by the OAuth module after verification.
+  void (async () => {
+    try {
+      const callback = await completeDidMdWalletCallback()
+      const session = callback ?? await restoreDidMdWalletSession()
+      if (session) {
+        if (walletHandleEl) walletHandleEl.value = session.handle
+        showWalletSession(session)
+        walletResult(callback ? `Connected ${session.handle}. This browser can restore its DPoP-bound session without reopening Wallet.` : `Restored ${session.handle}'s DPoP-bound device session.`)
+        await onWalletConnected?.()
+      }
+    } catch (error) {
+      walletResult(error instanceof Error ? error.message : String(error), true)
+    }
+  })()
+
+  walletLoginButton?.addEventListener('click', () => {
+    const handle = walletHandleEl?.value ?? ''
+    walletLoginButton.disabled = true
+    walletResult('Verifying the published did:webvh log before opening did.md Wallet…')
+    const config = readBisetConfig()
+    void beginDidMdWalletLogin(handle, config.mimiSelfBaseUrl, config.mediatorUrls).catch(error => {
+      walletLoginButton.disabled = false
+      walletResult(error instanceof Error ? error.message : String(error), true)
+    })
+  })
 
   tosInput.addEventListener('change', () => {
     tosIcon.style.opacity = tosInput.checked ? '1' : '0.3'

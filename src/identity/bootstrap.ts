@@ -69,7 +69,7 @@ let authServiceInstalled = false
 /** Idempotent: `setMlsAuthService` is one global (group.ts's own note on
  * why), so calling this more than once across a session's several
  * `createNewIdentity`/future-login calls must be harmless. */
-function ensureMlsAuthServiceInstalled(): void {
+export function ensureMlsAuthServiceInstalled(): void {
   if (authServiceInstalled) return
   setMlsAuthService(webvhAuthenticationService)
   authServiceInstalled = true
@@ -172,11 +172,19 @@ export async function createNewIdentity(
  * leaves IndexedDB, and the replacement wrap is signed by the current MLS
  * member just like an ordinary self-grant.
  */
+/** The repair needs only the locally held MLS leaf, not controller or Master
+ * material.  Wallet-authorized Biset devices use the same repair after an
+ * MLS epoch changes. */
+export interface VaultSegmentRepairIdentity {
+  did: string
+  deviceKid?: string
+}
+
 export async function repairCurrentLocalSegmentKeyWraps(
   selfGroupStore: MlsSelfGroupStateStore,
   segments: ActiveVaultSegmentStore,
   wraps: SegmentKeyWrapReader & SegmentKeyWrapWriter,
-  record: IdentityRecord,
+  record: VaultSegmentRepairIdentity,
   now: () => Date = () => new Date(),
 ): Promise<number> {
   if (!record.deviceKid) return 0
@@ -315,6 +323,41 @@ export interface VaultCryptoBoundary {
    * boundary's own epoch/signer wiring — mints a fresh SegmentKey and seals
    * the old one whenever the self-group epoch has moved on (PLAN.md §4.2). */
   activeSegment(): Promise<ActiveVaultSegment>
+}
+
+/**
+ * The narrow Vault boundary available to an external, Wallet-authorized
+ * Biset device.  It intentionally accepts only the public DID and this
+ * device's MLS leaf ID: Root, Sign, Spare, and Master material are neither
+ * required nor representable here.
+ *
+ * Unlike a locally-created Biset identity, this boundary never enables the
+ * stable Master-derived storage KEK.  New delivery wraps therefore stay
+ * bound to the current MLS epoch and a newly joined Wallet device cannot
+ * read pre-join Vault history merely because it has a browser session.
+ */
+export interface WalletVaultIdentity {
+  did: string
+  deviceKid: string
+}
+
+export function buildWalletVaultCryptoBoundary(
+  wraps: SegmentKeyWrapReader & SegmentKeyWrapWriter,
+  segments: ActiveVaultSegmentStore,
+  selfGroupStore: MlsSelfGroupStateStore,
+  identity: WalletVaultIdentity,
+): VaultCryptoBoundary {
+  if (!identity.did || !identity.deviceKid) throw new Error('buildWalletVaultCryptoBoundary: Wallet device is incomplete')
+  const loadState = async (): Promise<ClientState> => {
+    const stored = await selfGroupStore.load(identity.did)
+    if (!stored) throw new Error('buildWalletVaultCryptoBoundary: no self-group state for this Wallet device')
+    return stored.state
+  }
+  const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
+  const signer = new MlsMembershipSegmentKeyWrapSigner(identity.deviceKid, loadState)
+  const resolver = new StoredSegmentKeyResolver(wraps, epochs, signer)
+  const segmentManager = new ActiveVaultSegmentManager({ identityId: identity.did, segments, wraps, epochs, signer })
+  return { epochs, resolver, signer, activeSegment: () => segmentManager.activeSegment() }
 }
 
 /**
@@ -910,6 +953,64 @@ export interface EnsuredMimiVaultRoom {
   room: MimiVaultSessionRecord
   transport: MimiClientTransport
   provider: URL
+}
+
+/** A did.md Wallet device has the same Biset MLS leaf shape as a locally
+ * created identity, but intentionally lacks the Root, Sign, and Master
+ * secrets that `IdentityRecord` carries.  This narrower bootstrap keeps the
+ * controller boundary honest: Wallet has already signed the routing pointer
+ * and certified the leaf, so Biset only creates the initially reserved room
+ * or externally joins the one a prior device created. */
+export interface WalletMimiVaultDevice {
+  did: string
+  credential: MlsDeviceCredentialV2
+  signaturePrivateKey: Uint8Array
+  roomId: string
+  providerUrl: string
+  /** True only for the device which reserved an empty room through Wallet. */
+  createRoom: boolean
+}
+
+export async function ensureWalletMimiVaultRoom(
+  device: WalletMimiVaultDevice,
+  selfGroupStore: MlsSelfGroupStateStore & MimiVaultSessionStateStore,
+  mimiSelfBaseUrl: string,
+): Promise<EnsuredMimiVaultRoom> {
+  ensureMlsAuthServiceInstalled()
+  const provider = new URL(mimiSelfBaseUrl)
+  if (provider.protocol !== 'https:' || provider.toString() !== device.providerUrl || !new RegExp(`^mimi://${provider.hostname.replace(/[.]/g, '\\.')}/r/vault-[A-Za-z0-9_-]{43}$`).test(device.roomId)) {
+    throw new Error('Wallet MIMI Vault pointer does not match this Biset provider')
+  }
+  const signaturePublicKey = ed25519.getPublicKey(device.signaturePrivateKey)
+  if (device.credential.identityId !== device.did || !device.credential.signaturePublicKey.every((byte, index) => signaturePublicKey[index] === byte)) {
+    throw new Error('Wallet MIMI Vault device credential does not match this browser key')
+  }
+  const transport = new MimiClientTransport({ normalBaseUrl: mimiSelfBaseUrl, anonBaseUrl: mimiSelfBaseUrl, selfBaseUrl: mimiSelfBaseUrl, fetch: defaultFetch() })
+  const selfGroupId = 'mimi-vault'
+  let room = await selfGroupStore.loadMimiVault(device.did)
+  if (room && room.roomId !== device.roomId) throw new Error('This browser has a different local MIMI Vault room; disconnect and clear its Biset device data before reconnecting')
+  if (!room && device.createRoom) {
+    try {
+      await createMimiVaultRoom({ identityId: device.did, deviceId: device.credential.deviceKid, selfGroupId, roomId: device.roomId, credential: device.credential, signaturePrivateKey: device.signaturePrivateKey, transport, stateStore: selfGroupStore, providerHost: provider.hostname })
+    } catch (createError) {
+      // The provider may have accepted the first commit while this browser
+      // crashed before IndexedDB saved its state. Retrying a create would be
+      // wrong; an external join is the safe recovery path for the same
+      // Wallet-authorized leaf. If the room genuinely was never created,
+      // join fails too and the original create failure remains visible.
+      try {
+        await joinMimiVaultRoom({ identityId: device.did, deviceId: device.credential.deviceKid, selfGroupId, roomId: device.roomId, credential: device.credential, signaturePrivateKey: device.signaturePrivateKey, transport, stateStore: selfGroupStore })
+      } catch { throw createError }
+    }
+    room = await selfGroupStore.loadMimiVault(device.did)
+  } else if (!room) {
+    await joinMimiVaultRoom({ identityId: device.did, deviceId: device.credential.deviceKid, selfGroupId, roomId: device.roomId, credential: device.credential, signaturePrivateKey: device.signaturePrivateKey, transport, stateStore: selfGroupStore })
+    room = await selfGroupStore.loadMimiVault(device.did)
+  }
+  if (!room) throw new Error('Wallet MIMI Vault room initialization did not persist')
+  const storedCredential = ownMlsDeviceCredential(room.state)
+  if (storedCredential.deviceKid !== device.credential.deviceKid) throw new Error('Wallet MIMI Vault stored state belongs to another device')
+  return { credential: storedCredential, signaturePrivateKey: ownSignaturePrivateKey(room.state), selfGroupId, room, transport, provider }
 }
 
 /**

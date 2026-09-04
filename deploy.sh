@@ -84,6 +84,11 @@ deploy_app() {
   local body
   body=$(curl -fsS https://t.biset.md/)
   case "$body" in *BISET_CONFIG*) ;; *) fail "app: t.biset.md が __BISET_CONFIG__ を返さない" ;; esac
+  # Authorization Code flow returns here.  This must be the same SPA bundle,
+  # not a file-server 404; the browser validates code/state/issuer itself.
+  local callback_body
+  callback_body=$(curl -fsS 'https://t.biset.md/wallet/callback?code=deploy-probe&state=deploy-probe&iss=https%3A%2F%2Fapi.did.md')
+  case "$callback_body" in *BISET_CONFIG*) ;; *) fail "app: /wallet/callback がBiset bundleを返さない" ;; esac
   echo "✓ app OK ($local_sha, sw.js $sw_local_sha)"
 }
 

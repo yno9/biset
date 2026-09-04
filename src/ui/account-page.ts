@@ -28,7 +28,7 @@
 import { render } from './thread.ts'
 import { esc, avatarStyle } from './format.ts'
 import { parseWebvhDid } from '../identity/webvh/identifier.ts'
-import { resolveWithRouting } from '../didcomm/webvh-resolve.ts'
+import { resolve } from '../identity/webvh/resolver.ts'
 import { shortWebvhDid } from './did-display.ts'
 import { showComposePage } from './compose-page.ts'
 import { mountNewUserPageInline, unmountNewUserPageInline, setupNewUserPage } from './account-create.ts'
@@ -52,6 +52,24 @@ export interface AccountPageConfig {
    * that design exactly rather than inventing a "default page is the inbox"
    * model this rewrite never actually had. */
   did: string | null
+  /** A did.md Wallet account has a public DID, a delegated device capability,
+   * and a Biset-owned MLS Vault leaf, but no controller private key.
+   * Rendering it here avoids treating it as a zero account. */
+  wallet?: {
+    handle: string
+    deviceJkt: string
+    capabilityExpiresAt: string
+    /** Set only after Wallet has returned a typed Root+Sign MLS credential
+     * for this browser's Biset device leaf. */
+    deviceKid?: string
+    /** A Biset-owned X25519 DIDComm endpoint authorized and published by
+     * Wallet. It has no access to a Wallet controller key. */
+    didComm?: { xKid: string; mediatorUrl: string; error?: string }
+    /** Starts an explicit, same-tab Wallet approval to add a DIDComm endpoint
+     * to an already-connected Biset browser. */
+    onEnableMessaging?(): Promise<void>
+    onDisconnect(): Promise<void>
+  }
   /** hex (identity/record-store.ts's IdentityRecord.masterSeed) -- the ONE
    * piece of key material this file is handed directly rather than through
    * a callback: showing the Root Key phrase on demand (the Config modal's
@@ -118,7 +136,14 @@ export function configureAccountPage(next: AccountPageConfig): void {
 export function updateVaultCardStatus(status: VaultCardStatus): void {
   if (!config?.did) return
   config.vault = status
-  if (active) renderVaultCard()
+  // renderVaultCard owns (and replaces) the shared account-card list. Keep
+  // the adjacent Wallet session card in that list on lightweight Vault
+  // status updates; otherwise every 10-second sync makes it disappear until
+  // the next full account-page render.
+  if (active) {
+    renderVaultCard()
+    renderWalletAccountCard()
+  }
 }
 
 export function inAccountMode(): boolean {
@@ -561,6 +586,14 @@ export function hideConfigPage(): void {
  * entirely rather than ported inert -- per user direction, an unwired item
  * belongs in the menu looking exactly like the rest, not missing. */
 function identityMenuItems(did: string): MenuItem[] {
+  if (config?.wallet) {
+    return [{
+      label: 'Disconnect Wallet', danger: true, onClick: () => {
+        if (!confirm(`Disconnect ${config!.wallet!.handle} from this browser? The capability can still be revoked from did.md Wallet.`)) return
+        void config!.wallet!.onDisconnect().catch(error => config?.showMessage?.(error instanceof Error ? error.message : String(error)))
+      },
+    }]
+  }
   const noop = () => {}
   return [
     { label: 'Protect with passkey', onClick: noop },
@@ -773,6 +806,69 @@ function renderVaultCard(): void {
   list.appendChild(wrap)
 }
 
+function renderWalletAccountCard(): void {
+  const wallet = config?.wallet
+  const list = document.getElementById('cmd-acc-list')
+  if (!wallet || !list) return
+  const row = document.createElement('div')
+  row.className = 'cmd-page-row'
+  row.style.cssText = 'gap:12px;align-items:center;padding:10px 12px'
+  const detail = document.createElement('div')
+  detail.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:4px'
+  const title = document.createElement('div')
+  title.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600'
+  const dot = document.createElement('span')
+  dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:#34c759;flex-shrink:0'
+  const label = document.createElement('span')
+  label.textContent = 'did.md Wallet'
+  title.append(dot, label)
+  const description = document.createElement('div')
+  description.style.cssText = 'font-size:11px;color:var(--text-dim)'
+  description.textContent = wallet.deviceKid
+    ? `Connected · MLS device enrolled · capability until ${new Date(wallet.capabilityExpiresAt).toLocaleDateString()}`
+    : `Connected · reconnect to enroll this browser's MLS device · capability until ${new Date(wallet.capabilityExpiresAt).toLocaleDateString()}`
+  detail.append(title, description)
+  const messaging = document.createElement('div')
+  messaging.style.cssText = 'font-size:11px;color:var(--text-dim)'
+  if (wallet.didComm) {
+    messaging.textContent = wallet.didComm.error
+      ? `DIDComm endpoint needs attention: ${wallet.didComm.error}`
+      : `DIDComm endpoint registered · ${wallet.didComm.mediatorUrl}`
+  } else if (wallet.onEnableMessaging) {
+    const enable = document.createElement('button')
+    enable.type = 'button'
+    enable.className = 'cmd-page-btn'
+    enable.style.cssText = 'width:auto;padding:3px 7px;font-size:10px;margin-top:2px'
+    enable.textContent = 'Enable DIDComm messaging'
+    enable.addEventListener('click', () => {
+      enable.disabled = true
+      void wallet.onEnableMessaging!().catch(error => {
+        config?.showMessage?.(error instanceof Error ? error.message : String(error))
+        enable.disabled = false
+      })
+    })
+    messaging.append(enable)
+  } else {
+    messaging.textContent = 'DIDComm messaging is not configured for this Biset deployment'
+  }
+  detail.append(messaging)
+  const disconnect = document.createElement('button')
+  disconnect.type = 'button'
+  disconnect.className = 'cmd-page-btn'
+  disconnect.style.cssText = 'width:auto;padding:5px 9px;font-size:11px'
+  disconnect.textContent = 'Disconnect'
+  disconnect.addEventListener('click', () => {
+    if (!confirm(`Disconnect ${wallet.handle} from this browser? The capability can still be revoked from did.md Wallet.`)) return
+    disconnect.disabled = true
+    void wallet.onDisconnect().catch(error => {
+      config?.showMessage?.(error instanceof Error ? error.message : String(error))
+      disconnect.disabled = false
+    })
+  })
+  row.append(detail, disconnect)
+  list.appendChild(row)
+}
+
 export function showAccountPage(): void {
   const activeEl = document.getElementById('active-thread')
   const past = document.getElementById('past-threads')
@@ -831,6 +927,7 @@ export function showAccountPage(): void {
   activeEl.innerHTML = ''
   activeEl.appendChild(card)
   renderVaultCard()
+  renderWalletAccountCard()
 
   const nameEl = document.getElementById('cmd-acc-identity-name')
   const didEl = document.getElementById('cmd-acc-identity-did')
@@ -848,7 +945,11 @@ export function showAccountPage(): void {
   // opens pre-filled with the real current value, even if the fetch is
   // still in flight when the user clicks.
   let currentName = label
-  resolveWithRouting(did).then(doc => {
+  // The identity card is a view of the signed did:webvh document.  It must
+  // not depend on Biset's optional routing.json: a freshly created did.md
+  // identity has no DIDComm device/routing file yet, while its did.jsonl is
+  // already a complete, independently verifiable DID document.
+  resolve(did).then(doc => {
     if (doc?.name) {
       currentName = doc.name
       if (nameEl) nameEl.textContent = doc.name
@@ -874,7 +975,7 @@ export function showAccountPage(): void {
     if (!docEl) return
     docEl.textContent = 'Resolving…'
     try {
-      const doc = await resolveWithRouting(did)
+      const doc = await resolve(did)
       docEl.textContent = doc ? JSON.stringify(doc, null, 2) : 'No document found (not yet published, or no gateway reachable)'
     } catch {
       docEl.textContent = 'Failed to resolve DID document'
@@ -911,10 +1012,13 @@ export function showAccountPage(): void {
   // the pencil did nothing but toggle the card open/closed (bubbled to
   // `fields` below).
   const nameRow = document.getElementById('cmd-acc-identity-name-row')
-  nameRow?.addEventListener('click', e => {
+  if (config.onEditName) nameRow?.addEventListener('click', e => {
     e.stopPropagation()
     openDisplayNameModal(did, currentName)
   })
+  if (config.wallet) {
+    document.getElementById('cmd-acc-identity-name-edit')?.setAttribute('style', 'display:none')
+  }
   const menuBtn = document.getElementById('cmd-acc-identity-menu-btn')
   menuBtn?.addEventListener('click', e => {
     e.stopPropagation()

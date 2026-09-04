@@ -127,6 +127,13 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
       <span id="nu-at" style="padding:10px 10px 10px 2px;color:var(--text-dim);font-size:15px;white-space:nowrap;user-select:none">@<span id="nu-hostname"></span></span>
       <button id="nu-submit" type="button" style="padding:10px 12px;border:none;background:var(--accent);color:#fff;font-size:15px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0;align-self:stretch">Start</button>
     </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:2px">
+      <input id="nu-wallet-handle" type="text" placeholder="test1.did.md" autocomplete="username" autocapitalize="off" spellcheck="false" style="flex:1;min-width:0;padding:10px 12px;border-radius:8px;border:1px solid var(--header-border);background:var(--input-bg);color:var(--text);font-size:14px;font-family:inherit;outline:none">
+      <button id="nu-wallet-login" type="button" style="padding:10px 12px;border:0;border-radius:8px;background:var(--accent);color:#fff;font:inherit;font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap">Continue with did.md Wallet</button>
+    </div>
+    <p style="margin:0;color:var(--text-dim);font-size:12px;line-height:1.45">Connect a did.md hostname. Biset receives a revocable, device-bound capability — never your Root, Sign, or Master key.</p>
+    <div id="nu-wallet-session" style="display:none;gap:8px;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:8px;background:rgba(128,128,128,.08);font-size:13px"></div>
+    <div id="nu-wallet-result" style="display:none;min-height:18px;font-size:13px;text-align:center" aria-live="polite"></div>
     <!-- password/envelope concept disabled (commented out for easy revival —
          see src/ui/account-create.ts's submit handler for the matching TS
          side). Per-device JMAP credentials + the 24-word mnemonic replace

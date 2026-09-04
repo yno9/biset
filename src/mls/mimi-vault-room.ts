@@ -37,6 +37,9 @@ export interface CreateMimiVaultRoomOptions {
    * it must fail loudly rather than silently mint a room URI naming the
    * wrong provider. */
   providerHost: string
+  /** A Wallet-authorized opaque URI, when a relying-party integration needs
+   * the room location committed before the first MLS commit. */
+  roomId?: string
   now?: () => Date
 }
 
@@ -62,7 +65,8 @@ export async function createMimiVaultRoom(options: CreateMimiVaultRoomOptions): 
   const now = options.now ?? (() => new Date())
   const providerHost = options.providerHost
   if (!options.identityId || !options.deviceId || !options.selfGroupId || !/^[A-Za-z0-9.-]+$/.test(providerHost)) throw new TypeError('MIMI Vault room identity is invalid')
-  const roomId = `mimi://${providerHost}/r/vault-${bytesToBase64url(crypto.getRandomValues(new Uint8Array(32)))}`
+  const roomId = options.roomId ?? `mimi://${providerHost}/r/vault-${bytesToBase64url(crypto.getRandomValues(new Uint8Array(32)))}`
+  if (!new RegExp(`^mimi://${providerHost.replace(/[.]/g, '\\.')}/r/vault-[A-Za-z0-9_-]{43}$`).test(roomId)) throw new TypeError('MIMI Vault room URI is invalid')
   const own = await generateOwnKeyPackage(options.credential, options.signaturePrivateKey)
   const sender: VisibleCredential = {
     kind: 'visible', user: options.identityId, client: options.deviceId,
