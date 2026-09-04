@@ -326,33 +326,87 @@ S2 (テストをgitへ)  ─┴→ S3段階1 (credential generic化) → S3段�
 これは簡素化計画にとって**追い風**である——§1.2 で指摘した「Wallet 経路が同じ配線をもう一組、別実装で持っている＝二重配線」が、
 片方を消すことで根本的に解消する。S4（bootClient 分解）はこの削除の**後**にやる方が、対象が半分になる。
 
-### 調査で確定した範囲（2026-09-05）
+### ⚠️ 調査結果: 今すぐ削除すると**アプリが機能しなくなる**（2026-09-05）
 
-**N1. クライアントの native login**（`main.ts` `ui/` `identity/` で完結。`src/wallet/` は seed 系を一切使わないことを確認済み）
-- `identity/bootstrap.ts` の `createNewIdentity` / `restoreIdentity` と関連ヘルパ
-- `identity/seed.ts` `slip10.ts` `keys.ts`（BIP39/SLIP-10 由来の鍵導出）
-- `ui/mnemonic.ts`（337行）、`ui/account-create.ts` の native 部分（username / TOS / 24語 phrase / sign phrase フォームと submit ハンドラ）
-- `identity/record-store.ts`（seed ベースの IdentityRecord。Wallet アカウントはこれを持たない）
-- `main.ts` の `storedRecords` 経路一式 → **`configureWalletAccountIfPresent()` が唯一の入口になる**
+削除前提で seed 経路と wallet 経路の機能を1つずつ突き合わせた結果、**wallet 経路は seed 経路と同等ではない**。
+最も重大なのは:
 
-**N2. Anchor の認証サーバー**（1,147行）
-- `anchor/oidc.ts` `oidc-sqlite.ts` `oidc-deployment.ts` `oid4vp.ts`（OIDC provider + OpenID4VP Verifier）
-- クライアント側の対（`src/oid4vp/` 全4ファイル、`src/oidc/client.ts`）——**呼び出し元は `main.ts` のみ**であることを確認済み
-- これで §3.5 の「tests-only 23件」のうち `oid4vp/*` `oidc/client.ts` の3件が**削除で解消**する
+> **wallet アカウント同士では関係（relationship）を一度も確立できない。**
+> `sendWalletMessage`（`main.ts:552-559`）は contact が無ければ相手の公開 kid へ直接 basicmessage を投げるだけで
+> `RELATIONSHIP_INIT` を送らず、`RELATIONSHIP_ACCEPT` のハンドラも無い（`main.ts:454` で早期 return）。
+> **双方が responder** であり、今は「相手が seed アカウントなら向こうから INIT が来る」ことで成立している。
+> native を消せば全員が wallet になり、**誰とも関係を確立できなくなる**。
 
-**N3. 自前 did:webvh の発行・鍵ローテーション・ドメイン移転**
-- `identity/webvh/create-genesis.ts` `prerotation.ts` `move.ts` `migrate.ts` `adopt-move.ts`
-- did.md が identity の発行元になるため、biset 側が genesis を書く経路は不要
-- §5-5 の「MLS self-group 世代ローテーションの MIMI 版が無い」は**この変更で論点ごと消える可能性がある**（要確認）
+#### wallet 経路に無い機能
 
-**N4. Anchor の did:webvh 公開文書ホスティング**（`anchor/webvh/*`、判断保留）
-- did.md がホストするなら不要だが、**既存ユーザーの DID が biset ドメインに残っている**場合の移行を考える必要がある。
-  N1〜N3 を終えてから改めて判断する
+| 機能 | 状態 | 分類 |
+|---|---|---|
+| **自分から関係を開始（`RELATIONSHIP_INIT` 送信 / `ACCEPT` 処理）** | ❌ | **再実装必須・最優先** |
+| **メール送信（SMTP submission）** | ❌ | **再実装必須・設計課題あり**（下記） |
+| **メール受信（`MailIngressProjector` / mail-bridge 分岐）** | ❌ | 再実装必須 |
+| **DIDComm グループチャット（作成・招待・送受信）** | ❌ | 再実装必須 |
+| **DIDComm 送信 outbox と再送ループ** | ❌ | 再実装必須（送信失敗が即座に失われる） |
+| **OpenPGP メール鍵の有効化** | ❌ | 再実装必須 |
+| **MIMI checkpoint の作成・復元** | ❌ | 再設計必須（下記） |
+| **local JMAP gateway 経由の送信** | ❌ sink 直叩きで迂回 | 統合対象 |
+| 表示名変更 / ドメイン移転 / 鍵ローテ / Root Key phrase 表示 | ❌ | **不要**（did.md 側の責務。N3 の想定通り） |
 
-### 残すもの
-- `identity/webvh/{resolver,identifier,log,log-io,proof,document,multikey,hash,jcs}.ts` —
-  **他人の DID を解決する**ために必須。native login とは無関係
-- `src/wallet/`（did.md OAuth）、Vault、DIDComm、MIMI、mail — すべて
+**メールの設計課題**: `buildMailSubmitter` は `record.signPrivateKey` で署名し、`mailFromForIdentity`
+（`identity/webvh/identifier.ts:88-93`）は identity の DID ドメインが biset の apexDomain のサブドメインであることを
+要求する。**did.md がホストする DID は apex 配下ではないため、wallet アカウントは現状メールアドレスを持ちようがない。**
+送信署名鍵とアドレス採番の両方を設計しなおす必要がある。
+
+**checkpoint の設計課題**: 現状 `masterSeed` 派生 KEK が前提（`vault/vault-checkpoint.ts:20-23`）。
+checkpoint が無いと「新デバイスが join 前の履歴を復元できない」（これは MLS forward secrecy 上の意図的な仕様）
+だけでなく、**MIMI provider 側の delivery ログに圧縮点が作られず無限に伸びる**。
+`did-md-oauth.ts:382-385` が `vaultSecret` として32バイトを生成・封印しているが**どこからも使われておらず**、
+checkpoint KEK の置き場として用意された跡に見える（要確認）。
+
+#### `masterSeed` 依存の実態
+調査の結果、**本当に困るのは checkpoint の作成・復元だけ**だった。
+`buildLocalJmapReadModel` / `buildVaultDeliveryProjector` の `masterSeed` は optional 引数で、
+wallet は MLS epoch wrap のみで動作する。それ以外は削除対象か、wallet 側に等価物がある。
+
+### wallet 経路で見つかった実バグ（native 削除後に残る側）
+
+1. **グループ招待が poison message になる**。`handleWalletDidCommMessage`（`main.ts:490`）は type 分岐なしで
+   すべて `DidCommIngressProjector` に渡すが、同 projector は ping/basicmessage/relationship 以外を throw する。
+   `mediator-watch.ts:111-114` は throw 時に **ACK せずキューに残す**。
+   → 1通届くと再接続のたびに同じメッセージで失敗し続ける
+2. **wallet の MIMI sync にタイムアウトが無い**。seed 側は `main.ts:1739-1747` で25秒レースを張り、
+   コメントが「無いと `mimiPollBusy` が永久に true で固まる」と**実障害として**記録している。
+   wallet 側の `syncBusy` に同じ保護が無い。**seed を消すとこの既知の障害モードだけが残る**
+3. **relationship の mediator URL 比較が seed 側だけ生文字列**。wallet 側は `new URL().toString()` で正規化。
+   統合時は **wallet 側の実装を残すのが正しい**
+
+### 二重配線（同じ機能を両経路が別実装で持つ）
+削除の**前に**統合すべきもの。両経路が同じコードを呼ぶ状態にしてから片方を消せば、削除時の diff は
+「呼び出し元が1つ減る」だけになる。逆順だと wallet 側に残った実装の正しさを検証できない。
+
+| 機能 | seed 側 | wallet 側 | 差分 |
+|---|---|---|---|
+| sender key 解決 | `resolveAnyDidCommSenderKey` | `resolveWalletSenderKey` | **完全同一** |
+| DIDComm ingress envelope 生成 | `main.ts:1327-1344` | `main.ts:490-511` | `ingressId` の label 文字列だけ |
+| contact key 起動時復元ループ | `main.ts:1509-1524` | `main.ts:526-536` | 実質同一 |
+| relationship watch 登録 | `startRelationshipPoll` | `startWalletRelationshipWatch` | 実質同一 |
+| relationship INIT 応答 | `handleRelationshipMessage` | `handleWalletRelationshipMessage` | URL比較のみ（wallet が正） |
+| Vault カード status 更新 | `setVaultCard` | `setWalletVaultStatus` | 差分抑止の有無 |
+| Vault crypto boundary | `buildVaultCryptoBoundary` | `buildWalletVaultCryptoBoundary` | `storageKek` の有無 |
+| MIMI room bootstrap | `ensureMimiVaultRoom` | `ensureWalletMimiVaultRoom` | routing publish の有無 |
+| MIMI sync ループ | `synchronizeMimi` | `synchronizeWalletVault` | checkpoint とタイムアウトの有無 |
+
+### 実行順序（改訂）
+
+| | 内容 | 状態 |
+|---|---|---|
+| **W1** | wallet 経路の実バグ3件を直す（残る側なので最優先） | 🔵実行中 |
+| **W2** | 二重配線の統合（上の表。まず完全同一の3件から） | 未着手 |
+| **W3** | wallet 経路の機能穴を埋める: ①関係確立 INIT/ACCEPT ②送信 outbox ③グループチャット ④mail 受信 | 未着手・**要設計** |
+| **W4** | メールアドレス採番と送信署名鍵の設計（did.md ホストの DID にどう mail を持たせるか） | 未着手・**要判断** |
+| **W5** | checkpoint の KEK 再設計（`vaultSecret` の用途確認から） | 未着手・**要判断** |
+| **N1〜N4** | native login の実削除 | **W3 完了後**。それ以前に消すとアプリが動かなくなる |
+
+**削除そのものは簡単で、diff も大きい。難しいのは削除ではなく、消える機能を wallet 側に持たせることである。**
 
 ## 4. やらないこと（明示）
 - 機能の削除・仕様変更。S1 で「消えている機能」を見つけたら、消すのではなく**issueとして記録して残す**（core経由restoreが該当する可能性あり）
