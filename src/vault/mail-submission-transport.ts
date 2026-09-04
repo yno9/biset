@@ -9,8 +9,8 @@ export interface CoreMailSubmissionTransportOptions {
 
 /** Browser transport for signed outbound mail submission only -- signing
  * happens in the caller (identity/bootstrap.ts's buildMailSubmitter), this
- * is a thin POST wrapper, same shape as CoreIngressTransport/
- * CoreVaultDeliveryTransport. */
+ * is a thin POST wrapper. (The `Core` prefix is historical: this posts to
+ * the mediator's mail plugin, not to the retired core.) */
 export class CoreMailSubmissionTransport {
   private readonly fetchValue: typeof fetch
   private readonly baseUrl: string

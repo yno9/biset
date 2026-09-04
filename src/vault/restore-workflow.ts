@@ -1,7 +1,22 @@
 import { restoreControlPullSigningBytes, restoreOfferSigningBytes, restoreRequestSigningBytes } from '../protocol/signing.ts'
-import type { DeliveryPullResult, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1 } from '../protocol/vault.ts'
+import type { DeliveryPullResult, RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1 } from '../protocol/vault.ts'
 import type { DeviceId, IdentityId } from '../protocol/ids.ts'
-import type { RestoreControlTransport } from './core-restore-control-transport.ts'
+
+/**
+ * The signed restore control plane, as a contract rather than a deployment.
+ * Lived in `core-restore-control-transport.ts` beside a `CoreRestoreControlTransport`
+ * that posted to core's `/v1/restore/*`; core is retired and that class was
+ * never constructed anywhere, so only the contract survives -- moved here,
+ * next to its one consumer. NOTE: there is no implementation of this in the
+ * tree today, so nothing calls the functions below outside their tests.
+ */
+export interface RestoreControlTransport {
+  request(input: RestoreRequestV1): Promise<void>
+  pullRequests(input: RestoreControlPullV1): Promise<RestoreRequestV1[]>
+  offer(input: RestoreOfferV1): Promise<void>
+  pullOffers(input: RestoreControlPullV1): Promise<RestoreOfferV1[]>
+  cancel(input: RestoreCancelV1): Promise<void>
+}
 import type { VaultRestoreOfferOutboxRecord, VaultRestoreOfferOutboxStore, VaultRestoreRequestStateRecord, VaultRestoreRequestStateStore } from './store.ts'
 
 export interface RestoreControlSigner {

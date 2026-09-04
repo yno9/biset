@@ -30,10 +30,6 @@ import type { LocalJmapMutationSink } from './local-jmap/gateway.ts'
 import { LocalJmapGateway, LocalJmapTransport } from './local-jmap/gateway.ts'
 import { buildOutboundRfc5322 } from './mail/rfc5322-builder.ts'
 import { MailIngressProjector } from './mail/ingress-projector.ts'
-import { synchronizeMailIngress } from './mail/ingress-workflow.ts'
-import { CoreIngressTransport } from './vault/core-ingress-transport.ts'
-import { CoreVaultDeliveryTransport } from './vault/core-delivery-transport.ts'
-import type { IngressVerifierProjector } from './vault/ingress-ingest.ts'
 import { DidCommIngressProjector } from './didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from './didcomm/webvh-resolve.ts'
 import { initiateRelationship, sendRelationshipAccept, sendRelationshipMessage, sendGroupInvite, sendGroupChatMessage, type PendingRelationship } from './didcomm/send-message.ts'
@@ -51,7 +47,6 @@ import { watchMediator } from './didcomm/mediator-watch.ts'
 import type { DidCommSender } from './didcomm/mediator-transport.ts'
 import type { DeliveredMessage } from './didcomm/mediator-pickup.ts'
 import { ingestTransportIngress } from './vault/ingress-ingest.ts'
-import { flushVaultDeliveryOutbox } from './vault/delivery-outbox.ts'
 import type { IngressEnvelopeV1 } from './protocol/ingress.ts'
 import { canonicalHash, equalBytes, sha256Bytes } from './protocol/canonical.ts'
 import { fetchRouting, mimiVaultRoomFromRouting, putRouting, setRoutingMimiVaultRoom, setRoutingName } from './didcomm/webvh-routing.ts'
@@ -212,12 +207,12 @@ export async function bootClient(): Promise<void> {
   // on this device, so a second one doesn't silently drift out of sync just
   // because there's no account switcher yet (PLAN.md §7 plan, out of scope).
   // `let`, not `const`: enableDidComm (below) updates the record in place
-  // automatically at boot, and every closure that reads it (sendReply,
-  // syncMailIngress) has to see the new didCommKid/didCommX25519PrivateKey
-  // without needing a page reload.
+  // automatically at boot, and every closure that reads it (sendReply, the
+  // mediator-poll handlers) has to see the new didCommKid/
+  // didCommX25519PrivateKey without needing a page reload.
   let identity = records[0]!
   const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, identity.did, identity.masterSeed)
-  const { apexDomain, coreBaseUrl, mediatorUrls, mimiSelfBaseUrl } = readBisetConfig()
+  const { apexDomain, mediatorUrls, mimiSelfBaseUrl } = readBisetConfig()
   const mimiVaultConfigured = !!(mimiSelfBaseUrl && identity.deviceKid)
   // Ensured here, before EVERY self-group reader below -- not just
   // vaultDevices/buildVaultCryptoBoundary/enableDidComm further down, but
@@ -290,7 +285,7 @@ export async function bootClient(): Promise<void> {
     vaultDevices = members.map(member => ({ deviceId: member.client, current: member.client === mimiVaultRoom!.credential.deviceKid }))
     if (vaultCardStatus) setVaultCard(vaultCardStatus)
   }
-  // did:webvh domain move (identity/webvh/move.ts) — same coreBaseUrl-
+  // did:webvh domain move (identity/webvh/move.ts) — same server-side
   // independence as editName/pre-rotation above for the
   // did.jsonl move plus local DID-keyed store migration. MLS credentials are
   // stable Root-signed objects and require no move-time commit.
@@ -359,7 +354,6 @@ export async function bootClient(): Promise<void> {
     await bootClient()
   }
 
-  let syncMailIngress: (() => Promise<void>) | undefined
   let flushDidCommTransportOutbox: (() => Promise<void>) | undefined
   /** Best-effort nudge: ask the MIMI Vault sync loop to run right now
    * instead of waiting out whatever's left of its 10s tick. Set once,
@@ -369,14 +363,12 @@ export async function bootClient(): Promise<void> {
   let triggerMimiVaultSync: (() => Promise<void>) | undefined
   // Reply-send needs the signing/MLS boundary maintainSelfGroup already
   // requires a deviceKid for -- without a device identity to sign with, the
-  // UI stays read-only. coreBaseUrl dropped from this gate 2026-09-04: core
-  // is fully retired (no production config sets it any more), and this
-  // condition used to require it -- silently disabling this ENTIRE block
+  // UI stays read-only. `coreBaseUrl` was dropped from this gate 2026-09-04:
+  // it used to be required here, silently disabling this ENTIRE block
   // (enableDidComm, mediator polling/registration, mail submit/ingress,
   // group chat, contact-key relationships, outbox flush -- essentially
   // everything below) in every production deployment since core was
-  // removed, with no error: `coreBaseUrl` was simply always falsy, so
-  // nothing in here ever ran, and nothing outside it could tell (found
+  // removed, with no error, because it was simply always falsy (found
   // live: a queued mediator message for a real identity was never once
   // polled for, with zero console output of any kind, because
   // startMediatorPolling/mediatorPollHandles are set up inside this same
@@ -390,23 +382,22 @@ export async function bootClient(): Promise<void> {
     // survive the reassignment even though the value can't actually change.
     const deviceKid = identity.deviceKid
     const boundary = buildVaultCryptoBoundary(vaultStore, vaultStore, selfGroupStore, identity)
-    const flushReplicationOutbox = async () => {
-      // A MIMI-driven identity's delivery outbox is exclusively
-      // flushMimiVaultOutbox's job (synchronizeMimi's own poll, every 10s) --
-      // nothing else ever reads from core's legacy /v1/deliveries endpoint
-      // for this identity's sibling devices, so calling it here is not just
-      // useless but actively harmful: flushVaultDeliveryOutbox below shares
-      // the SAME outbox row this identity's real (MIMI) flush needs, and
-      // removes it the moment core's endpoint returns success -- deleting a
-      // just-received DIDComm message's own relay-onward entry before the
-      // next MIMI poll ever gets a chance to send it, permanently losing it
-      // for every sibling device (found live, 2026-09-02: only inbound
-      // DIDComm/mail-bridge handling ever called this explicitly; outbound
-      // sendReply never did, which is why only inbound message relay was
-      // affected -- it simply waited out the same race and lost every time).
-      if (mimiVaultConfigured) return { appendedEntryIds: [] }
-      return flushVaultDeliveryOutbox(vaultStore, new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl }), boundary.signer, identity.did)
-    }
+    /**
+     * Sibling-device replication after a local vault commit. A no-op since
+     * core was retired (2026-09-04): core's `/v1/deliveries` was the only
+     * transport this ever had, and `coreBaseUrl` was always '' in
+     * production, so every non-MIMI call threw here instead of replicating.
+     * A MIMI-driven identity never wanted this path in the first place --
+     * its delivery outbox is exclusively flushMimiVaultOutbox's job
+     * (synchronizeMimi's own 10s poll), and routing it through core's
+     * endpoint too was actively harmful: both flushes share the SAME outbox
+     * row, and core's removed it the moment its endpoint returned success,
+     * deleting a just-received DIDComm message's relay-onward entry before
+     * the next MIMI poll could send it (found live, 2026-09-02).
+     * Kept as an explicit no-op rather than deleted at every call site: this
+     * is where a non-MIMI replication transport would plug back in.
+     */
+    const flushReplicationOutbox = async () => ({ appendedEntryIds: [] as string[] })
     const sequencer = await buildActorSequencer(vaultStore, identity.did, deviceKid)
     const mutationSink = new VaultBackedLocalJmapMutationSink({
       accountId: `biset:${identity.did}`,
@@ -482,7 +473,7 @@ export async function bootClient(): Promise<void> {
         signer: boundary.signer,
         committer: vaultStore,
       })
-      identity = await enableDidComm(recordStore, identity, didCommReader, didCommSink, { coreBaseUrl, apexDomain, mediatorUrls }).catch(e => {
+      identity = await enableDidComm(recordStore, identity, didCommReader, didCommSink, { apexDomain, mediatorUrls }).catch(e => {
         console.warn('[enableDidComm]', e instanceof Error ? e.message : e)
         return identity
       })
@@ -891,13 +882,13 @@ export async function bootClient(): Promise<void> {
     // A single pulled batch can hold both protocols at once (the shared
     // IngressStore doesn't separate them) -- dispatched here by
     // envelope.protocol to whichever projector actually understands it,
-    // same synchronizeMailIngress/ingestIngress orchestration either way
-    // (that "Mail" in the name predates DIDComm and is otherwise
-    // protocol-agnostic already, see ingress-ingest.ts's own header).
-    // Shared by the legacy core-pull path (syncMailIngress, right below) and
-    // the mediator-poll path (further down): both need "this identity's
-    // DIDComm ingress projector, if it has one", and building two divergent
-    // copies is exactly the kind of thing that quietly drifts apart.
+    // same ingestIngress orchestration either way (that "Mail" in the name
+    // predates DIDComm and is otherwise protocol-agnostic already, see
+    // ingress-ingest.ts's own header).
+    // Built here for the mediator-poll path (further down), which needs
+    // "this identity's DIDComm ingress projector, if it has one" in more
+    // than one branch; building two divergent copies is exactly the kind of
+    // thing that quietly drifts apart.
     // Returns undefined once as freely as identity.didCommKid/
     // didCommX25519PrivateKey do -- an identity that hasn't enabled DIDComm
     // yet, or (not currently possible, but not asserted against either) had
@@ -940,10 +931,11 @@ export async function bootClient(): Promise<void> {
           })
         : undefined
 
-    // Shared with the mediator-poll path's mail-bridge branch (onMessage,
+    // Used by the mediator-poll path's mail-bridge branch (onMessage,
     // further down): a mediator+mail-plugin instance's inbound-mail Forward
-    // needs the exact same projector the legacy core-pull path already
-    // builds here, not a second divergent copy of the same constructor call.
+    // needs this projector. Kept as a builder (rather than one shared
+    // instance) because it closes over `identity`, which enableDidComm
+    // above can reassign.
     const buildMailProjector = (): MailIngressProjector => new MailIngressProjector({
       identityId: identity.did,
       actorDeviceId: identity.deviceKid!,
@@ -954,48 +946,18 @@ export async function bootClient(): Promise<void> {
       signer: boundary.signer,
     })
 
-    // core is fully retired -- no production config sets coreBaseUrl any
-    // more, so this legacy core-pull path (superseded by the independent-
-    // mediator poll further down, ARC.md's 2026-08-27 redesign) now has
-    // nowhere to pull from. Left assigned unconditionally, it used to run
-    // on every poll tick anyway, pointlessly constructing CoreIngressTransport/
-    // CoreVaultDeliveryTransport against an undefined baseUrl.
-    if (coreBaseUrl) syncMailIngress = async () => {
-      const mailProjector = buildMailProjector()
-      const didCommProjector = buildDidCommProjector()
-      const projector: IngressVerifierProjector = {
-        verifyAndProject: envelope => {
-          if (envelope.protocol === 'didcomm' && didCommProjector) return didCommProjector.verifyAndProject(envelope)
-          return mailProjector.verifyAndProject(envelope)
-        },
-      }
-      const result = await synchronizeMailIngress({
-        identityId: identity.did,
-        deviceId: identity.deviceKid!,
-        store: vaultStore,
-        ingressTransport: new CoreIngressTransport({ baseUrl: coreBaseUrl }),
-        deliveryTransport: new CoreVaultDeliveryTransport({ baseUrl: coreBaseUrl }),
-        flushDelivery: flushReplicationOutbox,
-        signer: boundary.signer,
-        projector,
-        committer: vaultStore,
-      })
-      if (result.ingress.ingestedIngressIds.length > 0) await refreshInbox(readModel)
-    }
 
     // Independent, blind mediators (ARC.md's 2026-08-27 redesign): this
     // device registers directly with each one configured (self-heal on
     // every boot -- registerWithMediator's own note) and polls it on its
-    // own cadence, entirely separate from the core-pull loop above. A
-    // delivered message is bridged into the SAME DidCommIngressProjector
-    // (built fresh per call, same as syncMailIngress -- didCommKid/
+    // own cadence. A delivered message is bridged into the SAME
+    // DidCommIngressProjector (built fresh per call -- didCommKid/
     // didCommX25519PrivateKey can't change mid-session today, but nothing
     // here assumes that) via the transport-neutral vault commit path, so it
-    // lands in the vault exactly like a core-delivered one without creating
-    // a core-specific ingress ACK; the resulting vault-delivery pack still
-    // syncs to sibling devices through biset-core (Phase 1's own point:
-    // ONLY DIDComm delivery moved off it, not this identity's own
-    // multi-device sync).
+    // lands in the vault without creating any transport-specific ingress
+    // ACK; the resulting vault-delivery pack then syncs to sibling devices
+    // through this identity's MIMI Vault room (mimi-vault-sync.ts), which
+    // is the only multi-device sync transport left now that core is gone.
     if (identity.didCommKid && identity.didCommX25519PrivateKey) {
       const didCommKid = identity.didCommKid
       const own: DidCommSender = { did: identity.did, xKid: didCommKid, xPriv: fromHex(identity.didCommX25519PrivateKey) }
@@ -1251,9 +1213,6 @@ export async function bootClient(): Promise<void> {
     showSysMsg('Could not load the inbox')
     console.warn('[refreshInbox]', e instanceof Error ? e.message : e)
   })
-  await syncMailIngress?.().catch(e => {
-    console.warn('[syncMailIngress]', e instanceof Error ? e.message : e)
-  })
   // Nothing pulls again after this until the page is reloaded otherwise --
   // there is no push here (PLAN.md §6.1 explicitly leaves DIDComm push out
   // of scope), but a plain periodic pull is a different, much simpler thing
@@ -1262,12 +1221,10 @@ export async function bootClient(): Promise<void> {
   // only showed up "a long time later" -- actually whenever something else
   // happened to trigger a reboot, not because of any real delay. (Any prior
   // interval was already cleared at the top of this function.)
-  if (syncMailIngress || flushDidCommTransportOutbox) {
-    const sync = syncMailIngress
+  if (flushDidCommTransportOutbox) {
     const flushDidComm = flushDidCommTransportOutbox
     pollTimer = setInterval(() => {
-      sync?.().catch(e => console.warn('[syncMailIngress/poll]', e instanceof Error ? e.message : e))
-      flushDidComm?.().then(() => refreshInbox(readModel)).catch(e => console.warn('[didcomm/outbox/poll]', e instanceof Error ? e.message : e))
+      flushDidComm().then(() => refreshInbox(readModel)).catch(e => console.warn('[didcomm/outbox/poll]', e instanceof Error ? e.message : e))
     }, 10_000)
   }
 

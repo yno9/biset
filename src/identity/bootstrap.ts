@@ -708,17 +708,11 @@ export function buildMailSubmitter(
 export { mailFromForIdentity }
 
 export interface EnableDidCommOptions {
-  /** Where the DIDComm ingress endpoint lives (`core/adapters/didcomm-http.ts`'s
-   * deployment) -- POST /v1/didcomm/ingress under this origin becomes the
-   * routing.json service descriptor's serviceEndpoint. Used only as the
-   * FALLBACK: superseded by `mediatorUrls` when at least one registration
-   * there succeeds, and as the last resort when every one of them fails. */
-  coreBaseUrl: string
   /** Independent, blind mediators to register this identity's shared
    * DIDComm kid with at provisioning time (ARC.md's 2026-08-27 redesign) --
    * each successfully-registered one becomes a routing.json
-   * DIDCommMessaging entry with `routingKeys` naming it (webvh-routing.ts),
-   * superseding the legacy direct `coreBaseUrl` endpoint. Registration
+   * DIDCommMessaging entry with `routingKeys` naming it (webvh-routing.ts).
+   * Registration
    * failures are logged and skipped, never fatal to provisioning: a
    * mediator being briefly unreachable at signup must not block account
    * creation. Empty/omitted keeps today's exact behavior (the legacy
@@ -825,22 +819,25 @@ export async function enableDidComm(
   const signing = { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }
   const keyAgreementKeys = [{ kid: didCommKid, publicKey: x25519PublicKey }]
 
-  // Publish the keyAgreement key FIRST, via the legacy endpoint shape --
+  // Publish the keyAgreement key FIRST, with no service entry yet --
   // registerWithMediator below sends a mediate-request the mediator must
   // authenticate by resolving THIS identity's own published keyAgreement
   // entry, so it has to already be live before any registration can
   // possibly succeed (a chicken-and-egg a did:dht-era identity never had:
   // its keyAgreement key rode in the DID document itself, published at
-  // genesis, not in a separately-provisioned routing.json).
-  await putRouting(record.did, buildDoc(buildRoutingDoc(record.did, {
-    didCommEndpoint: `${opts.coreBaseUrl.replace(/\/$/, '')}/v1/didcomm/ingress`,
-    keyAgreementKeys,
-  })), signing, fetchImpl)
+  // genesis, not in a separately-provisioned routing.json). This used to
+  // also publish a legacy direct-delivery `didCommEndpoint` built from
+  // `coreBaseUrl`; core is retired and no production config ever set it, so
+  // what actually went out was the relative, unusable URI
+  // `/v1/didcomm/ingress` -- never a fallback anyone could deliver to.
+  await putRouting(record.did, buildDoc(buildRoutingDoc(record.did, { keyAgreementKeys })), signing, fetchImpl)
 
   // Best-effort: register with each configured mediator, keeping only the
   // ones that actually succeeded. A mediator down at signup time must not
-  // block account creation -- the legacy publish above already stands as
-  // the fallback when this ends up empty.
+  // block account creation -- the keyAgreement publish above already stands
+  // when this ends up empty (no service entry, so no sender is told to
+  // Forward-wrap; the identity simply isn't DIDComm-reachable until a
+  // mediator registration succeeds on a later boot).
   const mediators: MediatorRegistration[] = []
   for (const url of opts.mediatorUrls ?? []) {
     try {

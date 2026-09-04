@@ -131,7 +131,7 @@ describe('enableDidComm (credential reader/sink isolation)', () => {
     const { reader, sink, eventCount } = await harness(record.did)
     const recordStore = memoryRecordStore()
 
-    const updated = await enableDidComm(recordStore, record, reader, sink, { coreBaseUrl: 'https://core.test.example', fetch })
+    const updated = await enableDidComm(recordStore, record, reader, sink, { fetch })
 
     expect(eventCount()).toBe(1)
     const credential = await reader.readCurrent()
@@ -151,10 +151,10 @@ describe('enableDidComm (credential reader/sink isolation)', () => {
     const { reader, sink } = await harness(record.did)
     const recordStore = memoryRecordStore()
 
-    const first = await enableDidComm(recordStore, record, reader, sink, { coreBaseUrl: 'https://core.test.example', fetch })
+    const first = await enableDidComm(recordStore, record, reader, sink, { fetch })
     const firstRouting = await fetchRouting(record.did, fetch)
 
-    const second = await enableDidComm(recordStore, first, reader, sink, { coreBaseUrl: 'https://core.test.example', fetch })
+    const second = await enableDidComm(recordStore, first, reader, sink, { fetch })
     expect(second.didCommKid).toBe(first.didCommKid)
     const secondRouting = await fetchRouting(record.did, fetch)
     expect(secondRouting).toEqual(firstRouting)
@@ -173,7 +173,7 @@ describe('enableDidComm (credential reader/sink isolation)', () => {
     await sink.store(first)
     await sink.store(second)
 
-    await expect(enableDidComm(recordStore, record, reader, sink, { coreBaseUrl: 'https://core.test.example', fetch })).rejects.toThrow('ambiguous')
+    await expect(enableDidComm(recordStore, record, reader, sink, { fetch })).rejects.toThrow('ambiguous')
   })
 
   test('mediatorUrls: registers with the mediator and publishes routingKeys instead of the legacy direct endpoint', async () => {
@@ -195,7 +195,7 @@ describe('enableDidComm (credential reader/sink isolation)', () => {
       const recordStore = memoryRecordStore()
 
       const updated = await enableDidComm(recordStore, record, reader, sink, {
-        coreBaseUrl: 'https://core.test.example', mediatorUrls: ['https://mediator.test.example'], fetch,
+        mediatorUrls: ['https://mediator.test.example'], fetch,
       })
 
       const routing = await fetchRouting(record.did, fetch)
@@ -211,7 +211,7 @@ describe('enableDidComm (credential reader/sink isolation)', () => {
     })
   })
 
-  test('mediatorUrls: falls back to the legacy direct endpoint when every registration fails', async () => {
+  test('mediatorUrls: publishes no service entry at all when every registration fails', async () => {
     const { fetch: anchorFetch } = fakeAnchor()
     const deadFetch = combinedFetch(anchorFetch, 'https://unreachable.test.example', async () => new Response('offline', { status: 503 }))
 
@@ -221,14 +221,18 @@ describe('enableDidComm (credential reader/sink isolation)', () => {
       const recordStore = memoryRecordStore()
 
       await enableDidComm(recordStore, record, reader, sink, {
-        coreBaseUrl: 'https://core.test.example', mediatorUrls: ['https://unreachable.test.example'], fetch: deadFetch,
+        mediatorUrls: ['https://unreachable.test.example'], fetch: deadFetch,
       })
 
+      // The legacy `coreBaseUrl` direct-delivery fallback is gone (core is
+      // retired, and the value was always '' in production, so what it
+      // actually published was the relative, undeliverable URI
+      // `/v1/didcomm/ingress`). The keyAgreement key still goes out -- that
+      // is what a mediate-request has to resolve -- but with no service
+      // entry, so no sender is pointed anywhere.
       const routing = await fetchRouting(record.did, deadFetch)
-      expect(routing?.service).toEqual([{
-        id: `${record.did}#didcomm`, type: 'DIDCommMessaging',
-        serviceEndpoint: { uri: 'https://core.test.example/v1/didcomm/ingress', accept: ['didcomm/v2'], routingKeys: [] },
-      }])
+      expect(routing?.service).toEqual([])
+      expect(routing?.keyAgreementVerificationMethod?.length).toBe(1)
     })
   })
 })
