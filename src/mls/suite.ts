@@ -19,7 +19,7 @@
 // different times — see PLANMLS.md §3 on why the two are not alternatives.
 import { getCiphersuiteFromName, getCiphersuiteImpl, nobleCryptoProvider, type CiphersuiteImpl, type CiphersuiteName } from './vendor/index.ts'
 
-export const MLS_SUITE: CiphersuiteName = 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519'
+const MLS_SUITE: CiphersuiteName = 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519'
 
 // `nobleCryptoProvider` is the fork's only provider: one set of primitives for
 // the whole app rather than WebCrypto here and @noble there, identical in the

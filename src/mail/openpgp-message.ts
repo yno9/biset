@@ -11,7 +11,7 @@ export interface OpenPgpEncryptedMessageInput {
   requireValidSignature?: boolean
 }
 
-export interface OpenPgpMessageSignature {
+interface OpenPgpMessageSignature {
   keyId: string
   valid: boolean
 }

@@ -40,7 +40,7 @@ export interface DidCommPlaintext {
 }
 
 /** UTC epoch seconds as an integer -- the unit every DIDComm time header uses. */
-export function nowEpochSeconds(): number { return Math.floor(Date.now() / 1000) }
+function nowEpochSeconds(): number { return Math.floor(Date.now() / 1000) }
 
 export interface PlaintextOptions {
   id?: string

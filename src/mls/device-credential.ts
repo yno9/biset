@@ -26,7 +26,7 @@ export function mlsDeviceKid(identityId: string, signaturePublicKey: Uint8Array)
   return `${identityId}#device-${base58.encode(sha256(signaturePublicKey).slice(0, KID_BYTES))}`
 }
 
-export function mlsDeviceCredentialSigningBytes(value: Omit<MlsDeviceCredentialV2, 'rootSignature' | 'signSignature'>): Uint8Array {
+function mlsDeviceCredentialSigningBytes(value: Omit<MlsDeviceCredentialV2, 'rootSignature' | 'signSignature'>): Uint8Array {
   return canonicalBytes({
     label: 'biset/mls-device-credential/v2', version: value.version,
     identityId: value.identityId, generation: value.generation, deviceKid: value.deviceKid,

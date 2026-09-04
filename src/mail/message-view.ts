@@ -28,7 +28,7 @@ export interface ThreadableMsg {
 const LOCAL_PREFIX = 'local:'
 const PHANTOM_PREFIX = 'mid:'
 
-export function nodeId(msg: ThreadableMsg): string {
+function nodeId(msg: ThreadableMsg): string {
   return msg.message_id || `${msg.from ?? ''}:${msg.ts ?? 0}`
 }
 
@@ -112,7 +112,7 @@ export function computeThreadKeys(msgs: ThreadableMsg[]): Map<string, string> {
   return out
 }
 
-export function threadKeyOf(msg: ThreadableMsg, all: ThreadableMsg[]): string {
+function threadKeyOf(msg: ThreadableMsg, all: ThreadableMsg[]): string {
   return computeThreadKeys(all).get(nodeId(msg)) ?? threadNode(msg)
 }
 
@@ -162,7 +162,7 @@ export interface ThreadGroup {
 
 export const processedMessages: ProcessedMessage[] = []
 
-export function messageKey(msg: { message_id?: string; from: string; ts: number }): string {
+function messageKey(msg: { message_id?: string; from: string; ts: number }): string {
   return msg.message_id || `${msg.from}:${msg.ts}`
 }
 

@@ -54,7 +54,7 @@ export async function synchronizeVaultDelivery(
   return { kind: 'synced', ingestedSequences, ...(after.pendingAckSequence === undefined ? {} : { pendingAckSequence: after.pendingAckSequence }) }
 }
 
-export async function flushVaultDeliveryAcks(
+async function flushVaultDeliveryAcks(
   store: VaultDeliveryAckOutboxReader,
   transport: Pick<VaultDeliveryPullTransport, 'acknowledge'>,
   identityId: IdentityId,

@@ -28,7 +28,7 @@ import type { DidCommSender } from './mediator-transport.ts'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { frontDoorMediatorRoute, sendFrontDoorMessage, type DidCommSendResult, type SendDidCommMessageOptions } from './front-door-send.ts'
 
-export { sendFrontDoorMessage, type DidCommSendResult, type SendDidCommMessageOptions }
+export { type DidCommSendResult, type SendDidCommMessageOptions }
 
 export interface PendingRelationship {
   counterpartyDid: string

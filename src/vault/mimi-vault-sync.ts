@@ -16,7 +16,7 @@ import type { VaultDeliveryOutboxReader } from './store.ts'
  * poisoned siblings restoring from it (found live, 2026-09-02). Every kind
  * here is a PERMANENT loss for this round, never a "try again next poll"
  * situation -- see each recovery strategy's own comment for why. */
-export interface MimiVaultSyncGap {
+interface MimiVaultSyncGap {
   kind: 'undecryptable-application' | 'unverifiable-commit' | 'unreconstructed-checkpoint' | 'checkpoint-restore-failed' | 'ingest-failed' | 'outbox-flush-failed'
   detail: string
 }
@@ -30,7 +30,7 @@ export interface MimiVaultMlsReceiver {
   /** Persist MLS handshake changes; return plaintext for application entries. */
   receive(entry: MimiDeliveryEntry): Promise<Uint8Array | undefined>
 }
-export interface MimiVaultPayload { transferId: string; payload: Uint8Array; finalSequence: number }
+interface MimiVaultPayload { transferId: string; payload: Uint8Array; finalSequence: number }
 export interface MimiVaultCheckpointPayload extends MimiVaultPayload { manifest: VaultCheckpointManifest }
 export interface MimiVaultDecodedBatch {
   deliveries: MimiVaultPayload[]
@@ -456,7 +456,7 @@ export async function decodeMimiVaultBatch(entries: readonly MimiDeliveryEntry[]
   return { deliveries, checkpoints, latestSequence, sawCheckpointManifest: manifests.length > 0, unreconstructedCheckpoints, gaps }
 }
 
-export function mimiVaultSequence(sequence: number): DeliverySeq {
+function mimiVaultSequence(sequence: number): DeliverySeq {
   if (!Number.isSafeInteger(sequence) || sequence < 1) throw new TypeError('MIMI Vault delivery sequence is invalid')
   return String(sequence) as DeliverySeq
 }

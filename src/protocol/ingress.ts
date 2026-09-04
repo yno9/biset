@@ -6,7 +6,7 @@ import type {
   VaultEventId,
 } from './ids.ts'
 
-export type IngressProtocol = 'didcomm' | 'mail' | 'activitypub'
+type IngressProtocol = 'didcomm' | 'mail' | 'activitypub'
 
 /** A short-lived external payload; it is never a mailbox record. */
 export interface IngressEnvelopeV1 {

@@ -54,7 +54,7 @@ export interface DidCommCredentialRecord {
   event: VaultEventV1
 }
 
-export function encodeDidCommPrivateCredential(value: DidCommPrivateCredentialV1): Uint8Array {
+function encodeDidCommPrivateCredential(value: DidCommPrivateCredentialV1): Uint8Array {
   assertCredential(value)
   return canonicalBytes({
     version: value.version,
@@ -67,7 +67,7 @@ export function encodeDidCommPrivateCredential(value: DidCommPrivateCredentialV1
   })
 }
 
-export function decodeDidCommPrivateCredential(bytes: Uint8Array): DidCommPrivateCredentialV1 {
+function decodeDidCommPrivateCredential(bytes: Uint8Array): DidCommPrivateCredentialV1 {
   let input: unknown
   try { input = JSON.parse(new TextDecoder().decode(bytes)) } catch { throw new TypeError('DIDComm credential is not JSON') }
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('DIDComm credential must be an object')
@@ -103,7 +103,7 @@ export async function buildDidCommPrivateCredential(
   return { credential: copyCredential(credential), object, event }
 }
 
-export function didCommCredentialAad(identityId: IdentityId, segmentId: SegmentId, didCommKid: string): Uint8Array {
+function didCommCredentialAad(identityId: IdentityId, segmentId: SegmentId, didCommKid: string): Uint8Array {
   return canonicalBytes({ label: 'biset/vault/credential/didcomm-private/aad/v1', identityId, segmentId, didCommKid })
 }
 

@@ -64,7 +64,7 @@ export async function verifyVaultObjectIntegrity(object: VaultObjectV1): Promise
     && equalBytes(object.ciphertextHash, await digest(object.ciphertext))
 }
 
-export function vaultObjectId(object: Omit<VaultObjectV1, 'objectId'> | VaultObjectV1): VaultObjectId {
+function vaultObjectId(object: Omit<VaultObjectV1, 'objectId'> | VaultObjectV1): VaultObjectId {
   return objectId(object)
 }
 

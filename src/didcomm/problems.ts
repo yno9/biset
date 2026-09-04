@@ -9,9 +9,9 @@
 // Ported from src.bak/did/didcomm/problems.ts.
 import { buildPlaintext, type DidCommPlaintext, type PlaintextOptions } from '../didcomm/message.ts'
 
-export const PROBLEM_REPORT = 'https://didcomm.org/report-problem/2.0/problem-report'
+const PROBLEM_REPORT = 'https://didcomm.org/report-problem/2.0/problem-report'
 
-export interface ProblemBody {
+interface ProblemBody {
   code: string
   comment?: string
   args?: string[]
@@ -54,7 +54,7 @@ export function isProblemReport(msg: { type?: string }): boolean {
 /** Interpolates a problem-report's `comment` with its `args`, per
  * problems.md: `{1}`,`{2}`,… are replaced positionally; a missing/null arg
  * becomes `?`; extra args are appended comma-separated. */
-export function formatProblem(body: ProblemBody): string {
+function formatProblem(body: ProblemBody): string {
   const { code, comment, args = [] } = body
   if (!comment) return code
   const used = new Set<number>()

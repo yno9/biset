@@ -95,7 +95,7 @@ export function assertIngressEnvelope(value: unknown): asserts value is IngressE
   bytes(input.protectedPayloadHash, 'protectedPayloadHash')
 }
 
-export function assertAdapterIngressOffer(value: unknown): asserts value is AdapterIngressOfferV1 {
+function assertAdapterIngressOffer(value: unknown): asserts value is AdapterIngressOfferV1 {
   const input = record(value, 'AdapterIngressOfferV1')
   exactKeys(input, [
     'version', 'ingressId', 'protocol', 'recipientIdentityId', 'createdAt', 'expiresAt',

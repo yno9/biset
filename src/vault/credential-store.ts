@@ -18,7 +18,7 @@ import type { SegmentKeyResolver } from './segment-key-resolver.ts'
 import type { VaultEventRecord, VaultObjectReader } from './store.ts'
 
 /** Identical across every credential family; each family re-exports its own alias. */
-export interface VaultCredentialBuildContext {
+interface VaultCredentialBuildContext {
   identityId: IdentityId
   actorDeviceId: DeviceId
   actorSeq: number
@@ -28,7 +28,7 @@ export interface VaultCredentialBuildContext {
 }
 
 /** The signed envelope plus ciphertext a credential build produces. */
-export interface VaultCredentialBuildResult {
+interface VaultCredentialBuildResult {
   object: VaultObjectV1
   event: VaultEventV1
 }

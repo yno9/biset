@@ -52,7 +52,7 @@ export async function synchronizeIngress(
   return { ingestedIngressIds, ...(after.pendingAckIngressId ?? before.pendingAckIngressId ? { pendingAckIngressId: after.pendingAckIngressId ?? before.pendingAckIngressId } : {}) }
 }
 
-export async function flushIngressAcks(
+async function flushIngressAcks(
   outbox: IngressAckOutboxReader,
   transport: Pick<IngressPullTransport, 'acknowledge'>,
   identityId: IdentityId,

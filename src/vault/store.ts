@@ -91,13 +91,13 @@ export interface DidCommTransportOutboxRecord {
   lastAttemptAt?: string
 }
 
-export interface DidCommTransportOutboxStore {
+interface DidCommTransportOutboxStore {
   readDidCommOutbox(identityId: IdentityId, limit?: number): Promise<DidCommTransportOutboxRecord[]>
   noteDidCommOutboxAttempt(identityId: IdentityId, outboundEventId: VaultEventId, toDid: string, attemptedAt: string): Promise<void>
   removeDidCommOutbox(identityId: IdentityId, outboundEventId: VaultEventId, toDid: string): Promise<void>
 }
 
-export interface VaultDeliveryReceiptRecord {
+interface VaultDeliveryReceiptRecord {
   identityId: IdentityId
   recipientDeviceId: DeviceId
   seq: DeliverySeq

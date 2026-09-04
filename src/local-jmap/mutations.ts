@@ -12,7 +12,7 @@ export interface VaultMutationIntent {
   payload: CanonicalValue
 }
 
-export interface EmailSetMutationInput {
+interface EmailSetMutationInput {
   accountId?: string
   update?: Record<string, unknown>
   destroy?: string[]

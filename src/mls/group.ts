@@ -194,7 +194,7 @@ export async function createMlsGroup(groupId: Uint8Array, own: OwnKeyPackage): P
   return createMlsGroupWithAuthenticationService(groupId, own, authService)
 }
 
-export async function createMlsGroupWithAuthenticationService(groupId: Uint8Array, own: OwnKeyPackage, authenticationService: AuthenticationService): Promise<ClientState> {
+async function createMlsGroupWithAuthenticationService(groupId: Uint8Array, own: OwnKeyPackage, authenticationService: AuthenticationService): Promise<ClientState> {
   const suite = await mlsSuite()
   return createGroup(groupId, own.publicPackage, own.privatePackage, [], suite, clientConfig(authenticationService))
 }
@@ -263,7 +263,7 @@ export async function rotateOwnCredentialAndRemoveMembers(state: ClientState, va
  * joinSelfGroup self-heal, for a device that lost its local group state and
  * rejoined under the SAME kid its old, never-removed leaf still carries) —
  * `members.find(m => m.kid === kid)` can only ever resolve to one of the two. */
-export async function removeLeavesByIndex(state: ClientState, leafIndices: number[]): Promise<CommitResult> {
+async function removeLeavesByIndex(state: ClientState, leafIndices: number[]): Promise<CommitResult> {
   const proposals: Proposal[] = leafIndices.map(removed => ({ proposalType: 'remove', remove: { removed } }))
   return commitWith(state, proposals)
 }
@@ -284,7 +284,7 @@ export async function removeLeavesByIndex(state: ClientState, leafIndices: numbe
  * purposes, but its leaf is in the tree until a sibling acts. See
  * mls/self-group.ts's leaveSelfGroup for what biset does about the case where
  * there is no sibling left to act. */
-export async function proposeSelfRemoval(state: ClientState): Promise<{ state: ClientState; proposal: Uint8Array }> {
+async function proposeSelfRemoval(state: ClientState): Promise<{ state: ClientState; proposal: Uint8Array }> {
   const suite = await mlsSuite()
   const removed = state.privatePath.leafIndex
   const result = await createProposal(state, true, { proposalType: 'remove', remove: { removed } }, suite)
@@ -393,7 +393,7 @@ export async function joinMlsGroup(welcomeBytes: Uint8Array, own: OwnKeyPackage,
 
 /** Join a group whose BasicCredential profile has its own authentication
  * service (the opaque Vault profile is the non-identity caller). */
-export async function joinMlsGroupWithAuthenticationService(
+async function joinMlsGroupWithAuthenticationService(
   welcomeBytes: Uint8Array,
   own: OwnKeyPackage,
   authenticationService: AuthenticationService,
@@ -455,7 +455,7 @@ export async function exportSecret(state: ClientState, label: string, context: U
 /** The member at one leaf index, or undefined when the leaf is empty — which
  * a message's sender leaf never is, since MLS authenticated it against that
  * leaf's key to get here. */
-export function memberAt(state: ClientState, leafIndex: number): MlsMemberId | undefined {
+function memberAt(state: ClientState, leafIndex: number): MlsMemberId | undefined {
   const node = state.ratchetTree[leafIndex * 2]
   if (node?.nodeType !== 'leaf') return undefined
   try {
@@ -597,7 +597,7 @@ export async function joinGroupExternally(
  * through the Authentication Service. The self-group recovery path uses this
  * to identify already-revoked leaves which otherwise prevent the MLS library
  * from parsing the very GroupInfo needed to remove them. */
-export function groupInfoMemberKids(groupInfoBytes: Uint8Array): string[] | undefined {
+function groupInfoMemberKids(groupInfoBytes: Uint8Array): string[] | undefined {
   const groupInfo = decodeGroupInfo(groupInfoBytes, 0)?.[0]
   if (groupInfo === undefined) return undefined
   const tree = ratchetTreeFromExtension(groupInfo)
@@ -621,7 +621,7 @@ export function groupInfoMemberKids(groupInfoBytes: Uint8Array): string[] | unde
  * Undefined when the GroupInfo carries no tree (another implementation's, or
  * one made before biset attached it) — "cannot tell", which the caller must
  * not read as either answer. */
-export function groupInfoContainsKid(groupInfoBytes: Uint8Array, kid: string): boolean | undefined {
+function groupInfoContainsKid(groupInfoBytes: Uint8Array, kid: string): boolean | undefined {
   const groupInfo = decodeGroupInfo(groupInfoBytes, 0)?.[0]
   if (groupInfo === undefined) return undefined
   const tree = ratchetTreeFromExtension(groupInfo)
@@ -659,7 +659,7 @@ export function decodeState(bytes: Uint8Array): ClientState {
   return decodeStateWithAuthenticationService(bytes, authService)
 }
 
-export function decodeStateWithAuthenticationService(bytes: Uint8Array, authenticationService: AuthenticationService): ClientState {
+function decodeStateWithAuthenticationService(bytes: Uint8Array, authenticationService: AuthenticationService): ClientState {
   const decoded = decodeGroupState(bytes, 0)?.[0]
   if (decoded === undefined) throw new Error('decodeState: undecodable group state')
   return { ...decoded, clientConfig: clientConfig(authenticationService) }
@@ -674,7 +674,7 @@ export function decodeStateWithAuthenticationService(bytes: Uint8Array, authenti
  * membership that has ended, and using it as "I am in the group" is how a
  * removed device stays out forever — it short-circuits the rejoin that would
  * put it back. */
-export function isActiveMember(state: ClientState, kid: string): boolean {
+function isActiveMember(state: ClientState, kid: string): boolean {
   if (state.groupActiveState.kind !== 'active') return false
   return memberList(state).some(m => m.kid === kid)
 }

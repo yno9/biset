@@ -27,7 +27,7 @@ export interface MimiMlsStateTransition {
   addedLeaves: AddedMlsLeaf[]
 }
 
-export class MimiMlsWireError extends TypeError {}
+class MimiMlsWireError extends TypeError {}
 
 /** Decode only direct AppDataUpdate proposals in a public Commit.  Proposal
  * references are deliberately rejected: accepting a reference without the

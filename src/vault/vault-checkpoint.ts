@@ -17,7 +17,7 @@ interface CoordinatorCheckpointEnvelopeV1 {
   plaintextLength: number
 }
 
-export function deriveVaultRecoveryKek(masterSeed: Uint8Array, vaultId: VaultId): Uint8Array {
+function deriveVaultRecoveryKek(masterSeed: Uint8Array, vaultId: VaultId): Uint8Array {
   if (masterSeed.length < 32) throw new TypeError('Vault recovery master seed is invalid')
   const salt = sha256(canonicalBytes({ label: 'biset/vault-recovery-kek/salt/v2', vaultId }))
   return hkdf(sha256, masterSeed, salt, canonicalBytes({ label: 'biset/vault-recovery-kek/info/v2' }), KEY_BYTES)
@@ -59,7 +59,7 @@ export async function openPortableCoordinatorCheckpoint(masterSeed: Uint8Array, 
 
 /** Domain-separated recovery KEK. The Coordinator origin prevents the same
  * recovery phrase from producing a correlatable key at another operator. */
-export function deriveCoordinatorRecoveryKek(masterSeed: Uint8Array, vaultId: VaultId, coordinatorUrl: string): Uint8Array {
+function deriveCoordinatorRecoveryKek(masterSeed: Uint8Array, vaultId: VaultId, coordinatorUrl: string): Uint8Array {
   if (masterSeed.length < 32) throw new TypeError('Coordinator recovery master seed is invalid')
   const origin = coordinatorOrigin(coordinatorUrl)
   const salt = sha256(canonicalBytes({ label: 'biset/coordinator/recovery-kek/salt/v1', vaultId, coordinatorOrigin: origin }))

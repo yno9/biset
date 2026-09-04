@@ -3,9 +3,9 @@
  * MIMI room.  These messages travel over an existing E2E room; no provider
  * receives the old room ID, participant identities, or ciphertext history.
  */
-export const MIMI_ROOM_MIGRATION_OFFER = 'https://biset.md/mimi/1.0/room-migration-offer'
-export const MIMI_ROOM_MIGRATION_ACCEPT = 'https://biset.md/mimi/1.0/room-migration-accept'
-export const MIMI_ROOM_MIGRATION_CUTOVER = 'https://biset.md/mimi/1.0/room-migration-cutover'
+const MIMI_ROOM_MIGRATION_OFFER = 'https://biset.md/mimi/1.0/room-migration-offer'
+const MIMI_ROOM_MIGRATION_ACCEPT = 'https://biset.md/mimi/1.0/room-migration-accept'
+const MIMI_ROOM_MIGRATION_CUTOVER = 'https://biset.md/mimi/1.0/room-migration-cutover'
 
 export interface MimiRoomMigrationOffer {
   version: 1
@@ -28,7 +28,7 @@ export interface MimiRoomMigrationRecord {
   expiresAt: string
 }
 
-export interface MimiRoomMigrationStateStore {
+interface MimiRoomMigrationStateStore {
   save(record: MimiRoomMigrationRecord): Promise<void>
   load(oldRoomId: string): Promise<MimiRoomMigrationRecord | undefined>
 }

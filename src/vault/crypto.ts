@@ -79,7 +79,7 @@ export async function unwrapSegmentKey(
   }
 }
 
-export function segmentKeyWrapAad(draft: Pick<SegmentKeyWrapDraft, 'identityId' | 'selfGroupId' | 'segmentId' | 'sourceEpoch' | 'recipientEpoch' | 'grantorDeviceId'>): Uint8Array {
+function segmentKeyWrapAad(draft: Pick<SegmentKeyWrapDraft, 'identityId' | 'selfGroupId' | 'segmentId' | 'sourceEpoch' | 'recipientEpoch' | 'grantorDeviceId'>): Uint8Array {
   return canonicalBytes({
     label: 'biset/vault/segment-key-wrap/aad/v1',
     identityId: draft.identityId,

@@ -16,7 +16,7 @@ import { didOfKid } from '../protocol/ids.ts'
 /** `routing === null` means "no routing.json exists for this identity" —
  * this identity simply hasn't provisioned a DIDComm-capable device yet.
  * Returns `doc` untouched in that case (nothing to add). */
-export function mergeRouting(doc: WebvhDidDocument, routing: RoutingDoc | null): WebvhDidDocument {
+function mergeRouting(doc: WebvhDidDocument, routing: RoutingDoc | null): WebvhDidDocument {
   if (!routing) return doc
   const kaVms = routing.keyAgreementVerificationMethod ?? []
   const mlkemVms = routing.mlkemVerificationMethod ?? []

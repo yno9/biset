@@ -20,7 +20,6 @@
 // and validates them.
 import type { Credential } from './vendor/credential.ts'
 import { credentialForMlsDevice, mlsDeviceCredentialOf, type MlsDeviceCredentialV2 } from './device-credential.ts'
-export { didOfKid } from '../protocol/ids.ts'
 
 /** An MLS device identity, one leaf per device. */
 export interface MlsMemberId { did: string; kid: string }

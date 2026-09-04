@@ -91,7 +91,7 @@ export async function openRecoveryArchive(recoveryKey: Uint8Array, archive: Reco
   return copySnapshot(snapshot)
 }
 
-export function recoveryArchiveAad(identityId: IdentityId, createdAt: string): Uint8Array {
+function recoveryArchiveAad(identityId: IdentityId, createdAt: string): Uint8Array {
   if (!identityId || Number.isNaN(Date.parse(createdAt))) throw new TypeError('recovery archive identity and creation time are required')
   return canonicalBytes({ label: 'biset/recovery-archive/aad/v1', identityId, createdAt })
 }
@@ -254,7 +254,7 @@ function copyArchive(value: RecoveryArchiveV1): RecoveryArchiveV1 {
   return { ...value, nonce: value.nonce.slice(), ciphertext: value.ciphertext.slice(), ciphertextHash: value.ciphertextHash.slice(), aad: value.aad.slice() }
 }
 
-export function assertRecoveryArchiveEnvelope(value: RecoveryArchiveV1): void {
+function assertRecoveryArchiveEnvelope(value: RecoveryArchiveV1): void {
   if (value.version !== 1 || value.kind !== 'biset.recovery-archive' || !value.identityId || Number.isNaN(Date.parse(value.createdAt)) || value.nonce.length !== NONCE_BYTES || value.ciphertext.length === 0 || value.ciphertextHash.length !== 32 || !Number.isSafeInteger(value.plaintextLength) || value.plaintextLength < 0 || value.aad.length === 0) throw new TypeError('recovery archive envelope is invalid')
 }
 

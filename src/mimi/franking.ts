@@ -38,10 +38,10 @@ export function verifyFrank(publicKey: Uint8Array, frank: Frank): boolean {
   return publicKey.length === 32 && frank.serverFrank.length === 32 && ed25519.verify(frank.frankingIntegritySignature, frankingIntegrityBytes(frank), publicKey)
 }
 
-export function frankingContextBytes(context: ServerFrankingContext): Uint8Array {
+function frankingContextBytes(context: ServerFrankingContext): Uint8Array {
   return canonicalBytes({ label: 'biset/mimi-server-franking-context/v1', senderUri: context.senderUri, roomUri: context.roomUri, acceptedTimestamp: context.acceptedTimestamp })
 }
 
-export function frankingIntegrityBytes(value: Pick<Frank, 'serverFrank' | 'frankingSignatureCiphersuite' | 'context'>): Uint8Array {
+function frankingIntegrityBytes(value: Pick<Frank, 'serverFrank' | 'frankingSignatureCiphersuite' | 'context'>): Uint8Array {
   return canonicalBytes({ label: 'FrankingIntegrityTBS', serverFrank: Array.from(value.serverFrank), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, context: { senderUri: value.context.senderUri, roomUri: value.context.roomUri, acceptedTimestamp: value.context.acceptedTimestamp } })
 }

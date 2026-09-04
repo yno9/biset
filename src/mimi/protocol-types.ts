@@ -12,7 +12,7 @@
 export type MimiRoomId = string
 export type MimiUserUri = string
 export type MimiClientUri = string
-export type MimiProviderUri = string
+type MimiProviderUri = string
 
 /** Decimal uint64, represented as a string so JSON never loses precision. */
 export type MimiEpoch = string
@@ -196,7 +196,7 @@ export interface KeyMaterialRequest {
   signature: Uint8Array
 }
 
-export type KeyMaterialUserStatus =
+type KeyMaterialUserStatus =
   | 'success'
   | 'partialSuccess'
   | 'incompatibleProtocol'
@@ -206,7 +206,7 @@ export type KeyMaterialUserStatus =
   | 'noConsentForThisRoom'
   | 'userDeleted'
 
-export type KeyMaterialClientStatus = 'success' | 'keyMaterialExhausted' | 'nothingCompatible'
+type KeyMaterialClientStatus = 'success' | 'keyMaterialExhausted' | 'nothingCompatible'
 
 export interface ClientKeyMaterial {
   client: MimiClientUri
@@ -223,7 +223,7 @@ export interface KeyMaterialResponse {
 }
 
 /** draft §5.7 explicit provider-to-provider consent operation. */
-export type MimiConsentOperation = 'cancel' | 'request' | 'grant' | 'revoke'
+type MimiConsentOperation = 'cancel' | 'request' | 'grant' | 'revoke'
 
 export interface MimiConsentEntry {
   consentOperation: MimiConsentOperation
@@ -234,18 +234,18 @@ export interface MimiConsentEntry {
   clientKeyPackages?: PublishedKeyPackage[]
 }
 
-export type MimiIdentifierSearchType = 'handle' | 'nick' | 'email' | 'phone' | 'partialName' | 'wholeProfile' | 'oidcStdClaim' | 'vcardField'
+type MimiIdentifierSearchType = 'handle' | 'nick' | 'email' | 'phone' | 'partialName' | 'wholeProfile' | 'oidcStdClaim' | 'vcardField'
 export interface MimiIdentifierQueryElement {
   searchType: MimiIdentifierSearchType
   searchValue: string
   fieldName?: string
 }
 export interface MimiIdentifierRequest { queryElements: MimiIdentifierQueryElement[] }
-export type MimiIdentifierQueryCode = 'success' | 'notFound' | 'ambiguous' | 'forbidden' | 'unsupportedField'
-export interface MimiIdentifierProfile { stableUri: MimiUserUri; fields: { fieldSource: 'oidcStdClaim' | 'vcardField'; fieldName: string; fieldValue: string }[] }
+type MimiIdentifierQueryCode = 'success' | 'notFound' | 'ambiguous' | 'forbidden' | 'unsupportedField'
+interface MimiIdentifierProfile { stableUri: MimiUserUri; fields: { fieldSource: 'oidcStdClaim' | 'vcardField'; fieldName: string; fieldValue: string }[] }
 export interface MimiIdentifierResponse { responseCode: MimiIdentifierQueryCode; foundProfiles: MimiIdentifierProfile[] }
 
-export interface MimiAbusiveMessage { messageContent: Uint8Array; frank: Frank; acceptedTimestamp: string }
+interface MimiAbusiveMessage { messageContent: Uint8Array; frank: Frank; acceptedTimestamp: string }
 export interface MimiAbuseReport { reportingUser?: MimiUserUri; allegedAbuserUri: MimiUserUri; reasonCode: number; note: string; messages: MimiAbusiveMessage[] }
 
 /**
@@ -269,13 +269,13 @@ export interface GroupInfoRequest {
   signature: Uint8Array
 }
 
-export type GroupInfoCode = 'success' | 'notAuthorized' | 'noSuchRoom'
+type GroupInfoCode = 'success' | 'notAuthorized' | 'noSuchRoom'
 
 /** The room's stored GroupInfo/ratchet_tree, HPKE-sealed to the requester's
  * groupInfoPublicKey. Pending (uncommitted) proposals are not tracked by
  * this store, so that list is always empty -- a documented simplification,
  * not a wire-format gap. */
-export interface GroupInfoRatchetTreeBundle {
+interface GroupInfoRatchetTreeBundle {
   groupInfo: Uint8Array
   ratchetTree?: Uint8Array
 }
@@ -337,7 +337,7 @@ export interface UpdateRoomRequest {
   signature: Uint8Array
 }
 
-export type UpdateResponseCode = 'success' | 'wrongEpoch' | 'notAllowed' | 'invalidProposal'
+type UpdateResponseCode = 'success' | 'wrongEpoch' | 'notAllowed' | 'invalidProposal'
 
 export interface UpdateRoomResponse {
   status: UpdateResponseCode

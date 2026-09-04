@@ -18,7 +18,7 @@ export interface SqliteMediatorLimits {
   maxReplayIds: number
 }
 
-export const DEFAULT_SQLITE_MEDIATOR_LIMITS: SqliteMediatorLimits = {
+const DEFAULT_SQLITE_MEDIATOR_LIMITS: SqliteMediatorLimits = {
   maxConnections: 10_000,
   maxKeysPerConnection: 32,
   maxQueueItemsPerRecipient: 256,

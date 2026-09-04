@@ -6,7 +6,7 @@ import { BufferEncoder, contramapBufferEncoders, encode, Encoder } from '../mls/
 import { decodeVarLenData, decodeVarLenType, varLenDataEncoder, varLenTypeEncoder } from '../mls/vendor/codec/variableLength.ts'
 import type { FrankAAD, FrankingAgentData, ParticipantListData, RoomMetadata, UserRolePair } from './protocol-types.ts'
 
-export const MIMI_FRANK_AAD_COMPONENT = 0x0020
+const MIMI_FRANK_AAD_COMPONENT = 0x0020
 export const MIMI_FRANKING_SIGNATURE_KEY_COMPONENT = 0x0021
 export const MIMI_PARTICIPANT_LIST_COMPONENT = 0x0022
 export const MIMI_ROOM_METADATA_COMPONENT = 0x0023
@@ -26,8 +26,8 @@ const decodeUserRolePair: Decoder<UserRolePair> = mapDecoders(
 const participantListEncoder: BufferEncoder<ParticipantListData> = contramapBufferEncoders(
   [varLenTypeEncoder(userRolePairEncoder)], value => [value.participants] as const,
 )
-export const encodeMimiParticipantList: Encoder<ParticipantListData> = encode(participantListEncoder)
-export const decodeMimiParticipantList: Decoder<ParticipantListData> = mapDecoder(
+const encodeMimiParticipantList: Encoder<ParticipantListData> = encode(participantListEncoder)
+const decodeMimiParticipantList: Decoder<ParticipantListData> = mapDecoder(
   decodeVarLenType(decodeUserRolePair), participants => ({ participants }),
 )
 
@@ -95,11 +95,11 @@ export const decodeMimiFrankingAgent: Decoder<FrankingAgentData> = mapDecoders(
   [decodeVarLenData, decodeVarLenData], (frankingSignatureKey, credential) => ({ frankingSignatureKey, credential }),
 )
 
-export function encodeMimiFrankAad(value: FrankAAD): Uint8Array {
+function encodeMimiFrankAad(value: FrankAAD): Uint8Array {
   if (value.frankingTag.length !== 32) throw new TypeError('FrankAAD franking_tag must be 32 bytes')
   return new Uint8Array(value.frankingTag)
 }
-export function decodeMimiFrankAad(value: Uint8Array): FrankAAD | undefined {
+function decodeMimiFrankAad(value: Uint8Array): FrankAAD | undefined {
   return value.length === 32 ? { frankingTag: new Uint8Array(value) } : undefined
 }
 

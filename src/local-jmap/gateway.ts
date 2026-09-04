@@ -1,7 +1,7 @@
 import type { AccountTransport, JmapMethodCall, JmapSession } from './transport.ts'
 
-export const JMAP_CORE_CAPABILITY = 'urn:ietf:params:jmap:core'
-export const JMAP_MAIL_CAPABILITY = 'urn:ietf:params:jmap:mail'
+const JMAP_CORE_CAPABILITY = 'urn:ietf:params:jmap:core'
+const JMAP_MAIL_CAPABILITY = 'urn:ietf:params:jmap:mail'
 
 export interface LocalJmapMailbox {
   id: string

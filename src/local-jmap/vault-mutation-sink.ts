@@ -10,8 +10,6 @@ import { emailSetToVaultMutationIntents } from './mutations.ts'
 import type { VaultMutationIntent } from './mutations.ts'
 import { assertActiveVaultSegment, type ActiveVaultSegment } from '../vault/active-segment.ts'
 
-export type { ActiveVaultSegment } from '../vault/active-segment.ts'
-
 export interface LocalVaultMutationCommitter {
   commitLocalMutation(input: {
     identityId: IdentityId

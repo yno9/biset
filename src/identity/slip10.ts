@@ -14,7 +14,7 @@ function ser32(i: number): Uint8Array {
   return b
 }
 
-export function masterNode(seed: Uint8Array): Slip10Node {
+function masterNode(seed: Uint8Array): Slip10Node {
   const I = hmac(sha512, ED25519_SEED_KEY, seed)
   return { key: I.slice(0, 32), chainCode: I.slice(32, 64) }
 }

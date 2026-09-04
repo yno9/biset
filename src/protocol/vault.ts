@@ -187,7 +187,7 @@ export interface RestoreControlPullV1 {
  * same state through ordinary polling -- this is a wake-up hint, not a
  * delivery channel.
  */
-export interface RestoreNotifyV1 {
+interface RestoreNotifyV1 {
   version: 1
   identityId: IdentityId
   requestId: string

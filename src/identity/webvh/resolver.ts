@@ -25,7 +25,7 @@ import { decodeMultikey } from './multikey.ts'
 import { multikeyHashBase58 } from './hash.ts'
 import type { WebvhDidDocument } from './document.ts'
 
-export class WebvhResolutionError extends Error {}
+class WebvhResolutionError extends Error {}
 
 // did:key method spec: a verificationMethod id is the full DID URL
 // `did:key:{mb}#{mb}` (fragment repeats the same multibase value) —

@@ -33,7 +33,7 @@ export interface OpenPgpCredentialRecord {
 }
 
 /** Encodes a private key only for an already encrypted endpoint vault object. */
-export function encodeOpenPgpPrivateCredential(value: OpenPgpPrivateCredentialV1): Uint8Array {
+function encodeOpenPgpPrivateCredential(value: OpenPgpPrivateCredentialV1): Uint8Array {
   assertCredential(value)
   return canonicalBytes({
     version: value.version,

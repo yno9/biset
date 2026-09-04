@@ -25,7 +25,7 @@ export interface DidCommGroupRoster {
   updatedAt: string
 }
 
-export interface DidCommGroupChatStore {
+interface DidCommGroupChatStore {
   save(roster: DidCommGroupRoster): Promise<void>
   /** Unions `patch.members` into whatever roster is already stored (keeping
    * the existing name unless `patch.name` is given, keeping the original

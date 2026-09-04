@@ -8,12 +8,12 @@
 // node:net/node:tls; Bun.listen/socket.upgradeTLS only.
 import { SmtpSession, type AcceptIngressInput, type SmtpEffect, type SmtpSessionDeps } from './mail-smtp-protocol.ts'
 
-export interface SmtpSocketServerTlsFileConfig {
+interface SmtpSocketServerTlsFileConfig {
   certPath: string
   keyPath: string
 }
 
-export interface SmtpConnectionInfo {
+interface SmtpConnectionInfo {
   remoteAddress: string
   tls: boolean
 }

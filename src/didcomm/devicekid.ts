@@ -87,7 +87,7 @@ export function mlkemKidFor(deviceKidOrFragment: string): string {
 }
 
 /** The X25519 kid an ML-KEM kid belongs to — the inverse of `mlkemKidFor`. */
-export function deviceKidForMlkem(mlkemKidOrFragment: string): string {
+function deviceKidForMlkem(mlkemKidOrFragment: string): string {
   const hash = mlkemKidOrFragment.indexOf('#')
   const did = hash < 0 ? '' : mlkemKidOrFragment.slice(0, hash)
   const fragment = hash < 0 ? mlkemKidOrFragment : mlkemKidOrFragment.slice(hash)
@@ -96,27 +96,27 @@ export function deviceKidForMlkem(mlkemKidOrFragment: string): string {
 }
 
 /** True for an ML-KEM-768 key id (`#kk…`) rather than an X25519 device id. */
-export function isMlkemKid(kidOrFragment: string): boolean {
+function isMlkemKid(kidOrFragment: string): boolean {
   return fragmentOf(kidOrFragment).startsWith('#kk')
 }
 
 /** True for a device key id of either generation — anything this codebase
  * recognizes as naming an X25519 device key. */
-export function isDeviceKid(kidOrFragment: string): boolean {
+function isDeviceKid(kidOrFragment: string): boolean {
   const fragment = fragmentOf(kidOrFragment)
   return fragment.startsWith('#k') && !fragment.startsWith('#kk')
 }
 
 /** True for the original positional form (`#k1`). These are never minted
  * again; they are read, and migrated away from. */
-export function isLegacyKid(kidOrFragment: string): boolean {
+function isLegacyKid(kidOrFragment: string): boolean {
   return /^#k\d+$/.test(fragmentOf(kidOrFragment))
 }
 
 /** True when this kid is the one the given key would produce — the check that
  * makes a derived kid self-verifying against a resolved document, and the test
  * a rename uses to know it is already done. */
-export function kidMatchesKey(kidOrFragment: string, publicKey: Uint8Array): boolean {
+function kidMatchesKey(kidOrFragment: string, publicKey: Uint8Array): boolean {
   return fragmentOf(kidOrFragment) === deviceKidFragment(publicKey)
 }
 

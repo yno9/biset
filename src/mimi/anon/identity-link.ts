@@ -4,7 +4,7 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { base64urlToBytes, bytesToBase64url, canonicalBytes } from '../../protocol/canonical.ts'
 import type { MimiRoomId, PseudonymousCredential } from '../protocol-types.ts'
 
-export const IDENTITY_LINK_EXPORTER_LABEL = 'mimi mmr identity-link'
+const IDENTITY_LINK_EXPORTER_LABEL = 'mimi mmr identity-link'
 const KEY_BYTES = 32
 const NONCE_BYTES = 24
 
@@ -65,18 +65,18 @@ export async function decryptAndVerifyIdentityLink(
   return link
 }
 
-export function pseudonymousCredentialTbsBytes(credential: PseudonymousCredentialTbs): Uint8Array {
+function pseudonymousCredentialTbsBytes(credential: PseudonymousCredentialTbs): Uint8Array {
   if (!credential.clientPseudonym || !credential.userPseudonym || credential.signaturePublicKey.length !== 32) throw new TypeError('pseudonymous credential TBS is invalid')
   return canonicalBytes({ label: 'PseudonymousCredentialTBS', clientPseudonym: credential.clientPseudonym, userPseudonym: credential.userPseudonym, signaturePublicKey: bytesToBase64url(credential.signaturePublicKey) })
 }
 
-export async function identityLinkKey(exporter: MmrEpochExporter, roomId: MimiRoomId): Promise<Uint8Array> {
+async function identityLinkKey(exporter: MmrEpochExporter, roomId: MimiRoomId): Promise<Uint8Array> {
   const key = await exporter.exportSecret(IDENTITY_LINK_EXPORTER_LABEL, identityLinkContext(roomId), KEY_BYTES)
   if (!(key instanceof Uint8Array) || key.length !== KEY_BYTES) throw new TypeError('MLS exporter returned an invalid identity-link key')
   return key.slice()
 }
 
-export function identityLinkContext(roomId: MimiRoomId): Uint8Array {
+function identityLinkContext(roomId: MimiRoomId): Uint8Array {
   if (!roomId) throw new TypeError('room ID is required')
   return canonicalBytes({ label: IDENTITY_LINK_EXPORTER_LABEL, roomId })
 }

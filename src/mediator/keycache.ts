@@ -29,7 +29,7 @@
 /** Where a cache keeps its entries between processes. `save` is best-effort
  * and must not throw — losing a persisted key costs one resolve, which must
  * never cost the caller its message. */
-export interface KeyCachePersistence {
+interface KeyCachePersistence {
   load(): Promise<Map<string, Uint8Array>>
   save(kid: string, key: Uint8Array): void
   drop(kid: string): void

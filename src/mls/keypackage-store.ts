@@ -14,7 +14,7 @@ import type { MlsDeviceCredentialV2 } from './device-credential.ts'
 /** How many unused key packages this device keeps published — a key package
  * is single-use, so the pool is what lets several devices invite this one
  * to several groups before it next comes online to refill. */
-export const KEY_PACKAGE_POOL_TARGET = 5
+const KEY_PACKAGE_POOL_TARGET = 5
 
 const DATABASE_NAME = 'biset-mls-keypackages'
 const DATABASE_VERSION = 1
@@ -28,7 +28,7 @@ interface StoredKeyPackage {
   createdAt: number
 }
 
-export interface MlsKeyPackageStore {
+interface MlsKeyPackageStore {
   /** Mints `count` fresh key packages, keeps their private halves, and
    * returns them (public + private) for the caller to publish. */
   mint(kid: string, credential: MlsDeviceCredentialV2, signaturePrivateKey: Uint8Array, count: number): Promise<OwnKeyPackage[]>

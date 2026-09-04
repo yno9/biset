@@ -9,7 +9,7 @@
  */
 import type { MimiUserUri, ParticipantListData, UserRolePair } from './protocol-types.ts'
 
-export type MimiRoleCapability =
+type MimiRoleCapability =
   | 'canAddParticipant'
   | 'canRemoveParticipant'
   | 'canRemoveSelf'
@@ -17,12 +17,12 @@ export type MimiRoleCapability =
   | 'canSendMessage'
   | 'canReceiveMessage'
 
-export interface RoleChangeTargets {
+interface RoleChangeTargets {
   fromRoleIndex: number
   targetRoleIndexes: number[]
 }
 
-export interface MimiRoomRole {
+interface MimiRoomRole {
   roleIndex: number
   capabilities: MimiRoleCapability[]
   minimumParticipants: number

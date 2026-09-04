@@ -13,7 +13,7 @@ import type { AcceptIngressInput } from './mail-smtp-protocol.ts'
 import { resolveMailRecipientRoute, packInboundMailForward, type MailRecipientRoute } from './bridge.ts'
 import { defaultFetch } from '../../net-fetch.ts'
 
-export interface MailPluginListenerTlsFileConfig {
+interface MailPluginListenerTlsFileConfig {
   certPath: string
   keyPath: string
 }

@@ -27,7 +27,7 @@ import { parseWebvhDid } from './webvh/identifier.ts'
  * anything it doesn't recognize: an email or a malformed did:webvh both come
  * back unchanged, so callers can pass whatever identifier they hold without
  * pre-checking what it is. */
-export function stableIdKey(id: string): string {
+function stableIdKey(id: string): string {
   if (!id.startsWith('did:webvh:')) return id
   try {
     return `webvh:${parseWebvhDid(id).scid}`
@@ -44,7 +44,7 @@ export function stableIdKey(id: string): string {
  * address. Callers used to test `startsWith('did:')` directly, which silently
  * became wrong once webvh identities normalize to a `webvh:` key — this is
  * the one place that knows every shape stableIdKey can produce. */
-export function isDidIdentityKey(key: string): boolean {
+function isDidIdentityKey(key: string): boolean {
   return key.startsWith('did:') || key.startsWith('webvh:')
 }
 

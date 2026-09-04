@@ -56,7 +56,7 @@ export interface DeviceKeyRecord {
   event: VaultEventV1
 }
 
-export function encodeDidCommDeviceKey(value: DidCommDeviceKeyV1): Uint8Array {
+function encodeDidCommDeviceKey(value: DidCommDeviceKeyV1): Uint8Array {
   assertDeviceKey(value)
   return canonicalBytes({
     version: value.version,

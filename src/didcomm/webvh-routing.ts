@@ -77,7 +77,7 @@ export interface RoutingDoc {
   mimiVaultRoom?: RoutingMimiVaultRoom
 }
 
-export interface RoutingMimiVaultRoom {
+interface RoutingMimiVaultRoom {
   roomId: string
   providerUrl: string
 }
@@ -102,8 +102,8 @@ export function didToRoutingUrl(did: string): string {
   return `https://${hostPart}/.well-known/routing.json`
 }
 
-export interface DidKeyAgreement { kid: string; publicKey: Uint8Array }
-export interface DidMlkemKeyAgreement { kid: string; publicKey: Uint8Array }
+interface DidKeyAgreement { kid: string; publicKey: Uint8Array }
+interface DidMlkemKeyAgreement { kid: string; publicKey: Uint8Array }
 
 /** One independent mediator this identity has registered a kid with
  * (mediator-sync.ts's `registerWithMediator`). `routingKid` is the
@@ -201,7 +201,7 @@ export async function fetchRouting(did: string, fetchImpl: typeof fetch, init?: 
  * the earlier VC-based design was dropped, 2026-08-30), so there is
  * nothing to gain from resolving the full signed did:webvh log just to
  * reach the same routing.json a domain-only GET already serves. */
-export function domainRoutingJsonUrl(domain: string, port?: number): string {
+function domainRoutingJsonUrl(domain: string, port?: number): string {
   const hostname = new URL(`https://${domain}`).hostname
   const hostPart = port ? `${hostname}:${port}` : hostname
   return `https://${hostPart}/.well-known/routing.json`

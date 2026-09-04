@@ -270,7 +270,7 @@ async function expect(reader: ReplyReader, code: number, what: string): Promise<
 
 // ── Pure helpers ──────────────────────────────────────────────────────────
 
-export function groupRecipientsByDomain(addresses: string[]): Map<string, string[]> {
+function groupRecipientsByDomain(addresses: string[]): Map<string, string[]> {
   const byDomain = new Map<string, string[]>()
   for (const address of addresses) {
     const at = address.lastIndexOf('@')
@@ -285,7 +285,7 @@ export function groupRecipientsByDomain(addresses: string[]): Map<string, string
 
 /** Escapes a leading dot on every line (RFC 5321 §4.5.2) so a body line of
  * `.` alone cannot be mistaken for the DATA terminator. */
-export function dotStuff(raw: Uint8Array): Uint8Array {
+function dotStuff(raw: Uint8Array): Uint8Array {
   const out: number[] = []
   let atLineStart = true
   for (const byte of raw) {
@@ -300,7 +300,7 @@ export function dotStuff(raw: Uint8Array): Uint8Array {
  * keyword token alone (a line may carry a parameter, e.g. "250-SIZE
  * 35882577", and a substring test would find "SIZE" inside another
  * keyword). */
-export function advertisesCapability(ehloReply: string, keyword: string): boolean {
+function advertisesCapability(ehloReply: string, keyword: string): boolean {
   return ehloReply.split(/\r\n/).some(line => {
     const rest = line.length > 4 ? line.slice(4) : ''
     return rest.trim().split(/\s+/)[0]?.toUpperCase() === keyword.toUpperCase()
@@ -312,7 +312,7 @@ export function advertisesCapability(ehloReply: string, keyword: string): boolea
  * first, SMTPUTF8 second). A bare `MAIL FROM` is not equivalent: without
  * BODY=8BITMIME a strict server is entitled to assume 7-bit, and a UTF-8
  * body can be mangled or refused. */
-export function buildMailFromCommand(from: string, ehloReply: string): string {
+function buildMailFromCommand(from: string, ehloReply: string): string {
   let command = `MAIL FROM:<${from}>`
   if (advertisesCapability(ehloReply, '8BITMIME')) command += ' BODY=8BITMIME'
   if (advertisesCapability(ehloReply, 'SMTPUTF8')) command += ' SMTPUTF8'

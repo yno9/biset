@@ -64,11 +64,11 @@ export function assertVaultObjectId(value: unknown): asserts value is VaultObjec
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const VAULT_ID = /^vlt_[A-Za-z0-9_-]{43}$/
 
-export function assertVaultId(value: unknown): asserts value is VaultId {
+function assertVaultId(value: unknown): asserts value is VaultId {
   if (typeof value !== 'string' || !VAULT_ID.test(value)) throw new TypeError('vaultId must be vlt_ followed by 256-bit base64url')
 }
 
-export function assertVaultMemberId(value: unknown): asserts value is VaultMemberId {
+function assertVaultMemberId(value: unknown): asserts value is VaultMemberId {
   assertOpaqueId(value, 'vault member id', 128)
 }
 
@@ -85,7 +85,7 @@ export function deliverySeq(value: bigint): DeliverySeq {
   return value.toString()
 }
 
-export function compareDeliverySeq(left: DeliverySeq, right: DeliverySeq): number {
+function compareDeliverySeq(left: DeliverySeq, right: DeliverySeq): number {
   const a = BigInt(left)
   const b = BigInt(right)
   return a < b ? -1 : a > b ? 1 : 0
