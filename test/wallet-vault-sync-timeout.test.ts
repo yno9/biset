@@ -10,6 +10,12 @@
 // comment); the Wallet path carried the same busy flag with none of the
 // protection.
 //
+// The timeout itself now lives in withVaultSyncTimeout, shared by both
+// account paths, so this file checks two things separately: that the Wallet
+// guard still goes through that helper, and that the helper still does what
+// the name promises. Splitting them is what let the helper's own
+// clearTimeout become part of the contract.
+//
 // This is a SOURCE-level contract test, deliberately: src/main.ts is the
 // browser entry point (it calls bootClient() at import time and pulls in
 // DOM-dependent UI modules), so there is no seam to import
@@ -26,6 +32,15 @@ function walletBranch(): string {
   const start = source.indexOf('async function configureWalletAccountIfPresent')
   expect(start).toBeGreaterThan(-1)
   const end = source.indexOf('export async function bootClient', start)
+  expect(end).toBeGreaterThan(start)
+  return source.slice(start, end)
+}
+
+/** The shared timeout helper, declared at module scope. */
+function timeoutHelper(): string {
+  const start = source.indexOf('function withVaultSyncTimeout')
+  expect(start).toBeGreaterThan(-1)
+  const end = source.indexOf('\n}\n', start)
   expect(end).toBeGreaterThan(start)
   return source.slice(start, end)
 }
@@ -48,18 +63,32 @@ describe('did.md Wallet MIMI Vault sync guard (main.ts)', () => {
     expect(/finally\s*\{[^}]*syncBusy = false/.test(entry)).toBe(true)
   })
 
-  test('the guarded sync is raced against a timeout, so the flag cannot wedge', () => {
-    // Without this race a hung transport keeps `syncBusy` true forever and
-    // the finally above never runs.
-    expect(entry).toContain('Promise.race([')
-    const timeout = /setTimeout\(\(\) => reject\([^)]*\)\), *([\d_]+)\)/.exec(entry)
+  test('the guarded sync goes through the shared timeout, so the flag cannot wedge', () => {
+    // Without this the round can hang, keeping `syncBusy` true forever.
+    expect(entry).toContain('withVaultSyncTimeout(runWalletVaultSyncOnce())')
+  })
+
+  test('the local-identity path is raced against the same helper', () => {
+    // Both paths, one implementation -- a fix to the budget or the cleanup
+    // cannot land on one account kind and miss the other.
+    expect(source).toContain('withVaultSyncTimeout(synchronizeMimi())')
+  })
+
+  test('the helper races against a bounded budget and clears its timer', () => {
+    const helper = timeoutHelper()
+    expect(helper).toContain('Promise.race([')
+    const timeout = /setTimeout\(\(\) => reject\([^)]*\)\), *([A-Z_]+|[\d_]+)\)/.exec(helper)
     expect(timeout).not.toBeNull()
-    const budgetMs = Number(timeout![1]!.replace(/_/g, ''))
-    expect(budgetMs).toBeGreaterThan(0)
+    const budgetLiteral = /VAULT_SYNC_TIMEOUT_MS = ([\d_]+)/.exec(source)
+    expect(budgetLiteral).not.toBeNull()
+    const budgetMs = Number(budgetLiteral![1]!.replace(/_/g, ''))
     // Same budget the local-identity path settled on -- long enough that a
     // slow-but-live sync is never cut short, short enough that a wedged one
     // recovers within one user-visible beat.
     expect(budgetMs).toBe(25_000)
+    // A round that finishes fast still holds a pending timer otherwise, one
+    // per tick, and the poll interval is shorter than the budget.
+    expect(/finally\(\(\) => \{[\s\S]{0,120}clearTimeout\(timer\)/.test(helper)).toBe(true)
   })
 
   test('a lost race still reports, instead of becoming an unhandled rejection', () => {

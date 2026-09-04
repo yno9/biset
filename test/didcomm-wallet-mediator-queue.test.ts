@@ -250,3 +250,49 @@ describe('did.md Wallet mediator delivery handler', () => {
     expect(queued).toBe(0)
   })
 })
+
+// The local-identity path reaches the same projector through its own
+// onMessage, which dispatches the four types it knows and falls through for
+// everything else. Every type a peer sends today is handled, so the
+// fallthrough is unreachable right now -- it becomes reachable the moment a
+// peer sends a type this build does not know yet, and then it is bug 1 all
+// over again on the other account kind (found while fixing the Wallet one,
+// 2026-09-05).
+//
+// Source-level, for the same reason wallet-vault-sync-timeout.test.ts is:
+// onMessage is declared inside bootClient() in the browser entry point and
+// has no importable seam. The behaviour the guard produces is already
+// covered above against a real mediator; what this pins is that the
+// local-identity path has the guard at all.
+const mainSource = await Bun.file(new URL('../src/main.ts', import.meta.url)).text()
+const projectorSource = await Bun.file(new URL('../src/didcomm/ingress-projector.ts', import.meta.url)).text()
+
+describe('local-identity mediator delivery handler (main.ts)', () => {
+  function onMessageBody(): string {
+    const source = mainSource
+    const start = source.indexOf('async function onMessage(')
+    expect(start).toBeGreaterThan(-1)
+    const end = source.indexOf('\n      }\n', start)
+    expect(end).toBeGreaterThan(start)
+    return source.slice(start, end)
+  }
+
+  test('an unsupported type is dropped before it can reach the projector', () => {
+    const body = onMessageBody()
+    const guard = body.indexOf('isProjectableDidCommIngress(plaintext)')
+    const projector = body.indexOf('buildDidCommProjector()')
+    expect(guard).toBeGreaterThan(-1)
+    expect(projector).toBeGreaterThan(-1)
+    // Order is the whole point: a guard after the projector call would not
+    // stop the throw that leaves the message unacknowledged.
+    expect(guard).toBeLessThan(projector)
+  })
+
+  test('both account paths share one allow-list with the projector', () => {
+    // Not two hand-maintained lists that drift: ingress-projector.ts's own
+    // check calls the same exported function both guards call.
+    expect(projectorSource).toContain('export function isProjectableDidCommIngress')
+    expect(projectorSource).toContain('if (!isProjectableDidCommIngress(msg)) throw')
+    expect(mainSource.match(/isProjectableDidCommIngress\(/g)?.length).toBeGreaterThanOrEqual(2)
+  })
+})

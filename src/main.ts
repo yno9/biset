@@ -154,6 +154,27 @@ async function deleteLocalDatabases(names: readonly string[]): Promise<void> {
   })))
 }
 
+// A Vault sync round that never settles would leave its caller's busy flag
+// set for the rest of the page's life, and every later tick returns early on
+// that flag -- found live 2026-09-02, when a hung fetch wedged polling until
+// reload. Both account paths race their round against this budget so the
+// NEXT tick gets a fresh try instead of finding everything stuck.
+//
+// The timer is cleared once the race settles. Without that, a round that
+// finishes in a second still holds a pending 25s timer, one per tick, and
+// the poll interval is shorter than the budget -- so they accumulate.
+const VAULT_SYNC_TIMEOUT_MS = 25_000
+
+function withVaultSyncTimeout<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('MIMI Vault sync timed out')), VAULT_SYNC_TIMEOUT_MS)
+  })
+  return Promise.race([work, timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer)
+  })
+}
+
 async function configureWalletAccountIfPresent(): Promise<boolean> {
   let session
   try {
@@ -347,9 +368,8 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
     const synchronizeWalletVault = async (): Promise<void> => {
       if (syncBusy) return
       syncBusy = true
-      const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('MIMI Vault sync timed out')), 25_000))
       try {
-        await Promise.race([runWalletVaultSyncOnce(), timeout])
+        await withVaultSyncTimeout(runWalletVaultSyncOnce())
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error)
         setWalletVaultStatus({
@@ -1362,6 +1382,21 @@ export async function bootClient(): Promise<void> {
           await handleDidCommGroupMessage(plaintext, msg.senderKid)
           return
         }
+        // Everything the four branches above did not claim falls through to
+        // the generic projector, which throws for anything outside its own
+        // allow-list -- and a throw here leaves the message unacknowledged,
+        // so the mediator re-delivers it on every reconnect and it fails
+        // identically, forever (mediator-watch.ts's onMessage contract).
+        // Today's known types are all handled, so this is not reachable now;
+        // it becomes reachable the moment a peer sends a type this build
+        // does not know yet -- a new biset.md message type, an MLS Welcome
+        // from a future feature. Dropped deliberately and visibly instead,
+        // the same way the wallet path does it, so an unknown type costs one
+        // log line rather than a queue that never drains.
+        if (!isProjectableDidCommIngress(plaintext)) {
+          console.warn(`[DIDComm] dropping unsupported message type ${plaintext.type} from ${msg.senderKid}`)
+          return
+        }
         const didCommProjector = buildDidCommProjector()
         if (!didCommProjector) return
         const payload = new TextEncoder().encode(JSON.stringify(msg.rawJwe))
@@ -1773,8 +1808,7 @@ export async function bootClient(): Promise<void> {
     // next attempt (the interval's next tick) gets a fresh try instead of
     // finding everything wedged on.
     const runMimiSync = (): Promise<void> => {
-      const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('MIMI Vault sync timed out')), 25_000))
-      return Promise.race([synchronizeMimi(), timeout]).catch(error => {
+      return withVaultSyncTimeout(synchronizeMimi()).catch(error => {
         const detail = error instanceof Error ? error.message : String(error)
         setVaultCard({ state: 'error', coordinatorUrl: mimiSelfBaseUrl, vaultId: room!.roomId as never, detail })
         console.warn('[mimi-vault/poll]', detail)
