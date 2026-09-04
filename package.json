@@ -19,7 +19,8 @@
     "smoke:didcomm-mediator": "bun run scripts/didcomm-mediator-smoke.ts",
     "test": "for f in $(find test -name '*.test.ts' | sort); do echo \"== $f\"; bun test \"$f\" || exit 1; done",
     "knip": "knip",
-    "check": "bun run typecheck && bun run knip && bun run test"
+    "check": "bun run typecheck && bun run knip && bun run reachability --quiet && bun run test",
+    "reachability": "bun run scripts/reachability.mjs"
   },
   "devDependencies": {
     "@hpke/core": "1.8.0",
