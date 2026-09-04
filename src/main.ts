@@ -31,19 +31,19 @@ import { readBisetConfig } from './ui/config.ts'
 import { VaultBackedLocalJmapMutationSink } from './local-jmap/vault-mutation-sink.ts'
 import type { LocalJmapMutationSink } from './local-jmap/gateway.ts'
 import { LocalJmapGateway, LocalJmapTransport } from './local-jmap/gateway.ts'
-import { buildOutboundRfc5322 } from './mail/rfc5322-builder.ts'
 import { MailIngressProjector } from './mail/ingress-projector.ts'
 import { DidCommIngressProjector } from './didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from './didcomm/webvh-resolve.ts'
-import { initiateRelationship, sendDidCommMessage, sendRelationshipAccept, sendRelationshipMessage, sendGroupInvite, sendGroupChatMessage, type PendingRelationship } from './didcomm/send-message.ts'
+import { sendDidCommMessage, sendRelationshipAccept, sendRelationshipMessage, sendGroupChatMessage } from './didcomm/send-message.ts'
 import { MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyOf } from './didcomm/mail-bridge.ts'
 import { didCommThreadId } from './didcomm/basicmessage.ts'
 import {
-  GROUP_INVITE, GROUP_MESSAGE, didcommGroupAddress, parseDidCommGroupAddress, randomDidCommGroupId,
+  GROUP_INVITE, GROUP_MESSAGE, parseDidCommGroupAddress,
   groupInviteBodyOf, groupMessageBodyOf, buildDidCommGroupMessageVaultRecord,
   type GroupInviteBody, type GroupMessageBody,
 } from './didcomm/group-chat.ts'
 import { IndexedDbDidCommGroupChatStore } from './didcomm/group-chat-store.ts'
+import { ensureDidCommContact as ensureDidCommContactWith, sendReply as sendReplyWith, type PendingHandshake, type SendContext } from './app/send.ts'
 import { didCommMessageDedupeId, resolveDidCommSenderDid } from './didcomm/ingress-projector.ts'
 import { registerWithMediator, type MediatorPollHandle } from './didcomm/mediator-sync.ts'
 import { watchMediator } from './didcomm/mediator-watch.ts'
@@ -913,11 +913,6 @@ export async function bootClient(): Promise<void> {
     // this identity's own devices in v1), accepted limitation for v1.
     const groupChatStore = new IndexedDbDidCommGroupChatStore()
 
-    interface PendingHandshake {
-      pending: PendingRelationship
-      promise: Promise<ContactKeyV1>
-      resolve(value: ContactKeyV1): void
-    }
     const pendingByOwnKid = new Map<string, PendingHandshake>()
     const pendingByCounterparty = new Map<string, PendingHandshake>()
     const relationshipPollKids = new Set<string>()
@@ -1046,42 +1041,35 @@ export async function bootClient(): Promise<void> {
       mutationSink: localMutationSink,
     }))
 
-    // A `to` of exactly one DID (not an email address) dispatches over
-    // DIDComm instead of mail -- the same "to" field both transports share
-    // (thread.ts/compose-page.ts have no separate DID input), branching
-    // here rather than in the UI layer. Multiple DIDs at once isn't
-    // supported: 1:1 chat only (confirmed with the user, 2026-08-25), and
-    // mixing a DID with a real email address in one send has no sane
-    // meaning either.
-    const ensureDidCommContact = async (toDid: string): Promise<ContactKeyV1> => {
-      if (!identity.didCommKid || !identity.didCommX25519PrivateKey) {
-        throw new Error('Enable DIDComm in account settings before messaging a DID')
-      }
-      let contactKey = await contactKeyReader.currentFor(toDid)
-      if (!contactKey) {
-        let handshake = pendingByCounterparty.get(toDid)
-        if (!handshake) {
-          const initiated = await initiateRelationship(toDid, {
-            fromKid: identity.didCommKid,
-            x25519PrivateKey: fromHex(identity.didCommX25519PrivateKey),
-          })
-          if (!initiated.ok) throw new Error(initiated.error)
-          let resolve!: (value: ContactKeyV1) => void
-          const promise = new Promise<ContactKeyV1>((resolvePromise) => {
-            resolve = resolvePromise
-          })
-          handshake = { pending: initiated.pending, promise, resolve }
-          pendingByOwnKid.set(initiated.pending.peer.xKid, handshake)
-          pendingByCounterparty.set(toDid, handshake)
-          startRelationshipPoll(initiated.pending.peer.xKid, initiated.pending.peer.xPriv, initiated.pending.peer.did, initiated.pending.mediatorUrl)
-        }
-        contactKey = await Promise.race([
-          handshake.promise,
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`relationship handshake with ${toDid} timed out`)), 60_000)),
-        ])
-      }
-      return contactKey
+    // Send-side handlers: app/send.ts. Lifted out of this scope
+    // (PLAN-simplify.md §2 S4 stage 1) with no behaviour change --
+    // SendContext's own doc comment covers why `identity` and the
+    // forward-declared `let`s below are handed over as callbacks rather
+    // than as captured values.
+    const sendContext: SendContext = {
+      identity: () => identity,
+      readModel,
+      mutationSink,
+      contactKeyReader,
+      groupChatStore,
+      transport,
+      mailFrom,
+      pendingByOwnKid,
+      pendingByCounterparty,
+      startRelationshipPoll: (xKid, xPriv, did, mediatorUrl) => startRelationshipPoll(xKid, xPriv, did, mediatorUrl),
+      // The `?.` stays on this side of the wiring, where it has always
+      // been: both of these are undefined for deployment shapes that never
+      // assign them, and "nothing to nudge" means a silent no-op.
+      flushDidCommTransportOutbox: async () => { await flushDidCommTransportOutbox?.() },
+      triggerMimiVaultSync: () => { void triggerMimiVaultSync?.() },
     }
+    // Only these two are still called from this file: ensureDidCommContact
+    // by the outbox flush and the group-mesh catch-up below,
+    // sendReply by configureCompose/configureComposePage. The other three
+    // (sendDidCommChat / sendDidCommGroupMessage / createAndSendDidCommGroup)
+    // are reached only through sendReply's own dispatch, inside send.ts.
+    const ensureDidCommContact = (toDid: string): Promise<ContactKeyV1> => ensureDidCommContactWith(sendContext, toDid)
+    const sendReply = (input: ReplySendInput): Promise<void> => sendReplyWith(sendContext, input)
 
     let flushingDidComm = false
     flushDidCommTransportOutbox = async (): Promise<void> => {
@@ -1167,191 +1155,6 @@ export async function bootClient(): Promise<void> {
       } finally {
         flushingDidComm = false
       }
-    }
-
-    const sendDidCommChat = async (toDid: string, input: ReplySendInput): Promise<void> => {
-      if (!identity.didCommKid || !identity.didCommX25519PrivateKey) {
-        throw new Error('Enable DIDComm in account settings before messaging a DID')
-      }
-      // A did.md Wallet starts a conversation from its public DIDComm leaf.
-      // It deliberately has no Biset-private relationship credential, so a
-      // reply to that inbound public message must use the same public route.
-      // Keep the normal private relationship path for every conversation
-      // that already has one, and for a newly composed Biset conversation.
-      const snapshotBeforeSend = await readModel.snapshot()
-      const repliedMessage = input.inReplyTo
-        ? snapshotBeforeSend.emails.find(email => email.id === input.inReplyTo)
-        : undefined
-      const currentContact = await contactKeyReader.currentFor(toDid)
-      const isPublicInboundReply = currentContact === null
-        && repliedMessage?.mailboxIds.inbox === true
-        && repliedMessage.from?.some(address => address.email === toDid) === true
-      if (isPublicInboundReply) {
-        const direct = await sendDidCommMessage(toDid, input.body, {
-          fromKid: identity.didCommKid,
-          x25519PrivateKey: fromHex(identity.didCommX25519PrivateKey),
-          ...(input.subject ? { subject: input.subject } : {}),
-        })
-        if (!direct.ok) throw new Error(direct.error)
-        const now = new Date().toISOString()
-        await mutationSink.commitMailMessage({
-          email: {
-            id: crypto.randomUUID(),
-            threadId: didCommThreadId(identity.did, toDid),
-            mailboxIds: { sent: true },
-            keywords: { '$seen': true },
-            receivedAt: now,
-            sentAt: now,
-            from: [{ email: identity.did }],
-            to: [{ email: toDid }],
-            ...(input.subject ? { subject: input.subject } : {}),
-          },
-          rawRfc5322: new TextEncoder().encode(input.body),
-        }, snapshotBeforeSend)
-        await refreshInbox(readModel)
-        void triggerMimiVaultSync?.()
-        return
-      }
-      const now = new Date().toISOString()
-      const emailId = crypto.randomUUID()
-      const messageId = crypto.randomUUID()
-      const snapshot = await readModel.snapshot()
-      await mutationSink.commitMailMessage({
-        email: {
-          id: emailId,
-          threadId: didCommThreadId(identity.did, toDid),
-          mailboxIds: { outbox: true },
-          keywords: { '$seen': true },
-          receivedAt: now,
-          sentAt: now,
-          from: [{ email: identity.did }],
-          to: [{ email: toDid }],
-          ...(input.subject ? { subject: input.subject } : {}),
-        },
-        rawRfc5322: new TextEncoder().encode(input.body),
-        didComm: [{ messageId, toDid }],
-      }, snapshot)
-      await refreshInbox(readModel)
-      await flushDidCommTransportOutbox?.()
-      await refreshInbox(readModel)
-      void triggerMimiVaultSync?.()
-    }
-
-    // Shared "commit local echo + fan out via the outbox" tail for DIDComm
-    // group chat -- used by BOTH group creation (after inviting) and
-    // ordinary replies to an existing group thread. Reads the roster fresh
-    // from groupChatStore rather than taking `toDids` as an argument, so
-    // both call sites converge on one path.
-    const sendDidCommGroupMessage = async (groupId: string, input: ReplySendInput): Promise<void> => {
-      const roster = await groupChatStore.load(groupId)
-      if (!roster) throw new Error(`No local roster for DIDComm group ${groupId}`)
-      const toDids = roster.members.filter(m => m !== identity.did)
-      const messageId = crypto.randomUUID()
-      const emailId = crypto.randomUUID()
-      const now = new Date().toISOString()
-      const snapshot = await readModel.snapshot()
-      await mutationSink.commitMailMessage({
-        email: {
-          id: emailId,
-          threadId: didcommGroupAddress(groupId),
-          mailboxIds: { outbox: true },
-          keywords: { '$seen': true },
-          receivedAt: now,
-          sentAt: now,
-          from: [{ email: identity.did }],
-          to: toDids.map(email => ({ email })),
-          ...(input.subject ? { subject: input.subject } : {}),
-        },
-        rawRfc5322: new TextEncoder().encode(input.body),
-        didComm: toDids.map(toDid => ({ messageId, toDid })),
-      }, snapshot)
-      await refreshInbox(readModel)
-      await flushDidCommTransportOutbox?.()
-      await refreshInbox(readModel)
-      void triggerMimiVaultSync?.()
-    }
-
-    // Compose's "2+ DID recipients" branch (sendReply's dispatch, below):
-    // full-mesh group creation, no MLS. Every member needs a pairwise
-    // ContactKeyV1 with every OTHER member (group-chat.ts's own header) --
-    // this device already has one with itself's not needed, and with each
-    // invitee via ensureDidCommContact below; the invitees mesh-complete
-    // with EACH OTHER on their own once they receive the invite
-    // (handleDidCommGroupInvite above).
-    const createAndSendDidCommGroup = async (toDids: string[], input: ReplySendInput): Promise<void> => {
-      if (!identity.didCommKid || !identity.didCommX25519PrivateKey) throw new Error('Enable DIDComm in account settings before starting a group')
-      const groupId = randomDidCommGroupId()
-      const members = [identity.did, ...toDids]
-      const now = new Date().toISOString()
-      await groupChatStore.save({ groupId, members, ...(input.subject ? { name: input.subject } : {}), createdAt: now, updatedAt: now })
-
-      const unreachable: string[] = []
-      for (const toDid of toDids) {
-        try {
-          const contactKey = await ensureDidCommContact(toDid)
-          const sent = await sendGroupInvite(contactKey, { groupId, members, ...(input.subject ? { name: input.subject } : {}) })
-          if (!sent.ok) throw new Error(sent.error)
-        } catch (error) {
-          unreachable.push(toDid)
-          console.warn(`[didcomm-group/invite] ${toDid}:`, error instanceof Error ? error.message : error)
-        }
-      }
-      if (unreachable.length) showSysMsg(`Could not invite: ${unreachable.join(', ')} -- they'll receive this once reachable`)
-
-      // Queue the founding message for EVERY member regardless of invite
-      // success above -- flushDidCommTransportOutbox's own
-      // ensureDidCommContact retries the handshake again on every poll, so
-      // an unreachable member still eventually gets it. No forward-secrecy
-      // concern here (unlike MLS), so no separate "wait for join" step is
-      // needed either.
-      await sendDidCommGroupMessage(groupId, input)
-    }
-
-    const sendReply = async (input: ReplySendInput): Promise<void> => {
-      if (input.toAddrs.length === 1 && input.toAddrs[0]!.startsWith('did:')) {
-        await sendDidCommChat(input.toAddrs[0]!, input)
-        return
-      }
-      if (input.toAddrs.length === 1 && input.toAddrs[0]!.startsWith('didcomm-group:')) {
-        await sendDidCommGroupMessage(parseDidCommGroupAddress(input.toAddrs[0]!), input)
-        return
-      }
-      // 2+ DID recipients (never mixed with mail -- same rule the 1-DID
-      // branch above already applies) starts a new DIDComm group chat,
-      // full-mesh, no MLS (mirroring src.bak's own "visible.length >= 2"
-      // compose branch).
-      if (input.toAddrs.length >= 2 && input.toAddrs.every(addr => addr.startsWith('did:'))) {
-        await createAndSendDidCommGroup(input.toAddrs, input)
-        return
-      }
-      const { rawRfc5322 } = buildOutboundRfc5322({
-        from: mailFrom,
-        to: input.toAddrs,
-        subject: input.subject,
-        body: input.body,
-        inReplyTo: input.inReplyTo,
-        references: input.references,
-      })
-      const emailId = crypto.randomUUID()
-      const now = new Date().toISOString()
-      const snapshot = await readModel.snapshot()
-      await mutationSink.commitMailMessage({
-        email: {
-          id: emailId,
-          threadId: crypto.randomUUID(),
-          mailboxIds: { outbox: true },
-          keywords: {},
-          receivedAt: now,
-          sentAt: now,
-          from: [{ email: mailFrom }],
-          to: input.toAddrs.map(email => ({ email })),
-          subject: input.subject,
-        },
-        rawRfc5322,
-      }, snapshot)
-      await transport.call([{ name: 'EmailSubmission/set', callId: 's1', arguments: { create: { s1: { emailId } } } }])
-      await refreshInbox(readModel)
-      void triggerMimiVaultSync?.()
     }
 
     configureCompose({
