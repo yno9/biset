@@ -1,6 +1,6 @@
 # Biset アーキテクチャ
 
-> MLSについては[ARC-MLS.md](ARC-MLS.md)を参照する。ただし同文書はCoordinatorの完全撤去（2026-09-03、commit `57ffa67`）以前の調査であり、「Coordinator MLS DS」「Coordinator owner-scoped Vault stream v2」を現行実装として説明する記述はすべて本書時点で誤りである——`src/coordinator/`はディレクトリごと存在しない。ARC-MLS.mdが依然として正確なのはRFC 9420 vendored forkそのものの節（ciphersuite、UpdatePath fix、vendor diffの一覧）に限られる。旧`ARC-coordinator.md`への相互参照は同ファイルが存在しないため削除した。Self Group/Vaultの現行の配送経路は本書§6・§9で説明するbiset-mimi Self Vaultである。
+> MLS の vendored fork（ciphersuite、UpdatePath fix、vendor diff の一覧）については `src/mls/vendor/VENDOR.md` と本書§13を参照する。かつて存在した `ARC-MLS.md` は Coordinator 完全撤去（2026-09-03、commit `57ffa67`）以前の調査で、中心的な二節が存在しないサブシステムを説明していたため 2026-09-05 に削除した。Self Group/Vault の現行の配送経路は本書§6・§9で説明する biset-mimi Self Vault である。
 
 > 調査基準日: 2026-09-04（Asia/Tokyo）
 > 調査対象: `~/biset` の commit `5b9f1fa`（前回調査基準 `11f0a62` から9commit進行。うち最重要は `99e08c0`「core: remove src/core/ entirely」——`biset-core`はディレクトリごと存在しない）
@@ -10,7 +10,7 @@
 
 Biset は、メールと DIDComm のデータを利用者の端末側で長期保管し、サーバーを恒久的なメールボックスやメッセージ履歴にしない通信クライアントである。本書は、現行コードの構成、信頼境界、暗号鍵、状態遷移、配送・復旧経路、運用方法、および未完成部分を一つの資料にまとめる。
 
-リポジトリ直下の `PLAN.md` と `PLANIMPLEMENTATION.md` には実装経緯や将来計画も含まれる。本書ではそれらを参考にしつつ、実際に `src/` と `test/` に存在し、呼び出し経路へ接続されているものを「実装済み」と判定する。クラスやテストだけが存在し、ブラウザの起動経路へ未接続のものは「部品実装済み」とする。
+リポジトリ直下の `PLAN.md` には実装経緯や将来計画も含まれる（`PLANIMPLEMENTATION.md` は 2026-09-05 に削除され、本書がその役割を引き継いだ）。本書ではそれを参考にしつつ、実際に `src/` と `test/` に存在し、呼び出し経路へ接続されているものを「実装済み」と判定する。クラスやテストだけが存在し、ブラウザの起動経路へ未接続のものは「部品実装済み」とする。
 
 **この節の背景（2026-09-03〜04の変化）**: 前回調査（commit `11f0a62`）時点では `biset-core`（`src/core/`）がAnchor・Mediator・Vault・biset-mimiと並ぶ五番目の主要コンポーネントとして存在し、SMTP受信、outbound mail relay、did:webvh/routing.json公開文書ホスティング、device rosterに基づくmail ingress-pull認可とlegacy Vault delivery、legacy DIDComm ingress fallbackを一手に担っていた。commit `99e08c0`（2026-09-03「core: remove src/core/ entirely, retired 2026-09-03」）で`src/core/`はディレクトリごと削除され、以後のcommitでその責務は次のように再配分された。
 
@@ -239,7 +239,7 @@ Self Vault roomのroom IDは、**random**な `mimi://{providerHost}/r/vault-{32 
 2. self-remove 後の無限走査回避と application sender leaf attribution。
 3. Domain move のため、committer 自身の UpdatePath で credential を置換できる additive hook。
 
-差分には `// biset:` marker があり、`src/mls/vendor/VENDOR.md` に記録される。`test/mls-core.test.ts` と `test/mls-crypto.test.ts` は現行 tree に存在し、fork の主要操作を検査している。この節はARC-MLS.mdのvendored fork記述と食い違わない。
+差分には `// biset:` marker があり、`src/mls/vendor/VENDOR.md` に記録される。`test/mls-core.test.ts` と `test/mls-crypto.test.ts` は現行 tree に存在し、fork の主要操作を検査している。
 
 ## 7. 鍵と秘密の一覧
 
