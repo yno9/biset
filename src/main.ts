@@ -183,6 +183,128 @@ function resolveAnyDidCommSenderKey(kid: string): Promise<Uint8Array> {
   return resolveDidCommSenderKey(kid)
 }
 
+function updateRememberedVaultCard(
+  next: VaultCardStatus,
+  options: {
+    current: () => VaultCardStatus | undefined
+    remember: (status: VaultCardStatus) => void
+    normalize?: (status: VaultCardStatus) => VaultCardStatus
+    skipEqual?: boolean
+  },
+): void {
+  const status = options.normalize ? options.normalize(next) : next
+  if (options.skipEqual && options.current() && JSON.stringify(options.current()) === JSON.stringify(status)) return
+  options.remember(status)
+  updateVaultCardStatus(status)
+}
+
+type RelationshipWatchStarter = (xKid: string, xPriv: Uint8Array, did: string, mediatorUrl: string) => void
+
+interface RelationshipContactReader {
+  readAll(): Promise<ContactKeyV1[]>
+  currentFor(counterpartyDid: string): Promise<ContactKeyV1 | null>
+}
+
+interface RelationshipContactSink {
+  store(contact: ContactKeyV1): Promise<unknown>
+}
+
+function startRelationshipWatch(
+  watchedKids: Set<string>, mediatorUrl: string, own: DidCommSender,
+  resolveSenderKey: (kid: string) => Promise<Uint8Array>,
+  onMessage: (message: DeliveredMessage) => Promise<void>,
+  onError: (error: unknown) => void,
+): void {
+  if (watchedKids.has(own.xKid)) return
+  watchedKids.add(own.xKid)
+  const watch = watchMediator({ mediatorUrl, own, resolveSenderKey, onMessage, onError })
+  mediatorPollHandles.push({ stop: () => watch.close() })
+}
+
+async function restoreRelationshipWatches(
+  reader: RelationshipContactReader,
+  startWatch: RelationshipWatchStarter,
+  onReadAllError?: (error: unknown) => void,
+  onCurrentError?: (counterpartyDid: string, error: unknown) => void,
+): Promise<void> {
+  let knownContacts: ContactKeyV1[]
+  try {
+    knownContacts = await reader.readAll()
+  } catch (error) {
+    if (!onReadAllError) throw error
+    onReadAllError(error)
+    return
+  }
+  const counterparties = new Set(knownContacts.map(contact => contact.counterpartyDid))
+  for (const counterpartyDid of counterparties) {
+    let contact: ContactKeyV1 | null
+    try {
+      contact = await reader.currentFor(counterpartyDid)
+    } catch (error) {
+      if (!onCurrentError) throw error
+      onCurrentError(counterpartyDid, error)
+      continue
+    }
+    if (!contact) continue
+    const route = relationshipMediatorService(contact.ownRelationshipKid)
+    startWatch(contact.ownRelationshipKid, contact.ownX25519PrivateKey, contact.ownRelationshipKid.split('#', 1)[0]!, route.url)
+  }
+}
+
+function didCommMediatorIngressEnvelope(
+  label: string, mediatorUrl: string, recipientKid: string, queueId: string,
+  recipientIdentityId: IngressEnvelopeV1['recipientIdentityId'],
+  recipientDeviceId: IngressEnvelopeV1['recipientDeviceSnapshot'][number],
+  rawJwe: unknown,
+): IngressEnvelopeV1 {
+  const protectedPayload = new TextEncoder().encode(JSON.stringify(rawJwe))
+  return {
+    version: 1,
+    ingressId: canonicalHash(label, { mediatorUrl, recipientKid, queueId }),
+    protocol: 'didcomm',
+    recipientIdentityId,
+    recipientDeviceSnapshot: [recipientDeviceId],
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    transportMetadata: {},
+    sourceEvidence: new Uint8Array(0),
+    protectedPayload,
+    protectedPayloadHash: sha256Bytes(protectedPayload),
+  }
+}
+
+async function handleRelationshipInit(
+  message: DeliveredMessage, mediatorUrl: string, identityId: string,
+  reader: RelationshipContactReader, sink: RelationshipContactSink,
+  startWatch: RelationshipWatchStarter, afterContactStored: () => Promise<unknown> = async () => {},
+): Promise<void> {
+  const plaintext = message.plaintext as DidCommPlaintext
+  if (plaintext.type !== RELATIONSHIP_INIT) return
+  const body = relationshipBodyOf(plaintext)
+  if (!body) throw new TypeError('relationship message body is invalid')
+  const route = relationshipMediatorService(body.relationshipKid)
+  if (!sameMediatorUrl(route.url, mediatorUrl)) throw new TypeError('relationship mediator does not match the delivery route')
+  if (message.senderKid.startsWith('did:peer:2.')) throw new TypeError('relationship init must be authenticated by a public front-door kid')
+  const counterpartyDid = didOfKid(message.senderKid)
+  let contact = await reader.currentFor(counterpartyDid)
+  if (!contact || contact.counterpartyRelationshipKid !== body.relationshipKid) {
+    const peer = generatePeerIdentity({ uri: route.url, routingKeys: [route.routingKid] })
+    await registerWithMediator(route.url, { did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv })
+    const next: ContactKeyV1 = {
+      version: 1, kind: 'contact-key', identityId, counterpartyDid,
+      ownRelationshipKid: peer.xKid, ownX25519PrivateKey: peer.xPriv, ownEd25519PrivateKey: peer.edPriv,
+      counterpartyRelationshipKid: body.relationshipKid, counterpartyPublicKey: body.publicKey,
+      createdAt: new Date().toISOString(), ...(contact ? { supersedesKid: contact.ownRelationshipKid } : {}),
+    }
+    await sink.store(next)
+    contact = next
+    await afterContactStored()
+    startWatch(peer.xKid, peer.xPriv, peer.did, route.url)
+  }
+  const accepted = await sendRelationshipAccept(contact)
+  if (!accepted.ok) throw new Error(accepted.error)
+}
+
 async function configureWalletAccountIfPresent(): Promise<boolean> {
   let session
   try {
@@ -291,8 +413,10 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
       // its result locally as well as repainting an already-mounted card,
       // otherwise a fast successful sync is overwritten by the initial
       // "Checking" state when the Account page is configured afterwards.
-      vault = next
-      updateVaultCardStatus(next)
+      updateRememberedVaultCard(next, {
+        current: () => vault,
+        remember: status => { vault = status },
+      })
     }
     const runWalletVaultSyncOnce = async (): Promise<void> => {
       try {
@@ -482,53 +606,14 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
         const relationshipWatchKids = new Set<string>()
         let handleWalletDidCommMessage: (message: DeliveredMessage, recipientKid: string, mediatorUrl: string) => Promise<void>
         const startWalletRelationshipWatch = (xKid: string, xPriv: Uint8Array, did: string, mediatorUrl: string): void => {
-          if (relationshipWatchKids.has(xKid)) return
-          relationshipWatchKids.add(xKid)
-          const watch = watchMediator({
-            mediatorUrl,
-            own: { did, xKid, xPriv },
-            resolveSenderKey: resolveAnyDidCommSenderKey,
-            onMessage: message => handleWalletDidCommMessage(message, xKid, mediatorUrl),
-            onError: error => console.warn('[did.md Wallet relationship watch]', error),
-          })
-          mediatorPollHandles.push({ stop: () => watch.close() })
+          startRelationshipWatch(
+            relationshipWatchKids, mediatorUrl, { did, xKid, xPriv }, resolveAnyDidCommSenderKey,
+            message => handleWalletDidCommMessage(message, xKid, mediatorUrl),
+            error => console.warn('[did.md Wallet relationship watch]', error),
+          )
         }
         const handleWalletRelationshipMessage = async (message: DeliveredMessage, mediatorUrl: string): Promise<void> => {
-          const plaintext = message.plaintext as DidCommPlaintext
-          if (plaintext.type !== RELATIONSHIP_INIT) return
-          const body = relationshipBodyOf(plaintext)
-          if (!body) throw new TypeError('relationship message body is invalid')
-          const route = relationshipMediatorService(body.relationshipKid)
-          if (!sameMediatorUrl(route.url, mediatorUrl)) {
-            throw new TypeError('relationship mediator does not match the delivery route')
-          }
-          if (message.senderKid.startsWith('did:peer:2.')) {
-            throw new TypeError('relationship init must be authenticated by a public front-door kid')
-          }
-          const counterpartyDid = didOfKid(message.senderKid)
-          let contact = await walletContactKeyReader.currentFor(counterpartyDid)
-          if (!contact || contact.counterpartyRelationshipKid !== body.relationshipKid) {
-            const peer = generatePeerIdentity({ uri: route.url, routingKeys: [route.routingKid] })
-            await registerWithMediator(route.url, { did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv })
-            const next: ContactKeyV1 = {
-              version: 1,
-              kind: 'contact-key',
-              identityId: device.did,
-              counterpartyDid,
-              ownRelationshipKid: peer.xKid,
-              ownX25519PrivateKey: peer.xPriv,
-              ownEd25519PrivateKey: peer.edPriv,
-              counterpartyRelationshipKid: body.relationshipKid,
-              counterpartyPublicKey: body.publicKey,
-              createdAt: new Date().toISOString(),
-              ...(contact ? { supersedesKid: contact.ownRelationshipKid } : {}),
-            }
-            await walletContactKeySink.store(next)
-            contact = next
-            startWalletRelationshipWatch(peer.xKid, peer.xPriv, peer.did, route.url)
-          }
-          const accepted = await sendRelationshipAccept(contact)
-          if (!accepted.ok) throw new Error(accepted.error)
+          await handleRelationshipInit(message, mediatorUrl, device.did, walletContactKeyReader, walletContactKeySink, startWalletRelationshipWatch)
         }
         handleWalletDidCommMessage = async (message, recipientKid, mediatorUrl) => {
             // A Wallet account carries no group-chat or mail-bridge handling
@@ -549,22 +634,10 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
               console.warn(`[did.md Wallet DIDComm] dropping unsupported message type ${dropped.type} from ${message.senderKid}`)
               return
             }
-            const payload = new TextEncoder().encode(JSON.stringify(message.rawJwe))
-            const envelope: IngressEnvelopeV1 = {
-              version: 1,
-              ingressId: canonicalHash('biset/didcomm-wallet-mediator-ingress/v1', {
-                mediatorUrl, recipientKid, queueId: message.ackId,
-              }),
-              protocol: 'didcomm',
-              recipientIdentityId: device.did,
-              recipientDeviceSnapshot: [device.credential.deviceKid],
-              createdAt: new Date().toISOString(),
-              expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-              transportMetadata: {},
-              sourceEvidence: new Uint8Array(0),
-              protectedPayload: payload,
-              protectedPayloadHash: sha256Bytes(payload),
-            }
+            const envelope = didCommMediatorIngressEnvelope(
+              'biset/didcomm-wallet-mediator-ingress/v1', mediatorUrl, recipientKid, message.ackId,
+              device.did, device.credential.deviceKid, message.rawJwe,
+            )
             await ingestTransportIngress(envelope, walletDidCommProjector, vaultStore)
             // Projecting INIT records the audit event.  Accepting it here is
             // the missing second half: register the private receiver, store
@@ -585,19 +658,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
         // Relationship keys survive reloads as encrypted Vault records.
         // Re-open their Pickup watches before accepting new messages so an
         // existing Biset conversation cannot disappear after refresh.
-        const knownContacts = await walletContactKeyReader.readAll()
-        const counterparties = new Set(knownContacts.map(contact => contact.counterpartyDid))
-        for (const counterpartyDid of counterparties) {
-          const contact = await walletContactKeyReader.currentFor(counterpartyDid)
-          if (!contact) continue
-          const route = relationshipMediatorService(contact.ownRelationshipKid)
-          startWalletRelationshipWatch(
-            contact.ownRelationshipKid,
-            contact.ownX25519PrivateKey,
-            contact.ownRelationshipKid.split('#', 1)[0]!,
-            route.url,
-          )
-        }
+        await restoreRelationshipWatches(walletContactKeyReader, startWalletRelationshipWatch)
       } catch (error) {
         didComm = { xKid: didCommDevice.xKid, mediatorUrl: didCommDevice.mediatorUrl, error: error instanceof Error ? error.message : String(error) }
         console.warn('[did.md Wallet DIDComm]', error)
@@ -793,10 +854,12 @@ export async function bootClient(): Promise<void> {
     state: 'checking', coordinatorUrl: mimiSelfBaseUrl, detail: 'Opening MIMI Self Vault', devices: vaultDevices,
   } : undefined
   const setVaultCard = (next: VaultCardStatus): void => {
-    next = { ...next, devices: vaultDevices }
-    if (vaultCardStatus && JSON.stringify(vaultCardStatus) === JSON.stringify(next)) return
-    vaultCardStatus = next
-    updateVaultCardStatus(next)
+    updateRememberedVaultCard(next, {
+      current: () => vaultCardStatus,
+      remember: status => { vaultCardStatus = status },
+      normalize: status => ({ ...status, devices: vaultDevices }),
+      skipEqual: true,
+    })
   }
   // Signs with the current Sign key (the key routing.json authorization
   // keyAgreement/alsoKnownAs entries are already signed with, webvh-routing.ts's
@@ -1392,20 +1455,10 @@ export async function bootClient(): Promise<void> {
         }
         const didCommProjector = buildDidCommProjector()
         if (!didCommProjector) return
-        const payload = new TextEncoder().encode(JSON.stringify(msg.rawJwe))
-        const envelope: IngressEnvelopeV1 = {
-          version: 1,
-          ingressId: canonicalHash('biset/didcomm-mediator-ingress/v1', { mediatorUrl, recipientKid, queueId: msg.ackId }),
-          protocol: 'didcomm',
-          recipientIdentityId: identity.did,
-          recipientDeviceSnapshot: [identity.deviceKid!],
-          createdAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-          transportMetadata: {},
-          sourceEvidence: new Uint8Array(0),
-          protectedPayload: payload,
-          protectedPayloadHash: sha256Bytes(payload),
-        }
+        const envelope = didCommMediatorIngressEnvelope(
+          'biset/didcomm-mediator-ingress/v1', mediatorUrl, recipientKid, msg.ackId,
+          identity.did, identity.deviceKid!, msg.rawJwe,
+        )
         await ingestTransportIngress(envelope, didCommProjector, vaultStore)
         await flushReplicationOutbox()
         await handleRelationshipMessage(msg, recipientKid, mediatorUrl)
@@ -1483,40 +1536,17 @@ export async function bootClient(): Promise<void> {
       async function handleRelationshipMessage(msg: DeliveredMessage, recipientKid: string, mediatorUrl: string): Promise<void> {
         const plaintext = msg.plaintext as DidCommPlaintext
         if (plaintext.type !== RELATIONSHIP_INIT && plaintext.type !== RELATIONSHIP_ACCEPT) return
+        if (plaintext.type === RELATIONSHIP_INIT) {
+          await handleRelationshipInit(
+            msg, mediatorUrl, identity.did, contactKeyReader, contactKeySink,
+            startRelationshipPoll, flushReplicationOutbox,
+          )
+          return
+        }
         const body = relationshipBodyOf(plaintext)
         if (!body) throw new TypeError('relationship message body is invalid')
         const route = relationshipMediatorService(body.relationshipKid)
         if (!sameMediatorUrl(route.url, mediatorUrl)) throw new TypeError('relationship mediator does not match the delivery route')
-
-        if (plaintext.type === RELATIONSHIP_INIT) {
-          if (msg.senderKid.startsWith('did:peer:2.')) throw new TypeError('relationship init must be authenticated by a public front-door kid')
-          const counterpartyDid = didOfKid(msg.senderKid)
-          let contact = await contactKeyReader.currentFor(counterpartyDid)
-          if (!contact || contact.counterpartyRelationshipKid !== body.relationshipKid) {
-            const peer = generatePeerIdentity({ uri: route.url, routingKeys: [route.routingKid] })
-            await registerWithMediator(route.url, { did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv })
-            const next: ContactKeyV1 = {
-              version: 1,
-              kind: 'contact-key',
-              identityId: identity.did,
-              counterpartyDid,
-              ownRelationshipKid: peer.xKid,
-              ownX25519PrivateKey: peer.xPriv,
-              ownEd25519PrivateKey: peer.edPriv,
-              counterpartyRelationshipKid: body.relationshipKid,
-              counterpartyPublicKey: body.publicKey,
-              createdAt: new Date().toISOString(),
-              ...(contact ? { supersedesKid: contact.ownRelationshipKid } : {}),
-            }
-            await contactKeySink.store(next)
-            contact = next
-            await flushReplicationOutbox()
-            startRelationshipPoll(peer.xKid, peer.xPriv, peer.did, route.url)
-          }
-          const accepted = await sendRelationshipAccept(contact)
-          if (!accepted.ok) throw new Error(accepted.error)
-          return
-        }
 
         if (body.relationshipKid !== msg.senderKid) throw new TypeError('relationship accept body does not match its authenticated sender')
         const pending = pendingByOwnKid.get(recipientKid)
@@ -1545,15 +1575,11 @@ export async function bootClient(): Promise<void> {
       }
 
       startRelationshipPoll = (xKid: string, xPriv: Uint8Array, did: string, mediatorUrl: string): void => {
-        if (relationshipPollKids.has(xKid)) return
-        relationshipPollKids.add(xKid)
-        const relationshipOwn: DidCommSender = { did, xKid, xPriv }
-        const watch = watchMediator({
-          mediatorUrl, own: relationshipOwn, resolveSenderKey: resolveAnyDidCommSenderKey,
-          onMessage: msg => onMessage(msg, xKid, mediatorUrl),
-          onError: e => console.warn(`[didcomm] watch of ${mediatorUrl} lost (reconnecting):`, e instanceof Error ? e.message : e),
-        })
-        mediatorPollHandles.push({ stop: () => watch.close() })
+        startRelationshipWatch(
+          relationshipPollKids, mediatorUrl, { did, xKid, xPriv }, resolveAnyDidCommSenderKey,
+          msg => onMessage(msg, xKid, mediatorUrl),
+          e => console.warn(`[didcomm] watch of ${mediatorUrl} lost (reconnecting):`, e instanceof Error ? e.message : e),
+        )
       }
 
       // SSE live delivery (mediator-watch.ts), not the old startMediatorPolling
@@ -1577,21 +1603,11 @@ export async function bootClient(): Promise<void> {
       // own bind/poll loop here -- it arrives via the SAME mediatorUrls
       // polling loop above (a mediator+mail-plugin instance Forwards it in
       // as an ordinary DIDComm message to this identity's own didCommKid).
-      const knownContactKeys = await contactKeyReader.readAll().catch(e => {
-        console.warn('[relationship] could not restore contact keys:', e instanceof Error ? e.message : e)
-        return []
-      })
-      const counterparties = new Set(knownContactKeys.map(contact => contact.counterpartyDid))
-      for (const counterpartyDid of counterparties) {
-        const contact = await contactKeyReader.currentFor(counterpartyDid).catch(e => {
-          console.warn(`[relationship] current key for ${counterpartyDid} is ambiguous:`, e instanceof Error ? e.message : e)
-          return null
-        })
-        if (!contact) continue
-        const route = relationshipMediatorService(contact.ownRelationshipKid)
-        const ownDid = contact.ownRelationshipKid.split('#', 1)[0]!
-        startRelationshipPoll(contact.ownRelationshipKid, contact.ownX25519PrivateKey, ownDid, route.url)
-      }
+      await restoreRelationshipWatches(
+        contactKeyReader, startRelationshipPoll,
+        e => console.warn('[relationship] could not restore contact keys:', e instanceof Error ? e.message : e),
+        (counterpartyDid, e) => console.warn(`[relationship] current key for ${counterpartyDid} is ambiguous:`, e instanceof Error ? e.message : e),
+      )
       await flushDidCommTransportOutbox().catch(e => {
         console.warn('[didcomm/outbox/boot]', e instanceof Error ? e.message : e)
       })
