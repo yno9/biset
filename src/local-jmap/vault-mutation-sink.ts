@@ -8,7 +8,7 @@ import { buildMailMessageAdd } from '../vault/mail-message.ts'
 import type { LocalJmapEmail, LocalJmapMutationSink, LocalJmapProjectionV1, LocalJmapSnapshot } from './gateway.ts'
 import { emailSetToVaultMutationIntents } from './mutations.ts'
 import type { VaultMutationIntent } from './mutations.ts'
-import type { ActiveVaultSegment } from '../vault/active-segment.ts'
+import { assertActiveVaultSegment, type ActiveVaultSegment } from '../vault/active-segment.ts'
 
 export type { ActiveVaultSegment } from '../vault/active-segment.ts'
 
@@ -83,10 +83,7 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
    */
   async commitIntents(intents: VaultMutationIntent[], snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>> {
     const segment = await this.options.activeSegment()
-    if (segment.keyWraps.length === 0) throw new TypeError('active vault segment has no current MLS key wrap')
-    if (segment.keyWraps.some(wrap => wrap.identityId !== this.options.identityId || wrap.segmentId !== segment.segmentId)) {
-      throw new TypeError('active vault segment key wrap does not match mutation identity or segment')
-    }
+    assertActiveVaultSegment(this.options.identityId, segment, 'mutation')
     const createdAt = this.now().toISOString()
     let parents = await this.options.initialParents()
     const records: Array<{ event: VaultEventV1; object: VaultObjectV1; plaintext: Uint8Array }> = []
@@ -145,10 +142,7 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
     snapshot: LocalJmapSnapshot,
   ): Promise<Record<string, unknown>> {
     const segment = await this.options.activeSegment()
-    if (segment.keyWraps.length === 0) throw new TypeError('active vault segment has no current MLS key wrap')
-    if (segment.keyWraps.some(wrap => wrap.identityId !== this.options.identityId || wrap.segmentId !== segment.segmentId)) {
-      throw new TypeError('active vault segment key wrap does not match mutation identity or segment')
-    }
+    assertActiveVaultSegment(this.options.identityId, segment, 'mutation')
     const createdAt = this.now().toISOString()
     const record = await buildMailMessageAdd(input, {
       identityId: this.options.identityId,
