@@ -27,6 +27,28 @@ import { defaultFetch } from '../net-fetch.ts'
 
 const RECONNECT_DELAY_MS = 2000
 
+/**
+ * True when two spellings name the same mediator endpoint.
+ *
+ * A delivery handler has to check that the mediator a relationship message
+ * names in its own did:peer service (relationship.ts's
+ * relationshipMediatorService) really is the mediator the message arrived
+ * from -- but the two strings reach that check from different places: one
+ * was minted into a did:peer document by the peer, the other comes from
+ * this device's own `mediatorUrls` config. A raw `!==` therefore rejects a
+ * perfectly matching pair over nothing but a trailing slash or a default
+ * port, so compare the parsed URLs instead. An unparseable spelling is not
+ * a match (never throws -- the caller's own "does not match" branch is the
+ * right answer for a URL that is not a URL).
+ */
+export function sameMediatorUrl(a: string, b: string): boolean {
+  try {
+    return new URL(a).toString() === new URL(b).toString()
+  } catch {
+    return false
+  }
+}
+
 export interface MediatorWatchOptions {
   mediatorUrl: string
   own: DidCommSender

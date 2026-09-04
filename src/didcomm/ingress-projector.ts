@@ -49,6 +49,24 @@ export interface DidCommIngressProjectorOptions {
 }
 
 /**
+ * The exact set of DIDComm message types `verifyAndProject` below can
+ * project; it throws "unsupported DIDComm message type" for anything else.
+ *
+ * Exported because that throw is NOT a safe default for a mediator-queue
+ * caller: mediator-watch.ts's onMessage contract leaves a message whose
+ * handler threw UNACKNOWLEDGED and re-delivers it on every reconnect. For a
+ * transient failure that retry is the point; for a permanently unsupported
+ * type it is an unbounded redelivery loop that keeps the queue growing and
+ * re-fails forever. So every mediator delivery handler must decide, BEFORE
+ * reaching this projector, what to do with a type it has no branch for --
+ * `msg.type`-dispatch it (the local-identity boot path's own onMessage does
+ * this for the group-chat and mail-bridge types) or drop it deliberately.
+ */
+export function isProjectableDidCommIngress(msg: { type?: string }): boolean {
+  return isPing(msg) || isBasicMessage(msg) || isRelationshipMessage(msg)
+}
+
+/**
  * Endpoint-only DIDComm ingress projector: decrypts a packed JWE with this
  * device's own keyAgreement key and verifies the sender via a live DID
  * resolve, then dispatches by DIDComm message type:
@@ -114,7 +132,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       throw new TypeError('DIDComm plaintext is not valid JSON')
     }
     if (isExpired(msg)) throw new TypeError('DIDComm message has expired')
-    if (!isPing(msg) && !isBasicMessage(msg) && !isRelationshipMessage(msg)) throw new TypeError(`unsupported DIDComm message type for this endpoint slice: ${msg.type}`)
+    if (!isProjectableDidCommIngress(msg)) throw new TypeError(`unsupported DIDComm message type for this endpoint slice: ${msg.type}`)
 
     const dedupeId = didCommMessageDedupeId(senderKid, msg.id)
     if (await this.options.alreadyProcessed(dedupeId)) throw new DidCommReplayError(`DIDComm message ${msg.id} from ${senderKid} was already processed`)

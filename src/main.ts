@@ -44,9 +44,9 @@ import {
 } from './didcomm/group-chat.ts'
 import { IndexedDbDidCommGroupChatStore } from './didcomm/group-chat-store.ts'
 import { ensureDidCommContact as ensureDidCommContactWith, sendReply as sendReplyWith, type PendingHandshake, type SendContext } from './app/send.ts'
-import { didCommMessageDedupeId, resolveDidCommSenderDid } from './didcomm/ingress-projector.ts'
+import { didCommMessageDedupeId, isProjectableDidCommIngress, resolveDidCommSenderDid } from './didcomm/ingress-projector.ts'
 import { registerWithMediator, type MediatorPollHandle } from './didcomm/mediator-sync.ts'
-import { watchMediator } from './didcomm/mediator-watch.ts'
+import { sameMediatorUrl, watchMediator } from './didcomm/mediator-watch.ts'
 import type { DidCommSender } from './didcomm/mediator-transport.ts'
 import type { DeliveredMessage } from './didcomm/mediator-pickup.ts'
 import { ingestTransportIngress } from './vault/ingress-ingest.ts'
@@ -265,10 +265,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
       vault = next
       updateVaultCardStatus(next)
     }
-    let syncBusy = false
-    const synchronizeWalletVault = async (): Promise<void> => {
-      if (syncBusy) return
-      syncBusy = true
+    const runWalletVaultSyncOnce = async (): Promise<void> => {
       try {
         // This is the ordinary background pull for new encrypted MIMI
         // deliveries, not an interactive operation. Keep a healthy Vault
@@ -333,6 +330,32 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
           detail: error instanceof Error ? error.message : String(error),
         })
         console.warn('[did.md Wallet MIMI Vault sync]', error)
+      }
+    }
+    // A hung underlying fetch (no timeout of its own -- MimiClientTransport
+    // never had one) would otherwise leave a round of sync stuck forever:
+    // `syncBusy` stays wedged true, so every later trigger's
+    // `if (syncBusy) return` then silently no-ops, permanently, with no
+    // error ever logged -- exactly what "an initial reload-triggered
+    // catch-up eventually works, but nothing new arrives after that" looks
+    // like from outside (found live on the local-identity path, 2026-09-02,
+    // whose runMimiSync carries the same guard for the same reason). Racing
+    // against a timeout can't cancel the stuck fetch itself, but it unblocks
+    // THIS code so the next trigger (an SSE wake-up, or the next interactive
+    // action) gets a fresh try instead of finding everything wedged on.
+    let syncBusy = false
+    const synchronizeWalletVault = async (): Promise<void> => {
+      if (syncBusy) return
+      syncBusy = true
+      const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('MIMI Vault sync timed out')), 25_000))
+      try {
+        await Promise.race([runWalletVaultSyncOnce(), timeout])
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        setWalletVaultStatus({
+          state: 'error', coordinatorUrl: mimiSelfBaseUrl, vaultId: ensured.room.roomId as never, devices: members, detail,
+        })
+        console.warn('[did.md Wallet MIMI Vault sync]', detail)
       } finally {
         syncBusy = false
       }
@@ -455,7 +478,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
           const body = relationshipBodyOf(plaintext)
           if (!body) throw new TypeError('relationship message body is invalid')
           const route = relationshipMediatorService(body.relationshipKid)
-          if (new URL(route.url).toString() !== new URL(mediatorUrl).toString()) {
+          if (!sameMediatorUrl(route.url, mediatorUrl)) {
             throw new TypeError('relationship mediator does not match the delivery route')
           }
           if (message.senderKid.startsWith('did:peer:2.')) {
@@ -487,6 +510,24 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
           if (!accepted.ok) throw new Error(accepted.error)
         }
         handleWalletDidCommMessage = async (message, recipientKid, mediatorUrl) => {
+            // A Wallet account carries no group-chat or mail-bridge handling
+            // (both live in the local-identity boot path's own onMessage). Its
+            // only branch is the DidCommIngressProjector below, which throws
+            // for every type outside ping/basicmessage/relationship -- and a
+            // throw here does NOT drop the message: watchMediator leaves it
+            // unacknowledged on purpose, so the mediator re-delivers the very
+            // same message on every reconnect, where it fails identically,
+            // forever. Retrying only ever helps a transient failure; an
+            // unsupported type is permanent, so drop it deliberately (and
+            // visibly) instead, exactly as the local-identity path drops a
+            // group message whose invite has not arrived. The Pickup ACK that
+            // follows this return is the point: it is what keeps the queue
+            // moving for every message behind this one.
+            const dropped = message.plaintext as DidCommPlaintext
+            if (!isProjectableDidCommIngress(dropped)) {
+              console.warn(`[did.md Wallet DIDComm] dropping unsupported message type ${dropped.type} from ${message.senderKid}`)
+              return
+            }
             const payload = new TextEncoder().encode(JSON.stringify(message.rawJwe))
             const envelope: IngressEnvelopeV1 = {
               version: 1,
@@ -1417,7 +1458,7 @@ export async function bootClient(): Promise<void> {
         const body = relationshipBodyOf(plaintext)
         if (!body) throw new TypeError('relationship message body is invalid')
         const route = relationshipMediatorService(body.relationshipKid)
-        if (route.url !== mediatorUrl) throw new TypeError('relationship mediator does not match the delivery route')
+        if (!sameMediatorUrl(route.url, mediatorUrl)) throw new TypeError('relationship mediator does not match the delivery route')
 
         if (plaintext.type === RELATIONSHIP_INIT) {
           if (msg.senderKid.startsWith('did:peer:2.')) throw new TypeError('relationship init must be authenticated by a public front-door kid')
