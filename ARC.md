@@ -1,13 +1,18 @@
 # Biset アーキテクチャ
 
-> MLS の vendored fork（ciphersuite、UpdatePath fix、vendor diff の一覧）については `src/vendor/mls/VENDOR.md` と本書§13を参照する。かつて存在した `ARC-MLS.md` は Coordinator 完全撤去（2026-09-03、commit `57ffa67`）以前の調査で、中心的な二節が存在しないサブシステムを説明していたため 2026-09-05 に削除した。Self Group/Vault の現行の配送経路は本書§6・§9で説明する biset-mimi Self Vault である。
+> MLS の vendored fork（ciphersuite、UpdatePath fix、vendor diff の一覧）については `src/protocol/mls/VENDOR.md` と本書§13を参照する。かつて存在した `ARC-MLS.md` は Coordinator 完全撤去（2026-09-03、commit `57ffa67`）以前の調査で、中心的な二節が存在しないサブシステムを説明していたため 2026-09-05 に削除した。Self Group/Vault の現行の配送経路は本書§6・§9で説明する biset-mimi Self Vault である。
 
-> 調査基準日: 2026-09-05（Asia/Tokyo）
-> 調査対象: `~/biset` の commit `d3dda2e`。前回基準からの最重要変更は三つ——
-> **Anchor の完全削除**、**native login（seed 由来 identity 層）の削除**、そして
-> **`src/` の再構成**（R2/R3: 到達不能コードの削除と client/server/shared/vendor への再編）。
-> `src/` の現在の構成と各ファイルの責務は **§21** にある。
+> 調査基準日: 2026-09-06（Asia/Tokyo）
+> 調査対象: `~/biset` の commit `d56fc9d`。前回基準からの最重要変更は四つ——
+> **Anchor の完全削除**、**native login（seed 由来 identity 層）の削除**、
+> **到達不能コードの削除**（R2）、そして **`src/` の再構成**（R3/R4）。
+> 現在のトップレベルは **client / server / protocol** の三つで、`shared/` も `vendor/` も存在しない。
+> 構成と各ファイルの責務は **§21** にある。
 > 状態: 現行コードを正とした実装アーキテクチャ。将来案は明示的に区別する。
+>
+> **⚠️ メールは実装されていない。** native login と一緒に削除され、再実装には did.md 側の
+> mediator が必要（`tasks/W3-wallet-mail-design-proposal.md`）。DIDComm による 1:1 と
+> グループチャット、複数端末同期は動作する。
 >
 > **⚠️ メールは実装されていない。** native login と一緒に削除され、再実装には did.md 側の
 > mediator が必要（`tasks/W3-wallet-mail-design-proposal.md`）。DIDComm による 1:1 と
@@ -81,7 +86,7 @@ Biset は、メールと DIDComm のデータを利用者の端末側で長期�
    │ 公開文書を書かない）│                         │ self モードだけに向く）
    ▼                    ▼                          ▼
 ┌─ did.md（外部）──┐┌─ Mediator（"A"素のDIDComm／"B"mail-plugin同梱）┐┌─ biset-mimi (self = Vault) ─┐
-│identity provider ││"A" = src/server/didcomm-mediator/index.ts                 ││このidentityのSelf Vault用。 │
+│identity provider ││"A" = src/server/mediator/index.ts                 ││このidentityのSelf Vault用。 │
 │did:webvh の発行・ ││  did:peer identity、SQLite queue、             ││main.ts から実配線済み——    │
 │ホスティング      ││  Coordinate/Pickup/relay-hop                   ││Vault mutation を運ぶ MLS    │
 │OAuth 認可        ││"B" = 上記 + SMTP:25 listener(inbound bridge) + ││application message チャネル │
@@ -101,8 +106,8 @@ Biset は、メールと DIDComm のデータを利用者の端末側で長期�
 Biset が**自分で運用する**主要コンポーネントは三つである（Anchor の削除により、四つから一つ減った）。
 identity provider は外部（did.md）に移ったため、もはや biset の構成要素ではない。
 
-1. **Mediator** — DIDCommの一時配送（store-and-forward）。`src/server/didcomm-mediator/index.ts`を入口とする"A"（素のmediator）と、
-   それに加えてSMTP inbound listener + outbound submission HTTPを同梱する`src/server/mail-plugin/index.ts`入口の"B"の、
+1. **Mediator** — DIDCommの一時配送（store-and-forward）。`src/server/mediator/index.ts`を入口とする"A"（素のmediator）と、
+   それに加えてSMTP inbound listener + outbound submission HTTPを同梱する`src/server/mediator/mail-plugin/index.ts`入口の"B"の、
    二つのdeployment variantがある。本番は"B"（mail-plugin同梱）が稼働中（`mediator.biset.md`）——
    同じ`biset-didcomm-mediator.service`とSQLiteを二つのバイナリが奪い合う排他関係であり、
    deploy.shの`didcomm-mediator`/`mail-plugin`ターゲットはどちらか一方だけをデプロイする（§17.3）。永続化はSQLite（`sqlite-store.ts`）。
@@ -117,7 +122,7 @@ identity provider は外部（did.md）に移ったため、もはや biset の�
 および OAuth による認可を担う。biset 側は `src/wallet/`（`did-md-oauth.ts` / `did-md-store.ts`）でそのクライアントとして振る舞い、
 **公開文書を書き込むことはない**——読んで解決するだけである（`src/identity/webvh/` の resolver 系）。
 
-`src/shared/protocol/`は各境界が共有するwire schema、canonical encoding、ID、署名対象byte列を定義する。
+`src/protocol/protocol/`は各境界が共有するwire schema、canonical encoding、ID、署名対象byte列を定義する。
 browser、mediator、mail-plugin、mimiは別々のTypeScript設定（`tsconfig.*.json`、4設定——
 旧`tsconfig.core.json`と`tsconfig.anchor.json`はいずれもディレクトリごと削除済み）で型検査する。
 
@@ -130,7 +135,7 @@ browser、mediator、mail-plugin、mimiは別々のTypeScript設定（`tsconfig.
 | DIDComm 1:1 chat | ペアワイズ・共有鍵なし | **部分的に稼働**。受信・応答はできるが、**自分から関係を開始できない**（下記） |
 | MIMI Self Vault | 単一identityの複数端末同期（対人チャットではない） | 稼働中（§9） |
 | Mail (SMTP/JMAP) | 従来のメール | **失われた**。送信・受信とも配線が削除された。`src/mail/` はモジュールとして残るがテストからしか到達されない |
-| DIDComm group chat | フルメッシュ・ペアワイズfan-out、MLS無し | **失われた**。`src/shared/didcomm/group-chat.ts` は残るが呼び出し元がない |
+| DIDComm group chat | フルメッシュ・ペアワイズfan-out、MLS無し | **失われた**。`src/client/didcomm/group-chat.ts` は残るが呼び出し元がない |
 
 > **現在の最重要の欠落**: `initiateRelationship`（`didcomm/send-message.ts`）の本番呼び出し元が**ゼロ**である。
 > `sendRelationshipAccept` は生きているため INIT に応答することはできるが、**どの端末も自分から関係を開始できない**。
@@ -166,7 +171,7 @@ biset は did.md の controller 鍵を一切保持しない。
 **mediator との関係（設計方針、未実装）**: メールアドレスの採番と送信署名鍵は biset ではなく **mediator の責務**として
 設計しなおす方針が決まっている（2026-09-05）。did.md が専用の mediator を運用し、利用者は Wallet ログイン時に
 そこへ登録する。特定 mediator の使用許可を capability として付与する形を検討中。
-これに伴い `mailFromForIdentity`（`src/client/identity/webvh/identifier.ts`）の
+これに伴い `mailFromForIdentity`（`src/protocol/webvh/identifier.ts`）の
 「DID のドメインが biset の apex 配下であること」という制約は将来外れる。
 
 ## 4. 信頼境界
@@ -228,7 +233,7 @@ Peer restore は現在の MLS member による署名と current-epoch grant を�
 
 Self/Vault group（MIMI room）への参加は、この時点では**行わない**。identity生成は`deviceKid`/`deviceSignaturePrivateKey`という純ローカルな値をIdentityRecordへ書き込むだけで終わり、Self Vault groupの作成・external joinは`main.ts`のboot flowが`ensureMimiVaultRoom`経由で別途駆動する。
 
-メール address は独立して発行せず、`did:webvh:{scid}:{username}.{apexDomain}` の domain から導出する。**canonical formはbare apexの`{username}@{apexDomain}`である**（`mailFromForIdentity`、`src/client/identity/webvh/identifier.ts`）。2026-09-04以前は`{username}@mail.{apexDomain}`が正規形だった——外部送信者からの実メールが`user@{apexDomain}`宛に届いて550 "no such user"で bounce した実障害を機に、まずbare apexをcanonicalにしつつ`mail.`形へのback-compatを追加し（`5fd385f`）、その後リポジトリオーナーの指示で明示的にそのback-compatを削除した（`274d110`）。現在`mail.{apexDomain}`宛は他の誤ったhostと同様に単純に拒否される（`identityDomainForMailAddress`）。この経緯は`test/identity/webvh-identifier-mail.test.ts`のtest名/コメントに残る。`routing.json.alsoKnownAs` にも best-effort で掲載する。
+メール address は独立して発行せず、`did:webvh:{scid}:{username}.{apexDomain}` の domain から導出する。**canonical formはbare apexの`{username}@{apexDomain}`である**（`mailFromForIdentity`、`src/protocol/webvh/identifier.ts`）。2026-09-04以前は`{username}@mail.{apexDomain}`が正規形だった——外部送信者からの実メールが`user@{apexDomain}`宛に届いて550 "no such user"で bounce した実障害を機に、まずbare apexをcanonicalにしつつ`mail.`形へのback-compatを追加し（`5fd385f`）、その後リポジトリオーナーの指示で明示的にそのback-compatを削除した（`274d110`）。現在`mail.{apexDomain}`宛は他の誤ったhostと同様に単純に拒否される（`identityDomainForMailAddress`）。この経緯は`test/identity/webvh-identifier-mail.test.ts`のtest名/コメントに残る。`routing.json.alsoKnownAs` にも best-effort で掲載する。
 
 ### 5.2 mnemonic によるログイン
 
@@ -302,7 +307,7 @@ Self Vault roomのroom IDは、**random**な `mimi://{providerHost}/r/vault-{32 
 2. self-remove 後の無限走査回避と application sender leaf attribution。
 3. Domain move のため、committer 自身の UpdatePath で credential を置換できる additive hook。
 
-差分には `// biset:` marker があり、`src/vendor/mls/VENDOR.md` に記録される。`test/mls-core.test.ts` と `test/mls-crypto.test.ts` は現行 tree に存在し、fork の主要操作を検査している。
+差分には `// biset:` marker があり、`src/protocol/mls/VENDOR.md` に記録される。`test/mls-core.test.ts` と `test/mls-crypto.test.ts` は現行 tree に存在し、fork の主要操作を検査している。
 
 ## 7. 鍵と秘密の一覧
 
@@ -336,7 +341,7 @@ Vault の長期正本は immutable な二種類の record からなる。
 - **VaultObjectV1** — 32-byte SegmentKey と AES-256-GCM で暗号化した content-addressed object。nonce、AAD、ciphertext hash、plaintext length を ID に含める。
 - **VaultEventV1** — actor device、actor sequence、kind、target、object reference、parents、timestamp を MLS leaf Ed25519 key で署名した event。event ID は canonical body と署名から導出する。
 
-代表的 event kind は `message.add/edit/tombstone`、`mailbox.set`、`keyword.set`、`transport.result`、`didcomm.control`、`contact-key.set`、OpenPGP/DIDComm credential である（`src/shared/protocol/vault.ts`の`VAULT_EVENT_KINDS`が唯一の正本リストであり、`vault/delivery-pack.ts`のdecode allow-listもこの同じ定数を直接参照する）。Raw RFC 5322 と JMAP metadata は別々の encrypted object として一つの `message.add` から参照される。
+代表的 event kind は `message.add/edit/tombstone`、`mailbox.set`、`keyword.set`、`transport.result`、`didcomm.control`、`contact-key.set`、OpenPGP/DIDComm credential である（`src/protocol/vault.ts`の`VAULT_EVENT_KINDS`が唯一の正本リストであり、`vault/delivery-pack.ts`のdecode allow-listもこの同じ定数を直接参照する）。Raw RFC 5322 と JMAP metadata は別々の encrypted object として一つの `message.add` から参照される。
 
 ### 8.2 Segment と epoch
 
@@ -362,7 +367,7 @@ Local garbage collection は実装されていない。Tombstone や completed o
 
 **旧biset-coreのbounded ingress store/pull/ack機構は完全に消滅した。** 現行の受信経路は次のとおりで、pull ではなく push であり、TTL/quotaを持つ独立バッファも存在しない。
 
-1. `src/server/mail-plugin/listener.ts`（"B" deployment）が port 25 で生SMTPを受ける。EHLO/HELO、MAIL、RCPT、DATA、RSET、NOOP、QUIT、STARTTLSを扱い、既定25 MiB制限を広告・強制する。SMTPUTF8とAUTHは提供しない。TLS certificate/keyが設定されればSTARTTLSを提供するが、未設定でもserverは起動しplaintext SMTPとなる（旧biset-coreのSMTP listenerと同じ挙動——`smtp-socket-server.ts`/`mail-smtp-protocol.ts`は`src/core/adapters/`から2026-09-03にこのディレクトリへ物理的に移設されただけで、ロジックは変わっていない）。
+1. `src/server/mediator/mail-plugin/listener.ts`（"B" deployment）が port 25 で生SMTPを受ける。EHLO/HELO、MAIL、RCPT、DATA、RSET、NOOP、QUIT、STARTTLSを扱い、既定25 MiB制限を広告・強制する。SMTPUTF8とAUTHは提供しない。TLS certificate/keyが設定されればSTARTTLSを提供するが、未設定でもserverは起動しplaintext SMTPとなる（旧biset-coreのSMTP listenerと同じ挙動——`smtp-socket-server.ts`/`mail-smtp-protocol.ts`は`src/core/adapters/`から2026-09-03にこのディレクトリへ物理的に移設されただけで、ロジックは変わっていない）。
 2. RCPT TO時点で`bridge.ts`の`resolveMailRecipientRoute`が宛先アドレスの**routing.jsonをdomainだけから直接resolveする**（`identityDomainForMailAddress`が`mailFromForIdentity`の決定論的逆関数——SCID lookupもsigned-log resolveも経由しない）。宛先がDIDComm keyAgreement/serviceを公開していなければ550で拒否する。
 3. DATA受理時、同じ`bridge.ts`の`packInboundMailForward`が受信メッセージを`MAIL_BRIDGE_INBOUND`型のDIDCommプレーンテキストへ包み、mail-pluginが自分で保持する専用の`did:peer`送信元identity（`SqliteMediatorStore.loadMailPluginIdentity`、real end-user identityとは別）からauthcryptし、宛先のmediator（Forward hop chainを含む）へ`OutboundDelivery`としてPOSTする——**core時代のingress store/pull/ackという独立した概念がなく、通常のDIDComm 1:1/group chatメッセージと全く同じmediator queueに載る**（§12.5）。
 4. Client側は他のDIDCommメッセージと同じ`DidCommIngressProjector`/mediator SSE watch経由でこれを受け取る（§12.5）。deviceごとのlease/quota/ACKという概念はもう存在しない。
@@ -443,7 +448,7 @@ apexDomainまたはdeviceKidがなければ UI は local projection の read-onl
 
 ### 11.1 受信
 
-§9.1で詳述した通り。要点は、(a) SMTP listenerとDIDComm変換ロジックが同一プロセス内にあり、(b) 宛先解決がroster/deviceローカルな認可情報を一切参照せず公開routing.jsonのみで完結し、(c) 変換後は通常のDIDComm Forwardとしてmediator queueに合流する、の三点である。core時代にあった独立のingress store・TTL・quota・per-device lease/pull/ackという概念はどれも存在しない。`src/server/mail-plugin/smtp-socket-server.ts`と`mail-smtp-protocol.ts`はcore撤去時に`src/core/adapters/`からこのディレクトリへ物理的に移設されたのみで、ロジックに変更はない。
+§9.1で詳述した通り。要点は、(a) SMTP listenerとDIDComm変換ロジックが同一プロセス内にあり、(b) 宛先解決がroster/deviceローカルな認可情報を一切参照せず公開routing.jsonのみで完結し、(c) 変換後は通常のDIDComm Forwardとしてmediator queueに合流する、の三点である。core時代にあった独立のingress store・TTL・quota・per-device lease/pull/ackという概念はどれも存在しない。`src/server/mediator/mail-plugin/smtp-socket-server.ts`と`mail-smtp-protocol.ts`はcore撤去時に`src/core/adapters/`からこのディレクトリへ物理的に移設されたのみで、ロジックに変更はない。
 
 ### 11.2 送信
 
@@ -494,7 +499,7 @@ Hybrid は recipient routing に ML-KEM key がある public-DID path の primit
 
 ### 12.4 Mediator
 
-Standalone mediator は自身の did:peer identity、connection keylist、queueを**SQLite**（`src/server/didcomm-mediator/sqlite-store.ts`）に保存する。Coordinate/Pickup request は DIDComm authcrypt の sender X25519 keyで認証する。did:webvh sender は公開 routing を resolve し、did:peer sender は self-certifying DID から鍵を得る。
+Standalone mediator は自身の did:peer identity、connection keylist、queueを**SQLite**（`src/server/mediator/sqlite-store.ts`）に保存する。Coordinate/Pickup request は DIDComm authcrypt の sender X25519 keyで認証する。did:webvh sender は公開 routing を resolve し、did:peer sender は self-certifying DID から鍵を得る。
 
 Queue は recipient kid あたり最大 256 件、保持 30 日で、満杯時は古い正当 message を捨てず sender を拒否する。Pickup は non-destructive delivery の後、`messages-received` ACK で削除する。Connection は最大 10,000、connection ごとに最大 32 kid。Replay guard は既定 10 分 / 50,000 ID、resolved key cache TTL は 10 分で stale-while-refresh 動作をする。共有HTTP surfaceは単一の `POST /` （DIDCommメッセージ種別で内部分岐）、`GET /.well-known/did.json`、`GET /stream`（SSE、client側の`watchMediator`が使う）の3経路であり、これは"A"（素のmediator）と"B"（mail-plugin同梱）で完全に共通（`deployment.ts`）である。"B"はこれに加えてSMTP:25とsubmission HTTP:8792を独立に持つ（§3・§11）。
 
@@ -510,11 +515,11 @@ DBファイルへの書き込み失敗時の挙動は、本調査でも未検証
 2. DIDComm group chat control/content（GROUP_INVITE等、§12.6）
 3. `MAIL_BRIDGE_INBOUND`（§9.1・§11.1のmail-plugin bridgeが変換したメール）
 
-`DidCommIngressProjector`（`src/shared/didcomm/ingress-projector.ts`）は元々core経由のlegacy ingressとmediator経由の両方で共用される汎用decodeクラスとして書かれていたが、core側の呼び出し元（`CoreIngressTransport`、main.tsの`if (coreBaseUrl)`ブロック内、§14参照）は現在事実上死んでいる。実際に動くのはmediator SSE watch経由の1経路だけであり、legacy core ingressとの二重化は名目上残るコード（`CoreIngressTransport`、`opts.coreBaseUrl`の空文字列defaultなど）はあっても、実質的には解消済みである。
+`DidCommIngressProjector`（`src/client/didcomm/ingress-projector.ts`）は元々core経由のlegacy ingressとmediator経由の両方で共用される汎用decodeクラスとして書かれていたが、core側の呼び出し元（`CoreIngressTransport`、main.tsの`if (coreBaseUrl)`ブロック内、§14参照）は現在事実上死んでいる。実際に動くのはmediator SSE watch経由の1経路だけであり、legacy core ingressとの二重化は名目上残るコード（`CoreIngressTransport`、`opts.coreBaseUrl`の空文字列defaultなど）はあっても、実質的には解消済みである。
 
 ### 12.6 DIDComm group chat
 
-複数人チャットの現行かつ唯一の実装。`src/shared/didcomm/group-chat.ts`と`group-chat-store.ts`（IndexedDB、device-localなroster cache）、`main.ts`側の`createAndSendDidCommGroup`/`sendDidCommGroupMessage`/`handleDidCommGroupInvite`/`handleDidCommGroupContent`から構成される。MLS共有group stateを一切使わない full-mesh pairwise fan-out であり、1:1チャットと同じ`ContactKeyV1`関係を再利用する。
+複数人チャットの現行かつ唯一の実装。`src/client/didcomm/group-chat.ts`と`group-chat-store.ts`（IndexedDB、device-localなroster cache）、`main.ts`側の`createAndSendDidCommGroup`/`sendDidCommGroupMessage`/`handleDidCommGroupInvite`/`handleDidCommGroupContent`から構成される。MLS共有group stateを一切使わない full-mesh pairwise fan-out であり、1:1チャットと同じ`ContactKeyV1`関係を再利用する。
 
 - アドレススキームは`didcomm-group:<groupId>`（compose/replyの`toAddrs`が2件以上のDIDのとき自動的にグループ作成へ分岐する）。
 - グループ作成（`createAndSendDidCommGroup`）は各招待者へ`GROUP_INVITE`（version, groupId, 送信者含む完全なmembers一覧, name）を送り、続けて`sendDidCommGroupMessage`で founding message を送る。招待の一部が失敗しても founding message は全メンバー分キューに積まれ、outboxのretryで後から届く。
@@ -622,7 +627,7 @@ biset-coreが持っていた「多くの場合request時に実行する」expiry
 
 Wire record は原則 `version: 1` を持ち、decoder は shape、canonical serialization、hash、署名、identity/epoch binding を検証して fail closed する。Opaque ID は domain-separated hash または UUID として扱う。
 
-互換性を保つ際は、TypeScript union に event kind を追加するだけでは不十分である。Wire decoder の allow-list、Vault reducer の explicit no-op/application rule、archive decoder、delivery projector、テスト fixture を同時更新する必要がある。`src/shared/protocol/vault.ts`の`VAULT_EVENT_KINDS`を`vault/delivery-pack.ts`のdecoderが直接参照する現行の実装は、この cross-layer checklist を単一の正本へ収束させた一例である（§8.1）。
+互換性を保つ際は、TypeScript union に event kind を追加するだけでは不十分である。Wire decoder の allow-list、Vault reducer の explicit no-op/application rule、archive decoder、delivery projector、テスト fixture を同時更新する必要がある。`src/protocol/vault.ts`の`VAULT_EVENT_KINDS`を`vault/delivery-pack.ts`のdecoderが直接参照する現行の実装は、この cross-layer checklist を単一の正本へ収束させた一例である（§8.1）。
 
 legacy core Vault delivery（§9.3）とMIMI Self Vaultの並存は、biset-core撤去によりサーバー側の実体を失った点で、旧ARC.mdが記述していた「並存」から「片方が死んでいるコードの並存」へ性質が変わった。廃止（コード削除）する際は、§15.2のリスク14に挙げた各所を一括で取り除く必要がある——中途半端に一部だけ削除すると、残った箇所が動かない前提でconfigを参照する形になりかねない。
 
@@ -708,12 +713,12 @@ identity のホスティングは did.md が行う（§3・§13.1）。
 
 `bun run knip` は失敗する（exit code 1）。現状の debt は次のとおりである。
 
-- unused files: **2**（いずれも `src/vendor/mls/` 配下の vendored fork。upstream diff を保つため意図的に残している）
+- unused files: **2**（いずれも `src/protocol/mls/` 配下の vendored fork。upstream diff を保つため意図的に残している）
 - unused dependencies: 5（`@scure/bip32`、`bittorrent-dht`、`cborg`、`hash-wasm`、`jmap-jam`）——変化なし。
 - unused devDependencies: 2（`@hpke/core`、`@types/wicg-file-system-access`）——変化なし。
 - unlisted binaries: 2（`tsc`、`knip`）——変化なし。
 - unresolved imports: 4（`scripts/pkarr-smoke.mjs`が参照する`src/did/keys.ts`等4ファイル——旧did:dht/Pkarr実装の残骸。did:webvh一本化後もこのスクリプトだけ削除されずに残っている）——変化なし。
-- unused exports: **325**、unused exported types: **192**。大半は `src/vendor/mls/`（RFC 9420 fork、触らない方針）である
+- unused exports: **325**、unused exported types: **192**。大半は `src/protocol/mls/`（RFC 9420 fork、触らない方針）である
 - configuration hints: 4（`deploy.sh`のignoreBinaries、`src/anchor/index.ts`/`src/server/mimi/index.ts`/`src/server/mimi/index.ts`のentry pattern重複——前回調査の`src/core/index.ts`が`src/server/mimi/index.ts`に置き換わった）。
 
 したがって `bun run check`（typecheck && knip && test）は typecheck/test が正常でも knip で非 zero になる。unused filesが微増しているのは、core撤去・Conversation Groups撤去に伴う未使用コードの掃除が引き続き追いついていないことを示す。
@@ -762,27 +767,91 @@ identity のホスティングは did.md が行う（§3・§13.1）。
 
 ## 21. `src/` の構成
 
-2026-09-05 の再構成（R2/R3）後の姿である。それ以前の11ディレクトリは
-**デプロイ先・レイヤ・プロトコルという3つの軸が1階層に潰れており**、新しいファイルを
-どこに置くべきかが構造から決まらなかった。現在は**最上位をデプロイ先で分け、その内側をレイヤで分ける**。
+2026-09-06 の再構成（R2/R3/R4）後の姿である。トップレベルは **client / server / protocol** の三つだけで、
+`shared/` も `vendor/` も存在しない。
 
 ```
 src/
-  client/    92 files  14,206 行   ブラウザで動く
-  server/    38 files   5,844 行   Bun で動く
-  shared/    38 files   5,426 行   両方が使う
-  vendor/    98 files  10,448 行   RFC 9420 の vendored fork
+  client/     クライアント本体（ブラウザ）
+  server/     mediator（mail-plugin を内包）と MIMI サーバー（Bun）
+  protocol/   wire 定義。使用者ではなく内容で命名する
 ```
 
-判断の根拠は import グラフの実測である。詳細は `tasks/R1-src-restructure-design.md`。
+### 21.0 なぜこの形なのか
 
-### 21.1 `client/app/` — 起動、配線、UI
+かつての11ディレクトリは**デプロイ先・レイヤ・プロトコルという3つの軸が1階層に潰れており**、
+新しいファイルをどこに置くべきかが構造から決まらなかった。
+
+R3 でいったん `shared/` を作ったが、これは**使用者で命名されたバケツ**であり、実測すると
+38ファイル中10が client からしか、4が server からしか到達しない——共有物ですらなかった。
+本当に両側が使う23ファイルは**プロトコル線できれいに割れており**、
+内容で命名し直すことで**重複ゼロで `shared` を廃止できた**（R4）。
+
+**依存の向きは一方向である。**
+
+```
+client/ ──→ protocol/ ←── server/
+```
+
+`protocol/` と `server/` は `client/` を**参照しない**。これは機械的に検証できる:
+
+```bash
+grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*client/" src/protocol src/server --include='*.ts'
+grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include='*.ts'
+```
+
+**この2つが空であることが構造の不変条件である。** 破れたら構成が壊れている。
+
+### 21.1 `protocol/` — wire 定義
+
+client と server の**両方**が使うものだけがここにある。どちらか一方しか使わないものは、
+使う側へ置く（それが R4 の判定基準だった）。
+
+| ファイル | 責務 |
+|---|---|
+| `canonical.ts` | 正準 JSON とバイト列化。**client・mediator・MIMI サーバーの3者すべてが使う唯一のファイル**。全署名対象の土台 |
+| `ids.ts` | identity / device / ingress / segment などの ID 型 |
+| `vault.ts` | Vault の event 種別と wire 型 |
+| `signing.ts` | 各操作の署名対象バイト列 |
+| `ingress.ts` | 短命な外部 payload。mailbox レコードではない |
+| `mail-submission.ts` | mail 送信要求の型 |
+| `net-fetch.ts` | `fetch` を裸の変数へ持ち出すときの束縛を保つラッパ。protocol クライアントと server の双方が使う |
+| `test-vectors.ts` | 正準 JSON のテストベクタ |
+
+**`protocol/didcomm/` — DIDComm プロトコル（client と mediator が使う）**
+
+`crypto.ts`（JWE 構築、525行）、`message.ts`（平文エンベロープ）、`peer.ts`（did:peer:2）、
+`devicekid.ts`（鍵から導出する識別子）、`multikey.ts`、`problems.ts`（Report Problem 2.0）、
+`forward-wrap.ts`（Anoncrypt-Forward 包み）、`mediator-protocol.ts`（型 URI）、
+`mediator-coordinate.ts`／`mediator-pickup.ts`／`mediator-transport.ts`（Coordination 2.0 / Pickup 3.0 / 転送）、
+`webvh-routing.ts`／`webvh-resolve.ts`（routing.json とその合成）。
+
+**`protocol/mimi/` — MIMI プロトコル（client と MIMI サーバーが使う）**
+
+`protocol-types.ts`（room/user/client URI 型）、`wire.ts`（JSON + base64url 境界）、
+`authorizer.ts`（provider 内部 credential 署名）、`app-data.ts`（MLS TLS 符号化の application component）。
+
+**`protocol/webvh/` — did:webvh（client と mail-plugin が使う）**
+
+`resolver.ts`（解決）、`log.ts`（DID Log 検証）、`proof.ts`（Data Integrity Proof、eddsa-jcs-2022）、
+`document.ts`（W3C DID Core の形）、`identifier.ts`（識別子解析と DID→HTTPS 変換）、
+`scid.ts`／`hash.ts`／`multihash.ts`／`multikey.ts`／`jcs.ts`（SCID 検証、ハッシュ、multiformats、RFC 8785）。
+
+> mail-plugin が署名検証とアドレス判定に did:webvh を使うため、**これは client 固有ではない**。
+> R4 の実測で13ファイル中10が mediator からも到達することが判明し、ここへ移した。
+
+**`protocol/mls/` — RFC 9420 の vendored fork（98ファイル）**
+
+client（Self Vault）と server（MIMI）の**両方**が使う。差分には `// biset:` marker があり `VENDOR.md` に記録される。
+**中身は一切変更しない。** knip がこのディレクトリの unused export を報告し続けるのは**正常**であり、
+中身を触らないことだけが upstream との差分を追える状態を保つ。
+
+### 21.2 `client/app/` — 起動、配線、UI
 
 | ファイル | 責務 |
 |---|---|
 | `main.ts` | 唯一のエントリポイント。boot からポーリング登録、UI へのハンドラ供給までの全配線 |
 | `sw.ts` | Service Worker の外殻。install/activate のみ |
-| `net-fetch.ts` | `window.fetch` を裸の変数へ持ち出すときの束縛を保つラッパ |
 | `ui/shell.ts` | 画面の切り替えとページ表示の骨格 |
 | `ui/left-pane.ts` | 会話一覧 |
 | `ui/thread.ts` | スレッド表示と返信欄 |
@@ -795,18 +864,17 @@ src/
 | `ui/config.ts` | `window.__BISET_CONFIG__` を読む唯一の場所 |
 | `ui/format.ts` | 表示ヘルパ（エスケープ、リンク化、時刻、引用除去、プレビュー） |
 | `ui/did-display.ts` | DID を人間に見せるときの共通規則 |
-| `ui/mail/message-view.ts` | メール形の read model からスレッドを組み立てる |
-| `ui/mail/body-text.ts` | 本文の平文抽出 |
-| `ui/mail/rfc5322-headers.ts` | RFC 5322 ヘッダの読み取り |
+| `mail/message-view.ts` | メール形 read model からスレッドを組み立てる |
+| `mail/body-text.ts` | 本文の平文抽出 |
+| `mail/rfc5322-headers.ts` | RFC 5322 ヘッダの読み取り |
 
-> `mail/` の3ファイルは**メール転送ではなく表示**である。DIDComm メッセージは
-> メール形の read model へ projection されるため、その描画に使われる（§10）。
-> メール転送そのものは 2026-09-05 に削除された（§19）。
+> `mail/` の3ファイルは**メール転送ではなく表示**である。DIDComm メッセージはメール形の
+> read model へ projection されるため、その描画に使う（§10）。メール転送は 2026-09-05 に削除された（§19）。
 
-### 21.2 `client/store/` — Vault と projection
+### 21.3 `client/store/` — Vault と projection
 
 かつて `vault/` と `local-jmap/` に分かれていたが、**双方向の循環依存**（12/8）が
-「1つの関心事を分けた結果」であることを示していたため統合した。
+「1つの関心事を分けた結果」であることを示していたため統合した（R3）。
 
 **`store/vault/` — 暗号化された長期正本**
 
@@ -819,166 +887,91 @@ src/
 | `crypto.ts` | VEK による SegmentKey の wrap と検証 |
 | `active-segment.ts` | 書き込み可能な現行 segment の決定と検証（`assertActiveVaultSegment`） |
 | `segment-key-resolver.ts` | MLS アダプタ境界。VEK は一時的で永続化しない |
-| `storage-root.ts` | endpoint 専用の安定 KEK。DID・ドメイン・サーバーから独立 |
+| `storage-root.ts` | endpoint 専用の安定 KEK |
 | **`commit.ts`** | **共有 Vault 状態を書く全経路が通る唯一の組み立て地点**。ここを迂回して delivery pack を直接作る本番コードがあってはならない |
-| `mutations.ts` / `mutation-records.ts` | 各 mutation の build と、検証してから復号する共通ステップ |
+| `mutations.ts` / `mutation-records.ts` | mutation の build と、検証してから復号する共通ステップ |
 | `mail-message.ts` | メール形メッセージの event/object 生成 |
 | `credential-store.ts` | private credential の汎用 reader / sink。4系統がこの1実装に記述子を渡す |
-| `contact-key.ts` / `-reader.ts` / `-sink.ts` | ペアワイズ関係鍵（`ContactKeyV1`） |
-| `didcomm-credential.ts` | identity 共有の DIDComm keyAgreement credential |
-| `didcomm-device-key.ts` / `-reader.ts` / `-sink.ts` | デバイスと DIDComm 鍵の対応 |
+| `contact-key{,-reader,-sink}.ts` | ペアワイズ関係鍵（`ContactKeyV1`） |
+| `didcomm-credential.ts` / `didcomm-device-key{,-reader,-sink}.ts` | DIDComm 鍵とデバイス対応 |
 | `openpgp-credential.ts` | OpenPGP 鍵の指紋正規化 |
-| `delivery-pack.ts` | 共有 delivery 1件の正準ボディ |
-| `delivery-ingest.ts` / `delivery-projector.ts` | 受信した delivery の検証と projection |
-| `ingress-ingest.ts` | 外部 ingress の確定。プロトコル固有の復号・検証は端末側で行う |
+| `delivery-pack.ts` / `delivery-ingest.ts` / `delivery-projector.ts` | 共有 delivery の正準ボディ、検証、projection |
+| `ingress-ingest.ts` | 外部 ingress の確定 |
 | `mimi-vault-sync.ts` | Vault と MIMI のデータプレーン境界。`gaps` による構造化された欠落報告 |
 | `mimi-vault-chunks.ts` | MLS application message に載せる不透明チャンク |
 | `vault-checkpoint.ts` | checkpoint の封入と復元。KEK は MLS self-group の VEK（§9） |
-| `recovery-archive.ts` | 利用者が持つ独立の秘密による archive。MLS 秘密でもデバイス鍵でもない |
-| `recovery-archive-export.ts` | snapshot の生成。checkpoint 作成にも使われる |
-| `recovery-archive-rewrap.ts` | 現行 epoch 向けの再 wrap。過去の wrap は持ち込まない |
+| `recovery-archive{,-export,-rewrap}.ts` | 利用者が持つ独立の秘密による archive。snapshot 生成は checkpoint 作成にも使われる |
 | `projection-rebuild.ts` | 全 projection の再構築（災害復旧経路） |
-| `blob-reader.ts` | SegmentKey をメモリ上で解決する。VEK を永続化しない |
+| `blob-reader.ts` | SegmentKey をメモリ上で解決する |
 
 **`store/projection/` — UI が読む JMAP 形の read model**
 
-| ファイル | 責務 |
-|---|---|
-| `gateway.ts` | Local JMAP の型（mailbox / email / snapshot） |
-| `reducer.ts` | 検証済み event から projection を決定的に組み立てる |
-| `indexeddb.ts` | read model の永続化 |
-| `mutations.ts` | JMAP の `Email/set` を Vault mutation intent へ変換 |
-| `vault-mutation-sink.ts` | Local JMAP 書き込み橋。parser → 暗号化 object → 署名 event → projection → 1回の commit |
-| `transport.ts` | JMAP メソッド呼び出しの型 |
+`gateway.ts`（型）、`reducer.ts`（検証済み event から決定的に組み立てる）、`indexeddb.ts`（永続化）、
+`mutations.ts`（`Email/set` を Vault mutation intent へ）、`vault-mutation-sink.ts`（書き込み橋）、`transport.ts`。
 
-### 21.3 `client/identity/` — この端末が誰であるか
+### 21.4 `client/didcomm/` — client 専用の DIDComm
+
+R4 の実測で、**どのサーバーからも到達しない**ことが確認された10ファイル。
+`protocol/didcomm/` とは別で、こちらは Vault と結合している。
 
 | ファイル | 責務 |
 |---|---|
-| `bootstrap.ts` | Vault 側の identity 境界。MLS epoch 鍵、SegmentKey wrap、各種 reader/sink の組み立て |
-| `idkey.ts` | 安定した内部 identity key |
-| `wallet/did-md-oauth.ts` | **did.md OAuth。アプリへの唯一の入口。** did:webvh log 検証、Data Integrity proof 検証、MLS device credential 検証、device capability の取得 |
-| `wallet/did-md-store.ts` | device session の暗号化保管（registration / pending authorization / device session） |
-| `wallet/relationship.ts` | Wallet 起点の DIDComm 関係確立（INIT 送信と ACCEPT 処理） |
-| `wallet/didcomm-outbox.ts` | 送信 outbox と再送ループ |
-| `webvh/resolver.ts` | **did:webvh の解決**。他人の DID を読むために必須 |
-| `webvh/log.ts` / `log-io.ts` | DID Log の検証と JSONL 入出力 |
-| `webvh/proof.ts` | Data Integrity Proof（eddsa-jcs-2022） |
-| `webvh/document.ts` | log entry の `state` が運ぶ W3C DID Core の形 |
-| `webvh/identifier.ts` | did:webvh 識別子の解析と DID→HTTPS 変換 |
-| `webvh/scid.ts` / `hash.ts` / `multihash.ts` / `multikey.ts` / `jcs.ts` | SCID 検証、ハッシュ構成、multiformats、RFC 8785 |
-| `webvh/create-genesis.ts` / `migrate.ts` | 発行と移転。**本番経路は無い**が、resolver のテスト3件が実物の log を組み立てる唯一の手段として使っている |
-| `web/identifier.ts` / `mirror.ts` | did:web mirror。`create-genesis.ts` 経由でのみ到達 |
+| `send-message.ts` | 送信の入口。routing.json 解決から発送まで |
+| `front-door-send.ts` | Vault 非依存の送信半分 |
+| `relationship.ts` | ペアワイズ関係の確立（INIT / ACCEPT） |
+| `basicmessage.ts` | Basic Message 2.0 |
+| `trust-ping.ts` | Trust Ping 2.0 |
+| `ingress-projector.ts` | 受信の鍵選択と Vault への projection |
+| `group-chat.ts` | フルメッシュのグループチャット |
+| `group-chat-store.ts` | グループ roster の端末ローカル保管（IndexedDB） |
+| `mediator-sync.ts` | mediator 登録の self-heal と poll ループ |
+| `mediator-watch.ts` | 1つの mediator からの SSE ライブ配送 |
 
-### 21.4 `client/mimi/` — Self Vault（MLS）と MIMI クライアント
+### 21.5 `client/identity/` と `client/mimi/`
 
-> **命名について**: このディレクトリの大半は MIMI プロトコルではなく **MLS のグループ操作**である。
-> Self Vault が MLS group そのものであるためここに同居しているが、名前は実態を正確には表していない（§21.7）。
+**`client/identity/`** — `bootstrap.ts`（Vault 側の identity 境界。MLS epoch 鍵、SegmentKey wrap、各種 reader/sink の組み立て）、
+`idkey.ts`。
 
-| ファイル | 責務 |
-|---|---|
-| `group.ts` | biset の MLS group 操作。RFC 9420 の表面全体 |
-| `store.ts` | MLS self-group 状態の永続化 |
-| `identity.ts` | MLS leaf が何を主張し、それが biset identity にどう対応するか |
-| `device-credential.ts` | identity と MLS leaf 署名鍵の Root 認可された結び付き |
-| `webvh-authentication-service.ts` | MLS Authentication Service。current WebVH 鍵でのみ leaf を承認する |
-| `vault-epoch.ts` | MLS exporter から VEK を導出する境界。**現行 epoch でしか鍵を返さない**（forward secrecy） |
-| `segment-key-membership.ts` | MLS デバイス鍵を Vault の2種類の検証質問へ適合させる |
-| `keypackage-store.ts` | この端末自身の KeyPackage 秘密鍵。現行 Self Vault は external join を使うため未配線 |
-| `mimi-vault-room.ts` | 単一利用者の Self/Vault MIMI room の作成 |
-| `mimi-vault-session.ts` | Vault データプレーンが使う永続的な MLS/MIMI セッション |
-| `mimi-vault-watch.ts` | Self/Vault room の SSE ライブ配送 |
-| `mimi-client-transport.ts` | MIMI provider のクライアント境界へのブラウザ側トランスポート |
-| `mimi-client-routing.ts` / `mimi-room-migration.ts` | deployment 選択と anon room への移行。未配線 |
+`identity/wallet/` — `did-md-oauth.ts`（**did.md OAuth。アプリへの唯一の入口**）、
+`did-md-store.ts`（device session の暗号化保管）、`relationship.ts`（Wallet 起点の関係確立）、
+`didcomm-outbox.ts`（送信 outbox と再送）。
 
-### 21.5 `server/` — Bun で動く
+`identity/webvh/` と `identity/web/` — `log-io.ts`（client からのみ使う log 入出力）と、
+`create-genesis.ts` / `migrate.ts` / `web/*`（**本番から到達しないが、
+残す側のコードのテスト3件が実物の did:webvh log を組み立てる唯一の手段**として使っている）。
 
-**`server/didcomm-mediator/` — blind な store-and-forward**
+**`client/mimi/`** — Self Vault。`group.ts`（MLS group 操作の RFC 9420 表面）、`store.ts`（MLS self-group 状態）、
+`identity.ts`、`device-credential.ts`、`webvh-authentication-service.ts`、
+`vault-epoch.ts`（MLS exporter から VEK を導出。**現行 epoch でしか鍵を返さない**）、
+`segment-key-membership.ts`、`keypackage-store.ts`（未配線）、
+`mimi-vault-{room,session,watch}.ts`／`mimi-client-transport.ts`（MIMI クライアント）、
+`mimi-client-routing.ts`／`mimi-room-migration.ts`（未配線）。
 
-| ファイル | 責務 |
-|---|---|
-| `index.ts` | 本番エントリポイント（"A" 素の mediator） |
-| `deployment.ts` | 永続ストア・DIDComm 境界・HTTP の合成（"A"/"B" 共通） |
-| `server.ts` | Coordinate Mediation 2.0 / Routing 2.0 / Pickup 3.0 |
-| `sqlite-store.ts` | SQLite 永続化 |
-| `queue.ts` | recipient kid → キューされた packed message |
-| `connections.ts` | mediate-request で登録された client DID の追跡 |
-| `keycache.ts` | 「kid の背後の公開鍵」の単一キャッシュ方針 |
-| `relay-poller.ts` | 多段中継。この mediator 自身の client 役 identity |
-| `signature.ts` | DIDComm signed message（Ed25519 のみ） |
-| `replay.ts` | TTL ベースの replay ガード |
-| `rate-limit.ts` | 公開 HTTP 暗号境界の固定窓リミッタ |
-| `watch-token.ts` | `GET /stream` 1本を認可する短命トークン |
+### 21.6 `server/`
 
-**`server/mail-plugin/` — SMTP 境界（mediator の deployment variant "B"）**
+**`server/mediator/`** — `index.ts`（本番エントリ "A"）、`deployment.ts`（合成）、
+`server.ts`（Coordinate Mediation 2.0 / Routing 2.0 / Pickup 3.0）、`sqlite-store.ts`、`queue.ts`、
+`connections.ts`、`keycache.ts`、`relay-poller.ts`（多段中継）、`signature.ts`、`replay.ts`、
+`rate-limit.ts`、`watch-token.ts`、`route-deliver.ts`、`validate.ts`。
 
-| ファイル | 責務 |
-|---|---|
-| `index.ts` | 本番エントリポイント（"B"） |
-| `listener.ts` | SMTP listener の組み立て |
-| `smtp-socket-server.ts` | `Bun.listen`/STARTTLS のソケット配管 |
-| `mail-smtp-protocol.ts` | ソケット非依存の inbound SMTP 状態機械 |
-| `bridge.ts` | SMTP → DIDComm 変換。受理した inbound を Forward として queue へ積む |
-| `smtp-client.ts` | outbound SMTP クライアント |
-| `mail-submission-http.ts` | `POST /v1/mail/submit`。認可付き outbound 送信 |
+**`server/mediator/mail-plugin/`** — `index.ts`（本番エントリ "B"）、`listener.ts`、
+`smtp-socket-server.ts`（`Bun.listen`/STARTTLS）、`mail-smtp-protocol.ts`（ソケット非依存の状態機械）、
+`bridge.ts`（SMTP → DIDComm）、`smtp-client.ts`（outbound）、`mail-submission-http.ts`（`POST /v1/mail/submit`）、
+`mail-bridge.ts`／`mail-submission-wire.ts`（wire 形）。
 
-**`server/mimi/` — MLS Delivery Service（`self`/`normal`/`anon` の3モード）**
-
-| ファイル | 責務 |
-|---|---|
-| `index.ts` / `deployment.ts` | エントリポイントと合成ルート |
-| `http.ts` | MIMI provider エンドポイントの HTTP 境界 |
-| `store.ts` | room 状態と delivery の永続化 |
-| `mls-appsync.ts` | 認証済み MLS public commit から MIMI application 状態を抽出 |
-| `mls-group-info-bootstrap.ts` | external join 用 GroupInfo の検証 |
-| `group-info.ts` | GroupInfo 応答の封入 |
-| `franking.ts` | hub 側 franking（draft §5.4.1） |
-| `fanout.ts` / `federation.ts` | FanoutMessage と provider 間連携の JSON 境界 |
-| `directory.ts` / `provider-directory-client.ts` / `provider-transport.ts` / `mimi-uri.ts` | provider ディレクトリ、解決、provider 間 HTTPS、`mimi://` URI |
-| `room-policy.ts` | room policy の意味評価器 |
-| `asset-proxy.ts` | 添付の proxy download |
-| `watch-token.ts` | delivery SSE 1本の短命認可 |
-| `anon/identity-link.ts` / `anon/pseudonym.ts` | Minimal Metadata Room の identity-link 暗号化と room スコープ仮名 |
-
-### 21.6 `shared/` と `vendor/`
-
-**`shared/protocol/` — 境界を跨ぐ wire 定義**
-
-| ファイル | 責務 |
-|---|---|
-| `canonical.ts` | 正準 JSON とバイト列化。全署名対象の土台 |
-| `ids.ts` | identity / device / ingress / segment などの ID 型 |
-| `vault.ts` | Vault の event 種別と wire 型 |
-| `signing.ts` | 各操作の署名対象バイト列 |
-| `validate.ts` | wire の strict 検証 |
-| `ingress.ts` | 短命な外部 payload。mailbox レコードではない |
-| `mail-submission.ts` / `mail-submission-wire.ts` | mail 送信要求の型と JSON 境界（server 側が使用） |
-| `test-vectors.ts` | 正準 JSON のテストベクタ |
-
-**`shared/didcomm/` — DIDComm プロトコル（client と mediator の双方が使う）**
-
-`crypto.ts`（JWE 構築）、`message.ts`（平文エンベロープ）、`peer.ts`（did:peer:2）、
-`devicekid.ts`（鍵から導出する識別子）、`relationship.ts`／`basicmessage.ts`／`trust-ping.ts`／
-`problems.ts`（各プロトコル）、`send-message.ts`／`front-door-send.ts`／`route-deliver.ts`／
-`forward-wrap.ts`（送信経路）、`ingress-projector.ts`（受信の鍵選択と projection）、
-`mediator-*.ts`（Coordinate / Pickup / transport / watch / sync、および server と共有する型 URI）、
-`webvh-routing.ts`／`webvh-resolve.ts`（routing.json）、`group-chat.ts`／`group-chat-store.ts`（グループチャット）、
-`mail-bridge.ts`（mail-plugin が inbound を渡す wire 形）、`multikey.ts`。
-
-**`shared/mimi/`** — `protocol-types.ts`（room/user/client URI 型）、`wire.ts`（JSON + base64url 境界）、
-`authorizer.ts`（provider 内部 credential 署名）、`app-data.ts`（MLS TLS 符号化の application component）。
-**この4つを shared に置いたことで、client が server ディレクトリを import する構造違反が消えた。**
-
-**`vendor/mls/`** — RFC 9420 の vendored fork。client（Self Vault）と server（MIMI）の**両方**が使うため
-最上位に置く。差分には `// biset:` marker があり `VENDOR.md` に記録される。**中身は変更しない。**
+**`server/mimi/`** — `index.ts`／`deployment.ts`、`http.ts`、`store.ts`、`mls-appsync.ts`、
+`mls-group-info-bootstrap.ts`、`group-info.ts`、`franking.ts`、`fanout.ts`／`federation.ts`、
+`directory.ts`／`provider-directory-client.ts`／`provider-transport.ts`／`mimi-uri.ts`、
+`room-policy.ts`、`asset-proxy.ts`、`watch-token.ts`、`anon/{identity-link,pseudonym}.ts`。
 
 ### 21.7 この構成に残る課題
 
-1. **`client/mimi/` の大半は MIMI ではなく MLS である。** Self Vault が MLS group そのもの
-   であるため同居しているが、名前が実態を表していない
-2. **`shared/didcomm/group-chat-store.ts` は `indexedDB` を使う**——ブラウザ専用であり、
-   `shared/` にあるべきではない。`client/` へ移すのが正しい
-3. `client/app/ui/mail/` という名前は、中身が「メール形 read model の描画」であることを
-   伝えにくい。メール転送は既に無い
+1. **`client/mimi/` の大半は MIMI ではなく MLS である。** Self Vault が MLS group そのものであるため
+   同居しているが、名前が実態を表していない
+2. **`client/app/mail/` という名前**は、中身が「メール形 read model の描画」であることを伝えにくい。
+   メール転送は既に無い
+
+> R3 時点で挙げていた「`shared/didcomm/group-chat-store.ts` がブラウザ専用なのに shared にある」は、
+> R4 で `client/didcomm/` へ移り**解消した**。
 
 この文書は「意図」ではなく上記 commit の現状を記録する。将来の変更でコードと本書が食い違った場合は、まず実行経路と wire compatibility をコード・テストで確認し、その後この調査基準 commit と実装状態表を更新する。
