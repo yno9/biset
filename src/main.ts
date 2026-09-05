@@ -774,9 +774,11 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
         // existing Biset conversation cannot disappear after refresh.
         await restoreRelationshipWatches(walletContactKeyReader, startWalletRelationshipWatch)
         // A durable intent might predate this tab (or the previous send's
-        // network attempt). Flush once at boot, then retry independently of
-        // incoming mediator traffic; failure deliberately leaves its row.
-        await walletDidCommOutbox.flush()
+        // network attempt). A first-contact flush can wait for an ACCEPT for
+        // up to a minute, so it must never delay initial UI rendering.
+        // Retry independently of incoming mediator traffic; failure leaves
+        // its row durable for the next pass.
+        void walletDidCommOutbox.flush()
         const retryTimer = setInterval(() => { void walletDidCommOutbox!.flush() }, 10_000)
         mediatorPollHandles.push({ stop: () => clearInterval(retryTimer) })
       } catch (error) {
