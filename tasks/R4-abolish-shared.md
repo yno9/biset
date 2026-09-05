@@ -34,8 +34,11 @@ src/
     didcomm/         DIDComm プロトコル定義（13ファイル）
     mimi/            MIMI プロトコル定義（4ファイル）
     webvh/           did:webvh の解決・routing.json（下記 §3）
-  vendor/mls/        RFC 9420 fork。中身は一切触らない
+    mls/             RFC 9420 fork（現 vendor/mls/）。**中身は一切触らない**（下記 §5）
 ```
+
+`vendor/` ディレクトリは**廃止する**。中身は `mls` だけであり、MLS は文字通りプロトコル（RFC 9420）で、
+利用者も client 8ファイル・server 6ファイルと `protocol/didcomm/` `protocol/mimi/` と同じプロファイルである。
 
 **依存の向きは一方向**: `client/` → `protocol/`、`server/` → `protocol/`。
 **`protocol/` と `server/` は `client/` を参照しない。**
@@ -82,7 +85,24 @@ client 固有ではない。
 | `webvh/log-io.ts` | client からのみ到達。`client/` に残す |
 | `webvh/create-genesis.ts` `webvh/migrate.ts` `web/identifier.ts` `web/mirror.ts` | **本番からは到達しない**が、**残す側のコードのテスト3件が実物の did:webvh log を組み立てる唯一の手段**として使っている。消さない・動かす場合もテストが通ることを必ず確認する |
 
-### 4. 残る逆流の解消
+### 4. `vendor/mls/` → `protocol/mls/`（`vendor` の廃止）
+
+`vendor/` を無くす。中身は `mls` だけである。
+
+**移動そのものは最も安全な部類である**——実測の結果、`vendor/mls/` は
+**外部を一切 import しない完全な葉**であり、書き換えが必要なのは参照側だけである。
+
+> **ただし「これは vendored fork であり中身を編集しない」という情報が、パス名から失われる。**
+> これを補うため、次を必ず守ること:
+> - `VENDOR.md` は移動先（`protocol/mls/VENDOR.md`）にそのまま置く
+> - **ファイルの中身は1バイトも変更しない。** import パスの書き換えも不要（自己完結しているため）
+> - upstream との差分を示す `// biset:` marker には触れない
+>
+> 中身を触らないことが upstream diff の可視性を保つ唯一の手段なので、
+> 「ついでに整形する」「未使用 export を消す」といった誘惑に乗らないこと。
+> knip がこのディレクトリの unused export を報告し続けるのは**正常**である。
+
+### 5. 残る逆流の解消
 
 上記を終えた時点で、`protocol/` と `server/` から `client/` への import は**ゼロになるはず**である。
 残っていたら、それは分類の誤りか見落としなので**報告すること**。
@@ -103,8 +123,9 @@ client 固有ではない。
 2. **server 専用4ファイルを `server/` へ**
 3. **`protocol/` の新設と、残る `shared/` の移動**（didcomm 13 / mimi 4 / canonical + schema 5）
 4. **`net-fetch.ts` と `webvh/` 10ファイルを `protocol/` へ**
-5. **`server/didcomm-mediator/` → `server/mediator/`、`server/mail-plugin/` → `server/mediator/mail-plugin/`**
-6. **設定の追従** — `tsconfig*.json` の include/exclude、`package.json` の各 script、
+5. **`vendor/mls/` → `protocol/mls/`**（葉なので単独で安全。参照側の書き換えのみ）
+6. **`server/didcomm-mediator/` → `server/mediator/`、`server/mail-plugin/` → `server/mediator/mail-plugin/`**
+7. **設定の追従** — `tsconfig*.json` の include/exclude、`package.json` の各 script、
    `knip.json` の entry、`scripts/reachability.mjs` の `ENTRIES`
 
 `git mv` を使うこと。**import パスの書き換えはスクリプトで機械的に行うこと。手作業は必ず漏れる。**
@@ -112,7 +133,8 @@ client 固有ではない。
 ## 絶対ルール
 
 - **振る舞いを変えない。** 移動と import パスの書き換えだけ。ロジックには触らない。
-- **`src/vendor/mls/` の中身は書き換えない。** RFC 9420 の vendored fork。
+- **`protocol/mls/`（現 `vendor/mls/`）の中身は書き換えない。** RFC 9420 の vendored fork であり、
+  中身を触らないことだけが upstream との差分を追える状態を保つ。
 - 既存テストを1本も消さない・弱めない。`test/` 側の import 書き換えは当然必要。
 - **コメント内のファイルパス参照も追従させること。** このコードベースのコメントは
   「なぜこうなっているか」を記録した最大の資産であり、パスが古くなると価値が落ちる。
@@ -160,6 +182,15 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 
 **この2つが空になることが、この作業の成功条件である。**
 
+あわせて `vendor/` が消えたことも確認する:
+
+```bash
+test ! -d src/vendor && echo "vendor 廃止 OK"
+test -f src/protocol/mls/VENDOR.md && echo "VENDOR.md 保持 OK"
+# vendored fork の中身が変わっていないこと（移動のみでdiffが出ないこと）
+git log --follow --oneline -1 -- src/protocol/mls/VENDOR.md
+```
+
 ## git
 
 - `git mv` を使う。**段階ごとにコミットを分ける。**
@@ -172,6 +203,7 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 1. 各段階の before / after（ファイル数、書き換えた import 数）
 2. **上記2つの grep が空になったことの確認**
 3. client 専用10ファイルを `client/` のどこに置いたか、その理由
+3b. `vendor/` が消え、`protocol/mls/` の**中身が1バイトも変わっていない**ことの確認方法
 4. `authorizer.ts` の型依存をどう反転させたか
 5. 実測と食い違った分類（あれば最優先で詳しく）
 6. 検証コマンドの結果（サーバー3種のビルドと `bash -n deploy.sh` を含む）
