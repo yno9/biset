@@ -1,6 +1,7 @@
 import type { AccountSession } from './local-jmap/transport.ts'
 import {
   buildActorSequencer,
+  buildLocalJmapProjectionRebuild,
   buildLocalJmapReadModel,
   buildRestoreTransferVerifier,
   buildVaultDeliveryProjector,
@@ -52,7 +53,11 @@ import { MimiClientTransport } from './mls/mimi-client-transport.ts'
 import { PersistedMimiVaultSession } from './mls/mimi-vault-session.ts'
 import { watchMimiVaultDeliveries } from './mls/mimi-vault-watch.ts'
 import { removeMimiVaultDevice } from './mls/mimi-vault-room.ts'
-import { synchronizeMimiVault } from './vault/mimi-vault-sync.ts'
+import { pullMimiVaultPages, sendMimiVaultCheckpoint, shouldRecreateVaultCheckpoint, synchronizeMimiVault } from './vault/mimi-vault-sync.ts'
+import { createVaultCheckpoint, openVaultCheckpoint, readVaultCheckpointEpoch, sameVaultCheckpointEpoch, VaultCheckpointEpochUnavailableError } from './vault/vault-checkpoint.ts'
+import { createRecoveryArchiveSnapshot } from './vault/recovery-archive-export.ts'
+import { rewrapRecoveryArchiveForCurrentEpoch } from './vault/recovery-archive-rewrap.ts'
+import { deliverySeq } from './shared/protocol/ids.ts'
 import type { DeliveriesPullRequest } from './mimi/protocol-types.ts'
 import { deliveriesPullSigningBytes } from './mimi/authorizer.ts'
 import {
@@ -271,15 +276,19 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
     // MLS leaf. That leaf is sufficient for ordinary post-join MIMI Vault
     // delivery: the self-group exporter opens current-epoch SegmentKey
     // wraps, and the leaf signs the provider pull plus local delivery ACK.
-    // Checkpoint recovery deliberately remains unavailable here because its
-    // archive key is Master-derived; pretending a Wallet leaf could recover
-    // pre-join history would defeat MLS forward secrecy.
+    // Since W5 the checkpoint KEK is that same self-group VEK rather than a
+    // Master-derived key, so checkpoint create/restore works here too --
+    // strictly within one epoch, which is exactly the forward-secrecy
+    // boundary a Wallet leaf is entitled to (a checkpoint sealed before this
+    // device joined stays unopenable; a sibling reseals it at the current
+    // epoch instead).
     const readModel = buildLocalJmapReadModel(vaultStore, selfGroupStore, device.did)
     const boundary = buildWalletVaultCryptoBoundary(vaultStore, vaultStore, selfGroupStore, {
       did: device.did,
       deviceKid: device.credential.deviceKid,
     })
     const projector = buildVaultDeliveryProjector(selfGroupStore, device.did, () => readModel.snapshot())
+    const rebuildWalletProjection = buildLocalJmapProjectionRebuild(vaultStore, vaultStore, vaultStore, selfGroupStore, device.did)
     const mlsCredential = ensured.credential
     const visibleCredential = () => ({
       kind: 'visible' as const,
@@ -346,6 +355,17 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
         remember: status => { vault = status },
       })
     }
+    // Debounces checkpoint auto-recreation across THIS device's own
+    // back-to-back sync rounds. Live SSE pushes (mimi-vault-watch.ts) mean
+    // every sibling device reacts to a change within milliseconds, and
+    // several devices independently racing to publish their own checkpoint
+    // inside the same second was found live (2026-09-02) to scramble
+    // sender-ratchet generation ordering across the resulting burst.
+    let lastCheckpointRecreateAt = 0
+    // Surfaces account-page.ts's "Checkpoint" row: the most recent checkpoint
+    // this device itself restored or created, live-session-only like every
+    // other field on that card.
+    let lastKnownCheckpointSeq: string | undefined
     const runWalletVaultSyncOnce = async (): Promise<void> => {
       try {
         // This is the ordinary background pull for new encrypted MIMI
@@ -360,9 +380,17 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
           requester: visibleCredential(),
           requestedAt: new Date().toISOString(),
         })
+        const pull = (value: DeliveriesPullRequest) => ensured.transport.pullDeliveries('self', value)
+        const signPull = (unsigned: Omit<DeliveriesPullRequest, 'signature'>) => ed25519.sign(deliveriesPullSigningBytes(unsigned), ensured.signaturePrivateKey)
+        // Set only when this round saw a checkpoint sealed for an epoch this
+        // device can no longer derive AND this device's own delivery cursor
+        // already covers it -- i.e. the checkpoint is useless to everyone but
+        // this device does hold that history and can reseal it. See
+        // shouldRecreateVaultCheckpoint's own note.
+        let staleCheckpointEpoch = false
         const result = await synchronizeMimiVault({
-          pull: value => ensured.transport.pullDeliveries('self', value),
-          signPull: unsigned => ed25519.sign(deliveriesPullSigningBytes(unsigned), ensured.signaturePrivateKey),
+          pull,
+          signPull,
           pullRequest: pullRequest(),
           receiver: mimiSession,
           sender: mimiSession,
@@ -379,6 +407,49 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
               createdAt: new Date().toISOString(),
               expiresAt: '9999-12-31T23:59:59.999Z',
           }, boundary.signer, projector, vaultStore)
+          },
+          restoreCheckpoint: async checkpoint => {
+            const localCursor = await vaultStore.readDeliveryCursor(device.did, device.credential.deviceKid)
+            const checkpointEpoch = readVaultCheckpointEpoch(checkpoint.payload)
+            const currentEpoch = await boundary.epochs.currentVaultEpoch(device.did)
+            // An older manifest is still valid ciphertext, but it cannot add
+            // anything this device does not already have.
+            if (BigInt(checkpoint.manifest.coveredSeq) <= BigInt(localCursor)) {
+              staleCheckpointEpoch ||= !sameVaultCheckpointEpoch(checkpointEpoch, currentEpoch)
+              return
+            }
+            // The VEK for a past epoch is unrecoverable by construction
+            // (MlsVaultEpochKeyResolver only derives the current one). Report
+            // it as this round's own gap rather than throwing an opaque
+            // "epoch changed; retry vault operation" out of the resolver --
+            // and deliberately do NOT arm staleCheckpointEpoch here: this
+            // device needed that history and does not have it, so it is the
+            // last device that should publish a replacement.
+            if (!sameVaultCheckpointEpoch(checkpointEpoch, currentEpoch)) throw new VaultCheckpointEpochUnavailableError(checkpointEpoch, currentEpoch)
+            const vek = await boundary.epochs.deriveVaultEpochKey(device.did, currentEpoch.selfGroupId, currentEpoch.epoch)
+            let snapshot
+            try {
+              snapshot = await openVaultCheckpoint(vek, checkpoint.payload, {
+                vaultId: ensured.room.roomId as never,
+                coveredSeq: deliverySeq(BigInt(checkpoint.manifest.coveredSeq)),
+              })
+            } finally { vek.fill(0) }
+            try {
+              if (snapshot.identityId !== device.did) throw new Error('MIMI Vault checkpoint belongs to another identity')
+              // Archived SegmentKeys are rewrapped for the CURRENT epoch, the
+              // same way an imported recovery archive is; no historical wrap
+              // and no VEK from the snapshot is ever stored.
+              const records = await rewrapRecoveryArchiveForCurrentEpoch(snapshot, boundary.epochs, boundary.signer, new Date().toISOString())
+              await vaultStore.commitRecoveryArchive({
+                identityId: device.did,
+                events: records.events.map(event => ({ ...event, identityId: device.did })),
+                objects: records.objects.map(object => ({ ...object, identityId: device.did })),
+                keyWraps: records.keyWraps,
+              })
+              const projection = await rebuildWalletProjection()
+              await vaultStore.advanceDeliveryCursor(device.did, device.credential.deviceKid, deliverySeq(BigInt(checkpoint.manifest.coveredSeq)), projection.state, new Date().toISOString())
+              lastKnownCheckpointSeq = String(checkpoint.manifest.coveredSeq)
+            } finally { for (const segment of snapshot.segmentKeys) segment.key.fill(0) }
           },
         })
         // Receiving an MLS commit can move this device to a new epoch during
@@ -397,12 +468,68 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
           if (!current) throw new Error('MIMI Vault state disappeared while synchronizing')
           await selfGroupStore.saveMimiVault(device.did, { ...current, deliveryCursor: result.latestSequence })
         }
-        if (result.ingestedSequences.length) await refreshInbox(readModel)
+        // A checkpoint restore writes vault_objects/vault_events directly and
+        // never touches ingestedSequences, so a device recovering its whole
+        // history from a checkpoint alone needs this too or the recovered
+        // history sits in IndexedDB with nothing on screen.
+        if (result.ingestedSequences.length || result.checkpoints.length) await refreshInbox(readModel)
+        if (shouldRecreateVaultCheckpoint({
+          latestSequence: result.latestSequence,
+          sawCheckpointManifest: result.sawCheckpointManifest,
+          staleCheckpointEpoch,
+          gaps: result.gaps,
+          sinceLastRecreateMs: Date.now() - lastCheckpointRecreateAt,
+        })) {
+          lastCheckpointRecreateAt = Date.now()
+          const currentEpoch = await boundary.epochs.currentVaultEpoch(device.did)
+          const snapshot = await createRecoveryArchiveSnapshot(vaultStore, boundary.resolver, device.did, new Date().toISOString())
+          try {
+            const vek = await boundary.epochs.deriveVaultEpochKey(device.did, currentEpoch.selfGroupId, currentEpoch.epoch)
+            let payload: Uint8Array
+            try {
+              payload = await createVaultCheckpoint(vek, snapshot, {
+                vaultId: ensured.room.roomId as never,
+                coveredSeq: deliverySeq(BigInt(result.latestSequence)),
+                selfGroupId: currentEpoch.selfGroupId,
+                epoch: currentEpoch.epoch,
+              })
+            } finally { vek.fill(0) }
+            let published = true
+            try {
+              await sendMimiVaultCheckpoint(payload, result.latestSequence, mimiSession)
+              lastKnownCheckpointSeq = String(result.latestSequence)
+            } catch (error) {
+              // A sibling can publish between this device's pull and its own
+              // manifest submission; the hub rejects the redundant one with a
+              // 409 rather than overwriting a fresher checkpoint. That is the
+              // intended outcome of the race, not a failure.
+              if (!(error instanceof Error) || !error.message.includes('conflict')) throw error
+              console.info('[mimi-vault/checkpoint] a sibling device already published a fresher checkpoint, skipping')
+              published = false
+            }
+            if (published) {
+              // The checkpoint's own chunks and manifest landed at sequence
+              // numbers the sync above never saw, so the cursor saved above
+              // does not cover them. Left alone, the next sync re-pulls them,
+              // recognizes its own chunks as echoes and drops them while the
+              // manifest still decodes -- a manifest that can never be
+              // reconstructed, forever (found live, 2026-09-02). A raw pull
+              // is enough to learn how far to advance past it.
+              const afterCheckpoint = await pullMimiVaultPages(pull, signPull, pullRequest(), result.latestSequence)
+              const newLatest = afterCheckpoint.reduce((max, entry) => Math.max(max, entry.seq), result.latestSequence)
+              if (newLatest > result.latestSequence) {
+                const stored = await selfGroupStore.loadMimiVault(device.did)
+                if (stored) await selfGroupStore.saveMimiVault(device.did, { ...stored, deliveryCursor: newLatest })
+              }
+            }
+          } finally { for (const segment of snapshot.segmentKeys) segment.key.fill(0) }
+        }
         const gap = result.gaps[0]
         setWalletVaultStatus({
           state: 'connected', coordinatorUrl: mimiSelfBaseUrl, vaultId: ensured.room.roomId as never,
           localSeq: String(await vaultStore.readDeliveryCursor(device.did, device.credential.deviceKid)),
           latestSeq: String(result.latestSequence), devices: members,
+          ...(lastKnownCheckpointSeq === undefined ? {} : { checkpointSeq: lastKnownCheckpointSeq }),
           detail: gap ? `MIMI Vault synced with a skipped item: ${gap.detail}` : 'Encrypted MIMI Vault is current',
         })
       } catch (error) {

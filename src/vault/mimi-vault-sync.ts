@@ -5,6 +5,7 @@ import { bytesToBase64url, equalBytes, sha256Bytes } from '../shared/protocol/ca
 import type { DeliverySeq, IdentityId, VaultEventId } from '../shared/protocol/ids.ts'
 import type { DeliveriesPullRequest, MimiDeliveryEntry, VaultCheckpointManifest } from '../mimi/protocol-types.ts'
 import { decodeMimiVaultChunk, encodeMimiVaultChunk, joinMimiVaultChunks, splitMimiVaultPayload, type MimiVaultChunk } from './mimi-vault-chunks.ts'
+import { VaultCheckpointEpochUnavailableError } from './vault-checkpoint.ts'
 import type { VaultDeliveryOutboxReader } from './store.ts'
 
 /** Everything one sync round could not fully apply, as data instead of a
@@ -16,8 +17,16 @@ import type { VaultDeliveryOutboxReader } from './store.ts'
  * poisoned siblings restoring from it (found live, 2026-09-02). Every kind
  * here is a PERMANENT loss for this round, never a "try again next poll"
  * situation -- see each recovery strategy's own comment for why. */
-interface MimiVaultSyncGap {
-  kind: 'undecryptable-application' | 'unverifiable-commit' | 'unreconstructed-checkpoint' | 'checkpoint-restore-failed' | 'ingest-failed' | 'outbox-flush-failed'
+export interface MimiVaultSyncGap {
+  /** `checkpoint-epoch-unavailable` is the one kind here that says nothing
+   * about the hub or this round's transport: the checkpoint arrived intact,
+   * but it was sealed under a self-group epoch that has already advanced, so
+   * its VEK can never be re-derived (see VaultCheckpointEpochUnavailableError).
+   * Recorded separately from `checkpoint-restore-failed` because the only
+   * recovery is for a device that already holds the full Vault to publish a
+   * fresh checkpoint at the current epoch -- retrying, re-pulling, or
+   * repairing this one can never work. */
+  kind: 'undecryptable-application' | 'unverifiable-commit' | 'unreconstructed-checkpoint' | 'checkpoint-restore-failed' | 'checkpoint-epoch-unavailable' | 'ingest-failed' | 'outbox-flush-failed'
   detail: string
 }
 export interface MimiVaultMlsSender {
@@ -199,6 +208,17 @@ async function applyCheckpoints(
       await restoreCheckpoint?.(checkpoint)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
+      // An unopenable epoch is not a failure of this device or this round --
+      // it is the accepted cost of wrapping the checkpoint KEK under the MLS
+      // group (tasks/W5). Logged and reported as its own gap kind so a
+      // caller can tell "I could not use this checkpoint" apart from "my own
+      // local Vault is damaged", and so the checkpoint-recreation gate can
+      // react to it instead of treating it as a reason to stay quiet.
+      if (error instanceof VaultCheckpointEpochUnavailableError) {
+        console.warn('[mimi-vault/checkpoint] sealed for an epoch this device can no longer derive, skipping until a device holding the full Vault republishes:', detail)
+        gaps.push({ kind: 'checkpoint-epoch-unavailable', detail: `${checkpoint.transferId}: ${detail}` })
+        continue
+      }
       console.warn('[mimi-vault/checkpoint] restore failed, skipping:', detail)
       gaps.push({ kind: 'checkpoint-restore-failed', detail: `${checkpoint.transferId}: ${detail}` })
     }
@@ -330,6 +350,41 @@ export async function sendMimiVaultCheckpoint(payload: Uint8Array, coveredSeq: n
   const manifest: VaultCheckpointManifest = { coveredSeq, transferId, chunkCount: chunks.length, payloadHash: chunks[0]!.payloadHash.slice() }
   await sender.sendCheckpoint(manifest)
   return manifest
+}
+
+/** The gate that decides whether this device should publish a fresh
+ * checkpoint after a sync round. Extracted from the caller's sync loop so it
+ * can be reasoned about (and tested) as data rather than as a condition
+ * buried in boot wiring.
+ *
+ * `staleCheckpointEpoch` is the condition W5 added: with the checkpoint KEK
+ * wrapped under the MLS self group, a checkpoint sealed at an earlier epoch
+ * can never be opened again by anyone -- so "a checkpoint manifest exists"
+ * stopped being sufficient reason not to make one. Without this, the first
+ * device to join a Vault would advance the epoch, the surviving checkpoint
+ * would be permanently unopenable, and no device would ever replace it: the
+ * newcomer could never restore. The caller must only set this when the
+ * checkpoint it saw was already covered by its OWN delivery cursor -- i.e.
+ * when this device holds that history itself and can genuinely reseal it. A
+ * device that needed the unopenable checkpoint has an incomplete Vault and
+ * reports `checkpoint-epoch-unavailable` in `gaps` instead, which keeps it
+ * out of this gate for the same reason every other gap does.
+ *
+ * `gaps` must be empty for the same found-live reason it always has: a device
+ * that silently skipped anything this round would checkpoint content it never
+ * received, and siblings restoring from it would lose real history. */
+export function shouldRecreateVaultCheckpoint(input: {
+  latestSequence: number
+  sawCheckpointManifest: boolean
+  staleCheckpointEpoch: boolean
+  gaps: readonly MimiVaultSyncGap[]
+  sinceLastRecreateMs: number
+  cooldownMs?: number
+}): boolean {
+  if (input.latestSequence <= 1) return false
+  if (input.gaps.length !== 0) return false
+  if (input.sinceLastRecreateMs <= (input.cooldownMs ?? 5_000)) return false
+  return !input.sawCheckpointManifest || input.staleCheckpointEpoch
 }
 
 /** Reconstructs complete Vault transfers from one or more contiguous pull
