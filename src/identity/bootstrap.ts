@@ -448,11 +448,20 @@ export async function ensureWalletMimiVaultRoom(
   }
   const transport = new MimiClientTransport({ normalBaseUrl: mimiSelfBaseUrl, anonBaseUrl: mimiSelfBaseUrl, selfBaseUrl: mimiSelfBaseUrl, fetch: defaultFetch() })
   const selfGroupId = 'mimi-vault'
+  const create = () => createMimiVaultRoom({
+    identityId: device.did, deviceId: device.credential.deviceKid, selfGroupId, roomId: device.roomId,
+    credential: device.credential, signaturePrivateKey: device.signaturePrivateKey, transport, stateStore: selfGroupStore,
+    providerHost: provider.hostname,
+  })
+  const join = () => joinMimiVaultRoom({
+    identityId: device.did, deviceId: device.credential.deviceKid, selfGroupId, roomId: device.roomId,
+    credential: device.credential, signaturePrivateKey: device.signaturePrivateKey, transport, stateStore: selfGroupStore,
+  })
   let room = await selfGroupStore.loadMimiVault(device.did)
   if (room && room.roomId !== device.roomId) throw new Error('This browser has a different local MIMI Vault room; disconnect and clear its Biset device data before reconnecting')
   if (!room && device.createRoom) {
     try {
-      await createMimiVaultRoom({ identityId: device.did, deviceId: device.credential.deviceKid, selfGroupId, roomId: device.roomId, credential: device.credential, signaturePrivateKey: device.signaturePrivateKey, transport, stateStore: selfGroupStore, providerHost: provider.hostname })
+      await create()
     } catch (createError) {
       // The provider may have accepted the first commit while this browser
       // crashed before IndexedDB saved its state. Retrying a create would be
@@ -460,12 +469,28 @@ export async function ensureWalletMimiVaultRoom(
       // Wallet-authorized leaf. If the room genuinely was never created,
       // join fails too and the original create failure remains visible.
       try {
-        await joinMimiVaultRoom({ identityId: device.did, deviceId: device.credential.deviceKid, selfGroupId, roomId: device.roomId, credential: device.credential, signaturePrivateKey: device.signaturePrivateKey, transport, stateStore: selfGroupStore })
+        await join()
       } catch { throw createError }
     }
     room = await selfGroupStore.loadMimiVault(device.did)
   } else if (!room) {
-    await joinMimiVaultRoom({ identityId: device.did, deviceId: device.credential.deviceKid, selfGroupId, roomId: device.roomId, credential: device.credential, signaturePrivateKey: device.signaturePrivateKey, transport, stateStore: selfGroupStore })
+    try {
+      await join()
+    } catch (joinError) {
+      // Wallet publishes the room pointer as part of approval, before Biset
+      // has created the initial MLS room. If that first browser is interrupted
+      // (for example by a blocked Safari popup), a later authorization sees
+      // the pointer and would otherwise only attempt this failing join.
+      if (!(joinError instanceof Error) || joinError.message !== 'MIMI Vault external join GroupInfo failed: noSuchRoom') throw joinError
+      try {
+        await create()
+      } catch (createError) {
+        // A sibling may have created the room after our noSuchRoom response.
+        // In that race, joining is the only safe recovery; otherwise preserve
+        // the create error rather than masking a genuine provider failure.
+        try { await join() } catch { throw createError }
+      }
+    }
     room = await selfGroupStore.loadMimiVault(device.did)
   }
   if (!room) throw new Error('Wallet MIMI Vault room initialization did not persist')
