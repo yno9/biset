@@ -9,7 +9,7 @@
 //
 // knip does not catch that class of problem: a file imported by a test is
 // "used" as far as knip is concerned. This walks the import graph from the
-// six real entry points instead, and reports what only tests reach.
+// real entry points instead, and reports what only tests reach.
 //
 // A file listed under "tests only" is not necessarily dead -- most of them
 // are parts built ahead of their wiring (ARC.md calls these "部品実装済み").
@@ -23,7 +23,6 @@ import { Glob } from 'bun'
 
 const ENTRIES = [
   'src/main.ts', 'src/sw.ts',
-  'src/anchor/index.ts',
   'src/mediator/index.ts', 'src/mediator/mail-plugin/index.ts',
   'src/mimi/index.ts',
 ]

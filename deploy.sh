@@ -2,16 +2,14 @@
 # biset 本番デプロイ。別成果物を扱う（混同厳禁）:
 #   app     : チャットアプリ  dist/index.html      → v1:/root/biset/app/     (t.biset.md が Caddy 配信)
 #   landing : ランディング     home/*               → v1:/root/biset/home/    (biset.md が Caddy 配信)
-#   anchor  : Identity Provider + did:webvh host src/anchor/*
-#             → v1:/opt/biset/bin/biset-anchor (systemd biset-anchor.service,
-#             listen 127.0.0.1:8788)。旧anchor.service:8770は2026-08-30に廃止・削除済み。
 #   smtp    : メールrelay      ~/biset/jmapsmtp     → v1:/root/jmapsmtp/      (systemd jmapsmtp, mail.biset.md)
 #   ap      : ActivityPub relay ~/go-jmapap         → v1:/root/jmapap/        (systemd jmapap,   ap.biset.md)
 #   relay   : smtp + ap をまとめて
 # 配信は Caddy（jmapap ではない）。relay 資産とは /root/biset/ に分離済み。
-# anchorはv1と別ホスト(v2)、macローカルはarm64だがv2はx86_64なので
-# クロスビルド必須（bun build --compile --target=bun-linux-x64、package.json
-# のbuild:anchorに埋め込み済み）。ここを忘れてネイティブ(arm64)バイナリを
+# bun製サービス（didcomm-mediator / mail-plugin）はmacローカルがarm64、
+# デプロイ先はx86_64なのでクロスビルド必須（bun build --compile
+# --target=bun-linux-x64、package.jsonのbuild:*に埋め込み済み）。
+# ここを忘れてネイティブ(arm64)バイナリを
 # そのまま送ると、実行中プロセスを再起動した瞬間 systemd が
 # status=203/EXEC で起動失敗する（2026-07-28 本番で発生、原因はまさにこれ）。
 # ap（go-jmapap）も同じ罠（v1もx86_64）なので GOOS/GOARCH を明示し、
@@ -30,7 +28,7 @@
 #   replace github.com/yno9/go-jmapserver => /Users/n/go-jmapserver
 # を持つので、core を直したら ap のバイナリを作り直す必要がある。
 #
-# 使い方: ./deploy.sh [app|landing|anchor|didcomm-mediator|mail-plugin|smtp|ap|relay|all]   (引数なし = all)
+# 使い方: ./deploy.sh [app|landing|didcomm-mediator|mail-plugin|smtp|ap|relay|all]   (引数なし = all)
 #   mail-plugin は didcomm-mediator と同じ biset-didcomm-mediator.service/DB
 #   を奪い合う排他ターゲット（同じsqliteを2プロセスで開けない）。どちらか
 #   一方だけが本番で動く。core retirement後の現行方針（2026-09-03時点）で
@@ -41,8 +39,6 @@ set -euo pipefail
 HOST=v1
 APP_DST=/root/biset/app
 LANDING_DST=/root/biset/home
-ANCHOR_HOST=v1
-ANCHOR_DST=/opt/biset/bin
 DIDCOMM_MEDIATOR_HOST=v1
 DIDCOMM_MEDIATOR_DST=/opt/biset/didcomm-mediator
 DIDCOMM_MEDIATOR_PUBLIC_HOST="${DIDCOMM_MEDIATOR_PUBLIC_HOST:-mediator.biset.md}"
@@ -109,51 +105,6 @@ deploy_landing() {
   body=$(curl -fsS https://biset.md/index.html)
   case "$body" in *"<!DOCTYPE html>"*|*"<!doctype html>"*) ;; *) fail "landing: biset.md/index.html がHTMLを返さない" ;; esac
   echo "✓ landing OK ($local_sha)"
-}
-
-deploy_anchor() {
-  echo "== anchor: build (linux-x64 cross-compile) =="
-  ( cd "$ROOT" && bun run build:anchor )
-  [ -f "$ROOT/biset-anchor" ] || fail "biset-anchor がない"
-  file "$ROOT/biset-anchor" | grep -q "x86-64" || fail "biset-anchor がx86_64バイナリでない（クロスビルド失敗）"
-
-  ssh "$ANCHOR_HOST" "test -f /etc/biset/anchor.env; systemctl cat biset-anchor.service >/dev/null" \
-    || fail "anchor: env/systemd unitが未準備"
-
-  echo "== anchor: compressed upload → $ANCHOR_HOST:$ANCHOR_DST =="
-  local transfer_dir binary_sha
-  transfer_dir="$(mktemp -d)"
-  binary_sha="$(shasum -a 256 "$ROOT/biset-anchor" | awk '{print $1}')"
-  gzip -9 -c "$ROOT/biset-anchor" > "$transfer_dir/biset-anchor.gz"
-  scp "$transfer_dir/biset-anchor.gz" "$ANCHOR_HOST:$ANCHOR_DST/biset-anchor.new.gz" \
-    || { rm -rf "$transfer_dir"; fail "anchor: upload失敗"; }
-  rm -rf "$transfer_dir"
-  ssh "$ANCHOR_HOST" "
-    set -e
-    gzip -dc $ANCHOR_DST/biset-anchor.new.gz > $ANCHOR_DST/biset-anchor.new
-    test \"\$(sha256sum $ANCHOR_DST/biset-anchor.new | awk '{print \$1}')\" = $binary_sha
-    file $ANCHOR_DST/biset-anchor.new | grep -q x86-64
-    rm -f $ANCHOR_DST/biset-anchor.new.gz
-  " || fail "anchor: remote checksum/architecture検証失敗"
-
-  echo "== anchor: swap + restart (systemd) =="
-  ssh "$ANCHOR_HOST" "
-    set -e
-    chmod 0755 $ANCHOR_DST/biset-anchor.new
-    backup=$ANCHOR_DST/biset-anchor.bak-\$(date +%Y%m%d-%H%M%S)
-    cp -p $ANCHOR_DST/biset-anchor \$backup
-    mv $ANCHOR_DST/biset-anchor.new $ANCHOR_DST/biset-anchor
-    if ! systemctl restart biset-anchor.service || ! sleep 2 || ! systemctl is-active --quiet biset-anchor.service || ! curl -fsS http://127.0.0.1:8788/.well-known/openid-configuration >/dev/null; then
-      cp -p \$backup $ANCHOR_DST/biset-anchor
-      systemctl restart biset-anchor.service
-      exit 1
-    fi
-  " || fail "anchor: restart/readiness失敗（直前binaryへ自動rollback済み）"
-
-  echo "== anchor: verify (health) =="
-  curl -fsS https://biset.md/.well-known/openid-configuration >/dev/null \
-    || fail "anchor: 公開OIDC discovery失敗"
-  echo "✓ anchor OK"
 }
 
 deploy_didcomm_mediator() {
@@ -411,14 +362,13 @@ deploy_ap() { deploy_relay_unit jmapap "$AP_REPO" ap.biset.md; }
 case "$target" in
   app)     deploy_app ;;
   landing) deploy_landing ;;
-  anchor)  deploy_anchor ;;
   didcomm-mediator) deploy_didcomm_mediator ;;
   mail-plugin) deploy_mail_plugin ;;
   smtp)    deploy_smtp ;;
   ap)      deploy_ap ;;
   relay)   deploy_smtp; deploy_ap ;;
-  all)     deploy_app; deploy_landing; deploy_anchor; deploy_smtp; deploy_ap ;;
-  *)       fail "unknown target: $target (app|landing|anchor|didcomm-mediator|mail-plugin|smtp|ap|relay|all)" ;;
+  all)     deploy_app; deploy_landing; deploy_smtp; deploy_ap ;;
+  *)       fail "unknown target: $target (app|landing|didcomm-mediator|mail-plugin|smtp|ap|relay|all)" ;;
 esac
 
 echo "== done: $target =="
