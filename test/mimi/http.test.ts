@@ -36,7 +36,7 @@ import { encodeCredential } from '../../src/protocol/mls/credential.ts'
 import { decryptWithLabel } from '../../src/protocol/mls/crypto/hpke.ts'
 import { encodeWelcome } from '../../src/protocol/mls/welcome.ts'
 import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../../src/protocol/mimi/app-data.ts'
-import { createMlsGroup, generateOwnKeyPackageForCredential } from '../../src/client/mimi/group.ts'
+import { createMlsGroup, generateOwnKeyPackageForCredential } from '../../src/client/mls/group.ts'
 import { mlsSuite } from '../../src/protocol/mls/suite.ts'
 
 interface Client { credential: VisibleCredential; secret: Uint8Array }

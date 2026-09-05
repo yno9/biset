@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { createMlsGroup, generateOwnKeyPackageForCredential } from '../src/client/mimi/group.ts'
+import { createMlsGroup, generateOwnKeyPackageForCredential } from '../src/client/mls/group.ts'
 import { mlsSuite } from '../src/protocol/mls/suite.ts'
 import { createCommit, type PublicMessage } from '../src/protocol/mls/index.ts'
 import { defaultAuthenticationService } from '../src/protocol/mls/authenticationService.ts'

@@ -12,12 +12,12 @@ import { createSegmentKeyWrap } from '../../src/client/store/vault/crypto.ts'
 import {
   confirmCommit, createMlsGroup, epochOf, exportSecret, generateOwnKeyPackage, groupInfoForExternalJoin,
   joinGroupExternally, memberKids, processIncoming, rekey, removeMembers,
-} from '../../src/client/mimi/group.ts'
+} from '../../src/client/mls/group.ts'
 import { unwrapSegmentKey } from '../../src/client/store/vault/crypto.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../../src/client/store/vault/storage-root.ts'
 import { mlsEpoch } from '../../src/protocol/ids.ts'
-import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mimi/store.ts'
+import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mls/store.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/client/store/vault/store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 
@@ -79,8 +79,8 @@ describe('buildWalletVaultCryptoBoundary', () => {
     const wraps = memoryWrapStore()
     const boundary = buildWalletVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
 
-    const { deriveVaultEpochKey } = await import('../../src/client/mimi/vault-epoch.ts')
-    const { exportSecret } = await import('../../src/client/mimi/group.ts')
+    const { deriveVaultEpochKey } = await import('../../src/client/mls/vault-epoch.ts')
+    const { exportSecret } = await import('../../src/client/mls/group.ts')
     const epoch = mlsEpoch(epochOf(state))
     const vek = await deriveVaultEpochKey({ selfGroupId: selfGroupId, epoch, exportSecret: (label, ctx, len) => exportSecret(state, label, ctx, len) })
 
@@ -219,7 +219,7 @@ describe('buildWalletVaultCryptoBoundary', () => {
     // state can produce -- its own (stale) epoch's exporter secret. MLS
     // forward secrecy means this is not the epoch the wrap was actually
     // encrypted under, so the AEAD tag must fail to verify.
-    const { deriveVaultEpochKey } = await import('../../src/client/mimi/vault-epoch.ts')
+    const { deriveVaultEpochKey } = await import('../../src/client/mls/vault-epoch.ts')
     const staleEpoch = mlsEpoch(epochOf(stateB))
     const staleVek = await deriveVaultEpochKey({
       selfGroupId: selfGroupId, epoch: staleEpoch,

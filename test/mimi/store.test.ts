@@ -6,7 +6,7 @@ import { RoomPseudonymIssuer } from '../../src/server/mimi/anon/pseudonym.ts'
 import { decryptIdentityLink, encryptIdentityLink } from '../../src/server/mimi/anon/identity-link.ts'
 import type { UpdateRoomRequest, VisibleCredential } from '../../src/protocol/mimi/protocol-types.ts'
 import type { MimiMlsStateTransition } from '../../src/server/mimi/mls-appsync.ts'
-import { createMlsGroup, encryptApplication, generateOwnKeyPackageForCredential } from '../../src/client/mimi/group.ts'
+import { createMlsGroup, encryptApplication, generateOwnKeyPackageForCredential } from '../../src/client/mls/group.ts'
 
 const at = '2026-09-01T00:00:00.000Z'
 const roomId = 'mimi://example.test/r/store'

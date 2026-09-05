@@ -6,7 +6,7 @@ import { MimiProviderTransport } from '../../src/server/mimi/provider-transport.
 import { updateRoomSigningBytes, submitMessageSigningBytes } from '../../src/protocol/mimi/authorizer.ts'
 import { encodeUpdateRoomRequestWire, encodeSubmitMessageRequestWire } from '../../src/protocol/mimi/wire.ts'
 import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../../src/protocol/mimi/app-data.ts'
-import { createMlsGroup, generateOwnKeyPackageForCredential } from '../../src/client/mimi/group.ts'
+import { createMlsGroup, generateOwnKeyPackageForCredential } from '../../src/client/mls/group.ts'
 import { mlsSuite } from '../../src/protocol/mls/suite.ts'
 import { createApplicationMessage, createCommit, encodeMlsMessage, type KeyPackage } from '../../src/protocol/mls/index.ts'
 import { encodeCredential } from '../../src/protocol/mls/credential.ts'

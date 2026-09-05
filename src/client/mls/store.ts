@@ -15,9 +15,36 @@
 // schema's migrations ever have to reason about the other's stores.
 import { decodeState, encodeState, epochOf, exportSecret } from './group.ts'
 import type { ClientState } from '../../protocol/mls/index.ts'
+
+/* Persisted shapes for the Self/Vault MIMI room. Declared here rather than
+ * beside the session that uses them: they describe what this store writes,
+ * and keeping them here is what lets client/mimi depend on client/mls
+ * without the reverse edge. */
+export interface MimiVaultPendingApplication {
+  deliveryId: string
+  plaintextHash: Uint8Array
+  appMessage: Uint8Array
+}
+export interface MimiVaultSessionRecord {
+  roomId: string
+  selfGroupId: string
+  state: ClientState
+  pending?: MimiVaultPendingApplication
+  /** Recent ciphertexts sent by this device. MLS sender chains cannot process
+   * their own post-send PrivateMessages (the desired generation is past), so
+   * these are recognized and skipped when the room inbox echoes them back. */
+  ownApplicationHashes?: string[]
+  /** Last completely processed provider delivery. This is a transport cursor,
+   * not a Vault event cursor: it also advances across handshakes and echoed
+   * application ciphertexts. */
+  deliveryCursor?: number
+}
+export interface MimiVaultSessionStateStore {
+  loadMimiVault(identityId: string): Promise<MimiVaultSessionRecord | undefined>
+  saveMimiVault(identityId: string, value: MimiVaultSessionRecord): Promise<void>
+}
 import { mlsEpoch } from '../../protocol/ids.ts'
 import type { MlsEpochExporter, MlsSelfGroupProvider } from './vault-epoch.ts'
-import type { MimiVaultPendingApplication, MimiVaultSessionRecord, MimiVaultSessionStateStore } from './mimi-vault-session.ts'
 
 const DATABASE_NAME = 'biset-mls-self-group'
 const DATABASE_VERSION = 1

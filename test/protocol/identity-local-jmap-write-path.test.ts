@@ -10,13 +10,13 @@
 // local-write-to-shared-delivery path actually interoperates on real keys.
 import { describe, expect, test } from 'bun:test'
 import { buildWalletVaultCryptoBoundary, buildVaultDeliveryProjector } from '../../src/client/identity/bootstrap.ts'
-import { createMlsGroup } from '../../src/client/mimi/group.ts'
+import { createMlsGroup } from '../../src/client/mls/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { LocalJmapGateway, LocalJmapTransport, MemoryLocalJmapReadModel, type LocalJmapSnapshot } from '../../src/client/store/projection/gateway.ts'
 import { VaultBackedLocalJmapMutationSink, type LocalVaultMutationCommitter } from '../../src/client/store/projection/vault-mutation-sink.ts'
 import { decodeVaultDeliveryPack } from '../../src/client/store/vault/delivery-pack.ts'
 import { vaultEventSigningBytes } from '../../src/client/store/vault/events.ts'
-import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mimi/store.ts'
+import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mls/store.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/client/store/vault/store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 

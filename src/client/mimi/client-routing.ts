@@ -5,7 +5,7 @@
  * deliberately creation-only: callers persist the returned route with the
  * room and never call it to migrate an existing room.
  */
-import type { MimiClientMode } from './mimi-client-transport.ts'
+import type { MimiClientMode } from './client-transport.ts'
 
 export type MimiRoomPrivacyPreference = 'normal' | 'prefer-anon' | 'require-anon'
 

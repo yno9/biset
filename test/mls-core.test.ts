@@ -15,9 +15,9 @@ import {
   encodeKeyPackage, decodeKeyPackage, encodeState, decodeState,
   setRoomMetadata, roomMetadataOf,
   setAppDataComponent,
-} from '../src/client/mimi/group.ts'
+} from '../src/client/mls/group.ts'
 import { appDataComponent, decodeMlsMessage } from '../src/protocol/mls/index.ts'
-import { createMlsDeviceCredential } from '../src/client/mimi/device-credential.ts'
+import { createMlsDeviceCredential } from '../src/client/mls/device-credential.ts'
 
 let fails = 0
 const ok = (name: string, cond: boolean, detail = '') => {

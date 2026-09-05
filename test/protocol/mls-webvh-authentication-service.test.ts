@@ -3,9 +3,9 @@
 // bind the leaf's ACTUAL signature key.
 import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { credentialFor } from '../../src/client/mimi/identity.ts'
-import { createMlsDeviceCredential } from '../../src/client/mimi/device-credential.ts'
-import { webvhAuthenticationService } from '../../src/client/mimi/webvh-authentication-service.ts'
+import { credentialFor } from '../../src/client/mls/identity.ts'
+import { createMlsDeviceCredential } from '../../src/client/mls/device-credential.ts'
+import { webvhAuthenticationService } from '../../src/client/mls/webvh-authentication-service.ts'
 import { createGenesis } from '../../src/client/identity/webvh/create-genesis.ts'
 import { migrateWebvhLocation } from '../../src/client/identity/webvh/migrate.ts'
 import { encodeMultikey } from '../../src/protocol/webvh/multikey.ts'

@@ -1,13 +1,13 @@
-// Verifies the concrete MlsSelfGroupProvider (src/client/mimi/store.ts) end to end:
+// Verifies the concrete MlsSelfGroupProvider (src/client/mls/store.ts) end to end:
 // a real MLS group's ClientState round-trips through an in-memory
 // MlsSelfGroupStateStore (the same contract IndexedDbMlsSelfGroupStore
 // implements against IndexedDB, untestable under Bun) and produces a usable
 // MlsEpochExporter that the existing Vault Epoch Key boundary
 // (mls/vault-epoch.ts) can derive a key from.
 import { describe, expect, test } from 'bun:test'
-import { createMlsGroup, generateOwnKeyPackage, rekey } from '../../src/client/mimi/group.ts'
-import { StoredMlsSelfGroupProvider, type LoadedMlsSelfGroup, type MlsSelfGroupStateStore } from '../../src/client/mimi/store.ts'
-import { MlsVaultEpochKeyResolver } from '../../src/client/mimi/vault-epoch.ts'
+import { createMlsGroup, generateOwnKeyPackage, rekey } from '../../src/client/mls/group.ts'
+import { StoredMlsSelfGroupProvider, type LoadedMlsSelfGroup, type MlsSelfGroupStateStore } from '../../src/client/mls/store.ts'
+import { MlsVaultEpochKeyResolver } from '../../src/client/mls/vault-epoch.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 
 const identityId = 'did:web:alice.example'

@@ -9,7 +9,7 @@
  * index resolved from the *same* embedded tree) -- no separate provenance
  * mechanism is needed. `HandshakeBundle.groupInfo` (protocol-types.ts) is
  * already an existing, optional wire field biset's own client produces via
- * `groupInfoForExternalJoin` (src/client/mimi/group.ts) using bare `encodeGroupInfo`
+ * `groupInfoForExternalJoin` (src/client/mls/group.ts) using bare `encodeGroupInfo`
  * (not MLSMessage-wrapped, matching that same client convention for
  * Welcome) -- decoding it here is genuinely new, since biset-mimi has so
  * far only ever stored these bytes opaquely for HPKE-sealed re-delivery to

@@ -7,11 +7,11 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { buildLocalJmapProjectionRebuild, buildLocalJmapReadModel, buildWalletVaultCryptoBoundary } from '../../src/client/identity/bootstrap.ts'
-import { createMlsGroup } from '../../src/client/mimi/group.ts'
+import { createMlsGroup } from '../../src/client/mls/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { buildMailMessageAdd } from '../../src/client/store/vault/mail-message.ts'
 import { IndexedDbVaultStore } from '../../src/client/store/vault/store.ts'
-import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mimi/store.ts'
+import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mls/store.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
 const identityId = 'did:web:alice.example'

@@ -9,8 +9,8 @@ import {
   ownMlsDeviceCredential,
   processIncoming,
   rotateOwnCredentialAndRemoveMembers,
-} from '../../src/client/mimi/group.ts'
-import { createMlsDeviceCredential } from '../../src/client/mimi/device-credential.ts'
+} from '../../src/client/mls/group.ts'
+import { createMlsDeviceCredential } from '../../src/client/mls/device-credential.ts'
 
 const generation1 = `1-${'a'.repeat(32)}`
 const generation2 = `2-${'b'.repeat(32)}`

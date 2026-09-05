@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { createMlsGroup, generateOwnKeyPackageForCredential, groupInfoForExternalJoin } from '../../src/client/mimi/group.ts'
+import { createMlsGroup, generateOwnKeyPackageForCredential, groupInfoForExternalJoin } from '../../src/client/mls/group.ts'
 import { mlsSuite } from '../../src/protocol/mls/suite.ts'
 import { defaultAuthenticationService } from '../../src/protocol/mls/authenticationService.ts'
 import { bootstrapPublicGroupStateFromGroupInfo, MimiGroupInfoBootstrapError } from '../../src/server/mimi/mls-group-info-bootstrap.ts'

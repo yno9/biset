@@ -5,8 +5,8 @@
  * cryptographic and opaque. */
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { bytesToBase64url, equalBytes } from '../../protocol/canonical.ts'
-import { createMlsGroup, confirmCommit, epochOf, generateOwnKeyPackage, groupInfoEpoch, groupInfoForExternalJoin, joinGroupExternally, removeMembers } from './group.ts'
-import type { MlsDeviceCredentialV2 } from './device-credential.ts'
+import { createMlsGroup, confirmCommit, epochOf, generateOwnKeyPackage, groupInfoEpoch, groupInfoForExternalJoin, joinGroupExternally, removeMembers } from '../mls/group.ts'
+import type { MlsDeviceCredentialV2 } from '../mls/device-credential.ts'
 import { createCommit, encodeMlsMessage } from '../../protocol/mls/index.ts'
 import type { ClientState } from '../../protocol/mls/index.ts'
 import { encodeCredential } from '../../protocol/mls/credential.ts'
@@ -15,10 +15,10 @@ import { decryptWithLabel } from '../../protocol/mls/crypto/hpke.ts'
 import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../../protocol/mimi/app-data.ts'
 import { deliveriesPullSigningBytes, groupInfoRequestSigningBytes, groupInfoResponseSigningBytes, updateRoomSigningBytes } from '../../protocol/mimi/authorizer.ts'
 import { decodeGroupInfoRatchetTreeBundle } from '../../protocol/mimi/wire.ts'
-import { memberIdOf } from './identity.ts'
-import type { MimiClientMode, MimiClientTransport } from './mimi-client-transport.ts'
+import { memberIdOf } from '../mls/identity.ts'
+import type { MimiClientMode, MimiClientTransport } from './client-transport.ts'
 import type { VisibleCredential } from '../../protocol/mimi/protocol-types.ts'
-import type { MimiVaultSessionStateStore } from './mimi-vault-session.ts'
+import type { MimiVaultSessionStateStore } from '../mls/store.ts'
 
 export interface CreateMimiVaultRoomOptions {
   identityId: string

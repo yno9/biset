@@ -4,7 +4,7 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { bytesToBase64url } from '../src/protocol/canonical.ts'
 import { buildProof } from '../src/protocol/webvh/proof.ts'
 import { didToHttpsUrl } from '../src/protocol/webvh/identifier.ts'
-import { createMlsDeviceCredential, encodeMlsDeviceCredential } from '../src/client/mimi/device-credential.ts'
+import { createMlsDeviceCredential, encodeMlsDeviceCredential } from '../src/client/mls/device-credential.ts'
 import { buildGenesisLog } from './protocol/support/webvh-log-fixture.ts'
 import {
   clearDidMdPendingAuthorization,

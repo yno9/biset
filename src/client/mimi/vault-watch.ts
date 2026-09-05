@@ -15,7 +15,7 @@
 import { decodeDeliveryEntry } from '../../protocol/mimi/wire.ts'
 import type { MimiCredential, MimiDeliveryEntry } from '../../protocol/mimi/protocol-types.ts'
 import { deliveriesWatchSigningBytes } from '../../protocol/mimi/authorizer.ts'
-import type { MimiClientMode, MimiClientTransport } from './mimi-client-transport.ts'
+import type { MimiClientMode, MimiClientTransport } from './client-transport.ts'
 
 const RECONNECT_DELAY_MS = 2000
 

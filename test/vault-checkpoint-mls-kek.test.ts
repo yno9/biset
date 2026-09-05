@@ -3,7 +3,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { canonicalBytes, type CanonicalValue } from '../src/protocol/canonical.ts'
 import type { MlsEpoch } from '../src/protocol/ids.ts'
 import { buildVaultManifest } from '../src/client/store/vault/manifest.ts'
-import { MlsVaultEpochKeyResolver, type MlsEpochExporter } from '../src/client/mimi/vault-epoch.ts'
+import { MlsVaultEpochKeyResolver, type MlsEpochExporter } from '../src/client/mls/vault-epoch.ts'
 import {
   createVaultCheckpoint,
   openVaultCheckpoint,

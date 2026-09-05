@@ -5,36 +5,14 @@
  * the exact same bytes and delivery ID; it never encrypts the plaintext a
  * second time from a stale ratchet state. */
 import { bytesToBase64url, equalBytes, sha256Bytes } from '../../protocol/canonical.ts'
-import { epochOf, encryptApplication, processIncoming } from './group.ts'
+import { epochOf, encryptApplication, processIncoming } from '../mls/group.ts'
 import type { ClientState } from '../../protocol/mls/index.ts'
-import type { MimiClientMode, MimiClientTransport } from './mimi-client-transport.ts'
+import type { MimiClientMode, MimiClientTransport } from './client-transport.ts'
 import type { MimiCredential, MimiDeliveryEntry, VaultCheckpointManifest } from '../../protocol/mimi/protocol-types.ts'
 import { submitMessageSigningBytes, submitVaultCheckpointSigningBytes } from '../../protocol/mimi/authorizer.ts'
 import type { MimiVaultMlsReceiver, MimiVaultMlsSender } from '../store/vault/mimi-vault-sync.ts'
+import type { MimiVaultPendingApplication, MimiVaultSessionRecord, MimiVaultSessionStateStore } from '../mls/store.ts'
 
-export interface MimiVaultPendingApplication {
-  deliveryId: string
-  plaintextHash: Uint8Array
-  appMessage: Uint8Array
-}
-export interface MimiVaultSessionRecord {
-  roomId: string
-  selfGroupId: string
-  state: ClientState
-  pending?: MimiVaultPendingApplication
-  /** Recent ciphertexts sent by this device. MLS sender chains cannot process
-   * their own post-send PrivateMessages (the desired generation is past), so
-   * these are recognized and skipped when the room inbox echoes them back. */
-  ownApplicationHashes?: string[]
-  /** Last completely processed provider delivery. This is a transport cursor,
-   * not a Vault event cursor: it also advances across handshakes and echoed
-   * application ciphertexts. */
-  deliveryCursor?: number
-}
-export interface MimiVaultSessionStateStore {
-  loadMimiVault(identityId: string): Promise<MimiVaultSessionRecord | undefined>
-  saveMimiVault(identityId: string, value: MimiVaultSessionRecord): Promise<void>
-}
 export interface MimiVaultSessionOptions {
   identityId: string
   mode: MimiClientMode
