@@ -58,8 +58,8 @@ import { createVaultCheckpoint, openVaultCheckpoint, readVaultCheckpointEpoch, s
 import { createRecoveryArchiveSnapshot } from './vault/recovery-archive-export.ts'
 import { rewrapRecoveryArchiveForCurrentEpoch } from './vault/recovery-archive-rewrap.ts'
 import { deliverySeq } from './shared/protocol/ids.ts'
-import type { DeliveriesPullRequest } from './mimi/protocol-types.ts'
-import { deliveriesPullSigningBytes } from './mimi/authorizer.ts'
+import type { DeliveriesPullRequest } from './shared/mimi/protocol-types.ts'
+import { deliveriesPullSigningBytes } from './shared/mimi/authorizer.ts'
 import {
   createWalletRelationshipManager,
   type RelationshipWatchStarter,

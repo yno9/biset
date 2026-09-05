@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { createMimiDeployment } from '../../src/mimi/deployment.ts'
+import { createMimiDeployment } from '../../src/server/mimi/deployment.ts'
 import { createMimiVaultRoom, joinMimiVaultRoom } from '../../src/mls/mimi-vault-room.ts'
 import { MimiClientTransport } from '../../src/mls/mimi-client-transport.ts'
 import { createMlsDeviceCredential } from '../../src/mls/device-credential.ts'

@@ -1,5 +1,5 @@
 /** JSON + base64url wire boundary for biset-mimi (PLAN §3). */
-import { base64urlToBytes, bytesToBase64url } from '../../shared/protocol/canonical.ts'
+import { base64urlToBytes, bytesToBase64url } from '../protocol/canonical.ts'
 import type {
   ClientKeyMaterial,
   DeliveriesPullRequest,

@@ -1,6 +1,6 @@
 /** Short-lived, opaque authorization for one MIMI delivery SSE connection. */
 import { bytesToHex } from '../../shared/protocol/canonical.ts'
-import type { MimiRoomId, MimiUserUri } from './protocol-types.ts'
+import type { MimiRoomId, MimiUserUri } from '../../shared/mimi/protocol-types.ts'
 
 export interface MimiWatchTokenRecord {
   roomId: MimiRoomId

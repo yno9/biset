@@ -7,12 +7,12 @@ import { Database } from 'bun:sqlite'
 import { equalBytes, sha256Bytes } from '../../shared/protocol/canonical.ts'
 import { createFrankingKeyMaterial, type FrankingKeyMaterial } from './franking.ts'
 import { decodeMimiConsentEntryWire, encodeMimiConsentEntryWire } from './federation.ts'
-import { decodeFrankWire, decodeVaultCheckpointManifestWire, encodeFrankWire, encodeVaultCheckpointManifestWire } from './wire.ts'
-import { applyMimiParticipantListUpdate } from './app-data.ts'
+import { decodeFrankWire, decodeVaultCheckpointManifestWire, encodeFrankWire, encodeVaultCheckpointManifestWire } from '../../shared/mimi/wire.ts'
+import { applyMimiParticipantListUpdate } from '../../shared/mimi/app-data.ts'
 import {
   decodeRoomStateWire,
   encodeRoomStateWire,
-} from './wire.ts'
+} from '../../shared/mimi/wire.ts'
 import type {
   KeyPackagePublishRequest,
   MimiConsentEntry,
@@ -30,7 +30,7 @@ import type {
   Frank,
   MimiDeploymentMode,
   SubmitVaultCheckpointRequest,
-} from './protocol-types.ts'
+} from '../../shared/mimi/protocol-types.ts'
 import type { AddedMlsLeaf, MimiMlsStateTransition } from './mls-appsync.ts'
 import { decodeGroupContext, encodeGroupContext } from '../../vendor/mls/groupContext.js'
 import { decodeRatchetTree, encodeRatchetTree } from '../../vendor/mls/ratchetTree.js'

@@ -2,14 +2,14 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SqliteMediatorStore } from '../src/mediator/sqlite-store.ts'
-import { QueueFullError } from '../src/mediator/queue.ts'
-import { createMediator } from '../src/mediator/server.ts'
+import { SqliteMediatorStore } from '../src/server/didcomm-mediator/sqlite-store.ts'
+import { QueueFullError } from '../src/server/didcomm-mediator/queue.ts'
+import { createMediator } from '../src/server/didcomm-mediator/server.ts'
 import { generatePeerIdentity } from '../src/didcomm/peer.ts'
 import { buildPlaintext, type DidCommPlaintext } from '../src/didcomm/message.ts'
 import { packAnoncrypt, packAuthcrypt, parseJwe, unpackAuthcrypt } from '../src/didcomm/crypto.ts'
 import { DELIVERY_REQUEST, MESSAGES_RECEIVED } from '../src/didcomm/mediator-protocol.ts'
-import { IpRateLimiter } from '../src/mediator/rate-limit.ts'
+import { IpRateLimiter } from '../src/server/didcomm-mediator/rate-limit.ts'
 
 function withDatabase<T>(run: (path: string) => Promise<T> | T): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'biset-mediator-sqlite-test-'))

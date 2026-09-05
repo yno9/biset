@@ -8,7 +8,7 @@ import { createMlsDeviceCredential } from '../src/mls/device-credential.ts'
 import { MimiClientTransport } from '../src/mls/mimi-client-transport.ts'
 import { createMimiVaultRoom, joinMimiVaultRoom } from '../src/mls/mimi-vault-room.ts'
 import { PersistedMimiVaultSession, type MimiVaultSessionRecord } from '../src/mls/mimi-vault-session.ts'
-import { deliveriesPullSigningBytes } from '../src/mimi/authorizer.ts'
+import { deliveriesPullSigningBytes } from '../src/shared/mimi/authorizer.ts'
 import { decodeMimiVaultBatch, sendMimiVaultCheckpoint } from '../src/vault/mimi-vault-sync.ts'
 
 const baseUrl = (process.env.MIMI_SELF_URL ?? 'https://mimi-self.biset.md').replace(/\/$/, '')

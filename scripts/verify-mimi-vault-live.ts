@@ -7,9 +7,9 @@ import { createMlsGroup, encryptApplication, generateOwnKeyPackageForCredential 
 import { createCommit, encodeMlsMessage } from '../src/vendor/mls/index.ts'
 import { encodeCredential } from '../src/vendor/mls/credential.ts'
 import { mlsSuite } from '../src/vendor/mls/suite.ts'
-import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../src/server/mimi/app-data.ts'
-import { deliveriesPullSigningBytes, submitMessageSigningBytes, submitVaultCheckpointSigningBytes, updateRoomSigningBytes } from '../src/server/mimi/authorizer.ts'
-import { decodeDeliveriesWire, decodeFrankingAgentDataWire, decodeSubmitMessageResponseWire, decodeSubmitVaultCheckpointResponseWire, decodeUpdateRoomResponseWire, encodeDeliveriesPullRequestWire, encodeSubmitMessageRequestWire, encodeSubmitVaultCheckpointRequestWire, encodeUpdateRoomRequestWire } from '../src/server/mimi/wire.ts'
+import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../src/shared/mimi/app-data.ts'
+import { deliveriesPullSigningBytes, submitMessageSigningBytes, submitVaultCheckpointSigningBytes, updateRoomSigningBytes } from '../src/shared/mimi/authorizer.ts'
+import { decodeDeliveriesWire, decodeFrankingAgentDataWire, decodeSubmitMessageResponseWire, decodeSubmitVaultCheckpointResponseWire, decodeUpdateRoomResponseWire, encodeDeliveriesPullRequestWire, encodeSubmitMessageRequestWire, encodeSubmitVaultCheckpointRequestWire, encodeUpdateRoomRequestWire } from '../src/shared/mimi/wire.ts'
 import { sendMimiVaultCheckpoint } from '../src/vault/mimi-vault-sync.ts'
 import { encodeVaultDeliveryPack } from '../src/vault/delivery-pack.ts'
 

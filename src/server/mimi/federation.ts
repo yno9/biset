@@ -1,8 +1,8 @@
 /** JSON boundary and provider-owned hooks for draft §5.7 and §5.8. */
 import { base64urlToBytes, bytesToBase64url } from '../../shared/protocol/canonical.ts'
-import type { MimiConsentEntry, MimiIdentifierQueryElement, MimiIdentifierRequest, MimiIdentifierResponse, PublishedKeyPackage } from './protocol-types.ts'
-import { decodeFrankWire, encodeFrankWire, MimiWireError } from './wire.ts'
-import type { MimiAbuseReport } from './protocol-types.ts'
+import type { MimiConsentEntry, MimiIdentifierQueryElement, MimiIdentifierRequest, MimiIdentifierResponse, PublishedKeyPackage } from '../../shared/mimi/protocol-types.ts'
+import { decodeFrankWire, encodeFrankWire, MimiWireError } from '../../shared/mimi/wire.ts'
+import type { MimiAbuseReport } from '../../shared/mimi/protocol-types.ts'
 
 export interface MimiIdentifierDirectory {
   /**

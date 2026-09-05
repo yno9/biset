@@ -12,7 +12,7 @@ import {
 } from '../src/vault/vault-checkpoint.ts'
 import { shouldRecreateVaultCheckpoint, synchronizeMimiVault, type MimiVaultSyncGap } from '../src/vault/mimi-vault-sync.ts'
 import { encodeMimiVaultChunk, splitMimiVaultPayload } from '../src/vault/mimi-vault-chunks.ts'
-import type { MimiDeliveryEntry } from '../src/mimi/protocol-types.ts'
+import type { MimiDeliveryEntry } from '../src/shared/mimi/protocol-types.ts'
 
 const identityId = 'did:webvh:test:example.test'
 const vaultId = 'vlt_checkpoint_test' as never

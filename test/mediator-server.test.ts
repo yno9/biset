@@ -8,7 +8,7 @@
 // for ANY DIDComm agent, not just biset's own.
 import { describe, expect, test } from 'bun:test'
 import { generatePeerIdentity } from '../src/didcomm/peer.ts'
-import { createMediator } from '../src/mediator/server.ts'
+import { createMediator } from '../src/server/didcomm-mediator/server.ts'
 import {
   packAuthcrypt, unpackAuthcrypt, packAnoncrypt, b64urlToBytes, parseJwe,
 } from '../src/didcomm/crypto.ts'

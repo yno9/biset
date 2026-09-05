@@ -4,13 +4,13 @@
  * state therefore have to arrive in an MLS PublicMessage. */
 import { decodeMlsMessage, type AppDataUpdate } from '../../vendor/mls/index.ts'
 import { encodeCredential } from '../../vendor/mls/credential.ts'
-import { decodeExact, decodeMimiFrankingAgent, decodeMimiParticipantListUpdate, decodeMimiRoomMetadata, type ParticipantListUpdate } from './app-data.ts'
+import { decodeExact, decodeMimiFrankingAgent, decodeMimiParticipantListUpdate, decodeMimiRoomMetadata, type ParticipantListUpdate } from '../../shared/mimi/app-data.ts'
 import {
   MIMI_FRANKING_SIGNATURE_KEY_COMPONENT,
   MIMI_PARTICIPANT_LIST_COMPONENT,
   MIMI_ROOM_METADATA_COMPONENT,
-} from './app-data.ts'
-import type { FrankingAgentData, RoomMetadata } from './protocol-types.ts'
+} from '../../shared/mimi/app-data.ts'
+import type { FrankingAgentData, RoomMetadata } from '../../shared/mimi/protocol-types.ts'
 
 /** An MLS leaf actually being added by a real `add` proposal in this same
  * Commit -- the only thing that can back a claim that some URI now has this

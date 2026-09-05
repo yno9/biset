@@ -12,7 +12,7 @@ import {
   keyMaterialResponse,
   userIsRoomParticipant,
   type MimiSignatureVerifier,
-} from './authorizer.ts'
+} from '../../shared/mimi/authorizer.ts'
 import {
   decodeGroupInfoRequestWire,
   decodeKeyMaterialRequestWire,
@@ -34,7 +34,7 @@ import {
   encodeSubmitVaultCheckpointResponseWire,
   MimiWireError,
   deliveryEntryWireJson,
-} from './wire.ts'
+} from '../../shared/mimi/wire.ts'
 import { frankMessage, verifyFrank } from './franking.ts'
 import { sealGroupInfoResponse } from './group-info.ts'
 import { createMimiProtocolDirectory, MIMI_PROTOCOL_DIRECTORY_PATH } from './directory.ts'
@@ -53,7 +53,7 @@ import { bootstrapPublicGroupStateFromGroupInfo } from './mls-group-info-bootstr
 import { equalBytes } from '../../shared/protocol/canonical.ts'
 import type { MimiAssetProxy } from './asset-proxy.ts'
 import { MimiStoreCapacityError, MimiStoreStateError, type SqliteMimiStore } from './store.ts'
-import type { GroupInfoResponse, MimiCredential, MimiDeliveryEntry, MimiDeploymentMode, MimiErrorResponse, UpdateRoomRequest, UpdateRoomResponse } from './protocol-types.ts'
+import type { GroupInfoResponse, MimiCredential, MimiDeliveryEntry, MimiDeploymentMode, MimiErrorResponse, UpdateRoomRequest, UpdateRoomResponse } from '../../shared/mimi/protocol-types.ts'
 import type { MimiWatchTokenIssuer } from './watch-token.ts'
 
 const MAX_BODY_BYTES = 1024 * 1024

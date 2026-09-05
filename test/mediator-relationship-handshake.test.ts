@@ -12,8 +12,8 @@ import {
 } from '../src/didcomm/send-message.ts'
 import type { DidCommPlaintext } from '../src/didcomm/message.ts'
 import { encodeX25519Multikey } from '../src/didcomm/multikey.ts'
-import { createMediator } from '../src/mediator/server.ts'
-import { ConnectionStore } from '../src/mediator/connections.ts'
+import { createMediator } from '../src/server/didcomm-mediator/server.ts'
+import { ConnectionStore } from '../src/server/didcomm-mediator/connections.ts'
 import type { ContactKeyV1 } from '../src/vault/contact-key.ts'
 import { buildGenesisLog } from './protocol/support/webvh-log-fixture.ts'
 

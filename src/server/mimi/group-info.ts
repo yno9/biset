@@ -7,10 +7,10 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { encryptWithLabel } from '../../vendor/mls/crypto/hpke.js'
 import { mlsSuite } from '../../vendor/mls/suite.ts'
-import { groupInfoResponseSigningBytes } from './authorizer.ts'
-import { encodeGroupInfoRatchetTreeBundle } from './wire.ts'
+import { groupInfoResponseSigningBytes } from '../../shared/mimi/authorizer.ts'
+import { encodeGroupInfoRatchetTreeBundle } from '../../shared/mimi/wire.ts'
 import type { FrankingKeyMaterial } from './franking.ts'
-import type { GroupInfoResponse } from './protocol-types.ts'
+import type { GroupInfoResponse } from '../../shared/mimi/protocol-types.ts'
 
 const GROUP_INFO_HPKE_LABEL = 'GroupInfo and ratchet_tree encryption'
 

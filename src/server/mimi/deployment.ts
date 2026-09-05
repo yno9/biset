@@ -1,9 +1,9 @@
 /** Composition root for one standalone biset-mimi provider deployment. */
-import { Ed25519MimiSignatureVerifier } from './authorizer.ts'
+import { Ed25519MimiSignatureVerifier } from '../../shared/mimi/authorizer.ts'
 import { createMimiHttpHandler, type MimiFederationOptions } from './http.ts'
 import { SqliteMimiStore } from './store.ts'
 import { MimiWatchTokenIssuer } from './watch-token.ts'
-import type { MimiDeploymentMode } from './protocol-types.ts'
+import type { MimiDeploymentMode } from '../../shared/mimi/protocol-types.ts'
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',

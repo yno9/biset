@@ -7,8 +7,8 @@
  * credential cannot replace an existing member's signing key.
  */
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { bytesToBase64url, canonicalBytes, equalBytes } from '../shared/protocol/canonical.ts'
-import type { CanonicalValue } from '../shared/protocol/canonical.ts'
+import { bytesToBase64url, canonicalBytes, equalBytes } from '../protocol/canonical.ts'
+import type { CanonicalValue } from '../protocol/canonical.ts'
 import type {
   DeliveriesPullRequest,
   DeliveriesWatchRequest,
@@ -26,8 +26,8 @@ import type {
   UpdateRoomRequest,
   VisibleCredential,
 } from './protocol-types.ts'
-import type { SqliteMimiStore } from './store.ts'
-import { encodeCredential } from '../vendor/mls/credential.ts'
+import type { SqliteMimiStore } from '../../server/mimi/store.ts'
+import { encodeCredential } from '../../vendor/mls/credential.ts'
 
 export interface MimiSignatureVerifier {
   verify(credential: MimiCredential, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>

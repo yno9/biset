@@ -4,7 +4,7 @@ import { hmac } from '@noble/hashes/hmac.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { concatBytes } from '@noble/hashes/utils.js'
 import { canonicalBytes } from '../../shared/protocol/canonical.ts'
-import type { Frank, FrankAAD, MimiRoomId, MimiUserUri, ServerFrankingContext } from './protocol-types.ts'
+import type { Frank, FrankAAD, MimiRoomId, MimiUserUri, ServerFrankingContext } from '../../shared/mimi/protocol-types.ts'
 
 export interface FrankingKeyMaterial {
   hubKey: Uint8Array

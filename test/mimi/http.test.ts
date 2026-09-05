@@ -12,7 +12,7 @@ import {
   keyMaterialSigningBytes,
   submitMessageSigningBytes,
   updateRoomSigningBytes,
-} from '../../src/server/mimi/authorizer.ts'
+} from '../../src/shared/mimi/authorizer.ts'
 import {
   decodeDeliveriesWire,
   decodeGroupInfoResponseWire,
@@ -29,13 +29,13 @@ import {
   decodeFrankingAgentDataWire,
   encodeSubmitMessageRequestWire,
   encodeUpdateRoomRequestWire,
-} from '../../src/server/mimi/wire.ts'
-import type { PseudonymousCredential, VisibleCredential } from '../../src/server/mimi/protocol-types.ts'
+} from '../../src/shared/mimi/wire.ts'
+import type { PseudonymousCredential, VisibleCredential } from '../../src/shared/mimi/protocol-types.ts'
 import { createCommit, encodeMlsMessage, type KeyPackage } from '../../src/vendor/mls/index.ts'
 import { encodeCredential } from '../../src/vendor/mls/credential.ts'
 import { decryptWithLabel } from '../../src/vendor/mls/crypto/hpke.ts'
 import { encodeWelcome } from '../../src/vendor/mls/welcome.ts'
-import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../../src/server/mimi/app-data.ts'
+import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../../src/shared/mimi/app-data.ts'
 import { createMlsGroup, generateOwnKeyPackageForCredential } from '../../src/mls/group.ts'
 import { mlsSuite } from '../../src/vendor/mls/suite.ts'
 

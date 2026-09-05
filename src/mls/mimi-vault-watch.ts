@@ -12,9 +12,9 @@
 // polling delay was pure dead time on both the sending AND receiving
 // device -- this closes both halves at once, not just the sending one
 // triggerMimiVaultSync already did).
-import { decodeDeliveryEntry } from '../mimi/wire.ts'
-import type { MimiCredential, MimiDeliveryEntry } from '../mimi/protocol-types.ts'
-import { deliveriesWatchSigningBytes } from '../mimi/authorizer.ts'
+import { decodeDeliveryEntry } from '../shared/mimi/wire.ts'
+import type { MimiCredential, MimiDeliveryEntry } from '../shared/mimi/protocol-types.ts'
+import { deliveriesWatchSigningBytes } from '../shared/mimi/authorizer.ts'
 import type { MimiClientMode, MimiClientTransport } from './mimi-client-transport.ts'
 
 const RECONNECT_DELAY_MS = 2000

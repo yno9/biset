@@ -3,7 +3,7 @@
  * ciphertext for one delivery ID. */
 import { bytesToBase64url, equalBytes, sha256Bytes } from '../shared/protocol/canonical.ts'
 import type { DeliverySeq, IdentityId, VaultEventId } from '../shared/protocol/ids.ts'
-import type { DeliveriesPullRequest, MimiDeliveryEntry, VaultCheckpointManifest } from '../mimi/protocol-types.ts'
+import type { DeliveriesPullRequest, MimiDeliveryEntry, VaultCheckpointManifest } from '../shared/mimi/protocol-types.ts'
 import { decodeMimiVaultChunk, encodeMimiVaultChunk, joinMimiVaultChunks, splitMimiVaultPayload, type MimiVaultChunk } from './mimi-vault-chunks.ts'
 import { VaultCheckpointEpochUnavailableError } from './vault-checkpoint.ts'
 import type { VaultDeliveryOutboxReader } from './store.ts'

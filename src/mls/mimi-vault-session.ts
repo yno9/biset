@@ -8,8 +8,8 @@ import { bytesToBase64url, equalBytes, sha256Bytes } from '../shared/protocol/ca
 import { epochOf, encryptApplication, processIncoming } from './group.ts'
 import type { ClientState } from '../vendor/mls/index.ts'
 import type { MimiClientMode, MimiClientTransport } from './mimi-client-transport.ts'
-import type { MimiCredential, MimiDeliveryEntry, VaultCheckpointManifest } from '../mimi/protocol-types.ts'
-import { submitMessageSigningBytes, submitVaultCheckpointSigningBytes } from '../mimi/authorizer.ts'
+import type { MimiCredential, MimiDeliveryEntry, VaultCheckpointManifest } from '../shared/mimi/protocol-types.ts'
+import { submitMessageSigningBytes, submitVaultCheckpointSigningBytes } from '../shared/mimi/authorizer.ts'
 import type { MimiVaultMlsReceiver, MimiVaultMlsSender } from '../vault/mimi-vault-sync.ts'
 
 export interface MimiVaultPendingApplication {

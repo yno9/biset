@@ -1,5 +1,5 @@
 /** Room-scoped pseudonym issuance for Minimal Metadata Rooms (draft §6.1). */
-import type { MimiClientUri, MimiRoomId, MimiUserUri } from '../protocol-types.ts'
+import type { MimiClientUri, MimiRoomId, MimiUserUri } from '../../../shared/mimi/protocol-types.ts'
 
 /**
  * Registry deliberately keys by `(roomId, real user/client)` and never by a

@@ -7,7 +7,7 @@
  * extension decoder can feed that normalized data here without changing the
  * authorization rules.
  */
-import type { MimiUserUri, ParticipantListData, UserRolePair } from './protocol-types.ts'
+import type { MimiUserUri, ParticipantListData, UserRolePair } from '../../shared/mimi/protocol-types.ts'
 
 type MimiRoleCapability =
   | 'canAddParticipant'
