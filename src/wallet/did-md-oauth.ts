@@ -44,7 +44,51 @@ const REQUESTED_SCOPES = ['biset:login', 'biset:device', 'biset:routing', 'biset
 const BISET_DEVICE_AUTHORIZATION_DETAIL = 'urn:biset:device-enrollment:v1'
 const encoder = new TextEncoder()
 
-let fileWalletPopup: { popup: Window; timer: number; reject: (reason?: unknown) => void } | undefined
+type FileWalletPopup = {
+  popup: Window
+  timer: number
+  reject: (reason?: unknown) => void
+  client: DidMdRegistration
+  pending: DidMdPendingAuthorization
+  polling: boolean
+}
+
+let fileWalletPopup: FileWalletPopup | undefined
+
+function finishFileWalletPopup(active: FileWalletPopup, value: Record<string, unknown>) {
+  if (value.state !== active.pending.state || value.iss !== active.client.issuer) return
+  window.clearInterval(active.timer)
+  if (fileWalletPopup === active) fileWalletPopup = undefined
+  active.popup.close()
+  const callback = new URL(redirectUri())
+  for (const name of ['code', 'state', 'iss', 'error', 'error_description']) {
+    if (typeof value[name] === 'string') callback.searchParams.set(name, value[name] as string)
+  }
+  // The local document, rather than an HTTPS page, performs this file://
+  // navigation. Chromium therefore does not reject an HTTPS-to-file hop.
+  location.assign(callback.toString())
+}
+
+async function pollFileWalletCallback(active: FileWalletPopup) {
+  if (active.polling || fileWalletPopup !== active) return
+  active.polling = true
+  try {
+    const endpoint = new URL('/v1/oauth/file-callback', active.client.issuer)
+    endpoint.searchParams.set('client_id', active.pending.clientId)
+    endpoint.searchParams.set('state', active.pending.state)
+    const response = await fetch(endpoint, { cache: 'no-store' })
+    if (response.status === 204) return
+    if (!response.ok) throw new Error(`did.md file callback relay failed (${response.status})`)
+    const value = asObject(await response.json(), 'did.md file callback relay')
+    finishFileWalletPopup(active, value)
+  } catch (error) {
+    // The relay is a Safari fallback; transient network errors must not turn
+    // an already-open Wallet approval into a failed authorization.
+    console.warn('did.md Wallet file callback relay polling failed', error)
+  } finally {
+    active.polling = false
+  }
+}
 
 if (typeof window !== 'undefined') {
   window.addEventListener('message', event => {
@@ -53,15 +97,7 @@ if (typeof window !== 'undefined') {
     if (!active || event.origin !== WALLET_ORIGIN || event.source !== active.popup
       || value?.type !== 'did.md/oauth-file-callback' || value.protocol !== 1
       || typeof value.state !== 'string' || typeof value.iss !== 'string') return
-    window.clearInterval(active.timer)
-    fileWalletPopup = undefined
-    const callback = new URL(redirectUri())
-    for (const name of ['code', 'state', 'iss', 'error', 'error_description']) {
-      if (typeof value[name] === 'string') callback.searchParams.set(name, value[name])
-    }
-    // The local document, rather than an HTTPS page, performs this file://
-    // navigation. Chromium therefore does not reject an HTTPS-to-file hop.
-    location.assign(callback.toString())
+    finishFileWalletPopup(active, value)
   })
 }
 
@@ -405,12 +441,16 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
     if (!popup) throw new Error('Allow popups to continue with did.md Wallet from a packaged Biset file')
     return await new Promise<never>((_resolve, reject) => {
       const timer = window.setInterval(() => {
+        const active = fileWalletPopup
+        if (active?.popup === popup) void pollFileWalletCallback(active)
         if (!popup.closed) return
         window.clearInterval(timer)
         if (fileWalletPopup?.popup === popup) fileWalletPopup = undefined
         reject(new Error('did.md Wallet popup was closed before authorization completed'))
       }, 500)
-      fileWalletPopup = { popup, timer, reject }
+      const active: FileWalletPopup = { popup, timer, reject, client, pending, polling: false }
+      fileWalletPopup = active
+      void pollFileWalletCallback(active)
     })
   }
   location.assign(request.toString())
