@@ -270,4 +270,11 @@ describe('mediator delivery handler (main.ts)', () => {
     expect(projectorSource).toContain('if (!isProjectableDidCommIngress(msg)) throw')
     expect(mainSource).toContain('isProjectableDidCommIngress(')
   })
+
+  test('Wallet handles group messages before the strict unsupported-type guard', () => {
+    const groupBranch = mainSource.indexOf('dropped.type === GROUP_INVITE || dropped.type === GROUP_MESSAGE')
+    const guard = mainSource.indexOf('if (!isProjectableDidCommIngress(dropped))')
+    expect(groupBranch).toBeGreaterThan(-1)
+    expect(guard).toBeGreaterThan(groupBranch)
+  })
 })

@@ -25,10 +25,12 @@ import { configureAccountPage, showAccountPage, updateVaultCardStatus, type Vaul
 import { configureComposePage } from './ui/compose-page.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { VaultBackedLocalJmapMutationSink } from './local-jmap/vault-mutation-sink.ts'
-import { DidCommIngressProjector } from './didcomm/ingress-projector.ts'
+import { DidCommIngressProjector, didCommMessageDedupeId, isProjectableDidCommIngress, resolveDidCommSenderDid } from './didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from './didcomm/webvh-resolve.ts'
 import { didCommThreadId } from './didcomm/basicmessage.ts'
-import { isProjectableDidCommIngress } from './didcomm/ingress-projector.ts'
+import { sendGroupInvite } from './didcomm/send-message.ts'
+import { buildDidCommGroupMessageVaultRecord, GROUP_INVITE, GROUP_MESSAGE, groupInviteBodyOf, groupMessageBodyOf, didcommGroupAddress, parseDidCommGroupAddress, randomDidCommGroupId } from './didcomm/group-chat.ts'
+import { IndexedDbDidCommGroupChatStore } from './didcomm/group-chat-store.ts'
 import { registerWithMediator, type MediatorPollHandle } from './didcomm/mediator-sync.ts'
 import { watchMediator } from './didcomm/mediator-watch.ts'
 import type { DidCommSender } from './didcomm/mediator-transport.ts'
@@ -327,6 +329,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
       signer: boundary.signer,
       committer: vaultStore,
     })
+    const walletGroupChatStore = new IndexedDbDidCommGroupChatStore()
     // The Wallet branch returns before the ordinary local-identity boot
     // path, which normally loads this projection.  Restore the existing
     // local inbox before rendering so a page reload never looks like it
@@ -556,6 +559,43 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
             error instanceof Error ? error.message : error,
           ),
         })
+        const handleWalletGroupMessage = async (message: DeliveredMessage): Promise<void> => {
+          const plaintext = message.plaintext as DidCommPlaintext
+          if (plaintext.type === GROUP_INVITE) {
+            const body = groupInviteBodyOf(plaintext)
+            if (!body) throw new TypeError('DIDComm group invite body is invalid')
+            await walletGroupChatStore.merge(body.groupId, { members: body.members, ...(body.name ? { name: body.name } : {}), updatedAt: new Date().toISOString() })
+            for (const member of body.members) {
+              if (member !== device.did) void walletRelationshipManager!.ensureContact(member).catch(error => console.warn('[did.md Wallet group mesh]', error))
+            }
+            return
+          }
+          const body = groupMessageBodyOf(plaintext)
+          if (!body) throw new TypeError('DIDComm group message body is invalid')
+          const senderDid = await resolveDidCommSenderDid(message.senderKid, kid => walletContactKeyReader.forCounterpartyKid(kid).then(contact => contact?.counterpartyDid ?? null))
+          if (!senderDid) throw new TypeError('DIDComm group sender is not associated with a contact')
+          const roster = await walletGroupChatStore.load(body.groupId)
+          if (!roster) {
+            console.warn(`[did.md Wallet group] dropping message for unknown group ${body.groupId}`)
+            return
+          }
+          const receivedAt = new Date().toISOString()
+          const record = await buildDidCommGroupMessageVaultRecord({
+            content: body.content,
+            emailId: didCommMessageDedupeId(message.senderKid, plaintext.id),
+            groupId: body.groupId,
+            senderDid,
+            otherMembers: roster.members.filter(member => member !== senderDid),
+            receivedAt,
+            sentAt: body.sentAt ?? (plaintext.created_time ? new Date(plaintext.created_time * 1000).toISOString() : receivedAt),
+            ...(body.subject ? { subject: body.subject } : {}),
+          }, {
+            identityId: device.did, actorDeviceId: device.credential.deviceKid,
+            nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(),
+            activeSegment: () => boundary.activeSegment(), currentSnapshot: () => readModel.snapshot(), signer: boundary.signer,
+          })
+          await vaultStore.commitLocalMutation({ identityId: device.did, ...record })
+        }
         handleWalletDidCommMessage = async (message, recipientKid, mediatorUrl) => {
             // A Wallet account carries no group-chat or mail-bridge handling
             // (both live in the local-identity boot path's own onMessage). Its
@@ -571,6 +611,12 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
             // follows this return is the point: it is what keeps the queue
             // moving for every message behind this one.
             const dropped = message.plaintext as DidCommPlaintext
+            if (dropped.type === GROUP_INVITE || dropped.type === GROUP_MESSAGE) {
+              await handleWalletGroupMessage(message)
+              await refreshInbox(readModel)
+              void synchronizeWalletVault()
+              return
+            }
             if (!isProjectableDidCommIngress(dropped)) {
               console.warn(`[did.md Wallet DIDComm] dropping unsupported message type ${dropped.type} from ${message.senderKid}`)
               return
@@ -614,11 +660,55 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
     } catch (error) {
       console.warn('[did.md Wallet DIDComm]', error)
     }
+    const queueWalletGroupMessage = async (groupId: string, members: string[], input: ReplySendInput): Promise<void> => {
+      const recipients = members.filter(member => member !== device.did)
+      if (recipients.length === 0) throw new Error('A DIDComm group needs another member')
+      const now = new Date().toISOString()
+      const emailId = crypto.randomUUID()
+      const messageId = crypto.randomUUID()
+      const snapshot = await readModel.snapshot()
+      await mutationSink.commitMailMessage({
+        email: {
+          id: emailId, threadId: didcommGroupAddress(groupId), mailboxIds: { outbox: true }, keywords: { '$seen': true },
+          receivedAt: now, sentAt: now, from: [{ email: device.did }], to: recipients.map(email => ({ email })),
+          ...(input.subject ? { subject: input.subject } : {}),
+        },
+        rawRfc5322: new TextEncoder().encode(input.body),
+        didComm: recipients.map(toDid => ({ messageId, toDid })),
+      }, snapshot)
+      await refreshInbox(readModel)
+      await walletDidCommOutbox!.flush()
+      await refreshInbox(readModel)
+      void synchronizeWalletVault()
+    }
     const sendWalletMessage = async (input: ReplySendInput): Promise<void> => {
       if (!activeDidCommDevice || !walletRelationshipManager || !walletDidCommOutbox) throw new Error('DIDComm is still connecting for this Wallet session')
-      if (input.toAddrs.length !== 1 || !input.toAddrs[0]?.startsWith('did:')) {
-        throw new Error('A did.md Wallet session can currently compose to one DID recipient')
+      const snapshotBeforeSend = await readModel.snapshot()
+      const replyThread = input.inReplyTo ? snapshotBeforeSend.emails.find(email => email.id === input.inReplyTo)?.threadId : undefined
+      if (replyThread?.startsWith('didcomm-group:')) {
+        const groupId = parseDidCommGroupAddress(replyThread)
+        const roster = await walletGroupChatStore.load(groupId)
+        if (!roster) throw new Error('This DIDComm group roster is unavailable on this device')
+        await queueWalletGroupMessage(groupId, roster.members, input)
+        return
       }
+      if (input.toAddrs.length >= 2 && input.toAddrs.every(address => address.startsWith('did:'))) {
+        const groupId = randomDidCommGroupId()
+        const members = [device.did, ...input.toAddrs]
+        await walletGroupChatStore.save({ groupId, members, ...(input.subject ? { name: input.subject } : {}), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
+        for (const toDid of input.toAddrs) {
+          try {
+            const contact = await walletRelationshipManager.ensureContact(toDid)
+            const invited = await sendGroupInvite(contact, { groupId, members, ...(input.subject ? { name: input.subject } : {}) })
+            if (!invited.ok) throw new Error(invited.error)
+          } catch (error) {
+            console.warn(`[did.md Wallet group invite] ${toDid}:`, error)
+          }
+        }
+        await queueWalletGroupMessage(groupId, members, input)
+        return
+      }
+      if (input.toAddrs.length !== 1 || !input.toAddrs[0]?.startsWith('did:')) throw new Error('A did.md Wallet session composes to DID recipients only')
       const toDid = input.toAddrs[0]
       const now = new Date().toISOString()
       const emailId = crypto.randomUUID()
@@ -652,6 +742,10 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
       selfDid: activeDidCommDevice ? device.did : undefined,
       sendReply: sendWalletMessage,
       onError: message => { showSysMsg(message); console.warn('[did.md Wallet send]', message) },
+      didcommGroup: {
+        membersOf: async groupId => (await walletGroupChatStore.load(groupId))?.members ?? [],
+        groupName: async groupId => (await walletGroupChatStore.load(groupId))?.name,
+      },
     })
     configureComposePage({
       selfAddress: device.did,

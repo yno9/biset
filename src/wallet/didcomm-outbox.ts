@@ -1,6 +1,7 @@
 import type { LocalJmapReadModel } from '../local-jmap/gateway.ts'
 import type { VaultBackedLocalJmapMutationSink } from '../local-jmap/vault-mutation-sink.ts'
-import { sendRelationshipMessage } from '../didcomm/send-message.ts'
+import { sendGroupChatMessage, sendRelationshipMessage } from '../didcomm/send-message.ts'
+import { parseDidCommGroupAddress } from '../didcomm/group-chat.ts'
 import type { ContactKeyV1 } from '../vault/contact-key.ts'
 import type { DidCommTransportOutboxRecord } from '../vault/store.ts'
 
@@ -16,7 +17,7 @@ export interface WalletDidCommOutboxOptions {
   readModel: Pick<LocalJmapReadModel, 'snapshot' | 'download'>
   mutationSink: Pick<VaultBackedLocalJmapMutationSink, 'commitIntents'>
   ensureContact(toDid: string): Promise<ContactKeyV1>
-  send?: (contact: ContactKeyV1, content: string, subject: string | undefined, message: { id: string; sentAt: string }) => Promise<{ ok: boolean; error?: string }>
+  send?: (contact: ContactKeyV1, content: string, subject: string | undefined, message: { id: string; sentAt: string }, threadId: string) => Promise<{ ok: boolean; error?: string }>
   onDelivered?: () => void
   onError(error: unknown, item: DidCommTransportOutboxRecord): void
 }
@@ -32,7 +33,9 @@ export interface WalletDidCommOutbox {
  * original DIDComm message id on the next boot or retry tick.
  */
 export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): WalletDidCommOutbox {
-  const send = options.send ?? ((contact, content, subject, message) => sendRelationshipMessage(contact, content, subject, undefined, message))
+  const send = options.send ?? ((contact, content, subject, message, threadId) => threadId.startsWith('didcomm-group:')
+    ? sendGroupChatMessage(contact, { groupId: parseDidCommGroupAddress(threadId), content, ...(subject ? { subject } : {}) }, undefined, message)
+    : sendRelationshipMessage(contact, content, subject, undefined, message))
   let flushing = false
 
   return {
@@ -52,7 +55,7 @@ export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): 
           try {
             const contact = await options.ensureContact(item.toDid)
             const content = new TextDecoder().decode(await options.readModel.download(email.blobId))
-            const sent = await send(contact, content, email.subject, { id: item.messageId, sentAt: email.sentAt ?? item.createdAt })
+            const sent = await send(contact, content, email.subject, { id: item.messageId, sentAt: email.sentAt ?? item.createdAt }, email.threadId)
             if (!sent.ok) throw new Error(sent.error ?? 'DIDComm send failed')
 
             const latest = await options.readModel.snapshot()
