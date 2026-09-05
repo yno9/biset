@@ -21,17 +21,17 @@ import { equalBytes, sha256Bytes } from '../src/shared/protocol/canonical.ts'
 import type { IngressEnvelopeV1 } from '../src/shared/protocol/ingress.ts'
 import { packAuthcrypt, packAnoncrypt } from '../src/shared/didcomm/crypto.ts'
 import { buildPlaintext } from '../src/shared/didcomm/message.ts'
-import { PING } from '../src/shared/didcomm/trust-ping.ts'
-import { BASIC_MESSAGE } from '../src/shared/didcomm/basicmessage.ts'
-import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT } from '../src/shared/didcomm/relationship.ts'
-import { GROUP_INVITE, GROUP_MESSAGE } from '../src/shared/didcomm/group-chat.ts'
+import { PING } from '../src/client/didcomm/trust-ping.ts'
+import { BASIC_MESSAGE } from '../src/client/didcomm/basicmessage.ts'
+import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT } from '../src/client/didcomm/relationship.ts'
+import { GROUP_INVITE, GROUP_MESSAGE } from '../src/client/didcomm/group-chat.ts'
 import { MAIL_BRIDGE_INBOUND } from '../src/shared/didcomm/mail-bridge.ts'
-import { DidCommIngressProjector, isProjectableDidCommIngress } from '../src/shared/didcomm/ingress-projector.ts'
+import { DidCommIngressProjector, isProjectableDidCommIngress } from '../src/client/didcomm/ingress-projector.ts'
 import { generatePeerIdentity } from '../src/shared/didcomm/peer.ts'
 import { createMediator } from '../src/server/didcomm-mediator/server.ts'
-import { registerWithMediator } from '../src/shared/didcomm/mediator-sync.ts'
+import { registerWithMediator } from '../src/client/didcomm/mediator-sync.ts'
 import { pickupStatus, type DeliveredMessage } from '../src/shared/didcomm/mediator-pickup.ts'
-import { watchMediator } from '../src/shared/didcomm/mediator-watch.ts'
+import { watchMediator } from '../src/client/didcomm/mediator-watch.ts'
 import type { DidCommSender } from '../src/shared/didcomm/mediator-transport.ts'
 import { createSegmentKeyWrap } from '../src/client/store/vault/crypto.ts'
 import { createSegmentKey } from '../src/client/store/vault/objects.ts'
@@ -262,7 +262,7 @@ describe('did.md Wallet mediator delivery handler', () => {
 // has no importable seam. The behaviour it produces is already covered
 // above against a real mediator.
 const mainSource = await Bun.file(new URL('../src/client/app/main.ts', import.meta.url)).text()
-const projectorSource = await Bun.file(new URL('../src/shared/didcomm/ingress-projector.ts', import.meta.url)).text()
+const projectorSource = await Bun.file(new URL('../src/client/didcomm/ingress-projector.ts', import.meta.url)).text()
 
 describe('mediator delivery handler (main.ts)', () => {
   test('the account path shares one allow-list with the projector', () => {

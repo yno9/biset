@@ -1,7 +1,7 @@
 import type { LocalJmapReadModel } from '../../store/projection/gateway.ts'
 import type { VaultBackedLocalJmapMutationSink } from '../../store/projection/vault-mutation-sink.ts'
-import { sendGroupChatMessage, sendRelationshipMessage } from '../../../shared/didcomm/send-message.ts'
-import { parseDidCommGroupAddress } from '../../../shared/didcomm/group-chat.ts'
+import { sendGroupChatMessage, sendRelationshipMessage } from '../../didcomm/send-message.ts'
+import { parseDidCommGroupAddress } from '../../didcomm/group-chat.ts'
 import type { ContactKeyV1 } from '../../store/vault/contact-key.ts'
 import type { DidCommTransportOutboxRecord } from '../../store/vault/store.ts'
 

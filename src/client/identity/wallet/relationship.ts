@@ -1,19 +1,19 @@
 import type { DidCommPlaintext } from '../../../shared/didcomm/message.ts'
 import type { DeliveredMessage } from '../../../shared/didcomm/mediator-pickup.ts'
-import { registerWithMediator } from '../../../shared/didcomm/mediator-sync.ts'
-import { sameMediatorUrl } from '../../../shared/didcomm/mediator-watch.ts'
+import { registerWithMediator } from '../../didcomm/mediator-sync.ts'
+import { sameMediatorUrl } from '../../didcomm/mediator-watch.ts'
 import { generatePeerIdentity } from '../../../shared/didcomm/peer.ts'
 import {
   RELATIONSHIP_ACCEPT,
   RELATIONSHIP_INIT,
   relationshipBodyOf,
   relationshipMediatorService,
-} from '../../../shared/didcomm/relationship.ts'
+} from '../../didcomm/relationship.ts'
 import {
   initiateRelationship,
   sendRelationshipAccept,
   type RelationshipInitiationResult,
-} from '../../../shared/didcomm/send-message.ts'
+} from '../../didcomm/send-message.ts'
 import { didOfKid } from '../../../shared/protocol/ids.ts'
 import type { ContactKeyV1 } from '../../store/vault/contact-key.ts'
 

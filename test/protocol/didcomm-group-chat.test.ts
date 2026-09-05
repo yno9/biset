@@ -10,7 +10,7 @@ import {
   isGroupMessage,
   parseDidCommGroupAddress,
   randomDidCommGroupId,
-} from '../../src/shared/didcomm/group-chat.ts'
+} from '../../src/client/didcomm/group-chat.ts'
 
 describe('DIDComm group invite message', () => {
   test('round-trips groupId/members/name through buildPlaintext', () => {

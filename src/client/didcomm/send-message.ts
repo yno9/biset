@@ -10,12 +10,12 @@
 // commitMailMessage (no DIDComm-specific vault-commit code needed: a chat
 // message's local echo is exactly the same message.add shape mail's own
 // sendReply already commits).
-import { packAuthcrypt, type DidCommJWE } from './crypto.ts'
-import { buildPlaintext } from './message.ts'
+import { packAuthcrypt, type DidCommJWE } from '../../shared/didcomm/crypto.ts'
+import { buildPlaintext } from '../../shared/didcomm/message.ts'
 import { BASIC_MESSAGE } from './basicmessage.ts'
-import { wrapForward } from './forward-wrap.ts'
-import { decodePeerDid2, generatePeerIdentity, publicKeyOf, type PeerIdentity } from './peer.ts'
-import { defaultFetch } from '../../client/app/net-fetch.ts'
+import { wrapForward } from '../../shared/didcomm/forward-wrap.ts'
+import { decodePeerDid2, generatePeerIdentity, publicKeyOf, type PeerIdentity } from '../../shared/didcomm/peer.ts'
+import { defaultFetch } from '../app/net-fetch.ts'
 import { registerWithMediator } from './mediator-sync.ts'
 import {
   RELATIONSHIP_INIT,
@@ -23,8 +23,8 @@ import {
   relationshipMediatorService,
 } from './relationship.ts'
 import { GROUP_INVITE, GROUP_MESSAGE, type GroupInviteBody, type GroupMessageBody } from './group-chat.ts'
-import type { ContactKeyV1 } from '../../client/store/vault/contact-key.ts'
-import type { DidCommSender } from './mediator-transport.ts'
+import type { ContactKeyV1 } from '../store/vault/contact-key.ts'
+import type { DidCommSender } from '../../shared/didcomm/mediator-transport.ts'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { frontDoorMediatorRoute, sendFrontDoorMessage, type DidCommSendResult, type SendDidCommMessageOptions } from './front-door-send.ts'
 

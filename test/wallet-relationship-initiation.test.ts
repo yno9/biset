@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { generatePeerIdentity } from '../src/shared/didcomm/peer.ts'
-import { relationshipBodyToWire } from '../src/shared/didcomm/relationship.ts'
+import { relationshipBodyToWire } from '../src/client/didcomm/relationship.ts'
 import { createWalletRelationshipManager } from '../src/client/identity/wallet/relationship.ts'
 import type { ContactKeyV1 } from '../src/client/store/vault/contact-key.ts'
 

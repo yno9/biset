@@ -14,15 +14,15 @@
 // group-chat-store.ts's own header), no name changes, no leave, no
 // edit/delete/reaction -- matching 1:1 DIDComm chat's own current scope
 // (ingress-projector.ts's header).
-import { bytesToHex } from '../protocol/canonical.ts'
-import type { DeviceId, IdentityId, VaultEventId } from '../protocol/ids.ts'
-import type { LocalJmapEmail, LocalJmapProjectionV1, LocalJmapSnapshot } from '../../client/store/projection/gateway.ts'
-import { assertActiveVaultSegment, type ActiveVaultSegment } from '../../client/store/vault/active-segment.ts'
-import { buildVaultCommit } from '../../client/store/vault/commit.ts'
-import { decryptVaultObject } from '../../client/store/vault/objects.ts'
-import type { VaultEventSigner } from '../../client/store/vault/events.ts'
-import type { VaultEventRecord, VaultObjectRecord } from '../../client/store/vault/store.ts'
-import { buildMailMessageAdd } from '../../client/store/vault/mail-message.ts'
+import { bytesToHex } from '../../shared/protocol/canonical.ts'
+import type { DeviceId, IdentityId, VaultEventId } from '../../shared/protocol/ids.ts'
+import type { LocalJmapEmail, LocalJmapProjectionV1, LocalJmapSnapshot } from '../store/projection/gateway.ts'
+import { assertActiveVaultSegment, type ActiveVaultSegment } from '../store/vault/active-segment.ts'
+import { buildVaultCommit } from '../store/vault/commit.ts'
+import { decryptVaultObject } from '../store/vault/objects.ts'
+import type { VaultEventSigner } from '../store/vault/events.ts'
+import type { VaultEventRecord, VaultObjectRecord } from '../store/vault/store.ts'
+import { buildMailMessageAdd } from '../store/vault/mail-message.ts'
 
 export const GROUP_INVITE = 'https://biset.md/didcomm-group/1.0/invite'
 export const GROUP_MESSAGE = 'https://biset.md/didcomm-group/1.0/message'
