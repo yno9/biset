@@ -1,10 +1,10 @@
 // Production entrypoint for the mediator+mail-plugin deploy ("B" in the
-// A/B split -- src/server/didcomm-mediator/index.ts alone is "A", the same DIDComm core
+// A/B split -- src/server/mediator/index.ts alone is "A", the same DIDComm core
 // with no SMTP surface at all). Runs the identical blind-mediator HTTP
 // surface (deployment.ts) plus an SMTP listener that bridges inbound mail
 // straight into a Forward-ready DIDComm envelope (bridge.ts) -- no spool,
 // relationship credential, or VC layer (2026-08-30 redesign).
-import { createMediatorDeployment } from '../didcomm-mediator/deployment.ts'
+import { createMediatorDeployment } from '../deployment.ts'
 import { createMailPluginListener } from './listener.ts'
 import { createMailSubmissionHttpHandler } from './mail-submission-http.ts'
 

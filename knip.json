@@ -3,8 +3,8 @@
   "entry": [
     "src/client/app/main.ts",
     "src/client/app/sw.ts",
-    "src/server/didcomm-mediator/index.ts",
-    "src/server/mail-plugin/index.ts",
+    "src/server/mediator/index.ts",
+    "src/server/mediator/mail-plugin/index.ts",
     "src/server/mimi/index.ts",
     "test/**/*.test.ts",
     "scripts/*.mjs"

@@ -19,8 +19,8 @@ import { initiateRelationship, sendRelationshipAccept, sendGroupInvite, sendGrou
 import { groupInviteBodyOf, groupMessageBodyOf, isGroupInvite, isGroupMessage } from '../src/client/didcomm/group-chat.ts'
 import type { DidCommPlaintext } from '../src/protocol/didcomm/message.ts'
 import { encodeX25519Multikey } from '../src/protocol/didcomm/multikey.ts'
-import { createMediator } from '../src/server/didcomm-mediator/server.ts'
-import { ConnectionStore } from '../src/server/didcomm-mediator/connections.ts'
+import { createMediator } from '../src/server/mediator/server.ts'
+import { ConnectionStore } from '../src/server/mediator/connections.ts'
 import type { ContactKeyV1 } from '../src/client/store/vault/contact-key.ts'
 import { buildGenesisLog } from './protocol/support/webvh-log-fixture.ts'
 

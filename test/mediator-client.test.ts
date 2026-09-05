@@ -8,7 +8,7 @@
 // network.
 import { describe, expect, test } from 'bun:test'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
-import { createMediator } from '../src/server/didcomm-mediator/server.ts'
+import { createMediator } from '../src/server/mediator/server.ts'
 import { fetchMediatorInfo, requestMediation, updateKeylist, queryKeylist } from '../src/protocol/didcomm/mediator-coordinate.ts'
 import { pickupStatus, pickupDeliver, acknowledgeMessages } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { registerWithMediator, startMediatorPolling } from '../src/client/didcomm/mediator-sync.ts'

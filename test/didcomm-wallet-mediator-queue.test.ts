@@ -28,7 +28,7 @@ import { GROUP_INVITE, GROUP_MESSAGE } from '../src/client/didcomm/group-chat.ts
 import { MAIL_BRIDGE_INBOUND } from '../src/server/mediator/mail-plugin/mail-bridge.ts'
 import { DidCommIngressProjector, isProjectableDidCommIngress } from '../src/client/didcomm/ingress-projector.ts'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
-import { createMediator } from '../src/server/didcomm-mediator/server.ts'
+import { createMediator } from '../src/server/mediator/server.ts'
 import { registerWithMediator } from '../src/client/didcomm/mediator-sync.ts'
 import { pickupStatus, type DeliveredMessage } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { watchMediator } from '../src/client/didcomm/mediator-watch.ts'

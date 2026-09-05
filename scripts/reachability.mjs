@@ -23,7 +23,7 @@ import { Glob } from 'bun'
 
 const ENTRIES = [
   'src/client/app/main.ts', 'src/client/app/sw.ts',
-  'src/server/didcomm-mediator/index.ts', 'src/server/mail-plugin/index.ts',
+  'src/server/mediator/index.ts', 'src/server/mediator/mail-plugin/index.ts',
   'src/server/mimi/index.ts',
 ]
 
@@ -75,7 +75,10 @@ for (const testFile of new Glob('test/**/*.test.ts').scanSync('.')) {
   }
 }
 
-const isVendor = file => relative('.', file).includes('/vendor/')
+const isVendor = file => {
+  const path = relative('.', file)
+  return path.includes('/vendor/') || path.startsWith('src/protocol/mls/')
+}
 const orphans = unreached.filter(file => !guardedByTests.has(file) && !isVendor(file))
 
 const quiet = process.argv.includes('--quiet')

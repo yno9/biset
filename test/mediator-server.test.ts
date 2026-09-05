@@ -1,4 +1,4 @@
-// End-to-end coverage for the standalone blind mediator (src/server/didcomm-mediator/) --
+// End-to-end coverage for the standalone blind mediator (src/server/mediator/) --
 // Coordinate Mediation 2.0 (mediate-request/keylist-update), Routing 2.0
 // Forward, and Pickup 3.0 (status/delivery-request/messages-received), all
 // driven over the same createMediator({ mediator, ... }).handle(req, url)
@@ -8,7 +8,7 @@
 // for ANY DIDComm agent, not just biset's own.
 import { describe, expect, test } from 'bun:test'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
-import { createMediator } from '../src/server/didcomm-mediator/server.ts'
+import { createMediator } from '../src/server/mediator/server.ts'
 import {
   packAuthcrypt, unpackAuthcrypt, packAnoncrypt, b64urlToBytes, parseJwe,
 } from '../src/protocol/didcomm/crypto.ts'

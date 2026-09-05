@@ -17,6 +17,6 @@
     "lib": ["ESNext"],
     "types": ["bun"]
   },
-  "include": ["src/server/mail-plugin/**/*"],
+  "include": ["src/server/mediator/mail-plugin/**/*"],
   "typeRoots": ["node_modules/@types"]
 }

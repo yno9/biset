@@ -11,7 +11,7 @@
 import { createSmtpSocketServer } from './smtp-socket-server.ts'
 import type { AcceptIngressInput } from './mail-smtp-protocol.ts'
 import { resolveMailRecipientRoute, packInboundMailForward, type MailRecipientRoute } from './bridge.ts'
-import { defaultFetch } from '../../protocol/net-fetch.ts'
+import { defaultFetch } from '../../../protocol/net-fetch.ts'
 
 interface MailPluginListenerTlsFileConfig {
   certPath: string

@@ -7,7 +7,7 @@ import { x25519 } from '@noble/curves/ed25519.js'
 import { generatePeerIdentity } from '../../../src/protocol/didcomm/peer.ts'
 import { encodeX25519Multikey } from '../../../src/protocol/didcomm/multikey.ts'
 import { unpackAuthcrypt, unpackAnoncrypt, parseJwe } from '../../../src/protocol/didcomm/crypto.ts'
-import { buildInboundMailForward } from '../../../src/server/mail-plugin/bridge.ts'
+import { buildInboundMailForward } from '../../../src/server/mediator/mail-plugin/bridge.ts'
 import { MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyOf } from '../../../src/server/mediator/mail-plugin/mail-bridge.ts'
 import { FORWARD } from '../../../src/protocol/didcomm/mediator-protocol.ts'
 
