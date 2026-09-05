@@ -17,7 +17,7 @@ import { buildPlaintext } from '../../protocol/didcomm/message.ts'
 import { wrapForwardChain } from '../../protocol/didcomm/forward-wrap.ts'
 import { decodePeerDid2, publicKeyOf } from '../../protocol/didcomm/peer.ts'
 import type { DidCommServiceEndpoint } from '../../protocol/didcomm/webvh-routing.ts'
-import { defaultFetch } from '../app/net-fetch.ts'
+import { defaultFetch } from '../../protocol/net-fetch.ts'
 
 export type DidCommSendResult = { ok: true } | { ok: false; error: string }
 

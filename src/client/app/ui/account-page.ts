@@ -27,8 +27,8 @@
 //     result (found live). Wired the same way #lp-compose-fab already is.
 import { render } from './thread.ts'
 import { avatarStyle } from './format.ts'
-import { parseWebvhDid } from '../../identity/webvh/identifier.ts'
-import { resolve } from '../../identity/webvh/resolver.ts'
+import { parseWebvhDid } from '../../../protocol/webvh/identifier.ts'
+import { resolve } from '../../../protocol/webvh/resolver.ts'
 import { shortWebvhDid } from './did-display.ts'
 import { showComposePage } from './compose-page.ts'
 import { mountNewUserPageInline, unmountNewUserPageInline, setupNewUserPage } from './account-create.ts'

@@ -18,9 +18,9 @@
 // address into `alsoKnownAs` (nothing else ever asserted the DID<->mail
 // link anywhere), and account-page.ts's "Edit identity" writes a
 // self-asserted `name`.
-import { parseWebvhDid } from '../../client/identity/webvh/identifier.ts'
-import { buildProof, type DataIntegrityProof } from '../../client/identity/webvh/proof.ts'
-import type { WebvhService, WebvhVerificationMethod } from '../../client/identity/webvh/document.ts'
+import { parseWebvhDid } from '../webvh/identifier.ts'
+import { buildProof, type DataIntegrityProof } from '../webvh/proof.ts'
+import type { WebvhService, WebvhVerificationMethod } from '../webvh/document.ts'
 import { encodeX25519Multikey, encodeMlkem768Multikey } from './multikey.ts'
 import { fragmentOf, mlkemKidFor } from './devicekid.ts'
 

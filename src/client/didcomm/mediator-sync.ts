@@ -15,7 +15,7 @@ import { fetchMediatorInfo, requestMediation, updateKeylist, type MediatorInfo }
 import { pickupDeliver, acknowledgeMessages, type DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
 import type { DidCommSender } from '../../protocol/didcomm/mediator-transport.ts'
 import type { ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
-import { defaultFetch } from '../app/net-fetch.ts'
+import { defaultFetch } from '../../protocol/net-fetch.ts'
 
 /** mediate-request + keylist-update(add), unconditionally -- both are
  * idempotent (keylist-update reports `no_change` rather than erroring when

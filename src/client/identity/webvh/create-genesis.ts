@@ -10,15 +10,15 @@
 // signed state itself is `buildMinimalWebvhState`'s id/#key-1/authentication
 // only, matching what the read-only resolver (resolver.ts) already expects
 // to find with no routing.json merge.
-import { buildWebvhDid, didToHttpsUrl } from './identifier.ts'
-import { generateScid, SCID_PLACEHOLDER } from './scid.ts'
-import { generateEntryHash, serializeLog, type LogEntry, type LogParameters } from './log.ts'
+import { buildWebvhDid, didToHttpsUrl } from '../../../protocol/webvh/identifier.ts'
+import { generateScid, SCID_PLACEHOLDER } from '../../../protocol/webvh/scid.ts'
+import { generateEntryHash, serializeLog, type LogEntry, type LogParameters } from '../../../protocol/webvh/log.ts'
 import { nowVersionTime } from './log-io.ts'
-import { buildProof } from './proof.ts'
-import { encodeMultikey } from './multikey.ts'
-import { buildMinimalWebvhState, type SignedWebvhState } from './document.ts'
+import { buildProof } from '../../../protocol/webvh/proof.ts'
+import { encodeMultikey } from '../../../protocol/webvh/multikey.ts'
+import { buildMinimalWebvhState, type SignedWebvhState } from '../../../protocol/webvh/document.ts'
 import { syncDidWebMirror } from '../web/mirror.ts'
-import { defaultFetch } from '../../app/net-fetch.ts'
+import { defaultFetch } from '../../../protocol/net-fetch.ts'
 import { didToRoutingUrl } from '../../../protocol/didcomm/webvh-routing.ts'
 
 export interface CreateGenesisOptions {

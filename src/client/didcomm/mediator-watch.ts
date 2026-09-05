@@ -23,7 +23,7 @@ import { fetchMediatorInfo, type DidCommSender, type MediatorInfo } from '../../
 import { registerWithMediator } from './mediator-sync.ts'
 import { requestWatch, mediatorStreamUrl, unpackQueuedMessage, acknowledgeMessages, type DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
 import type { ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
-import { defaultFetch } from '../app/net-fetch.ts'
+import { defaultFetch } from '../../protocol/net-fetch.ts'
 
 const RECONNECT_DELAY_MS = 2000
 

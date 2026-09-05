@@ -19,7 +19,7 @@ import { unpackAnoncrypt, parseJwe, type DidCommJWE } from '../../protocol/didco
 import { wrapForward } from '../../protocol/didcomm/forward-wrap.ts'
 import { FORWARD, STATUS, DELIVERY_REQUEST, DELIVERY } from '../../protocol/didcomm/mediator-protocol.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
-import { defaultFetch } from '../../client/app/net-fetch.ts'
+import { defaultFetch } from '../../protocol/net-fetch.ts'
 
 /** Same self-heal shape as mediator-sync.ts's registerWithMediator: safe to
  * call on every tick before we know whether the upstream already has us. */

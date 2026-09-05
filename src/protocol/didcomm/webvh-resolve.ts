@@ -6,9 +6,9 @@
 // itself so the core identity resolver stays free of DIDComm concerns.
 //
 // Ported from src.bak/did/webvh/resolver.ts's mergeRouting.
-import { resolve } from '../../client/identity/webvh/resolver.ts'
-import type { WebvhDidDocument } from '../../client/identity/webvh/document.ts'
-import { defaultFetch } from '../../client/app/net-fetch.ts'
+import { resolve } from '../webvh/resolver.ts'
+import type { WebvhDidDocument } from '../webvh/document.ts'
+import { defaultFetch } from '../net-fetch.ts'
 import { fetchRouting, type RoutingDoc } from './webvh-routing.ts'
 import { decodeX25519Multikey } from './multikey.ts'
 import { didOfKid } from '../ids.ts'

@@ -1,7 +1,7 @@
 // Shared log I/O — the GET/append-or-PUT primitives every write operation
 // (device key registration, key rotation, deactivate...) builds on.
-import { didToHttpsUrl } from './identifier.ts'
-import { parseLog, resolveParameters, serializeLog, type LogEntry, type LogParameters } from './log.ts'
+import { didToHttpsUrl } from '../../../protocol/webvh/identifier.ts'
+import { parseLog, resolveParameters, serializeLog, type LogEntry, type LogParameters } from '../../../protocol/webvh/log.ts'
 
 // Strictly increasing even across back-to-back calls within the same
 // process — two writes issued within the same second would otherwise

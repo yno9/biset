@@ -1,8 +1,8 @@
 // MLS Authentication Service: a leaf is admitted only by the current WebVH
 // Sign key and exact log generation, without publishing the leaf key itself.
-import { decodeMultikey } from '../identity/webvh/multikey.ts'
+import { decodeMultikey } from '../../protocol/webvh/multikey.ts'
 import { fetchCurrentLog } from '../identity/webvh/log-io.ts'
-import { resolveEntries } from '../identity/webvh/resolver.ts'
+import { resolveEntries } from '../../protocol/webvh/resolver.ts'
 import { mlsDeviceCredentialOf, verifyMlsDeviceCredential } from './device-credential.ts'
 import type { AuthenticationService, Credential } from '../../vendor/mls/index.ts'
 

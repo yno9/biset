@@ -16,7 +16,7 @@ import { decodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
 import { buildPlaintext } from '../../protocol/didcomm/message.ts'
 import { packForDelivery, type OutboundDelivery, type RouteEndpoint } from '../mediator/route-deliver.ts'
 import { MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyToWire, type MailBridgeInboundBody } from '../mediator/mail-plugin/mail-bridge.ts'
-import { identityDomainForMailAddress } from '../../client/identity/webvh/identifier.ts'
+import { identityDomainForMailAddress } from '../../protocol/webvh/identifier.ts'
 
 export interface MailRecipientRoute {
   toAddress: string

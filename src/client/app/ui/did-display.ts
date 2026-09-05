@@ -9,7 +9,7 @@
 // the 46-char SCID and keeping `did:webvh:{domain}` is the whole rule, not
 // src.bak's more general prefix/hidden/suffix split (which existed to also
 // handle a foreign did:webvh's own path convention).
-import { parseWebvhDid } from '../../identity/webvh/identifier.ts'
+import { parseWebvhDid } from '../../../protocol/webvh/identifier.ts'
 
 /** Elided display form -- `did:webvh:t.biset.md` for a did:webvh, the raw
  * string unchanged for anything else (a bare email, or a DID method this

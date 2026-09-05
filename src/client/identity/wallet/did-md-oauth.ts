@@ -6,11 +6,11 @@
  * private leaf key and Vault secret remain locally AES-wrapped here.
  */
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { decodeMultikey } from '../webvh/multikey.ts'
-import { parseWebvhDid } from '../webvh/identifier.ts'
-import { verifyProof, type DataIntegrityProof } from '../webvh/proof.ts'
+import { decodeMultikey } from '../../../protocol/webvh/multikey.ts'
+import { parseWebvhDid } from '../../../protocol/webvh/identifier.ts'
+import { verifyProof, type DataIntegrityProof } from '../../../protocol/webvh/proof.ts'
 import { fetchCurrentLog } from '../webvh/log-io.ts'
-import { resolveByDomain, resolveEntries } from '../webvh/resolver.ts'
+import { resolveByDomain, resolveEntries } from '../../../protocol/webvh/resolver.ts'
 import { decodeMlsDeviceCredential, verifyMlsDeviceCredential, verifyMlsDeviceCredentialRoot, type MlsDeviceCredentialV2 } from '../../mimi/device-credential.ts'
 import { base64urlToBytes } from '../../../protocol/canonical.ts'
 import { fetchRouting, mimiVaultRoomFromRouting } from '../../../protocol/didcomm/webvh-routing.ts'

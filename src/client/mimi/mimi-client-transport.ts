@@ -1,5 +1,5 @@
 /** Browser/client transport for a MIMI provider's local client boundary. */
-import { defaultFetch } from '../app/net-fetch.ts'
+import { defaultFetch } from '../../protocol/net-fetch.ts'
 import type { DeliveriesPullRequest, DeliveriesWatchRequest, GroupInfoRequest, KeyMaterialRequest, KeyPackagePublishRequest, SubmitMessageRequest, SubmitVaultCheckpointRequest, UpdateRoomRequest, MimiDeliveryEntry } from '../../protocol/mimi/protocol-types.ts'
 import { decodeDeliveriesWire, decodeDeliveriesWatchTokenWire, decodeFrankingAgentDataWire, decodeGroupInfoResponseWire, decodeKeyMaterialResponseWire, decodeKeyPackagePublishResponseWire, decodeSubmitMessageResponseWire, decodeSubmitVaultCheckpointResponseWire, decodeUpdateRoomResponseWire, encodeDeliveriesPullRequestWire, encodeDeliveriesWatchRequestWire, encodeGroupInfoRequestWire, encodeKeyMaterialRequestWire, encodeKeyPackagePublishWire, encodeSubmitMessageRequestWire, encodeSubmitVaultCheckpointRequestWire, encodeUpdateRoomRequestWire } from '../../protocol/mimi/wire.ts'
 

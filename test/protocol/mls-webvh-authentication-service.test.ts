@@ -8,8 +8,8 @@ import { createMlsDeviceCredential } from '../../src/client/mimi/device-credenti
 import { webvhAuthenticationService } from '../../src/client/mimi/webvh-authentication-service.ts'
 import { createGenesis } from '../../src/client/identity/webvh/create-genesis.ts'
 import { migrateWebvhLocation } from '../../src/client/identity/webvh/migrate.ts'
-import { encodeMultikey } from '../../src/client/identity/webvh/multikey.ts'
-import { multikeyHashBase58 } from '../../src/client/identity/webvh/hash.ts'
+import { encodeMultikey } from '../../src/protocol/webvh/multikey.ts'
+import { multikeyHashBase58 } from '../../src/protocol/webvh/hash.ts'
 import { buildGenesisLog, fakeAnchor, withFetch } from './support/webvh-log-fixture.ts'
 
 describe('webvh Authentication Service', () => {

@@ -10,7 +10,7 @@
 // issues or restores an identity of its own, so no Root, Sign, Spare or
 // Master material is representable in this module at all.
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { defaultFetch } from '../app/net-fetch.ts'
+import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { epochOf, exportSecret, ownMlsDeviceCredential, ownSignaturePrivateKey, setMlsAuthService } from '../mimi/group.ts'
 import { type MlsDeviceCredentialV2 } from '../mimi/device-credential.ts'
 import { webvhAuthenticationService } from '../mimi/webvh-authentication-service.ts'

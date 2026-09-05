@@ -2,7 +2,7 @@
 // keylist-update/keylist-query. Ported from src.bak/did/didcomm/coordinate.ts,
 // trimmed of the Web Push extension (deferred, ARC.md's Phase 3 minimum).
 import { sendAndUnpack, type DidCommSender, type MediatorInfo } from './mediator-transport.ts'
-import { defaultFetch } from '../../client/app/net-fetch.ts'
+import { defaultFetch } from '../net-fetch.ts'
 import { MEDIATE_REQUEST, MEDIATE_GRANT, KEYLIST_UPDATE, KEYLIST_UPDATE_RESPONSE, KEYLIST_QUERY, KEYLIST } from './mediator-protocol.ts'
 
 export { fetchMediatorInfo, type MediatorInfo } from './mediator-transport.ts'

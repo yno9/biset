@@ -8,8 +8,8 @@
 // patch against — it is always a full overwrite of "whatever webvh
 // currently says."
 import { didWebToHttpsUrl, buildWebDid } from './identifier.ts'
-import type { SignedWebvhState } from '../webvh/document.ts'
-import { defaultFetch } from '../../app/net-fetch.ts'
+import type { SignedWebvhState } from '../../../protocol/webvh/document.ts'
+import { defaultFetch } from '../../../protocol/net-fetch.ts'
 
 export interface SyncDidWebMirrorOptions {
   /** The did:webvh identity's own domain segment (`y.biset.md`) — reused

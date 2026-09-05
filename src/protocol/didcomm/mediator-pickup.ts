@@ -5,7 +5,7 @@
 // (signature.ts is out of scope for this phase -- ARC.md's design doc).
 import { unpackAuthcryptAuto, parseJwe, type DidCommJWE, type ResolveSenderKey } from './crypto.ts'
 import { sendAndUnpack, type DidCommSender, type MediatorInfo } from './mediator-transport.ts'
-import { defaultFetch } from '../../client/app/net-fetch.ts'
+import { defaultFetch } from '../net-fetch.ts'
 import { STATUS_REQUEST, STATUS, DELIVERY_REQUEST, DELIVERY, MESSAGES_RECEIVED, WATCH_REQUEST, WATCH_GRANT } from './mediator-protocol.ts'
 
 export async function pickupStatus(mediator: MediatorInfo, own: DidCommSender, fetchImpl: typeof fetch = defaultFetch()): Promise<number> {

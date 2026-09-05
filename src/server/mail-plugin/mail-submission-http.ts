@@ -19,9 +19,9 @@
 import { deliverMail, type MailDeliveryResult } from './smtp-client.ts'
 import { decodeMailSubmissionRequestWire, encodeMailSubmissionResultWire } from '../mediator/mail-plugin/mail-submission-wire.ts'
 import { mailSubmissionSigningBytes } from '../../protocol/signing.ts'
-import { mailFromForIdentity } from '../../client/identity/webvh/identifier.ts'
-import { resolveCurrentUpdateKeys } from '../../client/identity/webvh/resolver.ts'
-import { decodeMultikey } from '../../client/identity/webvh/multikey.ts'
+import { mailFromForIdentity } from '../../protocol/webvh/identifier.ts'
+import { resolveCurrentUpdateKeys } from '../../protocol/webvh/resolver.ts'
+import { decodeMultikey } from '../../protocol/webvh/multikey.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import type { MailSubmissionRequestV1, MailSubmissionResultV1 } from '../../protocol/mail-submission.ts'
 

@@ -12,7 +12,7 @@ import { packAuthcrypt, unpackAuthcrypt, parseJwe, type DidCommJWE } from './cry
 import { buildPlaintext, type DidCommPlaintext } from './message.ts'
 import { isProblemReport, problemReportError } from './problems.ts'
 import { publicKeyOf, type PeerDidDoc } from './peer.ts'
-import { defaultFetch } from '../../client/app/net-fetch.ts'
+import { defaultFetch } from '../net-fetch.ts'
 
 /** This device's own DIDComm transport identity -- the identity-shared
  * X25519 credential (vault/didcomm-credential.ts), read from whichever

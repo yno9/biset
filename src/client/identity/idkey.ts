@@ -20,7 +20,7 @@
 // why the reverse direction matters: a stable key alone cannot address
 // anything, so whatever holds one must also keep the current DID string
 // alongside it (identity/record-store.ts's IdentityRecord.did).
-import { parseWebvhDid } from './webvh/identifier.ts'
+import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
 
 /** Normalizes an identity string (a DID, or a plain email for a DID-less
  * relay) to the key biset indexes it under internally. Total and lossless for

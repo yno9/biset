@@ -15,7 +15,7 @@ import { buildPlaintext } from '../../protocol/didcomm/message.ts'
 import { BASIC_MESSAGE } from './basicmessage.ts'
 import { wrapForward } from '../../protocol/didcomm/forward-wrap.ts'
 import { decodePeerDid2, generatePeerIdentity, publicKeyOf, type PeerIdentity } from '../../protocol/didcomm/peer.ts'
-import { defaultFetch } from '../app/net-fetch.ts'
+import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { registerWithMediator } from './mediator-sync.ts'
 import {
   RELATIONSHIP_INIT,

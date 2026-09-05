@@ -18,14 +18,14 @@
 // add-device-verification-method.ts adds to the signed log, unlike
 // src.bak's own minimal log), so unlike prerotation.ts's port this one
 // needed no fix for that.
-import { buildWebvhDid, parseWebvhDid, didToHttpsUrl } from './identifier.ts'
-import { generateEntryHash, entryVersionNumber, resolveParameters, parametersToWrite, type LogEntry } from './log.ts'
-import { buildProof } from './proof.ts'
-import { encodeMultikey } from './multikey.ts'
-import { multikeyHashBase58 } from './hash.ts'
-import type { WebvhDidDocument } from './document.ts'
+import { buildWebvhDid, parseWebvhDid, didToHttpsUrl } from '../../../protocol/webvh/identifier.ts'
+import { generateEntryHash, entryVersionNumber, resolveParameters, parametersToWrite, type LogEntry } from '../../../protocol/webvh/log.ts'
+import { buildProof } from '../../../protocol/webvh/proof.ts'
+import { encodeMultikey } from '../../../protocol/webvh/multikey.ts'
+import { multikeyHashBase58 } from '../../../protocol/webvh/hash.ts'
+import type { WebvhDidDocument } from '../../../protocol/webvh/document.ts'
 import { fetchCurrentLog, putLog, nowVersionTime } from './log-io.ts'
-import { defaultFetch } from '../../app/net-fetch.ts'
+import { defaultFetch } from '../../../protocol/net-fetch.ts'
 
 export interface MigrateLocationOptions {
   oldDid: string
