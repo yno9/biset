@@ -441,10 +441,18 @@ W3 の①（関係確立）が入るまで、**wallet アカウント同士は�
 
 ## 5. 未解決issue（簡素化の対象外・記録のみ）
 
-8. **`protocol/{ingress,restore-control,vault-delivery}-wire.ts` の3ファイルは何からも到達されない**（S7/S12で判明）。
-   S1 では「現存機能の wire 定義だから」と残したが、その「現存機能」自体が上記23件の未配線部品である。
-   3ファイルを消せば `validate.ts` の assert 7本と `vault.ts` の型も内部化・削除できる。
-   ただし**機能を消すかどうかの判断**なので、本計画のルール（§4）に従い実行しない。要判断。
+8. **`shared/protocol/{ingress,restore-control,vault-delivery}-wire.ts` は何からも到達されない**（S7/S12で判明、2026-09-05に内訳確定）。
+   `bun run knip` の "Unused files" と `reachability` の "reached by nothing" に出続けている3ファイル。
+   **この6つの assert 関数（`assertIngressPull` `assertIngressAck` `assertRestoreCancel`
+   `assertRestoreControlPull` `assertVaultDeliveryAck` `assertVaultDeliveryPull`）を呼んでいるのは
+   この3ファイルだけ**であることを確認済み——他にゼロ。死んだファイルが `validate.ts` の export を
+   生かして見せているだけの構図。
+   内訳は同じではない:
+   - `ingress-wire.ts` — 削除済み core の ingress pull API。後継は mediator queue。**掃除して差し支えない**
+   - `vault-delivery-wire.ts` — 自身のコメントが「the bounded **core** HTTP API」と言っている。
+     後継は MIMI Self Vault。**掃除して差し支えない**
+   - `restore-control-wire.ts` — restore 機能のもの。**これは別件**。§5-1 の通り実装も呼び出し元も無いが、
+     native login 廃止とは無関係の未完成機能であり、削除は独立した判断が要る
 9. **未配線の部品23個を、動いているコードと物理的に分けるべきか**（S12で判明）。
    `src/staged/` のようなディレクトリへ移す、あるいは各ファイル先頭に統一マーカーを置くなど。
    移動は import 書き換えを伴い WIP と衝突するため、本計画では提案のみ。
