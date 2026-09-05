@@ -1,10 +1,8 @@
 import type { IngressAckV1 } from '../shared/protocol/ingress.ts'
 import { equalBytes } from '../shared/protocol/canonical.ts'
 import type { DeliverySeq, DeviceId, IdentityId, MlsEpoch, SegmentId, VaultEventId, VaultId, VaultMemberId, VaultObjectId } from '../shared/protocol/ids.ts'
-import type { DeliveryPullResult, RestoreOfferV1, RestoreRequestV1, SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../shared/protocol/vault.ts'
-import { assertRestoreOffer, assertRestoreRequest } from '../shared/protocol/validate.ts'
+import type { SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../shared/protocol/vault.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import type { RestoreTransferChunkCommit, RestoreTransferReceiverStore, RestoreTransferSessionV1 } from './restore-transfer-receiver.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
 const DATABASE_VERSION = 10
@@ -24,9 +22,6 @@ const STORES = {
   deliveryReceipts: 'vault_delivery_receipts',
   deliveryAckOutbox: 'vault_delivery_ack_outbox',
   deliveryState: 'vault_delivery_state',
-  restoreState: 'vault_restore_state',
-  restoreOfferOutbox: 'vault_restore_offer_outbox',
-  restoreTransferState: 'vault_restore_transfer_state',
   transportStatus: 'transport_status',
   didCommOutbox: 'didcomm_transport_outbox',
 } as const
@@ -115,32 +110,6 @@ export interface VaultDeliveryAckOutboxRecord {
   createdAt: string
 }
 
-/** Durable client-side intent to ask a trusted peer for a foreground restore. */
-export interface VaultRestoreRequestStateRecord {
-  identityId: IdentityId
-  deviceId: DeviceId
-  request: RestoreRequestV1
-  gap: Extract<DeliveryPullResult, { kind: 'restoreRequired' }>
-  status: 'pending' | 'submitted'
-  attempts: number
-  createdAt: string
-  lastAttemptAt?: string
-  submittedAt?: string
-}
-
-/** Durable, user-approved peer offer; it contains no manifest or vault bytes. */
-export interface VaultRestoreOfferOutboxRecord {
-  identityId: IdentityId
-  requestId: string
-  responderDeviceId: DeviceId
-  offer: RestoreOfferV1
-  status: 'pending' | 'submitted'
-  attempts: number
-  createdAt: string
-  lastAttemptAt?: string
-  submittedAt?: string
-}
-
 /**
  * All fields are written in one IndexedDB transaction. The caller may send the
  * ACK only after this promise resolves successfully.
@@ -194,14 +163,6 @@ export interface VaultDeliveryCommit {
   ackOutbox: VaultDeliveryAckOutboxRecord
 }
 
-/** Raw archive records are committed together; projection rebuild is a later explicit step. */
-export interface RecoveryArchiveImportCommit {
-  identityId: IdentityId
-  objects: VaultObjectRecord[]
-  events: VaultEventRecord[]
-  keyWraps: SegmentKeyWrapV1[]
-}
-
 export type IngressCommitResult = 'committed' | 'already-committed'
 
 /** Narrow read boundary used by local projections without exposing IDB internals. */
@@ -238,10 +199,6 @@ export interface VaultCredentialEventReader {
 export interface VaultRecordReader {
   readVaultEvents(identityId: IdentityId): Promise<VaultEventRecord[]>
   readVaultObjects(identityId: IdentityId): Promise<VaultObjectRecord[]>
-}
-
-export interface RecoveryArchiveImportStore {
-  commitRecoveryArchive(input: RecoveryArchiveImportCommit): Promise<void>
 }
 
 export interface SegmentKeyWrapReader {
@@ -322,24 +279,7 @@ export interface VaultDeliveryAckOutboxReader {
   noteDeliveryAckOutboxAttempt(identityId: IdentityId, recipientDeviceId: DeviceId, seq: DeliverySeq): Promise<void>
 }
 
-/** Restore requests are local durable state, not a core-side vault archive. */
-export interface VaultRestoreRequestStateStore {
-  readRestoreRequestState(identityId: IdentityId, deviceId: DeviceId): Promise<VaultRestoreRequestStateRecord | undefined>
-  writeRestoreRequestState(value: VaultRestoreRequestStateRecord): Promise<void>
-  noteRestoreRequestAttempt(identityId: IdentityId, deviceId: DeviceId, attemptedAt: string): Promise<void>
-  markRestoreRequestSubmitted(identityId: IdentityId, deviceId: DeviceId, submittedAt: string): Promise<void>
-  clearRestoreRequestState(identityId: IdentityId, deviceId: DeviceId): Promise<void>
-}
-
-export interface VaultRestoreOfferOutboxStore {
-  readRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<VaultRestoreOfferOutboxRecord | undefined>
-  writeRestoreOfferOutbox(value: VaultRestoreOfferOutboxRecord): Promise<void>
-  noteRestoreOfferAttempt(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId, attemptedAt: string): Promise<void>
-  markRestoreOfferSubmitted(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId, submittedAt: string): Promise<void>
-  clearRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<void>
-}
-
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjectionWriter, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, RecoveryArchiveImportStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressReceiptReader, IngressAckOutboxReader, DidCommTransportOutboxStore, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader, VaultRestoreRequestStateStore, VaultRestoreOfferOutboxStore, RestoreTransferReceiverStore {
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjectionWriter, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressReceiptReader, IngressAckOutboxReader, DidCommTransportOutboxStore, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -766,136 +706,19 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     await transactionDone(transaction)
   }
 
-  async readRestoreRequestState(identityId: IdentityId, deviceId: DeviceId): Promise<VaultRestoreRequestStateRecord | undefined> {
-    if (!identityId || !deviceId) throw new TypeError('restore request identity and device are required')
-    const transaction = this.database.transaction(STORES.restoreState, 'readonly')
-    const completed = transactionDone(transaction)
-    const record = await requestValue<VaultRestoreRequestStateRecord | undefined>(transaction.objectStore(STORES.restoreState).get([identityId, deviceId]))
-    await completed
-    return record && copyRestoreRequestState(record)
-  }
-
-  async writeRestoreRequestState(value: VaultRestoreRequestStateRecord): Promise<void> {
-    assertRestoreRequestState(value)
-    const transaction = this.database.transaction(STORES.restoreState, 'readwrite')
-    transaction.objectStore(STORES.restoreState).put(copyRestoreRequestState(value))
-    await transactionDone(transaction)
-  }
-
-  async noteRestoreRequestAttempt(identityId: IdentityId, deviceId: DeviceId, attemptedAt: string): Promise<void> {
-    if (!identityId || !deviceId || Number.isNaN(Date.parse(attemptedAt))) throw new TypeError('restore request attempt is invalid')
-    const transaction = this.database.transaction(STORES.restoreState, 'readwrite')
-    const store = transaction.objectStore(STORES.restoreState)
-    const request = store.get([identityId, deviceId])
-    request.onsuccess = () => {
-      const record = request.result as VaultRestoreRequestStateRecord | undefined
-      if (!record || record.status !== 'pending') return
-      store.put({ ...copyRestoreRequestState(record), attempts: record.attempts + 1, lastAttemptAt: attemptedAt })
-    }
-    await transactionDone(transaction)
-  }
-
-  async markRestoreRequestSubmitted(identityId: IdentityId, deviceId: DeviceId, submittedAt: string): Promise<void> {
-    if (!identityId || !deviceId || Number.isNaN(Date.parse(submittedAt))) throw new TypeError('restore request submission is invalid')
-    const transaction = this.database.transaction(STORES.restoreState, 'readwrite')
-    const store = transaction.objectStore(STORES.restoreState)
-    const request = store.get([identityId, deviceId])
-    request.onsuccess = () => {
-      const record = request.result as VaultRestoreRequestStateRecord | undefined
-      if (!record) return
-      store.put({ ...copyRestoreRequestState(record), status: 'submitted', submittedAt })
-    }
-    await transactionDone(transaction)
-  }
-
-  async clearRestoreRequestState(identityId: IdentityId, deviceId: DeviceId): Promise<void> {
-    if (!identityId || !deviceId) throw new TypeError('restore request identity and device are required')
-    const transaction = this.database.transaction(STORES.restoreState, 'readwrite')
-    transaction.objectStore(STORES.restoreState).delete([identityId, deviceId])
-    await transactionDone(transaction)
-  }
-
-  async readRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<VaultRestoreOfferOutboxRecord | undefined> {
-    if (!identityId || !requestId || !responderDeviceId) throw new TypeError('restore offer identity, request, and responder are required')
-    const transaction = this.database.transaction(STORES.restoreOfferOutbox, 'readonly')
-    const completed = transactionDone(transaction)
-    const record = await requestValue<VaultRestoreOfferOutboxRecord | undefined>(transaction.objectStore(STORES.restoreOfferOutbox).get([identityId, requestId, responderDeviceId]))
-    await completed
-    return record && copyRestoreOfferOutbox(record)
-  }
-
-  async writeRestoreOfferOutbox(value: VaultRestoreOfferOutboxRecord): Promise<void> {
-    assertRestoreOfferOutbox(value)
-    const transaction = this.database.transaction(STORES.restoreOfferOutbox, 'readwrite')
-    transaction.objectStore(STORES.restoreOfferOutbox).put(copyRestoreOfferOutbox(value))
-    await transactionDone(transaction)
-  }
-
-  async noteRestoreOfferAttempt(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId, attemptedAt: string): Promise<void> {
-    if (!identityId || !requestId || !responderDeviceId || Number.isNaN(Date.parse(attemptedAt))) throw new TypeError('restore offer attempt is invalid')
-    const transaction = this.database.transaction(STORES.restoreOfferOutbox, 'readwrite')
-    const store = transaction.objectStore(STORES.restoreOfferOutbox)
-    const request = store.get([identityId, requestId, responderDeviceId])
-    request.onsuccess = () => {
-      const record = request.result as VaultRestoreOfferOutboxRecord | undefined
-      if (!record || record.status !== 'pending') return
-      store.put({ ...copyRestoreOfferOutbox(record), attempts: record.attempts + 1, lastAttemptAt: attemptedAt })
-    }
-    await transactionDone(transaction)
-  }
-
-  async markRestoreOfferSubmitted(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId, submittedAt: string): Promise<void> {
-    if (!identityId || !requestId || !responderDeviceId || Number.isNaN(Date.parse(submittedAt))) throw new TypeError('restore offer submission is invalid')
-    const transaction = this.database.transaction(STORES.restoreOfferOutbox, 'readwrite')
-    const store = transaction.objectStore(STORES.restoreOfferOutbox)
-    const request = store.get([identityId, requestId, responderDeviceId])
-    request.onsuccess = () => {
-      const record = request.result as VaultRestoreOfferOutboxRecord | undefined
-      if (!record) return
-      store.put({ ...copyRestoreOfferOutbox(record), status: 'submitted', submittedAt })
-    }
-    await transactionDone(transaction)
-  }
-
-  async clearRestoreOfferOutbox(identityId: IdentityId, requestId: string, responderDeviceId: DeviceId): Promise<void> {
-    if (!identityId || !requestId || !responderDeviceId) throw new TypeError('restore offer identity, request, and responder are required')
-    const transaction = this.database.transaction(STORES.restoreOfferOutbox, 'readwrite')
-    transaction.objectStore(STORES.restoreOfferOutbox).delete([identityId, requestId, responderDeviceId])
-    await transactionDone(transaction)
-  }
-
-  async readRestoreTransferSession(identityId: IdentityId, requesterDeviceId: string): Promise<RestoreTransferSessionV1 | undefined> {
-    if (!identityId || !requesterDeviceId) throw new TypeError('restore transfer identity and requester are required')
-    const transaction = this.database.transaction(STORES.restoreTransferState, 'readonly')
-    const completed = transactionDone(transaction)
-    const value = await requestValue<RestoreTransferSessionV1 | undefined>(transaction.objectStore(STORES.restoreTransferState).get([identityId, requesterDeviceId]))
-    await completed
-    return value && copyRestoreTransferSession(value)
-  }
-
-  /** Records and the resume cursor are one transaction; a crash cannot advance one without the other. */
-  async commitRestoreTransferChunk(input: RestoreTransferChunkCommit): Promise<void> {
-    assertRestoreTransferChunkCommit(input)
-    const transaction = this.database.transaction([STORES.objects, STORES.events, STORES.keyWraps, STORES.restoreTransferState], 'readwrite')
-    for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject({ ...object, identityId: input.session.identityId }))
-    for (const event of input.events) transaction.objectStore(STORES.events).put(copyEvent({ ...event, identityId: input.session.identityId }))
-    for (const wrap of input.keyWraps) transaction.objectStore(STORES.keyWraps).put(copyKeyWrap(wrap))
-    transaction.objectStore(STORES.restoreTransferState).put(copyRestoreTransferSession(input.session))
-    await transactionDone(transaction)
-  }
-
-  /**
-   * Does not write projection/JMAP state: callers must cryptographically
-   * rebuild that view before declaring archive restore complete.
-   */
-  async commitRecoveryArchive(input: RecoveryArchiveImportCommit): Promise<void> {
-    assertRecoveryArchiveImportCommit(input)
+  /** Checkpoint restore commits raw records before rebuilding the projection. */
+  async commitRecoveryArchive(input: { identityId: IdentityId; objects: VaultObjectRecord[]; events: VaultEventRecord[]; keyWraps: SegmentKeyWrapV1[] }): Promise<void> {
+    if (!input.identityId || input.keyWraps.length === 0) throw new TypeError('checkpoint archive commit is invalid')
+    for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('checkpoint archive object identity does not match')
+    for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('checkpoint archive event identity does not match')
+    for (const wrap of input.keyWraps) if (wrap.identityId !== input.identityId) throw new TypeError('checkpoint archive key wrap identity does not match')
     const transaction = this.database.transaction([STORES.objects, STORES.events, STORES.keyWraps], 'readwrite')
     for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject(object))
     for (const event of input.events) transaction.objectStore(STORES.events).put(copyEvent(event))
     for (const wrap of input.keyWraps) transaction.objectStore(STORES.keyWraps).put(copyKeyWrap(wrap))
     await transactionDone(transaction)
   }
+
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -972,9 +795,6 @@ const KEY_PATHS: Record<StoreName, string | string[]> = {
   [STORES.deliveryReceipts]: ['identityId', 'recipientDeviceId', 'seq'],
   [STORES.deliveryAckOutbox]: ['identityId', 'recipientDeviceId', 'seq'],
   [STORES.deliveryState]: ['identityId', 'deviceId'],
-  [STORES.restoreState]: ['identityId', 'deviceId'],
-  [STORES.restoreOfferOutbox]: ['identityId', 'requestId', 'responderDeviceId'],
-  [STORES.restoreTransferState]: ['identityId', 'requesterDeviceId'],
   [STORES.transportStatus]: ['identityId', 'outboundEventId'],
   [STORES.didCommOutbox]: ['identityId', 'outboundEventId', 'toDid'],
 }
@@ -1121,45 +941,6 @@ function copySegmentRecord(value: VaultSegmentRecord): VaultSegmentRecord {
   return { ...value, segmentKey: value.segmentKey.slice() }
 }
 
-function assertRestoreRequestState(value: VaultRestoreRequestStateRecord): void {
-  if (!value.identityId || !value.deviceId || value.request.identityId !== value.identityId || value.request.requesterDeviceId !== value.deviceId) throw new TypeError('restore request state identity does not match')
-  assertRestoreRequest(value.request)
-  if (value.status !== 'pending' && value.status !== 'submitted') throw new TypeError('restore request state status is invalid')
-  if (!Number.isSafeInteger(value.attempts) || value.attempts < 0 || Number.isNaN(Date.parse(value.createdAt))) throw new TypeError('restore request state metadata is invalid')
-  if (value.lastAttemptAt !== undefined && Number.isNaN(Date.parse(value.lastAttemptAt))) throw new TypeError('restore request last attempt is invalid')
-  if (value.submittedAt !== undefined && Number.isNaN(Date.parse(value.submittedAt))) throw new TypeError('restore request submission is invalid')
-  if (value.gap.kind !== 'restoreRequired' || value.gap.reason !== value.request.reason) throw new TypeError('restore request state gap is invalid')
-}
-
-function assertRestoreOfferOutbox(value: VaultRestoreOfferOutboxRecord): void {
-  if (!value.identityId || !value.requestId || !value.responderDeviceId || value.offer.identityId !== value.identityId || value.offer.requestId !== value.requestId || value.offer.responderDeviceId !== value.responderDeviceId) throw new TypeError('restore offer outbox identity does not match')
-  assertRestoreOffer(value.offer)
-  if (value.status !== 'pending' && value.status !== 'submitted') throw new TypeError('restore offer outbox status is invalid')
-  if (!Number.isSafeInteger(value.attempts) || value.attempts < 0 || Number.isNaN(Date.parse(value.createdAt))) throw new TypeError('restore offer outbox metadata is invalid')
-  if (value.lastAttemptAt !== undefined && Number.isNaN(Date.parse(value.lastAttemptAt))) throw new TypeError('restore offer last attempt is invalid')
-  if (value.submittedAt !== undefined && Number.isNaN(Date.parse(value.submittedAt))) throw new TypeError('restore offer submission is invalid')
-}
-
-function assertRestoreTransferChunkCommit(input: RestoreTransferChunkCommit): void {
-  const { session, chunk } = input
-  if (session.version !== 1 || !session.identityId || !session.requesterDeviceId || session.identityId !== chunk.identityId || session.sourceManifest.identityId !== session.identityId || session.requesterManifest.identityId !== session.identityId || session.lastChunkHash !== chunk.chunkHash || session.completed !== (chunk.next === undefined)) throw new TypeError('restore transfer session does not match chunk')
-  if (!sameStringLists(input.objects.map(object => object.objectId), chunk.objects.map(object => object.objectId)) || !sameStringLists(input.events.map(event => event.id), chunk.events.map(event => event.id)) || !sameStringLists(input.keyWraps.map(wrap => `${wrap.segmentId}\u0000${wrap.recipientEpoch}`), chunk.keyWraps.map(wrap => `${wrap.segmentId}\u0000${wrap.recipientEpoch}`))) throw new TypeError('restore transfer records do not match verified chunk')
-  for (const object of input.objects) if (object.objectId.length === 0) throw new TypeError('restore transfer object is invalid')
-  for (const event of input.events) if (event.identityId !== session.identityId) throw new TypeError('restore transfer event identity does not match')
-  for (const wrap of input.keyWraps) if (wrap.identityId !== session.identityId) throw new TypeError('restore transfer key wrap identity does not match')
-}
-
-function assertRecoveryArchiveImportCommit(input: RecoveryArchiveImportCommit): void {
-  if (!input.identityId || input.keyWraps.length === 0) throw new TypeError('recovery archive import is invalid')
-  for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('recovery archive object identity does not match')
-  for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('recovery archive event identity does not match')
-  for (const wrap of input.keyWraps) if (wrap.identityId !== input.identityId) throw new TypeError('recovery archive key wrap identity does not match')
-}
-
-function sameStringLists(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index])
-}
-
 function copyKeyWrap(value: SegmentKeyWrapV1): SegmentKeyWrapV1 {
   return {
     ...value,
@@ -1168,16 +949,4 @@ function copyKeyWrap(value: SegmentKeyWrapV1): SegmentKeyWrapV1 {
     wrappedSegmentKey: value.wrappedSegmentKey.slice(),
     signature: value.signature.slice(),
   }
-}
-
-function copyRestoreRequestState(value: VaultRestoreRequestStateRecord): VaultRestoreRequestStateRecord {
-  return { ...value, request: { ...value.request, signature: value.request.signature.slice() }, gap: { ...value.gap } }
-}
-
-function copyRestoreOfferOutbox(value: VaultRestoreOfferOutboxRecord): VaultRestoreOfferOutboxRecord {
-  return { ...value, offer: { ...value.offer, signature: value.offer.signature.slice() } }
-}
-
-function copyRestoreTransferSession(value: RestoreTransferSessionV1): RestoreTransferSessionV1 {
-  return { ...value, sourceManifest: { ...value.sourceManifest, eventIds: [...value.sourceManifest.eventIds], objectIds: [...value.sourceManifest.objectIds] }, requesterManifest: { ...value.requesterManifest, eventIds: [...value.requesterManifest.eventIds], objectIds: [...value.requesterManifest.objectIds] }, ...(value.next === undefined ? {} : { next: { ...value.next } }) }
 }

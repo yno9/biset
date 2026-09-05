@@ -252,8 +252,6 @@ describe('IndexedDbVaultStore durability', () => {
     const objects = await store.readVaultObjects(identityId)
     expect(objects.map(o => o.objectId)).toEqual(['legacy-object'])
 
-    // The v5-only store now exists and is usable.
-    expect(await store.readRestoreTransferSession(identityId, 'device-a')).toBeUndefined()
     // The v6 DIDComm transport outbox was created by the same upgrade.
     expect(await store.readDidCommOutbox(identityId)).toEqual([])
     store.close()

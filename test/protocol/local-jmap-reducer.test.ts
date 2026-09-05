@@ -129,12 +129,10 @@ describe('Local JMAP projection reducer', () => {
     const oneShot = reduceLocalJmapProjection(identityId, base, allRecords)
 
     // The same records, but delivered as two separate batches the way a
-    // transfer interrupted after the first chunk and resumed later would --
+    // paged delivery interrupted after the first batch and resumed later would --
     // each batch only ever contains records whose target the PRIOR batch
     // already resolved (message.add lands no later than any mutation of the
-    // same email), which is exactly what commitRestoreTransferChunk's own
-    // "commit raw records now, run rebuildLocalJmapProjection once at the
-    // end" design guarantees in production.
+    // same email), so either batch boundary produces the same projection.
     const afterFirstChunk = reduceLocalJmapProjection(identityId, base, [add, mailboxUpdate])
     const afterSecondChunk = reduceLocalJmapProjection(
       identityId,

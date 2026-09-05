@@ -31,10 +31,8 @@
 
 ## 復旧
 
-- `recovery-archive*.ts`: 利用者管理の暗号化 archive への export / import / rewrap
-- `restore-workflow.ts` / `restore-transfer*.ts`: peer からの resumable restore
-  （**現在 transport 実装も本番呼び出し元も存在しない。テストのみが動かしている**——
-  `bun run reachability` の「reached only by tests」に出る。PLAN-simplify.md §5 参照）
+- `recovery-archive.ts` / `recovery-archive-export.ts` / `recovery-archive-rewrap.ts`:
+  checkpoint で使う利用者管理の暗号化 archive
 
 ## 規則
 

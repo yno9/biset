@@ -1,7 +1,7 @@
 import { bytesToBase64url, canonicalBytes } from './canonical.ts'
 import type { IngressAckV1, IngressPullV1 } from './ingress.ts'
 import type { MailSubmissionRequestV1 } from './mail-submission.ts'
-import type { RestoreCancelV1, RestoreControlPullV1, RestoreOfferV1, RestoreRequestV1, VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryPullV1 } from './vault.ts'
+import type { VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryPullV1 } from './vault.ts'
 
 /**
  * Canonical bytes for device-control signatures. These functions omit only
@@ -77,55 +77,5 @@ export function mailSubmissionSigningBytes(request: Omit<MailSubmissionRequestV1
     rcptTo: request.rcptTo,
     rawRfc5322: bytesToBase64url(request.rawRfc5322),
     submittedAt: request.submittedAt,
-  })
-}
-
-export function restoreRequestSigningBytes(request: Omit<RestoreRequestV1, 'signature'>): Uint8Array {
-  return canonicalBytes({
-    label: 'biset/restore-request/v1',
-    version: request.version,
-    requestId: request.requestId,
-    identityId: request.identityId,
-    requesterDeviceId: request.requesterDeviceId,
-    reason: request.reason,
-    ...(request.knownManifestRoot === undefined ? {} : { knownManifestRoot: request.knownManifestRoot }),
-    requestedAt: request.requestedAt,
-    expiresAt: request.expiresAt,
-  })
-}
-
-export function restoreOfferSigningBytes(offer: Omit<RestoreOfferV1, 'signature'>): Uint8Array {
-  return canonicalBytes({
-    label: 'biset/restore-offer/v1',
-    version: offer.version,
-    requestId: offer.requestId,
-    identityId: offer.identityId,
-    requesterDeviceId: offer.requesterDeviceId,
-    responderDeviceId: offer.responderDeviceId,
-    manifestRoot: offer.manifestRoot,
-    offeredAt: offer.offeredAt,
-    expiresAt: offer.expiresAt,
-  })
-}
-
-export function restoreCancelSigningBytes(cancel: Omit<RestoreCancelV1, 'signature'>): Uint8Array {
-  return canonicalBytes({
-    label: 'biset/restore-cancel/v1',
-    version: cancel.version,
-    requestId: cancel.requestId,
-    identityId: cancel.identityId,
-    requesterDeviceId: cancel.requesterDeviceId,
-    cancelledAt: cancel.cancelledAt,
-  })
-}
-
-export function restoreControlPullSigningBytes(pull: Omit<RestoreControlPullV1, 'signature'>): Uint8Array {
-  return canonicalBytes({
-    label: 'biset/restore-control-pull/v1',
-    version: pull.version,
-    identityId: pull.identityId,
-    deviceId: pull.deviceId,
-    kind: pull.kind,
-    requestedAt: pull.requestedAt,
   })
 }

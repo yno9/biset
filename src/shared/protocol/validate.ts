@@ -1,13 +1,7 @@
 import type { AdapterIngressOfferV1, IngressEnvelopeV1 } from './ingress.ts'
 import type { MailSubmissionRequestV1 } from './mail-submission.ts'
 import { assertDeliverySeq, assertOpaqueId } from './ids.ts'
-import type {
-  RestoreCancelV1,
-  RestoreControlPullV1,
-  RestoreOfferV1,
-  RestoreRequestV1,
-  VaultDeliveryAppendV1,
-} from './vault.ts'
+import type { VaultDeliveryAppendV1 } from './vault.ts'
 
 export class ProtocolValidationError extends Error {
   constructor(message: string) {
@@ -148,70 +142,5 @@ export function assertVaultDeliveryAppend(value: unknown): asserts value is Vaul
   bytes(input.payloadHash, 'payloadHash')
   opaqueId(input.senderDeviceId, 'senderDeviceId')
   time(input.sentAt, 'sentAt')
-  bytes(input.signature, 'signature')
-}
-
-
-
-export function assertRestoreRequest(value: unknown): asserts value is RestoreRequestV1 {
-  const input = record(value, 'RestoreRequestV1')
-  exactKeys(input, [
-    'version', 'requestId', 'identityId', 'requesterDeviceId', 'reason', 'knownManifestRoot', 'requestedAt', 'expiresAt', 'signature',
-  ], 'RestoreRequestV1')
-  if (input.version !== 1) throw new ProtocolValidationError('RestoreRequestV1.version must be 1')
-  opaqueId(input.requestId, 'requestId')
-  opaqueId(input.identityId, 'identityId')
-  opaqueId(input.requesterDeviceId, 'requesterDeviceId')
-  if (!['ttl-expired', 'retention-quota', 'delivery-confirmed', 'new-device'].includes(String(input.reason))) {
-    throw new ProtocolValidationError('RestoreRequestV1.reason is unsupported')
-  }
-  if (input.knownManifestRoot !== undefined) text(input.knownManifestRoot, 'knownManifestRoot')
-  time(input.requestedAt, 'requestedAt')
-  time(input.expiresAt, 'expiresAt')
-  if (Date.parse(input.expiresAt) <= Date.parse(input.requestedAt)) {
-    throw new ProtocolValidationError('RestoreRequestV1.expiresAt must be after requestedAt')
-  }
-  bytes(input.signature, 'signature')
-}
-
-export function assertRestoreOffer(value: unknown): asserts value is RestoreOfferV1 {
-  const input = record(value, 'RestoreOfferV1')
-  exactKeys(input, [
-    'version', 'requestId', 'identityId', 'requesterDeviceId', 'responderDeviceId', 'manifestRoot', 'offeredAt', 'expiresAt', 'signature',
-  ], 'RestoreOfferV1')
-  if (input.version !== 1) throw new ProtocolValidationError('RestoreOfferV1.version must be 1')
-  opaqueId(input.requestId, 'requestId')
-  opaqueId(input.identityId, 'identityId')
-  opaqueId(input.requesterDeviceId, 'requesterDeviceId')
-  opaqueId(input.responderDeviceId, 'responderDeviceId')
-  if (input.responderDeviceId === input.requesterDeviceId) throw new ProtocolValidationError('RestoreOfferV1 responder must be a peer')
-  opaqueId(input.manifestRoot, 'manifestRoot')
-  time(input.offeredAt, 'offeredAt')
-  time(input.expiresAt, 'expiresAt')
-  if (Date.parse(input.expiresAt) <= Date.parse(input.offeredAt)) {
-    throw new ProtocolValidationError('RestoreOfferV1.expiresAt must be after offeredAt')
-  }
-  bytes(input.signature, 'signature')
-}
-
-export function assertRestoreCancel(value: unknown): asserts value is RestoreCancelV1 {
-  const input = record(value, 'RestoreCancelV1')
-  exactKeys(input, ['version', 'requestId', 'identityId', 'requesterDeviceId', 'cancelledAt', 'signature'], 'RestoreCancelV1')
-  if (input.version !== 1) throw new ProtocolValidationError('RestoreCancelV1.version must be 1')
-  opaqueId(input.requestId, 'requestId')
-  opaqueId(input.identityId, 'identityId')
-  opaqueId(input.requesterDeviceId, 'requesterDeviceId')
-  time(input.cancelledAt, 'cancelledAt')
-  bytes(input.signature, 'signature')
-}
-
-export function assertRestoreControlPull(value: unknown): asserts value is RestoreControlPullV1 {
-  const input = record(value, 'RestoreControlPullV1')
-  exactKeys(input, ['version', 'identityId', 'deviceId', 'kind', 'requestedAt', 'signature'], 'RestoreControlPullV1')
-  if (input.version !== 1) throw new ProtocolValidationError('RestoreControlPullV1.version must be 1')
-  opaqueId(input.identityId, 'identityId')
-  opaqueId(input.deviceId, 'deviceId')
-  if (input.kind !== 'requests' && input.kind !== 'offers') throw new ProtocolValidationError('RestoreControlPullV1.kind is unsupported')
-  time(input.requestedAt, 'requestedAt')
   bytes(input.signature, 'signature')
 }

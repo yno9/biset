@@ -24,8 +24,6 @@ import { createMimiVaultRoom, joinMimiVaultRoom } from '../mls/mimi-vault-room.t
 import { MimiClientTransport } from '../mls/mimi-client-transport.ts'
 import type { MimiVaultSessionRecord, MimiVaultSessionStateStore } from '../mls/mimi-vault-session.ts'
 import { createSegmentKeyWrap, segmentKeyWrapSigningBytes, unwrapSegmentKey } from '../vault/crypto.ts'
-import type { RestoreTransferSource, RestoreTransferVerifier } from '../vault/restore-transfer.ts'
-import { buildVaultManifest } from '../vault/manifest.ts'
 import type { VaultObjectReader, VaultProjectionReader, VaultProjectionWriter, VaultRecordReader } from '../vault/store.ts'
 import { VaultDeliveryProjector } from '../vault/delivery-projector.ts'
 import { rebuildLocalJmapProjection } from '../vault/projection-rebuild.ts'
@@ -34,6 +32,7 @@ import type { LocalJmapProjectionV1, LocalJmapReadModel, LocalJmapSnapshot } fro
 import { IndexedDbLocalJmapReadModel, type LocalVaultBlobReader } from '../local-jmap/indexeddb.ts'
 import { equalBytes } from '../shared/protocol/canonical.ts'
 import { mlsEpoch, type VaultEventId } from '../shared/protocol/ids.ts'
+import type { SegmentKeyWrapV1 } from '../shared/protocol/vault.ts'
 import type { ClientState } from '../mls/vendor/index.ts'
 import { VAULT_STORAGE_GROUP_ID } from '../vault/storage-root.ts'
 
@@ -201,7 +200,7 @@ export function buildWalletVaultCryptoBoundary(
  * transfer frame is a property of the receiver's OWN current self-group
  * view, not of who is asking.
  */
-export function buildRestoreTransferVerifier(selfGroupStore: MlsSelfGroupStateStore, identityId: string, rootPublicKey?: Uint8Array): RestoreTransferVerifier {
+export function buildRestoreTransferVerifier(selfGroupStore: MlsSelfGroupStateStore, identityId: string, rootPublicKey?: Uint8Array) {
   const loadState = async (): Promise<ClientState> => {
     const stored = await selfGroupStore.load(identityId)
     if (!stored) throw new Error('buildRestoreTransferVerifier: no self-group state for this identity')
@@ -210,93 +209,7 @@ export function buildRestoreTransferVerifier(selfGroupStore: MlsSelfGroupStateSt
   const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState, rootPublicKey)
   return {
     eventVerifier: verifier,
-    verifyCurrentEpochWrap: wrap => verifier.verify(wrap.grantorDeviceId, segmentKeyWrapSigningBytes(wrap), wrap.signature),
-  }
-}
-
-/**
- * The SENDING side of a peer restore transfer (`vault/restore-transfer.ts`'s
- * `RestoreTransferSource`, consumed by `createRestoreTransferChunk`) — the
- * counterpart to `buildRestoreTransferVerifier`, which is the receiving
- * side. `manifest`/`readEvents`/`readObjects` are plain reads off this
- * device's own vault records; `readCurrentEpochWraps` is PLAN.md §4.2's
- * "restore grant": it never touches the requested segment's ciphertext or
- * mints a new SegmentKey, it only unwraps this device's own current-epoch
- * wrap (`resolver.resolveSegmentKey`) and re-wraps the SAME SegmentKey under
- * the requester's current epoch — the thing the requester actually asked
- * for.
- *
- * Requires the caller (`identityId`'s current epoch) and the requester
- * (`recipientEpoch`) to be at the SAME current self-group epoch: a restore
- * grant is a live-member operation, not a way to hand out a key for an
- * epoch this device cannot itself derive a VEK for.
- */
-export function buildRestoreTransferSource(
-  records: VaultRecordReader,
-  wraps: SegmentKeyWrapReader,
-  selfGroupStore: MlsSelfGroupStateStore,
-  record: VaultSegmentRepairIdentity,
-): RestoreTransferSource {
-  if (!record.deviceKid) throw new Error('buildRestoreTransferSource: identity has no deviceKid yet')
-  const deviceKid = record.deviceKid
-  const loadState = async (): Promise<ClientState> => {
-    const stored = await selfGroupStore.load(record.did)
-    if (!stored) throw new Error('buildRestoreTransferSource: no self-group state for this identity')
-    return stored.state
-  }
-  const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
-  const resolver = new StoredSegmentKeyResolver(wraps, epochs, new MlsMembershipSegmentKeyWrapVerifier(loadState))
-  const signer = new MlsMembershipSegmentKeyWrapSigner(deviceKid, loadState)
-
-  return {
-    async manifest(identityId) {
-      const [events, objects] = await Promise.all([records.readVaultEvents(identityId), records.readVaultObjects(identityId)])
-      return buildVaultManifest(identityId, events.map(event => event.id), objects.map(object => object.objectId), new Date().toISOString())
-    },
-    async readEvents(identityId, ids) {
-      const byId = new Map((await records.readVaultEvents(identityId)).map(event => [event.id, event]))
-      return ids.map(id => {
-        const event = byId.get(id)
-        if (!event) throw new Error(`buildRestoreTransferSource: missing event ${id}`)
-        return event
-      })
-    },
-    async readObjects(identityId, ids) {
-      const byId = new Map((await records.readVaultObjects(identityId)).map(object => [object.objectId, object]))
-      return ids.map(id => {
-        const object = byId.get(id)
-        if (!object) throw new Error(`buildRestoreTransferSource: missing object ${id}`)
-        return object
-      })
-    },
-    async readCurrentEpochWraps(identityId, segmentIds, recipientEpoch) {
-      const current = await epochs.currentVaultEpoch(identityId)
-      if (current.epoch !== recipientEpoch) {
-        throw new Error('buildRestoreTransferSource: requested epoch is not this device\'s own current epoch')
-      }
-      const grantedAt = new Date().toISOString()
-      return Promise.all(segmentIds.map(async segmentId => {
-        const segmentKey = await resolver.resolveSegmentKey(identityId, segmentId)
-        try {
-          const vek = await epochs.deriveVaultEpochKey(identityId, current.selfGroupId, current.epoch)
-          try {
-            return await createSegmentKeyWrap(vek, segmentKey, {
-              identityId,
-              selfGroupId: current.selfGroupId,
-              segmentId,
-              sourceEpoch: current.epoch,
-              recipientEpoch: current.epoch,
-              grantorDeviceId: deviceKid,
-              grantedAt,
-            }, signer)
-          } finally {
-            vek.fill(0)
-          }
-        } finally {
-          segmentKey.fill(0)
-        }
-      }))
-    },
+    verifyCurrentEpochWrap: (wrap: SegmentKeyWrapV1) => verifier.verify(wrap.grantorDeviceId, segmentKeyWrapSigningBytes(wrap), wrap.signature),
   }
 }
 
