@@ -134,7 +134,10 @@ export function setupNewUserPage(): void {
     walletLoginButton.disabled = true
     walletResult('Verifying the published did:webvh log before opening did.md Wallet…')
     const config = readBisetConfig()
-    void beginDidMdWalletLogin(handle, config.mimiSelfBaseUrl, config.mediatorUrls).catch(error => {
+    // Safari allows a popup only while this click handler is active. The
+    // authorization URL becomes available after asynchronous verification.
+    const walletPopup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
+    void beginDidMdWalletLogin(handle, config.mimiSelfBaseUrl, config.mediatorUrls, walletPopup).catch(error => {
       walletLoginButton.disabled = false
       walletResult(error instanceof Error ? error.message : String(error), true)
     })

@@ -415,7 +415,7 @@ function pendingFromSession(session: DidMdDeviceSession): DidMdPendingAuthorizat
   }
 }
 
-async function redirectToWallet(client: DidMdRegistration, pending: DidMdPendingAuthorization): Promise<never> {
+async function redirectToWallet(client: DidMdRegistration, pending: DidMdPendingAuthorization, openedPopup?: Window): Promise<never> {
   await saveDidMdPendingAuthorization(pending)
   const request = new URL(client.authorizationEndpoint)
   const params = new URLSearchParams({
@@ -437,8 +437,12 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
   })
   request.search = params.toString()
   if (location.protocol === 'file:') {
-    const popup = window.open(request.toString(), 'did-md-wallet')
+    // Safari only permits opening a window in the original click handler.
+    // account-create reserves it before the asynchronous DID verification;
+    // navigate that same harmless about:blank window once the URL is ready.
+    const popup = openedPopup ?? window.open('', 'did-md-wallet')
     if (!popup) throw new Error('Allow popups to continue with did.md Wallet from a packaged Biset file')
+    popup.location.replace(request.toString())
     return await new Promise<never>((_resolve, reject) => {
       const timer = window.setInterval(() => {
         const active = fileWalletPopup
@@ -457,7 +461,7 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
   throw new Error('The browser did not navigate to did.md Wallet')
 }
 
-export async function beginDidMdWalletLogin(rawHandle: string, mimiSelfBaseUrl: string, mediatorUrls: readonly string[] = []): Promise<never> {
+export async function beginDidMdWalletLogin(rawHandle: string, mimiSelfBaseUrl: string, mediatorUrls: readonly string[] = [], openedPopup?: Window): Promise<never> {
   const handle = didMdHandle(rawHandle)
   const document = await resolveByDomain(handle, undefined, { cache: 'no-store' })
   const identity = await rootAuthority(handle, document)
@@ -482,7 +486,7 @@ export async function beginDidMdWalletLogin(rawHandle: string, mimiSelfBaseUrl: 
     ...(bisetDidCommDevice ? { bisetDidCommDevice } : {}),
     createdAt: new Date().toISOString(),
   }
-  return redirectToWallet(client, pending)
+  return redirectToWallet(client, pending, openedPopup)
 }
 
 /** A current Wallet session can add a DIDComm device without replacing its
