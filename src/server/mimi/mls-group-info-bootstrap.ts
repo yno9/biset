@@ -1,5 +1,5 @@
 /**
- * Bootstraps a `PublicGroupState` (src/mls/vendor/publicGroupState.ts) from
+ * Bootstraps a `PublicGroupState` (src/vendor/mls/publicGroupState.ts) from
  * a GroupInfo -- this is what answers PLAN_biset-mimi-server.md §21.4's
  * open question ("how does a hub learn a room's genesis confirmationTag,
  * which isn't derivable from public data alone"). GroupInfo already carries
@@ -9,7 +9,7 @@
  * index resolved from the *same* embedded tree) -- no separate provenance
  * mechanism is needed. `HandshakeBundle.groupInfo` (protocol-types.ts) is
  * already an existing, optional wire field biset's own client produces via
- * `groupInfoForExternalJoin` (src/mls/group.ts) using bare `encodeGroupInfo`
+ * `groupInfoForExternalJoin` (src/client/mimi/group.ts) using bare `encodeGroupInfo`
  * (not MLSMessage-wrapped, matching that same client convention for
  * Welcome) -- decoding it here is genuinely new, since biset-mimi has so
  * far only ever stored these bytes opaquely for HPKE-sealed re-delivery to

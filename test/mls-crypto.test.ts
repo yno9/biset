@@ -1,6 +1,6 @@
 // The vendored MLS crypto, checked against something other than itself.
 //
-// `src/mls/vendor/crypto/implementation/noble/hpke.ts` replaces @hpke/core
+// `src/vendor/mls/crypto/implementation/noble/hpke.ts` replaces @hpke/core
 // with an implementation of RFC 9180 written for biset's single ciphersuite.
 // That is exactly the kind of change that passes every functional test while
 // being subtly wrong — every party would agree with every other party because

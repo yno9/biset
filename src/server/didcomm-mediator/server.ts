@@ -7,7 +7,7 @@
 // this module has NO import from biset-core, `roster/`, or `vault/` -- it
 // knows nothing about identities beyond a did:webvh string and a kid, and it
 // cannot decrypt a single byte it relays. It is a separate deploy unit from
-// biset-core on purpose (src/mediator/index.ts), so that property can never
+// biset-core on purpose (src/server/didcomm-mediator/index.ts), so that property can never
 // quietly regress via a shared process/DB.
 //
 // Ported from src.bak/anchor/mediator/server.ts, trimmed to Coordinate

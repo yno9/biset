@@ -1,4 +1,4 @@
-// Verifies the concrete MlsSelfGroupProvider (src/mls/store.ts) end to end:
+// Verifies the concrete MlsSelfGroupProvider (src/client/mimi/store.ts) end to end:
 // a real MLS group's ClientState round-trips through an in-memory
 // MlsSelfGroupStateStore (the same contract IndexedDbMlsSelfGroupStore
 // implements against IndexedDB, untestable under Bun) and produces a usable

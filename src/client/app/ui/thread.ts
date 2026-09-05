@@ -3,7 +3,7 @@
 // (focused thread + past-threads list), the scroll mechanics that keep a
 // reader's position stable while it renders, and (compose slice 1) a
 // minimal reply box on the focused thread. Field names on MailMessageView
-// (src/mail/message-view.ts) intentionally match the old
+// (src/client/app/mail/message-view.ts) intentionally match the old
 // ProcessedMessage['msg'] shape, so this logic ports with the import list
 // changed and little else.
 //

@@ -16,7 +16,7 @@ import { createSegmentKey, encryptVaultObject } from '../../src/client/store/vau
 import { sha256Bytes } from '../../src/shared/protocol/canonical.ts'
 import type { IngressAckV1 } from '../../src/shared/protocol/ingress.ts'
 
-// Must match DATABASE_NAME/DATABASE_VERSION in src/vault/store.ts -- not
+// Must match DATABASE_NAME/DATABASE_VERSION in src/client/store/vault/store.ts -- not
 // exported, so this test's own knowledge of the schema has to stay in sync
 // by hand if that module ever renames/re-versions it.
 const DATABASE_NAME = 'biset-vault-core'

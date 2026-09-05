@@ -1,5 +1,5 @@
 // End-to-end coverage for the CLIENT side of the standalone mediator
-// protocol (src/didcomm/mediator-{transport,coordinate,pickup,sync}.ts,
+// protocol (src/shared/didcomm/mediator-{transport,coordinate,pickup,sync}.ts,
 // ARC.md's 2026-08-27 redesign, Phase 4) -- driven against the same
 // createMediator handler Phase 3's test exercises directly, but this time
 // entirely through the client library a real device would use. The

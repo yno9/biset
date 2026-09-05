@@ -16,7 +16,7 @@
 // the name promises. Splitting them is what let the helper's own
 // clearTimeout become part of the contract.
 //
-// This is a SOURCE-level contract test, deliberately: src/main.ts is the
+// This is a SOURCE-level contract test, deliberately: src/client/app/main.ts is the
 // browser entry point (it calls bootClient() at import time and pulls in
 // DOM-dependent UI modules), so there is no seam to import
 // synchronizeWalletVault through and no way to drive it from bun:test.

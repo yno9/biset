@@ -1,4 +1,4 @@
-// End-to-end coverage for the standalone blind mediator (src/mediator/) --
+// End-to-end coverage for the standalone blind mediator (src/server/didcomm-mediator/) --
 // Coordinate Mediation 2.0 (mediate-request/keylist-update), Routing 2.0
 // Forward, and Pickup 3.0 (status/delivery-request/messages-received), all
 // driven over the same createMediator({ mediator, ... }).handle(req, url)

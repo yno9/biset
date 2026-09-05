@@ -108,9 +108,9 @@ function assertUnsigned64(value: unknown, name: string): asserts value is string
 
 /**
  * The identity behind a device key id — `did:webvh:x#k1` → `did:webvh:x`.
- * Lives here (not src/mls/identity.ts, which owns the MLS credential shape)
+ * Lives here (not src/client/mimi/identity.ts, which owns the MLS credential shape)
  * so that code with no business touching MLS state — core's DS authorizer,
- * in particular — never has to import src/mls/vendor/ just to parse a DID
+ * in particular — never has to import src/vendor/mls/ just to parse a DID
  * URL fragment off a string it already has.
  */
 export function didOfKid(kid: DeviceId): IdentityId {

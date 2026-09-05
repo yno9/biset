@@ -1,5 +1,5 @@
 // createGenesis (write path) against a fake in-memory anchor, then resolve
-// (read path, src/identity/webvh/resolver.ts) against the same log --
+// (read path, src/client/identity/webvh/resolver.ts) against the same log --
 // confirms the two sides of this resolver actually agree on the wire
 // format, not just that each independently accepts its own fixtures.
 import { describe, expect, test } from 'bun:test'
