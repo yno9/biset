@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { readRfc5322HeaderSummary } from '../../src/mail/rfc5322-headers.ts'
+import { readRfc5322HeaderSummary } from '../../src/client/app/mail/rfc5322-headers.ts'
 
 describe('endpoint RFC 5322 header summary', () => {
   test('reads unfolded display fields and bounded threading identifiers without parsing a MIME body', () => {

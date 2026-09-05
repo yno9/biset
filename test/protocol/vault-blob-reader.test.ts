@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { VaultObjectBlobReader } from '../../src/vault/blob-reader.ts'
-import { createSegmentKey, encryptVaultObject } from '../../src/vault/objects.ts'
+import { VaultObjectBlobReader } from '../../src/client/store/vault/blob-reader.ts'
+import { createSegmentKey, encryptVaultObject } from '../../src/client/store/vault/objects.ts'
 
 const text = new TextEncoder()
 

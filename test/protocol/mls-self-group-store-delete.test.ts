@@ -5,8 +5,8 @@
 // be dropped explicitly.
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
-import { createMlsGroup, generateOwnKeyPackage } from '../../src/mls/group.ts'
-import { IndexedDbMlsSelfGroupStore } from '../../src/mls/store.ts'
+import { createMlsGroup, generateOwnKeyPackage } from '../../src/client/mimi/group.ts'
+import { IndexedDbMlsSelfGroupStore } from '../../src/client/mimi/store.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 
 const DATABASE_NAME = 'biset-mls-self-group'

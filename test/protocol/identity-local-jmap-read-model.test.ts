@@ -6,12 +6,12 @@
 // decrypts the same raw RFC 5322 bytes the message was written with.
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
-import { buildLocalJmapProjectionRebuild, buildLocalJmapReadModel, buildWalletVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
-import { createMlsGroup } from '../../src/mls/group.ts'
+import { buildLocalJmapProjectionRebuild, buildLocalJmapReadModel, buildWalletVaultCryptoBoundary } from '../../src/client/identity/bootstrap.ts'
+import { createMlsGroup } from '../../src/client/mimi/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
-import { buildMailMessageAdd } from '../../src/vault/mail-message.ts'
-import { IndexedDbVaultStore } from '../../src/vault/store.ts'
-import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
+import { buildMailMessageAdd } from '../../src/client/store/vault/mail-message.ts'
+import { IndexedDbVaultStore } from '../../src/client/store/vault/store.ts'
+import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mimi/store.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
 const identityId = 'did:web:alice.example'

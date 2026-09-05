@@ -11,9 +11,9 @@
 // that can never complete, on nothing but punctuation. Both paths now go
 // through sameMediatorUrl.
 import { describe, expect, test } from 'bun:test'
-import { generatePeerIdentity } from '../src/didcomm/peer.ts'
-import { relationshipMediatorService } from '../src/didcomm/relationship.ts'
-import { sameMediatorUrl } from '../src/didcomm/mediator-watch.ts'
+import { generatePeerIdentity } from '../src/shared/didcomm/peer.ts'
+import { relationshipMediatorService } from '../src/shared/didcomm/relationship.ts'
+import { sameMediatorUrl } from '../src/shared/didcomm/mediator-watch.ts'
 
 describe('sameMediatorUrl', () => {
   test('a did:peer service endpoint matches the same mediator spelled with a trailing slash', () => {

@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { describe, expect, test } from 'bun:test'
-import { IndexedDbDidCommGroupChatStore } from '../../src/didcomm/group-chat-store.ts'
+import { IndexedDbDidCommGroupChatStore } from '../../src/shared/didcomm/group-chat-store.ts'
 
 describe('IndexedDbDidCommGroupChatStore', () => {
   test('save then load round-trips a roster', async () => {

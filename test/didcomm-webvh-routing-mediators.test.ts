@@ -4,7 +4,7 @@
 // spec-compliant sender to Forward-wrap instead of delivering directly --
 // and supersedes the legacy `didCommEndpoint` entry when both are given.
 import { describe, expect, test } from 'bun:test'
-import { buildRoutingDoc, mimiVaultRoomFromRouting } from '../src/didcomm/webvh-routing.ts'
+import { buildRoutingDoc, mimiVaultRoomFromRouting } from '../src/shared/didcomm/webvh-routing.ts'
 
 const DID = 'did:webvh:alice.example'
 

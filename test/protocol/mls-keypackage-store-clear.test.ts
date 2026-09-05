@@ -2,7 +2,7 @@
 // KeyPackage halves when an explicit reset is requested.
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
-import { IndexedDbMlsKeyPackageStore } from '../../src/mls/keypackage-store.ts'
+import { IndexedDbMlsKeyPackageStore } from '../../src/client/mimi/keypackage-store.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 
 const DATABASE_NAME = 'biset-mls-keypackages'

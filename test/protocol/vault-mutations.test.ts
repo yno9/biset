@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { equalBytes } from '../../src/shared/protocol/canonical.ts'
-import { emailSetToVaultMutationIntents } from '../../src/local-jmap/mutations.ts'
-import { decryptVaultObject } from '../../src/vault/objects.ts'
-import { createSegmentKey } from '../../src/vault/objects.ts'
-import { verifyVaultEvent, type VaultEventSigner } from '../../src/vault/events.ts'
-import { buildVaultMutation, mutationObjectAad } from '../../src/vault/mutations.ts'
+import { emailSetToVaultMutationIntents } from '../../src/client/store/projection/mutations.ts'
+import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
+import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
+import { verifyVaultEvent, type VaultEventSigner } from '../../src/client/store/vault/events.ts'
+import { buildVaultMutation, mutationObjectAad } from '../../src/client/store/vault/mutations.ts'
 
 const signer: VaultEventSigner = {
   deviceId: 'device-a',

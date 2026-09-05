@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { MimiClientTransport } from '../../src/mls/mimi-client-transport.ts'
+import { MimiClientTransport } from '../../src/client/mimi/mimi-client-transport.ts'
 
 describe('MIMI client transport', () => {
   test('keeps normal and anonymous provider origins separate for SSE', () => {

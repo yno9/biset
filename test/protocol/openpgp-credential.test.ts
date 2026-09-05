@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { equalBytes, sha256Bytes } from '../../src/shared/protocol/canonical.ts'
-import { decryptVaultObject } from '../../src/vault/objects.ts'
-import { buildOpenPgpPrivateCredential, decodeOpenPgpPrivateCredential, openPgpCredentialAad } from '../../src/vault/openpgp-credential.ts'
-import type { VaultEventSigner } from '../../src/vault/events.ts'
+import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
+import { buildOpenPgpPrivateCredential, decodeOpenPgpPrivateCredential, openPgpCredentialAad } from '../../src/client/store/vault/openpgp-credential.ts'
+import type { VaultEventSigner } from '../../src/client/store/vault/events.ts'
 
 const signer: VaultEventSigner = { deviceId: 'device-a', async sign(bytes) { return sha256Bytes(bytes) }, async verify(deviceId, bytes, signature) { return deviceId === 'device-a' && equalBytes(sha256Bytes(bytes), signature) } }
 const credential = { version: 1 as const, kind: 'credential.openpgp.private' as const, identityId: 'did:web:alice.example', fingerprint: '0123456789abcdef0123456789abcdef01234567', privateKey: new Uint8Array([1, 2, 3]), createdAt: '2026-08-21T00:00:00.000Z' }

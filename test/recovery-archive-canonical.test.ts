@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { canonicalBytes, type CanonicalValue } from '../src/shared/protocol/canonical.ts'
-import { buildVaultManifest } from '../src/vault/manifest.ts'
-import { decodeRecoveryArchiveSnapshot, encodeRecoveryArchiveSnapshot } from '../src/vault/recovery-archive.ts'
+import { buildVaultManifest } from '../src/client/store/vault/manifest.ts'
+import { decodeRecoveryArchiveSnapshot, encodeRecoveryArchiveSnapshot } from '../src/client/store/vault/recovery-archive.ts'
 
 const identityId = 'did:webvh:test:example.test'
 const createdAt = '2026-08-29T00:00:00.000Z'

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { sha256Bytes } from '../src/shared/protocol/canonical.ts'
-import { decodeMimiVaultBatch, flushMimiVaultOutbox, pullMimiVaultPages, sendMimiVaultCheckpoint, synchronizeMimiVault } from '../src/vault/mimi-vault-sync.ts'
-import { encodeMimiVaultChunk, splitMimiVaultPayload } from '../src/vault/mimi-vault-chunks.ts'
+import { decodeMimiVaultBatch, flushMimiVaultOutbox, pullMimiVaultPages, sendMimiVaultCheckpoint, synchronizeMimiVault } from '../src/client/store/vault/mimi-vault-sync.ts'
+import { encodeMimiVaultChunk, splitMimiVaultPayload } from '../src/client/store/vault/mimi-vault-chunks.ts'
 import type { MimiDeliveryEntry } from '../src/shared/mimi/protocol-types.ts'
 
 test('MIMI Vault outbox uses stable per-chunk delivery IDs and retains failed work', async () => {

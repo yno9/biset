@@ -8,7 +8,7 @@ import {
   VAULT_EPOCH_KEY_LENGTH,
   vaultEpochKeyContext,
   type MlsEpochExporter,
-} from '../../src/mls/vault-epoch.ts'
+} from '../../src/client/mimi/vault-epoch.ts'
 
 describe('MLS vault epoch key boundary', () => {
   test('pins label, context, and length while separating group and epoch', async () => {

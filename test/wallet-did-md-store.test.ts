@@ -17,7 +17,7 @@ import {
   type DidMdDeviceSession,
   type DidMdPendingAuthorization,
   type DidMdRegistration,
-} from '../src/wallet/did-md-store.ts'
+} from '../src/client/identity/wallet/did-md-store.ts'
 
 const DATABASE_NAME = 'biset-did-md-wallet'
 const bytes = (start: number) => Uint8Array.from({ length: 32 }, (_, index) => start + index)

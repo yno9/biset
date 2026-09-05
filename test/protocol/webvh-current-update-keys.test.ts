@@ -4,7 +4,7 @@
 // signatures against (mediator/mail-plugin/mail-submission-http.ts).
 import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { resolveCurrentUpdateKeys } from '../../src/identity/webvh/resolver.ts'
+import { resolveCurrentUpdateKeys } from '../../src/client/identity/webvh/resolver.ts'
 import { encodeMultikey, buildGenesisLog, withFetch } from './support/webvh-log-fixture.ts'
 
 describe('resolveCurrentUpdateKeys', () => {

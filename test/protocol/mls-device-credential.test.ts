@@ -6,7 +6,7 @@ import {
   encodeMlsDeviceCredential,
   mlsDeviceKid,
   verifyMlsDeviceCredential,
-} from '../../src/mls/device-credential.ts'
+} from '../../src/client/mimi/device-credential.ts'
 
 describe('Root-signed MLS device credential', () => {
   test('binds one deterministic device kid to its MLS leaf key without a DID verificationMethod', () => {

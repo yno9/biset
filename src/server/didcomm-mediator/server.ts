@@ -15,13 +15,13 @@
 // (mls-transport.ts/mls-ds.ts) is out of scope (biset's MLS DS is a
 // different wire protocol, coordinator/mls-delivery-store.ts, already
 // live) and Web Push is deferred (design doc's Phase 3 minimum).
-import { decodePeerDid2, publicKeyOf, type PeerIdentity, type PeerDidDoc } from '../../didcomm/peer.ts'
-import { buildPlaintext, isExpired, type DidCommPlaintext } from '../../didcomm/message.ts'
-import { buildProblemReport } from '../../didcomm/problems.ts'
+import { decodePeerDid2, publicKeyOf, type PeerIdentity, type PeerDidDoc } from '../../shared/didcomm/peer.ts'
+import { buildPlaintext, isExpired, type DidCommPlaintext } from '../../shared/didcomm/message.ts'
+import { buildProblemReport } from '../../shared/didcomm/problems.ts'
 import {
   packAuthcrypt, unpackAuthcrypt, unpackAnoncrypt, b64urlToBytes, parseJwe, protectedHeaderOf,
   type DidCommJWE,
-} from '../../didcomm/crypto.ts'
+} from '../../shared/didcomm/crypto.ts'
 import { SeenIds, type ReplayGuard } from './replay.ts'
 import { packSigned } from './signature.ts'
 import { ResolvedKeyCache } from './keycache.ts'
@@ -31,7 +31,7 @@ import {
   MEDIATE_REQUEST, MEDIATE_GRANT, KEYLIST_UPDATE, KEYLIST_UPDATE_RESPONSE, KEYLIST_QUERY, KEYLIST,
   FORWARD, STATUS_REQUEST, STATUS, DELIVERY_REQUEST, DELIVERY, MESSAGES_RECEIVED,
   WATCH_REQUEST, WATCH_GRANT,
-} from '../../didcomm/mediator-protocol.ts'
+} from '../../shared/didcomm/mediator-protocol.ts'
 import { MediatorWatchTokenIssuer } from './watch-token.ts'
 import type { QueuedMessage } from './queue.ts'
 

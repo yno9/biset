@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { equalBytes } from '../../src/shared/protocol/canonical.ts'
-import { decodeVaultDeliveryPack, encodeVaultDeliveryPack, type VaultDeliveryPackV1 } from '../../src/vault/delivery-pack.ts'
+import { decodeVaultDeliveryPack, encodeVaultDeliveryPack, type VaultDeliveryPackV1 } from '../../src/client/store/vault/delivery-pack.ts'
 
 const pack: VaultDeliveryPackV1 = {
   version: 1,

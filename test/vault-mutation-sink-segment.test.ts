@@ -5,8 +5,8 @@
 // the last two, so an empty segmentId or a SegmentKey that was not 32
 // bytes was accepted and encrypted under.
 import { describe, expect, test } from 'bun:test'
-import { VaultBackedLocalJmapMutationSink } from '../src/local-jmap/vault-mutation-sink.ts'
-import type { ActiveVaultSegment } from '../src/vault/active-segment.ts'
+import { VaultBackedLocalJmapMutationSink } from '../src/client/store/projection/vault-mutation-sink.ts'
+import type { ActiveVaultSegment } from '../src/client/store/vault/active-segment.ts'
 import type { SegmentKeyWrapV1 } from '../src/shared/protocol/vault.ts'
 
 const identityId = 'did:webvh:test:alice.example'

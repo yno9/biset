@@ -10,7 +10,7 @@ import { x25519 } from '@noble/curves/ed25519.js'
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
 import {
   packAnoncrypt, unpackAnoncrypt, b64urlToBytes, b64url, __internal, type DidCommJWE,
-} from '../src/didcomm/crypto.ts'
+} from '../src/shared/didcomm/crypto.ts'
 
 const recipientPriv = x25519.utils.randomSecretKey()
 const recipientPub = x25519.getPublicKey(recipientPriv)

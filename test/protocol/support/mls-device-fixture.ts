@@ -1,6 +1,6 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { createMlsDeviceCredential } from '../../../src/mls/device-credential.ts'
-import { generateOwnKeyPackage } from '../../../src/mls/group.ts'
+import { createMlsDeviceCredential } from '../../../src/client/mimi/device-credential.ts'
+import { generateOwnKeyPackage } from '../../../src/client/mimi/group.ts'
 
 /** Test-only constructor for a Root-authorized MLS device. */
 export async function mlsDeviceFixture(identityId: string, rootPrivateKey = ed25519.utils.randomSecretKey()) {

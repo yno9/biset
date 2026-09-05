@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { generatePeerIdentity } from '../src/didcomm/peer.ts'
-import { relationshipBodyToWire } from '../src/didcomm/relationship.ts'
-import { createWalletRelationshipManager } from '../src/wallet/relationship.ts'
-import type { ContactKeyV1 } from '../src/vault/contact-key.ts'
+import { generatePeerIdentity } from '../src/shared/didcomm/peer.ts'
+import { relationshipBodyToWire } from '../src/shared/didcomm/relationship.ts'
+import { createWalletRelationshipManager } from '../src/client/identity/wallet/relationship.ts'
+import type { ContactKeyV1 } from '../src/client/store/vault/contact-key.ts'
 
 const mediatorUrl = 'https://wallet-relationship.test.example'
 const walletDid = 'did:webvh:wallet:alice.test.example'
@@ -89,6 +89,35 @@ describe('Wallet-initiated DIDComm relationship', () => {
         body: relationshipBodyToWire({ relationshipKid: claimedPeer.xKid, publicKey: claimedPeer.xPub }),
       },
     }, pendingPeer.xKid, mediatorUrl)).rejects.toThrow('relationship accept sender does not match its relationship kid')
+  })
+
+  test('persists a late ACCEPT after the caller timed out waiting for it', async () => {
+    const pendingPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
+    const counterpartyPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
+    const contacts: ContactKeyV1[] = []
+    const manager = createWalletRelationshipManager({
+      identityId: walletDid,
+      frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
+      reader: {
+        async currentFor(did) { return contacts.find(contact => contact.counterpartyDid === did) ?? null },
+        async forOwnKid(kid) { return contacts.find(contact => contact.ownRelationshipKid === kid) ?? null },
+      },
+      sink: { async store(contact) { contacts.push(contact) } },
+      initiate: async did => ({ ok: true, pending: { counterpartyDid: did, peer: pendingPeer, mediatorUrl } }),
+      startWatch() {},
+      timeoutMs: 1,
+    })
+
+    await expect(manager.ensureContact(counterpartyDid)).rejects.toThrow(`relationship handshake with ${counterpartyDid} timed out`)
+    await manager.handleMessage({
+      ackId: 'accept-after-timeout', rawJwe: {} as never, senderKid: counterpartyPeer.xKid,
+      plaintext: {
+        type: 'https://biset.md/relationship/1.0/accept',
+        body: relationshipBodyToWire({ relationshipKid: counterpartyPeer.xKid, publicKey: counterpartyPeer.xPub }),
+      },
+    }, pendingPeer.xKid, mediatorUrl)
+    expect(contacts).toHaveLength(1)
+    expect(contacts[0]!.counterpartyRelationshipKid).toBe(counterpartyPeer.xKid)
   })
 })
 

@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { equalBytes } from '../../src/shared/protocol/canonical.ts'
-import { LocalJmapGateway, LocalJmapTransport, MemoryLocalJmapReadModel } from '../../src/local-jmap/gateway.ts'
-import { VaultBackedLocalJmapMutationSink } from '../../src/local-jmap/vault-mutation-sink.ts'
-import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
-import { decodeVaultDeliveryPack } from '../../src/vault/delivery-pack.ts'
-import type { VaultEventSigner } from '../../src/vault/events.ts'
-import { createSegmentKey } from '../../src/vault/objects.ts'
+import { LocalJmapGateway, LocalJmapTransport, MemoryLocalJmapReadModel } from '../../src/client/store/projection/gateway.ts'
+import { VaultBackedLocalJmapMutationSink } from '../../src/client/store/projection/vault-mutation-sink.ts'
+import { createSegmentKeyWrap } from '../../src/client/store/vault/crypto.ts'
+import { decodeVaultDeliveryPack } from '../../src/client/store/vault/delivery-pack.ts'
+import type { VaultEventSigner } from '../../src/client/store/vault/events.ts'
+import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
 
 const signer: VaultEventSigner = {
   deviceId: 'device-a',

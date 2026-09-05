@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { MimiRouteSelectionError, selectMimiRoomRoute } from '../../src/mls/mimi-client-routing.ts'
+import { MimiRouteSelectionError, selectMimiRoomRoute } from '../../src/client/mimi/mimi-client-routing.ts'
 
 const endpoints = { normalBaseUrl: 'https://normal.example/mimi/', anonBaseUrl: 'https://anon.example/mimi/' }
 const anonymousPeer = { peerId: 'did:example:alice', discoveryVerified: true, supportsNormal: true, anonymousMmrVersion: 1 as const }

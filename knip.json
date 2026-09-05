@@ -1,11 +1,11 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
-    "src/main.ts",
-    "src/sw.ts",
-    "src/mediator/index.ts",
-    "src/mediator/mail-plugin/index.ts",
-    "src/mimi/index.ts",
+    "src/client/app/main.ts",
+    "src/client/app/sw.ts",
+    "src/server/didcomm-mediator/index.ts",
+    "src/server/mail-plugin/index.ts",
+    "src/server/mimi/index.ts",
     "test/**/*.test.ts",
     "scripts/*.mjs"
   ],

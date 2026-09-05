@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import { equalBytes } from '../../src/shared/protocol/canonical.ts'
-import { VaultDeliveryProjector } from '../../src/vault/delivery-projector.ts'
-import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
-import type { VaultEventSigner } from '../../src/vault/events.ts'
-import { buildVaultMutation } from '../../src/vault/mutations.ts'
-import { createSegmentKey } from '../../src/vault/objects.ts'
-import { buildOpenPgpPrivateCredential } from '../../src/vault/openpgp-credential.ts'
-import { buildMailMessageAdd } from '../../src/vault/mail-message.ts'
+import { VaultDeliveryProjector } from '../../src/client/store/vault/delivery-projector.ts'
+import { createSegmentKeyWrap } from '../../src/client/store/vault/crypto.ts'
+import type { VaultEventSigner } from '../../src/client/store/vault/events.ts'
+import { buildVaultMutation } from '../../src/client/store/vault/mutations.ts'
+import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
+import { buildOpenPgpPrivateCredential } from '../../src/client/store/vault/openpgp-credential.ts'
+import { buildMailMessageAdd } from '../../src/client/store/vault/mail-message.ts'
 
 const signer: VaultEventSigner = {
   deviceId: 'device-a',

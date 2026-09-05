@@ -5,7 +5,7 @@
 // recipient to encrypt to. Ported from src.bak/did/didcomm/signature.ts,
 // trimmed to pack-only (the mediator never receives a signed message).
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { b64url } from '../../didcomm/crypto.ts'
+import { b64url } from '../../shared/didcomm/crypto.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 

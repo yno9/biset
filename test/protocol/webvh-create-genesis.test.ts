@@ -4,9 +4,9 @@
 // format, not just that each independently accepts its own fixtures.
 import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { createGenesis } from '../../src/identity/webvh/create-genesis.ts'
-import { resolve } from '../../src/identity/webvh/resolver.ts'
-import { decodeMultikey } from '../../src/identity/webvh/multikey.ts'
+import { createGenesis } from '../../src/client/identity/webvh/create-genesis.ts'
+import { resolve } from '../../src/client/identity/webvh/resolver.ts'
+import { decodeMultikey } from '../../src/client/identity/webvh/multikey.ts'
 import { fakeAnchor } from './support/webvh-log-fixture.ts'
 
 describe('createGenesis + resolve', () => {

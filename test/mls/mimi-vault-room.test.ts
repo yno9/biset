@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test'
 import { createMimiDeployment } from '../../src/server/mimi/deployment.ts'
-import { createMimiVaultRoom, joinMimiVaultRoom } from '../../src/mls/mimi-vault-room.ts'
-import { MimiClientTransport } from '../../src/mls/mimi-client-transport.ts'
-import { createMlsDeviceCredential } from '../../src/mls/device-credential.ts'
+import { createMimiVaultRoom, joinMimiVaultRoom } from '../../src/client/mimi/mimi-vault-room.ts'
+import { MimiClientTransport } from '../../src/client/mimi/mimi-client-transport.ts'
+import { createMlsDeviceCredential } from '../../src/client/mimi/device-credential.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
 
 test('creates a random self room with its initial MLS AppData and persists only after acceptance', async () => {

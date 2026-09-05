@@ -1,17 +1,17 @@
 import { describe, expect, test } from 'bun:test'
 import { equalBytes } from '../../src/shared/protocol/canonical.ts'
-import { decryptVaultObject, createSegmentKey } from '../../src/vault/objects.ts'
-import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
-import { decodeVaultDeliveryPack } from '../../src/vault/delivery-pack.ts'
+import { decryptVaultObject, createSegmentKey } from '../../src/client/store/vault/objects.ts'
+import { createSegmentKeyWrap } from '../../src/client/store/vault/crypto.ts'
+import { decodeVaultDeliveryPack } from '../../src/client/store/vault/delivery-pack.ts'
 import {
   buildDidCommDeviceKeyRecord,
   decodeDidCommDeviceKey,
   deviceKeyAad,
   type DidCommDeviceKeyV1,
-} from '../../src/vault/didcomm-device-key.ts'
-import { DidCommDeviceKeyVaultSink } from '../../src/vault/didcomm-device-key-sink.ts'
-import { DidCommDeviceKeyReader } from '../../src/vault/didcomm-device-key-reader.ts'
-import type { VaultEventSigner } from '../../src/vault/events.ts'
+} from '../../src/client/store/vault/didcomm-device-key.ts'
+import { DidCommDeviceKeyVaultSink } from '../../src/client/store/vault/didcomm-device-key-sink.ts'
+import { DidCommDeviceKeyReader } from '../../src/client/store/vault/didcomm-device-key-reader.ts'
+import type { VaultEventSigner } from '../../src/client/store/vault/events.ts'
 
 const identityId = 'did:web:alice.example'
 const signer: VaultEventSigner = {

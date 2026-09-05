@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { sha256Bytes } from '../src/shared/protocol/canonical.ts'
 import type { IngressEnvelopeV1 } from '../src/shared/protocol/ingress.ts'
-import type { IngressVaultCommit, VaultEventRecord } from '../src/vault/store.ts'
-import { ingestTransportIngress } from '../src/vault/ingress-ingest.ts'
+import type { IngressVaultCommit, VaultEventRecord } from '../src/client/store/vault/store.ts'
+import { ingestTransportIngress } from '../src/client/store/vault/ingress-ingest.ts'
 
 const identityId = 'did:webvh:test:alice.example'
 const payload = new TextEncoder().encode('{"ciphertext":"opaque"}')

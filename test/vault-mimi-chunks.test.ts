@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { decodeMimiVaultChunk, encodeMimiVaultChunk, joinMimiVaultChunks, MIMI_VAULT_CHUNK_BYTES, sendMimiVaultCheckpoint, splitMimiVaultPayload } from '../src/vault/mimi-vault-chunks.ts'
+import { decodeMimiVaultChunk, encodeMimiVaultChunk, joinMimiVaultChunks, MIMI_VAULT_CHUNK_BYTES, sendMimiVaultCheckpoint, splitMimiVaultPayload } from '../src/client/store/vault/mimi-vault-chunks.ts'
 
 test('Vault payload chunks are canonical, bounded, and reassemble with a whole-payload hash', () => {
   const payload = new Uint8Array(MIMI_VAULT_CHUNK_BYTES + 23); for (let offset = 0; offset < payload.length; offset += 65_536) crypto.getRandomValues(payload.subarray(offset, Math.min(payload.length, offset + 65_536)))

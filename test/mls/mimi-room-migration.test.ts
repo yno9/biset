@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { expect, test } from 'bun:test'
-import { acceptMimiRoomMigration, createMimiRoomMigrationOffer, cutOverMimiRoomMigration, IndexedDbMimiRoomMigrationStore, migrationOfferBody } from '../../src/mls/mimi-room-migration.ts'
+import { acceptMimiRoomMigration, createMimiRoomMigrationOffer, cutOverMimiRoomMigration, IndexedDbMimiRoomMigrationStore, migrationOfferBody } from '../../src/client/mimi/mimi-room-migration.ts'
 
 test('MIMI migration keeps the old-room mapping local and requires verified cutover', () => {
   const now = new Date('2026-09-01T00:00:00.000Z')

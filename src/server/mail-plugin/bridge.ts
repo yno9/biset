@@ -11,12 +11,12 @@
 // SmtpSession already carries a per-recipient `resolution` from RCPT
 // through to acceptIngress (that generic parameter's whole reason for
 // existing -- see its own header).
-import { fetchRoutingByDomain, type DidCommServiceEndpoint } from '../../didcomm/webvh-routing.ts'
-import { decodeX25519Multikey } from '../../didcomm/multikey.ts'
-import { buildPlaintext } from '../../didcomm/message.ts'
-import { packForDelivery, type OutboundDelivery, type RouteEndpoint } from '../../didcomm/route-deliver.ts'
-import { MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyToWire, type MailBridgeInboundBody } from '../../didcomm/mail-bridge.ts'
-import { identityDomainForMailAddress } from '../../identity/webvh/identifier.ts'
+import { fetchRoutingByDomain, type DidCommServiceEndpoint } from '../../shared/didcomm/webvh-routing.ts'
+import { decodeX25519Multikey } from '../../shared/didcomm/multikey.ts'
+import { buildPlaintext } from '../../shared/didcomm/message.ts'
+import { packForDelivery, type OutboundDelivery, type RouteEndpoint } from '../../shared/didcomm/route-deliver.ts'
+import { MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyToWire, type MailBridgeInboundBody } from '../../shared/didcomm/mail-bridge.ts'
+import { identityDomainForMailAddress } from '../../client/identity/webvh/identifier.ts'
 
 export interface MailRecipientRoute {
   toAddress: string

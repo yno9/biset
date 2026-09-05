@@ -1,20 +1,20 @@
 import { describe, expect, test } from 'bun:test'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { BASIC_MESSAGE } from '../src/didcomm/basicmessage.ts'
-import { pickupDeliver } from '../src/didcomm/mediator-pickup.ts'
-import { registerWithMediator } from '../src/didcomm/mediator-sync.ts'
-import { decodePeerDid2, generatePeerIdentity, publicKeyOf } from '../src/didcomm/peer.ts'
-import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT, relationshipBodyOf, relationshipMediatorService } from '../src/didcomm/relationship.ts'
+import { BASIC_MESSAGE } from '../src/shared/didcomm/basicmessage.ts'
+import { pickupDeliver } from '../src/shared/didcomm/mediator-pickup.ts'
+import { registerWithMediator } from '../src/shared/didcomm/mediator-sync.ts'
+import { decodePeerDid2, generatePeerIdentity, publicKeyOf } from '../src/shared/didcomm/peer.ts'
+import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT, relationshipBodyOf, relationshipMediatorService } from '../src/shared/didcomm/relationship.ts'
 import {
   initiateRelationship,
   sendRelationshipAccept,
   sendRelationshipMessage,
-} from '../src/didcomm/send-message.ts'
-import type { DidCommPlaintext } from '../src/didcomm/message.ts'
-import { encodeX25519Multikey } from '../src/didcomm/multikey.ts'
+} from '../src/shared/didcomm/send-message.ts'
+import type { DidCommPlaintext } from '../src/shared/didcomm/message.ts'
+import { encodeX25519Multikey } from '../src/shared/didcomm/multikey.ts'
 import { createMediator } from '../src/server/didcomm-mediator/server.ts'
 import { ConnectionStore } from '../src/server/didcomm-mediator/connections.ts'
-import type { ContactKeyV1 } from '../src/vault/contact-key.ts'
+import type { ContactKeyV1 } from '../src/client/store/vault/contact-key.ts'
 import { buildGenesisLog } from './protocol/support/webvh-log-fixture.ts'
 
 describe('private DIDComm relationship handshake', () => {

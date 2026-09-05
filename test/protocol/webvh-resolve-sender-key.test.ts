@@ -5,12 +5,12 @@
 // senderKid after a SIBLING device moves the shared identity's domain.
 import { describe, expect, test } from 'bun:test'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { createGenesis } from '../../src/identity/webvh/create-genesis.ts'
-import { migrateWebvhLocation } from '../../src/identity/webvh/migrate.ts'
-import { encodeMultikey } from '../../src/identity/webvh/multikey.ts'
-import { multikeyHashBase58 } from '../../src/identity/webvh/hash.ts'
-import { buildRoutingDoc, fetchRouting, putRouting } from '../../src/didcomm/webvh-routing.ts'
-import { resolveDidCommSenderKey } from '../../src/didcomm/webvh-resolve.ts'
+import { createGenesis } from '../../src/client/identity/webvh/create-genesis.ts'
+import { migrateWebvhLocation } from '../../src/client/identity/webvh/migrate.ts'
+import { encodeMultikey } from '../../src/client/identity/webvh/multikey.ts'
+import { multikeyHashBase58 } from '../../src/client/identity/webvh/hash.ts'
+import { buildRoutingDoc, fetchRouting, putRouting } from '../../src/shared/didcomm/webvh-routing.ts'
+import { resolveDidCommSenderKey } from '../../src/shared/didcomm/webvh-resolve.ts'
 import { fakeAnchor } from './support/webvh-log-fixture.ts'
 
 describe('resolveDidCommSenderKey', () => {

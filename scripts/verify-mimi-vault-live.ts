@@ -3,15 +3,15 @@
  * identity or an existing room. */
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { bytesToBase64url } from '../src/shared/protocol/canonical.ts'
-import { createMlsGroup, encryptApplication, generateOwnKeyPackageForCredential } from '../src/mls/group.ts'
+import { createMlsGroup, encryptApplication, generateOwnKeyPackageForCredential } from '../src/client/mimi/group.ts'
 import { createCommit, encodeMlsMessage } from '../src/vendor/mls/index.ts'
 import { encodeCredential } from '../src/vendor/mls/credential.ts'
 import { mlsSuite } from '../src/vendor/mls/suite.ts'
 import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../src/shared/mimi/app-data.ts'
 import { deliveriesPullSigningBytes, submitMessageSigningBytes, submitVaultCheckpointSigningBytes, updateRoomSigningBytes } from '../src/shared/mimi/authorizer.ts'
 import { decodeDeliveriesWire, decodeFrankingAgentDataWire, decodeSubmitMessageResponseWire, decodeSubmitVaultCheckpointResponseWire, decodeUpdateRoomResponseWire, encodeDeliveriesPullRequestWire, encodeSubmitMessageRequestWire, encodeSubmitVaultCheckpointRequestWire, encodeUpdateRoomRequestWire } from '../src/shared/mimi/wire.ts'
-import { sendMimiVaultCheckpoint } from '../src/vault/mimi-vault-sync.ts'
-import { encodeVaultDeliveryPack } from '../src/vault/delivery-pack.ts'
+import { sendMimiVaultCheckpoint } from '../src/client/store/vault/mimi-vault-sync.ts'
+import { encodeVaultDeliveryPack } from '../src/client/store/vault/delivery-pack.ts'
 
 const baseUrl = (process.env.MIMI_SELF_URL ?? 'https://mimi-self.biset.md').replace(/\/$/, '')
 const now = () => new Date().toISOString()

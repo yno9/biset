@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { LocalJmapGateway, LocalJmapTransport, MemoryLocalJmapReadModel } from '../../src/local-jmap/gateway.ts'
+import { LocalJmapGateway, LocalJmapTransport, MemoryLocalJmapReadModel } from '../../src/client/store/projection/gateway.ts'
 
 const model = new MemoryLocalJmapReadModel({
   state: 'vault-root-1',

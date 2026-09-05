@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { equalBytes } from '../../src/shared/protocol/canonical.ts'
-import { decryptVaultObject } from '../../src/vault/objects.ts'
-import { buildMailMessageAdd, buildMailMessageEdit, rawRfc5322ObjectAad } from '../../src/vault/mail-message.ts'
-import { createSegmentKey } from '../../src/vault/objects.ts'
-import { verifyVaultEvent, type VaultEventSigner } from '../../src/vault/events.ts'
+import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
+import { buildMailMessageAdd, buildMailMessageEdit, rawRfc5322ObjectAad } from '../../src/client/store/vault/mail-message.ts'
+import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
+import { verifyVaultEvent, type VaultEventSigner } from '../../src/client/store/vault/events.ts'
 
 const signer: VaultEventSigner = {
   deviceId: 'device-a',

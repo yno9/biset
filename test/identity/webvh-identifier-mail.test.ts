@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mailFromForIdentity, identityDomainForMailAddress } from '../../src/identity/webvh/identifier.ts'
+import { mailFromForIdentity, identityDomainForMailAddress } from '../../src/client/identity/webvh/identifier.ts'
 
 describe('mail address <-> did:webvh domain (identifier.ts)', () => {
   test('mailFromForIdentity derives {username}@{apexDomain} from a subdomain-per-identity DID', () => {

@@ -5,9 +5,9 @@
 // MlsEpochExporter that the existing Vault Epoch Key boundary
 // (mls/vault-epoch.ts) can derive a key from.
 import { describe, expect, test } from 'bun:test'
-import { createMlsGroup, generateOwnKeyPackage, rekey } from '../../src/mls/group.ts'
-import { StoredMlsSelfGroupProvider, type LoadedMlsSelfGroup, type MlsSelfGroupStateStore } from '../../src/mls/store.ts'
-import { MlsVaultEpochKeyResolver } from '../../src/mls/vault-epoch.ts'
+import { createMlsGroup, generateOwnKeyPackage, rekey } from '../../src/client/mimi/group.ts'
+import { StoredMlsSelfGroupProvider, type LoadedMlsSelfGroup, type MlsSelfGroupStateStore } from '../../src/client/mimi/store.ts'
+import { MlsVaultEpochKeyResolver } from '../../src/client/mimi/vault-epoch.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 
 const identityId = 'did:web:alice.example'

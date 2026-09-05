@@ -13,7 +13,7 @@ import { ml_kem768 } from '@noble/post-quantum/ml-kem.js'
 import {
   packAuthcrypt, unpackAuthcrypt, packAuthcryptHybrid, unpackAuthcryptHybrid,
   b64urlToBytes, b64url, type DidCommJWE,
-} from '../src/didcomm/crypto.ts'
+} from '../src/shared/didcomm/crypto.ts'
 
 const senderX = x25519.utils.randomSecretKey()
 const senderKid = 'did:webvh:alice#k1'

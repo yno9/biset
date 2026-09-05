@@ -4,14 +4,14 @@
 // accept a real event/wrap from a current self-group member and reject one
 // from a device that was never in the group.
 import { describe, expect, test } from 'bun:test'
-import { buildRestoreTransferVerifier } from '../../src/identity/bootstrap.ts'
-import { createMlsGroup, generateOwnKeyPackage, memberKids } from '../../src/mls/group.ts'
+import { buildRestoreTransferVerifier } from '../../src/client/identity/bootstrap.ts'
+import { createMlsGroup, generateOwnKeyPackage, memberKids } from '../../src/client/mimi/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
-import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
-import { createVaultEvent, verifyVaultEvent } from '../../src/vault/events.ts'
-import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
+import { MlsMembershipSegmentKeyWrapSigner } from '../../src/client/mimi/segment-key-membership.ts'
+import { createVaultEvent, verifyVaultEvent } from '../../src/client/store/vault/events.ts'
+import { createSegmentKeyWrap } from '../../src/client/store/vault/crypto.ts'
 import { mlsEpoch } from '../../src/shared/protocol/ids.ts'
-import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
+import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mimi/store.ts'
 import type { ClientState } from '../../src/vendor/mls/index.ts'
 
 const identityId = 'did:web:alice.example'
@@ -43,9 +43,9 @@ describe('buildRestoreTransferVerifier', () => {
     }, signer)
     expect(await verifyVaultEvent(event, verifier.eventVerifier)).toBe(true)
 
-    const { epochOf } = await import('../../src/mls/group.ts')
-    const { deriveVaultEpochKey } = await import('../../src/mls/vault-epoch.ts')
-    const { exportSecret } = await import('../../src/mls/group.ts')
+    const { epochOf } = await import('../../src/client/mimi/group.ts')
+    const { deriveVaultEpochKey } = await import('../../src/client/mimi/vault-epoch.ts')
+    const { exportSecret } = await import('../../src/client/mimi/group.ts')
     const epoch = mlsEpoch(epochOf(state))
     const vek = await deriveVaultEpochKey({ selfGroupId: selfGroupId, epoch, exportSecret: (label, ctx, len) => exportSecret(state, label, ctx, len) })
     const wrap = await createSegmentKeyWrap(vek, crypto.getRandomValues(new Uint8Array(32)), {

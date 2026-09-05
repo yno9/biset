@@ -19,23 +19,23 @@ import { describe, expect, test } from 'bun:test'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { equalBytes, sha256Bytes } from '../src/shared/protocol/canonical.ts'
 import type { IngressEnvelopeV1 } from '../src/shared/protocol/ingress.ts'
-import { packAuthcrypt, packAnoncrypt } from '../src/didcomm/crypto.ts'
-import { buildPlaintext } from '../src/didcomm/message.ts'
-import { PING } from '../src/didcomm/trust-ping.ts'
-import { BASIC_MESSAGE } from '../src/didcomm/basicmessage.ts'
-import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT } from '../src/didcomm/relationship.ts'
-import { GROUP_INVITE, GROUP_MESSAGE } from '../src/didcomm/group-chat.ts'
-import { MAIL_BRIDGE_INBOUND } from '../src/didcomm/mail-bridge.ts'
-import { DidCommIngressProjector, isProjectableDidCommIngress } from '../src/didcomm/ingress-projector.ts'
-import { generatePeerIdentity } from '../src/didcomm/peer.ts'
+import { packAuthcrypt, packAnoncrypt } from '../src/shared/didcomm/crypto.ts'
+import { buildPlaintext } from '../src/shared/didcomm/message.ts'
+import { PING } from '../src/shared/didcomm/trust-ping.ts'
+import { BASIC_MESSAGE } from '../src/shared/didcomm/basicmessage.ts'
+import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT } from '../src/shared/didcomm/relationship.ts'
+import { GROUP_INVITE, GROUP_MESSAGE } from '../src/shared/didcomm/group-chat.ts'
+import { MAIL_BRIDGE_INBOUND } from '../src/shared/didcomm/mail-bridge.ts'
+import { DidCommIngressProjector, isProjectableDidCommIngress } from '../src/shared/didcomm/ingress-projector.ts'
+import { generatePeerIdentity } from '../src/shared/didcomm/peer.ts'
 import { createMediator } from '../src/server/didcomm-mediator/server.ts'
-import { registerWithMediator } from '../src/didcomm/mediator-sync.ts'
-import { pickupStatus, type DeliveredMessage } from '../src/didcomm/mediator-pickup.ts'
-import { watchMediator } from '../src/didcomm/mediator-watch.ts'
-import type { DidCommSender } from '../src/didcomm/mediator-transport.ts'
-import { createSegmentKeyWrap } from '../src/vault/crypto.ts'
-import { createSegmentKey } from '../src/vault/objects.ts'
-import type { VaultEventSigner } from '../src/vault/events.ts'
+import { registerWithMediator } from '../src/shared/didcomm/mediator-sync.ts'
+import { pickupStatus, type DeliveredMessage } from '../src/shared/didcomm/mediator-pickup.ts'
+import { watchMediator } from '../src/shared/didcomm/mediator-watch.ts'
+import type { DidCommSender } from '../src/shared/didcomm/mediator-transport.ts'
+import { createSegmentKeyWrap } from '../src/client/store/vault/crypto.ts'
+import { createSegmentKey } from '../src/client/store/vault/objects.ts'
+import type { VaultEventSigner } from '../src/client/store/vault/events.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 const identityId = 'did:webvh:abc123:wallet.test.example'
@@ -261,8 +261,8 @@ describe('did.md Wallet mediator delivery handler', () => {
 // the handler is declared inside a closure in the browser entry point and
 // has no importable seam. The behaviour it produces is already covered
 // above against a real mediator.
-const mainSource = await Bun.file(new URL('../src/main.ts', import.meta.url)).text()
-const projectorSource = await Bun.file(new URL('../src/didcomm/ingress-projector.ts', import.meta.url)).text()
+const mainSource = await Bun.file(new URL('../src/client/app/main.ts', import.meta.url)).text()
+const projectorSource = await Bun.file(new URL('../src/shared/didcomm/ingress-projector.ts', import.meta.url)).text()
 
 describe('mediator delivery handler (main.ts)', () => {
   test('the account path shares one allow-list with the projector', () => {

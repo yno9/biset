@@ -4,12 +4,12 @@
 // 2026-08-30 redesign, the did:webvh<->mail mapping is already public).
 import { describe, expect, test } from 'bun:test'
 import { x25519 } from '@noble/curves/ed25519.js'
-import { generatePeerIdentity } from '../../../src/didcomm/peer.ts'
-import { encodeX25519Multikey } from '../../../src/didcomm/multikey.ts'
-import { unpackAuthcrypt, unpackAnoncrypt, parseJwe } from '../../../src/didcomm/crypto.ts'
+import { generatePeerIdentity } from '../../../src/shared/didcomm/peer.ts'
+import { encodeX25519Multikey } from '../../../src/shared/didcomm/multikey.ts'
+import { unpackAuthcrypt, unpackAnoncrypt, parseJwe } from '../../../src/shared/didcomm/crypto.ts'
 import { buildInboundMailForward } from '../../../src/server/mail-plugin/bridge.ts'
-import { MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyOf } from '../../../src/didcomm/mail-bridge.ts'
-import { FORWARD } from '../../../src/didcomm/mediator-protocol.ts'
+import { MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyOf } from '../../../src/shared/didcomm/mail-bridge.ts'
+import { FORWARD } from '../../../src/shared/didcomm/mediator-protocol.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 const recipientDid = 'did:webvh:{SCID}:y.biset.md'

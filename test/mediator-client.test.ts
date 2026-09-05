@@ -7,16 +7,16 @@
 // the in-process handler, so this is a real protocol round trip with no
 // network.
 import { describe, expect, test } from 'bun:test'
-import { generatePeerIdentity } from '../src/didcomm/peer.ts'
+import { generatePeerIdentity } from '../src/shared/didcomm/peer.ts'
 import { createMediator } from '../src/server/didcomm-mediator/server.ts'
-import { fetchMediatorInfo, requestMediation, updateKeylist, queryKeylist } from '../src/didcomm/mediator-coordinate.ts'
-import { pickupStatus, pickupDeliver, acknowledgeMessages } from '../src/didcomm/mediator-pickup.ts'
-import { registerWithMediator, startMediatorPolling } from '../src/didcomm/mediator-sync.ts'
-import { requestWatch, mediatorStreamUrl } from '../src/didcomm/mediator-pickup.ts'
-import { watchMediator } from '../src/didcomm/mediator-watch.ts'
-import type { DidCommSender } from '../src/didcomm/mediator-transport.ts'
-import { packAuthcrypt, packAnoncrypt } from '../src/didcomm/crypto.ts'
-import { buildPlaintext } from '../src/didcomm/message.ts'
+import { fetchMediatorInfo, requestMediation, updateKeylist, queryKeylist } from '../src/shared/didcomm/mediator-coordinate.ts'
+import { pickupStatus, pickupDeliver, acknowledgeMessages } from '../src/shared/didcomm/mediator-pickup.ts'
+import { registerWithMediator, startMediatorPolling } from '../src/shared/didcomm/mediator-sync.ts'
+import { requestWatch, mediatorStreamUrl } from '../src/shared/didcomm/mediator-pickup.ts'
+import { watchMediator } from '../src/shared/didcomm/mediator-watch.ts'
+import type { DidCommSender } from '../src/shared/didcomm/mediator-transport.ts'
+import { packAuthcrypt, packAnoncrypt } from '../src/shared/didcomm/crypto.ts'
+import { buildPlaintext } from '../src/shared/didcomm/message.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 

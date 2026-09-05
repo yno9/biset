@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { equalBytes, sha256Bytes } from '../../src/shared/protocol/canonical.ts'
 import { ingressAckSigningBytes } from '../../src/shared/protocol/signing.ts'
 import type { IngressEnvelopeV1 } from '../../src/shared/protocol/ingress.ts'
-import { ingestIngress } from '../../src/vault/ingress-ingest.ts'
+import { ingestIngress } from '../../src/client/store/vault/ingress-ingest.ts'
 
 const body = new Uint8Array([1, 2])
 const envelope: IngressEnvelopeV1 = { version: 1, ingressId: 'ingress-1', protocol: 'mail', recipientIdentityId: 'did:web:alice.example', recipientDeviceSnapshot: ['device-a'], createdAt: '2026-08-21T00:00:00.000Z', expiresAt: '2026-08-22T00:00:00.000Z', transportMetadata: {}, sourceEvidence: new Uint8Array([3]), protectedPayload: body, protectedPayloadHash: sha256Bytes(body) }

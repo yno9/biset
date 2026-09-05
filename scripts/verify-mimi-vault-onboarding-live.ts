@@ -4,12 +4,12 @@
  * external commit, then proves the original device can consume a message
  * encrypted by the restored one. No existing identity or room is touched. */
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { createMlsDeviceCredential } from '../src/mls/device-credential.ts'
-import { MimiClientTransport } from '../src/mls/mimi-client-transport.ts'
-import { createMimiVaultRoom, joinMimiVaultRoom } from '../src/mls/mimi-vault-room.ts'
-import { PersistedMimiVaultSession, type MimiVaultSessionRecord } from '../src/mls/mimi-vault-session.ts'
+import { createMlsDeviceCredential } from '../src/client/mimi/device-credential.ts'
+import { MimiClientTransport } from '../src/client/mimi/mimi-client-transport.ts'
+import { createMimiVaultRoom, joinMimiVaultRoom } from '../src/client/mimi/mimi-vault-room.ts'
+import { PersistedMimiVaultSession, type MimiVaultSessionRecord } from '../src/client/mimi/mimi-vault-session.ts'
 import { deliveriesPullSigningBytes } from '../src/shared/mimi/authorizer.ts'
-import { decodeMimiVaultBatch, sendMimiVaultCheckpoint } from '../src/vault/mimi-vault-sync.ts'
+import { decodeMimiVaultBatch, sendMimiVaultCheckpoint } from '../src/client/store/vault/mimi-vault-sync.ts'
 
 const baseUrl = (process.env.MIMI_SELF_URL ?? 'https://mimi-self.biset.md').replace(/\/$/, '')
 const identity = `did:biset:onboarding-${crypto.randomUUID()}`

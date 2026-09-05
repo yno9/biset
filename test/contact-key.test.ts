@@ -1,18 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 import { equalBytes } from '../src/shared/protocol/canonical.ts'
-import { generatePeerIdentity } from '../src/didcomm/peer.ts'
-import { createSegmentKeyWrap } from '../src/vault/crypto.ts'
-import { decodeVaultDeliveryPack } from '../src/vault/delivery-pack.ts'
-import type { VaultEventSigner } from '../src/vault/events.ts'
-import { createSegmentKey, decryptVaultObject } from '../src/vault/objects.ts'
+import { generatePeerIdentity } from '../src/shared/didcomm/peer.ts'
+import { createSegmentKeyWrap } from '../src/client/store/vault/crypto.ts'
+import { decodeVaultDeliveryPack } from '../src/client/store/vault/delivery-pack.ts'
+import type { VaultEventSigner } from '../src/client/store/vault/events.ts'
+import { createSegmentKey, decryptVaultObject } from '../src/client/store/vault/objects.ts'
 import {
   buildContactKeyRecord,
   contactKeyAad,
   decodeContactKey,
   type ContactKeyV1,
-} from '../src/vault/contact-key.ts'
-import { ContactKeyReader } from '../src/vault/contact-key-reader.ts'
-import { ContactKeyVaultSink } from '../src/vault/contact-key-sink.ts'
+} from '../src/client/store/vault/contact-key.ts'
+import { ContactKeyReader } from '../src/client/store/vault/contact-key-reader.ts'
+import { ContactKeyVaultSink } from '../src/client/store/vault/contact-key-sink.ts'
 
 const identityId = 'did:webvh:alice.example'
 const counterpartyDid = 'did:webvh:bob.example'

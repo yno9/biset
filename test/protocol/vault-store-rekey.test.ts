@@ -7,9 +7,9 @@
 // identically.
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
-import { IndexedDbVaultStore, type IngressVaultCommit } from '../../src/vault/store.ts'
-import { createVaultEvent, type VaultEventSigner } from '../../src/vault/events.ts'
-import { createSegmentKey, encryptVaultObject } from '../../src/vault/objects.ts'
+import { IndexedDbVaultStore, type IngressVaultCommit } from '../../src/client/store/vault/store.ts'
+import { createVaultEvent, type VaultEventSigner } from '../../src/client/store/vault/events.ts'
+import { createSegmentKey, encryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import type { IngressAckV1 } from '../../src/shared/protocol/ingress.ts'
 
 const DATABASE_NAME = 'biset-vault-core'

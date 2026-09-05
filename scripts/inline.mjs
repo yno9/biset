@@ -1,8 +1,8 @@
 import { readFileSync, writeFileSync } from 'fs'
 
-const html = readFileSync('src/index.html', 'utf8')
+const html = readFileSync('src/client/app/index.html', 'utf8')
 const js = readFileSync('dist/app.js', 'utf8')
-const css = readFileSync('src/style.css', 'utf8')
+const css = readFileSync('src/client/app/style.css', 'utf8')
 
 let config = {}
 try { config = JSON.parse(readFileSync('config.json', 'utf8')) } catch {}

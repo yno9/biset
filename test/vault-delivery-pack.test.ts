@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { VAULT_EVENT_KINDS, type VaultEventKind } from '../src/shared/protocol/vault.ts'
-import { decodeVaultDeliveryPack, encodeVaultDeliveryPack } from '../src/vault/delivery-pack.ts'
+import { decodeVaultDeliveryPack, encodeVaultDeliveryPack } from '../src/client/store/vault/delivery-pack.ts'
 
 describe('vault delivery pack', () => {
   test.each(VAULT_EVENT_KINDS)('round-trips the %s event kind', (kind: VaultEventKind) => {

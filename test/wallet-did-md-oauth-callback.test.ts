@@ -2,9 +2,9 @@ import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { bytesToBase64url } from '../src/shared/protocol/canonical.ts'
-import { buildProof } from '../src/identity/webvh/proof.ts'
-import { didToHttpsUrl } from '../src/identity/webvh/identifier.ts'
-import { createMlsDeviceCredential, encodeMlsDeviceCredential } from '../src/mls/device-credential.ts'
+import { buildProof } from '../src/client/identity/webvh/proof.ts'
+import { didToHttpsUrl } from '../src/client/identity/webvh/identifier.ts'
+import { createMlsDeviceCredential, encodeMlsDeviceCredential } from '../src/client/mimi/device-credential.ts'
 import { buildGenesisLog } from './protocol/support/webvh-log-fixture.ts'
 import {
   clearDidMdPendingAuthorization,
@@ -15,8 +15,8 @@ import {
   sealDidMdBisetDeviceMaterial,
   type DidMdPendingAuthorization,
   type DidMdRegistration,
-} from '../src/wallet/did-md-store.ts'
-import { completeDidMdWalletCallback } from '../src/wallet/did-md-oauth.ts'
+} from '../src/client/identity/wallet/did-md-store.ts'
+import { completeDidMdWalletCallback } from '../src/client/identity/wallet/did-md-oauth.ts'
 
 const DATABASE_NAME = 'biset-did-md-wallet'
 const ORIGIN = 'https://biset.example'

@@ -22,7 +22,7 @@
     "lib": ["ESNext"],
     "types": ["bun"]
   },
-  "include": ["src/mediator/**/*"],
-  "exclude": ["src/mediator/mail-plugin/**"],
+  "include": ["src/server/didcomm-mediator/**/*"],
+  "exclude": [],
   "typeRoots": ["node_modules/@types"]
 }

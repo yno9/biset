@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import { x25519, ed25519 } from '@noble/curves/ed25519.js'
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js'
-import { sendDidCommMessage } from '../../src/didcomm/send-message.ts'
-import { parseJwe, unpackAuthcrypt, unpackAuthcryptHybrid, unpackAnoncrypt, b64urlToBytes } from '../../src/didcomm/crypto.ts'
-import { BASIC_MESSAGE } from '../../src/didcomm/basicmessage.ts'
-import { encodeX25519Multikey, encodeMlkem768Multikey } from '../../src/didcomm/multikey.ts'
-import { mlkemKidFor } from '../../src/didcomm/devicekid.ts'
-import { generatePeerIdentity } from '../../src/didcomm/peer.ts'
+import { sendDidCommMessage } from '../../src/shared/didcomm/send-message.ts'
+import { parseJwe, unpackAuthcrypt, unpackAuthcryptHybrid, unpackAnoncrypt, b64urlToBytes } from '../../src/shared/didcomm/crypto.ts'
+import { BASIC_MESSAGE } from '../../src/shared/didcomm/basicmessage.ts'
+import { encodeX25519Multikey, encodeMlkem768Multikey } from '../../src/shared/didcomm/multikey.ts'
+import { mlkemKidFor } from '../../src/shared/didcomm/devicekid.ts'
+import { generatePeerIdentity } from '../../src/shared/didcomm/peer.ts'
 import { buildGenesisLog } from '../protocol/support/webvh-log-fixture.ts'
 
 const rootPrivateKey = ed25519.utils.randomSecretKey()

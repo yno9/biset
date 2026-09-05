@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { computeReplyContext } from '../src/mail/message-view.ts'
-import type { ProcessedMessage } from '../src/mail/message-view.ts'
+import { computeReplyContext } from '../src/client/app/mail/message-view.ts'
+import type { ProcessedMessage } from '../src/client/app/mail/message-view.ts'
 
 function msg(overrides: Partial<ProcessedMessage['msg']>): ProcessedMessage {
   return {

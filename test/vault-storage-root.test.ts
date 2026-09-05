@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { ActiveVaultSegmentManager } from '../src/vault/active-segment.ts'
-import { StoredSegmentKeyResolver, type VaultEpochKeyResolver } from '../src/vault/segment-key-resolver.ts'
-import { deriveVaultStorageKek, VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../src/vault/storage-root.ts'
+import { ActiveVaultSegmentManager } from '../src/client/store/vault/active-segment.ts'
+import { StoredSegmentKeyResolver, type VaultEpochKeyResolver } from '../src/client/store/vault/segment-key-resolver.ts'
+import { deriveVaultStorageKek, VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../src/client/store/vault/storage-root.ts'
 import type { SegmentKeyWrapV1 } from '../src/shared/protocol/vault.ts'
-import type { VaultSegmentRecord } from '../src/vault/store.ts'
+import type { VaultSegmentRecord } from '../src/client/store/vault/store.ts'
 
 describe('stable Vault storage root', () => {
   test('is deterministic and independent of MLS state', async () => {

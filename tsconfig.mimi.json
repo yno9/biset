@@ -13,6 +13,6 @@
     "lib": ["ESNext"],
     "types": ["bun"]
   },
-  "include": ["src/mimi/**/*"],
+  "include": ["src/server/mimi/**/*"],
   "typeRoots": ["node_modules/@types"]
 }

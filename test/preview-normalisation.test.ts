@@ -21,7 +21,7 @@
 // `ok()`/console.log harness it used before reported "Ran 0 tests" to
 // `bun run test`, so a failure here was invisible in the suite summary.
 import { describe, expect, test } from 'bun:test'
-import { previewText, stripQuoted } from '../src/ui/format.ts'
+import { previewText, stripQuoted } from '../src/client/app/ui/format.ts'
 
 // The message from the report, as the relay stores it.
 const REPLY = `test

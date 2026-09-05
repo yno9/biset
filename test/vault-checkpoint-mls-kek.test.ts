@@ -2,16 +2,16 @@ import { expect, test } from 'bun:test'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { canonicalBytes, type CanonicalValue } from '../src/shared/protocol/canonical.ts'
 import type { MlsEpoch } from '../src/shared/protocol/ids.ts'
-import { buildVaultManifest } from '../src/vault/manifest.ts'
-import { MlsVaultEpochKeyResolver, type MlsEpochExporter } from '../src/mls/vault-epoch.ts'
+import { buildVaultManifest } from '../src/client/store/vault/manifest.ts'
+import { MlsVaultEpochKeyResolver, type MlsEpochExporter } from '../src/client/mimi/vault-epoch.ts'
 import {
   createVaultCheckpoint,
   openVaultCheckpoint,
   readVaultCheckpointEpoch,
   VaultCheckpointEpochUnavailableError,
-} from '../src/vault/vault-checkpoint.ts'
-import { shouldRecreateVaultCheckpoint, synchronizeMimiVault, type MimiVaultSyncGap } from '../src/vault/mimi-vault-sync.ts'
-import { encodeMimiVaultChunk, splitMimiVaultPayload } from '../src/vault/mimi-vault-chunks.ts'
+} from '../src/client/store/vault/vault-checkpoint.ts'
+import { shouldRecreateVaultCheckpoint, synchronizeMimiVault, type MimiVaultSyncGap } from '../src/client/store/vault/mimi-vault-sync.ts'
+import { encodeMimiVaultChunk, splitMimiVaultPayload } from '../src/client/store/vault/mimi-vault-chunks.ts'
 import type { MimiDeliveryEntry } from '../src/shared/mimi/protocol-types.ts'
 
 const identityId = 'did:webvh:test:example.test'

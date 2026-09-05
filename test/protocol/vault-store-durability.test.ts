@@ -10,9 +10,9 @@
 // app" durability requires simulating.
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
-import { IndexedDbVaultStore, type IngressVaultCommit, type LocalVaultMutationCommit } from '../../src/vault/store.ts'
-import { createVaultEvent, type VaultEventSigner } from '../../src/vault/events.ts'
-import { createSegmentKey, encryptVaultObject } from '../../src/vault/objects.ts'
+import { IndexedDbVaultStore, type IngressVaultCommit, type LocalVaultMutationCommit } from '../../src/client/store/vault/store.ts'
+import { createVaultEvent, type VaultEventSigner } from '../../src/client/store/vault/events.ts'
+import { createSegmentKey, encryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { sha256Bytes } from '../../src/shared/protocol/canonical.ts'
 import type { IngressAckV1 } from '../../src/shared/protocol/ingress.ts'
 

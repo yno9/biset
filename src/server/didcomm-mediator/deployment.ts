@@ -7,7 +7,7 @@
 // twin (feedback: unify common logic) -- see tsconfig.mediator.json's own
 // header for why mail-plugin/ itself stays a separate typecheck project
 // even though its entrypoint imports this file.
-import { resolveDidCommSenderKey } from '../../didcomm/webvh-resolve.ts'
+import { resolveDidCommSenderKey } from '../../shared/didcomm/webvh-resolve.ts'
 import { createMediator } from './server.ts'
 import { SqliteMediatorStore } from './sqlite-store.ts'
 import { IpRateLimiter } from './rate-limit.ts'

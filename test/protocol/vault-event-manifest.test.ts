@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { equalBytes, sha256Bytes } from '../../src/shared/protocol/canonical.ts'
-import { buildVaultManifest, diffVaultManifests, verifyVaultManifest } from '../../src/vault/manifest.ts'
-import { createVaultEvent, verifyVaultEvent, type VaultEventSigner } from '../../src/vault/events.ts'
+import { buildVaultManifest, diffVaultManifests, verifyVaultManifest } from '../../src/client/store/vault/manifest.ts'
+import { createVaultEvent, verifyVaultEvent, type VaultEventSigner } from '../../src/client/store/vault/events.ts'
 
 const signer: VaultEventSigner = {
   deviceId: 'device-a',

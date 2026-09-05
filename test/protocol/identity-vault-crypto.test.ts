@@ -7,18 +7,18 @@
 // a fresh (sealing the old) segment exactly when the self-group epoch moves.
 import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { buildWalletVaultCryptoBoundary, repairCurrentLocalSegmentKeyWraps } from '../../src/identity/bootstrap.ts'
-import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
+import { buildWalletVaultCryptoBoundary, repairCurrentLocalSegmentKeyWraps } from '../../src/client/identity/bootstrap.ts'
+import { createSegmentKeyWrap } from '../../src/client/store/vault/crypto.ts'
 import {
   confirmCommit, createMlsGroup, epochOf, exportSecret, generateOwnKeyPackage, groupInfoForExternalJoin,
   joinGroupExternally, memberKids, processIncoming, rekey, removeMembers,
-} from '../../src/mls/group.ts'
-import { unwrapSegmentKey } from '../../src/vault/crypto.ts'
+} from '../../src/client/mimi/group.ts'
+import { unwrapSegmentKey } from '../../src/client/store/vault/crypto.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
-import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../../src/vault/storage-root.ts'
+import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../../src/client/store/vault/storage-root.ts'
 import { mlsEpoch } from '../../src/shared/protocol/ids.ts'
-import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
-import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/vault/store.ts'
+import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mimi/store.ts'
+import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/client/store/vault/store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/shared/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
@@ -79,8 +79,8 @@ describe('buildWalletVaultCryptoBoundary', () => {
     const wraps = memoryWrapStore()
     const boundary = buildWalletVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
 
-    const { deriveVaultEpochKey } = await import('../../src/mls/vault-epoch.ts')
-    const { exportSecret } = await import('../../src/mls/group.ts')
+    const { deriveVaultEpochKey } = await import('../../src/client/mimi/vault-epoch.ts')
+    const { exportSecret } = await import('../../src/client/mimi/group.ts')
     const epoch = mlsEpoch(epochOf(state))
     const vek = await deriveVaultEpochKey({ selfGroupId: selfGroupId, epoch, exportSecret: (label, ctx, len) => exportSecret(state, label, ctx, len) })
 
@@ -219,7 +219,7 @@ describe('buildWalletVaultCryptoBoundary', () => {
     // state can produce -- its own (stale) epoch's exporter secret. MLS
     // forward secrecy means this is not the epoch the wrap was actually
     // encrypted under, so the AEAD tag must fail to verify.
-    const { deriveVaultEpochKey } = await import('../../src/mls/vault-epoch.ts')
+    const { deriveVaultEpochKey } = await import('../../src/client/mimi/vault-epoch.ts')
     const staleEpoch = mlsEpoch(epochOf(stateB))
     const staleVek = await deriveVaultEpochKey({
       selfGroupId: selfGroupId, epoch: staleEpoch,

@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
-import { createMlsGroup, generateOwnKeyPackageForCredential } from '../../src/mls/group.ts'
-import { PersistedMimiVaultSession, type MimiVaultSessionRecord } from '../../src/mls/mimi-vault-session.ts'
+import { createMlsGroup, generateOwnKeyPackageForCredential } from '../../src/client/mimi/group.ts'
+import { PersistedMimiVaultSession, type MimiVaultSessionRecord } from '../../src/client/mimi/mimi-vault-session.ts'
 
 test('a lost MIMI response reuses the durable MLS PrivateMessage and delivery ID', async () => {
   const own = await generateOwnKeyPackageForCredential({ credentialType: 'basic', identity: new TextEncoder().encode('client') })

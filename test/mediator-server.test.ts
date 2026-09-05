@@ -7,12 +7,12 @@
 // point of a blind mediator (ARC.md's 2026-08-27 redesign) is that it works
 // for ANY DIDComm agent, not just biset's own.
 import { describe, expect, test } from 'bun:test'
-import { generatePeerIdentity } from '../src/didcomm/peer.ts'
+import { generatePeerIdentity } from '../src/shared/didcomm/peer.ts'
 import { createMediator } from '../src/server/didcomm-mediator/server.ts'
 import {
   packAuthcrypt, unpackAuthcrypt, packAnoncrypt, b64urlToBytes, parseJwe,
-} from '../src/didcomm/crypto.ts'
-import { buildPlaintext, type DidCommPlaintext } from '../src/didcomm/message.ts'
+} from '../src/shared/didcomm/crypto.ts'
+import { buildPlaintext, type DidCommPlaintext } from '../src/shared/didcomm/message.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 const fromUtf8 = (b: Uint8Array) => new TextDecoder().decode(b)

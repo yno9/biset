@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { buildPlaintext } from '../../src/didcomm/message.ts'
+import { buildPlaintext } from '../../src/shared/didcomm/message.ts'
 import {
   GROUP_INVITE,
   GROUP_MESSAGE,
@@ -10,7 +10,7 @@ import {
   isGroupMessage,
   parseDidCommGroupAddress,
   randomDidCommGroupId,
-} from '../../src/didcomm/group-chat.ts'
+} from '../../src/shared/didcomm/group-chat.ts'
 
 describe('DIDComm group invite message', () => {
   test('round-trips groupId/members/name through buildPlaintext', () => {

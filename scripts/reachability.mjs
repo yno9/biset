@@ -22,9 +22,9 @@ import { resolve, dirname, relative } from 'node:path'
 import { Glob } from 'bun'
 
 const ENTRIES = [
-  'src/main.ts', 'src/sw.ts',
-  'src/mediator/index.ts', 'src/mediator/mail-plugin/index.ts',
-  'src/mimi/index.ts',
+  'src/client/app/main.ts', 'src/client/app/sw.ts',
+  'src/server/didcomm-mediator/index.ts', 'src/server/mail-plugin/index.ts',
+  'src/server/mimi/index.ts',
 ]
 
 const importsOf = file => {

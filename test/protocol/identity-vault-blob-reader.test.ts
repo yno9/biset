@@ -3,12 +3,12 @@
 // chunk reader" actually decrypts a vault object through a real self-group
 // VEK, not a hand-built key, and serves range reads on the PLAINTEXT.
 import { describe, expect, test } from 'bun:test'
-import { buildVaultBlobReader, buildWalletVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
-import { createMlsGroup, generateOwnKeyPackage } from '../../src/mls/group.ts'
+import { buildVaultBlobReader, buildWalletVaultCryptoBoundary } from '../../src/client/identity/bootstrap.ts'
+import { createMlsGroup, generateOwnKeyPackage } from '../../src/client/mimi/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
-import { encryptVaultObject } from '../../src/vault/objects.ts'
-import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
-import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultObjectRecord, VaultSegmentRecord } from '../../src/vault/store.ts'
+import { encryptVaultObject } from '../../src/client/store/vault/objects.ts'
+import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mimi/store.ts'
+import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultObjectRecord, VaultSegmentRecord } from '../../src/client/store/vault/store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/shared/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'

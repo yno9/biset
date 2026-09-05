@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { emailSetToVaultMutationIntents } from '../../src/local-jmap/mutations.ts'
+import { emailSetToVaultMutationIntents } from '../../src/client/store/projection/mutations.ts'
 
 describe('Local JMAP mutation intents', () => {
   test('turns Email/set mailbox and keyword updates into immutable vault intents', () => {

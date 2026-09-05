@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { equalBytes } from '../../src/shared/protocol/canonical.ts'
-import { createSegmentKeyWrap, type SegmentKeyWrapSigner } from '../../src/vault/crypto.ts'
-import { createSegmentKey } from '../../src/vault/objects.ts'
-import { StoredSegmentKeyResolver } from '../../src/vault/segment-key-resolver.ts'
+import { createSegmentKeyWrap, type SegmentKeyWrapSigner } from '../../src/client/store/vault/crypto.ts'
+import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
+import { StoredSegmentKeyResolver } from '../../src/client/store/vault/segment-key-resolver.ts'
 
 const signer: SegmentKeyWrapSigner = {
   deviceId: 'device-a',

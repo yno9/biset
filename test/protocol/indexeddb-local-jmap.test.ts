@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { IndexedDbLocalJmapReadModel } from '../../src/local-jmap/indexeddb.ts'
-import { localJmapSnapshotFromProjection } from '../../src/local-jmap/gateway.ts'
+import { IndexedDbLocalJmapReadModel } from '../../src/client/store/projection/indexeddb.ts'
+import { localJmapSnapshotFromProjection } from '../../src/client/store/projection/gateway.ts'
 
 const identityId = 'did:web:alice.example'
 const projection = {

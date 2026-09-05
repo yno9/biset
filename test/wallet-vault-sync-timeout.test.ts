@@ -25,7 +25,7 @@
 // nothing else would notice.
 import { describe, expect, test } from 'bun:test'
 
-const source = await Bun.file(new URL('../src/main.ts', import.meta.url)).text()
+const source = await Bun.file(new URL('../src/client/app/main.ts', import.meta.url)).text()
 
 /** The `configureWalletAccountIfPresent` body -- the whole Wallet branch. */
 function walletBranch(): string {

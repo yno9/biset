@@ -5,15 +5,15 @@
 // into hop2's own queue -- all without either mediator's dispatch() ever
 // being told about hop chaining (2026-08-30 discussion).
 import { describe, expect, test } from 'bun:test'
-import { generatePeerIdentity } from '../../src/didcomm/peer.ts'
+import { generatePeerIdentity } from '../../src/shared/didcomm/peer.ts'
 import { createMediator } from '../../src/server/didcomm-mediator/server.ts'
 import { startRelayPoller } from '../../src/server/didcomm-mediator/relay-poller.ts'
-import { registerWithMediator } from '../../src/didcomm/mediator-sync.ts'
-import { pickupStatus, pickupDeliver, acknowledgeMessages } from '../../src/didcomm/mediator-pickup.ts'
-import type { DidCommSender } from '../../src/didcomm/mediator-transport.ts'
-import { packAuthcrypt, packAnoncrypt } from '../../src/didcomm/crypto.ts'
-import { buildPlaintext } from '../../src/didcomm/message.ts'
-import { FORWARD } from '../../src/didcomm/mediator-protocol.ts'
+import { registerWithMediator } from '../../src/shared/didcomm/mediator-sync.ts'
+import { pickupStatus, pickupDeliver, acknowledgeMessages } from '../../src/shared/didcomm/mediator-pickup.ts'
+import type { DidCommSender } from '../../src/shared/didcomm/mediator-transport.ts'
+import { packAuthcrypt, packAnoncrypt } from '../../src/shared/didcomm/crypto.ts'
+import { buildPlaintext } from '../../src/shared/didcomm/message.ts'
+import { FORWARD } from '../../src/shared/didcomm/mediator-protocol.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 

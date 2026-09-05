@@ -6,9 +6,9 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { base58 } from '@scure/base'
-import { canonicalize } from '../../../src/identity/webvh/jcs.ts'
-import { multihashSha256 } from '../../../src/identity/webvh/multihash.ts'
-import type { LogEntry, LogParameters } from '../../../src/identity/webvh/log.ts'
+import { canonicalize } from '../../../src/client/identity/webvh/jcs.ts'
+import { multihashSha256 } from '../../../src/client/identity/webvh/multihash.ts'
+import type { LogEntry, LogParameters } from '../../../src/client/identity/webvh/log.ts'
 
 export function jcsMultihashBase58(value: unknown): string {
   return base58.encode(multihashSha256(new TextEncoder().encode(canonicalize(value))))

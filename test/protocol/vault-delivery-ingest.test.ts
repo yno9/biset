@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { equalBytes, sha256Bytes } from '../../src/shared/protocol/canonical.ts'
 import { vaultDeliveryAckSigningBytes } from '../../src/shared/protocol/signing.ts'
-import { encodeVaultDeliveryPack } from '../../src/vault/delivery-pack.ts'
-import { ingestVaultDelivery } from '../../src/vault/delivery-ingest.ts'
-import type { VaultDeliveryCommit } from '../../src/vault/store.ts'
+import { encodeVaultDeliveryPack } from '../../src/client/store/vault/delivery-pack.ts'
+import { ingestVaultDelivery } from '../../src/client/store/vault/delivery-ingest.ts'
+import type { VaultDeliveryCommit } from '../../src/client/store/vault/store.ts'
 
 const identityId = 'did:web:alice.example'
 const payload = encodeVaultDeliveryPack({
