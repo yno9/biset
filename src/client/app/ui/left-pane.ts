@@ -21,8 +21,8 @@
 // local vault, no relay/DID-document/PGP/AP/push layer), so none of it can
 // actually be wired up; those DOM elements stay present (HTML/CSS
 // untouched) but inert, no event listeners attached.
-import { groupMessages } from '../mail/message-view.ts'
-import type { ThreadGroup } from '../mail/message-view.ts'
+import { groupMessages } from './message/message-view.ts'
+import type { ThreadGroup } from './message/message-view.ts'
 import { avatarStyle, esc, previewText } from './format.ts'
 import { getFocusedThreadKey, render, setFocusedThreadKey } from './thread.ts'
 import { hideAccountPage, hideConfigPage, inAccountMode, inConfigMode, showAccountPage, showConfigPage } from './account-page.ts'

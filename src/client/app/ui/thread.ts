@@ -3,7 +3,7 @@
 // (focused thread + past-threads list), the scroll mechanics that keep a
 // reader's position stable while it renders, and (compose slice 1) a
 // minimal reply box on the focused thread. Field names on MailMessageView
-// (src/client/app/mail/message-view.ts) intentionally match the old
+// (src/client/app/ui/message/message-view.ts) intentionally match the old
 // ProcessedMessage['msg'] shape, so this logic ports with the import list
 // changed and little else.
 //
@@ -25,8 +25,8 @@
 //   - the reply-dock height/padding sync (syncDockPosition) -- there is no
 //     resizable dock in this slice, so scroll math needs none of that
 //     geometry.
-import { computeReplyContext, emailToMessageView, groupMessages, latestGroup, processedMessages } from '../mail/message-view.ts'
-import type { MailMessageView, ProcessedMessage, ThreadGroup } from '../mail/message-view.ts'
+import { computeReplyContext, emailToMessageView, groupMessages, latestGroup, processedMessages } from './message/message-view.ts'
+import type { MailMessageView, ProcessedMessage, ThreadGroup } from './message/message-view.ts'
 import { avatarStyle, esc, formatTime, linkify, stripQuoted } from './format.ts'
 import type { LocalJmapReadModel } from '../../store/projection/gateway.ts'
 import { shortWebvhDid, labelForDid, protocolFor, PROTO_COLOR, PROTO_TEXT } from './did-display.ts'

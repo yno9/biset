@@ -2,7 +2,7 @@
 // threading.ts's union-find port (unchanged logic, just relocated) and the
 // new emailToMessageView bridge from LocalJmapEmail + raw RFC5322 bytes.
 import { describe, expect, test } from 'bun:test'
-import { computeThreadKeys, emailToMessageView } from '../src/client/app/mail/message-view.ts'
+import { computeThreadKeys, emailToMessageView } from '../src/client/app/ui/message/message-view.ts'
 import type { LocalJmapEmail } from '../src/client/store/projection/gateway.ts'
 
 describe('computeThreadKeys', () => {

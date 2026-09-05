@@ -12,7 +12,7 @@
 // In-Reply-To の親を1本辿って親の thread_id を継承していたので、親が欠けた瞬間
 // そこから先が丸ごと別スレッドに割れていた。ファントム経由なら同じ欠落親を指す
 // 兄弟同士が繋がる。（src.bak/threading.ts より移植、ロジックは無変更）
-import type { LocalJmapEmail } from '../../store/projection/gateway.ts'
+import type { LocalJmapEmail } from '../../../store/projection/gateway.ts'
 import { extractPlainTextBody } from './body-text.ts'
 import { readRfc5322HeaderSummary } from './rfc5322-headers.ts'
 
