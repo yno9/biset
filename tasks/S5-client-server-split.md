@@ -21,7 +21,7 @@
 | 移動先 | 内容 |
 |---|---|
 | `src/client/` | ブラウザで動くもの: `main.ts` `sw.ts` `app/` `ui/` `local-jmap/` `vault/` `mail/` `identity/` `wallet/` `oid4vp/` `oidc/` と、`didcomm/` `mls/` のクライアント側 |
-| `src/server/` | Bun で動くもの: `anchor/` `mediator/` `mimi/` |
+| `src/server/` | Bun で動くもの: `mediator/` `mimi/` |
 | `src/shared/` | 双方が使うもの: `protocol/`（wire schema、canonical encoding、ID、署名対象バイト列） |
 
 そのうえで:
@@ -29,7 +29,7 @@
 1. **クライアントがサーバー実装ディレクトリを直接 import している箇所を洗い出す。**
    起点は `src/mls/mimi-client-transport.ts` / `src/mls/mimi-vault-{room,session,watch}.ts` / `src/vault/mimi-vault-sync.ts`。
    共有すべき型・エンコーダだけを `src/shared/` に切り出し、**クライアントが `src/server/` を import しない状態**にする。
-2. `tsconfig.json` / `tsconfig.{anchor,mediator,mail-plugin,mimi}.json` の `include` を新しい構造に合わせる。
+2. `tsconfig.json` / `tsconfig.{mediator,mail-plugin,mimi}.json` の `include` を新しい構造に合わせる。
    **「型検査の分離」と「ディレクトリの分離」を一致させる**のがこの作業の本質。
 3. `package.json` の `scripts`（`build` / `build:*` / 各 entry）と `knip.json`、`scripts/reachability.mjs` の
    `ENTRIES` 配列も新しいパスに追従させる。
@@ -38,8 +38,8 @@
 
 **大量の import 書き換えを伴うので、一気にやらない。** 推奨する順序:
 
-1. まず `src/shared/`（= `protocol/` の移動）だけをやる。参照元が最も多いが、機械的で判断が要らない。
-2. 次に `src/server/`（`anchor/` `mediator/` `mimi/`）。ここは相互参照が少ない。
+1. まず `src/shared/`（= `protocol/` の移動。**2026-09-05 に完了済み** commit `4f889a6`）だけをやる。参照元が最も多いが、機械的で判断が要らない。
+2. 次に `src/server/`（`mediator/` `mimi/`）。ここは相互参照が少ない。
 3. **クライアント→サーバーの import を断ち切る**（上記 1.）。ここだけが設計判断を含む。
 4. 最後に `src/client/`。
 
@@ -89,7 +89,6 @@ bun run reachability --quiet
 
 サーバー3種のビルドも通ること:
 ```
-bun run build:anchor
 bun run build:didcomm-mediator
 bun run build:mail-plugin
 bun run build:mimi

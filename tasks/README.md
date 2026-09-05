@@ -9,7 +9,7 @@ biset は自前ログイン（native login: BIP39 seed から identity を作る
 外部の did IdP（**did.md**）ログインへ一本化する。
 
 - 既存ユーザーのデータは**すべて消してよい**。移行パスは不要
-- **Anchor そのものを削除する**（OIDC 層だけでなく did:webvh 公開文書ホスティングも含めて全部）
+- **Anchor そのものを削除する**（OIDC 層だけでなく did:webvh 公開文書ホスティングも含めて全部）→ ✅ 完了 `74864ff` `c26db16`
 - **機能が一時的に落ちることを許容する**（「先に削除、機能は後追い」）
 - MIMI checkpoint の KEK は wallet の `vaultSecret` を使う
 - メールアドレスの採番は **mediator 側の責務**（did.md が専用 mediator を運用する）
@@ -18,17 +18,18 @@ biset は自前ログイン（native login: BIP39 seed から identity を作る
 
 | ファイル | 内容 | 規模 | 前提 |
 |---|---|---|---|
-| [N1-remove-native-login.md](N1-remove-native-login.md) | クライアントの native login を削除（seed 由来の identity 生成・復元・鍵導出・UI） | 大 | Anchor 削除が先 |
+| [N1-remove-native-login.md](N1-remove-native-login.md) | クライアントの native login を削除（seed 由来の identity 生成・復元・鍵導出・UI） | 大 | Anchor 削除（済） |
 | [W3-wallet-feature-gaps.md](W3-wallet-feature-gaps.md) | N1 で落ちた機能を wallet 経路に実装（関係確立・送信outbox・checkpoint・グループ・メール） | 大 | **N1 が先** |
 | [S5-client-server-split.md](S5-client-server-split.md) | `src/` を client / server / shared に分離 | 大 | **他の全作業と排他** |
 
 ## 実行順序
 
 ```
-（Anchor 削除）──→ N1 ──→ W3 ──→ S5
+（Anchor 削除 ✅）──→ N1 ──→ W3 ──→ S5
 ```
 
-- **N1 の前に Anchor 削除**（`src/anchor/` と `src/oid4vp/` `src/oidc/`）。着手時に `git log --oneline -20` で確認
+- **Anchor 削除は完了済み**（`74864ff` `c26db16`）。`src/anchor/` `src/oid4vp/` `src/oidc/`
+  `tsconfig.anchor.json`、`deploy.sh` の anchor ターゲットはいずれも存在しない
 - **W3 は N1 の後**。何が落ちたかが分からないと埋めようがない
 - **S5 は最後**。ほぼ全ファイルを動かすので他と同時に走らせられない。
   N1 でファイルが大幅に減ってから移動する方が作業量が少ない
@@ -65,9 +66,9 @@ biset は自前ログイン（native login: BIP39 seed から identity を作る
 
 | | 何か | 扱い |
 |---|---|---|
-| `src/oid4vp/`, `src/oidc/` | **Anchor の Login Credential Wallet**（旧 native login 用） | 削除対象 |
+| ~~`src/oid4vp/`, `src/oidc/`~~ | Anchor の Login Credential Wallet（旧 native login 用） | 削除済 `74864ff` |
 | `src/wallet/` | **did.md OAuth Wallet**（新方式、唯一の入口） | **絶対に消さない** |
-| `src/anchor/webvh/` | Anchor 側の did:webvh **ホスティング** | 削除対象 |
+| ~~`src/anchor/webvh/`~~ | Anchor 側の did:webvh **ホスティング** | 削除済 `c26db16` |
 | `src/identity/webvh/` | クライアント側の did:webvh **解決** | **残す**（他人の DID 解決に必須） |
 
 `createPortableCoordinatorCheckpoint` などに残る `Coordinator` は、既に撤去されたサブシステムの名残で、
@@ -76,5 +77,6 @@ biset は自前ログイン（native login: BIP39 seed から identity を作る
 ## 背景資料
 
 - `PLAN-simplify.md` — 簡素化計画の全体像、これまでに分かったこと、未解決issue
-- `ARC.md` — 現行アーキテクチャ（Anchor 削除後は記述が古くなる。更新は別作業）
+- `ARC.md` — **Anchor 削除で記述が古い**（§3 の全体像、§4.2、§13.1、§17.2 が実在しない
+  コンポーネントを説明している）。N1 着地後にまとめて更新予定。読むときは注意
 - `src/vault/README.md` — Vault 層の構成と不変条件
