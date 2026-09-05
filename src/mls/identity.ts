@@ -18,7 +18,7 @@
 // `credentialType: 'basic'` is the right container: MLS transports the
 // canonical credential bytes while biset's Authentication Service interprets
 // and validates them.
-import type { Credential } from './vendor/credential.ts'
+import type { Credential } from '../vendor/mls/credential.ts'
 import { credentialForMlsDevice, mlsDeviceCredentialOf, type MlsDeviceCredentialV2 } from './device-credential.ts'
 
 /** An MLS device identity, one leaf per device. */

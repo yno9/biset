@@ -33,7 +33,7 @@ import { IndexedDbLocalJmapReadModel, type LocalVaultBlobReader } from '../local
 import { equalBytes } from '../shared/protocol/canonical.ts'
 import { mlsEpoch, type VaultEventId } from '../shared/protocol/ids.ts'
 import type { SegmentKeyWrapV1 } from '../shared/protocol/vault.ts'
-import type { ClientState } from '../mls/vendor/index.ts'
+import type { ClientState } from '../vendor/mls/index.ts'
 import { VAULT_STORAGE_GROUP_ID } from '../vault/storage-root.ts'
 
 let authServiceInstalled = false

@@ -5,8 +5,8 @@
  * GroupInfoResponse doc comment explains why that key is reused).
  */
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { encryptWithLabel } from '../mls/vendor/crypto/hpke.js'
-import { mlsSuite } from '../mls/suite.ts'
+import { encryptWithLabel } from '../vendor/mls/crypto/hpke.js'
+import { mlsSuite } from '../vendor/mls/suite.ts'
 import { groupInfoResponseSigningBytes } from './authorizer.ts'
 import { encodeGroupInfoRatchetTreeBundle } from './wire.ts'
 import type { FrankingKeyMaterial } from './franking.ts'

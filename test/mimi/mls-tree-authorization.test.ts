@@ -5,9 +5,9 @@ import { deliveriesPullSigningBytes, submitMessageSigningBytes, updateRoomSignin
 import { decodeDeliveriesWire, decodeSubmitMessageResponseWire, encodeDeliveriesPullRequestWire, encodeSubmitMessageRequestWire, encodeUpdateRoomRequestWire } from '../../src/mimi/wire.ts'
 import { encodeMimiParticipantListUpdate, encodeMimiFrankingAgent, encodeMimiRoomMetadata } from '../../src/mimi/app-data.ts'
 import { createMlsGroup, generateOwnKeyPackageForCredential, groupInfoForExternalJoin } from '../../src/mls/group.ts'
-import { mlsSuite } from '../../src/mls/suite.ts'
-import { createApplicationMessage, createCommit, encodeMlsMessage, type KeyPackage } from '../../src/mls/vendor/index.ts'
-import { encodeCredential } from '../../src/mls/vendor/credential.ts'
+import { mlsSuite } from '../../src/vendor/mls/suite.ts'
+import { createApplicationMessage, createCommit, encodeMlsMessage, type KeyPackage } from '../../src/vendor/mls/index.ts'
+import { encodeCredential } from '../../src/vendor/mls/credential.ts'
 import type { VisibleCredential } from '../../src/mimi/protocol-types.ts'
 
 const at = '2026-09-01T00:00:00.000Z'

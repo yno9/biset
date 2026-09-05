@@ -3,7 +3,7 @@
  * complete MLSMessage, and message-type-specific fields without flattening
  * them into local delivery metadata. */
 import { base64urlToBytes, bytesToBase64url, bytesToHex } from '../shared/protocol/canonical.ts'
-import { decodeMlsMessage } from '../mls/vendor/index.ts'
+import { decodeMlsMessage } from '../vendor/mls/index.ts'
 import type { Frank, MimiDeliveryEntry, MimiDeliveryKind, MimiEpoch, MimiRoomId } from './protocol-types.ts'
 import { decodeFrankWire, encodeFrankWire, MimiWireError } from './wire.ts'
 import type { MimiProviderTransport } from './provider-transport.ts'

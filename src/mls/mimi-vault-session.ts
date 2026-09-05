@@ -6,7 +6,7 @@
  * second time from a stale ratchet state. */
 import { bytesToBase64url, equalBytes, sha256Bytes } from '../shared/protocol/canonical.ts'
 import { epochOf, encryptApplication, processIncoming } from './group.ts'
-import type { ClientState } from './vendor/index.ts'
+import type { ClientState } from '../vendor/mls/index.ts'
 import type { MimiClientMode, MimiClientTransport } from './mimi-client-transport.ts'
 import type { MimiCredential, MimiDeliveryEntry, VaultCheckpointManifest } from '../mimi/protocol-types.ts'
 import { submitMessageSigningBytes, submitVaultCheckpointSigningBytes } from '../mimi/authorizer.ts'

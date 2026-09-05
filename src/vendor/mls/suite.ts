@@ -17,7 +17,7 @@
 // envelope in transit against harvest-now-decrypt-later; MLS protects the
 // group's own key schedule. Different layers, and they may reach PQ at
 // different times — see PLANMLS.md §3 on why the two are not alternatives.
-import { getCiphersuiteFromName, getCiphersuiteImpl, nobleCryptoProvider, type CiphersuiteImpl, type CiphersuiteName } from './vendor/index.ts'
+import { getCiphersuiteFromName, getCiphersuiteImpl, nobleCryptoProvider, type CiphersuiteImpl, type CiphersuiteName } from './index.ts'
 
 const MLS_SUITE: CiphersuiteName = 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519'
 

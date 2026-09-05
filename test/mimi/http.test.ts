@@ -31,13 +31,13 @@ import {
   encodeUpdateRoomRequestWire,
 } from '../../src/mimi/wire.ts'
 import type { PseudonymousCredential, VisibleCredential } from '../../src/mimi/protocol-types.ts'
-import { createCommit, encodeMlsMessage, type KeyPackage } from '../../src/mls/vendor/index.ts'
-import { encodeCredential } from '../../src/mls/vendor/credential.ts'
-import { decryptWithLabel } from '../../src/mls/vendor/crypto/hpke.ts'
-import { encodeWelcome } from '../../src/mls/vendor/welcome.ts'
+import { createCommit, encodeMlsMessage, type KeyPackage } from '../../src/vendor/mls/index.ts'
+import { encodeCredential } from '../../src/vendor/mls/credential.ts'
+import { decryptWithLabel } from '../../src/vendor/mls/crypto/hpke.ts'
+import { encodeWelcome } from '../../src/vendor/mls/welcome.ts'
 import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../../src/mimi/app-data.ts'
 import { createMlsGroup, generateOwnKeyPackageForCredential } from '../../src/mls/group.ts'
-import { mlsSuite } from '../../src/mls/suite.ts'
+import { mlsSuite } from '../../src/vendor/mls/suite.ts'
 
 interface Client { credential: VisibleCredential; secret: Uint8Array }
 

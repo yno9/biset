@@ -15,13 +15,13 @@
  * far only ever stored these bytes opaquely for HPKE-sealed re-delivery to
  * an external-join requester (group-info.ts).
  */
-import { decodeGroupInfo } from '../mls/vendor/groupInfo.js'
-import { getSignaturePublicKeyFromLeafIndex } from '../mls/vendor/ratchetTree.js'
-import { toLeafIndex } from '../mls/vendor/treemath.js'
-import type { CiphersuiteImpl } from '../mls/vendor/crypto/ciphersuite.js'
-import { verifyGroupInfoSignature, ratchetTreeFromExtension } from '../mls/vendor/groupInfo.js'
-import { initialPublicGroupState, type PublicGroupState } from '../mls/vendor/publicGroupState.js'
-import type { AuthenticationService } from '../mls/vendor/authenticationService.js'
+import { decodeGroupInfo } from '../vendor/mls/groupInfo.js'
+import { getSignaturePublicKeyFromLeafIndex } from '../vendor/mls/ratchetTree.js'
+import { toLeafIndex } from '../vendor/mls/treemath.js'
+import type { CiphersuiteImpl } from '../vendor/mls/crypto/ciphersuite.js'
+import { verifyGroupInfoSignature, ratchetTreeFromExtension } from '../vendor/mls/groupInfo.js'
+import { initialPublicGroupState, type PublicGroupState } from '../vendor/mls/publicGroupState.js'
+import type { AuthenticationService } from '../vendor/mls/authenticationService.js'
 
 export class MimiGroupInfoBootstrapError extends Error {}
 

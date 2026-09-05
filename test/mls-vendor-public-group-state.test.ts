@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { createMlsGroup, generateOwnKeyPackageForCredential } from '../src/mls/group.ts'
-import { mlsSuite } from '../src/mls/suite.ts'
-import { createCommit, type PublicMessage } from '../src/mls/vendor/index.ts'
-import { defaultAuthenticationService } from '../src/mls/vendor/authenticationService.ts'
-import { applyPublicCommit, initialPublicGroupState, verifyPublicMessageSignature } from '../src/mls/vendor/publicGroupState.ts'
+import { mlsSuite } from '../src/vendor/mls/suite.ts'
+import { createCommit, type PublicMessage } from '../src/vendor/mls/index.ts'
+import { defaultAuthenticationService } from '../src/vendor/mls/authenticationService.ts'
+import { applyPublicCommit, initialPublicGroupState, verifyPublicMessageSignature } from '../src/vendor/mls/publicGroupState.ts'
 
 /**
  * Cross-checks the new public (no-private-key) group state tracker against

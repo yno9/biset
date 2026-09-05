@@ -16,10 +16,10 @@
 //      the same RFC disagreeing is the signal.
 import { CipherSuite, DhkemX25519HkdfSha256, HkdfSha256, Aes128Gcm } from '@hpke/core'
 import vectors from './vectors/rfc9420-crypto-basics.json' with { type: 'json' }
-import { mlsSuite } from '../src/mls/suite.ts'
-import { expandWithLabel, deriveSecret, deriveTreeSecret } from '../src/mls/vendor/crypto/kdf.ts'
-import { encryptWithLabel, decryptWithLabel } from '../src/mls/vendor/crypto/hpke.ts'
-import { verifyWithLabel, signWithLabel } from '../src/mls/vendor/crypto/signature.ts'
+import { mlsSuite } from '../src/vendor/mls/suite.ts'
+import { expandWithLabel, deriveSecret, deriveTreeSecret } from '../src/vendor/mls/crypto/kdf.ts'
+import { encryptWithLabel, decryptWithLabel } from '../src/vendor/mls/crypto/hpke.ts'
+import { verifyWithLabel, signWithLabel } from '../src/vendor/mls/crypto/signature.ts'
 
 let fails = 0
 const ok = (name: string, cond: boolean, detail = '') => {

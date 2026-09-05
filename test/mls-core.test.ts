@@ -7,7 +7,7 @@
 // epoch (otherwise the middle envelope is undecryptable for someone), and a
 // browser client that can't reload its group state after a refresh has no
 // usable group at all.
-import type { ClientState } from '../src/mls/vendor/index.ts'
+import type { ClientState } from '../src/vendor/mls/index.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import {
   generateOwnKeyPackage, createMlsGroup, addMembers, removeMembers, rekey, joinMlsGroup,
@@ -16,7 +16,7 @@ import {
   setRoomMetadata, roomMetadataOf,
   setAppDataComponent,
 } from '../src/mls/group.ts'
-import { appDataComponent, decodeMlsMessage } from '../src/mls/vendor/index.ts'
+import { appDataComponent, decodeMlsMessage } from '../src/vendor/mls/index.ts'
 import { createMlsDeviceCredential } from '../src/mls/device-credential.ts'
 
 let fails = 0

@@ -1,9 +1,9 @@
 /** MIMI's registered application components, encoded with MLS TLS
  * Presentation Language primitives (draft-ietf-mimi-protocol-06 §7/§10). */
-import { decodeUint32, uint32Encoder } from '../mls/vendor/codec/number.ts'
-import { Decoder, mapDecoder, mapDecoders } from '../mls/vendor/codec/tlsDecoder.ts'
-import { BufferEncoder, contramapBufferEncoders, encode, Encoder } from '../mls/vendor/codec/tlsEncoder.ts'
-import { decodeVarLenData, decodeVarLenType, varLenDataEncoder, varLenTypeEncoder } from '../mls/vendor/codec/variableLength.ts'
+import { decodeUint32, uint32Encoder } from '../vendor/mls/codec/number.ts'
+import { Decoder, mapDecoder, mapDecoders } from '../vendor/mls/codec/tlsDecoder.ts'
+import { BufferEncoder, contramapBufferEncoders, encode, Encoder } from '../vendor/mls/codec/tlsEncoder.ts'
+import { decodeVarLenData, decodeVarLenType, varLenDataEncoder, varLenTypeEncoder } from '../vendor/mls/codec/variableLength.ts'
 import type { FrankAAD, FrankingAgentData, ParticipantListData, RoomMetadata, UserRolePair } from './protocol-types.ts'
 
 const MIMI_FRANK_AAD_COMPONENT = 0x0020

@@ -27,7 +27,7 @@ import type {
   VisibleCredential,
 } from './protocol-types.ts'
 import type { SqliteMimiStore } from './store.ts'
-import { encodeCredential } from '../mls/vendor/credential.ts'
+import { encodeCredential } from '../vendor/mls/credential.ts'
 
 export interface MimiSignatureVerifier {
   verify(credential: MimiCredential, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>

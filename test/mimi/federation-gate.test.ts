@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { createMimiDeployment } from '../../src/mimi/deployment.ts'
 import { MimiFanoutDispatcher } from '../../src/mimi/fanout.ts'
 import { MimiProviderTransport } from '../../src/mimi/provider-transport.ts'
-import { encodeMlsMessage } from '../../src/mls/vendor/index.ts'
+import { encodeMlsMessage } from '../../src/vendor/mls/index.ts'
 import type { UpdateRoomRequest, VisibleCredential } from '../../src/mimi/protocol-types.ts'
 import type { MimiMlsStateTransition } from '../../src/mimi/mls-appsync.ts'
 
