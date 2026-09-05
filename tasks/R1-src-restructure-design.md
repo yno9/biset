@@ -62,42 +62,62 @@ vault 13 / mail 7 / mls 3 / mimi 3 / shared 2 / local-jmap 2 /
 identity-webvh 2 / identity-web 2 / ui 1 / didcomm 1 / mls-vendor 2
 ```
 
-## 3. 提案する構成
+## 3. 構成（2026-09-05 ユーザー決定）
 
-**主軸をデプロイ先に取り、その中をレイヤで分け、プロトコルは葉に置く。**
-デプロイ先を主軸にする理由は、それが唯一 tsconfig とビルドで**強制されている境界**だからである。
+最上位を **client / server** で分ける。その内側をレイヤとプロトコルで分ける。
 
 ```
 src/
-  shared/            両方が使う: wire schema、canonical encoding、ID、署名対象バイト列
-  vendor/mls/        RFC 9420 の vendored fork。upstream diff を保つため一切触らない
-  client/            ブラウザ
-    app/             起動と配線（main.ts、send.ts、sw.ts）
-    ui/
-    store/           Vault と projection（現 vault + local-jmap。§2.1 により統合）
-    identity/        did:webvh の解決 + did.md Wallet セッション（現 identity + wallet）
-    messaging/       DIDComm（将来 mail が戻ればここ）
-    selfvault/       MLS self-group と MIMI クライアント（現 mls の client 部分）
-  server/            Bun
-    mediator/        + mail-plugin
-    mimi/
+  shared/
+    protocol/          wire schema、canonical encoding、ID、署名対象バイト列
+    mimi/              MIMI の protocol-types / wire / authorizer / app-data（§3.2）
+  vendor/
+    mls/               RFC 9420 fork。client と server の両方が使う（§3.1）。一切触らない
+  client/
+    app/               起動と配線、および UI（main.ts、sw.ts、net-fetch.ts、send.ts、現 ui/）
+    store/             Vault と projection（現 vault + local-jmap。§2.1 により統合）
+    identity/          did:webvh 解決 + did.md Wallet セッション（現 identity + wallet）
+    didcomm/           DIDComm クライアント
+    mimi/              Self Vault クライアント（現 mls/ の client 部分 + mls/mimi-*.ts）
+  server/
+    didcomm-mediator/  mediator 本体
+    mail-plugin/       SMTP listener + submission HTTP（mediator の deployment variant）
+    mimi/              self / normal / anon の3モード
 ```
 
-### 主な移動
+### 3.1 `vendor/mls` は mimi 配下に置けない（実測）
 
-| 現在 | 移動先 | 理由 |
-|---|---|---|
-| `vault/` + `local-jmap/` | `client/store/` | 循環依存が示すとおり1つの関心事 |
-| `mls/mimi-*.ts`（4ファイル） | `client/selfvault/` | client/server 違反の解消。共有すべき wire 型は `shared/` へ切り出す |
-| `mls/` の残り + `mls/vendor/` | `client/selfvault/` と `vendor/mls/` | fork を独立させ、upstream diff を見やすくする |
-| `identity/` + `wallet/` | `client/identity/` | どちらも「この端末が誰であるか」を扱う |
-| `didcomm/` + `mail/` | `client/messaging/` | 同じ「相手に届ける」レイヤ |
-| `main.ts` `sw.ts` `net-fetch.ts` | `client/app/` | root 直下にファイルを置かない |
-| `mediator/` `mimi/` | `server/` 配下 | デプロイ先が違うことを構造で示す |
+「vendor/mls も mimi に入れていいかもしれない」という案を検討したが、**成立しない**。
+`src/mimi/`（サーバー）が `mls/vendor/*` を大量に import している——
+`codec/{number,tlsDecoder,tlsEncoder,variableLength}`、`credential`、`groupInfo`、`ratchetTree`、
+`publicGroupState`、`welcome`、`authenticationService`、`groupContext`、`crypto/hpke`、そして `mls/suite.ts`。
 
-### この構成が答えること
+client 側（現 `src/mls/`）も同じ vendor を使う。**両方が使うので、両方から届く高さに置く必要がある**。
+`src/vendor/mls/` を最上位に置くのが正しい。ここに置けば fork の upstream diff も見やすくなる。
 
-- **新しいファイルをどこに置くか** — まずブラウザかサーバーか、次にどのレイヤか、で一意に決まる
+`mls/suite.ts`（ciphersuite の選択）も同じ理由で共有側に置く。
+
+### 3.2 client → server 違反の解消方法（実測）
+
+`src/mls/` の4ファイルが `src/mimi/` から import しているのは、次の4つだけである。
+
+| import 元 | 中身 |
+|---|---|
+| `mimi/protocol-types.ts` | wire の型定義 |
+| `mimi/wire.ts` | エンコード／デコード |
+| `mimi/authorizer.ts` | provider-internal credential signature |
+| `mimi/app-data.ts` | MLS app data のエンコード |
+
+**どれもサーバー実装ではなくプロトコル定義である。** したがって解決は単純で、
+この4つ（またはクライアントが必要とする部分）を `shared/mimi/` へ移せば、
+client と server が両方そこから import する形になり、**違反そのものが消える**。
+
+これは §2.2 の「型検査だけが境界を持ち、ディレクトリが持っていない」状態を、
+構造の側で解消することに相当する。
+
+### 3.3 この構成が答えること
+
+- **新しいファイルをどこに置くか** — まず client か server か、次にどのレイヤか、で一意に決まる
 - **これはブラウザで動くのか** — パスを見れば分かる
 - **循環していないか** — レイヤが上下関係を持つので、逆流が目に見える
 
@@ -135,16 +155,18 @@ Phase 1 完了後。**1段階ずつコミットする。**
 
 **構成が固まってから書く。** 先に書くと、移動のたびに書き直すことになる。
 
-## 5. 未解決の論点（実装前に決めること）
+## 5. 決定事項（2026-09-05 ユーザー判断）
 
-1. **`mail/` を削除するか残すか。** 現在 7ファイル全部が到達不能。
-   実装は did.md 側の mediator が必要で、設計案は `tasks/W3-wallet-mail-design-proposal.md` にある。
-   残すなら「未完成」と分かる場所（例: `client/messaging/mail/`）に置き、
-   消すなら設計案が復元の出発点になる
-2. **peer restore と archive import を残すか。** `ARC.md` §2.1 が復旧経路として挙げているが、
-   実装も本番呼び出し元も無い。checkpoint だけが動いている
-3. **`mimi` の `normal`/`anon` モードを残すか。** サーバーとしては動いているが client からの呼び出し経路が無い
-4. **`client/` と `server/` を同じリポジトリに置き続けるか。** 別リポジトリに分ける選択肢もある
+| 論点 | 決定 |
+|---|---|
+| `src/mail/`（7ファイル 1,071行、全て到達不能） | **削除する**。復元の出発点は `tasks/W3-wallet-mail-design-proposal.md` に残る |
+| peer restore と archive import | **削除する**。動いている復旧経路は checkpoint だけになる |
+| `mimi` の normal / anon モード | **区別を残す**。サーバーとして稼働しており、client 経路が無いだけ |
+| client と server を同じリポジトリに置くか | **同じで良い**。最上位を `client/` と `server/` で分ける |
+
+> 削除の結果として `ARC.md` §2.1 の設計原則「復旧に必要な履歴を checkpoint、信頼済み peer、
+> または利用者管理の暗号化 archive から取得する」は、**checkpoint 一本になる**。
+> ARC.md の該当箇所も Phase 3 で書き換えること。
 
 ## 6. リスク
 
