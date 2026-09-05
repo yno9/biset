@@ -418,8 +418,32 @@ wallet は MLS epoch wrap のみで動作する。それ以外は削除対象か
 | **W2** | 二重配線の統合 | ✅完了 `d8ba82b` `a263d7b`（**seed 経路ごと消えるため以後は不要**） |
 | **N2** | Anchor の OIDC / OpenID4VP とクライアント側の対 | ✅完了 `74864ff` |
 | **N4** | **Anchor の残り全部**（did:webvh 公開文書ホスティング、build/deploy 配線） | ✅完了 `c26db16` |
-| **N1** | クライアントの native login 削除（seed 由来の identity 生成・復元・鍵導出・UI） | 未着手 → `tasks/N1-remove-native-login.md` |
-| **W3** | wallet 経路の機能穴を埋める（①関係確立 INIT/ACCEPT ②送信 outbox ③checkpoint ④グループ ⑤mail） | **N1 の後** → `tasks/W3-wallet-feature-gaps.md` |
+| **N1** | クライアントの native login 削除（seed 由来の identity 生成・復元・鍵導出・UI） | ✅完了 `dd5a0cd` `71336b9` `7357830` |
+| **W3** | wallet 経路の機能穴を埋める（①関係確立 INIT/ACCEPT ②送信 outbox ③checkpoint ④グループ ⑤mail） | **着手可** → `tasks/W3-wallet-feature-gaps.md` |
+
+#### N1 の実績（2026-09-05）
+**合計 −4,174行**、削除13ファイル。`src/main.ts` **1,876 → 742行**。
+`dist/index.html` **1,219kb → 711kb（42%減）**。依存 `@scure/bip39` も除去。
+
+実際に失われた機能（削除後のツリーに対する grep で確認済み。W3 の入力）:
+- **自分から関係を開始できない** — `initiateRelationship` の本番呼び出し元がゼロ。
+  `sendRelationshipAccept` は生きているので応答はできるが、**wallet 同士は永久に関係を確立できない**。最優先
+- **メール一式** — 送信（`buildMailSubmitter`）、受信（`MailIngressProjector`、mail-bridge 分岐）、OpenPGP
+- **DIDComm グループチャット** — 作成・招待・送受信
+- **DIDComm 送信 outbox と再送** — 送信失敗が即座に失われる
+- **`enableDidComm`** — identity 全体の X25519 provisioning、`#routing` 公開、mediator 登録。
+  （wallet は Wallet 経由の独自 device enrollment を持つので DIDComm 通信自体は動く。消えたのは biset 側の provisioning）
+- **MIMI checkpoint 作成・復元** — KEK が `masterSeed` 由来だったため
+- **Local JMAP gateway / transport 層** — wallet は sink 直叩きで、JMAP を話す層が無い（`local-jmap/accounts.ts` `remote.ts` が到達不能）
+- **masterSeed 由来の Vault storage KEK** — 全 segment wrap が MLS epoch 束縛のみになった
+
+**削除しなかったもの（判断）**: `identity/webvh/create-genesis.ts` と `migrate.ts` は削除リストにあったが、
+**残す側のコードのテスト3件が、実物の did:webvh log を組み立てる唯一の手段**として使っている。
+消すと resolver のカバレッジごと消える。`identity/web/`（did:web mirror）も同じ理由で連鎖的に残った。
+
+**「何からも到達されない」7件は全部残した**——`vault-checkpoint.ts` `didcomm-credential-{reader,sink}.ts`
+`mail-submission-transport.ts` `webvh-routing-pointer.ts` `ui/account/modal.ts` `restore-control-wire.ts`。
+どれも W3 が配線し直す部品か、別途判断が要るもの。**今消すと W3 が必要とするコードを失う**。
 | **S5** | client / server / shared の分離 | 一部完了 `4f889a6`（protocol → shared）→ `tasks/S5-client-server-split.md` |
 
 **削除そのものは簡単で、diff も大きい。難しいのは削除ではなく、消える機能を wallet 側に持たせることである。**
