@@ -183,7 +183,21 @@ async function newBisetDidCommDevice(did: string, mediator: DidMdBisetMediator):
 }
 
 function redirectUri(): string {
+  if (location.protocol === 'file:') {
+    const callback = new URL(location.href)
+    callback.search = ''
+    callback.hash = ''
+    return callback.toString()
+  }
   return `${location.origin}${CALLBACK_PATH}`
+}
+
+function isWalletCallback(): boolean {
+  if (location.pathname === CALLBACK_PATH) return true
+  // A packaged file:// build cannot navigate to an origin-root callback
+  // route. Wallet therefore returns to the same local HTML file with the
+  // OAuth parameters appended.
+  return location.protocol === 'file:' && new URL(location.href).searchParams.has('state')
 }
 
 async function metadata(): Promise<Metadata> {
@@ -420,7 +434,7 @@ export async function beginDidMdWalletMessagingEnrollment(mediatorUrls: readonly
 }
 
 export async function completeDidMdWalletCallback(): Promise<DidMdActiveSession | undefined> {
-  if (location.pathname !== CALLBACK_PATH) return undefined
+  if (!isWalletCallback()) return undefined
   const callback = new URL(location.href)
   const pending = await readDidMdPendingAuthorization()
   if (!pending || pending.v !== 2 || pending.issuer !== ISSUER) throw new Error('No matching did.md Wallet authorization is pending')
@@ -432,14 +446,14 @@ export async function completeDidMdWalletCallback(): Promise<DidMdActiveSession 
   if (error) { await clearDidMdPendingAuthorization(); throw new Error(callback.searchParams.get('error_description') ?? `did.md Wallet authorization failed: ${error}`) }
   if (!code || !/^code_[A-Za-z0-9_-]{32,128}$/.test(code)) { await clearDidMdPendingAuthorization(); throw new Error('did.md Wallet callback has no valid authorization code') }
   const client = await registration()
-  if (client.clientId !== pending.clientId || client.redirectUri !== `${location.origin}${CALLBACK_PATH}`) { await clearDidMdPendingAuthorization(); throw new Error('did.md Wallet client registration changed during authorization') }
+  if (client.clientId !== pending.clientId || client.redirectUri !== redirectUri()) { await clearDidMdPendingAuthorization(); throw new Error('did.md Wallet client registration changed during authorization') }
   const response = await fetch(client.tokenEndpoint, {
     method: 'POST', headers: { 'content-type': 'application/json', dpop: await createDpop(pending.privateKey, pending.publicJwk, 'POST', client.tokenEndpoint) },
     body: JSON.stringify({ grant_type: 'authorization_code', client_id: client.clientId, code, code_verifier: pending.codeVerifier, redirect_uri: client.redirectUri }),
   })
   try {
     const active = await tokenFrom(response, pending)
-    history.replaceState(null, '', '/')
+    history.replaceState(null, '', location.protocol === 'file:' ? redirectUri() : '/')
     return active
   } finally { await clearDidMdPendingAuthorization() }
 }

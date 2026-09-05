@@ -22,6 +22,7 @@ const DATABASE_NAME = 'biset-did-md-wallet'
 const ORIGIN = 'https://biset.example'
 const ISSUER = 'https://api.did.md'
 const CALLBACK_PATH = '/wallet/callback'
+const FILE_CALLBACK_URL = 'file:///Users/n/biset/dist/index.html'
 const CODE = `code_${'c'.repeat(32)}`
 const bytes = (start: number) => Uint8Array.from({ length: 32 }, (_, index) => start + index)
 
@@ -43,17 +44,17 @@ afterEach(async () => {
   })
 })
 
-function callbackLocation(params: Record<string, string>): void {
-  const url = new URL(`${ORIGIN}${CALLBACK_PATH}`)
+function callbackLocation(params: Record<string, string>, callbackUrl = `${ORIGIN}${CALLBACK_PATH}`): void {
+  const url = new URL(callbackUrl)
   for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value)
   Object.defineProperty(globalThis, 'location', {
     configurable: true,
-    value: { href: url.toString(), origin: url.origin, pathname: url.pathname },
+    value: { href: url.toString(), origin: url.origin, pathname: url.pathname, protocol: url.protocol },
   })
   Object.defineProperty(globalThis, 'history', { configurable: true, value: { replaceState() {} } })
 }
 
-function registrationFixture(): DidMdRegistration {
+function registrationFixture(redirectUri = `${ORIGIN}${CALLBACK_PATH}`): DidMdRegistration {
   return {
     v: 2,
     issuer: ISSUER,
@@ -63,7 +64,7 @@ function registrationFixture(): DidMdRegistration {
     registrationEndpoint: `${ISSUER}/v1/oauth/register`,
     clientId: `client_${'a'.repeat(32)}`,
     registrationAccessToken: 'r'.repeat(32),
-    redirectUri: `${ORIGIN}${CALLBACK_PATH}`,
+    redirectUri,
   }
 }
 
@@ -114,14 +115,14 @@ describe('did.md OAuth callback validation', () => {
     await expectCallbackRejection({ state: pending.state, iss: 'https://attacker.example', code: CODE }, 'state or issuer did not match')
   })
 
-  test('consumes a successful callback and rejects replay of its authorization code', async () => {
+  test('consumes a successful file:// callback and rejects replay of its authorization code', async () => {
     const rootPrivateKey = ed25519.utils.randomSecretKey()
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
     const leafPrivateKey = ed25519.utils.randomSecretKey()
     const leafPublicKey = ed25519.getPublicKey(leafPrivateKey)
     const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [])
     const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']) as CryptoKeyPair
-    const registration = registrationFixture()
+    const registration = registrationFixture(FILE_CALLBACK_URL)
     const room = { providerUrl: 'https://mimi.example/', roomId: 'mimi://mimi.example/r/vault-test' }
     const pending: DidMdPendingAuthorization = {
       v: 2,
@@ -178,7 +179,7 @@ describe('did.md OAuth callback validation', () => {
     }) as typeof fetch
     await saveDidMdRegistration(registration)
     await saveDidMdPendingAuthorization(pending)
-    callbackLocation({ state: pending.state, iss: ISSUER, code: CODE })
+    callbackLocation({ state: pending.state, iss: ISSUER, code: CODE }, FILE_CALLBACK_URL)
 
     await expect(completeDidMdWalletCallback()).resolves.toMatchObject({ did, accessToken: 'access-token', nonce: 'nonce-value' })
     expect(await readDidMdPendingAuthorization()).toBeUndefined()
