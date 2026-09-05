@@ -28,10 +28,10 @@ import {
   defaultKeyPackageEqualityConfig, defaultPaddingConfig,
   type AuthenticationService, type Capabilities, type ClientConfig, type ClientState, type Credential, type KeyPackage,
   type PrivateKeyPackage, type Proposal, type Welcome,
-} from '../../vendor/mls/index.ts'
-import { encodeGroupInfo, decodeGroupInfo, ratchetTreeFromExtension } from '../../vendor/mls/groupInfo.ts'
-import { makeKeyPackageRef } from '../../vendor/mls/keyPackage.ts'
-import { mlsSuite } from '../../vendor/mls/suite.ts'
+} from '../../protocol/mls/index.ts'
+import { encodeGroupInfo, decodeGroupInfo, ratchetTreeFromExtension } from '../../protocol/mls/groupInfo.ts'
+import { makeKeyPackageRef } from '../../protocol/mls/keyPackage.ts'
+import { mlsSuite } from '../../protocol/mls/suite.ts'
 import { credentialFor, memberIdOf, type MlsMemberId } from './identity.ts'
 import { mlsDeviceCredentialOf, type MlsDeviceCredentialV2 } from './device-credential.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'

@@ -28,8 +28,8 @@ import type {
   UpdateRoomRequest,
   VisibleCredential,
 } from './protocol-types.ts'
-import { encodeCredential } from '../../vendor/mls/credential.ts'
-import type { PublicGroupState } from '../../vendor/mls/publicGroupState.ts'
+import { encodeCredential } from '../mls/credential.ts'
+import type { PublicGroupState } from '../mls/publicGroupState.ts'
 
 /** The protocol needs only these reads, allowing server storage to remain a
  * concrete implementation detail rather than a dependency of this module. */

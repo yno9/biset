@@ -4,7 +4,7 @@ import { decodeMultikey } from '../../protocol/webvh/multikey.ts'
 import { fetchCurrentLog } from '../identity/webvh/log-io.ts'
 import { resolveEntries } from '../../protocol/webvh/resolver.ts'
 import { mlsDeviceCredentialOf, verifyMlsDeviceCredential } from './device-credential.ts'
-import type { AuthenticationService, Credential } from '../../vendor/mls/index.ts'
+import type { AuthenticationService, Credential } from '../../protocol/mls/index.ts'
 
 export const webvhAuthenticationService: AuthenticationService = {
   async validateCredential(credential: Credential, signaturePublicKey: Uint8Array): Promise<boolean> {

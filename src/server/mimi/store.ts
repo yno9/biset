@@ -32,9 +32,9 @@ import type {
   SubmitVaultCheckpointRequest,
 } from '../../protocol/mimi/protocol-types.ts'
 import type { AddedMlsLeaf, MimiMlsStateTransition } from './mls-appsync.ts'
-import { decodeGroupContext, encodeGroupContext } from '../../vendor/mls/groupContext.js'
-import { decodeRatchetTree, encodeRatchetTree } from '../../vendor/mls/ratchetTree.js'
-import type { PublicGroupState } from '../../vendor/mls/publicGroupState.js'
+import { decodeGroupContext, encodeGroupContext } from '../../protocol/mls/groupContext.js'
+import { decodeRatchetTree, encodeRatchetTree } from '../../protocol/mls/ratchetTree.js'
+import type { PublicGroupState } from '../../protocol/mls/publicGroupState.js'
 
 const MAX_ROOMS = 10_000
 const MAX_PARTICIPANTS = 512

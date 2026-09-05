@@ -14,7 +14,7 @@
 // vault content, and keeping it out of the vault database means neither
 // schema's migrations ever have to reason about the other's stores.
 import { decodeState, encodeState, epochOf, exportSecret } from './group.ts'
-import type { ClientState } from '../../vendor/mls/index.ts'
+import type { ClientState } from '../../protocol/mls/index.ts'
 import { mlsEpoch } from '../../protocol/ids.ts'
 import type { MlsEpochExporter, MlsSelfGroupProvider } from './vault-epoch.ts'
 import type { MimiVaultPendingApplication, MimiVaultSessionRecord, MimiVaultSessionStateStore } from './mimi-vault-session.ts'

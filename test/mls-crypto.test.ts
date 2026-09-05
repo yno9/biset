@@ -1,6 +1,6 @@
 // The vendored MLS crypto, checked against something other than itself.
 //
-// `src/vendor/mls/crypto/implementation/noble/hpke.ts` replaces @hpke/core
+// `src/protocol/mls/crypto/implementation/noble/hpke.ts` replaces @hpke/core
 // with an implementation of RFC 9180 written for biset's single ciphersuite.
 // That is exactly the kind of change that passes every functional test while
 // being subtly wrong — every party would agree with every other party because
@@ -16,10 +16,10 @@
 //      the same RFC disagreeing is the signal.
 import { CipherSuite, DhkemX25519HkdfSha256, HkdfSha256, Aes128Gcm } from '@hpke/core'
 import vectors from './vectors/rfc9420-crypto-basics.json' with { type: 'json' }
-import { mlsSuite } from '../src/vendor/mls/suite.ts'
-import { expandWithLabel, deriveSecret, deriveTreeSecret } from '../src/vendor/mls/crypto/kdf.ts'
-import { encryptWithLabel, decryptWithLabel } from '../src/vendor/mls/crypto/hpke.ts'
-import { verifyWithLabel, signWithLabel } from '../src/vendor/mls/crypto/signature.ts'
+import { mlsSuite } from '../src/protocol/mls/suite.ts'
+import { expandWithLabel, deriveSecret, deriveTreeSecret } from '../src/protocol/mls/crypto/kdf.ts'
+import { encryptWithLabel, decryptWithLabel } from '../src/protocol/mls/crypto/hpke.ts'
+import { verifyWithLabel, signWithLabel } from '../src/protocol/mls/crypto/signature.ts'
 
 let fails = 0
 const ok = (name: string, cond: boolean, detail = '') => {

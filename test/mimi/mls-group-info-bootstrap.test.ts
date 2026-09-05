@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { createMlsGroup, generateOwnKeyPackageForCredential, groupInfoForExternalJoin } from '../../src/client/mimi/group.ts'
-import { mlsSuite } from '../../src/vendor/mls/suite.ts'
-import { defaultAuthenticationService } from '../../src/vendor/mls/authenticationService.ts'
+import { mlsSuite } from '../../src/protocol/mls/suite.ts'
+import { defaultAuthenticationService } from '../../src/protocol/mls/authenticationService.ts'
 import { bootstrapPublicGroupStateFromGroupInfo, MimiGroupInfoBootstrapError } from '../../src/server/mimi/mls-group-info-bootstrap.ts'
 
 describe('MIMI GroupInfo bootstrap (answers PLAN §21.4: how a hub learns a genesis confirmationTag)', () => {

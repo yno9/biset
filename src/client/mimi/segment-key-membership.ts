@@ -6,7 +6,7 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { memberSignaturePublicKey, ownMlsDeviceCredential, ownSignaturePrivateKey } from './group.ts'
 import { decodeMlsDeviceCredential, encodeMlsDeviceCredential, verifyMlsDeviceCredentialRoot } from './device-credential.ts'
-import type { ClientState } from '../../vendor/mls/index.ts'
+import type { ClientState } from '../../protocol/mls/index.ts'
 import type { SegmentKeyWrapSigner, SegmentKeyWrapVerifier } from '../store/vault/crypto.ts'
 import type { DeviceId } from '../../protocol/ids.ts'
 

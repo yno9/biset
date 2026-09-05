@@ -2,8 +2,8 @@
  * A hub intentionally has no MLS epoch secrets, so a PrivateMessage cannot be
  * inspected here.  MIMI AppDataUpdate proposals for provider-visible room
  * state therefore have to arrive in an MLS PublicMessage. */
-import { decodeMlsMessage, type AppDataUpdate } from '../../vendor/mls/index.ts'
-import { encodeCredential } from '../../vendor/mls/credential.ts'
+import { decodeMlsMessage, type AppDataUpdate } from '../../protocol/mls/index.ts'
+import { encodeCredential } from '../../protocol/mls/credential.ts'
 import { decodeExact, decodeMimiFrankingAgent, decodeMimiParticipantListUpdate, decodeMimiRoomMetadata, type ParticipantListUpdate } from '../../protocol/mimi/app-data.ts'
 import {
   MIMI_FRANKING_SIGNATURE_KEY_COMPONENT,

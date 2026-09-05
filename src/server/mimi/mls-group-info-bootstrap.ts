@@ -1,5 +1,5 @@
 /**
- * Bootstraps a `PublicGroupState` (src/vendor/mls/publicGroupState.ts) from
+ * Bootstraps a `PublicGroupState` (src/protocol/mls/publicGroupState.ts) from
  * a GroupInfo -- this is what answers PLAN_biset-mimi-server.md §21.4's
  * open question ("how does a hub learn a room's genesis confirmationTag,
  * which isn't derivable from public data alone"). GroupInfo already carries
@@ -15,13 +15,13 @@
  * far only ever stored these bytes opaquely for HPKE-sealed re-delivery to
  * an external-join requester (group-info.ts).
  */
-import { decodeGroupInfo } from '../../vendor/mls/groupInfo.js'
-import { getSignaturePublicKeyFromLeafIndex } from '../../vendor/mls/ratchetTree.js'
-import { toLeafIndex } from '../../vendor/mls/treemath.js'
-import type { CiphersuiteImpl } from '../../vendor/mls/crypto/ciphersuite.js'
-import { verifyGroupInfoSignature, ratchetTreeFromExtension } from '../../vendor/mls/groupInfo.js'
-import { initialPublicGroupState, type PublicGroupState } from '../../vendor/mls/publicGroupState.js'
-import type { AuthenticationService } from '../../vendor/mls/authenticationService.js'
+import { decodeGroupInfo } from '../../protocol/mls/groupInfo.js'
+import { getSignaturePublicKeyFromLeafIndex } from '../../protocol/mls/ratchetTree.js'
+import { toLeafIndex } from '../../protocol/mls/treemath.js'
+import type { CiphersuiteImpl } from '../../protocol/mls/crypto/ciphersuite.js'
+import { verifyGroupInfoSignature, ratchetTreeFromExtension } from '../../protocol/mls/groupInfo.js'
+import { initialPublicGroupState, type PublicGroupState } from '../../protocol/mls/publicGroupState.js'
+import type { AuthenticationService } from '../../protocol/mls/authenticationService.js'
 
 export class MimiGroupInfoBootstrapError extends Error {}
 

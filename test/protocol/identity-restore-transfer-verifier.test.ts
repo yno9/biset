@@ -12,7 +12,7 @@ import { createVaultEvent, verifyVaultEvent } from '../../src/client/store/vault
 import { createSegmentKeyWrap } from '../../src/client/store/vault/crypto.ts'
 import { mlsEpoch } from '../../src/protocol/ids.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mimi/store.ts'
-import type { ClientState } from '../../src/vendor/mls/index.ts'
+import type { ClientState } from '../../src/protocol/mls/index.ts'
 
 const identityId = 'did:web:alice.example'
 const selfGroupId = 'test-self-group'
