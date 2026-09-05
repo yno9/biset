@@ -18,23 +18,27 @@ biset は自前ログイン（native login: BIP39 seed から identity を作る
 
 | ファイル | 内容 | 規模 | 前提 |
 |---|---|---|---|
-| [N1-remove-native-login.md](N1-remove-native-login.md) | クライアントの native login を削除（seed 由来の identity 生成・復元・鍵導出・UI） | 大 | Anchor 削除（済） |
-| [W3-wallet-feature-gaps.md](W3-wallet-feature-gaps.md) | N1 で落ちた機能を wallet 経路に実装（関係確立・送信outbox・checkpoint・グループ・メール） | 大 | **N1 が先** |
-| [S5-client-server-split.md](S5-client-server-split.md) | `src/` を client / server / shared に分離 | 大 | **他の全作業と排他** |
+| [R1-src-restructure-design.md](R1-src-restructure-design.md) | **設計文書**（指示書ではない）。`src/` 構成変更の設計・実測・決定事項 | — | 先に読む |
+| [R2-phase1-delete-unreachable.md](R2-phase1-delete-unreachable.md) | 本番から到達不能なコードの削除（約2,700行） | 中 | R1 を読むこと |
+| [R3-phase2-restructure.md](R3-phase2-restructure.md) | `src/` を client / server / shared へ再構成 | **大** | **R2 完了後**。他の全作業と排他 |
+| [W3-wallet-mail-design-proposal.md](W3-wallet-mail-design-proposal.md) | **設計案**。メールを did.md mediator の capability として実装する案 | — | 実装は did.md 側が必要 |
+
+### 完了済み
+
+`N1`（native login 削除）`W3`（wallet 経路の機能穴）`W5`（checkpoint の KEK を MLS へ）
+`V1`（wallet 経路のテスト）は完了。参照用に残してある。
+
+`S5-client-server-split.md` は **R3 が置き換えた**ため削除した（Anchor 削除と
+`protocol/` → `shared/` 移動で前提が変わり、記述が古くなっていた）。
 
 ## 実行順序
 
 ```
-（Anchor 削除 ✅）──→ N1 ──→ W3 ──→ S5
+R2（削除）──→ R3（再構成）──→ ARC.md にプログラム構成を書く（Phase 3）
 ```
 
-- **Anchor 削除は完了済み**（`74864ff` `c26db16`）。`src/anchor/` `src/oid4vp/` `src/oidc/`
-  `tsconfig.anchor.json`、`deploy.sh` の anchor ターゲットはいずれも存在しない
-- **W3 は N1 の後**。何が落ちたかが分からないと埋めようがない
-- **S5 は最後**。ほぼ全ファイルを動かすので他と同時に走らせられない。
-  N1 でファイルが大幅に減ってから移動する方が作業量が少ない
-
-**N1・W3・S5 はいずれも `src/main.ts` を触るため、同時に実行しないこと。**
+- **R2 が先**。2,700行を移動してから消すのは二度手間で、移動の diff に消し忘れが埋もれる
+- **ARC.md は最後**。構成が固まる前に書くと、移動のたびに書き直しになる
 
 ## ⚠️ 同一作業ツリーでの並行実行は禁止
 
