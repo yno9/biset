@@ -368,6 +368,14 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
     let lastKnownCheckpointSeq: string | undefined
     const runWalletVaultSyncOnce = async (): Promise<void> => {
       try {
+        // A submit can reach the provider while its response is lost (tab
+        // reload, Safari suspending a popup, a transient network failure).
+        // The post-send MLS state and its exact ciphertext are persisted in
+        // that case.  Re-submit it before pulling or considering another
+        // Vault outbox entry; receive() deliberately rejects incoming MLS
+        // traffic while it is pending, and a later entry has a different
+        // delivery ID so it cannot clear this one.
+        await mimiSession.resumePendingApplication()
         // This is the ordinary background pull for new encrypted MIMI
         // deliveries, not an interactive operation. Keep a healthy Vault
         // card at "Connected" while it runs; flashing "Syncing" every ten

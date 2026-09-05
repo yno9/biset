@@ -83,10 +83,22 @@ export class PersistedMimiVaultSession implements MimiVaultMlsSender, MimiVaultM
       await this.options.stateStore.saveMimiVault(this.options.identityId, record)
       await this.submitApplication(record, record.pending!)
     }
-    await this.options.stateStore.saveMimiVault(this.options.identityId, {
-      ...record, pending: undefined,
-      ownApplicationHashes: rememberOwnApplication(record.ownApplicationHashes, pendingCipherHash(record.pending!)),
-    })
+    await this.confirmPendingApplication(record, record.pending!)
+  }
+
+  /**
+   * Finish a ciphertext whose local MLS state was durably advanced but whose
+   * submit response was lost.  This has to happen before receiving newer room
+   * traffic: MLS intentionally refuses to process that traffic while a local
+   * application delivery is pending, and attempting a different Vault outbox
+   * item first used to leave the session permanently blocked behind it.
+   */
+  async resumePendingApplication(): Promise<boolean> {
+    const record = await this.requiredRecord()
+    if (!record.pending) return false
+    await this.submitApplication(record, record.pending)
+    await this.confirmPendingApplication(record, record.pending)
+    return true
   }
 
   async sendCheckpoint(manifest: VaultCheckpointManifest): Promise<void> {
@@ -119,6 +131,14 @@ export class PersistedMimiVaultSession implements MimiVaultMlsSender, MimiVaultM
     }
     const response = await this.options.transport.submitMessage(this.options.mode, { ...unsigned, signature: await this.options.sign(submitMessageSigningBytes(unsigned)) })
     if (response.status !== 'accepted') throw new Error(`MIMI Vault application submission failed: ${response.status}`)
+  }
+
+  private async confirmPendingApplication(record: MimiVaultSessionRecord, pending: MimiVaultPendingApplication): Promise<void> {
+    await this.options.stateStore.saveMimiVault(this.options.identityId, {
+      ...record,
+      pending: undefined,
+      ownApplicationHashes: rememberOwnApplication(record.ownApplicationHashes, pendingCipherHash(pending)),
+    })
   }
 
   private async requiredRecord(): Promise<MimiVaultSessionRecord> {
