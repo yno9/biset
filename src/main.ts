@@ -805,7 +805,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
     } catch (error) {
       console.warn('[did.md Wallet DIDComm]', error)
     }
-    const queueWalletGroupMessage = async (groupId: string, members: string[], input: ReplySendInput): Promise<void> => {
+    const queueWalletGroupMessage = async (groupId: string, members: string[], input: ReplySendInput, flush = true): Promise<void> => {
       const recipients = members.filter(member => member !== device.did)
       if (recipients.length === 0) throw new Error('A DIDComm group needs another member')
       const now = new Date().toISOString()
@@ -822,8 +822,14 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
         didComm: recipients.map(toDid => ({ messageId, toDid })),
       }, snapshot)
       await refreshInbox(readModel)
-      await walletDidCommOutbox!.flush()
-      await refreshInbox(readModel)
+      // A new group can contain people this device has never contacted.
+      // Do not make the compose button wait for each relationship ACCEPT
+      // (up to a minute per person) before showing the locally durable
+      // message. The caller starts its invitation/flush work afterwards.
+      if (flush) {
+        await walletDidCommOutbox!.flush()
+        await refreshInbox(readModel)
+      }
       void synchronizeWalletVault()
     }
     const sendWalletMessage = async (input: ReplySendInput): Promise<void> => {
@@ -841,16 +847,24 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
         const groupId = randomDidCommGroupId()
         const members = [device.did, ...input.toAddrs]
         await walletGroupChatStore.save({ groupId, members, ...(input.subject ? { name: input.subject } : {}), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
+        // Persist and render the sent group message immediately. A recipient
+        // must see its GROUP_INVITE before its first GROUP_MESSAGE, so each
+        // independent background task sends the invite before asking the
+        // durable outbox to deliver that recipient's row.
+        await queueWalletGroupMessage(groupId, members, input, false)
         for (const toDid of input.toAddrs) {
-          try {
-            const contact = await walletRelationshipManager.ensureContact(toDid)
-            const invited = await sendGroupInvite(contact, { groupId, members, ...(input.subject ? { name: input.subject } : {}) })
-            if (!invited.ok) throw new Error(invited.error)
-          } catch (error) {
-            console.warn(`[did.md Wallet group invite] ${toDid}:`, error)
-          }
+          void (async () => {
+            try {
+              const contact = await walletRelationshipManager.ensureContact(toDid)
+              const invited = await sendGroupInvite(contact, { groupId, members, ...(input.subject ? { name: input.subject } : {}) })
+              if (!invited.ok) throw new Error(invited.error)
+              await walletDidCommOutbox!.flush()
+              await refreshInbox(readModel)
+            } catch (error) {
+              console.warn(`[did.md Wallet group invite] ${toDid}:`, error)
+            }
+          })()
         }
-        await queueWalletGroupMessage(groupId, members, input)
         return
       }
       if (input.toAddrs.length !== 1 || !input.toAddrs[0]?.startsWith('did:')) throw new Error('A did.md Wallet session composes to DID recipients only')
