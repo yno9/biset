@@ -12,7 +12,7 @@ import { assertOpaqueId, assertSegmentId, assertVaultEventId, assertVaultObjectI
 import { createVaultEvent, type VaultEventSigner } from '../../src/client/store/vault/events.ts'
 import { createSegmentKey, encryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { ActiveVaultSegmentManager } from '../../src/client/store/vault/active-segment.ts'
-import { assertIngressEnvelope, assertVaultDeliveryAppend, ProtocolValidationError } from '../../src/shared/protocol/validate.ts'
+import { assertIngressEnvelope, assertVaultDeliveryAppend, ProtocolValidationError } from '../../src/server/mediator/validate.ts'
 import { sha256Bytes } from '../../src/shared/protocol/canonical.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/client/store/vault/store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/shared/protocol/vault.ts'

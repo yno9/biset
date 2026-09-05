@@ -4,7 +4,7 @@ import { mailSubmissionSigningBytes } from '../../src/shared/protocol/signing.ts
 import {
   decodeMailSubmissionRequestWire, decodeMailSubmissionResultWire,
   encodeMailSubmissionRequestWire, encodeMailSubmissionResultWire,
-} from '../../src/shared/protocol/mail-submission-wire.ts'
+} from '../../src/server/mediator/mail-plugin/mail-submission-wire.ts'
 import type { MailSubmissionRequestV1, MailSubmissionResultV1 } from '../../src/shared/protocol/mail-submission.ts'
 
 describe('mail submission wire', () => {

@@ -17,7 +17,7 @@
 //      keys (resolveCurrentUpdateKeys) -- a public, self-certifying fact
 //      anyone can check, no separate credential registration needed.
 import { deliverMail, type MailDeliveryResult } from './smtp-client.ts'
-import { decodeMailSubmissionRequestWire, encodeMailSubmissionResultWire } from '../../shared/protocol/mail-submission-wire.ts'
+import { decodeMailSubmissionRequestWire, encodeMailSubmissionResultWire } from '../mediator/mail-plugin/mail-submission-wire.ts'
 import { mailSubmissionSigningBytes } from '../../shared/protocol/signing.ts'
 import { mailFromForIdentity } from '../../client/identity/webvh/identifier.ts'
 import { resolveCurrentUpdateKeys } from '../../client/identity/webvh/resolver.ts'

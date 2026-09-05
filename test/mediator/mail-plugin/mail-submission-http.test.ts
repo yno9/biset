@@ -5,7 +5,7 @@
 import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { createMailSubmissionHttpHandler } from '../../../src/server/mail-plugin/mail-submission-http.ts'
-import { encodeMailSubmissionRequestWire } from '../../../src/shared/protocol/mail-submission-wire.ts'
+import { encodeMailSubmissionRequestWire } from '../../../src/server/mediator/mail-plugin/mail-submission-wire.ts'
 import { mailSubmissionSigningBytes } from '../../../src/shared/protocol/signing.ts'
 import { encodeMultikey } from '../../protocol/support/webvh-log-fixture.ts'
 import type { MailSubmissionRequestV1 } from '../../../src/shared/protocol/mail-submission.ts'

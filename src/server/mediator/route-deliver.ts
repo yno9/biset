@@ -4,8 +4,8 @@
 // bridge (mediator/mail-plugin/bridge.ts) can reuse the exact same
 // packaging logic against a domain-resolved routing.json instead of a full
 // did:webvh document.
-import { packAuthcrypt, packAnoncrypt, type DidCommJWE } from './crypto.ts'
-import { wrapForwardChain } from './forward-wrap.ts'
+import { packAuthcrypt, packAnoncrypt, type DidCommJWE } from '../../shared/didcomm/crypto.ts'
+import { wrapForwardChain } from '../../shared/didcomm/forward-wrap.ts'
 
 export interface RouteEndpoint {
   uri: string
