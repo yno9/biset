@@ -174,3 +174,64 @@ Phase 1 完了後。**1段階ずつコミットする。**
 - 移動中はコメント内のファイルパス参照が古くなる。このコードベースのコメントは
   「なぜこうなっているか」を記録した最大の資産なので、**パスの機械的な置換も含めて追従させること**
 - `src.bak/` を移植元として引用しているコメントが多数ある。そちらのパスは変えないこと
+
+
+---
+
+# 追記: `shared` の廃止（2026-09-06 ユーザー決定）
+
+> 「shared という概念はやめよう。didcomm も mimi サーバも独立して client と無関係に存在すべき」
+
+## 実測: `shared/` は「共有物」ではなかった
+
+R3 実施後の `src/shared/`（38ファイル）を、client entry と各 server entry からの到達可能性で分類した。
+
+| | ファイル数 |
+|---|---|
+| 両方から到達（＝本当に両側が使う） | 23（3,819行） |
+| **client からのみ到達** | **10** |
+| **server からのみ到達** | **4** |
+| どちらからも到達せず | 1（`test-vectors.ts`） |
+
+さらに、その23ファイルが**どのサーバー**から使われているかを見ると、線がプロトコルできれいに割れている。
+
+| ファイル群 | client | mediator | mimi サーバー |
+|---|---|---|---|
+| `didcomm/` 13ファイル（crypto, message, peer, devicekid, multikey, problems, forward-wrap, mediator-{protocol,coordinate,pickup,transport}, webvh-{resolve,routing}） | ✓ | ✓ | — |
+| `mimi/` 4ファイル（protocol-types, wire, authorizer, app-data） | ✓ | — | ✓ |
+| `protocol/` 5ファイル（ids, ingress, mail-submission, signing, vault） | ✓ | ✓ | — |
+| `protocol/canonical.ts` | ✓ | ✓ | ✓ |
+
+**`shared/` の中身は共有物ではなく、プロトコルごとの定義が1つのバケツに集められていただけである。**
+したがってプロトコルを主軸にすれば、**重複ゼロで `shared` を廃止できる**。
+全体から使われるのは正準JSON（`canonical.ts`、126行）だけになる。
+
+## 構成（改訂）
+
+```
+src/
+  app/                クライアント本体。ui / store / identity / wallet / self-vault(MLS)
+  didcomm/            DIDComm プロトコル定義 + mediator サーバー + mail-plugin
+  mimi/               MIMI プロトコル定義 + サーバー（self / normal / anon）
+  canonical/          正準 JSON とバイト列化。全体の土台（唯一の全体共通物）
+  vendor/mls/         RFC 9420 fork
+```
+
+**依存の向きは一方向**: `app/` → `didcomm/`・`mimi/`・`canonical/`、
+各サーバー → 自分のプロトコル定義・`canonical/`。
+**`didcomm/` と `mimi/` は `app/` を一切参照しない**——これが「サーバーが client と無関係に存在する」の実体である。
+
+## 先に直すべき逆流（36箇所）
+
+現状 `shared/` と `server/` から `client/` への実 import が **36箇所**ある。層が逆流している。
+主なもの:
+
+- `client/app/net-fetch.ts` — 9ファイルが import。**プロトコル側の土台なので `canonical/` か各プロトコルへ**
+- `client/identity/webvh/*` — `shared/didcomm/webvh-*` と `server/mail-plugin/*` が使う。
+  **did:webvh 解決は didcomm 側の関心事**（routing.json と署名検証）なので `didcomm/webvh/` へ
+- `shared/didcomm/{group-chat,ingress-projector}.ts` — `client/store/` を7〜9個 import している。
+  **これらは client 専用**（上の分類で確認済み）なので `app/` へ移せば逆流が消える
+- `shared/mimi/authorizer.ts` → `server/mimi/store.ts`（型のみ）
+- `server/mail-plugin/*` → `client/identity/webvh/*`（webvh 移動で解消）
+
+**逆流を直すことと、プロトコル先への再編は同じ作業である。** 分けてやる必要はない。
