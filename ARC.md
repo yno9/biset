@@ -2,9 +2,16 @@
 
 > MLS の vendored fork（ciphersuite、UpdatePath fix、vendor diff の一覧）については `src/mls/vendor/VENDOR.md` と本書§13を参照する。かつて存在した `ARC-MLS.md` は Coordinator 完全撤去（2026-09-03、commit `57ffa67`）以前の調査で、中心的な二節が存在しないサブシステムを説明していたため 2026-09-05 に削除した。Self Group/Vault の現行の配送経路は本書§6・§9で説明する biset-mimi Self Vault である。
 
-> 調査基準日: 2026-09-04（Asia/Tokyo）
-> 調査対象: `~/biset` の commit `5b9f1fa`（前回調査基準 `11f0a62` から9commit進行。うち最重要は `99e08c0`「core: remove src/core/ entirely」——`biset-core`はディレクトリごと存在しない）
+> 調査基準日: 2026-09-05（Asia/Tokyo）
+> 調査対象: `~/biset` の commit `5ab136a`。前回基準 `5b9f1fa` からの最重要変更は二つ——
+> **Anchor の完全削除**（`74864ff` `c26db16`）と **native login（seed 由来 identity 層）の削除**（`dd5a0cd` `71336b9` `7357830`）。
+> `src/anchor/` も `src/oid4vp/` も `src/oidc/` も存在せず、identity provider は外部の did.md に移った。
 > 状態: 現行コードを正とした実装アーキテクチャ。将来案は明示的に区別する。
+>
+> **⚠️ この時点のコードは機能的に不完全である。** 「先に削除、機能は後追い」という方針で native login を
+> 削除したため、メール・グループチャット・送信 outbox・checkpoint が失われ、
+> **どの端末も自分から関係を開始できない**（§3.1）。復旧作業は `tasks/W3-wallet-feature-gaps.md`。
+> 本書は「今のコードがどうなっているか」を書いたものであり、「あるべき姿」ではない。
 
 ## 1. この文書の目的
 
@@ -15,7 +22,7 @@ Biset は、メールと DIDComm のデータを利用者の端末側で長期�
 **この節の背景（2026-09-03〜04の変化）**: 前回調査（commit `11f0a62`）時点では `biset-core`（`src/core/`）がAnchor・Mediator・Vault・biset-mimiと並ぶ五番目の主要コンポーネントとして存在し、SMTP受信、outbound mail relay、did:webvh/routing.json公開文書ホスティング、device rosterに基づくmail ingress-pull認可とlegacy Vault delivery、legacy DIDComm ingress fallbackを一手に担っていた。commit `99e08c0`（2026-09-03「core: remove src/core/ entirely, retired 2026-09-03」）で`src/core/`はディレクトリごと削除され、以後のcommitでその責務は次のように再配分された。
 
 - SMTP受信・outbound mail relay → `src/mediator/mail-plugin/`（standalone mediatorの deployment variant、§3・§11）
-- did:webvh/routing.json公開文書ホスティング → 元々`src/anchor/webvh/*`のstore classをcoreも間借りしていただけで、Anchorが唯一の実装だった。core撤去でAnchorが唯一のhostになった（§13.2、§17.3）
+- did:webvh/routing.json公開文書ホスティング → core撤去後は Anchor が唯一の host だったが、**その Anchor も 2026-09-05 に削除された**。現在は外部の did.md がホストする（§3・§13.1）
 - device rosterに基づくmail ingress-pull認可、legacy Vault delivery、legacy DIDComm ingress fallback → **後継なしに消滅**。roster機構自体（`rosterBackedVaultDeliveryAuthorizer`、`ensureMimiCoreRoster`、`src/mls/self-group.ts`のroster projection関連コード）も削除された。mail認可はdid:webvh update keyの署名検証へ置き換わり（§11.2）、legacy Vault delivery/DIDComm ingressはMIMI Self Vault/standalone mediatorへの移行が既に完了していたため、コード上は「production configが指さないfallback」として一部残っているだけである（§9.3、§12.1、§12.5）。
 
 ## 2. 設計原則と非目標
@@ -27,8 +34,13 @@ Biset は、メールと DIDComm のデータを利用者の端末側で長期�
 - UI と保存層の間には JMAP 形のローカル API を置き、暗号方式を UI へ漏らさない。
 - MLS は user-to-user のチャット本文暗号化には使わない（それは DIDComm の役割）。一方、同じ identity の信頼済み端末集合を表す Self/Vault MLS group は、Vault mutation を運ぶ暗号文チャンクそのものを MLS PrivateMessage/PublicMessage として運ぶ——「MLSはVEK導出境界だけに使う」という旧原則は、biset-mimi 移行後は成り立たない。VEK（Vault Epoch Key）は依然としてこの MLS exporter secret から導出し、SegmentKey の epoch-wrap 境界として使う。
 - 外部 ingress を ACK するのは、端末で検証・暗号化・永続化が完了した後だけとする。mail-plugin bridge の inbound mail は「ACK」という独立概念を持たず、DIDComm Forward としてmediator queueへ積まれた時点で標準の DIDComm 受信パイプラインに合流する（§9.1・§12.5）。
-- 復旧に必要な履歴本体を core（もはや存在しない）に置かず、biset-mimi Self Vault の checkpoint、信頼済み peer、または利用者管理の暗号化 archive から取得する。
+- 復旧に必要な履歴本体を biset のサーバーに置かず、biset-mimi Self Vault の checkpoint、信頼済み peer、
+  または利用者管理の暗号化 archive から取得する。**ただし3経路のうち実際に動いているのは checkpoint だけであり、
+  その checkpoint も 2026-09-05 の native login 削除で KEK（`masterSeed` 由来）を失って停止している**（§19）。
+  peer restore と archive import は部品はあるが配線がない。
 - did:webvh の SCID を identity の安定した識別子として扱い、ドメイン移転で Self Vault や配送列を分断しない。
+- **identity の発行とホスティングは biset の責務ではない**（2026-09-05〜）。外部の did IdP（did.md）が担い、
+  biset は解決するクライアントに徹する。biset は公開文書を書かない。
 
 ### 2.2 現行スコープ外または未完成
 
@@ -42,82 +54,113 @@ Biset は、メールと DIDComm のデータを利用者の端末側で長期�
 
 ## 3. システム全体像
 
+> **2026-09-05 の大きな変更**: biset 自前のログイン（BIP39 seed から identity を作り、Anchor が OIDC provider として
+> 認証する方式）を廃止し、外部の did IdP（**did.md**）ログインへ一本化した。**Anchor はリポジトリから削除された**
+> （commit `74864ff` `c26db16`）。seed 由来の identity 層も削除済み（`dd5a0cd` `71336b9` `7357830`）。
+> この削除は「先に消して機能は後追い」という方針で行われたため、**現在いくつかの機能が失われた状態にある**（§19）。
+
 ```text
 ┌──────────────────────── Biset Client（ブラウザ） ────────────────────────┐
-│ UI ─ Local JMAP Gateway ─ Projection                                    │
+│ UI ─ Projection                                                          │
 │                  │                                                       │
 │        IndexedDB Vault（暗号文 object + 署名 event + key wrap）          │
 │                  │                                                       │
-│  did:webvh / Self Vault MLS group / Mail / DIDComm 1:1 /                │
-│  DIDComm group chat / Restore endpoint logic                            │
-└──┬──────────┬─────────────────────────────┬─────────────────────────────┘
-   │signed    │DIDComm v2 encrypted HTTP     │MIMI Vault sync wire
-   │narrow    │（1:1・group chat・mail の    │（DIDComm ではない、
-   │HTTP      │ 受信すべてが同じ経路。mail   │ biset-mimi 独自 protocol。
-   │(公開文書 │ はSMTPで着信しForwardへ変換  │ self モードだけに向く）
-   │ hosting、│ される。group chatはfull-mesh│
-   │ 署名submit)│ pairwise fan-out、共有MLS  │
-   │          │ state を持たない）           │
-   ▼          ▼                              ▼
-┌─ Anchor ─┐┌─ Mediator（"A"素のDIDComm／"B"mail-plugin同梱） ┐┌─ biset-mimi (self = Vault) ─┐  ┌─ biset-mimi (group = hub) ──┐
-│did:webvh ││"A" = src/mediator/index.ts単体                ││このidentityのSelf Vault用。   │  │normal/anon モード。           │
-│/routing  ││  did:peer identity、SQLite queue、             ││main.ts から実配線済み——      │  │複数 OIDC owner を跨ぐ一般     │
-│.json 公開││  Coordinate/Pickup/relay-hop                   ││Vault mutation を運ぶ MLS      │  │group chat hub。                │
-│文書ホス  ││"B" = 上記 + SMTP:25 listener(inbound bridge) +  ││application message チャネル  │  │client からの呼び出し経路なし  │
-│ティング  ││  submission HTTP:8792(outbound、独立Bun.serve)  ││                              │  │（サーバーとして稼働のみ）     │
-│OpenID4VP ││  本番はBが稼働中（deploy.sh、両者は同じsqlite   ││                              │  │                                │
-│Verifier  ││  を奪い合う排他ターゲット）                    ││                              │  │                                │
-└──────────┘└─────────────────────────────────────────────────┘└──────────────────────────────┘  └────────────────────────────────┘
-     ▲ SMTP/DNS MXは"B"のSMTP listenerが直接受ける（core経由ではない）
-     │
-外部メールシステム
+│  did:webvh 解決 / did.md Wallet セッション /                             │
+│  Self Vault MLS group / DIDComm 1:1                                     │
+└──┬────────────────────┬─────────────────────────┬───────────────────────┘
+   │OAuth (DPoP-bound)  │DIDComm v2 encrypted HTTP │MIMI Vault sync wire
+   │＋ did:webvh 解決   │（受信はすべてこの経路）  │（DIDComm ではない、
+   │（読むだけ。biset は│                          │ biset-mimi 独自 protocol。
+   │ 公開文書を書かない）│                         │ self モードだけに向く）
+   ▼                    ▼                          ▼
+┌─ did.md（外部）──┐┌─ Mediator（"A"素のDIDComm／"B"mail-plugin同梱）┐┌─ biset-mimi (self = Vault) ─┐
+│identity provider ││"A" = src/mediator/index.ts単体                 ││このidentityのSelf Vault用。 │
+│did:webvh の発行・ ││  did:peer identity、SQLite queue、             ││main.ts から実配線済み——    │
+│ホスティング      ││  Coordinate/Pickup/relay-hop                   ││Vault mutation を運ぶ MLS    │
+│OAuth 認可        ││"B" = 上記 + SMTP:25 listener(inbound bridge) + ││application message チャネル │
+│（biset は        ││  submission HTTP:8792(outbound、独立Bun.serve) ││                             │
+│ クライアント）   ││  本番はBが稼働中（両者は同じsqliteを           ││                             │
+│                  ││  奪い合う排他ターゲット）                      ││                             │
+└──────────────────┘└────────────────────────────────────────────────┘└─────────────────────────────┘
+                          ▲ SMTP/DNS MXは"B"のSMTP listenerが直接受ける
+                          │
+                    外部メールシステム
+
+┌─ biset-mimi (normal/anon = hub) ─┐
+│複数 owner を跨ぐ一般 group chat hub。client からの呼び出し経路なし（サーバーとして稼働のみ）│
+└──────────────────────────────────┘
 ```
 
-Bisetの主要コンポーネントは四つである（前回調査時点の五つから、biset-coreの消滅により一つ減った）。現行の製品UIから実際に呼び出されているか（接続状況）はコンポーネントごとに大きく異なる。
+Biset が**自分で運用する**主要コンポーネントは三つである（Anchor の削除により、四つから一つ減った）。
+identity provider は外部（did.md）に移ったため、もはや biset の構成要素ではない。
 
-1. **Anchor** — `src/anchor/index.ts` を入口とするidentity provider。公開DID/domain/addressとOIDCを担当する。UI/bootに接続済み。**did:webvh の `did.jsonl`/`did.json`/`routing.json` 公開文書ホスティングは、core撤去後の現在、Anchorだけが提供する**——core在りし日も実装自体は`src/anchor/webvh/*`のstore class（`WebvhLogStore`/`DidWebStore`/`RoutingDocStore`）で、coreは同じclassを間借りして自分のHTTP surfaceからも公開していただけである（旧ARC.mdの「biset-coreが公開文書ホスティングを担う」という記述は、実装の所在を正確には表していなかった）。データディレクトリは`ANCHOR_DATA_DIR`（旧`/root/biset/core/data`をcoreと共有していたものを、core retirement前に独立させた `/root/biset/webvh-data` へ移行済み。§17.3）。
-2. **Mediator** — DIDCommの一時配送（store-and-forward）。`src/mediator/index.ts`を入口とする"A"（素のmediator）と、それに加えてSMTP inbound listener + outbound submission HTTPを同梱する`src/mediator/mail-plugin/index.ts`入口の"B"の、二つのdeployment variantがある。本番は"B"（mail-plugin同梱）が稼働中（`mediator.biset.md`）——同じ`biset-didcomm-mediator.service`とSQLiteを二つのバイナリが奪い合う排他関係であり、deploy.shの`didcomm-mediator`/`mail-plugin`ターゲットはどちらか一方だけをデプロイする(§17.3)。永続化はSQLite（`sqlite-store.ts`）。
-3. **Vault** — `src/main.ts`内で動くClient local storage。暗号化長期正本、projection、秘密、server間bindingを保持する。
-4. **biset-mimi**（`src/mimi/index.ts`）— IETF `draft-ietf-mimi-protocol`に準拠したMLS Delivery Service。設計・実装状況の詳細な正本は[PLAN_biset-mimi-server.md](PLAN_biset-mimi-server.md)。`normal`/`anon`/`self`の3プロセスとして本番稼働中（`mimi.biset.md`/`mimi-anon.biset.md`/`mimi-self.biset.md`と推定される命名——`mimiSelfBaseUrl`はruntime configで注入される）。**`self`モードは`main.ts`の`ensureMimiVaultRoom`/`synchronizeMimi`/`watchMimiVaultDeliveries`から実配線されており、単一identityの複数端末間Vault同期（Self Vault）の本番バックエンドである**。§1の判定基準に照らして「実装済み」。一方`normal`/`anon`モード（複数OIDC ownerを跨ぐ一般group chat hub）は`main.ts`からの呼び出し経路がなく、「部品実装済み」のままである。
+1. **Mediator** — DIDCommの一時配送（store-and-forward）。`src/mediator/index.ts`を入口とする"A"（素のmediator）と、
+   それに加えてSMTP inbound listener + outbound submission HTTPを同梱する`src/mediator/mail-plugin/index.ts`入口の"B"の、
+   二つのdeployment variantがある。本番は"B"（mail-plugin同梱）が稼働中（`mediator.biset.md`）——
+   同じ`biset-didcomm-mediator.service`とSQLiteを二つのバイナリが奪い合う排他関係であり、
+   deploy.shの`didcomm-mediator`/`mail-plugin`ターゲットはどちらか一方だけをデプロイする（§17.3）。永続化はSQLite（`sqlite-store.ts`）。
+2. **Vault** — `src/main.ts`内で動くClient local storage。暗号化長期正本、projection、秘密、server間bindingを保持する。
+3. **biset-mimi**（`src/mimi/index.ts`）— IETF `draft-ietf-mimi-protocol`に準拠したMLS Delivery Service。
+   設計・実装状況の詳細な正本は[PLAN_biset-mimi-server.md](PLAN_biset-mimi-server.md)。
+   `normal`/`anon`/`self`の3プロセスとして本番稼働中。**`self`モードは`main.ts`から実配線されており、
+   単一identityの複数端末間Vault同期（Self Vault）の本番バックエンドである**。
+   一方`normal`/`anon`モード（一般group chat hub）は`main.ts`からの呼び出し経路がなく、「部品実装済み」のままである。
 
-`src/protocol/`は各境界が共有するwire schema、canonical encoding、ID、署名対象byte列を定義する。browser、anchor、mediator、mail-plugin、mimiは別々のTypeScript設定（`tsconfig.*.json`、5設定——旧`tsconfig.core.json`はディレクトリごと削除済み）で型検査する。
+**did.md** は biset が運用するものではなく、依存する外部サービスである。identity（did:webvh）の発行とホスティング、
+および OAuth による認可を担う。biset 側は `src/wallet/`（`did-md-oauth.ts` / `did-md-store.ts`）でそのクライアントとして振る舞い、
+**公開文書を書き込むことはない**——読んで解決するだけである（`src/identity/webvh/` の resolver 系）。
 
-### 3.1 メッセージング機構の並存（Mail・DIDComm 1:1・DIDComm group chat・MIMI Self Vault）
+`src/shared/protocol/`は各境界が共有するwire schema、canonical encoding、ID、署名対象byte列を定義する。
+browser、mediator、mail-plugin、mimiは別々のTypeScript設定（`tsconfig.*.json`、4設定——
+旧`tsconfig.core.json`と`tsconfig.anchor.json`はいずれもディレクトリごと削除済み）で型検査する。
 
-「AさんからBさんにメッセージを届ける／複数端末で同期する」という同じ種類の問題に対して、現状4つの独立した機構が存在する。
+### 3.1 メッセージング機構の現況
 
-| 機構 | 用途 | 状態 |
+「AさんからBさんにメッセージを届ける／複数端末で同期する」という問題に対する機構は、native login 削除の前後で大きく変わった。
+
+| 機構 | 用途 | 状態（2026-09-05） |
 |---|---|---|
-| Mail (SMTP/JMAP) | 従来のメール | 稼働中、2026-09-04にoutbound STARTTLSバグ修正で初めて実際にend-to-endで動作を確認（§11） |
-| DIDComm 1:1 chat | ペアワイズ・共有鍵なし | 稼働中（§12.2〜12.5） |
-| DIDComm group chat | フルメッシュ・ペアワイズfan-out、MLS無し | 稼働中（§12.6） |
+| DIDComm 1:1 chat | ペアワイズ・共有鍵なし | **部分的に稼働**。受信・応答はできるが、**自分から関係を開始できない**（下記） |
 | MIMI Self Vault | 単一identityの複数端末同期（対人チャットではない） | 稼働中（§9） |
+| Mail (SMTP/JMAP) | 従来のメール | **失われた**。送信・受信とも配線が削除された。`src/mail/` はモジュールとして残るがテストからしか到達されない |
+| DIDComm group chat | フルメッシュ・ペアワイズfan-out、MLS無し | **失われた**。`src/didcomm/group-chat.ts` は残るが呼び出し元がない |
 
-このうち後の3つは互いに独立した実装であり、コード上で一つのパイプに統合されているわけではない。Mailだけは2026-08-30の再設計以降、受信経路がDIDComm 1:1/group chatと同じmediator queueに合流する（§9.1・§12.5）——完全に独立というより「着信をDIDCommの型へ変換してから同じ経路に乗せる」関係になっている。
+> **現在の最重要の欠落**: `initiateRelationship`（`didcomm/send-message.ts`）の本番呼び出し元が**ゼロ**である。
+> `sendRelationshipAccept` は生きているため INIT に応答することはできるが、**どの端末も自分から関係を開始できない**。
+> 全アカウントが did.md Wallet アカウントである現在、**誰も誰とも関係を確立できない**状態にある。
+> 復旧作業は `tasks/W3-wallet-feature-gaps.md` の①。
 
 - **DIDComm 1:1**（Mediator経由）は1:1のダイレクトメッセージ専用。§12.2〜12.5で詳述。
-- **DIDComm group chat**（`src/didcomm/group-chat.ts`）は複数人チャットの現行かつ唯一の実装。1:1チャットと同じ`ContactKeyV1`関係を使った full-mesh pairwise fan-out で、共有MLS group state を一切持たない。v1スコープは意図的に狭く、作成時のメンバーとメッセージのみ（作成後のメンバー変更・端末間roster同期・改名・退出・編集/削除/リアクションはない）。§12.6参照。
-- **MIMI Self Vault**（biset-mimi `self`モード）はユーザー対ユーザーのチャットではなく、一つのidentityの複数端末間でVault mutationを暗号化配送する専用チャネルである。Self VaultのMLS groupは(a)そのidentityの端末集合を表すroster、(b)VEK導出境界、(c)Vault mutationチャンクそのものを運ぶapplication messageチャネル、の三役を兼ねる。§6・§9で詳述する。
+- **MIMI Self Vault**（biset-mimi `self`モード）はユーザー対ユーザーのチャットではなく、
+  一つのidentityの複数端末間でVault mutationを暗号化配送する専用チャネルである。
+  Self VaultのMLS groupは(a)そのidentityの端末集合を表すroster、(b)VEK導出境界、
+  (c)Vault mutationチャンクそのものを運ぶapplication messageチャネル、の三役を兼ねる。§6・§9で詳述する。
 
-DIDComm group chatとMIMI Self Vaultの重複（両方とも「暗号化した内容をhub経由で複数の宛先に配る」という似た問題を別々のchunk機構・別々のretry設計で解いている）は未調査のまま残る課題である（§20）。
+### 3.2 認証（did.md OAuth）
 
-Anchorの認証は二層である。third partyやBiset Client自身から見える外側は通常のOpenID Connect Authorization Code + PKCEである。そのOIDC authorization endpointが必要とするinteractive authenticationだけをOpenID4VP 1.0 Verifierが担当する。WalletはAnchor発行のholder-bound Login Credentialを提示し、Anchorは検証結果を内部principalへ変換してOIDC処理を再開する。
+かつて Anchor が担っていた二層認証（外側 OIDC Authorization Code + PKCE、内側 OpenID4VP Verifier、
+Biset 発行の holder-bound Login Credential）は**すべて削除された**。現在の認証は外部 did IdP への OAuth である。
 
 ```text
-Nextcloud / Forgejo / Biset Client
-                     │ OIDC Code + PKCE
+              Biset Client（ブラウザ）
+                     │ OAuth Authorization Code
+                     │（/wallet/callback へ戻る）
                      ▼
-               Biset Anchor
-          OIDC Authorization Endpoint
-                     │ login required
+                  did.md Wallet
+                     │ device capability を承認
                      ▼
-          OpenID4VP Verifier (direct_post)
-                     ▲
-                     │ holder-signed vp_token
-              Biset Login Wallet
+        DPoP-bound device session（biset 側に保存）
 ```
 
-Login CredentialのsubjectはrandomなAnchor account referenceで、DID、SCID、domain、mail address、MLS memberを含まない。初回発行だけはcurrent did:webvh documentの`authentication` keyによるData Integrity proofでbootstrapする。このenrollment APIはBiset profileであり、OpenID4VPのpresentation flowと、将来必要になり得る完全なOpenID4VCI issuer実装を区別する。
+利用者は did.md Wallet で biset の端末を一度承認する。biset はその device session を
+`src/wallet/did-md-store.ts` に暗号化して保持し、以後 Wallet を再度開かずにセッションを復元できる。
+biset は did.md の controller 鍵を一切保持しない。
+
+**mediator との関係（設計方針、未実装）**: メールアドレスの採番と送信署名鍵は biset ではなく **mediator の責務**として
+設計しなおす方針が決まっている（2026-09-05）。did.md が専用の mediator を運用し、利用者は Wallet ログイン時に
+そこへ登録する。特定 mediator の使用許可を capability として付与する形を検討中。
+これに伴い `mailFromForIdentity`（`src/identity/webvh/identifier.ts`）の
+「DID のドメインが biset の apex 配下であること」という制約は将来外れる。
 
 ## 4. 信頼境界
 
@@ -131,9 +174,18 @@ Login CredentialのsubjectはrandomなAnchor account referenceで、DID、SCID�
 
 Client は plaintext の最終処理点であり、侵害された client から既取得の秘密を取り戻すことはできない。MLS revoke（Self Vault の Remove commit、§6.2）は将来 epoch へのアクセスを止めるが、過去にコピー済みの DIDComm/OpenPGP 共有秘密や平文を消去する機能ではない。
 
-### 4.2 Anchor を信頼する範囲
+### 4.2 did.md を信頼する範囲
 
-Anchor は did:webvh/did:web mirror/routing.json の公開文書ホスティングと、OIDC/OpenID4VP認証を担う。Vault plaintext、SegmentKey、MLS exporter secret、OpenPGP private key を知る必要はない。observableなのは、公開文書そのもの（元々公開情報）と、OIDC/OpenID4VPのsession・token・Login Credential検証に伴うmetadataである。
+**2026-09-05 に Anchor が削除され、この節は完全に置き換わった。** かつて Anchor が担っていた
+did:webvh/did:web mirror/routing.json の公開文書ホスティングと OIDC/OpenID4VP 認証は、
+いずれも biset の構成要素ではなくなった。
+
+did.md は identity の発行元かつホスト、および OAuth の認可者である。biset は**そのクライアント**にすぎない。
+did.md が知り得るのは、公開文書そのもの（元々公開情報）と、OAuth の認可・device capability に伴う metadata である。
+Vault plaintext、SegmentKey、MLS exporter secret、OpenPGP private key を知る必要はない——この性質は Anchor の頃と変わらない。
+
+biset 側が did.md に対して持つ秘密は device session（`src/wallet/did-md-store.ts` に暗号化保存）だけであり、
+**did.md の controller 鍵を biset が保持することはない**。利用者は did.md Wallet 側から当該 capability をいつでも失効できる。
 
 ### 4.3 Standalone mediator（"A"/"B"共通）を信頼する範囲
 
@@ -181,9 +233,9 @@ Onboarding UI は入力 domain が既に resolve できる場合、signup から
 
 | 文書 | 内容 | 更新認可 | ホスト |
 |---|---|---|---|
-| `did.jsonl` | hash chain、updateKeys、verificationMethod、move | did:webvh proof / current update key | Anchor（`ANCHOR_DATA_DIR`） |
-| `did.json` | 任意の did:web mirror | current did:webvh state による検証 | Anchor |
-| `routing.json` | DIDComm service/keyAgreement、mediator、Self VaultのMIMI room URIポインタ、alsoKnownAs、name、OpenPGP 公開鍵 | Root/current update key の Data Integrity proof | Anchor |
+| `did.jsonl` | hash chain、updateKeys、verificationMethod、move | did:webvh proof / current update key | **did.md**（外部） |
+| `did.json` | 任意の did:web mirror | current did:webvh state による検証 | **did.md**（外部） |
+| `routing.json` | DIDComm service/keyAgreement、mediator、Self VaultのMIMI room URIポインタ、alsoKnownAs、name、OpenPGP 公開鍵 | Root/current update key の Data Integrity proof | **did.md**（外部） |
 
 `routing.json` は operational data を署名付き PUT で管理するが、did:webvh hash chain 自体には含まれない。DIDComm を有効化すると、signed log には `#routing` pointer が追加される。Self Vault の room URI（`mimiVaultRoom`フィールド、`setRoutingMimiVaultRoom`/`mimiVaultRoomFromRouting`）もこの同じ署名付き文書経由で公開・発見される——別のlookup serviceは存在しない。
 
@@ -283,7 +335,7 @@ Vault の長期正本は immutable な二種類の record からなる。
 
 ### 8.3 IndexedDB transaction
 
-`biset-vault-core` database は、object、event、chunk、segment、key wrap、manifest、projection、JMAP state、各種 durable outbox/receipt/cursor、restore session、transport statusに加え、Clientだけが知るAnchor↔Vault binding、private MLS state、期限付きpending join KeyPackage秘密鍵を持つ。
+`biset-vault-core` database は、object、event、chunk、segment、key wrap、manifest、projection、JMAP state、各種 durable outbox/receipt/cursor、restore session、transport statusに加え、Clientだけが知る did.md セッション↔Vault binding、private MLS state、期限付きpending join KeyPackage秘密鍵を持つ。
 
 Ingress commit、local mutation、Vault delivery ingest は、record、projection、JMAP state、次の network ACK/outbox を同一 transaction に書く。Network 送信に失敗しても、次回 retry すべき ACK または delivery intent が local に残る。重複 event/ingress は unique key と content hash で idempotent に扱う。
 
@@ -461,20 +513,19 @@ DBファイルへの書き込み失敗時の挙動は、本調査でも未検証
 
 ## 13. HTTP surface と保存状態
 
-**biset-core（§13.1・旧HTTP surfaceテーブル）はディレクトリごと削除されており、この節は完全に書き換えている。** 現行のHTTP surfaceは Anchor（§13.1）、Mediator/mail-plugin（§13.2）、biset-mimi（§13.3）の3系統である。
+**この節は二度書き換えられている。** biset-core はディレクトリごと削除され（2026-09-03）、
+続いて **Anchor も削除された**（2026-09-05）。したがって biset が運用する HTTP surface は現在
+Mediator/mail-plugin（§13.2）と biset-mimi（§13.3）の**2系統だけ**である。
 
-### 13.1 HTTP surface（Anchor）
+### 13.1 HTTP surface（did.md — 外部依存）
 
-| Prefix / path | 役割 |
-|---|---|
-| `/healthz` | health |
-| `/.well-known/did.jsonl` | did:webvh log GET/PUT/POST |
-| `/.well-known/did.json` | did:web mirror GET/PUT |
-| `/.well-known/routing.json` | operational routing GET/PUT |
-| `/.well-known/openid-configuration` | OIDC discovery（`oidc`が構成されている場合のみ） |
-| OIDC Authorization/Token endpoint、OpenID4VP Verifier endpoint | ログイン（§3.1） |
+did:webvh log（`/.well-known/did.jsonl`）、did:web mirror（`/.well-known/did.json`）、
+routing 文書（`/.well-known/routing.json`）、および OAuth のエンドポイントは、いずれも **did.md が提供する**。
+biset はこれらを**読むだけ**で、書き込まない（§3）。したがって biset 側にこれらを提供する HTTP surface も、
+`ANCHOR_DATA_DIR` のような永続化ディレクトリも、もはや存在しない。
 
-did:webvh/did:web/routing.json は`ANCHOR_DATA_DIR`（旧core時代は`/root/biset/core/data`をcoreと共有、production移行済み。§17.3）に永続化する。全 route に CORS を付与する。
+クライアント側で対応するのは `src/identity/webvh/` の resolver 系（`resolver.ts` `log.ts` `log-io.ts` `proof.ts` ほか）で、
+これは**他人の DID を解決する**ために必須であり、native login の廃止とは無関係に残っている。
 
 ### 13.2 HTTP surface（Mediator / mail-plugin）
 
@@ -493,18 +544,19 @@ did:webvh/did:web/routing.json は`ANCHOR_DATA_DIR`（旧core時代は`/root/bis
 
 ### 13.3 HTTP surface（biset-mimi）
 
-IETF draft-ietf-mimi-protocol §5.2/§5.3のprovider-facing routesを実装する（`src/mimi/http.ts`）。主なpathは、well-known protocol directory、`GET /stream`（deliveries、SSE watch tokenで認可）、franking agentデータ、asset proxy download、`POST /notify/*`（federation fanout受信）、`POST /groupInfo/{roomId}`（external join、`allowExternalJoin`が有効なdeploymentのみ既定拒否を解除——`self`モードだけがこれを有効化する）、abuse report、consent request/update、identifier query、`POST /keyMaterial/{targetUser}`、`POST /keyPackage`、`POST /update/{roomId}`（room作成・external join commit・通常commit・checkpoint application messageのいずれも、この単一endpointを通る）である。すべてのbodyはbiset独自のprovider-internal credential signature（`authorizer.ts`）で認証し、Anchor OIDCトークンは要求しない——membershipとMLS leaf署名だけが認可根拠である。この節はcore撤去の影響を受けていない。
+IETF draft-ietf-mimi-protocol §5.2/§5.3のprovider-facing routesを実装する（`src/mimi/http.ts`）。主なpathは、well-known protocol directory、`GET /stream`（deliveries、SSE watch tokenで認可）、franking agentデータ、asset proxy download、`POST /notify/*`（federation fanout受信）、`POST /groupInfo/{roomId}`（external join、`allowExternalJoin`が有効なdeploymentのみ既定拒否を解除——`self`モードだけがこれを有効化する）、abuse report、consent request/update、identifier query、`POST /keyMaterial/{targetUser}`、`POST /keyPackage`、`POST /update/{roomId}`（room作成・external join commit・通常commit・checkpoint application messageのいずれも、この単一endpointを通る）である。すべてのbodyはbiset独自のprovider-internal credential signature（`authorizer.ts`）で認証する——membershipとMLS leaf署名だけが認可根拠であり、外部の認証トークンは要求しない。この節は core 撤去にも Anchor 削除にも影響を受けていない。
 
 ### 13.4 Fail-closed composition
 
-Anchorは`ANCHOR_DATA_DIR`必須（未設定は起動時に例外）。Mediator（"A"/"B"共通）は`MEDIATOR_PUBLIC_URL`と`MEDIATOR_DATABASE_PATH`/`MEDIATOR_DATA_DIR`のいずれかが必須。"B"（mail-plugin）はさらに`MAIL_PLUGIN_APEX_DOMAIN`が必須。biset-mimiは`MIMI_DATABASE_PATH`必須で、未設定時は起動時に例外で落ちる（healthのみ公開という緩やかなfallbackはない）。
+Mediator（"A"/"B"共通）は`MEDIATOR_PUBLIC_URL`と`MEDIATOR_DATABASE_PATH`/`MEDIATOR_DATA_DIR`のいずれかが必須。"B"（mail-plugin）はさらに`MAIL_PLUGIN_APEX_DOMAIN`が必須。biset-mimiは`MIMI_DATABASE_PATH`必須で、未設定時は起動時に例外で落ちる（healthのみ公開という緩やかなfallbackはない）。
 
-一つの SQLite database（mediator側）に did:peer identity、connection、queueを置く。Self Vault/group chatのMLS状態はbiset-mimi自身の別プロセス・別SQLiteファイルに置く（`MimiDeploymentOptions.mode`ごとに専用DBファイルが必須）。did:webvh/routing files は Anchorの`ANCHOR_DATA_DIR`に置く。Plaintext mailbox projection、private identity key、SegmentKey、MLS exporter secret はどのサーバー側storageにも置かない。
+一つの SQLite database（mediator側）に did:peer identity、connection、queueを置く。Self Vault/group chatのMLS状態はbiset-mimi自身の別プロセス・別SQLiteファイルに置く（`MimiDeploymentOptions.mode`ごとに専用DBファイルが必須）。**did:webvh/routing files は biset のどのサーバーにも置かれない**——did.md がホストする（§13.1）。Plaintext mailbox projection、private identity key、SegmentKey、MLS exporter secret はどのサーバー側storageにも置かない。
 
 ### 13.5 Hosting limits
 
-- did.jsonl: request 1 MiB、identity ごと最大 10,000 entry / 16 MiB（Anchor）
-- did.json と routing.json: 1 MiB（Anchor）
+- did.jsonl / did.json / routing.json のサイズ上限は、ホストである **did.md 側の関心事**である。
+  かつて Anchor が課していた上限（did.jsonl: request 1 MiB、identity ごと 10,000 entry / 16 MiB、他は 1 MiB）は、
+  Anchor ごと削除された
 - mail submit body: 25 MiB（mail-plugin `/v1/mail/submit`）
 - inbound SMTP message: 既定25 MiB（mail-plugin SMTP listener、`MAIL_PLUGIN_MAX_MESSAGE_BYTES`）
 
@@ -569,17 +621,22 @@ legacy core Vault delivery（§9.3）とMIMI Self Vaultの並存は、biset-core
 
 - `bun run build` — `src/main.ts` と `src/sw.ts` を browser IIFE に bundle し、`scripts/inline.mjs` で `dist/index.html` に inline 化する。
 - Runtime config — `window.__BISET_CONFIG__` の `apexDomain`、`mediatorUrls`、`mimiSelfBaseUrl`。旧native login用の`anchorBaseUrl`と`anchorOidcClientId`は削除済み。
-- `mediatorUrls` が未設定時、`enableDidComm`は空origin由来の動作しないURLを一時的にrouting.jsonへpublishする——旧ARC.mdが記述していた「legacy core DIDComm pathへのfallback」は、core撤去後は実質的に機能しない（§12.1）。`mimiSelfBaseUrl`が未設定であればMIMI Self Vault機能全体が起動せず、legacy core Vault delivery相当のコードパスへ分岐するが、これも同様にサーバー側実体を欠く（§9.3）。production configはmediatorUrls・mimiSelfBaseUrlのいずれも設定済みであり、これらの分岐は実運用では発生しない。
+- `enableDidComm` は **2026-09-05 の native login 削除で消えた**。identity 全体の X25519 provisioning、
+  `#routing` ポインタの publish、mediator 登録はいずれも biset 側から行われなくなり、
+  DIDComm の device enrollment は did.md Wallet の認可フローが担う（§3.2）。
+  したがって「`mediatorUrls` 未設定時に動作しない URL を routing.json へ publish する」という
+  旧来の失敗モードも同時に消滅した——biset は routing.json を書かない。
+- `mimiSelfBaseUrl` が未設定であれば MIMI Self Vault 機能全体が起動しない。
+  かつてそこから分岐していた legacy core Vault delivery 相当の経路はサーバー側実体を欠いたまま削除された。
+  production config は `mediatorUrls`・`mimiSelfBaseUrl` のいずれも設定済みである。
 
-### 17.2 Anchor environment
+### 17.2 （削除済み）Anchor environment
 
-| 変数 | 必須性 / 既定 |
-|---|---|
-| `PORT` | 既定 8788 |
-| `ANCHOR_DATA_DIR` | 必須。did:webvh/did:web/routing.json文書の永続化先。**2026-09-03以前はbiset-coreの`/root/biset/core/data`とディレクトリを共有していた（coreは`src/anchor/webvh/*`のstore classを間借りしていただけ）が、core retirement前に独立した`/root/biset/webvh-data`へ移行済み**（`/etc/biset/anchor.env`） |
-| `ANCHOR_DOMAIN_HEADER` | 既定 `x-biset-domain` |
+Anchor は 2026-09-05 に削除された（`74864ff` `c26db16`）。`ANCHOR_DATA_DIR` / `ANCHOR_DOMAIN_HEADER` /
+`bun run build:anchor` / `biset-anchor.service` / `deploy.sh` の `anchor` ターゲットは、いずれも存在しない。
+identity のホスティングは did.md が行う（§3・§13.1）。
 
-`bun run build:anchor` は Linux x64 向け standalone Bun binary を生成する。
+> 節番号は後続節の参照を壊さないために残してある。
 
 ### 17.3 Mediator / mail-plugin environment
 
@@ -631,7 +688,8 @@ legacy core Vault delivery（§9.3）とMIMI Self Vaultの並存は、biset-core
 
 対象 commit（`5b9f1fa`）で以下を実行した（2026-09-04、worktree上で再実行、数値はすべて実測）。
 
-- `bun run typecheck` — `tsc --noEmit`（root/browser）+ `tsconfig.anchor.json` + `tsconfig.mediator.json` + `tsconfig.mail-plugin.json` + `tsconfig.mimi.json` の**5設定**すべて成功。前回調査の6設定（+`tsconfig.core.json`）から、core撤去により1つ減った。
+- `bun run typecheck` — `tsc --noEmit`（root/browser）+ `tsconfig.mediator.json` + `tsconfig.mail-plugin.json` + `tsconfig.mimi.json` の**4設定**すべて成功。かつての6設定から、core 撤去（`tsconfig.core.json`）と Anchor 削除（`tsconfig.anchor.json`）で2つ減った。
+- `bun run reachability` — 本番エントリからの到達可能性を検査する。knip はテストが import したファイルを "used" と見なすため、「テストからしか到達されない＝本番では動いていない」層を捕まえられない。この差を埋めるための独自チェック（`scripts/reachability.mjs`）。
 - `bun run build` — 成功。`app.js` 1.1 MB、`sw.js` 183 bytes、inline HTML 1188 KB（ビルドツール自身の出力値。前回調査の約1195KBからほぼ変わらず、わずかに減少——core関連コードのbundleからの除去とmail-plugin側コードの追加が相殺した程度と見られる）。
 - `bun run test` — `find test -name '*.test.ts'` で数えて **149個** の `*.test.ts` file（前回調査の「140個」から9増加）を serial 実行し、すべて成功（exit code 0、非ゼロの `fail` 行なし）。ただし `git ls-tree -r HEAD` でtracked扱いなのは113個のみで、残り36個はgitignore対象のuntracked file（このセッション以前から既知の状態——git worktreeはgitignore対象untracked fileをコピーしないため、worktree内での実測はこの36個を欠いた113個になる。本節の数字は実際のmain working tree（`/Users/n/biset`）で直接実行した結果を採用した）。coreディレクトリごと削除されたことに伴うtest減少は実際には起きておらず、旧`test/core/*`相当のファイルが個別に削除された一方、mail-plugin関連の新規testが追加されたことで純増になっている。gitignore対象のtracked外test fileが33%を占める状態自体は、依然として未解消の運用上の負債である（§15.2・§20参照）。
 
@@ -653,21 +711,23 @@ legacy core Vault delivery（§9.3）とMIMI Self Vaultの並存は、biset-core
 
 | 領域 | 状態 | 判定 |
 |---|---|---|
-| did:webvh create/resolve/update/pre-rotation/domain move | UI まで接続、hostingはAnchor単独 | 実装済み |
+| did:webvh **解決** | UI/boot に接続。`src/identity/webvh/` の resolver 系 | 実装済み |
+| did:webvh create/update/pre-rotation/domain move | **削除済み**（2026-09-05）。発行は did.md の責務 | 廃止 |
 | Self Vault MLS group、roster、individual device removal、VEK | UI/boot と biset-mimi(self) に接続 | 実装済み |
 | Local encrypted Vault + JMAP projection | UI read/write に接続 | 実装済み |
-| Mail 受信（mail-plugin SMTP bridge、push型） | mediator queue経由でUIまで接続 | 実装済み |
-| Mail 送信（mail-plugin 署名submission） | UIまで接続。2026-09-04にSTARTTLSバグ修正で初めて実動作確認 | 実装済み（retry/DSN は未完成） |
+| Mail 受信（mail-plugin SMTP bridge、push型） | **クライアント側の配線が削除された**（2026-09-05）。mediator 側は稼働 | 部品実装済み（W3⑤で再配線予定） |
+| Mail 送信（mail-plugin 署名submission） | **クライアント側の配線が削除された**（2026-09-05）。mediator 側は稼働 | 部品実装済み（W3⑤で再配線予定） |
 | MIMI Self Vault delivery（checkpoint含む） | poll/SSE watch/outbox/gaps report まで UI に接続 | 実装済み |
 | legacy core Vault delivery | コードのみ残存、サーバー実体（biset-core）は削除済みで動作しない | 死んだコード（§9.3・§15.2リスク14） |
-| Mnemonic login | identity/device joinとSelf Vault external joinまでUI接続 | 部分実装 |
-| Anchor OpenID4VP login | Verifier、credential、session、Wallet enrollment/presentation、file bridge、OIDC PKCE callback/token検証 | 実装済み（consent UIは未実装） |
+| ~~Mnemonic login~~ | ~~identity/device join~~ | **廃止**（2026-09-05、`7357830`） |
+| ~~Anchor OpenID4VP login~~ | ~~Verifier、credential、session、Wallet enrollment~~ | **廃止**（2026-09-05、`74864ff`） |
+| **did.md Wallet login** | OAuth + DPoP-bound device session、boot の唯一の入口 | 実装済み |
 | Peer/archive restore | primitive と test あり、UI/boot なし | 部品実装済み |
 | OpenPGP | key provision/publication/crypto primitive あり、mail path 未接続 | 部分実装 |
 | DIDComm public front door | UI/boot に接続。legacy fallback文字列生成は残るが動作しない | 実装済み |
 | Standalone mediator（"A"/"B"、SQLite永続化） | binary、protocol、SSE watch、relay-poller あり | 実装済み、"B"が本番稼働中 |
-| Private relationship DIDComm 1:1 | UI send/receive と mediator E2E あり | 実装済み、pending durability なし |
-| DIDComm group chat | UI send/receive、mesh-complete招待、mediator SSE経由の受信まで接続 | 実装済み、v1スコープ限定（roster同期・メンバー変更等なし） |
+| Private relationship DIDComm 1:1 | 受信・応答は可能。**自分から関係を開始できない**（`initiateRelationship` の本番呼び出し元がゼロ） | **機能不全**（W3①が最優先） |
+| DIDComm group chat | **配線が削除された**（2026-09-05）。`didcomm/group-chat.ts` は残るが呼び出し元なし | 部品実装済み（W3④で再配線予定） |
 | ~~MLS Conversation Groups~~ | ~~ソース削除済み~~ | 廃止（2026-09-03） |
 | ~~biset-core~~ | ~~ソース削除済み（`src/core/`ごと）~~ | 廃止（2026-09-03、commit `99e08c0`） |
 | biset-mimi normal/anon（一般group chat hub） | サーバーとして稼働、client呼び出し経路なし | 部品実装済み |
@@ -695,7 +755,8 @@ legacy core Vault delivery（§9.3）とMIMI Self Vaultの並存は、biset-core
 |---|---|
 | Client composition | `src/main.ts`, `src/ui/*`, `src/ui/config.ts` |
 | Identity lifecycle | `src/identity/bootstrap.ts`, `src/identity/record-store.ts` |
-| did:webvh / Anchor | `src/identity/webvh/*`, `src/anchor/webvh/*`, `src/anchor/oidc*.ts`, `src/anchor/oid4vp.ts`, `src/oid4vp/*`, `src/anchor/app.ts`, `src/anchor/deployment.ts` |
+| did:webvh 解決 | `src/identity/webvh/*`（resolver 系のみ。発行・移転・鍵ローテは削除済み） |
+| did.md Wallet ログイン | `src/wallet/did-md-oauth.ts`, `src/wallet/did-md-store.ts` |
 | Self Vault MLS | `src/mls/self-group.ts`（roster projection呼び出し元を失った状態で生存）, `src/mls/group.ts`, `src/mls/mimi-vault-room.ts`, `src/mls/mimi-vault-session.ts`, `src/mls/mimi-vault-watch.ts`, `src/mls/mimi-client-transport.ts`, `src/mls/vendor/VENDOR.md` |
 | Vault | `src/vault/store.ts`, `objects.ts`, `events.ts`, `crypto.ts`, `delivery-pack.ts`, `restore-*`, `vault-checkpoint.ts` |
 | MIMI Vault sync（client側data plane） | `src/vault/mimi-vault-sync.ts`, `src/vault/mimi-vault-chunks.ts` |
