@@ -3,7 +3,7 @@
 > MLS の vendored fork（ciphersuite、UpdatePath fix、vendor diff の一覧）については `src/protocol/mls/VENDOR.md` と本書§13を参照する。かつて存在した `ARC-MLS.md` は Coordinator 完全撤去（2026-09-03、commit `57ffa67`）以前の調査で、中心的な二節が存在しないサブシステムを説明していたため 2026-09-05 に削除した。Self Group/Vault の現行の配送経路は本書§6・§9で説明する biset-mimi Self Vault である。
 
 > 調査基準日: 2026-09-06（Asia/Tokyo）
-> 調査対象: `~/biset` の commit `e731983`。前回基準からの最重要変更は四つ——
+> 調査対象: `~/biset` の commit `dc1cd84`。前回基準からの最重要変更は四つ——
 > **Anchor の完全削除**、**native login（seed 由来 identity 層）の削除**、
 > **到達不能コードの削除**（R2）、そして **`src/` の再構成**（R3/R4）。
 > 現在のトップレベルは **client / server / protocol** の三つで、`shared/` も `vendor/` も存在しない。
@@ -11,12 +11,18 @@
 > 状態: 現行コードを正とした実装アーキテクチャ。将来案は明示的に区別する。
 >
 > **⚠️ メールは実装されていない。** native login と一緒に削除され、再実装には did.md 側の
-> mediator が必要（`tasks/W3-wallet-mail-design-proposal.md`）。DIDComm による 1:1 と
-> グループチャット、複数端末同期は動作する。
+> mediator が必要（§11、`tasks/W3-wallet-mail-design-proposal.md`）。
+> DIDComm による 1:1・グループチャット・複数端末同期・checkpoint は動作する。
+>
+> **実機での起動確認は取れていない。** typecheck / test / build はすべて通っているが、
+> それは「起動して使える」ことの証明ではない（§20-2）。
 >
 > **⚠️ メールは実装されていない。** native login と一緒に削除され、再実装には did.md 側の
-> mediator が必要（`tasks/W3-wallet-mail-design-proposal.md`）。DIDComm による 1:1 と
-> グループチャット、複数端末同期は動作する。
+> mediator が必要（§11、`tasks/W3-wallet-mail-design-proposal.md`）。
+> DIDComm による 1:1・グループチャット・複数端末同期・checkpoint は動作する。
+>
+> **実機での起動確認は取れていない。** typecheck / test / build はすべて通っているが、
+> それは「起動して使える」ことの証明ではない（§20-2）。
 >
 > **⚠️ この時点のコードは機能的に不完全である。** 「先に削除、機能は後追い」という方針で native login を
 > 削除したため、メール・グループチャット・送信 outbox・checkpoint が失われ、
@@ -214,32 +220,65 @@ inbound mailの`protectedPayload`はmediatorに対するE2EEを意味しない�
 
 Self Vault hub は MLS application/handshake message の内容を復号しない——providerがVault plaintextやSegmentKeyを知ることはない。一方、Self Vault groupのroom URI、参加device数、epoch/sequence、payload size、時刻は観測できる。checkpointペイロード自体もAES-GCM暗号化されており、hubはmanifest（coveredSeq、transferId、chunkCount、payloadHash）だけを見る。
 
-### 4.5 外部 peer と archive
+### 4.5 外部 peer と archive（削除済み）
 
-Peer restore は現在の MLS member による署名と current-epoch grant を要求する。Recovery archive は独立した 32-byte Recovery Key で AES-GCM 暗号化され、利用者自身が archive と鍵を別途管理する。archive 本体も Recovery Key もどのサーバーも保持しない。
+Peer restore と利用者管理の Recovery archive は、**配線を持たないまま 2026-09-05 に削除された**（R2）。
+かつては peer restore が現在の MLS member による署名と current-epoch grant を要求し、
+archive は独立した 32-byte Recovery Key で AES-GCM 暗号化されていた。
+
+現在、復旧経路は Self Vault checkpoint 一本である（§9.4）。
+`recovery-archive.ts` という名前のモジュールは残るが、これは checkpoint の snapshot 生成に使われるもので、
+利用者向けの archive export/import ではない。
 
 ## 5. Identity と did:webvh
 
-### 5.1 Identity の生成
+### 5.1 Identity の生成と取得（2026-09-05 に全面的に変わった）
 
-`createNewIdentity`（`src/client/identity/bootstrap.ts`）は以下を一続きで実行する。
+> **biset は identity を作らない。** 発行とホスティングは外部の did IdP（did.md）が行う。
+> かつてここにあった自前の identity 生成（32バイト master seed → 24語 BIP39 mnemonic →
+> SLIP-0010 で Root Key 導出 → Spare Key → did:webvh genesis を自分で書く）は、
+> `createNewIdentity` / `restoreIdentity` ごと削除された（N1、commit `7357830`）。
+> 以下は現行の姿である。
 
-1. 32-byte master seed を生成する。
-2. seed を 24-word BIP39 mnemonic として利用者に提示する。
-3. SLIP-0010 の `m/0'` から Ed25519 Root Key を導出する。
-4. 独立のSpare Keyを生成し、phraseをRoot phraseと別に提示する。
-5. `updateKeys=[Root]`、`nextKeyHashes=[hash(Spare)]`とrouting pointerを含むdid:webvh genesisを作る。pre-rotationはこの時点から永久にactiveである。
-6. `registerDevice`が端末固有のMLS leaf signature key（random Ed25519）とRoot/Sign二重署名のMLS device credential（`MlsDeviceCredentialV2`）を導出する。
+利用者は did.md Wallet で biset の端末を一度承認する。biset 側は:
 
-Self/Vault group（MIMI room）への参加は、この時点では**行わない**。identity生成は`deviceKid`/`deviceSignaturePrivateKey`という純ローカルな値をIdentityRecordへ書き込むだけで終わり、Self Vault groupの作成・external joinは`main.ts`のboot flowが`ensureMimiVaultRoom`経由で別途駆動する。
+1. `beginDidMdWalletLogin`（`src/client/identity/wallet/did-md-oauth.ts`）が、
+   **Wallet を開く前に**公開された did:webvh log を検証する
+2. OAuth Authorization Code フローで `/wallet/callback` に戻り、`state` と `iss` を照合する
+3. DPoP-bound な device session を得て、`did-md-store.ts` が暗号化して保管する
+4. 端末固有の MLS leaf signature key（random Ed25519）と、did.md が認可した MLS device credential
+   （`MlsDeviceCredentialV2`）を得る
 
-メール address は独立して発行せず、`did:webvh:{scid}:{username}.{apexDomain}` の domain から導出する。**canonical formはbare apexの`{username}@{apexDomain}`である**（`mailFromForIdentity`、`src/protocol/webvh/identifier.ts`）。2026-09-04以前は`{username}@mail.{apexDomain}`が正規形だった——外部送信者からの実メールが`user@{apexDomain}`宛に届いて550 "no such user"で bounce した実障害を機に、まずbare apexをcanonicalにしつつ`mail.`形へのback-compatを追加し（`5fd385f`）、その後リポジトリオーナーの指示で明示的にそのback-compatを削除した（`274d110`）。現在`mail.{apexDomain}`宛は他の誤ったhostと同様に単純に拒否される（`identityDomainForMailAddress`）。この経緯は`test/identity/webvh-identifier-mail.test.ts`のtest名/コメントに残る。`routing.json.alsoKnownAs` にも best-effort で掲載する。
+**biset は did.md の controller 鍵を一切保持しない。** 利用者は Wallet 側から当該 capability をいつでも失効できる。
 
-### 5.2 mnemonic によるログイン
+Self/Vault group（MIMI room）への参加はこの時点では**行わない**。
+Self Vault group の作成・external join は `main.ts` の boot flow が `ensureMimiVaultRoom` 経由で別途駆動する。
 
-Onboarding UI は入力 domain が既に resolve できる場合、signup から login へ切り替える。`restoreIdentity`はRoot phraseに加えてcurrent Sign phraseを要求し、did:webvh current `updateKeys`と照合する。初回rotation前はRootがSignを兼ねるため、同じRoot phraseを両方に入力する。`restoreIdentity`も`createNewIdentity`と同様、この時点ではSelf Vault groupに触れない——`registerDevice`でこの端末のdeviceKid/署名鍵を作るところまでで終わる。
+#### メールアドレスについて
 
-現行 UI は既存の他端末が生きているかどうかを区別しない。mimiVaultConfigured（`mimiSelfBaseUrl`と`deviceKid`が揃っている）な boot は必ず`ensureMimiVaultRoom`を呼び、routing.jsonに記録されたroom URIが見つかればexternal join、見つからなければ新規roomを作成する。新規作成の場合、その端末はSelf Vaultの唯一のmemberとして始まり、Vault delivery の pull と archive/peer restore（§9.4）は依然として boot path に接続されていないため、mnemonic login だけで過去の Vault 本体が復元されるわけではない。
+`mailFromForIdentity`（`src/protocol/webvh/identifier.ts`）は、DID の domain が biset の apexDomain の
+サブドメインであることを要求し、`{username}@{apexDomain}` を canonical form とする。
+
+> **この関数は現在どこからも呼ばれていない。** メール転送は 2026-09-05 に削除された（§11）。
+> かつ **did.md がホストする DID は biset の apex 配下ではない**ため、この導出規則は
+> 新方式では成立しない。アドレス採番は **mediator の責務**として設計しなおす方針が決まっている
+> （`tasks/W3-wallet-mail-design-proposal.md`）。
+>
+> 削除前の経緯は記録として残す: 2026-09-04以前は `{username}@mail.{apexDomain}` が正規形だった——
+> 外部送信者からの実メールが `user@{apexDomain}` 宛に届いて 550 "no such user" で bounce した実障害を機に、
+> bare apex を canonical にし（`5fd385f`）、その後 back-compat を明示的に削除した（`274d110`）。
+> `test/identity/webvh-identifier-mail.test.ts` に残る。
+
+### 5.2 複数端末
+
+現行 UI は既存の他端末が生きているかどうかを区別しない。
+`mimiSelfBaseUrl` と `deviceKid` が揃った boot は必ず `ensureMimiVaultRoom` を呼び、
+routing.json に記録された room URI が見つかれば external join、見つからなければ新規 room を作成する。
+
+新規作成の場合、その端末は Self Vault の唯一の member として始まる。
+**過去の履歴を引き継ぐ唯一の経路は checkpoint である**（§9）——peer restore と archive import は
+2026-09-05 に削除された（R2）。checkpoint の KEK は現行 MLS epoch の VEK から導出されるため、
+**新しい端末を迎えるには既存の端末が1台オンラインである必要がある**。
 
 ### 5.3 公開文書
 
@@ -311,26 +350,43 @@ Self Vault roomのroom IDは、**random**な `mimi://{providerHost}/r/vault-{32 
 
 ## 7. 鍵と秘密の一覧
 
+> **2026-09-05 に大きく変わった。** native login の削除で `IdentityRecord` ごと消えたため、
+> master seed・Root Key・Sign Key・Spare Key は**もう存在しない**。
+> identity の controller 鍵は did.md 側にあり、biset は保持しない。
+
 | 鍵・秘密 | 単位 | 保存 | 公開・伝播 | 更新状況 |
 |---|---|---|---|---|
-| Master seed / 24-word Root Key phrase | identity | Client local `IdentityRecord` に hex 平文 | mnemonic を利用者が外部保管 | 自動 rotation なし |
-| Root Ed25519 key | identity | Client local `IdentityRecord` に private key 平文 | did:webvh updateKeys、routing.json 署名、**mail-plugin outbound submission署名の検証根拠**（§11.2） | pre-rotation で権限移行可能 |
-| Sign Ed25519 key | identity generation | アプリは永続保存せずphraseを利用者が保管 | current `updateKeys` | 初期はRootと同一、rotationで旧Spareへ移行 |
-| Spare Ed25519 key | next generation | アプリは永続保存せずphraseを一度表示 | hashのみ`nextKeyHashes`へ常に一つ公開 | rotation時にSignへ昇格し新Spareを同時commit |
-| MLS device credential / Self Vault leaf private state | device | MLS IndexedDB（`biset-mls-self-group`、同一rowにSelf Vault room state内包） | public verification method、Self Vault room | MLS UpdatePath / credential migration |
+| did.md device session（DPoP 鍵、device material、Vault secret） | device | `biset-did-md-wallet` IndexedDB。**private leaf key と Vault secret は非抽出の browser AES 鍵で封印**（`did-md-store.ts`） | しない | Wallet 側から失効可能 |
+| MLS device credential / Self Vault leaf private state | device | MLS IndexedDB（`biset-mls-self-group`、同一 row に Self Vault room state を内包） | public verification method、Self Vault room | MLS UpdatePath / credential migration |
 | MLS HPKE leaf material | device/epoch | MLS state | MLS tree / KeyPackage | commit により更新 |
-| VEK | identity + epoch | 永続保存しない | 同 epoch member が exporter から導出 | epoch ごとに変更 |
+| VEK（Vault Epoch Key） | identity + epoch | 永続保存しない | 同 epoch member が exporter から導出 | epoch ごとに変更 |
 | SegmentKey | Vault segment | `vault_segments.segmentKey` に平文保存 | VEK で暗号化した signed wrap を同期 | key は固定、wrap を epoch ごとに更新 |
-| Identity front-door DIDComm X25519 | identity | encrypted Vault credential **と** identity record の hex 平文 cache | routing.json、信頼済み端末へ Vault 同期 | rotation schema/UI なし |
 | Relationship X25519 + Ed25519 | counterparty/世代 | encrypted `contact-key.set` Vault object | service-bearing `did:peer:2`、Vault 同期 | `supersedesKid` chain、UI rotation なし |
-| OpenPGP private credential | identity | encrypted Vault object | 公開 certificate を routing.json、private を Vault 同期 | supersedes chain のみ、trigger なし |
-| Recovery Key | archive | アプリ内に保存しない | 利用者が archive と別管理 | archive ごとに新規 |
+| Identity front-door DIDComm X25519 | identity | encrypted Vault credential | routing.json、信頼済み端末へ Vault 同期 | rotation schema/UI なし |
+| checkpoint の data key | checkpoint ごと | 保存しない。**現行 epoch の VEK で包んで checkpoint 本体に同梱**（§9） | Self Vault member のみ復号可 | checkpoint ごとに新規 |
 
-重要な現状上の注意は二点ある。
+### 7.1 保存時（at rest）の保護状況
 
-第一に、`IdentityRecord` の master seed、Root private key、DIDComm private key は IndexedDB に平文で保存される。過去設計にあった WebAuthn PRF 由来鍵による at-rest sealing は未移植である。
+**did.md Wallet の device material は封印されている。** 非抽出（`extractable: false`）の
+AES-GCM 鍵を IndexedDB に置き、その鍵で private leaf key と Vault secret を包む。
+鍵自体は JS から取り出せないため、IndexedDB のダンプだけでは平文に戻せない。
 
-第二に、`VaultSegmentRecord.segmentKey` も local IndexedDB に平文で保持される。Vault object と delivery payload は暗号化されるが、端末 local storage 全体が別鍵で封印されているわけではない。したがって、この構成は server compromise と配送経路上の漏洩を主に抑えるもので、browser profile / local IndexedDB を読み取れる攻撃者に対する at-rest protection は未完成である。
+**一方、Vault 側の `VaultSegmentRecord.segmentKey` は local IndexedDB に平文で保持される。**
+Vault object と delivery payload は暗号化されるが、端末 local storage 全体が別鍵で封印されているわけではない。
+
+したがってこの構成は server compromise と配送経路上の漏洩を主に抑えるものであり、
+**browser profile / local IndexedDB を読み取れる攻撃者に対する at-rest protection は Vault 側で未完成**である。
+かつて存在した「`IdentityRecord` の master seed と Root private key が平文」という最大の穴は、
+その record ごと消えたことで結果的に無くなった。
+
+### 7.2 消えた鍵
+
+| かつて | 現状 |
+|---|---|
+| Master seed / 24語 Root Key phrase | **無い**。identity は did.md が発行する |
+| Root / Sign / Spare Ed25519 key と pre-rotation | **無い**。鍵ローテーションは did.md の責務 |
+| OpenPGP private credential | 書き手（reader/sink）は R2 で削除。record 型（`assertOpenPgpCredentialRecord`）だけが<br>過去 event の復号のため `mutation-records.ts` に残る |
+| Recovery Key（利用者管理 archive 用） | archive import は R2 で削除。`recovery-archive.ts` 自体は<br>checkpoint の snapshot 生成に使われるため残る |
 
 ## 8. Vault
 
@@ -390,20 +446,53 @@ MIMI Self Vaultのprotocol、SQLite store（hub側）、HTTP transport、project
 
 **legacy core Vault delivery（`flushVaultDeliveryOutbox`/`CoreVaultDeliveryTransport`、`/v1/vault-delivery/*`）はコードとして`main.ts`に残っているが、この宛先を実装するサーバー（biset-core）自体が2026-09-03に削除されているため、production configの有無に関わらずもはや動作しうる経路ではない。** 呼び出しは`mimiVaultConfigured`のfalse時にのみ発生し、production configは常に`mimiSelfBaseUrl`を設定しているためこの分岐自体が実行されないが、仮に実行されたとしても`coreBaseUrl`（デフォルト空文字列）宛のHTTP呼び出しが失敗するだけである。旧ARC.mdの「MIMI未設定時のfallback」という説明は、core撤去後は「fallbackの体をした死んだコード」に変わった。
 
-### 9.4 Restore
+### 9.4 Restore（2026-09-05〜06 に全面的に変わった）
 
-完全復元の正規経路は biset-mimi Self Vault checkpoint である。
+**復元経路は biset-mimi Self Vault checkpoint 一本である。**
+かつて §2.1 が挙げていた「信頼済み peer からの restore」と「利用者管理の暗号化 archive」は、
+配線を持たないまま R2 で削除された。
 
-1. Client は event/object と全 SegmentKey を canonical Recovery Archive snapshot にする。MLS exporter secret と device signing key は含めない。
-2. root phrase と Self Vault の room ID（旧来のCoordinator `vaultId`に相当する位置に room ID を使う）、provider origin から HKDF-SHA256 で recovery KEK を導出する。
-3. fresh random data key で snapshot を AES-GCM 暗号化し、その data key を recovery KEK で wrapする。外側 envelope に DID/SCID/domain/mail address を含めない。
-4. `createPortableCoordinatorCheckpoint`/`openPortableCoordinatorCheckpoint`（`src/client/store/vault/vault-checkpoint.ts`）——**関数名に "Coordinator" が残っているが、Coordinatorプロセス自体は存在しない**。v2フォーマットは「Vault operatorの間で移植可能」という設計であり、v1（廃止済みCoordinatorが書いたcheckpointの読み込み専用互換）とv2（現在書き込む唯一の形式、biset-mimi向け）を区別する。関数名のリネームは未実施のまま残る技術的負債である。
-5. checkpointのmanifest（`VaultCheckpointManifest`：`coveredSeq`/`transferId`/`chunkCount`/`payloadHash`）だけがhubに見え、payload自体はMLS application messageとして暗号化されてchunk化配送される（§9.2）。
-6. 新端末は`joinMimiVaultRoom`のexternal commitでSelf Vaultに参加した後、root phraseで復号、current epochへkey wrapを更新し、projection/cursorを再構築する。
+1. Client は event/object と全 SegmentKey を canonical Recovery Archive snapshot にする
+   （`createRecoveryArchiveSnapshot`）。MLS exporter secret と device signing key は含めない
+2. fresh random data key で snapshot を AES-GCM 暗号化する
+3. **その data key を、現行 MLS epoch の VEK で包む**（envelope v3、`createVaultCheckpoint`）。
+   envelope は `selfGroupId` と `epoch` を平文で持ち、AAD にも含める——
+   鍵を取り出す前に「自分に開けるか」を判断でき、epoch のすり替えは AAD 不一致で落ちる
+4. manifest（`VaultCheckpointManifest`: `coveredSeq` / `transferId` / `chunkCount` / `payloadHash`）だけが
+   hub に見え、payload 自体は MLS application message として運ばれる
+5. 新端末は `joinMimiVaultRoom` の external commit で Self Vault に参加した後、checkpoint を復号し、
+   current epoch へ key wrap を更新して projection/cursor を再構築する
 
-既存memberがonlineであれば、新端末のexternal joinはSelf Vault自体のMLS external commit機構で即座に成立する（Coordinator時代のような「pending KeyPackageのpoll承認」という別のステップは無くなった——external joinそのものがhub側で一発で受理されるかrejectされるかのいずれかである）。
+#### KEK が masterSeed から VEK へ変わった理由と、その代償
 
-これらの store、検証、import、projection rebuild は実装・テスト済みだが、`main.ts` と UI には export/import、peer approval、transfer、`restoreRequired` 処理が接続されていない（`main.ts`/`src/ui/*.ts`に`restoreRequired`という識別子は現行 tree に存在しない）。現行 UI で実行できる「restore」は mnemonic による identity/device 再参加（その結果 boot 時に自動的にSelf Vaultへexternal joinし、それ以降のVault mutationを追い掛け始める）までであり、それ以前の Vault history の一括 restore ではない。
+旧設計は recovery KEK を **root phrase から HKDF で導出**していた。native login の削除で
+master seed が存在しなくなり、**checkpoint は作成も復元もできない状態になった**。
+
+代替として3案を検討し、**MLS self-group の VEK で包む案**が選ばれた（W5、commit `da6bfcf` `74358bb`）。
+
+> **`deriveVaultEpochKey` は現行 epoch でしか鍵を返さない。** これは MLS の forward secrecy と
+> 整合した意図的な設計である。したがって:
+>
+> - **epoch が進むと、古い checkpoint は誰にも開けなくなる**（作った本人を含む）
+> - 新端末が参加すると epoch は必ず進む。つまり参加直後の新端末は既存 checkpoint を開けない
+>
+> 解決は「再ラップ」ではなく「**作り直し**」である。古い VEK を再導出する道は無いが、
+> Vault 全体をローカルに持つ端末なら checkpoint をいつでも作り直せる。
+> `main.ts` の自動再作成ゲートに epoch 不一致の条件が入っている。
+>
+> **そのゲートは、その端末が既にその履歴を持っている場合（`coveredSeq <= localCursor`）にだけ
+> 再作成を許す。** さもないと、参加直後で Vault が空の端末が「最新」を名乗って checkpoint を
+> 再公開してしまう（2026-09-02 に実際に起きた checkpoint poisoning と同じ形）。
+
+**受け入れた代償**: 新端末を迎えるには既存端末が1台オンラインである必要があり、
+**全端末を失った場合の復旧手段は無い**。現状これを利用者に警告する UI は無く、
+Vault カードに skip の詳細が出るだけである。
+
+開けない checkpoint は例外ではなく `gaps`（`checkpoint-epoch-unavailable`）として報告され、
+同期ループは止まらない。
+
+> 関数名の `Coordinator` 接頭辞（`createPortableCoordinatorCheckpoint` 等）は W5 の書き直しで
+> 解消した。現在は `createVaultCheckpoint` / `openVaultCheckpoint` である。
 
 ## 10. Local JMAP と UI
 
@@ -444,32 +533,49 @@ apexDomainまたはdeviceKidがなければ UI は local projection の read-onl
 
 ## 11. Mail transport
 
-**biset-core撤去（2026-09-03）と、standalone mediatorへのmail-plugin同梱（2026-09-03〜04、commit `9b98e4d`〜`5b9f1fa`）により、この節は前回調査から全面的に書き換わっている。** メールの受信・送信は、biset-coreではなく`src/mediator/mail-plugin/`（deployment variant "B"）が一手に担う。この変更は`ARC.md`の前回調査（commit `11f0a62`）の**後**に行われたため、旧文書は一切この設計を反映していなかった。
+> **⚠️ クライアント側のメールは 2026-09-05 に削除された（N1）。**
+> 送信（`buildMailSubmitter`）も受信（`MailIngressProjector`、mail-bridge 分岐）も配線が消えている。
+> **サーバー側（mail-plugin）は稼働したまま**であり、SMTP を受けて DIDComm Forward へ変換する能力を保っている——
+> それを受け取るクライアント側が無いだけである。
 
-### 11.1 受信
+### 11.1 現状
 
-§9.1で詳述した通り。要点は、(a) SMTP listenerとDIDComm変換ロジックが同一プロセス内にあり、(b) 宛先解決がroster/deviceローカルな認可情報を一切参照せず公開routing.jsonのみで完結し、(c) 変換後は通常のDIDComm Forwardとしてmediator queueに合流する、の三点である。core時代にあった独立のingress store・TTL・quota・per-device lease/pull/ackという概念はどれも存在しない。`src/server/mediator/mail-plugin/smtp-socket-server.ts`と`mail-smtp-protocol.ts`はcore撤去時に`src/core/adapters/`からこのディレクトリへ物理的に移設されたのみで、ロジックに変更はない。
+| 層 | 状態 |
+|---|---|
+| SMTP listener、inbound bridge、outbound SMTP client、submission HTTP | ✅ **稼働**（`src/server/mediator/mail-plugin/`） |
+| クライアントの送信経路 | ❌ 削除済み |
+| クライアントの受信経路 | ❌ 削除済み |
+| OpenPGP | ❌ 削除済み（reader/sink は R2 で削除、record 型のみ残存） |
 
-### 11.2 送信
+現在の送信 UI は DID 宛先しか受け付けず、メールアドレスを入れると
+`'A did.md Wallet session composes to DID recipients only'` で明示的に失敗する。
 
-Client はまず local Vault に outbox message を commit する。`EmailSubmission/set` → `buildMailSubmitter`（`src/client/identity/bootstrap.ts`）が device leaf key ではなく、**identityのcurrent did:webvh update key（Root、またはpost-rotation後の後継鍵）**で`MailSubmissionRequestV1`（raw RFC 5322、MAIL FROM、recipient、時刻を含む）に署名し、`mediatorUrls[0]`（＝mail-plugin配下の`/v1/mail/submit`、port 8792、Caddyが同一public origin `mediator.biset.md`の下でこのpathだけをport 8792へ振り分ける）へPOSTする。
+### 11.2 再実装の方針（未着手）
 
-サーバー側（`mail-submission-http.ts`の`isAuthorised`）の認可は次の二点のみで、**device rosterという概念自体が存在しない**（旧biset-coreのMLS-device-credential + trusted-device-roster方式は2026-09-04に完全に置き換わった）。
+**メールアドレスの採番と送信署名鍵は biset ではなく mediator の責務**として設計しなおす方針が
+決まっている（2026-09-05 ユーザー判断）。
 
-1. 申告された`mailFrom`が`mailFromForIdentity(identityId, apexDomain)`の導出結果と一致すること（なりすまし防止）。
-2. `signature`が`resolveCurrentUpdateKeys(identityId)`——routing.json更新そのものが要求するのと同じ、did:webvh current update keyの公開・自己証明可能な権威——で検証できること。
+> did.md が専用の mediator を運用し、利用者は Wallet ログイン時にそこへ登録する。
+> 特定 mediator の使用許可を capability として付与する。
 
-成功時は `transport.result` と `mailbox.set(sent)` を Vault に記録する。失敗時は temporary-failure として outbox に残すが、自動 retry scheduler と DSN はない。複数 domain の一部失敗も全体を temporary-failure に畳むため、recipient 単位の再送制御は未実装である。
+これに伴い `mailFromForIdentity` の「DID のドメインが biset の apex 配下であること」という制約は外れる
+（did.md がホストする DID は apex 配下ではないため、現行の導出規則では**そもそもアドレスを持てない**）。
 
-`buildMailSubmitter`が使う transport class は依然として`CoreMailSubmissionTransport`という名前のままである（実体はmail-plugin宛のHTTP submitで、biset-coreとは無関係）——§9.4の`createPortableCoordinatorCheckpoint`と同種の、撤去後も残る名称上の負債である。
+設計案は `tasks/W3-wallet-mail-design-proposal.md`。**実装には did.md 側の mediator が必要で、
+このリポジトリ内では完結しない。**
 
-**found live（2026-09-04）: outbound relayはこの日まで一度も実際に動作したことがなかった。** `smtp-client.ts`のoutbound SMTPクライアント（`deliverMail`、core撤去時にadapterからverbatimで移設）が、追加TLSオプションなしのSTARTTLSアップグレード時に`socket.upgradeTLS({tls: {}, ...})`を呼んでいた。本プロジェクトが動かすBun 1.4.0では、空の`tls: {}`オブジェクトを渡すと実行時に`Expected "tls" option`で例外になる——`Bun.TLSOptions`の型定義（全フィールドoptional）は`{}`が有効であるかのように見せるが、実際にBunのnative bindingが要求する「デフォルトTLSでアップグレードする」の正しい書き方は`tls: true`である。この不具合はSTARTTLSを要求する実サーバーに対してこのcodepathが行使された最初の機会（core由来のこのコードがverbatimで復元されて以来）で発覚し、それまでのoutbound relay試行は全て`{"status":"temporary-failure","detail":"Expected \"tls\" option"}`で失敗していた。修正（commit `5b9f1fa`）後、実際の送信（`a91b@biset.md` → 外部の`y@4r.ma`宛）が配送されたことを確認した——**これが本番でoutbound mail relayが実際にend-to-endで動作した最初の事例である。**
+### 11.3 削除前の設計（記録）
 
-### 11.3 OpenPGP
+サーバー側の認可は現在も次の二点だけで、**device roster という概念は存在しない**
+（`mail-submission-http.ts` の `isAuthorised`）。
 
-実装済みの endpoint primitive は、OpenPGP credential 生成、Vault への private key 保存、routing.json への public certificate 公開、RFC 3156 encrypted packet 抽出、packet 復号と署名検証である。
+1. 申告された `mailFrom` が `mailFromForIdentity(identityId, apexDomain)` の導出結果と一致すること
+2. `signature` が `resolveCurrentUpdateKeys(identityId)`——routing.json 更新そのものが要求するのと同じ
+   did:webvh current update key——で検証できること
 
-一方、`main.ts` の compose/send は常に plaintext RFC 5322 を構築し、recipient public key 解決や encrypt/sign を呼ばない。受信 UI も OpenPGP decrypt primitive を呼ばない。よって現在の OpenPGP は **鍵 provision と検証済み部品まで** であり、実際の mail E2EE は製品経路に未接続である。Autocrypt header の生成・peer state もない。
+**found live（2026-09-04）: outbound relay はこの日まで一度も実際に動作したことがなかった。**
+`smtp-client.ts` の outbound SMTP に STARTTLS のバグがあり、修正して初めて end-to-end で確認された。
+その翌日にクライアント側が削除されたため、**実働が確認されたのは実質1日だけ**である。
 
 ## 12. DIDComm
 
@@ -727,23 +833,23 @@ identity のホスティングは did.md が行う（§3・§13.1）。
 
 | 領域 | 状態 | 判定 |
 |---|---|---|
-| did:webvh **解決** | UI/boot に接続。`src/identity/webvh/` の resolver 系 | 実装済み |
+| did:webvh **解決** | UI/boot に接続。`src/protocol/webvh/` の resolver 系 | 実装済み |
 | did:webvh create/update/pre-rotation/domain move | **削除済み**（2026-09-05）。発行は did.md の責務 | 廃止 |
 | Self Vault MLS group、roster、individual device removal、VEK | UI/boot と biset-mimi(self) に接続 | 実装済み |
 | Local encrypted Vault + JMAP projection | UI read/write に接続 | 実装済み |
 | Mail 受信（mail-plugin SMTP bridge、push型） | **クライアント側の配線が削除された**（2026-09-05）。mediator 側は稼働 | 部品実装済み（W3⑤で再配線予定） |
 | Mail 送信（mail-plugin 署名submission） | **クライアント側の配線が削除された**（2026-09-05）。mediator 側は稼働 | 部品実装済み（W3⑤で再配線予定） |
-| MIMI Self Vault delivery（checkpoint含む） | poll/SSE watch/outbox/gaps report まで UI に接続 | 実装済み |
-| legacy core Vault delivery | コードのみ残存、サーバー実体（biset-core）は削除済みで動作しない | 死んだコード（§9.3・§15.2リスク14） |
+| MIMI Self Vault delivery | poll/SSE watch/outbox/gaps report まで UI に接続 | 実装済み |
+| Self Vault checkpoint | 作成・復元とも接続。KEK は MLS self-group の VEK（§9.4） | 実装済み（W5、`da6bfcf` `74358bb`） |
 | ~~Mnemonic login~~ | ~~identity/device join~~ | **廃止**（2026-09-05、`7357830`） |
 | ~~Anchor OpenID4VP login~~ | ~~Verifier、credential、session、Wallet enrollment~~ | **廃止**（2026-09-05、`74864ff`） |
 | **did.md Wallet login** | OAuth + DPoP-bound device session、boot の唯一の入口 | 実装済み |
-| Peer/archive restore | primitive と test あり、UI/boot なし | 部品実装済み |
-| OpenPGP | key provision/publication/crypto primitive あり、mail path 未接続 | 部分実装 |
+| ~~Peer/archive restore~~ | ~~primitive と test あり、UI/boot なし~~ | **削除**（2026-09-05、R2） |
+| ~~OpenPGP~~ | ~~key provision/publication/crypto primitive~~ | **削除**（2026-09-05、R2。record 型のみ残存） |
 | DIDComm public front door | UI/boot に接続。legacy fallback文字列生成は残るが動作しない | 実装済み |
 | Standalone mediator（"A"/"B"、SQLite永続化） | binary、protocol、SSE watch、relay-poller あり | 実装済み、"B"が本番稼働中 |
-| Private relationship DIDComm 1:1 | 受信・応答は可能。**自分から関係を開始できない**（`initiateRelationship` の本番呼び出し元がゼロ） | **機能不全**（W3①が最優先） |
-| DIDComm group chat | **配線が削除された**（2026-09-05）。`didcomm/group-chat.ts` は残るが呼び出し元なし | 部品実装済み（W3④で再配線予定） |
+| Private relationship DIDComm 1:1 | 送受信・関係確立（INIT/ACCEPT）とも動作。送信 outbox と10秒再送あり | 実装済み（W3、`0aced81` `cbd73af`） |
+| DIDComm group chat | 作成・招待・fan-out・受信・roster 表示まで接続 | 実装済み（W3、`9a9e6cf`） |
 | ~~MLS Conversation Groups~~ | ~~ソース削除済み~~ | 廃止（2026-09-03） |
 | ~~biset-core~~ | ~~ソース削除済み（`src/core/`ごと）~~ | 廃止（2026-09-03、commit `99e08c0`） |
 | biset-mimi normal/anon（一般group chat hub） | サーバーとして稼働、client呼び出し経路なし | 部品実装済み |
@@ -754,16 +860,27 @@ identity のホスティングは did.md が行う（§3・§13.1）。
 
 ## 20. 推奨する次の作業順
 
-1. **端末/鍵管理を1つの概念に統合する**（最優先）。「MIMI Self Vault roomのmember = このidentityの端末」という前提のもとで、追加・削除・ローテーションを1つのAPIへまとめる。Coordinator撤去で失われたSign Key rotationの一括世代交代（旧`rotateKeyRotation`相当）をこのタイミングで作り直す必要がある（§15.2のリスク4）。
-2. **core撤去後の死んだfallbackコードを一括で削除する**（新規、優先度高——§14のcoreBaseUrl gate regressionが実際に本番機能停止を引き起こした前例がある以上、「動かないが残っているgate/fallback」はこの種の事故の温床であることが実証された）。`opts.coreBaseUrl`起点のrouting fallback文字列生成（§12.1、`identity/bootstrap.ts`）、`CoreIngressTransport`/`CoreVaultDeliveryTransport`とその`if (coreBaseUrl)`分岐（§9.3・§12.5、`main.ts`）、`CoreMailSubmissionTransport`という名前（§11.2）、`createPortableCoordinatorCheckpoint`/`openPortableCoordinatorCheckpoint`という名前（§9.4）が対象。
-3. `restoreRequired`を専用UIへ接続し、biset-mimi checkpoint・Peer/Archive restoreを開始できるようにする。現在はsystem messageまでで止まる（§9.4、§15.2のリスク2）。
-4. OpenID4VPのconsent/account chooser UIとcredential管理/revoke UIを追加する。Verifier、session、永続provider compositionは実装済み。
-5. Relationship handshake（1:1・group chat招待の双方が使う`pendingByOwnKid`/`pendingByCounterparty`）をcrash-safeにする（§15.2のリスク6）。
-6. Device revoke後のidentity/DIDComm/OpenPGP credential rotationをcrash-safeにする（§15.2のリスク3）。
-7. DIDComm group chatとMIMI Self Vaultの機構重複を調査する。共有できるchunk/retry設計があるかを検討する——現時点では推測でしかない。
-8. Peer restoreとRecovery archive export/importをUIへ接続し、identity復旧と履歴復旧を分けて表示する。
-9. knip debtとlegacy dependency/scriptを整理し、`bun run check`をrelease gateとして通す。特に`scripts/pkarr-smoke.mjs`（did:dht/Pkarr、既に廃止済みの機構）と、unused filesに残る`src/route.ts`/`src/state.ts`/`src/types.ts`/`src/protocol/transport.ts`（削除済み）等の要否を精査する。
-10. `main.ts`のboot wiring（§10.3・§14）に対する最小限のbrowser E2Eまたは統合テストを追加する。coreBaseUrl gate regressionのような「typecheck/build/testはすべて通るのに製品経路が丸ごと死ぬ」regressionは、これがない限り再発しうる。
+2026-09-06 時点。R2/R3/R4 の再構成と N1 の機能削除を経た後の優先順位である。
+
+1. **メールの再実装**（最大の欠落）。現在クライアントにメールは無い。
+   アドレス採番と送信署名鍵を mediator の責務として設計する方針は決まっており（§11.2）、
+   設計案は `tasks/W3-wallet-mail-design-proposal.md` にある。
+   **実装には did.md 側の mediator が必要で、このリポジトリ内では完結しない**
+2. **実機での動作確認**。N1 以降、この構成で `dist/index.html` を `file://` で開いた確認が取れていない。
+   typecheck / test / build はすべて通っているが、それは「起動して使える」ことの証明ではない
+3. **全端末喪失時の復旧手段が無いことを利用者に伝える**（§9.4）。
+   現状 Vault カードに skip の詳細が出るだけで、警告は無い
+4. **端末/鍵管理を1つの概念に統合する**。「Self Vault room の member = この identity の端末」を
+   唯一の真実として、追加・削除・ローテーションを1つの API にまとめる。
+   MLS self-group の世代ローテーションは Coordinator 撤去の巻き添えで消えたまま（§19）
+5. **Relationship handshake を crash-safe にする**（`pendingByOwnKid` / `pendingByCounterparty` が
+   メモリ上にしかない。§15.2 のリスク）
+6. **Device revoke 後の credential rotation を crash-safe にする**（§15.2 のリスク3）
+7. **`main.ts` の boot wiring に対する統合テスト**。配線ミス由来のバグは現状 実機でしか見つからない
+8. **`bun run check` を release gate として通す**。`bun run reachability` は既に組み込み済み
+
+> かつてここに挙げていた「OpenID4VP の consent UI」「core 撤去後の死んだ fallback 削除」
+> 「Peer restore / archive を UI へ接続」は、いずれも**対象そのものが削除された**ため消滅した。
 
 ## 21. `src/` の構成
 
