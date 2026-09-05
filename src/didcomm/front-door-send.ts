@@ -31,6 +31,24 @@ export interface SendDidCommMessageOptions {
   fetch?: typeof fetch
 }
 
+/** Wallet enrollment appends a new public front-door device rather than
+ * rewriting older (possibly offline) device entries. Prefer that newest
+ * endpoint. Generic DIDComm documents still fall back to their newest
+ * keyAgreement entry when no Biset device suffix links service and key. */
+function newestDidCommRoute(doc: NonNullable<Awaited<ReturnType<typeof resolveWithRouting>>>) {
+  const service = [...doc.service].reverse().find(value => value.type === 'DIDCommMessaging')
+  const endpoint = service?.serviceEndpoint
+  const value = endpoint && typeof endpoint === 'object' && !Array.isArray(endpoint)
+    ? endpoint as Partial<DidCommServiceEndpoint>
+    : undefined
+  const keyAgreementIds = new Set(doc.keyAgreement ?? [])
+  const suffix = /#didcomm-biset-([A-Za-z0-9_-]+)$/.exec(service?.id ?? '')?.[1]
+  const keyAgreement = suffix
+    ? doc.verificationMethod.find(candidate => candidate.id.endsWith(`#k_${suffix}`) && keyAgreementIds.has(candidate.id))
+    : undefined
+  return { endpoint: value, keyAgreement: keyAgreement ?? [...doc.verificationMethod].reverse().find(candidate => keyAgreementIds.has(candidate.id)) }
+}
+
 /** The generic "resolve routing.json, authcrypt (Forward-wrapped if the
  * recipient registered a mediator), POST" primitive `sendDidCommMessage`/
  * `initiateRelationship` (send-message.ts) are thin wrappers around --
@@ -48,11 +66,7 @@ export async function sendFrontDoorMessage(toDid: string, type: string, body: un
   }
   if (!doc) return { ok: false, error: `${toDid} does not resolve to a published identity` }
 
-  const service = doc.service.find(s => s.type === 'DIDCommMessaging')
-  const serviceEndpoint = service?.serviceEndpoint
-  const endpoint = serviceEndpoint && typeof serviceEndpoint === 'object' && !Array.isArray(serviceEndpoint)
-    ? (serviceEndpoint as Partial<DidCommServiceEndpoint>)
-    : undefined
+  const { endpoint, keyAgreement: kaVm } = newestDidCommRoute(doc)
   if (!endpoint || typeof endpoint.uri !== 'string' || !endpoint.uri) return { ok: false, error: `${toDid} has no DIDComm service endpoint published` }
   // A non-empty routingKeys (webvh-routing.ts's own header) means the
   // recipient has registered with an independent, blind mediator: deliver
@@ -63,8 +77,6 @@ export async function sendFrontDoorMessage(toDid: string, type: string, body: un
   // first) -- not just its first entry.
   const routingKeys = endpoint.routingKeys ?? []
 
-  const keyAgreementIds = new Set(doc.keyAgreement ?? [])
-  const kaVm = doc.verificationMethod.find(v => keyAgreementIds.has(v.id))
   if (!kaVm) return { ok: false, error: `${toDid} has no keyAgreement key published -- they need to enable DIDComm first` }
   let recipientPublicKey: Uint8Array
   try {
@@ -125,10 +137,8 @@ export async function sendFrontDoorMessage(toDid: string, type: string, body: un
 export async function frontDoorMediatorRoute(toDid: string, fetchImpl: typeof fetch): Promise<{ url: string; routingKid: string }> {
   const doc = await resolveWithRouting(toDid, fetchImpl)
   if (!doc) throw new Error(`${toDid} does not resolve to a published identity`)
-  const service = doc.service.find(value => value.type === 'DIDCommMessaging')
-  const endpoint = service?.serviceEndpoint
-  if (!endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) throw new Error(`${toDid} has no DIDComm mediator service published`)
-  const value = endpoint as Partial<DidCommServiceEndpoint>
+  const { endpoint: value } = newestDidCommRoute(doc)
+  if (!value) throw new Error(`${toDid} has no DIDComm mediator service published`)
   if (!value.uri || !value.routingKeys?.[0]) throw new Error(`${toDid} has no independent DIDComm mediator published`)
   // Decode before registration so a hostile routing document cannot make us
   // enroll a private key against a malformed/non-self-certifying route.

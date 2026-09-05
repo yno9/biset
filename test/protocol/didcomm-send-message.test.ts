@@ -103,6 +103,38 @@ describe('sendDidCommMessage', () => {
     })
   })
 
+  test('uses the newest Biset front-door device instead of an older published key', () => {
+    const oldPrivateKey = x25519.utils.randomSecretKey()
+    const newestPrivateKey = x25519.utils.randomSecretKey()
+    const oldKid = `${recipientDid}#k_olddevice`
+    const newestKid = `${recipientDid}#k_newestdevice`
+    const routingJson = {
+      service: [
+        { id: `${recipientDid}#didcomm-biset-olddevice`, type: 'DIDCommMessaging', serviceEndpoint: { uri: 'https://old-device.test.example', accept: ['didcomm/v2'], routingKeys: [] } },
+        { id: `${recipientDid}#didcomm-biset-newestdevice`, type: 'DIDCommMessaging', serviceEndpoint: { uri: 'https://new-device.test.example', accept: ['didcomm/v2'], routingKeys: [] } },
+      ],
+      keyAgreementVerificationMethod: [
+        { id: oldKid, type: 'Multikey', controller: recipientDid, publicKeyMultibase: encodeX25519Multikey(x25519.getPublicKey(oldPrivateKey)) },
+        { id: newestKid, type: 'Multikey', controller: recipientDid, publicKeyMultibase: encodeX25519Multikey(x25519.getPublicKey(newestPrivateKey)) },
+      ],
+    }
+    const captured: { body?: string; url?: string } = {}
+    const fetchImpl = (async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/did.jsonl')) return new Response(log.map(entry => JSON.stringify(entry)).join('\n') + '\n', { status: 200 })
+      if (url.endsWith('/routing.json')) return Response.json(routingJson)
+      if (url === 'https://new-device.test.example') { captured.url = url; captured.body = init?.body as string; return new Response(null, { status: 202 }) }
+      return new Response(`unexpected request: ${url}`, { status: 500 })
+    }) as typeof fetch
+    return withCombinedFetch(fetchImpl, async fi => {
+      await expect(sendDidCommMessage(recipientDid, 'new device please', { fromKid: senderKid, x25519PrivateKey: senderX, fetch: fi })).resolves.toEqual({ ok: true })
+      expect(captured.url).toBe('https://new-device.test.example')
+      const jwe = parseJwe(JSON.parse(captured.body!))
+      expect(jwe).not.toBeNull()
+      await expect(unpackAuthcrypt(jwe!, { kid: newestKid, privateKey: newestPrivateKey }, async () => x25519.getPublicKey(senderX))).resolves.toMatchObject({ senderKid })
+    })
+  })
+
   // Root-cause regression guard: sendDidCommMessage must actually reach for
   // packAuthcryptHybrid when the recipient published an ML-KEM-768 entry --
   // that path had zero production callers (test-only) until this fix, so
