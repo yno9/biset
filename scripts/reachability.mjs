@@ -50,12 +50,28 @@ const sources = new Set([...new Glob('src/**/*.ts').scanSync('.')].map(path => r
 const live = reachable(ENTRIES)
 const unreached = [...sources].filter(file => !live.has(file))
 
+// Test reachability is transitive: a module a test never names directly,
+// but pulls in through one it does, is still exercised by that test. Only
+// counting direct imports put such a module in the "reached by nothing"
+// bucket, which is the one people act on -- so it read as safe to delete
+// when it was not (found 2026-09-05: identity/web/mirror.ts, reached
+// through create-genesis.ts, whose own coverage is what keeps the did:webvh
+// resolver tested).
 const guardedByTests = new Map()
 for (const testFile of new Glob('test/**/*.test.ts').scanSync('.')) {
-  for (const imported of importsOf(resolve(testFile))) {
-    if (!live.has(imported) && sources.has(imported)) {
-      guardedByTests.set(imported, [...(guardedByTests.get(imported) ?? []), testFile])
-    }
+  const direct = importsOf(resolve(testFile)).filter(file => sources.has(file))
+  const seen = new Set()
+  const stack = [...direct]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (seen.has(current) || !sources.has(current)) continue
+    seen.add(current)
+    stack.push(...importsOf(current))
+  }
+  for (const reached of seen) {
+    if (live.has(reached)) continue
+    const attributed = direct.includes(reached) ? testFile : `${testFile} (indirect)`
+    guardedByTests.set(reached, [...(guardedByTests.get(reached) ?? []), attributed])
   }
 }
 
