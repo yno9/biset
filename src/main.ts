@@ -27,7 +27,6 @@ import { readBisetConfig } from './ui/config.ts'
 import { VaultBackedLocalJmapMutationSink } from './local-jmap/vault-mutation-sink.ts'
 import { DidCommIngressProjector } from './didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from './didcomm/webvh-resolve.ts'
-import { sendRelationshipMessage } from './didcomm/send-message.ts'
 import { didCommThreadId } from './didcomm/basicmessage.ts'
 import { isProjectableDidCommIngress } from './didcomm/ingress-projector.ts'
 import { registerWithMediator, type MediatorPollHandle } from './didcomm/mediator-sync.ts'
@@ -59,6 +58,7 @@ import {
   type RelationshipWatchStarter,
   type WalletRelationshipManager,
 } from './wallet/relationship.ts'
+import { createWalletDidCommOutbox, type WalletDidCommOutbox } from './wallet/didcomm-outbox.ts'
 
 let mimiVaultWatchHandle: { close(): void } | undefined
 let mediatorPollHandles: MediatorPollHandle[] = []
@@ -242,6 +242,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
   let didComm: { xKid: string; mediatorUrl: string; error?: string } | undefined
   let activeDidCommDevice: { did: string; xKid: string; x25519PrivateKey: Uint8Array } | undefined
   let walletRelationshipManager: WalletRelationshipManager | undefined
+  let walletDidCommOutbox: WalletDidCommOutbox | undefined
   try {
     const device = await openDidMdWalletBisetDevice()
     const { mimiSelfBaseUrl, mediatorUrls } = readBisetConfig()
@@ -543,6 +544,18 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
           sink: walletContactKeySink,
           startWatch: startWalletRelationshipWatch,
         })
+        walletDidCommOutbox = createWalletDidCommOutbox({
+          identityId: device.did,
+          store: vaultStore,
+          readModel,
+          mutationSink,
+          ensureContact: toDid => walletRelationshipManager!.ensureContact(toDid),
+          onDelivered: () => { void synchronizeWalletVault() },
+          onError: (error, item) => console.warn(
+            `[did.md Wallet DIDComm outbox] ${item.emailId} -> ${item.toDid}:`,
+            error instanceof Error ? error.message : error,
+          ),
+        })
         handleWalletDidCommMessage = async (message, recipientKid, mediatorUrl) => {
             // A Wallet account carries no group-chat or mail-bridge handling
             // (both live in the local-identity boot path's own onMessage). Its
@@ -587,6 +600,12 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
         // Re-open their Pickup watches before accepting new messages so an
         // existing Biset conversation cannot disappear after refresh.
         await restoreRelationshipWatches(walletContactKeyReader, startWalletRelationshipWatch)
+        // A durable intent might predate this tab (or the previous send's
+        // network attempt). Flush once at boot, then retry independently of
+        // incoming mediator traffic; failure deliberately leaves its row.
+        await walletDidCommOutbox.flush()
+        const retryTimer = setInterval(() => { void walletDidCommOutbox!.flush() }, 10_000)
+        mediatorPollHandles.push({ stop: () => clearInterval(retryTimer) })
       } catch (error) {
         didComm = { xKid: didCommDevice.xKid, mediatorUrl: didCommDevice.mediatorUrl, error: error instanceof Error ? error.message : String(error) }
         console.warn('[did.md Wallet DIDComm]', error)
@@ -596,25 +615,20 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
       console.warn('[did.md Wallet DIDComm]', error)
     }
     const sendWalletMessage = async (input: ReplySendInput): Promise<void> => {
-      if (!activeDidCommDevice || !walletRelationshipManager) throw new Error('DIDComm is still connecting for this Wallet session')
+      if (!activeDidCommDevice || !walletRelationshipManager || !walletDidCommOutbox) throw new Error('DIDComm is still connecting for this Wallet session')
       if (input.toAddrs.length !== 1 || !input.toAddrs[0]?.startsWith('did:')) {
         throw new Error('A did.md Wallet session can currently compose to one DID recipient')
       }
       const toDid = input.toAddrs[0]
-      // First contact creates a private did:peer relationship and waits for
-      // its authenticated ACCEPT. Ordinary content never rides the public
-      // Wallet device kid, so the first message has the same privacy and
-      // retry boundary as every later message in the conversation.
-      const contact = await walletRelationshipManager.ensureContact(toDid)
-      const sent = await sendRelationshipMessage(contact, input.body, input.subject)
-      if (!sent.ok) throw new Error(sent.error)
       const now = new Date().toISOString()
+      const emailId = crypto.randomUUID()
+      const messageId = crypto.randomUUID()
       const snapshot = await readModel.snapshot()
       await mutationSink.commitMailMessage({
         email: {
-          id: crypto.randomUUID(),
+          id: emailId,
           threadId: didCommThreadId(device.did, toDid),
-          mailboxIds: { sent: true },
+          mailboxIds: { outbox: true },
           keywords: { '$seen': true },
           receivedAt: now,
           sentAt: now,
@@ -623,7 +637,13 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
           ...(input.subject ? { subject: input.subject } : {}),
         },
         rawRfc5322: new TextEncoder().encode(input.body),
+        didComm: [{ messageId, toDid }],
       }, snapshot)
+      await refreshInbox(readModel)
+      // First contact is established inside the flusher. It waits for a
+      // signed ACCEPT and sends only on the private did:peer route; a
+      // network or handshake failure retains this exact intent for retry.
+      await walletDidCommOutbox.flush()
       await refreshInbox(readModel)
       void synchronizeWalletVault()
     }
