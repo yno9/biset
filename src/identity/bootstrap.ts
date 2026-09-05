@@ -1,33 +1,18 @@
-// Identity bootstrap, end to end: this device's Root-signed MLS credential,
-// self-group membership, roster reflection, and
-// KeyPackage pool top-up — everything Vault Core's identity bootstrap needs
-// before any vault content can be read or written (PLAN.md §4.1's
-// roster/VEK boundary). Two entry points share that machinery
-// (`registerDeviceAndJoinSelfGroup`, below): `createNewIdentity` for a
-// brand-new identity (root key generated fresh, did:webvh genesis), and
-// `restoreIdentity` for an ADDITIONAL device of an identity that already
-// exists (root key re-derived from a recovery phrase, no genesis — the DID
-// is instead read off the identity's own did.jsonl).
+// The Vault-side identity boundary: MLS epoch keys, SegmentKey wraps and
+// their membership signer/verifier, the Local JMAP read model and projection
+// rebuild, and the MIMI Vault room a did.md Wallet device joins or creates.
 //
-// Ported at the flow level from src.bak/ui/account-create.ts's submit
-// handler (both its signup and its logInExistingAddress branches) and
-// src.bak/did/index.ts's initDidWebvh/localDidRecord, trimmed to what this
-// rewrite actually carries forward: no mail/AP relay provisioning, no
-// DIDComm mediator registration, no PGP — all relay-adapter or
-// DIDComm-adapter concerns this rewrite does not have yet (PLAN.md §6).
-import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { deriveRootKey } from './keys.ts'
-import { mnemonicToSeed } from './seed.ts'
-import { createGenesis } from './webvh/create-genesis.ts'
-import { resolveByDomain } from './webvh/resolver.ts'
-import { mailFromForIdentity } from './webvh/identifier.ts'
-import { decodeMultikey, encodeMultikey } from './webvh/multikey.ts'
-import { multikeyHashBase58 } from './webvh/hash.ts'
-import { fetchCurrentLog } from './webvh/log-io.ts'
+// Everything here is now driven by a Wallet-authorized device -- a public
+// DID plus this browser's own MLS leaf. The seed side of this file
+// (`createNewIdentity`, `restoreIdentity`, `registerDevice`, the
+// Master-derived storage KEK boundary, mail submission, `enableDidComm` and
+// `ensureMimiVaultRoom`) was removed in N1 (2026-09-05): biset no longer
+// issues or restores an identity of its own, so no Root, Sign, Spare or
+// Master material is representable in this module at all.
+import { ed25519 } from '@noble/curves/ed25519.js'
 import { defaultFetch } from '../net-fetch.ts'
-import type { IdentityRecord, IdentityRecordStore } from './record-store.ts'
-import { epochOf, exportSecret, generateOwnKeyPackage, ownMlsDeviceCredential, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
-import { createMlsDeviceCredential, encodeMlsDeviceCredential, type MlsDeviceCredentialV2 } from '../mls/device-credential.ts'
+import { epochOf, exportSecret, ownMlsDeviceCredential, ownSignaturePrivateKey, setMlsAuthService } from '../mls/group.ts'
+import { type MlsDeviceCredentialV2 } from '../mls/device-credential.ts'
 import { webvhAuthenticationService } from '../mls/webvh-authentication-service.ts'
 import { StoredSegmentKeyResolver, type SegmentKeyResolver, type VaultEpochKeyResolver } from '../vault/segment-key-resolver.ts'
 import { ActiveVaultSegmentManager, type ActiveVaultSegment } from '../vault/active-segment.ts'
@@ -35,16 +20,9 @@ import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWrite
 import { deriveVaultEpochKey, MlsVaultEpochKeyResolver } from '../mls/vault-epoch.ts'
 import { MlsMembershipSegmentKeyWrapSigner, MlsMembershipSegmentKeyWrapVerifier } from '../mls/segment-key-membership.ts'
 import { StoredMlsSelfGroupProvider, type MlsSelfGroupStateStore } from '../mls/store.ts'
-import { deviceKidFragment } from '../didcomm/devicekid.ts'
-import { publishRoutingPointer } from '../didcomm/webvh-routing-pointer.ts'
-import { buildRoutingDoc, fetchRouting, putRouting, setRoutingMimiVaultRoom, mimiVaultRoomFromRouting, type RoutingDoc, type MediatorRegistration } from '../didcomm/webvh-routing.ts'
 import { createMimiVaultRoom, joinMimiVaultRoom } from '../mls/mimi-vault-room.ts'
 import { MimiClientTransport } from '../mls/mimi-client-transport.ts'
 import type { MimiVaultSessionRecord, MimiVaultSessionStateStore } from '../mls/mimi-vault-session.ts'
-import { registerWithMediator } from '../didcomm/mediator-sync.ts'
-import { DidCommCredentialReader } from '../vault/didcomm-credential-reader.ts'
-import { DidCommCredentialVaultSink } from '../vault/didcomm-credential-sink.ts'
-import type { DidCommPrivateCredentialV1 } from '../vault/didcomm-credential.ts'
 import { createSegmentKeyWrap, segmentKeyWrapSigningBytes, unwrapSegmentKey } from '../vault/crypto.ts'
 import type { RestoreTransferSource, RestoreTransferVerifier } from '../vault/restore-transfer.ts'
 import { buildVaultManifest } from '../vault/manifest.ts'
@@ -55,109 +33,24 @@ import { VaultObjectBlobReader } from '../vault/blob-reader.ts'
 import type { LocalJmapProjectionV1, LocalJmapReadModel, LocalJmapSnapshot } from '../local-jmap/gateway.ts'
 import { IndexedDbLocalJmapReadModel, type LocalVaultBlobReader } from '../local-jmap/indexeddb.ts'
 import { equalBytes } from '../shared/protocol/canonical.ts'
-import { deliverySeq, mlsEpoch, type DeliverySeq, type VaultEventId } from '../shared/protocol/ids.ts'
-import { mailSubmissionSigningBytes, vaultDeliveryPullSigningBytes } from '../shared/protocol/signing.ts'
-import type { VaultDeliveryPullV1 } from '../shared/protocol/vault.ts'
-import type { MailSubmissionRequestV1, MailSubmissionResultV1 } from '../shared/protocol/mail-submission.ts'
-import { CoreMailSubmissionTransport } from '../vault/mail-submission-transport.ts'
-import type { VaultBackedLocalJmapMutationSink } from '../local-jmap/vault-mutation-sink.ts'
-import type { VaultMutationIntent } from '../local-jmap/mutations.ts'
+import { mlsEpoch, type VaultEventId } from '../shared/protocol/ids.ts'
 import type { ClientState } from '../mls/vendor/index.ts'
-import { deriveVaultStorageKek, VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../vault/storage-root.ts'
+import { VAULT_STORAGE_GROUP_ID } from '../vault/storage-root.ts'
 
 let authServiceInstalled = false
 /** Idempotent: `setMlsAuthService` is one global (group.ts's own note on
  * why), so calling this more than once across a session's several
- * `createNewIdentity`/future-login calls must be harmless. */
+ * Wallet-device bootstraps must be harmless. */
 export function ensureMlsAuthServiceInstalled(): void {
   if (authServiceInstalled) return
   setMlsAuthService(webvhAuthenticationService)
   authServiceInstalled = true
 }
 
-function toHex(bytes: Uint8Array): string {
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
-}
-
 export function fromHex(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
   for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
   return bytes
-}
-
-export interface CreateNewIdentityOptions {
-  /** This identity's own subdomain (`y.biset.md`) — used unchanged for both
-   * did:webvh (identifier.ts's subdomain form) and the did:web mirror. */
-  domain: string
-  /** Generated if omitted — the only reason to pass one in is a test. */
-  masterSeed?: Uint8Array
-  /** Independent first Spare Key seed; generated when omitted. */
-  spareSeed?: Uint8Array
-  didWebMirror?: boolean
-  fetch?: typeof fetch
-}
-
-export interface CreatedIdentity {
-  record: IdentityRecord
-  masterSeed: Uint8Array
-  /** Creation-only; never persisted in IdentityRecord. */
-  spareSeed?: Uint8Array
-}
-
-/**
- * The machinery `createNewIdentity` and `restoreIdentity` share once a DID
- * and its Root Key are in hand: mint this device's MLS leaf key and
- * Root-signed credential. Self/Vault membership itself is a separate,
- * later step the caller drives through biset-mimi (`ensureMimiVaultRoom`,
- * main.ts's own boot flow) -- this only derives the purely local values
- * (deviceKid, deviceSignaturePrivateKey) that step needs to reconstruct
- * this device's credential (found live, 2026-09-02: main.ts's
- * `mimiVaultConfigured` boot branch had no key to reconstruct this device's
- * own credential from, and fell back to the wrong key entirely, throwing
- * "MIMI Vault device credential does not match this identity device").
- */
-function registerDevice(
-  did: string,
-  rootPrivateKey: Uint8Array,
-  signPrivateKey: Uint8Array,
-  generation: string,
-): { deviceKid: string; deviceSignaturePrivateKey: Uint8Array } {
-  ensureMlsAuthServiceInstalled()
-  const deviceSignaturePrivateKey = ed25519.utils.randomSecretKey()
-  const deviceCredential = createMlsDeviceCredential(did, generation, ed25519.getPublicKey(deviceSignaturePrivateKey), rootPrivateKey, signPrivateKey)
-  return { deviceKid: deviceCredential.deviceKid, deviceSignaturePrivateKey }
-}
-
-/**
- * Creates a brand-new identity: did:webvh genesis, this device authorized by
- * a Root-signed credential as the first self-group member, and the identity
- * persisted locally. Throws if the identity anchor (genesis PUT) is
- * unreachable — same fail-fast rule the pre-rewrite signup form used.
- */
-export async function createNewIdentity(
-  recordStore: IdentityRecordStore,
-  opts: CreateNewIdentityOptions,
-): Promise<CreatedIdentity> {
-  const masterSeed = opts.masterSeed ?? crypto.getRandomValues(new Uint8Array(32))
-  const root = deriveRootKey(masterSeed)
-  const spareSeed = opts.spareSeed ?? crypto.getRandomValues(new Uint8Array(32))
-  const nextKeyHash = multikeyHashBase58(encodeMultikey(ed25519.getPublicKey(spareSeed)))
-  const { did, versionId } = await createGenesis({
-    domain: opts.domain, rootPrivateKey: root.privateKey, rootPublicKey: root.publicKey,
-    nextKeyHash,
-    didWebMirror: opts.didWebMirror, fetch: opts.fetch,
-  })
-
-  const { deviceKid, deviceSignaturePrivateKey } = registerDevice(did, root.privateKey, root.privateKey, versionId)
-
-  const record: IdentityRecord = {
-    did, masterSeed: toHex(masterSeed), rootPublicKey: toHex(root.publicKey), rootPrivateKey: toHex(root.privateKey),
-    signPublicKey: toHex(root.publicKey), signPrivateKey: toHex(root.privateKey), generation: versionId, deviceKid,
-    deviceSignaturePrivateKey: toHex(deviceSignaturePrivateKey),
-  }
-  await recordStore.put(record)
-
-  return { record, masterSeed, spareSeed }
 }
 
 /**
@@ -243,72 +136,6 @@ export async function repairCurrentLocalSegmentKeyWraps(
   }
 }
 
-export interface RestoreIdentityOptions {
-  /** The identity's own subdomain — same value `createNewIdentity` was
-   * originally called with for it. */
-  domain: string
-  /** The 24-word BIP39 recovery phrase (identity/seed.ts). */
-  mnemonic: string
-  /** Current Sign phrase. Initially this is the same phrase as Root. */
-  signMnemonic: string
-  didWebMirror?: boolean
-  fetch?: typeof fetch
-}
-
-/**
- * Adds THIS DEVICE to an identity that already exists, from its recovery
- * phrase — the `logInExistingAddress` half of the pre-rewrite signup form,
- * minus the DNS-anchor lookup (this rewrite has no restore/login UI to feed
- * it a DID yet) and minus mail/AP/PGP. The DID itself is read off the
- * identity's own did.jsonl (`resolveByDomain`), not derived from the
- * phrase — a did:webvh's SCID depends on genesis TIME, not just the root
- * key, so the DID cannot be recomputed offline (`create-genesis.ts`'s own
- * note). The resolved document's root key (`verificationMethod[0]` —
- * `add-device-verification-method.ts` only ever appends, so this stays the
- * one this identity's genesis minted) is checked against the phrase's own
- * derived key before anything else happens: a wrong phrase, or someone
- * else's identity, must never register a device.
- */
-export async function restoreIdentity(
-  recordStore: IdentityRecordStore,
-  opts: RestoreIdentityOptions,
-): Promise<CreatedIdentity> {
-  const masterSeed = mnemonicToSeed(opts.mnemonic)
-  const root = deriveRootKey(masterSeed)
-
-  const doc = await resolveByDomain(opts.domain)
-  if (!doc) throw new Error('restoreIdentity: no identity found at this domain')
-  const rootVm = doc.verificationMethod[0]
-  if (!rootVm) throw new Error('restoreIdentity: resolved document has no verificationMethod')
-  if (!equalBytes(decodeMultikey(rootVm.publicKeyMultibase), root.publicKey)) {
-    throw new Error('restoreIdentity: this recovery phrase does not control the identity at this domain')
-  }
-  const did = doc.id
-
-  const { last } = await fetchCurrentLog(did, opts.fetch)
-  const updateKeys = last.parameters.updateKeys ?? []
-  if (updateKeys.length !== 1 || (last.parameters.nextKeyHashes?.length ?? 0) !== 1) {
-    throw new Error('restoreIdentity: identity does not satisfy permanent pre-rotation invariants')
-  }
-  const normalizedRoot = opts.mnemonic.trim().toLowerCase().replace(/\s+/g, ' ')
-  const normalizedSign = opts.signMnemonic.trim().toLowerCase().replace(/\s+/g, ' ')
-  const signSeed = mnemonicToSeed(normalizedSign)
-  const signPrivateKey = normalizedSign === normalizedRoot ? deriveRootKey(signSeed).privateKey : signSeed
-  const signPublicKey = ed25519.getPublicKey(signPrivateKey)
-  if (encodeMultikey(signPublicKey) !== updateKeys[0]) throw new Error('restoreIdentity: Sign Key phrase is not current for this identity')
-
-  const { deviceKid, deviceSignaturePrivateKey } = registerDevice(did, root.privateKey, signPrivateKey, last.versionId)
-
-  const record: IdentityRecord = {
-    did, masterSeed: toHex(masterSeed), rootPublicKey: toHex(root.publicKey), rootPrivateKey: toHex(root.privateKey),
-    signPublicKey: toHex(signPublicKey), signPrivateKey: toHex(signPrivateKey), generation: last.versionId, deviceKid,
-    deviceSignaturePrivateKey: toHex(deviceSignaturePrivateKey),
-  }
-  await recordStore.put(record)
-
-  return { record, masterSeed }
-}
-
 export interface VaultCryptoBoundary {
   /** Current self-group epoch boundary, also used to rewrap a recovered
    * remote checkpoint before committing it locally. */
@@ -361,67 +188,6 @@ export function buildWalletVaultCryptoBoundary(
 }
 
 /**
- * Wires PLAN.md §4.2's "actual MLS VEK derivation / membership signer" —
- * the one piece `vault/segment-key-resolver.ts`, `vault/crypto.ts`, and
- * `vault/active-segment.ts` were built to receive but never got — to this
- * identity's actual self-group state. Local JMAP Gateway / vault mutation
- * code calls this once it has `record`/`selfGroupStore` in hand to get a
- * `SegmentKeyResolver` for decrypting vault objects, a signer for wrapping new ones, and an
- * `activeSegment()` for `VaultBackedLocalJmapMutationSink`.
- *
- * Reads the self-group `ClientState` fresh on every resolve/sign/verify
- * call (via `selfGroupStore.load`) rather than once at construction — MLS
- * state is immutable and wholesale-replaced on every commit, so a boundary
- * built once at boot must keep tracking the CURRENT epoch and CURRENT
- * membership, not the snapshot that existed when this was called.
- */
-export function buildVaultCryptoBoundary(
-  wraps: SegmentKeyWrapReader & SegmentKeyWrapWriter,
-  segments: ActiveVaultSegmentStore,
-  selfGroupStore: MlsSelfGroupStateStore,
-  record: IdentityRecord,
-): VaultCryptoBoundary {
-  if (!record.deviceKid) throw new Error('buildVaultCryptoBoundary: identity has no deviceKid yet')
-  const deviceKid = record.deviceKid
-  const loadState = async (): Promise<ClientState> => {
-    const stored = await selfGroupStore.load(record.did)
-    if (!stored) throw new Error('buildVaultCryptoBoundary: no self-group state for this identity')
-    return stored.state
-  }
-
-  const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
-  const signer = new MlsMembershipSegmentKeyWrapSigner(deviceKid, loadState)
-  const storageKek = record.masterSeed ? deriveVaultStorageKek(fromHex(record.masterSeed)) : undefined
-  const resolver = new StoredSegmentKeyResolver(wraps, epochs, signer, storageKek)
-  const segmentManager = new ActiveVaultSegmentManager({ identityId: record.did, segments, wraps, epochs, signer, storageKek })
-
-  return { epochs, resolver, signer, activeSegment: () => segmentManager.activeSegment() }
-}
-
-/** One-time, additive migration: wraps every locally known random SegmentKey
- * under the stable root-derived storage KEK. Ciphertexts are untouched. */
-export async function migrateLocalSegmentKeysToStorageRoot(
-  segments: ActiveVaultSegmentStore,
-  wraps: SegmentKeyWrapReader & SegmentKeyWrapWriter,
-  record: IdentityRecord,
-  selfGroupStore: MlsSelfGroupStateStore,
-): Promise<void> {
-  if (!record.masterSeed || !record.deviceKid) return
-  const stored = await selfGroupStore.load(record.did)
-  if (!stored) throw new Error('Vault storage migration requires Self Group state')
-  const signer = new MlsMembershipSegmentKeyWrapSigner(record.deviceKid, async () => stored.state)
-  const kek = deriveVaultStorageKek(fromHex(record.masterSeed))
-  try {
-    for (const segment of await segments.allSegments(record.did)) {
-      if (await wraps.readSegmentKeyWrap(record.did, segment.segmentId, VAULT_STORAGE_EPOCH)) continue
-      const wrap = await createSegmentKeyWrap(kek, segment.segmentKey, { identityId: record.did, selfGroupId: VAULT_STORAGE_GROUP_ID, segmentId: segment.segmentId, sourceEpoch: VAULT_STORAGE_EPOCH, recipientEpoch: VAULT_STORAGE_EPOCH, grantorDeviceId: record.deviceKid, grantedAt: new Date().toISOString() }, signer)
-      await wraps.writeSegmentKeyWrap(wrap)
-      await segments.recordSegmentRewrapped(record.did, segment.segmentId, VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID)
-    }
-  } finally { kek.fill(0) }
-}
-
-/**
  * Wires PLAN.md §4.3's "actual MLS grant verification" — `RestoreTransferVerifier`
  * (`vault/restore-transfer.ts`) has always needed one, but nothing built it
  * against a real self group. Both halves it asks for — an event's actor and
@@ -469,7 +235,7 @@ export function buildRestoreTransferSource(
   records: VaultRecordReader,
   wraps: SegmentKeyWrapReader,
   selfGroupStore: MlsSelfGroupStateStore,
-  record: IdentityRecord,
+  record: VaultSegmentRepairIdentity,
 ): RestoreTransferSource {
   if (!record.deviceKid) throw new Error('buildRestoreTransferSource: identity has no deviceKid yet')
   const deviceKid = record.deviceKid
@@ -551,7 +317,6 @@ export function buildVaultDeliveryProjector(
   selfGroupStore: MlsSelfGroupStateStore,
   identityId: string,
   currentSnapshot: () => Promise<LocalJmapSnapshot>,
-  masterSeedHex?: string,
 ): VaultDeliveryProjector {
   const loadState = async (): Promise<ClientState> => {
     const stored = await selfGroupStore.load(identityId)
@@ -559,9 +324,8 @@ export function buildVaultDeliveryProjector(
     return stored.state
   }
   const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
-  const rootPublicKey = masterSeedHex ? deriveRootKey(fromHex(masterSeedHex)).publicKey : undefined
-  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState, rootPublicKey)
-  return new VaultDeliveryProjector({ identityId, currentSnapshot, epochs, verifier, ...(masterSeedHex ? { storageKek: deriveVaultStorageKek(fromHex(masterSeedHex)) } : {}) })
+  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
+  return new VaultDeliveryProjector({ identityId, currentSnapshot, epochs, verifier })
 }
 
 /**
@@ -581,7 +345,6 @@ export function buildLocalJmapProjectionRebuild(
   projections: VaultProjectionWriter,
   selfGroupStore: MlsSelfGroupStateStore,
   identityId: string,
-  masterSeedHex?: string,
 ): () => Promise<LocalJmapProjectionV1> {
   const loadState = async (): Promise<ClientState> => {
     const stored = await selfGroupStore.load(identityId)
@@ -589,10 +352,9 @@ export function buildLocalJmapProjectionRebuild(
     return stored.state
   }
   const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
-  const rootPublicKey = masterSeedHex ? deriveRootKey(fromHex(masterSeedHex)).publicKey : undefined
-  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState, rootPublicKey)
+  const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
   return async () => {
-    const projection = await rebuildLocalJmapProjection({ identityId, records, wraps, epochs, verifier, ...(masterSeedHex ? { storageKek: deriveVaultStorageKek(fromHex(masterSeedHex)) } : {}) })
+    const projection = await rebuildLocalJmapProjection({ identityId, records, wraps, epochs, verifier })
     await projections.writeProjection(identityId, projection, { state: projection.state })
     return projection
   }
@@ -612,7 +374,6 @@ export function buildVaultBlobReader(
   wraps: SegmentKeyWrapReader,
   selfGroupStore: MlsSelfGroupStateStore,
   identityId: string,
-  masterSeedHex?: string,
 ): LocalVaultBlobReader {
   const loadState = async (): Promise<ClientState> => {
     const stored = await selfGroupStore.load(identityId)
@@ -621,7 +382,7 @@ export function buildVaultBlobReader(
   }
   const epochs = new MlsVaultEpochKeyResolver(new StoredMlsSelfGroupProvider(selfGroupStore))
   const verifier = new MlsMembershipSegmentKeyWrapVerifier(loadState)
-  const resolver = new StoredSegmentKeyResolver(wraps, epochs, verifier, masterSeedHex ? deriveVaultStorageKek(fromHex(masterSeedHex)) : undefined)
+  const resolver = new StoredSegmentKeyResolver(wraps, epochs, verifier)
   return new VaultObjectBlobReader(objects, resolver)
 }
 
@@ -641,309 +402,9 @@ export function buildLocalJmapReadModel(
   vault: VaultProjectionReader & VaultObjectReader & SegmentKeyWrapReader,
   selfGroupStore: MlsSelfGroupStateStore,
   identityId: string,
-  masterSeedHex?: string,
 ): LocalJmapReadModel {
-  const blobs = buildVaultBlobReader(vault, vault, selfGroupStore, identityId, masterSeedHex)
+  const blobs = buildVaultBlobReader(vault, vault, selfGroupStore, identityId)
   return new IndexedDbLocalJmapReadModel(vault, identityId, blobs)
-}
-
-/**
- * PLAN.md §6.2's outbound send: given an already-locally-committed "outbox"
- * email's raw blob and recipients, signs and submits it for delivery through
- * the identity's authenticated mail-plugin submission endpoint
- * (CoreMailSubmissionTransport, POSTing to a standalone mediator +
- * mail-plugin deploy, not biset-core -- retired 2026-09-04), then records
- * the outcome as an ordinary local vault commit through
- * VaultBackedLocalJmapMutationSink.commitIntents -- a `transport.result`
- * event always, plus a `mailbox.set` moving the email out of "outbox" only
- * when delivery actually succeeded. A temporary-failure leaves it in outbox
- * for a later retry; there is no scheduler here yet, matching the inbound
- * side's own deferred DSN handling.
- *
- * `mailFrom` is derived, not stored: an identity's DID domain IS its own
- * subdomain (identity/webvh/identifier.ts's subdomain-per-identity
- * convention -- the same one mail-recipient-resolver.ts uses server-side to
- * go the other direction), so `{username}@mail.{apexDomain}` falls out of
- * the identity's own DID with no new field needed on IdentityRecord.
- */
-export interface MailSubmissionTransport {
-  submit(request: MailSubmissionRequestV1): Promise<MailSubmissionResultV1>
-}
-
-export function buildMailSubmitter(
-  vault: VaultObjectReader & SegmentKeyWrapReader,
-  selfGroupStore: MlsSelfGroupStateStore,
-  record: IdentityRecord,
-  mutationSink: VaultBackedLocalJmapMutationSink,
-  apexDomain: string,
-  mailSubmitBaseUrl: string,
-  /** Overrides the default HTTP submission path -- everything else
-   * (signing, emailId, mailbox transitions) is unchanged, since this only
-   * decides WHERE the signed request goes. */
-  transportOverride?: MailSubmissionTransport,
-): {
-  submit(emailId: string, blobId: string, rcptTo: string[], snapshot: LocalJmapSnapshot): Promise<MailSubmissionResultV1>
-  submitMail(arguments_: Record<string, unknown>, snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>>
-} {
-  if (!record.deviceKid) throw new Error('buildMailSubmitter: identity has no deviceKid yet')
-  const deviceKid = record.deviceKid
-  // Signs with the identity's CURRENT did:webvh update key (Root, or its
-  // post-rotation successor) -- NOT an MLS device credential. The server
-  // side (mediator/mail-plugin/mail-submission-http.ts) verifies against
-  // resolveCurrentUpdateKeys, the exact same public, self-certifying
-  // authority a routing.json update itself signs with, so there is no
-  // separate device roster to register with or keep in sync (the old
-  // MLS-credential/biset-core-roster design was retired 2026-09-04
-  // alongside biset-core itself -- see that handler's own header for why).
-  const signer = { sign: (bytes: Uint8Array) => ed25519.sign(bytes, fromHex(record.signPrivateKey)) }
-  const blobs = buildVaultBlobReader(vault, vault, selfGroupStore, record.did, record.masterSeed)
-  const transport = transportOverride ?? new CoreMailSubmissionTransport({ baseUrl: mailSubmitBaseUrl })
-  const mailFrom = mailFromForIdentity(record.did, apexDomain)
-
-  return {
-    async submit(emailId, blobId, rcptTo, snapshot) {
-      const rawRfc5322 = await blobs.download(record.did, blobId)
-      const unsigned = { version: 1 as const, identityId: record.did, deviceId: deviceKid, mailFrom, rcptTo, rawRfc5322, submittedAt: new Date().toISOString() }
-      const signature = await signer.sign(mailSubmissionSigningBytes(unsigned))
-      const result = await transport.submit({ ...unsigned, signature })
-
-      const intents: VaultMutationIntent[] = [{
-        kind: 'transport.result',
-        targetIds: [emailId],
-        payload: { emailId, status: result.status, occurredAt: result.occurredAt, ...(result.detail === undefined ? {} : { detail: result.detail }) },
-      }]
-      if (result.status === 'accepted') {
-        intents.push({ kind: 'mailbox.set', targetIds: [emailId], payload: { emailId, mailboxIds: { sent: true } } })
-      }
-      await mutationSink.commitIntents(intents, snapshot)
-      return result
-    },
-
-    /**
-     * PLAN.md §6.2's minimal EmailSubmission/set: `{create: {creationId:
-     * {emailId}}}`, a single submission, no update/destroy, no
-     * onSuccessUpdateEmail hooks. Blocks until delivery completes and
-     * returns synchronously (the same "narrow API, do the real work now"
-     * shape this codebase already uses elsewhere) rather than adding an
-     * async EmailSubmission/get polling model.
-     */
-    async submitMail(arguments_, snapshot) {
-      const create = arguments_.create
-      if (create === null || typeof create !== 'object' || Array.isArray(create)) throw new TypeError('EmailSubmission/set requires create')
-      const entries = Object.entries(create as Record<string, unknown>)
-      if (entries.length !== 1) throw new TypeError('EmailSubmission/set supports exactly one creation per call')
-      const [creationId, spec] = entries[0]!
-      if (spec === null || typeof spec !== 'object' || Array.isArray(spec)) throw new TypeError('EmailSubmission/set creation must be an object')
-      const emailId = (spec as Record<string, unknown>).emailId
-      if (typeof emailId !== 'string' || !emailId) throw new TypeError('EmailSubmission/set creation requires emailId')
-      const email = snapshot.emails.find(candidate => candidate.id === emailId)
-      if (!email) return { notCreated: { [creationId]: { type: 'invalidProperties', description: 'no such email' } } }
-      if (email.mailboxIds.outbox !== true) return { notCreated: { [creationId]: { type: 'invalidProperties', description: 'email is not in the outbox' } } }
-      if (!email.blobId) return { notCreated: { [creationId]: { type: 'invalidProperties', description: 'email has no content' } } }
-      const rcptTo = (email.to ?? []).map(address => address.email).filter((value): value is string => !!value)
-      if (rcptTo.length === 0) return { notCreated: { [creationId]: { type: 'invalidProperties', description: 'email has no recipients' } } }
-      const result = await this.submit(emailId, email.blobId, rcptTo, snapshot)
-      return { created: { [creationId]: { id: `${emailId}-submission`, emailId, sendAt: result.occurredAt, undoStatus: result.status === 'accepted' ? 'final' : 'pending' } } }
-    },
-  }
-}
-
-export { mailFromForIdentity }
-
-export interface EnableDidCommOptions {
-  /** Independent, blind mediators to register this identity's shared
-   * DIDComm kid with at provisioning time (ARC.md's 2026-08-27 redesign) --
-   * each successfully-registered one becomes a routing.json
-   * DIDCommMessaging entry with `routingKeys` naming it (webvh-routing.ts).
-   * Registration
-   * failures are logged and skipped, never fatal to provisioning: a
-   * mediator being briefly unreachable at signup must not block account
-   * creation. Empty/omitted keeps today's exact behavior (the legacy
-   * direct model, no mediator involved). */
-  mediatorUrls?: string[]
-  /** When given, this identity's derived mail address (mailFromForIdentity)
-   * is published into routing.json's `alsoKnownAs` -- otherwise nothing
-   * anywhere ever asserts the DID<->mail link (found live, 2026-08-26: a
-   * resolved document's alsoKnownAs was always empty). Optional because a
-   * caller with no apexDomain configured has no mail address to derive at
-   * all (main.ts's own read-only-UI fallback). */
-  apexDomain?: string
-  fetch?: typeof fetch
-}
-
-/**
- * Opt-in DIDComm provisioning (PLAN.md §6.1's last checkbox) -- deliberately
- * NOT part of createNewIdentity/restoreIdentity: this rewrite's DIDComm
- * scope (external ingress/OOB/bootstrap/control plus 1:1 chat, confirmed
- * with the user) is not something every identity needs by default, unlike
- * the MLS self-group registration every device requires just to have a
- * vault at all.
- *
- * The DIDComm keyAgreement key is IDENTITY-shared, not per-device (2026-08-27
- * redesign, ARC.md's DIDComm mediator section) -- same shape as
- * vault/openpgp-credential.ts's mail credential, for the same reason: any of
- * this identity's trusted devices needs to be able to decrypt the SAME
- * incoming ciphertext, which sharing the actual private key (synced via the
- * ordinary vault delivery pipeline, `reader`/`sink` below) gets for free,
- * unlike the earlier per-device scheme where a sender had to guess which of
- * several published keys some device might be listening on. `reader.readCurrent()`
- * finds an already-synced credential from another device first; only the
- * device that happens to reach this point before any sibling ever has does
- * `sink.store()` mint a fresh one.
- *
- * Derives the kid the same way didcomm/devicekid.ts always did
- * (deviceKidFragment -- deliberately NOT `record.deviceKid`, which names a
- * different key: the MLS leaf credential, not this one), publishes the
- * signed `#routing` log pointer once (webvh-routing-pointer.ts) and the
- * identity's ONE keyAgreement entry + DIDCommMessaging service descriptor in
- * routing.json (webvh-routing.ts), then persists the key on this device's
- * own identity record. Idempotent on the KEY setup: a record that already
- * has `didCommKid` skips straight to ensureAlsoKnownAsPublished below --
- * still runs every boot (main.ts calls this unconditionally whenever a core
- * is configured) so an identity provisioned before alsoKnownAs existed
- * picks it up on its next boot rather than staying stuck without it forever.
- *
- * Fetch-merge-put against routing.json, not build-from-scratch-and-replace,
- * so mlkem/alsoKnownAs/name/openpgp fields already published by something
- * else survive -- the keyAgreement entry itself is a single-element array
- * now (REPLACED wholesale, not merged): there is only ever one, identity-wide.
- */
-export async function enableDidComm(
-  recordStore: IdentityRecordStore,
-  record: IdentityRecord,
-  reader: DidCommCredentialReader,
-  sink: DidCommCredentialVaultSink,
-  opts: EnableDidCommOptions,
-): Promise<IdentityRecord> {
-  if (record.didCommKid) {
-    await ensureAlsoKnownAsPublished(record, opts).catch(e => console.warn('[enableDidComm] alsoKnownAs backfill failed:', e instanceof Error ? e.message : e))
-    return record
-  }
-
-  let credential: DidCommPrivateCredentialV1
-  try {
-    credential = await reader.readCurrent()
-  } catch (e) {
-    if (!(e instanceof Error) || e.message !== 'no DIDComm credential is available') throw e
-    const x25519PrivateKey = x25519.utils.randomSecretKey()
-    const didCommKid = `${record.did}${deviceKidFragment(x25519.getPublicKey(x25519PrivateKey))}`
-    credential = { version: 1, kind: 'credential.didcomm.private', identityId: record.did, didCommKid, privateKey: x25519PrivateKey, createdAt: new Date().toISOString() }
-    await sink.store(credential)
-  }
-
-  const didCommKid = credential.didCommKid
-  const x25519PublicKey = x25519.getPublicKey(credential.privateKey)
-  const signPrivateKey = fromHex(record.signPrivateKey)
-  const signPublicKey = fromHex(record.signPublicKey)
-
-  await publishRoutingPointer({ did: record.did, signingPrivateKey: signPrivateKey, signingPublicKey: signPublicKey, fetch: opts.fetch })
-
-  const fetchImpl = opts.fetch ?? defaultFetch()
-  const current = await fetchRouting(record.did, fetchImpl).catch(() => null)
-  if (current?.keyAgreementVerificationMethod?.some(method => method.id === didCommKid)) {
-    const updated: IdentityRecord = { ...record, didCommKid, didCommX25519PrivateKey: toHex(credential.privateKey) }
-    await recordStore.put(updated)
-    return updated
-  }
-  let alsoKnownAs = current?.alsoKnownAs ? [...current.alsoKnownAs] : undefined
-  if (opts.apexDomain) {
-    try { alsoKnownAs = [...new Set([...(alsoKnownAs ?? []), mailFromForIdentity(record.did, opts.apexDomain)])] }
-    catch { /* identity's domain isn't a subdomain of apexDomain -- nothing to assert */ }
-  }
-  const buildDoc = (service: ReturnType<typeof buildRoutingDoc>): RoutingDoc => ({
-    service: service.service,
-    keyAgreementVerificationMethod: service.keyAgreementVerificationMethod!,
-    ...(current?.mlkemVerificationMethod?.length ? { mlkemVerificationMethod: current.mlkemVerificationMethod } : {}),
-    ...(alsoKnownAs?.length ? { alsoKnownAs } : {}),
-    ...(current?.name ? { name: current.name } : {}),
-    ...(current?.openpgpPublicKey ? { openpgpPublicKey: current.openpgpPublicKey } : {}),
-    ...(current?.mimiVaultRoom ? { mimiVaultRoom: current.mimiVaultRoom } : {}),
-  })
-  const signing = { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }
-  const keyAgreementKeys = [{ kid: didCommKid, publicKey: x25519PublicKey }]
-
-  // Publish the keyAgreement key FIRST, with no service entry yet --
-  // registerWithMediator below sends a mediate-request the mediator must
-  // authenticate by resolving THIS identity's own published keyAgreement
-  // entry, so it has to already be live before any registration can
-  // possibly succeed (a chicken-and-egg a did:dht-era identity never had:
-  // its keyAgreement key rode in the DID document itself, published at
-  // genesis, not in a separately-provisioned routing.json). This used to
-  // also publish a legacy direct-delivery `didCommEndpoint` built from
-  // `coreBaseUrl`; core is retired and no production config ever set it, so
-  // what actually went out was the relative, unusable URI
-  // `/v1/didcomm/ingress` -- never a fallback anyone could deliver to.
-  await putRouting(record.did, buildDoc(buildRoutingDoc(record.did, { keyAgreementKeys })), signing, fetchImpl)
-
-  // Best-effort: register with each configured mediator, keeping only the
-  // ones that actually succeeded. A mediator down at signup time must not
-  // block account creation -- the keyAgreement publish above already stands
-  // when this ends up empty (no service entry, so no sender is told to
-  // Forward-wrap; the identity simply isn't DIDComm-reachable until a
-  // mediator registration succeeds on a later boot).
-  const mediators: MediatorRegistration[] = []
-  for (const url of opts.mediatorUrls ?? []) {
-    try {
-      const info = await registerWithMediator(url, { did: record.did, xKid: didCommKid, xPriv: credential.privateKey }, fetchImpl)
-      mediators.push({ url, routingKid: info.xKid })
-    } catch (e) {
-      console.warn(`[enableDidComm] could not register with mediator ${url}:`, e instanceof Error ? e.message : e)
-    }
-  }
-
-  if (mediators.length) {
-    await putRouting(record.did, buildDoc(buildRoutingDoc(record.did, { mediators, keyAgreementKeys })), signing, fetchImpl)
-  }
-
-  const updated: IdentityRecord = { ...record, didCommKid, didCommX25519PrivateKey: toHex(credential.privateKey) }
-  await recordStore.put(updated)
-  return updated
-}
-
-/** Backfills routing.json's alsoKnownAs with this identity's derived mail
- * address for an identity that already has a didCommKid (so enableDidComm's
- * own main path above won't touch routing.json again) -- a fetch-modify-put
- * on the JSON directly, same shape as webvh-routing.ts's own setRoutingName,
- * so an already-set self-asserted `name` survives untouched. No-op when
- * there's no apexDomain to derive a mail address from, or the address is
- * already listed (the common case on every boot after the first). */
-async function ensureAlsoKnownAsPublished(record: IdentityRecord, opts: EnableDidCommOptions): Promise<void> {
-  if (!opts.apexDomain) return
-  let mailFrom: string
-  try { mailFrom = mailFromForIdentity(record.did, opts.apexDomain) }
-  catch { return }
-  const fetchImpl = opts.fetch ?? defaultFetch()
-  const current = await fetchRouting(record.did, fetchImpl)
-  if (!current || current.alsoKnownAs?.includes(mailFrom)) return
-  const signPrivateKey = fromHex(record.signPrivateKey)
-  const signPublicKey = fromHex(record.signPublicKey)
-  const alsoKnownAs = [...new Set([...(current.alsoKnownAs ?? []), mailFrom])]
-  await putRouting(record.did, { ...current, alsoKnownAs }, { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, fetchImpl)
-}
-
-/**
- * Publishes an empty routing.json for an identity that has none yet.
- * Every other "ensure X published" helper here (`ensureAlsoKnownAsPublished`,
- * and `setRoutingMimiVaultRoom` in webvh-routing.ts) is fetch-modify-put
- * against an EXISTING document and
- * refuses to create one from scratch -- historically the first-ever
- * routing.json was only ever created inside `enableDidComm` (bundled with
- * its own DIDComm keyAgreement publish), which is best-effort and requires
- * a self-group `ClientState` (`buildVaultCryptoBoundary`) that a MIMI-only
- * identity (no coordinator self-group) never has. Without this, such an
- * identity's MIMI Vault room pointer could never be published at all --
- * found live, 2026-09-02: `setRoutingMimiVaultRoom` threw "this identity
- * has no routing.json to update yet" on every single boot, meaning a
- * second device could never discover the room. Idempotent: no-ops once a
- * document already exists (whoever gets there first, DIDComm or this, wins
- * -- both start from the same empty shape).
- */
-export async function ensureRoutingDocument(record: IdentityRecord, fetchImpl: typeof fetch = defaultFetch()): Promise<void> {
-  const signPrivateKey = fromHex(record.signPrivateKey)
-  const signPublicKey = fromHex(record.signPublicKey)
-  await publishRoutingPointer({ did: record.did, signingPrivateKey: signPrivateKey, signingPublicKey: signPublicKey, fetch: fetchImpl })
-  if (await fetchRouting(record.did, fetchImpl)) return
-  await putRouting(record.did, buildRoutingDoc(record.did, {}), { updateKey: encodeMultikey(signPublicKey), privateKey: signPrivateKey }, fetchImpl)
 }
 
 export interface EnsuredMimiVaultRoom {
@@ -1011,84 +472,6 @@ export async function ensureWalletMimiVaultRoom(
   const storedCredential = ownMlsDeviceCredential(room.state)
   if (storedCredential.deviceKid !== device.credential.deviceKid) throw new Error('Wallet MIMI Vault stored state belongs to another device')
   return { credential: storedCredential, signaturePrivateKey: ownSignaturePrivateKey(room.state), selfGroupId, room, transport, provider }
-}
-
-/**
- * Ensures this identity's MIMI Vault room exists locally: joins it (via
- * routing.json's published pointer) if a sibling device already created it,
- * creates it if this is the first device, and (re)publishes the routing
- * pointer either way. Idempotent -- a room already known locally
- * (`selfGroupStore.loadMimiVault`) short-circuits everything past that
- * check to a single local read plus a best-effort routing-publish retry.
- *
- * There is exactly ONE self-group concept for a MIMI-driven identity, not a
- * "coordinator" one and a separate "MIMI" one -- this room's own
- * `ClientState` IS what `selfGroupStore.load` returns once it exists
- * (store.ts's `saveMimiVault` writes the same row `save` does), which is
- * why `buildVaultCryptoBoundary`/`enableDidComm`/mail ingress all keep
- * working against it with no code of their own aware that MIMI is
- * involved. The only reason this needs calling from two places in
- * main.ts's `bootClient` (once early, before those self-group readers, and
- * again where the room's own sync loop is wired up) is that the room does
- * not exist yet on this device's very first boot -- every self-group
- * reader that already ran before this used to run is why they logged "no
- * self-group state for this identity" once each, every time, not just on
- * that first boot (found live, 2026-09-02: this was previously ensured
- * only late in `bootClient`, well after those readers).
- */
-export async function ensureMimiVaultRoom(
-  identity: IdentityRecord,
-  selfGroupStore: MlsSelfGroupStateStore & MimiVaultSessionStateStore,
-  mimiSelfBaseUrl: string,
-  fetchImpl: typeof fetch = defaultFetch(),
-): Promise<EnsuredMimiVaultRoom> {
-  if (!identity.deviceKid) throw new Error('ensureMimiVaultRoom: identity has no deviceKid yet')
-  const provider = new URL(mimiSelfBaseUrl)
-  const transport = new MimiClientTransport({ normalBaseUrl: mimiSelfBaseUrl, anonBaseUrl: mimiSelfBaseUrl, selfBaseUrl: mimiSelfBaseUrl, fetch: fetchImpl })
-  let room = await selfGroupStore.loadMimiVault(identity.did)
-  const stored = await selfGroupStore.load(identity.did)
-  // Without a coordinator self-group, this device's own MLS leaf signature
-  // key lives only on `identity.deviceSignaturePrivateKey`
-  // (`registerDeviceAndJoinSelfGroup` above) -- it is a random per-device
-  // key, not derivable from Root/Sign, so there is no fallback if it's
-  // missing (found live, 2026-09-02: reusing `identity.signPublicKey` here
-  // produced a credential whose deviceKid never matched `identity.deviceKid`).
-  if (!stored && !identity.deviceSignaturePrivateKey) throw new Error('MIMI Vault device has no signature key to reconstruct its credential from')
-  const credential = stored
-    ? ownMlsDeviceCredential(stored.state)
-    : createMlsDeviceCredential(identity.did, identity.generation, ed25519.getPublicKey(fromHex(identity.deviceSignaturePrivateKey!)), fromHex(identity.rootPrivateKey), fromHex(identity.signPrivateKey))
-  const signaturePrivateKey = stored ? ownSignaturePrivateKey(stored.state) : fromHex(identity.deviceSignaturePrivateKey!)
-  if (credential.deviceKid !== identity.deviceKid) throw new Error('MIMI Vault device credential does not match this identity device')
-  const selfGroupId = stored?.selfGroupId ?? 'mimi-vault'
-
-  // A MIMI-only identity never goes through enableDidComm's own first-ever
-  // routing.json creation (that path needs a self-group ClientState that,
-  // before THIS function has run even once, doesn't exist yet either) --
-  // without this, the setRoutingMimiVaultRoom publish below would fail
-  // forever ("this identity has no routing.json to update yet"), and a
-  // second device could never discover this room. Best-effort: a transient
-  // failure here must not block the vault room itself from working locally.
-  await ensureRoutingDocument(identity, fetchImpl).catch(error => console.warn('[mimi-vault/routing-bootstrap]', error instanceof Error ? error.message : error))
-  const routedRoom = await fetchRouting(identity.did, fetchImpl)
-    .then(doc => mimiVaultRoomFromRouting(doc, mimiSelfBaseUrl))
-    .catch(error => { console.warn('[mimi-vault/routing-read]', error instanceof Error ? error.message : error); return undefined })
-  if (!room && routedRoom) {
-    await joinMimiVaultRoom({ identityId: identity.did, deviceId: credential.deviceKid, selfGroupId, roomId: routedRoom, credential, signaturePrivateKey, transport, stateStore: selfGroupStore })
-    room = await selfGroupStore.loadMimiVault(identity.did)
-  }
-  if (!room) {
-    await createMimiVaultRoom({ identityId: identity.did, deviceId: credential.deviceKid, selfGroupId, credential, signaturePrivateKey, transport, stateStore: selfGroupStore, providerHost: provider.hostname })
-    room = await selfGroupStore.loadMimiVault(identity.did)
-  }
-  if (!room) throw new Error('MIMI Vault room initialization did not persist')
-  // The random room URI is the sole bootstrap pointer for a restored
-  // device; it is signed routing metadata, not Vault content or key
-  // material. Retry best-effort on each boot if routing is temporarily out.
-  await setRoutingMimiVaultRoom(identity.did, room.roomId, mimiSelfBaseUrl, {
-    updateKey: encodeMultikey(fromHex(identity.signPublicKey)), privateKey: fromHex(identity.signPrivateKey),
-  }, fetchImpl).catch(error => console.warn('[mimi-vault/routing-publish]', error instanceof Error ? error.message : error))
-
-  return { credential, signaturePrivateKey, selfGroupId, room, transport, provider }
 }
 
 /**

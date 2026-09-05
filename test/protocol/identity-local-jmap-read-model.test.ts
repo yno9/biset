@@ -6,13 +6,12 @@
 // decrypts the same raw RFC 5322 bytes the message was written with.
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
-import { buildLocalJmapProjectionRebuild, buildLocalJmapReadModel, buildVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
+import { buildLocalJmapProjectionRebuild, buildLocalJmapReadModel, buildWalletVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
 import { createMlsGroup } from '../../src/mls/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { buildMailMessageAdd } from '../../src/vault/mail-message.ts'
 import { IndexedDbVaultStore } from '../../src/vault/store.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
-import type { IdentityRecord } from '../../src/identity/record-store.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
 const identityId = 'did:web:alice.example'
@@ -45,8 +44,8 @@ describe('buildLocalJmapReadModel', () => {
     await selfGroupStore.save(identityId, selfGroupId, state)
 
     const store = await IndexedDbVaultStore.open()
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
-    const boundary = buildVaultCryptoBoundary(store, store, selfGroupStore, record)
+    const record = { did: identityId, deviceKid }
+    const boundary = buildWalletVaultCryptoBoundary(store, store, selfGroupStore, record)
     const segment = await boundary.activeSegment()
 
     const rawRfc5322 = new TextEncoder().encode('Subject: hi\r\n\r\nhello from the vault')

@@ -1,12 +1,12 @@
 // End-to-end: buildVaultDeliveryProjector against a real MLS self group --
 // confirms PLAN.md §3.3/§4.2's "actual MLS wrap / event verify" for shared
 // vault delivery is wired: a mutation record built with the same
-// SegmentKey/wraps buildVaultCryptoBoundary's activeSegment() produces is
+// SegmentKey/wraps buildWalletVaultCryptoBoundary's activeSegment() produces is
 // packed, decoded, and correctly verified + decrypted + projected by
 // VaultDeliveryProjector via a real MLS exporter secret -- not a hand-built
 // fixture on either side.
 import { describe, expect, test } from 'bun:test'
-import { buildVaultCryptoBoundary, buildVaultDeliveryProjector } from '../../src/identity/bootstrap.ts'
+import { buildWalletVaultCryptoBoundary, buildVaultDeliveryProjector } from '../../src/identity/bootstrap.ts'
 import { createMlsGroup, generateOwnKeyPackage } from '../../src/mls/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
@@ -14,7 +14,6 @@ import { buildVaultMutation } from '../../src/vault/mutations.ts'
 import { encodeVaultDeliveryPack, decodeVaultDeliveryPack } from '../../src/vault/delivery-pack.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/vault/store.ts'
-import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/shared/protocol/vault.ts'
 import type { LocalJmapSnapshot } from '../../src/local-jmap/gateway.ts'
 
@@ -58,9 +57,9 @@ describe('buildVaultDeliveryProjector', () => {
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupId, state)
 
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const wraps = memoryWrapStore()
-    const boundary = buildVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
+    const boundary = buildWalletVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
     const segment = await boundary.activeSegment()
 
     const loadState = async () => (await selfGroupStore.load(identityId))!.state
@@ -89,9 +88,9 @@ describe('buildVaultDeliveryProjector', () => {
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupId, state)
 
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const wraps = memoryWrapStore()
-    const boundary = buildVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
+    const boundary = buildWalletVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
     const segment = await boundary.activeSegment()
 
     const strangerKid = `${identityId}#not-a-member`

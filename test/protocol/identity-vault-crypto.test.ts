@@ -1,4 +1,4 @@
-// End-to-end: buildVaultCryptoBoundary against a real MLS self group --
+// End-to-end: buildWalletVaultCryptoBoundary against a real MLS self group --
 // confirms PLAN.md §4.2's "actual MLS VEK derivation / membership signer"
 // is now wired: a SegmentKeyWrap signed/verified through the boundary's
 // signer actually round-trips through createSegmentKeyWrap/unwrapSegmentKey
@@ -7,7 +7,7 @@
 // a fresh (sealing the old) segment exactly when the self-group epoch moves.
 import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { buildVaultCryptoBoundary, repairCurrentLocalSegmentKeyWraps } from '../../src/identity/bootstrap.ts'
+import { buildWalletVaultCryptoBoundary, repairCurrentLocalSegmentKeyWraps } from '../../src/identity/bootstrap.ts'
 import { createSegmentKeyWrap } from '../../src/vault/crypto.ts'
 import {
   confirmCommit, createMlsGroup, epochOf, exportSecret, generateOwnKeyPackage, groupInfoForExternalJoin,
@@ -19,7 +19,6 @@ import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from '../../src/vault/sto
 import { mlsEpoch } from '../../src/shared/protocol/ids.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/vault/store.ts'
-import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/shared/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
@@ -73,12 +72,12 @@ async function setupGenesisSelfGroup() {
   return { selfGroupStore, state }
 }
 
-describe('buildVaultCryptoBoundary', () => {
+describe('buildWalletVaultCryptoBoundary', () => {
   test('a SegmentKeyWrap signed via the boundary round-trips through a real self-group VEK', async () => {
     const { selfGroupStore, state } = await setupGenesisSelfGroup()
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const wraps = memoryWrapStore()
-    const boundary = buildVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
+    const boundary = buildWalletVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
 
     const { deriveVaultEpochKey } = await import('../../src/mls/vault-epoch.ts')
     const { exportSecret } = await import('../../src/mls/group.ts')
@@ -98,8 +97,8 @@ describe('buildVaultCryptoBoundary', () => {
 
   test('verify rejects a grantor no longer in the self group', async () => {
     const { selfGroupStore } = await setupGenesisSelfGroup()
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
-    const boundary = buildVaultCryptoBoundary(memoryWrapStore(), memorySegmentStore(), selfGroupStore, record)
+    const record = { did: identityId, deviceKid }
+    const boundary = buildWalletVaultCryptoBoundary(memoryWrapStore(), memorySegmentStore(), selfGroupStore, record)
 
     const strangerKid = `${identityId}#not-a-member`
     const strangerKey = ed25519.utils.randomSecretKey()
@@ -110,9 +109,9 @@ describe('buildVaultCryptoBoundary', () => {
 
   test('activeSegment() mints once, reuses within an epoch, and seals + mints fresh after a commit', async () => {
     const { selfGroupStore, state } = await setupGenesisSelfGroup()
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const segments = memorySegmentStore()
-    const boundary = buildVaultCryptoBoundary(memoryWrapStore(), segments, selfGroupStore, record)
+    const boundary = buildWalletVaultCryptoBoundary(memoryWrapStore(), segments, selfGroupStore, record)
 
     const first = await boundary.activeSegment()
     expect(first.keyWraps).toHaveLength(1)
@@ -140,10 +139,10 @@ describe('buildVaultCryptoBoundary', () => {
 
   test('repairs a segment that skipped more than one MLS epoch from its endpoint-local key', async () => {
     const { selfGroupStore, state } = await setupGenesisSelfGroup()
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const segments = memorySegmentStore()
     const wraps = memoryWrapStore()
-    const boundary = buildVaultCryptoBoundary(wraps, segments, selfGroupStore, record)
+    const boundary = buildWalletVaultCryptoBoundary(wraps, segments, selfGroupStore, record)
     const original = await boundary.activeSegment()
 
     let current = state
@@ -169,7 +168,7 @@ describe('buildVaultCryptoBoundary', () => {
   // unconditionally, on every boot, for every identity.
   test('skips a segment already on the storage-root scheme instead of throwing', async () => {
     const { selfGroupStore } = await setupGenesisSelfGroup()
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const segments = memorySegmentStore()
     const wraps = memoryWrapStore()
     await segments.sealAndActivateSegment({
@@ -193,10 +192,10 @@ describe('buildVaultCryptoBoundary', () => {
 
     const selfGroupStoreA = memorySelfGroupStore()
     await selfGroupStoreA.save(identityId, selfGroupId, stateA)
-    const recordA: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const recordA = { did: identityId, deviceKid }
     const segments = memorySegmentStore()
     const wraps = memoryWrapStore()
-    const boundaryA = buildVaultCryptoBoundary(wraps, segments, selfGroupStoreA, recordA)
+    const boundaryA = buildWalletVaultCryptoBoundary(wraps, segments, selfGroupStoreA, recordA)
 
     // A segment minted while B is still a member -- B's state at this point
     // (post-join, pre-removal) could derive this epoch's VEK too, same as A.

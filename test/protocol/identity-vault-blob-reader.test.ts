@@ -3,13 +3,12 @@
 // chunk reader" actually decrypts a vault object through a real self-group
 // VEK, not a hand-built key, and serves range reads on the PLAINTEXT.
 import { describe, expect, test } from 'bun:test'
-import { buildVaultBlobReader, buildVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
+import { buildVaultBlobReader, buildWalletVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
 import { createMlsGroup, generateOwnKeyPackage } from '../../src/mls/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { encryptVaultObject } from '../../src/vault/objects.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultObjectRecord, VaultSegmentRecord } from '../../src/vault/store.ts'
-import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/shared/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
@@ -66,9 +65,9 @@ describe('buildVaultBlobReader', () => {
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupId, state)
 
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const wraps = memoryWrapStore()
-    const boundary = buildVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
+    const boundary = buildWalletVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
     const segment = await boundary.activeSegment()
 
     const plaintext = new TextEncoder().encode('hello from device A, this is a raw RFC 5322 blob')
@@ -101,9 +100,9 @@ describe('buildVaultBlobReader', () => {
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupId, state)
 
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const wraps = memoryWrapStore()
-    const boundary = buildVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
+    const boundary = buildWalletVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
     const segment = await boundary.activeSegment()
 
     const plaintext = new TextEncoder().encode('short')

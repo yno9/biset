@@ -6,14 +6,13 @@
 // where NOTHING has seeded a `vault_projection` row yet.
 import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { buildLocalJmapProjectionRebuild, buildVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
+import { buildLocalJmapProjectionRebuild, buildWalletVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
 import { createMlsGroup, generateOwnKeyPackage } from '../../src/mls/group.ts'
 import { createMlsDeviceCredential } from '../../src/mls/device-credential.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
 import { buildMailMessageAdd } from '../../src/vault/mail-message.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultRecordReader, VaultSegmentRecord } from '../../src/vault/store.ts'
-import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/shared/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
@@ -109,9 +108,9 @@ describe('buildLocalJmapProjectionRebuild', () => {
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupId, state)
 
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const wraps = memoryWrapStore()
-    const boundary = buildVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
+    const boundary = buildWalletVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
     const segment = await boundary.activeSegment()
 
     const loadState = async () => (await selfGroupStore.load(identityId))!.state
@@ -147,9 +146,9 @@ describe('buildLocalJmapProjectionRebuild', () => {
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupId, state)
 
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const wraps = memoryWrapStore()
-    const boundary = buildVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
+    const boundary = buildWalletVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
     const segment = await boundary.activeSegment()
 
     const strangerKid = `${identityId}#not-a-member`

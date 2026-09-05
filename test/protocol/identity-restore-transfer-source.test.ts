@@ -20,7 +20,6 @@ import { createRestoreTransferChunk, verifyRestoreTransferChunk } from '../../sr
 import { mlsEpoch } from '../../src/shared/protocol/ids.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultRecordReader } from '../../src/vault/store.ts'
-import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/shared/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
@@ -83,7 +82,7 @@ describe('buildRestoreTransferSource', () => {
     }, signer)
 
     const records = memoryRecordReader([event], [object])
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const source = buildRestoreTransferSource(records, wraps, selfGroupStore, record)
 
     const sourceManifest = await source.manifest(identityId)
@@ -117,7 +116,7 @@ describe('buildRestoreTransferSource', () => {
     const selfGroupStore = memorySelfGroupStore()
     await selfGroupStore.save(identityId, selfGroupId, state)
 
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const source = buildRestoreTransferSource(memoryRecordReader([], []), memoryWrapStore(), selfGroupStore, record)
 
     await expect(source.readCurrentEpochWraps(identityId, ['segment-1'], mlsEpoch(999n))).rejects.toThrow('not this device')

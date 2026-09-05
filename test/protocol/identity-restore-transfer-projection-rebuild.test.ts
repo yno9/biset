@@ -8,7 +8,7 @@
 // identity-local-jmap-projection-rebuild.test.ts never went through a
 // restore transfer to get its records.
 import { describe, expect, test } from 'bun:test'
-import { buildLocalJmapProjectionRebuild, buildRestoreTransferSource, buildRestoreTransferVerifier, buildVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
+import { buildLocalJmapProjectionRebuild, buildRestoreTransferSource, buildRestoreTransferVerifier, buildWalletVaultCryptoBoundary } from '../../src/identity/bootstrap.ts'
 import { createMlsGroup, epochOf, generateOwnKeyPackage } from '../../src/mls/group.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 import { MlsMembershipSegmentKeyWrapSigner } from '../../src/mls/segment-key-membership.ts'
@@ -19,7 +19,6 @@ import { receiveRestoreTransferChunk, type RestoreTransferChunkCommit, type Rest
 import { mlsEpoch } from '../../src/shared/protocol/ids.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultRecordReader, VaultSegmentRecord } from '../../src/vault/store.ts'
-import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/shared/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
@@ -91,9 +90,9 @@ describe('projection rebuild after a real peer restore transfer', () => {
     const epoch = mlsEpoch(epochOf(state))
 
     // The source device already has a real mail item.
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const wraps = memoryWrapStore()
-    const boundary = buildVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
+    const boundary = buildWalletVaultCryptoBoundary(wraps, memorySegmentStore(), selfGroupStore, record)
     const segment = await boundary.activeSegment()
     const loadState = async () => state
     const signer = new MlsMembershipSegmentKeyWrapSigner(deviceKid, loadState)

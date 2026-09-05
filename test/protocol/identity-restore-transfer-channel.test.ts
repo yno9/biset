@@ -24,7 +24,6 @@ import { createRestoreTransferChunk, verifyRestoreTransferChunk } from '../../sr
 import { mlsEpoch } from '../../src/shared/protocol/ids.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/mls/store.ts'
 import type { SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultRecordReader } from '../../src/vault/store.ts'
-import type { IdentityRecord } from '../../src/identity/record-store.ts'
 import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/shared/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
@@ -66,7 +65,7 @@ describe('peer restore transfer channel security', () => {
     await selfGroupStore.save(identityId, selfGroupId, state)
     const staleEpoch = mlsEpoch(epochOf(state))
 
-    const record: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const record = { did: identityId, deviceKid }
     const wraps = memoryWrapStore()
 
     // Device A already has a segment (with a genuine current-epoch wrap of
@@ -126,7 +125,7 @@ describe('peer restore transfer channel security', () => {
 
     const selfGroupStoreA = memorySelfGroupStore()
     await selfGroupStoreA.save(identityId, selfGroupId, stateA)
-    const recordA: IdentityRecord = { did: identityId, deviceKid, rootPublicKey: '', rootPrivateKey: '' }
+    const recordA = { did: identityId, deviceKid }
     const wraps = memoryWrapStore()
 
     const plaintext = new TextEncoder().encode('hello from device A')
