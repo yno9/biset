@@ -3,7 +3,7 @@
 > MLS の vendored fork（ciphersuite、UpdatePath fix、vendor diff の一覧）については `src/protocol/mls/VENDOR.md` と本書§13を参照する。かつて存在した `ARC-MLS.md` は Coordinator 完全撤去（2026-09-03、commit `57ffa67`）以前の調査で、中心的な二節が存在しないサブシステムを説明していたため 2026-09-05 に削除した。Self Group/Vault の現行の配送経路は本書§6・§9で説明する biset-mimi Self Vault である。
 
 > 調査基準日: 2026-09-06（Asia/Tokyo）
-> 調査対象: `~/biset` の commit `d56fc9d`。前回基準からの最重要変更は四つ——
+> 調査対象: `~/biset` の commit `e731983`。前回基準からの最重要変更は四つ——
 > **Anchor の完全削除**、**native login（seed 由来 identity 層）の削除**、
 > **到達不能コードの削除**（R2）、そして **`src/` の再構成**（R3/R4）。
 > 現在のトップレベルは **client / server / protocol** の三つで、`shared/` も `vendor/` も存在しない。
@@ -773,6 +773,12 @@ identity のホスティングは did.md が行う（§3・§13.1）。
 ```
 src/
   client/     クライアント本体（ブラウザ）
+    app/        起動・配線・UI
+    store/      Vault と projection
+    identity/   did.md Wallet セッションと did:webvh の client 側
+    didcomm/    client 専用の DIDComm
+    mls/        MLS group 層（Self Vault の実体）
+    mimi/       MIMI クライアント
   server/     mediator（mail-plugin を内包）と MIMI サーバー（Bun）
   protocol/   wire 定義。使用者ではなく内容で命名する
 ```
@@ -864,12 +870,14 @@ client（Self Vault）と server（MIMI）の**両方**が使う。差分には 
 | `ui/config.ts` | `window.__BISET_CONFIG__` を読む唯一の場所 |
 | `ui/format.ts` | 表示ヘルパ（エスケープ、リンク化、時刻、引用除去、プレビュー） |
 | `ui/did-display.ts` | DID を人間に見せるときの共通規則 |
-| `mail/message-view.ts` | メール形 read model からスレッドを組み立てる |
-| `mail/body-text.ts` | 本文の平文抽出 |
-| `mail/rfc5322-headers.ts` | RFC 5322 ヘッダの読み取り |
+| `ui/message/message-view.ts` | メール形 read model からスレッドを組み立てる |
+| `ui/message/body-text.ts` | 本文の平文抽出 |
+| `ui/message/rfc5322-headers.ts` | RFC 5322 ヘッダの読み取り |
 
-> `mail/` の3ファイルは**メール転送ではなく表示**である。DIDComm メッセージはメール形の
+> `ui/message/` の3ファイルは**メール転送ではなく表示**である。DIDComm メッセージはメール形の
 > read model へ projection されるため、その描画に使う（§10）。メール転送は 2026-09-05 に削除された（§19）。
+> かつて `client/app/mail/` にあったが、利用者が `ui/thread.ts` と `ui/left-pane.ts` だけであることを
+> 確認して `ui/` 配下へ移した（2026-09-06）。
 
 ### 21.3 `client/store/` — Vault と projection
 
@@ -940,12 +948,35 @@ R4 の実測で、**どのサーバーからも到達しない**ことが確認�
 `create-genesis.ts` / `migrate.ts` / `web/*`（**本番から到達しないが、
 残す側のコードのテスト3件が実物の did:webvh log を組み立てる唯一の手段**として使っている）。
 
-**`client/mimi/`** — Self Vault。`group.ts`（MLS group 操作の RFC 9420 表面）、`store.ts`（MLS self-group 状態）、
-`identity.ts`、`device-credential.ts`、`webvh-authentication-service.ts`、
-`vault-epoch.ts`（MLS exporter から VEK を導出。**現行 epoch でしか鍵を返さない**）、
-`segment-key-membership.ts`、`keypackage-store.ts`（未配線）、
-`mimi-vault-{room,session,watch}.ts`／`mimi-client-transport.ts`（MIMI クライアント）、
-`mimi-client-routing.ts`／`mimi-room-migration.ts`（未配線）。
+**`client/mls/`** — MLS group 層。Self Vault の実体である。
+
+| ファイル | 責務 |
+|---|---|
+| `group.ts` | biset の MLS group 操作。RFC 9420 の表面全体 |
+| `store.ts` | MLS self-group 状態の永続化。**Self Vault の MIMI room metadata も同じ行に持つ**（re-key で両方が一緒に運ばれるための意図的な設計）。その永続化レコード型もここが所有する |
+| `identity.ts` | MLS leaf が何を主張し、それが biset identity にどう対応するか |
+| `device-credential.ts` | identity と MLS leaf 署名鍵の Root 認可された結び付き |
+| `webvh-authentication-service.ts` | MLS Authentication Service。current WebVH 鍵でのみ leaf を承認する |
+| `vault-epoch.ts` | MLS exporter から VEK を導出する境界。**現行 epoch でしか鍵を返さない**（forward secrecy） |
+| `segment-key-membership.ts` | MLS デバイス鍵を Vault の2種類の検証質問へ適合させる |
+| `keypackage-store.ts` | この端末自身の KeyPackage 秘密鍵。現行 Self Vault は external join を使うため未配線 |
+
+**`client/mimi/`** — MIMI クライアント。
+
+| ファイル | 責務 |
+|---|---|
+| `vault-room.ts` | 単一利用者の Self/Vault MIMI room の作成 |
+| `vault-session.ts` | Vault データプレーンが使う永続的な MLS/MIMI セッション |
+| `vault-watch.ts` | Self/Vault room の SSE ライブ配送 |
+| `client-transport.ts` | MIMI provider のクライアント境界へのブラウザ側トランスポート |
+| `client-routing.ts` / `room-migration.ts` | deployment 選択と anon room への移行。未配線 |
+
+> **依存は `mimi/` → `mls/` の一方向**である。逆向きはゼロ:
+> ```bash
+> grep -rn "from '\.\./mimi/" src/client/mls --include='*.ts'   # 空であるべき
+> ```
+> 2026-09-06 の分割前は `mls/store.ts` が session の型を import しており逆流していた。
+> それらの型は**この store が書く形の定義**なので store 側へ移し、方向を揃えた。
 
 ### 21.6 `server/`
 
@@ -964,14 +995,13 @@ R4 の実測で、**どのサーバーからも到達しない**ことが確認�
 `directory.ts`／`provider-directory-client.ts`／`provider-transport.ts`／`mimi-uri.ts`、
 `room-policy.ts`、`asset-proxy.ts`、`watch-token.ts`、`anon/{identity-link,pseudonym}.ts`。
 
-### 21.7 この構成に残る課題
+### 21.7 構成上の課題（すべて解消済み）
 
-1. **`client/mimi/` の大半は MIMI ではなく MLS である。** Self Vault が MLS group そのものであるため
-   同居しているが、名前が実態を表していない
-2. **`client/app/mail/` という名前**は、中身が「メール形 read model の描画」であることを伝えにくい。
-   メール転送は既に無い
+R3/R4 時点で挙げていた3件は、いずれも 2026-09-06 に解消した。
 
-> R3 時点で挙げていた「`shared/didcomm/group-chat-store.ts` がブラウザ専用なのに shared にある」は、
-> R4 で `client/didcomm/` へ移り**解消した**。
+| 課題 | 解消 |
+|---|---|
+| `shared/didcomm/group-chat-store.ts` がブラウザ専用なのに shared にある | R4 で `client/didcomm/` へ |
+| `client/mimi/` の大半が MIMI ではなく MLS | `client/mls/` へ分割。`mimi-` の冗長な接頭辞も除去 |
+| `client/app/mail/` がメール転送を想起させる | `client/app/ui/message/` へ |
 
-この文書は「意図」ではなく上記 commit の現状を記録する。将来の変更でコードと本書が食い違った場合は、まず実行経路と wire compatibility をコード・テストで確認し、その後この調査基準 commit と実装状態表を更新する。
