@@ -38,10 +38,32 @@ import {
 } from './did-md-store.ts'
 
 const ISSUER = 'https://api.did.md'
+const WALLET_ORIGIN = 'https://app.did.md'
 const CALLBACK_PATH = '/wallet/callback'
 const REQUESTED_SCOPES = ['biset:login', 'biset:device', 'biset:routing', 'biset:messaging', 'biset:vault']
 const BISET_DEVICE_AUTHORIZATION_DETAIL = 'urn:biset:device-enrollment:v1'
 const encoder = new TextEncoder()
+
+let fileWalletPopup: { popup: Window; timer: number; reject: (reason?: unknown) => void } | undefined
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('message', event => {
+    const active = fileWalletPopup
+    const value = event.data as Record<string, unknown> | undefined
+    if (!active || event.origin !== WALLET_ORIGIN || event.source !== active.popup
+      || value?.type !== 'did.md/oauth-file-callback' || value.protocol !== 1
+      || typeof value.state !== 'string' || typeof value.iss !== 'string') return
+    window.clearInterval(active.timer)
+    fileWalletPopup = undefined
+    const callback = new URL(redirectUri())
+    for (const name of ['code', 'state', 'iss', 'error', 'error_description']) {
+      if (typeof value[name] === 'string') callback.searchParams.set(name, value[name])
+    }
+    // The local document, rather than an HTTPS page, performs this file://
+    // navigation. Chromium therefore does not reject an HTTPS-to-file hop.
+    location.assign(callback.toString())
+  })
+}
 
 export type DidMdActiveSession = {
   did: string
@@ -378,6 +400,19 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
     }]),
   })
   request.search = params.toString()
+  if (location.protocol === 'file:') {
+    const popup = window.open(request.toString(), 'did-md-wallet')
+    if (!popup) throw new Error('Allow popups to continue with did.md Wallet from a packaged Biset file')
+    return await new Promise<never>((_resolve, reject) => {
+      const timer = window.setInterval(() => {
+        if (!popup.closed) return
+        window.clearInterval(timer)
+        if (fileWalletPopup?.popup === popup) fileWalletPopup = undefined
+        reject(new Error('did.md Wallet popup was closed before authorization completed'))
+      }, 500)
+      fileWalletPopup = { popup, timer, reject }
+    })
+  }
   location.assign(request.toString())
   throw new Error('The browser did not navigate to did.md Wallet')
 }
