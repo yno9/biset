@@ -419,7 +419,30 @@ wallet は MLS epoch wrap のみで動作する。それ以外は削除対象か
 | **N2** | Anchor の OIDC / OpenID4VP とクライアント側の対 | ✅完了 `74864ff` |
 | **N4** | **Anchor の残り全部**（did:webvh 公開文書ホスティング、build/deploy 配線） | ✅完了 `c26db16` |
 | **N1** | クライアントの native login 削除（seed 由来の identity 生成・復元・鍵導出・UI） | ✅完了 `dd5a0cd` `71336b9` `7357830` |
-| **W3** | wallet 経路の機能穴を埋める（①関係確立 INIT/ACCEPT ②送信 outbox ③checkpoint ④グループ ⑤mail） | **着手可** → `tasks/W3-wallet-feature-gaps.md` |
+| **W3** | wallet 経路の機能穴を埋める（①関係確立 ②送信outbox ④グループ） | ✅完了 `0aced81` `cbd73af` `9a9e6cf` |
+| **W3⑤** | メール | 設計案のみ `325d4ef`。実装は **did.md 側の mediator** が必要で repo 内では不可 |
+| **W5** | checkpoint の KEK を MLS self-group の VEK へ載せ替え（③） | ✅完了 `da6bfcf` `74358bb` |
+| **V1** | wallet 経路のテスト（アプリ唯一の入口が無検査） | 進行中 → `tasks/V1-wallet-path-coverage.md` |
+
+#### W3・W5 の実績（2026-09-05）
+W3 で **「誰も誰とも関係を確立できない」状態は解消した**（`src/wallet/relationship.ts` 新設、
+`initiateRelationship` に本番呼び出し元ができ、`RELATIONSHIP_ACCEPT` ハンドラも入った）。
+グループ分岐は poison message ガードの**手前**に置かれ、ガード自体は緩んでいない。
+
+W5 で checkpoint が復活。**KEK は `masterSeed` 由来から MLS self-group の VEK 由来へ**（envelope v3）。
+v1（退役 Coordinator origin 混入）と v2（`masterSeed` 由来）は、鍵がもう存在せず開けないため削除した。
+
+> **一度出した推奨が誤りだった記録**: 当初 `src/wallet/did-md-oauth.ts` の `vaultSecret` を KEK にする案を
+> 推奨したが、あれは `crypto.getRandomValues` で**端末登録ごとに生成される端末ローカルの乱数**であり、
+> identity 共通ではない。別デバイスからは永久に開けない。前提が誤っていた。
+
+**受け入れた代償（option b）**: `deriveVaultEpochKey` は現行 epoch でしか鍵を返さない
+（forward secrecy と整合した意図的な設計）。epoch が進むと古い checkpoint は誰にも開けなくなるため、
+**新デバイスを迎えるには既存デバイスが1台オンラインである必要がある**。全デバイス喪失＝復旧不可。
+
+**実装時に見つかった穴**（指示書に書いていなかった）: 再作成ゲートの `staleCheckpointEpoch` は、
+**そのデバイスが既にその履歴を持っている場合（`coveredSeq <= localCursor`）にだけ**有効化しなければならない。
+さもないと、参加直後で Vault が空のデバイスが「最新」を名乗って checkpoint を再公開してしまう。
 
 #### N1 の実績（2026-09-05）
 **合計 −4,174行**、削除13ファイル。`src/main.ts` **1,876 → 742行**。
