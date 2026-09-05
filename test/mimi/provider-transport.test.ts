@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { MimiProviderTransport, mimiProviderMtlsServerOptions, verifyMimiProviderRequest } from '../../src/mimi/provider-transport.ts'
+import { MimiProviderTransport, mimiProviderMtlsServerOptions, verifyMimiProviderRequest } from '../../src/server/mimi/provider-transport.ts'
 
 describe('MIMI provider transport', () => {
   test('binds outgoing HTTPS requests to the mTLS credential and provider headers', async () => {

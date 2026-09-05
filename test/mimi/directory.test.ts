@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { createMimiDeployment } from '../../src/mimi/deployment.ts'
-import { createMimiProtocolDirectory, MIMI_PROTOCOL_DIRECTORY_PATH } from '../../src/mimi/directory.ts'
+import { createMimiDeployment } from '../../src/server/mimi/deployment.ts'
+import { createMimiProtocolDirectory, MIMI_PROTOCOL_DIRECTORY_PATH } from '../../src/server/mimi/directory.ts'
 
 describe('MIMI provider directory', () => {
   test('publishes all draft endpoint templates at the configured public HTTPS origin', async () => {

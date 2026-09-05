@@ -10,7 +10,7 @@ import type { Socket } from 'node:net'
 import { generatePeerIdentity } from '../../../src/didcomm/peer.ts'
 import { encodeX25519Multikey } from '../../../src/didcomm/multikey.ts'
 import { unpackAuthcrypt } from '../../../src/didcomm/crypto.ts'
-import { createMailPluginListener } from '../../../src/mediator/mail-plugin/listener.ts'
+import { createMailPluginListener } from '../../../src/server/mail-plugin/listener.ts'
 import { x25519 } from '@noble/curves/ed25519.js'
 
 function connectRaw(port: number): Promise<Socket> {

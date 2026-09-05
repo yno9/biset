@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { MimiAssetProxy } from '../../src/mimi/asset-proxy.ts'
+import { MimiAssetProxy } from '../../src/server/mimi/asset-proxy.ts'
 
 describe('MIMI asset proxy', () => {
   test('allows only configured HTTPS hosts, rejects redirects, and bounds response size', async () => {

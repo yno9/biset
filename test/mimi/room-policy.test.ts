@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { authorizeParticipantListTransition, maySendMessage, validateRoomPolicy, type MimiRoomPolicy } from '../../src/mimi/room-policy.ts'
+import { authorizeParticipantListTransition, maySendMessage, validateRoomPolicy, type MimiRoomPolicy } from '../../src/server/mimi/room-policy.ts'
 
 const policy: MimiRoomPolicy = {
   roles: [

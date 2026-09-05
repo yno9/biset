@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { MimiFanoutDispatcher, decodeMimiFanoutBatchWire, encodeMimiFanoutBatchWire, fanoutFingerprint } from '../../src/mimi/fanout.ts'
-import { MimiProviderTransport } from '../../src/mimi/provider-transport.ts'
+import { MimiFanoutDispatcher, decodeMimiFanoutBatchWire, encodeMimiFanoutBatchWire, fanoutFingerprint } from '../../src/server/mimi/fanout.ts'
+import { MimiProviderTransport } from '../../src/server/mimi/provider-transport.ts'
 import { encodeMlsMessage } from '../../src/vendor/mls/index.ts'
 
 const commit = encodeMlsMessage({ version: 'mls10', wireformat: 'mls_public_message', publicMessage: { content: { groupId: new Uint8Array([1]), epoch: 1n, sender: { senderType: 'member', leafIndex: 0 }, authenticatedData: new Uint8Array(), contentType: 'commit', commit: { proposals: [], path: undefined } }, auth: { contentType: 'commit', signature: new Uint8Array(), confirmationTag: new Uint8Array() }, senderType: 'member', membershipTag: new Uint8Array() } })

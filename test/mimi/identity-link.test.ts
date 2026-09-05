@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { decryptAndVerifyIdentityLink, encryptIdentityLinkTbe } from '../../src/mimi/anon/identity-link.ts'
+import { decryptAndVerifyIdentityLink, encryptIdentityLinkTbe } from '../../src/server/mimi/anon/identity-link.ts'
 
 const roomId = 'mimi://anon.example/r/identity-link'
 const exporter = { async exportSecret() { return new Uint8Array(32).fill(5) } }

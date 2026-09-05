@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { createMimiDeployment } from '../../src/mimi/deployment.ts'
-import { encodeMimiConsentEntryWire } from '../../src/mimi/federation.ts'
-import { encodeMimiAbuseReportWire } from '../../src/mimi/federation.ts'
+import { createMimiDeployment } from '../../src/server/mimi/deployment.ts'
+import { encodeMimiConsentEntryWire } from '../../src/server/mimi/federation.ts'
+import { encodeMimiAbuseReportWire } from '../../src/server/mimi/federation.ts'
 
 const target = 'target.example'
 const source = 'source.example'

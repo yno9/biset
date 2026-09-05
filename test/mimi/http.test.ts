@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { createMimiDeployment } from '../../src/mimi/deployment.ts'
-import { decryptIdentityLink, encryptIdentityLink } from '../../src/mimi/anon/identity-link.ts'
+import { createMimiDeployment } from '../../src/server/mimi/deployment.ts'
+import { decryptIdentityLink, encryptIdentityLink } from '../../src/server/mimi/anon/identity-link.ts'
 import {
   deliveriesPullSigningBytes,
   deliveriesWatchSigningBytes,
@@ -12,7 +12,7 @@ import {
   keyMaterialSigningBytes,
   submitMessageSigningBytes,
   updateRoomSigningBytes,
-} from '../../src/mimi/authorizer.ts'
+} from '../../src/server/mimi/authorizer.ts'
 import {
   decodeDeliveriesWire,
   decodeGroupInfoResponseWire,
@@ -29,13 +29,13 @@ import {
   decodeFrankingAgentDataWire,
   encodeSubmitMessageRequestWire,
   encodeUpdateRoomRequestWire,
-} from '../../src/mimi/wire.ts'
-import type { PseudonymousCredential, VisibleCredential } from '../../src/mimi/protocol-types.ts'
+} from '../../src/server/mimi/wire.ts'
+import type { PseudonymousCredential, VisibleCredential } from '../../src/server/mimi/protocol-types.ts'
 import { createCommit, encodeMlsMessage, type KeyPackage } from '../../src/vendor/mls/index.ts'
 import { encodeCredential } from '../../src/vendor/mls/credential.ts'
 import { decryptWithLabel } from '../../src/vendor/mls/crypto/hpke.ts'
 import { encodeWelcome } from '../../src/vendor/mls/welcome.ts'
-import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../../src/mimi/app-data.ts'
+import { encodeMimiFrankingAgent, encodeMimiParticipantListUpdate, encodeMimiRoomMetadata } from '../../src/server/mimi/app-data.ts'
 import { createMlsGroup, generateOwnKeyPackageForCredential } from '../../src/mls/group.ts'
 import { mlsSuite } from '../../src/vendor/mls/suite.ts'
 

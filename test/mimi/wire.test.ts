@@ -15,8 +15,8 @@ import {
   encodeRoomStateWire,
   encodeUpdateRoomRequestWire,
   MimiWireError,
-} from '../../src/mimi/wire.ts'
-import type { RoomState, UpdateRoomRequest, VisibleCredential } from '../../src/mimi/protocol-types.ts'
+} from '../../src/server/mimi/wire.ts'
+import type { RoomState, UpdateRoomRequest, VisibleCredential } from '../../src/server/mimi/protocol-types.ts'
 
 const alice: VisibleCredential = {
   kind: 'visible', user: 'did:web:alice', client: 'did:web:alice#phone',

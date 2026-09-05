@@ -4,12 +4,12 @@
 // this from being an open relay, so every rejection path gets its own test.
 import { describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { createMailSubmissionHttpHandler } from '../../../src/mediator/mail-plugin/mail-submission-http.ts'
+import { createMailSubmissionHttpHandler } from '../../../src/server/mail-plugin/mail-submission-http.ts'
 import { encodeMailSubmissionRequestWire } from '../../../src/shared/protocol/mail-submission-wire.ts'
 import { mailSubmissionSigningBytes } from '../../../src/shared/protocol/signing.ts'
 import { encodeMultikey } from '../../protocol/support/webvh-log-fixture.ts'
 import type { MailSubmissionRequestV1 } from '../../../src/shared/protocol/mail-submission.ts'
-import type { MailDeliveryResult } from '../../../src/mediator/mail-plugin/smtp-client.ts'
+import type { MailDeliveryResult } from '../../../src/server/mail-plugin/smtp-client.ts'
 
 const apexDomain = 'biset.example'
 const identityId = 'did:webvh:Qm11111111111111111111111111111111111111111111:alice.biset.example'

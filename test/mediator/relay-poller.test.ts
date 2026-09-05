@@ -6,8 +6,8 @@
 // being told about hop chaining (2026-08-30 discussion).
 import { describe, expect, test } from 'bun:test'
 import { generatePeerIdentity } from '../../src/didcomm/peer.ts'
-import { createMediator } from '../../src/mediator/server.ts'
-import { startRelayPoller } from '../../src/mediator/relay-poller.ts'
+import { createMediator } from '../../src/server/didcomm-mediator/server.ts'
+import { startRelayPoller } from '../../src/server/didcomm-mediator/relay-poller.ts'
 import { registerWithMediator } from '../../src/didcomm/mediator-sync.ts'
 import { pickupStatus, pickupDeliver, acknowledgeMessages } from '../../src/didcomm/mediator-pickup.ts'
 import type { DidCommSender } from '../../src/didcomm/mediator-transport.ts'
