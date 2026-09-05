@@ -407,18 +407,30 @@ wallet は MLS epoch wrap のみで動作する。それ以外は削除対象か
 | MIMI room bootstrap | `ensureMimiVaultRoom` | `ensureWalletMimiVaultRoom` | routing publish の有無 |
 | MIMI sync ループ | `synchronizeMimi` | `synchronizeWalletVault` | checkpoint とタイムアウトの有無 |
 
-### 実行順序（改訂）
+### 実行順序（2026-09-05 のユーザー判断で改訂）
+
+ユーザーの決定により順序が変わった: **「先に削除、機能は後追い」**。
+機能が一時的に落ちることを許容し、既存ユーザーのデータはすべて破棄してよい。Anchor も丸ごと削除する。
 
 | | 内容 | 状態 |
 |---|---|---|
 | **W1** | wallet 経路の実バグ3件を直す（残る側なので最優先） | ✅完了 `4a5554d` `0371a48` |
-| **W2** | 二重配線の統合（上の表。まず完全同一の3件から） | 未着手 |
-| **W3** | wallet 経路の機能穴を埋める: ①関係確立 INIT/ACCEPT ②送信 outbox ③グループチャット ④mail 受信 | 未着手・**要設計** |
-| **W4** | メールアドレス採番と送信署名鍵の設計（did.md ホストの DID にどう mail を持たせるか） | 未着手・**要判断** |
-| **W5** | checkpoint の KEK 再設計（`vaultSecret` の用途確認から） | 未着手・**要判断** |
-| **N1〜N4** | native login の実削除 | **W3 完了後**。それ以前に消すとアプリが動かなくなる |
+| **W2** | 二重配線の統合 | ✅完了 `d8ba82b` `a263d7b`（**seed 経路ごと消えるため以後は不要**） |
+| **N2** | Anchor の OIDC / OpenID4VP とクライアント側の対 | ✅完了 `74864ff` |
+| **N4** | **Anchor の残り全部**（did:webvh 公開文書ホスティング、build/deploy 配線） | ✅完了 `c26db16` |
+| **N1** | クライアントの native login 削除（seed 由来の identity 生成・復元・鍵導出・UI） | 未着手 → `tasks/N1-remove-native-login.md` |
+| **W3** | wallet 経路の機能穴を埋める（①関係確立 INIT/ACCEPT ②送信 outbox ③checkpoint ④グループ ⑤mail） | **N1 の後** → `tasks/W3-wallet-feature-gaps.md` |
+| **S5** | client / server / shared の分離 | 一部完了 `4f889a6`（protocol → shared）→ `tasks/S5-client-server-split.md` |
 
 **削除そのものは簡単で、diff も大きい。難しいのは削除ではなく、消える機能を wallet 側に持たせることである。**
+W3 の①（関係確立）が入るまで、**wallet アカウント同士は誰とも通信できない**——これが後追い実装の最優先事項。
+
+#### 決定済みの設計方針（2026-09-05）
+- **メール**: biset ではなく **mediator の問題**として扱う。did.md が専用 mediator を運用し、
+  wallet ログイン時にユーザーがそこへ登録する。特定 mediator の使用許可を capability として付与する形を検討。
+  → `mailFromForIdentity` の「DID ドメインが biset apex 配下」制約は将来外れる
+- **checkpoint**: wallet の `vaultSecret`（`did-md-oauth.ts` が既に生成・封印しているが未使用）を KEK に使う
+- **既存ユーザー**: 移行パス不要。すべて破棄してよい
 
 ## 4. やらないこと（明示）
 - 機能の削除・仕様変更。S1 で「消えている機能」を見つけたら、消すのではなく**issueとして記録して残す**（core経由restoreが該当する可能性あり）
