@@ -1,4 +1,4 @@
-import type { AdapterIngressOfferV1, IngressAckV1, IngressEnvelopeV1, IngressPullV1 } from './ingress.ts'
+import type { AdapterIngressOfferV1, IngressEnvelopeV1 } from './ingress.ts'
 import type { MailSubmissionRequestV1 } from './mail-submission.ts'
 import { assertDeliverySeq, assertOpaqueId } from './ids.ts'
 import type {
@@ -6,9 +6,7 @@ import type {
   RestoreControlPullV1,
   RestoreOfferV1,
   RestoreRequestV1,
-  VaultDeliveryAckV1,
   VaultDeliveryAppendV1,
-  VaultDeliveryPullV1,
 } from './vault.ts'
 
 export class ProtocolValidationError extends Error {
@@ -136,31 +134,7 @@ export function assertMailSubmissionRequest(value: unknown): asserts value is Ma
   bytes(input.signature, 'signature')
 }
 
-export function assertIngressPull(value: unknown): asserts value is IngressPullV1 {
-  const input = record(value, 'IngressPullV1')
-  exactKeys(input, ['version', 'identityId', 'recipientDeviceId', 'requestedAt', 'signature'], 'IngressPullV1')
-  if (input.version !== 1) throw new ProtocolValidationError('IngressPullV1.version must be 1')
-  opaqueId(input.identityId, 'identityId')
-  opaqueId(input.recipientDeviceId, 'recipientDeviceId')
-  time(input.requestedAt, 'requestedAt')
-  bytes(input.signature, 'signature')
-}
 
-export function assertIngressAck(value: unknown): asserts value is IngressAckV1 {
-  const input = record(value, 'IngressAckV1')
-  exactKeys(input, [
-    'version', 'ingressId', 'protectedPayloadHash', 'recipientDeviceId',
-    'vaultEventId', 'checkpointId', 'ackedAt', 'signature',
-  ], 'IngressAckV1')
-  if (input.version !== 1) throw new ProtocolValidationError('IngressAckV1.version must be 1')
-  opaqueId(input.ingressId, 'ingressId')
-  bytes(input.protectedPayloadHash, 'protectedPayloadHash')
-  opaqueId(input.recipientDeviceId, 'recipientDeviceId')
-  opaqueId(input.vaultEventId, 'vaultEventId')
-  opaqueId(input.checkpointId, 'checkpointId')
-  time(input.ackedAt, 'ackedAt')
-  bytes(input.signature, 'signature')
-}
 
 export function assertVaultDeliveryAppend(value: unknown): asserts value is VaultDeliveryAppendV1 {
   const input = record(value, 'VaultDeliveryAppendV1')
@@ -177,39 +151,7 @@ export function assertVaultDeliveryAppend(value: unknown): asserts value is Vaul
   bytes(input.signature, 'signature')
 }
 
-export function assertVaultDeliveryAck(value: unknown): asserts value is VaultDeliveryAckV1 {
-  const input = record(value, 'VaultDeliveryAckV1')
-  exactKeys(input, [
-    'version', 'identityId', 'seq', 'payloadHash', 'recipientDeviceId', 'checkpointId', 'ackedAt', 'signature',
-  ], 'VaultDeliveryAckV1')
-  if (input.version !== 1) throw new ProtocolValidationError('VaultDeliveryAckV1.version must be 1')
-  opaqueId(input.identityId, 'identityId')
-  try {
-    assertDeliverySeq(input.seq)
-  } catch {
-    throw new ProtocolValidationError('seq must be an unsigned 64-bit decimal string')
-  }
-  bytes(input.payloadHash, 'payloadHash')
-  opaqueId(input.recipientDeviceId, 'recipientDeviceId')
-  opaqueId(input.checkpointId, 'checkpointId')
-  time(input.ackedAt, 'ackedAt')
-  bytes(input.signature, 'signature')
-}
 
-export function assertVaultDeliveryPull(value: unknown): asserts value is VaultDeliveryPullV1 {
-  const input = record(value, 'VaultDeliveryPullV1')
-  exactKeys(input, ['version', 'identityId', 'recipientDeviceId', 'after', 'requestedAt', 'signature'], 'VaultDeliveryPullV1')
-  if (input.version !== 1) throw new ProtocolValidationError('VaultDeliveryPullV1.version must be 1')
-  opaqueId(input.identityId, 'identityId')
-  opaqueId(input.recipientDeviceId, 'recipientDeviceId')
-  try {
-    assertDeliverySeq(input.after)
-  } catch {
-    throw new ProtocolValidationError('after must be an unsigned 64-bit decimal string')
-  }
-  time(input.requestedAt, 'requestedAt')
-  bytes(input.signature, 'signature')
-}
 
 export function assertRestoreRequest(value: unknown): asserts value is RestoreRequestV1 {
   const input = record(value, 'RestoreRequestV1')
