@@ -641,11 +641,18 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
         // Public first-contact messages resolve from did:webvh.  Once a
         // relationship is established, continuing DIDComm traffic is signed
         // by a did:peer key embedded in its own identifier instead.
+        // A relationship INIT registers its temporary did:peer key before
+        // the ACCEPT can arrive, but that key is intentionally persisted only
+        // after the ACCEPT authenticates it. Keep the active watch's key
+        // available to the projector during that narrow interval.
+        const watchedRecipientPrivateKeys = new Map<string, Uint8Array>()
         const walletDidCommProjector = new DidCommIngressProjector({
           identityId: device.did,
           actorDeviceId: device.credential.deviceKid,
           resolveOwnKey: async kid => {
             if (kid === didCommDevice.xKid) return { kid, x25519PrivateKey: didCommDevice.x25519PrivateKey }
+            const watched = watchedRecipientPrivateKeys.get(kid)
+            if (watched) return { kid, x25519PrivateKey: watched }
             const contact = await walletContactKeyReader.forOwnKid(kid)
             return contact ? { kid, x25519PrivateKey: contact.ownX25519PrivateKey } : null
           },
@@ -661,6 +668,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
         const relationshipWatchKids = new Set<string>()
         let handleWalletDidCommMessage: (message: DeliveredMessage, recipientKid: string, mediatorUrl: string) => Promise<void>
         const startWalletRelationshipWatch = (xKid: string, xPriv: Uint8Array, did: string, mediatorUrl: string): void => {
+          watchedRecipientPrivateKeys.set(xKid, xPriv)
           startRelationshipWatch(
             relationshipWatchKids, mediatorUrl, { did, xKid, xPriv }, resolveAnyDidCommSenderKey,
             message => handleWalletDidCommMessage(message, xKid, mediatorUrl),
