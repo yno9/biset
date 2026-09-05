@@ -12,10 +12,10 @@ import { verifyProof, type DataIntegrityProof } from '../webvh/proof.ts'
 import { fetchCurrentLog } from '../webvh/log-io.ts'
 import { resolveByDomain, resolveEntries } from '../webvh/resolver.ts'
 import { decodeMlsDeviceCredential, verifyMlsDeviceCredential, verifyMlsDeviceCredentialRoot, type MlsDeviceCredentialV2 } from '../../mimi/device-credential.ts'
-import { base64urlToBytes } from '../../../shared/protocol/canonical.ts'
-import { fetchRouting, mimiVaultRoomFromRouting } from '../../../shared/didcomm/webvh-routing.ts'
-import { deviceKid } from '../../../shared/didcomm/devicekid.ts'
-import { fetchMediatorInfo } from '../../../shared/didcomm/mediator-coordinate.ts'
+import { base64urlToBytes } from '../../../protocol/canonical.ts'
+import { fetchRouting, mimiVaultRoomFromRouting } from '../../../protocol/didcomm/webvh-routing.ts'
+import { deviceKid } from '../../../protocol/didcomm/devicekid.ts'
+import { fetchMediatorInfo } from '../../../protocol/didcomm/mediator-coordinate.ts'
 import {
   clearDidMdRegistration,
   clearDidMdDeviceSession,

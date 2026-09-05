@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes } from '../src/shared/protocol/canonical.ts'
-import { deviceKidFragment } from '../src/shared/didcomm/devicekid.ts'
+import { equalBytes } from '../src/protocol/canonical.ts'
+import { deviceKidFragment } from '../src/protocol/didcomm/devicekid.ts'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { buildDidCommPrivateCredential } from '../src/client/store/vault/didcomm-credential.ts'
 import { type VaultEventSigner } from '../src/client/store/vault/events.ts'

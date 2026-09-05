@@ -4,12 +4,12 @@
  * request is attempted.  If the response is lost, the next attempt submits
  * the exact same bytes and delivery ID; it never encrypts the plaintext a
  * second time from a stale ratchet state. */
-import { bytesToBase64url, equalBytes, sha256Bytes } from '../../shared/protocol/canonical.ts'
+import { bytesToBase64url, equalBytes, sha256Bytes } from '../../protocol/canonical.ts'
 import { epochOf, encryptApplication, processIncoming } from './group.ts'
 import type { ClientState } from '../../vendor/mls/index.ts'
 import type { MimiClientMode, MimiClientTransport } from './mimi-client-transport.ts'
-import type { MimiCredential, MimiDeliveryEntry, VaultCheckpointManifest } from '../../shared/mimi/protocol-types.ts'
-import { submitMessageSigningBytes, submitVaultCheckpointSigningBytes } from '../../shared/mimi/authorizer.ts'
+import type { MimiCredential, MimiDeliveryEntry, VaultCheckpointManifest } from '../../protocol/mimi/protocol-types.ts'
+import { submitMessageSigningBytes, submitVaultCheckpointSigningBytes } from '../../protocol/mimi/authorizer.ts'
 import type { MimiVaultMlsReceiver, MimiVaultMlsSender } from '../store/vault/mimi-vault-sync.ts'
 
 export interface MimiVaultPendingApplication {

@@ -30,9 +30,9 @@ import { rebuildLocalJmapProjection } from '../store/vault/projection-rebuild.ts
 import { VaultObjectBlobReader } from '../store/vault/blob-reader.ts'
 import type { LocalJmapProjectionV1, LocalJmapReadModel, LocalJmapSnapshot } from '../store/projection/gateway.ts'
 import { IndexedDbLocalJmapReadModel, type LocalVaultBlobReader } from '../store/projection/indexeddb.ts'
-import { equalBytes } from '../../shared/protocol/canonical.ts'
-import { mlsEpoch, type VaultEventId } from '../../shared/protocol/ids.ts'
-import type { SegmentKeyWrapV1 } from '../../shared/protocol/vault.ts'
+import { equalBytes } from '../../protocol/canonical.ts'
+import { mlsEpoch, type VaultEventId } from '../../protocol/ids.ts'
+import type { SegmentKeyWrapV1 } from '../../protocol/vault.ts'
 import type { ClientState } from '../../vendor/mls/index.ts'
 import { VAULT_STORAGE_GROUP_ID } from '../store/vault/storage-root.ts'
 

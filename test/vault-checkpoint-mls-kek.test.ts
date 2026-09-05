@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { sha256 } from '@noble/hashes/sha2.js'
-import { canonicalBytes, type CanonicalValue } from '../src/shared/protocol/canonical.ts'
-import type { MlsEpoch } from '../src/shared/protocol/ids.ts'
+import { canonicalBytes, type CanonicalValue } from '../src/protocol/canonical.ts'
+import type { MlsEpoch } from '../src/protocol/ids.ts'
 import { buildVaultManifest } from '../src/client/store/vault/manifest.ts'
 import { MlsVaultEpochKeyResolver, type MlsEpochExporter } from '../src/client/mimi/vault-epoch.ts'
 import {
@@ -12,7 +12,7 @@ import {
 } from '../src/client/store/vault/vault-checkpoint.ts'
 import { shouldRecreateVaultCheckpoint, synchronizeMimiVault, type MimiVaultSyncGap } from '../src/client/store/vault/mimi-vault-sync.ts'
 import { encodeMimiVaultChunk, splitMimiVaultPayload } from '../src/client/store/vault/mimi-vault-chunks.ts'
-import type { MimiDeliveryEntry } from '../src/shared/mimi/protocol-types.ts'
+import type { MimiDeliveryEntry } from '../src/protocol/mimi/protocol-types.ts'
 
 const identityId = 'did:webvh:test:example.test'
 const vaultId = 'vlt_checkpoint_test' as never

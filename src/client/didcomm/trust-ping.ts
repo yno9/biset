@@ -4,7 +4,7 @@
 // file's own SendOptions-typed pingOptions (for emitting a ping) isn't
 // ported since this rewrite has no outbound DIDComm sender yet (this
 // file's own package header, message.ts).
-import type { DidCommPlaintext } from '../../shared/didcomm/message.ts'
+import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 
 export const PING = 'https://didcomm.org/trust-ping/2.0/ping'
 export const PING_RESPONSE = 'https://didcomm.org/trust-ping/2.0/ping-response'

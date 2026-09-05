@@ -7,9 +7,9 @@
 import { describe, expect, test } from 'bun:test'
 import { connect } from 'node:net'
 import type { Socket } from 'node:net'
-import { generatePeerIdentity } from '../../../src/shared/didcomm/peer.ts'
-import { encodeX25519Multikey } from '../../../src/shared/didcomm/multikey.ts'
-import { unpackAuthcrypt } from '../../../src/shared/didcomm/crypto.ts'
+import { generatePeerIdentity } from '../../../src/protocol/didcomm/peer.ts'
+import { encodeX25519Multikey } from '../../../src/protocol/didcomm/multikey.ts'
+import { unpackAuthcrypt } from '../../../src/protocol/didcomm/crypto.ts'
 import { createMailPluginListener } from '../../../src/server/mail-plugin/listener.ts'
 import { x25519 } from '@noble/curves/ed25519.js'
 

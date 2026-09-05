@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes } from '../../src/shared/protocol/canonical.ts'
+import { equalBytes } from '../../src/protocol/canonical.ts'
 import { createSegmentKeyWrap, unwrapSegmentKey, type SegmentKeyWrapSigner } from '../../src/client/store/vault/crypto.ts'
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
 

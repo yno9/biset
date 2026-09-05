@@ -7,8 +7,8 @@
  * credential cannot replace an existing member's signing key.
  */
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { bytesToBase64url, canonicalBytes, equalBytes } from '../protocol/canonical.ts'
-import type { CanonicalValue } from '../protocol/canonical.ts'
+import { bytesToBase64url, canonicalBytes, equalBytes } from '../canonical.ts'
+import type { CanonicalValue } from '../canonical.ts'
 import type {
   DeliveriesPullRequest,
   DeliveriesWatchRequest,
@@ -21,13 +21,23 @@ import type {
   MimiRoomId,
   MlsRequiredCapabilities,
   RoomStateUpdate,
+  RoomState,
+  PublishedKeyPackage,
   SubmitMessageRequest,
   SubmitVaultCheckpointRequest,
   UpdateRoomRequest,
   VisibleCredential,
 } from './protocol-types.ts'
-import type { SqliteMimiStore } from '../../server/mimi/store.ts'
 import { encodeCredential } from '../../vendor/mls/credential.ts'
+import type { PublicGroupState } from '../../vendor/mls/publicGroupState.ts'
+
+/** The protocol needs only these reads, allowing server storage to remain a
+ * concrete implementation detail rather than a dependency of this module. */
+export interface MimiAuthorizationStore {
+  room(roomId: MimiRoomId): RoomState | undefined
+  takeKeyPackages(targetUser: string, required: MlsRequiredCapabilities): PublishedKeyPackage[]
+  mlsPublicState(roomId: MimiRoomId): PublicGroupState | undefined
+}
 
 export interface MimiSignatureVerifier {
   verify(credential: MimiCredential, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>
@@ -92,7 +102,7 @@ export function submitVaultCheckpointSigningBytes(value: Omit<SubmitVaultCheckpo
   return canonicalBytes({ label: 'biset/mimi-vault-checkpoint/v1', version: value.version, protocol: value.protocol, roomId: value.roomId, sender: credentialValue(value.sender), epoch: value.epoch, manifest: { coveredSeq: value.manifest.coveredSeq, transferId: value.manifest.transferId, chunkCount: value.manifest.chunkCount, payloadHash: bytesToBase64url(value.manifest.payloadHash) }, submittedAt: value.submittedAt })
 }
 
-export async function authorizeUpdate(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: UpdateRoomRequest): Promise<boolean> {
+export async function authorizeUpdate(store: MimiAuthorizationStore, verifier: MimiSignatureVerifier, value: UpdateRoomRequest): Promise<boolean> {
   if (!(await verifier.verify(value.sender, updateRoomSigningBytes(value), value.signature))) return false
   const room = store.room(value.roomId)
   // An initial update is the one self-authenticated entry point.  Its signer
@@ -105,12 +115,12 @@ export async function authorizeUpdate(store: SqliteMimiStore, verifier: MimiSign
  * credential, so exact client-key matching cannot precede its first commit.
  * This is intentionally narrower than ordinary update authorization and the
  * HTTP layer enables it only for an allowExternalJoin deployment. */
-export async function authorizeExternalJoinUpdate(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: UpdateRoomRequest): Promise<boolean> {
+export async function authorizeExternalJoinUpdate(store: MimiAuthorizationStore, verifier: MimiSignatureVerifier, value: UpdateRoomRequest): Promise<boolean> {
   if (value.initialState !== undefined || value.bundle.kind !== 'commit' || value.sender.kind !== 'visible') return false
   return (await verifier.verify(value.sender, updateRoomSigningBytes(value), value.signature)) && userIsRoomParticipant(store.room(value.roomId), value.sender.user)
 }
 
-export async function authorizeKeyMaterial(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: KeyMaterialRequest): Promise<boolean> {
+export async function authorizeKeyMaterial(store: MimiAuthorizationStore, verifier: MimiSignatureVerifier, value: KeyMaterialRequest): Promise<boolean> {
   if (value.requestingUser !== credentialUser(value.requester)) return false
   if (!(await verifier.verify(value.requester, keyMaterialSigningBytes(value), value.signature))) return false
   const room = store.room(value.roomId)
@@ -121,18 +131,18 @@ export async function authorizeKeyPackagePublish(verifier: MimiSignatureVerifier
   return verifier.verify(value.credential, keyPackagePublishSigningBytes(value), value.signature)
 }
 
-export async function authorizeDeliveriesPull(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: DeliveriesPullRequest): Promise<boolean> {
+export async function authorizeDeliveriesPull(store: MimiAuthorizationStore, verifier: MimiSignatureVerifier, value: DeliveriesPullRequest): Promise<boolean> {
   return (await verifier.verify(value.requester, deliveriesPullSigningBytes(value), value.signature)) && credentialMatchesRoom(store, value.roomId, value.requester)
 }
 
-export async function authorizeDeliveriesWatch(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: DeliveriesWatchRequest): Promise<boolean> {
+export async function authorizeDeliveriesWatch(store: MimiAuthorizationStore, verifier: MimiSignatureVerifier, value: DeliveriesWatchRequest): Promise<boolean> {
   return (await verifier.verify(value.requester, deliveriesWatchSigningBytes(value), value.signature)) && credentialMatchesRoom(store, value.roomId, value.requester)
 }
 
-export async function authorizeSubmitMessage(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: SubmitMessageRequest): Promise<boolean> {
+export async function authorizeSubmitMessage(store: MimiAuthorizationStore, verifier: MimiSignatureVerifier, value: SubmitMessageRequest): Promise<boolean> {
   return (await verifier.verify(value.sender, submitMessageSigningBytes(value), value.signature)) && credentialMatchesRoom(store, value.roomId, value.sender)
 }
-export async function authorizeSubmitVaultCheckpoint(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: SubmitVaultCheckpointRequest): Promise<boolean> {
+export async function authorizeSubmitVaultCheckpoint(store: MimiAuthorizationStore, verifier: MimiSignatureVerifier, value: SubmitVaultCheckpointRequest): Promise<boolean> {
   return (await verifier.verify(value.sender, submitVaultCheckpointSigningBytes(value), value.signature)) && credentialMatchesRoom(store, value.roomId, value.sender)
 }
 
@@ -157,17 +167,17 @@ export function groupInfoResponseSigningBytes(value: Omit<GroupInfoResponse, 'si
  * stable user URI, not by exact credential -- the whole point of external
  * join is that the requester's device/credential is brand new and has never
  * been seen by this room before (§18, PLAN_biset-mimi-server.md). */
-export async function authorizeGroupInfoRequest(store: SqliteMimiStore, verifier: MimiSignatureVerifier, value: GroupInfoRequest): Promise<boolean> {
+export async function authorizeGroupInfoRequest(store: MimiAuthorizationStore, verifier: MimiSignatureVerifier, value: GroupInfoRequest): Promise<boolean> {
   if (!(await verifier.verify(value.requester, groupInfoRequestSigningBytes(value), value.signature))) return false
   return value.requester.kind === 'visible'
 }
 
-export function userIsRoomParticipant(room: ReturnType<SqliteMimiStore['room']>, user: string): boolean {
+export function userIsRoomParticipant(room: RoomState | undefined, user: string): boolean {
   return room !== undefined && room.participantList.participants.some(participant => participant.user === user)
 }
 
 /** Turns the store's single-use KeyPackage take into draft §5.2 status data. */
-export function keyMaterialResponse(targetUser: string, packages: ReturnType<SqliteMimiStore['takeKeyPackages']>): KeyMaterialResponse {
+export function keyMaterialResponse(targetUser: string, packages: PublishedKeyPackage[]): KeyMaterialResponse {
   if (packages.length === 0) return { protocol: 'mls10', user: targetUser, status: 'noCompatibleMaterial', clients: [] }
   return {
     protocol: 'mls10', user: targetUser, status: 'success',
@@ -197,7 +207,7 @@ export function keyMaterialResponse(targetUser: string, packages: ReturnType<Sql
  * Kept as an OR, not a replacement: rooms with no tracked state (still the
  * common case) behave exactly as before this existed.
  */
-function credentialMatchesRoom(store: SqliteMimiStore, roomId: MimiRoomId, signer: MimiCredential): boolean {
+function credentialMatchesRoom(store: MimiAuthorizationStore, roomId: MimiRoomId, signer: MimiCredential): boolean {
   const room = store.room(roomId)
   const user = credentialUser(signer)
   if (!room || !room.participantList.participants.some(participant => participant.user === user)) return false

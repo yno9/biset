@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes } from '../src/shared/protocol/canonical.ts'
-import { generatePeerIdentity } from '../src/shared/didcomm/peer.ts'
+import { equalBytes } from '../src/protocol/canonical.ts'
+import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
 import { createSegmentKeyWrap } from '../src/client/store/vault/crypto.ts'
 import { decodeVaultDeliveryPack } from '../src/client/store/vault/delivery-pack.ts'
 import type { VaultEventSigner } from '../src/client/store/vault/events.ts'

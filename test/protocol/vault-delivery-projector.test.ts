@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes } from '../../src/shared/protocol/canonical.ts'
+import { equalBytes } from '../../src/protocol/canonical.ts'
 import { VaultDeliveryProjector } from '../../src/client/store/vault/delivery-projector.ts'
 import { createSegmentKeyWrap } from '../../src/client/store/vault/crypto.ts'
 import type { VaultEventSigner } from '../../src/client/store/vault/events.ts'

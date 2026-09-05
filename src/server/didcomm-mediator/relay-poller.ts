@@ -12,13 +12,13 @@
 // mediator's point of view the re-Forward it produces is an ordinary
 // inbound Forward request, indistinguishable from one a real sender built
 // directly.
-import { fetchMediatorInfo, requestMediation, updateKeylist, type MediatorInfo } from '../../shared/didcomm/mediator-coordinate.ts'
-import { acknowledgeMessages } from '../../shared/didcomm/mediator-pickup.ts'
-import { sendAndUnpack, type DidCommSender } from '../../shared/didcomm/mediator-transport.ts'
-import { unpackAnoncrypt, parseJwe, type DidCommJWE } from '../../shared/didcomm/crypto.ts'
-import { wrapForward } from '../../shared/didcomm/forward-wrap.ts'
-import { FORWARD, STATUS, DELIVERY_REQUEST, DELIVERY } from '../../shared/didcomm/mediator-protocol.ts'
-import type { DidCommPlaintext } from '../../shared/didcomm/message.ts'
+import { fetchMediatorInfo, requestMediation, updateKeylist, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
+import { acknowledgeMessages } from '../../protocol/didcomm/mediator-pickup.ts'
+import { sendAndUnpack, type DidCommSender } from '../../protocol/didcomm/mediator-transport.ts'
+import { unpackAnoncrypt, parseJwe, type DidCommJWE } from '../../protocol/didcomm/crypto.ts'
+import { wrapForward } from '../../protocol/didcomm/forward-wrap.ts'
+import { FORWARD, STATUS, DELIVERY_REQUEST, DELIVERY } from '../../protocol/didcomm/mediator-protocol.ts'
+import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { defaultFetch } from '../../client/app/net-fetch.ts'
 
 /** Same self-heal shape as mediator-sync.ts's registerWithMediator: safe to

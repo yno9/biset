@@ -1,5 +1,5 @@
-import { canonicalBytes } from '../../shared/protocol/canonical.ts'
-import { assertMlsEpoch, type MlsEpoch } from '../../shared/protocol/ids.ts'
+import { canonicalBytes } from '../../protocol/canonical.ts'
+import { assertMlsEpoch, type MlsEpoch } from '../../protocol/ids.ts'
 import type { CurrentVaultEpoch, VaultEpochKeyResolver } from '../store/vault/segment-key-resolver.ts'
 
 export const VAULT_EPOCH_KEY_LABEL = 'biset/vault/epoch-key/v1'

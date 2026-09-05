@@ -11,10 +11,10 @@
 // identity-shared vault credential (vault/didcomm-credential.ts), already
 // resolved by the caller into a plain DidCommSender, so this module only
 // needs the mediator URL and that sender.
-import { fetchMediatorInfo, requestMediation, updateKeylist, type MediatorInfo } from '../../shared/didcomm/mediator-coordinate.ts'
-import { pickupDeliver, acknowledgeMessages, type DeliveredMessage } from '../../shared/didcomm/mediator-pickup.ts'
-import type { DidCommSender } from '../../shared/didcomm/mediator-transport.ts'
-import type { ResolveSenderKey } from '../../shared/didcomm/crypto.ts'
+import { fetchMediatorInfo, requestMediation, updateKeylist, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
+import { pickupDeliver, acknowledgeMessages, type DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
+import type { DidCommSender } from '../../protocol/didcomm/mediator-transport.ts'
+import type { ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
 import { defaultFetch } from '../app/net-fetch.ts'
 
 /** mediate-request + keylist-update(add), unconditionally -- both are

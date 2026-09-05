@@ -1,7 +1,7 @@
-import type { IngressAckV1 } from '../../../shared/protocol/ingress.ts'
-import { equalBytes } from '../../../shared/protocol/canonical.ts'
-import type { DeliverySeq, DeviceId, IdentityId, MlsEpoch, SegmentId, VaultEventId, VaultId, VaultMemberId, VaultObjectId } from '../../../shared/protocol/ids.ts'
-import type { SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../../../shared/protocol/vault.ts'
+import type { IngressAckV1 } from '../../../protocol/ingress.ts'
+import { equalBytes } from '../../../protocol/canonical.ts'
+import type { DeliverySeq, DeviceId, IdentityId, MlsEpoch, SegmentId, VaultEventId, VaultId, VaultMemberId, VaultObjectId } from '../../../protocol/ids.ts'
+import type { SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
 
 const DATABASE_NAME = 'biset-vault-core'

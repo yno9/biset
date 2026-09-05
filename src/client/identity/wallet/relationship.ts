@@ -1,8 +1,8 @@
-import type { DidCommPlaintext } from '../../../shared/didcomm/message.ts'
-import type { DeliveredMessage } from '../../../shared/didcomm/mediator-pickup.ts'
+import type { DidCommPlaintext } from '../../../protocol/didcomm/message.ts'
+import type { DeliveredMessage } from '../../../protocol/didcomm/mediator-pickup.ts'
 import { registerWithMediator } from '../../didcomm/mediator-sync.ts'
 import { sameMediatorUrl } from '../../didcomm/mediator-watch.ts'
-import { generatePeerIdentity } from '../../../shared/didcomm/peer.ts'
+import { generatePeerIdentity } from '../../../protocol/didcomm/peer.ts'
 import {
   RELATIONSHIP_ACCEPT,
   RELATIONSHIP_INIT,
@@ -14,7 +14,7 @@ import {
   sendRelationshipAccept,
   type RelationshipInitiationResult,
 } from '../../didcomm/send-message.ts'
-import { didOfKid } from '../../../shared/protocol/ids.ts'
+import { didOfKid } from '../../../protocol/ids.ts'
 import type { ContactKeyV1 } from '../../store/vault/contact-key.ts'
 
 export type RelationshipWatchStarter = (xKid: string, xPriv: Uint8Array, did: string, mediatorUrl: string) => void

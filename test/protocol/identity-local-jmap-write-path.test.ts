@@ -18,7 +18,7 @@ import { decodeVaultDeliveryPack } from '../../src/client/store/vault/delivery-p
 import { vaultEventSigningBytes } from '../../src/client/store/vault/events.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mimi/store.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/client/store/vault/store.ts'
-import type { SegmentKeyWrapV1 } from '../../src/shared/protocol/vault.ts'
+import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
 const selfGroupId = 'test-self-group'

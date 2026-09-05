@@ -7,7 +7,7 @@
 import { describe, expect, test } from 'bun:test'
 import { VaultBackedLocalJmapMutationSink } from '../src/client/store/projection/vault-mutation-sink.ts'
 import type { ActiveVaultSegment } from '../src/client/store/vault/active-segment.ts'
-import type { SegmentKeyWrapV1 } from '../src/shared/protocol/vault.ts'
+import type { SegmentKeyWrapV1 } from '../src/protocol/vault.ts'
 
 const identityId = 'did:webvh:test:alice.example'
 const segmentId = 'segment-1'

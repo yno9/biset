@@ -15,7 +15,7 @@
 // schema's migrations ever have to reason about the other's stores.
 import { decodeState, encodeState, epochOf, exportSecret } from './group.ts'
 import type { ClientState } from '../../vendor/mls/index.ts'
-import { mlsEpoch } from '../../shared/protocol/ids.ts'
+import { mlsEpoch } from '../../protocol/ids.ts'
 import type { MlsEpochExporter, MlsSelfGroupProvider } from './vault-epoch.ts'
 import type { MimiVaultPendingApplication, MimiVaultSessionRecord, MimiVaultSessionStateStore } from './mimi-vault-session.ts'
 

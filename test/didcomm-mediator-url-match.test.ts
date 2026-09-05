@@ -11,7 +11,7 @@
 // that can never complete, on nothing but punctuation. Both paths now go
 // through sameMediatorUrl.
 import { describe, expect, test } from 'bun:test'
-import { generatePeerIdentity } from '../src/shared/didcomm/peer.ts'
+import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
 import { relationshipMediatorService } from '../src/client/didcomm/relationship.ts'
 import { sameMediatorUrl } from '../src/client/didcomm/mediator-watch.ts'
 

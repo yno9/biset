@@ -14,7 +14,7 @@ import { buildVaultMutation } from '../../src/client/store/vault/mutations.ts'
 import { encodeVaultDeliveryPack, decodeVaultDeliveryPack } from '../../src/client/store/vault/delivery-pack.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mimi/store.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/client/store/vault/store.ts'
-import type { SegmentKeyWrapV1 } from '../../src/shared/protocol/vault.ts'
+import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 import type { LocalJmapSnapshot } from '../../src/client/store/projection/gateway.ts'
 
 const identityId = 'did:web:alice.example'

@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes } from '../../src/shared/protocol/canonical.ts'
+import { equalBytes } from '../../src/protocol/canonical.ts'
 import {
   ingressAckSigningBytes,
   vaultDeliveryAppendSigningBytes,
   vaultDeliveryPullSigningBytes,
   vaultDeliveryAckSigningBytes,
-} from '../../src/shared/protocol/signing.ts'
+} from '../../src/protocol/signing.ts'
 
 describe('device-control signing bytes', () => {
   test('binds delivery ACKs to their exact payload and device', () => {

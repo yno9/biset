@@ -1,10 +1,10 @@
-import { generatePeerIdentity } from '../src/shared/didcomm/peer.ts'
-import { buildPlaintext } from '../src/shared/didcomm/message.ts'
-import { packAnoncrypt, packAuthcrypt } from '../src/shared/didcomm/crypto.ts'
-import { fetchMediatorInfo } from '../src/shared/didcomm/mediator-transport.ts'
-import { queryKeylist, updateKeylist } from '../src/shared/didcomm/mediator-coordinate.ts'
+import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
+import { buildPlaintext } from '../src/protocol/didcomm/message.ts'
+import { packAnoncrypt, packAuthcrypt } from '../src/protocol/didcomm/crypto.ts'
+import { fetchMediatorInfo } from '../src/protocol/didcomm/mediator-transport.ts'
+import { queryKeylist, updateKeylist } from '../src/protocol/didcomm/mediator-coordinate.ts'
 import { registerWithMediator } from '../src/client/didcomm/mediator-sync.ts'
-import { acknowledgeMessages, pickupDeliver, pickupStatus } from '../src/shared/didcomm/mediator-pickup.ts'
+import { acknowledgeMessages, pickupDeliver, pickupStatus } from '../src/protocol/didcomm/mediator-pickup.ts'
 
 const url = (process.argv[2] ?? '').replace(/\/$/, '')
 if (!url) throw new Error('usage: bun run scripts/didcomm-mediator-smoke.ts https://mediator.example')

@@ -1,7 +1,7 @@
-import type { AdapterIngressOfferV1, IngressEnvelopeV1 } from '../../shared/protocol/ingress.ts'
-import type { MailSubmissionRequestV1 } from '../../shared/protocol/mail-submission.ts'
-import { assertDeliverySeq, assertOpaqueId } from '../../shared/protocol/ids.ts'
-import type { VaultDeliveryAppendV1 } from '../../shared/protocol/vault.ts'
+import type { AdapterIngressOfferV1, IngressEnvelopeV1 } from '../../protocol/ingress.ts'
+import type { MailSubmissionRequestV1 } from '../../protocol/mail-submission.ts'
+import { assertDeliverySeq, assertOpaqueId } from '../../protocol/ids.ts'
+import type { VaultDeliveryAppendV1 } from '../../protocol/vault.ts'
 
 export class ProtocolValidationError extends Error {
   constructor(message: string) {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { buildPlaintext } from '../../src/shared/didcomm/message.ts'
+import { buildPlaintext } from '../../src/protocol/didcomm/message.ts'
 import {
   GROUP_INVITE,
   GROUP_MESSAGE,

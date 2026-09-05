@@ -9,8 +9,8 @@ import { createGenesis } from '../../src/client/identity/webvh/create-genesis.ts
 import { migrateWebvhLocation } from '../../src/client/identity/webvh/migrate.ts'
 import { encodeMultikey } from '../../src/client/identity/webvh/multikey.ts'
 import { multikeyHashBase58 } from '../../src/client/identity/webvh/hash.ts'
-import { buildRoutingDoc, fetchRouting, putRouting } from '../../src/shared/didcomm/webvh-routing.ts'
-import { resolveDidCommSenderKey } from '../../src/shared/didcomm/webvh-resolve.ts'
+import { buildRoutingDoc, fetchRouting, putRouting } from '../../src/protocol/didcomm/webvh-routing.ts'
+import { resolveDidCommSenderKey } from '../../src/protocol/didcomm/webvh-resolve.ts'
 import { fakeAnchor } from './support/webvh-log-fixture.ts'
 
 describe('resolveDidCommSenderKey', () => {

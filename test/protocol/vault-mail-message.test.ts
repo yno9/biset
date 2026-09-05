@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes } from '../../src/shared/protocol/canonical.ts'
+import { equalBytes } from '../../src/protocol/canonical.ts'
 import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { buildMailMessageAdd, buildMailMessageEdit, rawRfc5322ObjectAad } from '../../src/client/store/vault/mail-message.ts'
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'

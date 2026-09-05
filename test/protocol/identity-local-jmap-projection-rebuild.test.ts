@@ -13,7 +13,7 @@ import { MlsMembershipSegmentKeyWrapSigner } from '../../src/client/mimi/segment
 import { buildMailMessageAdd } from '../../src/client/store/vault/mail-message.ts'
 import type { LoadedMlsSelfGroup, MlsSelfGroupStateStore } from '../../src/client/mimi/store.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultRecordReader, VaultSegmentRecord } from '../../src/client/store/vault/store.ts'
-import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/shared/protocol/vault.ts'
+import type { SegmentKeyWrapV1, VaultEventV1, VaultObjectV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
 const selfGroupId = 'test-self-group'

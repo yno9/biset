@@ -9,14 +9,14 @@
 // (tsconfig.mediator.json's own header explains why: proving a deploy unit
 // stays free of Vault/UI coupling is the whole point of the DOM-less check).
 // send-message.ts re-exports this unchanged for its own existing callers.
-import { resolveWithRouting } from '../../shared/didcomm/webvh-resolve.ts'
-import { decodeX25519Multikey, decodeMlkem768Multikey } from '../../shared/didcomm/multikey.ts'
-import { packAuthcrypt, packAuthcryptHybrid, type DidCommJWE } from '../../shared/didcomm/crypto.ts'
-import { mlkemKidFor } from '../../shared/didcomm/devicekid.ts'
-import { buildPlaintext } from '../../shared/didcomm/message.ts'
-import { wrapForwardChain } from '../../shared/didcomm/forward-wrap.ts'
-import { decodePeerDid2, publicKeyOf } from '../../shared/didcomm/peer.ts'
-import type { DidCommServiceEndpoint } from '../../shared/didcomm/webvh-routing.ts'
+import { resolveWithRouting } from '../../protocol/didcomm/webvh-resolve.ts'
+import { decodeX25519Multikey, decodeMlkem768Multikey } from '../../protocol/didcomm/multikey.ts'
+import { packAuthcrypt, packAuthcryptHybrid, type DidCommJWE } from '../../protocol/didcomm/crypto.ts'
+import { mlkemKidFor } from '../../protocol/didcomm/devicekid.ts'
+import { buildPlaintext } from '../../protocol/didcomm/message.ts'
+import { wrapForwardChain } from '../../protocol/didcomm/forward-wrap.ts'
+import { decodePeerDid2, publicKeyOf } from '../../protocol/didcomm/peer.ts'
+import type { DidCommServiceEndpoint } from '../../protocol/didcomm/webvh-routing.ts'
 import { defaultFetch } from '../app/net-fetch.ts'
 
 export type DidCommSendResult = { ok: true } | { ok: false; error: string }

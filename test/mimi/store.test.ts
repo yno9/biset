@@ -4,7 +4,7 @@ import { SqliteMimiStore } from '../../src/server/mimi/store.ts'
 import { frankMessage, verifyFrank } from '../../src/server/mimi/franking.ts'
 import { RoomPseudonymIssuer } from '../../src/server/mimi/anon/pseudonym.ts'
 import { decryptIdentityLink, encryptIdentityLink } from '../../src/server/mimi/anon/identity-link.ts'
-import type { UpdateRoomRequest, VisibleCredential } from '../../src/shared/mimi/protocol-types.ts'
+import type { UpdateRoomRequest, VisibleCredential } from '../../src/protocol/mimi/protocol-types.ts'
 import type { MimiMlsStateTransition } from '../../src/server/mimi/mls-appsync.ts'
 import { createMlsGroup, encryptApplication, generateOwnKeyPackageForCredential } from '../../src/client/mimi/group.ts'
 

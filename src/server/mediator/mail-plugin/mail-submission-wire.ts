@@ -1,5 +1,5 @@
-import { base64urlToBytes, bytesToBase64url } from '../../../shared/protocol/canonical.ts'
-import type { MailSubmissionRequestV1, MailSubmissionResultV1 } from '../../../shared/protocol/mail-submission.ts'
+import { base64urlToBytes, bytesToBase64url } from '../../../protocol/canonical.ts'
+import type { MailSubmissionRequestV1, MailSubmissionResultV1 } from '../../../protocol/mail-submission.ts'
 import { assertMailSubmissionRequest } from '../validate.ts'
 
 export function encodeMailSubmissionRequestWire(value: MailSubmissionRequestV1): string {

@@ -1,17 +1,17 @@
 import { describe, expect, test } from 'bun:test'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { BASIC_MESSAGE } from '../src/client/didcomm/basicmessage.ts'
-import { pickupDeliver } from '../src/shared/didcomm/mediator-pickup.ts'
+import { pickupDeliver } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { registerWithMediator } from '../src/client/didcomm/mediator-sync.ts'
-import { decodePeerDid2, generatePeerIdentity, publicKeyOf } from '../src/shared/didcomm/peer.ts'
+import { decodePeerDid2, generatePeerIdentity, publicKeyOf } from '../src/protocol/didcomm/peer.ts'
 import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT, relationshipBodyOf, relationshipMediatorService } from '../src/client/didcomm/relationship.ts'
 import {
   initiateRelationship,
   sendRelationshipAccept,
   sendRelationshipMessage,
 } from '../src/client/didcomm/send-message.ts'
-import type { DidCommPlaintext } from '../src/shared/didcomm/message.ts'
-import { encodeX25519Multikey } from '../src/shared/didcomm/multikey.ts'
+import type { DidCommPlaintext } from '../src/protocol/didcomm/message.ts'
+import { encodeX25519Multikey } from '../src/protocol/didcomm/multikey.ts'
 import { createMediator } from '../src/server/didcomm-mediator/server.ts'
 import { ConnectionStore } from '../src/server/didcomm-mediator/connections.ts'
 import type { ContactKeyV1 } from '../src/client/store/vault/contact-key.ts'

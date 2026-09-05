@@ -1,5 +1,5 @@
 // End-to-end coverage for the CLIENT side of the standalone mediator
-// protocol (src/shared/didcomm/mediator-{transport,coordinate,pickup,sync}.ts,
+// protocol (src/protocol/didcomm/mediator-{transport,coordinate,pickup,sync}.ts,
 // ARC.md's 2026-08-27 redesign, Phase 4) -- driven against the same
 // createMediator handler Phase 3's test exercises directly, but this time
 // entirely through the client library a real device would use. The
@@ -7,16 +7,16 @@
 // the in-process handler, so this is a real protocol round trip with no
 // network.
 import { describe, expect, test } from 'bun:test'
-import { generatePeerIdentity } from '../src/shared/didcomm/peer.ts'
+import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
 import { createMediator } from '../src/server/didcomm-mediator/server.ts'
-import { fetchMediatorInfo, requestMediation, updateKeylist, queryKeylist } from '../src/shared/didcomm/mediator-coordinate.ts'
-import { pickupStatus, pickupDeliver, acknowledgeMessages } from '../src/shared/didcomm/mediator-pickup.ts'
+import { fetchMediatorInfo, requestMediation, updateKeylist, queryKeylist } from '../src/protocol/didcomm/mediator-coordinate.ts'
+import { pickupStatus, pickupDeliver, acknowledgeMessages } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { registerWithMediator, startMediatorPolling } from '../src/client/didcomm/mediator-sync.ts'
-import { requestWatch, mediatorStreamUrl } from '../src/shared/didcomm/mediator-pickup.ts'
+import { requestWatch, mediatorStreamUrl } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { watchMediator } from '../src/client/didcomm/mediator-watch.ts'
-import type { DidCommSender } from '../src/shared/didcomm/mediator-transport.ts'
-import { packAuthcrypt, packAnoncrypt } from '../src/shared/didcomm/crypto.ts'
-import { buildPlaintext } from '../src/shared/didcomm/message.ts'
+import type { DidCommSender } from '../src/protocol/didcomm/mediator-transport.ts'
+import { packAuthcrypt, packAnoncrypt } from '../src/protocol/didcomm/crypto.ts'
+import { buildPlaintext } from '../src/protocol/didcomm/message.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 

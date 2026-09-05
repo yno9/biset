@@ -11,7 +11,7 @@ import type { SegmentKeyWrapSigner } from '../../src/client/store/vault/crypto.t
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
 import type { VaultEpochKeyResolver } from '../../src/client/store/vault/segment-key-resolver.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/client/store/vault/store.ts'
-import type { SegmentKeyWrapV1 } from '../../src/shared/protocol/vault.ts'
+import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
 const signer: SegmentKeyWrapSigner = {

@@ -19,7 +19,7 @@ import { encodeMultikey } from './multikey.ts'
 import { buildMinimalWebvhState, type SignedWebvhState } from './document.ts'
 import { syncDidWebMirror } from '../web/mirror.ts'
 import { defaultFetch } from '../../app/net-fetch.ts'
-import { didToRoutingUrl } from '../../../shared/didcomm/webvh-routing.ts'
+import { didToRoutingUrl } from '../../../protocol/didcomm/webvh-routing.ts'
 
 export interface CreateGenesisOptions {
   domain: string

@@ -11,9 +11,9 @@
 // SmtpSession already carries a per-recipient `resolution` from RCPT
 // through to acceptIngress (that generic parameter's whole reason for
 // existing -- see its own header).
-import { fetchRoutingByDomain, type DidCommServiceEndpoint } from '../../shared/didcomm/webvh-routing.ts'
-import { decodeX25519Multikey } from '../../shared/didcomm/multikey.ts'
-import { buildPlaintext } from '../../shared/didcomm/message.ts'
+import { fetchRoutingByDomain, type DidCommServiceEndpoint } from '../../protocol/didcomm/webvh-routing.ts'
+import { decodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
+import { buildPlaintext } from '../../protocol/didcomm/message.ts'
 import { packForDelivery, type OutboundDelivery, type RouteEndpoint } from '../mediator/route-deliver.ts'
 import { MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyToWire, type MailBridgeInboundBody } from '../mediator/mail-plugin/mail-bridge.ts'
 import { identityDomainForMailAddress } from '../../client/identity/webvh/identifier.ts'

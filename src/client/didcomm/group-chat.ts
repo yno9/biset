@@ -14,8 +14,8 @@
 // group-chat-store.ts's own header), no name changes, no leave, no
 // edit/delete/reaction -- matching 1:1 DIDComm chat's own current scope
 // (ingress-projector.ts's header).
-import { bytesToHex } from '../../shared/protocol/canonical.ts'
-import type { DeviceId, IdentityId, VaultEventId } from '../../shared/protocol/ids.ts'
+import { bytesToHex } from '../../protocol/canonical.ts'
+import type { DeviceId, IdentityId, VaultEventId } from '../../protocol/ids.ts'
 import type { LocalJmapEmail, LocalJmapProjectionV1, LocalJmapSnapshot } from '../store/projection/gateway.ts'
 import { assertActiveVaultSegment, type ActiveVaultSegment } from '../store/vault/active-segment.ts'
 import { buildVaultCommit } from '../store/vault/commit.ts'

@@ -3,7 +3,7 @@ import { buildVaultManifest } from '../../src/client/store/vault/manifest.ts'
 import { createSegmentKey, encryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { createRecoveryArchive, createRecoveryKey, decodeRecoveryArchive, encodeRecoveryArchive, openRecoveryArchive, type RecoveryArchiveSnapshotV1 } from '../../src/client/store/vault/recovery-archive.ts'
 import { createVaultEvent, type VaultEventSigner } from '../../src/client/store/vault/events.ts'
-import { bytesToBase64url, equalBytes } from '../../src/shared/protocol/canonical.ts'
+import { bytesToBase64url, equalBytes } from '../../src/protocol/canonical.ts'
 
 const identityId = 'did:web:alice.example'
 const signer: VaultEventSigner = {

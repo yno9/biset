@@ -19,10 +19,10 @@
 // (would replay a stale token) -- every reconnect attempt, including the
 // first connection, re-mints a fresh watch token via `requestWatch` first,
 // mirroring conversation-group-watch.ts's identical reasoning.
-import { fetchMediatorInfo, type DidCommSender, type MediatorInfo } from '../../shared/didcomm/mediator-transport.ts'
+import { fetchMediatorInfo, type DidCommSender, type MediatorInfo } from '../../protocol/didcomm/mediator-transport.ts'
 import { registerWithMediator } from './mediator-sync.ts'
-import { requestWatch, mediatorStreamUrl, unpackQueuedMessage, acknowledgeMessages, type DeliveredMessage } from '../../shared/didcomm/mediator-pickup.ts'
-import type { ResolveSenderKey } from '../../shared/didcomm/crypto.ts'
+import { requestWatch, mediatorStreamUrl, unpackQueuedMessage, acknowledgeMessages, type DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
+import type { ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
 import { defaultFetch } from '../app/net-fetch.ts'
 
 const RECONNECT_DELAY_MS = 2000

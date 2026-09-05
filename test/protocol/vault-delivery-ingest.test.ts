@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes, sha256Bytes } from '../../src/shared/protocol/canonical.ts'
-import { vaultDeliveryAckSigningBytes } from '../../src/shared/protocol/signing.ts'
+import { equalBytes, sha256Bytes } from '../../src/protocol/canonical.ts'
+import { vaultDeliveryAckSigningBytes } from '../../src/protocol/signing.ts'
 import { encodeVaultDeliveryPack } from '../../src/client/store/vault/delivery-pack.ts'
 import { ingestVaultDelivery } from '../../src/client/store/vault/delivery-ingest.ts'
 import type { VaultDeliveryCommit } from '../../src/client/store/vault/store.ts'

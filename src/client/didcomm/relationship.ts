@@ -1,5 +1,5 @@
-import { base64urlToBytes, bytesToBase64url } from '../../shared/protocol/canonical.ts'
-import { decodePeerDid2, publicKeyOf } from '../../shared/didcomm/peer.ts'
+import { base64urlToBytes, bytesToBase64url } from '../../protocol/canonical.ts'
+import { decodePeerDid2, publicKeyOf } from '../../protocol/didcomm/peer.ts'
 
 export const RELATIONSHIP_INIT = 'https://biset.md/relationship/1.0/init'
 export const RELATIONSHIP_ACCEPT = 'https://biset.md/relationship/1.0/accept'

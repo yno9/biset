@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { base64urlToBytes, bytesToBase64url, canonicalHash, canonicalJson, domainHash, equalBytes } from '../../src/shared/protocol/canonical.ts'
+import { base64urlToBytes, bytesToBase64url, canonicalHash, canonicalJson, domainHash, equalBytes } from '../../src/protocol/canonical.ts'
 import { assertIngressEnvelope, ProtocolValidationError } from '../../src/server/mediator/validate.ts'
 
 describe('protocol canonical encoding', () => {

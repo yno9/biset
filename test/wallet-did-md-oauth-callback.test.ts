@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { bytesToBase64url } from '../src/shared/protocol/canonical.ts'
+import { bytesToBase64url } from '../src/protocol/canonical.ts'
 import { buildProof } from '../src/client/identity/webvh/proof.ts'
 import { didToHttpsUrl } from '../src/client/identity/webvh/identifier.ts'
 import { createMlsDeviceCredential, encodeMlsDeviceCredential } from '../src/client/mimi/device-credential.ts'
