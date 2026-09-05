@@ -122,11 +122,19 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
       </div>
     </div>
     -->
+    <!-- Native BIP39 signup/login row (username@apex + Start/Log in button)
+         disabled 2026-09-05 (N1): biset no longer mints or restores its own
+         did:webvh identity -- did.md Wallet below is the only login. Kept
+         commented, same treatment as the did:dht toggle and the password
+         concept above, so the original markup is here if it is ever revived.
+    -->
+    <!--
     <div id="nu-username-row" style="display:flex;align-items:center;border-radius:8px;border:0px solid var(--header-border);background:rgba(128,128,128,0.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);overflow:hidden">
       <input id="nu-username" type="text" placeholder="username" autocomplete="username" style="flex:1;min-width:0;padding:10px 0 10px 14px;border:none;background:transparent;color:var(--text);font-size:15px;font-family:inherit;outline:none">
       <span id="nu-at" style="padding:10px 10px 10px 2px;color:var(--text-dim);font-size:15px;white-space:nowrap;user-select:none">@<span id="nu-hostname"></span></span>
       <button id="nu-submit" type="button" style="padding:10px 12px;border:none;background:var(--accent);color:#fff;font-size:15px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0;align-self:stretch">Start</button>
     </div>
+    -->
     <div style="display:flex;align-items:center;gap:8px;margin-top:2px">
       <input id="nu-wallet-handle" type="text" placeholder="test1.did.md" autocomplete="username" autocapitalize="off" spellcheck="false" style="flex:1;min-width:0;padding:10px 12px;border-radius:8px;border:1px solid var(--header-border);background:var(--input-bg);color:var(--text);font-size:14px;font-family:inherit;outline:none">
       <button id="nu-wallet-login" type="button" style="padding:10px 12px;border:0;border-radius:8px;background:var(--accent);color:#fff;font:inherit;font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap">Continue with did.md Wallet</button>
@@ -151,6 +159,10 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
       <span style="font-size:21px;font-weight:600;line-height:1.1;margin-top:2px">Remember your password</span>
     </div>
     -->
+    <!-- Root/Sign recovery-phrase inputs, Terms of Beta-testing checkbox and
+         the native form's error line: all part of the same removed native
+         login (N1, 2026-09-05). -->
+    <!--
     <textarea id="nu-phrase" rows="4" placeholder="Paste your 24-word Root Key phrase" autocomplete="off" autocapitalize="off" spellcheck="false" style="display:none;width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid var(--header-border);background:var(--input-bg);color:var(--text);font-size:14px;font-family:inherit;resize:none;overflow-y:hidden;outline:none"></textarea>
     <textarea id="nu-sign-phrase" rows="4" placeholder="Paste your current 24-word Sign Key phrase (before the first rotation, paste the Root phrase again)" autocomplete="off" autocapitalize="off" spellcheck="false" style="display:none;width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid var(--header-border);background:var(--input-bg);color:var(--text);font-size:14px;font-family:inherit;resize:none;overflow-y:hidden;outline:none"></textarea>
     <div id="nu-tos-row" style="display:flex;align-items:center;justify-content:center;gap:8px">
@@ -163,6 +175,7 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
       </label>
     </div>
     <div id="nu-error" style="color:#ff3b30;font-size:13px;display:none;min-height:18px;text-align:center"></div>
+    -->
     <div class="biset-title"><a href="https://biset.md" target="_blank" rel="noopener">biset</a> <a class="biset-version" href="https://github.com/yno9/biset" target="_blank" rel="noopener">beta</a></div>
   </div>
 </div>

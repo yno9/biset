@@ -36,26 +36,10 @@ export interface AccountPageConfig {
     onEnableMessaging?(): Promise<void>
     onDisconnect(): Promise<void>
   }
-  /** hex (identity/record-store.ts's IdentityRecord.masterSeed) -- the ONE
-   * piece of key material this file is handed directly rather than through
-   * a callback: showing the Root Key phrase on demand (the Config modal's
-   * click-to-reveal row) has to happen in the UI layer regardless (same as
-   * account-create.ts's own initial showMnemonic call at signup), so there
-   * is no "stays in main.ts" boundary to preserve here the way there is
-   * for editName/rotation, which never need to look at key material at
-   * all. */
-  masterSeed?: string
   /** Confirmed and invoked by the identity menu's "Log out" item
    * (src.bak/ui/left-pane.ts's confirmAndLogout -- confirm() stays here in
    * the UI layer, this is just the "actually do it" half). */
   onLogout?(): Promise<void>
-  /** Signs and publishes a new self-asserted display name (routing.json's
-   * `name`, didcomm/webvh-routing.ts's setRoutingName) -- main.ts's own
-   * closure, since it holds the root key this needs to sign with; this file
-   * never sees key material. */
-  onEditName?(name: string): Promise<void>
-  /** A domain move is also a permanent-pre-rotation transition. */
-  onMoveIdentity?(newDomain: string, revealedPrivateKey: Uint8Array, revealedPublicKey: Uint8Array, nextKeyHash: string): Promise<string>
   /** Live status for the identity's encrypted Vault (MIMI Self Vault --
    * the retired Coordinator backend this card used to also cover is gone).
    * This deliberately contains operational metadata only; no key material

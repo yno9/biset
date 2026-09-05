@@ -1,7 +1,4 @@
 import { render } from '../thread.ts'
-import { currentNextKeyHashes } from '../../identity/webvh/prerotation.ts'
-import { showMnemonic } from '../mnemonic.ts'
-import { fromHex } from '../../identity/bootstrap.ts'
 import { getAccountConfig } from './state.ts'
 
 let configPageActive = false
@@ -121,7 +118,6 @@ export function showConfigPage(): void {
   const dock = document.getElementById('reply-dock')
   if (dock) dock.innerHTML = ''
 
-  const did = config.did
   const card = document.createElement('div')
   card.className = 'cmd-thread-card'
   card.id = 'focused-thread-card'
@@ -129,36 +125,11 @@ export function showConfigPage(): void {
   activeEl.innerHTML = ''
   activeEl.appendChild(card)
 
-  const preRotKey = card.querySelector<HTMLElement>('#config-prerotation-key')!
-  const rootKey = card.querySelector<HTMLElement>('#config-rootkey')!
-
-  rootKey.textContent = did
-
-  const refresh = async (): Promise<void> => {
-    try {
-      const hashes = await currentNextKeyHashes(did)
-      if (hashes.length !== 1) throw new Error('identity does not satisfy permanent pre-rotation invariants')
-      preRotKey.textContent = hashes[0]!
-    } catch (e) { preRotKey.textContent = e instanceof Error ? e.message : String(e) }
-  }
-  void refresh()
-
-  // #prerotation-rotate-btn is intentionally left with no click wiring here:
-  // Spare Key rotation used to commit through the Coordinator self-group,
-  // which has been retired outright and has no MIMI-native replacement yet
-  // (key-rotation work is deferred). Present in the DOM, inert for now --
-  // same treatment this file's own header already gives every other
-  // not-yet-wired element (the devices list, #cmd-acc-list, and so on).
-
-  // Sign Key reveal has no wiring to give it: biset never retains a copy of
-  // a rotated-to Spare/Sign Key phrase once shown (prerotation.ts's own
-  // header) -- that absence IS the design, not a gap. Root Key reveal is a
-  // real capability (masterSeed is on disk); the click just needs it.
-  rootKey.addEventListener('click', () => {
-    const masterSeed = getAccountConfig()?.masterSeed
-    if (!masterSeed) return
-    showMnemonic(fromHex(masterSeed), { firstTime: false })
-  })
+  // The whole "Key rotation" section is markup only since N1 (2026-09-05).
+  // Pre-rotation, Spare/Sign rotation and the Root Key phrase reveal all
+  // belonged to the native BIP39 identity biset no longer issues -- did.md
+  // owns key rotation now. Present and inert, exactly like Notifications,
+  // Vault and +New Relay above (this file's header covers the convention).
 }
 
 export function hideConfigPage(): void {

@@ -20,7 +20,7 @@ import {
 } from './identity/bootstrap.ts'
 import { IndexedDbMlsSelfGroupStore } from './mls/store.ts'
 import { IndexedDbVaultStore } from './vault/store.ts'
-import { setOnIdentityCreated, setOnWalletConnected } from './ui/account-create.ts'
+import { setOnWalletConnected } from './ui/account-create.ts'
 import { beginDidMdWalletMessagingEnrollment, disconnectDidMdWallet, openDidMdWalletBisetDidCommDevice, openDidMdWalletBisetDevice, restoreDidMdWalletSession } from './wallet/did-md-oauth.ts'
 import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
 import { configureCompose } from './ui/thread.ts'
@@ -118,10 +118,6 @@ let mediatorPollHandles: MediatorPollHandle[] = []
 // account-create.ts, for the identical reason bootClient does: importing it
 // from account-create.ts would close the same kind of cycle (account-page.ts
 // already imports FROM account-create.ts for the inline-mount helpers).
-setOnIdentityCreated(async () => {
-  await bootClient()
-  showAccountPage()
-})
 setOnWalletConnected(async () => {
   await bootClient()
   showAccountPage()
@@ -903,9 +899,8 @@ export async function bootClient(): Promise<void> {
     return moved.did
   }
   configureAccountPage({
-    did: identity.did, masterSeed: identity.masterSeed,
-    onLogout: logout, onEditName: editName,
-    onMoveIdentity: moveIdentity,
+    did: identity.did,
+    onLogout: logout,
     onRemoveVaultDevice: mimiVaultRoom ? removeVaultDevice : undefined,
     vault: vaultCardStatus,
     showMessage: showSysMsg,

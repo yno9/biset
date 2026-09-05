@@ -34,7 +34,6 @@ import { showComposePage } from './compose-page.ts'
 import { mountNewUserPageInline, unmountNewUserPageInline, setupNewUserPage } from './account-create.ts'
 import { getAccountConfig, type VaultCardState, type VaultCardStatus } from './account/state.ts'
 import { openDropdownMenu, type MenuItem } from './account/menu.ts'
-import { openDisplayNameModal, openEditIdentityModal } from './account/identity-modals.ts'
 
 // The page's own state and markup live here; the pieces below were split out
 // (2026-09-05) into ./account/ by concern -- config state + the config types
@@ -95,9 +94,6 @@ function identityMenuItems(did: string): MenuItem[] {
     { label: 'Protect with passkey', onClick: noop },
     { label: 'Export Messages', onClick: noop },
     { label: 'Import Messages', onClick: noop },
-    ...(did.startsWith('did:webvh:') ? [
-      { label: 'Edit identity', onClick: () => openEditIdentityModal(did) },
-    ] : []),
     {
       label: 'Log out', danger: true, onClick: () => {
         const config = getAccountConfig()
@@ -503,20 +499,11 @@ export function showAccountPage(): void {
     e.stopPropagation()
     navigator.clipboard?.writeText(did).then(() => getAccountConfig()?.showMessage?.('DID copied')).catch(() => {})
   })
-  // Name + pencil icon are the same "click to rename" target (src.bak's
-  // `identityName.onclick` -- the pencil is a hover affordance, not a
-  // separate control). Found live, 2026-08-26: neither was wired at all,
-  // only the identity menu's own "Edit identity" item was -- so clicking
-  // the pencil did nothing but toggle the card open/closed (bubbled to
-  // `fields` below).
-  const nameRow = document.getElementById('cmd-acc-identity-name-row')
-  if (config.onEditName) nameRow?.addEventListener('click', e => {
-    e.stopPropagation()
-    openDisplayNameModal(did, currentName)
-  })
-  if (config.wallet) {
-    document.getElementById('cmd-acc-identity-name-edit')?.setAttribute('style', 'display:none')
-  }
+  // Renaming an identity (src.bak's `identityName.onclick` display-name
+  // modal) and the domain-move "Edit identity" modal both went with the
+  // native BIP39 identity in N1 (2026-09-05): both signed with the Sign key
+  // biset no longer holds. The pencil affordance stays hidden.
+  document.getElementById('cmd-acc-identity-name-edit')?.setAttribute('style', 'display:none')
   const menuBtn = document.getElementById('cmd-acc-identity-menu-btn')
   menuBtn?.addEventListener('click', e => {
     e.stopPropagation()
