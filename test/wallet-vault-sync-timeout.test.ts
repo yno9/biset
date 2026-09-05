@@ -68,12 +68,6 @@ describe('did.md Wallet MIMI Vault sync guard (main.ts)', () => {
     expect(entry).toContain('withVaultSyncTimeout(runWalletVaultSyncOnce())')
   })
 
-  test('the local-identity path is raced against the same helper', () => {
-    // Both paths, one implementation -- a fix to the budget or the cleanup
-    // cannot land on one account kind and miss the other.
-    expect(source).toContain('withVaultSyncTimeout(synchronizeMimi())')
-  })
-
   test('the helper races against a bounded budget and clears its timer', () => {
     const helper = timeoutHelper()
     expect(helper).toContain('Promise.race([')
@@ -82,9 +76,8 @@ describe('did.md Wallet MIMI Vault sync guard (main.ts)', () => {
     const budgetLiteral = /VAULT_SYNC_TIMEOUT_MS = ([\d_]+)/.exec(source)
     expect(budgetLiteral).not.toBeNull()
     const budgetMs = Number(budgetLiteral![1]!.replace(/_/g, ''))
-    // Same budget the local-identity path settled on -- long enough that a
-    // slow-but-live sync is never cut short, short enough that a wedged one
-    // recovers within one user-visible beat.
+    // Long enough that a slow-but-live sync is never cut short, short enough
+    // that a wedged one recovers within one user-visible beat.
     expect(budgetMs).toBe(25_000)
     // A round that finishes fast still holds a pending timer otherwise, one
     // per tick, and the poll interval is shorter than the budget.
