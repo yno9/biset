@@ -27,11 +27,11 @@ import { readBisetConfig } from './ui/config.ts'
 import { VaultBackedLocalJmapMutationSink } from './local-jmap/vault-mutation-sink.ts'
 import { DidCommIngressProjector } from './didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from './didcomm/webvh-resolve.ts'
-import { sendDidCommMessage, sendRelationshipAccept, sendRelationshipMessage } from './didcomm/send-message.ts'
+import { sendRelationshipMessage } from './didcomm/send-message.ts'
 import { didCommThreadId } from './didcomm/basicmessage.ts'
 import { isProjectableDidCommIngress } from './didcomm/ingress-projector.ts'
 import { registerWithMediator, type MediatorPollHandle } from './didcomm/mediator-sync.ts'
-import { sameMediatorUrl, watchMediator } from './didcomm/mediator-watch.ts'
+import { watchMediator } from './didcomm/mediator-watch.ts'
 import type { DidCommSender } from './didcomm/mediator-transport.ts'
 import type { DeliveredMessage } from './didcomm/mediator-pickup.ts'
 import { ingestTransportIngress } from './vault/ingress-ingest.ts'
@@ -43,10 +43,9 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { ContactKeyReader } from './vault/contact-key-reader.ts'
 import { ContactKeyVaultSink } from './vault/contact-key-sink.ts'
 import type { ContactKeyV1 } from './vault/contact-key.ts'
-import { decodePeerDid2, generatePeerIdentity, publicKeyOf } from './didcomm/peer.ts'
-import { RELATIONSHIP_INIT, relationshipBodyOf, relationshipMediatorService } from './didcomm/relationship.ts'
+import { decodePeerDid2, publicKeyOf } from './didcomm/peer.ts'
+import { relationshipMediatorService } from './didcomm/relationship.ts'
 import type { DidCommPlaintext } from './didcomm/message.ts'
-import { didOfKid } from './shared/protocol/ids.ts'
 import { ingestVaultDelivery } from './vault/delivery-ingest.ts'
 import { MimiClientTransport } from './mls/mimi-client-transport.ts'
 import { PersistedMimiVaultSession } from './mls/mimi-vault-session.ts'
@@ -55,6 +54,11 @@ import { removeMimiVaultDevice } from './mls/mimi-vault-room.ts'
 import { synchronizeMimiVault } from './vault/mimi-vault-sync.ts'
 import type { DeliveriesPullRequest } from './mimi/protocol-types.ts'
 import { deliveriesPullSigningBytes } from './mimi/authorizer.ts'
+import {
+  createWalletRelationshipManager,
+  type RelationshipWatchStarter,
+  type WalletRelationshipManager,
+} from './wallet/relationship.ts'
 
 let mimiVaultWatchHandle: { close(): void } | undefined
 let mediatorPollHandles: MediatorPollHandle[] = []
@@ -160,17 +164,6 @@ function updateRememberedVaultCard(
   updateVaultCardStatus(status)
 }
 
-type RelationshipWatchStarter = (xKid: string, xPriv: Uint8Array, did: string, mediatorUrl: string) => void
-
-interface RelationshipContactReader {
-  readAll(): Promise<ContactKeyV1[]>
-  currentFor(counterpartyDid: string): Promise<ContactKeyV1 | null>
-}
-
-interface RelationshipContactSink {
-  store(contact: ContactKeyV1): Promise<unknown>
-}
-
 function startRelationshipWatch(
   watchedKids: Set<string>, mediatorUrl: string, own: DidCommSender,
   resolveSenderKey: (kid: string) => Promise<Uint8Array>,
@@ -184,7 +177,7 @@ function startRelationshipWatch(
 }
 
 async function restoreRelationshipWatches(
-  reader: RelationshipContactReader,
+  reader: { readAll(): Promise<ContactKeyV1[]>; currentFor(counterpartyDid: string): Promise<ContactKeyV1 | null> },
   startWatch: RelationshipWatchStarter,
   onReadAllError?: (error: unknown) => void,
   onCurrentError?: (counterpartyDid: string, error: unknown) => void,
@@ -235,38 +228,6 @@ function didCommMediatorIngressEnvelope(
   }
 }
 
-async function handleRelationshipInit(
-  message: DeliveredMessage, mediatorUrl: string, identityId: string,
-  reader: RelationshipContactReader, sink: RelationshipContactSink,
-  startWatch: RelationshipWatchStarter, afterContactStored: () => Promise<unknown> = async () => {},
-): Promise<void> {
-  const plaintext = message.plaintext as DidCommPlaintext
-  if (plaintext.type !== RELATIONSHIP_INIT) return
-  const body = relationshipBodyOf(plaintext)
-  if (!body) throw new TypeError('relationship message body is invalid')
-  const route = relationshipMediatorService(body.relationshipKid)
-  if (!sameMediatorUrl(route.url, mediatorUrl)) throw new TypeError('relationship mediator does not match the delivery route')
-  if (message.senderKid.startsWith('did:peer:2.')) throw new TypeError('relationship init must be authenticated by a public front-door kid')
-  const counterpartyDid = didOfKid(message.senderKid)
-  let contact = await reader.currentFor(counterpartyDid)
-  if (!contact || contact.counterpartyRelationshipKid !== body.relationshipKid) {
-    const peer = generatePeerIdentity({ uri: route.url, routingKeys: [route.routingKid] })
-    await registerWithMediator(route.url, { did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv })
-    const next: ContactKeyV1 = {
-      version: 1, kind: 'contact-key', identityId, counterpartyDid,
-      ownRelationshipKid: peer.xKid, ownX25519PrivateKey: peer.xPriv, ownEd25519PrivateKey: peer.edPriv,
-      counterpartyRelationshipKid: body.relationshipKid, counterpartyPublicKey: body.publicKey,
-      createdAt: new Date().toISOString(), ...(contact ? { supersedesKid: contact.ownRelationshipKid } : {}),
-    }
-    await sink.store(next)
-    contact = next
-    await afterContactStored()
-    startWatch(peer.xKid, peer.xPriv, peer.did, route.url)
-  }
-  const accepted = await sendRelationshipAccept(contact)
-  if (!accepted.ok) throw new Error(accepted.error)
-}
-
 async function configureWalletAccountIfPresent(): Promise<boolean> {
   let session
   try {
@@ -280,6 +241,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
   let onRemoveVaultDevice: ((targetDeviceId: string) => Promise<void>) | undefined
   let didComm: { xKid: string; mediatorUrl: string; error?: string } | undefined
   let activeDidCommDevice: { did: string; xKid: string; x25519PrivateKey: Uint8Array } | undefined
+  let walletRelationshipManager: WalletRelationshipManager | undefined
   try {
     const device = await openDidMdWalletBisetDevice()
     const { mimiSelfBaseUrl, mediatorUrls } = readBisetConfig()
@@ -574,9 +536,13 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
             error => console.warn('[did.md Wallet relationship watch]', error),
           )
         }
-        const handleWalletRelationshipMessage = async (message: DeliveredMessage, mediatorUrl: string): Promise<void> => {
-          await handleRelationshipInit(message, mediatorUrl, device.did, walletContactKeyReader, walletContactKeySink, startWalletRelationshipWatch)
-        }
+        walletRelationshipManager = createWalletRelationshipManager({
+          identityId: device.did,
+          frontDoor: { xKid: didCommDevice.xKid, x25519PrivateKey: didCommDevice.x25519PrivateKey },
+          reader: walletContactKeyReader,
+          sink: walletContactKeySink,
+          startWatch: startWalletRelationshipWatch,
+        })
         handleWalletDidCommMessage = async (message, recipientKid, mediatorUrl) => {
             // A Wallet account carries no group-chat or mail-bridge handling
             // (both live in the local-identity boot path's own onMessage). Its
@@ -605,7 +571,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
             // the missing second half: register the private receiver, store
             // its encrypted contact key, then send the DIDComm ACCEPT.  The
             // Pickup ACK is intentionally delayed until all three succeed.
-            await handleWalletRelationshipMessage(message, mediatorUrl)
+            await walletRelationshipManager!.handleMessage(message, recipientKid, mediatorUrl)
             await refreshInbox(readModel)
             void synchronizeWalletVault()
         }
@@ -630,19 +596,17 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
       console.warn('[did.md Wallet DIDComm]', error)
     }
     const sendWalletMessage = async (input: ReplySendInput): Promise<void> => {
-      if (!activeDidCommDevice) throw new Error('DIDComm is still connecting for this Wallet session')
+      if (!activeDidCommDevice || !walletRelationshipManager) throw new Error('DIDComm is still connecting for this Wallet session')
       if (input.toAddrs.length !== 1 || !input.toAddrs[0]?.startsWith('did:')) {
         throw new Error('A did.md Wallet session can currently compose to one DID recipient')
       }
       const toDid = input.toAddrs[0]
-      const contact = await walletContactKeyReader.currentFor(toDid)
-      const sent = contact
-        ? await sendRelationshipMessage(contact, input.body, input.subject)
-        : await sendDidCommMessage(toDid, input.body, {
-          fromKid: activeDidCommDevice.xKid,
-          x25519PrivateKey: activeDidCommDevice.x25519PrivateKey,
-          ...(input.subject ? { subject: input.subject } : {}),
-        })
+      // First contact creates a private did:peer relationship and waits for
+      // its authenticated ACCEPT. Ordinary content never rides the public
+      // Wallet device kid, so the first message has the same privacy and
+      // retry boundary as every later message in the conversation.
+      const contact = await walletRelationshipManager.ensureContact(toDid)
+      const sent = await sendRelationshipMessage(contact, input.body, input.subject)
       if (!sent.ok) throw new Error(sent.error)
       const now = new Date().toISOString()
       const snapshot = await readModel.snapshot()
