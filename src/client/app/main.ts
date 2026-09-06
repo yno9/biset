@@ -22,7 +22,7 @@ import {
 import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
 import { configureCompose } from './ui/thread.ts'
 import type { ReplySendInput } from './ui/thread.ts'
-import { configureAccountPage, showAccountPage, updateVaultCardStatus, type VaultCardStatus } from './ui/account-page.ts'
+import { configureAccountPage, showAccountPage, updateHistoryRecoveryStatus, updateVaultCardStatus, type VaultCardStatus } from './ui/account-page.ts'
 import { configureComposePage } from './ui/compose-page.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { VaultBackedLocalJmapMutationSink } from '../store/projection/vault-mutation-sink.ts'
@@ -245,6 +245,13 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
   }
   if (!session) return false
   let vault: VaultCardStatus | undefined
+  let historyRecoveryDetail: { detail: string; since: string } | undefined
+  // Assigned together with historyRecoveryDetail inside the try block below
+  // (both close over `device`/`vaultStore`, unavailable until then) --
+  // whenever historyRecoveryDetail is set, this is too, since nothing else
+  // sets either. Declared out here because the account page is configured
+  // after that try/catch closes, not inside it.
+  let onStartFreshWithoutHistory: (() => Promise<void>) | undefined
   let onRemoveVaultDevice: ((targetDeviceId: string) => Promise<void>) | undefined
   let didComm: { xKid: string; mediatorUrl: string; error?: string } | undefined
   let activeDidCommDevice: { did: string; xKid: string; x25519PrivateKey: Uint8Array } | undefined
@@ -345,6 +352,19 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
     // discarded a Wallet account's encrypted history.
     await refreshInbox(readModel).catch(error => console.warn('[did.md Wallet inbox restore]', error))
 
+    // Reads the durable flag store.ts's restoreCheckpoint callback below
+    // sets (and advanceDeliveryCursor clears on the next successful
+    // restore) and shapes it for the account page. Called once per sync
+    // round -- not just on failure -- so the card also disappears the
+    // round a sibling's fresh checkpoint lands, without needing its own
+    // separate "did this just get resolved" check.
+    onStartFreshWithoutHistory = (): Promise<void> =>
+      vaultStore.acknowledgeCheckpointEpochUnavailable(device.did, device.credential.deviceKid).then(refreshHistoryRecoveryCard)
+    async function refreshHistoryRecoveryCard(): Promise<void> {
+      const status = await vaultStore.readCheckpointRecoveryStatus(device.did, device.credential.deviceKid)
+      historyRecoveryDetail = status.unavailable ? { detail: status.detail ?? 'unknown', since: status.since ?? new Date().toISOString() } : undefined
+      updateHistoryRecoveryStatus(historyRecoveryDetail && { ...historyRecoveryDetail, onStartFresh: onStartFreshWithoutHistory! })
+    }
     const setWalletVaultStatus = (next: VaultCardStatus): void => {
       // The first sync begins before configureAccountPage() below.  Retain
       // its result locally as well as repainting an already-mounted card,
@@ -433,7 +453,21 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
             // and deliberately do NOT arm staleCheckpointEpoch here: this
             // device needed that history and does not have it, so it is the
             // last device that should publish a replacement.
-            if (!sameVaultCheckpointEpoch(checkpointEpoch, currentEpoch)) throw new VaultCheckpointEpochUnavailableError(checkpointEpoch, currentEpoch)
+            if (!sameVaultCheckpointEpoch(checkpointEpoch, currentEpoch)) {
+              // The gap this throw produces is gone by the NEXT sync round
+              // (the delivery cursor already moved past this manifest, so
+              // it is never re-pulled -- mimi-vault-sync.ts's own comment).
+              // Recorded here, durably, so the account page has something
+              // to show for longer than one round: this device's own local
+              // history is genuinely gone until a sibling that holds it
+              // republishes, or the person accepts the loss.
+              await vaultStore.recordCheckpointEpochUnavailable(
+                device.did, device.credential.deviceKid,
+                `sealed for self-group epoch ${checkpointEpoch.selfGroupId}/${checkpointEpoch.epoch}, this device is at ${currentEpoch.selfGroupId}/${currentEpoch.epoch}`,
+                new Date().toISOString(),
+              )
+              throw new VaultCheckpointEpochUnavailableError(checkpointEpoch, currentEpoch)
+            }
             const vek = await boundary.epochs.deriveVaultEpochKey(device.did, currentEpoch.selfGroupId, currentEpoch.epoch)
             let snapshot
             try {
@@ -532,6 +566,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
             }
           } finally { for (const segment of snapshot.segmentKeys) segment.key.fill(0) }
         }
+        await refreshHistoryRecoveryCard()
         const gap = result.gaps[0]
         setWalletVaultStatus({
           state: 'connected', coordinatorUrl: mimiSelfBaseUrl, vaultId: ensured.room.roomId as never,
@@ -931,6 +966,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
       },
     },
     vault,
+    ...(historyRecoveryDetail ? { historyRecovery: { ...historyRecoveryDetail, onStartFresh: onStartFreshWithoutHistory! } } : {}),
     onRemoveVaultDevice,
     showMessage: showSysMsg,
   })

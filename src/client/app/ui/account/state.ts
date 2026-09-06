@@ -45,6 +45,19 @@ export interface AccountPageConfig {
    * This deliberately contains operational metadata only; no key material
    * belongs in the UI. */
   vault?: VaultCardStatus
+  /** Present only when this device's local Vault is missing history a
+   * checkpoint could not restore for it (store.ts's
+   * `VaultCheckpointRecoveryStatus`, epoch-bound by construction -- no
+   * retry or repair on this device can bring it back). `onStartFresh`
+   * acknowledges the loss; it performs no data operation of its own, since
+   * this device has already been operating without that history since the
+   * moment it was found unrecoverable -- see the store method's own doc
+   * comment on why. */
+  historyRecovery?: {
+    detail: string
+    since: string
+    onStartFresh(): Promise<void>
+  }
   /** Drops one sibling leaf ("zombie device") from the Self/Vault MLS room.
    * MIMI-only (vault.devices only ever has a Remove button rendered when
    * this is set) -- the retired coordinator never had an individual-removal

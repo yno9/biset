@@ -32,7 +32,7 @@ import { resolve } from '../../../protocol/webvh/resolver.ts'
 import { shortWebvhDid } from './did-display.ts'
 import { showComposePage } from './compose-page.ts'
 import { mountNewUserPageInline, unmountNewUserPageInline, setupNewUserPage } from './account-create.ts'
-import { getAccountConfig, type VaultCardState, type VaultCardStatus } from './account/state.ts'
+import { getAccountConfig, type AccountPageConfig, type VaultCardState, type VaultCardStatus } from './account/state.ts'
 import { openDropdownMenu, type MenuItem } from './account/menu.ts'
 
 // The page's own state and markup live here; the pieces below were split out
@@ -65,6 +65,24 @@ export function updateVaultCardStatus(status: VaultCardStatus): void {
   if (active) {
     renderVaultCard()
     renderWalletAccountCard()
+    renderHistoryRecoveryCard()
+  }
+}
+
+/** Same shared-list repaint as updateVaultCardStatus, driven independently:
+ * main.ts calls this once per sync round with whatever
+ * `vaultStore.readCheckpointRecoveryStatus` currently says, so the card
+ * appears the round a checkpoint turns out unrecoverable and disappears the
+ * round a sibling's fresh one lands -- without waiting for a full
+ * account-page re-render. */
+export function updateHistoryRecoveryStatus(status: AccountPageConfig['historyRecovery']): void {
+  const config = getAccountConfig()
+  if (!config?.did) return
+  config.historyRecovery = status
+  if (active) {
+    renderVaultCard()
+    renderWalletAccountCard()
+    renderHistoryRecoveryCard()
   }
 }
 
@@ -362,6 +380,60 @@ function renderWalletAccountCard(): void {
   list.appendChild(row)
 }
 
+/** Same "append into the shared list, do not wipe it" convention as
+ * renderWalletAccountCard: renderVaultCard alone owns the replaceChildren
+ * that clears #cmd-acc-list for this render pass. Absent entirely (not just
+ * hidden) when there is nothing to report -- most accounts never see this
+ * card. */
+function renderHistoryRecoveryCard(): void {
+  const recovery = getAccountConfig()?.historyRecovery
+  const list = document.getElementById('cmd-acc-list')
+  if (!recovery || !list) return
+
+  const wrap = document.createElement('div')
+  wrap.className = 'acc-card-wrap'
+  wrap.style.cssText = 'border-color:#ff9500'
+  const row = document.createElement('div')
+  row.className = 'cmd-page-row'
+  row.style.cssText = 'gap:12px;align-items:flex-start;padding:10px 12px;flex-direction:column'
+
+  const head = document.createElement('div')
+  head.style.cssText = 'display:flex;align-items:center;gap:8px'
+  const dot = document.createElement('span')
+  dot.style.cssText = 'width:8px;height:8px;border-radius:50%;flex-shrink:0;background:#ff9500'
+  const title = document.createElement('span')
+  title.style.cssText = 'font-size:13px;font-weight:600'
+  title.textContent = 'Earlier history is unavailable on this device'
+  head.append(dot, title)
+
+  const body = document.createElement('div')
+  body.style.cssText = 'font-size:12px;color:var(--text-dim);line-height:1.5'
+  body.textContent = `This device joined after the Vault's history, and it could not be recovered automatically. Opening another of this identity's devices resolves this the next time it syncs, since only a device holding the full history can restore it here. Waiting since ${new Date(recovery.since).toLocaleString()}.`
+
+  const actions = document.createElement('div')
+  actions.style.cssText = 'display:flex;gap:8px'
+  const startFresh = document.createElement('button')
+  startFresh.type = 'button'
+  startFresh.className = 'cmd-page-btn'
+  startFresh.style.cssText = 'width:auto;padding:5px 9px;font-size:11px'
+  startFresh.textContent = 'Continue without it'
+  startFresh.addEventListener('click', () => {
+    if (!confirm('This device will keep using its Vault as-is, without the history that came before it joined. This cannot be undone on this device -- if another of your devices still has that history, open it there instead. Continue?')) return
+    startFresh.disabled = true
+    void recovery.onStartFresh()
+      .then(() => getAccountConfig()?.showMessage?.('Continuing without the earlier history'))
+      .catch(error => {
+        getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
+        startFresh.disabled = false
+      })
+  })
+  actions.appendChild(startFresh)
+
+  row.append(head, body, actions)
+  wrap.appendChild(row)
+  list.appendChild(wrap)
+}
+
 export function showAccountPage(): void {
   const activeEl = document.getElementById('active-thread')
   const past = document.getElementById('past-threads')
@@ -422,6 +494,7 @@ export function showAccountPage(): void {
   activeEl.appendChild(card)
   renderVaultCard()
   renderWalletAccountCard()
+  renderHistoryRecoveryCard()
 
   const nameEl = document.getElementById('cmd-acc-identity-name')
   const didEl = document.getElementById('cmd-acc-identity-did')

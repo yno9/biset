@@ -272,6 +272,31 @@ export interface VaultDeliveryCursorReader {
   readDeliveryCursor(identityId: IdentityId, recipientDeviceId: DeviceId): Promise<DeliverySeq>
 }
 
+/** Whether the last checkpoint this device saw was sealed for a self-group
+ * epoch it can no longer derive a VEK for (VaultCheckpointEpochUnavailableError,
+ * mimi-vault-sync.ts's own `checkpoint-epoch-unavailable` gap) -- i.e. this
+ * device's local Vault is missing whatever history preceded the epoch it
+ * joined at, and nothing it does locally can recover that history. Only a
+ * sibling device that already holds the full Vault republishing a fresh
+ * checkpoint (or the device accepting the loss) clears this.
+ *
+ * Deliberately NOT the same thing as a `gaps` entry from one sync round:
+ * `advanceDeliveryCursor` moves the cursor past the unopenable manifest the
+ * moment it is seen (mimi-vault-sync.ts's own comment on why a skip here is
+ * permanent), so the gap itself is gone by the very next round -- silently.
+ * This flag is what survives that, and is the one thing an account-page
+ * card can read across reloads to tell "waiting to hear from a sibling"
+ * apart from "nothing is wrong". */
+export interface VaultCheckpointRecoveryStatus {
+  unavailable: boolean
+  detail?: string
+  since?: string
+}
+
+export interface VaultCheckpointRecoveryStatusReader {
+  readCheckpointRecoveryStatus(identityId: IdentityId, recipientDeviceId: DeviceId): Promise<VaultCheckpointRecoveryStatus>
+}
+
 /** ACKs are durable work items, independent of whether a push/network wake succeeds. */
 export interface VaultDeliveryAckOutboxReader {
   readDeliveryAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, limit?: number): Promise<VaultDeliveryAckOutboxRecord[]>
@@ -279,7 +304,7 @@ export interface VaultDeliveryAckOutboxReader {
   noteDeliveryAckOutboxAttempt(identityId: IdentityId, recipientDeviceId: DeviceId, seq: DeliverySeq): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjectionWriter, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressReceiptReader, IngressAckOutboxReader, DidCommTransportOutboxStore, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader {
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjectionWriter, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressReceiptReader, IngressAckOutboxReader, DidCommTransportOutboxStore, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultCheckpointRecoveryStatusReader, VaultDeliveryAckOutboxReader {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -659,7 +684,12 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
   }
 
   /** Advances a restored device to the remote checkpoint's covered
-   * sequence only after records and projection are durable. */
+   * sequence only after records and projection are durable. This is the
+   * only caller in the app (main.ts's `restoreCheckpoint`), reached only on
+   * a SUCCESSFUL checkpoint restore -- so landing here always means
+   * whatever `checkpoint-epoch-unavailable` state this device recorded
+   * earlier is resolved, and is cleared unconditionally alongside the
+   * cursor. */
   async advanceDeliveryCursor(identityId: IdentityId, recipientDeviceId: DeviceId, cursor: DeliverySeq, checkpointId: string, committedAt: string): Promise<void> {
     if (!identityId || !recipientDeviceId || !cursor || !checkpointId || Number.isNaN(Date.parse(committedAt))) throw new TypeError('restored delivery cursor is invalid')
     const transaction = this.database.transaction(STORES.deliveryState, 'readwrite')
@@ -670,6 +700,55 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
       throw new TypeError('restored delivery cursor cannot move backwards')
     }
     store.put({ identityId, deviceId: recipientDeviceId, cursor, checkpointId, committedAt })
+    await transactionDone(transaction)
+  }
+
+  async readCheckpointRecoveryStatus(identityId: IdentityId, recipientDeviceId: DeviceId): Promise<VaultCheckpointRecoveryStatus> {
+    if (!identityId || !recipientDeviceId) throw new TypeError('checkpoint recovery status identity and device are required')
+    const transaction = this.database.transaction(STORES.deliveryState, 'readonly')
+    const completed = transactionDone(transaction)
+    const record = await requestValue<{ checkpointUnavailable?: boolean; checkpointUnavailableDetail?: string; checkpointUnavailableSince?: string } | undefined>(
+      transaction.objectStore(STORES.deliveryState).get([identityId, recipientDeviceId]),
+    )
+    await completed
+    if (!record?.checkpointUnavailable) return { unavailable: false }
+    return { unavailable: true, detail: record.checkpointUnavailableDetail, since: record.checkpointUnavailableSince }
+  }
+
+  /** Records that the checkpoint just seen cannot be opened by this device
+   * (a stale self-group epoch) and there is nothing local retry can do
+   * about it -- see the field's own doc comment on `VaultCheckpointRecoveryStatus`.
+   * `since` is preserved across repeated calls so the UI can show how long
+   * this device has been waiting, not just that it still is. */
+  async recordCheckpointEpochUnavailable(identityId: IdentityId, recipientDeviceId: DeviceId, detail: string, now: string): Promise<void> {
+    if (!identityId || !recipientDeviceId || !detail || Number.isNaN(Date.parse(now))) throw new TypeError('checkpoint-epoch-unavailable record is invalid')
+    const transaction = this.database.transaction(STORES.deliveryState, 'readwrite')
+    const store = transaction.objectStore(STORES.deliveryState)
+    const existing = await requestValue<Record<string, unknown> | undefined>(store.get([identityId, recipientDeviceId]))
+    store.put({
+      identityId, deviceId: recipientDeviceId,
+      ...existing,
+      checkpointUnavailable: true,
+      checkpointUnavailableDetail: detail,
+      checkpointUnavailableSince: typeof existing?.checkpointUnavailableSince === 'string' ? existing.checkpointUnavailableSince : now,
+    })
+    await transactionDone(transaction)
+  }
+
+  /** The "this device's earlier history could not be recovered -- continue
+   * without it" acknowledgement. It clears only the recovery-status fields:
+   * this device already has been operating as if that history never
+   * existed (mimi-vault-sync.ts's own note that a skipped manifest cannot
+   * be re-pulled), so there is no data operation left to perform here, only
+   * the record of having told the user and them having accepted it. */
+  async acknowledgeCheckpointEpochUnavailable(identityId: IdentityId, recipientDeviceId: DeviceId): Promise<void> {
+    if (!identityId || !recipientDeviceId) throw new TypeError('checkpoint recovery acknowledgement identity and device are required')
+    const transaction = this.database.transaction(STORES.deliveryState, 'readwrite')
+    const store = transaction.objectStore(STORES.deliveryState)
+    const existing = await requestValue<Record<string, unknown> | undefined>(store.get([identityId, recipientDeviceId]))
+    if (!existing) { await transactionDone(transaction); return }
+    const { checkpointUnavailable: _u, checkpointUnavailableDetail: _d, checkpointUnavailableSince: _s, ...rest } = existing
+    store.put(rest)
     await transactionDone(transaction)
   }
 
