@@ -569,13 +569,17 @@ export async function joinGroupExternally(
    * been revoked from its owner's DID document. Normal joins always use the
    * installed DID Authentication Service. */
   authenticationService?: AuthenticationService,
-  /** True only for a device replacing its OWN existing leaf (a did:webvh
-   * domain move, identity/webvh/move.ts's own credential-migration step,
-   * via generateOwnKeyPackageWithSignatureKey's matching signature key) —
-   * the resulting commit atomically removes that leaf and adds this one.
-   * False (the default) for a genuinely new device joining: resync would
-   * remove whichever existing leaf's signature key happens to match `own`'s,
-   * which for a new device is nobody's and must stay that way. */
+  /** True only for a device rejoining under its OWN existing signature key —
+   * the resulting commit atomically removes whichever leaf matches it (if
+   * any, see protocol/mls/createCommit.ts's VENDOR.md entry) and adds this
+   * one. Two callers: `vault-room.ts`'s `joinMimiVaultRoom` retry, when this
+   * device's own local MLS state was lost but the hub still holds its stale
+   * leaf, and a did:webvh domain move re-issuing a device's credential
+   * (formerly `identity/webvh/move.ts`, removed 2026-09-05 with native
+   * login — currently no caller). False (the default) for a genuinely new
+   * device joining: resync would remove whichever existing leaf's signature
+   * key happens to match `own`'s, which for a new device is nobody's and
+   * must stay that way. */
   resync = false,
 ): Promise<CommitResult> {
   const suite = await mlsSuite()

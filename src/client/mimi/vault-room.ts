@@ -56,6 +56,11 @@ export interface JoinMimiVaultRoomOptions {
   stateStore: MimiVaultSessionStateStore
   mode?: MimiClientMode
   now?: () => Date
+  /** True when this device already holds a leaf in the room (the hub
+   * rejected a plain join as a duplicate client) and this call must remove
+   * that stale leaf as part of joining fresh. See
+   * `joinGroupExternally`'s `resync` parameter. */
+  resync?: boolean
 }
 
 /** Creates and durably records a fresh Self/Vault room.  Nothing is saved
@@ -137,7 +142,7 @@ export async function joinMimiVaultRoom(options: JoinMimiVaultRoomOptions): Prom
     response.encryptedGroupInfoAndTree.kemOutput, response.encryptedGroupInfoAndTree.ciphertext, suite.hpke,
   )
   const groupInfo = decodeGroupInfoRatchetTreeBundle(plaintext).groupInfo
-  const joined = await joinGroupExternally(groupInfo, own)
+  const joined = await joinGroupExternally(groupInfo, own, undefined, options.resync)
   const members: VisibleCredential[] = []
   for (const node of joined.state.ratchetTree) {
     if (node?.nodeType !== 'leaf') continue

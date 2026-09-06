@@ -366,9 +366,10 @@ export async function ensureWalletMimiVaultRoom(
     credential: device.credential, signaturePrivateKey: device.signaturePrivateKey, transport, stateStore: selfGroupStore,
     providerHost: provider.hostname,
   })
-  const join = () => joinMimiVaultRoom({
+  const join = (resync?: boolean) => joinMimiVaultRoom({
     identityId: device.did, deviceId: device.credential.deviceKid, selfGroupId, roomId: device.roomId,
     credential: device.credential, signaturePrivateKey: device.signaturePrivateKey, transport, stateStore: selfGroupStore,
+    resync,
   })
   let room = await selfGroupStore.loadMimiVault(device.did)
   if (room && room.roomId !== device.roomId) throw new Error('This browser has a different local MIMI Vault room; disconnect and clear its Biset device data before reconnecting')
@@ -390,18 +391,30 @@ export async function ensureWalletMimiVaultRoom(
     try {
       await join()
     } catch (joinError) {
+      if (!(joinError instanceof Error)) throw joinError
       // Wallet publishes the room pointer as part of approval, before Biset
       // has created the initial MLS room. If that first browser is interrupted
       // (for example by a blocked Safari popup), a later authorization sees
       // the pointer and would otherwise only attempt this failing join.
-      if (!(joinError instanceof Error) || joinError.message !== 'MIMI Vault external join GroupInfo failed: noSuchRoom') throw joinError
-      try {
-        await create()
-      } catch (createError) {
-        // A sibling may have created the room after our noSuchRoom response.
-        // In that race, joining is the only safe recovery; otherwise preserve
-        // the create error rather than masking a genuine provider failure.
-        try { await join() } catch { throw createError }
+      if (joinError.message === 'MIMI Vault external join GroupInfo failed: noSuchRoom') {
+        try {
+          await create()
+        } catch (createError) {
+          // A sibling may have created the room after our noSuchRoom response.
+          // In that race, joining is the only safe recovery; otherwise preserve
+          // the create error rather than masking a genuine provider failure.
+          try { await join() } catch { throw createError }
+        }
+      } else if (joinError.message.includes('credential duplicates an existing client in this room')) {
+        // This exact device (same persistent signature key) is already a
+        // leaf in the room -- it lost its local MLS state (e.g. cleared
+        // storage) but the hub's copy of its old leaf is still there. A
+        // plain join is correctly rejected as a duplicate; resync removes
+        // that stale leaf as part of adding the fresh one (store.ts's
+        // validateRoomState, protocol/mls/createCommit.ts's VENDOR.md).
+        await join(true)
+      } else {
+        throw joinError
       }
     }
     room = await selfGroupStore.loadMimiVault(device.did)

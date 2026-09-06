@@ -44,3 +44,43 @@ test('a freshly restored device obtains GroupInfo and externally joins its owner
   expect(deployment.store.room(created.roomId)?.memberCredentials.map(member => member.kind === 'visible' ? member.client : '')).toEqual([firstDevice, restoredDevice])
   deployment.close()
 })
+
+// Regression for the live 400 hit on 2026-09-06: a device that lost its
+// local MLS state (e.g. cleared storage) but never lost its Wallet-sealed
+// signature key retries joinMimiVaultRoom with the SAME credential it used
+// the first time. The hub still has that device's old leaf, so a plain
+// rejoin is correctly rejected -- and must be rejected with the specific
+// "duplicate client" message (store.ts's validateRoomState) that
+// ensureWalletMimiVaultRoom's retry looks for, not the ambiguous message
+// this replaced. Passing resync: true is what lets the SAME device recover:
+// it removes its own stale leaf as part of adding the fresh one.
+test('rejoining with the same device credential is rejected as a duplicate, and resync recovers it', async () => {
+  const deployment = createMimiDeployment({ databasePath: ':memory:', mode: 'normal', allowExternalJoin: true, publicBaseUrl: 'https://self.example' })
+  const transport = new MimiClientTransport({ normalBaseUrl: 'https://normal.example', anonBaseUrl: 'https://anon.example', selfBaseUrl: 'https://self.example', fetch: (input, init) => deployment.fetch(new Request(input, init)) })
+  const root = ed25519.utils.randomSecretKey(); const firstSign = ed25519.utils.randomSecretKey(); const lostSign = ed25519.utils.randomSecretKey()
+  const identity = 'did:example:owner'
+  const firstCredential = createMlsDeviceCredential(identity, `1-${'B'.repeat(20)}`, ed25519.getPublicKey(firstSign), root, firstSign)
+  const firstDevice = firstCredential.deviceKid
+  let firstRecord: any
+  const firstStore = { async loadMimiVault() { return firstRecord }, async saveMimiVault(_identity: string, value: any) { firstRecord = value } }
+  const created = await createMimiVaultRoom({ identityId: identity, deviceId: firstDevice, selfGroupId: 'self', credential: firstCredential, signaturePrivateKey: firstSign, transport, stateStore: firstStore, providerHost: 'self.example' })
+
+  const lostCredential = createMlsDeviceCredential(identity, `1-${'B'.repeat(20)}`, ed25519.getPublicKey(lostSign), root, lostSign)
+  const lostDevice = lostCredential.deviceKid
+  let lostRecord: any
+  const lostStore = { async loadMimiVault() { return lostRecord }, async saveMimiVault(_identity: string, value: any) { lostRecord = value } }
+  await joinMimiVaultRoom({ identityId: identity, deviceId: lostDevice, selfGroupId: 'self', roomId: created.roomId, credential: lostCredential, signaturePrivateKey: lostSign, transport, stateStore: lostStore })
+
+  // "Lost its local MLS state" is simulated by retrying with no local record
+  // and the SAME credential/signature key -- the hub sees a second join
+  // attempt from an already-present client id.
+  lostRecord = undefined
+  const plainRetry = joinMimiVaultRoom({ identityId: identity, deviceId: lostDevice, selfGroupId: 'self', roomId: created.roomId, credential: lostCredential, signaturePrivateKey: lostSign, transport, stateStore: lostStore })
+  await expect(plainRetry).rejects.toThrow(/credential duplicates an existing client in this room/)
+
+  const resynced = await joinMimiVaultRoom({ identityId: identity, deviceId: lostDevice, selfGroupId: 'self', roomId: created.roomId, credential: lostCredential, signaturePrivateKey: lostSign, transport, stateStore: lostStore, resync: true })
+  expect(resynced.client).toBe(lostDevice)
+  const clientIds = deployment.store.room(created.roomId)?.memberCredentials.map(member => member.kind === 'visible' ? member.client : '')
+  expect(clientIds).toEqual([firstDevice, lostDevice]) // exactly one leaf per device -- no duplicate
+  deployment.close()
+})
