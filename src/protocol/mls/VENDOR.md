@@ -51,9 +51,30 @@ Every divergence from upstream is marked in the source with a comment starting
   `validateProposals`), not what a committer's own path update may carry;
   this is not a new capability, just exposing a hook upstream never needed.
   `mls/group.ts`'s `updateOwnCredential` is the one caller, used by domain
-  moves (`identity/webvh/move.ts`) to re-issue a device's MLS credential
+  moves (`identity/webvh/move.ts`, removed 2026-09-05 with native login --
+  this hook is currently unused) to re-issue a device's MLS credential
   after its did:webvh identity relocates (ARC.md §4.6). Every existing
   caller's behavior is unchanged when the new parameter is omitted.
+- `createCommit.ts`'s `joinGroupExternal` -- a bug fix, not an addition.
+  `resync: true` is meant to remove whichever existing leaf shares the
+  joiner's signature key (self-recovery: rejoin under the same identity,
+  discarding the stale leaf), but upstream computed the leaf index to
+  remove unconditionally from `resync`, with no check for "no such leaf"
+  (`Array.prototype.findIndex` returning -1). `toNodeIndex` brand-casts
+  without validating range, so that case silently produced a `Remove`
+  proposal for a fractional, negative leaf index. Never exercised upstream
+  or in this fork's history: `resync: true`'s sole caller always had a
+  guaranteed match. Fixed to treat "no match" as a safe no-op (the same
+  behavior as `resync: false`) rather than a corrupt commit -- needed once
+  `vault-room.ts`'s `joinMimiVaultRoom` became `resync`'s second caller
+  (2026-09-06), which cannot guarantee a match up front. Severity check:
+  reverting this fix and running `test/protocol/mls-resync-external-join.test.ts`
+  against the no-match case does not throw or fail fast -- it hangs the
+  process outright (confirmed under both `bun test`'s own `--timeout` flag
+  and an external `kill` deadline), consistent with the negative fractional
+  leaf index driving one of the tree-math helpers into a loop it never
+  terminates. Not merely a bad commit; a denial-of-service on whichever
+  device or server processes it.
 
 ## Keeping it honest
 

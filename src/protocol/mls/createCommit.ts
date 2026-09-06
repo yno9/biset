@@ -541,18 +541,29 @@ export async function joinGroupExternal(
 
   if (!groupInfoSignatureVerified) throw new CryptoVerificationError("Could not verify groupInfo Signature")
 
-  const formerLeafIndex = resync
-    ? nodeToLeafIndex(
-        toNodeIndex(
-          ratchetTree.findIndex((n) => {
-            if (n !== undefined && n.nodeType === "leaf") {
-              return clientConfig.keyPackageEqualityConfig.compareKeyPackageToLeafNode(keyPackage, n.leaf)
-            }
-            return false
-          }),
-        ),
-      )
-    : undefined
+  // biset: upstream computed this unconditionally from `resync`, with no
+  // check for `findIndex` returning -1 (no matching leaf). `toNodeIndex`
+  // brand-casts without validating its input, so a resync request that
+  // does not actually match anything silently produced
+  // `nodeToLeafIndex(-1 as NodeIndex)` === -0.5 -- a non-integer, negative
+  // leaf index fed straight into a `Remove` proposal. Never exercised
+  // upstream or in this fork's own history: the sole caller resync was
+  // built for (a did:webvh domain move re-issuing a device's own credential,
+  // biset's `identity/webvh/move.ts`, removed 2026-09-05 with native login)
+  // always had a guaranteed match. The first NEW caller (2026-09-06,
+  // rejoining after this device's local MLS state was lost, `vault-room.ts`'s
+  // `joinMimiVaultRoom`) does not have that guarantee -- it retries with
+  // `resync: true` on a specific hub error, but a resync request with no
+  // actual match must be a safe no-op, not a corrupt commit.
+  const formerLeafNodeIndex = resync
+    ? ratchetTree.findIndex((n) => {
+        if (n !== undefined && n.nodeType === "leaf") {
+          return clientConfig.keyPackageEqualityConfig.compareKeyPackageToLeafNode(keyPackage, n.leaf)
+        }
+        return false
+      })
+    : -1
+  const formerLeafIndex = formerLeafNodeIndex === -1 ? undefined : nodeToLeafIndex(toNodeIndex(formerLeafNodeIndex))
 
   const updatedTree = formerLeafIndex !== undefined ? removeLeafNode(ratchetTree, formerLeafIndex) : ratchetTree
 
