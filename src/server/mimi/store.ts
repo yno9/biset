@@ -600,7 +600,14 @@ function validateRoomState(state: RoomState): void {
   for (const credential of state.memberCredentials) {
     const user = credential.kind === 'visible' ? credential.user : credential.userPseudonym
     const client = credential.kind === 'visible' ? credential.client : credential.clientPseudonym
-    if (!users.has(user) || clients.has(client)) throw new MimiStoreStateError('credential does not correspond to exactly one participant')
+    if (!users.has(user)) throw new MimiStoreStateError('credential belongs to a user who is not a participant')
+    // A client id already present here is a rejoin attempt: the same
+    // signature key trying to add a second leaf for a client the room
+    // already has, not a payload the hub can fix by itself. A caller that
+    // recognizes this specific message can retry the join as a resync
+    // (removing its own stale leaf) instead of treating it as a fatal
+    // room-state error -- see `joinMimiVaultRoom`'s `resync` retry.
+    if (clients.has(client)) throw new MimiStoreStateError('credential duplicates an existing client in this room')
     clients.add(client)
   }
 }
