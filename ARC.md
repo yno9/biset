@@ -494,6 +494,23 @@ Vault カードに skip の詳細が出るだけである。
 > 関数名の `Coordinator` 接頭辞（`createPortableCoordinatorCheckpoint` 等）は W5 の書き直しで
 > 解消した。現在は `createVaultCheckpoint` / `openVaultCheckpoint` である。
 
+#### 検討して却下した案: Wallet 側で決定論的に導出した secret（2026-09-06）
+
+新端末の enrollment は必ず did.md Wallet 認証を経る。Wallet は root private key を保持しているため、
+`vaultSecret`（現状 `crypto.getRandomValues` で**端末ごとにランダム**に生成、`did-md-oauth.ts`）を、
+**Wallet 側で root key から決定論的に導出**すれば、全端末が同じ値を得られる——masterSeed が持っていた
+「時間にも端末にも依存しない」性質を、biset 側に private key を渡さずに取り戻せる案として検討した。
+
+**却下した。** この変更は checkpoint に対する前方秘匿性（forward secrecy）と
+post-compromise security の**両方**を失わせる——一度その secret が漏れれば、
+それ以前に公開された checkpoint も、その後に作られる checkpoint も、ローテーションの仕組みが無い限り
+永久に読める固定鍵になる。加えて、`vaultSecret` は現在**端末ごとに別々**だが、決定論的にすると
+**全端末が同じ値を持つ**ため、1台の端末の侵害だけで identity 全体の checkpoint が終わる——
+被害範囲も広がる。VEK（現行案）は epoch ごとに変わるため、この種の固定鍵化を避けている。
+**VEK 堅持が結論。**
+
+
+
 ## 10. Local JMAP と UI
 
 ### 10.1 Local gateway
