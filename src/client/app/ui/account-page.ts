@@ -395,41 +395,26 @@ function renderHistoryRecoveryCard(): void {
   wrap.style.cssText = 'border-color:#ff9500'
   const row = document.createElement('div')
   row.className = 'cmd-page-row'
-  row.style.cssText = 'gap:12px;align-items:flex-start;padding:10px 12px;flex-direction:column'
+  row.style.cssText = 'gap:12px;align-items:center;padding:10px 12px'
 
-  const head = document.createElement('div')
-  head.style.cssText = 'display:flex;align-items:center;gap:8px'
-  const dot = document.createElement('span')
-  dot.style.cssText = 'width:8px;height:8px;border-radius:50%;flex-shrink:0;background:#ff9500'
-  const title = document.createElement('span')
-  title.style.cssText = 'font-size:13px;font-weight:600'
-  title.textContent = 'Earlier history is unavailable on this device'
-  head.append(dot, title)
+  const message = document.createElement('span')
+  message.style.cssText = 'flex:1;font-size:13px'
+  message.textContent = 'To restore past data, please open another device.'
 
-  const body = document.createElement('div')
-  body.style.cssText = 'font-size:12px;color:var(--text-dim);line-height:1.5'
-  body.textContent = `This device joined after the Vault's history, and it could not be recovered automatically. Opening another of this identity's devices resolves this the next time it syncs, since only a device holding the full history can restore it here. Waiting since ${new Date(recovery.since).toLocaleString()}.`
-
-  const actions = document.createElement('div')
-  actions.style.cssText = 'display:flex;gap:8px'
-  const startFresh = document.createElement('button')
-  startFresh.type = 'button'
-  startFresh.className = 'cmd-page-btn'
-  startFresh.style.cssText = 'width:auto;padding:5px 9px;font-size:11px'
-  startFresh.textContent = 'Continue without it'
-  startFresh.addEventListener('click', () => {
-    if (!confirm('This device will keep using its Vault as-is, without the history that came before it joined. This cannot be undone on this device -- if another of your devices still has that history, open it there instead. Continue?')) return
-    startFresh.disabled = true
-    void recovery.onStartFresh()
-      .then(() => getAccountConfig()?.showMessage?.('Continuing without the earlier history'))
-      .catch(error => {
-        getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
-        startFresh.disabled = false
-      })
+  const dismiss = document.createElement('button')
+  dismiss.type = 'button'
+  dismiss.setAttribute('aria-label', 'Dismiss')
+  dismiss.style.cssText = 'flex-shrink:0;width:22px;height:22px;border:0;background:transparent;color:var(--text-dim);font-size:16px;line-height:1;cursor:pointer'
+  dismiss.textContent = '×'
+  dismiss.addEventListener('click', () => {
+    dismiss.disabled = true
+    void recovery.onDismiss().catch(error => {
+      getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
+      dismiss.disabled = false
+    })
   })
-  actions.appendChild(startFresh)
 
-  row.append(head, body, actions)
+  row.append(message, dismiss)
   wrap.appendChild(row)
   list.appendChild(wrap)
 }

@@ -251,7 +251,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
   // whenever historyRecoveryDetail is set, this is too, since nothing else
   // sets either. Declared out here because the account page is configured
   // after that try/catch closes, not inside it.
-  let onStartFreshWithoutHistory: (() => Promise<void>) | undefined
+  let dismissHistoryRecovery: (() => Promise<void>) | undefined
   let onRemoveVaultDevice: ((targetDeviceId: string) => Promise<void>) | undefined
   let didComm: { xKid: string; mediatorUrl: string; error?: string } | undefined
   let activeDidCommDevice: { did: string; xKid: string; x25519PrivateKey: Uint8Array } | undefined
@@ -358,12 +358,12 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
     // round -- not just on failure -- so the card also disappears the
     // round a sibling's fresh checkpoint lands, without needing its own
     // separate "did this just get resolved" check.
-    onStartFreshWithoutHistory = (): Promise<void> =>
+    dismissHistoryRecovery = (): Promise<void> =>
       vaultStore.acknowledgeCheckpointEpochUnavailable(device.did, device.credential.deviceKid).then(refreshHistoryRecoveryCard)
     async function refreshHistoryRecoveryCard(): Promise<void> {
       const status = await vaultStore.readCheckpointRecoveryStatus(device.did, device.credential.deviceKid)
       historyRecoveryDetail = status.unavailable ? { detail: status.detail ?? 'unknown', since: status.since ?? new Date().toISOString() } : undefined
-      updateHistoryRecoveryStatus(historyRecoveryDetail && { ...historyRecoveryDetail, onStartFresh: onStartFreshWithoutHistory! })
+      updateHistoryRecoveryStatus(historyRecoveryDetail && { ...historyRecoveryDetail, onDismiss: dismissHistoryRecovery! })
     }
     const setWalletVaultStatus = (next: VaultCardStatus): void => {
       // The first sync begins before configureAccountPage() below.  Retain
@@ -966,7 +966,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
       },
     },
     vault,
-    ...(historyRecoveryDetail ? { historyRecovery: { ...historyRecoveryDetail, onStartFresh: onStartFreshWithoutHistory! } } : {}),
+    ...(historyRecoveryDetail ? { historyRecovery: { ...historyRecoveryDetail, onDismiss: dismissHistoryRecovery! } } : {}),
     onRemoveVaultDevice,
     showMessage: showSysMsg,
   })
