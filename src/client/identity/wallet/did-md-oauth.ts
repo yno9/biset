@@ -349,7 +349,7 @@ async function validateBisetMlsCredential(wire: string, pending: DidMdPendingAut
   if (!resolveEntries(pending.did, current.entries)) throw new Error('The published did:webvh log is no longer valid')
   const currentSign = current.last.parameters.updateKeys
   if (!currentSign || currentSign.length !== 1 || credential.generation !== current.last.versionId || !verifyMlsDeviceCredential(credential, decodeMultikey(currentSign[0]!)) || !verifyMlsDeviceCredentialRoot(credential, pending.rootPublicKey)) {
-    throw new Error('did.md returned an MLS credential not authorized by the current DID generation')
+    throw new Error('did.md returned an MLS credential not authorized by the current DID generation — reconnect did.md Wallet')
   }
   return credential
 }
@@ -547,7 +547,17 @@ export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | 
     method: 'POST', headers: { 'content-type': 'application/json', dpop: await createDpop(session.privateKey, session.publicJwk, 'POST', client.refreshEndpoint) },
     body: JSON.stringify({ client_id: client.clientId, capability: session.capability }),
   })
-  return tokenFrom(response, pending)
+  try {
+    return await tokenFrom(response, pending)
+  } catch (error) {
+    // A stored session that no longer validates (e.g. did.md issued a
+    // capability against a stale DID generation) would otherwise fail this
+    // exact way on every future load. Drop it so the account page comes up
+    // clean and the user is prompted to reconnect, instead of re-raising the
+    // same fatal error forever.
+    await clearDidMdDeviceSession()
+    throw error
+  }
 }
 
 export async function disconnectDidMdWallet(): Promise<void> {
