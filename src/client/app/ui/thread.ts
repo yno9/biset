@@ -435,6 +435,22 @@ function threadProtocol(msgs: MailMessageView[]): Proto {
   return first ? protocolFor(first) : 'mail'
 }
 
+/** The old src.bak client scoped its whole render() to one InboxSummary
+ * (user+mailbox+contact) at a time -- switchInbox reloaded processedMessages
+ * from scratch per contact, so "every other ThreadGroup" and "every other
+ * thread in this inbox" were the same set. This rewrite loads every
+ * conversation into one shared processedMessages (single local vault, no
+ * per-contact server fetch to scope by), so that equivalence silently broke:
+ * render()'s `others` list started showing literally every OTHER
+ * counterparty's thread in the "past threads" panel of whichever conversation
+ * happened to be focused (found live, 2026-09-09: one inbox showing every
+ * other inbox's threads). participantsOf is the same counterparty identity
+ * the old isk()'s `contact` field was -- reusing it here restores the
+ * original per-inbox scoping without resurrecting the InboxSummary type. */
+export function inboxKeyOf(group: ThreadGroup): string {
+  return participantsOf(group.messages.map(p => p.msg))
+}
+
 export function render(smooth = false): void {
   const $past = document.getElementById('past-threads')
   const $active = document.getElementById('active-thread')
@@ -476,8 +492,9 @@ export function render(smooth = false): void {
     setFocusedThreadKey(latestGroup(groups).key)
   }
   const focused = groups.find(g => g.key === focusedThreadKey)!
+  const focusedInboxKey = inboxKeyOf(focused)
   const others = groups
-    .filter(g => g.key !== focusedThreadKey)
+    .filter(g => g.key !== focusedThreadKey && inboxKeyOf(g) === focusedInboxKey)
     .sort((a, b) => a.messages[a.messages.length - 1]!.msg.ts - b.messages[b.messages.length - 1]!.msg.ts)
   for (const g of others) $past.appendChild(makePastRow(g))
 

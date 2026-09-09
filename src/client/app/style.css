@@ -2046,9 +2046,12 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
    transform/filter of its own, is what actually makes `fixed` mean
    viewport-fixed here.
    Hidden by default: shown whenever the left pane is the on-screen column
-   (rules below, desktop split-view and mobile nav-stack respectively) —
-   unconditional on which page is open (user-requested: not #account-only,
-   unlike #cmd-acc-compose-fab). */
+   (rules below, desktop split-view and mobile nav-stack respectively) AND
+   compose itself isn't already open -- unconditional on any OTHER page
+   (user-requested: not #account-only, unlike #cmd-acc-compose-fab), but
+   showing "open compose" on top of the compose page's own send button is
+   never correct regardless of that (found live, 2026-09-09: opening compose
+   on mobile left #lp-compose-fab sitting over #new-send-btn, unclickable). */
 #lp-compose-fab {
   position: fixed;
   bottom: 24px;
@@ -2068,7 +2071,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   #app.lp-enabled:not(.single-col)[data-menu-page="/account"] #cmd-acc-compose-fab {
     display: none;
   }
-  #app.lp-enabled:not(.single-col) #lp-compose-fab {
+  #app.lp-enabled:not(.single-col):not([data-menu-page="/compose"]) #lp-compose-fab {
     display: inline-flex;
   }
 }
@@ -2083,7 +2086,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   #app.lp-enabled.show-left[data-menu-page="/account"] #cmd-acc-compose-fab {
     display: none;
   }
-  #app.lp-enabled.show-left #lp-compose-fab {
+  #app.lp-enabled.show-left:not([data-menu-page="/compose"]) #lp-compose-fab {
     display: inline-flex;
   }
 }
@@ -3494,7 +3497,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
     font-size: 13px;
   }
   .lp-thread-toggle {
-    font-size: 20px;
+    font-size: 15px;
   }
   .lp-thread-row {
     font-size: 13px;
@@ -3693,7 +3696,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
     font-size: 14px;
   }
   .lp-thread-toggle {
-    font-size: 21px;
+    font-size: 16px;
   }
   .lp-thread-row {
     font-size: 14px;

@@ -34,6 +34,18 @@ export interface AccountPageConfig {
     /** Starts an explicit, same-tab Wallet approval to add a DIDComm endpoint
      * to an already-connected Biset browser. */
     onEnableMessaging?(): Promise<void>
+    /** Re-authorizes the same DIDComm leaf with a DIFFERENT mediator (the
+     * Mediator card's "Edit server", user-requested 2026-09-09) -- same
+     * same-tab Wallet approval as onEnableMessaging, just pointed at an
+     * explicit URL instead of this deployment's configured default. Present
+     * only once didComm exists (nothing to re-point before there's a first
+     * registration to begin with -- onEnableMessaging covers that case). */
+    onEditMediator?(mediatorUrl: string): Promise<void>
+    /** Unregisters this browser's DIDComm leaf from its current mediator,
+     * leaving the Wallet session/MLS device/Vault room untouched (the
+     * Mediator card's "Log out", user-requested 2026-09-09 -- scoped to
+     * Mediator only, no Vault equivalent yet). */
+    onLogOutMediator?(): Promise<void>
     onDisconnect(): Promise<void>
   }
   /** Confirmed and invoked by the identity menu's "Log out" item

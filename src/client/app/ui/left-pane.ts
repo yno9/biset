@@ -24,13 +24,164 @@
 import { groupMessages } from './message/message-view.ts'
 import type { ThreadGroup } from './message/message-view.ts'
 import { avatarStyle, esc, previewText } from './format.ts'
-import { getFocusedThreadKey, render, setFocusedThreadKey } from './thread.ts'
+import { getFocusedThreadKey, inboxKeyOf, render, setFocusedThreadKey } from './thread.ts'
 import { hideAccountPage, hideConfigPage, inAccountMode, inConfigMode, showAccountPage, showConfigPage } from './account-page.ts'
 import { hideComposePage, inComposeMode, showComposePage } from './compose-page.ts'
 import { labelForDid } from './did-display.ts'
 
 function latestOf(group: ThreadGroup) {
   return group.messages[group.messages.length - 1]!.msg
+}
+
+/** src.bak's own left-pane row (makeLpItem) was one per InboxSummary (a
+ * server-side per-contact summary), with a `.lp-thread-toggle` accordion
+ * underneath it listing every JMAP thread that contact had -- multiple
+ * subject-lines with the same person, not multiple people. This rewrite has
+ * no InboxSummary (no relay/multi-account layer to summarize), so rows were
+ * ported 1:1 off ThreadGroup instead (this file's own header comment) and
+ * the accordion was dropped outright along with it. Restoring it needs the
+ * same grouping key back -- thread.ts's inboxKeyOf (participantsOf) is
+ * exactly isk()'s `contact` field, so grouping ThreadGroups by it here
+ * reconstructs the same row shape src.bak had, one row per counterparty with
+ * every thread that shares it underneath (found live, 2026-09-09: the
+ * toggle button was simply missing, along with any way to reach a second
+ * thread with someone once one existed). */
+interface InboxRow {
+  key: string
+  /** Newest thread first -- same ordering src.bak's renderThreadAccordion used. */
+  groups: ThreadGroup[]
+}
+
+function inboxRows(): InboxRow[] {
+  const byKey = new Map<string, ThreadGroup[]>()
+  for (const g of groupMessages()) {
+    const key = inboxKeyOf(g)
+    const list = byKey.get(key)
+    if (list) list.push(g)
+    else byKey.set(key, [g])
+  }
+  return [...byKey.entries()].map(([key, groups]) => ({
+    key,
+    groups: groups.sort((a, b) => latestOf(b).ts - latestOf(a).ts),
+  }))
+}
+
+// src.bak's fmtThreadTs (ui/left-pane.ts), ported verbatim -- the
+// .lp-thread-row-ts label, distinct from thread.ts's fmtRelDate (past-row,
+// a different row shape) and left-pane's own relative-time preview.
+function fmtThreadTs(ts: number): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return String(d.getMonth() + 1).padStart(2, '0') + '/'
+    + String(d.getDate()).padStart(2, '0') + ' '
+    + String(d.getHours()).padStart(2, '0') + ':'
+    + String(d.getMinutes()).padStart(2, '0')
+}
+
+// Persists across renderLeftList rebuilds, same lifetime as src.bak's own
+// module-level _expandedInboxKeys.
+const expandedInboxKeys = new Set<string>()
+
+// ── Keyboard nav ──────────────────────────────────────────────────────────
+//
+// Ported from src.bak's own lpNavIdx/_lpFocusedKey/lpNavItems/focusedNavEl/
+// syncNavFocus/lpFocusEl/lpNavClear (ui/left-pane.ts) -- pure DOM/state, no
+// backend dependency, so this half of the old file ports as-is. Left out:
+// the `/`-prefixed command-palette branch inside the old search-box keydown
+// handler (applyLpSearch's own header comment already drops that half, this
+// rewrite has no #lp-commands page set to open).
+
+let lpNavIdx = -1
+/** 'inbox:<InboxRow.key>' | 'thread:<ThreadGroup.key>' | null. */
+let lpFocusedKey: string | null = null
+
+// .focused doubles as the keyboard-nav cursor, applied from every render
+// path below (toggleAccordion, lpFocusEl, applyLpSearch indirectly via
+// renderLeftList) -- there's no keyboard to navigate with on a touchscreen,
+// and re-applying it on every re-render flashed an unrelated row/inbox
+// background after taps in src.bak (2026-07-something, same reasoning its
+// own navFocusEnabled comment gives). Guarding every call site is
+// whack-a-mole; guard the class application here instead.
+function navFocusEnabled(): boolean {
+  return window.innerWidth > 574
+}
+
+// Flat ordered list. Expanded accordions contribute thread rows (header
+// visually grouped with thread1 via CSS :has); collapsed/empty contribute
+// the header row.
+function lpNavItems(): HTMLElement[] {
+  const result: HTMLElement[] = []
+  for (const inbox of document.querySelectorAll<HTMLElement>('#left-list .lp-item')) {
+    if (inbox.style.display === 'none') continue
+    const tl = inbox.querySelector<HTMLElement>('.lp-thread-list')
+    const rows = tl && tl.style.display !== 'none'
+      ? [...tl.querySelectorAll<HTMLElement>('.lp-thread-row')]
+      : []
+    if (rows.length) for (const row of rows) result.push(row)
+    else result.push(inbox)
+  }
+  return result
+}
+
+// Resolve lpFocusedKey to the current DOM element (recomputed fresh each
+// call). With no explicit key yet, falls back to whichever inbox the
+// currently-open thread belongs to (src.bak's own `currentInbox` fallback --
+// this rewrite has no separate currentInbox, so it's derived from
+// getFocusedThreadKey() instead).
+function focusedNavEl(items: HTMLElement[]): HTMLElement | undefined {
+  if (lpFocusedKey?.startsWith('thread:')) {
+    const tk = lpFocusedKey.slice('thread:'.length)
+    return items.find(el => el.dataset.threadKey === tk)
+  }
+  const activeThreadKey = getFocusedThreadKey()
+  const key = lpFocusedKey?.startsWith('inbox:')
+    ? lpFocusedKey.slice('inbox:'.length)
+    : (activeThreadKey ? inboxRows().find(r => r.groups.some(g => g.key === activeThreadKey))?.key : undefined)
+  if (!key) return undefined
+  return items.find(el => el.dataset.inboxKey === key)
+    ?? items.find(el =>
+      el.closest<HTMLElement>('.lp-item')?.dataset.inboxKey === key
+      && el === el.closest<HTMLElement>('.lp-item')?.querySelector('.lp-thread-list .lp-thread-row'))
+}
+
+function syncNavFocus(): void {
+  document.querySelectorAll<HTMLElement>('#left-list .lp-item, #left-list .lp-thread-row')
+    .forEach(el => el.classList.remove('focused'))
+  const items = lpNavItems()
+  const target = focusedNavEl(items)
+  if (target) {
+    if (navFocusEnabled()) target.classList.add('focused')
+    lpNavIdx = items.indexOf(target)
+  } else {
+    lpNavIdx = -1
+  }
+}
+
+// Set focus on el: update key, apply CSS, trigger the corresponding
+// navigation. Single entry point for "user hover/click/keyboard intent to
+// view a thread" (src.bak's own header comment on this function).
+function lpFocusEl(el: HTMLElement): void {
+  document.querySelectorAll<HTMLElement>('#left-list .lp-item, #left-list .lp-thread-row')
+    .forEach(item => item.classList.remove('focused'))
+  if (navFocusEnabled()) el.classList.add('focused')
+  el.scrollIntoView({ block: 'nearest' })
+  if (el.classList.contains('lp-thread-row')) {
+    const threadKey = el.dataset.threadKey!
+    lpFocusedKey = 'thread:' + threadKey
+    openThread(threadKey)
+  } else {
+    const key = el.dataset.inboxKey!
+    lpFocusedKey = 'inbox:' + key
+    const row = inboxRows().find(r => r.key === key)
+    if (row) openThread(row.groups[0]!.key)
+  }
+  syncNavFocus()
+}
+
+function lpNavClear(): void {
+  lpNavItems().forEach(el => el.classList.remove('focused'))
+  lpFocusedKey = null
+  lpNavIdx = -1
 }
 
 // Same DID-vs-display-name reasoning as thread.ts's createMsgEl: a DIDComm
@@ -43,15 +194,68 @@ function shortSenderLabel(name: string): string {
   return name.startsWith('did:') ? labelForDid(name) : name
 }
 
-function makeLpItem(group: ThreadGroup, active: boolean): HTMLElement {
-  const latest = latestOf(group)
-  const label = group.subject || shortSenderLabel(latest.from_name || latest.from || 'no title')
+/** Opens the given thread and leaves the left pane, same three steps every
+ * navigation path below needs (mobile row tap, desktop thread-row click,
+ * hamburger menu entries elsewhere in this file). */
+function openThread(threadKey: string): void {
+  if (inAccountMode()) hideAccountPage()
+  if (inConfigMode()) hideConfigPage()
+  if (inComposeMode()) hideComposePage()
+  setFocusedThreadKey(threadKey)
+  render()
+  renderLeftList()
+  // src.bak's switchInbox (ui/left-pane.ts:363,387) unconditionally drops
+  // show-left on every navigation through here, including re-opening the
+  // already-open row -- on mobile's single-col nav-stack (section 26,
+  // style.css) that class is what keeps the left pane the on-screen column;
+  // without clearing it, opening a thread left the left pane in front and
+  // the thread that just loaded behind it, unreachable (found live,
+  // 2026-09-09: opening an inbox in single-column mode never navigated to
+  // the right column).
+  document.getElementById('app')?.classList.remove('show-left')
+}
+
+/** src.bak's toggleAccordionForItem (ui/left-pane.ts), adapted: the old
+ * version's else-branch (`currentInbox` mismatch) called switchInbox first
+ * because an unopened inbox's threads lived on a server this rewrite has no
+ * client for -- every inbox's messages are already in the one local vault
+ * here, so opening one is just picking which ThreadGroup is focused. */
+function toggleAccordion(key: string, focusThread = true): void {
+  if (expandedInboxKeys.has(key)) {
+    expandedInboxKeys.delete(key)
+    lpFocusedKey = 'inbox:' + key
+    renderLeftList()
+    syncNavFocus()
+    return
+  }
+  expandedInboxKeys.add(key)
+  const row = inboxRows().find(r => r.key === key)
+  if (focusThread && row) {
+    lpFocusedKey = 'thread:' + row.groups[0]!.key
+    openThread(row.groups[0]!.key)
+  } else {
+    renderLeftList()
+  }
+  syncNavFocus()
+}
+
+/** The `.lp-thread-toggle`/`.lp-thread-list` accordion, ported from
+ * src.bak's own makeLpItem/renderThreadAccordion (ui/left-pane.ts) --
+ * one row per counterparty (InboxRow), expandable to the individual threads
+ * shared with them. Left out of this port vs. the original: swipe-to-delete
+ * and the avatar's inbox context menu (both need a delete/archive backend
+ * this rewrite's local vault doesn't have yet). */
+function makeLpItem(row: InboxRow, active: boolean, activeThreadKey: string | null): HTMLElement {
+  const latestGroup = row.groups[0]!
+  const latest = latestOf(latestGroup)
+  const label = latestGroup.subject || shortSenderLabel(latest.from_name || latest.from || 'no title')
   const avatarSubject = shortSenderLabel(latest.from_name || latest.from || label)
-  const unread = group.messages.some(p => p.msg.seen !== true)
+  const unread = row.groups.some(g => g.messages.some(p => p.msg.seen !== true))
+  const expanded = expandedInboxKeys.has(row.key)
   const a = document.createElement('a')
   a.className = 'lp-item' + (active ? ' current' : '')
   a.href = '#'
-  a.dataset.threadKey = group.key
+  a.dataset.inboxKey = row.key
   a.innerHTML = `
     <div class="lp-inner">
       <div class="lp-avatar" style="${avatarStyle(avatarSubject)}">${avatarSubject.charAt(0).toUpperCase()}${unread ? '<div class="unread-dot"></div>' : ''}</div>
@@ -59,16 +263,79 @@ function makeLpItem(group: ThreadGroup, active: boolean): HTMLElement {
         <div class="lp-name">${esc(label)}</div>
         <div class="lp-preview">${esc(previewText(latest.body))}</div>
       </div>
+      <button class="lp-thread-toggle" tabindex="-1">${expanded ? '▾' : '◂'}</button>
     </div>
+    <div class="lp-thread-list" style="display:${expanded ? 'block' : 'none'}"></div>
   `
+
+  const threadList = a.querySelector<HTMLElement>('.lp-thread-list')!
+  if (expanded) {
+    for (const g of row.groups) {
+      const threadRow = document.createElement('div')
+      threadRow.className = 'lp-thread-row' + (g.key === activeThreadKey ? ' focused' : '')
+      threadRow.dataset.threadKey = g.key
+      const title = document.createElement('span')
+      title.className = 'lp-thread-row-title'
+      title.textContent = g.subject || '(no title)'
+      const ts = document.createElement('span')
+      ts.className = 'lp-thread-row-ts'
+      ts.textContent = fmtThreadTs(latestOf(g).ts)
+      threadRow.append(title, ts)
+      threadRow.addEventListener('click', e => {
+        e.preventDefault()
+        e.stopPropagation()
+        lpFocusEl(threadRow)
+      })
+      // src.bak's own hover-to-focus on a thread row, desktop only (mouseenter
+      // never fires from a touch tap, so this is a no-op on mobile already).
+      threadRow.addEventListener('mouseenter', () => { if (navFocusEnabled()) lpFocusEl(threadRow) })
+      threadList.appendChild(threadRow)
+    }
+  }
+
+  a.querySelector<HTMLButtonElement>('.lp-thread-toggle')?.addEventListener('click', e => {
+    e.preventDefault()
+    e.stopPropagation()
+    toggleAccordion(row.key, false)
+  })
+
+  // Two-column desktop: moving the mouse over a row switches to it, same as
+  // src.bak's own `.lp-inner` mousemove handler -- the rightmost 10% (the
+  // toggle button) is excluded so reaching for ▾/◂ doesn't also navigate
+  // out from under the pointer. `_hoverFired` re-arms on mouseleave so
+  // re-entering the row (not just moving within it) can trigger again, and
+  // lpFocusEl itself (called for both the header and any already-expanded
+  // thread row) is what actually opens the thread -- no separate "first
+  // row" lookup needed here since it always resolves the newest one.
+  const innerEl = a.querySelector<HTMLElement>('.lp-inner')
+  if (innerEl) {
+    let hoverFired = false
+    innerEl.addEventListener('mouseenter', () => { hoverFired = false })
+    innerEl.addEventListener('mouseleave', () => { hoverFired = false })
+    innerEl.addEventListener('mousemove', e => {
+      if (hoverFired || !navFocusEnabled()) return
+      const rect = innerEl.getBoundingClientRect()
+      if (e.clientX > rect.right - rect.width * 0.1) return
+      hoverFired = true
+      lpFocusEl(a)
+    })
+  }
+
   a.addEventListener('click', e => {
     e.preventDefault()
-    if (inAccountMode()) hideAccountPage()
-    if (inConfigMode()) hideConfigPage()
-    if (inComposeMode()) hideComposePage()
-    setFocusedThreadKey(group.key)
-    render()
-    renderLeftList()
+    // Mobile: tapping the row always opens its newest thread, regardless of
+    // accordion state -- there's no room for an inline thread list on a
+    // single-column screen (src.bak's own `window.innerWidth <= 574` branch).
+    if (window.innerWidth <= 574) {
+      lpFocusedKey = 'inbox:' + row.key
+      openThread(latestGroup.key)
+      return
+    }
+    // Desktop: the row itself is purely the accordion toggle -- expanding it
+    // also opens the newest thread underneath (one click does both, same as
+    // src.bak's toggleAccordionForItem(a) with its default focusThread=true);
+    // collapsing an already-open row leaves whatever's on screen alone.
+    toggleAccordion(row.key)
   })
   return a
 }
@@ -77,9 +344,9 @@ export function renderLeftList(): void {
   const list = document.getElementById('left-list')
   if (!list) return
   list.innerHTML = ''
-  const groups = [...groupMessages()].sort((a, b) => latestOf(b).ts - latestOf(a).ts)
-  const active = getFocusedThreadKey()
-  for (const group of groups) list.appendChild(makeLpItem(group, group.key === active))
+  const rows = inboxRows().sort((a, b) => latestOf(b.groups[0]!).ts - latestOf(a.groups[0]!).ts)
+  const activeThreadKey = getFocusedThreadKey()
+  for (const row of rows) list.appendChild(makeLpItem(row, row.groups.some(g => g.key === activeThreadKey), activeThreadKey))
   applyLpSearch()
 }
 
@@ -219,7 +486,63 @@ export function setupLeftPane(): void {
     hamburgerLeft?.classList.toggle('lp-search-hidden', hidden)
   }, { passive: true })
 
-  document.getElementById('lp-search')?.addEventListener('input', applyLpSearch)
+  const lpSearch = document.getElementById('lp-search') as HTMLInputElement | null
+  lpSearch?.addEventListener('input', () => { lpNavIdx = -1; applyLpSearch() })
+
+  // Search box: Escape only (src.bak's own `/`-command-palette branch is
+  // dropped, per this function's header comment).
+  lpSearch?.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      lpNavClear()
+      lpSearch.value = ''
+      applyLpSearch()
+    }
+  })
+
+  // Document-level nav: Arrow/Space work regardless of search focus, ported
+  // verbatim from src.bak's own document-level keydown handler.
+  document.addEventListener('keydown', e => {
+    // Ignore when typing in a real input (but allow when lp-search is
+    // focused and empty).
+    const active = document.activeElement
+    const isTextInput = active instanceof HTMLTextAreaElement
+      || (active instanceof HTMLInputElement && active !== lpSearch)
+    if (isTextInput) return
+
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const items = lpNavItems()
+      if (!items.length) return
+      const focused = focusedNavEl(items)
+      const cur = focused ? items.indexOf(focused) : -1
+      const next = e.key === 'ArrowDown'
+        ? (cur < items.length - 1 ? cur + 1 : cur)
+        : Math.max(cur - 1, 0)
+      const target = items[next]
+      if (target && target !== focused) {
+        lpSearch?.blur()
+        lpFocusEl(target)
+      }
+    } else if (e.key === ' ') {
+      const items = lpNavItems()
+      const el = focusedNavEl(items)
+      if (el?.classList.contains('lp-item')) {
+        e.preventDefault()
+        toggleAccordion(el.dataset.inboxKey!)
+      } else if (el?.classList.contains('lp-thread-row')) {
+        // thread1 (first row) acts as "thread0+1" unit -- Space closes the accordion.
+        const inboxEl = el.closest<HTMLElement>('.lp-item')
+        if (inboxEl && el === inboxEl.querySelector('.lp-thread-list .lp-thread-row')) {
+          e.preventDefault()
+          toggleAccordion(inboxEl.dataset.inboxKey!)
+        }
+      }
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault()
+      const ta = document.querySelector<HTMLTextAreaElement>('#focused-thread-card textarea, .reply-box textarea')
+      if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length) }
+    }
+  })
 
   setupHamburgerMenu()
 }

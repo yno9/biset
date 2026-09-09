@@ -15,6 +15,7 @@ import { setOnWalletConnected } from './ui/account-create.ts'
 import {
   beginDidMdWalletMessagingEnrollment,
   disconnectDidMdWallet,
+  logOutDidMdWalletMediator,
   openDidMdWalletBisetDidCommDevice,
   openDidMdWalletBisetDevice,
   restoreDidMdWalletSession,
@@ -960,6 +961,16 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
       deviceKid: session.deviceKid,
       ...(didComm ? { didComm } : {}),
       onEnableMessaging: async () => beginDidMdWalletMessagingEnrollment(readBisetConfig().mediatorUrls),
+      // Same same-tab Wallet approval as onEnableMessaging, just pointed at
+      // an explicit mediator URL (the Mediator card's "Edit server") instead
+      // of always taking this deployment's configured default -- reuses
+      // beginDidMdWalletMessagingEnrollment as-is, since it already accepts
+      // an array and takes its first valid entry (bisetMediatorFor).
+      onEditMediator: async (mediatorUrl: string) => beginDidMdWalletMessagingEnrollment([mediatorUrl]),
+      onLogOutMediator: async () => {
+        await logOutDidMdWalletMediator()
+        await bootClient()
+      },
       onDisconnect: async () => {
         await disconnectDidMdWallet()
         await bootClient()
@@ -993,8 +1004,17 @@ export async function bootClient(): Promise<void> {
   // Not yet inlined into this function on purpose: flattening the call
   // structure is S4's job, not this change's.
   if (await configureWalletAccountIfPresent()) {
+    // NOT showAccountPage() here -- this branch also runs on a plain page
+    // refresh/reload (the module-level `bootClient()` call at the bottom of
+    // this file), which has an existing session and nothing to do with
+    // signup. Forcing the account page every time landed you back there no
+    // matter what you'd been reading before hitting reload (found live,
+    // 2026-09-09: single-column mode always bounced to /account on refresh).
+    // The actual "just signed up" case still gets its own account-page
+    // landing explicitly, from setOnWalletConnected's own callback below --
+    // this call site only ever needed it for that one case, never for an
+    // ordinary returning session.
     showApp()
-    showAccountPage()
     return
   }
   // Nothing owns these local databases -- see ALL_LOCAL_DATABASE_NAMES's

@@ -15,7 +15,7 @@ import { decodeMlsDeviceCredential, verifyMlsDeviceCredential, verifyMlsDeviceCr
 import { base64urlToBytes } from '../../../protocol/canonical.ts'
 import { fetchRouting, mimiVaultRoomFromRouting } from '../../../protocol/didcomm/webvh-routing.ts'
 import { deviceKid } from '../../../protocol/didcomm/devicekid.ts'
-import { fetchMediatorInfo } from '../../../protocol/didcomm/mediator-coordinate.ts'
+import { fetchMediatorInfo, updateKeylist } from '../../../protocol/didcomm/mediator-coordinate.ts'
 import {
   clearDidMdRegistration,
   clearDidMdDeviceSession,
@@ -595,6 +595,32 @@ export async function openDidMdWalletBisetDidCommDevice(): Promise<DidMdBisetDid
   if (!derivedPublic.every((byte, index) => byte === stored.x25519PublicKey[index])) throw new Error('Biset DIDComm private key does not match its Wallet-authorized public key')
   if (stored.xKid !== deviceKid(session.did, derivedPublic)) throw new Error('Biset DIDComm device key identifier is invalid')
   return { did: session.did, xKid: stored.xKid, x25519PrivateKey: privateMaterial.x25519PrivateKey, mediatorUrl: stored.mediatorUrl, routingKid: stored.routingKid }
+}
+
+/** Logs this browser out of its currently-registered DIDComm mediator only
+ * -- the Wallet session, MLS device, and Vault room are untouched, matching
+ * "Log out" on the account page's own Mediator card (user-requested,
+ * 2026-09-09; a request scoped to Mediator specifically -- Vault has no
+ * analogous per-card log out yet). Best-effort on the mediator's own
+ * keylist-update: a mediator that is unreachable or already forgot this kid
+ * must not block clearing the LOCAL record, since a stale local pointer to
+ * a route the mediator itself doesn't have is strictly worse (main.ts's own
+ * enrollment path already fails closed against exactly that mismatch --
+ * see the `mediator.xKid !== didCommDevice.routingKid` check in bootClient).
+ * Local-only, silent no-op when there's nothing registered. */
+export async function logOutDidMdWalletMediator(): Promise<void> {
+  const session = await readDidMdDeviceSession()
+  const stored = session?.bisetDidCommDevice
+  if (!session || session.v !== 2 || !stored) return
+  try {
+    const material = await openDidMdBisetDidCommDeviceMaterial(stored)
+    const mediator = await fetchMediatorInfo(stored.mediatorUrl)
+    await updateKeylist(mediator, { did: session.did, xKid: stored.xKid, xPriv: material.x25519PrivateKey }, stored.xKid, 'remove')
+  } catch (error) {
+    console.warn('[did.md Wallet mediator log out] could not unregister from the mediator, clearing the local record anyway:', error instanceof Error ? error.message : error)
+  }
+  const { bisetDidCommDevice: _dropped, ...rest } = session
+  await saveDidMdDeviceSession(rest)
 }
 
 export async function callDidMdWalletTestResource(active: DidMdActiveSession): Promise<string> {

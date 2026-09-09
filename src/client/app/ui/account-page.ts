@@ -65,6 +65,7 @@ export function updateVaultCardStatus(status: VaultCardStatus): void {
   if (active) {
     renderVaultCard()
     renderWalletAccountCard()
+    renderMediatorCard()
     renderHistoryRecoveryCard()
   }
 }
@@ -82,6 +83,7 @@ export function updateHistoryRecoveryStatus(status: AccountPageConfig['historyRe
   if (active) {
     renderVaultCard()
     renderWalletAccountCard()
+    renderMediatorCard()
     renderHistoryRecoveryCard()
   }
 }
@@ -339,30 +341,35 @@ function renderWalletAccountCard(): void {
     ? `Connected · MLS device enrolled · capability until ${new Date(wallet.capabilityExpiresAt).toLocaleDateString()}`
     : `Connected · reconnect to enroll this browser's MLS device · capability until ${new Date(wallet.capabilityExpiresAt).toLocaleDateString()}`
   detail.append(title, description)
-  const messaging = document.createElement('div')
-  messaging.style.cssText = 'font-size:11px;color:var(--text-dim)'
-  if (wallet.didComm) {
-    messaging.textContent = wallet.didComm.error
-      ? `DIDComm endpoint needs attention: ${wallet.didComm.error}`
-      : `DIDComm endpoint registered · ${wallet.didComm.mediatorUrl}`
-  } else if (wallet.onEnableMessaging) {
-    const enable = document.createElement('button')
-    enable.type = 'button'
-    enable.className = 'cmd-page-btn'
-    enable.style.cssText = 'width:auto;padding:3px 7px;font-size:10px;margin-top:2px'
-    enable.textContent = 'Enable DIDComm messaging'
-    enable.addEventListener('click', () => {
-      enable.disabled = true
-      void wallet.onEnableMessaging!().catch(error => {
-        getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
-        enable.disabled = false
+  // Once DIDComm is registered, its own status lives in the separate
+  // Mediator card (renderMediatorCard) -- the old relay card's visual
+  // grammar (dot + service/address heading), matching Vault's card instead
+  // of a plain text line buried in this one (user-requested, 2026-09-09:
+  // "⚫︎ Mediator : mediator.biset.md" as its own card). Not yet
+  // registered/configured still belongs here -- there's nothing to give its
+  // own card until there's an endpoint to report.
+  if (!wallet.didComm) {
+    const messaging = document.createElement('div')
+    messaging.style.cssText = 'font-size:11px;color:var(--text-dim)'
+    if (wallet.onEnableMessaging) {
+      const enable = document.createElement('button')
+      enable.type = 'button'
+      enable.className = 'cmd-page-btn'
+      enable.style.cssText = 'width:auto;padding:3px 7px;font-size:10px;margin-top:2px'
+      enable.textContent = 'Enable DIDComm messaging'
+      enable.addEventListener('click', () => {
+        enable.disabled = true
+        void wallet.onEnableMessaging!().catch(error => {
+          getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
+          enable.disabled = false
+        })
       })
-    })
-    messaging.append(enable)
-  } else {
-    messaging.textContent = 'DIDComm messaging is not configured for this Biset deployment'
+      messaging.append(enable)
+    } else {
+      messaging.textContent = 'DIDComm messaging is not configured for this Biset deployment'
+    }
+    detail.append(messaging)
   }
-  detail.append(messaging)
   const disconnect = document.createElement('button')
   disconnect.type = 'button'
   disconnect.className = 'cmd-page-btn'
@@ -378,6 +385,86 @@ function renderWalletAccountCard(): void {
   })
   row.append(detail, disconnect)
   list.appendChild(row)
+}
+
+/** The old relay card's visual grammar (renderVaultCard's own head row),
+ * reused for the DIDComm mediator endpoint once registered -- a standalone
+ * "⚫︎ Mediator : host" card next to Vault's, not a text line buried inside
+ * the Wallet card (user-requested, 2026-09-09). No expand panel: unlike
+ * Vault there's no device list or checkpoint detail to drill into, just the
+ * one endpoint and its state. */
+function renderMediatorCard(): void {
+  const wallet = getAccountConfig()?.wallet
+  const list = document.getElementById('cmd-acc-list')
+  if (!wallet?.didComm || !list) return
+
+  const wrap = document.createElement('div')
+  wrap.className = 'acc-card-wrap'
+  const row = document.createElement('div')
+  row.className = 'cmd-page-row'
+  row.style.cssText = 'gap:12px;align-items:center;padding:10px 12px'
+  const left = document.createElement('div')
+  left.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:4px'
+  const head = document.createElement('div')
+  head.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0'
+  const dot = document.createElement('span')
+  dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${wallet.didComm.error ? '#ff3b30' : '#34c759'}`
+  const title = document.createElement('span')
+  title.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--accent2, #888);flex-shrink:0'
+  title.textContent = 'Mediator'
+  const sep = document.createElement('span')
+  sep.style.cssText = 'color:var(--text-dim);flex-shrink:0'
+  sep.textContent = ':'
+  const endpoint = document.createElement('span')
+  endpoint.style.cssText = 'font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
+  endpoint.textContent = coordinatorHost(wallet.didComm.mediatorUrl)
+  head.append(dot, title, sep, endpoint)
+
+  const stats = document.createElement('div')
+  stats.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:var(--text-dim)'
+  const state = document.createElement('span')
+  state.textContent = wallet.didComm.error ? `Needs attention: ${wallet.didComm.error}` : 'Registered'
+  state.style.color = wallet.didComm.error ? '#ff3b30' : ''
+  stats.appendChild(state)
+  left.append(head, stats)
+  row.appendChild(left)
+
+  // Same "⋮" affordance as the identity heading's own menu button
+  // (cmd-acc-identity-menu-btn), scoped to this one card -- Edit server /
+  // Log out (user-requested, 2026-09-09). No Vault equivalent yet
+  // (renderVaultCard has its own click-to-expand instead, no menu).
+  const menuBtn = document.createElement('button')
+  menuBtn.type = 'button'
+  menuBtn.setAttribute('aria-label', 'Mediator menu')
+  menuBtn.style.cssText = 'flex-shrink:0;background:none;border:none;cursor:pointer;color:var(--text-dim);padding:4px'
+  menuBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>'
+  menuBtn.addEventListener('click', event => {
+    event.stopPropagation()
+    const didComm = wallet.didComm!
+    openDropdownMenu(menuBtn, [
+      {
+        label: 'Edit server', onClick: () => {
+          const url = window.prompt('DIDComm mediator URL', didComm.mediatorUrl)
+          if (!url || url === didComm.mediatorUrl) return
+          void wallet.onEditMediator?.(url).catch(error => {
+            getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
+          })
+        },
+      },
+      {
+        label: 'Log out', danger: true, onClick: () => {
+          if (!confirm(`Unregister this browser from ${coordinatorHost(didComm.mediatorUrl)}? DIDComm messages will stop delivering here until you register again.`)) return
+          void wallet.onLogOutMediator?.().catch(error => {
+            getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
+          })
+        },
+      },
+    ])
+  })
+  row.appendChild(menuBtn)
+
+  wrap.appendChild(row)
+  list.appendChild(wrap)
 }
 
 /** Same "append into the shared list, do not wipe it" convention as
@@ -479,6 +566,7 @@ export function showAccountPage(): void {
   activeEl.appendChild(card)
   renderVaultCard()
   renderWalletAccountCard()
+  renderMediatorCard()
   renderHistoryRecoveryCard()
 
   const nameEl = document.getElementById('cmd-acc-identity-name')
