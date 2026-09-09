@@ -254,4 +254,53 @@ describe('sendDidCommMessage', () => {
       expect(msg.body.content).toBe('via two hops')
     })
   })
+
+  // Regression guard for the 2026-09-09 fix: a recipient identified only by
+  // a did:peer:2 (no domain of its own to publish did:webvh routing.json
+  // at -- e.g. an outside DIDComm agent/bot) used to crash resolution with
+  // `parseWebvhDid: not a did:webvh identifier` the instant
+  // sendFrontDoorMessage/frontDoorMediatorRoute tried to treat it as a
+  // did:webvh. did:peer:2 is self-certifying, so no fetch should happen at
+  // all for the recipient side -- only the mediator POST itself.
+  test('sends directly to a did:peer:2 recipient with no did:webvh resolution', () => {
+    const mediator = generatePeerIdentity({ uri: 'https://mediator.test.example', accept: ['didcomm/v2'] })
+    const recipient = generatePeerIdentity({ uri: 'https://mediator.test.example', routingKeys: [mediator.xKid] })
+    const captured: { body?: string; url?: string } = {}
+    const fetchImpl = (async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url === 'https://mediator.test.example') { captured.url = url; captured.body = init?.body as string; return new Response(null, { status: 202 }) }
+      return new Response('unexpected request: ' + url, { status: 500 })
+    }) as typeof fetch
+    return withCombinedFetch(fetchImpl, async (fi) => {
+      const result = await sendDidCommMessage(recipient.did, 'hello agent', { fromKid: senderKid, x25519PrivateKey: senderX, fetch: fi })
+      expect(result.ok).toBe(true)
+      expect(captured.url).toBe('https://mediator.test.example')
+
+      const outer = parseJwe(JSON.parse(captured.body!))
+      expect(outer).not.toBeNull()
+      const forwardPlaintext = await unpackAnoncrypt(outer!, { kid: mediator.xKid, privateKey: mediator.xPriv })
+      const forward = JSON.parse(new TextDecoder().decode(forwardPlaintext))
+      expect(forward.type).toBe('https://didcomm.org/routing/2.0/forward')
+      expect(forward.body.next).toBe(recipient.xKid)
+
+      const inner = parseJwe(forward.attachments[0].data.json)
+      expect(inner).not.toBeNull()
+      const { plaintext, senderKid: outSenderKid } = await unpackAuthcrypt(inner!, { kid: recipient.xKid, privateKey: recipient.xPriv }, async () => x25519.getPublicKey(senderX))
+      expect(outSenderKid).toBe(senderKid)
+      const msg = JSON.parse(new TextDecoder().decode(plaintext))
+      expect(msg.body.content).toBe('hello agent')
+    })
+  })
+
+  test('fails clearly when a did:peer:2 recipient has published no DIDComm service', () => {
+    const recipient = generatePeerIdentity()
+    return withCombinedFetch(
+      (async (input) => new Response('unexpected request: ' + String(input), { status: 500 })) as typeof fetch,
+      async (fi) => {
+        const result = await sendDidCommMessage(recipient.did, 'hi', { fromKid: senderKid, x25519PrivateKey: senderX, fetch: fi })
+        expect(result.ok).toBe(false)
+        if (!result.ok) expect(result.error).toMatch(/no DIDComm service endpoint/)
+      },
+    )
+  })
 })
