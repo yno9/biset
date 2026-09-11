@@ -18,6 +18,7 @@ import {
   type DidMdPendingAuthorization,
   type DidMdRegistration,
 } from '../src/client/identity/wallet/did-md-store.ts'
+import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
 
 const DATABASE_NAME = 'biset-did-md-wallet'
 const bytes = (start: number) => Uint8Array.from({ length: 32 }, (_, index) => start + index)
@@ -64,7 +65,9 @@ async function pendingFixture(): Promise<DidMdPendingAuthorization> {
     privateKey: pair.privateKey,
     publicJwk: await crypto.subtle.exportKey('jwk', pair.publicKey),
     bisetDevice: await sealDidMdBisetDeviceMaterial(signaturePublicKey, { signaturePrivateKey: bytes(65), vaultSecret: bytes(97) }),
-    bisetMimiVaultRoom: { providerUrl: 'https://mimi.example/', roomId: 'mimi://mimi.example/r/vault-test' },
+    documentEdit: { type: 'urn:did-core:document-edit:v1', services: [], verificationMethods: [], remove: [] },
+    requestMlsCredential: true,
+    keyAuthorizationSubject: 'urn:uuid:11111111-1111-4111-8111-111111111111',
     bisetMimiVaultRoomCreated: true,
     createdAt: '2026-09-05T00:00:00.000Z',
   }
@@ -128,14 +131,12 @@ describe('did.md Biset device material sealing', () => {
 })
 
 describe('did.md Biset DIDComm device material sealing', () => {
-  // Reproduced: x25519PublicKey is also outside AES-GCM authenticated data.
-  test.todo('binds DIDComm public metadata to the sealed envelope')
-
   test('round-trips a context-bound DIDComm private key', async () => {
     const x25519PublicKey = bytes(129)
-    const privateMaterial = { x25519PrivateKey: bytes(161) }
+    const control = generatePeerIdentity()
+    const privateMaterial = { x25519PrivateKey: bytes(161), mediatorControlPrivateKey: control.xPriv }
 
-    const sealed = await sealDidMdBisetDidCommDeviceMaterial(x25519PublicKey, privateMaterial)
+    const sealed = await sealDidMdBisetDidCommDeviceMaterial(x25519PublicKey, { did: control.did, kid: control.xKid, publicKey: control.xPub }, privateMaterial)
 
     expect(sealed.x25519PublicKey).toEqual(x25519PublicKey)
     expect(sealed.sealed.ciphertext).not.toEqual(privateMaterial.x25519PrivateKey)
@@ -144,7 +145,8 @@ describe('did.md Biset DIDComm device material sealing', () => {
 
   test('rejects separately tampered DIDComm ciphertext and nonce without leaking private material', async () => {
     const secret = bytes(161)
-    const sealed = await sealDidMdBisetDidCommDeviceMaterial(bytes(129), { x25519PrivateKey: secret })
+    const control = generatePeerIdentity()
+    const sealed = await sealDidMdBisetDidCommDeviceMaterial(bytes(129), { did: control.did, kid: control.xKid, publicKey: control.xPub }, { x25519PrivateKey: secret, mediatorControlPrivateKey: control.xPriv })
 
     await expectNoSecretInError(
       () => openDidMdBisetDidCommDeviceMaterial({ ...sealed, sealed: { ...sealed.sealed, ciphertext: changed(sealed.sealed.ciphertext) } }),
@@ -152,6 +154,10 @@ describe('did.md Biset DIDComm device material sealing', () => {
     )
     await expectNoSecretInError(
       () => openDidMdBisetDidCommDeviceMaterial({ ...sealed, sealed: { ...sealed.sealed, iv: changed(sealed.sealed.iv) } }),
+      secret,
+    )
+    await expectNoSecretInError(
+      () => openDidMdBisetDidCommDeviceMaterial({ ...sealed, mediatorControlPublicKey: changed(sealed.mediatorControlPublicKey) }),
       secret,
     )
   })
@@ -175,7 +181,7 @@ describe('did.md Wallet IndexedDB storage', () => {
       publicJwk: pending.publicJwk,
       capability: { document: { id: 'capability-1' }, proof: { type: 'DataIntegrityProof' } },
       capabilityExpiresAt: '2026-10-05T00:00:00.000Z',
-      bisetDevice: { ...pending.bisetDevice, credentialWire: 'credential-wire', mimiVaultRoom: pending.bisetMimiVaultRoom, mimiVaultRoomCreated: true },
+      bisetDevice: { ...pending.bisetDevice, credentialWire: 'credential-wire', keyAuthorizationSubject: pending.keyAuthorizationSubject, mimiVaultRoomCreated: true },
     }
 
     await saveDidMdRegistration(registration)

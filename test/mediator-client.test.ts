@@ -78,6 +78,22 @@ describe('mediator client library (mediator-{transport,coordinate,pickup,sync}.t
     expect(await pickupStatus(info, bob, fetchImpl)).toBe(0)
   })
 
+  test('a private did:peer controls a distinct public recipient queue', async () => {
+    const { fetchImpl, url } = freshMediatorFetch()
+    const alice = generatePeerIdentity()
+    const controlPeer = generatePeerIdentity()
+    const recipientPeer = generatePeerIdentity()
+    const control: DidCommSender = { did: controlPeer.did, xKid: controlPeer.xKid, xPriv: controlPeer.xPriv }
+    const recipient: DidCommSender = { did: 'did:webvh:example:alice.example', xKid: 'did:webvh:example:alice.example#k-public', xPriv: recipientPeer.xPriv }
+    const info = await registerWithMediator(url, control, fetchImpl, recipient.xKid)
+    expect(await queryKeylist(info, control, fetchImpl)).toEqual([{ kid: recipient.xKid }])
+
+    await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, recipient, recipientPeer.xPub, 'separated')
+    const delivered = await pickupDeliver(info, control, async () => alice.xPub, 10, fetchImpl, recipient)
+    expect((delivered[0]!.plaintext as any).body.content).toBe('separated')
+    expect(await acknowledgeMessages(info, control, [delivered[0]!.ackId], fetchImpl, recipient.xKid)).toBe(0)
+  })
+
   test('re-registering (self-heal) is idempotent and does not disturb the keylist', async () => {
     const { fetchImpl, url } = freshMediatorFetch()
     const bobPeer = generatePeerIdentity()

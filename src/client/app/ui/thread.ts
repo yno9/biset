@@ -607,9 +607,11 @@ export function render(smooth = false): void {
 let _scrollButtonsSetUp = false
 
 /** #scroll-to-top/#scroll-to-bottom's src.bak/main.ts wiring, ported as-is
- * (pure #outer scroll math, no relay/menu-page concept this rewrite has --
- * inMenuMode() is always false here, there being no #account/#config/
- * #compose page to be "in"). */
+ * (pure #outer scroll math). Visibility while a menu page is on screen is a
+ * structural CSS rule (`#app[data-menu-page] #scroll-to-bottom` etc.,
+ * style.css section 13/25) rather than something this handler or any
+ * show*Page() needs to remember to clear -- the .visible class this sets
+ * stays whatever it was, harmlessly, since CSS wins regardless. */
 export function setupScrollButtons(): void {
   if (_scrollButtonsSetUp) return
   _scrollButtonsSetUp = true

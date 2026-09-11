@@ -331,13 +331,15 @@ function renderWalletAccountCard(): void {
   const title = document.createElement('div')
   title.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600'
   const dot = document.createElement('span')
-  dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:#34c759;flex-shrink:0'
+  dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${wallet.reconnectRequired ? '#ff9500' : '#34c759'};flex-shrink:0`
   const label = document.createElement('span')
   label.textContent = 'did.md Wallet'
   title.append(dot, label)
   const description = document.createElement('div')
   description.style.cssText = 'font-size:11px;color:var(--text-dim)'
-  description.textContent = wallet.deviceKid
+  description.textContent = wallet.reconnectRequired
+    ? 'Capability expired · reconnect required (local data is preserved)'
+    : wallet.deviceKid
     ? `Connected · MLS device enrolled · capability until ${new Date(wallet.capabilityExpiresAt).toLocaleDateString()}`
     : `Connected · reconnect to enroll this browser's MLS device · capability until ${new Date(wallet.capabilityExpiresAt).toLocaleDateString()}`
   detail.append(title, description)
@@ -346,8 +348,9 @@ function renderWalletAccountCard(): void {
   // grammar (dot + service/address heading), matching Vault's card instead
   // of a plain text line buried in this one (user-requested, 2026-09-09:
   // "⚫︎ Mediator : mediator.biset.md" as its own card). Not yet
-  // registered/configured still belongs here -- there's nothing to give its
-  // own card until there's an endpoint to report.
+  // configured deployments always get a Mediator card, including its grey
+  // logged-out state; this fallback remains only for deployments with no
+  // configured mediator URL at all.
   if (!wallet.didComm) {
     const messaging = document.createElement('div')
     messaging.style.cssText = 'font-size:11px;color:var(--text-dim)'
@@ -374,8 +377,13 @@ function renderWalletAccountCard(): void {
   disconnect.type = 'button'
   disconnect.className = 'cmd-page-btn'
   disconnect.style.cssText = 'width:auto;padding:5px 9px;font-size:11px'
-  disconnect.textContent = 'Disconnect'
+  disconnect.textContent = wallet.reconnectRequired ? 'Reconnect' : 'Disconnect'
   disconnect.addEventListener('click', () => {
+    if (wallet.reconnectRequired && wallet.onReconnect) {
+      disconnect.disabled = true
+      void wallet.onReconnect().catch(error => { getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error)); disconnect.disabled = false })
+      return
+    }
     if (!confirm(`Disconnect ${wallet.handle} from this browser? The capability can still be revoked from did.md Wallet.`)) return
     disconnect.disabled = true
     void wallet.onDisconnect().catch(error => {
@@ -388,7 +396,7 @@ function renderWalletAccountCard(): void {
 }
 
 /** The old relay card's visual grammar (renderVaultCard's own head row),
- * reused for the DIDComm mediator endpoint once registered -- a standalone
+ * reused for the configured DIDComm mediator -- a standalone
  * "⚫︎ Mediator : host" card next to Vault's, not a text line buried inside
  * the Wallet card (user-requested, 2026-09-09). No expand panel: unlike
  * Vault there's no device list or checkpoint detail to drill into, just the
@@ -408,7 +416,8 @@ function renderMediatorCard(): void {
   const head = document.createElement('div')
   head.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0'
   const dot = document.createElement('span')
-  dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${wallet.didComm.error ? '#ff3b30' : '#34c759'}`
+  const loggedOut = wallet.didComm.loggedOut === true
+  dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${wallet.didComm.error ? '#ff3b30' : loggedOut ? '#8e8e93' : '#34c759'}`
   const title = document.createElement('span')
   title.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--accent2, #888);flex-shrink:0'
   title.textContent = 'Mediator'
@@ -423,7 +432,7 @@ function renderMediatorCard(): void {
   const stats = document.createElement('div')
   stats.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:var(--text-dim)'
   const state = document.createElement('span')
-  state.textContent = wallet.didComm.error ? `Needs attention: ${wallet.didComm.error}` : 'Registered'
+  state.textContent = wallet.didComm.error ? `Needs attention: ${wallet.didComm.error}` : loggedOut ? 'Logged out' : 'Registered'
   state.style.color = wallet.didComm.error ? '#ff3b30' : ''
   stats.appendChild(state)
   left.append(head, stats)
@@ -441,7 +450,15 @@ function renderMediatorCard(): void {
   menuBtn.addEventListener('click', event => {
     event.stopPropagation()
     const didComm = wallet.didComm!
-    openDropdownMenu(menuBtn, [
+    openDropdownMenu(menuBtn, loggedOut ? [
+      {
+        label: 'Log in', onClick: () => {
+          void wallet.onEnableMessaging?.().catch(error => {
+            getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
+          })
+        },
+      },
+    ] : [
       {
         label: 'Edit server', onClick: () => {
           const url = window.prompt('DIDComm mediator URL', didComm.mediatorUrl)

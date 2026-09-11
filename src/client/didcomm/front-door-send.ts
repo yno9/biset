@@ -80,7 +80,9 @@ async function resolveFrontDoorRoute(toDid: string, fetchImpl: typeof fetch): Pr
   return {
     publicKey: decodeX25519Multikey(kaVm.publicKeyMultibase),
     mlkemPublicKey,
-    keyAgreementKid: kaVm.id,
+    // A DID Document may store its key ID as `#fragment`, but DIDComm's JWE
+    // header travels outside that document and must carry the absolute DID URL.
+    keyAgreementKid: kaVm.id.startsWith('#') ? `${doc.id}${kaVm.id}` : kaVm.id,
     endpointUri: endpoint.uri,
     routingKeys: endpoint.routingKeys ?? [],
   }

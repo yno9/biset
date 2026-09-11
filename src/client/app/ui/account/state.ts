@@ -30,7 +30,10 @@ export interface AccountPageConfig {
     deviceKid?: string
     /** A Biset-owned X25519 DIDComm endpoint authorized and published by
      * Wallet. It has no access to a Wallet controller key. */
-    didComm?: { xKid: string; mediatorUrl: string; error?: string }
+    /** The configured mediator remains visible after this browser logs out.
+     * `loggedOut` means there is deliberately no local key/registration and
+     * the card is only an entry point to the Wallet-backed login saga. */
+    didComm?: { xKid?: string; mediatorUrl: string; loggedOut?: boolean; error?: string }
     /** Starts an explicit, same-tab Wallet approval to add a DIDComm endpoint
      * to an already-connected Biset browser. */
     onEnableMessaging?(): Promise<void>
@@ -41,11 +44,12 @@ export interface AccountPageConfig {
      * only once didComm exists (nothing to re-point before there's a first
      * registration to begin with -- onEnableMessaging covers that case). */
     onEditMediator?(mediatorUrl: string): Promise<void>
-    /** Unregisters this browser's DIDComm leaf from its current mediator,
-     * leaving the Wallet session/MLS device/Vault room untouched (the
-     * Mediator card's "Log out", user-requested 2026-09-09 -- scoped to
-     * Mediator only, no Vault equivalent yet). */
+    /** Removes this browser's DIDComm service/key through Wallet, verifies
+     * the resolved DID, commits local state, then removes the mediator route.
+     * The Wallet session/MLS device/Vault room remain untouched. */
     onLogOutMediator?(): Promise<void>
+    reconnectRequired?: boolean
+    onReconnect?(): Promise<void>
     onDisconnect(): Promise<void>
   }
   /** Confirmed and invoked by the identity menu's "Log out" item

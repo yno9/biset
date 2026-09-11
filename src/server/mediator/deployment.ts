@@ -7,7 +7,6 @@
 // twin (feedback: unify common logic) -- see tsconfig.mediator.json's own
 // header for why mail-plugin/ itself stays a separate typecheck project
 // even though its entrypoint imports this file.
-import { resolveDidCommSenderKey } from '../../protocol/didcomm/webvh-resolve.ts'
 import { createMediator } from './server.ts'
 import { SqliteMediatorStore } from './sqlite-store.ts'
 import { IpRateLimiter } from './rate-limit.ts'
@@ -79,11 +78,9 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
     connections: store,
     replay: store,
     transaction: store.transaction,
-    // Public did:webvh resolution only. No biset-anchor API token, Vault
-    // roster, or service-to-service control plane is involved.
-    resolveDidWebvh: async (_did, kid) => {
-      try { return await resolveDidCommSenderKey(kid) } catch { return null }
-    },
+    // Control clients are self-certifying did:peer identities. Public
+    // did:webvh recipient kids may be registered as opaque queue targets,
+    // but are never resolved or used to authenticate mediator control.
   })
 
   let shuttingDown = false

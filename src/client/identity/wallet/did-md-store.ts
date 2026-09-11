@@ -39,7 +39,9 @@ export type DidMdPendingAuthorization = {
   /** Public, Wallet-authorized pointer to the MIMI Self/Vault room. This is
    * tied to the pending authorization so callback handling can reject a
   * substituted room before any MLS operation. */
-  bisetMimiVaultRoom: DidMdBisetMimiVaultRoom
+  documentEdit: DidCoreDocumentEdit
+  requestMlsCredential: boolean
+  keyAuthorizationSubject: string
   /** True only when this request reserved a not-yet-existing Vault room. */
   bisetMimiVaultRoomCreated: boolean
   /** Present only for a Wallet approval that explicitly publishes this
@@ -49,12 +51,28 @@ export type DidMdPendingAuthorization = {
     routingKid: string
     xKid: string
   }
+  previousBisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
+    mediatorUrl: string
+    routingKid: string
+    xKid: string
+  }
+  mediatorPreRegistered?: boolean
   createdAt: string
 }
 
 export type DidMdBisetMimiVaultRoom = {
   roomId: string
   providerUrl: string
+}
+
+export type DidCoreService = { id: string; type: string; serviceEndpoint: string | Record<string, unknown> }
+export type DidCoreVerificationMethod = { id: string; type: string; controller: string; publicKeyMultibase: string }
+export type DidCoreDocumentEdit = {
+  type: 'urn:did-core:document-edit:v1'
+  services: DidCoreService[]
+  verificationMethods: DidCoreVerificationMethod[]
+  serviceKeyBindings?: { serviceId: string; keyIds: string[] }[]
+  remove: string[]
 }
 
 export type DidMdBisetDeviceMaterial = {
@@ -72,13 +90,17 @@ export type OpenDidMdBisetDeviceMaterial = {
  * leaf: the two protocols have distinct key-agreement/signing roles and
  * must not share a private key. */
 export type DidMdBisetDidCommDeviceMaterial = {
-  v: 1
+  v: 2
   x25519PublicKey: Uint8Array
+  mediatorControlDid: string
+  mediatorControlKid: string
+  mediatorControlPublicKey: Uint8Array
   sealed: { iv: Uint8Array; ciphertext: Uint8Array }
 }
 
 export type OpenDidMdBisetDidCommDeviceMaterial = {
   x25519PrivateKey: Uint8Array
+  mediatorControlPrivateKey: Uint8Array
 }
 
 export type DidMdDeviceSession = {
@@ -97,7 +119,7 @@ export type DidMdDeviceSession = {
   capabilityExpiresAt: string
   /** The typed, public MLS credential the Wallet issued for this exact Biset
    * leaf. Undefined is an older Phase-A session and cannot open a Vault. */
-  bisetDevice?: DidMdBisetDeviceMaterial & { credentialWire: string; mimiVaultRoom: DidMdBisetMimiVaultRoom; mimiVaultRoomCreated: boolean }
+  bisetDevice?: DidMdBisetDeviceMaterial & { credentialWire: string; keyAuthorizationSubject: string; mimiVaultRoomCreated: boolean }
   /** An optional Biset-owned DIDComm leaf, authorized by a Wallet routing
    * approval. It is not a did.md controller key. */
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
@@ -176,11 +198,13 @@ function assertSealedDeviceMaterial(value: DidMdBisetDeviceMaterial): void {
 }
 
 function assertDidCommPrivateMaterial(value: OpenDidMdBisetDidCommDeviceMaterial): void {
-  if (!(value.x25519PrivateKey instanceof Uint8Array) || value.x25519PrivateKey.length !== 32) throw new TypeError('Biset DIDComm device private material is invalid')
+  if (!(value.x25519PrivateKey instanceof Uint8Array) || value.x25519PrivateKey.length !== 32 || !(value.mediatorControlPrivateKey instanceof Uint8Array) || value.mediatorControlPrivateKey.length !== 32) throw new TypeError('Biset DIDComm device private material is invalid')
 }
 
 function assertSealedDidCommMaterial(value: DidMdBisetDidCommDeviceMaterial): void {
-  if (value.v !== 1 || !(value.x25519PublicKey instanceof Uint8Array) || value.x25519PublicKey.length !== 32
+  if (value.v !== 2 || !(value.x25519PublicKey instanceof Uint8Array) || value.x25519PublicKey.length !== 32
+    || !value.mediatorControlDid?.startsWith('did:peer:2.') || !value.mediatorControlKid?.startsWith(`${value.mediatorControlDid}#`)
+    || !(value.mediatorControlPublicKey instanceof Uint8Array) || value.mediatorControlPublicKey.length !== 32
     || !(value.sealed?.iv instanceof Uint8Array) || value.sealed.iv.length !== 12
     || !(value.sealed?.ciphertext instanceof Uint8Array) || value.sealed.ciphertext.length < 17) {
     throw new TypeError('Biset DIDComm device material is invalid')
@@ -236,22 +260,23 @@ export async function openDidMdBisetDeviceMaterial(value: DidMdBisetDeviceMateri
  * under this origin's non-extractable browser key. */
 export async function sealDidMdBisetDidCommDeviceMaterial(
   x25519PublicKey: Uint8Array,
+  mediatorControl: { did: string; kid: string; publicKey: Uint8Array },
   privateMaterial: OpenDidMdBisetDidCommDeviceMaterial,
 ): Promise<DidMdBisetDidCommDeviceMaterial> {
   assertDidCommPrivateMaterial(privateMaterial)
   if (!(x25519PublicKey instanceof Uint8Array) || x25519PublicKey.length !== 32) throw new TypeError('Biset DIDComm device public key is invalid')
   const key = await materialWrappingKey()
   const iv = crypto.getRandomValues(new Uint8Array(12))
-  const additionalData = new TextEncoder().encode('biset/did-md/didcomm-device/v1')
-  const plaintext = new TextEncoder().encode(JSON.stringify({ v: 1, x25519PrivateKey: [...privateMaterial.x25519PrivateKey] }))
+  const additionalData = didCommMaterialAad(x25519PublicKey, mediatorControl)
+  const plaintext = new TextEncoder().encode(JSON.stringify({ v: 2, x25519PrivateKey: [...privateMaterial.x25519PrivateKey], mediatorControlPrivateKey: [...privateMaterial.mediatorControlPrivateKey] }))
   const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData }, key, plaintext))
-  return { v: 1, x25519PublicKey: x25519PublicKey.slice(), sealed: { iv, ciphertext } }
+  return { v: 2, x25519PublicKey: x25519PublicKey.slice(), mediatorControlDid: mediatorControl.did, mediatorControlKid: mediatorControl.kid, mediatorControlPublicKey: mediatorControl.publicKey.slice(), sealed: { iv, ciphertext } }
 }
 
 export async function openDidMdBisetDidCommDeviceMaterial(value: DidMdBisetDidCommDeviceMaterial): Promise<OpenDidMdBisetDidCommDeviceMaterial> {
   assertSealedDidCommMaterial(value)
   const key = await materialWrappingKey()
-  const additionalData = new TextEncoder().encode('biset/did-md/didcomm-device/v1')
+  const additionalData = didCommMaterialAad(value.x25519PublicKey, { did: value.mediatorControlDid, kid: value.mediatorControlKid, publicKey: value.mediatorControlPublicKey })
   let decoded: unknown
   try {
     const iv = new Uint8Array(value.sealed.iv.length); iv.set(value.sealed.iv)
@@ -261,10 +286,15 @@ export async function openDidMdBisetDidCommDeviceMaterial(value: DidMdBisetDidCo
   } catch { throw new Error('Biset DIDComm device material could not be decrypted on this browser') }
   if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) throw new Error('Biset DIDComm device material is invalid')
   const input = decoded as Record<string, unknown>
-  if (input.v !== 1 || !Array.isArray(input.x25519PrivateKey)) throw new Error('Biset DIDComm device material is invalid')
-  const privateMaterial = { x25519PrivateKey: new Uint8Array(input.x25519PrivateKey) }
+  if (input.v !== 2 || !Array.isArray(input.x25519PrivateKey) || !Array.isArray(input.mediatorControlPrivateKey)) throw new Error('Biset DIDComm device material is invalid')
+  const privateMaterial = { x25519PrivateKey: new Uint8Array(input.x25519PrivateKey), mediatorControlPrivateKey: new Uint8Array(input.mediatorControlPrivateKey) }
   assertDidCommPrivateMaterial(privateMaterial)
   return privateMaterial
+}
+
+function didCommMaterialAad(x25519PublicKey: Uint8Array, control: { did: string; kid: string; publicKey: Uint8Array }): ArrayBuffer {
+  const bytes = new TextEncoder().encode(JSON.stringify({ label: 'biset/did-md/didcomm-device/v2', x25519PublicKey: [...x25519PublicKey], mediatorControlDid: control.did, mediatorControlKid: control.kid, mediatorControlPublicKey: [...control.publicKey] }))
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 }
 
 async function transact<T>(storeName: string, mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {

@@ -69,7 +69,7 @@ describe('webvh Authentication Service', () => {
   // (never moved) must keep validating under its OWN unchanged (old-did
   // -prefixed) credential after a SIBLING device moves, or every future
   // join to the self-group would fail the moment ANY device has moved.
-  test('a never-moved device\'s unchanged credential still validates after the identity moves', async () => {
+  test('a previously admitted device credential remains valid after a later DID generation', async () => {
     const rootPrivateKey = ed25519.utils.randomSecretKey()
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
     const leafSignaturePublicKey = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
@@ -96,7 +96,7 @@ describe('webvh Authentication Service', () => {
     const realFetch = globalThis.fetch
     globalThis.fetch = anchor.fetch
     try {
-      expect(await webvhAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(false)
+      expect(await webvhAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(true)
     } finally {
       globalThis.fetch = realFetch
     }

@@ -352,7 +352,9 @@ export async function ensureWalletMimiVaultRoom(
 ): Promise<EnsuredMimiVaultRoom> {
   ensureMlsAuthServiceInstalled()
   const provider = new URL(mimiSelfBaseUrl)
-  if (provider.protocol !== 'https:' || provider.toString() !== device.providerUrl || !new RegExp(`^mimi://${provider.hostname.replace(/[.]/g, '\\.')}/r/vault-[A-Za-z0-9_-]{43}$`).test(device.roomId)) {
+  let declaredProvider: URL
+  try { declaredProvider = new URL(device.providerUrl) } catch { throw new Error('Wallet MIMI Vault pointer does not match this Biset provider') }
+  if (provider.protocol !== 'https:' || declaredProvider.protocol !== 'https:' || provider.toString() !== declaredProvider.toString() || !new RegExp(`^mimi://${provider.hostname.replace(/[.]/g, '\\.')}/r/vault-[A-Za-z0-9_-]{43}$`).test(device.roomId)) {
     throw new Error('Wallet MIMI Vault pointer does not match this Biset provider')
   }
   const signaturePublicKey = ed25519.getPublicKey(device.signaturePrivateKey)

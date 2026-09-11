@@ -72,13 +72,16 @@ test('rejoining with the same device credential is rejected as a duplicate, and 
   await joinMimiVaultRoom({ identityId: identity, deviceId: lostDevice, selfGroupId: 'self', roomId: created.roomId, credential: lostCredential, signaturePrivateKey: lostSign, transport, stateStore: lostStore })
 
   // "Lost its local MLS state" is simulated by retrying with no local record
-  // and the SAME credential/signature key -- the hub sees a second join
-  // attempt from an already-present client id.
+  // and the same signature key/client id. A later DID service edit may have
+  // reissued the credential at a newer generation; that must still be
+  // recognized as the same client and recovered through resync.
   lostRecord = undefined
-  const plainRetry = joinMimiVaultRoom({ identityId: identity, deviceId: lostDevice, selfGroupId: 'self', roomId: created.roomId, credential: lostCredential, signaturePrivateKey: lostSign, transport, stateStore: lostStore })
+  const refreshedCredential = createMlsDeviceCredential(identity, `2-${'C'.repeat(20)}`, ed25519.getPublicKey(lostSign), root, lostSign)
+  expect(refreshedCredential.deviceKid).toBe(lostDevice)
+  const plainRetry = joinMimiVaultRoom({ identityId: identity, deviceId: lostDevice, selfGroupId: 'self', roomId: created.roomId, credential: refreshedCredential, signaturePrivateKey: lostSign, transport, stateStore: lostStore })
   await expect(plainRetry).rejects.toThrow(/credential duplicates an existing client in this room/)
 
-  const resynced = await joinMimiVaultRoom({ identityId: identity, deviceId: lostDevice, selfGroupId: 'self', roomId: created.roomId, credential: lostCredential, signaturePrivateKey: lostSign, transport, stateStore: lostStore, resync: true })
+  const resynced = await joinMimiVaultRoom({ identityId: identity, deviceId: lostDevice, selfGroupId: 'self', roomId: created.roomId, credential: refreshedCredential, signaturePrivateKey: lostSign, transport, stateStore: lostStore, resync: true })
   expect(resynced.client).toBe(lostDevice)
   const clientIds = deployment.store.room(created.roomId)?.memberCredentials.map(member => member.kind === 'visible' ? member.client : '')
   expect(clientIds).toEqual([firstDevice, lostDevice]) // exactly one leaf per device -- no duplicate

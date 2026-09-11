@@ -1,10 +1,10 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { bytesToBase64url } from '../src/protocol/canonical.ts'
+import { bytesToBase64url, canonicalBytes } from '../src/protocol/canonical.ts'
+import { encodeMultikey } from '../src/protocol/webvh/multikey.ts'
 import { buildProof } from '../src/protocol/webvh/proof.ts'
 import { didToHttpsUrl } from '../src/protocol/webvh/identifier.ts'
-import { createMlsDeviceCredential, encodeMlsDeviceCredential } from '../src/client/mls/device-credential.ts'
 import { buildGenesisLog } from './protocol/support/webvh-log-fixture.ts'
 import {
   clearDidMdPendingAuthorization,
@@ -49,7 +49,7 @@ function callbackLocation(params: Record<string, string>, callbackUrl = `${ORIGI
   for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value)
   Object.defineProperty(globalThis, 'location', {
     configurable: true,
-    value: { href: url.toString(), origin: url.origin, pathname: url.pathname, protocol: url.protocol },
+    value: { href: url.toString(), origin: url.origin, pathname: url.pathname, protocol: url.protocol, replace() {} },
   })
   Object.defineProperty(globalThis, 'history', { configurable: true, value: { replaceState() {} } })
 }
@@ -84,7 +84,9 @@ async function pendingFixture(overrides: Partial<DidMdPendingAuthorization> = {}
     privateKey: pair.privateKey,
     publicJwk: await crypto.subtle.exportKey('jwk', pair.publicKey),
     bisetDevice: await sealDidMdBisetDeviceMaterial(bytes(33), { signaturePrivateKey: bytes(65), vaultSecret: bytes(97) }),
-    bisetMimiVaultRoom: { providerUrl: 'https://mimi.example/', roomId: 'mimi://mimi.example/r/vault-test' },
+    documentEdit: { type: 'urn:did-core:document-edit:v1', services: [], verificationMethods: [], remove: [] },
+    requestMlsCredential: true,
+    keyAuthorizationSubject: 'urn:uuid:11111111-1111-4111-8111-111111111111',
     bisetMimiVaultRoomCreated: true,
     createdAt: '2026-09-05T00:00:00.000Z',
     ...overrides,
@@ -123,7 +125,6 @@ describe('did.md OAuth callback validation', () => {
     const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [])
     const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']) as CryptoKeyPair
     const registration = registrationFixture(FILE_CALLBACK_URL)
-    const room = { providerUrl: 'https://mimi.example/', roomId: 'mimi://mimi.example/r/vault-test' }
     const pending: DidMdPendingAuthorization = {
       v: 2,
       issuer: ISSUER,
@@ -138,14 +139,23 @@ describe('did.md OAuth callback validation', () => {
       privateKey: pair.privateKey,
       publicJwk: await crypto.subtle.exportKey('jwk', pair.publicKey),
       bisetDevice: await sealDidMdBisetDeviceMaterial(leafPublicKey, { signaturePrivateKey: leafPrivateKey, vaultSecret: bytes(97) }),
-      bisetMimiVaultRoom: room,
+      documentEdit: { type: 'urn:did-core:document-edit:v1', services: [], verificationMethods: [], remove: [] },
+      requestMlsCredential: true,
+      keyAuthorizationSubject: 'urn:uuid:22222222-2222-4222-8222-222222222222',
       bisetMimiVaultRoomCreated: true,
       createdAt: '2026-09-05T00:00:00.000Z',
     }
-    const credential = createMlsDeviceCredential(did, log[0]!.versionId, leafPublicKey, rootPrivateKey, rootPrivateKey)
+    const keyCredentialUnsigned = {
+      type: 'did.md/KeyAuthorizationCredential', version: 1, issuer: did, audience: registration.clientId,
+      subject: pending.keyAuthorizationSubject, generation: log[0]!.versionId,
+      publicKey: { type: 'Multikey', publicKeyMultibase: encodeMultikey(leafPublicKey) }, purposes: ['signing'],
+      issuedAt: '2026-09-05T00:00:00.000Z', expiresAt: '2030-01-01T00:00:00.000Z',
+    }
+    const keyCredentialBytes = canonicalBytes({ label: 'did.md/key-authorization/v1', ...keyCredentialUnsigned })
+    const keyCredential = { ...keyCredentialUnsigned, rootSignature: bytesToBase64url(ed25519.sign(keyCredentialBytes, rootPrivateKey)), signSignature: bytesToBase64url(ed25519.sign(keyCredentialBytes, rootPrivateKey)) }
     const document = {
       audience: registration.clientId,
-      authorizationDetails: [{ type: 'urn:biset:device-enrollment:v1', mlsCredential: bytesToBase64url(encodeMlsDeviceCredential(credential)), mimiVaultRoom: room }],
+      authorizationDetails: [pending.documentEdit, { type: 'urn:did.md:key-authorization:v1', credential: bytesToBase64url(canonicalBytes(keyCredential)) }],
       deviceJkt: pending.deviceJkt,
       expiresAt: '2030-01-01T00:00:00.000Z',
       id: 'capability-1',

@@ -23,10 +23,10 @@ import { defaultFetch } from '../../protocol/net-fetch.ts'
  * repairs a mediator that lost this device's registration (its
  * ConnectionStore was reset, say) without needing to detect that case
  * specially. Safe to call repeatedly; the caller decides the cadence. */
-export async function registerWithMediator(mediatorUrl: string, own: DidCommSender, fetchImpl: typeof fetch = defaultFetch()): Promise<MediatorInfo> {
+export async function registerWithMediator(mediatorUrl: string, own: DidCommSender, fetchImpl: typeof fetch = defaultFetch(), recipientKid = own.xKid): Promise<MediatorInfo> {
   const mediator = await fetchMediatorInfo(mediatorUrl, fetchImpl)
   await requestMediation(mediator, own, fetchImpl)
-  await updateKeylist(mediator, own, own.xKid, 'add', fetchImpl)
+  await updateKeylist(mediator, own, recipientKid, 'add', fetchImpl)
   return mediator
 }
 

@@ -74,8 +74,9 @@ export async function pickupDeliver(
   resolveSenderKey: ResolveSenderKey,
   limit = 10,
   fetchImpl: typeof fetch = defaultFetch(),
+  recipient: DidCommSender = own,
 ): Promise<DeliveredMessage[]> {
-  const reply = await sendAndUnpack(mediator, own, DELIVERY_REQUEST, { recipient_did: own.xKid, limit }, fetchImpl)
+  const reply = await sendAndUnpack(mediator, own, DELIVERY_REQUEST, { recipient_did: recipient.xKid, limit }, fetchImpl)
   if (reply.type === STATUS) return [] // no messages queued
   if (reply.type !== DELIVERY) throw new Error(`pickupDeliver: unexpected reply type ${reply.type}`)
 
@@ -89,7 +90,7 @@ export async function pickupDeliver(
     // message into a lost one, so it is retried on every poll and
     // eventually aged out by the mediator's own retention bound rather than
     // discarded here.
-    const delivered = await unpackQueuedMessage(att.data.json, att.id, own, resolveSenderKey)
+    const delivered = await unpackQueuedMessage(att.data.json, att.id, recipient, resolveSenderKey)
     if (delivered) out.push(delivered)
   }
   return out
@@ -99,8 +100,8 @@ export async function pickupDeliver(
  * `streamUrl`'s `GET /stream` connection (mediator/server.ts). The request
  * that CAN carry a signature (`EventSource` itself can't), mirroring
  * mls-ds/client-transport.ts's own `watchDeliveries`/`streamUrl` pair. */
-export async function requestWatch(mediator: MediatorInfo, own: DidCommSender, fetchImpl: typeof fetch = defaultFetch()): Promise<{ token: string; expiresAt: string }> {
-  const reply = await sendAndUnpack(mediator, own, WATCH_REQUEST, { recipient_did: own.xKid }, fetchImpl)
+export async function requestWatch(mediator: MediatorInfo, own: DidCommSender, fetchImpl: typeof fetch = defaultFetch(), recipientKid = own.xKid): Promise<{ token: string; expiresAt: string }> {
+  const reply = await sendAndUnpack(mediator, own, WATCH_REQUEST, { recipient_did: recipientKid }, fetchImpl)
   if (reply.type !== WATCH_GRANT) throw new Error(`requestWatch: unexpected reply type ${reply.type}`)
   const body = reply.body as { token?: unknown; expires_at?: unknown }
   if (typeof body.token !== 'string' || typeof body.expires_at !== 'string') throw new Error('requestWatch: malformed WATCH_GRANT body')
@@ -116,9 +117,9 @@ export function mediatorStreamUrl(mediatorUrl: string, token: string): string {
 /** Pickup 3.0 messages-received: confirms the listed queue ids are durably
  * stored so the mediator drops them. Returns the count still queued. No-op
  * for an empty list. */
-export async function acknowledgeMessages(mediator: MediatorInfo, own: DidCommSender, ackIds: string[], fetchImpl: typeof fetch = defaultFetch()): Promise<number> {
+export async function acknowledgeMessages(mediator: MediatorInfo, own: DidCommSender, ackIds: string[], fetchImpl: typeof fetch = defaultFetch(), recipientKid = own.xKid): Promise<number> {
   if (ackIds.length === 0) return pickupStatus(mediator, own, fetchImpl)
-  const reply = await sendAndUnpack(mediator, own, MESSAGES_RECEIVED, { recipient_did: own.xKid, message_id_list: ackIds }, fetchImpl)
+  const reply = await sendAndUnpack(mediator, own, MESSAGES_RECEIVED, { recipient_did: recipientKid, message_id_list: ackIds }, fetchImpl)
   if (reply.type !== STATUS) throw new Error(`acknowledgeMessages: unexpected reply type ${reply.type}`)
   return (reply.body as { message_count?: number }).message_count ?? 0
 }

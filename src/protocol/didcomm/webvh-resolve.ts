@@ -83,7 +83,7 @@ export async function resolveDidCommSenderKey(senderKid: string, fetchImpl: type
   const fragment = senderKid.slice(hash)
   const doc = await resolveWithRouting(did, fetchImpl)
   if (!doc) throw new Error(`resolveDidCommSenderKey: sender identity ${did} does not resolve`)
-  const vm = doc.verificationMethod.find(v => v.id === `${doc.id}${fragment}`)
+  const vm = doc.verificationMethod.find(v => v.id === fragment || v.id === `${doc.id}${fragment}`)
   if (!vm) throw new Error(`resolveDidCommSenderKey: ${senderKid} is not a published keyAgreement entry`)
   return decodeX25519Multikey(vm.publicKeyMultibase)
 }

@@ -14,11 +14,15 @@ import { IndexedDbVaultStore } from '../store/vault/store.ts'
 import { setOnWalletConnected } from './ui/account-create.ts'
 import {
   beginDidMdWalletMessagingEnrollment,
+  beginDidMdWalletDocumentEdit,
+  beginDidMdWalletLogin,
+  completeDidMdWalletCallback,
   disconnectDidMdWallet,
-  logOutDidMdWalletMediator,
   openDidMdWalletBisetDidCommDevice,
   openDidMdWalletBisetDevice,
   restoreDidMdWalletSession,
+  didMdWalletReconnectState,
+  DID_MD_JUST_CONNECTED_KEY,
 } from '../identity/wallet/did-md-oauth.ts'
 import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
 import { configureCompose } from './ui/thread.ts'
@@ -126,6 +130,11 @@ async function deleteLocalDatabases(names: readonly string[]): Promise<void> {
     request.onblocked = () => resolve()
     setTimeout(resolve, 3000) // a step that never settles must not outlive its budget
   })))
+}
+
+async function disconnectWalletAndLocalData(): Promise<void> {
+  await disconnectDidMdWallet()
+  await deleteLocalDatabases(ALL_LOCAL_DATABASE_NAMES)
 }
 
 // A Vault sync round that never settles would leave its caller's busy flag
@@ -255,12 +264,13 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
   let dismissHistoryRecovery: (() => Promise<void>) | undefined
   let onRemoveVaultDevice: ((targetDeviceId: string) => Promise<void>) | undefined
   let didComm: { xKid: string; mediatorUrl: string; error?: string } | undefined
-  let activeDidCommDevice: { did: string; xKid: string; x25519PrivateKey: Uint8Array } | undefined
+  let activeDidCommDevice: { did: string; xKid: string; x25519PrivateKey: Uint8Array; mediatorControlDid: string; mediatorControlKid: string; mediatorControlPrivateKey: Uint8Array } | undefined
   let walletRelationshipManager: WalletRelationshipManager | undefined
   let walletDidCommOutbox: WalletDidCommOutbox | undefined
   try {
-    const device = await openDidMdWalletBisetDevice()
-    const { mimiSelfBaseUrl, mediatorUrls } = readBisetConfig()
+    const config = readBisetConfig()
+    const { mimiSelfBaseUrl, mediatorUrls } = config
+    const device = await openDidMdWalletBisetDevice(mimiSelfBaseUrl, config)
     const selfGroupStore = new IndexedDbMlsSelfGroupStore()
     const vaultStore = await IndexedDbVaultStore.open()
     const ensured = await ensureWalletMimiVaultRoom({
@@ -671,11 +681,9 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
           try { return new URL(url).toString() === authorizedMediator } catch { return false }
         })
         if (!configuredMediator) throw new Error('Wallet-authorized mediator is not configured by this Biset deployment')
-        const mediator = await registerWithMediator(didCommDevice.mediatorUrl, {
-          did: didCommDevice.did,
-          xKid: didCommDevice.xKid,
-          xPriv: didCommDevice.x25519PrivateKey,
-        })
+        const mediatorControl = { did: didCommDevice.mediatorControlDid, xKid: didCommDevice.mediatorControlKid, xPriv: didCommDevice.mediatorControlPrivateKey }
+        const mediatorRecipient = { did: didCommDevice.did, xKid: didCommDevice.xKid, xPriv: didCommDevice.x25519PrivateKey }
+        const mediator = await registerWithMediator(didCommDevice.mediatorUrl, mediatorControl, undefined, didCommDevice.xKid)
         if (mediator.xKid !== didCommDevice.routingKid) throw new Error('Mediator routing key changed since Wallet authorization; enable messaging again')
         didComm = { xKid: didCommDevice.xKid, mediatorUrl: didCommDevice.mediatorUrl }
         activeDidCommDevice = didCommDevice
@@ -815,7 +823,8 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
         }
         const watch = watchMediator({
           mediatorUrl: didCommDevice.mediatorUrl,
-          own: { did: didCommDevice.did, xKid: didCommDevice.xKid, xPriv: didCommDevice.x25519PrivateKey },
+          own: mediatorControl,
+          recipient: mediatorRecipient,
           resolveSenderKey: resolveAnyDidCommSenderKey,
           onMessage: message => handleWalletDidCommMessage(message, didCommDevice.xKid, didCommDevice.mediatorUrl),
           onError: error => console.warn('[did.md Wallet DIDComm watch]', error),
@@ -952,6 +961,16 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
     vault = { state: 'error', coordinatorUrl: readBisetConfig().mimiSelfBaseUrl, detail: error instanceof Error ? error.message : String(error) }
     console.warn('[did.md Wallet MIMI Vault]', error)
   }
+  // Keep the configured Mediator visible after an intentional logout.  No
+  // xKid is invented here: the grey state is configuration only, and its
+  // Log in action creates/registers a fresh device before asking Wallet to
+  // publish it.
+  const configuredMediator = readBisetConfig().mediatorUrls.find(url => {
+    try { return Boolean(new URL(url).host) } catch { return false }
+  })
+  const mediatorCard = didComm ?? (configuredMediator
+    ? { mediatorUrl: new URL(configuredMediator).toString(), loggedOut: true as const }
+    : undefined)
   configureAccountPage({
     did: session.did,
     wallet: {
@@ -959,20 +978,20 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
       deviceJkt: session.deviceJkt,
       capabilityExpiresAt: session.capabilityExpiresAt,
       deviceKid: session.deviceKid,
-      ...(didComm ? { didComm } : {}),
-      onEnableMessaging: async () => beginDidMdWalletMessagingEnrollment(readBisetConfig().mediatorUrls),
+      ...(mediatorCard ? { didComm: mediatorCard } : {}),
+      onEnableMessaging: async () => {
+        const config = readBisetConfig()
+        return beginDidMdWalletMessagingEnrollment(config.mediatorUrls, config)
+      },
       // Same same-tab Wallet approval as onEnableMessaging, just pointed at
       // an explicit mediator URL (the Mediator card's "Edit server") instead
       // of always taking this deployment's configured default -- reuses
       // beginDidMdWalletMessagingEnrollment as-is, since it already accepts
       // an array and takes its first valid entry (bisetMediatorFor).
-      onEditMediator: async (mediatorUrl: string) => beginDidMdWalletMessagingEnrollment([mediatorUrl]),
-      onLogOutMediator: async () => {
-        await logOutDidMdWalletMediator()
-        await bootClient()
-      },
+      onEditMediator: async (mediatorUrl: string) => beginDidMdWalletDocumentEdit({ mediatorUrls: [mediatorUrl], configuration: readBisetConfig() }),
+      onLogOutMediator: async () => beginDidMdWalletDocumentEdit({ removeMediator: true, configuration: readBisetConfig() }),
       onDisconnect: async () => {
-        await disconnectDidMdWallet()
+        await disconnectWalletAndLocalData()
         await bootClient()
       },
     },
@@ -992,6 +1011,15 @@ export async function bootClient(): Promise<void> {
   if (mimiVaultWatchHandle !== undefined) { mimiVaultWatchHandle.close(); mimiVaultWatchHandle = undefined }
   for (const handle of mediatorPollHandles) handle.stop()
   mediatorPollHandles = []
+
+  // Consume an OAuth callback before attempting an ordinary refresh of the
+  // stored Wallet capability.  A DID-document edit intentionally makes the
+  // old capability's document snapshot stale; refreshing it first used to
+  // clear the otherwise valid session and briefly render account creation,
+  // only for account-create.ts to consume the callback and restore it again.
+  // Callback completion saves the replacement session atomically before the
+  // account UI below reads it.
+  const completedWalletEdit = await completeDidMdWalletCallback()
 
   // A did.md Wallet session is the ONLY account this client has since N1
   // (2026-09-05). The seed-derived local IdentityRecord path that used to
@@ -1015,13 +1043,36 @@ export async function bootClient(): Promise<void> {
     // this call site only ever needed it for that one case, never for an
     // ordinary returning session.
     showApp()
+    if (completedWalletEdit || sessionStorage.getItem(DID_MD_JUST_CONNECTED_KEY) === '1') {
+      sessionStorage.removeItem(DID_MD_JUST_CONNECTED_KEY)
+      showAccountPage()
+    }
     return
   }
-  // Nothing owns these local databases -- see ALL_LOCAL_DATABASE_NAMES's
-  // comment. With no Wallet session there is no account on this device at
-  // all, so every one of them (biset-identity included, now that nothing
-  // else holds an open connection to it) is stale by definition.
-  await deleteLocalDatabases(ALL_LOCAL_DATABASE_NAMES)
+  const reconnect = await didMdWalletReconnectState()
+  if (reconnect?.expired) {
+    configureAccountPage({
+      did: reconnect.did,
+      wallet: {
+        handle: reconnect.handle, deviceJkt: '', capabilityExpiresAt: reconnect.capabilityExpiresAt, reconnectRequired: true,
+        onReconnect: async () => {
+          const config = readBisetConfig()
+          const popup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
+          return beginDidMdWalletLogin(reconnect.handle, config.mimiSelfBaseUrl, config.mediatorUrls, popup, config)
+        },
+        onDisconnect: async () => { await disconnectWalletAndLocalData(); await bootClient() },
+      },
+      showMessage: showSysMsg,
+    })
+    showApp()
+    showAccountPage()
+    showSysMsg(`The capability for ${reconnect.handle} expired. Reconnect did.md Wallet; local Vault and message databases were preserved.`)
+    return
+  }
+  // A missing/unreadable Wallet session is not proof that local Vault data
+  // is orphaned: callback races, temporary AS failures, or storage errors
+  // can all reach this branch. Destructive cleanup is therefore reserved
+  // for the explicit Disconnect action above.
   configureAccountPage({ did: null })
   showApp()
   showAccountPage()

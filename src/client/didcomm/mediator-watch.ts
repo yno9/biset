@@ -52,6 +52,9 @@ export function sameMediatorUrl(a: string, b: string): boolean {
 export interface MediatorWatchOptions {
   mediatorUrl: string
   own: DidCommSender
+  /** Queue recipient/decryption key. Defaults to `own`; Wallet front doors
+   * pass a separate public recipient while `own` remains private did:peer. */
+  recipient?: DidCommSender
   resolveSenderKey: ResolveSenderKey
   /** Same contract as startMediatorPolling's onMessage: a throw leaves the
    * message unacknowledged (the mediator keeps it queued -- the ordinary
@@ -94,9 +97,10 @@ export function watchMediator(options: MediatorWatchOptions): MediatorWatch {
       // first-tick registration -- a mediator that lost this device's
       // registration (its ConnectionStore reset, say) would otherwise mint
       // a watch token for a kid it's about to decide it doesn't own.
-      mediatorInfo = registered ? await fetchMediatorInfo(options.mediatorUrl, fetchImpl) : await registerWithMediator(options.mediatorUrl, options.own, fetchImpl)
+      const recipient = options.recipient ?? options.own
+      mediatorInfo = registered ? await fetchMediatorInfo(options.mediatorUrl, fetchImpl) : await registerWithMediator(options.mediatorUrl, options.own, fetchImpl, recipient.xKid)
       registered = true
-      const { token } = await requestWatch(mediatorInfo, options.own, fetchImpl)
+      const { token } = await requestWatch(mediatorInfo, options.own, fetchImpl, recipient.xKid)
       if (closed) return
 
       const es = new EventSourceCtor(mediatorStreamUrl(options.mediatorUrl, token))
@@ -127,11 +131,12 @@ export function watchMediator(options: MediatorWatchOptions): MediatorWatch {
     if (typeof parsed !== 'object' || parsed === null) return
     const { id, jwe } = parsed as { id?: unknown; jwe?: unknown }
     if (typeof id !== 'string' || jwe === undefined) return
-    const delivered = await unpackQueuedMessage(jwe, id, options.own, options.resolveSenderKey)
+    const recipient = options.recipient ?? options.own
+    const delivered = await unpackQueuedMessage(jwe, id, recipient, options.resolveSenderKey)
     if (!delivered) return
     try {
       await options.onMessage(delivered)
-      if (mediatorInfo) await acknowledgeMessages(mediatorInfo, options.own, [delivered.ackId], fetchImpl)
+      if (mediatorInfo) await acknowledgeMessages(mediatorInfo, options.own, [delivered.ackId], fetchImpl, recipient.xKid)
     } catch (e) {
       console.warn(`[didcomm] onMessage failed for ${delivered.ackId}, leaving it queued for retry:`, e instanceof Error ? e.message : e)
     }

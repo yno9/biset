@@ -845,9 +845,8 @@ select {
   font-size: 15px;
 }
 /* :last-of-type, not :last-child — a section can end with a non-row sibling
-   (prerotation-rotate-btn, hidden until active) that would otherwise keep
-   this row from being its parent's last CHILD while still being its last
-   ROW, leaving a stray trailing border under it (2026-08-17). */
+   that would otherwise keep this row from being its parent's last CHILD
+   while still being its last ROW, leaving a stray trailing border below. */
 .cmd-page-row:last-of-type {
   border-bottom: none;
 }
@@ -1451,6 +1450,27 @@ body:has(#app.lp-enabled.show-left) #reply-dock {
 }
 body:has(#app.lp-enabled.show-left) #scroll-to-bottom,
 body:has(#app.lp-enabled.show-left) #scroll-to-top {
+  display: none;
+}
+/* Scroll-to-top/bottom are conversation-screen furniture, not global chrome.
+   Their own .visible toggle (below) is pure #outer scroll math with no
+   notion of which page is on screen, so it can't tell "the account page
+   happens to be scrolled" from "a conversation is". #app carries
+   data-menu-page for exactly the opposite condition already (shell.ts's own
+   routing treats its ABSENCE as the definition of the conversation screen:
+   `if (!hasAttribute('data-menu-page')) render()`), and
+   account-page.ts/compose-page.ts/config-page.ts set/clear it purely for
+   their own routing -- reused here rather than adding a second, parallel
+   "is this the conversation screen" signal (or three separate
+   show*Page()-remembers-to-hide-it calls) to keep in sync with it. Two IDs
+   here outrank one ID + one class, so this wins over `.visible` with no
+   `!important` (found live, 2026-09-09: a stray scroll button, left
+   .visible from whatever thread was on screen, showed through on the
+   account page). */
+#app[data-menu-page] #scroll-to-bottom,
+#app[data-menu-page] #scroll-to-top {
+  opacity: 0;
+  pointer-events: none;
   display: none;
 }
 #reply-dock:empty {

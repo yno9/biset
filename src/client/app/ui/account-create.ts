@@ -137,7 +137,7 @@ export function setupNewUserPage(): void {
     // Safari allows a popup only while this click handler is active. The
     // authorization URL becomes available after asynchronous verification.
     const walletPopup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
-    void beginDidMdWalletLogin(handle, config.mimiSelfBaseUrl, config.mediatorUrls, walletPopup).catch(error => {
+    void beginDidMdWalletLogin(handle, config.mimiSelfBaseUrl, config.mediatorUrls, walletPopup, config).catch(error => {
       walletLoginButton.disabled = false
       walletResult(error instanceof Error ? error.message : String(error), true)
     })
