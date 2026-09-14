@@ -25,10 +25,13 @@ export type DidMdPendingAuthorization = {
   clientId: string
   state: string
   codeVerifier: string
-  did: string
-  handle: string
-  verificationMethod: string
-  rootPublicKey: Uint8Array
+  /** Unknown for the minimal first-shot authorize request, which sends no
+   * login_hint and defers all DID resolution to the callback -- filled in
+   * from the token response's `sub` once the Wallet identifies the signer. */
+  did?: string
+  handle?: string
+  verificationMethod?: string
+  rootPublicKey?: Uint8Array
   deviceJkt: string
   privateKey: CryptoKey
   publicJwk: JsonWebKey
@@ -42,14 +45,27 @@ export type DidMdPendingAuthorization = {
   documentEdit: DidCoreDocumentEdit
   requestMlsCredential: boolean
   keyAuthorizationSubject: string
-  /** True only when this request reserved a not-yet-existing Vault room. */
+  /** Unused by the Wallet-derived MIMI Vault room (see
+   * mimiVaultRoomDerivation) -- retained only because
+   * ensureWalletMimiVaultRoom's join-then-create-on-noSuchRoom fallback
+   * still takes a boolean hint, and `false` (attempt join first) is always
+   * the right one now that there is no "did we just create it" signal. */
   bisetMimiVaultRoomCreated: boolean
+  /** Present when this request asks Wallet to derive (never publish) the
+   * identity's MIMI Vault room id from its Root key -- see
+   * client/did-webvh.ts's deriveWalletSecret in the did.md repo. */
+  mimiVaultRoomDerivation?: { purpose: string; context: string }
   /** Present only for a Wallet approval that explicitly publishes this
    * browser's Biset DIDComm endpoint. */
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
     mediatorUrl: string
     routingKid: string
-    xKid: string
+    /** Unset only in the minimal first-shot login request, which prepares
+     * this device before the signer's DID is known (see
+     * prepareBisetDidCommDevice in did-md-oauth.ts) -- xKid = did +
+     * fragment is filled in once the token response reveals the DID, same
+     * as did/handle/verificationMethod/rootPublicKey above. */
+    xKid?: string
   }
   previousBisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
     mediatorUrl: string
@@ -120,6 +136,11 @@ export type DidMdDeviceSession = {
   /** The typed, public MLS credential the Wallet issued for this exact Biset
    * leaf. Undefined is an older Phase-A session and cannot open a Vault. */
   bisetDevice?: DidMdBisetDeviceMaterial & { credentialWire: string; keyAuthorizationSubject: string; mimiVaultRoomCreated: boolean }
+  /** The Wallet-derived MIMI Vault room -- never published to the DID
+   * Document, so there is nothing to resolve on session restore; this is
+   * the only record of it. Undefined for a session established before this
+   * field existed (reconnect did.md Wallet to get one). */
+  mimiVaultRoom?: DidMdBisetMimiVaultRoom
   /** An optional Biset-owned DIDComm leaf, authorized by a Wallet routing
    * approval. It is not a did.md controller key. */
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {

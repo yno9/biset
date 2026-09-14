@@ -13,7 +13,7 @@ import { IndexedDbMlsSelfGroupStore } from '../mls/store.ts'
 import { IndexedDbVaultStore } from '../store/vault/store.ts'
 import { setOnWalletConnected } from './ui/account-create.ts'
 import {
-  beginDidMdWalletMessagingEnrollment,
+  beginDidMdWalletFinalizeEnrollment,
   beginDidMdWalletDocumentEdit,
   beginDidMdWalletLogin,
   completeDidMdWalletCallback,
@@ -270,7 +270,7 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
   try {
     const config = readBisetConfig()
     const { mimiSelfBaseUrl, mediatorUrls } = config
-    const device = await openDidMdWalletBisetDevice(mimiSelfBaseUrl, config)
+    const device = await openDidMdWalletBisetDevice(mimiSelfBaseUrl)
     const selfGroupStore = new IndexedDbMlsSelfGroupStore()
     const vaultStore = await IndexedDbVaultStore.open()
     const ensured = await ensureWalletMimiVaultRoom({
@@ -979,14 +979,19 @@ async function configureWalletAccountIfPresent(): Promise<boolean> {
       capabilityExpiresAt: session.capabilityExpiresAt,
       deviceKid: session.deviceKid,
       ...(mediatorCard ? { didComm: mediatorCard } : {}),
+      // Publishes the DIDComm mediator device -- the one enrollment step
+      // that still needs a DID Document edit (other people's DIDComm
+      // senders have to be able to find the route publicly). The MIMI Vault
+      // room no longer needs this: it's Wallet-derived at sign-in, not
+      // published (see beginDidMdWalletLogin's own doc comment).
       onEnableMessaging: async () => {
         const config = readBisetConfig()
-        return beginDidMdWalletMessagingEnrollment(config.mediatorUrls, config)
+        return beginDidMdWalletFinalizeEnrollment(config.mediatorUrls, config)
       },
       // Same same-tab Wallet approval as onEnableMessaging, just pointed at
       // an explicit mediator URL (the Mediator card's "Edit server") instead
       // of always taking this deployment's configured default -- reuses
-      // beginDidMdWalletMessagingEnrollment as-is, since it already accepts
+      // beginDidMdWalletDocumentEdit as-is, since it already accepts
       // an array and takes its first valid entry (bisetMediatorFor).
       onEditMediator: async (mediatorUrl: string) => beginDidMdWalletDocumentEdit({ mediatorUrls: [mediatorUrl], configuration: readBisetConfig() }),
       onLogOutMediator: async () => beginDidMdWalletDocumentEdit({ removeMediator: true, configuration: readBisetConfig() }),
@@ -1019,7 +1024,20 @@ export async function bootClient(): Promise<void> {
   // only for account-create.ts to consume the callback and restore it again.
   // Callback completion saves the replacement session atomically before the
   // account UI below reads it.
-  const completedWalletEdit = await completeDidMdWalletCallback()
+  //
+  // Not guarded before, this could throw (an invalid/expired code, a
+  // network error) as an unhandled rejection out of the top-level
+  // `bootClient()` call at the bottom of this file -- aborting boot before
+  // showApp()/showAccountPage() ever ran, leaving a blank page with no
+  // visible error. account-create.ts's own callback handler still gets a
+  // chance to show the user what went wrong once the account page actually
+  // renders below.
+  let completedWalletEdit: Awaited<ReturnType<typeof completeDidMdWalletCallback>> = undefined
+  try {
+    completedWalletEdit = await completeDidMdWalletCallback()
+  } catch (error) {
+    console.warn('[did.md Wallet callback]', error instanceof Error ? error.message : error)
+  }
 
   // A did.md Wallet session is the ONLY account this client has since N1
   // (2026-09-05). The seed-derived local IdentityRecord path that used to
@@ -1058,7 +1076,7 @@ export async function bootClient(): Promise<void> {
         onReconnect: async () => {
           const config = readBisetConfig()
           const popup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
-          return beginDidMdWalletLogin(reconnect.handle, config.mimiSelfBaseUrl, config.mediatorUrls, popup, config)
+          return beginDidMdWalletLogin(config.mimiSelfBaseUrl, config.mediatorUrls, popup, config)
         },
         onDisconnect: async () => { await disconnectWalletAndLocalData(); await bootClient() },
       },

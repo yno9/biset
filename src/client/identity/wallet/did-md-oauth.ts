@@ -13,7 +13,6 @@ import { fetchCurrentLog } from '../webvh/log-io.ts'
 import { resolveByDomain, resolveEntries } from '../../../protocol/webvh/resolver.ts'
 import { decodeMlsDeviceCredential, mlsCredentialFromKeyAuthorization, verifyMlsDeviceCredential, verifyMlsDeviceCredentialRoot, type MlsDeviceCredentialV2 } from '../../mls/device-credential.ts'
 import { base64urlToBytes } from '../../../protocol/canonical.ts'
-import { mimiVaultRoomFromRouting } from '../../../protocol/didcomm/webvh-routing.ts'
 import { deviceKid, deviceKidFragment } from '../../../protocol/didcomm/devicekid.ts'
 import { encodeX25519Multikey } from '../../../protocol/didcomm/multikey.ts'
 import { fetchMediatorInfo, requestMediation, updateKeylist } from '../../../protocol/didcomm/mediator-coordinate.ts'
@@ -43,10 +42,17 @@ import {
 const ISSUER = 'https://api.did.md'
 const WALLET_ORIGIN = 'https://app.did.md'
 const CALLBACK_PATH = '/wallet/callback'
-const REQUESTED_SCOPES = ['biset:login', 'biset:device', 'biset:routing', 'biset:messaging', 'biset:vault']
+const REQUESTED_SCOPES = ['openid', 'profile', 'biset:login', 'biset:device', 'biset:routing', 'biset:messaging', 'biset:vault']
 const DID_DOCUMENT_EDIT_DETAIL = 'urn:did-core:document-edit:v1'
 const KEY_AUTHORIZATION_DETAIL = 'urn:did.md:key-authorization:v1'
-const MIMI_VAULT_SERVICE_TYPE = 'BisetMimiVaultRoom'
+const DERIVED_SECRET_DETAIL = 'urn:did.md:derived-secret:v1'
+// The Wallet-derived (never DID-document-published) MIMI Vault room
+// locator: HKDF(Root private key, this purpose + the provider URL as
+// context). See client/did-webvh.ts's deriveWalletSecret in the did.md
+// repo -- only the Wallet holds the Root key, so only devices signed in
+// through the same Wallet mnemonic can ever reproduce this value; an
+// outside observer who only knows the (public) DID cannot.
+const MIMI_VAULT_ROOM_DERIVED_SECRET_PURPOSE = 'biset:mimi-vault-room:v1'
 export const DID_MD_JUST_CONNECTED_KEY = 'biset-did-md-just-connected-v1'
 const encoder = new TextEncoder()
 
@@ -58,15 +64,20 @@ export type DidMdWalletConfiguration = {
 type WalletConfiguration = Required<DidMdWalletConfiguration>
 
 type DidDocumentServiceTemplate = {
-  purpose?: 'mimi-vault' | 'didcomm'
+  purpose?: 'didcomm'
   id: string
   type: string
   serviceEndpoint: string | Record<string, unknown>
   previousIds?: string[]
 }
 
+// MIMI Vault used to have a template here too, published as a DID Document
+// service so a device could discover an existing room before joining. It no
+// longer needs to be discoverable at all: every device derives the exact
+// same room id from the identity's own Root key (see
+// MIMI_VAULT_ROOM_DERIVED_SECRET_PURPOSE above), so there is nothing left to
+// publish or resolve.
 const defaultDidDocumentServices: DidDocumentServiceTemplate[] = [
-  { purpose: 'mimi-vault', id: '#mimi', type: MIMI_VAULT_SERVICE_TYPE, serviceEndpoint: '$mimiVaultRoom', previousIds: ['#biset-mimi-vault'] },
   { purpose: 'didcomm', id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: '$mediatorUrl', accept: ['didcomm/v2'], routingKeys: ['$routingKid'] }, previousIds: ['#didcomm-biset'] },
 ]
 
@@ -80,17 +91,16 @@ function walletConfiguration(value: DidMdWalletConfiguration = {}): WalletConfig
       || (typeof service.serviceEndpoint !== 'string' && (!service.serviceEndpoint || typeof service.serviceEndpoint !== 'object' || Array.isArray(service.serviceEndpoint)))
       || ids.has(service.id)) throw new Error('DID Document service configuration is invalid')
     ids.add(service.id)
-    if (service.purpose !== undefined && service.purpose !== 'mimi-vault' && service.purpose !== 'didcomm') throw new Error('DID Document service purpose is invalid')
+    if (service.purpose !== undefined && service.purpose !== 'didcomm') throw new Error('DID Document service purpose is invalid')
     if (service.previousIds?.some(id => !/^#[^\s#]+$/.test(id))) throw new Error('DID Document service previous IDs are invalid')
   }
-  const mimi = didDocumentServices.filter(service => service.purpose === 'mimi-vault')
   const didcomm = didDocumentServices.filter(service => service.purpose === 'didcomm')
-  if (mimi.length !== 1 || didcomm.length !== 1) throw new Error('DID Document services must define one MIMI Vault and one DIDComm template')
+  if (didcomm.length !== 1) throw new Error('DID Document services must define one DIDComm template')
   if (!walletDeviceName.trim() || walletDeviceName.length > 160) throw new Error('Wallet device name must be between 1 and 160 characters')
   return { didDocumentServices, walletDeviceName }
 }
 
-function configuredService(config: WalletConfiguration, purpose: 'mimi-vault' | 'didcomm'): DidDocumentServiceTemplate {
+function configuredService(config: WalletConfiguration, purpose: 'didcomm'): DidDocumentServiceTemplate {
   const service = config.didDocumentServices.find(candidate => candidate.purpose === purpose)
   if (!service) throw new Error(`DID Document services configuration has no ${purpose} template`)
   return service
@@ -107,12 +117,6 @@ function materializeServiceEndpoint(value: string | Record<string, unknown>, sub
     ? materializeServiceEndpoint(item as string | Record<string, unknown>, substitutions)
     : item
   return result
-}
-
-/** DID Core permits fragment-only service IDs. Accept legacy absolute IDs
- * while reading, but always ask Wallet to publish the compact form. */
-function isServiceId(did: string, value: string | undefined, fragment: string): boolean {
-  return value === fragment || value === `${did}${fragment}`
 }
 
 type FileWalletPopup = {
@@ -260,20 +264,24 @@ function didMdHandle(value: string): string {
   return handle
 }
 
-/** The public, opaque room URI is made by this browser, published by Wallet,
- * then compared exactly at callback time. It contains neither Vault content
- * nor a Vault key. */
-async function bisetMimiVaultRoomFor(did: string, providerValue: string, mimiService: DidDocumentServiceTemplate): Promise<{ room: DidMdBisetMimiVaultRoom; created: boolean }> {
+/** Validates and canonicalizes the configured MIMI Self/Vault provider URL --
+ * used both to build the derived-secret request's `context` (so the room id
+ * is bound to a specific provider) and to compute the resulting room URI. */
+function normalizedMimiProviderUrl(providerValue: string): URL {
   let provider: URL
   try { provider = new URL(providerValue) } catch { throw new Error('Biset MIMI Self/Vault is not configured') }
   if (provider.protocol !== 'https:' || provider.username || provider.password || provider.search || provider.hash) throw new Error('Biset MIMI Self/Vault URL is invalid')
-  const providerUrl = provider.toString()
-  const resolved = await resolveByDomain(parseWebvhDid(did).domain, undefined, { cache: 'no-store' })
-  const service = resolved?.service?.find(candidate => (isServiceId(did, candidate.id, mimiService.id) || mimiService.previousIds?.some(id => isServiceId(did, candidate.id, id))) && candidate.type === mimiService.type)
-  const roomId = typeof service?.serviceEndpoint === 'string'
-    ? mimiVaultRoomFromRouting({ service: [], mimiVaultRoom: { roomId: service.serviceEndpoint, providerUrl } }, providerUrl)
-    : undefined
-  return { room: { providerUrl, roomId: roomId ?? `mimi://${provider.hostname}/r/vault-${randomBase64url(32)}` }, created: !roomId }
+  return provider
+}
+
+/** The room id itself is never published or resolved -- see
+ * MIMI_VAULT_ROOM_DERIVED_SECRET_PURPOSE. `value` is the base64url HKDF
+ * output Wallet returned for that request (32 bytes, so a 43-character
+ * base64url string -- the exact shape `ensureWalletMimiVaultRoom` in
+ * biset's bootstrap.ts already expects). */
+function mimiVaultRoomFromDerivedSecret(provider: URL, value: string): DidMdBisetMimiVaultRoom {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(value)) throw new Error('did.md returned an invalid MIMI Vault room secret')
+  return { providerUrl: provider.toString(), roomId: `mimi://${provider.hostname}/r/vault-${value}` }
 }
 
 function sameDocumentEdit(value: unknown, expected: DidCoreDocumentEdit): void {
@@ -292,34 +300,47 @@ async function bisetMediatorFor(values: readonly string[]): Promise<DidMdBisetMe
   return { mediatorUrl, routingKid: info.xKid }
 }
 
-async function newBisetDidCommDevice(did: string, mediator: DidMdBisetMediator): Promise<NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']> & DidMdBisetDidCommDeviceMaterial> {
+/** Generates and seals the DIDComm device's own material -- none of it
+ * (the X25519 leaf, the did:peer mediator-control identity) is bound to
+ * this identity's did:webvh, so none of it needs the DID known yet. Only
+ * `xKid` (did:webvh + fragment) does; see withDidCommXKid. */
+async function prepareBisetDidCommDevice(mediator: DidMdBisetMediator): Promise<DidMdBisetDidCommDeviceMaterial & { mediatorUrl: string; routingKid: string }> {
   const x25519PrivateKey = x25519.utils.randomSecretKey()
   const x25519PublicKey = x25519.getPublicKey(x25519PrivateKey)
   const control = generatePeerIdentity()
-  const xKid = deviceKid(did, x25519PublicKey)
   try {
     const sealed = await sealDidMdBisetDidCommDeviceMaterial(
       x25519PublicKey,
       { did: control.did, kid: control.xKid, publicKey: control.xPub },
       { x25519PrivateKey, mediatorControlPrivateKey: control.xPriv },
     )
-    return { ...sealed, mediatorUrl: mediator.mediatorUrl, routingKid: mediator.routingKid, xKid }
+    return { ...sealed, mediatorUrl: mediator.mediatorUrl, routingKid: mediator.routingKid }
   } finally {
     x25519PrivateKey.fill(0)
     control.xPriv.fill(0); control.edPriv.fill(0)
   }
 }
 
-function buildDocumentEdit(did: string, config: WalletConfiguration, room?: DidMdBisetMimiVaultRoom, device?: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']>, remove: string[] = []): DidCoreDocumentEdit {
-  const mimi = configuredService(config, 'mimi-vault')
+function withDidCommXKid<T extends { x25519PublicKey: Uint8Array }>(device: T, did: string): T & { xKid: string } {
+  return { ...device, xKid: deviceKid(did, device.x25519PublicKey) }
+}
+
+/** For the two callers that already know the DID at build time (the
+ * mediator-only finalize step, and editing an existing mediator). The
+ * minimal first-shot login instead calls prepareBisetDidCommDevice
+ * directly and resolves xKid later, once the response reveals the DID. */
+async function newBisetDidCommDevice(did: string, mediator: DidMdBisetMediator): Promise<NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']> & DidMdBisetDidCommDeviceMaterial & { xKid: string }> {
+  return withDidCommXKid(await prepareBisetDidCommDevice(mediator), did)
+}
+
+function buildDocumentEdit(did: string, config: WalletConfiguration, device?: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']>, remove: string[] = []): DidCoreDocumentEdit {
   const didcomm = configuredService(config, 'didcomm')
   const services = config.didDocumentServices
-    .filter(service => (service.purpose !== 'mimi-vault' || room) && (service.purpose !== 'didcomm' || device))
+    .filter(service => service.purpose !== 'didcomm' || device)
     .map(service => ({
       id: service.id,
       type: service.type,
       serviceEndpoint: materializeServiceEndpoint(service.serviceEndpoint, {
-        '$mimiVaultRoom': room?.roomId ?? '',
         '$mediatorUrl': device?.mediatorUrl ?? '',
         '$routingKid': device?.routingKid ?? '',
       }),
@@ -328,15 +349,12 @@ function buildDocumentEdit(did: string, config: WalletConfiguration, room?: DidM
     type: DID_DOCUMENT_EDIT_DETAIL,
     services,
     verificationMethods: device ? [{ id: deviceKidFragment(device.x25519PublicKey), type: 'Multikey', controller: did, publicKeyMultibase: encodeX25519Multikey(device.x25519PublicKey) }] : [],
-    serviceKeyBindings: [
-      ...(room ? [{ serviceId: mimi.id, keyIds: [] }] : []),
-      ...(device ? [{ serviceId: didcomm.id, keyIds: [deviceKidFragment(device.x25519PublicKey)] }] : []),
-    ],
+    serviceKeyBindings: device ? [{ serviceId: didcomm.id, keyIds: [deviceKidFragment(device.x25519PublicKey)] }] : [],
     remove,
   }
 }
 
-async function setMediatorRegistration(_did: string, device: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']>, action: 'add' | 'remove'): Promise<void> {
+async function setMediatorRegistration(_did: string, device: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']> & { xKid: string }, action: 'add' | 'remove'): Promise<void> {
   const material = await openDidMdBisetDidCommDeviceMaterial(device)
   try {
     const mediator = await fetchMediatorInfo(device.mediatorUrl)
@@ -348,8 +366,9 @@ async function setMediatorRegistration(_did: string, device: NonNullable<DidMdPe
 }
 
 async function rollbackPendingMediator(pending: DidMdPendingAuthorization): Promise<void> {
-  if (!pending.mediatorPreRegistered || !pending.bisetDidCommDevice) return
-  try { await setMediatorRegistration(pending.did, pending.bisetDidCommDevice, 'remove') }
+  const device = pending.bisetDidCommDevice
+  if (!pending.mediatorPreRegistered || !device?.xKid || !pending.did) return
+  try { await setMediatorRegistration(pending.did, { ...device, xKid: device.xKid }, 'remove') }
   catch (error) { console.warn('[mediator edit rollback]', error instanceof Error ? error.message : error) }
 }
 
@@ -363,7 +382,7 @@ function redirectUri(): string {
   return `${location.origin}${CALLBACK_PATH}`
 }
 
-function isWalletCallback(): boolean {
+export function isWalletCallback(): boolean {
   if (location.pathname === CALLBACK_PATH) return true
   // A packaged file:// build cannot navigate to an origin-root callback
   // route. Wallet therefore returns to the same local HTML file with the
@@ -453,7 +472,7 @@ async function rootAuthority(handle: string, document: Awaited<ReturnType<typeof
   return { did: document.id, verificationMethod, rootPublicKey: decodeMultikey(method.publicKeyMultibase) }
 }
 
-async function validateBisetMlsCredential(wire: string, pending: DidMdPendingAuthorization): Promise<MlsDeviceCredentialV2> {
+async function validateBisetMlsCredential(wire: string, pending: ResolvedPendingAuthorization): Promise<MlsDeviceCredentialV2> {
   let credential: MlsDeviceCredentialV2
   try {
     const input = asObject(JSON.parse(new TextDecoder().decode(base64urlToBytes(wire))), 'key authorization credential')
@@ -480,7 +499,7 @@ async function validateBisetMlsCredential(wire: string, pending: DidMdPendingAut
   return credential
 }
 
-function capabilityDetails(value: unknown, pending: DidMdPendingAuthorization): { credentialWire: string; didCommDevice?: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']> } {
+function capabilityDetails(value: unknown, pending: ResolvedPendingAuthorization): { credentialWire: string; didCommDevice?: NonNullable<ResolvedPendingAuthorization['bisetDidCommDevice']>; mimiVaultRoom?: DidMdBisetMimiVaultRoom } {
   if (!Array.isArray(value)) throw new Error('did.md did not return Biset authorization details')
   const matches = value.filter(detail => {
     try { return asObject(detail, 'authorization detail').type === KEY_AUTHORIZATION_DETAIL } catch { return false }
@@ -492,10 +511,60 @@ function capabilityDetails(value: unknown, pending: DidMdPendingAuthorization): 
   const edits = (value as unknown[]).filter(item => { try { return asObject(item, 'authorization detail').type === DID_DOCUMENT_EDIT_DETAIL } catch { return false } })
   if (edits.length !== 1) throw new Error('did.md did not return one DID document edit detail')
   sameDocumentEdit(edits[0], pending.documentEdit)
-  return { credentialWire: detail.credential, ...(pending.bisetDidCommDevice ? { didCommDevice: pending.bisetDidCommDevice } : {}) }
+  let mimiVaultRoom: DidMdBisetMimiVaultRoom | undefined
+  if (pending.mimiVaultRoomDerivation) {
+    const derivedMatches = (value as unknown[]).filter(item => { try { return asObject(item, 'authorization detail').type === DERIVED_SECRET_DETAIL } catch { return false } })
+    if (derivedMatches.length !== 1) throw new Error('did.md did not return the requested MIMI Vault room secret')
+    const derived = asObject(derivedMatches[0], 'derived secret detail')
+    exactKeys(derived, ['type', 'purpose', 'context', 'value'], 'derived secret detail')
+    if (derived.purpose !== pending.mimiVaultRoomDerivation.purpose || derived.context !== pending.mimiVaultRoomDerivation.context || typeof derived.value !== 'string') throw new Error('did.md returned an invalid MIMI Vault room secret')
+    mimiVaultRoom = mimiVaultRoomFromDerivedSecret(new URL(pending.mimiVaultRoomDerivation.context), derived.value)
+  }
+  return { credentialWire: detail.credential, ...(pending.bisetDidCommDevice ? { didCommDevice: pending.bisetDidCommDevice } : {}), ...(mimiVaultRoom ? { mimiVaultRoom } : {}) }
 }
 
-async function capabilityFromResponse(value: unknown, pending: DidMdPendingAuthorization) {
+type ResolvedPendingAuthorization = DidMdPendingAuthorization & {
+  did: string; handle: string; verificationMethod: string; rootPublicKey: Uint8Array
+  // xKid is guaranteed once resolvedPendingAuthorization has run, whether it
+  // arrived already-resolved (finalize/documentEdit, did known at build
+  // time) or was filled in here (login, prepared before the DID was known).
+  bisetDidCommDevice?: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']> & { xKid: string }
+}
+
+/** Resolves the signer's DID/handle/root key from the token response's
+ * `sub` when the pending authorization didn't know them up front (the
+ * minimal first-shot login request sends no login_hint) -- the exact
+ * derivation the now-removed lightweight OIDC step used to do before
+ * redirecting a second time, now done once, after the single redirect. */
+async function resolvedPendingAuthorization(pending: DidMdPendingAuthorization, did: string): Promise<ResolvedPendingAuthorization> {
+  if (pending.did !== undefined) {
+    if (pending.did !== did) throw new Error('did.md returned a device capability for an unexpected DID')
+    return pending as ResolvedPendingAuthorization
+  }
+  const parts = parseWebvhDid(did)
+  const handle = didMdHandle(parts.domain)
+  const resolved = await resolveByDomain(handle, undefined, { cache: 'no-store' })
+  const identity = await rootAuthority(handle, resolved)
+  if (identity.did !== did) throw new Error('did.md returned a device capability for an unexpected DID')
+  // The login request prepared this device before the DID was known (see
+  // beginDidMdWalletLogin) -- xKid can only be computed now.
+  const bisetDidCommDevice = pending.bisetDidCommDevice ? withDidCommXKid(pending.bisetDidCommDevice, identity.did) : undefined
+  const { bisetDidCommDevice: _pendingDevice, ...rest } = pending
+  // The login request's documentEdit (if it has a verification method at
+  // all) was built with a placeholder controller, since the DID wasn't
+  // known yet -- but Wallet always force-overwrites controller to its own
+  // loaded DID regardless of what was requested (dispo's client/app.ts,
+  // didDocumentEditDetail), so the echoed edit sameDocumentEdit compares
+  // against below will carry the REAL DID. Correct this copy the same way
+  // before that comparison, or it always mismatches.
+  const documentEdit: DidCoreDocumentEdit = {
+    ...pending.documentEdit,
+    verificationMethods: pending.documentEdit.verificationMethods.map(method => ({ ...method, controller: identity.did })),
+  }
+  return { ...rest, did: identity.did, handle, verificationMethod: identity.verificationMethod, rootPublicKey: identity.rootPublicKey, bisetDidCommDevice, documentEdit }
+}
+
+async function capabilityFromResponse(value: unknown, pending: ResolvedPendingAuthorization) {
   const signed = asObject(value, 'device capability')
   exactKeys(signed, ['document', 'proof'], 'device capability')
   const document = asObject(signed.document, 'device capability document')
@@ -509,25 +578,34 @@ async function capabilityFromResponse(value: unknown, pending: DidMdPendingAutho
   const detail = capabilityDetails(document.authorizationDetails, pending)
   const credentialWire = detail.credentialWire
   const credential = await validateBisetMlsCredential(credentialWire, pending)
-  return { capability: { document, proof }, expiresAt: document.expiresAt, scope: document.scope as string[], credential, credentialWire, didCommDevice: detail.didCommDevice }
+  return { capability: { document, proof }, expiresAt: document.expiresAt, scope: document.scope as string[], credential, credentialWire, didCommDevice: detail.didCommDevice, mimiVaultRoom: detail.mimiVaultRoom }
 }
 
 async function tokenFrom(response: Response, pending: DidMdPendingAuthorization): Promise<DidMdActiveSession> {
   if (!response.ok) throw new Error(await response.text())
   const value = asObject(await response.json(), 'token response')
   const nonce = response.headers.get('dpop-nonce')
-  if (typeof value.access_token !== 'string' || value.token_type !== 'DPoP' || value.sub !== pending.did || typeof value.expires_in !== 'number' || !nonce) throw new Error('did.md returned an invalid token response')
-  const capability = await capabilityFromResponse(value.device_capability, pending)
-  const resolved = await resolveByDomain(parseWebvhDid(pending.did).domain, undefined, { cache: 'no-store' })
+  if (typeof value.access_token !== 'string' || value.token_type !== 'DPoP' || typeof value.sub !== 'string' || typeof value.expires_in !== 'number' || !nonce) throw new Error('did.md returned an invalid token response')
+  const resolvedPending = await resolvedPendingAuthorization(pending, value.sub)
+  const capability = await capabilityFromResponse(value.device_capability, resolvedPending)
+  const resolved = await resolveByDomain(parseWebvhDid(resolvedPending.did).domain, undefined, { cache: 'no-store' })
   if (!resolved) throw new Error('Could not resolve the DID document after Wallet approval')
-  for (const service of pending.documentEdit.services) if (JSON.stringify(resolved.service?.find(value => value.id === service.id)) !== JSON.stringify(service)) throw new Error(`Wallet did not publish requested service ${service.id}`)
-  for (const method of pending.documentEdit.verificationMethods) if (JSON.stringify(resolved.verificationMethod?.find(value => value.id === method.id)) !== JSON.stringify(method)) throw new Error(`Wallet did not publish requested verification method ${method.id}`)
-  for (const id of pending.documentEdit.remove) if (resolved.service?.some(value => value.id === id) || resolved.verificationMethod?.some(value => value.id === id)) throw new Error(`Wallet did not remove ${id}`)
+  for (const service of resolvedPending.documentEdit.services) if (JSON.stringify(resolved.service?.find(value => value.id === service.id)) !== JSON.stringify(service)) throw new Error(`Wallet did not publish requested service ${service.id}`)
+  for (const method of resolvedPending.documentEdit.verificationMethods) if (JSON.stringify(resolved.verificationMethod?.find(value => value.id === method.id)) !== JSON.stringify(method)) throw new Error(`Wallet did not publish requested verification method ${method.id}`)
+  for (const id of resolvedPending.documentEdit.remove) if (resolved.service?.some(value => value.id === id) || resolved.verificationMethod?.some(value => value.id === id)) throw new Error(`Wallet did not remove ${id}`)
+  // The MIMI Vault room is never republished (see MIMI_VAULT_ROOM_DERIVED_
+  // SECRET_PURPOSE), so a round that doesn't ask Wallet to derive it again
+  // (session restore, or the mediator-only finalize step) would otherwise
+  // lose it here -- carry the previous session's value forward whenever
+  // this round's response didn't include a fresh one.
+  const previousSession = await readDidMdDeviceSession()
+  const mimiVaultRoom = capability.mimiVaultRoom ?? previousSession?.mimiVaultRoom
   const session: DidMdDeviceSession = {
-    v: 2, issuer: pending.issuer, clientId: pending.clientId, did: pending.did, handle: pending.handle,
-    verificationMethod: pending.verificationMethod, rootPublicKey: pending.rootPublicKey, deviceJkt: pending.deviceJkt,
-    privateKey: pending.privateKey, publicJwk: pending.publicJwk, capability: capability.capability, capabilityExpiresAt: capability.expiresAt,
-    bisetDevice: { ...pending.bisetDevice, credentialWire: capability.credentialWire, keyAuthorizationSubject: pending.keyAuthorizationSubject, mimiVaultRoomCreated: pending.bisetMimiVaultRoomCreated },
+    v: 2, issuer: resolvedPending.issuer, clientId: resolvedPending.clientId, did: resolvedPending.did, handle: resolvedPending.handle,
+    verificationMethod: resolvedPending.verificationMethod, rootPublicKey: resolvedPending.rootPublicKey, deviceJkt: resolvedPending.deviceJkt,
+    privateKey: resolvedPending.privateKey, publicJwk: resolvedPending.publicJwk, capability: capability.capability, capabilityExpiresAt: capability.expiresAt,
+    bisetDevice: { ...resolvedPending.bisetDevice, credentialWire: capability.credentialWire, keyAuthorizationSubject: resolvedPending.keyAuthorizationSubject, mimiVaultRoomCreated: resolvedPending.bisetMimiVaultRoomCreated },
+    ...(mimiVaultRoom ? { mimiVaultRoom } : {}),
     ...(capability.didCommDevice ? { bisetDidCommDevice: capability.didCommDevice } : {}),
   }
   await saveDidMdDeviceSession(session)
@@ -536,15 +614,15 @@ async function tokenFrom(response: Response, pending: DidMdPendingAuthorization)
   // impossible by construction. Publish + re-resolve above first, persist
   // the recoverable session, then register; boot retries registration if
   // the network fails after the DID commit.
-  if (capability.didCommDevice) await setMediatorRegistration(pending.did, capability.didCommDevice, 'add')
-  if (pending.previousBisetDidCommDevice) {
-    try { await setMediatorRegistration(pending.did, pending.previousBisetDidCommDevice, 'remove') }
+  if (capability.didCommDevice) await setMediatorRegistration(resolvedPending.did, capability.didCommDevice, 'add')
+  if (resolvedPending.previousBisetDidCommDevice) {
+    try { await setMediatorRegistration(resolvedPending.did, resolvedPending.previousBisetDidCommDevice, 'remove') }
     catch (error) { console.warn('[mediator edit cleanup]', error instanceof Error ? error.message : error) }
   }
-  return { did: session.did, handle: session.handle, clientId: session.clientId, deviceJkt: session.deviceJkt, capabilityExpiresAt: session.capabilityExpiresAt, accessToken: value.access_token, nonce, scope: capability.scope, deviceKid: capability.credential.deviceKid, ...(capability.didCommDevice ? { didCommKid: capability.didCommDevice.xKid } : {}) }
+  return { did: session.did, handle: session.handle, clientId: session.clientId, deviceJkt: session.deviceJkt, capabilityExpiresAt: session.capabilityExpiresAt, accessToken: value.access_token, nonce, scope: capability.scope, deviceKid: capability.credential.deviceKid, ...(mimiVaultRoom ? { mimiVaultRoom } : {}), ...(capability.didCommDevice ? { didCommKid: capability.didCommDevice.xKid } : {}) }
 }
 
-function pendingFromSession(session: DidMdDeviceSession): DidMdPendingAuthorization {
+function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthorization {
   const capabilityDocument = (() => { try { return asObject(session.capability.document, 'stored capability document') } catch { return {} } })()
   const storedEdit = Array.isArray(capabilityDocument.authorizationDetails)
     ? capabilityDocument.authorizationDetails.find(value => { try { return asObject(value, 'stored authorization detail').type === DID_DOCUMENT_EDIT_DETAIL } catch { return false } })
@@ -569,11 +647,20 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
   const params = new URLSearchParams({
     client_id: pending.clientId, redirect_uri: client.redirectUri, response_type: 'code', state: pending.state,
     code_challenge: await sha256Base64url(pending.codeVerifier), code_challenge_method: 'S256',
-    login_hint: pending.handle, dpop_jkt: pending.deviceJkt, scope: REQUESTED_SCOPES.join(' '),
+    ...(pending.handle !== undefined ? { login_hint: pending.handle } : {}),
+    dpop_jkt: pending.deviceJkt, scope: REQUESTED_SCOPES.join(' '),
+    // A one-shot UI hint only (dispo ignores it once an identity already
+    // exists in that tab, e.g. every finalize/edit round after login): asks
+    // the did.md Wallet creation screen to start with its Alias toggle on,
+    // since a biset user is expected to want a memorable did.md hostname
+    // rather than the default SCID-derived one. Presence-only -- the value
+    // is never read.
+    alias: '',
     authorization_details: JSON.stringify([
       pending.documentEdit,
       { type: KEY_AUTHORIZATION_DETAIL, subject: pending.keyAuthorizationSubject,
         publicKey: { type: 'Multikey', publicKeyMultibase: encodeMultikey(pending.bisetDevice.signaturePublicKey) }, purposes: ['signing'] },
+      ...(pending.mimiVaultRoomDerivation ? [{ type: DERIVED_SECRET_DETAIL, purpose: pending.mimiVaultRoomDerivation.purpose, context: pending.mimiVaultRoomDerivation.context }] : []),
     ]),
   })
   request.search = params.toString()
@@ -602,59 +689,87 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
   throw new Error('The browser did not navigate to did.md Wallet')
 }
 
-export async function beginDidMdWalletLogin(rawHandle: string, mimiSelfBaseUrl: string, mediatorUrls: readonly string[] = [], openedPopup?: Window, configured: DidMdWalletConfiguration = {}): Promise<never> {
+/** The only round trip needed to sign in: no DID is resolved and no
+ * document edit is requested up front, so this never needs to know which
+ * did.md handle the user has open in Wallet beforehand (no login_hint). The
+ * signer's DID, MIMI Vault room, and DIDComm mediator enrollment are all
+ * resolved/deferred to after Wallet approves -- see `tokenFrom` for DID
+ * derivation and `beginDidMdWalletFinalizeEnrollment` for the follow-up
+ * step the user triggers explicitly from Biset's own UI. */
+/** The only round trip needed to sign in, provision a MIMI Vault room, AND
+ * (when a mediator is configured and reachable) publish a DIDComm device:
+ * no DID is resolved up front (no login_hint). The MIMI Vault room id is
+ * Wallet-derived rather than published (see
+ * MIMI_VAULT_ROOM_DERIVED_SECRET_PURPOSE), and the DIDComm device's own
+ * material -- the X25519 leaf, its did:peer mediator-control identity, even
+ * the document edit's verification method (a fragment-only id; its
+ * `controller` is ignored and overwritten by Wallet regardless) -- turns
+ * out not to need the DID either, only `xKid` (did:webvh + fragment) does.
+ * prepareBisetDidCommDevice builds everything else now; withDidCommXKid
+ * fills in `xKid` once the token response reveals the DID, the same
+ * resolve-after-response pattern resolvedPendingAuthorization already uses
+ * for did/handle/verificationMethod/rootPublicKey.
+ *
+ * Best-effort: a mediator that's unconfigured or unreachable right now
+ * just means no DIDComm device this round -- it must never block sign-in
+ * itself. beginDidMdWalletFinalizeEnrollment remains for that case, and for
+ * enabling messaging after the fact. */
+export async function beginDidMdWalletLogin(mimiSelfBaseUrl: string, mediatorUrls: readonly string[] = [], openedPopup?: Window, configured: DidMdWalletConfiguration = {}): Promise<never> {
   const config = walletConfiguration(configured)
-  const handle = didMdHandle(rawHandle)
-  const document = await resolveByDomain(handle, undefined, { cache: 'no-store' })
-  const identity = await rootAuthority(handle, document)
+  const provider = normalizedMimiProviderUrl(mimiSelfBaseUrl)
   const client = await registration(config.walletDeviceName)
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']) as CryptoKeyPair
   const publicJwk = p256PublicJwk(await crypto.subtle.exportKey('jwk', pair.publicKey))
   const signaturePrivateKey = ed25519.utils.randomSecretKey()
   const signaturePublicKey = ed25519.getPublicKey(signaturePrivateKey)
-  const requestedVault = await bisetMimiVaultRoomFor(identity.did, mimiSelfBaseUrl, configuredService(config, 'mimi-vault'))
-  const bisetMimiVaultRoom = requestedVault.room
   const bisetDevice = await sealDidMdBisetDeviceMaterial(signaturePublicKey, {
     signaturePrivateKey,
     vaultSecret: crypto.getRandomValues(new Uint8Array(32)),
   })
   signaturePrivateKey.fill(0)
-  const mediator = await bisetMediatorFor(mediatorUrls)
-  const bisetDidCommDevice = mediator ? await newBisetDidCommDevice(identity.did, mediator) : undefined
+  let bisetDidCommDevice: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']> | undefined
+  try {
+    const mediator = await bisetMediatorFor(mediatorUrls)
+    if (mediator) bisetDidCommDevice = await prepareBisetDidCommDevice(mediator)
+  } catch (error) {
+    console.warn('[did.md Wallet login] DIDComm mediator unavailable, signing in without it', error instanceof Error ? error.message : error)
+  }
   const pending: DidMdPendingAuthorization = {
     v: 2, issuer: client.issuer, clientId: client.clientId, state: randomBase64url(32), codeVerifier: randomBase64url(48),
-    did: identity.did, handle, verificationMethod: identity.verificationMethod, rootPublicKey: identity.rootPublicKey,
-    deviceJkt: await p256Jkt(publicJwk), privateKey: pair.privateKey, publicJwk, bisetDevice, bisetMimiVaultRoomCreated: requestedVault.created,
-    documentEdit: buildDocumentEdit(identity.did, config, bisetMimiVaultRoom, bisetDidCommDevice), requestMlsCredential: true,
+    deviceJkt: await p256Jkt(publicJwk), privateKey: pair.privateKey, publicJwk, bisetDevice, bisetMimiVaultRoomCreated: false,
+    documentEdit: buildDocumentEdit('', config, bisetDidCommDevice), requestMlsCredential: true,
     keyAuthorizationSubject: `urn:uuid:${crypto.randomUUID()}`,
+    mimiVaultRoomDerivation: { purpose: MIMI_VAULT_ROOM_DERIVED_SECRET_PURPOSE, context: provider.toString() },
     ...(bisetDidCommDevice ? { bisetDidCommDevice } : {}),
     createdAt: new Date().toISOString(),
   }
   return redirectToWallet(client, pending, openedPopup)
 }
 
-/** A current Wallet session can add a DIDComm device without replacing its
- * Biset MLS leaf or allocating a second Vault member. The new capability
- * carries the exact X25519 public key and mediator route that the Wallet
- * publishes under its current Sign key. */
-export async function beginDidMdWalletMessagingEnrollment(mediatorUrls: readonly string[], configured: DidMdWalletConfiguration = {}): Promise<never> {
+/** The explicit, user-triggered follow-up ("Connect to MIMI/mediator" in
+ * Biset's UI) that publishes the DIDComm mediator device for an already
+ * signed-in session, via a second Wallet approval -- for a session that
+ * signed in before a mediator was configured, or whose mediator wasn't
+ * reachable during beginDidMdWalletLogin above. */
+export async function beginDidMdWalletFinalizeEnrollment(mediatorUrls: readonly string[] = [], configured: DidMdWalletConfiguration = {}): Promise<never> {
   const config = walletConfiguration(configured)
   const session = await readDidMdDeviceSession()
   if (!session?.bisetDevice || session.v !== 2 || session.issuer !== ISSUER || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
-    throw new Error('Connect did.md Wallet again before enabling messaging on this browser')
+    throw new Error('Connect did.md Wallet again before finishing setup on this browser')
   }
   const client = await registration()
   if (client.clientId !== session.clientId || client.redirectUri !== redirectUri()) throw new Error('The did.md Wallet client registration changed; reconnect this browser')
   const mediator = await bisetMediatorFor(mediatorUrls)
   if (!mediator) throw new Error('Biset DIDComm mediator is not configured')
+  const bisetDidCommDevice = await newBisetDidCommDevice(session.did, mediator)
   const pending: DidMdPendingAuthorization = {
     ...pendingFromSession(session),
     state: randomBase64url(32),
     codeVerifier: randomBase64url(48),
-    bisetDidCommDevice: await newBisetDidCommDevice(session.did, mediator),
     createdAt: new Date().toISOString(),
+    bisetDidCommDevice,
   }
-  pending.documentEdit = buildDocumentEdit(session.did, config, undefined, pending.bisetDidCommDevice)
+  pending.documentEdit = buildDocumentEdit(session.did, config, bisetDidCommDevice)
   return redirectToWallet(client, pending)
 }
 
@@ -668,7 +783,7 @@ export async function beginDidMdWalletDocumentEdit(options: { mediatorUrls?: rea
   if (options.removeMediator) {
     if (session.bisetDidCommDevice) pending.previousBisetDidCommDevice = session.bisetDidCommDevice
     const didcomm = configuredService(config, 'didcomm')
-    pending.documentEdit = buildDocumentEdit(session.did, config, undefined, undefined, [didcomm.id, ...(didcomm.previousIds ?? []), ...(session.bisetDidCommDevice ? [session.bisetDidCommDevice.xKid] : [])])
+    pending.documentEdit = buildDocumentEdit(session.did, config, undefined, [didcomm.id, ...(didcomm.previousIds ?? []), ...(session.bisetDidCommDevice ? [session.bisetDidCommDevice.xKid] : [])])
     delete pending.bisetDidCommDevice
   } else {
     const mediator = await bisetMediatorFor(options.mediatorUrls ?? [])
@@ -676,7 +791,7 @@ export async function beginDidMdWalletDocumentEdit(options: { mediatorUrls?: rea
     const previous = session.bisetDidCommDevice?.xKid
     if (session.bisetDidCommDevice) pending.previousBisetDidCommDevice = session.bisetDidCommDevice
     pending.bisetDidCommDevice = await newBisetDidCommDevice(session.did, mediator)
-    pending.documentEdit = buildDocumentEdit(session.did, config, undefined, pending.bisetDidCommDevice, previous ? [previous] : [])
+    pending.documentEdit = buildDocumentEdit(session.did, config, pending.bisetDidCommDevice, previous ? [previous] : [])
   }
   return redirectToWallet(client, pending)
 }
@@ -750,38 +865,27 @@ export async function disconnectDidMdWallet(): Promise<void> {
 }
 
 /** Opens only this browser's Biset leaf material.  The Wallet's controller
- * keys never occur in this database or return value. */
-export async function openDidMdWalletBisetDevice(providerUrl: string, configured: DidMdWalletConfiguration = {}): Promise<DidMdBisetDevice> {
-  const config = walletConfiguration(configured)
+ * keys never occur in this database or return value. The MIMI Vault room is
+ * read straight from the stored session -- it was Wallet-derived at sign-in
+ * (or a later finalize round), never published, so there is nothing to
+ * resolve here. */
+export async function openDidMdWalletBisetDevice(providerUrl: string): Promise<DidMdBisetDevice> {
   const session = await readDidMdDeviceSession()
   if (!session?.bisetDevice || session.v !== 2) throw new Error('Connect did.md Wallet again to enroll this Biset device')
   const credential = await validateBisetMlsCredential(session.bisetDevice.credentialWire, pendingFromSession(session))
   const privateMaterial = await openDidMdBisetDeviceMaterial(session.bisetDevice)
   const derivedPublic = ed25519.getPublicKey(privateMaterial.signaturePrivateKey)
   if (!derivedPublic.every((byte, index) => byte === credential.signaturePublicKey[index])) throw new Error('Biset device private key does not match its Wallet credential')
-  const document = await resolveByDomain(parseWebvhDid(session.did).domain, undefined, { cache: 'no-store' })
-  let normalizedProviderUrl: string
-  try {
-    const provider = new URL(providerUrl)
-    if (provider.protocol !== 'https:' || provider.username || provider.password || provider.search || provider.hash) throw new Error()
-    normalizedProviderUrl = provider.toString()
-  } catch { throw new Error('Biset MIMI Self/Vault URL is invalid') }
-  const mimi = configuredService(config, 'mimi-vault')
-  const service = document?.service?.find(candidate => (isServiceId(session.did, candidate.id, mimi.id) || mimi.previousIds?.some(id => isServiceId(session.did, candidate.id, id))) && candidate.type === mimi.type)
-  let roomId: string | undefined
-  if (typeof service?.serviceEndpoint === 'string') {
-    try {
-      roomId = mimiVaultRoomFromRouting({ service: [], mimiVaultRoom: { roomId: service.serviceEndpoint, providerUrl: normalizedProviderUrl } }, normalizedProviderUrl)
-    } catch { /* handled below */ }
-  }
-  if (!roomId) throw new Error('The resolved DID document has no valid Biset MIMI Vault room service')
+  if (!session.mimiVaultRoom) throw new Error('Connect did.md Wallet again to provision a MIMI Vault room for this device')
+  const provider = normalizedMimiProviderUrl(providerUrl)
+  if (session.mimiVaultRoom.providerUrl !== provider.toString()) throw new Error('Wallet MIMI Vault pointer does not match this Biset provider')
   return {
     did: session.did,
     rootPublicKey: session.rootPublicKey.slice(),
     credential,
     ...privateMaterial,
-    mimiVaultRoom: { roomId, providerUrl: normalizedProviderUrl },
-    mimiVaultRoomCreated: session.bisetDevice.mimiVaultRoomCreated,
+    mimiVaultRoom: session.mimiVaultRoom,
+    mimiVaultRoomCreated: false,
   }
 }
 

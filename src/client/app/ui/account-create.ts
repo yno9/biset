@@ -83,7 +83,6 @@ let _newUserPageWired = false
 export function setupNewUserPage(): void {
   if (_newUserPageWired) return
   _newUserPageWired = true
-  const walletHandleEl = document.getElementById('nu-wallet-handle') as HTMLInputElement | null
   const walletLoginButton = document.getElementById('nu-wallet-login') as HTMLButtonElement | null
   const walletSessionEl = document.getElementById('nu-wallet-session') as HTMLDivElement | null
   const walletResultEl = document.getElementById('nu-wallet-result') as HTMLDivElement | null
@@ -119,7 +118,6 @@ export function setupNewUserPage(): void {
       const callback = await completeDidMdWalletCallback()
       const session = callback ?? await restoreDidMdWalletSession()
       if (session) {
-        if (walletHandleEl) walletHandleEl.value = session.handle
         showWalletSession(session)
         walletResult(callback ? `Connected ${session.handle}. This browser can restore its DPoP-bound session without reopening Wallet.` : `Restored ${session.handle}'s DPoP-bound device session.`)
         await onWalletConnected?.()
@@ -130,14 +128,11 @@ export function setupNewUserPage(): void {
   })()
 
   walletLoginButton?.addEventListener('click', () => {
-    const handle = walletHandleEl?.value ?? ''
     walletLoginButton.disabled = true
-    walletResult('Verifying the published did:webvh log before opening did.md Wallet…')
+    const popup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
     const config = readBisetConfig()
-    // Safari allows a popup only while this click handler is active. The
-    // authorization URL becomes available after asynchronous verification.
-    const walletPopup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
-    void beginDidMdWalletLogin(handle, config.mimiSelfBaseUrl, config.mediatorUrls, walletPopup, config).catch(error => {
+    walletResult('Opening did.md Wallet…')
+    void beginDidMdWalletLogin(config.mimiSelfBaseUrl, config.mediatorUrls, popup, config).catch(error => {
       walletLoginButton.disabled = false
       walletResult(error instanceof Error ? error.message : String(error), true)
     })

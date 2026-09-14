@@ -181,7 +181,7 @@ describe('did.md OAuth callback validation', () => {
         return Response.json({ issuer: ISSUER, authorization_endpoint: registration.authorizationEndpoint, token_endpoint: registration.tokenEndpoint, registration_endpoint: registration.registrationEndpoint })
       }
       if (url === `${ISSUER}/v1/oauth/register/${encodeURIComponent(registration.clientId)}`) {
-        return Response.json({ client_id: registration.clientId, redirect_uris: [registration.redirectUri], scope: 'biset:login biset:device biset:routing biset:messaging biset:vault', token_endpoint_auth_method: 'none' })
+        return Response.json({ client_id: registration.clientId, redirect_uris: [registration.redirectUri], scope: 'openid profile biset:login biset:device biset:routing biset:messaging biset:vault', token_endpoint_auth_method: 'none' })
       }
       if (url === registration.tokenEndpoint) return new Response(JSON.stringify(token), { headers: { 'content-type': 'application/json', 'dpop-nonce': 'nonce-value' } })
       if (url === didToHttpsUrl(did)) return new Response(log.map(entry => JSON.stringify(entry)).join('\n') + '\n')
