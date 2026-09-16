@@ -13,7 +13,7 @@ const event: VaultEventRecord = {
   actorSeq: 1,
   kind: 'message.add',
   targetIds: ['email-1'],
-  objectRefs: [],
+  objectRefs: ['metadata-1' as never, 'blob-1' as never],
   parents: [],
   createdAt,
   signature: new Uint8Array([1]),
@@ -37,11 +37,11 @@ describe('IndexedDB transport boundaries', () => {
         projection: {},
         jmapState: {},
         deliveryOutbox: { identityId, entryId: eventId, payload: new Uint8Array([1]), payloadHash: new Uint8Array([2]), createdAt, attempts: 0 },
-        didCommOutbox: [{ identityId, outboundEventId: eventId, emailId: 'email-1', messageId: 'message-1', toDid: 'did:example:bob', createdAt, attempts: 0 }],
+        didCommOutbox: [{ identityId, outboundEventId: eventId, emailId: 'email-1', blobId: 'blob-1', metadataBlobId: 'metadata-1', threadId: 'didcomm-thread', messageId: 'message-1', toDid: 'did:example:bob', createdAt, attempts: 0 }],
       })
 
       expect(await store.readDidCommOutbox(identityId)).toEqual([{
-        identityId, outboundEventId: eventId, emailId: 'email-1', messageId: 'message-1', toDid: 'did:example:bob', createdAt, attempts: 0,
+        identityId, outboundEventId: eventId, emailId: 'email-1', blobId: 'blob-1', metadataBlobId: 'metadata-1', threadId: 'didcomm-thread', messageId: 'message-1', toDid: 'did:example:bob', createdAt, attempts: 0,
       }])
       await store.noteDidCommOutboxAttempt(identityId, eventId, 'did:example:bob', '2026-08-27T00:00:01.000Z')
       expect((await store.readDidCommOutbox(identityId))[0]).toMatchObject({ attempts: 1, lastAttemptAt: '2026-08-27T00:00:01.000Z' })

@@ -19,7 +19,7 @@ export function pathToPathSecrets(pathSecrets: PathSecret[]): PathSecrets {
     {},
   )
 }
-export async function getCommitSecret(
+async function getCommitSecret(
   tree: RatchetTree,
   nodeIndex: NodeIndex,
   pathSecret: Uint8Array,

@@ -11,7 +11,7 @@ export interface RequiredCapabilities {
   credentialTypes: CredentialTypeName[]
 }
 
-export const requiredCapabilitiesEncoder: BufferEncoder<RequiredCapabilities> = contramapBufferEncoders(
+const requiredCapabilitiesEncoder: BufferEncoder<RequiredCapabilities> = contramapBufferEncoders(
   [varLenTypeEncoder(uint16Encoder), varLenTypeEncoder(uint16Encoder), varLenTypeEncoder(credentialTypeEncoder)],
   (rc) => [rc.extensionTypes, rc.proposalTypes, rc.credentialTypes] as const,
 )

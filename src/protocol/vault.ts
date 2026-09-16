@@ -76,7 +76,6 @@ export interface SegmentKeyWrapV1 {
   wrappedSegmentKey: Uint8Array
   grantorDeviceId: DeviceId
   grantedAt: string
-  signature: Uint8Array
 }
 
 /** A device-visible immutable delivery body. The recipient snapshot is core-only metadata. */
@@ -124,13 +123,13 @@ export interface VaultDeliveryPullV1 {
   signature: Uint8Array
 }
 
-export type RestoreRequiredReason =
+type RestoreRequiredReason =
   | 'ttl-expired'
   | 'retention-quota'
   | 'delivery-confirmed'
   | 'new-device'
 
-export type DeliveryPullResult =
+type DeliveryPullResult =
   | {
       kind: 'items'
       items: VaultDeliveryItemV1[]

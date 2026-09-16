@@ -9,7 +9,7 @@ export const uint8Encoder: BufferEncoder<number> = (n) => [
   },
 ]
 
-export const encodeUint8: Encoder<number> = encode(uint8Encoder)
+const encodeUint8: Encoder<number> = encode(uint8Encoder)
 
 export const decodeUint8: Decoder<number> = (b, offset) => {
   const value = b.at(offset)
@@ -24,7 +24,7 @@ export const uint16Encoder: BufferEncoder<number> = (n) => [
   },
 ]
 
-export const encodeUint16: Encoder<number> = encode(uint16Encoder)
+const encodeUint16: Encoder<number> = encode(uint16Encoder)
 
 export const decodeUint16: Decoder<number> = (b, offset) => {
   const view = new DataView(b.buffer, b.byteOffset, b.byteLength)
@@ -43,7 +43,7 @@ export const uint32Encoder: BufferEncoder<number> = (n) => [
   },
 ]
 
-export const encodeUint32: Encoder<number> = encode(uint32Encoder)
+const encodeUint32: Encoder<number> = encode(uint32Encoder)
 
 export const decodeUint32: Decoder<number> = (b, offset) => {
   const view = new DataView(b.buffer, b.byteOffset, b.byteLength)
@@ -62,7 +62,7 @@ export const uint64Encoder: BufferEncoder<bigint> = (n) => [
   },
 ]
 
-export const encodeUint64: Encoder<bigint> = encode(uint64Encoder)
+const encodeUint64: Encoder<bigint> = encode(uint64Encoder)
 
 export const decodeUint64: Decoder<bigint> = (b, offset) => {
   const view = new DataView(b.buffer, b.byteOffset, b.byteLength)

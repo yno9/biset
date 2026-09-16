@@ -24,26 +24,26 @@ export interface CredentialCustom {
   data: Uint8Array
 }
 
-export const credentialBasicEncoder: BufferEncoder<CredentialBasic> = contramapBufferEncoders(
+const credentialBasicEncoder: BufferEncoder<CredentialBasic> = contramapBufferEncoders(
   [credentialTypeEncoder, varLenDataEncoder],
   (c) => [c.credentialType, c.identity] as const,
 )
 
-export const encodeCredentialBasic: Encoder<CredentialBasic> = encode(credentialBasicEncoder)
+const encodeCredentialBasic: Encoder<CredentialBasic> = encode(credentialBasicEncoder)
 
-export const credentialX509Encoder: BufferEncoder<CredentialX509> = contramapBufferEncoders(
+const credentialX509Encoder: BufferEncoder<CredentialX509> = contramapBufferEncoders(
   [credentialTypeEncoder, varLenTypeEncoder(varLenDataEncoder)],
   (c) => [c.credentialType, c.certificates] as const,
 )
 
-export const encodeCredentialX509: Encoder<CredentialX509> = encode(credentialX509Encoder)
+const encodeCredentialX509: Encoder<CredentialX509> = encode(credentialX509Encoder)
 
-export const credentialCustomEncoder: BufferEncoder<CredentialCustom> = contramapBufferEncoders(
+const credentialCustomEncoder: BufferEncoder<CredentialCustom> = contramapBufferEncoders(
   [credentialTypeEncoder, varLenDataEncoder],
   (c) => [c.credentialType, c.data] as const,
 )
 
-export const encodeCredentialCustom: Encoder<CredentialCustom> = encode(credentialCustomEncoder)
+const encodeCredentialCustom: Encoder<CredentialCustom> = encode(credentialCustomEncoder)
 
 export const credentialEncoder: BufferEncoder<Credential> = (c) => {
   switch (c.credentialType) {

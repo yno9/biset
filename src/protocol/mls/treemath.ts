@@ -84,7 +84,7 @@ export function parent(nodeIndex: NodeIndex, leafWidth: number): NodeIndex {
   return toNodeIndex((nodeIndex | (1 << k)) ^ (b << (k + 1)))
 }
 
-export function sibling(x: NodeIndex, leafWidth: number): NodeIndex {
+function sibling(x: NodeIndex, leafWidth: number): NodeIndex {
   const p = parent(x, leafWidth)
   return x < p ? right(p) : left(p)
 }

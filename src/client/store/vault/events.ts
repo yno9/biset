@@ -24,7 +24,7 @@ export interface VaultEventVerifier {
   verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array, deviceCredential?: Uint8Array): Promise<boolean>
 }
 
-export function vaultEventSigningBytes(draft: VaultEventDraft): Uint8Array {
+function vaultEventSigningBytes(draft: VaultEventDraft): Uint8Array {
   assertDraft(draft)
   return canonicalBytes({
     version: 1,

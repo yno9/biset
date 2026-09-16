@@ -277,7 +277,7 @@ export async function unprotectPrivateMessage(
   return { tree: newTree, content, consumed }
 }
 
-export function validateSenderData(senderData: SenderData, tree: RatchetTree): MlsError | undefined {
+function validateSenderData(senderData: SenderData, tree: RatchetTree): MlsError | undefined {
   if (tree[leafToNodeIndex(toLeafIndex(senderData.leafIndex))]?.nodeType !== "leaf")
     return new ValidationError("SenderData did not point to a non-blank leaf node")
 }

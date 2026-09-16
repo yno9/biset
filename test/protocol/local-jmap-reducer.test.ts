@@ -65,7 +65,7 @@ describe('Local JMAP projection reducer', () => {
     expect(projection.mailboxes[0]).toMatchObject({ totalEmails: 1, unreadEmails: 1 })
   })
 
-  test('rejects a duplicate message.add rather than silently converging (dedup is the store\'s job, not the reducer\'s)', () => {
+  test('rejects the exact same event id appearing twice rather than silently converging (dedup is the store\'s job, not the reducer\'s)', () => {
     const base = { mailboxes: [], emails: [] }
     const add = {
       event: event({ id: 'event-add-1', kind: 'message.add', targetIds: ['email-1'], objectRefs: ['metadata-1', 'raw-rfc5322-1'] }),
@@ -73,11 +73,66 @@ describe('Local JMAP projection reducer', () => {
         email: { id: 'email-1', blobId: 'raw-rfc5322-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' },
       }),
     }
-    // The exact same record twice in one batch -- if the reducer silently
+    // The exact same event id twice in one batch -- if the reducer silently
     // deduped this, it would mask a bug in the caller (event storage's own
     // unique keyPath is what's actually supposed to prevent this from ever
-    // happening); it must fail loudly instead.
-    expect(() => reduceLocalJmapProjection('did:web:alice.example', base, [add, add])).toThrow('conflicts with an existing email')
+    // happening); it must fail loudly instead. This is distinct from TWO
+    // different event ids (two different devices' own independent adds)
+    // describing the same email, which the reducer tolerates below via
+    // sameMessageIdentity -- one event replayed twice is always a bug, two
+    // different events agreeing never is.
+    expect(() => reduceLocalJmapProjection('did:web:alice.example', base, [add, add])).toThrow('conflicts with an existing event of the same id')
+  })
+
+  test('tolerates message.add for the same email arriving as TWO DIFFERENT events in one batch (two devices, one rebuild)', () => {
+    // Reproduces exactly what broke live (2026-09-15): a full projection
+    // rebuild processes every stored event in ONE pass, so when this
+    // identity's two devices each independently ingested the same incoming
+    // DIDComm delivery (a consequence of them now sharing one relationship
+    // identity) and Vault Sync merged both into the same Vault, their two
+    // DIFFERENT message.add events for the identical email landed in the
+    // very same batch -- and used to be rejected outright before this fix,
+    // on literally every rebuild, regardless of whether the two adds
+    // actually agreed.
+    const base = { mailboxes: [], emails: [] }
+    const email = { id: 'email-1', blobId: 'raw-rfc5322-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }
+    const fromDeviceA = {
+      event: event({ id: 'event-add-device-a', actorDeviceId: 'device-a', kind: 'message.add', targetIds: ['email-1'], objectRefs: ['metadata-a', 'raw-rfc5322-a'] }),
+      plaintext: plaintext('message.add', ['email-1'], { email: { ...email, blobId: 'raw-rfc5322-a' } }),
+    }
+    const fromDeviceB = {
+      event: event({ id: 'event-add-device-b', actorDeviceId: 'device-b', kind: 'message.add', targetIds: ['email-1'], objectRefs: ['metadata-b', 'raw-rfc5322-b'] }),
+      plaintext: plaintext('message.add', ['email-1'], { email: { ...email, blobId: 'raw-rfc5322-b' } }),
+    }
+    const projection = reduceLocalJmapProjection('did:web:alice.example', base, [fromDeviceA, fromDeviceB])
+    expect(projection.emails).toHaveLength(1)
+    expect(projection.emails[0]).toMatchObject({ id: 'email-1', threadId: 'thread-1' })
+  })
+
+  test('treats a reconstructed group roster with different recipient order as the same message', () => {
+    const base = { mailboxes: [], emails: [] }
+    const email = {
+      id: 'group-message-1', blobId: 'raw-a', threadId: 'didcomm-group:g1',
+      mailboxIds: { inbox: true }, keywords: {}, receivedAt: '2026-09-16T00:00:00.000Z',
+      from: [{ email: 'did:example:b' }],
+      to: [{ email: 'did:example:a' }, { email: 'did:example:c' }],
+    }
+    const fromDeviceA = {
+      event: event({ id: 'group-event-a', actorDeviceId: 'device-a', kind: 'message.add', targetIds: [email.id], objectRefs: ['metadata-a', 'raw-a'] }),
+      plaintext: plaintext('message.add', [email.id], { email }),
+    }
+    const fromDeviceB = {
+      event: event({ id: 'group-event-b', actorDeviceId: 'device-b', kind: 'message.add', targetIds: [email.id], objectRefs: ['metadata-b', 'raw-b'] }),
+      plaintext: plaintext('message.add', [email.id], { email: { ...email, blobId: 'raw-b', to: [...email.to].reverse() } }),
+    }
+
+    expect(reduceLocalJmapProjection('did:example:a', base, [fromDeviceA, fromDeviceB]).emails).toHaveLength(1)
+
+    const wrongRoster = {
+      ...fromDeviceB,
+      plaintext: plaintext('message.add', [email.id], { email: { ...email, blobId: 'raw-b', to: [{ email: 'did:example:a' }, { email: 'did:example:d' }] } }),
+    }
+    expect(() => reduceLocalJmapProjection('did:example:a', base, [fromDeviceA, wrongRoster])).toThrow('conflicts with an existing email')
   })
 
   test('two devices writing to the same email while offline converge to the same result regardless of delivery order', () => {

@@ -13,7 +13,7 @@ export const lifetimeEncoder: BufferEncoder<Lifetime> = contramapBufferEncoders(
   (lt) => [lt.notBefore, lt.notAfter] as const,
 )
 
-export const encodeLifetime: Encoder<Lifetime> = encode(lifetimeEncoder)
+const encodeLifetime: Encoder<Lifetime> = encode(lifetimeEncoder)
 
 export const decodeLifetime: Decoder<Lifetime> = mapDecoders([decodeUint64, decodeUint64], (notBefore, notAfter) => ({
   notBefore,

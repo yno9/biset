@@ -51,6 +51,7 @@ describe('IndexedDbVaultStore.rekeyIdentity', () => {
     const store = await IndexedDbVaultStore.open()
     const commit = await buildIngressCommit(oldId)
     expect(await store.commitIngress(commit)).toBe('committed')
+    await store.writeProjection(oldId, commit.projection, commit.jmapState)
 
     await store.rekeyIdentity(oldId, newId)
 

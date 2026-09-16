@@ -26,7 +26,7 @@ export class UsageError extends MlsError {
   }
 }
 
-export class DependencyError extends MlsError {
+class DependencyError extends MlsError {
   constructor(message: string) {
     super(message)
     this.name = "DependencyError"

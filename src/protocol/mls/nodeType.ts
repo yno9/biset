@@ -9,10 +9,10 @@ const nodeTypes = {
 } as const
 
 export type NodeTypeName = keyof typeof nodeTypes
-export type NodeTypeValue = (typeof nodeTypes)[NodeTypeName]
+type NodeTypeValue = (typeof nodeTypes)[NodeTypeName]
 
 export const nodeTypeEncoder: BufferEncoder<NodeTypeName> = contramapBufferEncoder(uint8Encoder, (t) => nodeTypes[t])
 
-export const encodeNodeType: Encoder<NodeTypeName> = encode(nodeTypeEncoder)
+const encodeNodeType: Encoder<NodeTypeName> = encode(nodeTypeEncoder)
 
 export const decodeNodeType: Decoder<NodeTypeName> = mapDecoderOption(decodeUint8, enumNumberToKey(nodeTypes))

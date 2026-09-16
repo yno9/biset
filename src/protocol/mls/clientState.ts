@@ -128,7 +128,7 @@ export interface GroupState {
   groupActiveState: GroupActiveState
 }
 
-export const groupStateEncoder: BufferEncoder<GroupState> = contramapBufferEncoders(
+const groupStateEncoder: BufferEncoder<GroupState> = contramapBufferEncoders(
   [
     groupContextEncoder,
     keyScheduleEncoder,
@@ -198,7 +198,7 @@ export const decodeGroupState: Decoder<GroupState> = mapDecoders(
   }),
 )
 
-export const groupStateEncoderWithoutTree: BufferEncoder<GroupState> = contramapBufferEncoders(
+const groupStateEncoderWithoutTree: BufferEncoder<GroupState> = contramapBufferEncoders(
   [
     groupContextEncoder,
     keyScheduleEncoder,
@@ -224,9 +224,9 @@ export const groupStateEncoderWithoutTree: BufferEncoder<GroupState> = contramap
     ] as const,
 )
 
-export const encodeGroupStateWithoutTree: Encoder<GroupState> = encode(groupStateEncoderWithoutTree)
+const encodeGroupStateWithoutTree: Encoder<GroupState> = encode(groupStateEncoderWithoutTree)
 
-export function decodeGroupStateWithoutTree(ratchetTree: RatchetTree): Decoder<GroupState> {
+function decodeGroupStateWithoutTree(ratchetTree: RatchetTree): Decoder<GroupState> {
   return mapDecoders(
     [
       decodeGroupContext,
@@ -264,14 +264,14 @@ export function decodeGroupStateWithoutTree(ratchetTree: RatchetTree): Decoder<G
   )
 }
 
-export function getOwnLeafNode(state: ClientState): LeafNode {
+function getOwnLeafNode(state: ClientState): LeafNode {
   const idx = leafToNodeIndex(toLeafIndex(state.privatePath.leafIndex))
   const leaf = state.ratchetTree[idx]
   if (leaf?.nodeType !== "leaf") throw new InternalError("Expected leaf node")
   return leaf.leaf
 }
 
-export function getGroupMembers(state: ClientState): LeafNode[] {
+function getGroupMembers(state: ClientState): LeafNode[] {
   return extractFromGroupMembers(
     state,
     () => false,
@@ -279,7 +279,7 @@ export function getGroupMembers(state: ClientState): LeafNode[] {
   )
 }
 
-export function extractFromGroupMembers<T>(
+function extractFromGroupMembers<T>(
   state: ClientState,
   exclude: (l: LeafNode) => boolean,
   map: (l: LeafNode) => T,
@@ -307,7 +307,7 @@ export function checkCanSendHandshakeMessages(state: ClientState): void {
     throw new UsageError("Cannot send messages after being removed from group")
 }
 
-export interface Proposals {
+interface Proposals {
   add: { senderLeafIndex: number | undefined; proposal: ProposalAdd }[]
   update: { senderLeafIndex: number | undefined; proposal: ProposalUpdate }[]
   remove: { senderLeafIndex: number | undefined; proposal: ProposalRemove }[]
@@ -745,7 +745,7 @@ export interface ApplyProposalsResult {
   allProposals: ProposalWithSender[]
 }
 
-export type ApplyProposalsData =
+type ApplyProposalsData =
   | { kind: "memberCommit"; addedLeafNodes: [LeafIndex, KeyPackage][]; extensions: Extension[] }
   | { kind: "externalCommit"; externalInitSecret: Uint8Array; newMemberLeafIndex: LeafIndex }
   | { kind: "reinit"; reinit: Reinit }

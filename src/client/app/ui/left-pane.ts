@@ -353,7 +353,7 @@ export function renderLeftList(): void {
 /** Plain substring filter over the rendered rows (src.bak's own version
  * also handled `/`-prefixed command-palette input; that half is dropped,
  * this rewrite has no #lp-commands page set to open). */
-export function applyLpSearch(): void {
+function applyLpSearch(): void {
   const query = ((document.getElementById('lp-search') as HTMLInputElement | null)?.value ?? '').toLowerCase().trim()
   const items = [...document.querySelectorAll<HTMLElement>('#left-list .lp-item')]
   let visible = 0

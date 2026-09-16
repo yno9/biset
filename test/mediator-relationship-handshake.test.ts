@@ -30,6 +30,7 @@ describe('private DIDComm relationship handshake', () => {
     const bobDid = 'did:webvh:123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijk:Bob.example'
     const bobFrontX = x25519.utils.randomSecretKey()
     const bobFrontKid = `${bobDid}#k_bob-front-door`
+    const bobRelationshipSecret = x25519.utils.randomSecretKey()
 
     const { handle } = createMediator({
       mediator,
@@ -68,7 +69,7 @@ describe('private DIDComm relationship handshake', () => {
 
       // Bob enrolls his private kid BEFORE INIT, making Alice's ACCEPT
       // deliverable without exposing Bob's public DID in that registration.
-      const initiated = await initiateRelationship(aliceDid, {
+      const initiated = await initiateRelationship(aliceDid, bobRelationshipSecret, {
         fromKid: bobFrontKid,
         x25519PrivateKey: bobFrontX,
         fetch: fetchImpl,

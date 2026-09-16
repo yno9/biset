@@ -5,7 +5,7 @@ import { parseDidCommGroupAddress } from '../../didcomm/group-chat.ts'
 import type { ContactKeyV1 } from '../../store/vault/contact-key.ts'
 import type { DidCommTransportOutboxRecord } from '../../store/vault/store.ts'
 
-export interface WalletDidCommOutboxStore {
+interface WalletDidCommOutboxStore {
   readDidCommOutbox(identityId: string, limit?: number): Promise<DidCommTransportOutboxRecord[]>
   noteDidCommOutboxAttempt(identityId: string, outboundEventId: DidCommTransportOutboxRecord['outboundEventId'], toDid: string, attemptedAt: string): Promise<void>
   removeDidCommOutbox(identityId: string, outboundEventId: DidCommTransportOutboxRecord['outboundEventId'], toDid: string): Promise<void>
@@ -23,7 +23,10 @@ export interface WalletDidCommOutboxOptions {
 }
 
 export interface WalletDidCommOutbox {
-  flush(): Promise<void>
+  /** With a recipient, flush only that recipient's durable rows. Group
+   * creation uses this after its corresponding invite has been accepted so
+   * another member's content can never overtake their invite. */
+  flush(toDid?: string): Promise<void>
 }
 
 /**
@@ -36,26 +39,34 @@ export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): 
   const send = options.send ?? ((contact, content, subject, message, threadId) => threadId.startsWith('didcomm-group:')
     ? sendGroupChatMessage(contact, { groupId: parseDidCommGroupAddress(threadId), content, ...(subject ? { subject } : {}) }, undefined, message)
     : sendRelationshipMessage(contact, content, subject, undefined, message))
-  let flushing = false
+  const inFlight = new Set<string>()
 
   return {
-    async flush(): Promise<void> {
-      if (flushing) return
-      flushing = true
-      try {
-        const queued = await options.store.readDidCommOutbox(options.identityId)
-        for (const item of queued) {
+    async flush(toDid?: string): Promise<void> {
+      const queued = (await options.store.readDidCommOutbox(options.identityId))
+        .filter(item => toDid === undefined || item.toDid === toDid)
+      await Promise.allSettled(queued.map(async item => {
+        const key = `${item.outboundEventId}\u0000${item.toDid}`
+        if (inFlight.has(key)) return
+        inFlight.add(key)
+        try {
+          // One row stuck in a long relationship wait or mediator request
+          // must not delay later rows. This was found live when the former
+          // process-wide `flushing` flag stayed set behind one stalled send.
           const snapshot = await options.readModel.snapshot()
           const email = snapshot.emails.find(candidate => candidate.id === item.emailId)
-          if (!email?.blobId) {
+          const blobId = item.blobId ?? email?.blobId
+          if (!blobId) {
             options.onError(new Error(`local message ${item.emailId} is missing its body object`), item)
-            continue
+            return
           }
           await options.store.noteDidCommOutboxAttempt(options.identityId, item.outboundEventId, item.toDid, new Date().toISOString())
           try {
+            const metadata = email ?? await recoverMessageMetadata(item, options.readModel)
+            if (!metadata) throw new Error(`local message ${item.emailId} is missing its metadata object`)
             const contact = await options.ensureContact(item.toDid)
-            const content = new TextDecoder().decode(await options.readModel.download(email.blobId))
-            const sent = await send(contact, content, email.subject, { id: item.messageId, sentAt: email.sentAt ?? item.createdAt }, email.threadId)
+            const content = new TextDecoder().decode(await options.readModel.download(blobId))
+            const sent = await send(contact, content, metadata.subject, { id: item.messageId, sentAt: metadata.sentAt ?? item.createdAt }, metadata.threadId)
             if (!sent.ok) throw new Error(sent.error ?? 'DIDComm send failed')
 
             const latest = await options.readModel.snapshot()
@@ -74,10 +85,28 @@ export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): 
           } catch (error) {
             options.onError(error, item)
           }
-        }
-      } finally {
-        flushing = false
-      }
+        } finally { inFlight.delete(key) }
+      }))
     },
   }
+}
+
+async function recoverMessageMetadata(
+  item: DidCommTransportOutboxRecord,
+  readModel: Pick<LocalJmapReadModel, 'download'>,
+): Promise<{ threadId: string; subject?: string; sentAt?: string } | null> {
+  if (item.threadId) return { threadId: item.threadId, ...(item.subject ? { subject: item.subject } : {}), ...(item.sentAt ? { sentAt: item.sentAt } : {}) }
+  if (!item.metadataBlobId) return null
+  let decoded: unknown
+  try { decoded = JSON.parse(new TextDecoder().decode(await readModel.download(item.metadataBlobId))) } catch { return null }
+  if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) return null
+  const payload = (decoded as Record<string, unknown>).payload
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null
+  const email = (payload as Record<string, unknown>).email
+  if (email === null || typeof email !== 'object' || Array.isArray(email)) return null
+  const value = email as Record<string, unknown>
+  if (value.id !== item.emailId || typeof value.threadId !== 'string' || !value.threadId || (item.blobId && value.blobId !== item.blobId)) return null
+  if (value.subject !== undefined && typeof value.subject !== 'string') return null
+  if (value.sentAt !== undefined && typeof value.sentAt !== 'string') return null
+  return { threadId: value.threadId, ...(typeof value.subject === 'string' ? { subject: value.subject } : {}), ...(typeof value.sentAt === 'string' ? { sentAt: value.sentAt } : {}) }
 }

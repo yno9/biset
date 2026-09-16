@@ -33,6 +33,11 @@ export interface LocalVaultMutationCommitter {
       identityId: IdentityId
       outboundEventId: VaultEventId
       emailId: string
+      blobId: string
+      metadataBlobId: string
+      threadId: string
+      subject?: string
+      sentAt?: string
       messageId: string
       toDid: string
       createdAt: string
@@ -50,6 +55,7 @@ export interface VaultBackedLocalJmapMutationSinkOptions {
   activeSegment(): Promise<ActiveVaultSegment>
   signer: VaultEventSigner
   committer: LocalVaultMutationCommitter
+  onCrdtCommitted?(events: VaultEventV1[]): Promise<void>
   now?: () => Date
 }
 
@@ -109,6 +115,7 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
     })
     const projection = commit.projection
     await this.options.committer.commitLocalMutation({ identityId: this.options.identityId, ...commit })
+    await this.options.onCrdtCommitted?.(commit.events)
     const destroyed = new Set(records.filter(record => record.event.kind === 'message.tombstone').flatMap(record => record.event.targetIds))
     const updated = new Set(records.filter(record => record.event.kind !== 'message.tombstone').flatMap(record => record.event.targetIds))
     return {
@@ -170,6 +177,11 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
           identityId: this.options.identityId,
           outboundEventId: record.event.id,
           emailId: input.email.id,
+          blobId: record.rawRfc5322Object.objectId,
+          metadataBlobId: record.metadataObject.objectId,
+          threadId: input.email.threadId,
+          ...(input.email.subject ? { subject: input.email.subject } : {}),
+          ...(input.email.sentAt ? { sentAt: input.email.sentAt } : {}),
           messageId: entry.messageId,
           toDid: entry.toDid,
           createdAt,
@@ -177,6 +189,7 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
         })),
       } : {}),
     })
+    await this.options.onCrdtCommitted?.(commit.events)
     return {
       accountId: this.options.accountId,
       oldState: snapshot.state,

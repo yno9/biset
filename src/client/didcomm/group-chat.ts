@@ -94,6 +94,32 @@ export function randomDidCommGroupId(): string {
   return bytesToHex(crypto.getRandomValues(new Uint8Array(32)))
 }
 
+/** Reconstructs the roster cache on a second device from Vault-synchronized
+ * message metadata. Every group message records its sender in `from`, every
+ * other member in `to`, and the stable groupId in `threadId`, so their union
+ * is the same complete roster carried by the original invite. */
+export function groupRosterFromMessages(
+  groupId: string,
+  selfDid: string,
+  emails: readonly LocalJmapEmail[],
+): { members: string[]; name?: string } | null {
+  if (!groupId || !selfDid.startsWith('did:')) return null
+  const threadId = didcommGroupAddress(groupId)
+  const messages = emails.filter(email => email.threadId === threadId)
+  if (messages.length === 0) return null
+  const members = new Set<string>([selfDid])
+  for (const message of messages) {
+    for (const address of [...(message.from ?? []), ...(message.to ?? [])]) {
+      if (address.email?.startsWith('did:')) members.add(address.email)
+    }
+  }
+  if (members.size < 2) return null
+  const name = [...messages]
+    .sort((left, right) => (right.sentAt ?? right.receivedAt).localeCompare(left.sentAt ?? left.receivedAt))
+    .find(message => message.subject)?.subject
+  return { members: [...members].sort(), ...(name ? { name } : {}) }
+}
+
 // Message dedup for group content reuses ingress-projector.ts's
 // didCommMessageDedupeId directly (imported there, not re-exported here) --
 // keyed by the SENDING member's own (per-recipient) relationship kid plus

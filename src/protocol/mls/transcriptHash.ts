@@ -11,16 +11,16 @@ export interface ConfirmedTranscriptHashInput {
   signature: Uint8Array
 }
 
-export const confirmedTranscriptHashInputEncoder: BufferEncoder<ConfirmedTranscriptHashInput> = contramapBufferEncoders(
+const confirmedTranscriptHashInputEncoder: BufferEncoder<ConfirmedTranscriptHashInput> = contramapBufferEncoders(
   [wireformatEncoder, framedContentEncoder, varLenDataEncoder],
   (input) => [input.wireformat, input.content, input.signature] as const,
 )
 
-export const encodeConfirmedTranscriptHashInput: Encoder<ConfirmedTranscriptHashInput> = encode(
+const encodeConfirmedTranscriptHashInput: Encoder<ConfirmedTranscriptHashInput> = encode(
   confirmedTranscriptHashInputEncoder,
 )
 
-export const decodeConfirmedTranscriptHashInput: Decoder<ConfirmedTranscriptHashInput> = mapDecodersOption(
+const decodeConfirmedTranscriptHashInput: Decoder<ConfirmedTranscriptHashInput> = mapDecodersOption(
   [decodeWireformat, decodeFramedContent, decodeVarLenData],
   (wireformat, content, signature) => {
     if (content.contentType === "commit")

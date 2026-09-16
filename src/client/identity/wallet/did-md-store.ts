@@ -39,22 +39,19 @@ export type DidMdPendingAuthorization = {
    * sealed under an opaque, non-extractable browser AES key before this
    * pending authorization is persisted across the Wallet redirect. */
   bisetDevice: DidMdBisetDeviceMaterial
-  /** Public, Wallet-authorized pointer to the MIMI Self/Vault room. This is
-   * tied to the pending authorization so callback handling can reject a
-  * substituted room before any MLS operation. */
-  documentEdit: DidCoreDocumentEdit
+  /** Omitted for derived-secret-only Wallet requests. */
+  documentEdit?: DidCoreDocumentEdit
   requestMlsCredential: boolean
   keyAuthorizationSubject: string
-  /** Unused by the Wallet-derived MIMI Vault room (see
-   * mimiVaultRoomDerivation) -- retained only because
-   * ensureWalletMimiVaultRoom's join-then-create-on-noSuchRoom fallback
-   * still takes a boolean hint, and `false` (attempt join first) is always
-   * the right one now that there is no "did we just create it" signal. */
-  bisetMimiVaultRoomCreated: boolean
-  /** Present when this request asks Wallet to derive (never publish) the
-   * identity's MIMI Vault room id from its Root key -- see
-   * client/did-webvh.ts's deriveWalletSecret in the did.md repo. */
-  mimiVaultRoomDerivation?: { purpose: string; context: string }
+  /** Wallet derived-secret requests (VCK generations, and the fixed
+   * identity-wide relationship secret). Kept with the pending authorization
+   * so callback validation can reject a substituted generation or key.
+   * `context` is omitted (not empty-string) for a purpose with no
+   * generation concept -- did.md's own validator rejects an explicit empty
+   * string as invalid, only treating an absent field as "no context". */
+  vaultContentKeyDerivations?: { purpose: string; context?: string }[]
+  /** Durable marker between the two Wallet approvals of a VCK rotation. */
+  vaultKeyRotation?: { fromGeneration: string; toGeneration: string; phase?: 'prepared' | 'publishing' | 'rewrap' }
   /** Present only for a Wallet approval that explicitly publishes this
    * browser's Biset DIDComm endpoint. */
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
@@ -76,13 +73,8 @@ export type DidMdPendingAuthorization = {
   createdAt: string
 }
 
-export type DidMdBisetMimiVaultRoom = {
-  roomId: string
-  providerUrl: string
-}
-
-export type DidCoreService = { id: string; type: string; serviceEndpoint: string | Record<string, unknown> }
-export type DidCoreVerificationMethod = { id: string; type: string; controller: string; publicKeyMultibase: string }
+type DidCoreService = { id: string; type: string; serviceEndpoint: string | Record<string, unknown> }
+type DidCoreVerificationMethod = { id: string; type: string; controller: string; publicKeyMultibase: string }
 export type DidCoreDocumentEdit = {
   type: 'urn:did-core:document-edit:v1'
   services: DidCoreService[]
@@ -99,7 +91,19 @@ export type DidMdBisetDeviceMaterial = {
 
 export type OpenDidMdBisetDeviceMaterial = {
   signaturePrivateKey: Uint8Array
-  vaultSecret: Uint8Array
+  /** Generation-indexed VCKs, encrypted inside the same non-extractable
+   * browser-key envelope as the Biset signing material. */
+  vaultContentKeys?: Record<string, Uint8Array>
+  /** Identity-wide, non-rotating secret (derived from the Wallet's Root key
+   * via the same OAuth derived-secret grant VCK uses, under its own fixed
+   * purpose -- see did-md-oauth.ts's RELATIONSHIP_FRONT_DOOR_SECRET_PURPOSE).
+   * Every device of the same Wallet identity obtains the identical value, on
+   * purpose: it feeds `deriveRelationshipPeerIdentity` so two different
+   * devices independently contacting the same external counterparty
+   * converge on one relationship peer instead of racing to two irreconcilable
+   * ContactKeyV1 records (found live, 2026-09-15). Undefined only for a
+   * session created before this existed; re-authorizing fills it in. */
+  relationshipSecret?: Uint8Array
 }
 
 /** A Biset-owned DIDComm X25519 leaf. It is separate from the MLS signing
@@ -135,12 +139,14 @@ export type DidMdDeviceSession = {
   capabilityExpiresAt: string
   /** The typed, public MLS credential the Wallet issued for this exact Biset
    * leaf. Undefined is an older Phase-A session and cannot open a Vault. */
-  bisetDevice?: DidMdBisetDeviceMaterial & { credentialWire: string; keyAuthorizationSubject: string; mimiVaultRoomCreated: boolean }
-  /** The Wallet-derived MIMI Vault room -- never published to the DID
-   * Document, so there is nothing to resolve on session restore; this is
-   * the only record of it. Undefined for a session established before this
-   * field existed (reconnect did.md Wallet to get one). */
-  mimiVaultRoom?: DidMdBisetMimiVaultRoom
+  bisetDevice?: DidMdBisetDeviceMaterial & { credentialWire: string; keyAuthorizationSubject: string }
+  /** Current public generation.  The actual keys only live in bisetDevice's
+   * sealed private material. */
+  vaultGeneration?: string
+  /** Crash-resume marker for the single-approval VCK/publication operation.
+   * `phase` is optional only for sessions written by the retired two-round
+   * flow; those are treated as `prepared` and recover on the next action. */
+  vaultKeyRotation?: { fromGeneration: string; toGeneration: string; phase?: 'prepared' | 'publishing' | 'rewrap' }
   /** An optional Biset-owned DIDComm leaf, authorized by a Wallet routing
    * approval. It is not a did.md controller key. */
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
@@ -205,9 +211,11 @@ async function materialWrappingKey(): Promise<CryptoKey> {
 }
 
 function assertDevicePrivateMaterial(value: OpenDidMdBisetDeviceMaterial): void {
-  if (!(value.signaturePrivateKey instanceof Uint8Array) || value.signaturePrivateKey.length !== 32 || !(value.vaultSecret instanceof Uint8Array) || value.vaultSecret.length !== 32) {
+  if (!(value.signaturePrivateKey instanceof Uint8Array) || value.signaturePrivateKey.length !== 32) {
     throw new TypeError('Biset device private material is invalid')
   }
+  if (value.vaultContentKeys && Object.values(value.vaultContentKeys).some(key => !(key instanceof Uint8Array) || key.length !== 32)) throw new TypeError('Biset Vault Content Keys are invalid')
+  if (value.relationshipSecret !== undefined && (!(value.relationshipSecret instanceof Uint8Array) || value.relationshipSecret.length !== 32)) throw new TypeError('Biset relationship secret is invalid')
 }
 
 function assertSealedDeviceMaterial(value: DidMdBisetDeviceMaterial): void {
@@ -246,7 +254,8 @@ export async function sealDidMdBisetDeviceMaterial(
   const plaintext = new TextEncoder().encode(JSON.stringify({
     v: 1,
     signaturePrivateKey: [...privateMaterial.signaturePrivateKey],
-    vaultSecret: [...privateMaterial.vaultSecret],
+    ...(privateMaterial.vaultContentKeys ? { vaultContentKeys: Object.fromEntries(Object.entries(privateMaterial.vaultContentKeys).map(([generation, key]) => [generation, [...key]])) } : {}),
+    ...(privateMaterial.relationshipSecret ? { relationshipSecret: [...privateMaterial.relationshipSecret] } : {}),
   }))
   const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext))
   return { v: 1, signaturePublicKey: signaturePublicKey.slice(), sealed: { iv, ciphertext } }
@@ -268,10 +277,20 @@ export async function openDidMdBisetDeviceMaterial(value: DidMdBisetDeviceMateri
   } catch { throw new Error('Biset device material could not be decrypted on this browser') }
   if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) throw new Error('Biset device material is invalid')
   const input = decoded as Record<string, unknown>
-  if (input.v !== 1 || !Array.isArray(input.signaturePrivateKey) || !Array.isArray(input.vaultSecret)) throw new Error('Biset device material is invalid')
+  if (input.v !== 1 || !Array.isArray(input.signaturePrivateKey)) throw new Error('Biset device material is invalid')
+  let vaultContentKeys: Record<string, Uint8Array> | undefined
+  if (input.vaultContentKeys !== undefined) {
+    if (input.vaultContentKeys === null || typeof input.vaultContentKeys !== 'object' || Array.isArray(input.vaultContentKeys)) throw new Error('Biset device material is invalid')
+    vaultContentKeys = Object.fromEntries(Object.entries(input.vaultContentKeys as Record<string, unknown>).map(([generation, key]) => {
+      if (!Array.isArray(key)) throw new Error('Biset device material is invalid')
+      return [generation, new Uint8Array(key)]
+    }))
+  }
+  if (input.relationshipSecret !== undefined && !Array.isArray(input.relationshipSecret)) throw new Error('Biset device material is invalid')
   const privateMaterial = {
     signaturePrivateKey: new Uint8Array(input.signaturePrivateKey),
-    vaultSecret: new Uint8Array(input.vaultSecret),
+    ...(vaultContentKeys ? { vaultContentKeys } : {}),
+    ...(input.relationshipSecret !== undefined ? { relationshipSecret: new Uint8Array(input.relationshipSecret as number[]) } : {}),
   }
   assertDevicePrivateMaterial(privateMaterial)
   return privateMaterial

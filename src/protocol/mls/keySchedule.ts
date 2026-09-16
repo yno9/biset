@@ -49,7 +49,7 @@ export const keyScheduleEncoder: BufferEncoder<KeySchedule> = contramapBufferEnc
     ] as const,
 )
 
-export const encodeKeySchedule: Encoder<KeySchedule> = encode(keyScheduleEncoder)
+const encodeKeySchedule: Encoder<KeySchedule> = encode(keyScheduleEncoder)
 
 export const decodeKeySchedule: Decoder<KeySchedule> = mapDecoders(
   [

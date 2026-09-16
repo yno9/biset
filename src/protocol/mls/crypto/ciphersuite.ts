@@ -32,25 +32,25 @@ export const ciphersuites = {
 
 /** @public */
 export type CiphersuiteName = keyof typeof ciphersuites
-export type CiphersuiteId = (typeof ciphersuites)[CiphersuiteName]
+type CiphersuiteId = (typeof ciphersuites)[CiphersuiteName]
 
 export const ciphersuiteEncoder: BufferEncoder<CiphersuiteName> = contramapBufferEncoder(
   uint16Encoder,
   openEnumNumberEncoder(ciphersuites),
 )
 
-export const encodeCiphersuite: Encoder<CiphersuiteName> = encode(ciphersuiteEncoder)
+const encodeCiphersuite: Encoder<CiphersuiteName> = encode(ciphersuiteEncoder)
 
 export const decodeCiphersuite: Decoder<CiphersuiteName> = mapDecoderOption(
   decodeUint16,
   openEnumNumberToKey(ciphersuites),
 )
 
-export function getCiphersuiteNameFromId(id: CiphersuiteId): CiphersuiteName {
+function getCiphersuiteNameFromId(id: CiphersuiteId): CiphersuiteName {
   return reverseMap(ciphersuites)[id] as CiphersuiteName
 }
 
-export function getCiphersuiteFromId(id: CiphersuiteId): Ciphersuite {
+function getCiphersuiteFromId(id: CiphersuiteId): Ciphersuite {
   return ciphersuiteValues[id]
 }
 

@@ -1,14 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes } from '../../src/protocol/canonical.ts'
-import { createSegmentKeyWrap, type SegmentKeyWrapSigner } from '../../src/client/store/vault/crypto.ts'
+import { createSegmentKeyWrap } from '../../src/client/store/vault/crypto.ts'
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
 import { StoredSegmentKeyResolver } from '../../src/client/store/vault/segment-key-resolver.ts'
-
-const signer: SegmentKeyWrapSigner = {
-  deviceId: 'device-a',
-  async sign(bytes) { return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)) },
-  async verify(deviceId, bytes, signature) { return deviceId === 'device-a' && equalBytes(signature, await this.sign(bytes)) },
-}
 
 describe('StoredSegmentKeyResolver', () => {
   test('uses only the current MLS epoch wrap and clears its transient VEK', async () => {
@@ -17,7 +10,7 @@ describe('StoredSegmentKeyResolver', () => {
     let derivedVek: Uint8Array | undefined
     const wrap = await createSegmentKeyWrap(vek, segmentKey, {
       identityId: 'did:web:alice.example', selfGroupId: 'self-group-a', segmentId: 'segment-1', sourceEpoch: '7', recipientEpoch: '9', grantorDeviceId: 'device-a', grantedAt: '2026-08-21T00:00:00.000Z',
-    }, signer)
+    })
     const resolver = new StoredSegmentKeyResolver(
       { async readSegmentKeyWrap() { return wrap } },
       {
@@ -27,7 +20,6 @@ describe('StoredSegmentKeyResolver', () => {
           return derivedVek
         },
       },
-      signer,
     )
     expect(await resolver.resolveSegmentKey('did:web:alice.example', 'segment-1')).toEqual(segmentKey)
     expect(derivedVek).toEqual(new Uint8Array(32))
@@ -40,7 +32,6 @@ describe('StoredSegmentKeyResolver', () => {
         async currentVaultEpoch() { return { selfGroupId: 'self-group-a', epoch: '10' } },
         async deriveVaultEpochKey() { throw new Error('must not derive without a current wrap') },
       },
-      signer,
     )
     await expect(resolver.resolveSegmentKey('did:web:alice.example', 'segment-1')).rejects.toThrow('restore grant is required')
   })

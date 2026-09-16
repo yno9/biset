@@ -24,12 +24,12 @@ export interface GenerationSecret {
   unusedGenerations: Record<number, Uint8Array>
 }
 
-export const generationSecretEncoder: BufferEncoder<GenerationSecret> = contramapBufferEncoders(
+const generationSecretEncoder: BufferEncoder<GenerationSecret> = contramapBufferEncoders(
   [varLenDataEncoder, uint32Encoder, numberRecordEncoder(uint32Encoder, varLenDataEncoder)],
   (gs) => [gs.secret, gs.generation, gs.unusedGenerations] as const,
 )
 
-export const decodeGenerationSecret: Decoder<GenerationSecret> = mapDecoders(
+const decodeGenerationSecret: Decoder<GenerationSecret> = mapDecoders(
   [decodeVarLenData, decodeUint32, decodeNumberRecord(decodeUint32, decodeVarLenData)],
   (secret, generation, unusedGenerations) => ({
     secret,
@@ -44,12 +44,12 @@ export interface SecretTreeNode {
   application: GenerationSecret
 }
 
-export const secretTreeNodeEncoder: BufferEncoder<SecretTreeNode> = contramapBufferEncoders(
+const secretTreeNodeEncoder: BufferEncoder<SecretTreeNode> = contramapBufferEncoders(
   [generationSecretEncoder, generationSecretEncoder],
   (node) => [node.handshake, node.application] as const,
 )
 
-export const decodeSecretTreeNode: Decoder<SecretTreeNode> = mapDecoders(
+const decodeSecretTreeNode: Decoder<SecretTreeNode> = mapDecoders(
   [decodeGenerationSecret, decodeGenerationSecret],
   (handshake, application) => ({
     handshake,
@@ -127,15 +127,15 @@ async function deriveChildren(tree: Uint8Array[], nodeIndex: NodeIndex, kdf: Kdf
   return deriveChildren(await deriveChildren(tree, l, kdf), r, kdf)
 }
 
-export async function deriveNonce(secret: Uint8Array, generation: number, cs: CiphersuiteImpl): Promise<Uint8Array> {
+async function deriveNonce(secret: Uint8Array, generation: number, cs: CiphersuiteImpl): Promise<Uint8Array> {
   return await deriveTreeSecret(secret, "nonce", generation, cs.hpke.nonceLength, cs.kdf)
 }
 
-export async function deriveKey(secret: Uint8Array, generation: number, cs: CiphersuiteImpl): Promise<Uint8Array> {
+async function deriveKey(secret: Uint8Array, generation: number, cs: CiphersuiteImpl): Promise<Uint8Array> {
   return await deriveTreeSecret(secret, "key", generation, cs.hpke.keyLength, cs.kdf)
 }
 
-export async function ratchetUntil(
+async function ratchetUntil(
   current: GenerationSecret,
   desiredGen: number,
   config: KeyRetentionConfig,
@@ -204,7 +204,7 @@ function removeOldGenerations(
   return [record, consumed]
 }
 
-export async function derivePrivateMessageNonce(
+async function derivePrivateMessageNonce(
   secret: Uint8Array,
   generation: number,
   reuseGuard: Uint8Array,

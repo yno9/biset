@@ -43,7 +43,7 @@ export const privateMessageEncoder: BufferEncoder<PrivateMessage> = contramapBuf
     [msg.groupId, msg.epoch, msg.contentType, msg.authenticatedData, msg.encryptedSenderData, msg.ciphertext] as const,
 )
 
-export const encodePrivateMessage: Encoder<PrivateMessage> = encode(privateMessageEncoder)
+const encodePrivateMessage: Encoder<PrivateMessage> = encode(privateMessageEncoder)
 
 export const decodePrivateMessage: Decoder<PrivateMessage> = mapDecoders(
   [decodeVarLenData, decodeUint64, decodeContentType, decodeVarLenData, decodeVarLenData, decodeVarLenData],
@@ -69,9 +69,9 @@ export const privateContentAADEncoder: BufferEncoder<PrivateContentAAD> = contra
   (aad) => [aad.groupId, aad.epoch, aad.contentType, aad.authenticatedData] as const,
 )
 
-export const encodePrivateContentAAD: Encoder<PrivateContentAAD> = encode(privateContentAADEncoder)
+const encodePrivateContentAAD: Encoder<PrivateContentAAD> = encode(privateContentAADEncoder)
 
-export const decodePrivateContentAAD: Decoder<PrivateContentAAD> = mapDecoders(
+const decodePrivateContentAAD: Decoder<PrivateContentAAD> = mapDecoders(
   [decodeVarLenData, decodeUint64, decodeContentType, decodeVarLenData],
   (groupId, epoch, contentType, authenticatedData) => ({
     groupId,
@@ -86,13 +86,13 @@ export type PrivateMessageContent =
   | PrivateMessageContentProposal
   | PrivateMessageContentCommit
 
-export type PrivateMessageContentApplication = FramedContentApplicationData & {
+type PrivateMessageContentApplication = FramedContentApplicationData & {
   auth: FramedContentAuthDataApplicationOrProposal
 }
-export type PrivateMessageContentProposal = FramedContentProposalData & {
+type PrivateMessageContentProposal = FramedContentProposalData & {
   auth: FramedContentAuthDataApplicationOrProposal
 }
-export type PrivateMessageContentCommit = FramedContentCommitData & { auth: FramedContentAuthDataCommit }
+type PrivateMessageContentCommit = FramedContentCommitData & { auth: FramedContentAuthDataCommit }
 
 export function decodePrivateMessageContent(contentType: ContentTypeName): Decoder<PrivateMessageContent> {
   switch (contentType) {
@@ -123,7 +123,7 @@ export function decodePrivateMessageContent(contentType: ContentTypeName): Decod
   }
 }
 
-export function privateMessageContentEncoder(config: PaddingConfig): BufferEncoder<PrivateMessageContent> {
+function privateMessageContentEncoder(config: PaddingConfig): BufferEncoder<PrivateMessageContent> {
   return (msg) => {
     switch (msg.contentType) {
       case "application":

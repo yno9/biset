@@ -6,6 +6,6 @@ export const stringEncoder: BufferEncoder<string> = contramapBufferEncoder(varLe
   new TextEncoder().encode(s),
 )
 
-export const encodeString: Encoder<string> = encode(stringEncoder)
+const encodeString: Encoder<string> = encode(stringEncoder)
 
 export const decodeString: Decoder<string> = mapDecoder(decodeVarLenData, (u) => new TextDecoder().decode(u))

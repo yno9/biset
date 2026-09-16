@@ -6,6 +6,7 @@ import {
   didcommGroupAddress,
   groupInviteBodyOf,
   groupMessageBodyOf,
+  groupRosterFromMessages,
   isGroupInvite,
   isGroupMessage,
   parseDidCommGroupAddress,
@@ -78,5 +79,27 @@ describe('DIDComm group address', () => {
     const b = randomDidCommGroupId()
     expect(a).not.toBe(b)
     expect(a).toMatch(/^[0-9a-f]{64}$/)
+  })
+})
+
+describe('DIDComm group roster recovery', () => {
+  test('a second device reconstructs the complete roster from synced message metadata', () => {
+    const groupId = 'group-from-vault'
+    const threadId = didcommGroupAddress(groupId)
+    const base = { mailboxIds: { inbox: true as const }, keywords: {}, receivedAt: '2026-09-16T00:00:00.000Z' }
+    const emails = [
+      { ...base, id: 'm1', threadId, from: [{ email: 'did:example:a' }], to: [{ email: 'did:example:b' }, { email: 'did:example:c' }], subject: 'Trio' },
+      { ...base, id: 'm2', threadId, from: [{ email: 'did:example:b' }], to: [{ email: 'did:example:a' }, { email: 'did:example:c' }] },
+      { ...base, id: 'other', threadId: 'didcomm-group:other', from: [{ email: 'did:example:mallory' }], to: [{ email: 'did:example:a' }] },
+    ]
+
+    expect(groupRosterFromMessages(groupId, 'did:example:a', emails)).toEqual({
+      members: ['did:example:a', 'did:example:b', 'did:example:c'],
+      name: 'Trio',
+    })
+  })
+
+  test('does not invent a roster without a synced group message', () => {
+    expect(groupRosterFromMessages('missing', 'did:example:a', [])).toBeNull()
   })
 })

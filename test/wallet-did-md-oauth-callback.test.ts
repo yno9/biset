@@ -17,6 +17,7 @@ import {
   type DidMdRegistration,
 } from '../src/client/identity/wallet/did-md-store.ts'
 import { completeDidMdWalletCallback } from '../src/client/identity/wallet/did-md-oauth.ts'
+import { VAULT_CONTENT_KEY_PURPOSE } from '../src/client/store/vault/vault-content-key.ts'
 
 const DATABASE_NAME = 'biset-did-md-wallet'
 const ORIGIN = 'https://biset.example'
@@ -87,7 +88,6 @@ async function pendingFixture(overrides: Partial<DidMdPendingAuthorization> = {}
     documentEdit: { type: 'urn:did-core:document-edit:v1', services: [], verificationMethods: [], remove: [] },
     requestMlsCredential: true,
     keyAuthorizationSubject: 'urn:uuid:11111111-1111-4111-8111-111111111111',
-    bisetMimiVaultRoomCreated: true,
     createdAt: '2026-09-05T00:00:00.000Z',
     ...overrides,
   }
@@ -142,7 +142,7 @@ describe('did.md OAuth callback validation', () => {
       documentEdit: { type: 'urn:did-core:document-edit:v1', services: [], verificationMethods: [], remove: [] },
       requestMlsCredential: true,
       keyAuthorizationSubject: 'urn:uuid:22222222-2222-4222-8222-222222222222',
-      bisetMimiVaultRoomCreated: true,
+      vaultContentKeyDerivations: [{ purpose: VAULT_CONTENT_KEY_PURPOSE, context: '0' }],
       createdAt: '2026-09-05T00:00:00.000Z',
     }
     const keyCredentialUnsigned = {
@@ -155,7 +155,7 @@ describe('did.md OAuth callback validation', () => {
     const keyCredential = { ...keyCredentialUnsigned, rootSignature: bytesToBase64url(ed25519.sign(keyCredentialBytes, rootPrivateKey)), signSignature: bytesToBase64url(ed25519.sign(keyCredentialBytes, rootPrivateKey)) }
     const document = {
       audience: registration.clientId,
-      authorizationDetails: [pending.documentEdit, { type: 'urn:did.md:key-authorization:v1', credential: bytesToBase64url(canonicalBytes(keyCredential)) }],
+      authorizationDetails: [pending.documentEdit, { type: 'urn:did.md:key-authorization:v1', credential: bytesToBase64url(canonicalBytes(keyCredential)) }, { type: 'urn:did.md:derived-secret:v1', purpose: VAULT_CONTENT_KEY_PURPOSE, context: '0', value: bytesToBase64url(bytes(129)) }],
       deviceJkt: pending.deviceJkt,
       expiresAt: '2030-01-01T00:00:00.000Z',
       id: 'capability-1',

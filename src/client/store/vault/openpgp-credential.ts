@@ -117,7 +117,7 @@ function copyCredential(value: OpenPgpPrivateCredentialV1): OpenPgpPrivateCreden
 }
 
 /** Descriptor consumed by vault/credential-store.ts's generic reader and sink. */
-export const openPgpCredentialKind: VaultCredentialKind<OpenPgpPrivateCredentialV1, VaultCredentialEventReader> = {
+const openPgpCredentialKind: VaultCredentialKind<OpenPgpPrivateCredentialV1, VaultCredentialEventReader> = {
   eventKind: 'credential.openpgp.set',
   label: 'OpenPGP credential',
   segmentLabel: 'OpenPGP credential',

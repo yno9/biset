@@ -51,7 +51,7 @@ let authService: AuthenticationService = defaultAuthenticationService
 
 /** Install the DID-backed credential validator (Phase 2). Until then the
  * default accept-all service runs, and a leaf's DID claim is unverified. */
-export function setMlsAuthService(service: AuthenticationService): void { authService = service }
+function setMlsAuthService(service: AuthenticationService): void { authService = service }
 
 /** The client configuration every group of ours is created, joined and
  * restored with. `decodeGroupState` deliberately does NOT carry config — it is
@@ -91,7 +91,7 @@ export interface CommitResult { state: ClientState; commit: Uint8Array; welcome?
  * to process the winning commit with "Could not verify confirmation tag",
  * which is how this was found (test/mls-e2e.test.ts's epoch-conflict case).
  * On a conflict, drop the CommitResult and zero nothing. */
-export function confirmCommit(result: CommitResult): void {
+function confirmCommit(result: CommitResult): void {
   result.consumed.forEach(zeroOutUint8Array)
 }
 
@@ -230,12 +230,10 @@ export async function addMembers(state: ClientState, keyPackages: KeyPackage[]):
  * `wireAsPublicMessage` has NO default on purpose. It used to default to
  * `false` for the since-deleted self-group.ts / conversation-group.ts
  * callers, and that default is wrong for the only caller left in the app:
- * mimi-vault-room.ts's removeMimiVaultDevice, whose commit goes to the MIMI
- * hub as a room-state update and is rejected with 400 ("room-state update
- * must be a complete MLS PublicMessage") unless it is `true`. Rather than
- * swap one silently-wrong default for another (the tests below deliberately
- * exercise the private-wire framing), every caller now has to say which wire
- * framing its delivery service expects. */
+ * a provider's room-state update, which is rejected unless it is a complete
+ * MLS PublicMessage. Rather than swap one silently-wrong default for another
+ * (the tests below deliberately exercise the private-wire framing), every
+ * caller has to say which wire framing its delivery service expects. */
 export async function removeMembers(state: ClientState, kids: string[], wireAsPublicMessage: boolean): Promise<CommitResult> {
   const members = memberList(state)
   const proposals: Proposal[] = kids.map(kid => {
@@ -506,7 +504,7 @@ export function memberKids(state: ClientState, did: string): string[] {
  * membership rather than a resolved DID document (PLAN.md §4.2: the self
  * group, not the DID, is the authority on who may grant a SegmentKey right
  * now). */
-export function memberSignaturePublicKey(state: ClientState, kid: string): Uint8Array | undefined {
+function memberSignaturePublicKey(state: ClientState, kid: string): Uint8Array | undefined {
   for (const node of state.ratchetTree) {
     if (node?.nodeType !== 'leaf') continue
     try {
@@ -518,7 +516,7 @@ export function memberSignaturePublicKey(state: ClientState, kid: string): Uint8
   return undefined
 }
 
-export function memberDeviceCredentialBytes(state: ClientState, kid: string): Uint8Array | undefined {
+function memberDeviceCredentialBytes(state: ClientState, kid: string): Uint8Array | undefined {
   for (const node of state.ratchetTree) {
     if (node?.nodeType !== 'leaf') continue
     try {
@@ -572,11 +570,8 @@ export async function joinGroupExternally(
   /** True only for a device rejoining under its OWN existing signature key —
    * the resulting commit atomically removes whichever leaf matches it (if
    * any, see protocol/mls/createCommit.ts's VENDOR.md entry) and adds this
-   * one. Two callers: `vault-room.ts`'s `joinMimiVaultRoom` retry, when this
-   * device's own local MLS state was lost but the hub still holds its stale
-   * leaf, and a did:webvh domain move re-issuing a device's credential
-   * (formerly `identity/webvh/move.ts`, removed 2026-09-05 with native
-   * login — currently no caller). False (the default) for a genuinely new
+ * one. This remains available for provider clients whose local MLS state was
+ * lost but whose hub still holds a stale leaf. False (the default) for a genuinely new
    * device joining: resync would remove whichever existing leaf's signature
    * key happens to match `own`'s, which for a new device is nobody's and
    * must stay that way. */
@@ -641,7 +636,7 @@ function groupInfoContainsKid(groupInfoBytes: Uint8Array, kid: string): boolean 
 
 /** The epoch a GroupInfo describes — what an external joiner commits against,
  * and what the DS compares to decide whether that commit is still current. */
-export function groupInfoEpoch(groupInfoBytes: Uint8Array): bigint {
+function groupInfoEpoch(groupInfoBytes: Uint8Array): bigint {
   const groupInfo = decodeGroupInfo(groupInfoBytes, 0)?.[0]
   if (groupInfo === undefined) throw new Error('groupInfoEpoch: undecodable group info')
   return groupInfo.groupContext.epoch
@@ -697,7 +692,7 @@ export function epochOf(state: ClientState): bigint {
  * time. What lets self-group.ts's `SelfGroupSigner` be reconstructed after a
  * restart without keeping the original `OwnKeyPackage` around separately
  * (identity/bootstrap.ts's `maintainSelfGroup`). */
-export function ownSignaturePrivateKey(state: ClientState): Uint8Array {
+function ownSignaturePrivateKey(state: ClientState): Uint8Array {
   return state.signaturePrivateKey
 }
 

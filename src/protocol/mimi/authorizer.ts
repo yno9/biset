@@ -98,6 +98,7 @@ export function submitMessageSigningBytes(value: Omit<SubmitMessageRequest, 'sig
   return canonicalBytes({ label: 'biset/mimi-submit-message/v1', version: value.version, protocol: value.protocol, roomId: value.roomId, sender: credentialValue(value.sender), epoch: value.epoch, appMessage: bytesToBase64url(value.appMessage), ...(value.deliveryId === undefined ? {} : { deliveryId: value.deliveryId }), frankingTag: bytesToBase64url(value.frankAAD.frankingTag), frankingSignatureCiphersuite: value.frankingSignatureCiphersuite, submittedAt: value.submittedAt })
 }
 
+/** @public Third-party MIMI providers use this to verify checkpoint input. */
 export function submitVaultCheckpointSigningBytes(value: Omit<SubmitVaultCheckpointRequest, 'signature'>): Uint8Array {
   return canonicalBytes({ label: 'biset/mimi-vault-checkpoint/v1', version: value.version, protocol: value.protocol, roomId: value.roomId, sender: credentialValue(value.sender), epoch: value.epoch, manifest: { coveredSeq: value.manifest.coveredSeq, transferId: value.manifest.transferId, chunkCount: value.manifest.chunkCount, payloadHash: bytesToBase64url(value.manifest.payloadHash) }, submittedAt: value.submittedAt })
 }

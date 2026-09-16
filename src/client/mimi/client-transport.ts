@@ -6,11 +6,9 @@ import { decodeDeliveriesWire, decodeDeliveriesWatchTokenWire, decodeFrankingAge
 export interface MimiClientTransportOptions {
   normalBaseUrl: string
   anonBaseUrl: string
-  /** Dedicated normal-mode endpoint for the one-user Self/Vault room. */
-  selfBaseUrl?: string
   fetch?: typeof fetch
 }
-export type MimiClientMode = 'normal' | 'anon' | 'self'
+export type MimiClientMode = 'normal' | 'anon'
 
 export class MimiClientTransport {
   private readonly fetchValue: typeof fetch
@@ -20,7 +18,6 @@ export class MimiClientTransport {
     this.baseUrls = {
       normal: options.normalBaseUrl.replace(/\/$/, ''),
       anon: options.anonBaseUrl.replace(/\/$/, ''),
-      self: (options.selfBaseUrl ?? options.normalBaseUrl).replace(/\/$/, ''),
     }
     this.fetchValue = options.fetch ?? defaultFetch()
   }

@@ -40,8 +40,17 @@ export function reduceLocalJmapProjection(
 ): LocalJmapSnapshot {
   const emails = new Map(base.emails.map(email => [email.id, copyEmail(email)]))
   const tombstones = new Set<string>()
-  const addedThisBatch = new Set<string>()
+  // The events store's own unique keyPath on `id` is what's actually
+  // supposed to make the exact same event impossible to read twice from
+  // storage -- this is a defensive check against a caller/storage bug
+  // feeding it in anyway, kept separate from message.add's own
+  // sameMessageIdentity tolerance below (which is about two DIFFERENT
+  // events, from two different devices, describing the same email; this is
+  // about one event appearing more than once).
+  const seenEventIds = new Set<string>()
   for (const record of [...records].sort(compareEvents)) {
+    if (seenEventIds.has(record.event.id)) throw new TypeError('vault event conflicts with an existing event of the same id')
+    seenEventIds.add(record.event.id)
     const mutation = decodeVaultMutation(record.event, record.plaintext)
     const emailId = mutation.targetIds[0]
     if (mutation.kind === 'message.tombstone') {
@@ -55,18 +64,27 @@ export function reduceLocalJmapProjection(
       if (tombstones.has(emailId)) continue
       const existing = emails.get(emailId)
       if (existing) {
-        if (addedThisBatch.has(emailId)) throw new TypeError('vault message.add conflicts with an existing email')
         // A DIDComm envelope can be ingested locally before the same signed
-        // mutation reaches this device through Coordinator. The stable
-        // sender+message-id target identifies the same logical message, while
-        // receivedAt, encrypted blob IDs, and mutable mailbox/keyword state
-        // are necessarily device-local. Preserve the first local copy only
-        // when the immutable read-model metadata agrees.
+        // mutation reaches this device through Coordinator -- or, just as
+        // legitimately, be independently ingested by TWO of this identity's
+        // OWN devices sharing one relationship channel (both directly
+        // receive the same incoming DIDComm delivery, then Vault Sync also
+        // merges each device's own copy into the other's log), landing both
+        // adds in the very same rebuild pass. This used to reject that case
+        // outright merely for landing in one batch, before even checking
+        // whether the two adds actually agree ("vault message.add conflicts
+        // with an existing email" on every ordinary multi-device rebuild,
+        // found live, 2026-09-15) -- there is nothing about the SAME batch
+        // that makes a genuine duplicate less legitimate than one spread
+        // across two rebuilds. The stable sender+message-id target
+        // identifies the same logical message, while receivedAt, encrypted
+        // blob IDs, and mutable mailbox/keyword state are necessarily
+        // device-local. Preserve the first local copy only when the
+        // immutable read-model metadata agrees.
         if (!sameMessageIdentity(existing, email)) throw new TypeError('vault message.add conflicts with an existing email')
         continue
       }
       emails.set(emailId, email)
-      addedThisBatch.add(emailId)
       continue
     }
     if (mutation.kind === 'transport.result') {
@@ -84,14 +102,6 @@ export function reduceLocalJmapProjection(
       // never a mail/mailbox change. Still an ordinary vault event (advances
       // actorSeq/state/checkpoint like any other), just one this read model
       // has nothing to do with.
-      continue
-    }
-    if (mutation.kind === 'didcomm.device-key.set') {
-      // Deliberately a no-op for the read-model: a private
-      // (MLS device kid -> DIDComm keyAgreement kid) pairing
-      // (vault/didcomm-device-key.ts), read only by revokeDevice (main.ts)
-      // directly off the vault events, never projected into mail/mailbox
-      // state.
       continue
     }
     if (mutation.kind === 'credential.didcomm.set') {
@@ -215,6 +225,10 @@ function canonicalEmail(value: LocalJmapEmail): CanonicalValue {
   }
 }
 
+function canonicalIdentityAddresses(values: Array<{ email?: string; name?: string }>): CanonicalValue[] {
+  return values.map(canonicalAddress).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+}
+
 function canonicalAddress(value: { email?: string; name?: string }): CanonicalValue {
   return {
     ...(value.email === undefined ? {} : { email: value.email }),
@@ -243,8 +257,12 @@ function immutableMessageIdentity(value: LocalJmapEmail): CanonicalValue {
     // live, 2026-09-02: "vault message.add conflicts with an existing
     // email", every single poll, for a message every device involved could
     // already see was the same one).
-    ...(value.from === undefined ? {} : { from: value.from.map(canonicalAddress) }),
-    ...(value.to === undefined ? {} : { to: value.to.map(canonicalAddress) }),
+    // Recipient order is not message identity. In particular, a second
+    // device reconstructs a DIDComm group roster in deterministic sorted
+    // order while the first device may retain invitation order; both
+    // describe the same member set and the same authenticated message.
+    ...(value.from === undefined ? {} : { from: canonicalIdentityAddresses(value.from) }),
+    ...(value.to === undefined ? {} : { to: canonicalIdentityAddresses(value.to) }),
     ...(value.subject === undefined ? {} : { subject: value.subject }),
     ...(value.preview === undefined ? {} : { preview: value.preview }),
     ...(value.size === undefined ? {} : { size: value.size }),

@@ -1,4 +1,4 @@
-import { bytesToBase64url, canonicalBytes, equalBytes } from '../../../protocol/canonical.ts'
+import { canonicalBytes, equalBytes } from '../../../protocol/canonical.ts'
 import { assertMlsEpoch, type DeviceId, type IdentityId, type MlsEpoch, type SegmentId } from '../../../protocol/ids.ts'
 import type { SegmentKeyWrapV1 } from '../../../protocol/vault.ts'
 
@@ -15,31 +15,37 @@ export interface SegmentKeyWrapDraft {
   grantedAt: string
 }
 
-export interface SegmentKeyWrapSigner {
+/** Identifies which device minted a wrap. Recorded for audit only: unlike
+ * MLS membership, nothing here can verify that `grantorDeviceId` was a
+ * legitimate holder of the VCK at grant time. Trust rests entirely on the
+ * AEAD below -- the VCK is the sole root of trust once a device holds it
+ * (see WORKSHEET_vault-sync.md's self-mimi rewrite), so a wrap that
+ * decrypts under the current VCK is by construction one only a legitimate
+ * holder could have produced. A device-scoped signature could only assert
+ * "this specific device holds a still-current key" -- something the
+ * decrypt already proves -- and, being tied to one deviceKid, breaks the
+ * moment a device re-derives a fresh one (a re-login regenerating its Ed25519
+ * leaf) or a genuine sibling grants it: see the 2026-09-15 "SegmentKeyWrap
+ * signature is invalid" incident, where MIMI's removal took its whole-room
+ * membership verifier with it, leaving a check that could only ever pass
+ * for the single device that happened to grant it. */
+export interface SegmentGrantor {
   readonly deviceId: DeviceId
-  sign(bytes: Uint8Array): Promise<Uint8Array>
-  verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>
-}
-
-export interface SegmentKeyWrapVerifier {
-  verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array): Promise<boolean>
 }
 
 /**
- * Wraps the random SegmentKey under a current MLS-derived VEK. The caller is
- * responsible for deriving the VEK from the self-group exporter and for
+ * Wraps the random SegmentKey under a current VCK. The caller is
+ * responsible for deriving the VCK for the current generation and for
  * checking current membership before granting this wrap.
  */
 export async function createSegmentKeyWrap(
   vaultEpochKey: Uint8Array,
   segmentKey: Uint8Array,
   draft: SegmentKeyWrapDraft,
-  signer: SegmentKeyWrapSigner,
 ): Promise<SegmentKeyWrapV1> {
   assertKey(vaultEpochKey, 'Vault Epoch Key')
   assertKey(segmentKey, 'SegmentKey')
   assertDraft(draft)
-  if (draft.grantorDeviceId !== signer.deviceId) throw new TypeError('wrap signer does not match grantor device')
 
   const nonce = randomNonce()
   const aad = segmentKeyWrapAad(draft)
@@ -48,23 +54,16 @@ export async function createSegmentKeyWrap(
     await importAesKey(vaultEpochKey, ['encrypt']),
     arrayBuffer(segmentKey),
   ))
-  const unsigned = { version: 1 as const, ...draft, nonce, aad, wrappedSegmentKey }
-  const signature = await signer.sign(segmentKeyWrapSigningBytes(unsigned))
-  if (signature.length === 0) throw new TypeError('SegmentKeyWrap signature must not be empty')
-  return { ...unsigned, signature: signature.slice() }
+  return { version: 1, ...draft, nonce, aad, wrappedSegmentKey }
 }
 
 export async function unwrapSegmentKey(
   vaultEpochKey: Uint8Array,
   wrap: SegmentKeyWrapV1,
-  signer: SegmentKeyWrapVerifier,
 ): Promise<Uint8Array> {
   assertKey(vaultEpochKey, 'Vault Epoch Key')
   assertWrap(wrap)
   if (!equalBytes(wrap.aad, segmentKeyWrapAad(wrap))) throw new TypeError('SegmentKeyWrap AAD does not match metadata')
-  if (!(await signer.verify(wrap.grantorDeviceId, segmentKeyWrapSigningBytes(wrap), wrap.signature))) {
-    throw new TypeError('SegmentKeyWrap signature is invalid')
-  }
   try {
     const segmentKey = new Uint8Array(await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: arrayBuffer(wrap.nonce), additionalData: arrayBuffer(wrap.aad) },
@@ -91,24 +90,6 @@ function segmentKeyWrapAad(draft: Pick<SegmentKeyWrapDraft, 'identityId' | 'self
   })
 }
 
-export function segmentKeyWrapSigningBytes(
-  wrap: Omit<SegmentKeyWrapV1, 'signature'>,
-): Uint8Array {
-  return canonicalBytes({
-    version: wrap.version,
-    identityId: wrap.identityId,
-    selfGroupId: wrap.selfGroupId,
-    segmentId: wrap.segmentId,
-    sourceEpoch: wrap.sourceEpoch,
-    recipientEpoch: wrap.recipientEpoch,
-    nonce: bytesToBase64url(wrap.nonce),
-    aad: bytesToBase64url(wrap.aad),
-    wrappedSegmentKey: bytesToBase64url(wrap.wrappedSegmentKey),
-    grantorDeviceId: wrap.grantorDeviceId,
-    grantedAt: wrap.grantedAt,
-  })
-}
-
 function assertDraft(draft: SegmentKeyWrapDraft): void {
   if (!draft.identityId || !draft.selfGroupId || !draft.segmentId || !draft.grantorDeviceId) {
     throw new TypeError('SegmentKeyWrap draft has empty required fields')
@@ -121,7 +102,7 @@ function assertDraft(draft: SegmentKeyWrapDraft): void {
 function assertWrap(wrap: SegmentKeyWrapV1): void {
   if (wrap.version !== 1) throw new TypeError('unsupported SegmentKeyWrap version')
   assertDraft(wrap)
-  if (wrap.nonce.length !== NONCE_BYTES || wrap.aad.length === 0 || wrap.wrappedSegmentKey.length === 0 || wrap.signature.length === 0) {
+  if (wrap.nonce.length !== NONCE_BYTES || wrap.aad.length === 0 || wrap.wrappedSegmentKey.length === 0) {
     throw new TypeError('SegmentKeyWrap fields are invalid')
   }
 }

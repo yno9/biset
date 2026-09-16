@@ -19,7 +19,6 @@ const pack: VaultDeliveryPackV1 = {
     version: 1, identityId: 'did:web:alice.example', selfGroupId: 'self-group-1', segmentId: 'segment-1',
     sourceEpoch: '1', recipientEpoch: '2', nonce: new Uint8Array([13]), aad: new Uint8Array([14]),
     wrappedSegmentKey: new Uint8Array([15, 16]), grantorDeviceId: 'device-a', grantedAt: '2026-08-21T00:00:00.000Z',
-    signature: new Uint8Array([17]),
   }],
 }
 

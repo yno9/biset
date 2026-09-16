@@ -16,40 +16,40 @@ export interface Add {
   keyPackage: KeyPackage
 }
 
-export const addEncoder: BufferEncoder<Add> = contramapBufferEncoder(keyPackageEncoder, (a) => a.keyPackage)
+const addEncoder: BufferEncoder<Add> = contramapBufferEncoder(keyPackageEncoder, (a) => a.keyPackage)
 
-export const encodeAdd: Encoder<Add> = encode(addEncoder)
-export const decodeAdd: Decoder<Add> = mapDecoder(decodeKeyPackage, (keyPackage) => ({ keyPackage }))
+const encodeAdd: Encoder<Add> = encode(addEncoder)
+const decodeAdd: Decoder<Add> = mapDecoder(decodeKeyPackage, (keyPackage) => ({ keyPackage }))
 
 /** @public */
 export interface Update {
   leafNode: LeafNodeUpdate
 }
 
-export const updateEncoder: BufferEncoder<Update> = contramapBufferEncoder(leafNodeEncoder, (u) => u.leafNode)
+const updateEncoder: BufferEncoder<Update> = contramapBufferEncoder(leafNodeEncoder, (u) => u.leafNode)
 
-export const encodeUpdate: Encoder<Update> = encode(updateEncoder)
-export const decodeUpdate: Decoder<Update> = mapDecoder(decodeLeafNodeUpdate, (leafNode) => ({ leafNode }))
+const encodeUpdate: Encoder<Update> = encode(updateEncoder)
+const decodeUpdate: Decoder<Update> = mapDecoder(decodeLeafNodeUpdate, (leafNode) => ({ leafNode }))
 
 /** @public */
 export interface Remove {
   removed: number
 }
 
-export const removeEncoder: BufferEncoder<Remove> = contramapBufferEncoder(uint32Encoder, (r) => r.removed)
+const removeEncoder: BufferEncoder<Remove> = contramapBufferEncoder(uint32Encoder, (r) => r.removed)
 
-export const encodeRemove: Encoder<Remove> = encode(removeEncoder)
-export const decodeRemove: Decoder<Remove> = mapDecoder(decodeUint32, (removed) => ({ removed }))
+const encodeRemove: Encoder<Remove> = encode(removeEncoder)
+const decodeRemove: Decoder<Remove> = mapDecoder(decodeUint32, (removed) => ({ removed }))
 
 /** @public */
 export interface PSK {
   preSharedKeyId: PreSharedKeyID
 }
 
-export const pskEncoder: BufferEncoder<PSK> = contramapBufferEncoder(pskIdEncoder, (p) => p.preSharedKeyId)
+const pskEncoder: BufferEncoder<PSK> = contramapBufferEncoder(pskIdEncoder, (p) => p.preSharedKeyId)
 
-export const encodePSK: Encoder<PSK> = encode(pskEncoder)
-export const decodePSK: Decoder<PSK> = mapDecoder(decodePskId, (preSharedKeyId) => ({ preSharedKeyId }))
+const encodePSK: Encoder<PSK> = encode(pskEncoder)
+const decodePSK: Decoder<PSK> = mapDecoder(decodePskId, (preSharedKeyId) => ({ preSharedKeyId }))
 
 /** @public */
 export interface Reinit {
@@ -64,7 +64,7 @@ export const reinitEncoder: BufferEncoder<Reinit> = contramapBufferEncoders(
   (r) => [r.groupId, r.version, r.cipherSuite, r.extensions] as const,
 )
 
-export const encodeReinit: Encoder<Reinit> = encode(reinitEncoder)
+const encodeReinit: Encoder<Reinit> = encode(reinitEncoder)
 
 export const decodeReinit: Decoder<Reinit> = mapDecoders(
   [decodeVarLenData, decodeProtocolVersion, decodeCiphersuite, decodeVarLenType(decodeExtension)],
@@ -76,27 +76,27 @@ export interface ExternalInit {
   kemOutput: Uint8Array
 }
 
-export const externalInitEncoder: BufferEncoder<ExternalInit> = contramapBufferEncoder(
+const externalInitEncoder: BufferEncoder<ExternalInit> = contramapBufferEncoder(
   varLenDataEncoder,
   (e) => e.kemOutput,
 )
 
-export const encodeExternalInit: Encoder<ExternalInit> = encode(externalInitEncoder)
-export const decodeExternalInit: Decoder<ExternalInit> = mapDecoder(decodeVarLenData, (kemOutput) => ({ kemOutput }))
+const encodeExternalInit: Encoder<ExternalInit> = encode(externalInitEncoder)
+const decodeExternalInit: Decoder<ExternalInit> = mapDecoder(decodeVarLenData, (kemOutput) => ({ kemOutput }))
 
 /** @public */
 export interface GroupContextExtensions {
   extensions: Extension[]
 }
 
-export const groupContextExtensionsEncoder: BufferEncoder<GroupContextExtensions> = contramapBufferEncoder(
+const groupContextExtensionsEncoder: BufferEncoder<GroupContextExtensions> = contramapBufferEncoder(
   varLenTypeEncoder(extensionEncoder),
   (g) => g.extensions,
 )
 
-export const encodeGroupContextExtensions: Encoder<GroupContextExtensions> = encode(groupContextExtensionsEncoder)
+const encodeGroupContextExtensions: Encoder<GroupContextExtensions> = encode(groupContextExtensionsEncoder)
 
-export const decodeGroupContextExtensions: Decoder<GroupContextExtensions> = mapDecoder(
+const decodeGroupContextExtensions: Decoder<GroupContextExtensions> = mapDecoder(
   decodeVarLenType(decodeExtension),
   (extensions) => ({ extensions }),
 )
@@ -167,70 +167,70 @@ export type Proposal =
   | ProposalAppDataUpdate
   | ProposalCustom
 
-export const proposalAddEncoder: BufferEncoder<ProposalAdd> = contramapBufferEncoders(
+const proposalAddEncoder: BufferEncoder<ProposalAdd> = contramapBufferEncoders(
   [defaultProposalTypeEncoder, addEncoder],
   (p) => [p.proposalType, p.add] as const,
 )
 
-export const encodeProposalAdd: Encoder<ProposalAdd> = encode(proposalAddEncoder)
+const encodeProposalAdd: Encoder<ProposalAdd> = encode(proposalAddEncoder)
 
-export const proposalUpdateEncoder: BufferEncoder<ProposalUpdate> = contramapBufferEncoders(
+const proposalUpdateEncoder: BufferEncoder<ProposalUpdate> = contramapBufferEncoders(
   [defaultProposalTypeEncoder, updateEncoder],
   (p) => [p.proposalType, p.update] as const,
 )
 
-export const encodeProposalUpdate: Encoder<ProposalUpdate> = encode(proposalUpdateEncoder)
+const encodeProposalUpdate: Encoder<ProposalUpdate> = encode(proposalUpdateEncoder)
 
-export const proposalRemoveEncoder: BufferEncoder<ProposalRemove> = contramapBufferEncoders(
+const proposalRemoveEncoder: BufferEncoder<ProposalRemove> = contramapBufferEncoders(
   [defaultProposalTypeEncoder, removeEncoder],
   (p) => [p.proposalType, p.remove] as const,
 )
 
-export const encodeProposalRemove: Encoder<ProposalRemove> = encode(proposalRemoveEncoder)
+const encodeProposalRemove: Encoder<ProposalRemove> = encode(proposalRemoveEncoder)
 
-export const proposalPSKEncoder: BufferEncoder<ProposalPSK> = contramapBufferEncoders(
+const proposalPSKEncoder: BufferEncoder<ProposalPSK> = contramapBufferEncoders(
   [defaultProposalTypeEncoder, pskEncoder],
   (p) => [p.proposalType, p.psk] as const,
 )
 
-export const encodeProposalPSK: Encoder<ProposalPSK> = encode(proposalPSKEncoder)
+const encodeProposalPSK: Encoder<ProposalPSK> = encode(proposalPSKEncoder)
 
-export const proposalReinitEncoder: BufferEncoder<ProposalReinit> = contramapBufferEncoders(
+const proposalReinitEncoder: BufferEncoder<ProposalReinit> = contramapBufferEncoders(
   [defaultProposalTypeEncoder, reinitEncoder],
   (p) => [p.proposalType, p.reinit] as const,
 )
 
-export const encodeProposalReinit: Encoder<ProposalReinit> = encode(proposalReinitEncoder)
+const encodeProposalReinit: Encoder<ProposalReinit> = encode(proposalReinitEncoder)
 
-export const proposalExternalInitEncoder: BufferEncoder<ProposalExternalInit> = contramapBufferEncoders(
+const proposalExternalInitEncoder: BufferEncoder<ProposalExternalInit> = contramapBufferEncoders(
   [defaultProposalTypeEncoder, externalInitEncoder],
   (p) => [p.proposalType, p.externalInit] as const,
 )
 
-export const encodeProposalExternalInit: Encoder<ProposalExternalInit> = encode(proposalExternalInitEncoder)
+const encodeProposalExternalInit: Encoder<ProposalExternalInit> = encode(proposalExternalInitEncoder)
 
-export const proposalGroupContextExtensionsEncoder: BufferEncoder<ProposalGroupContextExtensions> =
+const proposalGroupContextExtensionsEncoder: BufferEncoder<ProposalGroupContextExtensions> =
   contramapBufferEncoders(
     [defaultProposalTypeEncoder, groupContextExtensionsEncoder],
     (p) => [p.proposalType, p.groupContextExtensions] as const,
   )
 
-export const encodeProposalGroupContextExtensions: Encoder<ProposalGroupContextExtensions> = encode(
+const encodeProposalGroupContextExtensions: Encoder<ProposalGroupContextExtensions> = encode(
   proposalGroupContextExtensionsEncoder,
 )
 
-export const proposalAppDataUpdateEncoder: BufferEncoder<ProposalAppDataUpdate> = contramapBufferEncoders(
+const proposalAppDataUpdateEncoder: BufferEncoder<ProposalAppDataUpdate> = contramapBufferEncoders(
   [defaultProposalTypeEncoder, appDataUpdateEncoder],
   (p) => [p.proposalType, p.appDataUpdate] as const,
 )
-export const encodeProposalAppDataUpdate: Encoder<ProposalAppDataUpdate> = encode(proposalAppDataUpdateEncoder)
+const encodeProposalAppDataUpdate: Encoder<ProposalAppDataUpdate> = encode(proposalAppDataUpdateEncoder)
 
-export const proposalCustomEncoder: BufferEncoder<ProposalCustom> = contramapBufferEncoders(
+const proposalCustomEncoder: BufferEncoder<ProposalCustom> = contramapBufferEncoders(
   [uint16Encoder, varLenDataEncoder],
   (p) => [p.proposalType, p.proposalData] as const,
 )
 
-export const encodeProposalCustom: Encoder<ProposalCustom> = encode(proposalCustomEncoder)
+const encodeProposalCustom: Encoder<ProposalCustom> = encode(proposalCustomEncoder)
 
 export const proposalEncoder: BufferEncoder<Proposal> = (p) => {
   switch (p.proposalType) {
@@ -255,43 +255,43 @@ export const proposalEncoder: BufferEncoder<Proposal> = (p) => {
   }
 }
 
-export const encodeProposal: Encoder<Proposal> = encode(proposalEncoder)
+const encodeProposal: Encoder<Proposal> = encode(proposalEncoder)
 
-export const decodeProposalAdd: Decoder<ProposalAdd> = mapDecoder(decodeAdd, (add) => ({ proposalType: "add", add }))
+const decodeProposalAdd: Decoder<ProposalAdd> = mapDecoder(decodeAdd, (add) => ({ proposalType: "add", add }))
 
-export const decodeProposalUpdate: Decoder<ProposalUpdate> = mapDecoder(decodeUpdate, (update) => ({
+const decodeProposalUpdate: Decoder<ProposalUpdate> = mapDecoder(decodeUpdate, (update) => ({
   proposalType: "update",
   update,
 }))
 
-export const decodeProposalRemove: Decoder<ProposalRemove> = mapDecoder(decodeRemove, (remove) => ({
+const decodeProposalRemove: Decoder<ProposalRemove> = mapDecoder(decodeRemove, (remove) => ({
   proposalType: "remove",
   remove,
 }))
 
-export const decodeProposalPSK: Decoder<ProposalPSK> = mapDecoder(decodePSK, (psk) => ({ proposalType: "psk", psk }))
+const decodeProposalPSK: Decoder<ProposalPSK> = mapDecoder(decodePSK, (psk) => ({ proposalType: "psk", psk }))
 
-export const decodeProposalReinit: Decoder<ProposalReinit> = mapDecoder(decodeReinit, (reinit) => ({
+const decodeProposalReinit: Decoder<ProposalReinit> = mapDecoder(decodeReinit, (reinit) => ({
   proposalType: "reinit",
   reinit,
 }))
 
-export const decodeProposalExternalInit: Decoder<ProposalExternalInit> = mapDecoder(
+const decodeProposalExternalInit: Decoder<ProposalExternalInit> = mapDecoder(
   decodeExternalInit,
   (externalInit) => ({ proposalType: "external_init", externalInit }),
 )
 
-export const decodeProposalGroupContextExtensions: Decoder<ProposalGroupContextExtensions> = mapDecoder(
+const decodeProposalGroupContextExtensions: Decoder<ProposalGroupContextExtensions> = mapDecoder(
   decodeGroupContextExtensions,
   (groupContextExtensions) => ({ proposalType: "group_context_extensions", groupContextExtensions }),
 )
 
-export const decodeProposalAppDataUpdate: Decoder<ProposalAppDataUpdate> = mapDecoder(
+const decodeProposalAppDataUpdate: Decoder<ProposalAppDataUpdate> = mapDecoder(
   decodeAppDataUpdate,
   appDataUpdate => ({ proposalType: 'app_data_update', appDataUpdate }),
 )
 
-export function decodeProposalCustom(proposalType: number): Decoder<ProposalCustom> {
+function decodeProposalCustom(proposalType: number): Decoder<ProposalCustom> {
   return mapDecoder(decodeVarLenData, (proposalData) => ({ proposalType, proposalData }))
 }
 

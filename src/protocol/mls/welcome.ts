@@ -16,14 +16,14 @@ export interface EncryptedGroupSecrets {
   encryptedGroupSecrets: HPKECiphertext
 }
 
-export const encryptedGroupSecretsEncoder: BufferEncoder<EncryptedGroupSecrets> = contramapBufferEncoders(
+const encryptedGroupSecretsEncoder: BufferEncoder<EncryptedGroupSecrets> = contramapBufferEncoders(
   [varLenDataEncoder, hpkeCiphertextEncoder],
   (egs) => [egs.newMember, egs.encryptedGroupSecrets] as const,
 )
 
-export const encodeEncryptedGroupSecrets: Encoder<EncryptedGroupSecrets> = encode(encryptedGroupSecretsEncoder)
+const encodeEncryptedGroupSecrets: Encoder<EncryptedGroupSecrets> = encode(encryptedGroupSecretsEncoder)
 
-export const decodeEncryptedGroupSecrets: Decoder<EncryptedGroupSecrets> = mapDecoders(
+const decodeEncryptedGroupSecrets: Decoder<EncryptedGroupSecrets> = mapDecoders(
   [decodeVarLenData, decodeHpkeCiphertext],
   (newMember, encryptedGroupSecrets) => ({ newMember, encryptedGroupSecrets }),
 )
@@ -47,11 +47,11 @@ export const decodeWelcome: Decoder<Welcome> = mapDecoders(
   (cipherSuite, secrets, encryptedGroupInfo) => ({ cipherSuite, secrets, encryptedGroupInfo }),
 )
 
-export function welcomeNonce(welcomeSecret: Uint8Array, cs: CiphersuiteImpl) {
+function welcomeNonce(welcomeSecret: Uint8Array, cs: CiphersuiteImpl) {
   return expandWithLabel(welcomeSecret, "nonce", new Uint8Array(), cs.hpke.nonceLength, cs.kdf)
 }
 
-export function welcomeKey(welcomeSecret: Uint8Array, cs: CiphersuiteImpl) {
+function welcomeKey(welcomeSecret: Uint8Array, cs: CiphersuiteImpl) {
   return expandWithLabel(welcomeSecret, "key", new Uint8Array(), cs.hpke.keyLength, cs.kdf)
 }
 

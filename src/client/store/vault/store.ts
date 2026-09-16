@@ -3,9 +3,10 @@ import { equalBytes } from '../../../protocol/canonical.ts'
 import type { DeliverySeq, DeviceId, IdentityId, MlsEpoch, SegmentId, VaultEventId, VaultId, VaultMemberId, VaultObjectId } from '../../../protocol/ids.ts'
 import type { SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
+import { rescueLegacyCrdtEvents } from './legacy-crdt-migration.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
-const DATABASE_VERSION = 10
+const DATABASE_VERSION = 14
 
 const STORES = {
   ingressReceipts: 'vault_ingress_receipts',
@@ -24,6 +25,8 @@ const STORES = {
   deliveryState: 'vault_delivery_state',
   transportStatus: 'transport_status',
   didCommOutbox: 'didcomm_transport_outbox',
+  actorSequences: 'vault_actor_sequences',
+  projectionMeta: 'vault_projection_meta',
 } as const
 
 type StoreName = (typeof STORES)[keyof typeof STORES]
@@ -54,7 +57,7 @@ export interface IngressAckOutboxRecord {
 }
 
 /** Durable external-ingress ACK work. A failed network wake must not lose it. */
-export interface IngressAckOutboxReader {
+interface IngressAckOutboxReader {
   readIngressAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, limit?: number): Promise<IngressAckOutboxRecord[]>
   removeIngressAckOutbox(identityId: IdentityId, ingressId: string): Promise<void>
   noteIngressAckOutboxAttempt(identityId: IdentityId, ingressId: string): Promise<void>
@@ -79,6 +82,14 @@ export interface DidCommTransportOutboxRecord {
   identityId: IdentityId
   outboundEventId: VaultEventId
   emailId: string
+  /** Raw body Vault object referenced by outboundEventId. Optional only for
+   * rows written before it was stored directly; readDidCommOutbox repairs
+   * those from the durable event rather than consulting the projection. */
+  blobId?: string
+  metadataBlobId?: string
+  threadId?: string
+  subject?: string
+  sentAt?: string
   messageId: string
   toDid: string
   createdAt: string
@@ -172,14 +183,14 @@ export interface VaultProjectionReader {
 
 /**
  * Writes a projection/JMAP-state pair that was NOT derived from a batch of
- * new events -- `rebuildLocalJmapProjection` (vault/projection-rebuild.ts)
+ * new events -- the historical full-projection rebuild path
  * is the only caller: it recomputes the projection from records already
  * committed, so there is nothing new for `commitLocalMutation`/`commitIngress`/
  * `commitDelivery` (which all require at least one event) to commit
  * alongside it. Also the only way a brand-new identity's very first
  * (all-empty) projection row ever gets written, since nothing else seeds one.
  */
-export interface VaultProjectionWriter {
+interface VaultProjectionWriter {
   writeProjection(identityId: IdentityId, projection: unknown, jmapState: unknown): Promise<void>
 }
 
@@ -199,6 +210,36 @@ export interface VaultCredentialEventReader {
 export interface VaultRecordReader {
   readVaultEvents(identityId: IdentityId): Promise<VaultEventRecord[]>
   readVaultObjects(identityId: IdentityId): Promise<VaultObjectRecord[]>
+}
+
+export interface VaultSyncRecordReader extends VaultRecordReader {
+  readSegmentKeyWraps(identityId: IdentityId): Promise<SegmentKeyWrapV1[]>
+}
+
+export interface IncomingVaultRecords {
+  identityId: IdentityId
+  objects: VaultObjectRecord[]
+  events: VaultEventRecord[]
+  keyWraps: SegmentKeyWrapV1[]
+}
+
+export interface IncomingVaultRecordsResult {
+  addedEventIds: VaultEventId[]
+  targetIds: string[]
+}
+
+export interface VaultProjectionMeta { identityId: IdentityId; tombstones: string[]; pending: string[] }
+
+export interface DuplicateActorSequence {
+  actorDeviceId: string
+  actorSeq: number
+  eventIds: VaultEventId[]
+}
+
+/** Atomic actor sequence reservations shared by every tab for one device. */
+export interface ActorSequenceStore {
+  reserveActorSeq(identityId: IdentityId, deviceId: string): Promise<number>
+  findDuplicateActorSequences(identityId: IdentityId): Promise<DuplicateActorSequence[]>
 }
 
 export interface SegmentKeyWrapReader {
@@ -262,52 +303,28 @@ export interface ActiveVaultSegmentStore {
 }
 
 /** The client retry loop sees only its own encrypted, local append work. */
-export interface VaultDeliveryOutboxReader {
+interface VaultDeliveryOutboxReader {
   readDeliveryOutbox(identityId: IdentityId, limit?: number): Promise<VaultDeliveryOutboxRecord[]>
   removeDeliveryOutbox(identityId: IdentityId, entryId: VaultEventId): Promise<void>
   noteDeliveryOutboxAttempt(identityId: IdentityId, entryId: VaultEventId): Promise<void>
 }
 
-export interface VaultDeliveryCursorReader {
+interface VaultDeliveryCursorReader {
   readDeliveryCursor(identityId: IdentityId, recipientDeviceId: DeviceId): Promise<DeliverySeq>
 }
 
-/** Whether the last checkpoint this device saw was sealed for a self-group
- * epoch it can no longer derive a VEK for (VaultCheckpointEpochUnavailableError,
- * mimi-vault-sync.ts's own `checkpoint-epoch-unavailable` gap) -- i.e. this
- * device's local Vault is missing whatever history preceded the epoch it
- * joined at, and nothing it does locally can recover that history. Only a
- * sibling device that already holds the full Vault republishing a fresh
- * checkpoint (or the device accepting the loss) clears this.
- *
- * Deliberately NOT the same thing as a `gaps` entry from one sync round:
- * `advanceDeliveryCursor` moves the cursor past the unopenable manifest the
- * moment it is seen (mimi-vault-sync.ts's own comment on why a skip here is
- * permanent), so the gap itself is gone by the very next round -- silently.
- * This flag is what survives that, and is the one thing an account-page
- * card can read across reloads to tell "waiting to hear from a sibling"
- * apart from "nothing is wrong". */
-export interface VaultCheckpointRecoveryStatus {
-  unavailable: boolean
-  detail?: string
-  since?: string
-}
-
-export interface VaultCheckpointRecoveryStatusReader {
-  readCheckpointRecoveryStatus(identityId: IdentityId, recipientDeviceId: DeviceId): Promise<VaultCheckpointRecoveryStatus>
-}
-
 /** ACKs are durable work items, independent of whether a push/network wake succeeds. */
-export interface VaultDeliveryAckOutboxReader {
+interface VaultDeliveryAckOutboxReader {
   readDeliveryAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, limit?: number): Promise<VaultDeliveryAckOutboxRecord[]>
   removeDeliveryAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, seq: DeliverySeq): Promise<void>
   noteDeliveryAckOutboxAttempt(identityId: IdentityId, recipientDeviceId: DeviceId, seq: DeliverySeq): Promise<void>
 }
 
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjectionWriter, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressReceiptReader, IngressAckOutboxReader, DidCommTransportOutboxStore, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultCheckpointRecoveryStatusReader, VaultDeliveryAckOutboxReader {
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjectionWriter, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, ActorSequenceStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressReceiptReader, IngressAckOutboxReader, DidCommTransportOutboxStore, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
+    await rescueLegacyCrdtEvents()
     return new IndexedDbVaultStore(await openDatabase())
   }
 
@@ -352,8 +369,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
       STORES.ingressReceipts,
       STORES.objects,
       STORES.events,
-      STORES.projection,
-      STORES.jmapState,
       STORES.deliveryOutbox,
     ]
     if (input.ackOutbox) stores.push(STORES.outbox)
@@ -366,8 +381,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     }
     for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject(object))
     for (const event of input.events) transaction.objectStore(STORES.events).put(copyEvent(event))
-    transaction.objectStore(STORES.projection).put({ identityId: input.identityId, value: input.projection })
-    transaction.objectStore(STORES.jmapState).put({ identityId: input.identityId, value: input.jmapState })
     if (input.ackOutbox) transaction.objectStore(STORES.outbox).put(copyOutbox(input.ackOutbox))
     if (input.deliveryOutbox) transaction.objectStore(STORES.deliveryOutbox).put(copyDeliveryOutbox(input.deliveryOutbox))
 
@@ -408,6 +421,28 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     await transactionDone(transaction)
   }
 
+  async readProjectionMeta(identityId: IdentityId): Promise<VaultProjectionMeta> {
+    const transaction = this.database.transaction(STORES.projectionMeta, 'readonly')
+    const completed = transactionDone(transaction)
+    const value = await requestValue<VaultProjectionMeta | undefined>(transaction.objectStore(STORES.projectionMeta).get(identityId))
+    await completed
+    return value ? { identityId, tombstones: [...value.tombstones], pending: [...value.pending] } : { identityId, tombstones: [], pending: [] }
+  }
+
+  async writeProjectionMeta(value: VaultProjectionMeta): Promise<void> {
+    const transaction = this.database.transaction(STORES.projectionMeta, 'readwrite')
+    transaction.objectStore(STORES.projectionMeta).put({ identityId: value.identityId, tombstones: [...new Set(value.tombstones)].sort(), pending: [...new Set(value.pending)].sort() })
+    await transactionDone(transaction)
+  }
+
+  async readEventsForTarget(identityId: IdentityId, targetId: string): Promise<VaultEventRecord[]> {
+    const transaction = this.database.transaction(STORES.events, 'readonly')
+    const completed = transactionDone(transaction)
+    const values = await requestValue<VaultEventRecord[]>(transaction.objectStore(STORES.events).index('by_target_id').getAll(targetId))
+    await completed
+    return values.filter(value => value.identityId === identityId).map(copyEvent)
+  }
+
   async readIngressAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, limit = 32): Promise<IngressAckOutboxRecord[]> {
     if (!identityId || !recipientDeviceId || !Number.isSafeInteger(limit) || limit < 1) throw new TypeError('ingress ACK outbox query is invalid')
     const transaction = this.database.transaction(STORES.outbox, 'readonly')
@@ -444,8 +479,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     const stores: StoreName[] = [
       STORES.objects,
       STORES.events,
-      STORES.projection,
-      STORES.jmapState,
       STORES.deliveryOutbox,
     ]
     if (input.didCommOutbox?.length) stores.push(STORES.didCommOutbox)
@@ -459,8 +492,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
       }
     }
     for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject(object))
-    transaction.objectStore(STORES.projection).put({ identityId: input.identityId, value: input.projection })
-    transaction.objectStore(STORES.jmapState).put({ identityId: input.identityId, value: input.jmapState })
     transaction.objectStore(STORES.deliveryOutbox).put(copyDeliveryOutbox(input.deliveryOutbox))
     for (const row of input.didCommOutbox ?? []) transaction.objectStore(STORES.didCommOutbox).put(copyDidCommOutbox(row))
     try {
@@ -472,15 +503,32 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     }
   }
 
+
   async readDidCommOutbox(identityId: IdentityId, limit = 32): Promise<DidCommTransportOutboxRecord[]> {
     if (!identityId || !Number.isSafeInteger(limit) || limit < 1) throw new TypeError('DIDComm outbox identity and positive limit are required')
     const transaction = this.database.transaction(STORES.didCommOutbox, 'readonly')
     const completed = transactionDone(transaction)
     const values = await requestValue<DidCommTransportOutboxRecord[]>(transaction.objectStore(STORES.didCommOutbox).getAll())
     await completed
-    return values.filter(value => value.identityId === identityId)
+    const selected = values.filter(value => value.identityId === identityId)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.outboundEventId.localeCompare(right.outboundEventId) || left.toDid.localeCompare(right.toDid))
-      .slice(0, limit).map(copyDidCommOutbox)
+      .slice(0, limit)
+    const legacy = selected.filter(value => !value.blobId || !value.metadataBlobId)
+    const eventById = new Map<VaultEventId, VaultEventRecord>()
+    if (legacy.length) {
+      const eventTransaction = this.database.transaction(STORES.events, 'readonly')
+      const eventCompleted = transactionDone(eventTransaction)
+      const eventStore = eventTransaction.objectStore(STORES.events)
+      const events = await Promise.all(legacy.map(value => requestValue<VaultEventRecord | undefined>(eventStore.get([identityId, value.outboundEventId]))))
+      await eventCompleted
+      for (const event of events) if (event) eventById.set(event.id, event)
+    }
+    return selected.map(value => {
+        const event = eventById.get(value.outboundEventId)
+        const blobId = value.blobId ?? event?.objectRefs[1]
+        const metadataBlobId = value.metadataBlobId ?? event?.objectRefs[0]
+        return copyDidCommOutbox({ ...value, ...(blobId ? { blobId } : {}), ...(metadataBlobId ? { metadataBlobId } : {}) })
+      })
   }
 
   async noteDidCommOutboxAttempt(identityId: IdentityId, outboundEventId: VaultEventId, toDid: string, attemptedAt: string): Promise<void> {
@@ -506,8 +554,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
       STORES.objects,
       STORES.events,
       STORES.keyWraps,
-      STORES.projection,
-      STORES.jmapState,
       STORES.deliveryState,
       STORES.deliveryAckOutbox,
     ], 'readwrite')
@@ -519,8 +565,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject(object))
     for (const event of input.events) transaction.objectStore(STORES.events).put(copyEvent(event))
     for (const wrap of input.keyWraps) transaction.objectStore(STORES.keyWraps).put(copyKeyWrap(wrap))
-    transaction.objectStore(STORES.projection).put({ identityId: input.identityId, value: input.projection })
-    transaction.objectStore(STORES.jmapState).put({ identityId: input.identityId, value: input.jmapState })
     transaction.objectStore(STORES.deliveryState).put({
       identityId: input.identityId,
       deviceId: input.receipt.recipientDeviceId,
@@ -570,6 +614,51 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     return values.filter(value => value.identityId === identityId).sort((left, right) => left.id.localeCompare(right.id)).map(copyEvent)
   }
 
+  async reserveActorSeq(identityId: IdentityId, deviceId: string): Promise<number> {
+    if (!identityId || !deviceId) throw new TypeError('actor sequence identity and device are required')
+    const transaction = this.database.transaction([STORES.actorSequences, STORES.events], 'readwrite')
+    const counters = transaction.objectStore(STORES.actorSequences)
+    const key = [identityId, deviceId]
+    const current = await requestValue<{ nextSeq: number } | undefined>(counters.get(key))
+    const latest = await requestValue<IDBCursorWithValue | null>(
+      transaction.objectStore(STORES.events).index('by_actor_sequence').openCursor(
+        IDBKeyRange.bound([identityId, deviceId, 0], [identityId, deviceId, Number.MAX_SAFE_INTEGER]),
+        'prev',
+      ),
+    )
+    // Imported/restored records can arrive after this counter was first
+    // created, so the durable counter and R3 history are both lower bounds.
+    const nextSeq = Math.max(current?.nextSeq ?? 1, ((latest?.value as VaultEventRecord | undefined)?.actorSeq ?? 0) + 1)
+    if (!Number.isSafeInteger(nextSeq) || nextSeq < 1 || nextSeq === Number.MAX_SAFE_INTEGER) {
+      transaction.abort()
+      throw new RangeError('actor sequence is exhausted')
+    }
+    counters.put({ identityId, deviceId, nextSeq: nextSeq + 1 })
+    await transactionDone(transaction)
+    return nextSeq
+  }
+
+  async findDuplicateActorSequences(identityId: IdentityId): Promise<DuplicateActorSequence[]> {
+    if (!identityId) throw new TypeError('actor sequence identity is required')
+    const transaction = this.database.transaction(STORES.events, 'readonly')
+    const completed = transactionDone(transaction)
+    const events = await requestValue<VaultEventRecord[]>(transaction.objectStore(STORES.events).getAll())
+    await completed
+    const groups = new Map<string, VaultEventRecord[]>()
+    for (const event of events) {
+      if (event.identityId !== identityId) continue
+      const key = `${event.actorDeviceId}\0${event.actorSeq}`
+      const group = groups.get(key)
+      if (group) group.push(event)
+      else groups.set(key, [event])
+    }
+    return [...groups.values()].filter(group => group.length > 1).map(group => ({
+      actorDeviceId: group[0]!.actorDeviceId,
+      actorSeq: group[0]!.actorSeq,
+      eventIds: group.map(event => event.id).sort(),
+    })).sort((left, right) => left.actorDeviceId.localeCompare(right.actorDeviceId) || left.actorSeq - right.actorSeq)
+  }
+
   async readVaultObjects(identityId: IdentityId): Promise<VaultObjectRecord[]> {
     if (!identityId) throw new TypeError('vault object identity is required')
     const transaction = this.database.transaction(STORES.objects, 'readonly')
@@ -577,6 +666,49 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     const values = await requestValue<VaultObjectRecord[]>(transaction.objectStore(STORES.objects).getAll())
     await completed
     return values.filter(value => value.identityId === identityId).sort((left, right) => left.objectId.localeCompare(right.objectId)).map(copyObject)
+  }
+
+  async readSegmentKeyWraps(identityId: IdentityId): Promise<SegmentKeyWrapV1[]> {
+    if (!identityId) throw new TypeError('key wrap identity is required')
+    const transaction = this.database.transaction(STORES.keyWraps, 'readonly')
+    const completed = transactionDone(transaction)
+    const values = await requestValue<SegmentKeyWrapV1[]>(transaction.objectStore(STORES.keyWraps).getAll())
+    await completed
+    return values.filter(value => value.identityId === identityId)
+      .sort((left, right) => left.segmentId.localeCompare(right.segmentId) || left.recipientEpoch.localeCompare(right.recipientEpoch))
+      .map(copyKeyWrap)
+  }
+
+  /** One idempotent R3 transaction. Validation deliberately happens before
+   * this boundary so a bad record can be discarded without aborting its
+   * valid siblings. Existing immutable keys are no-ops. */
+  async commitIncomingRecords(input: IncomingVaultRecords): Promise<IncomingVaultRecordsResult> {
+    if (!input.identityId) throw new TypeError('incoming Vault identity is required')
+    for (const value of input.objects) if (value.identityId !== input.identityId) throw new TypeError('incoming object identity does not match')
+    for (const value of input.events) if (value.identityId !== input.identityId) throw new TypeError('incoming event identity does not match')
+    for (const value of input.keyWraps) if (value.identityId !== input.identityId) throw new TypeError('incoming key wrap identity does not match')
+    const transaction = this.database.transaction([STORES.objects, STORES.events, STORES.keyWraps], 'readwrite')
+    const objectStore = transaction.objectStore(STORES.objects)
+    const eventStore = transaction.objectStore(STORES.events)
+    const wrapStore = transaction.objectStore(STORES.keyWraps)
+    const addedEvents: VaultEventRecord[] = []
+    for (const object of input.objects) {
+      if (!await requestValue<VaultObjectRecord | undefined>(objectStore.get([input.identityId, object.objectId]))) objectStore.add(copyObject(object))
+    }
+    for (const event of input.events) {
+      if (!await requestValue<VaultEventRecord | undefined>(eventStore.get([input.identityId, event.id]))) {
+        eventStore.add(copyEvent(event))
+        addedEvents.push(event)
+      }
+    }
+    for (const wrap of input.keyWraps) {
+      if (!await requestValue<SegmentKeyWrapV1 | undefined>(wrapStore.get([input.identityId, wrap.segmentId, wrap.recipientEpoch]))) wrapStore.add(copyKeyWrap(wrap))
+    }
+    await transactionDone(transaction)
+    return {
+      addedEventIds: addedEvents.map(event => event.id),
+      targetIds: [...new Set(addedEvents.flatMap(event => event.targetIds))].sort(),
+    }
   }
 
   async writeSegmentKeyWrap(wrap: SegmentKeyWrapV1): Promise<void> {
@@ -703,55 +835,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     await transactionDone(transaction)
   }
 
-  async readCheckpointRecoveryStatus(identityId: IdentityId, recipientDeviceId: DeviceId): Promise<VaultCheckpointRecoveryStatus> {
-    if (!identityId || !recipientDeviceId) throw new TypeError('checkpoint recovery status identity and device are required')
-    const transaction = this.database.transaction(STORES.deliveryState, 'readonly')
-    const completed = transactionDone(transaction)
-    const record = await requestValue<{ checkpointUnavailable?: boolean; checkpointUnavailableDetail?: string; checkpointUnavailableSince?: string } | undefined>(
-      transaction.objectStore(STORES.deliveryState).get([identityId, recipientDeviceId]),
-    )
-    await completed
-    if (!record?.checkpointUnavailable) return { unavailable: false }
-    return { unavailable: true, detail: record.checkpointUnavailableDetail, since: record.checkpointUnavailableSince }
-  }
-
-  /** Records that the checkpoint just seen cannot be opened by this device
-   * (a stale self-group epoch) and there is nothing local retry can do
-   * about it -- see the field's own doc comment on `VaultCheckpointRecoveryStatus`.
-   * `since` is preserved across repeated calls so the UI can show how long
-   * this device has been waiting, not just that it still is. */
-  async recordCheckpointEpochUnavailable(identityId: IdentityId, recipientDeviceId: DeviceId, detail: string, now: string): Promise<void> {
-    if (!identityId || !recipientDeviceId || !detail || Number.isNaN(Date.parse(now))) throw new TypeError('checkpoint-epoch-unavailable record is invalid')
-    const transaction = this.database.transaction(STORES.deliveryState, 'readwrite')
-    const store = transaction.objectStore(STORES.deliveryState)
-    const existing = await requestValue<Record<string, unknown> | undefined>(store.get([identityId, recipientDeviceId]))
-    store.put({
-      identityId, deviceId: recipientDeviceId,
-      ...existing,
-      checkpointUnavailable: true,
-      checkpointUnavailableDetail: detail,
-      checkpointUnavailableSince: typeof existing?.checkpointUnavailableSince === 'string' ? existing.checkpointUnavailableSince : now,
-    })
-    await transactionDone(transaction)
-  }
-
-  /** The "this device's earlier history could not be recovered -- continue
-   * without it" acknowledgement. It clears only the recovery-status fields:
-   * this device already has been operating as if that history never
-   * existed (mimi-vault-sync.ts's own note that a skipped manifest cannot
-   * be re-pulled), so there is no data operation left to perform here, only
-   * the record of having told the user and them having accepted it. */
-  async acknowledgeCheckpointEpochUnavailable(identityId: IdentityId, recipientDeviceId: DeviceId): Promise<void> {
-    if (!identityId || !recipientDeviceId) throw new TypeError('checkpoint recovery acknowledgement identity and device are required')
-    const transaction = this.database.transaction(STORES.deliveryState, 'readwrite')
-    const store = transaction.objectStore(STORES.deliveryState)
-    const existing = await requestValue<Record<string, unknown> | undefined>(store.get([identityId, recipientDeviceId]))
-    if (!existing) { await transactionDone(transaction); return }
-    const { checkpointUnavailable: _u, checkpointUnavailableDetail: _d, checkpointUnavailableSince: _s, ...rest } = existing
-    store.put(rest)
-    await transactionDone(transaction)
-  }
-
   async readDeliveryAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, limit = 32): Promise<VaultDeliveryAckOutboxRecord[]> {
     if (!identityId || !recipientDeviceId || !Number.isSafeInteger(limit) || limit < 1) throw new TypeError('delivery ACK outbox identity, device, and positive limit are required')
     const transaction = this.database.transaction(STORES.deliveryAckOutbox, 'readonly')
@@ -847,6 +930,10 @@ function openDatabase(): Promise<IDBDatabase> {
           for (const row of rows) fresh.put(row)
         }
       }
+      const events = request.transaction?.objectStore(STORES.events)
+      if (events && !events.indexNames.contains('by_target_id')) events.createIndex('by_target_id', 'targetIds', { multiEntry: true })
+      if (events && !events.indexNames.contains('by_actor_sequence')) events.createIndex('by_actor_sequence', ['identityId', 'actorDeviceId', 'actorSeq'])
+      if (event.oldVersion > 0 && event.oldVersion < 14 && request.result.objectStoreNames.contains('vault_crdt_state')) request.result.deleteObjectStore('vault_crdt_state')
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error ?? new Error('failed to open vault database'))
@@ -876,6 +963,8 @@ const KEY_PATHS: Record<StoreName, string | string[]> = {
   [STORES.deliveryState]: ['identityId', 'deviceId'],
   [STORES.transportStatus]: ['identityId', 'outboundEventId'],
   [STORES.didCommOutbox]: ['identityId', 'outboundEventId', 'toDid'],
+  [STORES.actorSequences]: ['identityId', 'deviceId'],
+  [STORES.projectionMeta]: 'identityId',
 }
 
 function createStores(database: IDBDatabase): void {
@@ -917,7 +1006,8 @@ function assertLocalCommit(input: LocalVaultMutationCommit): void {
   if (!input.identityId || input.events.length === 0 || input.deliveryOutbox.identityId !== input.identityId) throw new TypeError('local mutation commit needs matching identity and events')
   assertDeliveryOutbox(input.identityId, input.events, input.deliveryOutbox, 'local mutation')
   for (const value of input.didCommOutbox ?? []) {
-    if (value.identityId !== input.identityId || !input.events.some(event => event.id === value.outboundEventId) || !value.emailId || !value.messageId || !value.toDid.startsWith('did:') || value.attempts !== 0 || Number.isNaN(Date.parse(value.createdAt))) {
+    const event = input.events.find(event => event.id === value.outboundEventId)
+    if (value.identityId !== input.identityId || !event || !value.emailId || !value.blobId || event.objectRefs[1] !== value.blobId || !value.metadataBlobId || event.objectRefs[0] !== value.metadataBlobId || !value.threadId || !value.messageId || !value.toDid.startsWith('did:') || value.attempts !== 0 || Number.isNaN(Date.parse(value.createdAt))) {
       throw new TypeError('local mutation DIDComm outbox is invalid')
     }
   }
@@ -1026,6 +1116,5 @@ function copyKeyWrap(value: SegmentKeyWrapV1): SegmentKeyWrapV1 {
     nonce: value.nonce.slice(),
     aad: value.aad.slice(),
     wrappedSegmentKey: value.wrappedSegmentKey.slice(),
-    signature: value.signature.slice(),
   }
 }

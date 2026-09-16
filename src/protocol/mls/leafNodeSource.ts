@@ -10,14 +10,14 @@ const leafNodeSources = {
 } as const
 
 export type LeafNodeSourceName = keyof typeof leafNodeSources
-export type LeafNodeSourceValue = (typeof leafNodeSources)[LeafNodeSourceName]
+type LeafNodeSourceValue = (typeof leafNodeSources)[LeafNodeSourceName]
 
 export const leafNodeSourceEncoder: BufferEncoder<LeafNodeSourceName> = contramapBufferEncoder(
   uint8Encoder,
   (t) => leafNodeSources[t],
 )
 
-export const encodeLeafNodeSource: Encoder<LeafNodeSourceName> = encode(leafNodeSourceEncoder)
+const encodeLeafNodeSource: Encoder<LeafNodeSourceName> = encode(leafNodeSourceEncoder)
 
 export const decodeLeafNodeSource: Decoder<LeafNodeSourceName> = mapDecoderOption(
   decodeUint8,

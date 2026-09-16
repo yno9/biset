@@ -15,14 +15,14 @@ export const defaultExtensionTypes = {
 
 /** @public */
 export type DefaultExtensionTypeName = keyof typeof defaultExtensionTypes
-export type DefaultExtensionTypeValue = (typeof defaultExtensionTypes)[DefaultExtensionTypeName]
+type DefaultExtensionTypeValue = (typeof defaultExtensionTypes)[DefaultExtensionTypeName]
 
 export const defaultExtensionTypeEncoder: BufferEncoder<DefaultExtensionTypeName> = contramapBufferEncoder(
   uint16Encoder,
   (n) => defaultExtensionTypes[n],
 )
 
-export const encodeDefaultExtensionType: Encoder<DefaultExtensionTypeName> = encode(defaultExtensionTypeEncoder)
+const encodeDefaultExtensionType: Encoder<DefaultExtensionTypeName> = encode(defaultExtensionTypeEncoder)
 
 export const decodeDefaultExtensionType: Decoder<DefaultExtensionTypeName> = mapDecoderOption(
   decodeUint16,

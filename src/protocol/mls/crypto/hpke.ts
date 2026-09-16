@@ -13,7 +13,7 @@ import { composeBufferEncoders, encode } from "../codec/tlsEncoder.js"
 /** @public */
 export type PublicKey = { readonly bytes: Uint8Array; readonly keyType: "public" }
 
-export type SecretKey = { readonly bytes: Uint8Array; readonly keyType: "secret" }
+type SecretKey = { readonly bytes: Uint8Array; readonly keyType: "secret" }
 
 /** @public */
 export type PrivateKey = { readonly bytes: Uint8Array; readonly keyType: "private" }

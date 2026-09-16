@@ -17,7 +17,7 @@ export const varLenDataEncoder: BufferEncoder<Uint8Array> = (data) => {
   ]
 }
 
-export function lengthEncoder(len: number): [number, (offset: number, buffer: ArrayBuffer) => void] {
+function lengthEncoder(len: number): [number, (offset: number, buffer: ArrayBuffer) => void] {
   if (len < 64) {
     return [
       1,
@@ -54,7 +54,7 @@ export function lengthEncoder(len: number): [number, (offset: number, buffer: Ar
   }
 }
 
-export function determineLength(data: Uint8Array, offset: number = 0): { length: number; lengthFieldSize: number } {
+function determineLength(data: Uint8Array, offset: number = 0): { length: number; lengthFieldSize: number } {
   if (offset >= data.length) {
     throw new CodecError("Offset beyond buffer")
   }

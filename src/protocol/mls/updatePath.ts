@@ -34,14 +34,14 @@ export interface UpdatePathNode {
   encryptedPathSecret: HPKECiphertext[]
 }
 
-export const updatePathNodeEncoder: BufferEncoder<UpdatePathNode> = contramapBufferEncoders(
+const updatePathNodeEncoder: BufferEncoder<UpdatePathNode> = contramapBufferEncoders(
   [varLenDataEncoder, varLenTypeEncoder(hpkeCiphertextEncoder)],
   (node) => [node.hpkePublicKey, node.encryptedPathSecret] as const,
 )
 
-export const encodeUpdatePathNode: Encoder<UpdatePathNode> = encode(updatePathNodeEncoder)
+const encodeUpdatePathNode: Encoder<UpdatePathNode> = encode(updatePathNodeEncoder)
 
-export const decodeUpdatePathNode: Decoder<UpdatePathNode> = mapDecoders(
+const decodeUpdatePathNode: Decoder<UpdatePathNode> = mapDecoders(
   [decodeVarLenData, decodeVarLenType(decodeHpkeCiphertext)],
   (hpkePublicKey, encryptedPathSecret) => ({ hpkePublicKey, encryptedPathSecret }),
 )
@@ -57,7 +57,7 @@ export const updatePathEncoder: BufferEncoder<UpdatePath> = contramapBufferEncod
   (path) => [path.leafNode, path.nodes] as const,
 )
 
-export const encodeUpdatePath: Encoder<UpdatePath> = encode(updatePathEncoder)
+const encodeUpdatePath: Encoder<UpdatePath> = encode(updatePathEncoder)
 
 export const decodeUpdatePath: Decoder<UpdatePath> = mapDecoders(
   [decodeLeafNodeCommit, decodeVarLenType(decodeUpdatePathNode)],

@@ -15,7 +15,7 @@ export const groupSecretsEncoder: BufferEncoder<GroupSecrets> = contramapBufferE
   (gs) => [gs.joinerSecret, gs.pathSecret, gs.psks] as const,
 )
 
-export const encodeGroupSecrets: Encoder<GroupSecrets> = encode(groupSecretsEncoder)
+const encodeGroupSecrets: Encoder<GroupSecrets> = encode(groupSecretsEncoder)
 
 export const decodeGroupSecrets: Decoder<GroupSecrets> = mapDecoders(
   [decodeVarLenData, decodeOptional(decodeVarLenData), decodeVarLenType(decodePskId)],

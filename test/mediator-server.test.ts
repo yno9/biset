@@ -102,6 +102,22 @@ describe('standalone mediator (Coordinate Mediation 2.0 + Routing 2.0 + Pickup 3
     expect(report.body.code).toBe('e.p.req.not_enroll')
   })
 
+  test('keeps accepting Forward for a previously registered stale kid', async () => {
+    const { mediator, post } = freshMediator()
+    const stale = generatePeerIdentity()
+    await request(post, mediator, stale, 'https://didcomm.org/coordinate-mediation/2.0/mediate-request', {})
+    await request(post, mediator, stale, 'https://didcomm.org/coordinate-mediation/2.0/keylist-update', {
+      updates: [{ recipient_did: stale.xKid, action: 'add' }],
+    })
+    // The blind mediator has no DID Document lookup on Forward. Removing the
+    // xKid from a DID Document therefore prevents Biset from addressing it,
+    // but does not revoke this pre-existing mediator keylist registration.
+    const forward = buildPlaintext('https://didcomm.org/routing/2.0/forward', { next: stale.xKid })
+    forward.attachments = [{ id: 'inner', data: { json: { ciphertext: 'opaque' } } }]
+    const result = await post(packAnoncrypt(utf8(JSON.stringify(forward)), { kid: mediator.xKid, publicKey: mediator.xPub }))
+    expect(result!.status).toBe(202)
+  })
+
   test('a registered client cannot collect or ack another client\'s queued messages', async () => {
     const { mediator, post } = freshMediator()
     const bob = generatePeerIdentity()

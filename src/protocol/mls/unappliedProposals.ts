@@ -12,12 +12,12 @@ export interface ProposalWithSender {
   senderLeafIndex: number | undefined
 }
 
-export const proposalWithSenderEncoder: BufferEncoder<ProposalWithSender> = contramapBufferEncoders(
+const proposalWithSenderEncoder: BufferEncoder<ProposalWithSender> = contramapBufferEncoders(
   [proposalEncoder, optionalEncoder(uint32Encoder)],
   (pws) => [pws.proposal, pws.senderLeafIndex] as const,
 )
 
-export const decodeProposalWithSender: Decoder<ProposalWithSender> = mapDecoders(
+const decodeProposalWithSender: Decoder<ProposalWithSender> = mapDecoders(
   [decodeProposal, decodeOptional(decodeUint32)],
   (proposal, senderLeafIndex) => ({
     proposal,

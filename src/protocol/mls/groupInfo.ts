@@ -18,14 +18,14 @@ export interface GroupInfoTBS {
   signer: number
 }
 
-export const groupInfoTBSEncoder: BufferEncoder<GroupInfoTBS> = contramapBufferEncoders(
+const groupInfoTBSEncoder: BufferEncoder<GroupInfoTBS> = contramapBufferEncoders(
   [groupContextEncoder, varLenTypeEncoder(extensionEncoder), varLenDataEncoder, uint32Encoder],
   (g) => [g.groupContext, g.extensions, g.confirmationTag, g.signer] as const,
 )
 
-export const encodeGroupInfoTBS: Encoder<GroupInfoTBS> = encode(groupInfoTBSEncoder)
+const encodeGroupInfoTBS: Encoder<GroupInfoTBS> = encode(groupInfoTBSEncoder)
 
-export const decodeGroupInfoTBS: Decoder<GroupInfoTBS> = mapDecoders(
+const decodeGroupInfoTBS: Decoder<GroupInfoTBS> = mapDecoders(
   [decodeGroupContext, decodeVarLenType(decodeExtension), decodeVarLenData, decodeUint32],
   (groupContext, extensions, confirmationTag, signer) => ({
     groupContext,

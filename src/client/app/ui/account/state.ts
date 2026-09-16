@@ -61,26 +61,11 @@ export interface AccountPageConfig {
    * This deliberately contains operational metadata only; no key material
    * belongs in the UI. */
   vault?: VaultCardStatus
-  /** Present only when this device's local Vault is missing history a
-   * checkpoint could not restore for it (store.ts's
-   * `VaultCheckpointRecoveryStatus`, epoch-bound by construction -- no
-   * retry or repair on this device can bring it back; opening another of
-   * this identity's devices is what actually resolves it). `onDismiss` is
-   * just that: dismissing the notice. It performs no data operation of its
-   * own -- this device has already been operating without that history
-   * since the moment it was found unrecoverable, and the card disappears
-   * on its own the moment a sibling's checkpoint lands regardless of
-   * whether this was ever clicked. */
-  historyRecovery?: {
-    detail: string
-    since: string
-    onDismiss(): Promise<void>
-  }
-  /** Drops one sibling leaf ("zombie device") from the Self/Vault MLS room.
-   * MIMI-only (vault.devices only ever has a Remove button rendered when
-   * this is set) -- the retired coordinator never had an individual-removal
-   * entry point wired to the UI at all. */
-  onRemoveVaultDevice?(deviceId: string): Promise<void>
+  /** Advances the shared Vault Content Key generation, retaining only this
+   * browser's DIDComm device in the new generation. */
+  onRotateVaultKey?(): Promise<void>
+  onExportMessages?(): Promise<void>
+  onImportMessages?(): Promise<void>
   /** src.bak's showSysMsg (shell.ts) -- injected rather than imported
    * directly: shell.ts -> left-pane.ts -> account-page.ts already, so an
    * import the other way round would close a cycle (main.ts hit the same
@@ -89,7 +74,7 @@ export interface AccountPageConfig {
   showMessage?(text: string): void
 }
 
-export type VaultCardState = 'checking' | 'connecting' | 'syncing' | 'connected' | 'reconnect-required' | 'error'
+type VaultCardState = 'checking' | 'connecting' | 'syncing' | 'connected' | 'reconnect-required' | 'error'
 
 export interface VaultCardStatus {
   state: VaultCardState
@@ -99,7 +84,7 @@ export interface VaultCardStatus {
   latestSeq?: string
   checkpointSeq?: string
   detail?: string
-  devices?: Array<{ deviceId: string; current: boolean }>
+  devices?: Array<{ deviceId: string; current: boolean; lastActivity?: string }>
 }
 
 let config: AccountPageConfig | undefined

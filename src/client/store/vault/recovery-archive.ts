@@ -154,7 +154,7 @@ export function decodeRecoveryArchiveSnapshot(bytes: Uint8Array): RecoveryArchiv
 }
 
 /** Structural validation for a decrypted archive before any local import. */
-export async function assertRecoveryArchiveSnapshot(snapshot: RecoveryArchiveSnapshotV1): Promise<void> {
+async function assertRecoveryArchiveSnapshot(snapshot: RecoveryArchiveSnapshotV1): Promise<void> {
   if (snapshot.version !== 1 || !snapshot.identityId || Number.isNaN(Date.parse(snapshot.createdAt)) || snapshot.manifest.identityId !== snapshot.identityId || !verifyVaultManifest(snapshot.manifest)) throw new TypeError('recovery archive snapshot is invalid')
   const eventIds = new Set<string>()
   for (const event of snapshot.events) {

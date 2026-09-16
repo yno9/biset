@@ -62,7 +62,7 @@ export async function protectProposalPublic(
   return { publicMessage: msg }
 }
 
-export async function protectExternalProposalPublic(
+async function protectExternalProposalPublic(
   signKey: Uint8Array,
   groupContext: GroupContext,
   authenticatedData: Uint8Array,
@@ -128,7 +128,7 @@ export async function protectPublicMessage(
   }
 }
 
-export interface ProtectCommitPublicResult {
+interface ProtectCommitPublicResult {
   publicMessage: PublicMessage
 }
 

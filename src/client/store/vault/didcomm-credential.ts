@@ -128,7 +128,7 @@ function copyCredential(value: DidCommPrivateCredentialV1): DidCommPrivateCreden
 }
 
 /** Descriptor consumed by vault/credential-store.ts's generic reader and sink. */
-export const didCommCredentialKind: VaultCredentialKind<DidCommPrivateCredentialV1, VaultCredentialEventReader> = {
+const didCommCredentialKind: VaultCredentialKind<DidCommPrivateCredentialV1, VaultCredentialEventReader> = {
   eventKind: 'credential.didcomm.set',
   label: 'DIDComm credential',
   segmentLabel: 'DIDComm credential',

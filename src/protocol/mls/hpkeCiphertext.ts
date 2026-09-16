@@ -13,7 +13,7 @@ export const hpkeCiphertextEncoder: BufferEncoder<HPKECiphertext> = contramapBuf
   (egs) => [egs.kemOutput, egs.ciphertext] as const,
 )
 
-export const encodeHpkeCiphertext: Encoder<HPKECiphertext> = encode(hpkeCiphertextEncoder)
+const encodeHpkeCiphertext: Encoder<HPKECiphertext> = encode(hpkeCiphertextEncoder)
 
 export const decodeHpkeCiphertext: Decoder<HPKECiphertext> = mapDecoders(
   [decodeVarLenData, decodeVarLenData],

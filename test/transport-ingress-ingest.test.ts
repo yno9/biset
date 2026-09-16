@@ -46,6 +46,7 @@ describe('transport-owned ingress acknowledgement boundary', () => {
     }, () => new Date('2026-08-27T00:00:01.000Z'))
 
     expect(result.result).toBe('committed')
+    expect(result.targetIds).toEqual(event.targetIds)
     expect(committed?.receipt.ingressId).toBe(envelope.ingressId)
     expect(committed?.ackOutbox).toBeUndefined()
   })
@@ -66,6 +67,7 @@ describe('transport-owned ingress acknowledgement boundary', () => {
     })
 
     expect(result.result).toBe('already-committed')
+    expect(result.targetIds).toEqual([])
     expect(projected).toBe(false)
     expect(committed).toBe(false)
   })

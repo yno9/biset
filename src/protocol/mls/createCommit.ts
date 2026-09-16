@@ -327,7 +327,7 @@ async function createEncryptedGroupSecrets(
   return { newMember: ref, encryptedGroupSecrets: { kemOutput: egs.enc, ciphertext: egs.ct } }
 }
 
-export async function createGroupInfo(
+async function createGroupInfo(
   groupContext: GroupContext,
   confirmationTag: Uint8Array,
   state: ClientState,
@@ -344,7 +344,7 @@ export async function createGroupInfo(
   return signGroupInfo(groupInfoTbs, state.signaturePrivateKey, cs.signature)
 }
 
-export async function createGroupInfoWithRatchetTree(
+async function createGroupInfoWithRatchetTree(
   groupContext: GroupContext,
   confirmationTag: Uint8Array,
   state: ClientState,
@@ -548,13 +548,10 @@ export async function joinGroupExternal(
   // `nodeToLeafIndex(-1 as NodeIndex)` === -0.5 -- a non-integer, negative
   // leaf index fed straight into a `Remove` proposal. Never exercised
   // upstream or in this fork's own history: the sole caller resync was
-  // built for (a did:webvh domain move re-issuing a device's own credential,
-  // biset's `identity/webvh/move.ts`, removed 2026-09-05 with native login)
-  // always had a guaranteed match. The first NEW caller (2026-09-06,
-  // rejoining after this device's local MLS state was lost, `vault-room.ts`'s
-  // `joinMimiVaultRoom`) does not have that guarantee -- it retries with
-  // `resync: true` on a specific hub error, but a resync request with no
-  // actual match must be a safe no-op, not a corrupt commit.
+  // built for an identity credential refresh always had a guaranteed match.
+  // A provider client rejoining after lost local state does not have that
+  // guarantee, so a resync request with no actual match must be a safe no-op,
+  // not a corrupt commit.
   const formerLeafNodeIndex = resync
     ? ratchetTree.findIndex((n) => {
         if (n !== undefined && n.nodeType === "leaf") {
@@ -661,7 +658,7 @@ export async function joinGroupExternal(
 
   return { publicMessage: msg, newState: state }
 }
-export function filterNewLeaves(resolution: NodeIndex[], excludeNodes: NodeIndex[]): NodeIndex[] {
+function filterNewLeaves(resolution: NodeIndex[], excludeNodes: NodeIndex[]): NodeIndex[] {
   const set = new Set(excludeNodes)
   return resolution.filter((i) => !set.has(i))
 }

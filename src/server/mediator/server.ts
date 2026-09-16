@@ -291,11 +291,11 @@ export function createMediator({
    * MESSAGES_RECEIVED POST -- this route only replaces "how do I know
    * something arrived", not the rest of Pickup 3.0. */
   function streamFor(url: URL): Response {
-    const token = url.searchParams.get('token')
-    if (!token) return new Response('token query parameter is required', { status: 400 })
-    const record = watchTokens.resolve(token)
-    if (!record) return new Response('invalid or expired watch token', { status: 403 })
-    const { recipientKid } = record
+    const tokens = url.searchParams.getAll('token')
+    if (tokens.length === 0) return new Response('token query parameter is required', { status: 400 })
+    const recipientKids = [...new Set(tokens.map(token => watchTokens.resolve(token)?.recipientKid))]
+    if (recipientKids.includes(undefined)) return new Response('invalid or expired watch token', { status: 403 })
+    const authorizedKids = recipientKids as string[]
     const encoder = new TextEncoder()
     let unsubscribe: (() => void) | undefined
     let heartbeat: ReturnType<typeof setInterval> | undefined
@@ -309,14 +309,18 @@ export function createMediator({
         // masquerading as the exact poll-interval latency this stream exists
         // to eliminate. See mls-ds/http.ts's identical fix/note.
         controller.enqueue(encoder.encode(': connected\n\n'))
-        const send = (m: QueuedMessage) => {
-          const frame = { id: m.id, jwe: JSON.parse(m.packed) }
+        const send = (recipientKid: string, m: QueuedMessage) => {
+          const frame = { id: m.id, recipient_kid: recipientKid, jwe: JSON.parse(m.packed) }
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(frame)}\n\n`))
         }
-        for (const m of queue.peek(recipientKid, 100)) send(m)
-        unsubscribe = queue.subscribe(recipientKid, messages => {
-          for (const m of messages) send(m)
-        })
+        const unsubscribers: Array<() => void> = []
+        for (const recipientKid of authorizedKids) {
+          for (const m of queue.peek(recipientKid, 100)) send(recipientKid, m)
+          unsubscribers.push(queue.subscribe(recipientKid, messages => {
+            for (const m of messages) send(recipientKid, m)
+          }))
+        }
+        unsubscribe = () => { for (const stop of unsubscribers) stop() }
         // Same Bun.serve idle-timeout gotcha as mls-ds/http.ts's stream
         // (default 10s, deployment.ts also raises it explicitly) -- a quiet
         // recipient with nothing queued would otherwise have its connection

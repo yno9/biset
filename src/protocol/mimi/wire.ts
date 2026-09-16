@@ -636,6 +636,7 @@ function deliveryEntryJson(value: MimiDeliveryEntry): JsonRecord {
   return { seq: value.seq, kind: value.kind, payload: bytesToBase64url(value.payload), epoch: value.epoch, acceptedAt: value.acceptedAt, frank: value.frank === undefined ? undefined : JSON.parse(encodeFrankWire(value.frank)), vaultCheckpoint: value.vaultCheckpoint === undefined ? undefined : vaultCheckpointManifestJson(value.vaultCheckpoint) }
 }
 
+/** @public Third-party MIMI providers decode delivery entries at this boundary. */
 export function decodeDeliveryEntry(value: unknown, name: string): MimiDeliveryEntry {
   const input = requireRecord(value, name)
   const kind = input.kind

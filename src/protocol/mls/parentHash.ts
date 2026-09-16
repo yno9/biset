@@ -9,20 +9,20 @@ import { isLeaf, LeafIndex, leafWidth, left, NodeIndex, right, root, toNodeIndex
 
 import { constantTimeEqual } from "./util/constantTimeCompare.js"
 
-export interface ParentHashInput {
+interface ParentHashInput {
   encryptionKey: Uint8Array
   parentHash: Uint8Array
   originalSiblingTreeHash: Uint8Array
 }
 
-export const parentHashInputEncoder: BufferEncoder<ParentHashInput> = contramapBufferEncoders(
+const parentHashInputEncoder: BufferEncoder<ParentHashInput> = contramapBufferEncoders(
   [varLenDataEncoder, varLenDataEncoder, varLenDataEncoder],
   (i) => [i.encryptionKey, i.parentHash, i.originalSiblingTreeHash] as const,
 )
 
-export const encodeParentHashInput: Encoder<ParentHashInput> = encode(parentHashInputEncoder)
+const encodeParentHashInput: Encoder<ParentHashInput> = encode(parentHashInputEncoder)
 
-export const decodeParentHashInput: Decoder<ParentHashInput> = mapDecoders(
+const decodeParentHashInput: Decoder<ParentHashInput> = mapDecoders(
   [decodeVarLenData, decodeVarLenData, decodeVarLenData],
   (encryptionKey, parentHash, originalSiblingTreeHash) => ({
     encryptionKey,

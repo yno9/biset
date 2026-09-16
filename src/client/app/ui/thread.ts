@@ -51,7 +51,7 @@ export interface ReplySendInput {
  * (didcomm/group-chat-store.ts's roster) -- no `invite` counterpart:
  * membership changes after creation are out of scope for v1
  * (group-chat.ts's own header). */
-export interface DidCommGroupUiHooks {
+interface DidCommGroupUiHooks {
   membersOf(groupId: string): Promise<string[]>
   groupName(groupId: string): Promise<string | undefined>
 }
@@ -153,7 +153,7 @@ function renderDidCommGroupMembers(host: HTMLElement, groupId: string): void {
   }).catch(() => {})
 }
 
-export function createMsgEl({ msg, bodyText }: ProcessedMessage): HTMLElement {
+function createMsgEl({ msg, bodyText }: ProcessedMessage): HTMLElement {
   const div = document.createElement('div')
   div.className = 't-msg'
   // A DIDComm message's own from/from_name is always the raw DID. Per-
@@ -182,7 +182,7 @@ export function createMsgEl({ msg, bodyText }: ProcessedMessage): HTMLElement {
   return div
 }
 
-export function makeThreadCard(group: ThreadGroup, focused: boolean): HTMLElement {
+function makeThreadCard(group: ThreadGroup, focused: boolean): HTMLElement {
   const card = document.createElement('div')
   card.className = 'thread-card' + (focused ? ' focused-card' : ' clickable')
   if (focused) card.id = 'focused-thread-card'
@@ -321,7 +321,7 @@ function topFloor(outer: HTMLElement): number {
  * kept equal to the dock's height by hand, or the last message ends up
  * hidden underneath it. Synchronous: reading offsetHeight forces layout,
  * so callers that adjust scroll right after see the current padding. */
-export function syncDockPosition(): void {
+function syncDockPosition(): void {
   const outer = document.getElementById('outer')
   const dock = document.getElementById('reply-dock')
   const h = dock?.offsetHeight ?? 0

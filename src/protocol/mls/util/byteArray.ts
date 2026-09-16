@@ -1,4 +1,4 @@
-export function bytesToArrayBuffer(b: Uint8Array): ArrayBuffer {
+function bytesToArrayBuffer(b: Uint8Array): ArrayBuffer {
   if (b.buffer instanceof ArrayBuffer) {
     if (b.byteOffset === 0 && b.byteLength === b.buffer.byteLength) {
       return b.buffer
@@ -13,7 +13,7 @@ export function bytesToArrayBuffer(b: Uint8Array): ArrayBuffer {
 }
 
 /** DOM-free equivalent of WebCrypto's BufferSource, for the Bun-only MIMI build. */
-export function toBufferSource(b: Uint8Array): Uint8Array<ArrayBuffer> | ArrayBuffer {
+function toBufferSource(b: Uint8Array): Uint8Array<ArrayBuffer> | ArrayBuffer {
   if (b.buffer instanceof ArrayBuffer) return b as Uint8Array<ArrayBuffer>
   const ab = new ArrayBuffer(b.byteLength)
   const arr = new Uint8Array(ab)
@@ -45,7 +45,7 @@ export function base64ToBytes(base64: string): Uint8Array {
   }
 }
 
-export function concatUint8Arrays(a: Uint8Array, b: Uint8Array): Uint8Array {
+function concatUint8Arrays(a: Uint8Array, b: Uint8Array): Uint8Array {
   const result = new Uint8Array(a.length + b.length)
   result.set(a, 0)
   result.set(b, a.length)

@@ -14,7 +14,7 @@ import { packAuthcrypt, type DidCommJWE } from '../../protocol/didcomm/crypto.ts
 import { buildPlaintext } from '../../protocol/didcomm/message.ts'
 import { BASIC_MESSAGE } from './basicmessage.ts'
 import { wrapForward } from '../../protocol/didcomm/forward-wrap.ts'
-import { decodePeerDid2, generatePeerIdentity, publicKeyOf, type PeerIdentity } from '../../protocol/didcomm/peer.ts'
+import { decodePeerDid2, deriveRelationshipPeerIdentity, publicKeyOf, type PeerIdentity } from '../../protocol/didcomm/peer.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { registerWithMediator } from './mediator-sync.ts'
 import {
@@ -30,7 +30,27 @@ import { frontDoorMediatorRoute, sendFrontDoorMessage, type DidCommSendResult, t
 
 export { type DidCommSendResult, type SendDidCommMessageOptions }
 
-export interface PendingRelationship {
+/** One-recipient DIDComm delivery through a known mediator route. This is
+ * shared by Vault Sync's sibling fan-out and intentionally does not add a
+ * multi-recipient route: mediator queues are keyed by recipient kid. */
+export interface MediatedDidCommRecipient { kid: string; publicKey: Uint8Array; mediatorUrl: string; routingKid: string }
+
+export async function sendMediatedDidCommMessage(
+  type: string,
+  body: unknown,
+  own: DidCommSender,
+  recipient: MediatedDidCommRecipient,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  if (!recipient.kid || recipient.publicKey.length !== 32) throw new TypeError('DIDComm recipient route is invalid')
+  const plaintext = buildPlaintext(type, body, own.did, recipient.kid)
+  const inner = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: own.xKid, privateKey: own.xPriv }, { kid: recipient.kid, publicKey: recipient.publicKey })
+  const forward = wrapForward(inner, recipient.kid, recipient.routingKid)
+  const response = await fetchImpl(recipient.mediatorUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(forward) })
+  if (response.status !== 202) throw new Error(`DIDComm delivery failed: HTTP ${response.status}`)
+}
+
+interface PendingRelationship {
   counterpartyDid: string
   peer: PeerIdentity
   mediatorUrl: string
@@ -55,10 +75,19 @@ export async function sendDidCommMessage(toDid: string, content: string, opts: S
   }, opts)
 }
 
-/** Registers a fresh private did:peer before advertising it in INIT. This
- * ordering is required: ACCEPT is addressed to this kid and cannot be queued
- * by the mediator until the recipient has enrolled it. */
-export async function initiateRelationship(toDid: string, opts: SendDidCommMessageOptions): Promise<RelationshipInitiationResult> {
+/** Registers this counterparty's deterministically-derived private did:peer
+ * before advertising it in INIT. This ordering is required: ACCEPT is
+ * addressed to this kid and cannot be queued by the mediator until the
+ * recipient has enrolled it. Deriving (not minting a random identity) means
+ * a retry -- after a reload, a second concurrent send racing this one, or
+ * the SAME Wallet identity's OTHER device racing this one -- recomputes the
+ * exact same did:peer rather than orphaning the first attempt (peer.ts's
+ * `deriveRelationshipPeerIdentity`); `relationshipSecret` (not `opts`'s own
+ * per-device front-door key) is what makes that hold across devices, not
+ * just across retries on this one. `opts` still supplies THIS device's own
+ * front-door identity for the INIT envelope itself, via `sendFrontDoorMessage`
+ * below. */
+export async function initiateRelationship(toDid: string, relationshipSecret: Uint8Array, opts: SendDidCommMessageOptions): Promise<RelationshipInitiationResult> {
   const fetchImpl = opts.fetch ?? defaultFetch()
   let route: { url: string; routingKid: string }
   try {
@@ -66,7 +95,7 @@ export async function initiateRelationship(toDid: string, opts: SendDidCommMessa
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
-  const peer = generatePeerIdentity({ uri: route.url, routingKeys: [route.routingKid] })
+  const peer = deriveRelationshipPeerIdentity(relationshipSecret, toDid, { uri: route.url, routingKeys: [route.routingKid] })
   const own: DidCommSender = { did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv }
   try {
     await registerWithMediator(route.url, own, fetchImpl)
@@ -141,7 +170,11 @@ async function sendPrivateRelationshipMessage(contactKey: ContactKeyV1, type: st
   } catch {
     return { ok: false, error: 'private relationship mediator routing kid is invalid' }
   }
-  const response = await fetchImpl(route.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(outbound) })
+  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 15_000)
+  let response: Response
+  try { response = await fetchImpl(route.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(outbound), signal: controller.signal }) }
+  catch (error) { return { ok: false, error: controller.signal.aborted ? 'send timed out after 15 seconds' : `send failed: ${error instanceof Error ? error.message : String(error)}` } }
+  finally { clearTimeout(timeout) }
   if (response.status !== 202) return { ok: false, error: `send failed: HTTP ${response.status} ${(await response.text().catch(() => '')).slice(0, 256)}` }
   return { ok: true }
 }

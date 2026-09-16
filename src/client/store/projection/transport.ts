@@ -22,7 +22,7 @@ export interface AccountTransport {
   download(blobId: string, range?: { start: number; end?: number }): Promise<Uint8Array>
 }
 
-export interface LocalVaultSession {
+interface LocalVaultSession {
   kind: 'local-vault'
   accountId: string
   identityId: string
@@ -34,7 +34,7 @@ export interface LocalVaultSession {
   eventSourceUrl?: null
 }
 
-export interface RemoteJmapSession {
+interface RemoteJmapSession {
   kind: 'remote-jmap'
   accountId: string
   jmap: AccountTransport

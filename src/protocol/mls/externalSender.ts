@@ -9,7 +9,7 @@ export interface ExternalSender {
   credential: Credential
 }
 
-export const externalSenderEncoder: BufferEncoder<ExternalSender> = contramapBufferEncoders(
+const externalSenderEncoder: BufferEncoder<ExternalSender> = contramapBufferEncoders(
   [varLenDataEncoder, credentialEncoder],
   (e) => [e.signaturePublicKey, e.credential] as const,
 )

@@ -24,7 +24,7 @@ export type PublicMessageInfoMember = { senderType: "member"; membershipTag: Uin
 /** @public */
 export type PublicMessageInfoMemberOther = { senderType: Exclude<SenderTypeName, "member"> }
 
-export const publicMessageInfoEncoder: BufferEncoder<PublicMessageInfo> = (info) => {
+const publicMessageInfoEncoder: BufferEncoder<PublicMessageInfo> = (info) => {
   switch (info.senderType) {
     case "member":
       return varLenDataEncoder(info.membershipTag)
@@ -35,9 +35,9 @@ export const publicMessageInfoEncoder: BufferEncoder<PublicMessageInfo> = (info)
   }
 }
 
-export const encodePublicMessageInfo: Encoder<PublicMessageInfo> = encode(publicMessageInfoEncoder)
+const encodePublicMessageInfo: Encoder<PublicMessageInfo> = encode(publicMessageInfoEncoder)
 
-export function decodePublicMessageInfo(senderType: SenderTypeName): Decoder<PublicMessageInfo> {
+function decodePublicMessageInfo(senderType: SenderTypeName): Decoder<PublicMessageInfo> {
   switch (senderType) {
     case "member":
       return mapDecoder(decodeVarLenData, (membershipTag) => ({
@@ -53,7 +53,7 @@ export function decodePublicMessageInfo(senderType: SenderTypeName): Decoder<Pub
 
 /** @public */
 export type PublicMessage = { content: FramedContent; auth: FramedContentAuthData } & PublicMessageInfo
-export type MemberPublicMessage = PublicMessage & PublicMessageInfoMember
+type MemberPublicMessage = PublicMessage & PublicMessageInfoMember
 export type ExternalPublicMessage = PublicMessage & PublicMessageInfoMemberOther
 
 export const publicMessageEncoder: BufferEncoder<PublicMessage> = contramapBufferEncoders(
@@ -61,7 +61,7 @@ export const publicMessageEncoder: BufferEncoder<PublicMessage> = contramapBuffe
   (msg) => [msg.content, msg.auth, msg] as const,
 )
 
-export const encodePublicMessage: Encoder<PublicMessage> = encode(publicMessageEncoder)
+const encodePublicMessage: Encoder<PublicMessage> = encode(publicMessageEncoder)
 
 export const decodePublicMessage: Decoder<PublicMessage> = flatMapDecoder(decodeFramedContent, (content) =>
   mapDecoders(
@@ -104,7 +104,7 @@ export function findSignaturePublicKey(
   }
 }
 
-export function senderFromExtension(extensions: Extension[], senderIndex: number): ExternalSender | undefined {
+function senderFromExtension(extensions: Extension[], senderIndex: number): ExternalSender | undefined {
   const externalSenderExtensions = extensions.filter((ex) => ex.extensionType === "external_senders")
 
   const externalSenderExtension = externalSenderExtensions[senderIndex]

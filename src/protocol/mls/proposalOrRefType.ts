@@ -10,17 +10,17 @@ const proposalOrRefTypes = {
   reference: 2,
 } as const
 
-export type ProposalOrRefTypeName = keyof typeof proposalOrRefTypes
-export type ProposalOrRefTypeValue = (typeof proposalOrRefTypes)[ProposalOrRefTypeName]
+type ProposalOrRefTypeName = keyof typeof proposalOrRefTypes
+type ProposalOrRefTypeValue = (typeof proposalOrRefTypes)[ProposalOrRefTypeName]
 
-export const proposalOrRefTypeEncoder: BufferEncoder<ProposalOrRefTypeName> = contramapBufferEncoder(
+const proposalOrRefTypeEncoder: BufferEncoder<ProposalOrRefTypeName> = contramapBufferEncoder(
   uint8Encoder,
   (t) => proposalOrRefTypes[t],
 )
 
-export const encodeProposalOrRefType: Encoder<ProposalOrRefTypeName> = encode(proposalOrRefTypeEncoder)
+const encodeProposalOrRefType: Encoder<ProposalOrRefTypeName> = encode(proposalOrRefTypeEncoder)
 
-export const decodeProposalOrRefType: Decoder<ProposalOrRefTypeName> = mapDecoderOption(
+const decodeProposalOrRefType: Decoder<ProposalOrRefTypeName> = mapDecoderOption(
   decodeUint8,
   enumNumberToKey(proposalOrRefTypes),
 )
@@ -40,19 +40,19 @@ export interface ProposalOrRefProposalRef {
 /** @public */
 export type ProposalOrRef = ProposalOrRefProposal | ProposalOrRefProposalRef
 
-export const proposalOrRefProposalEncoder: BufferEncoder<ProposalOrRefProposal> = contramapBufferEncoders(
+const proposalOrRefProposalEncoder: BufferEncoder<ProposalOrRefProposal> = contramapBufferEncoders(
   [proposalOrRefTypeEncoder, proposalEncoder],
   (p) => [p.proposalOrRefType, p.proposal] as const,
 )
 
-export const encodeProposalOrRefProposal: Encoder<ProposalOrRefProposal> = encode(proposalOrRefProposalEncoder)
+const encodeProposalOrRefProposal: Encoder<ProposalOrRefProposal> = encode(proposalOrRefProposalEncoder)
 
-export const proposalOrRefProposalRefEncoder: BufferEncoder<ProposalOrRefProposalRef> = contramapBufferEncoders(
+const proposalOrRefProposalRefEncoder: BufferEncoder<ProposalOrRefProposalRef> = contramapBufferEncoders(
   [proposalOrRefTypeEncoder, varLenDataEncoder],
   (r) => [r.proposalOrRefType, r.reference] as const,
 )
 
-export const encodeProposalOrRefProposalRef: Encoder<ProposalOrRefProposalRef> = encode(proposalOrRefProposalRefEncoder)
+const encodeProposalOrRefProposalRef: Encoder<ProposalOrRefProposalRef> = encode(proposalOrRefProposalRefEncoder)
 
 export const proposalOrRefEncoder: BufferEncoder<ProposalOrRef> = (input) => {
   switch (input.proposalOrRefType) {
@@ -63,7 +63,7 @@ export const proposalOrRefEncoder: BufferEncoder<ProposalOrRef> = (input) => {
   }
 }
 
-export const encodeProposalOrRef: Encoder<ProposalOrRef> = encode(proposalOrRefEncoder)
+const encodeProposalOrRef: Encoder<ProposalOrRef> = encode(proposalOrRefEncoder)
 
 export const decodeProposalOrRef: Decoder<ProposalOrRef> = flatMapDecoder(
   decodeProposalOrRefType,

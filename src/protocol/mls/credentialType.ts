@@ -11,14 +11,14 @@ export const credentialTypes = {
 
 /** @public */
 export type CredentialTypeName = keyof typeof credentialTypes
-export type CredentialTypeValue = (typeof credentialTypes)[CredentialTypeName]
+type CredentialTypeValue = (typeof credentialTypes)[CredentialTypeName]
 
 export const credentialTypeEncoder: BufferEncoder<CredentialTypeName> = contramapBufferEncoder(
   uint16Encoder,
   openEnumNumberEncoder(credentialTypes),
 )
 
-export const encodeCredentialType: Encoder<CredentialTypeName> = encode(credentialTypeEncoder)
+const encodeCredentialType: Encoder<CredentialTypeName> = encode(credentialTypeEncoder)
 
 export const decodeCredentialType: Decoder<CredentialTypeName> = mapDecoderOption(
   decodeUint16,

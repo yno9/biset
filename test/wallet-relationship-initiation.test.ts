@@ -21,6 +21,7 @@ describe('Wallet-initiated DIDComm relationship', () => {
         xKid: `${walletDid}#k_wallet`,
         x25519PrivateKey: new Uint8Array(32).fill(7),
       },
+      relationshipSecret: new Uint8Array(32).fill(9),
       reader: {
         async currentFor(did) { return contacts.find(contact => contact.counterpartyDid === did) ?? null },
         async forOwnKid(kid) { return contacts.find(contact => contact.ownRelationshipKid === kid) ?? null },
@@ -71,6 +72,7 @@ describe('Wallet-initiated DIDComm relationship', () => {
     const manager = createWalletRelationshipManager({
       identityId: walletDid,
       frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
+      relationshipSecret: new Uint8Array(32).fill(9),
       reader: { async currentFor() { return null }, async forOwnKid() { return null } },
       sink: { async store() { throw new Error('must not store an unauthenticated ACCEPT') } },
       initiate: async did => {
@@ -98,6 +100,7 @@ describe('Wallet-initiated DIDComm relationship', () => {
     const manager = createWalletRelationshipManager({
       identityId: walletDid,
       frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
+      relationshipSecret: new Uint8Array(32).fill(9),
       reader: {
         async currentFor(did) { return contacts.find(contact => contact.counterpartyDid === did) ?? null },
         async forOwnKid(kid) { return contacts.find(contact => contact.ownRelationshipKid === kid) ?? null },
@@ -118,6 +121,51 @@ describe('Wallet-initiated DIDComm relationship', () => {
     }, pendingPeer.xKid, mediatorUrl)
     expect(contacts).toHaveLength(1)
     expect(contacts[0]!.counterpartyRelationshipKid).toBe(counterpartyPeer.xKid)
+  })
+
+  test('a crossing INIT reuses its stored contact when ACCEPT arrives instead of duplicating it', async () => {
+    const ownPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
+    const remotePeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
+    const existing: ContactKeyV1 = {
+      version: 1, kind: 'contact-key', identityId: walletDid, counterpartyDid,
+      ownRelationshipKid: ownPeer.xKid, ownX25519PrivateKey: ownPeer.xPriv, ownEd25519PrivateKey: ownPeer.edPriv,
+      counterpartyRelationshipKid: remotePeer.xKid, counterpartyPublicKey: remotePeer.xPub,
+      createdAt: '2026-09-05T12:00:00.000Z',
+    }
+    let contact: ContactKeyV1 | null = null
+    let stores = 0
+    let initiated = false
+    const manager = createWalletRelationshipManager({
+      identityId: walletDid,
+      frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
+      relationshipSecret: new Uint8Array(32).fill(9),
+      reader: {
+        async currentFor() { return contact },
+        async forOwnKid(kid) { return contact?.ownRelationshipKid === kid ? contact : null },
+      },
+      sink: { async store() { stores += 1 } },
+      initiate: async did => {
+        initiated = true
+        return { ok: true, pending: { counterpartyDid: did, peer: ownPeer, mediatorUrl } }
+      },
+      startWatch() {},
+    })
+
+    const waiting = manager.ensureContact(counterpartyDid)
+    await waitFor(() => initiated)
+    // Simulates the crossing remote INIT having been handled while our own
+    // initiation was waiting for its ACCEPT.
+    contact = existing
+    await manager.handleMessage({
+      ackId: 'crossing-accept', rawJwe: {} as never, senderKid: remotePeer.xKid,
+      plaintext: {
+        type: 'https://biset.md/relationship/1.0/accept',
+        body: relationshipBodyToWire({ relationshipKid: remotePeer.xKid, publicKey: remotePeer.xPub }),
+      },
+    }, ownPeer.xKid, mediatorUrl)
+
+    expect(await waiting).toEqual(existing)
+    expect(stores).toBe(0)
   })
 })
 

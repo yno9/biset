@@ -1,18 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes } from '../../src/protocol/canonical.ts'
-import { createSegmentKeyWrap, unwrapSegmentKey, type SegmentKeyWrapSigner } from '../../src/client/store/vault/crypto.ts'
+import { createSegmentKeyWrap, unwrapSegmentKey } from '../../src/client/store/vault/crypto.ts'
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
-
-const signer: SegmentKeyWrapSigner = {
-  deviceId: 'device-a',
-  async sign(bytes) {
-    return new Uint8Array(await crypto.subtle.digest('SHA-256', arrayBuffer(bytes)))
-  },
-  async verify(deviceId, bytes, signature) {
-    if (deviceId !== this.deviceId) return false
-    return equalBytes(signature, await this.sign(bytes))
-  },
-}
 
 const draft = {
   identityId: 'did:web:alice.example',
@@ -25,29 +13,20 @@ const draft = {
 }
 
 describe('SegmentKey wraps', () => {
-  test('releases a SegmentKey only to a verifier with the current VEK', async () => {
+  test('releases a SegmentKey only to a holder of the current VCK', async () => {
     const vek = createSegmentKey()
     const segmentKey = createSegmentKey()
-    const wrap = await createSegmentKeyWrap(vek, segmentKey, draft, signer)
+    const wrap = await createSegmentKeyWrap(vek, segmentKey, draft)
 
     expect(wrap.nonce).toHaveLength(12)
     expect(wrap.wrappedSegmentKey).not.toEqual(segmentKey)
-    expect(await unwrapSegmentKey(vek, wrap, signer)).toEqual(segmentKey)
-    await expect(unwrapSegmentKey(createSegmentKey(), wrap, signer)).rejects.toThrow('decryption failed')
+    expect(await unwrapSegmentKey(vek, wrap)).toEqual(segmentKey)
+    await expect(unwrapSegmentKey(createSegmentKey(), wrap)).rejects.toThrow('decryption failed')
   })
 
-  test('rejects a signed wrap when its protected metadata or signature changes', async () => {
-    const wrap = await createSegmentKeyWrap(createSegmentKey(), createSegmentKey(), draft, signer)
-    await expect(unwrapSegmentKey(createSegmentKey(), { ...wrap, recipientEpoch: '14' }, signer)).rejects.toThrow('AAD does not match')
-
-    const changedSignature = wrap.signature.slice()
-    changedSignature[0] ^= 0xff
-    await expect(unwrapSegmentKey(createSegmentKey(), { ...wrap, signature: changedSignature }, signer)).rejects.toThrow('signature is invalid')
+  test('rejects a wrap when its protected metadata changes', async () => {
+    const vek = createSegmentKey()
+    const wrap = await createSegmentKeyWrap(vek, createSegmentKey(), draft)
+    await expect(unwrapSegmentKey(vek, { ...wrap, recipientEpoch: '14' })).rejects.toThrow('AAD does not match')
   })
 })
-
-function arrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  const copy = new Uint8Array(bytes.length)
-  copy.set(bytes)
-  return copy.buffer
-}

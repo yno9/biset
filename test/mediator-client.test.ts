@@ -12,7 +12,7 @@ import { createMediator } from '../src/server/mediator/server.ts'
 import { fetchMediatorInfo, requestMediation, updateKeylist, queryKeylist } from '../src/protocol/didcomm/mediator-coordinate.ts'
 import { pickupStatus, pickupDeliver, acknowledgeMessages } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { registerWithMediator, startMediatorPolling } from '../src/client/didcomm/mediator-sync.ts'
-import { requestWatch, mediatorStreamUrl } from '../src/protocol/didcomm/mediator-pickup.ts'
+import { requestWatch, mediatorMultiplexedStreamUrl, mediatorStreamUrl } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { watchMediator } from '../src/client/didcomm/mediator-watch.ts'
 import type { DidCommSender } from '../src/protocol/didcomm/mediator-transport.ts'
 import { packAuthcrypt, packAnoncrypt } from '../src/protocol/didcomm/crypto.ts'
@@ -175,6 +175,27 @@ function sseFrameReader(response: Response) {
 }
 
 describe('mediator live watch (mediator-watch.ts, server.ts GET /stream)', () => {
+  test('one SSE multiplexes backlog from two independently authorized recipient queues', async () => {
+    const { fetchImpl, url } = freshMediatorFetch()
+    const alice = generatePeerIdentity()
+    const bobPeer = generatePeerIdentity()
+    const carolPeer = generatePeerIdentity()
+    const bob: DidCommSender = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv }
+    const carol: DidCommSender = { did: carolPeer.did, xKid: carolPeer.xKid, xPriv: carolPeer.xPriv }
+    const info = await registerWithMediator(url, bob, fetchImpl)
+    await registerWithMediator(url, carol, fetchImpl)
+    await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, bob, bobPeer.xPub, 'for bob')
+    await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, carol, carolPeer.xPub, 'for carol')
+
+    const bobToken = (await requestWatch(info, bob, fetchImpl)).token
+    const carolToken = (await requestWatch(info, carol, fetchImpl)).token
+    const response = await fetchImpl(mediatorMultiplexedStreamUrl(url, [bobToken, carolToken]), { method: 'GET' })
+    const frames = sseFrameReader(response)
+    const delivered = await frames.next(2) as Array<{ id: string; recipient_kid: string; jwe: unknown }>
+    expect(new Set(delivered.map(frame => frame.recipient_kid))).toEqual(new Set([bob.xKid, carol.xKid]))
+    await frames.close()
+  })
+
   test('GET /stream sends the already-queued backlog, then a live push for a message queued after connecting', async () => {
     const { fetchImpl, url } = freshMediatorFetch()
     const alicePeer = generatePeerIdentity()

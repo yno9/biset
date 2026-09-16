@@ -4,15 +4,9 @@
 // Service to reconnect to. A group's actual crypto rides on each member's
 // own pairwise ContactKeyV1 relationship (vault/contact-key.ts), which
 // already syncs across this identity's own devices through the ordinary
-// vault path -- this store holds only the group's METADATA (who's in it,
-// what it's called), and does NOT sync across a user's own multiple
-// devices in v1 (same accepted limitation conversation-group-store.ts's
-// own header documents for the same reason: this is a device-local cache
-// with its own migration lifecycle, kept in its own IndexedDB database
-// rather than vault/store.ts's). A second device of the same identity can
-// still send/receive on a group once it separately learns the roster
-// (e.g. by receiving a GROUP_MESSAGE/GROUP_INVITE itself) -- it just won't
-// show the thread until it does.
+// vault path. This store is only a local cache of group metadata: on another
+// device main.ts reconstructs a missing roster from the Vault-synchronized
+// messages' signed from/to/threadId metadata, then populates this cache.
 const DATABASE_NAME = 'biset-didcomm-group-chat'
 const DATABASE_VERSION = 1
 const STORE_NAME = 'didcomm-group-roster'

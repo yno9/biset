@@ -31,14 +31,17 @@ export function showApp(): void {
 // read + both render targets as one UI transaction.
 let inboxRefreshTail: Promise<void> = Promise.resolve()
 
-export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
+export function refreshInbox(readModel: LocalJmapReadModel, options: { forceRender?: boolean } = {}): Promise<void> {
   const task = inboxRefreshTail.then(async () => {
     await loadMessages(readModel)
     // Polling refreshes the data model, but must not navigate away from an
     // explicit menu page. render() repaints #active-thread as a conversation;
     // calling it while Account/Config/Compose owns that node caused a silent
     // page switch every ten seconds.
-    if (!document.getElementById('app')?.hasAttribute('data-menu-page')) render()
+    if (options.forceRender || !document.getElementById('app')?.hasAttribute('data-menu-page')) {
+      document.getElementById('app')?.removeAttribute('data-menu-page')
+      render()
+    }
     renderLeftList()
   })
   // Keep a rejected refresh observable to its caller without permanently

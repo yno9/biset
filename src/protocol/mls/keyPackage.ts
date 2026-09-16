@@ -26,7 +26,7 @@ export type KeyPackageTBS = {
   extensions: Extension[]
 }
 
-export const keyPackageTBSEncoder: BufferEncoder<KeyPackageTBS> = contramapBufferEncoders(
+const keyPackageTBSEncoder: BufferEncoder<KeyPackageTBS> = contramapBufferEncoders(
   [protocolVersionEncoder, ciphersuiteEncoder, varLenDataEncoder, leafNodeEncoder, varLenTypeEncoder(extensionEncoder)],
   (keyPackageTBS) =>
     [
@@ -38,9 +38,9 @@ export const keyPackageTBSEncoder: BufferEncoder<KeyPackageTBS> = contramapBuffe
     ] as const,
 )
 
-export const encodeKeyPackageTBS: Encoder<KeyPackageTBS> = encode(keyPackageTBSEncoder)
+const encodeKeyPackageTBS: Encoder<KeyPackageTBS> = encode(keyPackageTBSEncoder)
 
-export const decodeKeyPackageTBS: Decoder<KeyPackageTBS> = mapDecoders(
+const decodeKeyPackageTBS: Decoder<KeyPackageTBS> = mapDecoders(
   [
     decodeProtocolVersion,
     decodeCiphersuite,
@@ -65,7 +65,7 @@ export const keyPackageEncoder: BufferEncoder<KeyPackage> = contramapBufferEncod
   (keyPackage) => [keyPackage, keyPackage.signature] as const,
 )
 
-export const encodeKeyPackage: Encoder<KeyPackage> = encode(keyPackageEncoder)
+const encodeKeyPackage: Encoder<KeyPackage> = encode(keyPackageEncoder)
 
 export const decodeKeyPackage: Decoder<KeyPackage> = mapDecoders(
   [decodeKeyPackageTBS, decodeVarLenData],
@@ -75,7 +75,7 @@ export const decodeKeyPackage: Decoder<KeyPackage> = mapDecoders(
   }),
 )
 
-export async function signKeyPackage(tbs: KeyPackageTBS, signKey: Uint8Array, s: Signature): Promise<KeyPackage> {
+async function signKeyPackage(tbs: KeyPackageTBS, signKey: Uint8Array, s: Signature): Promise<KeyPackage> {
   return { ...tbs, signature: await signWithLabel(signKey, "KeyPackageTBS", encode(keyPackageTBSEncoder)(tbs), s) }
 }
 

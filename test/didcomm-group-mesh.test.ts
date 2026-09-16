@@ -24,7 +24,7 @@ import { ConnectionStore } from '../src/server/mediator/connections.ts'
 import type { ContactKeyV1 } from '../src/client/store/vault/contact-key.ts'
 import { buildGenesisLog } from './protocol/support/webvh-log-fixture.ts'
 
-interface Identity { did: string; domain: string; frontKid: string; frontX: Uint8Array; log: unknown[] }
+interface Identity { did: string; domain: string; frontKid: string; frontX: Uint8Array; relationshipSecret: Uint8Array; log: unknown[] }
 
 /** Pickup 3.0 delivery is non-destructive -- the mediator keeps every
  * returned message queued until acknowledged (mediator-pickup.ts's own
@@ -44,7 +44,7 @@ function makeIdentity(name: string): Identity {
   const domain = `${name}.test.example`
   const { did, log } = buildGenesisLog(root, ed25519.getPublicKey(root), [], domain)
   const frontX = x25519.utils.randomSecretKey()
-  return { did, domain, frontKid: `${did}#k_${name}-front-door`, frontX, log }
+  return { did, domain, frontKid: `${did}#k_${name}-front-door`, frontX, relationshipSecret: x25519.utils.randomSecretKey(), log }
 }
 
 describe('DIDComm group chat mesh', () => {
@@ -89,7 +89,7 @@ describe('DIDComm group chat mesh', () => {
       const contacts = new Map<string, Map<string, ContactKeyV1>>() // holderDid -> counterpartyDid -> ContactKeyV1
       const pairs: [Identity, Identity][] = [[alice, bob], [alice, carol], [bob, carol]]
       for (const [from, to] of pairs) {
-        const initiated = await initiateRelationship(to.did, { fromKid: from.frontKid, x25519PrivateKey: from.frontX, fetch: fetchImpl })
+        const initiated = await initiateRelationship(to.did, from.relationshipSecret, { fromKid: from.frontKid, x25519PrivateKey: from.frontX, fetch: fetchImpl })
         expect(initiated.ok).toBe(true)
         if (!initiated.ok) throw new Error(initiated.error)
         const fromPeer = initiated.pending.peer

@@ -21,7 +21,7 @@ export function ingressAckSigningBytes(ack: Omit<IngressAckV1, 'signature'>): Ui
   })
 }
 
-export function ingressPullSigningBytes(pull: Omit<IngressPullV1, 'signature'>): Uint8Array {
+function ingressPullSigningBytes(pull: Omit<IngressPullV1, 'signature'>): Uint8Array {
   return canonicalBytes({
     label: 'biset/ingress-pull/v1',
     version: pull.version,

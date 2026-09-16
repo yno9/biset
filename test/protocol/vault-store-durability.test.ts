@@ -15,12 +15,13 @@ import { createVaultEvent, type VaultEventSigner } from '../../src/client/store/
 import { createSegmentKey, encryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { sha256Bytes } from '../../src/protocol/canonical.ts'
 import type { IngressAckV1 } from '../../src/protocol/ingress.ts'
+import * as Y from 'yjs'
 
 // Must match DATABASE_NAME/DATABASE_VERSION in src/client/store/vault/store.ts -- not
 // exported, so this test's own knowledge of the schema has to stay in sync
 // by hand if that module ever renames/re-versions it.
 const DATABASE_NAME = 'biset-vault-core'
-const CURRENT_VERSION = 10
+const CURRENT_VERSION = 14
 
 const identityId = 'did:web:alice.example'
 const signer: VaultEventSigner = { deviceId: 'device-a', async sign() { return new Uint8Array([7]) }, async verify(_d, _b, sig) { return sig[0] === 7 } }
@@ -71,7 +72,31 @@ async function buildLocalMutationCommit(eventId2Suffix: string): Promise<LocalVa
 }
 
 describe('IndexedDbVaultStore durability', () => {
-  test('committed objects/events/projection survive closing and reopening the store (simulated browser restart)', async () => {
+  test('actor sequences are seeded from history and reserved atomically across connections', async () => {
+    const first = await IndexedDbVaultStore.open()
+    expect(await first.commitLocalMutation(await buildLocalMutationCommit('seed'))).toBe('committed')
+    const second = await IndexedDbVaultStore.open()
+    const reserved = await Promise.all([
+      first.reserveActorSeq(identityId, 'device-a'),
+      second.reserveActorSeq(identityId, 'device-a'),
+    ])
+    expect(reserved.sort((left, right) => left - right)).toEqual([2, 3])
+    first.close()
+    second.close()
+  })
+
+  test('reports legacy duplicate actor sequences without rejecting either event', async () => {
+    const store = await IndexedDbVaultStore.open()
+    expect(await store.commitLocalMutation(await buildLocalMutationCommit('duplicate-a'))).toBe('committed')
+    expect(await store.commitLocalMutation(await buildLocalMutationCommit('duplicate-b'))).toBe('committed')
+    const duplicates = await store.findDuplicateActorSequences(identityId)
+    expect(duplicates).toHaveLength(1)
+    expect(duplicates[0]).toMatchObject({ actorDeviceId: 'device-a', actorSeq: 1 })
+    expect(duplicates[0]!.eventIds).toHaveLength(2)
+    store.close()
+  })
+
+  test('committed R3 objects/events survive closing and reopening while projection remains projector-owned', async () => {
     const first = await IndexedDbVaultStore.open()
     const commit = await buildIngressCommit('ingress-1')
     expect(await first.commitIngress(commit)).toBe('committed')
@@ -87,7 +112,7 @@ describe('IndexedDbVaultStore durability', () => {
     expect(objects[0]!.objectId).toBe(commit.objects[0]!.objectId)
     expect(events).toHaveLength(1)
     expect(events[0]!.id).toBe(commit.events[0]!.id)
-    expect(projection).toEqual({ emails: [] })
+    expect(projection).toBeUndefined()
     second.close()
   })
 
@@ -244,7 +269,7 @@ describe('IndexedDbVaultStore durability', () => {
       }
       request.onerror = () => reject(request.error)
     })
-    void legacyWrite
+    await legacyWrite
 
     // Now open through IndexedDbVaultStore, which requests CURRENT_VERSION --
     // this is a real IDBOpenDBRequest upgrade, not a fresh database.
@@ -262,5 +287,33 @@ describe('IndexedDbVaultStore durability', () => {
       request.onsuccess = () => { expect(request.result.version).toBe(CURRENT_VERSION); request.result.close(); resolve() }
       request.onerror = () => reject(request.error)
     })
+  })
+
+  test('the event store exposes target and actor-sequence indexes', async () => {
+    const store = await IndexedDbVaultStore.open()
+    store.close()
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open(DATABASE_NAME)
+      request.onsuccess = () => {
+        const database = request.result
+        const transaction = database.transaction('vault_events', 'readonly')
+        const indexes = transaction.objectStore('vault_events').indexNames
+        expect([...indexes]).toContain('by_target_id')
+        expect([...indexes]).toContain('by_actor_sequence')
+        database.close()
+        resolve()
+      }
+      request.onerror = () => reject(request.error)
+    })
+  })
+
+  test('rescues events that exist only in the legacy Yjs state before deleting that store', async () => {
+    const event = await createVaultEvent({ identityId, actorDeviceId: 'device-a', actorSeq: 12, kind: 'keyword.set', targetIds: ['mail-a'], objectRefs: ['missing-object'], parents: [], createdAt: '2026-01-01T00:00:00.000Z' }, signer)
+    const document = new Y.Doc(); document.getArray('vault-events').push([event]); const update = Y.encodeStateAsUpdate(document); document.destroy()
+    await new Promise<void>((resolve, reject) => { const request = indexedDB.open(DATABASE_NAME, 13); request.onupgradeneeded = () => { request.result.createObjectStore('vault_events', { keyPath: ['identityId', 'id'] }); request.result.createObjectStore('vault_crdt_state', { keyPath: 'identityId' }) }; request.onsuccess = () => { const database = request.result; const tx = database.transaction('vault_crdt_state', 'readwrite'); tx.objectStore('vault_crdt_state').put({ identityId, update }); tx.oncomplete = () => { database.close(); resolve() }; tx.onerror = () => reject(tx.error) }; request.onerror = () => reject(request.error) })
+    const store = await IndexedDbVaultStore.open()
+    expect((await store.readVaultEvents(identityId)).map(value => value.id)).toEqual([event.id])
+    store.close()
+    await new Promise<void>((resolve, reject) => { const request = indexedDB.open(DATABASE_NAME); request.onsuccess = () => { expect(request.result.objectStoreNames.contains('vault_crdt_state')).toBe(false); request.result.close(); resolve() }; request.onerror = () => reject(request.error) })
   })
 })

@@ -23,7 +23,7 @@ export interface AuthenticatedContent {
   auth: FramedContentAuthData
 }
 
-export type AuthenticatedContentApplication = AuthenticatedContent & {
+type AuthenticatedContentApplication = AuthenticatedContent & {
   content: FramedContentApplicationData & FramedContentData
 }
 
@@ -31,21 +31,21 @@ export type AuthenticatedContentCommit = AuthenticatedContent & {
   content: FramedContentCommitData & FramedContentData
 }
 
-export type AuthenticatedContentProposal = AuthenticatedContent & {
+type AuthenticatedContentProposal = AuthenticatedContent & {
   content: FramedContentProposalData & FramedContentData
 }
 
 export type AuthenticatedContentProposalOrCommit = AuthenticatedContent & {
   content: (FramedContentProposalData | FramedContentCommitData) & FramedContentData
 }
-export const authenticatedContentEncoder: BufferEncoder<AuthenticatedContent> = contramapBufferEncoders(
+const authenticatedContentEncoder: BufferEncoder<AuthenticatedContent> = contramapBufferEncoders(
   [wireformatEncoder, framedContentEncoder, framedContentAuthDataEncoder],
   (a) => [a.wireformat, a.content, a.auth] as const,
 )
 
-export const encodeAuthenticatedContent: Encoder<AuthenticatedContent> = encode(authenticatedContentEncoder)
+const encodeAuthenticatedContent: Encoder<AuthenticatedContent> = encode(authenticatedContentEncoder)
 
-export const decodeAuthenticatedContent: Decoder<AuthenticatedContent> = mapDecoders(
+const decodeAuthenticatedContent: Decoder<AuthenticatedContent> = mapDecoders(
   [
     decodeWireformat,
     flatMapDecoder(decodeFramedContent, (content) => {
@@ -63,12 +63,12 @@ export interface AuthenticatedContentTBM {
   auth: FramedContentAuthData
 }
 
-export const authenticatedContentTBMEncoder: BufferEncoder<AuthenticatedContentTBM> = contramapBufferEncoders(
+const authenticatedContentTBMEncoder: BufferEncoder<AuthenticatedContentTBM> = contramapBufferEncoders(
   [framedContentTBSEncoder, framedContentAuthDataEncoder],
   (t) => [t.contentTbs, t.auth] as const,
 )
 
-export const encodeAuthenticatedContentTBM: Encoder<AuthenticatedContentTBM> = encode(authenticatedContentTBMEncoder)
+const encodeAuthenticatedContentTBM: Encoder<AuthenticatedContentTBM> = encode(authenticatedContentTBMEncoder)
 
 export function createMembershipTag(
   membershipKey: Uint8Array,

@@ -115,7 +115,7 @@ export function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
  * mediator/) can use it without pulling in utils.ts's DOM-dependent half
  * (its own account-page/left-pane helpers) -- utils.ts re-exports both for
  * existing callers. */
-export function hexToBytes(hex: string): Uint8Array {
+function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2)
   for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
   return out

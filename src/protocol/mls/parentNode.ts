@@ -15,7 +15,7 @@ export const parentNodeEncoder: BufferEncoder<ParentNode> = contramapBufferEncod
   (node) => [node.hpkePublicKey, node.parentHash, node.unmergedLeaves] as const,
 )
 
-export const encodeParentNode: Encoder<ParentNode> = encode(parentNodeEncoder)
+const encodeParentNode: Encoder<ParentNode> = encode(parentNodeEncoder)
 
 export const decodeParentNode: Decoder<ParentNode> = mapDecoders(
   [decodeVarLenData, decodeVarLenData, decodeVarLenType(decodeUint32)],

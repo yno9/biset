@@ -2,7 +2,7 @@
 // vault events/objects that ends up feeding `reduceLocalJmapProjection`
 // (local-jmap/reducer.ts) -- `VaultDeliveryProjector` (delivery-projector.ts,
 // one delivered pack at a time) and `rebuildLocalJmapProjection`
-// (projection-rebuild.ts, this identity's entire history at once). Both used
+// (the historical full-vault rebuild path). Both used
 // to carry their own copy of this loop; factored out here so the two never
 // drift on what counts as a valid mutation event (feedback: unify common
 // logic instead of letting near-identical implementations diverge).
@@ -11,7 +11,6 @@ import type { VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
 import { decryptVaultObject, verifyVaultObjectIntegrity } from './objects.ts'
 import { assertContactKeyRecord } from './contact-key.ts'
 import { assertDidCommCredentialRecord } from './didcomm-credential.ts'
-import { assertDidCommDeviceKeyRecord } from './didcomm-device-key.ts'
 import { assertOpenPgpCredentialRecord } from './openpgp-credential.ts'
 import { verifyVaultEvent, type VaultEventVerifier } from './events.ts'
 import type { SegmentKeyResolver } from './segment-key-resolver.ts'
@@ -62,8 +61,6 @@ export async function decryptVaultMutationRecords(
         assertOpenPgpCredentialRecord(event, object, plaintext)
       } else if (event.kind === 'credential.didcomm.set') {
         assertDidCommCredentialRecord(event, object, plaintext)
-      } else if (event.kind === 'didcomm.device-key.set') {
-        assertDidCommDeviceKeyRecord(event, object, plaintext)
       } else if (event.kind === 'contact-key.set') {
         assertContactKeyRecord(event, object, plaintext)
       } else {

@@ -10,14 +10,14 @@ export const protocolVersions = {
 
 /** @public */
 export type ProtocolVersionName = keyof typeof protocolVersions
-export type ProtocolVersionValue = (typeof protocolVersions)[ProtocolVersionName]
+type ProtocolVersionValue = (typeof protocolVersions)[ProtocolVersionName]
 
 export const protocolVersionEncoder: BufferEncoder<ProtocolVersionName> = contramapBufferEncoder(
   uint16Encoder,
   (t) => protocolVersions[t],
 )
 
-export const encodeProtocolVersion: Encoder<ProtocolVersionName> = encode(protocolVersionEncoder)
+const encodeProtocolVersion: Encoder<ProtocolVersionName> = encode(protocolVersionEncoder)
 
 export const decodeProtocolVersion: Decoder<ProtocolVersionName> = mapDecoderOption(
   decodeUint16,

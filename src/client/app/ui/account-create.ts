@@ -24,8 +24,8 @@ import {
 // generated bundle defined `bootClient` but never invoked it, and the app
 // silently never booted at all (found live, 2026-08-25 -- a totally blank
 // page with no console error, since nothing had run yet to error).
-let onWalletConnected: (() => Promise<void>) | undefined
-export function setOnWalletConnected(fn: () => Promise<void>): void {
+let onWalletConnected: ((session: DidMdActiveSession) => Promise<void>) | undefined
+export function setOnWalletConnected(fn: (session: DidMdActiveSession) => Promise<void>): void {
   onWalletConnected = fn
 }
 
@@ -120,7 +120,7 @@ export function setupNewUserPage(): void {
       if (session) {
         showWalletSession(session)
         walletResult(callback ? `Connected ${session.handle}. This browser can restore its DPoP-bound session without reopening Wallet.` : `Restored ${session.handle}'s DPoP-bound device session.`)
-        await onWalletConnected?.()
+        await onWalletConnected?.(session)
       }
     } catch (error) {
       walletResult(error instanceof Error ? error.message : String(error), true)
@@ -132,7 +132,7 @@ export function setupNewUserPage(): void {
     const popup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
     const config = readBisetConfig()
     walletResult('Opening did.md Wallet…')
-    void beginDidMdWalletLogin(config.mimiSelfBaseUrl, config.mediatorUrls, popup, config).catch(error => {
+    void beginDidMdWalletLogin(config.mediatorUrls, popup, config).catch(error => {
       walletLoginButton.disabled = false
       walletResult(error instanceof Error ? error.message : String(error), true)
     })

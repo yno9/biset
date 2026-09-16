@@ -22,7 +22,7 @@ export interface SyncDidWebMirrorOptions {
  * — id, controller, and every verificationMethod/authentication DID URL —
  * via one whole-document string replace (the same approach create-genesis.ts
  * uses to substitute its SCID placeholder). */
-export function buildDidWebMirrorDocument(webvhDid: string, domain: string, state: SignedWebvhState): SignedWebvhState {
+function buildDidWebMirrorDocument(webvhDid: string, domain: string, state: SignedWebvhState): SignedWebvhState {
   const webDid = buildWebDid(domain)
   return JSON.parse(JSON.stringify(state).split(webvhDid).join(webDid)) as SignedWebvhState
 }

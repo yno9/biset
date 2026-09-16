@@ -34,7 +34,7 @@ export type NodeParent = { nodeType: "parent"; parent: ParentNode }
 /** @public */
 export type NodeLeaf = { nodeType: "leaf"; leaf: LeafNode }
 
-export const nodeEncoder: BufferEncoder<Node> = (node) => {
+const nodeEncoder: BufferEncoder<Node> = (node) => {
   switch (node.nodeType) {
     case "parent":
       return contramapBufferEncoders(
@@ -49,9 +49,9 @@ export const nodeEncoder: BufferEncoder<Node> = (node) => {
   }
 }
 
-export const encodeNode: Encoder<Node> = encode(nodeEncoder)
+const encodeNode: Encoder<Node> = encode(nodeEncoder)
 
-export const decodeNode: Decoder<Node> = flatMapDecoder(decodeNodeType, (nodeType): Decoder<Node> => {
+const decodeNode: Decoder<Node> = flatMapDecoder(decodeNodeType, (nodeType): Decoder<Node> => {
   switch (nodeType) {
     case "parent":
       return mapDecoder(decodeParentNode, (parent) => ({
@@ -78,7 +78,7 @@ export function getHpkePublicKey(n: Node): Uint8Array {
 /** @public */
 export type RatchetTree = (Node | undefined)[]
 
-export function extendRatchetTree(tree: RatchetTree): RatchetTree {
+function extendRatchetTree(tree: RatchetTree): RatchetTree {
   const lastIndex = tree.length - 1
 
   if (tree[lastIndex] === undefined) {
@@ -112,7 +112,7 @@ function nextFullBinaryTreeSize(n: number): number {
  * The receiver MUST check that the last node in ratchet_tree is non-blank, and then extend the tree to the right until it has a length of the form 2d+1 - 1, adding the minimum number of blank values possible.
  * (Obviously, this may be done "virtually", by synthesizing blank nodes when required, as opposed to actually changing the structure in memory.)
  */
-export function stripBlankNodes(tree: RatchetTree): RatchetTree {
+function stripBlankNodes(tree: RatchetTree): RatchetTree {
   let lastNonBlank = tree.length - 1
   while (lastNonBlank >= 0 && tree[lastNonBlank] === undefined) {
     lastNonBlank--
@@ -144,7 +144,7 @@ export function findBlankLeafNodeIndexOrExtend(tree: RatchetTree): NodeIndex {
   return blankLeaf === undefined ? toNodeIndex(tree.length + 1) : blankLeaf
 }
 
-export function extendTree(tree: RatchetTree, leafNode: LeafNode): [RatchetTree, NodeIndex] {
+function extendTree(tree: RatchetTree, leafNode: LeafNode): [RatchetTree, NodeIndex] {
   const newRoot = undefined
   const insertedNodeIndex = toNodeIndex(tree.length + 1)
   const newTree: RatchetTree = [
@@ -226,7 +226,7 @@ function condenseRatchetTreeAfterRemove(tree: RatchetTree) {
   return extendRatchetTree(stripBlankNodes(tree))
 }
 
-export function resolution(tree: (Node | undefined)[], nodeIndex: NodeIndex): NodeIndex[] {
+function resolution(tree: (Node | undefined)[], nodeIndex: NodeIndex): NodeIndex[] {
   const node = tree[nodeIndex]
 
   if (node === undefined) {
@@ -299,7 +299,7 @@ export function removeLeaves(tree: RatchetTree, leafIndices: LeafIndex[]) {
   return condenseRatchetTreeAfterRemove(copy)
 }
 
-export function traverseToRoot<T>(
+function traverseToRoot<T>(
   tree: RatchetTree,
   leafIndex: LeafIndex,
   f: (nodeIndex: NodeIndex, node: ParentNode) => T | undefined,

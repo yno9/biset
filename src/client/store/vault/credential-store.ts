@@ -139,6 +139,7 @@ export interface VaultCredentialSinkOptions {
   currentSnapshot(): Promise<LocalJmapSnapshot>
   signer: VaultEventSigner
   committer: LocalVaultMutationCommitter
+  onCommitted?(event: VaultEventV1): Promise<void>
 }
 
 export interface VaultCredentialStoreResult {
@@ -182,6 +183,7 @@ export class VaultCredentialSink<T> {
       snapshot: await this.options.currentSnapshot(),
     })
     const result = await this.options.committer.commitLocalMutation({ identityId: this.options.identityId, ...commit })
+    if (result === 'committed') await this.options.onCommitted?.(record.event)
     return { result, event: record.event }
   }
 }

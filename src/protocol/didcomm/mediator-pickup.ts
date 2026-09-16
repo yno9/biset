@@ -114,6 +114,15 @@ export function mediatorStreamUrl(mediatorUrl: string, token: string): string {
   return `${mediatorUrl.replace(/\/$/, '')}/stream?token=${encodeURIComponent(token)}`
 }
 
+/** One EventSource carrying several independently authorized recipient
+ * queues. Repeating `token` preserves the single-token wire format while
+ * avoiding one permanent browser connection per ContactKey. */
+export function mediatorMultiplexedStreamUrl(mediatorUrl: string, tokens: readonly string[]): string {
+  if (tokens.length === 0) throw new TypeError('at least one mediator watch token is required')
+  const query = tokens.map(token => `token=${encodeURIComponent(token)}`).join('&')
+  return `${mediatorUrl.replace(/\/$/, '')}/stream?${query}`
+}
+
 /** Pickup 3.0 messages-received: confirms the listed queue ids are durably
  * stored so the mediator drops them. Returns the count still queued. No-op
  * for an empty list. */

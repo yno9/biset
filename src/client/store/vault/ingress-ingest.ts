@@ -32,6 +32,7 @@ export interface IngressIngestResult {
 
 export interface TransportIngressIngestResult {
   result: 'committed' | 'already-committed'
+  targetIds: string[]
 }
 
 /**
@@ -97,7 +98,7 @@ export async function ingestTransportIngress(
     if (!equalBytes(existing.protectedPayloadHash, envelope.protectedPayloadHash)) {
       throw new TypeError('transport ingress ID was reused with a different payload')
     }
-    return { result: 'already-committed' }
+    return { result: 'already-committed', targetIds: [] }
   }
   const derived = await projector.verifyAndProject(envelope)
   if (!derived.checkpointId) throw new TypeError('ingress checkpoint ID is required')
@@ -113,7 +114,7 @@ export async function ingestTransportIngress(
     jmapState: derived.jmapState,
     deliveryOutbox: derived.deliveryOutbox,
   })
-  return { result }
+  return { result, targetIds: [...new Set(derived.events.flatMap(event => event.targetIds))] }
 }
 
 function assertEnvelope(value: IngressEnvelopeV1): void {

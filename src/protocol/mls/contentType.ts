@@ -12,13 +12,13 @@ export const contentTypes = {
 
 /** @public */
 export type ContentTypeName = keyof typeof contentTypes
-export type ContentTypeValue = (typeof contentTypes)[ContentTypeName]
+type ContentTypeValue = (typeof contentTypes)[ContentTypeName]
 
 export const contentTypeEncoder: BufferEncoder<ContentTypeName> = contramapBufferEncoder(
   uint8Encoder,
   (t) => contentTypes[t],
 )
 
-export const encodeContentType: Encoder<ContentTypeName> = encode(contentTypeEncoder)
+const encodeContentType: Encoder<ContentTypeName> = encode(contentTypeEncoder)
 
 export const decodeContentType: Decoder<ContentTypeName> = mapDecoderOption(decodeUint8, enumNumberToKey(contentTypes))

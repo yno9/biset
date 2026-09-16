@@ -17,14 +17,14 @@ export const defaultProposalTypes = {
 
 /** @public */
 export type DefaultProposalTypeName = keyof typeof defaultProposalTypes
-export type DefaultProposalTypeValue = (typeof defaultProposalTypes)[DefaultProposalTypeName]
+type DefaultProposalTypeValue = (typeof defaultProposalTypes)[DefaultProposalTypeName]
 
 export const defaultProposalTypeEncoder: BufferEncoder<DefaultProposalTypeName> = contramapBufferEncoder(
   uint16Encoder,
   (n) => defaultProposalTypes[n],
 )
 
-export const encodeDefaultProposalType: Encoder<DefaultProposalTypeName> = encode(defaultProposalTypeEncoder)
+const encodeDefaultProposalType: Encoder<DefaultProposalTypeName> = encode(defaultProposalTypeEncoder)
 
 export const decodeDefaultProposalType: Decoder<DefaultProposalTypeName> = mapDecoderOption(
   decodeUint16,

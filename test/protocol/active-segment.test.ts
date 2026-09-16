@@ -7,18 +7,14 @@
 // in memory, past the single AEAD wrap operation it exists for.
 import { describe, expect, test } from 'bun:test'
 import { ActiveVaultSegmentManager } from '../../src/client/store/vault/active-segment.ts'
-import type { SegmentKeyWrapSigner } from '../../src/client/store/vault/crypto.ts'
+import type { SegmentGrantor } from '../../src/client/store/vault/crypto.ts'
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
 import type { VaultEpochKeyResolver } from '../../src/client/store/vault/segment-key-resolver.ts'
 import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/client/store/vault/store.ts'
 import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
 
 const identityId = 'did:web:alice.example'
-const signer: SegmentKeyWrapSigner = {
-  deviceId: 'device-a',
-  async sign(bytes) { return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)) },
-  async verify() { return true },
-}
+const signer: SegmentGrantor = { deviceId: 'device-a' }
 
 function memoryWrapStore(): SegmentKeyWrapReader & SegmentKeyWrapWriter {
   const rows = new Map<string, SegmentKeyWrapV1>()

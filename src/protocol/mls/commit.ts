@@ -16,7 +16,7 @@ export const commitEncoder: BufferEncoder<Commit> = contramapBufferEncoders(
   (commit) => [commit.proposals, commit.path] as const,
 )
 
-export const encodeCommit: Encoder<Commit> = encode(commitEncoder)
+const encodeCommit: Encoder<Commit> = encode(commitEncoder)
 
 export const decodeCommit: Decoder<Commit> = mapDecoders(
   [decodeVarLenType(decodeProposalOrRef), decodeOptional(decodeUpdatePath)],

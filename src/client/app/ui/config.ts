@@ -12,11 +12,11 @@ declare const __BISET_CONFIG__: {
   didDocumentServices?: DidDocumentServiceTemplate[]
 } | undefined
 
-export interface DidDocumentServiceTemplate {
+interface DidDocumentServiceTemplate {
   /** Biset-only placeholder binding; never published in the DID Document.
    * MIMI Vault used to have a 'mimi-vault' purpose here too, before its
    * room id became Wallet-derived instead of published (see
-   * did-md-oauth.ts's MIMI_VAULT_ROOM_DERIVED_SECRET_PURPOSE) -- there is
+   * no longer used for self-Vault synchronization -- there is
    * no longer a DID Document service template for it at all. */
   purpose?: 'didcomm'
   id: string
@@ -42,6 +42,7 @@ export interface BisetConfig {
 
 const defaultDidDocumentServices: DidDocumentServiceTemplate[] = [
   { purpose: 'didcomm', id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: '$mediatorUrl', accept: ['didcomm/v2'], routingKeys: ['$routingKid'] }, previousIds: ['#didcomm-biset'] },
+  { id: '#biset-vault', type: 'BisetVault', serviceEndpoint: '$vaultGeneration' },
 ]
 
 export function readBisetConfig(): BisetConfig {

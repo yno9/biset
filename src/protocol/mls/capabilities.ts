@@ -26,7 +26,7 @@ export const capabilitiesEncoder: BufferEncoder<Capabilities> = contramapBufferE
   (cap) => [cap.versions, cap.ciphersuites, cap.extensions, cap.proposals, cap.credentials] as const,
 )
 
-export const encodeCapabilities: Encoder<Capabilities> = encode(capabilitiesEncoder)
+const encodeCapabilities: Encoder<Capabilities> = encode(capabilitiesEncoder)
 
 export const decodeCapabilities: Decoder<Capabilities> = mapDecoders(
   [

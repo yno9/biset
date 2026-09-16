@@ -70,6 +70,16 @@ describe('contact key vault reader', () => {
     await expect(makeReader([first, second]).currentFor(counterpartyDid)).rejects.toThrow('ambiguous')
   })
 
+  test('collapses the equivalent duplicate created by a crossing INIT/ACCEPT race', async () => {
+    const first = await record(1, contactKey('2026-08-27T00:00:00.000Z'))
+    const duplicate = await record(2, { ...first.contactKey, createdAt: '2026-08-27T00:00:01.000Z' })
+    const reader = makeReader([first, duplicate])
+
+    expect((await reader.currentFor(counterpartyDid))?.ownRelationshipKid).toBe(first.contactKey.ownRelationshipKid)
+    expect((await reader.forOwnKid(first.contactKey.ownRelationshipKid))?.counterpartyRelationshipKid).toBe(first.contactKey.counterpartyRelationshipKid)
+    expect((await reader.forCounterpartyKid(first.contactKey.counterpartyRelationshipKid))?.ownRelationshipKid).toBe(first.contactKey.ownRelationshipKid)
+  })
+
   test('rejects a contact key event whose signature is invalid', async () => {
     const value = await record(1, contactKey('2026-08-27T00:00:00.000Z'))
     const tampered = { ...value, event: { ...value.event, signature: new Uint8Array([0]) } }

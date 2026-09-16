@@ -8,9 +8,9 @@
 - `objects.ts`: 暗号化 object の封入と復号、hash 検証
 - `events.ts`: immutable event の署名・検証
 - `manifest.ts`: Merkle manifest と差分検出
-- `crypto.ts`: MLS exporter から導出した VEK、SegmentKey、key wrap
+- `crypto.ts`: Vault Content Key (VCK) で保護する SegmentKey と key wrap
 - `active-segment.ts`: 書き込み可能な現行 segment の決定と検証（`assertActiveVaultSegment`）
-- `storage-root.ts` / `segment-key-resolver.ts`: SegmentKey の解決経路
+- `segment-key-resolver.ts`: VCKでラップされたSegmentKeyの解決経路
 
 ## 書き込み
 
@@ -25,19 +25,18 @@
 ## 配送と同期
 
 - `delivery-pack.ts` / `delivery-outbox.ts` / `delivery-ingest.ts` / `delivery-projector.ts`: shared delivery、ACK、cursor
-- `mimi-vault-sync.ts` / `mimi-vault-chunks.ts`: biset-mimi Self Vault との同期（現行の複数端末同期の本番経路）
-- `vault-checkpoint.ts`: checkpoint の封入と復元
+- `crdt-log.ts` / `vault-sync-chunks.ts`: YjsイベントログとDIDComm Vault同期のペイロード分割
 - `ingress-ingest.ts` / `ingress-sync.ts`: 外部 ingress の確定
 
 ## 復旧
 
-- `recovery-archive.ts` / `recovery-archive-export.ts` / `recovery-archive-rewrap.ts`:
-  checkpoint で使う利用者管理の暗号化 archive
+- `recovery-archive.ts` / `recovery-archive-export.ts`:
+  利用者管理の暗号化 archive
 
 ## 規則
 
 - protocol と wire schema の正本は `src/protocol/`、システム全体の現行アーキテクチャは
-  リポジトリ直下の `ARC.md`（§6・§9 が Vault と Self Vault 同期を扱う）。
+  リポジトリ直下の `ARC.md`。
   かつてここが指していた `PLANIMPLEMENTATION.md` は 2026-09-05 に削除された
-- 長期正本はこの暗号化 Vault であり、mediator や biset-mimi ではない。
+- 長期正本はこの暗号化 Vault であり、mediator や第三者MIMI providerではない。
   サーバー側に history query や mailbox DB を持たせてはならない

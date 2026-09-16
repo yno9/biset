@@ -5,24 +5,23 @@ import type { SegmentKeyWrapV1 } from '../../../protocol/vault.ts'
 import type { VaultDeliveryPackV1 } from './delivery-pack.ts'
 import type { VaultDeliveryVerifierProjector } from './delivery-ingest.ts'
 import type { VaultEventVerifier } from './events.ts'
-import type { SegmentKeyWrapVerifier } from './crypto.ts'
 import { decryptVaultMutationRecords } from './mutation-records.ts'
 import { StoredSegmentKeyResolver, type VaultEpochKeyResolver } from './segment-key-resolver.ts'
 import type { SegmentKeyWrapReader } from './store.ts'
-import { VAULT_STORAGE_EPOCH, VAULT_STORAGE_GROUP_ID } from './storage-root.ts'
 
 export interface VaultDeliveryProjectorOptions {
   identityId: IdentityId
   currentSnapshot(): Promise<LocalJmapSnapshot>
   epochs: VaultEpochKeyResolver
-  verifier: VaultEventVerifier & SegmentKeyWrapVerifier
-  storageKek?: Uint8Array
+  verifier: VaultEventVerifier
 }
 
 /**
  * Concrete receive-side verifier for the mutation subset currently supported
- * by Local JMAP. It checks every current MLS wrap and event signature before
- * decrypting its object, then produces the next deterministic projection.
+ * by Local JMAP. It checks every current wrap's epoch and event signature
+ * before decrypting its object, then produces the next deterministic
+ * projection. SegmentKeyWrap decryption itself trusts the VCK AEAD alone
+ * (see crypto.ts's SegmentGrantor) rather than a per-device signature.
  */
 export class VaultDeliveryProjector implements VaultDeliveryVerifierProjector {
   constructor(private readonly options: VaultDeliveryProjectorOptions) {
@@ -36,24 +35,15 @@ export class VaultDeliveryProjector implements VaultDeliveryVerifierProjector {
   }> {
     if (pack.identityId !== this.options.identityId) throw new TypeError('vault delivery pack identity is not local identity')
     const wraps = new PackSegmentKeyWrapReader(pack.keyWraps)
-    if (this.options.storageKek && pack.keyWraps.every(wrap => wrap.selfGroupId === VAULT_STORAGE_GROUP_ID && wrap.recipientEpoch === VAULT_STORAGE_EPOCH)) {
-      validateStableWraps(pack.identityId, pack.keyWraps)
-    } else {
-      const current = await this.options.epochs.currentVaultEpoch(pack.identityId)
-      validateCurrentWraps(pack.identityId, pack.keyWraps, current.selfGroupId, current.epoch)
-    }
-    const resolver = new StoredSegmentKeyResolver(wraps, this.options.epochs, this.options.verifier, this.options.storageKek)
+    const current = await this.options.epochs.currentVaultEpoch(pack.identityId)
+    validateCurrentWraps(pack.identityId, pack.keyWraps, current.selfGroupId, current.epoch)
+    const resolver = new StoredSegmentKeyResolver(wraps, this.options.epochs)
     const records = await decryptVaultMutationRecords(pack.identityId, pack.events, pack.objects, resolver, this.options.verifier)
     const base = await this.options.currentSnapshot()
     const next = reduceLocalJmapProjection(pack.identityId, base, records)
     const projection: LocalJmapProjectionV1 = { version: 1, identityId: pack.identityId, ...next }
     return { projection, jmapState: { state: projection.state }, checkpointId: projection.state }
   }
-}
-
-function validateStableWraps(identityId: IdentityId, wraps: SegmentKeyWrapV1[]): void {
-  if (wraps.length === 0) throw new TypeError('vault delivery pack has no Vault storage key wraps')
-  for (const wrap of wraps) if (wrap.identityId !== identityId || wrap.selfGroupId !== VAULT_STORAGE_GROUP_ID || wrap.sourceEpoch !== VAULT_STORAGE_EPOCH || wrap.recipientEpoch !== VAULT_STORAGE_EPOCH) throw new TypeError('vault delivery key wrap is not for stable Vault storage')
 }
 
 class PackSegmentKeyWrapReader implements SegmentKeyWrapReader {
@@ -87,5 +77,5 @@ function wrapKey(identityId: IdentityId, segmentId: string, epoch: string): stri
 }
 
 function copyWrap(wrap: SegmentKeyWrapV1): SegmentKeyWrapV1 {
-  return { ...wrap, nonce: wrap.nonce.slice(), aad: wrap.aad.slice(), wrappedSegmentKey: wrap.wrappedSegmentKey.slice(), signature: wrap.signature.slice() }
+  return { ...wrap, nonce: wrap.nonce.slice(), aad: wrap.aad.slice(), wrappedSegmentKey: wrap.wrappedSegmentKey.slice() }
 }

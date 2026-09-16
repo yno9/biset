@@ -17,16 +17,16 @@ export const senderTypes = {
 
 /** @public */
 export type SenderTypeName = keyof typeof senderTypes
-export type SenderTypeValue = (typeof senderTypes)[SenderTypeName]
+type SenderTypeValue = (typeof senderTypes)[SenderTypeName]
 
-export const senderTypeEncoder: BufferEncoder<SenderTypeName> = contramapBufferEncoder(
+const senderTypeEncoder: BufferEncoder<SenderTypeName> = contramapBufferEncoder(
   uint8Encoder,
   (t) => senderTypes[t],
 )
 
-export const encodeSenderType: Encoder<SenderTypeName> = encode(senderTypeEncoder)
+const encodeSenderType: Encoder<SenderTypeName> = encode(senderTypeEncoder)
 
-export const decodeSenderType: Decoder<SenderTypeName> = mapDecoderOption(decodeUint8, enumNumberToKey(senderTypes))
+const decodeSenderType: Decoder<SenderTypeName> = mapDecoderOption(decodeUint8, enumNumberToKey(senderTypes))
 
 /** @public */
 export interface SenderMember {
@@ -74,7 +74,7 @@ export const senderEncoder: BufferEncoder<Sender> = (s) => {
   }
 }
 
-export const encodeSender: Encoder<Sender> = encode(senderEncoder)
+const encodeSender: Encoder<Sender> = encode(senderEncoder)
 
 export const decodeSender: Decoder<Sender> = flatMapDecoder(decodeSenderType, (senderType): Decoder<Sender> => {
   switch (senderType) {
@@ -117,7 +117,7 @@ export interface SenderData {
 
 export type ReuseGuard = Uint8Array & { length: 4 }
 
-export const reuseGuardEncoder: BufferEncoder<ReuseGuard> = (g) => [
+const reuseGuardEncoder: BufferEncoder<ReuseGuard> = (g) => [
   4,
   (offset, buffer) => {
     const view = new Uint8Array(buffer, offset, 4)
@@ -125,9 +125,9 @@ export const reuseGuardEncoder: BufferEncoder<ReuseGuard> = (g) => [
   },
 ]
 
-export const encodeReuseGuard: Encoder<ReuseGuard> = encode(reuseGuardEncoder)
+const encodeReuseGuard: Encoder<ReuseGuard> = encode(reuseGuardEncoder)
 
-export const decodeReuseGuard: Decoder<ReuseGuard> = (b, offset) => {
+const decodeReuseGuard: Decoder<ReuseGuard> = (b, offset) => {
   return [b.subarray(offset, offset + 4) as ReuseGuard, 4]
 }
 
@@ -136,7 +136,7 @@ export const senderDataEncoder: BufferEncoder<SenderData> = contramapBufferEncod
   (s) => [s.leafIndex, s.generation, s.reuseGuard] as const,
 )
 
-export const encodeSenderData: Encoder<SenderData> = encode(senderDataEncoder)
+const encodeSenderData: Encoder<SenderData> = encode(senderDataEncoder)
 
 export const decodeSenderData: Decoder<SenderData> = mapDecoders(
   [decodeUint32, decodeUint32, decodeReuseGuard],
@@ -158,9 +158,9 @@ export const senderDataAADEncoder: BufferEncoder<SenderDataAAD> = contramapBuffe
   (aad) => [aad.groupId, aad.epoch, aad.contentType] as const,
 )
 
-export const encodeSenderDataAAD: Encoder<SenderDataAAD> = encode(senderDataAADEncoder)
+const encodeSenderDataAAD: Encoder<SenderDataAAD> = encode(senderDataAADEncoder)
 
-export const decodeSenderDataAAD: Decoder<SenderDataAAD> = mapDecoders(
+const decodeSenderDataAAD: Decoder<SenderDataAAD> = mapDecoders(
   [decodeVarLenData, decodeUint64, decodeContentType],
   (groupId, epoch, contentType) => ({
     groupId,
@@ -169,7 +169,7 @@ export const decodeSenderDataAAD: Decoder<SenderDataAAD> = mapDecoders(
   }),
 )
 
-export function sampleCiphertext(cs: CiphersuiteImpl, ciphertext: Uint8Array): Uint8Array {
+function sampleCiphertext(cs: CiphersuiteImpl, ciphertext: Uint8Array): Uint8Array {
   return ciphertext.length < cs.kdf.size ? ciphertext : ciphertext.subarray(0, cs.kdf.size)
 }
 

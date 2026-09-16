@@ -2,7 +2,7 @@
 //
 // This is the browser half of the MLS layer (group.ts is platform-free).
 // Unlike the pre-rewrite `src.bak/mls/store.ts`, this holds only what the
-// roster/vault-epoch path (PLAN.md §4.1) needs — the encoded `ClientState`
+// roster path needs — the encoded `ClientState`
 // for this identity's self group — and none of the pre-rewrite DS routing
 // fields (`dsDid`/`dsUrl`) or the key-package pool, both of which belong to
 // the DS-communication rewrite (KeyPackage directory / GroupInfo / Commit
@@ -13,14 +13,14 @@
 // losing forward access to the group without another member's help), not
 // vault content, and keeping it out of the vault database means neither
 // schema's migrations ever have to reason about the other's stores.
-import { decodeState, encodeState, epochOf, exportSecret } from './group.ts'
+import { decodeState, encodeState } from './group.ts'
 import type { ClientState } from '../../protocol/mls/index.ts'
 
 /* Persisted shapes for the Self/Vault MIMI room. Declared here rather than
  * beside the session that uses them: they describe what this store writes,
  * and keeping them here is what lets client/mimi depend on client/mls
  * without the reverse edge. */
-export interface MimiVaultPendingApplication {
+interface MimiVaultPendingApplication {
   deliveryId: string
   plaintextHash: Uint8Array
   appMessage: Uint8Array
@@ -39,12 +39,10 @@ export interface MimiVaultSessionRecord {
    * application ciphertexts. */
   deliveryCursor?: number
 }
-export interface MimiVaultSessionStateStore {
+interface MimiVaultSessionStateStore {
   loadMimiVault(identityId: string): Promise<MimiVaultSessionRecord | undefined>
   saveMimiVault(identityId: string, value: MimiVaultSessionRecord): Promise<void>
 }
-import { mlsEpoch } from '../../protocol/ids.ts'
-import type { MlsEpochExporter, MlsSelfGroupProvider } from './vault-epoch.ts'
 
 const DATABASE_NAME = 'biset-mls-self-group'
 const DATABASE_VERSION = 1
@@ -64,7 +62,7 @@ export interface LoadedMlsSelfGroup {
   state: ClientState
 }
 
-export interface MlsSelfGroupStateStore {
+interface MlsSelfGroupStateStore {
   save(identityId: string, selfGroupId: string, state: ClientState): Promise<void>
   load(identityId: string): Promise<LoadedMlsSelfGroup | undefined>
 }
@@ -144,27 +142,6 @@ function copyMimiVaultPending(value: MimiVaultPendingApplication): MimiVaultPend
 }
 function copyMimiVaultMetadata(value: NonNullable<StoredMlsSelfGroup['mimiVault']>): NonNullable<StoredMlsSelfGroup['mimiVault']> {
   return { roomId: value.roomId, ...(value.pending === undefined ? {} : { pending: copyMimiVaultPending(value.pending) }), ...(value.ownApplicationHashes === undefined ? {} : { ownApplicationHashes: [...value.ownApplicationHashes] }), ...(value.deliveryCursor === undefined ? {} : { deliveryCursor: value.deliveryCursor }) }
-}
-
-/**
- * The concrete `MlsSelfGroupProvider` (`vault-epoch.ts`) `MlsVaultEpochKeyResolver`
- * needs: reads this identity's stored `ClientState` and exposes only its
- * `exportSecret` — the store, and the decoded state, never leave this
- * function's closure.
- */
-export class StoredMlsSelfGroupProvider implements MlsSelfGroupProvider {
-  constructor(private readonly store: MlsSelfGroupStateStore) {}
-
-  async currentSelfGroup(identityId: string): Promise<MlsEpochExporter> {
-    const stored = await this.store.load(identityId)
-    if (!stored) throw new Error(`StoredMlsSelfGroupProvider: no self-group state for ${identityId}`)
-    const { selfGroupId, state } = stored
-    return {
-      selfGroupId,
-      epoch: mlsEpoch(epochOf(state)),
-      exportSecret: (label, context, length) => exportSecret(state, label, context, length),
-    }
-  }
 }
 
 function openDatabase(): Promise<IDBDatabase> {

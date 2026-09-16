@@ -117,8 +117,7 @@ export async function applyPublicCommit(
     // processMessages.ts's applyTreeUpdate. Skipping this and calling
     // applyUpdatePath directly against the un-extended tree fed treemath
     // functions (filteredDirectPath et al.) a leaf index outside the
-    // tree's actual width -- not a throw, an infinite loop (found live,
-    // 2026-09-02, via test/mls/mimi-vault-room.test.ts hanging).
+    // tree's actual width -- not a throw, an infinite loop.
     const committerLeafIndex = senderLeafIndex ?? (() => {
       if (additionalResult.kind !== 'externalCommit') throw new ValidationError('Cannot verify commit leaf node because no committer leaf index found')
       const [extended, leafNodeIndex] = addLeafNode(tree, message.content.commit.path!.leafNode)

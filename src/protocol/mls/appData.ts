@@ -9,15 +9,15 @@ export const APP_DATA_DICTIONARY_EXTENSION_TYPE = 0x0006
 /** `draft-ietf-mls-extensions`-10 §4.7 / §7.2.1. */
 export const APP_DATA_UPDATE_PROPOSAL_TYPE = 0x0008
 
-export interface ComponentData { componentId: number; data: Uint8Array }
-export interface AppDataDictionary { componentData: ComponentData[] }
+interface ComponentData { componentId: number; data: Uint8Array }
+interface AppDataDictionary { componentData: ComponentData[] }
 
 const componentDataEncoder: BufferEncoder<ComponentData> = contramapBufferEncoders(
   [uint16Encoder, varLenDataEncoder],
   value => [value.componentId, value.data] as const,
 )
-export const encodeComponentData: Encoder<ComponentData> = encode(componentDataEncoder)
-export const decodeComponentData: Decoder<ComponentData> = mapDecoders(
+const encodeComponentData: Encoder<ComponentData> = encode(componentDataEncoder)
+const decodeComponentData: Decoder<ComponentData> = mapDecoders(
   [decodeUint16, decodeVarLenData],
   (componentId, data) => ({ componentId, data }),
 )
@@ -26,13 +26,13 @@ const appDataDictionaryEncoder: BufferEncoder<AppDataDictionary> = contramapBuff
   [varLenTypeEncoder(componentDataEncoder)],
   value => [sortedUnique(value.componentData)] as const,
 )
-export const encodeAppDataDictionary: Encoder<AppDataDictionary> = encode(appDataDictionaryEncoder)
-export const decodeAppDataDictionary: Decoder<AppDataDictionary> = mapDecoder(
+const encodeAppDataDictionary: Encoder<AppDataDictionary> = encode(appDataDictionaryEncoder)
+const decodeAppDataDictionary: Decoder<AppDataDictionary> = mapDecoder(
   decodeVarLenType(decodeComponentData),
   componentData => ({ componentData }),
 )
 
-export type AppDataUpdateOperation = 'update' | 'remove'
+type AppDataUpdateOperation = 'update' | 'remove'
 export interface AppDataUpdate { componentId: number; operation: AppDataUpdateOperation; update?: Uint8Array }
 
 export const appDataUpdateEncoder: BufferEncoder<AppDataUpdate> = (value) => {
@@ -43,7 +43,7 @@ export const appDataUpdateEncoder: BufferEncoder<AppDataUpdate> = (value) => {
   if (value.update !== undefined) throw new TypeError('AppDataUpdate remove operation must not contain update bytes')
   return contramapBufferEncoders<[number, number], AppDataUpdate>([uint16Encoder, uint8Encoder], item => [item.componentId, 2] as const)(value)
 }
-export const encodeAppDataUpdate: Encoder<AppDataUpdate> = encode(appDataUpdateEncoder)
+const encodeAppDataUpdate: Encoder<AppDataUpdate> = encode(appDataUpdateEncoder)
 export const decodeAppDataUpdate: Decoder<AppDataUpdate> = flatMapDecoder(
   decodeUint16,
   componentId => flatMapDecoder(decodeUint8, operation => {
@@ -53,7 +53,7 @@ export const decodeAppDataUpdate: Decoder<AppDataUpdate> = flatMapDecoder(
   }),
 )
 
-export function appDataDictionaryFrom(extensions: Extension[]): AppDataDictionary | undefined {
+function appDataDictionaryFrom(extensions: Extension[]): AppDataDictionary | undefined {
   const extension = extensions.find(value => value.extensionType === APP_DATA_DICTIONARY_EXTENSION_TYPE)
   if (!extension) return undefined
   const decoded = decodeAppDataDictionary(extension.extensionData, 0)

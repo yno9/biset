@@ -32,7 +32,7 @@ import { resolve } from '../../../protocol/webvh/resolver.ts'
 import { shortWebvhDid } from './did-display.ts'
 import { showComposePage } from './compose-page.ts'
 import { mountNewUserPageInline, unmountNewUserPageInline, setupNewUserPage } from './account-create.ts'
-import { getAccountConfig, type AccountPageConfig, type VaultCardState, type VaultCardStatus } from './account/state.ts'
+import { getAccountConfig, type AccountPageConfig, type VaultCardStatus } from './account/state.ts'
 import { openDropdownMenu, type MenuItem } from './account/menu.ts'
 
 // The page's own state and markup live here; the pieces below were split out
@@ -46,46 +46,16 @@ export { configureAccountPage } from './account/state.ts'
 // AccountPageConfig is configureAccountPage's parameter type and has no
 // caller outside account/, so it stays internal (S7's rule).
 export type { VaultCardStatus } from './account/state.ts'
-export { showConfigPage, hideConfigPage, inConfigMode } from './account/config-page.ts'
+export { showConfigPage, hideConfigPage, inConfigMode, configureMarkdownVaultToggle } from './account/config-page.ts'
 
 let active = false
 
-/** Update only the Vault card when the background MIMI Vault session moves
- * between checking/connected/error states. Repainting the whole account page
- * here would close an open identity menu or expanded Vault panel every ten
- * seconds, so this intentionally targets the one reusable relay-card slot. */
+/** Refresh the device roster without repainting the identity card. */
 export function updateVaultCardStatus(status: VaultCardStatus): void {
   const config = getAccountConfig()
   if (!config?.did) return
   config.vault = status
-  // renderVaultCard owns (and replaces) the shared account-card list. Keep
-  // the adjacent Wallet session card in that list on lightweight Vault
-  // status updates; otherwise every 10-second sync makes it disappear until
-  // the next full account-page render.
-  if (active) {
-    renderVaultCard()
-    renderWalletAccountCard()
-    renderMediatorCard()
-    renderHistoryRecoveryCard()
-  }
-}
-
-/** Same shared-list repaint as updateVaultCardStatus, driven independently:
- * main.ts calls this once per sync round with whatever
- * `vaultStore.readCheckpointRecoveryStatus` currently says, so the card
- * appears the round a checkpoint turns out unrecoverable and disappears the
- * round a sibling's fresh one lands -- without waiting for a full
- * account-page re-render. */
-export function updateHistoryRecoveryStatus(status: AccountPageConfig['historyRecovery']): void {
-  const config = getAccountConfig()
-  if (!config?.did) return
-  config.historyRecovery = status
-  if (active) {
-    renderVaultCard()
-    renderWalletAccountCard()
-    renderMediatorCard()
-    renderHistoryRecoveryCard()
-  }
+  if (active) renderMediatorCard()
 }
 
 export function inAccountMode(): boolean {
@@ -100,20 +70,29 @@ export function inAccountMode(): boolean {
  * entirely rather than ported inert -- per user direction, an unwired item
  * belongs in the menu looking exactly like the rest, not missing. */
 function identityMenuItems(did: string): MenuItem[] {
-  if (getAccountConfig()?.wallet) {
-    return [{
+  const wallet = getAccountConfig()?.wallet
+  if (wallet) {
+    return [
+      ...(wallet.reconnectRequired && wallet.onReconnect ? [{
+        label: 'Reconnect Wallet', onClick: () => {
+          void wallet.onReconnect?.().catch(error => getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error)))
+        },
+      }] : []),
+      { label: 'Export Messages', onClick: () => { void getAccountConfig()?.onExportMessages?.().catch(error => getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))) } },
+      { label: 'Import Messages', onClick: () => { void getAccountConfig()?.onImportMessages?.().catch(error => getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))) } },
+      {
       label: 'Disconnect Wallet', danger: true, onClick: () => {
         const config = getAccountConfig()
-        if (!confirm(`Disconnect ${config!.wallet!.handle} from this browser? The capability can still be revoked from did.md Wallet.`)) return
+        const expires = new Date(config!.wallet!.capabilityExpiresAt).toLocaleDateString()
+        if (!confirm(`Disconnect ${config!.wallet!.handle} from this browser? Its capability remains valid until ${expires}.`)) return
         void config!.wallet!.onDisconnect().catch(error => getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error)))
       },
     }]
   }
-  const noop = () => {}
   return [
     { label: 'Protect with passkey', onClick: noop },
-    { label: 'Export Messages', onClick: noop },
-    { label: 'Import Messages', onClick: noop },
+    { label: 'Export Messages', onClick: () => { void getAccountConfig()?.onExportMessages?.() } },
+    { label: 'Import Messages', onClick: () => { void getAccountConfig()?.onImportMessages?.() } },
     {
       label: 'Log out', danger: true, onClick: () => {
         const config = getAccountConfig()
@@ -124,6 +103,8 @@ function identityMenuItems(did: string): MenuItem[] {
     },
   ]
 }
+
+function noop(): void {}
 
 // Verbatim from src.bak/ui/left-pane.ts's renderAccountPage() -- every
 // element it had, including the ones this rewrite can't wire up yet
@@ -142,6 +123,7 @@ const PAGE_HTML = `<div class="cmd-page-content wide-page">
         <div id="cmd-acc-identity-did-row">
           <span id="cmd-acc-identity-did"></span>
           <button id="cmd-acc-identity-copy" type="button" aria-label="Copy DID" title="Copy DID"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
+          <span id="cmd-acc-capability-expiry"></span>
         </div>
       </div>
       <button id="cmd-acc-identity-menu-btn" type="button" aria-label="Menu"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
@@ -166,248 +148,21 @@ function coordinatorHost(url: string): string {
   try { return new URL(url).host } catch { return url }
 }
 
-function shortenedOpaqueId(value: string): string {
-  return value.length > 24 ? `${value.slice(0, 12)}…${value.slice(-8)}` : value
-}
-
-/** The old relay card's visual grammar, now used for the one persistence
- * service this client actually has: dot + service/address heading, compact
- * stats, and a click-to-expand storage panel. */
-function renderVaultCard(): void {
-  const list = document.getElementById('cmd-acc-list')
-  const status = getAccountConfig()?.vault
-  if (!list || !status) return
-  const wasExpanded = document.getElementById('cmd-acc-vault-card')?.classList.contains('expanded') ?? false
-  list.replaceChildren()
-
-  const colors: Record<VaultCardState, string> = {
-    checking: '#8e8e93', connecting: '#ff9500', syncing: '#0a84ff',
-    connected: '#34c759', 'reconnect-required': '#ff9500', error: '#ff3b30',
-  }
-  const labels: Record<VaultCardState, string> = {
-    checking: 'Checking connection…', connecting: 'Connecting…', syncing: 'Syncing…',
-    connected: 'Connected', 'reconnect-required': 'Reconnect required', error: 'Connection error',
-  }
-
-  const wrap = document.createElement('div')
-  wrap.className = 'acc-card-wrap'
-  if (wasExpanded) wrap.classList.add('expanded')
-  wrap.id = 'cmd-acc-vault-card'
-  const row = document.createElement('div')
-  row.className = 'cmd-page-row'
-  row.style.cssText = 'gap:12px;align-items:center;padding:10px 12px'
-  const left = document.createElement('div')
-  left.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:4px'
-  const head = document.createElement('div')
-  head.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0'
-  const dot = document.createElement('span')
-  dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${colors[status.state]}`
-  const title = document.createElement('span')
-  title.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--accent2, #888);flex-shrink:0'
-  title.textContent = 'Vault'
-  const sep = document.createElement('span')
-  sep.style.cssText = 'color:var(--text-dim);flex-shrink:0'
-  sep.textContent = ':'
-  const endpoint = document.createElement('span')
-  endpoint.style.cssText = 'font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
-  endpoint.textContent = coordinatorHost(status.coordinatorUrl)
-  head.append(dot, title, sep, endpoint)
-
-  const stats = document.createElement('div')
-  stats.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:var(--text-dim)'
-  const state = document.createElement('span')
-  state.textContent = labels[status.state]
-  state.style.color = status.state === 'error' ? '#ff3b30' : status.state === 'reconnect-required' ? '#ff9500' : ''
-  stats.appendChild(state)
-  if (status.latestSeq !== undefined) {
-    const sync = document.createElement('span')
-    sync.textContent = `Sync: ${status.localSeq ?? '…'}/${status.latestSeq}`
-    stats.appendChild(sync)
-  }
-  if (status.checkpointSeq !== undefined) {
-    const checkpoint = document.createElement('span')
-    checkpoint.textContent = `Checkpoint: ${status.checkpointSeq}`
-    stats.appendChild(checkpoint)
-  }
-  left.append(head, stats)
-  row.appendChild(left)
-
-  // A reconnect-required/error state used to offer a "Reconnect" button here
-  // (Coordinator's OIDC re-auth). MIMI has no equivalent user action --
-  // membership plus the MLS leaf signature authenticate every request, so
-  // recovering from either state is automatic on the next sync poll rather
-  // than something a click drives.
-
-  const panel = document.createElement('div')
-  panel.className = 'acc-storage-panel'
-  const panelHeader = document.createElement('div')
-  panelHeader.className = 'acc-storage-header'
-  const panelTitle = document.createElement('span')
-  panelTitle.className = 'acc-storage-title'
-  panelTitle.textContent = 'Details'
-  panelHeader.appendChild(panelTitle)
-  const details = document.createElement('div')
-  details.className = 'acc-storage-tree'
-  details.style.cssText = 'display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 12px;color:var(--text-dim)'
-  const addDetail = (name: string, value: string | undefined, titleText?: string) => {
-    if (value === undefined) return
-    const key = document.createElement('span')
-    key.textContent = name
-    const val = document.createElement('span')
-    val.style.cssText = 'font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)'
-    val.textContent = value
-    if (titleText) val.title = titleText
-    details.append(key, val)
-  }
-  addDetail('Endpoint', status.coordinatorUrl)
-  addDetail('Vault ID', status.vaultId ? shortenedOpaqueId(status.vaultId) : '—', status.vaultId)
-  addDetail('Stream', status.latestSeq === undefined ? '—' : `${status.localSeq ?? '…'} / ${status.latestSeq}`)
-  addDetail('Checkpoint', status.checkpointSeq ?? '—')
-  if (status.detail) addDetail('Status', status.detail)
-  panel.append(panelHeader, details)
-  if (status.devices?.length) {
-    const devicesHeader = document.createElement('div')
-    devicesHeader.className = 'acc-storage-header'
-    devicesHeader.style.marginTop = '14px'
-    const devicesTitle = document.createElement('span')
-    devicesTitle.className = 'acc-storage-title'
-    devicesTitle.textContent = 'Devices'
-    devicesHeader.appendChild(devicesTitle)
-    const devices = document.createElement('div')
-    devices.className = 'acc-device-list'
-    for (const device of status.devices) {
-      const line = document.createElement('div')
-      line.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;font-size:13px'
-      const id = document.createElement('span')
-      id.style.cssText = 'font-family:ui-monospace,monospace;color:var(--text-dim)'
-      const fragment = device.deviceId.includes('#') ? device.deviceId.slice(device.deviceId.indexOf('#')) : device.deviceId
-      id.textContent = fragment.length > 18 ? `${fragment.slice(0, 10)}…` : fragment
-      id.title = device.deviceId
-      line.appendChild(id)
-      if (device.current) {
-        const tag = document.createElement('span')
-        tag.textContent = 'this device'
-        tag.style.cssText = 'font-size:10px;font-weight:700;color:var(--accent);flex-shrink:0'
-        line.appendChild(tag)
-      } else if (getAccountConfig()?.onRemoveVaultDevice) {
-        const remove = document.createElement('button')
-        remove.type = 'button'
-        remove.className = 'cmd-page-btn'
-        remove.style.cssText = 'padding:2px 8px;font-size:10px;font-weight:700;flex-shrink:0;color:#ff3b30'
-        remove.textContent = 'Remove'
-        remove.addEventListener('click', event => {
-          event.stopPropagation()
-          if (!confirm(`Remove this device (${device.deviceId}) from the Vault? It will stop syncing immediately.`)) return
-          remove.disabled = true
-          remove.textContent = '…'
-          void getAccountConfig()?.onRemoveVaultDevice?.(device.deviceId)
-            .then(() => getAccountConfig()?.showMessage?.('Device removed'))
-            .catch(error => {
-              getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
-              remove.disabled = false
-              remove.textContent = 'Remove'
-            })
-        })
-        line.appendChild(remove)
-      }
-      devices.appendChild(line)
-    }
-    panel.append(devicesHeader, devices)
-  }
-  wrap.append(row, panel)
-  row.addEventListener('click', () => wrap.classList.toggle('expanded'))
-  list.appendChild(wrap)
-}
-
-function renderWalletAccountCard(): void {
-  const wallet = getAccountConfig()?.wallet
-  const list = document.getElementById('cmd-acc-list')
-  if (!wallet || !list) return
-  const row = document.createElement('div')
-  row.className = 'cmd-page-row'
-  row.style.cssText = 'gap:12px;align-items:center;padding:10px 12px'
-  const detail = document.createElement('div')
-  detail.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:4px'
-  const title = document.createElement('div')
-  title.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600'
-  const dot = document.createElement('span')
-  dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${wallet.reconnectRequired ? '#ff9500' : '#34c759'};flex-shrink:0`
-  const label = document.createElement('span')
-  label.textContent = 'did.md Wallet'
-  title.append(dot, label)
-  const description = document.createElement('div')
-  description.style.cssText = 'font-size:11px;color:var(--text-dim)'
-  description.textContent = wallet.reconnectRequired
-    ? 'Capability expired · reconnect required (local data is preserved)'
-    : wallet.deviceKid
-    ? `Connected · MLS device enrolled · capability until ${new Date(wallet.capabilityExpiresAt).toLocaleDateString()}`
-    : `Connected · reconnect to enroll this browser's MLS device · capability until ${new Date(wallet.capabilityExpiresAt).toLocaleDateString()}`
-  detail.append(title, description)
-  // Once DIDComm is registered, its own status lives in the separate
-  // Mediator card (renderMediatorCard) -- the old relay card's visual
-  // grammar (dot + service/address heading), matching Vault's card instead
-  // of a plain text line buried in this one (user-requested, 2026-09-09:
-  // "⚫︎ Mediator : mediator.biset.md" as its own card). Not yet
-  // configured deployments always get a Mediator card, including its grey
-  // logged-out state; this fallback remains only for deployments with no
-  // configured mediator URL at all.
-  if (!wallet.didComm) {
-    const messaging = document.createElement('div')
-    messaging.style.cssText = 'font-size:11px;color:var(--text-dim)'
-    if (wallet.onEnableMessaging) {
-      const enable = document.createElement('button')
-      enable.type = 'button'
-      enable.className = 'cmd-page-btn'
-      enable.style.cssText = 'width:auto;padding:3px 7px;font-size:10px;margin-top:2px'
-      enable.textContent = 'Enable DIDComm messaging'
-      enable.addEventListener('click', () => {
-        enable.disabled = true
-        void wallet.onEnableMessaging!().catch(error => {
-          getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
-          enable.disabled = false
-        })
-      })
-      messaging.append(enable)
-    } else {
-      messaging.textContent = 'DIDComm messaging is not configured for this Biset deployment'
-    }
-    detail.append(messaging)
-  }
-  const disconnect = document.createElement('button')
-  disconnect.type = 'button'
-  disconnect.className = 'cmd-page-btn'
-  disconnect.style.cssText = 'width:auto;padding:5px 9px;font-size:11px'
-  disconnect.textContent = wallet.reconnectRequired ? 'Reconnect' : 'Disconnect'
-  disconnect.addEventListener('click', () => {
-    if (wallet.reconnectRequired && wallet.onReconnect) {
-      disconnect.disabled = true
-      void wallet.onReconnect().catch(error => { getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error)); disconnect.disabled = false })
-      return
-    }
-    if (!confirm(`Disconnect ${wallet.handle} from this browser? The capability can still be revoked from did.md Wallet.`)) return
-    disconnect.disabled = true
-    void wallet.onDisconnect().catch(error => {
-      getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
-      disconnect.disabled = false
-    })
-  })
-  row.append(detail, disconnect)
-  list.appendChild(row)
-}
-
-/** The old relay card's visual grammar (renderVaultCard's own head row),
- * reused for the configured DIDComm mediator -- a standalone
- * "⚫︎ Mediator : host" card next to Vault's, not a text line buried inside
- * the Wallet card (user-requested, 2026-09-09). No expand panel: unlike
- * Vault there's no device list or checkpoint detail to drill into, just the
- * one endpoint and its state. */
+/** The mediator is the account's one service card. Its accordion contains
+ * the current DIDComm/Vault-generation device roster. */
 function renderMediatorCard(): void {
-  const wallet = getAccountConfig()?.wallet
+  const config = getAccountConfig()
+  const wallet = config?.wallet
   const list = document.getElementById('cmd-acc-list')
-  if (!wallet?.didComm || !list) return
+  if (!list) return
+  const wasExpanded = document.getElementById('cmd-acc-mediator-card')?.classList.contains('expanded') ?? false
+  list.replaceChildren()
+  if (!wallet?.didComm) return
 
   const wrap = document.createElement('div')
   wrap.className = 'acc-card-wrap'
+  wrap.id = 'cmd-acc-mediator-card'
+  if (wasExpanded) wrap.classList.add('expanded')
   const row = document.createElement('div')
   row.className = 'cmd-page-row'
   row.style.cssText = 'gap:12px;align-items:center;padding:10px 12px'
@@ -438,10 +193,22 @@ function renderMediatorCard(): void {
   left.append(head, stats)
   row.appendChild(left)
 
-  // Same "⋮" affordance as the identity heading's own menu button
-  // (cmd-acc-identity-menu-btn), scoped to this one card -- Edit server /
-  // Log out (user-requested, 2026-09-09). No Vault equivalent yet
-  // (renderVaultCard has its own click-to-expand instead, no menu).
+  let removingOtherDevices = false
+  const removeOtherDevices = (): void => {
+    if (removingOtherDevices || !config?.onRotateVaultKey) return
+    if (!confirm('Remove all other devices from the current Vault generation? They will need to log in again. Previously received content cannot be revoked.')) return
+    removingOtherDevices = true
+    devices.querySelectorAll<HTMLButtonElement>('.acc-device-removable').forEach(button => { button.disabled = true })
+    void config.onRotateVaultKey()
+      .then(() => getAccountConfig()?.showMessage?.('Other devices removed'))
+      .catch(error => {
+        removingOtherDevices = false
+        devices.querySelectorAll<HTMLButtonElement>('.acc-device-removable').forEach(button => { button.disabled = false })
+        getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
+      })
+  }
+
+  // Same "⋮" affordance as the identity heading's own menu button.
   const menuBtn = document.createElement('button')
   menuBtn.type = 'button'
   menuBtn.setAttribute('aria-label', 'Mediator menu')
@@ -480,46 +247,68 @@ function renderMediatorCard(): void {
   })
   row.appendChild(menuBtn)
 
-  wrap.appendChild(row)
-  list.appendChild(wrap)
-}
-
-/** Same "append into the shared list, do not wipe it" convention as
- * renderWalletAccountCard: renderVaultCard alone owns the replaceChildren
- * that clears #cmd-acc-list for this render pass. Absent entirely (not just
- * hidden) when there is nothing to report -- most accounts never see this
- * card. */
-function renderHistoryRecoveryCard(): void {
-  const recovery = getAccountConfig()?.historyRecovery
-  const list = document.getElementById('cmd-acc-list')
-  if (!recovery || !list) return
-
-  const wrap = document.createElement('div')
-  wrap.className = 'acc-card-wrap'
-  wrap.style.cssText = 'border-color:#ff9500'
-  const row = document.createElement('div')
-  row.className = 'cmd-page-row'
-  row.style.cssText = 'gap:12px;align-items:center;padding:10px 12px'
-
-  const message = document.createElement('span')
-  message.style.cssText = 'flex:1;font-size:13px'
-  message.textContent = 'To restore past data, please open another device.'
-
-  const dismiss = document.createElement('button')
-  dismiss.type = 'button'
-  dismiss.setAttribute('aria-label', 'Dismiss')
-  dismiss.style.cssText = 'flex-shrink:0;width:22px;height:22px;border:0;background:transparent;color:var(--text-dim);font-size:16px;line-height:1;cursor:pointer'
-  dismiss.textContent = '×'
-  dismiss.addEventListener('click', () => {
-    dismiss.disabled = true
-    void recovery.onDismiss().catch(error => {
-      getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
-      dismiss.disabled = false
-    })
+  const panel = document.createElement('div')
+  panel.className = 'acc-storage-panel'
+  const panelHeader = document.createElement('div')
+  panelHeader.className = 'acc-storage-header'
+  const panelTitle = document.createElement('span')
+  panelTitle.className = 'acc-storage-title'
+  panelTitle.textContent = 'Devices'
+  panelHeader.appendChild(panelTitle)
+  const devices = document.createElement('div')
+  devices.className = 'acc-device-list'
+  const roster = [...(config?.vault?.devices ?? [])].sort((a, b) => Number(b.current) - Number(a.current))
+  if (!roster.length) {
+    const empty = document.createElement('div')
+    empty.className = 'acc-device-empty'
+    empty.textContent = 'No devices available'
+    devices.appendChild(empty)
+  }
+  for (const device of roster) {
+    const removable = !device.current && Boolean(config?.onRotateVaultKey)
+    const line = document.createElement(removable ? 'button' : 'div')
+    line.className = 'acc-device-row'
+    if (line instanceof HTMLButtonElement) {
+      line.type = 'button'
+      line.classList.add('acc-device-removable')
+      line.setAttribute('aria-label', `Remove other devices, including ${device.deviceId}`)
+      line.addEventListener('click', removeOtherDevices)
+    }
+    const id = document.createElement('span')
+    id.className = 'acc-device-label'
+    const fragment = device.deviceId.includes('#') ? device.deviceId.slice(device.deviceId.indexOf('#')) : device.deviceId
+    id.textContent = fragment.length > 18 ? `${fragment.slice(0, 10)}…` : fragment
+    id.title = device.deviceId
+    line.appendChild(id)
+    if (device.lastActivity) {
+      const activity = document.createElement('span')
+      activity.textContent = new Date(device.lastActivity).toLocaleString()
+      activity.className = 'acc-device-activity'
+      line.appendChild(activity)
+    }
+    if (device.current) {
+      const tag = document.createElement('span')
+      tag.textContent = 'this device'
+      tag.className = 'acc-device-current'
+      line.appendChild(tag)
+    } else if (removable) {
+      const trash = document.createElement('span')
+      trash.className = 'acc-device-trash'
+      trash.setAttribute('aria-hidden', 'true')
+      trash.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg>'
+      line.appendChild(trash)
+    }
+    devices.appendChild(line)
+  }
+  devices.addEventListener('pointerover', event => {
+    const target = event.target
+    devices.classList.toggle('remove-preview', target instanceof Element && Boolean(target.closest('.acc-device-removable')))
   })
+  devices.addEventListener('pointerleave', () => devices.classList.remove('remove-preview'))
+  panel.append(panelHeader, devices)
 
-  row.append(message, dismiss)
-  wrap.appendChild(row)
+  wrap.append(row, panel)
+  row.addEventListener('click', () => wrap.classList.toggle('expanded'))
   list.appendChild(wrap)
 }
 
@@ -581,13 +370,11 @@ export function showAccountPage(): void {
   card.innerHTML = PAGE_HTML
   activeEl.innerHTML = ''
   activeEl.appendChild(card)
-  renderVaultCard()
-  renderWalletAccountCard()
   renderMediatorCard()
-  renderHistoryRecoveryCard()
 
   const nameEl = document.getElementById('cmd-acc-identity-name')
   const didEl = document.getElementById('cmd-acc-identity-did')
+  const capabilityExpiryEl = document.getElementById('cmd-acc-capability-expiry')
   const avatarEl = document.getElementById('cmd-acc-identity-avatar')
   const docEl = document.getElementById('cmd-acc-identity-doc')
   const section = document.getElementById('cmd-acc-identity-section')
@@ -622,6 +409,13 @@ export function showAccountPage(): void {
   if (didEl) {
     didEl.textContent = shortWebvhDid(did)
     didEl.title = did
+  }
+  if (capabilityExpiryEl && config.wallet) {
+    const expires = new Date(config.wallet.capabilityExpiresAt)
+    const validDate = !Number.isNaN(expires.getTime())
+    capabilityExpiryEl.textContent = `~ ${validDate ? expires.toLocaleDateString() : config.wallet.capabilityExpiresAt}`
+    capabilityExpiryEl.title = validDate ? `Biset capability expires ${expires.toLocaleString()}` : 'Biset capability expiry'
+    capabilityExpiryEl.classList.toggle('expired', config.wallet.reconnectRequired === true || expires.getTime() <= Date.now())
   }
   if (avatarEl) {
     avatarEl.setAttribute('style', avatarStyle(label))

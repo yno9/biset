@@ -80,7 +80,7 @@ export function assertDeliverySeq(value: unknown): asserts value is DeliverySeq 
   assertUnsigned64(value, 'delivery sequence')
 }
 
-export function deliverySeq(value: bigint): DeliverySeq {
+function deliverySeq(value: bigint): DeliverySeq {
   if (value < 0n || value > MAX_U64) throw new RangeError('delivery sequence is outside uint64 range')
   return value.toString()
 }
@@ -95,7 +95,7 @@ export function assertMlsEpoch(value: unknown): asserts value is MlsEpoch {
   assertUnsigned64(value, 'MLS epoch')
 }
 
-export function mlsEpoch(value: bigint): MlsEpoch {
+function mlsEpoch(value: bigint): MlsEpoch {
   if (value < 0n || value > MAX_U64) throw new RangeError('MLS epoch is outside uint64 range')
   return value.toString()
 }

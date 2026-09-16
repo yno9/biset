@@ -54,7 +54,6 @@ function wrapToWire(wrap: SegmentKeyWrapV1): { [key: string]: CanonicalValue } {
     version: wrap.version, identityId: wrap.identityId, selfGroupId: wrap.selfGroupId, segmentId: wrap.segmentId,
     sourceEpoch: wrap.sourceEpoch, recipientEpoch: wrap.recipientEpoch, nonce: bytesToBase64url(wrap.nonce), aad: bytesToBase64url(wrap.aad),
     wrappedSegmentKey: bytesToBase64url(wrap.wrappedSegmentKey), grantorDeviceId: wrap.grantorDeviceId, grantedAt: wrap.grantedAt,
-    signature: bytesToBase64url(wrap.signature),
   }
 }
 
@@ -91,7 +90,7 @@ function wireWrap(value: unknown, identityId: IdentityId): SegmentKeyWrapV1 {
   assertMlsEpoch(input.sourceEpoch)
   assertMlsEpoch(input.recipientEpoch)
   if (!isoDate(input.grantedAt)) throw new TypeError('vault delivery key wrap is invalid')
-  return { version: 1, identityId, selfGroupId: input.selfGroupId as string, segmentId: input.segmentId as string, sourceEpoch: input.sourceEpoch as string, recipientEpoch: input.recipientEpoch as string, nonce: binary(input.nonce), aad: binary(input.aad), wrappedSegmentKey: binary(input.wrappedSegmentKey), grantorDeviceId: input.grantorDeviceId as string, grantedAt: input.grantedAt as string, signature: binary(input.signature) }
+  return { version: 1, identityId, selfGroupId: input.selfGroupId as string, segmentId: input.segmentId as string, sourceEpoch: input.sourceEpoch as string, recipientEpoch: input.recipientEpoch as string, nonce: binary(input.nonce), aad: binary(input.aad), wrappedSegmentKey: binary(input.wrappedSegmentKey), grantorDeviceId: input.grantorDeviceId as string, grantedAt: input.grantedAt as string }
 }
 
 function object(value: unknown, name: string): Record<string, unknown> {

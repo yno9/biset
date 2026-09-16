@@ -19,6 +19,7 @@ import {
   type DidMdRegistration,
 } from '../src/client/identity/wallet/did-md-store.ts'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
+import { completeDidMdVaultKeyRotation, didMdVaultKeyRotationStatus } from '../src/client/identity/wallet/did-md-oauth.ts'
 
 const DATABASE_NAME = 'biset-did-md-wallet'
 const bytes = (start: number) => Uint8Array.from({ length: 32 }, (_, index) => start + index)
@@ -68,7 +69,6 @@ async function pendingFixture(): Promise<DidMdPendingAuthorization> {
     documentEdit: { type: 'urn:did-core:document-edit:v1', services: [], verificationMethods: [], remove: [] },
     requestMlsCredential: true,
     keyAuthorizationSubject: 'urn:uuid:11111111-1111-4111-8111-111111111111',
-    bisetMimiVaultRoomCreated: true,
     createdAt: '2026-09-05T00:00:00.000Z',
   }
 }
@@ -95,7 +95,7 @@ describe('did.md Biset device material sealing', () => {
 
   test('round-trips Biset MLS device material', async () => {
     const signaturePublicKey = bytes(1)
-    const privateMaterial = { signaturePrivateKey: bytes(65), vaultSecret: bytes(97) }
+    const privateMaterial = { signaturePrivateKey: bytes(65) }
 
     const sealed = await sealDidMdBisetDeviceMaterial(signaturePublicKey, privateMaterial)
 
@@ -181,7 +181,7 @@ describe('did.md Wallet IndexedDB storage', () => {
       publicJwk: pending.publicJwk,
       capability: { document: { id: 'capability-1' }, proof: { type: 'DataIntegrityProof' } },
       capabilityExpiresAt: '2026-10-05T00:00:00.000Z',
-      bisetDevice: { ...pending.bisetDevice, credentialWire: 'credential-wire', keyAuthorizationSubject: pending.keyAuthorizationSubject, mimiVaultRoomCreated: true },
+      bisetDevice: { ...pending.bisetDevice, credentialWire: 'credential-wire', keyAuthorizationSubject: pending.keyAuthorizationSubject },
     }
 
     await saveDidMdRegistration(registration)
@@ -217,5 +217,33 @@ describe('did.md Wallet IndexedDB storage', () => {
     expect(serialized).not.toContain('signaturePrivateKey')
     expect(serialized).not.toContain('vaultSecret')
     expect(serialized).toContain('ciphertext')
+  })
+
+  test('clears a rotation marker only after publication reached the rewrap phase', async () => {
+    const pending = await pendingFixture()
+    const base: DidMdDeviceSession = {
+      v: 2,
+      issuer: pending.issuer,
+      clientId: pending.clientId,
+      did: pending.did!,
+      handle: pending.handle!,
+      verificationMethod: pending.verificationMethod!,
+      rootPublicKey: pending.rootPublicKey!,
+      deviceJkt: pending.deviceJkt,
+      privateKey: pending.privateKey,
+      publicJwk: pending.publicJwk,
+      capability: { document: {}, proof: {} },
+      capabilityExpiresAt: '2030-01-01T00:00:00.000Z',
+      vaultGeneration: '1',
+      vaultKeyRotation: { fromGeneration: '0', toGeneration: '1', phase: 'publishing' },
+    }
+    await saveDidMdDeviceSession(base)
+    await expect(completeDidMdVaultKeyRotation()).rejects.toThrow('not ready to complete')
+    expect(await didMdVaultKeyRotationStatus()).toEqual({ fromGeneration: '0', toGeneration: '1', phase: 'publishing' })
+
+    await saveDidMdDeviceSession({ ...base, vaultKeyRotation: { ...base.vaultKeyRotation!, phase: 'rewrap' } })
+    await completeDidMdVaultKeyRotation()
+    expect(await didMdVaultKeyRotationStatus()).toBeUndefined()
+    expect(await readDidMdDeviceSession()).toMatchObject({ vaultGeneration: '1' })
   })
 })

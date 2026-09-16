@@ -2,6 +2,9 @@ import { render } from '../thread.ts'
 import { getAccountConfig } from './state.ts'
 
 let configPageActive = false
+let markdownVault: { enabled(): boolean; observerSupported(): boolean; toggle(): Promise<void>; rescan(): Promise<void> } | undefined
+
+export function configureMarkdownVaultToggle(value: { enabled(): boolean; observerSupported(): boolean; toggle(): Promise<void>; rescan(): Promise<void> }): void { markdownVault = value }
 
 export function inConfigMode(): boolean {
   return configPageActive
@@ -79,6 +82,18 @@ export function showConfigPage(): void {
   card.innerHTML = CONFIG_PAGE_HTML
   activeEl.innerHTML = ''
   activeEl.appendChild(card)
+  const vaultToggle = document.getElementById('config-vault-toggle')
+  if (vaultToggle && markdownVault) {
+    vaultToggle.classList.toggle('on', markdownVault.enabled())
+    const refreshFallback = () => {
+      document.getElementById('config-vault-rescan')?.remove()
+      if (!markdownVault!.enabled() || markdownVault!.observerSupported()) return
+      const button = document.createElement('button'); button.id = 'config-vault-rescan'; button.className = 'cmd-page-btn'; button.textContent = 'Rescan Vault'
+      button.addEventListener('click', () => { void markdownVault!.rescan() }); vaultToggle.parentElement?.appendChild(button)
+    }
+    refreshFallback()
+    vaultToggle.addEventListener('click', () => { void markdownVault!.toggle().then(() => { vaultToggle.classList.toggle('on', markdownVault!.enabled()); refreshFallback() }) })
+  }
 }
 
 export function hideConfigPage(): void {
