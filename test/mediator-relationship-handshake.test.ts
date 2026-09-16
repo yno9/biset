@@ -11,11 +11,10 @@ import {
   sendRelationshipMessage,
 } from '../src/client/didcomm/send-message.ts'
 import type { DidCommPlaintext } from '../src/protocol/didcomm/message.ts'
-import { encodeX25519Multikey } from '../src/protocol/didcomm/multikey.ts'
 import { createMediator } from '../src/server/mediator/server.ts'
 import { ConnectionStore } from '../src/server/mediator/connections.ts'
 import type { ContactKeyV1 } from '../src/client/store/vault/contact-key.ts'
-import { buildGenesisLog } from './protocol/support/webvh-log-fixture.ts'
+import { buildDidCommLog } from './protocol/support/webvh-log-fixture.ts'
 
 describe('private DIDComm relationship handshake', () => {
   test('moves continuing traffic off both public front-door kids and registers only unlinkable did:peer relationship clients', async () => {
@@ -24,8 +23,16 @@ describe('private DIDComm relationship handshake', () => {
     const connections = new ConnectionStore()
 
     const aliceRoot = ed25519.utils.randomSecretKey()
-    const { did: aliceDid, log: aliceLog } = buildGenesisLog(aliceRoot, ed25519.getPublicKey(aliceRoot), [])
     const aliceFrontX = x25519.utils.randomSecretKey()
+    // Front-door key and `#didcomm` service both live in the signed log
+    // (routing.json retired 2026-09-16), so they go in at genesis.
+    const { did: aliceDid, log: aliceLog } = buildDidCommLog({
+      rootPrivateKey: aliceRoot,
+      rootPublicKey: ed25519.getPublicKey(aliceRoot),
+      keyAgreementKeys: [{ fragment: 'k_alice-front-door', x25519PublicKey: x25519.getPublicKey(aliceFrontX) }],
+      endpointUri: mediatorUrl,
+      routingKeys: [mediator.xKid],
+    })
     const aliceFrontKid = `${aliceDid}#k_alice-front-door`
     const bobDid = 'did:webvh:123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijk:Bob.example'
     const bobFrontX = x25519.utils.randomSecretKey()
@@ -41,24 +48,10 @@ describe('private DIDComm relationship handshake', () => {
         return null
       },
     })
-    const routingJson = {
-      service: [{
-        id: `${aliceDid}#didcomm`,
-        type: 'DIDCommMessaging',
-        serviceEndpoint: { uri: mediatorUrl, accept: ['didcomm/v2'], routingKeys: [mediator.xKid] },
-      }],
-      keyAgreementVerificationMethod: [{
-        id: aliceFrontKid,
-        type: 'Multikey',
-        controller: aliceDid,
-        publicKeyMultibase: encodeX25519Multikey(x25519.getPublicKey(aliceFrontX)),
-      }],
-    }
     const fetchImpl = (async (input, init) => {
       const url = new URL(String(input))
       if (url.origin === mediatorUrl) return (await handle(new Request(url, init), url)) ?? new Response('not found', { status: 404 })
       if (url.pathname.endsWith('/did.jsonl')) return new Response(aliceLog.map(value => JSON.stringify(value)).join('\n') + '\n')
-      if (url.pathname.endsWith('/routing.json')) return Response.json(routingJson)
       return new Response(`unexpected request: ${url}`, { status: 500 })
     }) as typeof fetch
     const realFetch = globalThis.fetch

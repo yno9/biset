@@ -1,6 +1,6 @@
 // Socket-level coverage for the mail plugin's SMTP listener: a real
 // EHLO/MAIL/RCPT/DATA transaction over a plaintext TCP connection must
-// resolve the recipient's routing.json, authcrypt a MAIL_BRIDGE_INBOUND
+// resolve the recipient's did:webvh log, authcrypt a MAIL_BRIDGE_INBOUND
 // message, and POST it -- exercising resolveMailRecipientRoute (RCPT) and
 // packInboundMailForward (DATA) through the shared smtp-socket-server.ts
 // plumbing, not just the pure bridge.ts functions in isolation.
@@ -8,10 +8,10 @@ import { describe, expect, test } from 'bun:test'
 import { connect } from 'node:net'
 import type { Socket } from 'node:net'
 import { generatePeerIdentity } from '../../../src/protocol/didcomm/peer.ts'
-import { encodeX25519Multikey } from '../../../src/protocol/didcomm/multikey.ts'
+import { buildDidCommLog } from '../../protocol/support/webvh-log-fixture.ts'
 import { unpackAuthcrypt } from '../../../src/protocol/didcomm/crypto.ts'
 import { createMailPluginListener } from '../../../src/server/mediator/mail-plugin/listener.ts'
-import { x25519 } from '@noble/curves/ed25519.js'
+import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 
 function connectRaw(port: number): Promise<Socket> {
   return new Promise((resolve, reject) => {
@@ -40,19 +40,22 @@ function readReply(socket: Socket): Promise<string> {
 }
 
 describe('mail plugin SMTP listener', () => {
-  test('a full EHLO/MAIL/RCPT/DATA transaction resolves routing.json and delivers a MAIL_BRIDGE_INBOUND Forward', async () => {
+  test('a full EHLO/MAIL/RCPT/DATA transaction resolves did.jsonl and delivers a MAIL_BRIDGE_INBOUND Forward', async () => {
     const sender = generatePeerIdentity()
     const recipientX = x25519.utils.randomSecretKey()
-    const recipientXPub = x25519.getPublicKey(recipientX)
-    const recipientKid = 'did:webvh:{SCID}:y.biset.md#k_recipienthash'
-    const routingJson = {
-      service: [{ id: 'did:webvh:{SCID}:y.biset.md#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: 'https://recipient-core.test.example/v1/didcomm/ingress', accept: ['didcomm/v2'], routingKeys: [] } }],
-      keyAgreementVerificationMethod: [{ id: recipientKid, type: 'Multikey', controller: 'did:webvh:{SCID}:y.biset.md', publicKeyMultibase: encodeX25519Multikey(recipientXPub) }],
-    }
+    const rootPrivateKey = ed25519.utils.randomSecretKey()
+    const { did: recipientDid, log } = buildDidCommLog({
+      rootPrivateKey,
+      rootPublicKey: ed25519.getPublicKey(rootPrivateKey),
+      keyAgreementKeys: [{ fragment: 'k_recipienthash', x25519PublicKey: x25519.getPublicKey(recipientX) }],
+      endpointUri: 'https://recipient-core.test.example/v1/didcomm/ingress',
+      domain: 'y.biset.md',
+    })
+    const recipientKid = `${recipientDid}#k_recipienthash`
     const delivered: { url: string; body: string }[] = []
     const fetchImpl = (async (input, init) => {
       const url = typeof input === 'string' ? input : input.toString()
-      if (url === 'https://y.biset.md/.well-known/routing.json') return new Response(JSON.stringify(routingJson), { status: 200 })
+      if (url === 'https://y.biset.md/.well-known/did.jsonl') return new Response(log.map(e => JSON.stringify(e)).join('\n') + '\n', { status: 200 })
       if (url === 'https://recipient-core.test.example/v1/didcomm/ingress') {
         delivered.push({ url, body: init?.body as string })
         return new Response(null, { status: 202 })
@@ -92,7 +95,7 @@ describe('mail plugin SMTP listener', () => {
     expect(msg.type).toBe('https://biset.md/mail-bridge/1.0/inbound')
   })
 
-  test('RCPT TO an address with no routing.json is rejected 550', async () => {
+  test('RCPT TO an address with no published did:webvh log is rejected 550', async () => {
     const sender = generatePeerIdentity()
     const fetchImpl = (async () => new Response('not found', { status: 404 })) as typeof fetch
     const listener = createMailPluginListener({

@@ -1,7 +1,7 @@
 // The wire shape a mediator+mail-plugin instance uses to hand an externally
 // received SMTP message to its recipient over ordinary DIDComm delivery
 // (2026-08-30 mail-mediator redesign: no spool, no relationship credential,
-// no VC -- the plugin just resolves the recipient's routing.json by domain
+// no VC -- the plugin just resolves the recipient's did:webvh log by domain
 // (identity/webvh/identifier.ts's `identityDomainForMailAddress`,
 // didcomm/webvh-routing.ts's `fetchRoutingByDomain`) and Forward-delivers a
 // message of this type, same as any other DIDComm sender would).

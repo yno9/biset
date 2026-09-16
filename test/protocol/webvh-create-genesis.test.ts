@@ -27,12 +27,10 @@ describe('createGenesis + resolve', () => {
       expect(doc?.verificationMethod[0]?.id).toBe(`${did}#key-1`)
       expect(decodeMultikey(doc!.verificationMethod[0]!.publicKeyMultibase)).toEqual(rootPublicKey)
       expect(doc?.authentication).toEqual([`${did}#key-1`])
-      // The immutable routing pointer is in genesis, so ordinary routing
-      // publication never needs to append another WebVH entry.
-      expect(doc?.service).toEqual([{
-        id: `${did}#routing`, type: 'BisetRoutingDocument',
-        serviceEndpoint: 'https://test.example/.well-known/routing.json',
-      }])
+      // No service at genesis: the `#routing` pointer went away with
+      // routing.json (2026-09-16), and the `#didcomm` service is appended
+      // later by did.md Wallet's document edit.
+      expect(doc?.service).toEqual([])
       expect(doc?.alsoKnownAs).toEqual([])
     } finally {
       globalThis.fetch = realFetch

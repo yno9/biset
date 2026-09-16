@@ -40,7 +40,7 @@ Biset は、メールと DIDComm のデータを利用者の端末側で長期�
 **この節の背景（2026-09-03〜04の変化）**: 前回調査（commit `11f0a62`）時点では `biset-core`（`src/core/`）がAnchor・Mediator・Vault・biset-mimiと並ぶ五番目の主要コンポーネントとして存在し、SMTP受信、outbound mail relay、did:webvh/routing.json公開文書ホスティング、device rosterに基づくmail ingress-pull認可とlegacy Vault delivery、legacy DIDComm ingress fallbackを一手に担っていた。commit `99e08c0`（2026-09-03「core: remove src/core/ entirely, retired 2026-09-03」）で`src/core/`はディレクトリごと削除され、以後のcommitでその責務は次のように再配分された。
 
 - SMTP受信・outbound mail relay → `src/server/mediator/mail-plugin/`（standalone mediatorの deployment variant、§3・§11）
-- did:webvh/routing.json公開文書ホスティング → core撤去後は Anchor が唯一の host だったが、**その Anchor も 2026-09-05 に削除された**。現在は外部の did.md がホストする（§3・§13.1）
+- did:webvh公開文書ホスティング → core撤去後は Anchor が唯一の host だったが、**その Anchor も 2026-09-05 に削除された**。現在は外部の did.md がホストする（§3・§13.1）。なお routing.json は 2026-09-16 に廃止され、DIDComm service / keyAgreement / name は署名済み did.jsonl に一本化された
 - device rosterに基づくmail ingress-pull認可、legacy Vault delivery、legacy DIDComm ingress fallback → **後継なしに消滅**。roster機構自体（`rosterBackedVaultDeliveryAuthorizer`、`ensureMimiCoreRoster`、`src/mls/self-group.ts`（削除済み）のroster projection関連コード）も削除された。mail認可はdid:webvh update keyの署名検証へ置き換わり（§11.2）、legacy Vault delivery/DIDComm ingressのコードは残骸ごと削除済みである（§12.5）。
 
 ## 2. 設計原則と非目標
@@ -229,7 +229,7 @@ VCK のローテーション（§6.2）は**次の世代**の SegmentKeyWrap を
 ### 4.2 did.md を信頼する範囲
 
 **2026-09-05 に Anchor が削除され、この節は完全に置き換わった。** かつて Anchor が担っていた
-did:webvh/did:web mirror/routing.json の公開文書ホスティングと OIDC/OpenID4VP 認証は、
+did:webvh/did:web mirror の公開文書ホスティングと OIDC/OpenID4VP 認証は、
 いずれも biset の構成要素ではなくなった。
 
 did.md は identity の発行元かつホスト、および OAuth の認可者である。biset は**そのクライアント**にすぎない。
@@ -345,7 +345,6 @@ biset 側は `vaultSyncSiblingDevices`（`src/client/didcomm/vault-sync.ts`）�
 |---|---|---|---|
 | `did.jsonl` | hash chain、updateKeys、**端末ごとの X25519 verificationMethod**、`#didcomm` service、`#biset-vault` service（VCK 世代） | did:webvh proof / current update key | **did.md**（外部） |
 | `did.json` | 任意の did:web mirror | current did:webvh state による検証 | **did.md**（外部） |
-| `routing.json` | DIDComm service/keyAgreement、mediator、alsoKnownAs、name | Root/current update key の Data Integrity proof | **did.md**（外部） |
 
 端末集合と VCK 世代は、いずれも **DID Document 本体**（`did.jsonl` の最新 entry）で公開される。
 
@@ -358,6 +357,14 @@ biset 側は `vaultSyncSiblingDevices`（`src/client/didcomm/vault-sync.ts`）�
 
 旧 Self Vault の `mimiVaultRoom` ポインタは、routing.json からも DID Document service テンプレートからも
 削除された（`config.ts` の `didDocumentServices` は `#didcomm` と `#biset-vault` の二つだけを提案する）。
+
+> **routing.json は 2026-09-16 に廃止され、biset 側の read/write 経路は全て削除された。**
+> DIDComm service / keyAgreement / name は署名済み `did.jsonl` に一本化されている
+> （実測: `cb81.did.md/.well-known/did.jsonl` は `keyAgreement` を `#k_<id>` の**参照配列**として持ち、
+> 各参照は X25519 `Multikey` の `verificationMethod` に解決される）。
+> **ただし did.md は今も `/.well-known/routing.json` に 200 を返す**——中身は
+> 2026-08 以前の残骸（`{"mimiVaultRoom":…}` のみ、service も keyAgreement も無い）であり、
+> これを読むと全宛先が「DIDComm 未公開」と判定される。read 経路を復活させてはならない。
 
 ### 5.4 Domain move
 
@@ -559,11 +566,11 @@ Local garbage collection は実装されていない。
 **旧biset-coreのbounded ingress store/pull/ack機構は完全に消滅した。** 現行の受信経路は次のとおりで、pull ではなく push であり、TTL/quotaを持つ独立バッファも存在しない。
 
 1. `src/server/mediator/mail-plugin/listener.ts`（"B" deployment）が port 25 で生SMTPを受ける。EHLO/HELO、MAIL、RCPT、DATA、RSET、NOOP、QUIT、STARTTLSを扱い、既定25 MiB制限を広告・強制する。SMTPUTF8とAUTHは提供しない。TLS certificate/keyが設定されればSTARTTLSを提供するが、未設定でもserverは起動しplaintext SMTPとなる（旧biset-coreのSMTP listenerと同じ挙動——`smtp-socket-server.ts`/`mail-smtp-protocol.ts`は`src/core/adapters/`から2026-09-03にこのディレクトリへ物理的に移設されただけで、ロジックは変わっていない）。
-2. RCPT TO時点で`bridge.ts`の`resolveMailRecipientRoute`が宛先アドレスの**routing.jsonをdomainだけから直接resolveする**（`identityDomainForMailAddress`が`mailFromForIdentity`の決定論的逆関数——SCID lookupもsigned-log resolveも経由しない）。宛先がDIDComm keyAgreement/serviceを公開していなければ550で拒否する。
+2. RCPT TO時点で`bridge.ts`の`resolveMailRecipientRoute`が宛先アドレスの**did.jsonlをdomainだけからresolveする**（`identityDomainForMailAddress`が`mailFromForIdentity`の決定論的逆関数でSCID lookupは不要。`resolveByDomain`はlog自身が埋め込むscid/hash chain/proofを全entry検証するため`resolve()`と同じ信頼度を持つ）。宛先がDIDComm keyAgreement/serviceを公開していなければ550で拒否する。**2026-09-16まではここが`/.well-known/routing.json`を読んでいた**（routing.json廃止、§5.3）。
 3. DATA受理時、同じ`bridge.ts`の`packInboundMailForward`が受信メッセージを`MAIL_BRIDGE_INBOUND`型のDIDCommプレーンテキストへ包み、mail-pluginが自分で保持する専用の`did:peer`送信元identity（`SqliteMediatorStore.loadMailPluginIdentity`、real end-user identityとは別）からauthcryptし、宛先のmediator（Forward hop chainを含む）へ`OutboundDelivery`としてPOSTする——**core時代のingress store/pull/ackという独立した概念がなく、通常のDIDComm 1:1/group chatメッセージと全く同じmediator queueに載る**（§12.5）。
 4. Client側は他のDIDCommメッセージと同じ`DidCommIngressProjector`/mediator SSE watch経由でこれを受け取る（§12.5）。deviceごとのlease/quota/ACKという概念はもう存在しない。
 
-roster（device集合の認可情報）はこの経路のどこにも登場しない——宛先解決がrouting.jsonの公開情報だけで完結するため、"このidentityの端末集合をmail認可のために知っておく"という前段そのものが不要になった。roster を担っていた `rosterBackedVaultDeliveryAuthorizer` / `ensureMimiCoreRoster` は、MLS self-group ごと削除済みである（§6）。
+roster（device集合の認可情報）はこの経路のどこにも登場しない——宛先解決がdid.jsonlの公開情報だけで完結するため、"このidentityの端末集合をmail認可のために知っておく"という前段そのものが不要になった。roster を担っていた `rosterBackedVaultDeliveryAuthorizer` / `ensureMimiCoreRoster` は、MLS self-group ごと削除済みである（§6）。
 
 ### 9.2 Vault Sync（層 1: ログの同期）
 
@@ -804,7 +811,7 @@ File System Access API で利用者が選んだディレクトリに、スレッ
 （`mail-submission-http.ts` の `isAuthorised`）。
 
 1. 申告された `mailFrom` が `mailFromForIdentity(identityId, apexDomain)` の導出結果と一致すること
-2. `signature` が `resolveCurrentUpdateKeys(identityId)`——routing.json 更新そのものが要求するのと同じ
+2. `signature` が `resolveCurrentUpdateKeys(identityId)`——did.jsonl 更新そのものが要求するのと同じ
    did:webvh current update key——で検証できること
 
 **found live（2026-09-04）: outbound relay はこの日まで一度も実際に動作したことがなかった。**
@@ -875,7 +882,7 @@ Standalone mediator は自身の did:peer identity、connection keylist、queue�
 
 Queue は recipient kid あたり最大 256 件、保持 30 日で、満杯時は古い正当 message を捨てず sender を拒否する。Pickup は non-destructive delivery の後、`messages-received` ACK で削除する。Connection は最大 10,000、connection ごとに最大 32 kid。Replay guard は既定 10 分 / 50,000 ID、resolved key cache TTL は 10 分で stale-while-refresh 動作をする。共有HTTP surfaceは単一の `POST /` （DIDCommメッセージ種別で内部分岐）、`GET /.well-known/did.json`、`GET /stream`（SSE）の3経路であり、これは"A"（素のmediator）と"B"（mail-plugin同梱）で完全に共通（`deployment.ts`）である。`GET /stream` は複数の `token` queryを受け取り、client側の`watchMediatorMultiplexed`が同じmediator上のfront-door/ContactKey queueを1本のEventSourceへ多重化する。これはHTTP/1.1の同一origin接続枠をContactKey数だけ占有しないためで、単一tokenも互換として維持する。"B"はこれに加えてSMTP:25とsubmission HTTP:8792を独立に持つ（§3・§11）。
 
-`relay-poller.ts`は、あるmediatorが別のupstream mediatorへ自分自身をclientとして登録し（`MEDIATOR_RELAY_UPSTREAM_URL`）、自分宛のForwardをunwrapして自分のqueueへ再Forwardする、任意のmulti-hop中継機能である。routing.jsonの`routingKeys`（outermost-first）でこの中継段を名指しできる。dispatch()自体はこの機能の有無で変わらない——upstream側からは通常のend-user deviceに見え、downstream側からは通常のForward requestに見える。
+`relay-poller.ts`は、あるmediatorが別のupstream mediatorへ自分自身をclientとして登録し（`MEDIATOR_RELAY_UPSTREAM_URL`）、自分宛のForwardをunwrapして自分のqueueへ再Forwardする、任意のmulti-hop中継機能である。DID documentの`#didcomm` serviceの`routingKeys`（outermost-first）でこの中継段を名指しできる。dispatch()自体はこの機能の有無で変わらない——upstream側からは通常のend-user deviceに見え、downstream側からは通常のForward requestに見える。
 
 DBファイルへの書き込み失敗時の挙動は、本調査でも未検証のまま次回調査で確認すべき既知の空白として残る。
 
@@ -911,7 +918,7 @@ Mediator/mail-plugin（§13.2）と biset-mimi（§13.3）の**2系統だけ**�
 ### 13.1 HTTP surface（did.md — 外部依存）
 
 did:webvh log（`/.well-known/did.jsonl`）、did:web mirror（`/.well-known/did.json`）、
-routing 文書（`/.well-known/routing.json`）、および OAuth のエンドポイントは、いずれも **did.md が提供する**。
+および OAuth のエンドポイントは、いずれも **did.md が提供する**。
 biset はこれらを**読むだけ**で、書き込まない（§3）。したがって biset 側にこれらを提供する HTTP surface も、
 `ANCHOR_DATA_DIR` のような永続化ディレクトリも、もはや存在しない。
 
@@ -948,7 +955,7 @@ Mediator（"A"/"B"共通）は`MEDIATOR_PUBLIC_URL`と`MEDIATOR_DATABASE_PATH`/`
 
 ### 13.5 Hosting limits
 
-- did.jsonl / did.json / routing.json のサイズ上限は、ホストである **did.md 側の関心事**である。
+- did.jsonl / did.json のサイズ上限は、ホストである **did.md 側の関心事**である。
   かつて Anchor が課していた上限（did.jsonl: request 1 MiB、identity ごと 10,000 entry / 16 MiB、他は 1 MiB）は、
   Anchor ごと削除された
 - mail submit body: 25 MiB（mail-plugin `/v1/mail/submit`）
@@ -978,8 +985,6 @@ biset-coreが持っていた「多くの場合request時に実行する」expiry
   標準の queue TTL（30 日、§12.4）の対象になる。
 - Outbound mail temporary failure は durable outbox に残るが scheduler がないため、
   利用者操作なしには retry されない。
-- `routing.json` 更新は fetch-merge-put だが version/ETag compare-and-swap がなく、
-  複数端末の同時更新で last-write-wins となり得る。
 - **`main.ts` の boot wiring は browser E2E で覆われていない。** 2026-09-04 の
   `coreBaseUrl` gate regression（DIDComm/mail/group chat が本番で静かに全停止していたのに
   typecheck/build/test はすべて通っていた）は、この隙間から出た実例である。§18・§20 を参照。
@@ -1005,7 +1010,7 @@ biset-coreが持っていた「多くの場合request時に実行する」expiry
   古い export を後から読み込んでも新しい状態を巻き戻さない（§9.4b）。
 - Mail submission は identity の current did:webvh update key による署名検証を要求し、
   mailFrom が署名者自身のアドレスと一致しない申告を拒否する（§11.2）。
-- Mail 受信の宛先解決は公開 routing.json のみに基づき、非公開状態を必要としない（§9.1）。
+- Mail 受信の宛先解決は公開 did.jsonl のみに基づき、非公開状態を必要としない（§9.1）。
 - DIDComm mediator は未登録 recipient への open forwarding を拒否する。
 - Relationship ごとの pairwise DID により、継続会話（1:1・group chat 双方）を公開 identity front door から分離する。
 - Canonical encoding と domain-separated signing/hash labels を protocol 全体で使う。
@@ -1304,7 +1309,7 @@ client と server の**両方**が使うものだけがここにある。どち�
 `devicekid.ts`（鍵から導出する識別子）、`multikey.ts`、`problems.ts`（Report Problem 2.0）、
 `forward-wrap.ts`（Anoncrypt-Forward 包み）、`mediator-protocol.ts`（型 URI）、
 `mediator-coordinate.ts`／`mediator-pickup.ts`／`mediator-transport.ts`（Coordination 2.0 / Pickup 3.0 / 転送）、
-`webvh-routing.ts`／`webvh-resolve.ts`（routing.json とその合成）、
+`webvh-route.ts`（DID document からの route 選択）／`webvh-resolve.ts`（sender key 解決）、
 **`vault-sync-protocol.ts`**（Vault Sync の 3 つの型 URI。biset 独自拡張であり DIF 登録型ではないが、
 標準の DIDComm routing と Pickup 3.0 がそのまま運ぶ、§9.2）。
 
@@ -1319,7 +1324,7 @@ client と server の**両方**が使うものだけがここにある。どち�
 `document.ts`（W3C DID Core の形）、`identifier.ts`（識別子解析と DID→HTTPS 変換）、
 `scid.ts`／`hash.ts`／`multihash.ts`／`multikey.ts`／`jcs.ts`（SCID 検証、ハッシュ、multiformats、RFC 8785）。
 
-> mail-plugin が署名検証とアドレス判定に did:webvh を使うため、**これは client 固有ではない**。
+> mail-plugin が宛先解決・署名検証・アドレス判定に did:webvh を使うため、**これは client 固有ではない**。
 > R4 の実測で13ファイル中10が mediator からも到達することが判明し、ここへ移した。
 
 **`protocol/mls/` — RFC 9420 の vendored fork（98ファイル）**

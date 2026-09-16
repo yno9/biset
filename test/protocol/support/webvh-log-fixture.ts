@@ -8,6 +8,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { base58 } from '@scure/base'
 import { canonicalize } from '../../../src/protocol/webvh/jcs.ts'
 import { multihashSha256 } from '../../../src/protocol/webvh/multihash.ts'
+import { encodeX25519Multikey } from '../../../src/protocol/didcomm/multikey.ts'
 import type { LogEntry, LogParameters } from '../../../src/protocol/webvh/log.ts'
 
 export function jcsMultihashBase58(value: unknown): string {
@@ -35,11 +36,11 @@ export function signProof(document: object, verificationMethod: string, privateK
  * `verificationMethod` carrying the root key at #key-1 plus every extra
  * verification method the caller supplies (device signing keys, MLS leaf
  * signature keys, etc). */
-export function buildGenesisLog(rootPrivateKey: Uint8Array, rootPublicKey: Uint8Array, extraVerificationMethods: Array<{ fragment: string; publicKey: Uint8Array }>, domain = 'test.example'): { did: string; log: LogEntry[] } {
+export function buildGenesisLog(rootPrivateKey: Uint8Array, rootPublicKey: Uint8Array, extraVerificationMethods: Array<{ fragment: string; publicKey: Uint8Array }>, domain = 'test.example', didComm?: DidCommStateExtras): { did: string; log: LogEntry[] } {
   const updateKey = encodeMultikey(rootPublicKey)
   const versionTime = '2026-08-23T00:00:00.000Z'
   const placeholderDid = `did:webvh:{SCID}:${domain}`
-  const parameters: LogParameters = { method: 'did:webvh:1.0', scid: '{SCID}', updateKeys: [updateKey], nextKeyHashes: [], portable: false, witness: {}, watchers: [], deactivated: false, ttl: 3600 }
+  const parameters: LogParameters = { method: 'did:webvh:1.0', scid: '{SCID}', updateKeys: [updateKey], nextKeyHashes: didComm?.nextKeyHashes ?? [], portable: didComm?.portable ?? false, witness: {}, watchers: [], deactivated: false, ttl: 3600 }
   const rootKeyId = `${placeholderDid}#key-1`
   const state = {
     '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/multikey/v1'],
@@ -49,8 +50,20 @@ export function buildGenesisLog(rootPrivateKey: Uint8Array, rootPublicKey: Uint8
       ...extraVerificationMethods.map(vm => ({ id: `${placeholderDid}#${vm.fragment}`, type: 'Multikey' as const, controller: placeholderDid, publicKeyMultibase: encodeMultikey(vm.publicKey) })),
     ],
     authentication: [rootKeyId],
-    service: [],
+    ...(didComm?.keyAgreementKeys?.length ? { keyAgreement: didComm.keyAgreementKeys.map(k => `${placeholderDid}#${k.fragment}`) } : {}),
+    service: (didComm?.services ?? (didComm?.endpointUri ? [{ id: didComm.serviceId ?? '#didcomm', uri: didComm.endpointUri, routingKeys: didComm.routingKeys }] : []))
+      .map(entry => ({
+        id: `${placeholderDid}${entry.id}`,
+        type: 'DIDCommMessaging',
+        serviceEndpoint: { uri: entry.uri, accept: ['didcomm/v2'], routingKeys: entry.routingKeys ?? [] },
+      })),
     alsoKnownAs: [],
+  }
+  for (const key of didComm?.keyAgreementKeys ?? []) {
+    state.verificationMethod.push({ id: `${placeholderDid}#${key.fragment}`, type: 'Multikey' as const, controller: placeholderDid, publicKeyMultibase: encodeX25519Multikey(key.x25519PublicKey) })
+  }
+  for (const vm of didComm?.rawVerificationMethods ?? []) {
+    state.verificationMethod.push({ id: `${placeholderDid}#${vm.fragment}`, type: 'Multikey' as const, controller: placeholderDid, publicKeyMultibase: vm.publicKeyMultibase })
   }
   const preliminary = { versionId: '{SCID}', versionTime, parameters, state }
   const scid = jcsMultihashBase58(preliminary)
@@ -96,4 +109,48 @@ export function withFetch(log: LogEntry[] | null, run: () => Promise<void>): Pro
     return new Response(log.map(e => JSON.stringify(e)).join('\n') + '\n', { status: 200 })
   }) as typeof fetch
   return run().finally(() => { globalThis.fetch = realFetch })
+}
+
+/** The `keyAgreement`/`#didcomm` service half of a did.md-published
+ * document, as `urn:did-core:document-edit:v1` writes it in production. Must
+ * be folded into the genesis state BEFORE the SCID is computed -- the SCID
+ * covers the whole state, so editing it afterwards fails SCID verification.
+ *
+ * Field shapes are copied from a live `cb81.did.md/.well-known/did.jsonl`:
+ * `keyAgreement` holds `#k_<id>` fragment references resolving to X25519
+ * `Multikey` verification methods, and `serviceEndpoint` is
+ * `{uri, accept, routingKeys}`. `serviceId` defaults to the current
+ * `#didcomm`; pass the older `#didcomm-biset-<suffix>` form to exercise
+ * suffix-bound route selection. */
+export interface DidCommStateExtras {
+  keyAgreementKeys?: Array<{ fragment: string; x25519PublicKey: Uint8Array }>
+  /** Verification methods whose multibase encoding is not Ed25519 or X25519
+   * (an ML-KEM-768 `#kk_<id>` entry, say) -- already-encoded, since only the
+   * caller knows the multicodec. Not referenced from `keyAgreement`: an
+   * ML-KEM entry is found by `mlkemKidFor` off its X25519 sibling. */
+  rawVerificationMethods?: Array<{ fragment: string; publicKeyMultibase: string }>
+  endpointUri?: string
+  routingKeys?: string[]
+  serviceId?: string
+  /** Several DIDCommMessaging services at once, in document order (oldest
+   * first) -- what a multi-device identity publishes. Supersedes the
+   * `endpointUri`/`serviceId`/`routingKeys` single-service shorthand. */
+  services?: Array<{ id: string; uri: string; routingKeys?: string[] }>
+  /** Genesis-only parameters a later append needs: `portable: true` to allow
+   * a domain move at all, and a Spare Key commitment to sign one with
+   * (migrate.ts enforces both). */
+  portable?: boolean
+  nextKeyHashes?: string[]
+}
+
+/** A DIDComm-capable single-entry log -- what replaced every
+ * `/.well-known/routing.json` fixture when routing.json was retired
+ * (2026-09-16). */
+export function buildDidCommLog(opts: DidCommStateExtras & {
+  rootPrivateKey: Uint8Array
+  rootPublicKey: Uint8Array
+  extraVerificationMethods?: Array<{ fragment: string; publicKey: Uint8Array }>
+  domain?: string
+}): { did: string; log: LogEntry[] } {
+  return buildGenesisLog(opts.rootPrivateKey, opts.rootPublicKey, opts.extraVerificationMethods ?? [], opts.domain, opts)
 }

@@ -3,7 +3,7 @@
 // src/core/adapters/ on 2026-09-03 when biset-core was retired; this plugin
 // is now its only consumer) with bridge.ts's resolve/pack split and an HTTP
 // POST for delivery. No spool, no identityId/deviceIds concept -- RCPT TO
-// resolves straight against the recipient's own routing.json (bridge.ts's
+// resolves straight against the recipient's own did:webvh log (bridge.ts's
 // `resolveMailRecipientRoute`), and DATA acceptance packs and delivers in
 // one step, matching the "250 OK only after it's actually on its way, not
 // just accepted" property a spool-backed listener would need a durable

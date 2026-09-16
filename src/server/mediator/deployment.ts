@@ -141,7 +141,7 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
   expiryTimer.unref()
 
   // Hop-chaining (2026-08-30 discussion): when this mediator is itself named
-  // as an intermediate hop in some recipient's routing.json, an upstream
+  // as an intermediate hop in some recipient's DID document, an upstream
   // mediator queues Forward-wrapped messages for this relay poller's own kid
   // rather than delivering them directly. Polling it and re-Forwarding into
   // our own `handle` requires no changes to either mediator's dispatch loop

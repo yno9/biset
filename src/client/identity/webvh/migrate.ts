@@ -56,10 +56,11 @@ export interface MigrateLocationOptions {
   buildState?: (carriedState: WebvhDidDocument, newDid: string) => object
   /** Runs after the NEW location's did.jsonl is written but BEFORE the OLD
    * location is told about the move (the second `putLog` below) — the one
-   * point where a caller can still back out cleanly. identity/webvh/move.ts
-   * uses this to seed the new location's routing.json: that write can only
-   * succeed once the new location's did.jsonl already exists (the anchor's
-   * own auth check reads it to find the current updateKeys), so it cannot
+   * point where a caller can still back out cleanly. The since-deleted
+   * identity/webvh/move.ts used it to seed a second document at the new
+   * location: such a write can only succeed once the new location's
+   * did.jsonl already exists (the host's own auth check reads it to find
+   * the current updateKeys), so it cannot
    * happen any earlier — and if it fails, throwing here skips the
    * old-location append entirely, so the OLD DID keeps resolving to the
    * pre-move document exactly as before, never advertising a move to a

@@ -1,5 +1,5 @@
 // SMTP -> DIDComm bridge: an inbound message accepted for
-// `{username}@mail.{apexDomain}` is resolved straight to a Forward-ready
+// `{username}@{apexDomain}` is resolved straight to a Forward-ready
 // outbound envelope, with no spool, relationship credential, or VC layer
 // (2026-08-30 redesign -- the did:webvh<->mail mapping is already public,
 // so there is nothing left to hide from this mediator).
@@ -11,7 +11,8 @@
 // SmtpSession already carries a per-recipient `resolution` from RCPT
 // through to acceptIngress (that generic parameter's whole reason for
 // existing -- see its own header).
-import { fetchRoutingByDomain, type DidCommServiceEndpoint } from '../../../protocol/didcomm/webvh-routing.ts'
+import { didCommRouteFromDocument, absoluteKid } from '../../../protocol/didcomm/webvh-route.ts'
+import { resolveByDomain } from '../../../protocol/webvh/resolver.ts'
 import { decodeX25519Multikey } from '../../../protocol/didcomm/multikey.ts'
 import { buildPlaintext } from '../../../protocol/didcomm/message.ts'
 import { packForDelivery, type OutboundDelivery, type RouteEndpoint } from '../route-deliver.ts'
@@ -28,10 +29,18 @@ export interface MailRecipientRoute {
 
 export type ResolveMailRecipientResult = { ok: true; route: MailRecipientRoute } | { ok: false; error: string }
 
-/** Resolves `toAddress`'s routing.json by domain alone (no signed-log
- * resolve, no SCID -- `identityDomainForMailAddress` is the deterministic
- * inverse of `mailFromForIdentity`). What an SMTP listener's RCPT TO
- * handler calls: a `{ ok: false }` here is exactly "no such user" (550). */
+/** Resolves `toAddress`'s did:webvh document by domain alone -- the signed
+ * log at `{domain}/.well-known/did.jsonl`, with no SCID known up front
+ * (`identityDomainForMailAddress` is the deterministic inverse of
+ * `mailFromForIdentity`). `resolveByDomain` carries the same trust as a
+ * full `resolve()`: every entry is verified against the log's OWN embedded
+ * scid and hash chain. What an SMTP listener's RCPT TO handler calls: a
+ * `{ ok: false }` here is exactly "no such user" (550).
+ *
+ * Until 2026-09-16 this read `/.well-known/routing.json` instead. That
+ * document is retired, and did.md still serves a 200 with pre-2026-08 junk
+ * in it (`{"mimiVaultRoom":...}`, nothing else), so reading it would reject
+ * EVERY recipient as "no DIDComm service endpoint published". */
 export async function resolveMailRecipientRoute(
   toAddress: string,
   apexDomain: string,
@@ -44,24 +53,18 @@ export async function resolveMailRecipientRoute(
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
 
-  let doc: Awaited<ReturnType<typeof fetchRoutingByDomain>>
+  let doc: Awaited<ReturnType<typeof resolveByDomain>>
   try {
-    doc = await fetchRoutingByDomain(domain, fetchImpl)
+    doc = await resolveByDomain(domain, undefined, undefined, fetchImpl)
   } catch (error) {
     return { ok: false, error: `could not resolve ${toAddress}: ${error instanceof Error ? error.message : String(error)}` }
   }
   if (!doc) return { ok: false, error: `${toAddress} does not resolve to a published identity` }
 
-  const service = doc.service.find(s => s.type === 'DIDCommMessaging')
-  const serviceEndpoint = service?.serviceEndpoint
-  const endpoint = serviceEndpoint && typeof serviceEndpoint === 'object' && !Array.isArray(serviceEndpoint)
-    ? (serviceEndpoint as Partial<DidCommServiceEndpoint>)
-    : undefined
+  const { endpoint, keyAgreement: kaVm } = didCommRouteFromDocument(doc)
   if (!endpoint || typeof endpoint.uri !== 'string' || !endpoint.uri) {
     return { ok: false, error: `${toAddress} has no DIDComm service endpoint published` }
   }
-
-  const kaVm = doc.keyAgreementVerificationMethod?.[0]
   if (!kaVm) return { ok: false, error: `${toAddress} has no keyAgreement key published -- they need to enable DIDComm first` }
   let recipientPublicKey: Uint8Array
   try {
@@ -72,7 +75,7 @@ export async function resolveMailRecipientRoute(
 
   return {
     ok: true,
-    route: { toAddress, recipientDid: kaVm.controller, recipientKid: kaVm.id, recipientPublicKey, endpoint: { uri: endpoint.uri, routingKeys: endpoint.routingKeys } },
+    route: { toAddress, recipientDid: doc.id, recipientKid: absoluteKid(doc, kaVm.id), recipientPublicKey, endpoint: { uri: endpoint.uri, routingKeys: endpoint.routingKeys } },
   }
 }
 
@@ -103,7 +106,7 @@ export type MailBridgeResult = { ok: true; delivery: OutboundDelivery } | { ok: 
  * caller that has no reason to resolve ahead of time (tests, a one-off
  * script). The SMTP listener itself calls `resolveMailRecipientRoute` and
  * `packInboundMailForward` separately instead, so RCPT-time resolution and
- * DATA-time packing don't each redo the same routing.json fetch. */
+ * DATA-time packing don't each redo the same did.jsonl fetch. */
 export async function buildInboundMailForward(
   toAddress: string,
   apexDomain: string,

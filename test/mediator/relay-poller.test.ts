@@ -39,16 +39,16 @@ describe('relay poller (multi-hop Forward chaining)', () => {
     }
 
     // The recipient registers with the LOCAL mediator only -- exactly as if
-    // its routing.json named local.mediator as the final hop.
+    // its DID document named local.mediator as the final hop.
     const recipientPeer = generatePeerIdentity()
     const recipient: DidCommSender = { did: recipientPeer.did, xKid: recipientPeer.xKid, xPriv: recipientPeer.xPriv }
     await registerWithMediator(local.url, recipient, fetchImpl)
 
-    // The poller's own identity is what the sender's routing.json names as
+    // The poller's own identity is what the sender's DID document names as
     // the intermediate `routingKeys` entry for hop1 -- persisted in
     // production (SqliteMediatorStore.loadRelayPollerIdentity), a fresh
     // generatePeerIdentity() here. Registered with the upstream mediator up
-    // front, same as a routing.json would only ever name a kid the poller
+    // front, same as a DID document would only ever name a kid the poller
     // already enrolled (a sender has no other way to learn about it).
     const relayIdentity = generatePeerIdentity()
     const relayOwn: DidCommSender = { did: relayIdentity.did, xKid: relayIdentity.xKid, xPriv: relayIdentity.xPriv }

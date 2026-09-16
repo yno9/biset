@@ -3,7 +3,7 @@
 // a live outbound DID resolve to whatever domain the sender-claimed,
 // unverified `apu`/`skid` header names. Getting this ordering backwards lets
 // an attacker who merely knows a real, publicly-published recipient kid
-// (routing.json keyAgreement entries are meant to be discoverable) trigger
+// (published keyAgreement entries are meant to be discoverable) trigger
 // the recipient's own device into contacting an arbitrary attacker-chosen
 // host, for a message that was always going to be rejected anyway (found
 // live, 2026-08-26).

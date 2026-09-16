@@ -2,7 +2,7 @@
 // published, Forward-wraps it -- the "where does this actually go" half of
 // send-message.ts's sendFrontDoorMessage, factored out so the mail plugin
 // bridge (mediator/mail-plugin/bridge.ts) can reuse the exact same
-// packaging logic against a domain-resolved routing.json instead of a full
+// packaging logic against a domain-resolved DID document instead of a full
 // did:webvh document.
 import { packAuthcrypt, packAnoncrypt, type DidCommJWE } from '../../protocol/didcomm/crypto.ts'
 import { wrapForwardChain } from '../../protocol/didcomm/forward-wrap.ts'

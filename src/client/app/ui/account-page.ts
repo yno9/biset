@@ -381,7 +381,7 @@ export function showAccountPage(): void {
   const fields = document.getElementById('cmd-acc-identity-fields')
 
   if (nameEl) nameEl.textContent = label
-  // A self-asserted name (routing.json's `name`, set via the name/pencil
+  // A self-asserted name (the document's `name`, set via the name/pencil
   // click below) overrides the bare domain label once it resolves -- fetched
   // in the background so the card still shows something immediately rather
   // than blocking render on a network round trip. Tracked separately from
@@ -389,10 +389,9 @@ export function showAccountPage(): void {
   // opens pre-filled with the real current value, even if the fetch is
   // still in flight when the user clicks.
   let currentName = label
-  // The identity card is a view of the signed did:webvh document.  It must
-  // not depend on Biset's optional routing.json: a freshly created did.md
-  // identity has no DIDComm device/routing file yet, while its did.jsonl is
-  // already a complete, independently verifiable DID document.
+  // The identity card is a view of the signed did:webvh document: a freshly
+  // created did.md identity has no DIDComm device published yet, while its
+  // did.jsonl is already a complete, independently verifiable DID document.
   resolve(did).then(doc => {
     if (doc?.name) {
       currentName = doc.name

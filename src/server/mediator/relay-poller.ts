@@ -1,6 +1,6 @@
 // Multi-hop relay: this mediator's own client-role identity, registered
 // with an UPSTREAM mediator so it can be named as an intermediate hop in a
-// recipient's routing.json (webvh-routing.ts's `routingKeys`, ordered
+// recipient's DID document (the `#didcomm` service's `routingKeys`, ordered
 // outermost-first). Polls the upstream for whatever a sender Forward-wrapped
 // to THIS hop's kid, unwraps one anoncrypt layer, and re-Forwards the still-
 // opaque payload into this mediator's own queue via `deliverLocally`.

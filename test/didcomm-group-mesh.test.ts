@@ -22,7 +22,7 @@ import { encodeX25519Multikey } from '../src/protocol/didcomm/multikey.ts'
 import { createMediator } from '../src/server/mediator/server.ts'
 import { ConnectionStore } from '../src/server/mediator/connections.ts'
 import type { ContactKeyV1 } from '../src/client/store/vault/contact-key.ts'
-import { buildGenesisLog } from './protocol/support/webvh-log-fixture.ts'
+import { buildDidCommLog } from './protocol/support/webvh-log-fixture.ts'
 
 interface Identity { did: string; domain: string; frontKid: string; frontX: Uint8Array; relationshipSecret: Uint8Array; log: unknown[] }
 
@@ -39,11 +39,22 @@ async function deliverAndAck(mediator: MediatorInfo, own: DidCommSender, resolve
   return delivered
 }
 
-function makeIdentity(name: string): Identity {
+/** The front-door key and the `#didcomm` service both live in the signed log
+ * (did.md publishes them there; routing.json was retired 2026-09-16), so the
+ * mediator this identity registers with has to be known before its DID
+ * exists -- the SCID covers the service entry naming that mediator. */
+function makeIdentity(name: string, mediatorUrl: string, mediatorKid: string): Identity {
   const root = ed25519.utils.randomSecretKey()
   const domain = `${name}.test.example`
-  const { did, log } = buildGenesisLog(root, ed25519.getPublicKey(root), [], domain)
   const frontX = x25519.utils.randomSecretKey()
+  const { did, log } = buildDidCommLog({
+    rootPrivateKey: root,
+    rootPublicKey: ed25519.getPublicKey(root),
+    keyAgreementKeys: [{ fragment: `k_${name}-front-door`, x25519PublicKey: x25519.getPublicKey(frontX) }],
+    endpointUri: mediatorUrl,
+    routingKeys: [mediatorKid],
+    domain,
+  })
   return { did, domain, frontKid: `${did}#k_${name}-front-door`, frontX, relationshipSecret: x25519.utils.randomSecretKey(), log }
 }
 
@@ -53,9 +64,9 @@ describe('DIDComm group chat mesh', () => {
     const mediator = generatePeerIdentity({ uri: mediatorUrl, accept: ['didcomm/v2'] })
     const connections = new ConnectionStore()
 
-    const alice = makeIdentity('alice')
-    const bob = makeIdentity('bob')
-    const carol = makeIdentity('carol')
+    const alice = makeIdentity('alice', mediatorUrl, mediator.xKid)
+    const bob = makeIdentity('bob', mediatorUrl, mediator.xKid)
+    const carol = makeIdentity('carol', mediatorUrl, mediator.xKid)
     const identities = [alice, bob, carol]
 
     const { handle } = createMediator({
@@ -66,16 +77,11 @@ describe('DIDComm group chat mesh', () => {
         return owner ? x25519.getPublicKey(owner.frontX) : null
       },
     })
-    const routingJsonFor = (identity: Identity) => ({
-      service: [{ id: `${identity.did}#didcomm`, type: 'DIDCommMessaging', serviceEndpoint: { uri: mediatorUrl, accept: ['didcomm/v2'], routingKeys: [mediator.xKid] } }],
-      keyAgreementVerificationMethod: [{ id: identity.frontKid, type: 'Multikey', controller: identity.did, publicKeyMultibase: encodeX25519Multikey(x25519.getPublicKey(identity.frontX)) }],
-    })
     const fetchImpl = (async (input, init) => {
       const url = new URL(String(input))
       if (url.origin === mediatorUrl) return (await handle(new Request(url, init), url)) ?? new Response('not found', { status: 404 })
       const owner = identities.find(id => url.hostname === id.domain)
       if (url.pathname.endsWith('/did.jsonl') && owner) return new Response(owner.log.map(value => JSON.stringify(value)).join('\n') + '\n')
-      if (url.pathname.endsWith('/routing.json') && owner) return Response.json(routingJsonFor(owner))
       return new Response(`unexpected request: ${url}`, { status: 500 })
     }) as typeof fetch
     const realFetch = globalThis.fetch

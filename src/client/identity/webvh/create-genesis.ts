@@ -3,13 +3,13 @@
 // URL the resulting DID's domain segment names.
 //
 // Deliberately minimal relative to src.bak/did/webvh/publish.ts's
-// createGenesis: no routing.json write (relay/DIDComm/mail service data —
-// Vault Core's identity generation does not publish any of that; mail/DIDComm
-// adapters can add it later when they exist), no username-specific path
-// convention (the caller supplies whatever pathSegments it wants). The
-// signed state itself is `buildMinimalWebvhState`'s id/#key-1/authentication
-// only, matching what the read-only resolver (resolver.ts) already expects
-// to find with no routing.json merge.
+// createGenesis: no DIDComm/mail service data at genesis (device keys and
+// the `#didcomm` service are appended later, by did.md Wallet's
+// `urn:did-core:document-edit:v1`), no username-specific path convention
+// (the caller supplies whatever pathSegments it wants). The signed state is
+// `buildMinimalWebvhState`'s id/#key-1/authentication only. The `#routing`
+// pointer service this used to burn into the genesis state was removed with
+// routing.json itself (2026-09-16).
 import { buildWebvhDid, didToHttpsUrl } from '../../../protocol/webvh/identifier.ts'
 import { generateScid, SCID_PLACEHOLDER } from '../../../protocol/webvh/scid.ts'
 import { generateEntryHash, serializeLog, type LogEntry, type LogParameters } from '../../../protocol/webvh/log.ts'
@@ -19,7 +19,6 @@ import { encodeMultikey } from '../../../protocol/webvh/multikey.ts'
 import { buildMinimalWebvhState, type SignedWebvhState } from '../../../protocol/webvh/document.ts'
 import { syncDidWebMirror } from '../web/mirror.ts'
 import { defaultFetch } from '../../../protocol/net-fetch.ts'
-import { didToRoutingUrl } from '../../../protocol/didcomm/webvh-routing.ts'
 
 export interface CreateGenesisOptions {
   domain: string
@@ -61,7 +60,6 @@ export async function createGenesis(opts: CreateGenesisOptions): Promise<{ did: 
     ttl: 3600,
   }
   const state = buildMinimalWebvhState(placeholderDid, opts.rootPublicKey)
-  state.service = [{ id: `${placeholderDid}#routing`, type: 'BisetRoutingDocument', serviceEndpoint: didToRoutingUrl(placeholderDid) }]
   const preliminary = { versionId: SCID_PLACEHOLDER, versionTime, parameters, state }
 
   const scid = generateScid(preliminary)

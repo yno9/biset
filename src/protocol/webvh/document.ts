@@ -1,6 +1,6 @@
 // The W3C DID Core JSON shape a did:webvh log entry's `state` field carries
 // directly. Read-only subset: only the fields this resolver actually
-// produces or consumes. biset's full document builder (routing.json merge,
+// produces or consumes. biset's full document builder (
 // keyAgreement/service assembly) stays in `src.bak/did/webvh/document.ts`
 // until the write path is ported.
 import { encodeMultikey } from './multikey.ts'
@@ -12,7 +12,7 @@ export interface WebvhVerificationMethod {
   publicKeyMultibase: string
 }
 
-export interface WebvhService {
+interface WebvhService {
   id: string
   type: string
   serviceEndpoint: string | string[] | Record<string, unknown>
@@ -30,15 +30,16 @@ export interface WebvhDidDocument {
 }
 
 /** The signed log entry's own `state` shape — narrower than a resolved
- * WebvhDidDocument (no `alsoKnownAs`/`keyAgreement`/`name`/routing-derived
- * `service`: those are operational data Vault Core does not publish through
- * routing.json — see PLAN.md's identity-generation scope decision). */
+ * WebvhDidDocument only in `alsoKnownAs`, which biset itself never writes
+ * (did.md uses it for DID aliases). `keyAgreement`/`service`/`name` ARE
+ * carried by the signed log — that is where they live since routing.json
+ * was retired (2026-09-16). */
 export type SignedWebvhState = Omit<WebvhDidDocument, 'alsoKnownAs'>
 
 /** Builds the minimal signed genesis/update state: `id` and the one root key
- * that defines this identity. Nothing else — no routing.json pointer, no
- * service entries — since Vault Core's identity generation does not publish
- * one (mail/DIDComm adapters will add whatever they need when they exist). */
+ * that defines this identity. Nothing else — no service entries, since
+ * identity generation publishes no DIDComm data; did.md Wallet appends the
+ * device keys and `#didcomm` service afterwards. */
 export function buildMinimalWebvhState(did: string, rootPublicKey: Uint8Array): SignedWebvhState {
   const keyId = `${did}#key-1`
   return {

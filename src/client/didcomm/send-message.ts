@@ -1,4 +1,4 @@
-// Outbound DIDComm send: resolve the recipient's routing.json (keyAgreement
+// Outbound DIDComm send: resolve the recipient's DID document (keyAgreement
 // key + DIDCommMessaging service endpoint), authcrypt a Basic Message 2.0
 // JWE to their kid, then -- when they've registered with a mediator
 // (webvh-routing.ts's `routingKeys`) -- anoncrypt-Forward-wrap it and POST

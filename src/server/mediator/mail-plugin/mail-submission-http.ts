@@ -2,7 +2,7 @@
 // counterpart to bridge.ts/listener.ts's inbound direction: a device signs
 // a MailSubmissionRequestV1 (identity/bootstrap.ts's buildMailSubmitter)
 // with its identity's CURRENT did:webvh update key (the same key a
-// routing.json/did.jsonl update itself must sign with -- NOT an MLS device
+// did.jsonl update itself must sign with -- NOT an MLS device
 // credential, since that concept lived entirely inside the now-retired
 // biset-core's own trusted-device roster and this plugin has no roster at
 // all, matching PLAN_biset-mail-mediator.md's own already-stated principle:

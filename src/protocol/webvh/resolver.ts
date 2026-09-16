@@ -6,13 +6,12 @@
 // this module exists to answer one question — "what Ed25519 keys does this
 // DID currently list in verificationMethod?" — for MLS's Authentication
 // Service role (PLANMLSARCH.md §3) and for the roster's
-// DeviceSigningPublicKeyResolver (PLAN.md §2.2). It does not merge
-// routing.json (keyAgreement/service/alsoKnownAs/name are biset-specific
-// operational data the signed log never carries — see the original
-// document.ts's header); a resolved document here therefore has an empty
-// `service`/`alsoKnownAs` and no `keyAgreement`, which is correct for
-// verificationMethod-only callers and wrong for anything that needs DIDComm
-// routing data.
+// DeviceSigningPublicKeyResolver (PLAN.md §2.2) — but it returns the whole
+// resolved state, `keyAgreement`/`service`/`alsoKnownAs`/`name` included:
+// since routing.json was retired (2026-09-16) the signed log is the ONLY
+// place that data lives, published by did.md Wallet's
+// `urn:did-core:document-edit:v1`. A DIDComm caller therefore needs nothing
+// beyond this resolver plus didcomm/webvh-route.ts's route selection.
 import { didToHttpsUrl, domainDidJsonlUrl, parseWebvhDid } from './identifier.ts'
 import {
   parseLog, verifyEntryHash, entryVersionNumber, resolveParameters,
@@ -45,16 +44,16 @@ function findSigningKey(proof: LogEntry['proof'][number], candidateKeys: string[
  * and a Data Integrity proof valid against the updateKeys the PRIOR entry
  * authorized (the genesis entry authorizes itself). Returns the latest
  * non-deactivated state, or null if the DID has no log / is deactivated. */
-export async function resolve(did: string, init?: RequestInit): Promise<WebvhDidDocument | null> {
+export async function resolve(did: string, init?: RequestInit, fetchImpl: typeof fetch = fetch): Promise<WebvhDidDocument | null> {
   const url = didToHttpsUrl(did)
-  const resp = await fetch(url, init)
+  const resp = await fetchImpl(url, init)
   if (resp.status === 404) return null
   if (!resp.ok) throw new WebvhResolutionError(`resolve: HTTP ${resp.status} fetching ${url}`)
   return resolveEntries(did, parseLog(await resp.text()))
 }
 
 /** Resolves an identity's CURRENT did:webvh update keys -- the same
- * authority a routing.json/did.jsonl update itself must sign with (Root, or
+ * authority a did.jsonl update itself must sign with (Root, or
  * its post-rotation successor). Reuses `resolveEntries`'s own full verified
  * walk (SCID, entryHash chain, proof-against-predecessor-authorized-keys)
  * so this carries the identical trust `resolve()` itself does; the only
@@ -86,9 +85,9 @@ export async function resolveCurrentUpdateKeys(did: string, init?: RequestInit):
  * every entry against ITS OWN embedded `scid`. This is what a
  * recovery-phrase login uses: the phrase alone re-derives the root key, not
  * the DID string (`identity/bootstrap.ts`'s `restoreIdentity`). */
-export async function resolveByDomain(domain: string, port?: number, init?: RequestInit): Promise<WebvhDidDocument | null> {
+export async function resolveByDomain(domain: string, port?: number, init?: RequestInit, fetchImpl: typeof fetch = fetch): Promise<WebvhDidDocument | null> {
   const url = domainDidJsonlUrl(domain, port)
-  const resp = await fetch(url, init)
+  const resp = await fetchImpl(url, init)
   if (resp.status === 404) return null
   if (!resp.ok) throw new WebvhResolutionError(`resolveByDomain: HTTP ${resp.status} fetching ${url}`)
   const entries = parseLog(await resp.text())

@@ -3,15 +3,20 @@
 // mls/webvh-authentication-service.ts: a device that never itself moved
 // must keep resolving under its OWN unchanged (old-did-prefixed) DIDComm
 // senderKid after a SIBLING device moves the shared identity's domain.
+//
+// The device's X25519 key is published IN the signed log (routing.json was
+// retired 2026-09-16), so the move carries it automatically -- migrate.ts's
+// whole-document string substitution rewrites the DID prefix on every id,
+// never the `#fragment`, which is exactly what the resolver must match on.
 import { describe, expect, test } from 'bun:test'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { createGenesis } from '../../src/client/identity/webvh/create-genesis.ts'
 import { migrateWebvhLocation } from '../../src/client/identity/webvh/migrate.ts'
+import { didToHttpsUrl } from '../../src/protocol/webvh/identifier.ts'
+import { serializeLog } from '../../src/protocol/webvh/log.ts'
 import { encodeMultikey } from '../../src/protocol/webvh/multikey.ts'
 import { multikeyHashBase58 } from '../../src/protocol/webvh/hash.ts'
-import { buildRoutingDoc, fetchRouting, putRouting } from '../../src/protocol/didcomm/webvh-routing.ts'
 import { resolveDidCommSenderKey } from '../../src/protocol/didcomm/webvh-resolve.ts'
-import { fakeAnchor } from './support/webvh-log-fixture.ts'
+import { buildDidCommLog, fakeAnchor } from './support/webvh-log-fixture.ts'
 
 describe('resolveDidCommSenderKey', () => {
   test('a never-moved device\'s senderKid still resolves after the identity moves', async () => {
@@ -20,41 +25,31 @@ describe('resolveDidCommSenderKey', () => {
     const senderPrivateKey = x25519.utils.randomSecretKey()
     const senderPublicKey = x25519.getPublicKey(senderPrivateKey)
     const anchor = fakeAnchor()
-    const rootSigning = { updateKey: encodeMultikey(rootPublicKey), privateKey: rootPrivateKey }
     const currentSparePrivateKey = ed25519.utils.randomSecretKey()
     const currentSparePublicKey = ed25519.getPublicKey(currentSparePrivateKey)
     const currentSpareHash = multikeyHashBase58(encodeMultikey(currentSparePublicKey))
 
-    const { did: oldDid } = await createGenesis({
-      domain: 'move-src.example', rootPrivateKey, rootPublicKey,
-      nextKeyHash: currentSpareHash, fetch: anchor.fetch,
+    const { did: oldDid, log } = buildDidCommLog({
+      rootPrivateKey, rootPublicKey,
+      keyAgreementKeys: [{ fragment: 'k1', x25519PublicKey: senderPublicKey }],
+      endpointUri: 'https://mediator.test.example',
+      domain: 'move-src.example',
+      portable: true,
+      nextKeyHashes: [currentSpareHash],
     })
+    await anchor.fetch(didToHttpsUrl(oldDid), { method: 'PUT', headers: { 'Content-Type': 'text/jsonl' }, body: serializeLog(log) })
     const senderKid = `${oldDid}#k1`
-    await putRouting(oldDid, buildRoutingDoc(oldDid, { keyAgreementKeys: [{ kid: '#k1', publicKey: senderPublicKey }] }), rootSigning, anchor.fetch)
 
-    // Someone else's move: only the domain changes, this sender device never re-publishes.
+    // Someone else's move: only the domain changes, this sender device never
+    // re-publishes anything of its own.
     const nextSparePrivateKey = ed25519.utils.randomSecretKey()
     const nextKeyHash = multikeyHashBase58(encodeMultikey(ed25519.getPublicKey(nextSparePrivateKey)))
-    const { newDid } = await migrateWebvhLocation({
+    await migrateWebvhLocation({
       oldDid, newDomain: 'move-dst.example',
       signingPrivateKey: currentSparePrivateKey, signingPublicKey: currentSparePublicKey,
       nextKeyHash, fetch: anchor.fetch,
     })
-    // Carries routing.json the same way identity/webvh/move.ts's own
-    // afterNewLocationWritten hook does -- whole-document string substitution.
-    const currentRouting = await fetchRouting(oldDid, anchor.fetch)
-    const carried = JSON.parse(JSON.stringify(currentRouting).split(oldDid).join(newDid))
-    await putRouting(newDid, carried, { updateKey: encodeMultikey(currentSparePublicKey), privateKey: currentSparePrivateKey }, anchor.fetch)
 
-    // resolveWithRouting's own resolve() half always uses the real global
-    // fetch (identity/webvh/resolver.ts's resolve() takes no fetch
-    // override) -- only its routing.json half honors the passed fetchImpl.
-    const realFetch = globalThis.fetch
-    globalThis.fetch = anchor.fetch
-    try {
-      expect(await resolveDidCommSenderKey(senderKid, anchor.fetch)).toEqual(senderPublicKey)
-    } finally {
-      globalThis.fetch = realFetch
-    }
+    expect(await resolveDidCommSenderKey(senderKid, anchor.fetch)).toEqual(senderPublicKey)
   })
 })

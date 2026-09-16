@@ -121,7 +121,7 @@ function kidMatchesKey(kidOrFragment: string, publicKey: Uint8Array): boolean {
 }
 
 /** `did:x:y#k_ab` → `#k_ab`; `#k_ab` → `#k_ab`. */
-export function fragmentOf(kidOrFragment: string): string {
+function fragmentOf(kidOrFragment: string): string {
   const hash = kidOrFragment.indexOf('#')
   return hash < 0 ? kidOrFragment : kidOrFragment.slice(hash)
 }
