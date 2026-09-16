@@ -8,3 +8,6 @@ PLAN*
 docs/
 *.bak
 /*.bak/
+tasks/
+scripts/
+ops/
