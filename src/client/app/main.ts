@@ -70,6 +70,8 @@ import { createWalletDidCommOutbox, type WalletDidCommOutbox } from '../identity
 import { MarkdownDirectoryConnection, observeMarkdownDirectory, removeMarkdownMirrorFile, scanMarkdownProjection, writeMarkdownProjection, type MarkdownMirrorFile } from '../store/vault/markdown-directory.ts'
 import { MarkdownSelfWriteGuard, markdownStatusMutation } from '../store/vault/markdown-mirror.ts'
 import { createJmapExport, decodeJmapExport, decryptJmapExport, encodeJmapExport, encryptJmapExport, importJmapExport, type JmapExportEnvelopeV1 } from '../store/vault/jmap-export.ts'
+import { buildOutboundRfc5322 } from '../mail/rfc5322-builder.ts'
+import { submitDidCommMail } from '../mail/didcomm-submit.ts'
 
 let mediatorPollHandles: MediatorPollHandle[] = []
 
@@ -758,6 +760,31 @@ async function configureWalletAccountIfPresent(
       }
     }
     const sendWalletMessage = async (input: ReplySendInput): Promise<void> => {
+      if (input.toAddrs.length > 0 && input.toAddrs.every(address => address.includes('@'))) {
+        const mailFrom = `${session.handle.split('.', 1)[0]}@did.md`
+        const now = new Date().toISOString()
+        const emailId = crypto.randomUUID()
+        const messageId = crypto.randomUUID()
+        const rawRfc5322 = buildOutboundRfc5322({ messageId, from: mailFrom, to: input.toAddrs, subject: input.subject, body: input.body, inReplyTo: input.inReplyTo, references: input.references })
+        const snapshot = await readModel.snapshot()
+        // This commit is the durable outbox: submission happens only after it
+        // is encrypted and committed. A rejected/failed request leaves it in
+        // outbox for a later retry rather than silently losing the draft.
+        await mutationSink.commitMailMessage({
+          email: { id: emailId, threadId: input.references?.[0] ?? input.inReplyTo ?? messageId, mailboxIds: { outbox: true }, keywords: { '$seen': true }, receivedAt: now, sentAt: now, from: [{ email: mailFrom }], to: input.toAddrs.map(email => ({ email })), ...(input.subject ? { subject: input.subject } : {}), ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}), size: rawRfc5322.length },
+          rawRfc5322,
+        }, snapshot)
+        await refreshInbox(readModel)
+        if (!activeDidCommDevice) throw new Error('DIDComm messaging is not enabled for this Wallet')
+        await submitDidCommMail({ fromKid: activeDidCommDevice.xKid, x25519PrivateKey: activeDidCommDevice.x25519PrivateKey, messageId, mailFrom, rcptTo: input.toAddrs, rawRfc5322 })
+        const afterSubmit = await readModel.snapshot()
+        await mutationSink.commitIntents([
+          { kind: 'transport.result', targetIds: [emailId], payload: { emailId, messageId, status: 'accepted', occurredAt: new Date().toISOString(), transport: 'didcomm-mail-bridge' } },
+          { kind: 'mailbox.set', targetIds: [emailId], payload: { emailId, mailboxIds: { sent: true } } },
+        ], afterSubmit)
+        await refreshInbox(readModel)
+        return
+      }
       if (!activeDidCommDevice || !walletRelationshipManager || !walletDidCommOutbox) throw new Error('DIDComm is still connecting for this Wallet session')
       const snapshotBeforeSend = await readModel.snapshot()
       const replyThread = input.inReplyTo ? snapshotBeforeSend.emails.find(email => email.id === input.inReplyTo)?.threadId : undefined

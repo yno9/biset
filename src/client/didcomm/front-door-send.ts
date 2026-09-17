@@ -18,6 +18,7 @@ import { wrapForwardChain } from '../../protocol/didcomm/forward-wrap.ts'
 import { decodePeerDid2, publicKeyOf } from '../../protocol/didcomm/peer.ts'
 import { didCommRouteFromDocument, absoluteKid } from '../../protocol/didcomm/webvh-route.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
+import { resolveDidWeb, didWebDidCommRoute } from '../../protocol/didcomm/did-web.ts'
 
 /** A did:peer:2 counterpart -- a mediator, or another device/bot addressed
  * directly by its did:peer rather than a did:webvh identity (e.g. a service
@@ -64,6 +65,13 @@ async function resolveFrontDoorRoute(toDid: string, fetchImpl: typeof fetch): Pr
     }
   }
 
+  if (toDid.startsWith('did:web:')) {
+    const doc = await resolveDidWeb(toDid, fetchImpl)
+    if (!doc) throw new Error(`${toDid} does not resolve to a published identity`)
+    const route = didWebDidCommRoute(doc)
+    return { publicKey: route.publicKey, keyAgreementKid: route.kid, endpointUri: route.uri, routingKeys: route.routingKeys }
+  }
+
   const doc = await resolve(toDid, undefined, fetchImpl)
   if (!doc) throw new Error(`${toDid} does not resolve to a published identity`)
   const { endpoint, keyAgreement: kaVm } = didCommRouteFromDocument(doc)
@@ -96,6 +104,9 @@ export interface SendDidCommMessageOptions {
   x25519PrivateKey: Uint8Array
   subject?: string
   fetch?: typeof fetch
+  id?: string
+  thid?: string
+  attachments?: Array<{ id: string; media_type?: string; data: { json?: unknown; base64?: string } }>
 }
 
 /** The generic "resolve the recipient, authcrypt (Forward-wrapped if the
@@ -114,7 +125,7 @@ export async function sendFrontDoorMessage(toDid: string, type: string, body: un
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
 
-  const plaintext = buildPlaintext(type, body, opts.fromKid.split('#', 1)[0], toDid)
+  const plaintext = buildPlaintext(type, body, opts.fromKid.split('#', 1)[0], toDid, { id: opts.id, thid: opts.thid, attachments: opts.attachments })
   const plaintextBytes = new TextEncoder().encode(JSON.stringify(plaintext))
   const sender = { kid: opts.fromKid, privateKey: opts.x25519PrivateKey }
 

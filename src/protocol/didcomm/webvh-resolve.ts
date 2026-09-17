@@ -12,6 +12,7 @@ import { resolve } from '../webvh/resolver.ts'
 import { defaultFetch } from '../net-fetch.ts'
 import { decodeX25519Multikey } from './multikey.ts'
 import { didOfKid } from '../ids.ts'
+import { resolveDidWeb } from './did-web.ts'
 
 /** Resolves a DIDComm sender's kid (a full DID URL, `did:webvh:...#k_<hash>`)
  * to its published X25519 keyAgreement public key -- crypto.ts's
@@ -33,6 +34,13 @@ export async function resolveDidCommSenderKey(senderKid: string, fetchImpl: type
   if (hash < 0) throw new Error(`resolveDidCommSenderKey: not a DID URL: ${senderKid}`)
   const did = didOfKid(senderKid)
   const fragment = senderKid.slice(hash)
+  if (did.startsWith('did:web:')) {
+    const doc = await resolveDidWeb(did, fetchImpl)
+    if (!doc) throw new Error(`resolveDidCommSenderKey: sender identity ${did} does not resolve`)
+    const vm = doc.verificationMethod?.find(value => value.id === fragment || value.id === senderKid)
+    if (!vm) throw new Error(`resolveDidCommSenderKey: ${senderKid} is not a published keyAgreement entry`)
+    return decodeX25519Multikey(vm.publicKeyMultibase)
+  }
   const doc = await resolve(did, undefined, fetchImpl)
   if (!doc) throw new Error(`resolveDidCommSenderKey: sender identity ${did} does not resolve`)
   const vm = doc.verificationMethod.find(v => v.id === fragment || v.id === `${doc.id}${fragment}`)

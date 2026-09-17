@@ -17,6 +17,8 @@ import { isBasicMessage, basicMessageBodyOf, didCommThreadId } from './basicmess
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { isExpired } from '../../protocol/didcomm/message.ts'
 import { isRelationshipMessage, relationshipBodyOf } from './relationship.ts'
+import { MAIL_BRIDGE_INBOUND, MAIL_BRIDGE_SEND_RESULT, mailBridgeInboundBodyOf } from '../../server/mediator/mail-plugin/mail-bridge.ts'
+import { readRfc5322HeaderSummary } from '../app/ui/message/rfc5322-headers.ts'
 
 export interface DidCommIngressProjectorOptions {
   identityId: IdentityId
@@ -63,7 +65,7 @@ export interface DidCommIngressProjectorOptions {
  * this for the group-chat and mail-bridge types) or drop it deliberately.
  */
 export function isProjectableDidCommIngress(msg: { type?: string }): boolean {
-  return isPing(msg) || isBasicMessage(msg) || isRelationshipMessage(msg)
+  return isPing(msg) || isBasicMessage(msg) || isRelationshipMessage(msg) || msg.type === MAIL_BRIDGE_INBOUND || msg.type === MAIL_BRIDGE_SEND_RESULT
 }
 
 /**
@@ -154,7 +156,36 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
     let event: VaultEventRecord
     let decryptedForProjection: { event: VaultEventRecord; plaintext: Uint8Array }
 
-    if (isPing(msg) || isRelationshipMessage(msg)) {
+    if (msg.type === MAIL_BRIDGE_INBOUND) {
+      // SMTP is deliberately opaque in transit.  Only the endpoint reads its
+      // inexpensive display/threading metadata; the original bytes are kept
+      // unchanged in the encrypted Vault object for replies and download.
+      const inbound = mailBridgeInboundBodyOf(msg)
+      if (!inbound) throw new TypeError('mail bridge message has an invalid inbound body')
+      const headers = readRfc5322HeaderSummary(inbound.rawRfc5322)
+      const emailId = didCommMessageDedupeId(senderKid, msg.id)
+      const threadId = headers.references[0] ?? headers.inReplyTo ?? headers.messageId ?? emailId
+      const record = await buildMailMessageAdd({
+        email: {
+          id: emailId,
+          threadId,
+          mailboxIds: { inbox: true },
+          keywords: {},
+          receivedAt: createdAt,
+          ...(headers.sentAt ? { sentAt: headers.sentAt } : {}),
+          ...(headers.from ? { from: [headers.from] } : {}),
+          to: [{ email: this.options.identityId }],
+          ...(headers.subject ? { subject: headers.subject } : {}),
+          ...(headers.inReplyTo ? { inReplyTo: headers.inReplyTo } : {}),
+          size: inbound.rawRfc5322.length,
+        },
+        rawRfc5322: inbound.rawRfc5322,
+      }, context, this.options.signer)
+      event = identityScopedObject(record.event, this.options.identityId)
+      objectRecords.push(identityScopedObject(record.metadataObject, this.options.identityId))
+      objectRecords.push(identityScopedObject(record.rawRfc5322Object, this.options.identityId))
+      decryptedForProjection = { event: record.event, plaintext: await decryptVaultObject(segment.segmentKey, record.metadataObject) }
+    } else if (isPing(msg) || isRelationshipMessage(msg) || msg.type === MAIL_BRIDGE_SEND_RESULT) {
       // Trust Ping 2.0: an audit record, never a thread row -- see
       // local-jmap/reducer.ts's own no-op case for `didcomm.control`.
       const alg = protectedHeaderOf(jwe)?.alg
@@ -172,6 +203,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
             relationshipKid: relationshipBody.relationshipKid,
             relationshipPublicKey: bytesToBase64url(relationshipBody.publicKey),
           } : {}),
+          ...(msg.type === MAIL_BRIDGE_SEND_RESULT ? { mailBridgeResultReceived: true, threadId: msg.thid ?? msg.id } : {}),
           receivedAt: createdAt,
         },
       }, context, this.options.signer)

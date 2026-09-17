@@ -36,7 +36,11 @@ export interface DidCommPlaintext {
   expires_time?: number
   // Pickup 3.0 `delivery`'s queued messages ride as attachments, each id
   // being the mediator's own queue id (mediator/server.ts's DELIVERY_REQUEST).
-  attachments?: Array<{ id: string; data: { json: unknown } }>
+  attachments?: Array<{
+    id: string
+    media_type?: string
+    data: { json?: unknown; base64?: string }
+  }>
 }
 
 /** UTC epoch seconds as an integer -- the unit every DIDComm time header uses. */
@@ -50,6 +54,7 @@ export interface PlaintextOptions {
   ack?: string[]
   /** UTC epoch seconds. Omit for no expiry (the sender's default per spec). */
   expiresTime?: number
+  attachments?: DidCommPlaintext['attachments']
 }
 
 export function buildPlaintext(type: string, body: unknown, from?: string, to?: string, opts: PlaintextOptions = {}): DidCommPlaintext {
@@ -65,6 +70,7 @@ export function buildPlaintext(type: string, body: unknown, from?: string, to?: 
   if (opts.pthid) msg.pthid = opts.pthid
   if (opts.ack && opts.ack.length) msg.ack = opts.ack
   if (opts.expiresTime !== undefined) msg.expires_time = opts.expiresTime
+  if (opts.attachments?.length) msg.attachments = opts.attachments
   return msg
 }
 

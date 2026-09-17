@@ -32,6 +32,9 @@ export interface MailPluginListenerOptions {
    * authcrypt'd from. */
   senderIdentity: { kid: string; privateKey: Uint8Array }
   fetch?: typeof fetch
+  /** did.md's independent relay supplies its colocated authority lookup here;
+   * the legacy plugin falls back to public did:webvh resolution. */
+  resolveRecipient?: (address: string) => Promise<MailRecipientRoute | undefined>
 }
 
 export interface MailPluginListener {
@@ -51,6 +54,9 @@ export function createMailPluginListener(options: MailPluginListenerOptions): Ma
     tls: options.tls,
     maxMessageBytes: options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES,
     resolveRecipient: async reference => {
+      const authoritative = options.resolveRecipient ? await options.resolveRecipient(reference.address) : undefined
+      if (authoritative) return authoritative
+      if (options.resolveRecipient) return undefined
       const resolved = await resolveMailRecipientRoute(reference.address, options.apexDomain, fetchImpl)
       return resolved.ok ? resolved.route : undefined
     },

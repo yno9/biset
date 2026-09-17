@@ -5,8 +5,8 @@
 // to DidCommIngressProjector. That projector throws for every type outside
 // ping/basicmessage/relationship, and watchMediator deliberately does NOT
 // acknowledge a message whose onMessage threw -- so before the guard added
-// alongside these tests, a single GROUP_INVITE (or GROUP_MESSAGE, or
-// MAIL_BRIDGE_INBOUND) addressed to a Wallet account stayed queued at the
+// alongside these tests, a single GROUP_INVITE (or GROUP_MESSAGE) addressed
+// to a Wallet account stayed queued at the
 // mediator forever and was re-delivered, and re-failed, on every reconnect.
 //
 // The first test below pins the projector's own allow-list against
@@ -97,10 +97,9 @@ describe('DidCommIngressProjector allow-list (isProjectableDidCommIngress)', () 
     }
   }
 
-  // The three types a Wallet account can actually receive today but has no
-  // branch for. Each MUST be rejected by the guard, because the projector
-  // itself rejects it with the very message quoted here.
-  for (const type of [GROUP_INVITE, GROUP_MESSAGE, MAIL_BRIDGE_INBOUND]) {
+  // Group traffic has its own handler in main.ts and is intentionally not
+  // handled by this projector.
+  for (const type of [GROUP_INVITE, GROUP_MESSAGE]) {
     test(`${type} is not projectable, and the projector agrees`, async () => {
       expect(isProjectableDidCommIngress({ type })).toBe(false)
       expect(await projectType(type)).toBe(`unsupported DIDComm message type for this endpoint slice: ${type}`)
@@ -113,7 +112,7 @@ describe('DidCommIngressProjector allow-list (isProjectableDidCommIngress)', () 
   // empty body -- which is exactly the proof that the type check let them
   // through. Basic Message likewise gets past the type check.)
   test('ping / basicmessage / relationship stay projectable', async () => {
-    for (const type of [PING, BASIC_MESSAGE, RELATIONSHIP_INIT, RELATIONSHIP_ACCEPT]) {
+    for (const type of [PING, BASIC_MESSAGE, RELATIONSHIP_INIT, RELATIONSHIP_ACCEPT, MAIL_BRIDGE_INBOUND]) {
       expect(isProjectableDidCommIngress({ type })).toBe(true)
       expect(await projectType(type)).not.toBe(`unsupported DIDComm message type for this endpoint slice: ${type}`)
     }

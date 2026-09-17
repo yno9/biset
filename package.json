@@ -6,14 +6,16 @@
   "scripts": {
     "build": "bun build src/client/app/main.ts --outfile=dist/app.js --target=browser --format=iife --minify-syntax --minify-whitespace --define 'process.env.NODE_ENV=\"production\"' && bun build src/client/app/sw.ts --outfile=dist/sw.js --target=browser --format=iife --minify-syntax --minify-whitespace && bun run scripts/inline.mjs",
     "dev": "bun build src/client/app/main.ts --outfile=dist/app.js --target=browser --format=iife --watch & bun build src/client/app/sw.ts --outfile=dist/sw.js --target=browser --format=iife --watch & bun run scripts/serve.mjs",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.mediator.json && tsc --noEmit -p tsconfig.mail-plugin.json && tsc --noEmit -p tsconfig.mimi.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.mediator.json && tsc --noEmit -p tsconfig.mail-plugin.json && tsc --noEmit -p tsconfig.mail-relay.json && tsc --noEmit -p tsconfig.mimi.json",
     "build:didcomm-mediator": "bun build --compile --target=bun-linux-x64 src/server/mediator/index.ts --outfile biset-didcomm-mediator",
     "build:mediator": "bun run build:didcomm-mediator",
     "build:mail-plugin": "bun build --compile --target=bun-linux-x64 src/server/mediator/mail-plugin/index.ts --outfile biset-mediator-mail-plugin",
+    "build:mail-relay": "bun build --compile --target=bun-linux-x64 src/server/mail-relay/index.ts --outfile biset-did-md-mail-relay",
     "build:mimi": "bun build --compile --target=bun-linux-x64 src/server/mimi/index.ts --outfile biset-mimi",
     "didcomm-mediator": "bun run src/server/mediator/index.ts",
     "mediator": "bun run didcomm-mediator",
     "mail-plugin": "bun run src/server/mediator/mail-plugin/index.ts",
+    "mail-relay": "bun run src/server/mail-relay/index.ts",
     "smoke:didcomm-mediator": "bun run scripts/didcomm-mediator-smoke.ts",
     "test": "for f in $(find test -name '*.test.ts' | sort); do echo \"== $f\"; bun test \"$f\" || exit 1; done",
     "knip": "knip",
@@ -23,9 +25,11 @@
   "devDependencies": {
     "@hpke/core": "1.8.0",
     "@types/bun": "^1.4.0",
+    "@types/nodemailer": "^8.0.2",
     "didcomm-node": "^0.4.1",
     "fake-indexeddb": "^6.2.5",
     "knip": "^6.27.0",
+    "mailauth": "^5.0.3",
     "typescript": "^5.9.3"
   },
   "dependencies": {
@@ -34,6 +38,7 @@
     "@noble/hashes": "^2.2.0",
     "@noble/post-quantum": "^0.6.1",
     "@scure/base": "^2.2.0",
+    "nodemailer": "^10.0.10",
     "yjs": "13.6.27"
   }
 }

@@ -92,7 +92,7 @@ describe('mail plugin SMTP listener', () => {
     const { plaintext, senderKid } = await unpackAuthcrypt(JSON.parse(delivered[0]!.body), { kid: recipientKid, privateKey: recipientX }, async () => sender.xPub)
     expect(senderKid).toBe(sender.xKid)
     const msg = JSON.parse(new TextDecoder().decode(plaintext))
-    expect(msg.type).toBe('https://biset.md/mail-bridge/1.0/inbound')
+    expect(msg.type).toBe('https://didcomm.org/mail-bridge/1.0/inbound')
   })
 
   test('RCPT TO an address with no published did:webvh log is rejected 550', async () => {

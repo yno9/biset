@@ -47,6 +47,11 @@ const REQUESTED_SCOPES = ['openid', 'profile', 'biset:login', 'biset:device', 'b
 const DID_DOCUMENT_EDIT_DETAIL = 'urn:did-core:document-edit:v1'
 const KEY_AUTHORIZATION_DETAIL = 'urn:did.md:key-authorization:v1'
 const DERIVED_SECRET_DETAIL = 'urn:did.md:derived-secret:v1'
+// The did.md-operated SMTP relay is a separate process, but shares did.md's
+// authority service.  This detail is Root-signed as part of the ordinary
+// Wallet device capability; no controller/update key reaches Biset.
+const MAIL_RELAY_CAPABILITY_DETAIL = 'urn:biset:mail-relay:v1'
+const DID_MD_MAIL_RELAY_ORIGIN = 'https://api.did.md'
 // Identity-wide (Root-derived, never rotating) secret every device of this
 // Wallet identity requests and obtains identically, via the same generic
 // derived-secret grant VCK uses. Backs relationship.ts's
@@ -705,6 +710,11 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
       { type: KEY_AUTHORIZATION_DETAIL, subject: pending.keyAuthorizationSubject,
         publicKey: { type: 'Multikey', publicKeyMultibase: encodeMultikey(pending.bisetDevice.signaturePublicKey) }, purposes: ['signing'] },
       ...(pending.vaultContentKeyDerivations ?? []).map(request => ({ type: DERIVED_SECRET_DETAIL, purpose: request.purpose, context: request.context })),
+      { type: MAIL_RELAY_CAPABILITY_DETAIL, relayOrigin: DID_MD_MAIL_RELAY_ORIGIN,
+        // The Wallet chooses an alias during first authorization, so Biset
+        // cannot know the concrete address yet. did.md materializes this
+        // one narrow placeholder before Root-signing the capability.
+        addresses: ['$didMdAddress'], operations: ['submit', 'pickup'] },
     ]),
   })
   request.search = params.toString()
@@ -1019,6 +1029,37 @@ export async function openDidMdWalletRelationshipSecret(): Promise<Uint8Array> {
   if (material.vaultContentKeys) for (const key of Object.values(material.vaultContentKeys)) key.fill(0)
   if (!material.relationshipSecret) throw new Error('Relationship secret is unavailable; reconnect your did.md Wallet')
   return material.relationshipSecret
+}
+
+/** Submit RFC 5322 bytes to did.md's mail relay using the same browser-held
+ * DPoP key and Wallet-signed capability established during login.  Access
+ * tokens are deliberately not used as relay credentials: the relay verifies
+ * the capability with did.md and binds it directly to this DPoP proof. */
+export async function submitDidMdMail(active: DidMdActiveSession, input: {
+  messageId: string; mailFrom: string; rcptTo: string[]; rawRfc5322: Uint8Array
+}): Promise<{ status: 'accepted' | 'temporary-failure'; occurredAt: string; detail?: string }> {
+  const session = await readDidMdDeviceSession()
+  if (!session || session.did !== active.did || Date.parse(session.capabilityExpiresAt) <= Date.now()) throw new Error('did.md mail capability is unavailable; reconnect did.md Wallet')
+  const endpoint = `${ISSUER}/v1/mail/submit`
+  const body = JSON.stringify({
+    version: 1, identityId: active.did, deviceId: active.deviceKid ?? active.did,
+    mailFrom: input.mailFrom, rcptTo: input.rcptTo,
+    rawRfc5322: base64url(input.rawRfc5322), submittedAt: new Date().toISOString(),
+    // The relay authorizes capability + DPoP, not the retired update-key
+    // signature field. Keep the v1 wire shape while clients migrate.
+    signature: base64url(new Uint8Array([0])),
+  })
+  const capability = base64url(encoder.encode(JSON.stringify(session.capability)))
+  const response = await fetch(endpoint, {
+    method: 'POST', headers: {
+      'content-type': 'application/json', dpop: await createDpop(session.privateKey, session.publicJwk, 'POST', endpoint),
+      'x-biset-mail-capability': capability, 'x-biset-mail-message-id': input.messageId,
+    }, body,
+  })
+  if (!response.ok) throw new Error((await response.text()).slice(0, 512) || `mail relay rejected submission (${response.status})`)
+  const value = asObject(await response.json(), 'mail relay response')
+  if ((value.status !== 'accepted' && value.status !== 'temporary-failure') || typeof value.occurredAt !== 'string' || (value.detail !== undefined && typeof value.detail !== 'string')) throw new Error('mail relay returned an invalid response')
+  return value as { status: 'accepted' | 'temporary-failure'; occurredAt: string; detail?: string }
 }
 
 /** Exposes only public generations; VCK bytes remain sealed until a caller

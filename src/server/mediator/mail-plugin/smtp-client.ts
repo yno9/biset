@@ -13,6 +13,7 @@
 // scope here). Deliberately no dependency on the vault/narrow-API/JMAP
 // layers above it -- see PLAN.md §6.2's plan for what's still to come.
 import { resolveMx as realResolveMx } from 'node:dns/promises'
+import { validateEnvelopeAddress, type MailDkimSigner } from './dkim.ts'
 
 export interface MailDeliveryResult {
   domain: string
@@ -26,6 +27,8 @@ export interface MailDeliveryResult {
 export interface DeliverMailOptions {
   /** Announced in EHLO. */
   hostname: string
+  /** Sign once before any MX connection. A signing failure never sends unsigned mail. */
+  signDkim?: MailDkimSigner
   /** Injectable for tests; defaults to real DNS. Returns hosts in priority
    * order, best first; empty means the domain takes no mail. */
   mxResolver?: (domain: string) => Promise<string[]>
@@ -46,6 +49,9 @@ export async function deliverMail(
   message: { mailFrom: string; rcptTo: string[]; rawRfc5322: Uint8Array },
 ): Promise<MailDeliveryResult[]> {
   if (message.rcptTo.length === 0) throw new TypeError('deliverMail requires at least one recipient')
+  validateEnvelopeAddress(message.mailFrom)
+  message.rcptTo.forEach(validateEnvelopeAddress)
+  const rawRfc5322 = options.signDkim ? await options.signDkim(message) : message.rawRfc5322
   const mxResolver = options.mxResolver ?? (async (domain: string) => {
     const records = await realResolveMx(domain)
     return records.sort((a, b) => a.priority - b.priority).map(record => record.exchange)
@@ -67,7 +73,7 @@ export async function deliverMail(
     const connectHost = host.replace(/\.$/, '')
     const target = `${connectHost}:${port}`
     try {
-      const outcome = await deliverToHost(connect, connectHost, port, options.hostname, options.tlsOptions, message.mailFrom, recipients, message.rawRfc5322)
+      const outcome = await deliverToHost(connect, connectHost, port, options.hostname, options.tlsOptions, message.mailFrom, recipients, rawRfc5322)
       results.push({ domain, target, ...outcome, outcome: 'delivered' })
     } catch (error) {
       results.push({ domain, target, accepted: [], rejected: [], outcome: 'error', error: error instanceof Error ? error.message : String(error) })

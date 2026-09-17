@@ -16,7 +16,7 @@ import { resolveByDomain } from '../../../protocol/webvh/resolver.ts'
 import { decodeX25519Multikey } from '../../../protocol/didcomm/multikey.ts'
 import { buildPlaintext } from '../../../protocol/didcomm/message.ts'
 import { packForDelivery, type OutboundDelivery, type RouteEndpoint } from '../route-deliver.ts'
-import { MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyToWire, type MailBridgeInboundBody } from './mail-bridge.ts'
+import { MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyToWire, mailBridgeRfc5322Attachment, type MailBridgeInboundBody } from './mail-bridge.ts'
 import { identityDomainForMailAddress } from '../../../protocol/webvh/identifier.ts'
 
 export interface MailRecipientRoute {
@@ -28,6 +28,53 @@ export interface MailRecipientRoute {
 }
 
 export type ResolveMailRecipientResult = { ok: true; route: MailRecipientRoute } | { ok: false; error: string }
+
+/** Resolves a did.md address through the colocated authority API.  Unlike the
+ * legacy public did.jsonl resolver below, this has no DNS/HTTP document cache:
+ * the authority reads its current suffix ledger and log in the same trust
+ * domain as the relay. */
+export async function resolveDidMdMailRecipientRoute(
+  toAddress: string,
+  authorityUrl: string,
+  relaySecret: string,
+  fetchImpl: typeof fetch,
+): Promise<ResolveMailRecipientResult> {
+  const match = /^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)@did\.md$/i.exec(toAddress)
+  if (!match) return { ok: false, error: `${toAddress} is not a did.md address` }
+  if (!relaySecret) return { ok: false, error: 'did.md mail authority is not configured' }
+  let response: Response
+  try {
+    response = await fetchImpl(`${authorityUrl.replace(/\/$/, '')}/v1/internal/mail/recipients/${match[1]!.toLowerCase()}`, {
+      headers: { 'x-did-md-mail-relay-secret': relaySecret },
+    })
+  } catch (error) {
+    return { ok: false, error: `could not query did.md authority: ${error instanceof Error ? error.message : String(error)}` }
+  }
+  if (response.status === 404) return { ok: false, error: `${toAddress} does not resolve to an active did.md mailbox` }
+  if (!response.ok) return { ok: false, error: `did.md authority rejected recipient lookup (HTTP ${response.status})` }
+  let value: Record<string, unknown>
+  try {
+    const parsed: unknown = await response.json()
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error()
+    value = parsed as Record<string, unknown>
+  } catch { return { ok: false, error: 'did.md authority returned an invalid recipient route' } }
+  if (typeof value.did !== 'string' || typeof value.recipientKid !== 'string' || typeof value.publicKeyMultibase !== 'string'
+    || value.endpoint === null || typeof value.endpoint !== 'object' || Array.isArray(value.endpoint)) return { ok: false, error: 'did.md authority returned an incomplete recipient route' }
+  const endpoint = value.endpoint as Record<string, unknown>
+  if (typeof endpoint.uri !== 'string' || !Array.isArray(endpoint.routingKeys) || endpoint.routingKeys.some(key => typeof key !== 'string')) return { ok: false, error: 'did.md authority returned an invalid DIDComm endpoint' }
+  try {
+    return {
+      ok: true,
+      route: {
+        toAddress,
+        recipientDid: value.did,
+        recipientKid: value.recipientKid,
+        recipientPublicKey: decodeX25519Multikey(value.publicKeyMultibase),
+        endpoint: { uri: endpoint.uri, routingKeys: endpoint.routingKeys as string[] },
+      },
+    }
+  } catch { return { ok: false, error: `${toAddress}'s authority keyAgreement key is not a valid X25519 key` } }
+}
 
 /** Resolves `toAddress`'s did:webvh document by domain alone -- the signed
  * log at `{domain}/.well-known/did.jsonl`, with no SCID known up front
@@ -95,7 +142,9 @@ export function packInboundMailForward(
   body: MailBridgeInboundBody,
   sender: { kid: string; privateKey: Uint8Array },
 ): OutboundDelivery {
-  const plaintext = buildPlaintext(MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyToWire(body), sender.kid.split('#', 1)[0], route.recipientDid)
+  const plaintext = buildPlaintext(MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyToWire(body), sender.kid.split('#', 1)[0], route.recipientDid, {
+    attachments: [mailBridgeRfc5322Attachment(body.rawRfc5322)],
+  })
   const plaintextBytes = new TextEncoder().encode(JSON.stringify(plaintext))
   return packForDelivery(plaintextBytes, sender, route.recipientKid, route.recipientPublicKey, route.endpoint)
 }

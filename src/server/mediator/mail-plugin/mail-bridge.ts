@@ -13,7 +13,10 @@
 // how to project (core/adapters/mail.ts's `MailIngressInput`).
 import { base64urlToBytes, bytesToBase64url } from '../../../protocol/canonical.ts'
 
-export const MAIL_BRIDGE_INBOUND = 'https://biset.md/mail-bridge/1.0/inbound'
+export const MAIL_BRIDGE_INBOUND = 'https://didcomm.org/mail-bridge/1.0/inbound'
+export const MAIL_BRIDGE_SEND = 'https://didcomm.org/mail-bridge/1.0/send'
+export const MAIL_BRIDGE_SEND_RESULT = 'https://didcomm.org/mail-bridge/1.0/send-result'
+export const MAIL_RFC5322_ATTACHMENT_ID = 'rfc5322'
 
 export interface MailBridgeInboundBody {
   /** The exact bytes the plugin's SMTP listener accepted for `DATA` --
@@ -28,27 +31,49 @@ export interface MailBridgeInboundBody {
 }
 
 export interface MailBridgeInboundWireBody {
-  rawRfc5322: string
   smtpEnvelope: string
+}
+
+export interface MailBridgeSendBody {
+  mailFrom: string
+  rcptTo: string[]
 }
 
 export function mailBridgeInboundBodyToWire(body: MailBridgeInboundBody): MailBridgeInboundWireBody {
   if (body.rawRfc5322.length === 0) throw new TypeError('mail bridge inbound body: rawRfc5322 must not be empty')
   if (!body.smtpEnvelope) throw new TypeError('mail bridge inbound body: smtpEnvelope is required')
-  return { rawRfc5322: bytesToBase64url(body.rawRfc5322), smtpEnvelope: body.smtpEnvelope }
+  return { smtpEnvelope: body.smtpEnvelope }
 }
 
-export function mailBridgeInboundBodyOf(msg: { body?: unknown }): MailBridgeInboundBody | null {
+export function mailBridgeRfc5322Attachment(rawRfc5322: Uint8Array) {
+  if (rawRfc5322.length === 0) throw new TypeError('mail bridge RFC5322 attachment must not be empty')
+  return { id: MAIL_RFC5322_ATTACHMENT_ID, media_type: 'message/rfc822', data: { base64: bytesToBase64url(rawRfc5322) } }
+}
+
+function rfc5322AttachmentOf(msg: { attachments?: Array<{ id: string; media_type?: string; data?: { base64?: unknown } }> }): Uint8Array | null {
+  const attachment = msg.attachments?.find(value => value.id === MAIL_RFC5322_ATTACHMENT_ID && value.media_type === 'message/rfc822')
+  if (!attachment || typeof attachment.data?.base64 !== 'string') return null
+  try {
+    const bytes = base64urlToBytes(attachment.data.base64)
+    return bytes.length ? bytes : null
+  } catch { return null }
+}
+
+export function mailBridgeInboundBodyOf(msg: { body?: unknown; attachments?: Array<{ id: string; media_type?: string; data?: { base64?: unknown } }> }): MailBridgeInboundBody | null {
   const body = msg.body
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return null
-  const rawRfc5322 = (body as Record<string, unknown>).rawRfc5322
   const smtpEnvelope = (body as Record<string, unknown>).smtpEnvelope
-  if (typeof rawRfc5322 !== 'string' || typeof smtpEnvelope !== 'string' || !smtpEnvelope) return null
-  try {
-    const bytes = base64urlToBytes(rawRfc5322)
-    if (bytes.length === 0) return null
-    return { rawRfc5322: bytes, smtpEnvelope }
-  } catch {
-    return null
-  }
+  const rawRfc5322 = rfc5322AttachmentOf(msg)
+  if (!rawRfc5322 || typeof smtpEnvelope !== 'string' || !smtpEnvelope) return null
+  return { rawRfc5322, smtpEnvelope }
+}
+
+export function mailBridgeSendBodyOf(msg: { body?: unknown; attachments?: Array<{ id: string; media_type?: string; data?: { base64?: unknown } }> }): (MailBridgeSendBody & { rawRfc5322: Uint8Array }) | null {
+  const body = msg.body
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null
+  const mailFrom = (body as Record<string, unknown>).mailFrom
+  const rcptTo = (body as Record<string, unknown>).rcptTo
+  const rawRfc5322 = rfc5322AttachmentOf(msg)
+  if (typeof mailFrom !== 'string' || !Array.isArray(rcptTo) || rcptTo.some(value => typeof value !== 'string') || !rawRfc5322) return null
+  return { mailFrom, rcptTo: [...rcptTo] as string[], rawRfc5322 }
 }
