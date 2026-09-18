@@ -45,6 +45,7 @@ import { buildDidCommGroupMessageVaultRecord, GROUP_INVITE, GROUP_MESSAGE, group
 import { IndexedDbDidCommGroupChatStore } from '../didcomm/group-chat-store.ts'
 import { registerWithMediator, type MediatorPollHandle } from '../didcomm/mediator-sync.ts'
 import { watchMediatorMultiplexed } from '../didcomm/mediator-multiplex-watch.ts'
+import { mediatorAliases } from '../didcomm/mediator-endpoints.ts'
 import type { DidCommSender } from '../../protocol/didcomm/mediator-transport.ts'
 import type { DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
 import { ingestTransportIngress } from '../store/vault/ingress-ingest.ts'
@@ -530,6 +531,7 @@ async function configureWalletAccountIfPresent(
           reader: walletContactKeyReader,
           sink: walletContactKeySink,
           startWatch: startWalletRelationshipWatch,
+          mediatorAliases: mediatorAliases({ canonicalUrl: didCommDevice.mediatorUrl, onionUrl: didCommDevice.mediatorOnionUrl }),
         })
         walletDidCommOutbox = createWalletDidCommOutbox({
           identityId: device.did,

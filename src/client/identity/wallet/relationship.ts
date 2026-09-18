@@ -54,6 +54,12 @@ export interface WalletRelationshipManagerOptions {
   reader: RelationshipContactReader
   sink: RelationshipContactSink
   startWatch: RelationshipWatchStarter
+  /** Every URI naming this device's configured mediator (PLAN-tor.md D-4:
+   * clearnet + onion, canonical first) -- feeds `sameMediatorUrl`'s
+   * `aliases` so a relationship message that arrived over one entrance
+   * still matches a route.url minted against the other (3-6). Empty/unset
+   * keeps the exact pre-Tor single-URL comparison (I-5). */
+  mediatorAliases?: readonly string[]
   /** Persist newly stored contact keys to the Wallet's MIMI Vault before a Pickup ACK. */
   afterContactStored?: () => Promise<unknown>
   initiate?: (toDid: string, relationshipSecret: Uint8Array, options: { fromKid: string; x25519PrivateKey: Uint8Array }) => Promise<RelationshipInitiationResult>
@@ -141,7 +147,7 @@ export function createWalletRelationshipManager(options: WalletRelationshipManag
     async handleMessage(message, recipientKid, mediatorUrl): Promise<void> {
       const plaintext = message.plaintext as DidCommPlaintext
       if (plaintext.type === RELATIONSHIP_INIT) {
-        await handleRelationshipInit(message, mediatorUrl, options.identityId, options.relationshipSecret, options.reader, options.sink, options.startWatch, afterContactStored)
+        await handleRelationshipInit(message, mediatorUrl, options.identityId, options.relationshipSecret, options.reader, options.sink, options.startWatch, afterContactStored, options.mediatorAliases ?? [])
         return
       }
       if (plaintext.type !== RELATIONSHIP_ACCEPT) return
@@ -149,7 +155,7 @@ export function createWalletRelationshipManager(options: WalletRelationshipManag
       const body = relationshipBodyOf(plaintext)
       if (!body) throw new TypeError('relationship message body is invalid')
       const route = relationshipMediatorService(body.relationshipKid)
-      if (!sameMediatorUrl(route.url, mediatorUrl)) throw new TypeError('relationship mediator does not match the delivery route')
+      if (!sameMediatorUrl(route.url, mediatorUrl, options.mediatorAliases ?? [])) throw new TypeError('relationship mediator does not match the delivery route')
       if (body.relationshipKid !== message.senderKid) throw new TypeError('relationship accept sender does not match its relationship kid')
 
       const pending = pendingByOwnKid.get(recipientKid)
@@ -200,13 +206,14 @@ async function handleRelationshipInit(
   message: DeliveredMessage, mediatorUrl: string, identityId: string, relationshipSecret: Uint8Array,
   reader: RelationshipContactReader, sink: RelationshipContactSink,
   startWatch: RelationshipWatchStarter, afterContactStored: () => Promise<unknown> = async () => {},
+  mediatorAliases: readonly string[] = [],
 ): Promise<void> {
   const plaintext = message.plaintext as DidCommPlaintext
   if (plaintext.type !== RELATIONSHIP_INIT) return
   const body = relationshipBodyOf(plaintext)
   if (!body) throw new TypeError('relationship message body is invalid')
   const route = relationshipMediatorService(body.relationshipKid)
-  if (!sameMediatorUrl(route.url, mediatorUrl)) throw new TypeError('relationship mediator does not match the delivery route')
+  if (!sameMediatorUrl(route.url, mediatorUrl, mediatorAliases)) throw new TypeError('relationship mediator does not match the delivery route')
   if (message.senderKid.startsWith('did:peer:2.')) throw new TypeError('relationship init must be authenticated by a public front-door kid')
   const counterpartyDid = didOfKid(message.senderKid)
   let contact = await reader.currentFor(counterpartyDid)

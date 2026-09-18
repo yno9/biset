@@ -226,6 +226,9 @@ export type DidMdBisetDidCommDevice = {
   mediatorControlPrivateKey: Uint8Array
   mediatorUrl: string
   routingKid: string
+  /** This mediator's Tor entrance (PLAN-tor.md D-4), if one was published
+   * alongside `mediatorUrl` when this device was authorized. */
+  mediatorOnionUrl?: string
 }
 
 type DidMdBisetMediator = {
@@ -1031,7 +1034,7 @@ export async function openDidMdWalletBisetDidCommDevice(): Promise<DidMdBisetDid
   if (!derivedPublic.every((byte, index) => byte === stored.x25519PublicKey[index])) throw new Error('Biset DIDComm private key does not match its Wallet-authorized public key')
   if (!derivedControlPublic.every((byte, index) => byte === stored.mediatorControlPublicKey[index])) throw new Error('Biset mediator control key does not match its did:peer identity')
   if (stored.xKid !== deviceKid(session.did, derivedPublic)) throw new Error('Biset DIDComm device key identifier is invalid')
-  return { did: session.did, xKid: stored.xKid, x25519PrivateKey: privateMaterial.x25519PrivateKey, mediatorControlDid: stored.mediatorControlDid, mediatorControlKid: stored.mediatorControlKid, mediatorControlPrivateKey: privateMaterial.mediatorControlPrivateKey, mediatorUrl: stored.mediatorUrl, routingKid: stored.routingKid }
+  return { did: session.did, xKid: stored.xKid, x25519PrivateKey: privateMaterial.x25519PrivateKey, mediatorControlDid: stored.mediatorControlDid, mediatorControlKid: stored.mediatorControlKid, mediatorControlPrivateKey: privateMaterial.mediatorControlPrivateKey, mediatorUrl: stored.mediatorUrl, routingKid: stored.routingKid, ...(stored.mediatorOnionUrl ? { mediatorOnionUrl: stored.mediatorOnionUrl } : {}) }
 }
 
 /** Supplies only copies of the Wallet-derived VCKs needed by the vault key

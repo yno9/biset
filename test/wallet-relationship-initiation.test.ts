@@ -167,6 +167,70 @@ describe('Wallet-initiated DIDComm relationship', () => {
     expect(await waiting).toEqual(existing)
     expect(stores).toBe(0)
   })
+
+  test('PLAN-tor D-4/3-6: an ACCEPT delivered over the onion entrance still matches a route.url minted against canonical', async () => {
+    const onionUrl = `http://${'a'.repeat(56)}.onion`
+    const pendingPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
+    const counterpartyPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
+    const contacts: ContactKeyV1[] = []
+    let initiated = false
+    const manager = createWalletRelationshipManager({
+      identityId: walletDid,
+      frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
+      relationshipSecret: new Uint8Array(32).fill(9),
+      reader: {
+        async currentFor(did) { return contacts.find(contact => contact.counterpartyDid === did) ?? null },
+        async forOwnKid(kid) { return contacts.find(contact => contact.ownRelationshipKid === kid) ?? null },
+      },
+      sink: { async store(contact) { contacts.push(contact) } },
+      initiate: async did => { initiated = true; return { ok: true, pending: { counterpartyDid: did, peer: pendingPeer, mediatorUrl } } },
+      startWatch() {},
+      mediatorAliases: [mediatorUrl, onionUrl],
+    })
+
+    const waiting = manager.ensureContact(counterpartyDid)
+    await waitFor(() => initiated)
+    // The ACCEPT arrives via the onion entrance (this device's own watch
+    // opened over Tor), while route.url (decoded from the peer's did:peer
+    // service, D-2) is always canonical -- without the alias set this would
+    // wrongly throw "relationship mediator does not match the delivery route".
+    await manager.handleMessage({
+      ackId: 'accept-via-onion', rawJwe: {} as never, senderKid: counterpartyPeer.xKid,
+      plaintext: {
+        type: 'https://biset.md/relationship/1.0/accept',
+        body: relationshipBodyToWire({ relationshipKid: counterpartyPeer.xKid, publicKey: counterpartyPeer.xPub }),
+      },
+    }, pendingPeer.xKid, onionUrl)
+
+    const contact = await waiting
+    expect(contact.counterpartyRelationshipKid).toBe(counterpartyPeer.xKid)
+  })
+
+  test('PLAN-tor D-4/3-6: an ACCEPT from an untrusted URL is still rejected even with aliases configured', async () => {
+    const onionUrl = `http://${'a'.repeat(56)}.onion`
+    const otherUrl = 'https://not-this-mediator.example'
+    const pendingPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
+    const counterpartyPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
+    const manager = createWalletRelationshipManager({
+      identityId: walletDid,
+      frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
+      relationshipSecret: new Uint8Array(32).fill(9),
+      reader: { async currentFor() { return null }, async forOwnKid() { return null } },
+      sink: { async store() { throw new Error('must not store on a mismatched mediator') } },
+      initiate: async did => ({ ok: true, pending: { counterpartyDid: did, peer: pendingPeer, mediatorUrl } }),
+      startWatch() {},
+      mediatorAliases: [mediatorUrl, onionUrl],
+    })
+    void manager.ensureContact(counterpartyDid).catch(() => {})
+
+    await expect(manager.handleMessage({
+      ackId: 'accept-untrusted', rawJwe: {} as never, senderKid: counterpartyPeer.xKid,
+      plaintext: {
+        type: 'https://biset.md/relationship/1.0/accept',
+        body: relationshipBodyToWire({ relationshipKid: counterpartyPeer.xKid, publicKey: counterpartyPeer.xPub }),
+      },
+    }, pendingPeer.xKid, otherUrl)).rejects.toThrow('relationship mediator does not match the delivery route')
+  })
 })
 
 async function waitFor(ready: () => boolean): Promise<void> {
