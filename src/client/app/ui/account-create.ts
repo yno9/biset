@@ -132,7 +132,7 @@ export function setupNewUserPage(): void {
     const popup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
     const config = readBisetConfig()
     walletResult('Opening did.md Wallet…')
-    void beginDidMdWalletLogin(config.mediatorUrls, popup, config).catch(error => {
+    void beginDidMdWalletLogin(config.mediatorUrls, popup, config, config.mediatorOnionUrls).catch(error => {
       walletLoginButton.disabled = false
       walletResult(error instanceof Error ? error.message : String(error), true)
     })

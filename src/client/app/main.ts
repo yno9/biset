@@ -900,7 +900,7 @@ async function configureWalletAccountIfPresent(
       // senders have to be able to find the route publicly).
       onEnableMessaging: async () => {
         const config = readBisetConfig()
-        return beginDidMdWalletFinalizeEnrollment(config.mediatorUrls, config)
+        return beginDidMdWalletFinalizeEnrollment(config.mediatorUrls, config, config.mediatorOnionUrls)
       },
       // Same same-tab Wallet approval as onEnableMessaging, just pointed at
       // an explicit mediator URL (the Mediator card's "Edit server") instead
@@ -995,7 +995,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
         onReconnect: async () => {
           const config = readBisetConfig()
           const popup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
-          return beginDidMdWalletLogin(config.mediatorUrls, popup, config)
+          return beginDidMdWalletLogin(config.mediatorUrls, popup, config, config.mediatorOnionUrls)
         },
         onDisconnect: async () => { await disconnectWalletAndLocalData(); await bootClient() },
       },

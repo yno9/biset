@@ -57,6 +57,8 @@ export type DidMdPendingAuthorization = {
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
     mediatorUrl: string
     routingKid: string
+    /** This mediator's Tor entrance (PLAN-tor.md D-4), if configured. */
+    mediatorOnionUrl?: string
     /** Unset only in the minimal first-shot login request, which prepares
      * this device before the signer's DID is known (see
      * prepareBisetDidCommDevice in did-md-oauth.ts) -- xKid = did +
@@ -67,13 +69,14 @@ export type DidMdPendingAuthorization = {
   previousBisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
     mediatorUrl: string
     routingKid: string
+    mediatorOnionUrl?: string
     xKid: string
   }
   mediatorPreRegistered?: boolean
   createdAt: string
 }
 
-type DidCoreService = { id: string; type: string; serviceEndpoint: string | Record<string, unknown> }
+type DidCoreService = { id: string; type: string; serviceEndpoint: string | Record<string, unknown> | Array<string | Record<string, unknown>> }
 type DidCoreVerificationMethod = { id: string; type: string; controller: string; publicKeyMultibase: string }
 export type DidCoreDocumentEdit = {
   type: 'urn:did-core:document-edit:v1'
@@ -152,6 +155,7 @@ export type DidMdDeviceSession = {
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
     mediatorUrl: string
     routingKid: string
+    mediatorOnionUrl?: string
     xKid: string
   }
 }

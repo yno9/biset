@@ -19,6 +19,7 @@ import { deviceKid, deviceKidFragment } from '../../../protocol/didcomm/deviceki
 import { decodeX25519Multikey, encodeX25519Multikey } from '../../../protocol/didcomm/multikey.ts'
 import { fetchMediatorInfo, requestMediation, updateKeylist } from '../../../protocol/didcomm/mediator-coordinate.ts'
 import { generatePeerIdentity } from '../../../protocol/didcomm/peer.ts'
+import { isOnionUrl } from '../../didcomm/mediator-endpoints.ts'
 import {
   clearDidMdRegistration,
   clearDidMdDeviceSession,
@@ -81,7 +82,10 @@ type DidDocumentServiceTemplate = {
   purpose?: 'didcomm'
   id: string
   type: string
-  serviceEndpoint: string | Record<string, unknown>
+  /** DID Core allows a set of endpoints (a string/map array), not only a
+   * single string or map -- PLAN-tor.md D-4 uses this for a mediator's
+   * clearnet + Tor entrances, both bound to the same routingKeys. */
+  serviceEndpoint: string | Record<string, unknown> | Array<string | Record<string, unknown>>
   previousIds?: string[]
 }
 
@@ -90,15 +94,21 @@ const defaultDidDocumentServices: DidDocumentServiceTemplate[] = [
   { id: '#biset-vault', type: 'BisetVault', serviceEndpoint: '$vaultGeneration' },
 ]
 
+function validServiceEndpointEntry(value: unknown): boolean {
+  return typeof value === 'string' || (!!value && typeof value === 'object' && !Array.isArray(value))
+}
+
 function walletConfiguration(value: DidMdWalletConfiguration = {}): WalletConfiguration {
   const walletDeviceName = value.walletDeviceName ?? 'Biset'
   const didDocumentServices = value.didDocumentServices ?? defaultDidDocumentServices
   if (!Array.isArray(didDocumentServices) || !didDocumentServices.length || didDocumentServices.length > 64) throw new Error('DID Document services configuration is invalid')
   const ids = new Set<string>()
   for (const service of didDocumentServices) {
+    const endpointValid = Array.isArray(service?.serviceEndpoint)
+      ? service.serviceEndpoint.length > 0 && service.serviceEndpoint.length <= 8 && service.serviceEndpoint.every(validServiceEndpointEntry)
+      : validServiceEndpointEntry(service?.serviceEndpoint)
     if (!service || typeof service !== 'object' || !/^#[^\s#]+$/.test(service.id) || !service.type.trim()
-      || (typeof service.serviceEndpoint !== 'string' && (!service.serviceEndpoint || typeof service.serviceEndpoint !== 'object' || Array.isArray(service.serviceEndpoint)))
-      || ids.has(service.id)) throw new Error('DID Document service configuration is invalid')
+      || !endpointValid || ids.has(service.id)) throw new Error('DID Document service configuration is invalid')
     ids.add(service.id)
     if (service.purpose !== undefined && service.purpose !== 'didcomm') throw new Error('DID Document service purpose is invalid')
     if (service.previousIds?.some(id => !/^#[^\s#]+$/.test(id))) throw new Error('DID Document service previous IDs are invalid')
@@ -115,12 +125,12 @@ function configuredService(config: WalletConfiguration, purpose: 'didcomm'): Did
   return service
 }
 
-function materializeServiceEndpoint(value: string | Record<string, unknown>, substitutions: Record<string, string>): string | Record<string, unknown> {
+function materializeServiceEndpoint(value: string | Record<string, unknown> | Array<string | Record<string, unknown>>, substitutions: Record<string, string>): string | Record<string, unknown> | Array<string | Record<string, unknown>> {
   if (typeof value === 'string') {
     if (value.startsWith('$') && !(value in substitutions)) throw new Error(`Unknown DID Document service placeholder ${value}`)
     return substitutions[value] ?? value
   }
-  if (Array.isArray(value)) return value.map(item => materializeServiceEndpoint(item as string | Record<string, unknown>, substitutions)) as unknown as Record<string, unknown>
+  if (Array.isArray(value)) return value.map(item => materializeServiceEndpoint(item, substitutions) as string | Record<string, unknown>)
   const result: Record<string, unknown> = {}
   for (const [key, item] of Object.entries(value)) result[key] = typeof item === 'string' || (item && typeof item === 'object')
     ? materializeServiceEndpoint(item as string | Record<string, unknown>, substitutions)
@@ -221,6 +231,11 @@ export type DidMdBisetDidCommDevice = {
 type DidMdBisetMediator = {
   mediatorUrl: string
   routingKid: string
+  /** This mediator's Tor entrance (PLAN-tor.md D-4), if this deployment's
+   * config pairs one with the chosen `mediatorUrl` by array index. Never
+   * fetched or otherwise validated over the network -- a non-Tor browser
+   * must not even attempt a `.onion` lookup (I-3). */
+  mediatorOnionUrl?: string
 }
 
 type Metadata = {
@@ -277,23 +292,37 @@ function sameDocumentEdit(value: unknown, expected: DidCoreDocumentEdit): void {
   if (JSON.stringify(value) !== JSON.stringify(expected)) throw new Error('did.md returned a DID document edit different from the one this browser requested')
 }
 
-async function bisetMediatorFor(values: readonly string[]): Promise<DidMdBisetMediator | undefined> {
-  const configured = values.find(value => typeof value === 'string' && value.trim())
-  if (!configured) return undefined
+/** Validates an onion counterpart URL (PLAN-tor.md D-4). Syntactic only --
+ * unlike `mediatorUrl`, never fetched, so a browser with no Tor path never
+ * issues a `.onion` lookup just to configure a DID Document (I-3). */
+function validatedMediatorOnionUrl(value: string): string {
   let url: URL
-  try { url = new URL(configured) } catch { throw new Error('Biset DIDComm mediator URL is invalid') }
+  try { url = new URL(value) } catch { throw new Error('Biset DIDComm mediator Tor URL is invalid') }
+  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password || url.search || url.hash || !isOnionUrl(url.toString())) {
+    throw new Error('Biset DIDComm mediator Tor URL is invalid')
+  }
+  return url.toString()
+}
+
+async function bisetMediatorFor(values: readonly string[], onionValues: readonly string[] = []): Promise<DidMdBisetMediator | undefined> {
+  const index = values.findIndex(value => typeof value === 'string' && value.trim())
+  if (index === -1) return undefined
+  let url: URL
+  try { url = new URL(values[index]!) } catch { throw new Error('Biset DIDComm mediator URL is invalid') }
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Biset DIDComm mediator URL is invalid')
   const mediatorUrl = url.toString()
   const info = await fetchMediatorInfo(mediatorUrl)
   if (!info.xKid || !info.xKid.startsWith('did:peer:')) throw new Error('Biset DIDComm mediator did not provide a valid routing key')
-  return { mediatorUrl, routingKid: info.xKid }
+  const onionCandidate = onionValues[index]
+  const mediatorOnionUrl = onionCandidate && onionCandidate.trim() ? validatedMediatorOnionUrl(onionCandidate) : undefined
+  return { mediatorUrl, routingKid: info.xKid, ...(mediatorOnionUrl ? { mediatorOnionUrl } : {}) }
 }
 
 /** Generates and seals the DIDComm device's own material -- none of it
  * (the X25519 leaf, the did:peer mediator-control identity) is bound to
  * this identity's did:webvh, so none of it needs the DID known yet. Only
  * `xKid` (did:webvh + fragment) does; see withDidCommXKid. */
-async function prepareBisetDidCommDevice(mediator: DidMdBisetMediator): Promise<DidMdBisetDidCommDeviceMaterial & { mediatorUrl: string; routingKid: string }> {
+async function prepareBisetDidCommDevice(mediator: DidMdBisetMediator): Promise<DidMdBisetDidCommDeviceMaterial & { mediatorUrl: string; routingKid: string; mediatorOnionUrl?: string }> {
   const x25519PrivateKey = x25519.utils.randomSecretKey()
   const x25519PublicKey = x25519.getPublicKey(x25519PrivateKey)
   const control = generatePeerIdentity()
@@ -303,7 +332,7 @@ async function prepareBisetDidCommDevice(mediator: DidMdBisetMediator): Promise<
       { did: control.did, kid: control.xKid, publicKey: control.xPub },
       { x25519PrivateKey, mediatorControlPrivateKey: control.xPriv },
     )
-    return { ...sealed, mediatorUrl: mediator.mediatorUrl, routingKid: mediator.routingKid }
+    return { ...sealed, mediatorUrl: mediator.mediatorUrl, routingKid: mediator.routingKid, ...(mediator.mediatorOnionUrl ? { mediatorOnionUrl: mediator.mediatorOnionUrl } : {}) }
   } finally {
     x25519PrivateKey.fill(0)
     control.xPriv.fill(0); control.edPriv.fill(0)
@@ -332,6 +361,7 @@ function buildDocumentEdit(did: string, config: WalletConfiguration, device?: No
       type: service.type,
       serviceEndpoint: materializeServiceEndpoint(service.serviceEndpoint, {
         '$mediatorUrl': device?.mediatorUrl ?? '',
+        '$mediatorOnionUrl': device?.mediatorOnionUrl ?? '',
         '$routingKid': device?.routingKid ?? '',
         '$vaultGeneration': vaultGenerationUrn(vaultGeneration),
       }),
@@ -809,7 +839,7 @@ export async function beginDidMdVaultKeyRotation(configured: DidMdWalletConfigur
  * just means no DIDComm device this round -- it must never block sign-in
  * itself. beginDidMdWalletFinalizeEnrollment remains for that case, and for
  * enabling messaging after the fact. */
-export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = [], openedPopup?: Window, configured: DidMdWalletConfiguration = {}): Promise<never> {
+export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = [], openedPopup?: Window, configured: DidMdWalletConfiguration = {}, mediatorOnionUrls: readonly string[] = []): Promise<never> {
   const config = walletConfiguration(configured)
   const client = await registration(config.walletDeviceName)
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']) as CryptoKeyPair
@@ -822,7 +852,7 @@ export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = []
   signaturePrivateKey.fill(0)
   let bisetDidCommDevice: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']> | undefined
   try {
-    const mediator = await bisetMediatorFor(mediatorUrls)
+    const mediator = await bisetMediatorFor(mediatorUrls, mediatorOnionUrls)
     if (mediator) bisetDidCommDevice = await prepareBisetDidCommDevice(mediator)
   } catch (error) {
     console.warn('[did.md Wallet login] DIDComm mediator unavailable, signing in without it', error instanceof Error ? error.message : error)
@@ -847,7 +877,7 @@ export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = []
  * signed-in session, via a second Wallet approval -- for a session that
  * signed in before a mediator was configured, or whose mediator wasn't
  * reachable during beginDidMdWalletLogin above. */
-export async function beginDidMdWalletFinalizeEnrollment(mediatorUrls: readonly string[] = [], configured: DidMdWalletConfiguration = {}): Promise<never> {
+export async function beginDidMdWalletFinalizeEnrollment(mediatorUrls: readonly string[] = [], configured: DidMdWalletConfiguration = {}, mediatorOnionUrls: readonly string[] = []): Promise<never> {
   const config = walletConfiguration(configured)
   const session = await readDidMdDeviceSession()
   if (!session?.bisetDevice || session.v !== 2 || session.issuer !== ISSUER || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
@@ -855,7 +885,7 @@ export async function beginDidMdWalletFinalizeEnrollment(mediatorUrls: readonly 
   }
   const client = await registration()
   if (client.clientId !== session.clientId || client.redirectUri !== redirectUri()) throw new Error('The did.md Wallet client registration changed; reconnect this browser')
-  const mediator = await bisetMediatorFor(mediatorUrls)
+  const mediator = await bisetMediatorFor(mediatorUrls, mediatorOnionUrls)
   if (!mediator) throw new Error('Biset DIDComm mediator is not configured')
   const bisetDidCommDevice = await newBisetDidCommDevice(session.did, mediator)
   // A retry of this same follow-up (the user hitting "Enable messaging"
@@ -877,7 +907,7 @@ export async function beginDidMdWalletFinalizeEnrollment(mediatorUrls: readonly 
   return redirectToWallet(client, pending)
 }
 
-export async function beginDidMdWalletDocumentEdit(options: { mediatorUrls?: readonly string[]; removeMediator?: boolean; configuration?: DidMdWalletConfiguration }): Promise<never> {
+export async function beginDidMdWalletDocumentEdit(options: { mediatorUrls?: readonly string[]; mediatorOnionUrls?: readonly string[]; removeMediator?: boolean; configuration?: DidMdWalletConfiguration }): Promise<never> {
   const config = walletConfiguration(options.configuration)
   const session = await readDidMdDeviceSession()
   if (!session?.bisetDevice || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) throw new Error('Reconnect did.md Wallet before editing the DID document')
@@ -890,7 +920,7 @@ export async function beginDidMdWalletDocumentEdit(options: { mediatorUrls?: rea
     pending.documentEdit = buildDocumentEdit(session.did, config, undefined, [didcomm.id, ...(didcomm.previousIds ?? []), ...(session.bisetDidCommDevice ? [session.bisetDidCommDevice.xKid] : [])])
     delete pending.bisetDidCommDevice
   } else {
-    const mediator = await bisetMediatorFor(options.mediatorUrls ?? [])
+    const mediator = await bisetMediatorFor(options.mediatorUrls ?? [], options.mediatorOnionUrls ?? [])
     if (!mediator) throw new Error('Biset DIDComm mediator is not configured')
     const previous = session.bisetDidCommDevice?.xKid
     if (session.bisetDidCommDevice) pending.previousBisetDidCommDevice = session.bisetDidCommDevice

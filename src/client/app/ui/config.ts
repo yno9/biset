@@ -5,6 +5,10 @@
 declare const __BISET_CONFIG__: {
   apexDomain?: string
   mediatorUrls?: string[]
+  /** Tor entrance for the mediator at the same index in `mediatorUrls`
+   * (PLAN-tor.md D-4), or '' if that mediator has none. Unset/empty keeps
+   * clearnet-only behavior exactly as before (I-5). */
+  mediatorOnionUrls?: string[]
   mimiSelfBaseUrl?: string
   /** Human-facing application/device label shown by did.md Wallet. */
   walletDeviceName?: string
@@ -21,7 +25,7 @@ interface DidDocumentServiceTemplate {
   purpose?: 'didcomm'
   id: string
   type: string
-  serviceEndpoint: string | Record<string, unknown>
+  serviceEndpoint: string | Record<string, unknown> | Array<string | Record<string, unknown>>
   /** Earlier IDs this template supersedes during a Wallet document edit. */
   previousIds?: string[]
 }
@@ -34,6 +38,10 @@ export interface BisetConfig {
    * exactly as before (no mediator involved at all). Additive and opt-in on
    * purpose: production currently opts into https://mediator.biset.md. */
   mediatorUrls: string[]
+  /** Tor entrance for the mediator at the same index in `mediatorUrls`
+   * (PLAN-tor.md D-4); '' or a short array means that mediator is
+   * clearnet-only. Empty/unset keeps current, clearnet-only behavior (I-5). */
+  mediatorOnionUrls: string[]
   /** Dedicated normal-mode MIMI endpoint for the owner's Self/Vault room. */
   mimiSelfBaseUrl: string
   walletDeviceName: string
@@ -50,6 +58,7 @@ export function readBisetConfig(): BisetConfig {
   return {
     apexDomain: cfg.apexDomain ?? '',
     mediatorUrls: cfg.mediatorUrls ?? [],
+    mediatorOnionUrls: cfg.mediatorOnionUrls ?? [],
     mimiSelfBaseUrl: cfg.mimiSelfBaseUrl ?? '',
     walletDeviceName: cfg.walletDeviceName ?? 'Biset',
     didDocumentServices: cfg.didDocumentServices ?? defaultDidDocumentServices,
