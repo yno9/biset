@@ -41,9 +41,15 @@ const RECONNECT_DELAY_MS = 2000
  * a match (never throws -- the caller's own "does not match" branch is the
  * right answer for a URL that is not a URL).
  */
-export function sameMediatorUrl(a: string, b: string): boolean {
+export function sameMediatorUrl(a: string, b: string, aliases: readonly string[] = []): boolean {
   try {
-    return new URL(a).toString() === new URL(b).toString()
+    const first = new URL(a).toString()
+    const second = new URL(b).toString()
+    if (first === second) return true
+    // One trusted mediator's entrances, never a flattened list of unrelated
+    // mediators or URLs taken from the incoming relationship message.
+    const normalized = aliases.map(alias => new URL(alias).toString())
+    return normalized.includes(first) && normalized.includes(second)
   } catch {
     return false
   }

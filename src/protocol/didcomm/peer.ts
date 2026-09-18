@@ -227,11 +227,40 @@ export function generatePeerIdentity(service?: PeerService): PeerIdentity {
  * `counterpartyDid` keeps every counterparty's derived identity independent
  * of every other's, exactly as a random one would be.
  */
-export function deriveRelationshipPeerIdentity(relationshipSecret: Uint8Array, counterpartyDid: string, service?: PeerService): PeerIdentity {
+/**
+ * Derives the SAME did:peer:2 identity every time for a given (relationship
+ * secret, counterparty DID) pair -- and, when `mediatorRoutingKid` is given,
+ * embeds ONLY that mediator's canonical service into the derived DID.
+ *
+ * The service URI comes from decoding the mediator's own self-certifying
+ * did:peer (the routing kid's DID), never from a caller-supplied URL: under
+ * the two-entrance mediator plan (PLAN-tor.md D-2) a transport-specific
+ * spelling (an .onion alias) must never leak into the derived DID, or two
+ * devices of one identity picking different entrances derive different,
+ * non-superseding ContactKeyV1 peers ("current contact key is ambiguous").
+ * Taking the URI from the mediator's own did:peer -- which carries exactly
+ * one service, its canonical (clearnet) endpoint -- yields the same service
+ * on every device and every transport, with no network fetch.
+ */
+export function deriveRelationshipPeerIdentity(relationshipSecret: Uint8Array, counterpartyDid: string, mediatorRoutingKid?: string): PeerIdentity {
   if (relationshipSecret.length !== 32) throw new TypeError('relationship secret must be 32 bytes')
   if (!counterpartyDid) throw new TypeError('counterparty DID is required to derive a relationship peer identity')
   const prk = extract(sha256, relationshipSecret, new TextEncoder().encode(counterpartyDid))
   const xPriv = expand(sha256, prk, new TextEncoder().encode('biset/relationship-peer/x25519/v1'), 32)
   const edPriv = expand(sha256, prk, new TextEncoder().encode('biset/relationship-peer/ed25519/v1'), 32)
-  return identityFromKeys(xPriv, edPriv, service)
+  return identityFromKeys(xPriv, edPriv, mediatorRoutingKid ? canonicalMediatorService(mediatorRoutingKid) : undefined)
+}
+
+/** Resolves the canonical service a derived relationship DID must embed, from
+ * the mediator's own self-certifying did:peer. Byte-identical to the pre-Tor
+ * derivations that passed `{ uri: <doc's endpointUri>, routingKeys: [kid] }`:
+ * for a spec-conforming mediator the doc's endpointUri IS the did:peer's own
+ * S-segment URI, and `accept` is left to identityFromKeys's default. */
+function canonicalMediatorService(mediatorRoutingKid: string): PeerService {
+  const doc = decodePeerDid2(mediatorRoutingKid.split('#', 1)[0]!)
+  const endpoint = doc.service[0]?.serviceEndpoint
+  if (typeof endpoint !== 'object' || endpoint === null || Array.isArray(endpoint) || typeof endpoint.uri !== 'string' || !endpoint.uri) {
+    throw new TypeError('mediator routing kid does not carry a canonical DIDComm service')
+  }
+  return { uri: endpoint.uri, routingKeys: [mediatorRoutingKid] }
 }

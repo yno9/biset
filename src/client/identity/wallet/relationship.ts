@@ -219,7 +219,7 @@ async function handleRelationshipInit(
     // stale one enrolled at the mediator forever, or the two devices
     // converging on two different, non-superseding ContactKeyV1 records
     // (peer.ts's `deriveRelationshipPeerIdentity`).
-    const peer = deriveRelationshipPeerIdentity(relationshipSecret, counterpartyDid, { uri: route.url, routingKeys: [route.routingKid] })
+    const peer = deriveRelationshipPeerIdentity(relationshipSecret, counterpartyDid, route.routingKid)
     await registerWithMediator(route.url, { did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv })
     const next: ContactKeyV1 = {
       version: 1, kind: 'contact-key', identityId, counterpartyDid,

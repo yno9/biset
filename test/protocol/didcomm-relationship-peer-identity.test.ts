@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { deriveRelationshipPeerIdentity } from '../../src/protocol/didcomm/peer.ts'
+import { x25519, ed25519 } from '@noble/curves/ed25519.js'
+import { deriveRelationshipPeerIdentity, identityFromKeys, decodePeerDid2 } from '../../src/protocol/didcomm/peer.ts'
 
 const counterpartyDid = 'did:webvh:QmCounterparty:bob.example'
 const secretA = new Uint8Array(32).fill(1)
@@ -49,5 +50,30 @@ describe('deriveRelationshipPeerIdentity', () => {
 
   test('rejects a secret that is not exactly 32 bytes', () => {
     expect(() => deriveRelationshipPeerIdentity(new Uint8Array(16), counterpartyDid)).toThrow('relationship secret must be 32 bytes')
+  })
+
+  test('PLAN-tor D-2: the embedded service comes from the mediator did:peer, not a caller URL', () => {
+    // The Tor plan's key invariant: two devices reaching the SAME mediator
+    // through different entrances (.onion vs clearnet) must derive the SAME
+    // relationship peer. The signature therefore accepts only the mediator's
+    // routing kid and resolves the canonical (clearnet) URI from the
+    // mediator's own self-certifying did:peer -- an .onion spelling cannot
+    // be passed even by accident.
+    const mediator = identityFromKeys(x25519.utils.randomSecretKey(), ed25519.utils.randomSecretKey(), { uri: 'https://mediator.biset.md', routingKeys: [] })
+    const derived = deriveRelationshipPeerIdentity(secretA, counterpartyDid, mediator.xKid)
+    const endpoint = decodePeerDid2(derived.did).service[0]!.serviceEndpoint
+    expect(endpoint.uri).toBe('https://mediator.biset.md')
+    expect((endpoint as { routing_keys: string[] }).routing_keys).toEqual([mediator.xKid])
+
+    // Byte-equivalence with the pre-Tor call shape, so every ContactKeyV1
+    // derived before this change stays exactly what a re-derivation yields.
+    const legacyService = { uri: 'https://mediator.biset.md', routingKeys: [mediator.xKid] }
+    const legacyDid = identityFromKeys(derived.xPriv, derived.edPriv, legacyService).did
+    expect(derived.did).toBe(legacyDid)
+
+    // A mediator did:peer without a usable service fails closed rather than
+    // deriving a DID whose service cannot be reconstructed.
+    const serviceless = identityFromKeys(x25519.utils.randomSecretKey(), ed25519.utils.randomSecretKey())
+    expect(() => deriveRelationshipPeerIdentity(secretA, counterpartyDid, serviceless.xKid)).toThrow('canonical DIDComm service')
   })
 })

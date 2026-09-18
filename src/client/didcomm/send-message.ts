@@ -95,7 +95,7 @@ export async function initiateRelationship(toDid: string, relationshipSecret: Ui
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
-  const peer = deriveRelationshipPeerIdentity(relationshipSecret, toDid, { uri: route.url, routingKeys: [route.routingKid] })
+  const peer = deriveRelationshipPeerIdentity(relationshipSecret, toDid, route.routingKid)
   const own: DidCommSender = { did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv }
   try {
     await registerWithMediator(route.url, own, fetchImpl)

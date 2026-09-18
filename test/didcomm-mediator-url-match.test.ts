@@ -44,6 +44,20 @@ describe('sameMediatorUrl', () => {
     expect(sameMediatorUrl('https://mediator.test.example/Pickup', 'https://mediator.test.example/pickup')).toBe(false)
   })
 
+  test('matches two entrances only inside one explicitly trusted alias set', () => {
+    const canonical = 'https://mediator.test.example'
+    const onion = `http://${'a'.repeat(56)}.onion`
+    const aliases = [canonical, onion]
+    expect(sameMediatorUrl(canonical, onion)).toBe(false)
+    expect(sameMediatorUrl(canonical, `${onion}/`, aliases)).toBe(true)
+    expect(sameMediatorUrl(onion, `${canonical}:443/`, aliases)).toBe(true)
+    expect(sameMediatorUrl(canonical, 'https://other.test.example', aliases)).toBe(false)
+    expect(sameMediatorUrl(canonical, `${onion}/other`, aliases)).toBe(false)
+    expect(sameMediatorUrl(canonical, onion, [onion])).toBe(false)
+    expect(sameMediatorUrl('', '', aliases)).toBe(false)
+    expect(sameMediatorUrl(canonical, onion, ['not a url', ...aliases])).toBe(false)
+  })
+
   test('an unparseable spelling is not a match, and does not throw', () => {
     expect(sameMediatorUrl('not a url', 'https://mediator.test.example')).toBe(false)
     expect(sameMediatorUrl('https://mediator.test.example', '')).toBe(false)
