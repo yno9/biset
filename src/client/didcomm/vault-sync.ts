@@ -35,11 +35,25 @@ export async function resolveVaultSyncSiblingRoutes(identityDid: string, ownKid?
   const document = await resolveByDomain(parseWebvhDid(identityDid).domain, undefined, { cache: 'no-store' })
   if (!document || document.id !== identityDid) throw new Error('Vault Sync identity DID does not resolve')
   const service = document.service?.find(candidate => candidate.id === '#didcomm' || candidate.id === `${identityDid}#didcomm`)
-  if (!service || !service.serviceEndpoint || typeof service.serviceEndpoint !== 'object' || Array.isArray(service.serviceEndpoint)) throw new Error('Vault Sync DIDComm service is unavailable')
-  const endpoint = service.serviceEndpoint as { uri?: unknown; routingKeys?: unknown }
-  if (typeof endpoint.uri !== 'string' || !Array.isArray(endpoint.routingKeys) || endpoint.routingKeys.length !== 1 || typeof endpoint.routingKeys[0] !== 'string') throw new Error('Vault Sync DIDComm mediator route is invalid')
-  const routingKeys = endpoint.routingKeys as string[]
-  return vaultSyncSiblingDevices(document, ownKid).map(device => ({ ...device, mediatorUrl: endpoint.uri as string, routingKid: routingKeys[0]! }))
+  if (!service || !service.serviceEndpoint) throw new Error('Vault Sync DIDComm service is unavailable')
+  // PLAN-tor.md D-4: a mediator with a Tor entrance publishes `serviceEndpoint`
+  // as a set (clearnet + onion), not a single map. Every entry must name the
+  // SAME mediator (one routingKid) -- differing routingKids would mean two
+  // different mediators are being conflated, which is never valid here.
+  const endpoints = Array.isArray(service.serviceEndpoint) ? service.serviceEndpoint : [service.serviceEndpoint]
+  if (!endpoints.length) throw new Error('Vault Sync DIDComm mediator route is invalid')
+  const routes = endpoints.map(entry => {
+    if (!entry || typeof entry !== 'object') throw new Error('Vault Sync DIDComm mediator route is invalid')
+    const endpoint = entry as { uri?: unknown; routingKeys?: unknown }
+    if (typeof endpoint.uri !== 'string' || !Array.isArray(endpoint.routingKeys) || endpoint.routingKeys.length !== 1 || typeof endpoint.routingKeys[0] !== 'string') throw new Error('Vault Sync DIDComm mediator route is invalid')
+    return { uri: endpoint.uri, routingKid: endpoint.routingKeys[0] as string }
+  })
+  const routingKid = routes[0]!.routingKid
+  if (routes.some(route => route.routingKid !== routingKid)) throw new Error('Vault Sync DIDComm mediator route is invalid')
+  // Picks the first (canonical, D-1/D-4 always lists clearnet first) entrance --
+  // choosing the reachable one among several is Phase 3-7, not yet wired here.
+  const mediatorUrl = routes[0]!.uri
+  return vaultSyncSiblingDevices(document, ownKid).map(device => ({ ...device, mediatorUrl, routingKid }))
 }
 export function mediatedVaultSyncTransport(own: DidCommSender, recipient: (kid: string) => Promise<VaultSyncMediatedRecipient>, fetchImpl: typeof fetch = fetch): VaultSyncTransport {
   return { async send(kid, message) {

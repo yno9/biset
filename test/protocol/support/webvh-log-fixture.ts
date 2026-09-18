@@ -55,7 +55,9 @@ export function buildGenesisLog(rootPrivateKey: Uint8Array, rootPublicKey: Uint8
       .map(entry => ({
         id: `${placeholderDid}${entry.id}`,
         type: 'DIDCommMessaging',
-        serviceEndpoint: { uri: entry.uri, accept: ['didcomm/v2'], routingKeys: entry.routingKeys ?? [] },
+        serviceEndpoint: 'serviceEndpoints' in entry
+          ? entry.serviceEndpoints.map(e => ({ uri: e.uri, accept: ['didcomm/v2'], routingKeys: e.routingKeys ?? [] }))
+          : { uri: entry.uri, accept: ['didcomm/v2'], routingKeys: entry.routingKeys ?? [] },
       })),
     alsoKnownAs: [],
   }
@@ -134,8 +136,11 @@ export interface DidCommStateExtras {
   serviceId?: string
   /** Several DIDCommMessaging services at once, in document order (oldest
    * first) -- what a multi-device identity publishes. Supersedes the
-   * `endpointUri`/`serviceId`/`routingKeys` single-service shorthand. */
-  services?: Array<{ id: string; uri: string; routingKeys?: string[] }>
+   * `endpointUri`/`serviceId`/`routingKeys` single-service shorthand. An
+   * entry may instead give `serviceEndpoints` directly (PLAN-tor.md D-4's
+   * clearnet+onion array), bypassing the `{uri, accept, routingKeys}` map
+   * shorthand entirely. */
+  services?: Array<{ id: string; uri: string; routingKeys?: string[] } | { id: string; serviceEndpoints: Array<{ uri: string; routingKeys?: string[] }> }>
   /** Genesis-only parameters a later append needs: `portable: true` to allow
    * a domain move at all, and a Spare Key commitment to sign one with
    * (migrate.ts enforces both). */
