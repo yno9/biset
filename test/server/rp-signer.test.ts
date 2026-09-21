@@ -109,10 +109,25 @@ test('POST /sign rejects an unknown claim rather than silently dropping it', asy
   await ready()
   const response = await fetch(`${base}/sign`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ state: 'abcdefghijklmnopqrstuvwxyz1234', code_challenge: 'A'.repeat(43), code_challenge_method: 'S256', scope: 'openid' }),
+    body: JSON.stringify({ state: 'abcdefghijklmnopqrstuvwxyz1234', code_challenge: 'A'.repeat(43), code_challenge_method: 'S256', capability_type: 'biset.md/MessengerCapability' }),
   })
   expect(response.status).toBe(400)
-  expect(await response.text()).toContain('unexpected field: scope')
+  expect(await response.text()).toContain('unexpected field: capability_type')
+})
+
+// scope is independent of dcql_query's capability type -- it is what the
+// resulting id_token/access token are good for (e.g. "openid" gates
+// id_token issuance server-side), so it must pass through untouched.
+test('POST /sign includes a caller-supplied scope claim verbatim', async () => {
+  await ready()
+  const response = await fetch(`${base}/sign`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ state: 'abcdefghijklmnopqrstuvwxyz1234', code_challenge: 'A'.repeat(43), code_challenge_method: 'S256', scope: 'openid profile biset:vault' }),
+  })
+  expect(response.status).toBe(200)
+  const { jwt } = await response.json() as { jwt: string }
+  const payload = JSON.parse(new TextDecoder().decode(base64urlDecode(jwt.split('.')[1])))
+  expect(payload.scope).toBe('openid profile biset:vault')
 })
 
 test('OPTIONS preflight and 404 responses both still carry CORS headers', async () => {

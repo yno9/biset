@@ -39,7 +39,7 @@ function base64url(bytes: Uint8Array): string { return Buffer.from(bytes).toStri
 // Only the claims a relying party is actually meant to choose per request.
 // iss/client_id (always `key.did`) and redirect_uri (always REDIRECT_URI,
 // never caller-supplied) are added here, not accepted from the request body.
-const ALLOWED_CLAIMS = ["state", "code_challenge", "code_challenge_method", "nonce", "dpop_jkt", "login_hint", "authorization_details", "dcql_query"] as const;
+const ALLOWED_CLAIMS = ["state", "code_challenge", "code_challenge_method", "nonce", "dpop_jkt", "login_hint", "authorization_details", "dcql_query", "scope"] as const;
 
 function sign(payload: Record<string, unknown>): string {
   const header = base64url(encoder.encode(JSON.stringify({ alg: "EdDSA", typ: "JWT", kid: key.verificationMethod })));

@@ -817,8 +817,11 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
     // RP DID key, obtained from biset-rp-signer (which holds that key;
     // this bundle never does). redirect_uri/client_id/response_type are
     // fixed server-side by the signer itself and not sent here (§0.1bis).
-    // No "scope"/"capability_type"/"alias" fields: the JAR path expresses
-    // the requested capability entirely through dcql_query (§0.4), and the
+    // No "capability_type"/"alias" fields: the JAR path expresses the
+    // requested capability *document* entirely through dcql_query (§0.4).
+    // scope is independent of that -- it is what the resulting id_token/
+    // access token are good for (e.g. "openid" gates id_token issuance),
+    // so it is still sent explicitly, same as the flat-query flow. The
     // one-shot Alias-toggle UI hint has no JAR equivalent yet (a known,
     // accepted gap for this first rollout -- see PLAN6's phase 2 notes).
     const signed = await fetch(RP_SIGNER_URL, {
@@ -827,6 +830,7 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
         state: pending.state, code_challenge: await sha256Base64url(pending.codeVerifier), code_challenge_method: 'S256',
         ...(pending.handle !== undefined ? { login_hint: pending.handle } : {}),
         ...(pending.deviceJkt !== undefined ? { dpop_jkt: pending.deviceJkt } : {}),
+        scope: REQUESTED_SCOPES.join(' '),
         authorization_details: authorizationDetails,
         dcql_query: { credentials: [{ id: 'capability', format: 'vc+di', meta: { type_values: [['VerifiableCredential', CAPABILITY_TYPE]] } }] },
       }),
