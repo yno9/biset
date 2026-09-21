@@ -475,16 +475,41 @@ function isWalletCallback(): boolean {
   return location.protocol === 'file:' && new URL(location.href).searchParams.has('state')
 }
 
-async function metadata(): Promise<Metadata> {
-  const response = await fetch(`${selectedWallet.issuer}/.well-known/oauth-authorization-server`, { cache: 'no-store' })
+async function metadataFor(issuer: string): Promise<Metadata> {
+  const response = await fetch(`${issuer}/.well-known/oauth-authorization-server`, { cache: 'no-store' })
   if (!response.ok) throw new Error(`did.md authorization-server discovery failed (${response.status})`)
   const value = asObject(await response.json(), 'authorization-server metadata')
-  if (value.issuer !== selectedWallet.issuer || typeof value.authorization_endpoint !== 'string' || typeof value.token_endpoint !== 'string' || typeof value.registration_endpoint !== 'string') throw new Error('did.md authorization-server metadata is invalid')
+  if (value.issuer !== issuer || typeof value.authorization_endpoint !== 'string' || typeof value.token_endpoint !== 'string' || typeof value.registration_endpoint !== 'string') throw new Error('did.md authorization-server metadata is invalid')
   for (const endpoint of [value.authorization_endpoint, value.token_endpoint, value.registration_endpoint]) {
     const parsed = new URL(endpoint)
     if (parsed.protocol !== 'https:') throw new Error('did.md authorization-server metadata contains a non-HTTPS endpoint')
   }
   return value as Metadata
+}
+async function metadata(): Promise<Metadata> {
+  return metadataFor(selectedWallet.issuer)
+}
+
+// Wallet discovery from a did:webvh suffix the user types (rather than
+// picking from WALLET_DIRECTORY): resolve that identity's own DID document,
+// read its "UDIWalletIssuer" service entry (published by
+// ~/did.md/client/did-webvh.ts's buildGenesis, the same pattern atproto uses
+// for #atproto_pds/AtprotoPersonalDataServer PDS discovery), then run the
+// ordinary OAuth-authorization-server discovery against that issuer. No new
+// registry or protocol -- just the did:webvh resolution biset already does,
+// applied to wallet discovery instead of identity/data hosting.
+export async function resolveWalletFromSuffix(suffix: string): Promise<WalletDirectoryEntry> {
+  const domain = suffix.trim().toLowerCase()
+  if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)) throw new Error('Enter a domain, e.g. alice.did.md.')
+  const document = await resolveByDomain(domain)
+  if (!document) throw new Error(`${domain} has no did:webvh identity.`)
+  const service = Array.isArray(document.service) ? document.service : []
+  const entry = service.find(candidate => candidate?.type === 'UDIWalletIssuer' && typeof candidate.serviceEndpoint === 'string')
+  if (!entry || typeof entry.serviceEndpoint !== 'string') throw new Error(`${domain} does not publish a wallet.`)
+  const issuer = entry.serviceEndpoint
+  if (new URL(issuer).protocol !== 'https:') throw new Error(`${domain}'s wallet issuer is invalid.`)
+  await metadataFor(issuer) // fails loudly if this issuer cannot actually be discovered
+  return { id: `suffix:${domain}`, displayName: domain, issuer, handleSuffix: `.${domain}` }
 }
 
 function registrationIsUsable(value: DidMdRegistration | undefined, discovered: Metadata): value is DidMdRegistration {

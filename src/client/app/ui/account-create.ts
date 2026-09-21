@@ -11,6 +11,7 @@ import {
   completeDidMdWalletCallback,
   disconnectDidMdWallet,
   restoreDidMdWalletSession,
+  resolveWalletFromSuffix,
   selectWallet,
   currentWallet,
   type DidMdActiveSession,
@@ -111,6 +112,23 @@ export function setupNewUserPage(): void {
     walletLoginButton.before(picker)
   }
 
+  // Optional: resolve a wallet by did:webvh suffix (e.g. "alice.did.md")
+  // instead of picking from WALLET_DIRECTORY -- the same "log in with your
+  // own identity's own issuer" pattern atproto uses for PDS discovery
+  // (its DID document's #atproto_pds entry), applied to wallet discovery.
+  // Left empty, login behaves exactly as before: WALLET_DIRECTORY's
+  // selected entry (dito by default).
+  let suffixInput: HTMLInputElement | undefined
+  if (walletLoginButton) {
+    suffixInput = document.createElement('input')
+    suffixInput.type = 'text'
+    suffixInput.id = 'nu-wallet-suffix'
+    suffixInput.placeholder = 'your did:web suffix (optional)'
+    suffixInput.autocomplete = 'off'
+    suffixInput.style.cssText = 'margin-right:8px;padding:8px 10px;border-radius:8px;font:inherit;font-size:14px;width:200px'
+    walletLoginButton.before(suffixInput)
+  }
+
   const walletResult = (message: string, error = false) => {
     if (!walletResultEl) return
     walletResultEl.textContent = message
@@ -153,10 +171,20 @@ export function setupNewUserPage(): void {
 
   walletLoginButton?.addEventListener('click', () => {
     walletLoginButton.disabled = true
+    // Safari only permits opening a window in the original click handler --
+    // reserve it now, before the asynchronous suffix resolution below, the
+    // same reason redirectToWallet itself takes an already-opened popup.
     const popup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
     const config = readBisetConfig()
-    walletResult('Opening did.md Wallet…')
-    void beginDidMdWalletLogin(config.mediatorUrls, popup, config, config.mediatorOnionUrls).catch(error => {
+    const suffix = suffixInput?.value.trim()
+    void (async () => {
+      if (suffix) {
+        walletResult(`Resolving ${suffix}…`)
+        selectWallet(await resolveWalletFromSuffix(suffix))
+      }
+      walletResult('Opening did.md Wallet…')
+      await beginDidMdWalletLogin(config.mediatorUrls, popup, config, config.mediatorOnionUrls)
+    })().catch(error => {
       walletLoginButton.disabled = false
       walletResult(error instanceof Error ? error.message : String(error), true)
     })
