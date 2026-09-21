@@ -8,7 +8,7 @@ config.json
 dist/app-*.js
 deploy.sh
 home/
-biset-*
+/biset-*
 PLAN*
 docs/
 *.bak

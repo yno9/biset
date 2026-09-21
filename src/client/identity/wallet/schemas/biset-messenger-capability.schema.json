@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biset.md/.well-known/capability-schema.json",
+  "title": "biset.md/MessengerCapability",
+  "description": "Biset's own capability credential type, presented by a did:webvh wallet (dito or any other implementation) as a VC-DM 2.0 Verifiable Credential (see ~/did.md/PLAN3-oid4vp-transport.md -- the transport envelope moved from a flat {document,proof} pair to this VC-DM wrapping). Biset owns the credentialSubject content, not did.md -- did.md's OAuth server only checks the generic transport envelope (@context/id/type/issuer/credentialSubject/proof, and within credentialSubject: audience/expiresAt/issuedAt/scope, deviceJkt/authorizationDetails present-or-absent) and a Data Integrity Proof over the whole credential; it does not interpret credentialSubject's contents. This file is imported directly by did-md-oauth.ts (see json-schema.ts) and is the single source of truth for the credential SHAPE -- checks that depend on the pending authorization request (audience match, deviceJkt match, expiry-in-the-past, required scope membership) are NOT expressible here and remain in did-md-oauth.ts itself. See ~/did.md/PLAN2-capability-ownership.md and ~/did.md/SPEC.md §5.3 for the design rationale.",
+  "type": "object",
+  "required": ["@context", "id", "type", "issuer", "credentialSubject", "proof"],
+  "additionalProperties": false,
+  "properties": {
+    "@context": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": { "const": "https://www.w3.org/ns/credentials/v2" }
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^urn:uuid:[0-9a-fA-F-]{36}$",
+      "description": "A fresh urn:uuid per authorization; not reused across grants."
+    },
+    "type": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        { "const": "VerifiableCredential" },
+        {
+          "enum": ["biset.md/MessengerCapability", "did.md/DeviceCapability"],
+          "description": "\"biset.md/MessengerCapability\" is Biset's own name and the only value Biset's own requests ask for (capability_type on the /authorize request). \"did.md/DeviceCapability\" is accepted here too, for a did.md Wallet that predates the capability_type request parameter and so falls back to its own old default -- a transitional compatibility value, not a name Biset chose."
+        }
+      ]
+    },
+    "issuer": {
+      "type": "string",
+      "pattern": "^did:webvh:",
+      "description": "The subject's own did:webvh -- the DID whose authentication key signed this credential's Data Integrity Proof."
+    },
+    "credentialSubject": {
+      "type": "object",
+      "required": ["audience", "deviceJkt", "scope", "issuedAt", "expiresAt", "authorizationDetails"],
+      "additionalProperties": false,
+      "properties": {
+        "audience": {
+          "type": "string",
+          "pattern": "^(client_[A-Za-z0-9_-]{32,128}|did:webvh:[A-Za-z0-9]{1,64}:[A-Za-z0-9.%-]{1,253}(:[A-Za-z0-9._~%-]{1,128}){0,8})$",
+          "description": "did.md's OAuth client_id for this Biset registration: either an RFC 7591 Dynamic Client Registration id, or (PLAN6) the did:webvh DID Biset authenticated itself with via JAR when running at https://t.biset.md."
+        },
+        "deviceJkt": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "description": "RFC 9449 DPoP JWK SHA-256 thumbprint of Biset's device key. Always present: Biset always requests dpop_jkt (see redirectToWallet), so a Biset capability credential is always DPoP-bound."
+        },
+        "scope": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Biset-defined scope strings. Known values in current use: openid, profile, biset:login, biset:device, biset:routing, biset:messaging, biset:vault (see REQUESTED_SCOPES in did-md-oauth.ts). did.md's server checks these only against the client's OWN registered scope list -- it does not know what any of them mean."
+        },
+        "issuedAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "authorizationDetails": {
+          "type": "array",
+          "maxItems": 16,
+          "description": "RFC 9396 Rich Authorization Details, opaque to did.md's server. Biset requests a fixed set of detail types per authorization (see redirectToWallet in did-md-oauth.ts) and validates each echoed detail itself (capabilityDetails). Always present: Biset always requests at least the key-authorization detail.",
+          "items": {
+            "oneOf": [
+              { "$ref": "#/$defs/keyAuthorizationDetail" },
+              { "$ref": "#/$defs/didDocumentEditDetail" },
+              { "$ref": "#/$defs/derivedSecretDetail" },
+              { "$ref": "#/$defs/mailRelayCapabilityDetail" }
+            ]
+          }
+        }
+      }
+    },
+    "proof": {
+      "type": "object",
+      "description": "A W3C Data Integrity Proof over this credential (with `proof` itself excluded from what is hashed -- see verifyProof in did-md-oauth.ts, and verifyAuthenticationProof in did.md's server.ts). Only the shape did-md-oauth.ts's own checks need is required here; the actual cryptographic verification is not a JSON Schema concern.",
+      "required": ["type", "cryptosuite", "proofPurpose", "verificationMethod", "proofValue"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "DataIntegrityProof" },
+        "cryptosuite": { "type": "string" },
+        "proofPurpose": { "type": "string" },
+        "verificationMethod": { "type": "string" },
+        "proofValue": { "type": "string" },
+        "created": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "$defs": {
+    "keyAuthorizationDetail": {
+      "type": "object",
+      "required": ["type", "credential"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "urn:did.md:key-authorization:v1" },
+        "credential": {
+          "type": "string",
+          "description": "Base64url-encoded wire form of a did.md/KeyAuthorizationCredential (a separate did.md-defined credential type, unrelated to this schema's own ownership -- see createKeyAuthorizationCredentialWire in did.md's client/did-webvh.ts). Exactly one of this detail type is required per capability (enforced in did-md-oauth.ts, not expressible as a per-item JSON Schema constraint)."
+        }
+      }
+    },
+    "didDocumentEditDetail": {
+      "type": "object",
+      "description": "Present only when Biset's authorization request included urn:did-core:document-edit:v1 (device onboarding that adds a verificationMethod to the identity's DID Document). See didDocumentEditDetail in did-md-oauth.ts for the exact validation this echoes against.",
+      "required": ["type", "services", "verificationMethods", "remove"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "urn:did-core:document-edit:v1" },
+        "services": { "type": "array", "maxItems": 64 },
+        "verificationMethods": { "type": "array", "maxItems": 64 },
+        "remove": { "type": "array", "maxItems": 128 },
+        "serviceKeyBindings": { "type": "array" }
+      }
+    },
+    "derivedSecretDetail": {
+      "type": "object",
+      "description": "One per requested (purpose, context) pair -- vault content keys (purpose=vault-content-key) and the DIDComm relationship secret (purpose=relationship-secret, no context) both use this shape. context is present in the echo only when the request itself supplied one.",
+      "required": ["type", "purpose", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "urn:did.md:derived-secret:v1" },
+        "purpose": { "type": "string" },
+        "context": { "type": "string" },
+        "value": {
+          "type": "string",
+          "description": "Base64url-encoded 32-byte derived secret (deriveWalletSecret in did.md's client/did-webvh.ts)."
+        }
+      }
+    },
+    "mailRelayCapabilityDetail": {
+      "type": "object",
+      "description": "Requested by redirectToWallet for the did.md-operated SMTP relay. NOTE: the exact echoed shape on receipt is not fully traced in did-md-oauth.ts as of this schema's authoring (2026-09-21) -- fields below reflect only what is REQUESTED, not a confirmed response contract. Verify against the mail-relay integration code before treating this as authoritative. additionalProperties is deliberately NOT false here, unlike the other detail types, to reflect that uncertainty.",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "urn:biset:mail-relay:v1" },
+        "relayOrigin": { "type": "string" },
+        "addresses": { "type": "array", "items": { "type": "string" } },
+        "operations": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

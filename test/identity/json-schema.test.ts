@@ -44,6 +44,15 @@ describe('json-schema.ts (interpretive validator, used against biset-messenger-c
     expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ type: 'acme.example/SomethingElse' }), 'credential')).toThrow(/expected one of/)
   })
 
+  // PLAN6 (~/did.md/PLAN6-rp-did-authentication.md): found live -- a
+  // did:webvh-authenticated audience (JAR/client_id_scheme=did, biset's own
+  // RP DID) was rejected here even after did.md's server-side checks all
+  // passed, because this schema's audience pattern only ever allowed a DCR
+  // client_XXXX id.
+  test('a did:webvh audience (JAR/client_id_scheme=did) is accepted alongside a DCR client_id', () => {
+    expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ subject: { audience: 'did:webvh:QmaQdf3VFoXtk7WjfP2rhmKAvMNinLh4qU1bjZ4mPDzVr6:t.biset.md' } }), 'credential')).not.toThrow()
+  })
+
   test('a missing required subject field is rejected', () => {
     const credential = validCapabilityCredential()
     delete (credential.credentialSubject as Record<string, unknown>).deviceJkt
