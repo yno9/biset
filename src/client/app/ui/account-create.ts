@@ -11,8 +11,11 @@ import {
   completeDidMdWalletCallback,
   disconnectDidMdWallet,
   restoreDidMdWalletSession,
+  selectWallet,
+  currentWallet,
   type DidMdActiveSession,
 } from '../../identity/wallet/did-md-oauth.ts'
+import { WALLET_DIRECTORY } from '../../identity/wallet/wallet-directory.ts'
 
 // Set once by main.ts (a plain function reference, not an import back to
 // it) so the handler below can re-run the boot routine after a Wallet
@@ -86,6 +89,27 @@ export function setupNewUserPage(): void {
   const walletLoginButton = document.getElementById('nu-wallet-login') as HTMLButtonElement | null
   const walletSessionEl = document.getElementById('nu-wallet-session') as HTMLDivElement | null
   const walletResultEl = document.getElementById('nu-wallet-result') as HTMLDivElement | null
+
+  // PLAN4 (~/did.md/PLAN4-wallet-connector.md): "connect with [...]" -- the
+  // [...] is WALLET_DIRECTORY, not a hardcoded dito assumption. With one
+  // entry (today), no picker renders and the button behaves exactly as
+  // before -- zero UX change until the directory actually grows.
+  if (walletLoginButton && WALLET_DIRECTORY.length > 1) {
+    const picker = document.createElement('select')
+    picker.id = 'nu-wallet-picker'
+    picker.style.cssText = 'margin-right:8px;padding:8px 10px;border-radius:8px;font:inherit;font-size:14px'
+    for (const entry of WALLET_DIRECTORY) {
+      const option = document.createElement('option')
+      option.value = entry.id; option.textContent = entry.displayName
+      if (entry.id === currentWallet().id) option.selected = true
+      picker.append(option)
+    }
+    picker.addEventListener('change', () => {
+      const entry = WALLET_DIRECTORY.find(candidate => candidate.id === picker.value)
+      if (entry) selectWallet(entry)
+    })
+    walletLoginButton.before(picker)
+  }
 
   const walletResult = (message: string, error = false) => {
     if (!walletResultEl) return

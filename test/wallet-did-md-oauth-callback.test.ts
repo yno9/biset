@@ -81,7 +81,7 @@ async function pendingFixture(overrides: Partial<DidMdPendingAuthorization> = {}
     handle: 'alice.did.md',
     verificationMethod: 'did:webvh:111111111111111111111111111111111111111111111111:test.example#key-1',
     rootPublicKey: bytes(1),
-    deviceJkt: 'dpop-thumbprint',
+    deviceJkt: 'A'.repeat(43),
     privateKey: pair.privateKey,
     publicJwk: await crypto.subtle.exportKey('jwk', pair.publicKey),
     bisetDevice: await sealDidMdBisetDeviceMaterial(bytes(33), { signaturePrivateKey: bytes(65), vaultSecret: bytes(97) }),
@@ -135,7 +135,7 @@ describe('did.md OAuth callback validation', () => {
       handle: 'alice.did.md',
       verificationMethod: `${did}#key-1`,
       rootPublicKey,
-      deviceJkt: 'dpop-thumbprint',
+      deviceJkt: 'A'.repeat(43),
       privateKey: pair.privateKey,
       publicJwk: await crypto.subtle.exportKey('jwk', pair.publicKey),
       bisetDevice: await sealDidMdBisetDeviceMaterial(leafPublicKey, { signaturePrivateKey: leafPrivateKey, vaultSecret: bytes(97) }),
@@ -153,27 +153,30 @@ describe('did.md OAuth callback validation', () => {
     }
     const keyCredentialBytes = canonicalBytes({ label: 'did.md/key-authorization/v1', ...keyCredentialUnsigned })
     const keyCredential = { ...keyCredentialUnsigned, rootSignature: bytesToBase64url(ed25519.sign(keyCredentialBytes, rootPrivateKey)), signSignature: bytesToBase64url(ed25519.sign(keyCredentialBytes, rootPrivateKey)) }
-    const document = {
-      audience: registration.clientId,
-      authorizationDetails: [pending.documentEdit, { type: 'urn:did.md:key-authorization:v1', credential: bytesToBase64url(canonicalBytes(keyCredential)) }, { type: 'urn:did.md:derived-secret:v1', purpose: VAULT_CONTENT_KEY_PURPOSE, context: '0', value: bytesToBase64url(bytes(129)) }],
-      deviceJkt: pending.deviceJkt,
-      expiresAt: '2030-01-01T00:00:00.000Z',
-      id: 'capability-1',
-      issuedAt: '2026-09-05T00:00:00.000Z',
+    // PLAN3 (~/did.md/PLAN3-oid4vp-transport.md): the capability is a
+    // VC-DM 2.0 credential with an embedded proof, not a {document, proof}
+    // pair -- RP-owned content lives under credentialSubject.
+    const unsignedVc = {
+      '@context': ['https://www.w3.org/ns/credentials/v2'],
+      id: 'urn:uuid:11111111-1111-4111-8111-111111111111',
+      type: ['VerifiableCredential', 'biset.md/MessengerCapability'],
       issuer: did,
-      scope: ['biset:login', 'biset:device', 'biset:vault'],
-      type: 'did.md/DeviceCapability',
-      version: 1,
+      credentialSubject: {
+        audience: registration.clientId,
+        authorizationDetails: [pending.documentEdit, { type: 'urn:did.md:key-authorization:v1', credential: bytesToBase64url(canonicalBytes(keyCredential)) }, { type: 'urn:did.md:derived-secret:v1', purpose: VAULT_CONTENT_KEY_PURPOSE, context: '0', value: bytesToBase64url(bytes(129)) }],
+        deviceJkt: pending.deviceJkt,
+        expiresAt: '2030-01-01T00:00:00.000Z',
+        issuedAt: '2026-09-05T00:00:00.000Z',
+        scope: ['biset:login', 'biset:device', 'biset:vault'],
+      },
     }
+    const vc = { ...unsignedVc, proof: buildProof(unsignedVc, { verificationMethod: pending.verificationMethod, proofPurpose: 'authentication', privateKey: rootPrivateKey }) }
     const token = {
       access_token: 'access-token',
       token_type: 'DPoP',
       sub: did,
       expires_in: 3600,
-      device_capability: {
-        document,
-        proof: buildProof(document, { verificationMethod: pending.verificationMethod, proofPurpose: 'authentication', privateKey: rootPrivateKey }),
-      },
+      vp_token: vc,
     }
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = input.toString()

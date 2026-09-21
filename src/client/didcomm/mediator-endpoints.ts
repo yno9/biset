@@ -52,3 +52,27 @@ export function preferredMediatorUrl(endpoints: MediatorEndpoints, torReachable:
   if (torReachable && endpoints.onionUrl) return endpoints.onionUrl
   return endpoints.canonicalUrl
 }
+
+/**
+ * True when this page itself is being served from a Tor v3 Hidden Service
+ * (D-6, 3-2) -- the ONLY signal this plan trusts to decide "am I in a Tor
+ * environment", so a plain browser on the ordinary clearnet origin never
+ * even attempts a `.onion` fetch (I-3) and no Tor Browser fingerprinting
+ * (User-Agent, screen size, timezone, ...) is ever consulted (I-6).
+ *
+ * Until biset's own app is additionally served over an onion address, this
+ * is always false and every session behaves exactly as before (I-5) --
+ * accepting Tor Browser *visitors of the mediator* without them dialing in
+ * from an onion biset front end is a later increment, not this plan's v1.
+ */
+export function isTorEnvironment(hostname: string = safeLocationHostname()): boolean {
+  return isOnionUrl(`http://${hostname}`)
+}
+
+function safeLocationHostname(): string {
+  try {
+    return location.hostname
+  } catch {
+    return ''
+  }
+}

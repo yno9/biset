@@ -13,6 +13,7 @@ import { verifyVaultObjectIntegrity } from '../store/vault/objects.ts'
 import type { IncomingVaultRecords, IncomingVaultRecordsResult, VaultEventRecord, VaultObjectRecord, VaultSyncRecordReader } from '../store/vault/store.ts'
 import { VAULT_SYNC_CHUNK_BYTES } from '../store/vault/vault-sync-chunks.ts'
 import { sendMediatedDidCommMessage } from './send-message.ts'
+import { isOnionUrl, preferredMediatorUrl, isTorEnvironment } from './mediator-endpoints.ts'
 
 const AAD_LABEL = 'biset/vault-sync/v1'
 export interface EncryptedVaultUpdate { version: 1; generation: string; nonce: string; ciphertext: string }
@@ -50,9 +51,14 @@ export async function resolveVaultSyncSiblingRoutes(identityDid: string, ownKid?
   })
   const routingKid = routes[0]!.routingKid
   if (routes.some(route => route.routingKid !== routingKid)) throw new Error('Vault Sync DIDComm mediator route is invalid')
-  // Picks the first (canonical, D-1/D-4 always lists clearnet first) entrance --
-  // choosing the reachable one among several is Phase 3-7, not yet wired here.
-  const mediatorUrl = routes[0]!.uri
+  // PLAN-tor.md D-4 forbids publishing an onion-only route, so a canonical
+  // (non-onion) entry must always be present; 3-7 picks it, or the onion
+  // entrance when this page itself is served over Tor (D-5/D-6, same rule
+  // registerWithMediator/watchMediatorMultiplexed already use in main.ts).
+  const canonicalRoute = routes.find(route => !isOnionUrl(route.uri))
+  if (!canonicalRoute) throw new Error('Vault Sync DIDComm mediator route is invalid')
+  const onionRoute = routes.find(route => isOnionUrl(route.uri))
+  const mediatorUrl = preferredMediatorUrl({ canonicalUrl: canonicalRoute.uri, onionUrl: onionRoute?.uri }, isTorEnvironment())
   return vaultSyncSiblingDevices(document, ownKid).map(device => ({ ...device, mediatorUrl, routingKid }))
 }
 export function mediatedVaultSyncTransport(own: DidCommSender, recipient: (kid: string) => Promise<VaultSyncMediatedRecipient>, fetchImpl: typeof fetch = fetch): VaultSyncTransport {

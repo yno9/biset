@@ -3,7 +3,7 @@
 // contracts other modules (sameMediatorUrl's aliases, D-5's transport
 // choice) will be wired to in later phases.
 import { describe, expect, test } from 'bun:test'
-import { mediatorAliases, isOnionUrl, preferredMediatorUrl, type MediatorEndpoints } from '../src/client/didcomm/mediator-endpoints.ts'
+import { mediatorAliases, isOnionUrl, preferredMediatorUrl, isTorEnvironment, type MediatorEndpoints } from '../src/client/didcomm/mediator-endpoints.ts'
 
 const canonical = 'https://mediator.biset.md'
 const onion = `http://${'a'.repeat(56)}.onion`
@@ -46,5 +46,17 @@ describe('preferredMediatorUrl', () => {
 
   test('a Tor environment falls back to canonical when no onion is published', () => {
     expect(preferredMediatorUrl(clearnetOnly, true)).toBe(canonical)
+  })
+})
+
+describe('isTorEnvironment', () => {
+  test('true only when the page itself is served from a .onion host', () => {
+    expect(isTorEnvironment(`${'a'.repeat(56)}.onion`)).toBe(true)
+  })
+
+  test('false for an ordinary clearnet host, empty string, or no argument (no location global)', () => {
+    expect(isTorEnvironment('biset.md')).toBe(false)
+    expect(isTorEnvironment('')).toBe(false)
+    expect(isTorEnvironment()).toBe(false)
   })
 })

@@ -18,6 +18,8 @@ import { parseVaultGenerationUrn, VAULT_CONTENT_KEY_PURPOSE, vaultGenerationUrn 
 import { deviceKid, deviceKidFragment } from '../../../protocol/didcomm/devicekid.ts'
 import { decodeX25519Multikey, encodeX25519Multikey } from '../../../protocol/didcomm/multikey.ts'
 import { fetchMediatorInfo, requestMediation, updateKeylist } from '../../../protocol/didcomm/mediator-coordinate.ts'
+import { assertMatchesSchema, type JSONSchema } from './json-schema.ts'
+import capabilitySchema from './schemas/biset-messenger-capability.schema.json' with { type: 'json' }
 import { generatePeerIdentity } from '../../../protocol/didcomm/peer.ts'
 import { isOnionUrl } from '../../didcomm/mediator-endpoints.ts'
 import {
@@ -41,10 +43,36 @@ import {
   type DidCoreDocumentEdit,
 } from './did-md-store.ts'
 
-const ISSUER = 'https://api.did.md'
-const WALLET_ORIGIN = 'https://app.did.md'
+import { DEFAULT_WALLET, type WalletDirectoryEntry } from './wallet-directory.ts'
+// PLAN4 (~/did.md/PLAN4-wallet-connector.md): the OAuth/OID4VP issuer this
+// module talks to is no longer a fixed constant -- it is whichever wallet
+// directory entry is currently selected (selectWallet/currentWallet
+// below), defaulting to dito so existing single-wallet UX is unchanged.
+// WALLET_ORIGIN was removed entirely: the popup-message origin check
+// (see the window "message" listener below) now derives the expected
+// origin from the active popup's own discovered authorization_endpoint,
+// rather than assuming app.did.md.
+let selectedWallet: WalletDirectoryEntry = DEFAULT_WALLET
+export function selectWallet(entry: WalletDirectoryEntry): void { selectedWallet = entry }
+export function currentWallet(): WalletDirectoryEntry { return selectedWallet }
+// The did.md-operated mail relay is Biset's own infrastructure choice
+// (see MAIL_RELAY_CAPABILITY_DETAIL below), independent of which wallet
+// authenticates the user -- it keeps pointing at did.md specifically
+// rather than following selectedWallet. /v1/oauth/resource, by contrast,
+// IS part of the OAuth server's own endpoint set and does follow
+// selectedWallet (see callDidMdWalletTestResource).
+const DID_MD_API_ORIGIN = 'https://api.did.md'
 const CALLBACK_PATH = '/wallet/callback'
 const REQUESTED_SCOPES = ['openid', 'profile', 'biset:login', 'biset:device', 'biset:routing', 'biset:messaging', 'biset:vault']
+// Biset's own capability document type (see did.md's
+// PLAN2-capability-ownership.md): did.md no longer names this for us. The
+// legacy 'did.md/DeviceCapability' name is still accepted ON RECEIPT --
+// see the "type" property's enum in schemas/biset-messenger-capability.
+// schema.json, which is the single source of truth for what's accepted --
+// for a did.md Wallet that predates the capability_type request parameter
+// and so falls back to its own old default. This constant is only ever
+// what Biset itself REQUESTS.
+const CAPABILITY_TYPE = 'biset.md/MessengerCapability'
 const DID_DOCUMENT_EDIT_DETAIL = 'urn:did-core:document-edit:v1'
 const KEY_AUTHORIZATION_DETAIL = 'urn:did.md:key-authorization:v1'
 const DERIVED_SECRET_DETAIL = 'urn:did.md:derived-secret:v1'
@@ -188,7 +216,12 @@ if (typeof window !== 'undefined') {
   window.addEventListener('message', event => {
     const active = fileWalletPopup
     const value = event.data as Record<string, unknown> | undefined
-    if (!active || event.origin !== WALLET_ORIGIN || event.source !== active.popup
+    // The expected popup origin is derived from THIS popup's own
+    // discovered authorization_endpoint (see registration()/metadata()),
+    // not a fixed dito origin -- any wallet directory entry's popup is
+    // validated against its own endpoint, never another wallet's.
+    const expectedOrigin = new URL(active?.client.authorizationEndpoint ?? 'about:blank').origin
+    if (!active || event.origin !== expectedOrigin || event.source !== active.popup
       || value?.type !== 'did.md/oauth-file-callback' || value.protocol !== 1
       || typeof value.state !== 'string' || typeof value.iss !== 'string') return
     finishFileWalletPopup(active, value)
@@ -281,9 +314,15 @@ function exactKeys(value: Record<string, unknown>, keys: string[], label: string
   if (Object.keys(value).sort().join(',') !== [...keys].sort().join(',')) throw new Error(`${label} has unexpected fields`)
 }
 
+// PLAN4: the hosting-domain suffix a handle must end with is a property of
+// the currently selected wallet, not a fixed ".did.md" assumption -- see
+// wallet-directory.ts's handleSuffix field. This is a UI input hint only;
+// the real trust check is DID resolution, not this pattern.
 function didMdHandle(value: string): string {
   const handle = value.trim().toLowerCase()
-  if (!/^[a-z0-9](?:[a-z0-9-]{0,61})?\.did\.md$/.test(handle)) throw new Error('Enter a did.md hostname, for example test1.did.md')
+  const suffix = selectedWallet.handleSuffix
+  const escapedSuffix = suffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  if (!new RegExp(`^[a-z0-9](?:[a-z0-9-]{0,61})?${escapedSuffix}$`).test(handle)) throw new Error(`Enter a ${suffix.replace(/^\./, '')} hostname, for example test1${suffix}`)
   return handle
 }
 
@@ -425,10 +464,10 @@ function isWalletCallback(): boolean {
 }
 
 async function metadata(): Promise<Metadata> {
-  const response = await fetch(`${ISSUER}/.well-known/oauth-authorization-server`, { cache: 'no-store' })
+  const response = await fetch(`${selectedWallet.issuer}/.well-known/oauth-authorization-server`, { cache: 'no-store' })
   if (!response.ok) throw new Error(`did.md authorization-server discovery failed (${response.status})`)
   const value = asObject(await response.json(), 'authorization-server metadata')
-  if (value.issuer !== ISSUER || typeof value.authorization_endpoint !== 'string' || typeof value.token_endpoint !== 'string' || typeof value.registration_endpoint !== 'string') throw new Error('did.md authorization-server metadata is invalid')
+  if (value.issuer !== selectedWallet.issuer || typeof value.authorization_endpoint !== 'string' || typeof value.token_endpoint !== 'string' || typeof value.registration_endpoint !== 'string') throw new Error('did.md authorization-server metadata is invalid')
   for (const endpoint of [value.authorization_endpoint, value.token_endpoint, value.registration_endpoint]) {
     const parsed = new URL(endpoint)
     if (parsed.protocol !== 'https:') throw new Error('did.md authorization-server metadata contains a non-HTTPS endpoint')
@@ -437,7 +476,7 @@ async function metadata(): Promise<Metadata> {
 }
 
 function registrationIsUsable(value: DidMdRegistration | undefined, discovered: Metadata): value is DidMdRegistration {
-  return !!value && value.v === 2 && value.issuer === ISSUER
+  return !!value && value.v === 2 && value.issuer === selectedWallet.issuer
     && value.authorizationEndpoint === discovered.authorization_endpoint
     && value.tokenEndpoint === discovered.token_endpoint
     && value.registrationEndpoint === discovered.registration_endpoint
@@ -450,7 +489,7 @@ async function registration(walletDeviceName = 'Biset'): Promise<DidMdRegistrati
   const discovered = await metadata()
   const existing = await readDidMdRegistration()
   if (registrationIsUsable(existing, discovered)) {
-    const response = await fetch(`${ISSUER}/v1/oauth/register/${encodeURIComponent(existing.clientId)}`, {
+    const response = await fetch(`${selectedWallet.issuer}/v1/oauth/register/${encodeURIComponent(existing.clientId)}`, {
       headers: { authorization: `Bearer ${existing.registrationAccessToken}` }, cache: 'no-store',
     })
     if (response.ok) {
@@ -476,10 +515,10 @@ async function registration(walletDeviceName = 'Biset'): Promise<DidMdRegistrati
   })
   if (!response.ok) throw new Error(await response.text())
   const value = asObject(await response.json(), 'client registration response')
-  if (!/^client_[A-Za-z0-9_-]{32,128}$/.test(String(value.client_id ?? '')) || typeof value.registration_access_token !== 'string' || value.registration_access_token.length < 32 || value.registration_client_uri !== `${ISSUER}/v1/oauth/register/${encodeURIComponent(String(value.client_id))}`) throw new Error('did.md client registration response is invalid')
+  if (!/^client_[A-Za-z0-9_-]{32,128}$/.test(String(value.client_id ?? '')) || typeof value.registration_access_token !== 'string' || value.registration_access_token.length < 32 || value.registration_client_uri !== `${selectedWallet.issuer}/v1/oauth/register/${encodeURIComponent(String(value.client_id))}`) throw new Error('did.md client registration response is invalid')
   const result: DidMdRegistration = {
     v: 2, issuer: discovered.issuer, authorizationEndpoint: discovered.authorization_endpoint,
-    tokenEndpoint: discovered.token_endpoint, refreshEndpoint: `${ISSUER}/v1/oauth/device-refresh`,
+    tokenEndpoint: discovered.token_endpoint, refreshEndpoint: `${selectedWallet.issuer}/v1/oauth/device-refresh`,
     registrationEndpoint: discovered.registration_endpoint, clientId: String(value.client_id),
     registrationAccessToken: value.registration_access_token, redirectUri: redirectUri(),
   }
@@ -628,20 +667,30 @@ async function resolvedPendingAuthorization(pending: DidMdPendingAuthorization, 
 }
 
 async function capabilityFromResponse(value: unknown, pending: ResolvedPendingAuthorization) {
-  const signed = asObject(value, 'device capability')
-  exactKeys(signed, ['document', 'proof'], 'device capability')
-  const document = asObject(signed.document, 'device capability document')
-  exactKeys(document, [
-    'audience', 'authorizationDetails', 'deviceJkt', 'expiresAt', 'id', 'issuedAt', 'issuer', 'scope', 'type', 'version',
-  ], 'device capability document')
-  if (document.type !== 'did.md/DeviceCapability' || document.version !== 1 || document.issuer !== pending.did || document.audience !== pending.clientId || document.deviceJkt !== pending.deviceJkt || !Array.isArray(document.scope) || document.scope.some(scope => typeof scope !== 'string') || typeof document.expiresAt !== 'string' || Date.parse(document.expiresAt) <= Date.now()) throw new Error('did.md returned an invalid device capability')
-  if (!document.scope.includes('biset:device') || !document.scope.includes('biset:vault')) throw new Error('did.md did not enroll this Biset device')
-  const proof = asObject(signed.proof, 'device capability proof') as unknown as DataIntegrityProof
-  if (proof.proofPurpose !== 'authentication' || proof.verificationMethod !== pending.verificationMethod || !verifyProof(document, proof, pending.rootPublicKey)) throw new Error('did.md device capability proof is invalid')
-  const detail = capabilityDetails(document.authorizationDetails, pending)
+  // PLAN3 (~/did.md/PLAN3-oid4vp-transport.md): `value` is now a VC-DM 2.0
+  // credential with an embedded `proof`, not a {document, proof} pair.
+  // The credential's SHAPE (required fields, formats, patterns, the
+  // authorizationDetails item union) is checked against
+  // schemas/biset-messenger-capability.schema.json -- see json-schema.ts.
+  // That schema is the single source of truth for shape; it is NOT aware
+  // of `pending` (the in-flight request this response must match), so
+  // everything below that compares against `pending` stays hand-written.
+  const vc = asObject(value, 'device capability')
+  assertMatchesSchema(capabilitySchema as JSONSchema, vc, 'device capability')
+  const subject = asObject(vc.credentialSubject, 'device capability subject')
+  if (vc.issuer !== pending.did || subject.audience !== pending.clientId || subject.deviceJkt !== pending.deviceJkt || Date.parse(subject.expiresAt as string) <= Date.now()) throw new Error('did.md returned an invalid device capability')
+  const scope = subject.scope as string[]
+  if (!scope.includes('biset:device') || !scope.includes('biset:vault')) throw new Error('did.md did not enroll this Biset device')
+  const proof = asObject(vc.proof, 'device capability proof') as unknown as DataIntegrityProof
+  // Data Integrity Proof convention: verify over the credential WITHOUT its
+  // own `proof` property -- the same shape did.md's server checks (see
+  // verifiedOauthCapability in server/server.ts).
+  const { proof: _vcProof, ...unsignedVc } = vc
+  if (proof.proofPurpose !== 'authentication' || proof.verificationMethod !== pending.verificationMethod || !verifyProof(unsignedVc, proof, pending.rootPublicKey)) throw new Error('did.md device capability proof is invalid')
+  const detail = capabilityDetails(subject.authorizationDetails, pending)
   const credentialWire = detail.credentialWire
   const credential = await validateBisetMlsCredential(credentialWire, pending)
-  return { capability: { document, proof }, expiresAt: document.expiresAt, scope: document.scope as string[], credential, credentialWire, didCommDevice: detail.didCommDevice, vaultContentKeys: detail.vaultContentKeys, relationshipSecret: detail.relationshipSecret }
+  return { capability: vc, expiresAt: subject.expiresAt as string, scope: subject.scope as string[], credential, credentialWire, didCommDevice: detail.didCommDevice, vaultContentKeys: detail.vaultContentKeys, relationshipSecret: detail.relationshipSecret }
 }
 
 async function tokenFrom(response: Response, pending: DidMdPendingAuthorization): Promise<DidMdActiveSession> {
@@ -650,7 +699,7 @@ async function tokenFrom(response: Response, pending: DidMdPendingAuthorization)
   const nonce = response.headers.get('dpop-nonce')
   if (typeof value.access_token !== 'string' || value.token_type !== 'DPoP' || typeof value.sub !== 'string' || typeof value.expires_in !== 'number' || !nonce) throw new Error('did.md returned an invalid token response')
   const resolvedPending = await resolvedPendingAuthorization(pending, value.sub)
-  const capability = await capabilityFromResponse(value.device_capability, resolvedPending)
+  const capability = await capabilityFromResponse(value.vp_token, resolvedPending)
   const resolved = await resolveByDomain(parseWebvhDid(resolvedPending.did).domain, undefined, { cache: 'no-store' })
   if (!resolved) throw new Error('Could not resolve the DID document after Wallet approval')
   for (const service of resolvedPending.documentEdit?.services ?? []) if (JSON.stringify(resolved.service?.find(value => value.id === service.id)) !== JSON.stringify(service)) throw new Error(`Wallet did not publish requested service ${service.id}`)
@@ -702,9 +751,12 @@ async function tokenFrom(response: Response, pending: DidMdPendingAuthorization)
 }
 
 function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthorization {
-  const capabilityDocument = (() => { try { return asObject(session.capability.document, 'stored capability document') } catch { return {} } })()
-  const storedEdit = Array.isArray(capabilityDocument.authorizationDetails)
-    ? capabilityDocument.authorizationDetails.find(value => { try { return asObject(value, 'stored authorization detail').type === DID_DOCUMENT_EDIT_DETAIL } catch { return false } })
+  // PLAN3: session.capability is now the whole VC-DM credential (embedded
+  // proof) -- the RP-owned content that used to be the flat document is
+  // now under credentialSubject.
+  const capabilitySubject = (() => { try { return asObject((session.capability as Record<string, unknown>).credentialSubject, 'stored capability subject') } catch { return {} } })()
+  const storedEdit = Array.isArray(capabilitySubject.authorizationDetails)
+    ? capabilitySubject.authorizationDetails.find(value => { try { return asObject(value, 'stored authorization detail').type === DID_DOCUMENT_EDIT_DETAIL } catch { return false } })
     : undefined
   return {
     v: 2, issuer: session.issuer, clientId: session.clientId, state: '', codeVerifier: '', did: session.did,
@@ -731,6 +783,12 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
     code_challenge: await sha256Base64url(pending.codeVerifier), code_challenge_method: 'S256',
     ...(pending.handle !== undefined ? { login_hint: pending.handle } : {}),
     dpop_jkt: pending.deviceJkt, scope: REQUESTED_SCOPES.join(' '),
+    // Biset owns this capability type's shape (see did.md's
+    // PLAN2-capability-ownership.md) -- the Wallet no longer decides it.
+    // A did.md Wallet that predates this parameter falls back to its own
+    // "did.md/DeviceCapability" default, which is why the check below still
+    // accepts that legacy value too during the transition.
+    capability_type: CAPABILITY_TYPE,
     // A one-shot UI hint only (dispo ignores it once an identity already
     // exists in that tab, e.g. every finalize/edit round after login): asks
     // the did.md Wallet creation screen to start with its Alias toggle on,
@@ -883,7 +941,7 @@ export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = []
 export async function beginDidMdWalletFinalizeEnrollment(mediatorUrls: readonly string[] = [], configured: DidMdWalletConfiguration = {}, mediatorOnionUrls: readonly string[] = []): Promise<never> {
   const config = walletConfiguration(configured)
   const session = await readDidMdDeviceSession()
-  if (!session?.bisetDevice || session.v !== 2 || session.issuer !== ISSUER || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
+  if (!session?.bisetDevice || session.v !== 2 || session.issuer !== selectedWallet.issuer || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
     throw new Error('Connect did.md Wallet again before finishing setup on this browser')
   }
   const client = await registration()
@@ -937,7 +995,7 @@ export async function completeDidMdWalletCallback(): Promise<DidMdActiveSession 
   if (!isWalletCallback()) return undefined
   const callback = new URL(location.href)
   const pending = await readDidMdPendingAuthorization()
-  if (!pending || pending.v !== 2 || pending.issuer !== ISSUER) throw new Error('No matching did.md Wallet authorization is pending')
+  if (!pending || pending.v !== 2 || pending.issuer !== selectedWallet.issuer) throw new Error('No matching did.md Wallet authorization is pending')
   const state = callback.searchParams.get('state')
   const issuer = callback.searchParams.get('iss')
   const code = callback.searchParams.get('code')
@@ -970,13 +1028,13 @@ export async function completeDidMdWalletCallback(): Promise<DidMdActiveSession 
 
 export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | undefined> {
   const session = await readDidMdDeviceSession()
-  if (!session || session.v !== 2 || session.issuer !== ISSUER || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
+  if (!session || session.v !== 2 || session.issuer !== selectedWallet.issuer || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
   const client = await registration()
   if (client.clientId !== session.clientId) return undefined
   const pending = pendingFromSession(session)
   const response = await fetch(client.refreshEndpoint, {
     method: 'POST', headers: { 'content-type': 'application/json', dpop: await createDpop(session.privateKey, session.publicJwk, 'POST', client.refreshEndpoint) },
-    body: JSON.stringify({ client_id: client.clientId, capability: session.capability }),
+    body: JSON.stringify({ client_id: client.clientId, vp_token: { capability: [session.capability] } }),
   })
   try {
     return await tokenFrom(response, pending)
@@ -993,7 +1051,7 @@ export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | 
 
 export async function didMdWalletReconnectState(): Promise<{ did: string; handle: string; capabilityExpiresAt: string; expired: boolean } | undefined> {
   const session = await readDidMdDeviceSession()
-  if (!session || session.v !== 2 || session.issuer !== ISSUER) return undefined
+  if (!session || session.v !== 2 || session.issuer !== selectedWallet.issuer) return undefined
   return { did: session.did, handle: session.handle, capabilityExpiresAt: session.capabilityExpiresAt, expired: Date.parse(session.capabilityExpiresAt) <= Date.now() }
 }
 
@@ -1073,7 +1131,7 @@ export async function submitDidMdMail(active: DidMdActiveSession, input: {
 }): Promise<{ status: 'accepted' | 'temporary-failure'; occurredAt: string; detail?: string }> {
   const session = await readDidMdDeviceSession()
   if (!session || session.did !== active.did || Date.parse(session.capabilityExpiresAt) <= Date.now()) throw new Error('did.md mail capability is unavailable; reconnect did.md Wallet')
-  const endpoint = `${ISSUER}/v1/mail/submit`
+  const endpoint = `${DID_MD_API_ORIGIN}/v1/mail/submit`
   const body = JSON.stringify({
     version: 1, identityId: active.did, deviceId: active.deviceKid ?? active.did,
     mailFrom: input.mailFrom, rcptTo: input.rcptTo,
@@ -1138,7 +1196,10 @@ export const walletVaultSyncKeys = {
 }
 
 async function callDidMdWalletTestResource(active: DidMdActiveSession): Promise<string> {
-  const endpoint = `${ISSUER}/v1/oauth/resource`
+  // Unlike mail submit (Biset's own infra choice), /v1/oauth/resource is
+  // part of the OAuth server's own endpoint set -- it must follow whichever
+  // wallet actually issued the current session's token, not a fixed origin.
+  const endpoint = `${selectedWallet.issuer}/v1/oauth/resource`
   const session = await readDidMdDeviceSession()
   if (!session || session.did !== active.did) throw new Error('The did.md Wallet device session is unavailable')
   const response = await fetch(endpoint, {

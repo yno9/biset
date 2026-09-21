@@ -45,7 +45,7 @@ import { buildDidCommGroupMessageVaultRecord, GROUP_INVITE, GROUP_MESSAGE, group
 import { IndexedDbDidCommGroupChatStore } from '../didcomm/group-chat-store.ts'
 import { registerWithMediator, type MediatorPollHandle } from '../didcomm/mediator-sync.ts'
 import { watchMediatorMultiplexed } from '../didcomm/mediator-multiplex-watch.ts'
-import { mediatorAliases } from '../didcomm/mediator-endpoints.ts'
+import { mediatorAliases, preferredMediatorUrl, isTorEnvironment } from '../didcomm/mediator-endpoints.ts'
 import type { DidCommSender } from '../../protocol/didcomm/mediator-transport.ts'
 import type { DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
 import { ingestTransportIngress } from '../store/vault/ingress-ingest.ts'
@@ -449,7 +449,26 @@ async function configureWalletAccountIfPresent(
         }
         const mediatorControl = { did: didCommDevice.mediatorControlDid, xKid: didCommDevice.mediatorControlKid, xPriv: didCommDevice.mediatorControlPrivateKey }
         const mediatorRecipient = { did: didCommDevice.did, xKid: didCommDevice.xKid, xPriv: didCommDevice.x25519PrivateKey }
-        const mediator = await registerWithMediator(didCommDevice.mediatorUrl, mediatorControl, undefined, didCommDevice.xKid)
+        // PLAN-tor.md D-5/3-3: dial this mediator's onion entrance only when
+        // this page itself is being served over Tor (isTorEnvironment, D-6) --
+        // an ordinary browser always gets canonical, with no `.onion` fetch
+        // ever attempted (I-3). Falls back to canonical if no onion is
+        // configured for this device (I-5's exact pre-Tor behavior), and
+        // also if the onion entrance itself fails to register (D-5's table:
+        // Tor environment prefers onion, "failed -> clearnet").
+        let activeMediatorUrl = preferredMediatorUrl(
+          { canonicalUrl: didCommDevice.mediatorUrl, onionUrl: didCommDevice.mediatorOnionUrl },
+          isTorEnvironment(),
+        )
+        let mediator: Awaited<ReturnType<typeof registerWithMediator>>
+        try {
+          mediator = await registerWithMediator(activeMediatorUrl, mediatorControl, undefined, didCommDevice.xKid)
+        } catch (error) {
+          if (activeMediatorUrl === didCommDevice.mediatorUrl) throw error
+          console.warn('[did.md Wallet DIDComm register] onion entrance unreachable, falling back to canonical', error instanceof Error ? error.message : error)
+          activeMediatorUrl = didCommDevice.mediatorUrl
+          mediator = await registerWithMediator(activeMediatorUrl, mediatorControl, undefined, didCommDevice.xKid)
+        }
         if (mediator.xKid !== didCommDevice.routingKid) throw new Error('Mediator routing key changed since Wallet authorization; enable messaging again')
         didComm = { xKid: didCommDevice.xKid, mediatorUrl: didCommDevice.mediatorUrl }
         activeDidCommDevice = didCommDevice
@@ -695,11 +714,11 @@ async function configureWalletAccountIfPresent(
             await refreshInbox(readModel, { forceRender: document.querySelector('#focused-thread-card .t-messages') !== null })
         }
         const watch = watchMediatorMultiplexed({
-          mediatorUrl: didCommDevice.mediatorUrl,
+          mediatorUrl: activeMediatorUrl,
           own: mediatorControl,
           recipient: mediatorRecipient,
           resolveSenderKey: resolveAnyDidCommSenderKey,
-          onMessage: message => handleWalletDidCommMessage(message, didCommDevice.xKid, didCommDevice.mediatorUrl),
+          onMessage: message => handleWalletDidCommMessage(message, didCommDevice.xKid, activeMediatorUrl),
           onError: error => console.warn('[did.md Wallet DIDComm watch]', error),
         })
         mediatorPollHandles.push({ stop: () => watch.close() })

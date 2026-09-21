@@ -138,7 +138,12 @@ export type DidMdDeviceSession = {
   deviceJkt: string
   privateKey: CryptoKey
   publicJwk: JsonWebKey
-  capability: { document: unknown; proof: unknown }
+  // PLAN3 (~/did.md/PLAN3-oid4vp-transport.md): a VC-DM 2.0 credential with
+  // an embedded proof, not a {document, proof} pair. Every consumer
+  // re-validates this with asObject/assertMatchesSchema itself (see
+  // capabilityFromResponse, pendingFromSession in did-md-oauth.ts), so this
+  // stays an opaque record rather than an unenforced shape here.
+  capability: Record<string, unknown>
   capabilityExpiresAt: string
   /** The typed, public MLS credential the Wallet issued for this exact Biset
    * leaf. Undefined is an older Phase-A session and cannot open a Vault. */

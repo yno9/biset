@@ -4,9 +4,11 @@
 // more than one mediator (differing routingKeys would mean two different
 // mediators, never valid for one #didcomm service).
 import { afterEach, describe, expect, test } from 'bun:test'
-import { ed25519 } from '@noble/curves/ed25519.js'
+import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { resolveVaultSyncSiblingRoutes } from '../src/client/didcomm/vault-sync.ts'
 import { domainDidJsonlUrl } from '../src/protocol/webvh/identifier.ts'
+import { deviceKidFragment } from '../src/protocol/didcomm/devicekid.ts'
+import { encodeX25519Multikey } from '../src/protocol/didcomm/multikey.ts'
 import { buildDidCommLog } from './protocol/support/webvh-log-fixture.ts'
 
 const originalFetch = globalThis.fetch
@@ -80,6 +82,38 @@ describe('resolveVaultSyncSiblingRoutes: PLAN-tor D-4 array serviceEndpoint', ()
     })
     serveLog(built)
     await expect(resolveVaultSyncSiblingRoutes(built.did)).rejects.toThrow('Vault Sync DIDComm mediator route is invalid')
+  })
+
+  test('PLAN-tor 3-7: picks canonical off Tor, and the onion entrance when this page is served over Tor', async () => {
+    const rootPrivateKey = ed25519.utils.randomSecretKey()
+    const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
+    const routingKid = 'did:peer:2.Vz6MkqRYqQmD9C1vUoGJdYVZ41UKbd8PiW2pD6TqEJqK6fpWsM4xS#key-1'
+    const onion = `http://${'a'.repeat(56)}.onion`
+    const siblingKey = x25519.utils.randomSecretKey()
+    const siblingPublicKey = x25519.getPublicKey(siblingKey)
+    const built = buildDidCommLog({
+      rootPrivateKey, rootPublicKey,
+      rawVerificationMethods: [{ fragment: deviceKidFragment(siblingPublicKey).slice(1), publicKeyMultibase: encodeX25519Multikey(siblingPublicKey) }],
+      services: [{ id: '#didcomm', serviceEndpoints: [
+        { uri: 'https://mediator.biset.md', routingKeys: [routingKid] },
+        { uri: onion, routingKeys: [routingKid] },
+      ] }],
+    })
+    serveLog(built)
+
+    const offTor = await resolveVaultSyncSiblingRoutes(built.did)
+    expect(offTor).toHaveLength(1)
+    expect(offTor[0]!.mediatorUrl).toBe('https://mediator.biset.md')
+
+    const originalLocation = globalThis.location
+    Object.defineProperty(globalThis, 'location', { value: { hostname: `${'b'.repeat(56)}.onion` }, configurable: true })
+    try {
+      const onTor = await resolveVaultSyncSiblingRoutes(built.did)
+      expect(onTor).toHaveLength(1)
+      expect(onTor[0]!.mediatorUrl).toBe(onion)
+    } finally {
+      Object.defineProperty(globalThis, 'location', { value: originalLocation, configurable: true })
+    }
   })
 
   test('rejects an empty serviceEndpoint array', async () => {
