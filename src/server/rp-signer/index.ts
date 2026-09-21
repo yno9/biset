@@ -63,7 +63,12 @@ Bun.serve({
       const body = await request.json();
       if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("request body must be a JSON object");
       for (const field of Object.keys(body)) if (!ALLOWED_CLAIMS.includes(field as any)) throw new Error(`unexpected field: ${field}`);
-      const payload = { ...body, iss: key.did, client_id: key.did, client_id_scheme: "did", response_type: "code", redirect_uri: REDIRECT_URI };
+      // PLAN7: pure SIOPv2/OID4VP direct delivery -- did.md hands the signed
+      // capability/id_token straight back to REDIRECT_URI (fragment), no
+      // api.did.md code+token round trip. redirect_uri/client_id/
+      // response_type are still fixed here, never accepted from the caller
+      // (see this module's own header comment).
+      const payload = { ...body, iss: key.did, client_id: key.did, client_id_scheme: "did", response_type: "vp_token id_token", redirect_uri: REDIRECT_URI };
       return Response.json({ jwt: sign(payload) }, { headers: cors() });
     } catch (error) {
       return new Response(`${error instanceof Error ? error.message : "invalid request"}\n`, { status: 400, headers: cors() });

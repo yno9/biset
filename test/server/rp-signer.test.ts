@@ -81,7 +81,7 @@ test('POST /sign returns a JAR whose signature verifies against the RP DID key, 
 
   const payload = JSON.parse(new TextDecoder().decode(base64urlDecode(payloadPart)))
   expect(payload).toMatchObject({
-    iss: did, client_id: did, client_id_scheme: 'did', response_type: 'code',
+    iss: did, client_id: did, client_id_scheme: 'did', response_type: 'vp_token id_token',
     redirect_uri: redirectUri, state: 'abcdefghijklmnopqrstuvwxyz1234',
     code_challenge: 'A'.repeat(43), code_challenge_method: 'S256', nonce: 'n-1',
   })

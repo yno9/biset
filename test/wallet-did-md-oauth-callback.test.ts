@@ -171,13 +171,9 @@ describe('did.md OAuth callback validation', () => {
       },
     }
     const vc = { ...unsignedVc, proof: buildProof(unsignedVc, { verificationMethod: pending.verificationMethod, proofPurpose: 'authentication', privateKey: rootPrivateKey }) }
-    const token = {
-      access_token: 'access-token',
-      token_type: 'DPoP',
-      sub: did,
-      expires_in: 3600,
-      vp_token: vc,
-    }
+    // PLAN7: did.md delivers the DCQL-wrapped vp_token straight to this RP
+    // (fragment on https, query string on file://) -- there is no token
+    // endpoint round trip to mock any more.
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = input.toString()
       if (url === `${ISSUER}/.well-known/oauth-authorization-server`) {
@@ -186,15 +182,14 @@ describe('did.md OAuth callback validation', () => {
       if (url === `${ISSUER}/v1/oauth/register/${encodeURIComponent(registration.clientId)}`) {
         return Response.json({ client_id: registration.clientId, redirect_uris: [registration.redirectUri], scope: 'openid profile biset:login biset:device biset:routing biset:messaging biset:vault', token_endpoint_auth_method: 'none' })
       }
-      if (url === registration.tokenEndpoint) return new Response(JSON.stringify(token), { headers: { 'content-type': 'application/json', 'dpop-nonce': 'nonce-value' } })
       if (url === didToHttpsUrl(did)) return new Response(log.map(entry => JSON.stringify(entry)).join('\n') + '\n')
       return new Response('unexpected request', { status: 500 })
     }) as typeof fetch
     await saveDidMdRegistration(registration)
     await saveDidMdPendingAuthorization(pending)
-    callbackLocation({ state: pending.state, iss: ISSUER, code: CODE }, FILE_CALLBACK_URL)
+    callbackLocation({ state: pending.state, iss: ISSUER, vp_token: JSON.stringify({ capability: [vc] }) }, FILE_CALLBACK_URL)
 
-    await expect(completeDidMdWalletCallback()).resolves.toMatchObject({ did, accessToken: 'access-token', nonce: 'nonce-value' })
+    await expect(completeDidMdWalletCallback()).resolves.toMatchObject({ did, clientId: registration.clientId, scope: ['biset:login', 'biset:device', 'biset:vault'] })
     expect(await readDidMdPendingAuthorization()).toBeUndefined()
     expect(await readDidMdDeviceSession()).toMatchObject({ did, clientId: registration.clientId })
 
