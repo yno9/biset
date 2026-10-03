@@ -14,7 +14,7 @@
 // nothing else.
 //
 // STRICTLY INTERNAL. Everything on the wire keeps using the full DID string:
-// DIDComm `from`/`to`, mediator keylist kids (`{did}#k1`), DID document `id`
+// DIDComm `from`/`to`, mediator recipient DIDs and kids (`{did}#k1`), DID document `id`
 // and verificationMethod ids. No other implementation knows (or could know)
 // about this representation, so it must never leave the client. That is also
 // why the reverse direction matters: a stable key alone cannot address

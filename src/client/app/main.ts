@@ -4,7 +4,8 @@ import {
   buildWalletVaultCryptoBoundary,
 } from '../identity/bootstrap.ts'
 import { IndexedDbVaultStore } from '../store/vault/store.ts'
-import { VaultSyncClient, resolveOwnDeviceKids, walletVaultSyncTransport, type VaultSyncMessage } from '../didcomm/vault-sync.ts'
+import { VaultSyncClient, resolveOwnDeviceKids, vaultSyncChunkBytes, walletVaultSyncTransport, type VaultSyncMessage } from '../didcomm/vault-sync.ts'
+import { discoverMaxReceiveBytes } from '../../protocol/didcomm/discover-features.ts'
 import { rebuildLocalJmapProjection } from '../store/vault/projection-rebuild.ts'
 import { VaultProjector } from '../store/vault/projector.ts'
 import { VAULT_SYNC_STATE_REQUEST, VAULT_SYNC_STATE_RESPONSE, VAULT_SYNC_UPDATE } from '../../protocol/didcomm/vault-sync-protocol.ts'
@@ -486,7 +487,10 @@ async function configureWalletAccountIfPresent(
           async result => {
             if (result.addedEventIds.length) deviceEvents = await vaultStore.readVaultEvents(device.did)
             if (result.targetIds.length || result.addedEventIds.length) await vaultProjector.recomputeEmails(device.did, result.targetIds)
-          })
+          },
+          // Sized to what this identity's mediator says it takes; a mediator
+          // that does not say gets the conservative default.
+          vaultSyncChunkBytes(await discoverMaxReceiveBytes(mediator, frontDoorInbox).catch(() => undefined)))
         await refreshInbox(readModel)
         // Mediator registration and the transport above are both live at
         // this point; nothing past here can throw its way back to the

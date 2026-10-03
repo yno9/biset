@@ -55,13 +55,13 @@ describe('mediator', () => {
   test('a client authenticating as itself but claiming another client in `from` is refused, and the victim stays registered', async () => {
     const { send, forwardTo } = harness()
     const victim = generatePeerIdentity(); const attacker = generatePeerIdentity(); const alice = generatePeerIdentity()
-    await send(victim, victim.did, 'https://didcomm.org/coordinate-mediation/2.0/mediate-request', {})
-    await send(victim, victim.did, 'https://didcomm.org/coordinate-mediation/2.0/keylist-update', { device: 'victim-device', updates: [{ recipient_did: victim.did, action: 'add' }] })
+    await send(victim, victim.did, 'https://didcomm.org/coordinate-mediation/3.0/mediate-request', {})
+    await send(victim, victim.did, 'https://didcomm.org/coordinate-mediation/3.0/recipient-update', { device: 'victim-device', updates: [{ recipient_did: victim.did, action: 'add' }] })
     const inner = packAuthcrypt(utf8('{}'), { kid: alice.xKid, privateKey: alice.xPriv }, [{ kid: victim.xKid, publicKey: victim.xPub }])
     expect((await forwardTo(victim.xKid, inner))!.status).toBe(202)
 
     for (const [type, body] of [
-      ['https://didcomm.org/coordinate-mediation/2.0/keylist-update', { device: 'victim-device', updates: [{ recipient_did: victim.did, action: 'remove' }] }],
+      ['https://didcomm.org/coordinate-mediation/3.0/recipient-update', { device: 'victim-device', updates: [{ recipient_did: victim.did, action: 'remove' }] }],
       ['https://didcomm.org/messagepickup/3.0/messages-received', { device: 'victim-device', message_id_list: ['anything'] }],
       ['https://didcomm.org/messagepickup/3.0/delivery-request', { recipient_did: victim.did, device: 'victim-device', limit: 10 }],
     ] as const) {

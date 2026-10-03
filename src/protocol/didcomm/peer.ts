@@ -2,7 +2,7 @@
 //
 // This is the standalone mediator's OWN identity method (ARC.md's DIDComm
 // mediator redesign, 2026-08-27): every client's mediate-request and
-// keylist-update targets this DID's keyAgreement kid. did:peer:2 needs no
+// recipient-update targets this DID's keyAgreement kid. did:peer:2 needs no
 // network resolution (the keys are IN the DID string), which is what lets a
 // mediator authenticate itself with zero external dependencies -- unlike
 // biset users' own did:webvh, which the mediator never needs or wants to be.

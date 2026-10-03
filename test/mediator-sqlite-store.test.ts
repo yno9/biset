@@ -16,7 +16,7 @@ describe('SqliteMediatorStore', () => {
     const bob = peer()
     const device = deviceLabel(1)
     const first = freshMediator({}, SqliteMediatorStore.open(path))
-    await first.request(bob, T.KEYLIST_UPDATE, { device, updates: [{ recipient_did: bob.did, action: 'add' }] })
+    await first.request(bob, T.RECIPIENT_UPDATE, { device, updates: [{ recipient_did: bob.did, action: 'add' }] })
     expect((await first.forward(bob.xKid, { ciphertext: 'opaque-inner-jwe' }, 'durable-forward-id')).status).toBe(202)
     first.store.close()
 

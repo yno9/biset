@@ -3,14 +3,11 @@
 // SMTP recipient resolution.
 import { createMailPluginListener } from '../mediator/mail-plugin/listener.ts'
 import { SqliteMailRelayStore } from './sqlite-store.ts'
-import { createMailRelaySubmissionHandler } from './submission-http.ts'
 import { mailBridgeDidDocument, mailBridgeDiscoveryDocument } from './did-document.ts'
 import { createMailBridgeAgent } from './agent-http.ts'
 import { MAIL_BRIDGE_DID } from './did-document.ts'
 import { loadMailRelayDkim } from './dkim-config.ts'
 
-const authorityUrl = required('DID_MD_AUTHORITY_URL')
-const authoritySecret = required('DID_MD_MAIL_RELAY_SECRET')
 const databasePath = required('MAIL_RELAY_DATABASE_PATH')
 const apexDomain = Bun.env.MAIL_RELAY_APEX_DOMAIN ?? 'did.md'
 if (apexDomain !== 'did.md') throw new Error('MAIL_RELAY_APEX_DOMAIN must be did.md')
@@ -31,12 +28,6 @@ const listener = createMailPluginListener({
     ? { tls: { certPath: Bun.env.MAIL_RELAY_TLS_CERT_PATH, keyPath: Bun.env.MAIL_RELAY_TLS_KEY_PATH } }
     : {}),
 })
-const relayOrigin = Bun.env.MAIL_RELAY_ORIGIN ?? 'https://api.did.md'
-const legacySubmission = createMailRelaySubmissionHandler({
-  hostname: Bun.env.MAIL_RELAY_SMTP_HELLO_NAME ?? 'mail.did.md', signDkim, authorityUrl, authoritySecret,
-  relayOrigin, allowedOrigins: new Set((Bun.env.MAIL_RELAY_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean)),
-  idempotency: { get: (messageId, request) => store.submissionResult(messageId, request), save: (messageId, request, result) => store.saveSubmissionResult(messageId, request, result) },
-})
 const bridgeAgent = createMailBridgeAgent({ hostname: Bun.env.MAIL_RELAY_SMTP_HELLO_NAME ?? 'mail.did.md', signDkim, apexDomain, identity: bridgeIdentity })
 const submission = Bun.serve({
   hostname: Bun.env.MAIL_RELAY_SUBMIT_HOST ?? '127.0.0.1',
@@ -50,12 +41,12 @@ const submission = Bun.serve({
       if (host === 'did.md') return Response.json(mailBridgeDiscoveryDocument(), { headers })
     }
     if (path === '/v1/mail') return bridgeAgent(request)
-    return legacySubmission(request)
+    return new Response('Not found\n', { status: 404 })
   },
 })
 
 console.info(JSON.stringify({ at: new Date().toISOString(), level: 'info', message: 'did.md mail relay SMTP listener started', port: listener.port, senderKid: bridgeIdentity.kid }))
-console.info(JSON.stringify({ at: new Date().toISOString(), level: 'info', message: 'did.md mail relay submission started', port: submission.port }))
+console.info(JSON.stringify({ at: new Date().toISOString(), level: 'info', message: 'did.md mail relay DIDComm agent started', port: submission.port }))
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => { listener.stop(); submission.stop(); store.close() })
 }

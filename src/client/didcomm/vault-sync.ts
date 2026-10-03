@@ -22,10 +22,15 @@ import { verifyVaultObjectIntegrity } from '../store/vault/objects.ts'
 import type { IncomingVaultRecords, IncomingVaultRecordsResult, VaultEventRecord, VaultObjectRecord, VaultSegmentKey, VaultSyncRecordReader } from '../store/vault/store.ts'
 import { sendFrontDoorMessage } from './front-door-send.ts'
 
-/** The most one Vault Sync message carries. A pack grows about 3.2x on the
- * wire (base64url, then the DIDComm JWE and Forward around it), and the
- * mediator refuses a message over its byte limit (1 MB by default). */
-const VAULT_SYNC_CHUNK_BYTES = 128 * 1024
+/** The most one Vault Sync message carries, from the mediator's disclosed
+ * `max_receive_bytes` (Discover Features). A pack grows about 3.2x on the
+ * wire (base64url, then the DIDComm JWE and Forward around it); one eighth
+ * of the limit keeps well inside it -- 128 KB for the default 1 MB, which
+ * is also what an undisclosed limit gets. */
+export function vaultSyncChunkBytes(maxReceiveBytes?: number): number {
+  if (maxReceiveBytes === undefined) return 128 * 1024
+  return Math.max(16 * 1024, Math.floor(maxReceiveBytes / 8))
+}
 
 export type VaultSyncSummary = Record<string, { max: number; gaps: number[] }>
 /** One chunk of records, as a base64url canonical delivery pack. */
@@ -71,6 +76,7 @@ export class VaultSyncClient {
     private readonly records: VaultSyncStore,
     private readonly transport: VaultSyncTransport,
     private readonly onApplied?: (result: VaultSyncApplyResult) => Promise<void>,
+    private readonly chunkBytes: number = vaultSyncChunkBytes(),
   ) {}
 
   async summary(): Promise<VaultSyncSummary> {
@@ -113,7 +119,7 @@ export class VaultSyncClient {
 
   private async send(ids: string[], type: typeof VAULT_SYNC_UPDATE | typeof VAULT_SYNC_STATE_RESPONSE, hasMore: boolean): Promise<void> {
     const pack = await this.packForEvents(new Set(ids)); if (!pack.events.length) return
-    const chunks = splitPack(pack)
+    const chunks = splitPack(pack, this.chunkBytes)
     for (let index = 0; index < chunks.length; index++) {
       const body: VaultSyncPackBody = { pack: bytesToBase64url(encodeVaultDeliveryPack(chunks[index]!)) }
       const more = hasMore || index < chunks.length - 1
@@ -142,21 +148,21 @@ export class VaultSyncClient {
 
   private async missingEvents(summary: VaultSyncSummary): Promise<{ events: VaultEventRecord[]; hasMore: boolean }> {
     const missing = (await this.records.readVaultEvents(this.identityId)).filter(event => { const remote = summary[event.actorDeviceId]; return !remote || event.actorSeq > remote.max || remote.gaps.includes(event.actorSeq) }).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)); const events: VaultEventRecord[] = []
-    for (const event of missing) { if (encodeVaultDeliveryPack(await this.packForEvents(new Set([...events.map(value => value.id), event.id]))).length > VAULT_SYNC_CHUNK_BYTES) break; events.push(event) }
+    for (const event of missing) { if (encodeVaultDeliveryPack(await this.packForEvents(new Set([...events.map(value => value.id), event.id]))).length > this.chunkBytes) break; events.push(event) }
     return { events, hasMore: events.length < missing.length }
   }
 }
 
-function splitPack(pack: VaultDeliveryPackV1): VaultDeliveryPackV1[] {
+function splitPack(pack: VaultDeliveryPackV1, chunkBytes: number): VaultDeliveryPackV1[] {
   const empty = (): VaultDeliveryPackV1 => ({ version: 1, identityId: pack.identityId, events: [], objects: [], segmentKeys: [] })
   const chunks: VaultDeliveryPackV1[] = []; let current = empty()
   const nonEmpty = (value: VaultDeliveryPackV1) => value.events.length || value.objects.length || value.segmentKeys.length
   const append = <K extends 'events' | 'objects' | 'segmentKeys'>(key: K, record: VaultDeliveryPackV1[K][number]): void => {
     const candidate = { ...current, [key]: [...current[key], record] } as VaultDeliveryPackV1
-    if (encodeVaultDeliveryPack(candidate).length <= VAULT_SYNC_CHUNK_BYTES) { current = candidate; return }
+    if (encodeVaultDeliveryPack(candidate).length <= chunkBytes) { current = candidate; return }
     if (nonEmpty(current)) chunks.push(current)
     current = { ...empty(), [key]: [record] } as VaultDeliveryPackV1
-    if (encodeVaultDeliveryPack(current).length > VAULT_SYNC_CHUNK_BYTES) throw new RangeError(`Vault Sync ${key} entry exceeds one chunk`)
+    if (encodeVaultDeliveryPack(current).length > chunkBytes) throw new RangeError(`Vault Sync ${key} entry exceeds one chunk`)
   }
   // Keys first, so a chunk carrying an object never precedes the key it needs.
   for (const value of pack.segmentKeys) append('segmentKeys', value as VaultSegmentKey)

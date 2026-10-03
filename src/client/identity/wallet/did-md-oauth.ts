@@ -13,7 +13,7 @@ import { freshFetch } from '../webvh/log-io.ts'
 import { resolveByDomain } from '../../../protocol/webvh/resolver.ts'
 import { deviceKid, deviceKidFragment } from '../../../protocol/didcomm/devicekid.ts'
 import { decodeX25519Multikey, encodeX25519Multikey } from '../../../protocol/didcomm/multikey.ts'
-import { fetchMediatorInfo, updateKeylist } from '../../../protocol/didcomm/mediator-coordinate.ts'
+import { fetchMediatorInfo, updateRecipient } from '../../../protocol/didcomm/mediator-coordinate.ts'
 import { mediatorInbox } from '../../../protocol/didcomm/mediator-device.ts'
 import { registerWithMediator } from '../../didcomm/mediator-sync.ts'
 import { assertMatchesSchema, type JSONSchema } from './json-schema.ts'
@@ -79,8 +79,6 @@ const DID_DOCUMENT_EDIT_DETAIL = 'urn:did-core:document-edit:v1'
 // The did.md-operated SMTP relay is a separate process, but shares did.md's
 // authority service.  This detail is Root-signed as part of the ordinary
 // Wallet device capability; no controller/update key reaches Biset.
-const MAIL_RELAY_CAPABILITY_DETAIL = 'urn:biset:mail-relay:v1'
-const DID_MD_MAIL_RELAY_ORIGIN = 'https://api.did.md'
 export const DID_MD_JUST_CONNECTED_KEY = 'biset-did-md-just-connected-v1'
 const encoder = new TextEncoder()
 
@@ -409,7 +407,7 @@ async function setMediatorRegistration(did: string, device: NonNullable<DidMdPen
     const mediator = await fetchMediatorInfo(device.mediatorUrl)
     if (mediator.xKid !== device.routingKid) throw new Error('Mediator routing key changed during DID document edit')
     const inbox = mediatorInbox({ did, xKid: device.xKid, xPriv: material.x25519PrivateKey }, material.mediatorDeviceSecret)
-    if (action === 'remove') await updateKeylist(mediator, inbox, 'remove')
+    if (action === 'remove') await updateRecipient(mediator, inbox, 'remove')
     else await registerWithMediator(device.mediatorUrl, inbox)
   } finally { material.x25519PrivateKey.fill(0); material.mediatorDeviceSecret.fill(0) }
 }
@@ -558,8 +556,9 @@ async function rootAuthority(handle: string, document: Awaited<ReturnType<typeof
 }
 
 function capabilityDetails(value: unknown, pending: ResolvedPendingAuthorization): { didCommDevice?: NonNullable<ResolvedPendingAuthorization['bisetDidCommDevice']> } {
-  if (!Array.isArray(value)) throw new Error('did.md did not return Biset authorization details')
-  const edits = (value as unknown[]).filter(item => { try { return asObject(item, 'authorization detail').type === DID_DOCUMENT_EDIT_DETAIL } catch { return false } })
+  // Absent when nothing was requested.
+  if (value !== undefined && !Array.isArray(value)) throw new Error('did.md returned invalid Biset authorization details')
+  const edits = ((value ?? []) as unknown[]).filter(item => { try { return asObject(item, 'authorization detail').type === DID_DOCUMENT_EDIT_DETAIL } catch { return false } })
   if (pending.documentEdit) {
     if (edits.length !== 1) throw new Error('did.md did not return one DID document edit detail')
     sameDocumentEdit(edits[0], pending.documentEdit)
@@ -717,14 +716,9 @@ function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthori
 async function redirectToWallet(client: DidMdRegistration, pending: DidMdPendingAuthorization, openedPopup?: Window): Promise<never> {
   await saveDidMdPendingAuthorization(pending)
   const request = new URL(client.authorizationEndpoint)
-  const authorizationDetails = JSON.stringify([
-    ...(pending.documentEdit ? [pending.documentEdit] : []),
-    { type: MAIL_RELAY_CAPABILITY_DETAIL, relayOrigin: DID_MD_MAIL_RELAY_ORIGIN,
-      // The Wallet chooses an alias during first authorization, so Biset
-      // cannot know the concrete address yet. did.md materializes this
-      // one narrow placeholder before Root-signing the capability.
-      addresses: ['$didMdAddress'], operations: ['submit', 'pickup'] },
-  ])
+  // RFC 9396 details are optional: a plain sign-in asks for none, and the
+  // parameter is left out rather than sent empty.
+  const authorizationDetails = pending.documentEdit ? JSON.stringify([pending.documentEdit]) : undefined
   if (client.clientId === RP_DID) {
     // PLAN6: a JAR (RFC 9101) Authorization Request signed by biset's own
     // RP DID key, obtained from biset-rp-signer (which holds that key;
@@ -744,7 +738,7 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
         ...(pending.handle !== undefined ? { login_hint: pending.handle } : {}),
         ...(pending.deviceJkt !== undefined ? { dpop_jkt: pending.deviceJkt } : {}),
         scope: REQUESTED_SCOPES.join(' '),
-        authorization_details: authorizationDetails,
+        ...(authorizationDetails ? { authorization_details: authorizationDetails } : {}),
         dcql_query: { credentials: [{ id: 'capability', format: 'vc+di', meta: { type_values: [['VerifiableCredential', CAPABILITY_TYPE]] } }] },
       }),
     })
@@ -776,7 +770,7 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
       // rather than the default SCID-derived one. Presence-only -- the value
       // is never read.
       alias: '',
-      authorization_details: authorizationDetails,
+      ...(authorizationDetails ? { authorization_details: authorizationDetails } : {}),
     })
     request.search = params.toString()
   }

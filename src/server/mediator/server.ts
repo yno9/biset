@@ -1,4 +1,5 @@
-// The DIDComm v2 mediator: Coordinate Mediation 2.0, Routing 2.0, Pickup 3.0.
+// The DIDComm v2 mediator: Coordinate Mediation 3.0, Routing 2.0, Pickup 3.0,
+// Discover Features 2.0, Trust Ping 2.0.
 // A client that can't hold a socket open (a browser) registers here, gives
 // the mediator's URL out as its own DIDComm endpoint, and collects what
 // arrives whenever it's next running.
@@ -19,9 +20,9 @@
 // ## Who may register what
 //
 // Every request is authcrypt'd, so the mediator knows which KEY sent it.
-// Registering recipient DID X (keylist-update add) is allowed exactly when
+// Registering recipient DID X (recipient-update add) is allowed exactly when
 // that key is one of X's own keyAgreement keys -- holding X's private key IS
-// the proof of owning X. Coordinate Mediation 2.0/3.0 leave this check out
+// the proof of owning X. Coordinate Mediation 3.0 leaves this check out
 // (3.0 names it under "Future Considerations"); without it anyone could
 // register someone else's public DID here and collect copies of their
 // traffic or block their registration.
@@ -49,15 +50,16 @@ import { parseLog, entryVersionNumber } from '../../protocol/webvh/log.ts'
 import { resolveEntries } from '../../protocol/webvh/resolver.ts'
 import type { WebvhDidDocument } from '../../protocol/webvh/document.ts'
 import { packSigned } from './signature.ts'
-import { PING, PING_RESPONSE, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
+import { PING, PING_RESPONSE, TRUST_PING, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
 import {
-  isDeviceLabel, MediatorFullError, QueueFullError, TooManyDevicesError,
+  isDeviceLabel, MediatorFullError, MessageTooBigError, QueueFullError, TooManyDevicesError,
   type QueuedMessage, type SqliteMediatorStore,
 } from './sqlite-store.ts'
 import {
-  MEDIATE_REQUEST, MEDIATE_GRANT, KEYLIST_UPDATE, KEYLIST_UPDATE_RESPONSE, KEYLIST_QUERY, KEYLIST,
-  FORWARD, STATUS_REQUEST, STATUS, DELIVERY_REQUEST, DELIVERY, MESSAGES_RECEIVED,
+  COORDINATE_MEDIATION, MEDIATE_REQUEST, MEDIATE_GRANT, RECIPIENT_UPDATE, RECIPIENT_UPDATE_RESPONSE, RECIPIENT_QUERY, RECIPIENT,
+  ROUTING, FORWARD, MESSAGE_PICKUP, STATUS_REQUEST, STATUS, DELIVERY_REQUEST, DELIVERY, MESSAGES_RECEIVED,
   LIVE_DELIVERY_CHANGE, LIVE_MODE_NOT_SUPPORTED_PROBLEM, MAX_DEVICES_PROBLEM,
+  DISCOVER_FEATURES, DISCOVER_FEATURES_QUERIES, DISCOVER_FEATURES_DISCLOSE, MAX_RECEIVE_BYTES, MESSAGE_TOO_BIG_PROBLEM,
 } from '../../protocol/didcomm/mediator-protocol.ts'
 
 function didOf(didOrKidUrl: string): string {
@@ -87,6 +89,30 @@ function webvhKeyAgreementKeys(doc: WebvhDidDocument): Record<string, string> {
 export interface MediatorOptions {
   mediator: PeerIdentity
   store: SqliteMediatorStore
+  /** The largest DIDComm message this mediator takes (Discover Features
+   * `max_receive_bytes`). Defaults to the store's per-message limit; a
+   * deployment with a smaller request-body limit passes the smaller one. */
+  maxReceiveBytes?: number
+}
+
+/** What a Discover Features query may match: the protocols this mediator
+ * speaks (with its role), the headers it honours, and its constraint. */
+function mediatorFeatures(maxReceiveBytes: number): Array<Record<string, unknown> & { 'feature-type': string; id: string }> {
+  return [
+    { 'feature-type': 'protocol', id: COORDINATE_MEDIATION, roles: ['mediator'] },
+    { 'feature-type': 'protocol', id: ROUTING, roles: ['mediator'] },
+    { 'feature-type': 'protocol', id: MESSAGE_PICKUP, roles: ['mediator'] },
+    { 'feature-type': 'protocol', id: TRUST_PING, roles: ['receiver'] },
+    { 'feature-type': 'protocol', id: DISCOVER_FEATURES, roles: ['responder'] },
+    { 'feature-type': 'header', id: 'return_route' },
+    { 'feature-type': 'constraint', id: MAX_RECEIVE_BYTES, [MAX_RECEIVE_BYTES]: String(maxReceiveBytes) },
+  ]
+}
+
+/** A Discover Features `match`: a literal, or a pattern with `*` wildcards. */
+function featureMatches(pattern: string, id: string): boolean {
+  const source = pattern.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')
+  return new RegExp(`^${source}$`).test(id)
 }
 
 /** One open WebSocket, as the transport (deployment.ts) hands it over. */
@@ -116,7 +142,7 @@ class Malformed extends Error {}
 /** A did:webvh sender whose log this mediator has not been given yet. */
 class UnknownWebvhState extends Error {}
 
-export function createMediator({ mediator, store }: MediatorOptions): MediatorHandler {
+export function createMediator({ mediator, store, maxReceiveBytes = store.limits.maxMessageBytes }: MediatorOptions): MediatorHandler {
   const ownRecipient = { kid: mediator.xKid, privateKey: mediator.xPriv }
   /** Per socket: the inboxes in live mode on it, each with its unsubscribe. */
   const liveInboxes = new WeakMap<LiveSocket, Map<string, () => void>>()
@@ -209,7 +235,11 @@ export function createMediator({ mediator, store }: MediatorOptions): MediatorHa
     let versionNumber: number
     try {
       const entries = parseLog(await req.text())
-      const did = (entries[0]?.state as { id?: unknown } | undefined)?.id
+      // The DID's id is whatever its LATEST entry says: a domain move (an
+      // alias renamed to its real hostname, say) rewrites the domain part
+      // of every state, and the genesis entry keeps the old one. The
+      // SCID, which verification checks against the whole chain, stays.
+      const did = (entries[entries.length - 1]?.state as { id?: unknown } | undefined)?.id
       if (typeof did !== 'string' || !did.startsWith('did:webvh:')) throw new Error('the log does not name a did:webvh')
       doc = resolveEntries(did, entries)
       if (!doc || doc.id !== did) throw new Error('the log does not resolve to its own DID')
@@ -299,6 +329,7 @@ export function createMediator({ mediator, store }: MediatorOptions): MediatorHa
     } catch (e) {
       // The replay id rolls back with the failed insert, so the sender can
       // retry once an inbox drains. Never acknowledge an uncommitted body.
+      if (e instanceof MessageTooBigError) return Response.json({ error: e.message, code: MESSAGE_TOO_BIG_PROBLEM }, { status: 413 })
       if (e instanceof QueueFullError) return Response.json({ error: e.message }, { status: 503 })
       throw e
     }
@@ -321,17 +352,33 @@ export function createMediator({ mediator, store }: MediatorOptions): MediatorHa
         // owed, the ping has done its job by arriving.
         return responseOwedFor(msg) ? replyTo(msg, senderKid, PING_RESPONSE, {}) : { http: new Response(null, { status: 202 }) }
 
+      case DISCOVER_FEATURES_QUERIES: {
+        const queries = Array.isArray(body.queries) ? body.queries as Array<{ 'feature-type'?: unknown; match?: unknown }> : []
+        const disclosures = mediatorFeatures(maxReceiveBytes).filter(feature => queries.some(query =>
+          query['feature-type'] === feature['feature-type'] && typeof query.match === 'string' && featureMatches(query.match, feature.id)))
+        return replyTo(msg, senderKid, DISCOVER_FEATURES_DISCLOSE, { disclosures })
+      }
+
       case MEDIATE_REQUEST:
-        return replyTo(msg, senderKid, MEDIATE_GRANT, { routing_did: mediator.did })
+        return replyTo(msg, senderKid, MEDIATE_GRANT, { routing_did: [mediator.did] })
 
-      case KEYLIST_QUERY:
-        return replyTo(msg, senderKid, KEYLIST, {
-          keys: store.listInboxes(ownerDid).map(inbox => ({ recipient_did: ownerDid, device: inbox.device, last_seen: inbox.lastSeen })),
+      case RECIPIENT_QUERY: {
+        // `device` and `last_seen` per entry are biset extensions: what a
+        // user needs to see to decide which device to remove at the limit.
+        const all = store.listInboxes(ownerDid)
+        const paginate = (body.paginate ?? {}) as { limit?: unknown; offset?: unknown }
+        const offset = Number.isSafeInteger(paginate.offset) && (paginate.offset as number) > 0 ? paginate.offset as number : 0
+        const limit = Number.isSafeInteger(paginate.limit) && (paginate.limit as number) > 0 ? paginate.limit as number : all.length
+        const page = all.slice(offset, offset + limit)
+        return replyTo(msg, senderKid, RECIPIENT, {
+          dids: page.map(inbox => ({ recipient_did: ownerDid, device: inbox.device, last_seen: inbox.lastSeen })),
+          ...(body.paginate ? { pagination: { count: page.length, offset, remaining: Math.max(0, all.length - offset - page.length) } } : {}),
         })
+      }
 
-      case KEYLIST_UPDATE: {
+      case RECIPIENT_UPDATE: {
         const device = body.device
-        if (!isDeviceLabel(device)) return problemTo(msg, senderKid, 'e.p.msg.invalid-device', 'keylist-update needs a `device` label')
+        if (!isDeviceLabel(device)) return problemTo(msg, senderKid, 'e.p.msg.invalid-device', 'recipient-update needs a `device` label')
         const updates = Array.isArray(body.updates) ? body.updates as Array<{ recipient_did?: unknown; action?: unknown }> : []
         const updated: Array<{ recipient_did: unknown; action: unknown; result: string }> = []
         for (const update of updates) {
@@ -356,7 +403,7 @@ export function createMediator({ mediator, store }: MediatorOptions): MediatorHa
             throw e
           }
         }
-        return replyTo(msg, senderKid, KEYLIST_UPDATE_RESPONSE, { updated })
+        return replyTo(msg, senderKid, RECIPIENT_UPDATE_RESPONSE, { updated })
       }
     }
 

@@ -8,7 +8,9 @@
 // network.
 import { describe, expect, test } from 'bun:test'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
-import { fetchMediatorInfo, requestMediation, updateKeylist, queryKeylist } from '../src/protocol/didcomm/mediator-coordinate.ts'
+import { fetchMediatorInfo, requestMediation, updateRecipient, queryRecipients } from '../src/protocol/didcomm/mediator-coordinate.ts'
+import { discoverMaxReceiveBytes } from '../src/protocol/didcomm/discover-features.ts'
+import { vaultSyncChunkBytes } from '../src/client/didcomm/vault-sync.ts'
 import { pickupStatus, pickupDeliver, acknowledgeMessages } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { MediatorDeviceLimitError, registerWithMediator, startMediatorPolling } from '../src/client/didcomm/mediator-sync.ts'
 import { watchMediatorLive } from '../src/client/didcomm/mediator-live.ts'
@@ -61,7 +63,7 @@ describe('mediator client library (mediator-{transport,coordinate,pickup,sync}.t
     const info = await registerWithMediator(url, bob, fetchImpl)
     expect(info.did).toBe(mediatorIdentity.did)
 
-    const keys = await queryKeylist(info, bob, fetchImpl)
+    const keys = await queryRecipients(info, bob, fetchImpl)
     expect(keys).toEqual([expect.objectContaining({ device: bob.device })])
 
     await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alicePeer, bob, bobPeer.xPub, 'hello bob')
@@ -86,7 +88,7 @@ describe('mediator client library (mediator-{transport,coordinate,pickup,sync}.t
     const laptop: MediatorInboxClient = { ...phone, device: 'bob-laptop-01' }
     const info = await registerWithMediator(url, phone, fetchImpl)
     await registerWithMediator(url, laptop, fetchImpl)
-    expect((await queryKeylist(info, phone, fetchImpl)).map(entry => entry.device)).toEqual(['bob-phone-01', 'bob-laptop-01'])
+    expect((await queryRecipients(info, phone, fetchImpl)).map(entry => entry.device)).toEqual(['bob-phone-01', 'bob-laptop-01'])
 
     await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, phone, bobPeer.xPub, 'to every device')
     for (const device of [phone, laptop]) {
@@ -96,14 +98,14 @@ describe('mediator client library (mediator-{transport,coordinate,pickup,sync}.t
     }
   })
 
-  test('re-registering (self-heal) is idempotent and does not disturb the keylist', async () => {
+  test('re-registering (self-heal) is idempotent and does not disturb the recipient list', async () => {
     const { fetchImpl, url } = freshMediatorFetch()
     const bobPeer = generatePeerIdentity()
     const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
     const info1 = await registerWithMediator(url, bob, fetchImpl)
     const info2 = await registerWithMediator(url, bob, fetchImpl)
     expect(info2.did).toBe(info1.did)
-    const keys = await queryKeylist(info1, bob, fetchImpl)
+    const keys = await queryRecipients(info1, bob, fetchImpl)
     expect(keys).toEqual([expect.objectContaining({ device: bob.device })])
   })
 
@@ -113,8 +115,8 @@ describe('mediator client library (mediator-{transport,coordinate,pickup,sync}.t
     const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
     const info = await fetchMediatorInfo(url, fetchImpl)
     const grant = await requestMediation(info, bob, fetchImpl)
-    expect(grant.routingDid).toBe(mediatorIdentity.did)
-    expect(await queryKeylist(info, bob, fetchImpl)).toEqual([])
+    expect(grant.routingDids).toEqual([mediatorIdentity.did])
+    expect(await queryRecipients(info, bob, fetchImpl)).toEqual([])
   })
 
   test('startMediatorPolling delivers a queued message to onMessage and acks it, then stops cleanly', async () => {
@@ -319,6 +321,18 @@ async function sendAndUnpackLive(info: Awaited<ReturnType<typeof fetchMediatorIn
 }
 
 describe('mediator transport rules', () => {
+  test('discoverMaxReceiveBytes reads the mediator\'s constraint, and Vault Sync sizes its chunks from it', async () => {
+    const { fetchImpl, url } = freshMediatorFetch()
+    const bobPeer = generatePeerIdentity()
+    const bob = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv }
+    const info = await fetchMediatorInfo(url, fetchImpl)
+    const max = await discoverMaxReceiveBytes(info, bob, fetchImpl)
+    expect(max).toBe(1024 * 1024)
+    expect(vaultSyncChunkBytes(max)).toBe(128 * 1024)
+    expect(vaultSyncChunkBytes(undefined)).toBe(128 * 1024)
+    expect(vaultSyncChunkBytes(256 * 1024)).toBe(32 * 1024)
+  })
+
   test('a POST without the DIDComm encrypted media type is refused with 415', async () => {
     const { fetchImpl, url, mediatorIdentity } = freshMediatorFetch()
     const bobPeer = generatePeerIdentity()

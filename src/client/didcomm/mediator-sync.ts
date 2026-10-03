@@ -9,7 +9,7 @@
 // file's did:dht-era session/IndexedDB record bookkeeping -- the caller
 // hands over one ready MediatorInboxClient (protocol/didcomm/
 // mediator-device.ts), so this module only needs the mediator URL and that.
-import { fetchMediatorInfo, pushWebvhLog, queryKeylist, requestMediation, updateKeylist, type KeylistEntry, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
+import { fetchMediatorInfo, pushWebvhLog, queryRecipients, requestMediation, updateRecipient, type RecipientEntry, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
 import { MAX_DEVICES_PROBLEM } from '../../protocol/didcomm/mediator-protocol.ts'
 import { DidCommProblemError } from '../../protocol/didcomm/problems.ts'
 import { pickupDeliver, acknowledgeMessages, type DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
@@ -19,7 +19,7 @@ import { serializeLog } from '../../protocol/webvh/log.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { fetchCurrentLog, freshFetch } from '../identity/webvh/log-io.ts'
 
-/** mediate-request + keylist-update(add), unconditionally -- both are
+/** mediate-request + recipient-update(add), unconditionally -- both are
  * idempotent (`no_change` when the inbox already exists), so calling this on
  * every boot is the self-heal for a mediator that lost this inbox. A
  * did:webvh inbox first hands the mediator the DID's current log, read past
@@ -33,10 +33,10 @@ export async function registerWithMediator(mediatorUrl: string, inbox: MediatorI
   }
   await requestMediation(mediator, inbox, fetchImpl)
   try {
-    await updateKeylist(mediator, inbox, 'add', fetchImpl)
+    await updateRecipient(mediator, inbox, 'add', fetchImpl)
   } catch (error) {
     if (!(error instanceof DidCommProblemError) || error.code !== MAX_DEVICES_PROBLEM) throw error
-    throw new MediatorDeviceLimitError(error.args[2] ?? '?', await queryKeylist(mediator, inbox, fetchImpl).catch(() => []))
+    throw new MediatorDeviceLimitError(error.args[2] ?? '?', await queryRecipients(mediator, inbox, fetchImpl).catch(() => []))
   }
   return mediator
 }
@@ -46,7 +46,7 @@ export async function registerWithMediator(mediatorUrl: string, inbox: MediatorI
  * (sign-in, boot, relationship), and its message is written to be shown to
  * the user as-is -- the account page's mediator card displays it. */
 export class MediatorDeviceLimitError extends Error {
-  constructor(readonly limit: string, readonly devices: readonly KeylistEntry[]) {
+  constructor(readonly limit: string, readonly devices: readonly RecipientEntry[]) {
     const seen = devices.map(device => new Date(device.lastSeen).toISOString().slice(0, 10)).join(', ')
     super(`This account already has ${limit} devices registered for messaging${seen ? ` (last active: ${seen})` : ''}. Remove the devices you no longer use (choose another device in the Account page's device list; this removes all other devices), then reload.`)
     this.name = 'MediatorDeviceLimitError'
@@ -94,7 +94,7 @@ export function startMediatorPolling(
     try {
       // Enrollment is part of the polling invariant, not a fire-and-forget
       // caller precondition. In particular the first tick runs immediately:
-      // racing it against a separate keylist-update used to produce a noisy
+      // racing it against a separate recipient-update used to produce a noisy
       // e.p.req.not_enroll problem report on every fresh page boot. Keeping
       // `registered` false after a failure also makes a live tab self-heal
       // when the mediator was unavailable at boot, rather than waiting for

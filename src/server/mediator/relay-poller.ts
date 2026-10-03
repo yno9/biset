@@ -12,7 +12,7 @@
 // mediator's point of view the re-Forward it produces is an ordinary
 // inbound Forward request, indistinguishable from one a real sender built
 // directly.
-import { fetchMediatorInfo, requestMediation, updateKeylist, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
+import { fetchMediatorInfo, requestMediation, updateRecipient, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
 import { acknowledgeMessages } from '../../protocol/didcomm/mediator-pickup.ts'
 import { sendAndUnpack, type DidCommSender, type MediatorInboxClient } from '../../protocol/didcomm/mediator-transport.ts'
 import { unpackAnoncrypt, parseJwe, type DidCommJWE } from '../../protocol/didcomm/crypto.ts'
@@ -26,7 +26,7 @@ import { defaultFetch } from '../../protocol/net-fetch.ts'
 async function registerAsHop(upstreamUrl: string, inbox: MediatorInboxClient, fetchImpl: typeof fetch): Promise<MediatorInfo> {
   const mediator = await fetchMediatorInfo(upstreamUrl, fetchImpl)
   await requestMediation(mediator, inbox, fetchImpl)
-  await updateKeylist(mediator, inbox, 'add', fetchImpl)
+  await updateRecipient(mediator, inbox, 'add', fetchImpl)
   return mediator
 }
 

@@ -1,8 +1,8 @@
 // Production entrypoint for the standalone blind DIDComm mediator ("A" in
 // the mediator+mail-plugin A/B split -- mail-plugin/index.ts is "B", the
 // same core (deployment.ts) plus an SMTP bridge). Its only durable state is
-// its own did:peer key, pairwise connection keylists, opaque JWE queues,
-// ACK tombstones, and replay IDs in one SQLite database.
+// its own did:peer key, verified did:webvh key sets, per-device inboxes,
+// opaque JWE queues, and replay IDs in one SQLite database.
 import { createMediatorDeployment } from './deployment.ts'
 
 const publicUrl = Bun.env.MEDIATOR_PUBLIC_URL

@@ -4,8 +4,9 @@
 // one) and the mediator (server.ts answers a ping sent to it).
 import type { DidCommPlaintext } from './message.ts'
 
-export const PING = 'https://didcomm.org/trust-ping/2.0/ping'
-export const PING_RESPONSE = 'https://didcomm.org/trust-ping/2.0/ping-response'
+export const TRUST_PING = 'https://didcomm.org/trust-ping/2.0'
+export const PING = `${TRUST_PING}/ping`
+export const PING_RESPONSE = `${TRUST_PING}/ping-response`
 
 export function isPing(msg: { type?: string }): boolean { return msg.type === PING }
 export function isPingResponse(msg: { type?: string }): boolean { return msg.type === PING_RESPONSE }

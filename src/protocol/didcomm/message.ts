@@ -95,7 +95,7 @@ function didOfUrl(didUrl: string): string { const hash = didUrl.indexOf('#'); re
  * acts on "who sent this" must have checked the two agree first. Without
  * this, a party holding ANY valid key could authenticate as itself and still
  * name somebody else in `from` (found 2026-10-02: the mediator authorized
- * keylist-update/messages-received by `from`, letting one client deregister
+ * recipient-update/messages-received by `from`, letting one client deregister
  * another's key and drop its queue).
  */
 export function assertFromMatchesSender(msg: { from?: unknown }, senderKid: string): void {

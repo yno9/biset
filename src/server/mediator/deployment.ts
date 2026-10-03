@@ -50,10 +50,9 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
   const store = SqliteMediatorStore.open(options.databasePath, options.limits)
   const mediator = store.loadIdentity(options.publicUrl)
 
-  const { handle, live, mediatorDid } = createMediator({ mediator, store })
-
   let shuttingDown = false
   const maxRequestBytes = options.maxRequestBytes ?? DEFAULTS.maxRequestBytes
+  const { handle, live, mediatorDid } = createMediator({ mediator, store, maxReceiveBytes: Math.min(maxRequestBytes, store.limits.maxMessageBytes) })
   const requestLimiter = new IpRateLimiter(options.rateLimitPerMinute ?? DEFAULTS.rateLimitPerMinute)
   const clientAddress = (request: Request) => request.headers.get('x-forwarded-for')?.split(',', 1)[0]?.trim()
     || server.requestIP(request)?.address

@@ -67,6 +67,12 @@ describe('json-schema.ts (interpretive validator, used against biset-messenger-c
     expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ subject: { deviceJkt: 'not-a-thumbprint' } }), 'credential')).toThrow(/does not match pattern/)
   })
 
+  test('a capability with no authorizationDetails (nothing was requested) is accepted', () => {
+    const credential = validCapabilityCredential()
+    delete (credential.credentialSubject as Record<string, unknown>).authorizationDetails
+    expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, credential, 'credential')).not.toThrow()
+  })
+
   test('an authorizationDetails item matching none of the known detail types is rejected', () => {
     expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ subject: { authorizationDetails: [{ type: 'urn:unknown:v1' }] } }), 'credential')).toThrow(/oneOf branch/)
   })
@@ -89,7 +95,6 @@ describe('json-schema.ts (interpretive validator, used against biset-messenger-c
       subject: {
         authorizationDetails: [
           { type: 'urn:did-core:document-edit:v1', services: [], verificationMethods: [], remove: [] },
-          { type: 'urn:biset:mail-relay:v1', relayOrigin: 'https://api.did.md' },
         ],
       },
     })

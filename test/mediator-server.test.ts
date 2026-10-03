@@ -1,5 +1,6 @@
 // End-to-end coverage for the blind mediator (src/server/mediator/):
-// Coordinate Mediation 2.0, Routing 2.0 Forward, Pickup 3.0, driven through
+// Coordinate Mediation 3.0, Routing 2.0 Forward, Pickup 3.0, Discover
+// Features 2.0, driven through
 // the same handle(req, url) a real HTTP server calls, over the production
 // SQLite store (in memory).
 import { describe, expect, test } from 'bun:test'
@@ -7,7 +8,12 @@ import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { packAuthcrypt, unpackAuthcrypt, b64urlToBytes } from '../src/protocol/didcomm/crypto.ts'
 import { buildPlaintext } from '../src/protocol/didcomm/message.ts'
 import { serializeLog } from '../src/protocol/webvh/log.ts'
-import { buildDidCommLog } from './protocol/support/webvh-log-fixture.ts'
+import { buildDidCommLog, fakeAnchor } from './protocol/support/webvh-log-fixture.ts'
+import { createGenesis } from '../src/client/identity/webvh/create-genesis.ts'
+import { migrateWebvhLocation } from '../src/client/identity/webvh/migrate.ts'
+import { fetchCurrentLog } from '../src/client/identity/webvh/log-io.ts'
+import { encodeMultikey } from '../src/protocol/webvh/multikey.ts'
+import { multikeyHashBase58 } from '../src/protocol/webvh/hash.ts'
 import { deviceLabel, freshMediator, peer, T, utf8 } from './support/mediator.ts'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -16,8 +22,8 @@ describe('blind mediator', () => {
   test('mediate-request grants mediation naming the mediator itself as routing_did', async () => {
     const { mediator, request } = freshMediator()
     const grant = await request(peer(), T.MEDIATE_REQUEST, {})
-    expect(grant.type).toBe('https://didcomm.org/coordinate-mediation/2.0/mediate-grant')
-    expect((grant.body as { routing_did: string }).routing_did).toBe(mediator.did)
+    expect(grant.type).toBe('https://didcomm.org/coordinate-mediation/3.0/mediate-grant')
+    expect((grant.body as { routing_did: string[] }).routing_did).toEqual([mediator.did])
   })
 
   test('full round trip: register, Forward, pick up, ack', async () => {
@@ -25,7 +31,7 @@ describe('blind mediator', () => {
     const alice = peer()
     const bob = peer()
     const device = deviceLabel(1)
-    const added = await request(bob, T.KEYLIST_UPDATE, { device, updates: [{ recipient_did: bob.did, action: 'add' }] })
+    const added = await request(bob, T.RECIPIENT_UPDATE, { device, updates: [{ recipient_did: bob.did, action: 'add' }] })
     expect((added.body as any).updated[0].result).toBe('success')
 
     const inner = buildPlaintext('https://didcomm.org/basicmessage/2.0/message', { content: 'hello bob' }, alice.did, bob.did)
@@ -55,9 +61,9 @@ describe('blind mediator', () => {
     const { request, store } = freshMediator()
     const bob = peer()
     const mallory = peer()
-    await request(bob, T.KEYLIST_UPDATE, { device: deviceLabel(1), updates: [{ recipient_did: bob.did, action: 'add' }] })
+    await request(bob, T.RECIPIENT_UPDATE, { device: deviceLabel(1), updates: [{ recipient_did: bob.did, action: 'add' }] })
 
-    const squat = await request(mallory, T.KEYLIST_UPDATE, { device: deviceLabel(9), updates: [{ recipient_did: bob.did, action: 'add' }] })
+    const squat = await request(mallory, T.RECIPIENT_UPDATE, { device: deviceLabel(9), updates: [{ recipient_did: bob.did, action: 'add' }] })
     expect((squat.body as any).updated[0].result).toBe('client_error')
     expect(store.listInboxes(bob.did)).toHaveLength(1)
 
@@ -70,7 +76,7 @@ describe('blind mediator', () => {
     const { request, forward, store } = freshMediator()
     const bob = peer()
     const [phone, laptop] = [deviceLabel(1), deviceLabel(2)]
-    for (const device of [phone, laptop]) await request(bob, T.KEYLIST_UPDATE, { device, updates: [{ recipient_did: bob.did, action: 'add' }] })
+    for (const device of [phone, laptop]) await request(bob, T.RECIPIENT_UPDATE, { device, updates: [{ recipient_did: bob.did, action: 'add' }] })
 
     expect((await forward(bob.did, { ciphertext: 'once' })).status).toBe(202)
     expect(store.stats()).toMatchObject({ queuedMessages: 1, pendingDeliveries: 2 })
@@ -87,24 +93,79 @@ describe('blind mediator', () => {
     expect(store.stats()).toMatchObject({ queuedMessages: 0, pendingDeliveries: 0 })
   })
 
-  test('a fourth device is refused with e.p.req.max-devices; keylist-query shows the three; a sibling can remove one', async () => {
+  test('a fourth device is refused with e.p.req.max-devices; recipient-query shows the three; a sibling can remove one', async () => {
     const { request } = freshMediator()
     const bob = peer()
-    for (const n of [1, 2, 3]) await request(bob, T.KEYLIST_UPDATE, { device: deviceLabel(n), updates: [{ recipient_did: bob.did, action: 'add' }] })
+    for (const n of [1, 2, 3]) await request(bob, T.RECIPIENT_UPDATE, { device: deviceLabel(n), updates: [{ recipient_did: bob.did, action: 'add' }] })
 
-    const fourth = await request(bob, T.KEYLIST_UPDATE, { device: deviceLabel(4), updates: [{ recipient_did: bob.did, action: 'add' }] })
+    const fourth = await request(bob, T.RECIPIENT_UPDATE, { device: deviceLabel(4), updates: [{ recipient_did: bob.did, action: 'add' }] })
     expect(fourth.type).toBe(T.PROBLEM_REPORT)
     expect((fourth.body as any).code).toBe('e.p.req.max-devices')
     expect((fourth.body as any).args).toEqual([bob.did, '3', '3'])
 
-    const listed = await request(bob, T.KEYLIST_QUERY, {})
-    expect((listed.body as any).keys.map((k: any) => k.device)).toEqual([deviceLabel(1), deviceLabel(2), deviceLabel(3)])
-    expect((listed.body as any).keys.every((k: any) => typeof k.last_seen === 'number')).toBe(true)
+    const listed = await request(bob, T.RECIPIENT_QUERY, {})
+    expect((listed.body as any).dids.map((k: any) => k.device)).toEqual([deviceLabel(1), deviceLabel(2), deviceLabel(3)])
+    expect((listed.body as any).dids.every((k: any) => typeof k.last_seen === 'number')).toBe(true)
 
-    const removed = await request(bob, T.KEYLIST_UPDATE, { device: deviceLabel(2), updates: [{ recipient_did: bob.did, action: 'remove' }] })
+    const removed = await request(bob, T.RECIPIENT_UPDATE, { device: deviceLabel(2), updates: [{ recipient_did: bob.did, action: 'remove' }] })
     expect((removed.body as any).updated[0].result).toBe('success')
-    const retried = await request(bob, T.KEYLIST_UPDATE, { device: deviceLabel(4), updates: [{ recipient_did: bob.did, action: 'add' }] })
+    const retried = await request(bob, T.RECIPIENT_UPDATE, { device: deviceLabel(4), updates: [{ recipient_did: bob.did, action: 'add' }] })
     expect((retried.body as any).updated[0].result).toBe('success')
+  })
+
+  test('recipient-query pages with paginate {limit, offset}', async () => {
+    const { request } = freshMediator()
+    const bob = peer()
+    for (const n of [1, 2, 3]) await request(bob, T.RECIPIENT_UPDATE, { device: deviceLabel(n), updates: [{ recipient_did: bob.did, action: 'add' }] })
+    const page = await request(bob, T.RECIPIENT_QUERY, { paginate: { limit: 2, offset: 1 } })
+    expect((page.body as any).dids.map((entry: any) => entry.device)).toEqual([deviceLabel(2), deviceLabel(3)])
+    expect((page.body as any).dids.every((entry: any) => entry.recipient_did === bob.did)).toBe(true)
+    expect((page.body as any).pagination).toEqual({ count: 2, offset: 1, remaining: 0 })
+  })
+
+  test('Discover Features discloses max_receive_bytes and the protocols it speaks, matching * wildcards', async () => {
+    const { request } = freshMediator({ maxMessageBytes: 65_536 })
+    const bob = peer()
+    const constraint = await request(bob, T.DISCOVER_FEATURES_QUERIES, { queries: [{ 'feature-type': 'constraint', match: 'max_receive_bytes' }] })
+    expect(constraint.type).toBe(T.DISCOVER_FEATURES_DISCLOSE)
+    expect((constraint.body as any).disclosures).toEqual([{ 'feature-type': 'constraint', id: 'max_receive_bytes', max_receive_bytes: '65536' }])
+    const protocols = await request(bob, T.DISCOVER_FEATURES_QUERIES, { queries: [{ 'feature-type': 'protocol', match: 'https://didcomm.org/coordinate-mediation/*' }, { 'feature-type': 'protocol', match: 'https://didcomm.org/tictactoe/1.*' }] })
+    expect((protocols.body as any).disclosures).toEqual([{ 'feature-type': 'protocol', id: 'https://didcomm.org/coordinate-mediation/3.0', roles: ['mediator'] }])
+    const unknown = await request(bob, T.DISCOVER_FEATURES_QUERIES, { queries: [{ 'feature-type': 'goal-code', match: '*' }] })
+    expect((unknown.body as any).disclosures).toEqual([])
+  })
+
+  test('a Forward over max_receive_bytes is refused with 413 and message_too_big', async () => {
+    const { request, forward } = freshMediator({ maxMessageBytes: 2048, maxQueueBytesPerInbox: 4096 })
+    const bob = peer()
+    await request(bob, T.RECIPIENT_UPDATE, { device: deviceLabel(1), updates: [{ recipient_did: bob.did, action: 'add' }] })
+    const res = await forward(bob.did, { opaque: 'x'.repeat(4096) })
+    expect(res.status).toBe(413)
+    expect((await res.json() as { code: string }).code).toBe('e.p.me.res.storage.message_too_big')
+  })
+
+  test('did:webvh: a log of a DID that moved domains (genesis names the old one) is accepted under its current DID', async () => {
+    // Found live 2026-10-03: did.md creates the identity under an alias and
+    // later moves it to its real hostname. The genesis entry keeps the old
+    // domain; the DID is whatever the latest entry says.
+    const { pushLog } = freshMediator()
+    const rootPrivateKey = ed25519.utils.randomSecretKey()
+    const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
+    const spare = ed25519.utils.randomSecretKey()
+    const nextSpare = ed25519.utils.randomSecretKey()
+    const anchor = fakeAnchor()
+    const { did: oldDid } = await createGenesis({
+      domain: 'ex.alias', rootPrivateKey, rootPublicKey,
+      nextKeyHash: multikeyHashBase58(encodeMultikey(ed25519.getPublicKey(spare))), fetch: anchor.fetch,
+    })
+    const { newDid } = await migrateWebvhLocation({
+      oldDid, newDomain: 'c8de.did.md',
+      signingPrivateKey: spare, signingPublicKey: ed25519.getPublicKey(spare),
+      nextKeyHash: multikeyHashBase58(encodeMultikey(ed25519.getPublicKey(nextSpare))), fetch: anchor.fetch,
+    })
+    const { entries } = await fetchCurrentLog(newDid, anchor.fetch)
+    expect((entries[0]!.state as { id: string }).id).toBe(oldDid)
+    expect(await (await pushLog(serializeLog(entries))).json()).toMatchObject({ did: newDid, outcome: 'stored' })
   })
 
   test('dormant inboxes get no copies and are told they missed some; with every inbox dormant the latest still collects', async () => {
@@ -164,7 +225,7 @@ describe('blind mediator', () => {
     expect(await (await pushLog(serializeLog(log))).json()).toMatchObject({ did, version: 1, outcome: 'stored' })
     expect(await (await pushLog(serializeLog(log))).json()).toMatchObject({ outcome: 'stale' })
     expect((await pushLog('not a log')).status).toBe(400)
-    const added = await request(device, T.KEYLIST_UPDATE, { device: deviceLabel(1), updates: [{ recipient_did: did, action: 'add' }] })
+    const added = await request(device, T.RECIPIENT_UPDATE, { device: deviceLabel(1), updates: [{ recipient_did: did, action: 'add' }] })
     expect((added.body as any).updated[0].result).toBe('success')
   })
 

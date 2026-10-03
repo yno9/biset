@@ -46,13 +46,15 @@ export function freshMediator(limits: Partial<SqliteMediatorLimits> = {}, store 
 }
 
 export const T = {
-  MEDIATE_REQUEST: 'https://didcomm.org/coordinate-mediation/2.0/mediate-request',
-  KEYLIST_UPDATE: 'https://didcomm.org/coordinate-mediation/2.0/keylist-update',
-  KEYLIST_QUERY: 'https://didcomm.org/coordinate-mediation/2.0/keylist-query',
+  MEDIATE_REQUEST: 'https://didcomm.org/coordinate-mediation/3.0/mediate-request',
+  RECIPIENT_UPDATE: 'https://didcomm.org/coordinate-mediation/3.0/recipient-update',
+  RECIPIENT_QUERY: 'https://didcomm.org/coordinate-mediation/3.0/recipient-query',
   STATUS_REQUEST: 'https://didcomm.org/messagepickup/3.0/status-request',
   DELIVERY_REQUEST: 'https://didcomm.org/messagepickup/3.0/delivery-request',
   MESSAGES_RECEIVED: 'https://didcomm.org/messagepickup/3.0/messages-received',
   PROBLEM_REPORT: 'https://didcomm.org/report-problem/2.0/problem-report',
+  DISCOVER_FEATURES_QUERIES: 'https://didcomm.org/discover-features/2.0/queries',
+  DISCOVER_FEATURES_DISCLOSE: 'https://didcomm.org/discover-features/2.0/disclose',
 } as const
 
 export function peer(): PeerIdentity { return generatePeerIdentity() }

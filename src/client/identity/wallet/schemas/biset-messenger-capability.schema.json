@@ -37,7 +37,7 @@
     },
     "credentialSubject": {
       "type": "object",
-      "required": ["audience", "deviceJkt", "scope", "issuedAt", "expiresAt", "authorizationDetails"],
+      "required": ["audience", "deviceJkt", "scope", "issuedAt", "expiresAt"],
       "additionalProperties": false,
       "properties": {
         "audience": {
@@ -64,8 +64,7 @@
           "description": "RFC 9396 Rich Authorization Details, opaque to did.md's server. Biset requests a fixed set of detail types per authorization (see redirectToWallet in did-md-oauth.ts) and validates each echoed detail itself (capabilityDetails).",
           "items": {
             "oneOf": [
-              { "$ref": "#/$defs/didDocumentEditDetail" },
-              { "$ref": "#/$defs/mailRelayCapabilityDetail" }
+              { "$ref": "#/$defs/didDocumentEditDetail" }
             ]
           }
         }
@@ -98,17 +97,6 @@
         "verificationMethods": { "type": "array", "maxItems": 64 },
         "remove": { "type": "array", "maxItems": 128 },
         "serviceKeyBindings": { "type": "array" }
-      }
-    },
-    "mailRelayCapabilityDetail": {
-      "type": "object",
-      "description": "Requested by redirectToWallet for the did.md-operated SMTP relay. NOTE: the exact echoed shape on receipt is not fully traced in did-md-oauth.ts as of this schema's authoring (2026-09-21) -- fields below reflect only what is REQUESTED, not a confirmed response contract. Verify against the mail-relay integration code before treating this as authoritative. additionalProperties is deliberately NOT false here, unlike the other detail types, to reflect that uncertainty.",
-      "required": ["type"],
-      "properties": {
-        "type": { "const": "urn:biset:mail-relay:v1" },
-        "relayOrigin": { "type": "string" },
-        "addresses": { "type": "array", "items": { "type": "string" } },
-        "operations": { "type": "array", "items": { "type": "string" } }
       }
     }
   }

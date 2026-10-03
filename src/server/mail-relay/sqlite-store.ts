@@ -3,7 +3,6 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { b64url, b64urlDecodeToBytes, identityFromKeys, type PeerIdentity } from '../../protocol/didcomm/peer.ts'
-import { canonicalHash } from '../../protocol/canonical.ts'
 
 /** Relay-only state.  It intentionally has no mediator queue or connection
  * tables: a did.md mail relay is independent from whichever mediator a
@@ -11,7 +10,6 @@ import { canonicalHash } from '../../protocol/canonical.ts'
 export class SqliteMailRelayStore {
   private constructor(private readonly database: Database) {
     database.run('CREATE TABLE IF NOT EXISTS relay_identity (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), x_priv TEXT NOT NULL, ed_priv TEXT NOT NULL)')
-    database.run('CREATE TABLE IF NOT EXISTS mail_submission_results (message_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, result TEXT NOT NULL, created_at INTEGER NOT NULL)')
   }
 
   static open(path: string): SqliteMailRelayStore {
@@ -33,17 +31,4 @@ export class SqliteMailRelayStore {
   }
 
   close(): void { this.database.close() }
-
-  submissionResult(messageId: string, request: { mailFrom: string; rcptTo: string[]; rawRfc5322: Uint8Array }): string | undefined {
-    const hash = canonicalHash('biset/mail-relay/submission/v1', { mailFrom: request.mailFrom, rcptTo: request.rcptTo, rawRfc5322: b64url(request.rawRfc5322) })
-    const row = this.database.query<{ request_hash: string; result: string }, [string]>('SELECT request_hash, result FROM mail_submission_results WHERE message_id = ?').get(messageId)
-    if (!row) return undefined
-    if (row.request_hash !== hash) throw new Error('mail submission idempotency key was reused with another message')
-    return row.result
-  }
-
-  saveSubmissionResult(messageId: string, request: { mailFrom: string; rcptTo: string[]; rawRfc5322: Uint8Array }, result: string): void {
-    const hash = canonicalHash('biset/mail-relay/submission/v1', { mailFrom: request.mailFrom, rcptTo: request.rcptTo, rawRfc5322: b64url(request.rawRfc5322) })
-    this.database.query('INSERT INTO mail_submission_results (message_id, request_hash, result, created_at) VALUES (?, ?, ?, ?)').run(messageId, hash, result, Date.now())
-  }
 }

@@ -53,6 +53,8 @@ export class TooManyDevicesError extends Error {
 export class MediatorFullError extends Error {}
 
 export class QueueFullError extends Error {}
+/** One message larger than `maxMessageBytes` -- never queueable, unlike a full inbox. */
+export class MessageTooBigError extends Error {}
 
 export type InboxAddResult = 'added' | 'updated' | 'unchanged'
 
@@ -151,7 +153,7 @@ export class SqliteMediatorStore {
   /** The mail plugin's own did:peer key (mediator/mail-plugin/bridge.ts) --
    * the `sender` an inbound-mail Forward is authcrypt'd from. Kept separate
    * from both this mediator's own identity and the relay poller's: unlike
-   * the poller it never registers a keylist with anyone, and unlike the
+   * the poller it never registers an inbox with anyone, and unlike the
    * mediator's own identity it is never dereferenced as a did.json -- a
    * recipient only ever learns it from the `from` field of an already-
    * authcrypt'd message it could decrypt. Authcrypt (not anoncrypt) purely
@@ -286,7 +288,7 @@ export class SqliteMediatorStore {
    * take it. */
   enqueue(did: string, packed: string, now = Date.now()): number {
     const size = new TextEncoder().encode(packed).byteLength
-    if (size > this.limits.maxMessageBytes) throw new QueueFullError('mediator: message exceeds byte limit')
+    if (size > this.limits.maxMessageBytes) throw new MessageTooBigError(`mediator: message exceeds ${this.limits.maxMessageBytes} bytes`)
     return this.transaction(() => {
       const inboxes = this.database.query<InboxRow, [string]>('SELECT device, registered_kid, last_seen FROM inboxes WHERE recipient_did = ? ORDER BY last_seen DESC, device').all(did)
       if (inboxes.length === 0) return 0
