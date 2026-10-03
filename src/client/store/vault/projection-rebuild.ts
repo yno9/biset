@@ -11,21 +11,10 @@
 // eventually calls this (found live, 2026-09-15: one Wallet device's own
 // sent message never appeared on a sibling, since nothing there rebuilt
 // the sibling's projection after the sync landed).
-//
-// A prior version of this file existed before the MIMI/MLS removal, wired
-// to the old MLS self-group's own epoch resolver/verifier
-// (MlsVaultEpochKeyResolver/MlsMembershipSegmentKeyWrapVerifier). It was
-// deleted along with that system without a replacement for the
-// Wallet-authorized boundary bootstrap.ts now uses instead -- this is that
-// replacement, and it needs neither MLS type: `decryptVaultMutationRecords`
-// only ever needed a `SegmentKeyResolver` and a `VaultEventVerifier`, both
-// of which `buildWalletVaultCryptoBoundary`'s own `resolver`/`signer` already
-// satisfy directly.
 import type { LocalJmapProjectionV1 } from '../projection/gateway.ts'
 import { reduceLocalJmapProjection } from '../projection/reducer.ts'
 import type { IdentityId } from '../../../protocol/ids.ts'
 import { decryptVaultMutationRecords } from './mutation-records.ts'
-import type { VaultEventVerifier } from './events.ts'
 import type { SegmentKeyResolver } from './segment-key-resolver.ts'
 import type { VaultRecordReader } from './store.ts'
 
@@ -33,7 +22,6 @@ export interface RebuildLocalJmapProjectionOptions {
   identityId: IdentityId
   records: VaultRecordReader
   resolver: SegmentKeyResolver
-  verifier: VaultEventVerifier
 }
 
 export async function rebuildLocalJmapProjection(opts: RebuildLocalJmapProjectionOptions): Promise<LocalJmapProjectionV1> {
@@ -42,7 +30,7 @@ export async function rebuildLocalJmapProjection(opts: RebuildLocalJmapProjectio
     opts.records.readVaultEvents(identityId),
     opts.records.readVaultObjects(identityId),
   ])
-  const records = await decryptVaultMutationRecords(identityId, events, objects, opts.resolver, opts.verifier)
+  const records = await decryptVaultMutationRecords(identityId, events, objects, opts.resolver)
   const snapshot = reduceLocalJmapProjection(identityId, { mailboxes: [], emails: [] }, records)
   return { version: 1, identityId, ...snapshot }
 }

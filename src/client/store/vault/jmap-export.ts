@@ -3,26 +3,27 @@ import type { VaultEventV1 } from '../../../protocol/vault.ts'
 import type { DeviceId, IdentityId, VaultEventId } from '../../../protocol/ids.ts'
 import type { LocalJmapEmail, LocalJmapMailbox, LocalJmapSnapshot } from '../projection/gateway.ts'
 import type { ActiveVaultSegment } from './active-segment.ts'
-import type { VaultEventSigner } from './events.ts'
+import type { VaultEventAuthor } from './events.ts'
 import { buildMailMessageAdd, buildMailMessageEdit } from './mail-message.ts'
 import { buildVaultMutation } from './mutations.ts'
 import type { IncomingVaultRecordsResult } from './store.ts'
 import type { IncomingVaultRecords } from './store.ts'
 
 export const JMAP_STATE_RANK = 'https://biset.md/jmap/ns:stateRank' as const
+/** JMAP keyword on every message a JMAP export file added to the Vault. */
+export const IMPORTED_KEYWORD = '$imported'
 interface JmapStateRank { keywords: string; mailboxIds: string; content: string }
 type ExportedJmapEmail = LocalJmapEmail & { [JMAP_STATE_RANK]?: JmapStateRank }
 export interface JmapExportV1 {
   version: 1; kind: 'biset.jmap-export'; identityId: string; exportedAt: string
   mailboxes: LocalJmapMailbox[]; emails: ExportedJmapEmail[]; blobs: Record<string, string>
 }
-export interface JmapExportEnvelopeV1 { version: 1; kind: 'biset.jmap-export-encrypted'; identityId: string; generation: string; exportedAt: string; nonce: string; ciphertext: string }
 interface JmapImportSummary { added: number; skipped: number; excluded: number; missingBodies: number; events: VaultEventV1[] }
 
 export async function importJmapExport(file: JmapExportV1, input: {
   identityId: IdentityId; actorDeviceId: DeviceId; snapshot: LocalJmapSnapshot; events: VaultEventV1[]
   nextActorSeq(): Promise<number>; initialParents(): Promise<VaultEventId[]>; activeSegment(): Promise<ActiveVaultSegment>
-  signer: VaultEventSigner; commit(records: IncomingVaultRecords): Promise<IncomingVaultRecordsResult>
+  signer: VaultEventAuthor; commit(records: IncomingVaultRecords): Promise<IncomingVaultRecordsResult>
 }): Promise<JmapImportSummary> {
   assertExport(file)
   if (file.identityId !== input.identityId) throw new TypeError('JMAP export identity does not match the current identity')
@@ -35,6 +36,10 @@ export async function importJmapExport(file: JmapExportV1, input: {
     if (!existing) {
       if (!body) { missingBodies++; excluded++; continue }
       const { [JMAP_STATE_RANK]: _rank, blobId: _blobId, ...email } = exported
+      // A file is plain JSON anyone could have edited, so a message that
+      // enters the Vault from one says so: it is shown as imported, never as
+      // something this account received.
+      email.keywords = { ...email.keywords, [IMPORTED_KEYWORD]: true }
       const record = await buildMailMessageAdd({ email, rawRfc5322: base64urlToBytes(body) }, await buildContext(rankDate(rank.content, exported.receivedAt)), input.signer)
       objects.push({ ...record.metadataObject, identityId: input.identityId }, { ...record.rawRfc5322Object, identityId: input.identityId }); events.push(record.event); parents = [record.event.id]; current.set(exported.id, exported); added++; continue
     }
@@ -54,26 +59,8 @@ export async function importJmapExport(file: JmapExportV1, input: {
     }
     if (!changed) skipped++
   }
-  if (events.length) await input.commit({ identityId: input.identityId, objects, events: events.map(event => ({ ...event, identityId: input.identityId })), keyWraps: segment.keyWraps })
+  if (events.length) await input.commit({ identityId: input.identityId, objects, events: events.map(event => ({ ...event, identityId: input.identityId })), segmentKeys: [] })
   return { added, skipped, excluded, missingBodies, events }
-}
-
-export async function encryptJmapExport(file: JmapExportV1, generation: string, key: Uint8Array): Promise<JmapExportEnvelopeV1> {
-  if (key.length !== 32) throw new TypeError('JMAP export key is invalid')
-  const nonce = crypto.getRandomValues(new Uint8Array(12)); const aad = canonicalBytes({ label: 'biset/jmap-export/aad/v1', identityId: file.identityId, generation, exportedAt: file.exportedAt })
-  const cryptoKey = await crypto.subtle.importKey('raw', buffer(key), 'AES-GCM', false, ['encrypt'])
-  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: buffer(nonce), additionalData: buffer(aad) }, cryptoKey, buffer(encodeJmapExport(file))))
-  return { version: 1, kind: 'biset.jmap-export-encrypted', identityId: file.identityId, generation, exportedAt: file.exportedAt, nonce: bytesToBase64url(nonce), ciphertext: bytesToBase64url(ciphertext) }
-}
-export async function decryptJmapExport(envelope: JmapExportEnvelopeV1, key: Uint8Array): Promise<JmapExportV1> {
-  if (key.length !== 32 || envelope.kind !== 'biset.jmap-export-encrypted') throw new TypeError('JMAP export envelope is invalid')
-  const aad = canonicalBytes({ label: 'biset/jmap-export/aad/v1', identityId: envelope.identityId, generation: envelope.generation, exportedAt: envelope.exportedAt })
-  try {
-    const cryptoKey = await crypto.subtle.importKey('raw', buffer(key), 'AES-GCM', false, ['decrypt'])
-    const plaintext = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buffer(base64urlToBytes(envelope.nonce)), additionalData: buffer(aad) }, cryptoKey, buffer(base64urlToBytes(envelope.ciphertext))))
-    const file = decodeJmapExport(plaintext); if (file.identityId !== envelope.identityId || file.exportedAt !== envelope.exportedAt) throw new TypeError('JMAP export envelope metadata does not match')
-    return file
-  } catch (error) { if (error instanceof TypeError) throw error; throw new TypeError('JMAP export cannot be decrypted') }
 }
 
 export function eventStateRank(event: Pick<VaultEventV1, 'createdAt' | 'actorDeviceId' | 'actorSeq' | 'id'>): string {
@@ -144,4 +131,3 @@ function sameMap(a: Record<string, true>, b: Record<string, true>): boolean { re
 function max(a: string, b: string): string { return a > b ? a : b }
 function compareEvents(a: VaultEventV1, b: VaultEventV1): number { return a.createdAt.localeCompare(b.createdAt) || a.actorDeviceId.localeCompare(b.actorDeviceId) || a.actorSeq - b.actorSeq || a.id.localeCompare(b.id) }
 function copyEmail<T extends LocalJmapEmail>(email: T): T { return { ...email, mailboxIds: { ...email.mailboxIds }, keywords: { ...email.keywords }, from: email.from?.map(value => ({ ...value })), to: email.to?.map(value => ({ ...value })), reactions: email.reactions && { ...email.reactions } } }
-function buffer(bytes: Uint8Array): ArrayBuffer { const copy = bytes.slice(); return copy.buffer }

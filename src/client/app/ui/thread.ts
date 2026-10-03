@@ -167,6 +167,16 @@ function createMsgEl({ msg, bodyText }: ProcessedMessage): HTMLElement {
   const rawSenderName = msg.from_name || msg.from || '?'
   const senderName = rawSenderName.startsWith('did:') ? labelForDid(rawSenderName) : rawSenderName
   div.dataset.messageId = msg.message_id
+  // External Feed Post only (message-view.ts's sourceUrl, from the
+  // non-standard X-Source-Url header): a separate link to the followed
+  // actor's original post, since the body text deliberately doesn't
+  // include it (2026-09-25). Scheme-checked before rendering as an href --
+  // this value arrives over unauthenticated anoncrypt (external-feed.ts's
+  // header), so it's untrusted the same way the body text is.
+  const sourceLink =
+    msg.sourceUrl && /^https?:\/\//.test(msg.sourceUrl)
+      ? `<div class="t-source-link"><a href="${esc(msg.sourceUrl)}" target="_blank" rel="noopener noreferrer">元の投稿を見る</a></div>`
+      : ''
   div.innerHTML = `
     <div class="t-avatar" style="${avatarStyle(msg.from || senderName)}">${senderName.charAt(0).toUpperCase()}</div>
     <div class="t-meta">
@@ -176,6 +186,7 @@ function createMsgEl({ msg, bodyText }: ProcessedMessage): HTMLElement {
         ${msg.edited ? '<span class="t-edited">edited</span>' : ''}
       </div>
       <div class="t-body">${linkify(esc(stripQuoted(bodyText)))}</div>
+      ${sourceLink}
       ${renderReactionsHtml(msg.reactions)}
     </div>
   `
@@ -456,7 +467,7 @@ export function render(smooth = false): void {
   const $active = document.getElementById('active-thread')
   if (!$past || !$active) return
   // A background refresh (background MIMI sync landing new content, most
-  // often -- far more frequent since this session's own move to live SSE
+  // often -- far more frequent since this session's own move to live
   // push) rebuilds the reply box's textarea from scratch below, same as
   // every other node in #active-thread. Losing whatever the user was
   // mid-typing, silently, on a timer they have no control over, is exactly

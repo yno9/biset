@@ -104,13 +104,9 @@ export function reduceLocalJmapProjection(
       // has nothing to do with.
       continue
     }
-    if (mutation.kind === 'credential.didcomm.set') {
-      // Deliberately a no-op for the read-model: the identity-shared DIDComm
-      // keyAgreement private key (vault/didcomm-credential.ts), read only by
-      // DidCommCredentialReader directly off the vault events -- never a
-      // mailbox/keyword change. A sibling device receiving this event via
-      // ordinary vault-delivery sync must not have it rejected here just
-      // because this reducer has no mail-projection rule for it.
+    if (mutation.kind === 'credential.relationship-seed.set') {
+      // A no-op for the read-model, like every private credential: read only
+      // by RelationshipSeedReader straight off the vault events.
       continue
     }
     if (mutation.kind === 'contact-key.set') {

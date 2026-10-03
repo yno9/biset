@@ -1,14 +1,16 @@
 import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes, type CanonicalValue } from '../../../protocol/canonical.ts'
-import { assertMlsEpoch, type IdentityId } from '../../../protocol/ids.ts'
-import { VAULT_EVENT_KINDS, type SegmentKeyWrapV1, type VaultEventV1 } from '../../../protocol/vault.ts'
-import type { VaultObjectRecord } from './store.ts'
+import type { IdentityId } from '../../../protocol/ids.ts'
+import { VAULT_EVENT_KINDS, type VaultEventV1 } from '../../../protocol/vault.ts'
+import type { VaultObjectRecord, VaultSegmentKey } from './store.ts'
 
 export interface VaultDeliveryPackV1 {
   version: 1
   identityId: IdentityId
   objects: VaultObjectRecord[]
   events: VaultEventV1[]
-  keyWraps: SegmentKeyWrapV1[]
+  /** The keys of the segments `objects` are encrypted under. This pack only
+   * ever travels inside DIDComm authcrypt to this identity's own devices. */
+  segmentKeys: VaultSegmentKey[]
 }
 
 /** Canonical opaque body for one shared vault-delivery item. */
@@ -19,7 +21,7 @@ export function encodeVaultDeliveryPack(pack: VaultDeliveryPackV1): Uint8Array {
     identityId: pack.identityId,
     objects: pack.objects.map(objectToWire),
     events: pack.events.map(eventToWire),
-    keyWraps: pack.keyWraps.map(wrapToWire),
+    segmentKeys: pack.segmentKeys.map(value => ({ segmentId: value.segmentId, segmentKey: bytesToBase64url(value.segmentKey) })),
   })
 }
 
@@ -44,30 +46,20 @@ function eventToWire(event: VaultEventV1): { [key: string]: CanonicalValue } {
   return {
     version: event.version, id: event.id, identityId: event.identityId, actorDeviceId: event.actorDeviceId, actorSeq: event.actorSeq,
     kind: event.kind, targetIds: [...event.targetIds], objectRefs: [...event.objectRefs], parents: [...event.parents], createdAt: event.createdAt,
-    ...(event.actorCredential ? { actorCredential: bytesToBase64url(event.actorCredential) } : {}),
-    signature: bytesToBase64url(event.signature),
-  }
-}
-
-function wrapToWire(wrap: SegmentKeyWrapV1): { [key: string]: CanonicalValue } {
-  return {
-    version: wrap.version, identityId: wrap.identityId, selfGroupId: wrap.selfGroupId, segmentId: wrap.segmentId,
-    sourceEpoch: wrap.sourceEpoch, recipientEpoch: wrap.recipientEpoch, nonce: bytesToBase64url(wrap.nonce), aad: bytesToBase64url(wrap.aad),
-    wrappedSegmentKey: bytesToBase64url(wrap.wrappedSegmentKey), grantorDeviceId: wrap.grantorDeviceId, grantedAt: wrap.grantedAt,
   }
 }
 
 function wireToPack(value: unknown): VaultDeliveryPackV1 {
   const record = object(value, 'vault delivery pack')
   if (record.version !== 1 || typeof record.identityId !== 'string' || !record.identityId) throw new TypeError('vault delivery pack header is invalid')
-  if (!Array.isArray(record.objects) || !Array.isArray(record.events) || !Array.isArray(record.keyWraps)) throw new TypeError('vault delivery pack lists are invalid')
+  if (!Array.isArray(record.objects) || !Array.isArray(record.events) || !Array.isArray(record.segmentKeys)) throw new TypeError('vault delivery pack lists are invalid')
   const identityId = record.identityId
   return {
     version: 1,
     identityId,
     objects: record.objects.map(value => wireObject(value, identityId)),
     events: record.events.map(value => wireEvent(value, identityId)),
-    keyWraps: record.keyWraps.map(value => wireWrap(value, identityId)),
+    segmentKeys: record.segmentKeys.map(wireSegmentKey),
   }
 }
 
@@ -80,17 +72,15 @@ function wireObject(value: unknown, identityId: IdentityId): VaultObjectRecord {
 function wireEvent(value: unknown, identityId: IdentityId): VaultEventV1 {
   const input = object(value, 'vault delivery event')
   if (input.version !== 1 || input.identityId !== identityId || !nonempty(input.id) || !nonempty(input.actorDeviceId) || !eventKind(input.kind) || !Number.isSafeInteger(input.actorSeq) || (input.actorSeq as number) < 0 || !isoDate(input.createdAt)) throw new TypeError('vault delivery event is invalid')
-  return { version: 1, id: input.id, identityId, actorDeviceId: input.actorDeviceId, ...(input.actorCredential === undefined ? {} : { actorCredential: binary(input.actorCredential) }), actorSeq: input.actorSeq as number, kind: input.kind as VaultEventV1['kind'], targetIds: strings(input.targetIds), objectRefs: strings(input.objectRefs), parents: strings(input.parents), createdAt: input.createdAt, signature: binary(input.signature) }
+  return { version: 1, id: input.id, identityId, actorDeviceId: input.actorDeviceId, actorSeq: input.actorSeq as number, kind: input.kind as VaultEventV1['kind'], targetIds: strings(input.targetIds), objectRefs: strings(input.objectRefs), parents: strings(input.parents), createdAt: input.createdAt }
 }
 
-function wireWrap(value: unknown, identityId: IdentityId): SegmentKeyWrapV1 {
-  const input = object(value, 'vault delivery key wrap')
-  for (const key of ['selfGroupId', 'segmentId', 'sourceEpoch', 'recipientEpoch', 'grantorDeviceId', 'grantedAt']) if (!nonempty(input[key])) throw new TypeError('vault delivery key wrap is invalid')
-  if (input.version !== 1 || input.identityId !== identityId) throw new TypeError('vault delivery key wrap is invalid')
-  assertMlsEpoch(input.sourceEpoch)
-  assertMlsEpoch(input.recipientEpoch)
-  if (!isoDate(input.grantedAt)) throw new TypeError('vault delivery key wrap is invalid')
-  return { version: 1, identityId, selfGroupId: input.selfGroupId as string, segmentId: input.segmentId as string, sourceEpoch: input.sourceEpoch as string, recipientEpoch: input.recipientEpoch as string, nonce: binary(input.nonce), aad: binary(input.aad), wrappedSegmentKey: binary(input.wrappedSegmentKey), grantorDeviceId: input.grantorDeviceId as string, grantedAt: input.grantedAt as string }
+function wireSegmentKey(value: unknown): VaultSegmentKey {
+  const input = object(value, 'vault delivery segment key')
+  if (!nonempty(input.segmentId) || Object.keys(input).length !== 2) throw new TypeError('vault delivery segment key is invalid')
+  const segmentKey = binary(input.segmentKey)
+  if (segmentKey.length !== 32) throw new TypeError('vault delivery segment key is invalid')
+  return { segmentId: input.segmentId, segmentKey }
 }
 
 function object(value: unknown, name: string): Record<string, unknown> {
@@ -109,5 +99,5 @@ function assertPack(pack: VaultDeliveryPackV1): void {
   if (!pack.identityId) throw new TypeError('vault delivery pack identity is required')
   for (const object of pack.objects) if (object.identityId !== pack.identityId) throw new TypeError('vault delivery object identity does not match pack')
   for (const event of pack.events) if (event.identityId !== pack.identityId) throw new TypeError('vault delivery event identity does not match pack')
-  for (const wrap of pack.keyWraps) if (wrap.identityId !== pack.identityId) throw new TypeError('vault delivery key wrap identity does not match pack')
+  for (const value of pack.segmentKeys) if (!value.segmentId || value.segmentKey.length !== 32) throw new TypeError('vault delivery segment key is invalid')
 }

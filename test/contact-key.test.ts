@@ -1,13 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes } from '../src/protocol/canonical.ts'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
-import { createSegmentKeyWrap } from '../src/client/store/vault/crypto.ts'
-import { decodeVaultDeliveryPack } from '../src/client/store/vault/delivery-pack.ts'
-import type { VaultEventSigner } from '../src/client/store/vault/events.ts'
+import type { VaultEventAuthor } from '../src/client/store/vault/events.ts'
 import { createSegmentKey, decryptVaultObject } from '../src/client/store/vault/objects.ts'
 import {
   buildContactKeyRecord,
   contactKeyAad,
+  type ContactKeyRef,
   decodeContactKey,
   type ContactKeyV1,
 } from '../src/client/store/vault/contact-key.ts'
@@ -18,11 +16,7 @@ const identityId = 'did:webvh:alice.example'
 const counterpartyDid = 'did:webvh:bob.example'
 const segmentId = 'segment-1'
 const segmentKey = createSegmentKey()
-const signer: VaultEventSigner = {
-  deviceId: 'device-a',
-  async sign(bytes) { return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)) },
-  async verify(deviceId, bytes, signature) { return deviceId === this.deviceId && equalBytes(signature, await this.sign(bytes)) },
-}
+const signer: VaultEventAuthor = { deviceId: 'device-a' }
 
 describe('contact key vault record', () => {
   test('encrypts canonical relationship keys and binds them to the counterparty and own kid', async () => {
@@ -30,14 +24,14 @@ describe('contact key vault record', () => {
     const record = await buildContactKeyRecord(value, context(1), signer)
 
     expect(record.event.kind).toBe('contact-key.set')
-    expect(record.event.targetIds).toEqual([`contact-key:${counterpartyDid}:${value.ownRelationshipKid}`])
+    expect(record.event.targetIds).toEqual([`contact-key:${counterpartyDid}:${value.ownRelationshipKid}:${value.counterpartyRelationshipKid}`])
     const plaintext = await decryptVaultObject(segmentKey, record.object)
     expect(decodeContactKey(plaintext)).toMatchObject({
       counterpartyDid,
       ownRelationshipKid: value.ownRelationshipKid,
       counterpartyRelationshipKid: value.counterpartyRelationshipKid,
     })
-    expect(record.object.aad).toEqual(contactKeyAad(identityId, segmentId, counterpartyDid, value.ownRelationshipKid))
+    expect(record.object.aad).toEqual(contactKeyAad(identityId, segmentId, counterpartyDid, value))
   })
 
   test('rejects own or counterparty key material that does not match its self-certifying did:peer kid', () => {
@@ -50,7 +44,7 @@ describe('contact key vault record', () => {
 describe('contact key vault reader', () => {
   test('selects the unique unsuperseded generation and supports own-kid lookup', async () => {
     const old = await record(1, contactKey('2026-08-27T00:00:00.000Z'))
-    const currentValue = contactKey('2026-08-27T01:00:00.000Z', old.contactKey.ownRelationshipKid)
+    const currentValue = contactKey('2026-08-27T01:00:00.000Z', { ownRelationshipKid: old.contactKey.ownRelationshipKid, counterpartyRelationshipKid: old.contactKey.counterpartyRelationshipKid })
     const current = await record(2, currentValue)
     const reader = makeReader([old, current])
 
@@ -80,28 +74,22 @@ describe('contact key vault reader', () => {
     expect((await reader.forCounterpartyKid(first.contactKey.counterpartyRelationshipKid))?.ownRelationshipKid).toBe(first.contactKey.ownRelationshipKid)
   })
 
-  test('rejects a contact key event whose signature is invalid', async () => {
+  test('rejects a contact key event whose content no longer matches its id', async () => {
     const value = await record(1, contactKey('2026-08-27T00:00:00.000Z'))
-    const tampered = { ...value, event: { ...value.event, signature: new Uint8Array([0]) } }
-    await expect(makeReader([tampered]).readAll()).rejects.toThrow('signature')
+    const tampered = { ...value, event: { ...value.event, actorSeq: 99 } }
+    await expect(makeReader([tampered]).readAll()).rejects.toThrow('not intact')
   })
 })
 
 describe('contact key vault sink', () => {
   test('atomically queues the encrypted relationship credential without changing JMAP state', async () => {
-    const wrap = await createSegmentKeyWrap(
-      new Uint8Array(32).fill(7),
-      segmentKey,
-      { identityId, selfGroupId: 'self-group-1', segmentId, sourceEpoch: '1', recipientEpoch: '1', grantorDeviceId: 'device-a', grantedAt: '2026-08-27T00:00:00.000Z' },
-      signer,
-    )
     let committed: any
     const sink = new ContactKeyVaultSink({
       identityId,
       actorDeviceId: 'device-a',
       async nextActorSeq() { return 1 },
       async initialParents() { return [] },
-      async activeSegment() { return { segmentId, segmentKey, keyWraps: [wrap] } },
+      async activeSegment() { return { segmentId, segmentKey } },
       async currentSnapshot() { return { state: 'state-1', mailboxes: [], emails: [] } },
       signer,
       committer: { async commitLocalMutation(input) { committed = input; return 'committed' } },
@@ -110,12 +98,11 @@ describe('contact key vault sink', () => {
     const result = await sink.store(contactKey('2026-08-27T00:00:00.000Z'))
     expect(result.event.kind).toBe('contact-key.set')
     expect(committed.projection).toMatchObject({ state: 'state-1', emails: [] })
-    const pack = decodeVaultDeliveryPack(committed.deliveryOutbox.payload)
-    expect(pack.events).toMatchObject([{ kind: 'contact-key.set' }])
+    expect(committed.events).toMatchObject([{ kind: 'contact-key.set' }])
   })
 })
 
-function contactKey(createdAt: string, supersedesKid?: string): ContactKeyV1 {
+function contactKey(createdAt: string, supersedes?: ContactKeyRef): ContactKeyV1 {
   const mediator = generatePeerIdentity()
   const service = { uri: 'https://mediator.test.example', routingKeys: [mediator.xKid] }
   const own = generatePeerIdentity(service)
@@ -131,7 +118,7 @@ function contactKey(createdAt: string, supersedesKid?: string): ContactKeyV1 {
     counterpartyRelationshipKid: counterparty.xKid,
     counterpartyPublicKey: counterparty.xPub,
     createdAt,
-    ...(supersedesKid === undefined ? {} : { supersedesKid }),
+    ...(supersedes === undefined ? {} : { supersedes }),
   }
 }
 
@@ -170,11 +157,9 @@ function makeReader(records: Awaited<ReturnType<typeof record>>[]): ContactKeyRe
           targetIds: [...value.event.targetIds],
           objectRefs: [...value.event.objectRefs],
           parents: [...value.event.parents],
-          signature: value.event.signature.slice(),
         }))
       },
     },
     segmentKeys: { async resolveSegmentKey() { return segmentKey.slice() } },
-    verifier: signer,
   })
 }

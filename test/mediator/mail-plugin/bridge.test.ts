@@ -116,7 +116,7 @@ describe('buildInboundMailForward', () => {
     const toHop2Bytes = await unpackAnoncrypt(toHop2Jwe!, { kid: hop2.xKid, privateKey: hop2.xPriv })
     const toHop2 = JSON.parse(new TextDecoder().decode(toHop2Bytes))
     expect(toHop2.type).toBe(FORWARD)
-    expect(toHop2.body.next).toBe(to.kid)
+    expect(toHop2.body.next).toBe(to.did)
 
     const innerJwe = parseJwe(toHop2.attachments[0].data.json)
     const { plaintext } = await unpackAuthcrypt(innerJwe!, { kid: to.kid, privateKey: to.privateKey }, async () => sender.xPub)

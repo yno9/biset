@@ -1,17 +1,28 @@
 // Pickup Protocol 3.0 client -- status-request/status, delivery-request/
-// delivery, messages-received. Polls a mediator for messages queued
-// against our own didCommKid and unpacks each one. Ported from
+// delivery, messages-received. Polls one of this device's mediator inboxes
+// and unpacks each queued message. Ported from
 // src.bak/did/didcomm/pickup.ts, trimmed of the sign-then-encrypt unwrap
 // (signature.ts is out of scope for this phase -- ARC.md's design doc).
-import { unpackAuthcryptAuto, parseJwe, type DidCommJWE, type ResolveSenderKey } from './crypto.ts'
-import { sendAndUnpack, type DidCommSender, type MediatorInfo } from './mediator-transport.ts'
+import { unpackAuthcrypt, unpackAnoncrypt, protectedHeaderOf, parseJwe, type DidCommJWE, type ResolveSenderKey } from './crypto.ts'
+import { sendAndUnpack, type DidCommSender, type MediatorInboxClient, type MediatorInfo } from './mediator-transport.ts'
 import { defaultFetch } from '../net-fetch.ts'
-import { STATUS_REQUEST, STATUS, DELIVERY_REQUEST, DELIVERY, MESSAGES_RECEIVED, WATCH_REQUEST, WATCH_GRANT } from './mediator-protocol.ts'
+import { addressedTo, assertFromMatchesSender } from './message.ts'
+import { STATUS_REQUEST, STATUS, DELIVERY_REQUEST, DELIVERY, MESSAGES_RECEIVED } from './mediator-protocol.ts'
 
-export async function pickupStatus(mediator: MediatorInfo, own: DidCommSender, fetchImpl: typeof fetch = defaultFetch()): Promise<number> {
-  const reply = await sendAndUnpack(mediator, own, STATUS_REQUEST, { recipient_did: own.xKid }, fetchImpl)
+/** A Pickup 3.0 status, plus biset's `missed`: the mediator dropped copies
+ * meant for this inbox (it was dormant, or full) since it last asked -- the
+ * device should catch up from a sibling via Vault Sync. */
+export interface InboxStatus { messageCount: number; missed: boolean }
+
+export function inboxStatusOf(body: unknown): InboxStatus {
+  const b = (body ?? {}) as { message_count?: unknown; missed?: unknown }
+  return { messageCount: typeof b.message_count === 'number' ? b.message_count : 0, missed: b.missed === true }
+}
+
+export async function pickupStatus(mediator: MediatorInfo, inbox: MediatorInboxClient, fetchImpl: typeof fetch = defaultFetch()): Promise<InboxStatus> {
+  const reply = await sendAndUnpack(mediator, inbox, STATUS_REQUEST, { recipient_did: inbox.did, device: inbox.device }, fetchImpl)
   if (reply.type !== STATUS) throw new Error(`pickupStatus: unexpected reply type ${reply.type}`)
-  return (reply.body as { message_count?: number }).message_count ?? 0
+  return inboxStatusOf(reply.body)
 }
 
 // `ackId` is the mediator's queue id for this message (the delivery
@@ -24,6 +35,17 @@ export async function pickupStatus(mediator: MediatorInfo, own: DidCommSender, f
 // already-decrypted content it would otherwise have to trust blind).
 export interface DeliveredMessage { plaintext: unknown; senderKid: string; ackId: string; rawJwe: DidCommJWE }
 
+/** Sentinel `senderKid` for a message that arrived anoncrypt (alg
+ * ECDH-ES+A256KW) -- there is no sender to authenticate by construction
+ * (crypto.ts's own header), so this is never a real kid and every DID-kid
+ * parser (didOfKid, resolveDidCommSenderDid) would reject it as malformed
+ * if it were accidentally fed one. A consumer that reaches for `senderKid`
+ * before checking `msg.type` for the one message type anoncrypt is valid
+ * for (External Feed Post -- ingress-projector.ts) is a bug either way;
+ * this makes that bug loud instead of silently mistaking a sentinel for an
+ * identity. */
+const ANONCRYPT_SENDER_KID = 'anoncrypt'
+
 /** Fetches up to `limit` queued messages and unpacks each (authcrypt from
  * whoever sent them, resolved via `resolveSenderKey`).
  *
@@ -32,7 +54,7 @@ export interface DeliveredMessage { plaintext: unknown; senderKid: string; ackId
  * acknowledgeMessages. The caller MUST ack (by ackId) once it has durably
  * stored them, or they will be redelivered on the next poll. */
 /** Unwraps ONE queued, still-packed JWE into a DeliveredMessage -- shared by
- * `pickupDeliver`'s batch loop below and mediator-watch.ts's SSE frame
+ * `pickupDeliver`'s batch loop below and mediator-live.ts's live delivery
  * handler, which needs the identical fresh-key-retry behavior for a queued
  * item arriving one at a time instead of in a DELIVERY batch. Returns
  * undefined (never throws) for an attachment that could not be opened even
@@ -43,13 +65,24 @@ export async function unpackQueuedMessage(
   packedJwe: unknown, ackId: string, own: DidCommSender, resolveSenderKey: ResolveSenderKey,
 ): Promise<DeliveredMessage | undefined> {
   const open = async (fresh: boolean): Promise<DeliveredMessage> => {
-    const self = { kid: own.xKid, x25519PrivateKey: own.xPriv }
+    const self = { kid: own.xKid, privateKey: own.xPriv }
     const senderKeys: ResolveSenderKey = fresh ? kid => resolveSenderKey(kid, { fresh: true }) : resolveSenderKey
-    // Queued by the mediator, but authored by whoever sent it.
+    // Queued by the mediator, but authored by whoever sent it (or, for
+    // anoncrypt, by construction not attributable at all -- see
+    // ANONCRYPT_SENDER_KID above). The `alg` peek routes an anoncrypt JWE to
+    // unpackAnoncrypt instead of failing unpackAuthcrypt and silently
+    // dropping the message via the catch below.
     const queued = parseJwe(packedJwe)
     if (!queued) throw new Error('queued attachment is not a DIDComm JWE')
-    const { plaintext, senderKid } = await unpackAuthcryptAuto(queued, self, senderKeys)
-    return { plaintext: JSON.parse(new TextDecoder().decode(plaintext)), senderKid, ackId, rawJwe: queued }
+    if (protectedHeaderOf(queued)?.alg === 'ECDH-ES+A256KW') {
+      const plaintext = await unpackAnoncrypt(queued, self)
+      return { plaintext: JSON.parse(new TextDecoder().decode(plaintext)), senderKid: ANONCRYPT_SENDER_KID, ackId, rawJwe: queued }
+    }
+    const { plaintext, senderKid } = await unpackAuthcrypt(queued, self, senderKeys)
+    const message = JSON.parse(new TextDecoder().decode(plaintext)) as { from?: unknown; to?: unknown }
+    assertFromMatchesSender(message, senderKid)
+    if (!addressedTo(message, own.xKid)) console.warn(`[didcomm] queued message ${ackId} is addressed to someone else in \`to\``)
+    return { plaintext: message, senderKid, ackId, rawJwe: queued }
   }
   try {
     return await open(false)
@@ -70,13 +103,12 @@ export async function unpackQueuedMessage(
 
 export async function pickupDeliver(
   mediator: MediatorInfo,
-  own: DidCommSender,
+  inbox: MediatorInboxClient,
   resolveSenderKey: ResolveSenderKey,
   limit = 10,
   fetchImpl: typeof fetch = defaultFetch(),
-  recipient: DidCommSender = own,
 ): Promise<DeliveredMessage[]> {
-  const reply = await sendAndUnpack(mediator, own, DELIVERY_REQUEST, { recipient_did: recipient.xKid, limit }, fetchImpl)
+  const reply = await sendAndUnpack(mediator, inbox, DELIVERY_REQUEST, { recipient_did: inbox.did, device: inbox.device, limit }, fetchImpl)
   if (reply.type === STATUS) return [] // no messages queued
   if (reply.type !== DELIVERY) throw new Error(`pickupDeliver: unexpected reply type ${reply.type}`)
 
@@ -90,45 +122,30 @@ export async function pickupDeliver(
     // message into a lost one, so it is retried on every poll and
     // eventually aged out by the mediator's own retention bound rather than
     // discarded here.
-    const delivered = await unpackQueuedMessage(att.data.json, att.id, recipient, resolveSenderKey)
+    const delivered = await unpackQueuedMessage(att.data.json, att.id, inbox, resolveSenderKey)
     if (delivered) out.push(delivered)
   }
   return out
 }
 
-/** WATCH_REQUEST/WATCH_GRANT -- mints a short-lived token authorizing
- * `streamUrl`'s `GET /stream` connection (mediator/server.ts). The request
- * that CAN carry a signature (`EventSource` itself can't), mirroring
- * mls-ds/client-transport.ts's own `watchDeliveries`/`streamUrl` pair. */
-export async function requestWatch(mediator: MediatorInfo, own: DidCommSender, fetchImpl: typeof fetch = defaultFetch(), recipientKid = own.xKid): Promise<{ token: string; expiresAt: string }> {
-  const reply = await sendAndUnpack(mediator, own, WATCH_REQUEST, { recipient_did: recipientKid }, fetchImpl)
-  if (reply.type !== WATCH_GRANT) throw new Error(`requestWatch: unexpected reply type ${reply.type}`)
-  const body = reply.body as { token?: unknown; expires_at?: unknown }
-  if (typeof body.token !== 'string' || typeof body.expires_at !== 'string') throw new Error('requestWatch: malformed WATCH_GRANT body')
-  return { token: body.token, expiresAt: body.expires_at }
+/** The mediator's WebSocket: the same endpoint as its HTTPS one, upgraded
+ * (https -> wss, http -> ws for an onion entrance). */
+export function mediatorLiveUrl(mediatorUrl: string): string {
+  const url = new URL(mediatorUrl)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.pathname = '/'
+  url.search = ''
+  url.hash = ''
+  return url.toString()
 }
 
-/** A plain URL, not a `fetch` call -- `EventSource` opens this itself
- * (mediator-watch.ts). `token` must come from `requestWatch`. */
-export function mediatorStreamUrl(mediatorUrl: string, token: string): string {
-  return `${mediatorUrl.replace(/\/$/, '')}/stream?token=${encodeURIComponent(token)}`
-}
-
-/** One EventSource carrying several independently authorized recipient
- * queues. Repeating `token` preserves the single-token wire format while
- * avoiding one permanent browser connection per ContactKey. */
-export function mediatorMultiplexedStreamUrl(mediatorUrl: string, tokens: readonly string[]): string {
-  if (tokens.length === 0) throw new TypeError('at least one mediator watch token is required')
-  const query = tokens.map(token => `token=${encodeURIComponent(token)}`).join('&')
-  return `${mediatorUrl.replace(/\/$/, '')}/stream?${query}`
-}
-
-/** Pickup 3.0 messages-received: confirms the listed queue ids are durably
- * stored so the mediator drops them. Returns the count still queued. No-op
- * for an empty list. */
-export async function acknowledgeMessages(mediator: MediatorInfo, own: DidCommSender, ackIds: string[], fetchImpl: typeof fetch = defaultFetch(), recipientKid = own.xKid): Promise<number> {
-  if (ackIds.length === 0) return pickupStatus(mediator, own, fetchImpl)
-  const reply = await sendAndUnpack(mediator, own, MESSAGES_RECEIVED, { recipient_did: recipientKid, message_id_list: ackIds }, fetchImpl)
+/** Pickup 3.0 messages-received: confirms the listed ids are durably stored
+ * so the mediator drops them from THIS inbox (siblings keep their copies).
+ * `recipient_did` and `device` are biset additions to the body, naming
+ * which of the sender's inboxes the ids belong to. */
+export async function acknowledgeMessages(mediator: MediatorInfo, inbox: MediatorInboxClient, ackIds: string[], fetchImpl: typeof fetch = defaultFetch()): Promise<InboxStatus> {
+  if (ackIds.length === 0) return pickupStatus(mediator, inbox, fetchImpl)
+  const reply = await sendAndUnpack(mediator, inbox, MESSAGES_RECEIVED, { recipient_did: inbox.did, device: inbox.device, message_id_list: ackIds }, fetchImpl)
   if (reply.type !== STATUS) throw new Error(`acknowledgeMessages: unexpected reply type ${reply.type}`)
-  return (reply.body as { message_count?: number }).message_count ?? 0
+  return inboxStatusOf(reply.body)
 }

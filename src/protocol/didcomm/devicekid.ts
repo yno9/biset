@@ -38,11 +38,9 @@
 //
 //     #k_<base58btc(sha256(publicKey)[0..16])>
 //
-// `_` after the `k` is load-bearing. ML-KEM-768 keys are named `#kk…` (see
-// `mlkemKidFor`), and the two prefixes have to stay distinguishable by a
-// prefix test alone; a derived suffix that happened to start with `k` would
-// make `#k` + `k…` ambiguous with `#kk` + `…`. `_` is unreserved in a URI
-// fragment (RFC 3986), and no derived suffix can begin with it.
+// `_` after the `k` keeps a derived suffix from ever reading as some other
+// `#k…` naming scheme. `_` is unreserved in a URI fragment (RFC 3986), and no
+// derived suffix can begin with it.
 //
 // 16 bytes of SHA-256 is 128 bits. This is an identifier, not a commitment:
 // the document still binds key to identity, so a collision would only mean
@@ -68,60 +66,4 @@ export function deviceKidFragment(publicKey: Uint8Array): string {
 /** The full DID URL for a device key of `did`. */
 export function deviceKid(did: string, publicKey: Uint8Array): string {
   return `${did}${deviceKidFragment(publicKey)}`
-}
-
-/** The ML-KEM-768 counterpart of an X25519 device kid — the same suffix under
- * the `#kk` prefix, so the pair is obvious from the strings alone and needs no
- * slot number to associate them.
- *
- * Works unchanged for legacy kids: `#k1` → `#kk1`, which is exactly what the
- * numeric scheme produced. */
-export function mlkemKidFor(deviceKidOrFragment: string): string {
-  const hash = deviceKidOrFragment.indexOf('#')
-  const did = hash < 0 ? '' : deviceKidOrFragment.slice(0, hash)
-  const fragment = hash < 0 ? deviceKidOrFragment : deviceKidOrFragment.slice(hash)
-  if (!fragment.startsWith('#k') || fragment.startsWith('#kk')) {
-    throw new Error(`mlkemKidFor: not an X25519 device kid: ${deviceKidOrFragment}`)
-  }
-  return `${did}#kk${fragment.slice(2)}`
-}
-
-/** The X25519 kid an ML-KEM kid belongs to — the inverse of `mlkemKidFor`. */
-function deviceKidForMlkem(mlkemKidOrFragment: string): string {
-  const hash = mlkemKidOrFragment.indexOf('#')
-  const did = hash < 0 ? '' : mlkemKidOrFragment.slice(0, hash)
-  const fragment = hash < 0 ? mlkemKidOrFragment : mlkemKidOrFragment.slice(hash)
-  if (!fragment.startsWith('#kk')) throw new Error(`deviceKidForMlkem: not an ML-KEM kid: ${mlkemKidOrFragment}`)
-  return `${did}#k${fragment.slice(3)}`
-}
-
-/** True for an ML-KEM-768 key id (`#kk…`) rather than an X25519 device id. */
-function isMlkemKid(kidOrFragment: string): boolean {
-  return fragmentOf(kidOrFragment).startsWith('#kk')
-}
-
-/** True for a device key id of either generation — anything this codebase
- * recognizes as naming an X25519 device key. */
-function isDeviceKid(kidOrFragment: string): boolean {
-  const fragment = fragmentOf(kidOrFragment)
-  return fragment.startsWith('#k') && !fragment.startsWith('#kk')
-}
-
-/** True for the original positional form (`#k1`). These are never minted
- * again; they are read, and migrated away from. */
-function isLegacyKid(kidOrFragment: string): boolean {
-  return /^#k\d+$/.test(fragmentOf(kidOrFragment))
-}
-
-/** True when this kid is the one the given key would produce — the check that
- * makes a derived kid self-verifying against a resolved document, and the test
- * a rename uses to know it is already done. */
-function kidMatchesKey(kidOrFragment: string, publicKey: Uint8Array): boolean {
-  return fragmentOf(kidOrFragment) === deviceKidFragment(publicKey)
-}
-
-/** `did:x:y#k_ab` → `#k_ab`; `#k_ab` → `#k_ab`. */
-function fragmentOf(kidOrFragment: string): string {
-  const hash = kidOrFragment.indexOf('#')
-  return hash < 0 ? kidOrFragment : kidOrFragment.slice(hash)
 }

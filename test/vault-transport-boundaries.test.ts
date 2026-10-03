@@ -36,7 +36,6 @@ describe('IndexedDB transport boundaries', () => {
         events: [event],
         projection: {},
         jmapState: {},
-        deliveryOutbox: { identityId, entryId: eventId, payload: new Uint8Array([1]), payloadHash: new Uint8Array([2]), createdAt, attempts: 0 },
         didCommOutbox: [{ identityId, outboundEventId: eventId, emailId: 'email-1', blobId: 'blob-1', metadataBlobId: 'metadata-1', threadId: 'didcomm-thread', messageId: 'message-1', toDid: 'did:example:bob', createdAt, attempts: 0 }],
       })
 

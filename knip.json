@@ -3,13 +3,14 @@
   "entry": [
     "src/client/app/main.ts",
     "src/client/app/sw.ts",
-    "src/server/mediator/index.ts",
-    "src/server/mediator/mail-plugin/index.ts",
     "src/server/mimi/index.ts",
     "test/**/*.test.ts",
     "scripts/*.mjs"
   ],
-  "project": ["src/**/*.ts"],
-  "ignoreBinaries": ["deploy.sh"],
-  "ignoreDependencies": ["didcomm-node"]
+  "project": [
+    "src/**/*.ts"
+  ],
+  "ignoreDependencies": [
+    "didcomm-node"
+  ]
 }

@@ -1,12 +1,10 @@
 import type { IngressAckV1 } from '../../../protocol/ingress.ts'
-import { equalBytes } from '../../../protocol/canonical.ts'
-import type { DeliverySeq, DeviceId, IdentityId, MlsEpoch, SegmentId, VaultEventId, VaultId, VaultMemberId, VaultObjectId } from '../../../protocol/ids.ts'
-import type { SegmentKeyWrapV1, VaultDeliveryAckV1, VaultDeliveryItemV1, VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
-import { ed25519 } from '@noble/curves/ed25519.js'
+import type { DeviceId, IdentityId, SegmentId, VaultEventId, VaultObjectId } from '../../../protocol/ids.ts'
+import type { VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
 import { rescueLegacyCrdtEvents } from './legacy-crdt-migration.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
-const DATABASE_VERSION = 14
+const DATABASE_VERSION = 15
 
 const STORES = {
   ingressReceipts: 'vault_ingress_receipts',
@@ -14,15 +12,10 @@ const STORES = {
   events: 'vault_events',
   chunks: 'vault_chunks',
   segments: 'vault_segments',
-  keyWraps: 'vault_key_wraps',
   manifests: 'vault_manifests',
   projection: 'vault_projection',
   jmapState: 'vault_jmap_state',
   outbox: 'vault_outbox',
-  deliveryOutbox: 'vault_delivery_outbox',
-  deliveryReceipts: 'vault_delivery_receipts',
-  deliveryAckOutbox: 'vault_delivery_ack_outbox',
-  deliveryState: 'vault_delivery_state',
   transportStatus: 'transport_status',
   didCommOutbox: 'didcomm_transport_outbox',
   actorSequences: 'vault_actor_sequences',
@@ -63,20 +56,6 @@ interface IngressAckOutboxReader {
   noteIngressAckOutboxAttempt(identityId: IdentityId, ingressId: string): Promise<void>
 }
 
-/**
- * Locally durable work waiting to become one mediator delivery item. Its body
- * is an encrypted shared-vault pack; recipient snapshots and expiry belong to
- * the mediator append operation and are deliberately absent here.
- */
-export interface VaultDeliveryOutboxRecord {
-  identityId: IdentityId
-  entryId: VaultEventId
-  payload: Uint8Array
-  payloadHash: Uint8Array
-  createdAt: string
-  attempts: number
-}
-
 /** Durable DIDComm send intent. Message content stays in encrypted vault objects. */
 export interface DidCommTransportOutboxRecord {
   identityId: IdentityId
@@ -103,24 +82,6 @@ interface DidCommTransportOutboxStore {
   removeDidCommOutbox(identityId: IdentityId, outboundEventId: VaultEventId, toDid: string): Promise<void>
 }
 
-interface VaultDeliveryReceiptRecord {
-  identityId: IdentityId
-  recipientDeviceId: DeviceId
-  seq: DeliverySeq
-  payloadHash: Uint8Array
-  checkpointId: string
-  committedAt: string
-}
-
-export interface VaultDeliveryAckOutboxRecord {
-  identityId: IdentityId
-  recipientDeviceId: DeviceId
-  seq: DeliverySeq
-  ack: VaultDeliveryAckV1
-  attempts: number
-  createdAt: string
-}
-
 /**
  * All fields are written in one IndexedDB transaction. The caller may send the
  * ACK only after this promise resolves successfully.
@@ -132,8 +93,6 @@ export interface IngressVaultCommit {
   events: VaultEventRecord[]
   projection: unknown
   jmapState: unknown
-  /** Present when the endpoint has made the external item part of shared vault state. */
-  deliveryOutbox?: VaultDeliveryOutboxRecord
   /** Core ingress requires this; transports with their own ACK protocol do not. */
   ackOutbox?: IngressAckOutboxRecord
 }
@@ -149,29 +108,11 @@ export interface LocalVaultMutationCommit {
   events: VaultEventRecord[]
   projection: unknown
   jmapState: unknown
-  deliveryOutbox: VaultDeliveryOutboxRecord
   /** One row per recipient -- a group message's single commit still needs
    * N delivery-queue rows, one per fan-out target
    * (didcomm/group-chat.ts's full-mesh design). A 1:1 chat message is the
    * one-element case. */
   didCommOutbox?: DidCommTransportOutboxRecord[]
-}
-
-/**
- * Receive-side counterpart of LocalVaultMutationCommit. The acknowledgement
- * becomes sendable only after every listed vault record and the derived local
- * projection are durably committed together.
- */
-export interface VaultDeliveryCommit {
-  identityId: IdentityId
-  receipt: VaultDeliveryReceiptRecord
-  delivery: VaultDeliveryItemV1
-  objects: VaultObjectRecord[]
-  events: VaultEventRecord[]
-  keyWraps: SegmentKeyWrapV1[]
-  projection: unknown
-  jmapState: unknown
-  ackOutbox: VaultDeliveryAckOutboxRecord
 }
 
 export type IngressCommitResult = 'committed' | 'already-committed'
@@ -213,14 +154,19 @@ export interface VaultRecordReader {
 }
 
 export interface VaultSyncRecordReader extends VaultRecordReader {
-  readSegmentKeyWraps(identityId: IdentityId): Promise<SegmentKeyWrapV1[]>
+  /** Every SegmentKey this device holds -- they travel to sibling devices
+   * with the objects encrypted under them (Vault Sync, inside DIDComm). */
+  readSegmentKeys(identityId: IdentityId): Promise<VaultSegmentKey[]>
 }
+
+/** A SegmentKey as it travels between this identity's devices. */
+export interface VaultSegmentKey { segmentId: SegmentId; segmentKey: Uint8Array }
 
 export interface IncomingVaultRecords {
   identityId: IdentityId
   objects: VaultObjectRecord[]
   events: VaultEventRecord[]
-  keyWraps: SegmentKeyWrapV1[]
+  segmentKeys: VaultSegmentKey[]
 }
 
 export interface IncomingVaultRecordsResult {
@@ -242,38 +188,15 @@ export interface ActorSequenceStore {
   findDuplicateActorSequences(identityId: IdentityId): Promise<DuplicateActorSequence[]>
 }
 
-export interface SegmentKeyWrapReader {
-  readSegmentKeyWrap(identityId: IdentityId, segmentId: string, recipientEpoch: string): Promise<SegmentKeyWrapV1 | undefined>
-}
-
-export interface SegmentKeyWrapWriter {
-  writeSegmentKeyWrap(wrap: SegmentKeyWrapV1): Promise<void>
-}
-
 /** One vault segment: the identifier/key pair every object encrypted under
- * it shares. `sealed` records whether new objects may still be appended to
- * it — PLAN.md §4.2's "seal the active segment after an MLS commit" is
- * exactly this record turning `sealed: true` the moment a newer one becomes
- * current (`sealAndActivateSegment`, below, is the only way that ever
- * happens).
- *
- * `epoch` is NOT "the epoch this segment was created in" — it is the most
- * RECENT self-group epoch this identity holds a `SegmentKeyWrap` for, for
- * THIS segment. A sealed segment's epoch only ever advances when
- * `recordSegmentRewrapped` runs after a fresh self-grant (PLAN.md §4.2's
- * restore-grant machinery, `identity/bootstrap.ts`'s `maintainSelfGroup`,
- * applied to this identity's OWN segments): a `StoredSegmentKeyResolver`
- * only ever looks up a wrap for the self group's CURRENT epoch, so a sealed
- * segment whose only wrap is for a long-superseded epoch is unreadable
- * until something re-wraps it for the current one. Tracking "the epoch we
- * last confirmed a wrap for" here is what lets that re-wrap step find the
- * right SOURCE wrap without a separate index. */
+ * it shares. Each device writes into one segment of its own (`sealed:
+ * false`); segments that arrived from sibling devices are stored sealed and
+ * only ever read. The key is held as is: it lives in the same browser
+ * storage any wrapping key would. */
 export interface VaultSegmentRecord {
   identityId: IdentityId
   segmentId: SegmentId
   segmentKey: Uint8Array
-  selfGroupId: string
-  epoch: MlsEpoch
   sealed: boolean
   createdAt: string
 }
@@ -283,11 +206,8 @@ export interface ActiveVaultSegmentStore {
    * none has ever been created. At most one segment is ever current per
    * identity — `sealAndActivateSegment` enforces that by construction. */
   currentSegment(identityId: IdentityId): Promise<VaultSegmentRecord | undefined>
-  /** Every segment (sealed or not) this identity has ever created — for
-   * `maintainSelfGroup`'s self-grant sweep, which must reach every segment
-   * whose wrap might have fallen behind the self group's current epoch, not
-   * only the current one. */
-  allSegments(identityId: IdentityId): Promise<VaultSegmentRecord[]>
+  /** The key of any segment this device holds, its own or a sibling's. */
+  readSegmentKey(identityId: IdentityId, segmentId: SegmentId): Promise<Uint8Array | undefined>
   /**
    * Atomically seals whatever segment is currently active for this
    * identity (a no-op if there is none) and activates `next` as the new
@@ -296,31 +216,9 @@ export interface ActiveVaultSegmentStore {
    * recently activated one" are always the same segment.
    */
   sealAndActivateSegment(next: VaultSegmentRecord): Promise<void>
-  /** Records that this segment's wrap is now confirmed current as of
-   * `epoch` — called after a successful self-grant re-wrap
-   * (`maintainSelfGroup`). Never changes `sealed`. */
-  recordSegmentRewrapped(identityId: IdentityId, segmentId: SegmentId, epoch: MlsEpoch, selfGroupId?: string): Promise<void>
 }
 
-/** The client retry loop sees only its own encrypted, local append work. */
-interface VaultDeliveryOutboxReader {
-  readDeliveryOutbox(identityId: IdentityId, limit?: number): Promise<VaultDeliveryOutboxRecord[]>
-  removeDeliveryOutbox(identityId: IdentityId, entryId: VaultEventId): Promise<void>
-  noteDeliveryOutboxAttempt(identityId: IdentityId, entryId: VaultEventId): Promise<void>
-}
-
-interface VaultDeliveryCursorReader {
-  readDeliveryCursor(identityId: IdentityId, recipientDeviceId: DeviceId): Promise<DeliverySeq>
-}
-
-/** ACKs are durable work items, independent of whether a push/network wake succeeds. */
-interface VaultDeliveryAckOutboxReader {
-  readDeliveryAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, limit?: number): Promise<VaultDeliveryAckOutboxRecord[]>
-  removeDeliveryAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, seq: DeliverySeq): Promise<void>
-  noteDeliveryAckOutboxAttempt(identityId: IdentityId, recipientDeviceId: DeviceId, seq: DeliverySeq): Promise<void>
-}
-
-export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjectionWriter, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, ActorSequenceStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, ActiveVaultSegmentStore, IngressReceiptReader, IngressAckOutboxReader, DidCommTransportOutboxStore, VaultDeliveryOutboxReader, VaultDeliveryCursorReader, VaultDeliveryAckOutboxReader {
+export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjectionWriter, VaultObjectReader, VaultCredentialEventReader, VaultRecordReader, ActorSequenceStore, ActiveVaultSegmentStore, IngressReceiptReader, IngressAckOutboxReader, DidCommTransportOutboxStore {
   private constructor(private readonly database: IDBDatabase) {}
 
   static async open(): Promise<IndexedDbVaultStore> {
@@ -369,7 +267,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
       STORES.ingressReceipts,
       STORES.objects,
       STORES.events,
-      STORES.deliveryOutbox,
     ]
     if (input.ackOutbox) stores.push(STORES.outbox)
     const transaction = this.database.transaction(stores, 'readwrite')
@@ -382,7 +279,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject(object))
     for (const event of input.events) transaction.objectStore(STORES.events).put(copyEvent(event))
     if (input.ackOutbox) transaction.objectStore(STORES.outbox).put(copyOutbox(input.ackOutbox))
-    if (input.deliveryOutbox) transaction.objectStore(STORES.deliveryOutbox).put(copyDeliveryOutbox(input.deliveryOutbox))
 
     try {
       await transactionDone(transaction)
@@ -479,7 +375,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     const stores: StoreName[] = [
       STORES.objects,
       STORES.events,
-      STORES.deliveryOutbox,
     ]
     if (input.didCommOutbox?.length) stores.push(STORES.didCommOutbox)
     const transaction = this.database.transaction(stores, 'readwrite')
@@ -492,7 +387,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
       }
     }
     for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject(object))
-    transaction.objectStore(STORES.deliveryOutbox).put(copyDeliveryOutbox(input.deliveryOutbox))
     for (const row of input.didCommOutbox ?? []) transaction.objectStore(STORES.didCommOutbox).put(copyDidCommOutbox(row))
     try {
       await transactionDone(transaction)
@@ -545,41 +439,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     const transaction = this.database.transaction(STORES.didCommOutbox, 'readwrite')
     transaction.objectStore(STORES.didCommOutbox).delete([identityId, outboundEventId, toDid])
     await transactionDone(transaction)
-  }
-
-  async commitDelivery(input: VaultDeliveryCommit): Promise<IngressCommitResult> {
-    assertDeliveryCommit(input)
-    const transaction = this.database.transaction([
-      STORES.deliveryReceipts,
-      STORES.objects,
-      STORES.events,
-      STORES.keyWraps,
-      STORES.deliveryState,
-      STORES.deliveryAckOutbox,
-    ], 'readwrite')
-    let duplicate = false
-    const receipt = transaction.objectStore(STORES.deliveryReceipts).add(copyDeliveryReceipt(input.receipt))
-    receipt.onerror = () => {
-      if (receipt.error?.name === 'ConstraintError') duplicate = true
-    }
-    for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject(object))
-    for (const event of input.events) transaction.objectStore(STORES.events).put(copyEvent(event))
-    for (const wrap of input.keyWraps) transaction.objectStore(STORES.keyWraps).put(copyKeyWrap(wrap))
-    transaction.objectStore(STORES.deliveryState).put({
-      identityId: input.identityId,
-      deviceId: input.receipt.recipientDeviceId,
-      cursor: input.receipt.seq,
-      checkpointId: input.receipt.checkpointId,
-      committedAt: input.receipt.committedAt,
-    })
-    transaction.objectStore(STORES.deliveryAckOutbox).put(copyDeliveryAckOutbox(input.ackOutbox))
-    try {
-      await transactionDone(transaction)
-      return 'committed'
-    } catch (error) {
-      if (duplicate) return 'already-committed'
-      throw error
-    }
   }
 
   async readObject(identityId: IdentityId, objectId: VaultObjectId): Promise<VaultObjectRecord | undefined> {
@@ -668,15 +527,15 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     return values.filter(value => value.identityId === identityId).sort((left, right) => left.objectId.localeCompare(right.objectId)).map(copyObject)
   }
 
-  async readSegmentKeyWraps(identityId: IdentityId): Promise<SegmentKeyWrapV1[]> {
-    if (!identityId) throw new TypeError('key wrap identity is required')
-    const transaction = this.database.transaction(STORES.keyWraps, 'readonly')
+  async readSegmentKeys(identityId: IdentityId): Promise<VaultSegmentKey[]> {
+    if (!identityId) throw new TypeError('segment identity is required')
+    const transaction = this.database.transaction(STORES.segments, 'readonly')
     const completed = transactionDone(transaction)
-    const values = await requestValue<SegmentKeyWrapV1[]>(transaction.objectStore(STORES.keyWraps).getAll())
+    const values = await requestValue<VaultSegmentRecord[]>(transaction.objectStore(STORES.segments).getAll())
     await completed
     return values.filter(value => value.identityId === identityId)
-      .sort((left, right) => left.segmentId.localeCompare(right.segmentId) || left.recipientEpoch.localeCompare(right.recipientEpoch))
-      .map(copyKeyWrap)
+      .sort((left, right) => left.segmentId.localeCompare(right.segmentId))
+      .map(value => ({ segmentId: value.segmentId, segmentKey: value.segmentKey.slice() }))
   }
 
   /** One idempotent R3 transaction. Validation deliberately happens before
@@ -686,11 +545,11 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     if (!input.identityId) throw new TypeError('incoming Vault identity is required')
     for (const value of input.objects) if (value.identityId !== input.identityId) throw new TypeError('incoming object identity does not match')
     for (const value of input.events) if (value.identityId !== input.identityId) throw new TypeError('incoming event identity does not match')
-    for (const value of input.keyWraps) if (value.identityId !== input.identityId) throw new TypeError('incoming key wrap identity does not match')
-    const transaction = this.database.transaction([STORES.objects, STORES.events, STORES.keyWraps], 'readwrite')
+    for (const value of input.segmentKeys) if (!value.segmentId || value.segmentKey.length !== 32) throw new TypeError('incoming segment key is invalid')
+    const transaction = this.database.transaction([STORES.objects, STORES.events, STORES.segments], 'readwrite')
     const objectStore = transaction.objectStore(STORES.objects)
     const eventStore = transaction.objectStore(STORES.events)
-    const wrapStore = transaction.objectStore(STORES.keyWraps)
+    const segmentStore = transaction.objectStore(STORES.segments)
     const addedEvents: VaultEventRecord[] = []
     for (const object of input.objects) {
       if (!await requestValue<VaultObjectRecord | undefined>(objectStore.get([input.identityId, object.objectId]))) objectStore.add(copyObject(object))
@@ -701,32 +560,18 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
         addedEvents.push(event)
       }
     }
-    for (const wrap of input.keyWraps) {
-      if (!await requestValue<SegmentKeyWrapV1 | undefined>(wrapStore.get([input.identityId, wrap.segmentId, wrap.recipientEpoch]))) wrapStore.add(copyKeyWrap(wrap))
+    // A sibling's segment is only ever read here, never written into.
+    const receivedAt = new Date().toISOString()
+    for (const value of input.segmentKeys) {
+      if (!await requestValue<VaultSegmentRecord | undefined>(segmentStore.get([input.identityId, value.segmentId]))) {
+        segmentStore.add({ identityId: input.identityId, segmentId: value.segmentId, segmentKey: value.segmentKey.slice(), sealed: true, createdAt: receivedAt })
+      }
     }
     await transactionDone(transaction)
     return {
       addedEventIds: addedEvents.map(event => event.id),
       targetIds: [...new Set(addedEvents.flatMap(event => event.targetIds))].sort(),
     }
-  }
-
-  async writeSegmentKeyWrap(wrap: SegmentKeyWrapV1): Promise<void> {
-    assertKeyWrap(wrap)
-    const transaction = this.database.transaction(STORES.keyWraps, 'readwrite')
-    transaction.objectStore(STORES.keyWraps).put(copyKeyWrap(wrap))
-    await transactionDone(transaction)
-  }
-
-  async readSegmentKeyWrap(identityId: IdentityId, segmentId: string, recipientEpoch: string): Promise<SegmentKeyWrapV1 | undefined> {
-    if (!identityId || !segmentId || !recipientEpoch) throw new TypeError('key wrap identity, segment, and epoch are required')
-    const transaction = this.database.transaction(STORES.keyWraps, 'readonly')
-    const completed = transactionDone(transaction)
-    const wrap = await requestValue<SegmentKeyWrapV1 | undefined>(
-      transaction.objectStore(STORES.keyWraps).get([identityId, segmentId, recipientEpoch]),
-    )
-    await completed
-    return wrap && copyKeyWrap(wrap)
   }
 
   async currentSegment(identityId: IdentityId): Promise<VaultSegmentRecord | undefined> {
@@ -739,13 +584,13 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     return current && copySegmentRecord(current)
   }
 
-  async allSegments(identityId: IdentityId): Promise<VaultSegmentRecord[]> {
-    if (!identityId) throw new TypeError('segment identity is required')
+  async readSegmentKey(identityId: IdentityId, segmentId: SegmentId): Promise<Uint8Array | undefined> {
+    if (!identityId || !segmentId) throw new TypeError('segment identity and ID are required')
     const transaction = this.database.transaction(STORES.segments, 'readonly')
     const completed = transactionDone(transaction)
-    const values = await requestValue<VaultSegmentRecord[]>(transaction.objectStore(STORES.segments).getAll())
+    const value = await requestValue<VaultSegmentRecord | undefined>(transaction.objectStore(STORES.segments).get([identityId, segmentId]))
     await completed
-    return values.filter(value => value.identityId === identityId).map(copySegmentRecord)
+    return value?.segmentKey.slice()
   }
 
   async sealAndActivateSegment(next: VaultSegmentRecord): Promise<void> {
@@ -761,125 +606,7 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     await transactionDone(transaction)
   }
 
-  async recordSegmentRewrapped(identityId: IdentityId, segmentId: SegmentId, epoch: MlsEpoch, selfGroupId?: string): Promise<void> {
-    if (!identityId || !segmentId || !epoch) throw new TypeError('segment rewrap identity, segment, and epoch are required')
-    const transaction = this.database.transaction(STORES.segments, 'readwrite')
-    const store = transaction.objectStore(STORES.segments)
-    const existing = await requestValue<VaultSegmentRecord | undefined>(store.get([identityId, segmentId]))
-    if (!existing) throw new Error('recordSegmentRewrapped: no such segment')
-    store.put({ ...copySegmentRecord(existing), epoch, ...(selfGroupId === undefined ? {} : { selfGroupId }) })
-    await transactionDone(transaction)
-  }
 
-  async readDeliveryOutbox(identityId: IdentityId, limit = 32): Promise<VaultDeliveryOutboxRecord[]> {
-    if (!identityId || !Number.isSafeInteger(limit) || limit < 1) throw new TypeError('delivery outbox identity and positive limit are required')
-    const transaction = this.database.transaction(STORES.deliveryOutbox, 'readonly')
-    const completed = transactionDone(transaction)
-    const values = await requestValue<VaultDeliveryOutboxRecord[]>(transaction.objectStore(STORES.deliveryOutbox).getAll())
-    await completed
-    return values
-      .filter(value => value.identityId === identityId)
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.entryId.localeCompare(right.entryId))
-      .slice(0, limit)
-      .map(copyDeliveryOutbox)
-  }
-
-  async removeDeliveryOutbox(identityId: IdentityId, entryId: VaultEventId): Promise<void> {
-    if (!identityId || !entryId) throw new TypeError('delivery outbox identity and entry ID are required')
-    const transaction = this.database.transaction(STORES.deliveryOutbox, 'readwrite')
-    transaction.objectStore(STORES.deliveryOutbox).delete([identityId, entryId])
-    await transactionDone(transaction)
-  }
-
-  async noteDeliveryOutboxAttempt(identityId: IdentityId, entryId: VaultEventId): Promise<void> {
-    if (!identityId || !entryId) throw new TypeError('delivery outbox identity and entry ID are required')
-    const transaction = this.database.transaction(STORES.deliveryOutbox, 'readwrite')
-    const store = transaction.objectStore(STORES.deliveryOutbox)
-    const request = store.get([identityId, entryId])
-    request.onsuccess = () => {
-      const record = request.result as VaultDeliveryOutboxRecord | undefined
-      if (!record) return
-      store.put({ ...copyDeliveryOutbox(record), attempts: record.attempts + 1 })
-    }
-    await transactionDone(transaction)
-  }
-
-  async readDeliveryCursor(identityId: IdentityId, recipientDeviceId: DeviceId): Promise<DeliverySeq> {
-    if (!identityId || !recipientDeviceId) throw new TypeError('delivery cursor identity and device are required')
-    const transaction = this.database.transaction(STORES.deliveryState, 'readonly')
-    const completed = transactionDone(transaction)
-    const record = await requestValue<{ cursor?: DeliverySeq } | undefined>(
-      transaction.objectStore(STORES.deliveryState).get([identityId, recipientDeviceId]),
-    )
-    await completed
-    return record?.cursor ?? '0'
-  }
-
-  /** Advances a restored device to the remote checkpoint's covered
-   * sequence only after records and projection are durable. This is the
-   * only caller in the app (main.ts's `restoreCheckpoint`), reached only on
-   * a SUCCESSFUL checkpoint restore -- so landing here always means
-   * whatever `checkpoint-epoch-unavailable` state this device recorded
-   * earlier is resolved, and is cleared unconditionally alongside the
-   * cursor. */
-  async advanceDeliveryCursor(identityId: IdentityId, recipientDeviceId: DeviceId, cursor: DeliverySeq, checkpointId: string, committedAt: string): Promise<void> {
-    if (!identityId || !recipientDeviceId || !cursor || !checkpointId || Number.isNaN(Date.parse(committedAt))) throw new TypeError('restored delivery cursor is invalid')
-    const transaction = this.database.transaction(STORES.deliveryState, 'readwrite')
-    const store = transaction.objectStore(STORES.deliveryState)
-    const existing = await requestValue<{ cursor?: DeliverySeq } | undefined>(store.get([identityId, recipientDeviceId]))
-    if (existing?.cursor && BigInt(existing.cursor) > BigInt(cursor)) {
-      transaction.abort()
-      throw new TypeError('restored delivery cursor cannot move backwards')
-    }
-    store.put({ identityId, deviceId: recipientDeviceId, cursor, checkpointId, committedAt })
-    await transactionDone(transaction)
-  }
-
-  async readDeliveryAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, limit = 32): Promise<VaultDeliveryAckOutboxRecord[]> {
-    if (!identityId || !recipientDeviceId || !Number.isSafeInteger(limit) || limit < 1) throw new TypeError('delivery ACK outbox identity, device, and positive limit are required')
-    const transaction = this.database.transaction(STORES.deliveryAckOutbox, 'readonly')
-    const completed = transactionDone(transaction)
-    const values = await requestValue<VaultDeliveryAckOutboxRecord[]>(transaction.objectStore(STORES.deliveryAckOutbox).getAll())
-    await completed
-    return values
-      .filter(value => value.identityId === identityId && value.recipientDeviceId === recipientDeviceId)
-      .sort((left, right) => BigInt(left.seq) < BigInt(right.seq) ? -1 : BigInt(left.seq) > BigInt(right.seq) ? 1 : 0)
-      .slice(0, limit)
-      .map(copyDeliveryAckOutbox)
-  }
-
-  async removeDeliveryAckOutbox(identityId: IdentityId, recipientDeviceId: DeviceId, seq: DeliverySeq): Promise<void> {
-    if (!identityId || !recipientDeviceId || !seq) throw new TypeError('delivery ACK outbox identity, device, and sequence are required')
-    const transaction = this.database.transaction(STORES.deliveryAckOutbox, 'readwrite')
-    transaction.objectStore(STORES.deliveryAckOutbox).delete([identityId, recipientDeviceId, seq])
-    await transactionDone(transaction)
-  }
-
-  async noteDeliveryAckOutboxAttempt(identityId: IdentityId, recipientDeviceId: DeviceId, seq: DeliverySeq): Promise<void> {
-    if (!identityId || !recipientDeviceId || !seq) throw new TypeError('delivery ACK outbox identity, device, and sequence are required')
-    const transaction = this.database.transaction(STORES.deliveryAckOutbox, 'readwrite')
-    const store = transaction.objectStore(STORES.deliveryAckOutbox)
-    const request = store.get([identityId, recipientDeviceId, seq])
-    request.onsuccess = () => {
-      const record = request.result as VaultDeliveryAckOutboxRecord | undefined
-      if (!record) return
-      store.put({ ...copyDeliveryAckOutbox(record), attempts: record.attempts + 1 })
-    }
-    await transactionDone(transaction)
-  }
-
-  /** Checkpoint restore commits raw records before rebuilding the projection. */
-  async commitRecoveryArchive(input: { identityId: IdentityId; objects: VaultObjectRecord[]; events: VaultEventRecord[]; keyWraps: SegmentKeyWrapV1[] }): Promise<void> {
-    if (!input.identityId || input.keyWraps.length === 0) throw new TypeError('checkpoint archive commit is invalid')
-    for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('checkpoint archive object identity does not match')
-    for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('checkpoint archive event identity does not match')
-    for (const wrap of input.keyWraps) if (wrap.identityId !== input.identityId) throw new TypeError('checkpoint archive key wrap identity does not match')
-    const transaction = this.database.transaction([STORES.objects, STORES.events, STORES.keyWraps], 'readwrite')
-    for (const object of input.objects) transaction.objectStore(STORES.objects).put(copyObject(object))
-    for (const event of input.events) transaction.objectStore(STORES.events).put(copyEvent(event))
-    for (const wrap of input.keyWraps) transaction.objectStore(STORES.keyWraps).put(copyKeyWrap(wrap))
-    await transactionDone(transaction)
-  }
 
 }
 
@@ -934,6 +661,12 @@ function openDatabase(): Promise<IDBDatabase> {
       if (events && !events.indexNames.contains('by_target_id')) events.createIndex('by_target_id', 'targetIds', { multiEntry: true })
       if (events && !events.indexNames.contains('by_actor_sequence')) events.createIndex('by_actor_sequence', ['identityId', 'actorDeviceId', 'actorSeq'])
       if (event.oldVersion > 0 && event.oldVersion < 14 && request.result.objectStoreNames.contains('vault_crdt_state')) request.result.deleteObjectStore('vault_crdt_state')
+      // v15: SegmentKeys are kept in vault_segments and travel inside Vault
+      // Sync; the Vault-Content-Key wraps and the MIMI-era shared-delivery
+      // stores are gone.
+      for (const retired of ['vault_key_wraps', 'vault_delivery_outbox', 'vault_delivery_receipts', 'vault_delivery_ack_outbox', 'vault_delivery_state']) {
+        if (request.result.objectStoreNames.contains(retired)) request.result.deleteObjectStore(retired)
+      }
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error ?? new Error('failed to open vault database'))
@@ -952,15 +685,10 @@ const KEY_PATHS: Record<StoreName, string | string[]> = {
   [STORES.events]: ['identityId', 'id'],
   [STORES.chunks]: ['identityId', 'objectId', 'chunkIndex'],
   [STORES.segments]: ['identityId', 'segmentId'],
-  [STORES.keyWraps]: ['identityId', 'segmentId', 'recipientEpoch'],
   [STORES.manifests]: 'identityId',
   [STORES.projection]: 'identityId',
   [STORES.jmapState]: 'identityId',
   [STORES.outbox]: ['identityId', 'ingressId'],
-  [STORES.deliveryOutbox]: ['identityId', 'entryId'],
-  [STORES.deliveryReceipts]: ['identityId', 'recipientDeviceId', 'seq'],
-  [STORES.deliveryAckOutbox]: ['identityId', 'recipientDeviceId', 'seq'],
-  [STORES.deliveryState]: ['identityId', 'deviceId'],
   [STORES.transportStatus]: ['identityId', 'outboundEventId'],
   [STORES.didCommOutbox]: ['identityId', 'outboundEventId', 'toDid'],
   [STORES.actorSequences]: ['identityId', 'deviceId'],
@@ -999,12 +727,10 @@ function assertCommit(input: IngressVaultCommit): void {
   }
   for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('object identity does not match')
   for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('event identity does not match')
-  if (input.deliveryOutbox) assertDeliveryOutbox(input.identityId, input.events, input.deliveryOutbox, 'ingress')
 }
 
 function assertLocalCommit(input: LocalVaultMutationCommit): void {
-  if (!input.identityId || input.events.length === 0 || input.deliveryOutbox.identityId !== input.identityId) throw new TypeError('local mutation commit needs matching identity and events')
-  assertDeliveryOutbox(input.identityId, input.events, input.deliveryOutbox, 'local mutation')
+  if (!input.identityId || input.events.length === 0) throw new TypeError('local mutation commit needs matching identity and events')
   for (const value of input.didCommOutbox ?? []) {
     const event = input.events.find(event => event.id === value.outboundEventId)
     if (value.identityId !== input.identityId || !event || !value.emailId || !value.blobId || event.objectRefs[1] !== value.blobId || !value.metadataBlobId || event.objectRefs[0] !== value.metadataBlobId || !value.threadId || !value.messageId || !value.toDid.startsWith('did:') || value.attempts !== 0 || Number.isNaN(Date.parse(value.createdAt))) {
@@ -1013,32 +739,6 @@ function assertLocalCommit(input: LocalVaultMutationCommit): void {
   }
   for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('local mutation object identity does not match')
   for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('local mutation event identity does not match')
-}
-
-function assertDeliveryOutbox(identityId: IdentityId, events: VaultEventRecord[], outbox: VaultDeliveryOutboxRecord, source: string): void {
-  if (outbox.identityId !== identityId || !events.some(event => event.id === outbox.entryId)
-    || !outbox.entryId || outbox.payload.length === 0 || outbox.payloadHash.length === 0
-    || !Number.isSafeInteger(outbox.attempts) || outbox.attempts < 0 || Number.isNaN(Date.parse(outbox.createdAt))) {
-    throw new TypeError(`${source} delivery outbox is invalid`)
-  }
-}
-
-function assertDeliveryCommit(input: VaultDeliveryCommit): void {
-  if (!input.identityId || input.delivery.identityId !== input.identityId || input.receipt.identityId !== input.identityId || input.ackOutbox.identityId !== input.identityId) {
-    throw new TypeError('delivery commit identity does not match')
-  }
-  if (input.receipt.seq !== input.delivery.seq || input.ackOutbox.seq !== input.delivery.seq || input.ackOutbox.ack.seq !== input.delivery.seq || input.ackOutbox.recipientDeviceId !== input.receipt.recipientDeviceId || input.ackOutbox.ack.recipientDeviceId !== input.receipt.recipientDeviceId) {
-    throw new TypeError('delivery commit receipt and ACK do not match')
-  }
-  if (!equalBytes(input.receipt.payloadHash, input.delivery.payloadHash) || !equalBytes(input.ackOutbox.ack.payloadHash, input.delivery.payloadHash)) {
-    throw new TypeError('delivery commit payload hashes do not match')
-  }
-  if (!input.receipt.checkpointId || !input.receipt.recipientDeviceId || input.receipt.payloadHash.length === 0 || !input.receipt.committedAt || input.ackOutbox.attempts !== 0) {
-    throw new TypeError('delivery receipt or ACK outbox is invalid')
-  }
-  for (const object of input.objects) if (object.identityId !== input.identityId) throw new TypeError('delivery object identity does not match')
-  for (const event of input.events) if (event.identityId !== input.identityId) throw new TypeError('delivery event identity does not match')
-  for (const wrap of input.keyWraps) if (wrap.identityId !== input.identityId) throw new TypeError('delivery key wrap identity does not match')
 }
 
 function copyReceipt(value: IngressReceiptRecord): IngressReceiptRecord {
@@ -1056,7 +756,7 @@ function copyObject(value: VaultObjectRecord): VaultObjectRecord {
 }
 
 function copyEvent(value: VaultEventRecord): VaultEventRecord {
-  return { ...value, ...(value.actorCredential ? { actorCredential: value.actorCredential.slice() } : {}), targetIds: [...value.targetIds], objectRefs: [...value.objectRefs], parents: [...value.parents], signature: value.signature.slice() }
+  return { ...value, targetIds: [...value.targetIds], objectRefs: [...value.objectRefs], parents: [...value.parents] }
 }
 
 function copyOutbox(value: IngressAckOutboxRecord): IngressAckOutboxRecord {
@@ -1070,37 +770,16 @@ function copyOutbox(value: IngressAckOutboxRecord): IngressAckOutboxRecord {
   }
 }
 
-function copyDeliveryOutbox(value: VaultDeliveryOutboxRecord): VaultDeliveryOutboxRecord {
-  return { ...value, payload: value.payload.slice(), payloadHash: value.payloadHash.slice() }
-}
-
 function copyDidCommOutbox(value: DidCommTransportOutboxRecord): DidCommTransportOutboxRecord {
   return { ...value }
-}
-
-function copyDeliveryReceipt(value: VaultDeliveryReceiptRecord): VaultDeliveryReceiptRecord {
-  return { ...value, payloadHash: value.payloadHash.slice() }
-}
-
-function copyDeliveryAckOutbox(value: VaultDeliveryAckOutboxRecord): VaultDeliveryAckOutboxRecord {
-  return {
-    ...value,
-    ack: { ...value.ack, payloadHash: value.ack.payloadHash.slice(), signature: value.ack.signature.slice() },
-  }
 }
 
 function assertCanonicalTimestamp(value: string, name: string): void {
   if (!Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) throw new TypeError(`${name} must be a canonical ISO timestamp`)
 }
 
-function assertKeyWrap(value: SegmentKeyWrapV1): void {
-  if (value.version !== 1 || !value.identityId || !value.selfGroupId || !value.segmentId || !value.recipientEpoch) {
-    throw new TypeError('invalid SegmentKeyWrap')
-  }
-}
-
 function assertSegmentRecord(value: VaultSegmentRecord): void {
-  if (!value.identityId || !value.segmentId || !value.selfGroupId || !value.epoch || value.segmentKey.length !== 32) {
+  if (!value.identityId || !value.segmentId || value.segmentKey.length !== 32) {
     throw new TypeError('invalid vault segment record')
   }
   if (Number.isNaN(Date.parse(value.createdAt))) throw new TypeError('vault segment createdAt must be an ISO date string')
@@ -1108,13 +787,4 @@ function assertSegmentRecord(value: VaultSegmentRecord): void {
 
 function copySegmentRecord(value: VaultSegmentRecord): VaultSegmentRecord {
   return { ...value, segmentKey: value.segmentKey.slice() }
-}
-
-function copyKeyWrap(value: SegmentKeyWrapV1): SegmentKeyWrapV1 {
-  return {
-    ...value,
-    nonce: value.nonce.slice(),
-    aad: value.aad.slice(),
-    wrappedSegmentKey: value.wrappedSegmentKey.slice(),
-  }
 }

@@ -1,27 +1,25 @@
 /**
  * did.md OAuth public-client integration.
  *
- * It persists no Wallet controller material.  During Phase B the Wallet
- * additionally certifies a Biset-generated MLS leaf key; that Biset-only
- * private leaf key and Vault secret remain locally AES-wrapped here.
+ * It persists no Wallet controller material. The only Biset-owned secrets
+ * it keeps are the DIDComm device's (its X25519 key and mediator inbox-label
+ * secret), AES-wrapped under a non-extractable browser key.
  */
-import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { decodeMultikey, encodeMultikey } from '../../../protocol/webvh/multikey.ts'
+import { x25519 } from '@noble/curves/ed25519.js'
+import { decodeMultikey } from '../../../protocol/webvh/multikey.ts'
 import { parseWebvhDid } from '../../../protocol/webvh/identifier.ts'
 import { verifyProof, type DataIntegrityProof } from '../../../protocol/webvh/proof.ts'
-import { fetchCurrentLog } from '../webvh/log-io.ts'
-import { resolveByDomain, resolveEntries } from '../../../protocol/webvh/resolver.ts'
-import { decodeMlsDeviceCredential, mlsCredentialFromKeyAuthorization, verifyMlsDeviceCredential, verifyMlsDeviceCredentialRoot, type MlsDeviceCredentialV2 } from '../../mls/device-credential.ts'
-import { base64urlToBytes } from '../../../protocol/canonical.ts'
-import { assertMlsEpoch, type MlsEpoch } from '../../../protocol/ids.ts'
-import { parseVaultGenerationUrn, VAULT_CONTENT_KEY_PURPOSE, vaultGenerationUrn } from '../../store/vault/vault-content-key.ts'
+import { freshFetch } from '../webvh/log-io.ts'
+import { resolveByDomain } from '../../../protocol/webvh/resolver.ts'
 import { deviceKid, deviceKidFragment } from '../../../protocol/didcomm/devicekid.ts'
 import { decodeX25519Multikey, encodeX25519Multikey } from '../../../protocol/didcomm/multikey.ts'
-import { fetchMediatorInfo, requestMediation, updateKeylist } from '../../../protocol/didcomm/mediator-coordinate.ts'
+import { fetchMediatorInfo, updateKeylist } from '../../../protocol/didcomm/mediator-coordinate.ts'
+import { mediatorInbox } from '../../../protocol/didcomm/mediator-device.ts'
+import { registerWithMediator } from '../../didcomm/mediator-sync.ts'
 import { assertMatchesSchema, type JSONSchema } from './json-schema.ts'
 import capabilitySchema from './schemas/biset-messenger-capability.schema.json' with { type: 'json' }
-import { generatePeerIdentity } from '../../../protocol/didcomm/peer.ts'
 import { isOnionUrl } from '../../didcomm/mediator-endpoints.ts'
+import { endpointsAreRemoved, serviceIsPublished } from './did-document-edit-check.ts'
 import {
   clearDidMdRegistration,
   clearDidMdDeviceSession,
@@ -33,14 +31,13 @@ import {
   saveDidMdPendingAuthorization,
   saveDidMdRegistration,
   sealDidMdBisetDidCommDeviceMaterial,
-  sealDidMdBisetDeviceMaterial,
   openDidMdBisetDidCommDeviceMaterial,
-  openDidMdBisetDeviceMaterial,
   type DidMdBisetDidCommDeviceMaterial,
   type DidMdDeviceSession,
   type DidMdPendingAuthorization,
   type DidMdRegistration,
   type DidCoreDocumentEdit,
+  type DidCoreEndpointRemoval,
 } from './did-md-store.ts'
 
 import { DEFAULT_WALLET, type WalletDirectoryEntry } from './wallet-directory.ts'
@@ -55,13 +52,6 @@ import { DEFAULT_WALLET, type WalletDirectoryEntry } from './wallet-directory.ts
 let selectedWallet: WalletDirectoryEntry = DEFAULT_WALLET
 export function selectWallet(entry: WalletDirectoryEntry): void { selectedWallet = entry }
 export function currentWallet(): WalletDirectoryEntry { return selectedWallet }
-// The did.md-operated mail relay is Biset's own infrastructure choice
-// (see MAIL_RELAY_CAPABILITY_DETAIL below), independent of which wallet
-// authenticates the user -- it keeps pointing at did.md specifically
-// rather than following selectedWallet. /v1/oauth/resource, by contrast,
-// IS part of the OAuth server's own endpoint set and does follow
-// selectedWallet (see callDidMdWalletTestResource).
-const DID_MD_API_ORIGIN = 'https://api.did.md'
 const CALLBACK_PATH = '/wallet/callback'
 const REQUESTED_SCOPES = ['openid', 'profile', 'biset:login', 'biset:device', 'biset:routing', 'biset:messaging', 'biset:vault']
 // Biset's own capability document type (see did.md's
@@ -86,28 +76,11 @@ const CAPABILITY_TYPE = 'biset.md/MessengerCapability'
 const RP_DID = 'did:webvh:QmaQdf3VFoXtk7WjfP2rhmKAvMNinLh4qU1bjZ4mPDzVr6:t.biset.md'
 const RP_SIGNER_URL = 'https://t.biset.md/api/rp-signer/sign'
 const DID_DOCUMENT_EDIT_DETAIL = 'urn:did-core:document-edit:v1'
-const KEY_AUTHORIZATION_DETAIL = 'urn:did.md:key-authorization:v1'
-const DERIVED_SECRET_DETAIL = 'urn:did.md:derived-secret:v1'
 // The did.md-operated SMTP relay is a separate process, but shares did.md's
 // authority service.  This detail is Root-signed as part of the ordinary
 // Wallet device capability; no controller/update key reaches Biset.
 const MAIL_RELAY_CAPABILITY_DETAIL = 'urn:biset:mail-relay:v1'
 const DID_MD_MAIL_RELAY_ORIGIN = 'https://api.did.md'
-// Identity-wide (Root-derived, never rotating) secret every device of this
-// Wallet identity requests and obtains identically, via the same generic
-// derived-secret grant VCK uses. Backs relationship.ts's
-// `deriveRelationshipPeerIdentity` so two different devices independently
-// contacting the same external counterparty converge on one relationship
-// peer instead of racing to two irreconcilable ContactKeyV1 records (see
-// peer.ts's own note; found live, 2026-09-15). No `context` -- unlike VCK
-// there is no generation to distinguish, so every request uses ''.
-const RELATIONSHIP_SECRET_PURPOSE = 'biset:relationship-front-door:v1'
-// The Wallet-derived (never DID-document-published) MIMI Vault room
-// locator: HKDF(Root private key, this purpose + the provider URL as
-// context). See client/did-webvh.ts's deriveWalletSecret in the did.md
-// repo -- only the Wallet holds the Root key, so only devices signed in
-// through the same Wallet mnemonic can ever reproduce this value; an
-// outside observer who only knows the (public) DID cannot.
 export const DID_MD_JUST_CONNECTED_KEY = 'biset-did-md-just-connected-v1'
 const encoder = new TextEncoder()
 
@@ -131,7 +104,6 @@ type DidDocumentServiceTemplate = {
 
 const defaultDidDocumentServices: DidDocumentServiceTemplate[] = [
   { purpose: 'didcomm', id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: '$mediatorUrl', accept: ['didcomm/v2'], routingKeys: ['$routingKid'] }, previousIds: ['#didcomm-biset'] },
-  { id: '#biset-vault', type: 'BisetVault', serviceEndpoint: '$vaultGeneration' },
 ]
 
 function validServiceEndpointEntry(value: unknown): boolean {
@@ -176,6 +148,16 @@ function materializeServiceEndpoint(value: string | Record<string, unknown> | Ar
     ? materializeServiceEndpoint(item as string | Record<string, unknown>, substitutions)
     : item
   return result
+}
+
+/** The Tor opt-in (Mediator card's "Enable Tor"): the DID Document then
+ * publishes the mediator's clearnet entrance AND its onion entrance as a set
+ * for the SAME mediator (PLAN-tor.md D-4). Without an onion URL the endpoint
+ * is returned unchanged -- the automatic login/enrollment paths never pass
+ * one, so they keep publishing the clearnet-only single map (I-5). */
+export function didCommEndpointWithOnion<T extends string | Record<string, unknown> | Array<string | Record<string, unknown>>>(endpoint: T, onionUrl?: string): T | Array<Record<string, unknown>> {
+  if (!onionUrl || !endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) return endpoint
+  return [endpoint as Record<string, unknown>, { ...endpoint as Record<string, unknown>, uri: onionUrl }]
 }
 
 type FileWalletPopup = {
@@ -253,34 +235,23 @@ export type DidMdActiveSession = {
   clientId: string
   deviceJkt: string
   capabilityExpiresAt: string
-  // PLAN7: the pure SIOPv2/OID4VP flow has no DPoP-bound access token or
-  // continuation nonce (there is no /v1/oauth/resource round trip to bind
-  // one to) -- present only for legacy sessions restored from before this
-  // change. Nothing reads either field: callDidMdWalletTestResource is the
-  // only consumer and is itself unused dead code (see its own comment).
-  accessToken?: string
-  nonce?: string
   scope: string[]
   deviceKid?: string
   didCommKid?: string
 }
 
-export type DidMdBisetDevice = {
+/** This browser as an author of the identity's Vault. */
+export type DidMdVaultDevice = {
   did: string
-  /** Public only.  This is required to verify locally persisted Biset
-   * capability records; it is never a did.md controller secret. */
-  rootPublicKey: Uint8Array
-  credential: MlsDeviceCredentialV2
-  signaturePrivateKey: Uint8Array
+  /** `actorDeviceId` on the Vault events this browser writes. */
+  deviceId: string
 }
 
 export type DidMdBisetDidCommDevice = {
   did: string
   xKid: string
   x25519PrivateKey: Uint8Array
-  mediatorControlDid: string
-  mediatorControlKid: string
-  mediatorControlPrivateKey: Uint8Array
+  mediatorDeviceSecret: Uint8Array
   mediatorUrl: string
   routingKid: string
   /** This mediator's Tor entrance (PLAN-tor.md D-4), if one was published
@@ -334,9 +305,6 @@ function asObject(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-function exactKeys(value: Record<string, unknown>, keys: string[], label: string): void {
-  if (Object.keys(value).sort().join(',') !== [...keys].sort().join(',')) throw new Error(`${label} has unexpected fields`)
-}
 
 // PLAN4: the hosting-domain suffix a handle must end with is a property of
 // the currently selected wallet, not a fixed ".did.md" assumption -- see
@@ -349,10 +317,6 @@ function didMdHandle(value: string): string {
   if (!new RegExp(`^[a-z0-9](?:[a-z0-9-]{0,61})?${escapedSuffix}$`).test(handle)) throw new Error(`Enter a ${suffix.replace(/^\./, '')} hostname, for example test1${suffix}`)
   return handle
 }
-
-/** Validates and canonicalizes the configured MIMI Self/Vault provider URL --
- * used both to build the derived-secret request's `context` (so the room id
- * is bound to a specific provider) and to compute the resulting room URI. */
 
 function sameDocumentEdit(value: unknown, expected: DidCoreDocumentEdit): void {
   if (JSON.stringify(value) !== JSON.stringify(expected)) throw new Error('did.md returned a DID document edit different from the one this browser requested')
@@ -385,23 +349,19 @@ async function bisetMediatorFor(values: readonly string[], onionValues: readonly
 }
 
 /** Generates and seals the DIDComm device's own material -- none of it
- * (the X25519 leaf, the did:peer mediator-control identity) is bound to
+ * (the X25519 leaf, the mediator inbox-label secret) is bound to
  * this identity's did:webvh, so none of it needs the DID known yet. Only
  * `xKid` (did:webvh + fragment) does; see withDidCommXKid. */
 async function prepareBisetDidCommDevice(mediator: DidMdBisetMediator): Promise<DidMdBisetDidCommDeviceMaterial & { mediatorUrl: string; routingKid: string; mediatorOnionUrl?: string }> {
   const x25519PrivateKey = x25519.utils.randomSecretKey()
   const x25519PublicKey = x25519.getPublicKey(x25519PrivateKey)
-  const control = generatePeerIdentity()
+  const mediatorDeviceSecret = crypto.getRandomValues(new Uint8Array(32))
   try {
-    const sealed = await sealDidMdBisetDidCommDeviceMaterial(
-      x25519PublicKey,
-      { did: control.did, kid: control.xKid, publicKey: control.xPub },
-      { x25519PrivateKey, mediatorControlPrivateKey: control.xPriv },
-    )
+    const sealed = await sealDidMdBisetDidCommDeviceMaterial(x25519PublicKey, { x25519PrivateKey, mediatorDeviceSecret })
     return { ...sealed, mediatorUrl: mediator.mediatorUrl, routingKid: mediator.routingKid, ...(mediator.mediatorOnionUrl ? { mediatorOnionUrl: mediator.mediatorOnionUrl } : {}) }
   } finally {
     x25519PrivateKey.fill(0)
-    control.xPriv.fill(0); control.edPriv.fill(0)
+    mediatorDeviceSecret.fill(0)
   }
 }
 
@@ -417,20 +377,21 @@ async function newBisetDidCommDevice(did: string, mediator: DidMdBisetMediator):
   return withDidCommXKid(await prepareBisetDidCommDevice(mediator), did)
 }
 
-function buildDocumentEdit(did: string, config: WalletConfiguration, device?: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']>, remove: string[] = [], vaultGeneration: MlsEpoch = '0'): DidCoreDocumentEdit {
-  assertMlsEpoch(vaultGeneration)
+function buildDocumentEdit(did: string, config: WalletConfiguration, device?: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']>, remove: string[] = [], removeEndpoints: DidCoreEndpointRemoval[] = []): DidCoreDocumentEdit {
   const didcomm = configuredService(config, 'didcomm')
   const services = config.didDocumentServices
     .filter(service => service.purpose !== 'didcomm' || device)
     .map(service => ({
       id: service.id,
       type: service.type,
-      serviceEndpoint: materializeServiceEndpoint(service.serviceEndpoint, {
+      // The DIDComm service is shared by every device of this identity (and carries the
+      // Tor entrance once the user opted in): each device adds ITS endpoints to it and
+      // never replaces what another one published.
+      ...(service.purpose === 'didcomm' ? { endpointMode: 'merge' as const } : {}),
+      serviceEndpoint: ((endpoint) => service.purpose === 'didcomm' ? didCommEndpointWithOnion(endpoint, device?.mediatorOnionUrl) : endpoint)(materializeServiceEndpoint(service.serviceEndpoint, {
         '$mediatorUrl': device?.mediatorUrl ?? '',
-        '$mediatorOnionUrl': device?.mediatorOnionUrl ?? '',
         '$routingKid': device?.routingKid ?? '',
-        '$vaultGeneration': vaultGenerationUrn(vaultGeneration),
-      }),
+      })),
     }))
   return {
     type: DID_DOCUMENT_EDIT_DETAIL,
@@ -438,28 +399,19 @@ function buildDocumentEdit(did: string, config: WalletConfiguration, device?: No
     verificationMethods: device ? [{ id: deviceKidFragment(device.x25519PublicKey), type: 'Multikey', controller: did, publicKeyMultibase: encodeX25519Multikey(device.x25519PublicKey) }] : [],
     serviceKeyBindings: device ? [{ serviceId: didcomm.id, keyIds: [deviceKidFragment(device.x25519PublicKey)] }] : [],
     remove,
+    ...(removeEndpoints.length ? { removeEndpoints } : {}),
   }
 }
 
-/** Reads the signed public generation.  A missing service is deliberately
- * treated as uninitialized: the next Wallet login publishes generation 0. */
-export function vaultGenerationFromDidDocument(did: string, document: { service?: Array<{ id?: string; serviceEndpoint?: unknown }> }): MlsEpoch | undefined {
-  const expected = `${did}#biset-vault`
-  const service = document.service?.find(candidate => candidate.id === '#biset-vault' || candidate.id === expected)
-  if (!service) return undefined
-  if (typeof service.serviceEndpoint !== 'string') throw new Error('Biset Vault service endpoint is invalid')
-  return parseVaultGenerationUrn(service.serviceEndpoint)
-}
-
-async function setMediatorRegistration(_did: string, device: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']> & { xKid: string }, action: 'add' | 'remove'): Promise<void> {
+async function setMediatorRegistration(did: string, device: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']> & { xKid: string }, action: 'add' | 'remove'): Promise<void> {
   const material = await openDidMdBisetDidCommDeviceMaterial(device)
   try {
     const mediator = await fetchMediatorInfo(device.mediatorUrl)
     if (mediator.xKid !== device.routingKid) throw new Error('Mediator routing key changed during DID document edit')
-    const own = { did: device.mediatorControlDid, xKid: device.mediatorControlKid, xPriv: material.mediatorControlPrivateKey }
-    if (action === 'add') await requestMediation(mediator, own)
-    await updateKeylist(mediator, own, device.xKid, action)
-  } finally { material.x25519PrivateKey.fill(0); material.mediatorControlPrivateKey.fill(0) }
+    const inbox = mediatorInbox({ did, xKid: device.xKid, xPriv: material.x25519PrivateKey }, material.mediatorDeviceSecret)
+    if (action === 'remove') await updateKeylist(mediator, inbox, 'remove')
+    else await registerWithMediator(device.mediatorUrl, inbox)
+  } finally { material.x25519PrivateKey.fill(0); material.mediatorDeviceSecret.fill(0) }
 }
 
 async function rollbackPendingMediator(pending: DidMdPendingAuthorization): Promise<void> {
@@ -605,84 +557,14 @@ async function rootAuthority(handle: string, document: Awaited<ReturnType<typeof
   return { did: document.id, verificationMethod, rootPublicKey: decodeMultikey(method.publicKeyMultibase) }
 }
 
-async function validateBisetMlsCredential(wire: string, pending: ResolvedPendingAuthorization): Promise<MlsDeviceCredentialV2> {
-  let credential: MlsDeviceCredentialV2
-  try {
-    const input = asObject(JSON.parse(new TextDecoder().decode(base64urlToBytes(wire))), 'key authorization credential')
-    exactKeys(input, ['type', 'version', 'issuer', 'audience', 'subject', 'generation', 'publicKey', 'purposes', 'issuedAt', 'expiresAt', 'rootSignature', 'signSignature'], 'key authorization credential')
-    const key = asObject(input.publicKey, 'authorized public key'); exactKeys(key, ['type', 'publicKeyMultibase'], 'authorized public key')
-    if (input.type !== 'did.md/KeyAuthorizationCredential' || input.version !== 1 || input.issuer !== pending.did || input.audience !== pending.clientId
-      || input.subject !== pending.keyAuthorizationSubject || key.type !== 'Multikey' || typeof key.publicKeyMultibase !== 'string'
-      || !Array.isArray(input.purposes) || input.purposes.length !== 1 || input.purposes[0] !== 'signing'
-      || typeof input.generation !== 'string' || typeof input.issuedAt !== 'string' || typeof input.expiresAt !== 'string'
-      || typeof input.rootSignature !== 'string' || typeof input.signSignature !== 'string') throw new Error()
-    credential = mlsCredentialFromKeyAuthorization({ issuer: input.issuer, audience: input.audience, subject: input.subject,
-      generation: input.generation, signaturePublicKey: decodeMultikey(key.publicKeyMultibase), issuedAt: input.issuedAt,
-      expiresAt: input.expiresAt, rootSignature: base64urlToBytes(input.rootSignature), signSignature: base64urlToBytes(input.signSignature) })
-  } catch { throw new Error('did.md returned an invalid key authorization credential') }
-  if (credential.identityId !== pending.did || !credential.signaturePublicKey.every((byte, index) => byte === pending.bisetDevice.signaturePublicKey[index])) {
-    throw new Error('did.md returned a Biset MLS credential for another device')
-  }
-  const current = await fetchCurrentLog(pending.did)
-  if (!resolveEntries(pending.did, current.entries)) throw new Error('The published did:webvh log is no longer valid')
-  const currentSign = current.last.parameters.updateKeys
-  // Verifying against the CURRENT Sign key (not requiring
-  // credential.generation to equal the CURRENT versionId) is deliberate:
-  // the DID document is shared across every one of this identity's
-  // devices, and any one of them editing it (enabling messaging, rotating
-  // the Vault key, another device simply logging in) advances versionId
-  // for all of them. A generation-must-match-current check therefore
-  // session-invalidated every OTHER device on the very next page load --
-  // "did.md returned an MLS credential not authorized by the current DID
-  // generation" (found live, 2026-09-15) -- even though this credential's
-  // signSignature still verifies fine under the Sign key that is still
-  // current. A device's credential only needs re-authorization once the
-  // Sign key itself actually rotates, which the signature check below
-  // already enforces on its own.
-  if (!currentSign || currentSign.length !== 1 || !verifyMlsDeviceCredential(credential, decodeMultikey(currentSign[0]!)) || !verifyMlsDeviceCredentialRoot(credential, pending.rootPublicKey)) {
-    throw new Error('did.md returned an MLS credential not authorized by the current DID generation — reconnect did.md Wallet')
-  }
-  return credential
-}
-
-function capabilityDetails(value: unknown, pending: ResolvedPendingAuthorization): { credentialWire: string; didCommDevice?: NonNullable<ResolvedPendingAuthorization['bisetDidCommDevice']>; vaultContentKeys: Record<MlsEpoch, Uint8Array>; relationshipSecret?: Uint8Array } {
+function capabilityDetails(value: unknown, pending: ResolvedPendingAuthorization): { didCommDevice?: NonNullable<ResolvedPendingAuthorization['bisetDidCommDevice']> } {
   if (!Array.isArray(value)) throw new Error('did.md did not return Biset authorization details')
-  const matches = value.filter(detail => {
-    try { return asObject(detail, 'authorization detail').type === KEY_AUTHORIZATION_DETAIL } catch { return false }
-  })
-  if (matches.length !== 1) throw new Error('did.md did not return one key authorization detail')
-  const detail = asObject(matches[0], 'key authorization detail')
-  exactKeys(detail, ['type', 'credential'], 'key authorization detail')
-  if (typeof detail.credential !== 'string') throw new Error('did.md returned an invalid key authorization detail')
   const edits = (value as unknown[]).filter(item => { try { return asObject(item, 'authorization detail').type === DID_DOCUMENT_EDIT_DETAIL } catch { return false } })
   if (pending.documentEdit) {
     if (edits.length !== 1) throw new Error('did.md did not return one DID document edit detail')
     sameDocumentEdit(edits[0], pending.documentEdit)
   } else if (edits.length !== 0) throw new Error('did.md returned an unexpected DID document edit detail')
-  const derivedMatches = (value as unknown[]).filter(item => { try { return asObject(item, 'authorization detail').type === DERIVED_SECRET_DETAIL } catch { return false } })
-  const vaultContentKeys: Record<MlsEpoch, Uint8Array> = {}
-  let relationshipSecret: Uint8Array | undefined
-  for (const request of pending.vaultContentKeyDerivations ?? []) {
-    const match = derivedMatches.find(item => { const detail = asObject(item, 'derived secret detail'); return detail.purpose === request.purpose && detail.context === request.context })
-    if (!match) throw new Error(`did.md did not return derived secret ${request.purpose}`)
-    const derived = asObject(match, 'derived secret detail')
-    // did.md only ever includes `context` in its echo when the request had
-    // one (client/app.ts's own derivedSecretDetails); a purpose with no
-    // generation concept (RELATIONSHIP_SECRET_PURPOSE) omits it entirely.
-    exactKeys(derived, request.context === undefined ? ['type', 'purpose', 'value'] : ['type', 'purpose', 'context', 'value'], 'derived secret detail')
-    if (derived.purpose !== request.purpose || derived.context !== request.context || typeof derived.value !== 'string') throw new Error('did.md returned an invalid derived secret')
-    const key = base64urlToBytes(derived.value)
-    if (key.length !== 32) throw new Error('did.md returned an invalid derived secret')
-    if (request.purpose === VAULT_CONTENT_KEY_PURPOSE) {
-      assertMlsEpoch(request.context)
-      vaultContentKeys[request.context] = key
-    } else if (request.purpose === RELATIONSHIP_SECRET_PURPOSE) {
-      relationshipSecret = key
-    } else {
-      throw new Error(`did.md returned an unexpected derived secret purpose ${request.purpose}`)
-    }
-  }
-  return { credentialWire: detail.credential, vaultContentKeys, ...(relationshipSecret ? { relationshipSecret } : {}), ...(pending.bisetDidCommDevice ? { didCommDevice: pending.bisetDidCommDevice } : {}) }
+  return { ...(pending.bisetDidCommDevice ? { didCommDevice: pending.bisetDidCommDevice } : {}) }
 }
 
 type ResolvedPendingAuthorization = DidMdPendingAuthorization & {
@@ -748,9 +630,7 @@ async function capabilityFromResponse(value: unknown, pending: ResolvedPendingAu
   const { proof: _vcProof, ...unsignedVc } = vc
   if (proof.proofPurpose !== 'authentication' || proof.verificationMethod !== pending.verificationMethod || !verifyProof(unsignedVc, proof, pending.rootPublicKey)) throw new Error('did.md device capability proof is invalid')
   const detail = capabilityDetails(subject.authorizationDetails, pending)
-  const credentialWire = detail.credentialWire
-  const credential = await validateBisetMlsCredential(credentialWire, pending)
-  return { capability: vc, expiresAt: subject.expiresAt as string, scope: subject.scope as string[], credential, credentialWire, didCommDevice: detail.didCommDevice, vaultContentKeys: detail.vaultContentKeys, relationshipSecret: detail.relationshipSecret }
+  return { capability: vc, expiresAt: subject.expiresAt as string, scope: subject.scope as string[], didCommDevice: detail.didCommDevice }
 }
 
 // PLAN7 (~/did.md/PLAN7-pure-siopv2-direct-delivery.md): did.md delivers
@@ -783,39 +663,21 @@ async function sessionFromVpToken(vpToken: unknown, did: string, pending: DidMdP
 async function sessionFromCapabilityValue(value: unknown, did: string, pending: DidMdPendingAuthorization): Promise<DidMdActiveSession> {
   const resolvedPending = await resolvedPendingAuthorization(pending, did)
   const capability = await capabilityFromResponse(value, resolvedPending)
-  const resolved = await resolveByDomain(parseWebvhDid(resolvedPending.did).domain, undefined, { cache: 'no-store' })
+  const resolved = await resolveByDomain(parseWebvhDid(resolvedPending.did).domain, undefined, undefined, freshFetch())
   if (!resolved) throw new Error('Could not resolve the DID document after Wallet approval')
-  for (const service of resolvedPending.documentEdit?.services ?? []) if (JSON.stringify(resolved.service?.find(value => value.id === service.id)) !== JSON.stringify(service)) throw new Error(`Wallet did not publish requested service ${service.id}`)
+  for (const service of resolvedPending.documentEdit?.services ?? []) if (!serviceIsPublished(resolved.service?.find(value => value.id === service.id), service)) throw new Error(`Wallet did not publish requested service ${service.id}`)
+  for (const removal of resolvedPending.documentEdit?.removeEndpoints ?? []) if (!endpointsAreRemoved(resolved.service?.find(value => value.id === removal.serviceId), removal)) throw new Error(`Wallet did not remove the requested endpoints of ${removal.serviceId}`)
   for (const method of resolvedPending.documentEdit?.verificationMethods ?? []) if (JSON.stringify(resolved.verificationMethod?.find(value => value.id === method.id)) !== JSON.stringify(method)) throw new Error(`Wallet did not publish requested verification method ${method.id}`)
   for (const id of resolvedPending.documentEdit?.remove ?? []) if (resolved.service?.some(value => value.id === id) || resolved.verificationMethod?.some(value => value.id === id)) throw new Error(`Wallet did not remove ${id}`)
   const previousSession = await readDidMdDeviceSession()
-  const oldMaterial = await openDidMdBisetDeviceMaterial(resolvedPending.bisetDevice)
-  const oldKeys = oldMaterial.vaultContentKeys ?? {}
-  const vaultContentKeys = { ...oldKeys, ...capability.vaultContentKeys }
-  // Deterministic and identity-wide -- did.md returns the same value every
-  // time it's requested -- so once known it never needs replacing; keep
-  // whatever this device already sealed if this particular round trip
-  // didn't ask for it (older sealed material, before this existed, has none
-  // yet either way).
-  const relationshipSecret = capability.relationshipSecret ?? oldMaterial.relationshipSecret
-  const sealedBisetDevice = await sealDidMdBisetDeviceMaterial(resolvedPending.bisetDevice.signaturePublicKey, { signaturePrivateKey: oldMaterial.signaturePrivateKey, vaultContentKeys, relationshipSecret })
-  oldMaterial.signaturePrivateKey.fill(0)
-  for (const key of Object.values(oldKeys)) key.fill(0)
-  oldMaterial.relationshipSecret?.fill(0)
-  const vaultGeneration = vaultGenerationFromDidDocument(resolvedPending.did, resolved) ?? '0'
-  if (!vaultContentKeys[vaultGeneration]) throw new Error(`did.md did not return current Vault Content Key generation ${vaultGeneration}`)
   const session: DidMdDeviceSession = {
     v: 2, issuer: resolvedPending.issuer, clientId: resolvedPending.clientId, did: resolvedPending.did, handle: resolvedPending.handle,
     verificationMethod: resolvedPending.verificationMethod, rootPublicKey: resolvedPending.rootPublicKey, deviceJkt: resolvedPending.deviceJkt,
     privateKey: resolvedPending.privateKey, publicJwk: resolvedPending.publicJwk, capability: capability.capability, capabilityExpiresAt: capability.expiresAt,
-    bisetDevice: { ...sealedBisetDevice, credentialWire: capability.credentialWire, keyAuthorizationSubject: resolvedPending.keyAuthorizationSubject },
-    vaultGeneration,
+    vaultDeviceId: resolvedPending.vaultDeviceId,
     ...(() => {
-      const rotation = resolvedPending.vaultKeyRotation ?? previousSession?.vaultKeyRotation
-      if (!rotation) return {}
-      return { vaultKeyRotation: vaultGeneration === rotation.toGeneration
-        ? { ...rotation, phase: 'rewrap' as const }
-        : rotation }
+      const removal = resolvedPending.deviceRemoval ?? previousSession?.deviceRemoval
+      return removal ? { deviceRemoval: removal } : {}
     })(),
     ...(capability.didCommDevice ? { bisetDidCommDevice: capability.didCommDevice } : {}),
   }
@@ -830,7 +692,7 @@ async function sessionFromCapabilityValue(value: unknown, did: string, pending: 
     try { await setMediatorRegistration(resolvedPending.did, resolvedPending.previousBisetDidCommDevice, 'remove') }
     catch (error) { console.warn('[mediator edit cleanup]', error instanceof Error ? error.message : error) }
   }
-  return { did: session.did, handle: session.handle, clientId: session.clientId, deviceJkt: session.deviceJkt, capabilityExpiresAt: session.capabilityExpiresAt, scope: capability.scope, deviceKid: capability.credential.deviceKid, ...(capability.didCommDevice ? { didCommKid: capability.didCommDevice.xKid } : {}) }
+  return { did: session.did, handle: session.handle, clientId: session.clientId, deviceJkt: session.deviceJkt, capabilityExpiresAt: session.capabilityExpiresAt, scope: capability.scope, deviceKid: resolvedPending.vaultDeviceId, ...(capability.didCommDevice ? { didCommKid: capability.didCommDevice.xKid } : {}) }
 }
 
 function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthorization {
@@ -845,14 +707,8 @@ function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthori
     v: 2, issuer: session.issuer, clientId: session.clientId, state: '', codeVerifier: '', did: session.did,
     handle: session.handle, verificationMethod: session.verificationMethod, rootPublicKey: session.rootPublicKey,
     deviceJkt: session.deviceJkt, privateKey: session.privateKey, publicJwk: session.publicJwk,
-    bisetDevice: session.bisetDevice ?? (() => { throw new Error('This did.md Wallet session predates Biset device enrollment; connect it again.') })(),
+    vaultDeviceId: session.vaultDeviceId ?? (() => { throw new Error('This did.md Wallet session predates this Biset version; connect it again.') })(),
     documentEdit: storedEdit as DidCoreDocumentEdit ?? { type: DID_DOCUMENT_EDIT_DETAIL, services: [], verificationMethods: [], remove: [] },
-    requestMlsCredential: true,
-    keyAuthorizationSubject: session.bisetDevice?.keyAuthorizationSubject ?? `urn:uuid:${crypto.randomUUID()}`,
-    vaultContentKeyDerivations: [
-      { purpose: VAULT_CONTENT_KEY_PURPOSE, context: session.vaultGeneration ?? '0' },
-      { purpose: RELATIONSHIP_SECRET_PURPOSE },
-    ],
     ...(session.bisetDidCommDevice ? { bisetDidCommDevice: session.bisetDidCommDevice } : {}),
     createdAt: '',
   }
@@ -863,9 +719,6 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
   const request = new URL(client.authorizationEndpoint)
   const authorizationDetails = JSON.stringify([
     ...(pending.documentEdit ? [pending.documentEdit] : []),
-    { type: KEY_AUTHORIZATION_DETAIL, subject: pending.keyAuthorizationSubject,
-      publicKey: { type: 'Multikey', publicKeyMultibase: encodeMultikey(pending.bisetDevice.signaturePublicKey) }, purposes: ['signing'] },
-    ...(pending.vaultContentKeyDerivations ?? []).map(request => ({ type: DERIVED_SECRET_DETAIL, purpose: request.purpose, context: request.context })),
     { type: MAIL_RELAY_CAPABILITY_DETAIL, relayOrigin: DID_MD_MAIL_RELAY_ORIGIN,
       // The Wallet chooses an alias during first authorization, so Biset
       // cannot know the concrete address yet. did.md materializes this
@@ -953,45 +806,40 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
 }
 
 /**
- * Rotates the VCK and public Vault membership in one Wallet approval. The
- * callback stores both generations before boot rewraps local SegmentKeys;
- * `vaultKeyRotation.phase === "rewrap"` is retained until that local durable
- * work succeeds, making a reload idempotently resume it without asking the
- * user to authorize a second time.
+ * Removes every other device of this identity in one Wallet approval: the
+ * DID document edit drops their keyAgreement keys, which is the one place
+ * the rest of the system learns who this identity's devices are (a mediator
+ * revokes their inboxes on the next log it is handed; a sender stops
+ * encrypting to them). The rest -- a fresh relationship seed, rotating every
+ * relationship to it -- runs on the next boot from the `deviceRemoval`
+ * marker this carries into the session, and is idempotent until done.
  */
-export async function beginDidMdVaultKeyRotation(configured: DidMdWalletConfiguration = {}): Promise<never> {
+export async function beginDidMdRemoveOtherDevices(configured: DidMdWalletConfiguration = {}): Promise<never> {
   const config = walletConfiguration(configured)
   const session = await readDidMdDeviceSession()
-  if (!session?.bisetDevice || !session.bisetDidCommDevice || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now() || !session.vaultGeneration) {
-    throw new Error('Reconnect did.md Wallet before updating the Vault key')
+  if (!session?.vaultDeviceId || !session.bisetDidCommDevice || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
+    throw new Error('Reconnect did.md Wallet before removing other devices')
   }
-  assertMlsEpoch(session.vaultGeneration)
-  const existing = session.vaultKeyRotation
-  if (existing && existing.fromGeneration !== session.vaultGeneration) throw new Error('Finish the current Vault key update before starting another')
-  const next = existing ? BigInt(existing.toGeneration) : BigInt(session.vaultGeneration) + 1n
-  if (next > 18_446_744_073_709_551_615n) throw new RangeError('Vault Content Key generation is exhausted')
-  if (next !== BigInt(session.vaultGeneration) + 1n) throw new Error('Stored Vault key rotation generations are invalid')
   const resolved = await resolveByDomain(parseWebvhDid(session.did).domain, undefined, { cache: 'no-store' })
-  if (!resolved || resolved.id !== session.did) throw new Error('Could not resolve the current DID document before updating the Vault key')
+  if (!resolved || resolved.id !== session.did) throw new Error('Could not resolve the current DID document before removing other devices')
   const ownKid = session.bisetDidCommDevice.xKid
+  const removedKids: string[] = []
   const remove = (resolved.verificationMethod ?? []).flatMap(method => {
     try {
       const key = decodeX25519Multikey(method.publicKeyMultibase)
       const fragment = method.id.startsWith('#') ? method.id : method.id.slice(session.did.length)
       const kid = `${session.did}${fragment}`
-      return fragment === deviceKidFragment(key) && kid !== ownKid ? [method.id] : []
+      if (fragment !== deviceKidFragment(key) || kid === ownKid) return []
+      removedKids.push(kid)
+      return [method.id]
     } catch { return [] }
   })
+  if (remove.length === 0) throw new Error('There are no other devices to remove')
   const client = await registration(config.walletDeviceName)
   const pending = pendingFromSession(session)
   pending.state = randomBase64url(32); pending.codeVerifier = randomBase64url(48); pending.createdAt = new Date().toISOString()
-  pending.documentEdit = buildDocumentEdit(session.did, config, session.bisetDidCommDevice, remove, next.toString())
-  pending.vaultContentKeyDerivations = [
-    { purpose: VAULT_CONTENT_KEY_PURPOSE, context: session.vaultGeneration },
-    { purpose: VAULT_CONTENT_KEY_PURPOSE, context: next.toString() },
-    { purpose: RELATIONSHIP_SECRET_PURPOSE },
-  ]
-  pending.vaultKeyRotation = { fromGeneration: session.vaultGeneration, toGeneration: next.toString(), phase: 'publishing' }
+  pending.documentEdit = buildDocumentEdit(session.did, config, session.bisetDidCommDevice, remove)
+  pending.deviceRemoval = { removedKids, requestedAt: new Date().toISOString() }
   return redirectToWallet(client, pending)
 }
 
@@ -1005,7 +853,7 @@ export async function beginDidMdVaultKeyRotation(configured: DidMdWalletConfigur
 /** The only round trip needed to sign in and, when a mediator is configured
  * and reachable, publish a DIDComm device. No DID is resolved up front
  * (no login_hint). The DIDComm device's own
- * material -- the X25519 leaf, its did:peer mediator-control identity, even
+ * material -- the X25519 leaf, its mediator inbox-label secret, even
  * the document edit's verification method (a fragment-only id; its
  * `controller` is ignored and overwritten by Wallet regardless) -- turns
  * out not to need the DID either, only `xKid` (did:webvh + fragment) does.
@@ -1018,33 +866,22 @@ export async function beginDidMdVaultKeyRotation(configured: DidMdWalletConfigur
  * just means no DIDComm device this round -- it must never block sign-in
  * itself. beginDidMdWalletFinalizeEnrollment remains for that case, and for
  * enabling messaging after the fact. */
-export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = [], openedPopup?: Window, configured: DidMdWalletConfiguration = {}, mediatorOnionUrls: readonly string[] = []): Promise<never> {
+export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = [], openedPopup?: Window, configured: DidMdWalletConfiguration = {}): Promise<never> {
   const config = walletConfiguration(configured)
   const client = await registration(config.walletDeviceName)
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']) as CryptoKeyPair
   const publicJwk = p256PublicJwk(await crypto.subtle.exportKey('jwk', pair.publicKey))
-  const signaturePrivateKey = ed25519.utils.randomSecretKey()
-  const signaturePublicKey = ed25519.getPublicKey(signaturePrivateKey)
-  const bisetDevice = await sealDidMdBisetDeviceMaterial(signaturePublicKey, {
-    signaturePrivateKey,
-  })
-  signaturePrivateKey.fill(0)
   let bisetDidCommDevice: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']> | undefined
   try {
-    const mediator = await bisetMediatorFor(mediatorUrls, mediatorOnionUrls)
+    const mediator = await bisetMediatorFor(mediatorUrls)
     if (mediator) bisetDidCommDevice = await prepareBisetDidCommDevice(mediator)
   } catch (error) {
     console.warn('[did.md Wallet login] DIDComm mediator unavailable, signing in without it', error instanceof Error ? error.message : error)
   }
   const pending: DidMdPendingAuthorization = {
     v: 2, issuer: client.issuer, clientId: client.clientId, state: randomBase64url(32), codeVerifier: randomBase64url(48),
-    deviceJkt: await p256Jkt(publicJwk), privateKey: pair.privateKey, publicJwk, bisetDevice,
-    documentEdit: buildDocumentEdit('', config, bisetDidCommDevice, [], '0'), requestMlsCredential: true,
-    keyAuthorizationSubject: `urn:uuid:${crypto.randomUUID()}`,
-    vaultContentKeyDerivations: [
-      { purpose: VAULT_CONTENT_KEY_PURPOSE, context: '0' },
-      { purpose: RELATIONSHIP_SECRET_PURPOSE },
-    ],
+    deviceJkt: await p256Jkt(publicJwk), privateKey: pair.privateKey, publicJwk, vaultDeviceId: `urn:uuid:${crypto.randomUUID()}`,
+    documentEdit: buildDocumentEdit('', config, bisetDidCommDevice, []),
     ...(bisetDidCommDevice ? { bisetDidCommDevice } : {}),
     createdAt: new Date().toISOString(),
   }
@@ -1056,15 +893,15 @@ export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = []
  * signed-in session, via a second Wallet approval -- for a session that
  * signed in before a mediator was configured, or whose mediator wasn't
  * reachable during beginDidMdWalletLogin above. */
-export async function beginDidMdWalletFinalizeEnrollment(mediatorUrls: readonly string[] = [], configured: DidMdWalletConfiguration = {}, mediatorOnionUrls: readonly string[] = []): Promise<never> {
+export async function beginDidMdWalletFinalizeEnrollment(mediatorUrls: readonly string[] = [], configured: DidMdWalletConfiguration = {}): Promise<never> {
   const config = walletConfiguration(configured)
   const session = await readDidMdDeviceSession()
-  if (!session?.bisetDevice || session.v !== 2 || session.issuer !== selectedWallet.issuer || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
+  if (!session?.vaultDeviceId || session.v !== 2 || session.issuer !== selectedWallet.issuer || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
     throw new Error('Connect did.md Wallet again before finishing setup on this browser')
   }
   const client = await registration()
   if (client.clientId !== session.clientId || client.redirectUri !== redirectUri()) throw new Error('The did.md Wallet client registration changed; reconnect this browser')
-  const mediator = await bisetMediatorFor(mediatorUrls, mediatorOnionUrls)
+  const mediator = await bisetMediatorFor(mediatorUrls)
   if (!mediator) throw new Error('Biset DIDComm mediator is not configured')
   const bisetDidCommDevice = await newBisetDidCommDevice(session.did, mediator)
   // A retry of this same follow-up (the user hitting "Enable messaging"
@@ -1089,7 +926,7 @@ export async function beginDidMdWalletFinalizeEnrollment(mediatorUrls: readonly 
 export async function beginDidMdWalletDocumentEdit(options: { mediatorUrls?: readonly string[]; mediatorOnionUrls?: readonly string[]; removeMediator?: boolean; configuration?: DidMdWalletConfiguration }): Promise<never> {
   const config = walletConfiguration(options.configuration)
   const session = await readDidMdDeviceSession()
-  if (!session?.bisetDevice || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) throw new Error('Reconnect did.md Wallet before editing the DID document')
+  if (!session?.vaultDeviceId || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) throw new Error('Reconnect did.md Wallet before editing the DID document')
   const client = await registration()
   const pending = pendingFromSession(session)
   pending.state = randomBase64url(32); pending.codeVerifier = randomBase64url(48); pending.createdAt = new Date().toISOString()
@@ -1104,7 +941,12 @@ export async function beginDidMdWalletDocumentEdit(options: { mediatorUrls?: rea
     const previous = session.bisetDidCommDevice?.xKid
     if (session.bisetDidCommDevice) pending.previousBisetDidCommDevice = session.bisetDidCommDevice
     pending.bisetDidCommDevice = await newBisetDidCommDevice(session.did, mediator)
-    pending.documentEdit = buildDocumentEdit(session.did, config, pending.bisetDidCommDevice, previous ? [previous] : [])
+    // Pointing at a DIFFERENT mediator retires every endpoint of the old one (its clearnet
+    // and its onion carry the same routing key); the same mediator keeps what is published.
+    const oldRoutingKid = session.bisetDidCommDevice?.routingKid
+    const retired: DidCoreEndpointRemoval[] = oldRoutingKid && oldRoutingKid !== mediator.routingKid
+      ? [{ serviceId: configuredService(config, 'didcomm').id, match: { routingKeys: [oldRoutingKid] } }] : []
+    pending.documentEdit = buildDocumentEdit(session.did, config, pending.bisetDidCommDevice, previous ? [previous] : [], retired)
   }
   return redirectToWallet(client, pending)
 }
@@ -1196,24 +1038,11 @@ export async function disconnectDidMdWallet(): Promise<void> {
   await Promise.all([clearDidMdPendingAuthorization(), clearDidMdDeviceSession()])
 }
 
-/** Opens only this browser's Biset leaf material.  The Wallet's controller
- * keys never occur in this database or return value. The MIMI Vault room is
- * read straight from the stored session -- it was Wallet-derived at sign-in
- * (or a later finalize round), never published, so there is nothing to
- * resolve here. */
-export async function openDidMdWalletBisetDevice(): Promise<DidMdBisetDevice> {
+/** This browser's identity as a Vault author. */
+export async function openDidMdWalletVaultDevice(): Promise<DidMdVaultDevice> {
   const session = await readDidMdDeviceSession()
-  if (!session?.bisetDevice || session.v !== 2) throw new Error('Connect did.md Wallet again to enroll this Biset device')
-  const credential = await validateBisetMlsCredential(session.bisetDevice.credentialWire, pendingFromSession(session))
-  const privateMaterial = await openDidMdBisetDeviceMaterial(session.bisetDevice)
-  const derivedPublic = ed25519.getPublicKey(privateMaterial.signaturePrivateKey)
-  if (!derivedPublic.every((byte, index) => byte === credential.signaturePublicKey[index])) throw new Error('Biset device private key does not match its Wallet credential')
-  return {
-    did: session.did,
-    rootPublicKey: session.rootPublicKey.slice(),
-    credential,
-    ...privateMaterial,
-  }
+  if (!session?.vaultDeviceId || session.v !== 2) throw new Error('Connect did.md Wallet again to use this Biset device')
+  return { did: session.did, deviceId: session.vaultDeviceId }
 }
 
 /** Opens the optional Biset-owned DIDComm leaf. The corresponding public
@@ -1225,125 +1054,23 @@ export async function openDidMdWalletBisetDidCommDevice(): Promise<DidMdBisetDid
   if (!session || session.v !== 2 || !stored) return undefined
   const privateMaterial = await openDidMdBisetDidCommDeviceMaterial(stored)
   const derivedPublic = x25519.getPublicKey(privateMaterial.x25519PrivateKey)
-  const derivedControlPublic = x25519.getPublicKey(privateMaterial.mediatorControlPrivateKey)
   if (!derivedPublic.every((byte, index) => byte === stored.x25519PublicKey[index])) throw new Error('Biset DIDComm private key does not match its Wallet-authorized public key')
-  if (!derivedControlPublic.every((byte, index) => byte === stored.mediatorControlPublicKey[index])) throw new Error('Biset mediator control key does not match its did:peer identity')
   if (stored.xKid !== deviceKid(session.did, derivedPublic)) throw new Error('Biset DIDComm device key identifier is invalid')
-  return { did: session.did, xKid: stored.xKid, x25519PrivateKey: privateMaterial.x25519PrivateKey, mediatorControlDid: stored.mediatorControlDid, mediatorControlKid: stored.mediatorControlKid, mediatorControlPrivateKey: privateMaterial.mediatorControlPrivateKey, mediatorUrl: stored.mediatorUrl, routingKid: stored.routingKid, ...(stored.mediatorOnionUrl ? { mediatorOnionUrl: stored.mediatorOnionUrl } : {}) }
+  return { did: session.did, xKid: stored.xKid, x25519PrivateKey: privateMaterial.x25519PrivateKey, mediatorDeviceSecret: privateMaterial.mediatorDeviceSecret, mediatorUrl: stored.mediatorUrl, routingKid: stored.routingKid, ...(stored.mediatorOnionUrl ? { mediatorOnionUrl: stored.mediatorOnionUrl } : {}) }
 }
 
-/** Supplies only copies of the Wallet-derived VCKs needed by the vault key
- * resolver.  They never appear in the serialized session outside the sealed
- * Biset device envelope. */
-export async function openDidMdWalletVaultContentKeys(): Promise<{ did: string; generation: MlsEpoch; keys: Record<MlsEpoch, Uint8Array> }> {
-  const session = await readDidMdDeviceSession()
-  if (!session?.bisetDevice || session.v !== 2 || !session.vaultGeneration) throw new Error('Connect did.md Wallet again to provision a Vault Content Key')
-  assertMlsEpoch(session.vaultGeneration)
-  const material = await openDidMdBisetDeviceMaterial(session.bisetDevice)
-  if (!material.vaultContentKeys?.[session.vaultGeneration]) throw new Error(`Vault Content Key generation ${session.vaultGeneration} is unavailable; reconnect your did.md Wallet`)
-  return { did: session.did, generation: session.vaultGeneration, keys: Object.fromEntries(Object.entries(material.vaultContentKeys).map(([generation, key]) => [generation, key.slice()])) }
+/** The unfinished part of a "remove other devices" this session approved,
+ * if any (beginDidMdRemoveOtherDevices). */
+export async function didMdPendingDeviceRemoval(): Promise<{ removedKids: string[]; requestedAt: string } | undefined> {
+  const removal = (await readDidMdDeviceSession())?.deviceRemoval
+  return removal ? { removedKids: [...removal.removedKids], requestedAt: removal.requestedAt } : undefined
 }
 
-/** Supplies a copy of the identity-wide relationship secret (never appears
- * in the serialized session outside the sealed Biset device envelope) that
- * every device of this Wallet identity derives to the identical value --
- * see RELATIONSHIP_SECRET_PURPOSE. Feeds relationship.ts's
- * `deriveRelationshipPeerIdentity` so first contact with an external
- * counterparty converges on one peer identity across every device. */
-export async function openDidMdWalletRelationshipSecret(): Promise<Uint8Array> {
+/** Clears the marker once boot has finished the removal. */
+export async function completeDidMdDeviceRemoval(): Promise<void> {
   const session = await readDidMdDeviceSession()
-  if (!session?.bisetDevice || session.v !== 2) throw new Error('Connect did.md Wallet again to provision a relationship secret')
-  const material = await openDidMdBisetDeviceMaterial(session.bisetDevice)
-  if (material.vaultContentKeys) for (const key of Object.values(material.vaultContentKeys)) key.fill(0)
-  if (!material.relationshipSecret) throw new Error('Relationship secret is unavailable; reconnect your did.md Wallet')
-  return material.relationshipSecret
-}
-
-/** Submit RFC 5322 bytes to did.md's mail relay using the same browser-held
- * DPoP key and Wallet-signed capability established during login.  Access
- * tokens are deliberately not used as relay credentials: the relay verifies
- * the capability with did.md and binds it directly to this DPoP proof. */
-export async function submitDidMdMail(active: DidMdActiveSession, input: {
-  messageId: string; mailFrom: string; rcptTo: string[]; rawRfc5322: Uint8Array
-}): Promise<{ status: 'accepted' | 'temporary-failure'; occurredAt: string; detail?: string }> {
-  const session = await readDidMdDeviceSession()
-  if (!session || session.did !== active.did || Date.parse(session.capabilityExpiresAt) <= Date.now()) throw new Error('did.md mail capability is unavailable; reconnect did.md Wallet')
-  const endpoint = `${DID_MD_API_ORIGIN}/v1/mail/submit`
-  const body = JSON.stringify({
-    version: 1, identityId: active.did, deviceId: active.deviceKid ?? active.did,
-    mailFrom: input.mailFrom, rcptTo: input.rcptTo,
-    rawRfc5322: base64url(input.rawRfc5322), submittedAt: new Date().toISOString(),
-    // The relay authorizes capability + DPoP, not the retired update-key
-    // signature field. Keep the v1 wire shape while clients migrate.
-    signature: base64url(new Uint8Array([0])),
-  })
-  const capability = base64url(encoder.encode(JSON.stringify(session.capability)))
-  const response = await fetch(endpoint, {
-    method: 'POST', headers: {
-      'content-type': 'application/json', dpop: await createDpop(session.privateKey, session.publicJwk, 'POST', endpoint),
-      'x-biset-mail-capability': capability, 'x-biset-mail-message-id': input.messageId,
-    }, body,
-  })
-  if (!response.ok) throw new Error((await response.text()).slice(0, 512) || `mail relay rejected submission (${response.status})`)
-  const value = asObject(await response.json(), 'mail relay response')
-  if ((value.status !== 'accepted' && value.status !== 'temporary-failure') || typeof value.occurredAt !== 'string' || (value.detail !== undefined && typeof value.detail !== 'string')) throw new Error('mail relay returned an invalid response')
-  return value as { status: 'accepted' | 'temporary-failure'; occurredAt: string; detail?: string }
-}
-
-/** Exposes only public generations; VCK bytes remain sealed until a caller
- * explicitly opens the Wallet session through `openDidMdWalletVaultContentKeys`. */
-export async function didMdVaultKeyRotationStatus(): Promise<{ fromGeneration: MlsEpoch; toGeneration: MlsEpoch; phase: 'prepared' | 'publishing' | 'rewrap' } | undefined> {
-  const session = await readDidMdDeviceSession()
-  const rotation = session?.vaultKeyRotation
-  if (!rotation) return undefined
-  assertMlsEpoch(rotation.fromGeneration)
-  assertMlsEpoch(rotation.toGeneration)
-  if (BigInt(rotation.toGeneration) !== BigInt(rotation.fromGeneration) + 1n) throw new Error('Stored Vault key rotation generations are invalid')
-  if (rotation.phase !== undefined && rotation.phase !== 'prepared' && rotation.phase !== 'publishing' && rotation.phase !== 'rewrap') throw new Error('Stored Vault key rotation phase is invalid')
-  return { fromGeneration: rotation.fromGeneration, toGeneration: rotation.toGeneration, phase: rotation.phase ?? 'prepared' }
-}
-
-/** Clears the crash-resume marker only after every local SegmentKey has a
- * durable wrap for the already-published generation. */
-export async function completeDidMdVaultKeyRotation(): Promise<void> {
-  const session = await readDidMdDeviceSession()
-  if (!session?.vaultKeyRotation || session.vaultKeyRotation.phase !== 'rewrap' || session.vaultGeneration !== session.vaultKeyRotation.toGeneration) {
-    throw new Error('Vault key update is not ready to complete')
-  }
-  const { vaultKeyRotation: _completed, ...completed } = session
+  if (!session?.deviceRemoval) return
+  const { deviceRemoval: _done, ...completed } = session
   await saveDidMdDeviceSession(completed)
 }
 
-/** Narrow adapter for VaultSyncClient. Each read opens the sealed session
- * material and returns a disposable VCK copy for one crypto operation. */
-export const walletVaultSyncKeys = {
-  async current(): Promise<{ generation: string; key: Uint8Array }> {
-    const keys = await openDidMdWalletVaultContentKeys()
-    const key = keys.keys[keys.generation]
-    for (const [generation, value] of Object.entries(keys.keys)) if (generation !== keys.generation) value.fill(0)
-    if (!key) throw new Error(`Vault Content Key generation ${keys.generation} is unavailable; reconnect your did.md Wallet`)
-    return { generation: keys.generation, key }
-  },
-  async forGeneration(generation: string): Promise<Uint8Array | undefined> {
-    const keys = await openDidMdWalletVaultContentKeys()
-    const selected = keys.keys[generation]?.slice()
-    for (const value of Object.values(keys.keys)) value.fill(0)
-    return selected
-  },
-}
-
-async function callDidMdWalletTestResource(active: DidMdActiveSession): Promise<string> {
-  // Unlike mail submit (Biset's own infra choice), /v1/oauth/resource is
-  // part of the OAuth server's own endpoint set -- it must follow whichever
-  // wallet actually issued the current session's token, not a fixed origin.
-  const endpoint = `${selectedWallet.issuer}/v1/oauth/resource`
-  const session = await readDidMdDeviceSession()
-  if (!session || session.did !== active.did) throw new Error('The did.md Wallet device session is unavailable')
-  const response = await fetch(endpoint, {
-    headers: { authorization: `DPoP ${active.accessToken}`, dpop: await createDpop(session.privateKey, session.publicJwk, 'GET', endpoint, active.nonce) },
-  })
-  if (!response.ok) throw new Error(await response.text())
-  const value = asObject(await response.json(), 'protected resource response')
-  if (value.ok !== true || value.sub !== active.did) throw new Error('The protected resource response is invalid')
-  return typeof value.message === 'string' ? value.message : 'DPoP-bound device session accepted'
-}

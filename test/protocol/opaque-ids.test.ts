@@ -9,16 +9,14 @@
 // REAL functions that mint them below rather than just declared.
 import { describe, expect, test } from 'bun:test'
 import { assertOpaqueId, assertSegmentId, assertVaultEventId, assertVaultObjectId } from '../../src/protocol/ids.ts'
-import { createVaultEvent, type VaultEventSigner } from '../../src/client/store/vault/events.ts'
+import { createVaultEvent, type VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import { createSegmentKey, encryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { ActiveVaultSegmentManager } from '../../src/client/store/vault/active-segment.ts'
-import { assertIngressEnvelope, assertVaultDeliveryAppend, ProtocolValidationError } from '../../src/server/mediator/validate.ts'
+import { assertIngressEnvelope, ProtocolValidationError } from '../../src/server/mediator/validate.ts'
 import { sha256Bytes } from '../../src/protocol/canonical.ts'
-import type { ActiveVaultSegmentStore, SegmentKeyWrapReader, SegmentKeyWrapWriter, VaultSegmentRecord } from '../../src/client/store/vault/store.ts'
-import type { SegmentKeyWrapV1 } from '../../src/protocol/vault.ts'
-import type { VaultEpochKeyResolver } from '../../src/client/store/vault/segment-key-resolver.ts'
+import type { ActiveVaultSegmentStore, VaultSegmentRecord } from '../../src/client/store/vault/store.ts'
 
-const signer: VaultEventSigner = { deviceId: 'device-a', async sign() { return new Uint8Array([7]) }, async verify() { return true } }
+const signer: VaultEventAuthor = { deviceId: 'device-a' }
 
 describe('assertOpaqueId (general bound)', () => {
   test('accepts realistic DID-, UUID-, and hash-shaped values', () => {
@@ -46,13 +44,6 @@ describe('assertOpaqueId (general bound)', () => {
     expect(() => assertIngressEnvelope(base)).not.toThrow()
     expect(() => assertIngressEnvelope({ ...base, ingressId: 'has a space' })).toThrow(ProtocolValidationError)
     expect(() => assertIngressEnvelope({ ...base, recipientDeviceSnapshot: ['ok', 'bad id'] })).toThrow(ProtocolValidationError)
-
-    const append = {
-      version: 1 as const, identityId: 'did:web:alice.example', appendId: 'append-1', payload: new Uint8Array([1]),
-      payloadHash: sha256Bytes(new Uint8Array([1])), senderDeviceId: 'device-a', sentAt: '2026-08-21T00:00:00.000Z', signature: new Uint8Array([9]),
-    }
-    expect(() => assertVaultDeliveryAppend(append)).not.toThrow()
-    expect(() => assertVaultDeliveryAppend({ ...append, senderDeviceId: 'x'.repeat(600) })).toThrow(ProtocolValidationError)
   })
 })
 
@@ -74,35 +65,18 @@ describe('strict production-shape ID grammars', () => {
   })
 
   test('assertSegmentId accepts a real ActiveVaultSegmentManager-minted ID and rejects a hand-picked one', async () => {
-    const wraps: SegmentKeyWrapReader & SegmentKeyWrapWriter = (() => {
-      const rows = new Map<string, SegmentKeyWrapV1>()
-      const key = (id: string, segmentId: string, epoch: string) => `${id} ${segmentId} ${epoch}`
-      return {
-        async readSegmentKeyWrap(id, segmentId, epoch) { return rows.get(key(id, segmentId, epoch)) },
-        async writeSegmentKeyWrap(wrap) { rows.set(key(wrap.identityId, wrap.segmentId, wrap.recipientEpoch), wrap) },
-      }
-    })()
     const segments: ActiveVaultSegmentStore = (() => {
       const rows: VaultSegmentRecord[] = []
       return {
         async currentSegment(id) { return rows.find(r => r.identityId === id && !r.sealed) },
-        async allSegments(id) { return rows.filter(r => r.identityId === id) },
+        async readSegmentKey(id, segmentId) { return rows.find(r => r.identityId === id && r.segmentId === segmentId)?.segmentKey },
         async sealAndActivateSegment(next) {
           for (const row of rows) if (row.identityId === next.identityId && !row.sealed) row.sealed = true
           rows.push({ ...next })
         },
-        async recordSegmentRewrapped(id, segmentId, epoch) {
-          const row = rows.find(r => r.identityId === id && r.segmentId === segmentId)
-          if (!row) throw new Error('no such segment')
-          row.epoch = epoch
-        },
       }
     })()
-    const epochs: VaultEpochKeyResolver = {
-      async currentVaultEpoch() { return { selfGroupId: 'self-group-a', epoch: '1' } },
-      async deriveVaultEpochKey() { return createSegmentKey() },
-    }
-    const manager = new ActiveVaultSegmentManager({ identityId: 'did:web:alice.example', segments, wraps, epochs, signer })
+    const manager = new ActiveVaultSegmentManager({ identityId: 'did:web:alice.example', segments })
     const segment = await manager.activeSegment()
 
     expect(() => assertSegmentId(segment.segmentId)).not.toThrow()

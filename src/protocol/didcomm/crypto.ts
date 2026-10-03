@@ -9,9 +9,9 @@
 // (draft-madden-jose-ecdh-1pu-04 appendices) for a byte-exact KDF check).
 //
 // Three algorithms:
-//   - authcrypt: ECDH-1PU+A256KW / A256CBC-HS512 (plain and the
-//     biset-specific X25519+ML-KEM-768 hybrid variant) — the actual
-//     sender-to-recipient message, both directions, single sender/recipient.
+//   - authcrypt: ECDH-1PU+A256KW / A256CBC-HS512 — the actual
+//     sender-to-recipient message, one sender, every recipient key of the
+//     recipient DID (multiplexed encryption).
 //   - anoncrypt: ECDH-ES+A256KW / A256CBC-HS512 (we produce) or XC20P (we
 //     must also consume — didcomm-rust, the reference implementation and
 //     hence most third-party agents, defaults anoncrypt's `enc` to XC20P) —
@@ -23,7 +23,6 @@
 //     mediator" — since revisited: a genuinely decentralized mediator has to
 //     be blind, which needs Forward wrapping to exist.
 import { x25519 } from '@noble/curves/ed25519.js'
-import { ml_kem768 } from '@noble/post-quantum/ml-kem.js'
 import { sha256, sha512 } from '@noble/hashes/sha2.js'
 import { hmac } from '@noble/hashes/hmac.js'
 import { cbc, aeskw } from '@noble/ciphers/aes.js'
@@ -94,22 +93,6 @@ function ecdh(privKey: Uint8Array, pubKey: Uint8Array): Uint8Array {
  * shared by both encrypt and decrypt. */
 function deriveEcdh1PU(ze: Uint8Array, zs: Uint8Array, alg: string, apu: Uint8Array, apv: Uint8Array, ccTag: Uint8Array, outputLenBits: number): Uint8Array {
   const z = concatBytes(ze, zs)
-  let pubInfo = u32be(outputLenBits)
-  if (ccTag.length > 0) pubInfo = concatBytes(pubInfo, u32be(ccTag.length), ccTag)
-  return concatKDF(z, utf8(alg), apu, apv, pubInfo, outputLenBits / 8)
-}
-
-/** ECDH-1PU key derivation, PQ-hybrid variant (PLAN.md "did:webvh
- * PQハイブリッド化", Phase 2): identical to deriveEcdh1PU except `z` also
- * concatenates `zpq` — the ML-KEM-768 shared secret — after Ze/Zs. Ze/Zs
- * alone still carry sender authentication (ECDH-1PU's whole point; ML-KEM is
- * a KEM, not a DH, so it cannot contribute to that half); zpq's only job is
- * making the derived key safe against a future CRQC recovering it from
- * today's ciphertext (HNDL) even if X25519 alone is eventually broken. Order
- * (Ze, Zs, then Zpq) is arbitrary but fixed, matching how deriveEcdh1PU
- * orders Ze before Zs. */
-function deriveEcdh1PUHybrid(ze: Uint8Array, zs: Uint8Array, zpq: Uint8Array, alg: string, apu: Uint8Array, apv: Uint8Array, ccTag: Uint8Array, outputLenBits: number): Uint8Array {
-  const z = concatBytes(ze, zs, zpq)
   let pubInfo = u32be(outputLenBits)
   if (ccTag.length > 0) pubInfo = concatBytes(pubInfo, u32be(ccTag.length), ccTag)
   return concatKDF(z, utf8(alg), apu, apv, pubInfo, outputLenBits / 8)
@@ -239,41 +222,74 @@ export function protectedHeaderOf(jwe: DidCommJWE): Record<string, unknown> | nu
 export interface X25519Recipient { kid: string; publicKey: Uint8Array }
 export interface X25519Sender { kid: string; privateKey: Uint8Array }
 
-function apvFor(recipientKid: string): Uint8Array { return sha256(utf8(recipientKid)) }
+/** DIDComm v2.1 §"ECDH-1PU key wrapping and common protected headers":
+ * `apv` is the SHA-256 of every recipient `kid`, sorted, joined by `.` —
+ * the same value whether the JWE has one recipient or many. */
+function apvFor(recipientKids: readonly string[]): Uint8Array {
+  return sha256(utf8([...recipientKids].sort().join('.')))
+}
+
+function assertRecipients(fn: string, recipients: readonly { kid: string }[]): void {
+  if (recipients.length === 0) throw new Error(`${fn}: no recipients`)
+  if (new Set(recipients.map(r => r.kid)).size !== recipients.length) throw new Error(`${fn}: duplicate recipient kid`)
+}
+
+/** Refuses a JWE whose `apv` is not the spec digest of its own `recipients`
+ * kids — the key-wrapping KDF already binds `apv`, so this only catches a
+ * sender (or a mangling hop) that disagrees with the spec about which
+ * recipients the message was for. */
+function assertApvMatchesRecipients(fn: string, jwe: DidCommJWE, header: Record<string, unknown>): Uint8Array {
+  if (typeof header.apv !== 'string') throw new Error(`${fn}: missing apv`)
+  const apv = b64urlToBytes(header.apv)
+  const want = apvFor(jwe.recipients.map(r => r.header.kid))
+  if (apv.length !== want.length || apv.some((b, i) => b !== want[i])) throw new Error(`${fn}: apv does not match the recipient kids`)
+  return apv
+}
+
+/** The media type of an encrypted DIDComm message -- its JWE `typ`, and the
+ * HTTP Content-Type every transport MUST carry it under (DIDComm v2.1). */
+export const DIDCOMM_ENCRYPTED_MEDIA_TYPE = 'application/didcomm-encrypted+json'
+
+/** The HTTP request that delivers one encrypted DIDComm message. */
+export function didCommPost(jwe: DidCommJWE, signal?: AbortSignal): RequestInit {
+  return { method: 'POST', headers: { 'content-type': DIDCOMM_ENCRYPTED_MEDIA_TYPE }, body: JSON.stringify(jwe), ...(signal ? { signal } : {}) }
+}
+
+/** Whether a request declares the encrypted DIDComm media type (any
+ * parameters after `;` ignored). */
+export function isDidCommEncryptedRequest(request: Request): boolean {
+  return request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() === DIDCOMM_ENCRYPTED_MEDIA_TYPE
+}
 
 function buildProtectedHeader(
   alg: string, sender: X25519Sender | null, apvRaw: Uint8Array, epkPub: Uint8Array,
-  pqKemCiphertext?: Uint8Array,
 ): { headerStr: string; apu: Uint8Array } {
   const apu = sender ? utf8(sender.kid) : new Uint8Array(0)
   const header: Record<string, unknown> = {
-    typ: 'application/didcomm-encrypted+json',
+    typ: DIDCOMM_ENCRYPTED_MEDIA_TYPE,
     alg,
     enc: 'A256CBC-HS512',
     ...(sender ? { skid: sender.kid, apu: b64url(apu) } : {}),
     apv: b64url(apvRaw),
     epk: { kty: 'OKP', crv: 'X25519', x: b64url(epkPub) },
-    // biset-specific field, not part of DIDComm v2 — carries the ML-KEM-768
-    // encapsulation this JWE also derives its CEK-wrapping key from. Only
-    // ever produced/consumed between two biset devices that both published a
-    // keyAgreement ML-KEM entry — a non-hybrid recipient never sees this
-    // field, since the sender only reaches for the hybrid `pack*` function
-    // when it already resolved one.
-    ...(pqKemCiphertext ? { pqKem: { alg: 'ML-KEM-768', ct: b64url(pqKemCiphertext) } } : {}),
   }
   return { headerStr: JSON.stringify(header), apu }
 }
 
-/** anoncrypt: ECDH-ES+A256KW / A256CBC-HS512, single recipient, no sender at
- * all. Used for Routing Protocol 2.0 Forward wrapping -- the mediator must
- * not learn who queued a message, only which registered routing kid it's
- * addressed to (`recipient.kid` here names the ROUTING kid, not a message
- * recipient's real keyAgreement kid -- the caller decides what to wrap). */
-export function packAnoncrypt(plaintext: Uint8Array, recipient: X25519Recipient): DidCommJWE {
+/** anoncrypt: ECDH-ES+A256KW / A256CBC-HS512, no sender at all, one
+ * content encryption shared by every recipient (each gets its own wrap of
+ * the CEK under the one ephemeral key — DIDComm v2.1 multiplexed
+ * encryption). Used for Routing Protocol 2.0 Forward wrapping -- the
+ * mediator must not learn who queued a message, only which registered
+ * routing kid it's addressed to (a recipient `kid` here names a ROUTING kid,
+ * not a message recipient's real keyAgreement kid -- the caller decides what
+ * to wrap). */
+export function packAnoncrypt(plaintext: Uint8Array, recipients: readonly X25519Recipient[]): DidCommJWE {
+  assertRecipients('packAnoncrypt', recipients)
   const alg = 'ECDH-ES+A256KW'
   const ephemPriv = x25519.utils.randomSecretKey()
   const ephemPub = x25519.getPublicKey(ephemPriv)
-  const apv = apvFor(recipient.kid)
+  const apv = apvFor(recipients.map(r => r.kid))
   const { headerStr, apu } = buildProtectedHeader(alg, null, apv, ephemPub)
   const protectedB64 = b64url(utf8(headerStr))
 
@@ -281,25 +297,29 @@ export function packAnoncrypt(plaintext: Uint8Array, recipient: X25519Recipient)
   const iv = crypto.getRandomValues(new Uint8Array(16))
   const { ciphertext, tag } = aesCbcHs512Encrypt(cek, iv, utf8(protectedB64), plaintext)
 
-  const z = ecdh(ephemPriv, recipient.publicKey)
-  const kek = deriveEcdhEs(z, alg, apu, apv, 256)
-  const encryptedKey = wrapKey(kek, cek)
-
   return {
     protected: protectedB64,
-    recipients: [{ header: { kid: recipient.kid }, encrypted_key: b64url(encryptedKey) }],
+    recipients: recipients.map(recipient => {
+      const z = ecdh(ephemPriv, recipient.publicKey)
+      const kek = deriveEcdhEs(z, alg, apu, apv, 256)
+      return { header: { kid: recipient.kid }, encrypted_key: b64url(wrapKey(kek, cek)) }
+    }),
     iv: b64url(iv),
     ciphertext: b64url(ciphertext),
     tag: b64url(tag),
   }
 }
 
-/** authcrypt: ECDH-1PU+A256KW / A256CBC-HS512, single sender + recipient. */
-export function packAuthcrypt(plaintext: Uint8Array, sender: X25519Sender, recipient: X25519Recipient): DidCommJWE {
+/** authcrypt: ECDH-1PU+A256KW / A256CBC-HS512, one sender, one content
+ * encryption wrapped for every recipient. DIDComm v2.1 says a sender SHOULD
+ * list every `keyAgreement` key of the recipient DID here, so each of the
+ * recipient's devices can open the same message. */
+export function packAuthcrypt(plaintext: Uint8Array, sender: X25519Sender, recipients: readonly X25519Recipient[]): DidCommJWE {
+  assertRecipients('packAuthcrypt', recipients)
   const alg = 'ECDH-1PU+A256KW'
   const ephemPriv = x25519.utils.randomSecretKey()
   const ephemPub = x25519.getPublicKey(ephemPriv)
-  const apv = apvFor(recipient.kid)
+  const apv = apvFor(recipients.map(r => r.kid))
   const { headerStr, apu } = buildProtectedHeader(alg, sender, apv, ephemPub)
   const protectedB64 = b64url(utf8(headerStr))
 
@@ -307,51 +327,14 @@ export function packAuthcrypt(plaintext: Uint8Array, sender: X25519Sender, recip
   const iv = crypto.getRandomValues(new Uint8Array(16))
   const { ciphertext, tag } = aesCbcHs512Encrypt(cek, iv, utf8(protectedB64), plaintext)
 
-  const ze = ecdh(ephemPriv, recipient.publicKey)
-  const zs = ecdh(sender.privateKey, recipient.publicKey)
-  const kek = deriveEcdh1PU(ze, zs, alg, apu, apv, tag, 256)
-  const encryptedKey = wrapKey(kek, cek)
-
   return {
     protected: protectedB64,
-    recipients: [{ header: { kid: recipient.kid }, encrypted_key: b64url(encryptedKey) }],
-    iv: b64url(iv),
-    ciphertext: b64url(ciphertext),
-    tag: b64url(tag),
-  }
-}
-
-const HYBRID_ALG = 'ECDH-1PU-X25519MLKEM768+A256KW'
-
-export interface HybridRecipient { kid: string; x25519PublicKey: Uint8Array; mlkemPublicKey: Uint8Array }
-export interface HybridSelf { kid: string; x25519PrivateKey: Uint8Array; mlkemPrivateKey: Uint8Array }
-
-/** Hybrid authcrypt: same ECDH-1PU/A256CBC-HS512 shape as packAuthcrypt,
- * plus an ML-KEM-768 encapsulation folded into the key-wrapping key
- * (deriveEcdh1PUHybrid) and carried in the protected header's `pqKem` field
- * so the recipient can decapsulate. biset-specific `alg` — never sent to a
- * peer that hasn't itself published an ML-KEM-768 keyAgreement entry (the
- * caller's own negotiation, not this function's concern). */
-export function packAuthcryptHybrid(plaintext: Uint8Array, sender: X25519Sender, recipient: HybridRecipient): DidCommJWE {
-  const ephemPriv = x25519.utils.randomSecretKey()
-  const ephemPub = x25519.getPublicKey(ephemPriv)
-  const apv = apvFor(recipient.kid)
-  const { cipherText: kemCt, sharedSecret: zpq } = ml_kem768.encapsulate(recipient.mlkemPublicKey)
-  const { headerStr, apu } = buildProtectedHeader(HYBRID_ALG, sender, apv, ephemPub, kemCt)
-  const protectedB64 = b64url(utf8(headerStr))
-
-  const cek = crypto.getRandomValues(new Uint8Array(64))
-  const iv = crypto.getRandomValues(new Uint8Array(16))
-  const { ciphertext, tag } = aesCbcHs512Encrypt(cek, iv, utf8(protectedB64), plaintext)
-
-  const ze = ecdh(ephemPriv, recipient.x25519PublicKey)
-  const zs = ecdh(sender.privateKey, recipient.x25519PublicKey)
-  const kek = deriveEcdh1PUHybrid(ze, zs, zpq, HYBRID_ALG, apu, apv, tag, 256)
-  const encryptedKey = wrapKey(kek, cek)
-
-  return {
-    protected: protectedB64,
-    recipients: [{ header: { kid: recipient.kid }, encrypted_key: b64url(encryptedKey) }],
+    recipients: recipients.map(recipient => {
+      const ze = ecdh(ephemPriv, recipient.publicKey)
+      const zs = ecdh(sender.privateKey, recipient.publicKey)
+      const kek = deriveEcdh1PU(ze, zs, alg, apu, apv, tag, 256)
+      return { header: { kid: recipient.kid }, encrypted_key: b64url(wrapKey(kek, cek)) }
+    }),
     iv: b64url(iv),
     ciphertext: b64url(ciphertext),
     tag: b64url(tag),
@@ -369,9 +352,9 @@ export interface UnpackedAuthcrypt { plaintext: Uint8Array; senderKid: string }
  * decrypted yet, so a real implementation of this (e.g.
  * `didcomm/webvh-resolve.ts`'s `resolveDidCommSenderKey`) makes a LIVE
  * outbound HTTP fetch to whatever domain the CLAIMED sender's DID names —
- * an attacker-steerable request. The unpack*WithHeader functions above call
- * this only after every cheap, no-network structural check on the message
- * has already passed (alg, enc, pqKem shape) specifically so a message
+ * an attacker-steerable request. unpackAuthcrypt below calls this only
+ * after every cheap, no-network structural check on the message has already
+ * passed (alg, enc, apv) specifically so a message
  * that's going to be rejected anyway never gets a chance to make this
  * device dial an arbitrary attacker-chosen host first (found live,
  * 2026-08-26 — see ARC.md's DIDComm section).
@@ -380,56 +363,12 @@ export interface UnpackedAuthcrypt { plaintext: Uint8Array; senderKid: string }
  * a caller retrying after an unpack failed with a possibly-stale cached key. */
 export type ResolveSenderKey = (senderKid: string, opts?: { fresh?: boolean }) => Uint8Array | Promise<Uint8Array>
 
-/** Parses the JWE's `protected` header once — shared by every unpack path
- * below so a message routed through `unpackAuthcryptAuto` (which has to peek
- * at `alg` to dispatch) never pays for a second base64url-decode-plus-parse
- * of the exact same bytes. */
 function parseProtectedHeader(jwe: DidCommJWE): Record<string, unknown> {
   return JSON.parse(new TextDecoder().decode(b64urlToBytes(jwe.protected)))
 }
 
-async function unpackAuthcryptHybridWithHeader(
-  jwe: DidCommJWE, header: Record<string, unknown>, recipient: HybridSelf, resolveSenderKey: ResolveSenderKey,
-): Promise<UnpackedAuthcrypt> {
-  if (header.alg !== HYBRID_ALG) throw new Error(`unpackAuthcryptHybrid: unexpected alg ${header.alg}`)
-  if (!(header.pqKem as { ct?: unknown } | undefined)?.ct) throw new Error('unpackAuthcryptHybrid: missing pqKem.ct')
-  // Every structural/format check that does NOT need a network round trip
-  // happens before resolveSenderKey below: that call is a live DID resolve
-  // to a domain the SENDER-CLAIMED, unverified `apu`/`skid` names, so a
-  // message this cheap to reject must never trigger it first — see
-  // resolveSenderKey's own note on why this ordering matters.
-  if (header.enc !== 'A256CBC-HS512') {
-    throw new Error(`unpackAuthcryptHybrid: unsupported enc ${JSON.stringify(header.enc)} — hybrid authcrypt is A256CBC-HS512 only`)
-  }
-  const apu = b64urlToBytes(header.apu as string)
-  const senderKid = new TextDecoder().decode(apu)
-  if (header.skid && header.skid !== senderKid) throw new Error('unpackAuthcryptHybrid: skid does not match apu')
-
-  const rec = jwe.recipients.find(r => r.header.kid === recipient.kid)
-  if (!rec) throw new Error('unpackAuthcryptHybrid: recipient kid not present in JWE')
-
-  const epkPub = b64urlToBytes((header.epk as { x: string }).x)
-  const senderPub = await resolveSenderKey(senderKid)
-  const apv = b64urlToBytes(header.apv as string)
-  const tag = b64urlToBytes(jwe.tag)
-
-  const ze = ecdh(recipient.x25519PrivateKey, epkPub)
-  const zs = ecdh(recipient.x25519PrivateKey, senderPub)
-  const zpq = ml_kem768.decapsulate(b64urlToBytes((header.pqKem as { ct: string }).ct), recipient.mlkemPrivateKey)
-  const kek = deriveEcdh1PUHybrid(ze, zs, zpq, header.alg, apu, apv, tag, 256)
-  const cek = unwrapKey(kek, b64urlToBytes(rec.encrypted_key))
-
-  const plaintext = aesCbcHs512Decrypt(cek, b64urlToBytes(jwe.iv), utf8(jwe.protected), b64urlToBytes(jwe.ciphertext), tag)
-  return { plaintext, senderKid }
-}
-
-export async function unpackAuthcryptHybrid(jwe: DidCommJWE, recipient: HybridSelf, resolveSenderKey: ResolveSenderKey): Promise<UnpackedAuthcrypt> {
-  return unpackAuthcryptHybridWithHeader(jwe, parseProtectedHeader(jwe), recipient, resolveSenderKey)
-}
-
-async function unpackAuthcryptWithHeader(
-  jwe: DidCommJWE, header: Record<string, unknown>, recipient: X25519Sender, resolveSenderKey: ResolveSenderKey,
-): Promise<UnpackedAuthcrypt> {
+export async function unpackAuthcrypt(jwe: DidCommJWE, recipient: X25519Sender, resolveSenderKey: ResolveSenderKey): Promise<UnpackedAuthcrypt> {
+  const header = parseProtectedHeader(jwe)
   if (header.alg !== 'ECDH-1PU+A256KW') throw new Error(`unpackAuthcrypt: unexpected alg ${header.alg}`)
   // didcomm-rust's authcrypt offers no `enc` but this one, so an authcrypt
   // arriving as anything else isn't an interop case to support — refuse by
@@ -448,8 +387,8 @@ async function unpackAuthcryptWithHeader(
   if (!rec) throw new Error('unpackAuthcrypt: recipient kid not present in JWE')
 
   const epkPub = b64urlToBytes((header.epk as { x: string }).x)
+  const apv = assertApvMatchesRecipients('unpackAuthcrypt', jwe, header)
   const senderPub = await resolveSenderKey(senderKid)
-  const apv = b64urlToBytes(header.apv as string)
   const tag = b64urlToBytes(jwe.tag)
 
   const ze = ecdh(recipient.privateKey, epkPub)
@@ -459,32 +398,6 @@ async function unpackAuthcryptWithHeader(
 
   const plaintext = aesCbcHs512Decrypt(cek, b64urlToBytes(jwe.iv), utf8(jwe.protected), b64urlToBytes(jwe.ciphertext), tag)
   return { plaintext, senderKid }
-}
-
-export async function unpackAuthcrypt(jwe: DidCommJWE, recipient: X25519Sender, resolveSenderKey: ResolveSenderKey): Promise<UnpackedAuthcrypt> {
-  return unpackAuthcryptWithHeader(jwe, parseProtectedHeader(jwe), recipient, resolveSenderKey)
-}
-
-export interface SelfKeys { kid: string; x25519PrivateKey: Uint8Array; mlkemPrivateKey?: Uint8Array }
-
-/** Dispatches to unpackAuthcryptHybrid or plain unpackAuthcrypt by reading
- * the JWE's own `alg` — the receiving side's half of the negotiation the
- * sending side decides (whether it resolved a hybrid keyAgreement entry for
- * this recipient). A device without its own ML-KEM-768 key
- * (`self.mlkemPrivateKey` unset) can never legitimately receive a hybrid JWE
- * addressed to it, so that combination throws rather than silently
- * mishandling it.
- *
- * Parses the header once and passes it to whichever *WithHeader variant
- * handles it, rather than calling the public unpackAuthcrypt(Hybrid)
- * functions (which would parse it again from scratch). */
-export async function unpackAuthcryptAuto(jwe: DidCommJWE, self: SelfKeys, resolveSenderKey: ResolveSenderKey): Promise<UnpackedAuthcrypt> {
-  const header = parseProtectedHeader(jwe)
-  if (header.alg === HYBRID_ALG) {
-    if (!self.mlkemPrivateKey) throw new Error('unpackAuthcryptAuto: received a hybrid-encrypted message but this device has no ML-KEM-768 key')
-    return unpackAuthcryptHybridWithHeader(jwe, header, { kid: self.kid, x25519PrivateKey: self.x25519PrivateKey, mlkemPrivateKey: self.mlkemPrivateKey }, resolveSenderKey)
-  }
-  return unpackAuthcryptWithHeader(jwe, header, { kid: self.kid, privateKey: self.x25519PrivateKey }, resolveSenderKey)
 }
 
 /** Unwraps a Forward envelope's anoncrypt layer -- a mediator's own job
@@ -503,7 +416,7 @@ export async function unpackAnoncrypt(jwe: DidCommJWE, recipient: X25519Sender):
 
   const epkPub = b64urlToBytes((header.epk as { x: string }).x)
   const apu = header.apu ? b64urlToBytes(header.apu as string) : new Uint8Array(0)
-  const apv = b64urlToBytes(header.apv as string)
+  const apv = assertApvMatchesRecipients('unpackAnoncrypt', jwe, header)
 
   const z = ecdh(recipient.privateKey, epkPub)
   const kek = deriveEcdhEs(z, header.alg as string, apu, apv, 256)
@@ -522,4 +435,4 @@ export async function unpackAnoncrypt(jwe: DidCommJWE, recipient: X25519Sender):
 }
 
 // ── exported for test-vector checks ─────────────────────────────────────────
-export const __internal = { concatKDF, deriveEcdh1PU, deriveEcdh1PUHybrid, deriveEcdhEs, ecdh, u32be, utf8, b64url }
+export const __internal = { concatKDF, deriveEcdh1PU, deriveEcdhEs, ecdh, u32be, utf8, b64url }

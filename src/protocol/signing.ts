@@ -1,7 +1,6 @@
 import { bytesToBase64url, canonicalBytes } from './canonical.ts'
-import type { IngressAckV1, IngressPullV1 } from './ingress.ts'
+import type { IngressAckV1 } from './ingress.ts'
 import type { MailSubmissionRequestV1 } from './mail-submission.ts'
-import type { VaultDeliveryAckV1, VaultDeliveryAppendV1, VaultDeliveryPullV1 } from './vault.ts'
 
 /**
  * Canonical bytes for device-control signatures. These functions omit only
@@ -18,52 +17,6 @@ export function ingressAckSigningBytes(ack: Omit<IngressAckV1, 'signature'>): Ui
     vaultEventId: ack.vaultEventId,
     checkpointId: ack.checkpointId,
     ackedAt: ack.ackedAt,
-  })
-}
-
-function ingressPullSigningBytes(pull: Omit<IngressPullV1, 'signature'>): Uint8Array {
-  return canonicalBytes({
-    label: 'biset/ingress-pull/v1',
-    version: pull.version,
-    identityId: pull.identityId,
-    recipientDeviceId: pull.recipientDeviceId,
-    requestedAt: pull.requestedAt,
-  })
-}
-
-export function vaultDeliveryAckSigningBytes(ack: Omit<VaultDeliveryAckV1, 'signature'>): Uint8Array {
-  return canonicalBytes({
-    label: 'biset/vault-delivery-ack/v1',
-    version: ack.version,
-    identityId: ack.identityId,
-    seq: ack.seq,
-    payloadHash: bytesToBase64url(ack.payloadHash),
-    recipientDeviceId: ack.recipientDeviceId,
-    checkpointId: ack.checkpointId,
-    ackedAt: ack.ackedAt,
-  })
-}
-
-export function vaultDeliveryAppendSigningBytes(append: Omit<VaultDeliveryAppendV1, 'signature'>): Uint8Array {
-  return canonicalBytes({
-    label: 'biset/vault-delivery-append/v1',
-    version: append.version,
-    identityId: append.identityId,
-    appendId: append.appendId,
-    payloadHash: bytesToBase64url(append.payloadHash),
-    senderDeviceId: append.senderDeviceId,
-    sentAt: append.sentAt,
-  })
-}
-
-export function vaultDeliveryPullSigningBytes(pull: Omit<VaultDeliveryPullV1, 'signature'>): Uint8Array {
-  return canonicalBytes({
-    label: 'biset/vault-delivery-pull/v1',
-    version: pull.version,
-    identityId: pull.identityId,
-    recipientDeviceId: pull.recipientDeviceId,
-    after: pull.after,
-    requestedAt: pull.requestedAt,
   })
 }
 

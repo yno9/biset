@@ -16,7 +16,7 @@ import { base64urlToBytes, bytesToBase64url } from '../../../protocol/canonical.
 export const MAIL_BRIDGE_INBOUND = 'https://didcomm.org/mail-bridge/1.0/inbound'
 export const MAIL_BRIDGE_SEND = 'https://didcomm.org/mail-bridge/1.0/send'
 export const MAIL_BRIDGE_SEND_RESULT = 'https://didcomm.org/mail-bridge/1.0/send-result'
-export const MAIL_RFC5322_ATTACHMENT_ID = 'rfc5322'
+const MAIL_RFC5322_ATTACHMENT_ID = 'rfc5322'
 
 export interface MailBridgeInboundBody {
   /** The exact bytes the plugin's SMTP listener accepted for `DATA` --

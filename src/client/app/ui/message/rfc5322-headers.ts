@@ -14,6 +14,12 @@ export interface Rfc5322HeaderSummary {
    * when there is no From header, or it doesn't contain a bare
    * `local@domain` address. */
   from?: { email: string; name?: string }
+  /** Non-standard `X-Source-Url` header, set only by
+   * ingress-projector.ts's External Feed Post handling: the followed
+   * actor's original post URL, kept out of the displayed body text
+   * (2026-09-25 user request) but still worth a link. Absent for ordinary
+   * mail/chat, which never sets this header. */
+  sourceUrl?: string
 }
 
 export function readRfc5322HeaderSummary(raw: Uint8Array): Rfc5322HeaderSummary {
@@ -29,12 +35,14 @@ export function readRfc5322HeaderSummary(raw: Uint8Array): Rfc5322HeaderSummary 
   const inReplyTo = messageIdentifier(fields.get('in-reply-to')?.[0])
   const references = (fields.get('references') ?? []).flatMap(value => identifiers(value)).slice(-32)
   const from = fromMailbox(fields.get('from')?.[0])
+  const sourceUrl = textField(fields.get('x-source-url')?.[0])
   return {
     ...(subject === undefined ? {} : { subject }),
     ...(sentAt === undefined ? {} : { sentAt }),
     ...(messageId === undefined ? {} : { messageId }),
     ...(inReplyTo === undefined ? {} : { inReplyTo }),
     ...(from === undefined ? {} : { from }),
+    ...(sourceUrl === undefined ? {} : { sourceUrl }),
     references,
   }
 }

@@ -138,7 +138,7 @@ function encodeEd25519Multikey(key: Uint8Array): string {
   return `z${base58.encode(prefixed)}`
 }
 
-export function mlsCredentialFromKeyAuthorization(value: {
+function mlsCredentialFromKeyAuthorization(value: {
   issuer: string; audience: string; subject: string; generation: string; signaturePublicKey: Uint8Array;
   issuedAt: string; expiresAt: string; rootSignature: Uint8Array; signSignature: Uint8Array;
 }): MlsDeviceCredentialV2 {

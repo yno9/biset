@@ -1,7 +1,9 @@
 import type { DidCommPlaintext } from '../../../protocol/didcomm/message.ts'
 import type { DeliveredMessage } from '../../../protocol/didcomm/mediator-pickup.ts'
 import { registerWithMediator } from '../../didcomm/mediator-sync.ts'
-import { sameMediatorUrl } from '../../didcomm/mediator-watch.ts'
+import { mediatorInbox } from '../../../protocol/didcomm/mediator-device.ts'
+import { requireRelationshipSeed, type RelationshipSeedSource } from '../../didcomm/relationship-seed-bootstrap.ts'
+import { sameMediatorUrl } from '../../didcomm/mediator-endpoints.ts'
 import { deriveRelationshipPeerIdentity } from '../../../protocol/didcomm/peer.ts'
 import {
   RELATIONSHIP_ACCEPT,
@@ -33,8 +35,8 @@ interface PendingWalletRelationship {
   promise: Promise<ContactKeyV1>
   resolve: (contact: ContactKeyV1) => void
   /** A caller may stop waiting without abandoning the registered private
-   * receiver. An ACCEPT can legitimately arrive after a temporary SSE
-   * disconnect, so keep this pending state until the authenticated ACCEPT
+   * receiver. An ACCEPT can legitimately arrive after a temporary live
+   * connection drop, so keep this pending state until the authenticated ACCEPT
    * consumes it (or a future contact attempt supersedes it). */
   startedAt: number
 }
@@ -42,15 +44,12 @@ interface PendingWalletRelationship {
 export interface WalletRelationshipManagerOptions {
   identityId: string
   frontDoor: { xKid: string; x25519PrivateKey: Uint8Array }
-  /** Identity-wide secret, identical across every device of this same
-   * Wallet identity (did-md-oauth.ts derives it from the Wallet's permanent
-   * Root key, the same way VCK is derived, under its own fixed purpose) --
-   * NOT `frontDoor`'s per-device key. Feeds `deriveRelationshipPeerIdentity`
-   * so two different devices of this identity, each contacting the same
-   * external counterparty for the first time, converge on the identical
-   * relationship peer instead of racing to two non-superseding ContactKeyV1
-   * records (peer.ts's own note; found live, 2026-09-15). */
-  relationshipSecret: Uint8Array
+  /** The Vault's relationship seed (store/vault/relationship-seed.ts); a
+   * device that has not received it yet cannot start or accept a
+   * relationship -- RelationshipSeedPendingError, retried later. */
+  relationshipSeed: RelationshipSeedSource
+  /** Keys this device's mediator inbox labels (mediator-device.ts). */
+  mediatorDeviceSecret: Uint8Array
   reader: RelationshipContactReader
   sink: RelationshipContactSink
   startWatch: RelationshipWatchStarter
@@ -62,7 +61,7 @@ export interface WalletRelationshipManagerOptions {
   mediatorAliases?: readonly string[]
   /** Persist newly stored contact keys to the Wallet's MIMI Vault before a Pickup ACK. */
   afterContactStored?: () => Promise<unknown>
-  initiate?: (toDid: string, relationshipSecret: Uint8Array, options: { fromKid: string; x25519PrivateKey: Uint8Array }) => Promise<RelationshipInitiationResult>
+  initiate?: (toDid: string, relationshipSeed: Uint8Array, options: { fromKid: string; x25519PrivateKey: Uint8Array; mediatorDeviceSecret: Uint8Array }) => Promise<RelationshipInitiationResult>
   now?: () => Date
   timeoutMs?: number
 }
@@ -89,7 +88,7 @@ export function createWalletRelationshipManager(options: WalletRelationshipManag
   // ContactKeyV1 that supersedes nothing -- readAll()'s selectUnsuperseded
   // then throws "current contact key is ambiguous" forever afterward.
   const ensuring = new Map<string, Promise<ContactKeyV1>>()
-  const initiate = options.initiate ?? ((toDid, relationshipSecret, input) => initiateRelationship(toDid, relationshipSecret, input))
+  const initiate = options.initiate ?? ((toDid, relationshipSeed, input) => initiateRelationship(toDid, relationshipSeed, input))
   const now = options.now ?? (() => new Date())
   const timeoutMs = options.timeoutMs ?? 60_000
   const afterContactStored = options.afterContactStored ?? (async () => {})
@@ -100,9 +99,10 @@ export function createWalletRelationshipManager(options: WalletRelationshipManag
 
     let pending = pendingByCounterparty.get(counterpartyDid)
     if (!pending) {
-      const initiated = await initiate(counterpartyDid, options.relationshipSecret, {
+      const initiated = await initiate(counterpartyDid, await requireRelationshipSeed(options.relationshipSeed), {
         fromKid: options.frontDoor.xKid,
         x25519PrivateKey: options.frontDoor.x25519PrivateKey,
+        mediatorDeviceSecret: options.mediatorDeviceSecret,
       })
       if (!initiated.ok) throw new Error(initiated.error)
       let resolve!: (contact: ContactKeyV1) => void
@@ -147,7 +147,7 @@ export function createWalletRelationshipManager(options: WalletRelationshipManag
     async handleMessage(message, recipientKid, mediatorUrl): Promise<void> {
       const plaintext = message.plaintext as DidCommPlaintext
       if (plaintext.type === RELATIONSHIP_INIT) {
-        await handleRelationshipInit(message, mediatorUrl, options.identityId, options.relationshipSecret, options.reader, options.sink, options.startWatch, afterContactStored, options.mediatorAliases ?? [])
+        await handleRelationshipInit(message, mediatorUrl, options.identityId, options.relationshipSeed, options.mediatorDeviceSecret, options.reader, options.sink, options.startWatch, afterContactStored, options.mediatorAliases ?? [])
         return
       }
       if (plaintext.type !== RELATIONSHIP_ACCEPT) return
@@ -203,7 +203,7 @@ export function createWalletRelationshipManager(options: WalletRelationshipManag
 }
 
 async function handleRelationshipInit(
-  message: DeliveredMessage, mediatorUrl: string, identityId: string, relationshipSecret: Uint8Array,
+  message: DeliveredMessage, mediatorUrl: string, identityId: string, relationshipSeed: RelationshipSeedSource, mediatorDeviceSecret: Uint8Array,
   reader: RelationshipContactReader, sink: RelationshipContactSink,
   startWatch: RelationshipWatchStarter, afterContactStored: () => Promise<unknown> = async () => {},
   mediatorAliases: readonly string[] = [],
@@ -218,7 +218,7 @@ async function handleRelationshipInit(
   const counterpartyDid = didOfKid(message.senderKid)
   let contact = await reader.currentFor(counterpartyDid)
   if (!contact || contact.counterpartyRelationshipKid !== body.relationshipKid) {
-    // Deriving from the identity-wide relationshipSecret (not minting a
+    // Deriving from the identity-wide relationship seed (not minting a
     // random identity, and not the device-local front-door key) means
     // re-receiving the same counterparty's INIT after this device's own
     // reload, OR a DIFFERENT device of this same Wallet identity receiving
@@ -226,13 +226,13 @@ async function handleRelationshipInit(
     // stale one enrolled at the mediator forever, or the two devices
     // converging on two different, non-superseding ContactKeyV1 records
     // (peer.ts's `deriveRelationshipPeerIdentity`).
-    const peer = deriveRelationshipPeerIdentity(relationshipSecret, counterpartyDid, route.routingKid)
-    await registerWithMediator(route.url, { did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv })
+    const peer = deriveRelationshipPeerIdentity(await requireRelationshipSeed(relationshipSeed), counterpartyDid, route.routingKid)
+    await registerWithMediator(route.url, mediatorInbox({ did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv }, mediatorDeviceSecret))
     const next: ContactKeyV1 = {
       version: 1, kind: 'contact-key', identityId, counterpartyDid,
       ownRelationshipKid: peer.xKid, ownX25519PrivateKey: peer.xPriv, ownEd25519PrivateKey: peer.edPriv,
       counterpartyRelationshipKid: body.relationshipKid, counterpartyPublicKey: body.publicKey,
-      createdAt: new Date().toISOString(), ...(contact ? { supersedesKid: contact.ownRelationshipKid } : {}),
+      createdAt: new Date().toISOString(), ...(contact ? { supersedes: { ownRelationshipKid: contact.ownRelationshipKid, counterpartyRelationshipKid: contact.counterpartyRelationshipKid } } : {}),
     }
     await sink.store(next)
     contact = next

@@ -61,12 +61,10 @@
         "authorizationDetails": {
           "type": "array",
           "maxItems": 16,
-          "description": "RFC 9396 Rich Authorization Details, opaque to did.md's server. Biset requests a fixed set of detail types per authorization (see redirectToWallet in did-md-oauth.ts) and validates each echoed detail itself (capabilityDetails). Always present: Biset always requests at least the key-authorization detail.",
+          "description": "RFC 9396 Rich Authorization Details, opaque to did.md's server. Biset requests a fixed set of detail types per authorization (see redirectToWallet in did-md-oauth.ts) and validates each echoed detail itself (capabilityDetails).",
           "items": {
             "oneOf": [
-              { "$ref": "#/$defs/keyAuthorizationDetail" },
               { "$ref": "#/$defs/didDocumentEditDetail" },
-              { "$ref": "#/$defs/derivedSecretDetail" },
               { "$ref": "#/$defs/mailRelayCapabilityDetail" }
             ]
           }
@@ -89,18 +87,6 @@
     }
   },
   "$defs": {
-    "keyAuthorizationDetail": {
-      "type": "object",
-      "required": ["type", "credential"],
-      "additionalProperties": false,
-      "properties": {
-        "type": { "const": "urn:did.md:key-authorization:v1" },
-        "credential": {
-          "type": "string",
-          "description": "Base64url-encoded wire form of a did.md/KeyAuthorizationCredential (a separate did.md-defined credential type, unrelated to this schema's own ownership -- see createKeyAuthorizationCredentialWire in did.md's client/did-webvh.ts). Exactly one of this detail type is required per capability (enforced in did-md-oauth.ts, not expressible as a per-item JSON Schema constraint)."
-        }
-      }
-    },
     "didDocumentEditDetail": {
       "type": "object",
       "description": "Present only when Biset's authorization request included urn:did-core:document-edit:v1 (device onboarding that adds a verificationMethod to the identity's DID Document). See didDocumentEditDetail in did-md-oauth.ts for the exact validation this echoes against.",
@@ -112,21 +98,6 @@
         "verificationMethods": { "type": "array", "maxItems": 64 },
         "remove": { "type": "array", "maxItems": 128 },
         "serviceKeyBindings": { "type": "array" }
-      }
-    },
-    "derivedSecretDetail": {
-      "type": "object",
-      "description": "One per requested (purpose, context) pair -- vault content keys (purpose=vault-content-key) and the DIDComm relationship secret (purpose=relationship-secret, no context) both use this shape. context is present in the echo only when the request itself supplied one.",
-      "required": ["type", "purpose", "value"],
-      "additionalProperties": false,
-      "properties": {
-        "type": { "const": "urn:did.md:derived-secret:v1" },
-        "purpose": { "type": "string" },
-        "context": { "type": "string" },
-        "value": {
-          "type": "string",
-          "description": "Base64url-encoded 32-byte derived secret (deriveWalletSecret in did.md's client/did-webvh.ts)."
-        }
       }
     },
     "mailRelayCapabilityDetail": {

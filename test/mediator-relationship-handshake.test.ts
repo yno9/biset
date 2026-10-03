@@ -12,15 +12,18 @@ import {
 } from '../src/client/didcomm/send-message.ts'
 import type { DidCommPlaintext } from '../src/protocol/didcomm/message.ts'
 import { createMediator } from '../src/server/mediator/server.ts'
-import { ConnectionStore } from '../src/server/mediator/connections.ts'
+import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
+import { mediatorInbox } from '../src/protocol/didcomm/mediator-device.ts'
 import type { ContactKeyV1 } from '../src/client/store/vault/contact-key.ts'
 import { buildDidCommLog } from './protocol/support/webvh-log-fixture.ts'
 
 describe('private DIDComm relationship handshake', () => {
   test('moves continuing traffic off both public front-door kids and registers only unlinkable did:peer relationship clients', async () => {
     const mediatorUrl = `https://relationship-mediator-${crypto.randomUUID()}.test.example`
-    const mediator = generatePeerIdentity({ uri: mediatorUrl, accept: ['didcomm/v2'] })
-    const connections = new ConnectionStore()
+    const store = SqliteMediatorStore.memory()
+    const mediator = store.loadIdentity(mediatorUrl)
+    const aliceDeviceSecret = x25519.utils.randomSecretKey()
+    const bobDeviceSecret = x25519.utils.randomSecretKey()
 
     const aliceRoot = ed25519.utils.randomSecretKey()
     const aliceFrontX = x25519.utils.randomSecretKey()
@@ -39,15 +42,7 @@ describe('private DIDComm relationship handshake', () => {
     const bobFrontKid = `${bobDid}#k_bob-front-door`
     const bobRelationshipSecret = x25519.utils.randomSecretKey()
 
-    const { handle } = createMediator({
-      mediator,
-      connections,
-      async resolveDidWebvh(_did, kid) {
-        if (kid === aliceFrontKid) return x25519.getPublicKey(aliceFrontX)
-        if (kid === bobFrontKid) return x25519.getPublicKey(bobFrontX)
-        return null
-      },
-    })
+    const { handle } = createMediator({ mediator, store })
     const fetchImpl = (async (input, init) => {
       const url = new URL(String(input))
       if (url.origin === mediatorUrl) return (await handle(new Request(url, init), url)) ?? new Response('not found', { status: 404 })
@@ -57,7 +52,7 @@ describe('private DIDComm relationship handshake', () => {
     const realFetch = globalThis.fetch
     globalThis.fetch = fetchImpl
     try {
-      const aliceFront = { did: aliceDid, xKid: aliceFrontKid, xPriv: aliceFrontX }
+      const aliceFront = mediatorInbox({ did: aliceDid, xKid: aliceFrontKid, xPriv: aliceFrontX }, aliceDeviceSecret)
       await registerWithMediator(mediatorUrl, aliceFront, fetchImpl)
 
       // Bob enrolls his private kid BEFORE INIT, making Alice's ACCEPT
@@ -65,13 +60,14 @@ describe('private DIDComm relationship handshake', () => {
       const initiated = await initiateRelationship(aliceDid, bobRelationshipSecret, {
         fromKid: bobFrontKid,
         x25519PrivateKey: bobFrontX,
+        mediatorDeviceSecret: bobDeviceSecret,
         fetch: fetchImpl,
       })
       expect(initiated.ok).toBe(true)
       if (!initiated.ok) throw new Error(initiated.error)
       const bobRelationship = initiated.pending.peer
-      expect(connections.listKeys(bobRelationship.did)).toEqual([bobRelationship.xKid])
-      expect(connections.listKeys(bobDid)).toEqual([])
+      expect(store.listInboxes(bobRelationship.did)).toHaveLength(1)
+      expect(store.listInboxes(bobDid)).toEqual([])
 
       const initDelivered = await pickupDeliver(mediatorInfo(), aliceFront, async kid => {
         if (kid !== bobFrontKid) throw new Error(`unexpected INIT sender ${kid}`)
@@ -84,7 +80,8 @@ describe('private DIDComm relationship handshake', () => {
 
       const route = relationshipMediatorService(initBody.relationshipKid)
       const aliceRelationship = generatePeerIdentity({ uri: route.url, routingKeys: [route.routingKid] })
-      await registerWithMediator(route.url, { did: aliceRelationship.did, xKid: aliceRelationship.xKid, xPriv: aliceRelationship.xPriv }, fetchImpl)
+      const aliceRelationshipInbox = mediatorInbox({ did: aliceRelationship.did, xKid: aliceRelationship.xKid, xPriv: aliceRelationship.xPriv }, aliceDeviceSecret)
+      await registerWithMediator(route.url, aliceRelationshipInbox, fetchImpl)
       const aliceContact: ContactKeyV1 = {
         version: 1,
         kind: 'contact-key',
@@ -99,11 +96,11 @@ describe('private DIDComm relationship handshake', () => {
       }
       expect((await sendRelationshipAccept(aliceContact, fetchImpl)).ok).toBe(true)
 
-      const acceptDelivered = await pickupDeliver(mediatorInfo(), {
+      const acceptDelivered = await pickupDeliver(mediatorInfo(), mediatorInbox({
         did: bobRelationship.did,
         xKid: bobRelationship.xKid,
         xPriv: bobRelationship.xPriv,
-      }, peerKey, 10, fetchImpl)
+      }, bobDeviceSecret), peerKey, 10, fetchImpl)
       expect(acceptDelivered).toHaveLength(1)
       expect((acceptDelivered[0]!.plaintext as DidCommPlaintext).type).toBe(RELATIONSHIP_ACCEPT)
       expect(acceptDelivered[0]!.senderKid).toBe(aliceRelationship.xKid)
@@ -127,11 +124,7 @@ describe('private DIDComm relationship handshake', () => {
         sentAt: '2026-08-27T00:00:02.000Z',
       })).ok).toBe(true)
 
-      const continuing = await pickupDeliver(mediatorInfo(), {
-        did: aliceRelationship.did,
-        xKid: aliceRelationship.xKid,
-        xPriv: aliceRelationship.xPriv,
-      }, peerKey, 10, fetchImpl)
+      const continuing = await pickupDeliver(mediatorInfo(), aliceRelationshipInbox, peerKey, 10, fetchImpl)
       expect(continuing).toHaveLength(1)
       expect((continuing[0]!.plaintext as DidCommPlaintext).type).toBe(BASIC_MESSAGE)
       expect((continuing[0]!.plaintext as DidCommPlaintext).body).toMatchObject({ content: 'only private kids from here' })
@@ -142,12 +135,14 @@ describe('private DIDComm relationship handshake', () => {
       expect(JSON.stringify(continuing[0]!.rawJwe)).not.toContain(aliceFrontKid)
       expect(JSON.stringify(continuing[0]!.rawJwe)).not.toContain(bobFrontKid)
 
-      // The public Alice connection remains only for first contact. Each
-      // relationship registration is owned by its own self-certifying peer
-      // DID; neither public identity is present in that ownership record.
-      expect(connections.listKeys(aliceDid)).toEqual([aliceFrontKid])
-      expect(connections.listKeys(aliceRelationship.did)).toEqual([aliceRelationship.xKid])
-      expect(connections.listKeys(bobRelationship.did)).toEqual([bobRelationship.xKid])
+      // The public Alice inbox remains only for first contact. Each
+      // relationship inbox belongs to its own self-certifying peer DID, and
+      // the same device's labels differ per DID, so nothing the mediator
+      // stores ties a relationship did:peer to a public identity.
+      expect(store.listInboxes(aliceDid).map(inbox => inbox.device)).toEqual([aliceFront.device])
+      expect(store.listInboxes(aliceRelationship.did).map(inbox => inbox.device)).toEqual([aliceRelationshipInbox.device])
+      expect(aliceRelationshipInbox.device).not.toBe(aliceFront.device)
+      expect(store.listInboxes(bobRelationship.did)).toHaveLength(1)
       expect(aliceRelationship.did).not.toContain(aliceDid)
       expect(bobRelationship.did).not.toContain(bobDid)
     } finally {

@@ -126,10 +126,8 @@ export function withFetch(log: LogEntry[] | null, run: () => Promise<void>): Pro
  * suffix-bound route selection. */
 export interface DidCommStateExtras {
   keyAgreementKeys?: Array<{ fragment: string; x25519PublicKey: Uint8Array }>
-  /** Verification methods whose multibase encoding is not Ed25519 or X25519
-   * (an ML-KEM-768 `#kk_<id>` entry, say) -- already-encoded, since only the
-   * caller knows the multicodec. Not referenced from `keyAgreement`: an
-   * ML-KEM entry is found by `mlkemKidFor` off its X25519 sibling. */
+  /** Extra verification methods, already multibase-encoded, that are not
+   * referenced from `keyAgreement`. */
   rawVerificationMethods?: Array<{ fragment: string; publicKeyMultibase: string }>
   endpointUri?: string
   routingKeys?: string[]

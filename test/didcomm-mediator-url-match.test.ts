@@ -13,7 +13,7 @@
 import { describe, expect, test } from 'bun:test'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
 import { relationshipMediatorService } from '../src/client/didcomm/relationship.ts'
-import { sameMediatorUrl } from '../src/client/didcomm/mediator-watch.ts'
+import { sameMediatorUrl } from '../src/client/didcomm/mediator-endpoints.ts'
 
 describe('sameMediatorUrl', () => {
   test('a did:peer service endpoint matches the same mediator spelled with a trailing slash', () => {

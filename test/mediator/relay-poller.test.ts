@@ -10,8 +10,9 @@ import { createMediator } from '../../src/server/mediator/server.ts'
 import { startRelayPoller } from '../../src/server/mediator/relay-poller.ts'
 import { registerWithMediator } from '../../src/client/didcomm/mediator-sync.ts'
 import { pickupStatus, pickupDeliver, acknowledgeMessages } from '../../src/protocol/didcomm/mediator-pickup.ts'
-import type { DidCommSender } from '../../src/protocol/didcomm/mediator-transport.ts'
-import { packAuthcrypt, packAnoncrypt } from '../../src/protocol/didcomm/crypto.ts'
+import type { MediatorInboxClient } from '../../src/protocol/didcomm/mediator-transport.ts'
+import { SqliteMediatorStore } from '../../src/server/mediator/sqlite-store.ts'
+import { packAuthcrypt, packAnoncrypt, didCommPost } from '../../src/protocol/didcomm/crypto.ts'
 import { buildPlaintext } from '../../src/protocol/didcomm/message.ts'
 import { FORWARD } from '../../src/protocol/didcomm/mediator-protocol.ts'
 
@@ -19,8 +20,9 @@ const utf8 = (s: string) => new TextEncoder().encode(s)
 
 function freshMediator() {
   const url = `https://mediator-${crypto.randomUUID()}.test.example`
-  const mediator = generatePeerIdentity({ uri: url, accept: ['didcomm/v2'] })
-  const { handle } = createMediator({ mediator })
+  const store = SqliteMediatorStore.memory()
+  const mediator = store.loadIdentity(url)
+  const { handle } = createMediator({ mediator, store })
   return { mediator, handle, url }
 }
 
@@ -41,7 +43,7 @@ describe('relay poller (multi-hop Forward chaining)', () => {
     // The recipient registers with the LOCAL mediator only -- exactly as if
     // its DID document named local.mediator as the final hop.
     const recipientPeer = generatePeerIdentity()
-    const recipient: DidCommSender = { did: recipientPeer.did, xKid: recipientPeer.xKid, xPriv: recipientPeer.xPriv }
+    const recipient: MediatorInboxClient = { did: recipientPeer.did, xKid: recipientPeer.xKid, xPriv: recipientPeer.xPriv, device: 'recipient-device' }
     await registerWithMediator(local.url, recipient, fetchImpl)
 
     // The poller's own identity is what the sender's DID document names as
@@ -51,37 +53,37 @@ describe('relay poller (multi-hop Forward chaining)', () => {
     // front, same as a DID document would only ever name a kid the poller
     // already enrolled (a sender has no other way to learn about it).
     const relayIdentity = generatePeerIdentity()
-    const relayOwn: DidCommSender = { did: relayIdentity.did, xKid: relayIdentity.xKid, xPriv: relayIdentity.xPriv }
-    await registerWithMediator(upstream.url, relayOwn, fetchImpl)
+    const relayOwn = { did: relayIdentity.did, xKid: relayIdentity.xKid, xPriv: relayIdentity.xPriv }
+    await registerWithMediator(upstream.url, { ...relayOwn, device: 'relay-poller' }, fetchImpl)
 
     // Sender builds the nested structure itself (no relay-side code
     // involved in building it) -- innermost payload, then Forward-wrap once
     // per hop, outermost first is what actually gets POSTed.
     const senderPeer = generatePeerIdentity()
     const inner = buildPlaintext('https://didcomm.org/basicmessage/2.0/message', { content: 'via two hops' }, senderPeer.did, recipientPeer.did)
-    const innerJwe = packAuthcrypt(utf8(JSON.stringify(inner)), { kid: senderPeer.xKid, privateKey: senderPeer.xPriv }, { kid: recipientPeer.xKid, publicKey: recipientPeer.xPub })
+    const innerJwe = packAuthcrypt(utf8(JSON.stringify(inner)), { kid: senderPeer.xKid, privateKey: senderPeer.xPriv }, [{ kid: recipientPeer.xKid, publicKey: recipientPeer.xPub }])
 
     const forwardToHop2 = buildPlaintext(FORWARD, { next: recipientPeer.xKid })
     forwardToHop2.attachments = [{ id: 'inner', data: { json: innerJwe } }]
-    const forwardToHop2Jwe = packAnoncrypt(utf8(JSON.stringify(forwardToHop2)), { kid: relayIdentity.xKid, publicKey: relayIdentity.xPub })
+    const forwardToHop2Jwe = packAnoncrypt(utf8(JSON.stringify(forwardToHop2)), [{ kid: relayIdentity.xKid, publicKey: relayIdentity.xPub }])
 
     const forwardToHop1 = buildPlaintext(FORWARD, { next: relayIdentity.xKid })
     forwardToHop1.attachments = [{ id: 'inner', data: { json: forwardToHop2Jwe } }]
-    const forwardToHop1Jwe = packAnoncrypt(utf8(JSON.stringify(forwardToHop1)), { kid: upstream.mediator.xKid, publicKey: upstream.mediator.xPub })
+    const forwardToHop1Jwe = packAnoncrypt(utf8(JSON.stringify(forwardToHop1)), [{ kid: upstream.mediator.xKid, publicKey: upstream.mediator.xPub }])
 
-    const postResult = await fetchImpl(upstream.url, { method: 'POST', body: JSON.stringify(forwardToHop1Jwe) })
+    const postResult = await fetchImpl(upstream.url, didCommPost(forwardToHop1Jwe))
     expect(postResult.status).toBe(202)
 
     // Nothing has reached the local mediator's queue yet -- only the relay
     // poller running alongside it can get it there.
-    expect(await pickupStatus({ url: local.url, did: local.mediator.did, xKid: local.mediator.xKid, xPub: local.mediator.xPub }, recipient, fetchImpl)).toBe(0)
+    expect(await pickupStatus({ url: local.url, did: local.mediator.did, xKid: local.mediator.xKid, xPub: local.mediator.xPub }, recipient, fetchImpl)).toMatchObject({ messageCount: 0 })
 
     const poller = startRelayPoller(
       upstream.url,
       relayOwn,
       local.mediator.xKid,
       async (outbound) => {
-        const req = new Request(local.url, { method: 'POST', body: JSON.stringify(outbound) })
+        const req = new Request(local.url, didCommPost(outbound))
         const res = await local.handle(req, new URL(local.url))
         if (!res || res.status !== 202) throw new Error(`unexpected status ${res?.status}`)
       },
@@ -101,6 +103,6 @@ describe('relay poller (multi-hop Forward chaining)', () => {
     expect((delivered[0]!.plaintext as any).body.content).toBe('via two hops')
     expect(delivered[0]!.senderKid).toBe(senderPeer.xKid)
     await acknowledgeMessages(localInfo, recipient, delivered.map(d => d.ackId), fetchImpl)
-    expect(await pickupStatus(localInfo, recipient, fetchImpl)).toBe(0)
+    expect(await pickupStatus(localInfo, recipient, fetchImpl)).toMatchObject({ messageCount: 0 })
   })
 })

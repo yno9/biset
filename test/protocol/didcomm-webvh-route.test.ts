@@ -6,14 +6,22 @@
 // this side is how a sender reads it back. Shapes match a live
 // `cb81.did.md/.well-known/did.jsonl`.
 import { describe, expect, test } from 'bun:test'
-import { didCommRouteFromDocument, absoluteKid } from '../../src/protocol/didcomm/webvh-route.ts'
+import { x25519 } from '@noble/curves/ed25519.js'
+import { didCommRouteFromDocument, keyAgreementRecipients } from '../../src/protocol/didcomm/webvh-route.ts'
+import { encodeX25519Multikey } from '../../src/protocol/didcomm/multikey.ts'
 import type { WebvhDidDocument } from '../../src/protocol/webvh/document.ts'
 
 const DID = 'did:webvh:QmScid:alice.example'
 
-function vm(fragment: string) {
-  return { id: `${DID}#${fragment}`, type: 'Multikey' as const, controller: DID, publicKeyMultibase: `z6LS${fragment}` }
+const KEYS = new Map<string, Uint8Array>()
+function keyOf(fragment: string): Uint8Array {
+  if (!KEYS.has(fragment)) KEYS.set(fragment, x25519.getPublicKey(x25519.utils.randomSecretKey()))
+  return KEYS.get(fragment)!
 }
+function vm(fragment: string) {
+  return { id: `${DID}#${fragment}`, type: 'Multikey' as const, controller: DID, publicKeyMultibase: encodeX25519Multikey(keyOf(fragment)) }
+}
+const kids = (route: { recipients: Array<{ kid: string }> }) => route.recipients.map(r => r.kid)
 
 function service(id: string, uri: string, routingKeys: string[] = []) {
   return { id: `${DID}${id}`, type: 'DIDCommMessaging', serviceEndpoint: { uri, accept: ['didcomm/v2'], routingKeys } }
@@ -31,7 +39,8 @@ describe('didCommRouteFromDocument', () => {
       service: [service('#didcomm', 'https://mediator.example', ['did:peer:2.Ez6Mk...#key-1'])],
     }))
     expect(route.endpoint).toEqual({ uri: 'https://mediator.example', accept: ['didcomm/v2'], routingKeys: ['did:peer:2.Ez6Mk...#key-1'] })
-    expect(route.keyAgreement?.id).toBe(`${DID}#k_one`)
+    expect(kids(route)).toEqual([`${DID}#k_one`])
+    expect(route.recipients[0]!.publicKey).toEqual(keyOf('k_one'))
   })
 
   test('no DIDCommMessaging service at all: no endpoint (this identity never enabled DIDComm)', () => {
@@ -44,7 +53,7 @@ describe('didCommRouteFromDocument', () => {
       verificationMethod: [vm('key-1'), vm('k_one')],
       service: [service('#didcomm', 'https://mediator.example')],
     }))
-    expect(route.keyAgreement).toBeUndefined()
+    expect(route.recipients).toEqual([])
   })
 
   test('a keyAgreement reference with no matching verificationMethod resolves to nothing', () => {
@@ -53,28 +62,24 @@ describe('didCommRouteFromDocument', () => {
       keyAgreement: [`${DID}#k_missing`],
       service: [service('#didcomm', 'https://mediator.example')],
     }))
-    expect(route.keyAgreement).toBeUndefined()
+    expect(route.recipients).toEqual([])
   })
 
-  test('the newest device wins: Wallet appends rather than rewriting older (offline) devices', () => {
+  test('every device key is a recipient: one message reaches all of them', () => {
     const route = didCommRouteFromDocument(doc({
       verificationMethod: [vm('k_old'), vm('k_newest')],
       keyAgreement: [`${DID}#k_old`, `${DID}#k_newest`],
       service: [service('#didcomm', 'https://mediator.example')],
     }))
-    expect(route.keyAgreement?.id).toBe(`${DID}#k_newest`)
+    expect(kids(route)).toEqual([`${DID}#k_old`, `${DID}#k_newest`])
   })
 
-  test('the legacy `#didcomm-biset-<suffix>` form binds one service to one device key', () => {
-    const route = didCommRouteFromDocument(doc({
-      verificationMethod: [vm('k_old'), vm('k_newest')],
-      keyAgreement: [`${DID}#k_old`, `${DID}#k_newest`],
-      service: [service('#didcomm-biset-newest', 'https://new.example'), service('#didcomm-biset-old', 'https://old.example')],
-    }))
-    // Newest SERVICE wins, and it names `k_old` -- so the bound key is used
-    // even though a later keyAgreement entry exists.
-    expect(route.endpoint?.uri).toBe('https://old.example')
-    expect(route.keyAgreement?.id).toBe(`${DID}#k_old`)
+  test('a keyAgreement entry that is not X25519 is skipped, not fatal', () => {
+    expect(keyAgreementRecipients({
+      id: DID,
+      keyAgreement: [`${DID}#k_one`, `${DID}#bad`],
+      verificationMethod: [vm('k_one'), { id: `${DID}#bad`, publicKeyMultibase: 'z6MkNotX25519' }],
+    }).map(r => r.kid)).toEqual([`${DID}#k_one`])
   })
 
   test('keyAgreement may reference a bare #fragment instead of an absolute DID URL', () => {
@@ -83,14 +88,46 @@ describe('didCommRouteFromDocument', () => {
       keyAgreement: ['#k_one'],
       service: [service('#didcomm', 'https://mediator.example')],
     }))
-    expect(route.keyAgreement?.id).toBe(`${DID}#k_one`)
+    expect(kids(route)).toEqual([`${DID}#k_one`])
   })
 })
 
-describe('absoluteKid', () => {
-  test('a JWE header needs the absolute DID URL, whichever form the document used', () => {
-    const document = doc({})
-    expect(absoluteKid(document, '#k_one')).toBe(`${DID}#k_one`)
-    expect(absoluteKid(document, `${DID}#k_one`)).toBe(`${DID}#k_one`)
+describe('didCommRouteFromDocument -- a mediator with a Tor entrance (PLAN-tor.md D-4/D-5)', () => {
+  const ROUTING = ['did:peer:2.Ez6Mk...#key-1']
+  const ONION = 'http://4rh3nzidm2dhed4chzyd5je4obqctf5vtocjjnwdmzprqnxmmy55qrid.onion'
+  const entry = (uri: string, routingKeys = ROUTING) => ({ uri, accept: ['didcomm/v2'], routingKeys })
+  const withSet = (entries: unknown[]) => doc({
+    verificationMethod: [vm('k_one')],
+    keyAgreement: [`${DID}#k_one`],
+    service: [{ id: `${DID}#didcomm`, type: 'DIDCommMessaging', serviceEndpoint: entries as never }],
+  })
+
+  test('a non-Tor sender gets the canonical entry, whatever the order', () => {
+    expect(didCommRouteFromDocument(withSet([entry('https://mediator.example'), entry(ONION)])).endpoint?.uri).toBe('https://mediator.example')
+    expect(didCommRouteFromDocument(withSet([entry(ONION), entry('https://mediator.example')])).endpoint?.uri).toBe('https://mediator.example')
+  })
+
+  test('a Tor sender gets the onion entry when it names the same mediator', () => {
+    const route = didCommRouteFromDocument(withSet([entry('https://mediator.example'), entry(ONION)]), { preferOnion: true })
+    expect(route.endpoint).toEqual(entry(ONION))
+  })
+
+  test('a Tor sender falls back to canonical when no onion entry is published', () => {
+    expect(didCommRouteFromDocument(withSet([entry('https://mediator.example')]), { preferOnion: true }).endpoint?.uri).toBe('https://mediator.example')
+  })
+
+  test('an onion entry with different routingKeys is another mediator and is never used', () => {
+    const route = didCommRouteFromDocument(withSet([entry('https://mediator.example'), entry(ONION, ['did:peer:2.Eother#key-1'])]), { preferOnion: true })
+    expect(route.endpoint?.uri).toBe('https://mediator.example')
+  })
+
+  test('an onion-only set, an empty set or a malformed element yields no route', () => {
+    expect(didCommRouteFromDocument(withSet([entry(ONION)]), { preferOnion: true }).endpoint).toBeUndefined()
+    expect(didCommRouteFromDocument(withSet([])).endpoint).toBeUndefined()
+    expect(didCommRouteFromDocument(withSet([entry('https://mediator.example'), 'https://x'])).endpoint).toBeUndefined()
+  })
+
+  test('a single map is unchanged (I-5)', () => {
+    expect(didCommRouteFromDocument(doc({ verificationMethod: [vm('k_one')], keyAgreement: [`${DID}#k_one`], service: [service('#didcomm', 'https://mediator.example', ROUTING)] }), { preferOnion: true }).endpoint?.uri).toBe('https://mediator.example')
   })
 })

@@ -1,7 +1,6 @@
 import type { AdapterIngressOfferV1, IngressEnvelopeV1 } from '../../protocol/ingress.ts'
 import type { MailSubmissionRequestV1 } from '../../protocol/mail-submission.ts'
-import { assertDeliverySeq, assertOpaqueId } from '../../protocol/ids.ts'
-import type { VaultDeliveryAppendV1 } from '../../protocol/vault.ts'
+import { assertOpaqueId } from '../../protocol/ids.ts'
 
 export class ProtocolValidationError extends Error {
   constructor(message: string) {
@@ -125,22 +124,5 @@ export function assertMailSubmissionRequest(value: unknown): asserts value is Ma
   for (const address of input.rcptTo) text(address, 'rcptTo entry')
   bytes(input.rawRfc5322, 'rawRfc5322')
   time(input.submittedAt, 'submittedAt')
-  bytes(input.signature, 'signature')
-}
-
-
-
-export function assertVaultDeliveryAppend(value: unknown): asserts value is VaultDeliveryAppendV1 {
-  const input = record(value, 'VaultDeliveryAppendV1')
-  exactKeys(input, [
-    'version', 'identityId', 'appendId', 'payload', 'payloadHash', 'senderDeviceId', 'sentAt', 'signature',
-  ], 'VaultDeliveryAppendV1')
-  if (input.version !== 1) throw new ProtocolValidationError('VaultDeliveryAppendV1.version must be 1')
-  opaqueId(input.identityId, 'identityId')
-  opaqueId(input.appendId, 'appendId')
-  bytes(input.payload, 'payload')
-  bytes(input.payloadHash, 'payloadHash')
-  opaqueId(input.senderDeviceId, 'senderDeviceId')
-  time(input.sentAt, 'sentAt')
   bytes(input.signature, 'signature')
 }

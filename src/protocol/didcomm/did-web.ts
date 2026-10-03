@@ -1,7 +1,9 @@
 // Minimal did:web reader for public DIDComm service agents.  User identities
 // remain did:webvh and use the signed-log resolver; this is deliberately only
 // for stable service DIDs such as did:web:smtp.did.md.
-import { decodeX25519Multikey } from './multikey.ts'
+import { selectDidCommEndpoint } from './service-endpoint.ts'
+import { keyAgreementRecipients } from './webvh-route.ts'
+import type { X25519Recipient } from './crypto.ts'
 
 export interface DidWebDocument {
   id: string
@@ -10,7 +12,7 @@ export interface DidWebDocument {
   service?: Array<{ id: string; type: string; serviceEndpoint: unknown }>
 }
 
-export function didWebDocumentUrl(did: string): string {
+function didWebDocumentUrl(did: string): string {
   if (!did.startsWith('did:web:')) throw new TypeError('not a did:web identifier')
   const parts = did.slice('did:web:'.length).split(':')
   const host = parts.shift()
@@ -31,13 +33,12 @@ export async function resolveDidWeb(did: string, fetchImpl: typeof fetch = fetch
   return doc as DidWebDocument
 }
 
-export function didWebDidCommRoute(doc: DidWebDocument): { kid: string; publicKey: Uint8Array; uri: string; routingKeys: string[] } {
-  const keyIds = new Set(doc.keyAgreement ?? [])
-  const key = doc.verificationMethod?.find(value => keyIds.has(value.id) || keyIds.has(value.id.startsWith('#') ? `${doc.id}${value.id}` : value.id))
+export function didWebDidCommRoute(doc: DidWebDocument, options: { preferOnion?: boolean } = {}): { recipients: X25519Recipient[]; uri: string; routingKeys: string[] } {
+  const recipients = keyAgreementRecipients(doc)
   const service = [...(doc.service ?? [])].reverse().find(value => value.type === 'DIDCommMessaging')
-  const endpoint = service?.serviceEndpoint
-  if (!key || !endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) throw new Error(`${doc.id} has no DIDComm route`)
+  const endpoint = selectDidCommEndpoint(service?.serviceEndpoint, options.preferOnion)
+  if (recipients.length === 0 || !endpoint) throw new Error(`${doc.id} has no DIDComm route`)
   const value = endpoint as { uri?: unknown; routingKeys?: unknown }
   if (typeof value.uri !== 'string' || !value.uri || (value.routingKeys !== undefined && (!Array.isArray(value.routingKeys) || value.routingKeys.some(key => typeof key !== 'string')))) throw new Error(`${doc.id} has an invalid DIDComm route`)
-  return { kid: key.id.startsWith('#') ? `${doc.id}${key.id}` : key.id, publicKey: decodeX25519Multikey(key.publicKeyMultibase), uri: value.uri, routingKeys: (value.routingKeys ?? []) as string[] }
+  return { recipients, uri: value.uri, routingKeys: (value.routingKeys ?? []) as string[] }
 }

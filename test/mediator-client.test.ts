@@ -8,46 +8,46 @@
 // network.
 import { describe, expect, test } from 'bun:test'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
-import { createMediator } from '../src/server/mediator/server.ts'
 import { fetchMediatorInfo, requestMediation, updateKeylist, queryKeylist } from '../src/protocol/didcomm/mediator-coordinate.ts'
 import { pickupStatus, pickupDeliver, acknowledgeMessages } from '../src/protocol/didcomm/mediator-pickup.ts'
-import { registerWithMediator, startMediatorPolling } from '../src/client/didcomm/mediator-sync.ts'
-import { requestWatch, mediatorMultiplexedStreamUrl, mediatorStreamUrl } from '../src/protocol/didcomm/mediator-pickup.ts'
-import { watchMediator } from '../src/client/didcomm/mediator-watch.ts'
-import type { DidCommSender } from '../src/protocol/didcomm/mediator-transport.ts'
-import { packAuthcrypt, packAnoncrypt } from '../src/protocol/didcomm/crypto.ts'
+import { MediatorDeviceLimitError, registerWithMediator, startMediatorPolling } from '../src/client/didcomm/mediator-sync.ts'
+import { watchMediatorLive } from '../src/client/didcomm/mediator-live.ts'
+import { packMediatorRequest, unpackMediatorMessage } from '../src/protocol/didcomm/mediator-transport.ts'
+import { DELIVERY, LIVE_DELIVERY_CHANGE, LIVE_MODE_NOT_SUPPORTED_PROBLEM, STATUS } from '../src/protocol/didcomm/mediator-protocol.ts'
+import { PING, PING_RESPONSE } from '../src/protocol/didcomm/trust-ping.ts'
+import { createMediatorDeployment } from '../src/server/mediator/deployment.ts'
+import type { LiveSocket, MediatorHandler } from '../src/server/mediator/server.ts'
+import { freshMediatorFetch } from './support/mediator.ts'
+import type { DidCommPlaintext } from '../src/protocol/didcomm/message.ts'
+import type { MediatorInboxClient } from '../src/protocol/didcomm/mediator-transport.ts'
+import { packAuthcrypt, packAnoncrypt, didCommPost } from '../src/protocol/didcomm/crypto.ts'
 import { buildPlaintext } from '../src/protocol/didcomm/message.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 
-/** A fresh, unique mediator URL per call -- fetchMediatorInfo caches its
- * result IN-MEMORY per URL (mediator-transport.ts's own note: right for a
- * real deployment's stable URL, but a shared constant across tests would
- * have one test's cached MediatorInfo silently answer for a DIFFERENT
- * freshly-minted mediator identity in the next). */
-function freshMediatorFetch() {
-  const url = `https://mediator-${crypto.randomUUID()}.test.example`
-  const mediator = generatePeerIdentity({ uri: url, accept: ['didcomm/v2'] })
-  const { handle } = createMediator({ mediator })
-  const fetchImpl: typeof fetch = async (input, init) => {
-    const reqUrl = new URL(String(input))
-    const res = await handle(new Request(reqUrl, init), reqUrl)
-    return res ?? new Response('not found', { status: 404 })
-  }
-  return { mediatorIdentity: mediator, fetchImpl, url }
+/** A raw live socket into `live`, collecting what the mediator pushes. */
+function rawLiveSocket(live: MediatorHandler['live']) {
+  const frames: string[] = []
+  const socket: LiveSocket = { send: data => { frames.push(data) } }
+  return { socket, frames, send: (raw: unknown) => live.message(socket, JSON.stringify(raw)) }
+}
+
+async function until(condition: () => boolean, deadlineMs = 2000): Promise<void> {
+  const deadline = Date.now() + deadlineMs
+  while (!condition() && Date.now() < deadline) await new Promise(r => setTimeout(r, 5))
 }
 
 /** Simulates what Phase 5's send-message.ts will build: alice authcrypts to
  * bob's kid, then anoncrypts a Forward naming it as `next` to the
  * mediator's own kid, and delivers it straight into the mediator (there is
  * no sender-side client library yet -- that is Phase 5). */
-async function forwardFromAliceToBob(fetchImpl: typeof fetch, mediatorUrl: string, mediatorXKid: string, mediatorXPub: Uint8Array, alice: ReturnType<typeof generatePeerIdentity>, bob: DidCommSender, bobXPub: Uint8Array, content: string) {
+async function forwardFromAliceToBob(fetchImpl: typeof fetch, mediatorUrl: string, mediatorXKid: string, mediatorXPub: Uint8Array, alice: ReturnType<typeof generatePeerIdentity>, bob: MediatorInboxClient, bobXPub: Uint8Array, content: string) {
   const inner = buildPlaintext('https://didcomm.org/basicmessage/2.0/message', { content }, alice.did, bob.did)
-  const innerJwe = packAuthcrypt(utf8(JSON.stringify(inner)), { kid: alice.xKid, privateKey: alice.xPriv }, { kid: bob.xKid, publicKey: bobXPub })
+  const innerJwe = packAuthcrypt(utf8(JSON.stringify(inner)), { kid: alice.xKid, privateKey: alice.xPriv }, [{ kid: bob.xKid, publicKey: bobXPub }])
   const forward = buildPlaintext('https://didcomm.org/routing/2.0/forward', { next: bob.xKid })
   forward.attachments = [{ id: 'inner', data: { json: innerJwe } }]
-  const forwardJwe = packAnoncrypt(utf8(JSON.stringify(forward)), { kid: mediatorXKid, publicKey: mediatorXPub })
-  const res = await fetchImpl(`${mediatorUrl}/`, { method: 'POST', body: JSON.stringify(forwardJwe) })
+  const forwardJwe = packAnoncrypt(utf8(JSON.stringify(forward)), [{ kid: mediatorXKid, publicKey: mediatorXPub }])
+  const res = await fetchImpl(`${mediatorUrl}/`, didCommPost(forwardJwe))
   expect(res.status).toBe(202)
 }
 
@@ -56,17 +56,17 @@ describe('mediator client library (mediator-{transport,coordinate,pickup,sync}.t
     const { mediatorIdentity, fetchImpl, url } = freshMediatorFetch()
     const alicePeer = generatePeerIdentity()
     const bobPeer = generatePeerIdentity()
-    const bob: DidCommSender = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv }
+    const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
 
     const info = await registerWithMediator(url, bob, fetchImpl)
     expect(info.did).toBe(mediatorIdentity.did)
 
     const keys = await queryKeylist(info, bob, fetchImpl)
-    expect(keys).toEqual([{ kid: bob.xKid }])
+    expect(keys).toEqual([expect.objectContaining({ device: bob.device })])
 
     await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alicePeer, bob, bobPeer.xPub, 'hello bob')
 
-    expect(await pickupStatus(info, bob, fetchImpl)).toBe(1)
+    expect(await pickupStatus(info, bob, fetchImpl)).toMatchObject({ messageCount: 1 })
 
     const delivered = await pickupDeliver(info, bob, async () => alicePeer.xPub, 10, fetchImpl)
     expect(delivered).toHaveLength(1)
@@ -74,41 +74,43 @@ describe('mediator client library (mediator-{transport,coordinate,pickup,sync}.t
     expect((delivered[0]!.plaintext as any).body.content).toBe('hello bob')
 
     const remaining = await acknowledgeMessages(info, bob, [delivered[0]!.ackId], fetchImpl)
-    expect(remaining).toBe(0)
-    expect(await pickupStatus(info, bob, fetchImpl)).toBe(0)
+    expect(remaining).toMatchObject({ messageCount: 0, missed: false })
+    expect(await pickupStatus(info, bob, fetchImpl)).toMatchObject({ messageCount: 0 })
   })
 
-  test('a private did:peer controls a distinct public recipient queue', async () => {
+  test('two devices of one DID each collect the same Forward through their own inbox', async () => {
     const { fetchImpl, url } = freshMediatorFetch()
     const alice = generatePeerIdentity()
-    const controlPeer = generatePeerIdentity()
-    const recipientPeer = generatePeerIdentity()
-    const control: DidCommSender = { did: controlPeer.did, xKid: controlPeer.xKid, xPriv: controlPeer.xPriv }
-    const recipient: DidCommSender = { did: 'did:webvh:example:alice.example', xKid: 'did:webvh:example:alice.example#k-public', xPriv: recipientPeer.xPriv }
-    const info = await registerWithMediator(url, control, fetchImpl, recipient.xKid)
-    expect(await queryKeylist(info, control, fetchImpl)).toEqual([{ kid: recipient.xKid }])
+    const bobPeer = generatePeerIdentity()
+    const phone: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-phone-01' }
+    const laptop: MediatorInboxClient = { ...phone, device: 'bob-laptop-01' }
+    const info = await registerWithMediator(url, phone, fetchImpl)
+    await registerWithMediator(url, laptop, fetchImpl)
+    expect((await queryKeylist(info, phone, fetchImpl)).map(entry => entry.device)).toEqual(['bob-phone-01', 'bob-laptop-01'])
 
-    await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, recipient, recipientPeer.xPub, 'separated')
-    const delivered = await pickupDeliver(info, control, async () => alice.xPub, 10, fetchImpl, recipient)
-    expect((delivered[0]!.plaintext as any).body.content).toBe('separated')
-    expect(await acknowledgeMessages(info, control, [delivered[0]!.ackId], fetchImpl, recipient.xKid)).toBe(0)
+    await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, phone, bobPeer.xPub, 'to every device')
+    for (const device of [phone, laptop]) {
+      const delivered = await pickupDeliver(info, device, async () => alice.xPub, 10, fetchImpl)
+      expect((delivered[0]!.plaintext as any).body.content).toBe('to every device')
+      expect(await acknowledgeMessages(info, device, [delivered[0]!.ackId], fetchImpl)).toMatchObject({ messageCount: 0 })
+    }
   })
 
   test('re-registering (self-heal) is idempotent and does not disturb the keylist', async () => {
     const { fetchImpl, url } = freshMediatorFetch()
     const bobPeer = generatePeerIdentity()
-    const bob: DidCommSender = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv }
+    const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
     const info1 = await registerWithMediator(url, bob, fetchImpl)
     const info2 = await registerWithMediator(url, bob, fetchImpl)
     expect(info2.did).toBe(info1.did)
     const keys = await queryKeylist(info1, bob, fetchImpl)
-    expect(keys).toEqual([{ kid: bob.xKid }])
+    expect(keys).toEqual([expect.objectContaining({ device: bob.device })])
   })
 
-  test('requestMediation alone grants without registering a kid', async () => {
+  test('requestMediation alone grants without opening an inbox', async () => {
     const { mediatorIdentity, fetchImpl, url } = freshMediatorFetch()
     const bobPeer = generatePeerIdentity()
-    const bob: DidCommSender = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv }
+    const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
     const info = await fetchMediatorInfo(url, fetchImpl)
     const grant = await requestMediation(info, bob, fetchImpl)
     expect(grant.routingDid).toBe(mediatorIdentity.did)
@@ -119,7 +121,7 @@ describe('mediator client library (mediator-{transport,coordinate,pickup,sync}.t
     const { fetchImpl, url } = freshMediatorFetch()
     const alicePeer = generatePeerIdentity()
     const bobPeer = generatePeerIdentity()
-    const bob: DidCommSender = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv }
+    const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
     const info = await registerWithMediator(url, bob, fetchImpl)
     await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alicePeer, bob, bobPeer.xPub, 'polled message')
 
@@ -136,151 +138,219 @@ describe('mediator client library (mediator-{transport,coordinate,pickup,sync}.t
 
     expect(received).toEqual(['polled message'])
     // Acknowledged by the poll loop itself -- nothing left queued.
-    expect(await pickupStatus(info, bob, fetchImpl)).toBe(0)
+    expect(await pickupStatus(info, bob, fetchImpl)).toMatchObject({ messageCount: 0 })
   })
 })
 
-/** Reads SSE `data: ...` lines off one stream, accumulating across chunk
- * boundaries (a `ReadableStream` makes no promise that one
- * `controller.enqueue` call in server.ts becomes exactly one `reader.read()`
- * result). Stateful across calls to `next(count)` -- a single reader is
- * acquired once (a `ReadableStream` throws if `getReader()` is called twice
- * on the same body) and reused for every subsequent read on that same
- * connection, exactly like a real `EventSource` staying open across
- * multiple pushes. */
-function sseFrameReader(response: Response) {
-  const reader = response.body!.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  return {
-    async next(count: number, deadlineMs = 2000): Promise<Array<{ id: string; jwe: unknown }>> {
-      const frames: Array<{ id: string; jwe: unknown }> = []
-      const deadline = Date.now() + deadlineMs
-      while (frames.length < count && Date.now() < deadline) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        let sep: number
-        while ((sep = buffer.indexOf('\n\n')) !== -1) {
-          const raw = buffer.slice(0, sep)
-          buffer = buffer.slice(sep + 2)
-          const line = raw.split('\n').find(l => l.startsWith('data: '))
-          if (line) frames.push(JSON.parse(line.slice('data: '.length)))
-        }
-      }
-      return frames
-    },
-    async close(): Promise<void> { await reader.cancel().catch(() => {}) },
-  }
-}
+describe('Pickup 3.0 live mode over WebSocket (server.ts live, mediator-live.ts)', () => {
+  test('live-delivery-change pushes a newly queued copy as a delivery, which stays queued until acked', async () => {
+    const { fetchImpl, url, live } = freshMediatorFetch()
+    const alice = generatePeerIdentity()
+    const bobPeer = generatePeerIdentity()
+    const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
+    const info = await registerWithMediator(url, bob, fetchImpl)
+    const raw = rawLiveSocket(live)
+    await raw.send(packMediatorRequest(info, bob, LIVE_DELIVERY_CHANGE, { recipient_did: bob.did, device: bob.device, live_delivery: true }))
+    const enabled = await unpackMediatorMessage(info, bob, JSON.parse(raw.frames[0]!))
+    expect(enabled.type).toBe(STATUS)
+    expect(enabled.body).toMatchObject({ live_delivery: true, message_count: 0 })
 
-describe('mediator live watch (mediator-watch.ts, server.ts GET /stream)', () => {
-  test('one SSE multiplexes backlog from two independently authorized recipient queues', async () => {
-    const { fetchImpl, url } = freshMediatorFetch()
+    await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, bob, bobPeer.xPub, 'pushed live')
+    expect(raw.frames).toHaveLength(2)
+    const pushed = await unpackMediatorMessage(info, bob, JSON.parse(raw.frames[1]!))
+    expect(pushed.type).toBe(DELIVERY)
+    expect(pushed.body).toMatchObject({ recipient_did: bob.did, device: bob.device })
+    expect(pushed.attachments).toHaveLength(1)
+    expect(await pickupStatus(info, bob, fetchImpl)).toMatchObject({ messageCount: 1 })
+
+    // Closing the socket ends live mode: the next copy is only queued.
+    live.close(raw.socket)
+    await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, bob, bobPeer.xPub, 'after close')
+    expect(raw.frames).toHaveLength(2)
+  })
+
+  test('live mode is refused over HTTP, and on a socket without return_route', async () => {
+    const { fetchImpl, url, live, mediatorIdentity } = freshMediatorFetch()
+    const bobPeer = generatePeerIdentity()
+    const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
+    const info = await registerWithMediator(url, bob, fetchImpl)
+    await expect(sendAndUnpackLive(info, bob, fetchImpl)).rejects.toThrow(LIVE_MODE_NOT_SUPPORTED_PROBLEM)
+
+    // Without return_route the mediator may not answer on the socket at all.
+    const raw = rawLiveSocket(live)
+    const plaintext = buildPlaintext(LIVE_DELIVERY_CHANGE, { recipient_did: bob.did, device: bob.device, live_delivery: true }, bob.did, mediatorIdentity.did)
+    await raw.send(packAuthcrypt(utf8(JSON.stringify(plaintext)), { kid: bob.xKid, privateKey: bob.xPriv }, [{ kid: info.xKid, publicKey: info.xPub }]))
+    expect(raw.frames).toHaveLength(0)
+  })
+
+  test('an HTTP request without return_route is accepted with no reply body', async () => {
+    const { fetchImpl, url, mediatorIdentity } = freshMediatorFetch()
+    const bobPeer = generatePeerIdentity()
+    const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
+    const info = await registerWithMediator(url, bob, fetchImpl)
+    const plaintext = buildPlaintext('https://didcomm.org/messagepickup/3.0/status-request', { recipient_did: bob.did, device: bob.device }, bob.did, mediatorIdentity.did)
+    const res = await fetchImpl(`${url}/`, didCommPost(packAuthcrypt(utf8(JSON.stringify(plaintext)), { kid: bob.xKid, privateKey: bob.xPriv }, [{ kid: info.xKid, publicKey: info.xPub }])))
+    expect(res.status).toBe(202)
+    expect(await res.text()).toBe('')
+  })
+
+  test('watchMediatorLive pulls the backlog with delivery-request, receives live pushes, and acks both', async () => {
+    const { fetchImpl, url, webSocketCtor } = freshMediatorFetch()
+    const alice = generatePeerIdentity()
+    const bobPeer = generatePeerIdentity()
+    const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
+    const info = await registerWithMediator(url, bob, fetchImpl)
+    // More than one delivery-request batch, queued before connecting.
+    for (let n = 0; n < 12; n++) await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, bob, bobPeer.xPub, `backlog ${n}`)
+
+    const received: string[] = []
+    const watch = watchMediatorLive({
+      mediatorUrl: url, inbox: bob, resolveSenderKey: async () => alice.xPub,
+      onMessage: msg => { received.push((msg.plaintext as { body: { content: string } }).body.content) },
+      fetch: fetchImpl, webSocketCtor,
+    })
+    await until(() => received.length === 12)
+    await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, bob, bobPeer.xPub, 'live')
+    await until(() => received.length === 13)
+    await until(() => false, 50)
+    watch.close()
+
+    expect(received).toEqual([...Array.from({ length: 12 }, (_, n) => `backlog ${n}`), 'live'])
+    expect(await pickupStatus(info, bob, fetchImpl)).toMatchObject({ messageCount: 0 })
+  })
+
+  test('one socket carries several inboxes, each enabled by its own authcrypt request', async () => {
+    const { fetchImpl, url, webSocketCtor } = freshMediatorFetch()
     const alice = generatePeerIdentity()
     const bobPeer = generatePeerIdentity()
     const carolPeer = generatePeerIdentity()
-    const bob: DidCommSender = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv }
-    const carol: DidCommSender = { did: carolPeer.did, xKid: carolPeer.xKid, xPriv: carolPeer.xPriv }
+    const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
+    const carol: MediatorInboxClient = { did: carolPeer.did, xKid: carolPeer.xKid, xPriv: carolPeer.xPriv, device: 'carol-device' }
     const info = await registerWithMediator(url, bob, fetchImpl)
-    await registerWithMediator(url, carol, fetchImpl)
+    let sockets = 0
+    const counting = class extends (webSocketCtor as unknown as new (url: string) => object) { constructor(u: string) { super(u); sockets++ } } as unknown as typeof WebSocket
+    const received: string[] = []
+    const watches = [bob, carol].map(inbox => watchMediatorLive({
+      mediatorUrl: url, inbox, resolveSenderKey: async () => alice.xPub,
+      onMessage: msg => { received.push(`${inbox.device}:${(msg.plaintext as { body: { content: string } }).body.content}`) },
+      fetch: fetchImpl, webSocketCtor: counting,
+    }))
+    await until(() => false, 50)
     await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, bob, bobPeer.xPub, 'for bob')
     await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, carol, carolPeer.xPub, 'for carol')
-
-    const bobToken = (await requestWatch(info, bob, fetchImpl)).token
-    const carolToken = (await requestWatch(info, carol, fetchImpl)).token
-    const response = await fetchImpl(mediatorMultiplexedStreamUrl(url, [bobToken, carolToken]), { method: 'GET' })
-    const frames = sseFrameReader(response)
-    const delivered = await frames.next(2) as Array<{ id: string; recipient_kid: string; jwe: unknown }>
-    expect(new Set(delivered.map(frame => frame.recipient_kid))).toEqual(new Set([bob.xKid, carol.xKid]))
-    await frames.close()
+    await until(() => received.length === 2)
+    for (const watch of watches) watch.close()
+    expect(sockets).toBe(1)
+    expect(new Set(received)).toEqual(new Set(['bob-device:for bob', 'carol-device:for carol']))
   })
 
-  test('GET /stream sends the already-queued backlog, then a live push for a message queued after connecting', async () => {
-    const { fetchImpl, url } = freshMediatorFetch()
-    const alicePeer = generatePeerIdentity()
+  test('a status saying the inbox missed copies calls onMissed', async () => {
+    const { fetchImpl, url, webSocketCtor, store } = freshMediatorFetch()
     const bobPeer = generatePeerIdentity()
-    const bob: DidCommSender = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv }
-    const info = await registerWithMediator(url, bob, fetchImpl)
-
-    // Queued BEFORE the watch connects -- must arrive as backlog.
-    await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alicePeer, bob, bobPeer.xPub, 'already queued')
-
-    const { token } = await requestWatch(info, bob, fetchImpl)
-    const response = await fetchImpl(mediatorStreamUrl(url, token), { method: 'GET' })
-    expect(response.headers.get('content-type')).toBe('text/event-stream')
-    const frames = sseFrameReader(response)
-
-    const [backlog] = await frames.next(1)
-    expect(backlog).toBeDefined()
-
-    // A SECOND message, queued while the connection is already open -- must
-    // arrive live, not require a reconnect.
-    const readLive = frames.next(1)
-    await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alicePeer, bob, bobPeer.xPub, 'pushed live')
-    const [live] = await readLive
-    expect(live).toBeDefined()
-    expect(live!.id).not.toBe(backlog!.id)
-    await frames.close()
-  })
-
-  test('an invalid or expired token is refused', async () => {
-    const { fetchImpl, url } = freshMediatorFetch()
-    const response = await fetchImpl(mediatorStreamUrl(url, 'not-a-real-token'), { method: 'GET' })
-    expect(response.status).toBe(403)
-  })
-
-  test('requestWatch for a kid this connection does not own is refused', async () => {
-    const { fetchImpl, url } = freshMediatorFetch()
-    const bobPeer = generatePeerIdentity()
-    const strangerPeer = generatePeerIdentity()
-    await registerWithMediator(url, { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv }, fetchImpl)
-    const info = await fetchMediatorInfo(url, fetchImpl)
-    // strangerPeer never keylist-registered bob's kid -- asking to watch
-    // themselves (their OWN unregistered kid) must still be refused, since
-    // denyUnlessOwned checks connection ownership, not just "some connection
-    // owns this kid".
-    await expect(requestWatch(info, { did: strangerPeer.did, xKid: strangerPeer.xKid, xPriv: strangerPeer.xPriv }, fetchImpl)).rejects.toThrow()
-  })
-
-  test('watchMediator (FakeEventSource) delivers a queued message and acks it', async () => {
-    const { fetchImpl, url } = freshMediatorFetch()
-    const alicePeer = generatePeerIdentity()
-    const bobPeer = generatePeerIdentity()
-    const bob: DidCommSender = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv }
-    const info = await registerWithMediator(url, bob, fetchImpl)
-    await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alicePeer, bob, bobPeer.xPub, 'watched message')
-
-    class FakeEventSource {
-      onmessage: ((event: { data: string }) => void) | null = null
-      onerror: (() => void) | null = null
-      private closed = false
-      constructor(public readonly streamUrl: string) {
-        void this.pump()
-      }
-      private async pump(): Promise<void> {
-        const response = await fetchImpl(this.streamUrl, { method: 'GET' })
-        const [frame] = await sseFrameReader(response).next(1)
-        if (this.closed || !frame) return
-        this.onmessage?.({ data: JSON.stringify(frame) })
-      }
-      close(): void { this.closed = true }
-    }
-
-    const received: string[] = []
-    const watch = watchMediator({
-      mediatorUrl: url, own: bob, resolveSenderKey: async () => alicePeer.xPub,
-      onMessage: msg => { received.push((msg.plaintext as any).body.content) },
-      fetch: fetchImpl,
-      eventSourceCtor: FakeEventSource as unknown as typeof EventSource,
+    const bob = (device: string): MediatorInboxClient => ({ did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device })
+    await registerWithMediator(url, bob('bob-device-a'), fetchImpl)
+    await registerWithMediator(url, bob('bob-device-b'), fetchImpl)
+    // Fifteen days on, only bob-b has been seen: bob-a is dormant and the
+    // copy queued now skips it.
+    const later = Date.now() + 15 * 24 * 60 * 60 * 1000
+    store.touch(bobPeer.did, 'bob-device-b', later)
+    store.enqueue(bobPeer.did, JSON.stringify({ opaque: true }), later)
+    let missed = 0
+    const watch = watchMediatorLive({
+      mediatorUrl: url, inbox: bob('bob-device-a'), resolveSenderKey: async () => bobPeer.xPub,
+      onMessage: () => {}, onMissed: () => { missed++ },
+      fetch: fetchImpl, webSocketCtor,
     })
-
-    const deadline = Date.now() + 2000
-    while (received.length === 0 && Date.now() < deadline) await new Promise(r => setTimeout(r, 10))
+    await until(() => missed > 0)
     watch.close()
+    expect(missed).toBe(1)
+  })
 
-    expect(received).toEqual(['watched message'])
-    // watchMediator acks after a successful onMessage -- nothing left queued.
-    expect(await pickupStatus(info, bob, fetchImpl)).toBe(0)
+  test('a failing onMessage leaves the copy queued (no ack) and does not spin', async () => {
+    const { fetchImpl, url, webSocketCtor } = freshMediatorFetch()
+    const alice = generatePeerIdentity()
+    const bobPeer = generatePeerIdentity()
+    const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
+    const info = await registerWithMediator(url, bob, fetchImpl)
+    await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, bob, bobPeer.xPub, 'fails')
+    let attempts = 0
+    const watch = watchMediatorLive({
+      mediatorUrl: url, inbox: bob, resolveSenderKey: async () => alice.xPub,
+      onMessage: () => { attempts++; throw new Error('not now') },
+      fetch: fetchImpl, webSocketCtor,
+    })
+    await until(() => false, 100)
+    watch.close()
+    expect(attempts).toBe(1)
+    expect(await pickupStatus(info, bob, fetchImpl)).toMatchObject({ messageCount: 1 })
+  })
+
+  test('over a real Bun server: the WebSocket upgrade on / carries live delivery', async () => {
+    const deployment = createMediatorDeployment({ publicUrl: 'http://127.0.0.1', databasePath: ':memory:', port: 0, log: () => {} })
+    const url = `http://127.0.0.1:${deployment.server.port}`
+    try {
+      const alice = generatePeerIdentity()
+      const bobPeer = generatePeerIdentity()
+      const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
+      const info = await registerWithMediator(url, bob)
+      await forwardFromAliceToBob(fetch, url, info.xKid, info.xPub, alice, bob, bobPeer.xPub, 'queued')
+      const received: string[] = []
+      const watch = watchMediatorLive({
+        mediatorUrl: url, inbox: bob, resolveSenderKey: async () => alice.xPub,
+        onMessage: msg => { received.push((msg.plaintext as { body: { content: string } }).body.content) },
+      })
+      await until(() => received.length === 1)
+      await forwardFromAliceToBob(fetch, url, info.xKid, info.xPub, alice, bob, bobPeer.xPub, 'live')
+      await until(() => received.length === 2)
+      await until(() => false, 50)
+      watch.close()
+      expect(received).toEqual(['queued', 'live'])
+      expect(await pickupStatus(info, bob)).toMatchObject({ messageCount: 0 })
+    } finally {
+      await deployment.shutdown('test')
+    }
+  })
+})
+
+/** live-delivery-change over plain HTTP -- refused with a problem-report. */
+async function sendAndUnpackLive(info: Awaited<ReturnType<typeof fetchMediatorInfo>>, inbox: MediatorInboxClient, fetchImpl: typeof fetch): Promise<DidCommPlaintext> {
+  const { sendAndUnpack } = await import('../src/protocol/didcomm/mediator-transport.ts')
+  return sendAndUnpack(info, inbox, LIVE_DELIVERY_CHANGE, { recipient_did: inbox.did, device: inbox.device, live_delivery: true }, fetchImpl)
+}
+
+describe('mediator transport rules', () => {
+  test('a POST without the DIDComm encrypted media type is refused with 415', async () => {
+    const { fetchImpl, url, mediatorIdentity } = freshMediatorFetch()
+    const bobPeer = generatePeerIdentity()
+    const plaintext = buildPlaintext(PING, {}, bobPeer.did, mediatorIdentity.did, { returnRoute: 'all' })
+    const jwe = packAuthcrypt(utf8(JSON.stringify(plaintext)), { kid: bobPeer.xKid, privateKey: bobPeer.xPriv }, [{ kid: mediatorIdentity.xKid, publicKey: mediatorIdentity.xPub }])
+    const res = await fetchImpl(`${url}/`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(jwe) })
+    expect(res.status).toBe(415)
+  })
+
+  test('the mediator answers a Trust Ping with a ping-response, and nothing when none is requested', async () => {
+    const { fetchImpl, url } = freshMediatorFetch()
+    const bobPeer = generatePeerIdentity()
+    const bob = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv }
+    const info = await fetchMediatorInfo(url, fetchImpl)
+    const { sendAndUnpack } = await import('../src/protocol/didcomm/mediator-transport.ts')
+    const reply = await sendAndUnpack(info, bob, PING, {}, fetchImpl)
+    expect(reply.type).toBe(PING_RESPONSE)
+    const quiet = await fetchImpl(`${url}/`, didCommPost(packMediatorRequest(info, bob, PING, { response_requested: false })))
+    expect(quiet.status).toBe(202)
+  })
+})
+
+describe('device limit', () => {
+  test('registerWithMediator turns e.p.req.max-devices into a user-facing error listing the devices', async () => {
+    const { fetchImpl, url } = freshMediatorFetch()
+    const bobPeer = generatePeerIdentity()
+    const bob = (device: string): MediatorInboxClient => ({ did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device })
+    for (const device of ['bob-device-1', 'bob-device-2', 'bob-device-3']) await registerWithMediator(url, bob(device), fetchImpl)
+    const refused = await registerWithMediator(url, bob('bob-device-4'), fetchImpl).catch(error => error)
+    expect(refused).toBeInstanceOf(MediatorDeviceLimitError)
+    expect(refused.devices).toHaveLength(3)
+    expect(refused.message).toContain('already has 3 devices registered')
+    expect(refused.message).toContain('this removes all other devices')
   })
 })

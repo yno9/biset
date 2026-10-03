@@ -3,7 +3,7 @@ import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../../../pro
 import type { VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
 import { decodePeerDid2, encodePeerDid2, publicKeyOf } from '../../../protocol/didcomm/peer.ts'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { createVaultEvent, type VaultEventSigner } from './events.ts'
+import { createVaultEvent, type VaultEventAuthor } from './events.ts'
 import { encryptVaultObject } from './objects.ts'
 import type { VaultCredentialKind } from './credential-store.ts'
 import type { VaultCredentialEventReader } from './store.ts'
@@ -24,7 +24,23 @@ export interface ContactKeyV1 {
   counterpartyRelationshipKid: string
   counterpartyPublicKey: Uint8Array
   createdAt: string
-  supersedesKid?: string
+  /** The relationship this record replaces: this side's own did:peer was
+   * rotated (a device removal), or the counterparty announced its own
+   * rotation with `from_prior`. A relationship is named by BOTH kids, since
+   * either side can rotate without the other. */
+  supersedes?: ContactKeyRef
+  /** When THIS side rotated: the DIDComm v2.1 `from_prior` JWT (iss = the
+   * previous own did:peer, sub = the current one) carried on every message
+   * sent from this relationship, so a counterparty that has not seen the
+   * rotation yet can still link it. */
+  fromPrior?: string
+}
+
+/** Names one relationship: the pair of did:peer kids it runs between. */
+export interface ContactKeyRef { ownRelationshipKid: string; counterpartyRelationshipKid: string }
+
+export function contactKeyRef(value: ContactKeyRef): string {
+  return `${value.ownRelationshipKid} ${value.counterpartyRelationshipKid}`
 }
 
 export interface ContactKeyBuildContext {
@@ -55,8 +71,18 @@ function encodeContactKey(value: ContactKeyV1): Uint8Array {
     counterpartyRelationshipKid: value.counterpartyRelationshipKid,
     counterpartyPublicKey: bytesToBase64url(value.counterpartyPublicKey),
     createdAt: value.createdAt,
-    ...(value.supersedesKid === undefined ? {} : { supersedesKid: value.supersedesKid }),
+    ...(value.supersedes === undefined ? {} : { supersedes: { ownRelationshipKid: value.supersedes.ownRelationshipKid, counterpartyRelationshipKid: value.supersedes.counterpartyRelationshipKid } }),
+    ...(value.fromPrior === undefined ? {} : { fromPrior: value.fromPrior }),
   })
+}
+
+function refOf(value: unknown): ContactKeyRef | undefined {
+  if (value === undefined) return undefined
+  const ref = value as Record<string, unknown> | null
+  if (!ref || typeof ref !== 'object' || typeof ref.ownRelationshipKid !== 'string' || typeof ref.counterpartyRelationshipKid !== 'string' || Object.keys(ref).length !== 2) {
+    throw new TypeError('contact key shape is invalid')
+  }
+  return { ownRelationshipKid: ref.ownRelationshipKid, counterpartyRelationshipKid: ref.counterpartyRelationshipKid }
 }
 
 export function decodeContactKey(bytes: Uint8Array): ContactKeyV1 {
@@ -70,8 +96,9 @@ export function decodeContactKey(bytes: Uint8Array): ContactKeyV1 {
     typeof value.ownRelationshipKid !== 'string' || typeof value.ownX25519PrivateKey !== 'string' ||
     typeof value.ownEd25519PrivateKey !== 'string' || typeof value.counterpartyRelationshipKid !== 'string' ||
     typeof value.counterpartyPublicKey !== 'string' || typeof value.createdAt !== 'string' ||
-    (value.supersedesKid !== undefined && typeof value.supersedesKid !== 'string')
+    (value.fromPrior !== undefined && typeof value.fromPrior !== 'string')
   ) throw new TypeError('contact key shape is invalid')
+  const supersedes = refOf(value.supersedes)
   const contactKey: ContactKeyV1 = {
     version: 1,
     kind: 'contact-key',
@@ -83,7 +110,8 @@ export function decodeContactKey(bytes: Uint8Array): ContactKeyV1 {
     counterpartyRelationshipKid: value.counterpartyRelationshipKid,
     counterpartyPublicKey: base64urlToBytes(value.counterpartyPublicKey),
     createdAt: value.createdAt,
-    ...(value.supersedesKid === undefined ? {} : { supersedesKid: value.supersedesKid }),
+    ...(supersedes === undefined ? {} : { supersedes }),
+    ...(value.fromPrior === undefined ? {} : { fromPrior: value.fromPrior as string }),
   }
   if (!equalBytes(bytes, encodeContactKey(contactKey))) throw new TypeError('contact key is not canonical')
   return contactKey
@@ -92,7 +120,7 @@ export function decodeContactKey(bytes: Uint8Array): ContactKeyV1 {
 export async function buildContactKeyRecord(
   contactKey: ContactKeyV1,
   context: ContactKeyBuildContext,
-  signer: VaultEventSigner,
+  signer: VaultEventAuthor,
 ): Promise<ContactKeyRecord> {
   assertContactKey(contactKey)
   if (context.identityId !== contactKey.identityId || context.actorDeviceId !== signer.deviceId || !context.segmentId || context.segmentKey.length !== 32) {
@@ -101,14 +129,14 @@ export async function buildContactKeyRecord(
   const object = await encryptVaultObject(context.segmentKey, {
     segmentId: context.segmentId,
     plaintext: encodeContactKey(contactKey),
-    aad: contactKeyAad(context.identityId, context.segmentId, contactKey.counterpartyDid, contactKey.ownRelationshipKid),
+    aad: contactKeyAad(context.identityId, context.segmentId, contactKey.counterpartyDid, contactKey),
   })
   const event = await createVaultEvent({
     identityId: context.identityId,
     actorDeviceId: context.actorDeviceId,
     actorSeq: context.actorSeq,
     kind: 'contact-key.set',
-    targetIds: [contactKeyTarget(contactKey.counterpartyDid, contactKey.ownRelationshipKid)],
+    targetIds: [contactKeyTarget(contactKey.counterpartyDid, contactKey)],
     objectRefs: [object.objectId],
     parents: [...context.parents],
     createdAt: contactKey.createdAt,
@@ -116,13 +144,13 @@ export async function buildContactKeyRecord(
   return { contactKey: copyContactKey(contactKey), object, event }
 }
 
-function contactKeyTarget(counterpartyDid: string, ownRelationshipKid: string): string {
-  if (!counterpartyDid || !ownRelationshipKid) throw new TypeError('contact key target is invalid')
-  return `contact-key:${counterpartyDid}:${ownRelationshipKid}`
+function contactKeyTarget(counterpartyDid: string, ref: ContactKeyRef): string {
+  if (!counterpartyDid || !ref.ownRelationshipKid || !ref.counterpartyRelationshipKid) throw new TypeError('contact key target is invalid')
+  return `contact-key:${counterpartyDid}:${ref.ownRelationshipKid}:${ref.counterpartyRelationshipKid}`
 }
 
-export function contactKeyAad(identityId: IdentityId, segmentId: SegmentId, counterpartyDid: string, ownRelationshipKid: string): Uint8Array {
-  return canonicalBytes({ label: 'biset/vault/contact-key/aad/v1', identityId, segmentId, counterpartyDid, ownRelationshipKid })
+export function contactKeyAad(identityId: IdentityId, segmentId: SegmentId, counterpartyDid: string, ref: ContactKeyRef): Uint8Array {
+  return canonicalBytes({ label: 'biset/vault/contact-key/aad/v2', identityId, segmentId, counterpartyDid, ownRelationshipKid: ref.ownRelationshipKid, counterpartyRelationshipKid: ref.counterpartyRelationshipKid })
 }
 
 export function assertContactKeyRecord(event: VaultEventV1, object: VaultObjectV1, plaintext: Uint8Array): ContactKeyV1 {
@@ -132,8 +160,8 @@ export function assertContactKeyRecord(event: VaultEventV1, object: VaultObjectV
   const contactKey = decodeContactKey(plaintext)
   if (
     contactKey.identityId !== event.identityId || contactKey.createdAt !== event.createdAt ||
-    event.targetIds.length !== 1 || event.targetIds[0] !== contactKeyTarget(contactKey.counterpartyDid, contactKey.ownRelationshipKid) ||
-    !equalBytes(object.aad, contactKeyAad(contactKey.identityId, object.segmentId, contactKey.counterpartyDid, contactKey.ownRelationshipKid))
+    event.targetIds.length !== 1 || event.targetIds[0] !== contactKeyTarget(contactKey.counterpartyDid, contactKey) ||
+    !equalBytes(object.aad, contactKeyAad(contactKey.identityId, object.segmentId, contactKey.counterpartyDid, contactKey))
   ) throw new TypeError('contact key record metadata does not match')
   return contactKey
 }
@@ -144,7 +172,7 @@ function assertContactKey(value: ContactKeyV1): void {
     value.ownX25519PrivateKey.length !== 32 || value.ownEd25519PrivateKey.length !== 32 ||
     value.counterpartyPublicKey.length !== 32 || Number.isNaN(Date.parse(value.createdAt))
   ) throw new TypeError('contact key is invalid')
-  if (value.supersedesKid !== undefined && value.supersedesKid === value.ownRelationshipKid) throw new TypeError('contact key cannot supersede itself')
+  if (value.supersedes !== undefined && contactKeyRef(value.supersedes) === contactKeyRef(value)) throw new TypeError('contact key cannot supersede itself')
 
   const ownDid = value.ownRelationshipKid.split('#', 1)[0]!
   if (!ownDid.startsWith('did:peer:2.')) throw new TypeError('contact key own kid is not did:peer:2')

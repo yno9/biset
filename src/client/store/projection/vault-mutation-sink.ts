@@ -1,4 +1,4 @@
-import type { VaultEventSigner } from '../vault/events.ts'
+import type { VaultEventAuthor } from '../vault/events.ts'
 import { buildVaultMutation, encodeVaultMutationObject } from '../vault/mutations.ts'
 import type { DeviceId, IdentityId, VaultEventId } from '../../../protocol/ids.ts'
 import type { VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
@@ -17,14 +17,6 @@ export interface LocalVaultMutationCommitter {
     events: VaultEventV1[]
     projection: LocalJmapProjectionV1
     jmapState: unknown
-    deliveryOutbox: {
-      identityId: IdentityId
-      entryId: VaultEventId
-      payload: Uint8Array
-      payloadHash: Uint8Array
-      createdAt: string
-      attempts: number
-    }
     /** One row per recipient -- a group message's single `message.add`
      * commit still needs N delivery-queue rows, one per fan-out target
      * (didcomm/group-chat.ts's own full-mesh design). A 1:1 chat message
@@ -53,7 +45,7 @@ export interface VaultBackedLocalJmapMutationSinkOptions {
   nextActorSeq(): Promise<number>
   initialParents(): Promise<VaultEventId[]>
   activeSegment(): Promise<ActiveVaultSegment>
-  signer: VaultEventSigner
+  signer: VaultEventAuthor
   committer: LocalVaultMutationCommitter
   onCrdtCommitted?(events: VaultEventV1[]): Promise<void>
   now?: () => Date
@@ -108,8 +100,6 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
       identityId: this.options.identityId,
       objects: records.map(record => record.object),
       events: records.map(record => record.event),
-      keyWraps: segment.keyWraps,
-      createdAt,
       snapshot,
       reduce: records,
     })
@@ -163,8 +153,6 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
       identityId: this.options.identityId,
       objects: [record.metadataObject, record.rawRfc5322Object],
       events: [record.event],
-      keyWraps: segment.keyWraps,
-      createdAt,
       snapshot,
       reduce: [{ event: record.event, plaintext }],
     })

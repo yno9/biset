@@ -1,16 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { equalBytes, sha256Bytes } from '../../src/protocol/canonical.ts'
 import { buildVaultManifest, diffVaultManifests, verifyVaultManifest } from '../../src/client/store/vault/manifest.ts'
-import { createVaultEvent, verifyVaultEvent, type VaultEventSigner } from '../../src/client/store/vault/events.ts'
+import { createVaultEvent, verifyVaultEvent, type VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 
-const signer: VaultEventSigner = {
-  deviceId: 'device-a',
-  sign: async (bytes) => sha256Bytes(bytes),
-  verify: async (deviceId, bytes, signature) => deviceId === 'device-a' && equalBytes(sha256Bytes(bytes), signature),
-}
+const signer: VaultEventAuthor = { deviceId: 'device-a' }
 
 describe('vault events', () => {
-  test('binds the ID to both canonical event content and signature', async () => {
+  test('binds the ID to the canonical event content', async () => {
     const event = await createVaultEvent({
       identityId: 'did:webvh:example:alice',
       actorDeviceId: 'device-a',
@@ -21,8 +16,9 @@ describe('vault events', () => {
       parents: [],
       createdAt: '2026-08-21T00:00:00.000Z',
     }, signer)
-    expect(await verifyVaultEvent(event, signer)).toBe(true)
-    expect(await verifyVaultEvent({ ...event, signature: new Uint8Array([1]) }, signer)).toBe(false)
+    expect(verifyVaultEvent(event)).toBe(true)
+    expect(verifyVaultEvent({ ...event, actorSeq: 2 })).toBe(false)
+    await expect(createVaultEvent({ identityId: event.identityId, actorDeviceId: 'device-b', actorSeq: 1, kind: 'message.add', targetIds: [], objectRefs: [], parents: [], createdAt: event.createdAt }, signer)).rejects.toThrow('author')
   })
 })
 

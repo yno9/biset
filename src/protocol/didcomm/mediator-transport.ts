@@ -8,16 +8,21 @@
 // function). mediator-coordinate.ts and mediator-pickup.ts both build on
 // this. Ported from src.bak/did/didcomm/coordinate.ts's fetchMediatorInfo
 // and message.ts's sendAndUnpack.
-import { packAuthcrypt, unpackAuthcrypt, parseJwe, type DidCommJWE } from './crypto.ts'
-import { buildPlaintext, type DidCommPlaintext } from './message.ts'
+import { didCommPost, packAuthcrypt, unpackAuthcrypt, parseJwe, type DidCommJWE } from './crypto.ts'
+import { assertFromMatchesSender, buildPlaintext, type DidCommPlaintext } from './message.ts'
 import { isProblemReport, problemReportError } from './problems.ts'
 import { publicKeyOf, type PeerDidDoc } from './peer.ts'
 import { defaultFetch } from '../net-fetch.ts'
 
-/** This device's own DIDComm transport identity -- the identity-shared
- * X25519 credential (vault/didcomm-credential.ts), read from whichever
- * device is running this. */
+/** A DIDComm key this device holds: its own device key of its did:webvh,
+ * or a relationship did:peer's key. */
 export interface DidCommSender { did: string; xKid: string; xPriv: Uint8Array }
+
+/** One device's inbox for `did` at a mediator (mediator/server.ts): the
+ * keyAgreement key that proves this device owns `did`, plus the `device`
+ * label that tells this device's inbox apart from its siblings'. The label
+ * must not link inboxes of different DIDs (see mediator-device.ts). */
+export interface MediatorInboxClient extends DidCommSender { device: string }
 
 export interface MediatorInfo { url: string; did: string; xKid: string; xPub: Uint8Array }
 
@@ -42,35 +47,44 @@ export async function fetchMediatorInfo(mediatorUrl: string, fetchImpl: typeof f
   return info
 }
 
+/** Authcrypts one request to the mediator. `return_route: "all"` always:
+ * a client of this mediator (a browser) has no endpoint of its own, so the
+ * answer must come back on the connection the request went out on -- the
+ * HTTP response, or the live WebSocket (mediator-live.ts). */
+export function packMediatorRequest(mediator: MediatorInfo, own: DidCommSender, type: string, body: unknown): DidCommJWE {
+  const plaintext = buildPlaintext(type, body, own.did, mediator.did, { returnRoute: 'all' })
+  return packAuthcrypt(
+    new TextEncoder().encode(JSON.stringify(plaintext)),
+    { kid: own.xKid, privateKey: own.xPriv },
+    [{ kid: mediator.xKid, publicKey: mediator.xPub }],
+  )
+}
+
+/** Unpacks one authcrypt'd message from the mediator to `own`. The
+ * mediator's key is already known (fetchMediatorInfo, did:peer is
+ * self-certifying) so this needs no resolver. A problem-report is returned
+ * like any other message; the caller decides what it means. */
+export async function unpackMediatorMessage(mediator: MediatorInfo, own: DidCommSender, raw: unknown): Promise<DidCommPlaintext> {
+  // The far end's message is as untrusted as any other body -- see parseJwe.
+  const jwe: DidCommJWE | null = parseJwe(raw)
+  if (!jwe) throw new Error('the mediator message is not a DIDComm JWE')
+  const { plaintext, senderKid } = await unpackAuthcrypt(jwe, { kid: own.xKid, privateKey: own.xPriv }, async () => mediator.xPub)
+  const message = JSON.parse(new TextDecoder().decode(plaintext)) as DidCommPlaintext
+  assertFromMatchesSender(message, senderKid)
+  return message
+}
+
 /** Authcrypts `type`/`body` to the mediator, POSTs it, and unpacks the
- * mediator's authcrypt'd reply -- the mediator's key is already known
- * (fetchMediatorInfo, did:peer is self-certifying) so unpacking needs no
- * resolver. A problem-report reply is thrown as a DidCommProblemError
- * rather than returned, so every coordinate/pickup caller gets a uniform
- * "why" instead of each re-checking `reply.type`. */
+ * reply from the HTTP response. A problem-report reply is thrown as a
+ * DidCommProblemError rather than returned, so every coordinate/pickup
+ * caller gets a uniform "why" instead of each re-checking `reply.type`. */
 export async function sendAndUnpack(
   mediator: MediatorInfo, own: DidCommSender, type: string, body: unknown,
   fetchImpl: typeof fetch = defaultFetch(),
 ): Promise<DidCommPlaintext> {
-  const plaintext = buildPlaintext(type, body, own.did, mediator.did)
-  const jwe = packAuthcrypt(
-    new TextEncoder().encode(JSON.stringify(plaintext)),
-    { kid: own.xKid, privateKey: own.xPriv },
-    { kid: mediator.xKid, publicKey: mediator.xPub },
-  )
-  const resp = await fetchImpl(`${trimSlash(mediator.url)}/`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/didcomm-encrypted+json' },
-    body: JSON.stringify(jwe),
-  })
+  const resp = await fetchImpl(`${trimSlash(mediator.url)}/`, didCommPost(packMediatorRequest(mediator, own, type, body)))
   if (!resp.ok) throw new Error(`mediator request failed: HTTP ${resp.status} ${await resp.text()}`)
-
-  // The far end's reply is as untrusted as any other body -- see parseJwe.
-  const replyJwe: DidCommJWE | null = parseJwe(await resp.json())
-  if (!replyJwe) throw new Error('the reply is not a DIDComm JWE')
-  const resolveSenderKey = async () => mediator.xPub
-  const { plaintext: replyBytes } = await unpackAuthcrypt(replyJwe, { kid: own.xKid, privateKey: own.xPriv }, resolveSenderKey)
-  const reply = JSON.parse(new TextDecoder().decode(replyBytes)) as DidCommPlaintext
+  const reply = await unpackMediatorMessage(mediator, own, await resp.json())
   if (isProblemReport(reply)) throw problemReportError(reply)
   return reply
 }

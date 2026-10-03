@@ -1,11 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { x25519, ed25519 } from '@noble/curves/ed25519.js'
-import { ml_kem768 } from '@noble/post-quantum/ml-kem.js'
-import { sendDidCommMessage } from '../../src/client/didcomm/send-message.ts'
-import { parseJwe, unpackAuthcrypt, unpackAuthcryptHybrid, unpackAnoncrypt, b64urlToBytes } from '../../src/protocol/didcomm/crypto.ts'
+import { answerTrustPing, sendDidCommMessage } from '../../src/client/didcomm/send-message.ts'
+import { PING, PING_RESPONSE } from '../../src/protocol/didcomm/trust-ping.ts'
+import { buildPlaintext } from '../../src/protocol/didcomm/message.ts'
+import { parseJwe, unpackAuthcrypt, unpackAnoncrypt, b64urlToBytes } from '../../src/protocol/didcomm/crypto.ts'
 import { BASIC_MESSAGE } from '../../src/client/didcomm/basicmessage.ts'
-import { encodeMlkem768Multikey } from '../../src/protocol/didcomm/multikey.ts'
-import { mlkemKidFor } from '../../src/protocol/didcomm/devicekid.ts'
 import { generatePeerIdentity } from '../../src/protocol/didcomm/peer.ts'
 import { buildDidCommLog, type DidCommStateExtras } from '../protocol/support/webvh-log-fixture.ts'
 import type { LogEntry } from '../../src/protocol/webvh/log.ts'
@@ -141,40 +140,6 @@ describe('sendDidCommMessage', () => {
     })
   })
 
-  // Root-cause regression guard: sendDidCommMessage must actually reach for
-  // packAuthcryptHybrid when the recipient published an ML-KEM-768 entry --
-  // that path had zero production callers (test-only) until this fix, so
-  // every real message stayed classical-only even when both sides supported
-  // post-quantum authcrypt.
-  test('upgrades to hybrid X25519+ML-KEM-768 authcrypt when the recipient published an mlkem key', () => {
-    const recipientKem = ml_kem768.keygen()
-    const to = recipientIdentity({
-      keyAgreementKeys: [{ fragment: 'k_recipienthash', x25519PublicKey: recipientXPub }],
-      rawVerificationMethods: [{ fragment: mlkemKidFor('#k_recipienthash').slice(1), publicKeyMultibase: encodeMlkem768Multikey(recipientKem.publicKey) }],
-      endpointUri: 'https://recipient-core.test.example/v1/didcomm/ingress',
-    })
-    const captured: { body?: string; url?: string } = {}
-    return withCombinedFetch(testFetch({ log: to.log, postCapture: captured }), async (fetchImpl) => {
-      const result = await sendDidCommMessage(to.did, 'pq please', { fromKid: senderKid, x25519PrivateKey: senderX, fetch: fetchImpl })
-      expect(result.ok).toBe(true)
-
-      const jwe = parseJwe(JSON.parse(captured.body!))
-      expect(jwe).not.toBeNull()
-      const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(jwe!.protected)))
-      expect(header.alg).toBe('ECDH-1PU-X25519MLKEM768+A256KW')
-
-      const { plaintext, senderKid: outSenderKid } = await unpackAuthcryptHybrid(jwe!, {
-        kid: to.kid, x25519PrivateKey: recipientX, mlkemPrivateKey: recipientKem.secretKey,
-      }, async (kid) => {
-        expect(kid).toBe(senderKid)
-        return x25519.getPublicKey(senderX)
-      })
-      expect(outSenderKid).toBe(senderKid)
-      const msg = JSON.parse(new TextDecoder().decode(plaintext))
-      expect(msg.body.content).toBe('pq please')
-    })
-  })
-
   // ARC.md's 2026-08-27 mediator redesign, Phase 5: a recipient who has
   // registered with a mediator publishes `routingKeys` naming it -- the
   // sender must Forward-wrap (anoncrypt to the mediator's kid, POST to the
@@ -194,7 +159,7 @@ describe('sendDidCommMessage', () => {
       const forwardPlaintext = await unpackAnoncrypt(outer!, { kid: mediator.xKid, privateKey: mediator.xPriv })
       const forward = JSON.parse(new TextDecoder().decode(forwardPlaintext))
       expect(forward.type).toBe('https://didcomm.org/routing/2.0/forward')
-      expect(forward.body.next).toBe(to.kid)
+      expect(forward.body.next).toBe(to.did)
 
       const inner = parseJwe(forward.attachments[0].data.json)
       expect(inner).not.toBeNull()
@@ -231,7 +196,7 @@ describe('sendDidCommMessage', () => {
       const forwardToHop2Bytes = await unpackAnoncrypt(outerToHop2!, { kid: hop2.xKid, privateKey: hop2.xPriv })
       const forwardToHop2 = JSON.parse(new TextDecoder().decode(forwardToHop2Bytes))
       expect(forwardToHop2.type).toBe('https://didcomm.org/routing/2.0/forward')
-      expect(forwardToHop2.body.next).toBe(to.kid)
+      expect(forwardToHop2.body.next).toBe(to.did)
 
       const inner = parseJwe(forwardToHop2.attachments[0].data.json)
       expect(inner).not.toBeNull()
@@ -267,7 +232,7 @@ describe('sendDidCommMessage', () => {
       const forwardPlaintext = await unpackAnoncrypt(outer!, { kid: mediator.xKid, privateKey: mediator.xPriv })
       const forward = JSON.parse(new TextDecoder().decode(forwardPlaintext))
       expect(forward.type).toBe('https://didcomm.org/routing/2.0/forward')
-      expect(forward.body.next).toBe(recipient.xKid)
+      expect(forward.body.next).toBe(recipient.did)
 
       const inner = parseJwe(forward.attachments[0].data.json)
       expect(inner).not.toBeNull()
@@ -288,5 +253,36 @@ describe('sendDidCommMessage', () => {
         if (!result.ok) expect(result.error).toMatch(/no DIDComm service endpoint/)
       },
     )
+  })
+})
+
+describe('answerTrustPing (Trust Ping 2.0)', () => {
+  const noRelationship = { contactKeyForOwnKid: async () => null, frontDoor: { fromKid: senderKid, x25519PrivateKey: senderX } }
+
+  test('answers a ping on the front door with a ping-response threaded to it, sent as application/didcomm-encrypted+json', async () => {
+    const pinger = oneDevice('https://recipient-core.test.example/v1/didcomm/ingress')
+    const ping = buildPlaintext(PING, {}, pinger.did, 'did:webvh:def456:bob.test.example')
+    let contentType: string | null = null
+    let body: string | undefined
+    const handler = testFetch({ log: pinger.log })
+    const capturing = (async (input, init) => {
+      if (String(input).endsWith('/ingress')) { contentType = new Headers(init?.headers).get('content-type'); body = init?.body as string }
+      return handler(input, init)
+    }) as typeof fetch
+    await withCombinedFetch(capturing, async fetchImpl => {
+      const result = await answerTrustPing(ping, senderKid, { ...noRelationship, fetch: fetchImpl })
+      expect(result).toEqual({ ok: true })
+    })
+    expect(contentType).toBe('application/didcomm-encrypted+json')
+    const { plaintext } = await unpackAuthcrypt(parseJwe(JSON.parse(body!))!, { kid: pinger.kid, privateKey: recipientX }, async () => x25519.getPublicKey(senderX))
+    const response = JSON.parse(new TextDecoder().decode(plaintext))
+    expect(response.type).toBe(PING_RESPONSE)
+    expect(response.thid).toBe(ping.id)
+  })
+
+  test('owes nothing for response_requested: false, or for anything but a ping', async () => {
+    const pinger = 'did:webvh:abc:alice.test.example'
+    expect(await answerTrustPing(buildPlaintext(PING, { response_requested: false }, pinger), senderKid, noRelationship)).toBeNull()
+    expect(await answerTrustPing(buildPlaintext(BASIC_MESSAGE, { content: 'hi' }, pinger), senderKid, noRelationship)).toBeNull()
   })
 })

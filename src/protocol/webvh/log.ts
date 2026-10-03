@@ -110,3 +110,15 @@ export function parseLog(jsonl: string): LogEntry[] {
 export function serializeLog(entries: LogEntry[]): string {
   return entries.map(e => JSON.stringify(e)).join('\n') + '\n'
 }
+
+/** The update keys in force right after the entry `versionId` -- the keys that were allowed to sign
+ * on behalf of the DID at that generation (with pre-rotation they change with every entry, so the
+ * current ones say nothing about an older generation). Undefined when the log has no such entry. */
+export function updateKeysAtVersion(entries: readonly LogEntry[], versionId: string): string[] | undefined {
+  let parameters: LogParameters = {}
+  for (const entry of entries) {
+    parameters = resolveParameters(parameters, entry.parameters)
+    if (entry.versionId === versionId) return parameters.updateKeys ?? []
+  }
+  return undefined
+}

@@ -1,13 +1,10 @@
-import type { AccountSession } from '../store/projection/transport.ts'
 import {
   buildActorSequencer,
   buildLocalJmapReadModel,
   buildWalletVaultCryptoBoundary,
 } from '../identity/bootstrap.ts'
 import { IndexedDbVaultStore } from '../store/vault/store.ts'
-import { VaultSyncClient, resolveVaultSyncSiblingRoutes, walletVaultSyncTransport, type VaultSyncMessage } from '../didcomm/vault-sync.ts'
-import { rewrapVaultSegmentsForGeneration } from '../store/vault/vault-key-rotation.ts'
-import { VAULT_CONTENT_KEY_GROUP_ID } from '../store/vault/vault-content-key.ts'
+import { VaultSyncClient, resolveOwnDeviceKids, walletVaultSyncTransport, type VaultSyncMessage } from '../didcomm/vault-sync.ts'
 import { rebuildLocalJmapProjection } from '../store/vault/projection-rebuild.ts'
 import { VaultProjector } from '../store/vault/projector.ts'
 import { VAULT_SYNC_STATE_REQUEST, VAULT_SYNC_STATE_RESPONSE, VAULT_SYNC_UPDATE } from '../../protocol/didcomm/vault-sync-protocol.ts'
@@ -16,18 +13,15 @@ import {
   beginDidMdWalletFinalizeEnrollment,
   beginDidMdWalletDocumentEdit,
   beginDidMdWalletLogin,
-  beginDidMdVaultKeyRotation,
-  completeDidMdVaultKeyRotation,
+  beginDidMdRemoveOtherDevices,
+  completeDidMdDeviceRemoval,
   completeDidMdWalletCallback,
   disconnectDidMdWallet,
   openDidMdWalletBisetDidCommDevice,
-  openDidMdWalletBisetDevice,
-  openDidMdWalletRelationshipSecret,
-  openDidMdWalletVaultContentKeys,
+  openDidMdWalletVaultDevice,
   restoreDidMdWalletSession,
   didMdWalletReconnectState,
-  didMdVaultKeyRotationStatus,
-  walletVaultSyncKeys,
+  didMdPendingDeviceRemoval,
   DID_MD_JUST_CONNECTED_KEY,
 } from '../identity/wallet/did-md-oauth.ts'
 import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
@@ -40,28 +34,31 @@ import { VaultBackedLocalJmapMutationSink } from '../store/projection/vault-muta
 import { DidCommIngressProjector, didCommMessageDedupeId, isProjectableDidCommIngress, resolveDidCommSenderDid } from '../didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from '../../protocol/didcomm/webvh-resolve.ts'
 import { didCommThreadId } from '../didcomm/basicmessage.ts'
-import { sendGroupInvite } from '../didcomm/send-message.ts'
+import { answerTrustPing, sendGroupInvite } from '../didcomm/send-message.ts'
+import { isPingResponse } from '../../protocol/didcomm/trust-ping.ts'
 import { buildDidCommGroupMessageVaultRecord, GROUP_INVITE, GROUP_MESSAGE, groupInviteBodyOf, groupMessageBodyOf, groupRosterFromMessages, didcommGroupAddress, parseDidCommGroupAddress, randomDidCommGroupId } from '../didcomm/group-chat.ts'
 import { IndexedDbDidCommGroupChatStore } from '../didcomm/group-chat-store.ts'
 import { registerWithMediator, type MediatorPollHandle } from '../didcomm/mediator-sync.ts'
-import { watchMediatorMultiplexed } from '../didcomm/mediator-multiplex-watch.ts'
-import { mediatorAliases, preferredMediatorUrl, isTorEnvironment } from '../didcomm/mediator-endpoints.ts'
-import type { DidCommSender } from '../../protocol/didcomm/mediator-transport.ts'
+import { watchMediatorLive } from '../didcomm/mediator-live.ts'
+import { mediatorAliases, preferredMediatorUrl, isTorEnvironment, sameMediatorUrl } from '../didcomm/mediator-endpoints.ts'
+import type { MediatorInboxClient } from '../../protocol/didcomm/mediator-transport.ts'
+import { mediatorInbox } from '../../protocol/didcomm/mediator-device.ts'
 import type { DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
 import { ingestTransportIngress } from '../store/vault/ingress-ingest.ts'
 import type { IngressEnvelopeV1 } from '../../protocol/ingress.ts'
 import { canonicalBytes, canonicalHash, sha256Bytes } from '../../protocol/canonical.ts'
-import { memberKids } from '../mls/group.ts'
-import { encodeMlsDeviceCredential } from '../mls/device-credential.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { ContactKeyReader } from '../store/vault/contact-key-reader.ts'
 import { ContactKeyVaultSink } from '../store/vault/contact-key-sink.ts'
+import { acceptCounterpartyRotation, rotateOwnRelationships } from '../identity/wallet/relationship-rotation.ts'
+import { mintRelationshipSeed, RelationshipSeedReader, RelationshipSeedSink } from '../store/vault/relationship-seed.ts'
+import type { VaultCredentialSinkOptions } from '../store/vault/credential-store.ts'
+import { finishDeviceRemoval, provisionRelationshipSeed } from '../didcomm/relationship-seed-bootstrap.ts'
+import { fetchCurrentLog, freshFetch } from '../identity/webvh/log-io.ts'
 import type { ContactKeyV1 } from '../store/vault/contact-key.ts'
 import { decodePeerDid2, publicKeyOf } from '../../protocol/didcomm/peer.ts'
 import { relationshipMediatorService } from '../didcomm/relationship.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
-import { ingestVaultDelivery } from '../store/vault/delivery-ingest.ts'
-import { MimiClientTransport } from '../mimi/client-transport.ts'
 import {
   createWalletRelationshipManager,
   type RelationshipWatchStarter,
@@ -70,7 +67,7 @@ import {
 import { createWalletDidCommOutbox, type WalletDidCommOutbox } from '../identity/wallet/didcomm-outbox.ts'
 import { MarkdownDirectoryConnection, observeMarkdownDirectory, removeMarkdownMirrorFile, scanMarkdownProjection, writeMarkdownProjection, type MarkdownMirrorFile } from '../store/vault/markdown-directory.ts'
 import { MarkdownSelfWriteGuard, markdownStatusMutation } from '../store/vault/markdown-mirror.ts'
-import { createJmapExport, decodeJmapExport, decryptJmapExport, encodeJmapExport, encryptJmapExport, importJmapExport, type JmapExportEnvelopeV1 } from '../store/vault/jmap-export.ts'
+import { createJmapExport, decodeJmapExport, encodeJmapExport, importJmapExport } from '../store/vault/jmap-export.ts'
 import { buildOutboundRfc5322 } from '../mail/rfc5322-builder.ts'
 import { submitDidCommMail } from '../mail/didcomm-submit.ts'
 
@@ -172,14 +169,15 @@ function updateRememberedVaultCard(
 }
 
 function startRelationshipWatch(
-  watchedKids: Set<string>, mediatorUrl: string, own: DidCommSender,
+  watchedKids: Set<string>, mediatorUrl: string, inbox: MediatorInboxClient,
   resolveSenderKey: (kid: string) => Promise<Uint8Array>,
   onMessage: (message: DeliveredMessage) => Promise<void>,
   onError: (error: unknown) => void,
+  onMissed: () => void,
 ): void {
-  if (watchedKids.has(own.xKid)) return
-  watchedKids.add(own.xKid)
-  const watch = watchMediatorMultiplexed({ mediatorUrl, own, resolveSenderKey, onMessage, onError })
+  if (watchedKids.has(inbox.xKid)) return
+  watchedKids.add(inbox.xKid)
+  const watch = watchMediatorLive({ mediatorUrl, inbox, resolveSenderKey, onMessage, onError, onMissed })
   mediatorPollHandles.push({ stop: () => watch.close() })
 }
 
@@ -208,9 +206,29 @@ async function restoreRelationshipWatches(
       continue
     }
     if (!contact) continue
-    const route = relationshipMediatorService(contact.ownRelationshipKid)
-    startWatch(contact.ownRelationshipKid, contact.ownX25519PrivateKey, contact.ownRelationshipKid.split('#', 1)[0]!, route.url)
+    for (const watched of ownKidsToWatch(contact, knownContacts.filter(value => value.counterpartyDid === counterpartyDid))) {
+      const route = relationshipMediatorService(watched.ownRelationshipKid)
+      startWatch(watched.ownRelationshipKid, watched.ownX25519PrivateKey, watched.ownRelationshipKid.split('#', 1)[0]!, route.url)
+    }
   }
+}
+
+/** How long an own relationship kid stays watched after this side rotated
+ * away from it: a counterparty that has not yet seen the `from_prior` keeps
+ * sending to it, and the mediator keeps a message at most this long. */
+const ROTATED_KID_WATCH_MS = 30 * 24 * 60 * 60 * 1000
+
+/** The current own kid, plus every own kid this side rotated away from within
+ * ROTATED_KID_WATCH_MS. */
+function ownKidsToWatch(current: ContactKeyV1, records: readonly ContactKeyV1[], now = Date.now()): ContactKeyV1[] {
+  const watched = new Map([[current.ownRelationshipKid, current]])
+  for (const record of records) {
+    const replaced = record.supersedes?.ownRelationshipKid
+    if (!replaced || replaced === record.ownRelationshipKid || watched.has(replaced) || now - Date.parse(record.createdAt) > ROTATED_KID_WATCH_MS) continue
+    const old = records.find(value => value.ownRelationshipKid === replaced)
+    if (old) watched.set(replaced, old)
+  }
+  return [...watched.values()]
 }
 
 function didCommMediatorIngressEnvelope(
@@ -250,7 +268,7 @@ async function configureWalletAccountIfPresent(
   if (!session) return false
   let vault: VaultCardStatus | undefined
   let didComm: { xKid: string; mediatorUrl: string; error?: string } | undefined
-  let activeDidCommDevice: { did: string; xKid: string; x25519PrivateKey: Uint8Array; mediatorControlDid: string; mediatorControlKid: string; mediatorControlPrivateKey: Uint8Array } | undefined
+  let activeDidCommDevice: { did: string; xKid: string; x25519PrivateKey: Uint8Array; mediatorDeviceSecret: Uint8Array } | undefined
   let walletRelationshipManager: WalletRelationshipManager | undefined
   let walletDidCommOutbox: WalletDidCommOutbox | undefined
   let exportMessages: (() => Promise<void>) | undefined
@@ -258,84 +276,56 @@ async function configureWalletAccountIfPresent(
   try {
     const config = readBisetConfig()
     const { mediatorUrls } = config
-    const device = await openDidMdWalletBisetDevice()
-    const walletVaultKeys = await openDidMdWalletVaultContentKeys()
-    if (walletVaultKeys.did !== device.did) throw new Error('did.md Wallet Vault Content Key belongs to another identity')
-    const vaultContentKeys = {
-      async currentGeneration(identityId: string) {
-        if (identityId !== walletVaultKeys.did) throw new Error('Vault Content Key identity does not match this Wallet session')
-        return walletVaultKeys.generation
-      },
-      async keyForGeneration(identityId: string, generation: string) {
-        if (identityId !== walletVaultKeys.did) return undefined
-        return walletVaultKeys.keys[generation]?.slice()
-      },
-    }
+    const device = await openDidMdWalletVaultDevice()
     const vaultStore = await IndexedDbVaultStore.open()
     let vaultSync: VaultSyncClient | undefined
     let deviceEvents = await vaultStore.readVaultEvents(device.did)
-    // Current Vault membership is the set of self-verifying Biset DIDComm
-    // leaves that survived the current generation's public DID commit.
-    // Historical event actors are audit history, not active devices: using
-    // them here made every past login remain in the UI after VCK rotation.
+    // This identity's devices are the keyAgreement keys its DID document
+    // lists now. Historical event actors are audit history, not devices:
+    // using them here made every past login remain in the UI.
     let currentVaultDeviceKid: string | undefined
     let currentVaultDeviceKids: string[] = []
     const refreshVaultDevices = async () => {
-      currentVaultDeviceKids = (await resolveVaultSyncSiblingRoutes(device.did)).map(route => route.kid)
+      currentVaultDeviceKids = await resolveOwnDeviceKids(device.did)
     }
     const vaultDevices = () => currentVaultDeviceKids
       .map(deviceId => ({ deviceId, current: deviceId === currentVaultDeviceKid }))
       .sort((left, right) => Number(right.current) - Number(left.current) || left.deviceId.localeCompare(right.deviceId))
-    const boundary = buildWalletVaultCryptoBoundary(vaultStore, vaultStore, {
-      did: device.did,
-      deviceKid: device.credential.deviceKid,
-      signaturePrivateKey: device.signaturePrivateKey,
-      credential: device.credential,
-      rootPublicKey: device.rootPublicKey,
-    }, vaultContentKeys)
-    const readModel = buildLocalJmapReadModel(vaultStore, device.did, vaultContentKeys)
-    const vaultProjector = new VaultProjector(vaultStore, boundary.resolver, boundary.signer)
-    const vaultRotation = await didMdVaultKeyRotationStatus()
-    if (vaultRotation?.phase === 'rewrap') {
-      if (walletVaultKeys.generation !== vaultRotation.toGeneration) throw new Error('Vault key rotation does not match the current public generation')
-      await rewrapVaultSegmentsForGeneration({ identityId: device.did, fromGeneration: vaultRotation.fromGeneration, toGeneration: vaultRotation.toGeneration, keys: vaultContentKeys, segments: vaultStore, wraps: vaultStore, signer: boundary.signer })
-      await completeDidMdVaultKeyRotation()
-    }
-    const sequencer = await buildActorSequencer(vaultStore, device.did, device.credential.deviceKid)
+    const boundary = buildWalletVaultCryptoBoundary(vaultStore, { did: device.did, deviceId: device.deviceId })
+    const readModel = buildLocalJmapReadModel(vaultStore, device.did)
+    const vaultProjector = new VaultProjector(vaultStore, boundary.resolver)
+    const sequencer = await buildActorSequencer(vaultStore, device.did, device.deviceId)
     const mutationSink = new VaultBackedLocalJmapMutationSink({
       accountId: `biset:${device.did}`,
       identityId: device.did,
-      actorDeviceId: device.credential.deviceKid,
+      actorDeviceId: device.deviceId,
       nextActorSeq: () => sequencer.nextActorSeq(),
       initialParents: () => sequencer.initialParents(),
       activeSegment: () => boundary.activeSegment(),
-      signer: boundary.signer,
+      signer: boundary.author,
       committer: vaultStore,
       onCrdtCommitted: async events => {
         deviceEvents.push(...events.map(event => ({ ...event, identityId: device.did })))
         await vaultProjector.recomputeEmails(device.did, events.flatMap(event => event.targetIds))
-        if (vaultSync) {
-          void resolveVaultSyncSiblingRoutes(device.did, activeDidCommDevice?.xKid)
-            .then(routes => vaultSync!.pushToSiblings(routes.map(route => route.kid), events))
-            .catch(error => console.warn('[did.md Wallet Vault Sync push]', error instanceof Error ? error.message : error))
-        }
+        if (vaultSync) void vaultSync.push(events).catch(error => console.warn('[did.md Wallet Vault Sync push]', error instanceof Error ? error.message : error))
       },
     })
     exportMessages = async () => {
       const exported = await createJmapExport({ identityId: device.did, snapshot: await readModel.snapshot(), events: await vaultStore.readVaultEvents(device.did), download: blobId => readModel.download(blobId) })
-      const plaintext = confirm('Export unencrypted plaintext JMAP? Choose Cancel for the recommended encrypted export.')
-      let bytes: Uint8Array; let suffix: string
-      if (plaintext) { bytes = encodeJmapExport(exported); suffix = 'json' }
-      else { const current = await vaultContentKeys.currentGeneration(device.did); const key = await vaultContentKeys.keyForGeneration(device.did, current); if (!key) throw new Error('Current Vault Content Key is unavailable'); try { bytes = canonicalBytes(await encryptJmapExport(exported, current, key) as never); suffix = 'biset' } finally { key.fill(0) } }
-      downloadFile(bytes, `biset-messages-${exported.exportedAt.replaceAll(':', '-')}.${suffix}`)
+      // Plain JSON: whoever can open this account's dashboard already sees
+      // everything the file contains.
+      downloadFile(encodeJmapExport(exported), `biset-messages-${exported.exportedAt.replaceAll(':', '-')}.json`)
     }
     importMessages = async () => {
-      const bytes = await chooseFile(); const parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as { kind?: string }
-      let file
-      if (parsed.kind === 'biset.jmap-export-encrypted') { const envelope = parsed as JmapExportEnvelopeV1; const key = await vaultContentKeys.keyForGeneration(device.did, envelope.generation); if (!key) throw new Error(`Vault Content Key generation ${envelope.generation} is unavailable`); try { file = await decryptJmapExport(envelope, key) } finally { key.fill(0) } }
-      else file = decodeJmapExport(bytes)
-      const result = await importJmapExport(file, { identityId: device.did, actorDeviceId: device.credential.deviceKid, snapshot: await readModel.snapshot(), events: await vaultStore.readVaultEvents(device.did), nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(), activeSegment: () => boundary.activeSegment(), signer: boundary.signer, commit: records => vaultStore.commitIncomingRecords(records) })
-      if (result.events.length) { await vaultProjector.recomputeEmails(device.did, result.events.flatMap(event => event.targetIds)); if (vaultSync) { const routes = await resolveVaultSyncSiblingRoutes(device.did, activeDidCommDevice?.xKid); await vaultSync.pushToSiblings(routes.map(route => route.kid), result.events) } await refreshInbox(readModel) }
+      const file = decodeJmapExport(await chooseFile())
+      // The file is plain JSON that anyone could have written. Its own
+      // identity must be this account (importJmapExport refuses otherwise),
+      // and the user confirms what it claims before anything is committed;
+      // every message it adds is marked $imported.
+      if (file.identityId !== device.did) throw new Error('This export belongs to another account')
+      if (!confirm(`Import ${file.emails.length} messages exported from this account on ${new Date(file.exportedAt).toLocaleString()}? Messages it adds are marked as imported.`)) return
+      const result = await importJmapExport(file, { identityId: device.did, actorDeviceId: device.deviceId, snapshot: await readModel.snapshot(), events: await vaultStore.readVaultEvents(device.did), nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(), activeSegment: () => boundary.activeSegment(), signer: boundary.author, commit: records => vaultStore.commitIncomingRecords(records) })
+      if (result.events.length) { await vaultProjector.recomputeEmails(device.did, result.events.flatMap(event => event.targetIds)); if (vaultSync) await vaultSync.push(result.events); await refreshInbox(readModel) }
       showSysMsg(`Import: ${result.added} added, ${result.skipped} skipped, ${result.excluded} excluded, ${result.missingBodies} missing bodies`)
     }
     const markdownDirectories = await MarkdownDirectoryConnection.open()
@@ -373,38 +363,42 @@ async function configureWalletAccountIfPresent(
           await markdownDirectories.remove(device.did)
           return
         }
-        const picker = (window as Window & { showDirectoryPicker(options?: { mode?: 'read' | 'readwrite' }): Promise<FileSystemDirectoryHandle> }).showDirectoryPicker
+        const picker = (window as unknown as { showDirectoryPicker(options?: { mode?: 'read' | 'readwrite' }): Promise<FileSystemDirectoryHandle> }).showDirectoryPicker
         markdownRoot = await picker({ mode: 'readwrite' })
         await markdownDirectories.save(device.did, markdownRoot)
         await startMarkdownMirror(markdownRoot)
       },
     })
-    // Relationship keys are Biset-local, encrypted Vault records.  The
-    // Wallet contributes only its public Root key so this browser can verify
-    // those records after a reload; no Wallet controller private key enters
-    // Biset at any point.
-    const walletEventVerifier = boundary.signer
+    // Relationship keys are Biset-local, encrypted Vault records; no Wallet
+    // controller private key enters Biset at any point.
     const walletContactKeyReader = new ContactKeyReader({
       identityId: device.did,
       objects: vaultStore,
       events: vaultStore,
       segmentKeys: boundary.resolver,
-      verifier: walletEventVerifier,
     })
-    const walletContactKeySink = new ContactKeyVaultSink({
+    const walletCredentialSinkOptions: VaultCredentialSinkOptions = {
       identityId: device.did,
-      actorDeviceId: device.credential.deviceKid,
+      actorDeviceId: device.deviceId,
       nextActorSeq: () => sequencer.nextActorSeq(),
       initialParents: () => sequencer.initialParents(),
       activeSegment: () => boundary.activeSegment(),
       currentSnapshot: () => readModel.snapshot(),
-      signer: boundary.signer,
+      signer: boundary.author,
       committer: vaultStore,
       onCommitted: async event => {
         deviceEvents.push({ ...event, identityId: device.did })
-        if (vaultSync) { const routes = await resolveVaultSyncSiblingRoutes(device.did, activeDidCommDevice?.xKid); await vaultSync.pushToSiblings(routes.map(route => route.kid), [event]) }
+        if (vaultSync) await vaultSync.push([event])
       },
+    }
+    const walletContactKeySink = new ContactKeyVaultSink(walletCredentialSinkOptions)
+    const walletRelationshipSeedReader = new RelationshipSeedReader({
+      identityId: device.did,
+      objects: vaultStore,
+      events: vaultStore,
+      segmentKeys: boundary.resolver,
     })
+    const walletRelationshipSeedSink = new RelationshipSeedSink(walletCredentialSinkOptions)
     const walletGroupChatStore = new IndexedDbDidCommGroupChatStore()
     const loadWalletGroupRoster = async (groupId: string) => {
       const cached = await walletGroupChatStore.load(groupId)
@@ -445,10 +439,9 @@ async function configureWalletAccountIfPresent(
         currentVaultDeviceKid = didCommDevice.xKid
         await refreshVaultDevices()
         if (!currentVaultDeviceKids.includes(didCommDevice.xKid)) {
-          throw new Error('This device is not enrolled in the current Vault generation; reconnect did.md Wallet')
+          throw new Error('This device is no longer listed in your DID document; reconnect did.md Wallet')
         }
-        const mediatorControl = { did: didCommDevice.mediatorControlDid, xKid: didCommDevice.mediatorControlKid, xPriv: didCommDevice.mediatorControlPrivateKey }
-        const mediatorRecipient = { did: didCommDevice.did, xKid: didCommDevice.xKid, xPriv: didCommDevice.x25519PrivateKey }
+        const frontDoorInbox = mediatorInbox({ did: didCommDevice.did, xKid: didCommDevice.xKid, xPriv: didCommDevice.x25519PrivateKey }, didCommDevice.mediatorDeviceSecret)
         // PLAN-tor.md D-5/3-3: dial this mediator's onion entrance only when
         // this page itself is being served over Tor (isTorEnvironment, D-6) --
         // an ordinary browser always gets canonical, with no `.onion` fetch
@@ -462,21 +455,33 @@ async function configureWalletAccountIfPresent(
         )
         let mediator: Awaited<ReturnType<typeof registerWithMediator>>
         try {
-          mediator = await registerWithMediator(activeMediatorUrl, mediatorControl, undefined, didCommDevice.xKid)
+          mediator = await registerWithMediator(activeMediatorUrl, frontDoorInbox)
         } catch (error) {
           if (activeMediatorUrl === didCommDevice.mediatorUrl) throw error
           console.warn('[did.md Wallet DIDComm register] onion entrance unreachable, falling back to canonical', error instanceof Error ? error.message : error)
           activeMediatorUrl = didCommDevice.mediatorUrl
-          mediator = await registerWithMediator(activeMediatorUrl, mediatorControl, undefined, didCommDevice.xKid)
+          mediator = await registerWithMediator(activeMediatorUrl, frontDoorInbox)
         }
         if (mediator.xKid !== didCommDevice.routingKid) throw new Error('Mediator routing key changed since Wallet authorization; enable messaging again')
         didComm = { xKid: didCommDevice.xKid, mediatorUrl: didCommDevice.mediatorUrl }
         activeDidCommDevice = didCommDevice
+        // The Vault's relationship seed: the identity's first device (per its
+        // did:webvh log) mints it; every other device receives it by Vault
+        // Sync and, until then, defers relationship work
+        // (RelationshipSeedPendingError) rather than minting a rival seed.
+        void provisionRelationshipSeed({
+          did: device.did,
+          ownKid: didCommDevice.xKid,
+          seeds: walletRelationshipSeedReader,
+          readLog: async () => (await fetchCurrentLog(device.did, freshFetch())).entries,
+          mintAndStore: () => walletRelationshipSeedSink.store(mintRelationshipSeed(device.did)),
+        }).then(outcome => { if (outcome === 'waiting') console.info('[did.md Wallet] waiting for the relationship seed from another device') })
+          .catch(error => console.warn('[did.md Wallet relationship seed]', error instanceof Error ? error.message : error))
         // Restore is "only while an existing sibling is reachable" (no
         // recovery-mailbox fallback): a cold device pulls state from an
         // online sibling via the ordinary bootstrap request below, and a
         // fresh Vault with no siblings simply starts empty.
-        vaultSync = new VaultSyncClient(device.did, vaultStore, boundary.signer, walletVaultSyncKeys,
+        vaultSync = new VaultSyncClient(device.did, didCommDevice.xKid, vaultStore,
           walletVaultSyncTransport({ did: didCommDevice.did, xKid: didCommDevice.xKid, xPriv: didCommDevice.x25519PrivateKey }),
           async result => {
             if (result.addedEventIds.length) deviceEvents = await vaultStore.readVaultEvents(device.did)
@@ -492,10 +497,9 @@ async function configureWalletAccountIfPresent(
           { current: () => vault, remember: status => { vault = status } },
         )
         // A fresh browser and a long-idle browser use the same pull route:
-        // ask every currently published sibling what this CRDT state lacks.
-        // The transport re-resolves immediately before each reply/send.
-        void resolveVaultSyncSiblingRoutes(device.did, didCommDevice.xKid)
-          .then(routes => Promise.all(routes.map(route => vaultSync!.requestState(route.kid))))
+        // ask every sibling (one message to this identity's own DID) what
+        // this device's state lacks.
+        void vaultSync.requestState()
           .catch(error => console.warn('[did.md Wallet Vault Sync bootstrap]', error instanceof Error ? error.message : error))
         // Enrollment alone only lets the mediator queue messages.  Open the
         // device-bound live Pickup watch as well, then project every durable
@@ -510,7 +514,7 @@ async function configureWalletAccountIfPresent(
         const watchedRecipientPrivateKeys = new Map<string, Uint8Array>()
         const walletDidCommProjector = new DidCommIngressProjector({
           identityId: device.did,
-          actorDeviceId: device.credential.deviceKid,
+          actorDeviceId: device.deviceId,
           resolveOwnKey: async kid => {
             if (kid === didCommDevice.xKid) return { kid, x25519PrivateKey: didCommDevice.x25519PrivateKey }
             const watched = watchedRecipientPrivateKeys.get(kid)
@@ -525,16 +529,23 @@ async function configureWalletAccountIfPresent(
           initialParents: () => sequencer.initialParents(),
           activeSegment: () => boundary.activeSegment(),
           currentSnapshot: () => readModel.snapshot(),
-          signer: boundary.signer,
+          signer: boundary.author,
         })
         const relationshipWatchKids = new Set<string>()
         let handleWalletDidCommMessage: (message: DeliveredMessage, recipientKid: string, mediatorUrl: string) => Promise<void>
+        // A mediator dropped copies for one of this device's inboxes (it was
+        // dormant, or full): every one of them also reached a sibling, so
+        // catch up from the siblings' Vault.
+        const catchUpFromSiblings = () => {
+          void vaultSync?.requestState().catch(error => console.warn('[did.md Wallet Vault Sync catch-up]', error instanceof Error ? error.message : error))
+        }
         const startWalletRelationshipWatch = (xKid: string, xPriv: Uint8Array, did: string, mediatorUrl: string): void => {
           watchedRecipientPrivateKeys.set(xKid, xPriv)
           startRelationshipWatch(
-            relationshipWatchKids, mediatorUrl, { did, xKid, xPriv }, resolveAnyDidCommSenderKey,
+            relationshipWatchKids, mediatorUrl, mediatorInbox({ did, xKid, xPriv }, didCommDevice.mediatorDeviceSecret), resolveAnyDidCommSenderKey,
             message => handleWalletDidCommMessage(message, xKid, mediatorUrl),
             error => console.warn('[did.md Wallet relationship watch]', error),
+            catchUpFromSiblings,
           )
         }
         const restoreWalletRelationshipWatches = () => restoreRelationshipWatches(
@@ -546,7 +557,8 @@ async function configureWalletAccountIfPresent(
         walletRelationshipManager = createWalletRelationshipManager({
           identityId: device.did,
           frontDoor: { xKid: didCommDevice.xKid, x25519PrivateKey: didCommDevice.x25519PrivateKey },
-          relationshipSecret: await openDidMdWalletRelationshipSecret(),
+          relationshipSeed: walletRelationshipSeedReader,
+          mediatorDeviceSecret: didCommDevice.mediatorDeviceSecret,
           reader: walletContactKeyReader,
           sink: walletContactKeySink,
           startWatch: startWalletRelationshipWatch,
@@ -595,21 +607,21 @@ async function configureWalletAccountIfPresent(
             sentAt: body.sentAt ?? (plaintext.created_time ? new Date(plaintext.created_time * 1000).toISOString() : receivedAt),
             ...(body.subject ? { subject: body.subject } : {}),
           }, {
-            identityId: device.did, actorDeviceId: device.credential.deviceKid,
+            identityId: device.did, actorDeviceId: device.deviceId,
             nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(),
-            activeSegment: () => boundary.activeSegment(), currentSnapshot: () => readModel.snapshot(), signer: boundary.signer,
+            activeSegment: () => boundary.activeSegment(), currentSnapshot: () => readModel.snapshot(), signer: boundary.author,
           })
           await vaultStore.commitLocalMutation({ identityId: device.did, ...record })
           deviceEvents.push(...record.events.map(event => ({ ...event, identityId: device.did })))
           await vaultProjector.recomputeEmails(device.did, record.events.flatMap(event => event.targetIds))
-          if (vaultSync) void resolveVaultSyncSiblingRoutes(device.did, activeDidCommDevice?.xKid).then(routes => vaultSync!.pushToSiblings(routes.map(route => route.kid), record.events)).catch(error => console.warn('[did.md Wallet Vault Sync group push]', error))
+          if (vaultSync) void vaultSync.push(record.events).catch(error => console.warn('[did.md Wallet Vault Sync group push]', error))
         }
         handleWalletDidCommMessage = async (message, recipientKid, mediatorUrl) => {
             // A Wallet account carries no group-chat or mail-bridge handling
             // (both live in the local-identity boot path's own onMessage). Its
             // only branch is the DidCommIngressProjector below, which throws
             // for every type outside ping/basicmessage/relationship -- and a
-            // throw here does NOT drop the message: watchMediator leaves it
+            // throw here does NOT drop the message: watchMediatorLive leaves it
             // unacknowledged on purpose, so the mediator re-delivers the very
             // same message on every reconnect, where it fails identically,
             // forever. Retrying only ever helps a transient failure; an
@@ -618,6 +630,10 @@ async function configureWalletAccountIfPresent(
             // group message whose invite has not arrived. The Pickup ACK that
             // follows this return is the point: it is what keeps the queue
             // moving for every message behind this one.
+            // A counterparty that rotated its relationship DID (after removing
+            // one of its devices) proves the move with `from_prior`; record it
+            // first, so the message itself is attributed to the relationship.
+            await acceptCounterpartyRotation({ message, reader: walletContactKeyReader, sink: walletContactKeySink })
             const candidate = message.plaintext as { type?: unknown }
             if (vaultSync && (candidate.type === VAULT_SYNC_UPDATE || candidate.type === VAULT_SYNC_STATE_REQUEST || candidate.type === VAULT_SYNC_STATE_RESPONSE)) {
               const syncResult = await vaultSync.receive(message.plaintext as VaultSyncMessage, message.senderKid)
@@ -629,9 +645,9 @@ async function configureWalletAccountIfPresent(
               if (candidate.type !== VAULT_SYNC_STATE_REQUEST && syncResult?.addedEventIds.length) {
                 await restoreWalletRelationshipWatches()
               }
-              // A sibling login may have published a current-generation leaf
-              // immediately before sending this sync message. Re-resolve the
-              // public membership instead of deriving it from event history.
+              // A sibling login may have added its device key to the DID
+              // document just before sending this sync message. Re-resolve the
+              // public device list instead of deriving it from event history.
               if (vault) {
                 await refreshVaultDevices()
                 updateRememberedVaultCard(
@@ -657,7 +673,7 @@ async function configureWalletAccountIfPresent(
                 // since this rebuilds from ALL of this identity's events
                 // every time) must not be treated as this sync message
                 // having failed. Before this guard, such a failure
-                // propagated out of onMessage, which mediator-watch.ts
+                // propagated out of onMessage, which mediator-live.ts
                 // never acks -- the same message then redelivers on every
                 // reconnect and fails identically forever, permanently
                 // wedging delivery to this device entirely ("完全に届かな
@@ -665,7 +681,7 @@ async function configureWalletAccountIfPresent(
                 // only the inbox's rendering of it is what's at risk here.
                 try {
                   const projection = await rebuildLocalJmapProjection({
-                    identityId: device.did, records: vaultStore, resolver: boundary.resolver, verifier: boundary.signer,
+                    identityId: device.did, records: vaultStore, resolver: boundary.resolver,
                   })
                   await vaultStore.writeProjection(device.did, projection, { state: projection.state })
                   await refreshInbox(readModel)
@@ -681,6 +697,8 @@ async function configureWalletAccountIfPresent(
               await refreshInbox(readModel)
               return
             }
+            // The answer to a ping this side sent: arriving was its whole job.
+            if (isPingResponse(dropped)) return
             if (!isProjectableDidCommIngress(dropped)) {
               console.warn(`[did.md Wallet DIDComm] dropping unsupported message type ${dropped.type} from ${message.senderKid}`)
               return
@@ -693,7 +711,7 @@ async function configureWalletAccountIfPresent(
             const eventIdsBeforeIngress = new Set(deviceEvents.map(event => event.id))
             const envelope = didCommMediatorIngressEnvelope(
               'biset/didcomm-wallet-mediator-ingress/v1', mediatorUrl, recipientKid, message.ackId,
-              device.did, device.credential.deviceKid, message.rawJwe,
+              device.did, device.deviceId, message.rawJwe,
             )
             const ingress = await ingestTransportIngress(envelope, walletDidCommProjector, vaultStore)
             if (ingress.targetIds.length) await vaultProjector.recomputeEmails(device.did, ingress.targetIds)
@@ -703,23 +721,30 @@ async function configureWalletAccountIfPresent(
             // its encrypted contact key, then send the DIDComm ACCEPT.  The
             // Pickup ACK is intentionally delayed until all three succeed.
             await walletRelationshipManager!.handleMessage(message, recipientKid, mediatorUrl)
+            // Trust Ping 2.0: answer one that asked. Best-effort: the ping is
+            // already recorded, and a lost answer is exactly what a ping
+            // exists to reveal to its sender.
+            void answerTrustPing(dropped, recipientKid, {
+              contactKeyForOwnKid: kid => walletContactKeyReader.forOwnKid(kid),
+              frontDoor: { fromKid: didCommDevice.xKid, x25519PrivateKey: didCommDevice.x25519PrivateKey },
+            }).then(result => { if (result && !result.ok) console.warn('[did.md Wallet Trust Ping response]', result.error) })
+              .catch(error => console.warn('[did.md Wallet Trust Ping response]', error instanceof Error ? error.message : error))
             const eventsAfterIngress = await vaultStore.readVaultEvents(device.did)
             const newlyCommitted = eventsAfterIngress.filter(event => !eventIdsBeforeIngress.has(event.id))
             deviceEvents = eventsAfterIngress
             if (vaultSync && newlyCommitted.length) {
-              void resolveVaultSyncSiblingRoutes(device.did, activeDidCommDevice?.xKid)
-                .then(routes => vaultSync!.pushToSiblings(routes.map(route => route.kid), newlyCommitted))
+              void vaultSync.push(newlyCommitted)
                 .catch(error => console.warn('[did.md Wallet Vault Sync ingress push]', error instanceof Error ? error.message : error))
             }
             await refreshInbox(readModel, { forceRender: document.querySelector('#focused-thread-card .t-messages') !== null })
         }
-        const watch = watchMediatorMultiplexed({
+        const watch = watchMediatorLive({
           mediatorUrl: activeMediatorUrl,
-          own: mediatorControl,
-          recipient: mediatorRecipient,
+          inbox: frontDoorInbox,
           resolveSenderKey: resolveAnyDidCommSenderKey,
           onMessage: message => handleWalletDidCommMessage(message, didCommDevice.xKid, activeMediatorUrl),
           onError: error => console.warn('[did.md Wallet DIDComm watch]', error),
+          onMissed: catchUpFromSiblings,
         })
         mediatorPollHandles.push({ stop: () => watch.close() })
         // Relationship keys survive reloads as encrypted Vault records.
@@ -738,6 +763,36 @@ async function configureWalletAccountIfPresent(
         // whole account from loading; it only ever needs a fix for that one
         // counterparty, never a full restart.
         await restoreWalletRelationshipWatches()
+        // Finishing "remove other devices": the DID document edit is done and
+        // registerWithMediator above has handed the mediator the new log
+        // (which revoked the removed devices' inboxes). What remains: a
+        // relationship seed the removed devices never see, and every
+        // relationship moved to the did:peer it derives (from_prior). Kept
+        // pending -- and retried next boot -- until every relationship moved.
+        const pendingRemoval = await didMdPendingDeviceRemoval()
+        if (pendingRemoval) {
+          try {
+            const seed = await finishDeviceRemoval({
+              identityId: device.did,
+              requestedAt: pendingRemoval.requestedAt,
+              seeds: walletRelationshipSeedReader,
+              storeSeed: seed => walletRelationshipSeedSink.store(seed),
+              mint: (identityId, supersedes) => mintRelationshipSeed(identityId, supersedes),
+            })
+            const rotation = await rotateOwnRelationships({
+              identityId: device.did,
+              seed: seed.seed,
+              mediatorDeviceSecret: didCommDevice.mediatorDeviceSecret,
+              reader: walletContactKeyReader,
+              sink: walletContactKeySink,
+              startWatch: startWalletRelationshipWatch,
+            })
+            if (rotation.failed.length === 0) await completeDidMdDeviceRemoval()
+            else console.warn('[did.md Wallet device removal] relationships not yet rotated', rotation.failed)
+          } catch (error) {
+            console.warn('[did.md Wallet device removal]', error instanceof Error ? error.message : error)
+          }
+        }
         // A durable intent might predate this tab (or the previous send's
         // network attempt). A first-contact flush can wait for an ACCEPT for
         // up to a minute, so it must never delay initial UI rendering.
@@ -906,6 +961,12 @@ async function configureWalletAccountIfPresent(
   const mediatorCard = didComm ?? (configuredMediator
     ? { mediatorUrl: new URL(configuredMediator).toString(), loggedOut: true as const }
     : undefined)
+  // The configured onion paired with this card's mediator (same index as
+  // `mediatorUrls`) pre-fills the "Enable Tor" prompt; nothing publishes it
+  // until the user confirms.
+  const configuredOnionUrl = mediatorCard
+    ? readBisetConfig().mediatorOnionUrls[readBisetConfig().mediatorUrls.findIndex(url => sameMediatorUrl(url, mediatorCard.mediatorUrl))]
+    : undefined
   configureAccountPage({
     did: session.did,
     ...(exportMessages ? { onExportMessages: exportMessages } : {}),
@@ -915,13 +976,13 @@ async function configureWalletAccountIfPresent(
       deviceJkt: session.deviceJkt,
       capabilityExpiresAt: session.capabilityExpiresAt,
       deviceKid: session.deviceKid,
-      ...(mediatorCard ? { didComm: mediatorCard } : {}),
+      ...(mediatorCard ? { didComm: { ...mediatorCard, ...(configuredOnionUrl ? { onionUrl: configuredOnionUrl } : {}) } } : {}),
       // Publishes the DIDComm mediator device -- the one enrollment step
       // that still needs a DID Document edit (other people's DIDComm
       // senders have to be able to find the route publicly).
       onEnableMessaging: async () => {
         const config = readBisetConfig()
-        return beginDidMdWalletFinalizeEnrollment(config.mediatorUrls, config, config.mediatorOnionUrls)
+        return beginDidMdWalletFinalizeEnrollment(config.mediatorUrls, config)
       },
       // Same same-tab Wallet approval as onEnableMessaging, just pointed at
       // an explicit mediator URL (the Mediator card's "Edit server") instead
@@ -929,6 +990,7 @@ async function configureWalletAccountIfPresent(
       // beginDidMdWalletDocumentEdit as-is, since it already accepts
       // an array and takes its first valid entry (bisetMediatorFor).
       onEditMediator: async (mediatorUrl: string) => beginDidMdWalletDocumentEdit({ mediatorUrls: [mediatorUrl], configuration: readBisetConfig() }),
+      onEnableTor: async (onionUrl: string) => beginDidMdWalletDocumentEdit({ mediatorUrls: [mediatorCard!.mediatorUrl], mediatorOnionUrls: [onionUrl], configuration: readBisetConfig() }),
       onLogOutMediator: async () => beginDidMdWalletDocumentEdit({ removeMediator: true, configuration: readBisetConfig() }),
       onDisconnect: async () => {
         await disconnectWalletAndLocalData()
@@ -936,7 +998,7 @@ async function configureWalletAccountIfPresent(
       },
     },
     vault,
-    onRotateVaultKey: async () => beginDidMdVaultKeyRotation(readBisetConfig()),
+    onRemoveOtherDevices: async () => beginDidMdRemoveOtherDevices(readBisetConfig()),
     showMessage: showSysMsg,
   })
   return true
@@ -1016,7 +1078,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
         onReconnect: async () => {
           const config = readBisetConfig()
           const popup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
-          return beginDidMdWalletLogin(config.mediatorUrls, popup, config, config.mediatorOnionUrls)
+          return beginDidMdWalletLogin(config.mediatorUrls, popup, config)
         },
         onDisconnect: async () => { await disconnectWalletAndLocalData(); await bootClient() },
       },
@@ -1037,8 +1099,4 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
 }
 
 /** Keeps the initial public API explicit while account routing is implemented. */
-export function accountKind(session: AccountSession): AccountSession['kind'] {
-  return session.kind
-}
-
 bootClient()

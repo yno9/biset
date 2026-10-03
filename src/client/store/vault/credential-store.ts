@@ -1,18 +1,16 @@
 // One generic implementation of the vault's private-credential read and
-// write paths. The four credential families (contact-key,
-// didcomm-credential, didcomm-device-key, openpgp-credential) differ only in
-// their event kind, their record codec, and the noun used in error
-// messages -- everything else (signature verification, segment key
-// resolution and zeroing, the atomic local-commit plus shared-delivery
-// outbox entry) was previously hand-copied four times, so a fix applied to
-// one copy silently left the other three wrong.
+// write paths. The credential families (contact-key, relationship-seed,
+// openpgp-credential) differ only in their event kind, their record codec,
+// and the noun used in error messages -- everything else (event
+// verification, segment key resolution and zeroing, the atomic local
+// commit) lives here once, so a fix can never reach only one copy.
 import type { LocalJmapSnapshot } from '../projection/gateway.ts'
 import type { LocalVaultMutationCommitter } from '../projection/vault-mutation-sink.ts'
 import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../../../protocol/ids.ts'
 import type { VaultEventKind, VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
 import { assertActiveVaultSegment, type ActiveVaultSegment } from './active-segment.ts'
 import { buildVaultCommit } from './commit.ts'
-import { verifyVaultEvent, type VaultEventSigner, type VaultEventVerifier } from './events.ts'
+import { verifyVaultEvent, type VaultEventAuthor } from './events.ts'
 import { decryptVaultObject } from './objects.ts'
 import type { SegmentKeyResolver } from './segment-key-resolver.ts'
 import type { VaultEventRecord, VaultObjectReader } from './store.ts'
@@ -35,10 +33,7 @@ interface VaultCredentialBuildResult {
 
 /**
  * Everything that distinguishes one credential family from another.
- *
- * `E` is the store interface the family's events come from: three families
- * use the narrow local credential index (`VaultCredentialEventReader`),
- * while didcomm-device-key reads the full event log (`VaultRecordReader`).
+ * `E` is the store interface the family's events come from.
  */
 export interface VaultCredentialKind<T, E> {
   eventKind: VaultEventKind
@@ -48,7 +43,7 @@ export interface VaultCredentialKind<T, E> {
   segmentLabel: string
   readEvents(source: E, identityId: IdentityId): Promise<VaultEventRecord[]>
   assert(event: VaultEventV1, object: VaultObjectV1, plaintext: Uint8Array): T
-  build(value: T, context: VaultCredentialBuildContext, signer: VaultEventSigner): Promise<VaultCredentialBuildResult>
+  build(value: T, context: VaultCredentialBuildContext, signer: VaultEventAuthor): Promise<VaultCredentialBuildResult>
   createdAtOf(value: T): string
   /** Deep copy, including the family's own secret byte fields. */
   copy(value: T): T
@@ -59,7 +54,6 @@ export interface VaultCredentialReaderOptions<E> {
   objects: VaultObjectReader
   events: E
   segmentKeys: SegmentKeyResolver
-  verifier: VaultEventVerifier
 }
 
 /**
@@ -84,7 +78,7 @@ export class VaultCredentialReader<T, E> {
       const values: T[] = []
       for (const event of events) {
         if (event.kind !== this.kind.eventKind) continue
-        if (!(await verifyVaultEvent(event, this.options.verifier))) throw new TypeError(`${this.kind.label} event signature is invalid`)
+        if (!verifyVaultEvent(event)) throw new TypeError(`${this.kind.label} event is not intact`)
         if (event.objectRefs.length !== 1) throw new TypeError(`${this.kind.label} event must reference exactly one object`)
         const object = await this.options.objects.readObject(this.options.identityId, event.objectRefs[0])
         if (!object) throw new Error(`${this.kind.label} object is unavailable; restore is required`)
@@ -110,8 +104,8 @@ export interface SelectUnsupersededSpec<T> {
 }
 
 /**
- * Selects the unique unsuperseded generation. If two generations are
- * independently introduced (e.g. two devices raced to mint one before either
+ * Selects the one record no other record supersedes. If two were
+ * introduced independently (e.g. two devices raced to mint one before either
  * had synced the other's), fail closed and require an explicit rotation
  * decision instead of silently picking one by local clock order.
  */
@@ -137,7 +131,7 @@ export interface VaultCredentialSinkOptions {
   initialParents(): Promise<VaultEventId[]>
   activeSegment(): Promise<ActiveVaultSegment>
   currentSnapshot(): Promise<LocalJmapSnapshot>
-  signer: VaultEventSigner
+  signer: VaultEventAuthor
   committer: LocalVaultMutationCommitter
   onCommitted?(event: VaultEventV1): Promise<void>
 }
@@ -178,8 +172,6 @@ export class VaultCredentialSink<T> {
       identityId: this.options.identityId,
       objects: [record.object],
       events: [record.event],
-      keyWraps: segment.keyWraps,
-      createdAt: this.kind.createdAtOf(value),
       snapshot: await this.options.currentSnapshot(),
     })
     const result = await this.options.committer.commitLocalMutation({ identityId: this.options.identityId, ...commit })

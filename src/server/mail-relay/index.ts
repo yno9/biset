@@ -2,7 +2,6 @@
 // third-party DIDComm mediators neither share its database nor participate in
 // SMTP recipient resolution.
 import { createMailPluginListener } from '../mediator/mail-plugin/listener.ts'
-import { resolveDidMdMailRecipientRoute } from '../mediator/mail-plugin/bridge.ts'
 import { SqliteMailRelayStore } from './sqlite-store.ts'
 import { createMailRelaySubmissionHandler } from './submission-http.ts'
 import { mailBridgeDidDocument, mailBridgeDiscoveryDocument } from './did-document.ts'
@@ -28,10 +27,6 @@ const listener = createMailPluginListener({
   apexDomain,
   maxMessageBytes: integer('MAIL_RELAY_MAX_MESSAGE_BYTES', 25 * 1024 * 1024),
   senderIdentity: bridgeIdentity,
-  resolveRecipient: async address => {
-    const resolved = await resolveDidMdMailRecipientRoute(address, authorityUrl, authoritySecret, fetch)
-    return resolved.ok ? resolved.route : undefined
-  },
   ...(Bun.env.MAIL_RELAY_TLS_CERT_PATH && Bun.env.MAIL_RELAY_TLS_KEY_PATH
     ? { tls: { certPath: Bun.env.MAIL_RELAY_TLS_CERT_PATH, keyPath: Bun.env.MAIL_RELAY_TLS_KEY_PATH } }
     : {}),

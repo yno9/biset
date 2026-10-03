@@ -11,7 +11,8 @@
 import { describe, expect, test } from 'bun:test'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { acknowledgeMessages, pickupDeliver, type DeliveredMessage } from '../src/protocol/didcomm/mediator-pickup.ts'
-import type { DidCommSender, MediatorInfo } from '../src/protocol/didcomm/mediator-transport.ts'
+import type { MediatorInboxClient, MediatorInfo } from '../src/protocol/didcomm/mediator-transport.ts'
+import { mediatorInbox } from '../src/protocol/didcomm/mediator-device.ts'
 import { registerWithMediator } from '../src/client/didcomm/mediator-sync.ts'
 import { decodePeerDid2, generatePeerIdentity, publicKeyOf } from '../src/protocol/didcomm/peer.ts'
 import { relationshipBodyOf, relationshipMediatorService } from '../src/client/didcomm/relationship.ts'
@@ -20,11 +21,11 @@ import { groupInviteBodyOf, groupMessageBodyOf, isGroupInvite, isGroupMessage } 
 import type { DidCommPlaintext } from '../src/protocol/didcomm/message.ts'
 import { encodeX25519Multikey } from '../src/protocol/didcomm/multikey.ts'
 import { createMediator } from '../src/server/mediator/server.ts'
-import { ConnectionStore } from '../src/server/mediator/connections.ts'
+import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 import type { ContactKeyV1 } from '../src/client/store/vault/contact-key.ts'
 import { buildDidCommLog } from './protocol/support/webvh-log-fixture.ts'
 
-interface Identity { did: string; domain: string; frontKid: string; frontX: Uint8Array; relationshipSecret: Uint8Array; log: unknown[] }
+interface Identity { did: string; domain: string; frontKid: string; frontX: Uint8Array; relationshipSecret: Uint8Array; deviceSecret: Uint8Array; log: unknown[] }
 
 /** Pickup 3.0 delivery is non-destructive -- the mediator keeps every
  * returned message queued until acknowledged (mediator-pickup.ts's own
@@ -33,7 +34,7 @@ interface Identity { did: string; domain: string; frontKid: string; frontX: Uint
  * here acks what it received, matching how a real client behaves (unlike
  * mediator-relationship-handshake.test.ts, which only ever picks up each
  * kid once and so never needed to). */
-async function deliverAndAck(mediator: MediatorInfo, own: DidCommSender, resolveSenderKey: Parameters<typeof pickupDeliver>[2], limit: number, fetchImpl: typeof fetch): Promise<DeliveredMessage[]> {
+async function deliverAndAck(mediator: MediatorInfo, own: MediatorInboxClient, resolveSenderKey: Parameters<typeof pickupDeliver>[2], limit: number, fetchImpl: typeof fetch): Promise<DeliveredMessage[]> {
   const delivered = await pickupDeliver(mediator, own, resolveSenderKey, limit, fetchImpl)
   if (delivered.length) await acknowledgeMessages(mediator, own, delivered.map(d => d.ackId), fetchImpl)
   return delivered
@@ -55,28 +56,21 @@ function makeIdentity(name: string, mediatorUrl: string, mediatorKid: string): I
     routingKeys: [mediatorKid],
     domain,
   })
-  return { did, domain, frontKid: `${did}#k_${name}-front-door`, frontX, relationshipSecret: x25519.utils.randomSecretKey(), log }
+  return { did, domain, frontKid: `${did}#k_${name}-front-door`, frontX, relationshipSecret: x25519.utils.randomSecretKey(), deviceSecret: x25519.utils.randomSecretKey(), log }
 }
 
 describe('DIDComm group chat mesh', () => {
   test('a GROUP_INVITE reaches every invitee with the full roster, and a GROUP_MESSAGE fans out to every other member', async () => {
     const mediatorUrl = `https://group-mesh-mediator-${crypto.randomUUID()}.test.example`
-    const mediator = generatePeerIdentity({ uri: mediatorUrl, accept: ['didcomm/v2'] })
-    const connections = new ConnectionStore()
+    const store = SqliteMediatorStore.memory()
+    const mediator = store.loadIdentity(mediatorUrl)
 
     const alice = makeIdentity('alice', mediatorUrl, mediator.xKid)
     const bob = makeIdentity('bob', mediatorUrl, mediator.xKid)
     const carol = makeIdentity('carol', mediatorUrl, mediator.xKid)
     const identities = [alice, bob, carol]
 
-    const { handle } = createMediator({
-      mediator,
-      connections,
-      async resolveDidWebvh(_did, kid) {
-        const owner = identities.find(id => id.frontKid === kid)
-        return owner ? x25519.getPublicKey(owner.frontX) : null
-      },
-    })
+    const { handle } = createMediator({ mediator, store })
     const fetchImpl = (async (input, init) => {
       const url = new URL(String(input))
       if (url.origin === mediatorUrl) return (await handle(new Request(url, init), url)) ?? new Response('not found', { status: 404 })
@@ -88,19 +82,19 @@ describe('DIDComm group chat mesh', () => {
     globalThis.fetch = fetchImpl
     try {
       for (const identity of identities) {
-        await registerWithMediator(mediatorUrl, { did: identity.did, xKid: identity.frontKid, xPriv: identity.frontX }, fetchImpl)
+        await registerWithMediator(mediatorUrl, mediatorInbox({ did: identity.did, xKid: identity.frontKid, xPriv: identity.frontX }, identity.deviceSecret), fetchImpl)
       }
 
       // Establish the ACTUAL mesh: Alice<->Bob, Alice<->Carol, Bob<->Carol.
       const contacts = new Map<string, Map<string, ContactKeyV1>>() // holderDid -> counterpartyDid -> ContactKeyV1
       const pairs: [Identity, Identity][] = [[alice, bob], [alice, carol], [bob, carol]]
       for (const [from, to] of pairs) {
-        const initiated = await initiateRelationship(to.did, from.relationshipSecret, { fromKid: from.frontKid, x25519PrivateKey: from.frontX, fetch: fetchImpl })
+        const initiated = await initiateRelationship(to.did, from.relationshipSecret, { fromKid: from.frontKid, x25519PrivateKey: from.frontX, mediatorDeviceSecret: from.deviceSecret, fetch: fetchImpl })
         expect(initiated.ok).toBe(true)
         if (!initiated.ok) throw new Error(initiated.error)
         const fromPeer = initiated.pending.peer
 
-        const delivered = await deliverAndAck({ url: mediatorUrl, did: mediator.did, xKid: mediator.xKid, xPub: mediator.xPub }, { did: to.did, xKid: to.frontKid, xPriv: to.frontX }, async kid => {
+        const delivered = await deliverAndAck({ url: mediatorUrl, did: mediator.did, xKid: mediator.xKid, xPub: mediator.xPub }, mediatorInbox({ did: to.did, xKid: to.frontKid, xPriv: to.frontX }, to.deviceSecret), async kid => {
           if (kid !== from.frontKid) throw new Error(`unexpected INIT sender ${kid}`)
           return x25519.getPublicKey(from.frontX)
         }, 10, fetchImpl)
@@ -109,7 +103,7 @@ describe('DIDComm group chat mesh', () => {
 
         const route = relationshipMediatorService(initBody.relationshipKid)
         const toPeer = generatePeerIdentity({ uri: route.url, routingKeys: [route.routingKid] })
-        await registerWithMediator(route.url, { did: toPeer.did, xKid: toPeer.xKid, xPriv: toPeer.xPriv }, fetchImpl)
+        await registerWithMediator(route.url, mediatorInbox({ did: toPeer.did, xKid: toPeer.xKid, xPriv: toPeer.xPriv }, to.deviceSecret), fetchImpl)
         const toContact: ContactKeyV1 = {
           version: 1, kind: 'contact-key', identityId: to.did, counterpartyDid: from.did,
           ownRelationshipKid: toPeer.xKid, ownX25519PrivateKey: toPeer.xPriv, ownEd25519PrivateKey: toPeer.edPriv,
@@ -117,7 +111,7 @@ describe('DIDComm group chat mesh', () => {
         }
         expect((await sendRelationshipAccept(toContact, fetchImpl)).ok).toBe(true)
 
-        const acceptDelivered = await deliverAndAck({ url: mediatorUrl, did: mediator.did, xKid: mediator.xKid, xPub: mediator.xPub }, { did: fromPeer.did, xKid: fromPeer.xKid, xPriv: fromPeer.xPriv }, peerKey, 10, fetchImpl)
+        const acceptDelivered = await deliverAndAck({ url: mediatorUrl, did: mediator.did, xKid: mediator.xKid, xPub: mediator.xPub }, mediatorInbox({ did: fromPeer.did, xKid: fromPeer.xKid, xPriv: fromPeer.xPriv }, from.deviceSecret), peerKey, 10, fetchImpl)
         expect(acceptDelivered).toHaveLength(1)
         const acceptBody = relationshipBodyOf(acceptDelivered[0]!.plaintext as DidCommPlaintext)!
         const fromContact: ContactKeyV1 = {
@@ -137,8 +131,8 @@ describe('DIDComm group chat mesh', () => {
       expect((await sendGroupInvite(aliceToBob, { groupId, members, name: 'Mesh Test' }, fetchImpl)).ok).toBe(true)
       expect((await sendGroupInvite(aliceToCarol, { groupId, members, name: 'Mesh Test' }, fetchImpl)).ok).toBe(true)
 
-      const bobPeer = { did: aliceToBob.counterpartyRelationshipKid.split('#', 1)[0]!, xKid: aliceToBob.counterpartyRelationshipKid, xPriv: contacts.get(bob.did)!.get(alice.did)!.ownX25519PrivateKey }
-      const carolPeer = { did: aliceToCarol.counterpartyRelationshipKid.split('#', 1)[0]!, xKid: aliceToCarol.counterpartyRelationshipKid, xPriv: contacts.get(carol.did)!.get(alice.did)!.ownX25519PrivateKey }
+      const bobPeer = mediatorInbox({ did: aliceToBob.counterpartyRelationshipKid.split('#', 1)[0]!, xKid: aliceToBob.counterpartyRelationshipKid, xPriv: contacts.get(bob.did)!.get(alice.did)!.ownX25519PrivateKey }, bob.deviceSecret)
+      const carolPeer = mediatorInbox({ did: aliceToCarol.counterpartyRelationshipKid.split('#', 1)[0]!, xKid: aliceToCarol.counterpartyRelationshipKid, xPriv: contacts.get(carol.did)!.get(alice.did)!.ownX25519PrivateKey }, carol.deviceSecret)
 
       const bobInvite = await deliverAndAck({ url: mediatorUrl, did: mediator.did, xKid: mediator.xKid, xPub: mediator.xPub }, bobPeer, peerKey, 10, fetchImpl)
       expect(bobInvite).toHaveLength(1)

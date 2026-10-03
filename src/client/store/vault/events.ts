@@ -13,18 +13,14 @@ export interface VaultEventDraft {
   createdAt: string
 }
 
-export interface VaultEventSigner {
+/** Who writes a Vault event: this device. Nothing signs it -- a Vault event
+ * reaches another device only inside DIDComm authcrypt from a key the
+ * identity's DID document lists (Vault Sync), which is the authentication. */
+export interface VaultEventAuthor {
   readonly deviceId: DeviceId
-  deviceCredential?(): Promise<Uint8Array>
-  sign(bytes: Uint8Array): Promise<Uint8Array>
-  verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array, deviceCredential?: Uint8Array): Promise<boolean>
 }
 
-export interface VaultEventVerifier {
-  verify(deviceId: DeviceId, bytes: Uint8Array, signature: Uint8Array, deviceCredential?: Uint8Array): Promise<boolean>
-}
-
-function vaultEventSigningBytes(draft: VaultEventDraft): Uint8Array {
+function vaultEventBytes(draft: VaultEventDraft): Uint8Array {
   assertDraft(draft)
   return canonicalBytes({
     version: 1,
@@ -39,36 +35,27 @@ function vaultEventSigningBytes(draft: VaultEventDraft): Uint8Array {
   })
 }
 
-export async function createVaultEvent(draft: VaultEventDraft, signer: VaultEventSigner): Promise<VaultEventV1> {
-  if (draft.actorDeviceId !== signer.deviceId) throw new TypeError('event signer does not match actor device')
-  const unsigned = vaultEventSigningBytes(draft)
-  const signature = await signer.sign(unsigned)
-  if (signature.length === 0) throw new TypeError('event signature must not be empty')
-  const actorCredential = await signer.deviceCredential?.()
+export async function createVaultEvent(draft: VaultEventDraft, author: VaultEventAuthor): Promise<VaultEventV1> {
+  if (draft.actorDeviceId !== author.deviceId) throw new TypeError('event author does not match actor device')
   return {
     version: 1,
-    id: eventId(unsigned, signature),
+    id: eventId(vaultEventBytes(draft)),
     ...draft,
-    ...(actorCredential ? { actorCredential: actorCredential.slice() } : {}),
     targetIds: [...draft.targetIds],
     objectRefs: [...draft.objectRefs],
     parents: [...draft.parents],
-    signature: signature.slice(),
   }
 }
 
-export async function verifyVaultEvent(event: VaultEventV1, signer: VaultEventVerifier): Promise<boolean> {
-  const { id, signature, version, actorCredential, ...draft } = event
-  if (version !== 1 || id !== eventId(vaultEventSigningBytes(draft), signature)) return false
-  return signer.verify(event.actorDeviceId, vaultEventSigningBytes(draft), signature, actorCredential)
+/** True when the event is well-formed and its id is the hash of its content
+ * -- the integrity check a received event gets. */
+export function verifyVaultEvent(event: VaultEventV1): boolean {
+  const { id, version, ...draft } = event
+  try { return version === 1 && id === eventId(vaultEventBytes(draft)) } catch { return false }
 }
 
-function eventId(unsigned: Uint8Array, signature: Uint8Array): VaultEventId {
-  const body = new Uint8Array(4 + unsigned.length + signature.length)
-  new DataView(body.buffer).setUint32(0, unsigned.length)
-  body.set(unsigned, 4)
-  body.set(signature, 4 + unsigned.length)
-  return domainHash('biset/vault/event-id/v1', body)
+function eventId(content: Uint8Array): VaultEventId {
+  return domainHash('biset/vault/event-id/v2', content)
 }
 
 function assertDraft(draft: VaultEventDraft): void {

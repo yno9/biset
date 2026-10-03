@@ -2,20 +2,20 @@
 // support): every store is keyed by identityId, so a domain move has to move
 // every row from the old did:webvh string to the new one, not just update
 // `identity.did` in memory. Covers both single-field keyPath stores
-// (projection) and compound ones (objects/events/deliveryOutbox) -- the two
+// (projection) and compound ones (objects/events/outbox) -- the two
 // shapes rekeyIdentity's generic KEY_PATHS-driven logic has to handle
 // identically.
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { IndexedDbVaultStore, type IngressVaultCommit } from '../../src/client/store/vault/store.ts'
-import { createVaultEvent, type VaultEventSigner } from '../../src/client/store/vault/events.ts'
+import { createVaultEvent, type VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import { createSegmentKey, encryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import type { IngressAckV1 } from '../../src/protocol/ingress.ts'
 
 const DATABASE_NAME = 'biset-vault-core'
 const oldId = 'did:webvh:2222222222222222222222222222222222222222222222:old.example'
 const newId = 'did:webvh:2222222222222222222222222222222222222222222222:new.example'
-const signer: VaultEventSigner = { deviceId: 'device-a', async sign() { return new Uint8Array([7]) }, async verify(_d, _b, sig) { return sig[0] === 7 } }
+const signer: VaultEventAuthor = { deviceId: 'device-a', async sign() { return new Uint8Array([7]) }, async verify(_d, _b, sig) { return sig[0] === 7 } }
 
 afterEach(async () => {
   await new Promise<void>((resolve, reject) => {
@@ -59,7 +59,6 @@ describe('IndexedDbVaultStore.rekeyIdentity', () => {
     expect(await store.readVaultObjects(oldId)).toHaveLength(0)
     expect(await store.readVaultEvents(oldId)).toHaveLength(0)
     expect(await store.readProjection(oldId)).toBeUndefined()
-    expect(await store.readDeliveryOutbox(oldId)).toHaveLength(0)
 
     // New identity: everything, byte-for-byte.
     const objects = await store.readVaultObjects(newId)

@@ -9,18 +9,6 @@ export type VaultEventId = string
 export type VaultObjectId = string
 export type SegmentId = string
 export type CheckpointId = string
-/** Random 256-bit identifier for a Vault partition. It is never derived from
- * a DID, SCID, domain, mail address, or OIDC subject. */
-export type VaultId = `vlt_${string}`
-/** Opaque, Vault-local member identifier. */
-export type VaultMemberId = string
-/** Decimal unsigned-64 representation. Strings keep the wire format JSON-safe. */
-export type DeliverySeq = string
-/** MLS epoch as a decimal unsigned-64 string. MLS epochs must not pass through JS Number. */
-export type MlsEpoch = string
-
-const DELIVERY_SEQ = /^(0|[1-9][0-9]{0,19})$/
-const MAX_U64 = 18_446_744_073_709_551_615n
 
 /**
  * The general bound every free-form opaque ID (`IdentityId`/`DeviceId`/
@@ -62,48 +50,8 @@ export function assertVaultObjectId(value: unknown): asserts value is VaultObjec
 
 /** `SegmentId` is always minted by `ActiveVaultSegmentManager` via `crypto.randomUUID()` (vault/active-segment.ts). */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const VAULT_ID = /^vlt_[A-Za-z0-9_-]{43}$/
-
-function assertVaultId(value: unknown): asserts value is VaultId {
-  if (typeof value !== 'string' || !VAULT_ID.test(value)) throw new TypeError('vaultId must be vlt_ followed by 256-bit base64url')
-}
-
-function assertVaultMemberId(value: unknown): asserts value is VaultMemberId {
-  assertOpaqueId(value, 'vault member id', 128)
-}
-
 export function assertSegmentId(value: unknown): asserts value is SegmentId {
   if (typeof value !== 'string' || !UUID.test(value)) throw new TypeError('segment id must be a UUID')
-}
-
-export function assertDeliverySeq(value: unknown): asserts value is DeliverySeq {
-  assertUnsigned64(value, 'delivery sequence')
-}
-
-function deliverySeq(value: bigint): DeliverySeq {
-  if (value < 0n || value > MAX_U64) throw new RangeError('delivery sequence is outside uint64 range')
-  return value.toString()
-}
-
-function compareDeliverySeq(left: DeliverySeq, right: DeliverySeq): number {
-  const a = BigInt(left)
-  const b = BigInt(right)
-  return a < b ? -1 : a > b ? 1 : 0
-}
-
-export function assertMlsEpoch(value: unknown): asserts value is MlsEpoch {
-  assertUnsigned64(value, 'MLS epoch')
-}
-
-function mlsEpoch(value: bigint): MlsEpoch {
-  if (value < 0n || value > MAX_U64) throw new RangeError('MLS epoch is outside uint64 range')
-  return value.toString()
-}
-
-function assertUnsigned64(value: unknown, name: string): asserts value is string {
-  if (typeof value !== 'string' || !DELIVERY_SEQ.test(value) || BigInt(value) > MAX_U64) {
-    throw new TypeError(`${name} must be an unsigned 64-bit decimal string`)
-  }
 }
 
 /**

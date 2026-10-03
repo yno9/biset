@@ -149,7 +149,7 @@ function coordinatorHost(url: string): string {
 }
 
 /** The mediator is the account's one service card. Its accordion contains
- * the current DIDComm/Vault-generation device roster. */
+ * the identity's device roster (its DID document's keyAgreement keys). */
 function renderMediatorCard(): void {
   const config = getAccountConfig()
   const wallet = config?.wallet
@@ -195,11 +195,11 @@ function renderMediatorCard(): void {
 
   let removingOtherDevices = false
   const removeOtherDevices = (): void => {
-    if (removingOtherDevices || !config?.onRotateVaultKey) return
-    if (!confirm('Remove all other devices from the current Vault generation? They will need to log in again. Previously received content cannot be revoked.')) return
+    if (removingOtherDevices || !config?.onRemoveOtherDevices) return
+    if (!confirm('Remove all other devices? They will need to sign in again. Content they already received cannot be revoked.')) return
     removingOtherDevices = true
     devices.querySelectorAll<HTMLButtonElement>('.acc-device-removable').forEach(button => { button.disabled = true })
-    void config.onRotateVaultKey()
+    void config.onRemoveOtherDevices()
       .then(() => getAccountConfig()?.showMessage?.('Other devices removed'))
       .catch(error => {
         removingOtherDevices = false
@@ -236,6 +236,15 @@ function renderMediatorCard(): void {
         },
       },
       {
+        label: 'Enable Tor', onClick: () => {
+          const onionUrl = window.prompt('DIDComm mediator Onion URL', didComm.onionUrl ?? '')?.trim()
+          if (!onionUrl) return
+          void wallet.onEnableTor?.(onionUrl).catch(error => {
+            getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
+          })
+        },
+      },
+      {
         label: 'Log out', danger: true, onClick: () => {
           if (!confirm(`Unregister this browser from ${coordinatorHost(didComm.mediatorUrl)}? DIDComm messages will stop delivering here until you register again.`)) return
           void wallet.onLogOutMediator?.().catch(error => {
@@ -265,7 +274,7 @@ function renderMediatorCard(): void {
     devices.appendChild(empty)
   }
   for (const device of roster) {
-    const removable = !device.current && Boolean(config?.onRotateVaultKey)
+    const removable = !device.current && Boolean(config?.onRemoveOtherDevices)
     const line = document.createElement(removable ? 'button' : 'div')
     line.className = 'acc-device-row'
     if (line instanceof HTMLButtonElement) {

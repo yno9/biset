@@ -10,13 +10,15 @@
 // commitMailMessage (no DIDComm-specific vault-commit code needed: a chat
 // message's local echo is exactly the same message.add shape mail's own
 // sendReply already commits).
-import { packAuthcrypt, type DidCommJWE } from '../../protocol/didcomm/crypto.ts'
-import { buildPlaintext } from '../../protocol/didcomm/message.ts'
+import { didCommPost, packAuthcrypt, type DidCommJWE } from '../../protocol/didcomm/crypto.ts'
+import { PING, PING_RESPONSE, isPing, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
+import { buildPlaintext, type DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { BASIC_MESSAGE } from './basicmessage.ts'
 import { wrapForward } from '../../protocol/didcomm/forward-wrap.ts'
 import { decodePeerDid2, deriveRelationshipPeerIdentity, publicKeyOf, type PeerIdentity } from '../../protocol/didcomm/peer.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { registerWithMediator } from './mediator-sync.ts'
+import { mediatorInbox } from '../../protocol/didcomm/mediator-device.ts'
 import {
   RELATIONSHIP_INIT,
   relationshipBodyToWire,
@@ -29,26 +31,6 @@ import { x25519 } from '@noble/curves/ed25519.js'
 import { frontDoorMediatorRoute, sendFrontDoorMessage, type DidCommSendResult, type SendDidCommMessageOptions } from './front-door-send.ts'
 
 export { type DidCommSendResult, type SendDidCommMessageOptions }
-
-/** One-recipient DIDComm delivery through a known mediator route. This is
- * shared by Vault Sync's sibling fan-out and intentionally does not add a
- * multi-recipient route: mediator queues are keyed by recipient kid. */
-export interface MediatedDidCommRecipient { kid: string; publicKey: Uint8Array; mediatorUrl: string; routingKid: string }
-
-export async function sendMediatedDidCommMessage(
-  type: string,
-  body: unknown,
-  own: DidCommSender,
-  recipient: MediatedDidCommRecipient,
-  fetchImpl: typeof fetch = fetch,
-): Promise<void> {
-  if (!recipient.kid || recipient.publicKey.length !== 32) throw new TypeError('DIDComm recipient route is invalid')
-  const plaintext = buildPlaintext(type, body, own.did, recipient.kid)
-  const inner = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: own.xKid, privateKey: own.xPriv }, { kid: recipient.kid, publicKey: recipient.publicKey })
-  const forward = wrapForward(inner, recipient.kid, recipient.routingKid)
-  const response = await fetchImpl(recipient.mediatorUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(forward) })
-  if (response.status !== 202) throw new Error(`DIDComm delivery failed: HTTP ${response.status}`)
-}
 
 interface PendingRelationship {
   counterpartyDid: string
@@ -82,12 +64,12 @@ export async function sendDidCommMessage(toDid: string, content: string, opts: S
  * a retry -- after a reload, a second concurrent send racing this one, or
  * the SAME Wallet identity's OTHER device racing this one -- recomputes the
  * exact same did:peer rather than orphaning the first attempt (peer.ts's
- * `deriveRelationshipPeerIdentity`); `relationshipSecret` (not `opts`'s own
+ * `deriveRelationshipPeerIdentity`); `relationshipSeed` (not `opts`'s own
  * per-device front-door key) is what makes that hold across devices, not
  * just across retries on this one. `opts` still supplies THIS device's own
  * front-door identity for the INIT envelope itself, via `sendFrontDoorMessage`
  * below. */
-export async function initiateRelationship(toDid: string, relationshipSecret: Uint8Array, opts: SendDidCommMessageOptions): Promise<RelationshipInitiationResult> {
+export async function initiateRelationship(toDid: string, relationshipSeed: Uint8Array, opts: SendDidCommMessageOptions & { mediatorDeviceSecret: Uint8Array }): Promise<RelationshipInitiationResult> {
   const fetchImpl = opts.fetch ?? defaultFetch()
   let route: { url: string; routingKid: string }
   try {
@@ -95,10 +77,9 @@ export async function initiateRelationship(toDid: string, relationshipSecret: Ui
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
-  const peer = deriveRelationshipPeerIdentity(relationshipSecret, toDid, route.routingKid)
-  const own: DidCommSender = { did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv }
+  const peer = deriveRelationshipPeerIdentity(relationshipSeed, toDid, route.routingKid)
   try {
-    await registerWithMediator(route.url, own, fetchImpl)
+    await registerWithMediator(route.url, mediatorInbox({ did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv }, opts.mediatorDeviceSecret), fetchImpl)
   } catch (error) {
     return { ok: false, error: `could not register private relationship key: ${error instanceof Error ? error.message : String(error)}` }
   }
@@ -146,7 +127,35 @@ export async function sendGroupChatMessage(
   return sendPrivateRelationshipMessage(contactKey, GROUP_MESSAGE, body, fetchImpl, message ? { id: message.id, createdTime: Math.floor(Date.parse(message.sentAt) / 1000) } : undefined)
 }
 
-async function sendPrivateRelationshipMessage(contactKey: ContactKeyV1, type: string, body: unknown, fetchImpl: typeof fetch, message?: { id: string; createdTime: number }): Promise<DidCommSendResult> {
+/** Tells the counterparty about this side's rotated relationship DID right
+ * away: a Trust Ping from the new DID, carrying `from_prior` like every
+ * message from it does. */
+export async function sendRelationshipRotationNotice(contactKey: ContactKeyV1, fetchImpl: typeof fetch = defaultFetch()): Promise<DidCommSendResult> {
+  if (!contactKey.fromPrior) throw new TypeError('relationship has not rotated')
+  return sendPrivateRelationshipMessage(contactKey, PING, { response_requested: false }, fetchImpl)
+}
+
+/** Trust Ping 2.0: answers a received ping that asked for a response
+ * (the default), threaded to it, on the channel it arrived on -- the
+ * relationship whose did:peer it was addressed to, else this identity's
+ * front door. Null when no answer is owed. */
+export async function answerTrustPing(
+  ping: DidCommPlaintext,
+  recipientKid: string,
+  options: {
+    contactKeyForOwnKid(kid: string): Promise<ContactKeyV1 | null>
+    frontDoor: { fromKid: string; x25519PrivateKey: Uint8Array }
+    fetch?: typeof fetch
+  },
+): Promise<DidCommSendResult | null> {
+  if (!isPing(ping) || !responseOwedFor(ping) || typeof ping.from !== 'string') return null
+  const fetchImpl = options.fetch ?? defaultFetch()
+  const contactKey = await options.contactKeyForOwnKid(recipientKid)
+  if (contactKey) return sendPrivateRelationshipMessage(contactKey, PING_RESPONSE, {}, fetchImpl, { thid: ping.id })
+  return sendFrontDoorMessage(ping.from, PING_RESPONSE, {}, { ...options.frontDoor, thid: ping.id, fetch: fetchImpl })
+}
+
+async function sendPrivateRelationshipMessage(contactKey: ContactKeyV1, type: string, body: unknown, fetchImpl: typeof fetch, message?: { id?: string; createdTime?: number; thid?: string }): Promise<DidCommSendResult> {
   let route: ReturnType<typeof relationshipMediatorService>
   let recipientPublicKey: Uint8Array
   try {
@@ -158,21 +167,23 @@ async function sendPrivateRelationshipMessage(contactKey: ContactKeyV1, type: st
   }
   const ownDid = contactKey.ownRelationshipKid.split('#', 1)[0]!
   const recipientDid = contactKey.counterpartyRelationshipKid.split('#', 1)[0]!
-  const plaintext = buildPlaintext(type, body, ownDid, recipientDid, message)
+  // A side that rotated its relationship DID proves the link to the old one
+  // on every message (DIDComm v2.1 DID Rotation, from-prior.ts).
+  const plaintext = buildPlaintext(type, body, ownDid, recipientDid, { ...message, ...(contactKey.fromPrior ? { fromPrior: contactKey.fromPrior } : {}) })
   const inner = packAuthcrypt(
     new TextEncoder().encode(JSON.stringify(plaintext)),
     { kid: contactKey.ownRelationshipKid, privateKey: contactKey.ownX25519PrivateKey },
-    { kid: contactKey.counterpartyRelationshipKid, publicKey: recipientPublicKey },
+    [{ kid: contactKey.counterpartyRelationshipKid, publicKey: recipientPublicKey }],
   )
   let outbound: DidCommJWE
   try {
-    outbound = wrapForward(inner, contactKey.counterpartyRelationshipKid, route.routingKid)
+    outbound = wrapForward(inner, recipientDid, route.routingKid)
   } catch {
     return { ok: false, error: 'private relationship mediator routing kid is invalid' }
   }
   const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 15_000)
   let response: Response
-  try { response = await fetchImpl(route.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(outbound), signal: controller.signal }) }
+  try { response = await fetchImpl(route.url, didCommPost(outbound, controller.signal)) }
   catch (error) { return { ok: false, error: controller.signal.aborted ? 'send timed out after 15 seconds' : `send failed: ${error instanceof Error ? error.message : String(error)}` } }
   finally { clearTimeout(timeout) }
   if (response.status !== 202) return { ok: false, error: `send failed: HTTP ${response.status} ${(await response.text().catch(() => '')).slice(0, 256)}` }

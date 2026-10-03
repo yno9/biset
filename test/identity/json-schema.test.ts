@@ -19,7 +19,7 @@ function validCapabilityCredential(overrides: { type?: string; topLevel?: Record
       issuedAt: '2026-09-05T00:00:00.000Z',
       expiresAt: '2030-01-01T00:00:00.000Z',
       authorizationDetails: [
-        { type: 'urn:did.md:key-authorization:v1', credential: 'abc' },
+        { type: 'urn:did-core:document-edit:v1', services: [], verificationMethods: [], remove: [] },
       ],
       ...overrides.subject,
     },
@@ -67,7 +67,7 @@ describe('json-schema.ts (interpretive validator, used against biset-messenger-c
     expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ subject: { deviceJkt: 'not-a-thumbprint' } }), 'credential')).toThrow(/does not match pattern/)
   })
 
-  test('an authorizationDetails item matching none of the four known detail types is rejected', () => {
+  test('an authorizationDetails item matching none of the known detail types is rejected', () => {
     expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ subject: { authorizationDetails: [{ type: 'urn:unknown:v1' }] } }), 'credential')).toThrow(/oneOf branch/)
   })
 
@@ -88,8 +88,8 @@ describe('json-schema.ts (interpretive validator, used against biset-messenger-c
     const credential = validCapabilityCredential({
       subject: {
         authorizationDetails: [
-          { type: 'urn:did.md:key-authorization:v1', credential: 'abc' },
           { type: 'urn:did-core:document-edit:v1', services: [], verificationMethods: [], remove: [] },
+          { type: 'urn:biset:mail-relay:v1', relayOrigin: 'https://api.did.md' },
         ],
       },
     })

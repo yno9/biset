@@ -190,7 +190,7 @@ export function generatePeerIdentity(service?: PeerService): PeerIdentity {
 
 /**
  * Derives the SAME did:peer:2 identity every time for a given (relationship
- * secret, counterparty DID) pair, instead of minting a fresh random one per
+ * seed, counterparty DID) pair, instead of minting a fresh random one per
  * relationship attempt.
  *
  * This replaces what used to be an in-memory "pending initiation" map: a
@@ -203,10 +203,10 @@ export function generatePeerIdentity(service?: PeerService): PeerIdentity {
  * eventually throwing "ambiguous" once two independently-initiated, non-
  * superseding contacts existed for the same counterparty).
  *
- * `relationshipSecret` MUST be identical across every device of the same
- * Wallet identity (did-md-oauth.ts derives it from the Wallet's permanent
- * Root key via the same OAuth derived-secret grant VCK uses, under its own
- * fixed, non-rotating purpose) -- NOT a per-device front-door key. The first
+ * `relationshipSeed` MUST be identical across every current device of the
+ * same identity -- the Vault's relationship seed (client/store/vault/
+ * relationship-seed.ts), which Vault Sync carries to current devices only
+ * and a device removal replaces -- NOT a per-device front-door key. The first
  * version of this function took the device's own front-door X25519 key,
  * which only made ONE device's own retries idempotent: two DIFFERENT
  * devices of the same identity, each contacting the same external
@@ -223,13 +223,13 @@ export function generatePeerIdentity(service?: PeerService): PeerIdentity {
  * send from the same or a different device, or re-registering with the
  * mediator are all naturally idempotent. Unlinkability is unaffected --
  * HKDF is one-way, so nothing this identity's public half reveals lets an
- * observer recover the relationship secret it came from, and salting on
+ * observer recover the relationship seed it came from, and salting on
  * `counterpartyDid` keeps every counterparty's derived identity independent
  * of every other's, exactly as a random one would be.
  */
 /**
  * Derives the SAME did:peer:2 identity every time for a given (relationship
- * secret, counterparty DID) pair -- and, when `mediatorRoutingKid` is given,
+ * seed, counterparty DID) pair -- and, when `mediatorRoutingKid` is given,
  * embeds ONLY that mediator's canonical service into the derived DID.
  *
  * The service URI comes from decoding the mediator's own self-certifying
@@ -242,10 +242,10 @@ export function generatePeerIdentity(service?: PeerService): PeerIdentity {
  * one service, its canonical (clearnet) endpoint -- yields the same service
  * on every device and every transport, with no network fetch.
  */
-export function deriveRelationshipPeerIdentity(relationshipSecret: Uint8Array, counterpartyDid: string, mediatorRoutingKid?: string): PeerIdentity {
-  if (relationshipSecret.length !== 32) throw new TypeError('relationship secret must be 32 bytes')
+export function deriveRelationshipPeerIdentity(relationshipSeed: Uint8Array, counterpartyDid: string, mediatorRoutingKid?: string): PeerIdentity {
+  if (relationshipSeed.length !== 32) throw new TypeError('relationship seed must be 32 bytes')
   if (!counterpartyDid) throw new TypeError('counterparty DID is required to derive a relationship peer identity')
-  const prk = extract(sha256, relationshipSecret, new TextEncoder().encode(counterpartyDid))
+  const prk = extract(sha256, relationshipSeed, new TextEncoder().encode(counterpartyDid))
   const xPriv = expand(sha256, prk, new TextEncoder().encode('biset/relationship-peer/x25519/v1'), 32)
   const edPriv = expand(sha256, prk, new TextEncoder().encode('biset/relationship-peer/ed25519/v1'), 32)
   return identityFromKeys(xPriv, edPriv, mediatorRoutingKid ? canonicalMediatorService(mediatorRoutingKid) : undefined)

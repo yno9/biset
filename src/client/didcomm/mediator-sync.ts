@@ -6,28 +6,51 @@
 //
 // Ported in spirit from src.bak/did/didcomm/channel.ts's
 // reassertKeylistRegistration + startDidCommPolling, but without that
-// file's did:dht-era session/IndexedDB record bookkeeping (getDidRecord,
-// storeDidRecord, sessions) -- biset's own DIDComm identity is the
-// identity-shared vault credential (vault/didcomm-credential.ts), already
-// resolved by the caller into a plain DidCommSender, so this module only
-// needs the mediator URL and that sender.
-import { fetchMediatorInfo, requestMediation, updateKeylist, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
+// file's did:dht-era session/IndexedDB record bookkeeping -- the caller
+// hands over one ready MediatorInboxClient (protocol/didcomm/
+// mediator-device.ts), so this module only needs the mediator URL and that.
+import { fetchMediatorInfo, pushWebvhLog, queryKeylist, requestMediation, updateKeylist, type KeylistEntry, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
+import { MAX_DEVICES_PROBLEM } from '../../protocol/didcomm/mediator-protocol.ts'
+import { DidCommProblemError } from '../../protocol/didcomm/problems.ts'
 import { pickupDeliver, acknowledgeMessages, type DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
-import type { DidCommSender } from '../../protocol/didcomm/mediator-transport.ts'
+import type { MediatorInboxClient } from '../../protocol/didcomm/mediator-transport.ts'
 import type { ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
+import { serializeLog } from '../../protocol/webvh/log.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
+import { fetchCurrentLog, freshFetch } from '../identity/webvh/log-io.ts'
 
 /** mediate-request + keylist-update(add), unconditionally -- both are
- * idempotent (keylist-update reports `no_change` rather than erroring when
- * already registered), so calling this on every boot is the self-heal: it
- * repairs a mediator that lost this device's registration (its
- * ConnectionStore was reset, say) without needing to detect that case
- * specially. Safe to call repeatedly; the caller decides the cadence. */
-export async function registerWithMediator(mediatorUrl: string, own: DidCommSender, fetchImpl: typeof fetch = defaultFetch(), recipientKid = own.xKid): Promise<MediatorInfo> {
+ * idempotent (`no_change` when the inbox already exists), so calling this on
+ * every boot is the self-heal for a mediator that lost this inbox. A
+ * did:webvh inbox first hands the mediator the DID's current log, read past
+ * the CDN: the mediator authenticates a did:webvh key only against the
+ * latest log it holds, and a key added moments ago is not in a cached one. */
+export async function registerWithMediator(mediatorUrl: string, inbox: MediatorInboxClient, fetchImpl: typeof fetch = defaultFetch()): Promise<MediatorInfo> {
   const mediator = await fetchMediatorInfo(mediatorUrl, fetchImpl)
-  await requestMediation(mediator, own, fetchImpl)
-  await updateKeylist(mediator, own, recipientKid, 'add', fetchImpl)
+  if (inbox.did.startsWith('did:webvh:')) {
+    const { entries } = await fetchCurrentLog(inbox.did, freshFetch(fetchImpl))
+    await pushWebvhLog(mediator, serializeLog(entries), fetchImpl)
+  }
+  await requestMediation(mediator, inbox, fetchImpl)
+  try {
+    await updateKeylist(mediator, inbox, 'add', fetchImpl)
+  } catch (error) {
+    if (!(error instanceof DidCommProblemError) || error.code !== MAX_DEVICES_PROBLEM) throw error
+    throw new MediatorDeviceLimitError(error.args[2] ?? '?', await queryKeylist(mediator, inbox, fetchImpl).catch(() => []))
+  }
   return mediator
+}
+
+/** The mediator refused this device's inbox: the identity already has the
+ * mediator's maximum number of devices. Thrown on every registration path
+ * (sign-in, boot, relationship), and its message is written to be shown to
+ * the user as-is -- the account page's mediator card displays it. */
+export class MediatorDeviceLimitError extends Error {
+  constructor(readonly limit: string, readonly devices: readonly KeylistEntry[]) {
+    const seen = devices.map(device => new Date(device.lastSeen).toISOString().slice(0, 10)).join(', ')
+    super(`This account already has ${limit} devices registered for messaging${seen ? ` (last active: ${seen})` : ''}. Remove the devices you no longer use (choose another device in the Account page's device list; this removes all other devices), then reload.`)
+    this.name = 'MediatorDeviceLimitError'
+  }
 }
 
 export interface MediatorPollHandle {
@@ -45,7 +68,7 @@ export interface MediatorPollOptions {
   onError?: (e: unknown) => void
 }
 
-/** Starts polling ONE mediator for messages queued at `own.xKid`. Each
+/** Starts polling ONE mediator inbox. Each
  * successfully-handled message (onMessage did not throw) is acknowledged;
  * one that throws is left unacknowledged so the mediator redelivers it next
  * tick (mirrors pickupDeliver's own per-message resilience, one level up:
@@ -54,7 +77,7 @@ export interface MediatorPollOptions {
  * interval -- call it once (idempotent; a repeat stop is a no-op). */
 export function startMediatorPolling(
   mediatorUrl: string,
-  own: DidCommSender,
+  inbox: MediatorInboxClient,
   resolveSenderKey: ResolveSenderKey,
   onMessage: (msg: DeliveredMessage) => Promise<void> | void,
   opts: MediatorPollOptions = {},
@@ -78,9 +101,9 @@ export function startMediatorPolling(
       // the next full page reload to attempt registration again.
       const mediator = registered
         ? await fetchMediatorInfo(mediatorUrl, fetchImpl)
-        : await registerWithMediator(mediatorUrl, own, fetchImpl)
+        : await registerWithMediator(mediatorUrl, inbox, fetchImpl)
       registered = true
-      const delivered = await pickupDeliver(mediator, own, resolveSenderKey, 10, fetchImpl)
+      const delivered = await pickupDeliver(mediator, inbox, resolveSenderKey, 10, fetchImpl)
       const ackIds: string[] = []
       for (const msg of delivered) {
         try {
@@ -90,7 +113,7 @@ export function startMediatorPolling(
           console.warn(`[didcomm] onMessage failed for ${msg.ackId}, leaving it queued for retry:`, e instanceof Error ? e.message : e)
         }
       }
-      if (ackIds.length) await acknowledgeMessages(mediator, own, ackIds, fetchImpl)
+      if (ackIds.length) await acknowledgeMessages(mediator, inbox, ackIds, fetchImpl)
     } catch (e) {
       opts.onError?.(e)
       console.warn(`[didcomm] poll of ${mediatorUrl} failed (will retry next tick):`, e instanceof Error ? e.message : e)

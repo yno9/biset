@@ -183,7 +183,7 @@ export function setupNewUserPage(): void {
         selectWallet(await resolveWalletFromSuffix(suffix))
       }
       walletResult('Opening did.md Wallet…')
-      await beginDidMdWalletLogin(config.mediatorUrls, popup, config, config.mediatorOnionUrls)
+      await beginDidMdWalletLogin(config.mediatorUrls, popup, config)
     })().catch(error => {
       walletLoginButton.disabled = false
       walletResult(error instanceof Error ? error.message : String(error), true)

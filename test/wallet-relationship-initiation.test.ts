@@ -21,7 +21,8 @@ describe('Wallet-initiated DIDComm relationship', () => {
         xKid: `${walletDid}#k_wallet`,
         x25519PrivateKey: new Uint8Array(32).fill(7),
       },
-      relationshipSecret: new Uint8Array(32).fill(9),
+      relationshipSeed: { current: async () => ({ seed: new Uint8Array(32).fill(9) }) },
+      mediatorDeviceSecret: new Uint8Array(32).fill(8),
       reader: {
         async currentFor(did) { return contacts.find(contact => contact.counterpartyDid === did) ?? null },
         async forOwnKid(kid) { return contacts.find(contact => contact.ownRelationshipKid === kid) ?? null },
@@ -72,7 +73,8 @@ describe('Wallet-initiated DIDComm relationship', () => {
     const manager = createWalletRelationshipManager({
       identityId: walletDid,
       frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
-      relationshipSecret: new Uint8Array(32).fill(9),
+      relationshipSeed: { current: async () => ({ seed: new Uint8Array(32).fill(9) }) },
+      mediatorDeviceSecret: new Uint8Array(32).fill(8),
       reader: { async currentFor() { return null }, async forOwnKid() { return null } },
       sink: { async store() { throw new Error('must not store an unauthenticated ACCEPT') } },
       initiate: async did => {
@@ -100,7 +102,8 @@ describe('Wallet-initiated DIDComm relationship', () => {
     const manager = createWalletRelationshipManager({
       identityId: walletDid,
       frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
-      relationshipSecret: new Uint8Array(32).fill(9),
+      relationshipSeed: { current: async () => ({ seed: new Uint8Array(32).fill(9) }) },
+      mediatorDeviceSecret: new Uint8Array(32).fill(8),
       reader: {
         async currentFor(did) { return contacts.find(contact => contact.counterpartyDid === did) ?? null },
         async forOwnKid(kid) { return contacts.find(contact => contact.ownRelationshipKid === kid) ?? null },
@@ -138,7 +141,8 @@ describe('Wallet-initiated DIDComm relationship', () => {
     const manager = createWalletRelationshipManager({
       identityId: walletDid,
       frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
-      relationshipSecret: new Uint8Array(32).fill(9),
+      relationshipSeed: { current: async () => ({ seed: new Uint8Array(32).fill(9) }) },
+      mediatorDeviceSecret: new Uint8Array(32).fill(8),
       reader: {
         async currentFor() { return contact },
         async forOwnKid(kid) { return contact?.ownRelationshipKid === kid ? contact : null },
@@ -177,7 +181,8 @@ describe('Wallet-initiated DIDComm relationship', () => {
     const manager = createWalletRelationshipManager({
       identityId: walletDid,
       frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
-      relationshipSecret: new Uint8Array(32).fill(9),
+      relationshipSeed: { current: async () => ({ seed: new Uint8Array(32).fill(9) }) },
+      mediatorDeviceSecret: new Uint8Array(32).fill(8),
       reader: {
         async currentFor(did) { return contacts.find(contact => contact.counterpartyDid === did) ?? null },
         async forOwnKid(kid) { return contacts.find(contact => contact.ownRelationshipKid === kid) ?? null },
@@ -214,7 +219,8 @@ describe('Wallet-initiated DIDComm relationship', () => {
     const manager = createWalletRelationshipManager({
       identityId: walletDid,
       frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
-      relationshipSecret: new Uint8Array(32).fill(9),
+      relationshipSeed: { current: async () => ({ seed: new Uint8Array(32).fill(9) }) },
+      mediatorDeviceSecret: new Uint8Array(32).fill(8),
       reader: { async currentFor() { return null }, async forOwnKid() { return null } },
       sink: { async store() { throw new Error('must not store on a mismatched mediator') } },
       initiate: async did => ({ ok: true, pending: { counterpartyDid: did, peer: pendingPeer, mediatorUrl } }),

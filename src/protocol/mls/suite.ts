@@ -12,11 +12,9 @@
 // pays ~1MB for ts-mls itself. PLANMLS.md §6 leaves the PQ timing open — when
 // it closes, this constant and one `bun add` are the migration.
 //
-// Note the asymmetry with DIDComm's transport crypto (`didcomm/crypto.ts`),
-// which IS PQ-hybrid today (ML-KEM-768 + X25519). That layer protects the
-// envelope in transit against harvest-now-decrypt-later; MLS protects the
-// group's own key schedule. Different layers, and they may reach PQ at
-// different times — see PLANMLS.md §3 on why the two are not alternatives.
+// DIDComm's transport crypto (`didcomm/crypto.ts`) is plain X25519 today; the
+// two layers may reach PQ at different times — see PLANMLS.md §3 on why they
+// are not alternatives.
 import { getCiphersuiteFromName, getCiphersuiteImpl, nobleCryptoProvider, type CiphersuiteImpl, type CiphersuiteName } from './index.ts'
 
 const MLS_SUITE: CiphersuiteName = 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519'

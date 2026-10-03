@@ -16,7 +16,10 @@
 // resolution). They used to each unpack the routing document their own way;
 // a divergence there means mail silently routes to a different device than
 // chat does.
-import type { WebvhDidDocument, WebvhVerificationMethod } from '../webvh/document.ts'
+import type { WebvhDidDocument } from '../webvh/document.ts'
+import { selectDidCommEndpoint } from './service-endpoint.ts'
+import { decodeX25519Multikey } from './multikey.ts'
+import type { X25519Recipient } from './crypto.ts'
 
 interface DidCommServiceEndpoint extends Record<string, unknown> {
   uri: string
@@ -26,39 +29,36 @@ interface DidCommServiceEndpoint extends Record<string, unknown> {
 
 export interface DidCommRoute {
   endpoint?: Partial<DidCommServiceEndpoint>
-  keyAgreement?: WebvhVerificationMethod
+  /** Every keyAgreement key of the DID -- one per device. A sender encrypts
+   * one message to all of them (DIDComm v2.1: "all keys declared in the
+   * keyAgreement section ... are used as target keys"), so whichever of the
+   * recipient's devices picks it up can open it. */
+  recipients: X25519Recipient[]
 }
 
-/** Wallet enrollment appends a new public front-door device rather than
- * rewriting older (possibly offline) device entries, so the NEWEST
- * DIDCommMessaging service and keyAgreement entry are the live ones.
- *
- * `#didcomm-biset-<suffix>` (config.json's `previousIds`) links a service to
- * one specific device key by suffix; the current `#didcomm` form does not,
- * and falls back to the newest keyAgreement entry. Both are handled here so
- * a document written before and after that rename resolves identically. */
-export function didCommRouteFromDocument(doc: WebvhDidDocument): DidCommRoute {
+/** The X25519 keys a DID document lists under `keyAgreement`, with absolute
+ * kids. `keyAgreement` holds references, so an entry counts only if it
+ * dereferences to a verificationMethod (matched on the absolute DID URL and
+ * on the bare `#fragment`, since a document may store either form) that
+ * decodes as X25519; anything else is skipped. Shared by did:webvh and
+ * did:web resolution. */
+export function keyAgreementRecipients(doc: { id: string; keyAgreement?: string[]; verificationMethod?: Array<{ id: string; publicKeyMultibase: string }> }): X25519Recipient[] {
+  const absolute = (id: string) => id.startsWith('#') ? `${doc.id}${id}` : id
+  const wanted = new Set((doc.keyAgreement ?? []).map(absolute))
+  const recipients: X25519Recipient[] = []
+  for (const vm of doc.verificationMethod ?? []) {
+    const kid = absolute(vm.id)
+    if (!wanted.has(kid) || recipients.some(r => r.kid === kid)) continue
+    try { recipients.push({ kid, publicKey: decodeX25519Multikey(vm.publicKeyMultibase) }) } catch { /* not X25519 */ }
+  }
+  return recipients
+}
+
+/** The live DIDCommMessaging service is the newest one in the document. */
+export function didCommRouteFromDocument(doc: WebvhDidDocument, options: { preferOnion?: boolean } = {}): DidCommRoute {
   const service = [...doc.service].reverse().find(value => value.type === 'DIDCommMessaging')
-  const serviceEndpoint = service?.serviceEndpoint
-  const endpoint = serviceEndpoint && typeof serviceEndpoint === 'object' && !Array.isArray(serviceEndpoint)
-    ? serviceEndpoint as Partial<DidCommServiceEndpoint>
-    : undefined
-  // `keyAgreement` holds references, so an entry is only usable if it
-  // dereferences to a verificationMethod -- matched on the absolute DID URL
-  // and on the bare `#fragment`, since a document may store either form.
-  const keyAgreementIds = new Set(doc.keyAgreement ?? [])
-  const isKeyAgreement = (vm: WebvhVerificationMethod): boolean =>
-    keyAgreementIds.has(vm.id) || keyAgreementIds.has(vm.id.startsWith('#') ? `${doc.id}${vm.id}` : `#${vm.id.split('#', 2)[1] ?? ''}`)
-  const suffix = /#didcomm-biset-([A-Za-z0-9_-]+)$/.exec(service?.id ?? '')?.[1]
-  const bound = suffix
-    ? doc.verificationMethod.find(vm => vm.id.endsWith(`#k_${suffix}`) && isKeyAgreement(vm))
-    : undefined
-  return { endpoint, keyAgreement: bound ?? [...doc.verificationMethod].reverse().find(isKeyAgreement) }
-}
-
-/** A DID Document may store a key id as `#fragment`, but a DIDComm JWE
- * header travels outside that document and must carry the absolute DID
- * URL. */
-export function absoluteKid(doc: WebvhDidDocument, kid: string): string {
-  return kid.startsWith('#') ? `${doc.id}${kid}` : kid
+  // A mediator with a Tor entrance publishes a set (PLAN-tor.md D-4);
+  // `preferOnion` is set only by a sender that is itself on Tor (D-5/D-6).
+  const endpoint = selectDidCommEndpoint(service?.serviceEndpoint, options.preferOnion) as Partial<DidCommServiceEndpoint> | undefined
+  return { endpoint, recipients: keyAgreementRecipients(doc) }
 }

@@ -10,9 +10,9 @@ import type { IdentityId, SegmentId } from '../../../protocol/ids.ts'
 import type { VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
 import { decryptVaultObject, verifyVaultObjectIntegrity } from './objects.ts'
 import { assertContactKeyRecord } from './contact-key.ts'
-import { assertDidCommCredentialRecord } from './didcomm-credential.ts'
+import { assertRelationshipSeedRecord } from './relationship-seed.ts'
 import { assertOpenPgpCredentialRecord } from './openpgp-credential.ts'
-import { verifyVaultEvent, type VaultEventVerifier } from './events.ts'
+import { verifyVaultEvent } from './events.ts'
 import type { SegmentKeyResolver } from './segment-key-resolver.ts'
 import type { DecryptedMutationRecord } from '../projection/reducer.ts'
 
@@ -29,7 +29,6 @@ export async function decryptVaultMutationRecords(
   events: VaultEventV1[],
   objectList: VaultObjectV1[],
   resolver: SegmentKeyResolver,
-  verifier: VaultEventVerifier,
 ): Promise<DecryptedMutationRecord[]> {
   const objects = objectMap(objectList)
   for (const object of objects.values()) {
@@ -39,7 +38,7 @@ export async function decryptVaultMutationRecords(
   try {
     const records: DecryptedMutationRecord[] = []
     for (const event of events) {
-      if (!(await verifyVaultEvent(event, verifier))) throw new TypeError('vault event signature is invalid')
+      if (!verifyVaultEvent(event)) throw new TypeError('vault event is not intact')
       const expectedObjectRefs = event.kind === 'message.add' ? 2 : 1
       if (event.objectRefs.length !== expectedObjectRefs) {
         throw new TypeError(event.kind === 'message.add'
@@ -59,10 +58,10 @@ export async function decryptVaultMutationRecords(
       const plaintext = await decryptVaultObject(key, object)
       if (event.kind === 'credential.openpgp.set') {
         assertOpenPgpCredentialRecord(event, object, plaintext)
-      } else if (event.kind === 'credential.didcomm.set') {
-        assertDidCommCredentialRecord(event, object, plaintext)
       } else if (event.kind === 'contact-key.set') {
         assertContactKeyRecord(event, object, plaintext)
+      } else if (event.kind === 'credential.relationship-seed.set') {
+        assertRelationshipSeedRecord(event, object, plaintext)
       } else {
         records.push({ event, plaintext })
       }

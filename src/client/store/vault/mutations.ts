@@ -2,7 +2,7 @@ import { canonicalBytes } from '../../../protocol/canonical.ts'
 import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../../../protocol/ids.ts'
 import type { VaultEventKind, VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
 import type { VaultMutationIntent } from '../projection/mutations.ts'
-import { createVaultEvent, type VaultEventSigner } from './events.ts'
+import { createVaultEvent, type VaultEventAuthor } from './events.ts'
 import { encryptVaultObject } from './objects.ts'
 
 export interface VaultMutationBuildContext {
@@ -29,7 +29,7 @@ export interface VaultMutationRecord {
 export async function buildVaultMutation(
   intent: VaultMutationIntent,
   context: VaultMutationBuildContext,
-  signer: VaultEventSigner,
+  signer: VaultEventAuthor,
 ): Promise<VaultMutationRecord> {
   assertContext(context, signer)
   if (!intent.kind || intent.targetIds.length === 0 || intent.targetIds.some(id => !id)) throw new TypeError('vault mutation intent is invalid')
@@ -76,7 +76,7 @@ export function mutationObjectAad(
   })
 }
 
-function assertContext(context: VaultMutationBuildContext, signer: VaultEventSigner): void {
+function assertContext(context: VaultMutationBuildContext, signer: VaultEventAuthor): void {
   if (!context.identityId || !context.actorDeviceId || !context.segmentId) throw new TypeError('vault mutation context has empty required fields')
   if (context.actorDeviceId !== signer.deviceId) throw new TypeError('vault mutation signer does not match actor device')
   if (!Number.isSafeInteger(context.actorSeq) || context.actorSeq < 0) throw new TypeError('vault mutation actor sequence is invalid')

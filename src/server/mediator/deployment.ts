@@ -8,7 +8,8 @@
 // header for why mail-plugin/ itself stays a separate typecheck project
 // even though its entrypoint imports this file.
 import { createMediator } from './server.ts'
-import { SqliteMediatorStore } from './sqlite-store.ts'
+import { didCommPost } from '../../protocol/didcomm/crypto.ts'
+import { SqliteMediatorStore, type SqliteMediatorLimits } from './sqlite-store.ts'
 import { IpRateLimiter } from './rate-limit.ts'
 import { startRelayPoller, type RelayPollHandle } from './relay-poller.ts'
 
@@ -20,14 +21,8 @@ export interface MediatorDeploymentOptions {
   allowedOrigins?: Set<string>
   maxRequestBytes?: number
   rateLimitPerMinute?: number
-  maxConnections?: number
-  maxKeysPerConnection?: number
-  maxQueueItemsPerRecipient?: number
-  maxQueueBytesPerRecipient?: number
-  maxMessageBytes?: number
-  queueTtlMs?: number
-  replayTtlMs?: number
-  maxReplayIds?: number
+  /** Store limits; unset ones take sqlite-store.ts's defaults. */
+  limits?: Partial<SqliteMediatorLimits>
   /** Set to have this mediator poll an upstream one for hop-chained
    * delivery (relay-poller.ts) -- absent means this mediator is a leaf/
    * front-door hop only. */
@@ -46,59 +41,39 @@ export interface MediatorDeployment {
 const DEFAULTS = {
   maxRequestBytes: 2 * 1024 * 1024,
   rateLimitPerMinute: 3000,
-  maxConnections: 10_000,
-  maxKeysPerConnection: 32,
-  maxQueueItemsPerRecipient: 256,
-  maxQueueBytesPerRecipient: 16 * 1024 * 1024,
-  maxMessageBytes: 1024 * 1024,
-  queueTtlMs: 30 * 24 * 60 * 60 * 1000,
-  replayTtlMs: 10 * 60 * 1000,
-  maxReplayIds: 50_000,
 }
 
 export function createMediatorDeployment(options: MediatorDeploymentOptions): MediatorDeployment {
   const serviceName = options.serviceName ?? 'biset-didcomm-mediator'
   const log = options.log ?? defaultLog
   const allowedOrigins = options.allowedOrigins ?? new Set<string>()
-  const store = SqliteMediatorStore.open(options.databasePath, {
-    maxConnections: options.maxConnections ?? DEFAULTS.maxConnections,
-    maxKeysPerConnection: options.maxKeysPerConnection ?? DEFAULTS.maxKeysPerConnection,
-    maxQueueItemsPerRecipient: options.maxQueueItemsPerRecipient ?? DEFAULTS.maxQueueItemsPerRecipient,
-    maxQueueBytesPerRecipient: options.maxQueueBytesPerRecipient ?? DEFAULTS.maxQueueBytesPerRecipient,
-    maxMessageBytes: options.maxMessageBytes ?? DEFAULTS.maxMessageBytes,
-    queueTtlMs: options.queueTtlMs ?? DEFAULTS.queueTtlMs,
-    replayTtlMs: options.replayTtlMs ?? DEFAULTS.replayTtlMs,
-    maxReplayIds: options.maxReplayIds ?? DEFAULTS.maxReplayIds,
-  })
+  const store = SqliteMediatorStore.open(options.databasePath, options.limits)
   const mediator = store.loadIdentity(options.publicUrl)
 
-  const { handle, mediatorDid } = createMediator({
-    mediator,
-    queue: store,
-    connections: store,
-    replay: store,
-    transaction: store.transaction,
-    // Control clients are self-certifying did:peer identities. Public
-    // did:webvh recipient kids may be registered as opaque queue targets,
-    // but are never resolved or used to authenticate mediator control.
-  })
+  const { handle, live, mediatorDid } = createMediator({ mediator, store })
 
   let shuttingDown = false
   const maxRequestBytes = options.maxRequestBytes ?? DEFAULTS.maxRequestBytes
   const requestLimiter = new IpRateLimiter(options.rateLimitPerMinute ?? DEFAULTS.rateLimitPerMinute)
-  const server = Bun.serve({
+  const clientAddress = (request: Request) => request.headers.get('x-forwarded-for')?.split(',', 1)[0]?.trim()
+    || server.requestIP(request)?.address
+    || 'unknown'
+  const server = Bun.serve<{ address: string }, never>({
     hostname: options.hostname ?? '127.0.0.1',
     port: options.port,
     maxRequestBodySize: maxRequestBytes,
-    // Bun.serve's own idleTimeout defaults to 10s -- far too short for
-    // `GET /stream`'s long-lived SSE connection (server.ts's `streamFor`).
-    // Found live in mls-ds's own identical stream (2026-09-01): every real
-    // connection died at ~10s with "unexpected EOF" through the reverse
-    // proxy, surfacing to the browser as an opaque CORS failure rather than
-    // a timeout. Raised to Bun's max as defense in depth alongside
-    // server.ts's own 15s heartbeat, which is what actually keeps a quiet
-    // recipient's connection from ever going idle in the first place.
-    idleTimeout: 255,
+    // The WebSocket transport (server.ts's `live`): one text frame is one
+    // DIDComm message, rate-limited like a POST. Bun pings an idle socket
+    // itself, which keeps a quiet live connection open through the proxy.
+    websocket: {
+      maxPayloadLength: maxRequestBytes,
+      idleTimeout: 120,
+      async message(ws, data) {
+        if (!requestLimiter.allow(ws.data.address)) { ws.close(1008, 'rate limit exceeded'); return }
+        await live.message(ws, typeof data === 'string' ? data : new TextDecoder().decode(data))
+      },
+      close(ws) { live.close(ws) },
+    },
     async fetch(request) {
       const url = new URL(request.url)
       if (request.method === 'OPTIONS') {
@@ -108,11 +83,13 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
       }
       const origin = request.headers.get('origin')
       if (origin && !allowedOrigins.has(origin)) return new Response('origin not allowed', { status: 403 })
-      if (request.method === 'POST' && url.pathname === '/') {
-        const address = request.headers.get('x-forwarded-for')?.split(',', 1)[0]?.trim()
-          || server.requestIP(request)?.address
-          || 'unknown'
-        if (!requestLimiter.allow(address)) {
+      if (request.method === 'GET' && url.pathname === '/' && request.headers.get('upgrade')?.toLowerCase() === 'websocket') {
+        if (shuttingDown) return new Response('shutting down', { status: 503 })
+        if (server.upgrade(request, { data: { address: clientAddress(request) } })) return undefined
+        return new Response('websocket upgrade failed', { status: 400 })
+      }
+      if (request.method === 'POST' && (url.pathname === '/' || url.pathname === '/webvh-log')) {
+        if (!requestLimiter.allow(clientAddress(request))) {
           return new Response('rate limit exceeded', { status: 429, headers: { 'retry-after': '60' } })
         }
       }
@@ -154,11 +131,7 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
       { did: relayIdentity.did, xKid: relayIdentity.xKid, xPriv: relayIdentity.xPriv },
       mediator.xKid,
       async (outbound) => {
-        const request = new Request('https://internal.invalid/', {
-          method: 'POST',
-          headers: { 'content-type': 'application/didcomm-encrypted+json' },
-          body: JSON.stringify(outbound),
-        })
+        const request = new Request('https://internal.invalid/', didCommPost(outbound))
         const response = await handle(request, new URL(request.url))
         if (!response || response.status !== 202) {
           throw new Error(`relay re-forward was not accepted: HTTP ${response?.status ?? 'null'}`)
@@ -212,18 +185,21 @@ function withCors(response: Response, origin: string): Response {
 function metrics(stats: ReturnType<SqliteMediatorStore['stats']>): string {
   const oldestAgeSeconds = stats.oldestQueuedAt === undefined ? 0 : Math.max(0, (Date.now() - stats.oldestQueuedAt) / 1000)
   return [
-    '# HELP biset_mediator_connections Registered mediator connections.',
-    '# TYPE biset_mediator_connections gauge',
-    `biset_mediator_connections ${stats.connections}`,
-    '# HELP biset_mediator_connection_keys Registered recipient keys.',
-    '# TYPE biset_mediator_connection_keys gauge',
-    `biset_mediator_connection_keys ${stats.keys}`,
-    '# HELP biset_mediator_queued_messages Opaque JWE messages awaiting ACK.',
+    '# HELP biset_mediator_inboxes Registered device inboxes.',
+    '# TYPE biset_mediator_inboxes gauge',
+    `biset_mediator_inboxes ${stats.inboxes}`,
+    '# HELP biset_mediator_recipients Recipient DIDs with at least one inbox.',
+    '# TYPE biset_mediator_recipients gauge',
+    `biset_mediator_recipients ${stats.recipients}`,
+    '# HELP biset_mediator_queued_messages Opaque JWE bodies awaiting ACK by at least one inbox.',
     '# TYPE biset_mediator_queued_messages gauge',
     `biset_mediator_queued_messages ${stats.queuedMessages}`,
     '# HELP biset_mediator_queued_bytes Opaque JWE bytes awaiting ACK.',
     '# TYPE biset_mediator_queued_bytes gauge',
     `biset_mediator_queued_bytes ${stats.queuedBytes}`,
+    '# HELP biset_mediator_pending_deliveries Inbox copies awaiting ACK.',
+    '# TYPE biset_mediator_pending_deliveries gauge',
+    `biset_mediator_pending_deliveries ${stats.pendingDeliveries}`,
     '# HELP biset_mediator_oldest_message_age_seconds Age of the oldest queued message.',
     '# TYPE biset_mediator_oldest_message_age_seconds gauge',
     `biset_mediator_oldest_message_age_seconds ${oldestAgeSeconds}`,

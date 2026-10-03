@@ -50,7 +50,6 @@ export interface BisetConfig {
 
 const defaultDidDocumentServices: DidDocumentServiceTemplate[] = [
   { purpose: 'didcomm', id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: '$mediatorUrl', accept: ['didcomm/v2'], routingKeys: ['$routingKid'] }, previousIds: ['#didcomm-biset'] },
-  { id: '#biset-vault', type: 'BisetVault', serviceEndpoint: '$vaultGeneration' },
 ]
 
 export function readBisetConfig(): BisetConfig {

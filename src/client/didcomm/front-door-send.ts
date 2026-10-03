@@ -10,14 +10,13 @@
 // stays free of Vault/UI coupling is the whole point of the DOM-less check).
 // send-message.ts re-exports this unchanged for its own existing callers.
 import { resolve } from '../../protocol/webvh/resolver.ts'
-import { decodeX25519Multikey, decodeMlkem768Multikey } from '../../protocol/didcomm/multikey.ts'
-import { packAuthcrypt, packAuthcryptHybrid, type DidCommJWE } from '../../protocol/didcomm/crypto.ts'
-import { mlkemKidFor } from '../../protocol/didcomm/devicekid.ts'
+import { didCommPost, packAuthcrypt, type DidCommJWE, type X25519Recipient } from '../../protocol/didcomm/crypto.ts'
 import { buildPlaintext } from '../../protocol/didcomm/message.ts'
 import { wrapForwardChain } from '../../protocol/didcomm/forward-wrap.ts'
 import { decodePeerDid2, publicKeyOf } from '../../protocol/didcomm/peer.ts'
-import { didCommRouteFromDocument, absoluteKid } from '../../protocol/didcomm/webvh-route.ts'
+import { didCommRouteFromDocument } from '../../protocol/didcomm/webvh-route.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
+import { isTorEnvironment } from './mediator-endpoints.ts'
 import { resolveDidWeb, didWebDidCommRoute } from '../../protocol/didcomm/did-web.ts'
 
 /** A did:peer:2 counterpart -- a mediator, or another device/bot addressed
@@ -35,12 +34,8 @@ function isDidPeer(did: string): boolean {
 }
 
 interface FrontDoorRoute {
-  publicKey: Uint8Array
-  /** did:webvh recipients that also published an ML-KEM-768 entry alongside
-   * their X25519 one (mlkemKidFor's naming convention) -- undefined for a
-   * did:peer:2 recipient, which never publishes one in this codebase. */
-  mlkemPublicKey?: Uint8Array
-  keyAgreementKid: string
+  /** Every keyAgreement key of the recipient DID -- one per device. */
+  recipients: X25519Recipient[]
   endpointUri: string
   routingKeys: string[]
 }
@@ -53,13 +48,11 @@ interface FrontDoorRoute {
 async function resolveFrontDoorRoute(toDid: string, fetchImpl: typeof fetch): Promise<FrontDoorRoute> {
   if (isDidPeer(toDid)) {
     const doc = decodePeerDid2(toDid)
-    const keyAgreementKid = doc.keyAgreement[0]
-    if (!keyAgreementKid) throw new Error(`${toDid} has no keyAgreement key published`)
+    if (doc.keyAgreement.length === 0) throw new Error(`${toDid} has no keyAgreement key published`)
     const endpoint = doc.service[0]?.serviceEndpoint
     if (!endpoint?.uri) throw new Error(`${toDid} has no DIDComm service endpoint published`)
     return {
-      publicKey: publicKeyOf(doc, keyAgreementKid),
-      keyAgreementKid,
+      recipients: doc.keyAgreement.map(kid => ({ kid, publicKey: publicKeyOf(doc, kid) })),
       endpointUri: endpoint.uri,
       routingKeys: endpoint.routing_keys ?? [],
     }
@@ -69,26 +62,17 @@ async function resolveFrontDoorRoute(toDid: string, fetchImpl: typeof fetch): Pr
     const doc = await resolveDidWeb(toDid, fetchImpl)
     if (!doc) throw new Error(`${toDid} does not resolve to a published identity`)
     const route = didWebDidCommRoute(doc)
-    return { publicKey: route.publicKey, keyAgreementKid: route.kid, endpointUri: route.uri, routingKeys: route.routingKeys }
+    return { recipients: route.recipients, endpointUri: route.uri, routingKeys: route.routingKeys }
   }
 
   const doc = await resolve(toDid, undefined, fetchImpl)
   if (!doc) throw new Error(`${toDid} does not resolve to a published identity`)
-  const { endpoint, keyAgreement: kaVm } = didCommRouteFromDocument(doc)
+  // PLAN-tor.md D-5/D-6: dial the recipient's onion entrance only when this page is itself served over Tor.
+  const { endpoint, recipients } = didCommRouteFromDocument(doc, { preferOnion: isTorEnvironment() })
   if (!endpoint?.uri) throw new Error(`${toDid} has no DIDComm service endpoint published`)
-  if (!kaVm) throw new Error(`${toDid} has no keyAgreement key published -- they need to enable DIDComm first`)
-  let mlkemPublicKey: Uint8Array | undefined
-  try {
-    const mlkemId = mlkemKidFor(kaVm.id)
-    const mlkemVm = doc.verificationMethod.find(v => v.id === mlkemId)
-    if (mlkemVm) mlkemPublicKey = decodeMlkem768Multikey(mlkemVm.publicKeyMultibase)
-  } catch {
-    mlkemPublicKey = undefined
-  }
+  if (recipients.length === 0) throw new Error(`${toDid} has no keyAgreement key published -- they need to enable DIDComm first`)
   return {
-    publicKey: decodeX25519Multikey(kaVm.publicKeyMultibase),
-    mlkemPublicKey,
-    keyAgreementKid: absoluteKid(doc, kaVm.id),
+    recipients,
     endpointUri: endpoint.uri,
     routingKeys: endpoint.routingKeys ?? [],
   }
@@ -129,19 +113,8 @@ export async function sendFrontDoorMessage(toDid: string, type: string, body: un
   const plaintextBytes = new TextEncoder().encode(JSON.stringify(plaintext))
   const sender = { kid: opts.fromKid, privateKey: opts.x25519PrivateKey }
 
-  // Upgrade to the hybrid X25519+ML-KEM-768 authcrypt whenever the recipient
-  // published an ML-KEM entry alongside their X25519 one -- this is the only
-  // production path that ever reaches packAuthcryptHybrid; without it the
-  // fully-implemented, tested PQ-hybrid mode was unreachable and every
-  // message stayed exposed to harvest-now-decrypt-later even between two
-  // devices that both supported it (found live, 2026-08-26).
-  const jwe = route.mlkemPublicKey
-    ? packAuthcryptHybrid(plaintextBytes, sender, {
-        kid: route.keyAgreementKid,
-        x25519PublicKey: route.publicKey,
-        mlkemPublicKey: route.mlkemPublicKey,
-      })
-    : packAuthcrypt(plaintextBytes, sender, { kid: route.keyAgreementKid, publicKey: route.publicKey })
+  // One JWE for every device of the recipient (multiplexed encryption).
+  const jwe = packAuthcrypt(plaintextBytes, sender, route.recipients)
 
   // A non-empty routingKeys means the recipient has registered with an
   // independent, blind mediator: deliver Forward-wrapped through it rather
@@ -154,12 +127,12 @@ export async function sendFrontDoorMessage(toDid: string, type: string, body: un
   let outbound: DidCommJWE = jwe
   if (route.routingKeys.length > 0) {
     try {
-      outbound = wrapForwardChain(jwe, route.keyAgreementKid, route.routingKeys)
+      outbound = wrapForwardChain(jwe, toDid, route.routingKeys)
     } catch {
       return { ok: false, error: `${toDid}'s registered mediator routing keys (${route.routingKeys.join(', ')}) are not valid did:peer kids` }
     }
   }
-  const response = await fetchImpl(route.endpointUri, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(outbound) })
+  const response = await fetchImpl(route.endpointUri, didCommPost(outbound))
   if (response.status !== 202) {
     return { ok: false, error: `send failed: HTTP ${response.status} ${(await response.text().catch(() => '')).slice(0, 256)}` }
   }

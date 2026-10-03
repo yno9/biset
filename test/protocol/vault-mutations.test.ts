@@ -3,10 +3,10 @@ import { equalBytes } from '../../src/protocol/canonical.ts'
 import { emailSetToVaultMutationIntents } from '../../src/client/store/projection/mutations.ts'
 import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
-import { verifyVaultEvent, type VaultEventSigner } from '../../src/client/store/vault/events.ts'
+import { verifyVaultEvent, type VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import { buildVaultMutation, mutationObjectAad } from '../../src/client/store/vault/mutations.ts'
 
-const signer: VaultEventSigner = {
+const signer: VaultEventAuthor = {
   deviceId: 'device-a',
   async sign(bytes) { return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)) },
   async verify(deviceId, bytes, signature) { return deviceId === 'device-a' && equalBytes(signature, await this.sign(bytes)) },

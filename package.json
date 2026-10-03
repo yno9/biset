@@ -35,11 +35,9 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@atproto/crypto": "^0.5.5",
     "@noble/ciphers": "^2.2.0",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
-    "@noble/post-quantum": "^0.6.1",
     "@scure/base": "^2.2.0",
     "nodemailer": "^10.0.10",
     "yjs": "13.6.27"

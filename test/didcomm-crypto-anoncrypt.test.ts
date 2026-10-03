@@ -19,7 +19,7 @@ const plaintext = new TextEncoder().encode(JSON.stringify({ type: 'https://didco
 
 describe('DIDComm anoncrypt (ECDH-ES+A256KW)', () => {
   test('round-trips plaintext with no sender to authenticate', async () => {
-    const jwe = packAnoncrypt(plaintext, { kid: routingKid, publicKey: recipientPub })
+    const jwe = packAnoncrypt(plaintext, [{ kid: routingKid, publicKey: recipientPub }])
     const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(jwe.protected)))
     expect(header.alg).toBe('ECDH-ES+A256KW')
     expect(header.skid).toBeUndefined()
@@ -30,13 +30,13 @@ describe('DIDComm anoncrypt (ECDH-ES+A256KW)', () => {
   })
 
   test('rejects a tampered ciphertext rather than silently decrypting garbage', async () => {
-    const jwe = packAnoncrypt(plaintext, { kid: routingKid, publicKey: recipientPub })
+    const jwe = packAnoncrypt(plaintext, [{ kid: routingKid, publicKey: recipientPub }])
     const tampered: DidCommJWE = { ...jwe, ciphertext: b64url(crypto.getRandomValues(new Uint8Array(b64urlToBytes(jwe.ciphertext).length))) }
     await expect(unpackAnoncrypt(tampered, { kid: routingKid, privateKey: recipientPriv })).rejects.toThrow()
   })
 
   test('rejects an unexpected alg', async () => {
-    const jwe = packAnoncrypt(plaintext, { kid: routingKid, publicKey: recipientPub })
+    const jwe = packAnoncrypt(plaintext, [{ kid: routingKid, publicKey: recipientPub }])
     const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(jwe.protected)))
     const tampered: DidCommJWE = { ...jwe, protected: b64url(new TextEncoder().encode(JSON.stringify({ ...header, alg: 'ECDH-1PU+A256KW' }))) }
     await expect(unpackAnoncrypt(tampered, { kid: routingKid, privateKey: recipientPriv })).rejects.toThrow('unexpected alg')

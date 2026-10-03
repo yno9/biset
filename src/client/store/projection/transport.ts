@@ -45,4 +45,4 @@ interface RemoteJmapSession {
   eventSourceUrl?: string | null
 }
 
-export type AccountSession = LocalVaultSession | RemoteJmapSession
+type AccountSession = LocalVaultSession | RemoteJmapSession

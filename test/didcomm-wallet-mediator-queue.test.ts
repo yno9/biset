@@ -3,7 +3,7 @@
 //
 // The Wallet branch has exactly one branch for a delivered message: hand it
 // to DidCommIngressProjector. That projector throws for every type outside
-// ping/basicmessage/relationship, and watchMediator deliberately does NOT
+// ping/basicmessage/relationship, and watchMediatorLive deliberately does NOT
 // acknowledge a message whose onMessage threw -- so before the guard added
 // alongside these tests, a single GROUP_INVITE (or GROUP_MESSAGE) addressed
 // to a Wallet account stayed queued at the
@@ -12,47 +12,38 @@
 // The first test below pins the projector's own allow-list against
 // isProjectableDidCommIngress (the guard must never drift from what the
 // projector actually accepts); the last two drive a real mediator + a real
-// watchMediator and assert the queue state directly, once with the
+// watchMediatorLive and assert the queue state directly, once with the
 // pre-guard handler shape (the bug, still queued) and once with the shipped
 // shape (acknowledged, queue empty).
 import { describe, expect, test } from 'bun:test'
 import { x25519 } from '@noble/curves/ed25519.js'
-import { equalBytes, sha256Bytes } from '../src/protocol/canonical.ts'
+import { sha256Bytes } from '../src/protocol/canonical.ts'
 import type { IngressEnvelopeV1 } from '../src/protocol/ingress.ts'
-import { packAuthcrypt, packAnoncrypt } from '../src/protocol/didcomm/crypto.ts'
+import { packAuthcrypt, packAnoncrypt, didCommPost } from '../src/protocol/didcomm/crypto.ts'
 import { buildPlaintext } from '../src/protocol/didcomm/message.ts'
-import { PING } from '../src/client/didcomm/trust-ping.ts'
+import { PING } from '../src/protocol/didcomm/trust-ping.ts'
 import { BASIC_MESSAGE } from '../src/client/didcomm/basicmessage.ts'
 import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT } from '../src/client/didcomm/relationship.ts'
 import { GROUP_INVITE, GROUP_MESSAGE } from '../src/client/didcomm/group-chat.ts'
 import { MAIL_BRIDGE_INBOUND } from '../src/server/mediator/mail-plugin/mail-bridge.ts'
 import { DidCommIngressProjector, isProjectableDidCommIngress } from '../src/client/didcomm/ingress-projector.ts'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
-import { createMediator } from '../src/server/mediator/server.ts'
 import { registerWithMediator } from '../src/client/didcomm/mediator-sync.ts'
 import { pickupStatus, type DeliveredMessage } from '../src/protocol/didcomm/mediator-pickup.ts'
-import { watchMediator } from '../src/client/didcomm/mediator-watch.ts'
-import type { DidCommSender } from '../src/protocol/didcomm/mediator-transport.ts'
-import { createSegmentKeyWrap } from '../src/client/store/vault/crypto.ts'
+import { watchMediatorLive } from '../src/client/didcomm/mediator-live.ts'
+import { freshMediatorFetch } from './support/mediator.ts'
+import type { MediatorInboxClient } from '../src/protocol/didcomm/mediator-transport.ts'
 import { createSegmentKey } from '../src/client/store/vault/objects.ts'
-import type { VaultEventSigner } from '../src/client/store/vault/events.ts'
+import type { VaultEventAuthor } from '../src/client/store/vault/events.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 const identityId = 'did:webvh:abc123:wallet.test.example'
 const recipientKid = `${identityId}#k_walletdevice`
 
-const signer: VaultEventSigner = {
-  deviceId: recipientKid,
-  async sign(bytes) { return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)) },
-  async verify(deviceId, bytes, signature) { return deviceId === recipientKid && equalBytes(signature, await this.sign(bytes)) },
-}
+const signer: VaultEventAuthor = { deviceId: recipientKid }
 const segmentKey = createSegmentKey()
 async function segmentFor() {
-  const wrap = await createSegmentKeyWrap(new Uint8Array(32).fill(9), segmentKey, {
-    identityId, selfGroupId: 'self-group-1', segmentId: 'segment-1', sourceEpoch: '1', recipientEpoch: '1',
-    grantorDeviceId: recipientKid, grantedAt: '2026-09-05T00:00:00.000Z',
-  }, signer)
-  return { segmentId: 'segment-1', segmentKey, keyWraps: [wrap] }
+  return { segmentId: 'segment-1', segmentKey }
 }
 
 function buildProjector(own: { kid: string; x25519PrivateKey: Uint8Array }, senderKid: string, senderXPub: Uint8Array) {
@@ -86,8 +77,9 @@ describe('DidCommIngressProjector allow-list (isProjectableDidCommIngress)', () 
   const recipientXPub = x25519.getPublicKey(recipientX)
 
   async function projectType(type: string): Promise<string | null> {
-    const plaintext = buildPlaintext(type, {})
-    const jwe = packAuthcrypt(utf8(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, { kid: recipientKid, publicKey: recipientXPub })
+    // An authcrypt message must name its sender in `from`, matching the skid (DIDComm v2.1).
+    const plaintext = buildPlaintext(type, {}, senderKid.split('#', 1)[0])
+    const jwe = packAuthcrypt(utf8(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
     const projector = buildProjector({ kid: recipientKid, x25519PrivateKey: recipientX }, senderKid, senderXPub)
     try {
       await projector.verifyAndProject(envelopeFor(utf8(JSON.stringify(jwe)), `ingress-${type}`))
@@ -120,87 +112,33 @@ describe('DidCommIngressProjector allow-list (isProjectableDidCommIngress)', () 
   })
 })
 
-/** A fresh, unique mediator URL per call -- fetchMediatorInfo caches per URL. */
-function freshMediatorFetch() {
-  const url = `https://mediator-${crypto.randomUUID()}.test.example`
-  const mediator = generatePeerIdentity({ uri: url, accept: ['didcomm/v2'] })
-  const { handle } = createMediator({ mediator })
-  const fetchImpl: typeof fetch = async (input, init) => {
-    const reqUrl = new URL(String(input))
-    const res = await handle(new Request(reqUrl, init), reqUrl)
-    return res ?? new Response('not found', { status: 404 })
-  }
-  return { fetchImpl, url }
-}
-
-/** Same shape mediator-client.test.ts reads SSE frames with. */
-function sseFrameReader(response: Response) {
-  const reader = response.body!.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  return {
-    async next(count: number, deadlineMs = 2000): Promise<Array<{ id: string; jwe: unknown }>> {
-      const frames: Array<{ id: string; jwe: unknown }> = []
-      const deadline = Date.now() + deadlineMs
-      while (frames.length < count && Date.now() < deadline) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        let sep: number
-        while ((sep = buffer.indexOf('\n\n')) !== -1) {
-          const raw = buffer.slice(0, sep)
-          buffer = buffer.slice(sep + 2)
-          const line = raw.split('\n').find(l => l.startsWith('data: '))
-          if (line) frames.push(JSON.parse(line.slice('data: '.length)))
-        }
-      }
-      return frames
-    },
-    async close(): Promise<void> { await reader.cancel().catch(() => {}) },
-  }
-}
-
 /** Delivers one authcrypt'd message of `type` into bob's mediator queue. */
 async function forwardToWallet(fetchImpl: typeof fetch, mediatorUrl: string, mediatorXKid: string, mediatorXPub: Uint8Array,
-  alice: ReturnType<typeof generatePeerIdentity>, bob: DidCommSender, bobXPub: Uint8Array, type: string, body: Record<string, unknown>) {
+  alice: ReturnType<typeof generatePeerIdentity>, bob: MediatorInboxClient, bobXPub: Uint8Array, type: string, body: Record<string, unknown>) {
   const inner = buildPlaintext(type, body, alice.did, bob.did)
-  const innerJwe = packAuthcrypt(utf8(JSON.stringify(inner)), { kid: alice.xKid, privateKey: alice.xPriv }, { kid: bob.xKid, publicKey: bobXPub })
+  const innerJwe = packAuthcrypt(utf8(JSON.stringify(inner)), { kid: alice.xKid, privateKey: alice.xPriv }, [{ kid: bob.xKid, publicKey: bobXPub }])
   const forward = buildPlaintext('https://didcomm.org/routing/2.0/forward', { next: bob.xKid })
   forward.attachments = [{ id: 'inner', data: { json: innerJwe } }]
-  const forwardJwe = packAnoncrypt(utf8(JSON.stringify(forward)), { kid: mediatorXKid, publicKey: mediatorXPub })
-  const res = await fetchImpl(`${mediatorUrl}/`, { method: 'POST', body: JSON.stringify(forwardJwe) })
+  const forwardJwe = packAnoncrypt(utf8(JSON.stringify(forward)), [{ kid: mediatorXKid, publicKey: mediatorXPub }])
+  const res = await fetchImpl(`${mediatorUrl}/`, didCommPost(forwardJwe))
   expect(res.status).toBe(202)
 }
 
 /**
  * Runs one GROUP_INVITE through a real mediator queue and a real
- * watchMediator, with a handler shaped exactly like the Wallet branch's
+ * watchMediatorLive, with a handler shaped exactly like the Wallet branch's
  * handleWalletDidCommMessage -- `guard: false` is the pre-fix shape (every
  * delivery goes straight to the projector), `guard: true` is the shipped
  * one. Returns how many messages the mediator still has queued afterwards.
  */
 async function walletDeliveryLeavesQueued(guard: boolean): Promise<{ queued: number; handlerErrors: string[] }> {
-  const { fetchImpl, url } = freshMediatorFetch()
+  const { fetchImpl, url, webSocketCtor } = freshMediatorFetch()
   const alicePeer = generatePeerIdentity()
   const bobPeer = generatePeerIdentity()
-  const bob: DidCommSender = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv }
+  const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
   const info = await registerWithMediator(url, bob, fetchImpl)
   await forwardToWallet(fetchImpl, url, info.xKid, info.xPub, alicePeer, bob, bobPeer.xPub,
     GROUP_INVITE, { groupId: 'g-1', members: [alicePeer.did, bobPeer.did] })
-
-  class FakeEventSource {
-    onmessage: ((event: { data: string }) => void) | null = null
-    onerror: (() => void) | null = null
-    private closed = false
-    constructor(public readonly streamUrl: string) { void this.pump() }
-    private async pump(): Promise<void> {
-      const response = await fetchImpl(this.streamUrl, { method: 'GET' })
-      const [frame] = await sseFrameReader(response).next(1)
-      if (this.closed || !frame) return
-      this.onmessage?.({ data: JSON.stringify(frame) })
-    }
-    close(): void { this.closed = true }
-  }
 
   const handlerErrors: string[] = []
   let handled = 0
@@ -220,25 +158,25 @@ async function walletDeliveryLeavesQueued(guard: boolean): Promise<{ queued: num
     }
   }
 
-  const watch = watchMediator({
-    mediatorUrl: url, own: bob, resolveSenderKey: async () => alicePeer.xPub,
+  const watch = watchMediatorLive({
+    mediatorUrl: url, inbox: bob, resolveSenderKey: async () => alicePeer.xPub,
     onMessage, onError: () => {},
-    fetch: fetchImpl, eventSourceCtor: FakeEventSource as unknown as typeof EventSource,
+    fetch: fetchImpl, webSocketCtor,
   })
   const deadline = Date.now() + 3000
   while (handled === 0 && Date.now() < deadline) await new Promise(r => setTimeout(r, 10))
-  // The acknowledgement watchMediator sends after a successful onMessage is
+  // The acknowledgement watchMediatorLive sends after a successful onMessage is
   // a separate round trip -- give it a beat to land before reading status.
   await new Promise(r => setTimeout(r, 50))
   watch.close()
-  return { queued: await pickupStatus(info, bob, fetchImpl), handlerErrors }
+  return { queued: (await pickupStatus(info, bob, fetchImpl)).messageCount, handlerErrors }
 }
 
 describe('did.md Wallet mediator delivery handler', () => {
   test('the pre-guard handler shape leaves a GROUP_INVITE queued forever (the bug)', async () => {
     const { queued, handlerErrors } = await walletDeliveryLeavesQueued(false)
     expect(handlerErrors).toEqual([`unsupported DIDComm message type for this endpoint slice: ${GROUP_INVITE}`])
-    // watchMediator never acked it: the very same message comes back on the
+    // watchMediatorLive never acked it: the very same message comes back on the
     // next reconnect, and fails identically, forever.
     expect(queued).toBe(1)
   })

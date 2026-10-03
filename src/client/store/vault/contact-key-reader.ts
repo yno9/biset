@@ -1,4 +1,4 @@
-import { contactKeyCredentialKind, type ContactKeyV1 } from './contact-key.ts'
+import { contactKeyCredentialKind, contactKeyRef, type ContactKeyV1 } from './contact-key.ts'
 import { selectUnsuperseded, VaultCredentialReader, type VaultCredentialReaderOptions } from './credential-store.ts'
 import type { VaultCredentialEventReader } from './store.ts'
 import { equalBytes } from '../../../protocol/canonical.ts'
@@ -23,34 +23,30 @@ export class ContactKeyReader {
 
   /**
    * Selects the unique unsuperseded relationship key for one counterparty.
-   * Fails closed when two generations were introduced independently -- see
+   * Fails closed when two were introduced independently -- see
    * `selectUnsuperseded`.
    */
   async currentFor(counterpartyDid: string): Promise<ContactKeyV1 | null> {
     const contactKeys = equivalentDuplicatesRemoved(await this.forCounterparty(counterpartyDid), 'duplicate contact key kid')
     if (contactKeys.length === 0) return null
     return copyContactKey(selectUnsuperseded(contactKeys, {
-      kidOf: value => value.ownRelationshipKid,
-      supersededKidOf: value => value.supersedesKid,
+      kidOf: (value: ContactKeyV1) => contactKeyRef(value),
+      supersededKidOf: (value: ContactKeyV1) => value.supersedes ? contactKeyRef(value.supersedes) : undefined,
       duplicateMessage: 'duplicate contact key kid',
       ambiguousMessage: 'current contact key is ambiguous; explicit rotation is required',
     }))
   }
 
+  /** The newest record using this own kid -- current or superseded, since
+   * mail can still arrive at a kid this side has rotated away from. Every
+   * record sharing an own kid shares its private key. */
   async forOwnKid(ownRelationshipKid: string): Promise<ContactKeyV1 | null> {
-    const matches = equivalentDuplicatesRemoved(
-      (await this.readAll()).filter(value => value.ownRelationshipKid === ownRelationshipKid),
-      'duplicate contact key kid',
-    )
-    return matches[0] ? copyContactKey(matches[0]) : null
+    return newestAgreeing((await this.readAll()).filter(value => value.ownRelationshipKid === ownRelationshipKid), 'own contact key kid is ambiguous')
   }
 
+  /** The newest record naming this counterparty kid, current or superseded. */
   async forCounterpartyKid(counterpartyRelationshipKid: string): Promise<ContactKeyV1 | null> {
-    const matches = equivalentDuplicatesRemoved(
-      (await this.readAll()).filter(value => value.counterpartyRelationshipKid === counterpartyRelationshipKid),
-      'duplicate counterparty contact key kid',
-    )
-    return matches[0] ? copyContactKey(matches[0]) : null
+    return newestAgreeing((await this.readAll()).filter(value => value.counterpartyRelationshipKid === counterpartyRelationshipKid), 'counterparty contact key kid is ambiguous')
   }
 }
 
@@ -61,7 +57,7 @@ export class ContactKeyReader {
 function equivalentDuplicatesRemoved(values: ContactKeyV1[], error: string): ContactKeyV1[] {
   const unique: ContactKeyV1[] = []
   for (const value of values) {
-    const sameKid = unique.find(candidate => candidate.ownRelationshipKid === value.ownRelationshipKid)
+    const sameKid = unique.find(candidate => contactKeyRef(candidate) === contactKeyRef(value))
     if (!sameKid) { unique.push(value); continue }
     if (!equivalentContactKey(sameKid, value)) throw new TypeError(error)
   }
@@ -76,7 +72,18 @@ function equivalentContactKey(left: ContactKeyV1, right: ContactKeyV1): boolean 
     equalBytes(left.ownEd25519PrivateKey, right.ownEd25519PrivateKey) &&
     left.counterpartyRelationshipKid === right.counterpartyRelationshipKid &&
     equalBytes(left.counterpartyPublicKey, right.counterpartyPublicKey) &&
-    left.supersedesKid === right.supersedesKid
+    (left.supersedes ? contactKeyRef(left.supersedes) : '') === (right.supersedes ? contactKeyRef(right.supersedes) : '') &&
+    left.fromPrior === right.fromPrior
+}
+
+/** Records sharing one kid must agree on who the counterparty is and on
+ * this side's private keys; past that, the newest one is the answer. */
+function newestAgreeing(values: ContactKeyV1[], error: string): ContactKeyV1 | null {
+  if (values.length === 0) return null
+  const [first] = values
+  if (values.some(value => value.counterpartyDid !== first!.counterpartyDid)) throw new TypeError(error)
+  const newest = [...values].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0]!
+  return copyContactKey(newest)
 }
 
 function copyContactKey(value: ContactKeyV1): ContactKeyV1 {

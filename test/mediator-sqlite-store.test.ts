@@ -2,14 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
-import { QueueFullError } from '../src/server/mediator/queue.ts'
-import { createMediator } from '../src/server/mediator/server.ts'
-import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
-import { buildPlaintext, type DidCommPlaintext } from '../src/protocol/didcomm/message.ts'
-import { packAnoncrypt, packAuthcrypt, parseJwe, unpackAuthcrypt } from '../src/protocol/didcomm/crypto.ts'
-import { DELIVERY_REQUEST, MESSAGES_RECEIVED } from '../src/protocol/didcomm/mediator-protocol.ts'
+import { QueueFullError, SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 import { IpRateLimiter } from '../src/server/mediator/rate-limit.ts'
+import { deviceLabel, freshMediator, peer, T } from './support/mediator.ts'
 
 function withDatabase<T>(run: (path: string) => Promise<T> | T): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'biset-mediator-sqlite-test-'))
@@ -17,39 +12,26 @@ function withDatabase<T>(run: (path: string) => Promise<T> | T): Promise<T> {
 }
 
 describe('SqliteMediatorStore', () => {
-  test('accepted Forward survives process restart, wire pickup works, and ACK remains durable', () => withDatabase(async path => {
-    const bob = generatePeerIdentity()
-    let first = SqliteMediatorStore.open(path)
-    let mediator = first.loadIdentity('https://mediator.example')
-    first.addKey(bob.did, bob.xKid, bob.xKid, hex(bob.xPub))
-    let handler = createMediator({
-      mediator, queue: first, connections: first, replay: first, transaction: first.transaction,
-    }).handle
+  test('an accepted Forward survives restart, its replay id too, and an ACK stays durable', () => withDatabase(async path => {
+    const bob = peer()
+    const device = deviceLabel(1)
+    const first = freshMediator({}, SqliteMediatorStore.open(path))
+    await first.request(bob, T.KEYLIST_UPDATE, { device, updates: [{ recipient_did: bob.did, action: 'add' }] })
+    expect((await first.forward(bob.xKid, { ciphertext: 'opaque-inner-jwe' }, 'durable-forward-id')).status).toBe(202)
+    first.store.close()
 
-    const forward = buildPlaintext('https://didcomm.org/routing/2.0/forward', { next: bob.xKid })
-    forward.id = 'durable-forward-id'
-    forward.attachments = [{ id: 'inner', data: { json: { ciphertext: 'opaque-inner-jwe' } } }]
-    const packedForward = packAnoncrypt(bytes(JSON.stringify(forward)), { kid: mediator.xKid, publicKey: mediator.xPub })
-    expect((await post(handler, packedForward)).status).toBe(202)
-    first.close()
-
-    const second = SqliteMediatorStore.open(path)
-    mediator = second.loadIdentity('https://mediator.example')
-    handler = createMediator({
-      mediator, queue: second, connections: second, replay: second, transaction: second.transaction,
-    }).handle
-    expect((await post(handler, packedForward)).status).toBe(400)
-
-    const delivery = await authenticatedRequest(handler, mediator, bob, DELIVERY_REQUEST, { recipient_did: bob.xKid })
+    const second = freshMediator({}, SqliteMediatorStore.open(path))
+    expect((await second.forward(bob.xKid, { ciphertext: 'opaque-inner-jwe' }, 'durable-forward-id')).status).toBe(400)
+    const delivery = await second.request(bob, T.DELIVERY_REQUEST, { device })
     expect(delivery.attachments).toHaveLength(1)
     expect(delivery.attachments![0]!.data.json).toEqual({ ciphertext: 'opaque-inner-jwe' })
-    const ackId = delivery.attachments![0]!.id
-    const ack = await authenticatedRequest(handler, mediator, bob, MESSAGES_RECEIVED, { message_id_list: [ackId] })
+    const ack = await second.request(bob, T.MESSAGES_RECEIVED, { device, message_id_list: [delivery.attachments![0]!.id] })
     expect((ack.body as { message_count: number }).message_count).toBe(0)
-    second.close()
+    second.store.close()
 
     const third = SqliteMediatorStore.open(path)
-    expect(third.count(bob.xKid)).toBe(0)
+    expect(third.count(bob.did, device)).toBe(0)
+    expect(third.stats().queuedMessages).toBe(0)
     third.close()
   }))
 
@@ -78,60 +60,64 @@ describe('SqliteMediatorStore', () => {
     second.close()
   }))
 
-  test('mediator identity, connection keylist, opaque queue, and replay IDs survive restart', () => withDatabase(path => {
+  test('mediator identity, inboxes, did:webvh state, opaque queue, and replay IDs survive restart', () => withDatabase(path => {
+    const did = 'did:webvh:scid:example.test'
     const first = SqliteMediatorStore.open(path)
     const identity = first.loadIdentity('https://mediator.example')
-    first.register('did:peer:alice')
-    expect(first.addKey('did:peer:alice', 'did:peer:alice#key-1', 'did:peer:alice', '010203')).toBe(true)
-    const queueId = first.push('did:peer:alice#key-1', JSON.stringify({ ciphertext: 'opaque' }))
+    first.recordWebvhState(did, 3, { [`${did}#k_a`]: '010203' })
+    expect(first.addInbox(did, deviceLabel(1), `${did}#k_a`)).toBe('added')
+    expect(first.enqueue(did, JSON.stringify({ ciphertext: 'opaque' }))).toBe(1)
     expect(first.check('Message-ID-A')).toBe(true)
     first.close()
 
     const second = SqliteMediatorStore.open(path)
     expect(second.loadIdentity('https://mediator.example').did).toBe(identity.did)
-    expect(second.listKeys('did:peer:alice')).toEqual(['did:peer:alice#key-1'])
-    expect(second.keyFor('did:peer:alice#key-1')).toBe('010203')
-    expect(second.peek('did:peer:alice#key-1', 10)).toEqual([expect.objectContaining({
-      id: queueId,
-      packed: JSON.stringify({ ciphertext: 'opaque' }),
-    })])
+    expect(second.listInboxes(did).map(inbox => inbox.device)).toEqual([deviceLabel(1)])
+    expect(second.webvhKey(did, `${did}#k_a`)).toBe('010203')
+    expect(second.peek(did, deviceLabel(1), 10)).toEqual([expect.objectContaining({ packed: JSON.stringify({ ciphertext: 'opaque' }) })])
     expect(second.check('message-id-a')).toBe(false)
     second.close()
   }))
 
   test('queue quota failure rolls back a replay ID in the shared Forward transaction', () => withDatabase(path => {
-    const store = SqliteMediatorStore.open(path, {
-      maxQueueItemsPerRecipient: 1,
-      maxQueueBytesPerRecipient: 64,
-      maxMessageBytes: 64,
-    })
-    const kid = 'did:peer:bob#key-1'
-    store.addKey('did:peer:bob', kid)
-    store.push(kid, '{}')
-
+    const store = SqliteMediatorStore.open(path, { maxQueueItemsPerInbox: 1, maxQueueBytesPerInbox: 64, maxMessageBytes: 64 })
+    const did = 'did:peer:2.bob'
+    store.addInbox(did, deviceLabel(1), `${did}#key-1`)
+    store.enqueue(did, '{}')
     expect(() => store.transaction(() => {
       expect(store.check('forward-retry')).toBe(true)
-      store.push(kid, '{}')
+      store.enqueue(did, '{}')
     })).toThrow(QueueFullError)
-
     // The failed transaction did not poison the retry as a replay.
     expect(store.check('forward-retry')).toBe(true)
     store.close()
   }))
 
   test('ACK removal is idempotent and remains removed after restart', () => withDatabase(path => {
+    const did = 'did:peer:2.carol'
     const first = SqliteMediatorStore.open(path)
-    const kid = 'did:peer:carol#key-1'
-    first.addKey('did:peer:carol', kid)
-    const id = first.push(kid, '{"ciphertext":"x"}')
-    expect(first.remove(kid, [id])).toBe(0)
-    expect(first.remove(kid, [id])).toBe(0)
+    first.addInbox(did, deviceLabel(1), `${did}#key-1`)
+    first.enqueue(did, '{"ciphertext":"x"}')
+    const [message] = first.peek(did, deviceLabel(1), 10)
+    expect(first.acknowledge(did, deviceLabel(1), [message!.id])).toBe(0)
+    expect(first.acknowledge(did, deviceLabel(1), [message!.id])).toBe(0)
     first.close()
 
     const second = SqliteMediatorStore.open(path)
-    expect(second.count(kid)).toBe(0)
+    expect(second.count(did, deviceLabel(1))).toBe(0)
     second.close()
   }))
+
+  test('messages past the queue TTL are dropped from every inbox', () => {
+    const store = SqliteMediatorStore.memory({ queueTtlMs: 60_000 })
+    const did = 'did:peer:2.dave'
+    const now = Date.now()
+    store.addInbox(did, deviceLabel(1), `${did}#key-1`, now)
+    store.addInbox(did, deviceLabel(2), `${did}#key-1`, now)
+    store.enqueue(did, '{}', now - 120_000)
+    store.expire(now)
+    expect(store.stats()).toMatchObject({ queuedMessages: 0, pendingDeliveries: 0 })
+  })
 
   test('persisted public URL cannot change silently', () => withDatabase(path => {
     const first = SqliteMediatorStore.open(path)
@@ -158,34 +144,3 @@ describe('IpRateLimiter', () => {
     expect(limiter.allow('192.0.2.1', 1000)).toBe(true)
   })
 })
-
-const bytes = (value: string): Uint8Array => new TextEncoder().encode(value)
-const hex = (value: Uint8Array): string => [...value].map(byte => byte.toString(16).padStart(2, '0')).join('')
-
-async function post(handler: ReturnType<typeof createMediator>['handle'], body: unknown): Promise<Response> {
-  const url = new URL('https://mediator.example/')
-  const response = await handler(new Request(url, { method: 'POST', body: JSON.stringify(body) }), url)
-  if (!response) throw new Error('mediator did not handle POST /')
-  return response
-}
-
-async function authenticatedRequest(
-  handler: ReturnType<typeof createMediator>['handle'],
-  mediator: ReturnType<typeof generatePeerIdentity>,
-  sender: ReturnType<typeof generatePeerIdentity>,
-  type: string,
-  body: unknown,
-): Promise<DidCommPlaintext> {
-  const plaintext = buildPlaintext(type, body, sender.did, mediator.did)
-  const packed = packAuthcrypt(
-    bytes(JSON.stringify(plaintext)),
-    { kid: sender.xKid, privateKey: sender.xPriv },
-    { kid: mediator.xKid, publicKey: mediator.xPub },
-  )
-  const response = await post(handler, packed)
-  expect(response.status).toBe(200)
-  const reply = parseJwe(await response.json())
-  if (!reply) throw new Error('mediator reply is not a JWE')
-  const unpacked = await unpackAuthcrypt(reply, { kid: sender.xKid, privateKey: sender.xPriv }, async () => mediator.xPub)
-  return JSON.parse(new TextDecoder().decode(unpacked.plaintext)) as DidCommPlaintext
-}

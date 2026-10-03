@@ -21,7 +21,7 @@ describe('vault delivery pack', () => {
         createdAt: '2026-08-28T00:00:00.000Z',
         signature: new Uint8Array([1, 2, 3]),
       }],
-      keyWraps: [],
+      segmentKeys: [],
     })
 
     expect(decodeVaultDeliveryPack(payload).events[0]?.kind).toBe(kind)

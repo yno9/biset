@@ -1,97 +1,78 @@
-import { base64urlToBytes, bytesToBase64url, canonicalBytes } from '../../protocol/canonical.ts'
+// Vault Sync: keeping this identity's devices' Vaults in step, over DIDComm
+// only. Every message goes to this identity's OWN DID, encrypted to every
+// device key its DID document lists (multiplexed encryption) and Forwarded
+// once to the mediator, which copies it into each device's inbox -- so one
+// send reaches every sibling, and a device removed from the DID document can
+// neither read new sync traffic nor send any (its key no longer resolves).
+// The sending device receives its own copy too and ignores it.
+//
+// A message carries a delivery pack (store/vault/delivery-pack.ts):
+// events, their encrypted objects, and the SegmentKeys those objects need.
+// DIDComm authcrypt is the only encryption the pack needs.
+import { base64urlToBytes, bytesToBase64url } from '../../protocol/canonical.ts'
 import { VAULT_SYNC_STATE_REQUEST, VAULT_SYNC_STATE_RESPONSE, VAULT_SYNC_UPDATE } from '../../protocol/didcomm/vault-sync-protocol.ts'
-import { deviceKidFragment } from '../../protocol/didcomm/devicekid.ts'
-import { decodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
 import type { DidCommSender } from '../../protocol/didcomm/mediator-transport.ts'
 import type { IdentityId } from '../../protocol/ids.ts'
-import type { SegmentKeyWrapV1 } from '../../protocol/vault.ts'
 import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
 import { resolveByDomain } from '../../protocol/webvh/resolver.ts'
+import { keyAgreementRecipients } from '../../protocol/didcomm/webvh-route.ts'
 import { decodeVaultDeliveryPack, encodeVaultDeliveryPack, type VaultDeliveryPackV1 } from '../store/vault/delivery-pack.ts'
-import { verifyVaultEvent, type VaultEventVerifier } from '../store/vault/events.ts'
+import { verifyVaultEvent } from '../store/vault/events.ts'
 import { verifyVaultObjectIntegrity } from '../store/vault/objects.ts'
-import type { IncomingVaultRecords, IncomingVaultRecordsResult, VaultEventRecord, VaultObjectRecord, VaultSyncRecordReader } from '../store/vault/store.ts'
-import { VAULT_SYNC_CHUNK_BYTES } from '../store/vault/vault-sync-chunks.ts'
-import { sendMediatedDidCommMessage } from './send-message.ts'
-import { isOnionUrl, preferredMediatorUrl, isTorEnvironment } from './mediator-endpoints.ts'
+import type { IncomingVaultRecords, IncomingVaultRecordsResult, VaultEventRecord, VaultObjectRecord, VaultSegmentKey, VaultSyncRecordReader } from '../store/vault/store.ts'
+import { sendFrontDoorMessage } from './front-door-send.ts'
 
-const AAD_LABEL = 'biset/vault-sync/v1'
-export interface EncryptedVaultUpdate { version: 1; generation: string; nonce: string; ciphertext: string }
+/** The most one Vault Sync message carries. A pack grows about 3.2x on the
+ * wire (base64url, then the DIDComm JWE and Forward around it), and the
+ * mediator refuses a message over its byte limit (1 MB by default). */
+const VAULT_SYNC_CHUNK_BYTES = 128 * 1024
+
 export type VaultSyncSummary = Record<string, { max: number; gaps: number[] }>
+/** One chunk of records, as a base64url canonical delivery pack. */
+interface VaultSyncPackBody { pack: string }
 export type VaultSyncMessage =
-  | { type: typeof VAULT_SYNC_UPDATE; body: EncryptedVaultUpdate }
+  | { type: typeof VAULT_SYNC_UPDATE; body: VaultSyncPackBody }
   | { type: typeof VAULT_SYNC_STATE_REQUEST; body: { summary: VaultSyncSummary } }
-  | { type: typeof VAULT_SYNC_STATE_RESPONSE; body: EncryptedVaultUpdate & { hasMore: boolean } }
-export interface VaultSyncTransport { send(recipientKid: string, message: VaultSyncMessage): Promise<void> }
-export interface VaultSyncMediatedRecipient { kid: string; publicKey: Uint8Array; mediatorUrl: string; routingKid: string }
-export interface VaultSyncKeys { current(): Promise<{ generation: string; key: Uint8Array }>; forGeneration(generation: string): Promise<Uint8Array | undefined> }
-export interface VaultSyncSiblingDevice { kid: string; publicKey: Uint8Array }
+  | { type: typeof VAULT_SYNC_STATE_RESPONSE; body: VaultSyncPackBody & { hasMore: boolean } }
+/** Sends to every device of this identity, including the sender itself. */
+export interface VaultSyncTransport { send(message: VaultSyncMessage): Promise<void> }
 export interface VaultSyncStore extends VaultSyncRecordReader {
   commitIncomingRecords(input: IncomingVaultRecords): Promise<IncomingVaultRecordsResult>
   findDuplicateActorSequences(identityId: IdentityId): Promise<Array<{ actorDeviceId: string }>>
 }
-export interface VaultSyncApplyResult extends IncomingVaultRecordsResult { skippedEvents: number; skippedObjects: number; skippedKeyWraps: number; hasMore: boolean }
+export interface VaultSyncApplyResult extends IncomingVaultRecordsResult { skippedEvents: number; skippedObjects: number; hasMore: boolean }
 
-export async function resolveVaultSyncSiblingRoutes(identityDid: string, ownKid?: string): Promise<VaultSyncMediatedRecipient[]> {
+/** This identity's device keys, as its DID document lists them right now. */
+export async function resolveOwnDeviceKids(identityDid: string): Promise<string[]> {
   const document = await resolveByDomain(parseWebvhDid(identityDid).domain, undefined, { cache: 'no-store' })
-  if (!document || document.id !== identityDid) throw new Error('Vault Sync identity DID does not resolve')
-  const service = document.service?.find(candidate => candidate.id === '#didcomm' || candidate.id === `${identityDid}#didcomm`)
-  if (!service || !service.serviceEndpoint) throw new Error('Vault Sync DIDComm service is unavailable')
-  // PLAN-tor.md D-4: a mediator with a Tor entrance publishes `serviceEndpoint`
-  // as a set (clearnet + onion), not a single map. Every entry must name the
-  // SAME mediator (one routingKid) -- differing routingKids would mean two
-  // different mediators are being conflated, which is never valid here.
-  const endpoints = Array.isArray(service.serviceEndpoint) ? service.serviceEndpoint : [service.serviceEndpoint]
-  if (!endpoints.length) throw new Error('Vault Sync DIDComm mediator route is invalid')
-  const routes = endpoints.map(entry => {
-    if (!entry || typeof entry !== 'object') throw new Error('Vault Sync DIDComm mediator route is invalid')
-    const endpoint = entry as { uri?: unknown; routingKeys?: unknown }
-    if (typeof endpoint.uri !== 'string' || !Array.isArray(endpoint.routingKeys) || endpoint.routingKeys.length !== 1 || typeof endpoint.routingKeys[0] !== 'string') throw new Error('Vault Sync DIDComm mediator route is invalid')
-    return { uri: endpoint.uri, routingKid: endpoint.routingKeys[0] as string }
-  })
-  const routingKid = routes[0]!.routingKid
-  if (routes.some(route => route.routingKid !== routingKid)) throw new Error('Vault Sync DIDComm mediator route is invalid')
-  // PLAN-tor.md D-4 forbids publishing an onion-only route, so a canonical
-  // (non-onion) entry must always be present; 3-7 picks it, or the onion
-  // entrance when this page itself is served over Tor (D-5/D-6, same rule
-  // registerWithMediator/watchMediatorMultiplexed already use in main.ts).
-  const canonicalRoute = routes.find(route => !isOnionUrl(route.uri))
-  if (!canonicalRoute) throw new Error('Vault Sync DIDComm mediator route is invalid')
-  const onionRoute = routes.find(route => isOnionUrl(route.uri))
-  const mediatorUrl = preferredMediatorUrl({ canonicalUrl: canonicalRoute.uri, onionUrl: onionRoute?.uri }, isTorEnvironment())
-  return vaultSyncSiblingDevices(document, ownKid).map(device => ({ ...device, mediatorUrl, routingKid }))
+  if (!document || document.id !== identityDid) throw new Error('this identity\'s DID does not resolve')
+  return keyAgreementRecipients(document).map(recipient => recipient.kid)
 }
-export function mediatedVaultSyncTransport(own: DidCommSender, recipient: (kid: string) => Promise<VaultSyncMediatedRecipient>, fetchImpl: typeof fetch = fetch): VaultSyncTransport {
-  return { async send(kid, message) {
-    const route = await recipient(kid)
+
+/** Vault Sync over this device's own front door: authcrypt from this
+ * device's key to every device key of the identity's DID. */
+export function walletVaultSyncTransport(own: DidCommSender, fetchImpl?: typeof fetch): VaultSyncTransport {
+  return { async send(message) {
     let error: unknown
     for (let attempt = 0; attempt < 6; attempt++) {
-      try { await sendMediatedDidCommMessage(message.type, message.body, own, route, fetchImpl); return }
-      catch (caught) { error = caught; if (attempt < 5) await delay(250 * 2 ** attempt) }
+      const sent = await sendFrontDoorMessage(own.did, message.type, message.body, { fromKid: own.xKid, x25519PrivateKey: own.xPriv, ...(fetchImpl ? { fetch: fetchImpl } : {}) })
+      if (sent.ok) return
+      error = new Error(sent.error)
+      if (attempt < 5) await delay(250 * 2 ** attempt)
     }
     throw error
   } }
 }
-export function walletVaultSyncTransport(own: DidCommSender, fetchImpl: typeof fetch = fetch): VaultSyncTransport {
-  return mediatedVaultSyncTransport(own, async kid => {
-    const route = (await resolveVaultSyncSiblingRoutes(own.did, own.xKid)).find(value => value.kid === kid)
-    if (!route) throw new Error(`Vault Sync sibling ${kid} is no longer published in the DID Document`)
-    return route
-  }, fetchImpl)
-}
-export function vaultSyncSiblingDevices(document: { id: string; verificationMethod?: Array<{ id: string; publicKeyMultibase: string }> }, ownKid?: string): VaultSyncSiblingDevice[] {
-  const result: VaultSyncSiblingDevice[] = []
-  for (const method of document.verificationMethod ?? []) {
-    let publicKey: Uint8Array; try { publicKey = decodeX25519Multikey(method.publicKeyMultibase) } catch { continue }
-    const fragment = method.id.startsWith('#') ? method.id : method.id.slice(document.id.length)
-    if (fragment !== deviceKidFragment(publicKey)) continue
-    const kid = `${document.id}${fragment}`; if (kid !== ownKid) result.push({ kid, publicKey })
-  }
-  return result
-}
 
 export class VaultSyncClient {
-  constructor(private readonly identityId: IdentityId, private readonly records: VaultSyncStore, private readonly verifier: VaultEventVerifier, private readonly keys: VaultSyncKeys, private readonly transport: VaultSyncTransport, private readonly onApplied?: (result: VaultSyncApplyResult) => Promise<void>) {}
+  constructor(
+    private readonly identityId: IdentityId,
+    private readonly ownKid: string,
+    private readonly records: VaultSyncStore,
+    private readonly transport: VaultSyncTransport,
+    private readonly onApplied?: (result: VaultSyncApplyResult) => Promise<void>,
+  ) {}
+
   async summary(): Promise<VaultSyncSummary> {
     const events = await this.records.readVaultEvents(this.identityId)
     const duplicates = new Set((await this.records.findDuplicateActorSequences(this.identityId)).map(value => value.actorDeviceId))
@@ -104,52 +85,61 @@ export class VaultSyncClient {
     }
     return result
   }
-  async requestState(kid: string): Promise<void> { await this.transport.send(kid, { type: VAULT_SYNC_STATE_REQUEST, body: { summary: await this.summary() } }) }
-  async pushToSiblings(kids: Iterable<string>, events: Iterable<{ id: string }>): Promise<void> { const ids = [...events].map(event => event.id); for (const kid of kids) await this.push(kid, ids, VAULT_SYNC_UPDATE, false) }
-  async receive(message: VaultSyncMessage, replyToKid?: string): Promise<VaultSyncApplyResult | undefined> {
+
+  /** Asks every sibling for what this device is missing. */
+  async requestState(): Promise<void> { await this.transport.send({ type: VAULT_SYNC_STATE_REQUEST, body: { summary: await this.summary() } }) }
+
+  /** Hands newly committed events to every sibling, in one send per chunk. */
+  async push(events: Iterable<{ id: string }>): Promise<void> { await this.send([...events].map(event => event.id), VAULT_SYNC_UPDATE, false) }
+
+  /** Handles a Vault Sync message `senderKid` sent. Only this identity's own
+   * devices may send one; this device's own copy is ignored. */
+  async receive(message: VaultSyncMessage, senderKid: string): Promise<VaultSyncApplyResult | undefined> {
+    if (!senderKid.startsWith(`${this.identityId}#`)) throw new TypeError('Vault Sync message is not from one of this identity\'s devices')
+    if (senderKid === this.ownKid) return undefined
     if (message.type === VAULT_SYNC_STATE_REQUEST) {
-      if (!replyToKid) throw new TypeError('Vault Sync state request has no authenticated sender')
-      const missing = await this.missingEvents(message.body.summary); if (missing.events.length) await this.push(replyToKid, missing.events.map(event => event.id), VAULT_SYNC_STATE_RESPONSE, missing.hasMore); return
+      const missing = await this.missingEvents(message.body.summary)
+      if (missing.events.length) await this.send(missing.events.map(event => event.id), VAULT_SYNC_STATE_RESPONSE, missing.hasMore)
+      return undefined
     }
-    const key = await this.keys.forGeneration(message.body.generation)
-    if (!key) throw new TypeError('Vault Sync update generation is unavailable; reconnect your did.md Wallet')
-    let pack: VaultDeliveryPackV1; try { pack = decodeVaultDeliveryPack(await decryptUpdate(message.body, { generation: message.body.generation, key })) } finally { key.fill(0) }
-    const result = await this.applyIncoming(pack, message.type === VAULT_SYNC_STATE_RESPONSE && message.body.hasMore); await this.onApplied?.(result)
-    // PUSH is only a hint: immediately reconcile summaries so records that
-    // predate this notification (or did not fit an earlier chunk) are pulled.
-    if (replyToKid && (message.type === VAULT_SYNC_UPDATE || message.body.hasMore)) await this.requestState(replyToKid)
+    const pack = decodeVaultDeliveryPack(base64urlToBytes(message.body.pack))
+    const result = await this.applyIncoming(pack, message.type === VAULT_SYNC_STATE_RESPONSE && message.body.hasMore)
+    await this.onApplied?.(result)
+    // An update is only a hint: reconcile summaries so records it did not
+    // carry (or that did not fit an earlier chunk) are pulled too.
+    if (message.type === VAULT_SYNC_UPDATE || message.body.hasMore) await this.requestState()
     return result
   }
-  private async push(kid: string, ids: string[], type: typeof VAULT_SYNC_UPDATE | typeof VAULT_SYNC_STATE_RESPONSE, hasMore: boolean): Promise<void> {
+
+  private async send(ids: string[], type: typeof VAULT_SYNC_UPDATE | typeof VAULT_SYNC_STATE_RESPONSE, hasMore: boolean): Promise<void> {
     const pack = await this.packForEvents(new Set(ids)); if (!pack.events.length) return
     const chunks = splitPack(pack)
-    const current = await this.keys.current(); try {
-      for (let index = 0; index < chunks.length; index++) {
-        const encrypted = await encryptUpdate(encodeVaultDeliveryPack(chunks[index]!), current)
-        const more = hasMore || index < chunks.length - 1
-        await this.transport.send(kid, type === VAULT_SYNC_UPDATE ? { type, body: encrypted } : { type, body: { ...encrypted, hasMore: more } })
-      }
-    } finally { current.key.fill(0) }
+    for (let index = 0; index < chunks.length; index++) {
+      const body: VaultSyncPackBody = { pack: bytesToBase64url(encodeVaultDeliveryPack(chunks[index]!)) }
+      const more = hasMore || index < chunks.length - 1
+      await this.transport.send(type === VAULT_SYNC_UPDATE ? { type, body } : { type, body: { ...body, hasMore: more } })
+    }
   }
+
   private async applyIncoming(pack: VaultDeliveryPackV1, hasMore: boolean): Promise<VaultSyncApplyResult> {
     if (pack.identityId !== this.identityId) throw new TypeError('Vault Sync records belong to another identity')
-    const objects: VaultObjectRecord[] = []; const events: VaultEventRecord[] = []; const keyWraps: SegmentKeyWrapV1[] = []; let skippedObjects = 0; let skippedEvents = 0; let skippedKeyWraps = 0
+    const objects: VaultObjectRecord[] = []; const events: VaultEventRecord[] = []; let skippedObjects = 0; let skippedEvents = 0
     for (const object of pack.objects) { if (await verifyVaultObjectIntegrity(object)) objects.push(object); else skippedObjects++ }
-    for (const event of pack.events) { if (await verifyVaultEvent(event, this.verifier)) events.push(event); else skippedEvents++ }
-    for (const wrap of pack.keyWraps) { if (wrap.identityId === this.identityId && wrap.segmentId && wrap.recipientEpoch && wrap.wrappedSegmentKey.length) keyWraps.push(wrap); else skippedKeyWraps++ }
-    const committed = await this.records.commitIncomingRecords({ identityId: this.identityId, objects, events, keyWraps })
-    // An object-only continuation can unblock an event that was deliberately
-    // committed by an earlier chunk. Surface those targets to the projector
-    // even though this chunk itself contains no event rows.
+    for (const event of pack.events) { if (verifyVaultEvent(event)) events.push(event); else skippedEvents++ }
+    const committed = await this.records.commitIncomingRecords({ identityId: this.identityId, objects, events, segmentKeys: pack.segmentKeys })
+    // An object-only continuation can unblock an event an earlier chunk
+    // committed; surface those targets to the projector too.
     const objectIds = new Set(objects.map(object => object.objectId))
     const unblockedTargets = objectIds.size ? (await this.records.readVaultEvents(this.identityId)).filter(event => event.objectRefs.some(id => objectIds.has(id))).flatMap(event => event.targetIds) : []
-    return { ...committed, targetIds: [...new Set([...committed.targetIds, ...unblockedTargets])], skippedObjects, skippedEvents, skippedKeyWraps, hasMore }
+    return { ...committed, targetIds: [...new Set([...committed.targetIds, ...unblockedTargets])], skippedObjects, skippedEvents, hasMore }
   }
+
   private async packForEvents(ids: Set<string>): Promise<VaultDeliveryPackV1> {
-    const [allEvents, allObjects, allWraps] = await Promise.all([this.records.readVaultEvents(this.identityId), this.records.readVaultObjects(this.identityId), this.records.readSegmentKeyWraps(this.identityId)])
+    const [allEvents, allObjects, allKeys] = await Promise.all([this.records.readVaultEvents(this.identityId), this.records.readVaultObjects(this.identityId), this.records.readSegmentKeys(this.identityId)])
     const events = allEvents.filter(event => ids.has(event.id)); const objectIds = new Set(events.flatMap(event => event.objectRefs)); const objects = allObjects.filter(object => objectIds.has(object.objectId)); const segments = new Set(objects.map(object => object.segmentId))
-    return { version: 1, identityId: this.identityId, events, objects, keyWraps: allWraps.filter(wrap => segments.has(wrap.segmentId)) }
+    return { version: 1, identityId: this.identityId, events, objects, segmentKeys: allKeys.filter(value => segments.has(value.segmentId)) }
   }
+
   private async missingEvents(summary: VaultSyncSummary): Promise<{ events: VaultEventRecord[]; hasMore: boolean }> {
     const missing = (await this.records.readVaultEvents(this.identityId)).filter(event => { const remote = summary[event.actorDeviceId]; return !remote || event.actorSeq > remote.max || remote.gaps.includes(event.actorSeq) }).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)); const events: VaultEventRecord[] = []
     for (const event of missing) { if (encodeVaultDeliveryPack(await this.packForEvents(new Set([...events.map(value => value.id), event.id]))).length > VAULT_SYNC_CHUNK_BYTES) break; events.push(event) }
@@ -158,32 +148,22 @@ export class VaultSyncClient {
 }
 
 function splitPack(pack: VaultDeliveryPackV1): VaultDeliveryPackV1[] {
-  const empty = (): VaultDeliveryPackV1 => ({ version: 1, identityId: pack.identityId, events: [], objects: [], keyWraps: [] })
+  const empty = (): VaultDeliveryPackV1 => ({ version: 1, identityId: pack.identityId, events: [], objects: [], segmentKeys: [] })
   const chunks: VaultDeliveryPackV1[] = []; let current = empty()
-  const append = <K extends 'events' | 'objects' | 'keyWraps'>(key: K, record: VaultDeliveryPackV1[K][number]): void => {
+  const nonEmpty = (value: VaultDeliveryPackV1) => value.events.length || value.objects.length || value.segmentKeys.length
+  const append = <K extends 'events' | 'objects' | 'segmentKeys'>(key: K, record: VaultDeliveryPackV1[K][number]): void => {
     const candidate = { ...current, [key]: [...current[key], record] } as VaultDeliveryPackV1
     if (encodeVaultDeliveryPack(candidate).length <= VAULT_SYNC_CHUNK_BYTES) { current = candidate; return }
-    if (current.events.length || current.objects.length || current.keyWraps.length) chunks.push(current)
+    if (nonEmpty(current)) chunks.push(current)
     current = { ...empty(), [key]: [record] } as VaultDeliveryPackV1
-    if (encodeVaultDeliveryPack(current).length > VAULT_SYNC_CHUNK_BYTES) throw new RangeError(`Vault Sync ${key.slice(0, -1)} exceeds one chunk`)
+    if (encodeVaultDeliveryPack(current).length > VAULT_SYNC_CHUNK_BYTES) throw new RangeError(`Vault Sync ${key} entry exceeds one chunk`)
   }
+  // Keys first, so a chunk carrying an object never precedes the key it needs.
+  for (const value of pack.segmentKeys) append('segmentKeys', value as VaultSegmentKey)
   for (const event of pack.events) append('events', event)
   for (const object of pack.objects) append('objects', object)
-  for (const wrap of pack.keyWraps) append('keyWraps', wrap)
-  if (current.events.length || current.objects.length || current.keyWraps.length) chunks.push(current)
+  if (nonEmpty(current)) chunks.push(current)
   return chunks
 }
 
-export async function encryptUpdate(plaintext: Uint8Array, input: { generation: string; key: Uint8Array }): Promise<EncryptedVaultUpdate> {
-  assertKey(input.key); if (!/^(0|[1-9][0-9]{0,19})$/.test(input.generation) || plaintext.length > VAULT_SYNC_CHUNK_BYTES) throw new TypeError('Vault Sync update is invalid')
-  const nonce = crypto.getRandomValues(new Uint8Array(12)); const aad = canonicalBytes({ label: AAD_LABEL, generation: input.generation }); const key = await crypto.subtle.importKey('raw', copy(input.key), 'AES-GCM', false, ['encrypt']); const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: copy(nonce), additionalData: copy(aad) }, key, copy(plaintext)))
-  return { version: 1, generation: input.generation, nonce: bytesToBase64url(nonce), ciphertext: bytesToBase64url(ciphertext) }
-}
-export async function decryptUpdate(input: EncryptedVaultUpdate, current: { generation: string; key: Uint8Array }): Promise<Uint8Array> {
-  if (!input || input.version !== 1 || input.generation !== current.generation) throw new TypeError('Vault Sync update generation is unavailable; reconnect your did.md Wallet')
-  const nonce = base64urlToBytes(input.nonce); const ciphertext = base64urlToBytes(input.ciphertext); const aad = canonicalBytes({ label: AAD_LABEL, generation: input.generation })
-  try { const key = await crypto.subtle.importKey('raw', copy(current.key), 'AES-GCM', false, ['decrypt']); return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: copy(nonce), additionalData: copy(aad) }, key, copy(ciphertext))) } catch { throw new Error('Vault Sync ciphertext could not be decrypted') }
-}
-function assertKey(key: Uint8Array): void { if (key.length !== 32) throw new TypeError('Vault Content Key is invalid') }
-function copy(bytes: Uint8Array): ArrayBuffer { const result = new Uint8Array(bytes.length); result.set(bytes); return result.buffer }
 function delay(milliseconds: number): Promise<void> { return new Promise(resolve => setTimeout(resolve, milliseconds)) }

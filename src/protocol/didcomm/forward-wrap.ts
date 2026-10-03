@@ -24,14 +24,14 @@ export function wrapForward(inner: DidCommJWE, next: string, routingKid: string)
   const mediatorPublicKey = publicKeyOf(decodePeerDid2(routingKid.split('#', 1)[0]!), routingKid)
   const forward = buildPlaintext(FORWARD, { next })
   forward.attachments = [{ id: 'inner', data: { json: inner } }]
-  return packAnoncrypt(new TextEncoder().encode(JSON.stringify(forward)), { kid: routingKid, publicKey: mediatorPublicKey })
+  return packAnoncrypt(new TextEncoder().encode(JSON.stringify(forward)), [{ kid: routingKid, publicKey: mediatorPublicKey }])
 }
 
-/** Nests one Forward per entry in `routingKeys` (webvh-routing.ts's own
- * ordering: outermost/closest-to-sender first, same as DIDComm Routing
- * 2.0's own `routingKeys` semantics) around `inner`, addressed at
- * `finalKid` -- the recipient's real keyAgreement kid. Building from the
- * LAST entry outward: the innermost Forward names `finalKid` as `next` and
+/** Nests one Forward per entry in `routingKeys` (outermost/closest-to-sender
+ * first, DIDComm Routing 2.0's own `routingKeys` semantics) around `inner`,
+ * addressed at `recipientDid` -- the recipient's DID, which the last mediator
+ * copies to every device inbox of that DID. Building from the LAST entry
+ * outward: the innermost Forward names `recipientDid` as `next` and
  * is anoncrypt'd to `routingKeys[routingKeys.length - 1]`; each Forward
  * built after that names the PREVIOUS hop's kid as `next`. The result is
  * what a sender POSTs to `routingKeys[0]`'s own published endpoint --
@@ -43,10 +43,10 @@ export function wrapForward(inner: DidCommJWE, next: string, routingKid: string)
  * `routingKeys.length === 0` throws -- a caller with no mediator at all
  * should skip calling this and deliver `inner` directly, same as
  * send-message.ts's own `mediatorRoutingKid` check. */
-export function wrapForwardChain(inner: DidCommJWE, finalKid: string, routingKeys: readonly string[]): DidCommJWE {
+export function wrapForwardChain(inner: DidCommJWE, recipientDid: string, routingKeys: readonly string[]): DidCommJWE {
   if (routingKeys.length === 0) throw new Error('wrapForwardChain: at least one routing key is required')
   let outbound = inner
-  let next = finalKid
+  let next = recipientDid
   for (let i = routingKeys.length - 1; i >= 0; i--) {
     outbound = wrapForward(outbound, next, routingKeys[i]!)
     next = routingKeys[i]!

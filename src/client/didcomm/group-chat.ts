@@ -20,7 +20,7 @@ import type { LocalJmapEmail, LocalJmapProjectionV1, LocalJmapSnapshot } from '.
 import { assertActiveVaultSegment, type ActiveVaultSegment } from '../store/vault/active-segment.ts'
 import { buildVaultCommit } from '../store/vault/commit.ts'
 import { decryptVaultObject } from '../store/vault/objects.ts'
-import type { VaultEventSigner } from '../store/vault/events.ts'
+import type { VaultEventAuthor } from '../store/vault/events.ts'
 import type { VaultEventRecord, VaultObjectRecord } from '../store/vault/store.ts'
 import { buildMailMessageAdd } from '../store/vault/mail-message.ts'
 
@@ -134,14 +134,6 @@ export interface DidCommGroupMessageVaultRecord {
   events: VaultEventRecord[]
   projection: LocalJmapProjectionV1
   jmapState: { state: string }
-  deliveryOutbox: {
-    identityId: IdentityId
-    entryId: VaultEventId
-    payload: Uint8Array
-    payloadHash: Uint8Array
-    createdAt: string
-    attempts: number
-  }
 }
 
 /** The shared "group chat content -> committable Vault record" step, used
@@ -149,7 +141,7 @@ export interface DidCommGroupMessageVaultRecord {
  * send path (main.ts's own outbound flow, committing its own echo) --
  * mirrors conversation-group-sync.ts's buildConversationGroupVaultRecord
  * exactly (build context -> buildMailMessageAdd -> decrypt-for-projection
- * -> reduce -> deliveryOutbox), minus MLS's edit/delete/reaction dispatch:
+ * -> reduce), minus MLS's edit/delete/reaction dispatch:
  * v1 group messages are add-only. */
 export async function buildDidCommGroupMessageVaultRecord(
   input: {
@@ -172,7 +164,7 @@ export async function buildDidCommGroupMessageVaultRecord(
     initialParents(): Promise<VaultEventId[]>
     activeSegment(): Promise<ActiveVaultSegment>
     currentSnapshot(): Promise<LocalJmapSnapshot>
-    signer: VaultEventSigner
+    signer: VaultEventAuthor
   },
 ): Promise<DidCommGroupMessageVaultRecord> {
   const segment = await options.activeSegment()
@@ -205,8 +197,6 @@ export async function buildDidCommGroupMessageVaultRecord(
     identityId: options.identityId,
     objects: [record.metadataObject, record.rawRfc5322Object],
     events: [event],
-    keyWraps: segment.keyWraps,
-    createdAt,
     snapshot: await options.currentSnapshot(),
     reduce: [{ event, plaintext: await decryptVaultObject(segment.segmentKey, record.metadataObject) }],
   })

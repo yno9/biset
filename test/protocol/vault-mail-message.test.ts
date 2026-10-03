@@ -3,9 +3,9 @@ import { equalBytes } from '../../src/protocol/canonical.ts'
 import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { buildMailMessageAdd, buildMailMessageEdit, rawRfc5322ObjectAad } from '../../src/client/store/vault/mail-message.ts'
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
-import { verifyVaultEvent, type VaultEventSigner } from '../../src/client/store/vault/events.ts'
+import { verifyVaultEvent, type VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 
-const signer: VaultEventSigner = {
+const signer: VaultEventAuthor = {
   deviceId: 'device-a',
   async sign(bytes) { return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)) },
   async verify(deviceId, bytes, signature) { return deviceId === 'device-a' && equalBytes(signature, await this.sign(bytes)) },

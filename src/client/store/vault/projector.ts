@@ -3,7 +3,6 @@ import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../projection/gat
 import { localJmapSnapshotFromProjection } from '../projection/gateway.ts'
 import { projectionState, reduceLocalJmapProjection } from '../projection/reducer.ts'
 import { decryptVaultMutationRecords } from './mutation-records.ts'
-import type { VaultEventVerifier } from './events.ts'
 import type { SegmentKeyResolver } from './segment-key-resolver.ts'
 import type { VaultEventRecord, VaultObjectRecord, VaultProjectionMeta } from './store.ts'
 
@@ -19,7 +18,7 @@ export interface ProjectorStore {
 
 /** The only writer of the derived mail projection for replicated records. */
 export class VaultProjector {
-  constructor(private readonly store: ProjectorStore, private readonly resolver: SegmentKeyResolver, private readonly verifier: VaultEventVerifier) {}
+  constructor(private readonly store: ProjectorStore, private readonly resolver: SegmentKeyResolver) {}
 
   async recomputeEmails(identityId: IdentityId, emailIds: Iterable<string>): Promise<LocalJmapProjectionV1> {
     const requested = [...new Set(emailIds)]
@@ -34,7 +33,7 @@ export class VaultProjector {
       const records = []
       let materializable = true
       for (const event of events) {
-        try { records.push(...await decryptVaultMutationRecords(identityId, [event], objects, this.resolver, this.verifier)) }
+        try { records.push(...await decryptVaultMutationRecords(identityId, [event], objects, this.resolver)) }
         catch { materializable = false }
         if (event.kind === 'message.tombstone') tombstones.add(emailId)
       }
@@ -59,7 +58,7 @@ export class VaultProjector {
     const records = []
     const pending = new Set<string>()
     for (const event of events) {
-      try { records.push(...await decryptVaultMutationRecords(identityId, [event], objects, this.resolver, this.verifier)) }
+      try { records.push(...await decryptVaultMutationRecords(identityId, [event], objects, this.resolver)) }
       catch { for (const target of event.targetIds) pending.add(target) }
     }
     const base: Omit<LocalJmapSnapshot, 'state'> = current === undefined

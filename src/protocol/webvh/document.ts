@@ -5,7 +5,7 @@
 // until the write path is ported.
 import { encodeMultikey } from './multikey.ts'
 
-export interface WebvhVerificationMethod {
+interface WebvhVerificationMethod {
   id: string
   type: 'Multikey'
   controller: string
@@ -15,7 +15,7 @@ export interface WebvhVerificationMethod {
 interface WebvhService {
   id: string
   type: string
-  serviceEndpoint: string | string[] | Record<string, unknown>
+  serviceEndpoint: string | Array<string | Record<string, unknown>> | Record<string, unknown>
 }
 
 export interface WebvhDidDocument {

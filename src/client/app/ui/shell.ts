@@ -24,7 +24,7 @@ export function showApp(): void {
   renderLeftList()
 }
 
-// A Wallet session can receive a DIDComm SSE delivery while its MIMI Vault
+// A Wallet session can receive a live DIDComm delivery while its MIMI Vault
 // sync or an outgoing message is refreshing the same projection.  Letting
 // those `loadMessages()` calls overlap permits an older snapshot to repaint
 // the left list after a newer one painted the focused thread.  Serialize the

@@ -13,17 +13,13 @@ const pack: VaultDeliveryPackV1 = {
   events: [{
     version: 1, id: 'event-1', identityId: 'did:web:alice.example', actorDeviceId: 'device-a', actorSeq: 1,
     kind: 'keyword.set', targetIds: ['email-1'], objectRefs: ['object-1'], parents: ['event-0'],
-    createdAt: '2026-08-21T00:00:00.000Z', signature: new Uint8Array([11, 12]),
+    createdAt: '2026-08-21T00:00:00.000Z',
   }],
-  keyWraps: [{
-    version: 1, identityId: 'did:web:alice.example', selfGroupId: 'self-group-1', segmentId: 'segment-1',
-    sourceEpoch: '1', recipientEpoch: '2', nonce: new Uint8Array([13]), aad: new Uint8Array([14]),
-    wrappedSegmentKey: new Uint8Array([15, 16]), grantorDeviceId: 'device-a', grantedAt: '2026-08-21T00:00:00.000Z',
-  }],
+  segmentKeys: [{ segmentId: 'segment-1', segmentKey: new Uint8Array(32).fill(5) }],
 }
 
 describe('vault delivery pack', () => {
-  test('canonically packs immutable object, event, and MLS key-wrap records', () => {
+  test('canonically packs immutable object, event, and segment-key records', () => {
     const encoded = encodeVaultDeliveryPack(pack)
     const decoded = decodeVaultDeliveryPack(encoded)
     expect(decoded).toEqual(pack)
@@ -38,9 +34,9 @@ describe('vault delivery pack', () => {
     expect(() => decodeVaultDeliveryPack(trailingSpace)).toThrow('not canonical')
   })
 
-  test('rejects an unrepresentable MLS epoch before accepting the wire body', () => {
+  test('rejects a segment key that is not 32 bytes', () => {
     const wire = JSON.parse(new TextDecoder().decode(encodeVaultDeliveryPack(pack)))
-    wire.keyWraps[0].recipientEpoch = '01'
-    expect(() => decodeVaultDeliveryPack(new TextEncoder().encode(JSON.stringify(wire)))).toThrow('MLS epoch')
+    wire.segmentKeys[0].segmentKey = 'AAAA'
+    expect(() => decodeVaultDeliveryPack(new TextEncoder().encode(JSON.stringify(wire)))).toThrow('segment key is invalid')
   })
 })

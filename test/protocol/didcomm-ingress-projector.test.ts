@@ -4,16 +4,14 @@ import { equalBytes, sha256Bytes } from '../../src/protocol/canonical.ts'
 import type { IngressEnvelopeV1 } from '../../src/protocol/ingress.ts'
 import { packAuthcrypt } from '../../src/protocol/didcomm/crypto.ts'
 import { buildPlaintext } from '../../src/protocol/didcomm/message.ts'
-import { PING, PING_RESPONSE } from '../../src/client/didcomm/trust-ping.ts'
+import { PING, PING_RESPONSE } from '../../src/protocol/didcomm/trust-ping.ts'
 import { BASIC_MESSAGE, didCommThreadId } from '../../src/client/didcomm/basicmessage.ts'
 import { didOfKid } from '../../src/protocol/ids.ts'
 import { DidCommIngressProjector, DidCommReplayError } from '../../src/client/didcomm/ingress-projector.ts'
 import { generatePeerIdentity } from '../../src/protocol/didcomm/peer.ts'
 import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT, relationshipBodyToWire, relationshipMediatorService } from '../../src/client/didcomm/relationship.ts'
-import { decodeVaultDeliveryPack } from '../../src/client/store/vault/delivery-pack.ts'
-import { createSegmentKeyWrap } from '../../src/client/store/vault/crypto.ts'
 import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
-import type { VaultEventSigner } from '../../src/client/store/vault/events.ts'
+import type { VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import { ingestIngress } from '../../src/client/store/vault/ingress-ingest.ts'
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
 
@@ -21,7 +19,7 @@ const identityId = 'did:webvh:abc123:alice.test.example'
 const recipientKid = `${identityId}#k_devicehash`
 const senderKid = 'did:webvh:def456:bob.test.example#k_senderhash'
 
-const signer: VaultEventSigner = {
+const signer: VaultEventAuthor = {
   deviceId: recipientKid,
   async sign(bytes) { return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)) },
   async verify(deviceId, bytes, signature) { return deviceId === recipientKid && equalBytes(signature, await this.sign(bytes)) },
@@ -34,10 +32,7 @@ const recipientXPub = x25519.getPublicKey(recipientX)
 
 const segmentKey = createSegmentKey()
 async function segmentFor() {
-  const wrap = await createSegmentKeyWrap(new Uint8Array(32).fill(9), segmentKey, {
-    identityId, selfGroupId: 'self-group-1', segmentId: 'segment-1', sourceEpoch: '1', recipientEpoch: '1', grantorDeviceId: recipientKid, grantedAt: '2026-08-25T00:00:00.000Z',
-  }, signer)
-  return { segmentId: 'segment-1', segmentKey, keyWraps: [wrap] }
+  return { segmentId: 'segment-1', segmentKey }
 }
 
 function envelopeFor(payload: Uint8Array, ingressId = 'ingress-1'): IngressEnvelopeV1 {
@@ -77,11 +72,11 @@ function buildProjector(alreadyProcessed = autoMarkingAlreadyProcessed()) {
 }
 
 function pingJwe(responseRequested = true) {
-  const plaintext = buildPlaintext(PING, { response_requested: responseRequested })
+  const plaintext = buildPlaintext(PING, { response_requested: responseRequested }, didOfKid(senderKid))
   const jwe = packAuthcrypt(
     new TextEncoder().encode(JSON.stringify(plaintext)),
     { kid: senderKid, privateKey: senderX },
-    { kid: recipientKid, publicKey: recipientXPub },
+    [{ kid: recipientKid, publicKey: recipientXPub }],
   )
   return { plaintext, jwe }
 }
@@ -99,9 +94,7 @@ describe('DIDComm ingress projector', () => {
         expect(input.objects).toHaveLength(1)
         expect(input.events).toHaveLength(1)
         expect(input.events[0]!.kind).toBe('didcomm.control')
-        expect(input.deliveryOutbox?.entryId).toBe(input.events[0]!.id)
-        const pack = decodeVaultDeliveryPack(input.deliveryOutbox!.payload)
-        expect(pack.objects.map(o => o.objectId)).toEqual(input.events[0]!.objectRefs)
+        expect(input.objects.map(o => o.objectId)).toEqual(input.events[0]!.objectRefs)
 
         const plaintextObject = await decryptVaultObject(segmentKey, input.objects[0]!)
         const decoded = JSON.parse(new TextDecoder().decode(plaintextObject)) as { payload: Record<string, unknown> }
@@ -156,7 +149,7 @@ describe('DIDComm ingress projector', () => {
 
   test('a JWE claiming to be from senderKid but signed by an impostor key fails to authenticate (sender-auth)', async () => {
     const impostorX = x25519.utils.randomSecretKey()
-    const plaintext = buildPlaintext(PING, { response_requested: true })
+    const plaintext = buildPlaintext(PING, { response_requested: true }, didOfKid(senderKid))
     // packAuthcrypt with the IMPOSTOR's private key but senderKid's own kid
     // string in the header -- resolveSenderKey still returns the REAL
     // senderXPub (the only key it knows for that kid), so ECDH-1PU's Zs
@@ -164,7 +157,7 @@ describe('DIDComm ingress projector', () => {
     const jwe = packAuthcrypt(
       new TextEncoder().encode(JSON.stringify(plaintext)),
       { kid: senderKid, privateKey: impostorX },
-      { kid: recipientKid, publicKey: recipientXPub },
+      [{ kid: recipientKid, publicKey: recipientXPub }],
     )
     const envelope = envelopeFor(new TextEncoder().encode(JSON.stringify(jwe)))
     const projector = buildProjector()
@@ -213,8 +206,8 @@ describe('DIDComm ingress projector', () => {
   })
 
   test('an unsupported DIDComm message type is rejected, not silently dropped', async () => {
-    const plaintext = buildPlaintext('https://didcomm.org/discover-features/2.0/queries', { content: 'hi' })
-    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, { kid: recipientKid, publicKey: recipientXPub })
+    const plaintext = buildPlaintext('https://didcomm.org/discover-features/2.0/queries', { content: 'hi' }, didOfKid(senderKid))
+    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
     const envelope = envelopeFor(new TextEncoder().encode(JSON.stringify(jwe)))
     const projector = buildProjector()
     await expect(projector.verifyAndProject(envelope)).rejects.toThrow(/unsupported DIDComm message type/)
@@ -223,8 +216,8 @@ describe('DIDComm ingress projector', () => {
   test('relationship init is recognized as an audit-only control event on the front-door key', async () => {
     const mediator = generatePeerIdentity()
     const relationship = generatePeerIdentity({ uri: 'https://mediator-init.test.example', routingKeys: [mediator.xKid] })
-    const plaintext = buildPlaintext(RELATIONSHIP_INIT, relationshipBodyToWire({ relationshipKid: relationship.xKid, publicKey: relationship.xPub }))
-    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, { kid: recipientKid, publicKey: recipientXPub })
+    const plaintext = buildPlaintext(RELATIONSHIP_INIT, relationshipBodyToWire({ relationshipKid: relationship.xKid, publicKey: relationship.xPub }), didOfKid(senderKid))
+    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
     const result = await buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
 
     expect(result.events[0]?.kind).toBe('didcomm.control')
@@ -239,11 +232,11 @@ describe('DIDComm ingress projector', () => {
     const service = { uri: 'https://mediator-accept.test.example', routingKeys: [mediator.xKid] }
     const recipientRelationship = generatePeerIdentity(service)
     const senderRelationship = generatePeerIdentity(service)
-    const plaintext = buildPlaintext(RELATIONSHIP_ACCEPT, relationshipBodyToWire({ relationshipKid: senderRelationship.xKid, publicKey: senderRelationship.xPub }))
+    const plaintext = buildPlaintext(RELATIONSHIP_ACCEPT, relationshipBodyToWire({ relationshipKid: senderRelationship.xKid, publicKey: senderRelationship.xPub }), senderRelationship.did)
     const jwe = packAuthcrypt(
       new TextEncoder().encode(JSON.stringify(plaintext)),
       { kid: senderRelationship.xKid, privateKey: senderRelationship.xPriv },
-      { kid: recipientRelationship.xKid, publicKey: recipientRelationship.xPub },
+      [{ kid: recipientRelationship.xKid, publicKey: recipientRelationship.xPub }],
     )
     const projector = new DidCommIngressProjector({
       identityId,
@@ -271,8 +264,8 @@ describe('DIDComm ingress projector', () => {
   })
 
   test('a basicmessage decrypts, verifies the sender, and lands as an ordinary message.add email in the recipient\'s own inbox', async () => {
-    const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'hey, are we really chatting over DIDComm now?', sentAt: '2026-08-25T00:00:00.000Z' })
-    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, { kid: recipientKid, publicKey: recipientXPub })
+    const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'hey, are we really chatting over DIDComm now?', sentAt: '2026-08-25T00:00:00.000Z' }, didOfKid(senderKid))
+    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
     const envelope = envelopeFor(new TextEncoder().encode(JSON.stringify(jwe)))
     const projector = buildProjector()
 
@@ -291,15 +284,15 @@ describe('DIDComm ingress projector', () => {
 
   test('two different basicmessages between the same pair land in the SAME thread, chat-style (not per-subject like mail)', async () => {
     const projector = buildProjector()
-    const first = buildPlaintext(BASIC_MESSAGE, { content: 'first message' })
-    const firstJwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(first)), { kid: senderKid, privateKey: senderX }, { kid: recipientKid, publicKey: recipientXPub })
+    const first = buildPlaintext(BASIC_MESSAGE, { content: 'first message' }, didOfKid(senderKid))
+    const firstJwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(first)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
     let firstThreadId = ''
     await ingestIngress(envelopeFor(new TextEncoder().encode(JSON.stringify(firstJwe)), 'ingress-1'), signer, projector, {
       async commitIngress(input) { firstThreadId = (input.projection as { emails: Array<{ threadId: string }> }).emails[0]!.threadId; return 'committed' },
     })
 
-    const second = buildPlaintext(BASIC_MESSAGE, { content: 'second message' })
-    const secondJwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(second)), { kid: senderKid, privateKey: senderX }, { kid: recipientKid, publicKey: recipientXPub })
+    const second = buildPlaintext(BASIC_MESSAGE, { content: 'second message' }, didOfKid(senderKid))
+    const secondJwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(second)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
     let secondThreadId = ''
     await ingestIngress(envelopeFor(new TextEncoder().encode(JSON.stringify(secondJwe)), 'ingress-2'), signer, projector, {
       async commitIngress(input) { secondThreadId = (input.projection as { emails: Array<{ threadId: string }> }).emails[0]!.threadId; return 'committed' },
@@ -308,9 +301,9 @@ describe('DIDComm ingress projector', () => {
   })
 
   test('an expired message is rejected', async () => {
-    const plaintext = buildPlaintext(PING, { response_requested: true })
+    const plaintext = buildPlaintext(PING, { response_requested: true }, didOfKid(senderKid))
     plaintext.expires_time = Math.floor(Date.parse('2020-01-01T00:00:00.000Z') / 1000)
-    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, { kid: recipientKid, publicKey: recipientXPub })
+    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
     const envelope = envelopeFor(new TextEncoder().encode(JSON.stringify(jwe)))
     const projector = buildProjector()
     await expect(projector.verifyAndProject(envelope)).rejects.toThrow(/expired/)

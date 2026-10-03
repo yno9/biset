@@ -14,7 +14,7 @@
 // directly.
 import { fetchMediatorInfo, requestMediation, updateKeylist, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
 import { acknowledgeMessages } from '../../protocol/didcomm/mediator-pickup.ts'
-import { sendAndUnpack, type DidCommSender } from '../../protocol/didcomm/mediator-transport.ts'
+import { sendAndUnpack, type DidCommSender, type MediatorInboxClient } from '../../protocol/didcomm/mediator-transport.ts'
 import { unpackAnoncrypt, parseJwe, type DidCommJWE } from '../../protocol/didcomm/crypto.ts'
 import { wrapForward } from '../../protocol/didcomm/forward-wrap.ts'
 import { FORWARD, STATUS, DELIVERY_REQUEST, DELIVERY } from '../../protocol/didcomm/mediator-protocol.ts'
@@ -23,12 +23,16 @@ import { defaultFetch } from '../../protocol/net-fetch.ts'
 
 /** Same self-heal shape as mediator-sync.ts's registerWithMediator: safe to
  * call on every tick before we know whether the upstream already has us. */
-async function registerAsHop(upstreamUrl: string, own: DidCommSender, fetchImpl: typeof fetch): Promise<MediatorInfo> {
+async function registerAsHop(upstreamUrl: string, inbox: MediatorInboxClient, fetchImpl: typeof fetch): Promise<MediatorInfo> {
   const mediator = await fetchMediatorInfo(upstreamUrl, fetchImpl)
-  await requestMediation(mediator, own, fetchImpl)
-  await updateKeylist(mediator, own, own.xKid, 'add', fetchImpl)
+  await requestMediation(mediator, inbox, fetchImpl)
+  await updateKeylist(mediator, inbox, 'add', fetchImpl)
   return mediator
 }
+
+/** The poller's did:peer is its own and it is the only device that ever
+ * registers it, so its inbox label is a constant. */
+const RELAY_POLLER_DEVICE = 'relay-poller'
 
 export interface RelayPollHandle {
   stop(): void
@@ -60,6 +64,7 @@ export function startRelayPoller(
   deliverLocally: (outbound: DidCommJWE) => Promise<void>,
   opts: RelayPollOptions = {},
 ): RelayPollHandle {
+  const inbox: MediatorInboxClient = { ...own, device: RELAY_POLLER_DEVICE }
   const intervalMs = opts.intervalMs ?? 15_000
   const fetchImpl = opts.fetch ?? defaultFetch()
   let stopped = false
@@ -72,10 +77,10 @@ export function startRelayPoller(
     try {
       const mediator = registered
         ? await fetchMediatorInfo(upstreamUrl, fetchImpl)
-        : await registerAsHop(upstreamUrl, own, fetchImpl)
+        : await registerAsHop(upstreamUrl, inbox, fetchImpl)
       registered = true
 
-      const reply = await sendAndUnpack(mediator, own, DELIVERY_REQUEST, { recipient_did: own.xKid, limit: 10 }, fetchImpl)
+      const reply = await sendAndUnpack(mediator, inbox, DELIVERY_REQUEST, { recipient_did: inbox.did, device: inbox.device, limit: 10 }, fetchImpl)
       if (reply.type === STATUS) return // nothing queued
       if (reply.type !== DELIVERY) throw new Error(`relay poll: unexpected reply type ${reply.type}`)
 
@@ -103,7 +108,7 @@ export function startRelayPoller(
           console.warn(`[mediator] relay poll of ${upstreamUrl} skipped an item (${att.id}):`, e instanceof Error ? e.message : e)
         }
       }
-      if (ackIds.length) await acknowledgeMessages(mediator, own, ackIds, fetchImpl)
+      if (ackIds.length) await acknowledgeMessages(mediator, inbox, ackIds, fetchImpl)
     } catch (e) {
       opts.onError?.(e)
       console.warn(`[mediator] relay poll of ${upstreamUrl} failed (will retry next tick):`, e instanceof Error ? e.message : e)

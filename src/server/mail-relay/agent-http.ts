@@ -1,12 +1,11 @@
 import type { MailDkimSigner } from '../mediator/mail-plugin/dkim.ts'
 import { deliverMail } from '../mediator/mail-plugin/smtp-client.ts'
 import { MAIL_BRIDGE_SEND, MAIL_BRIDGE_SEND_RESULT, mailBridgeSendBodyOf } from '../mediator/mail-plugin/mail-bridge.ts'
-import { parseJwe, unpackAuthcryptAuto } from '../../protocol/didcomm/crypto.ts'
+import { didCommPost, isDidCommEncryptedRequest, parseJwe, unpackAuthcrypt } from '../../protocol/didcomm/crypto.ts'
 import { resolveDidCommSenderKey } from '../../protocol/didcomm/webvh-resolve.ts'
 import { resolve } from '../../protocol/webvh/resolver.ts'
-import { didCommRouteFromDocument, absoluteKid } from '../../protocol/didcomm/webvh-route.ts'
-import { decodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
-import { buildPlaintext } from '../../protocol/didcomm/message.ts'
+import { didCommRouteFromDocument } from '../../protocol/didcomm/webvh-route.ts'
+import { assertFromMatchesSender, buildPlaintext } from '../../protocol/didcomm/message.ts'
 import { packForDelivery } from '../mediator/route-deliver.ts'
 import { mailFromForIdentity } from '../../protocol/webvh/identifier.ts'
 import { didOfKid } from '../../protocol/ids.ts'
@@ -19,12 +18,14 @@ export function createMailBridgeAgent(options: { hostname: string; signDkim?: Ma
     if (new URL(request.url).pathname !== PATH) return new Response('Not found\n', { status: 404 })
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers })
     if (request.method !== 'POST') return new Response('Method not allowed\n', { status: 405, headers })
+    if (!isDidCommEncryptedRequest(request)) return new Response('Content-Type must be application/didcomm-encrypted+json\n', { status: 415, headers })
     try {
       const jwe = parseJwe(await request.json())
       if (!jwe) throw new TypeError('DIDComm payload is not a JWE')
-      const unpacked = await unpackAuthcryptAuto(jwe, { kid: options.identity.kid, x25519PrivateKey: options.identity.privateKey }, kid => resolveDidCommSenderKey(kid))
+      const unpacked = await unpackAuthcrypt(jwe, { kid: options.identity.kid, privateKey: options.identity.privateKey }, kid => resolveDidCommSenderKey(kid))
       const message = JSON.parse(new TextDecoder().decode(unpacked.plaintext)) as { id?: unknown; type?: unknown; thid?: unknown; body?: unknown; attachments?: unknown }
       if (typeof message.id !== 'string' || typeof message.type !== 'string' || message.type !== MAIL_BRIDGE_SEND) throw new TypeError('unsupported DIDComm mail bridge message')
+      assertFromMatchesSender(message as { from?: unknown }, unpacked.senderKid)
       const input = mailBridgeSendBodyOf(message as never)
       if (!input) throw new TypeError('mail bridge send request is invalid')
       const senderDid = didOfKid(unpacked.senderKid)
@@ -44,11 +45,11 @@ async function sendResult(
 ): Promise<void> {
   const doc = await resolve(senderDid)
   if (!doc) throw new Error('authenticated sender DID no longer resolves')
-  const { endpoint, keyAgreement } = didCommRouteFromDocument(doc)
-  if (!endpoint?.uri || !keyAgreement) throw new Error('authenticated sender has no DIDComm return route')
+  const { endpoint, recipients } = didCommRouteFromDocument(doc)
+  if (!endpoint?.uri || recipients.length === 0) throw new Error('authenticated sender has no DIDComm return route')
   const body = { requestId: messageId, status: results.every(result => result.outcome === 'delivered' && result.rejected.length === 0) ? 'accepted' : 'temporary-failure', results }
   const plaintext = buildPlaintext(MAIL_BRIDGE_SEND_RESULT, body, sender.kid.split('#', 1)[0], senderDid, { thid })
-  const delivery = packForDelivery(new TextEncoder().encode(JSON.stringify(plaintext)), sender, absoluteKid(doc, keyAgreement.id), decodeX25519Multikey(keyAgreement.publicKeyMultibase), { uri: endpoint.uri, routingKeys: endpoint.routingKeys })
-  const response = await fetch(delivery.postUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(delivery.outbound) })
+  const delivery = packForDelivery(new TextEncoder().encode(JSON.stringify(plaintext)), sender, doc.id, recipients, { uri: endpoint.uri, routingKeys: endpoint.routingKeys })
+  const response = await fetch(delivery.postUrl, didCommPost(delivery.outbound))
   if (response.status !== 202) throw new Error(`mail send-result delivery failed: HTTP ${response.status}`)
 }

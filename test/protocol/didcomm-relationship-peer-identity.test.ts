@@ -48,8 +48,8 @@ describe('deriveRelationshipPeerIdentity', () => {
     expect(toCarol.did).not.toBe(toBob.did)
   })
 
-  test('rejects a secret that is not exactly 32 bytes', () => {
-    expect(() => deriveRelationshipPeerIdentity(new Uint8Array(16), counterpartyDid)).toThrow('relationship secret must be 32 bytes')
+  test('rejects a seed that is not exactly 32 bytes', () => {
+    expect(() => deriveRelationshipPeerIdentity(new Uint8Array(16), counterpartyDid)).toThrow('relationship seed must be 32 bytes')
   })
 
   test('PLAN-tor D-2: the embedded service comes from the mediator did:peer, not a caller URL', () => {

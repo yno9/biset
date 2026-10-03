@@ -11,6 +11,7 @@
 import { createSmtpSocketServer } from './smtp-socket-server.ts'
 import type { AcceptIngressInput } from './mail-smtp-protocol.ts'
 import { resolveMailRecipientRoute, packInboundMailForward, type MailRecipientRoute } from './bridge.ts'
+import { didCommPost } from '../../../protocol/didcomm/crypto.ts'
 import { defaultFetch } from '../../../protocol/net-fetch.ts'
 
 interface MailPluginListenerTlsFileConfig {
@@ -32,9 +33,6 @@ export interface MailPluginListenerOptions {
    * authcrypt'd from. */
   senderIdentity: { kid: string; privateKey: Uint8Array }
   fetch?: typeof fetch
-  /** did.md's independent relay supplies its colocated authority lookup here;
-   * the legacy plugin falls back to public did:webvh resolution. */
-  resolveRecipient?: (address: string) => Promise<MailRecipientRoute | undefined>
 }
 
 export interface MailPluginListener {
@@ -53,10 +51,9 @@ export function createMailPluginListener(options: MailPluginListenerOptions): Ma
     helloName: options.helloName,
     tls: options.tls,
     maxMessageBytes: options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES,
+    // The recipient's public did:webvh log is the only authority on its
+    // device keys: every keyAgreement key is a recipient.
     resolveRecipient: async reference => {
-      const authoritative = options.resolveRecipient ? await options.resolveRecipient(reference.address) : undefined
-      if (authoritative) return authoritative
-      if (options.resolveRecipient) return undefined
       const resolved = await resolveMailRecipientRoute(reference.address, options.apexDomain, fetchImpl)
       return resolved.ok ? resolved.route : undefined
     },
@@ -74,11 +71,7 @@ async function deliverInboundMail(
     { rawRfc5322: input.rawRfc5322, smtpEnvelope: `MAIL FROM:<${input.mailFrom}> RCPT TO:<${input.recipientAddress}>` },
     senderIdentity,
   )
-  const response = await fetchImpl(delivery.postUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(delivery.outbound),
-  })
+  const response = await fetchImpl(delivery.postUrl, didCommPost(delivery.outbound))
   // 202 Accepted, same convention didcomm/send-message.ts's own delivery
   // POST checks -- for both a Forward-wrapped delivery (mediator/server.ts's
   // FORWARD case) and a direct one to the recipient's own service endpoint.

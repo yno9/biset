@@ -18,6 +18,31 @@ export function nowVersionTime(): string {
   return new Date(sec * 1000).toISOString().replace('.000Z', 'Z')
 }
 
+/** A `fetch` that cannot be answered from a cache: a unique query string makes the URL a different
+ * cache key for the host's CDN as well (the host serves public reads with `s-maxage=30` and does not
+ * purge on write), and `no-store` skips the browser's. */
+export function freshFetch(fetchImpl: typeof fetch = fetch): typeof fetch {
+  return ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
+    url.searchParams.set('_', `${Date.now()}${Math.random().toString(36).slice(2, 8)}`)
+    return fetchImpl(url.toString(), { ...init, cache: 'no-store' })
+  }) as typeof fetch
+}
+
+/** The log as it stands once it contains the entry `versionId` -- for a reader that was just told, by
+ * the party that published it, that this entry exists. A public read can lag such a write by up to the
+ * host's CDN lifetime, so this reads fresh and, while the entry is still missing, waits and reads again
+ * (`retryDelaysMs` between attempts); it throws rather than hand back a log that predates the entry. */
+export async function fetchLogContaining(did: string, versionId: string, fetchImpl: typeof fetch = fetch, retryDelaysMs: readonly number[] = [1000, 2000, 3000, 5000, 8000, 10000]): Promise<{ url: string; entries: LogEntry[]; last: LogEntry }> {
+  for (let attempt = 0; ; attempt++) {
+    const log = await fetchCurrentLog(did, freshFetch(fetchImpl))
+    if (log.entries.some(entry => entry.versionId === versionId)) return log
+    const wait = retryDelaysMs[attempt]
+    if (wait === undefined) throw new Error(`The published did:webvh log does not contain ${versionId} yet; try again in a minute`)
+    await new Promise(resolve => setTimeout(resolve, wait))
+  }
+}
+
 /** Fetches the current log — the shared first half of every update.
  *
  * `last.parameters` is the FULLY RESOLVED value (chained through every entry

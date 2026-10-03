@@ -18,14 +18,12 @@ export const DELIVERY_REQUEST = 'https://didcomm.org/messagepickup/3.0/delivery-
 export const DELIVERY = 'https://didcomm.org/messagepickup/3.0/delivery'
 export const MESSAGES_RECEIVED = 'https://didcomm.org/messagepickup/3.0/messages-received'
 
-// Live delivery over SSE (mediator/server.ts's `GET /stream`) -- a biset-
-// specific extension, not a DIF-registered Pickup 3.0 message type: the
-// spec's own pickup family is deliberately poll/pull-oriented (an offline-
-// tolerant client asks when it's ready), with no live-push concept of its
-// own. Modeled on the SAME watch-token pattern mls-ds/http.ts's SSE stream
-// already uses, for the identical reason: `EventSource` can carry no
-// request body/custom headers, so the one request that CAN be authcrypt'd
-// (this one, over the mediator's ordinary POST /) mints a short-lived,
-// unencrypted token the subsequent GET carries in its query string instead.
-export const WATCH_REQUEST = 'https://biset.md/mediator-watch/1.0/watch-request'
-export const WATCH_GRANT = 'https://biset.md/mediator-watch/1.0/watch-grant'
+// Pickup 3.0 live mode: only over a persistent connection (WebSocket), and
+// only with `return_route: "all"` so the mediator may push on that socket.
+export const LIVE_DELIVERY_CHANGE = 'https://didcomm.org/messagepickup/3.0/live-delivery-change'
+export const LIVE_MODE_NOT_SUPPORTED_PROBLEM = 'e.m.live-mode-not-supported'
+
+// Problem code for a keylist-update add refused because the recipient DID
+// already has the mediator's maximum number of device inboxes
+// (mediator/server.ts). Args: the DID, how many it has, the limit.
+export const MAX_DEVICES_PROBLEM = 'e.p.req.max-devices'

@@ -33,7 +33,7 @@ export interface AccountPageConfig {
     /** The configured mediator remains visible after this browser logs out.
      * `loggedOut` means there is deliberately no local key/registration and
      * the card is only an entry point to the Wallet-backed login saga. */
-    didComm?: { xKid?: string; mediatorUrl: string; loggedOut?: boolean; error?: string }
+    didComm?: { xKid?: string; mediatorUrl: string; loggedOut?: boolean; error?: string; /** The deployment's configured Tor entrance for this mediator -- only the prompt's pre-filled value for "Enable Tor". */ onionUrl?: string }
     /** Starts an explicit, same-tab Wallet approval to add a DIDComm endpoint
      * to an already-connected Biset browser. */
     onEnableMessaging?(): Promise<void>
@@ -44,6 +44,11 @@ export interface AccountPageConfig {
      * only once didComm exists (nothing to re-point before there's a first
      * registration to begin with -- onEnableMessaging covers that case). */
     onEditMediator?(mediatorUrl: string): Promise<void>
+    /** The Mediator card's opt-in "Enable Tor": re-authorizes this
+     * browser's DIDComm device through Wallet and publishes the mediator's
+     * onion entrance beside its clearnet one (PLAN-tor.md D-4). Never run
+     * automatically -- login/enrollment publish clearnet only. */
+    onEnableTor?(onionUrl: string): Promise<void>
     /** Removes this browser's DIDComm service/key through Wallet, verifies
      * the resolved DID, commits local state, then removes the mediator route.
      * The Wallet session/MLS device/Vault room remain untouched. */
@@ -61,9 +66,9 @@ export interface AccountPageConfig {
    * This deliberately contains operational metadata only; no key material
    * belongs in the UI. */
   vault?: VaultCardStatus
-  /** Advances the shared Vault Content Key generation, retaining only this
-   * browser's DIDComm device in the new generation. */
-  onRotateVaultKey?(): Promise<void>
+  /** Removes every other device from the DID document (one Wallet
+   * approval), then moves every relationship to a fresh did:peer. */
+  onRemoveOtherDevices?(): Promise<void>
   onExportMessages?(): Promise<void>
   onImportMessages?(): Promise<void>
   /** src.bak's showSysMsg (shell.ts) -- injected rather than imported

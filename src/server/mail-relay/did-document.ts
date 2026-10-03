@@ -1,7 +1,7 @@
 import { encodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
 
 export const MAIL_BRIDGE_DID = 'did:web:smtp.did.md'
-export const MAIL_BRIDGE_ENDPOINT = 'https://smtp.did.md/v1/mail'
+const MAIL_BRIDGE_ENDPOINT = 'https://smtp.did.md/v1/mail'
 
 /** The relay's stable X25519 key is the public key in this did:web document.
  * The private half stays exclusively in relay.sqlite. */

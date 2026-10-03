@@ -12,12 +12,10 @@ import {
   readDidMdPendingAuthorization,
   saveDidMdPendingAuthorization,
   saveDidMdRegistration,
-  sealDidMdBisetDeviceMaterial,
   type DidMdPendingAuthorization,
   type DidMdRegistration,
 } from '../src/client/identity/wallet/did-md-store.ts'
 import { completeDidMdWalletCallback } from '../src/client/identity/wallet/did-md-oauth.ts'
-import { VAULT_CONTENT_KEY_PURPOSE } from '../src/client/store/vault/vault-content-key.ts'
 
 const DATABASE_NAME = 'biset-did-md-wallet'
 const ORIGIN = 'https://biset.example'
@@ -84,10 +82,8 @@ async function pendingFixture(overrides: Partial<DidMdPendingAuthorization> = {}
     deviceJkt: 'A'.repeat(43),
     privateKey: pair.privateKey,
     publicJwk: await crypto.subtle.exportKey('jwk', pair.publicKey),
-    bisetDevice: await sealDidMdBisetDeviceMaterial(bytes(33), { signaturePrivateKey: bytes(65), vaultSecret: bytes(97) }),
+    vaultDeviceId: 'urn:uuid:11111111-1111-4111-8111-111111111111',
     documentEdit: { type: 'urn:did-core:document-edit:v1', services: [], verificationMethods: [], remove: [] },
-    requestMlsCredential: true,
-    keyAuthorizationSubject: 'urn:uuid:11111111-1111-4111-8111-111111111111',
     createdAt: '2026-09-05T00:00:00.000Z',
     ...overrides,
   }
@@ -120,8 +116,6 @@ describe('did.md OAuth callback validation', () => {
   test('consumes a successful file:// callback and rejects replay of its authorization code', async () => {
     const rootPrivateKey = ed25519.utils.randomSecretKey()
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
-    const leafPrivateKey = ed25519.utils.randomSecretKey()
-    const leafPublicKey = ed25519.getPublicKey(leafPrivateKey)
     const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [])
     const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']) as CryptoKeyPair
     const registration = registrationFixture(FILE_CALLBACK_URL)
@@ -138,21 +132,10 @@ describe('did.md OAuth callback validation', () => {
       deviceJkt: 'A'.repeat(43),
       privateKey: pair.privateKey,
       publicJwk: await crypto.subtle.exportKey('jwk', pair.publicKey),
-      bisetDevice: await sealDidMdBisetDeviceMaterial(leafPublicKey, { signaturePrivateKey: leafPrivateKey, vaultSecret: bytes(97) }),
+      vaultDeviceId: 'urn:uuid:22222222-2222-4222-8222-222222222222',
       documentEdit: { type: 'urn:did-core:document-edit:v1', services: [], verificationMethods: [], remove: [] },
-      requestMlsCredential: true,
-      keyAuthorizationSubject: 'urn:uuid:22222222-2222-4222-8222-222222222222',
-      vaultContentKeyDerivations: [{ purpose: VAULT_CONTENT_KEY_PURPOSE, context: '0' }],
       createdAt: '2026-09-05T00:00:00.000Z',
     }
-    const keyCredentialUnsigned = {
-      type: 'did.md/KeyAuthorizationCredential', version: 1, issuer: did, audience: registration.clientId,
-      subject: pending.keyAuthorizationSubject, generation: log[0]!.versionId,
-      publicKey: { type: 'Multikey', publicKeyMultibase: encodeMultikey(leafPublicKey) }, purposes: ['signing'],
-      issuedAt: '2026-09-05T00:00:00.000Z', expiresAt: '2030-01-01T00:00:00.000Z',
-    }
-    const keyCredentialBytes = canonicalBytes({ label: 'did.md/key-authorization/v1', ...keyCredentialUnsigned })
-    const keyCredential = { ...keyCredentialUnsigned, rootSignature: bytesToBase64url(ed25519.sign(keyCredentialBytes, rootPrivateKey)), signSignature: bytesToBase64url(ed25519.sign(keyCredentialBytes, rootPrivateKey)) }
     // PLAN3 (~/did.md/PLAN3-oid4vp-transport.md): the capability is a
     // VC-DM 2.0 credential with an embedded proof, not a {document, proof}
     // pair -- RP-owned content lives under credentialSubject.
@@ -163,7 +146,7 @@ describe('did.md OAuth callback validation', () => {
       issuer: did,
       credentialSubject: {
         audience: registration.clientId,
-        authorizationDetails: [pending.documentEdit, { type: 'urn:did.md:key-authorization:v1', credential: bytesToBase64url(canonicalBytes(keyCredential)) }, { type: 'urn:did.md:derived-secret:v1', purpose: VAULT_CONTENT_KEY_PURPOSE, context: '0', value: bytesToBase64url(bytes(129)) }],
+        authorizationDetails: [pending.documentEdit],
         deviceJkt: pending.deviceJkt,
         expiresAt: '2030-01-01T00:00:00.000Z',
         issuedAt: '2026-09-05T00:00:00.000Z',
@@ -182,7 +165,8 @@ describe('did.md OAuth callback validation', () => {
       if (url === `${ISSUER}/v1/oauth/register/${encodeURIComponent(registration.clientId)}`) {
         return Response.json({ client_id: registration.clientId, redirect_uris: [registration.redirectUri], scope: 'openid profile biset:login biset:device biset:routing biset:messaging biset:vault', token_endpoint_auth_method: 'none' })
       }
-      if (url === didToHttpsUrl(did)) return new Response(log.map(entry => JSON.stringify(entry)).join('\n') + '\n')
+      // The log is read with a unique query string (log-io.ts's freshFetch: a CDN must not answer for a just-published edit).
+      if (url.split('?')[0] === didToHttpsUrl(did)) return new Response(log.map(entry => JSON.stringify(entry)).join('\n') + '\n')
       return new Response('unexpected request', { status: 500 })
     }) as typeof fetch
     await saveDidMdRegistration(registration)
@@ -191,10 +175,9 @@ describe('did.md OAuth callback validation', () => {
 
     await expect(completeDidMdWalletCallback()).resolves.toMatchObject({ did, clientId: registration.clientId, scope: ['biset:login', 'biset:device', 'biset:vault'] })
     expect(await readDidMdPendingAuthorization()).toBeUndefined()
-    expect(await readDidMdDeviceSession()).toMatchObject({ did, clientId: registration.clientId })
+    expect(await readDidMdDeviceSession()).toMatchObject({ did, clientId: registration.clientId, vaultDeviceId: pending.vaultDeviceId })
 
     await expect(completeDidMdWalletCallback()).rejects.toThrow('No matching did.md Wallet authorization is pending')
-    leafPrivateKey.fill(0)
     await clearDidMdPendingAuthorization()
   })
 })

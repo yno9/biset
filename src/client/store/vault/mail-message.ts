@@ -2,7 +2,7 @@ import { canonicalBytes, type CanonicalValue } from '../../../protocol/canonical
 import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../../../protocol/ids.ts'
 import type { VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
 import type { LocalJmapEmail } from '../projection/gateway.ts'
-import { createVaultEvent, type VaultEventSigner } from './events.ts'
+import { createVaultEvent, type VaultEventAuthor } from './events.ts'
 import { encryptVaultObject } from './objects.ts'
 import { encodeVaultMutationObject, mutationObjectAad } from './mutations.ts'
 
@@ -34,7 +34,7 @@ export interface MailMessageRecord {
 export async function buildMailMessageAdd(
   input: { email: Omit<LocalJmapEmail, 'blobId'>; rawRfc5322: Uint8Array },
   context: MailMessageBuildContext,
-  signer: VaultEventSigner,
+  signer: VaultEventAuthor,
 ): Promise<MailMessageRecord> {
   assertContext(context, signer)
   if (!(input.rawRfc5322 instanceof Uint8Array)) throw new TypeError('raw RFC 5322 message must be bytes')
@@ -87,7 +87,7 @@ export interface MailMessageEditRecord {
 export async function buildMailMessageEdit(
   input: { emailId: string; rawRfc5322: Uint8Array; subject?: string },
   context: MailMessageBuildContext,
-  signer: VaultEventSigner,
+  signer: VaultEventAuthor,
 ): Promise<MailMessageEditRecord> {
   assertContext(context, signer)
   if (!input.emailId) throw new TypeError('mail message edit requires an emailId')
@@ -176,7 +176,7 @@ function reactionsMap(value: unknown): Record<string, string> {
   return result
 }
 
-function assertContext(context: MailMessageBuildContext, signer: VaultEventSigner): void {
+function assertContext(context: MailMessageBuildContext, signer: VaultEventAuthor): void {
   if (!context.identityId || !context.actorDeviceId || !context.segmentId) throw new TypeError('mail message context has empty required fields')
   if (context.actorDeviceId !== signer.deviceId) throw new TypeError('mail message signer does not match actor device')
   if (!Number.isSafeInteger(context.actorSeq) || context.actorSeq < 0) throw new TypeError('mail message actor sequence is invalid')

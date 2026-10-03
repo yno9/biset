@@ -2,12 +2,10 @@ import { describe, expect, test } from 'bun:test'
 import { equalBytes } from '../../src/protocol/canonical.ts'
 import { LocalJmapGateway, LocalJmapTransport, MemoryLocalJmapReadModel } from '../../src/client/store/projection/gateway.ts'
 import { VaultBackedLocalJmapMutationSink } from '../../src/client/store/projection/vault-mutation-sink.ts'
-import { createSegmentKeyWrap } from '../../src/client/store/vault/crypto.ts'
-import { decodeVaultDeliveryPack } from '../../src/client/store/vault/delivery-pack.ts'
-import type { VaultEventSigner } from '../../src/client/store/vault/events.ts'
+import type { VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
 
-const signer: VaultEventSigner = {
+const signer: VaultEventAuthor = {
   deviceId: 'device-a',
   async sign(bytes) { return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)) },
   async verify(deviceId, bytes, signature) { return deviceId === 'device-a' && equalBytes(signature, await this.sign(bytes)) },
@@ -28,10 +26,6 @@ describe('VaultBackedLocalJmapMutationSink', () => {
         return {
           segmentId: 'segment-1',
           segmentKey,
-          keyWraps: [await createSegmentKeyWrap(new Uint8Array(32).fill(7), segmentKey, {
-            identityId: 'did:web:alice.example', selfGroupId: 'self-group-1', segmentId: 'segment-1',
-            sourceEpoch: '1', recipientEpoch: '1', grantorDeviceId: 'device-a', grantedAt: '2026-08-21T00:00:00.000Z',
-          }, signer)],
         }
       },
       signer,
@@ -53,11 +47,9 @@ describe('VaultBackedLocalJmapMutationSink', () => {
     expect(response.methodResponses[0][1]).toMatchObject({ oldState: 'state-1', updated: { 'email-1': null } })
     expect((committed?.events as unknown[])).toHaveLength(1)
     expect((committed?.objects as unknown[])).toHaveLength(1)
-    const deliveryOutbox = committed?.deliveryOutbox as { payload: Uint8Array; attempts: number }
-    expect(deliveryOutbox.attempts).toBe(0)
-    expect(decodeVaultDeliveryPack(deliveryOutbox.payload)).toMatchObject({
-      identityId: 'did:web:alice.example', objects: [{ segmentId: 'segment-1' }], events: [{ kind: 'keyword.set' }], keyWraps: [{ recipientEpoch: '1' }],
-    })
+    expect(committed?.objects).toMatchObject([{ segmentId: 'segment-1' }])
+    expect(committed?.events).toMatchObject([{ kind: 'keyword.set' }])
+    expect(committed).not.toHaveProperty('deliveryOutbox')
     expect((committed?.projection as { emails: Array<{ keywords: unknown }> }).emails[0].keywords).toEqual({ '$seen': true })
   })
 
@@ -75,10 +67,6 @@ describe('VaultBackedLocalJmapMutationSink', () => {
         return {
           segmentId: 'segment-1',
           segmentKey,
-          keyWraps: [await createSegmentKeyWrap(new Uint8Array(32).fill(7), segmentKey, {
-            identityId: 'did:web:alice.example', selfGroupId: 'self-group-1', segmentId: 'segment-1',
-            sourceEpoch: '1', recipientEpoch: '1', grantorDeviceId: 'device-a', grantedAt: '2026-08-24T00:00:00.000Z',
-          }, signer)],
         }
       },
       signer,

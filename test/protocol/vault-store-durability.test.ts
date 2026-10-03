@@ -11,7 +11,7 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { IndexedDbVaultStore, type IngressVaultCommit, type LocalVaultMutationCommit } from '../../src/client/store/vault/store.ts'
-import { createVaultEvent, type VaultEventSigner } from '../../src/client/store/vault/events.ts'
+import { createVaultEvent, type VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import { createSegmentKey, encryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { sha256Bytes } from '../../src/protocol/canonical.ts'
 import type { IngressAckV1 } from '../../src/protocol/ingress.ts'
@@ -21,10 +21,10 @@ import * as Y from 'yjs'
 // exported, so this test's own knowledge of the schema has to stay in sync
 // by hand if that module ever renames/re-versions it.
 const DATABASE_NAME = 'biset-vault-core'
-const CURRENT_VERSION = 14
+const CURRENT_VERSION = 15
 
 const identityId = 'did:web:alice.example'
-const signer: VaultEventSigner = { deviceId: 'device-a', async sign() { return new Uint8Array([7]) }, async verify(_d, _b, sig) { return sig[0] === 7 } }
+const signer: VaultEventAuthor = { deviceId: 'device-a', async sign() { return new Uint8Array([7]) }, async verify(_d, _b, sig) { return sig[0] === 7 } }
 
 afterEach(async () => {
   await new Promise<void>((resolve, reject) => {
@@ -67,7 +67,6 @@ async function buildLocalMutationCommit(eventId2Suffix: string): Promise<LocalVa
     events: [event],
     projection: { emails: [] },
     jmapState: { state: 'state-local-1' },
-    deliveryOutbox: { identityId, entryId: event.id, payload, payloadHash: sha256Bytes(payload), createdAt: '2026-08-24T00:00:00.000Z', attempts: 0 },
   }
 }
 
@@ -205,7 +204,6 @@ describe('IndexedDbVaultStore durability', () => {
       events: [event],
       projection: { emails: [] },
       jmapState: { state: 'contact-state' },
-      deliveryOutbox: { identityId, entryId: event.id, payload, payloadHash: sha256Bytes(payload), createdAt: event.createdAt, attempts: 0 },
     })
 
     expect(await store.readCredentialEvents(identityId)).toMatchObject([{ kind: 'contact-key.set', id: event.id }])

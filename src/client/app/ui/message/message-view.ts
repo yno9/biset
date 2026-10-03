@@ -147,6 +147,9 @@ export interface MailMessageView {
   reactions?: Array<{ from: string; emoji: string }>
   /** PLAN-mimi.md §4.3: set once any message.edit has landed on this email. */
   edited?: boolean
+  /** External Feed Post only (ingress-projector.ts): the followed actor's
+   * original post URL, read from the non-standard `X-Source-Url` header. */
+  sourceUrl?: string
 }
 
 export interface ProcessedMessage {
@@ -230,6 +233,7 @@ export function emailToMessageView(email: LocalJmapEmail, rawRfc5322: Uint8Array
     blob_id: email.blobId,
     reactions: email.reactions ? Object.entries(email.reactions).map(([from, emoji]) => ({ from, emoji })) : undefined,
     edited: email.edited,
+    sourceUrl: headers.sourceUrl,
   }
 }
 

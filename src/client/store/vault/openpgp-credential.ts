@@ -1,7 +1,7 @@
 import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes } from '../../../protocol/canonical.ts'
 import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../../../protocol/ids.ts'
 import type { VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
-import { createVaultEvent, type VaultEventSigner } from './events.ts'
+import { createVaultEvent, type VaultEventAuthor } from './events.ts'
 import { encryptVaultObject } from './objects.ts'
 import type { VaultCredentialKind } from './credential-store.ts'
 import type { VaultCredentialEventReader } from './store.ts'
@@ -62,7 +62,7 @@ export function decodeOpenPgpPrivateCredential(bytes: Uint8Array): OpenPgpPrivat
 export async function buildOpenPgpPrivateCredential(
   credential: OpenPgpPrivateCredentialV1,
   context: OpenPgpCredentialBuildContext,
-  signer: VaultEventSigner,
+  signer: VaultEventAuthor,
 ): Promise<OpenPgpCredentialRecord> {
   assertCredential(credential)
   if (context.identityId !== credential.identityId || context.actorDeviceId !== signer.deviceId || !context.segmentId || context.segmentKey.length !== 32) throw new TypeError('OpenPGP credential build context is invalid')

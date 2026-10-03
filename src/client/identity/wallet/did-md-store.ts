@@ -35,23 +35,15 @@ export type DidMdPendingAuthorization = {
   deviceJkt: string
   privateKey: CryptoKey
   publicJwk: JsonWebKey
-  /** Biset-only device material. Its private leaf key and Vault secret are
-   * sealed under an opaque, non-extractable browser AES key before this
-   * pending authorization is persisted across the Wallet redirect. */
-  bisetDevice: DidMdBisetDeviceMaterial
-  /** Omitted for derived-secret-only Wallet requests. */
+  /** Names this browser as the author of the Vault events it writes
+   * (`actorDeviceId`). Random per sign-in; carries no key. */
+  vaultDeviceId: string
+  /** Omitted for a Wallet request that edits nothing. */
   documentEdit?: DidCoreDocumentEdit
-  requestMlsCredential: boolean
-  keyAuthorizationSubject: string
-  /** Wallet derived-secret requests (VCK generations, and the fixed
-   * identity-wide relationship secret). Kept with the pending authorization
-   * so callback validation can reject a substituted generation or key.
-   * `context` is omitted (not empty-string) for a purpose with no
-   * generation concept -- did.md's own validator rejects an explicit empty
-   * string as invalid, only treating an absent field as "no context". */
-  vaultContentKeyDerivations?: { purpose: string; context?: string }[]
-  /** Durable marker between the two Wallet approvals of a VCK rotation. */
-  vaultKeyRotation?: { fromGeneration: string; toGeneration: string; phase?: 'prepared' | 'publishing' | 'rewrap' }
+  /** Set on the Wallet approval that removes every other device; carried
+   * into the session so boot finishes the removal (did-md-oauth.ts's
+   * beginDidMdRemoveOtherDevices). */
+  deviceRemoval?: { removedKids: string[]; requestedAt: string }
   /** Present only for a Wallet approval that explicitly publishes this
    * browser's Biset DIDComm endpoint. */
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
@@ -76,7 +68,10 @@ export type DidMdPendingAuthorization = {
   createdAt: string
 }
 
-type DidCoreService = { id: string; type: string; serviceEndpoint: string | Record<string, unknown> | Array<string | Record<string, unknown>> }
+/** `endpointMode: 'merge'` adds the service's endpoints to the ones already published instead of replacing the whole service (did.md Wallet's document-edit contract). */
+type DidCoreService = { id: string; type: string; serviceEndpoint: string | Record<string, unknown> | Array<string | Record<string, unknown>>; endpointMode?: 'replace' | 'merge' }
+/** Removes, from one service, the endpoints whose properties equal every entry of `match`. */
+export type DidCoreEndpointRemoval = { serviceId: string; match: Record<string, unknown> }
 type DidCoreVerificationMethod = { id: string; type: string; controller: string; publicKeyMultibase: string }
 export type DidCoreDocumentEdit = {
   type: 'urn:did-core:document-edit:v1'
@@ -84,29 +79,7 @@ export type DidCoreDocumentEdit = {
   verificationMethods: DidCoreVerificationMethod[]
   serviceKeyBindings?: { serviceId: string; keyIds: string[] }[]
   remove: string[]
-}
-
-export type DidMdBisetDeviceMaterial = {
-  v: 1
-  signaturePublicKey: Uint8Array
-  sealed: { iv: Uint8Array; ciphertext: Uint8Array }
-}
-
-export type OpenDidMdBisetDeviceMaterial = {
-  signaturePrivateKey: Uint8Array
-  /** Generation-indexed VCKs, encrypted inside the same non-extractable
-   * browser-key envelope as the Biset signing material. */
-  vaultContentKeys?: Record<string, Uint8Array>
-  /** Identity-wide, non-rotating secret (derived from the Wallet's Root key
-   * via the same OAuth derived-secret grant VCK uses, under its own fixed
-   * purpose -- see did-md-oauth.ts's RELATIONSHIP_FRONT_DOOR_SECRET_PURPOSE).
-   * Every device of the same Wallet identity obtains the identical value, on
-   * purpose: it feeds `deriveRelationshipPeerIdentity` so two different
-   * devices independently contacting the same external counterparty
-   * converge on one relationship peer instead of racing to two irreconcilable
-   * ContactKeyV1 records (found live, 2026-09-15). Undefined only for a
-   * session created before this existed; re-authorizing fills it in. */
-  relationshipSecret?: Uint8Array
+  removeEndpoints?: DidCoreEndpointRemoval[]
 }
 
 /** A Biset-owned DIDComm X25519 leaf. It is separate from the MLS signing
@@ -115,15 +88,14 @@ export type OpenDidMdBisetDeviceMaterial = {
 export type DidMdBisetDidCommDeviceMaterial = {
   v: 2
   x25519PublicKey: Uint8Array
-  mediatorControlDid: string
-  mediatorControlKid: string
-  mediatorControlPublicKey: Uint8Array
   sealed: { iv: Uint8Array; ciphertext: Uint8Array }
 }
 
 export type OpenDidMdBisetDidCommDeviceMaterial = {
   x25519PrivateKey: Uint8Array
-  mediatorControlPrivateKey: Uint8Array
+  /** Keys this device's mediator inbox labels (protocol/didcomm/
+   * mediator-device.ts) -- random per device, never leaves it. */
+  mediatorDeviceSecret: Uint8Array
 }
 
 export type DidMdDeviceSession = {
@@ -145,16 +117,12 @@ export type DidMdDeviceSession = {
   // stays an opaque record rather than an unenforced shape here.
   capability: Record<string, unknown>
   capabilityExpiresAt: string
-  /** The typed, public MLS credential the Wallet issued for this exact Biset
-   * leaf. Undefined is an older Phase-A session and cannot open a Vault. */
-  bisetDevice?: DidMdBisetDeviceMaterial & { credentialWire: string; keyAuthorizationSubject: string }
-  /** Current public generation.  The actual keys only live in bisetDevice's
-   * sealed private material. */
-  vaultGeneration?: string
-  /** Crash-resume marker for the single-approval VCK/publication operation.
-   * `phase` is optional only for sessions written by the retired two-round
-   * flow; those are treated as `prepared` and recover on the next action. */
-  vaultKeyRotation?: { fromGeneration: string; toGeneration: string; phase?: 'prepared' | 'publishing' | 'rewrap' }
+  /** This browser's Vault author id (see the pending authorization's). */
+  vaultDeviceId?: string
+  /** Crash-resume marker: the DID document no longer lists the other
+   * devices, but boot has not yet finished the rest of the removal (a fresh
+   * relationship seed, relationship rotation). Cleared once it has. */
+  deviceRemoval?: { removedKids: string[]; requestedAt: string }
   /** An optional Biset-owned DIDComm leaf, authorized by a Wallet routing
    * approval. It is not a did.md controller key. */
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
@@ -219,113 +187,38 @@ async function materialWrappingKey(): Promise<CryptoKey> {
   } finally { db.close() }
 }
 
-function assertDevicePrivateMaterial(value: OpenDidMdBisetDeviceMaterial): void {
-  if (!(value.signaturePrivateKey instanceof Uint8Array) || value.signaturePrivateKey.length !== 32) {
-    throw new TypeError('Biset device private material is invalid')
-  }
-  if (value.vaultContentKeys && Object.values(value.vaultContentKeys).some(key => !(key instanceof Uint8Array) || key.length !== 32)) throw new TypeError('Biset Vault Content Keys are invalid')
-  if (value.relationshipSecret !== undefined && (!(value.relationshipSecret instanceof Uint8Array) || value.relationshipSecret.length !== 32)) throw new TypeError('Biset relationship secret is invalid')
-}
-
-function assertSealedDeviceMaterial(value: DidMdBisetDeviceMaterial): void {
-  if (value.v !== 1 || !(value.signaturePublicKey instanceof Uint8Array) || value.signaturePublicKey.length !== 32
-    || !(value.sealed?.iv instanceof Uint8Array) || value.sealed.iv.length !== 12
-    || !(value.sealed?.ciphertext instanceof Uint8Array) || value.sealed.ciphertext.length < 17) {
-    throw new TypeError('Biset device material is invalid')
-  }
-}
-
 function assertDidCommPrivateMaterial(value: OpenDidMdBisetDidCommDeviceMaterial): void {
-  if (!(value.x25519PrivateKey instanceof Uint8Array) || value.x25519PrivateKey.length !== 32 || !(value.mediatorControlPrivateKey instanceof Uint8Array) || value.mediatorControlPrivateKey.length !== 32) throw new TypeError('Biset DIDComm device private material is invalid')
+  if (!(value.x25519PrivateKey instanceof Uint8Array) || value.x25519PrivateKey.length !== 32 || !(value.mediatorDeviceSecret instanceof Uint8Array) || value.mediatorDeviceSecret.length !== 32) throw new TypeError('Biset DIDComm device private material is invalid')
 }
 
 function assertSealedDidCommMaterial(value: DidMdBisetDidCommDeviceMaterial): void {
   if (value.v !== 2 || !(value.x25519PublicKey instanceof Uint8Array) || value.x25519PublicKey.length !== 32
-    || !value.mediatorControlDid?.startsWith('did:peer:2.') || !value.mediatorControlKid?.startsWith(`${value.mediatorControlDid}#`)
-    || !(value.mediatorControlPublicKey instanceof Uint8Array) || value.mediatorControlPublicKey.length !== 32
     || !(value.sealed?.iv instanceof Uint8Array) || value.sealed.iv.length !== 12
     || !(value.sealed?.ciphertext instanceof Uint8Array) || value.sealed.ciphertext.length < 17) {
     throw new TypeError('Biset DIDComm device material is invalid')
   }
 }
 
-/** Seals the two Biset-only secrets under an IndexedDB-persisted but
- * non-extractable AES-GCM CryptoKey. The key is unrelated to any did.md
- * controller key and cannot be exported by this origin. */
-export async function sealDidMdBisetDeviceMaterial(
-  signaturePublicKey: Uint8Array,
-  privateMaterial: OpenDidMdBisetDeviceMaterial,
-): Promise<DidMdBisetDeviceMaterial> {
-  assertDevicePrivateMaterial(privateMaterial)
-  if (!(signaturePublicKey instanceof Uint8Array) || signaturePublicKey.length !== 32) throw new TypeError('Biset device public key is invalid')
-  const key = await materialWrappingKey()
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-  const plaintext = new TextEncoder().encode(JSON.stringify({
-    v: 1,
-    signaturePrivateKey: [...privateMaterial.signaturePrivateKey],
-    ...(privateMaterial.vaultContentKeys ? { vaultContentKeys: Object.fromEntries(Object.entries(privateMaterial.vaultContentKeys).map(([generation, key]) => [generation, [...key]])) } : {}),
-    ...(privateMaterial.relationshipSecret ? { relationshipSecret: [...privateMaterial.relationshipSecret] } : {}),
-  }))
-  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext))
-  return { v: 1, signaturePublicKey: signaturePublicKey.slice(), sealed: { iv, ciphertext } }
-}
-
-/** Opens device material only into the active Biset tab. Callers must never
- * serialize this return value or use it as a did.md controller secret. */
-export async function openDidMdBisetDeviceMaterial(value: DidMdBisetDeviceMaterial): Promise<OpenDidMdBisetDeviceMaterial> {
-  assertSealedDeviceMaterial(value)
-  const key = await materialWrappingKey()
-  let decoded: unknown
-  try {
-    // Copy values read from IndexedDB into ordinary ArrayBuffer-backed views;
-    // WebCrypto's current DOM typings reject a potentially shared buffer.
-    const iv = new Uint8Array(value.sealed.iv.length); iv.set(value.sealed.iv)
-    const ciphertext = new Uint8Array(value.sealed.ciphertext.length); ciphertext.set(value.sealed.ciphertext)
-    const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext)
-    decoded = JSON.parse(new TextDecoder().decode(plaintext))
-  } catch { throw new Error('Biset device material could not be decrypted on this browser') }
-  if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) throw new Error('Biset device material is invalid')
-  const input = decoded as Record<string, unknown>
-  if (input.v !== 1 || !Array.isArray(input.signaturePrivateKey)) throw new Error('Biset device material is invalid')
-  let vaultContentKeys: Record<string, Uint8Array> | undefined
-  if (input.vaultContentKeys !== undefined) {
-    if (input.vaultContentKeys === null || typeof input.vaultContentKeys !== 'object' || Array.isArray(input.vaultContentKeys)) throw new Error('Biset device material is invalid')
-    vaultContentKeys = Object.fromEntries(Object.entries(input.vaultContentKeys as Record<string, unknown>).map(([generation, key]) => {
-      if (!Array.isArray(key)) throw new Error('Biset device material is invalid')
-      return [generation, new Uint8Array(key)]
-    }))
-  }
-  if (input.relationshipSecret !== undefined && !Array.isArray(input.relationshipSecret)) throw new Error('Biset device material is invalid')
-  const privateMaterial = {
-    signaturePrivateKey: new Uint8Array(input.signaturePrivateKey),
-    ...(vaultContentKeys ? { vaultContentKeys } : {}),
-    ...(input.relationshipSecret !== undefined ? { relationshipSecret: new Uint8Array(input.relationshipSecret as number[]) } : {}),
-  }
-  assertDevicePrivateMaterial(privateMaterial)
-  return privateMaterial
-}
-
 /** Seals a Biset DIDComm X25519 private leaf with a context-bound envelope
  * under this origin's non-extractable browser key. */
 export async function sealDidMdBisetDidCommDeviceMaterial(
   x25519PublicKey: Uint8Array,
-  mediatorControl: { did: string; kid: string; publicKey: Uint8Array },
   privateMaterial: OpenDidMdBisetDidCommDeviceMaterial,
 ): Promise<DidMdBisetDidCommDeviceMaterial> {
   assertDidCommPrivateMaterial(privateMaterial)
   if (!(x25519PublicKey instanceof Uint8Array) || x25519PublicKey.length !== 32) throw new TypeError('Biset DIDComm device public key is invalid')
   const key = await materialWrappingKey()
   const iv = crypto.getRandomValues(new Uint8Array(12))
-  const additionalData = didCommMaterialAad(x25519PublicKey, mediatorControl)
-  const plaintext = new TextEncoder().encode(JSON.stringify({ v: 2, x25519PrivateKey: [...privateMaterial.x25519PrivateKey], mediatorControlPrivateKey: [...privateMaterial.mediatorControlPrivateKey] }))
+  const additionalData = didCommMaterialAad(x25519PublicKey)
+  const plaintext = new TextEncoder().encode(JSON.stringify({ v: 2, x25519PrivateKey: [...privateMaterial.x25519PrivateKey], mediatorDeviceSecret: [...privateMaterial.mediatorDeviceSecret] }))
   const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData }, key, plaintext))
-  return { v: 2, x25519PublicKey: x25519PublicKey.slice(), mediatorControlDid: mediatorControl.did, mediatorControlKid: mediatorControl.kid, mediatorControlPublicKey: mediatorControl.publicKey.slice(), sealed: { iv, ciphertext } }
+  return { v: 2, x25519PublicKey: x25519PublicKey.slice(), sealed: { iv, ciphertext } }
 }
 
 export async function openDidMdBisetDidCommDeviceMaterial(value: DidMdBisetDidCommDeviceMaterial): Promise<OpenDidMdBisetDidCommDeviceMaterial> {
   assertSealedDidCommMaterial(value)
   const key = await materialWrappingKey()
-  const additionalData = didCommMaterialAad(value.x25519PublicKey, { did: value.mediatorControlDid, kid: value.mediatorControlKid, publicKey: value.mediatorControlPublicKey })
+  const additionalData = didCommMaterialAad(value.x25519PublicKey)
   let decoded: unknown
   try {
     const iv = new Uint8Array(value.sealed.iv.length); iv.set(value.sealed.iv)
@@ -335,14 +228,14 @@ export async function openDidMdBisetDidCommDeviceMaterial(value: DidMdBisetDidCo
   } catch { throw new Error('Biset DIDComm device material could not be decrypted on this browser') }
   if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) throw new Error('Biset DIDComm device material is invalid')
   const input = decoded as Record<string, unknown>
-  if (input.v !== 2 || !Array.isArray(input.x25519PrivateKey) || !Array.isArray(input.mediatorControlPrivateKey)) throw new Error('Biset DIDComm device material is invalid')
-  const privateMaterial = { x25519PrivateKey: new Uint8Array(input.x25519PrivateKey), mediatorControlPrivateKey: new Uint8Array(input.mediatorControlPrivateKey) }
+  if (input.v !== 2 || !Array.isArray(input.x25519PrivateKey) || !Array.isArray(input.mediatorDeviceSecret)) throw new Error('Biset DIDComm device material is invalid')
+  const privateMaterial = { x25519PrivateKey: new Uint8Array(input.x25519PrivateKey), mediatorDeviceSecret: new Uint8Array(input.mediatorDeviceSecret) }
   assertDidCommPrivateMaterial(privateMaterial)
   return privateMaterial
 }
 
-function didCommMaterialAad(x25519PublicKey: Uint8Array, control: { did: string; kid: string; publicKey: Uint8Array }): ArrayBuffer {
-  const bytes = new TextEncoder().encode(JSON.stringify({ label: 'biset/did-md/didcomm-device/v2', x25519PublicKey: [...x25519PublicKey], mediatorControlDid: control.did, mediatorControlKid: control.kid, mediatorControlPublicKey: [...control.publicKey] }))
+function didCommMaterialAad(x25519PublicKey: Uint8Array): ArrayBuffer {
+  const bytes = new TextEncoder().encode(JSON.stringify({ label: 'biset/did-md/didcomm-device/v3', x25519PublicKey: [...x25519PublicKey] }))
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 }
 
