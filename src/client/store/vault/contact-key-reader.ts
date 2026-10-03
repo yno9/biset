@@ -48,6 +48,18 @@ export class ContactKeyReader {
   async forCounterpartyKid(counterpartyRelationshipKid: string): Promise<ContactKeyV1 | null> {
     return newestAgreeing((await this.readAll()).filter(value => value.counterpartyRelationshipKid === counterpartyRelationshipKid), 'counterparty contact key kid is ambiguous')
   }
+
+  /** The relationship whose CURRENT counterparty kid this is -- the only
+   * one a message from that kid may be attributed to. Once a counterparty
+   * moved to a new did:peer (a front-door INIT, after it removed a device),
+   * its old kid is no longer that counterparty: a removed device still holds
+   * the old key and could keep using it. */
+  async currentForCounterpartyKid(counterpartyRelationshipKid: string): Promise<ContactKeyV1 | null> {
+    const named = await this.forCounterpartyKid(counterpartyRelationshipKid)
+    if (!named) return null
+    const current = await this.currentFor(named.counterpartyDid)
+    return current?.counterpartyRelationshipKid === counterpartyRelationshipKid ? current : null
+  }
 }
 
 /** A crossing relationship INIT/ACCEPT race in older clients could commit
@@ -73,7 +85,7 @@ function equivalentContactKey(left: ContactKeyV1, right: ContactKeyV1): boolean 
     left.counterpartyRelationshipKid === right.counterpartyRelationshipKid &&
     equalBytes(left.counterpartyPublicKey, right.counterpartyPublicKey) &&
     (left.supersedes ? contactKeyRef(left.supersedes) : '') === (right.supersedes ? contactKeyRef(right.supersedes) : '') &&
-    left.fromPrior === right.fromPrior
+    left.seedId === right.seedId
 }
 
 /** Records sharing one kid must agree on who the counterparty is and on

@@ -153,7 +153,12 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
       clearInterval(expiryTimer)
       relayPoller?.stop()
       log('info', 'mediator shutting down', { signal })
-      await server.stop(false)
+      // Close every connection now, live WebSockets included: a graceful
+      // stop waits for them, and a client keeps its socket open until told
+      // otherwise -- the restart then hung until systemd killed it (found
+      // live 2026-10-03, ~30 s of 502s). Clients reconnect on their own,
+      // and nothing is lost: copies stay queued until acknowledged.
+      await server.stop(true)
       store.close()
     },
   }

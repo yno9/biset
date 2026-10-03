@@ -363,15 +363,19 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
         return replyTo(msg, senderKid, MEDIATE_GRANT, { routing_did: [mediator.did] })
 
       case RECIPIENT_QUERY: {
-        // `device` and `last_seen` per entry are biset extensions: what a
-        // user needs to see to decide which device to remove at the limit.
+        // `last_seen` per entry is a biset extension: what a user needs to
+        // see at the device limit. The inboxes' device labels are NOT listed:
+        // anyone holding a DID's key may query, and a relationship did:peer's
+        // key is shared by every device -- including one the identity later
+        // removed, which could otherwise name a remaining device's inbox and
+        // remove it. A label is unguessable (mediator-device.ts) unless listed.
         const all = store.listInboxes(ownerDid)
         const paginate = (body.paginate ?? {}) as { limit?: unknown; offset?: unknown }
         const offset = Number.isSafeInteger(paginate.offset) && (paginate.offset as number) > 0 ? paginate.offset as number : 0
         const limit = Number.isSafeInteger(paginate.limit) && (paginate.limit as number) > 0 ? paginate.limit as number : all.length
         const page = all.slice(offset, offset + limit)
         return replyTo(msg, senderKid, RECIPIENT, {
-          dids: page.map(inbox => ({ recipient_did: ownerDid, device: inbox.device, last_seen: inbox.lastSeen })),
+          dids: page.map(inbox => ({ recipient_did: ownerDid, last_seen: inbox.lastSeen })),
           ...(body.paginate ? { pagination: { count: page.length, offset, remaining: Math.max(0, all.length - offset - page.length) } } : {}),
         })
       }

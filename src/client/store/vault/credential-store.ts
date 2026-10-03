@@ -87,7 +87,9 @@ export class VaultCredentialReader<T, E> {
           segmentKey = await this.options.segmentKeys.resolveSegmentKey(this.options.identityId, object.segmentId)
           keys.set(object.segmentId, segmentKey)
         }
-        values.push(this.kind.assert(event, object, await decryptVaultObject(segmentKey, object)))
+        const plaintext = await decryptVaultObject(segmentKey, object)
+        const value = readableCredential(this.kind.label, event.id, () => this.kind.assert(event, object, plaintext))
+        if (value !== undefined) values.push(value)
       }
       return values
     } finally {
@@ -95,6 +97,26 @@ export class VaultCredentialReader<T, E> {
     }
   }
 }
+
+/** A credential record's content, or undefined when it is intact but in a
+ * shape this version no longer reads (written before a format change -- no
+ * backward compatibility is kept). Such a record is absent, not fatal: one
+ * would otherwise stop every credential of its family, or every projection
+ * rebuild, from completing. Tampering is still fatal: the event and object
+ * integrity checks run before this. The one rule for every reader of
+ * credential records (this reader, mutation-records.ts). */
+export function readableCredential<T>(label: string, eventId: string, assert: () => T): T | undefined {
+  try { return assert() } catch (error) {
+    // Every read meets the same old records again: say so once per record.
+    if (!reportedUnreadable.has(eventId)) {
+      reportedUnreadable.add(eventId)
+      console.warn(`[vault] skipping a ${label} record in a format this version does not read (${eventId}):`, error instanceof Error ? error.message : error)
+    }
+    return undefined
+  }
+}
+
+const reportedUnreadable = new Set<string>()
 
 export interface SelectUnsupersededSpec<T> {
   kidOf(value: T): string

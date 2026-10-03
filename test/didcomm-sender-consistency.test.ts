@@ -9,7 +9,7 @@ import { createMediator } from '../src/server/mediator/server.ts'
 import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 import { packAuthcrypt, packAnoncrypt, didCommPost } from '../src/protocol/didcomm/crypto.ts'
 import { addressedTo, assertFromMatchesSender, buildPlaintext, DidCommSenderMismatchError } from '../src/protocol/didcomm/message.ts'
-import { unpackQueuedMessage } from '../src/protocol/didcomm/mediator-pickup.ts'
+import { PermanentDeliveryError, unpackQueuedMessage } from '../src/protocol/didcomm/mediator-pickup.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 type Peer = ReturnType<typeof generatePeerIdentity>
@@ -74,13 +74,13 @@ describe('mediator', () => {
 })
 
 describe('client delivery (unpackQueuedMessage)', () => {
-  test('a queued message whose `from` differs from its sender is not delivered; a consistent one is', async () => {
+  test('a queued message whose `from` differs from its sender is never delivered (dropped as permanent); a consistent one is', async () => {
     const bob = generatePeerIdentity(); const alice = generatePeerIdentity(); const mallory = generatePeerIdentity()
     const pack = (claimedFrom: string) => packAuthcrypt(utf8(JSON.stringify(buildPlaintext('https://didcomm.org/basicmessage/2.0/message', { content: 'hi' }, claimedFrom, bob.did))),
       { kid: mallory.xKid, privateKey: mallory.xPriv }, [{ kid: bob.xKid, publicKey: bob.xPub }])
     const own = { did: bob.did, xKid: bob.xKid, xPriv: bob.xPriv }
     const resolve = async () => mallory.xPub
-    expect(await unpackQueuedMessage(pack(alice.did), 'q1', own, resolve)).toBeUndefined()
+    await expect(unpackQueuedMessage(pack(alice.did), 'q1', own, resolve)).rejects.toBeInstanceOf(PermanentDeliveryError)
     const ok = await unpackQueuedMessage(pack(mallory.did), 'q2', own, resolve)
     expect(ok?.senderKid).toBe(mallory.xKid)
   })

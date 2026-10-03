@@ -13,6 +13,7 @@ import { assertContactKeyRecord } from './contact-key.ts'
 import { assertRelationshipSeedRecord } from './relationship-seed.ts'
 import { assertOpenPgpCredentialRecord } from './openpgp-credential.ts'
 import { verifyVaultEvent } from './events.ts'
+import { readableCredential } from './credential-store.ts'
 import type { SegmentKeyResolver } from './segment-key-resolver.ts'
 import type { DecryptedMutationRecord } from '../projection/reducer.ts'
 
@@ -56,12 +57,14 @@ export async function decryptVaultMutationRecords(
         keys.set(object.segmentId, key)
       }
       const plaintext = await decryptVaultObject(key, object)
+      // Credential records add nothing to the read model: only checked here,
+      // under the same old-format rule as their reader (credential-store.ts).
       if (event.kind === 'credential.openpgp.set') {
-        assertOpenPgpCredentialRecord(event, object, plaintext)
+        readableCredential('OpenPGP credential', event.id, () => assertOpenPgpCredentialRecord(event, object, plaintext))
       } else if (event.kind === 'contact-key.set') {
-        assertContactKeyRecord(event, object, plaintext)
+        readableCredential('contact key', event.id, () => assertContactKeyRecord(event, object, plaintext))
       } else if (event.kind === 'credential.relationship-seed.set') {
-        assertRelationshipSeedRecord(event, object, plaintext)
+        readableCredential('relationship seed', event.id, () => assertRelationshipSeedRecord(event, object, plaintext))
       } else {
         records.push({ event, plaintext })
       }

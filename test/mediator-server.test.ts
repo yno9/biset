@@ -103,9 +103,12 @@ describe('blind mediator', () => {
     expect((fourth.body as any).code).toBe('e.p.req.max-devices')
     expect((fourth.body as any).args).toEqual([bob.did, '3', '3'])
 
+    // Listed by when they were last used, never by label: a holder of the
+    // DID's key (a removed device, for a shared did:peer) must not learn the
+    // label of a remaining device's inbox and remove it.
     const listed = await request(bob, T.RECIPIENT_QUERY, {})
-    expect((listed.body as any).dids.map((k: any) => k.device)).toEqual([deviceLabel(1), deviceLabel(2), deviceLabel(3)])
-    expect((listed.body as any).dids.every((k: any) => typeof k.last_seen === 'number')).toBe(true)
+    expect((listed.body as any).dids).toHaveLength(3)
+    expect((listed.body as any).dids.every((k: any) => typeof k.last_seen === 'number' && k.device === undefined)).toBe(true)
 
     const removed = await request(bob, T.RECIPIENT_UPDATE, { device: deviceLabel(2), updates: [{ recipient_did: bob.did, action: 'remove' }] })
     expect((removed.body as any).updated[0].result).toBe('success')
@@ -118,7 +121,7 @@ describe('blind mediator', () => {
     const bob = peer()
     for (const n of [1, 2, 3]) await request(bob, T.RECIPIENT_UPDATE, { device: deviceLabel(n), updates: [{ recipient_did: bob.did, action: 'add' }] })
     const page = await request(bob, T.RECIPIENT_QUERY, { paginate: { limit: 2, offset: 1 } })
-    expect((page.body as any).dids.map((entry: any) => entry.device)).toEqual([deviceLabel(2), deviceLabel(3)])
+    expect((page.body as any).dids).toHaveLength(2)
     expect((page.body as any).dids.every((entry: any) => entry.recipient_did === bob.did)).toBe(true)
     expect((page.body as any).pagination).toEqual({ count: 2, offset: 1, remaining: 0 })
   })

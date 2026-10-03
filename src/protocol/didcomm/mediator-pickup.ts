@@ -7,6 +7,7 @@ import { unpackAuthcrypt, unpackAnoncrypt, protectedHeaderOf, parseJwe, type Did
 import { sendAndUnpack, type DidCommSender, type MediatorInboxClient, type MediatorInfo } from './mediator-transport.ts'
 import { defaultFetch } from '../net-fetch.ts'
 import { addressedTo, assertFromMatchesSender } from './message.ts'
+import { SenderKeyNotPublishedError } from './webvh-resolve.ts'
 import { STATUS_REQUEST, STATUS, DELIVERY_REQUEST, DELIVERY, MESSAGES_RECEIVED } from './mediator-protocol.ts'
 
 /** A Pickup 3.0 status, plus biset's `missed`: the mediator dropped copies
@@ -46,32 +47,41 @@ export interface DeliveredMessage { plaintext: unknown; senderKid: string; ackId
  * identity. */
 const ANONCRYPT_SENDER_KID = 'anoncrypt'
 
-/** Fetches up to `limit` queued messages and unpacks each (authcrypt from
- * whoever sent them, resolved via `resolveSenderKey`).
- *
- * Delivery is NON-destructive (Pickup 3.0): the mediator keeps every
- * returned message queued until the caller confirms receipt with
- * acknowledgeMessages. The caller MUST ack (by ackId) once it has durably
- * stored them, or they will be redelivered on the next poll. */
+/** A queued message that can never be handled -- not now, not on any
+ * retry: it cannot be opened, its sender's key is not (or no longer) the
+ * sender's, or it names a relationship that does not exist. The receiver
+ * acknowledges it so the mediator drops it; leaving it queued would only
+ * redeliver it on every connection until the mediator's retention ends.
+ * Anything else that fails (the network, a resolution, local storage) is
+ * transient and stays queued for a retry. */
+export class PermanentDeliveryError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PermanentDeliveryError'
+  }
+}
+
 /** Unwraps ONE queued, still-packed JWE into a DeliveredMessage -- shared by
- * `pickupDeliver`'s batch loop below and mediator-live.ts's live delivery
- * handler, which needs the identical fresh-key-retry behavior for a queued
- * item arriving one at a time instead of in a DELIVERY batch. Returns
- * undefined (never throws) for an attachment that could not be opened even
- * after a fresh-key retry -- the caller decides what "undeliverable" means
- * for its own delivery shape (pickupDeliver logs and skips; a watch just
- * leaves it for the next ordinary poll/backlog resend to retry). */
+ * `pickupDeliver` and mediator-live.ts. A sender key that resolves only from
+ * a cache gets one retry with a fresh resolve. Returns undefined when it
+ * cannot be opened for a transient reason (the sender's DID did not
+ * resolve); throws PermanentDeliveryError when it never can be: malformed,
+ * not for this key, or from a kid its DID does not list
+ * (SenderKeyNotPublishedError -- a removed device). */
 export async function unpackQueuedMessage(
   packedJwe: unknown, ackId: string, own: DidCommSender, resolveSenderKey: ResolveSenderKey,
 ): Promise<DeliveredMessage | undefined> {
+  let resolverFailure: unknown
   const open = async (fresh: boolean): Promise<DeliveredMessage> => {
+    resolverFailure = undefined
     const self = { kid: own.xKid, privateKey: own.xPriv }
-    const senderKeys: ResolveSenderKey = fresh ? kid => resolveSenderKey(kid, { fresh: true }) : resolveSenderKey
+    const senderKeys: ResolveSenderKey = async (kid, options) => {
+      try { return await resolveSenderKey(kid, fresh ? { fresh: true } : options) } catch (error) { resolverFailure = error; throw error }
+    }
     // Queued by the mediator, but authored by whoever sent it (or, for
     // anoncrypt, by construction not attributable at all -- see
     // ANONCRYPT_SENDER_KID above). The `alg` peek routes an anoncrypt JWE to
-    // unpackAnoncrypt instead of failing unpackAuthcrypt and silently
-    // dropping the message via the catch below.
+    // unpackAnoncrypt instead of failing unpackAuthcrypt.
     const queued = parseJwe(packedJwe)
     if (!queued) throw new Error('queued attachment is not a DIDComm JWE')
     if (protectedHeaderOf(queued)?.alg === 'ECDH-ES+A256KW') {
@@ -86,21 +96,24 @@ export async function unpackQueuedMessage(
   }
   try {
     return await open(false)
-  } catch (first) {
-    // The one way a CACHED sender key could become a permanent failure: the
-    // resolver may have handed back a stored key, and if that assumption
-    // ever breaks for a peer, every future message from them fails to
-    // unpack with no way back. One retry with a genuinely re-resolved key
-    // both opens this message and repairs the cache.
+  } catch {
     try {
       return await open(true)
-    } catch {
-      console.warn(`[didcomm] skipping an undeliverable queued message (${ackId}), the rest of the batch still arrives:`, first instanceof Error ? first.message : first)
-      return undefined
+    } catch (error) {
+      if (resolverFailure !== undefined && !(resolverFailure instanceof SenderKeyNotPublishedError)) {
+        console.warn(`[didcomm] could not resolve the sender of ${ackId} yet; it stays queued:`, resolverFailure instanceof Error ? resolverFailure.message : resolverFailure)
+        return undefined
+      }
+      throw new PermanentDeliveryError(`queued message ${ackId} can never be opened: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 }
 
+/** Fetches up to `limit` queued messages and unpacks each. Delivery is
+ * NON-destructive (Pickup 3.0): the caller acks with acknowledgeMessages
+ * once it has durably stored them. One that cannot be opened is skipped and
+ * logged, never blocking the rest of the batch (the queue is served
+ * oldest-first). */
 export async function pickupDeliver(
   mediator: MediatorInfo,
   inbox: MediatorInboxClient,
@@ -115,15 +128,12 @@ export async function pickupDeliver(
   const attachments = reply.attachments ?? []
   const out: DeliveredMessage[] = []
   for (const att of attachments) {
-    // Per attachment, NOT per batch -- one message that can't be unpacked
-    // must not block every message queued behind it (the queue is served
-    // oldest-first). Left UNACKNOWLEDGED on purpose (unpackQueuedMessage
-    // itself never acks): a transient resolve failure must not turn a real
-    // message into a lost one, so it is retried on every poll and
-    // eventually aged out by the mediator's own retention bound rather than
-    // discarded here.
-    const delivered = await unpackQueuedMessage(att.data.json, att.id, inbox, resolveSenderKey)
-    if (delivered) out.push(delivered)
+    try {
+      const delivered = await unpackQueuedMessage(att.data.json, att.id, inbox, resolveSenderKey)
+      if (delivered) out.push(delivered)
+    } catch (error) {
+      console.warn(`[didcomm] skipping an undeliverable queued message (${att.id}):`, error instanceof Error ? error.message : error)
+    }
   }
   return out
 }

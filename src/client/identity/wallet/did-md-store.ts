@@ -40,10 +40,6 @@ export type DidMdPendingAuthorization = {
   vaultDeviceId: string
   /** Omitted for a Wallet request that edits nothing. */
   documentEdit?: DidCoreDocumentEdit
-  /** Set on the Wallet approval that removes every other device; carried
-   * into the session so boot finishes the removal (did-md-oauth.ts's
-   * beginDidMdRemoveOtherDevices). */
-  deviceRemoval?: { removedKids: string[]; requestedAt: string }
   /** Present only for a Wallet approval that explicitly publishes this
    * browser's Biset DIDComm endpoint. */
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
@@ -119,10 +115,6 @@ export type DidMdDeviceSession = {
   capabilityExpiresAt: string
   /** This browser's Vault author id (see the pending authorization's). */
   vaultDeviceId?: string
-  /** Crash-resume marker: the DID document no longer lists the other
-   * devices, but boot has not yet finished the rest of the removal (a fresh
-   * relationship seed, relationship rotation). Cleared once it has. */
-  deviceRemoval?: { removedKids: string[]; requestedAt: string }
   /** An optional Biset-owned DIDComm leaf, authorized by a Wallet routing
    * approval. It is not a did.md controller key. */
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {

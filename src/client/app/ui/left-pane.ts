@@ -21,10 +21,10 @@
 // local vault, no relay/DID-document/PGP/AP/push layer), so none of it can
 // actually be wired up; those DOM elements stay present (HTML/CSS
 // untouched) but inert, no event listeners attached.
-import { groupMessages } from './message/message-view.ts'
+import { DIDCOMM_GROUP_THREAD_PREFIX, groupMessages } from './message/message-view.ts'
 import type { ThreadGroup } from './message/message-view.ts'
 import { avatarStyle, esc, previewText } from './format.ts'
-import { getFocusedThreadKey, inboxKeyOf, render, setFocusedThreadKey } from './thread.ts'
+import { getFocusedThreadKey, groupMembersLabel, inboxKeyOf, render, setFocusedThreadKey } from './thread.ts'
 import { hideAccountPage, hideConfigPage, inAccountMode, inConfigMode, showAccountPage, showConfigPage } from './account-page.ts'
 import { hideComposePage, inComposeMode, showComposePage } from './compose-page.ts'
 import { labelForDid } from './did-display.ts'
@@ -248,8 +248,12 @@ function toggleAccordion(key: string, focusThread = true): void {
 function makeLpItem(row: InboxRow, active: boolean, activeThreadKey: string | null): HTMLElement {
   const latestGroup = row.groups[0]!
   const latest = latestOf(latestGroup)
-  const label = latestGroup.subject || shortSenderLabel(latest.from_name || latest.from || 'no title')
-  const avatarSubject = shortSenderLabel(latest.from_name || latest.from || label)
+  // A group chat is its own inbox (inboxKeyOf), named by its title or, with
+  // none, by who is in it: "who the latest message came from" would give it
+  // the same label as the 1:1 inbox with that sender.
+  const isGroup = row.key.startsWith(DIDCOMM_GROUP_THREAD_PREFIX)
+  const label = latestGroup.subject || (isGroup ? groupMembersLabel(row.groups) : '') || shortSenderLabel(latest.from_name || latest.from || 'no title')
+  const avatarSubject = isGroup ? label : shortSenderLabel(latest.from_name || latest.from || label)
   const unread = row.groups.some(g => g.messages.some(p => p.msg.seen !== true))
   const expanded = expandedInboxKeys.has(row.key)
   const a = document.createElement('a')

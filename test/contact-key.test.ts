@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
-import type { VaultEventAuthor } from '../src/client/store/vault/events.ts'
-import { createSegmentKey, decryptVaultObject } from '../src/client/store/vault/objects.ts'
+import { createVaultEvent, type VaultEventAuthor } from '../src/client/store/vault/events.ts'
+import { createSegmentKey, decryptVaultObject, encryptVaultObject } from '../src/client/store/vault/objects.ts'
+import { canonicalBytes } from '../src/protocol/canonical.ts'
 import {
   buildContactKeyRecord,
   contactKeyAad,
@@ -10,6 +11,7 @@ import {
   type ContactKeyV1,
 } from '../src/client/store/vault/contact-key.ts'
 import { ContactKeyReader } from '../src/client/store/vault/contact-key-reader.ts'
+import { decryptVaultMutationRecords } from '../src/client/store/vault/mutation-records.ts'
 import { ContactKeyVaultSink } from '../src/client/store/vault/contact-key-sink.ts'
 
 const identityId = 'did:webvh:alice.example'
@@ -56,6 +58,35 @@ describe('contact key vault reader', () => {
     expect((await reader.forOwnKid(old.contactKey.ownRelationshipKid))?.counterpartyDid).toBe(counterpartyDid)
     expect(await reader.currentFor('did:webvh:nobody.example')).toBeNull()
     expect(await reader.forOwnKid('did:peer:2.unknown#key-1')).toBeNull()
+  })
+
+  test('a counterparty kid that was moved away from is no longer that counterparty', async () => {
+    // The counterparty moved to a new did:peer (it removed a device, which
+    // still holds the old key): the old kid must not speak for it any more.
+    const old = await record(1, contactKey('2026-08-27T00:00:00.000Z'))
+    const moved = await record(2, contactKey('2026-08-27T01:00:00.000Z', { ownRelationshipKid: old.contactKey.ownRelationshipKid, counterpartyRelationshipKid: old.contactKey.counterpartyRelationshipKid }))
+    const reader = makeReader([old, moved])
+    expect(await reader.currentForCounterpartyKid(old.contactKey.counterpartyRelationshipKid)).toBeNull()
+    expect((await reader.currentForCounterpartyKid(moved.contactKey.counterpartyRelationshipKid))?.counterpartyDid).toBe(counterpartyDid)
+    // History still knows the old kid; only acceptance stops.
+    expect((await reader.forCounterpartyKid(old.contactKey.counterpartyRelationshipKid))?.counterpartyDid).toBe(counterpartyDid)
+    expect(await reader.currentForCounterpartyKid('did:peer:2.unknown#key-1')).toBeNull()
+  })
+
+  test('a record in a format this version no longer reads is skipped, not fatal to the rest', async () => {
+    // Written before ContactKeyV1 gained `seedId` (no backward compatibility
+    // is kept): one such record used to stop every relationship from loading.
+    const current = await record(1, contactKey('2026-08-27T00:00:00.000Z'))
+    const legacy = await record(2, contactKey('2026-08-27T00:00:00.000Z'))
+    const { seedId: _dropped, ...legacyShape } = legacy.contactKey
+    const legacyObject = await encryptVaultObject(segmentKey, { segmentId, plaintext: canonicalBytes({ ...wireOf(legacyShape as ContactKeyV1) }), aad: legacy.object.aad })
+    const { identityId: eventIdentity, actorDeviceId, actorSeq, kind, targetIds, parents, createdAt } = legacy.event
+    const legacyEvent = await createVaultEvent({ identityId: eventIdentity, actorDeviceId, actorSeq, kind, targetIds, parents, createdAt, objectRefs: [legacyObject.objectId] }, signer)
+    const reader = makeReader([current, { ...legacy, object: legacyObject, event: legacyEvent }])
+    expect((await reader.readAll()).map(value => value.ownRelationshipKid)).toEqual([current.contactKey.ownRelationshipKid])
+    // Nor does it stop a projection rebuild, which checks every record.
+    const records = await decryptVaultMutationRecords(identityId, [{ ...legacyEvent, identityId }], [{ ...legacyObject, identityId }], { async resolveSegmentKey() { return segmentKey.slice() } })
+    expect(records).toEqual([])
   })
 
   test('fails closed for independently introduced current generations', async () => {
@@ -118,6 +149,7 @@ function contactKey(createdAt: string, supersedes?: ContactKeyRef): ContactKeyV1
     counterpartyRelationshipKid: counterparty.xKid,
     counterpartyPublicKey: counterparty.xPub,
     createdAt,
+    seedId: 'seed-1',
     ...(supersedes === undefined ? {} : { supersedes }),
   }
 }
@@ -162,4 +194,9 @@ function makeReader(records: Awaited<ReturnType<typeof record>>[]): ContactKeyRe
     },
     segmentKeys: { async resolveSegmentKey() { return segmentKey.slice() } },
   })
+}
+
+function wireOf(value: ContactKeyV1): Record<string, unknown> {
+  const { ownX25519PrivateKey, ownEd25519PrivateKey, counterpartyPublicKey, ...rest } = value
+  return { ...rest, ownX25519PrivateKey: toBase64url(ownX25519PrivateKey), ownEd25519PrivateKey: toBase64url(ownEd25519PrivateKey), counterpartyPublicKey: toBase64url(counterpartyPublicKey) }
 }

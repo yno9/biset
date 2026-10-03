@@ -24,16 +24,15 @@ export interface ContactKeyV1 {
   counterpartyRelationshipKid: string
   counterpartyPublicKey: Uint8Array
   createdAt: string
-  /** The relationship this record replaces: this side's own did:peer was
-   * rotated (a device removal), or the counterparty announced its own
-   * rotation with `from_prior`. A relationship is named by BOTH kids, since
-   * either side can rotate without the other. */
+  /** The relationship seed this side's own did:peer was derived from
+   * (relationship-seed.ts). A record from an older seed is a relationship
+   * that has not moved yet since a device removal. */
+  seedId: string
+  /** The relationship this record replaces: either side moved to a new
+   * did:peer (a device removal), announced by a front-door INIT. A
+   * relationship is named by BOTH kids, since either side can move without
+   * the other. */
   supersedes?: ContactKeyRef
-  /** When THIS side rotated: the DIDComm v2.1 `from_prior` JWT (iss = the
-   * previous own did:peer, sub = the current one) carried on every message
-   * sent from this relationship, so a counterparty that has not seen the
-   * rotation yet can still link it. */
-  fromPrior?: string
 }
 
 /** Names one relationship: the pair of did:peer kids it runs between. */
@@ -71,8 +70,8 @@ function encodeContactKey(value: ContactKeyV1): Uint8Array {
     counterpartyRelationshipKid: value.counterpartyRelationshipKid,
     counterpartyPublicKey: bytesToBase64url(value.counterpartyPublicKey),
     createdAt: value.createdAt,
+    seedId: value.seedId,
     ...(value.supersedes === undefined ? {} : { supersedes: { ownRelationshipKid: value.supersedes.ownRelationshipKid, counterpartyRelationshipKid: value.supersedes.counterpartyRelationshipKid } }),
-    ...(value.fromPrior === undefined ? {} : { fromPrior: value.fromPrior }),
   })
 }
 
@@ -96,7 +95,7 @@ export function decodeContactKey(bytes: Uint8Array): ContactKeyV1 {
     typeof value.ownRelationshipKid !== 'string' || typeof value.ownX25519PrivateKey !== 'string' ||
     typeof value.ownEd25519PrivateKey !== 'string' || typeof value.counterpartyRelationshipKid !== 'string' ||
     typeof value.counterpartyPublicKey !== 'string' || typeof value.createdAt !== 'string' ||
-    (value.fromPrior !== undefined && typeof value.fromPrior !== 'string')
+    typeof value.seedId !== 'string'
   ) throw new TypeError('contact key shape is invalid')
   const supersedes = refOf(value.supersedes)
   const contactKey: ContactKeyV1 = {
@@ -110,8 +109,8 @@ export function decodeContactKey(bytes: Uint8Array): ContactKeyV1 {
     counterpartyRelationshipKid: value.counterpartyRelationshipKid,
     counterpartyPublicKey: base64urlToBytes(value.counterpartyPublicKey),
     createdAt: value.createdAt,
+    seedId: value.seedId,
     ...(supersedes === undefined ? {} : { supersedes }),
-    ...(value.fromPrior === undefined ? {} : { fromPrior: value.fromPrior as string }),
   }
   if (!equalBytes(bytes, encodeContactKey(contactKey))) throw new TypeError('contact key is not canonical')
   return contactKey
@@ -170,7 +169,7 @@ function assertContactKey(value: ContactKeyV1): void {
   if (
     !value.identityId || value.kind !== 'contact-key' || !value.counterpartyDid ||
     value.ownX25519PrivateKey.length !== 32 || value.ownEd25519PrivateKey.length !== 32 ||
-    value.counterpartyPublicKey.length !== 32 || Number.isNaN(Date.parse(value.createdAt))
+    value.counterpartyPublicKey.length !== 32 || Number.isNaN(Date.parse(value.createdAt)) || !value.seedId
   ) throw new TypeError('contact key is invalid')
   if (value.supersedes !== undefined && contactKeyRef(value.supersedes) === contactKeyRef(value)) throw new TypeError('contact key cannot supersede itself')
 

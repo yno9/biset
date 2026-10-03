@@ -15,14 +15,12 @@ import {
   beginDidMdWalletDocumentEdit,
   beginDidMdWalletLogin,
   beginDidMdRemoveOtherDevices,
-  completeDidMdDeviceRemoval,
   completeDidMdWalletCallback,
   disconnectDidMdWallet,
   openDidMdWalletBisetDidCommDevice,
   openDidMdWalletVaultDevice,
   restoreDidMdWalletSession,
   didMdWalletReconnectState,
-  didMdPendingDeviceRemoval,
   DID_MD_JUST_CONNECTED_KEY,
 } from '../identity/wallet/did-md-oauth.ts'
 import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
@@ -51,10 +49,13 @@ import { canonicalBytes, canonicalHash, sha256Bytes } from '../../protocol/canon
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { ContactKeyReader } from '../store/vault/contact-key-reader.ts'
 import { ContactKeyVaultSink } from '../store/vault/contact-key-sink.ts'
-import { acceptCounterpartyRotation, rotateOwnRelationships } from '../identity/wallet/relationship-rotation.ts'
+import { moveStaleRelationships } from '../identity/wallet/relationship-rotation.ts'
 import { mintRelationshipSeed, RelationshipSeedReader, RelationshipSeedSink } from '../store/vault/relationship-seed.ts'
 import type { VaultCredentialSinkOptions } from '../store/vault/credential-store.ts'
-import { finishDeviceRemoval, provisionRelationshipSeed } from '../didcomm/relationship-seed-bootstrap.ts'
+import { createRelationshipSeedAuthority, RelationshipSeedPendingError } from '../didcomm/relationship-seed-bootstrap.ts'
+import { SenderKeyNotPublishedError } from '../../protocol/didcomm/webvh-resolve.ts'
+import { PermanentDeliveryError } from '../../protocol/didcomm/mediator-pickup.ts'
+import type { MediatorLiveWatch } from '../didcomm/mediator-live.ts'
 import { fetchCurrentLog, freshFetch } from '../identity/webvh/log-io.ts'
 import type { ContactKeyV1 } from '../store/vault/contact-key.ts'
 import { decodePeerDid2, publicKeyOf } from '../../protocol/didcomm/peer.ts'
@@ -148,8 +149,8 @@ async function disconnectWalletAndLocalData(): Promise<void> {
 
 function resolveAnyDidCommSenderKey(kid: string): Promise<Uint8Array> {
   if (kid.startsWith('did:peer:2.')) {
-    const did = kid.split('#', 1)[0]!
-    return Promise.resolve(publicKeyOf(decodePeerDid2(did), kid))
+    // Self-certifying: a kid this did:peer does not contain never will.
+    try { return Promise.resolve(publicKeyOf(decodePeerDid2(kid.split('#', 1)[0]!), kid)) } catch { return Promise.reject(new SenderKeyNotPublishedError(kid)) }
   }
   return resolveDidCommSenderKey(kid)
 }
@@ -170,15 +171,15 @@ function updateRememberedVaultCard(
 }
 
 function startRelationshipWatch(
-  watchedKids: Set<string>, mediatorUrl: string, inbox: MediatorInboxClient,
+  watches: Map<string, MediatorLiveWatch>, mediatorUrl: string, inbox: MediatorInboxClient,
   resolveSenderKey: (kid: string) => Promise<Uint8Array>,
   onMessage: (message: DeliveredMessage) => Promise<void>,
   onError: (error: unknown) => void,
   onMissed: () => void,
 ): void {
-  if (watchedKids.has(inbox.xKid)) return
-  watchedKids.add(inbox.xKid)
+  if (watches.has(inbox.xKid)) return
   const watch = watchMediatorLive({ mediatorUrl, inbox, resolveSenderKey, onMessage, onError, onMissed })
+  watches.set(inbox.xKid, watch)
   mediatorPollHandles.push({ stop: () => watch.close() })
 }
 
@@ -214,8 +215,8 @@ async function restoreRelationshipWatches(
   }
 }
 
-/** How long an own relationship kid stays watched after this side rotated
- * away from it: a counterparty that has not yet seen the `from_prior` keeps
+/** How long an own relationship kid stays watched after this side moved
+ * away from it: a counterparty that has not yet handled the move keeps
  * sending to it, and the mediator keeps a message at most this long. */
 const ROTATED_KID_WATCH_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -271,6 +272,9 @@ async function configureWalletAccountIfPresent(
   let didComm: { xKid: string; mediatorUrl: string; error?: string } | undefined
   let activeDidCommDevice: { did: string; xKid: string; x25519PrivateKey: Uint8Array; mediatorDeviceSecret: Uint8Array } | undefined
   let walletRelationshipManager: WalletRelationshipManager | undefined
+  // Set once messaging is up (it needs the relationship manager); Vault Sync
+  // calls it whenever it brings this device new records (a new seed, say).
+  let moveRelationships: () => Promise<void> = async () => {}
   let walletDidCommOutbox: WalletDidCommOutbox | undefined
   let exportMessages: (() => Promise<void>) | undefined
   let importMessages: (() => Promise<void>) | undefined
@@ -466,18 +470,22 @@ async function configureWalletAccountIfPresent(
         if (mediator.xKid !== didCommDevice.routingKid) throw new Error('Mediator routing key changed since Wallet authorization; enable messaging again')
         didComm = { xKid: didCommDevice.xKid, mediatorUrl: didCommDevice.mediatorUrl }
         activeDidCommDevice = didCommDevice
-        // The Vault's relationship seed: the identity's first device (per its
-        // did:webvh log) mints it; every other device receives it by Vault
-        // Sync and, until then, defers relationship work
-        // (RelationshipSeedPendingError) rather than minting a rival seed.
-        void provisionRelationshipSeed({
-          did: device.did,
+        // The Vault's relationship seed, as the did:webvh log allows this
+        // device to use it: the designated device mints it (first device;
+        // after a device removal, the first remaining one), every other one
+        // receives it by Vault Sync and defers relationship work
+        // (RelationshipSeedPendingError) until then; a removed device may not
+        // act at all (DeviceRemovedError).
+        const relationshipSeedAuthority = createRelationshipSeedAuthority({
           ownKid: didCommDevice.xKid,
           seeds: walletRelationshipSeedReader,
           readLog: async () => (await fetchCurrentLog(device.did, freshFetch())).entries,
-          mintAndStore: () => walletRelationshipSeedSink.store(mintRelationshipSeed(device.did)),
-        }).then(outcome => { if (outcome === 'waiting') console.info('[did.md Wallet] waiting for the relationship seed from another device') })
-          .catch(error => console.warn('[did.md Wallet relationship seed]', error instanceof Error ? error.message : error))
+          mintAndStore: async (afterVersion, supersedes) => {
+            const seed = mintRelationshipSeed(device.did, afterVersion, supersedes as Parameters<typeof mintRelationshipSeed>[2])
+            await walletRelationshipSeedSink.store(seed)
+            return seed
+          },
+        })
         // Restore is "only while an existing sibling is reachable" (no
         // recovery-mailbox fallback): a cold device pulls state from an
         // online sibling via the ordinary bootstrap request below, and a
@@ -527,7 +535,7 @@ async function configureWalletAccountIfPresent(
             return contact ? { kid, x25519PrivateKey: contact.ownX25519PrivateKey } : null
           },
           resolveSenderKey: resolveAnyDidCommSenderKey,
-          resolveCounterpartyDid: async kid => (await walletContactKeyReader.forCounterpartyKid(kid))?.counterpartyDid ?? null,
+          resolveCounterpartyDid: async kid => (await walletContactKeyReader.currentForCounterpartyKid(kid))?.counterpartyDid ?? null,
           async alreadyProcessed() { return false },
           nextActorSeq: () => sequencer.nextActorSeq(),
           initialParents: () => sequencer.initialParents(),
@@ -535,7 +543,7 @@ async function configureWalletAccountIfPresent(
           currentSnapshot: () => readModel.snapshot(),
           signer: boundary.author,
         })
-        const relationshipWatchKids = new Set<string>()
+        const relationshipWatches = new Map<string, MediatorLiveWatch>()
         let handleWalletDidCommMessage: (message: DeliveredMessage, recipientKid: string, mediatorUrl: string) => Promise<void>
         // A mediator dropped copies for one of this device's inboxes (it was
         // dormant, or full): every one of them also reached a sibling, so
@@ -546,7 +554,7 @@ async function configureWalletAccountIfPresent(
         const startWalletRelationshipWatch = (xKid: string, xPriv: Uint8Array, did: string, mediatorUrl: string): void => {
           watchedRecipientPrivateKeys.set(xKid, xPriv)
           startRelationshipWatch(
-            relationshipWatchKids, mediatorUrl, mediatorInbox({ did, xKid, xPriv }, didCommDevice.mediatorDeviceSecret), resolveAnyDidCommSenderKey,
+            relationshipWatches, mediatorUrl, mediatorInbox({ did, xKid, xPriv }, didCommDevice.mediatorDeviceSecret), resolveAnyDidCommSenderKey,
             message => handleWalletDidCommMessage(message, xKid, mediatorUrl),
             error => console.warn('[did.md Wallet relationship watch]', error),
             catchUpFromSiblings,
@@ -561,7 +569,8 @@ async function configureWalletAccountIfPresent(
         walletRelationshipManager = createWalletRelationshipManager({
           identityId: device.did,
           frontDoor: { xKid: didCommDevice.xKid, x25519PrivateKey: didCommDevice.x25519PrivateKey },
-          relationshipSeed: walletRelationshipSeedReader,
+          relationshipSeed: relationshipSeedAuthority,
+          drainInbox: ownKid => relationshipWatches.get(ownKid)?.drain() ?? Promise.resolve(),
           mediatorDeviceSecret: didCommDevice.mediatorDeviceSecret,
           reader: walletContactKeyReader,
           sink: walletContactKeySink,
@@ -582,9 +591,15 @@ async function configureWalletAccountIfPresent(
         })
         const handleWalletGroupMessage = async (message: DeliveredMessage): Promise<void> => {
           const plaintext = message.plaintext as DidCommPlaintext
+          // Group traffic rides established relationships only: the sender
+          // must be the CURRENT did:peer of a counterparty (an old one may be
+          // held by a device that counterparty removed).
+          const senderDid = await resolveDidCommSenderDid(message.senderKid, kid => walletContactKeyReader.currentForCounterpartyKid(kid).then(contact => contact?.counterpartyDid ?? null))
+          if (!senderDid || !message.senderKid.startsWith('did:peer:2.')) throw new PermanentDeliveryError('DIDComm group sender is not a current relationship')
           if (plaintext.type === GROUP_INVITE) {
             const body = groupInviteBodyOf(plaintext)
-            if (!body) throw new TypeError('DIDComm group invite body is invalid')
+            if (!body) throw new PermanentDeliveryError('DIDComm group invite body is invalid')
+            if (!body.members.includes(senderDid)) throw new PermanentDeliveryError('DIDComm group invite does not include its sender')
             await walletGroupChatStore.merge(body.groupId, { members: body.members, ...(body.name ? { name: body.name } : {}), updatedAt: new Date().toISOString() })
             for (const member of body.members) {
               if (member !== device.did) void walletRelationshipManager!.ensureContact(member).catch(error => console.warn('[did.md Wallet group mesh]', error))
@@ -592,14 +607,13 @@ async function configureWalletAccountIfPresent(
             return
           }
           const body = groupMessageBodyOf(plaintext)
-          if (!body) throw new TypeError('DIDComm group message body is invalid')
-          const senderDid = await resolveDidCommSenderDid(message.senderKid, kid => walletContactKeyReader.forCounterpartyKid(kid).then(contact => contact?.counterpartyDid ?? null))
-          if (!senderDid) throw new TypeError('DIDComm group sender is not associated with a contact')
+          if (!body) throw new PermanentDeliveryError('DIDComm group message body is invalid')
           const roster = await loadWalletGroupRoster(body.groupId)
           if (!roster) {
             console.warn(`[did.md Wallet group] dropping message for unknown group ${body.groupId}`)
             return
           }
+          if (!roster.members.includes(senderDid)) throw new PermanentDeliveryError(`DIDComm group message from ${senderDid}, who is not a member of ${body.groupId}`)
           const receivedAt = new Date().toISOString()
           const record = await buildDidCommGroupMessageVaultRecord({
             content: body.content,
@@ -634,10 +648,6 @@ async function configureWalletAccountIfPresent(
             // group message whose invite has not arrived. The Pickup ACK that
             // follows this return is the point: it is what keeps the queue
             // moving for every message behind this one.
-            // A counterparty that rotated its relationship DID (after removing
-            // one of its devices) proves the move with `from_prior`; record it
-            // first, so the message itself is attributed to the relationship.
-            await acceptCounterpartyRotation({ message, reader: walletContactKeyReader, sink: walletContactKeySink })
             const candidate = message.plaintext as { type?: unknown }
             if (vaultSync && (candidate.type === VAULT_SYNC_UPDATE || candidate.type === VAULT_SYNC_STATE_REQUEST || candidate.type === VAULT_SYNC_STATE_RESPONSE)) {
               const syncResult = await vaultSync.receive(message.plaintext as VaultSyncMessage, message.senderKid)
@@ -648,6 +658,7 @@ async function configureWalletAccountIfPresent(
               // the Set in startWalletRelationshipWatch makes this idempotent.
               if (candidate.type !== VAULT_SYNC_STATE_REQUEST && syncResult?.addedEventIds.length) {
                 await restoreWalletRelationshipWatches()
+                void moveRelationships()
               }
               // A sibling login may have added its device key to the DID
               // document just before sending this sync message. Re-resolve the
@@ -767,36 +778,17 @@ async function configureWalletAccountIfPresent(
         // whole account from loading; it only ever needs a fix for that one
         // counterparty, never a full restart.
         await restoreWalletRelationshipWatches()
-        // Finishing "remove other devices": the DID document edit is done and
-        // registerWithMediator above has handed the mediator the new log
-        // (which revoked the removed devices' inboxes). What remains: a
-        // relationship seed the removed devices never see, and every
-        // relationship moved to the did:peer it derives (from_prior). Kept
-        // pending -- and retried next boot -- until every relationship moved.
-        const pendingRemoval = await didMdPendingDeviceRemoval()
-        if (pendingRemoval) {
-          try {
-            const seed = await finishDeviceRemoval({
-              identityId: device.did,
-              requestedAt: pendingRemoval.requestedAt,
-              seeds: walletRelationshipSeedReader,
-              storeSeed: seed => walletRelationshipSeedSink.store(seed),
-              mint: (identityId, supersedes) => mintRelationshipSeed(identityId, supersedes),
-            })
-            const rotation = await rotateOwnRelationships({
-              identityId: device.did,
-              seed: seed.seed,
-              mediatorDeviceSecret: didCommDevice.mediatorDeviceSecret,
-              reader: walletContactKeyReader,
-              sink: walletContactKeySink,
-              startWatch: startWalletRelationshipWatch,
-            })
-            if (rotation.failed.length === 0) await completeDidMdDeviceRemoval()
-            else console.warn('[did.md Wallet device removal] relationships not yet rotated', rotation.failed)
-          } catch (error) {
-            console.warn('[did.md Wallet device removal]', error instanceof Error ? error.message : error)
-          }
-        }
+        // After a device removal, every relationship still derived from the
+        // old seed moves to the new one (relationship-rotation.ts). Run here
+        // and again whenever Vault Sync brings this device a new seed.
+        moveRelationships = () => relationshipSeedAuthority.require()
+          .then(usable => moveStaleRelationships({ reader: walletContactKeyReader, seedId: usable.seedId, ensureContact: did => walletRelationshipManager!.ensureContact(did) }))
+          .then(result => { if (result.failed.length) console.warn('[did.md Wallet relationships] not yet moved to the new seed', result.failed) })
+          .catch(error => {
+            if (error instanceof RelationshipSeedPendingError) console.info('[did.md Wallet] waiting for the relationship seed from another device')
+            else console.warn('[did.md Wallet relationships]', error instanceof Error ? error.message : error)
+          })
+        void moveRelationships()
         // A durable intent might predate this tab (or the previous send's
         // network attempt). A first-contact flush can wait for an ACCEPT for
         // up to a minute, so it must never delay initial UI rendering.

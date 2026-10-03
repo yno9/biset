@@ -157,6 +157,20 @@ export interface ProcessedMessage {
   bodyText: string
 }
 
+/** The prefix of a DIDComm group chat's `thread_id` (`didcomm-group:<groupId>`,
+ * didcomm/group-chat.ts's `didcommGroupAddress`). */
+export const DIDCOMM_GROUP_THREAD_PREFIX = 'didcomm-group:'
+
+/** Which inbox a thread belongs to. A group chat is its OWN inbox, named by
+ * its group: every message of it shares the sender's DID with that sender's
+ * 1:1 chat, so grouping by who the messages came from (what everything else
+ * is keyed on) folded a group into the 1:1 inbox with the same person as
+ * one more thread of it. Anything else belongs to the inbox of whoever it is
+ * with, as `counterparties` names them. */
+export function inboxKeyForThread(threadId: string | undefined, counterparties: string): string {
+  return threadId?.startsWith(DIDCOMM_GROUP_THREAD_PREFIX) ? threadId : counterparties
+}
+
 export interface ThreadGroup {
   key: string
   subject: string
@@ -174,10 +188,8 @@ export function groupMessages(): ThreadGroup[] {
   const groups = new Map<string, ThreadGroup>()
   for (const p of processedMessages) {
     const k = keys.get(nodeId(p.msg)) ?? nodeId(p.msg)
-    if (!groups.has(k)) groups.set(k, { key: k, subject: p.msg.subject, messages: [] })
-    const g = groups.get(k)!
-    if (!g.subject && p.msg.subject) g.subject = p.msg.subject
-    g.messages.push(p)
+    if (!groups.has(k)) groups.set(k, { key: k, subject: '', messages: [] })
+    groups.get(k)!.messages.push(p)
   }
   // Chronological (oldest first), not insertion order -- processedMessages
   // is appended in whatever order this device happened to load/receive each
@@ -189,7 +201,12 @@ export function groupMessages(): ThreadGroup[] {
   // this is the one place that has to actually guarantee it -- found live,
   // 2026-08-25: two sides of the same DIDComm chat showed "a"/"aa" in
   // opposite order.
-  for (const g of groups.values()) g.messages.sort((a, b) => a.msg.ts - b.msg.ts)
+  for (const g of groups.values()) {
+    g.messages.sort((a, b) => a.msg.ts - b.msg.ts)
+    // The title is the earliest message that has one -- not whichever this
+    // device happened to load first, which differs from device to device.
+    g.subject = g.messages.find(p => p.msg.subject)?.msg.subject ?? ''
+  }
   return Array.from(groups.values())
 }
 
@@ -281,7 +298,7 @@ export function computeReplyContext(thread: ProcessedMessage[], selfAddress: str
   // chat, multiple DIDs start a fresh DIDComm group chat (createAndSendDidCommGroup)
   // with the same membership -- a graceful forward-migration, not a crash.
   const groupThreadId = thread[0]?.msg.thread_id
-  if (groupThreadId?.startsWith('didcomm-group:')) {
+  if (groupThreadId?.startsWith(DIDCOMM_GROUP_THREAD_PREFIX)) {
     const references = [...thread].sort((a, b) => a.msg.ts - b.msg.ts).map(p => p.msg.message_id).filter(Boolean)
     return { toAddrs: [groupThreadId], references }
   }

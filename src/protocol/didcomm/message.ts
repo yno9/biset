@@ -20,9 +20,6 @@ export interface DidCommPlaintext {
   // written -- biset never requests one, but the mediator must recognize one
   // to know when answering with `ack` is warranted.
   please_ack?: string[]
-  // from_prior (DID Rotation): a JWT from the sender's previous DID naming
-  // `from` as its successor (from-prior.ts).
-  from_prior?: string
   // return_route (DIDComm v2.1 transports / Pickup 3.0): "all" asks the
   // receiver to answer on the same connection -- the HTTP response or the
   // open WebSocket -- instead of the sender's own service endpoint.
@@ -53,7 +50,6 @@ export interface PlaintextOptions {
   /** UTC epoch seconds. Omit for no expiry (the sender's default per spec). */
   expiresTime?: number
   attachments?: DidCommPlaintext['attachments']
-  fromPrior?: string
   returnRoute?: DidCommPlaintext['return_route']
 }
 
@@ -71,7 +67,6 @@ export function buildPlaintext(type: string, body: unknown, from?: string, to?: 
   if (opts.ack && opts.ack.length) msg.ack = opts.ack
   if (opts.expiresTime !== undefined) msg.expires_time = opts.expiresTime
   if (opts.attachments?.length) msg.attachments = opts.attachments
-  if (opts.fromPrior) msg.from_prior = opts.fromPrior
   if (opts.returnRoute) msg.return_route = opts.returnRoute
   return msg
 }

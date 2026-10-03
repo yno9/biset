@@ -15,6 +15,8 @@ import { pickupStatus, pickupDeliver, acknowledgeMessages } from '../src/protoco
 import { MediatorDeviceLimitError, registerWithMediator, startMediatorPolling } from '../src/client/didcomm/mediator-sync.ts'
 import { watchMediatorLive } from '../src/client/didcomm/mediator-live.ts'
 import { packMediatorRequest, unpackMediatorMessage } from '../src/protocol/didcomm/mediator-transport.ts'
+import { PermanentDeliveryError, unpackQueuedMessage } from '../src/protocol/didcomm/mediator-pickup.ts'
+import { SenderKeyNotPublishedError } from '../src/protocol/didcomm/webvh-resolve.ts'
 import { DELIVERY, LIVE_DELIVERY_CHANGE, LIVE_MODE_NOT_SUPPORTED_PROBLEM, STATUS } from '../src/protocol/didcomm/mediator-protocol.ts'
 import { PING, PING_RESPONSE } from '../src/protocol/didcomm/trust-ping.ts'
 import { createMediatorDeployment } from '../src/server/mediator/deployment.ts'
@@ -64,7 +66,7 @@ describe('mediator client library (mediator-{transport,coordinate,pickup,sync}.t
     expect(info.did).toBe(mediatorIdentity.did)
 
     const keys = await queryRecipients(info, bob, fetchImpl)
-    expect(keys).toEqual([expect.objectContaining({ device: bob.device })])
+    expect(keys).toEqual([{ lastSeen: expect.any(Number) }])
 
     await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alicePeer, bob, bobPeer.xPub, 'hello bob')
 
@@ -88,7 +90,7 @@ describe('mediator client library (mediator-{transport,coordinate,pickup,sync}.t
     const laptop: MediatorInboxClient = { ...phone, device: 'bob-laptop-01' }
     const info = await registerWithMediator(url, phone, fetchImpl)
     await registerWithMediator(url, laptop, fetchImpl)
-    expect((await queryRecipients(info, phone, fetchImpl)).map(entry => entry.device)).toEqual(['bob-phone-01', 'bob-laptop-01'])
+    expect(await queryRecipients(info, phone, fetchImpl)).toHaveLength(2)
 
     await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, phone, bobPeer.xPub, 'to every device')
     for (const device of [phone, laptop]) {
@@ -106,7 +108,7 @@ describe('mediator client library (mediator-{transport,coordinate,pickup,sync}.t
     const info2 = await registerWithMediator(url, bob, fetchImpl)
     expect(info2.did).toBe(info1.did)
     const keys = await queryRecipients(info1, bob, fetchImpl)
-    expect(keys).toEqual([expect.objectContaining({ device: bob.device })])
+    expect(keys).toEqual([{ lastSeen: expect.any(Number) }])
   })
 
   test('requestMediation alone grants without opening an inbox', async () => {
@@ -268,6 +270,46 @@ describe('Pickup 3.0 live mode over WebSocket (server.ts live, mediator-live.ts)
     expect(missed).toBe(1)
   })
 
+  test('a copy that can never be handled (PermanentDeliveryError) is acknowledged, so it is not redelivered', async () => {
+    const { fetchImpl, url, webSocketCtor } = freshMediatorFetch()
+    const alice = generatePeerIdentity()
+    const bobPeer = generatePeerIdentity()
+    const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
+    const info = await registerWithMediator(url, bob, fetchImpl)
+    await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, bob, bobPeer.xPub, 'from a removed device')
+    let attempts = 0
+    const watch = watchMediatorLive({
+      mediatorUrl: url, inbox: bob, resolveSenderKey: async () => alice.xPub,
+      onMessage: () => { attempts++; throw new PermanentDeliveryError('not a current counterparty') },
+      fetch: fetchImpl, webSocketCtor,
+    })
+    await until(() => attempts === 1)
+    await until(() => false, 50)
+    watch.close()
+    expect(await pickupStatus(info, bob, fetchImpl)).toMatchObject({ messageCount: 0 })
+  })
+
+  test('drain() handles everything already queued for the inbox before it resolves', async () => {
+    const { fetchImpl, url, webSocketCtor } = freshMediatorFetch()
+    const alice = generatePeerIdentity()
+    const bobPeer = generatePeerIdentity()
+    const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
+    const info = await registerWithMediator(url, bob, fetchImpl)
+    const received: string[] = []
+    const watch = watchMediatorLive({
+      mediatorUrl: url, inbox: bob, resolveSenderKey: async () => alice.xPub,
+      onMessage: async msg => { await new Promise(resolve => setTimeout(resolve, 2)); received.push((msg.plaintext as { body: { content: string } }).body.content) },
+      fetch: fetchImpl, webSocketCtor,
+    })
+    await until(() => false, 30)
+    for (let n = 0; n < 12; n++) await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, bob, bobPeer.xPub, `queued ${n}`)
+    await watch.drain()
+    expect(received).toHaveLength(12)
+    expect(await pickupStatus(info, bob, fetchImpl)).toMatchObject({ messageCount: 0 })
+    watch.close()
+    await expect(watch.drain()).rejects.toThrow('not open')
+  })
+
   test('a failing onMessage leaves the copy queued (no ack) and does not spin', async () => {
     const { fetchImpl, url, webSocketCtor } = freshMediatorFetch()
     const alice = generatePeerIdentity()
@@ -366,5 +408,17 @@ describe('device limit', () => {
     expect(refused.devices).toHaveLength(3)
     expect(refused.message).toContain('already has 3 devices registered')
     expect(refused.message).toContain('this removes all other devices')
+  })
+})
+
+describe('which undeliverable copies are permanent', () => {
+  test('a sender key its DID does not list is permanent; a sender that cannot be resolved right now is not', async () => {
+    const alice = generatePeerIdentity()
+    const bob = generatePeerIdentity()
+    const jwe = packAuthcrypt(utf8(JSON.stringify(buildPlaintext('https://didcomm.org/basicmessage/2.0/message', { content: 'x' }, alice.did, bob.did))), { kid: alice.xKid, privateKey: alice.xPriv }, [{ kid: bob.xKid, publicKey: bob.xPub }])
+    const own = { did: bob.did, xKid: bob.xKid, xPriv: bob.xPriv }
+    await expect(unpackQueuedMessage(jwe, 'q1', own, async kid => { throw new SenderKeyNotPublishedError(kid) })).rejects.toBeInstanceOf(PermanentDeliveryError)
+    expect(await unpackQueuedMessage(jwe, 'q2', own, async () => { throw new Error('fetch failed') })).toBeUndefined()
+    expect((await unpackQueuedMessage(jwe, 'q3', own, async () => alice.xPub))?.senderKid).toBe(alice.xKid)
   })
 })

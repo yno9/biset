@@ -107,17 +107,22 @@ describe('DIDComm group chat mesh', () => {
         const toContact: ContactKeyV1 = {
           version: 1, kind: 'contact-key', identityId: to.did, counterpartyDid: from.did,
           ownRelationshipKid: toPeer.xKid, ownX25519PrivateKey: toPeer.xPriv, ownEd25519PrivateKey: toPeer.edPriv,
-          counterpartyRelationshipKid: initBody.relationshipKid, counterpartyPublicKey: initBody.publicKey, createdAt: '2026-09-02T00:00:00.000Z',
+          counterpartyRelationshipKid: initBody.relationshipKid, counterpartyPublicKey: initBody.publicKey, createdAt: '2026-09-02T00:00:00.000Z', seedId: 'seed-1',
         }
-        expect((await sendRelationshipAccept(toContact, fetchImpl)).ok).toBe(true)
+        // The ACCEPT comes over the initiator's front door, from a key in the
+        // answering identity's DID document.
+        expect((await sendRelationshipAccept(toContact, { fromKid: to.frontKid, x25519PrivateKey: to.frontX, fetch: fetchImpl })).ok).toBe(true)
 
-        const acceptDelivered = await deliverAndAck({ url: mediatorUrl, did: mediator.did, xKid: mediator.xKid, xPub: mediator.xPub }, mediatorInbox({ did: fromPeer.did, xKid: fromPeer.xKid, xPriv: fromPeer.xPriv }, from.deviceSecret), peerKey, 10, fetchImpl)
+        const acceptDelivered = await deliverAndAck({ url: mediatorUrl, did: mediator.did, xKid: mediator.xKid, xPub: mediator.xPub }, mediatorInbox({ did: from.did, xKid: from.frontKid, xPriv: from.frontX }, from.deviceSecret), async kid => {
+          if (kid !== to.frontKid) throw new Error(`unexpected ACCEPT sender ${kid}`)
+          return x25519.getPublicKey(to.frontX)
+        }, 10, fetchImpl)
         expect(acceptDelivered).toHaveLength(1)
         const acceptBody = relationshipBodyOf(acceptDelivered[0]!.plaintext as DidCommPlaintext)!
         const fromContact: ContactKeyV1 = {
           version: 1, kind: 'contact-key', identityId: from.did, counterpartyDid: to.did,
           ownRelationshipKid: fromPeer.xKid, ownX25519PrivateKey: fromPeer.xPriv, ownEd25519PrivateKey: fromPeer.edPriv,
-          counterpartyRelationshipKid: acceptBody.relationshipKid, counterpartyPublicKey: acceptBody.publicKey, createdAt: '2026-09-02T00:00:01.000Z',
+          counterpartyRelationshipKid: acceptBody.relationshipKid, counterpartyPublicKey: acceptBody.publicKey, createdAt: '2026-09-02T00:00:01.000Z', seedId: 'seed-1',
         }
         setContact(contacts, from.did, to.did, fromContact)
         setContact(contacts, to.did, from.did, toContact)

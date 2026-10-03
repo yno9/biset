@@ -1,32 +1,56 @@
 import { describe, expect, test } from 'bun:test'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
 import { relationshipBodyToWire } from '../src/client/didcomm/relationship.ts'
-import { createWalletRelationshipManager } from '../src/client/identity/wallet/relationship.ts'
+import { createWalletRelationshipManager, type WalletRelationshipManagerOptions } from '../src/client/identity/wallet/relationship.ts'
+import { PermanentDeliveryError } from '../src/protocol/didcomm/mediator-pickup.ts'
 import type { ContactKeyV1 } from '../src/client/store/vault/contact-key.ts'
 
 const mediatorUrl = 'https://wallet-relationship.test.example'
 const walletDid = 'did:webvh:wallet:alice.test.example'
 const counterpartyDid = 'did:webvh:wallet:bob.test.example'
+/** The counterparty's front-door key: an ACCEPT comes over its front door. */
+const counterpartyFrontDoor = `${counterpartyDid}#k_bob`
+const ACCEPT = 'https://biset.md/relationship/1.0/accept'
 
-describe('Wallet-initiated DIDComm relationship', () => {
-  test('initiates once, watches its private receiver, and persists the ACCEPT as the contact used by the waiting send', async () => {
-    const pendingPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
-    const counterpartyPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
+const peer = () => generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
+const seed = (seedId: string) => ({ async require() { return { seed: new Uint8Array(32).fill(seedId.length), seedId } } })
+
+function manager(options: Partial<WalletRelationshipManagerOptions> & Pick<WalletRelationshipManagerOptions, 'reader' | 'sink' | 'initiate'>) {
+  return createWalletRelationshipManager({
+    identityId: walletDid,
+    frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
+    relationshipSeed: seed('seed-1'),
+    mediatorDeviceSecret: new Uint8Array(32).fill(8),
+    startWatch() {},
+    ...options,
+  })
+}
+
+function accept(from: string, relationship: ReturnType<typeof peer>) {
+  return {
+    ackId: 'accept', rawJwe: {} as never, senderKid: from,
+    plaintext: { type: ACCEPT, body: relationshipBodyToWire({ relationshipKid: relationship.xKid, publicKey: relationship.xPub }) },
+  }
+}
+
+function contactWith(own: ReturnType<typeof peer>, remote: ReturnType<typeof peer>, seedId: string): ContactKeyV1 {
+  return {
+    version: 1, kind: 'contact-key', identityId: walletDid, counterpartyDid,
+    ownRelationshipKid: own.xKid, ownX25519PrivateKey: own.xPriv, ownEd25519PrivateKey: own.edPriv,
+    counterpartyRelationshipKid: remote.xKid, counterpartyPublicKey: remote.xPub,
+    createdAt: '2026-09-05T12:00:00.000Z', seedId,
+  }
+}
+
+describe('Wallet DIDComm relationship', () => {
+  test('initiates once, watches its private receiver, and persists the front-door ACCEPT as the contact a waiting send uses', async () => {
+    const pendingPeer = peer()
+    const counterpartyPeer = peer()
     const contacts: ContactKeyV1[] = []
     const watched: Array<{ kid: string; did: string; url: string }> = []
     let initiations = 0
-    const manager = createWalletRelationshipManager({
-      identityId: walletDid,
-      frontDoor: {
-        xKid: `${walletDid}#k_wallet`,
-        x25519PrivateKey: new Uint8Array(32).fill(7),
-      },
-      relationshipSeed: { current: async () => ({ seed: new Uint8Array(32).fill(9) }) },
-      mediatorDeviceSecret: new Uint8Array(32).fill(8),
-      reader: {
-        async currentFor(did) { return contacts.find(contact => contact.counterpartyDid === did) ?? null },
-        async forOwnKid(kid) { return contacts.find(contact => contact.ownRelationshipKid === kid) ?? null },
-      },
+    const relationships = manager({
+      reader: { async currentFor(did) { return contacts.findLast(contact => contact.counterpartyDid === did) ?? null } },
       sink: { async store(contact) { contacts.push(contact) } },
       initiate: async did => {
         initiations += 1
@@ -37,212 +61,145 @@ describe('Wallet-initiated DIDComm relationship', () => {
       now: () => new Date('2026-09-05T12:00:00.000Z'),
     })
 
-    const waitingContact = manager.ensureContact(counterpartyDid)
+    const waitingContact = relationships.ensureContact(counterpartyDid)
     await waitFor(() => initiations === 1)
-    expect(initiations).toBe(1)
     expect(watched).toEqual([{ kid: pendingPeer.xKid, did: pendingPeer.did, url: mediatorUrl }])
 
-    await manager.handleMessage({
-      ackId: 'accept-1',
-      rawJwe: {} as never,
-      senderKid: counterpartyPeer.xKid,
-      plaintext: {
-        type: 'https://biset.md/relationship/1.0/accept',
-        body: relationshipBodyToWire({ relationshipKid: counterpartyPeer.xKid, publicKey: counterpartyPeer.xPub }),
-      },
-    }, pendingPeer.xKid, mediatorUrl)
+    await relationships.handleMessage(accept(counterpartyFrontDoor, counterpartyPeer), `${walletDid}#k_wallet`, mediatorUrl)
 
     const contact = await waitingContact
     expect(contact).toMatchObject({
-      identityId: walletDid,
-      counterpartyDid,
-      ownRelationshipKid: pendingPeer.xKid,
-      counterpartyRelationshipKid: counterpartyPeer.xKid,
-      createdAt: '2026-09-05T12:00:00.000Z',
+      identityId: walletDid, counterpartyDid, seedId: 'seed-1',
+      ownRelationshipKid: pendingPeer.xKid, counterpartyRelationshipKid: counterpartyPeer.xKid,
     })
-    expect(contacts).toHaveLength(1)
-    expect(await manager.ensureContact(counterpartyDid)).toEqual(contact)
+    expect(contact.supersedes).toBeUndefined()
+    expect(await relationships.ensureContact(counterpartyDid)).toEqual(contact)
     expect(initiations).toBe(1)
   })
 
-  test('rejects an ACCEPT that is not authenticated by the relationship kid it claims', async () => {
-    const pendingPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
-    const claimedPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
-    const differentPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
+  test('an ACCEPT from a did:peer is refused for good: only a key in the counterparty\'s DID document can answer an INIT', async () => {
+    // Its mediator knows the INIT's did:peer and could otherwise answer
+    // first with a did:peer of its own, sitting in the middle of the
+    // relationship from then on.
+    const pendingPeer = peer()
+    const impostor = peer()
     let initiated = false
-    const manager = createWalletRelationshipManager({
-      identityId: walletDid,
-      frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
-      relationshipSeed: { current: async () => ({ seed: new Uint8Array(32).fill(9) }) },
-      mediatorDeviceSecret: new Uint8Array(32).fill(8),
-      reader: { async currentFor() { return null }, async forOwnKid() { return null } },
-      sink: { async store() { throw new Error('must not store an unauthenticated ACCEPT') } },
-      initiate: async did => {
-        initiated = true
-        return { ok: true, pending: { counterpartyDid: did, peer: pendingPeer, mediatorUrl } }
-      },
-      startWatch() {},
+    const relationships = manager({
+      reader: { async currentFor() { return null } },
+      sink: { async store() { throw new Error('must not store an ACCEPT that is not from the front door') } },
+      initiate: async did => { initiated = true; return { ok: true, pending: { counterpartyDid: did, peer: pendingPeer, mediatorUrl } } },
     })
-    void manager.ensureContact(counterpartyDid).catch(() => {})
+    void relationships.ensureContact(counterpartyDid).catch(() => {})
     await waitFor(() => initiated)
+    await expect(relationships.handleMessage(accept(impostor.xKid, impostor), pendingPeer.xKid, mediatorUrl)).rejects.toBeInstanceOf(PermanentDeliveryError)
+  })
 
-    await expect(manager.handleMessage({
-      ackId: 'accept-wrong-sender', rawJwe: {} as never, senderKid: differentPeer.xKid,
-      plaintext: {
-        type: 'https://biset.md/relationship/1.0/accept',
-        body: relationshipBodyToWire({ relationshipKid: claimedPeer.xKid, publicKey: claimedPeer.xPub }),
-      },
-    }, pendingPeer.xKid, mediatorUrl)).rejects.toThrow('relationship accept sender does not match its relationship kid')
+  test('an ACCEPT from someone this side never initiated with is dropped as permanent', async () => {
+    const relationships = manager({
+      reader: { async currentFor() { return null } },
+      sink: { async store() { throw new Error('must not store') } },
+      initiate: async () => { throw new Error('must not initiate') },
+    })
+    await expect(relationships.handleMessage(accept('did:webvh:wallet:mallory.test.example#k_m', peer()), `${walletDid}#k_wallet`, mediatorUrl)).rejects.toBeInstanceOf(PermanentDeliveryError)
   })
 
   test('persists a late ACCEPT after the caller timed out waiting for it', async () => {
-    const pendingPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
-    const counterpartyPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
+    const pendingPeer = peer()
+    const counterpartyPeer = peer()
     const contacts: ContactKeyV1[] = []
-    const manager = createWalletRelationshipManager({
-      identityId: walletDid,
-      frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
-      relationshipSeed: { current: async () => ({ seed: new Uint8Array(32).fill(9) }) },
-      mediatorDeviceSecret: new Uint8Array(32).fill(8),
-      reader: {
-        async currentFor(did) { return contacts.find(contact => contact.counterpartyDid === did) ?? null },
-        async forOwnKid(kid) { return contacts.find(contact => contact.ownRelationshipKid === kid) ?? null },
-      },
+    const relationships = manager({
+      reader: { async currentFor(did) { return contacts.findLast(contact => contact.counterpartyDid === did) ?? null } },
       sink: { async store(contact) { contacts.push(contact) } },
       initiate: async did => ({ ok: true, pending: { counterpartyDid: did, peer: pendingPeer, mediatorUrl } }),
-      startWatch() {},
       timeoutMs: 1,
     })
-
-    await expect(manager.ensureContact(counterpartyDid)).rejects.toThrow(`relationship handshake with ${counterpartyDid} timed out`)
-    await manager.handleMessage({
-      ackId: 'accept-after-timeout', rawJwe: {} as never, senderKid: counterpartyPeer.xKid,
-      plaintext: {
-        type: 'https://biset.md/relationship/1.0/accept',
-        body: relationshipBodyToWire({ relationshipKid: counterpartyPeer.xKid, publicKey: counterpartyPeer.xPub }),
-      },
-    }, pendingPeer.xKid, mediatorUrl)
+    await expect(relationships.ensureContact(counterpartyDid)).rejects.toThrow(`relationship handshake with ${counterpartyDid} timed out`)
+    await relationships.handleMessage(accept(counterpartyFrontDoor, counterpartyPeer), `${walletDid}#k_wallet`, mediatorUrl)
     expect(contacts).toHaveLength(1)
     expect(contacts[0]!.counterpartyRelationshipKid).toBe(counterpartyPeer.xKid)
   })
 
+  test('an INIT left unanswered past the wait is sent again on the next attempt (its ACCEPT was lost or dropped)', async () => {
+    const pendingPeer = peer()
+    const counterpartyPeer = peer()
+    const contacts: ContactKeyV1[] = []
+    let initiations = 0
+    const relationships = manager({
+      reader: { async currentFor(did) { return contacts.findLast(contact => contact.counterpartyDid === did) ?? null } },
+      sink: { async store(contact) { contacts.push(contact) } },
+      initiate: async did => { initiations += 1; return { ok: true, pending: { counterpartyDid: did, peer: pendingPeer, mediatorUrl } } },
+      timeoutMs: 5,
+    })
+    await expect(relationships.ensureContact(counterpartyDid)).rejects.toThrow('timed out')
+    await new Promise(resolve => setTimeout(resolve, 10))
+    const retried = relationships.ensureContact(counterpartyDid)
+    await waitFor(() => initiations === 2)
+    await relationships.handleMessage(accept(counterpartyFrontDoor, counterpartyPeer), `${walletDid}#k_wallet`, mediatorUrl)
+    expect((await retried).counterpartyRelationshipKid).toBe(counterpartyPeer.xKid)
+  })
+
   test('a crossing INIT reuses its stored contact when ACCEPT arrives instead of duplicating it', async () => {
-    const ownPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
-    const remotePeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
-    const existing: ContactKeyV1 = {
-      version: 1, kind: 'contact-key', identityId: walletDid, counterpartyDid,
-      ownRelationshipKid: ownPeer.xKid, ownX25519PrivateKey: ownPeer.xPriv, ownEd25519PrivateKey: ownPeer.edPriv,
-      counterpartyRelationshipKid: remotePeer.xKid, counterpartyPublicKey: remotePeer.xPub,
-      createdAt: '2026-09-05T12:00:00.000Z',
-    }
+    const ownPeer = peer()
+    const remotePeer = peer()
+    const existing = contactWith(ownPeer, remotePeer, 'seed-1')
     let contact: ContactKeyV1 | null = null
     let stores = 0
     let initiated = false
-    const manager = createWalletRelationshipManager({
-      identityId: walletDid,
-      frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
-      relationshipSeed: { current: async () => ({ seed: new Uint8Array(32).fill(9) }) },
-      mediatorDeviceSecret: new Uint8Array(32).fill(8),
-      reader: {
-        async currentFor() { return contact },
-        async forOwnKid(kid) { return contact?.ownRelationshipKid === kid ? contact : null },
-      },
+    const relationships = manager({
+      reader: { async currentFor() { return contact } },
       sink: { async store() { stores += 1 } },
-      initiate: async did => {
-        initiated = true
-        return { ok: true, pending: { counterpartyDid: did, peer: ownPeer, mediatorUrl } }
-      },
-      startWatch() {},
+      initiate: async did => { initiated = true; return { ok: true, pending: { counterpartyDid: did, peer: ownPeer, mediatorUrl } } },
     })
-
-    const waiting = manager.ensureContact(counterpartyDid)
+    const waiting = relationships.ensureContact(counterpartyDid)
     await waitFor(() => initiated)
-    // Simulates the crossing remote INIT having been handled while our own
-    // initiation was waiting for its ACCEPT.
+    // The crossing remote INIT was handled while our own initiation waited.
     contact = existing
-    await manager.handleMessage({
-      ackId: 'crossing-accept', rawJwe: {} as never, senderKid: remotePeer.xKid,
-      plaintext: {
-        type: 'https://biset.md/relationship/1.0/accept',
-        body: relationshipBodyToWire({ relationshipKid: remotePeer.xKid, publicKey: remotePeer.xPub }),
-      },
-    }, ownPeer.xKid, mediatorUrl)
-
+    await relationships.handleMessage(accept(counterpartyFrontDoor, remotePeer), `${walletDid}#k_wallet`, mediatorUrl)
     expect(await waiting).toEqual(existing)
     expect(stores).toBe(0)
   })
 
-  test('PLAN-tor D-4/3-6: an ACCEPT delivered over the onion entrance still matches a route.url minted against canonical', async () => {
-    const onionUrl = `http://${'a'.repeat(56)}.onion`
-    const pendingPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
-    const counterpartyPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
-    const contacts: ContactKeyV1[] = []
-    let initiated = false
-    const manager = createWalletRelationshipManager({
-      identityId: walletDid,
-      frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
-      relationshipSeed: { current: async () => ({ seed: new Uint8Array(32).fill(9) }) },
-      mediatorDeviceSecret: new Uint8Array(32).fill(8),
-      reader: {
-        async currentFor(did) { return contacts.find(contact => contact.counterpartyDid === did) ?? null },
-        async forOwnKid(kid) { return contacts.find(contact => contact.ownRelationshipKid === kid) ?? null },
-      },
+  test('a relationship from an older seed (a device was removed) is moved before anything is sent on it: re-INIT, and the ACCEPT supersedes it', async () => {
+    const oldOwn = peer()
+    const oldRemote = peer()
+    const newOwn = peer()
+    const newRemote = peer()
+    const contacts: ContactKeyV1[] = [contactWith(oldOwn, oldRemote, 'seed-old')]
+    const drained: string[] = []
+    let initiations = 0
+    const relationships = manager({
+      relationshipSeed: seed('seed-new'),
+      reader: { async currentFor(did) { return contacts.findLast(contact => contact.counterpartyDid === did) ?? null } },
       sink: { async store(contact) { contacts.push(contact) } },
-      initiate: async did => { initiated = true; return { ok: true, pending: { counterpartyDid: did, peer: pendingPeer, mediatorUrl } } },
-      startWatch() {},
-      mediatorAliases: [mediatorUrl, onionUrl],
+      initiate: async did => { initiations += 1; return { ok: true, pending: { counterpartyDid: did, peer: newOwn, mediatorUrl } } },
+      drainInbox: async ownKid => { drained.push(ownKid) },
     })
-
-    const waiting = manager.ensureContact(counterpartyDid)
-    await waitFor(() => initiated)
-    // The ACCEPT arrives via the onion entrance (this device's own watch
-    // opened over Tor), while route.url (decoded from the peer's did:peer
-    // service, D-2) is always canonical -- without the alias set this would
-    // wrongly throw "relationship mediator does not match the delivery route".
-    await manager.handleMessage({
-      ackId: 'accept-via-onion', rawJwe: {} as never, senderKid: counterpartyPeer.xKid,
-      plaintext: {
-        type: 'https://biset.md/relationship/1.0/accept',
-        body: relationshipBodyToWire({ relationshipKid: counterpartyPeer.xKid, publicKey: counterpartyPeer.xPub }),
-      },
-    }, pendingPeer.xKid, onionUrl)
-
-    const contact = await waiting
-    expect(contact.counterpartyRelationshipKid).toBe(counterpartyPeer.xKid)
+    const waiting = relationships.ensureContact(counterpartyDid)
+    await waitFor(() => initiations === 1)
+    // The counterparty answered from a did:peer of its own it had not used
+    // with us: what it sent from the old one is taken first.
+    await relationships.handleMessage(accept(counterpartyFrontDoor, newRemote), `${walletDid}#k_wallet`, mediatorUrl)
+    const moved = await waiting
+    expect(moved).toMatchObject({ seedId: 'seed-new', ownRelationshipKid: newOwn.xKid, counterpartyRelationshipKid: newRemote.xKid })
+    expect(moved.supersedes).toEqual({ ownRelationshipKid: oldOwn.xKid, counterpartyRelationshipKid: oldRemote.xKid })
+    expect(drained).toEqual([oldOwn.xKid])
   })
 
-  test('PLAN-tor D-4/3-6: an ACCEPT from an untrusted URL is still rejected even with aliases configured', async () => {
-    const onionUrl = `http://${'a'.repeat(56)}.onion`
-    const otherUrl = 'https://not-this-mediator.example'
-    const pendingPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
-    const counterpartyPeer = generatePeerIdentity({ uri: mediatorUrl, routingKeys: ['did:peer:2.routing#key-1'] })
-    const manager = createWalletRelationshipManager({
-      identityId: walletDid,
-      frontDoor: { xKid: `${walletDid}#k_wallet`, x25519PrivateKey: new Uint8Array(32).fill(7) },
-      relationshipSeed: { current: async () => ({ seed: new Uint8Array(32).fill(9) }) },
-      mediatorDeviceSecret: new Uint8Array(32).fill(8),
-      reader: { async currentFor() { return null }, async forOwnKid() { return null } },
-      sink: { async store() { throw new Error('must not store on a mismatched mediator') } },
-      initiate: async did => ({ ok: true, pending: { counterpartyDid: did, peer: pendingPeer, mediatorUrl } }),
-      startWatch() {},
-      mediatorAliases: [mediatorUrl, onionUrl],
+  test('nothing is sent without a usable seed: a removed device, or one still waiting for the seed, cannot even start', async () => {
+    const relationships = manager({
+      relationshipSeed: { async require() { throw new Error('This device was removed from your account.') } },
+      reader: { async currentFor() { return contactWith(peer(), peer(), 'seed-1') } },
+      sink: { async store() { throw new Error('must not store') } },
+      initiate: async () => { throw new Error('must not initiate') },
     })
-    void manager.ensureContact(counterpartyDid).catch(() => {})
-
-    await expect(manager.handleMessage({
-      ackId: 'accept-untrusted', rawJwe: {} as never, senderKid: counterpartyPeer.xKid,
-      plaintext: {
-        type: 'https://biset.md/relationship/1.0/accept',
-        body: relationshipBodyToWire({ relationshipKid: counterpartyPeer.xKid, publicKey: counterpartyPeer.xPub }),
-      },
-    }, pendingPeer.xKid, otherUrl)).rejects.toThrow('relationship mediator does not match the delivery route')
+    await expect(relationships.ensureContact(counterpartyDid)).rejects.toThrow('removed')
   })
 })
 
-async function waitFor(ready: () => boolean): Promise<void> {
-  const deadline = Date.now() + 1_000
-  while (!ready()) {
-    if (Date.now() >= deadline) throw new Error('condition did not become ready')
+async function waitFor(condition: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('condition did not become ready')
     await new Promise(resolve => setTimeout(resolve, 1))
   }
 }

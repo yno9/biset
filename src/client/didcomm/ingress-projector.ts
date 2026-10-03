@@ -13,6 +13,7 @@ import type { VaultEventAuthor } from '../store/vault/events.ts'
 import type { VaultEventRecord, VaultObjectRecord } from '../store/vault/store.ts'
 import { parseJwe, protectedHeaderOf, unpackAuthcrypt, unpackAnoncrypt, type ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
 import { isPing, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
+import { PermanentDeliveryError } from '../../protocol/didcomm/mediator-pickup.ts'
 import { isBasicMessage, basicMessageBodyOf, didCommThreadId } from './basicmessage.ts'
 import { isExternalFeedPost, externalFeedPostBodyOf, externalFeedThreadId, EXTERNAL_FEED_POST } from './external-feed.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
@@ -298,7 +299,10 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       // authcrypt messages, since anoncrypt is gated to External Feed Post
       // above and that type is handled by the branch just above this one.)
       const senderDid = await resolveDidCommSenderDid(senderKid!, kid => this.options.resolveCounterpartyDid?.(kid) ?? null)
-      if (!senderDid) throw new TypeError('DIDComm relationship sender is not associated with a counterparty')
+      // Only a relationship's CURRENT counterparty kid speaks for it: an old
+      // one may be held by a device the counterparty removed. Final, so the
+      // copy is dropped instead of redelivered.
+      if (!senderDid) throw new PermanentDeliveryError('DIDComm relationship sender is not a current counterparty')
       const body = basicMessageBodyOf(msg)
       if (!body) throw new TypeError('DIDComm basicmessage has no readable content')
       const sentAt = body.sentAt ?? (msg.created_time ? new Date(msg.created_time * 1000).toISOString() : createdAt)

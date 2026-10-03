@@ -16,7 +16,6 @@ import {
   type DidMdPendingAuthorization,
   type DidMdRegistration,
 } from '../src/client/identity/wallet/did-md-store.ts'
-import { completeDidMdDeviceRemoval, didMdPendingDeviceRemoval } from '../src/client/identity/wallet/did-md-oauth.ts'
 
 const DATABASE_NAME = 'biset-did-md-wallet'
 const bytes = (start: number) => Uint8Array.from({ length: 32 }, (_, index) => start + index)
@@ -146,29 +145,5 @@ describe('did.md Wallet IndexedDB storage', () => {
     expect(await readDidMdRegistration()).toBeUndefined()
     expect(await readDidMdPendingAuthorization()).toBeUndefined()
     expect(await readDidMdDeviceSession()).toBeUndefined()
-  })
-
-  test('carries and clears the "remove other devices" crash-resume marker', async () => {
-    const pending = await pendingFixture()
-    const base: DidMdDeviceSession = {
-      v: 2,
-      issuer: pending.issuer,
-      clientId: pending.clientId,
-      did: pending.did!,
-      handle: pending.handle!,
-      verificationMethod: pending.verificationMethod!,
-      rootPublicKey: pending.rootPublicKey!,
-      deviceJkt: pending.deviceJkt,
-      privateKey: pending.privateKey,
-      publicJwk: pending.publicJwk,
-      capability: { document: {}, proof: {} },
-      capabilityExpiresAt: '2030-01-01T00:00:00.000Z',
-      deviceRemoval: { removedKids: ['did:webvh:x:alice.example#k_old'], requestedAt: '2026-10-02T00:00:00.000Z' },
-    }
-    await saveDidMdDeviceSession(base)
-    expect(await didMdPendingDeviceRemoval()).toEqual({ removedKids: ['did:webvh:x:alice.example#k_old'], requestedAt: '2026-10-02T00:00:00.000Z' })
-    await completeDidMdDeviceRemoval()
-    expect(await didMdPendingDeviceRemoval()).toBeUndefined()
-    expect(await readDidMdDeviceSession()).toMatchObject({ did: pending.did })
   })
 })

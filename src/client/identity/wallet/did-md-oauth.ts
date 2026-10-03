@@ -674,10 +674,6 @@ async function sessionFromCapabilityValue(value: unknown, did: string, pending: 
     verificationMethod: resolvedPending.verificationMethod, rootPublicKey: resolvedPending.rootPublicKey, deviceJkt: resolvedPending.deviceJkt,
     privateKey: resolvedPending.privateKey, publicJwk: resolvedPending.publicJwk, capability: capability.capability, capabilityExpiresAt: capability.expiresAt,
     vaultDeviceId: resolvedPending.vaultDeviceId,
-    ...(() => {
-      const removal = resolvedPending.deviceRemoval ?? previousSession?.deviceRemoval
-      return removal ? { deviceRemoval: removal } : {}
-    })(),
     ...(capability.didCommDevice ? { bisetDidCommDevice: capability.didCommDevice } : {}),
   }
   await saveDidMdDeviceSession(session)
@@ -796,7 +792,13 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
     })
   }
   location.assign(request.toString())
-  throw new Error('The browser did not navigate to did.md Wallet')
+  // Navigation is asynchronous: the page keeps running until it unloads, so
+  // throwing here at once showed a "did not navigate" error right before the
+  // wallet opened. Wait for the unload; only a navigation that never
+  // happens (blocked, say) is an error.
+  return await new Promise<never>((_resolve, reject) => {
+    window.setTimeout(() => reject(new Error('The browser did not navigate to did.md Wallet')), 10_000)
+  })
 }
 
 /**
@@ -804,9 +806,10 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
  * DID document edit drops their keyAgreement keys, which is the one place
  * the rest of the system learns who this identity's devices are (a mediator
  * revokes their inboxes on the next log it is handed; a sender stops
- * encrypting to them). The rest -- a fresh relationship seed, rotating every
- * relationship to it -- runs on the next boot from the `deviceRemoval`
- * marker this carries into the session, and is idempotent until done.
+ * encrypting to them). Everything after follows from the DID log alone,
+ * on whichever remaining device runs next: the relationship seed is stale
+ * once a key was removed, the designated device mints a new one, and every
+ * relationship moves to it (relationship-seed-bootstrap.ts).
  */
 export async function beginDidMdRemoveOtherDevices(configured: DidMdWalletConfiguration = {}): Promise<never> {
   const config = walletConfiguration(configured)
@@ -814,17 +817,16 @@ export async function beginDidMdRemoveOtherDevices(configured: DidMdWalletConfig
   if (!session?.vaultDeviceId || !session.bisetDidCommDevice || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
     throw new Error('Reconnect did.md Wallet before removing other devices')
   }
-  const resolved = await resolveByDomain(parseWebvhDid(session.did).domain, undefined, { cache: 'no-store' })
+  // Read past the host's CDN (`freshFetch`): a stale copy would leave a recently added device out of the removal.
+  const resolved = await resolveByDomain(parseWebvhDid(session.did).domain, undefined, undefined, freshFetch())
   if (!resolved || resolved.id !== session.did) throw new Error('Could not resolve the current DID document before removing other devices')
   const ownKid = session.bisetDidCommDevice.xKid
-  const removedKids: string[] = []
   const remove = (resolved.verificationMethod ?? []).flatMap(method => {
     try {
       const key = decodeX25519Multikey(method.publicKeyMultibase)
       const fragment = method.id.startsWith('#') ? method.id : method.id.slice(session.did.length)
       const kid = `${session.did}${fragment}`
       if (fragment !== deviceKidFragment(key) || kid === ownKid) return []
-      removedKids.push(kid)
       return [method.id]
     } catch { return [] }
   })
@@ -833,7 +835,6 @@ export async function beginDidMdRemoveOtherDevices(configured: DidMdWalletConfig
   const pending = pendingFromSession(session)
   pending.state = randomBase64url(32); pending.codeVerifier = randomBase64url(48); pending.createdAt = new Date().toISOString()
   pending.documentEdit = buildDocumentEdit(session.did, config, session.bisetDidCommDevice, remove)
-  pending.deviceRemoval = { removedKids, requestedAt: new Date().toISOString() }
   return redirectToWallet(client, pending)
 }
 
@@ -1051,20 +1052,5 @@ export async function openDidMdWalletBisetDidCommDevice(): Promise<DidMdBisetDid
   if (!derivedPublic.every((byte, index) => byte === stored.x25519PublicKey[index])) throw new Error('Biset DIDComm private key does not match its Wallet-authorized public key')
   if (stored.xKid !== deviceKid(session.did, derivedPublic)) throw new Error('Biset DIDComm device key identifier is invalid')
   return { did: session.did, xKid: stored.xKid, x25519PrivateKey: privateMaterial.x25519PrivateKey, mediatorDeviceSecret: privateMaterial.mediatorDeviceSecret, mediatorUrl: stored.mediatorUrl, routingKid: stored.routingKid, ...(stored.mediatorOnionUrl ? { mediatorOnionUrl: stored.mediatorOnionUrl } : {}) }
-}
-
-/** The unfinished part of a "remove other devices" this session approved,
- * if any (beginDidMdRemoveOtherDevices). */
-export async function didMdPendingDeviceRemoval(): Promise<{ removedKids: string[]; requestedAt: string } | undefined> {
-  const removal = (await readDidMdDeviceSession())?.deviceRemoval
-  return removal ? { removedKids: [...removal.removedKids], requestedAt: removal.requestedAt } : undefined
-}
-
-/** Clears the marker once boot has finished the removal. */
-export async function completeDidMdDeviceRemoval(): Promise<void> {
-  const session = await readDidMdDeviceSession()
-  if (!session?.deviceRemoval) return
-  const { deviceRemoval: _done, ...completed } = session
-  await saveDidMdDeviceSession(completed)
 }
 

@@ -25,7 +25,7 @@
 //   - the reply-dock height/padding sync (syncDockPosition) -- there is no
 //     resizable dock in this slice, so scroll math needs none of that
 //     geometry.
-import { computeReplyContext, emailToMessageView, groupMessages, latestGroup, processedMessages } from './message/message-view.ts'
+import { computeReplyContext, DIDCOMM_GROUP_THREAD_PREFIX, emailToMessageView, groupMessages, inboxKeyForThread, latestGroup, processedMessages } from './message/message-view.ts'
 import type { MailMessageView, ProcessedMessage, ThreadGroup } from './message/message-view.ts'
 import { avatarStyle, esc, formatTime, linkify, stripQuoted } from './format.ts'
 import type { LocalJmapReadModel } from '../../store/projection/gateway.ts'
@@ -418,8 +418,27 @@ function makePastRow(g: ThreadGroup): HTMLElement {
 // below instead; threadProtocol needs the raw did: prefix, which a
 // human-readable label has already thrown away.
 function participantsOf(msgs: MailMessageView[]): string {
-  const self = new Set([composeConfig?.selfAddress, composeConfig?.selfDid].filter((a): a is string => !!a).map(a => a.toLowerCase()))
+  const self = selfAddresses()
   return [...new Set(msgs.map(m => m.from).filter(Boolean))].filter(a => !self.has(a.toLowerCase())).join(', ')
+}
+
+function selfAddresses(): Set<string> {
+  return new Set([composeConfig?.selfAddress, composeConfig?.selfDid].filter((a): a is string => !!a).map(a => a.toLowerCase()))
+}
+
+/** The members of a group chat other than this identity, as the short names
+ * a list row shows (`c8de, bbb9`) -- what tells two inboxes apart when the
+ * group has no title of its own. Every message of a group carries the
+ * sender in `from` and everyone else in `to_addrs`. */
+export function groupMembersLabel(groups: ThreadGroup[]): string {
+  const self = selfAddresses()
+  const members = new Set<string>()
+  for (const group of groups) {
+    for (const { msg } of group.messages) {
+      for (const address of [msg.from, ...(msg.to_addrs ?? [])]) if (address && !self.has(address.toLowerCase())) members.add(address)
+    }
+  }
+  return [...members].map(address => address.startsWith('did:') ? labelForDid(address) : address).join(', ')
 }
 
 /** participantsOf, but every did:webvh address run through shortWebvhDid --
@@ -459,7 +478,7 @@ function threadProtocol(msgs: MailMessageView[]): Proto {
  * the old isk()'s `contact` field was -- reusing it here restores the
  * original per-inbox scoping without resurrecting the InboxSummary type. */
 export function inboxKeyOf(group: ThreadGroup): string {
-  return participantsOf(group.messages.map(p => p.msg))
+  return inboxKeyForThread(group.messages[0]?.msg.thread_id, participantsOf(group.messages.map(p => p.msg)))
 }
 
 export function render(smooth = false): void {
@@ -533,7 +552,7 @@ export function render(smooth = false): void {
     // host.textContent write, same destroy-then-reappend-by-reference shape
     // as the plain-text branch below, so didBadge/viaBadge's re-prepend
     // further down still works either way.
-    if (msgs[0]?.thread_id.startsWith('didcomm-group:')) renderDidCommGroupMembers($convTo, msgs[0].thread_id.slice('didcomm-group:'.length))
+    if (msgs[0]?.thread_id.startsWith(DIDCOMM_GROUP_THREAD_PREFIX)) renderDidCommGroupMembers($convTo, msgs[0].thread_id.slice(DIDCOMM_GROUP_THREAD_PREFIX.length))
     else $convTo.textContent = displayParticipantsOf(msgs)
     // src.bak's applyConvViaPill prepends #conv-via, then (mail/AP path)
     // prepends #conv-did last so it lands leftmost -- [did, via, address].

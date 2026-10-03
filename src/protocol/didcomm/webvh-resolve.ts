@@ -10,7 +10,7 @@
 // document.
 import { resolve } from '../webvh/resolver.ts'
 import { defaultFetch } from '../net-fetch.ts'
-import { decodeX25519Multikey } from './multikey.ts'
+import { keyAgreementRecipients } from './webvh-route.ts'
 import { didOfKid } from '../ids.ts'
 import { resolveDidWeb } from './did-web.ts'
 
@@ -29,21 +29,26 @@ import { resolveDidWeb } from './did-web.ts'
  * re-issued (any device other than the one that performed the move) would
  * otherwise become permanently unauthenticatable the instant a SIBLING
  * device moves. */
+/** The sender's DID resolved, and does not list this kid as a
+ * keyAgreement key: a device removed from it, or a kid that never was one.
+ * Not a network failure -- retrying cannot change the answer. */
+export class SenderKeyNotPublishedError extends Error {
+  constructor(kid: string) {
+    super(`resolveDidCommSenderKey: ${kid} is not a published keyAgreement entry`)
+    this.name = 'SenderKeyNotPublishedError'
+  }
+}
+
 export async function resolveDidCommSenderKey(senderKid: string, fetchImpl: typeof fetch = defaultFetch()): Promise<Uint8Array> {
   const hash = senderKid.indexOf('#')
   if (hash < 0) throw new Error(`resolveDidCommSenderKey: not a DID URL: ${senderKid}`)
   const did = didOfKid(senderKid)
   const fragment = senderKid.slice(hash)
-  if (did.startsWith('did:web:')) {
-    const doc = await resolveDidWeb(did, fetchImpl)
-    if (!doc) throw new Error(`resolveDidCommSenderKey: sender identity ${did} does not resolve`)
-    const vm = doc.verificationMethod?.find(value => value.id === fragment || value.id === senderKid)
-    if (!vm) throw new Error(`resolveDidCommSenderKey: ${senderKid} is not a published keyAgreement entry`)
-    return decodeX25519Multikey(vm.publicKeyMultibase)
-  }
-  const doc = await resolve(did, undefined, fetchImpl)
+  const doc = did.startsWith('did:web:') ? await resolveDidWeb(did, fetchImpl) : await resolve(did, undefined, fetchImpl)
   if (!doc) throw new Error(`resolveDidCommSenderKey: sender identity ${did} does not resolve`)
-  const vm = doc.verificationMethod.find(v => v.id === fragment || v.id === `${doc.id}${fragment}`)
-  if (!vm) throw new Error(`resolveDidCommSenderKey: ${senderKid} is not a published keyAgreement entry`)
-  return decodeX25519Multikey(vm.publicKeyMultibase)
+  // The device list is `keyAgreement`; a verification method it does not
+  // reference (a removed device's, left behind) authenticates nothing.
+  const recipient = keyAgreementRecipients(doc as Parameters<typeof keyAgreementRecipients>[0]).find(value => value.kid.slice(value.kid.indexOf('#')) === fragment)
+  if (!recipient) throw new SenderKeyNotPublishedError(senderKid)
+  return recipient.publicKey
 }

@@ -22,7 +22,7 @@
 // Live mode ends with the connection (Pickup 3.0), so a reconnect simply
 // repeats all of the above.
 import { fetchMediatorInfo, packMediatorRequest, unpackMediatorMessage, type MediatorInboxClient, type MediatorInfo } from '../../protocol/didcomm/mediator-transport.ts'
-import { inboxStatusOf, mediatorLiveUrl, unpackQueuedMessage, type DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
+import { inboxStatusOf, mediatorLiveUrl, PermanentDeliveryError, unpackQueuedMessage, type DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
 import { DELIVERY, DELIVERY_REQUEST, LIVE_DELIVERY_CHANGE, MESSAGES_RECEIVED, STATUS } from '../../protocol/didcomm/mediator-protocol.ts'
 import { isProblemReport, problemReportError } from '../../protocol/didcomm/problems.ts'
 import { parseJwe, type ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
@@ -37,7 +37,8 @@ export interface MediatorLiveOptions {
   inbox: MediatorInboxClient
   resolveSenderKey: ResolveSenderKey
   /** A throw leaves the message unacknowledged: it stays queued at the
-   * mediator and comes back on the next connection. */
+   * mediator and comes back on the next connection -- except a
+   * PermanentDeliveryError, which acknowledges (drops) it. */
   onMessage(msg: DeliveredMessage): Promise<void> | void
   /** Informational; a reconnect is already scheduled when this fires. */
   onError?(error: unknown): void
@@ -50,7 +51,13 @@ export interface MediatorLiveOptions {
   reconnectDelayMs?: number
 }
 
-export interface MediatorLiveWatch { close(): void }
+export interface MediatorLiveWatch {
+  close(): void
+  /** Handles everything already queued for this inbox, then resolves. What
+   * is left (only copies that failed for a transient reason) stays queued.
+   * Rejects if the connection is down or it takes longer than `timeoutMs`. */
+  drain(timeoutMs?: number): Promise<void>
+}
 
 interface Subscription {
   id: symbol
@@ -67,7 +74,20 @@ interface Subscription {
   /** Copies being handled now -- a backlog batch and a live push can
    * carry the same copy. */
   handling: Set<string>
+  /** Callers of drain() waiting for this inbox's queue to run dry. */
+  drainWaiters: Array<() => void>
+  /** Copies already handled and acknowledged. A live push and a backlog
+   * batch can carry the same copy before the mediator has applied the ack:
+   * it is acknowledged again, never handled twice. Bounded, oldest out. */
+  handled: Set<string>
+  /** A later retry of copies that failed for a transient reason. */
+  retryTimer?: ReturnType<typeof setTimeout>
 }
+
+const HANDLED_MEMORY = 1000
+/** How soon copies that failed for a transient reason (a seed still on its
+ * way, a resolution that failed) are tried again without other traffic. */
+const RETRY_DELAY_MS = 30_000
 
 interface Pool {
   mediatorUrl: string
@@ -102,6 +122,8 @@ export function watchMediatorLive(options: MediatorLiveOptions): MediatorLiveWat
     registered: false,
     queue: Promise.resolve(),
     handling: new Set(),
+    drainWaiters: [],
+    handled: new Set(),
   }
   pool.subscriptions.set(subscription.id, subscription)
   if (pool.socket?.readyState === 1) void enable(pool, subscription)
@@ -111,6 +133,7 @@ export function watchMediatorLive(options: MediatorLiveOptions): MediatorLiveWat
     close() {
       const current = pools.get(mediatorUrl)
       if (!current?.subscriptions.delete(subscription.id)) return
+      if (subscription.retryTimer !== undefined) clearTimeout(subscription.retryTimer)
       if (current.subscriptions.size > 0) {
         if (current.socket?.readyState === 1 && subscription.mediator) {
           send(current, subscription, LIVE_DELIVERY_CHANGE, { recipient_did: subscription.inbox.did, device: subscription.inbox.device, live_delivery: false })
@@ -123,7 +146,36 @@ export function watchMediatorLive(options: MediatorLiveOptions): MediatorLiveWat
       current.socket = undefined
       socket?.close()
     },
+    drain(timeoutMs = 15_000) {
+      const current = pools.get(mediatorUrl)
+      if (!current || current.socket?.readyState !== 1 || !subscription.mediator) return Promise.reject(new Error('mediator live connection is not open'))
+      return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          subscription.drainWaiters = subscription.drainWaiters.filter(waiter => waiter !== done)
+          reject(new Error('timed out handling the queued messages'))
+        }, timeoutMs)
+        const done = () => { clearTimeout(timer); resolve() }
+        subscription.drainWaiters.push(done)
+        requestDelivery(current, subscription)
+      })
+    },
   }
+}
+
+function requestDelivery(pool: Pool, subscription: Subscription): void {
+  subscription.queue = subscription.queue.then(() => send(pool, subscription, DELIVERY_REQUEST, { recipient_did: subscription.inbox.did, device: subscription.inbox.device, limit: DELIVERY_BATCH }))
+}
+
+function remember(subscription: Subscription, ackId: string): void {
+  subscription.handled.add(ackId)
+  if (subscription.handled.size > HANDLED_MEMORY) subscription.handled.delete(subscription.handled.values().next().value!)
+}
+
+/** The queue has run dry (or holds only copies that failed transiently). */
+function drained(subscription: Subscription): void {
+  const waiters = subscription.drainWaiters
+  subscription.drainWaiters = []
+  for (const done of waiters) done()
 }
 
 function connect(pool: Pool): void {
@@ -205,36 +257,57 @@ async function receive(pool: Pool, data: string): Promise<void> {
   if (message.type === STATUS) {
     const status = inboxStatusOf(message.body)
     if (status.missed) subscription.onMissed?.()
-    if (status.messageCount > 0) {
-      subscription.queue = subscription.queue.then(() => send(pool, subscription, DELIVERY_REQUEST, { recipient_did: subscription.inbox.did, device: subscription.inbox.device, limit: DELIVERY_BATCH }))
-    }
+    if (status.messageCount > 0) requestDelivery(pool, subscription)
+    else subscription.queue = subscription.queue.then(() => drained(subscription))
     return
   }
   if (message.type === DELIVERY) {
     const attachments = message.attachments ?? []
-    subscription.queue = subscription.queue.then(() => deliver(pool, subscription, attachments))
+    // An answer to this side's delivery-request carries its thread; a live
+    // push does not.
+    const answered = typeof message.thid === 'string'
+    subscription.queue = subscription.queue.then(() => deliver(pool, subscription, attachments, answered))
   }
 }
 
-async function deliver(pool: Pool, subscription: Subscription, attachments: NonNullable<Awaited<ReturnType<typeof unpackMediatorMessage>>['attachments']>): Promise<void> {
+async function deliver(pool: Pool, subscription: Subscription, attachments: NonNullable<Awaited<ReturnType<typeof unpackMediatorMessage>>['attachments']>, answered: boolean): Promise<void> {
   const acked: string[] = []
   for (const attachment of attachments) {
     const ackId = attachment.id
     if (typeof ackId !== 'string' || subscription.handling.has(ackId)) continue
+    if (subscription.handled.has(ackId)) { acked.push(ackId); continue }
     subscription.handling.add(ackId)
     try {
-      // Undeliverable (cannot be opened): left queued and retried on the
-      // next connection, until the mediator's retention ages it out.
+      // Undefined: it cannot be opened yet (a transient failure) -- left
+      // queued, and retried on the next connection.
       const delivered = await unpackQueuedMessage(attachment.data?.json, ackId, subscription.inbox, subscription.resolveSenderKey)
       if (!delivered) continue
       await subscription.onMessage(delivered)
       acked.push(ackId)
+      remember(subscription, ackId)
     } catch (error) {
-      console.warn(`[didcomm] onMessage failed for ${ackId}, leaving it queued for retry:`, error instanceof Error ? error.message : error)
+      if (error instanceof PermanentDeliveryError) {
+        // Can never be handled: acknowledge it, so it is not redelivered on
+        // every connection until the mediator's retention ends.
+        console.warn(`[didcomm] dropping ${ackId}: ${error.message}`)
+        acked.push(ackId)
+        remember(subscription, ackId)
+      } else {
+        console.warn(`[didcomm] onMessage failed for ${ackId}, leaving it queued for retry:`, error instanceof Error ? error.message : error)
+      }
     } finally {
       subscription.handling.delete(ackId)
     }
   }
-  // The mediator answers with a status; a non-empty one pulls the next batch.
+  // The mediator answers an ack with a status; a non-empty one pulls the
+  // next batch. With nothing acked, what is left can only fail again now --
+  // so try it again later, rather than only on the next traffic.
   if (acked.length) send(pool, subscription, MESSAGES_RECEIVED, { recipient_did: subscription.inbox.did, device: subscription.inbox.device, message_id_list: acked })
+  else if (answered) drained(subscription)
+  if (acked.length < attachments.length && subscription.retryTimer === undefined) {
+    subscription.retryTimer = setTimeout(() => {
+      subscription.retryTimer = undefined
+      if (pools.get(pool.mediatorUrl) === pool && pool.subscriptions.has(subscription.id)) requestDelivery(pool, subscription)
+    }, RETRY_DELAY_MS)
+  }
 }

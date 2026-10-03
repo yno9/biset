@@ -26,10 +26,9 @@ export async function requestMediation(mediator: MediatorInfo, own: DidCommSende
  * Sent from `inbox.did`'s own key -- that is the mediator's proof this
  * device owns the DID. A refusal because the DID already has the
  * mediator's maximum of devices arrives as a DidCommProblemError with code
- * MAX_DEVICES_PROBLEM. `device` defaults to the client's own inbox; any
- * device of the DID may remove a sibling's inbox by naming its label. */
-export async function updateRecipient(mediator: MediatorInfo, inbox: MediatorInboxClient, action: 'add' | 'remove', fetchImpl: typeof fetch = defaultFetch(), device = inbox.device): Promise<void> {
-  const reply = await sendAndUnpack(mediator, inbox, RECIPIENT_UPDATE, { device, updates: [{ recipient_did: inbox.did, action }] }, fetchImpl)
+ * MAX_DEVICES_PROBLEM. */
+export async function updateRecipient(mediator: MediatorInfo, inbox: MediatorInboxClient, action: 'add' | 'remove', fetchImpl: typeof fetch = defaultFetch()): Promise<void> {
+  const reply = await sendAndUnpack(mediator, inbox, RECIPIENT_UPDATE, { device: inbox.device, updates: [{ recipient_did: inbox.did, action }] }, fetchImpl)
   if (reply.type !== RECIPIENT_UPDATE_RESPONSE) throw new Error(`updateRecipient: unexpected reply type ${reply.type}`)
   const updated = (reply.body as { updated?: Array<{ recipient_did: string; result: string }> }).updated ?? []
   const entry = updated.find(u => u.recipient_did === inbox.did)
@@ -40,11 +39,10 @@ export async function updateRecipient(mediator: MediatorInfo, inbox: MediatorInb
   }
 }
 
-/** One device inbox the mediator holds for the sender's own DID, with that
- * inbox's last pickup -- what a user needs to see to decide which device to
- * remove when the limit is reached. */
+/** One device inbox the mediator holds for the sender's own DID: when it
+ * was last used -- what a user needs to see when the device limit is
+ * reached. (Which device it is the mediator does not say; see server.ts.) */
 export interface RecipientEntry {
-  device: string
   /** Epoch ms of that inbox's last pickup (or its registration). */
   lastSeen: number
 }
@@ -54,8 +52,8 @@ export interface RecipientEntry {
 export async function queryRecipients(mediator: MediatorInfo, own: DidCommSender, fetchImpl: typeof fetch = defaultFetch()): Promise<RecipientEntry[]> {
   const reply = await sendAndUnpack(mediator, own, RECIPIENT_QUERY, {}, fetchImpl)
   if (reply.type !== RECIPIENT) throw new Error(`queryRecipients: unexpected reply type ${reply.type}`)
-  const dids = (reply.body as { dids?: Array<{ device?: unknown; last_seen?: unknown }> }).dids ?? []
-  return dids.flatMap(entry => typeof entry.device === 'string' && typeof entry.last_seen === 'number' ? [{ device: entry.device, lastSeen: entry.last_seen }] : [])
+  const dids = (reply.body as { dids?: Array<{ last_seen?: unknown }> }).dids ?? []
+  return dids.flatMap(entry => typeof entry.last_seen === 'number' ? [{ lastSeen: entry.last_seen }] : [])
 }
 
 /** Hands this DID's did:webvh log to the mediator (`POST /webvh-log`), which

@@ -2,7 +2,8 @@ import type { DidCommPlaintext } from '../../../protocol/didcomm/message.ts'
 import type { DeliveredMessage } from '../../../protocol/didcomm/mediator-pickup.ts'
 import { registerWithMediator } from '../../didcomm/mediator-sync.ts'
 import { mediatorInbox } from '../../../protocol/didcomm/mediator-device.ts'
-import { requireRelationshipSeed, type RelationshipSeedSource } from '../../didcomm/relationship-seed-bootstrap.ts'
+import type { RelationshipSeedAuthority } from '../../didcomm/relationship-seed-bootstrap.ts'
+import { PermanentDeliveryError } from '../../../protocol/didcomm/mediator-pickup.ts'
 import { sameMediatorUrl } from '../../didcomm/mediator-endpoints.ts'
 import { deriveRelationshipPeerIdentity } from '../../../protocol/didcomm/peer.ts'
 import {
@@ -23,7 +24,6 @@ export type RelationshipWatchStarter = (xKid: string, xPriv: Uint8Array, did: st
 
 interface RelationshipContactReader {
   currentFor(counterpartyDid: string): Promise<ContactKeyV1 | null>
-  forOwnKid(ownRelationshipKid: string): Promise<ContactKeyV1 | null>
 }
 
 interface RelationshipContactSink {
@@ -32,6 +32,8 @@ interface RelationshipContactSink {
 
 interface PendingWalletRelationship {
   result: Extract<RelationshipInitiationResult, { ok: true }>
+  /** The seed the initiating did:peer was derived from. */
+  seedId: string
   promise: Promise<ContactKeyV1>
   resolve: (contact: ContactKeyV1) => void
   /** A caller may stop waiting without abandoning the registered private
@@ -44,10 +46,15 @@ interface PendingWalletRelationship {
 export interface WalletRelationshipManagerOptions {
   identityId: string
   frontDoor: { xKid: string; x25519PrivateKey: Uint8Array }
-  /** The Vault's relationship seed (store/vault/relationship-seed.ts); a
-   * device that has not received it yet cannot start or accept a
-   * relationship -- RelationshipSeedPendingError, retried later. */
-  relationshipSeed: RelationshipSeedSource
+  /** The Vault's relationship seed, as the DID log allows this device to
+   * use it (relationship-seed-bootstrap.ts): without a usable one it can
+   * neither start, accept, nor send on a relationship -- the error is
+   * retried later (or, once this device was removed, final). */
+  relationshipSeed: RelationshipSeedAuthority
+  /** Handles everything already queued in this device's inbox for one of
+   * its own relationship kids (mediator-live.ts's drain), before a
+   * counterparty's move to a new did:peer makes its old kid unacceptable. */
+  drainInbox?: (ownRelationshipKid: string) => Promise<void>
   /** Keys this device's mediator inbox labels (mediator-device.ts). */
   mediatorDeviceSecret: Uint8Array
   reader: RelationshipContactReader
@@ -77,7 +84,6 @@ export interface WalletRelationshipManager {
  * a Vault-encrypted ContactKeyV1 once ACCEPT proves the remote peer route.
  */
 export function createWalletRelationshipManager(options: WalletRelationshipManagerOptions): WalletRelationshipManager {
-  const pendingByOwnKid = new Map<string, PendingWalletRelationship>()
   const pendingByCounterparty = new Map<string, PendingWalletRelationship>()
   // Serializes concurrent ensureContact() calls for the SAME counterparty.
   // Without this, two callers racing (e.g. two outbox items to the same
@@ -93,13 +99,35 @@ export function createWalletRelationshipManager(options: WalletRelationshipManag
   const timeoutMs = options.timeoutMs ?? 60_000
   const afterContactStored = options.afterContactStored ?? (async () => {})
 
+  /** The relationship to send on. One derived from an older seed has not
+   * moved since a device removal: it is moved first (a front-door INIT,
+   * which only a device still in the DID document can send), and nothing is
+   * sent on it until the counterparty's ACCEPT confirms the move -- the
+   * counterparty will not accept the old did:peer once it has seen it. */
   async function ensureContactOnce(counterpartyDid: string): Promise<ContactKeyV1> {
+    const usable = await options.relationshipSeed.require()
     const stored = await options.reader.currentFor(counterpartyDid)
-    if (stored) return stored
+    if (stored && stored.seedId === usable.seedId) return stored
 
     let pending = pendingByCounterparty.get(counterpartyDid)
+    if (pending && pending.seedId !== usable.seedId) pending = undefined
+    // An INIT unanswered for longer than a send waits was lost or answered
+    // in a way this side had to drop (say, by a counterparty still running
+    // an older version): send it again. The did:peer derives the same, so a
+    // repeat is harmless; the waiters of the first attempt keep waiting.
+    if (pending && Date.now() - pending.startedAt > timeoutMs) {
+      const again = await initiate(counterpartyDid, usable.seed, {
+        fromKid: options.frontDoor.xKid,
+        x25519PrivateKey: options.frontDoor.x25519PrivateKey,
+        mediatorDeviceSecret: options.mediatorDeviceSecret,
+      })
+      if (!again.ok) throw new Error(again.error)
+      pending.result = again
+      pending.startedAt = Date.now()
+      options.startWatch(again.pending.peer.xKid, again.pending.peer.xPriv, again.pending.peer.did, again.pending.mediatorUrl)
+    }
     if (!pending) {
-      const initiated = await initiate(counterpartyDid, await requireRelationshipSeed(options.relationshipSeed), {
+      const initiated = await initiate(counterpartyDid, usable.seed, {
         fromKid: options.frontDoor.xKid,
         x25519PrivateKey: options.frontDoor.x25519PrivateKey,
         mediatorDeviceSecret: options.mediatorDeviceSecret,
@@ -107,8 +135,7 @@ export function createWalletRelationshipManager(options: WalletRelationshipManag
       if (!initiated.ok) throw new Error(initiated.error)
       let resolve!: (contact: ContactKeyV1) => void
       const promise = new Promise<ContactKeyV1>(done => { resolve = done })
-      pending = { result: initiated, promise, resolve, startedAt: Date.now() }
-      pendingByOwnKid.set(initiated.pending.peer.xKid, pending)
+      pending = { result: initiated, seedId: usable.seedId, promise, resolve, startedAt: Date.now() }
       pendingByCounterparty.set(counterpartyDid, pending)
       options.startWatch(
         initiated.pending.peer.xKid,
@@ -144,25 +171,30 @@ export function createWalletRelationshipManager(options: WalletRelationshipManag
       return promise
     },
 
-    async handleMessage(message, recipientKid, mediatorUrl): Promise<void> {
+    async handleMessage(message, _recipientKid, mediatorUrl): Promise<void> {
       const plaintext = message.plaintext as DidCommPlaintext
       if (plaintext.type === RELATIONSHIP_INIT) {
-        await handleRelationshipInit(message, mediatorUrl, options.identityId, options.relationshipSeed, options.mediatorDeviceSecret, options.reader, options.sink, options.startWatch, afterContactStored, options.mediatorAliases ?? [])
+        await handleRelationshipInit(message, mediatorUrl, options.identityId, options.relationshipSeed, options.mediatorDeviceSecret, options.frontDoor, options.reader, options.sink, options.startWatch, afterContactStored, options.mediatorAliases ?? [], options.drainInbox)
         return
       }
       if (plaintext.type !== RELATIONSHIP_ACCEPT) return
 
+      // Over the front door, like the INIT: from a key in the
+      // counterparty's DID document, so only one of its current devices --
+      // not whoever learned the INIT's did:peer -- can answer it.
       const body = relationshipBodyOf(plaintext)
-      if (!body) throw new TypeError('relationship message body is invalid')
-      const route = relationshipMediatorService(body.relationshipKid)
-      if (!sameMediatorUrl(route.url, mediatorUrl, options.mediatorAliases ?? [])) throw new TypeError('relationship mediator does not match the delivery route')
-      if (body.relationshipKid !== message.senderKid) throw new TypeError('relationship accept sender does not match its relationship kid')
+      if (!body) throw new PermanentDeliveryError('relationship message body is invalid')
+      if (message.senderKid.startsWith('did:peer:2.')) throw new PermanentDeliveryError('relationship accept must be authenticated by a public front-door kid')
+      try { relationshipMediatorService(body.relationshipKid) } catch { throw new PermanentDeliveryError('relationship accept names an invalid did:peer') }
+      const counterpartyDid = didOfKid(message.senderKid)
 
-      const pending = pendingByOwnKid.get(recipientKid)
+      const pending = pendingByCounterparty.get(counterpartyDid)
       if (!pending) {
-        const existing = await options.reader.forOwnKid(recipientKid)
+        const existing = await options.reader.currentFor(counterpartyDid)
         if (existing?.counterpartyRelationshipKid === body.relationshipKid) return
-        throw new TypeError('relationship accept has no pending initiation')
+        // Its initiation was lost (a reload before the ACCEPT): the next
+        // send initiates again and gets a fresh ACCEPT.
+        throw new PermanentDeliveryError('relationship accept has no pending initiation')
       }
       // Both members of a newly-created group receive the same roster and
       // may initiate to each other at the same time. In that crossing-INIT
@@ -176,11 +208,14 @@ export function createWalletRelationshipManager(options: WalletRelationshipManag
         existing?.ownRelationshipKid === pending.result.pending.peer.xKid &&
         existing.counterpartyRelationshipKid === body.relationshipKid
       ) {
-        pendingByOwnKid.delete(recipientKid)
         pendingByCounterparty.delete(pending.result.pending.counterpartyDid)
         pending.resolve(existing)
         return
       }
+      // A move: the counterparty answered from a did:peer it had not used
+      // with us before, so its old kid stops being accepted -- take what
+      // it already sent from there first.
+      if (existing && existing.counterpartyRelationshipKid !== body.relationshipKid) await options.drainInbox?.(existing.ownRelationshipKid)
       const contact: ContactKeyV1 = {
         version: 1,
         kind: 'contact-key',
@@ -192,53 +227,66 @@ export function createWalletRelationshipManager(options: WalletRelationshipManag
         counterpartyRelationshipKid: body.relationshipKid,
         counterpartyPublicKey: body.publicKey,
         createdAt: now().toISOString(),
+        seedId: pending.seedId,
+        ...(existing ? { supersedes: { ownRelationshipKid: existing.ownRelationshipKid, counterpartyRelationshipKid: existing.counterpartyRelationshipKid } } : {}),
       }
       await options.sink.store(contact)
       await afterContactStored()
-      pendingByOwnKid.delete(recipientKid)
       pendingByCounterparty.delete(pending.result.pending.counterpartyDid)
       pending.resolve(contact)
     },
   }
 }
 
+/** A counterparty's front-door INIT: the one way a relationship begins,
+ * and the one way it moves to new did:peers (after either side removed a
+ * device). Only a key in the sender's DID document can send it, which is
+ * what a removed device -- holding every old relationship key -- lacks. */
 async function handleRelationshipInit(
-  message: DeliveredMessage, mediatorUrl: string, identityId: string, relationshipSeed: RelationshipSeedSource, mediatorDeviceSecret: Uint8Array,
+  message: DeliveredMessage, mediatorUrl: string, identityId: string, relationshipSeed: RelationshipSeedAuthority, mediatorDeviceSecret: Uint8Array,
+  frontDoor: { xKid: string; x25519PrivateKey: Uint8Array },
   reader: RelationshipContactReader, sink: RelationshipContactSink,
   startWatch: RelationshipWatchStarter, afterContactStored: () => Promise<unknown> = async () => {},
   mediatorAliases: readonly string[] = [],
+  drainInbox?: (ownRelationshipKid: string) => Promise<void>,
 ): Promise<void> {
   const plaintext = message.plaintext as DidCommPlaintext
   if (plaintext.type !== RELATIONSHIP_INIT) return
   const body = relationshipBodyOf(plaintext)
-  if (!body) throw new TypeError('relationship message body is invalid')
+  if (!body) throw new PermanentDeliveryError('relationship message body is invalid')
   const route = relationshipMediatorService(body.relationshipKid)
-  if (!sameMediatorUrl(route.url, mediatorUrl, mediatorAliases)) throw new TypeError('relationship mediator does not match the delivery route')
-  if (message.senderKid.startsWith('did:peer:2.')) throw new TypeError('relationship init must be authenticated by a public front-door kid')
+  if (!sameMediatorUrl(route.url, mediatorUrl, mediatorAliases)) throw new PermanentDeliveryError('relationship mediator does not match the delivery route')
+  if (message.senderKid.startsWith('did:peer:2.')) throw new PermanentDeliveryError('relationship init must be authenticated by a public front-door kid')
   const counterpartyDid = didOfKid(message.senderKid)
+  const usable = await relationshipSeed.require()
   let contact = await reader.currentFor(counterpartyDid)
-  if (!contact || contact.counterpartyRelationshipKid !== body.relationshipKid) {
+  if (!contact || contact.counterpartyRelationshipKid !== body.relationshipKid || contact.seedId !== usable.seedId) {
+    // The counterparty moved: what it already sent from its old kid is
+    // handled while that kid is still its own, before the move makes it
+    // unacceptable (a removed device of the counterparty still holds it).
+    if (contact && contact.counterpartyRelationshipKid !== body.relationshipKid) await drainInbox?.(contact.ownRelationshipKid)
     // Deriving from the identity-wide relationship seed (not minting a
     // random identity, and not the device-local front-door key) means
     // re-receiving the same counterparty's INIT after this device's own
     // reload, OR a DIFFERENT device of this same Wallet identity receiving
-    // it first, reconstructs the identical did:peer rather than leaving a
-    // stale one enrolled at the mediator forever, or the two devices
-    // converging on two different, non-superseding ContactKeyV1 records
+    // it first, reconstructs the identical did:peer
     // (peer.ts's `deriveRelationshipPeerIdentity`).
-    const peer = deriveRelationshipPeerIdentity(await requireRelationshipSeed(relationshipSeed), counterpartyDid, route.routingKid)
+    const peer = deriveRelationshipPeerIdentity(usable.seed, counterpartyDid, route.routingKid)
     await registerWithMediator(route.url, mediatorInbox({ did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv }, mediatorDeviceSecret))
     const next: ContactKeyV1 = {
       version: 1, kind: 'contact-key', identityId, counterpartyDid,
       ownRelationshipKid: peer.xKid, ownX25519PrivateKey: peer.xPriv, ownEd25519PrivateKey: peer.edPriv,
       counterpartyRelationshipKid: body.relationshipKid, counterpartyPublicKey: body.publicKey,
-      createdAt: new Date().toISOString(), ...(contact ? { supersedes: { ownRelationshipKid: contact.ownRelationshipKid, counterpartyRelationshipKid: contact.counterpartyRelationshipKid } } : {}),
+      createdAt: new Date().toISOString(), seedId: usable.seedId,
+      ...(contact ? { supersedes: { ownRelationshipKid: contact.ownRelationshipKid, counterpartyRelationshipKid: contact.counterpartyRelationshipKid } } : {}),
     }
-    await sink.store(next)
-    contact = next
-    await afterContactStored()
+    if (!contact || next.ownRelationshipKid !== contact.ownRelationshipKid || next.counterpartyRelationshipKid !== contact.counterpartyRelationshipKid) {
+      await sink.store(next)
+      contact = next
+      await afterContactStored()
+    }
     startWatch(peer.xKid, peer.xPriv, peer.did, route.url)
   }
-  const accepted = await sendRelationshipAccept(contact)
+  const accepted = await sendRelationshipAccept(contact, { fromKid: frontDoor.xKid, x25519PrivateKey: frontDoor.x25519PrivateKey })
   if (!accepted.ok) throw new Error(accepted.error)
 }

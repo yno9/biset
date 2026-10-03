@@ -11,7 +11,7 @@
 // message's local echo is exactly the same message.add shape mail's own
 // sendReply already commits).
 import { didCommPost, packAuthcrypt, type DidCommJWE } from '../../protocol/didcomm/crypto.ts'
-import { PING, PING_RESPONSE, isPing, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
+import { PING_RESPONSE, isPing, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
 import { buildPlaintext, type DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { BASIC_MESSAGE } from './basicmessage.ts'
 import { wrapForward } from '../../protocol/didcomm/forward-wrap.ts'
@@ -20,6 +20,7 @@ import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { registerWithMediator } from './mediator-sync.ts'
 import { mediatorInbox } from '../../protocol/didcomm/mediator-device.ts'
 import {
+  RELATIONSHIP_ACCEPT,
   RELATIONSHIP_INIT,
   relationshipBodyToWire,
   relationshipMediatorService,
@@ -100,11 +101,15 @@ export async function sendRelationshipMessage(
   }, fetchImpl, message ? { id: message.id, createdTime: Math.floor(Date.parse(message.sentAt) / 1000) } : undefined)
 }
 
-export async function sendRelationshipAccept(contactKey: ContactKeyV1, fetchImpl: typeof fetch = defaultFetch()): Promise<DidCommSendResult> {
-  return sendPrivateRelationshipMessage(contactKey, 'https://biset.md/relationship/1.0/accept', relationshipBodyToWire({
+/** The answer to a counterparty's INIT: this side's relationship did:peer,
+ * sent over the front door like the INIT itself, so the counterparty knows
+ * it came from a device in this identity's DID document -- not from anyone
+ * who merely saw the INIT's did:peer (its mediator, say) and answered first. */
+export async function sendRelationshipAccept(contactKey: ContactKeyV1, opts: SendDidCommMessageOptions): Promise<DidCommSendResult> {
+  return sendFrontDoorMessage(contactKey.counterpartyDid, RELATIONSHIP_ACCEPT, relationshipBodyToWire({
     relationshipKid: contactKey.ownRelationshipKid,
     publicKey: x25519.getPublicKey(contactKey.ownX25519PrivateKey),
-  }), fetchImpl)
+  }), opts)
 }
 
 /** DIDComm group chat (group-chat.ts): both control/content types ride the
@@ -125,14 +130,6 @@ export async function sendGroupChatMessage(
   message?: { id: string; sentAt: string },
 ): Promise<DidCommSendResult> {
   return sendPrivateRelationshipMessage(contactKey, GROUP_MESSAGE, body, fetchImpl, message ? { id: message.id, createdTime: Math.floor(Date.parse(message.sentAt) / 1000) } : undefined)
-}
-
-/** Tells the counterparty about this side's rotated relationship DID right
- * away: a Trust Ping from the new DID, carrying `from_prior` like every
- * message from it does. */
-export async function sendRelationshipRotationNotice(contactKey: ContactKeyV1, fetchImpl: typeof fetch = defaultFetch()): Promise<DidCommSendResult> {
-  if (!contactKey.fromPrior) throw new TypeError('relationship has not rotated')
-  return sendPrivateRelationshipMessage(contactKey, PING, { response_requested: false }, fetchImpl)
 }
 
 /** Trust Ping 2.0: answers a received ping that asked for a response
@@ -167,9 +164,7 @@ async function sendPrivateRelationshipMessage(contactKey: ContactKeyV1, type: st
   }
   const ownDid = contactKey.ownRelationshipKid.split('#', 1)[0]!
   const recipientDid = contactKey.counterpartyRelationshipKid.split('#', 1)[0]!
-  // A side that rotated its relationship DID proves the link to the old one
-  // on every message (DIDComm v2.1 DID Rotation, from-prior.ts).
-  const plaintext = buildPlaintext(type, body, ownDid, recipientDid, { ...message, ...(contactKey.fromPrior ? { fromPrior: contactKey.fromPrior } : {}) })
+  const plaintext = buildPlaintext(type, body, ownDid, recipientDid, { ...message })
   const inner = packAuthcrypt(
     new TextEncoder().encode(JSON.stringify(plaintext)),
     { kid: contactKey.ownRelationshipKid, privateKey: contactKey.ownX25519PrivateKey },

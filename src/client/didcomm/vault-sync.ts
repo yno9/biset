@@ -21,6 +21,8 @@ import { verifyVaultEvent } from '../store/vault/events.ts'
 import { verifyVaultObjectIntegrity } from '../store/vault/objects.ts'
 import type { IncomingVaultRecords, IncomingVaultRecordsResult, VaultEventRecord, VaultObjectRecord, VaultSegmentKey, VaultSyncRecordReader } from '../store/vault/store.ts'
 import { sendFrontDoorMessage } from './front-door-send.ts'
+import { freshFetch } from '../identity/webvh/log-io.ts'
+import { defaultFetch } from '../../protocol/net-fetch.ts'
 
 /** The most one Vault Sync message carries, from the mediator's disclosed
  * `max_receive_bytes` (Discover Features). A pack grows about 3.2x on the
@@ -49,7 +51,8 @@ export interface VaultSyncApplyResult extends IncomingVaultRecordsResult { skipp
 
 /** This identity's device keys, as its DID document lists them right now. */
 export async function resolveOwnDeviceKids(identityDid: string): Promise<string[]> {
-  const document = await resolveByDomain(parseWebvhDid(identityDid).domain, undefined, { cache: 'no-store' })
+  // Past the host's CDN too (`freshFetch`): the device list shown to the user and the recipients of a sync must not lag a removal by the CDN's 30 s.
+  const document = await resolveByDomain(parseWebvhDid(identityDid).domain, undefined, undefined, freshFetch())
   if (!document || document.id !== identityDid) throw new Error('this identity\'s DID does not resolve')
   return keyAgreementRecipients(document).map(recipient => recipient.kid)
 }
@@ -60,7 +63,11 @@ export function walletVaultSyncTransport(own: DidCommSender, fetchImpl?: typeof 
   return { async send(message) {
     let error: unknown
     for (let attempt = 0; attempt < 6; attempt++) {
-      const sent = await sendFrontDoorMessage(own.did, message.type, message.body, { fromKid: own.xKid, x25519PrivateKey: own.xPriv, ...(fetchImpl ? { fetch: fetchImpl } : {}) })
+      // Its own DID read past the host's CDN: a device that joined moments
+      // ago is in the log but not yet in a cached copy, and every sync until
+      // the cache expires -- its own first state request included -- would be
+      // encrypted to the other devices only (found live 2026-10-03).
+      const sent = await sendFrontDoorMessage(own.did, message.type, message.body, { fromKid: own.xKid, x25519PrivateKey: own.xPriv, fetch: freshFetch(fetchImpl ?? defaultFetch()) })
       if (sent.ok) return
       error = new Error(sent.error)
       if (attempt < 5) await delay(250 * 2 ** attempt)
