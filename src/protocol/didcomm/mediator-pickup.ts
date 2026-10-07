@@ -3,7 +3,7 @@
 // and unpacks each queued message. Ported from
 // src.bak/did/didcomm/pickup.ts, trimmed of the sign-then-encrypt unwrap
 // (signature.ts is out of scope for this phase -- ARC.md's design doc).
-import { unpackAuthcrypt, unpackAnoncrypt, protectedHeaderOf, parseJwe, type DidCommJWE, type ResolveSenderKey } from './crypto.ts'
+import { unpackAuthcrypt, unpackAnoncrypt, protectedHeaderOf, parseJwe, b64urlToBytes, type DidCommJWE, type ResolveSenderKey } from './crypto.ts'
 import { sendAndUnpack, type DidCommSender, type MediatorInboxClient, type MediatorInfo } from './mediator-transport.ts'
 import { defaultFetch } from '../net-fetch.ts'
 import { addressedTo, assertFromMatchesSender } from './message.ts'
@@ -59,6 +59,17 @@ export class PermanentDeliveryError extends Error {
     super(message)
     this.name = 'PermanentDeliveryError'
   }
+}
+
+/** The encrypted message a Pickup 3.0 `delivery` attachment carries: the
+ * spec's `data.base64` (the message, base64url-encoded), or -- since a
+ * DIDComm attachment may embed JSON directly, and some mediators do -- `data.json`. */
+export function queuedMessageOf(attachment: { data?: { base64?: unknown; json?: unknown } }): unknown {
+  const data = attachment.data
+  if (typeof data?.base64 === 'string') {
+    try { return JSON.parse(new TextDecoder().decode(b64urlToBytes(data.base64))) } catch { throw new Error('queued attachment is not base64url-encoded JSON') }
+  }
+  return data?.json
 }
 
 /** Unwraps ONE queued, still-packed JWE into a DeliveredMessage -- shared by
@@ -129,7 +140,7 @@ export async function pickupDeliver(
   const out: DeliveredMessage[] = []
   for (const att of attachments) {
     try {
-      const delivered = await unpackQueuedMessage(att.data.json, att.id, inbox, resolveSenderKey)
+      const delivered = await unpackQueuedMessage(queuedMessageOf(att), att.id, inbox, resolveSenderKey)
       if (delivered) out.push(delivered)
     } catch (error) {
       console.warn(`[didcomm] skipping an undeliverable queued message (${att.id}):`, error instanceof Error ? error.message : error)

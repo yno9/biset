@@ -67,7 +67,7 @@ export interface AccountPageConfig {
    * belongs in the UI. */
   vault?: VaultCardStatus
   /** Removes every other device from the DID document (one Wallet
-   * approval), then moves every relationship to a fresh did:peer. */
+   * approval). */
   onRemoveOtherDevices?(): Promise<void>
   onExportMessages?(): Promise<void>
   onImportMessages?(): Promise<void>

@@ -1,8 +1,7 @@
 import type { LocalJmapReadModel } from '../../store/projection/gateway.ts'
 import type { VaultBackedLocalJmapMutationSink } from '../../store/projection/vault-mutation-sink.ts'
-import { sendGroupChatMessage, sendRelationshipMessage } from '../../didcomm/send-message.ts'
+import { sendDidCommMessage } from '../../didcomm/send-message.ts'
 import { parseDidCommGroupAddress } from '../../didcomm/group-chat.ts'
-import type { ContactKeyV1 } from '../../store/vault/contact-key.ts'
 import type { DidCommTransportOutboxRecord } from '../../store/vault/store.ts'
 
 interface WalletDidCommOutboxStore {
@@ -16,29 +15,43 @@ export interface WalletDidCommOutboxOptions {
   store: WalletDidCommOutboxStore
   readModel: Pick<LocalJmapReadModel, 'snapshot' | 'download'>
   mutationSink: Pick<VaultBackedLocalJmapMutationSink, 'commitIntents'>
-  ensureContact(toDid: string): Promise<ContactKeyV1>
-  send?: (contact: ContactKeyV1, content: string, subject: string | undefined, message: { id: string; sentAt: string }, threadId: string) => Promise<{ ok: boolean; error?: string }>
+  /** This device's key in the identity's DID document: every message goes
+   * out from it, to the recipient's public DID. */
+  frontDoor: { fromKid: string; x25519PrivateKey: Uint8Array }
+  send?: (toDid: string, content: string, message: OutboundChatMessage) => Promise<{ ok: boolean; error?: string }>
   onDelivered?: () => void
   onError(error: unknown, item: DidCommTransportOutboxRecord): void
 }
 
+/** What a queued row sends: the message as it was written, so a retry
+ * carries the same DIDComm id and time. A group message also names its
+ * conversation (`thid`) and every participant (`audience`). */
+interface OutboundChatMessage {
+  id: string
+  sentAt: string
+  subject?: string
+  thid?: string
+  audience?: string[]
+}
+
 export interface WalletDidCommOutbox {
-  /** With a recipient, flush only that recipient's durable rows. Group
-   * creation uses this after its corresponding invite has been accepted so
-   * another member's content can never overtake their invite. */
+  /** With a recipient, flush only that recipient's durable rows. */
   flush(toDid?: string): Promise<void>
 }
 
 /**
- * Retries locally durable 1:1 DIDComm intents. It never removes a row until
- * the authenticated private send succeeds and its local sent-state mutation
- * is durable; a tab close or network failure therefore resumes with the
- * original DIDComm message id on the next boot or retry tick.
+ * Retries locally durable DIDComm chat intents, one row per recipient. It
+ * never removes a row until the send succeeds and its local sent-state
+ * mutation is durable; a tab close or network failure therefore resumes with
+ * the original DIDComm message id on the next boot or retry tick.
  */
 export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): WalletDidCommOutbox {
-  const send = options.send ?? ((contact, content, subject, message, threadId) => threadId.startsWith('didcomm-group:')
-    ? sendGroupChatMessage(contact, { groupId: parseDidCommGroupAddress(threadId), content, ...(subject ? { subject } : {}) }, undefined, message)
-    : sendRelationshipMessage(contact, content, subject, undefined, message))
+  const send = options.send ?? ((toDid, content, message) => sendDidCommMessage(toDid, content, {
+    ...options.frontDoor, id: message.id, sentAt: message.sentAt,
+    ...(message.subject ? { subject: message.subject } : {}),
+    ...(message.thid ? { thid: message.thid } : {}),
+    ...(message.audience ? { audience: message.audience } : {}),
+  }))
   const inFlight = new Set<string>()
 
   return {
@@ -50,8 +63,7 @@ export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): 
         if (inFlight.has(key)) return
         inFlight.add(key)
         try {
-          // One row stuck in a long relationship wait or mediator request
-          // must not delay later rows. This was found live when the former
+          // One row stuck in a slow mediator request must not delay later rows. This was found live when the former
           // process-wide `flushing` flag stayed set behind one stalled send.
           const snapshot = await options.readModel.snapshot()
           const email = snapshot.emails.find(candidate => candidate.id === item.emailId)
@@ -62,11 +74,15 @@ export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): 
           }
           await options.store.noteDidCommOutboxAttempt(options.identityId, item.outboundEventId, item.toDid, new Date().toISOString())
           try {
-            const metadata = email ?? await recoverMessageMetadata(item, options.readModel)
+            const metadata = email ? { threadId: email.threadId, subject: email.subject, sentAt: email.sentAt, to: email.to?.map(address => address.email).filter((value): value is string => typeof value === 'string') } : await recoverMessageMetadata(item, options.readModel)
             if (!metadata) throw new Error(`local message ${item.emailId} is missing its metadata object`)
-            const contact = await options.ensureContact(item.toDid)
             const content = new TextDecoder().decode(await options.readModel.download(blobId))
-            const sent = await send(contact, content, metadata.subject, { id: item.messageId, sentAt: metadata.sentAt ?? item.createdAt }, metadata.threadId)
+            const group = metadata.threadId.startsWith('didcomm-group:')
+            const sent = await send(item.toDid, content, {
+              id: item.messageId, sentAt: metadata.sentAt ?? item.createdAt,
+              ...(metadata.subject ? { subject: metadata.subject } : {}),
+              ...(group ? { thid: parseDidCommGroupAddress(metadata.threadId), audience: metadata.to ?? [item.toDid] } : {}),
+            })
             if (!sent.ok) throw new Error(sent.error ?? 'DIDComm send failed')
 
             const latest = await options.readModel.snapshot()
@@ -94,8 +110,8 @@ export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): 
 async function recoverMessageMetadata(
   item: DidCommTransportOutboxRecord,
   readModel: Pick<LocalJmapReadModel, 'download'>,
-): Promise<{ threadId: string; subject?: string; sentAt?: string } | null> {
-  if (item.threadId) return { threadId: item.threadId, ...(item.subject ? { subject: item.subject } : {}), ...(item.sentAt ? { sentAt: item.sentAt } : {}) }
+): Promise<{ threadId: string; subject?: string; sentAt?: string; to?: string[] } | null> {
+  if (item.threadId && !item.threadId.startsWith('didcomm-group:')) return { threadId: item.threadId, ...(item.subject ? { subject: item.subject } : {}), ...(item.sentAt ? { sentAt: item.sentAt } : {}) }
   if (!item.metadataBlobId) return null
   let decoded: unknown
   try { decoded = JSON.parse(new TextDecoder().decode(await readModel.download(item.metadataBlobId))) } catch { return null }
@@ -108,5 +124,6 @@ async function recoverMessageMetadata(
   if (value.id !== item.emailId || typeof value.threadId !== 'string' || !value.threadId || (item.blobId && value.blobId !== item.blobId)) return null
   if (value.subject !== undefined && typeof value.subject !== 'string') return null
   if (value.sentAt !== undefined && typeof value.sentAt !== 'string') return null
-  return { threadId: value.threadId, ...(typeof value.subject === 'string' ? { subject: value.subject } : {}), ...(typeof value.sentAt === 'string' ? { sentAt: value.sentAt } : {}) }
+  const to = Array.isArray(value.to) ? value.to.map(address => (address as { email?: unknown })?.email).filter((email): email is string => typeof email === 'string') : undefined
+  return { threadId: value.threadId, ...(typeof value.subject === 'string' ? { subject: value.subject } : {}), ...(typeof value.sentAt === 'string' ? { sentAt: value.sentAt } : {}), ...(to?.length ? { to } : {}) }
 }

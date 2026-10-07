@@ -47,10 +47,10 @@ export interface ReplySendInput {
   references?: string[]
 }
 
-/** The read-only member strip a DIDComm group chat thread needs
- * (didcomm/group-chat-store.ts's roster) -- no `invite` counterpart:
- * membership changes after creation are out of scope for v1
- * (group-chat.ts's own header). */
+/** The read-only member strip a DIDComm group chat thread needs: its
+ * participants and name, as its latest message has them (group-chat.ts's
+ * `groupConversation`). Changing who is in it is replying to a different set
+ * of people, like email. */
 interface DidCommGroupUiHooks {
   membersOf(groupId: string): Promise<string[]>
   groupName(groupId: string): Promise<string | undefined>
@@ -66,8 +66,7 @@ export interface ComposeConfig {
   sendReply(input: ReplySendInput): Promise<void>
   onError?(message: string): void
   /** DIDComm group chat's own read-only counterpart -- always present once
-   * DIDComm itself is enabled (group-chat-store.ts has no server dependency
-   * to gate on). */
+   * DIDComm itself is enabled. */
   didcommGroup?: DidCommGroupUiHooks
 }
 
@@ -282,11 +281,23 @@ function makeThreadCard(group: ThreadGroup, focused: boolean): HTMLElement {
   return card
 }
 
+const REPLY_MAX_HEIGHT = 200
+
+/** Grow/shrink the reply textarea to fit its content (capped), and keep
+ * #outer's bottom padding in step with the dock's new height. */
+function autosizeReply(ta: HTMLTextAreaElement): void {
+  ta.style.height = 'auto'
+  ta.style.height = Math.min(ta.scrollHeight, REPLY_MAX_HEIGHT) + 'px'
+  ta.style.overflowY = ta.scrollHeight > REPLY_MAX_HEIGHT ? 'auto' : 'hidden'
+  if (ta.closest('#reply-dock')) syncDockPosition()
+}
+
 function wireReplyBox(card: HTMLElement, group: ThreadGroup, config: ComposeConfig): void {
   const ta = card.querySelector('.reply-box textarea') as HTMLTextAreaElement | null
   const btn = card.querySelector('.t-send-btn') as HTMLButtonElement | null
   if (!ta || !btn) return
   let sending = false
+  ta.addEventListener('input', () => autosizeReply(ta))
   const send = async () => {
     const body = ta.value.trim()
     if (!body || sending) return
@@ -296,6 +307,11 @@ function wireReplyBox(card: HTMLElement, group: ThreadGroup, config: ComposeConf
     try {
       const { toAddrs, references } = computeReplyContext(group.messages, config.selfDid ? [config.selfAddress, config.selfDid] : config.selfAddress)
       const last = [...group.messages].sort((a, b) => a.msg.ts - b.msg.ts).at(-1)
+      // Clear before awaiting: a re-render during the send preserves the live
+      // textarea value into the rebuilt box (see preservedReply), which would
+      // resurrect the sent text if we cleared only afterwards.
+      ta.value = ''
+      autosizeReply(ta)
       await config.sendReply({
         toAddrs,
         subject: group.subject,
@@ -303,8 +319,8 @@ function wireReplyBox(card: HTMLElement, group: ThreadGroup, config: ComposeConf
         inReplyTo: last?.msg.message_id || undefined,
         references,
       })
-      ta.value = ''
     } catch (e) {
+      if (!ta.value) { ta.value = body; autosizeReply(ta) }
       config.onError?.(e instanceof Error ? e.message : 'Could not send')
     } finally {
       sending = false
@@ -624,6 +640,7 @@ export function render(smooth = false): void {
     const $newReply = document.querySelector<HTMLTextAreaElement>('#reply-dock .reply-box textarea')
     if ($newReply) {
       $newReply.value = preservedReply.value
+      autosizeReply($newReply)
       if (preservedReply.hadFocus) {
         $newReply.focus()
         $newReply.setSelectionRange(preservedReply.selectionStart, preservedReply.selectionEnd)

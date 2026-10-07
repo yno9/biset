@@ -13,6 +13,8 @@ import { mediatorInbox } from '../src/protocol/didcomm/mediator-device.ts'
 import { serializeLog } from '../src/protocol/webvh/log.ts'
 import { buildDidCommLog } from './protocol/support/webvh-log-fixture.ts'
 import { freshMediator, MEDIATOR_URL } from './support/mediator.ts'
+import { createNetworkWebvhResolver } from '../src/server/mediator/webvh-state.ts'
+import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 import type { IncomingVaultRecords } from '../src/client/store/vault/store.ts'
 
 const DID = 'did:webvh:scid:alice.example'
@@ -63,13 +65,15 @@ describe('VaultSyncClient', () => {
 
 describe('walletVaultSyncTransport', () => {
   test('one send reaches every device of the identity through the mediator, each able to open it', async () => {
-    const { mediator, handle, store } = freshMediator()
+    // The mediator resolves the identity's DID itself, over the same network the devices use.
+    let network: typeof fetch = async () => new Response('not ready', { status: 500 })
+    const { mediator, handle, store } = freshMediator({}, SqliteMediatorStore.memory(), { resolveWebvh: createNetworkWebvhResolver({ fetch: (input, init) => network(input, init), lookup: async () => ['93.184.216.34'] }) })
     const root = ed25519.utils.randomSecretKey()
     const phoneX = x25519.utils.randomSecretKey(); const laptopX = x25519.utils.randomSecretKey()
     const { did, log } = buildDidCommLog({
       rootPrivateKey: root, rootPublicKey: ed25519.getPublicKey(root),
       keyAgreementKeys: [{ fragment: 'k_phone', x25519PublicKey: x25519.getPublicKey(phoneX) }, { fragment: 'k_laptop', x25519PublicKey: x25519.getPublicKey(laptopX) }],
-      endpointUri: MEDIATOR_URL, routingKeys: [mediator.xKid], domain: 'alice.example',
+      endpointUri: mediator.did, domain: 'alice.example', // the endpoint names the mediator by DID
     })
     const fetchImpl = (async (input, init) => {
       const url = new URL(String(input))
@@ -77,6 +81,7 @@ describe('walletVaultSyncTransport', () => {
       if (url.hostname === 'alice.example') return new Response(serializeLog(log))
       return new Response('unexpected', { status: 500 })
     }) as typeof fetch
+    network = fetchImpl
     const phone = mediatorInbox({ did, xKid: `${did}#k_phone`, xPriv: phoneX }, new Uint8Array(32).fill(1))
     const laptop = mediatorInbox({ did, xKid: `${did}#k_laptop`, xPriv: laptopX }, new Uint8Array(32).fill(2))
     const info = await registerWithMediator(MEDIATOR_URL, phone, fetchImpl)

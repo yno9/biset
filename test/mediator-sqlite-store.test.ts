@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { queuedMessageOf } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,7 +25,7 @@ describe('SqliteMediatorStore', () => {
     expect((await second.forward(bob.xKid, { ciphertext: 'opaque-inner-jwe' }, 'durable-forward-id')).status).toBe(400)
     const delivery = await second.request(bob, T.DELIVERY_REQUEST, { device })
     expect(delivery.attachments).toHaveLength(1)
-    expect(delivery.attachments![0]!.data.json).toEqual({ ciphertext: 'opaque-inner-jwe' })
+    expect(queuedMessageOf(delivery.attachments![0]!)).toEqual({ ciphertext: 'opaque-inner-jwe' })
     const ack = await second.request(bob, T.MESSAGES_RECEIVED, { device, message_id_list: [delivery.attachments![0]!.id] })
     expect((ack.body as { message_count: number }).message_count).toBe(0)
     second.store.close()

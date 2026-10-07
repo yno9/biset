@@ -9,7 +9,7 @@
 // Ported from src.bak/did/didcomm/problems.ts.
 import { buildPlaintext, type DidCommPlaintext, type PlaintextOptions } from './message.ts'
 
-const PROBLEM_REPORT = 'https://didcomm.org/report-problem/2.0/problem-report'
+export const PROBLEM_REPORT = 'https://didcomm.org/report-problem/2.0/problem-report'
 
 interface ProblemBody {
   code: string
@@ -29,7 +29,7 @@ export interface BuildProblemOptions {
 }
 
 /** Builds a problem-report plaintext. `code` is a dot-delimited problem code
- * (sorter `.` scope `.` descriptors -- e.g. `e.p.me.res.storage`); `comment`
+ * (sorter `.` scope `.` descriptors -- e.g. `e.m.me.res.storage`); `comment`
  * MUST be statically associated with `code` and may reference `args` as
  * `{1}`, `{2}`, … (problems.md). */
 export function buildProblemReport(

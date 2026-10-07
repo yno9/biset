@@ -163,7 +163,8 @@ describe('Pickup 3.0 live mode over WebSocket (server.ts live, mediator-live.ts)
     expect(raw.frames).toHaveLength(2)
     const pushed = await unpackMediatorMessage(info, bob, JSON.parse(raw.frames[1]!))
     expect(pushed.type).toBe(DELIVERY)
-    expect(pushed.body).toMatchObject({ recipient_did: bob.did, device: bob.device })
+    expect(pushed.body).toMatchObject({ recipient_did: bob.did })
+    expect((pushed.body as Record<string, unknown>).device).toBeUndefined()
     expect(pushed.attachments).toHaveLength(1)
     expect(await pickupStatus(info, bob, fetchImpl)).toMatchObject({ messageCount: 1 })
 
@@ -398,7 +399,7 @@ describe('mediator transport rules', () => {
 })
 
 describe('device limit', () => {
-  test('registerWithMediator turns e.p.req.max-devices into a user-facing error listing the devices', async () => {
+  test('registerWithMediator turns e.m.req.max-devices into a user-facing error listing the devices', async () => {
     const { fetchImpl, url } = freshMediatorFetch()
     const bobPeer = generatePeerIdentity()
     const bob = (device: string): MediatorInboxClient => ({ did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device })

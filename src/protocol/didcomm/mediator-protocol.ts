@@ -37,9 +37,9 @@ export const DISCOVER_FEATURES_QUERIES = `${DISCOVER_FEATURES}/queries`
 export const DISCOVER_FEATURES_DISCLOSE = `${DISCOVER_FEATURES}/disclose`
 export const MAX_RECEIVE_BYTES = 'max_receive_bytes'
 /** A message over `max_receive_bytes` (DIDComm v2.1 transports). */
-export const MESSAGE_TOO_BIG_PROBLEM = 'e.p.me.res.storage.message_too_big'
+export const MESSAGE_TOO_BIG_PROBLEM = 'e.m.me.res.storage.message_too_big'
 
 // Problem code for a recipient-update add refused because the recipient DID
 // already has the mediator's maximum number of device inboxes
 // (mediator/server.ts). Args: the DID, how many it has, the limit.
-export const MAX_DEVICES_PROBLEM = 'e.p.req.max-devices'
+export const MAX_DEVICES_PROBLEM = 'e.m.req.max-devices'

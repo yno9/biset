@@ -13,7 +13,7 @@
 // inbound Forward request, indistinguishable from one a real sender built
 // directly.
 import { fetchMediatorInfo, requestMediation, updateRecipient, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
-import { acknowledgeMessages } from '../../protocol/didcomm/mediator-pickup.ts'
+import { acknowledgeMessages, queuedMessageOf } from '../../protocol/didcomm/mediator-pickup.ts'
 import { sendAndUnpack, type DidCommSender, type MediatorInboxClient } from '../../protocol/didcomm/mediator-transport.ts'
 import { unpackAnoncrypt, parseJwe, type DidCommJWE } from '../../protocol/didcomm/crypto.ts'
 import { wrapForward } from '../../protocol/didcomm/forward-wrap.ts'
@@ -88,7 +88,7 @@ export function startRelayPoller(
       const ackIds: string[] = []
       for (const att of attachments) {
         try {
-          const queued = parseJwe(att.data.json)
+          const queued = parseJwe(queuedMessageOf(att))
           if (!queued) throw new Error('queued attachment is not a DIDComm JWE')
           const plaintextBytes = await unpackAnoncrypt(queued, { kid: own.xKid, privateKey: own.xPriv })
           const forward = JSON.parse(new TextDecoder().decode(plaintextBytes)) as DidCommPlaintext

@@ -232,8 +232,10 @@ biset は DID Document を直接書かず、**編集の要求を wallet に渡�
 | `services` | 追加・置換する service（id が同じなら置換） |
 | `services[].endpointMode: "merge"` | **置換せず、`serviceEndpoint` の要素を既存の service に足す**。要素は `uri`（string ならその値）で同一視する。結果が 1 要素なら単体の形に戻す。省略または `"replace"` は従来の置換 |
 | `verificationMethods` | 追加・置換する鍵（`controller` は wallet が自分の DID に強制する） |
+| `verificationMethods[].relationships` | その鍵を参照する検証関係（`authentication`・`assertionMethod`・`keyAgreement`・`capabilityInvocation`・`capabilityDelegation`）。省略時は `keyAgreement` だけ。文書には書かれない（2026-10-07 追加） |
+| `verificationMethods[].mode` | 省略または `"replace"` は追加・置換。`"ifAbsent"` は**同じ id の鍵が無いときだけ**足し、あれば何もしない。文書には書かれない（2026-10-07 追加） |
 | `serviceKeyBindings` | service と鍵の対応 |
-| `remove` | 削除する id（鍵・service） |
+| `remove` | 削除する id（鍵・service）。鍵は**すべての検証関係から**参照も消える。did.md の Root 鍵 `#pass-1` は、置換も削除も拒否される |
 | `removeEndpoints: [{serviceId, match}]` | `match` の全プロパティが一致する endpoint を、その service から削除する。全部消えたら service ごと消える |
 
 - **適用は承認の瞬間に、wallet が持つ現在の状態に対して行う**（`did.md/packages/wallet/src/did-document-edit.ts` の `withDidDocumentEdit`）。
@@ -261,9 +263,8 @@ biset は DID Document を直接書かず、**編集の要求を wallet に渡�
   その後はすべて DID ログから決まり、残った端末のどれが動いても同じ結果になる（セッション上の印は持たない）。wallet の画面から直接鍵を消した場合も同じ。
   1. 次に `registerWithMediator` が新しい DID ログを mediator に渡すと、**mediator は消えた鍵で登録された受信箱を失効させる**。
      送信者も次の解決から、外された端末に暗号化しなくなる。Vault Sync も同じ理由で届かなくなる。
-  2. 鍵が減ったエントリより前に作られた **relationship seed は古い**。残った端末のうち担当の 1 台が新しい seed を作る（§6）。
-  3. 古い seed から作られた relationship は、front door の再 INIT で新しい did:peer へ移る（§9.3）。移り終わるまで、その相手には送らない。
-- 外された端末がすでに持っている情報（過去の Vault、過去の relationship 鍵）は取り戻せない。外した後の新しい通信だけが守られる。
+  2. 会話はすべて front door（§9.2）なので、ほかに移すものは無い（P0）。DID Rotation が入った後の扱いは `PLAN-refactor.md` §4.5。
+- 外された端末がすでに持っている情報（過去の Vault）は取り戻せない。外した後の新しい通信だけが守られる。
 
 ### 5.7 wallet directory
 `wallet-directory.ts` の静的な配列（現状は dito＝did.md の 1 件）。`resolveWalletFromSuffix` は、ログインボタン横の入力欄（did:web の suffix）から wallet を解決する。
@@ -376,41 +377,24 @@ File System Access API で利用者が選んだディレクトリに、スレッ
 ## 9. DIDComm
 
 ### 9.1 front door
-端末ごとの X25519 鍵（`#k_<hash>`）が公開の front door。起動時に mediator へ登録する（`registerWithMediator`: DID ログを `POST /webvh-log` で渡し、mediate-request、recipient-update）。
+端末ごとの X25519 鍵（`#k_<hash>`）が公開の front door。起動時に mediator へ登録する（`registerWithMediator`: mediate-request、recipient-update。mediator が DID を自分で解決するので、ログを渡す必要は無い）。
 wallet が認可した mediator が、このデプロイの `mediatorUrls` に含まれていなければ fail closed。
 front door は、新規の relationship の発見と `RELATIONSHIP_INIT`、Vault Sync、メールの送受信に使う。
 送信は、宛先の DID Document の**全** keyAgreement 鍵に 1 通で暗号化し、`#didcomm` の `routingKeys` があれば Forward で包む（`next` は宛先の DID）。
 
-### 9.2 private relationship
-初回の送信者は、専用の X25519／Ed25519 と service を含む `did:peer:2` を **relationship seed から決定論的に**導出し、その受信箱を mediator に **INIT より先に**登録してから、
-**front door** で `RELATIONSHIP_INIT` を送る。受信者も専用の peer を導出・登録し、**front door** で `RELATIONSHIP_ACCEPT` を返す。
-- INIT も ACCEPT も、**送信者の DID Document に載っている鍵**で authcrypt される。did:peer からの ACCEPT は拒否する。
-  INIT の did:peer を知っている者（mediator など）が先に自分の did:peer で ACCEPT を返し、relationship の中間に入ることを防ぐため。
-- 双方の公開情報と自分の秘密鍵は、`contact-key.set` として Vault に保存される。
-- 確立後の Basic Message 2.0 と group chat は、同じ relationship kid 間の authcrypt だけを使う（公開 front-door kid を含めない）。
-- did:peer の鍵は identity の全端末で同じだが、mediator の受信箱は端末ごと（端末ラベルが別）なので、全端末がそれぞれ受け取る。
-- **受け付けるのは、相手の「現行の」did:peer からのメッセージだけ**（`currentForCounterpartyKid`）。置き換えられた古い did:peer は、もうその相手ではない。
-- 同じ相手への並行する `ensureContact` は直列化される（`WalletRelationshipManager` の `ensuring`）。呼び出し側の 60 秒タイムアウトは「待つのをやめる」だけで、登録済みの receiver と pending は残る。
-- 60 秒を過ぎても ACCEPT が来ない INIT は、次の送信の試行で**送り直す**（did:peer は同じものが導かれるので無害）。ACCEPT が失われた、
-  または相手が古い版で did:peer から ACCEPT を返し、こちらが捨てた場合でも、相手が新しい版になれば自然に確立する。
-- **crash 耐性は無い**: pending の状態はメモリ上の Map だけ。INIT 後・ACCEPT 前の reload で失われるが、決定論的導出により、やり直せば同じ peer が再構成される。
-
-### 9.3 relationship の乗り換え（端末を外した後）
-外された端末は、すべての旧 relationship の鍵（全端末で共有）を持ち続ける。乗り換えはそれを無効にするための手順で、**根拠は front door（DID Document の鍵）だけ**に置く。
-- 古い seed から作られた relationship に送ろうとすると（`ensureContact`）、新しい seed から did:peer を導き、**front door で再 INIT** する。
-  相手の ACCEPT が届くまで、その相手には送らない（outbox が再試行する）。起動時と、Vault Sync で新しい seed が届いたときにも、全 relationship についてこれを行う（`moveStaleRelationships`）。
-  外された端末は front door の鍵を持たないので、乗り換えも新しい relationship の確立もできない。
-- 相手側は再 INIT を受けると、**まず旧 did:peer からすでに届いている分を処理しきってから**（受信箱の drain）、relationship を置き換える。
-  置き換えた後は、旧 did:peer からのメッセージを受け付けない。これで、正規に送られていたメッセージは失わず、外された端末の送信は相手が乗り換えを処理した時点で止まる。
-- ACCEPT で相手の did:peer が変わっていた場合（相手側も外した端末があった場合など）も、同じく旧 did:peer の分を処理しきってから置き換える。
-- 自分の旧 kid の受信箱は、乗り換え後 30 日間は watch を続ける（相手がまだ乗り換えを処理していない間に送ってくる分のため）。
-- **残る窓（原理的に塞げない）**: 相手が乗り換えを処理するまで（相手がオフラインならその間ずっと）、外された端末は旧 did:peer で相手に送れ、相手から旧 did:peer 宛てに来たものも読める。共有鍵である以上、相手の協力なしには閉じられない。
-- `from_prior`（DIDComm v2.1 の DID Rotation）は使わない。旧 did:peer の鍵で署名するので外された端末も作れ、先着順で relationship を乗っ取れたため撤去した。
+### 9.2 会話（1:1）
+**2026-10-07 の P0（`PLAN-refactor.md`）で、relationship（INIT/ACCEPT の握手、相手ごとの did:peer、乗り換え）は撤去した。**
+会話はすべて front door で行う: 送り手の端末の鍵（DID Document の `keyAgreement`）から、相手の公開 DID の全 `keyAgreement` 鍵へ、Basic Message 2.0 を authcrypt で送る。
+- 送信は送信キュー（`didcomm-outbox.ts`）から。メッセージの `id` と時刻は再送でも変わらない。失敗はメッセージ・宛先・理由ごとに 1 回だけ画面に出し、再試行を続ける。
+- 受信: 送り主はその鍵の DID（did:webvh、did:web、did:peer:2）。did:peer の送り主も、その DID のまま独立した相手として扱う。did:key・did:peer:4 には対応しない（返信先が無い）。
+- 受信側は、JWE の宛先の中から自分の端末の鍵を探して開く（宛先の順序に依存しない）。
+- 公式の DID Rotation（`from_prior`。seed から導く署名鍵を `authentication` に置く）で did:peer へ移る形は、P2〜P4 で入る（`PLAN-refactor.md` §4・§7）。
 
 ### 9.4 group chat と External Feed
-- **group chat**: MLS を使わない、**full-mesh の pairwise fan-out**。アドレスは `didcomm-group:<groupId>`。作成時に各招待者へ `GROUP_INVITE`、続けて `GROUP_MESSAGE`。
-  v1 の範囲は意図的に狭い（作成後のメンバー変更、端末間の roster 同期、改名、退出、編集・削除・リアクションは未実装）。roster は端末ローカル（`group-chat-store.ts`）。
-- **External Feed**（`https://didcomm.org/external-feed/1.0/post`）: **anoncrypt のみ**で、送信者を認証しない。ActivityPub／AT Protocol／RSS のフィード投稿を bridge が運ぶことを想定している。
+- **group chat**: DIDComm 本体の仕組みだけで作る（`PLAN-refactor.md` §8）。宛先（平文の `to`）が 2 つ以上の Basic Message のスレッドで、`thid` が会話。
+  同じ平文を、参加者ごとに別々に暗号化して、各参加者の公開 DID へ送る。参加者はスレッドの**最新**メッセージの `to` と送り主、名前は最新の `subject`。
+  招待のメッセージも、管理者も、端末ごとのメンバー一覧も無い（メールの Cc と同じ考え方）。ローカルのスレッドは `didcomm-group:<thid>`。
+- **External Feed**（`https://biset.md/external-feed/1.0/post`）: **anoncrypt のみ**で、送信者を認証しない。ActivityPub／AT Protocol／RSS のフィード投稿を bridge が運ぶことを想定している。
   スレッドは `(identityId, source, actorId)` で作り、本文の URL は `X-Source-Url` ヘッダに退避して CR/LF を除く。anoncrypt を許すのはこの型だけ。
 
 ### 9.5 Trust Ping 2.0
@@ -443,7 +427,7 @@ relationship の did:peer 宛てに来た ping はその relationship で、そ�
 `isProjectableDidCommIngress` に無い型は、**明示的に捨てて ACK する**。
 **恒久的に処理できないメッセージ**（`PermanentDeliveryError`）も ACK して捨てる。開けない、差出人の鍵がその DID に載っていない（外された端末など、`SenderKeyNotPublishedError`）、
 現行でない did:peer から、確立していない relationship の ACCEPT、など。ネットワークや解決の失敗、Vault への保存の失敗は一時的なものとして残し、30 秒後にもう一度取り出す。
-同じコピーが live の配信と取り出しの両方で届いても、一度だけ処理する（処理済みは ACK だけを返す）。`drain()` は、その受信箱に溜まっている分を処理しきってから返る（§9.3）。
+同じコピーが live の配信と取り出しの両方で届いても、一度だけ処理する（処理済みは ACK だけを返す）。`drain()` は、その受信箱に溜まっている分を処理しきってから返る。
 dedupe の `alreadyProcessed()` は常に false を返す（未接続、§17-7）。
 
 ### 9.8 mediator の入口の選択と Tor
@@ -494,21 +478,24 @@ did.md ホストの利用者に限り、**DIDComm を土台にした汎用の ma
   **一覧に端末ラベルは出さない**（最終利用日だけ）。relationship の did:peer の鍵は全端末で共有されるので、外された端末も問い合わせられ、ラベルが見えれば残った端末の受信箱を名指しで消せてしまう。ラベルは推測できない値。
 - **Discover Features 2.0**: `queries` に `disclose` で答える（`*` のワイルドカード可）。開示するのは、protocol（coordinate-mediation 3.0、routing 2.0、messagepickup 3.0、trust-ping 2.0、
   discover-features 2.0。それぞれ自分の役割つき）、header（`return_route`）、constraint（`max_receive_bytes`。要求本文の上限と 1 メッセージの上限の小さい方）。
-  上限を超えた Forward は HTTP 413 と `e.p.me.res.storage.message_too_big` で拒否する。
+  上限を超えた Forward は HTTP 413 と `e.m.me.res.storage.message_too_big` で拒否する。
 - **トランスポート**: `POST /`（HTTPS）と、同じ `/` の **WebSocket upgrade**。どちらも 1 メッセージ＝1 JWE で、信頼は各メッセージの暗号化に置く（接続そのものは信頼しない）。
   - `POST /` は Content-Type `application/didcomm-encrypted+json` 以外を **415** で拒否する。
   - 応答は、要求に **`return_route: "all"`** があるときだけ、同じ接続（HTTP の応答、または socket）に返す。無ければ HTTP は本文なしの 202、socket は何も返さない。
   - **live mode** は WebSocket かつ `return_route: "all"` のときだけ有効にできる（それ以外は problem-report `e.m.live-mode-not-supported`）。
     新着は、live を有効にした鍵宛てに authcrypt した `delivery` メッセージとして push する。**push したコピーも ACK まで queue に残る**。接続が切れると live は解除される。
 - **受信箱 = (DID, 端末ラベル)**。登録（recipient-update）は、その DID 自身の keyAgreement 鍵から authcrypt されたものだけを受け付ける（所有の証明。Coordinate Mediation 3.0 が「将来の課題」とする部分を biset が補う）。
-  - did:peer の鍵は DID そのものから読む。did:webvh の鍵は、client が `POST /webvh-log` で渡した**検証済みの最新ログ**から読む（mediator はネットワークに出ない）。
-    新しいログで消えた鍵で登録された受信箱は失効する。
-  - **1 DID あたり最大 3 端末**。4 台目は problem-report `e.p.req.max-devices` で拒否し、client は登録済み端末の最終利用日つきのエラーを利用者に見せる（`MediatorDeviceLimitError`）。
+  - did:peer の鍵は DID そのものから読む。did:webvh の鍵は、**mediator が DID を自分で解決して**読む（`webvh-state.ts`。DIDComm の流儀。2026-10-07）。
+    解決は https のみ・リダイレクトなし・5 秒・1 MB の上限で、CDN を越えるよう毎回一意のクエリを付ける。ホストは、名前（末尾のドットや IPv4 の省略形・16 進形も含めて、内部名・IP リテラルを拒否）と、**名前が解決する全アドレス**（ループバック・私設・リンクローカル・CGNAT・マルチキャスト・予約済み。IPv4 射影と NAT64 は中の IPv4 で判定）の両方が公開のものに限る。結果は 5 分間信頼し、鍵が見つからなければ（10 秒に 1 回まで）解決し直す。
+    ネットワークが落ちているときは、1 時間以内に確認した状態なら使い、無ければ 503。**5 分ごとに、受信箱を持つ全 did:webvh を解決し直し**、DID から外れた端末の受信箱を失効させる（`MEDIATOR_WEBVH_REFRESH_SECONDS`）。
+    - 解決を使わない配備（`MEDIATOR_WEBVH_RESOLVE=0`）では、従来どおり client が `POST /webvh-log` で渡した検証済みのログだけを知る。これは**DIDComm ではない biset 独自の入口**で、今は誰も送らない。
+  - **`device` ラベルは任意**（biset の拡張）。無い要求（標準の client）は、送信鍵の kid から決めた受信箱を使う。ラベルは、1 つの鍵を複数の端末が共有する場合（relationship の did:peer）に端末を区別する。
+  - **1 DID あたり最大 3 端末**。4 台目は problem-report `e.m.req.max-devices` で拒否し、client は登録済み端末の最終利用日つきのエラーを利用者に見せる（`MediatorDeviceLimitError`）。
 - **配送**: Forward の `next`（宛先 DID）の全受信箱にコピーを置く（本文は 1 回だけ保存し、受信箱ごとの配送行で管理）。
   14 日使われていない受信箱（休眠）と満杯の受信箱は飛ばして `missed` の印を付ける。全受信箱が休眠なら、最後に使われた 1 つには置く。
-  どこにも置けなければ HTTP 503。未登録の DID 宛の Forward は、署名付きの problem-report（`e.p.req.not_enroll`）を HTTP 401 で返して拒否する（open relay にしない）。
+  どこにも置けなければ HTTP 503。未登録の DID 宛の Forward は、署名付きの problem-report（`e.m.req.not-enrolled`）を HTTP 401 で返して拒否する（open relay にしない）。
 - 上限（既定）: 受信箱 30,000、受信箱あたり 256 件・16 MB、メッセージ 1 MB、保持 30 日、休眠 14 日、replay guard 10 分／50,000 ID。
-- HTTP の入口: `POST /`、`GET /`（WebSocket upgrade）、`POST /webvh-log`、`GET /.well-known/did.json`、`/healthz`、`/readyz`、`/metrics`。
+- HTTP の入口: `POST /`、`GET /`（WebSocket upgrade）、`POST /webvh-log`（解決を使わない配備用）、`GET /.well-known/did.json`、`/healthz`、`/readyz`、`/metrics`。
   WebSocket は Bun が idle の socket に ping を送る（`idleTimeout` 120 秒）。CORS と WebSocket の Origin は `MEDIATOR_ALLOWED_ORIGINS`（`null` は `file://` 用）。
 - **停止は即座に接続を閉じる**（`server.stop(true)`）。開いた WebSocket の終了を待つと、クライアントは自分から閉じないので、systemd の強制終了（30 秒）まで止まり、
   その間 502 になっていた（2026-10-03 に実機で起きた）。クライアントは自動で再接続し、未 ACK の分は queue に残るので失われない。
@@ -554,12 +541,9 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 4. **既存のローカル projection で先に inbox を描画する**（ネットワークを待たない）。
 5. DIDComm の device material を開き、自分の DID Document を解決する。**自端末の鍵が `keyAgreement` に無ければ**、再接続を求めて止まる。
 6. mediator へ登録する（DID ログを渡す → mediate-request → recipient-update）。Discover Features で `max_receive_bytes` を聞く。入口は `preferredMediatorUrl`（通常は clearnet）。onion で失敗したら canonical へ戻る。
-7. relationship seed の権威を作る（`createRelationshipSeedAuthority`、§6）。
-8. `VaultSyncClient` を作り、`state-request` を送る（`void`）。
-9. `DidCommIngressProjector`、`WalletRelationshipManager`、outbox を作り、`watchMediatorLive` で front door の live 受信を始める。
-10. 保存済みの relationship の受信箱の watch を再開する（**1 つの相手の恒久的な失敗で boot 全体を落とさない**。乗り換え後 30 日の旧 kid も含む）。
-11. 使える seed を確かめ（担当の端末なら作り）、古い seed のままの relationship を乗り換える（`moveStaleRelationships`、§9.3）。
-12. outbox を flush し、10 秒ごとの再試行タイマーを張る。
+7. `VaultSyncClient` を作り、`state-request` を送る（`void`）。
+8. `DidCommIngressProjector` と outbox を作り、`watchMediatorLive` で front door の live 受信を始める。
+9. outbox を flush し、10 秒ごとの再試行タイマーを張る。
 
 どこかで例外が起きても、Vault カードを `error` にして、アカウント画面は出す。
 
@@ -588,12 +572,10 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 ### 14.2 未解消リスク
 1. **SegmentKey が IndexedDB に平文（高）**。wallet の material は封印されるが、Vault 側は未完成。
 2. **全端末を失うと履歴は戻らない（高）**。移送は「起動中の兄弟」か「利用者が持つ export」だけ。利用者への警告 UI は無い。
-3. **端末を外しても過去は取り戻せない（中）**。外された端末が持つ過去の Vault と relationship 鍵は有効なまま。外した後の通信だけが守られる。
+3. **端末を外しても過去は取り戻せない（中）**。外された端末が持つ過去の Vault は有効なまま。外した後の通信だけが守られる。
 4. **セッションの破棄が厳しすぎる（中）**。device-refresh の非 2xx 応答や、検証の失敗は、一律に session を破棄する。§5.3。
-5. **relationship handshake が非永続（中）**、**dedupe の lookup が未接続（中）**、**group chat の roster が端末ローカル（中）**。
-6. **端末を外した直後の窓（中、原理的）**。相手が乗り換えを処理するまで、外された端末は旧 did:peer で相手に送れ、相手からの旧 did:peer 宛てを読める（§9.3）。
-   また、相手が did.md の CDN の古い DID 文書を読む最大 30 秒は、外された端末を正規の端末とみなしうる。
-   担当の端末（§6）が長く起動しないと、残った他の端末は新しい seed を待ち続ける（その端末も外せば、担当が移る）。
+5. **dedupe の lookup が未接続（中）**。
+6. **端末を外した直後の窓（中、原理的）**。相手が did.md の CDN の古い DID 文書を読む最大 30 秒は、外された端末を正規の端末とみなしうる。
 7. **onion の rate limit 共有（中、Tor 実運用まで）**（§9.8）。
 8. **メール**: DKIM 未設定、送信状態の確定が未完、outbox の自動再送が無い（§10.3）。
 9. **No background／push（運用）**。ページが閉じている間は同期しない。
@@ -664,7 +646,7 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 
 優先度の高い順ではなく、**事実として確認できたもの**を挙げる。
 
-1. **DIDComm の仕様からの意図的な逸脱**: `from_prior` を使わない（§9.3）。`mail-bridge`／`external-feed` が didcomm.org の名前空間を使っている点は、対応しないと決めた。
+1. **DIDComm の仕様からの意図的な逸脱**: 無し（独自の握手 INIT/ACCEPT は 2026-10-07 の P0 で撤去）。`external-feed` は自前の名前空間（`https://biset.md/external-feed/1.0/post`）に移した（2026-10-07。以前は `didcomm.org` の名前空間を、レジストリに無いのに使っていた）。`mail-bridge` は didmail への分離で撤去する。
    `mediate-deny` は送らない（拒否の理由はすべて problem-report で返す）。
 2. **mail-plugin "B" の署名つき HTTP 送信**（`mail-submission-http.ts`）: 本番では使っていない variant に残る。
 3. **`client/` が `server/` を import**（`client/mail/didcomm-submit.ts`、`client/didcomm/ingress-projector.ts` が `server/mediator/mail-plugin/mail-bridge.ts` を参照）。

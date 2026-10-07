@@ -12,6 +12,8 @@ import { didCommPost } from '../../protocol/didcomm/crypto.ts'
 import { SqliteMediatorStore, type SqliteMediatorLimits } from './sqlite-store.ts'
 import { IpRateLimiter } from './rate-limit.ts'
 import { startRelayPoller, type RelayPollHandle } from './relay-poller.ts'
+import { createNetworkWebvhResolver, type WebvhStateResolver } from './webvh-state.ts'
+import { peerMediatorIdentity, webMediatorIdentity } from './identity.ts'
 
 export interface MediatorDeploymentOptions {
   publicUrl: string
@@ -27,6 +29,12 @@ export interface MediatorDeploymentOptions {
    * delivery (relay-poller.ts) -- absent means this mediator is a leaf/
    * front-door hop only. */
   relayUpstreamUrl?: string
+  /** How this mediator learns a did:webvh's keys (webvh-state.ts). By default
+   * it resolves the DID like any DIDComm agent; `resolve: false` makes it
+   * dial out to nothing, so only logs pushed to `POST /webvh-log` are known.
+   * `refreshSeconds` is how often every did:webvh with an inbox is resolved
+   * again (default 300), which is how a device removed from its DID loses its inbox. */
+  webvh?: { resolve?: boolean | WebvhStateResolver; refreshSeconds?: number }
   serviceName?: string
   log?(level: 'info' | 'error', message: string, fields: Record<string, unknown>): void
 }
@@ -48,11 +56,16 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
   const log = options.log ?? defaultLog
   const allowedOrigins = options.allowedOrigins ?? new Set<string>()
   const store = SqliteMediatorStore.open(options.databasePath, options.limits)
-  const mediator = store.loadIdentity(options.publicUrl)
+  // A did:web is https by definition: a mediator on any other URL (a local
+  // test, a Tor entrance only) is just its did:peer.
+  const peerIdentity = store.loadIdentity(options.publicUrl)
+  const mediator = new URL(options.publicUrl).protocol === 'https:' ? webMediatorIdentity(peerIdentity, options.publicUrl) : peerMediatorIdentity(peerIdentity)
 
   let shuttingDown = false
   const maxRequestBytes = options.maxRequestBytes ?? DEFAULTS.maxRequestBytes
-  const { handle, live, mediatorDid } = createMediator({ mediator, store, maxReceiveBytes: Math.min(maxRequestBytes, store.limits.maxMessageBytes) })
+  const webvhResolve = options.webvh?.resolve
+  const resolveWebvh = webvhResolve === false ? undefined : typeof webvhResolve === 'function' ? webvhResolve : createNetworkWebvhResolver()
+  const { handle, live, mediatorDid, refreshWebvh } = createMediator({ mediator, store, maxReceiveBytes: Math.min(maxRequestBytes, store.limits.maxMessageBytes), resolveWebvh })
   const requestLimiter = new IpRateLimiter(options.rateLimitPerMinute ?? DEFAULTS.rateLimitPerMinute)
   const clientAddress = (request: Request) => request.headers.get('x-forwarded-for')?.split(',', 1)[0]?.trim()
     || server.requestIP(request)?.address
@@ -115,6 +128,14 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
     try { store.expire() } catch (error) { log('error', 'background expiry failed', { error: errorMessage(error) }) }
   }, 60_000)
   expiryTimer.unref()
+  const webvhTimer = resolveWebvh
+    ? setInterval(() => {
+        refreshWebvh().then(result => {
+          if (result.revoked > 0) log('info', 'revoked inboxes of devices their DID no longer lists', result)
+        }).catch(error => log('error', 'did:webvh refresh failed', { error: errorMessage(error) }))
+      }, (options.webvh?.refreshSeconds ?? 300) * 1000)
+    : undefined
+  webvhTimer?.unref()
 
   // Hop-chaining (2026-08-30 discussion): when this mediator is itself named
   // as an intermediate hop in some recipient's DID document, an upstream
@@ -128,7 +149,7 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
     relayPoller = startRelayPoller(
       options.relayUpstreamUrl,
       { did: relayIdentity.did, xKid: relayIdentity.xKid, xPriv: relayIdentity.xPriv },
-      mediator.xKid,
+      mediator.peerKid,
       async (outbound) => {
         const request = new Request('https://internal.invalid/', didCommPost(outbound))
         const response = await handle(request, new URL(request.url))
@@ -151,6 +172,7 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
       if (shuttingDown) return
       shuttingDown = true
       clearInterval(expiryTimer)
+      if (webvhTimer) clearInterval(webvhTimer)
       relayPoller?.stop()
       log('info', 'mediator shutting down', { signal })
       // Close every connection now, live WebSockets included: a graceful

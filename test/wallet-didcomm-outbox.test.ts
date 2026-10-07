@@ -4,7 +4,7 @@ import { createWalletDidCommOutbox } from '../src/client/identity/wallet/didcomm
 const identityId = 'did:webvh:wallet:alice.test.example'
 
 describe('Wallet DIDComm outbox', () => {
-  test('retains a failed private send, then retries the same message id and removes it only after success', async () => {
+  test('retains a failed send, then retries the same message id and removes it only after success', async () => {
     const item = {
       identityId, outboundEventId: 'event-1' as never, emailId: 'email-1', messageId: 'message-1',
       toDid: 'did:webvh:wallet:bob.test.example', createdAt: '2026-09-05T12:00:00.000Z', attempts: 0,
@@ -31,15 +31,13 @@ describe('Wallet DIDComm outbox', () => {
         async download(blobId) { expect(blobId).toBe('blob-1'); return new TextEncoder().encode('hello from retry') },
       },
       mutationSink: { async commitIntents(intents) { commits.push(intents); return {} } },
-      ensureContact: async toDid => {
-        expect(toDid).toBe(item.toDid)
-        return {} as never
-      },
-      send: async (_contact, content, subject, message) => {
+      frontDoor: { fromKid: `${identityId}#k_a`, x25519PrivateKey: new Uint8Array(32) },
+      send: async (toDid, content, message) => {
         sends += 1
+        expect(toDid).toBe(item.toDid)
         expect(content).toBe('hello from retry')
-        expect(subject).toBe('hello')
-        expect(message).toEqual({ id: 'message-1', sentAt: item.createdAt })
+        // A 1:1 message: no thread or audience of its own.
+        expect(message).toEqual({ id: 'message-1', sentAt: item.createdAt, subject: 'hello' })
         return sends === 1 ? { ok: false, error: 'offline' } : { ok: true }
       },
       onError() {},
@@ -68,8 +66,8 @@ describe('Wallet DIDComm outbox', () => {
       identityId,
       store: { async readDidCommOutbox() { return [...queued] }, async noteDidCommOutboxAttempt() {}, async removeDidCommOutbox(_i, eventId) { const index = queued.findIndex(row => row.outboundEventId === eventId); if (index >= 0) queued.splice(index, 1) } },
       readModel: { async snapshot() { return { state: '', mailboxes: [], emails: queued.map(row => ({ id: row.emailId, blobId: `blob-${row.emailId}`, threadId: 'thread', mailboxIds: { outbox: true as const }, keywords: {}, receivedAt: row.createdAt })) } }, async download() { return new TextEncoder().encode('body') } },
-      mutationSink: { async commitIntents() { return {} } }, ensureContact: async () => ({} as never),
-      async send(_contact, _content, _subject, message) { sent.push(message.id); if (message.id === first.messageId) await firstGate; return { ok: true } }, onError() {},
+      mutationSink: { async commitIntents() { return {} } }, frontDoor: { fromKid: `${identityId}#k_a`, x25519PrivateKey: new Uint8Array(32) },
+      async send(_toDid, _content, message) { sent.push(message.id); if (message.id === first.messageId) await firstGate; return { ok: true } }, onError() {},
     })
     const firstFlush = outbox.flush(); await new Promise(resolve => setTimeout(resolve, 0))
     queued.push(second); await outbox.flush()
@@ -77,7 +75,7 @@ describe('Wallet DIDComm outbox', () => {
     releaseFirst(); await firstFlush
   })
 
-  test('a recipient-scoped flush cannot send another group member before their invite', async () => {
+  test('a group message goes to each participant with its thread and every participant; a recipient-scoped flush sends only that one', async () => {
     const bob = { identityId, outboundEventId: 'event-bob' as never, emailId: 'email-bob', messageId: 'message-bob', toDid: 'did:example:bob', createdAt: '2026-09-16T00:00:00.000Z', attempts: 0 }
     const carol = { ...bob, outboundEventId: 'event-carol' as never, emailId: 'email-carol', messageId: 'message-carol', toDid: 'did:example:carol' }
     const queued = [bob, carol]
@@ -90,12 +88,12 @@ describe('Wallet DIDComm outbox', () => {
         async removeDidCommOutbox(_identity, eventId) { const index = queued.findIndex(row => row.outboundEventId === eventId); if (index >= 0) queued.splice(index, 1) },
       },
       readModel: {
-        async snapshot() { return { state: '', mailboxes: [], emails: queued.map(row => ({ id: row.emailId, blobId: `blob-${row.emailId}`, threadId: 'didcomm-group:group-1', mailboxIds: { outbox: true as const }, keywords: {}, receivedAt: row.createdAt })) } },
+        async snapshot() { return { state: '', mailboxes: [], emails: queued.map(row => ({ id: row.emailId, blobId: `blob-${row.emailId}`, threadId: 'didcomm-group:group-1', mailboxIds: { outbox: true as const }, keywords: {}, receivedAt: row.createdAt, to: [{ email: bob.toDid }, { email: carol.toDid }] })) } },
         async download() { return new TextEncoder().encode('group body') },
       },
       mutationSink: { async commitIntents() { return {} } },
-      ensureContact: async () => ({} as never),
-      async send(_contact, _content, _subject, message) { sent.push(message.id); return { ok: true } },
+      frontDoor: { fromKid: `${identityId}#k_a`, x25519PrivateKey: new Uint8Array(32) },
+      async send(toDid, _content, message) { sent.push(message.id); expect(toDid).toBe(bob.toDid); expect(message.thid).toBe('group-1'); expect(message.audience).toEqual([bob.toDid, carol.toDid]); return { ok: true } },
       onError() {},
     })
 
@@ -111,7 +109,7 @@ describe('Wallet DIDComm outbox', () => {
       toDid: 'did:example:carol', createdAt: '2026-09-16T00:00:00.000Z', attempts: 0,
     }
     let removed = false
-    const sent: Array<{ content: string; threadId: string }> = []
+    const sent: Array<{ content: string; thid?: string; audience?: string[] }> = []
     const outbox = createWalletDidCommOutbox({
       identityId,
       store: {
@@ -125,19 +123,19 @@ describe('Wallet DIDComm outbox', () => {
           if (blobId === 'body-blob') return new TextEncoder().encode('recovered body')
           if (blobId === 'metadata-blob') return new TextEncoder().encode(JSON.stringify({
             version: 1, kind: 'message.add', targetIds: ['email-orphan'],
-            payload: { email: { id: 'email-orphan', blobId: 'body-blob', threadId: 'didcomm-group:group-1', sentAt: item.createdAt } },
+            payload: { email: { id: 'email-orphan', blobId: 'body-blob', threadId: 'didcomm-group:group-1', sentAt: item.createdAt, to: [{ email: 'did:example:bob' }, { email: 'did:example:carol' }] } },
           }))
           throw new Error('unexpected blob')
         },
       },
       mutationSink: { async commitIntents() { return {} } },
-      ensureContact: async () => ({} as never),
-      async send(_contact, content, _subject, _message, threadId) { sent.push({ content, threadId }); return { ok: true } },
+      frontDoor: { fromKid: `${identityId}#k_a`, x25519PrivateKey: new Uint8Array(32) },
+      async send(_toDid, content, message) { sent.push({ content, thid: message.thid, audience: message.audience }); return { ok: true } },
       onError(error) { throw error },
     })
 
     await outbox.flush()
-    expect(sent).toEqual([{ content: 'recovered body', threadId: 'didcomm-group:group-1' }])
+    expect(sent).toEqual([{ content: 'recovered body', thid: 'group-1', audience: ['did:example:bob', 'did:example:carol'] }])
     expect(removed).toBe(true)
   })
 })

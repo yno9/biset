@@ -298,3 +298,24 @@ describe('Local JMAP projection reducer', () => {
     })
   })
 })
+
+// PLAN-refactor.md §9.1: the projection is rebuilt from every event each time,
+// and one event it cannot read stops the whole rebuild. Events of the retired
+// relationship handshake stay in Vaults (and keep arriving by Vault Sync from
+// a not-yet-updated device), so they must still be read -- as no-ops.
+describe('events of the retired relationship handshake', () => {
+  test('a rebuild over a relationship INIT/ACCEPT audit record and contact keys still succeeds', () => {
+    const base = { mailboxes: [], emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: { inbox: true as const }, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }] }
+    const projection = reduceLocalJmapProjection('did:web:alice.example', base, [
+      { event: event({ id: 'event-init', kind: 'didcomm.control', targetIds: ['control-1'] }), plaintext: plaintext('didcomm.control', ['control-1'], {
+        messageId: 'm-1', type: 'https://biset.md/relationship/1.0/init', senderKid: 'did:web:bob.example#k_b', recipientKid: 'did:web:alice.example#k_a',
+        relationshipKid: 'did:peer:2.Ez6L#key-1', relationshipPublicKey: 'AA', receivedAt: '2026-08-21T00:00:00.000Z',
+      }) },
+      { event: event({ id: 'event-contact', actorSeq: 2, kind: 'contact-key.set', targetIds: ['contact-1'] }), plaintext: plaintext('contact-key.set', ['contact-1'], { opaque: true }) },
+      { event: event({ id: 'event-seed', actorSeq: 3, kind: 'credential.relationship-seed.set', targetIds: ['seed-1'] }), plaintext: plaintext('credential.relationship-seed.set', ['seed-1'], { opaque: true }) },
+      { event: event({ id: 'event-read', actorSeq: 4, kind: 'keyword.set', targetIds: ['email-1'] }), plaintext: plaintext('keyword.set', ['email-1'], { emailId: 'email-1', keywords: { '$seen': true } }) },
+    ])
+    expect(projection.emails).toHaveLength(1)
+    expect(projection.emails[0]!.keywords).toEqual({ '$seen': true })
+  })
+})

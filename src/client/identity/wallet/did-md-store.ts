@@ -45,6 +45,9 @@ export type DidMdPendingAuthorization = {
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
     mediatorUrl: string
     routingKid: string
+    /** The mediator's DID, which a DID document names as its endpoint
+     * (unset for a device authorized before that). */
+    mediatorDid?: string
     /** This mediator's Tor entrance (PLAN-tor.md D-4), if configured. */
     mediatorOnionUrl?: string
     /** Unset only in the minimal first-shot login request, which prepares
@@ -57,6 +60,9 @@ export type DidMdPendingAuthorization = {
   previousBisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
     mediatorUrl: string
     routingKid: string
+    /** The mediator's DID, which a DID document names as its endpoint
+     * (unset for a device authorized before that). */
+    mediatorDid?: string
     mediatorOnionUrl?: string
     xKid: string
   }
@@ -120,6 +126,9 @@ export type DidMdDeviceSession = {
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
     mediatorUrl: string
     routingKid: string
+    /** The mediator's DID, which a DID document names as its endpoint
+     * (unset for a device authorized before that). */
+    mediatorDid?: string
     mediatorOnionUrl?: string
     xKid: string
   }

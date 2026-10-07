@@ -12,6 +12,7 @@ import { didCommPost, packAuthcrypt, unpackAuthcrypt, parseJwe, type DidCommJWE 
 import { assertFromMatchesSender, buildPlaintext, type DidCommPlaintext } from './message.ts'
 import { isProblemReport, problemReportError } from './problems.ts'
 import { publicKeyOf, type PeerDidDoc } from './peer.ts'
+import { keyAgreementRecipients } from './webvh-route.ts'
 import { defaultFetch } from '../net-fetch.ts'
 
 /** A DIDComm key this device holds: its own device key of its did:webvh,
@@ -39,10 +40,20 @@ export async function fetchMediatorInfo(mediatorUrl: string, fetchImpl: typeof f
   if (cached) return cached
   const resp = await fetchImpl(`${trimSlash(mediatorUrl)}/.well-known/did.json`)
   if (!resp.ok) throw new Error(`fetchMediatorInfo: HTTP ${resp.status}`)
-  const doc = await resp.json() as PeerDidDoc
-  const xKid = doc.keyAgreement[0]
-  if (!xKid) throw new Error(`fetchMediatorInfo: ${doc.id} has no keyAgreement key`)
-  const info: MediatorInfo = { url: mediatorUrl, did: doc.id, xKid, xPub: publicKeyOf(doc, xKid) }
+  // The mediator's own DID document: its did:web (a recipient's DID document
+  // names that as its endpoint), or the did:peer of the same keys.
+  const doc = await resp.json() as PeerDidDoc | { id: string; keyAgreement?: string[]; verificationMethod?: Array<{ id: string; publicKeyMultibase: string }> }
+  let info: MediatorInfo
+  if (doc.id.startsWith('did:peer:')) {
+    const peer = doc as PeerDidDoc
+    const xKid = peer.keyAgreement[0]
+    if (!xKid) throw new Error(`fetchMediatorInfo: ${doc.id} has no keyAgreement key`)
+    info = { url: mediatorUrl, did: doc.id, xKid, xPub: publicKeyOf(peer, xKid) }
+  } else {
+    const key = keyAgreementRecipients(doc as Parameters<typeof keyAgreementRecipients>[0])[0]
+    if (!key) throw new Error(`fetchMediatorInfo: ${doc.id} has no keyAgreement key`)
+    info = { url: mediatorUrl, did: doc.id, xKid: key.kid, xPub: key.publicKey }
+  }
   mediatorInfoCache.set(mediatorUrl, info)
   return info
 }

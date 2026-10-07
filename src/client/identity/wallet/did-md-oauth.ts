@@ -100,15 +100,20 @@ type DidDocumentServiceTemplate = {
   previousIds?: string[]
 }
 
+// The endpoint names the mediator by its DID (DIDComm Messaging v2.1, "Using a
+// DID as an endpoint"): the mediator's keys and URL live in ITS document, so
+// they can change without this identity's document being rewritten. (Before
+// 2026-10-07 it was `{ uri: '$mediatorUrl', routingKeys: ['$routingKid'] }`.)
+// `$mediatorUrl` and `$routingKid` can still be used by a configured template.
 const defaultDidDocumentServices: DidDocumentServiceTemplate[] = [
-  { purpose: 'didcomm', id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: '$mediatorUrl', accept: ['didcomm/v2'], routingKeys: ['$routingKid'] }, previousIds: ['#didcomm-biset'] },
+  { purpose: 'didcomm', id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: '$mediatorDid', accept: ['didcomm/v2'] }, previousIds: ['#didcomm-biset'] },
 ]
 
 function validServiceEndpointEntry(value: unknown): boolean {
   return typeof value === 'string' || (!!value && typeof value === 'object' && !Array.isArray(value))
 }
 
-function walletConfiguration(value: DidMdWalletConfiguration = {}): WalletConfiguration {
+export function walletConfiguration(value: DidMdWalletConfiguration = {}): WalletConfiguration {
   const walletDeviceName = value.walletDeviceName ?? 'Biset'
   const didDocumentServices = value.didDocumentServices ?? defaultDidDocumentServices
   if (!Array.isArray(didDocumentServices) || !didDocumentServices.length || didDocumentServices.length > 64) throw new Error('DID Document services configuration is invalid')
@@ -155,6 +160,8 @@ function materializeServiceEndpoint(value: string | Record<string, unknown> | Ar
  * one, so they keep publishing the clearnet-only single map (I-5). */
 export function didCommEndpointWithOnion<T extends string | Record<string, unknown> | Array<string | Record<string, unknown>>>(endpoint: T, onionUrl?: string): T | Array<Record<string, unknown>> {
   if (!onionUrl || !endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) return endpoint
+  // An endpoint that names its mediator by DID has no Tor entrance of its own: the mediator's document lists it.
+  if (typeof (endpoint as { uri?: unknown }).uri === 'string' && (endpoint as { uri: string }).uri.startsWith('did:')) return endpoint
   return [endpoint as Record<string, unknown>, { ...endpoint as Record<string, unknown>, uri: onionUrl }]
 }
 
@@ -252,6 +259,8 @@ export type DidMdBisetDidCommDevice = {
   mediatorDeviceSecret: Uint8Array
   mediatorUrl: string
   routingKid: string
+  /** The mediator's DID (what a DID document's endpoint names), if known. */
+  mediatorDid?: string
   /** This mediator's Tor entrance (PLAN-tor.md D-4), if one was published
    * alongside `mediatorUrl` when this device was authorized. */
   mediatorOnionUrl?: string
@@ -260,6 +269,8 @@ export type DidMdBisetDidCommDevice = {
 type DidMdBisetMediator = {
   mediatorUrl: string
   routingKid: string
+  /** The mediator's DID: its did:web, or its did:peer if that is all it has. */
+  mediatorDid: string
   /** This mediator's Tor entrance (PLAN-tor.md D-4), if this deployment's
    * config pairs one with the chosen `mediatorUrl` by array index. Never
    * fetched or otherwise validated over the network -- a non-Tor browser
@@ -340,23 +351,24 @@ async function bisetMediatorFor(values: readonly string[], onionValues: readonly
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Biset DIDComm mediator URL is invalid')
   const mediatorUrl = url.toString()
   const info = await fetchMediatorInfo(mediatorUrl)
-  if (!info.xKid || !info.xKid.startsWith('did:peer:')) throw new Error('Biset DIDComm mediator did not provide a valid routing key')
+  // Named by its did:web, or by its did:peer (a mediator that is not at an https URL): either is a DID a document can name.
+  if (!info.xKid || !(info.did.startsWith('did:web:') || info.did.startsWith('did:peer:'))) throw new Error('Biset DIDComm mediator did not provide a valid routing key')
   const onionCandidate = onionValues[index]
   const mediatorOnionUrl = onionCandidate && onionCandidate.trim() ? validatedMediatorOnionUrl(onionCandidate) : undefined
-  return { mediatorUrl, routingKid: info.xKid, ...(mediatorOnionUrl ? { mediatorOnionUrl } : {}) }
+  return { mediatorUrl, routingKid: info.xKid, mediatorDid: info.did, ...(mediatorOnionUrl ? { mediatorOnionUrl } : {}) }
 }
 
 /** Generates and seals the DIDComm device's own material -- none of it
  * (the X25519 leaf, the mediator inbox-label secret) is bound to
  * this identity's did:webvh, so none of it needs the DID known yet. Only
  * `xKid` (did:webvh + fragment) does; see withDidCommXKid. */
-async function prepareBisetDidCommDevice(mediator: DidMdBisetMediator): Promise<DidMdBisetDidCommDeviceMaterial & { mediatorUrl: string; routingKid: string; mediatorOnionUrl?: string }> {
+async function prepareBisetDidCommDevice(mediator: DidMdBisetMediator): Promise<DidMdBisetDidCommDeviceMaterial & { mediatorUrl: string; routingKid: string; mediatorDid?: string; mediatorOnionUrl?: string }> {
   const x25519PrivateKey = x25519.utils.randomSecretKey()
   const x25519PublicKey = x25519.getPublicKey(x25519PrivateKey)
   const mediatorDeviceSecret = crypto.getRandomValues(new Uint8Array(32))
   try {
     const sealed = await sealDidMdBisetDidCommDeviceMaterial(x25519PublicKey, { x25519PrivateKey, mediatorDeviceSecret })
-    return { ...sealed, mediatorUrl: mediator.mediatorUrl, routingKid: mediator.routingKid, ...(mediator.mediatorOnionUrl ? { mediatorOnionUrl: mediator.mediatorOnionUrl } : {}) }
+    return { ...sealed, mediatorUrl: mediator.mediatorUrl, routingKid: mediator.routingKid, mediatorDid: mediator.mediatorDid, ...(mediator.mediatorOnionUrl ? { mediatorOnionUrl: mediator.mediatorOnionUrl } : {}) }
   } finally {
     x25519PrivateKey.fill(0)
     mediatorDeviceSecret.fill(0)
@@ -375,7 +387,7 @@ async function newBisetDidCommDevice(did: string, mediator: DidMdBisetMediator):
   return withDidCommXKid(await prepareBisetDidCommDevice(mediator), did)
 }
 
-function buildDocumentEdit(did: string, config: WalletConfiguration, device?: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']>, remove: string[] = [], removeEndpoints: DidCoreEndpointRemoval[] = []): DidCoreDocumentEdit {
+export function buildDocumentEdit(did: string, config: WalletConfiguration, device?: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']>, remove: string[] = [], removeEndpoints: DidCoreEndpointRemoval[] = []): DidCoreDocumentEdit {
   const didcomm = configuredService(config, 'didcomm')
   const services = config.didDocumentServices
     .filter(service => service.purpose !== 'didcomm' || device)
@@ -389,6 +401,7 @@ function buildDocumentEdit(did: string, config: WalletConfiguration, device?: No
       serviceEndpoint: ((endpoint) => service.purpose === 'didcomm' ? didCommEndpointWithOnion(endpoint, device?.mediatorOnionUrl) : endpoint)(materializeServiceEndpoint(service.serviceEndpoint, {
         '$mediatorUrl': device?.mediatorUrl ?? '',
         '$routingKid': device?.routingKid ?? '',
+        '$mediatorDid': device?.mediatorDid ?? '',
       })),
     }))
   return {
@@ -544,12 +557,20 @@ async function createDpop(privateKey: CryptoKey, publicJwk: JsonWebKey, method: 
   return `${input}.${base64url(signature)}`
 }
 
-async function rootAuthority(handle: string, document: Awaited<ReturnType<typeof resolveByDomain>>) {
+/** did.md's Root key: the identity's own authentication key, `#pass-1`. */
+const ROOT_KEY_FRAGMENT = '#pass-1'
+
+export async function rootAuthority(handle: string, document: Awaited<ReturnType<typeof resolveByDomain>>) {
   if (!document) throw new Error(`No DID was found for ${handle}`)
   const parts = parseWebvhDid(document.id)
   if (parts.domain !== handle || parts.pathSegments.length || parts.port !== undefined) throw new Error('Resolved DID does not match the requested did.md hostname')
-  const authRef = document.authentication[0]
-  const method = authRef ? document.verificationMethod.find(candidate => candidate.id === authRef || `${document.id}${candidate.id}` === authRef || candidate.id === `${document.id}${authRef}`) : undefined
+  // The Root key is `#pass-1` by name (did.md's genesis), not whichever
+  // authentication entry comes first: the document may list other
+  // authentication keys too (PLAN-refactor.md §3-4), in any order.
+  const root = `${document.id}${ROOT_KEY_FRAGMENT}`
+  const absolute = (id: string) => id.startsWith('#') ? `${document.id}${id}` : id
+  const authRef = document.authentication.find(ref => absolute(ref) === root)
+  const method = authRef ? document.verificationMethod.find(candidate => absolute(candidate.id) === root) : undefined
   if (!authRef || !method) throw new Error('Resolved DID has no Root authentication key')
   const verificationMethod = method.id.startsWith('#') ? `${document.id}${method.id}` : method.id
   return { did: document.id, verificationMethod, rootPublicKey: decodeMultikey(method.publicKeyMultibase) }
@@ -806,10 +827,8 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
  * DID document edit drops their keyAgreement keys, which is the one place
  * the rest of the system learns who this identity's devices are (a mediator
  * revokes their inboxes on the next log it is handed; a sender stops
- * encrypting to them). Everything after follows from the DID log alone,
- * on whichever remaining device runs next: the relationship seed is stale
- * once a key was removed, the designated device mints a new one, and every
- * relationship moves to it (relationship-seed-bootstrap.ts).
+ * encrypting to them, and Vault Sync stops reaching them). Every message
+ * goes to the keys the DID document lists, so nothing else needs to move.
  */
 export async function beginDidMdRemoveOtherDevices(configured: DidMdWalletConfiguration = {}): Promise<never> {
   const config = walletConfiguration(configured)
@@ -903,7 +922,7 @@ export async function beginDidMdWalletFinalizeEnrollment(mediatorUrls: readonly 
   // again, or a stale reachability check re-triggering it) must not leave
   // the previous round's device published alongside the new one -- an
   // orphaned #didcomm verification method a sibling still tries to send to,
-  // which the mediator then refuses with e.p.req.not_enroll since nothing
+  // which the mediator then refuses with e.m.req.not-enrolled since nothing
   // ever registered it (found live, 2026-09-15).
   const previous = session.bisetDidCommDevice?.xKid
   const pending: DidMdPendingAuthorization = {
@@ -916,6 +935,23 @@ export async function beginDidMdWalletFinalizeEnrollment(mediatorUrls: readonly 
   }
   pending.documentEdit = buildDocumentEdit(session.did, config, bisetDidCommDevice, previous ? [previous] : [])
   return redirectToWallet(client, pending)
+}
+
+/** The endpoints a DID document stops listing when its DIDComm device moves to `next`.
+ * Pointing at a DIFFERENT mediator retires every endpoint of the old one; the same
+ * mediator keeps what is published. An endpoint naming its mediator by URL carries
+ * the mediator's routing key (its clearnet and its onion alike); one naming it by DID
+ * is the DID itself. A move from the URL form to the DID form retires the former, so
+ * a document does not keep both. */
+export function retiredMediatorEndpoints(
+  old: { routingKid: string; mediatorDid?: string } | undefined,
+  next: { routingKid: string; mediatorDid?: string },
+  serviceId: string,
+): DidCoreEndpointRemoval[] {
+  return [
+    ...(old?.routingKid && old.routingKid !== next.routingKid ? [{ serviceId, match: { routingKeys: [old.routingKid] } }] : []),
+    ...(old?.mediatorDid && old.mediatorDid !== next.mediatorDid ? [{ serviceId, match: { uri: old.mediatorDid } }] : []),
+  ]
 }
 
 export async function beginDidMdWalletDocumentEdit(options: { mediatorUrls?: readonly string[]; mediatorOnionUrls?: readonly string[]; removeMediator?: boolean; configuration?: DidMdWalletConfiguration }): Promise<never> {
@@ -936,11 +972,7 @@ export async function beginDidMdWalletDocumentEdit(options: { mediatorUrls?: rea
     const previous = session.bisetDidCommDevice?.xKid
     if (session.bisetDidCommDevice) pending.previousBisetDidCommDevice = session.bisetDidCommDevice
     pending.bisetDidCommDevice = await newBisetDidCommDevice(session.did, mediator)
-    // Pointing at a DIFFERENT mediator retires every endpoint of the old one (its clearnet
-    // and its onion carry the same routing key); the same mediator keeps what is published.
-    const oldRoutingKid = session.bisetDidCommDevice?.routingKid
-    const retired: DidCoreEndpointRemoval[] = oldRoutingKid && oldRoutingKid !== mediator.routingKid
-      ? [{ serviceId: configuredService(config, 'didcomm').id, match: { routingKeys: [oldRoutingKid] } }] : []
+    const retired = retiredMediatorEndpoints(session.bisetDidCommDevice, mediator, configuredService(config, 'didcomm').id)
     pending.documentEdit = buildDocumentEdit(session.did, config, pending.bisetDidCommDevice, previous ? [previous] : [], retired)
   }
   return redirectToWallet(client, pending)

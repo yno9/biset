@@ -9,7 +9,7 @@ import { BASIC_MESSAGE, didCommThreadId } from '../../src/client/didcomm/basicme
 import { didOfKid } from '../../src/protocol/ids.ts'
 import { DidCommIngressProjector, DidCommReplayError } from '../../src/client/didcomm/ingress-projector.ts'
 import { generatePeerIdentity } from '../../src/protocol/didcomm/peer.ts'
-import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT, relationshipBodyToWire, relationshipMediatorService } from '../../src/client/didcomm/relationship.ts'
+import { didcommGroupAddress } from '../../src/client/didcomm/group-chat.ts'
 import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import type { VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import { ingestIngress } from '../../src/client/store/vault/ingress-ingest.ts'
@@ -180,7 +180,18 @@ describe('DIDComm ingress projector', () => {
       async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [] } },
       signer: { ...signer, deviceId: wrongDeviceKid },
     })
-    await expect(projector.verifyAndProject(envelope)).rejects.toThrow(/recipient kid .* is not available/)
+    await expect(projector.verifyAndProject(envelope)).rejects.toThrow(/recipient kids .* is available/)
+  })
+
+  test('a message encrypted for every device of this identity opens on whichever device this is, not only the first listed', async () => {
+    const otherDeviceKid = `${identityId}#k_firstdevice`
+    const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'to all of your devices' }, didOfKid(senderKid), identityId)
+    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [
+      { kid: otherDeviceKid, publicKey: x25519.getPublicKey(x25519.utils.randomSecretKey()) },
+      { kid: recipientKid, publicKey: recipientXPub },
+    ])
+    const result = await buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
+    expect(result.projection.emails).toHaveLength(1)
   })
 
   test('the SAME envelope succeeds for the actually-addressed device after a wrong device declined it (multidevice ingress)', async () => {
@@ -213,43 +224,21 @@ describe('DIDComm ingress projector', () => {
     await expect(projector.verifyAndProject(envelope)).rejects.toThrow(/unsupported DIDComm message type/)
   })
 
-  test('relationship init is recognized as an audit-only control event on the front-door key', async () => {
-    const mediator = generatePeerIdentity()
-    const relationship = generatePeerIdentity({ uri: 'https://mediator-init.test.example', routingKeys: [mediator.xKid] })
-    const plaintext = buildPlaintext(RELATIONSHIP_INIT, relationshipBodyToWire({ relationshipKid: relationship.xKid, publicKey: relationship.xPub }), didOfKid(senderKid))
+  test('the retired relationship INIT is an unsupported type', async () => {
+    const plaintext = buildPlaintext('https://biset.md/relationship/1.0/init', { relationshipKid: 'did:peer:2.x#key-1', publicKey: 'AA' }, didOfKid(senderKid))
     const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
-    const result = await buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
-
-    expect(result.events[0]?.kind).toBe('didcomm.control')
-    expect(result.projection.emails).toHaveLength(0)
-    const plaintextObject = await decryptVaultObject(segmentKey, result.objects[0]!)
-    const decoded = JSON.parse(new TextDecoder().decode(plaintextObject)) as { payload: Record<string, unknown> }
-    expect(decoded.payload).toMatchObject({ type: RELATIONSHIP_INIT, senderKid, recipientKid, relationshipKid: relationship.xKid })
+    await expect(buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))).rejects.toThrow(/unsupported DIDComm message type/)
   })
 
-  test('relationship accept selects a private relationship recipient key and verifies a did:peer sender', async () => {
+  test('a basicmessage from another agent\'s own did:peer:2 is a conversation with that did:peer', async () => {
     const mediator = generatePeerIdentity()
-    const service = { uri: 'https://mediator-accept.test.example', routingKeys: [mediator.xKid] }
-    const recipientRelationship = generatePeerIdentity(service)
-    const senderRelationship = generatePeerIdentity(service)
-    const plaintext = buildPlaintext(RELATIONSHIP_ACCEPT, relationshipBodyToWire({ relationshipKid: senderRelationship.xKid, publicKey: senderRelationship.xPub }), senderRelationship.did)
-    const jwe = packAuthcrypt(
-      new TextEncoder().encode(JSON.stringify(plaintext)),
-      { kid: senderRelationship.xKid, privateKey: senderRelationship.xPriv },
-      [{ kid: recipientRelationship.xKid, publicKey: recipientRelationship.xPub }],
-    )
+    const agent = generatePeerIdentity({ uri: 'https://agent-mediator.test.example', routingKeys: [mediator.xKid] })
+    const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'hello from an agent' }, agent.did, identityId)
+    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: agent.xKid, privateKey: agent.xPriv }, [{ kid: recipientKid, publicKey: recipientXPub }])
     const projector = new DidCommIngressProjector({
-      identityId,
-      actorDeviceId: recipientKid,
-      resolveOwnKey(kid) {
-        return kid === recipientRelationship.xKid
-          ? { kid, x25519PrivateKey: recipientRelationship.xPriv }
-          : kid === recipientKid ? { kid, x25519PrivateKey: recipientX } : null
-      },
-      async resolveSenderKey(kid) {
-        if (kid !== senderRelationship.xKid) throw new Error('unexpected relationship sender')
-        return senderRelationship.xPub
-      },
+      identityId, actorDeviceId: recipientKid,
+      resolveOwnKey(kid) { return kid === recipientKid ? { kid, x25519PrivateKey: recipientX } : null },
+      async resolveSenderKey(kid) { if (kid !== agent.xKid) throw new Error('unexpected sender'); return agent.xPub },
       async alreadyProcessed() { return false },
       async nextActorSeq() { return 1 },
       async initialParents() { return [] },
@@ -258,9 +247,31 @@ describe('DIDComm ingress projector', () => {
       signer,
     })
     const result = await projector.verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
+    expect(result.projection.emails).toMatchObject([{ from: [{ email: agent.did }], to: [{ email: identityId }], threadId: didCommThreadId(identityId, agent.did) }])
+  })
 
-    expect(result.events[0]?.kind).toBe('didcomm.control')
-    expect(relationshipMediatorService(senderRelationship.xKid)).toEqual({ url: service.uri, routingKid: mediator.xKid })
+  test('a basicmessage addressed to several parties lands in the group thread its thid names, with every recipient in `to`', async () => {
+    const carol = 'did:webvh:ghi789:carol.test.example'
+    const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'hello, both of you', subject: 'Planning' }, didOfKid(senderKid), [identityId, carol], { thid: 'group-1' })
+    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
+    const result = await buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
+    expect(result.projection.emails).toMatchObject([{
+      from: [{ email: didOfKid(senderKid) }], to: [{ email: identityId }, { email: carol }],
+      threadId: didcommGroupAddress('group-1'), subject: 'Planning',
+    }])
+  })
+
+  test('a group message that starts its own thread (no thid) is threaded by its id', async () => {
+    const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'new group' }, didOfKid(senderKid), [identityId, 'did:webvh:ghi789:carol.test.example'], { id: 'first-message' })
+    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
+    const result = await buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
+    expect(result.projection.emails[0]!.threadId).toBe(didcommGroupAddress('first-message'))
+  })
+
+  test('a group message that does not name this identity among its recipients is rejected', async () => {
+    const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'not for you' }, didOfKid(senderKid), ['did:webvh:x:carol.test.example', 'did:webvh:y:dave.test.example'], { thid: 'group-2' })
+    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
+    await expect(buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))).rejects.toThrow(/does not name this identity/)
   })
 
   test('a basicmessage decrypts, verifies the sender, and lands as an ordinary message.add email in the recipient\'s own inbox', async () => {

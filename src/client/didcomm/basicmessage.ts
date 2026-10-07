@@ -13,12 +13,15 @@ export function isBasicMessage(msg: { type?: string }): boolean { return msg.typ
 
 export interface BasicMessageBody {
   content: string
-  /** biset extension (not part of the DIDComm spec), matching src.bak's own
-   * basicmessage `sentAt` field: an ISO millisecond timestamp for
-   * same-second ordering `created_time`'s epoch-seconds precision can't
-   * give. Omitted, not required -- a non-biset sender's `created_time`
-   * remains the fallback (message.ts's own header-level field). */
+  /** NOT part of basicmessage/2.0 (whose only attribute is `content`): a biset
+   * extension. An ISO millisecond timestamp, for the order of messages sent
+   * within one second -- the official `created_time` header is epoch seconds.
+   * Always from the same instant as `created_time` (and, for a bridged mail,
+   * the mail's own `Date:`). Optional: a sender without it is read by its
+   * `created_time`. */
   sentAt?: string
+  /** NOT part of basicmessage/2.0: a biset extension, the subject line of a
+   * mail-shaped message. A receiver that does not know it ignores it. */
   subject?: string
 }
 

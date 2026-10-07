@@ -24,6 +24,8 @@ export interface DidCommPlaintext {
   // receiver to answer on the same connection -- the HTTP response or the
   // open WebSocket -- instead of the sender's own service endpoint.
   return_route?: 'all' | 'none' | 'thread'
+  /** Language of the message's human-readable text (BCP 47), e.g. a problem report's `comment`. */
+  lang?: string
   // created_time is spec-recommended on every message; expires_time is set
   // only when a sender wants a deadline. Both are UTC epoch SECONDS as
   // integers (message_structure.md) -- NOT millis, a common interop trap.
@@ -51,9 +53,13 @@ export interface PlaintextOptions {
   expiresTime?: number
   attachments?: DidCommPlaintext['attachments']
   returnRoute?: DidCommPlaintext['return_route']
+  lang?: string
 }
 
-export function buildPlaintext(type: string, body: unknown, from?: string, to?: string, opts: PlaintextOptions = {}): DidCommPlaintext {
+/** `to` is the message's audience: one DID, or several when the same
+ * plaintext goes to several parties (DIDComm v2.1 `to`; each recipient learns
+ * who else it was addressed to, like an email's To/Cc). */
+export function buildPlaintext(type: string, body: unknown, from?: string, to?: string | readonly string[], opts: PlaintextOptions = {}): DidCommPlaintext {
   const msg: DidCommPlaintext = {
     id: opts.id ?? crypto.randomUUID(),
     typ: 'application/didcomm-plain+json',
@@ -61,13 +67,15 @@ export function buildPlaintext(type: string, body: unknown, from?: string, to?: 
     created_time: opts.createdTime ?? nowEpochSeconds(),
   }
   if (from) msg.from = from
-  if (to) msg.to = [to]
+  if (typeof to === 'string') msg.to = [to]
+  else if (to?.length) msg.to = [...to]
   if (opts.thid) msg.thid = opts.thid
   if (opts.pthid) msg.pthid = opts.pthid
   if (opts.ack && opts.ack.length) msg.ack = opts.ack
   if (opts.expiresTime !== undefined) msg.expires_time = opts.expiresTime
   if (opts.attachments?.length) msg.attachments = opts.attachments
   if (opts.returnRoute) msg.return_route = opts.returnRoute
+  if (opts.lang) msg.lang = opts.lang
   return msg
 }
 

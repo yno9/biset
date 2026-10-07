@@ -1,4 +1,4 @@
-import { bytesToBase64url, canonicalHash, equalBytes, sha256Bytes } from '../../protocol/canonical.ts'
+import { canonicalHash, equalBytes, sha256Bytes } from '../../protocol/canonical.ts'
 import type { IngressEnvelopeV1 } from '../../protocol/ingress.ts'
 import { didOfKid } from '../../protocol/ids.ts'
 import type { DeviceId, IdentityId, VaultEventId } from '../../protocol/ids.ts'
@@ -18,7 +18,7 @@ import { isBasicMessage, basicMessageBodyOf, didCommThreadId } from './basicmess
 import { isExternalFeedPost, externalFeedPostBodyOf, externalFeedThreadId, EXTERNAL_FEED_POST } from './external-feed.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { assertFromMatchesSender, isExpired } from '../../protocol/didcomm/message.ts'
-import { isRelationshipMessage, relationshipBodyOf } from './relationship.ts'
+import { didcommGroupAddress, isGroupAudience } from './group-chat.ts'
 import { MAIL_BRIDGE_INBOUND, MAIL_BRIDGE_SEND_RESULT, mailBridgeInboundBodyOf } from '../../server/mediator/mail-plugin/mail-bridge.ts'
 import { readRfc5322HeaderSummary } from '../app/ui/message/rfc5322-headers.ts'
 
@@ -27,13 +27,10 @@ export interface OwnDidCommKey { kid: string; x25519PrivateKey: Uint8Array }
 export interface DidCommIngressProjectorOptions {
   identityId: IdentityId
   actorDeviceId: DeviceId
-  /** Selects either the public front-door key or a private relationship key
-   * from the JWE's addressed recipient kid. Unknown kids fail closed. */
+  /** This device's key for the JWE's addressed recipient kid. Unknown kids
+   * fail closed. */
   resolveOwnKey(kid: string): OwnDidCommKey | null | Promise<OwnDidCommKey | null>
   resolveSenderKey: ResolveSenderKey
-  /** Maps a private sender kid back to its public counterparty DID for the
-   * user-facing thread. Required only for established relationship chat. */
-  resolveCounterpartyDid?(senderKid: string): string | null | Promise<string | null>
   /** True if a `didcomm.control` event for this exact (senderKid, message id)
    * pair has already been committed -- the caller's job since the answer
    * lives in already-committed local vault state, which this
@@ -69,7 +66,7 @@ export interface DidCommIngressProjectorOptions {
  * this for the group-chat and mail-bridge types) or drop it deliberately.
  */
 export function isProjectableDidCommIngress(msg: { type?: string }): boolean {
-  return isPing(msg) || isBasicMessage(msg) || isRelationshipMessage(msg) || isExternalFeedPost(msg) || msg.type === MAIL_BRIDGE_INBOUND || msg.type === MAIL_BRIDGE_SEND_RESULT
+  return isPing(msg) || isBasicMessage(msg) || isExternalFeedPost(msg) || msg.type === MAIL_BRIDGE_INBOUND || msg.type === MAIL_BRIDGE_SEND_RESULT
 }
 
 /**
@@ -125,17 +122,25 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
     const jwe = parseJwe(parsed)
     if (!jwe) throw new TypeError('DIDComm ingress payload is not a well-formed JWE')
 
-    const recipientKid = jwe.recipients[0]?.header.kid
-    if (!recipientKid) throw new TypeError('DIDComm JWE has no recipient kid')
-    const selfKeys = await this.options.resolveOwnKey(recipientKid)
-    if (!selfKeys || selfKeys.kid !== recipientKid) throw new TypeError(`DIDComm recipient kid ${recipientKid} is not available to this endpoint`)
+    // A message to an identity is encrypted once for every device key its DID
+    // document lists (multiplexed encryption), in the sender's order: this
+    // device's key is any one of the recipients, not necessarily the first.
+    const recipientKids = jwe.recipients.map(recipient => recipient.header.kid).filter((kid): kid is string => typeof kid === 'string' && kid.length > 0)
+    if (recipientKids.length === 0) throw new TypeError('DIDComm JWE has no recipient kid')
+    let selfKeys: OwnDidCommKey | null = null
+    for (const kid of recipientKids) {
+      const candidate = await this.options.resolveOwnKey(kid)
+      if (candidate && candidate.kid === kid) { selfKeys = candidate; break }
+    }
+    if (!selfKeys) throw new TypeError(`none of the DIDComm recipient kids ${recipientKids.join(', ')} is available to this endpoint`)
+    const recipientKid = selfKeys.kid
 
     // anoncrypt (alg ECDH-ES+A256KW) has no sender to authenticate by
     // construction -- see crypto.ts's own header on why it exists at all
     // (Forward-wrapping so a mediator stays blind) and external-feed.ts's
     // header on why External Feed Post is the ONLY message type allowed to
     // ride on it: every other type this projector understands (chat, ping,
-    // relationship, mail-bridge) assumes an authenticated sender somewhere
+    // mail-bridge) assumes an authenticated sender somewhere
     // downstream, so admitting anoncrypt for them would silently swap out
     // that assumption's proof for nothing.
     const isAnoncrypt = protectedHeaderOf(jwe)?.alg === 'ECDH-ES+A256KW'
@@ -211,14 +216,12 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       objectRecords.push(identityScopedObject(record.metadataObject, this.options.identityId))
       objectRecords.push(identityScopedObject(record.rawRfc5322Object, this.options.identityId))
       decryptedForProjection = { event: record.event, plaintext: await decryptVaultObject(segment.segmentKey, record.metadataObject) }
-    } else if (isPing(msg) || isRelationshipMessage(msg) || msg.type === MAIL_BRIDGE_SEND_RESULT) {
+    } else if (isPing(msg) || msg.type === MAIL_BRIDGE_SEND_RESULT) {
       // Trust Ping 2.0: an audit record, never a thread row -- see
       // local-jmap/reducer.ts's own no-op case for `didcomm.control`.
       // (senderKid is always defined here, same reasoning as the
       // MAIL_BRIDGE_INBOUND branch above.)
       const alg = protectedHeaderOf(jwe)?.alg
-      const relationshipBody = isRelationshipMessage(msg) ? relationshipBodyOf(msg) : null
-      if (isRelationshipMessage(msg) && !relationshipBody) throw new TypeError('DIDComm relationship message has an invalid body')
       const record = await buildVaultMutation({
         kind: 'didcomm.control' as const,
         targetIds: [dedupeId],
@@ -227,10 +230,6 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
           recipientKid,
           ...(typeof alg === 'string' ? { alg } : {}),
           ...(isPing(msg) ? { responseOwed: responseOwedFor(msg) } : {}),
-          ...(relationshipBody ? {
-            relationshipKid: relationshipBody.relationshipKid,
-            relationshipPublicKey: bytesToBase64url(relationshipBody.publicKey),
-          } : {}),
           ...(msg.type === MAIL_BRIDGE_SEND_RESULT ? { mailBridgeResultReceived: true, threadId: msg.thid ?? msg.id } : {}),
           receivedAt: createdAt,
         },
@@ -292,30 +291,32 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
     } else {
       // Basic Message 2.0: a chat message, filed exactly like mail's own
       // message.add (buildMailMessageAdd) -- same reducer, same read model,
-      // same thread.ts UI, no DIDComm-specific rendering path needed. One
-      // thread per correspondent DID pair (didCommThreadId), not per-subject
-      // like mail: a chat's whole point is one continuous conversation.
-      // (senderKid is always defined here: this branch is only reached for
-      // authcrypt messages, since anoncrypt is gated to External Feed Post
-      // above and that type is handled by the branch just above this one.)
-      const senderDid = await resolveDidCommSenderDid(senderKid!, kid => this.options.resolveCounterpartyDid?.(kid) ?? null)
-      // Only a relationship's CURRENT counterparty kid speaks for it: an old
-      // one may be held by a device the counterparty removed. Final, so the
-      // copy is dropped instead of redelivered.
-      if (!senderDid) throw new PermanentDeliveryError('DIDComm relationship sender is not a current counterparty')
+      // same thread.ts UI. The sender is the DID of the key that authcrypted
+      // it, whatever its method (a did:peer of another agent is a party of its
+      // own). A message addressed to more than one party is a group
+      // conversation, threaded by `thid` (group-chat.ts); any other is the
+      // 1:1 conversation with its sender (didCommThreadId). Every field below
+      // comes from the message alone, never from this device's own state, so
+      // two of this identity's devices record it identically (PLAN-refactor.md
+      // §9.1: a mismatch stops the Vault's projection rebuild).
+      // (senderKid is always defined here: anoncrypt is gated to External
+      // Feed Post above, and that type is handled by the branch just above.)
+      const senderDid = didOfKid(senderKid!)
+      const group = isGroupAudience(msg.to)
+      if (group && !msg.to!.includes(this.options.identityId)) throw new PermanentDeliveryError('DIDComm group message does not name this identity among its recipients')
       const body = basicMessageBodyOf(msg)
       if (!body) throw new TypeError('DIDComm basicmessage has no readable content')
       const sentAt = body.sentAt ?? (msg.created_time ? new Date(msg.created_time * 1000).toISOString() : createdAt)
       const record = await buildMailMessageAdd({
         email: {
           id: dedupeId,
-          threadId: didCommThreadId(this.options.identityId, senderDid),
+          threadId: group ? didcommGroupAddress(msg.thid ?? msg.id) : didCommThreadId(this.options.identityId, senderDid),
           mailboxIds: { inbox: true },
           keywords: {},
           receivedAt: createdAt,
           sentAt,
           from: [{ email: senderDid }],
-          to: [{ email: this.options.identityId }],
+          to: (group ? msg.to! : [this.options.identityId]).map(email => ({ email })),
           ...(body.subject ? { subject: body.subject } : {}),
         },
         rawRfc5322: new TextEncoder().encode(body.content),
@@ -360,18 +361,6 @@ export function didCommMessageDedupeId(senderKid: string, messageId: string): st
   return canonicalHash('biset/vault/didcomm/message-dedupe-id/v1', { senderKid, messageId })
 }
 
-/** A private relationship kid (`did:peer:2...`) has no public DID of its
- * own -- the caller's `resolveCounterpartyDid` looks up which established
- * `ContactKeyV1` it belongs to. A public front-door kid IS a fragment of a
- * real DID already (`didOfKid`). Shared by both the 1:1 basicmessage path
- * above and any other DIDComm feature (e.g. group chat) that needs to turn
- * an authenticated sender kid into a human-facing DID the same way. */
-export async function resolveDidCommSenderDid(
-  senderKid: string,
-  resolveCounterpartyDid: (kid: string) => string | null | Promise<string | null>,
-): Promise<string | null> {
-  return senderKid.startsWith('did:peer:2.') ? await resolveCounterpartyDid(senderKid) : didOfKid(senderKid)
-}
 
 
 function identityScopedObject<T>(object: T, identityId: IdentityId): T & { identityId: IdentityId } {

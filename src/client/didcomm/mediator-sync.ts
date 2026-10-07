@@ -9,28 +9,23 @@
 // file's did:dht-era session/IndexedDB record bookkeeping -- the caller
 // hands over one ready MediatorInboxClient (protocol/didcomm/
 // mediator-device.ts), so this module only needs the mediator URL and that.
-import { fetchMediatorInfo, pushWebvhLog, queryRecipients, requestMediation, updateRecipient, type RecipientEntry, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
+import { fetchMediatorInfo, queryRecipients, requestMediation, updateRecipient, type RecipientEntry, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
 import { MAX_DEVICES_PROBLEM } from '../../protocol/didcomm/mediator-protocol.ts'
 import { DidCommProblemError } from '../../protocol/didcomm/problems.ts'
 import { pickupDeliver, acknowledgeMessages, type DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
 import type { MediatorInboxClient } from '../../protocol/didcomm/mediator-transport.ts'
 import type { ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
-import { serializeLog } from '../../protocol/webvh/log.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
-import { fetchCurrentLog, freshFetch } from '../identity/webvh/log-io.ts'
 
 /** mediate-request + recipient-update(add), unconditionally -- both are
  * idempotent (`no_change` when the inbox already exists), so calling this on
  * every boot is the self-heal for a mediator that lost this inbox. A
- * did:webvh inbox first hands the mediator the DID's current log, read past
- * the CDN: the mediator authenticates a did:webvh key only against the
- * latest log it holds, and a key added moments ago is not in a cached one. */
+ * did:webvh inbox needs nothing more: the mediator resolves the DID itself,
+ * as any DIDComm agent does, to see this device's key listed. (An earlier
+ * version pushed the DID's log to `POST /webvh-log` first; the mediator
+ * still accepts that, but it is not DIDComm and nothing sends it now.) */
 export async function registerWithMediator(mediatorUrl: string, inbox: MediatorInboxClient, fetchImpl: typeof fetch = defaultFetch()): Promise<MediatorInfo> {
   const mediator = await fetchMediatorInfo(mediatorUrl, fetchImpl)
-  if (inbox.did.startsWith('did:webvh:')) {
-    const { entries } = await fetchCurrentLog(inbox.did, freshFetch(fetchImpl))
-    await pushWebvhLog(mediator, serializeLog(entries), fetchImpl)
-  }
   await requestMediation(mediator, inbox, fetchImpl)
   try {
     await updateRecipient(mediator, inbox, 'add', fetchImpl)
@@ -95,7 +90,7 @@ export function startMediatorPolling(
       // Enrollment is part of the polling invariant, not a fire-and-forget
       // caller precondition. In particular the first tick runs immediately:
       // racing it against a separate recipient-update used to produce a noisy
-      // e.p.req.not_enroll problem report on every fresh page boot. Keeping
+      // e.m.req.not-enrolled problem report on every fresh page boot. Keeping
       // `registered` false after a failure also makes a live tab self-heal
       // when the mediator was unavailable at boot, rather than waiting for
       // the next full page reload to attempt registration again.

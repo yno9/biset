@@ -28,27 +28,31 @@
 // traffic or block their registration.
 //
 // Ownership says nothing about WHICH of X's devices is asking, and a
-// relationship did:peer shares one key across all of them, so each request
-// also names its inbox with a `device` label (a biset extension field):
-// one inbox per (X, device), at most `maxDevicesPerDid` per X. A Forward for
-// X is copied into every live inbox of X (routing.md lets a mediator
-// multiplex to a recipient's several physical devices).
+// relationship did:peer shares one key across all of them, so a request MAY
+// also name its inbox with a `device` label (a biset extension field): one
+// inbox per (X, device), at most `maxDevicesPerDid` per X. A request without
+// `device` -- every standard client's -- uses the inbox derived from its own
+// sending key (`defaultDeviceLabel`). A Forward for X is copied into every
+// live inbox of X (routing.md lets a mediator multiplex to a recipient's
+// several physical devices).
 //
-// did:peer keys are read straight out of the DID. did:webvh keys come from
-// the latest log a client pushed to `POST /webvh-log` -- verified here, no
-// network, and a newer log revokes every inbox registered with a key it no
-// longer lists.
+// did:peer keys are read straight out of the DID. did:webvh keys are learned
+// the way any DIDComm agent learns a sender's keys: the mediator resolves the
+// DID (`resolveWebvh`, webvh-state.ts) and re-checks it from time to time --
+// a newer log revokes every inbox registered with a key it no longer lists.
+// Without a `resolveWebvh` it falls back to the latest log a client pushed to
+// `POST /webvh-log` (not DIDComm; see webvh-state.ts).
 import { decodePeerDid2, publicKeyOf, type PeerIdentity } from '../../protocol/didcomm/peer.ts'
 import { assertFromMatchesSender, buildPlaintext, isExpired, type DidCommPlaintext } from '../../protocol/didcomm/message.ts'
-import { buildProblemReport } from '../../protocol/didcomm/problems.ts'
+import { buildProblemReport, PROBLEM_REPORT } from '../../protocol/didcomm/problems.ts'
 import {
-  packAuthcrypt, unpackAuthcrypt, unpackAnoncrypt, parseJwe, protectedHeaderOf,
+  packAuthcrypt, unpackAuthcrypt, unpackAnoncrypt, parseJwe, protectedHeaderOf, b64url,
   DIDCOMM_ENCRYPTED_MEDIA_TYPE, isDidCommEncryptedRequest,
 } from '../../protocol/didcomm/crypto.ts'
 import { decodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
-import { parseLog, entryVersionNumber } from '../../protocol/webvh/log.ts'
-import { resolveEntries } from '../../protocol/webvh/resolver.ts'
-import type { WebvhDidDocument } from '../../protocol/webvh/document.ts'
+import { defaultDeviceLabel } from '../../protocol/didcomm/mediator-device.ts'
+import { webvhStateFromLog, WebvhUnavailable, type WebvhStateResolver } from './webvh-state.ts'
+import { peerMediatorIdentity, type MediatorIdentity } from './identity.ts'
 import { packSigned } from './signature.ts'
 import { PING, PING_RESPONSE, TRUST_PING, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
 import {
@@ -71,28 +75,24 @@ const utf8 = (s: string) => new TextEncoder().encode(s)
 const toHex = (b: Uint8Array): string => [...b].map(x => x.toString(16).padStart(2, '0')).join('')
 const fromHex = (h: string): Uint8Array => new Uint8Array((h.match(/../g) ?? []).map(x => parseInt(x, 16)))
 
-/** Every keyAgreement kid (absolute) of a resolved did:webvh document and
- * its X25519 key, hex. Entries this mediator can't read are left out --
- * they can't authenticate anything here anyway. */
-function webvhKeyAgreementKeys(doc: WebvhDidDocument): Record<string, string> {
-  const absolute = (id: string) => id.startsWith('#') ? `${doc.id}${id}` : id
-  const keys: Record<string, string> = {}
-  for (const ref of doc.keyAgreement ?? []) {
-    const kid = absolute(ref)
-    const method = doc.verificationMethod.find(vm => absolute(vm.id) === kid)
-    if (!method) continue
-    try { keys[kid] = toHex(decodeX25519Multikey(method.publicKeyMultibase)) } catch { /* not X25519 */ }
-  }
-  return keys
-}
-
 export interface MediatorOptions {
-  mediator: PeerIdentity
+  /** A did:web mediator (identity.ts), or a bare did:peer. */
+  mediator: MediatorIdentity | PeerIdentity
   store: SqliteMediatorStore
   /** The largest DIDComm message this mediator takes (Discover Features
    * `max_receive_bytes`). Defaults to the store's per-message limit; a
    * deployment with a smaller request-body limit passes the smaller one. */
   maxReceiveBytes?: number
+  /** How to learn a did:webvh's current keys: resolve its log. Absent: only
+   * logs pushed to `POST /webvh-log` are known (the mediator never dials out). */
+  resolveWebvh?: WebvhStateResolver
+  /** A resolved state is trusted this long before the DID is resolved again (default 5 min). */
+  webvhFreshMs?: number
+  /** After a resolution attempt (any outcome), the same DID is not tried again for this long (default 10 s). */
+  webvhRetryMs?: number
+  /** When resolution fails, the state held is still used if it was confirmed this recently (default 1 h). */
+  webvhStaleMs?: number
+  now?: () => number
 }
 
 /** What a Discover Features query may match: the protocols this mediator
@@ -123,6 +123,10 @@ export interface LiveSocket {
 export interface MediatorHandler {
   /** Handles a mediator request, or returns null if the path isn't ours. */
   handle(req: Request, url: URL): Promise<Response | null>
+  /** Resolves every did:webvh that holds an inbox again, so a device its DID
+   * dropped loses its inbox now rather than at its next request. Does
+   * nothing without `resolveWebvh`. */
+  refreshWebvh(): Promise<{ checked: number; revoked: number }>
   /** The WebSocket transport: one call per text frame, and one when the
    * socket closes (live mode ends with the connection, Pickup 3.0). */
   live: {
@@ -139,22 +143,42 @@ interface Reply { trigger: DidCommPlaintext; packed: string }
 type Outcome = { reply: Reply } | { http: Response }
 
 class Malformed extends Error {}
-/** A did:webvh sender whose log this mediator has not been given yet. */
-class UnknownWebvhState extends Error {}
+/** A did:webvh sender whose current keys do not include the key it used (or
+ * whose log this mediator has not seen). */
+class UnknownWebvhState extends Error {
+  constructor(message: string, readonly code: string) { super(message) }
+}
 
-export function createMediator({ mediator, store, maxReceiveBytes = store.limits.maxMessageBytes }: MediatorOptions): MediatorHandler {
-  const ownRecipient = { kid: mediator.xKid, privateKey: mediator.xPriv }
+export function createMediator({
+  mediator: mediatorOption, store, maxReceiveBytes = store.limits.maxMessageBytes, resolveWebvh,
+  webvhFreshMs = 5 * 60_000, webvhRetryMs = 10_000, webvhStaleMs = 60 * 60_000, now = Date.now,
+}: MediatorOptions): MediatorHandler {
+  /** Per did:webvh: when it was last resolved successfully, and last tried. */
+  const webvhChecks = new Map<string, { confirmedAt?: number; triedAt: number }>()
+  const resolving = new Map<string, Promise<void>>()
+  const mediator = 'peerKid' in mediatorOption ? mediatorOption : peerMediatorIdentity(mediatorOption)
+  /** Every kid that names this mediator's key. A sender that took its key from
+   * the did:web document uses that kid; one that took it from the did:peer
+   * (a DID document published before, a relationship) uses the other. */
+  const ownKids = new Set([mediator.xKid, ...mediator.aliasKids])
+  const ownRecipientFor = (jwe: { recipients: Array<{ header: { kid: string } }> }) =>
+    ({ kid: jwe.recipients.map(recipient => recipient.header.kid).find(kid => ownKids.has(kid)) ?? mediator.xKid, privateKey: mediator.xPriv })
   /** Per socket: the inboxes in live mode on it, each with its unsubscribe. */
   const liveInboxes = new WeakMap<LiveSocket, Map<string, () => void>>()
 
-  /** The X25519 key of `kid`, a keyAgreement key of the DID it names --
-   * self-certifying for did:peer, the latest pushed log for did:webvh.
-   * Throws for any kid that is not (or is no longer) such a key. */
-  function keyAgreementKey(kid: string): Uint8Array {
+  /** The X25519 key of `kid` as this mediator holds it now -- self-certifying
+   * for did:peer, the latest verified state for did:webvh. Throws for any kid
+   * that is not (or is no longer) a keyAgreement key. */
+  function heldKey(kid: string): Uint8Array {
     const did = didOf(kid)
     if (did.startsWith('did:webvh:')) {
       const hex = store.webvhKey(did, kid)
-      if (!hex) throw new UnknownWebvhState(`${kid} is not a keyAgreement key of the latest ${did} log this mediator holds`)
+      if (!hex) {
+        throw new UnknownWebvhState(
+          `${kid} is not a keyAgreement key of ${did}`,
+          resolveWebvh ? 'e.m.trust.sender-key-not-listed' : 'e.m.did.log-required',
+        )
+      }
       return fromHex(hex)
     }
     if (did.startsWith('did:peer:2.')) {
@@ -165,12 +189,66 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
     throw new Malformed(`unsupported DID method for ${kid}`)
   }
 
+  /** Resolves `did` and records what it lists (revoking inboxes of keys it no
+   * longer lists). One resolution at a time per DID. */
+  function resolveAndRecord(did: string): Promise<void> {
+    const running = resolving.get(did)
+    if (running) return running
+    const attempt = (async () => {
+      const check = webvhChecks.get(did) ?? { triedAt: 0 }
+      check.triedAt = now()
+      webvhChecks.set(did, check)
+      const state = await resolveWebvh!(did)
+      if (state) {
+        store.recordWebvhState(state.did, state.versionNumber, state.keys)
+        check.confirmedAt = now()
+      }
+    })().finally(() => resolving.delete(did))
+    resolving.set(did, attempt)
+    return attempt
+  }
+
+  /** The X25519 key of `kid`. A did:webvh key is checked against a fresh
+   * enough resolution of its DID first: a key just added is not in a state
+   * held from before, so an unknown key triggers a resolve (no more often
+   * than `webvhRetryMs`). */
+  async function keyAgreementKey(kid: string): Promise<Uint8Array> {
+    const did = didOf(kid)
+    if (resolveWebvh && did.startsWith('did:webvh:')) {
+      const check = webvhChecks.get(did)
+      const listed = store.webvhKey(did, kid) !== undefined
+      const fresh = check?.confirmedAt !== undefined && now() - check.confirmedAt < webvhFreshMs
+      const recentlyTried = check !== undefined && now() - check.triedAt < webvhRetryMs
+      if ((!listed || !fresh) && !recentlyTried) {
+        try {
+          await resolveAndRecord(did)
+        } catch (error) {
+          // The network failed. A state confirmed (or, for a pushed one,
+          // recorded) recently enough still stands; otherwise ask to retry.
+          const lastKnown = Math.max(check?.confirmedAt ?? 0, store.webvhStateRecordedAt(did) ?? 0)
+          if (!listed || now() - lastKnown > webvhStaleMs) throw error instanceof WebvhUnavailable ? error : new WebvhUnavailable(error instanceof Error ? error.message : String(error))
+        }
+      }
+    }
+    return heldKey(kid)
+  }
+
+  async function refreshWebvh(): Promise<{ checked: number; revoked: number }> {
+    if (!resolveWebvh) return { checked: 0, revoked: 0 }
+    const dids = store.webvhRecipientDids()
+    const before = store.stats().inboxes
+    for (const did of dids) {
+      try { await resolveAndRecord(did) } catch (error) { console.warn(`[mediator] could not re-check ${did}:`, error instanceof Error ? error.message : String(error)) }
+    }
+    return { checked: dids.length, revoked: Math.max(0, before - store.stats().inboxes) }
+  }
+
   /** Authcrypts a reply back to the exact key that sent the request. */
   function packTo(plaintext: DidCommPlaintext, toKid: string): string {
     return JSON.stringify(packAuthcrypt(
       utf8(JSON.stringify(plaintext)),
       { kid: mediator.xKid, privateKey: mediator.xPriv },
-      [{ kid: toKid, publicKey: keyAgreementKey(toKid) }],
+      [{ kid: toKid, publicKey: heldKey(toKid) }],
     ))
   }
 
@@ -190,9 +268,24 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
 
   /** Queued copies for one inbox, as a Pickup 3.0 `delivery`. Each
    * attachment id is the mediator's own id for the body -- what the device
-   * names back in messages-received. */
+   * names back in messages-received. Pickup 3.0 carries each message as
+   * `data.base64`: the encrypted message, base64url-encoded. */
   function deliveryAttachments(batch: QueuedMessage[]): NonNullable<DidCommPlaintext['attachments']> {
-    return batch.map(m => ({ id: m.id, data: { json: JSON.parse(m.packed) } }))
+    return batch.map(m => ({ id: m.id, media_type: DIDCOMM_ENCRYPTED_MEDIA_TYPE, data: { base64: b64url(utf8(m.packed)) } }))
+  }
+
+  /** An error at the transport level (DIDComm transports: "it is also
+   * appropriate to emit an error at the transport level, such as HTTP 413"),
+   * with the standard problem-report as its body -- plaintext, since an error
+   * for a sender nobody can name has nothing to encrypt to. `comment` is
+   * fixed per `code`; what differs between occurrences is in `args`. With the
+   * message that triggered it, the report refers to its thread (`pthid`) and
+   * acknowledges it (`ack`); an unreadable request has no thread to refer to. */
+  function httpProblem(status: number, code: string, comment: string, args: string[] = [], trigger?: DidCommPlaintext): Response {
+    const report = buildPlaintext(PROBLEM_REPORT, { code, comment, ...(args.length ? { args } : {}) }, mediator.did, undefined, {
+      lang: 'en', ...(trigger ? { pthid: trigger.thid ?? trigger.id, ack: [trigger.id] } : {}),
+    })
+    return new Response(JSON.stringify(report), { status, headers: { 'content-type': 'application/didcomm-plain+json' } })
   }
 
   /** A problem-report for an anoncrypt Forward, which has no sender to
@@ -216,10 +309,10 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
     const header = protectedHeaderOf(jwe)
     if (!header) throw new Malformed('the protected header is not readable')
     if (header.alg === 'ECDH-ES+A256KW') {
-      const plaintext = await unpackAnoncrypt(jwe, ownRecipient)
+      const plaintext = await unpackAnoncrypt(jwe, ownRecipientFor(jwe))
       return { msg: JSON.parse(new TextDecoder().decode(plaintext)), senderKid: null }
     }
-    const { plaintext, senderKid } = await unpackAuthcrypt(jwe, ownRecipient, async kid => keyAgreementKey(kid))
+    const { plaintext, senderKid } = await unpackAuthcrypt(jwe, ownRecipientFor(jwe), kid => keyAgreementKey(kid))
     const msg = JSON.parse(new TextDecoder().decode(plaintext)) as DidCommPlaintext
     // Every rule below keys off the sender's DID, so `from` must be the DID
     // the envelope authenticated, not just a claim.
@@ -227,35 +320,27 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
     return { msg, senderKid }
   }
 
-  /** `POST /webvh-log` -- a did:webvh log (JSONL). Self-certifying, so
-   * anyone may hand it over: it is verified in full here and kept only if
-   * it is newer than what this mediator already holds for that DID. */
+  /** `POST /webvh-log` -- a did:webvh log (JSONL), pushed by a client.
+   * Not DIDComm (see webvh-state.ts): kept for a mediator that resolves
+   * nothing. Self-certifying, so anyone may hand it over: it is verified in
+   * full here and kept only if it is newer than what this mediator already
+   * holds for that DID. */
   async function acceptWebvhLog(req: Request): Promise<Response> {
-    let doc: WebvhDidDocument | null
-    let versionNumber: number
+    let state: ReturnType<typeof webvhStateFromLog>
     try {
-      const entries = parseLog(await req.text())
-      // The DID's id is whatever its LATEST entry says: a domain move (an
-      // alias renamed to its real hostname, say) rewrites the domain part
-      // of every state, and the genesis entry keeps the old one. The
-      // SCID, which verification checks against the whole chain, stays.
-      const did = (entries[entries.length - 1]?.state as { id?: unknown } | undefined)?.id
-      if (typeof did !== 'string' || !did.startsWith('did:webvh:')) throw new Error('the log does not name a did:webvh')
-      doc = resolveEntries(did, entries)
-      if (!doc || doc.id !== did) throw new Error('the log does not resolve to its own DID')
-      versionNumber = entryVersionNumber(entries[entries.length - 1]!.versionId)
+      state = webvhStateFromLog(await req.text())
     } catch (error) {
       return Response.json({ error: `not a valid did:webvh log: ${error instanceof Error ? error.message : String(error)}` }, { status: 400 })
     }
-    const outcome = store.recordWebvhState(doc.id, versionNumber, webvhKeyAgreementKeys(doc))
-    return Response.json({ did: doc.id, version: versionNumber, outcome })
+    const outcome = store.recordWebvhState(state.did, state.versionNumber, state.keys)
+    return Response.json({ did: state.did, version: state.versionNumber, outcome })
   }
 
   async function handle(req: Request, url: URL): Promise<Response | null> {
     if (req.method === 'GET' && url.pathname === '/.well-known/did.json') return Response.json(mediator.doc)
     if (req.method === 'POST' && url.pathname === '/webvh-log') return acceptWebvhLog(req)
     if (url.pathname !== '/' || req.method !== 'POST') return null
-    if (!isDidCommEncryptedRequest(req)) return Response.json({ error: `Content-Type must be ${DIDCOMM_ENCRYPTED_MEDIA_TYPE}` }, { status: 415 })
+    if (!isDidCommEncryptedRequest(req)) return httpProblem(415, 'e.m.msg', 'The request is not an encrypted DIDComm message: its Content-Type must be {1}.', [DIDCOMM_ENCRYPTED_MEDIA_TYPE])
     const outcome = await receive(await req.text())
     if ('http' in outcome) return outcome.http
     // No return_route: the answer has nowhere to go (the sender's own
@@ -283,31 +368,33 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
     try {
       ;({ msg, senderKid } = await unpack(raw))
     } catch (e) {
-      if (e instanceof UnknownWebvhState) return { http: Response.json({ error: e.message, code: 'e.p.req.webvh-log-required' }, { status: 401 }) }
-      if (e instanceof Malformed) return { http: Response.json({ error: e.message }, { status: 400 }) }
+      if (e instanceof UnknownWebvhState) return { http: httpProblem(401, e.code, 'The sender could not be authenticated: {1}', [e.message]) }
+      if (e instanceof WebvhUnavailable) return { http: httpProblem(503, 'e.m.me.res.net', "The sender's DID could not be resolved right now: {1}", [e.message]) }
+      if (e instanceof Malformed) return { http: httpProblem(400, 'e.m.msg', 'The message is malformed: {1}', [e.message]) }
       console.error('[mediator] could not unpack an inbound message:', e)
-      return { http: Response.json({ error: 'could not read this message' }, { status: 400 }) }
+      return { http: httpProblem(400, 'e.m.trust.crypto', 'The message could not be decrypted.') }
     }
 
-    if (typeof msg.id !== 'string' || !msg.id) return { http: Response.json({ error: 'message has no `id`' }, { status: 400 }) }
+    if (typeof msg.id !== 'string' || !msg.id) return { http: httpProblem(400, 'e.m.msg', 'The message has no `id`.') }
     if (msg.type !== FORWARD && !senderKid) {
-      return { http: Response.json({ error: 'this message type requires an authcrypt sender' }, { status: 400 }) }
+      return { http: httpProblem(400, 'e.m.trust', 'This message type must be authcrypt\'d by an identified sender.', [], msg) }
     }
     if (isExpired(msg)) {
       return senderKid
-        ? problemTo(msg, senderKid, 'e.p.msg.expired', 'message expired (expires_time in the past)')
-        : { http: Response.json({ error: 'message expired' }, { status: 400 }) }
+        ? problemTo(msg, senderKid, 'e.m.req.time.expired', 'message expired (expires_time in the past)')
+        : { http: httpProblem(400, 'e.m.req.time.expired', 'The message has expired.', [], msg) }
     }
     // Forward records its replay id in the same transaction as the queued
     // payload; everything else has no queue boundary and checks it here.
     if (msg.type !== FORWARD && !store.check(msg.id)) {
-      return problemTo(msg, senderKid!, 'e.p.crypto.message.dejavu', 'message id {1} has already been processed', [msg.id])
+      return problemTo(msg, senderKid!, 'e.m.msg.duplicate', 'message id {1} has already been processed', [msg.id])
     }
 
     try {
       return msg.type === FORWARD ? { http: forward(msg) } : control(msg, senderKid!, socket)
     } catch (e) {
-      return { http: Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 }) }
+      console.error('[mediator] failed to handle a message:', e)
+      return { http: httpProblem(500, 'e.m.me', 'The mediator failed to handle the message.', [], msg) }
     }
   }
 
@@ -317,7 +404,7 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
     const next = (msg.body as { next?: unknown } | undefined)?.next
     const forwarded = msg.attachments?.[0]?.data?.json
     if (typeof next !== 'string' || !next || forwarded === undefined) {
-      return Response.json({ error: 'forward is missing `next` or its attachment' }, { status: 400 })
+      return httpProblem(400, 'e.m.msg', 'A forward needs `next` and an attachment.', [], msg)
     }
     const did = didOf(next)
     let outcome: 'accepted' | 'not-enrolled' | 'replay'
@@ -329,14 +416,14 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
     } catch (e) {
       // The replay id rolls back with the failed insert, so the sender can
       // retry once an inbox drains. Never acknowledge an uncommitted body.
-      if (e instanceof MessageTooBigError) return Response.json({ error: e.message, code: MESSAGE_TOO_BIG_PROBLEM }, { status: 413 })
-      if (e instanceof QueueFullError) return Response.json({ error: e.message }, { status: 503 })
+      if (e instanceof MessageTooBigError) return httpProblem(413, MESSAGE_TOO_BIG_PROBLEM, 'The message exceeds the limit of {1} bytes.', [String(store.limits.maxMessageBytes)], msg)
+      if (e instanceof QueueFullError) return httpProblem(503, 'e.m.me.res.storage', 'Every inbox of the recipient is full.', [], msg)
       throw e
     }
     if (outcome === 'replay') {
-      return Response.json({ error: `message id ${msg.id} has already been processed`, code: 'e.p.crypto.message.dejavu' }, { status: 400 })
+      return httpProblem(400, 'e.m.msg.duplicate', 'Message id {1} has already been processed.', [msg.id], msg)
     }
-    if (outcome === 'not-enrolled') return signedProblem(msg, next, 'e.p.req.not_enroll', 'no device has registered {1}', [did])
+    if (outcome === 'not-enrolled') return signedProblem(msg, next, 'e.m.req.not-enrolled', 'no device has registered {1}', [did])
     return new Response(null, { status: 202 })
   }
 
@@ -363,26 +450,29 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
         return replyTo(msg, senderKid, MEDIATE_GRANT, { routing_did: [mediator.did] })
 
       case RECIPIENT_QUERY: {
-        // `last_seen` per entry is a biset extension: what a user needs to
+        // One entry per registered DID (Coordinate Mediation 3.0): the DID
+        // this key owns, if it has any inbox here. `devices` -- one
+        // `last_seen` per inbox -- is a biset extension: what a user needs to
         // see at the device limit. The inboxes' device labels are NOT listed:
         // anyone holding a DID's key may query, and a relationship did:peer's
         // key is shared by every device -- including one the identity later
         // removed, which could otherwise name a remaining device's inbox and
         // remove it. A label is unguessable (mediator-device.ts) unless listed.
-        const all = store.listInboxes(ownerDid)
+        const inboxes = store.listInboxes(ownerDid)
+        const all = inboxes.length > 0 ? [{ recipient_did: ownerDid, devices: inboxes.map(inbox => ({ last_seen: inbox.lastSeen })) }] : []
         const paginate = (body.paginate ?? {}) as { limit?: unknown; offset?: unknown }
         const offset = Number.isSafeInteger(paginate.offset) && (paginate.offset as number) > 0 ? paginate.offset as number : 0
         const limit = Number.isSafeInteger(paginate.limit) && (paginate.limit as number) > 0 ? paginate.limit as number : all.length
         const page = all.slice(offset, offset + limit)
         return replyTo(msg, senderKid, RECIPIENT, {
-          dids: page.map(inbox => ({ recipient_did: ownerDid, last_seen: inbox.lastSeen })),
+          dids: page,
           ...(body.paginate ? { pagination: { count: page.length, offset, remaining: Math.max(0, all.length - offset - page.length) } } : {}),
         })
       }
 
       case RECIPIENT_UPDATE: {
-        const device = body.device
-        if (!isDeviceLabel(device)) return problemTo(msg, senderKid, 'e.p.msg.invalid-device', 'recipient-update needs a `device` label')
+        const device = body.device === undefined ? defaultDeviceLabel(senderKid) : body.device
+        if (!isDeviceLabel(device)) return problemTo(msg, senderKid, 'e.m.msg.invalid-device', 'the `device` label is not valid')
         const updates = Array.isArray(body.updates) ? body.updates as Array<{ recipient_did?: unknown; action?: unknown }> : []
         const updated: Array<{ recipient_did: unknown; action: unknown; result: string }> = []
         for (const update of updates) {
@@ -403,7 +493,7 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
             if (e instanceof TooManyDevicesError) {
               return problemTo(msg, senderKid, MAX_DEVICES_PROBLEM, '{1} already has {2} devices registered at this mediator (limit {3})', [ownerDid, String(e.devices.length), String(e.limit)])
             }
-            if (e instanceof MediatorFullError) return problemTo(msg, senderKid, 'e.p.me.res.storage', 'mediator is at capacity')
+            if (e instanceof MediatorFullError) return problemTo(msg, senderKid, 'e.m.me.res.storage', 'mediator is at capacity')
             throw e
           }
         }
@@ -412,15 +502,22 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
     }
 
     // Pickup family: one named inbox of the sender's own DID.
-    const device = body.device
+    const device = body.device === undefined ? defaultDeviceLabel(senderKid) : body.device
     const asked = body.recipient_did
     if (!isDeviceLabel(device) || (asked !== undefined && (typeof asked !== 'string' || didOf(asked) !== ownerDid)) || !store.hasInbox(ownerDid, device)) {
-      return problemTo(msg, senderKid, 'e.p.req.not_enroll', 'no inbox {2} is registered for {1}', [ownerDid, String(device)])
+      return problemTo(msg, senderKid, 'e.m.req.not-enrolled', 'no inbox {2} is registered for {1}', [ownerDid, String(device)])
     }
     store.touch(ownerDid, device)
+    const liveKey = `${ownerDid}\n${device}`
+    // Pickup 3.0: every status says whether live delivery is on -- only ever
+    // true on a WebSocket where this inbox switched it on.
     const status = () => {
       const missed = store.takeMissed(ownerDid, device)
-      return { recipient_did: ownerDid, message_count: store.count(ownerDid, device), ...(missed ? { missed: true } : {}) }
+      return {
+        recipient_did: ownerDid, message_count: store.count(ownerDid, device),
+        live_delivery: socket !== undefined && liveInboxes.get(socket)?.has(liveKey) === true,
+        ...(missed ? { missed: true } : {}),
+      }
     }
 
     switch (msg.type) {
@@ -441,7 +538,7 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
         if (body.live_delivery === true) {
           const stop = store.subscribe(ownerDid, device, messages => {
             try {
-              const plaintext = buildPlaintext(DELIVERY, { recipient_did: ownerDid, device }, mediator.did, ownerDid, { attachments: deliveryAttachments(messages) })
+              const plaintext = buildPlaintext(DELIVERY, { recipient_did: ownerDid }, mediator.did, ownerDid, { attachments: deliveryAttachments(messages) })
               socket.send(packTo(plaintext, senderKid))
             } catch {
               // The key that enabled live mode is gone (a newer log dropped
@@ -452,15 +549,16 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
           })
           inboxes.set(key, stop)
         }
-        return replyTo(msg, senderKid, STATUS, { ...status(), live_delivery: inboxes.has(key) })
+        return replyTo(msg, senderKid, STATUS, status())
       }
 
       case DELIVERY_REQUEST: {
-        const asked = Number(body.limit ?? 10)
-        const limit = Number.isFinite(asked) ? Math.max(1, Math.min(Math.trunc(asked), 100)) : 10
+        const requested = Number(body.limit ?? 10)
+        const limit = Number.isFinite(requested) ? Math.max(1, Math.min(Math.trunc(requested), 100)) : 10
         const batch = store.peek(ownerDid, device, limit)
         if (batch.length === 0) return replyTo(msg, senderKid, STATUS, status())
-        return replyTo(msg, senderKid, DELIVERY, { recipient_did: ownerDid, device }, deliveryAttachments(batch))
+        // `recipient_did` only when the request named one (Pickup 3.0).
+        return replyTo(msg, senderKid, DELIVERY, asked === undefined ? {} : { recipient_did: ownerDid }, deliveryAttachments(batch))
       }
 
       case MESSAGES_RECEIVED: {
@@ -470,10 +568,10 @@ export function createMediator({ mediator, store, maxReceiveBytes = store.limits
       }
 
       default:
-        return problemTo(msg, senderKid, 'e.p.msg.not-recognized', 'unrecognized message type {1}', [msg.type])
+        return problemTo(msg, senderKid, 'e.m.msg.not-recognized', 'unrecognized message type {1}', [msg.type])
     }
   }
 
-  return { handle, live, mediatorDid: mediator.did }
+  return { handle, live, mediatorDid: mediator.did, refreshWebvh }
 }
 

@@ -27,8 +27,10 @@ export interface SqliteMediatorLimits {
 const DEFAULT_SQLITE_MEDIATOR_LIMITS: SqliteMediatorLimits = {
   maxInboxes: 30_000,
   maxDevicesPerDid: 3,
-  maxQueueItemsPerInbox: 256,
-  maxQueueBytesPerInbox: 16 * 1024 * 1024,
+  // One inbox per device carries all of its traffic -- every conversation
+  // and Vault Sync alike (PLAN-refactor.md §9.3).
+  maxQueueItemsPerInbox: 1024,
+  maxQueueBytesPerInbox: 64 * 1024 * 1024,
   maxMessageBytes: 1024 * 1024,
   queueTtlMs: 30 * 24 * 60 * 60 * 1000,
   dormantAfterMs: 14 * 24 * 60 * 60 * 1000,
@@ -211,6 +213,19 @@ export class SqliteMediatorStore {
       this.dropOrphanMessages()
       return 'stored'
     })
+  }
+
+  /** When the held state of `did` was last recorded (a new version). */
+  webvhStateRecordedAt(did: string): number | undefined {
+    const row = this.database.query<{ updated_at: number }, [string]>('SELECT updated_at FROM did_states WHERE did = ?').get(did)
+    return row ? Number(row.updated_at) : undefined
+  }
+
+  /** The did:webvh DIDs that hold at least one inbox -- the ones whose keys
+   * have to be checked again from time to time, so a device removed from its
+   * DID loses its inbox. */
+  webvhRecipientDids(): string[] {
+    return this.database.query<{ recipient_did: string }, []>("SELECT DISTINCT recipient_did FROM inboxes WHERE recipient_did LIKE 'did:webvh:%'").all().map(row => row.recipient_did)
   }
 
   /** The X25519 key (hex) the latest held state lists for this kid. */

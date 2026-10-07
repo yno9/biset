@@ -111,6 +111,30 @@ describe('sendDidCommMessage', () => {
       expect(msg.type).toBe(BASIC_MESSAGE)
       expect(msg.body.content).toBe('hello from a real send')
       expect(msg.body.subject).toBe('test subject')
+      expect(msg.to).toEqual([to.did])
+    })
+  })
+
+  test('a queued message keeps its id and time; a group message carries its thread and every participant in `to`', () => {
+    const to = oneDevice('https://recipient-core.test.example/v1/didcomm/ingress')
+    const captured: { body?: string; url?: string } = {}
+    const carol = 'did:webvh:QmCarol:carol.test.example'
+    return withCombinedFetch(testFetch({ log: to.log, postCapture: captured }), async (fetchImpl) => {
+      const result = await sendDidCommMessage(to.did, 'to the group', {
+        fromKid: senderKid, x25519PrivateKey: senderX, fetch: fetchImpl,
+        id: 'msg-1', sentAt: '2026-10-07T01:02:03.456Z', thid: 'group-1', audience: [to.did, carol],
+      })
+      expect(result.ok).toBe(true)
+      const jwe = parseJwe(JSON.parse(captured.body!))!
+      const { plaintext } = await unpackAuthcrypt(jwe, { kid: to.kid, privateKey: recipientX }, async () => x25519.getPublicKey(senderX))
+      const msg = JSON.parse(new TextDecoder().decode(plaintext))
+      expect(msg.id).toBe('msg-1')
+      expect(msg.thid).toBe('group-1')
+      expect(msg.to).toEqual([to.did, carol])
+      expect(msg.body.sentAt).toBe('2026-10-07T01:02:03.456Z')
+      expect(msg.created_time).toBe(Math.floor(Date.parse('2026-10-07T01:02:03.456Z') / 1000))
+      // Encrypted for this recipient alone: the other participant's keys are not in it.
+      expect(jwe.recipients.map(recipient => recipient.header.kid)).toEqual([to.kid])
     })
   })
 
@@ -257,7 +281,7 @@ describe('sendDidCommMessage', () => {
 })
 
 describe('answerTrustPing (Trust Ping 2.0)', () => {
-  const noRelationship = { contactKeyForOwnKid: async () => null, frontDoor: { fromKid: senderKid, x25519PrivateKey: senderX } }
+  const frontDoor = { frontDoor: { fromKid: senderKid, x25519PrivateKey: senderX } }
 
   test('answers a ping on the front door with a ping-response threaded to it, sent as application/didcomm-encrypted+json', async () => {
     const pinger = oneDevice('https://recipient-core.test.example/v1/didcomm/ingress')
@@ -270,7 +294,7 @@ describe('answerTrustPing (Trust Ping 2.0)', () => {
       return handler(input, init)
     }) as typeof fetch
     await withCombinedFetch(capturing, async fetchImpl => {
-      const result = await answerTrustPing(ping, senderKid, { ...noRelationship, fetch: fetchImpl })
+      const result = await answerTrustPing(ping, { ...frontDoor, fetch: fetchImpl })
       expect(result).toEqual({ ok: true })
     })
     expect(contentType).toBe('application/didcomm-encrypted+json')
@@ -282,7 +306,7 @@ describe('answerTrustPing (Trust Ping 2.0)', () => {
 
   test('owes nothing for response_requested: false, or for anything but a ping', async () => {
     const pinger = 'did:webvh:abc:alice.test.example'
-    expect(await answerTrustPing(buildPlaintext(PING, { response_requested: false }, pinger), senderKid, noRelationship)).toBeNull()
-    expect(await answerTrustPing(buildPlaintext(BASIC_MESSAGE, { content: 'hi' }, pinger), senderKid, noRelationship)).toBeNull()
+    expect(await answerTrustPing(buildPlaintext(PING, { response_requested: false }, pinger), frontDoor)).toBeNull()
+    expect(await answerTrustPing(buildPlaintext(BASIC_MESSAGE, { content: 'hi' }, pinger), frontDoor)).toBeNull()
   })
 })

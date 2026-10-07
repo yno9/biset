@@ -16,7 +16,7 @@
 // who is bridging this. The actor identity lives in the plaintext body,
 // same trust level as the body text itself -- unauthenticated, exactly what
 // anoncrypt promises and nothing more.
-export const EXTERNAL_FEED_POST = 'https://didcomm.org/external-feed/1.0/post'
+export const EXTERNAL_FEED_POST = 'https://biset.md/external-feed/1.0/post'
 
 export function isExternalFeedPost(msg: { type?: string }): boolean {
   return msg.type === EXTERNAL_FEED_POST

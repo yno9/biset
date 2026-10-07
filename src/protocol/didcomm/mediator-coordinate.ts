@@ -47,19 +47,25 @@ export interface RecipientEntry {
   lastSeen: number
 }
 
-/** recipient-query -> recipient. Throws on any transport or protocol
- * failure: never prune on "couldn't ask". */
+/** recipient-query -> recipient: the DIDs registered for this key, here at
+ * most the one it owns, each with the `last_seen` of its inboxes (a biset
+ * extension, `devices`). Throws on any transport or protocol failure: never
+ * prune on "couldn't ask". */
 export async function queryRecipients(mediator: MediatorInfo, own: DidCommSender, fetchImpl: typeof fetch = defaultFetch()): Promise<RecipientEntry[]> {
   const reply = await sendAndUnpack(mediator, own, RECIPIENT_QUERY, {}, fetchImpl)
   if (reply.type !== RECIPIENT) throw new Error(`queryRecipients: unexpected reply type ${reply.type}`)
-  const dids = (reply.body as { dids?: Array<{ last_seen?: unknown }> }).dids ?? []
-  return dids.flatMap(entry => typeof entry.last_seen === 'number' ? [{ lastSeen: entry.last_seen }] : [])
+  const dids = (reply.body as { dids?: Array<{ devices?: Array<{ last_seen?: unknown }> }> }).dids ?? []
+  return dids.flatMap(entry => (entry.devices ?? []).flatMap(device => typeof device.last_seen === 'number' ? [{ lastSeen: device.last_seen }] : []))
 }
 
-/** Hands this DID's did:webvh log to the mediator (`POST /webvh-log`), which
- * authenticates did:webvh device keys only against the latest log it has
- * verified. Self-certifying, so sending it needs no authentication. A
- * newer log is also how a removed device's inbox gets revoked. */
+/** Hands this DID's did:webvh log to the mediator (`POST /webvh-log`).
+ *
+ * NOT DIDComm, and no longer used by biset: a mediator learns a did:webvh's
+ * keys by resolving the DID (server/mediator/webvh-state.ts). Kept for a
+ * mediator deployed without resolution (`MEDIATOR_WEBVH_RESOLVE=0`), which
+ * authenticates did:webvh device keys only against logs it is handed.
+ * Self-certifying, so sending it needs no authentication. A newer log is
+ * also how a removed device's inbox gets revoked there. */
 export async function pushWebvhLog(mediator: MediatorInfo, logJsonl: string, fetchImpl: typeof fetch = defaultFetch()): Promise<void> {
   const resp = await fetchImpl(`${mediator.url.replace(/\/$/, '')}/webvh-log`, { method: 'POST', headers: { 'content-type': 'application/jsonl' }, body: logJsonl })
   if (!resp.ok) throw new Error(`pushWebvhLog: HTTP ${resp.status} ${await resp.text()}`)

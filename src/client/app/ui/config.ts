@@ -49,7 +49,8 @@ export interface BisetConfig {
 }
 
 const defaultDidDocumentServices: DidDocumentServiceTemplate[] = [
-  { purpose: 'didcomm', id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: '$mediatorUrl', accept: ['didcomm/v2'], routingKeys: ['$routingKid'] }, previousIds: ['#didcomm-biset'] },
+  // The endpoint names the mediator by DID (see did-md-oauth.ts's default, which this repeats).
+  { purpose: 'didcomm', id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: '$mediatorDid', accept: ['didcomm/v2'] }, previousIds: ['#didcomm-biset'] },
 ]
 
 export function readBisetConfig(): BisetConfig {

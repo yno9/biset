@@ -139,6 +139,8 @@ export function selectCurrentRelationshipSeed(values: readonly RelationshipSeedV
     .sort((a, b) => b.afterVersion - a.afterVersion || Date.parse(b.createdAt) - Date.parse(a.createdAt) || (a.seedId < b.seedId ? -1 : a.seedId > b.seedId ? 1 : 0))[0]
 }
 
+/** @public Not wired in while no relationship uses the seed: PLAN-refactor.md P2
+ * rebuilds the seed's authority (the DID document's signing key) on it. */
 export class RelationshipSeedReader {
   private readonly reader: VaultCredentialReader<RelationshipSeedV1, VaultCredentialEventReader>
   constructor(options: VaultCredentialReaderOptions<VaultCredentialEventReader>) {
@@ -150,6 +152,7 @@ export class RelationshipSeedReader {
   }
 }
 
+/** @public See RelationshipSeedReader. */
 export class RelationshipSeedSink {
   private readonly sink: VaultCredentialSink<RelationshipSeedV1>
   constructor(options: VaultCredentialSinkOptions) {

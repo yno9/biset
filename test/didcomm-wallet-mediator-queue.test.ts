@@ -1,13 +1,14 @@
 // Regression coverage for the did.md Wallet account's mediator delivery
 // handler (main.ts's handleWalletDidCommMessage).
 //
-// The Wallet branch has exactly one branch for a delivered message: hand it
-// to DidCommIngressProjector. That projector throws for every type outside
-// ping/basicmessage/relationship, and watchMediatorLive deliberately does NOT
-// acknowledge a message whose onMessage threw -- so before the guard added
-// alongside these tests, a single GROUP_INVITE (or GROUP_MESSAGE) addressed
-// to a Wallet account stayed queued at the
-// mediator forever and was re-delivered, and re-failed, on every reconnect.
+// Besides Vault Sync, the Wallet branch has exactly one branch for a
+// delivered message: hand it to DidCommIngressProjector. That projector
+// throws for every type it cannot project, and watchMediatorLive deliberately
+// does NOT acknowledge a message whose onMessage threw -- so before the guard
+// added alongside these tests, a single message of an unsupported type (then
+// a group invite; now, say, the retired relationship INIT a not-yet-updated
+// device may still send) stayed queued at the mediator forever and was
+// re-delivered, and re-failed, on every reconnect.
 //
 // The first test below pins the projector's own allow-list against
 // isProjectableDidCommIngress (the guard must never drift from what the
@@ -23,8 +24,10 @@ import { packAuthcrypt, packAnoncrypt, didCommPost } from '../src/protocol/didco
 import { buildPlaintext } from '../src/protocol/didcomm/message.ts'
 import { PING } from '../src/protocol/didcomm/trust-ping.ts'
 import { BASIC_MESSAGE } from '../src/client/didcomm/basicmessage.ts'
-import { RELATIONSHIP_ACCEPT, RELATIONSHIP_INIT } from '../src/client/didcomm/relationship.ts'
-import { GROUP_INVITE, GROUP_MESSAGE } from '../src/client/didcomm/group-chat.ts'
+// Types this endpoint no longer projects: the retired relationship handshake
+// and group protocol (PLAN-refactor.md §3, §8).
+const RETIRED_INIT = 'https://biset.md/relationship/1.0/init'
+const RETIRED_GROUP_INVITE = 'https://biset.md/didcomm-group/1.0/invite'
 import { MAIL_BRIDGE_INBOUND } from '../src/server/mediator/mail-plugin/mail-bridge.ts'
 import { DidCommIngressProjector, isProjectableDidCommIngress } from '../src/client/didcomm/ingress-projector.ts'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
@@ -89,9 +92,7 @@ describe('DidCommIngressProjector allow-list (isProjectableDidCommIngress)', () 
     }
   }
 
-  // Group traffic has its own handler in main.ts and is intentionally not
-  // handled by this projector.
-  for (const type of [GROUP_INVITE, GROUP_MESSAGE]) {
+  for (const type of [RETIRED_INIT, RETIRED_GROUP_INVITE]) {
     test(`${type} is not projectable, and the projector agrees`, async () => {
       expect(isProjectableDidCommIngress({ type })).toBe(false)
       expect(await projectType(type)).toBe(`unsupported DIDComm message type for this endpoint slice: ${type}`)
@@ -99,12 +100,11 @@ describe('DidCommIngressProjector allow-list (isProjectableDidCommIngress)', () 
   }
 
   // ... and the guard must not over-drop: everything the projector DOES
-  // handle has to pass it. (A ping projects cleanly; the two relationship
-  // types get past the type check and fail later, on their deliberately
-  // empty body -- which is exactly the proof that the type check let them
-  // through. Basic Message likewise gets past the type check.)
-  test('ping / basicmessage / relationship stay projectable', async () => {
-    for (const type of [PING, BASIC_MESSAGE, RELATIONSHIP_INIT, RELATIONSHIP_ACCEPT, MAIL_BRIDGE_INBOUND]) {
+  // handle has to pass it. (A ping projects cleanly; the others get past the
+  // type check and fail later, on their deliberately empty body -- which is
+  // exactly the proof that the type check let them through.)
+  test('ping / basicmessage / mail-bridge inbound stay projectable', async () => {
+    for (const type of [PING, BASIC_MESSAGE, MAIL_BRIDGE_INBOUND]) {
       expect(isProjectableDidCommIngress({ type })).toBe(true)
       expect(await projectType(type)).not.toBe(`unsupported DIDComm message type for this endpoint slice: ${type}`)
     }
@@ -125,7 +125,7 @@ async function forwardToWallet(fetchImpl: typeof fetch, mediatorUrl: string, med
 }
 
 /**
- * Runs one GROUP_INVITE through a real mediator queue and a real
+ * Runs one message of a retired type through a real mediator queue and a real
  * watchMediatorLive, with a handler shaped exactly like the Wallet branch's
  * handleWalletDidCommMessage -- `guard: false` is the pre-fix shape (every
  * delivery goes straight to the projector), `guard: true` is the shipped
@@ -138,7 +138,7 @@ async function walletDeliveryLeavesQueued(guard: boolean): Promise<{ queued: num
   const bob: MediatorInboxClient = { did: bobPeer.did, xKid: bobPeer.xKid, xPriv: bobPeer.xPriv, device: 'bob-device' }
   const info = await registerWithMediator(url, bob, fetchImpl)
   await forwardToWallet(fetchImpl, url, info.xKid, info.xPub, alicePeer, bob, bobPeer.xPub,
-    GROUP_INVITE, { groupId: 'g-1', members: [alicePeer.did, bobPeer.did] })
+    RETIRED_INIT, { relationshipKid: alicePeer.xKid, publicKey: 'AA' })
 
   const handlerErrors: string[] = []
   let handled = 0
@@ -173,9 +173,9 @@ async function walletDeliveryLeavesQueued(guard: boolean): Promise<{ queued: num
 }
 
 describe('did.md Wallet mediator delivery handler', () => {
-  test('the pre-guard handler shape leaves a GROUP_INVITE queued forever (the bug)', async () => {
+  test('the pre-guard handler shape leaves an unsupported message queued forever (the bug)', async () => {
     const { queued, handlerErrors } = await walletDeliveryLeavesQueued(false)
-    expect(handlerErrors).toEqual([`unsupported DIDComm message type for this endpoint slice: ${GROUP_INVITE}`])
+    expect(handlerErrors).toEqual([`unsupported DIDComm message type for this endpoint slice: ${RETIRED_INIT}`])
     // watchMediatorLive never acked it: the very same message comes back on the
     // next reconnect, and fails identically, forever.
     expect(queued).toBe(1)
@@ -206,12 +206,5 @@ describe('mediator delivery handler (main.ts)', () => {
     expect(projectorSource).toContain('export function isProjectableDidCommIngress')
     expect(projectorSource).toContain('if (!isProjectableDidCommIngress(msg)) throw')
     expect(mainSource).toContain('isProjectableDidCommIngress(')
-  })
-
-  test('Wallet handles group messages before the strict unsupported-type guard', () => {
-    const groupBranch = mainSource.indexOf('dropped.type === GROUP_INVITE || dropped.type === GROUP_MESSAGE')
-    const guard = mainSource.indexOf('if (!isProjectableDidCommIngress(dropped))')
-    expect(groupBranch).toBeGreaterThan(-1)
-    expect(guard).toBeGreaterThan(groupBranch)
   })
 })

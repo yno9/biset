@@ -24,8 +24,8 @@ const deployment = createMediatorDeployment({
   limits: {
     maxInboxes: envInteger('MEDIATOR_MAX_INBOXES', 30_000, 1, 10_000_000),
     maxDevicesPerDid: envInteger('MEDIATOR_MAX_DEVICES_PER_DID', 3, 1, 64),
-    maxQueueItemsPerInbox: envInteger('MEDIATOR_MAX_QUEUE_ITEMS', 256, 1, 100_000),
-    maxQueueBytesPerInbox: envInteger('MEDIATOR_MAX_QUEUE_BYTES', 16 * 1024 * 1024, 1024, 1024 * 1024 * 1024),
+    maxQueueItemsPerInbox: envInteger('MEDIATOR_MAX_QUEUE_ITEMS', 1024, 1, 100_000),
+    maxQueueBytesPerInbox: envInteger('MEDIATOR_MAX_QUEUE_BYTES', 64 * 1024 * 1024, 1024, 1024 * 1024 * 1024),
     maxMessageBytes: envInteger('MEDIATOR_MAX_MESSAGE_BYTES', 1024 * 1024, 1024, 64 * 1024 * 1024),
     queueTtlMs: envInteger('MEDIATOR_QUEUE_TTL_MS', 30 * 24 * 60 * 60 * 1000, 60_000, 365 * 24 * 60 * 60 * 1000),
     dormantAfterMs: envInteger('MEDIATOR_DORMANT_AFTER_MS', 14 * 24 * 60 * 60 * 1000, 60_000, 365 * 24 * 60 * 60 * 1000),
@@ -33,6 +33,8 @@ const deployment = createMediatorDeployment({
     maxReplayIds: envInteger('MEDIATOR_MAX_REPLAY_IDS', 50_000, 100, 10_000_000),
   },
   relayUpstreamUrl: Bun.env.MEDIATOR_RELAY_UPSTREAM_URL,
+  // MEDIATOR_WEBVH_RESOLVE=0: dial out to nothing; only pushed did:webvh logs are known.
+  webvh: { resolve: Bun.env.MEDIATOR_WEBVH_RESOLVE !== '0', refreshSeconds: envInteger('MEDIATOR_WEBVH_REFRESH_SECONDS', 300, 10, 24 * 60 * 60) },
 })
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

@@ -18,6 +18,16 @@ function mediatorDeviceLabel(deviceSecret: Uint8Array, did: string): string {
   return b64url(hmac(sha256, deviceSecret, new TextEncoder().encode(LABEL_CONTEXT + did))).slice(0, 22)
 }
 
+/** The inbox a request that names no `device` belongs to: one per sending
+ * key. Coordinate Mediation 3.0 and Pickup 3.0 have no `device` field -- a
+ * standard client holds one inbox per key it authenticates with -- so the
+ * mediator derives the label from the key's own kid. `device` is a biset
+ * extension for the case where several devices share ONE key (a
+ * relationship did:peer), which a kid cannot tell apart. */
+export function defaultDeviceLabel(senderKid: string): string {
+  return 'k' + b64url(sha256(new TextEncoder().encode('biset/mediator-default-device/v1\n' + senderKid))).slice(0, 21)
+}
+
 /** `identity` (a DID and one of its own keyAgreement keys) as this device's
  * inbox at a mediator. */
 export function mediatorInbox(identity: DidCommSender, deviceSecret: Uint8Array): MediatorInboxClient {

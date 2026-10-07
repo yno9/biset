@@ -1,30 +1,15 @@
-// Regression coverage for the relationship handler's "did this message
-// really arrive from the mediator its did:peer names?" check
-// (main.ts's handleRelationshipMessage / handleWalletRelationshipMessage).
-//
-// The two strings being compared reach that check from different places:
-// route.url is whatever the peer minted into its did:peer:2 service
-// endpoint, mediatorUrl is whatever this device's own `mediatorUrls` config
-// spells. The local-identity path used to compare them raw (`route.url !==
-// mediatorUrl`), so a config entry that differed only in a trailing slash
-// rejected every relationship INIT/ACCEPT from that mediator -- a handshake
-// that can never complete, on nothing but punctuation. Both paths now go
-// through sameMediatorUrl.
+// sameMediatorUrl: whether two spellings name the same mediator endpoint.
+// The two strings come from different places (a deployment's `mediatorUrls`
+// config, a URL a DID document or the Wallet canonicalized), so a raw `!==`
+// rejects a match over nothing but punctuation.
 import { describe, expect, test } from 'bun:test'
-import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
-import { relationshipMediatorService } from '../src/client/didcomm/relationship.ts'
 import { sameMediatorUrl } from '../src/client/didcomm/mediator-endpoints.ts'
 
 describe('sameMediatorUrl', () => {
-  test('a did:peer service endpoint matches the same mediator spelled with a trailing slash', () => {
-    const routing = generatePeerIdentity()
-    const peer = generatePeerIdentity({ uri: 'https://mediator.test.example', routingKeys: [routing.xKid] })
-    const route = relationshipMediatorService(peer.xKid)
-    expect(route.url).toBe('https://mediator.test.example')
-
+  test('the same mediator spelled with and without a trailing slash matches', () => {
     // The exact pair a raw `!==` gets wrong.
-    expect(sameMediatorUrl(route.url, 'https://mediator.test.example/')).toBe(true)
-    expect(sameMediatorUrl(route.url, 'https://mediator.test.example')).toBe(true)
+    expect(sameMediatorUrl('https://mediator.test.example', 'https://mediator.test.example/')).toBe(true)
+    expect(sameMediatorUrl('https://mediator.test.example', 'https://mediator.test.example')).toBe(true)
   })
 
   test('other spellings of one endpoint match', () => {

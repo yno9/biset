@@ -3,10 +3,12 @@
 // mediator tests share.
 import { expect } from 'bun:test'
 import { generatePeerIdentity, type PeerIdentity } from '../../src/protocol/didcomm/peer.ts'
-import { createMediator, type LiveSocket, type MediatorHandler } from '../../src/server/mediator/server.ts'
+import { createMediator, type LiveSocket, type MediatorHandler, type MediatorOptions } from '../../src/server/mediator/server.ts'
 import { SqliteMediatorStore, type SqliteMediatorLimits } from '../../src/server/mediator/sqlite-store.ts'
 import { packAnoncrypt, packAuthcrypt, parseJwe, unpackAuthcrypt, didCommPost } from '../../src/protocol/didcomm/crypto.ts'
 import { buildPlaintext, type DidCommPlaintext } from '../../src/protocol/didcomm/message.ts'
+import { createNetworkWebvhResolver } from '../../src/server/mediator/webvh-state.ts'
+import { webMediatorIdentity } from '../../src/server/mediator/identity.ts'
 
 export const MEDIATOR_URL = 'https://mediator.test.example'
 export const utf8 = (s: string) => new TextEncoder().encode(s)
@@ -14,9 +16,9 @@ export const utf8 = (s: string) => new TextEncoder().encode(s)
 /** Anything that can authcrypt as one keyAgreement key of a DID. */
 export interface KeyHolder { did: string; xKid: string; xPriv: Uint8Array }
 
-export function freshMediator(limits: Partial<SqliteMediatorLimits> = {}, store = SqliteMediatorStore.memory(limits)) {
-  const mediator = store.loadIdentity(MEDIATOR_URL)
-  const { handle } = createMediator({ mediator, store })
+export function freshMediator(limits: Partial<SqliteMediatorLimits> = {}, store = SqliteMediatorStore.memory(limits), options: Partial<MediatorOptions> = {}) {
+  const mediator = webMediatorIdentity(store.loadIdentity(MEDIATOR_URL), MEDIATOR_URL)
+  const { handle, refreshWebvh } = createMediator({ mediator, store, ...options })
   const call = async (path: string, init: RequestInit) => {
     const url = new URL(path, MEDIATOR_URL)
     const res = await handle(new Request(url, init), url)
@@ -42,7 +44,19 @@ export function freshMediator(limits: Partial<SqliteMediatorLimits> = {}, store 
     return post(packAnoncrypt(utf8(JSON.stringify(msg)), [{ kid: mediator.xKid, publicKey: mediator.xPub }]))
   }
   const pushLog = (jsonl: string) => call('/webvh-log', { method: 'POST', body: jsonl })
-  return { mediator, store, handle, post, request, forward, pushLog }
+  return { mediator, store, handle, call, post, request, forward, pushLog, refreshWebvh }
+}
+
+/** How a mediator under test learns a did:webvh's keys: by resolving it, as in
+ * production, over the test's own network. The test builds that network
+ * after the mediator (it routes to the mediator too), so it is handed over
+ * afterwards with `useNetwork`. */
+export function testWebvhResolver() {
+  let network: typeof fetch = async () => new Response('the test network is not set up yet', { status: 500 })
+  return {
+    resolveWebvh: createNetworkWebvhResolver({ fetch: (input, init) => network(input, init), lookup: async () => ['93.184.216.34'] }),
+    useNetwork(fetchImpl: typeof fetch) { network = fetchImpl },
+  }
 }
 
 export const T = {
@@ -66,11 +80,11 @@ export function deviceLabel(n: number): string { return `device-${String(n).padS
  * real deployment's stable URL, but a shared constant across tests would
  * have one test's cached MediatorInfo silently answer for a DIFFERENT
  * freshly-minted mediator identity in the next). */
-export function freshMediatorFetch() {
+export function freshMediatorFetch(options: Partial<MediatorOptions> = {}) {
   const url = `https://mediator-${crypto.randomUUID()}.test.example`
   const store = SqliteMediatorStore.memory()
-  const mediator = store.loadIdentity(url)
-  const { handle, live } = createMediator({ mediator, store })
+  const mediator = webMediatorIdentity(store.loadIdentity(url), url)
+  const { handle, live } = createMediator({ mediator, store, ...options })
   const fetchImpl: typeof fetch = async (input, init) => {
     const reqUrl = new URL(String(input))
     const res = await handle(new Request(reqUrl, init), reqUrl)

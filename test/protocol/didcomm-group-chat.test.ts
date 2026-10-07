@@ -1,105 +1,71 @@
+// Group chat is a thread of Basic Messages addressed to more than one party
+// (PLAN-refactor.md §8): `to` names the participants, `thid` the conversation,
+// and the participants of a group are those of its latest message.
 import { describe, expect, test } from 'bun:test'
-import { buildPlaintext } from '../../src/protocol/didcomm/message.ts'
 import {
-  GROUP_INVITE,
-  GROUP_MESSAGE,
   didcommGroupAddress,
-  groupInviteBodyOf,
-  groupMessageBodyOf,
-  groupRosterFromMessages,
-  isGroupInvite,
-  isGroupMessage,
+  groupConversation,
+  isGroupAudience,
   parseDidCommGroupAddress,
-  randomDidCommGroupId,
 } from '../../src/client/didcomm/group-chat.ts'
+import type { LocalJmapEmail } from '../../src/client/store/projection/gateway.ts'
 
-describe('DIDComm group invite message', () => {
-  test('round-trips groupId/members/name through buildPlaintext', () => {
-    const plaintext = buildPlaintext(GROUP_INVITE, { groupId: 'abc123', members: ['did:web:alice.example', 'did:web:bob.example'], name: 'Project Chat' })
-    expect(isGroupInvite(plaintext)).toBe(true)
-    expect(groupInviteBodyOf(plaintext)).toEqual({ groupId: 'abc123', members: ['did:web:alice.example', 'did:web:bob.example'], name: 'Project Chat' })
+const ALICE = 'did:webvh:QmA:alice.example'
+const BOB = 'did:webvh:QmB:bob.example'
+const CAROL = 'did:webvh:QmC:carol.example'
+const DAVE = 'did:webvh:QmD:dave.example'
+
+const email = (id: string, sentAt: string, from: string, to: string[], extra: Partial<LocalJmapEmail> = {}): LocalJmapEmail => ({
+  id, threadId: didcommGroupAddress('g1'), mailboxIds: { inbox: true }, keywords: {}, receivedAt: sentAt, sentAt,
+  from: [{ email: from }], to: to.map(value => ({ email: value })), ...extra,
+})
+
+describe('the group thread address', () => {
+  test('round-trips a thid', () => {
+    expect(parseDidCommGroupAddress(didcommGroupAddress('thread-1'))).toBe('thread-1')
   })
-
-  test('name is optional', () => {
-    const plaintext = buildPlaintext(GROUP_INVITE, { groupId: 'abc123', members: ['did:web:alice.example'] })
-    expect(groupInviteBodyOf(plaintext)).toEqual({ groupId: 'abc123', members: ['did:web:alice.example'] })
-  })
-
-  test('rejects a body missing groupId, with an empty member list, or with a non-string member', () => {
-    expect(groupInviteBodyOf(buildPlaintext(GROUP_INVITE, { members: ['did:web:alice.example'] }))).toBeNull()
-    expect(groupInviteBodyOf(buildPlaintext(GROUP_INVITE, { groupId: 'abc123', members: [] }))).toBeNull()
-    expect(groupInviteBodyOf(buildPlaintext(GROUP_INVITE, { groupId: 'abc123' }))).toBeNull()
-    expect(groupInviteBodyOf(buildPlaintext(GROUP_INVITE, { groupId: 'abc123', members: [1, 2] }))).toBeNull()
-    expect(groupInviteBodyOf({ body: null })).toBeNull()
-    expect(groupInviteBodyOf({ body: 'not an object' })).toBeNull()
-  })
-
-  test('a different message type is not recognized as an invite', () => {
-    expect(isGroupInvite(buildPlaintext('https://didcomm.org/basicmessage/2.0/message', { content: 'hi' }))).toBe(false)
+  test('rejects anything else', () => {
+    expect(() => parseDidCommGroupAddress('mls:abc')).toThrow('not a DIDComm group address')
   })
 })
 
-describe('DIDComm group message', () => {
-  test('round-trips groupId/content/sentAt/subject through buildPlaintext', () => {
-    const plaintext = buildPlaintext(GROUP_MESSAGE, { groupId: 'abc123', content: 'hello group', sentAt: '2026-09-02T00:00:00.000Z', subject: 'Hi' })
-    expect(isGroupMessage(plaintext)).toBe(true)
-    expect(groupMessageBodyOf(plaintext)).toEqual({ groupId: 'abc123', content: 'hello group', sentAt: '2026-09-02T00:00:00.000Z', subject: 'Hi' })
-  })
-
-  test('sentAt and subject are optional', () => {
-    const plaintext = buildPlaintext(GROUP_MESSAGE, { groupId: 'abc123', content: 'hello group' })
-    expect(groupMessageBodyOf(plaintext)).toEqual({ groupId: 'abc123', content: 'hello group' })
-  })
-
-  test('rejects a body missing groupId or content', () => {
-    expect(groupMessageBodyOf(buildPlaintext(GROUP_MESSAGE, { content: 'hi' }))).toBeNull()
-    expect(groupMessageBodyOf(buildPlaintext(GROUP_MESSAGE, { groupId: 'abc123' }))).toBeNull()
-  })
-
-  test('a different message type is not recognized as a group message', () => {
-    expect(isGroupMessage(buildPlaintext(GROUP_INVITE, { groupId: 'abc123', members: ['did:web:alice.example'] }))).toBe(false)
+describe('isGroupAudience', () => {
+  test('more than one recipient is a group; one, or none (read as Bcc), is not', () => {
+    expect(isGroupAudience([BOB, CAROL])).toBe(true)
+    expect(isGroupAudience([BOB])).toBe(false)
+    expect(isGroupAudience([])).toBe(false)
+    expect(isGroupAudience(undefined)).toBe(false)
   })
 })
 
-describe('DIDComm group address', () => {
-  test('round-trips a groupId', () => {
-    const groupId = randomDidCommGroupId()
-    const address = didcommGroupAddress(groupId)
-    expect(address).toBe(`didcomm-group:${groupId}`)
-    expect(parseDidCommGroupAddress(address)).toBe(groupId)
-  })
-
-  test('rejects a non-group address', () => {
-    expect(() => parseDidCommGroupAddress('mls:abc123')).toThrow()
-    expect(() => parseDidCommGroupAddress('did:web:alice.example')).toThrow()
-  })
-
-  test('randomDidCommGroupId produces distinct 64-character hex ids', () => {
-    const a = randomDidCommGroupId()
-    const b = randomDidCommGroupId()
-    expect(a).not.toBe(b)
-    expect(a).toMatch(/^[0-9a-f]{64}$/)
-  })
-})
-
-describe('DIDComm group roster recovery', () => {
-  test('a second device reconstructs the complete roster from synced message metadata', () => {
-    const groupId = 'group-from-vault'
-    const threadId = didcommGroupAddress(groupId)
-    const base = { mailboxIds: { inbox: true as const }, keywords: {}, receivedAt: '2026-09-16T00:00:00.000Z' }
+describe('groupConversation', () => {
+  test('its participants are the sender and recipients of its latest message', () => {
     const emails = [
-      { ...base, id: 'm1', threadId, from: [{ email: 'did:example:a' }], to: [{ email: 'did:example:b' }, { email: 'did:example:c' }], subject: 'Trio' },
-      { ...base, id: 'm2', threadId, from: [{ email: 'did:example:b' }], to: [{ email: 'did:example:a' }, { email: 'did:example:c' }] },
-      { ...base, id: 'other', threadId: 'didcomm-group:other', from: [{ email: 'did:example:mallory' }], to: [{ email: 'did:example:a' }] },
+      email('m1', '2026-10-07T00:00:00.000Z', ALICE, [BOB, CAROL]),
+      email('m2', '2026-10-07T00:01:00.000Z', BOB, [ALICE, CAROL, DAVE]),
     ]
-
-    expect(groupRosterFromMessages(groupId, 'did:example:a', emails)).toEqual({
-      members: ['did:example:a', 'did:example:b', 'did:example:c'],
-      name: 'Trio',
-    })
+    expect(groupConversation('g1', emails)?.participants).toEqual([ALICE, BOB, CAROL, DAVE].sort())
   })
 
-  test('does not invent a roster without a synced group message', () => {
-    expect(groupRosterFromMessages('missing', 'did:example:a', [])).toBeNull()
+  test('someone dropped by the latest message stays dropped, even if an older message named them', () => {
+    const emails = [
+      email('m2', '2026-10-07T00:01:00.000Z', ALICE, [BOB, CAROL]),
+      email('m1', '2026-10-07T00:00:00.000Z', ALICE, [BOB, CAROL, DAVE]),
+    ]
+    expect(groupConversation('g1', emails)?.participants).toEqual([ALICE, BOB, CAROL].sort())
+  })
+
+  test('its name is the latest subject given', () => {
+    const emails = [
+      email('m1', '2026-10-07T00:00:00.000Z', ALICE, [BOB, CAROL], { subject: 'Old name' }),
+      email('m2', '2026-10-07T00:01:00.000Z', BOB, [ALICE, CAROL], { subject: 'New name' }),
+      email('m3', '2026-10-07T00:02:00.000Z', CAROL, [ALICE, BOB]),
+    ]
+    expect(groupConversation('g1', emails)?.name).toBe('New name')
+  })
+
+  test('another conversation, or none, is not this one', () => {
+    expect(groupConversation('g1', [email('m1', '2026-10-07T00:00:00.000Z', ALICE, [BOB, CAROL], { threadId: didcommGroupAddress('g2') })])).toBeNull()
+    expect(groupConversation('g1', [])).toBeNull()
   })
 })

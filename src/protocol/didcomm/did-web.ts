@@ -7,6 +7,7 @@ import type { X25519Recipient } from './crypto.ts'
 
 export interface DidWebDocument {
   id: string
+  alsoKnownAs?: string[]
   verificationMethod?: Array<{ id: string; type: string; controller: string; publicKeyMultibase: string }>
   keyAgreement?: string[]
   service?: Array<{ id: string; type: string; serviceEndpoint: unknown }>

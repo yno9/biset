@@ -22,7 +22,7 @@
 // Live mode ends with the connection (Pickup 3.0), so a reconnect simply
 // repeats all of the above.
 import { fetchMediatorInfo, packMediatorRequest, unpackMediatorMessage, type MediatorInboxClient, type MediatorInfo } from '../../protocol/didcomm/mediator-transport.ts'
-import { inboxStatusOf, mediatorLiveUrl, PermanentDeliveryError, unpackQueuedMessage, type DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
+import { inboxStatusOf, mediatorLiveUrl, PermanentDeliveryError, queuedMessageOf, unpackQueuedMessage, type DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
 import { DELIVERY, DELIVERY_REQUEST, LIVE_DELIVERY_CHANGE, MESSAGES_RECEIVED, STATUS } from '../../protocol/didcomm/mediator-protocol.ts'
 import { isProblemReport, problemReportError } from '../../protocol/didcomm/problems.ts'
 import { parseJwe, type ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
@@ -248,7 +248,7 @@ async function receive(pool: Pool, data: string): Promise<void> {
     subscription.onError?.(problem)
     // The mediator no longer has this inbox (its store was reset, or a
     // newer DID log dropped the key): register again on the next connect.
-    if (problem.code === 'e.p.req.not_enroll') {
+    if (problem.code === 'e.m.req.not-enrolled') {
       subscription.registered = false
       pool.socket?.close()
     }
@@ -280,7 +280,7 @@ async function deliver(pool: Pool, subscription: Subscription, attachments: NonN
     try {
       // Undefined: it cannot be opened yet (a transient failure) -- left
       // queued, and retried on the next connection.
-      const delivered = await unpackQueuedMessage(attachment.data?.json, ackId, subscription.inbox, subscription.resolveSenderKey)
+      const delivered = await unpackQueuedMessage(queuedMessageOf(attachment), ackId, subscription.inbox, subscription.resolveSenderKey)
       if (!delivered) continue
       await subscription.onMessage(delivered)
       acked.push(ackId)
