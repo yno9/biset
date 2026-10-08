@@ -8,7 +8,7 @@ import { didOfKid } from '../../protocol/ids.ts'
 import { DISCOVER_FEATURES_DISCLOSE } from '../../protocol/didcomm/mediator-protocol.ts'
 import { PING } from '../../protocol/didcomm/trust-ping.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
-import type { PeerIdentity } from '../../protocol/didcomm/peer.ts'
+import { decodePeerDid2, type PeerIdentity } from '../../protocol/didcomm/peer.ts'
 import { contactCardForDid, counterpartyOfRotatedDid, didCommStateOf, didContactPatch, ownRotationPatch, publicDidOf, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
 import { chooseRoute, disclosesFromPrior, disclosuresFor, fromPriorQuery, isDiscoverFeatures, ownRotationIdentity, startedOwnRotations, type DidCommRoute, type FrontDoorKey } from './did-rotation.ts'
 import type { DidCommSendResult } from './front-door-send.ts'
@@ -23,6 +23,9 @@ export interface RotationManagerOptions {
   /** Commits contact patches to the Vault (and so to every device). */
   commit(writes: ContactSetPayload[]): Promise<void>
   send(toDid: string, type: string, body: unknown, options: { fromKid: string; x25519PrivateKey: Uint8Array; fromPrior?: string; thid?: string }): Promise<DidCommSendResult>
+  /** Every relationship seed in the Vault, current or not: an older one still
+   * opens what reaches a Y this identity has since moved away from (§4.5). */
+  storedSeeds?(): Promise<Uint8Array[]>
   /** Registers `peer`'s inbox with the mediator and watches it; idempotent. */
   watch(peer: PeerIdentity): Promise<void>
   now?: () => Date
@@ -33,7 +36,9 @@ export interface RotationManager {
   route(publicDid: string): Promise<DidCommRoute>
   /** This device's key for a recipient kid: the front door, or a started rotation. */
   ownKey(kid: string): { kid: string; x25519PrivateKey: Uint8Array } | null
-  /** Re-reads the cards: watches every started rotation's inbox. */
+  /** Re-reads the cards: watches every started rotation's inbox, moves again
+   * where a seed replacement left a Y behind, and keeps watching such a Y
+   * for a while (§4.5). */
   sync(): Promise<void>
   /** The counterparty's public DID behind an authenticated sender. */
   counterpartyOf(senderKid: string): Promise<string | undefined>
@@ -45,11 +50,28 @@ export interface RotationManager {
   handleDiscoverFeatures(msg: DidCommPlaintext, senderKid: string, recipientKid: string): Promise<boolean>
 }
 
+/** How long a Y left behind by a seed replacement is still watched, after
+ * the move to its successor started (§4.5). */
+export const RETIRED_Y_WATCH_MS = 30 * 24 * 60 * 60 * 1000
+
+/** The seed among `seeds` that derives `did` as the Y for `publicDid` (the
+ * mediator it names is read from the did:peer itself). */
+function seedOf(did: string, publicDid: string, seeds: readonly Uint8Array[]): PeerIdentity | undefined {
+  let mediatorDid: string
+  try { mediatorDid = decodePeerDid2(did).service[0]!.serviceEndpoint.uri } catch { return undefined }
+  for (const seed of seeds) {
+    const peer = ownRotationIdentity(seed, publicDid, mediatorDid)
+    if (peer.did === did) return peer
+  }
+  return undefined
+}
+
 export function createRotationManager(options: RotationManagerOptions): RotationManager {
   const ownKeys = new Map<string, Uint8Array>()
   const watched = new Set<string>()
   const offered = new Set<string>()
   const starting = new Map<string, Promise<void>>()
+  const restarted = new Set<string>()
   const now = options.now ?? (() => new Date())
   const report = (error: unknown) => options.onError?.(error)
 
@@ -70,11 +92,39 @@ export function createRotationManager(options: RotationManagerOptions): Rotation
     async sync() {
       const rotation = await options.rotation().catch(() => undefined)
       if (!rotation) return
-      for (const { peer } of startedOwnRotations(await options.cards(), publicDidOf, rotation)) {
+      const cards = await options.cards()
+      const watch = async (peer: PeerIdentity) => {
         ownKeys.set(peer.xKid, peer.xPriv)
-        if (watched.has(peer.did)) continue
+        if (watched.has(peer.did)) return
         watched.add(peer.did)
         await options.watch(peer).catch(error => { watched.delete(peer.did); report(error) })
+      }
+      for (const { peer } of startedOwnRotations(cards, publicDidOf, rotation)) await watch(peer)
+
+      // A seed replacement (a device removed) leaves this identity's Y for a
+      // counterparty underived by the current seed: move again, to the Y the
+      // new seed derives -- which a removed device, without that seed, cannot
+      // (§4.5). The old Y is still read for a while: the counterparty writes
+      // to it until it has processed the new move.
+      let seeds: Uint8Array[] | undefined
+      for (const card of cards) {
+        const own = didCommStateOf(card).own
+        const publicDid = publicDidOf(card)
+        if (!own || !publicDid) continue
+        const current = ownRotationIdentity(rotation.seed, publicDid, rotation.mediatorDid)
+        const left = Object.keys(own).filter(did => did !== current.did)
+        if (left.length === 0) continue
+        const successor = own[current.did]?.startedAt
+        if (!successor && !restarted.has(publicDid)) {
+          restarted.add(publicDid)
+          void manager.start(publicDid).catch(error => { restarted.delete(publicDid); report(error) })
+        }
+        if (successor && now().getTime() - Date.parse(successor) >= RETIRED_Y_WATCH_MS) continue
+        seeds ??= await options.storedSeeds?.().catch(() => []) ?? []
+        for (const did of left) {
+          const peer = seedOf(did, publicDid, seeds)
+          if (peer) await watch(peer)
+        }
       }
     },
 

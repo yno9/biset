@@ -462,6 +462,7 @@ async function configureWalletAccountIfPresent(
             return mediatorDid ? { seed, mediatorDid } : undefined
           },
           async commit(writes) { await mutationSink.commitIntents(writes.map(contactSetIntent), await readModel.snapshot()) },
+          storedSeeds: async () => (await walletSeedReader.readAll()).map(record => record.seed),
           send: (toDid, type, body, options) => sendFrontDoorMessage(toDid, type, body, options),
           async watch(peer) {
             const url = (await expandEndpoint({ uri: decodePeerDid2(peer.did).service[0]!.serviceEndpoint.uri }, freshFetch())).url

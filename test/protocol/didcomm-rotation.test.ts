@@ -16,7 +16,7 @@ import { BASIC_MESSAGE, didCommThreadId } from '../../src/client/didcomm/basicme
 import { DidCommIngressProjector } from '../../src/client/didcomm/ingress-projector.ts'
 import { PermanentDeliveryError } from '../../src/protocol/didcomm/mediator-pickup.ts'
 import { chooseRoute, ownRotationIdentity } from '../../src/client/didcomm/did-rotation.ts'
-import { createRotationManager } from '../../src/client/didcomm/rotation-manager.ts'
+import { createRotationManager, RETIRED_Y_WATCH_MS } from '../../src/client/didcomm/rotation-manager.ts'
 import { rotationSigningKey, ROTATION_KEY_FRAGMENT } from '../../src/client/didcomm/rotation-key.ts'
 import {
   applyContactSet, didContactPatch, ownRotationPatch, rotationPatch, DIDCOMM_CONTACT_PROPERTY, type ContactSetPayload, type LocalJmapContactCard,
@@ -181,7 +181,7 @@ describe('ingress of a moved counterparty', () => {
 })
 
 describe('the rotation manager', () => {
-  function manager(initial: LocalJmapContactCard[] = []) {
+  function manager(initial: LocalJmapContactCard[] = [], extra: { storedSeeds?: Uint8Array[]; now?: Date } = {}) {
     let contactCards = initial
     const sent: Array<{ toDid: string; type: string; body: unknown; options: { fromKid: string; fromPrior?: string; thid?: string } }> = []
     const watched: string[] = []
@@ -193,7 +193,8 @@ describe('the rotation manager', () => {
       async commit(writes) { contactCards = cards(...[...contactCards.map(card => ({ cardId: card.id, patch: Object.fromEntries(Object.entries(card).filter(([key]) => key !== 'id')) }) as ContactSetPayload), ...writes]) },
       async send(toDid, type, body, options) { sent.push({ toDid, type, body, options }); return { ok: true } },
       async watch(peer) { watched.push(peer.did) },
-      now: () => new Date('2026-10-08T00:00:00Z'),
+      ...(extra.storedSeeds ? { storedSeeds: async () => extra.storedSeeds! } : {}),
+      now: () => extra.now ?? new Date('2026-10-08T00:00:00Z'),
     })
     return { value, sent, watched, cards: () => contactCards }
   }
@@ -232,6 +233,64 @@ describe('the rotation manager', () => {
   })
 })
 
+describe('after a device removal replaced the seed (§4.5)', () => {
+  const oldSeed = crypto.getRandomValues(new Uint8Array(32))
+  const oldY = ownRotationIdentity(oldSeed, bob.did, MEDIATOR)
+
+  function manager(contactCards: LocalJmapContactCard[], now = new Date('2026-10-08T00:00:00Z')) {
+    let current = contactCards
+    const sent: Array<{ toDid: string; type: string; options: { fromKid: string; fromPrior?: string } }> = []
+    const watched: string[] = []
+    const value = createRotationManager({
+      identityDid: alice.did,
+      frontDoor: { fromKid: alice.kid, x25519PrivateKey: alice.x.secretKey },
+      async cards() { return current },
+      async rotation() { return { seed: alice.seed, mediatorDid: MEDIATOR } },
+      async storedSeeds() { return [oldSeed, alice.seed] },
+      async commit(writes) { current = cards(...current.map(card => ({ cardId: card.id, patch: Object.fromEntries(Object.entries(card).filter(([key]) => key !== 'id')) }) as ContactSetPayload), ...writes) },
+      async send(toDid, type, _body, options) { sent.push({ toDid, type, options }); return { ok: true } },
+      async watch(peer) { watched.push(peer.did) },
+      now: () => now,
+    })
+    return { value, sent, watched, cards: () => current }
+  }
+  const movedWithOldSeed = () => cards(bobCard,
+    ownRotationPatch(bobCard.cardId, oldY.did, 'startedAt', '2026-09-01T00:00:00Z'), ownRotationPatch(bobCard.cardId, oldY.did, 'confirmedAt', '2026-09-01T00:01:00Z'))
+
+  test('a Y the current seed does not derive is moved from again: to the new Y, with a from_prior from the public DID; the old Y is still read', async () => {
+    const { value, sent, watched, cards: current } = manager(movedWithOldSeed())
+    await value.sync()
+    await until(() => sent.length > 0)
+    expect(watched).toContain(aliceY.did)
+    expect(watched).toContain(oldY.did)
+    expect(value.ownKey(oldY.xKid)?.x25519PrivateKey).toEqual(oldY.xPriv)
+    expect(sent).toMatchObject([{ toDid: bob.did, type: PING, options: { fromKid: aliceY.xKid } }])
+    expect(await verify(sent[0]!.options.fromPrior!, aliceY.did)).toMatchObject({ prior: alice.did, current: aliceY.did })
+    expect((current()[0]![DIDCOMM_CONTACT_PROPERTY] as { own: Record<string, object> }).own[aliceY.did]).toEqual({ startedAt: '2026-10-08T00:00:00.000Z' })
+    // Once is enough: a later sync does not move again.
+    await value.sync()
+    expect(sent).toHaveLength(1)
+  })
+
+  test('the old Y is read for 30 days after the move from it started, not longer', async () => {
+    const later = cards(bobCard,
+      ownRotationPatch(bobCard.cardId, oldY.did, 'startedAt', '2026-09-01T00:00:00Z'),
+      ownRotationPatch(bobCard.cardId, aliceY.did, 'startedAt', '2026-09-02T00:00:00Z'))
+    const within = manager(later, new Date('2026-09-20T00:00:00Z'))
+    await within.value.sync()
+    expect(within.watched.sort()).toEqual([aliceY.did, oldY.did].sort())
+    const after = manager(later, new Date(Date.parse('2026-09-02T00:00:00Z') + RETIRED_Y_WATCH_MS))
+    await after.value.sync()
+    expect(after.watched).toEqual([aliceY.did])
+    expect(after.value.ownKey(oldY.xKid)).toBeNull()
+  })
+
+  test('the counterparty refuses a move signed with a key the document no longer publishes (what a removed device holds)', async () => {
+    const removed = createFromPrior({ iss: alice.did, sub: oldY.did, iat: 300 }, `${alice.did}${ROTATION_KEY_FRAGMENT}`, rotationSigningKey(oldSeed).privateKey)
+    await expect(verify(removed, oldY.did)).rejects.toThrow('signature does not verify')
+  })
+})
+
 describe('through a real mediator', () => {
   test('a message to Alice\'s Y -- a did:peer whose service names the mediator by its did:web -- reaches Y\'s registered inbox', async () => {
     const { mediatorIdentity, fetchImpl, url } = freshMediatorFetch()
@@ -247,3 +306,8 @@ describe('through a real mediator', () => {
     expect((delivered[0]!.plaintext as DidCommPlaintext).to).toEqual([y.did])
   })
 })
+
+async function until(condition: () => boolean, deadlineMs = 2000): Promise<void> {
+  const deadline = Date.now() + deadlineMs
+  while (!condition() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5))
+}

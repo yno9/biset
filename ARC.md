@@ -293,7 +293,7 @@ did-md-oauth.ts は特定の wallet を前提にせず、選択された entry �
     `lost`（担当の端末＝`keyAgreement` の fragment の並びで先頭が、ほかに持ちうる端末が無い、または公開から 24 時間たっても無いと判断）、
     `stale`（署名鍵を公開した後に、ウォレットから直接端末が外された）。`unpublished`・`lost`・`stale` は、アカウント画面の「Renew」（ウォレットの承認 1 回）で新しい seed の署名鍵に取り替える。
   - 鍵の比較は `#fragment` で行う（ドメイン移動は DID の部分だけを書き換え、fragment は鍵から導出されるため変わらない）。
-- 連絡先の `own` は Y の DID で引くので、今の seed が導かない Y（古い seed のもの）は使われない（その相手とは front door に戻る。端末削除の乗り換えは P4）。
+- 連絡先の `own` は Y の DID で引くので、今の seed が導かない Y（古い seed のもの）は使われない。端末を外して seed が替わると、その相手とは新しい seed の Y へ移り直す（`iss` は公開 DID なので、新しい署名鍵を持たない外された端末には作れない）。古い Y の受信箱は、移り直しを始めてから 30 日間は見続ける（古い Y の鍵は Vault に残る古い seed から導く）。
 
 ### 6.1 at rest
 wallet の device material は封印される。一方 **SegmentKey は IndexedDB に平文**で、browser profile を読める攻撃者に対する at-rest の保護は Vault 側で未完成。
@@ -403,6 +403,8 @@ INIT/ACCEPT の握手は無い（P0 で撤去）。
   相手が `from_prior` 付きで来たら、こちらも移る。
 - **Y**: seed と相手の公開 DID から導く did:peer:2（`deriveRelationshipPeerIdentity`）。service の `uri` は公開 DID Document の `#didcomm` の mediator（`did:web`）。どの端末でも同じ Y になる。
   兄弟が始めた移動は、連絡先の同期（Vault Sync）で知り、その受信箱も見る（`rotation-manager.ts` の `sync`）。
+- **端末の削除**（`PLAN-refactor.md` §4.5）: seed の取り替え（§6）の後、今の seed が導かない Y で移っていた相手には、新しい Y から移り直す。相手が新しい移動を処理すると、古い Y からのものは拒否される。
+  **残る窓**: 相手が処理するまで、外された端末は古い Y で読み書きできる（P0 以前の relationship と同じ）。
 - **受信**: 送り主は公開 DID で記録する。`from_prior` は全部を検査する（`protocol/didcomm/from-prior.ts`、§4.4・§7-2）。通らなければ恒久的に拒否。
   `from_prior` の無い did:peer は、連絡先がその DID を相手の移動先として持つときだけ受け入れる。持たない端末は**保留**する（ACK しない。兄弟の記録が届いてから処理する。§9.1 の規則）。
   相手が既に新しい DID へ移った後の古い DID からは拒否する。単体の did:peer（公開 DID を持たない相手）とはやりとりしない。did:key・did:peer:4 には対応しない（did:peer:4 は後で、§10-4）。
