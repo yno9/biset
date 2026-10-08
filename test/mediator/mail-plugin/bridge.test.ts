@@ -9,6 +9,7 @@ import { generatePeerIdentity } from '../../../src/protocol/didcomm/peer.ts'
 import { buildDidCommLog } from '../../protocol/support/webvh-log-fixture.ts'
 import type { LogEntry } from '../../../src/protocol/webvh/log.ts'
 import { unpackAuthcrypt, unpackAnoncrypt, parseJwe } from '../../../src/protocol/didcomm/crypto.ts'
+import { encodeX25519Multikey } from '../../../src/protocol/didcomm/multikey.ts'
 import { buildInboundMailForward } from '../../../src/server/mediator/mail-plugin/bridge.ts'
 import { MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyOf } from '../../../src/server/mediator/mail-plugin/mail-bridge.ts'
 import { FORWARD } from '../../../src/protocol/didcomm/mediator-protocol.ts'
@@ -122,5 +123,35 @@ describe('buildInboundMailForward', () => {
     const { plaintext } = await unpackAuthcrypt(innerJwe!, { kid: to.kid, privateKey: to.privateKey }, async () => sender.xPub)
     const msg = JSON.parse(new TextDecoder().decode(plaintext))
     expect(mailBridgeInboundBodyOf(msg)?.smtpEnvelope).toBe('MAIL FROM:<a@example.com> RCPT TO:<y@biset.md>')
+  })
+
+  test('delivers to a recipient whose service names the mediator by its did:web, or by URL with the did:web kid as routing key', async () => {
+    const sender = generatePeerIdentity()
+    const mediatorX = x25519.utils.randomSecretKey()
+    const mediatorDocument = {
+      '@context': ['https://www.w3.org/ns/did/v1'], id: 'did:web:mediator.test.example',
+      verificationMethod: [{ id: '#key-1', type: 'Multikey', controller: 'did:web:mediator.test.example', publicKeyMultibase: encodeX25519Multikey(x25519.getPublicKey(mediatorX)) }],
+      keyAgreement: ['#key-1'],
+      service: [{ id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: 'https://mediator.test.example', accept: ['didcomm/v2'] } }],
+    }
+    for (const [endpointUri, routingKeys] of [['did:web:mediator.test.example', []], ['https://mediator.test.example', ['did:web:mediator.test.example#key-1']]] as const) {
+      const to = recipient(endpointUri, [...routingKeys])
+      const fetchImpl = (async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url === 'https://mediator.test.example/.well-known/did.json') return Response.json(mediatorDocument)
+        return fetchServing(to.log)(input)
+      }) as typeof fetch
+      const result = await buildInboundMailForward(
+        'y@biset.md', 'biset.md',
+        { rawRfc5322: utf8('Subject: via did:web\r\n\r\nbody'), smtpEnvelope: 'MAIL FROM:<a@example.com> RCPT TO:<y@biset.md>' },
+        { kid: sender.xKid, privateKey: sender.xPriv }, fetchImpl,
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.delivery.postUrl).toBe('https://mediator.test.example')
+      const forward = JSON.parse(new TextDecoder().decode(await unpackAnoncrypt(result.delivery.outbound, { kid: 'did:web:mediator.test.example#key-1', privateKey: mediatorX })))
+      expect(forward.type).toBe(FORWARD)
+      expect(forward.body.next).toBe(to.did)
+    }
   })
 })

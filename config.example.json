@@ -17,9 +17,8 @@
       "id": "#didcomm",
       "type": "DIDCommMessaging",
       "serviceEndpoint": {
-        "uri": "$mediatorUrl",
-        "accept": ["didcomm/v2"],
-        "routingKeys": ["$routingKid"]
+        "uri": "$mediatorDid",
+        "accept": ["didcomm/v2"]
       },
       "previousIds": ["#didcomm-biset"]
     }

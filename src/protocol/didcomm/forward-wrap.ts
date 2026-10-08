@@ -62,9 +62,3 @@ export function wrapForwardHops(inner: DidCommJWE, recipientDid: string, hops: r
   }
   return outbound
 }
-
-/** `wrapForwardHops` for a route given as did:peer kids (the `routingKeys` of a
- * service endpoint that names its mediator by URL). */
-export function wrapForwardChain(inner: DidCommJWE, recipientDid: string, routingKeys: readonly string[]): DidCommJWE {
-  return wrapForwardHops(inner, recipientDid, routingKeys.map(peerHop))
-}

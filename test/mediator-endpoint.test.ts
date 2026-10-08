@@ -78,6 +78,24 @@ describe('expandEndpoint', () => {
     expect(expanded.hops[0]!.kid).toBe(m.xKid)
   })
 
+  test('a URL endpoint whose routing key is the mediator\'s did:web kid (what a document published after the mediator became a did:web carries) resolves that key', async () => {
+    const m = mediator()
+    const expanded = await expandEndpoint({ uri: URL_, routingKeys: [m.kid] }, m.fetchImpl)
+    expect(expanded.url).toBe(URL_)
+    expect(expanded.hops).toHaveLength(1)
+    expect(expanded.hops[0]!.kid).toBe(m.kid)
+    expect(expanded.hops[0]!.recipients[0]!.publicKey).toEqual(m.xPub)
+    // ... and mixes with a did:peer key further down the chain.
+    const another = generatePeerIdentity()
+    expect((await expandEndpoint({ uri: URL_, routingKeys: [m.kid, another.xKid] }, m.fetchImpl)).hops.map(hop => hop.kid)).toEqual([m.kid, another.xKid])
+  })
+
+  test('a routing key that is not a published keyAgreement key, or not a did:peer / did:web kid, is refused', async () => {
+    const m = mediator()
+    await expect(expandEndpoint({ uri: URL_, routingKeys: [`${MEDIATOR_DID}#key-9`] }, m.fetchImpl)).rejects.toThrow('not a keyAgreement key')
+    await expect(expandEndpoint({ uri: URL_, routingKeys: ['did:key:z6Mk#z6Mk'] }, m.fetchImpl)).rejects.toThrow('only did:peer:2 and did:web')
+  })
+
   test("a mediator that does not resolve, or whose own endpoint is a DID or has routing keys, is refused", async () => {
     await expect(expandEndpoint({ uri: 'did:web:nowhere.example' }, mediator().fetchImpl)).rejects.toThrow('does not resolve')
     const recursive = mediator({ service: [{ id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: 'did:web:other.example' } }] })

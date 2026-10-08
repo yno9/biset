@@ -49,7 +49,7 @@ async function sendResult(
   if (!endpoint?.uri || recipients.length === 0) throw new Error('authenticated sender has no DIDComm return route')
   const body = { requestId: messageId, status: results.every(result => result.outcome === 'delivered' && result.rejected.length === 0) ? 'accepted' : 'temporary-failure', results }
   const plaintext = buildPlaintext(MAIL_BRIDGE_SEND_RESULT, body, sender.kid.split('#', 1)[0], senderDid, { thid })
-  const delivery = packForDelivery(new TextEncoder().encode(JSON.stringify(plaintext)), sender, doc.id, recipients, { uri: endpoint.uri, routingKeys: endpoint.routingKeys })
+  const delivery = await packForDelivery(new TextEncoder().encode(JSON.stringify(plaintext)), sender, doc.id, recipients, { uri: endpoint.uri, routingKeys: endpoint.routingKeys })
   const response = await fetch(delivery.postUrl, didCommPost(delivery.outbound))
   if (response.status !== 202) throw new Error(`mail send-result delivery failed: HTTP ${response.status}`)
 }

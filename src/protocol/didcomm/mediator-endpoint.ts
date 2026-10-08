@@ -23,12 +23,27 @@ export interface ExpandedEndpoint {
   hops: ForwardHop[]
 }
 
+/** A hop named by a routing key (a DID URL, DIDComm v2.1): a did:peer:2 kid
+ * carries its key; a did:web kid (what a document published after the mediator
+ * became a did:web carries) is read from that DID's document. */
+async function routingHop(kid: string, fetchImpl: typeof fetch): Promise<ForwardHop> {
+  if (kid.startsWith('did:peer:2.')) return peerHop(kid)
+  if (!kid.startsWith('did:web:') || !kid.includes('#')) throw new Error(`routing key ${kid}: only did:peer:2 and did:web keys are supported`)
+  const did = kid.slice(0, kid.indexOf('#'))
+  const doc = await resolveDidWeb(did, fetchImpl)
+  if (!doc) throw new Error(`routing key ${kid}: ${did} does not resolve`)
+  const fragment = kid.slice(kid.indexOf('#'))
+  const key = keyAgreementRecipients(doc).find(recipient => recipient.kid.slice(recipient.kid.indexOf('#')) === fragment)
+  if (!key) throw new Error(`routing key ${kid} is not a keyAgreement key of ${did}`)
+  return { kid, recipients: [key] }
+}
+
 export async function expandEndpoint(
   endpoint: { uri: string; routingKeys?: readonly string[] },
   fetchImpl: typeof fetch,
   options: { preferOnion?: boolean } = {},
 ): Promise<ExpandedEndpoint> {
-  const routingHops = (endpoint.routingKeys ?? []).map(peerHop)
+  const routingHops = await Promise.all((endpoint.routingKeys ?? []).map(kid => routingHop(kid, fetchImpl)))
   if (!endpoint.uri.startsWith('did:')) {
     return { url: endpoint.uri, hops: routingHops }
   }

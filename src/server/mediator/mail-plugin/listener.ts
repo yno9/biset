@@ -66,10 +66,11 @@ async function deliverInboundMail(
   fetchImpl: typeof fetch,
   input: AcceptIngressInput<MailRecipientRoute>,
 ): Promise<void> {
-  const delivery = packInboundMailForward(
+  const delivery = await packInboundMailForward(
     input.resolution,
     { rawRfc5322: input.rawRfc5322, smtpEnvelope: `MAIL FROM:<${input.mailFrom}> RCPT TO:<${input.recipientAddress}>` },
     senderIdentity,
+    fetchImpl,
   )
   const response = await fetchImpl(delivery.postUrl, didCommPost(delivery.outbound))
   // 202 Accepted, same convention didcomm/send-message.ts's own delivery

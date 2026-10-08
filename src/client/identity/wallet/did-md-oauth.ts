@@ -391,6 +391,18 @@ async function newBisetDidCommDevice(did: string, mediator: DidMdBisetMediator):
   return withDidCommXKid(await prepareBisetDidCommDevice(mediator), did)
 }
 
+/** The clearnet endpoints of the OLD form -- the mediator's URL with its routing
+ * key -- that a document keeps next to the mediator's DID. Pointing at the
+ * mediator by DID replaces them (a document published while the configuration
+ * still had the URL form carries one, and senders cannot use its did:web
+ * routing key). The onion entrance is left alone: the mediator's own document
+ * does not list one, so retiring it would end the user's Tor opt-in. */
+function legacyUrlEndpointRemovals(serviceId: string, mediatorUrl: string | undefined): DidCoreEndpointRemoval[] {
+  if (!mediatorUrl) return []
+  const bare = mediatorUrl.replace(/\/+$/, '')
+  return [bare, `${bare}/`].map(uri => ({ serviceId, match: { uri } }))
+}
+
 export function buildDocumentEdit(did: string, config: WalletConfiguration, device?: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']>, remove: string[] = [], removeEndpoints: DidCoreEndpointRemoval[] = [], rotation?: RotationCandidate['method']): DidCoreDocumentEdit {
   const didcomm = configuredService(config, 'didcomm')
   const services = config.didDocumentServices
@@ -408,6 +420,9 @@ export function buildDocumentEdit(did: string, config: WalletConfiguration, devi
         '$mediatorDid': device?.mediatorDid ?? '',
       })),
     }))
+  const namesMediatorByDid = services.some(service => service.id === didcomm.id && [service.serviceEndpoint].flat().some(endpoint => typeof endpoint === 'object' && endpoint !== null && typeof (endpoint as { uri?: unknown }).uri === 'string' && (endpoint as { uri: string }).uri.startsWith('did:')))
+  const migration = device && namesMediatorByDid ? legacyUrlEndpointRemovals(didcomm.id, device.mediatorUrl) : []
+  removeEndpoints = [...removeEndpoints, ...migration.filter(removal => !removeEndpoints.some(existing => canonical(existing) === canonical(removal)))]
   return {
     type: DID_DOCUMENT_EDIT_DETAIL,
     services,

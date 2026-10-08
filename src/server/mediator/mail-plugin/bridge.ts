@@ -73,7 +73,7 @@ export async function resolveMailRecipientRoute(
   }
 }
 
-/** Pure (no network): authcrypts a MAIL_BRIDGE_INBOUND message to an
+/** Authcrypts a MAIL_BRIDGE_INBOUND message to an
  * already-resolved recipient route -- `sender` identifies this bridge (a
  * persisted did:peer, `SqliteMediatorStore.loadMailPluginIdentity`, kept
  * separate from a real end-user's DIDComm identity, but present because the
@@ -84,16 +84,17 @@ export async function resolveMailRecipientRoute(
  * route's own routing keys are malformed -- a listener has already resolved
  * the route once by the time it calls this, so that should not happen in
  * practice, but a caller distrusting a stale/cached route should catch it. */
-export function packInboundMailForward(
+export async function packInboundMailForward(
   route: MailRecipientRoute,
   body: MailBridgeInboundBody,
   sender: { kid: string; privateKey: Uint8Array },
-): OutboundDelivery {
+  fetchImpl: typeof fetch = fetch,
+): Promise<OutboundDelivery> {
   const plaintext = buildPlaintext(MAIL_BRIDGE_INBOUND, mailBridgeInboundBodyToWire(body), sender.kid.split('#', 1)[0], route.recipientDid, {
     attachments: [mailBridgeRfc5322Attachment(body.rawRfc5322)],
   })
   const plaintextBytes = new TextEncoder().encode(JSON.stringify(plaintext))
-  return packForDelivery(plaintextBytes, sender, route.recipientDid, route.recipients, route.endpoint)
+  return packForDelivery(plaintextBytes, sender, route.recipientDid, route.recipients, route.endpoint, fetchImpl)
 }
 
 export type MailBridgeResult = { ok: true; delivery: OutboundDelivery } | { ok: false; error: string }
@@ -113,7 +114,7 @@ export async function buildInboundMailForward(
   const resolved = await resolveMailRecipientRoute(toAddress, apexDomain, fetchImpl)
   if (!resolved.ok) return resolved
   try {
-    return { ok: true, delivery: packInboundMailForward(resolved.route, body, sender) }
+    return { ok: true, delivery: await packInboundMailForward(resolved.route, body, sender, fetchImpl) }
   } catch (error) {
     return { ok: false, error: `${toAddress}'s registered mediator routing keys are invalid: ${error instanceof Error ? error.message : String(error)}` }
   }

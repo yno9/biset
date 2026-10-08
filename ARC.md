@@ -1,7 +1,7 @@
 # Biset アーキテクチャ
 
 > 調査基準日: 2026-10-08（Asia/Tokyo）
-> 調査対象: `~/biset` の作業ツリー（HEAD `5f4d286` ＋ 2026-10-08 の再点検での修正）。本番の app は `5f4d286` のビルド（2026-10-08 05:55 UTC に配備、配信物の sha256 が手元と一致）。
+> 調査対象: `~/biset` の作業ツリー（HEAD `a8d36e2` ＋ 2026-10-08 の実機で見つかった `#didcomm` の形の修正）。本番の app は `5f4d286` のビルド（2026-10-08 05:55 UTC に配備、配信物の sha256 が手元と一致）。
 >
 > 2026-10-03 版を、`PLAN-refactor.md`（relationship を front door ＋ DID Rotation に置き換える、P0〜P5）と連絡先リスト（JMAP for Contacts、C1〜C3）に合わせて書き直した。
 > 変わった点は §1.4（2026-10-02 版から）と §1.5（2026-10-03 版から）にまとめた。方針は「現行コードを正とする」。将来案・廃止予定は、現行の事実と混ぜずに明示する。
@@ -656,7 +656,16 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 
 ### 15.4 2026-10-08 のデプロイ（`PLAN-refactor.md` P0〜P5）
 **app は 2026-10-08 に配備済み**（`5f4d286` のビルド。配信物の sha256 が手元の `dist/index.html` と一致）。
-同日の再点検での修正 4 件（`PLAN-refactor.md` §11 の「再点検」、ARC では §7.3・§9.2 に反映）は**未配備**で、`./deploy.sh app` で配る。版の混在の問題は無い（event の種類も形も変えていない）。
+同日の再点検での修正 4 件（`a8d36e2`、ARC では §7.3・§9.2 に反映）と、実機で見つかった `#didcomm` の形の修正（下）は**未配備**で、`./deploy.sh app` で配る。版の混在の問題は無い（event の種類も形も変えていない）。
+**`#didcomm` の形（実機で発見）**: 配備した app の設定（`config.json`、git 管理外・ビルドに埋め込まれる）の `didDocumentServices` が、古い URL ＋ `routingKeys: ["$routingKid"]` の形のままだった。
+コードの既定値（mediator の DID）を上書きしていたうえ、mediator が `did:web` になった後は `$routingKid` が `did:web:…#key-1` なので、公開された文書の `routingKeys` が did:peer でなくなり、
+送り側（`peerHop`）が `invalid base58 char :` で落ちた（その文書への送信と Vault Sync が全部失敗）。直したもの:
+- 送り側は `routingKeys` の `did:web` の鍵も読む（`mediator-endpoint.ts` の `routingHop`）。公開済みの文書が移行なしで使える。
+- メールの配送（`route-deliver.ts` の `packForDelivery`）も `expandEndpoint` を通す（URL でも mediator の DID でも、`routingKeys` が did:peer でも did:web でも）。以前は DID 形の `uri` を POST 先として使おうとして失敗した。
+- `config.json`／`config.example.json` を DID 形（`{ uri: "$mediatorDid" }`）に直した。
+- 文書の編集に、古い URL 形のクリアな endpoint（mediator の URL、末尾の `/` の有無の両方）を消す指定を加えた（`legacyUrlEndpointRemovals`）。onion の endpoint は残す（mediator 自身の文書が onion を載せていないので、消すと Tor の opt-in が終わる）。
+  既に古い形で公開された文書は、次の文書編集（別の端末のログイン、Account の Mediator の「Edit server」、「Remove other devices」）で新しい形になる。
+  すべて実際の文書で確かめた: 編集後は onion（旧形）と DID 形の 2 つになり、送り側は DID 形を選んで `https://mediator.biset.md` へ展開する。
 
 **版の混在を想定しない**（後方互換を持たない方針）。手順は `PLAN-refactor.md` §13。
 - did.md（文書編集の拡張、`#pass-1` に限るログイン）は P1 で配備済み。mediator（`did:web`、上限、egress の制限）は 2026-10-07 に配備済み。
@@ -707,6 +716,8 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
     同じリポジトリの `host.ts` の `fetchOk` は CDN を避けている。手元の `~/did.md` には承認画面の DID 編集の処理が見当たらず、本番の Wallet のソースの所在は未確認。
 14. **移動済みの相手の連絡先の削除**（§14.2-8）: 案は (a) `biset.md:didcomm` のある Card の削除と `onlineServices` の DIDComm の項目の書き換えを `forbidden` にする、
    (b) 削除しても DIDComm の状態だけは別に残す（JMAP からは見えない）、(c) 消えたら次の受信で相手に移り直しを求める。未決。
+16. **Rust 側の relay（`jmapsmtp`、`jmapap`）の `routingKeys` の読み方は未確認**。TypeScript 側（biset のクライアント、mail-relay、mail-plugin）は直した。
+    Rust 側が `routingKeys` を did:peer の鍵としてだけ読むなら、`did:web` の鍵を載せた文書に宛てた配送（メールの受信など）が失敗する。文書を DID 形へ移せば影響はないが、移るまでは確かめる必要がある。
 15. **seed の権威の読み直しが頻繁**: 経路を選ぶたび（送信 1 件ごと、受信 1 件ごと）に、seed の record を Vault から復号して読み直す（ログは 60 秒キャッシュ）。量が増えたら端末内のキャッシュが要る。
 
 ## 18. 実装状態の総括

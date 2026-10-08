@@ -36,6 +36,23 @@ describe('the DIDComm service of a DID document edit', () => {
     expect(withOnion.map(entry => entry.uri)).toEqual(['https://mediator.example', 'http://abc.onion'])
   })
 
+  test('naming the mediator by DID retires the clearnet URL-form endpoint an older document still carries (not the onion one)', () => {
+    const edit = buildDocumentEdit(DID, walletConfiguration(), device())
+    expect(edit.removeEndpoints).toEqual([
+      { serviceId: '#didcomm', match: { uri: 'https://mediator.example' } },
+      { serviceId: '#didcomm', match: { uri: 'https://mediator.example/' } },
+    ])
+    const withOnion = buildDocumentEdit(DID, walletConfiguration(), device({ mediatorOnionUrl: 'http://abc.onion/' }))
+    expect(JSON.stringify(withOnion.removeEndpoints)).not.toContain('onion')
+  })
+
+  test('a configured URL-form template retires nothing, and a removal already asked for is not repeated', () => {
+    const legacy = walletConfiguration({ didDocumentServices: [{ purpose: 'didcomm', id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: '$mediatorUrl', accept: ['didcomm/v2'], routingKeys: ['$routingKid'] } }] })
+    expect(buildDocumentEdit(DID, legacy, device()).removeEndpoints).toBeUndefined()
+    const asked = { serviceId: '#didcomm', match: { uri: 'https://mediator.example/' } }
+    expect(buildDocumentEdit(DID, walletConfiguration(), device(), [], [asked]).removeEndpoints?.filter(removal => removal.match.uri === 'https://mediator.example/')).toEqual([asked])
+  })
+
   test('the device key is added and bound to the service', () => {
     const d = device()
     const edit = buildDocumentEdit(DID, walletConfiguration(), d)
