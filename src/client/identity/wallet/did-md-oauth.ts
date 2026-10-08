@@ -950,6 +950,26 @@ export async function beginDidMdRotationKeyRenewal(configured: DidMdWalletConfig
   return redirectToWallet(client, pending)
 }
 
+/**
+ * Publishes the DIDComm endpoint as configured now, in one Wallet approval, for
+ * a document that carries an older form of it (the mediator's URL with a
+ * routing key, next to the mediator's DID that replaces it). This device's own
+ * key stays: only the service changes. The Mediator card's "Edit server" does
+ * this when the URL it is given is the one already in use.
+ */
+export async function beginDidMdEndpointUpdate(configured: DidMdWalletConfiguration = {}): Promise<never> {
+  const config = walletConfiguration(configured)
+  const session = await readDidMdDeviceSession()
+  if (!session?.vaultDeviceId || !session.bisetDidCommDevice?.mediatorDid || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
+    throw new Error('Reconnect did.md Wallet before updating the messaging address')
+  }
+  const client = await registration(config.walletDeviceName)
+  const pending = pendingFromSession(session)
+  pending.state = randomBase64url(32); pending.codeVerifier = randomBase64url(48); pending.createdAt = new Date().toISOString()
+  pending.documentEdit = buildDocumentEdit(session.did, config, session.bisetDidCommDevice)
+  return redirectToWallet(client, pending)
+}
+
 /** The only round trip needed to sign in: no DID is resolved and no
  * document edit is requested up front, so this never needs to know which
  * did.md handle the user has open in Wallet beforehand (no login_hint). The

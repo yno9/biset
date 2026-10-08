@@ -96,7 +96,8 @@
         "services": { "type": "array", "maxItems": 64 },
         "verificationMethods": { "type": "array", "maxItems": 64 },
         "remove": { "type": "array", "maxItems": 128 },
-        "serviceKeyBindings": { "type": "array" }
+        "serviceKeyBindings": { "type": "array" },
+        "removeEndpoints": { "type": "array", "maxItems": 64 }
       }
     }
   }

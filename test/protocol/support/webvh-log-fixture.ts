@@ -56,7 +56,7 @@ export function buildGenesisLog(rootPrivateKey: Uint8Array, rootPublicKey: Uint8
         id: `${placeholderDid}${entry.id}`,
         type: 'DIDCommMessaging',
         serviceEndpoint: 'serviceEndpoints' in entry
-          ? entry.serviceEndpoints.map(e => ({ uri: e.uri, accept: ['didcomm/v2'], routingKeys: e.routingKeys ?? [] }))
+          ? entry.serviceEndpoints.map(e => ({ uri: e.uri, accept: ['didcomm/v2'], ...(e.routingKeys === null ? {} : { routingKeys: e.routingKeys ?? [] }) }))
           : { uri: entry.uri, accept: ['didcomm/v2'], routingKeys: entry.routingKeys ?? [] },
       })),
     alsoKnownAs: [],
@@ -141,7 +141,7 @@ export interface DidCommStateExtras {
    * entry may instead give `serviceEndpoints` directly (PLAN-tor.md D-4's
    * clearnet+onion array), bypassing the `{uri, accept, routingKeys}` map
    * shorthand entirely. */
-  services?: Array<{ id: string; uri: string; routingKeys?: string[] } | { id: string; serviceEndpoints: Array<{ uri: string; routingKeys?: string[] }> }>
+  services?: Array<{ id: string; uri: string; routingKeys?: string[] } | { id: string; serviceEndpoints: Array<{ uri: string; routingKeys?: string[] | null }> }>
   /** Genesis-only parameters a later append needs: `portable: true` to allow
    * a domain move at all, and a Spare Key commitment to sign one with
    * (migrate.ts enforces both). */

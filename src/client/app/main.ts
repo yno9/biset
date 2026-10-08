@@ -16,6 +16,7 @@ import {
   beginDidMdWalletLogin,
   beginDidMdRemoveOtherDevices,
   beginDidMdRotationKeyRenewal,
+  beginDidMdEndpointUpdate,
   approvedRotationSeed,
   completeDidMdWalletCallback,
   disconnectDidMdWallet,
@@ -800,7 +801,10 @@ async function configureWalletAccountIfPresent(
       // of always taking this deployment's configured default -- reuses
       // beginDidMdWalletDocumentEdit as-is, since it already accepts
       // an array and takes its first valid entry (bisetMediatorFor).
-      onEditMediator: async (mediatorUrl: string) => beginDidMdWalletDocumentEdit({ mediatorUrls: [mediatorUrl], configuration: readBisetConfig() }),
+      // The URL already in use: republish the endpoint as configured now, keeping this device's key.
+      onEditMediator: async (mediatorUrl: string) => sameMediatorUrl(mediatorUrl, mediatorCard!.mediatorUrl)
+        ? beginDidMdEndpointUpdate(readBisetConfig())
+        : beginDidMdWalletDocumentEdit({ mediatorUrls: [mediatorUrl], configuration: readBisetConfig() }),
       onEnableTor: async (onionUrl: string) => beginDidMdWalletDocumentEdit({ mediatorUrls: [mediatorCard!.mediatorUrl], mediatorOnionUrls: [onionUrl], configuration: readBisetConfig() }),
       onLogOutMediator: async () => beginDidMdWalletDocumentEdit({ removeMediator: true, configuration: readBisetConfig() }),
       onDisconnect: async () => {

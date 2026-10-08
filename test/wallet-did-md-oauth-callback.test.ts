@@ -247,3 +247,52 @@ describe('the rotation key a sign-in offers', () => {
   })
 
 })
+
+describe('the endpoint update ("Edit server" with the URL already in use)', () => {
+  const MEDIATOR_DID = 'did:web:mediator.example'
+  const LEGACY = { uri: 'https://mediator.example/', routingKeys: [`${MEDIATOR_DID}#key-1`] }
+  const ONION = { uri: 'http://abc.onion/', routingKeys: ['did:peer:2.Ez6L.Vz6M#key-1'] }
+
+  async function approve(published: Array<{ uri: string; routingKeys?: string[] | null }>) {
+    const rootPrivateKey = ed25519.utils.randomSecretKey()
+    const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
+    const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [], 'test.example', { services: [{ id: '#didcomm', serviceEndpoints: published }] })
+    const registration = registrationFixture(FILE_CALLBACK_URL)
+    const documentEdit = {
+      type: 'urn:did-core:document-edit:v1' as const,
+      services: [{ id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: MEDIATOR_DID, accept: ['didcomm/v2'] }, endpointMode: 'merge' as const }],
+      verificationMethods: [], remove: [],
+      removeEndpoints: [{ serviceId: '#didcomm', match: { uri: 'https://mediator.example' } }, { serviceId: '#didcomm', match: { uri: 'https://mediator.example/' } }],
+    }
+    const pending = await pendingFixture({ clientId: registration.clientId, state: 'endpoint-update', did, verificationMethod: `${did}#key-1`, rootPublicKey, documentEdit })
+    const unsignedVc = {
+      '@context': ['https://www.w3.org/ns/credentials/v2'], id: 'urn:uuid:33333333-3333-4333-8333-333333333333',
+      type: ['VerifiableCredential', 'biset.md/MessengerCapability'], issuer: did,
+      credentialSubject: { audience: registration.clientId, authorizationDetails: [documentEdit], deviceJkt: pending.deviceJkt, expiresAt: '2030-01-01T00:00:00.000Z', issuedAt: '2026-10-08T00:00:00.000Z', scope: ['biset:login', 'biset:device', 'biset:vault'] },
+    }
+    const vc = { ...unsignedVc, proof: buildProof(unsignedVc, { verificationMethod: `${did}#key-1`, proofPurpose: 'authentication', privateKey: rootPrivateKey }) }
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url === `${ISSUER}/.well-known/oauth-authorization-server`) return Response.json({ issuer: ISSUER, authorization_endpoint: registration.authorizationEndpoint, token_endpoint: registration.tokenEndpoint, registration_endpoint: registration.registrationEndpoint })
+      if (url === `${ISSUER}/v1/oauth/register/${encodeURIComponent(registration.clientId)}`) return Response.json({ client_id: registration.clientId, redirect_uris: [registration.redirectUri], scope: 'openid profile biset:login biset:device biset:routing biset:messaging biset:vault', token_endpoint_auth_method: 'none' })
+      if (url.split('?')[0] === didToHttpsUrl(did)) return new Response(log.map(entry => JSON.stringify(entry)).join('\n') + '\n')
+      return new Response('unexpected request', { status: 500 })
+    }) as typeof fetch
+    await saveDidMdRegistration(registration)
+    await saveDidMdPendingAuthorization(pending)
+    callbackLocation({ state: pending.state, iss: ISSUER, vp_token: JSON.stringify({ capability: [vc] }) }, FILE_CALLBACK_URL)
+    return completeDidMdWalletCallback()
+  }
+
+  test('the document with the mediator\'s DID beside the onion entry, and the URL form gone, is what the check accepts', async () => {
+    await approve([ONION, { uri: MEDIATOR_DID, routingKeys: null }])
+  })
+
+  test('the URL form still there after the approval fails the check', async () => {
+    await expect(approve([LEGACY, ONION, { uri: MEDIATOR_DID, routingKeys: null }])).rejects.toThrow('did not remove the requested endpoints')
+  })
+
+  test('the mediator\'s DID missing after the approval fails the check', async () => {
+    await expect(approve([ONION])).rejects.toThrow('did not publish requested service')
+  })
+})

@@ -229,7 +229,9 @@ function renderMediatorCard(): void {
       {
         label: 'Edit server', onClick: () => {
           const url = window.prompt('DIDComm mediator URL', didComm.mediatorUrl)
-          if (!url || url === didComm.mediatorUrl) return
+          // The same URL republishes the endpoint as configured now (an older
+          // form in the document becomes the mediator's DID); no change of URL needed.
+          if (!url) return
           void wallet.onEditMediator?.(url).catch(error => {
             getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
           })

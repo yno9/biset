@@ -663,9 +663,12 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - 送り側は `routingKeys` の `did:web` の鍵も読む（`mediator-endpoint.ts` の `routingHop`）。公開済みの文書が移行なしで使える。
 - メールの配送（`route-deliver.ts` の `packForDelivery`）も `expandEndpoint` を通す（URL でも mediator の DID でも、`routingKeys` が did:peer でも did:web でも）。以前は DID 形の `uri` を POST 先として使おうとして失敗した。
 - `config.json`／`config.example.json` を DID 形（`{ uri: "$mediatorDid" }`）に直した。
-- 文書の編集に、古い URL 形のクリアな endpoint（mediator の URL、末尾の `/` の有無の両方）を消す指定を加えた（`legacyUrlEndpointRemovals`）。onion の endpoint は残す（mediator 自身の文書が onion を載せていないので、消すと Tor の opt-in が終わる）。
-  既に古い形で公開された文書は、次の文書編集（別の端末のログイン、Account の Mediator の「Edit server」、「Remove other devices」）で新しい形になる。
-  すべて実際の文書で確かめた: 編集後は onion（旧形）と DID 形の 2 つになり、送り側は DID 形を選んで `https://mediator.biset.md` へ展開する。
+- 文書の編集に、古い URL 形のクリアネットの endpoint（mediator の URL、末尾の `/` の有無の両方）を消す指定を加えた（`legacyUrlEndpointRemovals`）。onion の endpoint は残す（mediator 自身の文書が onion を載せていないので、消すと Tor の opt-in が終わる）。
+  既に古い形で公開された文書は、次の文書編集（別の端末のログイン、「Remove other devices」）か、Account の Mediator の **「Edit server」を今の URL のまま OK する**ことで新しい形になる。
+  後者は専用の更新（`beginDidMdEndpointUpdate`）で、この端末の鍵は入れ替えず、サービスだけを変える（URL を変えたときは従来どおり、端末の鍵を入れ替えて別の mediator へ移る）。
+  - **capability の JSON Schema（`biset-messenger-capability.schema.json`）に `removeEndpoints` が無かった**（`additionalProperties: false`）。did.md は `authorizationDetails` を中身を見ずに署名して返すので、
+  `removeEndpoints` を含む編集は承認後の検査で `device capability does not match its schema` になった。別の mediator へ変える編集（`retiredMediatorEndpoints`）も同じ不具合を持っていた。スキーマに足した。
+すべて実際の文書で確かめた: 編集後は onion（旧形）と DID 形の 2 つになり、送り側は DID 形を選んで `https://mediator.biset.md` へ展開する。
 
 **版の混在を想定しない**（後方互換を持たない方針）。手順は `PLAN-refactor.md` §13。
 - did.md（文書編集の拡張、`#pass-1` に限るログイン）は P1 で配備済み。mediator（`did:web`、上限、egress の制限）は 2026-10-07 に配備済み。
