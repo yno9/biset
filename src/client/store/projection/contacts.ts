@@ -59,6 +59,18 @@ export type LocalJmapContactCard = { [key: string]: CanonicalValue } & {
   addressBookIds: Record<string, true>
 }
 
+/** DIDComm routing state for one contact (§12.2). Every entry is written
+ * leaf by leaf, by ingress only. */
+export interface DidCommContactState {
+  /** Where the counterparty rotated to, keyed by its new DID: the DID it
+   * rotated from and the verified `from_prior`'s `iat`. */
+  rotations?: Record<string, { prior: string; iat: number }>
+  /** This identity's own rotation DIDs for this counterparty: when the
+   * rotation started, and when the counterparty first wrote to it (from then
+   * on `from_prior` is no longer sent, DIDComm v2.1). */
+  own?: Record<string, { startedAt?: string; confirmedAt?: string }>
+}
+
 // ---- ids ----
 
 /** The card id for `uid`. */
@@ -107,7 +119,7 @@ function assertIdMap(value: unknown, name: string, entry: (value: unknown, key: 
 
 function assertDidCommState(value: unknown): void {
   if (!isObject(value)) throw new TypeError(`contact card ${DIDCOMM_CONTACT_PROPERTY} must be an object`)
-  for (const key of Object.keys(value)) if (key !== 'rotations' && key !== 'confirmed') throw new TypeError(`contact card ${DIDCOMM_CONTACT_PROPERTY} has an unknown property`)
+  for (const key of Object.keys(value)) if (key !== 'rotations' && key !== 'own') throw new TypeError(`contact card ${DIDCOMM_CONTACT_PROPERTY} has an unknown property`)
   if (value.rotations !== undefined) {
     if (!isObject(value.rotations)) throw new TypeError('contact card rotations must be an object')
     for (const [did, rotation] of Object.entries(value.rotations)) {
@@ -117,9 +129,14 @@ function assertDidCommState(value: unknown): void {
       }
     }
   }
-  if (value.confirmed !== undefined) {
-    if (!isObject(value.confirmed)) throw new TypeError('contact card confirmed must be an object')
-    for (const [did, flag] of Object.entries(value.confirmed)) if (!did.startsWith('did:') || flag !== true) throw new TypeError('contact card confirmed entry is invalid')
+  if (value.own !== undefined) {
+    if (!isObject(value.own)) throw new TypeError('contact card own rotations must be an object')
+    for (const [did, own] of Object.entries(value.own)) {
+      const times = isObject(own) ? Object.entries(own) : []
+      if (!did.startsWith('did:') || times.length === 0 || times.some(([key, time]) => (key !== 'startedAt' && key !== 'confirmedAt') || typeof time !== 'string' || Number.isNaN(Date.parse(time)))) {
+        throw new TypeError('contact card own rotation is invalid')
+      }
+    }
   }
 }
 
@@ -240,6 +257,68 @@ export function creatingPatch(card: Omit<LocalJmapContactCard, 'id' | 'addressBo
     patch[pointerToken(key)] = value as CanonicalValue
   }
   return patch
+}
+
+// ---- DIDComm routing state (C3) ----
+
+/** The DIDComm state of a card, as written. */
+export function didCommStateOf(card: LocalJmapContactCard): DidCommContactState {
+  return (card[DIDCOMM_CONTACT_PROPERTY] ?? {}) as DidCommContactState
+}
+
+/** The card of a public DID: the one made for it (`didContactUid`), else any
+ * card listing it among its online services. */
+export function contactCardForDid(cards: readonly LocalJmapContactCard[], did: string): LocalJmapContactCard | undefined {
+  const own = contactCardId(didContactUid(did))
+  return cards.find(card => card.id === own) ?? cards.find(card => isObject(card.onlineServices)
+    && Object.values(card.onlineServices).some(service => isObject(service) && service.uri === did))
+}
+
+/** The counterparty's current DID: the latest rotation (by `iat`, then DID
+ * for a tie), or undefined when it has not rotated. */
+export function currentRotation(card: LocalJmapContactCard): { did: string; prior: string; iat: number } | undefined {
+  const rotations = Object.entries(didCommStateOf(card).rotations ?? {})
+  rotations.sort(([a, x], [b, y]) => x.iat - y.iat || a.localeCompare(b))
+  const latest = rotations.at(-1)
+  return latest ? { did: latest[0], ...latest[1] } : undefined
+}
+
+/** The public DID behind a counterparty's rotated DID, and whether that DID
+ * is still its current one; undefined when no card names it. */
+export function counterpartyOfRotatedDid(cards: readonly LocalJmapContactCard[], did: string): { publicDid: string; card: LocalJmapContactCard; current: boolean } | undefined {
+  for (const card of cards) {
+    const rotation = didCommStateOf(card).rotations?.[did]
+    if (!rotation) continue
+    const publicDid = publicDidOf(card) ?? rotation.prior
+    return { publicDid, card, current: currentRotation(card)?.did === did }
+  }
+  return undefined
+}
+
+/** The public DID a card was made for (its DIDComm online service). */
+export function publicDidOf(card: LocalJmapContactCard): string | undefined {
+  const service = isObject(card.onlineServices) ? card.onlineServices.didcomm : undefined
+  return isObject(service) && typeof service.uri === 'string' ? service.uri : undefined
+}
+
+const state = (path: string) => `${pointerToken(DIDCOMM_CONTACT_PROPERTY)}/${path}`
+
+/** The patch making sure `did` has a card: written leaf by leaf, so writing
+ * it again (another device, a later message) never undoes anything. */
+export function didContactPatch(did: string): ContactSetPayload {
+  const uid = didContactUid(did)
+  return { cardId: contactCardId(uid), patch: { '@type': 'Card', version: '1.0', uid, [`addressBookIds/${DEFAULT_ADDRESS_BOOK_ID}`]: true, 'onlineServices/didcomm': { service: 'DIDComm', uri: did } } }
+}
+
+/** Records that the counterparty of `cardId` rotated to `did`. */
+export function rotationPatch(cardId: string, rotation: { did: string; prior: string; iat: number }): ContactSetPayload {
+  return { cardId, patch: { [state(`rotations/${pointerToken(rotation.did)}`)]: { prior: rotation.prior, iat: rotation.iat } } }
+}
+
+/** Records this identity's own rotation `ownDid` for the counterparty of
+ * `cardId`: started, or confirmed (the counterparty wrote to it). */
+export function ownRotationPatch(cardId: string, ownDid: string, field: 'startedAt' | 'confirmedAt', at: string): ContactSetPayload {
+  return { cardId, patch: { [state(`own/${pointerToken(ownDid)}/${field}`)]: at } }
 }
 
 // ---- ContactCard/set (RFC 9610 §3.4, RFC 8620 §5.3) ----

@@ -2,6 +2,7 @@ import type { LocalJmapReadModel } from '../../store/projection/gateway.ts'
 import type { VaultBackedLocalJmapMutationSink } from '../../store/projection/vault-mutation-sink.ts'
 import { sendDidCommMessage } from '../../didcomm/send-message.ts'
 import { parseDidCommGroupAddress } from '../../didcomm/group-chat.ts'
+import type { DidCommRoute } from '../../didcomm/did-rotation.ts'
 import type { DidCommTransportOutboxRecord } from '../../store/vault/store.ts'
 
 interface WalletDidCommOutboxStore {
@@ -15,11 +16,12 @@ export interface WalletDidCommOutboxOptions {
   store: WalletDidCommOutboxStore
   readModel: Pick<LocalJmapReadModel, 'snapshot' | 'download'>
   mutationSink: Pick<VaultBackedLocalJmapMutationSink, 'commitIntents'>
-  /** This device's key in the identity's DID document: every message goes
-   * out from it, to the recipient's public DID. */
-  frontDoor: { fromKid: string; x25519PrivateKey: Uint8Array }
+  /** What a message to the counterparty whose public DID this is goes from
+   * and to (did-rotation.ts's chooseRoute): the front door, or the DIDs the
+   * conversation moved to. Asked at each attempt, so a retry follows a move. */
+  route(publicDid: string): Promise<DidCommRoute>
   send?: (toDid: string, content: string, message: OutboundChatMessage) => Promise<{ ok: boolean; error?: string }>
-  onDelivered?: () => void
+  onDelivered?: (item: DidCommTransportOutboxRecord) => void
   onError(error: unknown, item: DidCommTransportOutboxRecord): void
 }
 
@@ -46,12 +48,16 @@ export interface WalletDidCommOutbox {
  * the original DIDComm message id on the next boot or retry tick.
  */
 export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): WalletDidCommOutbox {
-  const send = options.send ?? ((toDid, content, message) => sendDidCommMessage(toDid, content, {
-    ...options.frontDoor, id: message.id, sentAt: message.sentAt,
-    ...(message.subject ? { subject: message.subject } : {}),
-    ...(message.thid ? { thid: message.thid } : {}),
-    ...(message.audience ? { audience: message.audience } : {}),
-  }))
+  const send = options.send ?? (async (publicDid, content, message) => {
+    const route = await options.route(publicDid)
+    return sendDidCommMessage(route.toDid, content, {
+      fromKid: route.fromKid, x25519PrivateKey: route.x25519PrivateKey, ...(route.fromPrior ? { fromPrior: route.fromPrior } : {}),
+      id: message.id, sentAt: message.sentAt,
+      ...(message.subject ? { subject: message.subject } : {}),
+      ...(message.thid ? { thid: message.thid } : {}),
+      ...(message.audience ? { audience: message.audience } : {}),
+    })
+  })
   const inFlight = new Set<string>()
 
   return {
@@ -97,7 +103,7 @@ export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): 
               payload: { emailId: item.emailId, mailboxIds: { sent: true } },
             }])], latest)
             await options.store.removeDidCommOutbox(options.identityId, item.outboundEventId, item.toDid)
-            options.onDelivered?.()
+            options.onDelivered?.(item)
           } catch (error) {
             options.onError(error, item)
           }

@@ -165,7 +165,7 @@ did.md は biset が運用するものではなく、依存する外部サービ
 - did.md Wallet の端末セッション（DPoP 鍵、封印された device material、Vault 用の端末 ID）
 - 端末固有の DIDComm 鍵（X25519、公開鍵が DID Document の `keyAgreement`）と、mediator の端末ラベルを作る秘密（`mediatorDeviceSecret`）
 - Vault の暗号文 object、event、SegmentKey、JMAP projection
-- Vault 内の **relationship seed** と、relationship ごとの非公開 DIDComm credential（`contact-key.set`、1:1・group chat 共通）
+- Vault 内の **relationship seed** と、連絡先（`contact.set`。相手の移動先と自分の移動の状態を含む。§7.3）
 - Markdown ミラーのディレクトリハンドル
 
 クライアントは plaintext の最終処理点であり、侵害されたクライアントから取得済みの秘密を取り戻すことはできない。
@@ -178,7 +178,7 @@ biset は did.md の controller 鍵を保持しない。
 ### 4.3 Mediator を信頼する範囲
 blind queue。内側の JWE は読めない。観測できるのは、登録された DID と端末ラベル、受信箱ごとの queue 数・時刻、接続元 IP、外側 Forward の `next`（宛先 DID）。
 - 端末ラベルは `HMAC(mediatorDeviceSecret, DID)` で、**DID ごとに異なる**。別々の DID の受信箱が同じ端末のものかは、ラベルからは分からない。
-- 継続的な会話は公開 did:webvh ではなく relationship 固有の `did:peer:2` を使い、公開 identity との直接の相関を避ける（group chat も同様）。
+- 移動に対応する相手との会話は、DID Rotation で相手ごとの `did:peer:2`（Y）へ移り、公開 identity との直接の相関を減らす（group chat も参加者ごとの経路で。§9.2）。
 - **Vault Sync は自分の DID 宛て**なので、「この identity が自分の端末同士で同期している」ことは観測できる。
 - **mediator は信頼の根拠にしない**。受信箱の登録は、DID 自身の鍵による authcrypt でしかできない（所有の証明、§11.1）。
 
@@ -282,7 +282,7 @@ did-md-oauth.ts は特定の wallet を前提にせず、選択された entry �
 | 候補の seed（承認待ち） | 端末 | `biset-did-md-wallet` の保留中の認可・セッション。**非抽出の AES 鍵で封印** | しない。ウォレットが署名鍵を公開したら Vault に移す |
 | SegmentKey | Vault segment | `vault_segments.segmentKey` に**平文** | Vault Sync の pack に入れて運ぶ（DIDComm authcrypt の中） |
 
-- relationship の did:peer は `deriveRelationshipPeerIdentity(seed, 相手の DID, mediatorRoutingKid)` で**決定論的**に導出する。
+- 移動先の did:peer（Y）は `deriveRelationshipPeerIdentity(seed, 相手の公開 DID, { uri: mediator の DID })` で**決定論的**に導出する。
   同一 identity の複数端末が同じ相手へ同時に初回接触しても、同じ peer に収束する。**service の URL は mediator の did:peer 自身が持つ canonical の値から取る**（onion の URL は入らない）。
 - **seed の権威は DID Document**（`relationship-seed-bootstrap.ts`、2026-10-08 の P2）。使う seed は「その rotation key（`rotation-key.ts`）を文書が公開している seed」。
   ログは追記のみで wallet が 1 エントリずつ署名するので、どの端末が読んでも同じ答えになる。
@@ -293,7 +293,7 @@ did-md-oauth.ts は特定の wallet を前提にせず、選択された entry �
     `lost`（担当の端末＝`keyAgreement` の fragment の並びで先頭が、ほかに持ちうる端末が無い、または公開から 24 時間たっても無いと判断）、
     `stale`（署名鍵を公開した後に、ウォレットから直接端末が外された）。`unpublished`・`lost`・`stale` は、アカウント画面の「Renew」（ウォレットの承認 1 回）で新しい seed の署名鍵に取り替える。
   - 鍵の比較は `#fragment` で行う（ドメイン移動は DID の部分だけを書き換え、fragment は鍵から導出されるため変わらない）。
-- 各 ContactKey は、どの seed から自分の did:peer を作ったか（`seedId`）を持つ。今の seed と違う relationship は、まだ移っていない。
+- 連絡先の `own` は Y の DID で引くので、今の seed が導かない Y（古い seed のもの）は使われない（その相手とは front door に戻る。端末削除の乗り換えは P4）。
 
 ### 6.1 at rest
 wallet の device material は封印される。一方 **SegmentKey は IndexedDB に平文**で、browser profile を読める攻撃者に対する at-rest の保護は Vault 側で未完成。
@@ -315,7 +315,7 @@ MLS そのもの（`src/protocol/mls/`、`client/mls/`、`client/mimi/`、`serve
   Vault の内容が端末の外に出るのは DIDComm authcrypt の中（Vault Sync）だけで、送り手の認証はそちらが担う。
 
 event の種別の正本は `src/protocol/vault.ts` の `VAULT_EVENT_KINDS`（`message.add/edit/tombstone`、`mailbox.set`、`keyword.set`、`transport.result`、
-`didcomm.control`、`contact-key.set`、`credential.relationship-seed.set`、`credential.openpgp.set` など）。
+`didcomm.control`、`contact.set`、`credential.relationship-seed.set`、`credential.openpgp.set` など）。`contact-key.set` は退役（reducer は何もしない）。
 
 **読めない credential の扱い**（`credential-store.ts` の `readableCredential`）: 完全性は正しいが、この版が読まない形の credential record（形式変更より前に書かれたもの）は、
 無いものとして読み飛ばす。1 件でもあると、その種類の credential 全体や、受信一覧の再構築（`mutation-records.ts`）が止まってしまうため。
@@ -337,6 +337,12 @@ local mutation・ingress commit・Vault Sync の受信適用は、record・proje
 `VaultProjector` が**唯一の writer**で、対象の email に触れた event だけを `by_target_id` で引いて畳み直す（per-entity LWW）。
 永続 tombstone（`message.tombstone`）は、後から届いた古い `message.add` が削除済みを復活させない。材料が揃わない email は `pending` に入り、次の再計算で再試行される。
 対象が 200 件を超える、または projection が無いときは `rebuildAll`。
+
+**連絡先**（JMAP for Contacts、RFC 9610。`client/store/projection/contacts.ts`、`PLAN-refactor.md` §12）: projection は email と並べて `contactCards`（JSContact の Card、RFC 9553）を持つ。
+住所録は既定の 1 冊（`AddressBook` の id `default`）。`contact.set` は 1 枚の Card への PatchObject（RFC 8620 §5.3）か削除で、target は `contact:<id>`（email の id と混ざらない）。
+reducer が event の順に当てるので、どの端末でも同じ Card になる（項目ごとの後勝ち）。Card の id は `uid` から導く。公開 DID の Card の `uid` はその DID の名前ベース UUID（v5）。
+DIDComm の経路の状態は独自のプロパティ `biset.md:didcomm`（相手の移動先 `rotations`、自分の移動 `own`）で、書くのは受信の処理だけ。JMAP の `ContactCard/set` と export の import からは書けない。
+gateway は `AddressBook/get`、`ContactCard/get`・`/query`・`/set` と capability `urn:ietf:params:jmap:contacts` を持つ。export／import（§8.2）も Card を運ぶ。
 
 ## 8. 端末間同期・履歴移送・Markdown
 
@@ -383,28 +389,38 @@ File System Access API で利用者が選んだディレクトリに、スレッ
 ### 9.1 front door
 端末ごとの X25519 鍵（`#k_<hash>`）が公開の front door。起動時に mediator へ登録する（`registerWithMediator`: mediate-request、recipient-update。mediator が DID を自分で解決するので、ログを渡す必要は無い）。
 wallet が認可した mediator が、このデプロイの `mediatorUrls` に含まれていなければ fail closed。
-front door は、新規の relationship の発見と `RELATIONSHIP_INIT`、Vault Sync、メールの送受信に使う。
+front door は、会話の始まり、Vault Sync、メールの送受信に使う。
 送信は、宛先の DID Document の**全** keyAgreement 鍵に 1 通で暗号化し、`#didcomm` の `routingKeys` があれば Forward で包む（`next` は宛先の DID）。
 
-### 9.2 会話（1:1）
-**2026-10-07 の P0（`PLAN-refactor.md`）で、relationship（INIT/ACCEPT の握手、相手ごとの did:peer、乗り換え）は撤去した。**
-会話はすべて front door で行う: 送り手の端末の鍵（DID Document の `keyAgreement`）から、相手の公開 DID の全 `keyAgreement` 鍵へ、Basic Message 2.0 を authcrypt で送る。
-- 送信は送信キュー（`didcomm-outbox.ts`）から。メッセージの `id` と時刻は再送でも変わらない。失敗はメッセージ・宛先・理由ごとに 1 回だけ画面に出し、再試行を続ける。
-- 受信: 送り主はその鍵の DID（did:webvh、did:web、did:peer:2）。did:peer の送り主も、その DID のまま独立した相手として扱う。did:key・did:peer:4 には対応しない（返信先が無い）。
-- 受信側は、JWE の宛先の中から自分の端末の鍵を探して開く（宛先の順序に依存しない）。
-- 公式の DID Rotation（`from_prior`。seed から導く署名鍵を `authentication` に置く）で did:peer へ移る形は、P2〜P4 で入る（`PLAN-refactor.md` §4・§7）。
+### 9.2 会話（1:1）と DID Rotation
+会話は front door で始まり、相手が対応していれば公式の DID Rotation（`from_prior`）で、この identity がその相手のために導く did:peer（Y）へ移る（`PLAN-refactor.md` §4.3、§12.5）。
+INIT/ACCEPT の握手は無い（P0 で撤去）。
+- **経路**（`did-rotation.ts` の `chooseRoute`、1:1・group・応答の全部がこれを通る）: 宛先は相手の連絡先の `rotations` のうち最新の DID、無ければ公開 DID。
+  送り元は、自分の移動を始めていれば Y、そうでなければ端末の front door の鍵。Y からは、相手が Y に書いてくるまで `from_prior`（`iss` = 公開 DID、seed の署名鍵）を付ける。
+  seed が使えない端末（届く前など）は front door から送る。
+- **移るかどうか**: Discover Features 2.0 で `header` の `from_prior` を問い合わせる（相手へ初めて送った後、または相手から届いた後、セッションごとに 1 回）。biset 自身も応答する。
+  対応を表明した相手には、Y の受信箱を mediator に登録してから、連絡先に `own.<Y>.startedAt` を書き、Y から `from_prior` 付きの ping を送る。相手が Y に書いてきたら `confirmedAt`。
+  相手が `from_prior` 付きで来たら、こちらも移る。
+- **Y**: seed と相手の公開 DID から導く did:peer:2（`deriveRelationshipPeerIdentity`）。service の `uri` は公開 DID Document の `#didcomm` の mediator（`did:web`）。どの端末でも同じ Y になる。
+  兄弟が始めた移動は、連絡先の同期（Vault Sync）で知り、その受信箱も見る（`rotation-manager.ts` の `sync`）。
+- **受信**: 送り主は公開 DID で記録する。`from_prior` は全部を検査する（`protocol/didcomm/from-prior.ts`、§4.4・§7-2）。通らなければ恒久的に拒否。
+  `from_prior` の無い did:peer は、連絡先がその DID を相手の移動先として持つときだけ受け入れる。持たない端末は**保留**する（ACK しない。兄弟の記録が届いてから処理する。§9.1 の規則）。
+  相手が既に新しい DID へ移った後の古い DID からは拒否する。単体の did:peer（公開 DID を持たない相手）とはやりとりしない。did:key・did:peer:4 には対応しない（did:peer:4 は後で、§10-4）。
+- 公開 DID の相手から初めて届いたら、その相手の連絡先を作る（同じ受信の commit で）。
+- 送信は送信キュー（`didcomm-outbox.ts`）から。メッセージの `id` と時刻は再送でも変わらない。経路は試すたびに選び直す。失敗はメッセージ・宛先・理由ごとに 1 回だけ画面に出す。
+- 受信側は、JWE の宛先の中から自分の鍵（front door か Y）を探して開く（宛先の順序に依存しない）。
 
 ### 9.4 group chat と External Feed
 - **group chat**: DIDComm 本体の仕組みだけで作る（`PLAN-refactor.md` §8）。宛先（平文の `to`）が 2 つ以上の Basic Message のスレッドで、`thid` が会話。
-  同じ平文を、参加者ごとに別々に暗号化して、各参加者の公開 DID へ送る。参加者はスレッドの**最新**メッセージの `to` と送り主、名前は最新の `subject`。
+  同じ平文（`to` は全員の公開 DID）を、参加者ごとに別々に暗号化して、各参加者への経路（§9.2 の `chooseRoute`）で送る。参加者はスレッドの**最新**メッセージの `to` と送り主、名前は最新の `subject`。
   招待のメッセージも、管理者も、端末ごとのメンバー一覧も無い（メールの Cc と同じ考え方）。ローカルのスレッドは `didcomm-group:<thid>`。
 - **External Feed**（`https://biset.md/external-feed/1.0/post`）: **anoncrypt のみ**で、送信者を認証しない。ActivityPub／AT Protocol／RSS のフィード投稿を bridge が運ぶことを想定している。
   スレッドは `(identityId, source, actorId)` で作り、本文の URL は `X-Source-Url` ヘッダに退避して CR/LF を除く。anoncrypt を許すのはこの型だけ。
 
 ### 9.5 Trust Ping 2.0
 `response_requested` が `false` でない ping には、`ping-response`（`thid` は ping の id）を返す（`answerTrustPing`）。
-relationship の did:peer 宛てに来た ping はその relationship で、それ以外は front door で返す。mediator も自分宛ての ping に応答する。
-受け取った `ping-response` は何もせず ACK する。
+受け取った鍵（front door か Y）から、ping の `from` へ返す。mediator も自分宛ての ping に応答する。
+受け取った `ping-response` は `didcomm.control` として記録する（Y に届いたものは移動の確定になる）。
 
 ### 9.6 暗号形式
 - Authcrypt `ECDH-1PU+A256KW` + `A256CBC-HS512`。Anoncrypt は `ECDH-ES+A256KW` + `A256CBC-HS512`（受信は `XC20P` も許容）。
@@ -413,8 +429,8 @@ relationship の did:peer 宛てに来た ping はその relationship で、そ�
 - HTTP の Content-Type は `application/didcomm-encrypted+json`（`DIDCOMM_ENCRYPTED_MEDIA_TYPE`、送信は `didCommPost` に統一）。
 
 ### 9.7 受信（live mode）と振り分け
-受信は **mediator ごとに WebSocket 1 本**（`mediator-live.ts` の `watchMediatorLive`）。front door と全 relationship の受信箱がその 1 本を共有する。
-接続のたびに、受信箱ごとに:
+受信は **mediator ごとに WebSocket 1 本**（`mediator-live.ts` の `watchMediatorLive`）。
+front door と、始めた移動の Y の受信箱が、その 1 本を共有する。接続のたびに、受信箱ごとに:
 1. HTTPS で登録する（自己修復。冪等）。
 2. `live-delivery-change {live_delivery: true}`（`return_route: "all"`）を送る。以後の新着は `delivery` メッセージとして流れてくる。
 3. mediator の status に溜まっている分があれば、`delivery-request` で 10 件ずつ取り出す（live mode は既存の queue に触れない、Pickup 3.0）。
@@ -423,14 +439,13 @@ relationship の did:peer 宛てに来た ping はその relationship で、そ�
 接続が切れると live は解除され、再接続で上をやり直す。受け取ったメッセージは型で振り分けられる。
 
 1. Vault Sync の 3 型 → `VaultSyncClient.receive`
-2. group chat（`GROUP_INVITE`／`GROUP_MESSAGE`）。送信者は相手の現行の did:peer に限り、招待は送信者自身を含み、メッセージの送信者はそのグループのメンバーに限る
-3. `ping-response` → 何もしない
-4. それ以外 → `DidCommIngressProjector`（Basic Message、Trust Ping、relationship、`MAIL_BRIDGE_INBOUND`、`MAIL_BRIDGE_SEND_RESULT`、External Feed）→ `ingestTransportIngress` → Vault。
-   relationship の `INIT`／`ACCEPT` は `WalletRelationshipManager` が続きを処理し、ping には応答する。
+2. Discover Features 2.0（`queries`／`disclose`）→ `RotationManager.handleDiscoverFeatures`（応答、または移動の開始。記録しない）
+3. それ以外 → `DidCommIngressProjector`（Basic Message、Trust Ping と `ping-response`、`MAIL_BRIDGE_INBOUND`、`MAIL_BRIDGE_SEND_RESULT`、External Feed）→ `ingestTransportIngress` → Vault。
+   ping には応答し、連絡先の変化に合わせて Y の受信箱を見始める（`sync`）。相手によっては移動を問い合わせる・始める。
 
 `isProjectableDidCommIngress` に無い型は、**明示的に捨てて ACK する**。
 **恒久的に処理できないメッセージ**（`PermanentDeliveryError`）も ACK して捨てる。開けない、差出人の鍵がその DID に載っていない（外された端末など、`SenderKeyNotPublishedError`）、
-現行でない did:peer から、確立していない relationship の ACCEPT、など。ネットワークや解決の失敗、Vault への保存の失敗は一時的なものとして残し、30 秒後にもう一度取り出す。
+相手が既に離れた did:peer から、検証できない `from_prior`、など。連絡先がまだ名指さない did:peer からのもの（`RotationPendingError`）は一時的なものとして残す。ネットワークや解決の失敗、Vault への保存の失敗は一時的なものとして残し、30 秒後にもう一度取り出す。
 同じコピーが live の配信と取り出しの両方で届いても、一度だけ処理する（処理済みは ACK だけを返す）。`drain()` は、その受信箱に溜まっている分を処理しきってから返る。
 dedupe の `alreadyProcessed()` は常に false を返す（未接続、§17-7）。
 
@@ -559,7 +574,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - 承認直後に古い DID ログが返ることがある（did.md の公開読み取りは CDN が `s-maxage=30` で保持し、更新時に purge しない）。
   biset は次の読み取りで CDN を避ける（`freshFetch`、`fetchLogContaining`）: 承認した内容の確認、自分の端末一覧、端末を外すときの対象、Vault Sync の宛先、relationship seed の権威（60 秒キャッシュ）。
   他人の DID の解決（送信先・送信者の鍵）は CDN を通すので、相手が端末を足したり外したりした直後の最大 30 秒は古い版で扱う（§14.2-6）。
-- relationship の handshake は reload を跨げない（§9.2）。outbox の mail 送信は自動再送されない（§10.3）。
+- outbox の mail 送信は自動再送されない（§10.3）。連絡先が名指さない did:peer からの保留は、mediator の保持期間（30 日）が上限。
 - **`main.ts` の boot wiring は、ブラウザ E2E で覆われていない。** 部品のテスト成功と、製品経路への接続を機械的に区別できない。
 
 ## 14. セキュリティ性質と未解消リスク
@@ -684,7 +699,7 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 | VaultProjector（per-entity LWW、tombstone、pending） | ✅ |
 | JMAP export／import（平文、差分収束、`$imported`） | ✅ |
 | Markdown ミラー | ✅ |
-| DIDComm の front door／1:1／group chat／relationship／Trust Ping | ✅ |
+| DIDComm の front door／1:1／group chat／DID Rotation／Trust Ping／Discover Features | ✅（DID Rotation は単体試験まで。本番の通しは未） |
 | mediator（"A"、SQLite、所有の証明、端末上限、WebSocket の live mode、relay-poller） | ✅（本番は 2026-10-03 のデプロイで入れ替え） |
 | メールの送信（DIDComm mail bridge）と受信 | ✅（did.md アドレスに限る。DKIM 未設定、送信状態の確定が未完） |
 | Tor（onion の入口、opt-in の公開、入口の選択） | ✅ 公開と読み取り。❓ Tor Browser・WebSocket での実運用 |
@@ -737,7 +752,7 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 **`store/projection/`（read model）**: `gateway.ts`（`LocalJmapGateway`）、`reducer.ts`、`indexeddb.ts`、`mutations.ts`、`vault-mutation-sink.ts`、`transport.ts`（型のみ）。
 
 ### 20.4 `client/didcomm/`
-`send-message.ts`（relationship 経由の送信、`answerTrustPing`）、`front-door-send.ts`、`relationship.ts`（wire）、`relationship-seed-bootstrap.ts`、`basicmessage.ts`、`ingress-projector.ts`、
+`send-message.ts`（chat の送信、`answerTrustPing`）、`front-door-send.ts`、`did-rotation.ts`（経路、Discover Features）、`rotation-manager.ts`（移動の開始・確定・受信箱）、`rotation-key.ts`、`relationship-seed-bootstrap.ts`、`basicmessage.ts`、`ingress-projector.ts`、
 `group-chat{,-store}.ts`、`external-feed.ts`、**`vault-sync.ts`**、`mediator-sync.ts`（登録）、**`mediator-live.ts`**（WebSocket の live 受信）、
 **`mediator-endpoints.ts`**（入口の別名、`sameMediatorUrl`、Tor 環境の判定）。
 

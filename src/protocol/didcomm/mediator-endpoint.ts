@@ -21,11 +21,6 @@ export interface ExpandedEndpoint {
   /** Who to wrap Forwards for, outermost (closest to the sender) first. Empty
    * for an endpoint that is a plain URL with no routingKeys: deliver directly. */
   hops: ForwardHop[]
-  /** The did:peer:2 kid of the first hop's key, when it has one -- what a
-   * private did:peer relationship embeds as its mediator (relationship.ts), as
-   * it must not depend on resolving anything. A mediator named by did:web
-   * publishes its did:peer as an `alsoKnownAs` alias. */
-  peerKid?: string
 }
 
 export async function expandEndpoint(
@@ -35,13 +30,13 @@ export async function expandEndpoint(
 ): Promise<ExpandedEndpoint> {
   const routingHops = (endpoint.routingKeys ?? []).map(peerHop)
   if (!endpoint.uri.startsWith('did:')) {
-    return { url: endpoint.uri, hops: routingHops, ...(routingHops[0] ? { peerKid: routingHops[0].kid } : {}) }
+    return { url: endpoint.uri, hops: routingHops }
   }
   const mediator = await resolveMediator(endpoint.uri, fetchImpl, options)
-  return { url: mediator.url, hops: [mediator.hop, ...routingHops], ...(mediator.peerKid ? { peerKid: mediator.peerKid } : {}) }
+  return { url: mediator.url, hops: [mediator.hop, ...routingHops] }
 }
 
-interface ResolvedMediator { url: string; hop: ForwardHop; peerKid?: string }
+interface ResolvedMediator { url: string; hop: ForwardHop }
 
 async function resolveMediator(did: string, fetchImpl: typeof fetch, options: { preferOnion?: boolean }): Promise<ResolvedMediator> {
   if (did.startsWith('did:peer:2.')) {
@@ -50,7 +45,7 @@ async function resolveMediator(did: string, fetchImpl: typeof fetch, options: { 
     const endpoint = doc.service[0]?.serviceEndpoint
     if (!kid || !endpoint?.uri) throw new Error(`mediator ${did} has no key or no DIDComm endpoint`)
     if (endpoint.uri.startsWith('did:') || endpoint.routing_keys.length > 0) throw new Error(`mediator ${did} must name a plain URL as its own endpoint`)
-    return { url: endpoint.uri, hop: { kid, recipients: doc.keyAgreement.map(k => ({ kid: k, publicKey: publicKeyOf(doc, k) })) }, peerKid: kid }
+    return { url: endpoint.uri, hop: { kid, recipients: doc.keyAgreement.map(k => ({ kid: k, publicKey: publicKeyOf(doc, k) })) } }
   }
   if (!did.startsWith('did:web:')) throw new Error(`mediator ${did}: only did:web and did:peer mediators are supported`)
   const doc = await resolveDidWeb(did, fetchImpl)
@@ -58,22 +53,5 @@ async function resolveMediator(did: string, fetchImpl: typeof fetch, options: { 
   const route = didWebDidCommRoute(doc, options)
   if (route.uri.startsWith('did:') || route.routingKeys.length > 0) throw new Error(`mediator ${did} must name a plain URL, with no routingKeys of its own, as its endpoint`)
   const recipients = keyAgreementRecipients(doc)
-  return { url: route.uri, hop: { kid: recipients[0]!.kid, recipients }, peerKid: peerAlias(doc, route.uri, recipients) }
-}
-
-/** The mediator's did:peer:2 alias -- one of its `alsoKnownAs` -- if it really
- * is the same mediator: its key is one of the document's own keyAgreement
- * keys, and its endpoint is the document's URL. Anything else is ignored. */
-function peerAlias(doc: { alsoKnownAs?: string[] }, url: string, recipients: readonly { publicKey: Uint8Array }[]): string | undefined {
-  for (const alias of doc.alsoKnownAs ?? []) {
-    if (!alias.startsWith('did:peer:2.')) continue
-    try {
-      const peer = decodePeerDid2(alias)
-      const kid = peer.keyAgreement[0]
-      if (!kid || peer.service[0]?.serviceEndpoint.uri !== url) continue
-      const key = publicKeyOf(peer, kid)
-      if (recipients.some(recipient => recipient.publicKey.length === key.length && recipient.publicKey.every((byte, i) => byte === key[i]))) return kid
-    } catch { /* not a usable alias */ }
-  }
-  return undefined
+  return { url: route.uri, hop: { kid: recipients[0]!.kid, recipients } }
 }

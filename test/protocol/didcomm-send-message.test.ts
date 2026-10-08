@@ -281,7 +281,7 @@ describe('sendDidCommMessage', () => {
 })
 
 describe('answerTrustPing (Trust Ping 2.0)', () => {
-  const frontDoor = { frontDoor: { fromKid: senderKid, x25519PrivateKey: senderX } }
+  const frontDoor = { key: { fromKid: senderKid, x25519PrivateKey: senderX } }
 
   test('answers a ping on the front door with a ping-response threaded to it, sent as application/didcomm-encrypted+json', async () => {
     const pinger = oneDevice('https://recipient-core.test.example/v1/didcomm/ingress')

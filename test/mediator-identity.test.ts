@@ -51,7 +51,6 @@ describe('the mediator\'s did:web document', () => {
     const expanded = await expandEndpoint({ uri: mediatorIdentity.did }, fetchImpl)
     expect(expanded.url).toBe(url)
     expect(expanded.hops[0]!.kid).toBe(mediatorIdentity.xKid)
-    expect(expanded.peerKid).toBe(mediatorIdentity.peerKid) // the alias is verified against the keys and the URL
   })
 })
 

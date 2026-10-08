@@ -7,7 +7,7 @@ import { buildPlaintext } from '../../src/protocol/didcomm/message.ts'
 import { PING, PING_RESPONSE } from '../../src/protocol/didcomm/trust-ping.ts'
 import { BASIC_MESSAGE, didCommThreadId } from '../../src/client/didcomm/basicmessage.ts'
 import { didOfKid } from '../../src/protocol/ids.ts'
-import { DidCommIngressProjector, DidCommReplayError } from '../../src/client/didcomm/ingress-projector.ts'
+import { DidCommIngressProjector, DidCommReplayError, RotationPendingError } from '../../src/client/didcomm/ingress-projector.ts'
 import { generatePeerIdentity } from '../../src/protocol/didcomm/peer.ts'
 import { didcommGroupAddress } from '../../src/client/didcomm/group-chat.ts'
 import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
@@ -91,10 +91,10 @@ describe('DIDComm ingress projector', () => {
     const result = await ingestIngress(envelope, signer, projector, {
       async commitIngress(input) {
         committed = true
-        expect(input.objects).toHaveLength(1)
-        expect(input.events).toHaveLength(1)
-        expect(input.events[0]!.kind).toBe('didcomm.control')
-        expect(input.objects.map(o => o.objectId)).toEqual(input.events[0]!.objectRefs)
+        // The ping, and the card made for its sender on first contact.
+        expect(input.events.map(event => event.kind)).toEqual(['didcomm.control', 'contact.set'])
+        expect(input.objects.map(o => o.objectId)).toEqual(input.events.flatMap(event => event.objectRefs))
+        expect(input.projection.contactCards).toMatchObject([{ onlineServices: { didcomm: { service: 'DIDComm', uri: didOfKid(senderKid) } } }])
 
         const plaintextObject = await decryptVaultObject(segmentKey, input.objects[0]!)
         const decoded = JSON.parse(new TextDecoder().decode(plaintextObject)) as { payload: Record<string, unknown> }
@@ -230,9 +230,8 @@ describe('DIDComm ingress projector', () => {
     await expect(buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))).rejects.toThrow(/unsupported DIDComm message type/)
   })
 
-  test('a basicmessage from another agent\'s own did:peer:2 is a conversation with that did:peer', async () => {
-    const mediator = generatePeerIdentity()
-    const agent = generatePeerIdentity({ uri: 'https://agent-mediator.test.example', routingKeys: [mediator.xKid] })
+  test('a basicmessage from a did:peer no contact names is held back, not projected (§10-5)', async () => {
+    const agent = generatePeerIdentity({ uri: 'https://agent-mediator.test.example' })
     const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'hello from an agent' }, agent.did, identityId)
     const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: agent.xKid, privateKey: agent.xPriv }, [{ kid: recipientKid, publicKey: recipientXPub }])
     const projector = new DidCommIngressProjector({
@@ -246,8 +245,7 @@ describe('DIDComm ingress projector', () => {
       async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [], contactCards: [] } },
       signer,
     })
-    const result = await projector.verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
-    expect(result.projection.emails).toMatchObject([{ from: [{ email: agent.did }], to: [{ email: identityId }], threadId: didCommThreadId(identityId, agent.did) }])
+    await expect(projector.verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))).rejects.toBeInstanceOf(RotationPendingError)
   })
 
   test('a basicmessage addressed to several parties lands in the group thread its thid names, with every recipient in `to`', async () => {
@@ -282,8 +280,8 @@ describe('DIDComm ingress projector', () => {
 
     const result = await ingestIngress(envelope, signer, projector, {
       async commitIngress(input) {
-        expect(input.objects).toHaveLength(2) // metadata + raw body, same shape as mail
-        expect(input.events[0]!.kind).toBe('message.add')
+        expect(input.objects).toHaveLength(3) // metadata + raw body, same shape as mail; and the sender's new card
+        expect(input.events.map(event => event.kind)).toEqual(['message.add', 'contact.set'])
         expect(input.projection).toMatchObject({
           emails: [{ from: [{ email: didOfKid(senderKid) }], to: [{ email: identityId }], threadId: didCommThreadId(identityId, didOfKid(senderKid)) }],
         })

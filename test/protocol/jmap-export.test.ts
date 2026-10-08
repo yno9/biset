@@ -110,7 +110,7 @@ describe('JMAP history export merge', () => {
     })
 
     test('a newer file updates only what differs, and never clears the local routing state; an older file changes nothing', async () => {
-      const local = card({ name: { full: 'Robert' }, notes: { n1: { note: 'x' } }, [DIDCOMM_CONTACT_PROPERTY]: { confirmed: { 'did:peer:2.Y': true } } })
+      const local = card({ name: { full: 'Robert' }, notes: { n1: { note: 'x' } }, [DIDCOMM_CONTACT_PROPERTY]: { own: { 'did:peer:2.Y': { startedAt: '2026-01-01T00:00:00.000Z' } } } })
       const newer: JmapExportV1 = { ...file('2026-06-01T00:00:00.000Z', '1', {}), emails: [], contactCards: [card()], contactCardStateRanks: { [id]: '2026-05-02T00:00:00.000Z|d|00000000000000000001|e' } }
       const { result, payloads } = await importInto(newer, [local], [])
       expect(result.contactsUpdated).toBe(1)

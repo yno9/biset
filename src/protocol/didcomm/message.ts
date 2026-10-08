@@ -9,6 +9,8 @@ export interface DidCommPlaintext {
   body: unknown
   from?: string
   to?: string[]
+  /** DID Rotation (from-prior.ts): a JWT proving `from` now speaks for the DID it names as `iss`. */
+  from_prior?: string
   // Threading (threading.md): thid identifies the thread, pthid the parent
   // thread. Absent thid means "id IS the thid" per spec.
   thid?: string
@@ -54,6 +56,7 @@ export interface PlaintextOptions {
   attachments?: DidCommPlaintext['attachments']
   returnRoute?: DidCommPlaintext['return_route']
   lang?: string
+  fromPrior?: string
 }
 
 /** `to` is the message's audience: one DID, or several when the same
@@ -76,6 +79,7 @@ export function buildPlaintext(type: string, body: unknown, from?: string, to?: 
   if (opts.attachments?.length) msg.attachments = opts.attachments
   if (opts.returnRoute) msg.return_route = opts.returnRoute
   if (opts.lang) msg.lang = opts.lang
+  if (opts.fromPrior) msg.from_prior = opts.fromPrior
   return msg
 }
 

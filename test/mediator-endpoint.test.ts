@@ -49,7 +49,6 @@ describe('expandEndpoint', () => {
     expect(expanded.url).toBe('https://hop1.example')
     expect(expanded.hops.map(hop => hop.kid)).toEqual([hop1.xKid, hop2.xKid])
     expect(expanded.hops[0]!.recipients[0]!.publicKey).toEqual(hop1.xPub)
-    expect(expanded.peerKid).toBe(hop1.xKid)
   })
 
   test('a plain URL with no routing keys is delivered to directly', async () => {
@@ -63,7 +62,6 @@ describe('expandEndpoint', () => {
     expect(expanded.hops).toHaveLength(1)
     expect(expanded.hops[0]!.kid).toBe(m.kid)
     expect(expanded.hops[0]!.recipients[0]!.publicKey).toEqual(m.xPub)
-    expect(expanded.peerKid).toBe(m.alias.xKid) // for a private relationship, which cannot depend on resolving anything
   })
 
   test("the mediator's key is PREPENDED to the endpoint's own routingKeys", async () => {
@@ -78,13 +76,6 @@ describe('expandEndpoint', () => {
     const expanded = await expandEndpoint({ uri: m.did }, fetch)
     expect(expanded.url).toBe(URL_)
     expect(expanded.hops[0]!.kid).toBe(m.xKid)
-    expect(expanded.peerKid).toBe(m.xKid)
-  })
-
-  test('an alias that is not the same mediator is ignored: another key, or another URL', async () => {
-    expect((await expandEndpoint({ uri: MEDIATOR_DID }, mediator({ alias: 'other-key' }).fetchImpl)).peerKid).toBeUndefined()
-    expect((await expandEndpoint({ uri: MEDIATOR_DID }, mediator({ alias: 'other-url' }).fetchImpl)).peerKid).toBeUndefined()
-    expect((await expandEndpoint({ uri: MEDIATOR_DID }, mediator({ alias: 'none' }).fetchImpl)).peerKid).toBeUndefined()
   })
 
   test("a mediator that does not resolve, or whose own endpoint is a DID or has routing keys, is refused", async () => {

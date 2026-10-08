@@ -36,7 +36,6 @@ import { DidCommIngressProjector, isProjectableDidCommIngress } from '../didcomm
 import { resolveDidCommSenderKey } from '../../protocol/didcomm/webvh-resolve.ts'
 import { didCommThreadId } from '../didcomm/basicmessage.ts'
 import { answerTrustPing } from '../didcomm/send-message.ts'
-import { isPingResponse } from '../../protocol/didcomm/trust-ping.ts'
 import { didcommGroupAddress, groupConversation, parseDidCommGroupAddress } from '../didcomm/group-chat.ts'
 import { registerWithMediator, type MediatorPollHandle } from '../didcomm/mediator-sync.ts'
 import { watchMediatorLive } from '../didcomm/mediator-live.ts'
@@ -52,6 +51,15 @@ import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { RelationshipSeedReader, RelationshipSeedSink, relationshipSeedRecord } from '../store/vault/relationship-seed.ts'
 import { createRelationshipSeedAuthority, type RelationshipSeedAuthority } from '../didcomm/relationship-seed-bootstrap.ts'
 import { publishedRotationKey, rotationSigningKey } from '../didcomm/rotation-key.ts'
+import { createRotationManager, type RotationManager } from '../didcomm/rotation-manager.ts'
+import { contactSetIntent } from '../store/projection/contacts.ts'
+import { fromPriorKeyResolver, verifyFromPrior } from '../../protocol/didcomm/from-prior.ts'
+import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
+import { didCommRouteFromDocument } from '../../protocol/didcomm/webvh-route.ts'
+import { resolve as resolveWebvh } from '../../protocol/webvh/resolver.ts'
+import { sendFrontDoorMessage } from '../didcomm/front-door-send.ts'
+import { isBasicMessage } from '../didcomm/basicmessage.ts'
+import { isPing } from '../../protocol/didcomm/trust-ping.ts'
 import { fetchCurrentLog, freshFetch } from '../identity/webvh/log-io.ts'
 import { entryVersionNumber } from '../../protocol/webvh/log.ts'
 import { equalBytes } from '../../protocol/canonical.ts'
@@ -433,6 +441,44 @@ async function configureWalletAccountIfPresent(
         }
         void vaultSync.requestState()
           .catch(error => console.warn('[did.md Wallet Vault Sync bootstrap]', error instanceof Error ? error.message : error))
+        // DID Rotation (PLAN-refactor.md §4.3, §12.5): every message to a
+        // counterparty goes by the route its contact card gives, and a
+        // conversation moves to this identity's own did:peer (Y) once the
+        // counterparty says it can. Y names the mediator of this identity's
+        // public DID document, by DID -- the same on every device.
+        let ownMediatorDid: Promise<string | undefined> | undefined
+        const mediatorDidOfDocument = () => ownMediatorDid ??= resolveWebvh(device.did, undefined, freshFetch())
+          .then(document => {
+            const uri = document ? didCommRouteFromDocument(document).endpoint?.uri : undefined
+            return typeof uri === 'string' && uri ? uri : undefined
+          })
+          .catch(error => { ownMediatorDid = undefined; throw error })
+        const rotationManager: RotationManager = createRotationManager({
+          identityDid: device.did,
+          frontDoor: { fromKid: didCommDevice.xKid, x25519PrivateKey: didCommDevice.x25519PrivateKey },
+          cards: async () => (await readModel.snapshot()).contactCards,
+          async rotation() {
+            const [{ seed }, mediatorDid] = await Promise.all([seedAuthority.require(), mediatorDidOfDocument()])
+            return mediatorDid ? { seed, mediatorDid } : undefined
+          },
+          async commit(writes) { await mutationSink.commitIntents(writes.map(contactSetIntent), await readModel.snapshot()) },
+          send: (toDid, type, body, options) => sendFrontDoorMessage(toDid, type, body, options),
+          async watch(peer) {
+            const url = (await expandEndpoint({ uri: decodePeerDid2(peer.did).service[0]!.serviceEndpoint.uri }, freshFetch())).url
+            const inbox = mediatorInbox({ did: peer.did, xKid: peer.xKid, xPriv: peer.xPriv }, didCommDevice.mediatorDeviceSecret)
+            await registerWithMediator(url, inbox)
+            const watch = watchMediatorLive({
+              mediatorUrl: url,
+              inbox,
+              resolveSenderKey: resolveAnyDidCommSenderKey,
+              onMessage: message => handleWalletDidCommMessage(message, peer.xKid, url),
+              onError: error => console.warn('[did.md Wallet DIDComm rotation watch]', error),
+              onMissed: () => catchUpFromSiblings(),
+            })
+            mediatorPollHandles.push({ stop: () => watch.close() })
+          },
+          onError: error => console.warn('[did.md Wallet DID Rotation]', error instanceof Error ? error.message : error),
+        })
         // Enrollment alone only lets the mediator queue messages.  Open the
         // device-bound live Pickup watch as well, then project every durable
         // DIDComm delivery into this browser's encrypted local Vault. Every
@@ -440,8 +486,10 @@ async function configureWalletAccountIfPresent(
         const walletDidCommProjector = new DidCommIngressProjector({
           identityId: device.did,
           actorDeviceId: device.deviceId,
-          resolveOwnKey: kid => kid === didCommDevice.xKid ? { kid, x25519PrivateKey: didCommDevice.x25519PrivateKey } : null,
+          resolveOwnKey: kid => rotationManager.ownKey(kid),
           resolveSenderKey: resolveAnyDidCommSenderKey,
+          // Past the host's CDN: a stale document would accept a replaced key.
+          verifyFromPrior: (jwt, from) => verifyFromPrior(jwt, from, fromPriorKeyResolver(freshFetch())),
           async alreadyProcessed() { return false },
           nextActorSeq: () => sequencer.nextActorSeq(),
           initialParents: () => sequencer.initialParents(),
@@ -461,8 +509,9 @@ async function configureWalletAccountIfPresent(
           store: vaultStore,
           readModel,
           mutationSink,
-          frontDoor: { fromKid: didCommDevice.xKid, x25519PrivateKey: didCommDevice.x25519PrivateKey },
-          onDelivered: () => undefined,
+          route: publicDid => rotationManager.route(publicDid),
+          // A counterparty written to may be one the conversation can move with.
+          onDelivered: item => { void rotationManager.offer(item.toDid).catch(() => undefined) },
           onError: (error, item) => {
             const reason = error instanceof Error ? error.message : String(error)
             console.warn(`[did.md Wallet DIDComm outbox] ${item.emailId} -> ${item.toDid}:`, reason)
@@ -529,6 +578,8 @@ async function configureWalletAccountIfPresent(
                   })
                   await vaultStore.writeProjection(device.did, projection, { state: projection.state })
                   await refreshInbox(readModel)
+                  // A sibling may have started a move: watch its inbox here too.
+                  await rotationManager.sync()
                 } catch (error) {
                   console.warn('[did.md Wallet Vault Sync projection rebuild]', error instanceof Error ? error.message : error)
                 }
@@ -536,8 +587,8 @@ async function configureWalletAccountIfPresent(
               return
             }
             const dropped = message.plaintext as DidCommPlaintext
-            // The answer to a ping this side sent: arriving was its whole job.
-            if (isPingResponse(dropped)) return
+            // Discover Features: answered here, never recorded (did-rotation.ts).
+            if (await rotationManager.handleDiscoverFeatures(dropped, message.senderKid, recipientKid)) return
             if (!isProjectableDidCommIngress(dropped)) {
               console.warn(`[did.md Wallet DIDComm] dropping unsupported message type ${dropped.type} from ${message.senderKid}`)
               return
@@ -558,10 +609,23 @@ async function configureWalletAccountIfPresent(
             // Trust Ping 2.0: answer one that asked. Best-effort: the ping is
             // already recorded, and a lost answer is exactly what a ping
             // exists to reveal to its sender.
-            void answerTrustPing(dropped, {
-              frontDoor: { fromKid: didCommDevice.xKid, x25519PrivateKey: didCommDevice.x25519PrivateKey },
+            const receivingKey = rotationManager.ownKey(recipientKid)
+            if (receivingKey) void answerTrustPing(dropped, {
+              key: { fromKid: receivingKey.kid, x25519PrivateKey: receivingKey.x25519PrivateKey },
             }).then(result => { if (result && !result.ok) console.warn('[did.md Wallet Trust Ping response]', result.error) })
               .catch(error => console.warn('[did.md Wallet Trust Ping response]', error instanceof Error ? error.message : error))
+            // What this message taught the contact cards (a counterparty's
+            // move, a confirmation) may start or end a watch; and a
+            // counterparty that moved, or that writes, may be one this
+            // identity moves with too.
+            await rotationManager.sync()
+            if (isBasicMessage(dropped) || isPing(dropped)) {
+              const publicDid = await rotationManager.counterpartyOf(message.senderKid)
+              if (publicDid && !publicDid.startsWith('did:peer:')) {
+                void (typeof dropped.from_prior === 'string' ? rotationManager.start(publicDid) : rotationManager.offer(publicDid))
+                  .catch(error => console.warn('[did.md Wallet DID Rotation]', error instanceof Error ? error.message : error))
+              }
+            }
             const eventsAfterIngress = await vaultStore.readVaultEvents(device.did)
             const newlyCommitted = eventsAfterIngress.filter(event => !eventIdsBeforeIngress.has(event.id))
             deviceEvents = eventsAfterIngress
@@ -580,6 +644,7 @@ async function configureWalletAccountIfPresent(
           onMissed: catchUpFromSiblings,
         })
         mediatorPollHandles.push({ stop: () => watch.close() })
+        void rotationManager.sync()
         // A durable intent might predate this tab (or the previous send's
         // network attempt). Flushing must never delay initial UI rendering.
         // Retry independently of incoming mediator traffic; failure leaves

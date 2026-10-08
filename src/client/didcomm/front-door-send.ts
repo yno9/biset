@@ -97,6 +97,9 @@ export interface SendDidCommMessageOptions {
    * a group message lists every participant. Defaults to `[toDid]`. */
   audience?: readonly string[]
   thid?: string
+  /** DID Rotation: sent from a DID this identity rotated to, until the
+   * recipient has written to it (from-prior.ts). */
+  fromPrior?: string
   attachments?: Array<{ id: string; media_type?: string; data: { json?: unknown; base64?: string } }>
 }
 
@@ -116,7 +119,7 @@ export async function sendFrontDoorMessage(toDid: string, type: string, body: un
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
 
-  const plaintext = buildPlaintext(type, body, opts.fromKid.split('#', 1)[0], opts.audience ?? toDid, { id: opts.id, createdTime: opts.createdTime, thid: opts.thid, attachments: opts.attachments })
+  const plaintext = buildPlaintext(type, body, opts.fromKid.split('#', 1)[0], opts.audience ?? toDid, { id: opts.id, createdTime: opts.createdTime, thid: opts.thid, attachments: opts.attachments, fromPrior: opts.fromPrior })
   const plaintextBytes = new TextEncoder().encode(JSON.stringify(plaintext))
   const sender = { kid: opts.fromKid, privateKey: opts.x25519PrivateKey }
 

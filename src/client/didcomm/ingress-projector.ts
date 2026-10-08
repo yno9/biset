@@ -12,7 +12,10 @@ import { buildMailMessageAdd } from '../store/vault/mail-message.ts'
 import type { VaultEventAuthor } from '../store/vault/events.ts'
 import type { VaultEventRecord, VaultObjectRecord } from '../store/vault/store.ts'
 import { parseJwe, protectedHeaderOf, unpackAuthcrypt, unpackAnoncrypt, type ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
-import { isPing, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
+import { isPing, isPingResponse, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
+import { FromPriorError, fromPriorKeyResolver, verifyFromPrior, type DidRotation } from '../../protocol/didcomm/from-prior.ts'
+import { contactCardForDid, contactSetIntent, counterpartyOfRotatedDid, currentRotation, didCommStateOf, didContactPatch, ownRotationPatch, rotationPatch, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
+import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { PermanentDeliveryError } from '../../protocol/didcomm/mediator-pickup.ts'
 import { isBasicMessage, basicMessageBodyOf, didCommThreadId } from './basicmessage.ts'
 import { isExternalFeedPost, externalFeedPostBodyOf, externalFeedThreadId, EXTERNAL_FEED_POST } from './external-feed.ts'
@@ -48,7 +51,22 @@ export interface DidCommIngressProjectorOptions {
   activeSegment(): Promise<ActiveVaultSegment>
   currentSnapshot(): Promise<LocalJmapSnapshot>
   signer: VaultEventAuthor
+  /** Verifies a `from_prior` against `from` (from-prior.ts). Defaults to a
+   * live resolution; the caller should bypass a host's CDN. */
+  verifyFromPrior?(jwt: string, from: string): Promise<DidRotation>
   now?: () => Date
+}
+
+/** A message from a did:peer that no contact card names yet: the card that
+ * would (a sibling's record of the rotation, by Vault Sync) has not arrived.
+ * Not permanent -- the message stays queued and is tried again -- and never
+ * projected with a guess, which would leave two devices disagreeing on who
+ * sent it (PLAN-refactor.md §9.1). */
+export class RotationPendingError extends Error {
+  constructor(did: string) {
+    super(`no contact names ${did} yet; waiting for this identity's other devices`)
+    this.name = 'RotationPendingError'
+  }
 }
 
 /**
@@ -66,7 +84,7 @@ export interface DidCommIngressProjectorOptions {
  * this for the group-chat and mail-bridge types) or drop it deliberately.
  */
 export function isProjectableDidCommIngress(msg: { type?: string }): boolean {
-  return isPing(msg) || isBasicMessage(msg) || isExternalFeedPost(msg) || msg.type === MAIL_BRIDGE_INBOUND || msg.type === MAIL_BRIDGE_SEND_RESULT
+  return isPing(msg) || isPingResponse(msg) || isBasicMessage(msg) || isExternalFeedPost(msg) || msg.type === MAIL_BRIDGE_INBOUND || msg.type === MAIL_BRIDGE_SEND_RESULT
 }
 
 /**
@@ -96,10 +114,16 @@ export function isProjectableDidCommIngress(msg: { type?: string }): boolean {
  */
 export class DidCommIngressProjector implements IngressVerifierProjector {
   private readonly now: () => Date
+  private readonly verify: (jwt: string, from: string) => Promise<DidRotation>
 
   constructor(private readonly options: DidCommIngressProjectorOptions) {
     if (!options.identityId || !options.actorDeviceId) throw new TypeError('DIDComm ingress projector identity is required')
     this.now = options.now ?? (() => new Date())
+    this.verify = options.verifyFromPrior ?? ((jwt, from) => verifyFromPrior(jwt, from, fromPriorKeyResolver(defaultFetch())))
+  }
+
+  private counterpartyOf(msg: DidCommPlaintext, senderKid: string, recipientKid: string, cards: readonly LocalJmapContactCard[], at: string) {
+    return resolveCounterparty(msg, senderKid, recipientKid, cards, at, this.verify)
   }
 
   async verifyAndProject(envelope: IngressEnvelopeV1): Promise<{
@@ -168,9 +192,17 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
     const dedupeId = didCommMessageDedupeId(dedupeSubject, msg.id)
     if (await this.options.alreadyProcessed(dedupeId)) throw new DidCommReplayError(`DIDComm message ${msg.id} from ${dedupeSubject} was already processed`)
 
+    const snapshot = await this.options.currentSnapshot()
+    const createdAt = this.now().toISOString()
+    // Chat and Trust Ping come from a counterparty: named by its public DID
+    // whatever DID it sent from (§12.5), with what that teaches about it
+    // written to its contact card in the same commit.
+    const counterparty = senderKid && (isBasicMessage(msg) || isPing(msg) || isPingResponse(msg))
+      ? await this.counterpartyOf(msg, senderKid, recipientKid, snapshot.contactCards, createdAt)
+      : undefined
+
     const segment = await this.options.activeSegment()
     assertActiveVaultSegment(this.options.identityId, segment, 'DIDComm ingress')
-    const createdAt = this.now().toISOString()
     const context = {
       identityId: this.options.identityId,
       actorDeviceId: this.options.actorDeviceId,
@@ -216,7 +248,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       objectRecords.push(identityScopedObject(record.metadataObject, this.options.identityId))
       objectRecords.push(identityScopedObject(record.rawRfc5322Object, this.options.identityId))
       decryptedForProjection = { event: record.event, plaintext: await decryptVaultObject(segment.segmentKey, record.metadataObject) }
-    } else if (isPing(msg) || msg.type === MAIL_BRIDGE_SEND_RESULT) {
+    } else if (isPing(msg) || isPingResponse(msg) || msg.type === MAIL_BRIDGE_SEND_RESULT) {
       // Trust Ping 2.0: an audit record, never a thread row -- see
       // local-jmap/reducer.ts's own no-op case for `didcomm.control`.
       // (senderKid is always defined here, same reasoning as the
@@ -291,9 +323,8 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
     } else {
       // Basic Message 2.0: a chat message, filed exactly like mail's own
       // message.add (buildMailMessageAdd) -- same reducer, same read model,
-      // same thread.ts UI. The sender is the DID of the key that authcrypted
-      // it, whatever its method (a did:peer of another agent is a party of its
-      // own). A message addressed to more than one party is a group
+      // same thread.ts UI. The sender is the counterparty's public DID,
+      // whichever of its DIDs sent it (resolveCounterparty). A message addressed to more than one party is a group
       // conversation, threaded by `thid` (group-chat.ts); any other is the
       // 1:1 conversation with its sender (didCommThreadId). Every field below
       // comes from the message alone, never from this device's own state, so
@@ -301,7 +332,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       // §9.1: a mismatch stops the Vault's projection rebuild).
       // (senderKid is always defined here: anoncrypt is gated to External
       // Feed Post above, and that type is handled by the branch just above.)
-      const senderDid = didOfKid(senderKid!)
+      const senderDid = counterparty!.publicDid
       const group = isGroupAudience(msg.to)
       if (group && !msg.to!.includes(this.options.identityId)) throw new PermanentDeliveryError('DIDComm group message does not name this identity among its recipients')
       const body = basicMessageBodyOf(msg)
@@ -327,15 +358,72 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       decryptedForProjection = { event: record.event, plaintext: await decryptVaultObject(segment.segmentKey, record.metadataObject) }
     }
 
+    const events: VaultEventRecord[] = [event]
+    const reduce = [decryptedForProjection]
+    for (const write of counterparty?.writes ?? []) {
+      const record = await buildVaultMutation(contactSetIntent(write), {
+        ...context, actorSeq: await this.options.nextActorSeq(), parents: [events.at(-1)!.id],
+      }, this.options.signer)
+      events.push(identityScopedObject(record.event, this.options.identityId))
+      objectRecords.push(identityScopedObject(record.object, this.options.identityId))
+      reduce.push({ event: record.event, plaintext: await decryptVaultObject(segment.segmentKey, record.object) })
+    }
     const commit = buildVaultCommit({
       identityId: this.options.identityId,
       objects: objectRecords,
-      events: [event],
-      snapshot: await this.options.currentSnapshot(),
-      reduce: [decryptedForProjection],
+      events,
+      snapshot,
+      reduce,
     })
     return { ...commit, checkpointId: commit.projection.state }
   }
+}
+
+/** The counterparty behind an authenticated sender, by its public DID, and
+ * the contact writes the message justifies. */
+async function resolveCounterparty(
+  msg: DidCommPlaintext, senderKid: string, recipientKid: string, cards: readonly LocalJmapContactCard[], at: string,
+  verify: (jwt: string, from: string) => Promise<DidRotation>,
+): Promise<{ publicDid: string; writes: ContactSetPayload[] }> {
+  const senderDid = didOfKid(senderKid)
+  const writes: ContactSetPayload[] = []
+  let publicDid: string
+  if (typeof msg.from_prior === 'string') {
+    // A DID Rotation: `from` now speaks for `iss` (DIDComm v2.1). Refused
+    // outright when it does not verify -- retrying gives the same answer.
+    let rotation: DidRotation
+    try { rotation = await verify(msg.from_prior, senderDid) } catch (error) {
+      if (error instanceof FromPriorError) throw new PermanentDeliveryError(error.message)
+      throw error
+    }
+    const prior = rotation.prior.startsWith('did:peer:') ? counterpartyOfRotatedDid(cards, rotation.prior)?.publicDid : rotation.prior
+    if (!prior) throw new RotationPendingError(rotation.prior)
+    publicDid = prior
+    const card = contactCardForDid(cards, publicDid)
+    const latest = card ? currentRotation(card) : undefined
+    // A rotation older than the one already processed: its DID was left.
+    if (latest && latest.did !== senderDid && latest.iat > rotation.iat) throw new PermanentDeliveryError(`${senderDid} is not ${publicDid}'s current DID`)
+    if (!card) writes.push(didContactPatch(publicDid))
+    const cardId = card?.id ?? didContactPatch(publicDid).cardId
+    if (!card || !didCommStateOf(card).rotations?.[senderDid]) writes.push(rotationPatch(cardId, { did: senderDid, prior: rotation.prior, iat: rotation.iat }))
+  } else if (senderDid.startsWith('did:peer:')) {
+    // Only a counterparty's rotated DID: no standalone did:peer parties (§10-5).
+    const known = counterpartyOfRotatedDid(cards, senderDid)
+    if (!known) throw new RotationPendingError(senderDid)
+    // Once a newer rotation was processed, the old DID is ignored (DIDComm v2.1).
+    if (!known.current) throw new PermanentDeliveryError(`${senderDid} is not ${known.publicDid}'s current DID`)
+    publicDid = known.publicDid
+  } else {
+    publicDid = senderDid
+    if (!contactCardForDid(cards, publicDid)) writes.push(didContactPatch(publicDid))
+  }
+  // Written to one of this identity's own rotation DIDs, by the counterparty
+  // it is for: that rotation is confirmed, and `from_prior` stops (§4.3).
+  const ownDid = didOfKid(recipientKid)
+  const card = contactCardForDid(cards, publicDid)
+  const own = card ? didCommStateOf(card).own?.[ownDid] : undefined
+  if (card && own?.startedAt && !own.confirmedAt) writes.push(ownRotationPatch(card.id, ownDid, 'confirmedAt', at))
+  return { publicDid, writes }
 }
 
 /** Thrown when this exact (senderKid, message id) pair was already

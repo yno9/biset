@@ -31,12 +31,13 @@ export async function sendDidCommMessage(toDid: string, content: string, opts: C
 }
 
 /** Trust Ping 2.0: answers a received ping that asked for a response (the
- * default), threaded to it, to the DID it came from. Null when no answer is
- * owed. */
+ * default), threaded to it, to the DID it came from, from the key it reached
+ * (the front door, or a DID this identity rotated to). Null when no answer
+ * is owed. */
 export async function answerTrustPing(
   ping: DidCommPlaintext,
-  options: { frontDoor: { fromKid: string; x25519PrivateKey: Uint8Array }; fetch?: typeof fetch },
+  options: { key: { fromKid: string; x25519PrivateKey: Uint8Array }; fetch?: typeof fetch },
 ): Promise<DidCommSendResult | null> {
   if (!isPing(ping) || !responseOwedFor(ping) || typeof ping.from !== 'string') return null
-  return sendFrontDoorMessage(ping.from, PING_RESPONSE, {}, { ...options.frontDoor, thid: ping.id, fetch: options.fetch ?? defaultFetch() })
+  return sendFrontDoorMessage(ping.from, PING_RESPONSE, {}, { ...options.key, thid: ping.id, fetch: options.fetch ?? defaultFetch() })
 }

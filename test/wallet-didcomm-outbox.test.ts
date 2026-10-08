@@ -31,7 +31,7 @@ describe('Wallet DIDComm outbox', () => {
         async download(blobId) { expect(blobId).toBe('blob-1'); return new TextEncoder().encode('hello from retry') },
       },
       mutationSink: { async commitIntents(intents) { commits.push(intents); return {} } },
-      frontDoor: { fromKid: `${identityId}#k_a`, x25519PrivateKey: new Uint8Array(32) },
+      route: async toDid => ({ toDid, fromKid: `${identityId}#k_a`, x25519PrivateKey: new Uint8Array(32) }),
       send: async (toDid, content, message) => {
         sends += 1
         expect(toDid).toBe(item.toDid)
@@ -66,7 +66,7 @@ describe('Wallet DIDComm outbox', () => {
       identityId,
       store: { async readDidCommOutbox() { return [...queued] }, async noteDidCommOutboxAttempt() {}, async removeDidCommOutbox(_i, eventId) { const index = queued.findIndex(row => row.outboundEventId === eventId); if (index >= 0) queued.splice(index, 1) } },
       readModel: { async snapshot() { return { state: '', mailboxes: [], emails: queued.map(row => ({ id: row.emailId, blobId: `blob-${row.emailId}`, threadId: 'thread', mailboxIds: { outbox: true as const }, keywords: {}, receivedAt: row.createdAt })) } }, async download() { return new TextEncoder().encode('body') } },
-      mutationSink: { async commitIntents() { return {} } }, frontDoor: { fromKid: `${identityId}#k_a`, x25519PrivateKey: new Uint8Array(32) },
+      mutationSink: { async commitIntents() { return {} } }, route: async toDid => ({ toDid, fromKid: `${identityId}#k_a`, x25519PrivateKey: new Uint8Array(32) }),
       async send(_toDid, _content, message) { sent.push(message.id); if (message.id === first.messageId) await firstGate; return { ok: true } }, onError() {},
     })
     const firstFlush = outbox.flush(); await new Promise(resolve => setTimeout(resolve, 0))
@@ -92,7 +92,7 @@ describe('Wallet DIDComm outbox', () => {
         async download() { return new TextEncoder().encode('group body') },
       },
       mutationSink: { async commitIntents() { return {} } },
-      frontDoor: { fromKid: `${identityId}#k_a`, x25519PrivateKey: new Uint8Array(32) },
+      route: async toDid => ({ toDid, fromKid: `${identityId}#k_a`, x25519PrivateKey: new Uint8Array(32) }),
       async send(toDid, _content, message) { sent.push(message.id); expect(toDid).toBe(bob.toDid); expect(message.thid).toBe('group-1'); expect(message.audience).toEqual([bob.toDid, carol.toDid]); return { ok: true } },
       onError() {},
     })
@@ -129,7 +129,7 @@ describe('Wallet DIDComm outbox', () => {
         },
       },
       mutationSink: { async commitIntents() { return {} } },
-      frontDoor: { fromKid: `${identityId}#k_a`, x25519PrivateKey: new Uint8Array(32) },
+      route: async toDid => ({ toDid, fromKid: `${identityId}#k_a`, x25519PrivateKey: new Uint8Array(32) }),
       async send(_toDid, content, message) { sent.push({ content, thid: message.thid, audience: message.audience }); return { ok: true } },
       onError(error) { throw error },
     })
