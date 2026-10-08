@@ -44,7 +44,7 @@ export class RelationshipSeedPendingError extends Error {
   constructor(readonly status: Exclude<SeedStatus['state'], 'usable'> = 'pending') {
     super(status === 'pending'
       ? 'This device is still syncing with your other devices. If you no longer use them, remove them on the Account page.'
-      : 'The key that lets your devices move a conversation to a private address needs renewing on the Account page.')
+      : 'Your DIDComm key needs to be renewed on the Account page.')
     this.name = 'RelationshipSeedPendingError'
   }
 }

@@ -317,39 +317,55 @@ function renderMediatorCard(): void {
   })
   devices.addEventListener('pointerleave', () => devices.classList.remove('remove-preview'))
   panel.append(panelHeader, devices)
-  // The key that moves a conversation to a private address
-  // (relationship-seed-bootstrap.ts), when it needs a Wallet approval.
-  const rotationKey = config?.rotationKey
-  if (rotationKey) {
-    const line = document.createElement('div')
-    line.className = 'acc-device-row'
-    const text = document.createElement('span')
-    text.className = 'acc-device-label'
-    text.textContent = ROTATION_KEY_TEXT[rotationKey.state]
-    const renew = document.createElement('button')
-    renew.type = 'button'
-    renew.textContent = 'Renew'
-    renew.addEventListener('click', event => {
-      event.stopPropagation()
-      renew.disabled = true
-      void rotationKey.onRenew().catch(error => {
-        renew.disabled = false
-        getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
-      })
-    })
-    line.append(text, renew)
-    panel.appendChild(line)
-  }
-
   wrap.append(row, panel)
   row.addEventListener('click', () => wrap.classList.toggle('expanded'))
   list.appendChild(wrap)
+  // What needs the user's attention about this account, below its card.
+  const notice = config?.rotationKey && renderDidCommKeyNotice(config.rotationKey)
+  if (notice) list.appendChild(notice)
 }
 
-const ROTATION_KEY_TEXT = {
-  unpublished: 'Your devices have no key for private conversations yet.',
-  lost: 'No device has the key for private conversations any more.',
-  stale: 'A removed device still holds the key for private conversations.',
+/** The system message card for the DIDComm key (relationship-seed-bootstrap.ts):
+ * "Your DIDComm key needs to be renewed", the link starting the one Wallet
+ * approval that publishes a fresh one. It stays until the key is in order. */
+function renderDidCommKeyNotice(rotationKey: NonNullable<ReturnType<typeof getAccountConfig>>['rotationKey'] & object): HTMLElement {
+  const card = document.createElement('div')
+  card.className = 'acc-notice'
+  card.id = 'cmd-acc-didcomm-key-notice'
+  card.setAttribute('role', 'status')
+  const dot = document.createElement('span')
+  dot.className = 'acc-notice-dot'
+  const body = document.createElement('div')
+  body.className = 'acc-notice-body'
+  const title = document.createElement('div')
+  title.className = 'acc-notice-title'
+  const link = document.createElement('a')
+  link.className = 'acc-notice-link'
+  link.href = '#renew-didcomm-key'
+  link.textContent = 'renewed'
+  link.addEventListener('click', event => {
+    event.preventDefault()
+    if (link.getAttribute('aria-disabled') === 'true') return
+    link.setAttribute('aria-disabled', 'true')
+    void rotationKey.onRenew().catch(error => {
+      link.removeAttribute('aria-disabled')
+      getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
+    })
+  })
+  title.append('Your DIDComm key needs to be ', link, '.')
+  const detail = document.createElement('div')
+  detail.className = 'acc-notice-detail'
+  detail.textContent = DIDCOMM_KEY_REASON[rotationKey.state]
+  body.append(title, detail)
+  card.append(dot, body)
+  return card
+}
+
+/** Why, in the user's words (the states are relationship-seed-bootstrap.ts's). */
+const DIDCOMM_KEY_REASON = {
+  unpublished: 'Your account has no DIDComm key yet. It lets your devices keep a conversation private.',
+  lost: 'None of your devices has it any more.',
+  stale: 'A device you removed may still have it.',
 } as const
 
 export function showAccountPage(): void {

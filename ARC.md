@@ -304,7 +304,7 @@ did-md-oauth.ts は特定の wallet を前提にせず、選択された entry �
     「他の端末を外す」と「署名鍵の更新」では `replace`。ウォレットが公開したら、候補を起動時に Vault に保存し、Vault Sync で配る。
   - 状態: `usable`（一致する seed が Vault にある）、`unpublished`（文書に署名鍵が無い）、`pending`（Vault Sync を待つ）、
     `lost`（担当の端末＝`keyAgreement` の fragment の並びで先頭が、ほかに持ちうる端末が無い、または公開から 24 時間たっても無いと判断）、
-    `stale`（署名鍵を公開した後に、ウォレットから直接端末が外された）。`unpublished`・`lost`・`stale` は、アカウント画面の「Renew」（ウォレットの承認 1 回）で新しい seed の署名鍵に取り替える。
+    `stale`（署名鍵を公開した後に、ウォレットから直接端末が外された）。`unpublished`・`lost`・`stale` は、アカウント画面の Mediator カードの下に出るシステムメッセージカード「Your DIDComm key needs to be **renewed**.」（閉じられない。直るまで出る。理由を 1 行添える）の **renewed** のリンクから、ウォレットの承認 1 回で新しい seed の署名鍵に取り替える。利用者には「DIDComm key」と呼ぶ（rotation key、DID Rotation という言葉は画面に出さない）。
   - 鍵の比較は `#fragment` で行う（ドメイン移動は DID の部分だけを書き換え、fragment は鍵から導出されるため変わらない）。
 - 連絡先の `own` は Y の DID で引くので、今の seed が導かない Y（古い seed のもの）は使われない。端末を外して seed が替わると、その相手とは新しい seed の Y へ移り直す（`iss` は公開 DID なので、新しい署名鍵を持たない外された端末には作れない）。古い Y の受信箱は、移り直しを始めてから 30 日間は見続ける（古い Y の鍵は Vault に残る古い seed から導く）。
 
@@ -673,7 +673,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 **版の混在を想定しない**（後方互換を持たない方針）。手順は `PLAN-refactor.md` §13。
 - did.md（文書編集の拡張、`#pass-1` に限るログイン）は P1 で配備済み。mediator（`did:web`、上限、egress の制限）は 2026-10-07 に配備済み。
 - app を入れ替え、**全端末で Vault を消して再ログインする**（新しい event の種類 `contact.set` を、古い版の端末は読めない）。
-- ログインで、各端末の候補の seed のうち最初に承認されたものの rotation key が DID Document に載る（`ifAbsent`）。既にログイン済みで鍵が無い identity は、Account の Devices の「Renew」で載せる。
+- ログインで、各端末の候補の seed のうち最初に承認されたものの rotation key が DID Document に載る（`ifAbsent`）。既にログイン済みで鍵が無い identity は、Account のシステムメッセージカード（上の「DIDComm key needs to be renewed」）から載せる。
 - mediator の SQLite は消さない。
 
 ## 16. 検証状況

@@ -895,6 +895,44 @@ select {
 #cmd-acc-list {
   margin-bottom: 0;
 }
+/* A system message about the account, below its cards: not dismissible, it
+   goes when the thing it says is put right. */
+.acc-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 159, 10, 0.1);
+  font-size: 14px;
+}
+.acc-notice-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: #ff9f0a;
+}
+.acc-notice-body {
+  min-width: 0;
+}
+.acc-notice-detail {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.acc-notice-link {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.acc-notice-link[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: wait;
+  pointer-events: none;
+}
 /* flex column + gap is the ONE spacing mechanism between this panel's rows
    (relay row, choice buttons, signup body, login form) — ad-hoc margin-top
    on individual rows used to duplicate/fight this (e.g. .cmd-form's own
