@@ -58,7 +58,7 @@ function buildProjector(own: { kid: string; x25519PrivateKey: Uint8Array }, send
     async nextActorSeq() { return 1 },
     async initialParents() { return [] },
     activeSegment: segmentFor,
-    async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [] } },
+    async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [], contactCards: [] } },
     signer,
     now: () => new Date('2026-09-05T00:01:00.000Z'),
   })

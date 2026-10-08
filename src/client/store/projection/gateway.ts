@@ -1,4 +1,5 @@
 import type { AccountTransport, JmapMethodCall, JmapSession } from './transport.ts'
+import { addressBookGet, assertContactCard, contactCardGet, contactCardQuery, copyContactCard, JMAP_CONTACTS_CAPABILITY, type LocalJmapContactCard } from './contacts.ts'
 
 const JMAP_CORE_CAPABILITY = 'urn:ietf:params:jmap:core'
 const JMAP_MAIL_CAPABILITY = 'urn:ietf:params:jmap:mail'
@@ -44,6 +45,8 @@ export interface LocalJmapSnapshot {
   state: string
   mailboxes: LocalJmapMailbox[]
   emails: LocalJmapEmail[]
+  /** JMAP for Contacts (RFC 9610) cards, in the one address book (contacts.ts). */
+  contactCards: LocalJmapContactCard[]
 }
 
 /** The versioned shape persisted as a local vault's JMAP projection. */
@@ -73,6 +76,7 @@ export interface LocalJmapMutationSink {
    * sink with no outbound wiring configured simply doesn't support it,
    * mirroring how emailSet itself is only reachable when a sink exists. */
   submitMail?(arguments_: Record<string, unknown>, snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>>
+  contactCardSet?(arguments_: Record<string, unknown>, snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>>
 }
 
 export class LocalJmapGateway {
@@ -86,16 +90,17 @@ export class LocalJmapGateway {
       capabilities: {
         [JMAP_CORE_CAPABILITY]: { maxSizeRequest: 5_000_000, maxCallsInRequest: 16 },
         [JMAP_MAIL_CAPABILITY]: {},
+        [JMAP_CONTACTS_CAPABILITY]: {},
       },
       accounts: {
         [options.accountId]: {
           name: options.identityId,
           isPersonal: true,
           isReadOnly: true,
-          accountCapabilities: { [JMAP_MAIL_CAPABILITY]: {} },
+          accountCapabilities: { [JMAP_MAIL_CAPABILITY]: {}, [JMAP_CONTACTS_CAPABILITY]: { maxAddressBooksPerCard: 1, mayCreateAddressBook: false } },
         },
       },
-      primaryAccounts: { [JMAP_MAIL_CAPABILITY]: options.accountId },
+      primaryAccounts: { [JMAP_MAIL_CAPABILITY]: options.accountId, [JMAP_CONTACTS_CAPABILITY]: options.accountId },
     }
   }
 
@@ -134,6 +139,13 @@ export class LocalJmapGateway {
       case 'EmailSubmission/set':
         if (!this.options.mutationSink?.submitMail) return ['error', { type: 'forbidden', description: 'outbound mail submission is not configured' }, call.callId]
         return ['EmailSubmission/set', await this.options.mutationSink.submitMail(call.arguments, snapshot), call.callId]
+      case 'AddressBook/get': return ['AddressBook/get', addressBookGet(this.options.accountId, snapshot.state, call.arguments), call.callId]
+      case 'ContactCard/get': return ['ContactCard/get', contactCardGet(this.options.accountId, snapshot.state, snapshot.contactCards, call.arguments), call.callId]
+      case 'ContactCard/query': return ['ContactCard/query', contactCardQuery(this.options.accountId, snapshot.state, snapshot.contactCards, call.arguments), call.callId]
+      case 'ContactCard/set':
+        if (!this.options.mutationSink?.contactCardSet) return ['error', { type: 'forbidden', description: 'local vault writes are not configured' }, call.callId]
+        if (call.arguments.ifInState !== undefined && call.arguments.ifInState !== snapshot.state) return ['error', { type: 'stateMismatch' }, call.callId]
+        return ['ContactCard/set', await this.options.mutationSink.contactCardSet(call.arguments, snapshot), call.callId]
       default: return ['error', { type: 'unknownMethod', description: `unsupported local JMAP method: ${call.name}` }, call.callId]
     }
   }
@@ -156,6 +168,7 @@ export class MemoryLocalJmapReadModel implements LocalJmapReadModel {
       state: this.snapshotValue.state,
       mailboxes: this.snapshotValue.mailboxes.map(copyMailbox),
       emails: this.snapshotValue.emails.map(copyEmail),
+      contactCards: this.snapshotValue.contactCards.map(copyContactCard),
     }
   }
 
@@ -189,10 +202,14 @@ export function localJmapSnapshotFromProjection(value: unknown, identityId: stri
       throw new TypeError('local JMAP projection has an invalid email')
     }
   }
+  if (projection.contactCards !== undefined && !Array.isArray(projection.contactCards)) throw new TypeError('local JMAP projection has an invalid contact card list')
+  // A projection written before contacts existed has none; the next rebuild adds them.
+  const contactCards = (projection.contactCards ?? []).map(card => copyContactCard(assertContactCard(card)))
   return {
     state: projection.state,
     mailboxes: projection.mailboxes.map(copyMailbox),
     emails: projection.emails.map(copyEmail),
+    contactCards,
   }
 }
 

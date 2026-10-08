@@ -60,7 +60,7 @@ async function record(identity: Identity, device: Device, message: DeliveredMess
     async nextActorSeq() { return 1 },
     async initialParents() { return [] },
     activeSegment: async () => ({ segmentId: `segment-${device.kid}`, segmentKey }),
-    async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [] } },
+    async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [], contactCards: [] } },
     signer,
   })
   const payload = new TextEncoder().encode(JSON.stringify(message.rawJwe))
@@ -127,7 +127,7 @@ describe('DIDComm group chat', () => {
       // Each of Bob's devices records its own copy; merged (as Vault Sync
       // does), the rebuild accepts both as the one same message.
       const records = await Promise.all(bob.devices.map((device, index) => record(bob, device, bobCopies[index]![0]!, aliceDevice.x)))
-      const merged = reduceLocalJmapProjection(bob.did, { mailboxes: [], emails: [] }, records)
+      const merged = reduceLocalJmapProjection(bob.did, { mailboxes: [], emails: [], contactCards: [] }, records)
       expect(merged.emails).toHaveLength(1)
       expect(merged.emails[0]).toMatchObject({
         threadId: didcommGroupAddress('thread-1'), subject: 'Planning',
@@ -136,7 +136,7 @@ describe('DIDComm group chat', () => {
 
       // Carol files it under the same conversation.
       const carolRecord = await record(carol, carol.devices[0]!, carolCopy[0]!, aliceDevice.x)
-      expect(reduceLocalJmapProjection(carol.did, { mailboxes: [], emails: [] }, [carolRecord]).emails[0]!.threadId).toBe(didcommGroupAddress('thread-1'))
+      expect(reduceLocalJmapProjection(carol.did, { mailboxes: [], emails: [], contactCards: [] }, [carolRecord]).emails[0]!.threadId).toBe(didcommGroupAddress('thread-1'))
     } finally {
       globalThis.fetch = realFetch
     }

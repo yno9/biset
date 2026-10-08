@@ -1,87 +1,50 @@
-// The relationship seed's authority: whether this device may use the Vault's
-// seed (store/vault/relationship-seed.ts) right now, and who mints a new one.
+// The relationship seed's authority: which seed this identity uses now, and
+// whether it needs replacing (PLAN-refactor.md §4.2, §7-1, §7-2, §9.2).
 //
 // Every answer comes from the did:webvh log -- this identity's one authority
-// on which devices exist -- never from the mediator, which only relays, and
-// never from a device's own memory of what it did. The log is append-only and
-// the Wallet signs one entry at a time, so every device reading it reaches
-// the same answer:
+// on its devices and keys -- never from the mediator, and never from a
+// device's own memory of what it did. The seed in use is the one whose
+// rotation key (rotation-key.ts) the DID document publishes: a device's
+// candidate becomes it only when the Wallet publishes its key (`ifAbsent` at
+// sign-in, so the first device approved wins; `replace` when removing other
+// devices). Every device reading the log reaches the same answer.
 //
 // - A device whose key is no longer in the log's keyAgreement was removed:
-//   it may not act as this identity at all.
-// - A seed is valid from the log version it was minted at. Once a later entry
-//   removes a device key, the seed is stale: the removed device has it.
-// - Exactly one device mints a seed. Before any device was ever removed, that
-//   is the identity's first device: the one whose key entered the log alone.
-//   After a removal, it is the device among those that survived it whose key
-//   sorts first. Every other device waits for Vault Sync to bring the seed --
-//   minting its own would give two devices two different seeds, and so two
-//   different relationship did:peers for every counterparty.
+//   it may not act as the identity at all.
+// - No rotation key published: the identity has no seed yet ("unpublished").
+// - The published key's seed is in this device's Vault: "usable".
+// - It is not, yet: "pending" -- Vault Sync brings it from the device that
+//   minted it. The designated device (the first-sorting key of the identity)
+//   decides it is "lost" when no other device could have it (it is the only
+//   one) or a day after the key was published.
+// - A device key was removed after the rotation key was published -- removed
+//   from the Wallet itself, which knows nothing of this key and so left it in
+//   place -- and the removed device holds its seed: "stale".
+// "unpublished", "lost" and "stale" need a Wallet approval to publish a fresh
+// seed's key (did-md-oauth.ts's beginDidMdRotationKeyRenewal).
 //
 // Keys are compared by `#fragment`: a domain move rewrites the DID part of
 // every id, never the fragment (a key's fragment is derived from the key).
-import { entryVersionNumber, type LogEntry } from '../../protocol/webvh/log.ts'
+import type { LogEntry } from '../../protocol/webvh/log.ts'
+import { authenticationKeySince, deviceRemovedSince, fragmentOf, keyAgreementOf } from '../../protocol/didcomm/from-prior.ts'
+import { ROTATION_KEY_FRAGMENT, rotationSigningKey } from './rotation-key.ts'
 
-function fragmentOf(id: string): string {
-  const hash = id.indexOf('#')
-  return hash < 0 ? id : id.slice(hash)
-}
+/** A seed's decision is not made sooner than this after its key was published. */
+export const SEED_LOST_AFTER_MS = 24 * 60 * 60 * 1000
 
-function keyAgreementOf(entry: LogEntry): string[] {
-  const state = entry.state as { keyAgreement?: unknown }
-  if (!Array.isArray(state.keyAgreement)) return []
-  return state.keyAgreement.filter((id): id is string => typeof id === 'string').map(fragmentOf)
-}
+export type SeedStatus =
+  | { state: 'usable'; seed: Uint8Array; seedId: string }
+  | { state: 'unpublished' }
+  | { state: 'pending' }
+  | { state: 'lost' }
+  | { state: 'stale'; designated: boolean }
 
-/** True when `ownKid` entered the log alone: the entry that first lists it
- * lists no other keyAgreement key. False when it was never listed. */
-export function isFirstDidCommDevice(entries: readonly LogEntry[], ownKid: string): boolean {
-  const own = fragmentOf(ownKid)
-  for (const entry of entries) {
-    const keys = keyAgreementOf(entry)
-    if (keys.includes(own)) return keys.length === 1
-  }
-  return false
-}
-
-/** The latest entry that removed a keyAgreement key (a device), or undefined
- * when no device was ever removed. */
-export function lastDeviceRemoval(entries: readonly LogEntry[]): { version: number; survivors: string[] } | undefined {
-  let found: { version: number; survivors: string[] } | undefined
-  for (let index = 1; index < entries.length; index++) {
-    const after = keyAgreementOf(entries[index]!)
-    if (keyAgreementOf(entries[index - 1]!).some(key => !after.includes(key))) {
-      found = { version: entryVersionNumber(entries[index]!.versionId), survivors: after }
-    }
-  }
-  return found
-}
-
-/** The current log version (its last entry's). */
-function logVersion(entries: readonly LogEntry[]): number {
-  const last = entries[entries.length - 1]
-  if (!last) throw new Error('the did:webvh log is empty')
-  return entryVersionNumber(last.versionId)
-}
-
-/** Whether this device is the one that mints the seed now, given no usable
- * seed. After a removal: the first-sorting key among those that survived it
- * and are still listed (or among all listed ones, if none of the survivors
- * is left). Before any: the identity's first device. */
-export function isDesignatedSeedMinter(entries: readonly LogEntry[], ownKid: string): boolean {
-  const own = fragmentOf(ownKid)
-  const removal = lastDeviceRemoval(entries)
-  if (!removal) return isFirstDidCommDevice(entries, ownKid)
-  const listed = keyAgreementOf(entries[entries.length - 1]!)
-  const survivors = removal.survivors.filter(key => listed.includes(key))
-  return [...(survivors.length ? survivors : listed)].sort()[0] === own
-}
-
-/** Thrown where a relationship needs the seed and this device does not have
- * a usable one yet -- the operation is retried once Vault Sync delivers it. */
+/** Thrown where something needs the seed and it is not usable right now. */
 export class RelationshipSeedPendingError extends Error {
-  constructor() {
-    super('This device is still syncing with your other devices. If you no longer use them, remove them on the Account page.')
+  constructor(readonly status: Exclude<SeedStatus['state'], 'usable'> = 'pending') {
+    super(status === 'pending'
+      ? 'This device is still syncing with your other devices. If you no longer use them, remove them on the Account page.'
+      : 'The key that lets your devices move a conversation to a private address needs renewing on the Account page.')
     this.name = 'RelationshipSeedPendingError'
   }
 }
@@ -95,36 +58,52 @@ export class DeviceRemovedError extends Error {
   }
 }
 
-interface UsableRelationshipSeed { seed: Uint8Array; seedId: string }
+interface StoredSeed { seed: Uint8Array; seedId: string }
 
-interface StoredSeed extends UsableRelationshipSeed { afterVersion: number }
+/** The seed status `entries` (the whole log) give this device (`ownKid`),
+ * holding `seeds` in its Vault, at `now`. */
+export function seedStatus(entries: readonly LogEntry[], ownKid: string, seeds: readonly StoredSeed[], now: number): SeedStatus {
+  const last = entries[entries.length - 1]
+  if (!last) throw new Error('the did:webvh log is empty')
+  const listed = keyAgreementOf(last)
+  if (!listed.includes(fragmentOf(ownKid))) throw new DeviceRemovedError()
+  const published = authenticationKeySince(entries, ROTATION_KEY_FRAGMENT)
+  if (!published) return { state: 'unpublished' }
+  const { key, since } = published
+  const designated = [...listed].sort()[0] === fragmentOf(ownKid)
+  // The same check a counterparty makes on this key (from-prior.ts, §7-2).
+  if (deviceRemovedSince(entries, since)) return { state: 'stale', designated }
+  const seed = seeds.find(value => rotationSigningKey(value.seed).publicKeyMultibase === key)
+  if (seed) return { state: 'usable', seed: seed.seed, seedId: seed.seedId }
+  if (!designated) return { state: 'pending' }
+  const publishedAt = Date.parse(entries[since]!.versionTime)
+  return listed.length === 1 || now - publishedAt >= SEED_LOST_AFTER_MS ? { state: 'lost' } : { state: 'pending' }
+}
 
 export interface RelationshipSeedAuthorityOptions {
   /** This device's own front-door kid (a key of the identity's DID). */
   ownKid: string
-  seeds: { current(): Promise<StoredSeed | undefined> }
+  seeds: { readAll(): Promise<StoredSeed[]> }
   /** The identity's did:webvh log, read past the host's CDN. */
   readLog(): Promise<readonly LogEntry[]>
-  /** Mints a seed valid from `afterVersion`, replacing `supersedes`, and
-   * stores it in the Vault (where Vault Sync carries it to siblings). */
-  mintAndStore(afterVersion: number, supersedes: StoredSeed | undefined): Promise<StoredSeed>
   /** How long a read of the log is reused. */
   logMaxAgeMs?: number
   now?: () => number
 }
 
 export interface RelationshipSeedAuthority {
-  /** The seed this device may derive relationships from now. Mints it when
-   * this device is the designated one; throws RelationshipSeedPendingError
-   * while waiting for a sibling's, DeviceRemovedError once removed. */
-  require(): Promise<UsableRelationshipSeed>
+  status(): Promise<SeedStatus>
+  /** The seed in use; throws RelationshipSeedPendingError when there is none
+   * this device may use now, DeviceRemovedError once removed. */
+  require(): Promise<StoredSeed>
+  /** Forgets the cached log (after this device changed the document). */
+  refresh(): void
 }
 
 export function createRelationshipSeedAuthority(options: RelationshipSeedAuthorityOptions): RelationshipSeedAuthority {
   const maxAge = options.logMaxAgeMs ?? 60_000
   const now = options.now ?? (() => Date.now())
   let cached: { at: number; entries: Promise<readonly LogEntry[]> } | undefined
-  let minting: Promise<StoredSeed> | undefined
 
   function log(): Promise<readonly LogEntry[]> {
     if (!cached || now() - cached.at > maxAge) {
@@ -135,18 +114,14 @@ export function createRelationshipSeedAuthority(options: RelationshipSeedAuthori
     return cached.entries
   }
 
-  return {
+  const authority: RelationshipSeedAuthority = {
+    async status() { return seedStatus(await log(), options.ownKid, await options.seeds.readAll(), now()) },
     async require() {
-      const entries = await log()
-      if (!keyAgreementOf(entries[entries.length - 1]!).includes(fragmentOf(options.ownKid))) throw new DeviceRemovedError()
-      const staleBefore = lastDeviceRemoval(entries)?.version ?? 0
-      const current = await options.seeds.current()
-      if (current && current.afterVersion >= staleBefore) return { seed: current.seed, seedId: current.seedId }
-      if (!isDesignatedSeedMinter(entries, options.ownKid)) throw new RelationshipSeedPendingError()
-      // One mint per device at a time; a concurrent caller shares it.
-      minting ??= options.mintAndStore(logVersion(entries), current).finally(() => { minting = undefined })
-      const minted = await minting
-      return { seed: minted.seed, seedId: minted.seedId }
+      const status = await authority.status()
+      if (status.state !== 'usable') throw new RelationshipSeedPendingError(status.state)
+      return { seed: status.seed, seedId: status.seedId }
     },
+    refresh() { cached = undefined },
   }
+  return authority
 }

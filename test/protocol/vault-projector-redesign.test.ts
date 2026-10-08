@@ -7,6 +7,7 @@ import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
 import { buildMailMessageAdd } from '../../src/client/store/vault/mail-message.ts'
 import { buildVaultMutation } from '../../src/client/store/vault/mutations.ts'
 import type { VaultEventAuthor } from '../../src/client/store/vault/events.ts'
+import { contactCardId, contactSetIntent, creatingPatch } from '../../src/client/store/projection/contacts.ts'
 
 const identityId = 'did:example:alice'; const segmentId = 'segment-a'; const key = createSegmentKey()
 const signer: VaultEventAuthor = { deviceId: 'device-a', async sign(bytes) { return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)) }, async verify(deviceId, bytes, signature) { return deviceId === this.deviceId && equalBytes(signature, await this.sign(bytes)) } }
@@ -29,6 +30,25 @@ describe('Vault projector arrival boundaries', () => {
     const lateAdd = await buildMailMessageAdd({ email: { id: 'email-a', threadId: 'thread-a', mailboxIds: { inbox: true }, keywords: {}, receivedAt: '2026-01-03T00:00:00.000Z' }, rawRfc5322: new TextEncoder().encode('late') }, { identityId, actorDeviceId: 'device-a', actorSeq: 3, parents: [tombstone.event.id], segmentId, segmentKey: key, createdAt: '2026-01-03T00:00:00.000Z' }, signer)
     await store.commitIncomingRecords({ identityId, events: [{ ...lateAdd.event, identityId }], objects: [{ ...lateAdd.metadataObject, identityId }, { ...lateAdd.rawRfc5322Object, identityId }], segmentKeys: [] })
     expect((await projector.recomputeEmails(identityId, ['email-a'])).emails).toEqual([])
+    store.close()
+  })
+
+  test('a contact card\'s events, targeted contact:<id>, update its card -- not an email -- on an incremental recompute', async () => {
+    const store = await IndexedDbVaultStore.open(); const projector = new VaultProjector(store, { async resolveSegmentKey() { return key.slice() } }, signer)
+    const cardId = contactCardId('urn:uuid:bob')
+    const commit = async (intent: ReturnType<typeof contactSetIntent>, actorSeq: number) => {
+      const built = await buildVaultMutation(intent, { identityId, actorDeviceId: 'device-a', actorSeq, parents: [], segmentId, segmentKey: key, createdAt: `2026-01-0${actorSeq}T00:00:00.000Z` }, signer)
+      await store.commitIncomingRecords({ identityId, events: [{ ...built.event, identityId }], objects: [{ ...built.object, identityId }], segmentKeys: [] })
+      return built.event.targetIds
+    }
+    await projector.rebuildAll(identityId)
+    const targets = await commit(contactSetIntent({ cardId, patch: creatingPatch({ '@type': 'Card', version: '1.0', uid: 'urn:uuid:bob', name: { full: 'Bob' } }) }), 1)
+    expect((await projector.recomputeEmails(identityId, targets)).contactCards.map(card => card.name)).toEqual([{ full: 'Bob' }])
+    await commit(contactSetIntent({ cardId, destroy: true }), 2)
+    const projection = await projector.recomputeEmails(identityId, targets)
+    expect(projection.contactCards).toEqual([])
+    expect(projection.emails).toEqual([])
+    expect((await projector.rebuildAll(identityId)).state).toBe(projection.state)
     store.close()
   })
 })

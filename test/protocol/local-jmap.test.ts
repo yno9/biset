@@ -7,7 +7,7 @@ const model = new MemoryLocalJmapReadModel({
   emails: [
     { id: 'email-old', blobId: 'blob-old', threadId: 'thread-1', mailboxIds: { inbox: true }, keywords: {}, receivedAt: '2026-08-20T00:00:00.000Z', subject: 'Old' },
     { id: 'email-new', blobId: 'blob-new', threadId: 'thread-2', mailboxIds: { inbox: true }, keywords: { '$seen': true }, receivedAt: '2026-08-21T00:00:00.000Z', subject: 'New' },
-  ],
+  ], contactCards: [],
 }, new Map([['blob-new', new Uint8Array([1, 2, 3, 4])]]))
 
 function transport(): LocalJmapTransport {
@@ -21,7 +21,7 @@ function transport(): LocalJmapTransport {
 describe('LocalJmapGateway', () => {
   test('presents a vault projection through ordinary JMAP reads', async () => {
     const local = transport()
-    expect((await local.session()).primaryAccounts).toEqual({ 'urn:ietf:params:jmap:mail': 'biset:did:web:alice.example' })
+    expect((await local.session()).primaryAccounts).toEqual({ 'urn:ietf:params:jmap:mail': 'biset:did:web:alice.example', 'urn:ietf:params:jmap:contacts': 'biset:did:web:alice.example' })
     const response = await local.call<{ methodResponses: Array<[string, Record<string, unknown>, string]> }>([
       { name: 'Mailbox/get', arguments: { accountId: 'biset:did:web:alice.example' }, callId: 'mailboxes' },
       { name: 'Email/query', arguments: { accountId: 'biset:did:web:alice.example', filter: { inMailbox: 'inbox' }, limit: 1 }, callId: 'query' },

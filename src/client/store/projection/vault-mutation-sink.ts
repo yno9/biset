@@ -7,6 +7,7 @@ import { decryptVaultObject } from '../vault/objects.ts'
 import { buildMailMessageAdd } from '../vault/mail-message.ts'
 import type { LocalJmapEmail, LocalJmapMutationSink, LocalJmapProjectionV1, LocalJmapSnapshot } from './gateway.ts'
 import { emailSetToVaultMutationIntents } from './mutations.ts'
+import { contactCardSet } from './contacts.ts'
 import type { VaultMutationIntent } from './mutations.ts'
 import { assertActiveVaultSegment, type ActiveVaultSegment } from '../vault/active-segment.ts'
 
@@ -66,6 +67,23 @@ export class VaultBackedLocalJmapMutationSink implements LocalJmapMutationSink {
 
   async emailSet(arguments_: Record<string, unknown>, snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>> {
     return this.commitIntents(emailSetToVaultMutationIntents(arguments_), snapshot)
+  }
+
+  /** ContactCard/set (RFC 9610): each accepted create, update and destroy is
+   * one `contact.set` patch (contacts.ts); refused items are reported, not
+   * thrown, as JMAP's /set does. */
+  async contactCardSet(arguments_: Record<string, unknown>, snapshot: LocalJmapSnapshot): Promise<Record<string, unknown>> {
+    const parsed = contactCardSet(arguments_, snapshot.contactCards)
+    const committed = parsed.intents.length > 0 ? await this.commitIntents(parsed.intents, snapshot) : { newState: snapshot.state }
+    const nonEmpty = (name: string, value: object) => Object.keys(value).length === 0 ? {} : { [name]: value }
+    return {
+      accountId: this.options.accountId,
+      oldState: snapshot.state,
+      newState: committed.newState,
+      ...nonEmpty('created', parsed.created), ...nonEmpty('updated', parsed.updated),
+      ...(parsed.destroyed.length ? { destroyed: parsed.destroyed } : {}),
+      ...nonEmpty('notCreated', parsed.notCreated), ...nonEmpty('notUpdated', parsed.notUpdated), ...nonEmpty('notDestroyed', parsed.notDestroyed),
+    }
   }
 
   /**

@@ -1,112 +1,117 @@
-// The Vault relationship seed and its authority, read off the did:webvh log:
-// who mints it (the first device; after a removal, the first remaining one),
-// when it is stale (a device key was removed after it was minted), and that
-// a removed device may not use one at all.
+// The relationship seed and its authority, read off the did:webvh log
+// (PLAN-refactor.md §4.2, §7-1, §7-2, §9.2): the seed in use is the one whose
+// rotation key the DID document publishes; a removed device may not use any.
 import { describe, expect, test } from 'bun:test'
 import type { LogEntry } from '../src/protocol/webvh/log.ts'
 import {
-  createRelationshipSeedAuthority, DeviceRemovedError, isDesignatedSeedMinter, isFirstDidCommDevice, lastDeviceRemoval,
-  RelationshipSeedPendingError,
+  createRelationshipSeedAuthority, DeviceRemovedError, RelationshipSeedPendingError, SEED_LOST_AFTER_MS, seedStatus,
 } from '../src/client/didcomm/relationship-seed-bootstrap.ts'
-import { mintRelationshipSeed, selectCurrentRelationshipSeed, type RelationshipSeedV1 } from '../src/client/store/vault/relationship-seed.ts'
+import { relationshipSeedRecord } from '../src/client/store/vault/relationship-seed.ts'
+import { publishedRotationKey, rotationKeyEditMethod, rotationSigningKey, ROTATION_KEY_FRAGMENT } from '../src/client/didcomm/rotation-key.ts'
 
 const DID = 'did:webvh:scid:alice.example'
-/** A log whose n-th entry (1-based) lists `keys[n-1]`. */
-const log = (...keys: string[][]): LogEntry[] => keys.map((keyAgreement, index) => ({
-  versionId: `${index + 1}-x`, versionTime: '', parameters: {}, state: { id: DID, keyAgreement },
-} as unknown as LogEntry))
 const kid = (fragment: string) => `${DID}#${fragment}`
+const T0 = Date.parse('2026-10-08T00:00:00Z')
+const at = (ms: number) => new Date(T0 + ms).toISOString()
 
-describe('reading the log', () => {
-  test('the first device is the key that entered the log alone', () => {
-    const entries = log([], ['#k_phone'], ['#k_phone', '#k_laptop'], ['#k_laptop'])
-    expect(isFirstDidCommDevice(entries, kid('k_phone'))).toBe(true)
-    expect(isFirstDidCommDevice(entries, kid('k_laptop'))).toBe(false)
-    expect(isFirstDidCommDevice(entries, kid('k_unknown'))).toBe(false)
+/** One log entry: the device keys it lists, and the rotation key it publishes (if any). */
+interface Step { keys: string[]; rotation?: Uint8Array; time?: number }
+const log = (...steps: Step[]): LogEntry[] => steps.map((step, index) => ({
+  versionId: `${index + 1}-x`, versionTime: at(step.time ?? index * 1000), parameters: {},
+  state: {
+    id: DID,
+    keyAgreement: step.keys.map(key => `#${key}`),
+    authentication: ['#pass-1', ...(step.rotation ? [ROTATION_KEY_FRAGMENT] : [])],
+    verificationMethod: step.rotation ? [{ id: ROTATION_KEY_FRAGMENT, type: 'Multikey', publicKeyMultibase: rotationSigningKey(step.rotation).publicKeyMultibase }] : [],
+  },
+} as unknown as LogEntry))
+const seed = () => crypto.getRandomValues(new Uint8Array(32))
+const stored = (value: Uint8Array) => relationshipSeedRecord(DID, value, 1)
+
+describe('the rotation key', () => {
+  test('is derived from the seed, the same on every device, and differs from seed to seed', () => {
+    const value = seed()
+    expect(rotationSigningKey(value).publicKeyMultibase).toBe(rotationSigningKey(value.slice()).publicKeyMultibase)
+    expect(rotationSigningKey(seed()).publicKeyMultibase).not.toBe(rotationSigningKey(value).publicKeyMultibase)
   })
 
-  test('keys compare by fragment, so a domain move (absolute ids under the old DID) changes nothing', () => {
-    const entries = log([`did:webvh:scid:ex.alias#k_phone`], ['#k_phone', '#k_laptop'])
-    expect(isFirstDidCommDevice(entries, kid('k_phone'))).toBe(true)
+  test('is published only under its id and referenced from authentication', () => {
+    const value = seed()
+    const key = rotationSigningKey(value).publicKeyMultibase
+    const method = { id: ROTATION_KEY_FRAGMENT, publicKeyMultibase: key }
+    expect(publishedRotationKey({ id: DID, verificationMethod: [method], authentication: [ROTATION_KEY_FRAGMENT] })).toBe(key)
+    expect(publishedRotationKey({ id: DID, verificationMethod: [{ ...method, id: kid('didcomm-rotation') }], authentication: [kid('didcomm-rotation')] })).toBe(key)
+    expect(publishedRotationKey({ id: DID, verificationMethod: [method], authentication: [] })).toBeUndefined()
+    expect(publishedRotationKey({ id: DID, verificationMethod: [], authentication: [ROTATION_KEY_FRAGMENT] })).toBeUndefined()
   })
 
-  test('the latest entry that removed a key, and who survived it', () => {
-    expect(lastDeviceRemoval(log(['#k_a'], ['#k_a', '#k_b']))).toBeUndefined()
-    expect(lastDeviceRemoval(log(['#k_a'], ['#k_a', '#k_b'], ['#k_b'], ['#k_b', '#k_c']))).toEqual({ version: 3, survivors: ['#k_b'] })
+  test('the edit entry asks for authentication, ifAbsent or replace', () => {
+    const value = seed()
+    expect(rotationKeyEditMethod(value, 'ifAbsent')).toMatchObject({ id: ROTATION_KEY_FRAGMENT, relationships: ['authentication'], mode: 'ifAbsent', publicKeyMultibase: rotationSigningKey(value).publicKeyMultibase })
+    expect(rotationKeyEditMethod(value, 'replace').mode).toBe('replace')
+  })
+})
+
+describe('seedStatus', () => {
+  test('no rotation key published: unpublished', () => {
+    expect(seedStatus(log({ keys: ['a'] }), kid('a'), [], T0).state).toBe('unpublished')
   })
 
-  test('after a removal, the designated minter is the first-sorting survivor still listed; before one, the first device', () => {
-    const entries = log(['#k_a'], ['#k_a', '#k_c', '#k_b'], ['#k_c', '#k_b'], ['#k_c', '#k_b', '#k_0'])
-    expect(isDesignatedSeedMinter(entries, kid('k_b'))).toBe(true)
-    expect(isDesignatedSeedMinter(entries, kid('k_c'))).toBe(false)
-    // Added after the removal: not a survivor of it, so not designated.
-    expect(isDesignatedSeedMinter(entries, kid('k_0'))).toBe(false)
-    expect(isDesignatedSeedMinter(log(['#k_a'], ['#k_a', '#k_b']), kid('k_a'))).toBe(true)
+  test('the seed whose key the document publishes is the one in use; another stored one is not', () => {
+    const current = seed(), other = seed()
+    const status = seedStatus(log({ keys: ['a', 'b'], rotation: current }), kid('b'), [stored(other), stored(current)], T0)
+    expect(status.state).toBe('usable')
+    expect(status.state === 'usable' && [...status.seed]).toEqual([...current])
+  })
+
+  test('without it, every device waits -- the designated one decides it is lost once no one else could have it, or after a day', () => {
+    const current = seed()
+    const entries = log({ keys: ['a', 'b'], rotation: current, time: 0 })
+    expect(seedStatus(entries, kid('b'), [], T0 + SEED_LOST_AFTER_MS * 2).state).toBe('pending') // not designated ('a' sorts first)
+    expect(seedStatus(entries, kid('a'), [], T0 + 1000).state).toBe('pending')
+    expect(seedStatus(entries, kid('a'), [], T0 + SEED_LOST_AFTER_MS).state).toBe('lost')
+    expect(seedStatus(log({ keys: ['a'], rotation: current }), kid('a'), [], T0).state).toBe('lost')
+  })
+
+  test('a device key removed after the rotation key was published (from the Wallet itself) makes it stale, even with the seed at hand', () => {
+    const current = seed()
+    const status = seedStatus(log({ keys: ['a', 'b', 'c'], rotation: current }, { keys: ['a', 'b'], rotation: current }), kid('b'), [stored(current)], T0)
+    expect(status).toEqual({ state: 'stale', designated: false })
+    expect(seedStatus(log({ keys: ['a', 'b', 'c'], rotation: current }, { keys: ['a', 'b'], rotation: current }), kid('a'), [], T0)).toEqual({ state: 'stale', designated: true })
+  })
+
+  test('removing devices in the same edit that replaces the key is not stale', () => {
+    const old = seed(), fresh = seed()
+    const entries = log({ keys: ['a', 'b', 'c'], rotation: old }, { keys: ['a'], rotation: fresh })
+    expect(seedStatus(entries, kid('a'), [stored(old), stored(fresh)], T0).state).toBe('usable')
+    // ... and a key added later does not either.
+    expect(seedStatus([...entries, ...log({ keys: ['a'] }, { keys: ['a', 'd'], rotation: fresh }).slice(1)], kid('a'), [stored(fresh)], T0).state).toBe('usable')
+  })
+
+  test('a device no longer in the DID document may not use any seed', () => {
+    const current = seed()
+    expect(() => seedStatus(log({ keys: ['a', 'b'], rotation: current }, { keys: ['a'], rotation: current }), kid('b'), [stored(current)], T0)).toThrow(DeviceRemovedError)
   })
 })
 
 describe('the seed authority', () => {
-  function authority(entries: LogEntry[], ownKid: string, stored: RelationshipSeedV1[] = []) {
-    const minted: RelationshipSeedV1[] = []
-    const value = createRelationshipSeedAuthority({
-      ownKid,
-      seeds: { async current() { return selectCurrentRelationshipSeed([...stored, ...minted]) } },
-      readLog: async () => entries,
-      mintAndStore: async (afterVersion, supersedes) => {
-        const seed = mintRelationshipSeed(DID, afterVersion, supersedes as RelationshipSeedV1 | undefined)
-        minted.push(seed)
-        return seed
-      },
-    })
-    return { value, minted }
-  }
-
-  test('the first device mints the identity\'s first seed; any other device waits for it', async () => {
-    const entries = log(['#k_phone'], ['#k_phone', '#k_laptop'])
-    const phone = authority(entries, kid('k_phone'))
-    expect((await phone.value.require()).seedId).toBe(phone.minted[0]!.seedId)
-    expect(phone.minted[0]!.afterVersion).toBe(2)
-    await expect(authority(entries, kid('k_laptop')).value.require()).rejects.toBeInstanceOf(RelationshipSeedPendingError)
+  test('require() hands out the usable seed and refuses otherwise, saying why', async () => {
+    const current = seed()
+    let seeds = [stored(current)]
+    const authority = createRelationshipSeedAuthority({ ownKid: kid('a'), seeds: { async readAll() { return seeds } }, async readLog() { return log({ keys: ['a', 'b'], rotation: current }) }, now: () => T0 })
+    expect([...(await authority.require()).seed]).toEqual([...current])
+    seeds = []
+    const error = await authority.require().catch(value => value)
+    expect(error).toBeInstanceOf(RelationshipSeedPendingError)
+    expect((error as RelationshipSeedPendingError).status).toBe('pending')
   })
 
-  test('a seed minted before a device was removed is stale: the designated survivor mints its successor, every other one waits', async () => {
-    const old = mintRelationshipSeed(DID, 2)
-    const entries = log(['#k_a'], ['#k_a', '#k_b', '#k_c'], ['#k_a', '#k_b'])
-    const a = authority(entries, kid('k_a'), [old])
-    const fresh = await a.value.require()
-    expect(fresh.seedId).not.toBe(old.seedId)
-    expect(a.minted[0]).toMatchObject({ afterVersion: 3, supersedesSeedId: old.seedId })
-    await expect(authority(entries, kid('k_b'), [old]).value.require()).rejects.toBeInstanceOf(RelationshipSeedPendingError)
-    // Once the successor reaches it (Vault Sync), the other one uses it.
-    expect((await authority(entries, kid('k_b'), [old, a.minted[0]!]).value.require()).seedId).toBe(fresh.seedId)
-  })
-
-  test('a device no longer in the DID document may not use any seed', async () => {
-    const seed = mintRelationshipSeed(DID, 1)
-    const entries = log(['#k_a', '#k_b'], ['#k_a'])
-    await expect(authority(entries, kid('k_b'), [seed]).value.require()).rejects.toBeInstanceOf(DeviceRemovedError)
-  })
-
-  test('concurrent callers share one mint', async () => {
-    const a = authority(log(['#k_a']), kid('k_a'))
-    const [first, second] = await Promise.all([a.value.require(), a.value.require()])
-    expect(first.seedId).toBe(second.seedId)
-    expect(a.minted).toHaveLength(1)
-  })
-})
-
-describe('selectCurrentRelationshipSeed', () => {
-  test('a superseded seed is never current; of the rest, the one minted at the latest log version', () => {
-    const first = mintRelationshipSeed(DID, 1, undefined, new Date('2026-10-02T00:00:00Z'))
-    const second = mintRelationshipSeed(DID, 5, first, new Date('2026-10-01T00:00:00Z'))
-    expect(selectCurrentRelationshipSeed([first, second])?.seedId).toBe(second.seedId)
-  })
-
-  test('two rival heads at the same version resolve the same way on every device', () => {
-    const base = mintRelationshipSeed(DID, 1, undefined, new Date('2026-10-01T00:00:00Z'))
-    const a = mintRelationshipSeed(DID, 3, base, new Date('2026-10-02T00:00:00Z'))
-    const b = mintRelationshipSeed(DID, 3, base, new Date('2026-10-02T00:00:00Z'))
-    const expected = [a, b].sort((x, y) => x.seedId < y.seedId ? -1 : 1)[0]!.seedId
-    expect(selectCurrentRelationshipSeed([a, b, base])?.seedId).toBe(expected)
+  test('the log is read once per period, and refresh() reads it again', async () => {
+    let reads = 0
+    const authority = createRelationshipSeedAuthority({ ownKid: kid('a'), seeds: { async readAll() { return [] } }, async readLog() { reads++; return log({ keys: ['a'] }) }, now: () => T0 })
+    await authority.status(); await authority.status()
+    expect(reads).toBe(1)
+    authority.refresh(); await authority.status()
+    expect(reads).toBe(2)
   })
 })

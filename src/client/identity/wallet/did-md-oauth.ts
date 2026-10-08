@@ -19,7 +19,7 @@ import { registerWithMediator } from '../../didcomm/mediator-sync.ts'
 import { assertMatchesSchema, type JSONSchema } from './json-schema.ts'
 import capabilitySchema from './schemas/biset-messenger-capability.schema.json' with { type: 'json' }
 import { isOnionUrl } from '../../didcomm/mediator-endpoints.ts'
-import { endpointsAreRemoved, serviceIsPublished } from './did-document-edit-check.ts'
+import { canonical, endpointsAreRemoved, serviceIsPublished } from './did-document-edit-check.ts'
 import {
   clearDidMdRegistration,
   clearDidMdDeviceSession,
@@ -32,7 +32,10 @@ import {
   saveDidMdRegistration,
   sealDidMdBisetDidCommDeviceMaterial,
   openDidMdBisetDidCommDeviceMaterial,
+  sealDidMdSecret,
+  openDidMdSecret,
   type DidMdBisetDidCommDeviceMaterial,
+  type DidMdSealedSecret,
   type DidMdDeviceSession,
   type DidMdPendingAuthorization,
   type DidMdRegistration,
@@ -41,6 +44,7 @@ import {
 } from './did-md-store.ts'
 
 import { DEFAULT_WALLET, type WalletDirectoryEntry } from './wallet-directory.ts'
+import { rotationKeyEditMethod, ROTATION_KEY_FRAGMENT } from '../../didcomm/rotation-key.ts'
 // PLAN4 (~/did.md/PLAN4-wallet-connector.md): the OAuth/OID4VP issuer this
 // module talks to is no longer a fixed constant -- it is whichever wallet
 // directory entry is currently selected (selectWallet/currentWallet
@@ -387,7 +391,7 @@ async function newBisetDidCommDevice(did: string, mediator: DidMdBisetMediator):
   return withDidCommXKid(await prepareBisetDidCommDevice(mediator), did)
 }
 
-export function buildDocumentEdit(did: string, config: WalletConfiguration, device?: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']>, remove: string[] = [], removeEndpoints: DidCoreEndpointRemoval[] = []): DidCoreDocumentEdit {
+export function buildDocumentEdit(did: string, config: WalletConfiguration, device?: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']>, remove: string[] = [], removeEndpoints: DidCoreEndpointRemoval[] = [], rotation?: RotationCandidate['method']): DidCoreDocumentEdit {
   const didcomm = configuredService(config, 'didcomm')
   const services = config.didDocumentServices
     .filter(service => service.purpose !== 'didcomm' || device)
@@ -407,11 +411,30 @@ export function buildDocumentEdit(did: string, config: WalletConfiguration, devi
   return {
     type: DID_DOCUMENT_EDIT_DETAIL,
     services,
-    verificationMethods: device ? [{ id: deviceKidFragment(device.x25519PublicKey), type: 'Multikey', controller: did, publicKeyMultibase: encodeX25519Multikey(device.x25519PublicKey) }] : [],
+    verificationMethods: [
+      ...(device ? [{ id: deviceKidFragment(device.x25519PublicKey), type: 'Multikey', controller: did, publicKeyMultibase: encodeX25519Multikey(device.x25519PublicKey) }] : []),
+      ...(rotation ? [{ ...rotation, controller: did }] : []),
+    ],
     serviceKeyBindings: device ? [{ serviceId: didcomm.id, keyIds: [deviceKidFragment(device.x25519PublicKey)] }] : [],
     remove,
     ...(removeEndpoints.length ? { removeEndpoints } : {}),
   }
+}
+
+/** What the sealed candidate seed is (did-md-store.ts's sealDidMdSecret label). */
+export const ROTATION_SEED_CANDIDATE = 'relationship-seed-candidate'
+
+interface RotationCandidate { sealed: DidMdSealedSecret; method: ReturnType<typeof rotationKeyEditMethod> }
+
+/** A fresh relationship seed, offered to the Wallet by its rotation key
+ * (PLAN-refactor.md §7-1): `ifAbsent` when the identity may already have one
+ * (sign-in, enabling messaging -- the first device approved wins),
+ * `replace` when it is being replaced (removing devices, renewing). The seed
+ * itself stays sealed in this browser until the Wallet publishes its key. */
+async function rotationCandidate(mode: 'ifAbsent' | 'replace'): Promise<RotationCandidate> {
+  const seed = crypto.getRandomValues(new Uint8Array(32))
+  try { return { sealed: await sealDidMdSecret(ROTATION_SEED_CANDIDATE, seed), method: rotationKeyEditMethod(seed, mode) } }
+  finally { seed.fill(0) }
 }
 
 async function setMediatorRegistration(did: string, device: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']> & { xKid: string }, action: 'add' | 'remove'): Promise<void> {
@@ -685,10 +708,34 @@ async function sessionFromCapabilityValue(value: unknown, did: string, pending: 
   const capability = await capabilityFromResponse(value, resolvedPending)
   const resolved = await resolveByDomain(parseWebvhDid(resolvedPending.did).domain, undefined, undefined, freshFetch())
   if (!resolved) throw new Error('Could not resolve the DID document after Wallet approval')
-  for (const service of resolvedPending.documentEdit?.services ?? []) if (!serviceIsPublished(resolved.service?.find(value => value.id === service.id), service)) throw new Error(`Wallet did not publish requested service ${service.id}`)
-  for (const removal of resolvedPending.documentEdit?.removeEndpoints ?? []) if (!endpointsAreRemoved(resolved.service?.find(value => value.id === removal.serviceId), removal)) throw new Error(`Wallet did not remove the requested endpoints of ${removal.serviceId}`)
-  for (const method of resolvedPending.documentEdit?.verificationMethods ?? []) if (JSON.stringify(resolved.verificationMethod?.find(value => value.id === method.id)) !== JSON.stringify(method)) throw new Error(`Wallet did not publish requested verification method ${method.id}`)
-  for (const id of resolvedPending.documentEdit?.remove ?? []) if (resolved.service?.some(value => value.id === id) || resolved.verificationMethod?.some(value => value.id === id)) throw new Error(`Wallet did not remove ${id}`)
+  // A DID URL may be written relative (`#x`) or absolute (`did:...#x`); both name the same.
+  const absolute = (id: unknown) => typeof id === 'string' && id.startsWith('#') ? `${resolvedPending.did}${id}` : id
+  const serviceOf = (id: string) => resolved.service?.find(value => absolute(value.id) === absolute(id))
+  for (const service of resolvedPending.documentEdit?.services ?? []) {
+    const published = serviceOf(service.id)
+    if (!serviceIsPublished(published && { ...published, id: service.id }, service)) throw new Error(`Wallet did not publish requested service ${service.id}`)
+  }
+  for (const removal of resolvedPending.documentEdit?.removeEndpoints ?? []) if (!endpointsAreRemoved(serviceOf(removal.serviceId), removal)) throw new Error(`Wallet did not remove the requested endpoints of ${removal.serviceId}`)
+  // A method asked for `ifAbsent` may meet another device's already there:
+  // then that one stays, and this request's candidate seed is not the
+  // identity's (its own seed arrives by Vault Sync). Anything else must be
+  // published as asked, referenced from the relationships asked for.
+  let rotationSeedPublished = false
+  for (const method of resolvedPending.documentEdit?.verificationMethods ?? []) {
+    const { relationships, mode, ...wanted } = method
+    const published = resolved.verificationMethod?.find(value => absolute(value.id) === absolute(method.id))
+    if (!published || canonical({ ...published, id: absolute(published.id) }) !== canonical({ ...wanted, id: absolute(wanted.id) })) {
+      if (mode === 'ifAbsent') continue
+      throw new Error(`Wallet did not publish requested verification method ${method.id}`)
+    }
+    const document = resolved as unknown as Record<string, unknown>
+    for (const relationship of relationships ?? ['keyAgreement']) {
+      const references = Array.isArray(document[relationship]) ? document[relationship] as unknown[] : []
+      if (!references.some(reference => absolute(reference) === absolute(method.id))) throw new Error(`Wallet did not reference ${method.id} from ${relationship}`)
+    }
+    if (method.id === ROTATION_KEY_FRAGMENT) rotationSeedPublished = true
+  }
+  for (const id of resolvedPending.documentEdit?.remove ?? []) if (resolved.service?.some(value => absolute(value.id) === absolute(id)) || resolved.verificationMethod?.some(value => absolute(value.id) === absolute(id))) throw new Error(`Wallet did not remove ${id}`)
   const previousSession = await readDidMdDeviceSession()
   const session: DidMdDeviceSession = {
     v: 2, issuer: resolvedPending.issuer, clientId: resolvedPending.clientId, did: resolvedPending.did, handle: resolvedPending.handle,
@@ -696,6 +743,10 @@ async function sessionFromCapabilityValue(value: unknown, did: string, pending: 
     privateKey: resolvedPending.privateKey, publicJwk: resolvedPending.publicJwk, capability: capability.capability, capabilityExpiresAt: capability.expiresAt,
     vaultDeviceId: resolvedPending.vaultDeviceId,
     ...(capability.didCommDevice ? { bisetDidCommDevice: capability.didCommDevice } : {}),
+    // Kept until this device stores it in its Vault (at boot). An earlier
+    // approval's seed not yet stored is kept too, unless this one replaced it.
+    ...(rotationSeedPublished && resolvedPending.rotationSeedCandidate ? { rotationSeed: resolvedPending.rotationSeedCandidate }
+      : previousSession?.rotationSeed && previousSession.did === resolvedPending.did ? { rotationSeed: previousSession.rotationSeed } : {}),
   }
   await saveDidMdDeviceSession(session)
   // The mediator authenticates this DIDComm sender by resolving xKid from
@@ -853,7 +904,34 @@ export async function beginDidMdRemoveOtherDevices(configured: DidMdWalletConfig
   const client = await registration(config.walletDeviceName)
   const pending = pendingFromSession(session)
   pending.state = randomBase64url(32); pending.codeVerifier = randomBase64url(48); pending.createdAt = new Date().toISOString()
-  pending.documentEdit = buildDocumentEdit(session.did, config, session.bisetDidCommDevice, remove)
+  // The removed devices hold the current seed: the same edit publishes a new
+  // one's rotation key in its place (PLAN-refactor.md §4.5).
+  const rotation = await rotationCandidate('replace')
+  pending.rotationSeedCandidate = rotation.sealed
+  pending.documentEdit = buildDocumentEdit(session.did, config, session.bisetDidCommDevice, remove, [], rotation.method)
+  return redirectToWallet(client, pending)
+}
+
+/**
+ * Publishes a fresh relationship seed's rotation key in place of the current
+ * one, in one Wallet approval: for an identity that has none yet, one whose
+ * seed no device has any more, or one whose seed a device removed from the
+ * Wallet itself still holds (relationship-seed-bootstrap.ts's "unpublished",
+ * "lost" and "stale").
+ */
+export async function beginDidMdRotationKeyRenewal(configured: DidMdWalletConfiguration = {}): Promise<never> {
+  const config = walletConfiguration(configured)
+  const session = await readDidMdDeviceSession()
+  if (!session?.vaultDeviceId || !session.bisetDidCommDevice || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
+    throw new Error('Reconnect did.md Wallet before renewing the key')
+  }
+  const client = await registration(config.walletDeviceName)
+  const pending = pendingFromSession(session)
+  pending.state = randomBase64url(32); pending.codeVerifier = randomBase64url(48); pending.createdAt = new Date().toISOString()
+  const rotation = await rotationCandidate('replace')
+  pending.rotationSeedCandidate = rotation.sealed
+  // Only the rotation key: no service or device key changes.
+  pending.documentEdit = { type: DID_DOCUMENT_EDIT_DETAIL, services: [], verificationMethods: [{ ...rotation.method, controller: session.did }], remove: [] }
   return redirectToWallet(client, pending)
 }
 
@@ -892,11 +970,13 @@ export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = []
   } catch (error) {
     console.warn('[did.md Wallet login] DIDComm mediator unavailable, signing in without it', error instanceof Error ? error.message : error)
   }
+  const rotation = bisetDidCommDevice ? await rotationCandidate('ifAbsent') : undefined
   const pending: DidMdPendingAuthorization = {
     v: 2, issuer: client.issuer, clientId: client.clientId, state: randomBase64url(32), codeVerifier: randomBase64url(48),
     deviceJkt: await p256Jkt(publicJwk), privateKey: pair.privateKey, publicJwk, vaultDeviceId: `urn:uuid:${crypto.randomUUID()}`,
-    documentEdit: buildDocumentEdit('', config, bisetDidCommDevice, []),
+    documentEdit: buildDocumentEdit('', config, bisetDidCommDevice, [], [], rotation?.method),
     ...(bisetDidCommDevice ? { bisetDidCommDevice } : {}),
+    ...(rotation ? { rotationSeedCandidate: rotation.sealed } : {}),
     createdAt: new Date().toISOString(),
   }
   return redirectToWallet(client, pending, openedPopup)
@@ -933,7 +1013,9 @@ export async function beginDidMdWalletFinalizeEnrollment(mediatorUrls: readonly 
     bisetDidCommDevice,
     ...(session.bisetDidCommDevice ? { previousBisetDidCommDevice: session.bisetDidCommDevice } : {}),
   }
-  pending.documentEdit = buildDocumentEdit(session.did, config, bisetDidCommDevice, previous ? [previous] : [])
+  const rotation = await rotationCandidate('ifAbsent')
+  pending.rotationSeedCandidate = rotation.sealed
+  pending.documentEdit = buildDocumentEdit(session.did, config, bisetDidCommDevice, previous ? [previous] : [], [], rotation.method)
   return redirectToWallet(client, pending)
 }
 
@@ -973,9 +1055,31 @@ export async function beginDidMdWalletDocumentEdit(options: { mediatorUrls?: rea
     if (session.bisetDidCommDevice) pending.previousBisetDidCommDevice = session.bisetDidCommDevice
     pending.bisetDidCommDevice = await newBisetDidCommDevice(session.did, mediator)
     const retired = retiredMediatorEndpoints(session.bisetDidCommDevice, mediator, configuredService(config, 'didcomm').id)
-    pending.documentEdit = buildDocumentEdit(session.did, config, pending.bisetDidCommDevice, previous ? [previous] : [], retired)
+    const rotation = await rotationCandidate('ifAbsent')
+    pending.rotationSeedCandidate = rotation.sealed
+    pending.documentEdit = buildDocumentEdit(session.did, config, pending.bisetDidCommDevice, previous ? [previous] : [], retired, rotation.method)
   }
   return redirectToWallet(client, pending)
+}
+
+/** The relationship seed whose rotation key a Wallet approval published for
+ * this session, until this device has stored it in its Vault. `forget()`
+ * once it is stored (or found to be no longer the identity's). */
+export async function approvedRotationSeed(): Promise<{ seed: Uint8Array; forget(): Promise<void> } | undefined> {
+  const session = await readDidMdDeviceSession()
+  if (!session?.rotationSeed) return undefined
+  const sealed = session.rotationSeed
+  return {
+    seed: await openDidMdSecret(sealed, ROTATION_SEED_CANDIDATE),
+    async forget() {
+      const latest = await readDidMdDeviceSession()
+      // A later approval may have put another seed here meanwhile: keep that one.
+      const same = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((byte, index) => byte === b[index])
+      if (!latest?.rotationSeed || !same(latest.rotationSeed.sealed.iv, sealed.sealed.iv)) return
+      const { rotationSeed: _done, ...rest } = latest
+      await saveDidMdDeviceSession(rest)
+    },
+  }
 }
 
 export async function completeDidMdWalletCallback(): Promise<DidMdActiveSession | undefined> {

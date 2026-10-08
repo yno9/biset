@@ -55,7 +55,7 @@ export function buildVaultCommit(input: VaultCommitInput): VaultCommitParts {
   const objects: VaultObjectRecord[] = input.objects.map(object => ({ ...object, identityId }))
   const events: VaultEventRecord[] = input.events.map(event => ({ ...event, identityId }))
   const projection: LocalJmapProjectionV1 = input.reduce
-    ? { version: 1, identityId, ...reduceLocalJmapProjection(identityId, { mailboxes: input.snapshot.mailboxes, emails: input.snapshot.emails }, input.reduce) }
-    : { version: 1, identityId, state: input.snapshot.state, mailboxes: input.snapshot.mailboxes, emails: input.snapshot.emails }
+    ? { version: 1, identityId, ...reduceLocalJmapProjection(identityId, { mailboxes: input.snapshot.mailboxes, emails: input.snapshot.emails, contactCards: input.snapshot.contactCards }, input.reduce) }
+    : { version: 1, identityId, state: input.snapshot.state, mailboxes: input.snapshot.mailboxes, emails: input.snapshot.emails, contactCards: input.snapshot.contactCards }
   return { objects, events, projection, jmapState: { state: projection.state } }
 }

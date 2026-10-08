@@ -35,7 +35,7 @@ describe('VaultBackedLocalJmapMutationSink', () => {
     const model = new MemoryLocalJmapReadModel({
       state: 'state-1',
       mailboxes: [{ id: 'inbox', name: 'Inbox', totalEmails: 1, unreadEmails: 1 }],
-      emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: { inbox: true }, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }],
+      emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: { inbox: true }, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }], contactCards: [],
     })
     const transport = new LocalJmapTransport(new LocalJmapGateway({
       accountId: 'biset:did:web:alice.example', identityId: 'did:web:alice.example', readModel: model, mutationSink: sink,
@@ -80,7 +80,7 @@ describe('VaultBackedLocalJmapMutationSink', () => {
         from: [{ email: 'alice@mail.example.test' }], to: [{ email: 'bob@mail.other.test' }], subject: 'hi',
       },
       rawRfc5322: new TextEncoder().encode('From: alice@mail.example.test\r\nTo: bob@mail.other.test\r\n\r\nhi'),
-    }, { state: 'state-1', mailboxes: [], emails: [] })
+    }, { state: 'state-1', mailboxes: [], emails: [], contactCards: [] })
     expect(result).toMatchObject({ oldState: 'state-1', created: { 'email-out-1': { id: 'email-out-1' } } })
     expect((committed?.events as unknown[])).toHaveLength(1)
     expect((committed?.objects as unknown[])).toHaveLength(2)

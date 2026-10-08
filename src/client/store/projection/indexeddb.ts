@@ -26,7 +26,7 @@ export class IndexedDbLocalJmapReadModel implements LocalJmapReadModel {
     // brand-new account right after signup, not an error. Empty mailboxes/
     // emails, same shape reduceLocalJmapProjection produces from a genuinely
     // empty base.
-    if (projection === undefined) return { state: projectionState(this.identityId, [], []), mailboxes: [], emails: [] }
+    if (projection === undefined) return { state: projectionState(this.identityId, [], []), mailboxes: [], emails: [], contactCards: [] }
     return localJmapSnapshotFromProjection(projection, this.identityId)
   }
 

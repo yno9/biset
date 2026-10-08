@@ -278,16 +278,20 @@ did-md-oauth.ts は特定の wallet を前提にせず、選択された entry �
 | 端末の DIDComm X25519 | 端末 | 同上。**非抽出の AES 鍵で封印** | 公開鍵が DID Document の `keyAgreement` |
 | `mediatorDeviceSecret` | 端末 | 同上 | しない。mediator の端末ラベル `HMAC(secret, DID)` を作る |
 | **relationship seed** | identity | Vault（`credential.relationship-seed.set`） | Vault Sync で全端末へ。端末を外すと作り直す |
-| relationship の X25519／Ed25519 | 相手ごと | `contact-key.set`（暗号化 Vault object） | service を含む `did:peer:2`、Vault Sync で全端末へ |
+| **rotation key**（Ed25519、seed から導出） | identity（seed ごと） | 持たない（seed から毎回導く） | 公開鍵が DID Document の `#didcomm-rotation`、`authentication` から参照。DID Rotation の `from_prior` に署名する（P3） |
+| 候補の seed（承認待ち） | 端末 | `biset-did-md-wallet` の保留中の認可・セッション。**非抽出の AES 鍵で封印** | しない。ウォレットが署名鍵を公開したら Vault に移す |
 | SegmentKey | Vault segment | `vault_segments.segmentKey` に**平文** | Vault Sync の pack に入れて運ぶ（DIDComm authcrypt の中） |
 
 - relationship の did:peer は `deriveRelationshipPeerIdentity(seed, 相手の DID, mediatorRoutingKid)` で**決定論的**に導出する。
   同一 identity の複数端末が同じ相手へ同時に初回接触しても、同じ peer に収束する。**service の URL は mediator の did:peer 自身が持つ canonical の値から取る**（onion の URL は入らない）。
-- **seed の権威は DID ログ**（`relationship-seed-bootstrap.ts` の `createRelationshipSeedAuthority`）。ログは追記のみで wallet が 1 エントリずつ署名するので、どの端末が読んでも同じ答えになる。
+- **seed の権威は DID Document**（`relationship-seed-bootstrap.ts`、2026-10-08 の P2）。使う seed は「その rotation key（`rotation-key.ts`）を文書が公開している seed」。
+  ログは追記のみで wallet が 1 エントリずつ署名するので、どの端末が読んでも同じ答えになる。
   - 自分の鍵が `keyAgreement` に無い端末は外された端末で、identity として何もできない（`DeviceRemovedError`）。
-  - seed は作ったときのログのバージョン（`afterVersion`）から有効で、**その後のエントリで鍵が 1 つでも減ると古くなる**（外された端末がその seed を持っているため）。
-  - seed を作るのは 1 台だけ。まだ鍵が減ったことが無ければ identity の最初の端末（自分の鍵を初めて載せたエントリに他の鍵が無い端末）。
-    鍵が減った後は、そのとき残った端末のうち今も載っているものの中で、kid の並びが先頭の端末。他の端末は、Vault Sync で seed が届くまで relationship の操作を保留する（`RelationshipSeedPendingError`）。
+  - **公開のしかた**: サインイン・メッセージの有効化・mediator の変更では、候補の seed の署名鍵を `ifAbsent` で編集要求に入れる（最初に承認された端末の候補が identity の seed になる）。
+    「他の端末を外す」と「署名鍵の更新」では `replace`。ウォレットが公開したら、候補を起動時に Vault に保存し、Vault Sync で配る。
+  - 状態: `usable`（一致する seed が Vault にある）、`unpublished`（文書に署名鍵が無い）、`pending`（Vault Sync を待つ）、
+    `lost`（担当の端末＝`keyAgreement` の fragment の並びで先頭が、ほかに持ちうる端末が無い、または公開から 24 時間たっても無いと判断）、
+    `stale`（署名鍵を公開した後に、ウォレットから直接端末が外された）。`unpublished`・`lost`・`stale` は、アカウント画面の「Renew」（ウォレットの承認 1 回）で新しい seed の署名鍵に取り替える。
   - 鍵の比較は `#fragment` で行う（ドメイン移動は DID の部分だけを書き換え、fragment は鍵から導出されるため変わらない）。
 - 各 ContactKey は、どの seed から自分の did:peer を作ったか（`seedId`）を持つ。今の seed と違う relationship は、まだ移っていない。
 

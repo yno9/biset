@@ -31,6 +31,6 @@ export async function rebuildLocalJmapProjection(opts: RebuildLocalJmapProjectio
     opts.records.readVaultObjects(identityId),
   ])
   const records = await decryptVaultMutationRecords(identityId, events, objects, opts.resolver)
-  const snapshot = reduceLocalJmapProjection(identityId, { mailboxes: [], emails: [] }, records)
+  const snapshot = reduceLocalJmapProjection(identityId, { mailboxes: [], emails: [], contactCards: [] }, records)
   return { version: 1, identityId, ...snapshot }
 }

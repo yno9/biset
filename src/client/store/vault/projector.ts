@@ -3,6 +3,7 @@ import type { LocalJmapProjectionV1, LocalJmapSnapshot } from '../projection/gat
 import { localJmapSnapshotFromProjection } from '../projection/gateway.ts'
 import { projectionState, reduceLocalJmapProjection } from '../projection/reducer.ts'
 import { decryptVaultMutationRecords } from './mutation-records.ts'
+import { contactCardIdOfTarget } from '../projection/contacts.ts'
 import type { SegmentKeyResolver } from './segment-key-resolver.ts'
 import type { VaultEventRecord, VaultObjectRecord, VaultProjectionMeta } from './store.ts'
 
@@ -27,6 +28,7 @@ export class VaultProjector {
     const current = localJmapSnapshotFromProjection(currentValue, identityId)
     const [objects, meta] = await Promise.all([this.store.readVaultObjects(identityId), this.store.readProjectionMeta(identityId)])
     const emails = new Map(current.emails.map(email => [email.id, email]))
+    const cards = new Map(current.contactCards.map(card => [card.id, card]))
     const tombstones = new Set(meta.tombstones); const pending = new Set(meta.pending)
     for (const emailId of new Set([...requested, ...pending])) {
       const events = await this.store.readEventsForTarget(identityId, emailId)
@@ -39,12 +41,19 @@ export class VaultProjector {
       }
       if (!materializable) pending.add(emailId); else pending.delete(emailId)
       try {
-        const folded = reduceLocalJmapProjection(identityId, { mailboxes: current.mailboxes, emails: [] }, records)
+        const folded = reduceLocalJmapProjection(identityId, { mailboxes: current.mailboxes, emails: [], contactCards: [] }, records)
+        // A contact card's events are targeted `contact:<id>` (contacts.ts), never an email id.
+        const cardId = contactCardIdOfTarget(emailId)
+        if (cardId !== undefined) {
+          const card = folded.contactCards.find(value => value.id === cardId)
+          if (card) cards.set(cardId, card); else cards.delete(cardId)
+          continue
+        }
         const replacement = folded.emails.find(email => email.id === emailId)
         if (replacement && !tombstones.has(emailId)) emails.set(emailId, replacement); else emails.delete(emailId)
       } catch { pending.add(emailId) }
     }
-    const recounted = reduceLocalJmapProjection(identityId, { mailboxes: current.mailboxes, emails: [...emails.values()] }, [])
+    const recounted = reduceLocalJmapProjection(identityId, { mailboxes: current.mailboxes, emails: [...emails.values()], contactCards: [...cards.values()] }, [])
     const projection: LocalJmapProjectionV1 = { version: 1, identityId, ...recounted }
     await this.store.writeProjection(identityId, projection, { state: projection.state })
     await this.store.writeProjectionMeta({ identityId, tombstones: [...tombstones], pending: [...pending] })
@@ -62,13 +71,13 @@ export class VaultProjector {
       catch { for (const target of event.targetIds) pending.add(target) }
     }
     const base: Omit<LocalJmapSnapshot, 'state'> = current === undefined
-      ? { mailboxes: [], emails: [] }
-      : { mailboxes: localJmapSnapshotFromProjection(current, identityId).mailboxes, emails: [] }
+      ? { mailboxes: [], emails: [], contactCards: [] }
+      : { mailboxes: localJmapSnapshotFromProjection(current, identityId).mailboxes, emails: [], contactCards: [] }
     const snapshot = reduceLocalJmapProjection(identityId, base, records)
     const tombstones = new Set(previousMeta.tombstones)
     for (const event of events) if (event.kind === 'message.tombstone') for (const target of event.targetIds) tombstones.add(target)
     const emails = snapshot.emails.filter(email => !tombstones.has(email.id))
-    const projection: LocalJmapProjectionV1 = { version: 1, identityId, ...snapshot, emails, state: projectionState(identityId, snapshot.mailboxes, emails) }
+    const projection: LocalJmapProjectionV1 = { version: 1, identityId, ...snapshot, emails, state: projectionState(identityId, snapshot.mailboxes, emails, snapshot.contactCards) }
     await this.store.writeProjection(identityId, projection, { state: projection.state })
     await this.store.writeProjectionMeta({ identityId, tombstones: [...tombstones], pending: [...pending] })
     return projection

@@ -69,6 +69,9 @@ export interface AccountPageConfig {
   /** Removes every other device from the DID document (one Wallet
    * approval). */
   onRemoveOtherDevices?(): Promise<void>
+  /** Present when the identity's rotation key (the seed's, PLAN-refactor.md
+   * §4.2) needs a Wallet approval to publish a fresh one. */
+  rotationKey?: { state: 'unpublished' | 'lost' | 'stale'; onRenew(): Promise<void> }
   onExportMessages?(): Promise<void>
   onImportMessages?(): Promise<void>
   /** src.bak's showSysMsg (shell.ts) -- injected rather than imported

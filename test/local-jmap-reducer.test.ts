@@ -54,7 +54,7 @@ describe('local JMAP reducer', () => {
 function base(existing: LocalJmapEmail) {
   return {
     mailboxes: [{ id: 'inbox', name: 'Inbox', role: 'inbox', totalEmails: 1, unreadEmails: 0 }],
-    emails: [existing],
+    emails: [existing], contactCards: [],
   }
 }
 

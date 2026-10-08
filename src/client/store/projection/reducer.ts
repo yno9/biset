@@ -3,6 +3,7 @@ import type { VaultEventV1 } from '../../../protocol/vault.ts'
 import type { VaultMutationIntent } from './mutations.ts'
 import type { LocalJmapEmail, LocalJmapMailbox, LocalJmapSnapshot } from './gateway.ts'
 import { assertMailMessageEmail } from '../vault/mail-message.ts'
+import { applyContactSet, assertContactSetPayload, copyContactCard, type LocalJmapContactCard } from './contacts.ts'
 
 export interface DecryptedMutationRecord {
   event: VaultEventV1
@@ -39,6 +40,7 @@ export function reduceLocalJmapProjection(
   records: DecryptedMutationRecord[],
 ): LocalJmapSnapshot {
   const emails = new Map(base.emails.map(email => [email.id, copyEmail(email)]))
+  const contactCards = new Map(base.contactCards.map(card => [card.id, copyContactCard(card)]))
   const tombstones = new Set<string>()
   // The events store's own unique keyPath on `id` is what's actually
   // supposed to make the exact same event impossible to read twice from
@@ -109,6 +111,15 @@ export function reduceLocalJmapProjection(
       // by RelationshipSeedReader straight off the vault events.
       continue
     }
+    if (mutation.kind === 'contact.set') {
+      // A PatchObject on one card, applied in this fold's event order, so
+      // every device reaches the same card (contacts.ts).
+      const payload = assertContactSetPayload(mutation.payload, emailId)
+      const card = applyContactSet(contactCards.get(payload.cardId), payload)
+      if (card) contactCards.set(card.id, card)
+      else contactCards.delete(payload.cardId)
+      continue
+    }
     if (mutation.kind === 'contact-key.set') {
       // Deliberately a no-op for the read-model: private per-counterparty
       // DIDComm relationship credentials are read directly from encrypted
@@ -173,20 +184,24 @@ export function reduceLocalJmapProjection(
   }
   const mailboxes = mailboxCounts(base.mailboxes, emails.values())
   const resultEmails = [...emails.values()].sort((left, right) => left.id.localeCompare(right.id))
+  const resultCards = [...contactCards.values()].sort((left, right) => left.id.localeCompare(right.id))
   return {
-    state: projectionState(identityId, mailboxes, resultEmails),
+    state: projectionState(identityId, mailboxes, resultEmails, resultCards),
     mailboxes,
     emails: resultEmails,
+    contactCards: resultCards,
   }
 }
 
-export function projectionState(identityId: string, mailboxes: LocalJmapMailbox[], emails: LocalJmapEmail[]): string {
+export function projectionState(identityId: string, mailboxes: LocalJmapMailbox[], emails: LocalJmapEmail[], contactCards: readonly LocalJmapContactCard[] = []): string {
   if (!identityId) throw new TypeError('projection identity is required')
   return canonicalHash('biset/local-jmap/projection/v1', {
     version: 1,
     identityId,
     mailboxes: [...mailboxes].sort((left, right) => left.id.localeCompare(right.id)).map(canonicalMailbox),
     emails: [...emails].sort((left, right) => left.id.localeCompare(right.id)).map(canonicalEmail),
+    // Only when there are any, so an identity without contacts keeps the state it had.
+    ...(contactCards.length === 0 ? {} : { contactCards: [...contactCards].sort((left, right) => left.id.localeCompare(right.id)) }),
   })
 }
 

@@ -1,19 +1,18 @@
 // The identity-wide secret every relationship did:peer is derived from
-// (protocol/didcomm/peer.ts's deriveRelationshipPeerIdentity). Kept in the
-// Vault, so it travels only to this identity's current devices over Vault
-// Sync -- never through the Wallet, never in a DID document.
+// (protocol/didcomm/peer.ts's deriveRelationshipPeerIdentity), and the key
+// that signs this identity's DID Rotation (client/didcomm/rotation-key.ts).
+// Kept in the Vault, so it travels only to this identity's current devices
+// over Vault Sync -- never through the Wallet. Only its rotation key's public
+// half is published, in the DID document.
 //
 // Deriving instead of minting at random is what keeps devices from racing:
-// a counterparty's INIT is delivered to every device at once, and each one
-// computes the SAME relationship did:peer to answer with. Removing a device
-// replaces the seed (the removing device mints a new one and the removed
-// device never receives it), so the removed device can neither derive new
-// relationships nor the ones existing relationships rotate to.
+// every device computes the same did:peer for the same counterparty. Removing
+// a device replaces the seed (the removing device's candidate, whose rotation
+// key the same document edit publishes), so the removed device can neither
+// sign rotations nor derive the did:peers conversations move to.
 //
-// Who mints, and when a seed is out of date, is decided from the did:webvh
-// log alone (relationship-seed-bootstrap.ts): a seed is valid from the log
-// version it was minted at (`afterVersion`), and stops being so once a later
-// entry removes a device key.
+// Which seed is in use is decided from the DID document alone
+// (relationship-seed-bootstrap.ts): the one whose rotation key it publishes.
 import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes } from '../../../protocol/canonical.ts'
 import type { IdentityId, SegmentId } from '../../../protocol/ids.ts'
 import type { VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
@@ -32,10 +31,11 @@ export interface RelationshipSeedV1 {
   /** 32 random bytes. */
   seed: Uint8Array
   createdAt: string
-  /** The did:webvh log version this seed was minted at. A later entry that
-   * removes a device key makes the seed stale (the removed device has it). */
+  /** The did:webvh log version at which this device stored it (a record of
+   * when; the DID document, not this, says whether it is in use). */
   afterVersion: number
-  /** The seed this one replaced (a device removal). */
+  /** Kept for records written before the DID document became the seed's
+   * authority; nothing writes it any more. */
   supersedesSeedId?: string
 }
 
@@ -43,13 +43,11 @@ function relationshipSeedId(seed: Uint8Array): string {
   return bytesToBase64url(sha256(seed)).slice(0, 22)
 }
 
-/** A brand-new seed for `identityId`. */
-export function mintRelationshipSeed(identityId: IdentityId, afterVersion: number, supersedes?: RelationshipSeedV1, now = new Date()): RelationshipSeedV1 {
-  const seed = crypto.getRandomValues(new Uint8Array(32))
-  return {
-    version: 1, kind: 'credential.relationship-seed', identityId, seedId: relationshipSeedId(seed), seed,
-    createdAt: now.toISOString(), afterVersion, ...(supersedes ? { supersedesSeedId: supersedes.seedId } : {}),
-  }
+/** A seed record for `seed`: a candidate this device made (a 32-byte random
+ * value) that the DID document now names by its rotation key. */
+export function relationshipSeedRecord(identityId: IdentityId, seed: Uint8Array, afterVersion: number, now = new Date()): RelationshipSeedV1 {
+  if (seed.length !== 32) throw new TypeError('relationship seed must be 32 bytes')
+  return { version: 1, kind: 'credential.relationship-seed', identityId, seedId: relationshipSeedId(seed), seed: seed.slice(), createdAt: now.toISOString(), afterVersion }
 }
 
 function encode(value: RelationshipSeedV1): Uint8Array {
@@ -128,31 +126,20 @@ const relationshipSeedKind: VaultCredentialKind<RelationshipSeedV1, VaultCredent
   copy,
 }
 
-/** The current seed: of those nothing supersedes, the one minted at the
- * latest log version. Should two ever tie (only one device is designated to
- * mint, but its retries could race), every device breaks it the same way
- * (latest `createdAt`, then smallest `seedId`) so all derive from the same. */
-export function selectCurrentRelationshipSeed(values: readonly RelationshipSeedV1[]): RelationshipSeedV1 | undefined {
-  const superseded = new Set(values.flatMap(value => value.supersedesSeedId ? [value.supersedesSeedId] : []))
-  return values
-    .filter(value => !superseded.has(value.seedId))
-    .sort((a, b) => b.afterVersion - a.afterVersion || Date.parse(b.createdAt) - Date.parse(a.createdAt) || (a.seedId < b.seedId ? -1 : a.seedId > b.seedId ? 1 : 0))[0]
-}
 
-/** @public Not wired in while no relationship uses the seed: PLAN-refactor.md P2
- * rebuilds the seed's authority (the DID document's signing key) on it. */
+/** Every seed in the Vault. Which one is in use is not theirs to say: it is
+ * the one whose rotation key the DID document publishes
+ * (relationship-seed-bootstrap.ts). */
 export class RelationshipSeedReader {
   private readonly reader: VaultCredentialReader<RelationshipSeedV1, VaultCredentialEventReader>
   constructor(options: VaultCredentialReaderOptions<VaultCredentialEventReader>) {
     this.reader = new VaultCredentialReader(relationshipSeedKind, options)
   }
-  async current(): Promise<RelationshipSeedV1 | undefined> {
-    const value = selectCurrentRelationshipSeed(await this.reader.readAll())
-    return value ? copy(value) : undefined
+  async readAll(): Promise<RelationshipSeedV1[]> {
+    return (await this.reader.readAll()).map(copy)
   }
 }
 
-/** @public See RelationshipSeedReader. */
 export class RelationshipSeedSink {
   private readonly sink: VaultCredentialSink<RelationshipSeedV1>
   constructor(options: VaultCredentialSinkOptions) {

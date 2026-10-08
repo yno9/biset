@@ -49,7 +49,7 @@ export function buildGenesisLog(rootPrivateKey: Uint8Array, rootPublicKey: Uint8
       { id: rootKeyId, type: 'Multikey' as const, controller: placeholderDid, publicKeyMultibase: updateKey },
       ...extraVerificationMethods.map(vm => ({ id: `${placeholderDid}#${vm.fragment}`, type: 'Multikey' as const, controller: placeholderDid, publicKeyMultibase: encodeMultikey(vm.publicKey) })),
     ],
-    authentication: [rootKeyId],
+    authentication: [rootKeyId, ...(didComm?.authenticationFragments ?? []).map(fragment => `${placeholderDid}#${fragment}`)],
     ...(didComm?.keyAgreementKeys?.length ? { keyAgreement: didComm.keyAgreementKeys.map(k => `${placeholderDid}#${k.fragment}`) } : {}),
     service: (didComm?.services ?? (didComm?.endpointUri ? [{ id: didComm.serviceId ?? '#didcomm', uri: didComm.endpointUri, routingKeys: didComm.routingKeys }] : []))
       .map(entry => ({
@@ -129,6 +129,9 @@ export interface DidCommStateExtras {
   /** Extra verification methods, already multibase-encoded, that are not
    * referenced from `keyAgreement`. */
   rawVerificationMethods?: Array<{ fragment: string; publicKeyMultibase: string }>
+  /** Fragments of verification methods (from `rawVerificationMethods`, say)
+   * that `authentication` references too, after the root key. */
+  authenticationFragments?: string[]
   endpointUri?: string
   routingKeys?: string[]
   serviceId?: string

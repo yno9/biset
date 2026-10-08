@@ -63,3 +63,15 @@ describe('retiredMediatorEndpoints', () => {
     ])
   })
 })
+
+describe('the rotation key in a document edit', () => {
+  test('rides along as an authentication method with its mode, not bound to the DIDComm service', async () => {
+    const { rotationKeyEditMethod, ROTATION_KEY_FRAGMENT } = await import('../src/client/didcomm/rotation-key.ts')
+    const seed = crypto.getRandomValues(new Uint8Array(32))
+    const edit = buildDocumentEdit(DID, walletConfiguration(), device(), [], [], rotationKeyEditMethod(seed, 'ifAbsent'))
+    const rotation = edit.verificationMethods.find(method => method.id === ROTATION_KEY_FRAGMENT)!
+    expect(rotation).toMatchObject({ controller: DID, relationships: ['authentication'], mode: 'ifAbsent', type: 'Multikey' })
+    expect(edit.verificationMethods).toHaveLength(2)
+    expect(edit.serviceKeyBindings![0]!.keyIds).not.toContain(ROTATION_KEY_FRAGMENT)
+  })
+})

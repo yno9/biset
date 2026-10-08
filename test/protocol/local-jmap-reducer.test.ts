@@ -31,7 +31,7 @@ describe('Local JMAP projection reducer', () => {
       emails: [
         { id: 'email-1', threadId: 'thread-1', mailboxIds: { inbox: true }, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' },
         { id: 'email-2', threadId: 'thread-2', mailboxIds: { inbox: true }, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' },
-      ],
+      ], contactCards: [],
     }
     const projection = reduceLocalJmapProjection('did:web:alice.example', base, [
       { event: event({ id: 'event-z', actorSeq: 3, kind: 'message.tombstone', targetIds: ['email-2'], createdAt: '2026-08-21T00:02:00.000Z' }), plaintext: plaintext('message.tombstone', ['email-2'], { emailId: 'email-2' }) },
@@ -48,7 +48,7 @@ describe('Local JMAP projection reducer', () => {
   })
 
   test('adds a mail item only when its metadata binds the second reference as the raw RFC 5322 blob', () => {
-    const base = { mailboxes: [{ id: 'inbox', name: 'Inbox', totalEmails: 0, unreadEmails: 0 }], emails: [] }
+    const base = { mailboxes: [{ id: 'inbox', name: 'Inbox', totalEmails: 0, unreadEmails: 0 }], emails: [], contactCards: [] }
     const projection = reduceLocalJmapProjection('did:web:alice.example', base, [{
       event: event({ kind: 'message.add', targetIds: ['email-1'], objectRefs: ['metadata-1', 'raw-rfc5322-1'] }),
       plaintext: plaintext('message.add', ['email-1'], {
@@ -66,7 +66,7 @@ describe('Local JMAP projection reducer', () => {
   })
 
   test('rejects the exact same event id appearing twice rather than silently converging (dedup is the store\'s job, not the reducer\'s)', () => {
-    const base = { mailboxes: [], emails: [] }
+    const base = { mailboxes: [], emails: [], contactCards: [] }
     const add = {
       event: event({ id: 'event-add-1', kind: 'message.add', targetIds: ['email-1'], objectRefs: ['metadata-1', 'raw-rfc5322-1'] }),
       plaintext: plaintext('message.add', ['email-1'], {
@@ -94,7 +94,7 @@ describe('Local JMAP projection reducer', () => {
     // very same batch -- and used to be rejected outright before this fix,
     // on literally every rebuild, regardless of whether the two adds
     // actually agreed.
-    const base = { mailboxes: [], emails: [] }
+    const base = { mailboxes: [], emails: [], contactCards: [] }
     const email = { id: 'email-1', blobId: 'raw-rfc5322-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }
     const fromDeviceA = {
       event: event({ id: 'event-add-device-a', actorDeviceId: 'device-a', kind: 'message.add', targetIds: ['email-1'], objectRefs: ['metadata-a', 'raw-rfc5322-a'] }),
@@ -110,7 +110,7 @@ describe('Local JMAP projection reducer', () => {
   })
 
   test('treats a reconstructed group roster with different recipient order as the same message', () => {
-    const base = { mailboxes: [], emails: [] }
+    const base = { mailboxes: [], emails: [], contactCards: [] }
     const email = {
       id: 'group-message-1', blobId: 'raw-a', threadId: 'didcomm-group:g1',
       mailboxIds: { inbox: true }, keywords: {}, receivedAt: '2026-09-16T00:00:00.000Z',
@@ -139,7 +139,7 @@ describe('Local JMAP projection reducer', () => {
     const identityId = 'did:web:alice.example'
     const base = {
       mailboxes: [],
-      emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }],
+      emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }], contactCards: [],
     }
     // Device A set a keyword at 00:00; device B set a DIFFERENT keyword one
     // minute later, on the same email, neither having seen the other's
@@ -164,7 +164,7 @@ describe('Local JMAP projection reducer', () => {
 
   test('an interrupted-then-resumed transfer, folded incrementally in two batches, converges to the same projection as one uninterrupted batch', () => {
     const identityId = 'did:web:alice.example'
-    const base = { mailboxes: [], emails: [] }
+    const base = { mailboxes: [], emails: [], contactCards: [] }
     const add = {
       event: event({ id: 'event-add-1', kind: 'message.add', targetIds: ['email-1'], objectRefs: ['metadata-1', 'raw-rfc5322-1'], createdAt: '2026-08-21T00:00:00.000Z' }),
       plaintext: plaintext('message.add', ['email-1'], {
@@ -191,7 +191,7 @@ describe('Local JMAP projection reducer', () => {
     const afterFirstChunk = reduceLocalJmapProjection(identityId, base, [add, mailboxUpdate])
     const afterSecondChunk = reduceLocalJmapProjection(
       identityId,
-      { mailboxes: afterFirstChunk.mailboxes, emails: afterFirstChunk.emails },
+      { mailboxes: afterFirstChunk.mailboxes, emails: afterFirstChunk.emails, contactCards: afterFirstChunk.contactCards },
       [tombstone],
     )
     expect(afterSecondChunk.emails).toEqual(oneShot.emails)
@@ -208,7 +208,7 @@ describe('Local JMAP projection reducer', () => {
     // PLAN-mimi.md's Vault projection gave them a rule.)
     const base = {
       mailboxes: [],
-      emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }],
+      emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }], contactCards: [],
     }
     expect(() => reduceLocalJmapProjection('did:web:alice.example', base, [{
       event: event({ kind: 'thread.set', targetIds: ['email-1'], objectRefs: ['object-a'] }),
@@ -217,7 +217,7 @@ describe('Local JMAP projection reducer', () => {
   })
 
   test('refuses message metadata which points at a different raw RFC 5322 object', () => {
-    const base = { mailboxes: [], emails: [] }
+    const base = { mailboxes: [], emails: [], contactCards: [] }
     expect(() => reduceLocalJmapProjection('did:web:alice.example', base, [{
       event: event({ kind: 'message.add', targetIds: ['email-1'], objectRefs: ['metadata-1', 'raw-rfc5322-1'] }),
       plaintext: plaintext('message.add', ['email-1'], {
@@ -230,7 +230,7 @@ describe('Local JMAP projection reducer', () => {
     test('moves blobId (and optionally subject) without changing id/threadId/inReplyTo', () => {
       const base = {
         mailboxes: [],
-        emails: [{ id: 'email-1', blobId: 'raw-v1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z', inReplyTo: 'email-0', subject: 'original' }],
+        emails: [{ id: 'email-1', blobId: 'raw-v1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z', inReplyTo: 'email-0', subject: 'original' }], contactCards: [],
       }
       const projection = reduceLocalJmapProjection('did:web:alice.example', base, [{
         event: event({ kind: 'message.edit', targetIds: ['email-1'], objectRefs: ['metadata-2', 'raw-v2'] }),
@@ -243,7 +243,7 @@ describe('Local JMAP projection reducer', () => {
     })
 
     test('sets the edited flag once any message.edit has landed', () => {
-      const base = { mailboxes: [], emails: [{ id: 'email-1', blobId: 'raw-v1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }] }
+      const base = { mailboxes: [], emails: [{ id: 'email-1', blobId: 'raw-v1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }], contactCards: [] }
       const projection = reduceLocalJmapProjection('did:web:alice.example', base, [{
         event: event({ kind: 'message.edit', targetIds: ['email-1'], objectRefs: ['metadata-2', 'raw-v2'] }),
         plaintext: plaintext('message.edit', ['email-1'], { emailId: 'email-1', blobId: 'raw-v2' }),
@@ -252,7 +252,7 @@ describe('Local JMAP projection reducer', () => {
     })
 
     test('refuses an edit whose blobId does not match the event objectRefs', () => {
-      const base = { mailboxes: [], emails: [{ id: 'email-1', blobId: 'raw-v1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }] }
+      const base = { mailboxes: [], emails: [{ id: 'email-1', blobId: 'raw-v1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }], contactCards: [] }
       expect(() => reduceLocalJmapProjection('did:web:alice.example', base, [{
         event: event({ kind: 'message.edit', targetIds: ['email-1'], objectRefs: ['metadata-2', 'raw-v2'] }),
         plaintext: plaintext('message.edit', ['email-1'], { emailId: 'email-1', blobId: 'a-different-blob' }),
@@ -260,7 +260,7 @@ describe('Local JMAP projection reducer', () => {
     })
 
     test('silently ignores an edit targeting a tombstoned or unknown email (same as mailbox.set/keyword.set)', () => {
-      const base = { mailboxes: [], emails: [] }
+      const base = { mailboxes: [], emails: [], contactCards: [] }
       const projection = reduceLocalJmapProjection('did:web:alice.example', base, [{
         event: event({ kind: 'message.edit', targetIds: ['email-missing'], objectRefs: ['metadata-2', 'raw-v2'] }),
         plaintext: plaintext('message.edit', ['email-missing'], { emailId: 'email-missing', blobId: 'raw-v2' }),
@@ -271,7 +271,7 @@ describe('Local JMAP projection reducer', () => {
 
   describe('reaction.set (PLAN-mimi.md §4.5, MimiContent reaction/retraction)', () => {
     test('adds one emoji per sender, keyed independently', () => {
-      const base = { mailboxes: [], emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }] }
+      const base = { mailboxes: [], emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }], contactCards: [] }
       const projection = reduceLocalJmapProjection('did:web:alice.example', base, [
         { event: event({ id: 'e1', kind: 'reaction.set', targetIds: ['email-1'] }), plaintext: plaintext('reaction.set', ['email-1'], { emailId: 'email-1', sender: 'alice', emoji: '👍' }) },
         { event: event({ id: 'e2', kind: 'reaction.set', targetIds: ['email-1'] }), plaintext: plaintext('reaction.set', ['email-1'], { emailId: 'email-1', sender: 'bob', emoji: '❤️' }) },
@@ -280,7 +280,7 @@ describe('Local JMAP projection reducer', () => {
     })
 
     test('a retraction (emoji: null) removes only that sender, leaving others intact', () => {
-      const base = { mailboxes: [], emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z', reactions: { alice: '👍', bob: '❤️' } }] }
+      const base = { mailboxes: [], emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z', reactions: { alice: '👍', bob: '❤️' } }], contactCards: [] }
       const projection = reduceLocalJmapProjection('did:web:alice.example', base, [{
         event: event({ kind: 'reaction.set', targetIds: ['email-1'] }),
         plaintext: plaintext('reaction.set', ['email-1'], { emailId: 'email-1', sender: 'alice', emoji: null }),
@@ -289,7 +289,7 @@ describe('Local JMAP projection reducer', () => {
     })
 
     test('retracting the last reaction clears the field entirely rather than leaving an empty object', () => {
-      const base = { mailboxes: [], emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z', reactions: { alice: '👍' } }] }
+      const base = { mailboxes: [], emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: {}, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z', reactions: { alice: '👍' } }], contactCards: [] }
       const projection = reduceLocalJmapProjection('did:web:alice.example', base, [{
         event: event({ kind: 'reaction.set', targetIds: ['email-1'] }),
         plaintext: plaintext('reaction.set', ['email-1'], { emailId: 'email-1', sender: 'alice', emoji: null }),
@@ -305,7 +305,7 @@ describe('Local JMAP projection reducer', () => {
 // a not-yet-updated device), so they must still be read -- as no-ops.
 describe('events of the retired relationship handshake', () => {
   test('a rebuild over a relationship INIT/ACCEPT audit record and contact keys still succeeds', () => {
-    const base = { mailboxes: [], emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: { inbox: true as const }, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }] }
+    const base = { mailboxes: [], emails: [{ id: 'email-1', threadId: 'thread-1', mailboxIds: { inbox: true as const }, keywords: {}, receivedAt: '2026-08-21T00:00:00.000Z' }], contactCards: [] }
     const projection = reduceLocalJmapProjection('did:web:alice.example', base, [
       { event: event({ id: 'event-init', kind: 'didcomm.control', targetIds: ['control-1'] }), plaintext: plaintext('didcomm.control', ['control-1'], {
         messageId: 'm-1', type: 'https://biset.md/relationship/1.0/init', senderKid: 'did:web:bob.example#k_b', recipientKid: 'did:web:alice.example#k_a',

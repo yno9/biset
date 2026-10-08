@@ -181,3 +181,69 @@ describe('did.md OAuth callback validation', () => {
     await clearDidMdPendingAuthorization()
   })
 })
+
+// PLAN-refactor.md §7-1: a sign-in offers a candidate relationship seed by its
+// rotation key (`ifAbsent`); the session keeps the seed only if the Wallet
+// published that key. A key already there (another device's) is not a failure.
+import { sealDidMdSecret } from '../src/client/identity/wallet/did-md-store.ts'
+import { approvedRotationSeed, ROTATION_SEED_CANDIDATE } from '../src/client/identity/wallet/did-md-oauth.ts'
+import { rotationKeyEditMethod, rotationSigningKey, ROTATION_KEY_FRAGMENT } from '../src/client/didcomm/rotation-key.ts'
+
+describe('the rotation key a sign-in offers', () => {
+  async function approve(options: { candidate: Uint8Array; mode: 'ifAbsent' | 'replace'; published?: Uint8Array; referenced?: boolean }) {
+    const rootPrivateKey = ed25519.utils.randomSecretKey()
+    const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
+    const published = options.published ? rotationSigningKey(options.published) : undefined
+    const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [], 'test.example', published ? {
+      rawVerificationMethods: [{ fragment: ROTATION_KEY_FRAGMENT.slice(1), publicKeyMultibase: published.publicKeyMultibase }],
+      authenticationFragments: options.referenced === false ? [] : [ROTATION_KEY_FRAGMENT.slice(1)],
+    } : {})
+    const registration = registrationFixture(FILE_CALLBACK_URL)
+    const documentEdit = { type: 'urn:did-core:document-edit:v1' as const, services: [], verificationMethods: [{ ...rotationKeyEditMethod(options.candidate, options.mode), controller: did }], remove: [] }
+    const pending = await pendingFixture({
+      clientId: registration.clientId, state: `rotation-${options.mode}`, did, verificationMethod: `${did}#key-1`, rootPublicKey, documentEdit,
+      rotationSeedCandidate: await sealDidMdSecret(ROTATION_SEED_CANDIDATE, options.candidate),
+    })
+    const unsignedVc = {
+      '@context': ['https://www.w3.org/ns/credentials/v2'], id: 'urn:uuid:33333333-3333-4333-8333-333333333333',
+      type: ['VerifiableCredential', 'biset.md/MessengerCapability'], issuer: did,
+      credentialSubject: { audience: registration.clientId, authorizationDetails: [documentEdit], deviceJkt: pending.deviceJkt, expiresAt: '2030-01-01T00:00:00.000Z', issuedAt: '2026-10-08T00:00:00.000Z', scope: ['biset:login', 'biset:device', 'biset:vault'] },
+    }
+    const vc = { ...unsignedVc, proof: buildProof(unsignedVc, { verificationMethod: `${did}#key-1`, proofPurpose: 'authentication', privateKey: rootPrivateKey }) }
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url === `${ISSUER}/.well-known/oauth-authorization-server`) return Response.json({ issuer: ISSUER, authorization_endpoint: registration.authorizationEndpoint, token_endpoint: registration.tokenEndpoint, registration_endpoint: registration.registrationEndpoint })
+      if (url === `${ISSUER}/v1/oauth/register/${encodeURIComponent(registration.clientId)}`) return Response.json({ client_id: registration.clientId, redirect_uris: [registration.redirectUri], scope: 'openid profile biset:login biset:device biset:routing biset:messaging biset:vault', token_endpoint_auth_method: 'none' })
+      if (url.split('?')[0] === didToHttpsUrl(did)) return new Response(log.map(entry => JSON.stringify(entry)).join('\n') + '\n')
+      return new Response('unexpected request', { status: 500 })
+    }) as typeof fetch
+    await saveDidMdRegistration(registration)
+    await saveDidMdPendingAuthorization(pending)
+    callbackLocation({ state: pending.state, iss: ISSUER, vp_token: JSON.stringify({ capability: [vc] }) }, FILE_CALLBACK_URL)
+    return completeDidMdWalletCallback()
+  }
+
+  test('its key published: the session keeps the seed until the Vault stores it', async () => {
+    const candidate = crypto.getRandomValues(new Uint8Array(32))
+    await approve({ candidate, mode: 'ifAbsent', published: candidate })
+    const approved = await approvedRotationSeed()
+    expect([...approved!.seed]).toEqual([...candidate])
+    await approved!.forget()
+    expect(await approvedRotationSeed()).toBeUndefined()
+  })
+
+  test('another device\'s key already there (ifAbsent): the sign-in succeeds, and keeps no seed', async () => {
+    await expect(approve({ candidate: crypto.getRandomValues(new Uint8Array(32)), mode: 'ifAbsent', published: crypto.getRandomValues(new Uint8Array(32)) })).resolves.toBeDefined()
+    expect(await approvedRotationSeed()).toBeUndefined()
+  })
+
+  test('a replacement the Wallet did not publish fails', async () => {
+    await expect(approve({ candidate: crypto.getRandomValues(new Uint8Array(32)), mode: 'replace', published: crypto.getRandomValues(new Uint8Array(32)) })).rejects.toThrow(`did not publish requested verification method ${ROTATION_KEY_FRAGMENT}`)
+  })
+
+  test('published but not referenced from authentication fails', async () => {
+    const candidate = crypto.getRandomValues(new Uint8Array(32))
+    await expect(approve({ candidate, mode: 'replace', published: candidate, referenced: false })).rejects.toThrow(`did not reference ${ROTATION_KEY_FRAGMENT} from authentication`)
+  })
+
+})

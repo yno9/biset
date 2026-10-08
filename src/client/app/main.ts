@@ -15,6 +15,8 @@ import {
   beginDidMdWalletDocumentEdit,
   beginDidMdWalletLogin,
   beginDidMdRemoveOtherDevices,
+  beginDidMdRotationKeyRenewal,
+  approvedRotationSeed,
   completeDidMdWalletCallback,
   disconnectDidMdWallet,
   openDidMdWalletBisetDidCommDevice,
@@ -47,6 +49,12 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { SenderKeyNotPublishedError } from '../../protocol/didcomm/webvh-resolve.ts'
 import { decodePeerDid2, publicKeyOf } from '../../protocol/didcomm/peer.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
+import { RelationshipSeedReader, RelationshipSeedSink, relationshipSeedRecord } from '../store/vault/relationship-seed.ts'
+import { createRelationshipSeedAuthority, type RelationshipSeedAuthority } from '../didcomm/relationship-seed-bootstrap.ts'
+import { publishedRotationKey, rotationSigningKey } from '../didcomm/rotation-key.ts'
+import { fetchCurrentLog, freshFetch } from '../identity/webvh/log-io.ts'
+import { entryVersionNumber } from '../../protocol/webvh/log.ts'
+import { equalBytes } from '../../protocol/canonical.ts'
 import { createWalletDidCommOutbox, type WalletDidCommOutbox } from '../identity/wallet/didcomm-outbox.ts'
 import { MarkdownDirectoryConnection, observeMarkdownDirectory, removeMarkdownMirrorFile, scanMarkdownProjection, writeMarkdownProjection, type MarkdownMirrorFile } from '../store/vault/markdown-directory.ts'
 import { MarkdownSelfWriteGuard, markdownStatusMutation } from '../store/vault/markdown-mirror.ts'
@@ -173,6 +181,25 @@ function didCommMediatorIngressEnvelope(
   }
 }
 
+/** Stores the seed a Wallet approval published the rotation key of (the
+ * approval's candidate, kept sealed in the session until the Vault is open)
+ * -- if the DID document still publishes that key and the Vault lacks it --
+ * and forgets the candidate either way. */
+async function storeApprovedRotationSeed(did: string, reader: RelationshipSeedReader, sink: RelationshipSeedSink, authority: RelationshipSeedAuthority): Promise<void> {
+  const approved = await approvedRotationSeed()
+  if (!approved) return
+  try {
+    const log = await fetchCurrentLog(did, freshFetch())
+    const published = publishedRotationKey(log.last.state as Parameters<typeof publishedRotationKey>[0])
+    const stored = (await reader.readAll()).some(value => equalBytes(value.seed, approved.seed))
+    if (published === rotationSigningKey(approved.seed).publicKeyMultibase && !stored) {
+      await sink.store(relationshipSeedRecord(did, approved.seed, entryVersionNumber(log.last.versionId)))
+      authority.refresh()
+    }
+    await approved.forget()
+  } finally { approved.seed.fill(0) }
+}
+
 async function configureWalletAccountIfPresent(
   callbackSession?: Awaited<ReturnType<typeof completeDidMdWalletCallback>>,
 ): Promise<boolean> {
@@ -190,6 +217,8 @@ async function configureWalletAccountIfPresent(
   let didComm: { xKid: string; mediatorUrl: string; error?: string } | undefined
   let activeDidCommDevice: { did: string; xKid: string; x25519PrivateKey: Uint8Array; mediatorDeviceSecret: Uint8Array } | undefined
   let walletDidCommOutbox: WalletDidCommOutbox | undefined
+  // Set when the identity's rotation key needs a Wallet approval (account page).
+  let rotationKeyState: 'unpublished' | 'lost' | 'stale' | undefined
   let exportMessages: (() => Promise<void>) | undefined
   let importMessages: (() => Promise<void>) | undefined
   try {
@@ -291,6 +320,19 @@ async function configureWalletAccountIfPresent(
     // A group conversation is whatever its messages say (group-chat.ts):
     // its participants are those of its latest message.
     const walletGroupConversation = async (thid: string) => groupConversation(thid, (await readModel.snapshot()).emails)
+    // The relationship seed: Vault records, read and written like every
+    // other private credential, and carried to siblings by Vault Sync.
+    const walletSeedReader = new RelationshipSeedReader({ identityId: device.did, objects: vaultStore, events: vaultStore, segmentKeys: boundary.resolver })
+    const walletSeedSink = new RelationshipSeedSink({
+      identityId: device.did, actorDeviceId: device.deviceId,
+      nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(),
+      activeSegment: () => boundary.activeSegment(), currentSnapshot: () => readModel.snapshot(),
+      signer: boundary.author, committer: vaultStore,
+      onCommitted: async event => {
+        deviceEvents.push({ ...event, identityId: device.did })
+        if (vaultSync) await vaultSync.push([event])
+      },
+    })
     // The Wallet branch returns before the ordinary local-identity boot
     // path, which normally loads this projection.  Restore the existing
     // local inbox before rendering so a page reload never looks like it
@@ -371,6 +413,24 @@ async function configureWalletAccountIfPresent(
         // A fresh browser and a long-idle browser use the same pull route:
         // ask every sibling (one message to this identity's own DID) what
         // this device's state lacks.
+        // The seed's authority is the DID document (PLAN-refactor.md §4.2).
+        // A seed a Wallet approval just published is stored in the Vault here,
+        // where it reaches every sibling; the account page offers a renewal
+        // when the document's key needs one.
+        const seedAuthority = createRelationshipSeedAuthority({
+          ownKid: didCommDevice.xKid,
+          seeds: walletSeedReader,
+          readLog: async () => (await fetchCurrentLog(device.did, freshFetch())).entries,
+        })
+        await storeApprovedRotationSeed(device.did, walletSeedReader, walletSeedSink, seedAuthority)
+          .catch(error => console.warn('[did.md Wallet relationship seed]', error instanceof Error ? error.message : error))
+        try {
+          const status = await seedAuthority.status()
+          if (status.state === 'unpublished' || status.state === 'lost' || status.state === 'stale') rotationKeyState = status.state
+          else if (status.state === 'pending') console.info('[did.md Wallet] waiting for the relationship seed from another device')
+        } catch (error) {
+          console.warn('[did.md Wallet relationship seed status]', error instanceof Error ? error.message : error)
+        }
         void vaultSync.requestState()
           .catch(error => console.warn('[did.md Wallet Vault Sync bootstrap]', error instanceof Error ? error.message : error))
         // Enrollment alone only lets the mediator queue messages.  Open the
@@ -681,6 +741,7 @@ async function configureWalletAccountIfPresent(
     },
     vault,
     onRemoveOtherDevices: async () => beginDidMdRemoveOtherDevices(readBisetConfig()),
+    ...(rotationKeyState ? { rotationKey: { state: rotationKeyState, onRenew: async () => beginDidMdRotationKeyRenewal(readBisetConfig()) } } : {}),
     showMessage: showSysMsg,
   })
   return true

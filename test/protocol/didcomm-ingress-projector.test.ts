@@ -65,7 +65,7 @@ function buildProjector(alreadyProcessed = autoMarkingAlreadyProcessed()) {
     async nextActorSeq() { return 1 },
     async initialParents() { return [] },
     activeSegment: segmentFor,
-    async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [] } },
+    async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [], contactCards: [] } },
     signer,
     now: () => new Date('2026-08-25T00:01:00.000Z'),
   })
@@ -177,7 +177,7 @@ describe('DIDComm ingress projector', () => {
       async nextActorSeq() { return 1 },
       async initialParents() { return [] },
       activeSegment: segmentFor,
-      async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [] } },
+      async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [], contactCards: [] } },
       signer: { ...signer, deviceId: wrongDeviceKid },
     })
     await expect(projector.verifyAndProject(envelope)).rejects.toThrow(/recipient kids .* is available/)
@@ -206,7 +206,7 @@ describe('DIDComm ingress projector', () => {
       async nextActorSeq() { return 1 },
       async initialParents() { return [] },
       activeSegment: segmentFor,
-      async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [] } },
+      async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [], contactCards: [] } },
       signer: { ...signer, deviceId: wrongDeviceKid },
     })
     await expect(wrongProjector.verifyAndProject(envelope)).rejects.toThrow()
@@ -243,7 +243,7 @@ describe('DIDComm ingress projector', () => {
       async nextActorSeq() { return 1 },
       async initialParents() { return [] },
       activeSegment: segmentFor,
-      async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [] } },
+      async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [], contactCards: [] } },
       signer,
     })
     const result = await projector.verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))

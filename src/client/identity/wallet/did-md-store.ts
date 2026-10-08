@@ -67,14 +67,23 @@ export type DidMdPendingAuthorization = {
     xKid: string
   }
   mediatorPreRegistered?: boolean
+  /** A relationship seed this request offers the Wallet, by its rotation
+   * key (`documentEdit` carries the key): it becomes the identity's seed if
+   * the Wallet publishes that key (client/didcomm/rotation-key.ts). */
+  rotationSeedCandidate?: DidMdSealedSecret
   createdAt: string
 }
+
+/** A secret only this browser can open: sealed under its non-extractable
+ * wrapping key, bound to what it is (`label`). */
+export type DidMdSealedSecret = { v: 1; label: string; sealed: { iv: Uint8Array; ciphertext: Uint8Array } }
 
 /** `endpointMode: 'merge'` adds the service's endpoints to the ones already published instead of replacing the whole service (did.md Wallet's document-edit contract). */
 type DidCoreService = { id: string; type: string; serviceEndpoint: string | Record<string, unknown> | Array<string | Record<string, unknown>>; endpointMode?: 'replace' | 'merge' }
 /** Removes, from one service, the endpoints whose properties equal every entry of `match`. */
 export type DidCoreEndpointRemoval = { serviceId: string; match: Record<string, unknown> }
-type DidCoreVerificationMethod = { id: string; type: string; controller: string; publicKeyMultibase: string }
+/** `relationships` and `mode` say how the Wallet adds the method (did.md's document-edit contract); neither is published with it. */
+type DidCoreVerificationMethod = { id: string; type: string; controller: string; publicKeyMultibase: string; relationships?: Array<'authentication' | 'assertionMethod' | 'keyAgreement' | 'capabilityInvocation' | 'capabilityDelegation'>; mode?: 'replace' | 'ifAbsent' }
 export type DidCoreDocumentEdit = {
   type: 'urn:did-core:document-edit:v1'
   services: DidCoreService[]
@@ -132,6 +141,10 @@ export type DidMdDeviceSession = {
     mediatorOnionUrl?: string
     xKid: string
   }
+  /** The relationship seed the Wallet published the rotation key of, in the
+   * approval that made this session, until this device has stored it in its
+   * Vault (which happens at boot, once the Vault is open). */
+  rotationSeed?: DidMdSealedSecret
 }
 
 const DB_NAME = 'biset-did-md-wallet'
@@ -233,6 +246,30 @@ export async function openDidMdBisetDidCommDeviceMaterial(value: DidMdBisetDidCo
   const privateMaterial = { x25519PrivateKey: new Uint8Array(input.x25519PrivateKey), mediatorDeviceSecret: new Uint8Array(input.mediatorDeviceSecret) }
   assertDidCommPrivateMaterial(privateMaterial)
   return privateMaterial
+}
+
+/** Seals `secret` (`label` says what it is) under this browser's wrapping key. */
+export async function sealDidMdSecret(label: string, secret: Uint8Array): Promise<DidMdSealedSecret> {
+  const key = await materialWrappingKey()
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: secretAad(label) }, key, secret.slice()))
+  return { v: 1, label, sealed: { iv, ciphertext } }
+}
+
+/** Opens a secret sealed as `label`; throws for any other label or browser. */
+export async function openDidMdSecret(value: DidMdSealedSecret, label: string): Promise<Uint8Array> {
+  if (value?.v !== 1 || value.label !== label || !(value.sealed?.iv instanceof Uint8Array) || !(value.sealed?.ciphertext instanceof Uint8Array)) throw new TypeError(`sealed ${label} is invalid`)
+  const key = await materialWrappingKey()
+  try {
+    const iv = new Uint8Array(value.sealed.iv.length); iv.set(value.sealed.iv)
+    const ciphertext = new Uint8Array(value.sealed.ciphertext.length); ciphertext.set(value.sealed.ciphertext)
+    return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: secretAad(label) }, key, ciphertext))
+  } catch { throw new Error(`sealed ${label} could not be decrypted on this browser`) }
+}
+
+function secretAad(label: string): ArrayBuffer {
+  const bytes = new TextEncoder().encode(JSON.stringify({ label: 'biset/did-md/sealed-secret/v1', of: label }))
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 }
 
 function didCommMaterialAad(x25519PublicKey: Uint8Array): ArrayBuffer {

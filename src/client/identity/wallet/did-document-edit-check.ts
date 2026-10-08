@@ -14,7 +14,7 @@ export type EndpointRemoval = { serviceId: string; match: Record<string, unknown
 const endpoints = (value: Endpoint | Endpoint[] | undefined): Endpoint[] => value === undefined ? [] : Array.isArray(value) ? value : [value]
 
 /** JSON with object keys sorted, so two documents that differ only in key order compare equal. */
-function canonical(value: unknown): string {
+export function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(',')}}`
   return JSON.stringify(value) ?? 'null'
