@@ -295,10 +295,13 @@ export function counterpartyOfRotatedDid(cards: readonly LocalJmapContactCard[],
   return undefined
 }
 
-/** The public DID a card was made for (its DIDComm online service). */
+/** The public DID of a card: its `didcomm` online service (what biset writes),
+ * else the first online service whose uri is a DID (a card written by hand). */
 export function publicDidOf(card: LocalJmapContactCard): string | undefined {
-  const service = isObject(card.onlineServices) ? card.onlineServices.didcomm : undefined
-  return isObject(service) && typeof service.uri === 'string' ? service.uri : undefined
+  if (!isObject(card.onlineServices)) return undefined
+  const services = [card.onlineServices.didcomm, ...Object.entries(card.onlineServices).filter(([key]) => key !== 'didcomm').sort(([a], [b]) => a.localeCompare(b)).map(([, service]) => service)]
+  for (const service of services) if (isObject(service) && typeof service.uri === 'string' && service.uri.startsWith('did:')) return service.uri
+  return undefined
 }
 
 const state = (path: string) => `${pointerToken(DIDCOMM_CONTACT_PROPERTY)}/${path}`

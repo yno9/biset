@@ -115,7 +115,12 @@ export function reduceLocalJmapProjection(
       // A PatchObject on one card, applied in this fold's event order, so
       // every device reaches the same card (contacts.ts).
       const payload = assertContactSetPayload(mutation.payload, emailId)
-      const card = applyContactSet(contactCards.get(payload.cardId), payload)
+      // Two devices editing at once can make a patch that no longer fits the
+      // card it lands on (one removed an email, the other set its label).
+      // Such a patch is skipped -- the same one on every device, since the
+      // order is the same -- rather than stopping the whole fold.
+      let card: LocalJmapContactCard | undefined
+      try { card = applyContactSet(contactCards.get(payload.cardId), payload) } catch { continue }
       if (card) contactCards.set(card.id, card)
       else contactCards.delete(payload.cardId)
       continue

@@ -1,7 +1,7 @@
 # Biset アーキテクチャ
 
 > 調査基準日: 2026-10-08（Asia/Tokyo）
-> 調査対象: `~/biset` の作業ツリー（HEAD `e7585dc` ＋ P5 の整理）。
+> 調査対象: `~/biset` の作業ツリー（HEAD `5f4d286` ＋ 2026-10-08 の再点検での修正）。本番の app は `5f4d286` のビルド（2026-10-08 05:55 UTC に配備、配信物の sha256 が手元と一致）。
 >
 > 2026-10-03 版を、`PLAN-refactor.md`（relationship を front door ＋ DID Rotation に置き換える、P0〜P5）と連絡先リスト（JMAP for Contacts、C1〜C3）に合わせて書き直した。
 > 変わった点は §1.4（2026-10-02 版から）と §1.5（2026-10-03 版から）にまとめた。方針は「現行コードを正とする」。将来案・廃止予定は、現行の事実と混ぜずに明示する。
@@ -50,7 +50,7 @@
 
 ### 1.3 本番との関係
 
-本書が記述するコードは、**全利用者が再ログインすることを前提に**デプロイされる（§15.4）。
+本書が記述するコードは、**全利用者が再ログインすることを前提に**デプロイされる（§15.4）。2026-10-08 に app を配備した（再点検での修正は未配備、§15.4）。
 mediator の登録の形（受信箱が DID × 端末になった）、Vault の IndexedDB（v15）、wallet セッションの形（VCK・関係秘密・MLS 証明書が消えた）が、いずれも互換性を持たない。
 後方互換は持たない方針である（本番のデータはすべてテスト用）。
 
@@ -353,7 +353,7 @@ local mutation・ingress commit・Vault Sync の受信適用は、record・proje
 
 **連絡先**（JMAP for Contacts、RFC 9610。`client/store/projection/contacts.ts`、`PLAN-refactor.md` §12）: projection は email と並べて `contactCards`（JSContact の Card、RFC 9553）を持つ。
 住所録は既定の 1 冊（`AddressBook` の id `default`）。`contact.set` は 1 枚の Card への PatchObject（RFC 8620 §5.3）か削除で、target は `contact:<id>`（email の id と混ざらない）。
-reducer が event の順に当てるので、どの端末でも同じ Card になる（項目ごとの後勝ち）。Card の id は `uid` から導く。公開 DID の Card の `uid` はその DID の名前ベース UUID（v5）。
+reducer が event の順に当てるので、どの端末でも同じ Card になる（項目ごとの後勝ち）。当てると Card が不正になる差分（2 台が同時に編集した結果。片方が消した項目に、もう片方が中身を書くなど）は、全端末で同じように読み飛ばし、再構築を止めない。Card の id は `uid` から導く。公開 DID の Card の `uid` はその DID の名前ベース UUID（v5）。
 DIDComm の経路の状態は独自のプロパティ `biset.md:didcomm`（相手の移動先 `rotations`、自分の移動 `own`）で、書くのは受信の処理だけ。JMAP の `ContactCard/set` と export の import からは書けない。
 gateway は `AddressBook/get`、`ContactCard/get`・`/query`・`/set` と capability `urn:ietf:params:jmap:contacts` を持つ。export／import（§8.2）も Card を運ぶ。
 
@@ -410,8 +410,8 @@ front door は、会話の始まり、Vault Sync、メールの送受信に使�
 INIT/ACCEPT の握手は無い（P0 で撤去）。
 - **経路**（`did-rotation.ts` の `chooseRoute`、1:1・group・応答の全部がこれを通る）: 宛先は相手の連絡先の `rotations` のうち最新の DID、無ければ公開 DID。
   送り元は、自分の移動を始めていれば Y、そうでなければ端末の front door の鍵。Y からは、相手が Y に書いてくるまで `from_prior`（`iss` = 公開 DID、seed の署名鍵）を付ける。
-  seed が使えない端末（届く前など）は front door から送る。
-- **移るかどうか**: Discover Features 2.0 で `header` の `from_prior` を問い合わせる（相手へ初めて送った後、または相手から届いた後、セッションごとに 1 回）。biset 自身も応答する。
+  seed が使えない端末（届く前など）や、公開 DID Document の `#didcomm` が mediator を DID でなく URL で指す identity（Y に埋められない）は、front door から送る。
+- **移るかどうか**: Discover Features 2.0 で `header` の `from_prior` を問い合わせる（相手へ初めて送った後、または相手から届いた後、セッションごとに 1 回）。biset 自身も応答する。送り主を認証しない（anoncrypt の）Discover Features には応答も処理もしない。
   対応を表明した相手には、Y の受信箱を mediator に登録してから、連絡先に `own.<Y>.startedAt` を書き、Y から `from_prior` 付きの ping を送る。相手が Y に書いてきたら `confirmedAt`。
   相手が `from_prior` 付きで来たら、こちらも移る。
 - **Y**: seed と相手の公開 DID から導く did:peer:2（`deriveRelationshipPeerIdentity`）。service の `uri` は公開 DID Document の `#didcomm` の mediator（`did:web`）。どの端末でも同じ Y になる。
@@ -612,6 +612,8 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 5. **dedupe の lookup が未接続（中）**。
 6. **端末を外した直後の窓（中、原理的）**。相手が did.md の CDN の古い DID 文書を読む最大 30 秒は、外された端末を正規の端末とみなしうる。
    DID Rotation で移っていた相手については、相手が新しい移動を処理するまで、外された端末は古い Y で読み書きできる（§9.2）。
+8. **移動済みの相手の連絡先を消すと、その相手の did:peer が分からなくなる（中）**。JMAP の `ContactCard/destroy`（や `onlineServices` の書き換え）で `biset.md:didcomm` も消える。
+   相手は `from_prior` を付けずに did:peer から送り続けるので、そのメッセージは保留されたまま mediator の保持期間（30 日）で消える。相手が次に移るか、こちらが移り直すまで戻らない。対処は未決（§17-14）。
 7. **onion の rate limit 共有（中、Tor 実運用まで）**（§9.8）。
 8. **メール**: DKIM 未設定、送信状態の確定が未完、outbox の自動再送が無い（§10.3）。
 9. **No background／push（運用）**。ページが閉じている間は同期しない。
@@ -652,7 +654,10 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - `didcomm-mediator` は入れ替え後に、本番に対してスモークテスト（`scripts/didcomm-mediator-smoke.ts`、git 追跡外）を流す。
 - `smtp`／`ap` は biset repo の外の relay（Rust／Go）を配る。
 
-### 15.4 2026-10-08 のデプロイの前提（`PLAN-refactor.md` P0〜P5）
+### 15.4 2026-10-08 のデプロイ（`PLAN-refactor.md` P0〜P5）
+**app は 2026-10-08 に配備済み**（`5f4d286` のビルド。配信物の sha256 が手元の `dist/index.html` と一致）。
+同日の再点検での修正 4 件（`PLAN-refactor.md` §11 の「再点検」、ARC では §7.3・§9.2 に反映）は**未配備**で、`./deploy.sh app` で配る。版の混在の問題は無い（event の種類も形も変えていない）。
+
 **版の混在を想定しない**（後方互換を持たない方針）。手順は `PLAN-refactor.md` §13。
 - did.md（文書編集の拡張、`#pass-1` に限るログイン）は P1 で配備済み。mediator（`did:web`、上限、egress の制限）は 2026-10-07 に配備済み。
 - app を入れ替え、**全端末で Vault を消して再ログインする**（新しい event の種類 `contact.set` を、古い版の端末は読めない）。
@@ -668,9 +673,9 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 | `bun run typecheck`（root ＋ mediator／mail-plugin／mail-relay／mimi／rp-signer） | ✅ すべて成功 |
 | `bun run knip` | ✅ 成功 |
 | `bun run reachability` | 本番の入口から 164／266 を到達、**テストのみ 23**（MLS／MIMI のクライアント側、`manifest.ts`、identity の fixture 用モジュールなど）、**どこからも到達しない 0** |
-| `bun run test` | ✅ **108 ファイル、642 件成功、失敗 0**（MLS の 2 ファイルは件数を出さない形式で、別に全成功） |
+| `bun run test` | ✅ **108 ファイル、645 件成功、失敗 0**（MLS の 2 ファイルは件数を出さない形式で、別に全成功） |
 | `bun run check`（上の 4 つ） | ✅ 成功 |
-| `bun run build` | ✅ `app.js` 約 580 KB、`sw.js` 183 B、`index.html` 約 720 KB |
+| `bun run build` | ✅ `app.js` 約 580 KB、`sw.js` 183 B、`index.html` 約 690 KB |
 
 テストは、canonical protocol、Vault の store、Vault Sync、VaultProjector、JMAP export／import、Markdown ミラー、
 DIDComm の crypto（DIF のテストベクタを含む）／multi-device 配送／mediator（HTTP と WebSocket、本物の Bun サーバーでの upgrade を含む）／seed と rotation key／`from_prior`／DID Rotation（本物の mediator を通す Y 宛ての配送を含む）／連絡先（JMAP for Contacts）／group、
@@ -700,6 +705,9 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
     `cache: "no-store"` だけで CDN を避けるクエリを付けていない。直前の承認から 30 秒以内に次の承認をすると、古い版を土台にエントリを作り、
     サーバーに `version 'N' in log doesn't match expected 'N+1'` で拒否される（2026-10-03 に実機で起きた）。30 秒待てば通る。
     同じリポジトリの `host.ts` の `fetchOk` は CDN を避けている。手元の `~/did.md` には承認画面の DID 編集の処理が見当たらず、本番の Wallet のソースの所在は未確認。
+14. **移動済みの相手の連絡先の削除**（§14.2-8）: 案は (a) `biset.md:didcomm` のある Card の削除と `onlineServices` の DIDComm の項目の書き換えを `forbidden` にする、
+   (b) 削除しても DIDComm の状態だけは別に残す（JMAP からは見えない）、(c) 消えたら次の受信で相手に移り直しを求める。未決。
+15. **seed の権威の読み直しが頻繁**: 経路を選ぶたび（送信 1 件ごと、受信 1 件ごと）に、seed の record を Vault から復号して読み直す（ログは 60 秒キャッシュ）。量が増えたら端末内のキャッシュが要る。
 
 ## 18. 実装状態の総括
 

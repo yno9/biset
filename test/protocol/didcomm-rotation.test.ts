@@ -206,6 +206,16 @@ describe('the rotation manager', () => {
     expect(sent).toEqual([{ toDid: bob.did, type: DISCOVER_FEATURES_DISCLOSE, body: { disclosures: [{ 'feature-type': 'protocol', id: 'https://didcomm.org/basicmessage/2.0' }, { 'feature-type': 'header', id: 'from_prior' }] }, options: expect.objectContaining({ fromKid: alice.kid, thid: query.id }) }])
   })
 
+  test('ignores a Discover Features message whose sender is not authenticated (anoncrypt)', async () => {
+    const { value, sent, watched } = manager()
+    const query = buildPlaintext(DISCOVER_FEATURES_QUERIES, { queries: [{ 'feature-type': 'header', match: 'from_prior' }] }, bob.did, alice.did)
+    expect(await value.handleDiscoverFeatures(query, 'anoncrypt', alice.kid)).toBe(true)
+    const disclose = buildPlaintext(DISCOVER_FEATURES_DISCLOSE, { disclosures: [{ 'feature-type': 'header', id: 'from_prior' }] }, bob.did, alice.did)
+    expect(await value.handleDiscoverFeatures(disclose, 'anoncrypt', alice.kid)).toBe(true)
+    expect(sent).toEqual([])
+    expect(watched).toEqual([])
+  })
+
   test('asks once per counterparty, and a disclosure of from_prior starts the move: inbox first, then the card, then a ping from Y', async () => {
     const { value, sent, watched, cards: current } = manager()
     await value.offer(bob.did)

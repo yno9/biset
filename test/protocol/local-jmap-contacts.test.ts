@@ -6,7 +6,7 @@ import { canonicalBytes, equalBytes } from '../../src/protocol/canonical.ts'
 import type { VaultEventV1 } from '../../src/protocol/vault.ts'
 import { reduceLocalJmapProjection } from '../../src/client/store/projection/reducer.ts'
 import {
-  assertContactSetPayload, contactCardId, contactTargetId, creatingPatch, DIDCOMM_CONTACT_PROPERTY, didContactUid, type ContactSetPayload, type LocalJmapContactCard,
+  assertContactSetPayload, contactCardId, publicDidOf, contactTargetId, creatingPatch, DIDCOMM_CONTACT_PROPERTY, didContactUid, type ContactSetPayload, type LocalJmapContactCard,
 } from '../../src/client/store/projection/contacts.ts'
 import { LocalJmapGateway, LocalJmapTransport, type LocalJmapReadModel, type LocalJmapSnapshot } from '../../src/client/store/projection/gateway.ts'
 import { VaultBackedLocalJmapMutationSink } from '../../src/client/store/projection/vault-mutation-sink.ts'
@@ -72,6 +72,22 @@ describe('contact.set in the reducer', () => {
     const destroyed = [record({ cardId: bobId, patch: bobCard() }, '2026-10-08T00:00:00Z'), record({ cardId: bobId, destroy: true }, '2026-10-08T00:01:00Z')]
     expect(fold([...destroyed, record({ cardId: bobId, patch: { name: { full: 'Bob' } } }, '2026-10-08T00:02:00Z')])).toEqual([])
     expect(fold([...destroyed, record({ cardId: bobId, patch: bobCard() }, '2026-10-08T00:02:00Z')])).toHaveLength(1)
+  })
+
+  test('a patch that no longer fits the card it lands on (two devices editing at once) is skipped, the same on every device, not fatal', () => {
+    const cards = fold([
+      record({ cardId: bobId, patch: bobCard({ emails: { e1: { address: 'bob@example.com' } } }) }, '2026-10-08T00:00:00Z'),
+      record({ cardId: bobId, patch: { 'emails/e1': null } }, '2026-10-08T00:01:00Z', 'a'),
+      record({ cardId: bobId, patch: { 'emails/e1/label': 'work' } }, '2026-10-08T00:01:30Z', 'b'),
+      record({ cardId: bobId, patch: { name: { full: 'Bob' } } }, '2026-10-08T00:02:00Z', 'a'),
+    ])
+    expect(cards[0]!.emails).toEqual({})
+    expect(cards[0]!.name).toEqual({ full: 'Bob' })
+  })
+
+  test('the public DID of a card written by hand is any online service whose uri is a DID', () => {
+    const card = { ...fold([record({ cardId: bobId, patch: bobCard() }, '2026-10-08T00:00:00Z')])[0]!, onlineServices: { web: { uri: 'https://bob.example' }, x1: { uri: BOB } } }
+    expect(publicDidOf(card as LocalJmapContactCard)).toBe(BOB)
   })
 
   test('refuses a payload that would change a card\'s id or uid, or names another target', () => {

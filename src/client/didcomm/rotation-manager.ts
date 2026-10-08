@@ -177,6 +177,9 @@ export function createRotationManager(options: RotationManagerOptions): Rotation
 
     async handleDiscoverFeatures(msg, senderKid, recipientKid) {
       if (!isDiscoverFeatures(msg)) return false
+      // Only from an authenticated sender: an anoncrypt `from` is a claim
+      // anyone can make, and answering it would send to whoever is named.
+      if (!senderKid.includes('#') || didOfKid(senderKid) !== msg.from) return true
       const disclosures = disclosuresFor(msg)
       if (disclosures) {
         // Answered from the key it reached, to whoever asked.

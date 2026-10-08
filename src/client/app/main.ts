@@ -449,8 +449,11 @@ async function configureWalletAccountIfPresent(
         let ownMediatorDid: Promise<string | undefined> | undefined
         const mediatorDidOfDocument = () => ownMediatorDid ??= resolveWebvh(device.did, undefined, freshFetch())
           .then(document => {
+            // Only a mediator named by DID: Y cannot embed a URL without the
+            // mediator's routing key, or what is sent to Y would not be
+            // Forward-wrapped and the mediator could not open it.
             const uri = document ? didCommRouteFromDocument(document).endpoint?.uri : undefined
-            return typeof uri === 'string' && uri ? uri : undefined
+            return typeof uri === 'string' && uri.startsWith('did:') ? uri : undefined
           })
           .catch(error => { ownMediatorDid = undefined; throw error })
         const rotationManager: RotationManager = createRotationManager({
