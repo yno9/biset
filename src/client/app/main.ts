@@ -271,10 +271,10 @@ async function configureWalletAccountIfPresent(
       // and the user confirms what it claims before anything is committed;
       // every message it adds is marked $imported.
       if (file.identityId !== device.did) throw new Error('This export belongs to another account')
-      if (!confirm(`Import ${file.emails.length} messages exported from this account on ${new Date(file.exportedAt).toLocaleString()}? Messages it adds are marked as imported.`)) return
+      if (!confirm(`Import ${file.emails.length} messages and ${file.contactCards?.length ?? 0} contacts exported from this account on ${new Date(file.exportedAt).toLocaleString()}? Messages it adds are marked as imported.`)) return
       const result = await importJmapExport(file, { identityId: device.did, actorDeviceId: device.deviceId, snapshot: await readModel.snapshot(), events: await vaultStore.readVaultEvents(device.did), nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(), activeSegment: () => boundary.activeSegment(), signer: boundary.author, commit: records => vaultStore.commitIncomingRecords(records) })
       if (result.events.length) { await vaultProjector.recomputeEmails(device.did, result.events.flatMap(event => event.targetIds)); if (vaultSync) await vaultSync.push(result.events); await refreshInbox(readModel) }
-      showSysMsg(`Import: ${result.added} added, ${result.skipped} skipped, ${result.excluded} excluded, ${result.missingBodies} missing bodies`)
+      showSysMsg(`Import: ${result.added} added, ${result.skipped} skipped, ${result.excluded} excluded, ${result.missingBodies} missing bodies; contacts ${result.contactsAdded} added, ${result.contactsUpdated} updated`)
     }
     const markdownDirectories = await MarkdownDirectoryConnection.open()
     const markdownGuard = new MarkdownSelfWriteGuard()

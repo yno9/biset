@@ -32,7 +32,7 @@ export const DIDCOMM_CONTACT_PROPERTY = 'biset.md:didcomm'
 /** The one address book (§12.2: more than one is for later). */
 const DEFAULT_ADDRESS_BOOK_ID = 'default'
 
-interface LocalJmapAddressBook {
+export interface LocalJmapAddressBook {
   id: string
   name: string
   description: string | null
@@ -43,7 +43,7 @@ interface LocalJmapAddressBook {
   myRights: { mayRead: boolean; mayWrite: boolean; mayShare: boolean; mayDelete: boolean }
 }
 
-const DEFAULT_ADDRESS_BOOK: LocalJmapAddressBook = {
+export const DEFAULT_ADDRESS_BOOK: LocalJmapAddressBook = {
   id: DEFAULT_ADDRESS_BOOK_ID, name: 'Contacts', description: null, sortOrder: 0, isDefault: true, isSubscribed: true, shareWith: null,
   myRights: { mayRead: true, mayWrite: true, mayShare: false, mayDelete: false },
 }
@@ -161,7 +161,7 @@ function pointer(path: string): string[] {
 }
 
 /** Escapes one property name as a JSON pointer token. */
-function pointerToken(name: string): string { return name.replace(/~/g, '~0').replace(/\//g, '~1') }
+export function pointerToken(name: string): string { return name.replace(/~/g, '~0').replace(/\//g, '~1') }
 
 function assertPatchShape(patch: unknown): ContactPatch {
   if (!isObject(patch) || Object.keys(patch).length === 0) throw new TypeError('contact patch must be a non-empty object')
