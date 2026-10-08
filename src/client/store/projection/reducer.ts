@@ -121,9 +121,9 @@ export function reduceLocalJmapProjection(
       continue
     }
     if (mutation.kind === 'contact-key.set') {
-      // Deliberately a no-op for the read-model: private per-counterparty
-      // DIDComm relationship credentials are read directly from encrypted
-      // vault events and never become mail or mailbox state.
+      // Retired with the relationship handshake (PLAN-refactor.md §9.1): an
+      // old Vault still holds these; the rule stays so they never stop a
+      // rebuild. Contacts are `contact.set` now.
       continue
     }
     if (mutation.kind === 'credential.openpgp.set') {

@@ -1,5 +1,5 @@
 // One generic implementation of the vault's private-credential read and
-// write paths. The credential families (contact-key, relationship-seed,
+// write paths. The credential families (relationship-seed,
 // openpgp-credential) differ only in their event kind, their record codec,
 // and the noun used in error messages -- everything else (event
 // verification, segment key resolution and zeroing, the atomic local
@@ -117,34 +117,6 @@ export function readableCredential<T>(label: string, eventId: string, assert: ()
 }
 
 const reportedUnreadable = new Set<string>()
-
-export interface SelectUnsupersededSpec<T> {
-  kidOf(value: T): string
-  supersededKidOf(value: T): string | undefined
-  duplicateMessage: string
-  ambiguousMessage: string
-}
-
-/**
- * Selects the one record no other record supersedes. If two were
- * introduced independently (e.g. two devices raced to mint one before either
- * had synced the other's), fail closed and require an explicit rotation
- * decision instead of silently picking one by local clock order.
- */
-export function selectUnsuperseded<T>(values: readonly T[], spec: SelectUnsupersededSpec<T>): T {
-  const byKid = new Map<string, T>()
-  const superseded = new Set<string>()
-  for (const value of values) {
-    const kid = spec.kidOf(value)
-    if (byKid.has(kid)) throw new TypeError(spec.duplicateMessage)
-    byKid.set(kid, value)
-    const supersedes = spec.supersededKidOf(value)
-    if (supersedes) superseded.add(supersedes)
-  }
-  const current = values.filter(value => !superseded.has(spec.kidOf(value)))
-  if (current.length !== 1) throw new Error(spec.ambiguousMessage)
-  return current[0]!
-}
 
 export interface VaultCredentialSinkOptions {
   identityId: IdentityId

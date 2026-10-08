@@ -1,10 +1,10 @@
 # Biset アーキテクチャ
 
-> 調査基準日: 2026-10-03（Asia/Tokyo）
-> 調査対象: `~/biset` の作業ツリー（HEAD `59f6195` ＋ 未コミットの変更：relationship の乗り換えの再設計と、その後の本番での修正）。
+> 調査基準日: 2026-10-08（Asia/Tokyo）
+> 調査対象: `~/biset` の作業ツリー（HEAD `e7585dc` ＋ P5 の整理）。
 >
-> 2026-10-02 版を、DIDComm／Vault Sync の仕様準拠作業（P0・P1、P2 の一部）に合わせて書き直した。
-> 変わった点は §1.4 にまとめた。方針は「現行コードを正とする」。将来案・廃止予定は、現行の事実と混ぜずに明示する。
+> 2026-10-03 版を、`PLAN-refactor.md`（relationship を front door ＋ DID Rotation に置き換える、P0〜P5）と連絡先リスト（JMAP for Contacts、C1〜C3）に合わせて書き直した。
+> 変わった点は §1.4（2026-10-02 版から）と §1.5（2026-10-03 版から）にまとめた。方針は「現行コードを正とする」。将来案・廃止予定は、現行の事実と混ぜずに明示する。
 
 ## 0. 要約
 
@@ -54,9 +54,8 @@
 mediator の登録の形（受信箱が DID × 端末になった）、Vault の IndexedDB（v15）、wallet セッションの形（VCK・関係秘密・MLS 証明書が消えた）が、いずれも互換性を持たない。
 後方互換は持たない方針である（本番のデータはすべてテスト用）。
 
-- Vault に残る旧形式の credential（`afterVersion` の無い relationship seed、`seedId` の無い ContactKey）は、**無いものとして読み飛ばす**（§7.1）。
-  seed は担当の端末が作り直し（§6）、relationship は次の送信で初回の INIT から作り直される（§9.2）。旧 relationship の受信箱に残っていた分は届かない。
-- **新旧の app は relationship を作れない**。新しい版は ACCEPT を front door で送り、did:peer からの ACCEPT を拒否する（§9.2）。
+- Vault に残る退役した record（relationship の `contact-key.set`、`didcomm.control` の INIT/ACCEPT の記録）は、**読まずに残す**。再構築は止めない（§7.1、`PLAN-refactor.md` §9.1）。
+- **版の混在は想定しない**（§15.4）。新しい event の種類 `contact.set` を古い版の端末が受け取ると、その端末の再構築が止まる。デプロイでは全端末を更新し、Vault を消す。
   開いたままのタブは古いコードで動き続けるので、デプロイ後は全端末でリロードが要る。
 
 ### 1.4 2026-10-02 版から変わったこと
@@ -66,10 +65,10 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 | 端末集合 | DID Document の verificationMethod ＋ Vault 鍵の世代（`#biset-vault`） | **`keyAgreement` だけ**。世代の概念は撤去（§5.6） |
 | 送信の暗号化 | 受信者の 1 鍵（「先頭の keyAgreement」） | **全 keyAgreement 鍵への multiplexed encryption**。`apv` は仕様どおり（§9.6） |
 | mediator の受信箱 | recipient kid ごと。所有の証明なし | **(DID, 端末ラベル) ごと**。登録は DID 自身の鍵からの authcrypt に限る。1 DID 最大 3 端末（§11.1） |
-| 関係（relationship）の鍵 | wallet が導出する「関係秘密」から決定論的に導出 | **Vault に置く relationship seed**から導出。誰が作るか・いつ古くなるかは DID ログで決まる（§6） |
-| 端末を外す | DIDComm 鍵の削除 ＋ 世代 +1（本番では機能せず） | **DID Document の編集 → seed の作り直し → 全 relationship を front door の再 INIT で新しい did:peer へ移す**（§5.6、§9.3） |
-| relationship の INIT／ACCEPT | INIT は front door、ACCEPT は did:peer から | **どちらも front door**（DID Document の鍵で認証）。did:peer からの ACCEPT は拒否（§9.2） |
-| 乗り換えの証明 | `from_prior`（旧 did:peer の鍵で署名） | **撤去**。共有鍵なので外された端末も作れ、乗っ取りに使えたため（§9.3） |
+| 相手ごとの did:peer の鍵 | wallet が導出する「関係秘密」から決定論的に導出 | **Vault に置く relationship seed**から導出。使う seed は DID Document が公開する rotation key で決まる（§6） |
+| 端末を外す | DIDComm 鍵の削除 ＋ 世代 +1（本番では機能せず） | **DID Document の編集で seed の rotation key を取り替え → 新しい seed の did:peer へ DID Rotation で移り直す**（§5.6、§9.2） |
+| 会話の確立 | 独自の握手 | **握手なし**。front door で始め、相手が対応すれば DID Rotation（`from_prior`）で did:peer へ（§9.2） |
+| 乗り換えの証明 | `from_prior`（旧 did:peer の鍵で署名） | **`from_prior`（`iss` は公開 DID、seed の rotation key で署名。DID Document の `authentication` に載る）**。外された端末は新しい鍵を持たない（§9.2） |
 | 恒久的に処理できないメッセージ | ACK せず、再接続のたびに再配送 | **ACK して捨てる**（`PermanentDeliveryError`、§9.7） |
 | Vault Sync | sibling ごとに送る。全体を VCK で暗号化 | **自分の DID 宛ての 1 通**。DIDComm authcrypt だけで守る。pack は SegmentKey をそのまま運ぶ（§8.1） |
 | Vault event | 端末の Ed25519 で署名、MLS 端末証明書で認可 | **署名なし**。event id は内容の hash（§7.1） |
@@ -87,6 +86,20 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 | 撤去したもの | — | recovery archive、delivery outbox／ingest／projector、`vault-content-key.ts`、`crypto.ts`（VCK）、`didcomm-credential.ts`、routing alias、mediator の connection／keycache／replay／watch-token、旧 vault delivery の wire 型 |
 | 検査 | `bun run check` は失敗（typecheck 1、knip 5） | **`bun run check` が成功**（§16） |
 
+### 1.5 2026-10-03 版から変わったこと（`PLAN-refactor.md`）
+
+| 領域 | 2026-10-03 版 | 現行コード |
+|---|---|---|
+| 会話の確立 | relationship の INIT/ACCEPT（独自の型）で相手ごとの did:peer を作る | **撤去**。front door で始め、Discover Features で `from_prior` に対応する相手とは DID Rotation で Y へ（§9.2） |
+| did:peer の送り主 | relationship の相手、または独立した相手 | **相手の移動先としてだけ**（連絡先が名指すか、`from_prior` が付く）。単体の did:peer とはやりとりしない |
+| 相手の記録 | `contact-key.set`（ContactKeyV1、秘密鍵を含む） | **連絡先**（`contact.set`、JMAP for Contacts の ContactCard。秘密鍵は持たない）（§7.3） |
+| seed の権威 | DID ログの「最初の端末」の判定 | **DID Document の `#didcomm-rotation`（`authentication`）が公開する鍵の seed**（§6） |
+| group chat | 独自の招待と型、端末ごとのメンバー一覧 | **`to` が複数の Basic Message**。`thid` が会話、参加者ごとの経路で送る（§9.4） |
+| Y の service | mediator の did:peer の鍵と URL | **mediator の DID（`did:web`）**。mediator が鍵や URL を替えても Y は変わらない（§9.2） |
+| problem code | `e.m.*` の独自の綴り | 仕様の sorter.scope.descriptors（scope `m`、kebab-case） |
+| mediator | did:peer | **`did:web`**（did:peer は `alsoKnownAs` に残す）。受信箱の上限 1024 件・64 MB（§11.1） |
+| did.md の文書編集 | 追加する鍵はすべて `keyAgreement` | 鍵ごとに検証関係と `ifAbsent`／`replace`。ログインの検証は `#pass-1` に限る（§5.4） |
+
 ## 2. 設計原則と非目標
 
 ### 2.1 原則
@@ -102,7 +115,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 - **identity の発行とホスティングは biset の責務ではない。** biset は解決するクライアントに徹し、公開文書を書かない。
   wallet は SIOPv2 の serverless な形で、サーバー側の失効の仕組みは持たない。
 - **復旧に必要な履歴本体を biset のサーバーに置かない。** 履歴の移送経路は二本だけ（起動中の兄弟端末との Vault Sync、利用者が持つ JMAP export ファイル）。
-- **DID と到達手段（URL）は別物。** relationship の did:peer には canonical（clearnet）の URL だけを埋め、onion は到達手段として別に扱う（§9.8）。
+- **DID と到達手段（URL）は別物。** 相手ごとの did:peer（Y）には mediator の DID だけを埋め、URL（clearnet・onion）は mediator の DID の解決で得る（§9.8）。
 - **同じ意味の処理は共通関数に 1 つだけ置く。** endpoint の選択（`service-endpoint.ts`）、keyAgreement の読み取り（`keyAgreementRecipients`）、
   DIDComm の HTTP 送信（`didCommPost`）などは、この方針で統合された。
 - UI と保存層の間には JMAP 形のローカル API を置き、暗号方式を UI へ漏らさない。
@@ -460,7 +473,7 @@ mediator は clearnet（`https://mediator.biset.md`）と onion（v3 Hidden Serv
   onion のみ・空・不正な要素の集合は route なし。読み取りの経路（通常の送信、`did:web`、mail bridge、mail relay、Vault Sync）がこの規則に揃っている。
 - **Tor 環境の判定**（`isTorEnvironment`）は、**ページ自身が onion のホストから配信されているときだけ**真になる。
   biset の app は onion からは配信されていないため、現状では常に偽。WebSocket の URL は入口の URL から作る（https → wss、onion の http → ws）。
-- **canonical URL を DID に埋める**: relationship の did:peer には canonical の URL だけを入れる。`sameMediatorUrl`（`mediator-endpoints.ts`）は、clearnet と onion を同じ mediator の別名として扱う。
+- **DID には URL を埋めない**: Y の service は mediator の DID（§9.2）。`sameMediatorUrl`（`mediator-endpoints.ts`）は、clearnet と onion を同じ mediator の別名として扱う。
 - **実機**: onion での登録・Forward の POST・配信は 2026-10-01 に SSE 時代の実装で確認した。**WebSocket 化後の onion 経由は未確認**（❓）。
 - **rate limit の注意**: mediator は `x-forwarded-for` の先頭、無ければ接続元 IP を単位に 1 分あたり 3000 件を数える（WebSocket はフレームごと）。
   onion は tor が 127.0.0.1 から直接つなぐため、**onion の利用者全員が 1 つの枠を共有し、送信者が XFF を自由に付けられる**。
@@ -496,7 +509,7 @@ did.md ホストの利用者に限り、**DIDComm を土台にした汎用の ma
   Discover Features 2.0、Report Problem 2.0。
 - **Coordinate Mediation 3.0**: `mediate-grant` の `routing_did` は配列（自分の DID 1 つ）。`recipient-update` の `device`、`recipient` の各要素の `device`／`last_seen` は biset の拡張。
   `recipient-query` は `paginate {limit, offset}` に従い、指定があれば `pagination {count, offset, remaining}` を返す。
-  **一覧に端末ラベルは出さない**（最終利用日だけ）。relationship の did:peer の鍵は全端末で共有されるので、外された端末も問い合わせられ、ラベルが見えれば残った端末の受信箱を名指しで消せてしまう。ラベルは推測できない値。
+  **一覧に端末ラベルは出さない**（最終利用日だけ）。Y の鍵は全端末で共有されるので、外された端末も問い合わせられ、ラベルが見えれば残った端末の受信箱を名指しで消せてしまう。ラベルは推測できない値。
 - **Discover Features 2.0**: `queries` に `disclose` で答える（`*` のワイルドカード可）。開示するのは、protocol（coordinate-mediation 3.0、routing 2.0、messagepickup 3.0、trust-ping 2.0、
   discover-features 2.0。それぞれ自分の役割つき）、header（`return_route`）、constraint（`max_receive_bytes`。要求本文の上限と 1 メッセージの上限の小さい方）。
   上限を超えた Forward は HTTP 413 と `e.m.me.res.storage.message_too_big` で拒否する。
@@ -510,7 +523,7 @@ did.md ホストの利用者に限り、**DIDComm を土台にした汎用の ma
     解決は https のみ・リダイレクトなし・5 秒・1 MB の上限で、CDN を越えるよう毎回一意のクエリを付ける。ホストは、名前（末尾のドットや IPv4 の省略形・16 進形も含めて、内部名・IP リテラルを拒否）と、**名前が解決する全アドレス**（ループバック・私設・リンクローカル・CGNAT・マルチキャスト・予約済み。IPv4 射影と NAT64 は中の IPv4 で判定）の両方が公開のものに限る。結果は 5 分間信頼し、鍵が見つからなければ（10 秒に 1 回まで）解決し直す。
     ネットワークが落ちているときは、1 時間以内に確認した状態なら使い、無ければ 503。**5 分ごとに、受信箱を持つ全 did:webvh を解決し直し**、DID から外れた端末の受信箱を失効させる（`MEDIATOR_WEBVH_REFRESH_SECONDS`）。
     - 解決を使わない配備（`MEDIATOR_WEBVH_RESOLVE=0`）では、従来どおり client が `POST /webvh-log` で渡した検証済みのログだけを知る。これは**DIDComm ではない biset 独自の入口**で、今は誰も送らない。
-  - **`device` ラベルは任意**（biset の拡張）。無い要求（標準の client）は、送信鍵の kid から決めた受信箱を使う。ラベルは、1 つの鍵を複数の端末が共有する場合（relationship の did:peer）に端末を区別する。
+  - **`device` ラベルは任意**（biset の拡張）。無い要求（標準の client）は、送信鍵の kid から決めた受信箱を使う。ラベルは、1 つの鍵を複数の端末が共有する場合（Y）に端末を区別する。
   - **1 DID あたり最大 3 端末**。4 台目は problem-report `e.m.req.max-devices` で拒否し、client は登録済み端末の最終利用日つきのエラーを利用者に見せる（`MediatorDeviceLimitError`）。
 - **配送**: Forward の `next`（宛先 DID）の全受信箱にコピーを置く（本文は 1 回だけ保存し、受信箱ごとの配送行で管理）。
   14 日使われていない受信箱（休眠）と満杯の受信箱は飛ばして `missed` の印を付ける。全受信箱が休眠なら、最後に使われた 1 つには置く。
@@ -574,7 +587,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - Vault Sync の PUSH は到達保証を持たず、取りこぼしは PUSH 適用後の `state-request` と、mediator の `missed` による `state-request` で回収される。送信は 6 回・指数バックオフ。
 - 一件の不正な record が batch 全体を落とさない（record 単位の skip）。materialize できない email は `pending` になる。
 - 承認直後に古い DID ログが返ることがある（did.md の公開読み取りは CDN が `s-maxage=30` で保持し、更新時に purge しない）。
-  biset は次の読み取りで CDN を避ける（`freshFetch`、`fetchLogContaining`）: 承認した内容の確認、自分の端末一覧、端末を外すときの対象、Vault Sync の宛先、relationship seed の権威（60 秒キャッシュ）。
+  biset は次の読み取りで CDN を避ける（`freshFetch`、`fetchLogContaining`）: 承認した内容の確認、自分の端末一覧、端末を外すときの対象、Vault Sync の宛先、relationship seed の権威（60 秒キャッシュ）、`from_prior` の検証、Y の mediator の DID。
   他人の DID の解決（送信先・送信者の鍵）は CDN を通すので、相手が端末を足したり外したりした直後の最大 30 秒は古い版で扱う（§14.2-6）。
 - outbox の mail 送信は自動再送されない（§10.3）。連絡先が名指さない did:peer からの保留は、mediator の保持期間（30 日）が上限。
 - **`main.ts` の boot wiring は、ブラウザ E2E で覆われていない。** 部品のテスト成功と、製品経路への接続を機械的に区別できない。
@@ -586,7 +599,8 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - Vault Sync は DIDComm authcrypt（端末の鍵、DID Document で検証）の中だけを通る。適用は fail-closed かつ record 単位。
 - merge は join-semilattice。削除は永続 tombstone。actorSeq の採番は transaction 内で単調。import は順位を比べ、新しい状態を巻き戻さない。
 - mediator は、受信箱の登録に DID 自身の鍵による所有の証明を要求し、未登録の DID への open forwarding を拒否する。端末数を 1 DID 3 台に制限する。
-- 端末の失効は DID Document が唯一の権威。外された端末は、新しいメッセージ・新しい Vault Sync・新しい relationship seed を受け取れない。
+- 端末の失効は DID Document が唯一の権威。外された端末は、新しいメッセージ・新しい Vault Sync・新しい relationship seed を受け取れず、新しい移動（`from_prior`）も作れない。
+- `from_prior` は受け手が全部を検査する（`typ`／`alg`、`iss` の `authentication`、署名、`sub` ＝ `from`、`exp`／`nbf`、did:webvh ではログで「鍵を載せた版より後に端末が減っていない」こと）。
 - 承認後は、capability の Data Integrity Proof と、公開された DID Document を**独立に検証**する。
 - `biset-rp-signer` は redirect_uri を固定し、claim を許可リストに限る。
 
@@ -597,6 +611,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 4. **セッションの破棄が厳しすぎる（中）**。device-refresh の非 2xx 応答や、検証の失敗は、一律に session を破棄する。§5.3。
 5. **dedupe の lookup が未接続（中）**。
 6. **端末を外した直後の窓（中、原理的）**。相手が did.md の CDN の古い DID 文書を読む最大 30 秒は、外された端末を正規の端末とみなしうる。
+   DID Rotation で移っていた相手については、相手が新しい移動を処理するまで、外された端末は古い Y で読み書きできる（§9.2）。
 7. **onion の rate limit 共有（中、Tor 実運用まで）**（§9.8）。
 8. **メール**: DKIM 未設定、送信状態の確定が未完、outbox の自動再送が無い（§10.3）。
 9. **No background／push（運用）**。ページが閉じている間は同期しない。
@@ -637,29 +652,28 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - `didcomm-mediator` は入れ替え後に、本番に対してスモークテスト（`scripts/didcomm-mediator-smoke.ts`、git 追跡外）を流す。
 - `smtp`／`ap` は biset repo の外の relay（Rust／Go）を配る。
 
-### 15.4 2026-10-03 のデプロイの前提
-mediator・app・mail-relay を**同時に**入れ替える。
-- mediator の SQLite は**消さない**。自分の did:peer（`mediator_identity`）のテーブルは新旧で同じ形なので、そのまま引き継がれ、`routingKeys` は変わらない。
-  新しい queue のテーブル（`did_states`、`inboxes`、`messages`、`deliveries`）は空で作られ、旧テーブル（`connections`、`connection_keys`、`queued_messages`、`received_acks`）は使われずに残る。
-  旧 queue に残っていたメッセージは届かなくなる。各端末は起動時に登録し直す。
-- 利用者は全員、did.md Wallet で再ログインが要る（wallet セッションの形が変わったため。古いセッションは読めずにログイン画面になる）。
-- ブラウザの Vault（IndexedDB v15）は upgrade で旧 store を消す。
+### 15.4 2026-10-08 のデプロイの前提（`PLAN-refactor.md` P0〜P5）
+**版の混在を想定しない**（後方互換を持たない方針）。手順は `PLAN-refactor.md` §13。
+- did.md（文書編集の拡張、`#pass-1` に限るログイン）は P1 で配備済み。mediator（`did:web`、上限、egress の制限）は 2026-10-07 に配備済み。
+- app を入れ替え、**全端末で Vault を消して再ログインする**（新しい event の種類 `contact.set` を、古い版の端末は読めない）。
+- ログインで、各端末の候補の seed のうち最初に承認されたものの rotation key が DID Document に載る（`ifAbsent`）。既にログイン済みで鍵が無い identity は、Account の Devices の「Renew」で載せる。
+- mediator の SQLite は消さない。
 
 ## 16. 検証状況
 
-2026-10-03、作業ツリーで実測した。
+2026-10-08、作業ツリーで実測した。
 
 | コマンド | 結果 |
 |---|---|
 | `bun run typecheck`（root ＋ mediator／mail-plugin／mail-relay／mimi／rp-signer） | ✅ すべて成功 |
 | `bun run knip` | ✅ 成功 |
 | `bun run reachability` | 本番の入口から 164／266 を到達、**テストのみ 23**（MLS／MIMI のクライアント側、`manifest.ts`、identity の fixture 用モジュールなど）、**どこからも到達しない 0** |
-| `bun run test` | ✅ **104 ファイル、552 件成功、失敗 0** |
+| `bun run test` | ✅ **108 ファイル、642 件成功、失敗 0**（MLS の 2 ファイルは件数を出さない形式で、別に全成功） |
 | `bun run check`（上の 4 つ） | ✅ 成功 |
-| `bun run build` | ✅ `app.js` 568 KB、`sw.js` 183 B、`index.html` 706 KB |
+| `bun run build` | ✅ `app.js` 約 580 KB、`sw.js` 183 B、`index.html` 約 720 KB |
 
 テストは、canonical protocol、Vault の store、Vault Sync、VaultProjector、JMAP export／import、Markdown ミラー、
-DIDComm の crypto（DIF のテストベクタを含む）／multi-device 配送／mediator（HTTP と WebSocket、本物の Bun サーバーでの upgrade を含む）／relationship／seed／乗り換え／group、
+DIDComm の crypto（DIF のテストベクタを含む）／multi-device 配送／mediator（HTTP と WebSocket、本物の Bun サーバーでの upgrade を含む）／seed と rotation key／`from_prior`／DID Rotation（本物の mediator を通す Y 宛ての配送を含む）／連絡先（JMAP for Contacts）／group、
 mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callback、JSON Schema、RP signer、MIMI を覆う。
 **テストで store を偽装しない**方針を採る（モックが本物の検証を再現していなかったことで障害を取り逃がした反省による）。
 
@@ -695,7 +709,8 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 | did.md Wallet login（RP DID／JAR、DCR、直接配送、DPoP 端末セッション、VC capability） | ✅ |
 | DID Document の編集（merge、removeEndpoints）と、承認後の独立な検証 | ✅ |
 | 端末集合＝`keyAgreement`、multiplexed encryption、端末ごとの受信箱 | ✅ ❓ 本番での複数端末の通し確認は未実施 |
-| 端末を外す（DID 編集 → DID ログから決まる seed の作り直し → front door の再 INIT による乗り換え） | ✅ ❓ 本番での通し確認は未実施 |
+| 端末を外す（DID 編集で rotation key を取り替え → 新しい seed の Y へ DID Rotation で移り直す） | ✅ ❓ 本番での通し確認は未実施 |
+| 連絡先（JMAP for Contacts、export／import） | ✅ JMAP と export のみ。住所録の画面は未 |
 | ローカルの暗号化 Vault（ログ層、schema v15） | ✅ |
 | Vault Sync（自分の DID 宛て、PUSH／REQUEST／RESPONSE、有界応答、`missed` での追いつき） | ✅ |
 | VaultProjector（per-entity LWW、tombstone、pending） | ✅ |
@@ -712,14 +727,16 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 
 ## 19. 次の作業
 
-1. **2026-10-03 のデプロイ後の実機確認**: 2 台での登録・配送・Vault Sync、4 台目の拒否、「Remove other devices」と乗り換え、WebSocket（clearnet と onion）、メールの受信。
-2. **相互運用テスト**: `didcomm` の参照実装（npm）を dev 依存にしたテスト。
-3. **wallet の承認の実機確認**: `authorization_details` を送らないサインインを、did.md Wallet が受け付けること。
-4. **セッション復元の失敗の分類**（§17-4）。transient な失敗でセッションを破棄しない。
-5. **残骸の整理**: 旧データの救出コード、空の UI、`anchor*` の config、`client/`→`server/` の import（§17-3、8、10）。
-6. **メールの完成**: 送信状態を `SEND_RESULT` で確定させる、outbox の永続 retry、DKIM、did.md 以外のドメイン。
-7. **repo の追跡の整理**（§17-6）。`scripts/` と `ops/` を追跡に戻す。
-8. **`main.ts` の boot wiring への統合テスト**。
+1. **2026-10-08 のデプロイ後の実機確認**（`PLAN-refactor.md` §13）: 2 つの identity の間の DID Rotation（問い合わせ → 開始 → 確定、group）、2 台での Vault Sync と連絡先、「Remove other devices」の後の移り直し、4 台目の拒否、WebSocket（clearnet と onion）、メールの受信。
+2. **`PLAN-refactor.md` §9.4 の残りの試験**: 満杯の受信箱からの `missed` での回収（6）、seed を失った状態からの回復の通し（5）、候補の seed の https の経路（4）。
+3. **did:peer:4**（§10-4）と、住所録の画面。
+4. **相互運用テスト**: `didcomm` の参照実装（npm）を dev 依存にしたテスト。
+5. **wallet の承認の実機確認**: `authorization_details` を送らないサインインを、did.md Wallet が受け付けること。
+6. **セッション復元の失敗の分類**（§17-4）。transient な失敗でセッションを破棄しない。
+7. **残骸の整理**: 旧データの救出コード、空の UI、`anchor*` の config、`client/`→`server/` の import（§17-3、8、10）。
+8. **メールの完成**: 送信状態を `SEND_RESULT` で確定させる、outbox の永続 retry、DKIM、did.md 以外のドメイン。
+9. **repo の追跡の整理**（§17-6）。`scripts/` と `ops/` を追跡に戻す。
+10. **`main.ts` の boot wiring への統合テスト**（DID Rotation の配線を含む）。
 
 ## 20. `src/` の構成
 
@@ -737,7 +754,7 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 | パス | 責務 |
 |---|---|
 | `canonical.ts`、`ids.ts`、`signing.ts`、`vault.ts`、`ingress.ts`、`mail-submission.ts`、`net-fetch.ts` | 正準 JSON、ID 型、署名対象、Vault の event 種別、外部 payload、`fetch` の束縛 |
-| `didcomm/` | `crypto.ts`（JWE、multi-recipient、`didCommPost`）、`message.ts`（`return_route` を含む）、`peer.ts`（did:peer:2、relationship の決定論的導出）、`from-prior.ts`、`devicekid.ts`、`multikey.ts`、`problems.ts`、`forward-wrap.ts`、`trust-ping.ts`、`mediator-{protocol,coordinate,pickup,transport,device}.ts`、`discover-features.ts`、`webvh-route.ts`・`did-web.ts`（route と受信者の選択）、`webvh-resolve.ts`（sender 鍵の解決）、**`service-endpoint.ts`（endpoint 選択の唯一の所有者）**、`vault-sync-protocol.ts` |
+| `didcomm/` | `crypto.ts`（JWE、multi-recipient、`didCommPost`）、`message.ts`（`return_route` を含む）、`peer.ts`（did:peer:2、Y の決定論的導出）、`from-prior.ts`、`devicekid.ts`、`multikey.ts`、`problems.ts`、`forward-wrap.ts`、`trust-ping.ts`、`mediator-{protocol,coordinate,pickup,transport,device}.ts`、`discover-features.ts`、`webvh-route.ts`・`did-web.ts`（route と受信者の選択）、`webvh-resolve.ts`（sender 鍵の解決）、**`service-endpoint.ts`（endpoint 選択の唯一の所有者）**、`vault-sync-protocol.ts` |
 | `webvh/` | `resolver.ts`、`log.ts`、`proof.ts`、`document.ts`、`identifier.ts`、`scid.ts`、`hash.ts`、`multihash.ts`、`multikey.ts`、`jcs.ts` |
 | `mimi/` | MIMI の型・wire・authorizer・app-data（MIMI サーバーが使う） |
 | `mls/` | RFC 9420 の vendored fork。**中身は変更しない**。現在の利用者は biset-mimi のサーバーだけ |
@@ -748,10 +765,10 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 
 ### 20.3 `client/store/` — Vault と projection
 **`store/vault/`（ログ層）**: `store.ts`（IndexedDB）、`objects.ts`、`events.ts`、`active-segment.ts`、`segment-key-resolver.ts`、
-`commit.ts`（共有 Vault 状態を書く全経路が通る組み立て地点）、`mutations.ts`／`mutation-records.ts`、`mail-message.ts`、`credential-store.ts`、`contact-key{,-reader,-sink}.ts`、`relationship-seed.ts`、
+`commit.ts`（共有 Vault 状態を書く全経路が通る組み立て地点）、`mutations.ts`／`mutation-records.ts`、`mail-message.ts`、`credential-store.ts`、`relationship-seed.ts`、
 `delivery-pack.ts`、`ingress-ingest.ts`、`projector.ts`、`jmap-export.ts`、`markdown-{mirror,directory}.ts`、`legacy-crdt-migration.ts`、`projection-rebuild.ts`、`blob-reader.ts`、
 `openpgp-credential.ts`、🔧 `manifest.ts`。詳細は `store/vault/README.md`。
-**`store/projection/`（read model）**: `gateway.ts`（`LocalJmapGateway`）、`reducer.ts`、`indexeddb.ts`、`mutations.ts`、`vault-mutation-sink.ts`、`transport.ts`（型のみ）。
+**`store/projection/`（read model）**: `gateway.ts`（`LocalJmapGateway`）、`contacts.ts`（JMAP for Contacts の Card と `contact.set`）、`reducer.ts`、`indexeddb.ts`、`mutations.ts`、`vault-mutation-sink.ts`、`transport.ts`（型のみ）。
 
 ### 20.4 `client/didcomm/`
 `send-message.ts`（chat の送信、`answerTrustPing`）、`front-door-send.ts`、`did-rotation.ts`（経路、Discover Features）、`rotation-manager.ts`（移動の開始・確定・受信箱）、`rotation-key.ts`、`relationship-seed-bootstrap.ts`、`basicmessage.ts`、`ingress-projector.ts`、
@@ -760,7 +777,7 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 
 ### 20.5 `client/identity/`・`client/mail/`・本番から外れた部分
 - `identity/bootstrap.ts`（Vault 側の identity 境界）、`idkey.ts`。
-- `identity/wallet/`: `did-md-oauth.ts`（wallet の承認、capability、DID 編集、端末の削除）、`did-md-store.ts`（セッションの封印）、`relationship.ts`、`relationship-rotation.ts`、
+- `identity/wallet/`: `did-md-oauth.ts`（wallet の承認、capability、DID 編集、端末の削除）、`did-md-store.ts`（セッションの封印）、
   `didcomm-outbox.ts`、`wallet-directory.ts`、`json-schema.ts`＋`schemas/biset-messenger-capability.schema.json`、`did-document-edit-check.ts`。
 - `identity/webvh/`（`log-io.ts` は現役。`freshFetch`／`fetchLogContaining`）、`identity/web/`・`create-genesis.ts`・`migrate.ts`（テストの fixture 用）。
 - `mail/`: `rfc5322-builder.ts`、`didcomm-submit.ts`。

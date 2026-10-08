@@ -19,7 +19,7 @@
   他端末への反映は Vault Sync が、コミット済みの record を読んで行う
 - `mutations.ts` / `mutation-records.ts` / `mail-message.ts`: 各 record 種別の build
 - `credential-store.ts`: private credential の汎用 reader / sink。
-  contact-key・relationship-seed・OpenPGP credential は、
+  relationship-seed・OpenPGP credential は、
   すべてこの1実装に記述子を渡す薄いラッパである
 
 ## 同期

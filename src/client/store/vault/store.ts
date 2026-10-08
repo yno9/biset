@@ -459,7 +459,7 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
     const values = await requestValue<VaultEventRecord[]>(transaction.objectStore(STORES.events).getAll())
     await completed
     return values
-      .filter(value => value.identityId === identityId && (value.kind.startsWith('credential.') || value.kind === 'contact-key.set'))
+      .filter(value => value.identityId === identityId && value.kind.startsWith('credential.'))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
       .map(copyEvent)
   }

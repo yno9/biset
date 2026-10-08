@@ -184,7 +184,7 @@ describe('IndexedDbVaultStore durability', () => {
     store.close()
   })
 
-  test('the credential event reader includes persisted private contact-key records', async () => {
+  test('the credential event reader leaves out the retired contact-key records an old Vault still holds', async () => {
     const store = await IndexedDbVaultStore.open()
     const object = await encryptVaultObject(createSegmentKey(), { segmentId: 'segment-contact', plaintext: new Uint8Array([1]), aad: new Uint8Array([2]) })
     const event = await createVaultEvent({
@@ -206,7 +206,8 @@ describe('IndexedDbVaultStore durability', () => {
       jmapState: { state: 'contact-state' },
     })
 
-    expect(await store.readCredentialEvents(identityId)).toMatchObject([{ kind: 'contact-key.set', id: event.id }])
+    expect(await store.readCredentialEvents(identityId)).toEqual([])
+    expect((await store.readVaultEvents(identityId)).map(value => value.id)).toEqual([event.id])
     store.close()
   })
 

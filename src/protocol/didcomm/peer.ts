@@ -126,7 +126,7 @@ function encodeServiceSegment(service: PeerService): string {
 }
 
 /** Build a did:peer:2 string from raw public keys, with an optional service. */
-export function encodePeerDid2(xPub: Uint8Array, edPub: Uint8Array, service?: PeerService): string {
+function encodePeerDid2(xPub: Uint8Array, edPub: Uint8Array, service?: PeerService): string {
   const eSeg = 'E' + 'z' + base58Encode(new Uint8Array([0xec, 0x01, ...xPub]))
   const vSeg = 'V' + 'z' + base58Encode(new Uint8Array([0xed, 0x01, ...edPub]))
   let did = `did:peer:2.${eSeg}.${vSeg}`
