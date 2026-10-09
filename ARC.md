@@ -1,7 +1,7 @@
 # Biset アーキテクチャ
 
 > 調査基準日: 2026-10-08（Asia/Tokyo）
-> 調査対象: `~/biset` の作業ツリー（HEAD `a8d36e2` ＋ 2026-10-08 の実機で見つかった `#didcomm` の形の修正）。本番の app は `5f4d286` のビルド（2026-10-08 05:55 UTC に配備、配信物の sha256 が手元と一致）。
+> 調査対象: `~/biset` の作業ツリー（HEAD `5be6720`）。DIDComm Messaging v2.1 への適合を 2026-10-09 に評価した（§9.9）。本番の app は `5f4d286` のビルド（2026-10-08 05:55 UTC に配備、配信物の sha256 が手元と一致）。
 >
 > 2026-10-03 版を、`PLAN-refactor.md`（relationship を front door ＋ DID Rotation に置き換える、P0〜P5）と連絡先リスト（JMAP for Contacts、C1〜C3）に合わせて書き直した。
 > 変わった点は §1.4（2026-10-02 版から）と §1.5（2026-10-03 版から）にまとめた。方針は「現行コードを正とする」。将来案・廃止予定は、現行の事実と混ぜずに明示する。
@@ -427,7 +427,8 @@ INIT/ACCEPT の握手は無い（P0 で撤去）。
 
 ### 9.4 group chat と External Feed
 - **group chat**: DIDComm 本体の仕組みだけで作る（`PLAN-refactor.md` §8）。宛先（平文の `to`）が 2 つ以上の Basic Message のスレッドで、`thid` が会話。
-  同じ平文（`to` は全員の公開 DID）を、参加者ごとに別々に暗号化して、各参加者への経路（§9.2 の `chooseRoute`）で送る。参加者はスレッドの**最新**メッセージの `to` と送り主、名前は最新の `subject`。
+  同じ平文（`to` は全員の公開 DID）を、参加者ごとに別々に暗号化して、各参加者への経路（§9.2 の `chooseRoute`）で送る。
+  **仕様との不一致**: 移った参加者への暗号文の `kid`（その参加者の did:peer）が平文の `to` に無く、宛先の整合性の MUST を満たさない（§9.9）。参加者はスレッドの**最新**メッセージの `to` と送り主、名前は最新の `subject`。
   招待のメッセージも、管理者も、端末ごとのメンバー一覧も無い（メールの Cc と同じ考え方）。ローカルのスレッドは `didcomm-group:<thid>`。
 - **External Feed**（`https://biset.md/external-feed/1.0/post`）: **anoncrypt のみ**で、送信者を認証しない。ActivityPub／AT Protocol／RSS のフィード投稿を bridge が運ぶことを想定している。
   スレッドは `(identityId, source, actorId)` で作り、本文の URL は `X-Source-Url` ヘッダに退避して CR/LF を除く。anoncrypt を許すのはこの型だけ。
@@ -477,6 +478,51 @@ mediator は clearnet（`https://mediator.biset.md`）と onion（v3 Hidden Serv
 - **実機**: onion での登録・Forward の POST・配信は 2026-10-01 に SSE 時代の実装で確認した。**WebSocket 化後の onion 経由は未確認**（❓）。
 - **rate limit の注意**: mediator は `x-forwarded-for` の先頭、無ければ接続元 IP を単位に 1 分あたり 3000 件を数える（WebSocket はフレームごと）。
   onion は tor が 127.0.0.1 から直接つなぐため、**onion の利用者全員が 1 つの枠を共有し、送信者が XFF を自由に付けられる**。
+
+### 9.9 DIDComm Messaging v2.1 への適合（2026-10-09 評価）
+仕様書（identity.foundation/didcomm-messaging/spec/v2.1）の規範的な要件を、現行コードと突き合わせた。
+判定: ✅ 適合 ／ ⚠️ 一部・SHOULD の未対応 ／ ❌ MUST の未対応 ／ 🔧 仕様が認める拡張 ／ — 対象外（任意の機能）。
+
+**MUST を満たしていないもの（❌）**
+
+| 要件 | 仕様 | biset |
+|---|---|---|
+| 鍵合意の曲線 | X25519・P-384・P-256 を MUST（P-521 は任意） | **X25519 のみ**。P-256／P-384 の鍵を持つ相手には送れず、そこから届いたものも開けない |
+| 署名つきメッセージ（JWS） | 受け手は General／Flattened の両方を処理できること（MUST）。EdDSA・ES256・ES256K の検証（MUST）、少なくとも 1 つで署名（MUST） | **JWS を扱えない**（`application/didcomm-signed+json` も、署名してから暗号化したものも受け取れない）。Ed25519 の検証は `from_prior` の JWT だけ |
+| 宛先の整合性 | 「平文の `to` は、暗号化されたメッセージの `kid` を含まなければならない」（Message Layer Addressing Consistency。違反は MUST でエラー） | **group の送信で、DID Rotation で移った参加者に宛てた暗号文の `kid`（その参加者の did:peer）が、平文の `to`（全員の公開 DID）に無い**（§9.4 の設計の帰結）。仕様に忠実な受け手はエラーにしうる。1:1 は `to` が送り先の DID なので満たす |
+| `id` の比較 | 大文字小文字を区別せずに比較（MUST） | 重複の検出・`thid` の照合・mediator の再送の検出は、**区別して比較**する。biset は小文字の UUID しか作らないので、biset 同士では起きない |
+
+**SHOULD・推奨を満たしていないもの（⚠️）**
+
+| 要件 | 仕様 | biset |
+|---|---|---|
+| HTTP の成功 | 2xx なら成功（MUST。202 を推奨） | 送り手は **202 だけ**を成功とみなす（`front-door-send.ts`、mail-relay、mail-plugin）。200・204 を返す mediator への送信を失敗と誤る |
+| 内容暗号 | A256CBC-HS512 必須、A256GCM 推奨、XC20P 任意 | A256CBC-HS512 を送受信。anoncrypt の受信は XC20P も。**A256GCM は受信できない** |
+| `id` の長さ | 32 バイト以下（ただし同じ節で UUID を推奨。UUID は 36 文字で、仕様の中で食い違っている） | UUID（36 文字） |
+| 受け手の `to` の確認 | 自分が `to` に無いとき、受け入れは拒否してはならず（MUST NOT）、利用者に警告する（SHOULD） | 受け入れて、コンソールに警告するだけ（利用者には出さない）。上の「宛先の整合性」の節の「エラー」とは逆の扱いで、仕様の 2 か所が食い違っている |
+| endpoint の切り替え | 届かなければ別の endpoint を試す（SHOULD） | 1 つを選ぶだけで、切り替えない（onion への切り替えは Tor 環境のときだけ） |
+| `lang` | 人が読む文字列には `lang` で言語を示す（SHOULD） | Basic Message に `lang` を付けない（mediator の problem-report には付ける） |
+| problem-report | 処理できないときの返事として望ましい（一般的な要件ではない） | クライアントは相手に problem-report を返さない（mediator は返す）。受け取った problem-report も表示しない |
+
+**適合しているもの（✅）**
+- 平文: `id`・`type`・`typ`（`application/didcomm-plain+json`）・`from`・`to`（配列）・`thid`・`pthid`・`created_time`（秒）・`attachments`。知らないヘッダは無視する。
+- authcrypt（ECDH-1PU+A256KW、A256CBC-HS512、`skid`／`apu`／`apv`）・anoncrypt（ECDH-ES+A256KW）。DIF の X25519 のテストベクタで確認（§9.6）。受信者全員への multiplexed encryption（「実用的な限り多くの鍵へ」の SHOULD）。
+- 宛先の整合性のうち、`from` と `skid` の一致（違反はエラー）。
+- メディアタイプ: `application/didcomm-encrypted+json`（`typ` と HTTP の Content-Type）。
+- 転送: HTTPS POST（Content-Type、mediator は 2xx）、WebSocket（1 メッセージ＝1 フレーム、信頼は各メッセージの暗号に置く）。
+- Routing 2.0: Forward の `next` と `attachments`、`please_ack` を Forward で尊重しない、`routingKeys`（did:peer:2 と did:web の鍵）、**DID をエンドポイントにする形**（mediator の鍵を routingKeys の前に足す）。
+- `DIDCommMessaging` の service（`id`・`type`・`serviceEndpoint` の object／array、`uri`・`accept`・`routingKeys`）。1 つの endpoint にだけ送る。
+- **DID Rotation**（`from_prior`）: 新しい DID からの暗号化されたメッセージに付け、新しい DID 宛てを受け取るまで付ける。受け手は署名鍵が `iss` の `authentication` にあることを含め全部を検査し、処理済みの移動より古い DID からは受け取らない（§9.2）。
+- Trust Ping 2.0、Discover Features 2.0（`protocol`・`goal-code`・`header` を理解し、知らない種類は無視）、Report Problem 2.0（mediator。コードは sorter.scope.descriptors）、Basic Message 2.0、Coordinate Mediation 3.0、Pickup 3.0（live mode を含む）、Routing 2.0。mediator 側の詳細な照合は `tasks/D2-didcomm-conformance-audit.md`。
+- PIURI／MTURI の形（`https://…/<名前>/<major.minor>/<型>`）。
+
+**仕様が認める拡張（🔧）** — 自前の名前空間か、仕様が禁じていない追加のフィールド。
+- Basic Message の `body.sentAt`・`body.subject`（`created_time` は同じ時刻から作る）。
+- Coordinate Mediation の `device` ラベル（1 つの鍵を複数の端末が共有する Y のため）。
+- `https://biset.md/vault-sync/1.0/*`、`https://biset.md/external-feed/1.0/post`（anoncrypt のみ）、mail-bridge の型。
+- group chat は独自の型を持たない（`to` が複数の Basic Message と `thid`）。ただし上の「宛先の整合性」の問題がある。
+
+**対象外（—）**: Out-of-Band 2.0（招待の URL・QR を作らない。公開 DID で直接連絡する）、`accept-lang`、`delay_milli`、did:key、did:peer:4（§10-4、後で実装）。
 
 ## 10. メール
 
@@ -698,7 +744,7 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 
 優先度の高い順ではなく、**事実として確認できたもの**を挙げる。
 
-1. **DIDComm の仕様からの意図的な逸脱**: 無し（独自の握手 INIT/ACCEPT は 2026-10-07 の P0 で撤去）。`external-feed` は自前の名前空間（`https://biset.md/external-feed/1.0/post`）に移した（2026-10-07。以前は `didcomm.org` の名前空間を、レジストリに無いのに使っていた）。`mail-bridge` は didmail への分離で撤去する。
+1. **DIDComm の仕様からの逸脱**: 独自の握手（INIT/ACCEPT）は 2026-10-07 の P0 で撤去した。**MUST の未対応が 4 つ残る**（P-256／P-384、JWS、group の宛先の整合性、`id` の大文字小文字。§9.9）。`external-feed` は自前の名前空間（`https://biset.md/external-feed/1.0/post`）に移した（2026-10-07。以前は `didcomm.org` の名前空間を、レジストリに無いのに使っていた）。`mail-bridge` は didmail への分離で撤去する。
    `mediate-deny` は送らない（拒否の理由はすべて problem-report で返す）。
 2. **mail-plugin "B" の署名つき HTTP 送信**（`mail-submission-http.ts`）: 本番では使っていない variant に残る。
 3. **`client/` が `server/` を import**（`client/mail/didcomm-submit.ts`、`client/didcomm/ingress-projector.ts` が `server/mediator/mail-plugin/mail-bridge.ts` を参照）。
@@ -752,13 +798,15 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 1. **2026-10-08 のデプロイ後の実機確認**（`PLAN-refactor.md` §13）: 2 つの identity の間の DID Rotation（問い合わせ → 開始 → 確定、group）、2 台での Vault Sync と連絡先、「Remove other devices」の後の移り直し、4 台目の拒否、WebSocket（clearnet と onion）、メールの受信。
 2. **`PLAN-refactor.md` §9.4 の残りの試験**: 満杯の受信箱からの `missed` での回収（6）、seed を失った状態からの回復の通し（5）、候補の seed の https の経路（4）。
 3. **did:peer:4**（§10-4）と、住所録の画面。
-4. **相互運用テスト**: `didcomm` の参照実装（npm）を dev 依存にしたテスト。
-5. **wallet の承認の実機確認**: `authorization_details` を送らないサインインを、did.md Wallet が受け付けること。
-6. **セッション復元の失敗の分類**（§17-4）。transient な失敗でセッションを破棄しない。
-7. **残骸の整理**: 旧データの救出コード、空の UI、`anchor*` の config、`client/`→`server/` の import（§17-3、8、10）。
-8. **メールの完成**: 送信状態を `SEND_RESULT` で確定させる、outbox の永続 retry、DKIM、did.md 以外のドメイン。
-9. **repo の追跡の整理**（§17-6）。`scripts/` と `ops/` を追跡に戻す。
-10. **`main.ts` の boot wiring への統合テスト**（DID Rotation の配線を含む）。
+4. **DIDComm の MUST の未対応（§9.9）**: 優先の高い順に、(a) group の宛先の整合性（移った参加者への暗号文の `to` に、その参加者の現在の DID を含める。自分の公開 DID も受け入れるよう受け手を合わせる）、
+   (b) HTTP の 2xx を成功とみなす（SHOULD だが修正は小さい）、(c) `id` の大文字小文字を区別しない比較、(d) P-384／P-256 の鍵合意、(e) JWS の受信（General・Flattened、EdDSA・ES256・ES256K の検証）。
+5. **相互運用テスト**: `didcomm` の参照実装（npm）を dev 依存にしたテスト。
+6. **wallet の承認の実機確認**: `authorization_details` を送らないサインインを、did.md Wallet が受け付けること。
+7. **セッション復元の失敗の分類**（§17-4）。transient な失敗でセッションを破棄しない。
+8. **残骸の整理**: 旧データの救出コード、空の UI、`anchor*` の config、`client/`→`server/` の import（§17-3、8、10）。
+9. **メールの完成**: 送信状態を `SEND_RESULT` で確定させる、outbox の永続 retry、DKIM、did.md 以外のドメイン。
+10. **repo の追跡の整理**（§17-6）。`scripts/` と `ops/` を追跡に戻す。
+11. **`main.ts` の boot wiring への統合テスト**（DID Rotation の配線を含む）。
 
 ## 20. `src/` の構成
 
