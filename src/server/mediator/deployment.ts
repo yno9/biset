@@ -1,12 +1,6 @@
 // Composes the standalone mediator's durable store, its blind DIDComm
-// handler, its HTTP surface, and (optionally) its hop-chain relay poller --
-// everything both deploy entrypoints need in common: index.ts (the blind
-// mediator alone, "A") and mail-plugin/index.ts (the same mediator plus an
-// SMTP bridge, "B"). Factored out so the two entrypoints share this exactly
-// rather than index.ts's own bootstrap slowly drifting from a hand-copied
-// twin (feedback: unify common logic) -- see tsconfig.mediator.json's own
-// header for why mail-plugin/ itself stays a separate typecheck project
-// even though its entrypoint imports this file.
+// handler, its HTTP surface, and (optionally) its hop-chain relay poller:
+// what index.ts (the entrypoint) and the tests start.
 import { createMediator } from './server.ts'
 import { didCommAccepted, didCommPost } from '../../protocol/didcomm/crypto.ts'
 import { SqliteMediatorStore, type SqliteMediatorLimits } from './sqlite-store.ts'

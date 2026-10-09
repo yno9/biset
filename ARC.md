@@ -20,7 +20,8 @@
 - **mediator は DIDComm v2.1 の標準手順で話す**: HTTPS POST と WebSocket、`return_route`、Pickup 3.0 の live mode、
   `application/didcomm-encrypted+json`、Trust Ping（§11.1）。
 - biset が自分で運用するサーバーは **mediator** と **rp-signer**（did.md への認可要求に署名）。
-  メール用の **did-md-mail-relay**（SMTP ⇄ DIDComm bridge）が同じホスト（v2）で動く（§11）。
+  **メールは biset の外**: 別リポジトリの **didmail**（SMTP ⇄ DIDComm bridge）が外部アドレスを `did:web` の DID として見せ、
+  biset はそれを普通の DIDComm の相手として扱う。アドレスから DID へは WebFinger で引く（§10）。
 - **世代（VCK）・routing alias・関係秘密・ML-KEM・Vault event の署名・MLS 端末証明書は、すべて撤去済み**（§1.4）。
 
 ## 1. この文書の読み方
@@ -77,7 +78,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 | ML-KEM ハイブリッド | public-DID 経路にあった | **撤去**（§9.6） |
 | live 受信 | 独自の `WATCH_REQUEST` ＋ SSE（`GET /stream`） | **WebSocket ＋ Pickup 3.0 `live-delivery-change`**（§9.7、§11.1） |
 | mediator の応答 | 常に HTTP の応答本文 | **`return_route: "all"` のときだけ**。無ければ 202（§11.1） |
-| Content-Type | 多くが `application/json` | **`application/didcomm-encrypted+json`**。mediator と mail relay は他を 415 で拒否 |
+| Content-Type | 多くが `application/json` | **`application/didcomm-encrypted+json`**。mediator は他を 415 で拒否 |
 | Trust Ping | 応答の義務を記録するだけ | **応答する**（client も mediator も）（§9.5） |
 | Coordinate Mediation | 2.0（`keylist-update`／`keylist-query`） | **3.0**（`recipient-update`／`recipient-query`、`routing_did` は配列、`paginate`）（§11.1） |
 | Discover Features | なし。Vault Sync は 128 KB を決め打ち | **mediator が `max_receive_bytes` などを開示**。Vault Sync はその 1/8 を 1 通の上限にする（§8.1） |
@@ -142,13 +143,13 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
    │(DPoP, JAR)    │HTTPS POST ＋ WebSocket  │ローカルの Markdown フォルダ
    │DID 解決(読む) │・1:1 / group chat       │JMAP export/import ファイル
    │               │・Vault Sync（自分の DID 宛て）
-   │               │・mail bridge の送受信
+   │               │・外部アドレス（didmail の did:web）
    ▼               ▼
-┌─ did.md（外部）─┐  ┌─ Mediator（"A"）──────────────┐  ┌─ did-md-mail-relay ─┐
-│identity 発行    │  │mediator.biset.md              │  │smtp.did.md          │
+┌─ did.md（外部）─┐  ┌─ Mediator ────────────────────┐  ┌─ didmail（外部）────┐
+│identity 発行    │  │mediator.biset.md              │  │別リポジトリ         │
 │did:webvh ホスト │  │did:peer identity、SQLite      │  │SMTP :25 ⇄ DIDComm   │
-│wallet の承認    │  │受信箱 = (DID, 端末)、最大 3   │  │did:web の bridge    │
-│                 │  │Pickup 3.0、live mode(WS)      │  │DKIM(未設定)         │
+│wallet の承認    │  │受信箱 = (DID, 端末)、最大 3   │  │アドレスごとの did:web│
+│                 │  │Pickup 3.0、live mode(WS)      │  │WebFinger            │
 │                 │  │Tor Hidden Service(onion)      │  │                     │
 └─────────────────┘  └───────────────────────────────┘  └─────────────────────┘
         ▲ JAR に署名
@@ -161,9 +162,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 
 | コンポーネント | 入口 | 状態 |
 |---|---|---|
-| **Mediator** | `src/server/mediator/index.ts`（"A"） | ✅ 本番稼働（v2、`127.0.0.1:8791`、Caddy 経由で `mediator.biset.md`） |
-| Mediator + mail-plugin | `src/server/mediator/mail-plugin/index.ts`（"B"） | 🔧 ビルド可。本番では使っていない（同じ unit・DB を奪い合う排他関係） |
-| **did-md-mail-relay** | `src/server/mail-relay/index.ts` | ✅ 本番稼働（v2、SMTP `:25`、HTTP `127.0.0.1:8792`）。mail-plugin のコードを共有 |
+| **Mediator** | `src/server/mediator/index.ts` | ✅ 本番稼働（v2、`127.0.0.1:8791`、Caddy 経由で `mediator.biset.md`） |
 | **biset-rp-signer** | `src/server/rp-signer/index.ts` | ✅ 本番稼働（v2、`:8794`、`t.biset.md/api/rp-signer/*` として公開） |
 | biset-mimi | `src/server/mimi/index.ts` | 🔧 サーバーとしては動くが、クライアントからの呼び出し経路が無い（将来の MIMI クライアントのために残す） |
 | **クライアント** | `src/client/app/main.ts` | ✅ `t.biset.md`（v2 の Caddy が `/opt/biset/app` を配信）。`file://` の `dist/index.html` でも動く |
@@ -315,7 +314,7 @@ Markdown ミラーを有効にすると、ローカルディスクに平文の `
 ### 6.2 撤去した鍵
 VCK（Vault Content Key、世代つき）、wallet から導出する関係秘密、routing alias、端末の Ed25519 署名鍵と MLS 端末証明書（key authorization credential）、ML-KEM-768、
 master seed／24 語 phrase、Root/Sign/Spare 鍵、recovery archive の鍵。いずれも現行コードに存在しない。
-MLS そのもの（`src/protocol/mls/`、`client/mls/`、`client/mimi/`、`server/mimi/`）は、将来の MIMI クライアントのために残している（§11.4）。
+MLS そのもの（`src/protocol/mls/`、`client/mls/`、`client/mimi/`、`server/mimi/`）は、将来の MIMI クライアントのために残している（§11.3）。
 
 ## 7. Vault
 
@@ -502,7 +501,7 @@ mediator は clearnet（`https://mediator.biset.md`）と onion（v3 Hidden Serv
 | 受け手の `to` の確認 | 自分が `to` に無いとき、受け入れは拒否してはならず（MUST NOT）、利用者に警告する（SHOULD） | 受け入れて、コンソールに警告するだけ（利用者には出さない）。仕様の「整合性の違反は MUST でエラー」と食い違う |
 | endpoint の切り替え | 届かなければ別の endpoint を試す（SHOULD） | 1 つを選ぶだけ。endpoint の組は clearnet と onion で、onion は Tor 環境でしか届かないため、切り替えても通常のブラウザでは意味が無い |
 | `lang` | 人が読む文字列には `lang` で言語を示す（SHOULD） | Basic Message に `lang` を付けない（書いた言語を biset は知らない）。mediator の problem-report には付ける |
-| problem-report | 処理できないときの返事として望ましい（一般的な要件ではない） | クライアントは相手に problem-report を返さない（mediator は返す）。受け取った problem-report も表示しない |
+| problem-report | 処理できないときの返事として望ましい（一般的な要件ではない） | クライアントは相手に problem-report を返さない（mediator は返す）。受け取った problem-report は `didcomm.control` に記録するだけで、表示しない |
 | 暗号化されていない署名つきメッセージの POST | 転送のメディアタイプは中身に合わせる | mediator は `application/didcomm-encrypted+json` 以外を 415 で拒否する（mediator への要求は authcrypt を前提にした設計。Forward は anoncrypt） |
 | P-521 | 任意 | 対応しない |
 
@@ -519,39 +518,46 @@ mediator は clearnet（`https://mediator.biset.md`）と onion（v3 Hidden Serv
 - PIURI／MTURI の形（`https://…/<名前>/<major.minor>/<型>`）。
 
 **仕様が認める拡張（🔧）** — 自前の名前空間か、仕様が禁じていない追加のフィールド。
-- Basic Message の `body.sentAt`・`body.subject`（`created_time` は同じ時刻から作る）。
+- Basic Message の `body.sentAt`・`body.subject`（`created_time` は同じ時刻から作る）。受信では didmail の `body.fromName`・`body.replyTo`・`body.auth` も読む（§10.2）。
 - Coordinate Mediation の `device` ラベル（1 つの鍵を複数の端末が共有する Y のため）。
-- `https://biset.md/vault-sync/1.0/*`、`https://biset.md/external-feed/1.0/post`（anoncrypt のみ）、mail-bridge の型。
+- `https://biset.md/vault-sync/1.0/*`、`https://biset.md/external-feed/1.0/post`（anoncrypt のみ）。
 - group chat は独自の型を持たない（`to` が複数の Basic Message と `thid`）。
 
 **対象外（—）**: Out-of-Band 2.0（招待の URL・QR を作らない。公開 DID で直接連絡する）、`accept-lang`、`delay_milli`、did:key、did:peer:4（§10-4、後で実装）。
 
 ## 10. メール
 
-did.md ホストの利用者に限り、**DIDComm を土台にした汎用の mail bridge** が動く（`PLAN-mail.md`）。
+**biset はメールを送らないし、SMTP を知らない**。メールは別リポジトリの **didmail**（`~/dev/v2/didmail`、仕様は `PROTOCOL.md`）が担い、
+外部アドレス `local@domain` を `did:web:{bridge}:{domain}:{local}` の DID（文書はアクセスのたびに生成）として見せる。
+biset にとって外部アドレスは、その DID を持つ普通の DIDComm の相手であり、送受信は Basic Message 2.0 だけ。2026-10-09 に旧 mail-bridge（`mail-plugin`、`mail-relay`、`mail-bridge/1.0` の型、client の RFC 5322 組み立て）を撤去した。
 
-### 10.1 送信
-1. 宛先にメールアドレスが含まれると、`sendWalletMessage`（`main.ts`）が `buildOutboundRfc5322`（Message-ID は `…@did.md`）で RFC 5322 を作る。
-   **差出人は `{handle の最初のラベル}@did.md` に固定**で、他のドメインは扱えない。
-2. その email を outbox として Vault にコミットしてから、`submitDidCommMail` が `did:web:did.md` を解決して `MailBridge` service を見つけ、
-   そのホストの `did:web:smtp.did.md` へ、**`MAIL_BRIDGE_SEND`（`https://didcomm.org/mail-bridge/1.0/send`）を authcrypt で送る**。RFC 5322 は attachment。
-3. relay（`createMailBridgeAgent`、`POST /v1/mail`）は Content-Type を確かめ、authcrypt の sender kid を解決し、`mailFrom` が sender の DID から導出したアドレスと一致することを確かめて、
-   外部へ SMTP 配送する（STARTTLS、DKIM は設定されていれば署名）。結果は `MAIL_BRIDGE_SEND_RESULT` として、sender の DID Document の経路へ返す。
-4. クライアントは **POST の成功をもって `transport.result: accepted` と `mailbox.set sent` を記録する**。`SEND_RESULT` は `didcomm.control` として残すだけで、送信状態を確定させない（❓ 未完）。
+### 10.1 アドレスから DID へ（WebFinger）
+compose の宛先にメールアドレスがあると、`resolveMailAddressDid`（`client/didcomm/address-resolver.ts`）が WebFinger（RFC 7033）で DID を引く。
+1. まず**アドレス自身のドメイン**の `/.well-known/webfinger?resource=acct:{address}`。DID の alias があれば、その DID へ直接送る（ブリッジを通らない）。
+2. 無ければ、config の **`mailGateways`**（本番は `["did.md"]`）に順に問う。didmail は、apex のアドレスには利用者の did:webvh を、他のアドレスにはブリッジ DID を返す。
+3. 誰も答えなければ送信エラー。WebFinger の答えは信頼の根拠ではない（その DID を解決した文書に暗号化する）。
 
 ### 10.2 受信
-外部の SMTP → relay の `:25`（`createMailPluginListener`）。RCPT TO で、`{label}@did.md` を `{label}.did.md` の **公開 did:webvh ログ**から解決する（`resolveMailRecipientRoute`）。
-宛先の全 keyAgreement 鍵が受信者になり、DATA の受理時に `MAIL_BRIDGE_INBOUND` を authcrypt（relay 専用の did:web の鍵）して、宛先の mediator へ Forward する。
-クライアントは通常の DIDComm と同じく live 受信で受け、`DidCommIngressProjector` が RFC 5322 のヘッダ（Message-ID、References など）からスレッドを組み、本文を暗号化 object として保存する。
+didmail が SMTP で受けたメールを、宛先の did:webvh の全 keyAgreement 鍵へ authcrypt した Basic Message として送る。`from` はいつも送信者アドレスのブリッジ DID。
+`DidCommIngressProjector` は通常の Basic Message と同じく 1:1 のスレッドに入れ、didmail の拡張を JMAP の email に写す。
 
-### 10.3 現状の限界
-- 差出人・宛先は did.md のドメインのみ（relay 側は `apexDomain = did.md` を強制）。
-- DKIM は **未設定**（`ops/mail-relay-dkim.md`）。SPF／DMARC は DNS に公開済みだが、本番での pass は未確認。
-- bounce、rate limit、永続的な retry queue、送信の冪等性は未実装。**outbox の永続 retry は無く**、temporary failure は利用者操作なしには再送されない。
+| didmail | email（`LocalJmapEmail`） |
+|---|---|
+| `id` | `messageId`（返信の `thid` に使う） |
+| `body.fromName` | `from[0].name` |
+| `body.replyTo`（DID） | `replyTo`。返信はこちらへ送る（`computeReplyContext`） |
+| `body.auth`（SPF／DKIM／DMARC） | `auth`（JMAP 外の拡張）。`dmarc` が `pass` でなければ、スレッドで差出人に「unverified」を付ける |
+
+HTML 本文と添付（`attachments`）は今は保存しない（`body.content` が常にあるので読める）。配送失敗は report-problem/2.0（`e.m.xfer.*`）で届き、`didcomm.control` に記録される（表示は未実装）。
+
+### 10.3 送信
+アドレスを DID に解決したあとは、普通の 1:1 の DIDComm 送信（Vault の outbox、`didcomm-outbox.ts`）。did:web 宛ては front door（相手の `keyAgreement` と `service`）へ authcrypt する。
+送った email は自分の DIDComm `id` を `messageId` に持ち、1:1 の返信は返信先の email を `inReplyTo` に持つ。outbox は、その email の `messageId` を `thid` にして送る（didmail はこれを `In-Reply-To` にする）。
+差出人は常にこの identity の DID。didmail が DID からアドレスを導出する（apex 配下の did:webvh だけが送れる）。
 
 ## 11. サーバー
 
-### 11.1 Mediator（"A"／"B" 共通、`deployment.ts` ＋ `server.ts`）
+### 11.1 Mediator（`deployment.ts` ＋ `server.ts`）
 - 自分の `did:peer:2` を SQLite に持つ。**公開 URL（https）が DID の service に埋まる**ため、`MEDIATOR_PUBLIC_URL` を変えると DID が変わり、起動時に fail closed する。
 - プロトコル: Coordinate Mediation 3.0（登録）、Routing 2.0（Forward）、Pickup 3.0（status／delivery-request／messages-received／live-delivery-change）、Trust Ping 2.0、
   Discover Features 2.0、Report Problem 2.0。
@@ -584,31 +590,19 @@ did.md ホストの利用者に限り、**DIDComm を土台にした汎用の ma
 - `relay-poller.ts`: 別の upstream mediator へ自分を client として登録し、自分宛の Forward を unwrap して再 Forward する、任意の多段中継（`MEDIATOR_RELAY_UPSTREAM_URL`）。
 - 永続化は `sqlite-store.ts`（テーブル: `did_states`、`inboxes`、`messages`、`deliveries`、`replay_ids`、`identities`）。Vault Sync も同じ queue を使うだけで、専用のテーブルや権限は無い。
 
-### 11.2 mail-plugin と mail-relay
-`mail-plugin/`（"B"）は、mediator に **SMTP `:25` の listener** と、署名つきの **`POST /v1/mail/submit` の HTTP（`:8792`）** を同居させた deployment variant（本番では使っていない）。
-`mail-relay/` は、そのコード（listener、`smtp-client`、DKIM、bridge）を共有しつつ、**mediator とは独立したプロセス・独立した SQLite** として動く。
-
-| 経路（relay） | 役割 |
-|---|---|
-| SMTP `:25` | 外部からの受信 → 公開 DID の解決 → `MAIL_BRIDGE_INBOUND`（§10.2） |
-| `POST /v1/mail`（`:8792`） | DIDComm の送信 agent（§10.1） |
-| `GET /.well-known/did.json` | `Host: smtp.did.md` なら bridge の did:web（`#key-1` の X25519）、`Host: did.md` なら discovery（`MailBridge` service） |
-
-### 11.3 biset-rp-signer
+### 11.2 biset-rp-signer
 状態を持たない。RP DID の鍵（`RP_DID_KEY_FILE`）で JAR を署名するだけ。受け付ける claim は許可リスト（`state`、`dpop_jkt`、`login_hint`、`authorization_details`、`dcql_query`、`scope` など）で、
 `iss`・`client_id`・`response_type`・`redirect_uri` は**サーバー側で固定**し、呼び出し側からは受け取らない。
 
-### 11.4 biset-mimi（🔧）
+### 11.3 biset-mimi（🔧）
 IETF `draft-ietf-mimi-protocol` に沿った MLS delivery service（`normal`／`anon`／`self`）。サーバーとしては動き、テストも通るが、**現行クライアントからの呼び出し経路は無い**。
 biset は将来 MIMI クライアントにもなる予定で、そのために MLS／MIMI のコードを残している。設計の正本は `PLAN_biset-mimi-server.md`。
 
-### 11.5 環境変数（要点）
+### 11.4 環境変数（要点）
 - Mediator: `MEDIATOR_PUBLIC_URL`（必須）、`MEDIATOR_DATABASE_PATH`（または `MEDIATOR_DATA_DIR`）、`PORT`（既定 8791）、`MEDIATOR_HOST`（既定 127.0.0.1）、
   `MEDIATOR_ALLOWED_ORIGINS`、`MEDIATOR_RATE_LIMIT_PER_MINUTE`、`MEDIATOR_MAX_REQUEST_BYTES`、`MEDIATOR_MAX_INBOXES`、`MEDIATOR_MAX_DEVICES_PER_DID`、
   `MEDIATOR_MAX_QUEUE_ITEMS`、`MEDIATOR_MAX_QUEUE_BYTES`、`MEDIATOR_MAX_MESSAGE_BYTES`、`MEDIATOR_QUEUE_TTL_MS`、`MEDIATOR_DORMANT_AFTER_MS`、
   `MEDIATOR_REPLAY_TTL_MS`、`MEDIATOR_MAX_REPLAY_IDS`、`MEDIATOR_RELAY_UPSTREAM_URL`。
-- mail-plugin（"B"）: `MAIL_PLUGIN_APEX_DOMAIN`（必須）ほか `MAIL_PLUGIN_SMTP_*`、`MAIL_PLUGIN_SUBMIT_*`、`MAIL_PLUGIN_TLS_*`。
-- mail-relay: `MAIL_RELAY_DATABASE_PATH`（必須）、`MAIL_RELAY_SMTP_*`、`MAIL_RELAY_SUBMIT_*`（DIDComm agent と did.json の HTTP）、`MAIL_RELAY_TLS_*`、DKIM 関連。
 - rp-signer: `RP_DID_KEY_FILE`、`RP_REDIRECT_URI`、`RP_SIGNER_ALLOWED_ORIGIN`、`PORT`（既定 8794）。
 - biset-mimi: `MIMI_DATABASE_PATH`、`MIMI_MODE`、`MIMI_PUBLIC_BASE_URL`、`MIMI_ALLOW_EXTERNAL_JOIN`、`PORT`。
 
@@ -637,7 +631,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - 承認直後に古い DID ログが返ることがある（did.md の公開読み取りは CDN が `s-maxage=30` で保持し、更新時に purge しない）。
   biset は次の読み取りで CDN を避ける（`freshFetch`、`fetchLogContaining`）: 承認した内容の確認、自分の端末一覧、端末を外すときの対象、Vault Sync の宛先、relationship seed の権威（60 秒キャッシュ）、`from_prior` の検証、Y の mediator の DID。
   他人の DID の解決（送信先・送信者の鍵）は CDN を通すので、相手が端末を足したり外したりした直後の最大 30 秒は古い版で扱う（§14.2-6）。
-- outbox の mail 送信は自動再送されない（§10.3）。連絡先が名指さない did:peer からの保留は、mediator の保持期間（30 日）が上限。
+- 連絡先が名指さない did:peer からの保留は、mediator の保持期間（30 日）が上限。
 - **`main.ts` の boot wiring は、ブラウザ E2E で覆われていない。** 部品のテスト成功と、製品経路への接続を機械的に区別できない。
 
 ## 14. セキュリティ性質と未解消リスク
@@ -663,7 +657,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 8. **移動済みの相手の連絡先を消すと、その相手の did:peer が分からなくなる（中）**。JMAP の `ContactCard/destroy`（や `onlineServices` の書き換え）で `biset.md:didcomm` も消える。
    相手は `from_prior` を付けずに did:peer から送り続けるので、そのメッセージは保留されたまま mediator の保持期間（30 日）で消える。相手が次に移るか、こちらが移り直すまで戻らない。対処は未決（§17-14）。
 7. **onion の rate limit 共有（中、Tor 実運用まで）**（§9.8）。
-8. **メール**: DKIM 未設定、送信状態の確定が未完、outbox の自動再送が無い（§10.3）。
+8. **メール**: 配送失敗（didmail の problem-report）が送信状態に反映されない。HTML 本文と添付は保存しない（§10.2）。
 9. **No background／push（運用）**。ページが閉じている間は同期しない。
 10. **mediator の DB 書き込み失敗時の挙動は未検証（運用）**。
 
@@ -689,15 +683,15 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - Caddy（`/etc/caddy/Caddyfile`、did.md の deploy と共有。**biset の `deploy.sh` は Caddyfile を触らない**）:
   `mediator.biset.md` → `127.0.0.1:8791`（WebSocket の upgrade も Caddy の `reverse_proxy` がそのまま通す）、
   `t.biset.md` → `/opt/biset/app`（`/wallet/callback` は `index.html` に書き換え、`/api/rp-signer/*` は `127.0.0.1:8794`）、`biset.md` → `/opt/biset/home`。
-- systemd: `biset-didcomm-mediator.service`（`DynamicUser`、`/opt/biset/didcomm-mediator/`）、`biset-rp-signer.service`、`did-md-mail-relay.service`（`/opt/did-md-mail-relay/`）。
+- systemd: `biset-didcomm-mediator.service`（`DynamicUser`、`/opt/biset/didcomm-mediator/`）、`biset-rp-signer.service`、`did-md-mail-relay.service`（`/opt/did-md-mail-relay/`。旧 mail-relay。didmail への入れ替えを待つ）。
 - tor: `/etc/tor/torrc` の Hidden Service は 2 つ。`/var/lib/tor/biset-mediator/` → `127.0.0.1:8791`。**秘密鍵を失うと `.onion` が変わり、公開済みの DID Document がすべて古くなる**。
 - mediator の DB は `/var/lib/biset-didcomm-mediator/mediator.sqlite`。mail-relay の DB は `/var/lib/did-md-mail-relay/relay.sqlite`。`deploy.sh` は mediator の入れ替え前に `sqlite3 .backup` で `/var/backups/biset-didcomm-mediator/` へ退避する。
 
 ### 15.3 デプロイ（`deploy.sh`、git 追跡外）
-`./deploy.sh [app|landing|didcomm-mediator|mail-plugin|smtp|ap|relay|tor-backup|all]`。
+`./deploy.sh [app|landing|didcomm-mediator|smtp|ap|relay|tor-backup|all]`。
 - `app`: build → `v2:/opt/biset/app/` へ `index.html` と `sw.js` → sha256 と公開 URL で検証。
 - `tor-backup`: v2 の `/var/lib/tor`（キャッシュを除く）と torrc を、ローカルの `~/.biset-backups/tor/` に 0600 で退避する（暗号化は無い）。
-- `didcomm-mediator` と `mail-plugin` は排他。**mail-relay には専用のターゲットが無く**、`bun run build:mail-relay` のバイナリを手動で入れ替えている。
+- メール（didmail）は biset の `deploy.sh` の対象外（別リポジトリ）。
 - **`all`（引数なしも同じ）は mediator を入れ替えない**（app・landing・smtp・ap だけ）。mediator は `./deploy.sh didcomm-mediator` を別に実行する。
 - `didcomm-mediator` は入れ替え後に、本番に対してスモークテスト（`scripts/didcomm-mediator-smoke.ts`、git 追跡外）を流す。
 - `smtp`／`ap` は biset repo の外の relay（Rust／Go）を配る。
@@ -746,11 +740,11 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 
 優先度の高い順ではなく、**事実として確認できたもの**を挙げる。
 
-1. **DIDComm の仕様からの逸脱**: 独自の握手（INIT/ACCEPT）は 2026-10-07 の P0 で撤去した。**MUST の未対応は無い**（2026-10-09 に P-256／P-384、JWS、`id` の大文字小文字、group の宛先の整合性を直した。§9.9）。SHOULD の未対応と仕様の中の食い違いは §9.9。`external-feed` は自前の名前空間（`https://biset.md/external-feed/1.0/post`）に移した（2026-10-07。以前は `didcomm.org` の名前空間を、レジストリに無いのに使っていた）。`mail-bridge` は didmail への分離で撤去する。
+1. **DIDComm の仕様からの逸脱**: 独自の握手（INIT/ACCEPT）は 2026-10-07 の P0 で撤去した。**MUST の未対応は無い**（2026-10-09 に P-256／P-384、JWS、`id` の大文字小文字、group の宛先の整合性を直した。§9.9）。SHOULD の未対応と仕様の中の食い違いは §9.9。`external-feed` は自前の名前空間（`https://biset.md/external-feed/1.0/post`）に移した（2026-10-07。以前は `didcomm.org` の名前空間を、レジストリに無いのに使っていた）。`mail-bridge` は 2026-10-09 に didmail への分離で撤去した（§10）。
    `mediate-deny` は送らない（拒否の理由はすべて problem-report で返す）。
-2. **mail-plugin "B" の署名つき HTTP 送信**（`mail-submission-http.ts`）: 本番では使っていない variant に残る。
-3. **`client/` が `server/` を import**（`client/mail/didcomm-submit.ts`、`client/didcomm/ingress-projector.ts` が `server/mediator/mail-plugin/mail-bridge.ts` を参照）。
-   メールの wire 型が `server/` に置かれているため。`protocol/` へ移すのが筋。
+2. **本文を RFC 5322 として読む名残**: Vault の本文 object は `rawRfc5322` という名前で、`message-view.ts` は `rfc5322-headers.ts` で本文の先頭のヘッダを読む（旧メールの Message-ID／References、External Feed Post の `X-Source-Url`）。
+   DIDComm のメッセージにはヘッダが無いので、`sourceUrl` を別の場所に移せば、ヘッダの読み取りは消せる。名前の変更（`rawRfc5322`→本文）は機械的だが差分が大きい。
+3. **配送失敗（problem-report）を利用者に見せない**: didmail の `e.m.xfer.*` は記録されるが、送った email の状態は `sent` のまま。
 4. **セッション復元の失敗が一律にセッション破棄になる**（§14.2-4）。
 5. **file:// 版と https 版が別のアプリとして wallet に登録される**（§5.2）。**RP DID は `t.biset.md` に束縛**されており、ドメインを後から自由に変えられるという方針と衝突しうる。
 6. **git の追跡**: `.gitignore` が `scripts/`・`ops/`・`tasks/`・`docs/`・`deploy.sh`・`home/`・`PLAN*`・`config.json` を除外している。**`bun run build` が使う `scripts/inline.mjs` が、clone から再現できない。**
@@ -767,7 +761,7 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
     同じリポジトリの `host.ts` の `fetchOk` は CDN を避けている。手元の `~/did.md` には承認画面の DID 編集の処理が見当たらず、本番の Wallet のソースの所在は未確認。
 14. **移動済みの相手の連絡先の削除**（§14.2-8）: 案は (a) `biset.md:didcomm` のある Card の削除と `onlineServices` の DIDComm の項目の書き換えを `forbidden` にする、
    (b) 削除しても DIDComm の状態だけは別に残す（JMAP からは見えない）、(c) 消えたら次の受信で相手に移り直しを求める。未決。
-16. **Rust 側の relay（`jmapsmtp`、`jmapap`）の `routingKeys` の読み方は未確認**。TypeScript 側（biset のクライアント、mail-relay、mail-plugin）は直した。
+16. **Rust 側の relay（`jmapsmtp`、`jmapap`）の `routingKeys` の読み方は未確認**。TypeScript 側（biset のクライアント、didmail）は直した。
     Rust 側が `routingKeys` を did:peer の鍵としてだけ読むなら、`did:web` の鍵を載せた文書に宛てた配送（メールの受信など）が失敗する。文書を DID 形へ移せば影響はないが、移るまでは確かめる必要がある。
 15. **seed の権威の読み直しが頻繁**: 経路を選ぶたび（送信 1 件ごと、受信 1 件ごと）に、seed の record を Vault から復号して読み直す（ログは 60 秒キャッシュ）。量が増えたら端末内のキャッシュが要る。
 
@@ -787,8 +781,8 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 | JMAP export／import（平文、差分収束、`$imported`） | ✅ |
 | Markdown ミラー | ✅ |
 | DIDComm の front door／1:1／group chat／DID Rotation／Trust Ping／Discover Features | ✅（DID Rotation は単体試験まで。本番の通しは未） |
-| mediator（"A"、SQLite、所有の証明、端末上限、WebSocket の live mode、relay-poller） | ✅（本番は 2026-10-03 のデプロイで入れ替え） |
-| メールの送信（DIDComm mail bridge）と受信 | ✅（did.md アドレスに限る。DKIM 未設定、送信状態の確定が未完） |
+| mediator（SQLite、所有の証明、端末上限、WebSocket の live mode、relay-poller） | ✅（本番は 2026-10-03 のデプロイで入れ替え） |
+| メールアドレスとの送受信（didmail、WebFinger） | 🔧 実装済み・未デプロイ（2026-10-09。didmail と同時に入れ替える） |
 | Tor（onion の入口、opt-in の公開、入口の選択） | ✅ 公開と読み取り。❓ Tor Browser・WebSocket での実運用 |
 | External Feed の受信 | ✅ 受信口のみ（送る bridge は未実装） |
 | biset-mimi、`client/mls/`・`client/mimi/` | 🔧 将来の MIMI クライアントのために残す |
@@ -851,15 +845,12 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 - `identity/wallet/`: `did-md-oauth.ts`（wallet の承認、capability、DID 編集、端末の削除）、`did-md-store.ts`（セッションの封印）、
   `didcomm-outbox.ts`、`wallet-directory.ts`、`json-schema.ts`＋`schemas/biset-messenger-capability.schema.json`、`did-document-edit-check.ts`。
 - `identity/webvh/`（`log-io.ts` は現役。`freshFetch`／`fetchLogContaining`）、`identity/web/`・`create-genesis.ts`・`migrate.ts`（テストの fixture 用）。
-- `mail/`: `rfc5322-builder.ts`、`didcomm-submit.ts`。
 - `mls/*`、`mimi/*` は 🔧（将来の MIMI クライアント用）。
 
 ### 20.6 `server/`
-- `mediator/`: `index.ts`（"A"）、`deployment.ts`（HTTP と WebSocket）、`server.ts`、`sqlite-store.ts`、`relay-poller.ts`、`rate-limit.ts`、`route-deliver.ts`、`validate.ts`。
-- `mediator/mail-plugin/`: `index.ts`（"B"）、`listener.ts`、`smtp-socket-server.ts`、`mail-smtp-protocol.ts`、`bridge.ts`、`smtp-client.ts`、`dkim.ts`、`mail-submission-http.ts`、`mail-bridge.ts`／`mail-submission-wire.ts`。
-- `mail-relay/`: `index.ts`、`agent-http.ts`、`did-document.ts`、`sqlite-store.ts`、`dkim-config.ts`。
+- `mediator/`: `index.ts`、`deployment.ts`（HTTP と WebSocket）、`server.ts`、`sqlite-store.ts`、`relay-poller.ts`、`rate-limit.ts`、`validate.ts`。
 - `rp-signer/index.ts`。
-- `mimi/`: `index.ts`、`deployment.ts`、`http.ts`、`store.ts`、`mls-appsync.ts` ほか（§11.4）。
+- `mimi/`: `index.ts`、`deployment.ts`、`http.ts`、`store.ts`、`mls-appsync.ts` ほか（§11.3）。
 
 ### 20.7 リポジトリ直下の補足
 `dist/`（ビルド生成物。追跡されている）、`home/`（`biset.md` のランディング）、`src.bak/`（旧実装。参照用）、`pds/`（Bluesky PDS の配布物。biset のコードではない）、

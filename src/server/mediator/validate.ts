@@ -1,5 +1,4 @@
 import type { AdapterIngressOfferV1, IngressEnvelopeV1 } from '../../protocol/ingress.ts'
-import type { MailSubmissionRequestV1 } from '../../protocol/mail-submission.ts'
 import { assertOpaqueId } from '../../protocol/ids.ts'
 
 export class ProtocolValidationError extends Error {
@@ -107,22 +106,4 @@ function assertAdapterIngressOffer(value: unknown): asserts value is AdapterIngr
   bytes(input.sourceEvidence, 'sourceEvidence')
   bytes(input.protectedPayload, 'protectedPayload')
   bytes(input.protectedPayloadHash, 'protectedPayloadHash')
-}
-
-export function assertMailSubmissionRequest(value: unknown): asserts value is MailSubmissionRequestV1 {
-  const input = record(value, 'MailSubmissionRequestV1')
-  exactKeys(input, [
-    'version', 'identityId', 'deviceId', 'mailFrom', 'rcptTo', 'rawRfc5322', 'submittedAt', 'signature',
-  ], 'MailSubmissionRequestV1')
-  if (input.version !== 1) throw new ProtocolValidationError('MailSubmissionRequestV1.version must be 1')
-  opaqueId(input.identityId, 'identityId')
-  opaqueId(input.deviceId, 'deviceId')
-  text(input.mailFrom, 'mailFrom')
-  if (!Array.isArray(input.rcptTo) || input.rcptTo.length === 0) {
-    throw new ProtocolValidationError('rcptTo must be a non-empty array')
-  }
-  for (const address of input.rcptTo) text(address, 'rcptTo entry')
-  bytes(input.rawRfc5322, 'rawRfc5322')
-  time(input.submittedAt, 'submittedAt')
-  bytes(input.signature, 'signature')
 }

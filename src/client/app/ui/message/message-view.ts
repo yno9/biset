@@ -294,9 +294,8 @@ export function computeReplyContext(thread: ProcessedMessage[], selfAddress: str
   // An OLD `mls:<groupId>` thread (Conversation Groups, retired from active
   // deployment) deliberately has NO special case here any more: main.ts's
   // sendReply dropped its `mls:` send branch entirely, so keeping this
-  // thread's toAddrs pinned to the dead group address would only route a
-  // reply into the mail-submission fallback, addressed to the literal
-  // string "mls:...". Falling through to the generic algorithm below
+  // thread's toAddrs pinned to the dead group address would only send a
+  // reply to the literal string "mls:...". Falling through to the generic algorithm below
   // instead reads this thread's real per-message from/to_addrs (real DIDs,
   // mimi-content-projector.ts's old `projectMimiConversationMessage` always
   // wrote actual DIDs there, never the group address) and lands the reply

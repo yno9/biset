@@ -11,11 +11,9 @@
 // `service[#didcomm].serviceEndpoint` carries `{uri, accept, routingKeys}`
 // with the mediator's did:peer in `routingKeys`.
 //
-// One function, two callers -- client/didcomm/front-door-send.ts (outbound
-// DIDComm) and server/mediator/mail-plugin/bridge.ts (SMTP RCPT TO
-// resolution). They used to each unpack the routing document their own way;
-// a divergence there means mail silently routes to a different device than
-// chat does.
+// One function for every reader of a routing document (the outbound send,
+// the mediator, did:web documents), so they never disagree on where a
+// message goes.
 import type { WebvhDidDocument } from '../webvh/document.ts'
 import { selectDidCommEndpoint } from './service-endpoint.ts'
 import { decodeKeyAgreementMultikey, keyAgreementKeyFromJwk } from './key-agreement.ts'

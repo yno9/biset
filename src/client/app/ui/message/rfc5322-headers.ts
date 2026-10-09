@@ -47,11 +47,10 @@ export function readRfc5322HeaderSummary(raw: Uint8Array): Rfc5322HeaderSummary 
   }
 }
 
-/** "Name <addr@example.com>" or a bare "addr@example.com" -- matches
- * exactly what mail/rfc5322-builder.ts's buildOutboundRfc5322 writes, the
- * one producer this rewrite has for a From header (no encoded-words, no
- * quoted display-name, same "not implemented" scope as the rest of this
- * reader). */
+/** "Name <addr@example.com>" or a bare "addr@example.com" -- what the
+ * removed RFC 5322 builder wrote into messages still in old Vaults (no
+ * encoded-words, no quoted display-name, same "not implemented" scope as
+ * the rest of this reader). */
 function fromMailbox(value: string | undefined): { email: string; name?: string } | undefined {
   if (!value) return undefined
   const trimmed = value.trim()

@@ -47,10 +47,13 @@ Verify the client by opening that file over `file://`.
 Server binaries are built separately:
 
 ```bash
-bun run build:mail-plugin        # mediator with the SMTP bridge (production)
-bun run build:didcomm-mediator   # plain mediator (mutually exclusive with the above)
+bun run build:didcomm-mediator   # the DIDComm mediator
 bun run build:mimi               # MIMI delivery service
 ```
+
+Mail is not part of Biset: a mail address is reached as the DID a mail bridge
+([didmail](https://github.com/yno9/didmail)) gives it, looked up by WebFinger
+(`mailGateways` in `config.json`).
 
 Deployment targets are in `deploy.sh`; the application and the landing page are two separate
 targets and must not be confused.
