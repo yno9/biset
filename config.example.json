@@ -3,6 +3,7 @@
   "coreBaseUrl": "https://biset.md",
   "mediatorUrls": ["https://mediator.biset.md"],
   "mimiSelfBaseUrl": "https://mimi-self.biset.md",
+  "mailGateways": ["did.md"],
   "walletDeviceName": "Biset",
   "didDocumentServices": [
     {

@@ -150,6 +150,8 @@ export interface MailMessageView {
   /** External Feed Post only (ingress-projector.ts): the followed actor's
    * original post URL, read from the non-standard `X-Source-Url` header. */
   sourceUrl?: string
+  /** Where a reply to this message goes instead of `from` (LocalJmapEmail.replyTo). */
+  reply_to?: string
   /** A bridged mail's SPF/DKIM/DMARC results (LocalJmapEmail.auth). */
   auth?: MailAuthResults
 }
@@ -253,6 +255,7 @@ export function emailToMessageView(email: LocalJmapEmail, rawRfc5322: Uint8Array
     reactions: email.reactions ? Object.entries(email.reactions).map(([from, emoji]) => ({ from, emoji })) : undefined,
     edited: email.edited,
     sourceUrl: headers.sourceUrl,
+    ...(email.replyTo?.[0]?.email ? { reply_to: email.replyTo[0].email } : {}),
     ...(email.auth ? { auth: email.auth } : {}),
   }
 }
@@ -309,7 +312,9 @@ export function computeReplyContext(thread: ProcessedMessage[], selfAddress: str
   const toAddrs: string[] = []
   const seen = new Set<string>(self)
   for (const { msg } of thread) {
-    for (const address of [msg.from, ...(msg.to_addrs ?? [])]) {
+    // A message that names a reply-to (a bridged mail's Reply-To:) is
+    // answered there, not at its sender.
+    for (const address of [msg.reply_to || msg.from, ...(msg.to_addrs ?? [])]) {
       if (!address) continue
       const key = address.toLowerCase()
       if (seen.has(key)) continue

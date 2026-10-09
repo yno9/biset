@@ -27,7 +27,8 @@ export interface WalletDidCommOutboxOptions {
 
 /** What a queued row sends: the message as it was written, so a retry
  * carries the same DIDComm id and time. A group message also names its
- * conversation (`thid`) and every participant (`audience`). */
+ * conversation (`thid`) and every participant (`audience`); a 1:1 reply, the
+ * message it answers (`thid`). */
 interface OutboundChatMessage {
   id: string
   sentAt: string
@@ -84,10 +85,13 @@ export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): 
             if (!metadata) throw new Error(`local message ${item.emailId} is missing its metadata object`)
             const content = new TextDecoder().decode(await options.readModel.download(blobId))
             const group = metadata.threadId.startsWith('didcomm-group:')
+            // A 1:1 reply names the message it answers by its DIDComm id (a
+            // mail bridge turns it into In-Reply-To, didmail PROTOCOL.md §6.2).
+            const answered = !group && email?.inReplyTo ? snapshot.emails.find(candidate => candidate.id === email.inReplyTo)?.messageId : undefined
             const sent = await send(item.toDid, content, {
               id: item.messageId, sentAt: metadata.sentAt ?? item.createdAt,
               ...(metadata.subject ? { subject: metadata.subject } : {}),
-              ...(group ? { thid: parseDidCommGroupAddress(metadata.threadId), audience: metadata.to ?? [item.toDid] } : {}),
+              ...(group ? { thid: parseDidCommGroupAddress(metadata.threadId), audience: metadata.to ?? [item.toDid] } : answered ? { thid: answered } : {}),
             })
             if (!sent.ok) throw new Error(sent.error ?? 'DIDComm send failed')
 

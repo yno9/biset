@@ -10,6 +10,10 @@ declare const __BISET_CONFIG__: {
    * clearnet-only behavior exactly as before (I-5). */
   mediatorOnionUrls?: string[]
   mimiSelfBaseUrl?: string
+  /** Hosts whose WebFinger answers any mail address with a DID (a didmail
+   * bridge, didmail PROTOCOL.md §9), asked when the address's own domain
+   * has no DID for it. */
+  mailGateways?: string[]
   /** Human-facing application/device label shown by did.md Wallet. */
   walletDeviceName?: string
   /** DID Document service templates proposed during Wallet authorization. */
@@ -44,6 +48,9 @@ export interface BisetConfig {
   mediatorOnionUrls: string[]
   /** Dedicated normal-mode MIMI endpoint for the owner's Self/Vault room. */
   mimiSelfBaseUrl: string
+  /** Mail gateways (WebFinger hosts), in the order they are asked. Empty: a
+   * mail address reaches only a domain that publishes its own DIDs. */
+  mailGateways: string[]
   walletDeviceName: string
   didDocumentServices: DidDocumentServiceTemplate[]
 }
@@ -60,6 +67,7 @@ export function readBisetConfig(): BisetConfig {
     mediatorUrls: cfg.mediatorUrls ?? [],
     mediatorOnionUrls: cfg.mediatorOnionUrls ?? [],
     mimiSelfBaseUrl: cfg.mimiSelfBaseUrl ?? '',
+    mailGateways: cfg.mailGateways ?? [],
     walletDeviceName: cfg.walletDeviceName ?? 'Biset',
     didDocumentServices: cfg.didDocumentServices ?? defaultDidDocumentServices,
   }

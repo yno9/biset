@@ -122,7 +122,7 @@ function renderRowProto(row: HTMLElement): void {
   const badge = document.createElement('span')
   badge.textContent = PROTO_TEXT[proto]
   badge.style.cssText = `font-size:10px;font-weight:700;color:#fff;border-radius:4px;padding:1px 5px;margin-right:6px;flex-shrink:0;background:${PROTO_COLOR[proto]}`
-  badge.title = proto === 'did' ? 'Sends over DIDComm' : 'Sends as mail'
+  badge.title = proto === 'did' ? 'Sends over DIDComm' : 'Sends over DIDComm, to the DID this address names (its own domain or a mail gateway answers)'
   el.appendChild(badge)
 }
 
@@ -141,10 +141,10 @@ function recipients(): string[] {
 // there is nothing to choose between once "to" has decided the transport.
 interface FromOption { protocol: Proto; address: string }
 
+// Every send goes from this identity's DID: a mail address is only another
+// name for a recipient's DID (address-resolver.ts), never a sender of mail.
 function fromOptions(): FromOption[] {
-  const opts: FromOption[] = [{ protocol: 'mail', address: config!.selfAddress }]
-  if (config!.selfDid) opts.push({ protocol: 'did', address: config!.selfDid })
-  return opts
+  return [{ protocol: 'did', address: config!.selfDid ?? config!.selfAddress }]
 }
 
 /** The first filled recipient row's protocol, or null with nothing typed yet
@@ -248,7 +248,7 @@ export function showComposePage(): void {
     const body = bodyEl?.value.trim() ?? ''
     if (toAddrs.length === 0) { config.onError?.('At least one recipient is required'); return }
     if (!body) { config.onError?.('Message cannot be empty'); return }
-    if (toAddrs[0]!.startsWith('did:') && !config.selfDid) {
+    if (!config.selfDid) {
       config.onError?.('DIDComm is not set up on this identity yet')
       return
     }

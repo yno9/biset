@@ -23,6 +23,11 @@ describe('computeReplyContext', () => {
     expect(toAddrs).toEqual(['alice@x.test', 'bob@x.test'])
   })
 
+  test('a message with a reply-to is answered there, not at its sender', () => {
+    const thread = [msg({ from: 'did:web:did.md:x.test:noreply', reply_to: 'did:web:did.md:x.test:support', to_addrs: ['did:me'], message_id: 'm1', ts: 1 })]
+    expect(computeReplyContext(thread, 'did:me').toAddrs).toEqual(['did:web:did.md:x.test:support'])
+  })
+
   test('address comparison is case-insensitive', () => {
     const thread = [msg({ from: 'Alice@X.test', to_addrs: ['ME@x.test'], message_id: 'm1', ts: 1 })]
     const { toAddrs } = computeReplyContext(thread, 'me@x.test')
