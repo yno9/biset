@@ -236,6 +236,9 @@ function canonicalEmail(value: LocalJmapEmail): CanonicalValue {
     ...(value.preview === undefined ? {} : { preview: value.preview }),
     ...(value.size === undefined ? {} : { size: value.size }),
     ...(value.inReplyTo === undefined ? {} : { inReplyTo: value.inReplyTo }),
+    ...(value.messageId === undefined ? {} : { messageId: value.messageId }),
+    ...(value.replyTo === undefined ? {} : { replyTo: value.replyTo.map(canonicalAddress) }),
+    ...(value.auth === undefined ? {} : { auth: { ...value.auth } }),
     ...(value.reactions === undefined ? {} : { reactions: { ...value.reactions } }),
     ...(value.edited === undefined ? {} : { edited: value.edited }),
   }
@@ -283,6 +286,9 @@ function immutableMessageIdentity(value: LocalJmapEmail): CanonicalValue {
     ...(value.preview === undefined ? {} : { preview: value.preview }),
     ...(value.size === undefined ? {} : { size: value.size }),
     ...(value.inReplyTo === undefined ? {} : { inReplyTo: value.inReplyTo }),
+    ...(value.messageId === undefined ? {} : { messageId: value.messageId }),
+    ...(value.replyTo === undefined ? {} : { replyTo: value.replyTo.map(canonicalAddress) }),
+    ...(value.auth === undefined ? {} : { auth: { ...value.auth } }),
   }
 }
 

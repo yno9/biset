@@ -7,6 +7,8 @@
 // out of scope here (this rewrite's DIDComm adapter is external-ingress/
 // OOB/bootstrap/control plus, now, 1:1 chat -- not the old system's full
 // messaging subsystem, confirmed with the user).
+import type { MailAuthResults } from '../store/projection/gateway.ts'
+
 export const BASIC_MESSAGE = 'https://didcomm.org/basicmessage/2.0/message'
 
 export function isBasicMessage(msg: { type?: string }): boolean { return msg.type === BASIC_MESSAGE }
@@ -23,6 +25,30 @@ export interface BasicMessageBody {
   /** NOT part of basicmessage/2.0: a biset extension, the subject line of a
    * mail-shaped message. A receiver that does not know it ignores it. */
   subject?: string
+  /** NOT part of basicmessage/2.0: the sender's display name (a bridged
+   * mail's `From:` name, didmail PROTOCOL.md §4). */
+  fromName?: string
+  /** NOT part of basicmessage/2.0: the DID a reply goes to instead of `from`
+   * (a bridged mail's `Reply-To:`, didmail PROTOCOL.md §4.2). */
+  replyTo?: string
+  /** NOT part of basicmessage/2.0: a bridged mail's SPF/DKIM/DMARC results
+   * (didmail PROTOCOL.md §4.3). Unknown fields and values are dropped. */
+  auth?: MailAuthResults
+}
+
+/** RFC 8601's result words. */
+const AUTH_RESULTS = new Set(['pass', 'fail', 'softfail', 'neutral', 'none', 'temperror', 'permerror'])
+
+function mailAuthOf(value: unknown): MailAuthResults | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const auth = value as Record<string, unknown>
+  const result: MailAuthResults = {}
+  for (const field of ['spf', 'dkim', 'dmarc'] as const) {
+    const entry = auth[field]
+    if (typeof entry === 'string' && AUTH_RESULTS.has(entry)) result[field] = entry
+  }
+  if (typeof auth.domain === 'string' && auth.domain) result.domain = auth.domain
+  return Object.keys(result).length ? result : undefined
 }
 
 /** One thread per correspondent DID pair, not per-subject like mail -- a
@@ -38,11 +64,14 @@ export function basicMessageBodyOf(msg: { body?: unknown }): BasicMessageBody | 
   if (typeof body !== 'object' || body === null) return null
   const content = (body as Record<string, unknown>).content
   if (typeof content !== 'string') return null
-  const sentAt = (body as Record<string, unknown>).sentAt
-  const subject = (body as Record<string, unknown>).subject
+  const { sentAt, subject, fromName, replyTo } = body as Record<string, unknown>
+  const auth = mailAuthOf((body as Record<string, unknown>).auth)
   return {
     content,
     ...(typeof sentAt === 'string' ? { sentAt } : {}),
     ...(typeof subject === 'string' ? { subject } : {}),
+    ...(typeof fromName === 'string' && fromName ? { fromName } : {}),
+    ...(typeof replyTo === 'string' && replyTo.startsWith('did:') ? { replyTo } : {}),
+    ...(auth ? { auth } : {}),
   }
 }

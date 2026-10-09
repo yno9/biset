@@ -13,6 +13,11 @@ export interface LocalJmapMailbox {
   unreadEmails: number
 }
 
+/** SPF/DKIM/DMARC results, each an RFC 8601 result word (`pass`, `fail`,
+ * `softfail`, `neutral`, `none`, `temperror`, `permerror`), and the `From:`
+ * domain DMARC evaluated. */
+export interface MailAuthResults { spf?: string; dkim?: string; dmarc?: string; domain?: string }
+
 export interface LocalJmapEmail {
   id: string
   blobId?: string
@@ -30,6 +35,15 @@ export interface LocalJmapEmail {
    * one replies to. Immutable, set only at `message.add` time -- unlike
    * `blobId`/`reactions`, a reply's target never changes after creation. */
   inReplyTo?: string
+  /** The DIDComm `id` of the message this email is (JMAP `messageId`, one id
+   * rather than a list): what a reply puts in its `thid`. Immutable. */
+  messageId?: string
+  /** Where a reply goes instead of `from` (JMAP `replyTo`): a received
+   * basicmessage's `body.replyTo` DID. Immutable. */
+  replyTo?: Array<{ email?: string; name?: string }>
+  /** Not JMAP: how a bridged mail authenticated when the bridge received it
+   * (didmail PROTOCOL.md §4.3). Absent when nobody checked. Immutable. */
+  auth?: MailAuthResults
   /** Set by the reducer once any `message.edit` has been applied (PLAN-mimi.md
    * §4.3) -- content itself carries no "this was edited" marker (the new
    * blobId just replaces the old one), so the UI needs this to show a

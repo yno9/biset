@@ -6,6 +6,7 @@ import { packAnoncrypt, packAuthcrypt } from '../../src/protocol/didcomm/crypto.
 import { signDidCommMessage } from '../../src/protocol/didcomm/jws.ts'
 import { buildPlaintext } from '../../src/protocol/didcomm/message.ts'
 import { PING, PING_RESPONSE } from '../../src/protocol/didcomm/trust-ping.ts'
+import { PROBLEM_REPORT } from '../../src/protocol/didcomm/problems.ts'
 import { BASIC_MESSAGE, didCommThreadId } from '../../src/client/didcomm/basicmessage.ts'
 import { didOfKid } from '../../src/protocol/ids.ts'
 import { DidCommIngressProjector, DidCommReplayError, RotationPendingError } from '../../src/client/didcomm/ingress-projector.ts'
@@ -332,6 +333,30 @@ describe('DIDComm ingress projector', () => {
       },
     })
     expect(result.ack.vaultEventId).toBeTruthy()
+  })
+
+  test('a bridged mail keeps its id, the From: name, the Reply-To DID and the auth results; unknown auth values are dropped', async () => {
+    const replyTo = 'did:web:did.md:example.com:list'
+    const plaintext = buildPlaintext(BASIC_MESSAGE, {
+      content: 'hello from mail', subject: 'Hi', fromName: 'Bob Example', replyTo,
+      auth: { spf: 'pass', dkim: 'bogus', dmarc: 'fail', domain: 'example.com', extra: 'x' },
+    }, didOfKid(senderKid), undefined, { id: 'CAF00@mail.example.com' })
+    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
+    const result = await buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
+    expect(result.projection.emails).toMatchObject([{
+      from: [{ email: didOfKid(senderKid), name: 'Bob Example' }], subject: 'Hi',
+      messageId: 'CAF00@mail.example.com', replyTo: [{ email: replyTo }],
+      auth: { spf: 'pass', dmarc: 'fail', domain: 'example.com' },
+    }])
+    expect(result.projection.emails[0]!.auth).toEqual({ spf: 'pass', dmarc: 'fail', domain: 'example.com' })
+  })
+
+  test('a problem-report (a bridge\'s delivery failure) is recorded, not a thread row', async () => {
+    const plaintext = buildPlaintext(PROBLEM_REPORT, { code: 'e.m.xfer.rejected', comment: 'refused for {1}: {2}', args: ['a@b.example', '550'] }, didOfKid(senderKid), [identityId], { pthid: 'Sent-1' })
+    const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
+    const result = await buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
+    expect(result.events.map(event => event.kind)).toEqual(['didcomm.control'])
+    expect(result.projection.emails).toEqual([])
   })
 
   test('two different basicmessages between the same pair land in the SAME thread, chat-style (not per-subject like mail)', async () => {

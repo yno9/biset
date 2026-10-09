@@ -1,7 +1,7 @@
 import { canonicalBytes, type CanonicalValue } from '../../../protocol/canonical.ts'
 import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../../../protocol/ids.ts'
 import type { VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
-import type { LocalJmapEmail } from '../projection/gateway.ts'
+import type { LocalJmapEmail, MailAuthResults } from '../projection/gateway.ts'
 import { createVaultEvent, type VaultEventAuthor } from './events.ts'
 import { encryptVaultObject } from './objects.ts'
 import { encodeVaultMutationObject, mutationObjectAad } from './mutations.ts'
@@ -151,7 +151,9 @@ export function assertMailMessageEmail(value: unknown): LocalJmapEmail {
   }
   if (email.from !== undefined) result.from = addresses(email.from, 'from')
   if (email.to !== undefined) result.to = addresses(email.to, 'to')
-  for (const field of ['subject', 'preview', 'inReplyTo'] as const) {
+  if (email.replyTo !== undefined) result.replyTo = addresses(email.replyTo, 'replyTo')
+  if (email.auth !== undefined) result.auth = mailAuthResults(email.auth)
+  for (const field of ['subject', 'preview', 'inReplyTo', 'messageId'] as const) {
     if (email[field] !== undefined) {
       if (typeof email[field] !== 'string' || !email[field]) throw new TypeError(`mail message ${field} is invalid`)
       result[field] = email[field]
@@ -163,6 +165,18 @@ export function assertMailMessageEmail(value: unknown): LocalJmapEmail {
     result.size = size
   }
   if (email.reactions !== undefined) result.reactions = reactionsMap(email.reactions)
+  return result
+}
+
+const MAIL_AUTH_FIELDS = ['spf', 'dkim', 'dmarc', 'domain'] as const
+
+function mailAuthResults(value: unknown): MailAuthResults {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('mail message auth must be an object')
+  const result: MailAuthResults = {}
+  for (const [field, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!(MAIL_AUTH_FIELDS as readonly string[]).includes(field) || !nonEmptyString(entry)) throw new TypeError('mail message auth is invalid')
+    result[field as typeof MAIL_AUTH_FIELDS[number]] = entry
+  }
   return result
 }
 
@@ -226,6 +240,9 @@ function canonicalMailMessageEmail(email: LocalJmapEmail): CanonicalValue {
     ...(email.preview === undefined ? {} : { preview: email.preview }),
     ...(email.size === undefined ? {} : { size: email.size }),
     ...(email.inReplyTo === undefined ? {} : { inReplyTo: email.inReplyTo }),
+    ...(email.messageId === undefined ? {} : { messageId: email.messageId }),
+    ...(email.replyTo === undefined ? {} : { replyTo: email.replyTo.map(canonicalAddress) }),
+    ...(email.auth === undefined ? {} : { auth: { ...email.auth } }),
     ...(email.reactions === undefined ? {} : { reactions: { ...email.reactions } }),
   }
 }

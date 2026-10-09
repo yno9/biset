@@ -2443,6 +2443,13 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   opacity: 0.65;
   font-style: italic;
 }
+.t-unverified {
+  font-size: 11px;
+  color: #b45309;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 4px;
+}
 
 /* ─────────────────────────────────────────────────────────────────────────────
    18  MESSAGE EDIT/DELETE ACTIONS

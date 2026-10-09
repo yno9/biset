@@ -1,6 +1,7 @@
 // Minimal did:web reader for public DIDComm service agents.  User identities
-// remain did:webvh and use the signed-log resolver; this is deliberately only
-// for stable service DIDs such as did:web:smtp.did.md.
+// remain did:webvh and use the signed-log resolver; this is for service DIDs:
+// a mediator (did:web:mediator.biset.md), a mail bridge's address DIDs
+// (did:web:did.md:gmail.com:alice).
 import { selectDidCommEndpoint } from './service-endpoint.ts'
 import { keyAgreementRecipients } from './webvh-route.ts'
 import type { X25519Recipient } from './crypto.ts'
@@ -19,7 +20,9 @@ function didWebDocumentUrl(did: string): string {
   const host = parts.shift()
   if (!host || !/^[a-z0-9.-]+$/i.test(host)) throw new TypeError('invalid did:web host')
   if (parts.length === 0) return `https://${host}/.well-known/did.json`
-  if (parts.some(part => !part || part === '.' || part === '..' || /[^A-Za-z0-9._~-]/.test(part))) throw new TypeError('invalid did:web path')
+  // A segment is DID Core `idchar`s, `%XX` included (a mail bridge's
+  // `bob%2Bnews`), kept encoded in the URL as did:web says.
+  if (parts.some(part => part === '.' || part === '..' || !/^(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+$/.test(part))) throw new TypeError('invalid did:web path')
   return `https://${host}/${parts.join('/')}/did.json`
 }
 

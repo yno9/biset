@@ -176,11 +176,18 @@ function createMsgEl({ msg, bodyText }: ProcessedMessage): HTMLElement {
     msg.sourceUrl && /^https?:\/\//.test(msg.sourceUrl)
       ? `<div class="t-source-link"><a href="${esc(msg.sourceUrl)}" target="_blank" rel="noopener noreferrer">元の投稿を見る</a></div>`
       : ''
+  // A bridged mail whose From: domain did not pass DMARC may be forged
+  // (didmail PROTOCOL.md §4.3). No `auth` at all is "not checked" -- a
+  // DIDComm message, authenticated by its own encryption -- so no badge.
+  const unverified = msg.auth && msg.auth.dmarc !== 'pass'
+    ? `<span class="t-unverified" title="The sender's mail domain did not verify this message (DMARC ${esc(msg.auth.dmarc ?? 'none')}). It may not be from ${esc(msg.auth.domain ?? 'that domain')}.">unverified</span>`
+    : ''
   div.innerHTML = `
     <div class="t-avatar" style="${avatarStyle(msg.from || senderName)}">${senderName.charAt(0).toUpperCase()}</div>
     <div class="t-meta">
       <div class="t-hdr">
         <span class="t-sender">${esc(senderName)}</span>
+        ${unverified}
         <span class="t-time">${formatTime(msg.ts)}</span>
         ${msg.edited ? '<span class="t-edited">edited</span>' : ''}
       </div>

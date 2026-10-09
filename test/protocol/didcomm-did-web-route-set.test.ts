@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { didWebDidCommRoute, type DidWebDocument } from '../../src/protocol/didcomm/did-web.ts'
+import { didWebDidCommRoute, resolveDidWeb, type DidWebDocument } from '../../src/protocol/didcomm/did-web.ts'
 import { encodeX25519Multikey } from '../../src/protocol/didcomm/multikey.ts'
 
 const DID = 'did:web:smtp.example'
@@ -19,5 +19,19 @@ describe('didWebDidCommRoute with a published set', () => {
   })
   test('an onion-only set has no route', () => {
     expect(() => didWebDidCommRoute(base([entry('http://x.onion')]))).toThrow('no DIDComm route')
+  })
+})
+
+describe('resolveDidWeb paths', () => {
+  const fetched: string[] = []
+  const fetchImpl = (async (input: string | URL | Request) => { fetched.push(String(input)); return new Response('Not found', { status: 404 }) }) as typeof fetch
+  test('a percent-encoded segment (a mail bridge address DID) is kept encoded in the URL', async () => {
+    expect(await resolveDidWeb('did:web:did.md:gmail.com:bob%2Bnews', fetchImpl)).toBeNull()
+    expect(fetched.at(-1)).toBe('https://did.md/gmail.com/bob%2Bnews/did.json')
+  })
+  test('other characters, a bare `%`, and dot segments are refused', async () => {
+    for (const did of ['did:web:did.md:gmail.com:bob+news', 'did:web:did.md:gmail.com:bob%2', 'did:web:did.md:..:x', 'did:web:did.md::x']) {
+      await expect(resolveDidWeb(did, fetchImpl)).rejects.toThrow('invalid did:web path')
+    }
   })
 })

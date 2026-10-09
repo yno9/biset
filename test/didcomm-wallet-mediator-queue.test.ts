@@ -28,7 +28,7 @@ import { BASIC_MESSAGE } from '../src/client/didcomm/basicmessage.ts'
 // and group protocol (PLAN-refactor.md §3, §8).
 const RETIRED_INIT = 'https://biset.md/relationship/1.0/init'
 const RETIRED_GROUP_INVITE = 'https://biset.md/didcomm-group/1.0/invite'
-import { MAIL_BRIDGE_INBOUND } from '../src/server/mediator/mail-plugin/mail-bridge.ts'
+import { PROBLEM_REPORT } from '../src/protocol/didcomm/problems.ts'
 import { DidCommIngressProjector, isProjectableDidCommIngress } from '../src/client/didcomm/ingress-projector.ts'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
 import { registerWithMediator } from '../src/client/didcomm/mediator-sync.ts'
@@ -103,12 +103,13 @@ describe('DidCommIngressProjector allow-list (isProjectableDidCommIngress)', () 
   // handle has to pass it. (A ping projects cleanly; the others get past the
   // type check and fail later, on their deliberately empty body -- which is
   // exactly the proof that the type check let them through.)
-  test('ping / basicmessage / mail-bridge inbound stay projectable', async () => {
-    for (const type of [PING, BASIC_MESSAGE, MAIL_BRIDGE_INBOUND]) {
+  test('ping / basicmessage / problem-report stay projectable', async () => {
+    for (const type of [PING, BASIC_MESSAGE, PROBLEM_REPORT]) {
       expect(isProjectableDidCommIngress({ type })).toBe(true)
       expect(await projectType(type)).not.toBe(`unsupported DIDComm message type for this endpoint slice: ${type}`)
     }
     expect(await projectType(PING)).toBeNull()
+    expect(await projectType(PROBLEM_REPORT)).toBeNull()
   })
 })
 

@@ -12,7 +12,7 @@
 // In-Reply-To の親を1本辿って親の thread_id を継承していたので、親が欠けた瞬間
 // そこから先が丸ごと別スレッドに割れていた。ファントム経由なら同じ欠落親を指す
 // 兄弟同士が繋がる。（src.bak/threading.ts より移植、ロジックは無変更）
-import type { LocalJmapEmail } from '../../../store/projection/gateway.ts'
+import type { LocalJmapEmail, MailAuthResults } from '../../../store/projection/gateway.ts'
 import { extractPlainTextBody } from './body-text.ts'
 import { readRfc5322HeaderSummary } from './rfc5322-headers.ts'
 
@@ -150,6 +150,8 @@ export interface MailMessageView {
   /** External Feed Post only (ingress-projector.ts): the followed actor's
    * original post URL, read from the non-standard `X-Source-Url` header. */
   sourceUrl?: string
+  /** A bridged mail's SPF/DKIM/DMARC results (LocalJmapEmail.auth). */
+  auth?: MailAuthResults
 }
 
 export interface ProcessedMessage {
@@ -251,6 +253,7 @@ export function emailToMessageView(email: LocalJmapEmail, rawRfc5322: Uint8Array
     reactions: email.reactions ? Object.entries(email.reactions).map(([from, emoji]) => ({ from, emoji })) : undefined,
     edited: email.edited,
     sourceUrl: headers.sourceUrl,
+    ...(email.auth ? { auth: email.auth } : {}),
   }
 }
 

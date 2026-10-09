@@ -24,8 +24,7 @@ import { DidCommSenderMismatchError, isExpired } from '../../protocol/didcomm/me
 import { parseDidCommJws, SignatureError, signingKeyResolver, type SigningKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { openDidCommPayload, type OpenedMessage } from '../../protocol/didcomm/open.ts'
 import { didcommGroupAddress, isGroupAudience } from './group-chat.ts'
-import { MAIL_BRIDGE_INBOUND, MAIL_BRIDGE_SEND_RESULT, mailBridgeInboundBodyOf } from '../../server/mediator/mail-plugin/mail-bridge.ts'
-import { readRfc5322HeaderSummary } from '../app/ui/message/rfc5322-headers.ts'
+import { isProblemReport } from '../../protocol/didcomm/problems.ts'
 
 export interface OwnDidCommKey { kid: string; x25519PrivateKey: Uint8Array }
 
@@ -86,10 +85,10 @@ export class RotationPendingError extends Error {
  * re-fails forever. So every mediator delivery handler must decide, BEFORE
  * reaching this projector, what to do with a type it has no branch for --
  * `msg.type`-dispatch it (the local-identity boot path's own onMessage does
- * this for the group-chat and mail-bridge types) or drop it deliberately.
+ * this for the group-chat and problem-report types) or drop it deliberately.
  */
 export function isProjectableDidCommIngress(msg: { type?: string }): boolean {
-  return isPing(msg) || isPingResponse(msg) || isBasicMessage(msg) || isExternalFeedPost(msg) || msg.type === MAIL_BRIDGE_INBOUND || msg.type === MAIL_BRIDGE_SEND_RESULT
+  return isPing(msg) || isPingResponse(msg) || isBasicMessage(msg) || isExternalFeedPost(msg) || isProblemReport(msg)
 }
 
 /**
@@ -196,7 +195,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
     // anoncrypt exists at all (Forward-wrapping so a mediator stays blind) and
     // external-feed.ts's header on why External Feed Post is the ONLY message
     // type allowed to arrive that way: every other type this projector
-    // understands (chat, ping, mail-bridge) assumes an authenticated sender
+    // understands (chat, ping, problem-report) assumes an authenticated sender
     // somewhere downstream.
     const senderKid = opened.senderKid
     if (isExpired(msg)) throw new TypeError('DIDComm message has expired')
@@ -238,42 +237,12 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
     let event: VaultEventRecord
     let decryptedForProjection: { event: VaultEventRecord; plaintext: Uint8Array }
 
-    if (msg.type === MAIL_BRIDGE_INBOUND) {
-      // SMTP is deliberately opaque in transit.  Only the endpoint reads its
-      // inexpensive display/threading metadata; the original bytes are kept
-      // unchanged in the encrypted Vault object for replies and download.
-      // (senderKid is always defined here: anoncrypt is gated to External
-      // Feed Post above, and this branch is never that type.)
-      const inbound = mailBridgeInboundBodyOf(msg)
-      if (!inbound) throw new TypeError('mail bridge message has an invalid inbound body')
-      const headers = readRfc5322HeaderSummary(inbound.rawRfc5322)
-      const emailId = didCommMessageDedupeId(senderKid!, msg.id)
-      const threadId = headers.references[0] ?? headers.inReplyTo ?? headers.messageId ?? emailId
-      const record = await buildMailMessageAdd({
-        email: {
-          id: emailId,
-          threadId,
-          mailboxIds: { inbox: true },
-          keywords: {},
-          receivedAt: createdAt,
-          ...(headers.sentAt ? { sentAt: headers.sentAt } : {}),
-          ...(headers.from ? { from: [headers.from] } : {}),
-          to: [{ email: this.options.identityId }],
-          ...(headers.subject ? { subject: headers.subject } : {}),
-          ...(headers.inReplyTo ? { inReplyTo: headers.inReplyTo } : {}),
-          size: inbound.rawRfc5322.length,
-        },
-        rawRfc5322: inbound.rawRfc5322,
-      }, context, this.options.signer)
-      event = identityScopedObject(record.event, this.options.identityId)
-      objectRecords.push(identityScopedObject(record.metadataObject, this.options.identityId))
-      objectRecords.push(identityScopedObject(record.rawRfc5322Object, this.options.identityId))
-      decryptedForProjection = { event: record.event, plaintext: await decryptVaultObject(segment.segmentKey, record.metadataObject) }
-    } else if (isPing(msg) || isPingResponse(msg) || msg.type === MAIL_BRIDGE_SEND_RESULT) {
-      // Trust Ping 2.0: an audit record, never a thread row -- see
-      // local-jmap/reducer.ts's own no-op case for `didcomm.control`.
-      // (senderKid is always defined here, same reasoning as the
-      // MAIL_BRIDGE_INBOUND branch above.)
+    if (isPing(msg) || isPingResponse(msg) || isProblemReport(msg)) {
+      // Trust Ping 2.0, and a problem-report (such as a mail bridge's
+      // delivery failure, threaded by `pthid` to the message it is about): an
+      // audit record, never a thread row -- see local-jmap/reducer.ts's own
+      // no-op case for `didcomm.control`. (senderKid is always defined here:
+      // anoncrypt is gated to External Feed Post.)
       const alg = jwe ? protectedHeaderOf(jwe)?.alg : 'signed'
       const record = await buildVaultMutation({
         kind: 'didcomm.control' as const,
@@ -283,7 +252,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
           recipientKid,
           ...(typeof alg === 'string' ? { alg } : {}),
           ...(isPing(msg) ? { responseOwed: responseOwedFor(msg) } : {}),
-          ...(msg.type === MAIL_BRIDGE_SEND_RESULT ? { mailBridgeResultReceived: true, threadId: msg.thid ?? msg.id } : {}),
+          ...(isProblemReport(msg) ? problemOf(msg) : {}),
           receivedAt: createdAt,
         },
       }, context, this.options.signer)
@@ -375,9 +344,12 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
           keywords: {},
           receivedAt: createdAt,
           sentAt,
-          from: [{ email: senderDid }],
+          from: [{ email: senderDid, ...(body.fromName ? { name: body.fromName } : {}) }],
           to: (group ? audience : [this.options.identityId]).map(email => ({ email })),
           ...(body.subject ? { subject: body.subject } : {}),
+          messageId: msg.id,
+          ...(body.replyTo ? { replyTo: [{ email: body.replyTo }] } : {}),
+          ...(body.auth ? { auth: body.auth } : {}),
         },
         rawRfc5322: new TextEncoder().encode(body.content),
       }, context, this.options.signer)
@@ -406,6 +378,13 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
     })
     return { ...commit, checkpointId: commit.projection.state }
   }
+}
+
+/** What a control record keeps of a problem-report: its code and the thread
+ * it is about. */
+function problemOf(msg: DidCommPlaintext): { problemCode?: string; threadId?: string } {
+  const code = (msg.body as { code?: unknown } | undefined)?.code
+  return { ...(typeof code === 'string' ? { problemCode: code } : {}), ...(typeof msg.pthid === 'string' ? { threadId: msg.pthid.toLowerCase() } : {}) }
 }
 
 /** The counterparty behind an authenticated sender, by its public DID, and
