@@ -16,6 +16,7 @@
 // (kid = positional "#key-N", service payload = {id, t, s: {uri, a, r}}),
 // ported from src.bak/did/peer/peer.ts (verified there to interoperate
 // against adorsys's own mediator).
+import { jwkOfKeyAgreementKey, keyAgreementCurveOfPrefix, keyAgreementKeyFromJwk, type KeyAgreementCurve } from './key-agreement.ts'
 import { x25519, ed25519 } from '@noble/curves/ed25519.js'
 import { extract, expand } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
@@ -89,7 +90,7 @@ export interface PeerDidDoc {
     id: string
     type: string
     controller: string
-    publicKeyJwk: { kty: string; crv: string; x: string }
+    publicKeyJwk: { kty: string; crv: string; x: string; y?: string }
   }>
   service: Array<{
     id: string
@@ -109,11 +110,23 @@ export interface PeerIdentity {
   doc: PeerDidDoc
 }
 
-/** The public key for `kid` from an already-decoded doc. */
+/** The public key for `kid` from an already-decoded doc: raw bytes for an
+ * OKP key (X25519, Ed25519), the SEC1 point for a NIST one. */
 export function publicKeyOf(doc: PeerDidDoc, kid: string): Uint8Array {
   const vm = doc.verificationMethod.find(v => v.id === kid)
   if (!vm) throw new Error(`publicKeyOf: kid ${kid} not found in DID doc`)
+  if (vm.publicKeyJwk.kty === 'EC') return keyAgreementKeyFromJwk(vm.publicKeyJwk).publicKey
   return b64urlDecodeToBytes(vm.publicKeyJwk.x)
+}
+
+/** Every keyAgreement key of a did:peer:2, with its curve. */
+export function peerKeyAgreementRecipients(doc: PeerDidDoc): Array<{ kid: string; publicKey: Uint8Array; curve?: KeyAgreementCurve }> {
+  return doc.keyAgreement.flatMap(kid => {
+    const vm = doc.verificationMethod.find(value => value.id === kid)
+    if (!vm) return []
+    const key = keyAgreementKeyFromJwk(vm.publicKeyJwk)
+    return [{ kid, publicKey: key.publicKey, ...(key.curve === 'X25519' ? {} : { curve: key.curve }) }]
+  })
 }
 
 function encodeServiceSegment(service: PeerService): string {
@@ -159,14 +172,16 @@ export function decodePeerDid2(did: string): PeerDidDoc {
     const raw = decoded.slice(2) // strip 2-byte multicodec varint prefix
     idx++
     const kid = `${did}#key-${idx}`
-    const isX25519 = decoded[0] === 0xec
+    // The key type is the multicodec prefix: a key-agreement curve (X25519,
+    // P-256, P-384 -- key-agreement.ts), or Ed25519.
+    const curve = keyAgreementCurveOfPrefix(decoded[0], decoded[1])
+    const isEd25519 = decoded[0] === 0xed && decoded[1] === 0x01
+    if (!curve && !isEd25519) continue
     verificationMethod.push({
       id: kid,
       type: 'JsonWebKey2020',
       controller: did,
-      publicKeyJwk: isX25519
-        ? { kty: 'OKP', crv: 'X25519', x: b64url(raw) }
-        : { kty: 'OKP', crv: 'Ed25519', x: b64url(raw) },
+      publicKeyJwk: curve ? jwkOfKeyAgreementKey({ curve, publicKey: raw }) : { kty: 'OKP', crv: 'Ed25519', x: b64url(raw) },
     })
     if (purpose === 'E') keyAgreement.push(kid)
     if (purpose === 'V') authentication.push(kid)

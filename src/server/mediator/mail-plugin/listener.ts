@@ -11,7 +11,7 @@
 import { createSmtpSocketServer } from './smtp-socket-server.ts'
 import type { AcceptIngressInput } from './mail-smtp-protocol.ts'
 import { resolveMailRecipientRoute, packInboundMailForward, type MailRecipientRoute } from './bridge.ts'
-import { didCommPost } from '../../../protocol/didcomm/crypto.ts'
+import { didCommAccepted, didCommPost } from '../../../protocol/didcomm/crypto.ts'
 import { defaultFetch } from '../../../protocol/net-fetch.ts'
 
 interface MailPluginListenerTlsFileConfig {
@@ -73,10 +73,10 @@ async function deliverInboundMail(
     fetchImpl,
   )
   const response = await fetchImpl(delivery.postUrl, didCommPost(delivery.outbound))
-  // 202 Accepted, same convention didcomm/send-message.ts's own delivery
-  // POST checks -- for both a Forward-wrapped delivery (mediator/server.ts's
-  // FORWARD case) and a direct one to the recipient's own service endpoint.
-  if (response.status !== 202) {
+  // Any 2xx, the same check every DIDComm delivery makes (crypto.ts's
+  // didCommAccepted) -- for both a Forward-wrapped delivery and a direct one
+  // to the recipient's own service endpoint.
+  if (!didCommAccepted(response.status)) {
     throw new Error(`mail bridge delivery failed: HTTP ${response.status} ${(await response.text().catch(() => '')).slice(0, 256)}`)
   }
 }

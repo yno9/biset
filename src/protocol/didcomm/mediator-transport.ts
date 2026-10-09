@@ -50,7 +50,8 @@ export async function fetchMediatorInfo(mediatorUrl: string, fetchImpl: typeof f
     if (!xKid) throw new Error(`fetchMediatorInfo: ${doc.id} has no keyAgreement key`)
     info = { url: mediatorUrl, did: doc.id, xKid, xPub: publicKeyOf(peer, xKid) }
   } else {
-    const key = keyAgreementRecipients(doc as Parameters<typeof keyAgreementRecipients>[0])[0]
+    // This client talks to a mediator from an X25519 key (authcrypt): one of the mediator's on that curve.
+    const key = keyAgreementRecipients(doc as Parameters<typeof keyAgreementRecipients>[0]).find(recipient => (recipient.curve ?? 'X25519') === 'X25519')
     if (!key) throw new Error(`fetchMediatorInfo: ${doc.id} has no keyAgreement key`)
     info = { url: mediatorUrl, did: doc.id, xKid: key.kid, xPub: key.publicKey }
   }

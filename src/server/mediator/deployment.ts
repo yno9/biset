@@ -8,7 +8,7 @@
 // header for why mail-plugin/ itself stays a separate typecheck project
 // even though its entrypoint imports this file.
 import { createMediator } from './server.ts'
-import { didCommPost } from '../../protocol/didcomm/crypto.ts'
+import { didCommAccepted, didCommPost } from '../../protocol/didcomm/crypto.ts'
 import { SqliteMediatorStore, type SqliteMediatorLimits } from './sqlite-store.ts'
 import { IpRateLimiter } from './rate-limit.ts'
 import { startRelayPoller, type RelayPollHandle } from './relay-poller.ts'
@@ -153,7 +153,7 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
       async (outbound) => {
         const request = new Request('https://internal.invalid/', didCommPost(outbound))
         const response = await handle(request, new URL(request.url))
-        if (!response || response.status !== 202) {
+        if (!response || !didCommAccepted(response.status)) {
           throw new Error(`relay re-forward was not accepted: HTTP ${response?.status ?? 'null'}`)
         }
       },

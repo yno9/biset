@@ -6,7 +6,9 @@
 import { unpackAuthcrypt, unpackAnoncrypt, protectedHeaderOf, parseJwe, b64urlToBytes, type DidCommJWE, type ResolveSenderKey } from './crypto.ts'
 import { sendAndUnpack, type DidCommSender, type MediatorInboxClient, type MediatorInfo } from './mediator-transport.ts'
 import { defaultFetch } from '../net-fetch.ts'
-import { addressedTo, assertFromMatchesSender } from './message.ts'
+import { addressedTo } from './message.ts'
+import { parseDidCommJws, SignatureError, signingKeyResolver, type DidCommJws, type SigningKeyResolver } from './jws.ts'
+import { openDidCommPayload } from './open.ts'
 import { SenderKeyNotPublishedError } from './webvh-resolve.ts'
 import { STATUS_REQUEST, STATUS, DELIVERY_REQUEST, DELIVERY, MESSAGES_RECEIVED } from './mediator-protocol.ts'
 
@@ -34,7 +36,7 @@ export async function pickupStatus(mediator: MediatorInfo, inbox: MediatorInboxC
 // full verify-and-project pipeline (biset's own DidCommIngressProjector does
 // its own decrypt + replay-dedup from the raw bytes, not from
 // already-decrypted content it would otherwise have to trust blind).
-export interface DeliveredMessage { plaintext: unknown; senderKid: string; ackId: string; rawJwe: DidCommJWE }
+export interface DeliveredMessage { plaintext: unknown; senderKid: string; ackId: string; rawJwe: DidCommJWE | DidCommJws }
 
 /** Sentinel `senderKid` for a message that arrived anoncrypt (alg
  * ECDH-ES+A256KW) -- there is no sender to authenticate by construction
@@ -81,6 +83,7 @@ export function queuedMessageOf(attachment: { data?: { base64?: unknown; json?: 
  * (SenderKeyNotPublishedError -- a removed device). */
 export async function unpackQueuedMessage(
   packedJwe: unknown, ackId: string, own: DidCommSender, resolveSenderKey: ResolveSenderKey,
+  resolveSigningKey: SigningKeyResolver = signingKeyResolver(defaultFetch()),
 ): Promise<DeliveredMessage | undefined> {
   let resolverFailure: unknown
   const open = async (fresh: boolean): Promise<DeliveredMessage> => {
@@ -89,19 +92,31 @@ export async function unpackQueuedMessage(
     const senderKeys: ResolveSenderKey = async (kid, options) => {
       try { return await resolveSenderKey(kid, fresh ? { fresh: true } : options) } catch (error) { resolverFailure = error; throw error }
     }
+    // A signer's key that cannot be resolved right now is transient; one the
+    // signer's document refuses (SignatureError) is not.
+    const signingKeys: SigningKeyResolver = async kid => {
+      try { return await resolveSigningKey(kid) } catch (error) { if (!(error instanceof SignatureError)) resolverFailure = error; throw error }
+    }
+    // A message signed but not encrypted (DIDComm v2.1 signed messages): the
+    // signature alone authenticates it.
+    const signed = parseDidCommJws(packedJwe)
+    if (signed) {
+      const opened = await openDidCommPayload(new TextEncoder().encode(JSON.stringify(signed)), undefined, signingKeys)
+      return { plaintext: opened.message, senderKid: opened.senderKid!, ackId, rawJwe: signed }
+    }
     // Queued by the mediator, but authored by whoever sent it (or, for
     // anoncrypt, by construction not attributable at all -- see
     // ANONCRYPT_SENDER_KID above). The `alg` peek routes an anoncrypt JWE to
     // unpackAnoncrypt instead of failing unpackAuthcrypt.
     const queued = parseJwe(packedJwe)
-    if (!queued) throw new Error('queued attachment is not a DIDComm JWE')
+    if (!queued) throw new Error('queued attachment is not a DIDComm JWE or signed message')
     if (protectedHeaderOf(queued)?.alg === 'ECDH-ES+A256KW') {
-      const plaintext = await unpackAnoncrypt(queued, self)
-      return { plaintext: JSON.parse(new TextDecoder().decode(plaintext)), senderKid: ANONCRYPT_SENDER_KID, ackId, rawJwe: queued }
+      // Anoncrypt has no sender -- unless what it carries is signed.
+      const opened = await openDidCommPayload(await unpackAnoncrypt(queued, self), undefined, signingKeys)
+      return { plaintext: opened.message, senderKid: opened.senderKid ?? ANONCRYPT_SENDER_KID, ackId, rawJwe: queued }
     }
     const { plaintext, senderKid } = await unpackAuthcrypt(queued, self, senderKeys)
-    const message = JSON.parse(new TextDecoder().decode(plaintext)) as { from?: unknown; to?: unknown }
-    assertFromMatchesSender(message, senderKid)
+    const { message } = await openDidCommPayload(plaintext, senderKid, signingKeys)
     if (!addressedTo(message, own.xKid)) console.warn(`[didcomm] queued message ${ackId} is addressed to someone else in \`to\``)
     return { plaintext: message, senderKid, ackId, rawJwe: queued }
   }

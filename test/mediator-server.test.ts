@@ -5,7 +5,10 @@
 // SQLite store (in memory).
 import { describe, expect, test } from 'bun:test'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { packAnoncrypt, packAuthcrypt, unpackAuthcrypt, b64urlToBytes } from '../src/protocol/didcomm/crypto.ts'
+import { packAnoncrypt, packAuthcrypt, unpackAuthcrypt, b64urlToBytes, parseJwe } from '../src/protocol/didcomm/crypto.ts'
+import { signDidCommMessage } from '../src/protocol/didcomm/jws.ts'
+import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
+import { PING, PING_RESPONSE } from '../src/protocol/didcomm/trust-ping.ts'
 import { buildPlaintext } from '../src/protocol/didcomm/message.ts'
 import { queuedMessageOf } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { defaultDeviceLabel } from '../src/protocol/didcomm/mediator-device.ts'
@@ -60,6 +63,22 @@ describe('blind mediator', () => {
     expect(res.headers.get('content-type')).toBe('application/didcomm-signed+json')
     const report = JSON.parse(new TextDecoder().decode(b64urlToBytes((await res.json()).payload)))
     expect(report.body.code).toBe('e.m.req.not-enrolled')
+  })
+
+  test('a request authcrypted and signed by the same DID is answered; signed by another DID it is refused', async () => {
+    const { post, mediator } = freshMediator()
+    const bob = generatePeerIdentity()
+    const ping = buildPlaintext(PING, { response_requested: true }, bob.did, mediator.did, { returnRoute: 'all' })
+    const send = (signedBy: ReturnType<typeof generatePeerIdentity>) => post(packAuthcrypt(
+      new TextEncoder().encode(JSON.stringify(signDidCommMessage(ping, signedBy.edKid, signedBy.edPriv))),
+      { kid: bob.xKid, privateKey: bob.xPriv }, [{ kid: mediator.xKid, publicKey: mediator.xPub }],
+    ))
+    const answered = await send(bob)
+    expect(answered.status).toBe(200)
+    const { plaintext } = await unpackAuthcrypt(parseJwe(await answered.json())!, { kid: bob.xKid, privateKey: bob.xPriv }, async () => mediator.xPub)
+    expect(JSON.parse(new TextDecoder().decode(plaintext)).type).toBe(PING_RESPONSE)
+    const refused = await send(generatePeerIdentity())
+    expect(refused.status).toBeGreaterThanOrEqual(400)
   })
 
   test('ownership: a key can only register its own DID, and only touch its own inboxes', async () => {

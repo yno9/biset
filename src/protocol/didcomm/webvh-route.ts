@@ -18,7 +18,7 @@
 // chat does.
 import type { WebvhDidDocument } from '../webvh/document.ts'
 import { selectDidCommEndpoint } from './service-endpoint.ts'
-import { decodeX25519Multikey } from './multikey.ts'
+import { decodeKeyAgreementMultikey, keyAgreementKeyFromJwk } from './key-agreement.ts'
 import type { X25519Recipient } from './crypto.ts'
 
 interface DidCommServiceEndpoint extends Record<string, unknown> {
@@ -36,20 +36,24 @@ export interface DidCommRoute {
   recipients: X25519Recipient[]
 }
 
-/** The X25519 keys a DID document lists under `keyAgreement`, with absolute
- * kids. `keyAgreement` holds references, so an entry counts only if it
- * dereferences to a verificationMethod (matched on the absolute DID URL and
- * on the bare `#fragment`, since a document may store either form) that
- * decodes as X25519; anything else is skipped. Shared by did:webvh and
- * did:web resolution. */
-export function keyAgreementRecipients(doc: { id: string; keyAgreement?: string[]; verificationMethod?: Array<{ id: string; publicKeyMultibase: string }> }): X25519Recipient[] {
+/** The key-agreement keys a DID document lists under `keyAgreement`, with
+ * absolute kids and their curve (X25519, P-256, P-384: key-agreement.ts). `keyAgreement`
+ * holds references, so an entry counts only if it dereferences to a
+ * verificationMethod (matched on the absolute DID URL and on the bare
+ * `#fragment`, since a document may store either form) whose `Multikey` or
+ * `publicKeyJwk` decodes as one of those; anything else is skipped. Shared by
+ * did:webvh and did:web resolution. */
+export function keyAgreementRecipients(doc: { id: string; keyAgreement?: string[]; verificationMethod?: Array<{ id: string; publicKeyMultibase?: string; publicKeyJwk?: Record<string, unknown> }> }): X25519Recipient[] {
   const absolute = (id: string) => id.startsWith('#') ? `${doc.id}${id}` : id
   const wanted = new Set((doc.keyAgreement ?? []).map(absolute))
   const recipients: X25519Recipient[] = []
   for (const vm of doc.verificationMethod ?? []) {
     const kid = absolute(vm.id)
     if (!wanted.has(kid) || recipients.some(r => r.kid === kid)) continue
-    try { recipients.push({ kid, publicKey: decodeX25519Multikey(vm.publicKeyMultibase) }) } catch { /* not X25519 */ }
+    try {
+      const key = typeof vm.publicKeyMultibase === 'string' ? decodeKeyAgreementMultikey(vm.publicKeyMultibase) : keyAgreementKeyFromJwk(vm.publicKeyJwk ?? {})
+      recipients.push({ kid, publicKey: key.publicKey, ...(key.curve === 'X25519' ? {} : { curve: key.curve }) })
+    } catch { /* not a key-agreement key */ }
   }
   return recipients
 }

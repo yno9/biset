@@ -55,6 +55,7 @@ import { publishedRotationKey, rotationSigningKey } from '../didcomm/rotation-ke
 import { createRotationManager, type RotationManager } from '../didcomm/rotation-manager.ts'
 import { contactSetIntent } from '../store/projection/contacts.ts'
 import { fromPriorKeyResolver, verifyFromPrior } from '../../protocol/didcomm/from-prior.ts'
+import { signingKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
 import { didCommRouteFromDocument } from '../../protocol/didcomm/webvh-route.ts'
 import { resolve as resolveWebvh } from '../../protocol/webvh/resolver.ts'
@@ -495,6 +496,7 @@ async function configureWalletAccountIfPresent(
           resolveSenderKey: resolveAnyDidCommSenderKey,
           // Past the host's CDN: a stale document would accept a replaced key.
           verifyFromPrior: (jwt, from) => verifyFromPrior(jwt, from, fromPriorKeyResolver(freshFetch())),
+          resolveSigningKey: kid => signingKeyResolver(freshFetch())(kid),
           async alreadyProcessed() { return false },
           nextActorSeq: () => sequencer.nextActorSeq(),
           initialParents: () => sequencer.initialParents(),

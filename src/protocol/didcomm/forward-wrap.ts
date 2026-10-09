@@ -7,10 +7,10 @@
 // A mediator's Forward handler (mediator/server.ts) queues the inner
 // attachment for `next` if that is registered directly with IT; relaying on
 // to another mediator is relay-poller.ts's job (it polls the upstream hop).
-import { packAnoncrypt, type DidCommJWE, type X25519Recipient } from './crypto.ts'
+import { packAnoncrypt, sameCurveRecipients, type DidCommJWE, type X25519Recipient } from './crypto.ts'
 import { buildPlaintext } from './message.ts'
 import { FORWARD } from './mediator-protocol.ts'
-import { decodePeerDid2, publicKeyOf } from './peer.ts'
+import { decodePeerDid2, peerKeyAgreementRecipients } from './peer.ts'
 
 /** One hop of a route: a mediator, by the key(s) a Forward to it is
  * anoncrypt'd to. `kid` names the hop (the previous hop's `next`); a mediator
@@ -24,14 +24,16 @@ export interface ForwardHop {
 /** A hop named by a did:peer:2 kid -- self-certifying, so its key is read out
  * of the kid itself with no network resolve. Throws if `kid` is not one. */
 export function peerHop(kid: string): ForwardHop {
-  const publicKey = publicKeyOf(decodePeerDid2(kid.split('#', 1)[0]!), kid)
-  return { kid, recipients: [{ kid, publicKey }] }
+  const recipient = peerKeyAgreementRecipients(decodePeerDid2(kid.split('#', 1)[0]!)).find(value => value.kid === kid)
+  if (!recipient) throw new Error(`routing key ${kid} is not a keyAgreement key of its did:peer`)
+  return { kid, recipients: [recipient] }
 }
 
 function wrapForwardTo(inner: DidCommJWE, next: string, hop: ForwardHop): DidCommJWE {
   const forward = buildPlaintext(FORWARD, { next })
   forward.attachments = [{ id: 'inner', data: { json: inner } }]
-  return packAnoncrypt(new TextEncoder().encode(JSON.stringify(forward)), hop.recipients)
+  // A mediator may list keys of several curves; one JWE carries one.
+  return packAnoncrypt(new TextEncoder().encode(JSON.stringify(forward)), sameCurveRecipients(hop.recipients))
 }
 
 /** Wraps `inner` in a single Routing 2.0 Forward addressed to `next`,

@@ -11,7 +11,7 @@
 // Per the spec the mediator's own document uses a plain URL (no DID, so no
 // recursion), and here also no routingKeys of its own.
 import { keyAgreementRecipients } from './webvh-route.ts'
-import { decodePeerDid2, publicKeyOf } from './peer.ts'
+import { decodePeerDid2, peerKeyAgreementRecipients } from './peer.ts'
 import { resolveDidWeb, didWebDidCommRoute } from './did-web.ts'
 import { peerHop, type ForwardHop } from './forward-wrap.ts'
 
@@ -60,7 +60,7 @@ async function resolveMediator(did: string, fetchImpl: typeof fetch, options: { 
     const endpoint = doc.service[0]?.serviceEndpoint
     if (!kid || !endpoint?.uri) throw new Error(`mediator ${did} has no key or no DIDComm endpoint`)
     if (endpoint.uri.startsWith('did:') || endpoint.routing_keys.length > 0) throw new Error(`mediator ${did} must name a plain URL as its own endpoint`)
-    return { url: endpoint.uri, hop: { kid, recipients: doc.keyAgreement.map(k => ({ kid: k, publicKey: publicKeyOf(doc, k) })) } }
+    return { url: endpoint.uri, hop: { kid, recipients: peerKeyAgreementRecipients(doc) } }
   }
   if (!did.startsWith('did:web:')) throw new Error(`mediator ${did}: only did:web and did:peer mediators are supported`)
   const doc = await resolveDidWeb(did, fetchImpl)

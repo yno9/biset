@@ -4,7 +4,7 @@
 // bridge (mediator/mail-plugin/bridge.ts) can reuse the exact same
 // packaging logic against a domain-resolved DID document instead of a full
 // did:webvh document.
-import { packAuthcrypt, packAnoncrypt, type DidCommJWE, type X25519Recipient } from '../../protocol/didcomm/crypto.ts'
+import { packAuthcrypt, packAnoncrypt, recipientsForSender, sameCurveRecipients, type DidCommJWE, type X25519Recipient } from '../../protocol/didcomm/crypto.ts'
 import { wrapForwardHops } from '../../protocol/didcomm/forward-wrap.ts'
 import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
 
@@ -33,7 +33,7 @@ export async function packForDelivery(
   endpoint: RouteEndpoint,
   fetchImpl: typeof fetch = fetch,
 ): Promise<OutboundDelivery> {
-  const jwe = sender ? packAuthcrypt(plaintextBytes, sender, recipients) : packAnoncrypt(plaintextBytes, recipients)
+  const jwe = sender ? packAuthcrypt(plaintextBytes, sender, recipientsForSender(recipients, sender)) : packAnoncrypt(plaintextBytes, sameCurveRecipients(recipients))
   const expanded = await expandEndpoint({ uri: endpoint.uri, routingKeys: endpoint.routingKeys ?? [] }, fetchImpl)
   const outbound = expanded.hops.length > 0 ? wrapForwardHops(jwe, recipientDid, expanded.hops) : jwe
   return { postUrl: expanded.url, outbound }

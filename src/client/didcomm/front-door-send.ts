@@ -7,11 +7,11 @@
 // deploy unit stays free of Vault/UI coupling is the whole point of the
 // DOM-less check). send-message.ts builds chat messages on it.
 import { resolve } from '../../protocol/webvh/resolver.ts'
-import { didCommPost, packAuthcrypt, type DidCommJWE, type X25519Recipient } from '../../protocol/didcomm/crypto.ts'
+import { didCommAccepted, didCommPost, packAuthcrypt, recipientsForSender, type DidCommJWE, type X25519Recipient } from '../../protocol/didcomm/crypto.ts'
 import { buildPlaintext } from '../../protocol/didcomm/message.ts'
 import { wrapForwardHops, type ForwardHop } from '../../protocol/didcomm/forward-wrap.ts'
 import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
-import { decodePeerDid2, publicKeyOf } from '../../protocol/didcomm/peer.ts'
+import { decodePeerDid2, peerKeyAgreementRecipients } from '../../protocol/didcomm/peer.ts'
 import { didCommRouteFromDocument } from '../../protocol/didcomm/webvh-route.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { isTorEnvironment } from './mediator-endpoints.ts'
@@ -57,7 +57,7 @@ async function resolveFrontDoorRoute(toDid: string, fetchImpl: typeof fetch): Pr
     if (doc.keyAgreement.length === 0) throw new Error(`${toDid} has no keyAgreement key published`)
     const published = doc.service[0]?.serviceEndpoint
     if (!published?.uri) throw new Error(`${toDid} has no DIDComm service endpoint published`)
-    recipients = doc.keyAgreement.map(kid => ({ kid, publicKey: publicKeyOf(doc, kid) }))
+    recipients = peerKeyAgreementRecipients(doc)
     endpoint = { uri: published.uri, routingKeys: published.routing_keys ?? [] }
   } else if (toDid.startsWith('did:web:')) {
     const doc = await resolveDidWeb(toDid, fetchImpl)
@@ -124,7 +124,10 @@ export async function sendFrontDoorMessage(toDid: string, type: string, body: un
   const sender = { kid: opts.fromKid, privateKey: opts.x25519PrivateKey }
 
   // One JWE for every device of the recipient (multiplexed encryption).
-  const jwe = packAuthcrypt(plaintextBytes, sender, route.recipients)
+  let jwe: DidCommJWE
+  try { jwe = packAuthcrypt(plaintextBytes, sender, recipientsForSender(route.recipients, sender)) } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
 
   // Any hop means the recipient has registered with an independent, blind
   // mediator (named by DID, or by URL plus did:peer routing keys): deliver
@@ -136,7 +139,7 @@ export async function sendFrontDoorMessage(toDid: string, type: string, body: un
   // outermost/closest-to-sender first).
   const outbound: DidCommJWE = route.hops.length > 0 ? wrapForwardHops(jwe, toDid, route.hops) : jwe
   const response = await fetchImpl(route.endpointUri, didCommPost(outbound))
-  if (response.status !== 202) {
+  if (!didCommAccepted(response.status)) {
     return { ok: false, error: `send failed: HTTP ${response.status} ${(await response.text().catch(() => '')).slice(0, 256)}` }
   }
   return { ok: true }

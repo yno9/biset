@@ -62,7 +62,7 @@ describe('DIDComm anoncrypt (ECDH-ES+A256KW)', () => {
     const ciphertext = sealed.slice(0, sealed.length - 16)
     const tag = sealed.slice(sealed.length - 16)
 
-    const z = __internal.ecdh(ephemPriv, recipientPub)
+    const z = __internal.ecdh('X25519', ephemPriv, recipientPub)
     const kek = __internal.deriveEcdhEs(z, alg, new Uint8Array(0), apv, 256)
     const { aeskw } = await import('@noble/ciphers/aes.js')
     const encryptedKey = aeskw(kek).encrypt(cek)

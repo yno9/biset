@@ -23,8 +23,11 @@ function serving(respond: () => Response | Promise<Response>, seen: Seen[] = [])
 }
 
 describe('webvhStateFromLog', () => {
-  test('reads the DID, its version and every keyAgreement key from a verified log', () => {
-    expect(webvhStateFromLog(text)).toEqual({ did, versionNumber: 1, keys: { [`${did}#k_phone`]: hex(x25519.getPublicKey(phone)) } })
+  test('reads the DID, its version, every keyAgreement key and every authentication (signing) key from a verified log', () => {
+    expect(webvhStateFromLog(text)).toEqual({
+      did, versionNumber: 1, keys: { [`${did}#k_phone`]: hex(x25519.getPublicKey(phone)) },
+      authentication: { [`${did}#key-1`]: { type: 'Ed25519', publicKey: ed25519.getPublicKey(root) } },
+    })
   })
   test('refuses a log that does not verify', () => {
     expect(() => webvhStateFromLog(text.replace('alice.example', 'mallory.example'))).toThrow()

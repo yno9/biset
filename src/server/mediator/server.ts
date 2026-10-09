@@ -53,7 +53,8 @@ import { decodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
 import { defaultDeviceLabel } from '../../protocol/didcomm/mediator-device.ts'
 import { webvhStateFromLog, WebvhUnavailable, type WebvhStateResolver } from './webvh-state.ts'
 import { peerMediatorIdentity, type MediatorIdentity } from './identity.ts'
-import { packSigned } from './signature.ts'
+import { authenticationSigningKey, DIDCOMM_SIGNED_MEDIA_TYPE, signDidCommMessage, SignatureError, type SigningKey } from '../../protocol/didcomm/jws.ts'
+import { openDidCommPayload } from '../../protocol/didcomm/open.ts'
 import { PING, PING_RESPONSE, TRUST_PING, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
 import {
   isDeviceLabel, MediatorFullError, MessageTooBigError, QueueFullError, TooManyDevicesError,
@@ -294,8 +295,8 @@ export function createMediator({
    * anything 2xx would tell it the message was queued. */
   function signedProblem(trigger: DidCommPlaintext, toDid: string, code: string, comment: string, args?: string[]): Response {
     const report = buildProblemReport(mediator.did, didOf(toDid), code, comment, { pthid: trigger.thid ?? trigger.id }, args)
-    const jws = packSigned(utf8(JSON.stringify(report)), { kid: mediator.edKid, edPrivateKey: mediator.edPriv })
-    return new Response(JSON.stringify(jws), { status: 401, headers: { 'content-type': 'application/didcomm-signed+json' } })
+    const jws = signDidCommMessage(report, mediator.edKid, mediator.edPriv)
+    return new Response(JSON.stringify(jws), { status: 401, headers: { 'content-type': DIDCOMM_SIGNED_MEDIA_TYPE } })
   }
 
   /** Forward is anoncrypt by design (the mediator learns where to queue, not
@@ -308,16 +309,37 @@ export function createMediator({
     if (!jwe) throw new Malformed('body is not a DIDComm JWE')
     const header = protectedHeaderOf(jwe)
     if (!header) throw new Malformed('the protected header is not readable')
+    // The payload may be signed as well (DIDComm v2.1: a recipient MUST
+    // process signed messages): open.ts verifies it, and an authcrypted one
+    // must be signed by its sender's DID. Every rule below keys off the
+    // sender's DID, so `from` must be the DID the envelope authenticated.
+    // A signed anoncrypt message proves who signed it, not that the signer
+    // holds one of its DID's keyAgreement keys -- which is what this mediator
+    // authorizes by -- so it stays unauthenticated here.
+    const open = async (plaintext: Uint8Array, authcryptSenderKid?: string) => {
+      try { return await openDidCommPayload(plaintext, authcryptSenderKid, signingKey) } catch (error) {
+        if (error instanceof WebvhUnavailable) throw error
+        throw new Malformed(error instanceof Error ? error.message : String(error))
+      }
+    }
     if (header.alg === 'ECDH-ES+A256KW') {
-      const plaintext = await unpackAnoncrypt(jwe, ownRecipientFor(jwe))
-      return { msg: JSON.parse(new TextDecoder().decode(plaintext)), senderKid: null }
+      const opened = await open(await unpackAnoncrypt(jwe, ownRecipientFor(jwe)))
+      return { msg: opened.message, senderKid: null }
     }
     const { plaintext, senderKid } = await unpackAuthcrypt(jwe, ownRecipientFor(jwe), kid => keyAgreementKey(kid))
-    const msg = JSON.parse(new TextDecoder().decode(plaintext)) as DidCommPlaintext
-    // Every rule below keys off the sender's DID, so `from` must be the DID
-    // the envelope authenticated, not just a claim.
-    try { assertFromMatchesSender(msg, senderKid) } catch (error) { throw new Malformed(error instanceof Error ? error.message : String(error)) }
-    return { msg, senderKid }
+    return { msg: (await open(plaintext, senderKid)).message, senderKid }
+  }
+
+  /** The signing key a signer kid names: a did:peer:2's own, a did:webvh's as
+   * this mediator resolves it (the same guarded resolution as its keys). */
+  async function signingKey(kid: string): Promise<SigningKey> {
+    const did = kid.split('#', 1)[0]!
+    if (did.startsWith('did:peer:2.')) return authenticationSigningKey(decodePeerDid2(did) as never, kid)
+    if (did.startsWith('did:webvh:') && resolveWebvh) {
+      const key = (await resolveWebvh(did))?.authentication?.[kid]
+      if (key) return key
+    }
+    throw new SignatureError(`${kid} is not a signing key this mediator can read`)
   }
 
   /** `POST /webvh-log` -- a did:webvh log (JSONL), pushed by a client.

@@ -22,10 +22,10 @@
 //     adapter was "first-party infrastructure, not a blind third-party
 //     mediator" — since revisited: a genuinely decentralized mediator has to
 //     be blind, which needs Forward wrapping to exist.
-import { x25519 } from '@noble/curves/ed25519.js'
 import { sha256, sha512 } from '@noble/hashes/sha2.js'
 import { hmac } from '@noble/hashes/hmac.js'
-import { cbc, aeskw } from '@noble/ciphers/aes.js'
+import { cbc, aeskw, gcm } from '@noble/ciphers/aes.js'
+import { generateKeyAgreementKeyPair, jwkOfKeyAgreementKey, keyAgreementKeyFromJwk, keyAgreementSharedSecret, type KeyAgreementCurve } from './key-agreement.ts'
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
 
 // ── byte helpers ─────────────────────────────────────────────────────────────
@@ -82,8 +82,8 @@ function concatKDF(z: Uint8Array, alg: Uint8Array, apu: Uint8Array, apv: Uint8Ar
   return sha256(message).slice(0, outputLen)
 }
 
-function ecdh(privKey: Uint8Array, pubKey: Uint8Array): Uint8Array {
-  return x25519.getSharedSecret(privKey, pubKey)
+function ecdh(curve: KeyAgreementCurve, privKey: Uint8Array, pubKey: Uint8Array): Uint8Array {
+  return keyAgreementSharedSecret(curve, privKey, pubKey)
 }
 
 /** ECDH-1PU key derivation (authcrypt). Ze = ECDH(ephemeral, recipient),
@@ -152,6 +152,14 @@ function xc20pDecrypt(cek: Uint8Array, iv: Uint8Array, aad: Uint8Array, cipherte
   return xchacha20poly1305(cek, iv, aad).decrypt(concatBytes(ciphertext, tag))
 }
 
+// ── A256GCM (RFC 7518 §5.3) ────────────────────────────────────────────────
+// Decrypt only, like XC20P: DIDComm v2.1 recommends it for anoncrypt; we
+// produce A256CBC-HS512. 32-byte CEK, 12-byte IV, 16-byte tag.
+function a256gcmDecrypt(cek: Uint8Array, iv: Uint8Array, aad: Uint8Array, ciphertext: Uint8Array, tag: Uint8Array): Uint8Array {
+  if (iv.length !== 12) throw new Error(`A256GCM: expected a 12-byte IV, got ${iv.length}`)
+  return gcm(cek, iv, aad).decrypt(concatBytes(ciphertext, tag))
+}
+
 /** The content-encryption half of unpacking anoncrypt, where -- unlike
  * authcrypt -- the sender's choice of `enc` is genuinely open (we send
  * A256CBC-HS512, didcomm-rust sends XC20P). Unknown values are named and
@@ -163,7 +171,8 @@ function decryptContent(enc: string, cek: Uint8Array, jwe: DidCommJWE): Uint8Arr
   const tag = b64urlToBytes(jwe.tag)
   if (enc === 'A256CBC-HS512') return aesCbcHs512Decrypt(cek, iv, aad, ciphertext, tag)
   if (enc === 'XC20P') return xc20pDecrypt(cek, iv, aad, ciphertext, tag)
-  throw new Error(`unpackAnoncrypt: unsupported enc ${JSON.stringify(enc)} -- anoncrypt reads A256CBC-HS512 and XC20P`)
+  if (enc === 'A256GCM') return a256gcmDecrypt(cek, iv, aad, ciphertext, tag)
+  throw new Error(`unpackAnoncrypt: unsupported enc ${JSON.stringify(enc)} -- anoncrypt reads A256CBC-HS512, A256GCM and XC20P`)
 }
 
 /** How many bytes of CEK an `enc` needs -- the KDF has to produce the right
@@ -172,7 +181,8 @@ function decryptContent(enc: string, cek: Uint8Array, jwe: DidCommJWE): Uint8Arr
 function cekBytesFor(enc: string): number {
   if (enc === 'A256CBC-HS512') return 64
   if (enc === 'XC20P') return XC20P_KEY_BYTES
-  throw new Error(`unpackAnoncrypt: unsupported enc ${JSON.stringify(enc)} -- anoncrypt reads A256CBC-HS512 and XC20P`)
+  if (enc === 'A256GCM') return 32
+  throw new Error(`unpackAnoncrypt: unsupported enc ${JSON.stringify(enc)} -- anoncrypt reads A256CBC-HS512, A256GCM and XC20P`)
 }
 
 // ── JWE (general JSON serialization, DIDComm's single-recipient subset) ────
@@ -219,8 +229,31 @@ export function protectedHeaderOf(jwe: DidCommJWE): Record<string, unknown> | nu
   }
 }
 
-export interface X25519Recipient { kid: string; publicKey: Uint8Array }
-export interface X25519Sender { kid: string; privateKey: Uint8Array }
+/** A key-agreement key a message is encrypted to (or from). `curve` defaults
+ * to X25519; a NIST key's public half is a SEC1 point (key-agreement.ts).
+ * Every recipient of one JWE is on the same curve -- the JWE has one
+ * ephemeral key -- and an authcrypt sender is on that curve too. */
+export interface X25519Recipient { kid: string; publicKey: Uint8Array; curve?: KeyAgreementCurve }
+export interface X25519Sender { kid: string; privateKey: Uint8Array; curve?: KeyAgreementCurve }
+
+const curveOf = (key: { curve?: KeyAgreementCurve }): KeyAgreementCurve => key.curve ?? 'X25519'
+
+/** The recipients an authcrypt from `sender` can reach: those on its curve
+ * (ECDH-1PU needs the sender's and the recipients' keys on one curve). */
+export function recipientsForSender<T extends { curve?: KeyAgreementCurve }>(recipients: readonly T[], sender: X25519Sender): T[] {
+  const reachable = recipients.filter(recipient => curveOf(recipient) === curveOf(sender))
+  if (reachable.length === 0 && recipients.length > 0) {
+    throw new Error(`the recipient has no key-agreement key on this sender's curve (${curveOf(sender)}); its keys are ${[...new Set(recipients.map(curveOf))].join(', ')}`)
+  }
+  return reachable
+}
+
+/** The recipients of one curve among `recipients` -- `prefer`'s, if it has
+ * any, else the first curve listed -- since one JWE carries one curve. */
+export function sameCurveRecipients<T extends { curve?: KeyAgreementCurve }>(recipients: readonly T[], prefer: KeyAgreementCurve = 'X25519'): T[] {
+  const curve = recipients.some(recipient => curveOf(recipient) === prefer) ? prefer : recipients[0] ? curveOf(recipients[0]) : prefer
+  return recipients.filter(recipient => curveOf(recipient) === curve)
+}
 
 /** DIDComm v2.1 §"ECDH-1PU key wrapping and common protected headers":
  * `apv` is the SHA-256 of every recipient `kid`, sorted, joined by `.` —
@@ -229,9 +262,12 @@ function apvFor(recipientKids: readonly string[]): Uint8Array {
   return sha256(utf8([...recipientKids].sort().join('.')))
 }
 
-function assertRecipients(fn: string, recipients: readonly { kid: string }[]): void {
+function assertRecipients(fn: string, recipients: readonly { kid: string; curve?: KeyAgreementCurve }[]): KeyAgreementCurve {
   if (recipients.length === 0) throw new Error(`${fn}: no recipients`)
   if (new Set(recipients.map(r => r.kid)).size !== recipients.length) throw new Error(`${fn}: duplicate recipient kid`)
+  const curve = curveOf(recipients[0]!)
+  if (recipients.some(recipient => curveOf(recipient) !== curve)) throw new Error(`${fn}: recipients are on different curves (one JWE has one ephemeral key)`)
+  return curve
 }
 
 /** Refuses a JWE whose `apv` is not the spec digest of its own `recipients`
@@ -255,6 +291,13 @@ export function didCommPost(jwe: DidCommJWE, signal?: AbortSignal): RequestInit 
   return { method: 'POST', headers: { 'content-type': DIDCOMM_ENCRYPTED_MEDIA_TYPE }, body: JSON.stringify(jwe), ...(signal ? { signal } : {}) }
 }
 
+/** Whether an HTTP delivery of a DIDComm message was accepted: any 2xx
+ * (DIDComm v2.1 transports: success MUST be a 2xx code; 202 is only the
+ * recommended one, so a 200 or 204 is acceptance too). */
+export function didCommAccepted(status: number): boolean {
+  return status >= 200 && status < 300
+}
+
 /** Whether a request declares the encrypted DIDComm media type (any
  * parameters after `;` ignored). */
 export function isDidCommEncryptedRequest(request: Request): boolean {
@@ -262,7 +305,7 @@ export function isDidCommEncryptedRequest(request: Request): boolean {
 }
 
 function buildProtectedHeader(
-  alg: string, sender: X25519Sender | null, apvRaw: Uint8Array, epkPub: Uint8Array,
+  alg: string, sender: X25519Sender | null, apvRaw: Uint8Array, epk: Record<string, string>,
 ): { headerStr: string; apu: Uint8Array } {
   const apu = sender ? utf8(sender.kid) : new Uint8Array(0)
   const header: Record<string, unknown> = {
@@ -271,7 +314,7 @@ function buildProtectedHeader(
     enc: 'A256CBC-HS512',
     ...(sender ? { skid: sender.kid, apu: b64url(apu) } : {}),
     apv: b64url(apvRaw),
-    epk: { kty: 'OKP', crv: 'X25519', x: b64url(epkPub) },
+    epk,
   }
   return { headerStr: JSON.stringify(header), apu }
 }
@@ -285,12 +328,11 @@ function buildProtectedHeader(
  * not a message recipient's real keyAgreement kid -- the caller decides what
  * to wrap). */
 export function packAnoncrypt(plaintext: Uint8Array, recipients: readonly X25519Recipient[]): DidCommJWE {
-  assertRecipients('packAnoncrypt', recipients)
+  const curve = assertRecipients('packAnoncrypt', recipients)
   const alg = 'ECDH-ES+A256KW'
-  const ephemPriv = x25519.utils.randomSecretKey()
-  const ephemPub = x25519.getPublicKey(ephemPriv)
+  const { privateKey: ephemPriv, publicKey: ephemPub } = generateKeyAgreementKeyPair(curve)
   const apv = apvFor(recipients.map(r => r.kid))
-  const { headerStr, apu } = buildProtectedHeader(alg, null, apv, ephemPub)
+  const { headerStr, apu } = buildProtectedHeader(alg, null, apv, jwkOfKeyAgreementKey({ curve, publicKey: ephemPub }))
   const protectedB64 = b64url(utf8(headerStr))
 
   const cek = crypto.getRandomValues(new Uint8Array(64))
@@ -300,7 +342,7 @@ export function packAnoncrypt(plaintext: Uint8Array, recipients: readonly X25519
   return {
     protected: protectedB64,
     recipients: recipients.map(recipient => {
-      const z = ecdh(ephemPriv, recipient.publicKey)
+      const z = ecdh(curve, ephemPriv, recipient.publicKey)
       const kek = deriveEcdhEs(z, alg, apu, apv, 256)
       return { header: { kid: recipient.kid }, encrypted_key: b64url(wrapKey(kek, cek)) }
     }),
@@ -315,12 +357,12 @@ export function packAnoncrypt(plaintext: Uint8Array, recipients: readonly X25519
  * list every `keyAgreement` key of the recipient DID here, so each of the
  * recipient's devices can open the same message. */
 export function packAuthcrypt(plaintext: Uint8Array, sender: X25519Sender, recipients: readonly X25519Recipient[]): DidCommJWE {
-  assertRecipients('packAuthcrypt', recipients)
+  const curve = assertRecipients('packAuthcrypt', recipients)
+  if (curveOf(sender) !== curve) throw new Error(`packAuthcrypt: the sender's key is ${curveOf(sender)}, the recipients' ${curve} (ECDH-1PU needs one curve)`)
   const alg = 'ECDH-1PU+A256KW'
-  const ephemPriv = x25519.utils.randomSecretKey()
-  const ephemPub = x25519.getPublicKey(ephemPriv)
+  const { privateKey: ephemPriv, publicKey: ephemPub } = generateKeyAgreementKeyPair(curve)
   const apv = apvFor(recipients.map(r => r.kid))
-  const { headerStr, apu } = buildProtectedHeader(alg, sender, apv, ephemPub)
+  const { headerStr, apu } = buildProtectedHeader(alg, sender, apv, jwkOfKeyAgreementKey({ curve, publicKey: ephemPub }))
   const protectedB64 = b64url(utf8(headerStr))
 
   const cek = crypto.getRandomValues(new Uint8Array(64))
@@ -330,8 +372,8 @@ export function packAuthcrypt(plaintext: Uint8Array, sender: X25519Sender, recip
   return {
     protected: protectedB64,
     recipients: recipients.map(recipient => {
-      const ze = ecdh(ephemPriv, recipient.publicKey)
-      const zs = ecdh(sender.privateKey, recipient.publicKey)
+      const ze = ecdh(curve, ephemPriv, recipient.publicKey)
+      const zs = ecdh(curve, sender.privateKey, recipient.publicKey)
       const kek = deriveEcdh1PU(ze, zs, alg, apu, apv, tag, 256)
       return { header: { kid: recipient.kid }, encrypted_key: b64url(wrapKey(kek, cek)) }
     }),
@@ -363,6 +405,16 @@ export interface UnpackedAuthcrypt { plaintext: Uint8Array; senderKid: string }
  * a caller retrying after an unpack failed with a possibly-stale cached key. */
 export type ResolveSenderKey = (senderKid: string, opts?: { fresh?: boolean }) => Uint8Array | Promise<Uint8Array>
 
+/** The JWE's ephemeral public key, which must be on the recipient key's curve
+ * (a NIST point is checked to be on the curve). */
+function ephemeralKeyOf(fn: string, header: Record<string, unknown>, recipient: X25519Sender): { curve: KeyAgreementCurve; publicKey: Uint8Array } {
+  const epk = header.epk
+  if (epk === null || typeof epk !== 'object' || Array.isArray(epk)) throw new Error(`${fn}: missing epk`)
+  const key = keyAgreementKeyFromJwk(epk as Record<string, unknown>)
+  if (key.curve !== curveOf(recipient)) throw new Error(`${fn}: the epk is ${key.curve}, the recipient key ${curveOf(recipient)}`)
+  return key
+}
+
 function parseProtectedHeader(jwe: DidCommJWE): Record<string, unknown> {
   return JSON.parse(new TextDecoder().decode(b64urlToBytes(jwe.protected)))
 }
@@ -386,13 +438,13 @@ export async function unpackAuthcrypt(jwe: DidCommJWE, recipient: X25519Sender, 
   const rec = jwe.recipients.find(r => r.header.kid === recipient.kid)
   if (!rec) throw new Error('unpackAuthcrypt: recipient kid not present in JWE')
 
-  const epkPub = b64urlToBytes((header.epk as { x: string }).x)
+  const epk = ephemeralKeyOf('unpackAuthcrypt', header, recipient)
   const apv = assertApvMatchesRecipients('unpackAuthcrypt', jwe, header)
   const senderPub = await resolveSenderKey(senderKid)
   const tag = b64urlToBytes(jwe.tag)
 
-  const ze = ecdh(recipient.privateKey, epkPub)
-  const zs = ecdh(recipient.privateKey, senderPub)
+  const ze = ecdh(epk.curve, recipient.privateKey, epk.publicKey)
+  const zs = ecdh(epk.curve, recipient.privateKey, senderPub)
   const kek = deriveEcdh1PU(ze, zs, header.alg, apu, apv, tag, 256)
   const cek = unwrapKey(kek, b64urlToBytes(rec.encrypted_key))
 
@@ -414,11 +466,11 @@ export async function unpackAnoncrypt(jwe: DidCommJWE, recipient: X25519Sender):
   const rec = jwe.recipients.find(r => r.header.kid === recipient.kid)
   if (!rec) throw new Error('unpackAnoncrypt: recipient kid not present in JWE')
 
-  const epkPub = b64urlToBytes((header.epk as { x: string }).x)
+  const epk = ephemeralKeyOf('unpackAnoncrypt', header, recipient)
   const apu = header.apu ? b64urlToBytes(header.apu as string) : new Uint8Array(0)
   const apv = assertApvMatchesRecipients('unpackAnoncrypt', jwe, header)
 
-  const z = ecdh(recipient.privateKey, epkPub)
+  const z = ecdh(epk.curve, recipient.privateKey, epk.publicKey)
   const kek = deriveEcdhEs(z, header.alg as string, apu, apv, 256)
   const cek = unwrapKey(kek, b64urlToBytes(rec.encrypted_key))
 

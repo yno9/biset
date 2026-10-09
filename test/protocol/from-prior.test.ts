@@ -71,7 +71,7 @@ describe('from_prior', () => {
     const next = generatePeerIdentity()
     const jwt = createFromPrior({ iss: peer.did, sub: next.did }, peer.edKid, peer.edPriv)
     expect((await verifyFromPrior(jwt, next.did, fromPriorKeyResolver(serving([])))).prior).toBe(peer.did)
-    await expect(verifyFromPrior(createFromPrior({ iss: peer.did, sub: next.did }, peer.xKid, peer.edPriv), next.did, fromPriorKeyResolver(serving([])))).rejects.toThrow('not an Ed25519 authentication key')
+    await expect(verifyFromPrior(createFromPrior({ iss: peer.did, sub: next.did }, peer.xKid, peer.edPriv), next.did, fromPriorKeyResolver(serving([])))).rejects.toThrow('is not an authentication key')
   })
 })
 

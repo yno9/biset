@@ -14,6 +14,7 @@
 //
 // Either way the log is verified in full here (SCID, entry-hash chain, proofs)
 // with the same code, so a state means the same thing whichever way it came.
+import { signingKeyOfMethod, type SigningKey } from '../../protocol/didcomm/jws.ts'
 import { lookup as dnsLookup } from 'node:dns/promises'
 import { parseLog, entryVersionNumber } from '../../protocol/webvh/log.ts'
 import { resolveEntries } from '../../protocol/webvh/resolver.ts'
@@ -29,6 +30,9 @@ export interface WebvhState {
   versionNumber: number
   /** Every keyAgreement kid (absolute DID URL) -> its X25519 public key, hex. */
   keys: Record<string, string>
+  /** Every authentication kid (absolute) -> its signing key, for a signed
+   * message (jws.ts). Only as resolved: not kept by the store. */
+  authentication?: Record<string, SigningKey>
 }
 
 /** The keys could not be learned right now (the network, the host) -- as
@@ -53,6 +57,20 @@ function keyAgreementKeys(doc: WebvhDidDocument): Record<string, string> {
   return keys
 }
 
+/** Every authentication kid (absolute) of a resolved document and its
+ * signing key; entries that are not a signing key are left out. */
+function authenticationKeys(doc: WebvhDidDocument): Record<string, SigningKey> {
+  const absolute = (id: string) => id.startsWith('#') ? `${doc.id}${id}` : id
+  const keys: Record<string, SigningKey> = {}
+  for (const ref of doc.authentication ?? []) {
+    const kid = absolute(ref)
+    const method = doc.verificationMethod.find(vm => absolute(vm.id) === kid)
+    if (!method) continue
+    try { keys[kid] = signingKeyOfMethod(method) } catch { /* not a signing key */ }
+  }
+  return keys
+}
+
 /** Verifies a did:webvh log (JSONL) and reads its keyAgreement state. Throws
  * if the log is not valid. The DID is whatever the LATEST entry says: a
  * domain move (an alias renamed to its real hostname, say) rewrites the
@@ -64,7 +82,7 @@ export function webvhStateFromLog(jsonl: string): WebvhState {
   if (typeof did !== 'string' || !did.startsWith('did:webvh:')) throw new Error('the log does not name a did:webvh')
   const doc = resolveEntries(did, entries)
   if (!doc || doc.id !== did) throw new Error('the log does not resolve to its own DID')
-  return { did: doc.id, versionNumber: entryVersionNumber(entries[entries.length - 1]!.versionId), keys: keyAgreementKeys(doc) }
+  return { did: doc.id, versionNumber: entryVersionNumber(entries[entries.length - 1]!.versionId), keys: keyAgreementKeys(doc), authentication: authenticationKeys(doc) }
 }
 
 /** A host NAME the mediator may dial for a DID's log. The DID -- so the host --

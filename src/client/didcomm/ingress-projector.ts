@@ -20,7 +20,9 @@ import { PermanentDeliveryError } from '../../protocol/didcomm/mediator-pickup.t
 import { isBasicMessage, basicMessageBodyOf, didCommThreadId } from './basicmessage.ts'
 import { isExternalFeedPost, externalFeedPostBodyOf, externalFeedThreadId, EXTERNAL_FEED_POST } from './external-feed.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
-import { assertFromMatchesSender, isExpired } from '../../protocol/didcomm/message.ts'
+import { DidCommSenderMismatchError, isExpired } from '../../protocol/didcomm/message.ts'
+import { parseDidCommJws, SignatureError, signingKeyResolver, type SigningKeyResolver } from '../../protocol/didcomm/jws.ts'
+import { openDidCommPayload, type OpenedMessage } from '../../protocol/didcomm/open.ts'
 import { didcommGroupAddress, isGroupAudience } from './group-chat.ts'
 import { MAIL_BRIDGE_INBOUND, MAIL_BRIDGE_SEND_RESULT, mailBridgeInboundBodyOf } from '../../server/mediator/mail-plugin/mail-bridge.ts'
 import { readRfc5322HeaderSummary } from '../app/ui/message/rfc5322-headers.ts'
@@ -54,6 +56,9 @@ export interface DidCommIngressProjectorOptions {
   /** Verifies a `from_prior` against `from` (from-prior.ts). Defaults to a
    * live resolution; the caller should bypass a host's CDN. */
   verifyFromPrior?(jwt: string, from: string): Promise<DidRotation>
+  /** Resolves a signer's key (a signed message, jws.ts). Defaults to a live
+   * resolution; the caller should bypass a host's CDN. */
+  resolveSigningKey?: SigningKeyResolver
   now?: () => Date
 }
 
@@ -115,11 +120,13 @@ export function isProjectableDidCommIngress(msg: { type?: string }): boolean {
 export class DidCommIngressProjector implements IngressVerifierProjector {
   private readonly now: () => Date
   private readonly verify: (jwt: string, from: string) => Promise<DidRotation>
+  private readonly resolveSigningKey: SigningKeyResolver
 
   constructor(private readonly options: DidCommIngressProjectorOptions) {
     if (!options.identityId || !options.actorDeviceId) throw new TypeError('DIDComm ingress projector identity is required')
     this.now = options.now ?? (() => new Date())
     this.verify = options.verifyFromPrior ?? ((jwt, from) => verifyFromPrior(jwt, from, fromPriorKeyResolver(defaultFetch())))
+    this.resolveSigningKey = options.resolveSigningKey ?? signingKeyResolver(defaultFetch())
   }
 
   private counterpartyOf(msg: DidCommPlaintext, senderKid: string, recipientKid: string, cards: readonly LocalJmapContactCard[], at: string) {
@@ -143,44 +150,58 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
     } catch {
       throw new TypeError('DIDComm ingress payload is not valid JSON')
     }
-    const jwe = parseJwe(parsed)
-    if (!jwe) throw new TypeError('DIDComm ingress payload is not a well-formed JWE')
-
-    // A message to an identity is encrypted once for every device key its DID
-    // document lists (multiplexed encryption), in the sender's order: this
-    // device's key is any one of the recipients, not necessarily the first.
-    const recipientKids = jwe.recipients.map(recipient => recipient.header.kid).filter((kid): kid is string => typeof kid === 'string' && kid.length > 0)
-    if (recipientKids.length === 0) throw new TypeError('DIDComm JWE has no recipient kid')
-    let selfKeys: OwnDidCommKey | null = null
-    for (const kid of recipientKids) {
-      const candidate = await this.options.resolveOwnKey(kid)
-      if (candidate && candidate.kid === kid) { selfKeys = candidate; break }
+    // A signed message may arrive without encryption (DIDComm v2.1 signed
+    // messages); everything else is a JWE.
+    const signedOnly = parseDidCommJws(parsed)
+    const jwe = signedOnly ? null : parseJwe(parsed)
+    if (!jwe && !signedOnly) throw new TypeError('DIDComm ingress payload is not a well-formed JWE or signed message')
+    const open = async (bytes: Uint8Array, authcryptSenderKid?: string) => {
+      try { return await openDidCommPayload(bytes, authcryptSenderKid, this.resolveSigningKey) } catch (error) {
+        if (error instanceof SignatureError || error instanceof DidCommSenderMismatchError) throw new PermanentDeliveryError(error.message)
+        throw error
+      }
     }
-    if (!selfKeys) throw new TypeError(`none of the DIDComm recipient kids ${recipientKids.join(', ')} is available to this endpoint`)
-    const recipientKid = selfKeys.kid
 
-    // anoncrypt (alg ECDH-ES+A256KW) has no sender to authenticate by
-    // construction -- see crypto.ts's own header on why it exists at all
-    // (Forward-wrapping so a mediator stays blind) and external-feed.ts's
-    // header on why External Feed Post is the ONLY message type allowed to
-    // ride on it: every other type this projector understands (chat, ping,
-    // mail-bridge) assumes an authenticated sender somewhere
-    // downstream, so admitting anoncrypt for them would silently swap out
-    // that assumption's proof for nothing.
-    const isAnoncrypt = protectedHeaderOf(jwe)?.alg === 'ECDH-ES+A256KW'
-    const { plaintext, senderKid } = isAnoncrypt
-      ? { plaintext: await unpackAnoncrypt(jwe, { kid: selfKeys.kid, privateKey: selfKeys.x25519PrivateKey }), senderKid: undefined as string | undefined }
-      : await unpackAuthcrypt(jwe, { kid: selfKeys.kid, privateKey: selfKeys.x25519PrivateKey }, this.options.resolveSenderKey)
-    let msg: DidCommPlaintext
-    try {
-      msg = JSON.parse(new TextDecoder().decode(plaintext)) as DidCommPlaintext
-    } catch {
-      throw new TypeError('DIDComm plaintext is not valid JSON')
+    // The key of this device the message was encrypted to ('' for a signed
+    // message that was not encrypted at all).
+    let recipientKid = ''
+    let opened: OpenedMessage
+    if (jwe) {
+      // A message to an identity is encrypted once for every device key its DID
+      // document lists (multiplexed encryption), in the sender's order: this
+      // device's key is any one of the recipients, not necessarily the first.
+      const recipientKids = jwe.recipients.map(recipient => recipient.header.kid).filter((kid): kid is string => typeof kid === 'string' && kid.length > 0)
+      if (recipientKids.length === 0) throw new TypeError('DIDComm JWE has no recipient kid')
+      let selfKeys: OwnDidCommKey | null = null
+      for (const kid of recipientKids) {
+        const candidate = await this.options.resolveOwnKey(kid)
+        if (candidate && candidate.kid === kid) { selfKeys = candidate; break }
+      }
+      if (!selfKeys) throw new TypeError(`none of the DIDComm recipient kids ${recipientKids.join(', ')} is available to this endpoint`)
+      recipientKid = selfKeys.kid
+      const self = { kid: selfKeys.kid, privateKey: selfKeys.x25519PrivateKey }
+      if (protectedHeaderOf(jwe)?.alg === 'ECDH-ES+A256KW') {
+        opened = await open(await unpackAnoncrypt(jwe, self))
+      } else {
+        const { plaintext, senderKid } = await unpackAuthcrypt(jwe, self, this.options.resolveSenderKey)
+        opened = await open(plaintext, senderKid)
+      }
+    } else {
+      opened = await open(new TextEncoder().encode(JSON.stringify(signedOnly)))
     }
-    if (senderKid) assertFromMatchesSender(msg, senderKid)
+    const msg = opened.message
+    // Authenticated by the authcrypt sender or a signature; neither is an
+    // anoncrypt message nobody signed. Such a message has no sender to
+    // authenticate by construction -- see crypto.ts's own header on why
+    // anoncrypt exists at all (Forward-wrapping so a mediator stays blind) and
+    // external-feed.ts's header on why External Feed Post is the ONLY message
+    // type allowed to arrive that way: every other type this projector
+    // understands (chat, ping, mail-bridge) assumes an authenticated sender
+    // somewhere downstream.
+    const senderKid = opened.senderKid
     if (isExpired(msg)) throw new TypeError('DIDComm message has expired')
     if (!isProjectableDidCommIngress(msg)) throw new TypeError(`unsupported DIDComm message type for this endpoint slice: ${msg.type}`)
-    if (isAnoncrypt && !isExternalFeedPost(msg)) throw new TypeError(`anoncrypt is only accepted for ${EXTERNAL_FEED_POST}, got ${msg.type}`)
+    if (!senderKid && !isExternalFeedPost(msg)) throw new TypeError(`an unauthenticated (anoncrypt, unsigned) message is only accepted for ${EXTERNAL_FEED_POST}, got ${msg.type}`)
 
     const feedBody = isExternalFeedPost(msg) ? externalFeedPostBodyOf(msg) : null
     if (isExternalFeedPost(msg) && !feedBody) throw new TypeError('DIDComm external feed post has an invalid body')
@@ -253,7 +274,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       // local-jmap/reducer.ts's own no-op case for `didcomm.control`.
       // (senderKid is always defined here, same reasoning as the
       // MAIL_BRIDGE_INBOUND branch above.)
-      const alg = protectedHeaderOf(jwe)?.alg
+      const alg = jwe ? protectedHeaderOf(jwe)?.alg : 'signed'
       const record = await buildVaultMutation({
         kind: 'didcomm.control' as const,
         targetIds: [dedupeId],
@@ -339,7 +360,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       // copy was encrypted to (DIDComm v2.1: `to` contains the recipient
       // kid's DID). Recorded by the public DID either way, the same on every
       // device of this identity.
-      const ownDids = new Set([this.options.identityId, didOfKid(recipientKid)])
+      const ownDids = new Set([this.options.identityId, ...(recipientKid ? [didOfKid(recipientKid)] : [])])
       const audience = group ? [...new Set(msg.to!.map(did => ownDids.has(did) ? this.options.identityId : did))] : []
       if (group && !msg.to!.some(did => ownDids.has(did))) throw new PermanentDeliveryError('DIDComm group message does not name this identity among its recipients')
       const body = basicMessageBodyOf(msg)
@@ -348,7 +369,8 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       const record = await buildMailMessageAdd({
         email: {
           id: dedupeId,
-          threadId: group ? didcommGroupAddress(msg.thid ?? msg.id) : didCommThreadId(this.options.identityId, senderDid),
+          // A thread is named by an id: compared case-insensitively (DIDComm v2.1).
+          threadId: group ? didcommGroupAddress((msg.thid ?? msg.id).toLowerCase()) : didCommThreadId(this.options.identityId, senderDid),
           mailboxIds: { inbox: true },
           keywords: {},
           receivedAt: createdAt,
@@ -426,10 +448,10 @@ async function resolveCounterparty(
   }
   // Written to one of this identity's own rotation DIDs, by the counterparty
   // it is for: that rotation is confirmed, and `from_prior` stops (§4.3).
-  const ownDid = didOfKid(recipientKid)
+  const ownDid = recipientKid ? didOfKid(recipientKid) : undefined
   const card = contactCardForDid(cards, publicDid)
-  const own = card ? didCommStateOf(card).own?.[ownDid] : undefined
-  if (card && own?.startedAt && !own.confirmedAt) writes.push(ownRotationPatch(card.id, ownDid, 'confirmedAt', at))
+  const own = card && ownDid ? didCommStateOf(card).own?.[ownDid] : undefined
+  if (card && ownDid && own?.startedAt && !own.confirmedAt) writes.push(ownRotationPatch(card.id, ownDid, 'confirmedAt', at))
   return { publicDid, writes }
 }
 
@@ -453,7 +475,8 @@ export class DidCommReplayError extends Error {}
  * each other since sender+message-id already uniquely identifies one
  * specific DIDComm message regardless of its `type`. */
 export function didCommMessageDedupeId(senderKid: string, messageId: string): string {
-  return canonicalHash('biset/vault/didcomm/message-dedupe-id/v1', { senderKid, messageId })
+  // DIDComm v2.1: a message id MUST be compared case-insensitively.
+  return canonicalHash('biset/vault/didcomm/message-dedupe-id/v1', { senderKid, messageId: messageId.toLowerCase() })
 }
 
 

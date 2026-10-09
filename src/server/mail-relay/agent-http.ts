@@ -1,7 +1,7 @@
 import type { MailDkimSigner } from '../mediator/mail-plugin/dkim.ts'
 import { deliverMail } from '../mediator/mail-plugin/smtp-client.ts'
 import { MAIL_BRIDGE_SEND, MAIL_BRIDGE_SEND_RESULT, mailBridgeSendBodyOf } from '../mediator/mail-plugin/mail-bridge.ts'
-import { didCommPost, isDidCommEncryptedRequest, parseJwe, unpackAuthcrypt } from '../../protocol/didcomm/crypto.ts'
+import { didCommAccepted, didCommPost, isDidCommEncryptedRequest, parseJwe, unpackAuthcrypt } from '../../protocol/didcomm/crypto.ts'
 import { resolveDidCommSenderKey } from '../../protocol/didcomm/webvh-resolve.ts'
 import { resolve } from '../../protocol/webvh/resolver.ts'
 import { didCommRouteFromDocument } from '../../protocol/didcomm/webvh-route.ts'
@@ -51,5 +51,5 @@ async function sendResult(
   const plaintext = buildPlaintext(MAIL_BRIDGE_SEND_RESULT, body, sender.kid.split('#', 1)[0], senderDid, { thid })
   const delivery = await packForDelivery(new TextEncoder().encode(JSON.stringify(plaintext)), sender, doc.id, recipients, { uri: endpoint.uri, routingKeys: endpoint.routingKeys })
   const response = await fetch(delivery.postUrl, didCommPost(delivery.outbound))
-  if (response.status !== 202) throw new Error(`mail send-result delivery failed: HTTP ${response.status}`)
+  if (!didCommAccepted(response.status)) throw new Error(`mail send-result delivery failed: HTTP ${response.status}`)
 }

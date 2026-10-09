@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { x25519 } from '@noble/curves/ed25519.js'
+import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { equalBytes, sha256Bytes } from '../../src/protocol/canonical.ts'
 import type { IngressEnvelopeV1 } from '../../src/protocol/ingress.ts'
-import { packAuthcrypt } from '../../src/protocol/didcomm/crypto.ts'
+import { packAnoncrypt, packAuthcrypt } from '../../src/protocol/didcomm/crypto.ts'
+import { signDidCommMessage } from '../../src/protocol/didcomm/jws.ts'
 import { buildPlaintext } from '../../src/protocol/didcomm/message.ts'
 import { PING, PING_RESPONSE } from '../../src/protocol/didcomm/trust-ping.ts'
 import { BASIC_MESSAGE, didCommThreadId } from '../../src/client/didcomm/basicmessage.ts'
@@ -137,6 +138,23 @@ describe('DIDComm ingress projector', () => {
     })).rejects.toBeInstanceOf(DidCommReplayError)
   })
 
+  test('a message id is compared case-insensitively: the same id in other case is the same message (DIDComm v2.1)', async () => {
+    const plaintext = buildPlaintext(PING, { response_requested: false }, didOfKid(senderKid), undefined, { id: 'abc-DEF-123' })
+    const again = { ...plaintext, id: 'ABC-def-123' }
+    const pack = (value: object) => envelopeFor(new TextEncoder().encode(JSON.stringify(packAuthcrypt(new TextEncoder().encode(JSON.stringify(value)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }]))), crypto.randomUUID())
+    const projector = buildProjector()
+    await projector.verifyAndProject(pack(plaintext))
+    await expect(projector.verifyAndProject(pack(again))).rejects.toBeInstanceOf(DidCommReplayError)
+  })
+
+  test('a group thread id in other case is the same thread', async () => {
+    const carol = 'did:webvh:ghi789:carol.test.example'
+    const pack = (thid: string) => envelopeFor(new TextEncoder().encode(JSON.stringify(packAuthcrypt(new TextEncoder().encode(JSON.stringify(buildPlaintext(BASIC_MESSAGE, { content: 'hi' }, didOfKid(senderKid), [identityId, carol], { thid }))), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }]))), crypto.randomUUID())
+    const upper = await buildProjector().verifyAndProject(pack('Group-ABC'))
+    const lower = await buildProjector().verifyAndProject(pack('group-abc'))
+    expect(upper.projection.emails[0]!.threadId).toBe(lower.projection.emails[0]!.threadId)
+  })
+
   test('a different ping (new message id) from the same sender is NOT treated as a replay', async () => {
     const projector = buildProjector()
     const { jwe: first } = pingJwe(true)
@@ -228,6 +246,31 @@ describe('DIDComm ingress projector', () => {
     const plaintext = buildPlaintext('https://biset.md/relationship/1.0/init', { relationshipKid: 'did:peer:2.x#key-1', publicKey: 'AA' }, didOfKid(senderKid))
     const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
     await expect(buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))).rejects.toThrow(/unsupported DIDComm message type/)
+  })
+
+  test('an anoncrypt message signed by its sender (DIDComm v2.1 signed messages) is recorded as the signer\'s', async () => {
+    const signingKey = ed25519.utils.randomSecretKey()
+    const signerKid = 'did:webvh:def456:bob.test.example#signing'
+    const message = buildPlaintext(BASIC_MESSAGE, { content: 'signed, not authcrypted' }, didOfKid(senderKid), identityId)
+    const signed = signDidCommMessage(message, signerKid, signingKey)
+    const jwe = packAnoncrypt(new TextEncoder().encode(JSON.stringify(signed)), [{ kid: recipientKid, publicKey: recipientXPub }])
+    const projector = new DidCommIngressProjector({
+      identityId, actorDeviceId: recipientKid,
+      resolveOwnKey(kid) { return kid === recipientKid ? { kid, x25519PrivateKey: recipientX } : null },
+      async resolveSenderKey() { throw new Error('anoncrypt has no sender key') },
+      async resolveSigningKey(kid) { if (kid !== signerKid) throw new Error('unexpected signer'); return { type: 'Ed25519' as const, publicKey: ed25519.getPublicKey(signingKey) } },
+      async alreadyProcessed() { return false },
+      async nextActorSeq() { return 1 },
+      async initialParents() { return [] },
+      activeSegment: segmentFor,
+      async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [], contactCards: [] } },
+      signer,
+    })
+    const result = await projector.verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
+    expect(result.projection.emails).toMatchObject([{ from: [{ email: didOfKid(senderKid) }] }])
+    // An anoncrypt message nobody signed is still only for External Feed Post.
+    const unsigned = packAnoncrypt(new TextEncoder().encode(JSON.stringify(message)), [{ kid: recipientKid, publicKey: recipientXPub }])
+    await expect(projector.verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(unsigned)), 'ingress-2'))).rejects.toThrow('unauthenticated')
   })
 
   test('a basicmessage from a did:peer no contact names is held back, not projected (§10-5)', async () => {

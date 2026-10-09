@@ -484,32 +484,34 @@ mediator は clearnet（`https://mediator.biset.md`）と onion（v3 Hidden Serv
 仕様書（identity.foundation/didcomm-messaging/spec/v2.1）の規範的な要件を、現行コードと突き合わせた。
 判定: ✅ 適合 ／ ⚠️ 一部・SHOULD の未対応 ／ ❌ MUST の未対応 ／ 🔧 仕様が認める拡張 ／ — 対象外（任意の機能）。
 
-**MUST を満たしていないもの（❌）** — group の宛先の整合性は 2026-10-09 に直した（下の ✅）。
+**MUST を満たしていないもの（❌）**: 無し（2026-10-09 にすべて直した）。
 
+**2026-10-09 に直した MUST**
 | 要件 | 仕様 | biset |
 |---|---|---|
-| 鍵合意の曲線 | X25519・P-384・P-256 を MUST（P-521 は任意） | **X25519 のみ**。P-256／P-384 の鍵を持つ相手には送れず、そこから届いたものも開けない |
-| 署名つきメッセージ（JWS） | 受け手は General／Flattened の両方を処理できること（MUST）。EdDSA・ES256・ES256K の検証（MUST）、少なくとも 1 つで署名（MUST） | **JWS を扱えない**（`application/didcomm-signed+json` も、署名してから暗号化したものも受け取れない）。Ed25519 の検証は `from_prior` の JWT だけ |
-| `id` の比較 | 大文字小文字を区別せずに比較（MUST） | 重複の検出・`thid` の照合・mediator の再送の検出は、**区別して比較**する。biset は小文字の UUID しか作らないので、biset 同士では起きない |
+| 鍵合意の曲線 | X25519・P-384・P-256 を MUST | 3 つとも暗号化・復号できる（`key-agreement.ts`。NIST 曲線は ECDH の x 座標を Z にし、受け取った点が曲線上にあるかを確かめる）。DID 文書の Multikey と JWK、did:peer:2 から読む。1 つの JWE は 1 つの曲線（`epk` が 1 つ）なので、authcrypt は送り手と同じ曲線の鍵へ、Forward は mediator の鍵の 1 つの曲線で包む。**biset 自身の鍵は X25519 だけ**なので、鍵合意の鍵が P-256／P-384 しか無い相手とは authcrypt できない（anoncrypt と Forward はできる） |
+| 署名つきメッセージ（JWS） | General／Flattened の処理、EdDSA・ES256・ES256K の検証、少なくとも 1 つで署名 | `jws.ts`・`open.ts`。署名の鍵は署名者の DID の `authentication` にあるものだけ。authcrypt と署名の両方があれば、署名者は authcrypt の送り主と同じ DID でなければエラー。anoncrypt の中の署名は送り主を認証する（Basic Message なども受け取れる）。暗号化されていない署名つきメッセージも受け取れる（受信箱から）。署名は EdDSA（mediator の problem-report）。`from_prior` も 3 つの署名アルゴリズムを受け付ける |
+| `id` の比較 | 大文字小文字を区別しない（MUST） | 重複の検出と group の `thid` は小文字にそろえて比べる（mediator は前から） |
+| 宛先の整合性（group） | 平文の `to` は暗号文の `kid` の DID を含む | §9.4（移った参加者への分だけ、`to` のその参加者の項目を did:peer にする） |
 
 **SHOULD・推奨を満たしていないもの（⚠️）**
 
 | 要件 | 仕様 | biset |
 |---|---|---|
-| HTTP の成功 | 2xx なら成功（MUST。202 を推奨） | 送り手は **202 だけ**を成功とみなす（`front-door-send.ts`、mail-relay、mail-plugin）。200・204 を返す mediator への送信を失敗と誤る |
-| 内容暗号 | A256CBC-HS512 必須、A256GCM 推奨、XC20P 任意 | A256CBC-HS512 を送受信。anoncrypt の受信は XC20P も。**A256GCM は受信できない** |
 | `id` の長さ | 32 バイト以下（ただし同じ節で UUID を推奨。UUID は 36 文字で、仕様の中で食い違っている） | UUID（36 文字） |
-| 受け手の `to` の確認 | 自分が `to` に無いとき、受け入れは拒否してはならず（MUST NOT）、利用者に警告する（SHOULD） | 受け入れて、コンソールに警告するだけ（利用者には出さない）。上の「宛先の整合性」の節の「エラー」とは逆の扱いで、仕様の 2 か所が食い違っている |
-| endpoint の切り替え | 届かなければ別の endpoint を試す（SHOULD） | 1 つを選ぶだけで、切り替えない（onion への切り替えは Tor 環境のときだけ） |
-| `lang` | 人が読む文字列には `lang` で言語を示す（SHOULD） | Basic Message に `lang` を付けない（mediator の problem-report には付ける） |
+| 受け手の `to` の確認 | 自分が `to` に無いとき、受け入れは拒否してはならず（MUST NOT）、利用者に警告する（SHOULD） | 受け入れて、コンソールに警告するだけ（利用者には出さない）。仕様の「整合性の違反は MUST でエラー」と食い違う |
+| endpoint の切り替え | 届かなければ別の endpoint を試す（SHOULD） | 1 つを選ぶだけ。endpoint の組は clearnet と onion で、onion は Tor 環境でしか届かないため、切り替えても通常のブラウザでは意味が無い |
+| `lang` | 人が読む文字列には `lang` で言語を示す（SHOULD） | Basic Message に `lang` を付けない（書いた言語を biset は知らない）。mediator の problem-report には付ける |
 | problem-report | 処理できないときの返事として望ましい（一般的な要件ではない） | クライアントは相手に problem-report を返さない（mediator は返す）。受け取った problem-report も表示しない |
+| 暗号化されていない署名つきメッセージの POST | 転送のメディアタイプは中身に合わせる | mediator は `application/didcomm-encrypted+json` 以外を 415 で拒否する（mediator への要求は authcrypt を前提にした設計。Forward は anoncrypt） |
+| P-521 | 任意 | 対応しない |
 
 **適合しているもの（✅）**
 - 平文: `id`・`type`・`typ`（`application/didcomm-plain+json`）・`from`・`to`（配列）・`thid`・`pthid`・`created_time`（秒）・`attachments`。知らないヘッダは無視する。
-- authcrypt（ECDH-1PU+A256KW、A256CBC-HS512、`skid`／`apu`／`apv`）・anoncrypt（ECDH-ES+A256KW）。DIF の X25519 のテストベクタで確認（§9.6）。受信者全員への multiplexed encryption（「実用的な限り多くの鍵へ」の SHOULD）。
+- authcrypt（ECDH-1PU+A256KW、A256CBC-HS512、`skid`／`apu`／`apv`）・anoncrypt（ECDH-ES+A256KW。受信は A256CBC-HS512・A256GCM・XC20P）。曲線は X25519・P-256・P-384。DIF の X25519 のテストベクタで確認（§9.6）。受信者全員への multiplexed encryption（「実用的な限り多くの鍵へ」の SHOULD）。
 - 宛先の整合性: `from` と `skid` の一致（違反はエラー）。平文の `to` は暗号文の `kid` の DID を含む（1:1 は送り先の DID。group は移った参加者への分だけ、その参加者の did:peer を `to` に入れる。§9.4）。
 - メディアタイプ: `application/didcomm-encrypted+json`（`typ` と HTTP の Content-Type）。
-- 転送: HTTPS POST（Content-Type、mediator は 2xx）、WebSocket（1 メッセージ＝1 フレーム、信頼は各メッセージの暗号に置く）。
+- 転送: HTTPS POST（Content-Type。2xx を成功とみなす。mediator は 202 か 200）、WebSocket（1 メッセージ＝1 フレーム、信頼は各メッセージの暗号に置く）。
 - Routing 2.0: Forward の `next` と `attachments`、`please_ack` を Forward で尊重しない、`routingKeys`（did:peer:2 と did:web の鍵）、**DID をエンドポイントにする形**（mediator の鍵を routingKeys の前に足す）。
 - `DIDCommMessaging` の service（`id`・`type`・`serviceEndpoint` の object／array、`uri`・`accept`・`routingKeys`）。1 つの endpoint にだけ送る。
 - **DID Rotation**（`from_prior`）: 新しい DID からの暗号化されたメッセージに付け、新しい DID 宛てを受け取るまで付ける。受け手は署名鍵が `iss` の `authentication` にあることを含め全部を検査し、処理済みの移動より古い DID からは受け取らない（§9.2）。
@@ -744,7 +746,7 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 
 優先度の高い順ではなく、**事実として確認できたもの**を挙げる。
 
-1. **DIDComm の仕様からの逸脱**: 独自の握手（INIT/ACCEPT）は 2026-10-07 の P0 で撤去した。**MUST の未対応が 3 つ残る**（P-256／P-384、JWS、`id` の大文字小文字。§9.9）。group の宛先の整合性は 2026-10-09 に直した。`external-feed` は自前の名前空間（`https://biset.md/external-feed/1.0/post`）に移した（2026-10-07。以前は `didcomm.org` の名前空間を、レジストリに無いのに使っていた）。`mail-bridge` は didmail への分離で撤去する。
+1. **DIDComm の仕様からの逸脱**: 独自の握手（INIT/ACCEPT）は 2026-10-07 の P0 で撤去した。**MUST の未対応は無い**（2026-10-09 に P-256／P-384、JWS、`id` の大文字小文字、group の宛先の整合性を直した。§9.9）。SHOULD の未対応と仕様の中の食い違いは §9.9。`external-feed` は自前の名前空間（`https://biset.md/external-feed/1.0/post`）に移した（2026-10-07。以前は `didcomm.org` の名前空間を、レジストリに無いのに使っていた）。`mail-bridge` は didmail への分離で撤去する。
    `mediate-deny` は送らない（拒否の理由はすべて problem-report で返す）。
 2. **mail-plugin "B" の署名つき HTTP 送信**（`mail-submission-http.ts`）: 本番では使っていない variant に残る。
 3. **`client/` が `server/` を import**（`client/mail/didcomm-submit.ts`、`client/didcomm/ingress-projector.ts` が `server/mediator/mail-plugin/mail-bridge.ts` を参照）。
@@ -798,7 +800,7 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 1. **2026-10-08 のデプロイ後の実機確認**（`PLAN-refactor.md` §13）: 2 つの identity の間の DID Rotation（問い合わせ → 開始 → 確定、group）、2 台での Vault Sync と連絡先、「Remove other devices」の後の移り直し、4 台目の拒否、WebSocket（clearnet と onion）、メールの受信。
 2. **`PLAN-refactor.md` §9.4 の残りの試験**: 満杯の受信箱からの `missed` での回収（6）、seed を失った状態からの回復の通し（5）、候補の seed の https の経路（4）。
 3. **did:peer:4**（§10-4）と、住所録の画面。
-4. **DIDComm の MUST の未対応（§9.9）**: 優先の高い順に、(a) HTTP の 2xx を成功とみなす（SHOULD だが修正は小さい）、(b) `id` の大文字小文字を区別しない比較、(c) P-384／P-256 の鍵合意、(d) JWS の受信（General・Flattened、EdDSA・ES256・ES256K の検証）。group の宛先の整合性は 2026-10-09 に直した。
+4. **DIDComm の残り（§9.9）**: SHOULD の未対応（`lang`、利用者への `to` の警告、相手への problem-report）。biset 自身の P-256／P-384 の鍵（今は X25519 だけ。NIST の鍵しか持たない相手と authcrypt するには、端末ごとに鍵を足して DID 文書に載せる必要がある）。
 5. **相互運用テスト**: `didcomm` の参照実装（npm）を dev 依存にしたテスト。
 6. **wallet の承認の実機確認**: `authorization_details` を送らないサインインを、did.md Wallet が受け付けること。
 7. **セッション復元の失敗の分類**（§17-4）。transient な失敗でセッションを破棄しない。
@@ -823,7 +825,7 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 | パス | 責務 |
 |---|---|
 | `canonical.ts`、`ids.ts`、`signing.ts`、`vault.ts`、`ingress.ts`、`mail-submission.ts`、`net-fetch.ts` | 正準 JSON、ID 型、署名対象、Vault の event 種別、外部 payload、`fetch` の束縛 |
-| `didcomm/` | `crypto.ts`（JWE、multi-recipient、`didCommPost`）、`message.ts`（`return_route` を含む）、`peer.ts`（did:peer:2、Y の決定論的導出）、`from-prior.ts`、`devicekid.ts`、`multikey.ts`、`problems.ts`、`forward-wrap.ts`、`trust-ping.ts`、`mediator-{protocol,coordinate,pickup,transport,device}.ts`、`discover-features.ts`、`webvh-route.ts`・`did-web.ts`（route と受信者の選択）、`webvh-resolve.ts`（sender 鍵の解決）、**`service-endpoint.ts`（endpoint 選択の唯一の所有者）**、`vault-sync-protocol.ts` |
+| `didcomm/` | `crypto.ts`（JWE、multi-recipient、`didCommPost`、`didCommAccepted`）、`key-agreement.ts`（X25519・P-256・P-384 の鍵）、`jws.ts`（署名つきメッセージ、EdDSA・ES256・ES256K）、`open.ts`（復号後の平文・署名の層を開く共通処理）、`message.ts`（`return_route` を含む）、`peer.ts`（did:peer:2、Y の決定論的導出）、`from-prior.ts`、`devicekid.ts`、`multikey.ts`、`problems.ts`、`forward-wrap.ts`、`trust-ping.ts`、`mediator-{protocol,coordinate,pickup,transport,device}.ts`、`discover-features.ts`、`webvh-route.ts`・`did-web.ts`（route と受信者の選択）、`webvh-resolve.ts`（sender 鍵の解決）、**`service-endpoint.ts`（endpoint 選択の唯一の所有者）**、`vault-sync-protocol.ts` |
 | `webvh/` | `resolver.ts`、`log.ts`、`proof.ts`、`document.ts`、`identifier.ts`、`scid.ts`、`hash.ts`、`multihash.ts`、`multikey.ts`、`jcs.ts` |
 | `mimi/` | MIMI の型・wire・authorizer・app-data（MIMI サーバーが使う） |
 | `mls/` | RFC 9420 の vendored fork。**中身は変更しない**。現在の利用者は biset-mimi のサーバーだけ |
@@ -853,7 +855,7 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 - `mls/*`、`mimi/*` は 🔧（将来の MIMI クライアント用）。
 
 ### 20.6 `server/`
-- `mediator/`: `index.ts`（"A"）、`deployment.ts`（HTTP と WebSocket）、`server.ts`、`sqlite-store.ts`、`relay-poller.ts`、`signature.ts`、`rate-limit.ts`、`route-deliver.ts`、`validate.ts`。
+- `mediator/`: `index.ts`（"A"）、`deployment.ts`（HTTP と WebSocket）、`server.ts`、`sqlite-store.ts`、`relay-poller.ts`、`rate-limit.ts`、`route-deliver.ts`、`validate.ts`。
 - `mediator/mail-plugin/`: `index.ts`（"B"）、`listener.ts`、`smtp-socket-server.ts`、`mail-smtp-protocol.ts`、`bridge.ts`、`smtp-client.ts`、`dkim.ts`、`mail-submission-http.ts`、`mail-bridge.ts`／`mail-submission-wire.ts`。
 - `mail-relay/`: `index.ts`、`agent-http.ts`、`did-document.ts`、`sqlite-store.ts`、`dkim-config.ts`。
 - `rp-signer/index.ts`。
