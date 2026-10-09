@@ -2,7 +2,7 @@ import type { LocalJmapReadModel } from '../../store/projection/gateway.ts'
 import type { VaultBackedLocalJmapMutationSink } from '../../store/projection/vault-mutation-sink.ts'
 import { sendDidCommMessage } from '../../didcomm/send-message.ts'
 import { parseDidCommGroupAddress } from '../../didcomm/group-chat.ts'
-import type { DidCommRoute } from '../../didcomm/did-rotation.ts'
+import { audienceOfCopy, type DidCommRoute } from '../../didcomm/did-rotation.ts'
 import type { DidCommTransportOutboxRecord } from '../../store/vault/store.ts'
 
 interface WalletDidCommOutboxStore {
@@ -55,7 +55,7 @@ export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): 
       id: message.id, sentAt: message.sentAt,
       ...(message.subject ? { subject: message.subject } : {}),
       ...(message.thid ? { thid: message.thid } : {}),
-      ...(message.audience ? { audience: message.audience } : {}),
+      ...(message.audience ? { audience: audienceOfCopy(message.audience, publicDid, route.toDid) } : {}),
     })
   })
   const inFlight = new Set<string>()

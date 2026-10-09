@@ -74,6 +74,16 @@ export function chooseRoute(publicDid: string, context: RouteContext): DidCommRo
   return { toDid, fromKid: context.frontDoor.fromKid, x25519PrivateKey: context.frontDoor.x25519PrivateKey }
 }
 
+/** The plaintext `to` of the copy of a group message sent to the participant
+ * whose public DID is `publicDid`, over a route to `toDid`: that participant's
+ * own entry names the DID the copy is encrypted to (DIDComm v2.1, Message
+ * Layer Addressing Consistency: `to` contains the recipient kid's DID). Every
+ * other participant stays named by its public DID, so no participant learns
+ * the DID another one moved to with someone else. */
+export function audienceOfCopy(audience: readonly string[], publicDid: string, toDid: string): string[] {
+  return audience.map(did => did === publicDid ? toDid : did)
+}
+
 /** This identity's own rotations that are started, one per counterparty
  * card, as derived from the current seed: the inboxes to watch, and the keys
  * a message to them is opened with. A rotation under an older seed (the

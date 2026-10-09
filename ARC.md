@@ -428,7 +428,8 @@ INIT/ACCEPT の握手は無い（P0 で撤去）。
 ### 9.4 group chat と External Feed
 - **group chat**: DIDComm 本体の仕組みだけで作る（`PLAN-refactor.md` §8）。宛先（平文の `to`）が 2 つ以上の Basic Message のスレッドで、`thid` が会話。
   同じ平文（`to` は全員の公開 DID）を、参加者ごとに別々に暗号化して、各参加者への経路（§9.2 の `chooseRoute`）で送る。
-  **仕様との不一致**: 移った参加者への暗号文の `kid`（その参加者の did:peer）が平文の `to` に無く、宛先の整合性の MUST を満たさない（§9.9）。参加者はスレッドの**最新**メッセージの `to` と送り主、名前は最新の `subject`。
+  **移った参加者に宛てた分**は、`to` のその参加者の項目だけを、暗号化の宛先の DID（その参加者の did:peer）にする（`audienceOfCopy`）。DIDComm v2.1 の「平文の `to` は暗号文の `kid` を含む」を満たすため（§9.9）。
+  他の参加者は公開 DID のままなので、ある参加者が別の参加者との間で移った did:peer は誰にも見えない。受け手は「`to` に自分の公開 DID か、開いた鍵の DID がある」ことで自分宛てと判断し、記録は公開 DID に直す（端末の間で記録が揃う）。参加者はスレッドの**最新**メッセージの `to` と送り主、名前は最新の `subject`。
   招待のメッセージも、管理者も、端末ごとのメンバー一覧も無い（メールの Cc と同じ考え方）。ローカルのスレッドは `didcomm-group:<thid>`。
 - **External Feed**（`https://biset.md/external-feed/1.0/post`）: **anoncrypt のみ**で、送信者を認証しない。ActivityPub／AT Protocol／RSS のフィード投稿を bridge が運ぶことを想定している。
   スレッドは `(identityId, source, actorId)` で作り、本文の URL は `X-Source-Url` ヘッダに退避して CR/LF を除く。anoncrypt を許すのはこの型だけ。
@@ -483,13 +484,12 @@ mediator は clearnet（`https://mediator.biset.md`）と onion（v3 Hidden Serv
 仕様書（identity.foundation/didcomm-messaging/spec/v2.1）の規範的な要件を、現行コードと突き合わせた。
 判定: ✅ 適合 ／ ⚠️ 一部・SHOULD の未対応 ／ ❌ MUST の未対応 ／ 🔧 仕様が認める拡張 ／ — 対象外（任意の機能）。
 
-**MUST を満たしていないもの（❌）**
+**MUST を満たしていないもの（❌）** — group の宛先の整合性は 2026-10-09 に直した（下の ✅）。
 
 | 要件 | 仕様 | biset |
 |---|---|---|
 | 鍵合意の曲線 | X25519・P-384・P-256 を MUST（P-521 は任意） | **X25519 のみ**。P-256／P-384 の鍵を持つ相手には送れず、そこから届いたものも開けない |
 | 署名つきメッセージ（JWS） | 受け手は General／Flattened の両方を処理できること（MUST）。EdDSA・ES256・ES256K の検証（MUST）、少なくとも 1 つで署名（MUST） | **JWS を扱えない**（`application/didcomm-signed+json` も、署名してから暗号化したものも受け取れない）。Ed25519 の検証は `from_prior` の JWT だけ |
-| 宛先の整合性 | 「平文の `to` は、暗号化されたメッセージの `kid` を含まなければならない」（Message Layer Addressing Consistency。違反は MUST でエラー） | **group の送信で、DID Rotation で移った参加者に宛てた暗号文の `kid`（その参加者の did:peer）が、平文の `to`（全員の公開 DID）に無い**（§9.4 の設計の帰結）。仕様に忠実な受け手はエラーにしうる。1:1 は `to` が送り先の DID なので満たす |
 | `id` の比較 | 大文字小文字を区別せずに比較（MUST） | 重複の検出・`thid` の照合・mediator の再送の検出は、**区別して比較**する。biset は小文字の UUID しか作らないので、biset 同士では起きない |
 
 **SHOULD・推奨を満たしていないもの（⚠️）**
@@ -507,7 +507,7 @@ mediator は clearnet（`https://mediator.biset.md`）と onion（v3 Hidden Serv
 **適合しているもの（✅）**
 - 平文: `id`・`type`・`typ`（`application/didcomm-plain+json`）・`from`・`to`（配列）・`thid`・`pthid`・`created_time`（秒）・`attachments`。知らないヘッダは無視する。
 - authcrypt（ECDH-1PU+A256KW、A256CBC-HS512、`skid`／`apu`／`apv`）・anoncrypt（ECDH-ES+A256KW）。DIF の X25519 のテストベクタで確認（§9.6）。受信者全員への multiplexed encryption（「実用的な限り多くの鍵へ」の SHOULD）。
-- 宛先の整合性のうち、`from` と `skid` の一致（違反はエラー）。
+- 宛先の整合性: `from` と `skid` の一致（違反はエラー）。平文の `to` は暗号文の `kid` の DID を含む（1:1 は送り先の DID。group は移った参加者への分だけ、その参加者の did:peer を `to` に入れる。§9.4）。
 - メディアタイプ: `application/didcomm-encrypted+json`（`typ` と HTTP の Content-Type）。
 - 転送: HTTPS POST（Content-Type、mediator は 2xx）、WebSocket（1 メッセージ＝1 フレーム、信頼は各メッセージの暗号に置く）。
 - Routing 2.0: Forward の `next` と `attachments`、`please_ack` を Forward で尊重しない、`routingKeys`（did:peer:2 と did:web の鍵）、**DID をエンドポイントにする形**（mediator の鍵を routingKeys の前に足す）。
@@ -520,7 +520,7 @@ mediator は clearnet（`https://mediator.biset.md`）と onion（v3 Hidden Serv
 - Basic Message の `body.sentAt`・`body.subject`（`created_time` は同じ時刻から作る）。
 - Coordinate Mediation の `device` ラベル（1 つの鍵を複数の端末が共有する Y のため）。
 - `https://biset.md/vault-sync/1.0/*`、`https://biset.md/external-feed/1.0/post`（anoncrypt のみ）、mail-bridge の型。
-- group chat は独自の型を持たない（`to` が複数の Basic Message と `thid`）。ただし上の「宛先の整合性」の問題がある。
+- group chat は独自の型を持たない（`to` が複数の Basic Message と `thid`）。
 
 **対象外（—）**: Out-of-Band 2.0（招待の URL・QR を作らない。公開 DID で直接連絡する）、`accept-lang`、`delay_milli`、did:key、did:peer:4（§10-4、後で実装）。
 
@@ -744,7 +744,7 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 
 優先度の高い順ではなく、**事実として確認できたもの**を挙げる。
 
-1. **DIDComm の仕様からの逸脱**: 独自の握手（INIT/ACCEPT）は 2026-10-07 の P0 で撤去した。**MUST の未対応が 4 つ残る**（P-256／P-384、JWS、group の宛先の整合性、`id` の大文字小文字。§9.9）。`external-feed` は自前の名前空間（`https://biset.md/external-feed/1.0/post`）に移した（2026-10-07。以前は `didcomm.org` の名前空間を、レジストリに無いのに使っていた）。`mail-bridge` は didmail への分離で撤去する。
+1. **DIDComm の仕様からの逸脱**: 独自の握手（INIT/ACCEPT）は 2026-10-07 の P0 で撤去した。**MUST の未対応が 3 つ残る**（P-256／P-384、JWS、`id` の大文字小文字。§9.9）。group の宛先の整合性は 2026-10-09 に直した。`external-feed` は自前の名前空間（`https://biset.md/external-feed/1.0/post`）に移した（2026-10-07。以前は `didcomm.org` の名前空間を、レジストリに無いのに使っていた）。`mail-bridge` は didmail への分離で撤去する。
    `mediate-deny` は送らない（拒否の理由はすべて problem-report で返す）。
 2. **mail-plugin "B" の署名つき HTTP 送信**（`mail-submission-http.ts`）: 本番では使っていない variant に残る。
 3. **`client/` が `server/` を import**（`client/mail/didcomm-submit.ts`、`client/didcomm/ingress-projector.ts` が `server/mediator/mail-plugin/mail-bridge.ts` を参照）。
@@ -798,8 +798,7 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 1. **2026-10-08 のデプロイ後の実機確認**（`PLAN-refactor.md` §13）: 2 つの identity の間の DID Rotation（問い合わせ → 開始 → 確定、group）、2 台での Vault Sync と連絡先、「Remove other devices」の後の移り直し、4 台目の拒否、WebSocket（clearnet と onion）、メールの受信。
 2. **`PLAN-refactor.md` §9.4 の残りの試験**: 満杯の受信箱からの `missed` での回収（6）、seed を失った状態からの回復の通し（5）、候補の seed の https の経路（4）。
 3. **did:peer:4**（§10-4）と、住所録の画面。
-4. **DIDComm の MUST の未対応（§9.9）**: 優先の高い順に、(a) group の宛先の整合性（移った参加者への暗号文の `to` に、その参加者の現在の DID を含める。自分の公開 DID も受け入れるよう受け手を合わせる）、
-   (b) HTTP の 2xx を成功とみなす（SHOULD だが修正は小さい）、(c) `id` の大文字小文字を区別しない比較、(d) P-384／P-256 の鍵合意、(e) JWS の受信（General・Flattened、EdDSA・ES256・ES256K の検証）。
+4. **DIDComm の MUST の未対応（§9.9）**: 優先の高い順に、(a) HTTP の 2xx を成功とみなす（SHOULD だが修正は小さい）、(b) `id` の大文字小文字を区別しない比較、(c) P-384／P-256 の鍵合意、(d) JWS の受信（General・Flattened、EdDSA・ES256・ES256K の検証）。group の宛先の整合性は 2026-10-09 に直した。
 5. **相互運用テスト**: `didcomm` の参照実装（npm）を dev 依存にしたテスト。
 6. **wallet の承認の実機確認**: `authorization_details` を送らないサインインを、did.md Wallet が受け付けること。
 7. **セッション復元の失敗の分類**（§17-4）。transient な失敗でセッションを破棄しない。

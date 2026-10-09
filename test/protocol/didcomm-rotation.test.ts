@@ -15,7 +15,7 @@ import type { LogEntry } from '../../src/protocol/webvh/log.ts'
 import { BASIC_MESSAGE, didCommThreadId } from '../../src/client/didcomm/basicmessage.ts'
 import { DidCommIngressProjector } from '../../src/client/didcomm/ingress-projector.ts'
 import { PermanentDeliveryError } from '../../src/protocol/didcomm/mediator-pickup.ts'
-import { chooseRoute, ownRotationIdentity } from '../../src/client/didcomm/did-rotation.ts'
+import { audienceOfCopy, chooseRoute, ownRotationIdentity } from '../../src/client/didcomm/did-rotation.ts'
 import { createRotationManager, RETIRED_Y_WATCH_MS } from '../../src/client/didcomm/rotation-manager.ts'
 import { rotationSigningKey, ROTATION_KEY_FRAGMENT } from '../../src/client/didcomm/rotation-key.ts'
 import {
@@ -99,6 +99,14 @@ describe('the route of a message', () => {
   })
 })
 
+describe('a group message to a participant that moved (Message Layer Addressing Consistency)', () => {
+  const carol = 'did:webvh:QmCarol:carol.example'
+  test('the copy to the moved participant names it by the DID it is encrypted to; the others stay named by their public DIDs', () => {
+    expect(audienceOfCopy([bob.did, carol], bob.did, bobY.did)).toEqual([bobY.did, carol])
+    expect(audienceOfCopy([bob.did, carol], carol, carol)).toEqual([bob.did, carol])
+  })
+})
+
 describe('ingress of a moved counterparty', () => {
   const signer: VaultEventAuthor = {
     deviceId: 'device-a',
@@ -160,6 +168,20 @@ describe('ingress of a moved counterparty', () => {
     const two = await projector(known).verifyAndProject(envelope(message, fromBobY, toAliceFrontDoor))
     expect(one.projection.emails).toMatchObject([{ from: [{ email: bob.did }] }])
     expect(two.projection.emails.map(email => [email.id, email.threadId, email.from])).toEqual(one.projection.emails.map(email => [email.id, email.threadId, email.from]))
+  })
+
+  test('a group copy naming Alice by her Y is hers, recorded with her public DID -- the same on every device', async () => {
+    const carol = 'did:webvh:QmCarol:carol.example'
+    const known = cards(bobCard, rotationPatch(bobCard.cardId, { did: bobY.did, prior: bob.did, iat: 100 }))
+    const message = buildPlaintext(BASIC_MESSAGE, { content: 'hello group' }, bob.did, [aliceY.did, carol], { thid: 'group-9' })
+    const toAliceY = { kid: aliceY.xKid, publicKey: aliceY.xPub }
+    const one = await projector(known).verifyAndProject(envelope(message, { kid: bob.kid, key: bob.x.secretKey }, toAliceY))
+    const two = await projector(known).verifyAndProject(envelope(message, { kid: bob.kid, key: bob.x.secretKey }, toAliceY))
+    expect(one.projection.emails[0]!.to).toEqual([{ email: alice.did }, { email: carol }])
+    expect(two.projection.emails[0]!.to).toEqual(one.projection.emails[0]!.to)
+    // Someone else's did:peer in `to` does not make the message Alice's.
+    const notMine = buildPlaintext(BASIC_MESSAGE, { content: 'not for you' }, bob.did, ['did:peer:2.someone-else', carol], { thid: 'group-9' })
+    await expect(projector(known).verifyAndProject(envelope(notMine, { kid: bob.kid, key: bob.x.secretKey }, toAliceY))).rejects.toThrow('does not name this identity')
   })
 
   test('a DID Bob has since moved away from is refused for good', async () => {

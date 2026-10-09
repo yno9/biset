@@ -334,7 +334,14 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       // Feed Post above, and that type is handled by the branch just above.)
       const senderDid = counterparty!.publicDid
       const group = isGroupAudience(msg.to)
-      if (group && !msg.to!.includes(this.options.identityId)) throw new PermanentDeliveryError('DIDComm group message does not name this identity among its recipients')
+      // This identity is in `to` by its public DID, or -- when the sender
+      // writes to the DID this identity moved to -- by the DID of the key the
+      // copy was encrypted to (DIDComm v2.1: `to` contains the recipient
+      // kid's DID). Recorded by the public DID either way, the same on every
+      // device of this identity.
+      const ownDids = new Set([this.options.identityId, didOfKid(recipientKid)])
+      const audience = group ? [...new Set(msg.to!.map(did => ownDids.has(did) ? this.options.identityId : did))] : []
+      if (group && !msg.to!.some(did => ownDids.has(did))) throw new PermanentDeliveryError('DIDComm group message does not name this identity among its recipients')
       const body = basicMessageBodyOf(msg)
       if (!body) throw new TypeError('DIDComm basicmessage has no readable content')
       const sentAt = body.sentAt ?? (msg.created_time ? new Date(msg.created_time * 1000).toISOString() : createdAt)
@@ -347,7 +354,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
           receivedAt: createdAt,
           sentAt,
           from: [{ email: senderDid }],
-          to: (group ? msg.to! : [this.options.identityId]).map(email => ({ email })),
+          to: (group ? audience : [this.options.identityId]).map(email => ({ email })),
           ...(body.subject ? { subject: body.subject } : {}),
         },
         rawRfc5322: new TextEncoder().encode(body.content),
