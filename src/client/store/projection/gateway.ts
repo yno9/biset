@@ -44,6 +44,10 @@ export interface LocalJmapEmail {
   /** Not JMAP: how a bridged mail authenticated when the bridge received it
    * (didmail PROTOCOL.md §4.3). Absent when nobody checked. Immutable. */
   auth?: MailAuthResults
+  /** A sent message a recipient reported it could not deliver (a
+   * report-problem/2.0 error that acknowledges it, such as a mail bridge's
+   * `e.m.xfer.*`): one entry per recipient and code. Set by the reducer. */
+  undelivered?: Array<{ to: string; code: string; reason?: string }>
   /** Set by the reducer once any `message.edit` has been applied (PLAN-mimi.md
    * §4.3) -- content itself carries no "this was edited" marker (the new
    * blobId just replaces the old one), so the UI needs this to show a

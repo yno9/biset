@@ -51,12 +51,15 @@ export function isProblemReport(msg: { type?: string }): boolean {
   return msg.type === PROBLEM_REPORT
 }
 
-/** Interpolates a problem-report's `comment` with its `args`, per
- * problems.md: `{1}`,`{2}`,… are replaced positionally; a missing/null arg
- * becomes `?`; extra args are appended comma-separated. */
-function formatProblem(body: ProblemBody): string {
-  const { code, comment, args = [] } = body
-  if (!comment) return code
+/** A problem-report's `comment` with its `args` put in, per problems.md:
+ * `{1}`,`{2}`,… are replaced positionally; a missing/null arg becomes `?`;
+ * extra args are appended comma-separated. The code alone when there is no
+ * comment. */
+export function describeProblem(body: { code?: unknown; comment?: unknown; args?: unknown }): string {
+  const code = typeof body.code === 'string' ? body.code : ''
+  if (typeof body.comment !== 'string' || !body.comment) return code
+  const comment = body.comment
+  const args = Array.isArray(body.args) ? body.args : []
   const used = new Set<number>()
   let text = comment.replace(/\{(\d+)\}/g, (_, n) => {
     const i = Number(n) - 1
@@ -66,7 +69,11 @@ function formatProblem(body: ProblemBody): string {
   })
   const extra = args.filter((_, i) => !used.has(i))
   if (extra.length) text += ` (${extra.join(', ')})`
-  return `${code}: ${text}`
+  return text
+}
+
+function formatProblem(body: ProblemBody): string {
+  return body.comment ? `${body.code}: ${describeProblem(body)}` : body.code
 }
 
 /** A problem-report turned into a throwable, keeping the machine-readable

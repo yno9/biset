@@ -182,6 +182,11 @@ function createMsgEl({ msg, bodyText }: ProcessedMessage): HTMLElement {
   const unverified = msg.auth && msg.auth.dmarc !== 'pass'
     ? `<span class="t-unverified" title="The sender's mail domain did not verify this message (DMARC ${esc(msg.auth.dmarc ?? 'none')}). It may not be from ${esc(msg.auth.domain ?? 'that domain')}.">unverified</span>`
     : ''
+  // A sent message a recipient reported undelivered (a mail bridge's
+  // delivery failure): the reason in the title, one line per recipient.
+  const undelivered = msg.undelivered?.length
+    ? `<span class="t-undelivered" title="${esc(msg.undelivered.map(entry => `${entry.to.startsWith('did:') ? labelForDid(entry.to) : entry.to}: ${entry.reason ?? entry.code}`).join('\n'))}">not delivered</span>`
+    : ''
   div.innerHTML = `
     <div class="t-avatar" style="${avatarStyle(msg.from || senderName)}">${senderName.charAt(0).toUpperCase()}</div>
     <div class="t-meta">
@@ -190,6 +195,7 @@ function createMsgEl({ msg, bodyText }: ProcessedMessage): HTMLElement {
         ${unverified}
         <span class="t-time">${formatTime(msg.ts)}</span>
         ${msg.edited ? '<span class="t-edited">edited</span>' : ''}
+        ${undelivered}
       </div>
       <div class="t-body">${linkify(esc(stripQuoted(bodyText)))}</div>
       ${sourceLink}

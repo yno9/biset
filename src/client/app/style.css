@@ -2443,6 +2443,14 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   opacity: 0.65;
   font-style: italic;
 }
+.t-undelivered {
+  font-size: 11px;
+  color: #b91c1c;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 4px;
+  cursor: help;
+}
 .t-unverified {
   font-size: 11px;
   color: #b45309;

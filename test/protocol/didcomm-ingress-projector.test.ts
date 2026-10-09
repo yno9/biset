@@ -7,6 +7,7 @@ import { signDidCommMessage } from '../../src/protocol/didcomm/jws.ts'
 import { buildPlaintext } from '../../src/protocol/didcomm/message.ts'
 import { PING, PING_RESPONSE } from '../../src/protocol/didcomm/trust-ping.ts'
 import { PROBLEM_REPORT } from '../../src/protocol/didcomm/problems.ts'
+import type { LocalJmapEmail } from '../../src/client/store/projection/gateway.ts'
 import { BASIC_MESSAGE, didCommThreadId } from '../../src/client/didcomm/basicmessage.ts'
 import { didOfKid } from '../../src/protocol/ids.ts'
 import { DidCommIngressProjector, DidCommReplayError, RotationPendingError } from '../../src/client/didcomm/ingress-projector.ts'
@@ -58,7 +59,7 @@ function autoMarkingAlreadyProcessed(): (id: string) => Promise<boolean> {
   }
 }
 
-function buildProjector(alreadyProcessed = autoMarkingAlreadyProcessed()) {
+function buildProjector(alreadyProcessed = autoMarkingAlreadyProcessed(), emails: LocalJmapEmail[] = []) {
   return new DidCommIngressProjector({
     identityId, actorDeviceId: recipientKid,
     resolveOwnKey(kid) { return kid === recipientKid ? { kid: recipientKid, x25519PrivateKey: recipientX } : null },
@@ -67,7 +68,7 @@ function buildProjector(alreadyProcessed = autoMarkingAlreadyProcessed()) {
     async nextActorSeq() { return 1 },
     async initialParents() { return [] },
     activeSegment: segmentFor,
-    async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [], contactCards: [] } },
+    async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails, contactCards: [] } },
     signer,
     now: () => new Date('2026-08-25T00:01:00.000Z'),
   })
@@ -357,6 +358,21 @@ describe('DIDComm ingress projector', () => {
     const result = await buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
     expect(result.events.map(event => event.kind)).toEqual(['didcomm.control'])
     expect(result.projection.emails).toEqual([])
+  })
+
+  test('an error problem-report that acknowledges a sent message marks it undelivered to its sender, and only to a recipient of it', async () => {
+    const sent = (id: string, to: string): LocalJmapEmail => ({ id, blobId: `b-${id}`, threadId: 't', mailboxIds: { sent: true }, keywords: {}, receivedAt: '2026-08-25T00:00:00.000Z', to: [{ email: to }], messageId: `Msg-${id}` })
+    const emails = [sent('to-bob', didOfKid(senderKid)), sent('to-carol', 'did:webvh:x:carol.test.example')]
+    const report = (ack: string[], code = 'e.m.xfer.rejected') => {
+      const plaintext = buildPlaintext(PROBLEM_REPORT, { code, comment: 'The recipient\'s mail server refused the message for {1}: {2}', args: ['a@b.example', '550\r\nno such user'] }, didOfKid(senderKid), [identityId], { pthid: 't', ack })
+      return envelopeFor(new TextEncoder().encode(JSON.stringify(packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }]))))
+    }
+    const result = await buildProjector(undefined, emails).verifyAndProject(report(['msg-to-bob', 'msg-to-carol']))
+    const byId = Object.fromEntries(result.projection.emails.map(email => [email.id, email]))
+    expect(byId['to-bob']!.undelivered).toEqual([{ to: didOfKid(senderKid), code: 'e.m.xfer.rejected', reason: "The recipient's mail server refused the message for a@b.example: 550 no such user" }])
+    expect(byId['to-carol']!.undelivered).toBeUndefined() // bob cannot report carol's copy
+    const warning = await buildProjector(undefined, emails).verifyAndProject(report(['msg-to-bob'], 'w.m.xfer.slow'))
+    expect(warning.projection.emails.find(email => email.id === 'to-bob')!.undelivered).toBeUndefined()
   })
 
   test('two different basicmessages between the same pair land in the SAME thread, chat-style (not per-subject like mail)', async () => {

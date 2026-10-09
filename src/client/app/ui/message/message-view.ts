@@ -154,6 +154,8 @@ export interface MailMessageView {
   reply_to?: string
   /** A bridged mail's SPF/DKIM/DMARC results (LocalJmapEmail.auth). */
   auth?: MailAuthResults
+  /** Recipients that reported this sent message undelivered (LocalJmapEmail.undelivered). */
+  undelivered?: Array<{ to: string; code: string; reason?: string }>
 }
 
 export interface ProcessedMessage {
@@ -257,6 +259,7 @@ export function emailToMessageView(email: LocalJmapEmail, rawRfc5322: Uint8Array
     sourceUrl: headers.sourceUrl,
     ...(email.replyTo?.[0]?.email ? { reply_to: email.replyTo[0].email } : {}),
     ...(email.auth ? { auth: email.auth } : {}),
+    ...(email.undelivered?.length ? { undelivered: email.undelivered } : {}),
   }
 }
 

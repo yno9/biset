@@ -24,7 +24,7 @@ import { DidCommSenderMismatchError, isExpired } from '../../protocol/didcomm/me
 import { parseDidCommJws, SignatureError, signingKeyResolver, type SigningKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { openDidCommPayload, type OpenedMessage } from '../../protocol/didcomm/open.ts'
 import { didcommGroupAddress, isGroupAudience } from './group-chat.ts'
-import { isProblemReport } from '../../protocol/didcomm/problems.ts'
+import { describeProblem, isProblemReport } from '../../protocol/didcomm/problems.ts'
 
 export interface OwnDidCommKey { kid: string; x25519PrivateKey: Uint8Array }
 
@@ -380,11 +380,20 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
   }
 }
 
-/** What a control record keeps of a problem-report: its code and the thread
- * it is about. */
-function problemOf(msg: DidCommPlaintext): { problemCode?: string; threadId?: string } {
-  const code = (msg.body as { code?: unknown } | undefined)?.code
-  return { ...(typeof code === 'string' ? { problemCode: code } : {}), ...(typeof msg.pthid === 'string' ? { threadId: msg.pthid.toLowerCase() } : {}) }
+/** What a control record keeps of a problem-report: its code, the text it
+ * gives (control characters out, 512 characters at most: the args may be a
+ * remote server's words), the thread it is about, and the messages it
+ * acknowledges -- by which the reducer finds the sent email that failed. */
+function problemOf(msg: DidCommPlaintext): { problemCode?: string; problemText?: string; threadId?: string; acked?: string[] } {
+  const body = (msg.body ?? {}) as { code?: unknown; comment?: unknown; args?: unknown }
+  const text = describeProblem(body).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 512)
+  const acked = Array.isArray(msg.ack) ? msg.ack.filter((id): id is string => typeof id === 'string' && id.length > 0).map(id => id.toLowerCase()) : []
+  return {
+    ...(typeof body.code === 'string' ? { problemCode: body.code } : {}),
+    ...(text ? { problemText: text } : {}),
+    ...(typeof msg.pthid === 'string' ? { threadId: msg.pthid.toLowerCase() } : {}),
+    ...(acked.length ? { acked } : {}),
+  }
 }
 
 /** The counterparty behind an authenticated sender, by its public DID, and

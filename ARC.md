@@ -548,7 +548,7 @@ didmail が SMTP で受けたメールを、宛先の did:webvh の全 keyAgreem
 | `body.replyTo`（DID） | `replyTo`。返信はこちらへ送る（`computeReplyContext`） |
 | `body.auth`（SPF／DKIM／DMARC） | `auth`（JMAP 外の拡張）。`dmarc` が `pass` でなければ、スレッドで差出人に「unverified」を付ける |
 
-HTML 本文と添付（`attachments`）は今は保存しない（`body.content` が常にあるので読める）。配送失敗は report-problem/2.0（`e.m.xfer.*`）で届き、`didcomm.control` に記録される（表示は未実装）。
+HTML 本文と添付（`attachments`）は今は保存しない（`body.content` が常にあるので読める）。配送失敗は report-problem/2.0（`e.m.xfer.*`）で届き、`didcomm.control` に記録される。その `ack` が送った email の `messageId` を指し、報告者がその email の宛先なら、reducer が email に `undelivered`（宛先・コード・理由）を付け、スレッドに「not delivered」を出す（理由は title）。宛先でない者の報告と、警告（`w.`）は無視する。
 
 ### 10.3 送信
 アドレスを DID に解決したあとは、普通の 1:1 の DIDComm 送信（Vault の outbox、`didcomm-outbox.ts`）。did:web 宛ては front door（相手の `keyAgreement` と `service`）へ authcrypt する。
@@ -657,7 +657,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 8. **移動済みの相手の連絡先を消すと、その相手の did:peer が分からなくなる（中）**。JMAP の `ContactCard/destroy`（や `onlineServices` の書き換え）で `biset.md:didcomm` も消える。
    相手は `from_prior` を付けずに did:peer から送り続けるので、そのメッセージは保留されたまま mediator の保持期間（30 日）で消える。相手が次に移るか、こちらが移り直すまで戻らない。対処は未決（§17-14）。
 7. **onion の rate limit 共有（中、Tor 実運用まで）**（§9.8）。
-8. **メール**: 配送失敗（didmail の problem-report）が送信状態に反映されない。HTML 本文と添付は保存しない（§10.2）。
+8. **メール**: HTML 本文と添付は保存しない（§10.2）。DID Rotation で移った相手からの problem-report は、送った email の宛先（公開 DID）と一致しないので反映されない（didmail は移らない）。
 9. **No background／push（運用）**。ページが閉じている間は同期しない。
 10. **mediator の DB 書き込み失敗時の挙動は未検証（運用）**。
 
@@ -744,7 +744,6 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
    `mediate-deny` は送らない（拒否の理由はすべて problem-report で返す）。
 2. **本文を RFC 5322 として読む名残**: Vault の本文 object は `rawRfc5322` という名前で、`message-view.ts` は `rfc5322-headers.ts` で本文の先頭のヘッダを読む（旧メールの Message-ID／References、External Feed Post の `X-Source-Url`）。
    DIDComm のメッセージにはヘッダが無いので、`sourceUrl` を別の場所に移せば、ヘッダの読み取りは消せる。名前の変更（`rawRfc5322`→本文）は機械的だが差分が大きい。
-3. **配送失敗（problem-report）を利用者に見せない**: didmail の `e.m.xfer.*` は記録されるが、送った email の状態は `sent` のまま。
 4. **セッション復元の失敗が一律にセッション破棄になる**（§14.2-4）。
 5. **file:// 版と https 版が別のアプリとして wallet に登録される**（§5.2）。**RP DID は `t.biset.md` に束縛**されており、ドメインを後から自由に変えられるという方針と衝突しうる。
 6. **git の追跡**: `.gitignore` が `scripts/`・`ops/`・`tasks/`・`docs/`・`deploy.sh`・`home/`・`PLAN*`・`config.json` を除外している。**`bun run build` が使う `scripts/inline.mjs` が、clone から再現できない。**
