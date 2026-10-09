@@ -683,9 +683,9 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - Caddy（`/etc/caddy/Caddyfile`、did.md の deploy と共有。**biset の `deploy.sh` は Caddyfile を触らない**）:
   `mediator.biset.md` → `127.0.0.1:8791`（WebSocket の upgrade も Caddy の `reverse_proxy` がそのまま通す）、
   `t.biset.md` → `/opt/biset/app`（`/wallet/callback` は `index.html` に書き換え、`/api/rp-signer/*` は `127.0.0.1:8794`）、`biset.md` → `/opt/biset/home`。
-- systemd: `biset-didcomm-mediator.service`（`DynamicUser`、`/opt/biset/didcomm-mediator/`）、`biset-rp-signer.service`、`did-md-mail-relay.service`（`/opt/did-md-mail-relay/`。旧 mail-relay。didmail への入れ替えを待つ）。
+- systemd: `biset-didcomm-mediator.service`（`DynamicUser`、`/opt/biset/didcomm-mediator/`）、`biset-rp-signer.service`、`didmail.service`（2026-10-09 から。`/opt/didmail/current`、設定 `/etc/didmail/didmail.env`、DB `/var/lib/didmail/relay.sqlite`。配備は didmail の `deploy.sh`）。旧 `did-md-mail-relay.service` は停止・無効化済み（ファイルは残す）。
 - tor: `/etc/tor/torrc` の Hidden Service は 2 つ。`/var/lib/tor/biset-mediator/` → `127.0.0.1:8791`。**秘密鍵を失うと `.onion` が変わり、公開済みの DID Document がすべて古くなる**。
-- mediator の DB は `/var/lib/biset-didcomm-mediator/mediator.sqlite`。mail-relay の DB は `/var/lib/did-md-mail-relay/relay.sqlite`。`deploy.sh` は mediator の入れ替え前に `sqlite3 .backup` で `/var/backups/biset-didcomm-mediator/` へ退避する。
+- mediator の DB は `/var/lib/biset-didcomm-mediator/mediator.sqlite`。`deploy.sh` は mediator の入れ替え前に `sqlite3 .backup` で `/var/backups/biset-didcomm-mediator/` へ退避する。
 
 ### 15.3 デプロイ（`deploy.sh`、git 追跡外）
 `./deploy.sh [app|landing|didcomm-mediator|smtp|ap|relay|tor-backup|all]`。
@@ -781,7 +781,7 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 | Markdown ミラー | ✅ |
 | DIDComm の front door／1:1／group chat／DID Rotation／Trust Ping／Discover Features | ✅（DID Rotation は単体試験まで。本番の通しは未） |
 | mediator（SQLite、所有の証明、端末上限、WebSocket の live mode、relay-poller） | ✅（本番は 2026-10-03 のデプロイで入れ替え） |
-| メールアドレスとの送受信（didmail、WebFinger） | 🔧 実装済み・未デプロイ（2026-10-09。didmail と同時に入れ替える） |
+| メールアドレスとの送受信（didmail、WebFinger） | 🔧 didmail は 2026-10-09 に本番へ。biset の新版は未デプロイ。did.md の MX（`mx.did.md`）は v2 を指していない |
 | Tor（onion の入口、opt-in の公開、入口の選択） | ✅ 公開と読み取り。❓ Tor Browser・WebSocket での実運用 |
 | External Feed の受信 | ✅ 受信口のみ（送る bridge は未実装） |
 | biset-mimi、`client/mls/`・`client/mimi/` | 🔧 将来の MIMI クライアントのために残す |
