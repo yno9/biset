@@ -548,6 +548,13 @@ didmail が SMTP で受けたメールを、宛先の did:webvh の全 keyAgreem
 | `body.replyTo`（DID） | `replyTo`。返信はこちらへ送る（`computeReplyContext`） |
 | `body.auth`（SPF／DKIM／DMARC） | `auth`（JMAP 外の拡張）。`dmarc` が `pass` でなければ、スレッドで差出人に「unverified」を付ける |
 
+### 10.4 PGP（2026-10-10、設計は `tasks/D3-pgp.md`）
+メールの PGP は、**暗号操作を biset、メールの扱いを didmail** が分担する。秘密鍵と平文は端末から出ない。
+- **鍵**: アカウントページの「PGP key」カード（`account/pgp-card.ts`）で、生成（Curve25519）か、手元の鍵のインポート（パスフレーズ付きなら一度だけ尋ね、**保存はパスフレーズ無し**で。Vault が暗号化しているので）。秘密鍵は Vault の `credential.openpgp.set` の記録（`OpenPgpCredentialReader/Sink`）で、全端末へ同期する。現在の鍵は「他に置き換えられていない最新のもの」。
+- **公開**: 生成かインポートの直後に、公開鍵を自分のアドレス（`label@apex`）のブリッジ DID へ DIDComm で送る（`https://did.md/openpgp-key/1.0/publish`、`client/pgp/publish.ts`）。ブリッジ DID は WebFinger の `links`（`https://did.md/rel/mail-bridge`）で引く。ブリッジは WKD で配信する（didmail PROTOCOL.md §11）。「Publish」「Withdraw」で手動でもできる。
+- **まだ**: 受信した `pgp` 添付の復号と、`pgp-signed` の検証（スレッドへの表示）、連絡先の `cryptoKeys` への保存と WKD での取得、送信の暗号化。
+- 鍵のユーザー ID がアドレスと合わなければ、カードが警告する（WKD の利用者は、合う鍵を探す）。
+
 HTML 本文と添付（`attachments`）は今は保存しない（`body.content` が常にあるので読める）。配送失敗は report-problem/2.0（`e.m.xfer.*`）で届き、`didcomm.control` に記録される。その `ack` が送った email の `messageId` を指し、報告者がその email の宛先なら、reducer が email に `undelivered`（宛先・コード・理由）を付け、スレッドに「not delivered」を出す（理由は title）。宛先でない者の報告と、警告（`w.`）は無視する。
 
 ### 10.3 送信

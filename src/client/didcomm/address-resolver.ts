@@ -19,6 +19,9 @@ export function isMailAddress(value: string): boolean {
   return at > 0 && !value.startsWith('did:') && /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(value.slice(at + 1))
 }
 
+/** The link relation of an address's bridge DID (didmail PROTOCOL.md §9). */
+const BRIDGE_REL = 'https://did.md/rel/mail-bridge'
+
 /** The first DID among a JRD's `aliases`, or undefined. */
 function didOfJrd(value: unknown): string | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
@@ -27,12 +30,12 @@ function didOfJrd(value: unknown): string | undefined {
   return aliases.find((alias): alias is string => typeof alias === 'string' && (alias.startsWith('did:webvh:') || alias.startsWith('did:web:')))
 }
 
-async function webFinger(host: string, address: string, fetchImpl: typeof fetch): Promise<string | undefined> {
+async function webFinger(host: string, address: string, fetchImpl: typeof fetch, pick: (jrd: unknown) => string | undefined = didOfJrd): Promise<string | undefined> {
   const url = `https://${host}/.well-known/webfinger?resource=${encodeURIComponent(`acct:${address}`)}`
   try {
     const response = await fetchImpl(url, { headers: { accept: 'application/jrd+json, application/json' }, signal: AbortSignal.timeout(TIMEOUT_MS) })
     if (!response.ok) return undefined
-    return didOfJrd(await response.json())
+    return pick(await response.json())
   } catch {
     // No WebFinger there, no CORS, or no answer in time: not this host.
     return undefined
@@ -51,4 +54,21 @@ export async function resolveMailAddressDid(address: string, gateways: readonly 
   throw new Error(gateways.length
     ? `No DID answers for ${address}: neither ${domain} nor the mail gateway knows it`
     : `No DID answers for ${address}, and no mail gateway is configured`)
+}
+
+/** The DID a mail bridge gives `address` -- the one to address what a user tells
+ * the bridge about their own address (a key to publish). Asked of the mail
+ * gateways only: it is the bridge's own DID, not the address's. */
+export async function resolveMailBridgeDid(address: string, gateways: readonly string[], fetchImpl: typeof fetch = fetch): Promise<string> {
+  if (!isMailAddress(address)) throw new TypeError(`${address} is not a mail address`)
+  for (const host of gateways) {
+    const did = await webFinger(host, address, fetchImpl, jrd => {
+      const links = (jrd as { links?: unknown } | null)?.links
+      if (!Array.isArray(links)) return undefined
+      const link = links.find((entry): entry is { href: string } => entry?.rel === BRIDGE_REL && typeof entry.href === 'string' && entry.href.startsWith('did:'))
+      return link?.href
+    })
+    if (did) return did
+  }
+  throw new Error(gateways.length ? `No mail gateway answers for ${address}` : 'No mail gateway is configured')
 }

@@ -34,6 +34,7 @@ import { showComposePage } from './compose-page.ts'
 import { mountNewUserPageInline, unmountNewUserPageInline, setupNewUserPage } from './account-create.ts'
 import { getAccountConfig, type AccountPageConfig, type VaultCardStatus } from './account/state.ts'
 import { openDropdownMenu, type MenuItem } from './account/menu.ts'
+import { renderPgpCard } from './account/pgp-card.ts'
 
 // The page's own state and markup live here; the pieces below were split out
 // (2026-09-05) into ./account/ by concern -- config state + the config types
@@ -323,6 +324,7 @@ function renderMediatorCard(): void {
   // What needs the user's attention about this account, below its card.
   const notice = config?.rotationKey && renderDidCommKeyNotice(config.rotationKey)
   if (notice) list.appendChild(notice)
+  if (config?.pgp) list.appendChild(renderPgpCard(config.pgp, text => getAccountConfig()?.showMessage?.(text)))
 }
 
 /** The system message card for the DIDComm key (relationship-seed-bootstrap.ts):

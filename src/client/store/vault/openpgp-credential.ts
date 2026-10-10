@@ -3,7 +3,7 @@ import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../../../pro
 import type { VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
 import { createVaultEvent, type VaultEventAuthor } from './events.ts'
 import { encryptVaultObject } from './objects.ts'
-import type { VaultCredentialKind } from './credential-store.ts'
+import { VaultCredentialReader, VaultCredentialSink, type VaultCredentialKind, type VaultCredentialReaderOptions, type VaultCredentialSinkOptions, type VaultCredentialStoreResult } from './credential-store.ts'
 import type { VaultCredentialEventReader } from './store.ts'
 
 export interface OpenPgpPrivateCredentialV1 {
@@ -126,4 +126,33 @@ const openPgpCredentialKind: VaultCredentialKind<OpenPgpPrivateCredentialV1, Vau
   build: buildOpenPgpPrivateCredential,
   createdAtOf: value => value.createdAt,
   copy: copyCredential,
+}
+
+/** Every OpenPGP secret key in the Vault, and which one is current. */
+export class OpenPgpCredentialReader {
+  private readonly reader: VaultCredentialReader<OpenPgpPrivateCredentialV1, VaultCredentialEventReader>
+  constructor(options: VaultCredentialReaderOptions<VaultCredentialEventReader>) {
+    this.reader = new VaultCredentialReader(openPgpCredentialKind, options)
+  }
+  async readAll(): Promise<OpenPgpPrivateCredentialV1[]> {
+    return (await this.reader.readAll()).map(copyCredential)
+  }
+  /** The key in use: the newest that no other key supersedes. */
+  async current(): Promise<OpenPgpPrivateCredentialV1 | undefined> {
+    return currentOpenPgpCredential(await this.readAll())
+  }
+}
+
+export class OpenPgpCredentialSink {
+  private readonly sink: VaultCredentialSink<OpenPgpPrivateCredentialV1>
+  constructor(options: VaultCredentialSinkOptions) {
+    this.sink = new VaultCredentialSink(openPgpCredentialKind, options)
+  }
+  store(value: OpenPgpPrivateCredentialV1): Promise<VaultCredentialStoreResult> { return this.sink.store(value) }
+}
+
+/** The newest credential that no other one names as superseded. */
+export function currentOpenPgpCredential(all: readonly OpenPgpPrivateCredentialV1[]): OpenPgpPrivateCredentialV1 | undefined {
+  const superseded = new Set(all.map(value => value.supersedesFingerprint).filter((value): value is string => value !== undefined))
+  return [...all].filter(value => !superseded.has(value.fingerprint)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
 }

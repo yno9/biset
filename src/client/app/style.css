@@ -2443,6 +2443,18 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   opacity: 0.65;
   font-style: italic;
 }
+.acc-pgp-btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 9px;
+  border: 1px solid var(--border, #8884);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.acc-pgp-btn:disabled { opacity: 0.5; cursor: default; }
+.acc-pgp-btn[data-danger="true"] { color: #b91c1c; }
 .t-undelivered {
   font-size: 11px;
   color: #b91c1c;

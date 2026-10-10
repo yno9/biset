@@ -70,6 +70,11 @@ import { MarkdownDirectoryConnection, observeMarkdownDirectory, removeMarkdownMi
 import { MarkdownSelfWriteGuard, markdownStatusMutation } from '../store/vault/markdown-mirror.ts'
 import { createJmapExport, decodeJmapExport, encodeJmapExport, importJmapExport } from '../store/vault/jmap-export.ts'
 import { isMailAddress, resolveMailAddressDid } from '../didcomm/address-resolver.ts'
+import { OpenPgpCredentialReader, OpenPgpCredentialSink } from '../store/vault/openpgp-credential.ts'
+import { generatePgpKey, importPgpKey, keyNamesAddress, readPgpKey } from '../pgp/keyring.ts'
+import { publishPgpKey } from '../pgp/publish.ts'
+import type { PgpCardConfig } from './ui/account/pgp-card.ts'
+import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
 
 let mediatorPollHandles: MediatorPollHandle[] = []
 
@@ -228,6 +233,7 @@ async function configureWalletAccountIfPresent(
   let walletDidCommOutbox: WalletDidCommOutbox | undefined
   // Set when the identity's rotation key needs a Wallet approval (account page).
   let rotationKeyState: 'unpublished' | 'lost' | 'stale' | undefined
+  let pgpCard: PgpCardConfig | undefined
   let exportMessages: (() => Promise<void>) | undefined
   let importMessages: (() => Promise<void>) | undefined
   try {
@@ -342,6 +348,65 @@ async function configureWalletAccountIfPresent(
         if (vaultSync) await vaultSync.push([event])
       },
     })
+    // The user's PGP key: a Vault record like the seed, read and written the
+    // same way. Only its public half ever leaves the device.
+    const pgpReader = new OpenPgpCredentialReader({ identityId: device.did, objects: vaultStore, events: vaultStore, segmentKeys: boundary.resolver })
+    const pgpSink = new OpenPgpCredentialSink({
+      identityId: device.did, actorDeviceId: device.deviceId,
+      nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(),
+      activeSegment: () => boundary.activeSegment(), currentSnapshot: () => readModel.snapshot(),
+      signer: boundary.author, committer: vaultStore,
+      onCommitted: async event => {
+        deviceEvents.push({ ...event, identityId: device.did })
+        if (vaultSync) await vaultSync.push([event])
+      },
+    })
+    // `label@apex`: the address of an identity at `label.apex` (didmail).
+    const ownMailAddress = (() => {
+      const domain = parseWebvhDid(device.did).domain
+      const dot = domain.indexOf('.')
+      return dot > 0 ? `${domain.slice(0, dot)}@${domain.slice(dot + 1)}` : undefined
+    })()
+    const publishPgp = async (publicArmor: string | null): Promise<void> => {
+      if (!activeDidCommDevice) throw new Error('DIDComm is still connecting for this Wallet session')
+      await publishPgpKey({ address: ownMailAddress!, gateways: readBisetConfig().mailGateways, publicArmor, fromKid: activeDidCommDevice.xKid, x25519PrivateKey: activeDidCommDevice.x25519PrivateKey })
+    }
+    const storePgpKey = async (key: Awaited<ReturnType<typeof generatePgpKey>>): Promise<void> => {
+      const previous = await pgpReader.current()
+      if (previous && previous.fingerprint === key.fingerprint) return
+      await pgpSink.store({
+        version: 1, kind: 'credential.openpgp.private', identityId: device.did, fingerprint: key.fingerprint, privateKey: key.privateKey,
+        createdAt: new Date().toISOString(), ...(previous ? { supersedesFingerprint: previous.fingerprint } : {}),
+      })
+      // The new key is the one to publish. A failure leaves the key stored: Publish retries.
+      await publishPgp(key.publicArmor).catch(error => showSysMsg(`The key is saved, but publishing it failed: ${error instanceof Error ? error.message : String(error)}`))
+    }
+    const currentPgp = async () => {
+      const credential = await pgpReader.current()
+      return credential ? { credential, key: await readPgpKey(credential.privateKey) } : undefined
+    }
+    if (ownMailAddress) {
+      pgpCard = {
+        address: ownMailAddress,
+        async current() {
+          const current = await currentPgp()
+          return current && { fingerprint: current.key.fingerprint, userIds: current.key.userIds, namesAddress: keyNamesAddress(current.key, ownMailAddress) }
+        },
+        onGenerate: async () => storePgpKey(await generatePgpKey(ownMailAddress)),
+        onImport: async (text, passphrase) => storePgpKey(await importPgpKey(text, passphrase)),
+        onPublish: async () => {
+          const current = await currentPgp()
+          if (!current) throw new Error('There is no PGP key to publish')
+          await publishPgp(current.key.publicArmor)
+        },
+        onWithdraw: async () => publishPgp(null),
+        onCopyPublic: async () => {
+          const current = await currentPgp()
+          if (!current) throw new Error('There is no PGP key')
+          return current.key.publicArmor
+        },
+      }
+    }
     // The Wallet branch returns before the ordinary local-identity boot
     // path, which normally loads this projection.  Restore the existing
     // local inbox before rendering so a page reload never looks like it
@@ -795,6 +860,7 @@ async function configureWalletAccountIfPresent(
       },
     },
     vault,
+    ...(pgpCard ? { pgp: pgpCard } : {}),
     onRemoveOtherDevices: async () => beginDidMdRemoveOtherDevices(readBisetConfig()),
     ...(rotationKeyState ? { rotationKey: { state: rotationKeyState, onRenew: async () => beginDidMdRotationKeyRenewal(readBisetConfig()) } } : {}),
     showMessage: showSysMsg,

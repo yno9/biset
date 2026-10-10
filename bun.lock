@@ -9,6 +9,7 @@
         "@noble/curves": "^2.2.0",
         "@noble/hashes": "^2.2.0",
         "@scure/base": "^2.2.0",
+        "openpgp": "^6.3.2",
         "yjs": "13.6.27",
       },
       "devDependencies": {
@@ -149,6 +150,8 @@
     "knip": ["knip@6.27.0", "", { "dependencies": { "fdir": "^6.5.0", "formatly": "^0.3.0", "get-tsconfig": "4.14.0", "jiti": "^2.7.0", "oxc-parser": "^0.137.0", "oxc-resolver": "11.21.3", "picomatch": "^4.0.4", "smol-toml": "^1.6.1", "strip-json-comments": "5.0.3", "tinyglobby": "^0.2.17", "unbash": "^4.0.1", "yaml": "^2.9.0", "zod": "^4.1.11" }, "bin": { "knip": "bin/knip.js", "knip-bun": "bin/knip-bun.js" } }, "sha512-CngYEYrD0n20N06FXA8n3u/0Wnnugoa+B9k14OP+iKIgkCHuzvIdsP3nfwjhByoc1WfogpxfiriMboAXFETDUw=="],
 
     "lib0": ["lib0@0.2.117", "", { "dependencies": { "isomorphic.js": "^0.2.4" }, "bin": { "0serve": "bin/0serve.js", "0gentesthtml": "bin/gentesthtml.js", "0ecdsa-generate-keypair": "bin/0ecdsa-generate-keypair.js" } }, "sha512-DeXj9X5xDCjgKLU/7RR+/HQEVzuuEUiwldwOGsHK/sfAfELGWEyTcf0x+uOvCvK3O2zPmZePXWL85vtia6GyZw=="],
+
+    "openpgp": ["openpgp@6.3.2", "", { "peerDependencies": { "@openpgp/web-stream-tools": "~0.3.0" }, "optionalPeers": ["@openpgp/web-stream-tools"] }, "sha512-wcZTzHz41LV8Y48zH/JlD1JT8YdNmpWOuMAjQ/podvvCwsjBEU37K3znJh4UQcj3hksE5z9TzvhbUbwzsGvlLQ=="],
 
     "oxc-parser": ["oxc-parser@0.137.0", "", { "dependencies": { "@oxc-project/types": "^0.137.0" }, "optionalDependencies": { "@oxc-parser/binding-android-arm-eabi": "0.137.0", "@oxc-parser/binding-android-arm64": "0.137.0", "@oxc-parser/binding-darwin-arm64": "0.137.0", "@oxc-parser/binding-darwin-x64": "0.137.0", "@oxc-parser/binding-freebsd-x64": "0.137.0", "@oxc-parser/binding-linux-arm-gnueabihf": "0.137.0", "@oxc-parser/binding-linux-arm-musleabihf": "0.137.0", "@oxc-parser/binding-linux-arm64-gnu": "0.137.0", "@oxc-parser/binding-linux-arm64-musl": "0.137.0", "@oxc-parser/binding-linux-ppc64-gnu": "0.137.0", "@oxc-parser/binding-linux-riscv64-gnu": "0.137.0", "@oxc-parser/binding-linux-riscv64-musl": "0.137.0", "@oxc-parser/binding-linux-s390x-gnu": "0.137.0", "@oxc-parser/binding-linux-x64-gnu": "0.137.0", "@oxc-parser/binding-linux-x64-musl": "0.137.0", "@oxc-parser/binding-openharmony-arm64": "0.137.0", "@oxc-parser/binding-wasm32-wasi": "0.137.0", "@oxc-parser/binding-win32-arm64-msvc": "0.137.0", "@oxc-parser/binding-win32-ia32-msvc": "0.137.0", "@oxc-parser/binding-win32-x64-msvc": "0.137.0" } }, "sha512-yFImD+WLElJpLKy8llG1qe4DCmMsL18peRp8XP1JKfig/gISbJkglnpDtX2aTmAn10kZF7164HbN2H8QPsXxGg=="],
 

@@ -1,3 +1,4 @@
+import type { PgpCardConfig } from './pgp-card.ts'
 // The one owner of the account page's module state. Split out of
 // ui/account-page.ts (2026-09-05) when that file was broken up by concern:
 // the config object below is read by the account page itself, the config
@@ -72,6 +73,8 @@ export interface AccountPageConfig {
   /** Present when the identity's DIDComm key (the seed's rotation key,
    * PLAN-refactor.md §4.2) needs a Wallet approval to publish a fresh one. */
   rotationKey?: { state: 'unpublished' | 'lost' | 'stale'; onRenew(): Promise<void> }
+  /** The PGP key card (account/pgp-card.ts); present once DIDComm is. */
+  pgp?: PgpCardConfig
   onExportMessages?(): Promise<void>
   onImportMessages?(): Promise<void>
   /** src.bak's showSysMsg (shell.ts) -- injected rather than imported
