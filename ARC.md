@@ -579,6 +579,10 @@ HTML 本文と添付（`attachments`）は今は保存しない（`body.content`
     - 解決を使わない配備（`MEDIATOR_WEBVH_RESOLVE=0`）では、従来どおり client が `POST /webvh-log` で渡した検証済みのログだけを知る。これは**DIDComm ではない biset 独自の入口**で、今は誰も送らない。
   - **`device` ラベルは任意**（biset の拡張）。無い要求（標準の client）は、送信鍵の kid から決めた受信箱を使う。ラベルは、1 つの鍵を複数の端末が共有する場合（Y）に端末を区別する。
   - **1 DID あたり最大 3 端末**。4 台目は problem-report `e.m.req.max-devices` で拒否し、client は登録済み端末の最終利用日つきのエラーを利用者に見せる（`MediatorDeviceLimitError`）。
+- **誰が登録できるか**: 既定は、DID の鍵を持つ者なら誰でも（開放型）。次の 2 つで絞れる。
+  - `MEDIATOR_ALLOWED_DID_DOMAINS=did.md,biset.md`: **did:webvh のドメインが、これらか、その配下のものだけ**が登録も認証もできる。許可の外の DID は、解決もされずに 403 `e.m.trust.did-not-allowed`（`POST /webvh-log` も同じ）。`evil-did.md` のような末尾だけ似たものは外れる。**did:peer は対象外**（関係ごとの Y は所有者を名乗らないので、ドメインで絞れない）。設定前に登録済みの許可外の DID は使えなくなる。
+  - `MEDIATOR_NEW_INBOXES_PER_ADDRESS_PER_HOUR`（既定 60）: **1 つのクライアントアドレスが 1 時間に新しく作れる受信箱の数**。更新（既にある受信箱の再登録）は数えない。超えると problem-report `e.m.req.rate-limited`。アドレスは `X-Forwarded-For`（Caddy）で、Tor 経由はローカルの 1 アドレスに見えるので、その枠は 10 倍。relay-poller の内部呼び出しには掛からない。
+  - 残る穴: 許可ドメインを設定しても、did:peer を大量に作れば、受信箱の総数（30,000）を使い切れる。1 アドレスあたりの上限が緩和するだけ。
 - **配送**: Forward の `next`（宛先 DID）の全受信箱にコピーを置く（本文は 1 回だけ保存し、受信箱ごとの配送行で管理）。
   14 日使われていない受信箱（休眠）と満杯の受信箱は飛ばして `missed` の印を付ける。全受信箱が休眠なら、最後に使われた 1 つには置く。
   どこにも置けなければ HTTP 503。未登録の DID 宛の Forward は、署名付きの problem-report（`e.m.req.not-enrolled`）を HTTP 401 で返して拒否する（open relay にしない）。
@@ -602,7 +606,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - Mediator: `MEDIATOR_PUBLIC_URL`（必須）、`MEDIATOR_DATABASE_PATH`（または `MEDIATOR_DATA_DIR`）、`PORT`（既定 8791）、`MEDIATOR_HOST`（既定 127.0.0.1）、
   `MEDIATOR_ALLOWED_ORIGINS`、`MEDIATOR_RATE_LIMIT_PER_MINUTE`、`MEDIATOR_MAX_REQUEST_BYTES`、`MEDIATOR_MAX_INBOXES`、`MEDIATOR_MAX_DEVICES_PER_DID`、
   `MEDIATOR_MAX_QUEUE_ITEMS`、`MEDIATOR_MAX_QUEUE_BYTES`、`MEDIATOR_MAX_MESSAGE_BYTES`、`MEDIATOR_QUEUE_TTL_MS`、`MEDIATOR_DORMANT_AFTER_MS`、
-  `MEDIATOR_REPLAY_TTL_MS`、`MEDIATOR_MAX_REPLAY_IDS`、`MEDIATOR_RELAY_UPSTREAM_URL`。
+  `MEDIATOR_REPLAY_TTL_MS`、`MEDIATOR_MAX_REPLAY_IDS`、`MEDIATOR_RELAY_UPSTREAM_URL`、`MEDIATOR_ALLOWED_DID_DOMAINS`、`MEDIATOR_NEW_INBOXES_PER_ADDRESS_PER_HOUR`。
 - rp-signer: `RP_DID_KEY_FILE`、`RP_REDIRECT_URI`、`RP_SIGNER_ALLOWED_ORIGIN`、`PORT`（既定 8794）。
 - biset-mimi: `MIMI_DATABASE_PATH`、`MIMI_MODE`、`MIMI_PUBLIC_BASE_URL`、`MIMI_ALLOW_EXTERNAL_JOIN`、`PORT`。
 

@@ -17,6 +17,9 @@ export interface MediatorDeploymentOptions {
   allowedOrigins?: Set<string>
   maxRequestBytes?: number
   rateLimitPerMinute?: number
+  /** Registration policy (server.ts's `registration`). `newInboxesPerAddressPerHour`
+   * caps the inboxes one client address may open; absent, no cap. */
+  registration?: { allowedDidDomains?: readonly string[]; newInboxesPerAddressPerHour?: number }
   /** Store limits; unset ones take sqlite-store.ts's defaults. */
   limits?: Partial<SqliteMediatorLimits>
   /** Set to have this mediator poll an upstream one for hop-chained
@@ -59,7 +62,18 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
   const maxRequestBytes = options.maxRequestBytes ?? DEFAULTS.maxRequestBytes
   const webvhResolve = options.webvh?.resolve
   const resolveWebvh = webvhResolve === false ? undefined : typeof webvhResolve === 'function' ? webvhResolve : createNetworkWebvhResolver()
-  const { handle, live, mediatorDid, refreshWebvh } = createMediator({ mediator, store, maxReceiveBytes: Math.min(maxRequestBytes, store.limits.maxMessageBytes), resolveWebvh })
+  const newInboxLimit = options.registration?.newInboxesPerAddressPerHour
+  const newInboxLimiter = newInboxLimit ? new IpRateLimiter(newInboxLimit, 60 * 60_000) : undefined
+  // Every Tor visitor reaches this server from the local Tor daemon: one
+  // address for all of them, so that bucket is wider than a person's.
+  const onionLimiter = newInboxLimit ? new IpRateLimiter(newInboxLimit * 10, 60 * 60_000) : undefined
+  const { handle, live, mediatorDid, refreshWebvh } = createMediator({
+    mediator, store, maxReceiveBytes: Math.min(maxRequestBytes, store.limits.maxMessageBytes), resolveWebvh,
+    registration: {
+      ...(options.registration?.allowedDidDomains?.length ? { allowedDidDomains: options.registration.allowedDidDomains } : {}),
+      ...(newInboxLimiter ? { admitNewInbox: address => (isLoopback(address) ? onionLimiter! : newInboxLimiter).allow(address) } : {}),
+    },
+  })
   const requestLimiter = new IpRateLimiter(options.rateLimitPerMinute ?? DEFAULTS.rateLimitPerMinute)
   const clientAddress = (request: Request) => request.headers.get('x-forwarded-for')?.split(',', 1)[0]?.trim()
     || server.requestIP(request)?.address
@@ -76,7 +90,7 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
       idleTimeout: 120,
       async message(ws, data) {
         if (!requestLimiter.allow(ws.data.address)) { ws.close(1008, 'rate limit exceeded'); return }
-        await live.message(ws, typeof data === 'string' ? data : new TextDecoder().decode(data))
+        await live.message(ws, typeof data === 'string' ? data : new TextDecoder().decode(data), ws.data.address)
       },
       close(ws) { live.close(ws) },
     },
@@ -112,7 +126,7 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
       } else if (url.pathname === '/metrics' && request.method === 'GET') {
         response = new Response(metrics(store.stats()), { headers: { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' } })
       } else {
-        response = await handle(request, url) ?? new Response('not found', { status: 404 })
+        response = await handle(request, url, clientAddress(request)) ?? new Response('not found', { status: 404 })
       }
       return origin ? withCors(response, origin) : response
     },
@@ -178,6 +192,10 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
       store.close()
     },
   }
+}
+
+function isLoopback(address: string): boolean {
+  return address === 'unknown' || address === '::1' || address.startsWith('127.') || address.startsWith('::ffff:127.')
 }
 
 function defaultLog(level: 'info' | 'error', message: string, fields: Record<string, unknown>): void {

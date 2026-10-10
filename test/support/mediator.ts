@@ -19,9 +19,11 @@ export interface KeyHolder { did: string; xKid: string; xPriv: Uint8Array }
 export function freshMediator(limits: Partial<SqliteMediatorLimits> = {}, store = SqliteMediatorStore.memory(limits), options: Partial<MediatorOptions> = {}) {
   const mediator = webMediatorIdentity(store.loadIdentity(MEDIATOR_URL), MEDIATOR_URL)
   const { handle, refreshWebvh } = createMediator({ mediator, store, ...options })
+  /** The client address the transport would pass (unset: none, as for a relay poller). */
+  const client: { address?: string } = {}
   const call = async (path: string, init: RequestInit) => {
     const url = new URL(path, MEDIATOR_URL)
-    const res = await handle(new Request(url, init), url)
+    const res = await handle(new Request(url, init), url, client.address)
     if (!res) throw new Error(`mediator did not handle ${path}`)
     return res
   }
@@ -44,7 +46,7 @@ export function freshMediator(limits: Partial<SqliteMediatorLimits> = {}, store 
     return post(packAnoncrypt(utf8(JSON.stringify(msg)), [{ kid: mediator.xKid, publicKey: mediator.xPub }]))
   }
   const pushLog = (jsonl: string) => call('/webvh-log', { method: 'POST', body: jsonl })
-  return { mediator, store, handle, call, post, request, forward, pushLog, refreshWebvh }
+  return { mediator, store, handle, call, post, request, forward, pushLog, refreshWebvh, client }
 }
 
 /** How a mediator under test learns a did:webvh's keys: by resolving it, as in

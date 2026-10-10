@@ -31,6 +31,12 @@ const deployment = createMediatorDeployment({
     replayTtlMs: envInteger('MEDIATOR_REPLAY_TTL_MS', 10 * 60 * 1000, 1000, 24 * 60 * 60 * 1000),
     maxReplayIds: envInteger('MEDIATOR_MAX_REPLAY_IDS', 50_000, 100, 10_000_000),
   },
+  // MEDIATOR_ALLOWED_DID_DOMAINS=did.md,biset.md: only a did:webvh on these domains (or below) may register.
+  // Unset: any DID whose owner can prove it. A did:peer is not limited by this.
+  registration: {
+    allowedDidDomains: (Bun.env.MEDIATOR_ALLOWED_DID_DOMAINS ?? '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean),
+    newInboxesPerAddressPerHour: envInteger('MEDIATOR_NEW_INBOXES_PER_ADDRESS_PER_HOUR', 60, 1, 1_000_000),
+  },
   relayUpstreamUrl: Bun.env.MEDIATOR_RELAY_UPSTREAM_URL,
   // MEDIATOR_WEBVH_RESOLVE=0: dial out to nothing; only pushed did:webvh logs are known.
   webvh: { resolve: Bun.env.MEDIATOR_WEBVH_RESOLVE !== '0', refreshSeconds: envInteger('MEDIATOR_WEBVH_REFRESH_SECONDS', 300, 10, 24 * 60 * 60) },

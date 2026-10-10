@@ -253,6 +253,52 @@ describe('blind mediator', () => {
     expect((await forward(bob.did, { n: 3 })).status).toBe(503)
   })
 
+  test('registration: a did:webvh outside the allowed domains is refused before anything is resolved; a did:peer and an allowed domain are not', async () => {
+    const rootPrivateKey = new Uint8Array(32).fill(9)
+    const deviceX = x25519.utils.randomSecretKey()
+    const logOn = (domain: string) => buildDidCommLog({
+      rootPrivateKey, rootPublicKey: ed25519.getPublicKey(rootPrivateKey), domain,
+      keyAgreementKeys: [{ fragment: 'k_device', x25519PublicKey: x25519.getPublicKey(deviceX) }],
+    })
+    const { mediator, post, request, pushLog } = freshMediator({}, undefined, { registration: { allowedDidDomains: ['did.md'] } })
+
+    const outside = logOn('someone.example.org')
+    expect((await pushLog(serializeLog(outside.log))).status).toBe(403)
+    const blind = buildPlaintext(T.MEDIATE_REQUEST, {}, outside.did, mediator.did)
+    const refused = await post(packAuthcrypt(utf8(JSON.stringify(blind)), { kid: `${outside.did}#k_device`, privateKey: deviceX }, [{ kid: mediator.xKid, publicKey: mediator.xPub }]))
+    expect(refused.status).toBe(403)
+    expect((await refused.json()).body.code).toBe('e.m.trust.did-not-allowed')
+
+    for (const domain of ['c8de.did.md', 'did.md']) {
+      const inside = logOn(domain)
+      expect(await (await pushLog(serializeLog(inside.log))).json()).toMatchObject({ did: inside.did, outcome: 'stored' })
+    }
+    const lookalike = logOn('evil-did.md')
+    expect((await pushLog(serializeLog(lookalike.log))).status).toBe(403)
+
+    // a relationship's did:peer names no owner: not limited by the domains
+    const bob = peer()
+    const added = await request(bob, T.RECIPIENT_UPDATE, { device: deviceLabel(1), updates: [{ recipient_did: bob.did, action: 'add' }] })
+    expect((added.body as any).updated[0].result).toBe('success')
+  })
+
+  test('registration: one address may open only so many new inboxes; renewing one is free; no address (a relay poller) is not counted', async () => {
+    let admitted = 0
+    const { request, client } = freshMediator({}, undefined, { registration: { admitNewInbox: () => ++admitted <= 2 } })
+    const add = (who: ReturnType<typeof peer>, n = 1) => request(who, T.RECIPIENT_UPDATE, { device: deviceLabel(n), updates: [{ recipient_did: who.did, action: 'add' }] })
+    client.address = '203.0.113.7'
+    const [a, b, c] = [peer(), peer(), peer()]
+    expect(((await add(a)).body as any).updated[0].result).toBe('success')
+    expect(((await add(b)).body as any).updated[0].result).toBe('success')
+    expect(((await add(a)).body as any).updated[0].result).toBe('no_change') // renewing: not asked
+    expect(admitted).toBe(2)
+    const refused = await add(c)
+    expect(refused.type).toBe(T.PROBLEM_REPORT)
+    expect((refused.body as any).code).toBe('e.m.req.rate-limited')
+    client.address = undefined
+    expect(((await add(c)).body as any).updated[0].result).toBe('success')
+  })
+
   test('did:webvh: authenticated only against a pushed log; a stale log is ignored', async () => {
     const { mediator, post, request, pushLog } = freshMediator()
     const rootPrivateKey = new Uint8Array(32).fill(7)

@@ -51,6 +51,7 @@ import {
 } from '../../protocol/didcomm/crypto.ts'
 import { decodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
 import { defaultDeviceLabel } from '../../protocol/didcomm/mediator-device.ts'
+import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
 import { webvhStateFromLog, WebvhUnavailable, type WebvhStateResolver } from './webvh-state.ts'
 import { peerMediatorIdentity, type MediatorIdentity } from './identity.ts'
 import { authenticationSigningKey, DIDCOMM_SIGNED_MEDIA_TYPE, signDidCommMessage, SignatureError, type SigningKey } from '../../protocol/didcomm/jws.ts'
@@ -94,6 +95,17 @@ export interface MediatorOptions {
   /** When resolution fails, the state held is still used if it was confirmed this recently (default 1 h). */
   webvhStaleMs?: number
   now?: () => number
+  /** Who may hold an inbox here. Unset: anyone who can prove they own a DID. */
+  registration?: {
+    /** Only a did:webvh whose domain is one of these (or a subdomain of one)
+     * may register, or authenticate at all -- such a DID is not even resolved.
+     * A did:peer (a relationship's DID, which names no owner) is not limited
+     * by this. */
+    allowedDidDomains?: readonly string[]
+    /** Asked before a NEW inbox is created, with the client's address (set by
+     * the transport); `false` refuses it. Re-registering an inbox is never asked. */
+    admitNewInbox?(clientAddress: string): boolean
+  }
 }
 
 /** What a Discover Features query may match: the protocols this mediator
@@ -123,7 +135,7 @@ export interface LiveSocket {
 
 export interface MediatorHandler {
   /** Handles a mediator request, or returns null if the path isn't ours. */
-  handle(req: Request, url: URL): Promise<Response | null>
+  handle(req: Request, url: URL, clientAddress?: string): Promise<Response | null>
   /** Resolves every did:webvh that holds an inbox again, so a device its DID
    * dropped loses its inbox now rather than at its next request. Does
    * nothing without `resolveWebvh`. */
@@ -131,7 +143,7 @@ export interface MediatorHandler {
   /** The WebSocket transport: one call per text frame, and one when the
    * socket closes (live mode ends with the connection, Pickup 3.0). */
   live: {
-    message(socket: LiveSocket, raw: string): Promise<void>
+    message(socket: LiveSocket, raw: string, clientAddress?: string): Promise<void>
     close(socket: LiveSocket): void
   }
   mediatorDid: string
@@ -144,6 +156,8 @@ interface Reply { trigger: DidCommPlaintext; packed: string }
 type Outcome = { reply: Reply } | { http: Response }
 
 class Malformed extends Error {}
+/** A did:webvh outside this mediator's allowed domains (registration.allowedDidDomains). */
+class DidNotAllowed extends Error {}
 /** A did:webvh sender whose current keys do not include the key it used (or
  * whose log this mediator has not seen). */
 class UnknownWebvhState extends Error {
@@ -152,8 +166,16 @@ class UnknownWebvhState extends Error {
 
 export function createMediator({
   mediator: mediatorOption, store, maxReceiveBytes = store.limits.maxMessageBytes, resolveWebvh,
-  webvhFreshMs = 5 * 60_000, webvhRetryMs = 10_000, webvhStaleMs = 60 * 60_000, now = Date.now,
+  webvhFreshMs = 5 * 60_000, webvhRetryMs = 10_000, webvhStaleMs = 60 * 60_000, now = Date.now, registration,
 }: MediatorOptions): MediatorHandler {
+  const allowedDomains = registration?.allowedDidDomains?.length ? registration.allowedDidDomains.map(domain => domain.toLowerCase()) : undefined
+  /** Whether a did:webvh may use this mediator at all. */
+  function didAllowed(did: string): boolean {
+    if (!allowedDomains || !did.startsWith('did:webvh:')) return true
+    let domain: string
+    try { domain = parseWebvhDid(did).domain.toLowerCase() } catch { return false }
+    return allowedDomains.some(allowed => domain === allowed || domain.endsWith(`.${allowed}`))
+  }
   /** Per did:webvh: when it was last resolved successfully, and last tried. */
   const webvhChecks = new Map<string, { confirmedAt?: number; triedAt: number }>()
   const resolving = new Map<string, Promise<void>>()
@@ -215,6 +237,7 @@ export function createMediator({
    * than `webvhRetryMs`). */
   async function keyAgreementKey(kid: string): Promise<Uint8Array> {
     const did = didOf(kid)
+    if (!didAllowed(did)) throw new DidNotAllowed(`${did} is not on a domain this mediator serves`)
     if (resolveWebvh && did.startsWith('did:webvh:')) {
       const check = webvhChecks.get(did)
       const listed = store.webvhKey(did, kid) !== undefined
@@ -336,6 +359,7 @@ export function createMediator({
     const did = kid.split('#', 1)[0]!
     if (did.startsWith('did:peer:2.')) return authenticationSigningKey(decodePeerDid2(did) as never, kid)
     if (did.startsWith('did:webvh:') && resolveWebvh) {
+      if (!didAllowed(did)) throw new DidNotAllowed(`${did} is not on a domain this mediator serves`)
       const key = (await resolveWebvh(did))?.authentication?.[kid]
       if (key) return key
     }
@@ -354,16 +378,17 @@ export function createMediator({
     } catch (error) {
       return Response.json({ error: `not a valid did:webvh log: ${error instanceof Error ? error.message : String(error)}` }, { status: 400 })
     }
+    if (!didAllowed(state.did)) return Response.json({ error: `${state.did} is not on a domain this mediator serves` }, { status: 403 })
     const outcome = store.recordWebvhState(state.did, state.versionNumber, state.keys)
     return Response.json({ did: state.did, version: state.versionNumber, outcome })
   }
 
-  async function handle(req: Request, url: URL): Promise<Response | null> {
+  async function handle(req: Request, url: URL, clientAddress?: string): Promise<Response | null> {
     if (req.method === 'GET' && url.pathname === '/.well-known/did.json') return Response.json(mediator.doc)
     if (req.method === 'POST' && url.pathname === '/webvh-log') return acceptWebvhLog(req)
     if (url.pathname !== '/' || req.method !== 'POST') return null
     if (!isDidCommEncryptedRequest(req)) return httpProblem(415, 'e.m.msg', 'The request is not an encrypted DIDComm message: its Content-Type must be {1}.', [DIDCOMM_ENCRYPTED_MEDIA_TYPE])
-    const outcome = await receive(await req.text())
+    const outcome = await receive(await req.text(), undefined, clientAddress)
     if ('http' in outcome) return outcome.http
     // No return_route: the answer has nowhere to go (the sender's own
     // endpoint is not ours to call), so the request is just accepted.
@@ -372,8 +397,8 @@ export function createMediator({
   }
 
   const live: MediatorHandler['live'] = {
-    async message(socket, raw) {
-      const outcome = await receive(raw, socket)
+    async message(socket, raw, clientAddress) {
+      const outcome = await receive(raw, socket, clientAddress)
       if ('reply' in outcome && outcome.reply.trigger.return_route === 'all') socket.send(outcome.reply.packed)
     },
     close(socket) {
@@ -384,12 +409,13 @@ export function createMediator({
 
   /** One inbound message from either transport. `socket` is set only for a
    * WebSocket -- the one transport live mode may be enabled on. */
-  async function receive(raw: string, socket?: LiveSocket): Promise<Outcome> {
+  async function receive(raw: string, socket?: LiveSocket, clientAddress?: string): Promise<Outcome> {
     let msg: DidCommPlaintext
     let senderKid: string | null
     try {
       ;({ msg, senderKid } = await unpack(raw))
     } catch (e) {
+      if (e instanceof DidNotAllowed) return { http: httpProblem(403, 'e.m.trust.did-not-allowed', 'The sender is not on a domain this mediator serves.') }
       if (e instanceof UnknownWebvhState) return { http: httpProblem(401, e.code, 'The sender could not be authenticated: {1}', [e.message]) }
       if (e instanceof WebvhUnavailable) return { http: httpProblem(503, 'e.m.me.res.net', "The sender's DID could not be resolved right now: {1}", [e.message]) }
       if (e instanceof Malformed) return { http: httpProblem(400, 'e.m.msg', 'The message is malformed: {1}', [e.message]) }
@@ -413,7 +439,7 @@ export function createMediator({
     }
 
     try {
-      return msg.type === FORWARD ? { http: forward(msg) } : control(msg, senderKid!, socket)
+      return msg.type === FORWARD ? { http: forward(msg) } : control(msg, senderKid!, socket, clientAddress)
     } catch (e) {
       console.error('[mediator] failed to handle a message:', e)
       return { http: httpProblem(500, 'e.m.me', 'The mediator failed to handle the message.', [], msg) }
@@ -451,7 +477,7 @@ export function createMediator({
 
   /** Everything but Forward: an authenticated owner of `ownerDid` acting on
    * one of its own inboxes. */
-  function control(msg: DidCommPlaintext, senderKid: string, socket?: LiveSocket): Outcome {
+  function control(msg: DidCommPlaintext, senderKid: string, socket?: LiveSocket, clientAddress?: string): Outcome {
     const ownerDid = didOf(senderKid)
     const body = (msg.body ?? {}) as Record<string, unknown>
 
@@ -507,6 +533,11 @@ export function createMediator({
           if (update.action === 'remove') {
             updated.push({ recipient_did: update.recipient_did, action: 'remove', result: store.removeInbox(ownerDid, device) ? 'success' : 'no_change' })
             continue
+          }
+          // A new inbox costs this mediator storage: how many one address may
+          // open is limited. Renewing one it already has is free.
+          if (clientAddress !== undefined && registration?.admitNewInbox && !store.hasInbox(ownerDid, device) && !registration.admitNewInbox(clientAddress)) {
+            return problemTo(msg, senderKid, 'e.m.req.rate-limited', 'too many new inboxes from this address; try again later')
           }
           try {
             const result = store.addInbox(ownerDid, device, senderKid)
