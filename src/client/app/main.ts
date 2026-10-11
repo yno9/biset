@@ -72,6 +72,7 @@ import { createJmapExport, decodeJmapExport, encodeJmapExport, importJmapExport 
 import { isMailAddress, resolveMailAddressDid } from '../didcomm/address-resolver.ts'
 import { OpenPgpCredentialReader, OpenPgpCredentialSink } from '../store/vault/openpgp-credential.ts'
 import { generatePgpKey, importPgpKey, keyNamesAddress, readPgpKey } from '../pgp/keyring.ts'
+import { ensureOwnPgpKey } from '../pgp/auto.ts'
 import { publishPgpKey } from '../pgp/publish.ts'
 import type { PgpCardConfig } from './ui/account/pgp-card.ts'
 import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
@@ -505,8 +506,19 @@ async function configureWalletAccountIfPresent(
         } catch (error) {
           console.warn('[did.md Wallet relationship seed status]', error instanceof Error ? error.message : error)
         }
-        void vaultSync.requestState()
-          .catch(error => console.warn('[did.md Wallet Vault Sync bootstrap]', error instanceof Error ? error.message : error))
+        const vaultPulled = vaultSync.requestState()
+          .catch(error => { console.warn('[did.md Wallet Vault Sync bootstrap]', error instanceof Error ? error.message : error) })
+        // The account's OpenPGP key is made without being asked, once the Vault pull has had its chance
+        // to bring one from a sibling device and the address's WKD has none (pgp/auto.ts).
+        if (ownMailAddress) {
+          void ensureOwnPgpKey({
+            address: ownMailAddress,
+            hasKey: async () => (await pgpReader.current()) !== undefined,
+            generate: async () => storePgpKey(await generatePgpKey(ownMailAddress)),
+            vaultPulled,
+          }).then(outcome => { if (outcome === 'generated') console.info('[did.md Wallet] OpenPGP key made for', ownMailAddress) })
+            .catch(error => console.warn('[did.md Wallet OpenPGP key]', error instanceof Error ? error.message : error))
+        }
         // DID Rotation (PLAN-refactor.md §4.3, §12.5): every message to a
         // counterparty goes by the route its contact card gives, and a
         // conversation moves to this identity's own did:peer (Y) once the
