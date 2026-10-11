@@ -79,6 +79,17 @@ const CAPABILITY_TYPE = 'biset.md/MessengerCapability'
 // on the DCR path unconditionally, forever.
 const RP_DID = 'did:webvh:QmaQdf3VFoXtk7WjfP2rhmKAvMNinLh4qU1bjZ4mPDzVr6:t.biset.md'
 const RP_SIGNER_URL = 'https://t.biset.md/api/rp-signer/sign'
+
+// This deployment's relying-party identity: the constants above, unless the page's config names
+// others (`rpDid`, `rpSignerUrl` in __BISET_CONFIG__). Its signer fixes the redirect URI, and that
+// DID's document must list it, so a deployment at another origin (mail.did.md) needs its own pair.
+function rpIdentity(): { did: string, signerUrl: string } {
+  const configured = (globalThis as { __BISET_CONFIG__?: { rpDid?: unknown, rpSignerUrl?: unknown } }).__BISET_CONFIG__
+  return {
+    did: typeof configured?.rpDid === 'string' ? configured.rpDid : RP_DID,
+    signerUrl: typeof configured?.rpSignerUrl === 'string' ? configured.rpSignerUrl : RP_SIGNER_URL,
+  }
+}
 const DID_DOCUMENT_EDIT_DETAIL = 'urn:did-core:document-edit:v1'
 // The did.md-operated SMTP relay is a separate process, but shares did.md's
 // authority service.  This detail is Root-signed as part of the ordinary
@@ -544,7 +555,7 @@ async function registration(walletDeviceName = 'Biset'): Promise<DidMdRegistrati
     return {
       v: 2, issuer: discovered.issuer, authorizationEndpoint: discovered.authorization_endpoint,
       tokenEndpoint: discovered.token_endpoint, refreshEndpoint: `${selectedWallet.issuer}/v1/oauth/device-refresh`,
-      registrationEndpoint: discovered.registration_endpoint, clientId: RP_DID,
+      registrationEndpoint: discovered.registration_endpoint, clientId: rpIdentity().did,
       registrationAccessToken: '', redirectUri: redirectUri(),
     }
   }
@@ -796,13 +807,15 @@ function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthori
   }
 }
 
-async function redirectToWallet(client: DidMdRegistration, pending: DidMdPendingAuthorization, openedPopup?: Window): Promise<never> {
+/** Saves the pending authorization and builds the Wallet's authorization request URL (for a JAR
+ * relying party: the signed request object from biset-rp-signer). It does not navigate. */
+async function walletRequestUrl(client: DidMdRegistration, pending: DidMdPendingAuthorization): Promise<string> {
   await saveDidMdPendingAuthorization(pending)
   const request = new URL(client.authorizationEndpoint)
   // RFC 9396 details are optional: a plain sign-in asks for none, and the
   // parameter is left out rather than sent empty.
   const authorizationDetails = pending.documentEdit ? JSON.stringify([pending.documentEdit]) : undefined
-  if (client.clientId === RP_DID) {
+  if (client.clientId === rpIdentity().did) {
     // PLAN6: a JAR (RFC 9101) Authorization Request signed by biset's own
     // RP DID key, obtained from biset-rp-signer (which holds that key;
     // this bundle never does). redirect_uri/client_id/response_type are
@@ -814,7 +827,7 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
     // so it is still sent explicitly, same as the flat-query flow. The
     // one-shot Alias-toggle UI hint has no JAR equivalent yet (a known,
     // accepted gap for this first rollout -- see PLAN6's phase 2 notes).
-    const signed = await fetch(RP_SIGNER_URL, {
+    const signed = await fetch(rpIdentity().signerUrl, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         state: pending.state,
@@ -828,7 +841,7 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
     if (!signed.ok) throw new Error(`biset-rp-signer request failed: ${signed.status} ${await signed.text()}`)
     const { jwt } = asObject(await signed.json(), 'biset-rp-signer response') as { jwt: unknown }
     if (typeof jwt !== 'string') throw new Error('biset-rp-signer response is invalid')
-    request.search = new URLSearchParams({ client_id: RP_DID, response_type: 'vp_token id_token', request: jwt }).toString()
+    request.search = new URLSearchParams({ client_id: rpIdentity().did, response_type: 'vp_token id_token', request: jwt }).toString()
   } else {
     // PLAN7 (~/did.md/PLAN7-pure-siopv2-direct-delivery.md): no `code`, no
     // PKCE (nothing to protect from interception once the response is
@@ -857,6 +870,11 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
     })
     request.search = params.toString()
   }
+  return request.toString()
+}
+
+async function redirectToWallet(client: DidMdRegistration, pending: DidMdPendingAuthorization, openedPopup?: Window): Promise<never> {
+  const request = new URL(await walletRequestUrl(client, pending))
   if (location.protocol === 'file:') {
     // Safari only permits opening a window in the original click handler.
     // account-create reserves it before the asynchronous DID verification;
@@ -993,8 +1011,7 @@ export async function beginDidMdEndpointUpdate(configured: DidMdWalletConfigurat
  * just means no DIDComm device this round -- it must never block sign-in
  * itself. beginDidMdWalletFinalizeEnrollment remains for that case, and for
  * enabling messaging after the fact. */
-export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = [], openedPopup?: Window, configured: DidMdWalletConfiguration = {}): Promise<never> {
-  const config = walletConfiguration(configured)
+async function newLoginPending(mediatorUrls: readonly string[], config: WalletConfiguration, handle?: string): Promise<{ client: DidMdRegistration, pending: DidMdPendingAuthorization }> {
   const client = await registration(config.walletDeviceName)
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']) as CryptoKeyPair
   const publicJwk = p256PublicJwk(await crypto.subtle.exportKey('jwk', pair.publicKey))
@@ -1008,13 +1025,31 @@ export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = []
   const rotation = bisetDidCommDevice ? await rotationCandidate('ifAbsent') : undefined
   const pending: DidMdPendingAuthorization = {
     v: 2, issuer: client.issuer, clientId: client.clientId, state: randomBase64url(32), codeVerifier: randomBase64url(48),
+    ...(handle !== undefined ? { handle } : {}),
     deviceJkt: await p256Jkt(publicJwk), privateKey: pair.privateKey, publicJwk, vaultDeviceId: `urn:uuid:${crypto.randomUUID()}`,
     documentEdit: buildDocumentEdit('', config, bisetDidCommDevice, [], [], rotation?.method),
     ...(bisetDidCommDevice ? { bisetDidCommDevice } : {}),
     ...(rotation ? { rotationSeedCandidate: rotation.sealed } : {}),
     createdAt: new Date().toISOString(),
   }
+  return { client, pending }
+}
+
+export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = [], openedPopup?: Window, configured: DidMdWalletConfiguration = {}): Promise<never> {
+  const { client, pending } = await newLoginPending(mediatorUrls, walletConfiguration(configured))
   return redirectToWallet(client, pending, openedPopup)
+}
+
+/**
+ * The same login, prepared but not started: the pending authorization is saved and the signed
+ * request is built, and its query string is returned for the wallet to open itself (the embedded
+ * create hands it to dito's save page, which signs in as the person finishes saving the Passphrase;
+ * the response comes back to the wallet callback as usual). `handle` pins the login to the
+ * identity being created (`name.did.md`).
+ */
+export async function prepareDidMdWalletLoginRequest(mediatorUrls: readonly string[] = [], configured: DidMdWalletConfiguration = {}, handle?: string): Promise<string> {
+  const { client, pending } = await newLoginPending(mediatorUrls, walletConfiguration(configured), handle)
+  return new URL(await walletRequestUrl(client, pending)).search
 }
 
 /** The explicit, user-triggered follow-up ("Connect to MIMI/mediator" in

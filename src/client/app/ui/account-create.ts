@@ -8,6 +8,7 @@
 import { readBisetConfig } from './config.ts'
 import {
   beginDidMdWalletLogin,
+  prepareDidMdWalletLoginRequest,
   completeDidMdWalletCallback,
   disconnectDidMdWallet,
   restoreDidMdWalletSession,
@@ -17,6 +18,7 @@ import {
   type DidMdActiveSession,
 } from '../../identity/wallet/did-md-oauth.ts'
 import { WALLET_DIRECTORY } from '../../identity/wallet/wallet-directory.ts'
+import { ditoEmbedOrigin, mountDitoCreate } from '../../identity/wallet/dito-embed.ts'
 
 // Set once by main.ts (a plain function reference, not an import back to
 // it) so the handler below can re-run the boot routine after a Wallet
@@ -133,6 +135,7 @@ export function setupNewUserPage(): void {
     if (!walletResultEl) return
     walletResultEl.textContent = message
     walletResultEl.style.display = 'block'
+    walletResultEl.style.overflowWrap = 'anywhere'
     walletResultEl.style.color = error ? '#ff3b30' : 'var(--text-dim)'
   }
   const showWalletSession = (session: DidMdActiveSession | undefined) => {
@@ -168,6 +171,44 @@ export function setupNewUserPage(): void {
       walletResult(error instanceof Error ? error.message : String(error), true)
     }
   })()
+
+  // Same-site with dito: create the identity from dito's own form (an iframe),
+  // in place of the popup login button.
+  const ditoOrigin = ditoEmbedOrigin()
+  const createBox = document.getElementById('nu-create') as HTMLDivElement | null
+  const createFrame = document.getElementById('nu-dito-frame') as HTMLIFrameElement | null
+  // The wallet callback page finishes a sign-in; it has no create form to show.
+  if (ditoOrigin && createBox && createFrame && location.pathname !== '/wallet/callback') {
+    createBox.style.display = 'flex'
+    document.getElementById('nu-wallet-login-row')?.style.setProperty('display', 'none')
+    // Nothing on this page may move while the wallet works: the happy path shows no
+    // message at all (an "already has" / "created" line pushed the form up and down).
+    // Only a failure is reported.
+    // Sign-in rides along with the creation, in the background: the signed request is prepared the
+    // moment Create is pressed (so nothing waits for it), handed to dito's save page, which approves
+    // it while the person saves the Passphrase, and the response lands on /wallet/callback.
+    let loginRequest: Promise<string | undefined> | undefined
+    mountDitoCreate(createFrame, ditoOrigin, {
+      creating: handle => {
+        const config = readBisetConfig()
+        loginRequest = prepareDidMdWalletLoginRequest(config.mediatorUrls, config, handle).catch(error => {
+          console.warn('[did.md Wallet login] could not prepare the sign-in request; the identity is still created', error instanceof Error ? error.message : error)
+          return undefined
+        })
+      },
+      created: () => {},
+      // The same tab goes to dito's top-level save page and comes back: to the wallet callback
+      // when the sign-in succeeded, otherwise to this very URL.
+      savePage: async () => {
+        const login = await loginRequest
+        const target = `${ditoOrigin}/?embed=save&return=${encodeURIComponent(location.href)}${login ? `&login=${encodeURIComponent(login)}` : ''}`
+        location.assign(target)
+      },
+      existing: () => {},
+      unloaded: () => {},
+      error: message => walletResult(message, true),
+    }).catch(error => walletResult(error instanceof Error ? error.message : String(error), true))
+  }
 
   walletLoginButton?.addEventListener('click', () => {
     walletLoginButton.disabled = true

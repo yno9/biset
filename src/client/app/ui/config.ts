@@ -14,6 +14,10 @@ declare const __BISET_CONFIG__: {
    * bridge, didmail PROTOCOL.md §9), asked when the address's own domain
    * has no DID for it. */
   mailGateways?: string[]
+  /** This deployment's relying-party DID and the rp-signer that signs for it; the built-in pair
+   * (t.biset.md) when absent. The signer fixes the redirect URI, and the DID document must list it. */
+  rpDid?: string
+  rpSignerUrl?: string
   /** Human-facing application/device label shown by did.md Wallet. */
   walletDeviceName?: string
   /** DID Document service templates proposed during Wallet authorization. */
