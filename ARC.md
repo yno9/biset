@@ -604,6 +604,7 @@ HTML 本文と添付（`attachments`）は今は保存しない（`body.content`
 ### 11.2 biset-rp-signer
 状態を持たない。RP DID の鍵（`RP_DID_KEY_FILE`）で JAR を署名するだけ。受け付ける claim は許可リスト（`state`、`dpop_jkt`、`login_hint`、`authorization_details`、`dcql_query`、`scope` など）で、
 `iss`・`client_id`・`response_type`・`redirect_uri` は**サーバー側で固定**し、呼び出し側からは受け取らない。
+Bun ではなく素の Node（24 以上、型は Node が自分で除去する）で動く。依存パッケージは無く、署名は `node:crypto` の Ed25519。既定で `127.0.0.1` にだけ bind する。
 
 ### 11.3 biset-mimi（🔧）
 IETF `draft-ietf-mimi-protocol` に沿った MLS delivery service（`normal`／`anon`／`self`）。サーバーとしては動き、テストも通るが、**現行クライアントからの呼び出し経路は無い**。
@@ -614,7 +615,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
   `MEDIATOR_ALLOWED_ORIGINS`、`MEDIATOR_RATE_LIMIT_PER_MINUTE`、`MEDIATOR_MAX_REQUEST_BYTES`、`MEDIATOR_MAX_INBOXES`、`MEDIATOR_MAX_DEVICES_PER_DID`、
   `MEDIATOR_MAX_QUEUE_ITEMS`、`MEDIATOR_MAX_QUEUE_BYTES`、`MEDIATOR_MAX_MESSAGE_BYTES`、`MEDIATOR_QUEUE_TTL_MS`、`MEDIATOR_DORMANT_AFTER_MS`、
   `MEDIATOR_REPLAY_TTL_MS`、`MEDIATOR_MAX_REPLAY_IDS`、`MEDIATOR_RELAY_UPSTREAM_URL`、`MEDIATOR_ALLOWED_DID_DOMAINS`、`MEDIATOR_NEW_INBOXES_PER_ADDRESS_PER_HOUR`。
-- rp-signer: `RP_DID_KEY_FILE`、`RP_REDIRECT_URI`、`RP_SIGNER_ALLOWED_ORIGIN`、`PORT`（既定 8794）。
+- rp-signer: `RP_DID_KEY_FILE`、`RP_REDIRECT_URI`、`RP_SIGNER_ALLOWED_ORIGIN`、`PORT`（既定 8794）、`HOST`（既定 127.0.0.1）。
 - biset-mimi: `MIMI_DATABASE_PATH`、`MIMI_MODE`、`MIMI_PUBLIC_BASE_URL`、`MIMI_ALLOW_EXTERNAL_JOIN`、`PORT`。
 
 ## 12. クライアントの起動

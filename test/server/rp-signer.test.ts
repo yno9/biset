@@ -11,8 +11,9 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 // DCR client_id/secret embedded in the public browser bundle. These tests
 // spawn the real service as a subprocess (same pattern did.md's own
 // tests/oauth-loopback.test.ts uses) rather than importing src/server/
-// rp-signer/index.ts directly, since that module's top-level Bun.serve()
-// call is itself the thing under test.
+// rp-signer/index.ts directly, since that module's top-level createServer()
+// call is itself the thing under test. The service runs on plain Node (not Bun),
+// exactly as in production.
 
 const dataDir = mkdtempSync(join(tmpdir(), 'biset-rp-signer-'))
 const keyFile = join(dataDir, 'rp-did-key.json')
@@ -29,7 +30,7 @@ const base = `http://127.0.0.1:${port}`
 const redirectUri = 'https://t.biset.md/wallet/callback'
 const allowedOrigin = 'https://t.biset.md'
 const server = Bun.spawn({
-  cmd: [process.execPath, 'run', 'src/server/rp-signer/index.ts'],
+  cmd: ['node', 'src/server/rp-signer/index.ts'],
   cwd: new URL('../..', import.meta.url).pathname,
   env: { ...process.env, PORT: String(port), RP_DID_KEY_FILE: keyFile, RP_REDIRECT_URI: redirectUri, RP_SIGNER_ALLOWED_ORIGIN: allowedOrigin },
   stdout: 'ignore',
