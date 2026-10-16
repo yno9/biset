@@ -18,7 +18,7 @@ import {
   type DidMdActiveSession,
 } from '../../identity/wallet/did-md-oauth.ts'
 import { WALLET_DIRECTORY } from '../../identity/wallet/wallet-directory.ts'
-import { ditoEmbedOrigin, mountDitoCreate, type DitoEmbed } from '../../identity/wallet/dito-embed.ts'
+import { ditoEmbedOrigin, mountDito, type DitoEmbed } from '../../identity/wallet/dito-embed.ts'
 
 // Set once by main.ts (a plain function reference, not an import back to
 // it) so the handler below can re-run the boot routine after a Wallet
@@ -189,7 +189,7 @@ export function setupNewUserPage(): void {
     // it while the person saves the Passphrase, and the response lands on /wallet/callback.
     let loginRequest: Promise<string | undefined> | undefined
     let ditoEmbed: DitoEmbed | undefined
-    mountDitoCreate(createFrame, ditoOrigin, {
+    mountDito(createFrame, ditoOrigin, 'create', {
       // An existing identity: dito's frame collects the Passphrase and signs in itself; this page
       // only prepares the signed request and takes the response, so the wallet is never left.
       login: handle => {
@@ -197,7 +197,7 @@ export function setupNewUserPage(): void {
           const config = readBisetConfig()
           // The frame reports its own failures (wrong Passphrase, ...); only ours are shown here.
           const request = await prepareDidMdWalletLoginRequest(config.mediatorUrls, config, handle)
-          const response = await ditoEmbed!.login(request).catch(() => undefined)
+          const response = await ditoEmbed!.approve(request).catch(() => undefined)
           if (!response) return
           const session = await completeDidMdWalletCallback(response)
           if (!session) return

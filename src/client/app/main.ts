@@ -11,9 +11,9 @@ import { VaultProjector } from '../store/vault/projector.ts'
 import { VAULT_SYNC_STATE_REQUEST, VAULT_SYNC_STATE_RESPONSE, VAULT_SYNC_UPDATE } from '../../protocol/didcomm/vault-sync-protocol.ts'
 import { setOnWalletConnected } from './ui/account-create.ts'
 import {
-  beginDidMdWalletDocumentEdit,
+  beginDidMdDocumentEdit,
+  type DidMdDocumentChange,
   beginDidMdWalletLogin,
-  beginDidMdRotationEdit,
   approvedRotationSeed,
   completeDidMdWalletCallback,
   disconnectDidMdWallet,
@@ -29,6 +29,7 @@ import type { ReplySendInput } from './ui/thread.ts'
 import { configureAccountPage, configureMarkdownVaultToggle, showAccountPage, updateVaultCardStatus, type VaultCardStatus } from './ui/account-page.ts'
 import { configureComposePage } from './ui/compose-page.ts'
 import { readBisetConfig } from './ui/config.ts'
+import { installDitoApprover } from '../identity/wallet/dito-approve.ts'
 import { VaultBackedLocalJmapMutationSink } from '../store/projection/vault-mutation-sink.ts'
 import { DidCommIngressProjector, isProjectableDidCommIngress } from '../didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from '../../protocol/didcomm/webvh-resolve.ts'
@@ -210,6 +211,12 @@ async function storeApprovedRotationSeed(did: string, reader: RelationshipSeedRe
     }
     await approved.forget()
   } finally { approved.seed.fill(0) }
+}
+
+// An approved edit changes the session (new DIDComm key, rotation key): rebuild the page from it.
+// Without an in-page approver the call navigates to the Wallet and never returns here.
+async function editDocument(change: DidMdDocumentChange, config: ReturnType<typeof readBisetConfig>): Promise<void> {
+  await bootClient(await beginDidMdDocumentEdit(change, config))
 }
 
 async function configureWalletAccountIfPresent(
@@ -850,16 +857,16 @@ async function configureWalletAccountIfPresent(
       // senders have to be able to find the route publicly).
       onEnableMessaging: async () => {
         const config = readBisetConfig()
-        return beginDidMdWalletDocumentEdit({ mediatorUrls: config.mediatorUrls, configuration: config })
+        return editDocument({ kind: 'mediator', mediatorUrls: config.mediatorUrls }, config)
       },
       // Same same-tab Wallet approval as onEnableMessaging, just pointed at
       // an explicit mediator URL (the Mediator card's "Edit server") instead
       // of always taking this deployment's configured default -- reuses
-      // beginDidMdWalletDocumentEdit as-is, since it already accepts
+      // beginDidMdDocumentEdit as-is, since it already accepts
       // an array and takes its first valid entry (bisetMediatorFor).
-      onEditMediator: async (mediatorUrl: string) => beginDidMdWalletDocumentEdit({ mediatorUrls: [mediatorUrl], configuration: readBisetConfig() }),
-      onEnableTor: async (onionUrl: string) => beginDidMdWalletDocumentEdit({ mediatorUrls: [mediatorCard!.mediatorUrl], mediatorOnionUrls: [onionUrl], configuration: readBisetConfig() }),
-      onLogOutMediator: async () => beginDidMdWalletDocumentEdit({ removeMediator: true, configuration: readBisetConfig() }),
+      onEditMediator: async (mediatorUrl: string) => editDocument({ kind: 'mediator', mediatorUrls: [mediatorUrl] }, readBisetConfig()),
+      onEnableTor: async (onionUrl: string) => editDocument({ kind: 'mediator', mediatorUrls: [mediatorCard!.mediatorUrl], mediatorOnionUrls: [onionUrl] }, readBisetConfig()),
+      onLogOutMediator: async () => editDocument({ kind: 'leaveMediator' }, readBisetConfig()),
       onDisconnect: async () => {
         await disconnectWalletAndLocalData()
         await bootClient()
@@ -867,8 +874,8 @@ async function configureWalletAccountIfPresent(
     },
     vault,
     ...(pgpCard ? { pgp: pgpCard } : {}),
-    onRemoveOtherDevices: async () => beginDidMdRotationEdit(readBisetConfig(), { removeOtherDevices: true }),
-    ...(rotationKeyState ? { rotationKey: { state: rotationKeyState, onRenew: async () => beginDidMdRotationEdit(readBisetConfig()) } } : {}),
+    onRemoveOtherDevices: async () => editDocument({ kind: 'rotation', removeOtherDevices: true }, readBisetConfig()),
+    ...(rotationKeyState ? { rotationKey: { state: rotationKeyState, onRenew: async () => editDocument({ kind: 'rotation' }, readBisetConfig()) } } : {}),
     showMessage: showSysMsg,
   })
   return true
@@ -968,5 +975,6 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
   showAccountPage()
 }
 
+installDitoApprover()
 /** Keeps the initial public API explicit while account routing is implemented. */
 bootClient()

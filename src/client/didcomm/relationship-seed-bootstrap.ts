@@ -21,7 +21,7 @@
 //   from the Wallet itself, which knows nothing of this key and so left it in
 //   place -- and the removed device holds its seed: "stale".
 // "unpublished", "lost" and "stale" need a Wallet approval to publish a fresh
-// seed's key (did-md-oauth.ts's beginDidMdRotationEdit).
+// seed's key (did-md-oauth.ts's beginDidMdDocumentEdit).
 //
 // Keys are compared by `#fragment`: a domain move rewrites the DID part of
 // every id, never the fragment (a key's fragment is derived from the key).

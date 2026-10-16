@@ -906,34 +906,6 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
   })
 }
 
-/**
- * Replaces the identity's rotation key (a fresh relationship seed's) in one Wallet approval: for an
- * identity that has none yet, one whose seed no device has any more, or one whose seed a device
- * removed from the Wallet itself still holds (relationship-seed-bootstrap.ts's "unpublished",
- * "lost" and "stale"). With `removeOtherDevices`, the same edit also removes every other device: the
- * DID document edit drops their keyAgreement keys, which is the one place
- * the rest of the system learns who this identity's devices are (a mediator
- * revokes their inboxes on the next log it is handed; a sender stops
- * encrypting to them, and Vault Sync stops reaching them). Every message
- * goes to the keys the DID document lists, so nothing else needs to move.
- */
-export async function beginDidMdRotationEdit(configured: DidMdWalletConfiguration = {}, options: { removeOtherDevices?: boolean } = {}): Promise<never> {
-  const config = walletConfiguration(configured)
-  const session = await readDidMdDeviceSession()
-  if (!session?.vaultDeviceId || !session.bisetDidCommDevice || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
-    throw new Error('Reconnect did.md Wallet before changing the keys')
-  }
-  const remove = options.removeOtherDevices ? await otherDeviceMethodIds(session.did, session.bisetDidCommDevice.xKid) : []
-  if (options.removeOtherDevices && remove.length === 0) throw new Error('There are no other devices to remove')
-  const client = await registration(config.walletDeviceName)
-  const pending = pendingFromSession(session)
-  pending.state = randomBase64url(32); pending.codeVerifier = randomBase64url(48); pending.createdAt = new Date().toISOString()
-  const rotation = await rotationCandidate('replace')
-  pending.rotationSeedCandidate = rotation.sealed
-  pending.documentEdit = buildDocumentEdit(session.did, config, session.bisetDidCommDevice, remove, [], rotation.method)
-  return redirectToWallet(client, pending)
-}
-
 async function otherDeviceMethodIds(did: string, ownKid: string): Promise<string[]> {
   // Read past the host's CDN (`freshFetch`): a stale copy would leave a recently added device out of the removal.
   const resolved = await resolveByDomain(parseWebvhDid(did).domain, undefined, undefined, freshFetch())
@@ -969,7 +941,7 @@ async function otherDeviceMethodIds(did: string, ownKid: string): Promise<string
  *
  * Best-effort: a mediator that's unconfigured or unreachable right now
  * just means no DIDComm device this round -- it must never block sign-in
- * itself; beginDidMdWalletDocumentEdit publishes the device afterwards. */
+ * itself; beginDidMdDocumentEdit publishes the device afterwards. */
 async function newLoginPending(mediatorUrls: readonly string[], config: WalletConfiguration, handle?: string): Promise<{ client: DidMdRegistration, pending: DidMdPendingAuthorization }> {
   const client = await registration(config.walletDeviceName)
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']) as CryptoKeyPair
@@ -1028,32 +1000,83 @@ export function retiredMediatorEndpoints(
   ]
 }
 
-export async function beginDidMdWalletDocumentEdit(options: { mediatorUrls?: readonly string[]; mediatorOnionUrls?: readonly string[]; removeMediator?: boolean; configuration?: DidMdWalletConfiguration }): Promise<never> {
-  const config = walletConfiguration(options.configuration)
-  const session = await readDidMdDeviceSession()
-  if (!session?.vaultDeviceId || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) throw new Error('Reconnect did.md Wallet before editing the DID document')
-  const client = await registration()
-  const pending = pendingFromSession(session)
-  pending.state = randomBase64url(32); pending.codeVerifier = randomBase64url(48); pending.createdAt = new Date().toISOString()
-  if (options.removeMediator) {
-    if (session.bisetDidCommDevice) pending.previousBisetDidCommDevice = session.bisetDidCommDevice
-    const didcomm = configuredService(config, 'didcomm')
-    pending.documentEdit = buildDocumentEdit(session.did, config, undefined, [didcomm.id, ...(didcomm.previousIds ?? []), ...(session.bisetDidCommDevice ? [session.bisetDidCommDevice.xKid] : [])])
-    delete pending.bisetDidCommDevice
-  } else {
-    const mediator = await bisetMediatorFor(options.mediatorUrls ?? [], options.mediatorOnionUrls ?? [])
-    if (!mediator) throw new Error('Biset DIDComm mediator is not configured')
-    const previous = session.bisetDidCommDevice?.xKid
-    if (session.bisetDidCommDevice) pending.previousBisetDidCommDevice = session.bisetDidCommDevice
-    pending.bisetDidCommDevice = await newBisetDidCommDevice(session.did, mediator)
-    const retired = retiredMediatorEndpoints(session.bisetDidCommDevice, mediator, configuredService(config, 'didcomm').id)
-    const rotation = await rotationCandidate('ifAbsent')
-    pending.rotationSeedCandidate = rotation.sealed
-    pending.documentEdit = buildDocumentEdit(session.did, config, pending.bisetDidCommDevice, previous ? [previous] : [], retired, rotation.method)
+/**
+ * Approves a signed request without leaving the page (dito's embedded frame): resolves with the
+ * response the relying party would otherwise get in the callback URL. Without one, an approval is a
+ * full-page round trip through the Wallet (`redirectToWallet`).
+ */
+export type DidMdWalletApprover = (request: string) => Promise<URLSearchParams>
+let walletApprover: DidMdWalletApprover | undefined
+export function useDidMdWalletApprover(approver: DidMdWalletApprover | undefined): void { walletApprover = approver }
+
+/** Sends the pending authorization to the Wallet: in place when there is an approver (resolving
+ * with the new session), otherwise by navigating away (never resolving). */
+async function submitToWallet(client: DidMdRegistration, pending: DidMdPendingAuthorization): Promise<DidMdActiveSession> {
+  if (!walletApprover) return redirectToWallet(client, pending)
+  const request = new URL(await walletRequestUrl(client, pending)).search
+  let response: URLSearchParams
+  try { response = await walletApprover(request) }
+  catch (error) {
+    await rollbackPendingMediator(pending)
+    await clearDidMdPendingAuthorization()
+    throw error
   }
-  return redirectToWallet(client, pending)
+  const session = await completeDidMdWalletCallback(response)
+  if (!session) throw new Error('did.md Wallet did not return a session')
+  return session
 }
 
+/**
+ * What one Wallet approval changes in the identity's DID document. Every edit is the same round
+ * trip (the session's pending authorization plus a document edit the Wallet shows and signs);
+ * only the edit differs:
+ *  - `mediator`: publish this device's DIDComm key for the mediator (first connect, a new server,
+ *    Tor), replacing the previous one.
+ *  - `leaveMediator`: take this device's DIDComm key and the DIDComm service out.
+ *  - `rotation`: replace the rotation key (a fresh relationship seed's) -- for an identity that has
+ *    none yet, one whose seed no device has any more, or one whose seed a device removed from the
+ *    Wallet still holds (relationship-seed-bootstrap.ts's "unpublished", "lost", "stale"). With
+ *    `removeOtherDevices` the same edit drops every other device's keyAgreement key, which is the
+ *    one place the rest of the system learns who the devices are (a mediator revokes their inboxes
+ *    on the next log it is handed; senders stop encrypting to them, Vault Sync stops reaching them).
+ */
+export type DidMdDocumentChange =
+  | { kind: 'mediator'; mediatorUrls: readonly string[]; mediatorOnionUrls?: readonly string[] }
+  | { kind: 'leaveMediator' }
+  | { kind: 'rotation'; removeOtherDevices?: boolean }
+
+export async function beginDidMdDocumentEdit(change: DidMdDocumentChange, configured: DidMdWalletConfiguration = {}): Promise<DidMdActiveSession> {
+  const config = walletConfiguration(configured)
+  const session = await readDidMdDeviceSession()
+  if (!session?.vaultDeviceId || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) throw new Error('Reconnect did.md Wallet before editing the DID document')
+  const client = await registration(config.walletDeviceName)
+  const pending = pendingFromSession(session)
+  pending.state = randomBase64url(32); pending.codeVerifier = randomBase64url(48); pending.createdAt = new Date().toISOString()
+  const previousDevice = session.bisetDidCommDevice
+  if (change.kind === 'leaveMediator') {
+    if (previousDevice) pending.previousBisetDidCommDevice = previousDevice
+    const didcomm = configuredService(config, 'didcomm')
+    pending.documentEdit = buildDocumentEdit(session.did, config, undefined, [didcomm.id, ...(didcomm.previousIds ?? []), ...(previousDevice ? [previousDevice.xKid] : [])])
+    delete pending.bisetDidCommDevice
+  } else if (change.kind === 'mediator') {
+    const mediator = await bisetMediatorFor(change.mediatorUrls, change.mediatorOnionUrls ?? [])
+    if (!mediator) throw new Error('Biset DIDComm mediator is not configured')
+    if (previousDevice) pending.previousBisetDidCommDevice = previousDevice
+    pending.bisetDidCommDevice = await newBisetDidCommDevice(session.did, mediator)
+    const retired = retiredMediatorEndpoints(previousDevice, mediator, configuredService(config, 'didcomm').id)
+    const rotation = await rotationCandidate('ifAbsent')
+    pending.rotationSeedCandidate = rotation.sealed
+    pending.documentEdit = buildDocumentEdit(session.did, config, pending.bisetDidCommDevice, previousDevice ? [previousDevice.xKid] : [], retired, rotation.method)
+  } else {
+    if (!previousDevice) throw new Error('Connect the mediator before changing the keys')
+    const remove = change.removeOtherDevices ? await otherDeviceMethodIds(session.did, previousDevice.xKid) : []
+    if (change.removeOtherDevices && remove.length === 0) throw new Error('There are no other devices to remove')
+    const rotation = await rotationCandidate('replace')
+    pending.rotationSeedCandidate = rotation.sealed
+    pending.documentEdit = buildDocumentEdit(session.did, config, previousDevice, remove, [], rotation.method)
+  }
+  return submitToWallet(client, pending)
+}
 /** The relationship seed whose rotation key a Wallet approval published for
  * this session, until this device has stored it in its Vault. `forget()`
  * once it is stored (or found to be no longer the identity's). */
