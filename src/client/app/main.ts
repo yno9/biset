@@ -219,13 +219,20 @@ async function editDocument(change: DidMdDocumentChange, config: ReturnType<type
   await bootClient(await beginDidMdDocumentEdit(change, config))
 }
 
+// Boot timing (console.debug "[boot] ..."): how long each wait before the app shows takes.
+const bootStartedAt = performance.now()
+async function timed<T>(label: string, work: Promise<T>): Promise<T> {
+  const startedAt = performance.now()
+  try { return await work } finally { console.debug(`[boot] ${label} +${Math.round(performance.now() - startedAt)}ms (at ${Math.round(performance.now() - bootStartedAt)}ms)`) }
+}
+
 async function configureWalletAccountIfPresent(
   callbackSession?: Awaited<ReturnType<typeof completeDidMdWalletCallback>>,
 ): Promise<boolean> {
   let session = callbackSession
   if (!session) {
     try {
-      session = await restoreDidMdWalletSession()
+      session = await timed('restoreDidMdWalletSession', restoreDidMdWalletSession())
     } catch (error) {
       console.warn('[did.md Wallet restore]', error instanceof Error ? error.message : error)
       return false
@@ -244,17 +251,17 @@ async function configureWalletAccountIfPresent(
   try {
     const config = readBisetConfig()
     const { mediatorUrls } = config
-    const device = await openDidMdWalletVaultDevice()
-    const vaultStore = await IndexedDbVaultStore.open()
+    const device = await timed('openDidMdWalletVaultDevice', openDidMdWalletVaultDevice())
+    const vaultStore = await timed('IndexedDbVaultStore.open', IndexedDbVaultStore.open())
     let vaultSync: VaultSyncClient | undefined
-    let deviceEvents = await vaultStore.readVaultEvents(device.did)
+    let deviceEvents = await timed('readVaultEvents', vaultStore.readVaultEvents(device.did))
     // This identity's devices are the keyAgreement keys its DID document
     // lists now. Historical event actors are audit history, not devices:
     // using them here made every past login remain in the UI.
     let currentVaultDeviceKid: string | undefined
     let currentVaultDeviceKids: string[] = []
     const refreshVaultDevices = async () => {
-      currentVaultDeviceKids = await resolveOwnDeviceKids(device.did)
+      currentVaultDeviceKids = await timed('resolveOwnDeviceKids', resolveOwnDeviceKids(device.did))
     }
     const vaultDevices = () => currentVaultDeviceKids
       .map(deviceId => ({ deviceId, current: deviceId === currentVaultDeviceKid }))
@@ -262,7 +269,7 @@ async function configureWalletAccountIfPresent(
     const boundary = buildWalletVaultCryptoBoundary(vaultStore, { did: device.did, deviceId: device.deviceId })
     const readModel = buildLocalJmapReadModel(vaultStore, device.did)
     const vaultProjector = new VaultProjector(vaultStore, boundary.resolver)
-    const sequencer = await buildActorSequencer(vaultStore, device.did, device.deviceId)
+    const sequencer = await timed('buildActorSequencer', buildActorSequencer(vaultStore, device.did, device.deviceId))
     const mutationSink = new VaultBackedLocalJmapMutationSink({
       accountId: `biset:${device.did}`,
       identityId: device.did,
@@ -299,7 +306,7 @@ async function configureWalletAccountIfPresent(
     const markdownDirectories = await MarkdownDirectoryConnection.open()
     const markdownGuard = new MarkdownSelfWriteGuard()
     let sendMarkdownDraft: ((file: MarkdownMirrorFile) => Promise<void>) | undefined
-    let markdownRoot = await markdownDirectories.restore(device.did)
+    let markdownRoot = await timed('markdownDirectories.restore', markdownDirectories.restore(device.did))
     let markdownObserver: { disconnect(): void; supported: boolean } | undefined
     const startMarkdownMirror = async (root: FileSystemDirectoryHandle): Promise<void> => {
       markdownObserver?.disconnect()
@@ -416,7 +423,7 @@ async function configureWalletAccountIfPresent(
     // path, which normally loads this projection.  Restore the existing
     // local inbox before rendering so a page reload never looks like it
     // discarded a Wallet account's encrypted history.
-    await refreshInbox(readModel).catch(error => console.warn('[did.md Wallet inbox restore]', error))
+    await timed('refreshInbox(restore)', refreshInbox(readModel).catch(error => console.warn('[did.md Wallet inbox restore]', error)))
 
     vault = { state: 'checking', coordinatorUrl: 'didcomm', vaultId: device.did as never, detail: 'Connecting encrypted Vault sync', devices: vaultDevices() }
     // DIDComm has its own X25519 leaf, never the MLS signing leaf and never
@@ -427,7 +434,7 @@ async function configureWalletAccountIfPresent(
     // otherwise healthy Vault sync look unavailable. It has its own sealed
     // device material and its registration is deliberately best-effort.
     try {
-      const didCommDevice = await openDidMdWalletBisetDidCommDevice()
+      const didCommDevice = await timed('openDidMdWalletBisetDidCommDevice', openDidMdWalletBisetDidCommDevice())
         if (didCommDevice) {
         try {
         // URL serialization is canonical at the Wallet boundary (an origin
@@ -439,7 +446,7 @@ async function configureWalletAccountIfPresent(
         })
         if (!configuredMediator) throw new Error('Wallet-authorized mediator is not configured by this Biset deployment')
         currentVaultDeviceKid = didCommDevice.xKid
-        await refreshVaultDevices()
+        await timed('refreshVaultDevices', refreshVaultDevices())
         if (!currentVaultDeviceKids.includes(didCommDevice.xKid)) {
           throw new Error('This device is no longer listed in your DID document; reconnect did.md Wallet')
         }
@@ -457,12 +464,12 @@ async function configureWalletAccountIfPresent(
         )
         let mediator: Awaited<ReturnType<typeof registerWithMediator>>
         try {
-          mediator = await registerWithMediator(activeMediatorUrl, frontDoorInbox)
+          mediator = await timed('registerWithMediator', registerWithMediator(activeMediatorUrl, frontDoorInbox))
         } catch (error) {
           if (activeMediatorUrl === didCommDevice.mediatorUrl) throw error
           console.warn('[did.md Wallet DIDComm register] onion entrance unreachable, falling back to canonical', error instanceof Error ? error.message : error)
           activeMediatorUrl = didCommDevice.mediatorUrl
-          mediator = await registerWithMediator(activeMediatorUrl, frontDoorInbox)
+          mediator = await timed('registerWithMediator', registerWithMediator(activeMediatorUrl, frontDoorInbox))
         }
         if (mediator.xKid !== didCommDevice.routingKid) throw new Error('Mediator routing key changed since Wallet authorization; enable messaging again')
         didComm = { xKid: didCommDevice.xKid, mediatorUrl: didCommDevice.mediatorUrl }
@@ -479,8 +486,8 @@ async function configureWalletAccountIfPresent(
           },
           // Sized to what this identity's mediator says it takes; a mediator
           // that does not say gets the conservative default.
-          vaultSyncChunkBytes(await discoverMaxReceiveBytes(mediator, frontDoorInbox).catch(() => undefined)))
-        await refreshInbox(readModel)
+          vaultSyncChunkBytes(await timed('discoverMaxReceiveBytes', discoverMaxReceiveBytes(mediator, frontDoorInbox).catch(() => undefined))))
+        await timed('refreshInbox', refreshInbox(readModel))
         // Mediator registration and the transport above are both live at
         // this point; nothing past here can throw its way back to the
         // 'checking' state left set above, so mark the card connected now
@@ -501,10 +508,10 @@ async function configureWalletAccountIfPresent(
           seeds: walletSeedReader,
           readLog: async () => (await fetchCurrentLog(device.did, freshFetch())).entries,
         })
-        await storeApprovedRotationSeed(device.did, walletSeedReader, walletSeedSink, seedAuthority)
+        await timed('storeApprovedRotationSeed', storeApprovedRotationSeed(device.did, walletSeedReader, walletSeedSink, seedAuthority))
           .catch(error => console.warn('[did.md Wallet relationship seed]', error instanceof Error ? error.message : error))
         try {
-          const status = await seedAuthority.status()
+          const status = await timed('seedAuthority.status', seedAuthority.status())
           if (status.state === 'unpublished' || status.state === 'lost' || status.state === 'stale') rotationKeyState = status.state
           else if (status.state === 'pending') console.info('[did.md Wallet] waiting for the relationship seed from another device')
         } catch (error) {
@@ -629,7 +636,7 @@ async function configureWalletAccountIfPresent(
               // document just before sending this sync message. Re-resolve the
               // public device list instead of deriving it from event history.
               if (vault) {
-                await refreshVaultDevices()
+                await timed('refreshVaultDevices', refreshVaultDevices())
                 updateRememberedVaultCard(
                   { ...vault, devices: vaultDevices() },
                   { current: () => vault, remember: status => { vault = status } },
@@ -664,7 +671,7 @@ async function configureWalletAccountIfPresent(
                     identityId: device.did, records: vaultStore, resolver: boundary.resolver,
                   })
                   await vaultStore.writeProjection(device.did, projection, { state: projection.state })
-                  await refreshInbox(readModel)
+                  await timed('refreshInbox', refreshInbox(readModel))
                   // A sibling may have started a move: watch its inbox here too.
                   await rotationManager.sync()
                 } catch (error) {
@@ -928,7 +935,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
   // not immediately refresh that brand-new session again: a transient
   // refresh/propagation failure used to clear it and make a successful
   // Vault rotation look exactly like a logout.
-  if (await configureWalletAccountIfPresent(completedWalletEdit)) {
+  if (await timed('configureWalletAccountIfPresent (total)', configureWalletAccountIfPresent(completedWalletEdit))) {
     // NOT showAccountPage() here -- this branch also runs on a plain page
     // refresh/reload (the module-level `bootClient()` call at the bottom of
     // this file), which has an existing session and nothing to do with
