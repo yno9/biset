@@ -71,6 +71,8 @@ export interface DitoEmbed {
    * (`vp_token`, `id_token`, `state`, `iss`), the same fields the callback URL would carry.
    */
   approve(request: string): Promise<URLSearchParams>
+  /** The page could not prepare the request it announced: the frame's button stops working. */
+  cancel(): Promise<void>
 }
 
 export function mountDito(frame: HTMLIFrameElement, origin: string, mode: DitoMode, handlers: DitoEmbedHandlers = {}): Promise<DitoEmbed> {
@@ -92,6 +94,7 @@ export function mountDito(frame: HTMLIFrameElement, origin: string, mode: DitoMo
         for (const [name, value] of Object.entries(result?.response ?? {})) if (typeof value === 'string') params.set(name, value)
         return params
       },
+      async cancel() { await call('wallet.cancel', {}) },
     }
     const timer = setTimeout(() => {
       removeEventListener('message', onMessage)

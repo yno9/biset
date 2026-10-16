@@ -202,9 +202,11 @@ export function setupNewUserPage(): void {
           const session = await completeDidMdWalletCallback(response)
           if (!session) return
           showWalletSession(session)
-          walletResult(`Connected ${session.handle}. This browser can restore its DPoP-bound session without reopening Wallet.`)
           await onWalletConnected?.(session)
-        })().catch(error => walletResult(error instanceof Error ? error.message : String(error), true))
+        })().catch(error => {
+          void ditoEmbed?.cancel().catch(() => {})
+          walletResult(error instanceof Error ? error.message : String(error), true)
+        })
       },
       creating: handle => {
         const config = readBisetConfig()
