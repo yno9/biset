@@ -25,7 +25,7 @@ import { DIDCOMM_GROUP_THREAD_PREFIX, groupMessages } from './message/message-vi
 import type { ThreadGroup } from './message/message-view.ts'
 import { avatarStyle, esc, previewText } from './format.ts'
 import { getFocusedThreadKey, groupMembersLabel, inboxKeyOf, render, setFocusedThreadKey } from './thread.ts'
-import { hideAccountPage, hideConfigPage, inAccountMode, inConfigMode, showAccountPage, showConfigPage } from './account-page.ts'
+import { hideAccountPage, hideConfigPage, inAccountMode, inConfigMode, showAccountPage, showConfigPage } from './account-page.tsx'
 import { hideComposePage, inComposeMode, showComposePage } from './compose-page.ts'
 import { labelForDid } from './did-display.ts'
 

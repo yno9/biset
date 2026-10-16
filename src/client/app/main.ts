@@ -26,7 +26,7 @@ import {
 import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
 import { configureCompose } from './ui/thread.ts'
 import type { ReplySendInput } from './ui/thread.ts'
-import { configureAccountPage, configureMarkdownVaultToggle, showAccountPage, updateVaultCardStatus, type VaultCardStatus } from './ui/account-page.ts'
+import { configureAccountPage, configureMarkdownVaultToggle, showAccountPage, updateVaultCardStatus, type VaultCardStatus } from './ui/account-page.tsx'
 import { configureComposePage } from './ui/compose-page.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { installDitoApprover } from '../identity/wallet/dito-approve.ts'
@@ -73,7 +73,7 @@ import { OpenPgpCredentialReader, OpenPgpCredentialSink } from '../store/vault/o
 import { generatePgpKey, importPgpKey, keyNamesAddress, readPgpKey } from '../pgp/keyring.ts'
 import { ensureOwnPgpKey } from '../pgp/auto.ts'
 import { publishPgpKey } from '../pgp/publish.ts'
-import type { PgpCardConfig } from './ui/account/pgp-card.ts'
+import type { PgpCardConfig } from './ui/account/pgp-card.tsx'
 import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
 
 let mediatorPollHandles: MediatorPollHandle[] = []

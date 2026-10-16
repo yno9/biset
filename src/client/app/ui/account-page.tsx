@@ -32,9 +32,10 @@ import { resolve } from '../../../protocol/webvh/resolver.ts'
 import { shortWebvhDid } from './did-display.ts'
 import { showComposePage } from './compose-page.ts'
 import { mountNewUserPageInline, unmountNewUserPageInline, setupNewUserPage } from './account-create.ts'
-import { getAccountConfig, type AccountPageConfig, type VaultCardStatus } from './account/state.ts'
+import { accountConfig, getAccountConfig, type VaultCardStatus } from './account/state.ts'
 import { openDropdownMenu, type MenuItem } from './account/menu.ts'
-import { renderPgpCard } from './account/pgp-card.ts'
+import { AccountList } from './account/account-list.tsx'
+import { mountInto } from '../react/island.tsx'
 
 // The page's own state and markup live here; the pieces below were split out
 // (2026-09-05) into ./account/ by concern -- config state + the config types
@@ -55,8 +56,14 @@ let active = false
 export function updateVaultCardStatus(status: VaultCardStatus): void {
   const config = getAccountConfig()
   if (!config?.did) return
-  config.vault = status
-  if (active) renderMediatorCard()
+  accountConfig.set({ ...config, vault: status })
+}
+
+// The React part of the page (under the identity card) is rebuilt with the card.
+let unmountAccountList: (() => void) | undefined
+function dropAccountList(): void {
+  unmountAccountList?.()
+  unmountAccountList = undefined
 }
 
 export function inAccountMode(): boolean {
@@ -145,231 +152,6 @@ const PAGE_HTML = `<div class="cmd-page-content wide-page">
   <button id="cmd-acc-compose-fab" class="compose-fab" type="button" aria-label="Compose" title="Compose"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
 </div>`
 
-function coordinatorHost(url: string): string {
-  try { return new URL(url).host } catch { return url }
-}
-
-/** The mediator is the account's one service card. Its accordion contains
- * the identity's device roster (its DID document's keyAgreement keys). */
-function renderMediatorCard(): void {
-  const config = getAccountConfig()
-  const wallet = config?.wallet
-  const list = document.getElementById('cmd-acc-list')
-  if (!list) return
-  const wasExpanded = document.getElementById('cmd-acc-mediator-card')?.classList.contains('expanded') ?? false
-  list.replaceChildren()
-  if (!wallet?.didComm) return
-
-  const wrap = document.createElement('div')
-  wrap.className = 'acc-card-wrap'
-  wrap.id = 'cmd-acc-mediator-card'
-  if (wasExpanded) wrap.classList.add('expanded')
-  const row = document.createElement('div')
-  row.className = 'cmd-page-row'
-  row.style.cssText = 'gap:12px;align-items:center;padding:10px 12px'
-  const left = document.createElement('div')
-  left.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:4px'
-  const head = document.createElement('div')
-  head.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0'
-  const dot = document.createElement('span')
-  const loggedOut = wallet.didComm.loggedOut === true
-  dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${wallet.didComm.error ? '#ff3b30' : loggedOut ? '#8e8e93' : '#34c759'}`
-  const title = document.createElement('span')
-  title.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--accent2, #888);flex-shrink:0'
-  title.textContent = 'Mediator'
-  const sep = document.createElement('span')
-  sep.style.cssText = 'color:var(--text-dim);flex-shrink:0'
-  sep.textContent = ':'
-  const endpoint = document.createElement('span')
-  endpoint.style.cssText = 'font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
-  endpoint.textContent = coordinatorHost(wallet.didComm.mediatorUrl)
-  head.append(dot, title, sep, endpoint)
-
-  const stats = document.createElement('div')
-  stats.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:var(--text-dim)'
-  const state = document.createElement('span')
-  state.textContent = wallet.didComm.error ? `Needs attention: ${wallet.didComm.error}` : loggedOut ? 'Logged out' : 'Registered'
-  state.style.color = wallet.didComm.error ? '#ff3b30' : ''
-  stats.appendChild(state)
-  left.append(head, stats)
-  row.appendChild(left)
-
-  let removingOtherDevices = false
-  const removeOtherDevices = (): void => {
-    if (removingOtherDevices || !config?.onRemoveOtherDevices) return
-    if (!confirm('Remove all other devices? They will need to sign in again. Content they already received cannot be revoked.')) return
-    removingOtherDevices = true
-    devices.querySelectorAll<HTMLButtonElement>('.acc-device-removable').forEach(button => { button.disabled = true })
-    void config.onRemoveOtherDevices()
-      .then(() => getAccountConfig()?.showMessage?.('Other devices removed'))
-      .catch(error => {
-        removingOtherDevices = false
-        devices.querySelectorAll<HTMLButtonElement>('.acc-device-removable').forEach(button => { button.disabled = false })
-        getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
-      })
-  }
-
-  // Same "⋮" affordance as the identity heading's own menu button.
-  const menuBtn = document.createElement('button')
-  menuBtn.type = 'button'
-  menuBtn.setAttribute('aria-label', 'Mediator menu')
-  menuBtn.style.cssText = 'flex-shrink:0;background:none;border:none;cursor:pointer;color:var(--text-dim);padding:4px'
-  menuBtn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>'
-  menuBtn.addEventListener('click', event => {
-    event.stopPropagation()
-    const didComm = wallet.didComm!
-    openDropdownMenu(menuBtn, loggedOut ? [
-      {
-        label: 'Log in', onClick: () => {
-          void wallet.onEnableMessaging?.().catch(error => {
-            getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
-          })
-        },
-      },
-    ] : [
-      {
-        label: 'Edit server', onClick: () => {
-          const url = window.prompt('DIDComm mediator URL', didComm.mediatorUrl)
-          // The same URL republishes the endpoint as configured now (an older
-          // form in the document becomes the mediator's DID); no change of URL needed.
-          if (!url) return
-          void wallet.onEditMediator?.(url).catch(error => {
-            getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
-          })
-        },
-      },
-      {
-        label: 'Enable Tor', onClick: () => {
-          const onionUrl = window.prompt('DIDComm mediator Onion URL', didComm.onionUrl ?? '')?.trim()
-          if (!onionUrl) return
-          void wallet.onEnableTor?.(onionUrl).catch(error => {
-            getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
-          })
-        },
-      },
-      {
-        label: 'Log out', danger: true, onClick: () => {
-          if (!confirm(`Unregister this browser from ${coordinatorHost(didComm.mediatorUrl)}? DIDComm messages will stop delivering here until you register again.`)) return
-          void wallet.onLogOutMediator?.().catch(error => {
-            getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
-          })
-        },
-      },
-    ])
-  })
-  row.appendChild(menuBtn)
-
-  const panel = document.createElement('div')
-  panel.className = 'acc-storage-panel'
-  const panelHeader = document.createElement('div')
-  panelHeader.className = 'acc-storage-header'
-  const panelTitle = document.createElement('span')
-  panelTitle.className = 'acc-storage-title'
-  panelTitle.textContent = 'Devices'
-  panelHeader.appendChild(panelTitle)
-  const devices = document.createElement('div')
-  devices.className = 'acc-device-list'
-  const roster = [...(config?.vault?.devices ?? [])].sort((a, b) => Number(b.current) - Number(a.current))
-  if (!roster.length) {
-    const empty = document.createElement('div')
-    empty.className = 'acc-device-empty'
-    empty.textContent = 'No devices available'
-    devices.appendChild(empty)
-  }
-  for (const device of roster) {
-    const removable = !device.current && Boolean(config?.onRemoveOtherDevices)
-    const line = document.createElement(removable ? 'button' : 'div')
-    line.className = 'acc-device-row'
-    if (line instanceof HTMLButtonElement) {
-      line.type = 'button'
-      line.classList.add('acc-device-removable')
-      line.setAttribute('aria-label', `Remove other devices, including ${device.deviceId}`)
-      line.addEventListener('click', removeOtherDevices)
-    }
-    const id = document.createElement('span')
-    id.className = 'acc-device-label'
-    const fragment = device.deviceId.includes('#') ? device.deviceId.slice(device.deviceId.indexOf('#')) : device.deviceId
-    id.textContent = fragment.length > 18 ? `${fragment.slice(0, 10)}…` : fragment
-    id.title = device.deviceId
-    line.appendChild(id)
-    if (device.lastActivity) {
-      const activity = document.createElement('span')
-      activity.textContent = new Date(device.lastActivity).toLocaleString()
-      activity.className = 'acc-device-activity'
-      line.appendChild(activity)
-    }
-    if (device.current) {
-      const tag = document.createElement('span')
-      tag.textContent = 'this device'
-      tag.className = 'acc-device-current'
-      line.appendChild(tag)
-    } else if (removable) {
-      const trash = document.createElement('span')
-      trash.className = 'acc-device-trash'
-      trash.setAttribute('aria-hidden', 'true')
-      trash.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg>'
-      line.appendChild(trash)
-    }
-    devices.appendChild(line)
-  }
-  devices.addEventListener('pointerover', event => {
-    const target = event.target
-    devices.classList.toggle('remove-preview', target instanceof Element && Boolean(target.closest('.acc-device-removable')))
-  })
-  devices.addEventListener('pointerleave', () => devices.classList.remove('remove-preview'))
-  panel.append(panelHeader, devices)
-  wrap.append(row, panel)
-  row.addEventListener('click', () => wrap.classList.toggle('expanded'))
-  list.appendChild(wrap)
-  // What needs the user's attention about this account, below its card.
-  const notice = config?.rotationKey && renderDidCommKeyNotice(config.rotationKey)
-  if (notice) list.appendChild(notice)
-  if (config?.pgp) list.appendChild(renderPgpCard(config.pgp, text => getAccountConfig()?.showMessage?.(text)))
-}
-
-/** The system message card for the DIDComm key (relationship-seed-bootstrap.ts):
- * "Your DIDComm key needs to be renewed", the link starting the one Wallet
- * approval that publishes a fresh one. It stays until the key is in order. */
-function renderDidCommKeyNotice(rotationKey: NonNullable<ReturnType<typeof getAccountConfig>>['rotationKey'] & object): HTMLElement {
-  const card = document.createElement('div')
-  card.className = 'acc-notice'
-  card.id = 'cmd-acc-didcomm-key-notice'
-  card.setAttribute('role', 'status')
-  const dot = document.createElement('span')
-  dot.className = 'acc-notice-dot'
-  const body = document.createElement('div')
-  body.className = 'acc-notice-body'
-  const title = document.createElement('div')
-  title.className = 'acc-notice-title'
-  const link = document.createElement('a')
-  link.className = 'acc-notice-link'
-  link.href = '#renew-didcomm-key'
-  link.textContent = 'renewed'
-  link.addEventListener('click', event => {
-    event.preventDefault()
-    if (link.getAttribute('aria-disabled') === 'true') return
-    link.setAttribute('aria-disabled', 'true')
-    void rotationKey.onRenew().catch(error => {
-      link.removeAttribute('aria-disabled')
-      getAccountConfig()?.showMessage?.(error instanceof Error ? error.message : String(error))
-    })
-  })
-  title.append('Your DIDComm key needs to be ', link, '.')
-  const detail = document.createElement('div')
-  detail.className = 'acc-notice-detail'
-  detail.textContent = DIDCOMM_KEY_REASON[rotationKey.state]
-  body.append(title, detail)
-  card.append(dot, body)
-  return card
-}
-
-/** Why, in the user's words (the states are relationship-seed-bootstrap.ts's). */
-const DIDCOMM_KEY_REASON = {
-  unpublished: 'Your account has no DIDComm key yet. It lets your devices keep a conversation private.',
-  lost: 'None of your devices has it any more.',
-  stale: 'A device you removed may still have it.',
-} as const
-
 export function showAccountPage(): void {
   const activeEl = document.getElementById('active-thread')
   const past = document.getElementById('past-threads')
@@ -377,6 +159,7 @@ export function showAccountPage(): void {
   const config = getAccountConfig()
   if (!activeEl || !config) return
   active = true
+  dropAccountList()
   app?.setAttribute('data-menu-page', '/account')
   if (past) past.innerHTML = ''
 
@@ -428,7 +211,8 @@ export function showAccountPage(): void {
   card.innerHTML = PAGE_HTML
   activeEl.innerHTML = ''
   activeEl.appendChild(card)
-  renderMediatorCard()
+  const list = document.getElementById('cmd-acc-list')
+  if (list) unmountAccountList = mountInto(list, <AccountList />)
 
   const nameEl = document.getElementById('cmd-acc-identity-name')
   const didEl = document.getElementById('cmd-acc-identity-did')
@@ -529,6 +313,7 @@ export function showAccountPage(): void {
 export function hideAccountPage(): void {
   if (!active) return
   active = false
+  dropAccountList()
   document.getElementById('app')?.removeAttribute('data-menu-page')
   const convMeta = document.getElementById('conv-meta')
   if (convMeta) convMeta.style.display = ''
