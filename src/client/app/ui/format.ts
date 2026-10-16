@@ -1,6 +1,6 @@
 // Display helpers ported unchanged from src.bak/utils.ts -- only the pure,
-// dependency-free subset thread.ts needs (esc/linkify/formatTime/stripQuoted/
-// avatarStyle). Left out: everything DID/route/contact-addressed (inboxToHash,
+// dependency-free subset the mail UI needs (esc/linkify/formatTime/stripQuoted/
+// avatarColor). Left out: everything DID/route/contact-addressed (inboxToHash,
 // firstServiceEndpoint, expandDualRelay, etc.) -- none of that exists in this
 // rewrite yet, and none of it is a display concern.
 
@@ -43,4 +43,3 @@ export function avatarColor(name: string): string {
   return palette[Math.abs(h) % palette.length]!
 }
 
-export function avatarStyle(name: string): string { return `background:${avatarColor(name)}` }

@@ -1,53 +1,43 @@
-// Ported at the flow level from src.bak/ui/shell.ts (443 lines), cut to the
-// two things a read-only slice needs: dismissing the unlock/loading overlay
-// once an identity's local vault is open, and a manual refresh (this slice
-// has no incremental sync yet, so "refresh" is loadMessages' full reload,
-// not a poll loop -- see PLAN.md §7's plan). Left out: everything
-// send/compose (addPendingMessage and friends), the mobile-column
-// MutationObserver, and every relay/session/DIDComm import shell.ts used only
-// for those.
-import { loadMessages, render, setupScrollButtons } from './thread.ts'
-import { renderLeftList, setupLeftPane } from './left-pane.ts'
+// What the rest of the app calls to drive the mail UI: show it, and refresh what it lists.
 import type { LocalJmapReadModel } from '../../store/projection/gateway.ts'
-
-export function showApp(): void {
-  // #app is src.bak's own mail-UI container (id restored as-is 2026-08-24,
-  // see PLAN.md §7's progress log) -- distinct from #overlay, which this
-  // rewrite has no use for (no unlock step yet: record-store.ts's secrets
-  // are still plaintext, so there's nothing to wait on between "identity
-  // found" and showing mail).
-  const $app = document.getElementById('app')
-  if ($app) $app.style.display = 'flex'
-  setupLeftPane()
-  setupScrollButtons()
-  render()
-  renderLeftList()
-}
-
-// A Wallet session can receive a live DIDComm delivery while its MIMI Vault
-// sync or an outgoing message is refreshing the same projection.  Letting
-// those `loadMessages()` calls overlap permits an older snapshot to repaint
-// the left list after a newer one painted the focused thread.  Serialize the
-// read + both render targets as one UI transaction.
-let inboxRefreshTail: Promise<void> = Promise.resolve()
-
-export function refreshInbox(readModel: LocalJmapReadModel, options: { forceRender?: boolean } = {}): Promise<void> {
-  const task = inboxRefreshTail.then(async () => {
-    await loadMessages(readModel)
-    // Polling refreshes the data model, but must not navigate away from an
-    // explicit menu page. render() repaints #active-thread as a conversation;
-    // calling it while Account/Config/Compose owns that node caused a silent
-    // page switch every ten seconds.
-    if (options.forceRender || !document.getElementById('app')?.hasAttribute('data-menu-page')) {
-      document.getElementById('app')?.removeAttribute('data-menu-page')
-      render()
-    }
-    renderLeftList()
-  })
-  // Keep a rejected refresh observable to its caller without permanently
-  // poisoning the queue for the next successful delivery.
-  inboxRefreshTail = task.catch(() => {})
-  return task
-}
+import { emailToMessageView } from './message/message-view.ts'
+import type { ProcessedMessage } from './message/message-view.ts'
+import { isNarrow, mail, patchShell } from './stores.ts'
 
 export { showSysMsg } from './sys-msg.tsx'
+
+let shown = false
+
+/** Shows the mail UI (an identity is signed in and its vault is open). The left pane starts open or
+ * collapsed as the user left it, on a wide screen. */
+export function showApp(): void {
+  if (!shown) {
+    shown = true
+    try { patchShell({ singleCol: !isNarrow() && localStorage.getItem('lp-open') !== '1' }) } catch { /* private browsing */ }
+  }
+  patchShell({ appShown: true })
+}
+
+// A Wallet session can receive a live DIDComm delivery while its MIMI Vault sync or an outgoing
+// message is refreshing the same projection. Letting those reads overlap permits an older snapshot
+// to land after a newer one, so they run one after another.
+let refreshTail: Promise<void> = Promise.resolve()
+
+/** Replaces the messages shown from a fresh snapshot of the read model. Every locally-committed
+ * message is shown regardless of mailbox: there is no folder/trash/spam concept yet, and a sent
+ * reply lives in outbox then sent, never inbox, so filtering to inbox would make it vanish. */
+export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
+  const task = refreshTail.then(async () => {
+    const snapshot = await readModel.snapshot()
+    const views: ProcessedMessage[] = []
+    for (const email of snapshot.emails) {
+      if (!email.blobId) continue
+      const msg = emailToMessageView(email, await readModel.download(email.blobId))
+      views.push({ msg, bodyText: msg.body })
+    }
+    mail.set({ messages: views })
+  })
+  // A rejected refresh stays observable to its caller without poisoning the queue for the next one.
+  refreshTail = task.catch(() => {})
+  return task
+}

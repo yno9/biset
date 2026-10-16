@@ -50,7 +50,7 @@ export class IndexedDbMlsKeyPackageStore implements MlsKeyPackageStore {
   /** Releases this instance's connection -- every `new IndexedDbMlsKeyPackageStore()`
    * opens its own, and nothing closed any of them anywhere in this codebase
    * until now (vault/store.ts's IndexedDbVaultStore was the one exception,
-   * logout()'s own vaultStore.close()). A signup retry (account-create.ts's
+   * logout()'s own vaultStore.close()). A signup retry (the new-user page's
    * submit handler creates a fresh instance per attempt) or a logout/
    * re-login cycle left the old connection open indefinitely otherwise --
    * found live, 2026-08-26: after several logout/signup cycles in one tab,

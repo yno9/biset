@@ -1,4 +1,4 @@
-// Single source for reading window.__BISET_CONFIG__ -- account-create.ts and
+// Single source for reading window.__BISET_CONFIG__ -- the new-user page and
 // main.ts each need apexDomain, so this is read in one place
 // rather than two copies of the same window-global reach-through drifting
 // apart.

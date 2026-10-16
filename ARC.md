@@ -679,8 +679,15 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - `pnpm build` — Vite（`vite.config.ts`、`vite-plugin-singlefile`）が `src/client/app/index.html` の script と style を inline 化した
   単一ファイル `dist/index.html` を作り、`sw.ts` は esbuild で別ファイル `dist/sw.js` に bundle する（Service Worker は inline できない）。
   外部の module script は `file://` では CORS で止まるため、単一ファイルであることが `file://` で動く前提になる。検証は `file://` の `dist/index.html` で行う。
-- 画面は React（`src/client/app/react/`、`ui/*.tsx`）へ 1 画面ずつ移行中。素の DOM のページ内の node に島（`mountIsland`）として載せ、ロジックから画面へは
-  `createStore` / `useStore`（`react/store.ts`）で渡す。最初の島は system toast（`ui/sys-msg.tsx`）。画面のテストは vitest + Testing Library（`test/ui/*.test.tsx`）。
+- 画面は全部 React（19）。`index.html` は `<div id="root">` だけで、`ui/app.tsx` の `App` が全体を描く（`mountApp`）。
+  - **状態はストア**（`react/store.ts` の `createStore` / `useStore`）: `ui/stores.ts`（`mail` = メッセージ、`shell` = 開いているスレッド・左ペイン・検索・展開行・キーボードのカーソル）、
+    `ui/state.ts`（`uiPage` = thread | account | config | compose）、`ui/account/state.ts`（`accountConfig`）、`ui/reply-box.tsx`（`composeConfig`）。ロジック（`main.ts`）はここへ書き、画面は購読する。
+  - **ロジックから画面を動かす入口**: `ui/shell.ts`（`showApp` / `refreshInbox`）、`ui/pages/index.ts`（`showAccountPage` ほか）、`configureCompose` / `configureAccountPage` / `configureComposePage`。
+  - **画面**: 左ペイン `ui/left-pane.tsx`、右カラム `ui/right-col.tsx`（タイトル行・過去スレッド・会話メタ・リプライドック・スクロール）、ページ `ui/page-host.tsx` →
+    `ui/thread-page.tsx` / `ui/pages/{account,config,compose}-page.tsx` / `new-user-page.tsx`（dito の iframe 含む）、`ui/account/account-list.tsx`、`ui/hamburger-menu.tsx`、`ui/scroll-buttons.tsx`。
+  - スレッド・一覧の計算は純関数（`ui/thread-model.ts`、`ui/message/message-view.ts`）。スクロールの寸法合わせだけ DOM を直接測る（`ui/scroll.ts`）。
+  - 見た目の CSS は id / class のまま（`style.css`）。DOM を変えるときは、旧版との比較（同じ偽データで DOM とスクリーンショットを突き合わせる）で確かめた。
+  - テストは vitest + Testing Library（`test/ui/*.test.tsx`）。
 - `pnpm dev` は Vite の dev サーバー（:3000、HMR）。`/sw.js` と `/config.json` はそこで配る。
 - 実行時設定は `window.__BISET_CONFIG__`（`ui/config.ts` が読む唯一の場所。`config.json`（`BISET_CONFIG` で別の設定）を Vite の plugin が head に埋め込む。
   出力先は `BISET_OUT_DIR`、mail.did.md は `BISET_CONFIG=ops/mail-did-md/config.json BISET_OUT_DIR=dist-mail`）。

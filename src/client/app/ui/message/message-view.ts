@@ -183,16 +183,14 @@ export interface ThreadGroup {
   messages: ProcessedMessage[]
 }
 
-export const processedMessages: ProcessedMessage[] = []
-
 function messageKey(msg: { message_id?: string; from: string; ts: number }): string {
   return msg.message_id || `${msg.from}:${msg.ts}`
 }
 
-export function groupMessages(): ThreadGroup[] {
-  const keys = computeThreadKeys(processedMessages.map(p => p.msg))
+export function groupMessages(messages: readonly ProcessedMessage[]): ThreadGroup[] {
+  const keys = computeThreadKeys(messages.map(p => p.msg))
   const groups = new Map<string, ThreadGroup>()
-  for (const p of processedMessages) {
+  for (const p of messages) {
     const k = keys.get(nodeId(p.msg)) ?? nodeId(p.msg)
     if (!groups.has(k)) groups.set(k, { key: k, subject: '', messages: [] })
     groups.get(k)!.messages.push(p)

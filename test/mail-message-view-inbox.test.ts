@@ -2,7 +2,7 @@
 // and a group chat from the same person landed in ONE inbox row (as two
 // threads), because both are keyed on who the messages came from.
 import { describe, expect, test } from 'vitest'
-import { DIDCOMM_GROUP_THREAD_PREFIX, groupMessages, inboxKeyForThread, processedMessages } from '../src/client/app/ui/message/message-view.ts'
+import { DIDCOMM_GROUP_THREAD_PREFIX, groupMessages, inboxKeyForThread } from '../src/client/app/ui/message/message-view.ts'
 
 describe('inboxKeyForThread', () => {
   const c8de = 'did:webvh:QmUKjahfVxnJHfj9iiWurMh6XF4umMdNvnqASv1LdAsNme:c8de.did.md'
@@ -30,13 +30,12 @@ describe('a thread\'s title', () => {
   })
 
   test('is the earliest message that has a subject, whatever order this device loaded them in; none when no message has one', () => {
-    processedMessages.length = 0
     // Loaded newest first, as a second device may receive them.
-    processedMessages.push(message(3, 'later title', 'didcomm-group:g1'), message(1, 'first title', 'didcomm-group:g1'), message(2, '', 'didcomm-group:g1'))
-    processedMessages.push(message(5, '', 'didcomm-group:g2'))
-    const groups = groupMessages()
+    const groups = groupMessages([
+      message(3, 'later title', 'didcomm-group:g1'), message(1, 'first title', 'didcomm-group:g1'), message(2, '', 'didcomm-group:g1'),
+      message(5, '', 'didcomm-group:g2'),
+    ])
     expect(groups.find(g => g.messages[0]!.msg.thread_id === 'didcomm-group:g1')!.subject).toBe('first title')
     expect(groups.find(g => g.messages[0]!.msg.thread_id === 'didcomm-group:g2')!.subject).toBe('')
-    processedMessages.length = 0
   })
 })

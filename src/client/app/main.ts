@@ -23,13 +23,11 @@ import {
   DID_MD_JUST_CONNECTED_KEY,
 } from '../identity/wallet/did-md-oauth.ts'
 import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
-import { configureCompose } from './ui/thread.ts'
-import type { ReplySendInput } from './ui/thread.ts'
+import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
 import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { installDitoApprover } from '../identity/wallet/dito-approve.ts'
-import { mountSysMsg } from './ui/sys-msg.tsx'
-import { mountPageHost } from './ui/page-host.tsx'
+import { mountApp } from './ui/app.tsx'
 import { VaultBackedLocalJmapMutationSink } from '../store/projection/vault-mutation-sink.ts'
 import { DidCommIngressProjector, isProjectableDidCommIngress } from '../didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from '../../protocol/didcomm/webvh-resolve.ts'
@@ -84,7 +82,7 @@ function chooseFile(): Promise<Uint8Array> { return new Promise((resolve, reject
  * New-client bootstrap. The only branch this makes is "does this device
  * already have an identity locally": with none, this lands on the account
  * page in its zero-identity state (the signup form mounted inline --
- * account-page.ts's own showAccountPage) -- src.bak's ACTUAL default page
+ * the account page's own showAccountPage) -- src.bak's ACTUAL default page
  * whenever there's no session (`if (!sessions.length) showMenuPage('/account')`),
  * not a separate full-page overlay (corrected 2026-08-25 after drifting into
  * inventing that instead). With one, it opens the vault UI (read model +
@@ -93,7 +91,7 @@ function chooseFile(): Promise<Uint8Array> { return new Promise((resolve, reject
  * begins DIDComm Vault synchronization.
  */
 // Registered once, at module load -- a plain function reference, not an
-// import back into this module (see account-create.ts's own note on why:
+// import back into this module (see pages/new-user-page.tsx's own note on why:
 // this file is the bundle's entry point, and a dynamic `import('../../../main.ts')`
 // there used to make it also reachable via another module's import edge,
 // which silently broke bundling -- bootClient was defined but never invoked).
@@ -103,9 +101,8 @@ function chooseFile(): Promise<Uint8Array> { return new Promise((resolve, reject
 // (`showMenuPage('/account')`), showing the just-created identity's card,
 // not the (empty, since nothing's arrived yet) inbox bootClient's own
 // showApp() renders by default. showAccountPage lives here, not in
-// account-create.ts, for the identical reason bootClient does: importing it
-// from account-create.ts would close the same kind of cycle (account-page.ts
-// already imports FROM account-create.ts for the inline-mount helpers).
+// pages/new-user-page.tsx, for the identical reason bootClient does: importing it from there
+// would close an import cycle.
 setOnWalletConnected(async session => {
   await bootClient(session)
   showAccountPage()
@@ -727,7 +724,7 @@ async function configureWalletAccountIfPresent(
               void vaultSync.push(newlyCommitted)
                 .catch(error => console.warn('[did.md Wallet Vault Sync ingress push]', error instanceof Error ? error.message : error))
             }
-            await refreshInbox(readModel, { forceRender: document.querySelector('#focused-thread-card .t-messages') !== null })
+            await refreshInbox(readModel)
         }
         const watch = watchMediatorLive({
           mediatorUrl: activeMediatorUrl,
@@ -900,7 +897,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
   // stored Wallet capability.  A DID-document edit intentionally makes the
   // old capability's document snapshot stale; refreshing it first used to
   // clear the otherwise valid session and briefly render account creation,
-  // only for account-create.ts to consume the callback and restore it again.
+  // only for the new-user page to consume the callback and restore it again.
   // Callback completion saves the replacement session atomically before the
   // account UI below reads it.
   //
@@ -908,7 +905,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
   // network error) as an unhandled rejection out of the top-level
   // `bootClient()` call at the bottom of this file -- aborting boot before
   // showApp()/showAccountPage() ever ran, leaving a blank page with no
-  // visible error. account-create.ts's own callback handler still gets a
+  // visible error. the new-user page's own callback handler still gets a
   // chance to show the user what went wrong once the account page actually
   // renders below.
   let completedWalletEdit = callbackSession
@@ -982,8 +979,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
   showAccountPage()
 }
 
-mountSysMsg()
-mountPageHost()
+mountApp()
 installDitoApprover()
 /** Keeps the initial public API explicit while account routing is implemented. */
 bootClient()

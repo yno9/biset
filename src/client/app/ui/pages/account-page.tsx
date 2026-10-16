@@ -12,7 +12,6 @@ import { shortWebvhDid } from '../did-display.ts'
 import { avatarColor } from '../format.ts'
 import { setPage } from '../state.ts'
 import { NewUserPage } from './new-user-page.tsx'
-import { usePageChrome } from './page-chrome.ts'
 
 const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
@@ -124,7 +123,6 @@ function IdentityCard({ did }: { did: string }) {
 
 export function AccountPage() {
   const config = useStore(accountConfig)
-  usePageChrome('account')
   if (!config) return null
   // No local identity yet: the account page is the landing page for that state, and its one job is
   // the sign-up form, in place of the identity card.

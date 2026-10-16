@@ -10,12 +10,9 @@ export { setOnWalletConnected } from './new-user-page.tsx'
 
 export const showAccountPage = (): void => { if (getAccountConfig()) setPage('account') }
 export const hideAccountPage = (): void => { if (inPage('account')) setPage('thread') }
-export const inAccountMode = (): boolean => inPage('account')
 
 export const showConfigPage = (): void => { if (getAccountConfig()?.did) setPage('config') }
 export const hideConfigPage = (): void => { if (inPage('config')) setPage('thread') }
-export const inConfigMode = (): boolean => inPage('config')
 
 export const showComposePage = (): void => { if (composeConfigured()) setPage('compose') }
 export const hideComposePage = (): void => { if (inPage('compose')) setPage('thread') }
-export const inComposeMode = (): boolean => inPage('compose')

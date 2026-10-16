@@ -1,7 +1,7 @@
 import type { PgpCardConfig } from './pgp-card.tsx'
 import { createStore } from '../../react/store.ts'
 // The one owner of the account page's module state. Split out of
-// ui/account-page.ts (2026-09-05) when that file was broken up by concern:
+// the account page (2026-09-05) when that file was broken up by concern:
 // the config object below is read by the account page itself, the config
 // page, and the identity modals, so it lives in exactly one place and is
 // reached through getAccountConfig() rather than duplicated into each of
@@ -79,7 +79,7 @@ export interface AccountPageConfig {
   onExportMessages?(): Promise<void>
   onImportMessages?(): Promise<void>
   /** src.bak's showSysMsg (shell.ts) -- injected rather than imported
-   * directly: shell.ts -> left-pane.ts -> account-page.ts already, so an
+   * directly: shell.ts -> pages already, so an
    * import the other way round would close a cycle (main.ts hit the same
    * shape of bug with bootClient itself, 2026-08-25). Used for the DID-copy
    * toast (wireIdentityDid's own "DID copied"). */

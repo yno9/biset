@@ -1,7 +1,6 @@
 // Biset's own configuration. DID controller key material and pre-rotation belong to the did.md
 // Wallet that owns the Master mnemonic, so none of it is represented here.
 import { useState } from 'react'
-import { usePageChrome } from './page-chrome.ts'
 
 interface MarkdownVault { enabled(): boolean; observerSupported(): boolean; toggle(): Promise<void>; rescan(): Promise<void> }
 let markdownVault: MarkdownVault | undefined
@@ -21,7 +20,6 @@ function VaultRow({ vault }: { vault: MarkdownVault | undefined }) {
 }
 
 export function ConfigPage() {
-  usePageChrome('config')
   return (
     <div id="active-thread">
       <div className="cmd-thread-card" id="focused-thread-card">

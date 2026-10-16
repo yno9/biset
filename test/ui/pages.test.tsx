@@ -30,18 +30,6 @@ const account = (over: Partial<AccountPageConfig> = {}): AccountPageConfig => ({
   showMessage: text => { messages.push(text) }, ...over,
 })
 
-// ── page chrome ──────────────────────────────────────────────────────────────
-
-test('a page marks the shell while it is on screen, and lets go when it leaves', () => {
-  const { unmount } = render(<ConfigPage />)
-  expect(document.getElementById('app')!.getAttribute('data-menu-page')).toBe('/config')
-  expect(document.getElementById('header-thread-title')!.textContent).toBe('config')
-  expect(document.getElementById('conv-meta')!.style.display).toBe('none')
-  unmount()
-  expect(document.getElementById('app')!.hasAttribute('data-menu-page')).toBe(false)
-  expect(document.getElementById('conv-meta')!.style.display).toBe('')
-})
-
 // ── compose ──────────────────────────────────────────────────────────────────
 
 const composeConfig = (over = {}) => ({ selfAddress: 'me@did.md', selfDid: 'did:webvh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi:me.did.md', sendMessage: vi.fn(async () => {}), onError: vi.fn(), ...over })

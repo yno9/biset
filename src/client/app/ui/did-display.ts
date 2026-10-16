@@ -1,5 +1,5 @@
-// Shared "how do I show this DID to a human" rule -- account-page.ts (the
-// signed-in identity's own DID) and compose-page.ts (a typed recipient's
+// Shared "how do I show this DID to a human" rule -- the account page (the
+// signed-in identity's own DID) and the compose page (a typed recipient's
 // DID) both need the exact same elision, and duplicating it was already the
 // kind of divergence that bit this codebase once (state.ts/message-view.ts).
 //
@@ -47,10 +47,10 @@ export function labelForDid(did: string): string {
 }
 
 // ── Transport protocol pill ─────────────────────────────────────────────────
-// Shared between compose-page.ts (a typed recipient) and thread.ts (a
+// Shared between pages/compose-page.tsx (a typed recipient) and right-col.tsx (a
 // conversation's actual participants) -- a "to"/participant is either a
 // did:webvh string (DIDComm) or a plain mail address, decided entirely by
-// its shape. thread.ts's own conv-via badge used to hardcode 'Mail'
+// its shape. the thread header's own conv-via badge used to hardcode 'Mail'
 // unconditionally (written before DIDComm chat send existed, never revisited
 // once it did) -- this is the one place that decides, so both readers agree.
 export type Proto = 'mail' | 'did'

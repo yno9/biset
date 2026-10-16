@@ -4,10 +4,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { createStore, useStore } from '../../react/store.ts'
 import { shortWebvhDid, protocolFor, PROTO_COLOR, PROTO_TEXT } from '../did-display.ts'
-import type { ReplySendInput } from '../thread.ts'
+import type { ReplySendInput } from '../reply-box.tsx'
 import type { Proto } from '../did-display.ts'
 import { setPage } from '../state.ts'
-import { usePageChrome } from './page-chrome.ts'
 
 export interface ComposePageConfig {
   selfAddress: string
@@ -33,7 +32,6 @@ const badge = (proto: Proto) => (
 
 export function ComposePage() {
   const config = useStore(composeConfig)
-  usePageChrome('compose')
   const [rows, setRows] = useState<Recipient[]>([{ id: 0, text: '' }])
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
