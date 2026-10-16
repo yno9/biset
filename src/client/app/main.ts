@@ -219,11 +219,11 @@ async function editDocument(change: DidMdDocumentChange, config: ReturnType<type
   await bootClient(await beginDidMdDocumentEdit(change, config))
 }
 
-// Boot timing (console.debug "[boot] ..."): how long each wait before the app shows takes.
+// Boot timing (console.info "[boot] ..."): how long each wait before the app shows takes.
 const bootStartedAt = performance.now()
 async function timed<T>(label: string, work: Promise<T>): Promise<T> {
   const startedAt = performance.now()
-  try { return await work } finally { console.debug(`[boot] ${label} +${Math.round(performance.now() - startedAt)}ms (at ${Math.round(performance.now() - bootStartedAt)}ms)`) }
+  try { return await work } finally { console.info(`[boot] ${label} +${Math.round(performance.now() - startedAt)}ms (at ${Math.round(performance.now() - bootStartedAt)}ms)`) }
 }
 
 async function configureWalletAccountIfPresent(
