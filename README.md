@@ -36,19 +36,23 @@ The previous implementation is retained locally in `src.bak/` and `jmapsmtp.bak/
 
 ## Building and checking
 
+Node 26 and pnpm (`.nvmrc`, `packageManager`); there is no Bun.
+
 ```bash
-bun run build      # bundles the client AND inlines it into dist/index.html
-bun run check      # typecheck + knip + reachability + tests
+pnpm install
+pnpm build      # bundles the client with esbuild AND inlines it into dist/index.html
+pnpm dev        # esbuild --watch + a static server on :3000
+pnpm check      # typecheck + knip + reachability + tests (vitest)
 ```
 
-`bun build` on its own is not enough — `bun run build` is what produces `dist/index.html`.
+`esbuild` on its own is not enough — `pnpm build` is what produces `dist/index.html`.
 Verify the client by opening that file over `file://`.
 
-Server binaries are built separately:
+Servers are each bundled into one `.mjs` that runs on Node 26 (`dist-server/`):
 
 ```bash
-bun run build:didcomm-mediator   # the DIDComm mediator
-bun run build:mimi               # MIMI delivery service
+pnpm build:didcomm-mediator   # the DIDComm mediator
+pnpm build:mimi               # MIMI delivery service
 ```
 
 Mail is not part of Biset: a mail address is reached as the DID a mail bridge

@@ -1,7 +1,7 @@
 // DIDComm Messaging v2.1 requirements beyond X25519 authcrypt/anoncrypt (ARC.md
 // §9.9): HTTP 2xx, A256GCM, the P-256/P-384 key-agreement curves, and signed
 // messages (JWS) with EdDSA, ES256 and ES256K.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { p256, p384 } from '@noble/curves/nist.js'
 import { secp256k1 } from '@noble/curves/secp256k1.js'

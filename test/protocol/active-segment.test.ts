@@ -1,6 +1,6 @@
 // This device's writable segment and the resolver that reads any segment's
 // key back -- its own or one a sibling delivered through Vault Sync.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ActiveVaultSegmentManager } from '../../src/client/store/vault/active-segment.ts'
 import { StoredSegmentKeyResolver } from '../../src/client/store/vault/segment-key-resolver.ts'
 import type { ActiveVaultSegmentStore, VaultSegmentRecord } from '../../src/client/store/vault/store.ts'

@@ -4,20 +4,20 @@
 // inboxes, opaque JWE queues, and replay IDs in one SQLite database.
 import { createMediatorDeployment } from './deployment.ts'
 
-const publicUrl = Bun.env.MEDIATOR_PUBLIC_URL
+const publicUrl = process.env.MEDIATOR_PUBLIC_URL
 if (!publicUrl) throw new Error('MEDIATOR_PUBLIC_URL is required')
 
-const databasePath = Bun.env.MEDIATOR_DATABASE_PATH
-  ?? (Bun.env.MEDIATOR_DATA_DIR ? `${Bun.env.MEDIATOR_DATA_DIR}/mediator.sqlite` : undefined)
+const databasePath = process.env.MEDIATOR_DATABASE_PATH
+  ?? (process.env.MEDIATOR_DATA_DIR ? `${process.env.MEDIATOR_DATA_DIR}/mediator.sqlite` : undefined)
 if (!databasePath) throw new Error('MEDIATOR_DATABASE_PATH or MEDIATOR_DATA_DIR is required')
 
-const deployment = createMediatorDeployment({
+const deployment = await createMediatorDeployment({
   publicUrl,
   databasePath,
   // 8790 is the legacy biset-core port in the current deployment.
   port: envInteger('PORT', 8791, 1, 65_535),
-  hostname: Bun.env.MEDIATOR_HOST ?? '127.0.0.1',
-  allowedOrigins: new Set((Bun.env.MEDIATOR_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean)),
+  hostname: process.env.MEDIATOR_HOST ?? '127.0.0.1',
+  allowedOrigins: new Set((process.env.MEDIATOR_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean)),
   maxRequestBytes: envInteger('MEDIATOR_MAX_REQUEST_BYTES', 2 * 1024 * 1024, 1024, 64 * 1024 * 1024),
   rateLimitPerMinute: envInteger('MEDIATOR_RATE_LIMIT_PER_MINUTE', 3000, 1, 1_000_000),
   limits: {
@@ -34,12 +34,12 @@ const deployment = createMediatorDeployment({
   // MEDIATOR_ALLOWED_DID_DOMAINS=did.md,biset.md: only a did:webvh on these domains (or below) may register.
   // Unset: any DID whose owner can prove it. A did:peer is not limited by this.
   registration: {
-    allowedDidDomains: (Bun.env.MEDIATOR_ALLOWED_DID_DOMAINS ?? '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean),
+    allowedDidDomains: (process.env.MEDIATOR_ALLOWED_DID_DOMAINS ?? '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean),
     newInboxesPerAddressPerHour: envInteger('MEDIATOR_NEW_INBOXES_PER_ADDRESS_PER_HOUR', 60, 1, 1_000_000),
   },
-  relayUpstreamUrl: Bun.env.MEDIATOR_RELAY_UPSTREAM_URL,
+  relayUpstreamUrl: process.env.MEDIATOR_RELAY_UPSTREAM_URL,
   // MEDIATOR_WEBVH_RESOLVE=0: dial out to nothing; only pushed did:webvh logs are known.
-  webvh: { resolve: Bun.env.MEDIATOR_WEBVH_RESOLVE !== '0', refreshSeconds: envInteger('MEDIATOR_WEBVH_REFRESH_SECONDS', 300, 10, 24 * 60 * 60) },
+  webvh: { resolve: process.env.MEDIATOR_WEBVH_RESOLVE !== '0', refreshSeconds: envInteger('MEDIATOR_WEBVH_REFRESH_SECONDS', 300, 10, 24 * 60 * 60) },
 })
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
@@ -47,7 +47,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 }
 
 function envInteger(name: string, fallback: number, min: number, max: number): number {
-  const raw = Bun.env[name]
+  const raw = process.env[name]
   const value = raw === undefined ? fallback : Number(raw)
   if (!Number.isSafeInteger(value) || value < min || value > max) {
     throw new TypeError(`${name} must be an integer between ${min} and ${max}`)

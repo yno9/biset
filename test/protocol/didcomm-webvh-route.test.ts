@@ -5,7 +5,7 @@
 // `urn:did-core:document-edit:v1`, so the only thing left to pin down on
 // this side is how a sender reads it back. Shapes match a live
 // `cb81.did.md/.well-known/did.jsonl`.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { didCommRouteFromDocument, keyAgreementRecipients } from '../../src/protocol/didcomm/webvh-route.ts'
 import { encodeX25519Multikey } from '../../src/protocol/didcomm/multikey.ts'

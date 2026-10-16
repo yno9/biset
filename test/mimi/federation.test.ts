@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { createMimiDeployment } from '../../src/server/mimi/deployment.ts'
 import { encodeMimiConsentEntryWire } from '../../src/server/mimi/federation.ts'
 import { encodeMimiAbuseReportWire } from '../../src/server/mimi/federation.ts'

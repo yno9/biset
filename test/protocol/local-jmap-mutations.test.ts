@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { emailSetToVaultMutationIntents } from '../../src/client/store/projection/mutations.ts'
 
 describe('Local JMAP mutation intents', () => {

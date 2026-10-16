@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { assertMatchesSchema, type JSONSchema } from '../../src/client/identity/wallet/json-schema.ts'
 import capabilitySchema from '../../src/client/identity/wallet/schemas/biset-messenger-capability.schema.json' with { type: 'json' }
 

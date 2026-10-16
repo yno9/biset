@@ -6,7 +6,7 @@
 // mediator's HTTP surface is faked as a fetch that dispatches straight into
 // the in-process handler, so this is a real protocol round trip with no
 // network.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
 import { fetchMediatorInfo, requestMediation, updateRecipient, queryRecipients } from '../src/protocol/didcomm/mediator-coordinate.ts'
 import { discoverMaxReceiveBytes } from '../src/protocol/didcomm/discover-features.ts'
@@ -302,7 +302,7 @@ describe('Pickup 3.0 live mode over WebSocket (server.ts live, mediator-live.ts)
       onMessage: async msg => { await new Promise(resolve => setTimeout(resolve, 2)); received.push((msg.plaintext as { body: { content: string } }).body.content) },
       fetch: fetchImpl, webSocketCtor,
     })
-    await until(() => false, 30)
+    await until(() => false, 300)
     for (let n = 0; n < 12; n++) await forwardFromAliceToBob(fetchImpl, url, info.xKid, info.xPub, alice, bob, bobPeer.xPub, `queued ${n}`)
     await watch.drain()
     expect(received).toHaveLength(12)
@@ -330,8 +330,8 @@ describe('Pickup 3.0 live mode over WebSocket (server.ts live, mediator-live.ts)
     expect(await pickupStatus(info, bob, fetchImpl)).toMatchObject({ messageCount: 1 })
   })
 
-  test('over a real Bun server: the WebSocket upgrade on / carries live delivery', async () => {
-    const deployment = createMediatorDeployment({ publicUrl: 'http://127.0.0.1', databasePath: ':memory:', port: 0, log: () => {} })
+  test('over a real HTTP server: the WebSocket upgrade on / carries live delivery', async () => {
+    const deployment = await createMediatorDeployment({ publicUrl: 'http://127.0.0.1', databasePath: ':memory:', port: 0, log: () => {} })
     const url = `http://127.0.0.1:${deployment.server.port}`
     try {
       const alice = generatePeerIdentity()

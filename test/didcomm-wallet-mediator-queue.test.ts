@@ -16,26 +16,39 @@
 // watchMediatorLive and assert the queue state directly, once with the
 // pre-guard handler shape (the bug, still queued) and once with the shipped
 // shape (acknowledged, queue empty).
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { x25519 } from '@noble/curves/ed25519.js'
+import { readFile } from 'node:fs/promises'
 import { sha256Bytes } from '../src/protocol/canonical.ts'
 import type { IngressEnvelopeV1 } from '../src/protocol/ingress.ts'
+import { readFile } from 'node:fs/promises'
 import { packAuthcrypt, packAnoncrypt, didCommPost } from '../src/protocol/didcomm/crypto.ts'
+import { readFile } from 'node:fs/promises'
 import { buildPlaintext } from '../src/protocol/didcomm/message.ts'
+import { readFile } from 'node:fs/promises'
 import { PING } from '../src/protocol/didcomm/trust-ping.ts'
+import { readFile } from 'node:fs/promises'
 import { BASIC_MESSAGE } from '../src/client/didcomm/basicmessage.ts'
 // Types this endpoint no longer projects: the retired relationship handshake
 // and group protocol (PLAN-refactor.md §3, §8).
 const RETIRED_INIT = 'https://biset.md/relationship/1.0/init'
 const RETIRED_GROUP_INVITE = 'https://biset.md/didcomm-group/1.0/invite'
+import { readFile } from 'node:fs/promises'
 import { PROBLEM_REPORT } from '../src/protocol/didcomm/problems.ts'
+import { readFile } from 'node:fs/promises'
 import { DidCommIngressProjector, isProjectableDidCommIngress } from '../src/client/didcomm/ingress-projector.ts'
+import { readFile } from 'node:fs/promises'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
+import { readFile } from 'node:fs/promises'
 import { registerWithMediator } from '../src/client/didcomm/mediator-sync.ts'
+import { readFile } from 'node:fs/promises'
 import { pickupStatus, type DeliveredMessage } from '../src/protocol/didcomm/mediator-pickup.ts'
+import { readFile } from 'node:fs/promises'
 import { watchMediatorLive } from '../src/client/didcomm/mediator-live.ts'
+import { readFile } from 'node:fs/promises'
 import { freshMediatorFetch } from './support/mediator.ts'
 import type { MediatorInboxClient } from '../src/protocol/didcomm/mediator-transport.ts'
+import { readFile } from 'node:fs/promises'
 import { createSegmentKey } from '../src/client/store/vault/objects.ts'
 import type { VaultEventAuthor } from '../src/client/store/vault/events.ts'
 
@@ -199,8 +212,8 @@ describe('did.md Wallet mediator delivery handler', () => {
 // the handler is declared inside a closure in the browser entry point and
 // has no importable seam. The behaviour it produces is already covered
 // above against a real mediator.
-const mainSource = await Bun.file(new URL('../src/client/app/main.ts', import.meta.url)).text()
-const projectorSource = await Bun.file(new URL('../src/client/didcomm/ingress-projector.ts', import.meta.url)).text()
+const mainSource = await readFile(new URL('../src/client/app/main.ts', import.meta.url), 'utf8')
+const projectorSource = await readFile(new URL('../src/client/didcomm/ingress-projector.ts', import.meta.url), 'utf8')
 
 describe('mediator delivery handler (main.ts)', () => {
   test('the account path shares one allow-list with the projector', () => {

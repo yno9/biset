@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { createSegmentKey, decryptVaultObject, encryptVaultObject } from '../../src/client/store/vault/objects.ts'
 
 const text = new TextEncoder()

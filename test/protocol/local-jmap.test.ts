@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { LocalJmapGateway, LocalJmapTransport, MemoryLocalJmapReadModel } from '../../src/client/store/projection/gateway.ts'
 
 const model = new MemoryLocalJmapReadModel({

@@ -2,7 +2,7 @@
 // The two strings come from different places (a deployment's `mediatorUrls`
 // config, a URL a DID document or the Wallet canonicalized), so a raw `!==`
 // rejects a match over nothing but punctuation.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { sameMediatorUrl } from '../src/client/didcomm/mediator-endpoints.ts'
 
 describe('sameMediatorUrl', () => {

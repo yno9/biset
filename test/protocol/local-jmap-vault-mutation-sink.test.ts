@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { equalBytes } from '../../src/protocol/canonical.ts'
 import { LocalJmapGateway, LocalJmapTransport, MemoryLocalJmapReadModel } from '../../src/client/store/projection/gateway.ts'
 import { VaultBackedLocalJmapMutationSink } from '../../src/client/store/projection/vault-mutation-sink.ts'

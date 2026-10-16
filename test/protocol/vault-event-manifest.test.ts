@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { buildVaultManifest, diffVaultManifests, verifyVaultManifest } from '../../src/client/store/vault/manifest.ts'
 import { createVaultEvent, verifyVaultEvent, type VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 

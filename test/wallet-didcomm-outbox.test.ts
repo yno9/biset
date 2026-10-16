@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { createWalletDidCommOutbox } from '../src/client/identity/wallet/didcomm-outbox.ts'
 
 const identityId = 'did:webvh:wallet:alice.test.example'

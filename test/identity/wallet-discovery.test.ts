@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { afterEach, expect, test } from 'bun:test'
+import { afterEach, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { resolveWalletFromSuffix } from '../../src/client/identity/wallet/did-md-oauth.ts'
 import { jcsMultihashBase58, signProof, encodeMultikey } from '../protocol/support/webvh-log-fixture.ts'

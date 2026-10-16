@@ -1,6 +1,6 @@
 // A service endpoint that names its mediator by DID (DIDComm Messaging v2.1,
 // "Using a DID as an endpoint"): resolved to where to POST and whom to wrap for.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { expandEndpoint } from '../src/protocol/didcomm/mediator-endpoint.ts'
 import { peerHop, wrapForwardHops } from '../src/protocol/didcomm/forward-wrap.ts'

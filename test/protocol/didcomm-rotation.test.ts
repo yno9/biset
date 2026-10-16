@@ -1,7 +1,7 @@
 // DID Rotation between biset identities (PLAN-refactor.md §4.3, §12.5): the
 // route each message takes, what ingress learns from `from_prior`, and the
 // device-side manager that asks, starts and confirms a move.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { equalBytes, sha256Bytes } from '../../src/protocol/canonical.ts'
 import type { IngressEnvelopeV1 } from '../../src/protocol/ingress.ts'

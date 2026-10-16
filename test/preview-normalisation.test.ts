@@ -20,7 +20,7 @@
 // Rewritten onto bun:test's own API at the same time. The hand-rolled
 // `ok()`/console.log harness it used before reported "Ran 0 tests" to
 // `bun run test`, so a failure here was invisible in the suite summary.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { previewText, stripQuoted } from '../src/client/app/ui/format.ts'
 
 // The message from the report, as the relay stores it.

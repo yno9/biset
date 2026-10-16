@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { MimiAssetProxy } from '../../src/server/mimi/asset-proxy.ts'
 
 describe('MIMI asset proxy', () => {

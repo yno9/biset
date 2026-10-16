@@ -7,7 +7,7 @@
 // assertSegmentId) for the three ID types nothing but this codebase's own
 // domainHash()/crypto.randomUUID() calls ever produces, proven against the
 // REAL functions that mint them below rather than just declared.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { assertOpaqueId, assertSegmentId, assertVaultEventId, assertVaultObjectId } from '../../src/protocol/ids.ts'
 import { createVaultEvent, type VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import { createSegmentKey, encryptVaultObject } from '../../src/client/store/vault/objects.ts'

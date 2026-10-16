@@ -8,7 +8,7 @@
 // retired 2026-09-16), so the move carries it automatically -- migrate.ts's
 // whole-document string substitution rewrites the DID prefix on every id,
 // never the `#fragment`, which is exactly what the resolver must match on.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { migrateWebvhLocation } from '../../src/client/identity/webvh/migrate.ts'
 import { didToHttpsUrl } from '../../src/protocol/webvh/identifier.ts'

@@ -6,7 +6,7 @@
 // shapes rekeyIdentity's generic KEY_PATHS-driven logic has to handle
 // identically.
 import 'fake-indexeddb/auto'
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'vitest'
 import { IndexedDbVaultStore, type IngressVaultCommit } from '../../src/client/store/vault/store.ts'
 import { createVaultEvent, type VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import { createSegmentKey, encryptVaultObject } from '../../src/client/store/vault/objects.ts'

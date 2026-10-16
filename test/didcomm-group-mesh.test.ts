@@ -5,7 +5,7 @@
 // so two devices of one identity merging their records through Vault Sync
 // cannot make the projection rebuild fail (§9.1).
 import { testWebvhResolver } from './support/mediator.ts'
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { sha256Bytes } from '../src/protocol/canonical.ts'
 import { acknowledgeMessages, pickupDeliver, type DeliveredMessage } from '../src/protocol/didcomm/mediator-pickup.ts'

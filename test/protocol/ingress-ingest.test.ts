@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { equalBytes, sha256Bytes } from '../../src/protocol/canonical.ts'
 import { ingressAckSigningBytes } from '../../src/protocol/signing.ts'
 import type { IngressEnvelopeV1 } from '../../src/protocol/ingress.ts'

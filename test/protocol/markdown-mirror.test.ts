@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { MarkdownSelfWriteGuard, markdownStatusMutation, markdownThreadFilename, parseMarkdownThread, renderMarkdownThread } from '../../src/client/store/vault/markdown-mirror.ts'
 import { emailSetToVaultMutationIntents } from '../../src/client/store/projection/mutations.ts'
 

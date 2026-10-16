@@ -3,7 +3,7 @@
 // Found 2026-10-02: the mediator authorized by `from` alone, so a client that
 // authenticated with its own key could name another client in `from` and
 // deregister that client's key (dropping its queue).
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
 import { createMediator } from '../src/server/mediator/server.ts'
 import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'

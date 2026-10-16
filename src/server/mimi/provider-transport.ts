@@ -1,10 +1,14 @@
 /** Provider-to-provider HTTPS transport and mTLS-bound request identity. */
+import type { SecureContextOptions, TlsOptions } from 'node:tls'
+import { Agent, fetch as undiciFetch } from 'undici'
+
+type TlsMaterial = Pick<SecureContextOptions, 'cert' | 'key' | 'ca'> & Pick<TlsOptions, 'requestCert' | 'rejectUnauthorized'>
 
 export interface MimiMtlsMaterial {
-  cert: NonNullable<Bun.TLSOptions['cert']>
-  key: NonNullable<Bun.TLSOptions['key']>
-  /** Optional private CA bundle; without it Bun uses its normal trust store. */
-  ca?: Bun.TLSOptions['ca']
+  cert: NonNullable<TlsMaterial['cert']>
+  key: NonNullable<TlsMaterial['key']>
+  /** Optional private CA bundle; without it Node uses its normal trust store. */
+  ca?: TlsMaterial['ca']
 }
 
 export interface MimiProviderTransportOptions {
@@ -35,13 +39,16 @@ export interface VerifiedProviderPeer {
 export class MimiProviderTransport {
   private readonly sourceProviderDomain: string
   private readonly fetchImpl: typeof fetch
-  private readonly tls: Bun.TLSOptions
+  private readonly tls: TlsMaterial
+  private readonly dispatcher: Agent
 
   constructor(options: MimiProviderTransportOptions) {
     this.sourceProviderDomain = providerDomain(options.sourceProviderDomain)
     if (!options.tls.cert || !options.tls.key) throw new TypeError('provider mTLS requires a client certificate and key')
-    this.fetchImpl = options.fetchImpl ?? fetch
     this.tls = { cert: options.tls.cert, key: options.tls.key, ...(options.tls.ca === undefined ? {} : { ca: options.tls.ca }), rejectUnauthorized: true }
+    this.dispatcher = new Agent({ connect: this.tls })
+    // The default fetch presents the client certificate through this transport's own dispatcher.
+    this.fetchImpl = options.fetchImpl ?? ((input, init) => undiciFetch(input as never, { ...init, dispatcher: this.dispatcher } as never) as unknown as Promise<Response>)
   }
 
   async post(targetBaseUrl: string | URL, request: ProviderPost): Promise<Response> {
@@ -55,12 +62,12 @@ export class MimiProviderTransport {
     headers.set('content-type', request.contentType ?? 'application/json')
     headers.set('host', target.host)
     headers.set('from', `mimi@${this.sourceProviderDomain}`)
-    return this.fetchImpl(url, { method: 'POST', headers, body: request.body, signal: request.signal, tls: this.tls })
+    return this.fetchImpl(url, { method: 'POST', headers, body: request.body, signal: request.signal, tls: this.tls } as RequestInit)
   }
 }
 
-/** TLS settings for a Bun server which must reject unauthenticated providers. */
-export function mimiProviderMtlsServerOptions(material: MimiMtlsMaterial): Bun.TLSOptions {
+/** TLS settings for an HTTPS server which must reject unauthenticated providers. */
+export function mimiProviderMtlsServerOptions(material: MimiMtlsMaterial): TlsMaterial {
   if (!material.cert || !material.key) throw new TypeError('provider mTLS requires a server certificate and key')
   return { cert: material.cert, key: material.key, ...(material.ca === undefined ? {} : { ca: material.ca }), requestCert: true, rejectUnauthorized: true }
 }

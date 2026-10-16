@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { readRfc5322HeaderSummary } from '../../src/client/app/ui/message/rfc5322-headers.ts'
 
 describe('endpoint RFC 5322 header summary', () => {

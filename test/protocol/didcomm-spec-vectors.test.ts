@@ -2,7 +2,7 @@
 // three X25519 keys of one DID), checked against this implementation. These
 // are the interop anchor for multiplexed encryption: one ciphertext, one CEK
 // wrapped per recipient key, any of Bob's devices can open it.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import vectors from '../fixtures/didcomm-v2.1-x25519-vectors.json'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { b64urlToBytes, packAnoncrypt, packAuthcrypt, protectedHeaderOf, unpackAnoncrypt, unpackAuthcrypt, type DidCommJWE } from '../../src/protocol/didcomm/crypto.ts'

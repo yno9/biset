@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { equalBytes, sha256Bytes } from '../../src/protocol/canonical.ts'
 import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { buildOpenPgpPrivateCredential, decodeOpenPgpPrivateCredential, openPgpCredentialAad } from '../../src/client/store/vault/openpgp-credential.ts'

@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'vitest'
 import { IndexedDbVaultStore, type VaultEventRecord } from '../src/client/store/vault/store.ts'
 
 const identityId = 'did:webvh:test:alice.example'

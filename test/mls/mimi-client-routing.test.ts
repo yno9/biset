@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { MimiRouteSelectionError, selectMimiRoomRoute } from '../../src/client/mimi/client-routing.ts'
 
 const endpoints = { normalBaseUrl: 'https://normal.example/mimi/', anonBaseUrl: 'https://anon.example/mimi/' }

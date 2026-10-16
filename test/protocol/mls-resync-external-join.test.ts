@@ -12,7 +12,7 @@
 // retrying with resync: true after a device's own local MLS state was lost
 // and the hub rejects its plain rejoin as a duplicate participant) cannot
 // guarantee a match up front, so "no match" has to be a safe no-op.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import {
   createMlsGroup, generateOwnKeyPackage, groupInfoForExternalJoin, joinGroupExternally, memberList, processIncoming,
 } from '../../src/client/mls/group.ts'

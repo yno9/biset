@@ -2,7 +2,7 @@
 // commit assembly (PLAN-simplify S3 stage 2, 2026-09-05): the local JMAP
 // write path once accepted an empty segmentId or a SegmentKey that was not
 // 32 bytes and encrypted under it.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { VaultBackedLocalJmapMutationSink } from '../src/client/store/projection/vault-mutation-sink.ts'
 import type { ActiveVaultSegment } from '../src/client/store/vault/active-segment.ts'
 

@@ -1,6 +1,7 @@
 // Composes the standalone mediator's durable store, its blind DIDComm
 // handler, its HTTP surface, and (optionally) its hop-chain relay poller:
 // what index.ts (the entrypoint) and the tests start.
+import { serve, type Server } from '../runtime/serve.ts'
 import { createMediator } from './server.ts'
 import { didCommAccepted, didCommPost } from '../../protocol/didcomm/crypto.ts'
 import { SqliteMediatorStore, type SqliteMediatorLimits } from './sqlite-store.ts'
@@ -39,7 +40,7 @@ export interface MediatorDeploymentOptions {
 export interface MediatorDeployment {
   readonly store: SqliteMediatorStore
   readonly mediatorDid: string
-  readonly server: ReturnType<typeof Bun.serve>
+  readonly server: Server<{ address: string }>
   shutdown(signal: string): Promise<void>
 }
 
@@ -48,7 +49,7 @@ const DEFAULTS = {
   rateLimitPerMinute: 3000,
 }
 
-export function createMediatorDeployment(options: MediatorDeploymentOptions): MediatorDeployment {
+export async function createMediatorDeployment(options: MediatorDeploymentOptions): Promise<MediatorDeployment> {
   const serviceName = options.serviceName ?? 'biset-didcomm-mediator'
   const log = options.log ?? defaultLog
   const allowedOrigins = options.allowedOrigins ?? new Set<string>()
@@ -78,12 +79,12 @@ export function createMediatorDeployment(options: MediatorDeploymentOptions): Me
   const clientAddress = (request: Request) => request.headers.get('x-forwarded-for')?.split(',', 1)[0]?.trim()
     || server.requestIP(request)?.address
     || 'unknown'
-  const server = Bun.serve<{ address: string }, never>({
+  const server: Server<{ address: string }> = await serve<{ address: string }>({
     hostname: options.hostname ?? '127.0.0.1',
     port: options.port,
     maxRequestBodySize: maxRequestBytes,
     // The WebSocket transport (server.ts's `live`): one text frame is one
-    // DIDComm message, rate-limited like a POST. Bun pings an idle socket
+    // DIDComm message, rate-limited like a POST. The server pings an idle socket
     // itself, which keeps a quiet live connection open through the proxy.
     websocket: {
       maxPayloadLength: maxRequestBytes,

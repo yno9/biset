@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { computeReplyContext } from '../src/client/app/ui/message/message-view.ts'
 import type { ProcessedMessage } from '../src/client/app/ui/message/message-view.ts'
 

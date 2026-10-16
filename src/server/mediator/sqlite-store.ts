@@ -1,4 +1,4 @@
-import { Database } from 'bun:sqlite'
+import { Database } from '../runtime/sqlite.ts'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { x25519, ed25519 } from '@noble/curves/ed25519.js'

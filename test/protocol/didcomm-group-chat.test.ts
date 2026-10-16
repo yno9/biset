@@ -1,7 +1,7 @@
 // Group chat is a thread of Basic Messages addressed to more than one party
 // (PLAN-refactor.md §8): `to` names the participants, `thid` the conversation,
 // and the participants of a group are those of its latest message.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import {
   didcommGroupAddress,
   groupConversation,

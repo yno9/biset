@@ -1,3 +1,4 @@
+import { expect, test } from 'vitest'
 // The vendored MLS crypto, checked against something other than itself.
 //
 // `src/protocol/mls/crypto/implementation/noble/hpke.ts` replaces @hpke/core
@@ -141,4 +142,5 @@ try {
 ok('opening with the wrong key throws', openFailed)
 
 console.log(fails === 0 ? '\nall ok' : `\n${fails} failed`)
-process.exit(fails === 0 ? 0 : 1)
+// These checks run as the module loads; vitest sees one test over their outcome.
+test('all checks pass', () => { expect(fails).toBe(0) })

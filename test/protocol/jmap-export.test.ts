@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { createJmapExport, decodeJmapExport, encodeJmapExport, eventStateRank, IMPORTED_KEYWORD, importJmapExport, JMAP_STATE_RANK, mergeJmapExports, type JmapExportV1 } from '../../src/client/store/vault/jmap-export.ts'
 import { bytesToBase64url, equalBytes } from '../../src/protocol/canonical.ts'

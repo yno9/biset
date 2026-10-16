@@ -1,3 +1,4 @@
+import { expect, test } from 'vitest'
 // The MLS layer's own guarantees, independent of DIDComm transport: a group
 // forms, members join and leave, application messages decrypt, the exporter
 // secret agrees across members, and state survives a persistence round trip.
@@ -225,4 +226,5 @@ try { await generateOwnKeyPackage({} as never, new Uint8Array(32)) } catch { rej
 ok('a credential without a key fragment is refused', rejected)
 
 console.log(fails === 0 ? '\nall ok' : `\n${fails} failed`)
-process.exit(fails === 0 ? 0 : 1)
+// These checks run as the module loads; vitest sees one test over their outcome.
+test('all checks pass', () => { expect(fails).toBe(0) })

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import {
   createMlsDeviceCredential,

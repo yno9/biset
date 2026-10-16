@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test'
+import { expect, test } from 'vitest'
 import { ensureOwnPgpKey, publishedKeyState, wkdHash } from '../src/client/pgp/auto.ts'
 
 const never = new Promise<never>(() => {})

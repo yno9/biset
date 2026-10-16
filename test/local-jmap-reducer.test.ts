@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import type { LocalJmapEmail } from '../src/client/store/projection/gateway.ts'
 import { reduceLocalJmapProjection } from '../src/client/store/projection/reducer.ts'
 import { encodeVaultMutationObject } from '../src/client/store/vault/mutations.ts'

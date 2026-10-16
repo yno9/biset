@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { endpointsAreRemoved, serviceIsPublished } from '../src/client/identity/wallet/did-document-edit-check.ts'
 
 const clearnet = { uri: 'https://m.example/', accept: ['didcomm/v2'], routingKeys: ['k1'] }

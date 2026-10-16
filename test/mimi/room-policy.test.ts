@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { authorizeParticipantListTransition, maySendMessage, validateRoomPolicy, type MimiRoomPolicy } from '../../src/server/mimi/room-policy.ts'
 
 const policy: MimiRoomPolicy = {

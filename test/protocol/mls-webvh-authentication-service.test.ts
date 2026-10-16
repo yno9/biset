@@ -1,7 +1,7 @@
 // Verifies the Authentication Service role (RFC 9750 §4): an MLS leaf's
 // credential must be signed by the stable Root Key in the DID document and
 // bind the leaf's ACTUAL signature key.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { credentialFor } from '../../src/client/mls/identity.ts'
 import { createMlsDeviceCredential } from '../../src/client/mls/device-credential.ts'

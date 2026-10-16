@@ -1152,8 +1152,9 @@ export async function approvedRotationSeed(): Promise<{ seed: Uint8Array; forget
   }
 }
 
-export async function completeDidMdWalletCallback(): Promise<DidMdActiveSession | undefined> {
-  if (!isWalletCallback()) return undefined
+/** `delivered` is a response the embedded Wallet frame handed over its port, in place of the callback URL. */
+export async function completeDidMdWalletCallback(delivered?: URLSearchParams): Promise<DidMdActiveSession | undefined> {
+  if (!delivered && !isWalletCallback()) return undefined
   const callback = new URL(location.href)
   const pending = await readDidMdPendingAuthorization()
   if (!pending || pending.v !== 2 || pending.issuer !== selectedWallet.issuer) throw new Error('No matching did.md Wallet authorization is pending')
@@ -1163,7 +1164,7 @@ export async function completeDidMdWalletCallback(): Promise<DidMdActiveSession 
   // (finishFileWalletPopup's own re-navigation; there is no server on that
   // path either way, see its own comment). Try the fragment first since a
   // fragment and a query string can coexist on the same URL.
-  const params = callback.hash ? new URLSearchParams(callback.hash.slice(1)) : callback.searchParams
+  const params = delivered ?? (callback.hash ? new URLSearchParams(callback.hash.slice(1)) : callback.searchParams)
   const state = params.get('state')
   const issuer = params.get('iss')
   const vpToken = params.get('vp_token')
@@ -1187,6 +1188,7 @@ export async function completeDidMdWalletCallback(): Promise<DidMdActiveSession 
     // Chromium assigns each file: URL a unique opaque origin and rejects
     // history.replaceState even when only the query string changes. A
     // top-level replacement is allowed and also prevents replay on reload.
+    if (delivered) return active
     if (location.protocol === 'file:') {
       if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(DID_MD_JUST_CONNECTED_KEY, '1')
       location.replace(redirectUri())

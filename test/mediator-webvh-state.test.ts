@@ -1,7 +1,7 @@
 // How the mediator reads a did:webvh's keys: webvh-state.ts. The host it
 // dials comes from a DID named in a message anyone can send, so the limits
 // here are the point.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { serializeLog } from '../src/protocol/webvh/log.ts'
 import { createNetworkWebvhResolver, isPublicAddress, isPublicHostname, webvhStateFromLog, WebvhUnavailable } from '../src/server/mediator/webvh-state.ts'

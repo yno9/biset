@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { bytesToBase64url, canonicalBytes } from '../src/protocol/canonical.ts'
 import { encodeMultikey } from '../src/protocol/webvh/multikey.ts'

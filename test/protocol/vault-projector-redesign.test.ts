@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'vitest'
 import { equalBytes } from '../../src/protocol/canonical.ts'
 import { IndexedDbVaultStore } from '../../src/client/store/vault/store.ts'
 import { VaultProjector } from '../../src/client/store/vault/projector.ts'

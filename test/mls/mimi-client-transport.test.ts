@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { MimiClientTransport } from '../../src/client/mimi/client-transport.ts'
 
 describe('MIMI client transport', () => {

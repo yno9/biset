@@ -1,7 +1,7 @@
 // Unit coverage for the vault UI's message-pipeline module (PLAN.md §7):
 // threading.ts's union-find port (unchanged logic, just relocated) and the
 // new emailToMessageView bridge from LocalJmapEmail + raw RFC5322 bytes.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { computeThreadKeys, emailToMessageView } from '../src/client/app/ui/message/message-view.ts'
 import type { LocalJmapEmail } from '../src/client/store/projection/gateway.ts'
 

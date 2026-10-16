@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { deriveRelationshipPeerIdentity, decodePeerDid2 } from '../../src/protocol/didcomm/peer.ts'
 
 const counterpartyDid = 'did:webvh:QmCounterparty:bob.example'

@@ -1,4 +1,5 @@
 /** Composition root for one standalone biset-mimi provider deployment. */
+import { serve } from '../runtime/serve.ts'
 import { Ed25519MimiSignatureVerifier } from '../../protocol/mimi/authorizer.ts'
 import { createMimiHttpHandler, type MimiFederationOptions } from './http.ts'
 import { SqliteMimiStore } from './store.ts'
@@ -56,12 +57,11 @@ export function createMimiDeployment(options: MimiDeploymentOptions) {
   }
 }
 
-/** Starts a MIMI provider with the SSE-safe Bun idle timeout. */
-export function serveMimiDeployment(options: MimiServerOptions) {
+/** Starts a MIMI provider; quiet SSE connections are never cut by an idle timeout. */
+export async function serveMimiDeployment(options: MimiServerOptions) {
   const deployment = createMimiDeployment(options)
-  // Bun's default idle timeout is roughly 10 seconds, which silently closes a
-  // quiet SSE connection before its 15-second heartbeat.  255 is Bun's
-  // maximum and provides defense in depth alongside http.ts's heartbeat.
-  const server = Bun.serve({ port: options.port, fetch: deployment.fetch, idleTimeout: 255 })
+  // node:http has no idle timeout on a response (serve.ts), so a quiet SSE connection stays open;
+  // http.ts's heartbeat still keeps proxies from closing it.
+  const server = await serve({ port: options.port, fetch: request => deployment.fetch(request) })
   return { ...deployment, server }
 }

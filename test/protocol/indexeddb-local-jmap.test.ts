@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { IndexedDbLocalJmapReadModel } from '../../src/client/store/projection/indexeddb.ts'
 import { localJmapSnapshotFromProjection } from '../../src/client/store/projection/gateway.ts'
 

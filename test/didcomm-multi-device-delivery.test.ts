@@ -2,7 +2,7 @@
 // encrypts ONE message to both keyAgreement keys, Forwards it to the
 // recipient's DID, and the mediator copies it into both device inboxes --
 // each device opens it with its own key.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { sendFrontDoorMessage } from '../src/client/didcomm/front-door-send.ts'
 import { registerWithMediator } from '../src/client/didcomm/mediator-sync.ts'

@@ -14,7 +14,7 @@
     "noEmit": true,
     "skipLibCheck": true,
     "lib": ["ESNext"],
-    "types": ["bun"]
+    "types": ["node"]
   },
   "include": ["src/server/mediator/**/*"],
   "typeRoots": ["node_modules/@types"]

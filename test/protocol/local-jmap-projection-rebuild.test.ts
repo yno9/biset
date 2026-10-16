@@ -6,7 +6,7 @@
 // another device's events/objects: merging the CRDT log and object store
 // alone never updates the separately-stored projection the inbox actually
 // renders from (main.ts's own VAULT_SYNC_UPDATE/STATE_RESPONSE handler).
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { equalBytes } from '../../src/protocol/canonical.ts'
 import { buildMailMessageAdd } from '../../src/client/store/vault/mail-message.ts'
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'

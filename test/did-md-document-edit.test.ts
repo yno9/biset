@@ -1,7 +1,7 @@
 // How a Biset device's DIDComm endpoint is written into its DID document: the
 // endpoint names the mediator by DID (DIDComm Messaging v2.1, "Using a DID as
 // an endpoint"), and a move between mediators retires the old endpoints.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { buildDocumentEdit, retiredMediatorEndpoints, walletConfiguration } from '../src/client/identity/wallet/did-md-oauth.ts'
 import { assertMatchesSchema, type JSONSchema } from '../src/client/identity/wallet/json-schema.ts'

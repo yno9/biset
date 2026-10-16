@@ -1,7 +1,7 @@
 // createGenesis with didWebMirror: true also
 // publish a did:web document (no proof, no history) at the same subdomain's
 // /.well-known/did.json, kept in sync with whatever did:webvh currently says.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { createGenesis } from '../../src/client/identity/webvh/create-genesis.ts'
 import { didWebToHttpsUrl, buildWebDid } from '../../src/client/identity/web/identifier.ts'

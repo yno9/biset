@@ -1,7 +1,7 @@
 // The address book (PLAN-refactor.md §12): JMAP for Contacts (RFC 9610)
 // cards, kept as `contact.set` PatchObjects in the Vault and folded by the
 // reducer the same way on every device.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { canonicalBytes, equalBytes } from '../../src/protocol/canonical.ts'
 import type { VaultEventV1 } from '../../src/protocol/vault.ts'
 import { reduceLocalJmapProjection } from '../../src/client/store/projection/reducer.ts'

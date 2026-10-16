@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { fetchLogContaining, freshFetch } from '../src/client/identity/webvh/log-io.ts'
 
 // A did:webvh log is JSON Lines; fetchCurrentLog only needs versionId and parameters of each entry.

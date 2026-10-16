@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { createMimiDeployment } from '../../src/server/mimi/deployment.ts'
 import { MimiFanoutDispatcher } from '../../src/server/mimi/fanout.ts'
 import { MimiProviderTransport } from '../../src/server/mimi/provider-transport.ts'

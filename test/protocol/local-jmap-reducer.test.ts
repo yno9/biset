@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { canonicalBytes } from '../../src/protocol/canonical.ts'
 import { decodeVaultMutation, reduceLocalJmapProjection } from '../../src/client/store/projection/reducer.ts'
 import type { VaultEventV1 } from '../../src/protocol/vault.ts'

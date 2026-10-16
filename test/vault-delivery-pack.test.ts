@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { VAULT_EVENT_KINDS, type VaultEventKind } from '../src/protocol/vault.ts'
 import { decodeVaultDeliveryPack, encodeVaultDeliveryPack } from '../src/client/store/vault/delivery-pack.ts'
 

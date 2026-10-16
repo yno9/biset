@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { sha256Bytes } from '../src/protocol/canonical.ts'
 import type { IngressEnvelopeV1 } from '../src/protocol/ingress.ts'
 import type { IngressVaultCommit, VaultEventRecord } from '../src/client/store/vault/store.ts'

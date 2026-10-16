@@ -1,6 +1,6 @@
 // `from_prior` (DID Rotation) signing and every check a receiver makes on it
 // (PLAN-refactor.md §4.4, §7-2).
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import type { LogEntry } from '../../src/protocol/webvh/log.ts'
 import {

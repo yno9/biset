@@ -7,7 +7,7 @@
 // the recipient's own device into contacting an arbitrary attacker-chosen
 // host, for a message that was always going to be rejected anyway (found
 // live, 2026-08-26).
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { x25519 } from '@noble/curves/ed25519.js'
 import {
   packAuthcrypt, unpackAuthcrypt,

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { equalBytes } from '../../src/protocol/canonical.ts'
 import { decodeVaultDeliveryPack, encodeVaultDeliveryPack, type VaultDeliveryPackV1 } from '../../src/client/store/vault/delivery-pack.ts'
 

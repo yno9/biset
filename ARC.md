@@ -85,7 +85,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 | 旧メール HTTP 経路 | relay の `/v1/mail/submit`、wallet 要求の `urn:biset:mail-relay:v1` | **撤去**（§10） |
 | メール受信の宛先解決 | did.md の authority API（鍵 1 つ） | **公開 did:webvh の解決**（全端末の鍵）（§10.2） |
 | 撤去したもの | — | recovery archive、delivery outbox／ingest／projector、`vault-content-key.ts`、`crypto.ts`（VCK）、`didcomm-credential.ts`、routing alias、mediator の connection／keycache／replay／watch-token、旧 vault delivery の wire 型 |
-| 検査 | `bun run check` は失敗（typecheck 1、knip 5） | **`bun run check` が成功**（§16） |
+| 検査 | `pnpm check` は失敗（typecheck 1、knip 5） | **`pnpm check` が成功**（§16） |
 
 ### 1.5 2026-10-03 版から変わったこと（`PLAN-refactor.md`）
 
@@ -595,7 +595,7 @@ HTML 本文と添付（`attachments`）は今は保存しない（`body.content`
   どこにも置けなければ HTTP 503。未登録の DID 宛の Forward は、署名付きの problem-report（`e.m.req.not-enrolled`）を HTTP 401 で返して拒否する（open relay にしない）。
 - 上限（既定）: 受信箱 30,000、受信箱あたり 256 件・16 MB、メッセージ 1 MB、保持 30 日、休眠 14 日、replay guard 10 分／50,000 ID。
 - HTTP の入口: `POST /`、`GET /`（WebSocket upgrade）、`POST /webvh-log`（解決を使わない配備用）、`GET /.well-known/did.json`、`/healthz`、`/readyz`、`/metrics`。
-  WebSocket は Bun が idle の socket に ping を送る（`idleTimeout` 120 秒）。CORS と WebSocket の Origin は `MEDIATOR_ALLOWED_ORIGINS`（`null` は `file://` 用）。
+  WebSocket は `src/server/runtime/serve.ts` が idle の socket に ping を送る（`idleTimeout` 120 秒、その 1/3 間隔）。CORS と WebSocket の Origin は `MEDIATOR_ALLOWED_ORIGINS`（`null` は `file://` 用）。
 - **停止は即座に接続を閉じる**（`server.stop(true)`）。開いた WebSocket の終了を待つと、クライアントは自分から閉じないので、systemd の強制終了（30 秒）まで止まり、
   その間 502 になっていた（2026-10-03 に実機で起きた）。クライアントは自動で再接続し、未 ACK の分は queue に残るので失われない。
 - `relay-poller.ts`: 別の upstream mediator へ自分を client として登録し、自分宛の Forward を unwrap して再 Forward する、任意の多段中継（`MEDIATOR_RELAY_UPSTREAM_URL`）。
@@ -604,7 +604,7 @@ HTML 本文と添付（`attachments`）は今は保存しない（`body.content`
 ### 11.2 biset-rp-signer
 状態を持たない。RP DID の鍵（`RP_DID_KEY_FILE`）で JAR を署名するだけ。受け付ける claim は許可リスト（`state`、`dpop_jkt`、`login_hint`、`authorization_details`、`dcql_query`、`scope` など）で、
 `iss`・`client_id`・`response_type`・`redirect_uri` は**サーバー側で固定**し、呼び出し側からは受け取らない。
-Bun ではなく素の Node（24 以上、型は Node が自分で除去する）で動く。依存パッケージは無く、署名は `node:crypto` の Ed25519。既定で `127.0.0.1` にだけ bind する。
+素の Node（24 以上、型は Node が自分で除去する）で動く。依存パッケージは無く、署名は `node:crypto` の Ed25519。既定で `127.0.0.1` にだけ bind する。
 
 ### 11.3 biset-mimi（🔧）
 IETF `draft-ietf-mimi-protocol` に沿った MLS delivery service（`normal`／`anon`／`self`）。サーバーとしては動き、テストも通るが、**現行クライアントからの呼び出し経路は無い**。
@@ -676,8 +676,8 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 ## 15. Build・設定・運用
 
 ### 15.1 クライアント
-- `bun run build` — `src/client/app/main.ts` と `sw.ts` を browser の IIFE に bundle し、`scripts/inline.mjs` で `dist/index.html` に inline 化する。
-  **`bun build` 単体では不十分**で、必ず `bun run build` を使う。検証は `file://` の `dist/index.html` で行う（localhost の dev サーバーは使わない）。
+- `pnpm build` — `src/client/app/main.ts` と `sw.ts` を browser の IIFE に bundle し、`scripts/inline.mjs` で `dist/index.html` に inline 化する。
+  **`esbuild` 単体では不十分**で、必ず `pnpm build` を使う。検証は `file://` の `dist/index.html` で行う（localhost の dev サーバーは使わない）。
 - 実行時設定は `window.__BISET_CONFIG__`（`ui/config.ts` が読む唯一の場所。`config.json` を `inline.mjs` が埋め込む）。
 
 | キー | 用途 |
@@ -736,15 +736,15 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 
 | コマンド | 結果 |
 |---|---|
-| `bun run typecheck`（root ＋ mediator／mail-plugin／mail-relay／mimi／rp-signer） | ✅ すべて成功 |
-| `bun run knip` | ✅ 成功 |
-| `bun run reachability` | 本番の入口から 164／266 を到達、**テストのみ 23**（MLS／MIMI のクライアント側、`manifest.ts`、identity の fixture 用モジュールなど）、**どこからも到達しない 0** |
-| `bun run test` | ✅ **108 ファイル、645 件成功、失敗 0**（MLS の 2 ファイルは件数を出さない形式で、別に全成功） |
-| `bun run check`（上の 4 つ） | ✅ 成功 |
-| `bun run build` | ✅ `app.js` 約 580 KB、`sw.js` 183 B、`index.html` 約 690 KB |
+| `pnpm typecheck`（root ＋ mediator／mail-plugin／mail-relay／mimi／rp-signer） | ✅ すべて成功 |
+| `pnpm knip` | ✅ 成功 |
+| `pnpm reachability` | 本番の入口から 164／266 を到達、**テストのみ 23**（MLS／MIMI のクライアント側、`manifest.ts`、identity の fixture 用モジュールなど）、**どこからも到達しない 0** |
+| `pnpm test` | ✅ **108 ファイル、645 件成功、失敗 0**（MLS の 2 ファイルは件数を出さない形式で、別に全成功） |
+| `pnpm check`（上の 4 つ） | ✅ 成功 |
+| `pnpm build` | ✅ `app.js` 約 580 KB、`sw.js` 183 B、`index.html` 約 690 KB |
 
 テストは、canonical protocol、Vault の store、Vault Sync、VaultProjector、JMAP export／import、Markdown ミラー、
-DIDComm の crypto（DIF のテストベクタを含む）／multi-device 配送／mediator（HTTP と WebSocket、本物の Bun サーバーでの upgrade を含む）／seed と rotation key／`from_prior`／DID Rotation（本物の mediator を通す Y 宛ての配送を含む）／連絡先（JMAP for Contacts）／group、
+DIDComm の crypto（DIF のテストベクタを含む）／multi-device 配送／mediator（HTTP と WebSocket、本物の HTTP サーバー（node:http + ws）での upgrade を含む）／seed と rotation key／`from_prior`／DID Rotation（本物の mediator を通す Y 宛ての配送を含む）／連絡先（JMAP for Contacts）／group、
 mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callback、JSON Schema、RP signer、MIMI を覆う。
 **テストで store を偽装しない**方針を採る（モックが本物の検証を再現していなかったことで障害を取り逃がした反省による）。
 
@@ -758,7 +758,7 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
    DIDComm のメッセージにはヘッダが無いので、`sourceUrl` を別の場所に移せば、ヘッダの読み取りは消せる。名前の変更（`rawRfc5322`→本文）は機械的だが差分が大きい。
 4. **セッション復元の失敗が一律にセッション破棄になる**（§14.2-4）。
 5. **file:// 版と https 版が別のアプリとして wallet に登録される**（§5.2）。**RP DID は `t.biset.md` に束縛**されており、ドメインを後から自由に変えられるという方針と衝突しうる。
-6. **git の追跡**: `.gitignore` が `scripts/`・`ops/`・`tasks/`・`docs/`・`deploy.sh`・`home/`・`PLAN*`・`config.json` を除外している。**`bun run build` が使う `scripts/inline.mjs` が、clone から再現できない。**
+6. **git の追跡**: `.gitignore` が `scripts/`・`ops/`・`tasks/`・`docs/`・`deploy.sh`・`home/`・`PLAN*`・`config.json` を除外している。**`pnpm build` が使う `scripts/inline.mjs` が、clone から再現できない。**
 7. **dedupe の `alreadyProcessed()` が常に false**（`main.ts`）。
 8. **結線の無い UI と config の残骸**: `config-page.ts` の「New Relay」フォームと「Notifications」のトグル（`src.bak` の HTML を改変せずに移植する方針の結果で、意図した「空の UI」）。
    `mimiSelfBaseUrl` と config の `anchor*` も残骸。
@@ -866,3 +866,16 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 ### 20.7 リポジトリ直下の補足
 `dist/`（ビルド生成物。追跡されている）、`home/`（`biset.md` のランディング）、`src.bak/`（旧実装。参照用）、`pds/`（Bluesky PDS の配布物。biset のコードではない）、
 `biset-*`（コンパイル済みバイナリ。`.gitignore` 対象）、`test/`（104 ファイル）。
+
+## ランタイム: Node 26 + pnpm（2026-10-14 に Bun から移行）
+
+- パッケージ管理は pnpm（`packageManager`、`pnpm-workspace.yaml` の `allowBuilds` は esbuild のみ）。lockfile は `pnpm-lock.yaml` だけ。
+- client の bundle は esbuild（`pnpm build` / `pnpm dev`）。server（mediator・MIMI）は esbuild で依存込みの単一 `.mjs` にして Node 26 で動かす。
+  **Node 26 には `--experimental-transform-types` が無く**、`constructor(private readonly …)` のようなパラメータプロパティを含む `.ts` は
+  `node file.ts` では動かない。server・smoke は bundle 経由で起動する（`rp-signer` はそういう構文が無く、`node …/index.ts` のまま）。
+- `src/server/runtime/sqlite.ts` は `bun:sqlite` と同じ形（`query().get/all/run`、`transaction`）の `node:sqlite` ラッパー。`get()` は行が無ければ `null`。
+- `src/server/runtime/serve.ts` は `Bun.serve` 相当（fetch ハンドラ、ストリーム応答＝MIMI の SSE、WebSocket upgrade）を `node:http` と `ws` で実装する。
+  listen は非同期なので `createMediatorDeployment` と `serveMimiDeployment` は Promise を返す。
+- MIMI の provider-to-provider mTLS は `undici` の `Agent`（`connect: { cert, key, ca }`）で送る。
+- テストは vitest（`test/setup.ts` が bun:test 由来の `toStartWith` / `toBeTrue` / `toBeFalse` を足す）。
+  live mode の 2 テストが数十 ms の固定待ちを持つので、`vitest.config.ts` は `maxWorkers: 2`。

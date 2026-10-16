@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { equalBytes } from '../../src/protocol/canonical.ts'
 import { emailSetToVaultMutationIntents } from '../../src/client/store/projection/mutations.ts'
 import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'

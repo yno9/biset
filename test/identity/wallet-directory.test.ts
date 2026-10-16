@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { afterEach, expect, test } from 'bun:test'
+import { afterEach, expect, test } from 'vitest'
 import { beginDidMdWalletLogin, currentWallet, selectWallet } from '../../src/client/identity/wallet/did-md-oauth.ts'
 import { DEFAULT_WALLET, WALLET_DIRECTORY, type WalletDirectoryEntry } from '../../src/client/identity/wallet/wallet-directory.ts'
 

@@ -1,7 +1,7 @@
 // A real mediator (createMediator over an in-memory SqliteMediatorStore --
 // the production store, not a test double) plus the wire helpers the
 // mediator tests share.
-import { expect } from 'bun:test'
+import { expect } from 'vitest'
 import { generatePeerIdentity, type PeerIdentity } from '../../src/protocol/didcomm/peer.ts'
 import { createMediator, type LiveSocket, type MediatorHandler, type MediatorOptions } from '../../src/server/mediator/server.ts'
 import { SqliteMediatorStore, type SqliteMediatorLimits } from '../../src/server/mediator/sqlite-store.ts'

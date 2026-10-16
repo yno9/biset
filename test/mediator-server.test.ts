@@ -3,7 +3,7 @@
 // Features 2.0, driven through
 // the same handle(req, url) a real HTTP server calls, over the production
 // SQLite store (in memory).
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { packAnoncrypt, packAuthcrypt, unpackAuthcrypt, b64urlToBytes, parseJwe } from '../src/protocol/didcomm/crypto.ts'
 import { signDidCommMessage } from '../src/protocol/didcomm/jws.ts'

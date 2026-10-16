@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { isMailAddress, resolveMailAddressDid } from '../src/client/didcomm/address-resolver.ts'
 
 function fetchFrom(answers: Record<string, unknown>, asked: string[] = []): typeof fetch {

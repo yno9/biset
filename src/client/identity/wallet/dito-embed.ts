@@ -36,6 +36,11 @@ export interface DitoEmbedHandlers {
   savePage(): void
   /** The user removed dito's copy from this browser; the form is back. */
   unloaded(): void
+  /**
+   * The user pressed Log in for an identity that already exists: `handle` is its host. The page
+   * prepares the signed sign-in request and hands it back with `DitoEmbed.login`.
+   */
+  login(handle: string): void
   error(message: string): void
 }
 
@@ -55,9 +60,35 @@ function recalledHeight(): number | undefined {
   } catch { return undefined }
 }
 
-export function mountDitoCreate(frame: HTMLIFrameElement, origin: string, handlers: DitoEmbedHandlers): Promise<void> {
+export interface DitoEmbed {
+  /**
+   * Signs in to the identity named by `request` (the query string of a signed sign-in request).
+   * The Passphrase is typed in dito's frame; what comes back is the relying-party response
+   * (`vp_token`, `id_token`, `state`, `iss`), the same fields the callback URL would carry.
+   */
+  login(request: string): Promise<URLSearchParams>
+}
+
+export function mountDitoCreate(frame: HTMLIFrameElement, origin: string, handlers: DitoEmbedHandlers): Promise<DitoEmbed> {
   return new Promise((resolve, reject) => {
     let ready = false
+    let port: MessagePort | undefined
+    let nextId = 1
+    const calls = new Map<number, { resolve(value: unknown): void, reject(error: Error): void }>()
+    const call = (method: string, params: unknown) => new Promise<unknown>((done, fail) => {
+      if (!port) { fail(new Error('The wallet is not connected.')); return }
+      const id = nextId++
+      calls.set(id, { resolve: done, reject: fail })
+      port.postMessage({ id, method, params })
+    })
+    const embed: DitoEmbed = {
+      async login(request) {
+        const result = await call('wallet.login', { request }) as { response?: Record<string, unknown> } | null
+        const params = new URLSearchParams()
+        for (const [name, value] of Object.entries(result?.response ?? {})) if (typeof value === 'string') params.set(name, value)
+        return params
+      },
+    }
     const timer = setTimeout(() => {
       removeEventListener('message', onMessage)
       reject(new Error('The wallet did not respond.'))
@@ -69,18 +100,27 @@ export function mountDitoCreate(frame: HTMLIFrameElement, origin: string, handle
       if (event.origin !== origin || event.source !== frame.contentWindow) return
       if ((event.data as { type?: unknown } | null)?.type !== 'dito:ready') return
       const channel = new MessageChannel()
+      port = channel.port1
       channel.port1.onmessage = message => {
-        const data = message.data as { event?: string, did?: unknown, message?: unknown, height?: unknown, handle?: unknown }
+        const data = message.data as { event?: string, did?: unknown, message?: unknown, height?: unknown, handle?: unknown, id?: unknown, result?: unknown, error?: { message?: unknown } }
+        if (typeof data.id === 'number') {
+          const pending = calls.get(data.id)
+          calls.delete(data.id)
+          if (data.error) pending?.reject(new Error(typeof data.error.message === 'string' ? data.error.message : 'Wallet error'))
+          else pending?.resolve(data.result)
+          return
+        }
         if (data.event === 'resize' && typeof data.height === 'number') { frame.style.height = `${data.height}px`; rememberHeight(data.height) }
         else if (data.event === 'creating' && typeof data.handle === 'string') handlers.creating(data.handle)
         else if (data.event === 'created' && typeof data.did === 'string') handlers.created(data.did)
         else if (data.event === 'existing' && typeof data.did === 'string') handlers.existing(data.did)
         else if (data.event === 'save-page') handlers.savePage()
         else if (data.event === 'unloaded') handlers.unloaded()
+        else if (data.event === 'login' && typeof data.handle === 'string') handlers.login(data.handle)
         else if (data.event === 'error') handlers.error(typeof data.message === 'string' ? data.message : 'Wallet error')
       }
       frame.contentWindow!.postMessage({ type: 'dito:hello' }, origin, [channel.port2])
-      if (!ready) { ready = true; clearTimeout(timer); resolve() }
+      if (!ready) { ready = true; clearTimeout(timer); resolve(embed) }
     }
 
     // Start at the height the frame had last time, so the page does not jump when it loads.

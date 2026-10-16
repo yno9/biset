@@ -1,4 +1,6 @@
-import { afterAll, expect, test } from 'bun:test'
+import { afterAll, expect, test } from 'vitest'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,12 +31,10 @@ const port = 18_700 + Math.floor(Math.random() * 1000)
 const base = `http://127.0.0.1:${port}`
 const redirectUri = 'https://t.biset.md/wallet/callback'
 const allowedOrigin = 'https://t.biset.md'
-const server = Bun.spawn({
-  cmd: ['node', 'src/server/rp-signer/index.ts'],
+const server = spawn(process.execPath, ['src/server/rp-signer/index.ts'], {
   cwd: new URL('../..', import.meta.url).pathname,
   env: { ...process.env, PORT: String(port), RP_DID_KEY_FILE: keyFile, RP_REDIRECT_URI: redirectUri, RP_SIGNER_ALLOWED_ORIGIN: allowedOrigin },
-  stdout: 'ignore',
-  stderr: 'ignore',
+  stdio: 'ignore',
 })
 
 async function ready(): Promise<void> {
@@ -42,14 +42,15 @@ async function ready(): Promise<void> {
     try {
       if ((await fetch(`${base}/healthz`)).ok) return
     } catch { /* still starting */ }
-    await Bun.sleep(20)
+    await new Promise(resolve => setTimeout(resolve, 20))
   }
   throw new Error('biset-rp-signer did not start')
 }
 
 afterAll(async () => {
+  const exited = once(server, 'exit')
   server.kill()
-  await server.exited
+  await exited
   rmSync(dataDir, { recursive: true, force: true })
 })
 

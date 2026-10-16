@@ -1,7 +1,7 @@
 // The relationship seed and its authority, read off the did:webvh log
 // (PLAN-refactor.md §4.2, §7-1, §7-2, §9.2): the seed in use is the one whose
 // rotation key the DID document publishes; a removed device may not use any.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import type { LogEntry } from '../src/protocol/webvh/log.ts'
 import {
   createRelationshipSeedAuthority, DeviceRemovedError, RelationshipSeedPendingError, SEED_LOST_AFTER_MS, seedStatus,

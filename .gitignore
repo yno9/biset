@@ -15,3 +15,5 @@ docs/
 /*.bak/
 
 dist-mail/
+dist-server/
+TODO.md

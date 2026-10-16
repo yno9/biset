@@ -1,7 +1,7 @@
 // A DIDComm group chat is its own inbox. Found live 2026-10-03: a 1:1 chat
 // and a group chat from the same person landed in ONE inbox row (as two
 // threads), because both are keyed on who the messages came from.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { DIDCOMM_GROUP_THREAD_PREFIX, groupMessages, inboxKeyForThread, processedMessages } from '../src/client/app/ui/message/message-view.ts'
 
 describe('inboxKeyForThread', () => {

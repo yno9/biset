@@ -4,7 +4,7 @@
 // identityId, the now-stale row still sitting under the OLD one needs to
 // be dropped explicitly.
 import 'fake-indexeddb/auto'
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'vitest'
 import { createMlsGroup, generateOwnKeyPackage } from '../../src/client/mls/group.ts'
 import { IndexedDbMlsSelfGroupStore } from '../../src/client/mls/store.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'

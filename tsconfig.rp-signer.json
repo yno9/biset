@@ -8,7 +8,7 @@
     "noEmit": true,
     "skipLibCheck": true,
     "lib": ["ESNext"],
-    "types": ["bun"]
+    "types": ["node"]
   },
   "include": ["src/server/rp-signer/**/*"],
   "typeRoots": ["node_modules/@types"]

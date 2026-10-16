@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { createMlsGroup, generateOwnKeyPackageForCredential, groupInfoForExternalJoin } from '../../src/client/mls/group.ts'
 import { mlsSuite } from '../../src/protocol/mls/suite.ts'
 import { defaultAuthenticationService } from '../../src/protocol/mls/authenticationService.ts'

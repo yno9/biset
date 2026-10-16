@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { didCommEndpointWithOnion } from '../src/client/identity/wallet/did-md-oauth.ts'
 
 const clearnet = { uri: 'https://mediator.example/', accept: ['didcomm/v2'], routingKeys: ['did:peer:2.Ez#key-1'] }

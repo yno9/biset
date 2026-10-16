@@ -1,6 +1,6 @@
 // Vault Sync: one message to the identity's own DID reaches every device;
 // a device ignores its own copy; only the identity's own devices are heard.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { VaultSyncClient, walletVaultSyncTransport, type VaultSyncMessage } from '../src/client/didcomm/vault-sync.ts'
 import { bytesToBase64url } from '../src/protocol/canonical.ts'

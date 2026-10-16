@@ -9,7 +9,7 @@
 // `IDBDatabase` connection, which is exactly what "close the tab, reopen the
 // app" durability requires simulating.
 import 'fake-indexeddb/auto'
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'vitest'
 import { IndexedDbVaultStore, type IngressVaultCommit, type LocalVaultMutationCommit } from '../../src/client/store/vault/store.ts'
 import { createVaultEvent, type VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import { createSegmentKey, encryptVaultObject } from '../../src/client/store/vault/objects.ts'

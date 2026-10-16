@@ -4,7 +4,7 @@
 // up from hop1, unwrap it, and re-Forward the still-opaque inner attachment
 // into hop2's own queue -- all without either mediator's dispatch() ever
 // being told about hop chaining (2026-08-30 discussion).
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { generatePeerIdentity } from '../../src/protocol/didcomm/peer.ts'
 import { createMediator } from '../../src/server/mediator/server.ts'
 import { startRelayPoller } from '../../src/server/mediator/relay-poller.ts'

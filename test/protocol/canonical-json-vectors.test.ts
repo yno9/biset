@@ -4,7 +4,7 @@
 // documentation but an executable, current contract. An independent
 // (non-TypeScript) implementation replaying the same `value`s should
 // reproduce the same `json` text and `sha256Base64url` hash byte for byte.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { canonicalJson, canonicalBytes, sha256Bytes, bytesToBase64url } from '../../src/protocol/canonical.ts'
 import { CANONICAL_JSON_VECTORS } from '../../src/protocol/test-vectors.ts'
 

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { didWebDidCommRoute, resolveDidWeb, type DidWebDocument } from '../../src/protocol/didcomm/did-web.ts'
 import { encodeX25519Multikey } from '../../src/protocol/didcomm/multikey.ts'
 

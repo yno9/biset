@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { MimiFanoutDispatcher, decodeMimiFanoutBatchWire, encodeMimiFanoutBatchWire, fanoutFingerprint } from '../../src/server/mimi/fanout.ts'
 import { MimiProviderTransport } from '../../src/server/mimi/provider-transport.ts'
 import { encodeMlsMessage } from '../../src/protocol/mls/index.ts'

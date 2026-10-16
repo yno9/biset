@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import * as openpgp from 'openpgp'
 import { generatePgpKey, importPgpKey, keyNamesAddress, readPgpKey } from '../src/client/pgp/keyring.ts'
 import { currentOpenPgpCredential, type OpenPgpPrivateCredentialV1 } from '../src/client/store/vault/openpgp-credential.ts'

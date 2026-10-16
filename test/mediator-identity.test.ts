@@ -1,6 +1,6 @@
 // The mediator as a did:web (the DID a recipient's DID document names as its
 // endpoint), with the did:peer of the same keys still accepted.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { didWebForUrl, peerMediatorIdentity, webMediatorIdentity } from '../src/server/mediator/identity.ts'
 import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 import { resolveDidWeb } from '../src/protocol/didcomm/did-web.ts'

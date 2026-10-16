@@ -1,7 +1,7 @@
 // did.md's Root key is `#pass-1` by name. A document may list other
 // authentication keys too (PLAN-refactor.md §3-4: the DID Rotation signing
 // key), in any order; the Root must never be taken to be whichever comes first.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { encodeMultikey } from '../src/protocol/webvh/multikey.ts'
 import { rootAuthority } from '../src/client/identity/wallet/did-md-oauth.ts'

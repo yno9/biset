@@ -3,7 +3,7 @@
  * identity-blind MLS DS, this store deliberately persists the participant
  * list and MLS credentials required by a specification-conformant hub.
  */
-import { Database } from 'bun:sqlite'
+import { Database } from '../runtime/sqlite.ts'
 import { equalBytes, sha256Bytes } from '../../protocol/canonical.ts'
 import { createFrankingKeyMaterial, type FrankingKeyMaterial } from './franking.ts'
 import { decodeMimiConsentEntryWire, encodeMimiConsentEntryWire } from './federation.ts'

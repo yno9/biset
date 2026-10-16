@@ -2,7 +2,7 @@
 // and (optional) Tor entrances. Pins the alias/onion-detection/selection
 // contracts other modules (sameMediatorUrl's aliases, D-5's transport
 // choice) will be wired to in later phases.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { mediatorAliases, isOnionUrl, preferredMediatorUrl, isTorEnvironment, type MediatorEndpoints } from '../src/client/didcomm/mediator-endpoints.ts'
 
 const canonical = 'https://mediator.biset.md'

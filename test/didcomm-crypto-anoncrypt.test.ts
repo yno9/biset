@@ -5,7 +5,7 @@
 // consume XC20P even though we never produce it (didcomm-rust's own
 // default `enc` for anoncrypt, this file's own header) -- that a hand-built
 // XC20P envelope from a hypothetical third-party sender still decrypts.
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'vitest'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
 import {

@@ -1,7 +1,7 @@
 // IndexedDbMlsKeyPackageStore.clear() removes all locally retained private
 // KeyPackage halves when an explicit reset is requested.
 import 'fake-indexeddb/auto'
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'vitest'
 import { IndexedDbMlsKeyPackageStore } from '../../src/client/mls/keypackage-store.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 

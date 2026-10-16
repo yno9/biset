@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test'
-import { Database } from 'bun:sqlite'
+import { describe, expect, test } from 'vitest'
+import { Database } from '../../src/server/runtime/sqlite.ts'
 import { SqliteMimiStore } from '../../src/server/mimi/store.ts'
 import { frankMessage, verifyFrank } from '../../src/server/mimi/franking.ts'
 import { RoomPseudonymIssuer } from '../../src/server/mimi/anon/pseudonym.ts'
