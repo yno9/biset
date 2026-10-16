@@ -50,13 +50,4 @@ export function refreshInbox(readModel: LocalJmapReadModel, options: { forceRend
   return task
 }
 
-let sysMsgTimer: ReturnType<typeof setTimeout> | null = null
-
-export function showSysMsg(text: string, durationMs = 1800): void {
-  const el = document.getElementById('sys-msg')
-  if (!el) return
-  el.textContent = text
-  el.classList.add('show')
-  if (sysMsgTimer) clearTimeout(sysMsgTimer)
-  sysMsgTimer = setTimeout(() => el.classList.remove('show'), durationMs)
-}
+export { showSysMsg } from './sys-msg.tsx'

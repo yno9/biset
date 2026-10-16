@@ -30,6 +30,7 @@ import { configureAccountPage, configureMarkdownVaultToggle, showAccountPage, up
 import { configureComposePage } from './ui/compose-page.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { installDitoApprover } from '../identity/wallet/dito-approve.ts'
+import { mountSysMsg } from './ui/sys-msg.tsx'
 import { VaultBackedLocalJmapMutationSink } from '../store/projection/vault-mutation-sink.ts'
 import { DidCommIngressProjector, isProjectableDidCommIngress } from '../didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from '../../protocol/didcomm/webvh-resolve.ts'
@@ -982,6 +983,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
   showAccountPage()
 }
 
+mountSysMsg()
 installDitoApprover()
 /** Keeps the initial public API explicit while account routing is implemented. */
 bootClient()

@@ -22,8 +22,7 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..900,0..1,0..1,0..1&family=Caveat:wght@600;700&display=swap">
-<link rel="stylesheet" href="style.css">
-<!-- CSS inlined by build -->
+<link rel="stylesheet" href="./style.css">
 </head>
 <body>
 
@@ -78,7 +77,7 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
   <div id="pw-error2"></div>
 </div>
 
-<div id="sys-msg"></div>
+<div id="sys-msg-root"></div>
 
 <div id="menu"></div>
 
@@ -314,6 +313,6 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
   </svg>
 </button>
 
-<!-- JS inlined by build -->
+<script type="module" src="./main.ts"></script>
 </body>
 </html>

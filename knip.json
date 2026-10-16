@@ -1,14 +1,15 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
+    "vite.config.ts",
     "src/client/app/main.ts",
     "src/client/app/sw.ts",
     "src/server/mimi/index.ts",
-    "test/**/*.test.ts",
+    "test/**/*.test.{ts,tsx}",
     "scripts/*.mjs"
   ],
   "project": [
-    "src/**/*.ts"
+    "src/**/*.{ts,tsx}"
   ],
   "ignoreDependencies": [
     "didcomm-node"

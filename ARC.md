@@ -676,9 +676,14 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 ## 15. Build・設定・運用
 
 ### 15.1 クライアント
-- `pnpm build` — `src/client/app/main.ts` と `sw.ts` を browser の IIFE に bundle し、`scripts/inline.mjs` で `dist/index.html` に inline 化する。
-  **`esbuild` 単体では不十分**で、必ず `pnpm build` を使う。検証は `file://` の `dist/index.html` で行う（localhost の dev サーバーは使わない）。
-- 実行時設定は `window.__BISET_CONFIG__`（`ui/config.ts` が読む唯一の場所。`config.json` を `inline.mjs` が埋め込む）。
+- `pnpm build` — Vite（`vite.config.ts`、`vite-plugin-singlefile`）が `src/client/app/index.html` の script と style を inline 化した
+  単一ファイル `dist/index.html` を作り、`sw.ts` は esbuild で別ファイル `dist/sw.js` に bundle する（Service Worker は inline できない）。
+  外部の module script は `file://` では CORS で止まるため、単一ファイルであることが `file://` で動く前提になる。検証は `file://` の `dist/index.html` で行う。
+- 画面は React（`src/client/app/react/`、`ui/*.tsx`）へ 1 画面ずつ移行中。素の DOM のページ内の node に島（`mountIsland`）として載せ、ロジックから画面へは
+  `createStore` / `useStore`（`react/store.ts`）で渡す。最初の島は system toast（`ui/sys-msg.tsx`）。画面のテストは vitest + Testing Library（`test/ui/*.test.tsx`）。
+- `pnpm dev` は Vite の dev サーバー（:3000、HMR）。`/sw.js` と `/config.json` はそこで配る。
+- 実行時設定は `window.__BISET_CONFIG__`（`ui/config.ts` が読む唯一の場所。`config.json`（`BISET_CONFIG` で別の設定）を Vite の plugin が head に埋め込む。
+  出力先は `BISET_OUT_DIR`、mail.did.md は `BISET_CONFIG=ops/mail-did-md/config.json BISET_OUT_DIR=dist-mail`）。
 
 | キー | 用途 |
 |---|---|
