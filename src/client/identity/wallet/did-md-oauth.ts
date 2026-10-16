@@ -730,9 +730,9 @@ async function sessionFromVpToken(vpToken: unknown, did: string, pending: DidMdP
 // (unchanged by PLAN7, see restoreDidMdWalletSession) carries it flat as
 // `vp_token`. This is where they reconverge.
 async function sessionFromCapabilityValue(value: unknown, did: string, pending: DidMdPendingAuthorization): Promise<DidMdActiveSession> {
-  const resolvedPending = await resolvedPendingAuthorization(pending, did)
-  const capability = await capabilityFromResponse(value, resolvedPending)
-  const resolved = await resolveByDomain(parseWebvhDid(resolvedPending.did).domain, undefined, undefined, freshFetch())
+  const resolvedPending = await timedStep('    session: resolvedPendingAuthorization', resolvedPendingAuthorization(pending, did))
+  const capability = await timedStep('    session: capabilityFromResponse', capabilityFromResponse(value, resolvedPending))
+  const resolved = await timedStep('    session: resolveByDomain(did)', resolveByDomain(parseWebvhDid(resolvedPending.did).domain, undefined, undefined, freshFetch()))
   if (!resolved) throw new Error('Could not resolve the DID document after Wallet approval')
   // A DID URL may be written relative (`#x`) or absolute (`did:...#x`); both name the same.
   const absolute = (id: unknown) => typeof id === 'string' && id.startsWith('#') ? `${resolvedPending.did}${id}` : id
@@ -1146,16 +1146,22 @@ export async function completeDidMdWalletCallback(delivered?: URLSearchParams): 
   } finally { await clearDidMdPendingAuthorization() }
 }
 
+// Temporary boot timing (console.info "[boot] ...").
+async function timedStep<T>(label: string, work: Promise<T>): Promise<T> {
+  const startedAt = performance.now()
+  try { return await work } finally { console.info(`[boot] ${label} +${Math.round(performance.now() - startedAt)}ms`) }
+}
+
 export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | undefined> {
   const session = await readDidMdDeviceSession()
   if (!session || session.v !== 2 || session.issuer !== selectedWallet.issuer || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
-  const client = await registration()
+  const client = await timedStep('  restore: registration (wallet metadata)', registration())
   if (client.clientId !== session.clientId) return undefined
   const pending = pendingFromSession(session)
-  const response = await fetch(client.refreshEndpoint, {
+  const response = await timedStep('  restore: device-refresh POST', fetch(client.refreshEndpoint, {
     method: 'POST', headers: { 'content-type': 'application/json', dpop: await createDpop(session.privateKey, session.publicJwk, 'POST', client.refreshEndpoint) },
     body: JSON.stringify({ client_id: client.clientId, vp_token: { capability: [session.capability] } }),
-  })
+  }))
   try {
     // device-refresh (server/oauth-server.ts's oauthRefresh/oauthIssueToken)
     // is untouched by PLAN7 -- it still returns the pre-PLAN7 token-response
@@ -1164,7 +1170,7 @@ export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | 
     if (!response.ok) throw new Error('did.md rejected the device refresh request')
     const value = asObject(await response.json(), 'device refresh response')
     if (typeof value.access_token !== 'string' || value.token_type !== 'DPoP' || typeof value.sub !== 'string') throw new Error('did.md returned an invalid device refresh response')
-    return await sessionFromCapabilityValue(value.vp_token, value.sub, pending)
+    return await timedStep('  restore: sessionFromCapabilityValue', sessionFromCapabilityValue(value.vp_token, value.sub, pending))
   } catch (error) {
     // A stored session that no longer validates (e.g. did.md issued a
     // capability against a stale DID generation) would otherwise fail this
