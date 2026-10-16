@@ -10,7 +10,6 @@ import {
   beginDidMdWalletLogin,
   prepareDidMdWalletLoginRequest,
   completeDidMdWalletCallback,
-  disconnectDidMdWallet,
   restoreDidMdWalletSession,
   resolveWalletFromSuffix,
   selectWallet,
@@ -90,7 +89,6 @@ export function setupNewUserPage(): void {
   if (_newUserPageWired) return
   _newUserPageWired = true
   const walletLoginButton = document.getElementById('nu-wallet-login') as HTMLButtonElement | null
-  const walletSessionEl = document.getElementById('nu-wallet-session') as HTMLDivElement | null
   const walletResultEl = document.getElementById('nu-wallet-result') as HTMLDivElement | null
 
   // PLAN4 (~/did.md/PLAN4-wallet-connector.md): "connect with [...]" -- the
@@ -138,24 +136,6 @@ export function setupNewUserPage(): void {
     walletResultEl.style.overflowWrap = 'anywhere'
     walletResultEl.style.color = error ? '#ff3b30' : 'var(--text-dim)'
   }
-  const showWalletSession = (session: DidMdActiveSession | undefined) => {
-    if (!walletSessionEl) return
-    walletSessionEl.replaceChildren()
-    walletSessionEl.style.display = session ? 'flex' : 'none'
-    if (!session) return
-    const label = document.createElement('span')
-    label.textContent = `Connected · ${session.handle} · device capability until ${new Date(session.capabilityExpiresAt).toLocaleDateString()}`
-    const actions = document.createElement('span')
-    actions.style.display = 'flex'; actions.style.gap = '6px'
-    const disconnect = document.createElement('button')
-    disconnect.type = 'button'; disconnect.textContent = 'Disconnect'; disconnect.style.cssText = 'border:0;background:transparent;color:var(--text-dim);font:inherit;cursor:pointer'
-    disconnect.addEventListener('click', () => {
-      void disconnectDidMdWallet().then(() => { showWalletSession(undefined); walletResult('This browser was disconnected. The remote capability remains revocable from did.md Wallet.') })
-    })
-    actions.append(disconnect)
-    walletSessionEl.append(label, actions)
-  }
-
   // A callback is consumed before ordinary session restore.  Its code is
   // one-use and the URL is cleared by the OAuth module after verification.
   void (async () => {
@@ -163,8 +143,6 @@ export function setupNewUserPage(): void {
       const callback = await completeDidMdWalletCallback()
       const session = callback ?? await restoreDidMdWalletSession()
       if (session) {
-        showWalletSession(session)
-        walletResult(callback ? `Connected ${session.handle}. This browser can restore its DPoP-bound session without reopening Wallet.` : `Restored ${session.handle}'s DPoP-bound device session.`)
         await onWalletConnected?.(session)
       }
     } catch (error) {
@@ -201,7 +179,6 @@ export function setupNewUserPage(): void {
           if (!response) return
           const session = await completeDidMdWalletCallback(response)
           if (!session) return
-          showWalletSession(session)
           await onWalletConnected?.(session)
         })().catch(error => {
           void ditoEmbed?.cancel().catch(() => {})
