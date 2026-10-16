@@ -113,3 +113,10 @@ export function configureAccountPage(next: AccountPageConfig): void {
 export function getAccountConfig(): AccountPageConfig | undefined {
   return accountConfig.get()
 }
+
+/** Refresh the device roster and vault status without redrawing the page. */
+export function updateVaultCardStatus(status: VaultCardStatus): void {
+  const config = accountConfig.get()
+  if (!config?.did) return
+  accountConfig.set({ ...config, vault: status })
+}

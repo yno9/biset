@@ -9,7 +9,6 @@ import { discoverMaxReceiveBytes } from '../../protocol/didcomm/discover-feature
 import { rebuildLocalJmapProjection } from '../store/vault/projection-rebuild.ts'
 import { VaultProjector } from '../store/vault/projector.ts'
 import { VAULT_SYNC_STATE_REQUEST, VAULT_SYNC_STATE_RESPONSE, VAULT_SYNC_UPDATE } from '../../protocol/didcomm/vault-sync-protocol.ts'
-import { setOnWalletConnected } from './ui/account-create.ts'
 import {
   beginDidMdDocumentEdit,
   type DidMdDocumentChange,
@@ -26,11 +25,11 @@ import {
 import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
 import { configureCompose } from './ui/thread.ts'
 import type { ReplySendInput } from './ui/thread.ts'
-import { configureAccountPage, configureMarkdownVaultToggle, showAccountPage, updateVaultCardStatus, type VaultCardStatus } from './ui/account-page.tsx'
-import { configureComposePage } from './ui/compose-page.ts'
+import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { installDitoApprover } from '../identity/wallet/dito-approve.ts'
 import { mountSysMsg } from './ui/sys-msg.tsx'
+import { mountPageHost } from './ui/page-host.tsx'
 import { VaultBackedLocalJmapMutationSink } from '../store/projection/vault-mutation-sink.ts'
 import { DidCommIngressProjector, isProjectableDidCommIngress } from '../didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from '../../protocol/didcomm/webvh-resolve.ts'
@@ -984,6 +983,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
 }
 
 mountSysMsg()
+mountPageHost()
 installDitoApprover()
 /** Keeps the initial public API explicit while account routing is implemented. */
 bootClient()

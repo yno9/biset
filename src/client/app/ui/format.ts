@@ -38,9 +38,9 @@ export function previewText(body: string, max = 60): string {
 
 const palette = ['#e8604a', '#4a90d9', '#5caf6e', '#9b59b6', '#e67e22', '#1abc9c', '#e91e8c', '#607d8b']
 
-function colorFor(name: string): string {
+export function avatarColor(name: string): string {
   let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) & 0xffffff
   return palette[Math.abs(h) % palette.length]!
 }
 
-export function avatarStyle(name: string): string { return `background:${colorFor(name)}` }
+export function avatarStyle(name: string): string { return `background:${avatarColor(name)}` }
