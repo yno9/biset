@@ -993,8 +993,7 @@ export async function beginDidMdEndpointUpdate(configured: DidMdWalletConfigurat
  * did.md handle the user has open in Wallet beforehand (no login_hint). The
  * signer's DID and DIDComm mediator enrollment are both
  * resolved/deferred to after Wallet approves -- see `tokenFrom` for DID
- * derivation and `beginDidMdWalletFinalizeEnrollment` for the follow-up
- * step the user triggers explicitly from Biset's own UI. */
+ * derivation. */
 /** The only round trip needed to sign in and, when a mediator is configured
  * and reachable, publish a DIDComm device. No DID is resolved up front
  * (no login_hint). The DIDComm device's own
@@ -1009,8 +1008,7 @@ export async function beginDidMdEndpointUpdate(configured: DidMdWalletConfigurat
  *
  * Best-effort: a mediator that's unconfigured or unreachable right now
  * just means no DIDComm device this round -- it must never block sign-in
- * itself. beginDidMdWalletFinalizeEnrollment remains for that case, and for
- * enabling messaging after the fact. */
+ * itself; beginDidMdWalletDocumentEdit publishes the device afterwards. */
 async function newLoginPending(mediatorUrls: readonly string[], config: WalletConfiguration, handle?: string): Promise<{ client: DidMdRegistration, pending: DidMdPendingAuthorization }> {
   const client = await registration(config.walletDeviceName)
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']) as CryptoKeyPair
@@ -1050,43 +1048,6 @@ export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = []
 export async function prepareDidMdWalletLoginRequest(mediatorUrls: readonly string[] = [], configured: DidMdWalletConfiguration = {}, handle?: string): Promise<string> {
   const { client, pending } = await newLoginPending(mediatorUrls, walletConfiguration(configured), handle)
   return new URL(await walletRequestUrl(client, pending)).search
-}
-
-/** The explicit, user-triggered follow-up ("Connect to MIMI/mediator" in
- * Biset's UI) that publishes the DIDComm mediator device for an already
- * signed-in session, via a second Wallet approval -- for a session that
- * signed in before a mediator was configured, or whose mediator wasn't
- * reachable during beginDidMdWalletLogin above. */
-export async function beginDidMdWalletFinalizeEnrollment(mediatorUrls: readonly string[] = [], configured: DidMdWalletConfiguration = {}): Promise<never> {
-  const config = walletConfiguration(configured)
-  const session = await readDidMdDeviceSession()
-  if (!session?.vaultDeviceId || session.v !== 2 || session.issuer !== selectedWallet.issuer || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
-    throw new Error('Connect did.md Wallet again before finishing setup on this browser')
-  }
-  const client = await registration()
-  if (client.clientId !== session.clientId || client.redirectUri !== redirectUri()) throw new Error('The did.md Wallet client registration changed; reconnect this browser')
-  const mediator = await bisetMediatorFor(mediatorUrls)
-  if (!mediator) throw new Error('Biset DIDComm mediator is not configured')
-  const bisetDidCommDevice = await newBisetDidCommDevice(session.did, mediator)
-  // A retry of this same follow-up (the user hitting "Enable messaging"
-  // again, or a stale reachability check re-triggering it) must not leave
-  // the previous round's device published alongside the new one -- an
-  // orphaned #didcomm verification method a sibling still tries to send to,
-  // which the mediator then refuses with e.m.req.not-enrolled since nothing
-  // ever registered it (found live, 2026-09-15).
-  const previous = session.bisetDidCommDevice?.xKid
-  const pending: DidMdPendingAuthorization = {
-    ...pendingFromSession(session),
-    state: randomBase64url(32),
-    codeVerifier: randomBase64url(48),
-    createdAt: new Date().toISOString(),
-    bisetDidCommDevice,
-    ...(session.bisetDidCommDevice ? { previousBisetDidCommDevice: session.bisetDidCommDevice } : {}),
-  }
-  const rotation = await rotationCandidate('ifAbsent')
-  pending.rotationSeedCandidate = rotation.sealed
-  pending.documentEdit = buildDocumentEdit(session.did, config, bisetDidCommDevice, previous ? [previous] : [], [], rotation.method)
-  return redirectToWallet(client, pending)
 }
 
 /** The endpoints a DID document stops listing when its DIDComm device moves to `next`.

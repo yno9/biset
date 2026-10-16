@@ -11,7 +11,6 @@ import { VaultProjector } from '../store/vault/projector.ts'
 import { VAULT_SYNC_STATE_REQUEST, VAULT_SYNC_STATE_RESPONSE, VAULT_SYNC_UPDATE } from '../../protocol/didcomm/vault-sync-protocol.ts'
 import { setOnWalletConnected } from './ui/account-create.ts'
 import {
-  beginDidMdWalletFinalizeEnrollment,
   beginDidMdWalletDocumentEdit,
   beginDidMdWalletLogin,
   beginDidMdRemoveOtherDevices,
@@ -853,7 +852,7 @@ async function configureWalletAccountIfPresent(
       // senders have to be able to find the route publicly).
       onEnableMessaging: async () => {
         const config = readBisetConfig()
-        return beginDidMdWalletFinalizeEnrollment(config.mediatorUrls, config)
+        return beginDidMdWalletDocumentEdit({ mediatorUrls: config.mediatorUrls, configuration: config })
       },
       // Same same-tab Wallet approval as onEnableMessaging, just pointed at
       // an explicit mediator URL (the Mediator card's "Edit server") instead
