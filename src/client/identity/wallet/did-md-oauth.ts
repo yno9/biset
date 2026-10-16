@@ -729,7 +729,9 @@ async function sessionFromVpToken(vpToken: unknown, did: string, pending: DidMdP
 // wraps it in a DCQL envelope (PLAN7), while device-refresh's response body
 // (unchanged by PLAN7, see restoreDidMdWalletSession) carries it flat as
 // `vp_token`. This is where they reconverge.
-async function sessionFromCapabilityValue(value: unknown, did: string, pending: DidMdPendingAuthorization): Promise<DidMdActiveSession> {
+/** `registerMediator: false` is a restore of a stored session: boot registers this device with the
+ * mediator right after, so doing it here too would only repeat the same round trips. */
+async function sessionFromCapabilityValue(value: unknown, did: string, pending: DidMdPendingAuthorization, options: { registerMediator?: boolean } = {}): Promise<DidMdActiveSession> {
   const resolvedPending = await timedStep('    session: resolvedPendingAuthorization', resolvedPendingAuthorization(pending, did))
   const capability = await timedStep('    session: capabilityFromResponse', capabilityFromResponse(value, resolvedPending))
   const resolved = await timedStep('    session: resolveByDomain(did)', resolveByDomain(parseWebvhDid(resolvedPending.did).domain, undefined, undefined, freshFetch()))
@@ -780,7 +782,7 @@ async function sessionFromCapabilityValue(value: unknown, did: string, pending: 
   // impossible by construction. Publish + re-resolve above first, persist
   // the recoverable session, then register; boot retries registration if
   // the network fails after the DID commit.
-  if (capability.didCommDevice) await setMediatorRegistration(resolvedPending.did, capability.didCommDevice, 'add')
+  if (capability.didCommDevice && options.registerMediator !== false) await setMediatorRegistration(resolvedPending.did, capability.didCommDevice, 'add')
   if (resolvedPending.previousBisetDidCommDevice) {
     try { await setMediatorRegistration(resolvedPending.did, resolvedPending.previousBisetDidCommDevice, 'remove') }
     catch (error) { console.warn('[mediator edit cleanup]', error instanceof Error ? error.message : error) }
@@ -1155,7 +1157,10 @@ async function timedStep<T>(label: string, work: Promise<T>): Promise<T> {
 export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | undefined> {
   const session = await readDidMdDeviceSession()
   if (!session || session.v !== 2 || session.issuer !== selectedWallet.issuer || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
-  const client = await timedStep('  restore: registration (wallet metadata)', registration())
+  // Over https the client id and the refresh endpoint are constants: no discovery round trip.
+  const client = location.protocol === 'file:'
+    ? await registration()
+    : { clientId: rpIdentity().did, refreshEndpoint: `${selectedWallet.issuer}/v1/oauth/device-refresh` }
   if (client.clientId !== session.clientId) return undefined
   const pending = pendingFromSession(session)
   const response = await timedStep('  restore: device-refresh POST', fetch(client.refreshEndpoint, {
@@ -1170,7 +1175,7 @@ export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | 
     if (!response.ok) throw new Error('did.md rejected the device refresh request')
     const value = asObject(await response.json(), 'device refresh response')
     if (typeof value.access_token !== 'string' || value.token_type !== 'DPoP' || typeof value.sub !== 'string') throw new Error('did.md returned an invalid device refresh response')
-    return await timedStep('  restore: sessionFromCapabilityValue', sessionFromCapabilityValue(value.vp_token, value.sub, pending))
+    return await timedStep('  restore: sessionFromCapabilityValue', sessionFromCapabilityValue(value.vp_token, value.sub, pending, { registerMediator: false }))
   } catch (error) {
     // A stored session that no longer validates (e.g. did.md issued a
     // capability against a stale DID generation) would otherwise fail this
