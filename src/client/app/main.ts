@@ -13,9 +13,7 @@ import { setOnWalletConnected } from './ui/account-create.ts'
 import {
   beginDidMdWalletDocumentEdit,
   beginDidMdWalletLogin,
-  beginDidMdRemoveOtherDevices,
-  beginDidMdRotationKeyRenewal,
-  beginDidMdEndpointUpdate,
+  beginDidMdRotationEdit,
   approvedRotationSeed,
   completeDidMdWalletCallback,
   disconnectDidMdWallet,
@@ -859,10 +857,7 @@ async function configureWalletAccountIfPresent(
       // of always taking this deployment's configured default -- reuses
       // beginDidMdWalletDocumentEdit as-is, since it already accepts
       // an array and takes its first valid entry (bisetMediatorFor).
-      // The URL already in use: republish the endpoint as configured now, keeping this device's key.
-      onEditMediator: async (mediatorUrl: string) => sameMediatorUrl(mediatorUrl, mediatorCard!.mediatorUrl)
-        ? beginDidMdEndpointUpdate(readBisetConfig())
-        : beginDidMdWalletDocumentEdit({ mediatorUrls: [mediatorUrl], configuration: readBisetConfig() }),
+      onEditMediator: async (mediatorUrl: string) => beginDidMdWalletDocumentEdit({ mediatorUrls: [mediatorUrl], configuration: readBisetConfig() }),
       onEnableTor: async (onionUrl: string) => beginDidMdWalletDocumentEdit({ mediatorUrls: [mediatorCard!.mediatorUrl], mediatorOnionUrls: [onionUrl], configuration: readBisetConfig() }),
       onLogOutMediator: async () => beginDidMdWalletDocumentEdit({ removeMediator: true, configuration: readBisetConfig() }),
       onDisconnect: async () => {
@@ -872,8 +867,8 @@ async function configureWalletAccountIfPresent(
     },
     vault,
     ...(pgpCard ? { pgp: pgpCard } : {}),
-    onRemoveOtherDevices: async () => beginDidMdRemoveOtherDevices(readBisetConfig()),
-    ...(rotationKeyState ? { rotationKey: { state: rotationKeyState, onRenew: async () => beginDidMdRotationKeyRenewal(readBisetConfig()) } } : {}),
+    onRemoveOtherDevices: async () => beginDidMdRotationEdit(readBisetConfig(), { removeOtherDevices: true }),
+    ...(rotationKeyState ? { rotationKey: { state: rotationKeyState, onRenew: async () => beginDidMdRotationEdit(readBisetConfig()) } } : {}),
     showMessage: showSysMsg,
   })
   return true

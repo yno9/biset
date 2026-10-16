@@ -907,85 +907,46 @@ async function redirectToWallet(client: DidMdRegistration, pending: DidMdPending
 }
 
 /**
- * Removes every other device of this identity in one Wallet approval: the
+ * Replaces the identity's rotation key (a fresh relationship seed's) in one Wallet approval: for an
+ * identity that has none yet, one whose seed no device has any more, or one whose seed a device
+ * removed from the Wallet itself still holds (relationship-seed-bootstrap.ts's "unpublished",
+ * "lost" and "stale"). With `removeOtherDevices`, the same edit also removes every other device: the
  * DID document edit drops their keyAgreement keys, which is the one place
  * the rest of the system learns who this identity's devices are (a mediator
  * revokes their inboxes on the next log it is handed; a sender stops
  * encrypting to them, and Vault Sync stops reaching them). Every message
  * goes to the keys the DID document lists, so nothing else needs to move.
  */
-export async function beginDidMdRemoveOtherDevices(configured: DidMdWalletConfiguration = {}): Promise<never> {
+export async function beginDidMdRotationEdit(configured: DidMdWalletConfiguration = {}, options: { removeOtherDevices?: boolean } = {}): Promise<never> {
   const config = walletConfiguration(configured)
   const session = await readDidMdDeviceSession()
   if (!session?.vaultDeviceId || !session.bisetDidCommDevice || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
-    throw new Error('Reconnect did.md Wallet before removing other devices')
+    throw new Error('Reconnect did.md Wallet before changing the keys')
   }
-  // Read past the host's CDN (`freshFetch`): a stale copy would leave a recently added device out of the removal.
-  const resolved = await resolveByDomain(parseWebvhDid(session.did).domain, undefined, undefined, freshFetch())
-  if (!resolved || resolved.id !== session.did) throw new Error('Could not resolve the current DID document before removing other devices')
-  const ownKid = session.bisetDidCommDevice.xKid
-  const remove = (resolved.verificationMethod ?? []).flatMap(method => {
-    try {
-      const key = decodeX25519Multikey(method.publicKeyMultibase)
-      const fragment = method.id.startsWith('#') ? method.id : method.id.slice(session.did.length)
-      const kid = `${session.did}${fragment}`
-      if (fragment !== deviceKidFragment(key) || kid === ownKid) return []
-      return [method.id]
-    } catch { return [] }
-  })
-  if (remove.length === 0) throw new Error('There are no other devices to remove')
+  const remove = options.removeOtherDevices ? await otherDeviceMethodIds(session.did, session.bisetDidCommDevice.xKid) : []
+  if (options.removeOtherDevices && remove.length === 0) throw new Error('There are no other devices to remove')
   const client = await registration(config.walletDeviceName)
   const pending = pendingFromSession(session)
   pending.state = randomBase64url(32); pending.codeVerifier = randomBase64url(48); pending.createdAt = new Date().toISOString()
-  // The removed devices hold the current seed: the same edit publishes a new
-  // one's rotation key in its place (PLAN-refactor.md §4.5).
   const rotation = await rotationCandidate('replace')
   pending.rotationSeedCandidate = rotation.sealed
   pending.documentEdit = buildDocumentEdit(session.did, config, session.bisetDidCommDevice, remove, [], rotation.method)
   return redirectToWallet(client, pending)
 }
 
-/**
- * Publishes a fresh relationship seed's rotation key in place of the current
- * one, in one Wallet approval: for an identity that has none yet, one whose
- * seed no device has any more, or one whose seed a device removed from the
- * Wallet itself still holds (relationship-seed-bootstrap.ts's "unpublished",
- * "lost" and "stale").
- */
-export async function beginDidMdRotationKeyRenewal(configured: DidMdWalletConfiguration = {}): Promise<never> {
-  const config = walletConfiguration(configured)
-  const session = await readDidMdDeviceSession()
-  if (!session?.vaultDeviceId || !session.bisetDidCommDevice || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
-    throw new Error('Reconnect did.md Wallet before renewing the key')
-  }
-  const client = await registration(config.walletDeviceName)
-  const pending = pendingFromSession(session)
-  pending.state = randomBase64url(32); pending.codeVerifier = randomBase64url(48); pending.createdAt = new Date().toISOString()
-  const rotation = await rotationCandidate('replace')
-  pending.rotationSeedCandidate = rotation.sealed
-  // Only the rotation key: no service or device key changes.
-  pending.documentEdit = { type: DID_DOCUMENT_EDIT_DETAIL, services: [], verificationMethods: [{ ...rotation.method, controller: session.did }], remove: [] }
-  return redirectToWallet(client, pending)
-}
-
-/**
- * Publishes the DIDComm endpoint as configured now, in one Wallet approval, for
- * a document that carries an older form of it (the mediator's URL with a
- * routing key, next to the mediator's DID that replaces it). This device's own
- * key stays: only the service changes. The Mediator card's "Edit server" does
- * this when the URL it is given is the one already in use.
- */
-export async function beginDidMdEndpointUpdate(configured: DidMdWalletConfiguration = {}): Promise<never> {
-  const config = walletConfiguration(configured)
-  const session = await readDidMdDeviceSession()
-  if (!session?.vaultDeviceId || !session.bisetDidCommDevice?.mediatorDid || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) {
-    throw new Error('Reconnect did.md Wallet before updating the messaging address')
-  }
-  const client = await registration(config.walletDeviceName)
-  const pending = pendingFromSession(session)
-  pending.state = randomBase64url(32); pending.codeVerifier = randomBase64url(48); pending.createdAt = new Date().toISOString()
-  pending.documentEdit = buildDocumentEdit(session.did, config, session.bisetDidCommDevice)
-  return redirectToWallet(client, pending)
+async function otherDeviceMethodIds(did: string, ownKid: string): Promise<string[]> {
+  // Read past the host's CDN (`freshFetch`): a stale copy would leave a recently added device out of the removal.
+  const resolved = await resolveByDomain(parseWebvhDid(did).domain, undefined, undefined, freshFetch())
+  if (!resolved || resolved.id !== did) throw new Error('Could not resolve the current DID document before removing other devices')
+  return (resolved.verificationMethod ?? []).flatMap(method => {
+    try {
+      const key = decodeX25519Multikey(method.publicKeyMultibase)
+      const fragment = method.id.startsWith('#') ? method.id : method.id.slice(did.length)
+      const kid = `${did}${fragment}`
+      if (fragment !== deviceKidFragment(key) || kid === ownKid) return []
+      return [method.id]
+    } catch { return [] }
+  })
 }
 
 /** The only round trip needed to sign in: no DID is resolved and no
