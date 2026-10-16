@@ -1,4 +1,5 @@
-import type { PgpCardConfig } from './pgp-card.ts'
+import type { PgpCardConfig } from './pgp-card.tsx'
+import { createStore } from '../../react/store.ts'
 // The one owner of the account page's module state. Split out of
 // ui/account-page.ts (2026-09-05) when that file was broken up by concern:
 // the config object below is read by the account page itself, the config
@@ -98,10 +99,11 @@ export interface VaultCardStatus {
   devices?: Array<{ deviceId: string; current: boolean; lastActivity?: string }>
 }
 
-let config: AccountPageConfig | undefined
+// The config is a store: React screens subscribe to it, plain DOM code reads it with getAccountConfig().
+export const accountConfig = createStore<AccountPageConfig | undefined>(undefined)
 
 export function configureAccountPage(next: AccountPageConfig): void {
-  config = next
+  accountConfig.set(next)
 }
 
 /** The current config, or undefined before main.ts has configured the page.
@@ -109,5 +111,5 @@ export function configureAccountPage(next: AccountPageConfig): void {
  * read happens inside a deferred handler, since main.ts can reconfigure the
  * page between render and click. */
 export function getAccountConfig(): AccountPageConfig | undefined {
-  return config
+  return accountConfig.get()
 }
