@@ -221,6 +221,7 @@ export function setupNewUserPage(): void {
         const target = `${ditoOrigin}/?embed=save&return=${encodeURIComponent(location.href)}${login ? `&login=${encodeURIComponent(login)}` : ''}`
         location.assign(target)
       },
+      // Nothing to do here: the frame itself opens on the log-in form for the identity this browser holds.
       existing: () => {},
       unloaded: () => {},
       error: message => walletResult(message, true),
