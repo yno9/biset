@@ -74,7 +74,7 @@ function MediatorCard({ config, wallet, didComm, showMessage }: { config: Accoun
   ]
 
   const roster = [...(config.vault?.devices ?? [])].sort((a, b) => Number(b.current) - Number(a.current))
-  const dotColor = didComm.error ? '#ff3b30' : loggedOut ? '#8e8e93' : '#34c759'
+  const dotColor = didComm.error ? '#ff3b30' : loggedOut ? '#8e8e93' : didComm.connecting ? '#ff9f0a' : '#34c759'
 
   return (
     <div className={`acc-card-wrap${expanded ? ' expanded' : ''}`} id="cmd-acc-mediator-card">
@@ -88,7 +88,7 @@ function MediatorCard({ config, wallet, didComm, showMessage }: { config: Accoun
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 11, color: 'var(--text-dim)' }}>
             <span style={{ color: didComm.error ? '#ff3b30' : '' }}>
-              {didComm.error ? `Needs attention: ${didComm.error}` : loggedOut ? 'Logged out' : 'Registered'}
+              {didComm.error ? `Needs attention: ${didComm.error}` : loggedOut ? 'Logged out' : didComm.connecting ? 'Connecting…' : 'Registered'}
             </span>
           </div>
         </div>

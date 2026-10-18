@@ -18,6 +18,8 @@ import {
   disconnectDidMdWallet,
   openDidMdWalletBisetDidCommDevice,
   openDidMdWalletVaultDevice,
+  peekDidMdWalletSession,
+  type DidMdActiveSession,
   restoreDidMdWalletSession,
   didMdWalletReconnectState,
   DID_MD_JUST_CONNECTED_KEY,
@@ -223,21 +225,30 @@ async function timed<T>(label: string, work: Promise<T>): Promise<T> {
   try { return await work } finally { console.info(`[boot] ${label} +${Math.round(performance.now() - startedAt)}ms (at ${Math.round(performance.now() - bootStartedAt)}ms)`) }
 }
 
+// Bumped by every boot: work still running from an earlier one must not touch what a later one set up.
+let bootGeneration = 0
+
 async function configureWalletAccountIfPresent(
   callbackSession?: Awaited<ReturnType<typeof completeDidMdWalletCallback>>,
 ): Promise<boolean> {
   let session = callbackSession
+  // A stored session is this browser's own, checked when it was saved: what it names is on screen at
+  // once, and the Wallet is asked to refresh it in the background (below).
+  let refreshing: Promise<DidMdActiveSession | undefined> | undefined
   if (!session) {
-    try {
-      session = await timed('restoreDidMdWalletSession', restoreDidMdWalletSession())
-    } catch (error) {
-      console.warn('[did.md Wallet restore]', error instanceof Error ? error.message : error)
-      return false
+    session = await peekDidMdWalletSession()
+    if (session) {
+      refreshing = timed('restoreDidMdWalletSession', restoreDidMdWalletSession())
+      refreshing.catch(() => {}) // the outcome is read at the end; this only keeps an early failure from going unhandled
     }
   }
   if (!session) return false
+  // What the page shows of the session: replaced when the Wallet's refresh answers.
+  let active: DidMdActiveSession = session
+  const generation = bootGeneration
+  const stale = (): boolean => generation !== bootGeneration
   let vault: VaultCardStatus | undefined
-  let didComm: { xKid: string; mediatorUrl: string; error?: string } | undefined
+  let didComm: { xKid: string; mediatorUrl: string; connecting?: boolean; error?: string } | undefined
   let activeDidCommDevice: { did: string; xKid: string; x25519PrivateKey: Uint8Array; mediatorDeviceSecret: Uint8Array } | undefined
   let walletDidCommOutbox: WalletDidCommOutbox | undefined
   // Set when the identity's rotation key needs a Wallet approval (account page).
@@ -245,6 +256,79 @@ async function configureWalletAccountIfPresent(
   let pgpCard: PgpCardConfig | undefined
   let exportMessages: (() => Promise<void>) | undefined
   let importMessages: (() => Promise<void>) | undefined
+  // The account page as the state stands: called once what is local is ready, and again as each
+  // thing the network confirms (the mediator, the key notice) changes it.
+  const publishAccount = (): void => {
+    // Keep the configured Mediator visible after an intentional logout.  No
+    // xKid is invented here: the grey state is configuration only, and its
+    // Log in action creates/registers a fresh device before asking Wallet to
+    // publish it.
+    const configuredMediator = readBisetConfig().mediatorUrls.find(url => {
+      try { return Boolean(new URL(url).host) } catch { return false }
+    })
+    const mediatorCard = didComm ?? (configuredMediator
+      ? { mediatorUrl: new URL(configuredMediator).toString(), loggedOut: true as const }
+      : undefined)
+    // The configured onion paired with this card's mediator (same index as
+    // `mediatorUrls`) pre-fills the "Enable Tor" prompt; nothing publishes it
+    // until the user confirms.
+    const configuredOnionUrl = mediatorCard
+      ? readBisetConfig().mediatorOnionUrls[readBisetConfig().mediatorUrls.findIndex(url => sameMediatorUrl(url, mediatorCard.mediatorUrl))]
+      : undefined
+    configureAccountPage({
+      did: active.did,
+      ...(exportMessages ? { onExportMessages: exportMessages } : {}),
+      ...(importMessages ? { onImportMessages: importMessages } : {}),
+      wallet: {
+        handle: active.handle,
+        deviceJkt: active.deviceJkt,
+        capabilityExpiresAt: active.capabilityExpiresAt,
+        deviceKid: active.deviceKid,
+        ...(mediatorCard ? { didComm: { ...mediatorCard, ...(configuredOnionUrl ? { onionUrl: configuredOnionUrl } : {}) } } : {}),
+        // Publishes the DIDComm mediator device -- the one enrollment step
+        // that still needs a DID Document edit (other people's DIDComm
+        // senders have to be able to find the route publicly).
+        onEnableMessaging: async () => {
+          const config = readBisetConfig()
+          return editDocument({ kind: 'mediator', mediatorUrls: config.mediatorUrls }, config)
+        },
+        // Same same-tab Wallet approval as onEnableMessaging, just pointed at
+        // an explicit mediator URL (the Mediator card's "Edit server") instead
+        // of always taking this deployment's configured default -- reuses
+        // beginDidMdDocumentEdit as-is, since it already accepts
+        // an array and takes its first valid entry (bisetMediatorFor).
+        onEditMediator: async (mediatorUrl: string) => editDocument({ kind: 'mediator', mediatorUrls: [mediatorUrl] }, readBisetConfig()),
+        onEnableTor: async (onionUrl: string) => editDocument({ kind: 'mediator', mediatorUrls: [mediatorCard!.mediatorUrl], mediatorOnionUrls: [onionUrl] }, readBisetConfig()),
+        onLogOutMediator: async () => editDocument({ kind: 'leaveMediator' }, readBisetConfig()),
+        onDisconnect: async () => {
+          await disconnectWalletAndLocalData()
+          await bootClient()
+        },
+      },
+      vault,
+      ...(pgpCard ? { pgp: pgpCard } : {}),
+      onRemoveOtherDevices: async () => editDocument({ kind: 'rotation', removeOtherDevices: true }, readBisetConfig()),
+      ...(rotationKeyState ? { rotationKey: { state: rotationKeyState, onRenew: async () => editDocument({ kind: 'rotation' }, readBisetConfig()) } } : {}),
+      showMessage: showSysMsg,
+    })
+  }
+  // Set once the local setup below has what it needs: connects to the mediator (the network half).
+  let startConnect: (() => Promise<void>) | undefined
+  // The Wallet's answer to the background refresh of the stored session. A newer capability replaces
+  // what the page shows; a session the Wallet turned down was cleared, so boot again for what
+  // follows (reconnect or sign-up); a failure that left the session alone (offline) leaves the page be.
+  const refreshSession = (): void => {
+    refreshing?.then(refreshed => {
+      if (stale() || !refreshed) return
+      active = refreshed
+      publishAccount()
+    }, async error => {
+      if (stale()) return
+      console.warn('[did.md Wallet restore]', error instanceof Error ? error.message : error)
+      if (await peekDidMdWalletSession()) showSysMsg(`Could not refresh the Wallet session yet: ${error instanceof Error ? error.message : String(error)}`)
+      else void bootClient()
+    })
+  }
   try {
     const config = readBisetConfig()
     const { mediatorUrls } = config
@@ -430,9 +514,12 @@ async function configureWalletAccountIfPresent(
     // A corrupt or independently revoked DIDComm envelope must not make the
     // otherwise healthy Vault sync look unavailable. It has its own sealed
     // device material and its registration is deliberately best-effort.
-    try {
-      const didCommDevice = await timed('openDidMdWalletBisetDidCommDevice', openDidMdWalletBisetDidCommDevice())
-        if (didCommDevice) {
+    let didCommDevice: Awaited<ReturnType<typeof openDidMdWalletBisetDidCommDevice>>
+    try { didCommDevice = await timed('openDidMdWalletBisetDidCommDevice', openDidMdWalletBisetDidCommDevice()) }
+    catch (error) { console.warn('[did.md Wallet DIDComm]', error) }
+    // What is stored is on screen at once, as "connecting"; connect() (below) confirms it with the mediator.
+    if (didCommDevice) didComm = { xKid: didCommDevice.xKid, mediatorUrl: didCommDevice.mediatorUrl, connecting: true }
+    const connect = async (didCommDevice: NonNullable<Awaited<ReturnType<typeof openDidMdWalletBisetDidCommDevice>>>): Promise<void> => {
         try {
         // URL serialization is canonical at the Wallet boundary (an origin
         // gains its trailing slash), whereas deployment configuration may
@@ -726,6 +813,7 @@ async function configureWalletAccountIfPresent(
             }
             await refreshInbox(readModel)
         }
+        if (stale()) return
         const watch = watchMediatorLive({
           mediatorUrl: activeMediatorUrl,
           inbox: frontDoorInbox,
@@ -747,10 +835,10 @@ async function configureWalletAccountIfPresent(
         didComm = { xKid: didCommDevice.xKid, mediatorUrl: didCommDevice.mediatorUrl, error: error instanceof Error ? error.message : String(error) }
         console.warn('[did.md Wallet DIDComm]', error)
       }
-      }
-    } catch (error) {
-      console.warn('[did.md Wallet DIDComm]', error)
+      publishCompose()
+      publishAccount()
     }
+    startConnect = didCommDevice && (() => connect(didCommDevice))
     // A DIDComm chat message is committed locally first (the durable
     // outbox), then sent to each recipient's public DID from this device's
     // own key. `thid` makes it part of a group conversation: the same
@@ -810,9 +898,12 @@ async function configureWalletAccountIfPresent(
       const snapshot = await readModel.snapshot(); const thread = snapshot.emails.filter(email => email.threadId === file.parsed.frontmatter.id)
       await sendWalletMessage({ toAddrs: [file.parsed.frontmatter.contact], subject: file.parsed.frontmatter.subject ?? '', body: file.parsed.draft.replace(/(^|\n)!b(?:\n|$)/g, '$1').trim(), ...(thread.at(-1) ? { inReplyTo: thread.at(-1)!.id } : {}) })
     }
+    // DIDComm is the identity's own DID once the mediator is (or is being) connected; a failed one is not.
+    const publishCompose = (): void => {
+    const selfDid = didComm && !didComm.error ? device.did : undefined
     configureCompose({
       selfAddress: device.did,
-      selfDid: activeDidCommDevice ? device.did : undefined,
+      selfDid,
       sendReply: sendWalletMessage,
       onError: message => { showSysMsg(message); console.warn('[did.md Wallet send]', message) },
       didcommGroup: {
@@ -822,70 +913,24 @@ async function configureWalletAccountIfPresent(
     })
     configureComposePage({
       selfAddress: device.did,
-      selfDid: activeDidCommDevice ? device.did : undefined,
+      selfDid,
       sendMessage: sendWalletMessage,
       onError: message => { showSysMsg(message); console.warn('[did.md Wallet compose]', message) },
     })
+    }
+    publishCompose()
   } catch (error) {
     vault = { state: 'error', coordinatorUrl: 'didcomm', detail: error instanceof Error ? error.message : String(error) }
     console.warn('[did.md Wallet Vault]', error)
   }
-  // Keep the configured Mediator visible after an intentional logout.  No
-  // xKid is invented here: the grey state is configuration only, and its
-  // Log in action creates/registers a fresh device before asking Wallet to
-  // publish it.
-  const configuredMediator = readBisetConfig().mediatorUrls.find(url => {
-    try { return Boolean(new URL(url).host) } catch { return false }
-  })
-  const mediatorCard = didComm ?? (configuredMediator
-    ? { mediatorUrl: new URL(configuredMediator).toString(), loggedOut: true as const }
-    : undefined)
-  // The configured onion paired with this card's mediator (same index as
-  // `mediatorUrls`) pre-fills the "Enable Tor" prompt; nothing publishes it
-  // until the user confirms.
-  const configuredOnionUrl = mediatorCard
-    ? readBisetConfig().mediatorOnionUrls[readBisetConfig().mediatorUrls.findIndex(url => sameMediatorUrl(url, mediatorCard.mediatorUrl))]
-    : undefined
-  configureAccountPage({
-    did: session.did,
-    ...(exportMessages ? { onExportMessages: exportMessages } : {}),
-    ...(importMessages ? { onImportMessages: importMessages } : {}),
-    wallet: {
-      handle: session.handle,
-      deviceJkt: session.deviceJkt,
-      capabilityExpiresAt: session.capabilityExpiresAt,
-      deviceKid: session.deviceKid,
-      ...(mediatorCard ? { didComm: { ...mediatorCard, ...(configuredOnionUrl ? { onionUrl: configuredOnionUrl } : {}) } } : {}),
-      // Publishes the DIDComm mediator device -- the one enrollment step
-      // that still needs a DID Document edit (other people's DIDComm
-      // senders have to be able to find the route publicly).
-      onEnableMessaging: async () => {
-        const config = readBisetConfig()
-        return editDocument({ kind: 'mediator', mediatorUrls: config.mediatorUrls }, config)
-      },
-      // Same same-tab Wallet approval as onEnableMessaging, just pointed at
-      // an explicit mediator URL (the Mediator card's "Edit server") instead
-      // of always taking this deployment's configured default -- reuses
-      // beginDidMdDocumentEdit as-is, since it already accepts
-      // an array and takes its first valid entry (bisetMediatorFor).
-      onEditMediator: async (mediatorUrl: string) => editDocument({ kind: 'mediator', mediatorUrls: [mediatorUrl] }, readBisetConfig()),
-      onEnableTor: async (onionUrl: string) => editDocument({ kind: 'mediator', mediatorUrls: [mediatorCard!.mediatorUrl], mediatorOnionUrls: [onionUrl] }, readBisetConfig()),
-      onLogOutMediator: async () => editDocument({ kind: 'leaveMediator' }, readBisetConfig()),
-      onDisconnect: async () => {
-        await disconnectWalletAndLocalData()
-        await bootClient()
-      },
-    },
-    vault,
-    ...(pgpCard ? { pgp: pgpCard } : {}),
-    onRemoveOtherDevices: async () => editDocument({ kind: 'rotation', removeOtherDevices: true }, readBisetConfig()),
-    ...(rotationKeyState ? { rotationKey: { state: rotationKeyState, onRenew: async () => editDocument({ kind: 'rotation' }, readBisetConfig()) } } : {}),
-    showMessage: showSysMsg,
-  })
+  publishAccount()
+  void startConnect?.()
+  refreshSession()
   return true
 }
 
 export async function bootClient(callbackSession?: Awaited<ReturnType<typeof completeDidMdWalletCallback>>): Promise<void> {
+  bootGeneration++
   // Cleared unconditionally, before any branch: a re-entry into bootClient()
   // (a Wallet disconnect, most notably) must not leave a PRIOR session's
   // mediator polls running against the new session's own
@@ -944,6 +989,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
     // this call site only ever needed it for that one case, never for an
     // ordinary returning session.
     showApp()
+    console.info(`[boot] app shown at ${Math.round(performance.now() - bootStartedAt)}ms`)
     if (completedWalletEdit || sessionStorage.getItem(DID_MD_JUST_CONNECTED_KEY) === '1') {
       sessionStorage.removeItem(DID_MD_JUST_CONNECTED_KEY)
       showAccountPage()

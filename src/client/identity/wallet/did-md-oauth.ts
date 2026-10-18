@@ -1154,6 +1154,21 @@ async function timedStep<T>(label: string, work: Promise<T>): Promise<T> {
   try { return await work } finally { console.info(`[boot] ${label} +${Math.round(performance.now() - startedAt)}ms`) }
 }
 
+/** The stored session as the active one, without asking the Wallet anything: what is on screen
+ * before the refresh below has been answered. Absent when there is none, it is for another Wallet,
+ * or its capability has run out. */
+export async function peekDidMdWalletSession(): Promise<DidMdActiveSession | undefined> {
+  const session = await readDidMdDeviceSession()
+  if (!session || session.v !== 2 || session.issuer !== selectedWallet.issuer || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
+  const subject = (() => { try { return asObject((session.capability as Record<string, unknown>).credentialSubject, 'stored capability subject') } catch { return {} } })()
+  return {
+    did: session.did, handle: session.handle, clientId: session.clientId, deviceJkt: session.deviceJkt, capabilityExpiresAt: session.capabilityExpiresAt,
+    scope: Array.isArray(subject.scope) ? subject.scope.filter((value): value is string => typeof value === 'string') : [],
+    ...(session.vaultDeviceId ? { deviceKid: session.vaultDeviceId } : {}),
+    ...(session.bisetDidCommDevice?.xKid ? { didCommKid: session.bisetDidCommDevice.xKid } : {}),
+  }
+}
+
 export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | undefined> {
   const session = await readDidMdDeviceSession()
   if (!session || session.v !== 2 || session.issuer !== selectedWallet.issuer || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
@@ -1167,6 +1182,8 @@ export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | 
     method: 'POST', headers: { 'content-type': 'application/json', dpop: await createDpop(session.privateKey, session.publicJwk, 'POST', client.refreshEndpoint) },
     body: JSON.stringify({ client_id: client.clientId, vp_token: { capability: [session.capability] } }),
   }))
+  // A server that is down says nothing about the session: it stays, to be refreshed another time.
+  if (response.status >= 500) throw new Error(`did.md is unavailable (${response.status})`)
   try {
     // device-refresh (server/oauth-server.ts's oauthRefresh/oauthIssueToken)
     // is untouched by PLAN7 -- it still returns the pre-PLAN7 token-response
