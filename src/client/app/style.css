@@ -3960,3 +3960,30 @@ html.pwa-standalone #app {
 .conv-member-chip:hover { opacity: 1; border-color: #b00020; color: #b00020 }
 .conv-member-add:hover, .conv-member-leave:hover { border-color: var(--border, #d0d0d0); color: inherit }
 .conv-member-leave { opacity: .55 }
+
+/* ---- dropdown menu (ui/account/menu.tsx) ---- */
+.dropdown-menu {
+  position: fixed;
+  width: 180px;
+  background: var(--bg);
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.25));
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  z-index: 10000;
+  padding: 4px;
+  font-size: 14px;
+}
+.dropdown-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 14px;
+}
+.dropdown-item:hover { background: rgba(128, 128, 128, 0.12); }
+.dropdown-item.danger { color: #ff3b30; }

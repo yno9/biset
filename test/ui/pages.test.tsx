@@ -9,6 +9,7 @@ vi.mock('../../src/client/identity/wallet/did-md-oauth.ts', () => ({
 vi.mock('../../src/protocol/webvh/resolver.ts', () => ({ resolve: vi.fn(async () => ({ name: 'Alice' })) }))
 
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
+import { DropdownMenu } from '../../src/client/app/ui/account/menu.tsx'
 import { AccountPage } from '../../src/client/app/ui/pages/account-page.tsx'
 import { ComposePage, configureComposePage } from '../../src/client/app/ui/pages/compose-page.tsx'
 import { ConfigPage, configureMarkdownVaultToggle } from '../../src/client/app/ui/pages/config-page.tsx'
@@ -23,7 +24,7 @@ beforeEach(() => {
     const el = document.createElement('div'); el.id = id; document.body.append(el)
   }
 })
-afterEach(() => { cleanup(); document.body.innerHTML = ''; vi.restoreAllMocks(); accountConfig.set(undefined); setPage('thread') })
+afterEach(() => { fireEvent.keyDown(document, { key: 'Escape' }); cleanup(); document.body.innerHTML = ''; vi.restoreAllMocks(); accountConfig.set(undefined); setPage('thread') })
 
 const account = (over: Partial<AccountPageConfig> = {}): AccountPageConfig => ({
   did: DID, wallet: { handle: 'alice.did.md', deviceJkt: 'j', capabilityExpiresAt: '2030-01-01T00:00:00Z', onDisconnect: vi.fn(async () => {}) },
@@ -160,7 +161,7 @@ test('account: clicking the DID copies it and says so', async () => {
 test('account: the identity menu disconnects only after a confirmation', () => {
   const onDisconnect = vi.fn(async () => {})
   accountConfig.set(account({ wallet: { handle: 'alice.did.md', deviceJkt: 'j', capabilityExpiresAt: '2030-01-01T00:00:00Z', onDisconnect } }))
-  const { container } = render(<AccountPage />)
+  const { container } = render(<><AccountPage /><DropdownMenu /></>)
   fireEvent.click(container.querySelector('#cmd-acc-identity-menu-btn')!)
   vi.spyOn(window, 'confirm').mockReturnValueOnce(false)
   fireEvent.click(screen.getByText('Disconnect Wallet'))

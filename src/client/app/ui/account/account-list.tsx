@@ -2,7 +2,7 @@
 // roster in its accordion), a notice when the DIDComm key needs a Wallet approval, and the PGP card.
 import { useRef, useState } from 'react'
 import { useStore } from '../../react/store.ts'
-import { openDropdownMenu, type MenuItem } from './menu.ts'
+import { openDropdownMenu, type MenuItem } from './menu.tsx'
 import { PgpCard } from './pgp-card.tsx'
 import { accountConfig, type AccountPageConfig } from './state.ts'
 

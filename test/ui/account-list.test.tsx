@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { AccountList } from '../../src/client/app/ui/account/account-list.tsx'
+import { DropdownMenu } from '../../src/client/app/ui/account/menu.tsx'
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
 
 const messages: string[] = []
@@ -25,7 +26,7 @@ function config(over: Partial<AccountPageConfig> = {}, didComm: Partial<NonNulla
 const set = (next: AccountPageConfig) => act(() => accountConfig.set(next))
 
 beforeEach(() => { messages.length = 0 })
-afterEach(() => { cleanup(); document.body.querySelectorAll('div[style*="position:fixed"]').forEach(menu => menu.remove()); vi.restoreAllMocks(); accountConfig.set(undefined) })
+afterEach(() => { fireEvent.keyDown(document, { key: 'Escape' }); cleanup(); vi.restoreAllMocks(); accountConfig.set(undefined) })
 
 test('nothing is drawn before there is a mediator', () => {
   const { container } = render(<AccountList />)
@@ -100,7 +101,7 @@ test('a new device roster from the vault shows without redrawing the card', () =
 
 test('the mediator menu edits the server', () => {
   const next = config()
-  const { container } = render(<AccountList />)
+  const { container } = render(<><AccountList /><DropdownMenu /></>)
   set(next)
   vi.spyOn(window, 'prompt').mockReturnValue('https://other.example/')
   fireEvent.click(container.querySelector('[aria-label="Mediator menu"]')!)
@@ -110,7 +111,7 @@ test('the mediator menu edits the server', () => {
 
 test('logged out, the menu has one item: Log in', () => {
   const next = config({}, { loggedOut: true })
-  const { container } = render(<AccountList />)
+  const { container } = render(<><AccountList /><DropdownMenu /></>)
   set(next)
   fireEvent.click(container.querySelector('[aria-label="Mediator menu"]')!)
   expect(screen.queryByText('Edit server')).toBeNull()
