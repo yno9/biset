@@ -8,6 +8,8 @@ import { BASIC_MESSAGE } from '../../src/client/didcomm/basicmessage.ts'
 import { DidCommIngressProjector } from '../../src/client/didcomm/ingress-projector.ts'
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
 import type { VaultEventAuthor } from '../../src/client/store/vault/events.ts'
+import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
+import { armorOfStoredBody } from '../../src/client/pgp/stored.ts'
 import { AUTOCRYPT_CONTACT_PROPERTY, autocryptKeyId, currentAutocryptKey } from '../../src/client/store/projection/contacts.ts'
 
 const identityId = 'did:webvh:abc123:alice.test.example'
@@ -42,8 +44,8 @@ function projector() {
   })
 }
 
-function envelope(body: Record<string, unknown>) {
-  const plaintext = buildPlaintext(BASIC_MESSAGE, body, bridgeDid, identityId)
+function envelope(body: Record<string, unknown>, attachments?: Array<{ id: string; data: { base64: string } }>) {
+  const plaintext = buildPlaintext(BASIC_MESSAGE, body, bridgeDid, identityId, attachments ? { attachments } : {})
   const payload = new TextEncoder().encode(JSON.stringify(packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: x25519.getPublicKey(recipientX) }])))
   return {
     version: 1, ingressId: crypto.randomUUID(), protocol: 'didcomm', recipientIdentityId: identityId, recipientDeviceSnapshot: [recipientKid],
@@ -80,5 +82,25 @@ describe('a bridged mail with an Autocrypt key', () => {
     const sentAt = result.projection.emails[0]!.sentAt!
     expect(Number.isNaN(Date.parse(sentAt))).toBe(false)
     expect(currentAutocryptKey(result.projection.contactCards[0]!)!.seenAt).toBe(sentAt)
+  })
+
+  test('an encrypted mail keeps its armored message in the record, so it can be opened where it is shown', async () => {
+    const armor = '-----BEGIN PGP MESSAGE-----\n\nwcBMA0\n=abcd\n-----END PGP MESSAGE-----\n'
+    const data = btoa(armor).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    const result = await projector().verifyAndProject(envelope({ content: 'This message is encrypted with OpenPGP.', encryption: 'openpgp' }, [{ id: 'pgp', data: { base64: data } }]))
+    const texts = await Promise.all(result.objects.map(async object => new TextDecoder().decode(await decryptVaultObject(segmentKey, object))))
+    const stored = texts.find(text => text.includes('X-Biset-Encrypted'))!
+    expect(stored).toContain('This message is encrypted with OpenPGP.')
+    expect(armorOfStoredBody(stored)).toBe(armor.trim())
+  })
+
+  test('an encrypted mail without armor is just its notice, and an ordinary one is untouched', async () => {
+    const bare = await projector().verifyAndProject(envelope({ content: 'notice only', encryption: 'openpgp' }))
+    const plain = await projector().verifyAndProject(envelope({ content: 'hello' }))
+    for (const [result, text] of [[bare, 'notice only'], [plain, 'hello']] as const) {
+      const texts = await Promise.all(result.objects.map(async object => new TextDecoder().decode(await decryptVaultObject(segmentKey, object))))
+      expect(texts.some(entry => entry === text)).toBe(true)
+      expect(texts.some(entry => entry.includes('X-Biset-Encrypted'))).toBe(false)
+    }
   })
 })

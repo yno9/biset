@@ -17,7 +17,8 @@ import { FromPriorError, fromPriorKeyResolver, verifyFromPrior, type DidRotation
 import { autocryptKeyPatch, contactCardForDid, contactSetIntent, counterpartyOfRotatedDid, currentRotation, didCommStateOf, didContactPatch, ownRotationPatch, rotationPatch, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { PermanentDeliveryError } from '../../protocol/didcomm/mediator-pickup.ts'
-import { isBasicMessage, basicMessageBodyOf, didCommThreadId } from './basicmessage.ts'
+import { isBasicMessage, basicMessageBodyOf, didCommThreadId, pgpArmorOf } from './basicmessage.ts'
+import { storedEncryptedBody } from '../pgp/stored.ts'
 import { mailAddressOfBridgeDid } from '../pgp/autocrypt.ts'
 import { isExternalFeedPost, externalFeedPostBodyOf, externalFeedThreadId, EXTERNAL_FEED_POST } from './external-feed.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
@@ -361,7 +362,9 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
           ...(body.replyTo ? { replyTo: [{ email: body.replyTo }] } : {}),
           ...(body.auth ? { auth: body.auth } : {}),
         },
-        rawRfc5322: new TextEncoder().encode(body.content),
+        // An encrypted mail keeps its ciphertext (the bridge cannot read it): it is opened where it is shown, with the
+        // key of this identity, which a device that has just joined may not have yet.
+        rawRfc5322: new TextEncoder().encode(body.encryption === 'openpgp' ? storedEncryptedBody(body.content, pgpArmorOf(msg)) : body.content),
       }, context, this.options.signer)
       event = identityScopedObject(record.event, this.options.identityId)
       objectRecords.push(identityScopedObject(record.metadataObject, this.options.identityId))

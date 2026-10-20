@@ -104,3 +104,14 @@ export function basicMessageBodyOf(msg: { body?: unknown }): BasicMessageBody | 
     ...(signature === 'openpgp' ? { signature } : {}),
   }
 }
+
+/** The armored OpenPGP message of an encrypted mail the bridge carried: the `pgp` attachment (didmail PROTOCOL.md §5.3). */
+export function pgpArmorOf(msg: { attachments?: Array<{ id?: string; data?: { base64?: unknown } }> }): string | undefined {
+  const encoded = msg.attachments?.find(attachment => attachment.id === 'pgp')?.data?.base64
+  if (typeof encoded !== 'string' || encoded.length > 40 * 1024 * 1024) return undefined
+  try {
+    const bytes = Uint8Array.from(atob(encoded.replace(/-/g, '+').replace(/_/g, '/')), char => char.charCodeAt(0))
+    const text = new TextDecoder().decode(bytes)
+    return text.includes('-----BEGIN PGP MESSAGE-----') ? text : undefined
+  } catch { return undefined }
+}

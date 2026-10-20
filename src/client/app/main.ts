@@ -24,7 +24,7 @@ import {
   didMdWalletReconnectState,
   DID_MD_JUST_CONNECTED_KEY,
 } from '../identity/wallet/did-md-oauth.ts'
-import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
+import { refreshInbox, setEncryptedMailOpener, showApp, showSysMsg } from './ui/shell.ts'
 import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
 import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, showConfigPage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
 import { savedPage } from './ui/state.ts'
@@ -52,7 +52,7 @@ import { RelationshipSeedReader, RelationshipSeedSink, relationshipSeedRecord } 
 import { createRelationshipSeedAuthority, type RelationshipSeedAuthority } from '../didcomm/relationship-seed-bootstrap.ts'
 import { publishedRotationKey, rotationSigningKey } from '../didcomm/rotation-key.ts'
 import { createRotationManager, type RotationManager } from '../didcomm/rotation-manager.ts'
-import { contactSetIntent } from '../store/projection/contacts.ts'
+import { contactCardForDid, contactSetIntent, currentAutocryptKey } from '../store/projection/contacts.ts'
 import { fromPriorKeyResolver, verifyFromPrior } from '../../protocol/didcomm/from-prior.ts'
 import { signingKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
@@ -73,7 +73,10 @@ import { OpenPgpCredentialReader, OpenPgpCredentialSink } from '../store/vault/o
 import { generatePgpKey, importPgpKey, keyNamesAddress, readPgpKey } from '../pgp/keyring.ts'
 import { ensureOwnPgpKey } from '../pgp/auto.ts'
 import { publishPgpKey } from '../pgp/publish.ts'
-import { ownAutocryptFor } from '../pgp/autocrypt.ts'
+import { bridgeHostOf, mailAddressOfBridgeDid, ownAutocryptFor, shouldEncrypt } from '../pgp/autocrypt.ts'
+import { composeEncryptedMail } from '../pgp/compose.ts'
+import { autocryptKeydata } from '../pgp/keyring.ts'
+import { openStoredMail } from '../pgp/open.ts'
 import type { PgpCardConfig } from './ui/account/pgp-card.tsx'
 import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
 
@@ -476,6 +479,13 @@ async function configureWalletAccountIfPresent(
       // The new key is the one to publish. A failure leaves the key stored: Publish retries.
       await publishPgp(key.publicArmor).catch(error => showSysMsg(`The key is saved, but publishing it failed: ${error instanceof Error ? error.message : String(error)}`))
     }
+    // An encrypted mail is opened where it is shown, with this identity's key and the key held for its sender.
+    setEncryptedMailOpener(async (rawBody, email, snapshot) => {
+      const credential = await pgpReader.current()
+      const card = contactCardForDid(snapshot.contactCards, email.from?.[0]?.email ?? '')
+      const held = card && currentAutocryptKey(card)
+      return openStoredMail(rawBody, { privateKey: credential?.privateKey, senderKeys: held ? [Uint8Array.from(atob(held.keydata), char => char.charCodeAt(0))] : [] })
+    })
     const currentPgp = async () => {
       const credential = await pgpReader.current()
       return credential ? { credential, key: await readPgpKey(credential.privateKey) } : undefined
@@ -692,6 +702,21 @@ async function configureWalletAccountIfPresent(
           route: publicDid => rotationManager.route(publicDid),
           // To a mail address: this identity's OpenPGP key, which the bridge puts in an Autocrypt header.
           autocrypt: async toDid => ownAutocryptFor(toDid, ownMailAddress ? await pgpReader.current().then(credential => credential && { address: ownMailAddress, privateKey: credential.privateKey }) : undefined),
+          // To a mail address whose key we hold and who asked for encryption: the message goes as an OpenPGP-encrypted mail.
+          encrypt: async (toDid, content, message) => {
+            const credential = await pgpReader.current()
+            const host = bridgeHostOf(toDid), toAddress = mailAddressOfBridgeDid(toDid)
+            if (!credential || !ownMailAddress || !host || !toAddress) return undefined
+            const card = contactCardForDid((await readModel.snapshot()).contactCards, toDid)
+            const held = card && currentAutocryptKey(card)
+            if (!held || !shouldEncrypt(held)) return undefined
+            return composeEncryptedMail({
+              id: message.id, ...(message.thid ? { thid: message.thid } : {}), bridgeHost: host, ...(message.subject ? { subject: message.subject } : {}),
+              content, sentAt: message.sentAt, fromAddress: ownMailAddress, toAddress,
+              own: { privateKey: credential.privateKey, keydata: await autocryptKeydata(credential.privateKey, ownMailAddress) },
+              peerKey: Uint8Array.from(atob(held.keydata), char => char.charCodeAt(0)),
+            })
+          },
           // A counterparty written to may be one the conversation can move with.
           onDelivered: item => { void rotationManager.offer(item.toDid).catch(() => undefined) },
           onError: (error, item) => {

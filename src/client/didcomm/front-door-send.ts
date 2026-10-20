@@ -100,7 +100,7 @@ export interface SendDidCommMessageOptions {
   /** DID Rotation: sent from a DID this identity rotated to, until the
    * recipient has written to it (from-prior.ts). */
   fromPrior?: string
-  attachments?: Array<{ id: string; media_type?: string; data: { json?: unknown; base64?: string } }>
+  attachments?: Array<{ id: string; filename?: string; media_type?: string; data: { json?: unknown; base64?: string } }>
 }
 
 /** The generic "resolve the recipient, authcrypt (Forward-wrapped if the

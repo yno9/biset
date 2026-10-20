@@ -9,6 +9,7 @@ import { PING_RESPONSE, isPing, responseOwedFor } from '../../protocol/didcomm/t
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { BASIC_MESSAGE } from './basicmessage.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
+import { bytesToBase64url } from '../../protocol/canonical.ts'
 import { sendFrontDoorMessage, type DidCommSendResult, type SendDidCommMessageOptions } from './front-door-send.ts'
 
 export { type DidCommSendResult }
@@ -20,6 +21,9 @@ export interface ChatMessageOptions extends SendDidCommMessageOptions {
   sentAt?: string
   /** This identity's OpenPGP key, for a mail bridge to put in an `Autocrypt:` header (didmail PROTOCOL.md §7.4). */
   autocrypt?: { keydata: string; preferEncrypt?: 'mutual' }
+  /** The message, already encrypted (pgp/compose.ts): a mail bridge wraps this armored OpenPGP message into PGP/MIME
+   * (didmail PROTOCOL.md §7.4). `content` is then not sent. */
+  encrypted?: { armored: string }
 }
 
 /** Sends a chat message to `toDid`. `opts.id` keeps a retried message's
@@ -27,9 +31,14 @@ export interface ChatMessageOptions extends SendDidCommMessageOptions {
  * conversation (the thread and its participants). */
 export async function sendDidCommMessage(toDid: string, content: string, opts: ChatMessageOptions): Promise<DidCommSendResult> {
   const sentAt = opts.sentAt ?? new Date().toISOString()
+  const encrypted = opts.encrypted
   return sendFrontDoorMessage(toDid, BASIC_MESSAGE, {
-    content, sentAt, ...(opts.subject ? { subject: opts.subject } : {}), ...(opts.autocrypt ? { autocrypt: opts.autocrypt } : {}),
-  }, { ...opts, createdTime: Math.floor(Date.parse(sentAt) / 1000) })
+    content: encrypted ? '' : content, sentAt, ...(opts.subject ? { subject: opts.subject } : {}), ...(opts.autocrypt ? { autocrypt: opts.autocrypt } : {}),
+    ...(encrypted ? { encryption: 'openpgp' } : {}),
+  }, {
+    ...opts, createdTime: Math.floor(Date.parse(sentAt) / 1000),
+    ...(encrypted ? { attachments: [{ id: 'pgp', filename: 'encrypted.asc', media_type: 'application/octet-stream', data: { base64: bytesToBase64url(new TextEncoder().encode(encrypted.armored)) } }] } : {}),
+  })
 }
 
 /** Trust Ping 2.0: answers a received ping that asked for a response (the

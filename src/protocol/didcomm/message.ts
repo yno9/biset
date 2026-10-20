@@ -37,6 +37,7 @@ export interface DidCommPlaintext {
   // being the mediator's own queue id (mediator/server.ts's DELIVERY_REQUEST).
   attachments?: Array<{
     id: string
+    filename?: string
     media_type?: string
     data: { json?: unknown; base64?: string }
   }>

@@ -125,6 +125,8 @@ function threadKeyOf(msg: ThreadableMsg, all: ThreadableMsg[]): string {
 // このスライスの対象外なので持たない。
 
 export interface MailMessageView {
+  /** Set for a mail that came OpenPGP-encrypted and was opened with this identity's key. */
+  encrypted?: { signed: boolean; verified: boolean }
   from: string
   from_name: string
   body: string

@@ -25,3 +25,12 @@ export function mailAddressOfBridgeDid(did: string): string | undefined {
   const [, , , domain, local] = did.split(':')
   try { return `${decodeURIComponent(local!)}@${domain!.toLowerCase()}` } catch { return undefined }
 }
+
+/** The host of a mail bridge DID (`did:web:did.md:4r.ma:n` -> `did.md`), or undefined. */
+export function bridgeHostOf(did: string): string | undefined {
+  return isMailBridgeDid(did) ? decodeURIComponent(did.split(':')[2]!) : undefined
+}
+
+/** Whether to write to a mail address encrypted: a key is held for it and it asked for encryption when both sides want it
+ * (Autocrypt Level 1, 2.2; this identity always does). */
+export function shouldEncrypt(held: { preferEncrypt?: 'mutual' } | undefined): boolean { return held?.preferEncrypt === 'mutual' }

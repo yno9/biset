@@ -22,6 +22,9 @@ export interface WalletDidCommOutboxOptions {
   route(publicDid: string): Promise<DidCommRoute>
   /** The OpenPGP key to tell a mail bridge about, for the recipient's DID (undefined: none). Asked at each attempt. */
   autocrypt?(toDid: string): Promise<{ keydata: string; preferEncrypt?: 'mutual' } | undefined>
+  /** The message written as an OpenPGP-encrypted mail for the recipient's DID, when a key is held for it (undefined: send it as it is).
+   * Asked at each attempt, with the message as it was written; the armor is made again on a retry, the DIDComm id stays. */
+  encrypt?(toDid: string, content: string, message: OutboundChatMessage): Promise<{ armored: string; outerSubject: string } | undefined>
   send?: (toDid: string, content: string, message: OutboundChatMessage) => Promise<{ ok: boolean; error?: string }>
   onDelivered?: (item: DidCommTransportOutboxRecord) => void
   onError(error: unknown, item: DidCommTransportOutboxRecord): void
@@ -54,11 +57,14 @@ export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): 
   const send = options.send ?? (async (publicDid, content, message) => {
     const route = await options.route(publicDid)
     const autocrypt = await options.autocrypt?.(route.toDid).catch(() => undefined)
+    const encrypted = await options.encrypt?.(route.toDid, content, message).catch(() => undefined)
     return sendDidCommMessage(route.toDid, content, {
       ...(autocrypt ? { autocrypt } : {}),
+      ...(encrypted ? { encrypted: { armored: encrypted.armored } } : {}),
       fromKid: route.fromKid, x25519PrivateKey: route.x25519PrivateKey, ...(route.fromPrior ? { fromPrior: route.fromPrior } : {}),
       id: message.id, sentAt: message.sentAt,
-      ...(message.subject ? { subject: message.subject } : {}),
+      // The subject an encrypted mail shows outside is a stand-in; the real one is inside.
+      ...(encrypted ? { subject: encrypted.outerSubject } : message.subject ? { subject: message.subject } : {}),
       ...(message.thid ? { thid: message.thid } : {}),
       ...(message.audience ? { audience: audienceOfCopy(message.audience, publicDid, route.toDid) } : {}),
     })
