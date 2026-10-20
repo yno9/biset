@@ -812,7 +812,15 @@ function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthori
 /** Saves the pending authorization and builds the Wallet's authorization request URL (for a JAR
  * relying party: the signed request object from biset-rp-signer). It does not navigate. */
 async function walletRequestUrl(client: DidMdRegistration, pending: DidMdPendingAuthorization): Promise<string> {
-  await saveDidMdPendingAuthorization(pending)
+  // Saved while the signer is asked (nothing below reads it); both are done before the request is handed on.
+  const saved = saveDidMdPendingAuthorization(pending)
+  saved.catch(() => {})
+  const url = await walletRequestUrlUnsaved(client, pending)
+  await saved
+  return url
+}
+
+async function walletRequestUrlUnsaved(client: DidMdRegistration, pending: DidMdPendingAuthorization): Promise<string> {
   const request = new URL(client.authorizationEndpoint)
   // RFC 9396 details are optional: a plain sign-in asks for none, and the
   // parameter is left out rather than sent empty.
@@ -1007,7 +1015,7 @@ export function retiredMediatorEndpoints(
  * response the relying party would otherwise get in the callback URL. Without one, an approval is a
  * full-page round trip through the Wallet (`redirectToWallet`).
  */
-export type DidMdWalletApprover = (request: string) => Promise<URLSearchParams>
+export type DidMdWalletApprover = (request: Promise<string>) => Promise<URLSearchParams>
 let walletApprover: DidMdWalletApprover | undefined
 export function useDidMdWalletApprover(approver: DidMdWalletApprover | undefined): void { walletApprover = approver }
 
@@ -1015,7 +1023,9 @@ export function useDidMdWalletApprover(approver: DidMdWalletApprover | undefined
  * with the new session), otherwise by navigating away (never resolving). */
 async function submitToWallet(client: DidMdRegistration, pending: DidMdPendingAuthorization): Promise<DidMdActiveSession> {
   if (!walletApprover) return redirectToWallet(client, pending)
-  const request = new URL(await walletRequestUrl(client, pending)).search
+  // The approver gets the request still being prepared (the RP signer is a network round trip), so
+  // its dialog can open and the Wallet frame can wake while that runs.
+  const request = walletRequestUrl(client, pending).then(url => new URL(url).search)
   let response: URLSearchParams
   try { response = await walletApprover(request) }
   catch (error) {

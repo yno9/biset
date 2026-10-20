@@ -44,6 +44,8 @@ export interface DitoEmbedHandlers {
    * prepares the signed sign-in request and hands it back with `DitoEmbed.login`.
    */
   login?(handle: string): void
+  /** The frame laid its screen out (it reports its height): there is something to show. */
+  resized?(height: number): void
   error?(message: string): void
 }
 
@@ -53,13 +55,13 @@ export interface DitoEmbedHandlers {
  * password managers only react to a real user gesture inside the frame that
  * holds the form, and a click forwarded from this page would be neither.
  */
-const HEIGHT_KEY = 'biset.dito-frame-height'
-function rememberHeight(height: number): void {
-  try { localStorage.setItem(HEIGHT_KEY, String(Math.round(height))) } catch { /* private mode */ }
+const heightKey = (mode: DitoMode) => `biset.dito-frame-height${mode === 'create' ? '' : `.${mode}`}`
+function rememberHeight(mode: DitoMode, height: number): void {
+  try { localStorage.setItem(heightKey(mode), String(Math.round(height))) } catch { /* private mode */ }
 }
-function recalledHeight(): number | undefined {
+function recalledHeight(mode: DitoMode): number | undefined {
   try {
-    const value = Number(localStorage.getItem(HEIGHT_KEY))
+    const value = Number(localStorage.getItem(heightKey(mode)))
     return value >= 100 && value <= 800 ? value : undefined
   } catch { return undefined }
 }
@@ -73,6 +75,8 @@ export interface DitoEmbed {
   approve(request: string): Promise<URLSearchParams>
   /** The page could not prepare the request it announced: the frame's button stops working. */
   cancel(): Promise<void>
+  /** Stops listening for the frame (a frame that is being replaced). */
+  dispose(): void
 }
 
 export function mountDito(frame: HTMLIFrameElement, origin: string, mode: DitoMode, handlers: DitoEmbedHandlers = {}): Promise<DitoEmbed> {
@@ -95,6 +99,7 @@ export function mountDito(frame: HTMLIFrameElement, origin: string, mode: DitoMo
         return params
       },
       async cancel() { await call('wallet.cancel', {}) },
+      dispose() { removeEventListener('message', onMessage) },
     }
     const timer = setTimeout(() => {
       removeEventListener('message', onMessage)
@@ -117,7 +122,7 @@ export function mountDito(frame: HTMLIFrameElement, origin: string, mode: DitoMo
           else pending?.resolve(data.result)
           return
         }
-        if (data.event === 'resize' && typeof data.height === 'number') { frame.style.height = `${data.height}px`; if (mode === 'create') rememberHeight(data.height) }
+        if (data.event === 'resize' && typeof data.height === 'number') { frame.style.height = `${data.height}px`; rememberHeight(mode, data.height); handlers.resized?.(data.height) }
         else if (data.event === 'creating' && typeof data.handle === 'string') handlers.creating?.(data.handle)
         else if (data.event === 'created' && typeof data.did === 'string') handlers.created?.(data.did)
         else if (data.event === 'existing' && typeof data.did === 'string') handlers.existing?.(data.did)
@@ -131,7 +136,7 @@ export function mountDito(frame: HTMLIFrameElement, origin: string, mode: DitoMo
     }
 
     // Start at the height the frame had last time, so the page does not jump when it loads.
-    const hint = mode === 'create' ? recalledHeight() : undefined
+    const hint = recalledHeight(mode)
     if (hint) frame.style.height = `${hint}px`
     addEventListener('message', onMessage)
     frame.src = `${origin}/?embed=${mode}`

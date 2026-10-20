@@ -26,7 +26,8 @@ import {
 } from '../identity/wallet/did-md-oauth.ts'
 import { refreshInbox, showApp, showSysMsg } from './ui/shell.ts'
 import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
-import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
+import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, showConfigPage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
+import { savedPage } from './ui/state.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { installDitoApprover } from './ui/approve-dialog.tsx'
 import { mountApp } from './ui/app.tsx'
@@ -993,6 +994,10 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
     if (completedWalletEdit || sessionStorage.getItem(DID_MD_JUST_CONNECTED_KEY) === '1') {
       sessionStorage.removeItem(DID_MD_JUST_CONNECTED_KEY)
       showAccountPage()
+    } else {
+      const page = savedPage()
+      if (page === 'account') showAccountPage()
+      else if (page === 'config') showConfigPage()
     }
     return
   }
