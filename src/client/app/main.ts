@@ -73,6 +73,7 @@ import { OpenPgpCredentialReader, OpenPgpCredentialSink } from '../store/vault/o
 import { generatePgpKey, importPgpKey, keyNamesAddress, readPgpKey } from '../pgp/keyring.ts'
 import { ensureOwnPgpKey } from '../pgp/auto.ts'
 import { publishPgpKey } from '../pgp/publish.ts'
+import { ownAutocryptFor } from '../pgp/autocrypt.ts'
 import type { PgpCardConfig } from './ui/account/pgp-card.tsx'
 import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
 
@@ -689,6 +690,8 @@ async function configureWalletAccountIfPresent(
           readModel,
           mutationSink,
           route: publicDid => rotationManager.route(publicDid),
+          // To a mail address: this identity's OpenPGP key, which the bridge puts in an Autocrypt header.
+          autocrypt: async toDid => ownAutocryptFor(toDid, ownMailAddress ? await pgpReader.current().then(credential => credential && { address: ownMailAddress, privateKey: credential.privateKey }) : undefined),
           // A counterparty written to may be one the conversation can move with.
           onDelivered: item => { void rotationManager.offer(item.toDid).catch(() => undefined) },
           onError: (error, item) => {

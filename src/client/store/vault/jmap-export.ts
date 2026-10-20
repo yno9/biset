@@ -8,7 +8,7 @@ import { buildMailMessageAdd, buildMailMessageEdit } from './mail-message.ts'
 import { buildVaultMutation } from './mutations.ts'
 import type { IncomingVaultRecordsResult } from './store.ts'
 import type { IncomingVaultRecords } from './store.ts'
-import { assertContactCard, contactSetIntent, contactTargetId, creatingPatch, DEFAULT_ADDRESS_BOOK, DIDCOMM_CONTACT_PROPERTY, pointerToken, type ContactPatch, type LocalJmapAddressBook, type LocalJmapContactCard } from '../projection/contacts.ts'
+import { assertContactCard, contactSetIntent, contactTargetId, creatingPatch, DEFAULT_ADDRESS_BOOK, AUTOCRYPT_CONTACT_PROPERTY, DIDCOMM_CONTACT_PROPERTY, pointerToken, type ContactPatch, type LocalJmapAddressBook, type LocalJmapContactCard } from '../projection/contacts.ts'
 
 export const JMAP_STATE_RANK = 'https://biset.md/jmap/ns:stateRank' as const
 /** JMAP keyword on every message a JMAP export file added to the Vault. */
@@ -67,15 +67,15 @@ export async function importJmapExport(file: JmapExportV1, input: {
   }
   // Contacts: a card newer in the file than in the Vault (or absent from
   // it, destroy included) is written as one patch dated at the file's rank.
-  // Its DIDComm routing state is dropped: the file is plain JSON anyone
+  // Its DIDComm routing state and Autocrypt keys are dropped: the file is plain JSON anyone
   // could have edited, and "this did:peer is Bob" must come only from a
-  // verified DID Rotation (contacts.ts).
+  // verified DID Rotation, "this is Bob's key" only from his mail (contacts.ts).
   let contactsAdded = 0; let contactsUpdated = 0
   const cards = new Map(input.snapshot.contactCards.map(card => [card.id, card]))
   for (const value of file.contactCards ?? []) {
     let card: LocalJmapContactCard
     try { card = assertContactCard(JSON.parse(JSON.stringify(value))) } catch { excluded++; continue }
-    const { [DIDCOMM_CONTACT_PROPERTY]: _routing, ...plain } = card
+    const { [DIDCOMM_CONTACT_PROPERTY]: _routing, [AUTOCRYPT_CONTACT_PROPERTY]: _keys, ...plain } = card
     const rank = file.contactCardStateRanks?.[card.id] ?? `${file.exportedAt}|||`
     if (rank <= currentRank(input.events, contactTargetId(card.id), ['contact.set'])) { skipped++; continue }
     const existing = cards.get(card.id)
@@ -92,7 +92,7 @@ export async function importJmapExport(file: JmapExportV1, input: {
 /** The patch that turns `current` into `wanted`, top-level property by
  * property, leaving the card's identity and its DIDComm routing state alone. */
 function cardDifference(current: LocalJmapContactCard, wanted: LocalJmapContactCard): ContactPatch {
-  const fixed = new Set(['id', 'uid', '@type', DIDCOMM_CONTACT_PROPERTY])
+  const fixed = new Set(['id', 'uid', '@type', DIDCOMM_CONTACT_PROPERTY, AUTOCRYPT_CONTACT_PROPERTY])
   const patch: ContactPatch = {}
   for (const [key, value] of Object.entries(wanted)) {
     if (!fixed.has(key) && canonicalJson(value) !== canonicalJson(current[key] ?? null)) patch[pointerToken(key)] = value as CanonicalValue

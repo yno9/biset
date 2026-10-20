@@ -34,6 +34,30 @@ export interface BasicMessageBody {
   /** NOT part of basicmessage/2.0: a bridged mail's SPF/DKIM/DMARC results
    * (didmail PROTOCOL.md §4.3). Unknown fields and values are dropped. */
   auth?: MailAuthResults
+  /** NOT part of basicmessage/2.0: the sender's OpenPGP public key from a bridged mail's `Autocrypt:`
+   * header (didmail PROTOCOL.md §5.5). `addr` is the From address, `keydata` the binary key as base64. */
+  autocrypt?: AutocryptKey
+  /** NOT part of basicmessage/2.0: `openpgp` when the mail was OpenPGP-encrypted; the armored message is
+   * the `pgp` attachment and `content` is only a notice (didmail PROTOCOL.md §5.3). */
+  encryption?: 'openpgp'
+  /** NOT part of basicmessage/2.0: `openpgp` when the mail carries an OpenPGP signature (§5.4). */
+  signature?: 'openpgp'
+}
+
+interface AutocryptKey {
+  addr: string
+  keydata: string
+  preferEncrypt?: 'mutual'
+}
+
+const MAX_KEYDATA_LENGTH = 96 * 1024
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
+
+function autocryptOf(value: unknown): AutocryptKey | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const { addr, keydata, preferEncrypt } = value as Record<string, unknown>
+  if (typeof addr !== 'string' || !addr.includes('@') || typeof keydata !== 'string' || keydata.length > MAX_KEYDATA_LENGTH || !BASE64.test(keydata)) return undefined
+  return { addr, keydata, ...(preferEncrypt === 'mutual' ? { preferEncrypt } : {}) }
 }
 
 /** RFC 8601's result words. */
@@ -64,8 +88,9 @@ export function basicMessageBodyOf(msg: { body?: unknown }): BasicMessageBody | 
   if (typeof body !== 'object' || body === null) return null
   const content = (body as Record<string, unknown>).content
   if (typeof content !== 'string') return null
-  const { sentAt, subject, fromName, replyTo } = body as Record<string, unknown>
+  const { sentAt, subject, fromName, replyTo, encryption, signature } = body as Record<string, unknown>
   const auth = mailAuthOf((body as Record<string, unknown>).auth)
+  const autocrypt = autocryptOf((body as Record<string, unknown>).autocrypt)
   return {
     content,
     ...(typeof sentAt === 'string' ? { sentAt } : {}),
@@ -73,5 +98,8 @@ export function basicMessageBodyOf(msg: { body?: unknown }): BasicMessageBody | 
     ...(typeof fromName === 'string' && fromName ? { fromName } : {}),
     ...(typeof replyTo === 'string' && replyTo.startsWith('did:') ? { replyTo } : {}),
     ...(auth ? { auth } : {}),
+    ...(autocrypt ? { autocrypt } : {}),
+    ...(encryption === 'openpgp' ? { encryption } : {}),
+    ...(signature === 'openpgp' ? { signature } : {}),
   }
 }

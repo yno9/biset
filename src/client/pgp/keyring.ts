@@ -62,3 +62,21 @@ export function keyNamesAddress(key: Pick<PgpKey, 'userIds'>, address: string): 
   const wanted = address.toLowerCase()
   return key.userIds.some(id => (/<([^>]+)>/.exec(id)?.[1] ?? id).trim().toLowerCase() === wanted)
 }
+
+/** The `keydata` of an Autocrypt header (Autocrypt Level 1, 2.1): the public key as standard base64, cut down to
+ * what a peer needs -- the primary key, the user ID for `address` (any one, when none names it), and the newest
+ * encryption subkey, without third-party certifications. */
+export async function autocryptKeydata(privateKey: Uint8Array, address: string): Promise<string> {
+  const key = (await openpgp.readPrivateKey({ binaryKey: privateKey })).toPublic()
+  const wanted = address.toLowerCase()
+  const named = key.users.filter(user => (user.userID?.email ?? '').toLowerCase() === wanted)
+  key.users = (named.length ? named : key.users).slice(0, 1)
+  for (const user of key.users) user.otherCertifications = []
+  const encryption = await key.getEncryptionKey().catch(() => undefined)
+  key.subkeys = encryption && encryption.getKeyID().toHex() !== key.getKeyID().toHex()
+    ? key.subkeys.filter(subkey => subkey.getKeyID().toHex() === encryption.getKeyID().toHex())
+    : []
+  let binary = ''
+  for (const byte of key.write()) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}

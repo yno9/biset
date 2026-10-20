@@ -20,6 +20,8 @@ export interface WalletDidCommOutboxOptions {
    * and to (did-rotation.ts's chooseRoute): the front door, or the DIDs the
    * conversation moved to. Asked at each attempt, so a retry follows a move. */
   route(publicDid: string): Promise<DidCommRoute>
+  /** The OpenPGP key to tell a mail bridge about, for the recipient's DID (undefined: none). Asked at each attempt. */
+  autocrypt?(toDid: string): Promise<{ keydata: string; preferEncrypt?: 'mutual' } | undefined>
   send?: (toDid: string, content: string, message: OutboundChatMessage) => Promise<{ ok: boolean; error?: string }>
   onDelivered?: (item: DidCommTransportOutboxRecord) => void
   onError(error: unknown, item: DidCommTransportOutboxRecord): void
@@ -51,7 +53,9 @@ export interface WalletDidCommOutbox {
 export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): WalletDidCommOutbox {
   const send = options.send ?? (async (publicDid, content, message) => {
     const route = await options.route(publicDid)
+    const autocrypt = await options.autocrypt?.(route.toDid).catch(() => undefined)
     return sendDidCommMessage(route.toDid, content, {
+      ...(autocrypt ? { autocrypt } : {}),
       fromKid: route.fromKid, x25519PrivateKey: route.x25519PrivateKey, ...(route.fromPrior ? { fromPrior: route.fromPrior } : {}),
       id: message.id, sentAt: message.sentAt,
       ...(message.subject ? { subject: message.subject } : {}),

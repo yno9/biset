@@ -18,6 +18,8 @@ export interface ChatMessageOptions extends SendDidCommMessageOptions {
    * official `created_time` header both come from it; a retry of a queued
    * message keeps its original time. Defaults to now. */
   sentAt?: string
+  /** This identity's OpenPGP key, for a mail bridge to put in an `Autocrypt:` header (didmail PROTOCOL.md §7.4). */
+  autocrypt?: { keydata: string; preferEncrypt?: 'mutual' }
 }
 
 /** Sends a chat message to `toDid`. `opts.id` keeps a retried message's
@@ -26,7 +28,7 @@ export interface ChatMessageOptions extends SendDidCommMessageOptions {
 export async function sendDidCommMessage(toDid: string, content: string, opts: ChatMessageOptions): Promise<DidCommSendResult> {
   const sentAt = opts.sentAt ?? new Date().toISOString()
   return sendFrontDoorMessage(toDid, BASIC_MESSAGE, {
-    content, sentAt, ...(opts.subject ? { subject: opts.subject } : {}),
+    content, sentAt, ...(opts.subject ? { subject: opts.subject } : {}), ...(opts.autocrypt ? { autocrypt: opts.autocrypt } : {}),
   }, { ...opts, createdTime: Math.floor(Date.parse(sentAt) / 1000) })
 }
 

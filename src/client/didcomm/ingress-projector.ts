@@ -14,10 +14,11 @@ import type { VaultEventRecord, VaultObjectRecord } from '../store/vault/store.t
 import { parseJwe, protectedHeaderOf, unpackAuthcrypt, unpackAnoncrypt, type ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
 import { isPing, isPingResponse, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
 import { FromPriorError, fromPriorKeyResolver, verifyFromPrior, type DidRotation } from '../../protocol/didcomm/from-prior.ts'
-import { contactCardForDid, contactSetIntent, counterpartyOfRotatedDid, currentRotation, didCommStateOf, didContactPatch, ownRotationPatch, rotationPatch, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
+import { autocryptKeyPatch, contactCardForDid, contactSetIntent, counterpartyOfRotatedDid, currentRotation, didCommStateOf, didContactPatch, ownRotationPatch, rotationPatch, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { PermanentDeliveryError } from '../../protocol/didcomm/mediator-pickup.ts'
 import { isBasicMessage, basicMessageBodyOf, didCommThreadId } from './basicmessage.ts'
+import { mailAddressOfBridgeDid } from '../pgp/autocrypt.ts'
 import { isExternalFeedPost, externalFeedPostBodyOf, externalFeedThreadId, EXTERNAL_FEED_POST } from './external-feed.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { DidCommSenderMismatchError, isExpired } from '../../protocol/didcomm/message.ts'
@@ -221,6 +222,9 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       ? await this.counterpartyOf(msg, senderKid, recipientKid, snapshot.contactCards, createdAt)
       : undefined
 
+    // Contact-card writes the message itself justifies, after the ones its sender's identity does.
+    const keyWrites: ContactSetPayload[] = []
+
     const segment = await this.options.activeSegment()
     assertActiveVaultSegment(this.options.identityId, segment, 'DIDComm ingress')
     const context = {
@@ -335,6 +339,12 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       const body = basicMessageBodyOf(msg)
       if (!body) throw new TypeError('DIDComm basicmessage has no readable content')
       const sentAt = body.sentAt ?? (msg.created_time ? new Date(msg.created_time * 1000).toISOString() : createdAt)
+      // The sender's OpenPGP key from the mail's Autocrypt header (didmail PROTOCOL.md §5.5), written to its
+      // card -- only when the bridge saw the mail pass DMARC and the key is for the address the DID stands for.
+      if (body.autocrypt && body.auth?.dmarc === 'pass' && body.autocrypt.addr.toLowerCase() === mailAddressOfBridgeDid(senderDid)?.toLowerCase()) {
+        const cardId = contactCardForDid(snapshot.contactCards, senderDid)?.id ?? didContactPatch(senderDid).cardId
+        keyWrites.push(autocryptKeyPatch(cardId, { keydata: body.autocrypt.keydata, seenAt: sentAt, ...(body.autocrypt.preferEncrypt ? { preferEncrypt: body.autocrypt.preferEncrypt } : {}) }))
+      }
       const record = await buildMailMessageAdd({
         email: {
           id: dedupeId,
@@ -361,7 +371,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
 
     const events: VaultEventRecord[] = [event]
     const reduce = [decryptedForProjection]
-    for (const write of counterparty?.writes ?? []) {
+    for (const write of [...(counterparty?.writes ?? []), ...keyWrites]) {
       const record = await buildVaultMutation(contactSetIntent(write), {
         ...context, actorSeq: await this.options.nextActorSeq(), parents: [events.at(-1)!.id],
       }, this.options.signer)

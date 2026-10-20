@@ -29,6 +29,9 @@ import type { VaultMutationIntent } from './mutations.ts'
 export const JMAP_CONTACTS_CAPABILITY = 'urn:ietf:params:jmap:contacts'
 /** JSContact vendor property holding DIDComm routing state (§12.2). */
 export const DIDCOMM_CONTACT_PROPERTY = 'biset.md:didcomm'
+/** JSContact vendor property holding the OpenPGP keys a counterparty's mail told us (Autocrypt). Like the
+ * DIDComm state, written only by DIDComm ingress. */
+export const AUTOCRYPT_CONTACT_PROPERTY = 'biset.md:autocrypt'
 /** The one address book (§12.2: more than one is for later). */
 const DEFAULT_ADDRESS_BOOK_ID = 'default'
 
@@ -70,6 +73,18 @@ export interface DidCommContactState {
    * on `from_prior` is no longer sent, DIDComm v2.1). */
   own?: Record<string, { startedAt?: string; confirmedAt?: string }>
 }
+
+/** One key a counterparty's mail carried (Autocrypt Level 1: the key of its newest mail is the current one). */
+export interface AutocryptKeyEntry {
+  /** The binary public key, standard base64. */
+  keydata: string
+  /** When the mail that carried it was written (its Date). */
+  seenAt: string
+  preferEncrypt?: 'mutual'
+}
+
+/** `{ keys: { [keyId]: entry } }`: one leaf per distinct key, so a later mail with the same key only moves `seenAt`. */
+interface AutocryptContactState { keys?: Record<string, AutocryptKeyEntry> }
 
 // ---- ids ----
 
@@ -140,6 +155,25 @@ function assertDidCommState(value: unknown): void {
   }
 }
 
+const KEY_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/
+const KEYDATA_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/
+const MAX_KEYDATA_LENGTH = 96 * 1024
+
+function assertAutocryptState(value: unknown): void {
+  if (!isObject(value)) throw new TypeError(`contact card ${AUTOCRYPT_CONTACT_PROPERTY} must be an object`)
+  for (const key of Object.keys(value)) if (key !== 'keys') throw new TypeError(`contact card ${AUTOCRYPT_CONTACT_PROPERTY} has an unknown property`)
+  if (value.keys === undefined) return
+  if (!isObject(value.keys)) throw new TypeError('contact card autocrypt keys must be an object')
+  for (const [id, entry] of Object.entries(value.keys)) {
+    if (!KEY_ID_PATTERN.test(id) || !isObject(entry) || typeof entry.keydata !== 'string' || entry.keydata.length > MAX_KEYDATA_LENGTH || !KEYDATA_PATTERN.test(entry.keydata)
+      || typeof entry.seenAt !== 'string' || Number.isNaN(Date.parse(entry.seenAt))
+      || (entry.preferEncrypt !== undefined && entry.preferEncrypt !== 'mutual')
+      || Object.keys(entry).some(field => !['keydata', 'seenAt', 'preferEncrypt'].includes(field))) {
+      throw new TypeError('contact card autocrypt key is invalid')
+    }
+  }
+}
+
 /** Checks a whole card: RFC 9553's required properties, RFC 9610's
  * `addressBookIds`, the Id-typed maps biset reads, and the DIDComm state. */
 export function assertContactCard(value: unknown): LocalJmapContactCard {
@@ -155,6 +189,7 @@ export function assertContactCard(value: unknown): LocalJmapContactCard {
     if (!isObject(service) || (typeof service.uri !== 'string' && typeof service.user !== 'string')) throw new TypeError('contact card online service needs a uri or user')
   })
   if (value[DIDCOMM_CONTACT_PROPERTY] !== undefined) assertDidCommState(value[DIDCOMM_CONTACT_PROPERTY])
+  if (value[AUTOCRYPT_CONTACT_PROPERTY] !== undefined) assertAutocryptState(value[AUTOCRYPT_CONTACT_PROPERTY])
   return value as LocalJmapContactCard
 }
 
@@ -304,6 +339,24 @@ export function publicDidOf(card: LocalJmapContactCard): string | undefined {
   return undefined
 }
 
+/** The id of a key in the card's autocrypt state: a hash of its `keydata`. */
+export function autocryptKeyId(keydata: string): string {
+  return bytesToBase64url(sha256(new TextEncoder().encode(`biset/autocrypt-key-id/v1\n${keydata}`))).slice(0, 22)
+}
+
+/** Records that a mail written at `seenAt` carried `keydata` for the counterparty of `cardId`. */
+export function autocryptKeyPatch(cardId: string, entry: AutocryptKeyEntry): ContactSetPayload {
+  return { cardId, patch: { [`${pointerToken(AUTOCRYPT_CONTACT_PROPERTY)}/keys/${autocryptKeyId(entry.keydata)}`]: { ...entry } as unknown as CanonicalValue } }
+}
+
+/** The counterparty's current key: the one its newest mail carried (ties by key id), or undefined. */
+export function currentAutocryptKey(card: LocalJmapContactCard): (AutocryptKeyEntry & { id: string }) | undefined {
+  const keys = Object.entries((card[AUTOCRYPT_CONTACT_PROPERTY] as AutocryptContactState | undefined)?.keys ?? {})
+  keys.sort(([a, x], [b, y]) => Date.parse(x.seenAt) - Date.parse(y.seenAt) || a.localeCompare(b))
+  const latest = keys.at(-1)
+  return latest ? { id: latest[0], ...latest[1] } : undefined
+}
+
 const state = (path: string) => `${pointerToken(DIDCOMM_CONTACT_PROPERTY)}/${path}`
 
 /** The patch making sure `did` has a card: written leaf by leaf, so writing
@@ -338,7 +391,8 @@ interface ContactCardSetResult {
 
 const SERVER_SET = new Set(['id'])
 
-function touchesDidComm(path: string): boolean { return pointer(path)[0] === DIDCOMM_CONTACT_PROPERTY }
+/** The card properties only ingress writes: a JMAP client may not set them. */
+function touchesDidComm(path: string): boolean { const head = pointer(path)[0]; return head === DIDCOMM_CONTACT_PROPERTY || head === AUTOCRYPT_CONTACT_PROPERTY }
 
 /** Parses a ContactCard/set request against `cards` into the patches to
  * commit, and the per-item results a JMAP response reports. */
@@ -350,10 +404,10 @@ export function contactCardSet(arguments_: Record<string, unknown>, cards: reado
 
   if (arguments_.create !== undefined) {
     if (!isObject(arguments_.create)) throw new TypeError('ContactCard/set create must be an object')
-    for (const [creationId, value] of Object.entries(arguments_.create)) {
+    next: for (const [creationId, value] of Object.entries(arguments_.create)) {
       try {
         if (!isObject(value)) throw new TypeError('a card must be an object')
-        if (DIDCOMM_CONTACT_PROPERTY in value) { result.notCreated[creationId] = { type: 'forbidden', description: `${DIDCOMM_CONTACT_PROPERTY} is managed by biset` }; continue }
+        for (const managed of [DIDCOMM_CONTACT_PROPERTY, AUTOCRYPT_CONTACT_PROPERTY]) if (managed in value) { result.notCreated[creationId] = { type: 'forbidden', description: `${managed} is managed by biset` }; continue next }
         if ([...SERVER_SET].some(key => key in value)) throw new TypeError('id is set by the server')
         const uid = typeof value.uid === 'string' && value.uid ? value.uid : newUid()
         const id = contactCardId(uid)
