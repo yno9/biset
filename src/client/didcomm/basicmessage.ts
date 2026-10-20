@@ -93,7 +93,8 @@ export function basicMessageBodyOf(msg: { body?: unknown }): BasicMessageBody | 
   const autocrypt = autocryptOf((body as Record<string, unknown>).autocrypt)
   return {
     content,
-    ...(typeof sentAt === 'string' ? { sentAt } : {}),
+    // A time the Vault cannot read would fail the whole message on every redelivery: the receiver's own time stands in for it.
+    ...(typeof sentAt === 'string' && !Number.isNaN(Date.parse(sentAt)) ? { sentAt } : {}),
     ...(typeof subject === 'string' ? { subject } : {}),
     ...(typeof fromName === 'string' && fromName ? { fromName } : {}),
     ...(typeof replyTo === 'string' && replyTo.startsWith('did:') ? { replyTo } : {}),

@@ -28,12 +28,13 @@ const segmentKey = createSegmentKey()
 
 function projector() {
   const seen = new Set<string>()
+  let seq = 0 // events are folded by (time, device, sequence): the sequence must grow, as it does on a device
   return new DidCommIngressProjector({
     identityId, actorDeviceId: recipientKid,
     resolveOwnKey: kid => kid === recipientKid ? { kid: recipientKid, x25519PrivateKey: recipientX } : null,
     async resolveSenderKey() { return x25519.getPublicKey(senderX) },
     async alreadyProcessed(id) { if (seen.has(id)) return true; seen.add(id); return false },
-    async nextActorSeq() { return 1 },
+    async nextActorSeq() { return ++seq },
     async initialParents() { return [] },
     async activeSegment() { return { segmentId: 'segment-1', segmentKey } },
     async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [], contactCards: [] } },
@@ -72,5 +73,12 @@ describe('a bridged mail with an Autocrypt key', () => {
       expect(card).toBeDefined()
       expect(card![AUTOCRYPT_CONTACT_PROPERTY]).toBeUndefined()
     }
+  })
+
+  test('a message whose sentAt is not a date still lands, dated by its own created_time', async () => {
+    const result = await projector().verifyAndProject(envelope({ content: 'hi', sentAt: 'tomorrow-ish', auth: dmarc, autocrypt }))
+    const sentAt = result.projection.emails[0]!.sentAt!
+    expect(Number.isNaN(Date.parse(sentAt))).toBe(false)
+    expect(currentAutocryptKey(result.projection.contactCards[0]!)!.seenAt).toBe(sentAt)
   })
 })

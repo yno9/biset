@@ -25,3 +25,14 @@ describe('basicMessageBodyOf: the OpenPGP fields a bridged mail carries', () => 
     }
   })
 })
+
+describe('basicMessageBodyOf: sentAt', () => {
+  test('a time that is not a date is dropped, so it cannot make the message fail for good', () => {
+    for (const sentAt of ['tomorrow-ish', '', 'Invalid Date', '99999999999999999']) {
+      const body = basicMessageBodyOf({ body: { content: 'x', sentAt } })!
+      expect(body.content).toBe('x')
+      expect('sentAt' in body).toBe(false)
+    }
+    expect(basicMessageBodyOf({ body: { content: 'x', sentAt: '2026-10-20T00:00:30.000Z' } })!.sentAt).toBe('2026-10-20T00:00:30.000Z')
+  })
+})
