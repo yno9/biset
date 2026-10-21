@@ -84,9 +84,6 @@ function IdentityCard({ did }: { did: string }) {
     } catch { setDoc('Failed to resolve DID document') }
   }
 
-  const expires = wallet ? new Date(wallet.capabilityExpiresAt) : undefined
-  const validDate = expires !== undefined && !Number.isNaN(expires.getTime())
-
   return (
     <div className={`cmd-page-section${expanded ? ' expanded' : ''}`} id="cmd-acc-identity-section">
       <div id="cmd-acc-identity-fields" title="Click to view DID document"
@@ -102,13 +99,6 @@ function IdentityCard({ did }: { did: string }) {
               <circle cx="580" cy="150" r="48" /><circle cx="928" cy="735" r="48" /><circle cx="816" cy="810" r="48" /><circle cx="702" cy="875" r="48" /><circle cx="351" cy="285" r="48" /><circle cx="463" cy="213" r="48" />
             </svg>
             <span id="cmd-acc-identity-did" title={did}>{did}</span>
-            {wallet && expires ? (
-              <span id="cmd-acc-capability-expiry"
-                className={wallet.reconnectRequired === true || expires.getTime() <= Date.now() ? 'expired' : undefined}
-                title={validDate ? `Biset capability expires ${expires.toLocaleString()}` : 'Biset capability expiry'}>
-                {`~ ${validDate ? expires.toLocaleDateString() : wallet.capabilityExpiresAt}`}
-              </span>
-            ) : <span id="cmd-acc-capability-expiry" />}
           </div>
           {pgp ? <PgpKeyRow config={pgp} showMessage={text => getAccountConfig()?.showMessage?.(text)} /> : null}
         </div>

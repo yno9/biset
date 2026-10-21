@@ -1935,16 +1935,6 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-#cmd-acc-capability-expiry {
-  color: var(--text-dim);
-  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-#cmd-acc-capability-expiry.expired {
-  color: #ff9500;
-}
 #cmd-acc-identity-menu-btn {
   background: none;
   border: none;

@@ -122,10 +122,10 @@ test('config: the vault toggle reflects and flips the markdown vault', async () 
 
 // ── account ──────────────────────────────────────────────────────────────────
 
-test('account: the identity card shows the domain, then the name the DID document gives', async () => {
+test('account: the identity card shows the DID, then the name the DID document gives', async () => {
   accountConfig.set(account())
   const { container } = render(<AccountPage />)
-  expect(container.querySelector('#cmd-acc-identity-did')!.textContent).toBe('did:webvh:alice.did.md')
+  expect(container.querySelector('#cmd-acc-identity-did')!.textContent).toBe(DID)
   expect(container.querySelector('#cmd-acc-identity-avatar')!.textContent).toBe('A')
   await waitFor(() => expect(container.querySelector('#cmd-acc-identity-name')!.textContent).toBe('Alice'))
   expect(container.querySelector('#cmd-acc-capability-expiry')!.textContent).toMatch(/^~ /)
