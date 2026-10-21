@@ -47,6 +47,7 @@ export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
       if (openEncrypted && !opened && armorOfStoredBody(body)) { console.warn(`[encrypted mail] not shown, cannot be opened with this identity's keys: ${email.id}`); continue }
       const msg = emailToMessageView(email, opened?.raw ?? raw)
       // The outer subject of an encrypted mail is a stand-in; the real one is inside.
+      if (opened?.hidden) continue
       if (opened?.subject) msg.subject = opened.subject
       // ... and so is its time: the outer Date of an encrypted mail is made up.
       if (opened?.sentAt !== undefined) msg.ts = opened.sentAt

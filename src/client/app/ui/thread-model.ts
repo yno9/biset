@@ -45,6 +45,17 @@ export function groupMembersLabel(groups: readonly ThreadGroup[], self: SelfAddr
   return [...members].map(address => address.startsWith('did:') ? labelForDid(address) : address).join(', ')
 }
 
+/** Who a 1:1 row is with: the name (or short address) of the latest message that came from the other side, so what we sent last
+ * does not name the row after ourselves. Empty when nothing came from them yet (then the members label is the way). */
+export function counterpartLabel(groups: readonly ThreadGroup[], self: SelfAddresses): string {
+  const received = groups.flatMap(group => group.messages.map(p => p.msg)).filter(msg => msg.from && !self.has(msg.from.toLowerCase())).sort((a, b) => b.ts - a.ts)[0]
+  if (received) {
+    const name = received.from_name && !received.from_name.startsWith('did:') ? received.from_name : ''
+    return name || (received.from.startsWith('did:') ? labelForDid(received.from) : received.from)
+  }
+  return groupMembersLabel(groups, self)
+}
+
 /** Which row of the left list a thread belongs to: the counterparty (a group chat is its own row). */
 function inboxKeyOf(group: ThreadGroup, self: SelfAddresses): string {
   return inboxKeyForThread(group.messages[0]?.msg.thread_id, participantsOf(group.messages.map(p => p.msg), self))

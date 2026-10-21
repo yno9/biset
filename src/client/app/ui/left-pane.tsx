@@ -9,7 +9,7 @@ import { hamburgerTrigger } from './hamburger-menu.tsx'
 import { showComposePage, hideAccountPage, hideComposePage, hideConfigPage } from './pages/index.ts'
 import { HamburgerDots, PaneToggleIcons, togglePane } from './right-col.tsx'
 import { isNarrow, patchShell, shell } from './stores.ts'
-import { groupMembersLabel, latestOf, type InboxRow } from './thread-model.ts'
+import { counterpartLabel, groupMembersLabel, latestOf, type InboxRow } from './thread-model.ts'
 import { useSelf, useThreads } from './use-threads.ts'
 
 // The keyboard cursor and hover focus only mean something where there is a pointer and a keyboard.
@@ -123,12 +123,13 @@ export function LeftPane() {
     // A group chat is its own row, named by its title or, with none, by who is in it: "who the
     // latest message came from" would give it the same label as the 1:1 row with that sender.
     const isGroup = row.key.startsWith(DIDCOMM_GROUP_THREAD_PREFIX)
-    const label = latestGroup.subject || (isGroup ? groupMembersLabel(row.groups, self) : '') || shortSenderLabel(latest.from_name || latest.from || 'no title')
+    // A row is who it is with (the threads, with their subjects, are under it): a group by its title, else its members; a person by name.
+    const label = isGroup ? latestGroup.subject || groupMembersLabel(row.groups, self) || 'no title' : counterpartLabel(row.groups, self) || shortSenderLabel(latest.from_name || latest.from || 'no title')
     return {
       row, label,
       avatarSubject: isGroup ? label : shortSenderLabel(latest.from_name || latest.from || label),
       unread: row.groups.some(g => g.messages.some(p => p.msg.seen !== true)),
-      visible: !query || label.toLowerCase().includes(query),
+      visible: !query || label.toLowerCase().includes(query) || row.groups.some(g => (g.subject ?? '').toLowerCase().includes(query)),
     }
   })
 

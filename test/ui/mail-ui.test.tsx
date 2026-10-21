@@ -198,10 +198,10 @@ test('one row per person, newest first, with an unread dot; the open thread\'s r
   const { container } = app(<LeftPane />)
   const rows = container.querySelectorAll('.lp-item')
   expect(rows).toHaveLength(2)
-  expect(rows[0]!.querySelector('.lp-name')!.textContent).toBe('Hello')
+  expect(rows[0]!.querySelector('.lp-name')!.textContent).toBe('Carol') // who the row is with; the thread's subject is under it
   expect(rows[0]!.classList.contains('current')).toBe(true)
   expect(rows[1]!.querySelector('.unread-dot')).not.toBeNull()
-  expect(rows[1]!.querySelector('.lp-name')!.textContent).toBe('Plans')
+  expect(rows[1]!.querySelector('.lp-name')!.textContent).toBe('Bob')
 })
 
 test('the filter hides rows that do not match, and Escape clears it', () => {

@@ -70,3 +70,16 @@ test('a message for an earlier generation\'s key is opened by the next key in th
   expect(mail.get().messages[0]!.msg.body.trim()).toBe('the real words')
   expect(mail.get().messages[0]!.msg.encrypted).toEqual({ signed: true, verified: true })
 })
+
+test('a key update from Delta Chat (an encrypted disposition-notification report) is not shown', async () => {
+  const alice = await generatePgpKey('alice@did.md'), bob = await generatePgpKey('bob@x.test')
+  const report = ['Content-Type: multipart/report; report-type=disposition-notification; boundary="b"', 'Subject: Keyupdate', '', '--b', 'Content-Type: text/plain', '', "This message updates the sender's encryption key and relay list.", '--b--', ''].join('\r\n')
+  const armored = await encryptMessage({ plaintext: report, recipients: [await publicBytes(alice)], signer: bob.privateKey })
+  const model = {
+    async snapshot() { return { emails: [{ id: 'e1', blobId: 'b1', threadId: 't1', mailboxIds: {}, keywords: {}, receivedAt: '2026-10-21T00:00:00Z', subject: '[...]', from: [{ email: 'did:web:did.md:x.test:bob' }] }], contactCards: [] } as never },
+    async download() { return new TextEncoder().encode(storedEncryptedBody(NOTICE, armored)) },
+  }
+  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [alice.privateKey], senderKeys: [] }))
+  await refreshInbox(model as never)
+  expect(mail.get().messages).toHaveLength(0)
+})
