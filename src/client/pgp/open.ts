@@ -9,6 +9,8 @@ export interface OpenedMail {
   raw: Uint8Array
   /** The real subject, which the outer mail hides. */
   subject?: string
+  /** When it was really written (epoch ms): the outer `Date:` of an encrypted mail is made up (Delta Chat picks a day within the last week). */
+  sentAt?: number
   /** The signature on it, when it has one. */
   signature?: Decrypted['signature']
 }
@@ -29,10 +31,12 @@ export async function openStoredMail(rawBody: string, keys: OpenKeys): Promise<O
     try { decrypted = await decryptMessage({ armored, privateKey, senderKeys: keys.senderKeys }); break } catch { /* not for this generation's key */ }
   }
   if (!decrypted) return undefined
-  const subject = parseInnerMime(decrypted.plaintext).headers.subject
+  const headers = parseInnerMime(decrypted.plaintext).headers
+  const sentAt = headers.date ? Date.parse(headers.date) : NaN
   return {
     raw: new TextEncoder().encode(decrypted.plaintext),
-    ...(subject ? { subject: decodeEncodedWords(subject) } : {}),
+    ...(headers.subject ? { subject: decodeEncodedWords(headers.subject) } : {}),
+    ...(Number.isNaN(sentAt) ? {} : { sentAt }),
     ...(decrypted.signature ? { signature: decrypted.signature } : {}),
   }
 }

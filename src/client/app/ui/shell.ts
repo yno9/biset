@@ -43,6 +43,8 @@ export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
       const msg = emailToMessageView(email, opened?.raw ?? raw)
       // The outer subject of an encrypted mail is a stand-in; the real one is inside.
       if (opened?.subject) msg.subject = opened.subject
+      // ... and so is its time: the outer Date of an encrypted mail is made up.
+      if (opened?.sentAt !== undefined) msg.ts = opened.sentAt
       if (opened) msg.encrypted = { signed: opened.signature !== undefined, verified: opened.signature?.verified === true }
       views.push({ msg, bodyText: msg.body })
     }

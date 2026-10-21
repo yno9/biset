@@ -16,11 +16,11 @@ const NOTICE = 'This message is encrypted with OpenPGP. The mail bridge cannot r
 
 async function setup() {
   const alice = await generatePgpKey('alice@did.md'), bob = await generatePgpKey('bob@x.test')
-  const inner = buildInnerMime({ headers: [['Subject', 'ひみつ'], ['Message-ID', '<real@x.test>'], ['In-Reply-To', '<before@x.test>']], text: 'the real words' })
+  const inner = buildInnerMime({ headers: [['Subject', 'ひみつ'], ['Date', 'Wed, 21 Oct 2026 04:03:02 GMT'], ['Message-ID', '<real@x.test>'], ['In-Reply-To', '<before@x.test>']], text: 'the real words' })
   const armored = await encryptMessage({ plaintext: inner, recipients: [await publicBytes(alice)], signer: bob.privateKey })
   const stored = storedEncryptedBody(NOTICE, armored)
   const model = {
-    async snapshot() { return { emails: [{ id: 'e1', blobId: 'b1', threadId: 't1', mailboxIds: {}, keywords: {}, receivedAt: '2026-10-21T00:00:00Z', subject: '[...]', from: [{ email: 'did:web:did.md:x.test:bob' }] }], contactCards: [] } as never },
+    async snapshot() { return { emails: [{ id: 'e1', blobId: 'b1', threadId: 't1', mailboxIds: {}, keywords: {}, receivedAt: '2026-10-21T00:00:00Z', sentAt: '2026-10-17T11:53:00Z', subject: '[...]', from: [{ email: 'did:web:did.md:x.test:bob' }] }], contactCards: [] } as never },
     async download() { return new TextEncoder().encode(stored) },
   }
   return { alice, bob, model, stored }
@@ -35,6 +35,8 @@ test('an encrypted mail is shown opened: the real body and subject, its threadin
   expect(shown!.msg.subject).toBe('ひみつ')
   expect(shown!.msg.in_reply_to).toBe('before@x.test')
   expect(shown!.msg.encrypted).toEqual({ signed: true, verified: true })
+  // The outer sentAt (a made-up day, as Delta Chat does) is not the time shown: the inner Date is.
+  expect(shown!.msg.ts).toBe(Date.parse('2026-10-21T04:03:02Z'))
 })
 
 test('without the sender\'s key the signature is reported as not verified; without our key the notice stays', async () => {
