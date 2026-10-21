@@ -167,3 +167,13 @@ export function parseKeydataHeader(value: string | undefined): { addr: string; k
   const keydata = /(?:^|;)\s*keydata=([A-Za-z0-9+/=\s]+)/i.exec(value)?.[1]?.replace(/\s+/g, '')
   return addr && keydata ? { addr, keydata } : undefined
 }
+
+/** The display name in a `From:` header value (`"Name" <addr>`, `Name <addr>`, encoded-words decoded), or undefined when it has none
+ * (`<addr>`, a bare address) -- Delta Chat puts the name there when it shares its profile. */
+export function displayNameOfFrom(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  const match = /^\s*(?:"((?:[^"\\]|\\.)*)"|([^<"]*?))\s*<[^>]+>\s*$/.exec(value)
+  const raw = (match?.[1]?.replace(/\\(.)/g, '$1') ?? match?.[2] ?? '').trim()
+  const name = decodeEncodedWords(raw).trim()
+  return name && !name.includes('@') ? name : undefined
+}

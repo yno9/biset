@@ -24,7 +24,7 @@ import {
   didMdWalletReconnectState,
   DID_MD_JUST_CONNECTED_KEY,
 } from '../identity/wallet/did-md-oauth.ts'
-import { refreshInbox, setEncryptedMailOpener, showApp, showSysMsg } from './ui/shell.ts'
+import { refreshInbox, setEncryptedMailOpener, setSignedNameHandler, showApp, showSysMsg } from './ui/shell.ts'
 import { labelForDid } from './ui/did-display.ts'
 import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
 import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, showConfigPage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
@@ -460,6 +460,18 @@ async function configureWalletAccountIfPresent(
       all: async () => (await walletSeedReader.readAll()).map(record => record.seed),
     }) : undefined
     // An encrypted mail is opened where it is shown, with this identity's keys and the key held for its sender.
+    // Delta Chat shares its profile in what it signs: the name on a message from a key we hold is the sender's own, and follows
+    // it when it changes. The newest message's name is kept on the contact card (a card of its own is made if there is none).
+    setSignedNameHandler((did, name) => {
+      void (async () => {
+        const snapshot = await readModel.snapshot()
+        const card = contactCardForDid(snapshot.contactCards, did)
+        const write = contactNamePatch(card?.id ?? didContactPatch(did).cardId, card, name, 'signed')
+        if (!write) return
+        await mutationSink.commitIntents([...(card ? [] : [contactSetIntent(didContactPatch(did))]), contactSetIntent(write)], snapshot)
+        await refreshInbox(readModel)
+      })().catch(error => console.warn('[contact name]', error instanceof Error ? error.message : error))
+    })
     setEncryptedMailOpener(async (rawBody, email, snapshot) => {
       const card = contactCardForDid(snapshot.contactCards, email.from?.[0]?.email ?? '')
       const held = card && currentAutocryptKey(card)
@@ -708,14 +720,14 @@ async function configureWalletAccountIfPresent(
           if (!sent.ok) throw new Error(sent.error)
         }
         // A key a Secure-Join handshake has vouched for: kept on the contact's card, as verified.
-        const learnVerifiedKey = async (who: { did: string }, keydata: string, name?: string) => {
+        const learnVerifiedKey = async (who: { did: string }, keydata: string, name?: { text: string; source: 'signed' | 'invite' }) => {
           const snapshot = await readModel.snapshot()
           const card = contactCardForDid(snapshot.contactCards, who.did)
           const created = didContactPatch(who.did)
           await mutationSink.commitIntents([
             ...(card ? [] : [contactSetIntent(created)]),
             contactSetIntent(autocryptKeyPatch(card?.id ?? created.cardId, { keydata, seenAt: new Date().toISOString(), preferEncrypt: 'mutual', verified: true })),
-            ...(name ? [contactNamePatch(card?.id ?? created.cardId, card, name, 'invite')].filter((write): write is NonNullable<typeof write> => write !== undefined).map(contactSetIntent) : []),
+            ...(name ? [contactNamePatch(card?.id ?? created.cardId, card, name.text, name.source)].filter((write): write is NonNullable<typeof write> => write !== undefined).map(contactSetIntent) : []),
           ], snapshot)
         }
         const pendingJoins = localPendingJoins(device.did)

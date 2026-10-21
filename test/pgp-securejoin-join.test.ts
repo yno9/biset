@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import * as openpgp from 'openpgp'
-import { decryptMessage } from '../src/client/pgp/message-crypto.ts'
-import { parseInnerMime, parseKeydataHeader } from '../src/client/pgp/mime.ts'
+import { decryptMessage, encryptMessage } from '../src/client/pgp/message-crypto.ts'
+import { buildInnerMime, parseInnerMime, parseKeydataHeader } from '../src/client/pgp/mime.ts'
 import { derivePgpKey } from '../src/client/pgp/derive.ts'
 import { autocryptKeydata } from '../src/client/pgp/keyring.ts'
 import { handleSecureJoin, inviteUrl, type SecureJoinContext } from '../src/client/pgp/securejoin.ts'
@@ -20,7 +20,7 @@ async function world() {
   const toAlice: Array<{ armored: string; introduction?: boolean }> = []
   const toBob: string[] = []
   const bobLearned: string[] = []
-  const bobNames: Array<string | undefined> = []
+  const bobNames: Array<{ text: string; source: string } | undefined> = []
   const aliceLearned: string[] = []
   const pending = new Map<string, PendingJoin>()
   const bobContext: JoinContext = {
@@ -81,7 +81,7 @@ describe('Secure-Join, the joining side, against the inviting side', () => {
     expect(await handleSecureJoin(w.toBob[1]!, w.aliceParty, bobAsInviter)).toBeUndefined()
     expect(await handleJoinStep(w.toBob[1]!, w.aliceParty, w.bobContext)).toBe('vc-contact-confirm')
     expect(w.bobLearned).toEqual([await autocryptKeydata(w.alice.privateKey, 'alice@x.test')])
-    expect(w.bobNames).toEqual(['Alice']) // the name the invite gave
+    expect(w.bobNames).toEqual([{ text: 'Alice', source: 'invite' }]) // the name the invite gave (our inviter's step 4 carries no From: name)
     expect(w.pending.size).toBe(0)
   })
 
@@ -121,4 +121,17 @@ test('the answers may come from another address of the inviter (a Delta Chat acc
   await handleSecureJoin(w.toAlice[1]!.armored, w.bobParty, alice2)
   expect(await handleJoinStep(w.toBob[1]!, elsewhere, w.bobContext)).toBe('vc-contact-confirm')
   expect(w.bobLearned).toEqual([await autocryptKeydata(w.alice.privateKey, 'alice2@y.test')])
+})
+
+test('a vc-contact-confirm that carries the inviter\'s own name (Delta Chat shares its profile there) gives that name, signed, over the invite\'s', async () => {
+  const w = await world()
+  await beginJoin(parseInvite(w.url), w.aliceParty, w.bobContext)
+  await handleSecureJoin(w.toAlice[0]!.armored, w.bobParty, w.aliceContext)
+  await handleJoinStep(w.toBob[0]!, w.aliceParty, w.bobContext)
+  const confirm = await encryptMessage({
+    plaintext: buildInnerMime({ lines: ['From: Alice Real <alice@x.test>', 'Chat-Version: 1.0', 'Secure-Join: vc-contact-confirm'], text: 'Secure-Join' }),
+    recipients: [(await openpgp.readKey({ armoredKey: w.bob.publicArmor })).write()], signer: w.alice.privateKey,
+  })
+  expect(await handleJoinStep(confirm, w.aliceParty, w.bobContext)).toBe('vc-contact-confirm')
+  expect(w.bobNames).toEqual([{ text: 'Alice Real', source: 'signed' }])
 })

@@ -17,6 +17,12 @@ type EncryptedMailOpener = (rawBody: string, email: LocalJmapEmail, snapshot: Lo
 let openEncrypted: EncryptedMailOpener | undefined
 export function setEncryptedMailOpener(opener: EncryptedMailOpener | undefined): void { openEncrypted = opener }
 
+/** Told the name a sender signs its mail with (its newest mail's), to keep on its contact card. It is called on every refresh; keeping
+ * the same name again changes nothing, so it settles. */
+type SignedNameHandler = (did: string, name: string) => void
+let onSignedName: SignedNameHandler | undefined
+export function setSignedNameHandler(handler: SignedNameHandler | undefined): void { onSignedName = handler }
+
 /** Shows the mail UI (an identity is signed in and its vault is open). The left pane starts open or
  * collapsed as the user left it, on a wide screen. */
 export function showApp(): void {
@@ -46,6 +52,7 @@ export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
     }
     setContactNames(names)
     const views: ProcessedMessage[] = []
+    const signedNames = new Map<string, { ts: number; name: string }>()
     for (const email of snapshot.emails) {
       if (!email.blobId) continue
       const raw = await readModel.download(email.blobId)
@@ -60,6 +67,7 @@ export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
       if (known) msg.from_name = known
       // The outer subject of an encrypted mail is a stand-in; the real one is inside.
       if (opened?.hidden) continue
+      if (opened?.fromName && msg.from.startsWith('did:') && msg.ts >= (signedNames.get(msg.from)?.ts ?? 0)) signedNames.set(msg.from, { ts: msg.ts, name: opened.fromName })
       if (opened?.subject) msg.subject = opened.subject
       // ... and so is its time: the outer Date of an encrypted mail is made up.
       if (opened?.sentAt !== undefined) msg.ts = opened.sentAt
@@ -67,6 +75,8 @@ export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
       views.push({ msg, bodyText: msg.body })
     }
     mail.set({ messages: views })
+    // Only a sender's newest name counts: an older message carries the name it had then.
+    if (onSignedName) for (const [did, { name }] of signedNames) onSignedName(did, name)
   })
   // A rejected refresh stays observable to its caller without poisoning the queue for the next one.
   refreshTail = task.catch(() => {})

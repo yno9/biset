@@ -134,7 +134,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
   DIDComm の HTTP 送信（`didCommPost`）などは、この方針で統合された。
 - UI と保存層の間には JMAP 形のローカル API を置き、暗号方式を UI へ漏らさない。
 - **人に見せる名前は、DID ではなくメールアドレス**。メールブリッジの DID（`did:web:did.md:nine.testrun.org:hrdcv7qkr`）は `hrdcv7qkr@nine.testrun.org`、この系の did:webvh（`alice.did.md`）は `alice@did.md` として出す。変換は `labelForDid`（`client/app/ui/did-display.ts`）の 1 か所で、誰かの名前を出す画面（左の一覧、スレッド、宛先、メンバー、エラー文）はすべてここを通る。DID をそのまま見せるのは、意図した例外（アカウント画面の ID カード、デバッグ用の行）だけ。
-  - **名前があれば名前**（`displayName`）。連絡先カードの `name/full` を、左の一覧・スレッドの送り主・メンバーに使う。会話画面のメタ欄と宛先欄は、名前を併記せずアドレスだけ。名前の出どころは `biset.md:nameSource` に記録し、強い順に **利用者が手で付けた（`user`）＞ Delta Chat の招待の `n=`（`invite`）＞ DID 文書の `name`（`did`、未実装）＞ DMARC が通ったメールの `From:` の名前（`mail`）**。弱い出どころは強い出どころの名前を書き換えない。JMAP の `ContactCard/set` で `name` を書くと `user` になり、`nameSource` 自体は書けない。
+  - **名前があれば名前**（`displayName`）。連絡先カードの `name/full` を、左の一覧・スレッドの送り主・メンバーに使う。会話画面のメタ欄と宛先欄は、名前を併記せずアドレスだけ。名前の出どころは `biset.md:nameSource` に記録し、強い順に **利用者が手で付けた（`user`）＞ 本人の言葉（`signed` = 署名が通った暗号化メッセージの内側の `From:` の名前、`invite` = Delta Chat の招待の `n=`。同じ強さで、新しいほうが勝つ）＞ DID 文書の `name`（`did`、未実装）＞ DMARC が通ったメールの `From:` の名前（`mail`）**。Delta Chat は普段のメッセージにも名前（プロフィール）を載せるので（chatmail/core `mimefactory.rs` の `should_attach_profile_data`）、相手が名前を変えると、署名が通った最新のメッセージの名前で追従する（`pgp/open.ts` の `fromName` → `shell.ts` の `setSignedNameHandler`）。弱い出どころは強い出どころの名前を書き換えない。JMAP の `ContactCard/set` で `name` を書くと `user` になり、`nameSource` 自体は書けない。
 - 外部 ingress を ACK するのは、端末で検証・暗号化・永続化が完了した後だけにする。
 
 ### 2.2 非目標・未完成

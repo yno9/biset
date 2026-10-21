@@ -20,3 +20,13 @@ test('a thread of which only our own first message exists is with the one it was
   expect(threadProtocol(sent, self)).toBe('did')
   expect(displayParticipantsOf(sent, self)).toBe('hrdcv7qkr@nine.testrun.org')
 })
+
+test('the display name of a From: header, in the forms mail has it', async () => {
+  const { displayNameOfFrom } = await import('../../src/client/pgp/mime.ts')
+  expect(displayNameOfFrom('Bob Builder <bob@x.test>')).toBe('Bob Builder')
+  expect(displayNameOfFrom('"Builder, Bob" <bob@x.test>')).toBe('Builder, Bob')
+  expect(displayNameOfFrom('=?UTF-8?B?44Gf44Gq44Gq?= <bob@x.test>')).toBe('たなな')
+  expect(displayNameOfFrom('<bob@x.test>')).toBeUndefined()
+  expect(displayNameOfFrom('bob@x.test')).toBeUndefined()
+  expect(displayNameOfFrom(undefined)).toBeUndefined()
+})

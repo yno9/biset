@@ -2,7 +2,7 @@
 import { displayName } from '../../src/client/app/ui/did-display.ts'
 import { afterEach, expect, test } from 'vitest'
 import * as openpgp from 'openpgp'
-import { refreshInbox, setEncryptedMailOpener } from '../../src/client/app/ui/shell.ts'
+import { refreshInbox, setEncryptedMailOpener, setSignedNameHandler } from '../../src/client/app/ui/shell.ts'
 import { mail } from '../../src/client/app/ui/stores.ts'
 import { generatePgpKey } from '../support/pgp.ts'
 import { buildInnerMime } from '../../src/client/pgp/mime.ts'
@@ -96,4 +96,23 @@ test('a name in the contact list is the one shown for the sender, over the name 
   await refreshInbox(model as never)
   expect(mail.get().messages[0]!.msg.from_name).toBe('Robert')
   expect(displayName(bob)).toBe('Robert')
+})
+
+test('the name a sender signs its mail with is handed on once per sender: the newest message\'s, and only when the signature held', async () => {
+  const alice = await generatePgpKey('alice@did.md'), bob = await generatePgpKey('bob@x.test')
+  const make = async (name: string, date: string) => storedEncryptedBody(NOTICE, await encryptMessage({ plaintext: buildInnerMime({ lines: [`From: ${name} <bob@x.test>`], headers: [['Date', date]], text: 'hi' }), recipients: [await publicBytes(alice)], signer: bob.privateKey }))
+  const bodies: Record<string, string> = { b1: await make('Bob Old', 'Wed, 21 Oct 2026 01:00:00 GMT'), b2: await make('Bob New', 'Wed, 21 Oct 2026 02:00:00 GMT') }
+  const emails = ['b1', 'b2'].map(blobId => ({ id: blobId, blobId, threadId: 't', mailboxIds: {}, keywords: {}, receivedAt: '2026-10-21T00:00:00Z', subject: '[...]', from: [{ email: 'did:web:did.md:x.test:bob' }] }))
+  const model = { async snapshot() { return { emails, contactCards: [] } as never }, async download(id: string) { return new TextEncoder().encode(bodies[id]!) } }
+  const heard: Array<[string, string]> = []
+  setSignedNameHandler((did, name) => heard.push([did, name]))
+  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [alice.privateKey], senderKeys: [await publicBytes(bob)] }))
+  await refreshInbox(model as never)
+  expect(heard).toEqual([['did:web:did.md:x.test:bob', 'Bob New']])
+
+  heard.length = 0
+  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [alice.privateKey], senderKeys: [] })) // no key for the sender: not verified
+  await refreshInbox(model as never)
+  expect(heard).toEqual([])
+  setSignedNameHandler(undefined)
 })

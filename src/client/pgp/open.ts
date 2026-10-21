@@ -2,7 +2,7 @@
 // against the key we hold for the sender, and hand back the inner MIME as the message to show.
 import { armorOfStoredBody } from './stored.ts'
 import { decryptMessage, type Decrypted } from './message-crypto.ts'
-import { decodeEncodedWords, parseInnerMime } from './mime.ts'
+import { decodeEncodedWords, displayNameOfFrom, parseInnerMime } from './mime.ts'
 
 export interface OpenedMail {
   /** The inner MIME (headers and body), to read like any other mail. */
@@ -13,6 +13,8 @@ export interface OpenedMail {
   sentAt?: number
   /** A protocol message, not mail to read: a receipt, or the key update Delta Chat sends after a relay change (a `multipart/report` that is a disposition notification). */
   hidden?: boolean
+  /** The sender's own name, from the `From:` inside -- only when the signature held against a key we have for the sender, so it is theirs. */
+  fromName?: string
   /** The signature on it, when it has one. */
   signature?: Decrypted['signature']
 }
@@ -41,6 +43,7 @@ export async function openStoredMail(rawBody: string, keys: OpenKeys): Promise<O
     ...(type.startsWith('multipart/report') && type.includes('disposition-notification') ? { hidden: true } : {}),
     ...(headers.subject ? { subject: decodeEncodedWords(headers.subject) } : {}),
     ...(Number.isNaN(sentAt) ? {} : { sentAt }),
+    ...(decrypted.signature?.verified === true && displayNameOfFrom(headers.from) ? { fromName: displayNameOfFrom(headers.from)! } : {}),
     ...(decrypted.signature ? { signature: decrypted.signature } : {}),
   }
 }

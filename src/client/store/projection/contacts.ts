@@ -350,8 +350,9 @@ export function autocryptKeyId(keydata: string): string {
 }
 
 // ---- names ----
-export type NameSource = 'user' | 'invite' | 'did' | 'mail'
-const NAME_RANK: Record<NameSource, number> = { mail: 1, did: 2, invite: 3, user: 4 }
+export type NameSource = 'user' | 'signed' | 'invite' | 'did' | 'mail'
+/** `invite` and `signed` are both the person's own word (a QR code's name, the From: of a message signed by their key): the same rank, so the latest wins. */
+const NAME_RANK: Record<NameSource, number> = { mail: 1, did: 2, invite: 3, signed: 3, user: 4 }
 const isNameSource = (value: unknown): value is NameSource => typeof value === 'string' && value in NAME_RANK
 
 /** The card's name, or undefined. */

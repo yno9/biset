@@ -17,7 +17,7 @@ import { bytesToBase64url } from '../../protocol/canonical.ts'
 import type { PgpKey } from './keyring.ts'
 import { autocryptKeydata } from './keyring.ts'
 import { decryptMessage, encryptMessage, NotEncryptedToUsError } from './message-crypto.ts'
-import { buildInnerMime, keydataHeader, parseInnerMime, parseKeydataHeader } from './mime.ts'
+import { buildInnerMime, displayNameOfFrom, keydataHeader, parseInnerMime, parseKeydataHeader } from './mime.ts'
 import { symmetricDecrypt, symmetricEncryptSigned } from './symmetric.ts'
 
 export const INVITE_DAYS = 30
@@ -65,7 +65,7 @@ export interface SecureJoinContext {
   /** Sends an answer: an armored OpenPGP message, as a mail with the subject `Secure-Join`. */
   send(to: SecureJoinParty, armored: string): Promise<void>
   /** Keeps the key of the other side, which the handshake has vouched for. */
-  learn(party: SecureJoinParty, keydata: string): Promise<void>
+  learn(party: SecureJoinParty, keydata: string, name?: { text: string; source: 'signed' }): Promise<void>
 }
 
 export type SecureJoinOutcome = 'vc-request-pubkey' | 'vc-request-with-auth'
@@ -110,7 +110,8 @@ export async function handleSecureJoin(armored: string, from: SecureJoinParty, c
   const checked = await decryptMessage({ armored, privateKey: context.key.privateKey, senderKeys: [keyBytes] })
   if (checked.signature?.verified !== true) throw new Error('vc-request-with-auth is not signed by the key it names')
 
-  await context.learn(from, held.keydata)
+  const joinerName = displayNameOfFrom(mime.headers.from)
+  await context.learn(from, held.keydata, joinerName ? { text: joinerName, source: 'signed' } : undefined)
   const confirm = buildInnerMime({ lines: ['Chat-Version: 1.0', 'Secure-Join: vc-contact-confirm', keydataHeader('Autocrypt-Gossip', from.address, held.keydata)], text: SECURE_JOIN_SUBJECT })
   await context.send(from, await encryptMessage({ plaintext: confirm, recipients: [keyBytes], signer: context.key.privateKey }))
   return 'vc-request-with-auth'

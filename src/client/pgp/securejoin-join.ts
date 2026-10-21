@@ -19,7 +19,7 @@ import * as openpgp from 'openpgp'
 import type { PgpKey } from './keyring.ts'
 import { autocryptKeydata } from './keyring.ts'
 import { decryptMessage, encryptMessage, NotEncryptedToUsError } from './message-crypto.ts'
-import { buildInnerMime, keydataHeader, parseInnerMime, parseKeydataHeader } from './mime.ts'
+import { buildInnerMime, displayNameOfFrom, keydataHeader, parseInnerMime, parseKeydataHeader } from './mime.ts'
 import { symmetricDecrypt, symmetricEncryptSigned } from './symmetric.ts'
 import { SECURE_JOIN_SUBJECT, sharedSecret, type SecureJoinParty } from './securejoin.ts'
 
@@ -76,7 +76,7 @@ export interface JoinContext {
    * address that has not written to us (didmail's reply-only mode; PROTOCOL.md §7.1). */
   send(to: SecureJoinParty, armored: string, options: { introduction?: boolean }): Promise<void>
   /** Keeps their key, which the handshake has vouched for, and the name their invite gave them (when it gave one). */
-  learn(party: SecureJoinParty, keydata: string, name?: string): Promise<void>
+  learn(party: SecureJoinParty, keydata: string, name?: { text: string; source: 'signed' | 'invite' }): Promise<void>
 }
 
 const fromBase64 = (value: string) => Uint8Array.from(atob(value), char => char.charCodeAt(0))
@@ -128,9 +128,12 @@ export async function handleJoinStep(armored: string, from: SecureJoinParty, con
       if (error instanceof NotEncryptedToUsError) continue
       throw error
     }
-    if (parseInnerMime(checked.plaintext).headers['secure-join'] !== 'vc-contact-confirm') continue
+    const confirmed = parseInnerMime(checked.plaintext)
+    if (confirmed.headers['secure-join'] !== 'vc-contact-confirm') continue
     if (checked.signature?.verified !== true) throw new Error('vc-contact-confirm is not signed by the key the invite names')
-    await context.learn(from, join.keydata!, join.name && join.name !== join.address ? join.name : undefined)
+    // Their own name, signed by their key (Delta Chat shares its profile in this step), else the one the invite carried.
+    const signedName = displayNameOfFrom(confirmed.headers.from)
+    await context.learn(from, join.keydata!, signedName ? { text: signedName, source: 'signed' } : join.name && join.name !== join.address ? { text: join.name, source: 'invite' } : undefined)
     await context.pending.remove(join.address)
     return 'vc-contact-confirm'
   }
