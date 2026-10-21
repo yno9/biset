@@ -182,7 +182,7 @@ describe('did.md OAuth callback validation', () => {
   })
 })
 
-// PLAN-refactor.md §7-1: a sign-in offers a candidate relationship seed by its
+// PLAN-refactor.md §7-1: a sign-in offers a candidate generation seed by its
 // rotation key (`ifAbsent`); the session keeps the seed only if the Wallet
 // published that key. A key already there (another device's) is not a failure.
 import { sealDidMdSecret } from '../src/client/identity/wallet/did-md-store.ts'

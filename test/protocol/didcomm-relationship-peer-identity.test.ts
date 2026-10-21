@@ -24,7 +24,7 @@ describe('deriveRelationshipPeerIdentity', () => {
   })
 
   test('rejects a seed that is not exactly 32 bytes', () => {
-    expect(() => deriveRelationshipPeerIdentity(new Uint8Array(16), counterpartyDid)).toThrow('relationship seed must be 32 bytes')
+    expect(() => deriveRelationshipPeerIdentity(new Uint8Array(16), counterpartyDid)).toThrow('generation seed must be 32 bytes')
   })
 
   test('the service names the mediator by DID, and nothing else (§10-1)', () => {

@@ -14,7 +14,7 @@ const document = (authentication: string[], methods: Array<{ id: string; publicK
 describe('rootAuthority', () => {
   test('picks #pass-1 even when another authentication key is listed first', async () => {
     const root = key()
-    const authority = await rootAuthority('alice.did.md', document(['#didcomm-rotation', '#pass-1'], [{ id: '#didcomm-rotation', publicKeyMultibase: key() }, { id: '#pass-1', publicKeyMultibase: root }]))
+    const authority = await rootAuthority('alice.did.md', document(['#biset-generation', '#pass-1'], [{ id: '#biset-generation', publicKeyMultibase: key() }, { id: '#pass-1', publicKeyMultibase: root }]))
     expect(authority.verificationMethod).toBe(`${DID}#pass-1`)
   })
 
@@ -24,6 +24,6 @@ describe('rootAuthority', () => {
   })
 
   test('a document without #pass-1 has no Root, whatever else it authenticates with', async () => {
-    await expect(rootAuthority('alice.did.md', document(['#didcomm-rotation'], [{ id: '#didcomm-rotation', publicKeyMultibase: key() }]))).rejects.toThrow('no Root authentication key')
+    await expect(rootAuthority('alice.did.md', document(['#biset-generation'], [{ id: '#biset-generation', publicKeyMultibase: key() }]))).rejects.toThrow('no Root authentication key')
   })
 })

@@ -66,7 +66,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 | 端末集合 | DID Document の verificationMethod ＋ Vault 鍵の世代（`#biset-vault`） | **`keyAgreement` だけ**。世代の概念は撤去（§5.6） |
 | 送信の暗号化 | 受信者の 1 鍵（「先頭の keyAgreement」） | **全 keyAgreement 鍵への multiplexed encryption**。`apv` は仕様どおり（§9.6） |
 | mediator の受信箱 | recipient kid ごと。所有の証明なし | **(DID, 端末ラベル) ごと**。登録は DID 自身の鍵からの authcrypt に限る。1 DID 最大 3 端末（§11.1） |
-| 相手ごとの did:peer の鍵 | wallet が導出する「関係秘密」から決定論的に導出 | **Vault に置く relationship seed**から導出。使う seed は DID Document が公開する rotation key で決まる（§6） |
+| 相手ごとの did:peer の鍵 | wallet が導出する「関係秘密」から決定論的に導出 | **Vault に置く generation seed**から導出。使う seed は DID Document が公開する rotation key で決まる（§6） |
 | 端末を外す | DIDComm 鍵の削除 ＋ 世代 +1（本番では機能せず） | **DID Document の編集で seed の rotation key を取り替え → 新しい seed の did:peer へ DID Rotation で移り直す**（§5.6、§9.2） |
 | 会話の確立 | 独自の握手 | **握手なし**。front door で始め、相手が対応すれば DID Rotation（`from_prior`）で did:peer へ（§9.2） |
 | 乗り換えの証明 | `from_prior`（旧 did:peer の鍵で署名） | **`from_prior`（`iss` は公開 DID、seed の rotation key で署名。DID Document の `authentication` に載る）**。外された端末は新しい鍵を持たない（§9.2） |
@@ -177,14 +177,14 @@ did.md は biset が運用するものではなく、依存する外部サービ
 - did.md Wallet の端末セッション（DPoP 鍵、封印された device material、Vault 用の端末 ID）
 - 端末固有の DIDComm 鍵（X25519、公開鍵が DID Document の `keyAgreement`）と、mediator の端末ラベルを作る秘密（`mediatorDeviceSecret`）
 - Vault の暗号文 object、event、SegmentKey、JMAP projection
-- Vault 内の **relationship seed** と、連絡先（`contact.set`。相手の移動先と自分の移動の状態を含む。§7.3）
+- Vault 内の **generation seed** と、連絡先（`contact.set`。相手の移動先と自分の移動の状態を含む。§7.3）
 - Markdown ミラーのディレクトリハンドル
 
 クライアントは plaintext の最終処理点であり、侵害されたクライアントから取得済みの秘密を取り戻すことはできない。
 
 ### 4.2 did.md を信頼する範囲
 did.md は identity の発行元かつホスト、wallet の承認者である。知り得るのは公開文書と、承認・capability に伴う metadata。
-Vault plaintext・SegmentKey・relationship seed を知る必要は無く、**wallet から biset へ渡る秘密は無い**（derived secret の要求は撤去済み）。
+Vault plaintext・SegmentKey・generation seed を知る必要は無く、**wallet から biset へ渡る秘密は無い**（derived secret の要求は撤去済み）。
 biset は did.md の controller 鍵を保持しない。
 
 ### 4.3 Mediator を信頼する範囲
@@ -289,14 +289,14 @@ did-md-oauth.ts は特定の wallet を前提にせず、選択された entry �
 | DPoP 鍵（P-256、非抽出） | 端末 | `biset-did-md-wallet` | しない |
 | 端末の DIDComm X25519 | 端末 | 同上。**非抽出の AES 鍵で封印** | 公開鍵が DID Document の `keyAgreement` |
 | `mediatorDeviceSecret` | 端末 | 同上 | しない。mediator の端末ラベル `HMAC(secret, DID)` を作る |
-| **relationship seed** | identity | Vault（`credential.relationship-seed.set`） | Vault Sync で全端末へ。端末を外すと作り直す |
+| **generation seed** | identity | Vault（`credential.generation-seed.set`） | Vault Sync で全端末へ。端末を外すと作り直す |
 | **rotation key**（Ed25519、seed から導出） | identity（seed ごと） | 持たない（seed から毎回導く） | 公開鍵が DID Document の `#biset-generation`（旧 `#didcomm-rotation`）、`authentication` から参照。DID Rotation の `from_prior` に署名する（P3） |
 | 候補の seed（承認待ち） | 端末 | `biset-did-md-wallet` の保留中の認可・セッション。**非抽出の AES 鍵で封印** | しない。ウォレットが署名鍵を公開したら Vault に移す |
 | SegmentKey | Vault segment | `vault_segments.segmentKey` に**平文** | Vault Sync の pack に入れて運ぶ（DIDComm authcrypt の中） |
 
 - 移動先の did:peer（Y）は `deriveRelationshipPeerIdentity(seed, 相手の公開 DID, { uri: mediator の DID })` で**決定論的**に導出する。
   同一 identity の複数端末が同じ相手へ同時に初回接触しても、同じ peer に収束する。**service の URL は mediator の did:peer 自身が持つ canonical の値から取る**（onion の URL は入らない）。
-- **seed の権威は DID Document**（`relationship-seed-bootstrap.ts`、2026-10-08 の P2）。使う seed は「その rotation key（`rotation-key.ts`）を文書が公開している seed」。
+- **seed の権威は DID Document**（`generation-seed-bootstrap.ts`、2026-10-08 の P2）。使う seed は「その rotation key（`rotation-key.ts`）を文書が公開している seed」。
   ログは追記のみで wallet が 1 エントリずつ署名するので、どの端末が読んでも同じ答えになる。
   - 自分の鍵が `keyAgreement` に無い端末は外された端末で、identity として何もできない（`DeviceRemovedError`）。
   - **公開のしかた**: サインイン・メッセージの有効化・mediator の変更では、候補の seed の署名鍵を `ifAbsent` で編集要求に入れる（最初に承認された端末の候補が identity の seed になる）。
@@ -327,7 +327,7 @@ MLS そのもの（`src/protocol/mls/`、`client/mls/`、`client/mimi/`、`serve
   Vault の内容が端末の外に出るのは DIDComm authcrypt の中（Vault Sync）だけで、送り手の認証はそちらが担う。
 
 event の種別の正本は `src/protocol/vault.ts` の `VAULT_EVENT_KINDS`（`message.add/edit/tombstone`、`mailbox.set`、`keyword.set`、`transport.result`、
-`didcomm.control`、`contact.set`、`credential.relationship-seed.set`、`credential.openpgp.set` など）。`contact-key.set` は退役（reducer は何もしない）。
+`didcomm.control`、`contact.set`、`credential.generation-seed.set`、`credential.openpgp.set` など）。`contact-key.set` は退役（reducer は何もしない）。
 
 **読めない credential の扱い**（`credential-store.ts` の `readableCredential`）: 完全性は正しいが、この版が読まない形の credential record（形式変更より前に書かれたもの）は、
 無いものとして読み飛ばす。1 件でもあると、その種類の credential 全体や、受信一覧の再構築（`mutation-records.ts`）が止まってしまうため。
@@ -641,7 +641,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - Vault Sync の PUSH は到達保証を持たず、取りこぼしは PUSH 適用後の `state-request` と、mediator の `missed` による `state-request` で回収される。送信は 6 回・指数バックオフ。
 - 一件の不正な record が batch 全体を落とさない（record 単位の skip）。materialize できない email は `pending` になる。
 - 承認直後に古い DID ログが返ることがある（did.md の公開読み取りは CDN が `s-maxage=30` で保持し、更新時に purge しない）。
-  biset は次の読み取りで CDN を避ける（`freshFetch`、`fetchLogContaining`）: 承認した内容の確認、自分の端末一覧、端末を外すときの対象、Vault Sync の宛先、relationship seed の権威（60 秒キャッシュ）、`from_prior` の検証、Y の mediator の DID。
+  biset は次の読み取りで CDN を避ける（`freshFetch`、`fetchLogContaining`）: 承認した内容の確認、自分の端末一覧、端末を外すときの対象、Vault Sync の宛先、generation seed の権威（60 秒キャッシュ）、`from_prior` の検証、Y の mediator の DID。
   他人の DID の解決（送信先・送信者の鍵）は CDN を通すので、相手が端末を足したり外したりした直後の最大 30 秒は古い版で扱う（§14.2-6）。
 - 連絡先が名指さない did:peer からの保留は、mediator の保持期間（30 日）が上限。
 - **`main.ts` の boot wiring は、ブラウザ E2E で覆われていない。** 部品のテスト成功と、製品経路への接続を機械的に区別できない。
@@ -653,7 +653,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - Vault Sync は DIDComm authcrypt（端末の鍵、DID Document で検証）の中だけを通る。適用は fail-closed かつ record 単位。
 - merge は join-semilattice。削除は永続 tombstone。actorSeq の採番は transaction 内で単調。import は順位を比べ、新しい状態を巻き戻さない。
 - mediator は、受信箱の登録に DID 自身の鍵による所有の証明を要求し、未登録の DID への open forwarding を拒否する。端末数を 1 DID 3 台に制限する。
-- 端末の失効は DID Document が唯一の権威。外された端末は、新しいメッセージ・新しい Vault Sync・新しい relationship seed を受け取れず、新しい移動（`from_prior`）も作れない。
+- 端末の失効は DID Document が唯一の権威。外された端末は、新しいメッセージ・新しい Vault Sync・新しい generation seed を受け取れず、新しい移動（`from_prior`）も作れない。
 - `from_prior` は受け手が全部を検査する（`typ`／`alg`、`iss` の `authentication`、署名、`sub` ＝ `from`、`exp`／`nbf`、did:webvh ではログで「鍵を載せた版より後に端末が減っていない」こと）。
 - 承認後は、capability の Data Integrity Proof と、公開された DID Document を**独立に検証**する。
 - `biset-rp-signer` は redirect_uri を固定し、claim を許可リストに限る。
@@ -853,13 +853,13 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 
 ### 20.3 `client/store/` — Vault と projection
 **`store/vault/`（ログ層）**: `store.ts`（IndexedDB）、`objects.ts`、`events.ts`、`active-segment.ts`、`segment-key-resolver.ts`、
-`commit.ts`（共有 Vault 状態を書く全経路が通る組み立て地点）、`mutations.ts`／`mutation-records.ts`、`mail-message.ts`、`credential-store.ts`、`relationship-seed.ts`、
+`commit.ts`（共有 Vault 状態を書く全経路が通る組み立て地点）、`mutations.ts`／`mutation-records.ts`、`mail-message.ts`、`credential-store.ts`、`generation-seed.ts`、
 `delivery-pack.ts`、`ingress-ingest.ts`、`projector.ts`、`jmap-export.ts`、`markdown-{mirror,directory}.ts`、`legacy-crdt-migration.ts`、`projection-rebuild.ts`、`blob-reader.ts`、
 `openpgp-credential.ts`、🔧 `manifest.ts`。詳細は `store/vault/README.md`。
 **`store/projection/`（read model）**: `gateway.ts`（`LocalJmapGateway`）、`contacts.ts`（JMAP for Contacts の Card と `contact.set`）、`reducer.ts`、`indexeddb.ts`、`mutations.ts`、`vault-mutation-sink.ts`、`transport.ts`（型のみ）。
 
 ### 20.4 `client/didcomm/`
-`send-message.ts`（chat の送信、`answerTrustPing`）、`front-door-send.ts`、`did-rotation.ts`（経路、Discover Features）、`rotation-manager.ts`（移動の開始・確定・受信箱）、`rotation-key.ts`、`relationship-seed-bootstrap.ts`、`basicmessage.ts`、`ingress-projector.ts`、
+`send-message.ts`（chat の送信、`answerTrustPing`）、`front-door-send.ts`、`did-rotation.ts`（経路、Discover Features）、`rotation-manager.ts`（移動の開始・確定・受信箱）、`rotation-key.ts`、`generation-seed-bootstrap.ts`、`basicmessage.ts`、`ingress-projector.ts`、
 `group-chat{,-store}.ts`、`external-feed.ts`、**`vault-sync.ts`**、`mediator-sync.ts`（登録）、**`mediator-live.ts`**（WebSocket の live 受信）、
 **`mediator-endpoints.ts`**（入口の別名、`sameMediatorUrl`、Tor 環境の判定）。
 

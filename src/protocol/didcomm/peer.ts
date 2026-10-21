@@ -206,7 +206,7 @@ export function generatePeerIdentity(service?: PeerService): PeerIdentity {
 /**
  * The did:peer:2 this identity rotates to for one counterparty (DID Rotation,
  * PLAN-refactor.md §4.3): derived, not minted, from the identity-wide
- * relationship seed and the counterparty's public DID, so every device of the
+ * generation seed and the counterparty's public DID, so every device of the
  * identity derives the same one with nothing to remember or race over, and a
  * retry or a second device re-registering it is idempotent. HKDF is one-way:
  * nothing public about the result reveals the seed, and salting on the
@@ -216,10 +216,10 @@ export function generatePeerIdentity(service?: PeerService): PeerIdentity {
  * a DID as an endpoint"): a did:peer cannot be edited, so it must not embed
  * the mediator's keys or URL, which the mediator may change (§10-1).
  */
-export function deriveRelationshipPeerIdentity(relationshipSeed: Uint8Array, counterpartyDid: string, service?: PeerService): PeerIdentity {
-  if (relationshipSeed.length !== 32) throw new TypeError('relationship seed must be 32 bytes')
+export function deriveRelationshipPeerIdentity(generationSeed: Uint8Array, counterpartyDid: string, service?: PeerService): PeerIdentity {
+  if (generationSeed.length !== 32) throw new TypeError('generation seed must be 32 bytes')
   if (!counterpartyDid) throw new TypeError('counterparty DID is required to derive a relationship peer identity')
-  const prk = extract(sha256, relationshipSeed, new TextEncoder().encode(counterpartyDid))
+  const prk = extract(sha256, generationSeed, new TextEncoder().encode(counterpartyDid))
   const xPriv = expand(sha256, prk, new TextEncoder().encode('biset/relationship-peer/x25519/v1'), 32)
   const edPriv = expand(sha256, prk, new TextEncoder().encode('biset/relationship-peer/ed25519/v1'), 32)
   return identityFromKeys(xPriv, edPriv, service)

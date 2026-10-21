@@ -130,14 +130,14 @@ function DeviceRow({ device, removable, disabled, onRemove }: { device: Device; 
     : <div className="acc-device-row">{content}</div>
 }
 
-/** Why, in the user's words (the states are relationship-seed-bootstrap.ts's). */
+/** Why, in the user's words (the states are generation-seed-bootstrap.ts's). */
 const DIDCOMM_KEY_REASON = {
   unpublished: 'Your account has no DIDComm key yet. It lets your devices keep a conversation private.',
   lost: 'None of your devices has it any more.',
   stale: 'A device you removed may still have it.',
 } as const
 
-/** The system message card for the DIDComm key (relationship-seed-bootstrap.ts): "Your DIDComm key
+/** The system message card for the DIDComm key (generation-seed-bootstrap.ts): "Your DIDComm key
  * needs to be renewed", the link starting the one Wallet approval that publishes a fresh one. It
  * stays until the key is in order. */
 function DidCommKeyNotice({ rotationKey, showMessage }: { rotationKey: NonNullable<AccountPageConfig['rotationKey']>; showMessage: (text: string) => void }) {

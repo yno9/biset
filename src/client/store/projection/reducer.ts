@@ -107,9 +107,9 @@ export function reduceLocalJmapProjection(
       markUndelivered(emails, mutation.payload)
       continue
     }
-    if (mutation.kind === 'credential.relationship-seed.set') {
+    if (mutation.kind === 'credential.generation-seed.set') {
       // A no-op for the read-model, like every private credential: read only
-      // by RelationshipSeedReader straight off the vault events.
+      // by GenerationSeedReader straight off the vault events.
       continue
     }
     if (mutation.kind === 'contact.set') {

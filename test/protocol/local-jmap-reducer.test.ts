@@ -312,7 +312,7 @@ describe('events of the retired relationship handshake', () => {
         relationshipKid: 'did:peer:2.Ez6L#key-1', relationshipPublicKey: 'AA', receivedAt: '2026-08-21T00:00:00.000Z',
       }) },
       { event: event({ id: 'event-contact', actorSeq: 2, kind: 'contact-key.set', targetIds: ['contact-1'] }), plaintext: plaintext('contact-key.set', ['contact-1'], { opaque: true }) },
-      { event: event({ id: 'event-seed', actorSeq: 3, kind: 'credential.relationship-seed.set', targetIds: ['seed-1'] }), plaintext: plaintext('credential.relationship-seed.set', ['seed-1'], { opaque: true }) },
+      { event: event({ id: 'event-seed', actorSeq: 3, kind: 'credential.generation-seed.set', targetIds: ['seed-1'] }), plaintext: plaintext('credential.generation-seed.set', ['seed-1'], { opaque: true }) },
       { event: event({ id: 'event-read', actorSeq: 4, kind: 'keyword.set', targetIds: ['email-1'] }), plaintext: plaintext('keyword.set', ['email-1'], { emailId: 'email-1', keywords: { '$seen': true } }) },
     ])
     expect(projection.emails).toHaveLength(1)

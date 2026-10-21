@@ -19,11 +19,11 @@ export interface RotationManagerOptions {
   cards(): Promise<readonly LocalJmapContactCard[]>
   /** The usable seed and the mediator Y names, or undefined when this device
    * cannot move conversations now (no seed yet, no mediator published). */
-  rotation(): Promise<{ seed: Uint8Array; mediatorDid: string; fragment?: string } | undefined>
+  rotation(): Promise<{ seed: Uint8Array; mediatorDid: string } | undefined>
   /** Commits contact patches to the Vault (and so to every device). */
   commit(writes: ContactSetPayload[]): Promise<void>
   send(toDid: string, type: string, body: unknown, options: { fromKid: string; x25519PrivateKey: Uint8Array; fromPrior?: string; thid?: string }): Promise<DidCommSendResult>
-  /** Every relationship seed in the Vault, current or not: an older one still
+  /** Every generation seed in the Vault, current or not: an older one still
    * opens what reaches a Y this identity has since moved away from (§4.5). */
   storedSeeds?(): Promise<Uint8Array[]>
   /** Registers `peer`'s inbox with the mediator and watches it; idempotent. */

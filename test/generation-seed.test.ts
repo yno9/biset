@@ -1,12 +1,12 @@
-// The relationship seed and its authority, read off the did:webvh log
+// The generation seed and its authority, read off the did:webvh log
 // (PLAN-refactor.md §4.2, §7-1, §7-2, §9.2): the seed in use is the one whose
 // rotation key the DID document publishes; a removed device may not use any.
 import { describe, expect, test } from 'vitest'
 import type { LogEntry } from '../src/protocol/webvh/log.ts'
 import {
-  createRelationshipSeedAuthority, DeviceRemovedError, RelationshipSeedPendingError, SEED_LOST_AFTER_MS, seedStatus,
-} from '../src/client/didcomm/relationship-seed-bootstrap.ts'
-import { relationshipSeedRecord } from '../src/client/store/vault/relationship-seed.ts'
+  createGenerationSeedAuthority, DeviceRemovedError, GenerationSeedPendingError, SEED_LOST_AFTER_MS, seedStatus,
+} from '../src/client/didcomm/generation-seed-bootstrap.ts'
+import { generationSeedRecord } from '../src/client/store/vault/generation-seed.ts'
 import { publishedRotationKey, rotationKeyEditMethod, rotationSigningKey, ROTATION_KEY_FRAGMENT } from '../src/client/didcomm/rotation-key.ts'
 
 const DID = 'did:webvh:scid:alice.example'
@@ -26,7 +26,7 @@ const log = (...steps: Step[]): LogEntry[] => steps.map((step, index) => ({
   },
 } as unknown as LogEntry))
 const seed = () => crypto.getRandomValues(new Uint8Array(32))
-const stored = (value: Uint8Array) => relationshipSeedRecord(DID, value, 1)
+const stored = (value: Uint8Array) => generationSeedRecord(DID, value, 1)
 
 describe('the rotation key', () => {
   test('is derived from the seed, the same on every device, and differs from seed to seed', () => {
@@ -40,7 +40,7 @@ describe('the rotation key', () => {
     const key = rotationSigningKey(value).publicKeyMultibase
     const method = { id: ROTATION_KEY_FRAGMENT, publicKeyMultibase: key }
     expect(publishedRotationKey({ id: DID, verificationMethod: [method], authentication: [ROTATION_KEY_FRAGMENT] })).toBe(key)
-    expect(publishedRotationKey({ id: DID, verificationMethod: [{ ...method, id: kid('didcomm-rotation') }], authentication: [kid('didcomm-rotation')] })).toBe(key)
+    expect(publishedRotationKey({ id: DID, verificationMethod: [{ ...method, id: kid('biset-generation') }], authentication: [kid('biset-generation')] })).toBe(key)
     expect(publishedRotationKey({ id: DID, verificationMethod: [method], authentication: [] })).toBeUndefined()
     expect(publishedRotationKey({ id: DID, verificationMethod: [], authentication: [ROTATION_KEY_FRAGMENT] })).toBeUndefined()
   })
@@ -98,17 +98,17 @@ describe('the seed authority', () => {
   test('require() hands out the usable seed and refuses otherwise, saying why', async () => {
     const current = seed()
     let seeds = [stored(current)]
-    const authority = createRelationshipSeedAuthority({ ownKid: kid('a'), seeds: { async readAll() { return seeds } }, async readLog() { return log({ keys: ['a', 'b'], rotation: current }) }, now: () => T0 })
+    const authority = createGenerationSeedAuthority({ ownKid: kid('a'), seeds: { async readAll() { return seeds } }, async readLog() { return log({ keys: ['a', 'b'], rotation: current }) }, now: () => T0 })
     expect([...(await authority.require()).seed]).toEqual([...current])
     seeds = []
     const error = await authority.require().catch(value => value)
-    expect(error).toBeInstanceOf(RelationshipSeedPendingError)
-    expect((error as RelationshipSeedPendingError).status).toBe('pending')
+    expect(error).toBeInstanceOf(GenerationSeedPendingError)
+    expect((error as GenerationSeedPendingError).status).toBe('pending')
   })
 
   test('the log is read once per period, and refresh() reads it again', async () => {
     let reads = 0
-    const authority = createRelationshipSeedAuthority({ ownKid: kid('a'), seeds: { async readAll() { return [] } }, async readLog() { reads++; return log({ keys: ['a'] }) }, now: () => T0 })
+    const authority = createGenerationSeedAuthority({ ownKid: kid('a'), seeds: { async readAll() { return [] } }, async readLog() { reads++; return log({ keys: ['a'] }) }, now: () => T0 })
     await authority.status(); await authority.status()
     expect(reads).toBe(1)
     authority.refresh(); await authority.status()

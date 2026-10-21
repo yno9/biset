@@ -48,8 +48,8 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { SenderKeyNotPublishedError } from '../../protocol/didcomm/webvh-resolve.ts'
 import { decodePeerDid2, publicKeyOf } from '../../protocol/didcomm/peer.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
-import { RelationshipSeedReader, RelationshipSeedSink, relationshipSeedRecord } from '../store/vault/relationship-seed.ts'
-import { createRelationshipSeedAuthority, type RelationshipSeedAuthority } from '../didcomm/relationship-seed-bootstrap.ts'
+import { GenerationSeedReader, GenerationSeedSink, generationSeedRecord } from '../store/vault/generation-seed.ts'
+import { createGenerationSeedAuthority, type GenerationSeedAuthority } from '../didcomm/generation-seed-bootstrap.ts'
 import { publishedRotationKey, rotationSigningKey } from '../didcomm/rotation-key.ts'
 import { createRotationManager, type RotationManager } from '../didcomm/rotation-manager.ts'
 import { contactCardForDid, contactSetIntent, currentAutocryptKey } from '../store/projection/contacts.ts'
@@ -202,7 +202,7 @@ function didCommMediatorIngressEnvelope(
  * approval's candidate, kept sealed in the session until the Vault is open)
  * -- if the DID document still publishes that key and the Vault lacks it --
  * and forgets the candidate either way. */
-async function storeApprovedRotationSeed(did: string, reader: RelationshipSeedReader, sink: RelationshipSeedSink, authority: RelationshipSeedAuthority): Promise<void> {
+async function storeApprovedRotationSeed(did: string, reader: GenerationSeedReader, sink: GenerationSeedSink, authority: GenerationSeedAuthority): Promise<void> {
   const approved = await approvedRotationSeed()
   if (!approved) return
   try {
@@ -210,7 +210,7 @@ async function storeApprovedRotationSeed(did: string, reader: RelationshipSeedRe
     const published = publishedRotationKey(log.last.state as Parameters<typeof publishedRotationKey>[0])
     const stored = (await reader.readAll()).some(value => equalBytes(value.seed, approved.seed))
     if (published === rotationSigningKey(approved.seed).publicKeyMultibase && !stored) {
-      await sink.store(relationshipSeedRecord(did, approved.seed, entryVersionNumber(log.last.versionId)))
+      await sink.store(generationSeedRecord(did, approved.seed, entryVersionNumber(log.last.versionId)))
       authority.refresh()
     }
     await approved.forget()
@@ -433,10 +433,10 @@ async function configureWalletAccountIfPresent(
     // A group conversation is whatever its messages say (group-chat.ts):
     // its participants are those of its latest message.
     const walletGroupConversation = async (thid: string) => groupConversation(thid, (await readModel.snapshot()).emails)
-    // The relationship seed: Vault records, read and written like every
+    // The generation seed: Vault records, read and written like every
     // other private credential, and carried to siblings by Vault Sync.
-    const walletSeedReader = new RelationshipSeedReader({ identityId: device.did, objects: vaultStore, events: vaultStore, segmentKeys: boundary.resolver })
-    const walletSeedSink = new RelationshipSeedSink({
+    const walletSeedReader = new GenerationSeedReader({ identityId: device.did, objects: vaultStore, events: vaultStore, segmentKeys: boundary.resolver })
+    const walletSeedSink = new GenerationSeedSink({
       identityId: device.did, actorDeviceId: device.deviceId,
       nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(),
       activeSegment: () => boundary.activeSegment(), currentSnapshot: () => readModel.snapshot(),
@@ -599,19 +599,19 @@ async function configureWalletAccountIfPresent(
         // A seed a Wallet approval just published is stored in the Vault here,
         // where it reaches every sibling; the account page offers a renewal
         // when the document's key needs one.
-        const seedAuthority = createRelationshipSeedAuthority({
+        const seedAuthority = createGenerationSeedAuthority({
           ownKid: didCommDevice.xKid,
           seeds: walletSeedReader,
           readLog: async () => (await fetchCurrentLog(device.did, freshFetch())).entries,
         })
         await timed('storeApprovedRotationSeed', storeApprovedRotationSeed(device.did, walletSeedReader, walletSeedSink, seedAuthority))
-          .catch(error => console.warn('[did.md Wallet relationship seed]', error instanceof Error ? error.message : error))
+          .catch(error => console.warn('[did.md Wallet generation seed]', error instanceof Error ? error.message : error))
         try {
           const status = await timed('seedAuthority.status', seedAuthority.status())
           if (status.state === 'unpublished' || status.state === 'lost' || status.state === 'stale') rotationKeyState = status.state
-          else if (status.state === 'pending') console.info('[did.md Wallet] waiting for the relationship seed from another device')
+          else if (status.state === 'pending') console.info('[did.md Wallet] waiting for the generation seed from another device')
         } catch (error) {
-          console.warn('[did.md Wallet relationship seed status]', error instanceof Error ? error.message : error)
+          console.warn('[did.md Wallet generation seed status]', error instanceof Error ? error.message : error)
         }
         const vaultPulled = vaultSync.requestState()
           .catch(error => { console.warn('[did.md Wallet Vault Sync bootstrap]', error instanceof Error ? error.message : error) })
@@ -646,8 +646,8 @@ async function configureWalletAccountIfPresent(
           frontDoor: { fromKid: didCommDevice.xKid, x25519PrivateKey: didCommDevice.x25519PrivateKey },
           cards: async () => (await readModel.snapshot()).contactCards,
           async rotation() {
-            const [{ seed, fragment }, mediatorDid] = await Promise.all([seedAuthority.require(), mediatorDidOfDocument()])
-            return mediatorDid ? { seed, mediatorDid, fragment } : undefined
+            const [{ seed }, mediatorDid] = await Promise.all([seedAuthority.require(), mediatorDidOfDocument()])
+            return mediatorDid ? { seed, mediatorDid } : undefined
           },
           async commit(writes) { await mutationSink.commitIntents(writes.map(contactSetIntent), await readModel.snapshot()) },
           storedSeeds: async () => (await walletSeedReader.readAll()).map(record => record.seed),

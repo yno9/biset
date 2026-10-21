@@ -44,7 +44,7 @@ import {
 } from './did-md-store.ts'
 
 import { DEFAULT_WALLET, type WalletDirectoryEntry } from './wallet-directory.ts'
-import { LEGACY_ROTATION_KEY_FRAGMENT, rotationKeyEditMethod, ROTATION_KEY_FRAGMENT } from '../../didcomm/rotation-key.ts'
+import { rotationKeyEditMethod, ROTATION_KEY_FRAGMENT } from '../../didcomm/rotation-key.ts'
 // PLAN4 (~/did.md/PLAN4-wallet-connector.md): the OAuth/OID4VP issuer this
 // module talks to is no longer a fixed constant -- it is whichever wallet
 // directory entry is currently selected (selectWallet/currentWallet
@@ -442,19 +442,17 @@ export function buildDocumentEdit(did: string, config: WalletConfiguration, devi
       ...(rotation ? [{ ...rotation, controller: did }] : []),
     ],
     serviceKeyBindings: device ? [{ serviceId: didcomm.id, keyIds: [deviceKidFragment(device.x25519PublicKey)] }] : [],
-    // Replacing the seed (removing devices, renewing) is also where a document loses the key's old name: while it
-    // had it, that name stayed the authority (rotation-key.ts).
-    remove: rotation?.mode === 'replace' ? [...remove, LEGACY_ROTATION_KEY_FRAGMENT].filter((id, index, all) => all.indexOf(id) === index) : remove,
+    remove,
     ...(removeEndpoints.length ? { removeEndpoints } : {}),
   }
 }
 
 /** What the sealed candidate seed is (did-md-store.ts's sealDidMdSecret label). */
-export const ROTATION_SEED_CANDIDATE = 'relationship-seed-candidate'
+export const ROTATION_SEED_CANDIDATE = 'generation-seed-candidate'
 
 interface RotationCandidate { sealed: DidMdSealedSecret; method: ReturnType<typeof rotationKeyEditMethod> }
 
-/** A fresh relationship seed, offered to the Wallet by its rotation key
+/** A fresh generation seed, offered to the Wallet by its rotation key
  * (PLAN-refactor.md §7-1): `ifAbsent` when the identity may already have one
  * (sign-in, enabling messaging -- the first device approved wins),
  * `replace` when it is being replaced (removing devices, renewing). The seed
@@ -1047,9 +1045,9 @@ async function submitToWallet(client: DidMdRegistration, pending: DidMdPendingAu
  *  - `mediator`: publish this device's DIDComm key for the mediator (first connect, a new server,
  *    Tor), replacing the previous one.
  *  - `leaveMediator`: take this device's DIDComm key and the DIDComm service out.
- *  - `rotation`: replace the rotation key (a fresh relationship seed's) -- for an identity that has
+ *  - `rotation`: replace the rotation key (a fresh generation seed's) -- for an identity that has
  *    none yet, one whose seed no device has any more, or one whose seed a device removed from the
- *    Wallet still holds (relationship-seed-bootstrap.ts's "unpublished", "lost", "stale"). With
+ *    Wallet still holds (generation-seed-bootstrap.ts's "unpublished", "lost", "stale"). With
  *    `removeOtherDevices` the same edit drops every other device's keyAgreement key, which is the
  *    one place the rest of the system learns who the devices are (a mediator revokes their inboxes
  *    on the next log it is handed; senders stop encrypting to them, Vault Sync stops reaching them).
@@ -1091,7 +1089,7 @@ export async function beginDidMdDocumentEdit(change: DidMdDocumentChange, config
   }
   return submitToWallet(client, pending)
 }
-/** The relationship seed whose rotation key a Wallet approval published for
+/** The generation seed whose rotation key a Wallet approval published for
  * this session, until this device has stored it in its Vault. `forget()`
  * once it is stored (or found to be no longer the identity's). */
 export async function approvedRotationSeed(): Promise<{ seed: Uint8Array; forget(): Promise<void> } | undefined> {

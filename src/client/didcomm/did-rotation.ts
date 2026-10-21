@@ -6,7 +6,7 @@
 //
 // - Whether to move is asked with Discover Features 2.0: a `header` query for
 //   `from_prior`. biset answers the same query for itself.
-// - Y is derived from the relationship seed and the counterparty's public DID
+// - Y is derived from the generation seed and the counterparty's public DID
 //   (peer.ts), its service naming this identity's mediator by DID. Every
 //   device derives the same Y; the contact card records that this identity
 //   started the move (`own.<Y>.startedAt`) and when the counterparty first
@@ -50,9 +50,9 @@ export interface RouteContext {
   identityDid: string
   frontDoor: FrontDoorKey
   cards: readonly LocalJmapContactCard[]
-  /** The usable relationship seed and the mediator Y names; without both, a
+  /** The usable generation seed and the mediator Y names; without both, a
    * message goes from the front door. */
-  rotation?: { seed: Uint8Array; mediatorDid: string; /** The id the DID document publishes the rotation key under; default the current one. */ fragment?: string }
+  rotation?: { seed: Uint8Array; mediatorDid: string }
   now?: () => number
 }
 
@@ -66,7 +66,7 @@ export function chooseRoute(publicDid: string, context: RouteContext): DidCommRo
     if (entry?.startedAt) {
       const fromPrior = entry.confirmedAt ? undefined : createFromPrior(
         { iss: context.identityDid, sub: own.did, iat: Math.floor((context.now?.() ?? Date.now()) / 1000) },
-        `${context.identityDid}${context.rotation.fragment ?? ROTATION_KEY_FRAGMENT}`, rotationSigningKey(context.rotation.seed).privateKey,
+        `${context.identityDid}${ROTATION_KEY_FRAGMENT}`, rotationSigningKey(context.rotation.seed).privateKey,
       )
       return { toDid, fromKid: own.xKid, x25519PrivateKey: own.xPriv, ...(fromPrior ? { fromPrior } : {}) }
     }

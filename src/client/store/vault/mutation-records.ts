@@ -9,7 +9,7 @@
 import type { IdentityId, SegmentId } from '../../../protocol/ids.ts'
 import type { VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
 import { decryptVaultObject, verifyVaultObjectIntegrity } from './objects.ts'
-import { assertRelationshipSeedRecord } from './relationship-seed.ts'
+import { assertGenerationSeedRecord } from './generation-seed.ts'
 import { assertOpenPgpCredentialRecord } from './openpgp-credential.ts'
 import { verifyVaultEvent } from './events.ts'
 import { readableCredential } from './credential-store.ts'
@@ -63,8 +63,8 @@ export async function decryptVaultMutationRecords(
       } else if (event.kind === 'contact-key.set') {
         // Retired with the relationship handshake (PLAN-refactor.md §9.1):
         // kept in old Vaults, read by nothing, never a reason to stop.
-      } else if (event.kind === 'credential.relationship-seed.set') {
-        readableCredential('relationship seed', event.id, () => assertRelationshipSeedRecord(event, object, plaintext))
+      } else if (event.kind === 'credential.generation-seed.set') {
+        readableCredential('generation seed', event.id, () => assertGenerationSeedRecord(event, object, plaintext))
       } else {
         records.push({ event, plaintext })
       }

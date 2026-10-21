@@ -1,4 +1,4 @@
-// The relationship seed's authority: which seed this identity uses now, and
+// The generation seed's authority: which seed this identity uses now, and
 // whether it needs replacing (PLAN-refactor.md §4.2, §7-1, §7-2, §9.2).
 //
 // Every answer comes from the did:webvh log -- this identity's one authority
@@ -27,26 +27,25 @@
 // every id, never the fragment (a key's fragment is derived from the key).
 import type { LogEntry } from '../../protocol/webvh/log.ts'
 import { authenticationKeySince, deviceRemovedSince, fragmentOf, keyAgreementOf } from '../../protocol/didcomm/from-prior.ts'
-import { rotationKeyFragments, rotationSigningKey } from './rotation-key.ts'
+import { ROTATION_KEY_FRAGMENT, rotationSigningKey } from './rotation-key.ts'
 
 /** A seed's decision is not made sooner than this after its key was published. */
 export const SEED_LOST_AFTER_MS = 24 * 60 * 60 * 1000
 
 export type SeedStatus =
-  /** `fragment`: the id the DID document publishes the seed's rotation key under. */
-  | { state: 'usable'; seed: Uint8Array; seedId: string; fragment: string }
+  | { state: 'usable'; seed: Uint8Array; seedId: string }
   | { state: 'unpublished' }
   | { state: 'pending' }
   | { state: 'lost' }
   | { state: 'stale'; designated: boolean }
 
 /** Thrown where something needs the seed and it is not usable right now. */
-export class RelationshipSeedPendingError extends Error {
+export class GenerationSeedPendingError extends Error {
   constructor(readonly status: Exclude<SeedStatus['state'], 'usable'> = 'pending') {
     super(status === 'pending'
       ? 'This device is still syncing with your other devices. If you no longer use them, remove them on the Account page.'
       : 'Your DIDComm key needs to be renewed on the Account page.')
-    this.name = 'RelationshipSeedPendingError'
+    this.name = 'GenerationSeedPendingError'
   }
 }
 
@@ -68,25 +67,20 @@ export function seedStatus(entries: readonly LogEntry[], ownKid: string, seeds: 
   if (!last) throw new Error('the did:webvh log is empty')
   const listed = keyAgreementOf(last)
   if (!listed.includes(fragmentOf(ownKid))) throw new DeviceRemovedError()
-  let fragment = ''
-  let published: ReturnType<typeof authenticationKeySince>
-  for (const candidate of rotationKeyFragments) {
-    published = authenticationKeySince(entries, candidate)
-    if (published) { fragment = candidate; break }
-  }
+  const published = authenticationKeySince(entries, ROTATION_KEY_FRAGMENT)
   if (!published) return { state: 'unpublished' }
   const { key, since } = published
   const designated = [...listed].sort()[0] === fragmentOf(ownKid)
   // The same check a counterparty makes on this key (from-prior.ts, §7-2).
   if (deviceRemovedSince(entries, since)) return { state: 'stale', designated }
   const seed = seeds.find(value => rotationSigningKey(value.seed).publicKeyMultibase === key)
-  if (seed) return { state: 'usable', seed: seed.seed, seedId: seed.seedId, fragment }
+  if (seed) return { state: 'usable', seed: seed.seed, seedId: seed.seedId }
   if (!designated) return { state: 'pending' }
   const publishedAt = Date.parse(entries[since]!.versionTime)
   return listed.length === 1 || now - publishedAt >= SEED_LOST_AFTER_MS ? { state: 'lost' } : { state: 'pending' }
 }
 
-export interface RelationshipSeedAuthorityOptions {
+export interface GenerationSeedAuthorityOptions {
   /** This device's own front-door kid (a key of the identity's DID). */
   ownKid: string
   seeds: { readAll(): Promise<StoredSeed[]> }
@@ -97,16 +91,16 @@ export interface RelationshipSeedAuthorityOptions {
   now?: () => number
 }
 
-export interface RelationshipSeedAuthority {
+export interface GenerationSeedAuthority {
   status(): Promise<SeedStatus>
-  /** The seed in use; throws RelationshipSeedPendingError when there is none
+  /** The seed in use; throws GenerationSeedPendingError when there is none
    * this device may use now, DeviceRemovedError once removed. */
-  require(): Promise<StoredSeed & { fragment: string }>
+  require(): Promise<StoredSeed>
   /** Forgets the cached log (after this device changed the document). */
   refresh(): void
 }
 
-export function createRelationshipSeedAuthority(options: RelationshipSeedAuthorityOptions): RelationshipSeedAuthority {
+export function createGenerationSeedAuthority(options: GenerationSeedAuthorityOptions): GenerationSeedAuthority {
   const maxAge = options.logMaxAgeMs ?? 60_000
   const now = options.now ?? (() => Date.now())
   let cached: { at: number; entries: Promise<readonly LogEntry[]> } | undefined
@@ -120,12 +114,12 @@ export function createRelationshipSeedAuthority(options: RelationshipSeedAuthori
     return cached.entries
   }
 
-  const authority: RelationshipSeedAuthority = {
+  const authority: GenerationSeedAuthority = {
     async status() { return seedStatus(await log(), options.ownKid, await options.seeds.readAll(), now()) },
     async require() {
       const status = await authority.status()
-      if (status.state !== 'usable') throw new RelationshipSeedPendingError(status.state)
-      return { seed: status.seed, seedId: status.seedId, fragment: status.fragment }
+      if (status.state !== 'usable') throw new GenerationSeedPendingError(status.state)
+      return { seed: status.seed, seedId: status.seedId }
     },
     refresh() { cached = undefined },
   }

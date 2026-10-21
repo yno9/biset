@@ -67,7 +67,7 @@ export type DidMdPendingAuthorization = {
     xKid: string
   }
   mediatorPreRegistered?: boolean
-  /** A relationship seed this request offers the Wallet, by its rotation
+  /** A generation seed this request offers the Wallet, by its rotation
    * key (`documentEdit` carries the key): it becomes the identity's seed if
    * the Wallet publishes that key (client/didcomm/rotation-key.ts). */
   rotationSeedCandidate?: DidMdSealedSecret
@@ -141,7 +141,7 @@ export type DidMdDeviceSession = {
     mediatorOnionUrl?: string
     xKid: string
   }
-  /** The relationship seed the Wallet published the rotation key of, in the
+  /** The generation seed the Wallet published the rotation key of, in the
    * approval that made this session, until this device has stored it in its
    * Vault (which happens at boot, once the Vault is open). */
   rotationSeed?: DidMdSealedSecret

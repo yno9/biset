@@ -19,8 +19,8 @@ function identity(authenticated = true) {
   return buildDidCommLog({
     rootPrivateKey: root.secretKey, rootPublicKey: root.publicKey,
     keyAgreementKeys: [{ fragment: 'k_a', x25519PublicKey: device.publicKey }],
-    rawVerificationMethods: [{ fragment: 'didcomm-rotation', publicKeyMultibase: encodeMultikey(rotation.publicKey) }],
-    authenticationFragments: authenticated ? ['didcomm-rotation'] : [],
+    rawVerificationMethods: [{ fragment: 'biset-generation', publicKeyMultibase: encodeMultikey(rotation.publicKey) }],
+    authenticationFragments: authenticated ? ['biset-generation'] : [],
   })
 }
 
@@ -30,23 +30,23 @@ const peer = generatePeerIdentity({ uri: 'https://mediator.example' })
 describe('from_prior', () => {
   test('a rotation signed by the published authentication key verifies, and names prior and current', async () => {
     const { did, log } = identity()
-    const jwt = createFromPrior({ iss: did, sub: peer.did, iat: 1_700_000_000 }, `${did}#didcomm-rotation`, rotation.secretKey)
-    expect(fromPriorClaims(jwt)).toMatchObject({ iss: did, sub: peer.did, kid: `${did}#didcomm-rotation` })
-    expect(await verifyFromPrior(jwt, peer.did, fromPriorKeyResolver(serving(log)))).toEqual({ prior: did, current: peer.did, kid: `${did}#didcomm-rotation`, iat: 1_700_000_000 })
+    const jwt = createFromPrior({ iss: did, sub: peer.did, iat: 1_700_000_000 }, `${did}#biset-generation`, rotation.secretKey)
+    expect(fromPriorClaims(jwt)).toMatchObject({ iss: did, sub: peer.did, kid: `${did}#biset-generation` })
+    expect(await verifyFromPrior(jwt, peer.did, fromPriorKeyResolver(serving(log)))).toEqual({ prior: did, current: peer.did, kid: `${did}#biset-generation`, iat: 1_700_000_000 })
   })
 
   test('refuses a key the document has but does not reference from authentication', async () => {
     const { did, log } = identity(false)
-    const jwt = createFromPrior({ iss: did, sub: peer.did }, `${did}#didcomm-rotation`, rotation.secretKey)
+    const jwt = createFromPrior({ iss: did, sub: peer.did }, `${did}#biset-generation`, rotation.secretKey)
     await expect(verifyFromPrior(jwt, peer.did, fromPriorKeyResolver(serving(log)))).rejects.toBeInstanceOf(FromPriorError)
   })
 
   test('refuses another signer, a sub that is not the message\'s from, and a kid of another DID', async () => {
     const { did, log } = identity()
     const resolver = fromPriorKeyResolver(serving(log))
-    const forged = createFromPrior({ iss: did, sub: peer.did }, `${did}#didcomm-rotation`, ed25519.keygen().secretKey)
+    const forged = createFromPrior({ iss: did, sub: peer.did }, `${did}#biset-generation`, ed25519.keygen().secretKey)
     await expect(verifyFromPrior(forged, peer.did, resolver)).rejects.toThrow('signature does not verify')
-    const good = createFromPrior({ iss: did, sub: peer.did }, `${did}#didcomm-rotation`, rotation.secretKey)
+    const good = createFromPrior({ iss: did, sub: peer.did }, `${did}#biset-generation`, rotation.secretKey)
     await expect(verifyFromPrior(good, generatePeerIdentity().did, resolver)).rejects.toThrow('sub is not')
     // A header put together by hand, kid on another DID than iss.
     const [, payload, signature] = good.split('.')
@@ -56,7 +56,7 @@ describe('from_prior', () => {
 
   test('honours exp and nbf', async () => {
     const { did, log } = identity()
-    const header = b64url(new TextEncoder().encode(JSON.stringify({ typ: 'JWT', alg: 'EdDSA', kid: `${did}#didcomm-rotation` })))
+    const header = b64url(new TextEncoder().encode(JSON.stringify({ typ: 'JWT', alg: 'EdDSA', kid: `${did}#biset-generation` })))
     const sign = (claims: object) => {
       const payload = b64url(new TextEncoder().encode(JSON.stringify({ iss: did, sub: peer.did, iat: 1000, ...claims })))
       return `${header}.${payload}.${b64url(ed25519.sign(new TextEncoder().encode(`${header}.${payload}`), rotation.secretKey))}`
@@ -80,15 +80,15 @@ describe('a key published before a device was removed (§7-2)', () => {
     versionId: 'x', versionTime: '2026-10-08T00:00:00Z', parameters: {},
     state: {
       id: 'did:webvh:s:a.example', keyAgreement: keys.map(key => `#${key}`),
-      authentication: published ? ['#didcomm-rotation'] : [],
-      verificationMethod: [{ id: '#didcomm-rotation', publicKeyMultibase: encodeMultikey(rotation.publicKey) }],
+      authentication: published ? ['#biset-generation'] : [],
+      verificationMethod: [{ id: '#biset-generation', publicKeyMultibase: encodeMultikey(rotation.publicKey) }],
     },
   } as unknown as LogEntry)
 
   test('is refused; one removed with the key\'s own publication, or a device added later, is not', () => {
-    expect(() => assertKeyNotStale([entry(['a', 'b']), entry(['a'])], '#didcomm-rotation')).toThrow('before a device was removed')
-    expect(() => assertKeyNotStale([entry(['a', 'b'], false), entry(['a'])], '#didcomm-rotation')).not.toThrow()
-    expect(() => assertKeyNotStale([entry(['a']), entry(['a', 'b'])], '#didcomm-rotation')).not.toThrow()
-    expect(() => assertKeyNotStale([entry(['a'], false)], '#didcomm-rotation')).toThrow('not an authentication key')
+    expect(() => assertKeyNotStale([entry(['a', 'b']), entry(['a'])], '#biset-generation')).toThrow('before a device was removed')
+    expect(() => assertKeyNotStale([entry(['a', 'b'], false), entry(['a'])], '#biset-generation')).not.toThrow()
+    expect(() => assertKeyNotStale([entry(['a']), entry(['a', 'b'])], '#biset-generation')).not.toThrow()
+    expect(() => assertKeyNotStale([entry(['a'], false)], '#biset-generation')).toThrow('not an authentication key')
   })
 })
