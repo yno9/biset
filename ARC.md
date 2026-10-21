@@ -94,7 +94,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 | 会話の確立 | relationship の INIT/ACCEPT（独自の型）で相手ごとの did:peer を作る | **撤去**。front door で始め、Discover Features で `from_prior` に対応する相手とは DID Rotation で Y へ（§9.2） |
 | did:peer の送り主 | relationship の相手、または独立した相手 | **相手の移動先としてだけ**（連絡先が名指すか、`from_prior` が付く）。単体の did:peer とはやりとりしない |
 | 相手の記録 | `contact-key.set`（ContactKeyV1、秘密鍵を含む） | **連絡先**（`contact.set`、JMAP for Contacts の ContactCard。秘密鍵は持たない）（§7.3） |
-| seed の権威 | DID ログの「最初の端末」の判定 | **DID Document の `#biset`（`authentication`）が公開する鍵の seed**（2026-10-21 までは `#didcomm-rotation`。その名前の文書は、鍵を取り替える（renew）まで、その名前が権威のまま）（§6） |
+| seed の権威 | DID ログの「最初の端末」の判定 | **DID Document の `#biset-generation`（`authentication`）が公開する鍵の seed**（2026-10-21 までは `#didcomm-rotation`。その名前の文書は、鍵を取り替える（renew）まで、その名前が権威のまま）（§6） |
 | group chat | 独自の招待と型、端末ごとのメンバー一覧 | **`to` が複数の Basic Message**。`thid` が会話、参加者ごとの経路で送る（§9.4） |
 | Y の service | mediator の did:peer の鍵と URL | **mediator の DID（`did:web`）**。mediator が鍵や URL を替えても Y は変わらない（§9.2） |
 | problem code | `e.m.*` の独自の綴り | 仕様の sorter.scope.descriptors（scope `m`、kebab-case） |
@@ -290,7 +290,7 @@ did-md-oauth.ts は特定の wallet を前提にせず、選択された entry �
 | 端末の DIDComm X25519 | 端末 | 同上。**非抽出の AES 鍵で封印** | 公開鍵が DID Document の `keyAgreement` |
 | `mediatorDeviceSecret` | 端末 | 同上 | しない。mediator の端末ラベル `HMAC(secret, DID)` を作る |
 | **relationship seed** | identity | Vault（`credential.relationship-seed.set`） | Vault Sync で全端末へ。端末を外すと作り直す |
-| **rotation key**（Ed25519、seed から導出） | identity（seed ごと） | 持たない（seed から毎回導く） | 公開鍵が DID Document の `#biset`（旧 `#didcomm-rotation`）、`authentication` から参照。DID Rotation の `from_prior` に署名する（P3） |
+| **rotation key**（Ed25519、seed から導出） | identity（seed ごと） | 持たない（seed から毎回導く） | 公開鍵が DID Document の `#biset-generation`（旧 `#didcomm-rotation`）、`authentication` から参照。DID Rotation の `from_prior` に署名する（P3） |
 | 候補の seed（承認待ち） | 端末 | `biset-did-md-wallet` の保留中の認可・セッション。**非抽出の AES 鍵で封印** | しない。ウォレットが署名鍵を公開したら Vault に移す |
 | SegmentKey | Vault segment | `vault_segments.segmentKey` に**平文** | Vault Sync の pack に入れて運ぶ（DIDComm authcrypt の中） |
 

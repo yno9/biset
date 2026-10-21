@@ -1,4 +1,4 @@
-// The id of biset's own key in the DID document: `#biset` now, `#didcomm-rotation` before. A document that still has
+// The id of biset's own key in the DID document: `#biset-generation` now, `#didcomm-rotation` before. A document that still has
 // the old name keeps it as the authority until the key is renewed; a new device's `ifAbsent` for the new id must not
 // take over from it.
 import { describe, expect, test } from 'vitest'
@@ -23,24 +23,24 @@ const entry = (published: Array<[string, Uint8Array]>): LogEntry => ({ versionId
 const stored = (seed: Uint8Array) => ({ seed, seedId: relationshipSeedRecord(DID, seed, 1).seedId })
 
 describe('the key\'s id', () => {
-  test('it is #biset, apart from the service #didcomm', () => {
-    expect(ROTATION_KEY_FRAGMENT).toBe('#biset')
+  test('it is #biset-generation, apart from the service #didcomm', () => {
+    expect(ROTATION_KEY_FRAGMENT).toBe('#biset-generation')
     expect(ROTATION_KEY_FRAGMENT).not.toBe('#didcomm')
   })
 
   test('a document publishes it under the new id, or still under the old; with both, the old one is the authority', () => {
-    expect(publishedRotation(doc([['#biset', seedA]]))).toEqual({ fragment: '#biset', key: key(seedA) })
+    expect(publishedRotation(doc([['#biset-generation', seedA]]))).toEqual({ fragment: '#biset-generation', key: key(seedA) })
     expect(publishedRotation(doc([[LEGACY_ROTATION_KEY_FRAGMENT, seedA]]))).toEqual({ fragment: LEGACY_ROTATION_KEY_FRAGMENT, key: key(seedA) })
-    expect(publishedRotation(doc([['#biset', seedB], [LEGACY_ROTATION_KEY_FRAGMENT, seedA]]))).toEqual({ fragment: LEGACY_ROTATION_KEY_FRAGMENT, key: key(seedA) })
+    expect(publishedRotation(doc([['#biset-generation', seedB], [LEGACY_ROTATION_KEY_FRAGMENT, seedA]]))).toEqual({ fragment: LEGACY_ROTATION_KEY_FRAGMENT, key: key(seedA) })
     expect(publishedRotation(doc([]))).toBeUndefined()
   })
 
   test('the seed in use is found under either id, and says which; a stray new id does not displace the old authority', () => {
     const own = '#a'.replace('#', 'did:webvh:scid:alice.example#')
-    const fresh = seedStatus([entry([['#biset', seedA]])], own, [stored(seedA)], Date.now())
+    const fresh = seedStatus([entry([['#biset-generation', seedA]])], own, [stored(seedA)], Date.now())
     const old = seedStatus([entry([[LEGACY_ROTATION_KEY_FRAGMENT, seedA]])], own, [stored(seedA)], Date.now())
-    const both = seedStatus([entry([[LEGACY_ROTATION_KEY_FRAGMENT, seedA], ['#biset', seedB]])], own, [stored(seedA), stored(seedB)], Date.now())
-    expect(fresh).toMatchObject({ state: 'usable', fragment: '#biset' })
+    const both = seedStatus([entry([[LEGACY_ROTATION_KEY_FRAGMENT, seedA], ['#biset-generation', seedB]])], own, [stored(seedA), stored(seedB)], Date.now())
+    expect(fresh).toMatchObject({ state: 'usable', fragment: '#biset-generation' })
     expect(old).toMatchObject({ state: 'usable', fragment: LEGACY_ROTATION_KEY_FRAGMENT })
     expect(both).toMatchObject({ state: 'usable', fragment: LEGACY_ROTATION_KEY_FRAGMENT })
     expect(both.state === 'usable' && [...both.seed]).toEqual([...seedA])
@@ -62,8 +62,8 @@ describe('signing a DID Rotation', () => {
 
   test('from_prior names the key by the id the document publishes it under', () => {
     expect(fromPriorClaims(route(LEGACY_ROTATION_KEY_FRAGMENT).fromPrior!).kid).toBe(`${DID}#didcomm-rotation`)
-    expect(fromPriorClaims(route('#biset').fromPrior!).kid).toBe(`${DID}#biset`)
-    expect(fromPriorClaims(route().fromPrior!).kid).toBe(`${DID}#biset`)
+    expect(fromPriorClaims(route('#biset-generation').fromPrior!).kid).toBe(`${DID}#biset-generation`)
+    expect(fromPriorClaims(route().fromPrior!).kid).toBe(`${DID}#biset-generation`)
   })
 })
 
@@ -71,10 +71,10 @@ describe('publishing it', () => {
   const config = walletConfiguration()
 
   test('replacing the seed also removes the old id; asking ifAbsent leaves a document\'s ids alone', () => {
-    const replace = buildDocumentEdit(DID, config, undefined, ['#k_old'], [], { id: '#biset', type: 'Multikey', controller: '', publicKeyMultibase: key(seedA), relationships: ['authentication'], mode: 'replace' })
+    const replace = buildDocumentEdit(DID, config, undefined, ['#k_old'], [], { id: '#biset-generation', type: 'Multikey', controller: '', publicKeyMultibase: key(seedA), relationships: ['authentication'], mode: 'replace' })
     expect(replace.remove).toEqual(['#k_old', LEGACY_ROTATION_KEY_FRAGMENT])
-    expect(replace.verificationMethods.map(value => value.id)).toEqual(['#biset'])
-    const ifAbsent = buildDocumentEdit(DID, config, undefined, ['#k_old'], [], { id: '#biset', type: 'Multikey', controller: '', publicKeyMultibase: key(seedA), relationships: ['authentication'], mode: 'ifAbsent' })
+    expect(replace.verificationMethods.map(value => value.id)).toEqual(['#biset-generation'])
+    const ifAbsent = buildDocumentEdit(DID, config, undefined, ['#k_old'], [], { id: '#biset-generation', type: 'Multikey', controller: '', publicKeyMultibase: key(seedA), relationships: ['authentication'], mode: 'ifAbsent' })
     expect(ifAbsent.remove).toEqual(['#k_old'])
     expect(buildDocumentEdit(DID, config).remove).toEqual([])
   })

@@ -15,11 +15,12 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { encodeMultikey } from '../../protocol/webvh/multikey.ts'
 import { authenticationKeyOf } from '../../protocol/didcomm/from-prior.ts'
 
-/** The id of biset's own key in the DID document: the one general-purpose key biset has there (it signs the DID
- * Rotation, and is what the relationship seed is known by). Fixed, so that every device asking for "the" key asks
- * for the same one (did.md's `ifAbsent` keeps the first one approved). It is not `#didcomm`, the service's id: a
- * document's ids are one namespace (a `remove` of `#didcomm` would take both). */
-export const ROTATION_KEY_FRAGMENT = '#biset'
+/** The id of the key that marks the generation of biset's relationship seed in the DID document: its public half
+ * says which seed is the identity's now (replacing the seed, as when a device is removed, publishes the next
+ * generation's), and it signs the DID Rotation. Fixed, so that every device asking for "the" key asks for the same one
+ * (did.md's `ifAbsent` keeps the first one approved). It is not `#didcomm`, the service's id: a document's ids are
+ * one namespace (a `remove` of `#didcomm` would take both). */
+export const ROTATION_KEY_FRAGMENT = '#biset-generation'
 
 /** What the key was called before. A document published then keeps it until the key is renewed (and then loses it). */
 export const LEGACY_ROTATION_KEY_FRAGMENT = '#didcomm-rotation'
