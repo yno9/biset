@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../react/store.ts'
 import { DIDCOMM_GROUP_THREAD_PREFIX } from './message/message-view.ts'
-import { labelForDid } from './did-display.ts'
+import { displayName } from './did-display.ts'
 import { avatarColor, previewText } from './format.ts'
 import { hamburgerTrigger } from './hamburger-menu.tsx'
 import { showComposePage, hideAccountPage, hideComposePage, hideConfigPage } from './pages/index.ts'
@@ -24,7 +24,7 @@ function fmtThreadTs(ts: number): string {
 
 // A DIDComm message's from/from_name is always the raw DID: a bare username is the right length for
 // a name repeated once per row.
-const shortSenderLabel = (name: string): string => name.startsWith('did:') ? labelForDid(name) : name
+const shortSenderLabel = (name: string): string => name.startsWith('did:') ? displayName(name) : name
 
 type NavItem = { kind: 'inbox'; key: string } | { kind: 'thread'; key: string; rowKey: string }
 

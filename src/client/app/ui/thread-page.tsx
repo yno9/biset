@@ -1,7 +1,7 @@
 // The open thread: its messages, newest at the bottom, the oldest hidden behind "Show older".
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { MailMessageView, ProcessedMessage, ThreadGroup } from './message/message-view.ts'
-import { labelForDid } from './did-display.ts'
+import { displayName, labelForDid } from './did-display.ts'
 import { avatarColor, esc, formatTime, linkify, stripQuoted } from './format.ts'
 import { scrollToFocused } from './scroll.ts'
 import { useThreads } from './use-threads.ts'
@@ -22,7 +22,7 @@ function Message({ message: { msg, bodyText } }: { message: ProcessedMessage }) 
   // A DIDComm message's from/from_name is always the raw DID; a per-message sender label is the bare
   // username (the fuller form is for the one-per-thread header, where it isn't repeated).
   const rawSender = msg.from_name || msg.from || '?'
-  const sender = rawSender.startsWith('did:') ? labelForDid(rawSender) : rawSender
+  const sender = rawSender.startsWith('did:') ? displayName(rawSender) : rawSender
   return (
     <div className="t-msg" data-message-id={msg.message_id}>
       <div className="t-avatar" style={{ background: avatarColor(msg.from || sender) }}>{sender.charAt(0).toUpperCase()}</div>

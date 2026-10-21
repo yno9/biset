@@ -20,13 +20,14 @@ async function world() {
   const toAlice: Array<{ armored: string; introduction?: boolean }> = []
   const toBob: string[] = []
   const bobLearned: string[] = []
+  const bobNames: Array<string | undefined> = []
   const aliceLearned: string[] = []
   const pending = new Map<string, PendingJoin>()
   const bobContext: JoinContext = {
     key: bob, address: 'bob@did.md', now: NOW,
     pending: { list: async () => [...pending.values()], put: async join => { pending.set(join.address, join) }, remove: async address => { pending.delete(address) } },
     async send(_to, armored, options) { toAlice.push({ armored, ...(options.introduction ? { introduction: true } : {}) }) },
-    async learn(_party, keydata) { bobLearned.push(keydata) },
+    async learn(_party, keydata, name) { bobLearned.push(keydata); bobNames.push(name) },
   }
   const aliceContext: SecureJoinContext = {
     seed: aliceSeed, key: alice, address: 'alice@x.test', now: NOW,
@@ -34,7 +35,7 @@ async function world() {
     async learn(_party, keydata) { aliceLearned.push(keydata) },
   }
   const url = inviteUrl({ seed: aliceSeed, key: alice, address: 'alice@x.test', name: 'Alice', now: NOW })
-  return { alice, bob, aliceParty, bobParty, toAlice, toBob, bobLearned, aliceLearned, pending, bobContext, aliceContext, url }
+  return { alice, bob, aliceParty, bobParty, toAlice, toBob, bobLearned, bobNames, aliceLearned, pending, bobContext, aliceContext, url }
 }
 
 describe('the invite we are given', () => {
@@ -80,6 +81,7 @@ describe('Secure-Join, the joining side, against the inviting side', () => {
     expect(await handleSecureJoin(w.toBob[1]!, w.aliceParty, bobAsInviter)).toBeUndefined()
     expect(await handleJoinStep(w.toBob[1]!, w.aliceParty, w.bobContext)).toBe('vc-contact-confirm')
     expect(w.bobLearned).toEqual([await autocryptKeydata(w.alice.privateKey, 'alice@x.test')])
+    expect(w.bobNames).toEqual(['Alice']) // the name the invite gave
     expect(w.pending.size).toBe(0)
   })
 

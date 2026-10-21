@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { displayName } from '../../src/client/app/ui/did-display.ts'
 import { afterEach, expect, test } from 'vitest'
 import * as openpgp from 'openpgp'
 import { refreshInbox, setEncryptedMailOpener } from '../../src/client/app/ui/shell.ts'
@@ -82,4 +83,17 @@ test('a key update from Delta Chat (an encrypted disposition-notification report
   setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [alice.privateKey], senderKeys: [] }))
   await refreshInbox(model as never)
   expect(mail.get().messages).toHaveLength(0)
+})
+
+test('a name in the contact list is the one shown for the sender, over the name the message carried', async () => {
+  const bob = 'did:web:did.md:x.test:bob'
+  const card = { id: 'c1', '@type': 'Card', version: '1.0', uid: 'u', addressBookIds: { default: true }, name: { full: 'Robert' }, onlineServices: { didcomm: { service: 'DIDComm', uri: bob } } }
+  const model = {
+    async snapshot() { return { emails: [{ id: 'e1', blobId: 'b1', threadId: 't1', mailboxIds: {}, keywords: {}, receivedAt: '2026-10-21T00:00:00Z', subject: 'hi', from: [{ email: bob, name: 'bob from the mail' }] }], contactCards: [card] } as never },
+    async download() { return new TextEncoder().encode('hello') },
+  }
+  setEncryptedMailOpener(undefined)
+  await refreshInbox(model as never)
+  expect(mail.get().messages[0]!.msg.from_name).toBe('Robert')
+  expect(displayName(bob)).toBe('Robert')
 })

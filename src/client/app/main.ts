@@ -53,7 +53,7 @@ import { GenerationSeedReader, GenerationSeedSink, generationSeedRecord } from '
 import { createGenerationSeedAuthority, type GenerationSeedAuthority } from '../didcomm/generation-seed-bootstrap.ts'
 import { publishedRotationKey, rotationSigningKey } from '../didcomm/rotation-key.ts'
 import { createRotationManager, type RotationManager } from '../didcomm/rotation-manager.ts'
-import { autocryptKeyPatch, contactCardForDid, contactSetIntent, currentAutocryptKey, didContactPatch } from '../store/projection/contacts.ts'
+import { autocryptKeyPatch, contactCardForDid, contactNamePatch, contactSetIntent, currentAutocryptKey, didContactPatch } from '../store/projection/contacts.ts'
 import { fromPriorKeyResolver, verifyFromPrior } from '../../protocol/didcomm/from-prior.ts'
 import { signingKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
@@ -708,13 +708,14 @@ async function configureWalletAccountIfPresent(
           if (!sent.ok) throw new Error(sent.error)
         }
         // A key a Secure-Join handshake has vouched for: kept on the contact's card, as verified.
-        const learnVerifiedKey = async (who: { did: string }, keydata: string) => {
+        const learnVerifiedKey = async (who: { did: string }, keydata: string, name?: string) => {
           const snapshot = await readModel.snapshot()
           const card = contactCardForDid(snapshot.contactCards, who.did)
           const created = didContactPatch(who.did)
           await mutationSink.commitIntents([
             ...(card ? [] : [contactSetIntent(created)]),
             contactSetIntent(autocryptKeyPatch(card?.id ?? created.cardId, { keydata, seenAt: new Date().toISOString(), preferEncrypt: 'mutual', verified: true })),
+            ...(name ? [contactNamePatch(card?.id ?? created.cardId, card, name, 'invite')].filter((write): write is NonNullable<typeof write> => write !== undefined).map(contactSetIntent) : []),
           ], snapshot)
         }
         const pendingJoins = localPendingJoins(device.did)

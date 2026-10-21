@@ -2,7 +2,7 @@
 // it belongs to. Pure; the screens call these with the identity's own addresses.
 import { groupMessages, inboxKeyForThread, latestGroup } from './message/message-view.ts'
 import type { MailMessageView, ProcessedMessage, ThreadGroup } from './message/message-view.ts'
-import { labelForDid, protocolFor } from './did-display.ts'
+import { displayName, labelForDid, protocolFor } from './did-display.ts'
 import type { Proto } from './did-display.ts'
 
 /** This identity's own address(es), lower-cased: its mail address and, once DIDComm is on, its DID. */
@@ -44,7 +44,7 @@ export function groupMembersLabel(groups: readonly ThreadGroup[], self: SelfAddr
       for (const address of [msg.from, ...(msg.to_addrs ?? [])]) if (address && !self.has(address.toLowerCase())) members.add(address)
     }
   }
-  return [...members].map(address => address.startsWith('did:') ? labelForDid(address) : address).join(', ')
+  return [...members].map(address => address.startsWith('did:') ? displayName(address) : address).join(', ')
 }
 
 /** Who a 1:1 row is with: the name (or short address) of the latest message that came from the other side, so what we sent last
@@ -53,7 +53,7 @@ export function counterpartLabel(groups: readonly ThreadGroup[], self: SelfAddre
   const received = groups.flatMap(group => group.messages.map(p => p.msg)).filter(msg => msg.from && !self.has(msg.from.toLowerCase())).sort((a, b) => b.ts - a.ts)[0]
   if (received) {
     const name = received.from_name && !received.from_name.startsWith('did:') ? received.from_name : ''
-    return name || (received.from.startsWith('did:') ? labelForDid(received.from) : received.from)
+    return name || (received.from.startsWith('did:') ? displayName(received.from) : received.from)
   }
   return groupMembersLabel(groups, self)
 }

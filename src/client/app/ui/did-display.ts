@@ -47,6 +47,15 @@ export function labelForDid(did: string): string {
   }
 }
 
+// ── Names ─────────────────────────────────────────────────────────────────────
+// Who someone is called, where there is a name: the contact list's (contacts.ts: a name written by hand, the one an invite gave,
+// the one on a mail's From:). Without one, the address. The list is filled from the contact cards each time the inbox is
+// refreshed (shell.ts); the places that name a person call displayName, the ones that mean the address call labelForDid.
+let contactNames: ReadonlyMap<string, string> = new Map()
+export function setContactNames(names: ReadonlyMap<string, string>): void { contactNames = names }
+
+export function displayName(did: string): string { return contactNames.get(did) ?? labelForDid(did) }
+
 // ── Transport protocol pill ─────────────────────────────────────────────────
 // Shared between pages/compose-page.tsx (a typed recipient) and right-col.tsx (a
 // conversation's actual participants) -- a "to"/participant is either a

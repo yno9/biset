@@ -308,7 +308,7 @@ test('showApp shows the UI once; a refresh replaces the messages, one after anot
   expect(shell.get().appShown).toBe(true)
   const order: string[] = []
   const model = (name: string, delay: number, subject: string) => ({
-    async snapshot() { await new Promise(r => setTimeout(r, delay)); order.push(name); return { emails: [{ id: name, blobId: name, threadId: name, mailboxIds: {}, keywords: {}, receivedAt: '2026-10-16T00:00:00Z', subject }] } as never },
+    async snapshot() { await new Promise(r => setTimeout(r, delay)); order.push(name); return { emails: [{ id: name, blobId: name, threadId: name, mailboxIds: {}, keywords: {}, receivedAt: '2026-10-16T00:00:00Z', subject }], contactCards: [] } as never },
     async download() { return new TextEncoder().encode(`Subject: ${subject}\r\nMessage-ID: <${name}@x>\r\n\r\nhello ${name}\r\n`) },
   })
   const slow = refreshInbox(model('slow', 40, 'S'))

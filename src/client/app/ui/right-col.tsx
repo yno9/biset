@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../react/store.ts'
 import { DIDCOMM_GROUP_THREAD_PREFIX } from './message/message-view.ts'
 import type { ThreadGroup } from './message/message-view.ts'
-import { labelForDid, PROTO_COLOR, PROTO_TEXT, shortWebvhDid } from './did-display.ts'
+import { displayName, PROTO_COLOR, PROTO_TEXT, shortWebvhDid } from './did-display.ts'
 import { hamburgerTrigger } from './hamburger-menu.tsx'
 import { PageHost } from './page-host.tsx'
 import { ReplyBox, composeConfig } from './reply-box.tsx'
@@ -92,7 +92,7 @@ function GroupStrip({ groupId, name }: { groupId: string; name: string }) {
     <>
       <span>{name}</span>
       <span className="conv-members">
-        {hooks ? members.map(did => <span key={did} className="conv-member-chip conv-member-static" title={did}>{did.startsWith('did:') ? labelForDid(did) : did}</span>) : null}
+        {hooks ? members.map(did => <span key={did} className="conv-member-chip conv-member-static" title={did}>{did.startsWith('did:') ? displayName(did) : did}</span>) : null}
       </span>
     </>
   )

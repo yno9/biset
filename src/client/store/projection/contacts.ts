@@ -32,6 +32,8 @@ export const DIDCOMM_CONTACT_PROPERTY = 'biset.md:didcomm'
 /** JSContact vendor property holding the OpenPGP keys a counterparty's mail told us (Autocrypt). Like the
  * DIDComm state, written only by DIDComm ingress. */
 export const AUTOCRYPT_CONTACT_PROPERTY = 'biset.md:autocrypt'
+/** Where the card's `name/full` came from (a NameSource): a weaker source never replaces a stronger one's name. */
+export const NAME_SOURCE_PROPERTY = 'biset.md:nameSource'
 /** The one address book (§12.2: more than one is for later). */
 const DEFAULT_ADDRESS_BOOK_ID = 'default'
 
@@ -347,6 +349,34 @@ export function autocryptKeyId(keydata: string): string {
   return bytesToBase64url(sha256(new TextEncoder().encode(`biset/autocrypt-key-id/v1\n${keydata}`))).slice(0, 22)
 }
 
+// ---- names ----
+export type NameSource = 'user' | 'invite' | 'did' | 'mail'
+const NAME_RANK: Record<NameSource, number> = { mail: 1, did: 2, invite: 3, user: 4 }
+const isNameSource = (value: unknown): value is NameSource => typeof value === 'string' && value in NAME_RANK
+
+/** The card's name, or undefined. */
+export function contactDisplayName(card: LocalJmapContactCard): string | undefined {
+  const full = isObject(card.name) ? card.name.full : undefined
+  return typeof full === 'string' && full.trim() ? full.trim() : undefined
+}
+
+/** Where the name came from; a name nothing records (written through JMAP, imported) is a person's. */
+export function nameSourceOf(card: LocalJmapContactCard): NameSource | undefined {
+  const source = card[NAME_SOURCE_PROPERTY]
+  return isNameSource(source) ? source : contactDisplayName(card) ? 'user' : undefined
+}
+
+/** The patch giving the card `name`, found out from `source` -- or undefined when it would change nothing, or when the name it
+ * has comes from a stronger source (a name written by hand is never replaced by one from a mail's `From:`). */
+export function contactNamePatch(cardId: string, card: LocalJmapContactCard | undefined, name: string, source: NameSource): ContactSetPayload | undefined {
+  const wanted = name.replace(/\s+/g, ' ').trim()
+  if (!wanted || wanted.length > 200) return undefined
+  const current = card && nameSourceOf(card)
+  if (current && NAME_RANK[current] > NAME_RANK[source]) return undefined
+  if (card && contactDisplayName(card) === wanted && current === source) return undefined
+  return { cardId, patch: { 'name/full': wanted, [pointerToken(NAME_SOURCE_PROPERTY)]: source } }
+}
+
 /** Records that a mail written at `seenAt` carried `keydata` for the counterparty of `cardId`. */
 export function autocryptKeyPatch(cardId: string, entry: AutocryptKeyEntry): ContactSetPayload {
   return { cardId, patch: { [`${pointerToken(AUTOCRYPT_CONTACT_PROPERTY)}/keys/${autocryptKeyId(entry.keydata)}`]: { ...entry } as unknown as CanonicalValue } }
@@ -396,7 +426,7 @@ interface ContactCardSetResult {
 const SERVER_SET = new Set(['id'])
 
 /** The card properties only ingress writes: a JMAP client may not set them. */
-function touchesDidComm(path: string): boolean { const head = pointer(path)[0]; return head === DIDCOMM_CONTACT_PROPERTY || head === AUTOCRYPT_CONTACT_PROPERTY }
+function touchesDidComm(path: string): boolean { const head = pointer(path)[0]; return head === DIDCOMM_CONTACT_PROPERTY || head === AUTOCRYPT_CONTACT_PROPERTY || head === NAME_SOURCE_PROPERTY }
 
 /** Parses a ContactCard/set request against `cards` into the patches to
  * commit, and the per-item results a JMAP response reports. */
@@ -411,7 +441,7 @@ export function contactCardSet(arguments_: Record<string, unknown>, cards: reado
     next: for (const [creationId, value] of Object.entries(arguments_.create)) {
       try {
         if (!isObject(value)) throw new TypeError('a card must be an object')
-        for (const managed of [DIDCOMM_CONTACT_PROPERTY, AUTOCRYPT_CONTACT_PROPERTY]) if (managed in value) { result.notCreated[creationId] = { type: 'forbidden', description: `${managed} is managed by biset` }; continue next }
+        for (const managed of [DIDCOMM_CONTACT_PROPERTY, AUTOCRYPT_CONTACT_PROPERTY, NAME_SOURCE_PROPERTY]) if (managed in value) { result.notCreated[creationId] = { type: 'forbidden', description: `${managed} is managed by biset` }; continue next }
         if ([...SERVER_SET].some(key => key in value)) throw new TypeError('id is set by the server')
         const uid = typeof value.uid === 'string' && value.uid ? value.uid : newUid()
         const id = contactCardId(uid)
@@ -443,6 +473,8 @@ export function contactCardSet(arguments_: Record<string, unknown>, cards: reado
             if (!isObject(target)) throw new TypeError(`${path}: its parent does not exist`)
           }
         }
+        // A name a person writes is the strongest there is: nothing found out later replaces it.
+        if (Object.keys(patch).some(path => pointer(path)[0] === 'name')) patch[NAME_SOURCE_PROPERTY] = 'user'
         const next = applyContactSet(card, { cardId: id, patch })!
         result.intents.push(contactSetIntent({ cardId: id, patch }))
         byId.set(id, next)

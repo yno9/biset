@@ -1,5 +1,7 @@
 // What the rest of the app calls to drive the mail UI: show it, and refresh what it lists.
 import type { LocalJmapEmail, LocalJmapReadModel, LocalJmapSnapshot } from '../../store/projection/gateway.ts'
+import { contactDisplayName, publicDidOf } from '../../store/projection/contacts.ts'
+import { setContactNames } from './did-display.ts'
 import type { OpenedMail } from '../../pgp/open.ts'
 import { armorOfStoredBody } from '../../pgp/stored.ts'
 import { emailToMessageView } from './message/message-view.ts'
@@ -36,6 +38,13 @@ let refreshTail: Promise<void> = Promise.resolve()
 export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
   const task = refreshTail.then(async () => {
     const snapshot = await readModel.snapshot()
+    // The contact list's names, for everything below that names a person.
+    const names = new Map<string, string>()
+    for (const card of snapshot.contactCards) {
+      const did = publicDidOf(card), name = contactDisplayName(card)
+      if (did && name) names.set(did, name)
+    }
+    setContactNames(names)
     const views: ProcessedMessage[] = []
     for (const email of snapshot.emails) {
       if (!email.blobId) continue
@@ -46,6 +55,9 @@ export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
       // shown: its stand-in subject `[...]` and the armor say nothing to read.
       if (openEncrypted && !opened && armorOfStoredBody(body)) { console.warn(`[encrypted mail] not shown, cannot be opened with this identity's keys: ${email.id}`); continue }
       const msg = emailToMessageView(email, opened?.raw ?? raw)
+      // A name in the contact list is the one to show (the mail's own From: name is only where there is none).
+      const known = names.get(msg.from)
+      if (known) msg.from_name = known
       // The outer subject of an encrypted mail is a stand-in; the real one is inside.
       if (opened?.hidden) continue
       if (opened?.subject) msg.subject = opened.subject

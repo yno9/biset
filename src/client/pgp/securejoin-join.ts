@@ -75,8 +75,8 @@ export interface JoinContext {
   /** Sends an armored OpenPGP message as a mail with the subject `Secure-Join`. `introduction` marks the first message to an
    * address that has not written to us (didmail's reply-only mode; PROTOCOL.md §7.1). */
   send(to: SecureJoinParty, armored: string, options: { introduction?: boolean }): Promise<void>
-  /** Keeps their key, which the handshake has vouched for. */
-  learn(party: SecureJoinParty, keydata: string): Promise<void>
+  /** Keeps their key, which the handshake has vouched for, and the name their invite gave them (when it gave one). */
+  learn(party: SecureJoinParty, keydata: string, name?: string): Promise<void>
 }
 
 const fromBase64 = (value: string) => Uint8Array.from(atob(value), char => char.charCodeAt(0))
@@ -130,7 +130,7 @@ export async function handleJoinStep(armored: string, from: SecureJoinParty, con
     }
     if (parseInnerMime(checked.plaintext).headers['secure-join'] !== 'vc-contact-confirm') continue
     if (checked.signature?.verified !== true) throw new Error('vc-contact-confirm is not signed by the key the invite names')
-    await context.learn(from, join.keydata!)
+    await context.learn(from, join.keydata!, join.name && join.name !== join.address ? join.name : undefined)
     await context.pending.remove(join.address)
     return 'vc-contact-confirm'
   }

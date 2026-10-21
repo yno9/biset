@@ -14,7 +14,7 @@ import type { VaultEventRecord, VaultObjectRecord } from '../store/vault/store.t
 import { parseJwe, protectedHeaderOf, unpackAuthcrypt, unpackAnoncrypt, type ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
 import { isPing, isPingResponse, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
 import { FromPriorError, fromPriorKeyResolver, verifyFromPrior, type DidRotation } from '../../protocol/didcomm/from-prior.ts'
-import { autocryptKeyPatch, contactCardForDid, contactSetIntent, counterpartyOfRotatedDid, currentRotation, didCommStateOf, didContactPatch, ownRotationPatch, rotationPatch, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
+import { autocryptKeyPatch, contactCardForDid, contactNamePatch, contactSetIntent, counterpartyOfRotatedDid, currentRotation, didCommStateOf, didContactPatch, ownRotationPatch, rotationPatch, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { PermanentDeliveryError } from '../../protocol/didcomm/mediator-pickup.ts'
 import { isBasicMessage, basicMessageBodyOf, didCommThreadId, pgpArmorOf } from './basicmessage.ts'
@@ -340,6 +340,12 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       const body = basicMessageBodyOf(msg)
       if (!body) throw new TypeError('DIDComm basicmessage has no readable content')
       const sentAt = body.sentAt ?? (msg.created_time ? new Date(msg.created_time * 1000).toISOString() : createdAt)
+      // The name on the mail's From: -- the sender's own choice, so only from a mail the bridge saw pass DMARC.
+      if (body.fromName && body.auth?.dmarc === 'pass') {
+        const card = contactCardForDid(snapshot.contactCards, senderDid)
+        const write = contactNamePatch(card?.id ?? didContactPatch(senderDid).cardId, card, body.fromName, 'mail')
+        if (write) keyWrites.push(write)
+      }
       // The sender's OpenPGP key from the mail's Autocrypt header (didmail PROTOCOL.md §5.5), written to its
       // card -- only when the bridge saw the mail pass DMARC and the key is for the address the DID stands for.
       if (body.autocrypt && body.auth?.dmarc === 'pass' && body.autocrypt.addr.toLowerCase() === mailAddressOfBridgeDid(senderDid)?.toLowerCase()) {
