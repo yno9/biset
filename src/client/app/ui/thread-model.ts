@@ -2,7 +2,7 @@
 // it belongs to. Pure; the screens call these with the identity's own addresses.
 import { groupMessages, inboxKeyForThread, latestGroup } from './message/message-view.ts'
 import type { MailMessageView, ProcessedMessage, ThreadGroup } from './message/message-view.ts'
-import { labelForDid, protocolFor, shortWebvhDid } from './did-display.ts'
+import { labelForDid, protocolFor } from './did-display.ts'
 import type { Proto } from './did-display.ts'
 
 /** This identity's own address(es), lower-cased: its mail address and, once DIDComm is on, its DID. */
@@ -17,13 +17,15 @@ export function selfAddressesOf(selfAddress?: string, selfDid?: string): SelfAdd
  * alternates between the two. Callers that show it to a human go through displayParticipantsOf;
  * threadProtocol needs the raw did: prefix a label has already thrown away. */
 function participantsOf(msgs: readonly MailMessageView[], self: SelfAddresses): string {
-  return [...new Set(msgs.map(m => m.from).filter(Boolean))].filter(a => !self.has(a.toLowerCase())).join(', ')
+  // Who a message came from; and for what this identity wrote, who it was written to -- otherwise a thread of which only our
+  // first message exists has nobody in it (no transport, no name) until the other side answers.
+  const others = msgs.flatMap(m => m.from && self.has(m.from.toLowerCase()) ? m.to_addrs ?? [] : [m.from])
+  return [...new Set(others.filter(Boolean))].filter(a => !self.has(a.toLowerCase())).join(', ')
 }
 
-/** participantsOf, every did:webvh shortened (SCID hidden): the form shown wherever a participant
- * list is. */
+/** participantsOf, every DID as the address it stands for (labelForDid): the form shown wherever a participant list is. */
 export function displayParticipantsOf(msgs: readonly MailMessageView[], self: SelfAddresses): string {
-  return participantsOf(msgs, self).split(', ').filter(Boolean).map(a => a.startsWith('did:') ? shortWebvhDid(a) : a).join(', ')
+  return participantsOf(msgs, self).split(', ').filter(Boolean).map(a => a.startsWith('did:') ? labelForDid(a) : a).join(', ')
 }
 
 /** The transport the thread used: the first participant's address shape decides it (a DID recipient

@@ -13,3 +13,10 @@ test('without a display name the short address names it; with nothing received, 
   expect(counterpartLabel([group({ from: 'bob@x.test', ts: 1 })], self)).toBe('bob@x.test')
   expect(counterpartLabel([group({ from: 'me@did.md', ts: 1, to_addrs: ['carol@y.test'] })], self)).toBe('carol@y.test')
 })
+
+test('a thread of which only our own first message exists is with the one it was written to, over DIDComm', async () => {
+  const { threadProtocol, displayParticipantsOf } = await import('../../src/client/app/ui/thread-model.ts')
+  const sent = [{ from: 'me@did.md', to_addrs: ['did:web:did.md:nine.testrun.org:hrdcv7qkr'], ts: 1, thread_id: 't' }] as never
+  expect(threadProtocol(sent, self)).toBe('did')
+  expect(displayParticipantsOf(sent, self)).toBe('hrdcv7qkr@nine.testrun.org')
+})
