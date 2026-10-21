@@ -1817,6 +1817,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   flex-shrink: 0;
 }
 #cmd-acc-identity-text {
+  line-height: 1.32;
   flex: 1;
   min-width: 0;
   display: flex;

@@ -90,7 +90,7 @@ function IdentityCard({ did }: { did: string }) {
         onClick={() => { setExpanded(open => !open); if (!expanded && !docLoaded.current) { docLoaded.current = true; void loadDoc() } }}>
         <div id="cmd-acc-identity-avatar" className="lp-avatar" style={{ background: avatarColor(label) }}>{label.charAt(0).toUpperCase()}</div>
         <div id="cmd-acc-identity-text">
-          <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{name}</span></div>
+          <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{name.replace(/\.did\.md$/, '@did.md')}</span></div>
           {/* Clicking the DID text copies it. */}
           <div id="cmd-acc-identity-did-row"
             onClick={event => { event.stopPropagation(); navigator.clipboard?.writeText(did).then(() => getAccountConfig()?.showMessage?.('DID copied')).catch(() => {}) }}>
