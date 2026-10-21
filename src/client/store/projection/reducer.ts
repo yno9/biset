@@ -132,15 +132,6 @@ export function reduceLocalJmapProjection(
       // rebuild. Contacts are `contact.set` now.
       continue
     }
-    if (mutation.kind === 'credential.openpgp.set') {
-      // Deliberately a no-op for the read-model: the identity-shared OpenPGP
-      // mail private key (vault/openpgp-credential-sink.ts), read only by
-      // OpenPgpCredentialReader directly off the vault events -- never a
-      // mailbox/keyword change. A sibling device receiving this event via
-      // ordinary vault-delivery sync must not have it rejected here just
-      // because this reducer has no mail-projection rule for it.
-      continue
-    }
     if (mutation.kind === 'message.edit') {
       // MimiContent `replaces` with a non-null body (PLAN-mimi.md §4.3): an
       // existing email's blobId (and optionally subject) move to newly

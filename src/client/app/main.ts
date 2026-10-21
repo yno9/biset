@@ -69,10 +69,7 @@ import { MarkdownDirectoryConnection, observeMarkdownDirectory, removeMarkdownMi
 import { MarkdownSelfWriteGuard, markdownStatusMutation } from '../store/vault/markdown-mirror.ts'
 import { createJmapExport, decodeJmapExport, encodeJmapExport, importJmapExport } from '../store/vault/jmap-export.ts'
 import { isMailAddress, resolveMailAddressDid } from '../didcomm/address-resolver.ts'
-import { OpenPgpCredentialReader, OpenPgpCredentialSink } from '../store/vault/openpgp-credential.ts'
-import { generatePgpKey, importPgpKey, keyNamesAddress, readPgpKey } from '../pgp/keyring.ts'
-import { ensureOwnPgpKey } from '../pgp/auto.ts'
-import { publishPgpKey } from '../pgp/publish.ts'
+import { ownPgp, type OwnPgp } from '../pgp/own.ts'
 import { bridgeHostOf, mailAddressOfBridgeDid, ownAutocryptFor, shouldEncrypt } from '../pgp/autocrypt.ts'
 import { composeEncryptedMail } from '../pgp/compose.ts'
 import { autocryptKeydata } from '../pgp/keyring.ts'
@@ -446,69 +443,36 @@ async function configureWalletAccountIfPresent(
         if (vaultSync) await vaultSync.push([event])
       },
     })
-    // The user's PGP key: a Vault record like the seed, read and written the
-    // same way. Only its public half ever leaves the device.
-    const pgpReader = new OpenPgpCredentialReader({ identityId: device.did, objects: vaultStore, events: vaultStore, segmentKeys: boundary.resolver })
-    const pgpSink = new OpenPgpCredentialSink({
-      identityId: device.did, actorDeviceId: device.deviceId,
-      nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(),
-      activeSegment: () => boundary.activeSegment(), currentSnapshot: () => readModel.snapshot(),
-      signer: boundary.author, committer: vaultStore,
-      onCommitted: async event => {
-        deviceEvents.push({ ...event, identityId: device.did })
-        if (vaultSync) await vaultSync.push([event])
-      },
-    })
     // `label@apex`: the address of an identity at `label.apex` (didmail).
     const ownMailAddress = (() => {
       const domain = parseWebvhDid(device.did).domain
       const dot = domain.indexOf('.')
       return dot > 0 ? `${domain.slice(0, dot)}@${domain.slice(dot + 1)}` : undefined
     })()
-    const publishPgp = async (publicArmor: string | null): Promise<void> => {
-      if (!activeDidCommDevice) throw new Error('DIDComm is still connecting for this Wallet session')
-      await publishPgpKey({ address: ownMailAddress!, gateways: readBisetConfig().mailGateways, publicArmor, fromKid: activeDidCommDevice.xKid, x25519PrivateKey: activeDidCommDevice.x25519PrivateKey })
-    }
-    const storePgpKey = async (key: Awaited<ReturnType<typeof generatePgpKey>>): Promise<void> => {
-      const previous = await pgpReader.current()
-      if (previous && previous.fingerprint === key.fingerprint) return
-      await pgpSink.store({
-        version: 1, kind: 'credential.openpgp.private', identityId: device.did, fingerprint: key.fingerprint, privateKey: key.privateKey,
-        createdAt: new Date().toISOString(), ...(previous ? { supersedesFingerprint: previous.fingerprint } : {}),
-      })
-      // The new key is the one to publish. A failure leaves the key stored: Publish retries.
-      await publishPgp(key.publicArmor).catch(error => showSysMsg(`The key is saved, but publishing it failed: ${error instanceof Error ? error.message : String(error)}`))
-    }
-    // An encrypted mail is opened where it is shown, with this identity's key and the key held for its sender.
+    // The user's OpenPGP key is derived from the generation seed (pgp/derive.ts), not stored: the seed comes from the
+    // authority below, once it exists, and from the Vault for the earlier generations.
+    let generationSeeds: { current(): Promise<Uint8Array | undefined> } | undefined
+    const pgp: OwnPgp | undefined = ownMailAddress ? ownPgp(ownMailAddress, {
+      current: async () => generationSeeds?.current(),
+      all: async () => (await walletSeedReader.readAll()).map(record => record.seed),
+    }) : undefined
+    // An encrypted mail is opened where it is shown, with this identity's keys and the key held for its sender.
     setEncryptedMailOpener(async (rawBody, email, snapshot) => {
-      const credential = await pgpReader.current()
       const card = contactCardForDid(snapshot.contactCards, email.from?.[0]?.email ?? '')
       const held = card && currentAutocryptKey(card)
-      return openStoredMail(rawBody, { privateKey: credential?.privateKey, senderKeys: held ? [Uint8Array.from(atob(held.keydata), char => char.charCodeAt(0))] : [] })
+      return openStoredMail(rawBody, { privateKeys: (await pgp?.all() ?? []).map(key => key.privateKey), senderKeys: held ? [Uint8Array.from(atob(held.keydata), char => char.charCodeAt(0))] : [] })
     })
-    const currentPgp = async () => {
-      const credential = await pgpReader.current()
-      return credential ? { credential, key: await readPgpKey(credential.privateKey) } : undefined
-    }
-    if (ownMailAddress) {
+    if (ownMailAddress && pgp) {
       pgpCard = {
         address: ownMailAddress,
         async current() {
-          const current = await currentPgp()
-          return current && { fingerprint: current.key.fingerprint, userIds: current.key.userIds, namesAddress: keyNamesAddress(current.key, ownMailAddress) }
+          const key = await pgp.current()
+          return key && { fingerprint: key.fingerprint, userIds: key.userIds }
         },
-        onGenerate: async () => storePgpKey(await generatePgpKey(ownMailAddress)),
-        onImport: async (text, passphrase) => storePgpKey(await importPgpKey(text, passphrase)),
-        onPublish: async () => {
-          const current = await currentPgp()
-          if (!current) throw new Error('There is no PGP key to publish')
-          await publishPgp(current.key.publicArmor)
-        },
-        onWithdraw: async () => publishPgp(null),
         onCopyPublic: async () => {
-          const current = await currentPgp()
-          if (!current) throw new Error('There is no PGP key')
-          return current.key.publicArmor
+          const key = await pgp.current()
+          if (!key) throw new Error('There is no PGP key yet')
+          return key.publicArmor
         },
       }
     }
@@ -604,6 +568,7 @@ async function configureWalletAccountIfPresent(
           seeds: walletSeedReader,
           readLog: async () => (await fetchCurrentLog(device.did, freshFetch())).entries,
         })
+        generationSeeds = { current: () => seedAuthority.require().then(value => value.seed, () => undefined) }
         await timed('storeApprovedRotationSeed', storeApprovedRotationSeed(device.did, walletSeedReader, walletSeedSink, seedAuthority))
           .catch(error => console.warn('[did.md Wallet generation seed]', error instanceof Error ? error.message : error))
         try {
@@ -613,19 +578,8 @@ async function configureWalletAccountIfPresent(
         } catch (error) {
           console.warn('[did.md Wallet generation seed status]', error instanceof Error ? error.message : error)
         }
-        const vaultPulled = vaultSync.requestState()
+        void vaultSync.requestState()
           .catch(error => { console.warn('[did.md Wallet Vault Sync bootstrap]', error instanceof Error ? error.message : error) })
-        // The account's OpenPGP key is made without being asked, once the Vault pull has had its chance
-        // to bring one from a sibling device and the address's WKD has none (pgp/auto.ts).
-        if (ownMailAddress) {
-          void ensureOwnPgpKey({
-            address: ownMailAddress,
-            hasKey: async () => (await pgpReader.current()) !== undefined,
-            generate: async () => storePgpKey(await generatePgpKey(ownMailAddress)),
-            vaultPulled,
-          }).then(outcome => { if (outcome === 'generated') console.info('[did.md Wallet] OpenPGP key made for', ownMailAddress) })
-            .catch(error => console.warn('[did.md Wallet OpenPGP key]', error instanceof Error ? error.message : error))
-        }
         // DID Rotation (PLAN-refactor.md §4.3, §12.5): every message to a
         // counterparty goes by the route its contact card gives, and a
         // conversation moves to this identity's own did:peer (Y) once the
@@ -701,19 +655,19 @@ async function configureWalletAccountIfPresent(
           mutationSink,
           route: publicDid => rotationManager.route(publicDid),
           // To a mail address: this identity's OpenPGP key, which the bridge puts in an Autocrypt header.
-          autocrypt: async toDid => ownAutocryptFor(toDid, ownMailAddress ? await pgpReader.current().then(credential => credential && { address: ownMailAddress, privateKey: credential.privateKey }) : undefined),
+          autocrypt: async toDid => ownAutocryptFor(toDid, ownMailAddress ? await pgp?.current().then(key => key && { address: ownMailAddress, privateKey: key.privateKey }) : undefined),
           // To a mail address whose key we hold and who asked for encryption: the message goes as an OpenPGP-encrypted mail.
           encrypt: async (toDid, content, message) => {
-            const credential = await pgpReader.current()
+            const own = await pgp?.current()
             const host = bridgeHostOf(toDid), toAddress = mailAddressOfBridgeDid(toDid)
-            if (!credential || !ownMailAddress || !host || !toAddress) return undefined
+            if (!own || !ownMailAddress || !host || !toAddress) return undefined
             const card = contactCardForDid((await readModel.snapshot()).contactCards, toDid)
             const held = card && currentAutocryptKey(card)
             if (!held || !shouldEncrypt(held)) return undefined
             return composeEncryptedMail({
               id: message.id, ...(message.thid ? { thid: message.thid } : {}), bridgeHost: host, ...(message.subject ? { subject: message.subject } : {}),
               content, sentAt: message.sentAt, fromAddress: ownMailAddress, toAddress,
-              own: { privateKey: credential.privateKey, keydata: await autocryptKeydata(credential.privateKey, ownMailAddress) },
+              own: { privateKey: own.privateKey, keydata: await autocryptKeydata(own.privateKey, ownMailAddress) },
               peerKey: Uint8Array.from(atob(held.keydata), char => char.charCodeAt(0)),
             })
           },

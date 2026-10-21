@@ -548,12 +548,16 @@ didmail が SMTP で受けたメールを、宛先の did:webvh の全 keyAgreem
 | `body.replyTo`（DID） | `replyTo`。返信はこちらへ送る（`computeReplyContext`） |
 | `body.auth`（SPF／DKIM／DMARC） | `auth`（JMAP 外の拡張）。`dmarc` が `pass` でなければ、スレッドで差出人に「unverified」を付ける |
 
-### 10.4 PGP（2026-10-10、設計は `tasks/D3-pgp.md`）
+### 10.4 PGP（2026-10-21 に、generation seed から導出する形へ。方針は didmail の `PLAN.md` §9.6）
 メールの PGP は、**暗号操作を biset、メールの扱いを didmail** が分担する。秘密鍵と平文は端末から出ない。
-- **鍵**: アカウントページの「PGP key」カード（`account/pgp-card.ts`）で、生成（Curve25519）か、手元の鍵のインポート（パスフレーズ付きなら一度だけ尋ね、**保存はパスフレーズ無し**で。Vault が暗号化しているので）。秘密鍵は Vault の `credential.openpgp.set` の記録（`OpenPgpCredentialReader/Sink`）で、全端末へ同期する。現在の鍵は「他に置き換えられていない最新のもの」。
-- **公開**: 生成かインポートの直後に、公開鍵を自分のアドレス（`label@apex`）のブリッジ DID へ DIDComm で送る（`https://did.md/openpgp-key/1.0/publish`、`client/pgp/publish.ts`）。ブリッジ DID は WebFinger の `links`（`https://did.md/rel/mail-bridge`）で引く。ブリッジは WKD で配信する（didmail PROTOCOL.md §11）。「Publish」「Withdraw」で手動でもできる。
-- **まだ**: 受信した `pgp` 添付の復号と、`pgp-signed` の検証（スレッドへの表示）、連絡先の `cryptoKeys` への保存と WKD での取得、送信の暗号化。
-- 鍵のユーザー ID がアドレスと合わなければ、カードが警告する（WKD の利用者は、合う鍵を探す）。
+- **鍵は導出する**（`client/pgp/derive.ts`）。generation seed（§6）から決定的に作り、保管も同期もしない。全端末が同じ鍵（同じバイト列の証明書）になる。
+  - 主鍵: DID 文書の `#biset-generation` と同じ Ed25519（EdDSA legacy、v4）。DID 文書が PGP 鍵のフィンガープリントを保証する。
+  - 暗号化副鍵: seed から別のラベル（`biset/pgp/encryption/v1`）で導いた X25519（ECDH curve25519 legacy）。
+  - 作成時刻と自己署名の時刻は固定。形式は Delta Chat 自身の鍵と同じ（v4、アルゴリズム 22 / 18、ユーザー ID は `<アドレス>`）。
+- **世代で替わる**。端末を外すと seed が替わり、PGP 鍵も新しい世代の鍵になる（フィンガープリントが替わるので、Delta Chat の鍵つき連絡先は Secure-Join をやり直す）。古い世代の seed は Vault に残るので、その世代の鍵を導き直して、古いメッセージを読める（`client/pgp/own.ts`）。
+- アカウントページの「PGP key」カードは、フィンガープリントの表示と公開鍵のコピーだけ（作る・取り込む・公開する操作は無い）。WKD は使わない。
+- **送受信**: 暗号化メールは暗号文のまま保管し（`pgp/stored.ts`）、一覧を更新するときに開く（`pgp/open.ts`。署名が相手の鍵で検証できたかも記録）。送るときは、相手の鍵を持っていて `prefer-encrypt=mutual` なら暗号化する（`pgp/compose.ts`。内側に本物の件名・Message-ID・自分の `Autocrypt:`、外側の件名は `[...]`）。メールの `Autocrypt:` の鍵は、DMARC が通ったものだけを連絡先カード（`biset.md:autocrypt`）に覚える。
+- **まだ**: Delta Chat の Secure-Join（鍵つき連絡先になる唯一の道）、暗号化メール内側の `Autocrypt:` / gossip の取り込み、署名の表示。
 
 HTML 本文と添付（`attachments`）は今は保存しない（`body.content` が常にあるので読める）。配送失敗は report-problem/2.0（`e.m.xfer.*`）で届き、`didcomm.control` に記録される。その `ack` が送った email の `messageId` を指し、報告者がその email の宛先なら、reducer が email に `undelivered`（宛先・コード・理由）を付け、スレッドに「not delivered」を出す（理由は title）。宛先でない者の報告と、警告（`w.`）は無視する。
 

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { generatePgpKey } from '../src/client/pgp/keyring.ts'
+import { generatePgpKey } from './support/pgp.ts'
 import { isMailBridgeDid, ownAutocryptFor } from '../src/client/pgp/autocrypt.ts'
 
 const sent: Array<{ toDid: string; type: string; body: Record<string, unknown> }> = []

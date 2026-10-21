@@ -14,8 +14,8 @@ export interface OpenedMail {
 }
 
 export interface OpenKeys {
-  /** This identity's secret key, binary; undefined when this device has none (yet). */
-  privateKey: Uint8Array | undefined
+  /** This identity's secret keys, binary, the current generation's first: a message may be for an earlier generation. */
+  privateKeys: readonly Uint8Array[]
   /** The keys held for the sender (binary public keys), to check the signature with. */
   senderKeys: readonly Uint8Array[]
 }
@@ -23,9 +23,12 @@ export interface OpenKeys {
 /** The opened mail, or undefined when the body is not an encrypted one or cannot be opened (no key here, not encrypted to it). */
 export async function openStoredMail(rawBody: string, keys: OpenKeys): Promise<OpenedMail | undefined> {
   const armored = armorOfStoredBody(rawBody)
-  if (!armored || !keys.privateKey) return undefined
-  let decrypted: Decrypted
-  try { decrypted = await decryptMessage({ armored, privateKey: keys.privateKey, senderKeys: keys.senderKeys }) } catch { return undefined }
+  if (!armored) return undefined
+  let decrypted: Decrypted | undefined
+  for (const privateKey of keys.privateKeys) {
+    try { decrypted = await decryptMessage({ armored, privateKey, senderKeys: keys.senderKeys }); break } catch { /* not for this generation's key */ }
+  }
+  if (!decrypted) return undefined
   const subject = parseInnerMime(decrypted.plaintext).headers.subject
   return {
     raw: new TextEncoder().encode(decrypted.plaintext),

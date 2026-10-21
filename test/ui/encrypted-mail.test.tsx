@@ -3,7 +3,7 @@ import { afterEach, expect, test } from 'vitest'
 import * as openpgp from 'openpgp'
 import { refreshInbox, setEncryptedMailOpener } from '../../src/client/app/ui/shell.ts'
 import { mail } from '../../src/client/app/ui/stores.ts'
-import { generatePgpKey } from '../../src/client/pgp/keyring.ts'
+import { generatePgpKey } from '../support/pgp.ts'
 import { buildInnerMime } from '../../src/client/pgp/mime.ts'
 import { encryptMessage } from '../../src/client/pgp/message-crypto.ts'
 import { openStoredMail } from '../../src/client/pgp/open.ts'
@@ -28,7 +28,7 @@ async function setup() {
 
 test('an encrypted mail is shown opened: the real body and subject, its threading, and whether its signature held', async () => {
   const { alice, bob, model } = await setup()
-  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKey: alice.privateKey, senderKeys: [await publicBytes(bob)] }))
+  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [alice.privateKey], senderKeys: [await publicBytes(bob)] }))
   await refreshInbox(model as never)
   const [shown] = mail.get().messages
   expect(shown!.msg.body.trim()).toBe('the real words')
@@ -39,11 +39,11 @@ test('an encrypted mail is shown opened: the real body and subject, its threadin
 
 test('without the sender\'s key the signature is reported as not verified; without our key the notice stays', async () => {
   const { alice, model } = await setup()
-  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKey: alice.privateKey, senderKeys: [] }))
+  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [alice.privateKey], senderKeys: [] }))
   await refreshInbox(model as never)
   expect(mail.get().messages[0]!.msg.encrypted).toEqual({ signed: true, verified: false })
 
-  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKey: undefined, senderKeys: [] }))
+  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [], senderKeys: [] }))
   await refreshInbox(model as never)
   const shown = mail.get().messages[0]!.msg
   expect(shown.encrypted).toBeUndefined()
@@ -53,8 +53,17 @@ test('without the sender\'s key the signature is reported as not verified; witho
 test('a key that is not a recipient leaves the notice (the message is not lost)', async () => {
   const { model } = await setup()
   const other = await generatePgpKey('carol@did.md')
-  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKey: other.privateKey, senderKeys: [] }))
+  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [other.privateKey], senderKeys: [] }))
   await refreshInbox(model as never)
   expect(mail.get().messages[0]!.msg.encrypted).toBeUndefined()
   expect(mail.get().messages[0]!.msg.body).toContain('This message is encrypted with OpenPGP.')
+})
+
+test('a message for an earlier generation\'s key is opened by the next key in the list', async () => {
+  const { alice, bob, model } = await setup()
+  const newer = await generatePgpKey('alice@did.md') // the key of a later generation
+  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [newer.privateKey, alice.privateKey], senderKeys: [await publicBytes(bob)] }))
+  await refreshInbox(model as never)
+  expect(mail.get().messages[0]!.msg.body.trim()).toBe('the real words')
+  expect(mail.get().messages[0]!.msg.encrypted).toEqual({ signed: true, verified: true })
 })

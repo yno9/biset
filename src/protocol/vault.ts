@@ -19,7 +19,6 @@ export const VAULT_EVENT_KINDS = [
   'transport.result',
   'contact-key.set',
   'contact.set',
-  'credential.openpgp.set',
   'credential.generation-seed.set',
   'didcomm.control',
 ] as const

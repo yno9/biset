@@ -1,6 +1,6 @@
 // One generic implementation of the vault's private-credential read and
-// write paths. The credential families (generation-seed,
-// openpgp-credential) differ only in their event kind, their record codec,
+// write paths. The credential families (today only the generation seed)
+// differ in their event kind, their record codec,
 // and the noun used in error messages -- everything else (event
 // verification, segment key resolution and zeroing, the atomic local
 // commit) lives here once, so a fix can never reach only one copy.

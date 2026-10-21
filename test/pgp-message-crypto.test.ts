@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import * as openpgp from 'openpgp'
-import { generatePgpKey, autocryptKeydata } from '../src/client/pgp/keyring.ts'
+import { generatePgpKey } from './support/pgp.ts'
+import { autocryptKeydata } from '../src/client/pgp/keyring.ts'
 import { buildInnerMime, decodeEncodedWords, encodeHeaderValue, keydataHeader, parseInnerMime } from '../src/client/pgp/mime.ts'
 import { decryptMessage, encryptMessage, ensureArmorChecksum, extractArmor, NotEncryptedToUsError } from '../src/client/pgp/message-crypto.ts'
 

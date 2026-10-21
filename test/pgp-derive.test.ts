@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import * as openpgp from 'openpgp'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { DERIVED_KEY_TIME, derivePgpKey, isPrimaryOf } from '../src/client/pgp/derive.ts'
-import { autocryptKeydata, keyNamesAddress } from '../src/client/pgp/keyring.ts'
+import { autocryptKeydata } from '../src/client/pgp/keyring.ts'
 import { rotationSigningKey } from '../src/client/didcomm/rotation-key.ts'
 import { decryptMessage, encryptMessage } from '../src/client/pgp/message-crypto.ts'
 
@@ -49,7 +49,7 @@ describe('the PGP key derived from the generation seed', () => {
 
   test('it works as a key: names its address, signs, and decrypts what is encrypted to its public half', async () => {
     const alice = await derivePgpKey(seed(), 'alice@did.md'), bob = await derivePgpKey(seed(), 'bob@x.test')
-    expect(keyNamesAddress(alice, 'alice@did.md')).toBe(true)
+    expect(alice.userIds).toEqual(['<alice@did.md>'])
     const publicBytes = async (key: { publicArmor: string }) => (await openpgp.readKey({ armoredKey: key.publicArmor })).write()
     const armored = await encryptMessage({ plaintext: 'derived', recipients: [await publicBytes(bob)], signer: alice.privateKey })
     const opened = await decryptMessage({ armored, privateKey: bob.privateKey, senderKeys: [await publicBytes(alice)] })

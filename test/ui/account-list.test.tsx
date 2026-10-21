@@ -148,17 +148,21 @@ test('a failed renewal is reported and the link works again', async () => {
   await waitFor(() => expect(link.getAttribute('aria-disabled')).toBeNull())
 })
 
-test('the PGP card offers to make a key when there is none, and shows it when there is', async () => {
-  let key: { fingerprint: string; userIds: string[]; namesAddress: boolean } | undefined
-  const pgp = {
-    address: 'alice@did.md', current: async () => key, onGenerate: vi.fn(async () => { key = { fingerprint: 'ABCD1234EF', userIds: ['alice@did.md'], namesAddress: true } }),
-    onImport: vi.fn(async () => {}), onPublish: vi.fn(async () => {}), onWithdraw: vi.fn(async () => {}), onCopyPublic: vi.fn(async () => 'armor'),
-  }
+test('the PGP card waits while there is no generation seed, then shows the derived key and copies its public half', async () => {
+  let key: { fingerprint: string; userIds: string[] } | undefined
+  const writeText = vi.fn(async () => {})
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  const pgp = { address: 'alice@did.md', current: async () => key, onCopyPublic: vi.fn(async () => 'armor') }
   const { container } = render(<AccountList />)
   set(config({ pgp }))
-  await waitFor(() => expect(container.querySelector('#cmd-acc-pgp-card')!.textContent).toContain('Make a key for alice@did.md'))
-  fireEvent.click(screen.getByText('Generate'))
+  await waitFor(() => expect(container.querySelector('#cmd-acc-pgp-card')!.textContent).toContain('generation seed'))
+  expect(screen.queryByText('Copy public key')).toBeNull()
+
+  key = { fingerprint: 'ABCD1234EF', userIds: ['<alice@did.md>'] }
+  set(config({ pgp: { ...pgp } }))
   await waitFor(() => expect(container.querySelector('#cmd-acc-pgp-card')!.textContent).toContain('ABCD 1234 EF'))
-  expect(messages).toContain('PGP key generated')
-  expect(screen.getByText('Publish')).toBeTruthy()
+  fireEvent.click(screen.getByText('Copy public key'))
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith('armor'))
+  await waitFor(() => expect(messages).toContain('Public key copied'))
+  vi.unstubAllGlobals()
 })
