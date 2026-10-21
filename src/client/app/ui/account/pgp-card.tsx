@@ -1,6 +1,6 @@
-// The account page's PGP key card: the key this identity decrypts and signs mail with. It is derived from the
+// The PGP key row of the identity card: the key this identity decrypts and signs mail with. It is derived from the
 // generation seed (pgp/derive.ts), so there is nothing to make, bring or publish here; a new generation (a device was
-// removed) is a new key. The card shows its fingerprint and copies its public half.
+// removed) is a new key. The row shows its fingerprint; clicking it copies the public half.
 import { useCallback, useEffect, useState } from 'react'
 
 export interface PgpCardConfig {
@@ -12,13 +12,15 @@ export interface PgpCardConfig {
   onCopyPublic(): Promise<string>
   /** The link that makes this identity a contact in Delta Chat when it is opened there (Secure-Join; valid for a month). */
   inviteLink(): Promise<string>
+  /** Opens an invite Delta Chat gave (its link, or the text of its QR code): asks that contact for its key. */
+  joinInvite(invite: string): Promise<{ name: string; address: string }>
 }
 
 type Key = Awaited<ReturnType<PgpCardConfig['current']>>
 
 const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
-export function PgpCard({ config, showMessage }: { config: PgpCardConfig; showMessage: (text: string) => void }) {
+export function PgpKeyRow({ config, showMessage }: { config: PgpCardConfig; showMessage: (text: string) => void }) {
   const [key, setKey] = useState<Key | 'loading'>('loading')
 
   const refresh = useCallback(async () => { setKey(await config.current().catch(() => undefined)) }, [config])
@@ -31,38 +33,24 @@ export function PgpCard({ config, showMessage }: { config: PgpCardConfig; showMe
     return () => clearInterval(timer)
   }, [key, refresh])
 
+  if (!key || key === 'loading') return null
   return (
-    <div className="acc-card-wrap" id="cmd-acc-pgp-card">
-      <div className="cmd-page-row" style={{ gap: 12, alignItems: 'center', padding: '10px 12px', flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--accent2, #888)', flexShrink: 0 }}>PGP key</span>
-            <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>:</span>
-            <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {key === 'loading' ? '…' : key ? key.fingerprint.replace(/(.{4})(?=.)/g, '$1 ') : 'waiting'}
-            </span>
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--text-dim)', wordBreak: 'break-all' }}>
-            {key === 'loading' ? '' : key
-              ? `${key.userIds.join(', ')}. Derived from this account's generation; a new generation (a device was removed) is a new key.`
-              : `The key of ${config.address} follows from the account's generation seed, which this device does not have yet.`}
-          </div>
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {key && key !== 'loading' ? (
-            <>
-              <button type="button" className="acc-pgp-btn"
-                onClick={event => { event.stopPropagation(); void config.inviteLink().then(text => navigator.clipboard.writeText(text)).then(() => showMessage('Delta Chat invite link copied: open it in Delta Chat to become contacts'), error => showMessage(errorText(error))) }}>
-                Copy Delta Chat invite
-              </button>
-              <button type="button" className="acc-pgp-btn"
-                onClick={event => { event.stopPropagation(); void config.onCopyPublic().then(text => navigator.clipboard.writeText(text)).then(() => showMessage('Public key copied'), error => showMessage(errorText(error))) }}>
-                Copy public key
-              </button>
-            </>
-          ) : null}
-        </div>
-      </div>
+    <div id="cmd-acc-pgp-row" title={`PGP key ${key.userIds.join(', ')}: click to copy the public key`}
+      onClick={event => { event.stopPropagation(); void config.onCopyPublic().then(text => navigator.clipboard.writeText(text)).then(() => showMessage('Public key copied'), error => showMessage(errorText(error))) }}>
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="7.5" cy="15.5" r="4.5" /><path d="m10.7 12.3 9.8-9.8M16 7l3 3M14 9l2 2" /></svg>
+      <span id="cmd-acc-pgp-fingerprint">{key.fingerprint.replace(/(.{4})(?=.)/g, '$1 ')}</span>
     </div>
   )
+}
+
+/** Copies the Delta Chat invite link (the identity menu's entry). */
+export function copyInviteLink(config: PgpCardConfig, showMessage: (text: string) => void): void {
+  void config.inviteLink().then(text => navigator.clipboard.writeText(text)).then(() => showMessage('Delta Chat invite link copied: open it in Delta Chat to become contacts'), error => showMessage(errorText(error)))
+}
+
+/** Asks for a Delta Chat invite (the identity menu's entry) and starts the Secure-Join with it. */
+export function joinDeltaChatInvite(config: PgpCardConfig, showMessage: (text: string) => void): void {
+  const invite = window.prompt('Paste the Delta Chat invite link (or the text of its QR code)')?.trim()
+  if (!invite) return
+  void config.joinInvite(invite).then(({ name, address }) => showMessage(`Asked ${name} <${address}> for their key: the contact is verified when they answer`), error => showMessage(errorText(error)))
 }

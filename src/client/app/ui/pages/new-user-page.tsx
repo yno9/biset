@@ -165,7 +165,7 @@ export function NewUserPage() {
         <div id="nu-wallet-login-row" style={{ display: embedded ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2 }}>
           {/* "connect with [...]": the [...] is WALLET_DIRECTORY, not a hardcoded wallet. With one entry no picker renders. */}
           {WALLET_DIRECTORY.length > 1 ? (
-            <select id="nu-wallet-picker" value={walletId} style={{ marginRight: 8, padding: '8px 10px', borderRadius: 8, font: 'inherit', fontSize: 14 }}
+            <select id="nu-wallet-picker" value={walletId} style={{ marginRight: 8, padding: '8px 10px', borderRadius: 8, font: 'inherit', fontSize: 15.5 }}
               onChange={event => {
                 setWalletId(event.target.value)
                 const entry = WALLET_DIRECTORY.find(candidate => candidate.id === event.target.value)
@@ -176,12 +176,12 @@ export function NewUserPage() {
           ) : null}
           {/* Optional: a wallet resolved by did:webvh suffix (alice.did.md) instead of the directory's selection. */}
           <input id="nu-wallet-suffix" type="text" placeholder="your did:web suffix (optional)" autoComplete="off" value={suffix} onChange={event => setSuffix(event.target.value)}
-            style={{ marginRight: 8, padding: '8px 10px', borderRadius: 8, font: 'inherit', fontSize: 14, width: 200 }} />
+            style={{ marginRight: 8, padding: '8px 10px', borderRadius: 8, font: 'inherit', fontSize: 15.5, width: 200 }} />
           <button id="nu-wallet-login" type="button" disabled={connecting} onClick={connect}
-            style={{ padding: '10px 18px', border: 0, borderRadius: 8, background: 'var(--accent)', color: '#fff', font: 'inherit', fontSize: 14, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>Connect with your did</button>
+            style={{ padding: '10px 18px', border: 0, borderRadius: 8, background: 'var(--accent)', color: '#fff', font: 'inherit', fontSize: 15.5, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>Connect with your did</button>
         </div>
         <div id="nu-wallet-result" aria-live="polite"
-          style={{ display: result ? 'block' : 'none', minHeight: 18, fontSize: 13, textAlign: 'center', overflowWrap: 'anywhere', color: result?.error ? '#ff3b30' : 'var(--text-dim)' }}>{result?.message}</div>
+          style={{ display: result ? 'block' : 'none', minHeight: 18, fontSize: 14.5, textAlign: 'center', overflowWrap: 'anywhere', color: result?.error ? '#ff3b30' : 'var(--text-dim)' }}>{result?.message}</div>
       </div>
     </div>
   )

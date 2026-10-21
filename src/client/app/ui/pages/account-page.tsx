@@ -6,9 +6,9 @@ import { useStore } from '../../react/store.ts'
 import { parseWebvhDid } from '../../../../protocol/webvh/identifier.ts'
 import { resolve } from '../../../../protocol/webvh/resolver.ts'
 import { AccountList } from '../account/account-list.tsx'
+import { copyInviteLink, joinDeltaChatInvite, PgpKeyRow } from '../account/pgp-card.tsx'
 import { openDropdownMenu, type MenuItem } from '../account/menu.tsx'
 import { accountConfig, getAccountConfig } from '../account/state.ts'
-import { shortWebvhDid } from '../did-display.ts'
 import { avatarColor } from '../format.ts'
 import { setPage } from '../state.ts'
 import { NewUserPage } from './new-user-page.tsx'
@@ -21,8 +21,14 @@ function identityMenuItems(): MenuItem[] {
   const config = getAccountConfig()
   const wallet = config?.wallet
   const showMessage = (error: unknown) => getAccountConfig()?.showMessage?.(errorText(error))
+  const pgp = config?.pgp
+  const invite: MenuItem[] = pgp ? [
+    { label: 'Copy Delta Chat invite', onClick: () => copyInviteLink(pgp, text => config?.showMessage?.(text)) },
+    { label: 'Join a Delta Chat invite', onClick: () => joinDeltaChatInvite(pgp, text => config?.showMessage?.(text)) },
+  ] : []
   if (wallet) {
     return [
+      ...invite,
       ...(wallet.reconnectRequired && wallet.onReconnect ? [{ label: 'Reconnect Wallet', onClick: () => { void wallet.onReconnect?.().catch(showMessage) } }] : []),
       { label: 'Export Messages', onClick: () => { void getAccountConfig()?.onExportMessages?.().catch(showMessage) } },
       { label: 'Import Messages', onClick: () => { void getAccountConfig()?.onImportMessages?.().catch(showMessage) } },
@@ -36,6 +42,7 @@ function identityMenuItems(): MenuItem[] {
     ]
   }
   return [
+    ...invite,
     { label: 'Protect with passkey', onClick: () => {} },
     { label: 'Export Messages', onClick: () => { void getAccountConfig()?.onExportMessages?.() } },
     { label: 'Import Messages', onClick: () => { void getAccountConfig()?.onImportMessages?.() } },
@@ -52,7 +59,9 @@ function identityMenuItems(): MenuItem[] {
 
 function IdentityCard({ did }: { did: string }) {
   const label = parseWebvhDid(did).domain
-  const wallet = useStore(accountConfig)?.wallet
+  const accountState = useStore(accountConfig)
+  const wallet = accountState?.wallet
+  const pgp = accountState?.pgp
   const [name, setName] = useState(label)
   const [expanded, setExpanded] = useState(false)
   const [doc, setDoc] = useState('')
@@ -85,13 +94,14 @@ function IdentityCard({ did }: { did: string }) {
         <div id="cmd-acc-identity-avatar" className="lp-avatar" style={{ background: avatarColor(label) }}>{label.charAt(0).toUpperCase()}</div>
         <div id="cmd-acc-identity-text">
           <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{name}</span></div>
-          {/* The DID text and its copy button are one click target, one handler on the row. */}
+          {/* Clicking the DID text copies it. */}
           <div id="cmd-acc-identity-did-row"
             onClick={event => { event.stopPropagation(); navigator.clipboard?.writeText(did).then(() => getAccountConfig()?.showMessage?.('DID copied')).catch(() => {}) }}>
-            <span id="cmd-acc-identity-did" title={did}>{shortWebvhDid(did)}</span>
-            <button id="cmd-acc-identity-copy" type="button" aria-label="Copy DID" title="Copy DID">
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
-            </button>
+            <svg id="cmd-acc-webvh-icon" viewBox="290 90 700 850" width="13" height="13" fill="currentColor" stroke="currentColor" aria-hidden="true">
+              <path fill="none" strokeWidth="54" d="M580 150 L928 351 V735 M578 150 V541 L698 610 M578 255 L815 392 V810 M578 347 L698 416 V875 M348 285 V650 L700 853 M462 213 V594 L698 718" />
+              <circle cx="580" cy="150" r="48" /><circle cx="928" cy="735" r="48" /><circle cx="816" cy="810" r="48" /><circle cx="702" cy="875" r="48" /><circle cx="351" cy="285" r="48" /><circle cx="463" cy="213" r="48" />
+            </svg>
+            <span id="cmd-acc-identity-did" title={did}>{did}</span>
             {wallet && expires ? (
               <span id="cmd-acc-capability-expiry"
                 className={wallet.reconnectRequired === true || expires.getTime() <= Date.now() ? 'expired' : undefined}
@@ -100,6 +110,7 @@ function IdentityCard({ did }: { did: string }) {
               </span>
             ) : <span id="cmd-acc-capability-expiry" />}
           </div>
+          {pgp ? <PgpKeyRow config={pgp} showMessage={text => getAccountConfig()?.showMessage?.(text)} /> : null}
         </div>
         <button ref={menuButton} id="cmd-acc-identity-menu-btn" type="button" aria-label="Menu"
           onClick={event => { event.stopPropagation(); openDropdownMenu(menuButton.current!, identityMenuItems()) }}>

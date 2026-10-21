@@ -123,7 +123,7 @@ function ConvMeta({ group, hidden, groupName }: { group: ThreadGroup | undefined
       <div id="conv-fields" onClick={() => setExpanded(open => !open)}>
         <div id="conv-to">
           <span id="conv-did" />
-          {group ? <span id="conv-via" style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: PROTO_COLOR[proto], borderRadius: 4, padding: '1px 5px', marginRight: 6, flexShrink: 0 }}>{PROTO_TEXT[proto]}</span> : <span id="conv-via" />}
+          {group ? <span id="conv-via" style={{ fontSize: 11, fontWeight: 700, color: '#fff', background: PROTO_COLOR[proto], borderRadius: 4, padding: '1px 5px', marginRight: 6, flexShrink: 0 }}>{PROTO_TEXT[proto]}</span> : <span id="conv-via" />}
           {first?.thread_id.startsWith(DIDCOMM_GROUP_THREAD_PREFIX) ? <GroupStrip groupId={first.thread_id.slice(DIDCOMM_GROUP_THREAD_PREFIX.length)} name={groupName ?? 'Group'} /> : (group ? displayParticipantsOf(msgs, self) : null)}
         </div>
         <div id="conv-cc" />

@@ -71,6 +71,7 @@ import { createJmapExport, decodeJmapExport, encodeJmapExport, importJmapExport 
 import { isMailAddress, resolveMailAddressDid } from '../didcomm/address-resolver.ts'
 import { ownPgp, type OwnPgp } from '../pgp/own.ts'
 import { handleSecureJoin, inviteUrl, SECURE_JOIN_SUBJECT } from '../pgp/securejoin.ts'
+import { beginJoin, handleJoinStep, localPendingJoins, parseInvite, type JoinContext } from '../pgp/securejoin-join.ts'
 import { bridgeHostOf, mailAddressOfBridgeDid, ownAutocryptFor, shouldEncrypt } from '../pgp/autocrypt.ts'
 import { composeEncryptedMail } from '../pgp/compose.ts'
 import { autocryptKeydata } from '../pgp/keyring.ts'
@@ -463,6 +464,8 @@ async function configureWalletAccountIfPresent(
       const held = card && currentAutocryptKey(card)
       return openStoredMail(rawBody, { privateKeys: (await pgp?.all() ?? []).map(key => key.privateKey), senderKeys: held ? [Uint8Array.from(atob(held.keydata), char => char.charCodeAt(0))] : [] })
     })
+    // Set where the Secure-Join answers are (below), which needs what is built after this card.
+    let joinInvite: ((invite: string) => Promise<{ name: string; address: string }>) | undefined
     if (ownMailAddress && pgp) {
       pgpCard = {
         address: ownMailAddress,
@@ -479,6 +482,10 @@ async function configureWalletAccountIfPresent(
           const [seed, key] = await Promise.all([generationSeeds?.current(), pgp.current()])
           if (!seed || !key) throw new Error('The key is not ready yet')
           return inviteUrl({ seed, key, address: ownMailAddress, now: Date.now() })
+        },
+        joinInvite: async invite => {
+          if (!joinInvite) throw new Error('Not connected yet')
+          return joinInvite(invite)
         },
       }
     }
@@ -692,6 +699,36 @@ async function configureWalletAccountIfPresent(
         })
         // Delta Chat's Secure-Join, the invited side: an invite link (the account page) is opened in Delta Chat, which then sends
         // two messages that only someone with the invite can make; the answers make this identity a key-contact there.
+        const sendSecureJoin = async (to: { did: string }, armored: string, options: { introduction?: boolean }) => {
+          const route = await rotationManager.route(to.did)
+          const sent = await sendDidCommMessage(route.toDid, '', {
+            fromKid: route.fromKid, x25519PrivateKey: route.x25519PrivateKey, subject: SECURE_JOIN_SUBJECT, encrypted: { armored }, ...(options.introduction ? { introduction: true } : {}),
+          })
+          if (!sent.ok) throw new Error(sent.error)
+        }
+        // A key a Secure-Join handshake has vouched for: kept on the contact's card, as verified.
+        const learnVerifiedKey = async (who: { did: string }, keydata: string) => {
+          const snapshot = await readModel.snapshot()
+          const card = contactCardForDid(snapshot.contactCards, who.did)
+          const created = didContactPatch(who.did)
+          await mutationSink.commitIntents([
+            ...(card ? [] : [contactSetIntent(created)]),
+            contactSetIntent(autocryptKeyPatch(card?.id ?? created.cardId, { keydata, seenAt: new Date().toISOString(), preferEncrypt: 'mutual', verified: true })),
+          ], snapshot)
+        }
+        const pendingJoins = localPendingJoins(device.did)
+        const joinContext = (key: NonNullable<Awaited<ReturnType<NonNullable<typeof pgp>['current']>>>): JoinContext => ({
+          key, address: ownMailAddress!, now: Date.now(), pending: pendingJoins, send: sendSecureJoin, learn: learnVerifiedKey,
+        })
+        // Opening an invite Delta Chat gave: the first step of the handshake, to the address the invite names.
+        joinInvite = async text => {
+          const key = await pgp?.current()
+          if (!key || !ownMailAddress) throw new Error('The key is not ready yet')
+          const invite = parseInvite(text)
+          const did = await resolveMailAddressDid(invite.address, readBisetConfig().mailGateways)
+          await beginJoin(invite, { did, address: invite.address }, joinContext(key))
+          return { name: invite.name, address: invite.address }
+        }
         const answerSecureJoin = async (message: DidCommPlaintext): Promise<boolean> => {
           const armored = pgpArmorOf(message)
           const fromDid = typeof message.from === 'string' ? message.from : undefined
@@ -703,23 +740,9 @@ async function configureWalletAccountIfPresent(
           try {
             const outcome = await handleSecureJoin(armored, party, {
               seed, key, address: ownMailAddress, now: Date.now(),
-              async send(to, answer) {
-                const route = await rotationManager.route(to.did)
-                const sent = await sendDidCommMessage(route.toDid, '', {
-                  fromKid: route.fromKid, x25519PrivateKey: route.x25519PrivateKey, subject: SECURE_JOIN_SUBJECT, encrypted: { armored: answer },
-                })
-                if (!sent.ok) throw new Error(sent.error)
-              },
-              async learn(who, keydata) {
-                const snapshot = await readModel.snapshot()
-                const card = contactCardForDid(snapshot.contactCards, who.did)
-                const created = didContactPatch(who.did)
-                await mutationSink.commitIntents([
-                  ...(card ? [] : [contactSetIntent(created)]),
-                  contactSetIntent(autocryptKeyPatch(card?.id ?? created.cardId, { keydata, seenAt: new Date().toISOString(), preferEncrypt: 'mutual', verified: true })),
-                ], snapshot)
-              },
-            })
+              send: (to, answer) => sendSecureJoin(to, answer, {}),
+              learn: learnVerifiedKey,
+            }) ?? await handleJoinStep(armored, party, joinContext(key))
             if (outcome) console.info(`[did.md Wallet Secure-Join] ${outcome} from ${fromAddress}`)
             return outcome !== undefined
           } catch (error) {

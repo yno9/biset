@@ -27,7 +27,7 @@ interface Recipient { id: number; text: string; fullDid?: string }
 
 const addressOf = (row: Recipient): string => (row.fullDid || row.text).trim()
 const badge = (proto: Proto) => (
-  <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', borderRadius: 4, padding: '1px 5px', marginRight: 6, flexShrink: 0, background: PROTO_COLOR[proto] }}>{PROTO_TEXT[proto]}</span>
+  <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', borderRadius: 4, padding: '1px 5px', marginRight: 6, flexShrink: 0, background: PROTO_COLOR[proto] }}>{PROTO_TEXT[proto]}</span>
 )
 
 export function ComposePage() {
@@ -85,7 +85,7 @@ export function ComposePage() {
                     <div key={row.id} className="new-recipient-row" data-kind={index === 0 ? 'to' : undefined}>
                       <span className="new-field-label">{index === 0 ? 'To' : ''}</span>
                       <span className="new-recip-protos">
-                        {proto ? <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', borderRadius: 4, padding: '1px 5px', marginRight: 6, flexShrink: 0, background: PROTO_COLOR[proto] }}
+                        {proto ? <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', borderRadius: 4, padding: '1px 5px', marginRight: 6, flexShrink: 0, background: PROTO_COLOR[proto] }}
                           title={proto === 'did' ? 'Sends over DIDComm' : 'Sends over DIDComm, to the DID this address names (its own domain or a mail gateway answers)'}>{PROTO_TEXT[proto]}</span> : null}
                       </span>
                       <input ref={index === rows.length - 1 ? lastInput : undefined} className="new-field-input" type="email" placeholder="recipient@example.com" autoComplete="off"
@@ -97,7 +97,7 @@ export function ComposePage() {
                           const full = addressOf(current)
                           return full.startsWith('did:webvh:') ? { id: current.id, text: shortWebvhDid(full), fullDid: full } : { id: current.id, text: full ? full : current.text }
                         })} />
-                      {index === 0 ? <button id="new-add-btn" className="new-compose-add-btn" tabIndex={-1} style={{ fontSize: 18, padding: '0 4px', lineHeight: 1 }}
+                      {index === 0 ? <button id="new-add-btn" className="new-compose-add-btn" tabIndex={-1} style={{ fontSize: 20, padding: '0 4px', lineHeight: 1 }}
                         onClick={() => { focusNewRow.current = true; setRows(current => [...current, { id: nextId.current++, text: '' }]) }}>+</button> : null}
                     </div>
                   )

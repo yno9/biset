@@ -1,9 +1,8 @@
 // What sits under the identity card on the account page: the mediator (with the identity's device
-// roster in its accordion), a notice when the DIDComm key needs a Wallet approval, and the PGP card.
+// roster in its accordion), and a notice when the DIDComm key needs a Wallet approval.
 import { useRef, useState } from 'react'
 import { useStore } from '../../react/store.ts'
 import { openDropdownMenu, type MenuItem } from './menu.tsx'
-import { PgpCard } from './pgp-card.tsx'
 import { accountConfig, type AccountPageConfig } from './state.ts'
 
 type Wallet = NonNullable<AccountPageConfig['wallet']>
@@ -25,7 +24,6 @@ export function AccountList() {
     <>
       <MediatorCard config={config} wallet={wallet} didComm={wallet.didComm} showMessage={showMessage} />
       {config.rotationKey ? <DidCommKeyNotice rotationKey={config.rotationKey} showMessage={showMessage} /> : null}
-      {config.pgp ? <PgpCard config={config.pgp} showMessage={showMessage} /> : null}
     </>
   )
 }
@@ -82,11 +80,11 @@ function MediatorCard({ config, wallet, didComm, showMessage }: { config: Accoun
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: dotColor }} />
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--accent2, #888)', flexShrink: 0 }}>Mediator</span>
+            <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--accent2, #888)', flexShrink: 0 }}>Mediator</span>
             <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>:</span>
-            <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{coordinatorHost(didComm.mediatorUrl)}</span>
+            <span style={{ fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{coordinatorHost(didComm.mediatorUrl)}</span>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 11, color: 'var(--text-dim)' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 12, color: 'var(--text-dim)' }}>
             <span style={{ color: didComm.error ? '#ff3b30' : '' }}>
               {didComm.error ? `Needs attention: ${didComm.error}` : loggedOut ? 'Logged out' : didComm.connecting ? 'Connecting…' : 'Registered'}
             </span>

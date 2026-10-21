@@ -69,7 +69,7 @@ function Messages({ group }: { group: ThreadGroup }) {
   return (
     <div className="t-messages" ref={container}>
       {start > 0 ? (
-        <button className="t-load-older" style={{ display: 'block', margin: '8px auto', padding: '6px 14px', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-dim)', borderRadius: 14, cursor: 'pointer', fontSize: 12 }}
+        <button className="t-load-older" style={{ display: 'block', margin: '8px auto', padding: '6px 14px', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-dim)', borderRadius: 14, cursor: 'pointer', fontSize: 13 }}
           onClick={() => {
             before.current = { height: container.current?.scrollHeight ?? 0, scroll: document.getElementById('outer')?.scrollTop ?? 0 }
             visibleCounts.set(group.key, Math.min(visible + LOAD_STEP, all.length))
