@@ -19,7 +19,7 @@
 - **複数端末の同期は DIDComm 上の「Vault Sync」**で、自分の DID 宛ての通常の DIDComm メッセージとして送る。専用サーバーも専用の鍵も無い（§8）。
 - **mediator は DIDComm v2.1 の標準手順で話す**: HTTPS POST と WebSocket、`return_route`、Pickup 3.0 の live mode、
   `application/didcomm-encrypted+json`、Trust Ping（§11.1）。
-- biset が自分で運用するサーバーは **mediator** と **rp-signer**（did.md への認可要求に署名）。
+- biset が自分で運用するサーバーは **mediator** だけ。did.md への認可要求は署名しない（rp-signer は 2026-10 に廃止、§5.2）。
   **メールは biset の外**: 別リポジトリの **didmail**（SMTP ⇄ DIDComm bridge）が外部アドレスを `did:web` の DID として見せ、
   biset はそれを普通の DIDComm の相手として扱う。アドレスから DID へは WebFinger で引く（§10）。
 - **メールの PGP は Delta Chat と相互運用する**（Autocrypt v1 ＋ Secure-Join）。PGP 鍵は generation seed から導出し、主鍵は DID 文書の `#biset-generation`（Ed25519）そのもの（§10.4）。**Autocrypt v2（PQ）は保留**（§10.5）。
@@ -158,7 +158,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 │  IndexedDB Vault（ログ層）  ／ did.md Wallet セッション ／ DIDComm      │
 └──┬───────────────┬─────────────────────────┬────────────────────────────┘
    │SIOPv2/OID4VP  │DIDComm v2.1             │File System Access API
-   │(DPoP, JAR)    │HTTPS POST ＋ WebSocket  │ローカルの Markdown フォルダ
+   │(DPoP)         │HTTPS POST ＋ WebSocket  │ローカルの Markdown フォルダ
    │DID 解決(読む) │・1:1 / group chat       │JMAP export/import ファイル
    │               │・Vault Sync（自分の DID 宛て）
    │               │・外部アドレス（didmail の did:web）
@@ -170,10 +170,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 │                 │  │Pickup 3.0、live mode(WS)      │  │WebFinger            │
 │                 │  │Tor Hidden Service(onion)      │  │                     │
 └─────────────────┘  └───────────────────────────────┘  └─────────────────────┘
-        ▲ JAR に署名
-┌─ biset-rp-signer ─┐   biset-mimi（稼働可能だが、現行クライアントは呼ばない）
-│t.biset.md の RP DID│
-└────────────────────┘
+        biset-mimi（稼働可能だが、現行クライアントは呼ばない）
 ```
 
 ### 3.1 運用コンポーネント
@@ -181,9 +178,8 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 | コンポーネント | 入口 | 状態 |
 |---|---|---|
 | **Mediator** | `src/server/mediator/index.ts` | ✅ 本番稼働（v2、`127.0.0.1:8791`、Caddy 経由で `mediator.biset.md`） |
-| **biset-rp-signer** | `src/server/rp-signer/index.ts` | ✅ 本番稼働（v2、`:8794`、`t.biset.md/api/rp-signer/*` として公開） |
 | biset-mimi | `src/server/mimi/index.ts` | 🔧 サーバーとしては動くが、クライアントからの呼び出し経路が無い（将来の MIMI クライアントのために残す） |
-| **クライアント** | `src/client/app/main.ts` | ✅ `t.biset.md`（v2 の Caddy が `/opt/biset/app` を配信）。`file://` の `dist/index.html` でも動く |
+| **クライアント** | `src/client/app/main.ts` | ✅ `mail.did.md`（`./deploy.sh mail`）。`t.biset.md` は廃止の方針。`file://` の `dist/index.html` でも動く |
 | tor | v2 の `tor@default`（did.md と共有） | ✅ Hidden Service が 2 つ（did.md の `didmd-app`、biset の mediator） |
 
 did.md は biset が運用するものではなく、依存する外部サービスである（identity の発行とホスト、wallet の承認）。
@@ -232,11 +228,11 @@ import は確認ダイアログを経て、別の identity の export は拒否�
 
 | ビルド | client の識別 | 認可要求 |
 |---|---|---|
-| **https**（`t.biset.md`） | **RP DID**（固定の did:webvh、`t.biset.md` に束縛）。登録の往復は無い | **JAR（RFC 9101）**。`biset-rp-signer` が RP DID の鍵で署名する |
+| **https**（`mail.did.md`） | **RP DID**（設定の `rpDid`、固定の did:webvh、そのオリジンに束縛）。登録の往復は無い | **署名なしの平文パラメータ**（`client_id` ＝ RP DID）。dito が iframe（と作成の最後のページ）の中でだけ受け付け、承認は開いた親ページのオリジンに限る。署名サーバーは無い |
 | **file://** | DCR で得るランダムな `client_xxx`（`registrationAccessToken` を保持） | 通常のクエリ形式（`redirect_uri`、`capability_type`、`alias` など） |
 
 - 応答は **直接配送**（PLAN7）で、`vp_token`（VC-DM の capability）と `id_token` が fragment（https）、または popup の postMessage／クエリ（file://）で戻る。コード交換の往復は無い。
-- `redirect_uri` は、https では signer が固定値（`https://t.biset.md/wallet/callback`）を埋め、呼び出し側からは受け取らない。
+- `redirect_uri` は、https では `<配備のオリジン>/wallet/callback`。dito は、これが iframe を開いた親ページのオリジンで、`client_id`（RP DID）のホストと一致するときだけ承認する。
 - **file:// 版は、https 版と別のアプリとして wallet に登録される**（client_id と redirect_uri が別）（§17-5）。
 - 端末セッションは、DPoP 用の ECDSA P-256 鍵（**非抽出**の `CryptoKey`）に束縛される。
 - ログイン時に、Vault 上の端末 ID（`vaultDeviceId`、`urn:uuid:…`）を作ってセッションに保存する。
@@ -654,10 +650,8 @@ HTML 本文と添付（`attachments`）は今は保存しない（`body.content`
 - `relay-poller.ts`: 別の upstream mediator へ自分を client として登録し、自分宛の Forward を unwrap して再 Forward する、任意の多段中継（`MEDIATOR_RELAY_UPSTREAM_URL`）。
 - 永続化は `sqlite-store.ts`（テーブル: `did_states`、`inboxes`、`messages`、`deliveries`、`replay_ids`、`identities`）。Vault Sync も同じ queue を使うだけで、専用のテーブルや権限は無い。
 
-### 11.2 biset-rp-signer
-状態を持たない。RP DID の鍵（`RP_DID_KEY_FILE`）で JAR を署名するだけ。受け付ける claim は許可リスト（`state`、`dpop_jkt`、`login_hint`、`authorization_details`、`dcql_query`、`scope` など）で、
-`iss`・`client_id`・`response_type`・`redirect_uri` は**サーバー側で固定**し、呼び出し側からは受け取らない。
-素の Node（24 以上、型は Node が自分で除去する）で動く。依存パッケージは無く、署名は `node:crypto` の Ed25519。既定で `127.0.0.1` にだけ bind する。
+### 11.2 biset-rp-signer（廃止）
+2026-10 に廃止した。認可要求は署名しない（§5.2）。署名鍵は不要になった。
 
 ### 11.3 biset-mimi（🔧）
 IETF `draft-ietf-mimi-protocol` に沿った MLS delivery service（`normal`／`anon`／`self`）。サーバーとしては動き、テストも通るが、**現行クライアントからの呼び出し経路は無い**。
@@ -668,7 +662,6 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
   `MEDIATOR_ALLOWED_ORIGINS`、`MEDIATOR_RATE_LIMIT_PER_MINUTE`、`MEDIATOR_MAX_REQUEST_BYTES`、`MEDIATOR_MAX_INBOXES`、`MEDIATOR_MAX_DEVICES_PER_DID`、
   `MEDIATOR_MAX_QUEUE_ITEMS`、`MEDIATOR_MAX_QUEUE_BYTES`、`MEDIATOR_MAX_MESSAGE_BYTES`、`MEDIATOR_QUEUE_TTL_MS`、`MEDIATOR_DORMANT_AFTER_MS`、
   `MEDIATOR_REPLAY_TTL_MS`、`MEDIATOR_MAX_REPLAY_IDS`、`MEDIATOR_RELAY_UPSTREAM_URL`、`MEDIATOR_ALLOWED_DID_DOMAINS`、`MEDIATOR_NEW_INBOXES_PER_ADDRESS_PER_HOUR`。
-- rp-signer: `RP_DID_KEY_FILE`、`RP_REDIRECT_URI`、`RP_SIGNER_ALLOWED_ORIGIN`、`PORT`（既定 8794）、`HOST`（既定 127.0.0.1）。
 - biset-mimi: `MIMI_DATABASE_PATH`、`MIMI_MODE`、`MIMI_PUBLIC_BASE_URL`、`MIMI_ALLOW_EXTERNAL_JOIN`、`PORT`。
 
 ## 12. クライアントの起動
@@ -709,7 +702,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - 端末の失効は DID Document が唯一の権威。外された端末は、新しいメッセージ・新しい Vault Sync・新しい generation seed を受け取れず、新しい移動（`from_prior`）も作れない。
 - `from_prior` は受け手が全部を検査する（`typ`／`alg`、`iss` の `authentication`、署名、`sub` ＝ `from`、`exp`／`nbf`、did:webvh ではログで「鍵を載せた版より後に端末が減っていない」こと）。
 - 承認後は、capability の Data Integrity Proof と、公開された DID Document を**独立に検証**する。
-- `biset-rp-signer` は redirect_uri を固定し、claim を許可リストに限る。
+- 認可要求は署名しない。dito は iframe（と作成の最後のページ）の中でだけ平文の要求を受け付け、`redirect_uri` が開いた親ページのオリジンで、その DID のホストと一致するときに限って承認する。
 
 ### 14.2 未解消リスク
 1. **SegmentKey が IndexedDB に平文（高）**。wallet の material は封印されるが、Vault 側は未完成。
@@ -759,8 +752,8 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 ### 15.2 本番の構成（v2、Debian 12、x86_64）
 - Caddy（`/etc/caddy/Caddyfile`、did.md の deploy と共有。**biset の `deploy.sh` は Caddyfile を触らない**）:
   `mediator.biset.md` → `127.0.0.1:8791`（WebSocket の upgrade も Caddy の `reverse_proxy` がそのまま通す）、
-  `t.biset.md` → `/opt/biset/app`（`/wallet/callback` は `index.html` に書き換え、`/api/rp-signer/*` は `127.0.0.1:8794`）、`biset.md` → `/opt/biset/home`。
-- systemd: `biset-didcomm-mediator.service`（`DynamicUser`、`/opt/biset/didcomm-mediator/`）、`biset-rp-signer.service`、`didmail.service`（`/opt/didmail/current`、設定 `/etc/didmail/didmail.env`、DB `/var/lib/didmail/relay.sqlite`。配備は didmail の `deploy.sh`）。メール UI は `mail.did.md`（`./deploy.sh mail`）。旧 `did-md-mail-relay.service` は停止・無効化済み（ファイルは残す）。
+  `t.biset.md` → `/opt/biset/app`（`/wallet/callback` は `index.html` に書き換え）、`biset.md` → `/opt/biset/home`。
+- systemd: `biset-didcomm-mediator.service`（`DynamicUser`、`/opt/biset/didcomm-mediator/`）、`didmail.service`（`/opt/didmail/current`、設定 `/etc/didmail/didmail.env`、DB `/var/lib/didmail/relay.sqlite`。配備は didmail の `deploy.sh`）。メール UI は `mail.did.md`（`./deploy.sh mail`）。旧 `did-md-mail-relay.service` は停止・無効化済み（ファイルは残す）。
 - tor: `/etc/tor/torrc` の Hidden Service は 2 つ。`/var/lib/tor/biset-mediator/` → `127.0.0.1:8791`。**秘密鍵を失うと `.onion` が変わり、公開済みの DID Document がすべて古くなる**。
 - mediator の DB は `/var/lib/biset-didcomm-mediator/mediator.sqlite`。`deploy.sh` は mediator の入れ替え前に `sqlite3 .backup` で `/var/backups/biset-didcomm-mediator/` へ退避する。
 
@@ -821,7 +814,7 @@ PGP（導出、SKESK v6／OCB、Secure-Join、暗号化メールの組み立て�
 2. **本文を RFC 5322 として読む名残**: Vault の本文 object は `rawRfc5322` という名前で、`message-view.ts` は `rfc5322-headers.ts` で本文の先頭のヘッダを読む（旧メールの Message-ID／References、External Feed Post の `X-Source-Url`）。
    DIDComm のメッセージにはヘッダが無いので、`sourceUrl` を別の場所に移せば、ヘッダの読み取りは消せる。名前の変更（`rawRfc5322`→本文）は機械的だが差分が大きい。
 4. **セッション復元の失敗が一律にセッション破棄になる**（§14.2-4）。
-5. **file:// 版と https 版が別のアプリとして wallet に登録される**（§5.2）。**RP DID は `t.biset.md` に束縛**されており、ドメインを後から自由に変えられるという方針と衝突しうる。
+5. **file:// 版と https 版が別のアプリとして wallet に登録される**（§5.2）。**RP DID は配備するオリジン（`mail.did.md`）に束縛**されており、ドメインを後から自由に変えられるという方針と衝突しうる。
 6. **git の追跡**: `.gitignore` が `scripts/`・`ops/`・`tasks/`・`docs/`・`deploy.sh`・`home/`・`PLAN*`・`config.json` を除外している。**`pnpm build` が使う `scripts/inline.mjs` が、clone から再現できない。**
 7. **dedupe の `alreadyProcessed()` が常に false**（`main.ts`）。
 8. **結線の無い UI と config の残骸**: `config-page.ts` の「New Relay」フォームと「Notifications」のトグル（`src.bak` の HTML を改変せずに移植する方針の結果で、意図した「空の UI」）。
@@ -845,7 +838,7 @@ PGP（導出、SKESK v6／OCB、Secure-Join、暗号化メールの組み立て�
 | 領域 | 状態 |
 |---|---|
 | did:webvh の解決（`protocol/webvh/`） | ✅ |
-| did.md Wallet login（RP DID／JAR、DCR、直接配送、DPoP 端末セッション、VC capability） | ✅ |
+| did.md Wallet login（RP DID（署名なし）、DCR、直接配送、DPoP 端末セッション、VC capability） | ✅ |
 | DID Document の編集（merge、removeEndpoints）と、承認後の独立な検証 | ✅ |
 | 端末集合＝`keyAgreement`、multiplexed encryption、端末ごとの受信箱 | ✅ ❓ 本番での複数端末の通し確認は未実施 |
 | 端末を外す（DID 編集で rotation key を取り替え → 新しい seed の Y へ DID Rotation で移り直す） | ✅ ❓ 本番での通し確認は未実施 |
@@ -930,7 +923,6 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 
 ### 20.6 `server/`
 - `mediator/`: `index.ts`、`deployment.ts`（HTTP と WebSocket）、`server.ts`、`sqlite-store.ts`、`relay-poller.ts`、`rate-limit.ts`、`validate.ts`。
-- `rp-signer/index.ts`。
 - `mimi/`: `index.ts`、`deployment.ts`、`http.ts`、`store.ts`、`mls-appsync.ts` ほか（§11.3）。
 
 ### 20.7 リポジトリ直下の補足
@@ -942,7 +934,7 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 - パッケージ管理は pnpm（`packageManager`、`pnpm-workspace.yaml` の `allowBuilds` は esbuild のみ）。lockfile は `pnpm-lock.yaml` だけ。
 - client の bundle は esbuild（`pnpm build` / `pnpm dev`）。server（mediator・MIMI）は esbuild で依存込みの単一 `.mjs` にして Node 26 で動かす。
   **Node 26 には `--experimental-transform-types` が無く**、`constructor(private readonly …)` のようなパラメータプロパティを含む `.ts` は
-  `node file.ts` では動かない。server・smoke は bundle 経由で起動する（`rp-signer` はそういう構文が無く、`node …/index.ts` のまま）。
+  `node file.ts` では動かない。server・smoke は bundle 経由で起動する。
 - `src/server/runtime/sqlite.ts` は `bun:sqlite` と同じ形（`query().get/all/run`、`transaction`）の `node:sqlite` ラッパー。`get()` は行が無ければ `null`。
 - `src/server/runtime/serve.ts` は `Bun.serve` 相当（fetch ハンドラ、ストリーム応答＝MIMI の SSE、WebSocket upgrade）を `node:http` と `ws` で実装する。
   listen は非同期なので `createMediatorDeployment` と `serveMimiDeployment` は Promise を返す。

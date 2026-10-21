@@ -67,29 +67,16 @@ const REQUESTED_SCOPES = ['openid', 'profile', 'biset:login', 'biset:device', 'b
 // and so falls back to its own old default. This constant is only ever
 // what Biset itself REQUESTS.
 const CAPABILITY_TYPE = 'biset.md/MessengerCapability'
-// PLAN6 (~/did.md/PLAN6-rp-did-authentication.md): when biset runs at its
-// normal https://t.biset.md origin, it authenticates its Authorization
-// Requests to did.md with this DID (JAR/RFC 9101, client_id_scheme=did)
-// instead of a DCR client_id/secret -- see registration() and
-// redirectToWallet() below. Published at
-// https://t.biset.md/.well-known/did.jsonl (created once via
-// ~/did.md/scripts/create-rp-did.ts; the corresponding private key lives
-// only in biset-rp-signer's own secret storage, never in this bundle).
-// A file:// build has no fixed origin to bind a DID to (§0.1bis) and stays
-// on the DCR path unconditionally, forever.
-const RP_DID = 'did:webvh:QmaQdf3VFoXtk7WjfP2rhmKAvMNinLh4qU1bjZ4mPDzVr6:t.biset.md'
-const RP_SIGNER_URL = 'https://t.biset.md/api/rp-signer/sign'
-
-// This deployment's relying-party identity: the constants above, unless the page's config names
-// others (`rpDid`, `rpSignerUrl` in __BISET_CONFIG__). Its signer fixes the redirect URI, and that
-// DID's document must list it, so a deployment at another origin (mail.did.md) needs its own pair.
-function rpIdentity(): { did: string, signerUrl: string } {
-  const configured = (globalThis as { __BISET_CONFIG__?: { rpDid?: unknown, rpSignerUrl?: unknown } }).__BISET_CONFIG__
-  return {
-    did: typeof configured?.rpDid === 'string' ? configured.rpDid : RP_DID,
-    signerUrl: typeof configured?.rpSignerUrl === 'string' ? configured.rpSignerUrl : RP_SIGNER_URL,
-  }
+// This deployment's relying-party DID (`rpDid` in __BISET_CONFIG__; its document lists the redirect
+// URI). The https build names itself with it as the request's client_id and signs nothing: the Wallet
+// approves a request only for the page that embeds it. A file:// build has no fixed origin to bind a
+// DID to and stays on the DCR path.
+function rpDid(): string {
+  const configured = (globalThis as { __BISET_CONFIG__?: { rpDid?: unknown } }).__BISET_CONFIG__?.rpDid
+  if (typeof configured !== 'string') throw new Error('This deployment has no relying-party DID (rpDid in its config)')
+  return configured
 }
+const hasRpDid = (): boolean => typeof (globalThis as { __BISET_CONFIG__?: { rpDid?: unknown } }).__BISET_CONFIG__?.rpDid === 'string'
 const DID_DOCUMENT_EDIT_DETAIL = 'urn:did-core:document-edit:v1'
 // The did.md-operated SMTP relay is a separate process, but shares did.md's
 // authority service.  This detail is Root-signed as part of the ordinary
@@ -548,14 +535,14 @@ function registrationIsUsable(value: DidMdRegistration | undefined, discovered: 
 
 async function registration(walletDeviceName = 'Biset'): Promise<DidMdRegistration> {
   const discovered = await metadata()
-  // PLAN6 §0.1bis: JAR mode needs no DCR round trip at all -- RP_DID is a
+  // An https build needs no DCR round trip at all -- its RP DID is a
   // fixed constant, so there is nothing to register or cache. Only applies
-  // when biset itself runs at a fixed https origin (see RP_DID's comment).
+  // when biset itself runs at a fixed https origin (see rpDid()).
   if (location.protocol !== 'file:') {
     return {
       v: 2, issuer: discovered.issuer, authorizationEndpoint: discovered.authorization_endpoint,
       tokenEndpoint: discovered.token_endpoint, refreshEndpoint: `${selectedWallet.issuer}/v1/oauth/device-refresh`,
-      registrationEndpoint: discovered.registration_endpoint, clientId: rpIdentity().did,
+      registrationEndpoint: discovered.registration_endpoint, clientId: rpDid(),
       registrationAccessToken: '', redirectUri: redirectUri(),
     }
   }
@@ -809,77 +796,40 @@ function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthori
   }
 }
 
-/** Saves the pending authorization and builds the Wallet's authorization request URL (for a JAR
- * relying party: the signed request object from biset-rp-signer). It does not navigate. */
+/** Saves the pending authorization and builds the Wallet's authorization request URL: plain
+ * parameters, nothing signed. It does not navigate. */
 async function walletRequestUrl(client: DidMdRegistration, pending: DidMdPendingAuthorization): Promise<string> {
-  // Saved while the signer is asked (nothing below reads it); both are done before the request is handed on.
-  const saved = saveDidMdPendingAuthorization(pending)
-  saved.catch(() => {})
-  const url = await walletRequestUrlUnsaved(client, pending)
-  await saved
-  return url
-}
-
-async function walletRequestUrlUnsaved(client: DidMdRegistration, pending: DidMdPendingAuthorization): Promise<string> {
+  await saveDidMdPendingAuthorization(pending)
   const request = new URL(client.authorizationEndpoint)
   // RFC 9396 details are optional: a plain sign-in asks for none, and the
   // parameter is left out rather than sent empty.
   const authorizationDetails = pending.documentEdit ? JSON.stringify([pending.documentEdit]) : undefined
-  if (client.clientId === rpIdentity().did) {
-    // PLAN6: a JAR (RFC 9101) Authorization Request signed by biset's own
-    // RP DID key, obtained from biset-rp-signer (which holds that key;
-    // this bundle never does). redirect_uri/client_id/response_type are
-    // fixed server-side by the signer itself and not sent here (§0.1bis).
-    // No "capability_type"/"alias" fields: the JAR path expresses the
-    // requested capability *document* entirely through dcql_query (§0.4).
-    // scope is independent of that -- it is what the resulting id_token/
-    // access token are good for (e.g. "openid" gates id_token issuance),
-    // so it is still sent explicitly, same as the flat-query flow. The
-    // one-shot Alias-toggle UI hint has no JAR equivalent yet (a known,
-    // accepted gap for this first rollout -- see PLAN6's phase 2 notes).
-    const signed = await fetch(rpIdentity().signerUrl, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        state: pending.state,
-        ...(pending.handle !== undefined ? { login_hint: pending.handle } : {}),
-        ...(pending.deviceJkt !== undefined ? { dpop_jkt: pending.deviceJkt } : {}),
-        scope: REQUESTED_SCOPES.join(' '),
-        ...(authorizationDetails ? { authorization_details: authorizationDetails } : {}),
-        dcql_query: { credentials: [{ id: 'capability', format: 'vc+di', meta: { type_values: [['VerifiableCredential', CAPABILITY_TYPE]] } }] },
-      }),
-    })
-    if (!signed.ok) throw new Error(`biset-rp-signer request failed: ${signed.status} ${await signed.text()}`)
-    const { jwt } = asObject(await signed.json(), 'biset-rp-signer response') as { jwt: unknown }
-    if (typeof jwt !== 'string') throw new Error('biset-rp-signer response is invalid')
-    request.search = new URLSearchParams({ client_id: rpIdentity().did, response_type: 'vp_token id_token', request: jwt }).toString()
-  } else {
-    // PLAN7 (~/did.md/PLAN7-pure-siopv2-direct-delivery.md): no `code`, no
-    // PKCE (nothing to protect from interception once the response is
-    // delivered directly -- see completeDidMdWalletCallback). did.md
-    // delivers the signed capability/id_token straight to redirectUri, by
-    // URL fragment (https) or postMessage (file://); no api.did.md call
-    // happens in between.
-    const params = new URLSearchParams({
-      client_id: pending.clientId, redirect_uri: client.redirectUri, response_type: 'vp_token id_token', state: pending.state,
-      ...(pending.handle !== undefined ? { login_hint: pending.handle } : {}),
-      dpop_jkt: pending.deviceJkt, scope: REQUESTED_SCOPES.join(' '),
-      // Biset owns this capability type's shape (see did.md's
-      // PLAN2-capability-ownership.md) -- the Wallet no longer decides it.
-      // A did.md Wallet that predates this parameter falls back to its own
-      // "did.md/DeviceCapability" default, which is why the check below still
-      // accepts that legacy value too during the transition.
-      capability_type: CAPABILITY_TYPE,
-      // A one-shot UI hint only (dispo ignores it once an identity already
-      // exists in that tab, e.g. every finalize/edit round after login): asks
-      // the did.md Wallet creation screen to start with its Alias toggle on,
-      // since a biset user is expected to want a memorable did.md hostname
-      // rather than the default SCID-derived one. Presence-only -- the value
-      // is never read.
-      alias: '',
-      ...(authorizationDetails ? { authorization_details: authorizationDetails } : {}),
-    })
-    request.search = params.toString()
-  }
+  // PLAN7 (~/did.md/PLAN7-pure-siopv2-direct-delivery.md): no `code`, no
+  // PKCE (nothing to protect from interception once the response is
+  // delivered directly -- see completeDidMdWalletCallback). did.md
+  // delivers the signed capability/id_token straight to redirectUri, by
+  // URL fragment (https) or postMessage (file://); no api.did.md call
+  // happens in between.
+  const params = new URLSearchParams({
+    client_id: pending.clientId, redirect_uri: client.redirectUri, response_type: 'vp_token id_token', state: pending.state,
+    ...(pending.handle !== undefined ? { login_hint: pending.handle } : {}),
+    dpop_jkt: pending.deviceJkt, scope: REQUESTED_SCOPES.join(' '),
+    // Biset owns this capability type's shape (see did.md's
+    // PLAN2-capability-ownership.md) -- the Wallet no longer decides it.
+    // A did.md Wallet that predates this parameter falls back to its own
+    // "did.md/DeviceCapability" default, which is why the check below still
+    // accepts that legacy value too during the transition.
+    capability_type: CAPABILITY_TYPE,
+    // A one-shot UI hint only (dispo ignores it once an identity already
+    // exists in that tab, e.g. every finalize/edit round after login): asks
+    // the did.md Wallet creation screen to start with its Alias toggle on,
+    // since a biset user is expected to want a memorable did.md hostname
+    // rather than the default SCID-derived one. Presence-only -- the value
+    // is never read.
+    alias: '',
+    ...(authorizationDetails ? { authorization_details: authorizationDetails } : {}),
+  })
+  request.search = params.toString()
   return request.toString()
 }
 
@@ -1182,10 +1132,11 @@ export async function peekDidMdWalletSession(): Promise<DidMdActiveSession | und
 export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | undefined> {
   const session = await readDidMdDeviceSession()
   if (!session || session.v !== 2 || session.issuer !== selectedWallet.issuer || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
+  if (location.protocol !== 'file:' && !hasRpDid()) return undefined
   // Over https the client id and the refresh endpoint are constants: no discovery round trip.
   const client = location.protocol === 'file:'
     ? await registration()
-    : { clientId: rpIdentity().did, refreshEndpoint: `${selectedWallet.issuer}/v1/oauth/device-refresh` }
+    : { clientId: rpDid(), refreshEndpoint: `${selectedWallet.issuer}/v1/oauth/device-refresh` }
   if (client.clientId !== session.clientId) return undefined
   const pending = pendingFromSession(session)
   const response = await timedStep('  restore: device-refresh POST', fetch(client.refreshEndpoint, {
