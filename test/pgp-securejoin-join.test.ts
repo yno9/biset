@@ -100,3 +100,15 @@ describe('Secure-Join, the joining side, against the inviting side', () => {
     expect(await handleJoinStep(w.toBob[0]!, w.aliceParty, { ...w.bobContext, now: NOW + (PENDING_HOURS + 1) * 3600_000 })).toBeUndefined()
   })
 })
+
+test('the answers may come from another address of the inviter (a Delta Chat account has several relays)', async () => {
+  const w = await world()
+  const elsewhere = { did: 'did:web:did.md:y.test:alice2', address: 'alice2@y.test' }
+  const alice2 = { ...w.aliceContext, address: 'alice2@y.test' } // its Autocrypt header names the address it sends from
+  await beginJoin(parseInvite(w.url), w.aliceParty, w.bobContext) // the invite names alice@x.test
+  await handleSecureJoin(w.toAlice[0]!.armored, w.bobParty, alice2)
+  expect(await handleJoinStep(w.toBob[0]!, elsewhere, w.bobContext)).toBe('vc-pubkey')
+  await handleSecureJoin(w.toAlice[1]!.armored, w.bobParty, alice2)
+  expect(await handleJoinStep(w.toBob[1]!, elsewhere, w.bobContext)).toBe('vc-contact-confirm')
+  expect(w.bobLearned).toEqual([await autocryptKeydata(w.alice.privateKey, 'alice2@y.test')])
+})

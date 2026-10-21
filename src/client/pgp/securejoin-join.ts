@@ -8,6 +8,9 @@
 //   us -> them   vc-request-with-auth    encrypted to their key, signed by us, our Autocrypt header, our fingerprint
 //   them -> us   vc-contact-confirm      encrypted to our key, signed by them
 //
+// The answers are matched to the join by what only the invite gives (the password, and the fingerprint of the key), not by the
+// sender's address: the account that made the invite may answer from another of its addresses.
+//
 // The state between the steps (which invite we opened for which address, and the key they sent) is the pending join: it is
 // kept on this device only, for PENDING_HOURS.
 import * as openpgp from 'openpgp'
@@ -91,7 +94,9 @@ export type JoinOutcome = 'vc-pubkey' | 'vc-contact-confirm'
  * an error, and the join stays pending. */
 export async function handleJoinStep(armored: string, from: SecureJoinParty, context: JoinContext): Promise<JoinOutcome | undefined> {
   const horizon = context.now - PENDING_HOURS * 60 * 60 * 1000
-  const mine = (await context.pending.list()).filter(join => join.address.toLowerCase() === from.address.toLowerCase() && join.at >= horizon)
+  // Not only the invite's own address: a Delta Chat account may have several relays, and answer from another one (the invite
+  // names chtml.ca, the answer comes from chat.vim.wtf). The password (the invite's) and the key (its fingerprint) are the proof.
+  const mine = (await context.pending.list()).filter(join => join.at >= horizon)
   for (const join of mine) {
     if (join.stage === 'requested') {
       // 2. They send their key, under the password only the invite gives.
