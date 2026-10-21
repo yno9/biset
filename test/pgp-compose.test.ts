@@ -32,6 +32,7 @@ describe('writing an encrypted mail', () => {
     expect(mime.body).toBe('the words')
     expect(decodeEncodedWords(mime.headers.subject!)).toBe('秘密の話')
     expect(mime.headers['message-id']).toBe('<m-1@did.md>')
+    expect(mime.headers['chat-version']).toBe('1.0') // so that Delta Chat shows the text alone
     expect(mime.headers['in-reply-to']).toBe('<abc@mail.x.test>')
     expect(mime.headers.references).toBe('<abc@mail.x.test>')
     expect(mime.headers.to).toBe('bob@x.test')

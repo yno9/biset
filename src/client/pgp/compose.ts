@@ -39,6 +39,8 @@ export async function composeEncryptedMail(input: ComposeInput): Promise<{ armor
       ['Subject', input.subject ?? ''],
       ['Date', (Number.isNaN(date.getTime()) ? new Date() : date).toUTCString()],
       ['Message-ID', messageIdOf(input.id, input.bridgeHost)],
+      // Without it Delta Chat takes the message for ordinary mail and shows "<subject> – <text>"; with it, the text alone.
+      ['Chat-Version', '1.0'],
       ...(parent ? [['In-Reply-To', parent], ['References', parent]] as Array<[string, string]> : []),
     ],
     lines: [keydataHeader('Autocrypt', input.fromAddress, input.own.keydata, true)],
