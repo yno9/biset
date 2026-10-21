@@ -10,6 +10,7 @@
 // src.bak's more general prefix/hidden/suffix split (which existed to also
 // handle a foreign did:webvh's own path convention).
 import { parseWebvhDid } from '../../../protocol/webvh/identifier.ts'
+import { mailAddressOfBridgeDid } from '../../pgp/autocrypt.ts'
 
 /** Elided display form -- `did:webvh:t.biset.md` for a did:webvh, the raw
  * string unchanged for anything else (a bare email, or a DID method this
@@ -25,22 +26,22 @@ export function shortWebvhDid(did: string): string {
   }
 }
 
-/** src.bak's labelForDid (did/contacts.ts): a did:webvh's identifier bakes
- * the username in, so showing it needs no resolve, no Card, nothing
- * published -- reads the same identifier the peer is already addressed by.
- * This rewrite's did:webvh has no separate `:{username}` path segment the
- * way src.bak's did (bisetWebvhUsername) had; the username IS the domain's
- * first label instead (identity/bootstrap.ts's own `domain =
- * ${username}.${apexDomain}`), so that's what this reads. Falls back to the
- * elided form for anything that isn't shaped like that (a bare email, a
- * foreign did:webvh apex with no subdomain, or any other DID method) --
- * never invents a name from a shape it doesn't recognize. */
+/** How a DID is shown to a person: as a mail address, `hrdcv7qkr@nine.testrun.org`, `alice@did.md`. biset's principle is that a
+ * person sees addresses, not DIDs; a screen that shows a DID on purpose (the identity card, a debugging line) says so and does
+ * not come through here. Everything else that names someone calls this, so a rule changed here changes it everywhere.
+ *
+ *  - a mail bridge's DID (`did:web:{bridge}:{domain}:{local}`) is the address it stands for (didmail PROTOCOL.md §3.1);
+ *  - a did:webvh of this system (`{username}.{apex}`, no separate path: identity/bootstrap.ts) is `username@apex`, the address
+ *    didmail gives it;
+ *  - anything else (a bare address, another DID method, a did:webvh shaped otherwise) is left as it is, never invented. */
 export function labelForDid(did: string): string {
+  const bridged = mailAddressOfBridgeDid(did)
+  if (bridged) return bridged
   if (!did.startsWith('did:webvh:')) return did
   try {
     const domain = parseWebvhDid(did).domain
-    const label = domain.split('.')[0]
-    return label && label !== domain ? label : shortWebvhDid(did)
+    const dot = domain.indexOf('.')
+    return dot > 0 ? `${domain.slice(0, dot)}@${domain.slice(dot + 1)}` : shortWebvhDid(did)
   } catch {
     return did
   }

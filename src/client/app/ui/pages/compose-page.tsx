@@ -3,7 +3,7 @@
 // recipient (DIDComm for a DID, and for a mail address its DID); "From" is never a manual choice.
 import { useEffect, useRef, useState } from 'react'
 import { createStore, useStore } from '../../react/store.ts'
-import { shortWebvhDid, protocolFor, PROTO_COLOR, PROTO_TEXT } from '../did-display.ts'
+import { labelForDid, protocolFor, PROTO_COLOR, PROTO_TEXT } from '../did-display.ts'
 import type { ReplySendInput } from '../reply-box.tsx'
 import type { Proto } from '../did-display.ts'
 import { setPage } from '../state.ts'
@@ -89,13 +89,13 @@ export function ComposePage() {
                           title={proto === 'did' ? 'Sends over DIDComm' : 'Sends over DIDComm, to the DID this address names (its own domain or a mail gateway answers)'}>{PROTO_TEXT[proto]}</span> : null}
                       </span>
                       <input ref={index === rows.length - 1 ? lastInput : undefined} className="new-field-input" type="email" placeholder="recipient@example.com" autoComplete="off"
-                        value={row.fullDid ? shortWebvhDid(row.fullDid) : row.text}
+                        value={row.fullDid ? labelForDid(row.fullDid) : row.text}
                         // A manual edit always clears an elided DID's real address.
                         onChange={event => update(row.id, current => ({ id: current.id, text: event.target.value }))}
                         // A typed did:webvh collapses to its elided form once the field is left.
                         onBlur={() => update(row.id, current => {
                           const full = addressOf(current)
-                          return full.startsWith('did:webvh:') ? { id: current.id, text: shortWebvhDid(full), fullDid: full } : { id: current.id, text: full ? full : current.text }
+                          return full.startsWith('did:webvh:') ? { id: current.id, text: labelForDid(full), fullDid: full } : { id: current.id, text: full ? full : current.text }
                         })} />
                       {index === 0 ? <button id="new-add-btn" className="new-compose-add-btn" tabIndex={-1} style={{ fontSize: 20, padding: '0 4px', lineHeight: 1 }}
                         onClick={() => { focusNewRow.current = true; setRows(current => [...current, { id: nextId.current++, text: '' }]) }}>+</button> : null}
@@ -108,7 +108,7 @@ export function ComposePage() {
               <span className="new-field-label">From</span>
               <button type="button" id="new-from" className="new-field-input new-from-btn">
                 {badge('did')}
-                <span style={{ whiteSpace: 'nowrap', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} title={fromAddress}>{shortWebvhDid(fromAddress)}</span>
+                <span style={{ whiteSpace: 'nowrap', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} title={fromAddress}>{labelForDid(fromAddress)}</span>
               </button>
             </div>
             <div id="new-title-field" className="new-compose-field">

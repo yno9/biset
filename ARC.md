@@ -133,6 +133,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 - **同じ意味の処理は共通関数に 1 つだけ置く。** endpoint の選択（`service-endpoint.ts`）、keyAgreement の読み取り（`keyAgreementRecipients`）、
   DIDComm の HTTP 送信（`didCommPost`）などは、この方針で統合された。
 - UI と保存層の間には JMAP 形のローカル API を置き、暗号方式を UI へ漏らさない。
+- **人に見せる名前は、DID ではなくメールアドレス**。メールブリッジの DID（`did:web:did.md:nine.testrun.org:hrdcv7qkr`）は `hrdcv7qkr@nine.testrun.org`、この系の did:webvh（`alice.did.md`）は `alice@did.md` として出す。変換は `labelForDid`（`client/app/ui/did-display.ts`）の 1 か所で、誰かの名前を出す画面（左の一覧、スレッド、宛先、メンバー、エラー文）はすべてここを通る。DID をそのまま見せるのは、意図した例外（アカウント画面の ID カード、デバッグ用の行）だけ。
 - 外部 ingress を ACK するのは、端末で検証・暗号化・永続化が完了した後だけにする。
 
 ### 2.2 非目標・未完成

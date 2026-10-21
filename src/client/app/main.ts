@@ -25,6 +25,7 @@ import {
   DID_MD_JUST_CONNECTED_KEY,
 } from '../identity/wallet/did-md-oauth.ts'
 import { refreshInbox, setEncryptedMailOpener, showApp, showSysMsg } from './ui/shell.ts'
+import { labelForDid } from './ui/did-display.ts'
 import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
 import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, showConfigPage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
 import { savedPage } from './ui/state.ts'
@@ -694,7 +695,7 @@ async function configureWalletAccountIfPresent(
             const key = `${item.outboundEventId}\u0000${item.toDid}\u0000${reason}`
             if (reportedOutboxFailures.has(key)) return
             reportedOutboxFailures.add(key)
-            showSysMsg(`Could not send to ${item.toDid} yet (it stays queued and will be retried): ${reason}`)
+            showSysMsg(`Could not send to ${labelForDid(item.toDid)} yet (it stays queued and will be retried): ${reason}`)
           },
         })
         // Delta Chat's Secure-Join, the invited side: an invite link (the account page) is opened in Delta Chat, which then sends

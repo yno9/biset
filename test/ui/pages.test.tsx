@@ -38,7 +38,7 @@ const composeConfig = (over = {}) => ({ selfAddress: 'me@did.md', selfDid: 'did:
 test('compose: From is this identity\'s DID, the To row shows the transport its address uses', () => {
   configureComposePage(composeConfig())
   const { container } = render(<ComposePage />)
-  expect(container.querySelector('#new-from')!.textContent).toContain('did:webvh:me.did.md')
+  expect(container.querySelector('#new-from')!.textContent).toContain('me@did.md')
   const input = container.querySelector<HTMLInputElement>('#new-recipients .new-field-input')!
   expect(container.querySelector('.new-recip-protos')!.textContent).toBe('')
   fireEvent.change(input, { target: { value: 'bob@did.md' } })
@@ -47,14 +47,14 @@ test('compose: From is this identity\'s DID, the To row shows the transport its 
   expect(container.querySelector('.new-recip-protos')!.textContent).toBe('DID')
 })
 
-test('compose: a typed did:webvh collapses to its short form on blur and is sent in full', async () => {
+test('compose: a typed did:webvh shows as its address on blur and is sent as the DID', async () => {
   const config = composeConfig()
   configureComposePage(config)
   const { container } = render(<ComposePage />)
   const input = container.querySelector<HTMLInputElement>('#new-recipients .new-field-input')!
   fireEvent.change(input, { target: { value: DID } })
   fireEvent.blur(input)
-  expect(input.value).toBe('did:webvh:alice.did.md')
+  expect(input.value).toBe('alice@did.md')
   fireEvent.change(container.querySelector('#new-body')!, { target: { value: ' hello ' } })
   fireEvent.click(container.querySelector('#new-send-btn')!)
   await waitFor(() => expect(config.sendMessage).toHaveBeenCalledWith({ toAddrs: [DID], subject: '', body: 'hello' }))
@@ -68,7 +68,7 @@ test('compose: rows can be added, and an edit drops an elided DID\'s real addres
   expect(inputs()).toHaveLength(2)
   fireEvent.change(inputs()[1]!, { target: { value: DID } })
   fireEvent.blur(inputs()[1]!)
-  expect(inputs()[1]!.value).toBe('did:webvh:alice.did.md')
+  expect(inputs()[1]!.value).toBe('alice@did.md')
   fireEvent.change(inputs()[1]!, { target: { value: 'did:webvh:alice.did.m' } })
   expect(inputs()[1]!.value).toBe('did:webvh:alice.did.m')
 })

@@ -79,7 +79,7 @@ test('a DIDComm sender is shown by its short name; badges mark what is wrong wit
   expect(container.querySelector('.t-source-link')).toBeNull()
   act(() => shell.set({ ...shell.get(), focusedThreadKey: 'D' }))
   rerender(<div id="app"><RightCol /></div>)
-  expect(container.querySelector('.t-sender')!.textContent).toBe('dave')
+  expect(container.querySelector('.t-sender')!.textContent).toBe('dave@did.md')
 })
 
 test('only the latest 100 messages show; "Show older" adds a hundred more', () => {
@@ -124,7 +124,7 @@ test('a group chat is titled by its name and lists its members', async () => {
   setMessages([message({ from: did('zed'), from_name: did('zed'), thread_id: G, subject: 'subject' })])
   const { container } = app(<RightCol />)
   await waitFor(() => expect(container.querySelector('#header-thread-title')!.textContent).toBe('Book club'))
-  await waitFor(() => expect([...container.querySelectorAll('.conv-member-chip')].map(e => e.textContent)).toEqual(['zed', 'amy']))
+  await waitFor(() => expect([...container.querySelectorAll('.conv-member-chip')].map(e => e.textContent)).toEqual(['zed@did.md', 'amy@did.md']))
 })
 
 test('other pages take the title and hide the thread\'s own furniture', () => {

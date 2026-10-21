@@ -15,6 +15,7 @@
 import type { LocalJmapEmail, MailAuthResults } from '../../../store/projection/gateway.ts'
 import { extractPlainTextBody } from './body-text.ts'
 import { readRfc5322HeaderSummary } from './rfc5322-headers.ts'
+import { labelForDid } from '../did-display.ts'
 
 export interface ThreadableMsg {
   message_id?: string
@@ -234,7 +235,7 @@ export function emailToMessageView(email: LocalJmapEmail, rawRfc5322: Uint8Array
   const ts = Date.parse(email.sentAt ?? email.receivedAt)
   return {
     from: from?.email ?? '',
-    from_name: from?.name ?? from?.email ?? '',
+    from_name: from?.name ?? (from?.email ? labelForDid(from.email) : ''),
     body: extractPlainTextBody(rawRfc5322),
     subject: email.subject ?? headers.subject ?? '',
     ts: Number.isNaN(ts) ? 0 : ts,
