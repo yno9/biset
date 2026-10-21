@@ -1825,8 +1825,8 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 }
 #cmd-acc-identity-avatar {
   flex-shrink: 0;
-  width: 44px;
-  height: 44px;
+  width: 46px;
+  height: 46px;
   font-size: 15px;
 }
 #cmd-acc-identity-text {
