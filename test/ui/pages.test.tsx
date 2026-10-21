@@ -6,6 +6,7 @@ vi.mock('../../src/client/identity/wallet/did-md-oauth.ts', () => ({
   prepareDidMdWalletLoginRequest: vi.fn(async () => ''), completeDidMdWalletCallback: vi.fn(async () => undefined), restoreDidMdWalletSession: vi.fn(async () => undefined),
   beginDidMdWalletLogin: vi.fn(async () => {}), resolveWalletFromSuffix: vi.fn(), selectWallet: vi.fn(), currentWallet: () => ({ id: 'dito', displayName: 'dito' }),
 }))
+vi.mock('../../src/client/app/ui/account/profile.ts', async importOriginal => ({ ...await importOriginal<typeof import('../../src/client/app/ui/account/profile.ts')>(), chooseImage: vi.fn(async () => new File(['x'], 'me.png', { type: 'image/png' })) }))
 vi.mock('../../src/protocol/webvh/resolver.ts', () => ({ resolve: vi.fn(async () => ({ name: 'Alice' })) }))
 
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
@@ -129,6 +130,19 @@ test('account: the identity card shows the DID, then the name the DID document g
   expect(container.querySelector('#cmd-acc-identity-avatar')!.textContent).toBe('A')
   await waitFor(() => expect(container.querySelector('#cmd-acc-identity-name')!.textContent).toBe('Alice'))
   expect(container.querySelector('#cmd-acc-capability-expiry')).toBeNull() // the identity card shows no expiry date any more
+})
+
+test('account: clicking the avatar asks for a picture and sets it, without opening the card; no profile, no click', async () => {
+  const profile = { current: vi.fn(async () => ({})), setName: vi.fn(async () => {}), setAvatar: vi.fn(async () => {}) }
+  accountConfig.set(account({ profile }))
+  const { container } = render(<AccountPage />)
+  fireEvent.click(container.querySelector('#cmd-acc-identity-avatar')!)
+  await waitFor(() => expect(profile.setAvatar).toHaveBeenCalledWith(expect.any(File)))
+  expect(container.querySelector('#cmd-acc-identity-section')!.classList.contains('expanded')).toBe(false)
+  cleanup()
+  accountConfig.set(account())
+  const bare = render(<AccountPage />)
+  expect(bare.container.querySelector('#cmd-acc-identity-avatar')!.getAttribute('role')).toBeNull()
 })
 
 test('account: the card opens on click and reads the DID document once', async () => {

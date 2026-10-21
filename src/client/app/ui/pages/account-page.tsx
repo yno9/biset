@@ -25,7 +25,6 @@ function identityMenuItems(): MenuItem[] {
   const pgp = config?.pgp
   const profile = config?.profile
   const profileItems: MenuItem[] = profile ? [
-    { label: 'Set profile picture', onClick: () => { void chooseImage().then(file => file && profile.setAvatar(file)).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(showMessage) } },
     { label: 'Remove profile picture', onClick: () => { void profile.setAvatar(null).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(showMessage) } },
     { label: 'Set display name', onClick: () => {
       const name = window.prompt('Display name (shown to the people you write to; empty removes it)')
@@ -113,7 +112,13 @@ function IdentityCard({ did }: { did: string }) {
     <div className={`cmd-page-section${expanded ? ' expanded' : ''}`} id="cmd-acc-identity-section">
       <div id="cmd-acc-identity-fields" title="Click to view DID document"
         onClick={() => { setExpanded(open => !open); if (!expanded && !docLoaded.current) { docLoaded.current = true; void loadDoc() } }}>
-        <div id="cmd-acc-identity-avatar" className="lp-avatar" style={{ background: avatarColor(label) }}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : label.charAt(0).toUpperCase()}</div>
+        <div id="cmd-acc-identity-avatar" className="lp-avatar" role={profile ? 'button' : undefined} title={profile ? 'Set profile picture' : undefined}
+          style={{ background: avatarColor(label), ...(profile ? { cursor: 'pointer' } : {}) }}
+          // The picture is set where it is shown: a click on it asks for an image (not the card opening).
+          onClick={profile ? event => {
+            event.stopPropagation()
+            void chooseImage().then(file => file && profile.setAvatar(file)).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => getAccountConfig()?.showMessage?.(errorText(error)))
+          } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : label.charAt(0).toUpperCase()}</div>
         <div id="cmd-acc-identity-text">
           <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ?? name.replace(/\.did\.md$/, '@did.md')}</span></div>
           {/* Clicking the DID text copies it. */}
