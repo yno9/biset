@@ -12,6 +12,7 @@ import { ReplyBox, composeConfig } from './reply-box.tsx'
 import { readScroll, scrollUi } from './scroll-buttons.tsx'
 import { scrollToFocused, syncDockPosition } from './scroll.ts'
 import { patchShell, shell, isNarrow } from './stores.ts'
+import { markSeen } from './seen.ts'
 import { displayParticipantsOf, latestOf, threadProtocol } from './thread-model.ts'
 import { uiPage } from './state.ts'
 import { useSelf, useThreads } from './use-threads.ts'
@@ -144,6 +145,12 @@ export function RightCol() {
   const column = useRef<HTMLDivElement>(null)
   const onThread = page === 'thread'
   const titleClass = titleHidden ? 'title-hidden' : undefined
+
+  // A thread that is open is read: what it holds that was not read before is marked now (not while the page is hidden).
+  useEffect(() => {
+    if (!onThread || !focused || document.visibilityState === 'hidden') return
+    markSeen(focused.messages.map(item => item.msg))
+  }, [onThread, focused])
 
   const first = focused?.messages[0]?.msg
   const groupName = useGroupName(first?.thread_id.startsWith(DIDCOMM_GROUP_THREAD_PREFIX) ? first.thread_id.slice(DIDCOMM_GROUP_THREAD_PREFIX.length) : undefined)

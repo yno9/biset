@@ -7,6 +7,7 @@ import { LeftPane } from '../../src/client/app/ui/left-pane.tsx'
 import { setContactAvatars } from '../../src/client/app/ui/did-display.ts'
 import { accountConfig } from '../../src/client/app/ui/account/state.ts'
 import { ReplyBox, composeConfig, type ComposeConfig } from '../../src/client/app/ui/reply-box.tsx'
+import { setMarkSeenHandler } from '../../src/client/app/ui/seen.ts'
 import { RightCol } from '../../src/client/app/ui/right-col.tsx'
 import { refreshInbox, showApp } from '../../src/client/app/ui/shell.ts'
 import { setPage, uiPage } from '../../src/client/app/ui/state.ts'
@@ -48,6 +49,17 @@ test('the newest thread is open by default, with its subject as the title', () =
   const { container } = app(<RightCol />)
   expect(container.querySelector('#header-thread-title')!.textContent).toBe('Fresh')
   expect(container.querySelector('.t-body')!.textContent).toBe('newest')
+})
+
+test('an open thread is read: what was not read in it is marked, and what was read is not asked again', () => {
+  const asked: string[][] = []
+  setMarkSeenHandler(messages => asked.push(messages.map(item => item.jmap_id)))
+  const unread = message({ from: 'bob@did.md', thread_id: 'T', seen: false, ts: T0 })
+  setMessages([unread, message({ from: 'bob@did.md', thread_id: 'T', seen: true }), message({ from: 'carol@did.md', thread_id: 'U', seen: false, ts: T0 - 10_000_000_000 })])
+  app(<RightCol />)
+  // the open thread is the newest one: only its unread message is asked for, not the other thread's
+  expect(asked).toEqual([[unread.msg.jmap_id]])
+  setMarkSeenHandler(undefined)
 })
 
 test('a thread with no subject is "no title", marked untitled; with nothing at all too', () => {

@@ -24,6 +24,7 @@ import {
   didMdWalletReconnectState,
   DID_MD_JUST_CONNECTED_KEY,
 } from '../identity/wallet/did-md-oauth.ts'
+import { markSeenDone, setMarkSeenHandler } from './ui/seen.ts'
 import { refreshInbox, setEncryptedMailOpener, setSignedNameHandler, showApp, showSysMsg } from './ui/shell.ts'
 import { labelForDid } from './ui/did-display.ts'
 import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
@@ -466,6 +467,18 @@ async function configureWalletAccountIfPresent(
     // An encrypted mail is opened where it is shown, with this identity's keys and the key held for its sender.
     // Delta Chat shares its profile in what it signs: the name on a message from a key we hold is the sender's own, and follows
     // it when it changes. The newest message's name is kept on the contact card (a card of its own is made if there is none).
+    // A thread that has been open is read: its messages get the $seen keyword (the store keeps it; other devices see it too).
+    setMarkSeenHandler(messages => {
+      const ids = messages.map(message => message.jmap_id)
+      void (async () => {
+        const snapshot = await readModel.snapshot()
+        const update: Record<string, unknown> = {}
+        for (const email of snapshot.emails) if (ids.includes(email.id) && email.keywords['$seen'] !== true) update[email.id] = { keywords: { ...email.keywords, $seen: true } }
+        if (Object.keys(update).length === 0) return
+        await mutationSink.emailSet({ accountId: `biset:${device.did}`, update }, snapshot)
+        await refreshInbox(readModel)
+      })().catch(error => console.warn('[mark read]', error instanceof Error ? error.message : error)).finally(() => markSeenDone(ids))
+    })
     setSignedNameHandler((did, profile) => {
       void (async () => {
         const snapshot = await readModel.snapshot()
