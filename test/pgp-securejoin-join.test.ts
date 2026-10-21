@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'vitest'
+import * as openpgp from 'openpgp'
+import { decryptMessage } from '../src/client/pgp/message-crypto.ts'
+import { parseInnerMime, parseKeydataHeader } from '../src/client/pgp/mime.ts'
 import { derivePgpKey } from '../src/client/pgp/derive.ts'
 import { autocryptKeydata } from '../src/client/pgp/keyring.ts'
 import { handleSecureJoin, inviteUrl, type SecureJoinContext } from '../src/client/pgp/securejoin.ts'
@@ -67,6 +70,11 @@ describe('Secure-Join, the joining side, against the inviting side', () => {
     expect(w.toAlice).toHaveLength(2)
     expect(w.toAlice[1]!.introduction).toBeUndefined()
 
+    // Delta Chat takes the step only with the inviter's own key gossiped in it (securejoin.rs: "No self addr+pubkey gossip found")
+    const step3 = parseInnerMime((await decryptMessage({ armored: w.toAlice[1]!.armored, privateKey: w.alice.privateKey })).plaintext)
+    expect(step3.gossip).toHaveLength(1)
+    const gossiped = parseKeydataHeader(step3.gossip[0]!)!
+    expect((await openpgp.readKey({ binaryKey: Uint8Array.from(atob(gossiped.keydata), char => char.charCodeAt(0)) })).getFingerprint().toUpperCase()).toBe(w.alice.fingerprint)
     expect(await handleSecureJoin(w.toAlice[1]!.armored, w.bobParty, w.aliceContext)).toBe('vc-request-with-auth')
     expect(w.aliceLearned).toEqual([await autocryptKeydata(w.bob.privateKey, 'bob@did.md')])
     expect(await handleSecureJoin(w.toBob[1]!, w.aliceParty, bobAsInviter)).toBeUndefined()

@@ -5,7 +5,9 @@
 //   us -> them   vc-request-pubkey       encrypted to a password, the shared secret `securejoin/<their fingerprint>/<auth>`;
 //                                        neither signed nor carrying our key (Delta Chat sends it so)
 //   them -> us   vc-pubkey               same password, signed by them, their key in an Autocrypt header
-//   us -> them   vc-request-with-auth    encrypted to their key, signed by us, our Autocrypt header, our fingerprint
+//   us -> them   vc-request-with-auth    encrypted to their key, signed by us, our Autocrypt header, our fingerprint, and their
+//                                        own key in an Autocrypt-Gossip header: Delta Chat ignores the step without it (it
+//                                        takes the gossip for the proof that we encrypted to the key we were meant to)
 //   them -> us   vc-contact-confirm      encrypted to our key, signed by them
 //
 // The answers are matched to the join by what only the invite gives (the password, and the fingerprint of the key), not by the
@@ -112,7 +114,7 @@ export async function handleJoinStep(armored: string, from: SecureJoinParty, con
       if (!signed || signed.signedBy.length === 0) throw new Error('vc-pubkey is not signed by the key the invite names')
 
       const reply = buildInnerMime({
-        lines: [keydataHeader('Autocrypt', context.address, await autocryptKeydata(context.key.privateKey, context.address), true), 'Chat-Version: 1.0', 'Secure-Join: vc-request-with-auth', `Secure-Join-Auth: ${join.auth}`, `Secure-Join-Fingerprint: ${context.key.fingerprint}`],
+        lines: [keydataHeader('Autocrypt', context.address, await autocryptKeydata(context.key.privateKey, context.address), true), 'Chat-Version: 1.0', 'Secure-Join: vc-request-with-auth', `Secure-Join-Auth: ${join.auth}`, `Secure-Join-Fingerprint: ${context.key.fingerprint}`, keydataHeader('Autocrypt-Gossip', held.addr, held.keydata)],
         text: SECURE_JOIN_SUBJECT,
       })
       await context.send(from, await encryptMessage({ plaintext: reply, recipients: [fromBase64(held.keydata)], signer: context.key.privateKey }), {})
