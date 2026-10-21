@@ -76,7 +76,7 @@ import { beginJoin, handleJoinStep, localPendingJoins, parseInvite, type JoinCon
 import { bridgeHostOf, mailAddressOfBridgeDid, ownAutocryptFor, shouldEncrypt } from '../pgp/autocrypt.ts'
 import { composeEncryptedMail } from '../pgp/compose.ts'
 import type { OwnProfile } from '../pgp/mime.ts'
-import { fitAvatar, type ProfileConfig } from './ui/account/profile.ts'
+import type { ProfileConfig } from './ui/account/profile.ts'
 import { autocryptKeydata } from '../pgp/keyring.ts'
 import { openStoredMail } from '../pgp/open.ts'
 import type { PgpCardConfig } from './ui/account/pgp-card.tsx'
@@ -500,7 +500,7 @@ async function configureWalletAccountIfPresent(
     profileCard = {
       async current() { const card = await ownCard(); return { ...(card && contactDisplayName(card) ? { name: contactDisplayName(card)! } : {}), ...(card && contactAvatar(card) ? { avatar: contactAvatar(card)! } : {}) } },
       setName: name => writeOwnCard((cardId, card) => ownNamePatch(cardId, card, name)),
-      setAvatar: async file => { const avatar = file ? await fitAvatar(file) : null; await writeOwnCard((cardId, card) => ownAvatarPatch(cardId, card, avatar)) },
+      setAvatar: avatar => writeOwnCard((cardId, card) => ownAvatarPatch(cardId, card, avatar)),
     }
     /** What this identity says about itself in what it signs: its name and picture (the base64 of the image), from its card. */
     const ownProfile = async (): Promise<OwnProfile & { avatarHash?: string }> => {

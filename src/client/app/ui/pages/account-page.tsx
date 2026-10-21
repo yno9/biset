@@ -6,6 +6,7 @@ import { useStore } from '../../react/store.ts'
 import { parseWebvhDid } from '../../../../protocol/webvh/identifier.ts'
 import { resolve } from '../../../../protocol/webvh/resolver.ts'
 import { AccountList } from '../account/account-list.tsx'
+import { cropAvatar } from '../account/avatar-crop.tsx'
 import { chooseImage, PROFILE_CHANGED } from '../account/profile.ts'
 import { copyInviteLink, joinDeltaChatInvite, PgpKeyRow } from '../account/pgp-card.tsx'
 import { openDropdownMenu, type MenuItem } from '../account/menu.tsx'
@@ -117,7 +118,7 @@ function IdentityCard({ did }: { did: string }) {
           // The picture is set where it is shown: a click on it asks for an image (not the card opening).
           onClick={profile ? event => {
             event.stopPropagation()
-            void chooseImage().then(file => file && profile.setAvatar(file)).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => getAccountConfig()?.showMessage?.(errorText(error)))
+            void chooseImage().then(file => file && cropAvatar(file)).then(avatar => { if (avatar) return profile.setAvatar(avatar) }).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => getAccountConfig()?.showMessage?.(errorText(error)))
           } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : label.charAt(0).toUpperCase()}</div>
         <div id="cmd-acc-identity-text">
           <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ?? name.replace(/\.did\.md$/, '@did.md')}</span></div>

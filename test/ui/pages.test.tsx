@@ -7,6 +7,7 @@ vi.mock('../../src/client/identity/wallet/did-md-oauth.ts', () => ({
   beginDidMdWalletLogin: vi.fn(async () => {}), resolveWalletFromSuffix: vi.fn(), selectWallet: vi.fn(), currentWallet: () => ({ id: 'dito', displayName: 'dito' }),
 }))
 vi.mock('../../src/client/app/ui/account/profile.ts', async importOriginal => ({ ...await importOriginal<typeof import('../../src/client/app/ui/account/profile.ts')>(), chooseImage: vi.fn(async () => new File(['x'], 'me.png', { type: 'image/png' })) }))
+vi.mock('../../src/client/app/ui/account/avatar-crop.tsx', async importOriginal => ({ ...await importOriginal<typeof import('../../src/client/app/ui/account/avatar-crop.tsx')>(), cropAvatar: vi.fn(async () => 'data:image/jpeg;base64,/9j/AAAA') }))
 vi.mock('../../src/protocol/webvh/resolver.ts', () => ({ resolve: vi.fn(async () => ({ name: 'Alice' })) }))
 
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
@@ -137,7 +138,7 @@ test('account: clicking the avatar asks for a picture and sets it, without openi
   accountConfig.set(account({ profile }))
   const { container } = render(<AccountPage />)
   fireEvent.click(container.querySelector('#cmd-acc-identity-avatar')!)
-  await waitFor(() => expect(profile.setAvatar).toHaveBeenCalledWith(expect.any(File)))
+  await waitFor(() => expect(profile.setAvatar).toHaveBeenCalledWith('data:image/jpeg;base64,/9j/AAAA')) // the picture chosen, then cropped
   expect(container.querySelector('#cmd-acc-identity-section')!.classList.contains('expanded')).toBe(false)
   cleanup()
   accountConfig.set(account())
