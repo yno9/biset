@@ -19,7 +19,7 @@ export interface RotationManagerOptions {
   cards(): Promise<readonly LocalJmapContactCard[]>
   /** The usable seed and the mediator Y names, or undefined when this device
    * cannot move conversations now (no seed yet, no mediator published). */
-  rotation(): Promise<{ seed: Uint8Array; mediatorDid: string } | undefined>
+  rotation(): Promise<{ seed: Uint8Array; mediatorDid: string; fragment?: string } | undefined>
   /** Commits contact patches to the Vault (and so to every device). */
   commit(writes: ContactSetPayload[]): Promise<void>
   send(toDid: string, type: string, body: unknown, options: { fromKid: string; x25519PrivateKey: Uint8Array; fromPrior?: string; thid?: string }): Promise<DidCommSendResult>

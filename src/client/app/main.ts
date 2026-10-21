@@ -646,8 +646,8 @@ async function configureWalletAccountIfPresent(
           frontDoor: { fromKid: didCommDevice.xKid, x25519PrivateKey: didCommDevice.x25519PrivateKey },
           cards: async () => (await readModel.snapshot()).contactCards,
           async rotation() {
-            const [{ seed }, mediatorDid] = await Promise.all([seedAuthority.require(), mediatorDidOfDocument()])
-            return mediatorDid ? { seed, mediatorDid } : undefined
+            const [{ seed, fragment }, mediatorDid] = await Promise.all([seedAuthority.require(), mediatorDidOfDocument()])
+            return mediatorDid ? { seed, mediatorDid, fragment } : undefined
           },
           async commit(writes) { await mutationSink.commitIntents(writes.map(contactSetIntent), await readModel.snapshot()) },
           storedSeeds: async () => (await walletSeedReader.readAll()).map(record => record.seed),

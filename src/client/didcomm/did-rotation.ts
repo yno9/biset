@@ -52,7 +52,7 @@ export interface RouteContext {
   cards: readonly LocalJmapContactCard[]
   /** The usable relationship seed and the mediator Y names; without both, a
    * message goes from the front door. */
-  rotation?: { seed: Uint8Array; mediatorDid: string }
+  rotation?: { seed: Uint8Array; mediatorDid: string; /** The id the DID document publishes the rotation key under; default the current one. */ fragment?: string }
   now?: () => number
 }
 
@@ -66,7 +66,7 @@ export function chooseRoute(publicDid: string, context: RouteContext): DidCommRo
     if (entry?.startedAt) {
       const fromPrior = entry.confirmedAt ? undefined : createFromPrior(
         { iss: context.identityDid, sub: own.did, iat: Math.floor((context.now?.() ?? Date.now()) / 1000) },
-        `${context.identityDid}${ROTATION_KEY_FRAGMENT}`, rotationSigningKey(context.rotation.seed).privateKey,
+        `${context.identityDid}${context.rotation.fragment ?? ROTATION_KEY_FRAGMENT}`, rotationSigningKey(context.rotation.seed).privateKey,
       )
       return { toDid, fromKid: own.xKid, x25519PrivateKey: own.xPriv, ...(fromPrior ? { fromPrior } : {}) }
     }

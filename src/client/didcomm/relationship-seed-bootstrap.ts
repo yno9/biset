@@ -27,13 +27,14 @@
 // every id, never the fragment (a key's fragment is derived from the key).
 import type { LogEntry } from '../../protocol/webvh/log.ts'
 import { authenticationKeySince, deviceRemovedSince, fragmentOf, keyAgreementOf } from '../../protocol/didcomm/from-prior.ts'
-import { ROTATION_KEY_FRAGMENT, rotationSigningKey } from './rotation-key.ts'
+import { rotationKeyFragments, rotationSigningKey } from './rotation-key.ts'
 
 /** A seed's decision is not made sooner than this after its key was published. */
 export const SEED_LOST_AFTER_MS = 24 * 60 * 60 * 1000
 
 export type SeedStatus =
-  | { state: 'usable'; seed: Uint8Array; seedId: string }
+  /** `fragment`: the id the DID document publishes the seed's rotation key under. */
+  | { state: 'usable'; seed: Uint8Array; seedId: string; fragment: string }
   | { state: 'unpublished' }
   | { state: 'pending' }
   | { state: 'lost' }
@@ -67,14 +68,19 @@ export function seedStatus(entries: readonly LogEntry[], ownKid: string, seeds: 
   if (!last) throw new Error('the did:webvh log is empty')
   const listed = keyAgreementOf(last)
   if (!listed.includes(fragmentOf(ownKid))) throw new DeviceRemovedError()
-  const published = authenticationKeySince(entries, ROTATION_KEY_FRAGMENT)
+  let fragment = ''
+  let published: ReturnType<typeof authenticationKeySince>
+  for (const candidate of rotationKeyFragments) {
+    published = authenticationKeySince(entries, candidate)
+    if (published) { fragment = candidate; break }
+  }
   if (!published) return { state: 'unpublished' }
   const { key, since } = published
   const designated = [...listed].sort()[0] === fragmentOf(ownKid)
   // The same check a counterparty makes on this key (from-prior.ts, §7-2).
   if (deviceRemovedSince(entries, since)) return { state: 'stale', designated }
   const seed = seeds.find(value => rotationSigningKey(value.seed).publicKeyMultibase === key)
-  if (seed) return { state: 'usable', seed: seed.seed, seedId: seed.seedId }
+  if (seed) return { state: 'usable', seed: seed.seed, seedId: seed.seedId, fragment }
   if (!designated) return { state: 'pending' }
   const publishedAt = Date.parse(entries[since]!.versionTime)
   return listed.length === 1 || now - publishedAt >= SEED_LOST_AFTER_MS ? { state: 'lost' } : { state: 'pending' }
@@ -95,7 +101,7 @@ export interface RelationshipSeedAuthority {
   status(): Promise<SeedStatus>
   /** The seed in use; throws RelationshipSeedPendingError when there is none
    * this device may use now, DeviceRemovedError once removed. */
-  require(): Promise<StoredSeed>
+  require(): Promise<StoredSeed & { fragment: string }>
   /** Forgets the cached log (after this device changed the document). */
   refresh(): void
 }
@@ -119,7 +125,7 @@ export function createRelationshipSeedAuthority(options: RelationshipSeedAuthori
     async require() {
       const status = await authority.status()
       if (status.state !== 'usable') throw new RelationshipSeedPendingError(status.state)
-      return { seed: status.seed, seedId: status.seedId }
+      return { seed: status.seed, seedId: status.seedId, fragment: status.fragment }
     },
     refresh() { cached = undefined },
   }

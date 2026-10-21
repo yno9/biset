@@ -44,7 +44,7 @@ import {
 } from './did-md-store.ts'
 
 import { DEFAULT_WALLET, type WalletDirectoryEntry } from './wallet-directory.ts'
-import { rotationKeyEditMethod, ROTATION_KEY_FRAGMENT } from '../../didcomm/rotation-key.ts'
+import { LEGACY_ROTATION_KEY_FRAGMENT, rotationKeyEditMethod, ROTATION_KEY_FRAGMENT } from '../../didcomm/rotation-key.ts'
 // PLAN4 (~/did.md/PLAN4-wallet-connector.md): the OAuth/OID4VP issuer this
 // module talks to is no longer a fixed constant -- it is whichever wallet
 // directory entry is currently selected (selectWallet/currentWallet
@@ -442,7 +442,9 @@ export function buildDocumentEdit(did: string, config: WalletConfiguration, devi
       ...(rotation ? [{ ...rotation, controller: did }] : []),
     ],
     serviceKeyBindings: device ? [{ serviceId: didcomm.id, keyIds: [deviceKidFragment(device.x25519PublicKey)] }] : [],
-    remove,
+    // Replacing the seed (removing devices, renewing) is also where a document loses the key's old name: while it
+    // had it, that name stayed the authority (rotation-key.ts).
+    remove: rotation?.mode === 'replace' ? [...remove, LEGACY_ROTATION_KEY_FRAGMENT].filter((id, index, all) => all.indexOf(id) === index) : remove,
     ...(removeEndpoints.length ? { removeEndpoints } : {}),
   }
 }
