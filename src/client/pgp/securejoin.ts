@@ -17,7 +17,7 @@ import { bytesToBase64url } from '../../protocol/canonical.ts'
 import type { PgpKey } from './keyring.ts'
 import { autocryptKeydata } from './keyring.ts'
 import { decryptMessage, encryptMessage, NotEncryptedToUsError } from './message-crypto.ts'
-import { buildInnerMime, displayNameOfFrom, keydataHeader, parseInnerMime, parseKeydataHeader } from './mime.ts'
+import { avatarLine, buildInnerMime, displayNameOfFrom, fromLine, keydataHeader, type OwnProfile, parseInnerMime, parseKeydataHeader } from './mime.ts'
 import { symmetricDecrypt, symmetricEncryptSigned } from './symmetric.ts'
 
 export const INVITE_DAYS = 30
@@ -62,6 +62,8 @@ export interface SecureJoinContext {
   key: PgpKey
   address: string
   now: number
+  /** What we say about ourselves in the steps where Delta Chat shares its profile too (vc-contact-confirm). */
+  profile?: OwnProfile
   /** Sends an answer: an armored OpenPGP message, as a mail with the subject `Secure-Join`. */
   send(to: SecureJoinParty, armored: string): Promise<void>
   /** Keeps the key of the other side, which the handshake has vouched for. */
@@ -112,7 +114,7 @@ export async function handleSecureJoin(armored: string, from: SecureJoinParty, c
 
   const joinerName = displayNameOfFrom(mime.headers.from)
   await context.learn(from, held.keydata, joinerName ? { text: joinerName, source: 'signed' } : undefined)
-  const confirm = buildInnerMime({ lines: ['Chat-Version: 1.0', 'Secure-Join: vc-contact-confirm', keydataHeader('Autocrypt-Gossip', from.address, held.keydata)], text: SECURE_JOIN_SUBJECT })
+  const confirm = buildInnerMime({ lines: [...(context.profile?.name ? [fromLine(context.address, context.profile.name)] : []), ...(context.profile?.avatarBase64 ? [avatarLine(context.profile.avatarBase64)] : []), 'Chat-Version: 1.0', 'Secure-Join: vc-contact-confirm', keydataHeader('Autocrypt-Gossip', from.address, held.keydata)], text: SECURE_JOIN_SUBJECT })
   await context.send(from, await encryptMessage({ plaintext: confirm, recipients: [keyBytes], signer: context.key.privateKey }))
   return 'vc-request-with-auth'
 }

@@ -19,7 +19,7 @@ import * as openpgp from 'openpgp'
 import type { PgpKey } from './keyring.ts'
 import { autocryptKeydata } from './keyring.ts'
 import { decryptMessage, encryptMessage, NotEncryptedToUsError } from './message-crypto.ts'
-import { buildInnerMime, displayNameOfFrom, keydataHeader, parseInnerMime, parseKeydataHeader } from './mime.ts'
+import { avatarLine, buildInnerMime, displayNameOfFrom, fromLine, keydataHeader, type OwnProfile, parseInnerMime, parseKeydataHeader } from './mime.ts'
 import { symmetricDecrypt, symmetricEncryptSigned } from './symmetric.ts'
 import { SECURE_JOIN_SUBJECT, sharedSecret, type SecureJoinParty } from './securejoin.ts'
 
@@ -68,6 +68,8 @@ export interface PendingJoins {
 }
 
 export interface JoinContext {
+  /** What we say about ourselves in vc-request-with-auth (Delta Chat shares its profile there). */
+  profile?: OwnProfile
   key: PgpKey
   address: string
   now: number
@@ -114,7 +116,7 @@ export async function handleJoinStep(armored: string, from: SecureJoinParty, con
       if (!signed || signed.signedBy.length === 0) throw new Error('vc-pubkey is not signed by the key the invite names')
 
       const reply = buildInnerMime({
-        lines: [keydataHeader('Autocrypt', context.address, await autocryptKeydata(context.key.privateKey, context.address), true), 'Chat-Version: 1.0', 'Secure-Join: vc-request-with-auth', `Secure-Join-Auth: ${join.auth}`, `Secure-Join-Fingerprint: ${context.key.fingerprint}`, keydataHeader('Autocrypt-Gossip', held.addr, held.keydata)],
+        lines: [...(context.profile?.name ? [fromLine(context.address, context.profile.name)] : []), ...(context.profile?.avatarBase64 ? [avatarLine(context.profile.avatarBase64)] : []), keydataHeader('Autocrypt', context.address, await autocryptKeydata(context.key.privateKey, context.address), true), 'Chat-Version: 1.0', 'Secure-Join: vc-request-with-auth', `Secure-Join-Auth: ${join.auth}`, `Secure-Join-Fingerprint: ${context.key.fingerprint}`, keydataHeader('Autocrypt-Gossip', held.addr, held.keydata)],
         text: SECURE_JOIN_SUBJECT,
       })
       await context.send(from, await encryptMessage({ plaintext: reply, recipients: [fromBase64(held.keydata)], signer: context.key.privateKey }), {})

@@ -6,6 +6,7 @@ import { useStore } from '../../react/store.ts'
 import { parseWebvhDid } from '../../../../protocol/webvh/identifier.ts'
 import { resolve } from '../../../../protocol/webvh/resolver.ts'
 import { AccountList } from '../account/account-list.tsx'
+import { chooseImage, PROFILE_CHANGED } from '../account/profile.ts'
 import { copyInviteLink, joinDeltaChatInvite, PgpKeyRow } from '../account/pgp-card.tsx'
 import { openDropdownMenu, type MenuItem } from '../account/menu.tsx'
 import { accountConfig, getAccountConfig } from '../account/state.ts'
@@ -22,12 +23,23 @@ function identityMenuItems(): MenuItem[] {
   const wallet = config?.wallet
   const showMessage = (error: unknown) => getAccountConfig()?.showMessage?.(errorText(error))
   const pgp = config?.pgp
+  const profile = config?.profile
+  const profileItems: MenuItem[] = profile ? [
+    { label: 'Set profile picture', onClick: () => { void chooseImage().then(file => file && profile.setAvatar(file)).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(showMessage) } },
+    { label: 'Remove profile picture', onClick: () => { void profile.setAvatar(null).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(showMessage) } },
+    { label: 'Set display name', onClick: () => {
+      const name = window.prompt('Display name (shown to the people you write to; empty removes it)')
+      if (name === null) return
+      void profile.setName(name.trim() || null).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(showMessage)
+    } },
+  ] : []
   const invite: MenuItem[] = pgp ? [
     { label: 'Copy Delta Chat invite', onClick: () => copyInviteLink(pgp, text => config?.showMessage?.(text)) },
     { label: 'Join a Delta Chat invite', onClick: () => joinDeltaChatInvite(pgp, text => config?.showMessage?.(text)) },
   ] : []
   if (wallet) {
     return [
+      ...profileItems,
       ...invite,
       ...(wallet.reconnectRequired && wallet.onReconnect ? [{ label: 'Reconnect Wallet', onClick: () => { void wallet.onReconnect?.().catch(showMessage) } }] : []),
       { label: 'Export Messages', onClick: () => { void getAccountConfig()?.onExportMessages?.().catch(showMessage) } },
@@ -42,6 +54,7 @@ function identityMenuItems(): MenuItem[] {
     ]
   }
   return [
+    ...profileItems,
     ...invite,
     { label: 'Protect with passkey', onClick: () => {} },
     { label: 'Export Messages', onClick: () => { void getAccountConfig()?.onExportMessages?.() } },
@@ -63,6 +76,7 @@ function IdentityCard({ did }: { did: string }) {
   const wallet = accountState?.wallet
   const pgp = accountState?.pgp
   const [name, setName] = useState(label)
+  const [own, setOwn] = useState<{ name?: string; avatar?: string }>({})
   const [expanded, setExpanded] = useState(false)
   const [doc, setDoc] = useState('')
   const docLoaded = useRef(false)
@@ -76,6 +90,17 @@ function IdentityCard({ did }: { did: string }) {
     return () => { current = false }
   }, [did])
 
+  // The identity's own name and picture, from its card; looked at again when the menu changes them.
+  const profile = accountState?.profile
+  useEffect(() => {
+    if (!profile) return
+    let current = true
+    const load = () => { void profile.current().then(found => { if (current) setOwn(found) }).catch(() => {}) }
+    load()
+    window.addEventListener(PROFILE_CHANGED, load)
+    return () => { current = false; window.removeEventListener(PROFILE_CHANGED, load) }
+  }, [profile])
+
   const loadDoc = async () => {
     setDoc('Resolving…')
     try {
@@ -88,9 +113,9 @@ function IdentityCard({ did }: { did: string }) {
     <div className={`cmd-page-section${expanded ? ' expanded' : ''}`} id="cmd-acc-identity-section">
       <div id="cmd-acc-identity-fields" title="Click to view DID document"
         onClick={() => { setExpanded(open => !open); if (!expanded && !docLoaded.current) { docLoaded.current = true; void loadDoc() } }}>
-        <div id="cmd-acc-identity-avatar" className="lp-avatar" style={{ background: avatarColor(label) }}>{label.charAt(0).toUpperCase()}</div>
+        <div id="cmd-acc-identity-avatar" className="lp-avatar" style={{ background: avatarColor(label) }}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : label.charAt(0).toUpperCase()}</div>
         <div id="cmd-acc-identity-text">
-          <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{name.replace(/\.did\.md$/, '@did.md')}</span></div>
+          <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ?? name.replace(/\.did\.md$/, '@did.md')}</span></div>
           {/* Clicking the DID text copies it. */}
           <div id="cmd-acc-identity-did-row"
             onClick={event => { event.stopPropagation(); navigator.clipboard?.writeText(did).then(() => getAccountConfig()?.showMessage?.('DID copied')).catch(() => {}) }}>

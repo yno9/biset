@@ -194,3 +194,19 @@ export function avatarOfHeader(value: string | undefined): string | null | undef
   const type = IMAGE_MAGIC.find(([, magic]) => magic.every((byte, index) => bytes[index] === byte))?.[0]
   return type ? `data:${type};base64,${text.slice(7)}` : undefined
 }
+
+/** A `From:` line: the name (quoted if it has specials, encoded-words if it is not ASCII) and the address. */
+export function fromLine(address: string, name?: string): string {
+  const clean = name?.replace(/[\r\n]+/g, ' ').trim()
+  if (!clean) return `From: ${address}`
+  const encoded = encodeHeaderValue(clean)
+  return `From: ${/^[\w .'-]*$/.test(encoded) ? encoded : encoded.startsWith('=?') ? encoded : `"${encoded.replace(/(["\\])/g, '\\$1')}"`} <${address}>`
+}
+
+/** Delta Chat's profile picture header: `Chat-User-Avatar: base64:<image>` on one line, as it writes it (`0` removes the picture). */
+export function avatarLine(imageBase64: string | null): string {
+  return imageBase64 === null ? 'Chat-User-Avatar: 0' : `Chat-User-Avatar: base64:${imageBase64}`
+}
+
+/** What this identity says about itself in what it signs: its name in `From:`, its picture. */
+export interface OwnProfile { name?: string; avatarBase64?: string }

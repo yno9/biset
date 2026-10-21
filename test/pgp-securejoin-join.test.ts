@@ -135,3 +135,22 @@ test('a vc-contact-confirm that carries the inviter\'s own name (Delta Chat shar
   expect(await handleJoinStep(confirm, w.aliceParty, w.bobContext)).toBe('vc-contact-confirm')
   expect(w.bobNames).toEqual([{ text: 'Alice Real', source: 'signed' }])
 })
+
+test('the steps where Delta Chat shares its profile carry ours, and read theirs: names and pictures both ways', async () => {
+  const w = await world()
+  const PNG = btoa(String.fromCharCode(0x89, 0x50, 0x4e, 0x47, 1, 2, 3))
+  const bobProfile = { name: 'Bob の名前', avatarBase64: PNG }
+  const aliceNames: Array<{ text: string; source: string } | undefined> = []
+  const alice = { ...w.aliceContext, profile: { name: 'Alice Real' }, async learn(_party: unknown, keydata: string, name?: { text: string; source: 'signed' }) { aliceNames.push(name); w.aliceLearned.push(keydata) } }
+  await beginJoin(parseInvite(w.url), w.aliceParty, w.bobContext)
+  await handleSecureJoin(w.toAlice[0]!.armored, w.bobParty, alice)
+  await handleJoinStep(w.toBob[0]!, w.aliceParty, { ...w.bobContext, profile: bobProfile })
+  // the joiner's step 3 says who the joiner is, and the inviter reads it
+  const step3 = parseInnerMime((await decryptMessage({ armored: w.toAlice[1]!.armored, privateKey: w.alice.privateKey })).plaintext)
+  expect(step3.headers['chat-user-avatar']).toBe(`base64:${PNG}`)
+  await handleSecureJoin(w.toAlice[1]!.armored, w.bobParty, alice)
+  expect(aliceNames).toEqual([{ text: 'Bob の名前', source: 'signed' }])
+  // and the inviter's step 4 says who the inviter is
+  expect(await handleJoinStep(w.toBob[1]!, w.aliceParty, w.bobContext)).toBe('vc-contact-confirm')
+  expect(w.bobNames).toEqual([{ text: 'Alice Real', source: 'signed' }])
+})

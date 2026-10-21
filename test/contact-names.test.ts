@@ -83,3 +83,30 @@ describe('a contact\'s picture', async () => {
     expect(contactAvatarPatch(cardId, mine, null)).toBeUndefined()
   })
 })
+
+describe('this identity\'s own name and picture', async () => {
+  const { ownNamePatch, ownAvatarPatch, contactAvatar } = await import('../src/client/store/projection/contacts.ts')
+
+  test('a name set by hand is the strongest, is not rewritten when unchanged, and can be removed', () => {
+    const { cardId, card } = fresh()
+    const named = applyContactSet(card, ownNamePatch(cardId, card, '  Me   Myself ')!)!
+    expect(contactDisplayName(named)).toBe('Me Myself')
+    expect(nameSourceOf(named)).toBe('user')
+    expect(ownNamePatch(cardId, named, 'Me Myself')).toBeUndefined()
+    expect(contactNamePatch(cardId, named, 'Seen on a mail', 'mail')).toBeUndefined()
+    const cleared = applyContactSet(named, ownNamePatch(cardId, named, null)!)!
+    expect(contactDisplayName(cleared)).toBeUndefined()
+    expect(ownNamePatch(cardId, cleared, null)).toBeUndefined()
+  })
+
+  test('a picture set by hand is kept, and a signed one does not replace it', async () => {
+    const { contactAvatarPatch } = await import('../src/client/store/projection/contacts.ts')
+    const { cardId, card } = fresh()
+    const mine = 'data:image/jpeg;base64,/9j/AAAA'
+    const set = applyContactSet(card, ownAvatarPatch(cardId, card, mine)!)!
+    expect(contactAvatar(set)).toBe(mine)
+    expect(ownAvatarPatch(cardId, set, mine)).toBeUndefined()
+    expect(contactAvatarPatch(cardId, set, 'data:image/png;base64,iVBORw0KGgo=')).toBeUndefined()
+    expect(contactAvatar(applyContactSet(set, ownAvatarPatch(cardId, set, null)!)!)).toBeUndefined()
+  })
+})

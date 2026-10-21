@@ -44,7 +44,7 @@ import { preferredMediatorUrl, isTorEnvironment, sameMediatorUrl } from '../didc
 import { mediatorInbox } from '../../protocol/didcomm/mediator-device.ts'
 import { ingestTransportIngress } from '../store/vault/ingress-ingest.ts'
 import type { IngressEnvelopeV1 } from '../../protocol/ingress.ts'
-import { canonicalBytes, canonicalHash, sha256Bytes } from '../../protocol/canonical.ts'
+import { bytesToBase64url, canonicalBytes, canonicalHash, sha256Bytes } from '../../protocol/canonical.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { SenderKeyNotPublishedError } from '../../protocol/didcomm/webvh-resolve.ts'
 import { decodePeerDid2, publicKeyOf } from '../../protocol/didcomm/peer.ts'
@@ -53,7 +53,7 @@ import { GenerationSeedReader, GenerationSeedSink, generationSeedRecord } from '
 import { createGenerationSeedAuthority, type GenerationSeedAuthority } from '../didcomm/generation-seed-bootstrap.ts'
 import { publishedRotationKey, rotationSigningKey } from '../didcomm/rotation-key.ts'
 import { createRotationManager, type RotationManager } from '../didcomm/rotation-manager.ts'
-import { autocryptKeyPatch, contactAvatarPatch, contactCardForDid, contactNamePatch, contactSetIntent, currentAutocryptKey, didContactPatch } from '../store/projection/contacts.ts'
+import { autocryptKeyPatch, contactAvatar, contactAvatarPatch, contactDisplayName, ownAvatarPatch, ownNamePatch, type ContactSetPayload, type LocalJmapContactCard, contactCardForDid, contactNamePatch, contactSetIntent, currentAutocryptKey, didContactPatch } from '../store/projection/contacts.ts'
 import { fromPriorKeyResolver, verifyFromPrior } from '../../protocol/didcomm/from-prior.ts'
 import { signingKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
@@ -75,6 +75,8 @@ import { handleSecureJoin, inviteUrl, SECURE_JOIN_SUBJECT } from '../pgp/securej
 import { beginJoin, handleJoinStep, localPendingJoins, parseInvite, type JoinContext } from '../pgp/securejoin-join.ts'
 import { bridgeHostOf, mailAddressOfBridgeDid, ownAutocryptFor, shouldEncrypt } from '../pgp/autocrypt.ts'
 import { composeEncryptedMail } from '../pgp/compose.ts'
+import type { OwnProfile } from '../pgp/mime.ts'
+import { fitAvatar, type ProfileConfig } from './ui/account/profile.ts'
 import { autocryptKeydata } from '../pgp/keyring.ts'
 import { openStoredMail } from '../pgp/open.ts'
 import type { PgpCardConfig } from './ui/account/pgp-card.tsx'
@@ -259,6 +261,7 @@ async function configureWalletAccountIfPresent(
   // Set when the identity's rotation key needs a Wallet approval (account page).
   let rotationKeyState: 'unpublished' | 'lost' | 'stale' | undefined
   let pgpCard: PgpCardConfig | undefined
+  let profileCard: ProfileConfig | undefined
   let exportMessages: (() => Promise<void>) | undefined
   let importMessages: (() => Promise<void>) | undefined
   // The account page as the state stands: called once what is local is ready, and again as each
@@ -312,6 +315,7 @@ async function configureWalletAccountIfPresent(
       },
       vault,
       ...(pgpCard ? { pgp: pgpCard } : {}),
+      ...(profileCard ? { profile: profileCard } : {}),
       onRemoveOtherDevices: async () => editDocument({ kind: 'rotation', removeOtherDevices: true }, readBisetConfig()),
       ...(rotationKeyState ? { rotationKey: { state: rotationKeyState, onRenew: async () => editDocument({ kind: 'rotation' }, readBisetConfig()) } } : {}),
       showMessage: showSysMsg,
@@ -483,6 +487,32 @@ async function configureWalletAccountIfPresent(
     })
     // Set where the Secure-Join answers are (below), which needs what is built after this card.
     let joinInvite: ((invite: string) => Promise<{ name: string; address: string }>) | undefined
+    // This identity's own name and picture live on its own card in the contact list; what is sent to the people it writes to is made from it.
+    const ownCard = async () => contactCardForDid((await readModel.snapshot()).contactCards, device.did)
+    const writeOwnCard = async (make: (cardId: string, card: LocalJmapContactCard | undefined) => ContactSetPayload | undefined) => {
+      const snapshot = await readModel.snapshot()
+      const card = contactCardForDid(snapshot.contactCards, device.did)
+      const write = make(card?.id ?? didContactPatch(device.did).cardId, card)
+      if (!write) return
+      await mutationSink.commitIntents([...(card ? [] : [contactSetIntent(didContactPatch(device.did))]), contactSetIntent(write)], snapshot)
+      await refreshInbox(readModel)
+    }
+    profileCard = {
+      async current() { const card = await ownCard(); return { ...(card && contactDisplayName(card) ? { name: contactDisplayName(card)! } : {}), ...(card && contactAvatar(card) ? { avatar: contactAvatar(card)! } : {}) } },
+      setName: name => writeOwnCard((cardId, card) => ownNamePatch(cardId, card, name)),
+      setAvatar: async file => { const avatar = file ? await fitAvatar(file) : null; await writeOwnCard((cardId, card) => ownAvatarPatch(cardId, card, avatar)) },
+    }
+    /** What this identity says about itself in what it signs: its name and picture (the base64 of the image), from its card. */
+    const ownProfile = async (): Promise<OwnProfile & { avatarHash?: string }> => {
+      const card = await ownCard()
+      const name = card && contactDisplayName(card), avatar = card && contactAvatar(card)
+      const base64 = avatar?.slice(avatar.indexOf(',') + 1)
+      return { ...(name ? { name } : {}), ...(base64 ? { avatarBase64: base64, avatarHash: bytesToBase64url(sha256Bytes(new TextEncoder().encode(avatar!))).slice(0, 16) } : {}) }
+    }
+    // The picture goes to a contact when it has not got this one: tracked here, per contact, in this browser.
+    const sentKey = `biset.profileSent.${device.did}`
+    const avatarSentTo = (): Record<string, string> => { try { return JSON.parse(localStorage.getItem(sentKey) ?? '{}') as Record<string, string> } catch { return {} } }
+    const markAvatarSent = (did: string, hash: string) => { try { localStorage.setItem(sentKey, JSON.stringify({ ...avatarSentTo(), [did]: hash })) } catch { /* no storage: it is sent again next time */ } }
     if (ownMailAddress && pgp) {
       pgpCard = {
         address: ownMailAddress,
@@ -694,7 +724,11 @@ async function configureWalletAccountIfPresent(
             const card = contactCardForDid((await readModel.snapshot()).contactCards, toDid)
             const held = card && currentAutocryptKey(card)
             if (!held || !shouldEncrypt(held)) return undefined
+            const profile = await ownProfile()
+            const sendPicture = profile.avatarBase64 !== undefined && avatarSentTo()[toDid] !== profile.avatarHash
+            if (sendPicture) markAvatarSent(toDid, profile.avatarHash!)
             return composeEncryptedMail({
+              ...(profile.name ? { fromName: profile.name } : {}), ...(sendPicture ? { avatarBase64: profile.avatarBase64! } : {}),
               id: message.id, ...(message.thid ? { thid: message.thid } : {}), bridgeHost: host, ...(message.subject ? { subject: message.subject } : {}),
               content, sentAt: message.sentAt, fromAddress: ownMailAddress, toAddress,
               own: { privateKey: own.privateKey, keydata: await autocryptKeydata(own.privateKey, ownMailAddress) },
@@ -735,8 +769,8 @@ async function configureWalletAccountIfPresent(
           ], snapshot)
         }
         const pendingJoins = localPendingJoins(device.did)
-        const joinContext = (key: NonNullable<Awaited<ReturnType<NonNullable<typeof pgp>['current']>>>): JoinContext => ({
-          key, address: ownMailAddress!, now: Date.now(), pending: pendingJoins, send: sendSecureJoin, learn: learnVerifiedKey,
+        const joinContext = (key: NonNullable<Awaited<ReturnType<NonNullable<typeof pgp>['current']>>>, profile: OwnProfile): JoinContext => ({
+          key, address: ownMailAddress!, now: Date.now(), pending: pendingJoins, send: sendSecureJoin, learn: learnVerifiedKey, profile,
         })
         // Opening an invite Delta Chat gave: the first step of the handshake, to the address the invite names.
         joinInvite = async text => {
@@ -744,7 +778,7 @@ async function configureWalletAccountIfPresent(
           if (!key || !ownMailAddress) throw new Error('The key is not ready yet')
           const invite = parseInvite(text)
           const did = await resolveMailAddressDid(invite.address, readBisetConfig().mailGateways)
-          await beginJoin(invite, { did, address: invite.address }, joinContext(key))
+          await beginJoin(invite, { did, address: invite.address }, joinContext(key, await ownProfile()))
           return { name: invite.name, address: invite.address }
         }
         const answerSecureJoin = async (message: DidCommPlaintext): Promise<boolean> => {
@@ -756,11 +790,12 @@ async function configureWalletAccountIfPresent(
           if (!armored || !fromDid || !fromAddress || !seed || !key || !ownMailAddress) return false
           const party = { did: fromDid, address: fromAddress }
           try {
+            const profile = await ownProfile()
             const outcome = await handleSecureJoin(armored, party, {
-              seed, key, address: ownMailAddress, now: Date.now(),
+              seed, key, address: ownMailAddress, now: Date.now(), profile,
               send: (to, answer) => sendSecureJoin(to, answer, {}),
               learn: learnVerifiedKey,
-            }) ?? await handleJoinStep(armored, party, joinContext(key))
+            }) ?? await handleJoinStep(armored, party, joinContext(key, profile))
             if (outcome) console.info(`[did.md Wallet Secure-Join] ${outcome} from ${fromAddress}`)
             return outcome !== undefined
           } catch (error) {

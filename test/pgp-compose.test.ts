@@ -78,3 +78,36 @@ describe('sending it', () => {
     expect(sent[0]!.opts.attachments).toBeUndefined()
   })
 })
+
+describe('what an encrypted mail says about its sender', () => {
+  const build = async (extra: Record<string, unknown>) => {
+    const { composeEncryptedMail } = await import('../src/client/pgp/compose.ts')
+    const { generatePgpKey } = await import('./support/pgp.ts')
+    const { decryptMessage } = await import('../src/client/pgp/message-crypto.ts')
+    const { parseInnerMime, displayNameOfFrom } = await import('../src/client/pgp/mime.ts')
+    const openpgp = await import('openpgp')
+    const alice = await generatePgpKey('alice@did.md'), bob = await generatePgpKey('bob@x.test')
+    const { armored } = await composeEncryptedMail({
+      id: 'm1', bridgeHost: 'did.md', content: 'hi', sentAt: '2026-10-21T00:00:00Z', fromAddress: 'alice@did.md', toAddress: 'bob@x.test',
+      own: { privateKey: alice.privateKey, keydata: 'AAAA' }, peerKey: (await openpgp.readKey({ armoredKey: bob.publicArmor })).write(), ...extra,
+    } as never)
+    const mime = parseInnerMime((await decryptMessage({ armored, privateKey: bob.privateKey })).plaintext)
+    return { mime, name: displayNameOfFrom(mime.headers.from) }
+  }
+
+  test('its name in From: (plain, and not ASCII) and its picture on one Chat-User-Avatar line', async () => {
+    const plain = await build({ fromName: 'Alice A', avatarBase64: 'iVBORw0KGgo=' })
+    expect(plain.name).toBe('Alice A')
+    expect(plain.mime.headers['chat-user-avatar']).toBe('base64:iVBORw0KGgo=')
+    expect(plain.mime.headers.from).toContain('<alice@did.md>')
+    expect((await build({ fromName: 'たなな' })).name).toBe('たなな')
+    expect((await build({ fromName: 'たなな' })).mime.headers.from).toMatch(/<alice@did\.md>$/)
+  })
+
+  test('without a name or a picture, a bare From: and no avatar header', async () => {
+    const bare = await build({})
+    expect(bare.name).toBeUndefined()
+    expect(bare.mime.headers.from).toBe('alice@did.md')
+    expect('chat-user-avatar' in bare.mime.headers).toBe(false)
+  })
+})

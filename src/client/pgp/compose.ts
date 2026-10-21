@@ -2,7 +2,7 @@
 // (the real Subject, Date, Message-ID and References inside; our key in an Autocrypt header), encrypted to the
 // recipient's key and ours, signed. The mail bridge (didmail PROTOCOL.md §7.4) wraps the armor into PGP/MIME.
 import { encryptMessage } from './message-crypto.ts'
-import { buildInnerMime, keydataHeader } from './mime.ts'
+import { avatarLine, buildInnerMime, fromLine, keydataHeader } from './mime.ts'
 
 export interface ComposeInput {
   /** The DIDComm message id and thread, which the bridge turns into Message-ID and In-Reply-To (PROTOCOL.md §6.1). */
@@ -15,6 +15,8 @@ export interface ComposeInput {
   sentAt: string
   fromAddress: string
   fromName?: string
+  /** The picture to send along (base64 of the image), when the recipient has not got this one yet. */
+  avatarBase64?: string
   toAddress: string
   own: { privateKey: Uint8Array; keydata: string }
   /** The recipient's binary public key. */
@@ -34,7 +36,6 @@ export async function composeEncryptedMail(input: ComposeInput): Promise<{ armor
   const date = new Date(input.sentAt)
   const inner = buildInnerMime({
     headers: [
-      ['From', input.fromName ? `${input.fromName} <${input.fromAddress}>` : input.fromAddress],
       ['To', input.toAddress],
       ['Subject', input.subject ?? ''],
       ['Date', (Number.isNaN(date.getTime()) ? new Date() : date).toUTCString()],
@@ -43,7 +44,7 @@ export async function composeEncryptedMail(input: ComposeInput): Promise<{ armor
       ['Chat-Version', '1.0'],
       ...(parent ? [['In-Reply-To', parent], ['References', parent]] as Array<[string, string]> : []),
     ],
-    lines: [keydataHeader('Autocrypt', input.fromAddress, input.own.keydata, true)],
+    lines: [fromLine(input.fromAddress, input.fromName), keydataHeader('Autocrypt', input.fromAddress, input.own.keydata, true), ...(input.avatarBase64 ? [avatarLine(input.avatarBase64)] : [])],
     text: input.content,
   })
   const armored = await encryptMessage({ plaintext: inner, recipients: [input.peerKey], signer: input.own.privateKey })

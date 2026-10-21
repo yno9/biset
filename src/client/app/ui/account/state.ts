@@ -1,4 +1,5 @@
 import type { PgpCardConfig } from './pgp-card.tsx'
+import type { ProfileConfig } from './profile.ts'
 import { createStore } from '../../react/store.ts'
 // The one owner of the account page's module state. Split out of
 // the account page (2026-09-05) when that file was broken up by concern:
@@ -76,6 +77,8 @@ export interface AccountPageConfig {
   rotationKey?: { state: 'unpublished' | 'lost' | 'stale'; onRenew(): Promise<void> }
   /** The PGP key card (account/pgp-card.ts); present once DIDComm is. */
   pgp?: PgpCardConfig
+  /** This identity's own name and picture (account/profile.ts). */
+  profile?: ProfileConfig
   onExportMessages?(): Promise<void>
   onImportMessages?(): Promise<void>
   /** src.bak's showSysMsg (shell.ts) -- injected rather than imported

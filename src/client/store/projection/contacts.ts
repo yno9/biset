@@ -397,6 +397,23 @@ export function contactAvatarPatch(cardId: string, card: LocalJmapContactCard | 
   return { cardId, patch: { 'media/avatar': { '@type': 'Media', kind: 'photo', uri: avatar }, [pointerToken(AVATAR_SOURCE_PROPERTY)]: 'signed' } }
 }
 
+/** This identity's own name for its card (a person's word: nothing found out later replaces it); `null` removes it. */
+export function ownNamePatch(cardId: string, card: LocalJmapContactCard | undefined, name: string | null): ContactSetPayload | undefined {
+  if (name === null) return card && contactDisplayName(card) ? { cardId, patch: { 'name/full': null as unknown as CanonicalValue, [pointerToken(NAME_SOURCE_PROPERTY)]: null as unknown as CanonicalValue } } : undefined
+  const wanted = name.replace(/\s+/g, ' ').trim()
+  if (!wanted || wanted.length > 200) return undefined
+  if (card && contactDisplayName(card) === wanted && nameSourceOf(card) === 'user') return undefined
+  return { cardId, patch: { 'name/full': wanted, [pointerToken(NAME_SOURCE_PROPERTY)]: 'user' } }
+}
+
+/** This identity's own picture (a data URL) for its card, by hand; `null` removes it. */
+export function ownAvatarPatch(cardId: string, card: LocalJmapContactCard | undefined, avatar: string | null): ContactSetPayload | undefined {
+  const current = card && contactAvatar(card)
+  if (avatar === null) return current ? { cardId, patch: { 'media/avatar': null as unknown as CanonicalValue, [pointerToken(AVATAR_SOURCE_PROPERTY)]: null as unknown as CanonicalValue } } : undefined
+  if (current === avatar && card![AVATAR_SOURCE_PROPERTY] === 'user') return undefined
+  return { cardId, patch: { 'media/avatar': { '@type': 'Media', kind: 'photo', uri: avatar }, [pointerToken(AVATAR_SOURCE_PROPERTY)]: 'user' } }
+}
+
 /** Records that a mail written at `seenAt` carried `keydata` for the counterparty of `cardId`. */
 export function autocryptKeyPatch(cardId: string, entry: AutocryptKeyEntry): ContactSetPayload {
   return { cardId, patch: { [`${pointerToken(AUTOCRYPT_CONTACT_PROPERTY)}/keys/${autocryptKeyId(entry.keydata)}`]: { ...entry } as unknown as CanonicalValue } }
