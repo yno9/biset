@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { applyContactSet, contactCardSet, contactDisplayName, contactNamePatch, didContactPatch, nameSourceOf, NAME_SOURCE_PROPERTY, type LocalJmapContactCard } from '../src/client/store/projection/contacts.ts'
+import { applyContactSet, contactCardSet, contactDisplayName, contactNamePatch, didContactPatch, nameSourceOf, SOURCES_PROPERTY, type LocalJmapContactCard } from '../src/client/store/projection/contacts.ts'
 
 const DID = 'did:web:did.md:nine.testrun.org:hrdcv7qkr'
 const fresh = () => { const patch = didContactPatch(DID); return { cardId: patch.cardId, card: applyContactSet(undefined, patch)! } }
@@ -47,7 +47,7 @@ describe('a contact\'s name and where it came from', () => {
     const next = applyContactSet(card, (update.intents[0]!.payload as never))!
     expect(contactDisplayName(next)).toBe('Mine')
     expect(nameSourceOf(next)).toBe('user')
-    const forged = contactCardSet({ update: { [card.id]: { [NAME_SOURCE_PROPERTY]: 'user' } } }, [card])
+    const forged = contactCardSet({ update: { [card.id]: { [SOURCES_PROPERTY]: { name: 'user' } } } }, [card])
     expect(forged.notUpdated[card.id]?.type).toBe('forbidden')
   })
 })
@@ -109,4 +109,14 @@ describe('this identity\'s own name and picture', async () => {
     expect(contactAvatarPatch(cardId, set, 'data:image/png;base64,iVBORw0KGgo=')).toBeUndefined()
     expect(contactAvatar(applyContactSet(set, ownAvatarPatch(cardId, set, null)!)!)).toBeUndefined()
   })
+})
+
+test('the sources of a card\'s name and picture are one property, and cards from before it are still read', () => {
+  const { cardId, card } = fresh()
+  const named = withName(card, cardId, 'Bob', 'mail')
+  expect(named['biset.md:sources']).toEqual({ name: 'mail' })
+  expect('biset.md:nameSource' in named).toBe(false)
+  const legacy = { ...card, name: { full: 'Old' }, 'biset.md:nameSource': 'mail' } as LocalJmapContactCard
+  expect(nameSourceOf(legacy)).toBe('mail')
+  expect(contactNamePatch(cardId, legacy, 'New', 'signed')).toBeDefined()
 })
