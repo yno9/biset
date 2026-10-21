@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { displayName } from '../../src/client/app/ui/did-display.ts'
+import { avatarOf, displayName } from '../../src/client/app/ui/did-display.ts'
 import { afterEach, expect, test } from 'vitest'
 import * as openpgp from 'openpgp'
 import { refreshInbox, setEncryptedMailOpener, setSignedNameHandler } from '../../src/client/app/ui/shell.ts'
@@ -104,8 +104,8 @@ test('the name a sender signs its mail with is handed on once per sender: the ne
   const bodies: Record<string, string> = { b1: await make('Bob Old', 'Wed, 21 Oct 2026 01:00:00 GMT'), b2: await make('Bob New', 'Wed, 21 Oct 2026 02:00:00 GMT') }
   const emails = ['b1', 'b2'].map(blobId => ({ id: blobId, blobId, threadId: 't', mailboxIds: {}, keywords: {}, receivedAt: '2026-10-21T00:00:00Z', subject: '[...]', from: [{ email: 'did:web:did.md:x.test:bob' }] }))
   const model = { async snapshot() { return { emails, contactCards: [] } as never }, async download(id: string) { return new TextEncoder().encode(bodies[id]!) } }
-  const heard: Array<[string, string]> = []
-  setSignedNameHandler((did, name) => heard.push([did, name]))
+  const heard: Array<[string, unknown]> = []
+  setSignedNameHandler((did, profile) => heard.push([did, profile.name]))
   setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [alice.privateKey], senderKeys: [await publicBytes(bob)] }))
   await refreshInbox(model as never)
   expect(heard).toEqual([['did:web:did.md:x.test:bob', 'Bob New']])
@@ -114,5 +114,21 @@ test('the name a sender signs its mail with is handed on once per sender: the ne
   setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [alice.privateKey], senderKeys: [] })) // no key for the sender: not verified
   await refreshInbox(model as never)
   expect(heard).toEqual([])
+  setSignedNameHandler(undefined)
+})
+
+test('a signed Chat-User-Avatar is handed on with the name, and a picture on the card is what the screens show', async () => {
+  const alice = await generatePgpKey('alice@did.md'), bob = await generatePgpKey('bob@x.test')
+  const PNG = btoa(String.fromCharCode(0x89, 0x50, 0x4e, 0x47, 1, 2, 3))
+  const stored = storedEncryptedBody(NOTICE, await encryptMessage({ plaintext: buildInnerMime({ lines: ['From: Bob <bob@x.test>', `Chat-User-Avatar: base64:${PNG}`], text: 'hi' }), recipients: [await publicBytes(alice)], signer: bob.privateKey }))
+  const bobDid = 'did:web:did.md:x.test:bob'
+  const card = { id: 'c1', '@type': 'Card', version: '1.0', uid: 'u', addressBookIds: { default: true }, media: { avatar: { '@type': 'Media', kind: 'photo', uri: `data:image/png;base64,${PNG}` } }, onlineServices: { didcomm: { service: 'DIDComm', uri: bobDid } } }
+  const model = { async snapshot() { return { emails: [{ id: 'e1', blobId: 'b1', threadId: 't', mailboxIds: {}, keywords: {}, receivedAt: '2026-10-21T00:00:00Z', subject: '[...]', from: [{ email: bobDid }] }], contactCards: [card] } as never }, async download() { return new TextEncoder().encode(stored) } }
+  const heard: Array<[string, unknown]> = []
+  setSignedNameHandler((did, profile) => heard.push([did, profile]))
+  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [alice.privateKey], senderKeys: [await publicBytes(bob)] }))
+  await refreshInbox(model as never)
+  expect(heard).toEqual([[bobDid, { name: 'Bob', avatar: `data:image/png;base64,${PNG}` }]])
+  expect(avatarOf(bobDid)).toBe(`data:image/png;base64,${PNG}`)
   setSignedNameHandler(undefined)
 })

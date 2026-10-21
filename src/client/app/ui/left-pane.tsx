@@ -3,13 +3,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../react/store.ts'
 import { DIDCOMM_GROUP_THREAD_PREFIX } from './message/message-view.ts'
-import { displayName } from './did-display.ts'
+import { avatarOf, displayName } from './did-display.ts'
 import { avatarColor, previewText } from './format.ts'
 import { hamburgerTrigger } from './hamburger-menu.tsx'
 import { showComposePage, hideAccountPage, hideComposePage, hideConfigPage } from './pages/index.ts'
 import { HamburgerDots, PaneToggleIcons, togglePane } from './right-col.tsx'
 import { isNarrow, patchShell, shell } from './stores.ts'
-import { counterpartLabel, groupMembersLabel, latestOf, type InboxRow } from './thread-model.ts'
+import { counterpartDid, counterpartLabel, groupMembersLabel, latestOf, type InboxRow } from './thread-model.ts'
 import { useSelf, useThreads } from './use-threads.ts'
 
 // The keyboard cursor and hover focus only mean something where there is a pointer and a keyboard.
@@ -48,8 +48,8 @@ function toggleAccordion(row: InboxRow | undefined, key: string, focusThread = t
   } else patchShell({ expandedInboxKeys: expanded })
 }
 
-function Row({ row, label, avatarSubject, unread, current, focusedItem, activeThreadKey, expanded, visible, onNavigate }: {
-  row: InboxRow; label: string; avatarSubject: string; unread: boolean; current: boolean; focusedItem: NavItem | undefined
+function Row({ row, label, avatarSubject, avatarImage, unread, current, focusedItem, activeThreadKey, expanded, visible, onNavigate }: {
+  row: InboxRow; label: string; avatarSubject: string; avatarImage: string | undefined; unread: boolean; current: boolean; focusedItem: NavItem | undefined
   activeThreadKey: string | undefined; expanded: boolean; visible: boolean; onNavigate: (item: NavItem) => void
 }) {
   const latest = latestOf(row.groups[0]!)
@@ -84,7 +84,7 @@ function Row({ row, label, avatarSubject, unread, current, focusedItem, activeTh
           hoverFired.current = true
           onNavigate({ kind: 'inbox', key: row.key })
         }}>
-        <div className="lp-avatar" style={{ background: avatarColor(avatarSubject) }}>{avatarSubject.charAt(0).toUpperCase()}{unread ? <div className="unread-dot" /> : null}</div>
+        <div className="lp-avatar" style={{ background: avatarColor(avatarSubject) }}>{avatarImage ? <img className="lp-avatar-img" src={avatarImage} alt="" /> : avatarSubject.charAt(0).toUpperCase()}{unread ? <div className="unread-dot" /> : null}</div>
         <div className="lp-info">
           <div className="lp-name">{label}</div>
           <div className="lp-preview">{previewText(latest.body)}</div>
@@ -128,6 +128,7 @@ export function LeftPane() {
     return {
       row, label,
       avatarSubject: isGroup ? label : shortSenderLabel(latest.from_name || latest.from || label),
+      avatarImage: isGroup ? undefined : avatarOf(counterpartDid(row.groups, self)),
       unread: row.groups.some(g => g.messages.some(p => p.msg.seen !== true)),
       visible: !query || label.toLowerCase().includes(query) || row.groups.some(g => (g.subject ?? '').toLowerCase().includes(query)),
     }

@@ -177,3 +177,20 @@ export function displayNameOfFrom(value: string | undefined): string | undefined
   const name = decodeEncodedWords(raw).trim()
   return name && !name.includes('@') ? name : undefined
 }
+
+const AVATAR_MAX_BYTES = 200 * 1024
+const IMAGE_MAGIC: Array<[type: string, magic: number[]]> = [['image/png', [0x89, 0x50, 0x4e, 0x47]], ['image/jpeg', [0xff, 0xd8, 0xff]], ['image/gif', [0x47, 0x49, 0x46, 0x38]], ['image/webp', [0x52, 0x49, 0x46, 0x46]]]
+
+/** What a `Chat-User-Avatar:` header says (Delta Chat, in the signed part): `base64:<image>` is the picture, as a data URL; `0` says the
+ * person removed theirs (`null`); anything else (the older form that names an attached part, an image that is too big or not an
+ * image we know) tells us nothing (`undefined`). */
+export function avatarOfHeader(value: string | undefined): string | null | undefined {
+  const text = value?.replace(/\s+/g, '')
+  if (text === '0') return null
+  if (!text?.startsWith('base64:')) return undefined
+  let bytes: Uint8Array
+  try { bytes = Uint8Array.from(atob(text.slice(7)), char => char.charCodeAt(0)) } catch { return undefined }
+  if (bytes.length === 0 || bytes.length > AVATAR_MAX_BYTES) return undefined
+  const type = IMAGE_MAGIC.find(([, magic]) => magic.every((byte, index) => bytes[index] === byte))?.[0]
+  return type ? `data:${type};base64,${text.slice(7)}` : undefined
+}

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { ProcessedMessage } from '../../src/client/app/ui/message/message-view.ts'
 import { HamburgerMenu } from '../../src/client/app/ui/hamburger-menu.tsx'
 import { LeftPane } from '../../src/client/app/ui/left-pane.tsx'
+import { setContactAvatars } from '../../src/client/app/ui/did-display.ts'
 import { accountConfig } from '../../src/client/app/ui/account/state.ts'
 import { ReplyBox, composeConfig, type ComposeConfig } from '../../src/client/app/ui/reply-box.tsx'
 import { RightCol } from '../../src/client/app/ui/right-col.tsx'
@@ -202,6 +203,18 @@ test('one row per person, newest first, with an unread dot; the open thread\'s r
   expect(rows[0]!.classList.contains('current')).toBe(true)
   expect(rows[1]!.querySelector('.unread-dot')).not.toBeNull()
   expect(rows[1]!.querySelector('.lp-name')!.textContent).toBe('Bob')
+})
+
+test('a contact\'s picture fills the avatar of its row and of its messages; without one, the initial', () => {
+  const bob = 'did:web:did.md:x.test:bob'
+  setMessages([message({ from: bob, from_name: 'Bob', subject: 'Lunch', thread_id: 'L1', ts: T0 })])
+  const { container } = app(<LeftPane />)
+  expect(container.querySelector('.lp-avatar-img')).toBeNull()
+  expect(container.querySelector('.lp-avatar')!.textContent).toBe('B')
+  setContactAvatars(new Map([[bob, 'data:image/png;base64,AAAA']]))
+  const withPicture = app(<LeftPane />)
+  expect(withPicture.container.querySelector('.lp-avatar-img')!.getAttribute('src')).toBe('data:image/png;base64,AAAA')
+  setContactAvatars(new Map())
 })
 
 test('the filter hides rows that do not match, and Escape clears it', () => {

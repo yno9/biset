@@ -56,6 +56,11 @@ export function setContactNames(names: ReadonlyMap<string, string>): void { cont
 
 export function displayName(did: string): string { return contactNames.get(did) ?? labelForDid(did) }
 
+// Pictures: the card's, as data URLs, set the same way each refresh.
+let contactAvatars: ReadonlyMap<string, string> = new Map()
+export function setContactAvatars(avatars: ReadonlyMap<string, string>): void { contactAvatars = avatars }
+export function avatarOf(did: string | undefined): string | undefined { return did ? contactAvatars.get(did) : undefined }
+
 // ── Transport protocol pill ─────────────────────────────────────────────────
 // Shared between pages/compose-page.tsx (a typed recipient) and right-col.tsx (a
 // conversation's actual participants) -- a "to"/participant is either a

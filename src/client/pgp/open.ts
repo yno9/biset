@@ -2,7 +2,7 @@
 // against the key we hold for the sender, and hand back the inner MIME as the message to show.
 import { armorOfStoredBody } from './stored.ts'
 import { decryptMessage, type Decrypted } from './message-crypto.ts'
-import { decodeEncodedWords, displayNameOfFrom, parseInnerMime } from './mime.ts'
+import { avatarOfHeader, decodeEncodedWords, displayNameOfFrom, parseInnerMime } from './mime.ts'
 
 export interface OpenedMail {
   /** The inner MIME (headers and body), to read like any other mail. */
@@ -15,6 +15,8 @@ export interface OpenedMail {
   hidden?: boolean
   /** The sender's own name, from the `From:` inside -- only when the signature held against a key we have for the sender, so it is theirs. */
   fromName?: string
+  /** The sender's picture from the `Chat-User-Avatar:` inside (a data URL), or `null` when it removed it; absent when the message says nothing, or the signature did not hold. */
+  avatar?: string | null
   /** The signature on it, when it has one. */
   signature?: Decrypted['signature']
 }
@@ -44,6 +46,7 @@ export async function openStoredMail(rawBody: string, keys: OpenKeys): Promise<O
     ...(headers.subject ? { subject: decodeEncodedWords(headers.subject) } : {}),
     ...(Number.isNaN(sentAt) ? {} : { sentAt }),
     ...(decrypted.signature?.verified === true && displayNameOfFrom(headers.from) ? { fromName: displayNameOfFrom(headers.from)! } : {}),
+    ...(decrypted.signature?.verified === true && avatarOfHeader(headers['chat-user-avatar']) !== undefined ? { avatar: avatarOfHeader(headers['chat-user-avatar'])! } : {}),
     ...(decrypted.signature ? { signature: decrypted.signature } : {}),
   }
 }

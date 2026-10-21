@@ -1,7 +1,7 @@
 // What the rest of the app calls to drive the mail UI: show it, and refresh what it lists.
 import type { LocalJmapEmail, LocalJmapReadModel, LocalJmapSnapshot } from '../../store/projection/gateway.ts'
-import { contactDisplayName, publicDidOf } from '../../store/projection/contacts.ts'
-import { setContactNames } from './did-display.ts'
+import { contactAvatar, contactDisplayName, publicDidOf } from '../../store/projection/contacts.ts'
+import { setContactAvatars, setContactNames } from './did-display.ts'
 import type { OpenedMail } from '../../pgp/open.ts'
 import { armorOfStoredBody } from '../../pgp/stored.ts'
 import { emailToMessageView } from './message/message-view.ts'
@@ -19,7 +19,8 @@ export function setEncryptedMailOpener(opener: EncryptedMailOpener | undefined):
 
 /** Told the name a sender signs its mail with (its newest mail's), to keep on its contact card. It is called on every refresh; keeping
  * the same name again changes nothing, so it settles. */
-type SignedNameHandler = (did: string, name: string) => void
+type SignedProfile = { name?: string; avatar?: string | null }
+type SignedNameHandler = (did: string, profile: SignedProfile) => void
 let onSignedName: SignedNameHandler | undefined
 export function setSignedNameHandler(handler: SignedNameHandler | undefined): void { onSignedName = handler }
 
@@ -51,8 +52,15 @@ export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
       if (did && name) names.set(did, name)
     }
     setContactNames(names)
+    const avatars = new Map<string, string>()
+    for (const card of snapshot.contactCards) {
+      const did = publicDidOf(card), picture = contactAvatar(card)
+      if (did && picture) avatars.set(did, picture)
+    }
+    setContactAvatars(avatars)
     const views: ProcessedMessage[] = []
     const signedNames = new Map<string, { ts: number; name: string }>()
+    const signedAvatars = new Map<string, { ts: number; avatar: string | null }>()
     for (const email of snapshot.emails) {
       if (!email.blobId) continue
       const raw = await readModel.download(email.blobId)
@@ -68,6 +76,7 @@ export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
       // The outer subject of an encrypted mail is a stand-in; the real one is inside.
       if (opened?.hidden) continue
       if (opened?.fromName && msg.from.startsWith('did:') && msg.ts >= (signedNames.get(msg.from)?.ts ?? 0)) signedNames.set(msg.from, { ts: msg.ts, name: opened.fromName })
+      if (opened?.avatar !== undefined && msg.from.startsWith('did:') && msg.ts >= (signedAvatars.get(msg.from)?.ts ?? 0)) signedAvatars.set(msg.from, { ts: msg.ts, avatar: opened.avatar })
       if (opened?.subject) msg.subject = opened.subject
       // ... and so is its time: the outer Date of an encrypted mail is made up.
       if (opened?.sentAt !== undefined) msg.ts = opened.sentAt
@@ -76,7 +85,10 @@ export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
     }
     mail.set({ messages: views })
     // Only a sender's newest name counts: an older message carries the name it had then.
-    if (onSignedName) for (const [did, { name }] of signedNames) onSignedName(did, name)
+    if (onSignedName) for (const did of new Set([...signedNames.keys(), ...signedAvatars.keys()])) {
+      const name = signedNames.get(did)?.name, avatar = signedAvatars.get(did)
+      onSignedName(did, { ...(name ? { name } : {}), ...(avatar ? { avatar: avatar.avatar } : {}) })
+    }
   })
   // A rejected refresh stays observable to its caller without poisoning the queue for the next one.
   refreshTail = task.catch(() => {})

@@ -51,3 +51,35 @@ describe('a contact\'s name and where it came from', () => {
     expect(forged.notUpdated[card.id]?.type).toBe('forbidden')
   })
 })
+
+describe('a contact\'s picture', async () => {
+  const { avatarOfHeader } = await import('../src/client/pgp/mime.ts')
+  const { contactAvatar, contactAvatarPatch } = await import('../src/client/store/projection/contacts.ts')
+  const PNG = btoa(String.fromCharCode(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3))
+
+  test('Chat-User-Avatar: base64: is the picture, 0 removes it, the rest says nothing', () => {
+    expect(avatarOfHeader(`base64:${PNG}`)).toBe(`data:image/png;base64,${PNG}`)
+    expect(avatarOfHeader(`base64:${PNG.slice(0, 8)}  ${PNG.slice(8)}`)).toBe(`data:image/png;base64,${PNG}`) // folded
+    expect(avatarOfHeader('0')).toBeNull()
+    expect(avatarOfHeader('avatar.jpg')).toBeUndefined() // the older form names an attached part
+    expect(avatarOfHeader(`base64:${btoa('not an image at all')}`)).toBeUndefined()
+    expect(avatarOfHeader(undefined)).toBeUndefined()
+  })
+
+  test('the card takes a signed picture, changes with it, loses it when removed, and a picture put there by a person stays', () => {
+    const { cardId, card } = fresh()
+    const uri = `data:image/png;base64,${PNG}`
+    const set = applyContactSet(card, contactAvatarPatch(cardId, card, uri)!)!
+    expect(contactAvatar(set)).toBe(uri)
+    expect(contactAvatarPatch(cardId, set, uri)).toBeUndefined()
+    const other = `data:image/png;base64,${PNG.slice(0, -4)}AAAA`
+    expect(contactAvatar(applyContactSet(set, contactAvatarPatch(cardId, set, other)!)!)).toBe(other)
+    expect(contactAvatar(applyContactSet(set, contactAvatarPatch(cardId, set, null)!)!)).toBeUndefined()
+    expect(contactAvatarPatch(cardId, card, null)).toBeUndefined() // nothing to remove
+
+    const byHand = contactCardSet({ update: { [card.id]: { media: { avatar: { '@type': 'Media', kind: 'photo', uri: 'data:image/png;base64,AAAA' } } } } }, [card])
+    const mine = applyContactSet(card, byHand.intents[0]!.payload as never)!
+    expect(contactAvatarPatch(cardId, mine, uri)).toBeUndefined()
+    expect(contactAvatarPatch(cardId, mine, null)).toBeUndefined()
+  })
+})

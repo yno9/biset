@@ -58,6 +58,11 @@ export function counterpartLabel(groups: readonly ThreadGroup[], self: SelfAddre
   return groupMembersLabel(groups, self)
 }
 
+/** The DID of the other side of a 1:1 row (the latest message that came from them), for its picture; undefined when none did. */
+export function counterpartDid(groups: readonly ThreadGroup[], self: SelfAddresses): string | undefined {
+  return groups.flatMap(group => group.messages.map(p => p.msg)).filter(msg => msg.from.startsWith('did:') && !self.has(msg.from.toLowerCase())).sort((a, b) => b.ts - a.ts)[0]?.from
+}
+
 /** Which row of the left list a thread belongs to: the counterparty (a group chat is its own row). */
 function inboxKeyOf(group: ThreadGroup, self: SelfAddresses): string {
   return inboxKeyForThread(group.messages[0]?.msg.thread_id, participantsOf(group.messages.map(p => p.msg), self))

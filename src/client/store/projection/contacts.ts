@@ -34,6 +34,8 @@ export const DIDCOMM_CONTACT_PROPERTY = 'biset.md:didcomm'
 export const AUTOCRYPT_CONTACT_PROPERTY = 'biset.md:autocrypt'
 /** Where the card's `name/full` came from (a NameSource): a weaker source never replaces a stronger one's name. */
 export const NAME_SOURCE_PROPERTY = 'biset.md:nameSource'
+/** Who set the card's `media/avatar`: 'signed' (a picture a contact signed its messages with) or 'user'. */
+export const AVATAR_SOURCE_PROPERTY = 'biset.md:avatarSource'
 /** The one address book (§12.2: more than one is for later). */
 const DEFAULT_ADDRESS_BOOK_ID = 'default'
 
@@ -378,6 +380,23 @@ export function contactNamePatch(cardId: string, card: LocalJmapContactCard | un
   return { cardId, patch: { 'name/full': wanted, [pointerToken(NAME_SOURCE_PROPERTY)]: source } }
 }
 
+/** The card's picture (a data URL), or undefined. */
+export function contactAvatar(card: LocalJmapContactCard): string | undefined {
+  const media = isObject(card.media) ? card.media : undefined
+  const avatar = media && isObject(media.avatar) ? media.avatar : undefined
+  return avatar && typeof avatar.uri === 'string' && avatar.uri.startsWith('data:image/') ? avatar.uri : undefined
+}
+
+/** The patch giving the card the picture a contact signed its messages with (`null`: it removed it) -- or undefined when that
+ * changes nothing, or when the picture on the card was put there by a person. */
+export function contactAvatarPatch(cardId: string, card: LocalJmapContactCard | undefined, avatar: string | null): ContactSetPayload | undefined {
+  const current = card && contactAvatar(card)
+  if (current && card![AVATAR_SOURCE_PROPERTY] !== 'signed') return undefined
+  if (avatar === null) return current ? { cardId, patch: { 'media/avatar': null as unknown as CanonicalValue } } : undefined
+  if (current === avatar) return undefined
+  return { cardId, patch: { 'media/avatar': { '@type': 'Media', kind: 'photo', uri: avatar }, [pointerToken(AVATAR_SOURCE_PROPERTY)]: 'signed' } }
+}
+
 /** Records that a mail written at `seenAt` carried `keydata` for the counterparty of `cardId`. */
 export function autocryptKeyPatch(cardId: string, entry: AutocryptKeyEntry): ContactSetPayload {
   return { cardId, patch: { [`${pointerToken(AUTOCRYPT_CONTACT_PROPERTY)}/keys/${autocryptKeyId(entry.keydata)}`]: { ...entry } as unknown as CanonicalValue } }
@@ -427,7 +446,7 @@ interface ContactCardSetResult {
 const SERVER_SET = new Set(['id'])
 
 /** The card properties only ingress writes: a JMAP client may not set them. */
-function touchesDidComm(path: string): boolean { const head = pointer(path)[0]; return head === DIDCOMM_CONTACT_PROPERTY || head === AUTOCRYPT_CONTACT_PROPERTY || head === NAME_SOURCE_PROPERTY }
+function touchesDidComm(path: string): boolean { const head = pointer(path)[0]; return head === DIDCOMM_CONTACT_PROPERTY || head === AUTOCRYPT_CONTACT_PROPERTY || head === NAME_SOURCE_PROPERTY || head === AVATAR_SOURCE_PROPERTY }
 
 /** Parses a ContactCard/set request against `cards` into the patches to
  * commit, and the per-item results a JMAP response reports. */
@@ -442,7 +461,7 @@ export function contactCardSet(arguments_: Record<string, unknown>, cards: reado
     next: for (const [creationId, value] of Object.entries(arguments_.create)) {
       try {
         if (!isObject(value)) throw new TypeError('a card must be an object')
-        for (const managed of [DIDCOMM_CONTACT_PROPERTY, AUTOCRYPT_CONTACT_PROPERTY, NAME_SOURCE_PROPERTY]) if (managed in value) { result.notCreated[creationId] = { type: 'forbidden', description: `${managed} is managed by biset` }; continue next }
+        for (const managed of [DIDCOMM_CONTACT_PROPERTY, AUTOCRYPT_CONTACT_PROPERTY, NAME_SOURCE_PROPERTY, AVATAR_SOURCE_PROPERTY]) if (managed in value) { result.notCreated[creationId] = { type: 'forbidden', description: `${managed} is managed by biset` }; continue next }
         if ([...SERVER_SET].some(key => key in value)) throw new TypeError('id is set by the server')
         const uid = typeof value.uid === 'string' && value.uid ? value.uid : newUid()
         const id = contactCardId(uid)
@@ -476,6 +495,7 @@ export function contactCardSet(arguments_: Record<string, unknown>, cards: reado
         }
         // A name a person writes is the strongest there is: nothing found out later replaces it.
         if (Object.keys(patch).some(path => pointer(path)[0] === 'name')) patch[NAME_SOURCE_PROPERTY] = 'user'
+        if (Object.keys(patch).some(path => pointer(path)[0] === 'media')) patch[AVATAR_SOURCE_PROPERTY] = 'user'
         const next = applyContactSet(card, { cardId: id, patch })!
         result.intents.push(contactSetIntent({ cardId: id, patch }))
         byId.set(id, next)

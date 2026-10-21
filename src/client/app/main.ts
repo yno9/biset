@@ -53,7 +53,7 @@ import { GenerationSeedReader, GenerationSeedSink, generationSeedRecord } from '
 import { createGenerationSeedAuthority, type GenerationSeedAuthority } from '../didcomm/generation-seed-bootstrap.ts'
 import { publishedRotationKey, rotationSigningKey } from '../didcomm/rotation-key.ts'
 import { createRotationManager, type RotationManager } from '../didcomm/rotation-manager.ts'
-import { autocryptKeyPatch, contactCardForDid, contactNamePatch, contactSetIntent, currentAutocryptKey, didContactPatch } from '../store/projection/contacts.ts'
+import { autocryptKeyPatch, contactAvatarPatch, contactCardForDid, contactNamePatch, contactSetIntent, currentAutocryptKey, didContactPatch } from '../store/projection/contacts.ts'
 import { fromPriorKeyResolver, verifyFromPrior } from '../../protocol/didcomm/from-prior.ts'
 import { signingKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
@@ -462,13 +462,17 @@ async function configureWalletAccountIfPresent(
     // An encrypted mail is opened where it is shown, with this identity's keys and the key held for its sender.
     // Delta Chat shares its profile in what it signs: the name on a message from a key we hold is the sender's own, and follows
     // it when it changes. The newest message's name is kept on the contact card (a card of its own is made if there is none).
-    setSignedNameHandler((did, name) => {
+    setSignedNameHandler((did, profile) => {
       void (async () => {
         const snapshot = await readModel.snapshot()
         const card = contactCardForDid(snapshot.contactCards, did)
-        const write = contactNamePatch(card?.id ?? didContactPatch(did).cardId, card, name, 'signed')
-        if (!write) return
-        await mutationSink.commitIntents([...(card ? [] : [contactSetIntent(didContactPatch(did))]), contactSetIntent(write)], snapshot)
+        const cardId = card?.id ?? didContactPatch(did).cardId
+        const writes = [
+          profile.name ? contactNamePatch(cardId, card, profile.name, 'signed') : undefined,
+          profile.avatar !== undefined ? contactAvatarPatch(cardId, card, profile.avatar) : undefined,
+        ].filter((write): write is NonNullable<typeof write> => write !== undefined)
+        if (writes.length === 0) return
+        await mutationSink.commitIntents([...(card ? [] : [contactSetIntent(didContactPatch(did))]), ...writes.map(contactSetIntent)], snapshot)
         await refreshInbox(readModel)
       })().catch(error => console.warn('[contact name]', error instanceof Error ? error.message : error))
     })
