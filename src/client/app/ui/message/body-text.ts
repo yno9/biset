@@ -17,11 +17,18 @@ function decodeUtf8(raw: Uint8Array): string {
   try { return new TextDecoder('utf-8', { fatal: true }).decode(raw) } catch { return new TextDecoder('utf-8').decode(raw) }
 }
 
+/** The headers that make a leading block a header block: those a mail carries, and the feed's `X-Source-Url`. */
+const MIME_HEADER = /^(content-type|content-transfer-encoding|mime-version|message-id|in-reply-to|references|from|to|subject|date|x-source-url):/im
+
 function splitEntity(text: string): MimeEntity {
   const separator = /\r?\n\r?\n/.exec(text)
   if (!separator || separator.index === undefined) return { headers: {}, body: text }
+  // A chat message is not an RFC 5322 entity: its first paragraph is text, not a header block ("たなな\n\n--\nsig"
+  // lost its first paragraph here). Only a block that is empty, or says what it is, counts as headers.
+  const block = text.slice(0, separator.index)
+  if (block && !MIME_HEADER.test(block)) return { headers: {}, body: text }
   const headers: Record<string, string> = {}
-  for (const line of unfoldHeaders(text.slice(0, separator.index))) {
+  for (const line of unfoldHeaders(block)) {
     const colon = line.indexOf(':')
     if (colon <= 0) continue
     headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim()
