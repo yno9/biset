@@ -24,7 +24,7 @@ export async function generatePgpKey(address: string, name?: string): Promise<Pg
   const { privateKey } = await openpgp.generateKey({
     type: 'curve25519', userIDs: [{ ...(name ? { name } : {}), email: address }], format: 'object',
   })
-  return describe(privateKey)
+  return describeKey(privateKey)
 }
 
 /** A key the user already has: armored or binary, with the passphrase it is protected by (if any). */
@@ -40,15 +40,16 @@ export async function importPgpKey(key: string | Uint8Array, passphrase?: string
     try { privateKey = await openpgp.decryptKey({ privateKey, passphrase }) } catch { throw new Error('The passphrase does not unlock the key.') }
   }
   await privateKey.getEncryptionKey().catch(() => { throw new Error('The key cannot decrypt (no usable encryption subkey).') })
-  return describe(privateKey)
+  return describeKey(privateKey)
 }
 
 /** The key behind stored secret-key bytes. */
 export async function readPgpKey(privateKey: Uint8Array): Promise<PgpKey> {
-  return describe(await openpgp.readPrivateKey({ binaryKey: privateKey }))
+  return describeKey(await openpgp.readPrivateKey({ binaryKey: privateKey }))
 }
 
-function describe(privateKey: openpgp.PrivateKey): PgpKey {
+/** A secret key as the app keeps and shows it. */
+export function describeKey(privateKey: openpgp.PrivateKey): PgpKey {
   return {
     fingerprint: privateKey.getFingerprint().toUpperCase(),
     privateKey: privateKey.write(),
