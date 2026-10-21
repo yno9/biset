@@ -128,7 +128,7 @@ test('account: the identity card shows the DID, then the name the DID document g
   expect(container.querySelector('#cmd-acc-identity-did')!.textContent).toBe(DID)
   expect(container.querySelector('#cmd-acc-identity-avatar')!.textContent).toBe('A')
   await waitFor(() => expect(container.querySelector('#cmd-acc-identity-name')!.textContent).toBe('Alice'))
-  expect(container.querySelector('#cmd-acc-capability-expiry')!.textContent).toMatch(/^~ /)
+  expect(container.querySelector('#cmd-acc-capability-expiry')).toBeNull() // the identity card shows no expiry date any more
 })
 
 test('account: the card opens on click and reads the DID document once', async () => {
