@@ -156,7 +156,7 @@ export function NewUserPage() {
 
   return (
     <div id="new-user-page" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(100vh - 220px)', padding: '4px 0 20px' }}>
-      <div style={{ width: '100%', maxWidth: 360, display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ width: '100%', maxWidth: 440, display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div id="nu-pigeon"><Pigeon /></div>
         <div id="nu-create" style={{ display: embedded ? 'flex' : 'none', flexDirection: 'column', gap: 12 }}>
           <iframe ref={frame} id="nu-dito-frame" title="Create your identity" style={{ width: '100%', height: 230, border: 0, background: 'transparent', colorScheme: 'light dark' }}
