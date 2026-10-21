@@ -83,7 +83,7 @@ export async function handleSecureJoin(armored: string, from: SecureJoinParty, c
     const auth = mime.headers['secure-join-auth']
     if (mime.headers['secure-join'] !== 'vc-request-pubkey' || !auth || !auths.includes(auth)) throw new Error('a password message that is not a valid vc-request-pubkey')
     const inner = buildInnerMime({
-      lines: [keydataHeader('Autocrypt', context.address, await autocryptKeydata(context.key.privateKey, context.address), true), 'Secure-Join: vc-pubkey', `Secure-Join-Auth: ${auth}`],
+      lines: [keydataHeader('Autocrypt', context.address, await autocryptKeydata(context.key.privateKey, context.address), true), 'Chat-Version: 1.0', 'Secure-Join: vc-pubkey', `Secure-Join-Auth: ${auth}`],
       text: SECURE_JOIN_SUBJECT,
     })
     await context.send(from, await symmetricEncryptSigned(inner, sharedSecret(context.key.fingerprint, auth), context.key.privateKey))
@@ -111,7 +111,7 @@ export async function handleSecureJoin(armored: string, from: SecureJoinParty, c
   if (checked.signature?.verified !== true) throw new Error('vc-request-with-auth is not signed by the key it names')
 
   await context.learn(from, held.keydata)
-  const confirm = buildInnerMime({ lines: ['Secure-Join: vc-contact-confirm', keydataHeader('Autocrypt-Gossip', from.address, held.keydata)], text: SECURE_JOIN_SUBJECT })
+  const confirm = buildInnerMime({ lines: ['Chat-Version: 1.0', 'Secure-Join: vc-contact-confirm', keydataHeader('Autocrypt-Gossip', from.address, held.keydata)], text: SECURE_JOIN_SUBJECT })
   await context.send(from, await encryptMessage({ plaintext: confirm, recipients: [keyBytes], signer: context.key.privateKey }))
   return 'vc-request-with-auth'
 }
