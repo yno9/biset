@@ -78,3 +78,25 @@ export function domainDidJsonlUrl(domain: string, port?: number): string {
   const hostPart = port ? `${hostname}:${port}` : hostname
   return didJsonlUrlFor(hostPart, [])
 }
+
+/** The SCID of a did:webvh, the part of the identity that survives a move to another host (an alias
+ * change); `undefined` for any other DID. */
+export function scidOf(did: string): string | undefined {
+  if (!did.startsWith('did:webvh:')) return undefined
+  const scid = did.slice('did:webvh:'.length).split(':')[0]
+  return scid && SCID_RE.test(scid) ? scid : undefined
+}
+
+/** True when both are the same did:webvh identity (same SCID), whatever host each names. */
+export function sameIdentity(a: string, b: string): boolean {
+  if (a === b) return true
+  const scid = scidOf(a)
+  return scid !== undefined && scid === scidOf(b)
+}
+
+/** What every local store is keyed by for `did`: the SCID form `did:webvh:<SCID>` of a did:webvh
+ * (stable across an alias change), any other DID as it is. */
+export function identityKey(did: string): string {
+  const scid = scidOf(did)
+  return scid ? `did:webvh:${scid}` : did
+}
