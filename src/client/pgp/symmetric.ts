@@ -73,15 +73,15 @@ function afterFirstPacket(bytes: Uint8Array): Uint8Array {
   return bytes.slice(offset + length)
 }
 
-/** `plaintext` encrypted to `password` and signed by the secret key `signer` (binary), as Delta Chat reads it. */
-export async function symmetricEncryptSigned(plaintext: string, password: string, signer: Uint8Array): Promise<string> {
-  const signingKey = await openpgp.readPrivateKey({ binaryKey: signer })
+/** `plaintext` encrypted to `password` and, when `signer` (a binary secret key) is given, signed by it, as Delta Chat reads it. */
+export async function symmetricEncryptSigned(plaintext: string, password: string, signer?: Uint8Array): Promise<string> {
+  const signingKey = signer ? await openpgp.readPrivateKey({ binaryKey: signer }) : undefined
   const sessionKey = crypto.getRandomValues(new Uint8Array(16))
   const encrypted = await openpgp.encrypt({
     message: await openpgp.createMessage({ text: plaintext }),
     sessionKey: { data: sessionKey, algorithm: 'aes128', aeadAlgorithm: 'ocb' },
     passwords: ['discarded'], // makes openpgp.js write a session key packet, which is dropped below
-    signingKeys: signingKey, config: SEIPD_V2, format: 'binary',
+    ...(signingKey ? { signingKeys: signingKey } : {}), config: SEIPD_V2, format: 'binary',
   }) as Uint8Array
   const data = afterFirstPacket(new Uint8Array(encrypted))
   const skesk = await sessionKeyPacket(sessionKey, password)

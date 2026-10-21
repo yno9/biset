@@ -24,6 +24,8 @@ export interface ChatMessageOptions extends SendDidCommMessageOptions {
   /** The message, already encrypted (pgp/compose.ts): a mail bridge wraps this armored OpenPGP message into PGP/MIME
    * (didmail PROTOCOL.md §7.4). `content` is then not sent. */
   encrypted?: { armored: string }
+  /** This is the first message to an address that has not written to us -- the user chose to write first (didmail PROTOCOL.md §7.1). */
+  introduction?: boolean
 }
 
 /** Sends a chat message to `toDid`. `opts.id` keeps a retried message's
@@ -35,6 +37,7 @@ export async function sendDidCommMessage(toDid: string, content: string, opts: C
   return sendFrontDoorMessage(toDid, BASIC_MESSAGE, {
     content: encrypted ? '' : content, sentAt, ...(opts.subject ? { subject: opts.subject } : {}), ...(opts.autocrypt ? { autocrypt: opts.autocrypt } : {}),
     ...(encrypted ? { encryption: 'openpgp' } : {}),
+    ...(opts.introduction ? { introduction: true } : {}),
   }, {
     ...opts, createdTime: Math.floor(Date.parse(sentAt) / 1000),
     ...(encrypted ? { attachments: [{ id: 'pgp', filename: 'encrypted.asc', media_type: 'application/octet-stream', data: { base64: bytesToBase64url(new TextEncoder().encode(encrypted.armored)) } }] } : {}),
