@@ -402,7 +402,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
 /** What a control record keeps of a problem-report: its code, the text it
  * gives (control characters out, 512 characters at most: the args may be a
  * remote server's words), the thread it is about, and the messages it
- * acknowledges -- by which the reducer finds the sent email that failed. */
+ * acknowledges: an audit record, which the read model does not use. */
 function problemOf(msg: DidCommPlaintext): { problemCode?: string; problemText?: string; threadId?: string; acked?: string[] } {
   const body = (msg.body ?? {}) as { code?: unknown; comment?: unknown; args?: unknown }
   const text = describeProblem(body).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 512)

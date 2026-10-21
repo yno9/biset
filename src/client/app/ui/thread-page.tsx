@@ -34,9 +34,6 @@ function Message({ message: { msg, bodyText } }: { message: ProcessedMessage }) 
             ? <span className="t-unverified" title={`The sender's mail domain did not verify this message (DMARC ${msg.auth.dmarc ?? 'none'}). It may not be from ${msg.auth.domain ?? 'that domain'}.`}>unverified</span> : null}
           <span className="t-time">{formatTime(msg.ts)}</span>
           {msg.edited ? <span className="t-edited">edited</span> : null}
-          {/* A sent message a recipient reported undelivered: the reason in the title, one line per recipient. */}
-          {msg.undelivered?.length
-            ? <span className="t-undelivered" title={msg.undelivered.map(entry => `${entry.to.startsWith('did:') ? labelForDid(entry.to) : entry.to}: ${entry.reason ?? entry.code}`).join('\n')}>not delivered</span> : null}
         </div>
         {/* esc() leaves nothing but text, and linkify() only adds anchors: the body is never markup. */}
         <div className="t-body" dangerouslySetInnerHTML={{ __html: linkify(esc(stripQuoted(bodyText))) }} />

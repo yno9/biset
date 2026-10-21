@@ -4,7 +4,6 @@ import type { VaultMutationIntent } from './mutations.ts'
 import type { LocalJmapEmail, LocalJmapMailbox, LocalJmapSnapshot } from './gateway.ts'
 import { assertMailMessageEmail } from '../vault/mail-message.ts'
 import { applyContactSet, assertContactSetPayload, copyContactCard, type LocalJmapContactCard } from './contacts.ts'
-import { didOfKid } from '../../../protocol/ids.ts'
 
 export interface DecryptedMutationRecord {
   event: VaultEventV1
@@ -100,11 +99,9 @@ export function reduceLocalJmapProjection(
     }
     if (mutation.kind === 'didcomm.control') {
       // An audit record of a received DIDComm control-plane message
-      // (didcomm/ingress-projector.ts) -- never a mailbox change. The one
-      // thing the read model takes from it: an error problem-report that
-      // acknowledges a message this identity sent marks that email
-      // undelivered to its sender.
-      markUndelivered(emails, mutation.payload)
+      // (didcomm/ingress-projector.ts) -- never a mailbox change, and nothing
+      // the read model takes from it (a mail bridge tells delivery failures in
+      // a conversation now, not in a problem report).
       continue
     }
     if (mutation.kind === 'credential.generation-seed.set') {
@@ -233,28 +230,6 @@ function canonicalEmail(value: LocalJmapEmail): CanonicalValue {
     ...(value.auth === undefined ? {} : { auth: { ...value.auth } }),
     ...(value.reactions === undefined ? {} : { reactions: { ...value.reactions } }),
     ...(value.edited === undefined ? {} : { edited: value.edited }),
-    ...(value.undelivered === undefined ? {} : { undelivered: value.undelivered.map(entry => ({ ...entry })) }),
-  }
-}
-
-/** Applies an error problem-report (its control record) to the sent emails
- * it acknowledges. Only a recipient of an email can report it undelivered:
- * the report's authenticated sender must be among the email's `to`, so no
- * one else can mark this identity's messages failed. A record of any other
- * shape is left alone. */
-function markUndelivered(emails: Map<string, LocalJmapEmail>, payload: unknown): void {
-  if (payload === null || typeof payload !== 'object') return
-  const { problemCode, problemText, acked, senderKid } = payload as Record<string, unknown>
-  if (typeof problemCode !== 'string' || !problemCode.startsWith('e.') || typeof senderKid !== 'string' || !Array.isArray(acked)) return
-  const reporter = didOfKid(senderKid)
-  const ids = new Set(acked.filter((id): id is string => typeof id === 'string'))
-  for (const [id, email] of emails) {
-    if (!email.messageId || !ids.has(email.messageId.toLowerCase())) continue
-    if (!email.mailboxIds.outbox && !email.mailboxIds.sent) continue
-    if (!email.to?.some(address => address.email === reporter)) continue
-    if (email.undelivered?.some(entry => entry.to === reporter && entry.code === problemCode)) continue
-    const entry = { to: reporter, code: problemCode, ...(typeof problemText === 'string' && problemText ? { reason: problemText } : {}) }
-    emails.set(id, { ...email, undelivered: [...(email.undelivered ?? []), entry] })
   }
 }
 

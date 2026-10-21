@@ -360,21 +360,6 @@ describe('DIDComm ingress projector', () => {
     expect(result.projection.emails).toEqual([])
   })
 
-  test('an error problem-report that acknowledges a sent message marks it undelivered to its sender, and only to a recipient of it', async () => {
-    const sent = (id: string, to: string): LocalJmapEmail => ({ id, blobId: `b-${id}`, threadId: 't', mailboxIds: { sent: true }, keywords: {}, receivedAt: '2026-08-25T00:00:00.000Z', to: [{ email: to }], messageId: `Msg-${id}` })
-    const emails = [sent('to-bob', didOfKid(senderKid)), sent('to-carol', 'did:webvh:x:carol.test.example')]
-    const report = (ack: string[], code = 'e.m.xfer.rejected') => {
-      const plaintext = buildPlaintext(PROBLEM_REPORT, { code, comment: 'The recipient\'s mail server refused the message for {1}: {2}', args: ['a@b.example', '550\r\nno such user'] }, didOfKid(senderKid), [identityId], { pthid: 't', ack })
-      return envelopeFor(new TextEncoder().encode(JSON.stringify(packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }]))))
-    }
-    const result = await buildProjector(undefined, emails).verifyAndProject(report(['msg-to-bob', 'msg-to-carol']))
-    const byId = Object.fromEntries(result.projection.emails.map(email => [email.id, email]))
-    expect(byId['to-bob']!.undelivered).toEqual([{ to: didOfKid(senderKid), code: 'e.m.xfer.rejected', reason: "The recipient's mail server refused the message for a@b.example: 550 no such user" }])
-    expect(byId['to-carol']!.undelivered).toBeUndefined() // bob cannot report carol's copy
-    const warning = await buildProjector(undefined, emails).verifyAndProject(report(['msg-to-bob'], 'w.m.xfer.slow'))
-    expect(warning.projection.emails.find(email => email.id === 'to-bob')!.undelivered).toBeUndefined()
-  })
-
   test('two different basicmessages between the same pair land in the SAME thread, chat-style (not per-subject like mail)', async () => {
     const projector = buildProjector()
     const first = buildPlaintext(BASIC_MESSAGE, { content: 'first message' }, didOfKid(senderKid))

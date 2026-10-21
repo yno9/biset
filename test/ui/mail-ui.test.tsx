@@ -82,12 +82,11 @@ test('a message body is text: markup in it is shown, not run, and links are link
 
 test('a DIDComm sender is shown by its short name; badges mark what is wrong with a mail', () => {
   setMessages([message({ from: 'did:webvh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi:dave.did.md', from_name: 'did:webvh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi:dave.did.md', thread_id: 'D' }),
-    message({ auth: { dmarc: 'fail', domain: 'evil.example' } as never, edited: true, undelivered: [{ to: 'bob@did.md', code: 'x', reason: 'mailbox full' }], reactions: [{ from: 'a', emoji: '👍' }], sourceUrl: 'javascript:alert(1)', thread_id: 'E', ts: T0 + 1000 })])
+    message({ auth: { dmarc: 'fail', domain: 'evil.example' } as never, edited: true, reactions: [{ from: 'a', emoji: '👍' }], sourceUrl: 'javascript:alert(1)', thread_id: 'E', ts: T0 + 1000 })])
   const { container, rerender } = app(<RightCol />)
   expect(container.querySelector('.t-sender')!.textContent).toBe('Bob')
   expect(container.querySelector('.t-unverified')!.getAttribute('title')).toContain('evil.example')
   expect(container.querySelector('.t-edited')).not.toBeNull()
-  expect(container.querySelector('.t-undelivered')!.getAttribute('title')).toContain('mailbox full')
   expect(container.querySelector('.t-reaction-chip')!.textContent).toBe('👍')
   expect(container.querySelector('.t-source-link')).toBeNull()
   act(() => shell.set({ ...shell.get(), focusedThreadKey: 'D' }))
