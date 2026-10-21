@@ -1,10 +1,10 @@
 # Biset アーキテクチャ
 
-> 調査基準日: 2026-10-08（Asia/Tokyo）
-> 調査対象: `~/biset` の作業ツリー（HEAD `5be6720`）。DIDComm Messaging v2.1 への適合を 2026-10-09 に評価した（§9.9）。本番の app は `5f4d286` のビルド（2026-10-08 05:55 UTC に配備、配信物の sha256 が手元と一致）。
+> 調査基準日: 2026-10-21（Asia/Tokyo）
+> 調査対象: `~/dev/v2/biset` の `main`（HEAD `60baf4a`）。DIDComm Messaging v2.1 への適合は 2026-10-09 に評価した（§9.9）。メール UI は `mail.did.md`（`./deploy.sh mail`）に、2026-10-21 のビルドを配備済み。
 >
-> 2026-10-03 版を、`PLAN-refactor.md`（relationship を front door ＋ DID Rotation に置き換える、P0〜P5）と連絡先リスト（JMAP for Contacts、C1〜C3）に合わせて書き直した。
-> 変わった点は §1.4（2026-10-02 版から）と §1.5（2026-10-03 版から）にまとめた。方針は「現行コードを正とする」。将来案・廃止予定は、現行の事実と混ぜずに明示する。
+> 2026-10-08 版から、Delta Chat との相互運用（Autocrypt v1、Secure-Join、PGP 鍵の導出。§10）と、名前の整理（relationship seed → generation seed、`#didcomm-rotation` → `#biset-generation`）を反映して書き直した。
+> 変わった点は §1.4〜§1.6。方針は「現行コードを正とする」。将来案・保留は、現行の事実と混ぜずに明示する（§10.5 に Autocrypt v2 の保留）。
 
 ## 0. 要約
 
@@ -22,6 +22,7 @@
 - biset が自分で運用するサーバーは **mediator** と **rp-signer**（did.md への認可要求に署名）。
   **メールは biset の外**: 別リポジトリの **didmail**（SMTP ⇄ DIDComm bridge）が外部アドレスを `did:web` の DID として見せ、
   biset はそれを普通の DIDComm の相手として扱う。アドレスから DID へは WebFinger で引く（§10）。
+- **メールの PGP は Delta Chat と相互運用する**（Autocrypt v1 ＋ Secure-Join）。PGP 鍵は generation seed から導出し、主鍵は DID 文書の `#biset-generation`（Ed25519）そのもの（§10.4）。**Autocrypt v2（PQ）は保留**（§10.5）。
 - **世代（VCK）・routing alias・関係秘密・ML-KEM・Vault event の署名・MLS 端末証明書は、すべて撤去済み**（§1.4）。
 
 ## 1. この文書の読み方
@@ -94,12 +95,24 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 | 会話の確立 | relationship の INIT/ACCEPT（独自の型）で相手ごとの did:peer を作る | **撤去**。front door で始め、Discover Features で `from_prior` に対応する相手とは DID Rotation で Y へ（§9.2） |
 | did:peer の送り主 | relationship の相手、または独立した相手 | **相手の移動先としてだけ**（連絡先が名指すか、`from_prior` が付く）。単体の did:peer とはやりとりしない |
 | 相手の記録 | `contact-key.set`（ContactKeyV1、秘密鍵を含む） | **連絡先**（`contact.set`、JMAP for Contacts の ContactCard。秘密鍵は持たない）（§7.3） |
-| seed の権威 | DID ログの「最初の端末」の判定 | **DID Document の `#biset-generation`（`authentication`）が公開する鍵の seed**（2026-10-21 までは `#didcomm-rotation`。その名前の文書は、鍵を取り替える（renew）まで、その名前が権威のまま）（§6） |
+| seed の権威 | DID ログの「最初の端末」の判定 | **DID Document の `#biset-generation`（`authentication`）が公開する鍵の seed**（2026-10-21 までは `#didcomm-rotation`。旧名は読まないので、旧名の文書は「鍵が無い」扱いになり、renew で取り替える）（§6） |
 | group chat | 独自の招待と型、端末ごとのメンバー一覧 | **`to` が複数の Basic Message**。`thid` が会話、参加者ごとの経路で送る（§9.4） |
 | Y の service | mediator の did:peer の鍵と URL | **mediator の DID（`did:web`）**。mediator が鍵や URL を替えても Y は変わらない（§9.2） |
 | problem code | `e.m.*` の独自の綴り | 仕様の sorter.scope.descriptors（scope `m`、kebab-case） |
 | mediator | did:peer | **`did:web`**（did:peer は `alsoKnownAs` に残す）。受信箱の上限 1024 件・64 MB（§11.1） |
 | did.md の文書編集 | 追加する鍵はすべて `keyAgreement` | 鍵ごとに検証関係と `ifAbsent`／`replace`。ログインの検証は `#pass-1` に限る（§5.4） |
+
+### 1.6 2026-10-08 版から変わったこと
+
+| 領域 | 2026-10-08 版 | 現行コード |
+|---|---|---|
+| seed の名前 | relationship seed（一部の記述）／ `#didcomm-rotation` | **generation seed**／**`#biset-generation`**。旧名の文書は読まない（互換なし。Vault の種別は `credential.generation-seed(.set)`） |
+| メールの PGP | 鍵を作る・取り込む・WKD で公開する（`credential.openpgp.set`） | **seed から導出**。保管も公開もしない。WKD は didmail ごと廃止（§10.4） |
+| Delta Chat との連絡 | なし | **Secure-Join の招待側**を実装（classic／chatmail の両方で実機確認）。暗号化メールの送受信、`Autocrypt:` の取り込み（§10.4） |
+| 暗号化メールの保管 | — | 暗号文のまま Vault に置き、表示のときに開く（世代ごとの鍵を試す） |
+| 連絡先の拡張 | `biset.md:didcomm` | **`biset.md:autocrypt`**（相手の公開鍵、`prefer-encrypt`、`verified`）を追加（§7.3） |
+| didmail | 本番へ配備、MX 未設定 | MX（`mx.did.md`）・SPF・DKIM を設定し、chatmail の中継にも受理される（`didmail/ARC.md`） |
+| テスト | 645 件 | **729 件** |
 
 ## 2. 設計原則と非目標
 
@@ -327,7 +340,7 @@ MLS そのもの（`src/protocol/mls/`、`client/mls/`、`client/mimi/`、`serve
   Vault の内容が端末の外に出るのは DIDComm authcrypt の中（Vault Sync）だけで、送り手の認証はそちらが担う。
 
 event の種別の正本は `src/protocol/vault.ts` の `VAULT_EVENT_KINDS`（`message.add/edit/tombstone`、`mailbox.set`、`keyword.set`、`transport.result`、
-`didcomm.control`、`contact.set`、`credential.generation-seed.set`、`credential.openpgp.set` など）。`contact-key.set` は退役（reducer は何もしない）。
+`didcomm.control`、`contact.set`、`credential.generation-seed.set` など）。`credential.openpgp.set` は撤去（PGP 鍵は導出する。§10.4）。`contact-key.set` は退役（reducer は何もしない）。
 
 **読めない credential の扱い**（`credential-store.ts` の `readableCredential`）: 完全性は正しいが、この版が読まない形の credential record（形式変更より前に書かれたもの）は、
 無いものとして読み飛ばす。1 件でもあると、その種類の credential 全体や、受信一覧の再構築（`mutation-records.ts`）が止まってしまうため。
@@ -354,6 +367,7 @@ local mutation・ingress commit・Vault Sync の受信適用は、record・proje
 住所録は既定の 1 冊（`AddressBook` の id `default`）。`contact.set` は 1 枚の Card への PatchObject（RFC 8620 §5.3）か削除で、target は `contact:<id>`（email の id と混ざらない）。
 reducer が event の順に当てるので、どの端末でも同じ Card になる（項目ごとの後勝ち）。当てると Card が不正になる差分（2 台が同時に編集した結果。片方が消した項目に、もう片方が中身を書くなど）は、全端末で同じように読み飛ばし、再構築を止めない。Card の id は `uid` から導く。公開 DID の Card の `uid` はその DID の名前ベース UUID（v5）。
 DIDComm の経路の状態は独自のプロパティ `biset.md:didcomm`（相手の移動先 `rotations`、自分の移動 `own`）で、書くのは受信の処理だけ。JMAP の `ContactCard/set` と export の import からは書けない。
+もう 1 つの独自プロパティ **`biset.md:autocrypt`**（`{keys: {[id]: {keydata, seenAt, preferEncrypt?, verified?}}}`）は、相手の PGP 公開鍵を持つ（`autocryptKeyPatch`、`currentAutocryptKey` は `verified` を先に選ぶ）。書くのは受信の処理（DMARC が通ったメールの `Autocrypt:`、Secure-Join の完了）だけで、同じく JMAP の `ContactCard/set` と import からは書けない。
 gateway は `AddressBook/get`、`ContactCard/get`・`/query`・`/set` と capability `urn:ietf:params:jmap:contacts` を持つ。export／import（§8.2）も Card を運ぶ。
 
 ## 8. 端末間同期・履歴移送・Markdown
@@ -527,7 +541,7 @@ mediator は clearnet（`https://mediator.biset.md`）と onion（v3 Hidden Serv
 
 ## 10. メール
 
-**biset はメールを送らないし、SMTP を知らない**。メールは別リポジトリの **didmail**（`~/dev/v2/didmail`、仕様は `PROTOCOL.md`）が担い、
+**biset はメールを送らないし、SMTP を知らない**。メールは別リポジトリの **didmail**（`~/dev/v2/didmail`、構成は `ARC.md`、仕様は `PROTOCOL.md`）が担い、
 外部アドレス `local@domain` を `did:web:{bridge}:{domain}:{local}` の DID（文書はアクセスのたびに生成）として見せる。
 biset にとって外部アドレスは、その DID を持つ普通の DIDComm の相手であり、送受信は Basic Message 2.0 だけ。2026-10-09 に旧 mail-bridge（`mail-plugin`、`mail-relay`、`mail-bridge/1.0` の型、client の RFC 5322 組み立て）を撤去した。
 
@@ -548,16 +562,46 @@ didmail が SMTP で受けたメールを、宛先の did:webvh の全 keyAgreem
 | `body.replyTo`（DID） | `replyTo`。返信はこちらへ送る（`computeReplyContext`） |
 | `body.auth`（SPF／DKIM／DMARC） | `auth`（JMAP 外の拡張）。`dmarc` が `pass` でなければ、スレッドで差出人に「unverified」を付ける |
 
-### 10.4 PGP（2026-10-21 に、generation seed から導出する形へ。方針は didmail の `PLAN.md` §9.6）
-メールの PGP は、**暗号操作を biset、メールの扱いを didmail** が分担する。秘密鍵と平文は端末から出ない。
-- **鍵は導出する**（`client/pgp/derive.ts`）。generation seed（§6）から決定的に作り、保管も同期もしない。全端末が同じ鍵（同じバイト列の証明書）になる。
-  - 主鍵: DID 文書の `#biset-generation` と同じ Ed25519（EdDSA legacy、v4）。DID 文書が PGP 鍵のフィンガープリントを保証する。
-  - 暗号化副鍵: seed から別のラベル（`biset/pgp/encryption/v1`）で導いた X25519（ECDH curve25519 legacy）。
-  - 作成時刻と自己署名の時刻は固定。形式は Delta Chat 自身の鍵と同じ（v4、アルゴリズム 22 / 18、ユーザー ID は `<アドレス>`）。
-- **世代で替わる**。端末を外すと seed が替わり、PGP 鍵も新しい世代の鍵になる（フィンガープリントが替わるので、Delta Chat の鍵つき連絡先は Secure-Join をやり直す）。古い世代の seed は Vault に残るので、その世代の鍵を導き直して、古いメッセージを読める（`client/pgp/own.ts`）。
-- アカウントページの「PGP key」カードは、フィンガープリントの表示と公開鍵のコピーだけ（作る・取り込む・公開する操作は無い）。WKD は使わない。
-- **送受信**: 暗号化メールは暗号文のまま保管し（`pgp/stored.ts`）、一覧を更新するときに開く（`pgp/open.ts`。署名が相手の鍵で検証できたかも記録）。送るときは、相手の鍵を持っていて `prefer-encrypt=mutual` なら暗号化する（`pgp/compose.ts`。内側に本物の件名・Message-ID・自分の `Autocrypt:`、外側の件名は `[...]`）。メールの `Autocrypt:` の鍵は、DMARC が通ったものだけを連絡先カード（`biset.md:autocrypt`）に覚える。
-- **まだ**: Delta Chat の Secure-Join（鍵つき連絡先になる唯一の道）、暗号化メール内側の `Autocrypt:` / gossip の取り込み、署名の表示。
+### 10.4 PGP と Delta Chat（2026-10-21。方針は didmail の `PLAN.md` §9）
+メールの PGP は、**暗号操作を biset、メールの運搬を didmail** が分担する。秘密鍵と平文は端末から出ない。didmail は `Autocrypt:` ヘッダと PGP/MIME を中身を解釈せずに運ぶ（`body.autocrypt`、`body.encryption="openpgp"` ＋ `pgp` 添付。`didmail/PROTOCOL.md` §5.5、§7.4）。
+
+**鍵は導出する**（`client/pgp/derive.ts`、`own.ts`）。generation seed（§6）から決定的に作り、保管も同期もしない。全端末が同じ鍵（同じバイト列の証明書）になる。
+- 主鍵: DID 文書の `#biset-generation` と同じ Ed25519（EdDSA legacy、v4）。DID 文書が PGP 鍵のフィンガープリントを保証する。
+- 暗号化副鍵: seed から別のラベル（`biset/pgp/encryption/v1`）で導いた X25519（ECDH curve25519 legacy）。
+- 作成時刻と自己署名の時刻は固定（`2026-06-30T23:59:59Z`）。形式は Delta Chat 自身の鍵と同じ（v4、アルゴリズム 22／18、ユーザー ID は `<アドレス>`）。
+- **世代で替わる**。端末を外すと seed が替わり、PGP 鍵も新しい世代の鍵になる（フィンガープリントが替わるので、Delta Chat の鍵つき連絡先は Secure-Join をやり直す）。古い世代の seed は Vault に残るので、その世代の鍵を導き直して古いメッセージを読める。
+- アカウントページの「PGP key」カードは、フィンガープリント、公開鍵のコピー、**「Copy Delta Chat invite」**（Secure-Join の招待リンク）。seed が Vault に入るまでは、カードが取得を繰り返し確かめる。
+
+**Delta Chat とは Secure-Join で鍵つき連絡先になる**（`pgp/securejoin.ts`）。Delta Chat v2 は暗号化したチャットを「鍵つき連絡先」（フィンガープリントで識別）にだけ書く。`Autocrypt:` ヘッダだけでは鍵つき連絡先にならない。
+- 招待トークンは seed と日付から導き（30 日有効）、保管しない。biset は**招待される側ではなく、招待する側**。`vc-request-pubkey` と `vc-request-with-auth` に答える。答えは `Chat-Version: 1.0` 付き。
+- パスワード付きのメッセージは、Delta Chat が受け付ける形に限られる: **SKESK v6（AES-128、OCB、salt つき S2K SHA-256）＋ SEIPD v2（OCB、8 KiB チャンク）**。v4 の SKESK ＋ SEIPD v1 だと「Modification Detection Code error」になる。openpgp.js は SKESK v6 を作れないので手組みした（`symmetric.ts`、`ocb.ts`。OCB は RFC 7253 のテストベクタで確認）。
+- 実機: classic アカウントと chatmail アカウントの両方で、握手と双方向の暗号化メッセージを確認した（2026-10-21）。
+
+**送受信**
+- 暗号化メールは暗号文のまま保管し（`pgp/stored.ts`）、一覧を更新するときに開く（`pgp/open.ts`。世代ごとの鍵を試す。署名が相手の鍵で検証できたかも記録）。内側の `Date`／`Subject` を表示に使う（Delta Chat は外側の `Date` を乱数にし、`Subject` を `[...]` にする）。
+- 送るときは、`shouldEncrypt`（相手の鍵が `verified`、または `prefer-encrypt=mutual` の相互）なら暗号化する（`pgp/compose.ts`）。内側に本物の件名・Message-ID・自分の `Autocrypt:`・`Chat-Version: 1.0`、外側の件名は `[...]`。宛先と自分の両方に暗号化し、自分の鍵で署名する。
+- メールの `Autocrypt:` の鍵は、DMARC が通ったものだけを連絡先（`biset.md:autocrypt`）に覚える。
+- **まだ**: 暗号化メールの内側の `Autocrypt:`／gossip の取り込み、署名の表示、biset が「招待される側」になる Secure-Join。
+
+### 10.5 Autocrypt v2（PQ）は保留（2026-10-21）
+**判断**: Delta Chat が出すまで実装しない。現行は v4 鍵（EdDSALegacy／ECDH cv25519）で、これは Delta Chat の今の形式。
+
+外部の状況（2026-10-21 に確認）:
+- Delta Chat（chatmail/core）の最新は v2.64.0（10/20）で、Autocrypt 2 の記載は無い。実装は Draft の PR #8318（「WIP: feat: Autocrypt2」、10/10 に force-push、レビューなし、リリース時期未定）。ヘッダでの運び方、Secure-Join、gossip は Issue #8317 にも書かれていない。
+- 仕様 draft-autocrypt-openpgp-v2-cert は -03（2026-07-06）が最新。失効は 2027-01-07。
+- openpgp.js の ML-KEM は GitHub `main`（PR #2022、2026-07-10）にだけある。npm の最新と biset の依存は 6.3.2 で、ML-KEM が無い。
+
+済んでいる検証（コードはリポジトリに入っていない。使い捨ての作業場所のみ）:
+- `main` で draft-03 のテストベクタ（cert と TSK）をすべて読めた。暗号化→復号の往復も通った。
+- ratchet の HKDF 出力はテストベクタの `ks.hexdump` と一致した。導出した秘密副鍵と署名 B／D／F は**バイト単位で一致**した（`SignaturePacket` のサブクラスで `writeHashedSubPackets()` を替え、issuer-fingerprint を non-critical（0xa1→0x21）にする必要がある。`salt` は bssalt、`nonDeterministicSignaturesViaNotation: false`）。
+- openpgp.js の既定は**新しい**副鍵を選ぶ。仕様は有効期限が最も早い回転副鍵を選び、有効な間はフォールバック副鍵に暗号化してはならない（MUST NOT）。選択は自前になる。
+
+決めてあること:
+- 鍵は seed から導出したまま。暗号化副鍵だけを ML-KEM-768＋X25519（アルゴリズム 35、96 byte の素材を別ラベル、例 `biset/pgp/pq-encryption/v1` から導く）に替え、主鍵は同じ Ed25519（作成時刻は仕様の固定値 `2026-06-30T23:59:59Z`）。端末を外す＝新しい主鍵（v2 では TSK を持つ者が将来の副鍵をすべて導けるため）。
+- didmail は変更不要の見込み（cert 2938 B、ヘッダ約 3.9 KB で、サイズの上限だけ確認する）。
+
+再開するときの順序: (a) openpgp.js `main` を固定して Vite のビルドで通す、(b) seed 導出の v6 TSK／cert と ratchet を実装し、テストベクタを CI に入れる、(c) 相手の v2 cert の受信・マージと、最も早く切れる副鍵の選択、(d) Delta Chat の出した形に合わせた Secure-Join。再開の合図は Delta Chat の release note への記載と、openpgp.js の PQC 入りの release。
+DIDComm 自体のハイブリッド PQ（X25519＋ML-KEM）は別件で、これも保留（`didmail/PLAN.md` §8、§8.5）。
 
 HTML 本文と添付（`attachments`）は今は保存しない（`body.content` が常にあるので読める）。配送失敗は report-problem/2.0（`e.m.xfer.*`）で届き、`didcomm.control` に記録される。その `ack` が送った email の `messageId` を指し、報告者がその email の宛先なら、reducer が email に `undelivered`（宛先・コード・理由）を付け、スレッドに「not delivered」を出す（理由は title）。宛先でない者の報告と、警告（`w.`）は無視する。
 
@@ -711,7 +755,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - Caddy（`/etc/caddy/Caddyfile`、did.md の deploy と共有。**biset の `deploy.sh` は Caddyfile を触らない**）:
   `mediator.biset.md` → `127.0.0.1:8791`（WebSocket の upgrade も Caddy の `reverse_proxy` がそのまま通す）、
   `t.biset.md` → `/opt/biset/app`（`/wallet/callback` は `index.html` に書き換え、`/api/rp-signer/*` は `127.0.0.1:8794`）、`biset.md` → `/opt/biset/home`。
-- systemd: `biset-didcomm-mediator.service`（`DynamicUser`、`/opt/biset/didcomm-mediator/`）、`biset-rp-signer.service`、`didmail.service`（2026-10-09 から。`/opt/didmail/current`、設定 `/etc/didmail/didmail.env`、DB `/var/lib/didmail/relay.sqlite`。配備は didmail の `deploy.sh`）。旧 `did-md-mail-relay.service` は停止・無効化済み（ファイルは残す）。
+- systemd: `biset-didcomm-mediator.service`（`DynamicUser`、`/opt/biset/didcomm-mediator/`）、`biset-rp-signer.service`、`didmail.service`（`/opt/didmail/current`、設定 `/etc/didmail/didmail.env`、DB `/var/lib/didmail/relay.sqlite`。配備は didmail の `deploy.sh`）。メール UI は `mail.did.md`（`./deploy.sh mail`）。旧 `did-md-mail-relay.service` は停止・無効化済み（ファイルは残す）。
 - tor: `/etc/tor/torrc` の Hidden Service は 2 つ。`/var/lib/tor/biset-mediator/` → `127.0.0.1:8791`。**秘密鍵を失うと `.onion` が変わり、公開済みの DID Document がすべて古くなる**。
 - mediator の DB は `/var/lib/biset-didcomm-mediator/mediator.sqlite`。`deploy.sh` は mediator の入れ替え前に `sqlite3 .backup` で `/var/backups/biset-didcomm-mediator/` へ退避する。
 
@@ -748,20 +792,19 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 
 ## 16. 検証状況
 
-2026-10-08、作業ツリーで実測した。
+2026-10-21、`main`（`60baf4a`）で実測した。
 
 | コマンド | 結果 |
 |---|---|
-| `pnpm typecheck`（root ＋ mediator／mail-plugin／mail-relay／mimi／rp-signer） | ✅ すべて成功 |
-| `pnpm knip` | ✅ 成功 |
-| `pnpm reachability` | 本番の入口から 164／266 を到達、**テストのみ 23**（MLS／MIMI のクライアント側、`manifest.ts`、identity の fixture 用モジュールなど）、**どこからも到達しない 0** |
-| `pnpm test` | ✅ **108 ファイル、645 件成功、失敗 0**（MLS の 2 ファイルは件数を出さない形式で、別に全成功） |
-| `pnpm check`（上の 4 つ） | ✅ 成功 |
-| `pnpm build` | ✅ `app.js` 約 580 KB、`sw.js` 183 B、`index.html` 約 690 KB |
+| `pnpm test` | ✅ **729 件成功、失敗 0** |
+| 実機（Delta Chat） | ✅ classic（n@4r.ma）と chatmail（mailchat.pl）の両方で Secure-Join の握手、双方向の暗号化メッセージ |
+| 実機（本番の didmail） | ✅ DKIM／SPF／MX 設定済みで、chatmail の中継が受理 |
+
+`typecheck`・`knip`・`reachability` は 2026-10-08 の実測（全成功、到達しない 0）から再測定していない。`main.ts` の boot wiring がブラウザ E2E で覆われていない点は変わらない（§13）。
 
 テストは、canonical protocol、Vault の store、Vault Sync、VaultProjector、JMAP export／import、Markdown ミラー、
-DIDComm の crypto（DIF のテストベクタを含む）／multi-device 配送／mediator（HTTP と WebSocket、本物の HTTP サーバー（node:http + ws）での upgrade を含む）／seed と rotation key／`from_prior`／DID Rotation（本物の mediator を通す Y 宛ての配送を含む）／連絡先（JMAP for Contacts）／group、
-mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callback、JSON Schema、RP signer、MIMI を覆う。
+DIDComm の crypto（DIF のテストベクタを含む）／multi-device 配送／mediator（HTTP と WebSocket）／seed と rotation key／`from_prior`／DID Rotation／連絡先（JMAP for Contacts）／group、
+PGP（導出、SKESK v6／OCB、Secure-Join、暗号化メールの組み立てと開封）、SQLite、wallet の callback、JSON Schema、RP signer、MIMI を覆う。
 **テストで store を偽装しない**方針を採る（モックが本物の検証を再現していなかったことで障害を取り逃がした反省による）。
 
 ## 17. 負債・不整合・整理対象
@@ -809,7 +852,10 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 | Markdown ミラー | ✅ |
 | DIDComm の front door／1:1／group chat／DID Rotation／Trust Ping／Discover Features | ✅（DID Rotation は単体試験まで。本番の通しは未） |
 | mediator（SQLite、所有の証明、端末上限、WebSocket の live mode、relay-poller） | ✅（本番は 2026-10-03 のデプロイで入れ替え） |
-| メールアドレスとの送受信（didmail、WebFinger） | 🔧 didmail は 2026-10-09 に本番へ。biset の新版は未デプロイ。did.md の MX（`mx.did.md`）は v2 を指していない |
+| メールアドレスとの送受信（didmail、WebFinger） | ✅ 本番（`mail.did.md`、MX／SPF／DKIM 設定済み） |
+| メールの PGP（導出した鍵、Autocrypt v1、暗号化メール） | ✅ Delta Chat と実機で確認 |
+| Delta Chat の Secure-Join（招待する側） | ✅ classic／chatmail。招待される側は未 |
+| Autocrypt v2（PQ） | ⏸ 保留（§10.5） |
 | Tor（onion の入口、opt-in の公開、入口の選択） | ✅ 公開と読み取り。❓ Tor Browser・WebSocket での実運用 |
 | External Feed の受信 | ✅ 受信口のみ（送る bridge は未実装） |
 | biset-mimi、`client/mls/`・`client/mimi/` | 🔧 将来の MIMI クライアントのために残す |
@@ -818,15 +864,15 @@ mail-plugin／mail-relay（DKIM を含む）、SQLite、SMTP、wallet の callba
 
 ## 19. 次の作業
 
-1. **2026-10-08 のデプロイ後の実機確認**（`PLAN-refactor.md` §13）: 2 つの identity の間の DID Rotation（問い合わせ → 開始 → 確定、group）、2 台での Vault Sync と連絡先、「Remove other devices」の後の移り直し、4 台目の拒否、WebSocket（clearnet と onion）、メールの受信。
-2. **`PLAN-refactor.md` §9.4 の残りの試験**: 満杯の受信箱からの `missed` での回収（6）、seed を失った状態からの回復の通し（5）、候補の seed の https の経路（4）。
-3. **did:peer:4**（§10-4）と、住所録の画面。
-4. **DIDComm の残り（§9.9）**: SHOULD の未対応（`lang`、利用者への `to` の警告、相手への problem-report）。biset 自身の P-256／P-384 の鍵（今は X25519 だけ。NIST の鍵しか持たない相手と authcrypt するには、端末ごとに鍵を足して DID 文書に載せる必要がある）。
-5. **相互運用テスト**: `didcomm` の参照実装（npm）を dev 依存にしたテスト。
-6. **wallet の承認の実機確認**: `authorization_details` を送らないサインインを、did.md Wallet が受け付けること。
+1. **2026-10-08 のデプロイ後の実機確認**（`PLAN-refactor.md` §13）: 2 つの identity の間の DID Rotation（問い合わせ → 開始 → 確定、group）、2 台での Vault Sync と連絡先、「Remove other devices」の後の移り直し、4 台目の拒否、WebSocket（clearnet と onion）。
+2. **`PLAN-refactor.md` §9.4 の残りの試験**: 満杯の受信箱からの `missed` での回収、seed を失った状態からの回復の通し、候補の seed の https の経路。
+3. **メールの PGP の残り**（§10.4）: 内側の `Autocrypt:`／gossip の取り込み、署名の表示、招待される側の Secure-Join。
+4. **Autocrypt v2**: 保留（§10.5）。Delta Chat の対応待ち。
+5. **did:peer:4**（§10-4）と、住所録の画面。
+6. **DIDComm の残り（§9.9）**: SHOULD の未対応（`lang`、利用者への `to` の警告、相手への problem-report）。biset 自身の P-256／P-384 の鍵。DIDComm のハイブリッド PQ は別件で保留。
 7. **セッション復元の失敗の分類**（§17-4）。transient な失敗でセッションを破棄しない。
 8. **残骸の整理**: 旧データの救出コード、空の UI、`anchor*` の config、`client/`→`server/` の import（§17-3、8、10）。
-9. **メールの完成**: 送信状態を `SEND_RESULT` で確定させる、outbox の永続 retry、DKIM、did.md 以外のドメイン。
+9. **メールの完成**: 送信状態を `SEND_RESULT` で確定させる、outbox の永続 retry、HTML 本文と添付の保存。
 10. **repo の追跡の整理**（§17-6）。`scripts/` と `ops/` を追跡に戻す。
 11. **`main.ts` の boot wiring への統合テスト**（DID Rotation の配線を含む）。
 
@@ -859,13 +905,16 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 **`store/vault/`（ログ層）**: `store.ts`（IndexedDB）、`objects.ts`、`events.ts`、`active-segment.ts`、`segment-key-resolver.ts`、
 `commit.ts`（共有 Vault 状態を書く全経路が通る組み立て地点）、`mutations.ts`／`mutation-records.ts`、`mail-message.ts`、`credential-store.ts`、`generation-seed.ts`、
 `delivery-pack.ts`、`ingress-ingest.ts`、`projector.ts`、`jmap-export.ts`、`markdown-{mirror,directory}.ts`、`legacy-crdt-migration.ts`、`projection-rebuild.ts`、`blob-reader.ts`、
-`openpgp-credential.ts`、🔧 `manifest.ts`。詳細は `store/vault/README.md`。
+🔧 `manifest.ts`。詳細は `store/vault/README.md`。
 **`store/projection/`（read model）**: `gateway.ts`（`LocalJmapGateway`）、`contacts.ts`（JMAP for Contacts の Card と `contact.set`）、`reducer.ts`、`indexeddb.ts`、`mutations.ts`、`vault-mutation-sink.ts`、`transport.ts`（型のみ）。
 
 ### 20.4 `client/didcomm/`
-`send-message.ts`（chat の送信、`answerTrustPing`）、`front-door-send.ts`、`did-rotation.ts`（経路、Discover Features）、`rotation-manager.ts`（移動の開始・確定・受信箱）、`rotation-key.ts`、`generation-seed-bootstrap.ts`、`basicmessage.ts`、`ingress-projector.ts`、
+`send-message.ts`（chat の送信、`answerTrustPing`）、`front-door-send.ts`、`did-rotation.ts`（経路、Discover Features）、`rotation-manager.ts`（移動の開始・確定・受信箱）、`rotation-key.ts`（`#biset-generation`）、`generation-seed-bootstrap.ts`、`basicmessage.ts`、`ingress-projector.ts`、
 `group-chat{,-store}.ts`、`external-feed.ts`、**`vault-sync.ts`**、`mediator-sync.ts`（登録）、**`mediator-live.ts`**（WebSocket の live 受信）、
 **`mediator-endpoints.ts`**（入口の別名、`sameMediatorUrl`、Tor 環境の判定）。
+
+### 20.4b `client/pgp/`
+`derive.ts`（seed から PGP 鍵）、`own.ts`（自分の鍵と世代ごとの鍵）、`keyring.ts`（相手の鍵の表示、`Autocrypt:` 用の keydata）、`message-crypto.ts`（暗号化・復号）、`mime.ts`（内側の MIME）、`compose.ts`（暗号化メールの組み立て）、`stored.ts`／`open.ts`（保管と開封）、`autocrypt.ts`（ブリッジ DID とアドレス、`shouldEncrypt`）、`securejoin.ts`、`symmetric.ts`／`ocb.ts`（SKESK v6／OCB の手組み）。
 
 ### 20.5 `client/identity/`・`client/mail/`・本番から外れた部分
 - `identity/bootstrap.ts`（Vault 側の identity 境界）、`idkey.ts`。
