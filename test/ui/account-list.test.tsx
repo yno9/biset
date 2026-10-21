@@ -152,7 +152,7 @@ test('the PGP card waits while there is no generation seed, then shows the deriv
   let key: { fingerprint: string; userIds: string[] } | undefined
   const writeText = vi.fn(async () => {})
   vi.stubGlobal('navigator', { clipboard: { writeText } })
-  const pgp = { address: 'alice@did.md', current: async () => key, onCopyPublic: vi.fn(async () => 'armor') }
+  const pgp = { address: 'alice@did.md', current: async () => key, onCopyPublic: vi.fn(async () => 'armor'), inviteLink: vi.fn(async () => 'https://i.delta.chat/#FP&v=3') }
   const { container } = render(<AccountList />)
   set(config({ pgp }))
   await waitFor(() => expect(container.querySelector('#cmd-acc-pgp-card')!.textContent).toContain('generation seed'))
@@ -164,5 +164,8 @@ test('the PGP card waits while there is no generation seed, then shows the deriv
   fireEvent.click(screen.getByText('Copy public key'))
   await waitFor(() => expect(writeText).toHaveBeenCalledWith('armor'))
   await waitFor(() => expect(messages).toContain('Public key copied'))
+  fireEvent.click(screen.getByText('Copy Delta Chat invite'))
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith('https://i.delta.chat/#FP&v=3'))
+  await waitFor(() => expect(messages.some(text => text.startsWith('Delta Chat invite link copied'))).toBe(true))
   vi.unstubAllGlobals()
 })

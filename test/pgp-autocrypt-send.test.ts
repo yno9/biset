@@ -38,3 +38,23 @@ describe('the key told to a mail bridge', () => {
     expect('autocrypt' in sent[1]!.body).toBe(false)
   })
 })
+
+describe('a key a Secure-Join handshake vouched for', () => {
+  test('it is written to encrypted without asking for the mutual preference; an unverified key without it is not', async () => {
+    const { shouldEncrypt } = await import('../src/client/pgp/autocrypt.ts')
+    expect(shouldEncrypt({ verified: true })).toBe(true)
+    expect(shouldEncrypt({})).toBe(false)
+    expect(shouldEncrypt({ preferEncrypt: 'mutual' })).toBe(true)
+  })
+
+  test('the verified key is the current one, even when a mail later carries another', async () => {
+    const { autocryptKeyPatch, applyContactSet, currentAutocryptKey, didContactPatch } = await import('../src/client/store/projection/contacts.ts')
+    const did = 'did:web:did.md:x.test:bob'
+    let card = applyContactSet(undefined, didContactPatch(did))!
+    const cardId = card.id
+    card = applyContactSet(card, autocryptKeyPatch(cardId, { keydata: 'AAAA', seenAt: '2026-10-21T00:00:00Z', preferEncrypt: 'mutual', verified: true }))!
+    card = applyContactSet(card, autocryptKeyPatch(cardId, { keydata: 'BBBB', seenAt: '2026-10-22T00:00:00Z', preferEncrypt: 'mutual' }))!
+    expect(currentAutocryptKey(card)).toMatchObject({ keydata: 'AAAA', verified: true })
+    expect(() => applyContactSet(card, autocryptKeyPatch(cardId, { keydata: 'CCCC', seenAt: '2026-10-22T00:00:00Z', verified: false as never }))).toThrow('autocrypt key is invalid')
+  })
+})

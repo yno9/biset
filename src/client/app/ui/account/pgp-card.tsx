@@ -10,6 +10,8 @@ export interface PgpCardConfig {
   current(): Promise<{ fingerprint: string; userIds: string[] } | undefined>
   /** The armored public key, to copy. */
   onCopyPublic(): Promise<string>
+  /** The link that makes this identity a contact in Delta Chat when it is opened there (Secure-Join; valid for a month). */
+  inviteLink(): Promise<string>
 }
 
 type Key = Awaited<ReturnType<PgpCardConfig['current']>>
@@ -41,10 +43,16 @@ export function PgpCard({ config, showMessage }: { config: PgpCardConfig; showMe
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {key && key !== 'loading' ? (
-            <button type="button" className="acc-pgp-btn"
-              onClick={event => { event.stopPropagation(); void config.onCopyPublic().then(text => navigator.clipboard.writeText(text)).then(() => showMessage('Public key copied'), error => showMessage(errorText(error))) }}>
-              Copy public key
-            </button>
+            <>
+              <button type="button" className="acc-pgp-btn"
+                onClick={event => { event.stopPropagation(); void config.inviteLink().then(text => navigator.clipboard.writeText(text)).then(() => showMessage('Delta Chat invite link copied: open it in Delta Chat to become contacts'), error => showMessage(errorText(error))) }}>
+                Copy Delta Chat invite
+              </button>
+              <button type="button" className="acc-pgp-btn"
+                onClick={event => { event.stopPropagation(); void config.onCopyPublic().then(text => navigator.clipboard.writeText(text)).then(() => showMessage('Public key copied'), error => showMessage(errorText(error))) }}>
+                Copy public key
+              </button>
+            </>
           ) : null}
         </div>
       </div>

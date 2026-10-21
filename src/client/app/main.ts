@@ -35,7 +35,7 @@ import { VaultBackedLocalJmapMutationSink } from '../store/projection/vault-muta
 import { DidCommIngressProjector, isProjectableDidCommIngress } from '../didcomm/ingress-projector.ts'
 import { resolveDidCommSenderKey } from '../../protocol/didcomm/webvh-resolve.ts'
 import { didCommThreadId } from '../didcomm/basicmessage.ts'
-import { answerTrustPing } from '../didcomm/send-message.ts'
+import { answerTrustPing, sendDidCommMessage } from '../didcomm/send-message.ts'
 import { didcommGroupAddress, groupConversation, parseDidCommGroupAddress } from '../didcomm/group-chat.ts'
 import { registerWithMediator, type MediatorPollHandle } from '../didcomm/mediator-sync.ts'
 import { watchMediatorLive } from '../didcomm/mediator-live.ts'
@@ -52,14 +52,14 @@ import { GenerationSeedReader, GenerationSeedSink, generationSeedRecord } from '
 import { createGenerationSeedAuthority, type GenerationSeedAuthority } from '../didcomm/generation-seed-bootstrap.ts'
 import { publishedRotationKey, rotationSigningKey } from '../didcomm/rotation-key.ts'
 import { createRotationManager, type RotationManager } from '../didcomm/rotation-manager.ts'
-import { contactCardForDid, contactSetIntent, currentAutocryptKey } from '../store/projection/contacts.ts'
+import { autocryptKeyPatch, contactCardForDid, contactSetIntent, currentAutocryptKey, didContactPatch } from '../store/projection/contacts.ts'
 import { fromPriorKeyResolver, verifyFromPrior } from '../../protocol/didcomm/from-prior.ts'
 import { signingKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
 import { didCommRouteFromDocument } from '../../protocol/didcomm/webvh-route.ts'
 import { resolve as resolveWebvh } from '../../protocol/webvh/resolver.ts'
 import { sendFrontDoorMessage } from '../didcomm/front-door-send.ts'
-import { isBasicMessage } from '../didcomm/basicmessage.ts'
+import { isBasicMessage, pgpArmorOf } from '../didcomm/basicmessage.ts'
 import { isPing } from '../../protocol/didcomm/trust-ping.ts'
 import { fetchCurrentLog, freshFetch } from '../identity/webvh/log-io.ts'
 import { entryVersionNumber } from '../../protocol/webvh/log.ts'
@@ -70,6 +70,7 @@ import { MarkdownSelfWriteGuard, markdownStatusMutation } from '../store/vault/m
 import { createJmapExport, decodeJmapExport, encodeJmapExport, importJmapExport } from '../store/vault/jmap-export.ts'
 import { isMailAddress, resolveMailAddressDid } from '../didcomm/address-resolver.ts'
 import { ownPgp, type OwnPgp } from '../pgp/own.ts'
+import { handleSecureJoin, inviteUrl, SECURE_JOIN_SUBJECT } from '../pgp/securejoin.ts'
 import { bridgeHostOf, mailAddressOfBridgeDid, ownAutocryptFor, shouldEncrypt } from '../pgp/autocrypt.ts'
 import { composeEncryptedMail } from '../pgp/compose.ts'
 import { autocryptKeydata } from '../pgp/keyring.ts'
@@ -474,6 +475,11 @@ async function configureWalletAccountIfPresent(
           if (!key) throw new Error('There is no PGP key yet')
           return key.publicArmor
         },
+        async inviteLink() {
+          const [seed, key] = await Promise.all([generationSeeds?.current(), pgp.current()])
+          if (!seed || !key) throw new Error('The key is not ready yet')
+          return inviteUrl({ seed, key, address: ownMailAddress, now: Date.now() })
+        },
       }
     }
     // The Wallet branch returns before the ordinary local-identity boot
@@ -684,6 +690,44 @@ async function configureWalletAccountIfPresent(
             showSysMsg(`Could not send to ${item.toDid} yet (it stays queued and will be retried): ${reason}`)
           },
         })
+        // Delta Chat's Secure-Join, the invited side: an invite link (the account page) is opened in Delta Chat, which then sends
+        // two messages that only someone with the invite can make; the answers make this identity a key-contact there.
+        const answerSecureJoin = async (message: DidCommPlaintext): Promise<boolean> => {
+          const armored = pgpArmorOf(message)
+          const fromDid = typeof message.from === 'string' ? message.from : undefined
+          const fromAddress = fromDid ? mailAddressOfBridgeDid(fromDid) : undefined
+          const seed = await generationSeeds?.current()
+          const key = await pgp?.current()
+          if (!armored || !fromDid || !fromAddress || !seed || !key || !ownMailAddress) return false
+          const party = { did: fromDid, address: fromAddress }
+          try {
+            const outcome = await handleSecureJoin(armored, party, {
+              seed, key, address: ownMailAddress, now: Date.now(),
+              async send(to, answer) {
+                const route = await rotationManager.route(to.did)
+                const sent = await sendDidCommMessage(route.toDid, '', {
+                  fromKid: route.fromKid, x25519PrivateKey: route.x25519PrivateKey, subject: SECURE_JOIN_SUBJECT, encrypted: { armored: answer },
+                })
+                if (!sent.ok) throw new Error(sent.error)
+              },
+              async learn(who, keydata) {
+                const snapshot = await readModel.snapshot()
+                const card = contactCardForDid(snapshot.contactCards, who.did)
+                const created = didContactPatch(who.did)
+                await mutationSink.commitIntents([
+                  ...(card ? [] : [contactSetIntent(created)]),
+                  contactSetIntent(autocryptKeyPatch(card?.id ?? created.cardId, { keydata, seenAt: new Date().toISOString(), preferEncrypt: 'mutual', verified: true })),
+                ], snapshot)
+              },
+            })
+            if (outcome) console.info(`[did.md Wallet Secure-Join] ${outcome} from ${fromAddress}`)
+            return outcome !== undefined
+          } catch (error) {
+            // Not a valid step (an old invite, a key that does not match): it is not mail either, so it is not shown.
+            console.warn('[did.md Wallet Secure-Join] refused:', error instanceof Error ? error.message : error)
+            return true
+          }
+        }
         const handleWalletDidCommMessage = async (message: { plaintext: unknown; senderKid: string; ackId: string; rawJwe: unknown }, recipientKid: string, mediatorUrl: string): Promise<void> => {
             // Besides Vault Sync, the only branch is the DidCommIngressProjector
             // below, which throws for every type it cannot project -- and a
@@ -750,6 +794,8 @@ async function configureWalletAccountIfPresent(
             const dropped = message.plaintext as DidCommPlaintext
             // Discover Features: answered here, never recorded (did-rotation.ts).
             if (await rotationManager.handleDiscoverFeatures(dropped, message.senderKid, recipientKid)) return
+            // A step of Delta Chat's Secure-Join (pgp/securejoin.ts) is answered here and never shown; an ordinary mail goes on.
+            if (isBasicMessage(dropped) && await answerSecureJoin(dropped)) return
             if (!isProjectableDidCommIngress(dropped)) {
               console.warn(`[did.md Wallet DIDComm] dropping unsupported message type ${dropped.type} from ${message.senderKid}`)
               return

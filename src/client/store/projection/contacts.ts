@@ -81,6 +81,8 @@ export interface AutocryptKeyEntry {
   /** When the mail that carried it was written (its Date). */
   seenAt: string
   preferEncrypt?: 'mutual'
+  /** The key was vouched for by a Secure-Join handshake (a Delta Chat invite): it is the contact's, whatever a later mail says. */
+  verified?: true
 }
 
 /** `{ keys: { [keyId]: entry } }`: one leaf per distinct key, so a later mail with the same key only moves `seenAt`. */
@@ -168,7 +170,8 @@ function assertAutocryptState(value: unknown): void {
     if (!KEY_ID_PATTERN.test(id) || !isObject(entry) || typeof entry.keydata !== 'string' || entry.keydata.length > MAX_KEYDATA_LENGTH || !KEYDATA_PATTERN.test(entry.keydata)
       || typeof entry.seenAt !== 'string' || Number.isNaN(Date.parse(entry.seenAt))
       || (entry.preferEncrypt !== undefined && entry.preferEncrypt !== 'mutual')
-      || Object.keys(entry).some(field => !['keydata', 'seenAt', 'preferEncrypt'].includes(field))) {
+      || (entry.verified !== undefined && entry.verified !== true)
+      || Object.keys(entry).some(field => !['keydata', 'seenAt', 'preferEncrypt', 'verified'].includes(field))) {
       throw new TypeError('contact card autocrypt key is invalid')
     }
   }
@@ -349,10 +352,11 @@ export function autocryptKeyPatch(cardId: string, entry: AutocryptKeyEntry): Con
   return { cardId, patch: { [`${pointerToken(AUTOCRYPT_CONTACT_PROPERTY)}/keys/${autocryptKeyId(entry.keydata)}`]: { ...entry } as unknown as CanonicalValue } }
 }
 
-/** The counterparty's current key: the one its newest mail carried (ties by key id), or undefined. */
+/** The counterparty's current key: a verified one first (a Secure-Join handshake vouched for it), else the one its newest
+ * mail carried (ties by key id), or undefined. */
 export function currentAutocryptKey(card: LocalJmapContactCard): (AutocryptKeyEntry & { id: string }) | undefined {
   const keys = Object.entries((card[AUTOCRYPT_CONTACT_PROPERTY] as AutocryptContactState | undefined)?.keys ?? {})
-  keys.sort(([a, x], [b, y]) => Date.parse(x.seenAt) - Date.parse(y.seenAt) || a.localeCompare(b))
+  keys.sort(([a, x], [b, y]) => Number(x.verified === true) - Number(y.verified === true) || Date.parse(x.seenAt) - Date.parse(y.seenAt) || a.localeCompare(b))
   const latest = keys.at(-1)
   return latest ? { id: latest[0], ...latest[1] } : undefined
 }

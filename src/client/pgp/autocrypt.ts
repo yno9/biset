@@ -31,6 +31,7 @@ export function bridgeHostOf(did: string): string | undefined {
   return isMailBridgeDid(did) ? decodeURIComponent(did.split(':')[2]!) : undefined
 }
 
-/** Whether to write to a mail address encrypted: a key is held for it and it asked for encryption when both sides want it
- * (Autocrypt Level 1, 2.2; this identity always does). */
-export function shouldEncrypt(held: { preferEncrypt?: 'mutual' } | undefined): boolean { return held?.preferEncrypt === 'mutual' }
+/** Whether to write to a mail address encrypted: a key is held for it and either a Secure-Join handshake vouched for it (a
+ * Delta Chat contact is only ever written encrypted) or it asked for encryption when both sides want it (Autocrypt Level 1,
+ * 2.2; this identity always does). */
+export function shouldEncrypt(held: { preferEncrypt?: 'mutual'; verified?: true } | undefined): boolean { return held?.verified === true || held?.preferEncrypt === 'mutual' }

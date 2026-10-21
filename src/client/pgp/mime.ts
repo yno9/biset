@@ -159,3 +159,11 @@ function decodeBody(body: string, encoding: string, charset: string): string {
   }
   return body
 }
+
+/** `addr` and the binary `keydata` (as base64, whitespace removed) of an `Autocrypt:` / `Autocrypt-Gossip:` header value, or undefined. */
+export function parseKeydataHeader(value: string | undefined): { addr: string; keydata: string } | undefined {
+  if (!value) return undefined
+  const addr = /(?:^|;)\s*addr=([^;]+)/i.exec(value)?.[1]?.trim()
+  const keydata = /(?:^|;)\s*keydata=([A-Za-z0-9+/=\s]+)/i.exec(value)?.[1]?.replace(/\s+/g, '')
+  return addr && keydata ? { addr, keydata } : undefined
+}
