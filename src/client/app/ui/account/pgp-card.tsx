@@ -23,6 +23,13 @@ export function PgpCard({ config, showMessage }: { config: PgpCardConfig; showMe
 
   const refresh = useCallback(async () => { setKey(await config.current().catch(() => undefined)) }, [config])
   useEffect(() => { void refresh() }, [refresh])
+  // Right after a sign-in the page is up before the generation seed has been stored: look again until there is a key.
+  useEffect(() => {
+    if (key !== undefined) return
+    let tries = 0
+    const timer = setInterval(() => { if (++tries > 60) clearInterval(timer); else void refresh() }, 1500)
+    return () => clearInterval(timer)
+  }, [key, refresh])
 
   return (
     <div className="acc-card-wrap" id="cmd-acc-pgp-card">

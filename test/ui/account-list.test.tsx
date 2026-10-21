@@ -169,3 +169,13 @@ test('the PGP card waits while there is no generation seed, then shows the deriv
   await waitFor(() => expect(messages.some(text => text.startsWith('Delta Chat invite link copied'))).toBe(true))
   vi.unstubAllGlobals()
 })
+
+test('the PGP card looks again while the key is not ready, and shows it as soon as it is, with no reload', async () => {
+  let key: { fingerprint: string; userIds: string[] } | undefined
+  const pgp = { address: 'alice@did.md', current: async () => key, onCopyPublic: vi.fn(async () => 'armor'), inviteLink: vi.fn(async () => 'link') }
+  const { container } = render(<AccountList />)
+  set(config({ pgp }))
+  await waitFor(() => expect(container.querySelector('#cmd-acc-pgp-card')!.textContent).toContain('generation seed'))
+  key = { fingerprint: 'AAAABBBBCC', userIds: ['<alice@did.md>'] }
+  await waitFor(() => expect(container.querySelector('#cmd-acc-pgp-card')!.textContent).toContain('AAAA BBBB CC'), { timeout: 5000 })
+})
