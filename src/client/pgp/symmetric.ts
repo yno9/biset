@@ -1,15 +1,19 @@
 // Password-encrypted OpenPGP messages, the kind Delta Chat's Secure-Join v3 uses for its first two steps
 // (`vc-request-pubkey`, `vc-pubkey`): the password is a shared secret, not a key.
 //
-// Delta Chat opens a symmetric message only when its session key packet (SKESK) has a *Salted* S2K, but openpgp.js writes only
-// *Iterated* S2K for a password and refuses the salted kind. So a message is made by hand: the session key is derived from the
-// password with the salted S2K, openpgp.js encrypts and signs the data with exactly that session key, its own SKESK is dropped,
-// and a v4 SKESK with the salted S2K (and no encrypted session key, so the reader derives the same key) goes in front.
+// Delta Chat writes a password message as a version 6 session key packet (SKESK: AES-128, OCB, salted S2K with SHA-256) in front of a
+// version 2 encrypted data packet (SEIPD: OCB), and opens only a *salted* S2K (anything else is refused, so that a sender cannot make
+// it run an expensive one). openpgp.js writes other S2K kinds for a password, so the SKESK is written here (RFC 9580 section 5.3.2)
+// and openpgp.js encrypts and signs the data with exactly the session key it holds. An earlier form of this -- a v4 SKESK in front of
+// a SEIPD v1 -- was not opened by Delta Chat (its "Modification Detection Code error").
 import * as openpgp from 'openpgp'
+import { hkdf } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
+import { ocbEncrypt } from './ocb.ts'
 import { ensureArmorChecksum, extractArmor } from './message-crypto.ts'
 
-const SEIPD_V1: openpgp.PartialConfig = { aeadProtect: false }
+// 8 KiB chunks, as Delta Chat writes them (chunk size byte 7: 2^(7+6)).
+const SEIPD_V2: openpgp.PartialConfig = { aeadProtect: true, aeadChunkSizeByte: 7, preferredAEADAlgorithm: openpgp.enums.aead.ocb, preferredSymmetricAlgorithm: openpgp.enums.symmetric.aes128 }
 // What a reader may meet: SEIPD v2 (AEAD OCB with AES-128) from Delta Chat's own symmetric messages.
 const READ: openpgp.PartialConfig = { aeadProtect: true, preferredAEADAlgorithm: openpgp.enums.aead.ocb, preferredSymmetricAlgorithm: openpgp.enums.symmetric.aes128 }
 
@@ -31,16 +35,34 @@ export async function symmetricDecrypt(armored: string, passwords: readonly stri
   return undefined
 }
 
+const utf8 = (text: string) => new TextEncoder().encode(text)
+
 // Salted S2K (RFC 9580 section 3.7.1.2): key = H(salt || password), cut to the cipher's key size. AES-128 needs 16 of SHA-256's 32 bytes.
 function saltedS2K(salt: Uint8Array, password: string): Uint8Array {
-  const secret = new TextEncoder().encode(password)
+  const secret = utf8(password)
   const input = new Uint8Array(salt.length + secret.length)
   input.set(salt)
   input.set(secret, salt.length)
   return sha256(input).slice(0, 16)
 }
 
-// The bytes after the first packet, which is a new-format packet (the SKESK openpgp.js wrote).
+const SKESK_TAG = 0xc3 // new format, packet type 3
+const AES128 = 7
+const OCB = 2
+
+/** The version 6 session key packet (RFC 9580 section 5.3.2) that seals `sessionKey` under `password`. */
+async function sessionKeyPacket(sessionKey: Uint8Array, password: string): Promise<Uint8Array> {
+  const salt = crypto.getRandomValues(new Uint8Array(8))
+  const iv = crypto.getRandomValues(new Uint8Array(15)) // OCB's nonce
+  const s2k = new Uint8Array([0x01, 0x08, ...salt]) // salted, SHA-256
+  const info = new Uint8Array([SKESK_TAG, 6, AES128, OCB])
+  const kek = hkdf(sha256, saltedS2K(salt, password), undefined, info, 16)
+  const sealed = await ocbEncrypt(kek, iv, info, sessionKey) // the session key, then the 16-byte tag
+  const body = new Uint8Array([6, 1 + 1 + 1 + s2k.length + iv.length, AES128, OCB, s2k.length, ...s2k, ...iv, ...sealed])
+  return new Uint8Array([SKESK_TAG, body.length, ...body])
+}
+
+// The bytes after the first packet, which is a new-format packet (the session key packet openpgp.js wrote).
 function afterFirstPacket(bytes: Uint8Array): Uint8Array {
   const first = bytes[1]!
   let offset = 1, length = 0
@@ -54,17 +76,15 @@ function afterFirstPacket(bytes: Uint8Array): Uint8Array {
 /** `plaintext` encrypted to `password` and signed by the secret key `signer` (binary), as Delta Chat reads it. */
 export async function symmetricEncryptSigned(plaintext: string, password: string, signer: Uint8Array): Promise<string> {
   const signingKey = await openpgp.readPrivateKey({ binaryKey: signer })
-  const salt = crypto.getRandomValues(new Uint8Array(8))
+  const sessionKey = crypto.getRandomValues(new Uint8Array(16))
   const encrypted = await openpgp.encrypt({
     message: await openpgp.createMessage({ text: plaintext }),
-    sessionKey: { data: saltedS2K(salt, password), algorithm: 'aes128' },
+    sessionKey: { data: sessionKey, algorithm: 'aes128', aeadAlgorithm: 'ocb' },
     passwords: ['discarded'], // makes openpgp.js write a session key packet, which is dropped below
-    signingKeys: signingKey, config: SEIPD_V1, format: 'binary',
+    signingKeys: signingKey, config: SEIPD_V2, format: 'binary',
   }) as Uint8Array
-  const body = afterFirstPacket(new Uint8Array(encrypted))
-  // v4 SKESK: AES-128 (7), salted S2K (type 1) with SHA-256 (8) and the salt.
-  const skeskBody = new Uint8Array([0x04, 0x07, 0x01, 0x08, ...salt])
-  const skesk = new Uint8Array([0xc3, skeskBody.length, ...skeskBody])
-  const armored = openpgp.armor(openpgp.enums.armor.message, new Uint8Array([...skesk, ...body]))
+  const data = afterFirstPacket(new Uint8Array(encrypted))
+  const skesk = await sessionKeyPacket(sessionKey, password)
+  const armored = openpgp.armor(openpgp.enums.armor.message, new Uint8Array([...skesk, ...data]))
   return ensureArmorChecksum(armored)
 }
