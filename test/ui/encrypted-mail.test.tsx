@@ -39,7 +39,7 @@ test('an encrypted mail is shown opened: the real body and subject, its threadin
   expect(shown!.msg.ts).toBe(Date.parse('2026-10-21T04:03:02Z'))
 })
 
-test('without the sender\'s key the signature is reported as not verified; without our key the notice stays', async () => {
+test('without the sender\'s key the signature is reported as not verified; without our key the mail is not shown, and comes once the key is here', async () => {
   const { alice, model } = await setup()
   setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [alice.privateKey], senderKeys: [] }))
   await refreshInbox(model as never)
@@ -47,18 +47,19 @@ test('without the sender\'s key the signature is reported as not verified; witho
 
   setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [], senderKeys: [] }))
   await refreshInbox(model as never)
-  const shown = mail.get().messages[0]!.msg
-  expect(shown.encrypted).toBeUndefined()
-  expect(shown.body).toContain('This message is encrypted with OpenPGP.')
+  expect(mail.get().messages).toHaveLength(0) // no armor, no "[...]" subject: nothing to read
+
+  setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [alice.privateKey], senderKeys: [] }))
+  await refreshInbox(model as never)
+  expect(mail.get().messages).toHaveLength(1)
 })
 
-test('a key that is not a recipient leaves the notice (the message is not lost)', async () => {
+test('a key that is not a recipient shows nothing (a Secure-Join step after its join, mail for another key)', async () => {
   const { model } = await setup()
   const other = await generatePgpKey('carol@did.md')
   setEncryptedMailOpener(async rawBody => openStoredMail(rawBody, { privateKeys: [other.privateKey], senderKeys: [] }))
   await refreshInbox(model as never)
-  expect(mail.get().messages[0]!.msg.encrypted).toBeUndefined()
-  expect(mail.get().messages[0]!.msg.body).toContain('This message is encrypted with OpenPGP.')
+  expect(mail.get().messages).toHaveLength(0)
 })
 
 test('a message for an earlier generation\'s key is opened by the next key in the list', async () => {
