@@ -197,6 +197,7 @@ export function assertContactCard(value: unknown): LocalJmapContactCard {
   if (Object.keys(value.addressBookIds as object).length === 0) throw new TypeError('contact card must belong to an address book')
   if (value.name !== undefined && !isObject(value.name)) throw new TypeError('contact card name must be an object')
   if (value.emails !== undefined) assertIdMap(value.emails, 'emails', email => { if (!isObject(email) || typeof email.address !== 'string' || !email.address) throw new TypeError('contact card email needs an address') })
+  if (value.cryptoKeys !== undefined) assertIdMap(value.cryptoKeys, 'cryptoKeys', key => { if (!isObject(key) || typeof key.uri !== 'string') throw new TypeError('contact card crypto key needs a uri') })
   if (value.onlineServices !== undefined) assertIdMap(value.onlineServices, 'onlineServices', service => {
     if (!isObject(service) || (typeof service.uri !== 'string' && typeof service.user !== 'string')) throw new TypeError('contact card online service needs a uri or user')
   })
@@ -401,6 +402,28 @@ export function contactAvatarPatch(cardId: string, card: LocalJmapContactCard | 
   if (avatar === null) return current ? { cardId, patch: { 'media/avatar': null as unknown as CanonicalValue } } : undefined
   if (current === avatar) return undefined
   return { cardId, patch: { 'media/avatar': { '@type': 'Media', kind: 'photo', uri: avatar }, [sourcePath('avatar')]: 'signed' } }
+}
+
+/** The key the card names as its preferred one (JSContact `cryptoKeys`, the one with the lowest `pref`): the id is the key's
+ * fingerprint, and `keydata` the base64 of the public key. Undefined when the card names none. */
+export function contactCryptoKey(card: LocalJmapContactCard): { fingerprint: string; keydata: string } | undefined {
+  const keys = isObject(card.cryptoKeys) ? Object.entries(card.cryptoKeys) : []
+  const usable = keys.flatMap(([fingerprint, key]) => isObject(key) && typeof key.uri === 'string' && key.uri.startsWith(PGP_KEY_URI)
+    ? [{ fingerprint, keydata: key.uri.slice(PGP_KEY_URI.length), pref: typeof key.pref === 'number' ? key.pref : 100 }] : [])
+  usable.sort((a, b) => a.pref - b.pref || a.fingerprint.localeCompare(b.fingerprint))
+  return usable[0] && { fingerprint: usable[0].fingerprint, keydata: usable[0].keydata }
+}
+const PGP_KEY_URI = 'data:application/pgp-keys;base64,'
+
+/** The patch making `fingerprint` the card's key (its public key as `keydata`, base64) and nothing else: any other key it named
+ * is dropped. Undefined when the card names exactly this already. */
+export function ownCryptoKeyPatch(cardId: string, card: LocalJmapContactCard | undefined, fingerprint: string, keydata: string): ContactSetPayload | undefined {
+  const existing = card && isObject(card.cryptoKeys) ? Object.keys(card.cryptoKeys) : []
+  const current = card && contactCryptoKey(card)
+  if (current?.fingerprint === fingerprint && current.keydata === keydata && existing.length === 1) return undefined
+  const patch: ContactPatch = { [`cryptoKeys/${fingerprint}`]: { '@type': 'CryptoKey', uri: `${PGP_KEY_URI}${keydata}`, mediaType: 'application/pgp-keys', pref: 1 } }
+  for (const id of existing) if (id !== fingerprint) patch[`cryptoKeys/${pointerToken(id)}`] = null as unknown as CanonicalValue
+  return { cardId, patch }
 }
 
 /** This identity's own name for its card (a person's word: nothing found out later replaces it); `null` removes it. */

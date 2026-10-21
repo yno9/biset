@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { AccountList } from '../../src/client/app/ui/account/account-list.tsx'
 import { DropdownMenu } from '../../src/client/app/ui/account/menu.tsx'
-import { copyInviteLink, joinDeltaChatInvite, PgpKeyRow } from '../../src/client/app/ui/account/pgp-card.tsx'
+import { copyInviteLink, joinDeltaChatInvite, PGP_KEY_CHANGED, PgpKeyRow } from '../../src/client/app/ui/account/pgp-card.tsx'
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
 
 const messages: string[] = []
@@ -188,4 +188,14 @@ test('joining a Delta Chat invite asks for it, starts the join, and says whom wa
   await waitFor(() => expect(messages.some(text => text.includes('Bob <bob@x.test>'))).toBe(true))
   expect(joinInvite).toHaveBeenCalledWith('https://i.delta.chat/#ABC&v=3')
   vi.unstubAllGlobals()
+})
+
+test('the PGP key row looks again when the key it showed turned out to be another', async () => {
+  let fingerprint = 'AAAABBBBCC'
+  const pgp = { address: 'alice@did.md', current: async () => ({ fingerprint, userIds: ['<alice@did.md>'] }), onCopyPublic: async () => '', inviteLink: async () => '', joinInvite: async () => ({ name: '', address: '' }) }
+  const { container } = render(<PgpKeyRow config={pgp} showMessage={() => {}} />)
+  await waitFor(() => expect(container.querySelector('#cmd-acc-pgp-fingerprint')!.textContent).toContain('AAAA BBBB CC'))
+  fingerprint = 'DDDDEEEEFF'
+  window.dispatchEvent(new Event(PGP_KEY_CHANGED))
+  await waitFor(() => expect(container.querySelector('#cmd-acc-pgp-fingerprint')!.textContent).toContain('DDDD EEEE FF'))
 })

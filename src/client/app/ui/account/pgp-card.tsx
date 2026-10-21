@@ -18,13 +18,21 @@ export interface PgpCardConfig {
 
 type Key = Awaited<ReturnType<PgpCardConfig['current']>>
 
+/** Said when the key on show turned out to be another one than the card remembered (a new generation), so the row looks again. */
+export const PGP_KEY_CHANGED = 'biset-pgp-key-changed'
+
 const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
 export function PgpKeyRow({ config, showMessage }: { config: PgpCardConfig; showMessage: (text: string) => void }) {
   const [key, setKey] = useState<Key | 'loading'>('loading')
 
   const refresh = useCallback(async () => { setKey(await config.current().catch(() => undefined)) }, [config])
-  useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => {
+    void refresh()
+    const again = () => { void refresh() }
+    window.addEventListener(PGP_KEY_CHANGED, again)
+    return () => window.removeEventListener(PGP_KEY_CHANGED, again)
+  }, [refresh])
   // Right after a sign-in the page is up before the generation seed has been stored: look again until there is a key.
   useEffect(() => {
     if (key !== undefined) return

@@ -53,7 +53,7 @@ import { GenerationSeedReader, GenerationSeedSink, generationSeedRecord } from '
 import { createGenerationSeedAuthority, type GenerationSeedAuthority } from '../didcomm/generation-seed-bootstrap.ts'
 import { publishedRotationKey, rotationSigningKey } from '../didcomm/rotation-key.ts'
 import { createRotationManager, type RotationManager } from '../didcomm/rotation-manager.ts'
-import { autocryptKeyPatch, contactAvatar, contactAvatarPatch, contactDisplayName, ownAvatarPatch, ownNamePatch, type ContactSetPayload, type LocalJmapContactCard, contactCardForDid, contactNamePatch, contactSetIntent, currentAutocryptKey, didContactPatch } from '../store/projection/contacts.ts'
+import { autocryptKeyPatch, contactAvatar, contactCryptoKey, ownCryptoKeyPatch, contactAvatarPatch, contactDisplayName, ownAvatarPatch, ownNamePatch, type ContactSetPayload, type LocalJmapContactCard, contactCardForDid, contactNamePatch, contactSetIntent, currentAutocryptKey, didContactPatch } from '../store/projection/contacts.ts'
 import { fromPriorKeyResolver, verifyFromPrior } from '../../protocol/didcomm/from-prior.ts'
 import { signingKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
@@ -79,7 +79,7 @@ import type { OwnProfile } from '../pgp/mime.ts'
 import type { ProfileConfig } from './ui/account/profile.ts'
 import { autocryptKeydata } from '../pgp/keyring.ts'
 import { openStoredMail } from '../pgp/open.ts'
-import type { PgpCardConfig } from './ui/account/pgp-card.tsx'
+import { PGP_KEY_CHANGED, type PgpCardConfig } from './ui/account/pgp-card.tsx'
 import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
 
 let mediatorPollHandles: MediatorPollHandle[] = []
@@ -497,6 +497,16 @@ async function configureWalletAccountIfPresent(
       await mutationSink.commitIntents([...(card ? [] : [contactSetIntent(didContactPatch(device.did))]), contactSetIntent(write)], snapshot)
       await refreshInbox(readModel)
     }
+    // Writes the key the seed gives to this identity's own card, unless the card names it already; says whether it changed anything.
+    let ownKeyChecked = false
+    const rememberOwnKey = async (): Promise<boolean> => {
+      const key = await pgp?.current()
+      if (!key || !ownMailAddress) return false
+      const keydata = await autocryptKeydata(key.privateKey, ownMailAddress)
+      const before = await ownCard().then(card => card && contactCryptoKey(card)?.fingerprint)
+      await writeOwnCard((cardId, card) => ownCryptoKeyPatch(cardId, card, key.fingerprint, keydata))
+      return before !== key.fingerprint
+    }
     profileCard = {
       async current() { const card = await ownCard(); return { ...(card && contactDisplayName(card) ? { name: contactDisplayName(card)! } : {}), ...(card && contactAvatar(card) ? { avatar: contactAvatar(card)! } : {}) } },
       setName: name => writeOwnCard((cardId, card) => ownNamePatch(cardId, card, name)),
@@ -516,8 +526,16 @@ async function configureWalletAccountIfPresent(
     if (ownMailAddress && pgp) {
       pgpCard = {
         address: ownMailAddress,
+        // The key is remembered on this identity's own card (JSContact cryptoKeys): shown from there at once, and checked against
+        // the one the seed gives in the background -- the seed comes only after the DID log has been read.
         async current() {
+          const remembered = await ownCard().then(card => card && contactCryptoKey(card))
+          if (remembered) {
+            if (!ownKeyChecked) { ownKeyChecked = true; void rememberOwnKey().then(changed => { if (changed) window.dispatchEvent(new Event(PGP_KEY_CHANGED)) }).catch(() => { ownKeyChecked = false }) }
+            return { fingerprint: remembered.fingerprint, userIds: [`<${ownMailAddress}>`] }
+          }
           const key = await pgp.current()
+          if (key) void rememberOwnKey().catch(() => undefined)
           return key && { fingerprint: key.fingerprint, userIds: key.userIds }
         },
         onCopyPublic: async () => {

@@ -120,3 +120,29 @@ test('the sources of a card\'s name and picture are one property, and cards from
   expect(nameSourceOf(legacy)).toBe('mail')
   expect(contactNamePatch(cardId, legacy, 'New', 'signed')).toBeDefined()
 })
+
+describe('the key a card names (JSContact cryptoKeys)', async () => {
+  const { contactCryptoKey, ownCryptoKeyPatch } = await import('../src/client/store/projection/contacts.ts')
+
+  test('the card names one key by its fingerprint, and naming it again changes nothing', () => {
+    const { cardId, card } = fresh()
+    expect(contactCryptoKey(card)).toBeUndefined()
+    const named = applyContactSet(card, ownCryptoKeyPatch(cardId, card, 'AB12', 'AAAA')!)!
+    expect(contactCryptoKey(named)).toEqual({ fingerprint: 'AB12', keydata: 'AAAA' })
+    expect((named.cryptoKeys as Record<string, { mediaType: string }>).AB12!.mediaType).toBe('application/pgp-keys')
+    expect(ownCryptoKeyPatch(cardId, named, 'AB12', 'AAAA')).toBeUndefined()
+  })
+
+  test('a new generation\'s key replaces the old one: the card names only the current key', () => {
+    const { cardId, card } = fresh()
+    const first = applyContactSet(card, ownCryptoKeyPatch(cardId, card, 'AB12', 'AAAA')!)!
+    const second = applyContactSet(first, ownCryptoKeyPatch(cardId, first, 'CD34', 'BBBB')!)!
+    expect(contactCryptoKey(second)).toEqual({ fingerprint: 'CD34', keydata: 'BBBB' })
+    expect(Object.keys(second.cryptoKeys as object)).toEqual(['CD34'])
+  })
+
+  test('a card whose crypto key is not a key (no uri) is refused', () => {
+    const { card } = fresh()
+    expect(() => applyContactSet(card, { cardId: card.id, patch: { 'cryptoKeys/X': { '@type': 'CryptoKey' } } })).toThrow(/uri/)
+  })
+})
