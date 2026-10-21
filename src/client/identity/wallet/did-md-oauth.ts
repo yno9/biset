@@ -1026,7 +1026,10 @@ export async function beginDidMdDocumentEdit(change: DidMdDocumentChange, config
     if (previousDevice) pending.previousBisetDidCommDevice = previousDevice
     pending.bisetDidCommDevice = await newBisetDidCommDevice(session.did, mediator)
     const retired = retiredMediatorEndpoints(previousDevice, mediator, configuredService(config, 'didcomm').id)
-    const rotation = await rotationCandidate('ifAbsent')
+    // Replacing this device's DIDComm key drops the previous one from the document, which reads as a
+    // device removed after the rotation key was published ("stale"): the same edit renews that key
+    // (a device removed in the entry that publishes a key was removed with its renewal).
+    const rotation = await rotationCandidate(previousDevice ? 'replace' : 'ifAbsent')
     pending.rotationSeedCandidate = rotation.sealed
     pending.documentEdit = buildDocumentEdit(session.did, config, pending.bisetDidCommDevice, previousDevice ? [previousDevice.xKid] : [], retired, rotation.method)
   } else {
