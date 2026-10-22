@@ -2,6 +2,7 @@
 // a Wallet approval (the Services tab), and the keys: this identity's devices, and its PGP key (the Keys tab).
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../../react/store.ts'
+import { didToHttpsUrl } from '../../../../protocol/webvh/identifier.ts'
 import { resolve } from '../../../../protocol/webvh/resolver.ts'
 import { openDropdownMenu, type MenuItem } from './menu.tsx'
 import { PgpKeyRow } from './pgp-card.tsx'
@@ -33,8 +34,9 @@ export function AccountList() {
 
 /** Where the identity lives: the wallet that hosts the DID and approves changes to it. The dot is green when the
  * DID resolves (its `/.well-known/did.jsonl` is there and verifies), orange while that is being looked up, red
- * when it does not. The link on the right opens the wallet itself (the
- * origin the identity's keys are stored under; app.did.md is another origin and does not have them). */
+ * when it does not. The host is a link to the wallet itself (the origin
+ * the identity's keys are stored under; app.did.md is another origin and does not have them); the document icon
+ * on the right opens the DID's own log, `/.well-known/did.jsonl`, in a new tab. */
 function IdentityHostCard({ did, host }: { did: string; host: string }) {
   const [resolved, setResolved] = useState<'checking' | 'ok' | 'error'>('checking')
   useEffect(() => {
@@ -43,6 +45,7 @@ function IdentityHostCard({ did, host }: { did: string; host: string }) {
     resolve(did).then(found => { if (current) setResolved(found ? 'ok' : 'error') }).catch(() => { if (current) setResolved('error') })
     return () => { current = false }
   }, [did])
+  const logUrl = (() => { try { return didToHttpsUrl(did) } catch { return undefined } })()
   const dotColor = resolved === 'ok' ? '#34c759' : resolved === 'error' ? '#ff3b30' : '#ff9f0a'
   return (
     <div className="acc-card-wrap" id="cmd-acc-identity-host-card">
@@ -52,12 +55,13 @@ function IdentityHostCard({ did, host }: { did: string; host: string }) {
             style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: dotColor }} />
           <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--accent2, #888)', flexShrink: 0 }}>Identity host</span>
           <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>:</span>
-          <span style={{ fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{host}</span>
+          <a href={`https://${host}`} target="_blank" rel="noopener noreferrer" data-tip={`Open ${host}`}
+            style={{ fontSize: 14.5, fontWeight: 600, color: 'inherit', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{host}</a>
         </div>
-        <a href={`https://${host}`} target="_blank" rel="noopener noreferrer" aria-label={`Open ${host}`} data-tip={`Open ${host}`}
+        {logUrl ? <a href={logUrl} target="_blank" rel="noopener noreferrer" aria-label="Open the DID log" data-tip="Open the DID log (did.jsonl)"
           style={{ flexShrink: 0, color: 'var(--text-dim)', padding: 4, display: 'flex' }}>
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
-        </a>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h6" /></svg>
+        </a> : null}
       </div>
     </div>
   )

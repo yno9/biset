@@ -9,6 +9,7 @@ import { copyInviteLink, joinDeltaChatInvite, PGP_KEY_CHANGED, PgpKeyRow } from 
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
 
 const messages: string[] = []
+const REAL_DID = 'did:webvh:QmPLLKQAYjB94BqYvFx27z5xNb2CjZG6kxUWucjWwPCjDv:alice.did.md'
 function config(over: Partial<AccountPageConfig> = {}, didComm: Partial<NonNullable<NonNullable<AccountPageConfig['wallet']>['didComm']>> = {}): AccountPageConfig {
   return {
     did: 'did:webvh:SCID:alice.did.md',
@@ -38,24 +39,26 @@ test('nothing is drawn before there is a mediator', () => {
   expect(container.innerHTML).toBe('')
 })
 
-test('the Identity host card: green when the DID resolves, red when not, and a link to the host', async () => {
+test('the Identity host card: green when the DID resolves, red when not, a link on the host, and the DID log in a new tab', async () => {
   const { resolve } = await import('../../src/protocol/webvh/resolver.ts')
-  const next = config()
+  const next = config({ did: REAL_DID })
   const { container } = render(<AccountList />)
   set({ ...next, wallet: { ...next.wallet!, host: 'dito.did.md' } })
   const dot = () => container.querySelector<HTMLElement>('#cmd-acc-identity-host-card [role="status"]')!
   await waitFor(() => expect(dot().dataset.state).toBe('ok'))
   expect(dot().style.background).toBe('#34c759')
-  const link = container.querySelector<HTMLAnchorElement>('#cmd-acc-identity-host-card a')!
-  expect(link.href).toBe('https://dito.did.md/')
-  expect(link.target).toBe('_blank')
+  const [hostLink, logLink] = [...container.querySelectorAll<HTMLAnchorElement>('#cmd-acc-identity-host-card a')]
+  expect(hostLink!.href).toBe('https://dito.did.md/')
+  expect(hostLink!.textContent).toBe('dito.did.md')
+  expect(logLink!.href).toBe('https://alice.did.md/.well-known/did.jsonl')
+  expect(logLink!.target).toBe('_blank')
   vi.mocked(resolve).mockResolvedValueOnce(null)
-  set({ ...next, did: 'did:webvh:OTHER:alice.did.md', wallet: { ...next.wallet!, host: 'dito.did.md' } })
+  set({ ...next, did: REAL_DID.replace('QmPLLK', 'QmPLLL'), wallet: { ...next.wallet!, host: 'dito.did.md' } })
   await waitFor(() => expect(dot().dataset.state).toBe('error'))
 })
 
 test('the Identity host card names where the wallet is, with or without a mediator', () => {
-  const next = config()
+  const next = config({ did: REAL_DID })
   const { container } = render(<AccountList />)
   set({ ...next, wallet: { ...next.wallet!, host: 'dito.did.md' } })
   expect(container.querySelector('#cmd-acc-identity-host-card')!.textContent).toBe('Identity host:dito.did.md')
