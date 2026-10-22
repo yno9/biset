@@ -23,7 +23,8 @@ export const PGP_KEY_CHANGED = 'biset-pgp-key-changed'
 
 const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
-export function PgpKeyRow({ config, showMessage }: { config: PgpCardConfig; showMessage: (text: string) => void }) {
+/** `plain` leaves out the ids, for a second row on the same page (the identity card has the one with them). */
+export function PgpKeyRow({ config, showMessage, plain }: { config: PgpCardConfig; showMessage: (text: string) => void; plain?: boolean }) {
   const [key, setKey] = useState<Key | 'loading'>('loading')
 
   const refresh = useCallback(async () => { setKey(await config.current().catch(() => undefined)) }, [config])
@@ -43,10 +44,10 @@ export function PgpKeyRow({ config, showMessage }: { config: PgpCardConfig; show
 
   if (!key || key === 'loading') return null
   return (
-    <div id="cmd-acc-pgp-row" data-tip={`PGP key ${key.userIds.join(', ')}: click to copy the public key`}
+    <div id={plain ? undefined : 'cmd-acc-pgp-row'} className="acc-pgp-row" data-tip={`PGP key ${key.userIds.join(', ')}: click to copy the public key`}
       onClick={event => { event.stopPropagation(); void config.onCopyPublic().then(text => navigator.clipboard.writeText(text)).then(() => showMessage('Public key copied'), error => showMessage(errorText(error))) }}>
       <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="7.5" cy="15.5" r="4.5" /><path d="m10.7 12.3 9.8-9.8M16 7l3 3M14 9l2 2" /></svg>
-      <span id="cmd-acc-pgp-fingerprint">{key.fingerprint.replace(/(.{4})(?=.)/g, '$1 ')}</span>
+      <span id={plain ? undefined : 'cmd-acc-pgp-fingerprint'} className="acc-pgp-fingerprint">{key.fingerprint.replace(/(.{4})(?=.)/g, '$1 ')}</span>
     </div>
   )
 }

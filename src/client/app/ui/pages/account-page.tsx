@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../../react/store.ts'
 import { parseWebvhDid } from '../../../../protocol/webvh/identifier.ts'
 import { resolve } from '../../../../protocol/webvh/resolver.ts'
-import { AccountList } from '../account/account-list.tsx'
+import { AccountList, KeysPanel } from '../account/account-list.tsx'
 import { cropAvatar } from '../account/avatar-crop.tsx'
 import { chooseImage, PROFILE_CHANGED } from '../account/profile.ts'
 import { copyInviteLink, joinDeltaChatInvite, PgpKeyRow } from '../account/pgp-card.tsx'
@@ -207,7 +207,7 @@ const TABS = ['Services', 'Keys', 'Files'] as const
 type Tab = typeof TABS[number]
 
 /** The bar under the identity card, and the panel it picks. Services is what the page showed so far (the
- * mediator), Files has Export / Import / Disconnect, Keys nothing yet. */
+ * mediator), Keys has the devices and the PGP key, Files has Export / Import / Disconnect. */
 function AccountTabs() {
   const [tab, setTab] = useState<Tab>('Services')
   return (
@@ -218,7 +218,7 @@ function AccountTabs() {
         ))}
       </nav>
       <div className="cmd-page-section" id="cmd-acc-list" role="tabpanel">
-        {tab === 'Services' ? <AccountList /> : tab === 'Files' ? <FilesPanel /> : <div className="acc-nav-empty">Nothing here yet.</div>}
+        {tab === 'Services' ? <AccountList /> : tab === 'Keys' ? <KeysPanel /> : <FilesPanel />}
       </div>
     </>
   )

@@ -1,8 +1,9 @@
-// What sits under the identity card on the account page: the mediator (with the identity's device
-// roster in its accordion), and a notice when the DIDComm key needs a Wallet approval.
+// What sits under the identity card on the account page: the mediator and a notice when the DIDComm key needs
+// a Wallet approval (the Services tab), and the keys: this identity's devices, and its PGP key (the Keys tab).
 import { useRef, useState } from 'react'
 import { useStore } from '../../react/store.ts'
 import { openDropdownMenu, type MenuItem } from './menu.tsx'
+import { PgpKeyRow } from './pgp-card.tsx'
 import { accountConfig, type AccountPageConfig } from './state.ts'
 
 type Wallet = NonNullable<AccountPageConfig['wallet']>
@@ -29,21 +30,9 @@ export function AccountList() {
 }
 
 function MediatorCard({ config, wallet, didComm, showMessage }: { config: AccountPageConfig; wallet: Wallet; didComm: DidComm; showMessage: (text: string) => void }) {
-  const [expanded, setExpanded] = useState(false)
-  const [removing, setRemoving] = useState(false)
-  const [previewRemoval, setPreviewRemoval] = useState(false)
   const menuButton = useRef<HTMLButtonElement>(null)
   const loggedOut = didComm.loggedOut === true
   const report = (error: unknown) => showMessage(errorText(error))
-
-  const removeOtherDevices = () => {
-    if (removing || !config.onRemoveOtherDevices) return
-    if (!confirm('Remove all other devices? They will need to sign in again. Content they already received cannot be revoked.')) return
-    setRemoving(true)
-    config.onRemoveOtherDevices()
-      .then(() => showMessage('Other devices removed'))
-      .catch(error => { setRemoving(false); report(error) })
-  }
 
   const menuItems = (): MenuItem[] => loggedOut ? [
     { label: 'Log in', onClick: () => { void wallet.onEnableMessaging?.().catch(report) } },
@@ -71,12 +60,11 @@ function MediatorCard({ config, wallet, didComm, showMessage }: { config: Accoun
     },
   ]
 
-  const roster = [...(config.vault?.devices ?? [])].sort((a, b) => Number(b.current) - Number(a.current))
   const dotColor = didComm.error ? '#ff3b30' : loggedOut ? '#8e8e93' : didComm.connecting ? '#ff9f0a' : '#34c759'
 
   return (
-    <div className={`acc-card-wrap${expanded ? ' expanded' : ''}`} id="cmd-acc-mediator-card">
-      <div className="cmd-page-row" style={{ gap: 12, alignItems: 'center', padding: '10px 12px' }} onClick={() => setExpanded(open => !open)}>
+    <div className="acc-card-wrap" id="cmd-acc-mediator-card">
+      <div className="cmd-page-row" style={{ gap: 12, alignItems: 'center', padding: '10px 12px' }}>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: dotColor }} />
@@ -97,14 +85,48 @@ function MediatorCard({ config, wallet, didComm, showMessage }: { config: Accoun
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" /></svg>
         </button>
       </div>
-      <div className="acc-storage-panel">
-        <div className="acc-storage-header"><span className="acc-storage-title">Devices</span></div>
-        <div className={`acc-device-list${previewRemoval ? ' remove-preview' : ''}`} onPointerLeave={() => setPreviewRemoval(false)}
-          onPointerOver={event => setPreviewRemoval(event.target instanceof Element && Boolean(event.target.closest('.acc-device-removable')))}>
-          {roster.length ? roster.map(device => (
-            <DeviceRow key={device.deviceId} device={device} removable={!device.current && Boolean(config.onRemoveOtherDevices)} disabled={removing} onRemove={removeOtherDevices} />
-          )) : <div className="acc-device-empty">No devices available</div>}
-        </div>
+    </div>
+  )
+}
+
+/** The Keys tab: the devices that hold this identity's DIDComm key, and its PGP key. */
+export function KeysPanel() {
+  const config = useStore(accountConfig)
+  if (!config) return null
+  const showMessage = (text: string) => config.showMessage?.(text)
+  return (
+    <div id="cmd-acc-keys">
+      <DeviceKeyCard config={config} showMessage={showMessage} />
+      <div className="acc-card-wrap acc-key-card" id="cmd-acc-pgp-key-card">
+        <div className="acc-storage-header"><span className="acc-storage-title">PGP Key</span></div>
+        {config.pgp ? <PgpKeyRow config={config.pgp} showMessage={showMessage} plain /> : <div className="acc-device-empty">No key available</div>}
+      </div>
+    </div>
+  )
+}
+
+function DeviceKeyCard({ config, showMessage }: { config: AccountPageConfig; showMessage: (text: string) => void }) {
+  const [removing, setRemoving] = useState(false)
+  const [previewRemoval, setPreviewRemoval] = useState(false)
+  const report = (error: unknown) => showMessage(errorText(error))
+  const removeOtherDevices = () => {
+    if (removing || !config.onRemoveOtherDevices) return
+    if (!confirm('Remove all other devices? They will need to sign in again. Content they already received cannot be revoked.')) return
+    setRemoving(true)
+    config.onRemoveOtherDevices()
+      .then(() => showMessage('Other devices removed'))
+      .catch(error => { setRemoving(false); report(error) })
+  }
+
+  const roster = [...(config.vault?.devices ?? [])].sort((a, b) => Number(b.current) - Number(a.current))
+  return (
+    <div className="acc-card-wrap acc-key-card" id="cmd-acc-device-key-card">
+      <div className="acc-storage-header"><span className="acc-storage-title">Device Key</span></div>
+      <div className={`acc-device-list${previewRemoval ? ' remove-preview' : ''}`} onPointerLeave={() => setPreviewRemoval(false)}
+        onPointerOver={event => setPreviewRemoval(event.target instanceof Element && Boolean(event.target.closest('.acc-device-removable')))}>
+        {roster.length ? roster.map(device => (
+          <DeviceRow key={device.deviceId} device={device} removable={!device.current && Boolean(config.onRemoveOtherDevices)} disabled={removing} onRemove={removeOtherDevices} />
+        )) : <div className="acc-device-empty">No devices available</div>}
       </div>
     </div>
   )

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { AccountList } from '../../src/client/app/ui/account/account-list.tsx'
+import { AccountList, KeysPanel } from '../../src/client/app/ui/account/account-list.tsx'
 import { DropdownMenu } from '../../src/client/app/ui/account/menu.tsx'
 import { copyInviteLink, joinDeltaChatInvite, PGP_KEY_CHANGED, PgpKeyRow } from '../../src/client/app/ui/account/pgp-card.tsx'
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
@@ -56,19 +56,17 @@ test('while the mediator is being connected the card says so, and is neither gre
   expect(dot.style.background).not.toMatch(/34c759|ff3b30/)
 })
 
-test('the card opens and closes on click', () => {
+test('the mediator card is a plain card: a click on it opens nothing', () => {
   const { container } = render(<AccountList />)
   set(config())
   const card = container.querySelector('#cmd-acc-mediator-card')!
-  expect(card.classList.contains('expanded')).toBe(false)
-  fireEvent.click(card.querySelector('.cmd-page-row')!)
-  expect(card.classList.contains('expanded')).toBe(true)
   fireEvent.click(card.querySelector('.cmd-page-row')!)
   expect(card.classList.contains('expanded')).toBe(false)
+  expect(container.querySelector('.acc-device-row')).toBeNull()
 })
 
 test('this device comes first and is tagged; others are removable only when removal is wired', () => {
-  const { container } = render(<AccountList />)
+  const { container } = render(<KeysPanel />)
   set(config())
   const rows = [...container.querySelectorAll('.acc-device-row')]
   expect(rows[0]!.textContent).toContain('this device')
@@ -79,7 +77,7 @@ test('this device comes first and is tagged; others are removable only when remo
 
 test('removing other devices asks first, then reports', async () => {
   const onRemoveOtherDevices = vi.fn(async () => {})
-  const { container } = render(<AccountList />)
+  const { container } = render(<KeysPanel />)
   set(config({ onRemoveOtherDevices }))
   vi.spyOn(window, 'confirm').mockReturnValueOnce(false)
   fireEvent.click(container.querySelector('.acc-device-removable')!)
@@ -92,7 +90,7 @@ test('removing other devices asks first, then reports', async () => {
 
 test('a failed removal is reported and can be tried again', async () => {
   const onRemoveOtherDevices = vi.fn(async () => { throw new Error('wallet said no') })
-  const { container } = render(<AccountList />)
+  const { container } = render(<KeysPanel />)
   set(config({ onRemoveOtherDevices }))
   vi.spyOn(window, 'confirm').mockReturnValue(true)
   fireEvent.click(container.querySelector('.acc-device-removable')!)
@@ -100,13 +98,13 @@ test('a failed removal is reported and can be tried again', async () => {
   await waitFor(() => expect((container.querySelector('.acc-device-removable') as HTMLButtonElement).disabled).toBe(false))
 })
 
-test('a new device roster from the vault shows without redrawing the card', () => {
-  const { container } = render(<AccountList />)
+test('a new device roster from the vault shows in the Keys tab', () => {
+  const { container } = render(<KeysPanel />)
   set(config())
-  fireEvent.click(container.querySelector('#cmd-acc-mediator-card .cmd-page-row')!)
+  expect(container.textContent).toContain('Device Key')
+  expect(container.querySelectorAll('.acc-device-row')).toHaveLength(2)
   set({ ...config(), vault: { state: 'connected', coordinatorUrl: 'didcomm', devices: [] } })
   expect(container.textContent).toContain('No devices available')
-  expect(container.querySelector('#cmd-acc-mediator-card')!.classList.contains('expanded')).toBe(true)
 })
 
 test('the mediator menu edits the server', () => {

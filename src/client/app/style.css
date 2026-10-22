@@ -1921,7 +1921,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 #cmd-acc-identity-name .acc-display-name,
 #cmd-acc-identity-name .acc-alias-edit,
 #cmd-acc-identity-did-row,
-#cmd-acc-pgp-row {
+.acc-pgp-row {
   padding: 1px 3px;
   margin: -1px -3px;
   border-radius: 8px;
@@ -1930,7 +1930,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 #cmd-acc-identity-name .acc-display-name:hover,
 #cmd-acc-identity-name .acc-alias-edit:hover,
 #cmd-acc-identity-did-row:hover,
-#cmd-acc-pgp-row:hover {
+.acc-pgp-row:hover {
   background: rgba(128, 128, 128, 0.11);
 }
 #cmd-acc-identity-name .acc-name-sep {
@@ -2011,7 +2011,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   cursor: pointer;
   word-break: break-all;
 }
-#cmd-acc-pgp-row {
+.acc-pgp-row {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2022,8 +2022,8 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   color: var(--text-dim);
 }
 #cmd-acc-webvh-icon { flex-shrink: 0; color: var(--text-dim); }
-#cmd-acc-pgp-row svg { flex-shrink: 0; }
-#cmd-acc-pgp-fingerprint {
+.acc-pgp-row svg { flex-shrink: 0; }
+.acc-pgp-fingerprint {
   font-size: 12px;
   font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   white-space: nowrap;
@@ -2074,9 +2074,6 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 .acc-card-wrap {
   border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
   border-radius: 8px;
-}
-.acc-card-wrap .cmd-page-row {
-  cursor: pointer;
 }
 .acc-card-wrap.expanded .cmd-page-row,
 .acc-card-wrap:last-child .cmd-page-row {
@@ -4073,4 +4070,14 @@ html.pwa-standalone #app {
   line-height: 1.4;
   overflow-wrap: anywhere;
   pointer-events: none;
+}
+
+/* The Keys tab: one bordered card per key. */
+#cmd-acc-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.acc-key-card {
+  padding: 12px;
 }
