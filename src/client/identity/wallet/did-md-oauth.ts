@@ -790,7 +790,8 @@ function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthori
     handle: session.handle, verificationMethod: session.verificationMethod, rootPublicKey: session.rootPublicKey,
     deviceJkt: session.deviceJkt, privateKey: session.privateKey, publicJwk: session.publicJwk,
     vaultDeviceId: session.vaultDeviceId ?? (() => { throw new Error('This did.md Wallet session predates this Biset version; connect it again.') })(),
-    documentEdit: storedEdit as DidCoreDocumentEdit ?? { type: DID_DOCUMENT_EDIT_DETAIL, services: [], verificationMethods: [], remove: [] },
+    // None when the capability carries none (a sign-in under a moved DID): the refresh must not expect one.
+    ...(storedEdit ? { documentEdit: storedEdit as DidCoreDocumentEdit } : {}),
     ...(session.bisetDidCommDevice ? { bisetDidCommDevice: session.bisetDidCommDevice } : {}),
     createdAt: '',
   }
