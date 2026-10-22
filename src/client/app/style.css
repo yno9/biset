@@ -1857,6 +1857,29 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   color: var(--text);
   border-bottom-color: var(--accent, currentColor);
 }
+#cmd-acc-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 12px;
+}
+.acc-file-btn {
+  padding: 7px 16px;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+.acc-file-btn:hover {
+  background: rgba(128, 128, 128, 0.11);
+}
+.acc-file-btn.danger {
+  color: #c0392b;
+}
 .acc-nav-empty {
   padding: 24px 12px;
   color: var(--text-dim);

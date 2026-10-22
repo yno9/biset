@@ -26,6 +26,38 @@ function changeDisplayName(current?: string): void {
   void profile.setName(name.trim() || null).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => getAccountConfig()?.showMessage?.(errorText(error)))
 }
 
+type FileAction = MenuItem & { short: string }
+
+/** Export, Import and Disconnect (Log out without a Wallet): the identity menu lists them by `label`, the Files
+ * tab as buttons named `short`. */
+function fileActions(): FileAction[] {
+  const config = getAccountConfig()
+  const wallet = config?.wallet
+  const showMessage = (error: unknown) => config?.showMessage?.(errorText(error))
+  const actions: FileAction[] = [
+    { label: 'Export Messages', short: 'Export', onClick: () => { void config?.onExportMessages?.()?.catch(showMessage) } },
+    { label: 'Import Messages', short: 'Import', onClick: () => { void config?.onImportMessages?.()?.catch(showMessage) } },
+  ]
+  if (wallet) {
+    actions.push({
+      label: 'Disconnect Wallet', short: 'Disconnect', danger: true, onClick: () => {
+        const expires = new Date(wallet.capabilityExpiresAt).toLocaleDateString()
+        if (!confirm(`Disconnect ${wallet.handle} from this browser? Its capability remains valid until ${expires}.`)) return
+        void wallet.onDisconnect().catch(showMessage)
+      },
+    })
+  } else {
+    actions.push({
+      label: 'Log out', short: 'Log out', danger: true, onClick: () => {
+        if (!config?.onLogout) return
+        if (!confirm('Log out and erase ALL local data (accounts, messages, keys)? This cannot be undone.')) return
+        void config.onLogout()
+      },
+    })
+  }
+  return actions
+}
+
 /** The identity menu. A Wallet account can reconnect, move its messages, and disconnect; the rest of
  * the old menu (passkey protection) has no backend here. */
 function identityMenuItems(currentName: string | undefined, did: { expanded: boolean; onToggle: () => void }): MenuItem[] {
@@ -49,15 +81,7 @@ function identityMenuItems(currentName: string | undefined, did: { expanded: boo
       ...profileItems,
       ...invite,
       ...(wallet.reconnectRequired && wallet.onReconnect ? [{ label: 'Reconnect Wallet', onClick: () => { void wallet.onReconnect?.().catch(showMessage) } }] : []),
-      { label: 'Export Messages', onClick: () => { void getAccountConfig()?.onExportMessages?.().catch(showMessage) } },
-      { label: 'Import Messages', onClick: () => { void getAccountConfig()?.onImportMessages?.().catch(showMessage) } },
-      {
-        label: 'Disconnect Wallet', danger: true, onClick: () => {
-          const expires = new Date(wallet.capabilityExpiresAt).toLocaleDateString()
-          if (!confirm(`Disconnect ${wallet.handle} from this browser? Its capability remains valid until ${expires}.`)) return
-          void wallet.onDisconnect().catch(showMessage)
-        },
-      },
+      ...fileActions(),
     ]
   }
   return [
@@ -65,16 +89,7 @@ function identityMenuItems(currentName: string | undefined, did: { expanded: boo
     ...profileItems,
     ...invite,
     { label: 'Protect with passkey', onClick: () => {} },
-    { label: 'Export Messages', onClick: () => { void getAccountConfig()?.onExportMessages?.() } },
-    { label: 'Import Messages', onClick: () => { void getAccountConfig()?.onImportMessages?.() } },
-    {
-      label: 'Log out', danger: true, onClick: () => {
-        const current = getAccountConfig()
-        if (!current?.onLogout) return
-        if (!confirm('Log out and erase ALL local data (accounts, messages, keys)? This cannot be undone.')) return
-        void current.onLogout()
-      },
-    },
+    ...fileActions(),
   ]
 }
 
@@ -180,11 +195,22 @@ function IdentityCard({ did }: { did: string }) {
   )
 }
 
+function FilesPanel() {
+  useStore(accountConfig)
+  return (
+    <div id="cmd-acc-files">
+      {fileActions().map(action => (
+        <button key={action.short} type="button" className={action.danger ? 'acc-file-btn danger' : 'acc-file-btn'} onClick={action.onClick}>{action.short}</button>
+      ))}
+    </div>
+  )
+}
+
 const TABS = ['Services', 'Keys', 'Files'] as const
 type Tab = typeof TABS[number]
 
 /** The bar under the identity card, and the panel it picks. Services is what the page showed so far (the
- * mediator); Keys and Files have nothing to show yet. */
+ * mediator), Files has Export / Import / Disconnect, Keys nothing yet. */
 function AccountTabs() {
   const [tab, setTab] = useState<Tab>('Services')
   return (
@@ -195,7 +221,7 @@ function AccountTabs() {
         ))}
       </nav>
       <div className="cmd-page-section" id="cmd-acc-list" role="tabpanel">
-        {tab === 'Services' ? <AccountList /> : <div className="acc-nav-empty">Nothing here yet.</div>}
+        {tab === 'Services' ? <AccountList /> : tab === 'Files' ? <FilesPanel /> : <div className="acc-nav-empty">Nothing here yet.</div>}
       </div>
     </>
   )
