@@ -2010,8 +2010,13 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   color: var(--text-dim);
   font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   cursor: pointer;
-  word-break: break-all;
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
 }
+/* One line: the SCID shrinks to an ellipsis, the rest keeps its width. */
+.acc-did-fixed { flex: none; }
+.acc-did-scid { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .acc-pgp-row {
   display: flex;
   align-items: center;

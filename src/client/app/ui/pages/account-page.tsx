@@ -107,6 +107,20 @@ function AliasButton({ children }: { children: string }) {
 /** The first character, upper-cased, of a display name or of the mail address (a character, not a UTF-16 unit). */
 const initialOf = (text: string): string => (Array.from(text)[0] ?? '').toUpperCase()
 
+/** `did:webvh:` + SCID + `:alias.did.md` on one line: when the card is narrow the SCID gives way (ellipsis), the
+ * alias never does. */
+function DidText({ did }: { did: string }) {
+  const parts = did.split(':')
+  if (parts.length < 4) return <span className="acc-did-scid">{did}</span>
+  return (
+    <>
+      <span className="acc-did-fixed">{parts.slice(0, 2).join(':')}:</span>
+      <span className="acc-did-scid">{parts[2]}</span>
+      <span className="acc-did-fixed">:{parts.slice(3).join(':')}</span>
+    </>
+  )
+}
+
 function IdentityCard({ did }: { did: string }) {
   const label = parseWebvhDid(did).domain
   const accountState = useStore(accountConfig)
@@ -163,7 +177,7 @@ function IdentityCard({ did }: { did: string }) {
           {/* Clicking the DID text copies it. */}
           <div id="cmd-acc-identity-did-row"
             onClick={event => { event.stopPropagation(); navigator.clipboard?.writeText(did).then(() => getAccountConfig()?.showMessage?.('DID copied')).catch(() => {}) }}>
-            <span id="cmd-acc-identity-did" data-tip={did}>{did}</span>
+            <span id="cmd-acc-identity-did" data-tip={did}><DidText did={did} /></span>
             <svg id="cmd-acc-identity-copy-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
           </div>
         </div>
