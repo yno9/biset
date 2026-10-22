@@ -25,6 +25,10 @@ export function installDitoApprover(): void {
   }))
 }
 
+let reloadWarmFrame: (() => void) | undefined
+/** Loads the waiting frame again: what it had restored is out of date (the identity moved to another address). */
+export function refreshApproveFrame(): void { reloadWarmFrame?.() }
+
 interface Warm { ready: Promise<DitoEmbed>; dispose(): void; onResize?(height: number): void }
 
 /**
@@ -47,6 +51,11 @@ export function ApproveDialog() {
     warm.current = slot
     return slot
   }
+
+  useEffect(() => {
+    reloadWarmFrame = () => { if (approval.get()) return; warm.current?.dispose(); start() }
+    return () => { reloadWarmFrame = undefined }
+  }, [])
 
   useEffect(() => {
     if (!origin) return

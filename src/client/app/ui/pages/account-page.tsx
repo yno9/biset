@@ -41,6 +41,7 @@ function identityMenuItems(): MenuItem[] {
     return [
       ...profileItems,
       ...invite,
+      ...(wallet.onChangeAlias ? [{ label: 'Change address', onClick: () => { void wallet.onChangeAlias?.().catch(showMessage) } }] : []),
       ...(wallet.reconnectRequired && wallet.onReconnect ? [{ label: 'Reconnect Wallet', onClick: () => { void wallet.onReconnect?.().catch(showMessage) } }] : []),
       { label: 'Export Messages', onClick: () => { void getAccountConfig()?.onExportMessages?.().catch(showMessage) } },
       { label: 'Import Messages', onClick: () => { void getAccountConfig()?.onImportMessages?.().catch(showMessage) } },

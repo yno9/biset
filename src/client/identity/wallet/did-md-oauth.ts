@@ -7,7 +7,7 @@
  */
 import { x25519 } from '@noble/curves/ed25519.js'
 import { decodeMultikey } from '../../../protocol/webvh/multikey.ts'
-import { parseWebvhDid } from '../../../protocol/webvh/identifier.ts'
+import { parseWebvhDid, sameIdentity } from '../../../protocol/webvh/identifier.ts'
 import { verifyProof, type DataIntegrityProof } from '../../../protocol/webvh/proof.ts'
 import { freshFetch } from '../webvh/log-io.ts'
 import { resolveByDomain } from '../../../protocol/webvh/resolver.ts'
@@ -1042,6 +1042,27 @@ export async function beginDidMdDocumentEdit(change: DidMdDocumentChange, config
   }
   return submitToWallet(client, pending)
 }
+
+/**
+ * The Wallet moved this identity to another address (its DID's host): signs in again as the same
+ * device, for the same identity under its new DID. The device keys stay; the capability, the DID and
+ * the DIDComm key ids are the new ones (the login path resolves the DID from the capability itself).
+ */
+export async function rebindDidMdSessionToMovedDid(newDid: string, configured: DidMdWalletConfiguration = {}): Promise<DidMdActiveSession> {
+  const config = walletConfiguration(configured)
+  const session = await readDidMdDeviceSession()
+  if (!session?.vaultDeviceId || session.v !== 2) throw new Error('Reconnect did.md Wallet before changing the address')
+  if (!sameIdentity(session.did, newDid)) throw new Error('The moved DID is not this account')
+  const client = await registration(config.walletDeviceName)
+  const { did: _old, ...rest } = pendingFromSession(session)
+  const pending: DidMdPendingAuthorization = {
+    ...rest, state: randomBase64url(32), codeVerifier: randomBase64url(48), createdAt: new Date().toISOString(),
+    handle: didMdHandle(parseWebvhDid(newDid).domain),
+  }
+  delete pending.documentEdit
+  return submitToWallet(client, pending)
+}
+
 /** The generation seed whose rotation key a Wallet approval published for
  * this session, until this device has stored it in its Vault. `forget()`
  * once it is stored (or found to be no longer the identity's). */

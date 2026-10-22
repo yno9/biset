@@ -21,7 +21,7 @@ function ditoDevPort(own: string): string {
   return `:${configured && /^\d{2,5}$/.test(configured) ? configured : own}`
 }
 
-export type DitoMode = 'create' | 'approve'
+export type DitoMode = 'create' | 'approve' | 'alias'
 
 /** What the frame reports; every handler is optional because the approve frame reports only errors. */
 export interface DitoEmbedHandlers {
@@ -73,6 +73,11 @@ export interface DitoEmbed {
    * (`vp_token`, `id_token`, `state`, `iss`), the same fields the callback URL would carry.
    */
   approve(request: string): Promise<URLSearchParams>
+  /**
+   * Has dito move this browser's identity to another address (the DID's host), asking for the new
+   * name and the Passphrase in the frame. Resolves with the new DID; rejects when it is cancelled.
+   */
+  moveAlias(): Promise<{ did: string, host: string }>
   /** The page could not prepare the request it announced: the frame's button stops working. */
   cancel(): Promise<void>
   /** Stops listening for the frame (a frame that is being replaced). */
@@ -97,6 +102,11 @@ export function mountDito(frame: HTMLIFrameElement, origin: string, mode: DitoMo
         const params = new URLSearchParams()
         for (const [name, value] of Object.entries(result?.response ?? {})) if (typeof value === 'string') params.set(name, value)
         return params
+      },
+      async moveAlias() {
+        const result = await call('wallet.moveAlias', {}) as { did?: unknown, host?: unknown } | null
+        if (typeof result?.did !== 'string' || typeof result.host !== 'string') throw new Error('The wallet did not return the new address.')
+        return { did: result.did, host: result.host }
       },
       async cancel() { await call('wallet.cancel', {}) },
       dispose() { removeEventListener('message', onMessage) },

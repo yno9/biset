@@ -21,6 +21,7 @@
 //   touch it (ContactCard/set refuses the patch), and an imported file's copy
 //   is dropped: anyone could have edited the file to claim "this did:peer is
 //   Bob".
+import { identityKey, sameIdentity } from '../../../protocol/webvh/identifier.ts'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { sha1 } from '@noble/hashes/legacy.js'
 import { bytesToBase64url, type CanonicalValue } from '../../../protocol/canonical.ts'
@@ -119,7 +120,8 @@ const URL_NAMESPACE = '6ba7b8119dad11d180b400c04fd430c8' // RFC 9562's NameSpace
  * made for a public DID, identical on every device. */
 export function didContactUid(did: string): string {
   const namespace = Uint8Array.from(URL_NAMESPACE.match(/../g)!.map(byte => parseInt(byte, 16)))
-  const name = new TextEncoder().encode(did)
+  // By identity: a person who changes their address (the DID's host) stays the same card.
+  const name = new TextEncoder().encode(identityKey(did))
   const hash = sha1(new Uint8Array([...namespace, ...name])).slice(0, 16)
   hash[6] = (hash[6]! & 0x0f) | 0x50
   hash[8] = (hash[8]! & 0x3f) | 0x80
@@ -320,7 +322,7 @@ export function didCommStateOf(card: LocalJmapContactCard): DidCommContactState 
 export function contactCardForDid(cards: readonly LocalJmapContactCard[], did: string): LocalJmapContactCard | undefined {
   const own = contactCardId(didContactUid(did))
   return cards.find(card => card.id === own) ?? cards.find(card => isObject(card.onlineServices)
-    && Object.values(card.onlineServices).some(service => isObject(service) && service.uri === did))
+    && Object.values(card.onlineServices).some(service => isObject(service) && typeof service.uri === 'string' && sameIdentity(service.uri, did)))
 }
 
 /** The counterparty's current DID: the latest rotation (by `iat`, then DID

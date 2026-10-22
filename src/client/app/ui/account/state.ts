@@ -58,6 +58,8 @@ export interface AccountPageConfig {
     onLogOutMediator?(): Promise<void>
     reconnectRequired?: boolean
     onReconnect?(): Promise<void>
+    /** Moves the identity to another address (dito asks for the name and the Passphrase), then signs in again under the new DID. */
+    onChangeAlias?(): Promise<void>
     onDisconnect(): Promise<void>
   }
   /** Confirmed and invoked by the identity menu's "Log out" item
