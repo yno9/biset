@@ -1043,13 +1043,8 @@ export async function beginDidMdDocumentEdit(change: DidMdDocumentChange, config
   return submitToWallet(client, pending)
 }
 
-/**
- * The Wallet moved this identity to another address (its DID's host): signs in again as the same
- * device, for the same identity under its new DID. The device keys stay; the capability, the DID and
- * the DIDComm key ids are the new ones (the login path resolves the DID from the capability itself).
- */
-export async function rebindDidMdSessionToMovedDid(newDid: string, configured: DidMdWalletConfiguration = {}): Promise<DidMdActiveSession> {
-  const config = walletConfiguration(configured)
+/** The sign-in for the same device under the DID the Wallet moved this identity to (its host changed). */
+async function movedDidLoginPending(newDid: string, config: WalletConfiguration): Promise<{ client: DidMdRegistration, pending: DidMdPendingAuthorization }> {
   const session = await readDidMdDeviceSession()
   if (!session?.vaultDeviceId || session.v !== 2) throw new Error('Reconnect did.md Wallet before changing the address')
   if (!sameIdentity(session.did, newDid)) throw new Error('The moved DID is not this account')
@@ -1060,7 +1055,20 @@ export async function rebindDidMdSessionToMovedDid(newDid: string, configured: D
     handle: didMdHandle(parseWebvhDid(newDid).domain),
   }
   delete pending.documentEdit
-  return submitToWallet(client, pending)
+  return { client, pending }
+}
+
+/**
+ * The Wallet moved this identity to another address (its DID's host): the sign-in request for the same
+ * device under the new DID, prepared and saved but not started -- its query string goes to the Wallet's
+ * save page (the person's password manager updates the saved account there), whose last page signs in
+ * with the Passphrase it was given and returns to the wallet callback. The device keys stay; the
+ * capability, the DID and the DIDComm key ids are the new ones (the login path resolves the DID from
+ * the capability itself).
+ */
+export async function prepareDidMdMovedDidLoginRequest(newDid: string, configured: DidMdWalletConfiguration = {}): Promise<string> {
+  const { client, pending } = await movedDidLoginPending(newDid, walletConfiguration(configured))
+  return new URL(await walletRequestUrl(client, pending)).search
 }
 
 /** The generation seed whose rotation key a Wallet approval published for
