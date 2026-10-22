@@ -28,12 +28,13 @@ function changeDisplayName(current?: string): void {
   void profile.setName(name.trim() || null).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => getAccountConfig()?.showMessage?.(errorText(error)))
 }
 
-function identityMenuItems(currentName?: string): MenuItem[] {
+function identityMenuItems(currentName: string | undefined, did: { expanded: boolean; onToggle: () => void }): MenuItem[] {
   const config = getAccountConfig()
   const wallet = config?.wallet
   const showMessage = (error: unknown) => getAccountConfig()?.showMessage?.(errorText(error))
   const pgp = config?.pgp
   const profile = config?.profile
+  const didItem: MenuItem = { label: did.expanded ? 'Hide DID' : 'View DID', onClick: did.onToggle }
   const profileItems: MenuItem[] = profile ? [
     { label: 'Remove profile picture', onClick: () => { void profile.setAvatar(null).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(showMessage) } },
     { label: 'Set display name', onClick: () => changeDisplayName(currentName) },
@@ -44,6 +45,7 @@ function identityMenuItems(currentName?: string): MenuItem[] {
   ] : []
   if (wallet) {
     return [
+      didItem,
       ...profileItems,
       ...invite,
       ...(wallet.reconnectRequired && wallet.onReconnect ? [{ label: 'Reconnect Wallet', onClick: () => { void wallet.onReconnect?.().catch(showMessage) } }] : []),
@@ -59,6 +61,7 @@ function identityMenuItems(currentName?: string): MenuItem[] {
     ]
   }
   return [
+    didItem,
     ...profileItems,
     ...invite,
     { label: 'Protect with passkey', onClick: () => {} },
@@ -128,10 +131,11 @@ function IdentityCard({ did }: { did: string }) {
     } catch { setDoc('Failed to resolve DID document') }
   }
 
+  const toggleDid = () => { setExpanded(open => !open); if (!expanded && !docLoaded.current) { docLoaded.current = true; void loadDoc() } }
+
   return (
     <div className={`cmd-page-section${expanded ? ' expanded' : ''}`} id="cmd-acc-identity-section">
-      <div id="cmd-acc-identity-fields" data-tip="Click to view DID document"
-        onClick={() => { setExpanded(open => !open); if (!expanded && !docLoaded.current) { docLoaded.current = true; void loadDoc() } }}>
+      <div id="cmd-acc-identity-fields">
         <div id="cmd-acc-identity-avatar" className="lp-avatar" role={profile ? 'button' : undefined} data-tip={profile ? 'Set profile picture' : undefined}
           style={{ background: avatarColor(label), ...(profile ? { cursor: 'pointer' } : {}) }}
           // The picture is set where it is shown: a click on it asks for an image (not the card opening).
@@ -154,7 +158,7 @@ function IdentityCard({ did }: { did: string }) {
           {pgp ? <PgpKeyRow config={pgp} showMessage={text => getAccountConfig()?.showMessage?.(text)} /> : null}
         </div>
         <button ref={menuButton} id="cmd-acc-identity-menu-btn" type="button" aria-label="Menu"
-          onClick={event => { event.stopPropagation(); openDropdownMenu(menuButton.current!, identityMenuItems(own.name)) }}>
+          onClick={event => { event.stopPropagation(); openDropdownMenu(menuButton.current!, identityMenuItems(own.name, { expanded, onToggle: toggleDid })) }}>
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" /></svg>
         </button>
       </div>

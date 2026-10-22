@@ -1816,7 +1816,6 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   display: flex;
   align-items: center;
   gap: 12px;
-  cursor: pointer;
   /* Matches the relay/storage cards' own row padding (renderAccountsList's
      row.style.cssText = 'padding:10px 12px') — before this the identity
      card's content sat flush against the container edge while every card

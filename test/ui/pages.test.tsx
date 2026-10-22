@@ -146,18 +146,24 @@ test('account: clicking the avatar asks for a picture and sets it, without openi
   expect(bare.container.querySelector('#cmd-acc-identity-avatar')!.getAttribute('role')).toBeNull()
 })
 
-test('account: the card opens on click and reads the DID document once', async () => {
+test('account: View DID in the identity menu opens the card and reads the DID document once; a click on the card does not', async () => {
   const { resolve } = await import('../../src/protocol/webvh/resolver.ts')
   vi.mocked(resolve).mockResolvedValue({ id: DID, name: 'Alice' } as never)
   accountConfig.set(account())
-  const { container } = render(<AccountPage />)
+  const { container } = render(<><AccountPage /><DropdownMenu /></>)
   const section = container.querySelector('#cmd-acc-identity-section')!
   const callsBefore = vi.mocked(resolve).mock.calls.length
   fireEvent.click(container.querySelector('#cmd-acc-identity-fields')!)
+  expect(section.classList.contains('expanded')).toBe(false)
+  fireEvent.click(container.querySelector('#cmd-acc-identity-menu-btn')!)
+  fireEvent.click(screen.getByText('View DID'))
   expect(section.classList.contains('expanded')).toBe(true)
   await waitFor(() => expect(container.querySelector('#cmd-acc-identity-doc')!.textContent).toContain('"name": "Alice"'))
-  fireEvent.click(container.querySelector('#cmd-acc-identity-fields')!)
-  fireEvent.click(container.querySelector('#cmd-acc-identity-fields')!)
+  fireEvent.click(container.querySelector('#cmd-acc-identity-menu-btn')!)
+  fireEvent.click(screen.getByText('Hide DID'))
+  expect(section.classList.contains('expanded')).toBe(false)
+  fireEvent.click(container.querySelector('#cmd-acc-identity-menu-btn')!)
+  fireEvent.click(screen.getByText('View DID'))
   expect(vi.mocked(resolve).mock.calls.length).toBe(callsBefore + 1)
   fireEvent.click(container.querySelector('#cmd-acc-identity-sync-btn')!)
   await waitFor(() => expect(vi.mocked(resolve).mock.calls.length).toBe(callsBefore + 2))
