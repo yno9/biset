@@ -895,7 +895,7 @@ select {
 /* The panel under the tab bar: the same padding for Services and Files. */
 #cmd-acc-list {
   margin-bottom: 0;
-  padding: 14px 12px;
+  padding: 14px 0px;
 }
 /* A system message about the account, below its cards: not dismissible, it
    goes when the thing it says is put right. */
@@ -1832,6 +1832,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 }
 /* The bar under the identity card: Services | Keys | Files. */
 #cmd-acc-nav {
+  position: relative;
   display: flex;
   gap: 4px;
   margin: 4px 0 2px;
@@ -1839,25 +1840,26 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   border-bottom: 1px solid var(--border, rgba(128, 128, 128, 0.25));
 }
 .acc-nav-tab {
-  margin-bottom: -1px;
   padding: 8px 12px;
   border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 8px 8px 0 0;
   background: none;
   color: var(--text-dim);
   font: inherit;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: background-color 0.12s, color 0.12s;
-}
-.acc-nav-tab:hover {
-  background: rgba(128, 128, 128, 0.11);
+  transition: color 0.2s;
 }
 .acc-nav-tab[aria-selected="true"] {
   color: var(--text);
-  border-bottom-color: var(--accent, currentColor);
+}
+/* The one underline, sliding to the chosen tab. It sits on the bar's own bottom border. */
+.acc-nav-underline {
+  position: absolute;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent, currentColor);
+  transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 #cmd-acc-files {
   display: flex;

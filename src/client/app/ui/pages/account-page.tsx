@@ -1,7 +1,7 @@
 // The account page: the identity card (name, DID, capability expiry, and the DID document behind a
 // click), then what hangs off it (the mediator, the key notice, PGP: account/account-list.tsx). With
 // no identity yet, the one thing to do from here is sign up.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../../react/store.ts'
 import { parseWebvhDid } from '../../../../protocol/webvh/identifier.ts'
 import { resolve } from '../../../../protocol/webvh/resolver.ts'
@@ -210,12 +210,23 @@ type Tab = typeof TABS[number]
  * mediator), Keys has the devices and the PGP key, Files has Export / Import / Disconnect. */
 function AccountTabs() {
   const [tab, setTab] = useState<Tab>('Services')
+  const [bar, setBar] = useState<{ left: number; width: number }>()
+  const tabs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({})
+  // The underline is one element that slides (CSS transition on left and width) to the chosen tab; it
+  // first appears already in place, so nothing slides on load.
+  useLayoutEffect(() => {
+    const measure = () => { const button = tabs.current[tab]; if (button) setBar({ left: button.offsetLeft, width: button.offsetWidth }) }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [tab])
   return (
     <>
       <nav id="cmd-acc-nav" role="tablist" aria-label="Account">
         {TABS.map(name => (
-          <button key={name} type="button" role="tab" className="acc-nav-tab" aria-selected={tab === name} onClick={() => setTab(name)}>{name}</button>
+          <button key={name} ref={element => { tabs.current[name] = element }} type="button" role="tab" className="acc-nav-tab" aria-selected={tab === name} onClick={() => setTab(name)}>{name}</button>
         ))}
+        {bar ? <span className="acc-nav-underline" style={{ left: bar.left, width: bar.width }} /> : null}
       </nav>
       <div className="cmd-page-section" id="cmd-acc-list" role="tabpanel">
         {tab === 'Services' ? <AccountList /> : tab === 'Keys' ? <KeysPanel /> : <FilesPanel />}
