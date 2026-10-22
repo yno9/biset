@@ -40,7 +40,7 @@ test('the card shows the mediator host and its state', () => {
   const { container } = render(<AccountList />)
   set(config())
   expect(container.textContent).toContain('mediator.biset.md')
-  expect(container.textContent).toContain('Registered')
+  expect(container.textContent).not.toContain('Registered')
   set(config({}, { error: 'unreachable' }))
   expect(container.textContent).toContain('Needs attention: unreachable')
   set(config({}, { loggedOut: true }))

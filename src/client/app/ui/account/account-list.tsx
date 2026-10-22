@@ -60,6 +60,7 @@ function MediatorCard({ config, wallet, didComm, showMessage }: { config: Accoun
     },
   ]
 
+  const status = didComm.error ? `Needs attention: ${didComm.error}` : loggedOut ? 'Logged out' : didComm.connecting ? 'Connecting…' : ''
   const dotColor = didComm.error ? '#ff3b30' : loggedOut ? '#8e8e93' : didComm.connecting ? '#ff9f0a' : '#34c759'
 
   return (
@@ -71,11 +72,8 @@ function MediatorCard({ config, wallet, didComm, showMessage }: { config: Accoun
             <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--accent2, #888)', flexShrink: 0 }}>Mediator</span>
             <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>:</span>
             <span style={{ fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{coordinatorHost(didComm.mediatorUrl)}</span>
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 12, color: 'var(--text-dim)' }}>
-            <span style={{ color: didComm.error ? '#ff3b30' : '' }}>
-              {didComm.error ? `Needs attention: ${didComm.error}` : loggedOut ? 'Logged out' : didComm.connecting ? 'Connecting…' : 'Registered'}
-            </span>
+            {/* The dot says "registered"; the line only says it when something else is the case. */}
+            {status ? <span style={{ fontSize: 12, flexShrink: 1, minWidth: 0, color: didComm.error ? '#ff3b30' : 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{status}</span> : null}
           </div>
         </div>
         {/* Same "⋮" affordance as the identity heading's own menu button. */}
