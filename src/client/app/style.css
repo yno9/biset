@@ -1963,7 +1963,8 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 .acc-pgp-row:hover {
   background: rgba(128, 128, 128, 0.11);
 }
-/* Without a display name, "Set display name" shows when the pointer is on the name line. */
+/* Without a display name, "Set display name" shows when the pointer is on the card, except over the alias (a
+   click there changes the alias, so the other offer steps out of the way). */
 .acc-name-add {
   margin-left: 10px;
   padding: 0;
@@ -1976,8 +1977,9 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   opacity: 0;
   transition: opacity 0.12s;
 }
-#cmd-acc-identity-name-row:hover .acc-name-add,
+#cmd-acc-identity-fields:hover .acc-name-add,
 .acc-name-add:focus-visible { opacity: 1; }
+#cmd-acc-identity-fields:has(.acc-alias-edit:hover) .acc-name-add:not(:focus-visible) { opacity: 0; }
 #cmd-acc-identity-name .acc-name-sep {
   margin: 0 0.5em;
   font-weight: 400;
