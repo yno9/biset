@@ -9,6 +9,7 @@
 // A message carries a delivery pack (store/vault/delivery-pack.ts):
 // events, their encrypted objects, and the SegmentKeys those objects need.
 // DIDComm authcrypt is the only encryption the pack needs.
+import { sameIdentity } from '../../protocol/webvh/identifier.ts'
 import { base64urlToBytes, bytesToBase64url } from '../../protocol/canonical.ts'
 import { VAULT_SYNC_STATE_REQUEST, VAULT_SYNC_STATE_RESPONSE, VAULT_SYNC_UPDATE } from '../../protocol/didcomm/vault-sync-protocol.ts'
 import type { DidCommSender } from '../../protocol/didcomm/mediator-transport.ts'
@@ -108,7 +109,7 @@ export class VaultSyncClient {
   /** Handles a Vault Sync message `senderKid` sent. Only this identity's own
    * devices may send one; this device's own copy is ignored. */
   async receive(message: VaultSyncMessage, senderKid: string): Promise<VaultSyncApplyResult | undefined> {
-    if (!senderKid.startsWith(`${this.identityId}#`)) throw new TypeError('Vault Sync message is not from one of this identity\'s devices')
+    if (!senderKid.includes('#') || !sameIdentity(senderKid.slice(0, senderKid.indexOf('#')), this.identityId)) throw new TypeError('Vault Sync message is not from one of this identity\'s devices')
     if (senderKid === this.ownKid) return undefined
     if (message.type === VAULT_SYNC_STATE_REQUEST) {
       const missing = await this.missingEvents(message.body.summary)

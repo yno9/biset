@@ -26,6 +26,7 @@ import { DidCommSenderMismatchError, isExpired } from '../../protocol/didcomm/me
 import { parseDidCommJws, SignatureError, signingKeyResolver, type SigningKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { openDidCommPayload, type OpenedMessage } from '../../protocol/didcomm/open.ts'
 import { didcommGroupAddress, isGroupAudience } from './group-chat.ts'
+import { sameIdentity } from '../../protocol/webvh/identifier.ts'
 import { describeProblem, isProblemReport } from '../../protocol/didcomm/problems.ts'
 
 export interface OwnDidCommKey { kid: string; x25519PrivateKey: Uint8Array }
@@ -334,9 +335,11 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       // copy was encrypted to (DIDComm v2.1: `to` contains the recipient
       // kid's DID). Recorded by the public DID either way, the same on every
       // device of this identity.
-      const ownDids = new Set([this.options.identityId, ...(recipientKid ? [didOfKid(recipientKid)] : [])])
-      const audience = group ? [...new Set(msg.to!.map(did => ownDids.has(did) ? this.options.identityId : did))] : []
-      if (group && !msg.to!.some(did => ownDids.has(did))) throw new PermanentDeliveryError('DIDComm group message does not name this identity among its recipients')
+      const ownDids = new Set(recipientKid ? [didOfKid(recipientKid)] : [])
+      // `identityId` is the identity's key (its SCID form), so an alias change keeps naming it.
+      const isOwn = (did: string): boolean => ownDids.has(did) || sameIdentity(did, this.options.identityId)
+      const audience = group ? [...new Set(msg.to!.map(did => isOwn(did) ? this.options.identityId : did))] : []
+      if (group && !msg.to!.some(isOwn)) throw new PermanentDeliveryError('DIDComm group message does not name this identity among its recipients')
       const body = basicMessageBodyOf(msg)
       if (!body) throw new TypeError('DIDComm basicmessage has no readable content')
       const sentAt = body.sentAt ?? (msg.created_time ? new Date(msg.created_time * 1000).toISOString() : createdAt)

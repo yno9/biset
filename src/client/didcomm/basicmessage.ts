@@ -8,6 +8,7 @@
 // OOB/bootstrap/control plus, now, 1:1 chat -- not the old system's full
 // messaging subsystem, confirmed with the user).
 import type { MailAuthResults } from '../store/projection/gateway.ts'
+import { identityKey } from '../../protocol/webvh/identifier.ts'
 
 export const BASIC_MESSAGE = 'https://didcomm.org/basicmessage/2.0/message'
 
@@ -80,7 +81,8 @@ function mailAuthOf(value: unknown): MailAuthResults | undefined {
  * threadIdFor. Order-independent (sorted) so both correspondents' devices
  * derive the identical id. */
 export function didCommThreadId(selfDid: string, otherDid: string): string {
-  return [selfDid, otherDid].sort().join('|')
+  // By identity, not DID string: either side changing its alias (the DID's host) keeps the conversation.
+  return [identityKey(selfDid), identityKey(otherDid)].sort().join('|')
 }
 
 export function basicMessageBodyOf(msg: { body?: unknown }): BasicMessageBody | null {

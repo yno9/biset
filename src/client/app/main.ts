@@ -81,7 +81,7 @@ import type { ProfileConfig } from './ui/account/profile.ts'
 import { autocryptKeydata } from '../pgp/keyring.ts'
 import { openStoredMail } from '../pgp/open.ts'
 import { PGP_KEY_CHANGED, type PgpCardConfig } from './ui/account/pgp-card.tsx'
-import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
+import { identityKey, parseWebvhDid, sameIdentity } from '../../protocol/webvh/identifier.ts'
 
 let mediatorPollHandles: MediatorPollHandle[] = []
 
@@ -343,9 +343,12 @@ async function configureWalletAccountIfPresent(
     const config = readBisetConfig()
     const { mediatorUrls } = config
     const device = await timed('openDidMdWalletVaultDevice', openDidMdWalletVaultDevice())
+    // What every local store and every address of this identity in stored data is keyed by: stable across an
+    // alias change (the DID's host), unlike `device.did`, which is for talking to others.
+    const identityId = identityKey(device.did)
     const vaultStore = await timed('IndexedDbVaultStore.open', IndexedDbVaultStore.open())
     let vaultSync: VaultSyncClient | undefined
-    let deviceEvents = await timed('readVaultEvents', vaultStore.readVaultEvents(device.did))
+    let deviceEvents = await timed('readVaultEvents', vaultStore.readVaultEvents(identityId))
     // This identity's devices are the keyAgreement keys its DID document
     // lists now. Historical event actors are audit history, not devices:
     // using them here made every past login remain in the UI.
@@ -357,13 +360,13 @@ async function configureWalletAccountIfPresent(
     const vaultDevices = () => currentVaultDeviceKids
       .map(deviceId => ({ deviceId, current: deviceId === currentVaultDeviceKid }))
       .sort((left, right) => Number(right.current) - Number(left.current) || left.deviceId.localeCompare(right.deviceId))
-    const boundary = buildWalletVaultCryptoBoundary(vaultStore, { did: device.did, deviceId: device.deviceId })
-    const readModel = buildLocalJmapReadModel(vaultStore, device.did)
+    const boundary = buildWalletVaultCryptoBoundary(vaultStore, { did: identityId, deviceId: device.deviceId })
+    const readModel = buildLocalJmapReadModel(vaultStore, identityId)
     const vaultProjector = new VaultProjector(vaultStore, boundary.resolver)
-    const sequencer = await timed('buildActorSequencer', buildActorSequencer(vaultStore, device.did, device.deviceId))
+    const sequencer = await timed('buildActorSequencer', buildActorSequencer(vaultStore, identityId, device.deviceId))
     const mutationSink = new VaultBackedLocalJmapMutationSink({
-      accountId: `biset:${device.did}`,
-      identityId: device.did,
+      accountId: `biset:${identityId}`,
+      identityId: identityId,
       actorDeviceId: device.deviceId,
       nextActorSeq: () => sequencer.nextActorSeq(),
       initialParents: () => sequencer.initialParents(),
@@ -371,13 +374,13 @@ async function configureWalletAccountIfPresent(
       signer: boundary.author,
       committer: vaultStore,
       onCrdtCommitted: async events => {
-        deviceEvents.push(...events.map(event => ({ ...event, identityId: device.did })))
-        await vaultProjector.recomputeEmails(device.did, events.flatMap(event => event.targetIds))
+        deviceEvents.push(...events.map(event => ({ ...event, identityId: identityId })))
+        await vaultProjector.recomputeEmails(identityId, events.flatMap(event => event.targetIds))
         if (vaultSync) void vaultSync.push(events).catch(error => console.warn('[did.md Wallet Vault Sync push]', error instanceof Error ? error.message : error))
       },
     })
     exportMessages = async () => {
-      const exported = await createJmapExport({ identityId: device.did, snapshot: await readModel.snapshot(), events: await vaultStore.readVaultEvents(device.did), download: blobId => readModel.download(blobId) })
+      const exported = await createJmapExport({ identityId: identityId, snapshot: await readModel.snapshot(), events: await vaultStore.readVaultEvents(identityId), download: blobId => readModel.download(blobId) })
       // Plain JSON: whoever can open this account's dashboard already sees
       // everything the file contains.
       downloadFile(encodeJmapExport(exported), `biset-messages-${exported.exportedAt.replaceAll(':', '-')}.json`)
@@ -388,20 +391,20 @@ async function configureWalletAccountIfPresent(
       // identity must be this account (importJmapExport refuses otherwise),
       // and the user confirms what it claims before anything is committed;
       // every message it adds is marked $imported.
-      if (file.identityId !== device.did) throw new Error('This export belongs to another account')
+      if (file.identityId !== identityId) throw new Error('This export belongs to another account')
       if (!confirm(`Import ${file.emails.length} messages and ${file.contactCards?.length ?? 0} contacts exported from this account on ${new Date(file.exportedAt).toLocaleString()}? Messages it adds are marked as imported.`)) return
-      const result = await importJmapExport(file, { identityId: device.did, actorDeviceId: device.deviceId, snapshot: await readModel.snapshot(), events: await vaultStore.readVaultEvents(device.did), nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(), activeSegment: () => boundary.activeSegment(), signer: boundary.author, commit: records => vaultStore.commitIncomingRecords(records) })
-      if (result.events.length) { await vaultProjector.recomputeEmails(device.did, result.events.flatMap(event => event.targetIds)); if (vaultSync) await vaultSync.push(result.events); await refreshInbox(readModel) }
+      const result = await importJmapExport(file, { identityId: identityId, actorDeviceId: device.deviceId, snapshot: await readModel.snapshot(), events: await vaultStore.readVaultEvents(identityId), nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(), activeSegment: () => boundary.activeSegment(), signer: boundary.author, commit: records => vaultStore.commitIncomingRecords(records) })
+      if (result.events.length) { await vaultProjector.recomputeEmails(identityId, result.events.flatMap(event => event.targetIds)); if (vaultSync) await vaultSync.push(result.events); await refreshInbox(readModel) }
       showSysMsg(`Import: ${result.added} added, ${result.skipped} skipped, ${result.excluded} excluded, ${result.missingBodies} missing bodies; contacts ${result.contactsAdded} added, ${result.contactsUpdated} updated`)
     }
     const markdownDirectories = await MarkdownDirectoryConnection.open()
     const markdownGuard = new MarkdownSelfWriteGuard()
     let sendMarkdownDraft: ((file: MarkdownMirrorFile) => Promise<void>) | undefined
-    let markdownRoot = await timed('markdownDirectories.restore', markdownDirectories.restore(device.did))
+    let markdownRoot = await timed('markdownDirectories.restore', markdownDirectories.restore(identityId))
     let markdownObserver: { disconnect(): void; supported: boolean } | undefined
     const startMarkdownMirror = async (root: FileSystemDirectoryHandle): Promise<void> => {
       markdownObserver?.disconnect()
-      await writeMarkdownProjection(root, readModel, device.did, markdownGuard)
+      await writeMarkdownProjection(root, readModel, identityId, markdownGuard)
       markdownObserver = observeMarkdownDirectory(root, () => {
         void scanMarkdownProjection(root, markdownGuard).then(async files => {
           const snapshot = await readModel.snapshot()
@@ -412,9 +415,9 @@ async function configureWalletAccountIfPresent(
             if (shouldSend && sendMarkdownDraft) { await sendMarkdownDraft(file); await removeMarkdownMirrorFile(root, file.path); continue }
             if (!thread.length || !status) continue
             const mutation = markdownStatusMutation(status, thread, snapshot)
-            if (mutation) await mutationSink.emailSet({ accountId: `biset:${device.did}`, ...mutation }, snapshot)
+            if (mutation) await mutationSink.emailSet({ accountId: `biset:${identityId}`, ...mutation }, snapshot)
           }
-          await writeMarkdownProjection(root, readModel, device.did, markdownGuard)
+          await writeMarkdownProjection(root, readModel, identityId, markdownGuard)
         }).catch(error => console.warn('[Markdown Vault]', error))
       })
     }
@@ -426,12 +429,12 @@ async function configureWalletAccountIfPresent(
       async toggle() {
         if (markdownRoot) {
           markdownObserver?.disconnect(); markdownObserver = undefined; markdownRoot = undefined
-          await markdownDirectories.remove(device.did)
+          await markdownDirectories.remove(identityId)
           return
         }
         const picker = (window as unknown as { showDirectoryPicker(options?: { mode?: 'read' | 'readwrite' }): Promise<FileSystemDirectoryHandle> }).showDirectoryPicker
         markdownRoot = await picker({ mode: 'readwrite' })
-        await markdownDirectories.save(device.did, markdownRoot)
+        await markdownDirectories.save(identityId, markdownRoot)
         await startMarkdownMirror(markdownRoot)
       },
     })
@@ -440,14 +443,14 @@ async function configureWalletAccountIfPresent(
     const walletGroupConversation = async (thid: string) => groupConversation(thid, (await readModel.snapshot()).emails)
     // The generation seed: Vault records, read and written like every
     // other private credential, and carried to siblings by Vault Sync.
-    const walletSeedReader = new GenerationSeedReader({ identityId: device.did, objects: vaultStore, events: vaultStore, segmentKeys: boundary.resolver })
+    const walletSeedReader = new GenerationSeedReader({ identityId: identityId, objects: vaultStore, events: vaultStore, segmentKeys: boundary.resolver })
     const walletSeedSink = new GenerationSeedSink({
-      identityId: device.did, actorDeviceId: device.deviceId,
+      identityId: identityId, actorDeviceId: device.deviceId,
       nextActorSeq: () => sequencer.nextActorSeq(), initialParents: () => sequencer.initialParents(),
       activeSegment: () => boundary.activeSegment(), currentSnapshot: () => readModel.snapshot(),
       signer: boundary.author, committer: vaultStore,
       onCommitted: async event => {
-        deviceEvents.push({ ...event, identityId: device.did })
+        deviceEvents.push({ ...event, identityId: identityId })
         if (vaultSync) await vaultSync.push([event])
       },
     })
@@ -475,7 +478,7 @@ async function configureWalletAccountIfPresent(
         const update: Record<string, unknown> = {}
         for (const email of snapshot.emails) if (ids.includes(email.id) && email.keywords['$seen'] !== true) update[email.id] = { keywords: { ...email.keywords, $seen: true } }
         if (Object.keys(update).length === 0) return
-        await mutationSink.emailSet({ accountId: `biset:${device.did}`, update }, snapshot)
+        await mutationSink.emailSet({ accountId: `biset:${identityId}`, update }, snapshot)
         await refreshInbox(readModel)
       })().catch(error => console.warn('[mark read]', error instanceof Error ? error.message : error)).finally(() => markSeenDone(ids))
     })
@@ -501,13 +504,13 @@ async function configureWalletAccountIfPresent(
     // Set where the Secure-Join answers are (below), which needs what is built after this card.
     let joinInvite: ((invite: string) => Promise<{ name: string; address: string }>) | undefined
     // This identity's own name and picture live on its own card in the contact list; what is sent to the people it writes to is made from it.
-    const ownCard = async () => contactCardForDid((await readModel.snapshot()).contactCards, device.did)
+    const ownCard = async () => contactCardForDid((await readModel.snapshot()).contactCards, identityId)
     const writeOwnCard = async (make: (cardId: string, card: LocalJmapContactCard | undefined) => ContactSetPayload | undefined) => {
       const snapshot = await readModel.snapshot()
-      const card = contactCardForDid(snapshot.contactCards, device.did)
-      const write = make(card?.id ?? didContactPatch(device.did).cardId, card)
+      const card = contactCardForDid(snapshot.contactCards, identityId)
+      const write = make(card?.id ?? didContactPatch(identityId).cardId, card)
       if (!write) return
-      await mutationSink.commitIntents([...(card ? [] : [contactSetIntent(didContactPatch(device.did))]), contactSetIntent(write)], snapshot)
+      await mutationSink.commitIntents([...(card ? [] : [contactSetIntent(didContactPatch(identityId))]), contactSetIntent(write)], snapshot)
       await refreshInbox(readModel)
     }
     // Writes the key the seed gives to this identity's own card, unless the card names it already; says whether it changed anything.
@@ -533,7 +536,7 @@ async function configureWalletAccountIfPresent(
       return { ...(name ? { name } : {}), ...(base64 ? { avatarBase64: base64, avatarHash: bytesToBase64url(sha256Bytes(new TextEncoder().encode(avatar!))).slice(0, 16) } : {}) }
     }
     // The picture goes to a contact when it has not got this one: tracked here, per contact, in this browser.
-    const sentKey = `biset.profileSent.${device.did}`
+    const sentKey = `biset.profileSent.${identityId}`
     const avatarSentTo = (): Record<string, string> => { try { return JSON.parse(localStorage.getItem(sentKey) ?? '{}') as Record<string, string> } catch { return {} } }
     const markAvatarSent = (did: string, hash: string) => { try { localStorage.setItem(sentKey, JSON.stringify({ ...avatarSentTo(), [did]: hash })) } catch { /* no storage: it is sent again next time */ } }
     if (ownMailAddress && pgp) {
@@ -629,11 +632,11 @@ async function configureWalletAccountIfPresent(
         // recovery-mailbox fallback): a cold device pulls state from an
         // online sibling via the ordinary bootstrap request below, and a
         // fresh Vault with no siblings simply starts empty.
-        vaultSync = new VaultSyncClient(device.did, didCommDevice.xKid, vaultStore,
+        vaultSync = new VaultSyncClient(identityId, didCommDevice.xKid, vaultStore,
           walletVaultSyncTransport({ did: didCommDevice.did, xKid: didCommDevice.xKid, xPriv: didCommDevice.x25519PrivateKey }),
           async result => {
-            if (result.addedEventIds.length) deviceEvents = await vaultStore.readVaultEvents(device.did)
-            if (result.targetIds.length || result.addedEventIds.length) await vaultProjector.recomputeEmails(device.did, result.targetIds)
+            if (result.addedEventIds.length) deviceEvents = await vaultStore.readVaultEvents(identityId)
+            if (result.targetIds.length || result.addedEventIds.length) await vaultProjector.recomputeEmails(identityId, result.targetIds)
           },
           // Sized to what this identity's mediator says it takes; a mediator
           // that does not say gets the conservative default.
@@ -718,7 +721,7 @@ async function configureWalletAccountIfPresent(
         // DIDComm delivery into this browser's encrypted local Vault. Every
         // message arrives at this device's own key in the DID document.
         const walletDidCommProjector = new DidCommIngressProjector({
-          identityId: device.did,
+          identityId: identityId,
           actorDeviceId: device.deviceId,
           resolveOwnKey: kid => rotationManager.ownKey(kid),
           resolveSenderKey: resolveAnyDidCommSenderKey,
@@ -740,7 +743,7 @@ async function configureWalletAccountIfPresent(
         }
         const reportedOutboxFailures = new Set<string>()
         walletDidCommOutbox = createWalletDidCommOutbox({
-          identityId: device.did,
+          identityId: identityId,
           store: vaultStore,
           readModel,
           mutationSink,
@@ -799,7 +802,7 @@ async function configureWalletAccountIfPresent(
             ...(name ? [contactNamePatch(card?.id ?? created.cardId, card, name.text, name.source)].filter((write): write is NonNullable<typeof write> => write !== undefined).map(contactSetIntent) : []),
           ], snapshot)
         }
-        const pendingJoins = localPendingJoins(device.did)
+        const pendingJoins = localPendingJoins(identityId)
         const joinContext = (key: NonNullable<Awaited<ReturnType<NonNullable<typeof pgp>['current']>>>, profile: OwnProfile): JoinContext => ({
           key, address: ownMailAddress!, now: Date.now(), pending: pendingJoins, send: sendSecureJoin, learn: learnVerifiedKey, profile,
         })
@@ -849,7 +852,7 @@ async function configureWalletAccountIfPresent(
             const candidate = message.plaintext as { type?: unknown }
             if (vaultSync && (candidate.type === VAULT_SYNC_UPDATE || candidate.type === VAULT_SYNC_STATE_REQUEST || candidate.type === VAULT_SYNC_STATE_RESPONSE)) {
               await vaultSync.receive(message.plaintext as VaultSyncMessage, message.senderKid)
-              deviceEvents = await vaultStore.readVaultEvents(device.did)
+              deviceEvents = await vaultStore.readVaultEvents(identityId)
               // A sibling login may have added its device key to the DID
               // document just before sending this sync message. Re-resolve the
               // public device list instead of deriving it from event history.
@@ -886,9 +889,9 @@ async function configureWalletAccountIfPresent(
                 // only the inbox's rendering of it is what's at risk here.
                 try {
                   const projection = await rebuildLocalJmapProjection({
-                    identityId: device.did, records: vaultStore, resolver: boundary.resolver,
+                    identityId: identityId, records: vaultStore, resolver: boundary.resolver,
                   })
-                  await vaultStore.writeProjection(device.did, projection, { state: projection.state })
+                  await vaultStore.writeProjection(identityId, projection, { state: projection.state })
                   await timed('refreshInbox', refreshInbox(readModel))
                   // A sibling may have started a move: watch its inbox here too.
                   await rotationManager.sync()
@@ -915,11 +918,11 @@ async function configureWalletAccountIfPresent(
             const eventIdsBeforeIngress = new Set(deviceEvents.map(event => event.id))
             const envelope = didCommMediatorIngressEnvelope(
               'biset/didcomm-wallet-mediator-ingress/v1', mediatorUrl, recipientKid, message.ackId,
-              device.did, device.deviceId, message.rawJwe,
+              identityId, device.deviceId, message.rawJwe,
             )
             const ingress = await ingestTransportIngress(envelope, walletDidCommProjector, vaultStore)
-            if (ingress.targetIds.length) await vaultProjector.recomputeEmails(device.did, ingress.targetIds)
-            else await vaultProjector.rebuildAll(device.did)
+            if (ingress.targetIds.length) await vaultProjector.recomputeEmails(identityId, ingress.targetIds)
+            else await vaultProjector.rebuildAll(identityId)
             // Trust Ping 2.0: answer one that asked. Best-effort: the ping is
             // already recorded, and a lost answer is exactly what a ping
             // exists to reveal to its sender.
@@ -940,7 +943,7 @@ async function configureWalletAccountIfPresent(
                   .catch(error => console.warn('[did.md Wallet DID Rotation]', error instanceof Error ? error.message : error))
               }
             }
-            const eventsAfterIngress = await vaultStore.readVaultEvents(device.did)
+            const eventsAfterIngress = await vaultStore.readVaultEvents(identityId)
             const newlyCommitted = eventsAfterIngress.filter(event => !eventIdsBeforeIngress.has(event.id))
             deviceEvents = eventsAfterIngress
             if (vaultSync && newlyCommitted.length) {
@@ -990,9 +993,9 @@ async function configureWalletAccountIfPresent(
         email: {
           id: emailId,
           // A group conversation is its `thid`, carried by every message of it.
-          threadId: group ? didcommGroupAddress(group.thid) : didCommThreadId(device.did, recipients[0]!),
+          threadId: group ? didcommGroupAddress(group.thid) : didCommThreadId(identityId, recipients[0]!),
           mailboxIds: { outbox: true }, keywords: { '$seen': true },
-          receivedAt: now, sentAt: now, from: [{ email: device.did }], to: recipients.map(email => ({ email })),
+          receivedAt: now, sentAt: now, from: [{ email: identityId }], to: recipients.map(email => ({ email })),
           ...(input.subject ? { subject: input.subject } : {}),
           messageId,
           ...(inReplyTo ? { inReplyTo } : {}),
@@ -1014,13 +1017,13 @@ async function configureWalletAccountIfPresent(
         const thid = parseDidCommGroupAddress(replyThread)
         const conversation = await walletGroupConversation(thid)
         if (!conversation) throw new Error('This DIDComm group conversation is unavailable on this device')
-        await queueWalletChatMessage(conversation.participants.filter(participant => participant !== device.did), input, { thid })
+        await queueWalletChatMessage(conversation.participants.filter(participant => !sameIdentity(participant, device.did)), input, { thid })
         return
       }
       // A mail address is another name for a DID (address-resolver.ts).
       const toDids = await Promise.all(input.toAddrs.map(address => isMailAddress(address) ? resolveMailAddressDid(address, readBisetConfig().mailGateways) : address))
       if (toDids.length === 0 || !toDids.every(address => address.startsWith('did:'))) throw new Error('A did.md Wallet session composes to DID recipients or mail addresses only')
-      const recipients = [...new Set(toDids)].filter(address => address !== device.did)
+      const recipients = [...new Set(toDids)].filter(address => !sameIdentity(address, device.did))
       // Several recipients start a group conversation of its own.
       if (recipients.length >= 2) {
         await queueWalletChatMessage(recipients, input, { thid: crypto.randomUUID() })
@@ -1038,7 +1041,7 @@ async function configureWalletAccountIfPresent(
     const publishCompose = (): void => {
     const selfDid = didComm && !didComm.error ? device.did : undefined
     configureCompose({
-      selfAddress: device.did,
+      selfAddress: identityId,
       selfDid,
       sendReply: sendWalletMessage,
       onError: message => { showSysMsg(message); console.warn('[did.md Wallet send]', message) },
@@ -1048,7 +1051,7 @@ async function configureWalletAccountIfPresent(
       },
     })
     configureComposePage({
-      selfAddress: device.did,
+      selfAddress: identityId,
       selfDid,
       sendMessage: sendWalletMessage,
       onError: message => { showSysMsg(message); console.warn('[did.md Wallet compose]', message) },
