@@ -1828,6 +1828,40 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   height: 50px;
   font-size: 24px;
 }
+/* The bar under the identity card: Services | Keys | Files. */
+#cmd-acc-nav {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0 2px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--border, rgba(128, 128, 128, 0.25));
+}
+.acc-nav-tab {
+  margin-bottom: -1px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+}
+.acc-nav-tab:hover {
+  background: rgba(128, 128, 128, 0.11);
+}
+.acc-nav-tab[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--accent, currentColor);
+}
+.acc-nav-empty {
+  padding: 24px 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
 #cmd-acc-identity-text {
   line-height: 1.32;
   flex: 1;

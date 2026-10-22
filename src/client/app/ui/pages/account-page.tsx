@@ -180,6 +180,27 @@ function IdentityCard({ did }: { did: string }) {
   )
 }
 
+const TABS = ['Services', 'Keys', 'Files'] as const
+type Tab = typeof TABS[number]
+
+/** The bar under the identity card, and the panel it picks. Services is what the page showed so far (the
+ * mediator); Keys and Files have nothing to show yet. */
+function AccountTabs() {
+  const [tab, setTab] = useState<Tab>('Services')
+  return (
+    <>
+      <nav id="cmd-acc-nav" role="tablist" aria-label="Account">
+        {TABS.map(name => (
+          <button key={name} type="button" role="tab" className="acc-nav-tab" aria-selected={tab === name} onClick={() => setTab(name)}>{name}</button>
+        ))}
+      </nav>
+      <div className="cmd-page-section" id="cmd-acc-list" role="tabpanel">
+        {tab === 'Services' ? <AccountList /> : <div className="acc-nav-empty">Nothing here yet.</div>}
+      </div>
+    </>
+  )
+}
+
 export function AccountPage() {
   const config = useStore(accountConfig)
   if (!config) return null
@@ -193,7 +214,7 @@ export function AccountPage() {
       <div className="cmd-thread-card" id="focused-thread-card">
         <div className="cmd-page-content wide-page">
           <IdentityCard did={config.did} />
-          <div className="cmd-page-section" id="cmd-acc-list"><AccountList /></div>
+          <AccountTabs />
           <button id="cmd-acc-compose-fab" className="compose-fab" type="button" aria-label="Compose" data-tip="Compose" onClick={() => setPage('compose')}>
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
           </button>
