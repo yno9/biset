@@ -43,7 +43,7 @@ export function PgpKeyRow({ config, showMessage }: { config: PgpCardConfig; show
 
   if (!key || key === 'loading') return null
   return (
-    <div id="cmd-acc-pgp-row" title={`PGP key ${key.userIds.join(', ')}: click to copy the public key`}
+    <div id="cmd-acc-pgp-row" data-tip={`PGP key ${key.userIds.join(', ')}: click to copy the public key`}
       onClick={event => { event.stopPropagation(); void config.onCopyPublic().then(text => navigator.clipboard.writeText(text)).then(() => showMessage('Public key copied'), error => showMessage(errorText(error))) }}>
       <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="7.5" cy="15.5" r="4.5" /><path d="m10.7 12.3 9.8-9.8M16 7l3 3M14 9l2 2" /></svg>
       <span id="cmd-acc-pgp-fingerprint">{key.fingerprint.replace(/(.{4})(?=.)/g, '$1 ')}</span>

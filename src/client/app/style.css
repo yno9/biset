@@ -3997,3 +3997,18 @@ html.pwa-standalone #app {
 }
 .dropdown-item:hover { background: rgba(128, 128, 128, 0.12); }
 .dropdown-item.danger { color: #ff3b30; }
+
+/* The tooltip for [data-tip] elements (account/tooltip.tsx). */
+.tip {
+  position: fixed;
+  z-index: 100;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: #fff;
+  color: #1a1a1a;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08), 0 6px 18px rgba(0, 0, 0, 0.16);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}

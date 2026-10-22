@@ -80,7 +80,7 @@ function AliasButton({ children }: { children: string }) {
   const wallet = useStore(accountConfig)?.wallet
   if (!wallet?.onChangeAlias) return <>{children}</>
   return (
-    <span className="acc-alias-edit" role="button" tabIndex={0} title="Change alias" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+    <span className="acc-alias-edit" role="button" tabIndex={0} data-tip="Change alias" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5 }}
       onClick={event => { event.stopPropagation(); void wallet.onChangeAlias?.().catch(error => { if (errorText(error) !== 'Cancelled.') getAccountConfig()?.showMessage?.(errorText(error)) }) }}
       onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); void wallet.onChangeAlias?.().catch(error => { if (errorText(error) !== 'Cancelled.') getAccountConfig()?.showMessage?.(errorText(error)) }) } }}>
       {children}
@@ -130,9 +130,9 @@ function IdentityCard({ did }: { did: string }) {
 
   return (
     <div className={`cmd-page-section${expanded ? ' expanded' : ''}`} id="cmd-acc-identity-section">
-      <div id="cmd-acc-identity-fields" title="Click to view DID document"
+      <div id="cmd-acc-identity-fields" data-tip="Click to view DID document"
         onClick={() => { setExpanded(open => !open); if (!expanded && !docLoaded.current) { docLoaded.current = true; void loadDoc() } }}>
-        <div id="cmd-acc-identity-avatar" className="lp-avatar" role={profile ? 'button' : undefined} title={profile ? 'Set profile picture' : undefined}
+        <div id="cmd-acc-identity-avatar" className="lp-avatar" role={profile ? 'button' : undefined} data-tip={profile ? 'Set profile picture' : undefined}
           style={{ background: avatarColor(label), ...(profile ? { cursor: 'pointer' } : {}) }}
           // The picture is set where it is shown: a click on it asks for an image (not the card opening).
           onClick={profile ? event => {
@@ -140,7 +140,7 @@ function IdentityCard({ did }: { did: string }) {
             void chooseImage().then(file => file && cropAvatar(file)).then(avatar => { if (avatar) return profile.setAvatar(avatar) }).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => { if (errorText(error) !== 'Cancelled.') getAccountConfig()?.showMessage?.(errorText(error)) })
           } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : label.charAt(0).toUpperCase()}</div>
         <div id="cmd-acc-identity-text">
-          <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ? <><span className="acc-display-name" role={profile ? 'button' : undefined} title={profile ? 'Change display name' : undefined}
+          <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ? <><span className="acc-display-name" role={profile ? 'button' : undefined} data-tip={profile ? 'Change display name' : undefined}
             onClick={profile ? event => { event.stopPropagation(); changeDisplayName(own.name) } : undefined}>{own.name}</span><span className="acc-name-sep">|</span></> : null}<AliasButton>{name.replace(/\.did\.md$/, '@did.md')}</AliasButton></span></div>
           {/* Clicking the DID text copies it. */}
           <div id="cmd-acc-identity-did-row"
@@ -149,7 +149,7 @@ function IdentityCard({ did }: { did: string }) {
               <path fill="none" strokeWidth="54" d="M580 150 L928 351 V735 M578 150 V541 L698 610 M578 255 L815 392 V810 M578 347 L698 416 V875 M348 285 V650 L700 853 M462 213 V594 L698 718" />
               <circle cx="580" cy="150" r="48" /><circle cx="928" cy="735" r="48" /><circle cx="816" cy="810" r="48" /><circle cx="702" cy="875" r="48" /><circle cx="351" cy="285" r="48" /><circle cx="463" cy="213" r="48" />
             </svg>
-            <span id="cmd-acc-identity-did" title={did}>{did}</span>
+            <span id="cmd-acc-identity-did" data-tip={did}>{did}</span>
           </div>
           {pgp ? <PgpKeyRow config={pgp} showMessage={text => getAccountConfig()?.showMessage?.(text)} /> : null}
         </div>
@@ -162,7 +162,7 @@ function IdentityCard({ did }: { did: string }) {
         <div className="acc-storage-header">
           <span className="acc-storage-title">DID:Webvh</span>
           <div className="acc-storage-actions">
-            <button id="cmd-acc-identity-sync-btn" className="acc-storage-icon-btn" type="button" aria-label="Sync" title="Sync" onClick={event => { event.stopPropagation(); void loadDoc() }}>
+            <button id="cmd-acc-identity-sync-btn" className="acc-storage-icon-btn" type="button" aria-label="Sync" data-tip="Sync" onClick={event => { event.stopPropagation(); void loadDoc() }}>
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6" /><path d="M1 20v-6h6" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
             </button>
           </div>
@@ -187,7 +187,7 @@ export function AccountPage() {
         <div className="cmd-page-content wide-page">
           <IdentityCard did={config.did} />
           <div className="cmd-page-section" id="cmd-acc-list"><AccountList /></div>
-          <button id="cmd-acc-compose-fab" className="compose-fab" type="button" aria-label="Compose" title="Compose" onClick={() => setPage('compose')}>
+          <button id="cmd-acc-compose-fab" className="compose-fab" type="button" aria-label="Compose" data-tip="Compose" onClick={() => setPage('compose')}>
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
           </button>
         </div>
