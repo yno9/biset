@@ -2069,6 +2069,11 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
    the click target; the solid border between cards opens into a filled
    surface instead of just a line, same idea as #cmd-acc-identity-expanded /
    #conv-meta's click-to-expand. */
+/* A card of the Services tab is drawn like the Files buttons: a 1px border, 8px corners. */
+.acc-card-wrap {
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
+  border-radius: 8px;
+}
 .acc-card-wrap .cmd-page-row {
   cursor: pointer;
 }

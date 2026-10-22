@@ -28,8 +28,7 @@ function changeDisplayName(current?: string): void {
 
 type FileAction = MenuItem & { short: string }
 
-/** Export, Import and Disconnect (Log out without a Wallet): the identity menu lists them by `label`, the Files
- * tab as buttons named `short`. */
+/** Export, Import and Disconnect (Log out without a Wallet), the buttons of the Files tab (named `short`). */
 function fileActions(): FileAction[] {
   const config = getAccountConfig()
   const wallet = config?.wallet
@@ -81,7 +80,6 @@ function identityMenuItems(currentName: string | undefined, did: { expanded: boo
       ...profileItems,
       ...invite,
       ...(wallet.reconnectRequired && wallet.onReconnect ? [{ label: 'Reconnect Wallet', onClick: () => { void wallet.onReconnect?.().catch(showMessage) } }] : []),
-      ...fileActions(),
     ]
   }
   return [
@@ -89,7 +87,6 @@ function identityMenuItems(currentName: string | undefined, did: { expanded: boo
     ...profileItems,
     ...invite,
     { label: 'Protect with passkey', onClick: () => {} },
-    ...fileActions(),
   ]
 }
 

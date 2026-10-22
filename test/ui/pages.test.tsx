@@ -179,18 +179,29 @@ test('account: clicking the DID copies it and says so', async () => {
   await waitFor(() => expect(messages).toContain('DID copied'))
 })
 
-test('account: the identity menu disconnects only after a confirmation', () => {
+test('account: Disconnect in the Files tab disconnects only after a confirmation', () => {
   const onDisconnect = vi.fn(async () => {})
   accountConfig.set(account({ wallet: { handle: 'alice.did.md', deviceJkt: 'j', capabilityExpiresAt: '2030-01-01T00:00:00Z', onDisconnect } }))
+  render(<AccountPage />)
+  fireEvent.click(screen.getByRole('tab', { name: 'Files' }))
+  vi.spyOn(window, 'confirm').mockReturnValueOnce(false)
+  fireEvent.click(screen.getByText('Disconnect'))
+  expect(onDisconnect).not.toHaveBeenCalled()
+  vi.spyOn(window, 'confirm').mockReturnValueOnce(true)
+  fireEvent.click(screen.getByText('Disconnect'))
+  expect(onDisconnect).toHaveBeenCalled()
+})
+
+test('account: Export and Import are in the Files tab, not in the identity menu', () => {
+  const onExportMessages = vi.fn(async () => {})
+  accountConfig.set(account({ wallet: { handle: 'alice.did.md', deviceJkt: 'j', capabilityExpiresAt: '2030-01-01T00:00:00Z', onDisconnect: vi.fn(async () => {}) }, onExportMessages }))
   const { container } = render(<><AccountPage /><DropdownMenu /></>)
   fireEvent.click(container.querySelector('#cmd-acc-identity-menu-btn')!)
-  vi.spyOn(window, 'confirm').mockReturnValueOnce(false)
-  fireEvent.click(screen.getByText('Disconnect Wallet'))
-  expect(onDisconnect).not.toHaveBeenCalled()
-  fireEvent.click(container.querySelector('#cmd-acc-identity-menu-btn')!)
-  vi.spyOn(window, 'confirm').mockReturnValueOnce(true)
-  fireEvent.click(screen.getByText('Disconnect Wallet'))
-  expect(onDisconnect).toHaveBeenCalled()
+  expect(screen.queryByText('Export Messages')).toBeNull()
+  expect(screen.queryByText('Disconnect Wallet')).toBeNull()
+  fireEvent.click(screen.getByRole('tab', { name: 'Files' }))
+  fireEvent.click(screen.getByText('Export'))
+  expect(onExportMessages).toHaveBeenCalled()
 })
 
 test('account: the compose button opens the compose page', () => {
