@@ -163,11 +163,8 @@ function IdentityCard({ did }: { did: string }) {
           {/* Clicking the DID text copies it. */}
           <div id="cmd-acc-identity-did-row"
             onClick={event => { event.stopPropagation(); navigator.clipboard?.writeText(did).then(() => getAccountConfig()?.showMessage?.('DID copied')).catch(() => {}) }}>
-            <svg id="cmd-acc-webvh-icon" viewBox="290 90 700 850" width="13" height="13" fill="currentColor" stroke="currentColor" aria-hidden="true">
-              <path fill="none" strokeWidth="54" d="M580 150 L928 351 V735 M578 150 V541 L698 610 M578 255 L815 392 V810 M578 347 L698 416 V875 M348 285 V650 L700 853 M462 213 V594 L698 718" />
-              <circle cx="580" cy="150" r="48" /><circle cx="928" cy="735" r="48" /><circle cx="816" cy="810" r="48" /><circle cx="702" cy="875" r="48" /><circle cx="351" cy="285" r="48" /><circle cx="463" cy="213" r="48" />
-            </svg>
             <span id="cmd-acc-identity-did" data-tip={did}>{did}</span>
+            <svg id="cmd-acc-identity-copy-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
           </div>
         </div>
         <button ref={menuButton} id="cmd-acc-identity-menu-btn" type="button" aria-label="Menu"

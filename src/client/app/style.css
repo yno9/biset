@@ -2022,7 +2022,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   max-width: 100%;
   color: var(--text-dim);
 }
-#cmd-acc-webvh-icon { flex-shrink: 0; color: var(--text-dim); }
+#cmd-acc-identity-copy-icon { flex-shrink: 0; color: var(--text-dim); }
 .acc-pgp-row svg { flex-shrink: 0; }
 .acc-pgp-fingerprint {
   font-size: 12px;
