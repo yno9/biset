@@ -108,7 +108,7 @@ export function NewUserPage() {
           const response = await ditoEmbed!.approve(request).catch(() => undefined)
           if (!response) return
           const session = await completeDidMdWalletCallback(response)
-          if (!session) return
+          if (!session) { void ditoEmbed?.cancel().catch(() => {}); return }
           await onWalletConnected?.(session)
         })().catch(error => {
           void ditoEmbed?.cancel().catch(() => {})
