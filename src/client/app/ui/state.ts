@@ -3,7 +3,7 @@
 import { flushSync } from 'react-dom'
 import { createStore } from '../react/store.ts'
 
-export type Page = 'thread' | 'account' | 'config' | 'compose'
+export type Page = 'thread' | 'account' | 'compose'
 
 export const uiPage = createStore<Page>('thread')
 
@@ -15,8 +15,8 @@ export const setPage = (page: Page): void => {
 
 const PAGE_KEY = 'biset:page'
 
-/** The page this tab was on before a reload (account or config; the others need live state). */
-export function savedPage(): 'account' | 'config' | undefined {
-  try { const page = sessionStorage.getItem(PAGE_KEY); return page === 'account' || page === 'config' ? page : undefined } catch { return undefined }
+/** The page this tab was on before a reload (account; the others need live state). */
+export function savedPage(): 'account' | undefined {
+  try { return sessionStorage.getItem(PAGE_KEY) === 'account' ? 'account' : undefined } catch { return undefined }
 }
 export const inPage = (page: Page): boolean => uiPage.get() === page

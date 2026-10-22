@@ -30,7 +30,7 @@ import { markSeenDone, setMarkSeenHandler } from './ui/seen.ts'
 import { refreshInbox, setEncryptedMailOpener, setSignedNameHandler, showApp, showSysMsg } from './ui/shell.ts'
 import { labelForDid } from './ui/did-display.ts'
 import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
-import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, showConfigPage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
+import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
 import { savedPage } from './ui/state.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { installDitoApprover, requestAliasChange } from './ui/approve-dialog.tsx'
@@ -1150,7 +1150,6 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
     } else {
       const page = savedPage()
       if (page === 'account') showAccountPage()
-      else if (page === 'config') showConfigPage()
     }
     return
   }

@@ -13,7 +13,7 @@ vi.mock('../../src/protocol/webvh/resolver.ts', () => ({ resolve: vi.fn(async ()
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
 import { AccountPage } from '../../src/client/app/ui/pages/account-page.tsx'
 import { ComposePage, configureComposePage } from '../../src/client/app/ui/pages/compose-page.tsx'
-import { ConfigPage, configureMarkdownVaultToggle } from '../../src/client/app/ui/pages/config-page.tsx'
+import { ConfigPanel, configureMarkdownVaultToggle } from '../../src/client/app/ui/pages/config-page.tsx'
 import { setPage, uiPage } from '../../src/client/app/ui/state.ts'
 
 const DID = 'did:webvh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi:alice.did.md'
@@ -105,12 +105,12 @@ test('compose: a sent message returns to the thread; a failed one stays and says
 
 // ── config ───────────────────────────────────────────────────────────────────
 
-test('config: the vault toggle reflects and flips the markdown vault', async () => {
+test('config tab: the vault toggle reflects and flips the markdown vault', async () => {
   ;(window as unknown as { showDirectoryPicker: () => void }).showDirectoryPicker = () => {}
   let on = false
   const vault = { enabled: () => on, observerSupported: () => false, toggle: vi.fn(async () => { on = !on }), rescan: vi.fn(async () => {}) }
   configureMarkdownVaultToggle(vault)
-  const { container } = render(<ConfigPage />)
+  const { container } = render(<ConfigPanel />)
   const toggle = container.querySelector('#config-vault-toggle')!
   expect(toggle.classList.contains('on')).toBe(false)
   expect(container.querySelector('#config-vault-rescan')).toBeNull()

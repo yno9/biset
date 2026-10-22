@@ -6,7 +6,7 @@ import { DIDCOMM_GROUP_THREAD_PREFIX } from './message/message-view.ts'
 import { avatarOf, displayName } from './did-display.ts'
 import { avatarColor, previewText } from './format.ts'
 import { hamburgerTrigger } from './hamburger-menu.tsx'
-import { showComposePage, hideAccountPage, hideComposePage, hideConfigPage } from './pages/index.ts'
+import { showComposePage, hideAccountPage, hideComposePage } from './pages/index.ts'
 import { HamburgerDots, PaneToggleIcons, togglePane } from './right-col.tsx'
 import { isNarrow, patchShell, shell } from './stores.ts'
 import { counterpartDid, counterpartLabel, groupMembersLabel, latestOf, type InboxRow } from './thread-model.ts'
@@ -30,7 +30,7 @@ type NavItem = { kind: 'inbox'; key: string } | { kind: 'thread'; key: string; r
 
 /** Opens a thread and leaves the left pane (on a narrow screen the pane is a column in front). */
 function openThread(threadKey: string): void {
-  hideAccountPage(); hideConfigPage(); hideComposePage()
+  hideAccountPage(); hideComposePage()
   patchShell({ focusedThreadKey: threadKey, showLeft: false })
 }
 

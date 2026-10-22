@@ -19,28 +19,23 @@ function VaultRow({ vault }: { vault: MarkdownVault | undefined }) {
   )
 }
 
-export function ConfigPage() {
+/** The Config tab of the account page. */
+export function ConfigPanel() {
   return (
-    <div id="active-thread">
-      <div className="cmd-thread-card" id="focused-thread-card">
-        <div className="cmd-page-content wide-page">
-          <div className="cmd-page-section">
-            <h3>Notifications</h3>
-            <div className="cmd-page-row">
-              <span>Push notifications</span>
-              <div className="toggle-switch" id="config-notif-toggle" style={{ cursor: 'pointer' }} />
-            </div>
-          </div>
-          {'showDirectoryPicker' in window ? (
-            <div className="cmd-page-section">
-              <h3>Vault (Markdown)</h3>
-              <VaultRow vault={markdownVault} />
-            </div>
-          ) : null}
-          <button id="cmd-acc-fab" type="button"><span className="acc-new-account-plus">+</span>New Relay</button>
-          <div id="cmd-acc-panel-backdrop" />
+    <div id="cmd-acc-config">
+      <div className="cmd-page-section">
+        <h3>Notifications</h3>
+        <div className="cmd-page-row">
+          <span>Push notifications</span>
+          <div className="toggle-switch" id="config-notif-toggle" style={{ cursor: 'pointer' }} />
         </div>
       </div>
+      {'showDirectoryPicker' in window ? (
+        <div className="cmd-page-section">
+          <h3>Vault (Markdown)</h3>
+          <VaultRow vault={markdownVault} />
+        </div>
+      ) : null}
     </div>
   )
 }

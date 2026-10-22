@@ -135,7 +135,7 @@ function ConvMeta({ group, hidden, groupName }: { group: ThreadGroup | undefined
   )
 }
 
-const TITLES = { account: 'account', config: 'config', compose: 'compose' } as const
+const TITLES = { account: 'account', compose: 'compose' } as const
 
 export function RightCol() {
   const page = useStore(uiPage)

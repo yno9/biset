@@ -2,7 +2,7 @@
 // or click, closes a moment after the pointer leaves, or on any click elsewhere.
 import { useEffect } from 'react'
 import { createStore, useStore } from '../react/store.ts'
-import { showAccountPage, showConfigPage } from './pages/index.ts'
+import { showAccountPage } from './pages/index.ts'
 import { patchShell } from './stores.ts'
 
 const menu = createStore({ open: false, top: 0, right: 0 })
@@ -27,7 +27,7 @@ export const hamburgerTrigger = {
   },
 }
 
-const PAGES = [{ page: '/account', label: 'account', show: showAccountPage }, { page: '/config', label: 'config', show: showConfigPage }]
+const PAGES = [{ page: '/account', label: 'account', show: showAccountPage }]
 
 export function HamburgerMenu() {
   const { open, top, right } = useStore(menu)

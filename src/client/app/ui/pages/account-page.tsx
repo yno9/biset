@@ -8,6 +8,7 @@ import { resolve } from '../../../../protocol/webvh/resolver.ts'
 import { AccountList, KeysPanel } from '../account/account-list.tsx'
 import { cropAvatar } from '../account/avatar-crop.tsx'
 import { chooseImage, PROFILE_CHANGED } from '../account/profile.ts'
+import { ConfigPanel } from './config-page.tsx'
 import { DeltaChatIcon } from '../account/deltachat-icon.tsx'
 import { copyInviteLink, joinDeltaChatInvite } from '../account/pgp-card.tsx'
 import { accountConfig, getAccountConfig } from '../account/state.ts'
@@ -167,7 +168,7 @@ function DeltaChatBar() {
   )
 }
 
-const TABS = ['Services', 'Keys', 'Files'] as const
+const TABS = ['Services', 'Keys', 'Files', 'Config'] as const
 type Tab = typeof TABS[number]
 
 /** The bar under the identity card, and the panel it picks. Services is what the page showed so far (the
@@ -195,7 +196,7 @@ function AccountTabs() {
         {bar ? <span className="acc-nav-underline" style={{ left: bar.left, width: bar.width }} /> : null}
       </nav>
       <div className="cmd-page-section" id="cmd-acc-list" role="tabpanel">
-        {tab === 'Services' ? <AccountList /> : tab === 'Keys' ? <KeysPanel /> : <FilesPanel />}
+        {tab === 'Services' ? <AccountList /> : tab === 'Keys' ? <KeysPanel /> : tab === 'Files' ? <FilesPanel /> : <ConfigPanel />}
       </div>
     </>
   )

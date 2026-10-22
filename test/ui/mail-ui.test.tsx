@@ -142,12 +142,12 @@ test('a group chat is titled by its name and lists its members', async () => {
 test('other pages take the title and hide the thread\'s own furniture', () => {
   setMessages([message({ subject: 'Hi' })])
   const { container } = app(<RightCol />)
-  act(() => setPage('config'))
-  expect(container.querySelector('#header-thread-title')!.textContent).toBe('config')
+  act(() => setPage('account'))
+  expect(container.querySelector('#header-thread-title')!.textContent).toBe('account')
   expect((container.querySelector('#conv-meta') as HTMLElement).style.display).toBe('none')
   expect(container.querySelector('.reply-box')).toBeNull()
   expect(container.querySelector('#past-threads')!.children).toHaveLength(0)
-  expect(uiPage.get()).toBe('config')
+  expect(uiPage.get()).toBe('account')
 })
 
 // ── the reply box ────────────────────────────────────────────────────────────
@@ -321,8 +321,8 @@ test('the menu opens under its button and goes to the page chosen', () => {
   expect(menu.classList.contains('open')).toBe(false)
   fireEvent.click(container.querySelector('#lp-hamburger')!)
   expect(menu.classList.contains('open')).toBe(true)
-  fireEvent.click(within(menu as HTMLElement).getByText('config'))
-  expect(uiPage.get()).toBe('config')
+  fireEvent.click(within(menu as HTMLElement).getByText('account'))
+  expect(uiPage.get()).toBe('account')
   expect(menu.classList.contains('open')).toBe(false)
 })
 
