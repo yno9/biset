@@ -475,7 +475,7 @@ export function didContactPatch(did: string): ContactSetPayload {
 export const SCID_CONTACT_PROPERTY = 'biset.md:scid'
 
 /** `label@apex` for a did:webvh at host `label.apex` (didmail's form of the address a DID stands for). */
-export function mailAddressOfWebvhDid(did: string): string | undefined {
+function mailAddressOfWebvhDid(did: string): string | undefined {
   if (scidOf(did) === undefined) return undefined
   const host = decodeURIComponent(did.split(':')[3] ?? '')
   const dot = host.indexOf('.')

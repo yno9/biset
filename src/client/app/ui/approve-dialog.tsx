@@ -1,12 +1,14 @@
 // Approvals inside the page (identity/wallet/dito-embed.ts): a request that needs the Passphrase -- a
 // DID document edit -- opens dito's approve screen in a dialog over this page, so the person never
-// leaves it. The dialog only frames dito's screen; nothing typed there reaches this page.
+// leaves it. The dialog only frames dito's screen; nothing typed there reaches this page. The same
+// waiting frame also serves the address change (dito's alias screen), so that opens at once too.
 import { useEffect, useRef } from 'react'
 import { createStore, useStore } from '../react/store.ts'
 import { useDidMdWalletApprover } from '../../identity/wallet/did-md-oauth.ts'
 import { ditoEmbedOrigin, mountDito, type DitoEmbed } from '../../identity/wallet/dito-embed.ts'
 
-interface Approval { origin: string; request: Promise<string>; resolve(response: URLSearchParams): void; reject(error: Error): void }
+/** One thing asked of dito's waiting frame: `ready` is what `run` needs and is still being prepared. */
+interface Approval { origin: string; ready: Promise<unknown>; run(embed: DitoEmbed, prepared: unknown): Promise<unknown>; resolve(result: unknown): void; reject(error: Error): void }
 
 const approval = createStore<Approval | undefined>(undefined)
 
@@ -21,13 +23,19 @@ export function installDitoApprover(): void {
   document.head.append(hint)
   useDidMdWalletApprover(request => new Promise<URLSearchParams>((resolve, reject) => {
     if (approval.get()) { reject(new Error('Another approval is already open.')); return }
-    approval.set({ origin, request, resolve, reject })
+    approval.set({ origin, ready: request, run: (embed, search) => embed.approve(search as string), resolve, reject })
   }))
 }
 
-let reloadWarmFrame: (() => void) | undefined
-/** Loads the waiting frame again: what it had restored is out of date (the identity moved to another address). */
-export function refreshApproveFrame(): void { reloadWarmFrame?.() }
+/** Asks dito, in the dialog, to move this browser's identity to another address; resolves with the new DID. */
+export function requestAddressChange(): Promise<{ did: string, host: string }> {
+  const origin = ditoEmbedOrigin()
+  if (!origin) return Promise.reject(new Error('Changing the address needs the embedded wallet.'))
+  return new Promise((resolve, reject) => {
+    if (approval.get()) { reject(new Error('Another approval is already open.')); return }
+    approval.set({ origin, ready: Promise.resolve(), run: embed => embed.moveAlias(), resolve, reject })
+  })
+}
 
 interface Warm { ready: Promise<DitoEmbed>; dispose(): void; onResize?(height: number): void }
 
@@ -53,11 +61,6 @@ export function ApproveDialog() {
   }
 
   useEffect(() => {
-    reloadWarmFrame = () => { if (approval.get()) return; warm.current?.dispose(); start() }
-    return () => { reloadWarmFrame = undefined }
-  }, [])
-
-  useEffect(() => {
     if (!origin) return
     const idle = window.requestIdleCallback ?? ((run: () => void) => setTimeout(run, 500))
     idle(() => { if (!warm.current) start() }, { timeout: 3000 })
@@ -65,7 +68,7 @@ export function ApproveDialog() {
 
   useEffect(() => {
     if (!current) return
-    const { request, resolve, reject } = current
+    const { ready, run, resolve, reject } = current
     const el = dialog.current!
     const slot = warm.current ?? start()
     let settled = false
@@ -94,13 +97,13 @@ export function ApproveDialog() {
     const fallback = setTimeout(reveal, 8000)
     const t0 = performance.now()
     const lap = (what: string) => console.info(`[approve] ${what} +${Math.round(performance.now() - t0)}ms`)
-    Promise.all([slot.ready, request])
-      .then(([embed, search]) => {
+    Promise.all([slot.ready, ready])
+      .then(([embed, prepared]) => {
         lap('frame ready, request prepared')
         slot.onResize = height => { if (height >= 40) { lap('approval laid out'); reveal() } }
-        return embed.approve(search)
+        return run(embed, prepared)
       })
-      .then(response => finish(() => resolve(response)), error => finish(() => reject(error instanceof Error ? error : new Error(String(error)))))
+      .then(result => finish(() => resolve(result)), error => finish(() => reject(error instanceof Error ? error : new Error(String(error)))))
   }, [current])
 
   if (!origin) return null

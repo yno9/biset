@@ -32,8 +32,7 @@ import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
 import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, showConfigPage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
 import { savedPage } from './ui/state.ts'
 import { readBisetConfig } from './ui/config.ts'
-import { installDitoApprover, refreshApproveFrame } from './ui/approve-dialog.tsx'
-import { requestAddressChange } from './ui/alias-dialog.tsx'
+import { installDitoApprover, requestAddressChange } from './ui/approve-dialog.tsx'
 import { mountApp } from './ui/app.tsx'
 import { VaultBackedLocalJmapMutationSink } from '../store/projection/vault-mutation-sink.ts'
 import { DidCommIngressProjector, isProjectableDidCommIngress } from '../didcomm/ingress-projector.ts'
@@ -312,10 +311,9 @@ async function configureWalletAccountIfPresent(
         onEnableTor: async (onionUrl: string) => editDocument({ kind: 'mediator', mediatorUrls: [mediatorCard!.mediatorUrl], mediatorOnionUrls: [onionUrl] }, readBisetConfig()),
         onLogOutMediator: async () => editDocument({ kind: 'leaveMediator' }, readBisetConfig()),
         onChangeAlias: async () => {
-          // dito moves the DID to the new address in its frame; the frame waiting for the next approval
-          // restored the old one, so it is loaded again, and this device signs in under the new DID.
+          // dito moves the DID to the new address in its frame (a fresh frame is loaded for the next
+          // approval, which restores the new address), and this device signs in under the new DID.
           const moved = await requestAddressChange()
-          refreshApproveFrame()
           await bootClient(await rebindDidMdSessionToMovedDid(moved.did, readBisetConfig()))
         },
         onDisconnect: async () => {
