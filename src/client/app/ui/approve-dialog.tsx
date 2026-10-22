@@ -1,7 +1,7 @@
 // Approvals inside the page (identity/wallet/dito-embed.ts): a request that needs the Passphrase -- a
 // DID document edit -- opens dito's approve screen in a dialog over this page, so the person never
 // leaves it. The dialog only frames dito's screen; nothing typed there reaches this page. The same
-// waiting frame also serves the address change (dito's alias screen), so that opens at once too.
+// waiting frame also serves the alias change (dito's alias screen), so that opens at once too.
 import { useEffect, useRef } from 'react'
 import { createStore, useStore } from '../react/store.ts'
 import { useDidMdWalletApprover } from '../../identity/wallet/did-md-oauth.ts'
@@ -28,9 +28,9 @@ export function installDitoApprover(): void {
 }
 
 /** Asks dito, in the dialog, to move this browser's identity to another address; resolves with the new DID. */
-export function requestAddressChange(): Promise<{ did: string, host: string }> {
+export function requestAliasChange(): Promise<{ did: string, host: string }> {
   const origin = ditoEmbedOrigin()
-  if (!origin) return Promise.reject(new Error('Changing the address needs the embedded wallet.'))
+  if (!origin) return Promise.reject(new Error('Changing the alias needs the embedded wallet.'))
   return new Promise((resolve, reject) => {
     if (approval.get()) { reject(new Error('Another approval is already open.')); return }
     approval.set({ origin, ready: Promise.resolve(), run: embed => embed.moveAlias(), resolve, reject })

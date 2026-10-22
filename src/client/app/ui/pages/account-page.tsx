@@ -41,7 +41,6 @@ function identityMenuItems(): MenuItem[] {
     return [
       ...profileItems,
       ...invite,
-      ...(wallet.onChangeAlias ? [{ label: 'Change address', onClick: () => { void wallet.onChangeAlias?.().catch(showMessage) } }] : []),
       ...(wallet.reconnectRequired && wallet.onReconnect ? [{ label: 'Reconnect Wallet', onClick: () => { void wallet.onReconnect?.().catch(showMessage) } }] : []),
       { label: 'Export Messages', onClick: () => { void getAccountConfig()?.onExportMessages?.().catch(showMessage) } },
       { label: 'Import Messages', onClick: () => { void getAccountConfig()?.onImportMessages?.().catch(showMessage) } },
@@ -69,6 +68,20 @@ function identityMenuItems(): MenuItem[] {
       },
     },
   ]
+}
+
+/** The alias (the mail address, the DID's host): a click changes it, the pencil on its right says so. */
+function AliasButton({ children }: { children: string }) {
+  const wallet = useStore(accountConfig)?.wallet
+  if (!wallet?.onChangeAlias) return <>{children}</>
+  return (
+    <span className="acc-alias-edit" role="button" tabIndex={0} title="Change alias" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+      onClick={event => { event.stopPropagation(); void wallet.onChangeAlias?.().catch(error => getAccountConfig()?.showMessage?.(errorText(error))) }}
+      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); void wallet.onChangeAlias?.().catch(error => getAccountConfig()?.showMessage?.(errorText(error))) } }}>
+      {children}
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" style={{ opacity: .6, flex: 'none' }}><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+    </span>
+  )
 }
 
 function IdentityCard({ did }: { did: string }) {
@@ -122,7 +135,7 @@ function IdentityCard({ did }: { did: string }) {
             void chooseImage().then(file => file && cropAvatar(file)).then(avatar => { if (avatar) return profile.setAvatar(avatar) }).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => getAccountConfig()?.showMessage?.(errorText(error)))
           } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : label.charAt(0).toUpperCase()}</div>
         <div id="cmd-acc-identity-text">
-          <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ?? name.replace(/\.did\.md$/, '@did.md')}</span></div>
+          <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ?? <AliasButton>{name.replace(/\.did\.md$/, '@did.md')}</AliasButton>}</span></div>
           {/* Clicking the DID text copies it. */}
           <div id="cmd-acc-identity-did-row"
             onClick={event => { event.stopPropagation(); navigator.clipboard?.writeText(did).then(() => getAccountConfig()?.showMessage?.('DID copied')).catch(() => {}) }}>
@@ -130,7 +143,7 @@ function IdentityCard({ did }: { did: string }) {
               <path fill="none" strokeWidth="54" d="M580 150 L928 351 V735 M578 150 V541 L698 610 M578 255 L815 392 V810 M578 347 L698 416 V875 M348 285 V650 L700 853 M462 213 V594 L698 718" />
               <circle cx="580" cy="150" r="48" /><circle cx="928" cy="735" r="48" /><circle cx="816" cy="810" r="48" /><circle cx="702" cy="875" r="48" /><circle cx="351" cy="285" r="48" /><circle cx="463" cy="213" r="48" />
             </svg>
-            <span id="cmd-acc-identity-did" title={did}>{did}</span>
+            <span id="cmd-acc-identity-did" title={did}>{own.name ? <>{did.split(':').slice(0, 3).join(':')}:<AliasButton>{did.split(':').slice(3).join(':')}</AliasButton></> : did}</span>
           </div>
           {pgp ? <PgpKeyRow config={pgp} showMessage={text => getAccountConfig()?.showMessage?.(text)} /> : null}
         </div>

@@ -32,7 +32,7 @@ import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
 import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, showConfigPage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
 import { savedPage } from './ui/state.ts'
 import { readBisetConfig } from './ui/config.ts'
-import { installDitoApprover, requestAddressChange } from './ui/approve-dialog.tsx'
+import { installDitoApprover, requestAliasChange } from './ui/approve-dialog.tsx'
 import { ditoEmbedOrigin } from '../identity/wallet/dito-embed.ts'
 import { mountApp } from './ui/app.tsx'
 import { VaultBackedLocalJmapMutationSink } from '../store/projection/vault-mutation-sink.ts'
@@ -315,10 +315,10 @@ async function configureWalletAccountIfPresent(
           // dito moves the DID to the new address in its frame. The tab then goes to dito's save page, as
           // the sign-up does: the password manager offers to update the saved account there, and its last
           // page signs this device in under the new DID (the request prepared here) and returns.
-          const moved = await requestAddressChange()
+          const moved = await requestAliasChange()
           const login = await prepareDidMdMovedDidLoginRequest(moved.did, readBisetConfig())
           const origin = ditoEmbedOrigin()
-          if (!origin) throw new Error('Changing the address needs the embedded wallet.')
+          if (!origin) throw new Error('Changing the alias needs the embedded wallet.')
           location.assign(`${origin}/?embed=save&return=${encodeURIComponent(location.href)}&login=${encodeURIComponent(login)}`)
         },
         onDisconnect: async () => {

@@ -120,7 +120,7 @@ const URL_NAMESPACE = '6ba7b8119dad11d180b400c04fd430c8' // RFC 9562's NameSpace
  * made for a public DID, identical on every device. */
 export function didContactUid(did: string): string {
   const namespace = Uint8Array.from(URL_NAMESPACE.match(/../g)!.map(byte => parseInt(byte, 16)))
-  // By identity: a person who changes their address (the DID's host) stays the same card.
+  // By identity: a person who changes their alias (the DID's host) stays the same card.
   const name = new TextEncoder().encode(identityKey(did))
   const hash = sha1(new Uint8Array([...namespace, ...name])).slice(0, 16)
   hash[6] = (hash[6]! & 0x0f) | 0x50
@@ -495,7 +495,7 @@ function webvhIdentityPatch(did: string): Record<string, CanonicalValue> {
 }
 
 /** The patch adding the address `did` stands for to `card`'s aliases (`emails`), when it is not there yet
- * (the contact changed its address, or writes from a second one). */
+ * (the contact changed its alias, or writes from a second one). */
 export function aliasPatch(card: LocalJmapContactCard, did: string): ContactSetPayload | undefined {
   const address = mailAddressOfWebvhDid(did)
   if (!address) return undefined
