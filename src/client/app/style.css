@@ -4128,10 +4128,10 @@ html.pwa-standalone #app {
 }
 
 /* The Keys tab: one bordered card per key. */
-#cmd-acc-config {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+/* One card, the items in rows divided by a line (the card rule that drops a last card's row line is for cards
+   of one row). */
+#cmd-acc-config-card .cmd-page-row:not(:last-child) {
+  border-bottom: 1px solid var(--header-border);
 }
 .acc-config-title {
   flex: 1;
