@@ -63,29 +63,22 @@ function identityMenuItems(currentName: string | undefined, did: { expanded: boo
   const config = getAccountConfig()
   const wallet = config?.wallet
   const showMessage = (error: unknown) => getAccountConfig()?.showMessage?.(errorText(error))
-  const pgp = config?.pgp
   const profile = config?.profile
   const didItem: MenuItem = { label: did.expanded ? 'Hide DID' : 'View DID', onClick: did.onToggle }
   const profileItems: MenuItem[] = profile ? [
     // Once there is a name, the name in the card is what changes it.
     ...(currentName ? [] : [{ label: 'Set display name', onClick: () => changeDisplayName() }]),
   ] : []
-  const invite: MenuItem[] = pgp ? [
-    { label: 'Copy Delta Chat invite', onClick: () => copyInviteLink(pgp, text => config?.showMessage?.(text)) },
-    { label: 'Join a Delta Chat invite', onClick: () => joinDeltaChatInvite(pgp, text => config?.showMessage?.(text)) },
-  ] : []
   if (wallet) {
     return [
       didItem,
       ...profileItems,
-      ...invite,
       ...(wallet.reconnectRequired && wallet.onReconnect ? [{ label: 'Reconnect Wallet', onClick: () => { void wallet.onReconnect?.().catch(showMessage) } }] : []),
     ]
   }
   return [
     didItem,
     ...profileItems,
-    ...invite,
     { label: 'Protect with passkey', onClick: () => {} },
   ]
 }
@@ -212,6 +205,23 @@ function FilesPanel() {
   )
 }
 
+/** Delta Chat, at the foot of the page: join someone's invite, or copy this identity's own invite link. */
+function DeltaChatBar() {
+  const config = useStore(accountConfig)
+  const pgp = config?.pgp
+  if (!pgp) return null
+  const showMessage = (text: string) => config?.showMessage?.(text)
+  return (
+    <div id="cmd-acc-deltachat">
+      {/* A speech bubble with a delta in it (drawn here, not Delta Chat's own artwork). */}
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true"><path d="M5 3.5h14a2.5 2.5 0 0 1 2.5 2.5v8.5a2.5 2.5 0 0 1-2.5 2.5h-7L8 21v-4H5A2.5 2.5 0 0 1 2.5 14.5V6A2.5 2.5 0 0 1 5 3.5Z" /><path d="M12 7.5 15.5 13.5h-7Z" /></svg>
+      <button type="button" onClick={() => joinDeltaChatInvite(pgp, showMessage)}>Join</button>
+      <span aria-hidden="true">|</span>
+      <button type="button" onClick={() => copyInviteLink(pgp, showMessage)}>Copy URL</button>
+    </div>
+  )
+}
+
 const TABS = ['Services', 'Keys', 'Files'] as const
 type Tab = typeof TABS[number]
 
@@ -260,6 +270,7 @@ export function AccountPage() {
         <div className="cmd-page-content wide-page">
           <IdentityCard did={config.did} />
           <AccountTabs />
+          <DeltaChatBar />
           <button id="cmd-acc-compose-fab" className="compose-fab" type="button" aria-label="Compose" data-tip="Compose" onClick={() => setPage('compose')}>
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
           </button>

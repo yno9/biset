@@ -1860,6 +1860,28 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   background: var(--accent, currentColor);
   transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
+/* Delta Chat's row, centred at the foot of the account page. */
+#cmd-acc-deltachat {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 28px 0 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+#cmd-acc-deltachat button {
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+#cmd-acc-deltachat button:hover {
+  color: var(--text);
+}
 #cmd-acc-files {
   display: flex;
   flex-wrap: wrap;

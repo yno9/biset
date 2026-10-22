@@ -169,6 +169,23 @@ test('account: View DID in the identity menu opens the card and reads the DID do
   await waitFor(() => expect(vi.mocked(resolve).mock.calls.length).toBe(callsBefore + 2))
 })
 
+test('account: the Delta Chat row at the foot joins an invite and copies this identity\'s link, and the menu no longer has them', async () => {
+  const writeText = vi.fn(async () => {})
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+  const joinInvite = vi.fn(async () => ({ name: 'Bob', address: 'bob@x.test' }))
+  const pgp = { address: 'alice@did.md', current: async () => undefined, onCopyPublic: async () => '', inviteLink: async () => 'https://i.delta.chat/#FP', joinInvite }
+  vi.spyOn(window, 'prompt').mockReturnValue('https://i.delta.chat/#ABC')
+  accountConfig.set(account({ pgp }))
+  const { container } = render(<><AccountPage /><DropdownMenu /></>)
+  fireEvent.click(container.querySelector('#cmd-acc-identity-menu-btn')!)
+  expect(screen.queryByText('Copy Delta Chat invite')).toBeNull()
+  expect(screen.queryByText('Join a Delta Chat invite')).toBeNull()
+  fireEvent.click(screen.getByText('Copy URL'))
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith('https://i.delta.chat/#FP'))
+  fireEvent.click(screen.getByText('Join'))
+  await waitFor(() => expect(joinInvite).toHaveBeenCalledWith('https://i.delta.chat/#ABC'))
+})
+
 test('account: clicking the DID copies it and says so', async () => {
   const writeText = vi.fn(async () => {})
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
