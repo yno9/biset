@@ -99,7 +99,7 @@ export function KeysPanel() {
       <DeviceKeyCard config={config} showMessage={showMessage} />
       <div className="acc-card-wrap acc-key-card" id="cmd-acc-pgp-key-card">
         <div className="acc-storage-header"><span className="acc-storage-title">PGP Key</span></div>
-        {config.pgp ? <PgpKeyRow config={config.pgp} showMessage={showMessage} plain /> : <div className="acc-device-empty">No key available</div>}
+        {config.pgp ? <PgpKeyRow config={config.pgp} showMessage={showMessage} /> : <div className="acc-device-empty">No key available</div>}
       </div>
     </div>
   )

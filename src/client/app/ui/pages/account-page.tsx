@@ -8,7 +8,7 @@ import { resolve } from '../../../../protocol/webvh/resolver.ts'
 import { AccountList, KeysPanel } from '../account/account-list.tsx'
 import { cropAvatar } from '../account/avatar-crop.tsx'
 import { chooseImage, PROFILE_CHANGED } from '../account/profile.ts'
-import { copyInviteLink, joinDeltaChatInvite, PgpKeyRow } from '../account/pgp-card.tsx'
+import { copyInviteLink, joinDeltaChatInvite } from '../account/pgp-card.tsx'
 import { openDropdownMenu, type MenuItem } from '../account/menu.tsx'
 import { accountConfig, getAccountConfig } from '../account/state.ts'
 import { avatarColor } from '../format.ts'
@@ -111,7 +111,6 @@ function IdentityCard({ did }: { did: string }) {
   const label = parseWebvhDid(did).domain
   const accountState = useStore(accountConfig)
   const wallet = accountState?.wallet
-  const pgp = accountState?.pgp
   const [name, setName] = useState(label)
   const [own, setOwn] = useState<{ name?: string; avatar?: string }>({})
   const [expanded, setExpanded] = useState(false)
@@ -170,7 +169,6 @@ function IdentityCard({ did }: { did: string }) {
             </svg>
             <span id="cmd-acc-identity-did" data-tip={did}>{did}</span>
           </div>
-          {pgp ? <PgpKeyRow config={pgp} showMessage={text => getAccountConfig()?.showMessage?.(text)} /> : null}
         </div>
         <button ref={menuButton} id="cmd-acc-identity-menu-btn" type="button" aria-label="Menu"
           onClick={event => { event.stopPropagation(); openDropdownMenu(menuButton.current!, identityMenuItems(own.name, { expanded, onToggle: toggleDid })) }}>
