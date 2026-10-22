@@ -4128,6 +4128,17 @@ html.pwa-standalone #app {
 }
 
 /* The Keys tab: one bordered card per key. */
+#cmd-acc-config {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.acc-config-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+}
 #cmd-acc-keys {
   display: flex;
   flex-direction: column;

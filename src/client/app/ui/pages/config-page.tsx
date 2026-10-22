@@ -9,12 +9,14 @@ export function configureMarkdownVaultToggle(value: MarkdownVault): void { markd
 function VaultRow({ vault }: { vault: MarkdownVault | undefined }) {
   const [enabled, setEnabled] = useState(vault?.enabled() ?? false)
   return (
-    <div className="cmd-page-row">
-      <span>Vault</span>
-      <div className={`toggle-switch${enabled ? ' on' : ''}`} id="config-vault-toggle" style={{ cursor: 'pointer' }}
-        onClick={() => { if (vault) void vault.toggle().then(() => setEnabled(vault.enabled())) }} />
-      {/* Without a file-system observer the vault is rescanned by hand. */}
-      {vault && enabled && !vault.observerSupported() ? <button id="config-vault-rescan" className="cmd-page-btn" onClick={() => { void vault.rescan() }}>Rescan Vault</button> : null}
+    <div className="acc-card-wrap" id="cmd-acc-vault-card">
+      <div className="cmd-page-row" style={{ gap: 12, alignItems: 'center', padding: '10px 12px' }}>
+        <span className="acc-config-title">Vault (Markdown)</span>
+        {/* Without a file-system observer the vault is rescanned by hand. */}
+        {vault && enabled && !vault.observerSupported() ? <button id="config-vault-rescan" className="cmd-page-btn" onClick={() => { void vault.rescan() }}>Rescan Vault</button> : null}
+        <div className={`toggle-switch${enabled ? ' on' : ''}`} id="config-vault-toggle" style={{ cursor: 'pointer' }}
+          onClick={() => { if (vault) void vault.toggle().then(() => setEnabled(vault.enabled())) }} />
+      </div>
     </div>
   )
 }
@@ -23,19 +25,13 @@ function VaultRow({ vault }: { vault: MarkdownVault | undefined }) {
 export function ConfigPanel() {
   return (
     <div id="cmd-acc-config">
-      <div className="cmd-page-section">
-        <h3>Notifications</h3>
-        <div className="cmd-page-row">
-          <span>Push notifications</span>
+      <div className="acc-card-wrap" id="cmd-acc-notifications-card">
+        <div className="cmd-page-row" style={{ gap: 12, alignItems: 'center', padding: '10px 12px' }}>
+          <span className="acc-config-title">Push notifications</span>
           <div className="toggle-switch" id="config-notif-toggle" style={{ cursor: 'pointer' }} />
         </div>
       </div>
-      {'showDirectoryPicker' in window ? (
-        <div className="cmd-page-section">
-          <h3>Vault (Markdown)</h3>
-          <VaultRow vault={markdownVault} />
-        </div>
-      ) : null}
+      {'showDirectoryPicker' in window ? <VaultRow vault={markdownVault} /> : null}
     </div>
   )
 }
