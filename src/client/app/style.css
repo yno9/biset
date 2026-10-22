@@ -1826,8 +1826,8 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 }
 #cmd-acc-identity-avatar {
   flex-shrink: 0;
-  width: 50px;
-  height: 50px;
+  width: 46px;
+  height: 46px;
   font-size: 24px;
 }
 /* The bar under the identity card: Services | Keys | Files. */
