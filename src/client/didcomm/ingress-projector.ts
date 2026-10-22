@@ -14,7 +14,7 @@ import type { VaultEventRecord, VaultObjectRecord } from '../store/vault/store.t
 import { parseJwe, protectedHeaderOf, unpackAuthcrypt, unpackAnoncrypt, type ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
 import { isPing, isPingResponse, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
 import { FromPriorError, fromPriorKeyResolver, verifyFromPrior, type DidRotation } from '../../protocol/didcomm/from-prior.ts'
-import { autocryptKeyPatch, contactCardForDid, contactNamePatch, contactSetIntent, counterpartyOfRotatedDid, currentRotation, didCommStateOf, didContactPatch, ownRotationPatch, rotationPatch, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
+import { aliasPatch, autocryptKeyPatch, contactCardForDid, contactNamePatch, contactSetIntent, counterpartyOfRotatedDid, currentRotation, didCommStateOf, didContactPatch, ownRotationPatch, rotationPatch, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { PermanentDeliveryError } from '../../protocol/didcomm/mediator-pickup.ts'
 import { isBasicMessage, basicMessageBodyOf, didCommThreadId, pgpArmorOf } from './basicmessage.ts'
@@ -454,7 +454,13 @@ async function resolveCounterparty(
     publicDid = known.publicDid
   } else {
     publicDid = senderDid
-    if (!contactCardForDid(cards, publicDid)) writes.push(didContactPatch(publicDid))
+    const known = contactCardForDid(cards, publicDid)
+    if (!known) writes.push(didContactPatch(publicDid))
+    else {
+      // The same contact under another address: kept among its aliases.
+      const alias = aliasPatch(known, publicDid)
+      if (alias) writes.push(alias)
+    }
   }
   // Written to one of this identity's own rotation DIDs, by the counterparty
   // it is for: that rotation is confirmed, and `from_prior` stops (§4.3).
