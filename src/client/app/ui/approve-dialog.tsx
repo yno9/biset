@@ -9,7 +9,7 @@ import { useDidMdWalletApprover } from '../../identity/wallet/did-md-oauth.ts'
 import { ditoEmbedOrigin, mountDito, type DitoEmbed } from '../../identity/wallet/dito-embed.ts'
 
 /** One thing asked of dito's waiting frame: `ready` is what `run` needs and is still being prepared. */
-interface Approval { origin: string; ready: Promise<unknown>; run(embed: DitoEmbed, prepared: unknown): Promise<unknown>; resolve(result: unknown): void; reject(error: Error): void }
+interface Approval { origin: string; /** A click outside the card closes it (Esc does too). */ dismissOutside?: boolean; ready: Promise<unknown>; run(embed: DitoEmbed, prepared: unknown): Promise<unknown>; resolve(result: unknown): void; reject(error: Error): void }
 
 const approval = createStore<Approval | undefined>(undefined)
 
@@ -34,7 +34,7 @@ export function requestAliasChange(): Promise<{ did: string, host: string }> {
   if (!origin) return Promise.reject(new Error('Changing the alias needs the embedded wallet.'))
   return new Promise((resolve, reject) => {
     if (approval.get()) { reject(new Error('Another approval is already open.')); return }
-    approval.set({ origin, ready: Promise.resolve(), run: embed => embed.moveAlias(), resolve, reject })
+    approval.set({ origin, dismissOutside: true, ready: Promise.resolve(), run: embed => embed.moveAlias(), resolve, reject })
   })
 }
 
@@ -72,7 +72,7 @@ export function ApproveDialog() {
 
   useEffect(() => {
     if (!current) return
-    const { ready, run, resolve, reject } = current
+    const { ready, run, resolve, reject, dismissOutside } = current
     const el = dialog.current!
     const slot = warm.current ?? start()
     let settled = false
@@ -82,6 +82,7 @@ export function ApproveDialog() {
       clearTimeout(fallback)
       slot.onResize = undefined
       el.removeEventListener('close', onClose)
+      el.removeEventListener('click', onOutside)
       if (el.open) el.close()
       el.style.visibility = ''
       approval.set(undefined)
@@ -92,6 +93,9 @@ export function ApproveDialog() {
     // Escape (or any other way the dialog closes before the frame answers) is a refusal.
     const onClose = () => finish(() => reject(new Error('Cancelled.')))
     el.addEventListener('close', onClose)
+    // The frame fills the dialog, so a click on the dialog itself is a click on its backdrop.
+    const onOutside = (event: MouseEvent) => { if (dismissOutside && event.target === el) el.close() }
+    el.addEventListener('click', onOutside)
     // Open at once (the backdrop answers the click) but keep the box invisible until dito has laid its
     // approval out: the frame is blank until it has the request. A frame that never reports a height
     // is shown after a while anyway.

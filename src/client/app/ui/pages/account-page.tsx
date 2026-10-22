@@ -76,8 +76,8 @@ function AliasButton({ children }: { children: string }) {
   if (!wallet?.onChangeAlias) return <>{children}</>
   return (
     <span className="acc-alias-edit" role="button" tabIndex={0} title="Change alias" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5 }}
-      onClick={event => { event.stopPropagation(); void wallet.onChangeAlias?.().catch(error => getAccountConfig()?.showMessage?.(errorText(error))) }}
-      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); void wallet.onChangeAlias?.().catch(error => getAccountConfig()?.showMessage?.(errorText(error))) } }}>
+      onClick={event => { event.stopPropagation(); void wallet.onChangeAlias?.().catch(error => { if (errorText(error) !== 'Cancelled.') getAccountConfig()?.showMessage?.(errorText(error)) }) }}
+      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); void wallet.onChangeAlias?.().catch(error => { if (errorText(error) !== 'Cancelled.') getAccountConfig()?.showMessage?.(errorText(error)) }) } }}>
       {children}
       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" style={{ opacity: .6, flex: 'none' }}><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
     </span>
@@ -132,7 +132,7 @@ function IdentityCard({ did }: { did: string }) {
           // The picture is set where it is shown: a click on it asks for an image (not the card opening).
           onClick={profile ? event => {
             event.stopPropagation()
-            void chooseImage().then(file => file && cropAvatar(file)).then(avatar => { if (avatar) return profile.setAvatar(avatar) }).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => getAccountConfig()?.showMessage?.(errorText(error)))
+            void chooseImage().then(file => file && cropAvatar(file)).then(avatar => { if (avatar) return profile.setAvatar(avatar) }).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => { if (errorText(error) !== 'Cancelled.') getAccountConfig()?.showMessage?.(errorText(error)) })
           } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : label.charAt(0).toUpperCase()}</div>
         <div id="cmd-acc-identity-text">
           <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ?? <AliasButton>{name.replace(/\.did\.md$/, '@did.md')}</AliasButton>}</span></div>
