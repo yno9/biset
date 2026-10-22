@@ -38,7 +38,7 @@ test('nothing is drawn before there is a mediator', () => {
   expect(container.innerHTML).toBe('')
 })
 
-test('the Identity host card: green when the DID resolves, red when not, and a link to app.did.md', async () => {
+test('the Identity host card: green when the DID resolves, red when not, and a link to the host', async () => {
   const { resolve } = await import('../../src/protocol/webvh/resolver.ts')
   const next = config()
   const { container } = render(<AccountList />)
@@ -47,7 +47,7 @@ test('the Identity host card: green when the DID resolves, red when not, and a l
   await waitFor(() => expect(dot().dataset.state).toBe('ok'))
   expect(dot().style.background).toBe('#34c759')
   const link = container.querySelector<HTMLAnchorElement>('#cmd-acc-identity-host-card a')!
-  expect(link.href).toBe('https://app.did.md/')
+  expect(link.href).toBe('https://dito.did.md/')
   expect(link.target).toBe('_blank')
   vi.mocked(resolve).mockResolvedValueOnce(null)
   set({ ...next, did: 'did:webvh:OTHER:alice.did.md', wallet: { ...next.wallet!, host: 'dito.did.md' } })
