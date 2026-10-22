@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+vi.mock('../../src/protocol/webvh/resolver.ts', () => ({ resolve: vi.fn(async () => ({ id: 'did:webvh:SCID:alice.did.md' })) }))
+
 import { AccountList, KeysPanel } from '../../src/client/app/ui/account/account-list.tsx'
 import { DropdownMenu } from '../../src/client/app/ui/account/menu.tsx'
 import { copyInviteLink, joinDeltaChatInvite, PGP_KEY_CHANGED, PgpKeyRow } from '../../src/client/app/ui/account/pgp-card.tsx'
@@ -34,6 +36,22 @@ test('nothing is drawn before there is a mediator', () => {
   expect(container.innerHTML).toBe('')
   set(config({ wallet: { handle: 'a', deviceJkt: 'j', capabilityExpiresAt: '2030-01-01T00:00:00Z', onDisconnect: async () => {} } }))
   expect(container.innerHTML).toBe('')
+})
+
+test('the Identity host card: green when the DID resolves, red when not, and a link to app.did.md', async () => {
+  const { resolve } = await import('../../src/protocol/webvh/resolver.ts')
+  const next = config()
+  const { container } = render(<AccountList />)
+  set({ ...next, wallet: { ...next.wallet!, host: 'dito.did.md' } })
+  const dot = () => container.querySelector<HTMLElement>('#cmd-acc-identity-host-card [role="status"]')!
+  await waitFor(() => expect(dot().dataset.state).toBe('ok'))
+  expect(dot().style.background).toBe('#34c759')
+  const link = container.querySelector<HTMLAnchorElement>('#cmd-acc-identity-host-card a')!
+  expect(link.href).toBe('https://app.did.md/')
+  expect(link.target).toBe('_blank')
+  vi.mocked(resolve).mockResolvedValueOnce(null)
+  set({ ...next, did: 'did:webvh:OTHER:alice.did.md', wallet: { ...next.wallet!, host: 'dito.did.md' } })
+  await waitFor(() => expect(dot().dataset.state).toBe('error'))
 })
 
 test('the Identity host card names where the wallet is, with or without a mediator', () => {
