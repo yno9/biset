@@ -19,7 +19,16 @@ const errorText = (error: unknown): string => error instanceof Error ? error.mes
 
 /** The identity menu. A Wallet account can reconnect, move its messages, and disconnect; the rest of
  * the old menu (passkey protection) has no backend here. */
-function identityMenuItems(): MenuItem[] {
+/** Asks for the display name (the menu's "Set display name", and a click on the name in the card). */
+function changeDisplayName(current?: string): void {
+  const profile = getAccountConfig()?.profile
+  if (!profile) return
+  const name = window.prompt('Display name (shown to the people you write to; empty removes it)', current ?? '')
+  if (name === null) return
+  void profile.setName(name.trim() || null).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => getAccountConfig()?.showMessage?.(errorText(error)))
+}
+
+function identityMenuItems(currentName?: string): MenuItem[] {
   const config = getAccountConfig()
   const wallet = config?.wallet
   const showMessage = (error: unknown) => getAccountConfig()?.showMessage?.(errorText(error))
@@ -27,11 +36,7 @@ function identityMenuItems(): MenuItem[] {
   const profile = config?.profile
   const profileItems: MenuItem[] = profile ? [
     { label: 'Remove profile picture', onClick: () => { void profile.setAvatar(null).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(showMessage) } },
-    { label: 'Set display name', onClick: () => {
-      const name = window.prompt('Display name (shown to the people you write to; empty removes it)')
-      if (name === null) return
-      void profile.setName(name.trim() || null).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(showMessage)
-    } },
+    { label: 'Set display name', onClick: () => changeDisplayName(currentName) },
   ] : []
   const invite: MenuItem[] = pgp ? [
     { label: 'Copy Delta Chat invite', onClick: () => copyInviteLink(pgp, text => config?.showMessage?.(text)) },
@@ -135,7 +140,8 @@ function IdentityCard({ did }: { did: string }) {
             void chooseImage().then(file => file && cropAvatar(file)).then(avatar => { if (avatar) return profile.setAvatar(avatar) }).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => { if (errorText(error) !== 'Cancelled.') getAccountConfig()?.showMessage?.(errorText(error)) })
           } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : label.charAt(0).toUpperCase()}</div>
         <div id="cmd-acc-identity-text">
-          <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ? <>{own.name}<span className="acc-name-sep">|</span></> : null}<AliasButton>{name.replace(/\.did\.md$/, '@did.md')}</AliasButton></span></div>
+          <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ? <><span className="acc-display-name" role={profile ? 'button' : undefined} title={profile ? 'Change display name' : undefined}
+            onClick={profile ? event => { event.stopPropagation(); changeDisplayName(own.name) } : undefined}>{own.name}</span><span className="acc-name-sep">|</span></> : null}<AliasButton>{name.replace(/\.did\.md$/, '@did.md')}</AliasButton></span></div>
           {/* Clicking the DID text copies it. */}
           <div id="cmd-acc-identity-did-row"
             onClick={event => { event.stopPropagation(); navigator.clipboard?.writeText(did).then(() => getAccountConfig()?.showMessage?.('DID copied')).catch(() => {}) }}>
@@ -148,7 +154,7 @@ function IdentityCard({ did }: { did: string }) {
           {pgp ? <PgpKeyRow config={pgp} showMessage={text => getAccountConfig()?.showMessage?.(text)} /> : null}
         </div>
         <button ref={menuButton} id="cmd-acc-identity-menu-btn" type="button" aria-label="Menu"
-          onClick={event => { event.stopPropagation(); openDropdownMenu(menuButton.current!, identityMenuItems()) }}>
+          onClick={event => { event.stopPropagation(); openDropdownMenu(menuButton.current!, identityMenuItems(own.name)) }}>
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" /></svg>
         </button>
       </div>
